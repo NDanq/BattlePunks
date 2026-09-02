@@ -82,6 +82,24 @@ target_include_directories(EngineCore
 
 target_compile_features(EngineCore PUBLIC cxx_std_17)
 
+# === Build version stamp ===
+# Generates Generated/BuildInfo.h from git (see cmake/GitVersion.cmake). Only
+# when EngineCore is the top-level project -- its own repo, or a standalone
+# configure. Inside Odessa, CoreClient stamps the combined build and already
+# records this tree's SHA, so a second stamp here would be noise.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+    include(GitVersion)
+    git_version_stamp(
+            PREFIX   ENGINECORE
+            VERSION  "${PROJECT_VERSION}"
+            TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/Source/Public/Core/BuildInfo.h.in"
+            OUTPUT   "${CMAKE_CURRENT_BINARY_DIR}/Generated/BuildInfo.h"
+            TARGET   EngineCore
+    )
+    target_include_directories(EngineCore PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()
+
 # EngineCore is Qt-free by definition. CoreClient sets CMAKE_AUTOMOC/UIC/RCC ON
 # as directory properties, and add_subdirectory hands those down to this scope,
 # which would quietly make the Qt-free library depend on moc being available.
