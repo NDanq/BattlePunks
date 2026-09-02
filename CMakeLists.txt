@@ -10,9 +10,10 @@ project(EngineCore VERSION 0.1 LANGUAGES CXX)
 # what a VkInstance or an HGLRC is belongs in GDI, not here: a game engine
 # links EngineCore to get the math without dragging in a renderer.
 #
-# The directory and the Perforce stream are named "Core"; the CMake target and
-# the C++ namespace are "EngineCore", because a library literally called Core
-# sitting next to an application called CoreClient reads badly on a link line.
+# The directory (and its future standalone git repo) is named "Core"; the
+# CMake target and the C++ namespace are "EngineCore", because a library
+# literally called Core sitting next to an application called CoreClient reads
+# badly on a link line.
 # ===========================================================================
 
 option(CORE_SHARED          "Build EngineCore as a shared library"      OFF)
