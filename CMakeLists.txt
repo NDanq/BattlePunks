@@ -156,6 +156,21 @@ if(CORE_BUILD_SMOKETEST)
     add_executable(EngineCoreSmokeTest Tests/SmokeMain.cpp)
     target_link_libraries(EngineCoreSmokeTest PRIVATE EngineCore::EngineCore)
     set_target_properties(EngineCoreSmokeTest PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+    # Register with CTest so CI has one command to run rather than having to know
+    # the binary's name and location. SmokeMain returns the failure count as its
+    # exit status, which is exactly what add_test() checks.
+    #
+    # enable_testing() only takes effect from the top-level scope, so `ctest`
+    # works when EngineCore is configured directly. When it is pulled in with
+    # add_subdirectory, the parent project must call enable_testing() itself for
+    # this test to appear in its ctest run.
+    enable_testing()
+    add_test(NAME EngineCore.Smoke COMMAND EngineCoreSmokeTest)
+    set_tests_properties(EngineCore.Smoke PROPERTIES
+        TIMEOUT 120
+        LABELS  "smoke"
+    )
 endif()
 
 source_group("Core"     FILES ${CORE_SOURCES})
