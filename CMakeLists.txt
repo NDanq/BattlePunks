@@ -248,6 +248,24 @@ target_include_directories(GDI
 
 target_compile_features(GDI PUBLIC cxx_std_17)
 
+# === Build version stamp ===
+# Generates Generated/BuildInfo.h from git (see cmake/GitVersion.cmake). Only
+# when GDI is the top-level project -- its own repo, or a standalone configure.
+# Inside Odessa, CoreClient stamps the combined build and already records this
+# tree's SHA.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+    include(GitVersion)
+    git_version_stamp(
+            PREFIX   GDI
+            VERSION  "${PROJECT_VERSION}"
+            TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/Source/Public/GDI/BuildInfo.h.in"
+            OUTPUT   "${CMAKE_CURRENT_BINARY_DIR}/Generated/BuildInfo.h"
+            TARGET   GDI
+    )
+    target_include_directories(GDI PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()
+
 # PUBLIC: GDI's public headers expose EngineCore types, and CoreClient must
 # inherit WITH_SIMD and the compatibility aliases from the same single source.
 target_link_libraries(GDI PUBLIC EngineCore::EngineCore)
