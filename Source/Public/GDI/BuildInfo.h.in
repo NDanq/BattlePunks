@@ -22,7 +22,6 @@
 // Monotonic build counter from CI ($BUILD_NUMBER, else $GITHUB_RUN_NUMBER);
 // 0 for local developer builds.
 #define GDI_BUILD_NUMBER      @GDI_BUILD_NUMBER@
-#define GDI_BUILD_TIMESTAMP   "@GDI_BUILD_TIMESTAMP@"
 
 // One-line summary for logs / diagnostics.
 #define GDI_VERSION_STRING    "@GDI_VERSION_STRING@"

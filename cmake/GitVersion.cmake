@@ -118,6 +118,14 @@ function(_gv_run)
         set(_self_GIT_DIRTY 0)
     endif()
 
+    # Names collected here are both fed to configure_file() and pushed to the
+    # caller's scope at the end of the function. Deliberately NO wall-clock
+    # build time: it would change the header's content on every build and force
+    # a recompile of everything that includes it. GIT_COMMIT_DATE dates the
+    # source; BUILD_NUMBER identifies the CI run.
+    set(_gv_keys VERSION GIT_DESCRIBE GIT_SHA GIT_SHA_SHORT GIT_BRANCH
+                 GIT_COMMIT_DATE GIT_DIRTY BUILD_NUMBER VERSION_STRING)
+
     set(${P}_VERSION         "${A_VERSION}")
     set(${P}_GIT_DESCRIBE    "${_self_GIT_DESCRIBE}")
     set(${P}_GIT_SHA         "${_self_GIT_SHA}")
@@ -135,8 +143,6 @@ function(_gv_run)
         set(_bn 0)
     endif()
     set(${P}_BUILD_NUMBER "${_bn}")
-
-    string(TIMESTAMP ${P}_BUILD_TIMESTAMP "%Y-%m-%dT%H:%M:%SZ" UTC)
 
     set(_vs "${_self_GIT_DESCRIBE}")
     if(NOT "${_self_GIT_BRANCH}" STREQUAL "unknown")
@@ -167,11 +173,18 @@ function(_gv_run)
         endif()
         set(${P}_${_name}_GIT_SHA_SHORT "${_dep_GIT_SHA_SHORT}")
         set(${P}_${_name}_GIT_DESCRIBE  "${_dep_GIT_DESCRIBE}")
+        list(APPEND _gv_keys ${_name}_GIT_SHA_SHORT ${_name}_GIT_DESCRIBE)
     endforeach()
 
-    get_filename_component(_od "${A_OUTPUT}" DIRECTORY)
-    file(MAKE_DIRECTORY "${_od}")
+    file(MAKE_DIRECTORY "${_outdir}")
     configure_file("${A_TEMPLATE}" "${A_OUTPUT}" @ONLY)
+
+    # Hand every stamped value back to the caller (git_version_stamp, or the
+    # top-level script scope in worker mode where it is simply unused).
+    foreach(_k IN LISTS _gv_keys)
+        set(${P}_${_k} "${${P}_${_k}}" PARENT_SCOPE)
+    endforeach()
+    set(${P}_GV_KEYS "${_gv_keys}" PARENT_SCOPE)
 endfunction()
 
 # --- public entry point ----------------------------------------------------
@@ -187,8 +200,8 @@ function(git_version_stamp)
             VERSION "${G_VERSION}" SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}"
             REPOS "${G_REPOS}")
 
-    foreach(_v VERSION GIT_DESCRIBE GIT_SHA GIT_SHA_SHORT GIT_BRANCH GIT_DIRTY
-               GIT_COMMIT_DATE BUILD_NUMBER BUILD_TIMESTAMP VERSION_STRING)
+    # Forward every stamped value one more scope out, to the calling CMakeLists.
+    foreach(_v IN LISTS ${G_PREFIX}_GV_KEYS)
         set(${G_PREFIX}_${_v} "${${G_PREFIX}_${_v}}" PARENT_SCOPE)
     endforeach()
     message(STATUS "Build version [${G_PREFIX}]: ${${G_PREFIX}_VERSION_STRING} "
