@@ -22,7 +22,6 @@
 // Monotonic build counter from CI ($BUILD_NUMBER, else $GITHUB_RUN_NUMBER);
 // 0 for local developer builds.
 #define ENGINECORE_BUILD_NUMBER      @ENGINECORE_BUILD_NUMBER@
-#define ENGINECORE_BUILD_TIMESTAMP   "@ENGINECORE_BUILD_TIMESTAMP@"
 
 // One-line summary for logs / diagnostics.
 #define ENGINECORE_VERSION_STRING    "@ENGINECORE_VERSION_STRING@"
