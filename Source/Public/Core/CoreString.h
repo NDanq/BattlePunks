@@ -34,6 +34,8 @@ namespace EngineCore
 
     /* Whitespace from both ends. */
     CORE_API std::string Trim(const std::string& InText);
+
+    //TestComment
 }
 
 #endif //ENGINECORE_CORESTRING_H
