@@ -148,11 +148,11 @@ bool ModuleManager::RegisterModule(const std::string& InModuleName, const std::s
     Record.bWatch     = bInWatch;
     Records.push_back(std::move(Record));
 
-    if(!bSwept)
-    {
-        bSwept = true;
-        SweepShadowDirectory();
-    }
+    // Every registration, not just the first: modules may be watched in
+    // different directories, and a root that no module had been registered
+    // against yet would otherwise never be swept. It is a handful of directory
+    // listings against a registration count that is always small.
+    SweepShadowDirectory();
 
     return true;
 }

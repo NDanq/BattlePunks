@@ -142,8 +142,11 @@ namespace EngineCore
         void  SetSettleSeconds(float InSeconds);
         float GetSettleSeconds() const;
 
-        /* Deletes shadow directories left behind by OTHER, dead processes.
-         * Called automatically by the first RegisterModule. */
+        /* Deletes shadow directories left behind by OTHER, dead processes --
+         * a crashed or debugger-killed previous run. A directory belonging to
+         * a live process is never touched, and an entry whose name does not
+         * parse is left alone rather than guessed at. Called automatically by
+         * RegisterModule. */
         void SweepShadowDirectory();
 
     private:
@@ -202,7 +205,6 @@ namespace EngineCore
         std::vector<ModuleRecord> Records;
         std::string               ShadowRootOverride;
         float                     SettleSeconds = 0.25f;
-        bool                      bSwept        = false;
     };
 
     /* Process-wide manager. Not owned -- exactly like SetFileProvider. */
