@@ -82,6 +82,13 @@ target_include_directories(EngineCore
 
 target_compile_features(EngineCore PUBLIC cxx_std_17)
 
+# dlopen/dlsym/dlclose back the appDLL* seam. They live in libdl on glibc (until
+# 2.34; linking it is harmless after) and in libc on macOS, so this must NOT be
+# unconditional -- ${CMAKE_DL_LIBS} is empty on Apple and "dl" on Linux, which
+# is exactly the distinction, so let CMake make it. PRIVATE because no
+# consumer's headers expose dlopen.
+target_link_libraries(EngineCore PRIVATE ${CMAKE_DL_LIBS})
+
 # === Build version stamp ===
 # Generates Generated/BuildInfo.h from git (see cmake/GitVersion.cmake). Only
 # when EngineCore is the top-level project -- its own repo, or a standalone
