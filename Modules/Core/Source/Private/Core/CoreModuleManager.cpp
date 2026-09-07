@@ -594,12 +594,15 @@ int ModuleManager::Tick(const float InDeltaSeconds)
         }
 
         // Guard 1 of 3, and the only one that works on POSIX: the same
-        // (mtime, size) has to be observed twice, SettleSeconds apart.
+        // (mtime, size) has to hold still for SettleSeconds before it is
+        // touched. A first sighting starts the clock and then falls through to
+        // the check rather than skipping it, so that a settle window of zero
+        // means "do not wait" rather than "wait one extra tick" -- which is
+        // what a test, or a host driving reloads by hand, actually asks for.
         if(Stamp != Record.PendingStamp)
         {
             Record.PendingStamp        = Stamp;
             Record.PendingSinceSeconds = Now;
-            continue;
         }
 
         if(Now - Record.PendingSinceSeconds < double(SettleSeconds))
