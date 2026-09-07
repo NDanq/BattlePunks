@@ -201,6 +201,35 @@ if(CORE_BUILD_SMOKETEST)
         TIMEOUT 120
         LABELS  "smoke"
     )
+
+    # === Hot-reload fixtures ===============================================
+    # The module tests need a DLL that can be "rebuilt" without a second
+    # compile, because CTest runs one binary. Three builds of one source are
+    # produced here and the test copies one over another at runtime; see
+    # Tests/Modules/ExampleHotModule.cpp.
+    #
+    # Gated on CORE_SHARED because hot reload genuinely does not work without
+    # it: a module linked against a STATIC EngineCore gets its own GLogHandler,
+    # its own GFileProvider and its own copy of ModuleReloadState::Write, so the
+    # blob is allocated in one heap and freed in another. Rather than build
+    # fixtures that could only fail, the tests skip and say so.
+    if(CORE_SHARED)
+        add_subdirectory(Tests/Modules)
+        add_dependencies(EngineCoreSmokeTest
+                ExampleHotModuleA ExampleHotModuleB ExampleHotModuleSTALE)
+
+        # How the test finds the DLLs, given that this tree sets no output
+        # directory convention: it does not have to. TARGET_FILE resolves
+        # per-config, so this is correct under a multi-config generator without
+        # pinning every variant into one directory, and it yields forward-slash
+        # paths, which are safe inside a C string literal.
+        target_compile_definitions(EngineCoreSmokeTest PRIVATE
+                CORE_SMOKE_MODULE_A="$<TARGET_FILE:ExampleHotModuleA>"
+                CORE_SMOKE_MODULE_B="$<TARGET_FILE:ExampleHotModuleB>"
+                CORE_SMOKE_MODULE_STALE="$<TARGET_FILE:ExampleHotModuleSTALE>")
+    else()
+        message("EngineCore: CORE_SHARED is OFF -- hot-reload module tests will be skipped.")
+    endif()
 endif()
 
 source_group("Core"     FILES ${CORE_SOURCES})

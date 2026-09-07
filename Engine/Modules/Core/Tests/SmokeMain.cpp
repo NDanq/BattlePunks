@@ -17,6 +17,7 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <chrono>
 #include <utility>
 
 #include "Public/Core/CoreFileProvider.h"
@@ -605,6 +606,343 @@ static void TestTypes()
     Expect(Matrix4x4().InitIdentity().Data[0][0] == 1, "Matrix4x4 identity");
 }
 
+// --- hot-reload modules ---------------------------------------------------
+//
+// Skipped entirely when CORE_SHARED is OFF: with a static EngineCore a module
+// DLL gets its own GLogHandler, its own GFileProvider and its own copy of
+// ModuleReloadState::Write, so these tests would not be testing hot reload,
+// they would be documenting a configuration that cannot work. Core/CMakeLists
+// only defines CORE_SMOKE_MODULE_A in the shared build.
+
+#if defined(CORE_SMOKE_MODULE_A)
+
+/*
+ * A log sink that records what crossed it. The point of the message capture is
+ * one specific assertion: a CORE_LOG issued INSIDE the module DLL has to reach
+ * a handler installed by this EXE. If it does, there is exactly one
+ * GLogHandler in the process, which is the single most important structural
+ * claim the CORE_SHARED requirement makes.
+ */
+static int         GModuleLogErrors = 0;
+static int         GModuleLogWarns  = 0;
+static std::string GModuleLastMessage;
+static std::string GModuleAllMessages;
+
+static void ModuleLogHandler(const LogVerbosity Verbosity, const char* Message)
+{
+    if(Verbosity == LogVerbosity::Error) ++GModuleLogErrors;
+    if(Verbosity == LogVerbosity::Warning) ++GModuleLogWarns;
+
+    GModuleLastMessage = Message ? Message : "";
+    GModuleAllMessages += GModuleLastMessage;
+    GModuleAllMessages += "\n";
+}
+
+static void ResetModuleLog()
+{
+    GModuleLogErrors = 0;
+    GModuleLogWarns  = 0;
+    GModuleLastMessage.clear();
+    GModuleAllMessages.clear();
+}
+
+static bool ModuleLogContains(const char* InNeedle)
+{
+    return GModuleAllMessages.find(InNeedle) != std::string::npos;
+}
+
+static const char* const GWatchDir    = "SmokeScratch/Modules";
+static const char* const GWatchedPath = "SmokeScratch/Modules/Watched.dll";
+static const char* const GShadowRoot  = "SmokeScratch/Modules/Shadow";
+
+/* Reads one of the module's own exports through the manager. Returns 0 if the
+ * module is not loaded, which every caller distinguishes by other means. */
+static uint32_t ModuleCounter(const ModuleManager& InManager, const char* InSymbol)
+{
+    using CounterFn = uint32_t (*)();
+
+    void* Symbol = InManager.GetModuleSymbol("Example", InSymbol);
+    return Symbol ? reinterpret_cast<CounterFn>(Symbol)() : 0u;
+}
+
+static bool StageVariant(const char* InVariantPath)
+{
+    return appFileCopy(InVariantPath, GWatchedPath, true);
+}
+
+static void TestModuleLoad()
+{
+    std::printf("[module load]\n");
+
+    Expect(appCreateDirectories(GWatchDir), "the module scratch directory is created");
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged at the watched path");
+
+    ResetModuleLog();
+    SetLogHandler(&ModuleLogHandler);
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.0f);
+
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Unregistered,
+               "an unknown name reports MS_Unregistered");
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(!Manager.RegisterModule("Example", GWatchedPath), "a duplicate registration is refused");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Unloaded,
+               "a registered but unloaded module reports MS_Unloaded");
+        Expect(Manager.GetModuleCount() == 1, "the module is counted");
+        Expect(Manager.GetModuleNameAt(0) == "Example", "the module can be enumerated by index");
+
+        Expect(Manager.LoadModule("Example"), "LoadModule succeeds");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Loaded, "the module reports MS_Loaded");
+
+        IModule* Module = Manager.GetModule("Example");
+        Expect(Module != nullptr, "GetModule returns the instance");
+        Expect(Module && std::strcmp(Module->GetName(), "ExampleHotModule") == 0,
+               "the module reports its name");
+        Expect(Manager.GetModuleVersionString("Example") == "A", "variant A is the loaded build");
+
+        // The CORE_SHARED payoff, asserted directly.
+        Expect(ModuleLogContains("ExampleHotModule A startup"),
+               "a CORE_LOG from inside the DLL reaches the handler this EXE installed");
+
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 1,
+               "the module ran OnStartup exactly once");
+
+        /*
+         * THE HEADLINE ASSERTION.
+         *
+         * Windows maps a loaded DLL with FILE_SHARE_READ only, so overwriting
+         * the watched file while the module is live is a sharing violation
+         * unless something is actually shadow-copying it. This single line is
+         * what proves the entire shadow-copy design does its job; stub the copy
+         * out and it fails immediately.
+         */
+        Expect(appFileCopy(CORE_SMOKE_MODULE_B, GWatchedPath, true),
+               "the watched DLL can be overwritten while the module is loaded");
+
+        // Put A back so this test leaves no reload pending for the next one.
+        Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is restored");
+
+        Expect(Manager.UnloadModule("Example"), "UnloadModule succeeds");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Unloaded,
+               "the module reports MS_Unloaded after unloading");
+        Expect(Manager.GetModule("Example") == nullptr, "GetModule returns null once unloaded");
+
+        // If the handle really was released, the file is deletable.
+        Expect(appFileDelete(GWatchedPath), "the watched DLL is deletable after unload");
+    }
+
+    SetLogHandler(nullptr);
+}
+
+static void TestModuleReload()
+{
+    std::printf("[module reload]\n");
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged");
+
+    ResetModuleLog();
+    SetLogHandler(&ModuleLogHandler);
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.0f);      // no waiting; the settle window has its own test
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(Manager.LoadModule("Example"), "variant A loads");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 1, "one startup so far");
+
+        // Ticks before the swap, so the accumulated count means something.
+        Expect(Manager.Tick(0.016f) == 0, "an unchanged module is not reloaded");
+        Manager.Tick(0.016f);
+        Manager.Tick(0.016f);
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetTickCount") == 3,
+               "OnTick runs once per Tick while loaded");
+
+        // The "rebuild": different code at the same watched path.
+        Expect(StageVariant(CORE_SMOKE_MODULE_B), "variant B is written over the watched path");
+        Expect(Manager.Tick(0.016f) == 1, "Tick reloads the changed module");
+
+        Expect(Manager.GetModuleVersionString("Example") == "B",
+               "the reloaded module reports variant B -- different code is executing");
+        Expect(Manager.GetReloadCount("Example") == 1, "the reload is counted");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Loaded, "the module is still loaded");
+
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 2,
+               "B picked up A's startup count -- the host-owned blob round-tripped");
+
+        // 'A' is what A's OnShutdown stamped into the blob.
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetLastVariant") == uint32_t('A'),
+               "the blob B consumed was written by A");
+
+        // The Tick that performed the reload also ticked the new instance, so
+        // the count is the three from A plus that one.
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetTickCount") == 4,
+               "the tick count accumulated across the reload rather than resetting");
+
+        const ModuleReloadState* Blob = Manager.GetReloadState("Example");
+        Expect(Blob != nullptr, "the reload state is inspectable from the host");
+        Expect(Blob && !Blob->IsEmpty(), "the reload state holds a payload");
+
+        // And back again, which proves the handoff is not one-directional.
+        Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is written back");
+        Expect(Manager.Tick(0.016f) == 1, "Tick reloads back to A");
+        Expect(Manager.GetModuleVersionString("Example") == "A", "variant A is loaded again");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 3,
+               "the startup count survived a second reload");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetLastVariant") == uint32_t('B'),
+               "the blob A consumed was written by B");
+        Expect(Manager.GetReloadCount("Example") == 2, "both reloads are counted");
+
+        // The explicit path an editor hotkey would take.
+        Expect(Manager.ReloadModule("Example"), "an explicit ReloadModule succeeds with no file change");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 4,
+               "an explicit reload re-runs OnStartup");
+    }
+
+    SetLogHandler(nullptr);
+    Expect(appFileDelete(GWatchedPath), "the watched DLL is deletable after the manager is destroyed");
+}
+
+static void TestModuleSettleWindow()
+{
+    std::printf("[module settle window]\n");
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged");
+
+    SetLogHandler(&ModuleLogHandler);
+    ResetModuleLog();
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.25f);
+        Expect(Manager.GetSettleSeconds() == 0.25f, "the settle window round-trips");
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(Manager.LoadModule("Example"), "variant A loads");
+
+        Expect(StageVariant(CORE_SMOKE_MODULE_B), "variant B is written over the watched path");
+
+        // First sighting only records the candidate -- a file seen once could
+        // still be half-written.
+        Expect(Manager.Tick(0.016f) == 0, "a just-changed file is not reloaded immediately");
+        Expect(Manager.GetModuleVersionString("Example") == "A", "the old build is still running");
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        Expect(Manager.Tick(0.016f) == 1, "the file reloads once it has settled");
+        Expect(Manager.GetModuleVersionString("Example") == "B", "variant B is now running");
+    }
+
+    SetLogHandler(nullptr);
+    appFileDelete(GWatchedPath);
+}
+
+static void TestModuleAbiMismatch()
+{
+    std::printf("[module abi mismatch]\n");
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_STALE), "the forged stale plugin is staged");
+
+    SetLogHandler(&ModuleLogHandler);
+    ResetModuleLog();
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.0f);
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(!Manager.LoadModule("Example"), "a plugin with the wrong ABI version is refused");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Failed, "the module reports MS_Failed");
+        Expect(Manager.GetModule("Example") == nullptr, "no instance is created for a rejected plugin");
+        Expect(GModuleLogErrors > 0, "the refusal is logged as an error");
+
+        // The refusal names the offender, which it can only do through the free
+        // NimbleModuleGetName export -- calling a virtual on a plugin whose
+        // vtable is the untrustworthy part would defeat the check.
+        Expect(ModuleLogContains("ExampleHotModule"), "the refusal names the rejected module");
+
+        // A rejected plugin must be CLOSED, not leaked: if the handle were
+        // still open the shadow copy would be undeletable.
+        Expect(ModuleLogContains("refusing"), "the log says the plugin was refused");
+    }
+
+    SetLogHandler(nullptr);
+    Expect(appFileDelete(GWatchedPath), "the rejected DLL is deletable, so it was closed");
+}
+
+static void TestModuleReloadRollback()
+{
+    std::printf("[module reload rollback]\n");
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged");
+
+    SetLogHandler(&ModuleLogHandler);
+    ResetModuleLog();
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.0f);
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(Manager.LoadModule("Example"), "variant A loads");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 1, "one startup so far");
+
+        ResetModuleLog();
+
+        // A "bad build" lands at the watched path.
+        Expect(StageVariant(CORE_SMOKE_MODULE_STALE), "the stale plugin is written over the watched path");
+        Expect(Manager.Tick(0.016f) == 0, "the bad build does not count as a reload");
+
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Loaded,
+               "the module is still loaded -- rolled back, not left dead");
+        Expect(Manager.GetModuleVersionString("Example") == "A", "the previous build is running again");
+        Expect(GModuleLogErrors > 0, "the failed reload is logged as an error");
+
+        // Distinguishes "rolled back" from "never attempted": the old code was
+        // genuinely torn down and re-instantiated, and was handed the blob it
+        // had just written itself.
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 2,
+               "the rolled-back instance re-ran OnStartup on its own blob");
+
+        // The retry gate. Without it this spins once per tick forever.
+        const int ErrorsAfterFirstAttempt = GModuleLogErrors;
+        Manager.Tick(0.016f);
+        Manager.Tick(0.016f);
+        Expect(GModuleLogErrors == ErrorsAfterFirstAttempt,
+               "the same failing build is not retried on every tick");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 2,
+               "no further reload attempts were made");
+
+        // And the gate releases on a new stamp rather than latching.
+        Expect(StageVariant(CORE_SMOKE_MODULE_B), "a good build replaces the bad one");
+        Expect(Manager.Tick(0.016f) == 1, "the module recovers once a good build appears");
+        Expect(Manager.GetModuleVersionString("Example") == "B", "variant B is now running");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 3,
+               "the state survived the failed reload and the recovery");
+    }
+
+    SetLogHandler(nullptr);
+    appFileDelete(GWatchedPath);
+}
+
+#endif //CORE_SMOKE_MODULE_A
+
+static void RunModuleTests()
+{
+#if defined(CORE_SMOKE_MODULE_A)
+    TestModuleLoad();
+    TestModuleReload();
+    TestModuleSettleWindow();
+    TestModuleAbiMismatch();
+    TestModuleReloadRollback();
+#else
+    std::printf("[modules] skipped (CORE_SHARED off)\n");
+#endif
+}
+
 int main()
 {
     std::printf("EngineCore smoke test\n");
@@ -619,6 +957,7 @@ int main()
     TestImageFormatConversion();
     TestQueue();
     TestTypes();
+    RunModuleTests();
 
     // Restore the default handler so a failure below is not swallowed.
     SetLogHandler(nullptr);
