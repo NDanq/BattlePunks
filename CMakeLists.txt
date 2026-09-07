@@ -35,6 +35,7 @@ set( CORE_SOURCES
         Source/Private/Core/CoreString.cpp
         Source/Private/Core/CoreModule.cpp
         Source/Private/Core/CoreModuleManager.cpp
+        Source/Private/Core/CoreConfig.cpp
         Source/Public/Core/CoreAPI.h
         Source/Public/Core/CoreTypes.h
         Source/Public/Core/CoreLog.h
@@ -45,6 +46,7 @@ set( CORE_SOURCES
         Source/Public/Core/CorePlatform.h
         Source/Public/Core/CoreModule.h
         Source/Public/Core/CoreModuleManager.h
+        Source/Public/Core/CoreConfig.h
 )
 
 # === Platform layer ===
