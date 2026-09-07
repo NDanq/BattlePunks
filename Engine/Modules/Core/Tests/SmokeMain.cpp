@@ -145,6 +145,98 @@ static void TestFileSeam()
     Expect(appThreadID() == appThreadID(), "appThreadID is stable within a thread");
 }
 
+static void TestFileMetadataSeam()
+{
+    std::printf("[file metadata seam]\n");
+
+    const std::string Dir  = "SmokeScratch/Nested/Deeper";
+    const std::string Path = Dir + "/binary.bin";       // written by TestFileSeam
+
+    FileStamp Stamp;
+    Expect(appFileStat(Path, Stamp), "appFileStat succeeds on an existing file");
+    Expect(Stamp.IsValid(), "a successful stat is IsValid()");
+    Expect(Stamp.SizeBytes == 12, "appFileStat reports the exact byte count");
+
+    FileStamp Again;
+    Expect(appFileStat(Path, Again) && Again == Stamp, "restatting an unchanged file gives an equal stamp");
+
+    FileStamp MissingStamp;
+    Expect(!appFileStat("SmokeScratch/does-not-exist.bin", MissingStamp),
+           "appFileStat fails on a missing file");
+    Expect(!MissingStamp.IsValid(), "a failed stat leaves the stamp invalid");
+    Expect(!appFileStat(Dir, MissingStamp), "appFileStat fails on a directory");
+
+    // A different size alone must register as a change, which is the half of
+    // the signature that covers coarse mtime resolution.
+    FileStamp Bigger = Stamp;
+    Bigger.SizeBytes += 1;
+    Expect(Bigger != Stamp, "a size difference alone makes the stamps unequal");
+
+    const std::string CopyPath = Dir + "/binary.copy.bin";
+    appFileDelete(CopyPath);
+    Expect(appFileCopy(Path, CopyPath, false), "appFileCopy creates a new file");
+    Expect(appFileExists(CopyPath), "the copy exists");
+
+    std::vector<uint8_t> Original;
+    std::vector<uint8_t> Copied;
+    Expect(appFileReadAll(Path, Original) && appFileReadAll(CopyPath, Copied),
+           "both source and copy read back");
+    Expect(Original.size() == Copied.size() &&
+           (Original.empty() || std::memcmp(Original.data(), Copied.data(), Original.size()) == 0),
+           "the copy is byte-identical to the source");
+
+    Expect(!appFileCopy(Path, CopyPath, false), "appFileCopy refuses to overwrite when not asked to");
+    Expect(appFileCopy(Path, CopyPath, true), "appFileCopy overwrites when asked to");
+
+    Expect(appFileCanOpenExclusive(Path), "an idle file opens exclusively");
+    Expect(!appFileCanOpenExclusive("SmokeScratch/does-not-exist.bin"),
+           "a missing file does not open exclusively");
+
+    std::vector<std::string> Names;
+    Expect(appDirectoryList(Dir, Names), "appDirectoryList succeeds");
+    bool bFoundCopy = false;
+    bool bFoundDot  = false;
+    for(const std::string& Name : Names)
+    {
+        if(Name == "binary.copy.bin") bFoundCopy = true;
+        if(Name == "." || Name == "..") bFoundDot = true;
+    }
+    Expect(bFoundCopy, "appDirectoryList finds a file just created");
+    Expect(!bFoundDot, "appDirectoryList omits . and ..");
+    Expect(!appDirectoryList("SmokeScratch/no-such-dir", Names), "appDirectoryList fails on a missing dir");
+
+    Expect(appFileDelete(CopyPath), "appFileDelete removes the copy");
+    Expect(!appFileExists(CopyPath), "the copy is gone");
+    Expect(appFileDelete(CopyPath), "appFileDelete is idempotent -- already gone is success");
+
+    const std::string EmptyDir = "SmokeScratch/EmptyDirForDelete";
+    Expect(appCreateDirectories(EmptyDir), "a scratch directory is created");
+    Expect(appDirectoryDelete(EmptyDir), "appDirectoryDelete removes an empty directory");
+    Expect(appDirectoryDelete(EmptyDir), "appDirectoryDelete is idempotent");
+    Expect(!appDirectoryDelete(Dir), "appDirectoryDelete refuses a non-empty directory");
+
+    Expect(appProcessID() != 0, "appProcessID is non-zero");
+    Expect(appProcessID() == appProcessID(), "appProcessID is stable");
+}
+
+static void TestDLLSeam()
+{
+    std::printf("[dll seam]\n");
+
+    // Only the failure path is testable without a real library to load; the
+    // success path is covered end to end by the module tests, which is where a
+    // loadable DLL actually exists.
+    Expect(appDLLOpen("SmokeScratch/definitely-not-a-library.dll") == nullptr,
+           "appDLLOpen fails on a nonexistent path");
+    Expect(!appDLLGetLastError().empty(), "a failed appDLLOpen leaves a diagnostic");
+
+    Expect(appDLLGetSymbol(nullptr, "Anything") == nullptr, "appDLLGetSymbol rejects a null handle");
+    Expect(!appDLLGetLastError().empty(), "a failed appDLLGetSymbol leaves a diagnostic");
+
+    appDLLClose(nullptr);       // must be a no-op, not a crash
+    Expect(true, "appDLLClose(nullptr) is a no-op");
+}
+
 static void TestFileProvider()
 {
     std::printf("[file provider]\n");
@@ -427,6 +519,8 @@ int main()
 
     TestLogging();
     TestFileSeam();
+    TestFileMetadataSeam();
+    TestDLLSeam();
     TestFileProvider();
     TestImage();
     TestImageFormatConversion();
