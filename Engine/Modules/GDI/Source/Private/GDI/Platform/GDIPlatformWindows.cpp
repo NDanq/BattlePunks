@@ -10,6 +10,45 @@
  */
 
 #include <Windows.h>
+
+namespace GDIPlatform
+{
+namespace
+{
+    HWND ToHWND(const EngineCore::WindowHandle& InWindow)
+    {
+        return InWindow.IsValid() ? reinterpret_cast<HWND>(InWindow.Native) : nullptr;
+    }
+}
+
+bool appGetWindowPixelSize(EngineCore::WindowHandle InWindow, uint32_t& OutWidth, uint32_t& OutHeight)
+{
+    HWND Window = ToHWND(InWindow);
+    if(Window == nullptr)
+    {
+        return false;
+    }
+
+    RECT Client{};
+    if(!::GetClientRect(Window, &Client))
+    {
+        return false;
+    }
+
+    // GetClientRect is already in physical pixels, so there is no DPI factor
+    // to apply -- unlike QWindow::width(), which is logical.
+    OutWidth  = uint32_t(Client.right  - Client.left);
+    OutHeight = uint32_t(Client.bottom - Client.top);
+    return true;
+}
+}
+
+
+// ===========================================================================
+// OpenGL / WGL
+// ===========================================================================
+#if WITH_OPENGL_GDI
+
 // wglext.h uses GLenum/GLint/GLushort and does not include them itself,
 // so the GL 1.1 header has to come first.
 #include <gl/GL.h>
@@ -22,11 +61,6 @@ namespace
     HWND GOffscreenWindow = nullptr;
     HDC  GOffscreenDC     = nullptr;
     int  GPixelFormat     = 0;
-
-    HWND ToHWND(const EngineCore::WindowHandle& InWindow)
-    {
-        return InWindow.IsValid() ? reinterpret_cast<HWND>(InWindow.Native) : nullptr;
-    }
 
     /*
      * Pixel-format handling, and why it works the way it does.
@@ -192,27 +226,6 @@ namespace
             ::ReleaseDC(Window, InDC);
         }
     }
-}
-
-bool appGetWindowPixelSize(EngineCore::WindowHandle InWindow, uint32_t& OutWidth, uint32_t& OutHeight)
-{
-    HWND Window = ToHWND(InWindow);
-    if(Window == nullptr)
-    {
-        return false;
-    }
-
-    RECT Client{};
-    if(!::GetClientRect(Window, &Client))
-    {
-        return false;
-    }
-
-    // GetClientRect is already in physical pixels, so there is no DPI factor
-    // to apply -- unlike QWindow::width(), which is logical.
-    OutWidth  = uint32_t(Client.right  - Client.left);
-    OutHeight = uint32_t(Client.bottom - Client.top);
-    return true;
 }
 
 void* appGLGetProcAddress(const char* InName)
@@ -387,6 +400,8 @@ EngineCore::WindowHandle appGLOffscreenWindow()
     return EngineCore::WindowHandle(reinterpret_cast<void*>(GOffscreenWindow));
 }
 }
+
+#endif // WITH_OPENGL_GDI
 
 
 // ===========================================================================

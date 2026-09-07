@@ -35,6 +35,11 @@
 #include "Public/GDI/Metal/QMTLSync.h"
 #endif
 
+// Unconditional -- NullGDI has no platform dependency and is always
+// available, unlike the three GPU-backed drivers above.
+#include "Public/GDI/Null/NullDynamicGDI.h"
+#include "Public/GDI/Null/NullSync.h"
+
 
 GDIDynamicDriver*   GDynamicGDI = nullptr;
 GDISync*            GSync = nullptr;
@@ -127,6 +132,12 @@ void GDIRenderQueue_NoteDrainEnd()
 void InitializeGDI( ERenderPlatform Platform, EngineCore::WindowHandle InWindow )
 {
     {
+        if(Platform == ERP_Null)
+        {
+            GDynamicGDI = new NullDynamicGDI(InWindow);
+            GSync = new NullSync();
+        }
+        else
 #if WITH_METAL_GDI
         if(Platform == ERP_Metal)
         {
@@ -181,6 +192,11 @@ void ReleaseGDI()
 {
     delete GDynamicGDI;
     GDynamicGDI = nullptr;
+
+    // Previously leaked: nothing deleted or nulled GSync, so a second
+    // InitializeGDI() call would leak the old one.
+    delete GSync;
+    GSync = nullptr;
 }
 
 void GDIDynamicDriver::DrawObject(GDIViewObject *InObject)
@@ -365,6 +381,22 @@ EngineCore::Color GDIGetColorFromSamplePoint(const EngineCore::Point& InPoint, c
         return GDynamicGDI->GetColorFromSamplePoint(InPoint, InSize);
     }
     return EngineCore::Color();
+}
+
+/*
+ * Hand-written rather than IMPLEMENT_GDI_FUNCTION_BODY_RET: that macro's
+ * no-driver path is `return NULL`, which for an `enum : char` decays to 0 --
+ * ERP_OpenGL, the most misleading answer possible for "no driver is
+ * installed". ERP_Null is the honest answer here, matching
+ * GDIGetColorFromSamplePoint's hand-written fallback just above.
+ */
+ERenderPlatform GDIGetRenderPlatform()
+{
+    if(GDynamicGDI)
+    {
+        return GDynamicGDI->GetRenderPlatform();
+    }
+    return ERP_Null;
 }
 
 IMPLEMENT_GDI_FUNCTION_BODY(void,

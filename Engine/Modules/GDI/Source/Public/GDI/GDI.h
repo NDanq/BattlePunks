@@ -187,6 +187,7 @@ public:
         OpenGLContext = 0,
         VulkanContext,
         MetalContext,
+        NullContext,
         MAX_GDIContextType
     };
 
@@ -214,7 +215,7 @@ public:
     ThreadID(0),
     bInitialized(false){ }
 
-    ~GDIDynamicDriver()
+    virtual ~GDIDynamicDriver()
     {
         // std::unordered_map iterates key/value PAIRS, where QHash iterated
         // values -- hence .second rather than the bare element.
@@ -352,6 +353,8 @@ public:
     virtual GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) = 0;
 
     virtual bool CheckError(const std::string& FailStr) = 0;
+
+    virtual ERenderPlatform GetRenderPlatform() const = 0;
 
     virtual EngineCore::Color GetColorFromSamplePoint(const EngineCore::Point&, const EngineCore::Size& InSize) = 0;
 
