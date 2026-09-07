@@ -221,6 +221,8 @@ public:
 
     bool CheckError(const std::string& InFailStr) override;
 
+    ERenderPlatform GetRenderPlatform() const override { return ERP_OpenGL; }
+
     EngineCore::Color GetColorFromSamplePoint(const EngineCore::Point& InPoint, const EngineCore::Size& InSize) override;
 
     GLenum DecodeCTM(ECompareTestMode);

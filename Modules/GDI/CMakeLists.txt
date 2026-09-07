@@ -68,7 +68,10 @@ if(APPLE)
         set(GDI_WITH_VULKAN OFF CACHE BOOL "Build the Vulkan GDI backend" FORCE)
     endif()
     if(NOT GDI_WITH_METAL)
-        message(FATAL_ERROR "GDI_WITH_METAL is OFF on an Apple target, which would leave no usable render backend.")
+        # No longer fatal for the same reason as the no-backend check below --
+        # NullGDI is always available. Still worth flagging: an Apple target
+        # with Metal off has no GPU-backed backend at all.
+        message(STATUS "GDI_WITH_METAL is OFF on an Apple target -- GDI will build with NullGDI as its only driver.")
     endif()
     enable_language(OBJCXX)
     set(CMAKE_OBJCXX_STANDARD 17)
@@ -76,7 +79,9 @@ if(APPLE)
 endif()
 
 if(NOT GDI_WITH_OPENGL AND NOT GDI_WITH_VULKAN AND NOT GDI_WITH_METAL)
-    message(FATAL_ERROR "No render backend enabled -- GDI would provide no driver.")
+    # No longer fatal: NullGDI is always compiled in, so this configure still
+    # produces a usable (headless) driver -- see GDI_NULL_SOURCES above.
+    message(STATUS "No GPU-backed render backend enabled -- GDI will build with NullGDI as its only driver.")
 endif()
 
 # === EngineCore ===
@@ -116,6 +121,21 @@ set( GDI_SHADERCLASS_SOURCES
         Source/Public/GDI/Shaders/Classes/TestbedShaders.h
         Source/Public/GDI/Shaders/Classes/UIShaders.h
         Source/Public/GDI/Shaders/Classes/BrushShaders.h
+)
+
+# NullGDI -- always compiled, unlike the GPU-backed backends below. It has no
+# platform dependency, so there is no option to gate it and no #if to get
+# wrong. It exists so a headless build (a dedicated-server executable, or any
+# configure with every GPU backend off) still has a usable driver instead of
+# failing to configure at all.
+set( GDI_NULL_SOURCES
+        Source/Private/GDI/Null/NullDynamicGDI.cpp
+        Source/Public/GDI/Null/NullDynamicGDI.h
+        Source/Public/GDI/Null/NullSync.h
+        Source/Public/GDI/Null/NullRenderTarget.h
+        Source/Public/GDI/Null/NullMesh.h
+        Source/Public/GDI/Null/NullShader.h
+        Source/Public/GDI/Null/NullTexture.h
 )
 
 if(GDI_WITH_OPENGL)
@@ -228,6 +248,7 @@ add_library(GDI ${GDI_LIB_TYPE}
         ${GDI_CORE_SOURCES}
         ${GDI_PLATFORM_SOURCES}
         ${GDI_SHADERCLASS_SOURCES}
+        ${GDI_NULL_SOURCES}
         ${GDI_OPENGL_SOURCES}
         ${GDI_VULKAN_SOURCES}
         ${GDI_METAL_SOURCES}
@@ -352,7 +373,11 @@ set_target_properties(GDI PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 # cook_shaders.py derives its paths from Path(__file__).parent and
 # SCRIPT_DIR.parent / "Shaders", so moving the script and the shaders together
 # is self-consistent and the script itself needs no edit.
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
+# Only the shader-cooking targets below need Python; a headless (Null-only)
+# configure should not have to have it installed.
+if(GDI_WITH_VULKAN OR (WIN32 AND GDI_WITH_OPENGL) OR GDI_WITH_METAL)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+endif()
 
 set(GDI_COOKED_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Cooked" CACHE INTERNAL "GDI cooked shader output root")
 
@@ -499,3 +524,4 @@ source_group("GDI\\Shaders" FILES ${GDI_SHADERCLASS_SOURCES})
 source_group("GDI\\OpenGL"  FILES ${GDI_OPENGL_SOURCES})
 source_group("GDI\\Vulkan"  FILES ${GDI_VULKAN_SOURCES})
 source_group("GDI\\Metal"   FILES ${GDI_METAL_SOURCES})
+source_group("GDI\\Null"    FILES ${GDI_NULL_SOURCES})
