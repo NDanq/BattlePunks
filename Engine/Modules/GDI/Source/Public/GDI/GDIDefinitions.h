@@ -144,6 +144,7 @@ enum ERenderPlatform : char
     ERP_OpenGL = 0,
     ERP_Vulkan,
     ERP_Metal,
+    ERP_Null,
     ERP_MAX
 };
 
