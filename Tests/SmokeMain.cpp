@@ -665,6 +665,19 @@ static uint32_t ModuleCounter(const ModuleManager& InManager, const char* InSymb
     return Symbol ? reinterpret_cast<CounterFn>(Symbol)() : 0u;
 }
 
+/* The manager has its own copy of this in an anonymous namespace; the test
+ * cannot see it, and duplicating four lines beats exporting a path utility. */
+static std::string SwapExtensionToPdb(const std::string& InPath)
+{
+    const size_t Dot   = InPath.find_last_of('.');
+    const size_t Slash = InPath.find_last_of("/\\");
+    if(Dot == std::string::npos || (Slash != std::string::npos && Dot < Slash))
+    {
+        return InPath + ".pdb";
+    }
+    return InPath.substr(0, Dot) + ".pdb";
+}
+
 static bool StageVariant(const char* InVariantPath)
 {
     return appFileCopy(InVariantPath, GWatchedPath, true);
@@ -735,6 +748,77 @@ static void TestModuleLoad()
     }
 
     SetLogHandler(nullptr);
+}
+
+/*
+ * The .pdb half of the shadow copy.
+ *
+ * Modules link with /PDBALTPATH:%_PDB%, so a module DLL records only the bare
+ * filename of its symbols. The debugger resolves that relative to the loaded
+ * module's own directory -- which for a hot-reloaded module is the shadow
+ * directory -- so the manager has to put a copy of the .pdb there. Without it
+ * the debugger falls back to the original, holds it open, and the next build
+ * fails with LNK1201: hot reload would have traded a locked DLL for a locked
+ * PDB and gained nothing.
+ *
+ * The debugger part of that cannot be asserted from in here. What can be
+ * asserted is that the copy is made, which is the mechanism it depends on.
+ */
+static void TestModuleShadowPdb()
+{
+    std::printf("[module shadow pdb]\n");
+
+    const std::string WatchedPdb = "SmokeScratch/Modules/Watched.pdb";
+    const std::string SourcePdb  = SwapExtensionToPdb(CORE_SMOKE_MODULE_A);
+
+    if(!appFileExists(SourcePdb))
+    {
+        // A Release build without separate symbols has nothing to copy, and
+        // that is not a failure of anything.
+        std::printf("  (no .pdb beside the fixture; skipped)\n");
+        return;
+    }
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged");
+    Expect(appFileCopy(SourcePdb.c_str(), WatchedPdb.c_str(), true),
+           "a .pdb is staged beside the watched DLL");
+
+    const std::string PdbShadowRoot = "SmokeScratch/Modules/ShadowPdb";
+
+    {
+        ModuleManager Manager(PdbShadowRoot);
+        Manager.SetSettleSeconds(0.0f);
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(Manager.LoadModule("Example"), "the module loads");
+
+        // Exactly one generation directory exists at this point, and it should
+        // hold both files under their original names.
+        std::vector<std::string> Generations;
+        Expect(appDirectoryList(PdbShadowRoot, Generations), "the shadow root can be listed");
+        Expect(Generations.size() == 1, "one generation directory exists after a single load");
+
+        if(Generations.size() == 1)
+        {
+            const std::string GenerationDir = PdbShadowRoot + "/" + Generations[0];
+
+            std::vector<std::string> Copied;
+            Expect(appDirectoryList(GenerationDir, Copied), "the generation directory can be listed");
+
+            bool bHasDll = false;
+            bool bHasPdb = false;
+            for(const std::string& Name : Copied)
+            {
+                if(Name == "Watched.dll") bHasDll = true;
+                if(Name == "Watched.pdb") bHasPdb = true;
+            }
+            Expect(bHasDll, "the DLL was shadow-copied");
+            Expect(bHasPdb, "the .pdb was shadow-copied alongside it");
+        }
+    }
+
+    appFileDelete(GWatchedPath);
+    appFileDelete(WatchedPdb.c_str());
 }
 
 static void TestModuleReload()
@@ -934,6 +1018,7 @@ static void RunModuleTests()
 {
 #if defined(CORE_SMOKE_MODULE_A)
     TestModuleLoad();
+    TestModuleShadowPdb();
     TestModuleReload();
     TestModuleSettleWindow();
     TestModuleAbiMismatch();
