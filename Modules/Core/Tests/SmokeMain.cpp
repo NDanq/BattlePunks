@@ -17,10 +17,13 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <utility>
 
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/Core/CoreModule.h"
+#include "Public/Core/CoreModuleManager.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreQueue.h"
 #include "Public/Math/Matrix.h"
@@ -235,6 +238,95 @@ static void TestDLLSeam()
 
     appDLLClose(nullptr);       // must be a no-op, not a crash
     Expect(true, "appDLLClose(nullptr) is a no-op");
+}
+
+/*
+ * The reload blob, exercised entirely host-side. This runs in every
+ * configuration, including a static one where no module can be loaded at all,
+ * because the (version, size) gate is the thing standing between a reloaded
+ * module and a reinterpretation of stale bytes.
+ */
+static void TestModuleReloadStateBuffer()
+{
+    std::printf("[module reload state]\n");
+
+    struct Payload
+    {
+        uint32_t A;
+        uint32_t B;
+    };
+
+    ModuleReloadState State;
+    Expect(State.IsEmpty(), "a fresh state is empty");
+    Expect(State.GetStateVersion() == 0, "a fresh state has version 0");
+    Expect(State.GetSizeBytes() == 0, "a fresh state has no bytes");
+
+    const Payload Written{ 0xABCDEF01u, 7u };
+    Expect(State.Write(3, &Written, sizeof(Written)), "Write succeeds");
+    Expect(!State.IsEmpty(), "a written state is not empty");
+    Expect(State.GetStateVersion() == 3, "the state version round-trips");
+    Expect(State.GetSizeBytes() == sizeof(Written), "the byte count round-trips");
+
+    Payload ReadBack{ 0, 0 };
+    Expect(State.Read(3, &ReadBack, sizeof(ReadBack)), "Read with a matching version and size succeeds");
+    Expect(ReadBack.A == Written.A && ReadBack.B == Written.B, "the payload round-trips byte for byte");
+
+    // A mismatch must leave the destination ALONE, not partially filled: the
+    // caller is about to treat it as a struct and cannot tell the difference.
+    Payload Untouched{ 0x11111111u, 0x22222222u };
+    Expect(!State.Read(4, &Untouched, sizeof(Untouched)), "Read with the wrong version fails");
+    Expect(Untouched.A == 0x11111111u && Untouched.B == 0x22222222u,
+           "a version mismatch leaves the destination untouched");
+
+    uint8_t Wrong[sizeof(Payload) + 4];
+    std::memset(Wrong, 0x5A, sizeof(Wrong));
+    Expect(!State.Read(3, Wrong, sizeof(Wrong)), "Read with the wrong size fails");
+    bool bAllUnchanged = true;
+    for(size_t Index = 0; Index < sizeof(Wrong); ++Index)
+    {
+        if(Wrong[Index] != 0x5A) bAllUnchanged = false;
+    }
+    Expect(bAllUnchanged, "a size mismatch leaves the destination untouched");
+
+    // A second write replaces rather than appends -- a reload writes the whole
+    // blob every time, and a growing buffer would be a slow leak.
+    const uint32_t Small = 42u;
+    Expect(State.Write(9, &Small, sizeof(Small)), "a second Write succeeds");
+    Expect(State.GetSizeBytes() == sizeof(Small), "the second Write replaces rather than appends");
+    Expect(State.GetStateVersion() == 9, "the second Write replaces the version");
+    Expect(!State.Read(3, &ReadBack, sizeof(ReadBack)), "the previous payload is no longer readable");
+
+    uint32_t SmallBack = 0;
+    Expect(State.Read(9, &SmallBack, sizeof(SmallBack)) && SmallBack == 42u,
+           "the second payload reads back");
+
+    // Zero bytes is a real payload: a stateless module can still say "I ran".
+    Expect(State.Write(5, nullptr, 0), "a zero-byte Write succeeds");
+    Expect(State.IsEmpty(), "a zero-byte payload reports empty");
+    Expect(State.GetStateVersion() == 5, "a zero-byte Write still records its version");
+    Expect(State.Read(5, nullptr, 0), "a zero-byte payload reads back successfully");
+    Expect(!State.Read(6, nullptr, 0), "a zero-byte payload still checks its version");
+
+    Expect(State.Write(1, &Written, sizeof(Written)), "the buffer is reusable after a zero-byte write");
+    State.Reset();
+    Expect(State.IsEmpty(), "Reset empties the state");
+    Expect(State.GetStateVersion() == 0, "Reset clears the version");
+    Expect(!State.Read(1, &ReadBack, sizeof(ReadBack)), "nothing reads back after Reset");
+
+    // Moving is what lets a ModuleRecord live in a std::vector.
+    ModuleReloadState Source;
+    Expect(Source.Write(2, &Written, sizeof(Written)), "a state to move from is written");
+    ModuleReloadState Moved(std::move(Source));
+    Expect(Moved.GetStateVersion() == 2 && Moved.GetSizeBytes() == sizeof(Written),
+           "move construction carries the payload");
+    Expect(Source.IsEmpty(), "the moved-from state is left empty");
+
+    ModuleReloadState Target;
+    Target = std::move(Moved);
+    Expect(Target.GetStateVersion() == 2 && Target.Read(2, &ReadBack, sizeof(ReadBack)) &&
+           ReadBack.A == Written.A,
+           "move assignment carries the payload");
+    Expect(Moved.IsEmpty(), "the moved-from state is left empty after assignment");
 }
 
 static void TestFileProvider()
@@ -521,6 +613,7 @@ int main()
     TestFileSeam();
     TestFileMetadataSeam();
     TestDLLSeam();
+    TestModuleReloadStateBuffer();
     TestFileProvider();
     TestImage();
     TestImageFormatConversion();
