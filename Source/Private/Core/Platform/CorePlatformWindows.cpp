@@ -57,6 +57,40 @@ namespace
         // the seam's "no handle" value and translated at the boundary.
         return InHandle ? reinterpret_cast<HANDLE>(InHandle) : INVALID_HANDLE_VALUE;
     }
+
+    /*
+     * appDLLGetLastError's backing store. Captured at the point of failure
+     * rather than read on demand, because GetLastError() is clobbered by the
+     * very next Win32 call -- including ones made inside this file.
+     */
+    thread_local std::string GDLLLastError;
+
+    void CaptureDLLError(const DWORD InErr)
+    {
+        LPWSTR Buffer = nullptr;
+        const DWORD Len = ::FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER |
+                                           FORMAT_MESSAGE_FROM_SYSTEM     |
+                                           FORMAT_MESSAGE_IGNORE_INSERTS,
+                                           nullptr, InErr, 0,
+                                           reinterpret_cast<LPWSTR>(&Buffer), 0, nullptr);
+
+        if(Len && Buffer)
+        {
+            // FormatMessage leaves a trailing CRLF on nearly every message.
+            size_t Trimmed = Len;
+            while(Trimmed > 0 && (Buffer[Trimmed - 1] == L'\r' || Buffer[Trimmed - 1] == L'\n'))
+            {
+                --Trimmed;
+            }
+            GDLLLastError = Narrow(std::wstring(Buffer, Trimmed));
+        }
+        else
+        {
+            GDLLLastError = "Win32 error " + std::to_string(InErr);
+        }
+
+        if(Buffer) ::LocalFree(Buffer);
+    }
 }
 
 FileHandle appFileOpenRead(const std::string& InPath)
@@ -237,6 +271,173 @@ std::string appGetAppDataDir(const std::string& InAppName)
     }
 
     return Result;
+}
+
+bool appFileStat(const std::string& InPath, FileStamp& OutStamp)
+{
+    OutStamp = FileStamp();
+
+    WIN32_FILE_ATTRIBUTE_DATA Data{};
+    if(!::GetFileAttributesExW(Widen(InPath).c_str(), GetFileExInfoStandard, &Data))
+    {
+        return false;
+    }
+    if(Data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
+    {
+        return false;
+    }
+
+    // One call for both fields. Two getters would be two syscalls and, worse,
+    // could observe the file mid-write between them -- the pair has to be
+    // sampled atomically for it to work as a change signature.
+    OutStamp.ModifiedTime = (uint64_t(Data.ftLastWriteTime.dwHighDateTime) << 32)
+                          |  uint64_t(Data.ftLastWriteTime.dwLowDateTime);
+    OutStamp.SizeBytes    = (uint64_t(Data.nFileSizeHigh) << 32) | uint64_t(Data.nFileSizeLow);
+
+    // A stamp of 0 means "unavailable" to callers, and a real FILETIME is never
+    // 0 for an existing file. Guard anyway so a bizarre filesystem cannot make
+    // a successful stat look like a failed one.
+    if(OutStamp.ModifiedTime == 0) OutStamp.ModifiedTime = 1;
+    return true;
+}
+
+bool appFileCopy(const std::string& InSrcPath, const std::string& InDstPath, const bool bInOverwrite)
+{
+    // CopyFileW preserves the source's last-write time, which the module
+    // manager relies on: it re-stats the SOURCE after copying to detect a build
+    // that started mid-copy, and that comparison only means anything if the
+    // copy did not perturb the thing being compared.
+    return ::CopyFileW(Widen(InSrcPath).c_str(), Widen(InDstPath).c_str(), !bInOverwrite) != 0;
+}
+
+bool appFileDelete(const std::string& InPath)
+{
+    if(::DeleteFileW(Widen(InPath).c_str()))
+    {
+        return true;
+    }
+    // Already gone is the outcome the caller wanted.
+    return ::GetLastError() == ERROR_FILE_NOT_FOUND || ::GetLastError() == ERROR_PATH_NOT_FOUND;
+}
+
+bool appFileCanOpenExclusive(const std::string& InPath)
+{
+    const HANDLE H = ::CreateFileW(Widen(InPath).c_str(),
+                                   GENERIC_READ,
+                                   0,                   // dwShareMode 0 -- the whole point
+                                   nullptr,
+                                   OPEN_EXISTING,
+                                   FILE_ATTRIBUTE_NORMAL,
+                                   nullptr);
+    if(H == INVALID_HANDLE_VALUE)
+    {
+        return false;
+    }
+    ::CloseHandle(H);
+    return true;
+}
+
+bool appDirectoryList(const std::string& InPath, std::vector<std::string>& OutNames)
+{
+    OutNames.clear();
+
+    std::wstring Pattern = Widen(InPath);
+    if(!Pattern.empty() && Pattern.back() != L'\\' && Pattern.back() != L'/')
+    {
+        Pattern += L'\\';
+    }
+    Pattern += L'*';
+
+    WIN32_FIND_DATAW Found{};
+    const HANDLE Search = ::FindFirstFileW(Pattern.c_str(), &Found);
+    if(Search == INVALID_HANDLE_VALUE)
+    {
+        return false;
+    }
+
+    do
+    {
+        const std::wstring Name(Found.cFileName);
+        if(Name == L"." || Name == L"..") continue;
+        OutNames.push_back(Narrow(Name));
+    }
+    while(::FindNextFileW(Search, &Found));
+
+    ::FindClose(Search);
+    return true;
+}
+
+bool appDirectoryDelete(const std::string& InPath)
+{
+    if(::RemoveDirectoryW(Widen(InPath).c_str()))
+    {
+        return true;
+    }
+    const DWORD Err = ::GetLastError();
+    return Err == ERROR_FILE_NOT_FOUND || Err == ERROR_PATH_NOT_FOUND;
+}
+
+DLLHandle appDLLOpen(const std::string& InPath)
+{
+    /*
+     * NO LOAD_WITH_ALTERED_SEARCH_PATH -- read before "fixing" this.
+     *
+     * A hot-reloaded module is loaded from a shadow copy in a subdirectory, but
+     * it imports EngineCore.dll, which sits next to the EXE. The DEFAULT search
+     * order includes the directory the application was loaded from, so the
+     * import resolves. LOAD_WITH_ALTERED_SEARCH_PATH replaces that entry with
+     * the shadow directory, where EngineCore.dll is not, and the load fails
+     * with a message that says nothing about search paths.
+     */
+    const HMODULE Module = ::LoadLibraryW(Widen(InPath).c_str());
+    if(!Module)
+    {
+        CaptureDLLError(::GetLastError());
+        return nullptr;
+    }
+
+    GDLLLastError.clear();
+    return reinterpret_cast<DLLHandle>(Module);
+}
+
+void* appDLLGetSymbol(const DLLHandle InHandle, const char* InSymbol)
+{
+    if(!InHandle || !InSymbol)
+    {
+        GDLLLastError = "appDLLGetSymbol called with a null handle or symbol";
+        return nullptr;
+    }
+
+    // GetProcAddress returns FARPROC (a function pointer); the cast through
+    // void* is the conversion the seam's opaque return type requires and is
+    // well-defined on every platform this targets.
+    FARPROC Proc = ::GetProcAddress(reinterpret_cast<HMODULE>(InHandle), InSymbol);
+    if(!Proc)
+    {
+        CaptureDLLError(::GetLastError());
+        return nullptr;
+    }
+
+    GDLLLastError.clear();
+    return reinterpret_cast<void*>(Proc);
+}
+
+void appDLLClose(const DLLHandle InHandle)
+{
+    if(InHandle)
+    {
+        ::FreeLibrary(reinterpret_cast<HMODULE>(InHandle));
+    }
+}
+
+std::string appDLLGetLastError()
+{
+    return GDLLLastError;
+}
+
+uint32_t appProcessID()
+{
+    return uint32_t(::GetCurrentProcessId());
 }
 
 ThreadID appThreadID()
