@@ -33,6 +33,8 @@ set( CORE_SOURCES
         Source/Private/Core/CoreImage.cpp
         Source/Private/Core/CoreFileProvider.cpp
         Source/Private/Core/CoreString.cpp
+        Source/Private/Core/CoreModule.cpp
+        Source/Private/Core/CoreModuleManager.cpp
         Source/Public/Core/CoreAPI.h
         Source/Public/Core/CoreTypes.h
         Source/Public/Core/CoreLog.h
@@ -41,6 +43,8 @@ set( CORE_SOURCES
         Source/Public/Core/CoreString.h
         Source/Public/Core/CoreQueue.h
         Source/Public/Core/CorePlatform.h
+        Source/Public/Core/CoreModule.h
+        Source/Public/Core/CoreModuleManager.h
 )
 
 # === Platform layer ===
