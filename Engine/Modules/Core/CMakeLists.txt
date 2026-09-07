@@ -33,6 +33,8 @@ set( CORE_SOURCES
         Source/Private/Core/CoreImage.cpp
         Source/Private/Core/CoreFileProvider.cpp
         Source/Private/Core/CoreString.cpp
+        Source/Private/Core/CoreModule.cpp
+        Source/Private/Core/CoreModuleManager.cpp
         Source/Public/Core/CoreAPI.h
         Source/Public/Core/CoreTypes.h
         Source/Public/Core/CoreLog.h
@@ -41,6 +43,8 @@ set( CORE_SOURCES
         Source/Public/Core/CoreString.h
         Source/Public/Core/CoreQueue.h
         Source/Public/Core/CorePlatform.h
+        Source/Public/Core/CoreModule.h
+        Source/Public/Core/CoreModuleManager.h
 )
 
 # === Platform layer ===
@@ -81,6 +85,13 @@ target_include_directories(EngineCore
 )
 
 target_compile_features(EngineCore PUBLIC cxx_std_17)
+
+# dlopen/dlsym/dlclose back the appDLL* seam. They live in libdl on glibc (until
+# 2.34; linking it is harmless after) and in libc on macOS, so this must NOT be
+# unconditional -- ${CMAKE_DL_LIBS} is empty on Apple and "dl" on Linux, which
+# is exactly the distinction, so let CMake make it. PRIVATE because no
+# consumer's headers expose dlopen.
+target_link_libraries(EngineCore PRIVATE ${CMAKE_DL_LIBS})
 
 # === Build version stamp ===
 # Generates Generated/BuildInfo.h from git (see cmake/GitVersion.cmake). Only
@@ -190,6 +201,35 @@ if(CORE_BUILD_SMOKETEST)
         TIMEOUT 120
         LABELS  "smoke"
     )
+
+    # === Hot-reload fixtures ===============================================
+    # The module tests need a DLL that can be "rebuilt" without a second
+    # compile, because CTest runs one binary. Three builds of one source are
+    # produced here and the test copies one over another at runtime; see
+    # Tests/Modules/ExampleHotModule.cpp.
+    #
+    # Gated on CORE_SHARED because hot reload genuinely does not work without
+    # it: a module linked against a STATIC EngineCore gets its own GLogHandler,
+    # its own GFileProvider and its own copy of ModuleReloadState::Write, so the
+    # blob is allocated in one heap and freed in another. Rather than build
+    # fixtures that could only fail, the tests skip and say so.
+    if(CORE_SHARED)
+        add_subdirectory(Tests/Modules)
+        add_dependencies(EngineCoreSmokeTest
+                ExampleHotModuleA ExampleHotModuleB ExampleHotModuleSTALE)
+
+        # How the test finds the DLLs, given that this tree sets no output
+        # directory convention: it does not have to. TARGET_FILE resolves
+        # per-config, so this is correct under a multi-config generator without
+        # pinning every variant into one directory, and it yields forward-slash
+        # paths, which are safe inside a C string literal.
+        target_compile_definitions(EngineCoreSmokeTest PRIVATE
+                CORE_SMOKE_MODULE_A="$<TARGET_FILE:ExampleHotModuleA>"
+                CORE_SMOKE_MODULE_B="$<TARGET_FILE:ExampleHotModuleB>"
+                CORE_SMOKE_MODULE_STALE="$<TARGET_FILE:ExampleHotModuleSTALE>")
+    else()
+        message("EngineCore: CORE_SHARED is OFF -- hot-reload module tests will be skipped.")
+    endif()
 endif()
 
 source_group("Core"     FILES ${CORE_SOURCES})

@@ -17,10 +17,14 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <chrono>
+#include <utility>
 
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/Core/CoreModule.h"
+#include "Public/Core/CoreModuleManager.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreQueue.h"
 #include "Public/Math/Matrix.h"
@@ -143,6 +147,187 @@ static void TestFileSeam()
 
     Expect(appThreadID() != 0, "appThreadID is non-zero");
     Expect(appThreadID() == appThreadID(), "appThreadID is stable within a thread");
+}
+
+static void TestFileMetadataSeam()
+{
+    std::printf("[file metadata seam]\n");
+
+    const std::string Dir  = "SmokeScratch/Nested/Deeper";
+    const std::string Path = Dir + "/binary.bin";       // written by TestFileSeam
+
+    FileStamp Stamp;
+    Expect(appFileStat(Path, Stamp), "appFileStat succeeds on an existing file");
+    Expect(Stamp.IsValid(), "a successful stat is IsValid()");
+    Expect(Stamp.SizeBytes == 12, "appFileStat reports the exact byte count");
+
+    FileStamp Again;
+    Expect(appFileStat(Path, Again) && Again == Stamp, "restatting an unchanged file gives an equal stamp");
+
+    FileStamp MissingStamp;
+    Expect(!appFileStat("SmokeScratch/does-not-exist.bin", MissingStamp),
+           "appFileStat fails on a missing file");
+    Expect(!MissingStamp.IsValid(), "a failed stat leaves the stamp invalid");
+    Expect(!appFileStat(Dir, MissingStamp), "appFileStat fails on a directory");
+
+    // A different size alone must register as a change, which is the half of
+    // the signature that covers coarse mtime resolution.
+    FileStamp Bigger = Stamp;
+    Bigger.SizeBytes += 1;
+    Expect(Bigger != Stamp, "a size difference alone makes the stamps unequal");
+
+    const std::string CopyPath = Dir + "/binary.copy.bin";
+    appFileDelete(CopyPath);
+    Expect(appFileCopy(Path, CopyPath, false), "appFileCopy creates a new file");
+    Expect(appFileExists(CopyPath), "the copy exists");
+
+    std::vector<uint8_t> Original;
+    std::vector<uint8_t> Copied;
+    Expect(appFileReadAll(Path, Original) && appFileReadAll(CopyPath, Copied),
+           "both source and copy read back");
+    Expect(Original.size() == Copied.size() &&
+           (Original.empty() || std::memcmp(Original.data(), Copied.data(), Original.size()) == 0),
+           "the copy is byte-identical to the source");
+
+    Expect(!appFileCopy(Path, CopyPath, false), "appFileCopy refuses to overwrite when not asked to");
+    Expect(appFileCopy(Path, CopyPath, true), "appFileCopy overwrites when asked to");
+
+    Expect(appFileCanOpenExclusive(Path), "an idle file opens exclusively");
+    Expect(!appFileCanOpenExclusive("SmokeScratch/does-not-exist.bin"),
+           "a missing file does not open exclusively");
+
+    std::vector<std::string> Names;
+    Expect(appDirectoryList(Dir, Names), "appDirectoryList succeeds");
+    bool bFoundCopy = false;
+    bool bFoundDot  = false;
+    for(const std::string& Name : Names)
+    {
+        if(Name == "binary.copy.bin") bFoundCopy = true;
+        if(Name == "." || Name == "..") bFoundDot = true;
+    }
+    Expect(bFoundCopy, "appDirectoryList finds a file just created");
+    Expect(!bFoundDot, "appDirectoryList omits . and ..");
+    Expect(!appDirectoryList("SmokeScratch/no-such-dir", Names), "appDirectoryList fails on a missing dir");
+
+    Expect(appFileDelete(CopyPath), "appFileDelete removes the copy");
+    Expect(!appFileExists(CopyPath), "the copy is gone");
+    Expect(appFileDelete(CopyPath), "appFileDelete is idempotent -- already gone is success");
+
+    const std::string EmptyDir = "SmokeScratch/EmptyDirForDelete";
+    Expect(appCreateDirectories(EmptyDir), "a scratch directory is created");
+    Expect(appDirectoryDelete(EmptyDir), "appDirectoryDelete removes an empty directory");
+    Expect(appDirectoryDelete(EmptyDir), "appDirectoryDelete is idempotent");
+    Expect(!appDirectoryDelete(Dir), "appDirectoryDelete refuses a non-empty directory");
+
+    Expect(appProcessID() != 0, "appProcessID is non-zero");
+    Expect(appProcessID() == appProcessID(), "appProcessID is stable");
+}
+
+static void TestDLLSeam()
+{
+    std::printf("[dll seam]\n");
+
+    // Only the failure path is testable without a real library to load; the
+    // success path is covered end to end by the module tests, which is where a
+    // loadable DLL actually exists.
+    Expect(appDLLOpen("SmokeScratch/definitely-not-a-library.dll") == nullptr,
+           "appDLLOpen fails on a nonexistent path");
+    Expect(!appDLLGetLastError().empty(), "a failed appDLLOpen leaves a diagnostic");
+
+    Expect(appDLLGetSymbol(nullptr, "Anything") == nullptr, "appDLLGetSymbol rejects a null handle");
+    Expect(!appDLLGetLastError().empty(), "a failed appDLLGetSymbol leaves a diagnostic");
+
+    appDLLClose(nullptr);       // must be a no-op, not a crash
+    Expect(true, "appDLLClose(nullptr) is a no-op");
+}
+
+/*
+ * The reload blob, exercised entirely host-side. This runs in every
+ * configuration, including a static one where no module can be loaded at all,
+ * because the (version, size) gate is the thing standing between a reloaded
+ * module and a reinterpretation of stale bytes.
+ */
+static void TestModuleReloadStateBuffer()
+{
+    std::printf("[module reload state]\n");
+
+    struct Payload
+    {
+        uint32_t A;
+        uint32_t B;
+    };
+
+    ModuleReloadState State;
+    Expect(State.IsEmpty(), "a fresh state is empty");
+    Expect(State.GetStateVersion() == 0, "a fresh state has version 0");
+    Expect(State.GetSizeBytes() == 0, "a fresh state has no bytes");
+
+    const Payload Written{ 0xABCDEF01u, 7u };
+    Expect(State.Write(3, &Written, sizeof(Written)), "Write succeeds");
+    Expect(!State.IsEmpty(), "a written state is not empty");
+    Expect(State.GetStateVersion() == 3, "the state version round-trips");
+    Expect(State.GetSizeBytes() == sizeof(Written), "the byte count round-trips");
+
+    Payload ReadBack{ 0, 0 };
+    Expect(State.Read(3, &ReadBack, sizeof(ReadBack)), "Read with a matching version and size succeeds");
+    Expect(ReadBack.A == Written.A && ReadBack.B == Written.B, "the payload round-trips byte for byte");
+
+    // A mismatch must leave the destination ALONE, not partially filled: the
+    // caller is about to treat it as a struct and cannot tell the difference.
+    Payload Untouched{ 0x11111111u, 0x22222222u };
+    Expect(!State.Read(4, &Untouched, sizeof(Untouched)), "Read with the wrong version fails");
+    Expect(Untouched.A == 0x11111111u && Untouched.B == 0x22222222u,
+           "a version mismatch leaves the destination untouched");
+
+    uint8_t Wrong[sizeof(Payload) + 4];
+    std::memset(Wrong, 0x5A, sizeof(Wrong));
+    Expect(!State.Read(3, Wrong, sizeof(Wrong)), "Read with the wrong size fails");
+    bool bAllUnchanged = true;
+    for(size_t Index = 0; Index < sizeof(Wrong); ++Index)
+    {
+        if(Wrong[Index] != 0x5A) bAllUnchanged = false;
+    }
+    Expect(bAllUnchanged, "a size mismatch leaves the destination untouched");
+
+    // A second write replaces rather than appends -- a reload writes the whole
+    // blob every time, and a growing buffer would be a slow leak.
+    const uint32_t Small = 42u;
+    Expect(State.Write(9, &Small, sizeof(Small)), "a second Write succeeds");
+    Expect(State.GetSizeBytes() == sizeof(Small), "the second Write replaces rather than appends");
+    Expect(State.GetStateVersion() == 9, "the second Write replaces the version");
+    Expect(!State.Read(3, &ReadBack, sizeof(ReadBack)), "the previous payload is no longer readable");
+
+    uint32_t SmallBack = 0;
+    Expect(State.Read(9, &SmallBack, sizeof(SmallBack)) && SmallBack == 42u,
+           "the second payload reads back");
+
+    // Zero bytes is a real payload: a stateless module can still say "I ran".
+    Expect(State.Write(5, nullptr, 0), "a zero-byte Write succeeds");
+    Expect(State.IsEmpty(), "a zero-byte payload reports empty");
+    Expect(State.GetStateVersion() == 5, "a zero-byte Write still records its version");
+    Expect(State.Read(5, nullptr, 0), "a zero-byte payload reads back successfully");
+    Expect(!State.Read(6, nullptr, 0), "a zero-byte payload still checks its version");
+
+    Expect(State.Write(1, &Written, sizeof(Written)), "the buffer is reusable after a zero-byte write");
+    State.Reset();
+    Expect(State.IsEmpty(), "Reset empties the state");
+    Expect(State.GetStateVersion() == 0, "Reset clears the version");
+    Expect(!State.Read(1, &ReadBack, sizeof(ReadBack)), "nothing reads back after Reset");
+
+    // Moving is what lets a ModuleRecord live in a std::vector.
+    ModuleReloadState Source;
+    Expect(Source.Write(2, &Written, sizeof(Written)), "a state to move from is written");
+    ModuleReloadState Moved(std::move(Source));
+    Expect(Moved.GetStateVersion() == 2 && Moved.GetSizeBytes() == sizeof(Written),
+           "move construction carries the payload");
+    Expect(Source.IsEmpty(), "the moved-from state is left empty");
+
+    ModuleReloadState Target;
+    Target = std::move(Moved);
+    Expect(Target.GetStateVersion() == 2 && Target.Read(2, &ReadBack, sizeof(ReadBack)) &&
+           ReadBack.A == Written.A,
+           "move assignment carries the payload");
+    Expect(Moved.IsEmpty(), "the moved-from state is left empty after assignment");
 }
 
 static void TestFileProvider()
@@ -421,17 +606,443 @@ static void TestTypes()
     Expect(Matrix4x4().InitIdentity().Data[0][0] == 1, "Matrix4x4 identity");
 }
 
+// --- hot-reload modules ---------------------------------------------------
+//
+// Skipped entirely when CORE_SHARED is OFF: with a static EngineCore a module
+// DLL gets its own GLogHandler, its own GFileProvider and its own copy of
+// ModuleReloadState::Write, so these tests would not be testing hot reload,
+// they would be documenting a configuration that cannot work. Core/CMakeLists
+// only defines CORE_SMOKE_MODULE_A in the shared build.
+
+#if defined(CORE_SMOKE_MODULE_A)
+
+/*
+ * A log sink that records what crossed it. The point of the message capture is
+ * one specific assertion: a CORE_LOG issued INSIDE the module DLL has to reach
+ * a handler installed by this EXE. If it does, there is exactly one
+ * GLogHandler in the process, which is the single most important structural
+ * claim the CORE_SHARED requirement makes.
+ */
+static int         GModuleLogErrors = 0;
+static int         GModuleLogWarns  = 0;
+static std::string GModuleLastMessage;
+static std::string GModuleAllMessages;
+
+static void ModuleLogHandler(const LogVerbosity Verbosity, const char* Message)
+{
+    if(Verbosity == LogVerbosity::Error) ++GModuleLogErrors;
+    if(Verbosity == LogVerbosity::Warning) ++GModuleLogWarns;
+
+    GModuleLastMessage = Message ? Message : "";
+    GModuleAllMessages += GModuleLastMessage;
+    GModuleAllMessages += "\n";
+}
+
+static void ResetModuleLog()
+{
+    GModuleLogErrors = 0;
+    GModuleLogWarns  = 0;
+    GModuleLastMessage.clear();
+    GModuleAllMessages.clear();
+}
+
+static bool ModuleLogContains(const char* InNeedle)
+{
+    return GModuleAllMessages.find(InNeedle) != std::string::npos;
+}
+
+static const char* const GWatchDir    = "SmokeScratch/Modules";
+static const char* const GWatchedPath = "SmokeScratch/Modules/Watched.dll";
+static const char* const GShadowRoot  = "SmokeScratch/Modules/Shadow";
+
+/* Reads one of the module's own exports through the manager. Returns 0 if the
+ * module is not loaded, which every caller distinguishes by other means. */
+static uint32_t ModuleCounter(const ModuleManager& InManager, const char* InSymbol)
+{
+    using CounterFn = uint32_t (*)();
+
+    void* Symbol = InManager.GetModuleSymbol("Example", InSymbol);
+    return Symbol ? reinterpret_cast<CounterFn>(Symbol)() : 0u;
+}
+
+/* The manager has its own copy of this in an anonymous namespace; the test
+ * cannot see it, and duplicating four lines beats exporting a path utility. */
+static std::string SwapExtensionToPdb(const std::string& InPath)
+{
+    const size_t Dot   = InPath.find_last_of('.');
+    const size_t Slash = InPath.find_last_of("/\\");
+    if(Dot == std::string::npos || (Slash != std::string::npos && Dot < Slash))
+    {
+        return InPath + ".pdb";
+    }
+    return InPath.substr(0, Dot) + ".pdb";
+}
+
+static bool StageVariant(const char* InVariantPath)
+{
+    return appFileCopy(InVariantPath, GWatchedPath, true);
+}
+
+static void TestModuleLoad()
+{
+    std::printf("[module load]\n");
+
+    Expect(appCreateDirectories(GWatchDir), "the module scratch directory is created");
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged at the watched path");
+
+    ResetModuleLog();
+    SetLogHandler(&ModuleLogHandler);
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.0f);
+
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Unregistered,
+               "an unknown name reports MS_Unregistered");
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(!Manager.RegisterModule("Example", GWatchedPath), "a duplicate registration is refused");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Unloaded,
+               "a registered but unloaded module reports MS_Unloaded");
+        Expect(Manager.GetModuleCount() == 1, "the module is counted");
+        Expect(Manager.GetModuleNameAt(0) == "Example", "the module can be enumerated by index");
+
+        Expect(Manager.LoadModule("Example"), "LoadModule succeeds");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Loaded, "the module reports MS_Loaded");
+
+        IModule* Module = Manager.GetModule("Example");
+        Expect(Module != nullptr, "GetModule returns the instance");
+        Expect(Module && std::strcmp(Module->GetName(), "ExampleHotModule") == 0,
+               "the module reports its name");
+        Expect(Manager.GetModuleVersionString("Example") == "A", "variant A is the loaded build");
+
+        // The CORE_SHARED payoff, asserted directly.
+        Expect(ModuleLogContains("ExampleHotModule A startup"),
+               "a CORE_LOG from inside the DLL reaches the handler this EXE installed");
+
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 1,
+               "the module ran OnStartup exactly once");
+
+        /*
+         * THE HEADLINE ASSERTION.
+         *
+         * Windows maps a loaded DLL with FILE_SHARE_READ only, so overwriting
+         * the watched file while the module is live is a sharing violation
+         * unless something is actually shadow-copying it. This single line is
+         * what proves the entire shadow-copy design does its job; stub the copy
+         * out and it fails immediately.
+         */
+        Expect(appFileCopy(CORE_SMOKE_MODULE_B, GWatchedPath, true),
+               "the watched DLL can be overwritten while the module is loaded");
+
+        // Put A back so this test leaves no reload pending for the next one.
+        Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is restored");
+
+        Expect(Manager.UnloadModule("Example"), "UnloadModule succeeds");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Unloaded,
+               "the module reports MS_Unloaded after unloading");
+        Expect(Manager.GetModule("Example") == nullptr, "GetModule returns null once unloaded");
+
+        // If the handle really was released, the file is deletable.
+        Expect(appFileDelete(GWatchedPath), "the watched DLL is deletable after unload");
+    }
+
+    SetLogHandler(nullptr);
+}
+
+/*
+ * The .pdb half of the shadow copy.
+ *
+ * Modules link with /PDBALTPATH:%_PDB%, so a module DLL records only the bare
+ * filename of its symbols. The debugger resolves that relative to the loaded
+ * module's own directory -- which for a hot-reloaded module is the shadow
+ * directory -- so the manager has to put a copy of the .pdb there. Without it
+ * the debugger falls back to the original, holds it open, and the next build
+ * fails with LNK1201: hot reload would have traded a locked DLL for a locked
+ * PDB and gained nothing.
+ *
+ * The debugger part of that cannot be asserted from in here. What can be
+ * asserted is that the copy is made, which is the mechanism it depends on.
+ */
+static void TestModuleShadowPdb()
+{
+    std::printf("[module shadow pdb]\n");
+
+    const std::string WatchedPdb = "SmokeScratch/Modules/Watched.pdb";
+    const std::string SourcePdb  = SwapExtensionToPdb(CORE_SMOKE_MODULE_A);
+
+    if(!appFileExists(SourcePdb))
+    {
+        // A Release build without separate symbols has nothing to copy, and
+        // that is not a failure of anything.
+        std::printf("  (no .pdb beside the fixture; skipped)\n");
+        return;
+    }
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged");
+    Expect(appFileCopy(SourcePdb.c_str(), WatchedPdb.c_str(), true),
+           "a .pdb is staged beside the watched DLL");
+
+    const std::string PdbShadowRoot = "SmokeScratch/Modules/ShadowPdb";
+
+    {
+        ModuleManager Manager(PdbShadowRoot);
+        Manager.SetSettleSeconds(0.0f);
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(Manager.LoadModule("Example"), "the module loads");
+
+        // Exactly one generation directory exists at this point, and it should
+        // hold both files under their original names.
+        std::vector<std::string> Generations;
+        Expect(appDirectoryList(PdbShadowRoot, Generations), "the shadow root can be listed");
+        Expect(Generations.size() == 1, "one generation directory exists after a single load");
+
+        if(Generations.size() == 1)
+        {
+            const std::string GenerationDir = PdbShadowRoot + "/" + Generations[0];
+
+            std::vector<std::string> Copied;
+            Expect(appDirectoryList(GenerationDir, Copied), "the generation directory can be listed");
+
+            bool bHasDll = false;
+            bool bHasPdb = false;
+            for(const std::string& Name : Copied)
+            {
+                if(Name == "Watched.dll") bHasDll = true;
+                if(Name == "Watched.pdb") bHasPdb = true;
+            }
+            Expect(bHasDll, "the DLL was shadow-copied");
+            Expect(bHasPdb, "the .pdb was shadow-copied alongside it");
+        }
+    }
+
+    appFileDelete(GWatchedPath);
+    appFileDelete(WatchedPdb.c_str());
+}
+
+static void TestModuleReload()
+{
+    std::printf("[module reload]\n");
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged");
+
+    ResetModuleLog();
+    SetLogHandler(&ModuleLogHandler);
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.0f);      // no waiting; the settle window has its own test
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(Manager.LoadModule("Example"), "variant A loads");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 1, "one startup so far");
+
+        // Ticks before the swap, so the accumulated count means something.
+        Expect(Manager.Tick(0.016f) == 0, "an unchanged module is not reloaded");
+        Manager.Tick(0.016f);
+        Manager.Tick(0.016f);
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetTickCount") == 3,
+               "OnTick runs once per Tick while loaded");
+
+        // The "rebuild": different code at the same watched path.
+        Expect(StageVariant(CORE_SMOKE_MODULE_B), "variant B is written over the watched path");
+        Expect(Manager.Tick(0.016f) == 1, "Tick reloads the changed module");
+
+        Expect(Manager.GetModuleVersionString("Example") == "B",
+               "the reloaded module reports variant B -- different code is executing");
+        Expect(Manager.GetReloadCount("Example") == 1, "the reload is counted");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Loaded, "the module is still loaded");
+
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 2,
+               "B picked up A's startup count -- the host-owned blob round-tripped");
+
+        // 'A' is what A's OnShutdown stamped into the blob.
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetLastVariant") == uint32_t('A'),
+               "the blob B consumed was written by A");
+
+        // The Tick that performed the reload also ticked the new instance, so
+        // the count is the three from A plus that one.
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetTickCount") == 4,
+               "the tick count accumulated across the reload rather than resetting");
+
+        const ModuleReloadState* Blob = Manager.GetReloadState("Example");
+        Expect(Blob != nullptr, "the reload state is inspectable from the host");
+        Expect(Blob && !Blob->IsEmpty(), "the reload state holds a payload");
+
+        // And back again, which proves the handoff is not one-directional.
+        Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is written back");
+        Expect(Manager.Tick(0.016f) == 1, "Tick reloads back to A");
+        Expect(Manager.GetModuleVersionString("Example") == "A", "variant A is loaded again");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 3,
+               "the startup count survived a second reload");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetLastVariant") == uint32_t('B'),
+               "the blob A consumed was written by B");
+        Expect(Manager.GetReloadCount("Example") == 2, "both reloads are counted");
+
+        // The explicit path an editor hotkey would take.
+        Expect(Manager.ReloadModule("Example"), "an explicit ReloadModule succeeds with no file change");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 4,
+               "an explicit reload re-runs OnStartup");
+    }
+
+    SetLogHandler(nullptr);
+    Expect(appFileDelete(GWatchedPath), "the watched DLL is deletable after the manager is destroyed");
+}
+
+static void TestModuleSettleWindow()
+{
+    std::printf("[module settle window]\n");
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged");
+
+    SetLogHandler(&ModuleLogHandler);
+    ResetModuleLog();
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.25f);
+        Expect(Manager.GetSettleSeconds() == 0.25f, "the settle window round-trips");
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(Manager.LoadModule("Example"), "variant A loads");
+
+        Expect(StageVariant(CORE_SMOKE_MODULE_B), "variant B is written over the watched path");
+
+        // First sighting only records the candidate -- a file seen once could
+        // still be half-written.
+        Expect(Manager.Tick(0.016f) == 0, "a just-changed file is not reloaded immediately");
+        Expect(Manager.GetModuleVersionString("Example") == "A", "the old build is still running");
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+        Expect(Manager.Tick(0.016f) == 1, "the file reloads once it has settled");
+        Expect(Manager.GetModuleVersionString("Example") == "B", "variant B is now running");
+    }
+
+    SetLogHandler(nullptr);
+    appFileDelete(GWatchedPath);
+}
+
+static void TestModuleAbiMismatch()
+{
+    std::printf("[module abi mismatch]\n");
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_STALE), "the forged stale plugin is staged");
+
+    SetLogHandler(&ModuleLogHandler);
+    ResetModuleLog();
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.0f);
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(!Manager.LoadModule("Example"), "a plugin with the wrong ABI version is refused");
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Failed, "the module reports MS_Failed");
+        Expect(Manager.GetModule("Example") == nullptr, "no instance is created for a rejected plugin");
+        Expect(GModuleLogErrors > 0, "the refusal is logged as an error");
+
+        // The refusal names the offender, which it can only do through the free
+        // NimbleModuleGetName export -- calling a virtual on a plugin whose
+        // vtable is the untrustworthy part would defeat the check.
+        Expect(ModuleLogContains("ExampleHotModule"), "the refusal names the rejected module");
+
+        // A rejected plugin must be CLOSED, not leaked: if the handle were
+        // still open the shadow copy would be undeletable.
+        Expect(ModuleLogContains("refusing"), "the log says the plugin was refused");
+    }
+
+    SetLogHandler(nullptr);
+    Expect(appFileDelete(GWatchedPath), "the rejected DLL is deletable, so it was closed");
+}
+
+static void TestModuleReloadRollback()
+{
+    std::printf("[module reload rollback]\n");
+
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged");
+
+    SetLogHandler(&ModuleLogHandler);
+    ResetModuleLog();
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.0f);
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "RegisterModule succeeds");
+        Expect(Manager.LoadModule("Example"), "variant A loads");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 1, "one startup so far");
+
+        ResetModuleLog();
+
+        // A "bad build" lands at the watched path.
+        Expect(StageVariant(CORE_SMOKE_MODULE_STALE), "the stale plugin is written over the watched path");
+        Expect(Manager.Tick(0.016f) == 0, "the bad build does not count as a reload");
+
+        Expect(Manager.GetModuleState("Example") == EModuleState::MS_Loaded,
+               "the module is still loaded -- rolled back, not left dead");
+        Expect(Manager.GetModuleVersionString("Example") == "A", "the previous build is running again");
+        Expect(GModuleLogErrors > 0, "the failed reload is logged as an error");
+
+        // Distinguishes "rolled back" from "never attempted": the old code was
+        // genuinely torn down and re-instantiated, and was handed the blob it
+        // had just written itself.
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 2,
+               "the rolled-back instance re-ran OnStartup on its own blob");
+
+        // The retry gate. Without it this spins once per tick forever.
+        const int ErrorsAfterFirstAttempt = GModuleLogErrors;
+        Manager.Tick(0.016f);
+        Manager.Tick(0.016f);
+        Expect(GModuleLogErrors == ErrorsAfterFirstAttempt,
+               "the same failing build is not retried on every tick");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 2,
+               "no further reload attempts were made");
+
+        // And the gate releases on a new stamp rather than latching.
+        Expect(StageVariant(CORE_SMOKE_MODULE_B), "a good build replaces the bad one");
+        Expect(Manager.Tick(0.016f) == 1, "the module recovers once a good build appears");
+        Expect(Manager.GetModuleVersionString("Example") == "B", "variant B is now running");
+        Expect(ModuleCounter(Manager, "ExampleHotModuleGetStartupCount") == 3,
+               "the state survived the failed reload and the recovery");
+    }
+
+    SetLogHandler(nullptr);
+    appFileDelete(GWatchedPath);
+}
+
+#endif //CORE_SMOKE_MODULE_A
+
+static void RunModuleTests()
+{
+#if defined(CORE_SMOKE_MODULE_A)
+    TestModuleLoad();
+    TestModuleShadowPdb();
+    TestModuleReload();
+    TestModuleSettleWindow();
+    TestModuleAbiMismatch();
+    TestModuleReloadRollback();
+#else
+    std::printf("[modules] skipped (CORE_SHARED off)\n");
+#endif
+}
+
 int main()
 {
     std::printf("EngineCore smoke test\n");
 
     TestLogging();
     TestFileSeam();
+    TestFileMetadataSeam();
+    TestDLLSeam();
+    TestModuleReloadStateBuffer();
     TestFileProvider();
     TestImage();
     TestImageFormatConversion();
     TestQueue();
     TestTypes();
+    RunModuleTests();
 
     // Restore the default handler so a failure below is not swallowed.
     SetLogHandler(nullptr);
