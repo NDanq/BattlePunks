@@ -1,0 +1,33 @@
+# ===========================================================================
+# NimbleEngine repository root .gitignore
+#
+# Each vendored module subtree (Engine/Modules/Core, Engine/Modules/GDI) keeps
+# its own .gitignore for the standalone case. This file covers only what the
+# engine-level aggregate produces, which no subtree can know about.
+# ===========================================================================
+
+# The flat runtime layout Engine/CMakeLists.txt sets up, and the per-generation
+# shadow copies CoreModuleManager writes underneath it during hot reload.
+/Engine/Binaries/
+
+# Smoke-test scratch output. The test writes it relative to its working
+# directory, and the executable can be run from anywhere -- including here.
+/SmokeScratch/
+
+# Engine-level build trees.
+/Engine/Build/
+/Engine/build/
+/Engine/cmake-build-*/
+
+# Editor / IDE / local tooling state
+.idea/
+.vs/
+.vscode/
+*.user
+.cache/
+.claude/settings.local.json
+
+# OS cruft
+Thumbs.db
+Desktop.ini
+.DS_Store
