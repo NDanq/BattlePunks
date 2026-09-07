@@ -20,6 +20,7 @@
 #include <chrono>
 #include <utility>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreLog.h"
@@ -27,6 +28,7 @@
 #include "Public/Core/CoreModuleManager.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreQueue.h"
+#include "Public/Core/CoreString.h"
 #include "Public/Math/Matrix.h"
 #include "Public/Math/Vector.h"
 
@@ -606,6 +608,204 @@ static void TestTypes()
     Expect(Matrix4x4().InitIdentity().Data[0][0] == 1, "Matrix4x4 identity");
 }
 
+// --- config ----------------------------------------------------------------
+
+static int              GConfigCallbackCount = 0;
+static const ConfigVar* GConfigCallbackVar   = nullptr;
+
+static void SmokeConfigCallback(const ConfigVar& InVar)
+{
+    ++GConfigCallbackCount;
+    GConfigCallbackVar = &InVar;
+}
+
+NIMBLE_CONFIG_BOOL  (GSmokeVSync,  "Smoke", "VSync",  true,   &SmokeConfigCallback);
+NIMBLE_CONFIG_INT   (GSmokeMaxFPS, "Smoke", "MaxFPS", 60,     nullptr);
+NIMBLE_CONFIG_FLOAT (GSmokeScale,  "Smoke", "Scale",  1.0f,   nullptr);
+NIMBLE_CONFIG_STRING(GSmokeTitle,  "Smoke", "Title",  "none", nullptr);
+NIMBLE_CONFIG_INT   (GSmokeGlobal, "",      "Global", 7,      nullptr);
+
+static void TestConfigRegistry()
+{
+    std::printf("[config registry]\n");
+
+    Expect(ConfigFindVar("Smoke", "VSync") == &GSmokeVSync, "a macro-declared var self-registers before main()");
+    Expect(ConfigFindVar("smoke", "vsync") == &GSmokeVSync, "section and key lookup is case-insensitive");
+    Expect(ConfigFindVar("Smoke", "NoSuchKey") == nullptr, "an undeclared key is not found");
+    Expect(ConfigFindVar("", "Global") == &GSmokeGlobal, "the empty section is addressable");
+
+    Expect(ConfigFindVarByPath("Smoke.MaxFPS") == &GSmokeMaxFPS, "qualified path lookup resolves");
+    Expect(ConfigFindVarByPath("MaxFPS") == &GSmokeMaxFPS, "a bare name searches every section");
+
+    Expect(GSmokeMaxFPS.GetInt() == 60, "the compiled default survives registration");
+    Expect(GSmokeVSync.GetBool() == true, "the compiled bool default survives registration");
+    Expect(ConfigGetVarCount() >= 5, "the registry walk reaches every declared var");
+
+    // The direct stand-in for a hot module's DLL unload: a ConfigVar's
+    // destructor must unlink it, cleanly, with no trace left behind.
+    const int Before = ConfigGetVarCount();
+    {
+        ConfigVar Temp(EConfigType::CT_Int, "Smoke", "Scoped", MakeConfigInt(1), nullptr);
+        Expect(ConfigFindVar("Smoke", "Scoped") == &Temp, "a scoped var registers on construction");
+        Expect(ConfigGetVarCount() == Before + 1, "the count tracks registration");
+    }
+    Expect(ConfigFindVar("Smoke", "Scoped") == nullptr, "a ConfigVar unregisters in its destructor");
+    Expect(ConfigGetVarCount() == Before, "the list is spliced cleanly, not leaked");
+
+    // Duplicate registration: a second var at the same key is linked (and
+    // warned about) but does not shadow the first in lookup order, and does
+    // NOT inherit the first's value -- only a load or a console set touches
+    // every var sharing a key, see A DUPLICATE KEY IS A WARNING in CoreConfig.h.
+    ConfigVar Dup(EConfigType::CT_Int, "Smoke", "MaxFPS", MakeConfigInt(999), nullptr);
+    Expect(ConfigFindVar("Smoke", "MaxFPS") == &Dup, "the most recently registered duplicate is found first");
+    Expect(Dup.GetInt() == 999, "a duplicate holds its own compiled default when no file has set the key yet");
+
+    LoadConfigText("[Smoke]\nMaxFPS = 123\n");
+    Expect(GSmokeMaxFPS.GetInt() == 123 && Dup.GetInt() == 123,
+           "loading a value applies it to every var registered under the same key");
+}
+
+static void TestConfigParse()
+{
+    std::printf("[config parse]\n");
+
+    ConfigLoadStats Stats;
+    const bool bOk = LoadConfigText(
+        "; a comment line\n"
+        "# another comment style\n"
+        "\n"
+        "Global = 9\n"
+        "[Smoke]\n"
+        "VSync = off\n"
+        "MaxFPS   =   144   \n"
+        "Scale = 2\n"
+        "Nope.Nope = 1\n"
+        "NotAKeyValueLine\n"
+        "MaxFPS = fast\n",
+        &Stats);
+
+    Expect(!bOk, "a file with a bad value or a malformed line reports failure");
+    Expect(GSmokeVSync.GetBool() == false, "'off' parses as bool false");
+    Expect(GSmokeMaxFPS.GetInt() == 144, "whitespace around '=' and the value is ignored");
+    Expect(GSmokeScale.GetFloat() == 2.0f, "an integer literal is accepted for a float var");
+    Expect(GSmokeGlobal.GetInt() == 9, "a key before any [Section] lands in the global section");
+    Expect(Stats.UnknownKeys == 1, "an unknown key warns and is counted, never fatal");
+    Expect(Stats.MalformedLines == 1, "a line with no '=' is counted as malformed");
+    Expect(Stats.BadValues == 1, "'fast' is rejected for an int var");
+    Expect(GSmokeMaxFPS.GetInt() == 144, "a bad value leaves the previous value intact");
+
+    // Hex, quoting, duplicate-key-last-wins, and CRLF, in one pass.
+    ConfigLoadStats Stats2;
+    LoadConfigText(
+        "[Smoke]\r\n"
+        "MaxFPS = 0x20\r\n"
+        "Title = \"two words\"\r\n"
+        "MaxFPS = 30\r\n",
+        &Stats2);
+    Expect(GSmokeMaxFPS.GetInt() == 30, "a duplicate key in one file: last wins");
+    Expect(std::string(GSmokeTitle.GetString()) == "two words", "a quoted value keeps inner spaces and loses outer quotes");
+
+    ConfigLoadStats Stats3;
+    LoadConfigText("[Smoke]\nMaxFPS = 0x20\n", &Stats3);
+    Expect(GSmokeMaxFPS.GetInt() == 32, "'0x20' parses as hex 32");
+}
+
+static void TestConfigCallbacks()
+{
+    std::printf("[config callbacks]\n");
+
+    GSmokeVSync.SetBool(true);
+    GConfigCallbackCount = 0;
+    GConfigCallbackVar   = nullptr;
+
+    Expect(GSmokeVSync.SetBool(false), "SetBool reports a real change");
+    Expect(GConfigCallbackCount == 1, "a changed value fires the callback exactly once");
+    Expect(GConfigCallbackVar == &GSmokeVSync, "the callback receives the var that changed");
+
+    Expect(!GSmokeVSync.SetBool(false), "SetBool reports no change for the same value");
+    Expect(GConfigCallbackCount == 1, "an unchanged value does not fire the callback");
+
+    Expect(!GSmokeMaxFPS.SetInt(GSmokeMaxFPS.GetInt()), "SetInt reports no change for the same value");
+
+    ConfigApplyAll();
+    Expect(GConfigCallbackCount == 2, "ConfigApplyAll fires every callback regardless of change");
+
+    Expect(GSmokeMaxFPS.ResetToDefault(), "ResetToDefault reports a change when the value was not the default");
+    Expect(GSmokeMaxFPS.GetInt() == 60, "reset restores the compiled default");
+
+    // Back-fill: a var declared AFTER a file was parsed must come up holding
+    // the file's value -- the mechanism that makes a hot module's config work.
+    LoadConfigText("[Smoke]\nLateVar = 42\n");
+    {
+        ConfigVar LateVar(EConfigType::CT_Int, "Smoke", "LateVar", MakeConfigInt(0), nullptr);
+        Expect(LateVar.GetInt() == 42, "a var registered after its file was loaded is back-filled from the retained entry");
+    }
+}
+
+static void TestConfigFile()
+{
+    std::printf("[config file]\n");
+
+    const std::string Dir  = "SmokeScratch/Config";
+    const std::string Path = Dir + "/Smoke.ini";
+    Expect(appCreateDirectories(Dir), "scratch config directory created");
+
+    const std::string Contents = "[Smoke]\nMaxFPS = 75\n";
+    FileHandle W = appFileOpenWrite(Path);
+    Expect(W != nullptr, "config scratch file opens for write");
+    if(W)
+    {
+        appFileWrite(W, Contents.data(), Contents.size());
+        appFileClose(W);
+    }
+
+    Expect(LoadConfigFile(Path), "LoadConfigFile reads through the appFile* fallback with no provider installed");
+    Expect(GSmokeMaxFPS.GetInt() == 75, "the loaded file's value was applied");
+
+    FilesystemProvider Provider(Dir);
+    SetFileProvider(&Provider);
+    ConfigLoadStats Stats;
+    Expect(LoadConfigFile("Smoke.ini", &Stats), "LoadConfigFile resolves a bundle-relative path through the provider");
+    SetFileProvider(nullptr);   // the provider is a stack object -- clear it immediately
+
+    Expect(!LoadConfigFile("SmokeScratch/Config/missing.ini"), "a missing config file fails without crashing");
+}
+
+static void TestConfigConsole()
+{
+    std::printf("[config console]\n");
+
+    GSmokeMaxFPS.SetInt(60);
+    std::string R;
+
+    Expect(ExecConfigCommand("Smoke.MaxFPS", R) && Contains(R, "60"), "a get returns the current value");
+
+    Expect(ExecConfigCommand("Smoke.MaxFPS 30", R) && GSmokeMaxFPS.GetInt() == 30, "a bare set applies");
+    Expect(ExecConfigCommand("Smoke.MaxFPS = 45", R) && GSmokeMaxFPS.GetInt() == 45, "'=' is accepted and ignored");
+    Expect(ExecConfigCommand("Smoke.MaxFPS   90", R) && GSmokeMaxFPS.GetInt() == 90, "a whitespace run is one separator");
+
+    Expect(!ExecConfigCommand("Smoke.MaxFPS fast", R) && GSmokeMaxFPS.GetInt() == 90,
+           "a bad value fails and changes nothing");
+    Expect(Contains(R, "int"), "the failure names the expected type");
+
+    Expect(ExecConfigCommand("Smoke.VSync on", R) && GSmokeVSync.GetBool(), "'on' sets a bool");
+    Expect(ExecConfigCommand("Smoke.Title \"two words\"", R) && std::string(GSmokeTitle.GetString()) == "two words",
+           "a quoted final argument is one token");
+
+    Expect(!ExecConfigCommand("Nope.Nope 1", R) && Contains(R, "Unknown"), "an unknown key is rejected, not created");
+    Expect(ConfigFindVar("Nope", "Nope") == nullptr, "a failed set did not auto-register the key");
+
+    Expect(!ExecConfigCommand("", R), "an empty command is not a config command");
+    Expect(!ExecConfigCommand("   ", R), "a whitespace-only command is not a config command");
+
+    Expect(ExecConfigCommand("MaxFPS 75", R) && GSmokeMaxFPS.GetInt() == 75, "an unqualified name resolves");
+
+    const int BeforeGets = GConfigCallbackCount;
+    ExecConfigCommand("Smoke.MaxFPS", R);
+    ExecConfigCommand("Smoke.VSync", R);
+    Expect(GConfigCallbackCount == BeforeGets, "a get does not fire callbacks");
+}
+
 // --- hot-reload modules ---------------------------------------------------
 //
 // Skipped entirely when CORE_SHARED is OFF: with a static EngineCore a module
@@ -1042,6 +1242,11 @@ int main()
     TestImageFormatConversion();
     TestQueue();
     TestTypes();
+    TestConfigRegistry();
+    TestConfigParse();
+    TestConfigCallbacks();
+    TestConfigFile();
+    TestConfigConsole();
     RunModuleTests();
 
     // Restore the default handler so a failure below is not swallowed.
