@@ -21,6 +21,8 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <cerrno>
+#include <dlfcn.h>
+#include <dirent.h>
 
 namespace EngineCore
 {
@@ -30,6 +32,12 @@ namespace
     {
         return static_cast<FILE*>(InHandle);
     }
+
+    /*
+     * appDLLGetLastError's backing store. Captured at the point of failure
+     * because dlerror() is consume-on-read: whoever calls it first clears it.
+     */
+    thread_local std::string GDLLLastError;
 
     std::string HomeDir()
     {
@@ -159,6 +167,210 @@ std::string appGetAppDataDir(const std::string& InAppName)
     }
 
     return Result;
+}
+
+bool appFileStat(const std::string& InPath, FileStamp& OutStamp)
+{
+    OutStamp = FileStamp();
+
+    struct stat St{};
+    if(::stat(InPath.c_str(), &St) != 0)
+    {
+        return false;
+    }
+    if(S_ISDIR(St.st_mode))
+    {
+        return false;
+    }
+
+#if defined(__APPLE__)
+    const uint64_t Seconds = uint64_t(St.st_mtimespec.tv_sec);
+    const uint64_t Nanos   = uint64_t(St.st_mtimespec.tv_nsec);
+#else
+    const uint64_t Seconds = uint64_t(St.st_mtim.tv_sec);
+    const uint64_t Nanos   = uint64_t(St.st_mtim.tv_nsec);
+#endif
+
+    OutStamp.ModifiedTime = Seconds * 1000000000ull + Nanos;
+    OutStamp.SizeBytes    = uint64_t(St.st_size);
+
+    // 0 is the seam's "unavailable" value, so a file stamped exactly at the
+    // epoch must not read as a failed stat.
+    if(OutStamp.ModifiedTime == 0) OutStamp.ModifiedTime = 1;
+    return true;
+}
+
+bool appFileCopy(const std::string& InSrcPath, const std::string& InDstPath, const bool bInOverwrite)
+{
+    if(!bInOverwrite && appFileExists(InDstPath))
+    {
+        return false;
+    }
+
+    // Built on the seam's own file functions rather than <filesystem>: the
+    // seam exists precisely so the rest of the tree needs neither.
+    std::vector<uint8_t> Bytes;
+    if(!appFileReadAll(InSrcPath, Bytes))
+    {
+        return false;
+    }
+
+    const FileHandle Dst = appFileOpenWrite(InDstPath);
+    if(!Dst)
+    {
+        return false;
+    }
+
+    bool bOk = true;
+    if(!Bytes.empty())
+    {
+        bOk = appFileWrite(Dst, Bytes.data(), Bytes.size()) == Bytes.size();
+    }
+    appFileClose(Dst);
+
+    if(!bOk)
+    {
+        appFileDelete(InDstPath);
+        return false;
+    }
+
+    // Preserve the mode, so copying an executable or a shared object produces
+    // something the loader will still accept.
+    struct stat St{};
+    if(::stat(InSrcPath.c_str(), &St) == 0)
+    {
+        ::chmod(InDstPath.c_str(), St.st_mode);
+    }
+
+    return true;
+}
+
+bool appFileDelete(const std::string& InPath)
+{
+    if(::unlink(InPath.c_str()) == 0)
+    {
+        return true;
+    }
+    return errno == ENOENT;      // already gone is the outcome the caller wanted
+}
+
+bool appFileCanOpenExclusive(const std::string& InPath)
+{
+    /*
+     * See the PLATFORM ASYMMETRY note in CorePlatform.h. POSIX has no mandatory
+     * locking, so there is nothing here to interlock against: a linker writing
+     * this file right now does not prevent us opening it. This degenerates to
+     * an existence check on purpose, and the settle window in
+     * ModuleManager::Tick is what actually guards against a half-written
+     * library on this platform.
+     */
+    return appFileExists(InPath);
+}
+
+bool appDirectoryList(const std::string& InPath, std::vector<std::string>& OutNames)
+{
+    OutNames.clear();
+
+    DIR* Dir = ::opendir(InPath.c_str());
+    if(!Dir)
+    {
+        return false;
+    }
+
+    while(const struct dirent* Entry = ::readdir(Dir))
+    {
+        const std::string Name(Entry->d_name);
+        if(Name == "." || Name == "..") continue;
+        OutNames.push_back(Name);
+    }
+
+    ::closedir(Dir);
+    return true;
+}
+
+bool appDirectoryDelete(const std::string& InPath)
+{
+    if(::rmdir(InPath.c_str()) == 0)
+    {
+        return true;
+    }
+    return errno == ENOENT;
+}
+
+DLLHandle appDLLOpen(const std::string& InPath)
+{
+    /*
+     * RTLD_NOW: an unresolved symbol fails here rather than ambushing the first
+     * call into it, which matches Windows and is what makes the manager's
+     * "reject and roll back" path able to see the failure at all.
+     *
+     * RTLD_LOCAL: two generations of the same module must never merge symbol
+     * tables. The consequence -- cross-boundary dynamic_cast and typeid on
+     * module-defined types become unreliable -- is fine, because the RELOAD
+     * HAZARDS block in CoreModule.h forbids both anyway.
+     */
+    ::dlerror();        // clear any stale condition before the call
+
+    void* Handle = ::dlopen(InPath.c_str(), RTLD_NOW | RTLD_LOCAL);
+    if(!Handle)
+    {
+        // Captured immediately: dlerror() is consume-on-read, so deferring this
+        // to appDLLGetLastError would reliably return nothing.
+        const char* Err = ::dlerror();
+        GDLLLastError = Err ? Err : "dlopen failed with no diagnostic";
+        return nullptr;
+    }
+
+    GDLLLastError.clear();
+    return DLLHandle(Handle);
+}
+
+void* appDLLGetSymbol(const DLLHandle InHandle, const char* InSymbol)
+{
+    if(!InHandle || !InSymbol)
+    {
+        GDLLLastError = "appDLLGetSymbol called with a null handle or symbol";
+        return nullptr;
+    }
+
+    // A symbol may legitimately resolve to null, so the return value alone
+    // cannot report failure -- clear, call, then ask.
+    ::dlerror();
+    void* Symbol = ::dlsym(InHandle, InSymbol);
+
+    if(const char* Err = ::dlerror())
+    {
+        GDLLLastError = Err;
+        return nullptr;
+    }
+
+    GDLLLastError.clear();
+    return Symbol;
+}
+
+void appDLLClose(const DLLHandle InHandle)
+{
+    /*
+     * KNOWN LINUX CAVEAT: dlclose is advisory. glibc may decline to unmap a
+     * library that uses static TLS, in which case the old code stays resident
+     * and a subsequent "reload" silently keeps running the previous version.
+     * There is no reliable way to detect this from here. Windows has no
+     * equivalent problem.
+     */
+    if(InHandle)
+    {
+        ::dlclose(InHandle);
+    }
+}
+
+std::string appDLLGetLastError()
+{
+    return GDLLLastError;
+}
+
+uint32_t appProcessID()
+{
+    return uint32_t(::getpid());
 }
 
 ThreadID appThreadID()
