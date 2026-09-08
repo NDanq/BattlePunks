@@ -152,12 +152,15 @@ struct GameWindowDelegates
 
     // --- lifecycle / exit -------------------------------------------------
     // OnCloseRequested is the X button and Alt-F4. It is a REQUEST: return
-    // false to veto (an unsaved-work prompt). Returning true destroys nothing
-    // by itself -- the host calls RequestClose() when it is actually ready.
+    // false to veto (an unsaved-work prompt), true to proceed. On true -- or
+    // with the slot left null -- the window is marked and destroyed by the reap
+    // at the end of that PumpEvents, never inside the call itself.
     bool (*OnCloseRequested)(GameWindow*, void*) = nullptr;
 
     // Process-level quit (SDL_EVENT_QUIT: last window gone, OS logoff, SIGINT).
-    // Not per-window, so it carries no GameWindow*.
+    // Not per-window, so it carries no GameWindow*, and it fires ONCE, on the
+    // primary window's table -- firing it per window would call a host's single
+    // quit handler N times.
     void (*OnQuit)(void*) = nullptr;
 
     // --- window state -----------------------------------------------------
