@@ -149,8 +149,8 @@ function(nimble_add_hot_module NM_TARGET)
         target_compile_options(${NM_TARGET} PRIVATE /wd4251)
     elseif(UNIX AND NOT APPLE)
         # A shadow copy sits one directory below the real libraries, so
-        # $ORIGIN/.. is where libEngineCore.so is under the flat Binaries/
-        # layout Engine/CMakeLists.txt sets up.
+        # $ORIGIN/.. is where libEngineCore.so is under the flat
+        # Binaries/<Platform>_<Config> layout Engine/CMakeLists.txt sets up.
         set_target_properties(${NM_TARGET} PROPERTIES BUILD_RPATH "$ORIGIN/..")
     endif()
 endfunction()
