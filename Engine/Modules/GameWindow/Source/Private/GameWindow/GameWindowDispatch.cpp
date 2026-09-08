@@ -1,4 +1,32 @@
+#include <cmath>
+
 #include "Private/GameWindow/GameWindowInternal.h"
+
+namespace
+{
+    /*
+     * SDL reports mouse position in LOGICAL window units; the engine's mouse
+     * events promise PHYSICAL pixels, so everything goes through here.
+     *
+     * On a 1x display this is the identity and the whole thing is invisible.
+     * On a 2x display, skipping it means every hit test is out by a factor of
+     * two against a swapchain sized in physical pixels -- and it reproduces on
+     * nobody's machine but the one with the scaled monitor.
+     *
+     * std::lround, not a truncating cast: truncation biases every coordinate
+     * toward the top-left by up to a pixel, which is visible in a paint tool
+     * and infuriating to track down.
+     *
+     * Takes the density rather than the Impl because GameWindow::Impl is a
+     * private member type and this is not the friend class -- the same access
+     * rule that bites in GameWindowSystem::CreateGameWindow.
+     */
+    EngineCore::Point ToPhysical(const float InDensity, const float InX, const float InY)
+    {
+        return EngineCore::Point(int(std::lround(InX * InDensity)),
+                                 int(std::lround(InY * InDensity)));
+    }
+}
 
 /*
  * SDL_EVENT_WINDOW_* -> GameWindowDelegates.
@@ -197,4 +225,122 @@ void GameWindowSystem_Impl::DispatchWindowEvent(GameWindow& InWindow, const SDL_
         default:
             break;
     }
+}
+
+// ===========================================================================
+// Input
+// ===========================================================================
+
+void GameWindowSystem_Impl::DispatchKeyEvent(GameWindow& InWindow, const SDL_KeyboardEvent& InEvent)
+{
+    const GameWindowDelegates& D = Get(InWindow).Delegates;
+    if(!D.OnKey)
+    {
+        return;
+    }
+
+    KeyEvent Out;
+    Out.Key       = GameWindowKeyFromScancode(InEvent.scancode);
+    Out.Modifiers = GameWindowModifiersFromSDL(InEvent.mod);
+    Out.bPressed  = InEvent.down;
+    Out.bRepeat   = InEvent.repeat;
+
+    /*
+     * KC_Unknown is still delivered rather than dropped. A key this build has
+     * no name for is a real press the host may want to see -- media keys,
+     * international keys, a vendor's extra row -- and swallowing it would make
+     * "my keyboard has a key that does nothing" undebuggable from the outside.
+     */
+    D.OnKey(&InWindow, Out, D.UserData);
+}
+
+void GameWindowSystem_Impl::DispatchTextEvent(GameWindow& InWindow, const SDL_TextInputEvent& InEvent)
+{
+    const GameWindowDelegates& D = Get(InWindow).Delegates;
+    if(!D.OnText || !InEvent.text)
+    {
+        return;
+    }
+
+    /*
+     * InEvent.text points into SDL's event storage and is valid only until the
+     * next pump iteration -- which is exactly the lifetime the slot documents.
+     * Nothing is copied here on purpose: a host that needs to keep the text
+     * copies it, and a host that appends it to a buffer (the common case) does
+     * not pay for an allocation per keystroke.
+     */
+    D.OnText(&InWindow, InEvent.text, D.UserData);
+}
+
+void GameWindowSystem_Impl::DispatchMouseButtonEvent(GameWindow& InWindow, const SDL_MouseButtonEvent& InEvent)
+{
+    GameWindow::Impl&          I = Get(InWindow);
+    const GameWindowDelegates& D = I.Delegates;
+    if(!D.OnMouseButton)
+    {
+        return;
+    }
+
+    const EMouseButton Button = GameWindowMouseButtonFromSDL(InEvent.button);
+    if(Button == MB_MAX)
+    {
+        /* A button this engine does not model. Dropped rather than reported as
+         * some other button, which would be worse than silence. */
+        return;
+    }
+
+    MouseButtonEvent Out;
+    Out.Button     = Button;
+    Out.Pos        = ToPhysical(I.PixelDensity, InEvent.x, InEvent.y);
+    Out.ClickCount = InEvent.clicks;
+    Out.bPressed   = InEvent.down;
+    Out.Modifiers  = GameWindowModifiersFromSDL(SDL_GetModState());
+
+    D.OnMouseButton(&InWindow, Out, D.UserData);
+}
+
+void GameWindowSystem_Impl::DispatchMouseMotionEvent(GameWindow& InWindow, const SDL_MouseMotionEvent& InEvent)
+{
+    GameWindow::Impl&          I = Get(InWindow);
+    const GameWindowDelegates& D = I.Delegates;
+    if(!D.OnMouseMove)
+    {
+        return;
+    }
+
+    const EngineCore::Point Delta = ToPhysical(I.PixelDensity, InEvent.xrel, InEvent.yrel);
+
+    MouseMoveEvent Out;
+    Out.Pos       = ToPhysical(I.PixelDensity, InEvent.x, InEvent.y);
+    Out.DeltaX    = Delta.X;
+    Out.DeltaY    = Delta.Y;
+    Out.Modifiers = GameWindowModifiersFromSDL(SDL_GetModState());
+
+    D.OnMouseMove(&InWindow, Out, D.UserData);
+}
+
+void GameWindowSystem_Impl::DispatchMouseWheelEvent(GameWindow& InWindow, const SDL_MouseWheelEvent& InEvent)
+{
+    GameWindow::Impl&          I = Get(InWindow);
+    const GameWindowDelegates& D = I.Delegates;
+    if(!D.OnMouseWheel)
+    {
+        return;
+    }
+
+    /*
+     * SDL_MOUSEWHEEL_FLIPPED means the platform already inverted the values
+     * (macOS "natural" scrolling). Undoing it here means a host always sees
+     * "positive Y is away from the user" and never has to ask which convention
+     * it is looking at.
+     */
+    const float Sign = (InEvent.direction == SDL_MOUSEWHEEL_FLIPPED) ? -1.0f : 1.0f;
+
+    MouseWheelEvent Out;
+    Out.DeltaX    = InEvent.x * Sign;
+    Out.DeltaY    = InEvent.y * Sign;
+    Out.Pos       = ToPhysical(I.PixelDensity, InEvent.mouse_x, InEvent.mouse_y);
+    Out.Modifiers = GameWindowModifiersFromSDL(SDL_GetModState());
+
+    D.OnMouseWheel(&InWindow, Out, D.UserData);
 }

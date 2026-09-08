@@ -114,14 +114,24 @@ struct GameWindowDelegates
     void (*OnDisplayScaleChanged)(GameWindow*, float InScale, void*)  = nullptr;
 
     // === Input ==============================================================
-    // NOT YET DISPATCHED. The slots exist so the table's layout is settled, but
-    // GameWindowDispatch.cpp handles window events only; input arrives at build
-    // step 4. Binding these today is harmless and silent.
+    //
+    // Mouse positions are PHYSICAL pixels, window-relative -- the same units as
+    // OnResized and GDIPlatform::appGetWindowPixelSize, so a hit test against
+    // anything sized from the swapchain is a direct comparison. SDL reports
+    // logical units; the conversion happens on the way through.
 
+    /* Physical keys, not characters: KC_W is the key where W sits on a US
+     * layout and stays KC_W on AZERTY. For anything the user is TYPING, use
+     * OnText -- it is the only post-layout, post-dead-key, post-IME source. */
     void (*OnKey)(GameWindow*, const KeyEvent&, void*)                 = nullptr;
 
-    /* InUtf8 is valid FOR THE DURATION OF THE CALL ONLY -- it points into SDL's
-     * event. Copy it if you need to keep it. */
+    /*
+     * InUtf8 is valid FOR THE DURATION OF THE CALL ONLY -- it points into SDL's
+     * event. Copy it if you need to keep it.
+     *
+     * Fires only while GameWindow::SetTextInputActive(true) is in effect, which
+     * is OFF by default. A bound OnText that never fires is almost always that.
+     */
     void (*OnText)(GameWindow*, const char* InUtf8, void*)             = nullptr;
 
     void (*OnMouseButton)(GameWindow*, const MouseButtonEvent&, void*) = nullptr;

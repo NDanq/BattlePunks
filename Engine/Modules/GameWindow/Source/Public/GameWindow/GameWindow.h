@@ -109,6 +109,23 @@ public:
     /* Windowed <-> whichever fullscreen mode was last used. */
     bool ToggleFullscreen();
 
+    // === Text input =========================================================
+
+    /*
+     * Gates OnText and the platform IME. OFF by default.
+     *
+     * This is not an optimisation, it is the whole reason OnText can look
+     * broken: with text input inactive SDL emits no SDL_EVENT_TEXT_INPUT at
+     * all, so a bound OnText simply never fires and nothing says why. A host
+     * turns it on while a field has focus and off again afterwards -- leaving
+     * it on permanently also leaves the on-screen keyboard up on platforms that
+     * have one.
+     *
+     * OnKey is unaffected and fires either way.
+     */
+    void SetTextInputActive(bool bInActive);
+    bool IsTextInputActive() const;
+
     // === Exit ===============================================================
 
     /*

@@ -31,6 +31,22 @@ struct GameWindow::Impl
     EngineCore::Point Position;
     float             DisplayScale = 1.0f;
 
+    /*
+     * Physical pixels per logical unit -- NOT the same as DisplayScale.
+     *
+     * DisplayScale is the user's content/UI scale (SDL_GetWindowDisplayScale);
+     * this is the framebuffer-to-window ratio (SDL_GetWindowPixelDensity).
+     * They are equal on a lot of setups and differ on exactly the ones that
+     * matter, which is why both are cached rather than one being derived from
+     * the other.
+     *
+     * SDL reports mouse coordinates in logical window units. The engine's mouse
+     * events promise PHYSICAL pixels, matching GDIPlatform::appGetWindowPixelSize
+     * and anything sized against the swapchain, so every coordinate is scaled by
+     * this on the way through.
+     */
+    float             PixelDensity = 1.0f;
+
     EWindowMode Mode = WM_Windowed;
 
     /* What ToggleFullscreen() goes back to. Seeded from the WindowDesc so a
@@ -63,9 +79,28 @@ public:
      * any event that could have invalidated more than it reports. */
     static void RefreshCachedState(GameWindow& InWindow);
 
-    /* GameWindowDispatch.cpp. Routes one SDL_EVENT_WINDOW_* to the delegates. */
+    /* GameWindowDispatch.cpp. Each routes one SDL event to the delegates. */
     static void DispatchWindowEvent(GameWindow& InWindow, const SDL_WindowEvent& InEvent);
+    static void DispatchKeyEvent(GameWindow& InWindow, const SDL_KeyboardEvent& InEvent);
+    static void DispatchTextEvent(GameWindow& InWindow, const SDL_TextInputEvent& InEvent);
+    static void DispatchMouseButtonEvent(GameWindow& InWindow, const SDL_MouseButtonEvent& InEvent);
+    static void DispatchMouseMotionEvent(GameWindow& InWindow, const SDL_MouseMotionEvent& InEvent);
+    static void DispatchMouseWheelEvent(GameWindow& InWindow, const SDL_MouseWheelEvent& InEvent);
 };
+
+/*
+ * SDL input codes -> the engine's own. GameWindowInputSDL.cpp.
+ *
+ * Free functions rather than members: they touch no window state, and keeping
+ * them reachable without a GameWindow is what lets the smoke test check the
+ * tables directly.
+ */
+EKeyCode     GameWindowKeyFromScancode(SDL_Scancode InScancode);
+uint16_t     GameWindowModifiersFromSDL(SDL_Keymod InMod);
+
+/* MB_MAX for a button this engine does not model -- a 6-button mouse reports
+ * one, and the dispatch drops it rather than calling it a left click. */
+EMouseButton GameWindowMouseButtonFromSDL(uint8_t InButton);
 
 /*
  * The native OS handle behind an SDL_Window -- an HWND on Windows, an NSView*

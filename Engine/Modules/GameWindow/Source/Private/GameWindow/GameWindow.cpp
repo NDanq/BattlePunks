@@ -211,6 +211,38 @@ bool GameWindow::ToggleFullscreen()
     return SetWindowMode(P->Mode == WM_Windowed ? P->LastFullscreenMode : WM_Windowed);
 }
 
+// === Text input =============================================================
+
+void GameWindow::SetTextInputActive(const bool bInActive)
+{
+    GameWindowSystem::CheckPumpThread("GameWindow::SetTextInputActive");
+
+    if(!P->Window)
+    {
+        return;
+    }
+
+    const bool bOk = bInActive ? SDL_StartTextInput(P->Window)
+                               : SDL_StopTextInput(P->Window);
+
+    if(!bOk)
+    {
+        /* Worth a warning rather than a silent false: the symptom of a failed
+         * StartTextInput is "OnText never fires", which is indistinguishable
+         * from a host that forgot to bind the slot. */
+        GW_LOG_WARN(std::string("text input could not be ")
+                  + (bInActive ? "started: " : "stopped: ") + SDL_GetError());
+    }
+}
+
+bool GameWindow::IsTextInputActive() const
+{
+    /* Asked of SDL rather than cached: unlike the window-state flags there is
+     * no event that reports it changing, so a cached copy would have nothing
+     * keeping it honest. */
+    return P->Window && SDL_TextInputActive(P->Window);
+}
+
 // === Exit ===================================================================
 
 void GameWindow::RequestClose()
@@ -274,6 +306,15 @@ void GameWindowSystem_Impl::RefreshCachedState(GameWindow& InWindow)
     if(Scale > 0.0f)
     {
         I.DisplayScale = Scale;
+    }
+
+    /* Distinct from DisplayScale -- see the note on Impl::PixelDensity. Guarded
+     * because a zero would silently collapse every mouse coordinate to the
+     * origin, which looks like a broken mouse rather than a bad scale factor. */
+    const float Density = SDL_GetWindowPixelDensity(I.Window);
+    if(Density > 0.0f)
+    {
+        I.PixelDensity = Density;
     }
 
     const SDL_WindowFlags Flags = SDL_GetWindowFlags(I.Window);
