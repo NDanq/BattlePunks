@@ -128,9 +128,61 @@ namespace
             return;
         }
 
-        /* Keyboard and mouse events land here and are dropped. Build step 4
-         * routes them; the delegate slots already exist and stay null-safe
-         * until then. */
+        /*
+         * Input. Each event carries its own windowID in its own struct -- they
+         * are NOT interchangeable with event.window, which is why each case
+         * reads through its own member rather than a shared one.
+         *
+         * An event whose window is not in the registry is dropped. That is the
+         * normal case for keystrokes arriving after a window was reaped in this
+         * same pump: SDL queued them before the close, and there is no longer
+         * anything to deliver them to.
+         */
+        switch(InEvent.type)
+        {
+            case SDL_EVENT_KEY_DOWN:
+            case SDL_EVENT_KEY_UP:
+                if(GameWindow* Window = GameWindowSystem::FindWindow(InEvent.key.windowID))
+                {
+                    GameWindowSystem_Impl::DispatchKeyEvent(*Window, InEvent.key);
+                }
+                return;
+
+            case SDL_EVENT_TEXT_INPUT:
+                if(GameWindow* Window = GameWindowSystem::FindWindow(InEvent.text.windowID))
+                {
+                    GameWindowSystem_Impl::DispatchTextEvent(*Window, InEvent.text);
+                }
+                return;
+
+            case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            case SDL_EVENT_MOUSE_BUTTON_UP:
+                if(GameWindow* Window = GameWindowSystem::FindWindow(InEvent.button.windowID))
+                {
+                    GameWindowSystem_Impl::DispatchMouseButtonEvent(*Window, InEvent.button);
+                }
+                return;
+
+            case SDL_EVENT_MOUSE_MOTION:
+                if(GameWindow* Window = GameWindowSystem::FindWindow(InEvent.motion.windowID))
+                {
+                    GameWindowSystem_Impl::DispatchMouseMotionEvent(*Window, InEvent.motion);
+                }
+                return;
+
+            case SDL_EVENT_MOUSE_WHEEL:
+                if(GameWindow* Window = GameWindowSystem::FindWindow(InEvent.wheel.windowID))
+                {
+                    GameWindowSystem_Impl::DispatchMouseWheelEvent(*Window, InEvent.wheel);
+                }
+                return;
+
+            default:
+                /* Joystick, gamepad, touch, pen, audio-device, clipboard and
+                 * the rest. Deliberately not modelled here -- a gamepad belongs
+                 * to an input module, not a window module. */
+                return;
+        }
     }
 
     /*

@@ -77,6 +77,7 @@ set(GAMEWINDOW_SOURCES
         Source/Private/GameWindow/GameWindow.cpp
         Source/Private/GameWindow/GameWindowSystem.cpp
         Source/Private/GameWindow/GameWindowDispatch.cpp
+        Source/Private/GameWindow/GameWindowInputSDL.cpp
         Source/Private/GameWindow/GameWindowInternal.h
         Source/Public/GameWindow/GameWindowAPI.h
         Source/Public/GameWindow/GameWindowLog.h
