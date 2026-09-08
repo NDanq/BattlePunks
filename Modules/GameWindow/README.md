@@ -399,8 +399,43 @@ Engine/Modules/GameWindow/External/SDL-release-3.4.16/
 
 This mirrors how `Modules/GDI` carries `External/wglext`: the dependency lives
 with the one module that needs it, so nothing engine-wide has to know SDL
-exists. There is no `find_package(SDL3)` and no `FetchContent` -- the build is
-hermetic and a fresh clone configures with no per-machine setup.
+exists. There is no `find_package(SDL3)` and no `FetchContent`, and no fallback
+to a system SDL -- the module builds SDL **from this source tree**, so a fresh
+clone configures with no per-machine setup and every platform gets the same
+SDL. That is the portability property, and it is why the tree is committed
+rather than downloaded.
+
+**What is committed.** All of it except the examples and the test suite -- 475
+files and ~17 MB that this engine never builds. Both are gated in SDL's own
+CMakeLists and both gates are forced OFF in ours: `add_subdirectory(examples)`
+runs only under `if(SDL_EXAMPLES)`, `add_subdirectory(test)` only under
+`if(SDL_TESTS)`. The excluded paths are `examples/`, `test/`, and the
+`VisualC/` directories holding the `.vcxproj` files that build them.
+
+Two things that are **not** excluded despite the names, because they are not
+what they look like:
+
+* `src/test/` is where the `SDL3_test` library's sources actually live -- SDL
+  globs `src/test/*.c` for it, nothing from the top-level `test/`. It stays.
+* `Xcode/SDLTest/` is a mixed project covering both that library and the test
+  programs, so dropping it would take a project for code we still vendor.
+  `VisualC/SDL_test/`, the library-only equivalent, stays for the same reason.
+
+Everything else is committed **faithfully**, including the 14 files SDL's own
+`.gitignore` would have dropped -- the `pkg-support` `*Config.cmake` files and
+the `.hlsl` shader sources under `src/render/gpu/shaders/`. A vendored
+dependency should be a byte-faithful copy of the release: filtering it through
+the upstream project's development-time ignore rules produces a tree that
+silently differs from what was extracted, and makes the next version bump diff
+against phantom changes. (The build itself does not need those 14 -- the
+shaders it compiles are the checked-in `.dxil.h` / `.spv.h` / `.msl.h` outputs
+-- but `build-shaders.sh` does.)
+
+**Bumping SDL** is two edits: drop the new tree in beside the old one and
+change `GAMEWINDOW_SDL_DIR` in `CMakeLists.txt`, plus the matching path in this
+module's `.gitignore`. The version is spelled out rather than globbed so that
+which SDL a given commit builds against is answerable from the source, not from
+whatever happens to be on disk.
 
 Three facts about that tree that the module's CMakeLists has to respect:
 
