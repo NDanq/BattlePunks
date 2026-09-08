@@ -38,6 +38,17 @@ option(GAMEWINDOW_SHARED "Build GameWindow as a shared library" OFF)
 #
 # SDL_TEST_LIBRARY in particular defaults to ON and would build an SDL3_test
 # static library this engine never links.
+#
+# SDL_EXAMPLES and SDL_TESTS are not merely off, they are unbuildable:
+# External/.../examples and External/.../test are deliberately not vendored
+# (see the module's .gitignore). SDL only descends into those directories when
+# the matching option is ON, so forcing both OFF is what keeps that true.
+# Turning either on against this checkout fails the configure -- correctly,
+# because the directory really is absent.
+#
+# SDL_TEST_LIBRARY is a THIRD thing despite the name: the SDL3_test library is
+# built from src/test/, which IS vendored. It is off because nothing here links
+# it, not because its sources are missing.
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
 set(SDL_TESTS        OFF CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES     OFF CACHE BOOL "" FORCE)
