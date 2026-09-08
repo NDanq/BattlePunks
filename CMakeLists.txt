@@ -38,27 +38,59 @@ include(NimbleModule)
 enable_testing()
 
 # === Binaries/ =============================================================
-# One flat runtime directory, per config.
+# One flat runtime directory per platform+config: Binaries/<Platform>_<Config>,
+# e.g. Binaries/Windows_Debug, Binaries/Mac_Release, Binaries/Linux_RelWithDebInfo.
 #
-# Hot reload REQUIRES this layout: a shadow-copied module DLL resolves
-# EngineCore.dll through the loader's application-directory search, which is
-# the directory of the EXE -- so the exe, EngineCore and every module have to
-# be siblings. On Linux the same layout is what makes the modules' $ORIGIN/..
-# RPATH resolve libEngineCore.so from one level above their shadow directory.
+# The <Config> half is the CMake configuration name verbatim. The <Platform>
+# half keeps a Windows build and a future Mac/Linux build from landing their
+# EngineCore.dll / libEngineCore.so in the same folder.
 #
-# The per-config variables are NOT redundant: a multi-config generator (Visual
-# Studio) appends /Debug to the plain variable and ignores your intent, which
-# would scatter the four configurations' binaries into places that do not match
-# what the plain variable says.
-set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Binaries")
-set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Binaries")
-set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/Binaries/Lib")
-foreach(NM_CFG Debug Release RelWithDebInfo MinSizeRel)
-    string(TOUPPER "${NM_CFG}" NM_CFG_U)
-    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${NM_CFG_U} "${CMAKE_CURRENT_SOURCE_DIR}/Binaries/${NM_CFG}")
-    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${NM_CFG_U} "${CMAKE_CURRENT_SOURCE_DIR}/Binaries/${NM_CFG}")
-    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${NM_CFG_U} "${CMAKE_CURRENT_SOURCE_DIR}/Binaries/${NM_CFG}/Lib")
-endforeach()
+# Every module DLL ends up here for free: these variables are inherited by any
+# target created at or below this scope, and add_subdirectory(Modules/*) runs
+# below -- so EngineCore, GDI (when GDI_SHARED), the hot-reload modules and any
+# future nimble_add_module target all write here without a per-module edit.
+#
+# Hot reload REQUIRES this stay ONE flat directory: a shadow-copied module DLL
+# resolves EngineCore.dll through the loader's application-directory search,
+# which is the directory of the EXE -- so the exe, EngineCore and every module
+# have to be siblings. On Linux the same layout is what makes the modules'
+# $ORIGIN/.. RPATH resolve libEngineCore.so from one level above their shadow
+# directory. The <Platform>_<Config> split does not break that: it is still a
+# single directory, just a differently named one.
+#
+# Import libs / .exp go to <dir>/Lib so .lib clutter stays out of the flat
+# runtime directory.
+if(WIN32)
+    set(NM_PLATFORM Windows)
+elseif(APPLE)
+    set(NM_PLATFORM Mac)
+else()
+    set(NM_PLATFORM Linux)
+endif()
+
+get_property(NM_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NM_MULTI_CONFIG)
+    # Visual Studio / Xcode / Ninja Multi-Config: only the per-config variables
+    # matter, and CMake appends nothing to them. Setting the plain variable here
+    # would just get a /Debug tacked on by the generator and scatter output.
+    foreach(NM_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
+        string(TOUPPER "${NM_CFG}" NM_CFG_U)
+        set(NM_CFG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Binaries/${NM_PLATFORM}_${NM_CFG}")
+        set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}")
+        set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}")
+        set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}/Lib")
+    endforeach()
+else()
+    # Ninja / Makefiles: a single CMAKE_BUILD_TYPE, known now. Default it so the
+    # folder is never Binaries/<Platform>_ with an empty config.
+    if(NOT CMAKE_BUILD_TYPE)
+        set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build configuration" FORCE)
+    endif()
+    set(NM_CFG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Binaries/${NM_PLATFORM}_${CMAKE_BUILD_TYPE}")
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${NM_CFG_DIR}")
+    set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${NM_CFG_DIR}")
+    set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${NM_CFG_DIR}/Lib")
+endif()
 
 # === EngineCore linkage ====================================================
 # Hot reload is only sound with a single shared EngineCore -- one GLogHandler,
