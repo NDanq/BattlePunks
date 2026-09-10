@@ -25,7 +25,11 @@
 #include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreModule.h"
+#include "Public/Core/CoreGC.h"
+#include "Public/Core/CoreMemory.h"
+#include "Public/Core/CoreMemoryPool.h"
 #include "Public/Core/CoreModuleManager.h"
+#include "Public/Core/CorePointer.h"
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreQueue.h"
 #include "Public/Core/CoreString.h"
@@ -1212,7 +1216,620 @@ static void TestModuleReloadRollback()
     appFileDelete(GWatchedPath);
 }
 
+/*
+ * The unload barrier.
+ *
+ * ExampleHotModule deliberately leaks a GC-tracked object with a real
+ * destructor (see BarrierProbe in that file). Everything below turns on one
+ * question: was that object destroyed while the module's code was still
+ * mapped?
+ *
+ * It cannot be answered by reading a counter, because the counter would live
+ * in the module and be gone by the time the test could look. So the probe's
+ * destructor logs, and this counts the message -- the same trick, and the same
+ * reasoning, as the "CORE_LOG in OnStartup reaches the EXE's handler" check
+ * the fixture already relies on.
+ */
+static int GProbeDestroyCount = 0;
+static int GBarrierErrors     = 0;
+
+static void BarrierLogHandler(const LogVerbosity Verbosity, const char* Message)
+{
+    if(Verbosity == LogVerbosity::Error)
+    {
+        ++GBarrierErrors;
+    }
+    if(Message && std::strstr(Message, "barrier probe destroyed") != nullptr)
+    {
+        ++GProbeDestroyCount;
+    }
+}
+
+static void TestModuleAllocationBarrier()
+{
+    std::printf("[module allocation barrier]\n");
+
+    Expect(appCreateDirectories(GWatchDir), "the module scratch directory is created");
+    Expect(StageVariant(CORE_SMOKE_MODULE_A), "variant A is staged at the watched path");
+
+    GProbeDestroyCount = 0;
+    GBarrierErrors     = 0;
+    SetLogHandler(&BarrierLogHandler);
+
+    const uint64_t TrackedBefore = Memory::GetTrackedObjectCount();
+
+    {
+        ModuleManager Manager(GShadowRoot);
+        Manager.SetSettleSeconds(0.0f);
+
+        Expect(Manager.RegisterModule("Example", GWatchedPath), "the module registers");
+        Expect(Manager.LoadModule("Example"), "the module loads");
+
+        // The module allocated through EngineCore.dll, so the HOST's object
+        // table is what holds it. If CORE_SHARED had produced two copies of the
+        // memory subsystem, this count would not have moved.
+        Expect(Memory::GetTrackedObjectCount() == TrackedBefore + 1,
+               "the module's allocation landed in the host's object table");
+        Expect(GProbeDestroyCount == 0, "and is still alive while the module is loaded");
+
+        Expect(Manager.UnloadModule("Example"), "the module unloads");
+
+        /*
+         * THE WHOLE POINT. The probe's destructor lives in the module image.
+         * If the barrier had not run before appDLLClose, this message would
+         * never arrive -- and the object would sit in the object table with a
+         * Destruct pointer into unmapped memory, waiting to take the next
+         * collect down with it.
+         */
+        Expect(GProbeDestroyCount == 1,
+               "the leaked object was destroyed at unload, while the module's code was still mapped");
+        Expect(Memory::GetTrackedObjectCount() == TrackedBefore,
+               "and its memory went back to the pool it came from");
+        Expect(GBarrierErrors > 0,
+               "the module's leak was reported, not silently cleaned up behind it");
+    }
+
+    /*
+     * The second half of the barrier's job. The module left a file-scope TRef
+     * pointing at the probe; its node is still in a list EngineCore owns, and
+     * its target must have been cleared. If it had been left pointing at the
+     * freed block, this collect would follow it.
+     */
+    Memory::CollectGarbage();
+    Expect(Memory::GetTrackedObjectCount() == TrackedBefore,
+           "a collect after the module is gone finds nothing left of it");
+
+    SetLogHandler(nullptr);
+    appFileDelete(GWatchedPath);
+}
+
 #endif //CORE_SMOKE_MODULE_A
+
+// --- memory: pools, Alloc/Dealloc, smart pointers, the collector -----------
+
+/*
+ * The cases below are chosen from the failure modes the memory design calls
+ * out, not for coverage's sake -- the same rule the rest of this file follows.
+ * Where a test asserts that something is REFUSED, it also asserts that the
+ * refusal was logged: a silent refusal and a silent success are the same thing
+ * from a call site's point of view, and the log is the only difference.
+ */
+
+static int GMemoryLogErrors = 0;
+
+static void MemoryTestLogHandler(const LogVerbosity Verbosity, const char* /*Message*/)
+{
+    if(Verbosity == LogVerbosity::Error || Verbosity == LogVerbosity::Fatal)
+    {
+        ++GMemoryLogErrors;
+    }
+}
+
+namespace
+{
+    int GCountedLive     = 0;
+    int GCountedDestroyed = 0;
+
+    struct Counted
+    {
+        int Value = 0;
+
+        Counted() { ++GCountedLive; }
+        explicit Counted(const int InValue) : Value(InValue) { ++GCountedLive; }
+        ~Counted() { --GCountedLive; ++GCountedDestroyed; }
+    };
+
+    struct alignas(64) WideAligned
+    {
+        double Values[8] = {};
+    };
+
+    /* A node that can point at another node -- the shape a reference cycle
+     * needs, and the shape the collector's edge discovery has to see through. */
+    struct GraphNode
+    {
+        int                    Id = 0;
+        TRef<GraphNode>        Other;
+
+        explicit GraphNode(const int InId) : Id(InId) { ++GCountedLive; }
+        ~GraphNode() { --GCountedLive; ++GCountedDestroyed; }
+    };
+
+    void ResetCounters()
+    {
+        GCountedLive      = 0;
+        GCountedDestroyed = 0;
+        GMemoryLogErrors  = 0;
+    }
+}
+
+static void TestVirtualMemory()
+{
+    std::printf("[memory/vm]\n");
+
+    const size_t Page = appMemPageSize();
+    Expect(Page >= 4096 && (Page & (Page - 1)) == 0, "page size is a sensible power of two");
+
+    // 64MB of ADDRESS SPACE. If this were a malloc the process would be 64MB
+    // heavier; the whole point of the seam is that it is not.
+    const size_t ReserveBytes = 64u * 1024u * 1024u;
+    void* const  Base         = appMemReserve(ReserveBytes);
+    Expect(Base != nullptr, "a 64MB reservation succeeds");
+
+    if(Base)
+    {
+        Expect(appMemCommit(Base, Page), "one page commits");
+
+        uint8_t* const Bytes = static_cast<uint8_t*>(Base);
+        Bytes[0]        = 0xAB;
+        Bytes[Page - 1] = 0xCD;
+        Expect(Bytes[0] == 0xAB && Bytes[Page - 1] == 0xCD, "committed memory is readable and writable");
+
+        // Committing an already-committed range must be a no-op rather than a
+        // failure -- pools rely on that to commit greedily without tracking
+        // page boundaries themselves.
+        Expect(appMemCommit(Base, Page), "re-committing an already-committed page succeeds");
+        Expect(Bytes[0] == 0xAB, "re-committing does not clear what was already there");
+
+        Expect(appMemDecommit(Base, Page), "the page decommits");
+        Expect(appMemCommit(Base, Page), "the same range re-commits after a decommit");
+
+#if defined(_WIN32)
+        /*
+         * Windows guarantees a freshly committed page reads as zero, so this
+         * proves the decommit actually released the pages rather than being a
+         * silent no-op. NOT asserted on POSIX: MADV_DONTNEED is advisory on
+         * macOS and may keep the contents, which is exactly why
+         * CorePlatform.h specifies them as LOST rather than as ZERO.
+         */
+        Expect(Bytes[0] == 0 && Bytes[Page - 1] == 0, "decommit really released the pages");
+#endif
+
+        appMemRelease(Base, ReserveBytes);
+    }
+}
+
+static void TestMemoryPools()
+{
+    std::printf("[memory/pools]\n");
+
+    ResetCounters();
+    SetLogHandler(&MemoryTestLogHandler);
+
+    // --- HeapMemoryPool: accounting over the CRT ---------------------------
+    {
+        HeapMemoryPool Heap("SmokeHeap");
+        const PoolID   Id = RegisterMemoryPool(&Heap);
+        Expect(Id != POOL_Invalid && Id != POOL_Default, "a pool registers into a non-default slot");
+        Expect(FindMemoryPool("SmokeHeap") == Id, "a pool is findable by name");
+        Expect(FindMemoryPool("NoSuchPool") == POOL_Invalid, "an unknown name yields POOL_Invalid");
+
+        void* Block = Heap.Allocate(128, 16);
+        Expect(Block != nullptr, "the heap pool allocates");
+        Expect(reinterpret_cast<uintptr_t>(Block) % 16 == 0, "the heap pool honours alignment");
+
+        MemoryPoolStats Stats;
+        Heap.GetStats(Stats);
+        Expect(Stats.LiveAllocations == 1 && Stats.BytesInUse == 128, "the heap pool counts what it hands out");
+
+        // A pool with memory still out cannot be unregistered: every live
+        // block's header names this slot, and clearing it would make them
+        // unfreeable.
+        const int ErrorsBefore = GMemoryLogErrors;
+        UnregisterMemoryPool(Id);
+        Expect(GMemoryLogErrors > ErrorsBefore, "unregistering a pool with live allocations is refused and logged");
+        Expect(GetMemoryPool(Id) == &Heap, "the refused unregister left the slot intact");
+
+        Heap.Deallocate(Block, 128, 16);
+        Heap.GetStats(Stats);
+        Expect(Stats.LiveAllocations == 0 && Stats.BytesInUse == 0, "freeing returns the pool to empty");
+
+        UnregisterMemoryPool(Id);
+        Expect(GetMemoryPool(Id) == nullptr, "an empty pool unregisters");
+    }
+
+    // --- FixedBlockPool: one size class, reuse, exhaustion -----------------
+    {
+        FixedBlockPool Fixed("SmokeFixed", 64, 16, 4);
+
+        void* A = Fixed.Allocate(64, 16);
+        void* B = Fixed.Allocate(64, 16);
+        void* C = Fixed.Allocate(64, 16);
+        void* D = Fixed.Allocate(64, 16);
+        Expect(A && B && C && D, "the fixed pool hands out its whole capacity");
+        Expect(Fixed.Allocate(64, 16) == nullptr, "an exhausted fixed pool returns null rather than corrupting");
+
+        Expect(Fixed.Owns(A), "Owns recognises a block it handed out");
+        Expect(!Fixed.Owns(&Fixed), "Owns rejects a foreign pointer");
+        Expect(!Fixed.Owns(static_cast<uint8_t*>(A) + 8), "Owns rejects an interior pointer");
+
+        // The free list has to actually work -- a pool that never reuses is a
+        // pool that exhausts at its capacity and stays there.
+        Fixed.Deallocate(B, 64, 16);
+        void* Reused = Fixed.Allocate(64, 16);
+        Expect(Reused == B, "a freed block is reused");
+
+        Expect(Fixed.Allocate(65, 16) == nullptr, "a request larger than the block size is refused");
+        Expect(Fixed.Allocate(64, 32) == nullptr, "a request aligned harder than the block is refused");
+
+        MemoryPoolStats Stats;
+        Fixed.GetStats(Stats);
+        Expect(Stats.BytesReserved > 0, "the fixed pool reserved address space");
+        Expect(Stats.BytesCommitted <= Stats.BytesReserved, "it committed no more than it reserved");
+
+        Fixed.Deallocate(A, 64, 16);
+        Fixed.Deallocate(C, 64, 16);
+        Fixed.Deallocate(D, 64, 16);
+        Fixed.Deallocate(Reused, 64, 16);
+    }
+
+    // --- LinearMemoryPool: bump, and the reset that runs no destructors ----
+    {
+        LinearMemoryPool Linear("SmokeLinear", 1024u * 1024u);
+
+        void* A = Linear.Allocate(100, 16);
+        void* B = Linear.Allocate(100, 16);
+        Expect(A && B && A != B, "the linear pool bumps");
+        Expect(reinterpret_cast<uintptr_t>(B) % 16 == 0, "the bump respects alignment");
+        Expect(Linear.GetBytesUsed() >= 200, "the bump advanced");
+
+        // Documented behaviour, asserted so it cannot drift: an individual
+        // free reclaims nothing at all.
+        const size_t UsedBefore = Linear.GetBytesUsed();
+        Linear.Deallocate(A, 100, 16);
+        Expect(Linear.GetBytesUsed() == UsedBefore, "Deallocate on a bump allocator is a no-op");
+
+        Linear.Reset();
+        Expect(Linear.GetBytesUsed() == 0, "Reset rewinds the whole arena");
+
+        void* AfterReset = Linear.Allocate(100, 16);
+        Expect(AfterReset == A, "the arena hands the same addresses out again after a reset");
+    }
+
+    SetLogHandler(nullptr);
+}
+
+static void TestAllocDealloc()
+{
+    std::printf("[memory/alloc]\n");
+
+    ResetCounters();
+    SetLogHandler(&MemoryTestLogHandler);
+
+    // --- constructor forwarding and exactly-once destruction ---------------
+    {
+        Counted* Object = Memory::Alloc<Counted>(42);
+        Expect(Object != nullptr, "Alloc returns memory");
+        Expect(Object->Value == 42, "Alloc forwards constructor arguments");
+        Expect(GCountedLive == 1, "the object was constructed");
+
+        const AllocHeader* Header = Memory::GetHeader(Object);
+        Expect(Header != nullptr, "an Alloc'd pointer has a readable header");
+        Expect(Header && Header->SizeBytes == sizeof(Counted), "the header records the payload size");
+        Expect(Header && Header->Pool == POOL_Default, "a plain Alloc came from the default pool");
+        Expect(Header && Header->Destruct != nullptr, "a type with a destructor records one");
+
+        Memory::Dealloc(Object);
+        Expect(GCountedLive == 0 && GCountedDestroyed == 1, "Dealloc runs the destructor exactly once");
+    }
+
+    /*
+     * THE CASE THIS WHOLE DESIGN EXISTS FOR: allocate from a chosen pool, free
+     * with a Dealloc that was told nothing about it, and have the bytes go
+     * back to the right place. If the header round-trip is broken, this is
+     * where it shows.
+     */
+    {
+        HeapMemoryPool Heap("SmokeAllocPool");
+        const PoolID   Id = RegisterMemoryPool(&Heap);
+
+        Counted* Object = Memory::AllocIn<Counted>(Id, 7);
+        Expect(Object != nullptr && Object->Value == 7, "AllocIn constructs in the chosen pool");
+
+        MemoryPoolStats Stats;
+        Heap.GetStats(Stats);
+        Expect(Stats.LiveAllocations == 1, "the chosen pool -- not the default one -- provided the bytes");
+
+        const AllocHeader* Header = Memory::GetHeader(Object);
+        Expect(Header && Header->Pool == Id, "the header carries the pool id");
+
+        Memory::Dealloc(Object);        // note: no pool argument anywhere
+
+        Heap.GetStats(Stats);
+        Expect(Stats.LiveAllocations == 0 && Stats.BytesInUse == 0,
+               "Dealloc returned the bytes to the pool they came from, without being told which");
+
+        UnregisterMemoryPool(Id);
+    }
+
+    // --- over-aligned types ------------------------------------------------
+    {
+        WideAligned* Wide = Memory::Alloc<WideAligned>();
+        Expect(Wide != nullptr, "an over-aligned type allocates");
+        Expect(reinterpret_cast<uintptr_t>(Wide) % 64 == 0, "the payload is 64-byte aligned");
+        Expect(Memory::GetHeader(Wide) != nullptr, "the header survives the alignment padding");
+        Memory::Dealloc(Wide);
+    }
+
+    // --- arrays ------------------------------------------------------------
+    {
+        ResetCounters();
+
+        Counted* Items = Memory::AllocArray<Counted>(8);
+        Expect(Items != nullptr, "AllocArray allocates");
+        Expect(GCountedLive == 8, "every element was constructed");
+
+        Memory::DeallocArray(Items, 8);
+        Expect(GCountedLive == 0 && GCountedDestroyed == 8, "every element was destroyed exactly once");
+    }
+
+    // --- a bump allocator may not hold a type with a destructor ------------
+    {
+        ResetCounters();
+
+        LinearMemoryPool Linear("SmokeLinearRefuse", 64u * 1024u);
+        const PoolID     Id = RegisterMemoryPool(&Linear);
+
+        // Reset() would reclaim these bytes without running ~Counted, and
+        // silently not running a destructor is precisely the failure this
+        // check exists to prevent.
+        Counted* Refused = Memory::AllocIn<Counted>(Id, 1);
+        Expect(Refused == nullptr, "a type with a destructor is refused by a pool that cannot free");
+        Expect(GMemoryLogErrors > 0, "the refusal is logged rather than silent");
+        Expect(GCountedLive == 0, "nothing was constructed in the refused allocation");
+
+        // A trivially-destructible type is fine in the same pool: there is no
+        // destructor for Reset to skip.
+        int* Plain = Memory::AllocIn<int>(Id, 5);
+        Expect(Plain != nullptr && *Plain == 5, "a trivially-destructible type is accepted");
+
+        UnregisterMemoryPool(Id);
+    }
+
+    // --- a foreign pointer is not mistaken for an allocation ---------------
+    {
+        // Deliberately far inside a large buffer, so reading the 48 bytes in
+        // front of it stays comfortably in bounds -- see the hazard note on
+        // GetHeader.
+        std::vector<uint8_t> Foreign(4096, 0);
+        Expect(Memory::GetHeader(Foreign.data() + 2048) == nullptr,
+               "GetHeader rejects a pointer that is not a Core allocation");
+        Expect(Memory::GetHeader(nullptr) == nullptr, "GetHeader tolerates null");
+    }
+
+    SetLogHandler(nullptr);
+}
+
+static void TestSmartPointers()
+{
+    std::printf("[memory/pointers]\n");
+
+    ResetCounters();
+    SetLogHandler(&MemoryTestLogHandler);
+
+    // --- TUnique -----------------------------------------------------------
+    {
+        {
+            TUnique<Counted> A = MakeUnique<Counted>(3);
+            Expect(A.IsValid() && A->Value == 3, "MakeUnique constructs");
+            Expect(GCountedLive == 1, "one object is alive");
+
+            TUnique<Counted> B = std::move(A);
+            Expect(!A.IsValid() && B.IsValid(), "moving transfers ownership");
+            Expect(GCountedLive == 1, "moving neither copies nor destroys");
+        }
+        Expect(GCountedLive == 0 && GCountedDestroyed == 1,
+               "a moved-from TUnique does not double free, and the owner destroys once");
+
+        ResetCounters();
+        {
+            TUnique<Counted> A = MakeUnique<Counted>(1);
+            A.Reset();
+            Expect(GCountedDestroyed == 1 && !A.IsValid(), "Reset destroys and empties");
+            A.Reset();
+            Expect(GCountedDestroyed == 1, "Reset on an empty handle does nothing");
+        }
+    }
+
+    // --- TRef refcounting --------------------------------------------------
+    {
+        ResetCounters();
+        {
+            TRef<Counted> A = MakeRef<Counted>(9);
+            Expect(A.IsValid() && A->Value == 9, "MakeRef constructs");
+            Expect(A.GetStrongCount() == 1, "a fresh TRef holds the only reference");
+
+            {
+                TRef<Counted> B = A;
+                Expect(A.GetStrongCount() == 2, "copying a TRef adds a reference");
+                Expect(B.Get() == A.Get(), "both handles point at the same object");
+            }
+            Expect(A.GetStrongCount() == 1, "the copy released its reference");
+            Expect(GCountedLive == 1, "the object outlived the copy");
+
+            TRef<Counted> C = std::move(A);
+            Expect(!A.IsValid() && C.IsValid(), "moving a TRef transfers without touching the count");
+            Expect(C.GetStrongCount() == 1, "the move did not add a reference");
+        }
+        Expect(GCountedLive == 0 && GCountedDestroyed == 1,
+               "the object dies deterministically when the last TRef drops");
+    }
+
+    // --- self-assignment and reassignment ---------------------------------
+    {
+        ResetCounters();
+        TRef<Counted> A = MakeRef<Counted>(1);
+        TRef<Counted> B = MakeRef<Counted>(2);
+
+        A = A;                                  // must not destroy anything
+        Expect(GCountedDestroyed == 0 && A.IsValid(), "self-assignment is harmless");
+
+        A = B;
+        Expect(GCountedDestroyed == 1, "reassignment released the old target exactly once");
+        Expect(A->Value == 2 && B.GetStrongCount() == 2, "both handles now share the survivor");
+    }
+
+    // --- TWeakRef ----------------------------------------------------------
+    {
+        ResetCounters();
+
+        TWeakRef<Counted> Weak;
+        {
+            TRef<Counted> Strong = MakeRef<Counted>(5);
+            Weak = Strong;
+
+            Expect(!Weak.IsStale(), "a weak reference to a live object is not stale");
+
+            TRef<Counted> Pinned = Weak.Pin();
+            Expect(Pinned.IsValid() && Pinned->Value == 5, "Pin returns a usable handle");
+            Expect(Strong.GetStrongCount() == 2, "pinning takes a real reference");
+        }
+
+        Expect(GCountedDestroyed == 1, "the object died when the last strong handle dropped");
+        Expect(Weak.IsStale(), "the weak reference reports the object as gone");
+        Expect(!Weak.Pin().IsValid(), "pinning a dead object yields a null handle");
+
+        // The block is still allocated -- the weak reference is what is
+        // holding it -- so reading the header here must be safe rather than a
+        // use-after-free. Resetting is what finally releases it.
+        Weak.Reset();
+        Expect(!Weak.IsSet(), "resetting clears the weak reference");
+    }
+
+    SetLogHandler(nullptr);
+}
+
+static void TestGarbageCollection()
+{
+    std::printf("[memory/gc]\n");
+
+    ResetCounters();
+    SetLogHandler(&MemoryTestLogHandler);
+
+    Memory::SetCollectorThread();
+
+    const uint64_t Baseline = Memory::GetTrackedObjectCount();
+
+    // --- the case the collector exists for ---------------------------------
+    {
+        ResetCounters();
+        {
+            TRef<GraphNode> X = MakeRef<GraphNode>(1);
+            TRef<GraphNode> Y = MakeRef<GraphNode>(2);
+            X->Other = Y;
+            Y->Other = X;
+            Expect(X.GetStrongCount() == 2, "each cycle member is referenced twice");
+        }
+
+        // This is the whole justification for the file: reference counting
+        // cannot get here, no matter how careful the call site is.
+        Expect(GCountedDestroyed == 0, "a reference cycle is NOT reclaimed by refcounting");
+        Expect(Memory::GetTrackedObjectCount() == Baseline + 2, "both nodes are still tracked");
+
+        Memory::GCStats Stats;
+        Memory::CollectGarbage(&Stats);
+
+        Expect(GCountedDestroyed == 2, "the collector reclaims the cycle");
+        Expect(Stats.ObjectsCollected == 2, "and reports what it reclaimed");
+        Expect(Memory::GetTrackedObjectCount() == Baseline, "the object table is back to where it started");
+    }
+
+    // --- a stack TRef is a root -------------------------------------------
+    {
+        ResetCounters();
+
+        TRef<GraphNode> Live = MakeRef<GraphNode>(3);
+        Memory::CollectGarbage();
+        Expect(GCountedDestroyed == 0, "an object held by a stack TRef survives a collect");
+        Expect(Live.IsValid() && Live->Id == 3, "and is still usable afterwards");
+    }
+
+    /*
+     * --- edge discovery, not just root discovery ---
+     *
+     * Inner is referenced ONLY by a TRef living inside Outer's payload. It
+     * survives only if the mark phase followed that handle -- which is the
+     * mechanism the whole no-reflection design rests on. If edge discovery
+     * were broken, the root test above would still pass and this one would
+     * not.
+     */
+    {
+        ResetCounters();
+
+        TRef<GraphNode> Outer = MakeRef<GraphNode>(4);
+        Outer->Other = MakeRef<GraphNode>(5);
+        GraphNode* const InnerRaw = Outer->Other.Get();
+
+        Memory::CollectGarbage();
+
+        Expect(GCountedDestroyed == 0, "an object reachable only through a TRef inside another object survives");
+        Expect(Outer->Other.IsValid() && Outer->Other.Get() == InnerRaw, "the inner handle is unchanged");
+
+        // Dropping the outer handle makes both unreachable, and the refcount
+        // path -- not the collector -- should reclaim them, in order.
+        Outer.Reset();
+        Expect(GCountedDestroyed == 2, "dropping the outer reference destroys both without a collect");
+    }
+
+    // --- a weak reference does not keep an object reachable ----------------
+    {
+        ResetCounters();
+
+        TWeakRef<GraphNode> Weak;
+        {
+            TRef<GraphNode> Strong = MakeRef<GraphNode>(6);
+            Weak = Strong;
+            Strong->Other = Strong;             // a one-node cycle
+        }
+
+        Expect(GCountedDestroyed == 0, "the self-referencing node keeps itself alive");
+        Memory::CollectGarbage();
+        Expect(GCountedDestroyed == 1, "a TWeakRef is invisible to the mark phase, so the cycle is collected");
+        Expect(Weak.IsStale(), "the weak reference reports the collected object as gone");
+    }
+
+    // --- ReportLeaks -------------------------------------------------------
+    // A walk, not an assertion: it must be callable at any point in a process
+    // and must count what is genuinely outstanding right then.
+    {
+        TRef<GraphNode> Held = MakeRef<GraphNode>(7);
+        Expect(Memory::ReportLeaks() == Baseline + 1, "ReportLeaks counts a live tracked object");
+    }
+    Expect(Memory::ReportLeaks() == Baseline, "and reports nothing once it is gone");
+
+    Expect(Memory::GetTrackedObjectCount() == Baseline, "no tracked objects leaked out of the GC tests");
+
+    SetLogHandler(nullptr);
+}
+
+static void RunMemoryTests()
+{
+    TestVirtualMemory();
+    TestMemoryPools();
+    TestAllocDealloc();
+    TestSmartPointers();
+    TestGarbageCollection();
+}
 
 static void RunModuleTests()
 {
@@ -1223,6 +1840,7 @@ static void RunModuleTests()
     TestModuleSettleWindow();
     TestModuleAbiMismatch();
     TestModuleReloadRollback();
+    TestModuleAllocationBarrier();
 #else
     std::printf("[modules] skipped (CORE_SHARED off)\n");
 #endif
@@ -1247,6 +1865,7 @@ int main()
     TestConfigCallbacks();
     TestConfigFile();
     TestConfigConsole();
+    RunMemoryTests();
     RunModuleTests();
 
     // Restore the default handler so a failure below is not swallowed.

@@ -36,6 +36,9 @@ set( CORE_SOURCES
         Source/Private/Core/CoreModule.cpp
         Source/Private/Core/CoreModuleManager.cpp
         Source/Private/Core/CoreConfig.cpp
+        Source/Private/Core/CoreMemoryPool.cpp
+        Source/Private/Core/CoreMemory.cpp
+        Source/Private/Core/CoreGC.cpp
         Source/Public/Core/CoreAPI.h
         Source/Public/Core/CoreTypes.h
         Source/Public/Core/CoreLog.h
@@ -47,6 +50,11 @@ set( CORE_SOURCES
         Source/Public/Core/CoreModule.h
         Source/Public/Core/CoreModuleManager.h
         Source/Public/Core/CoreConfig.h
+        Source/Public/Core/CoreMemoryPool.h
+        Source/Public/Core/CoreMemory.h
+        Source/Public/Core/CorePointer.h
+        Source/Public/Core/CoreGC.h
+        Source/Private/Core/CoreMemoryInternal.h
 )
 
 # === Platform layer ===
