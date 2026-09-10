@@ -41,6 +41,7 @@
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreModule.h"
+#include "Public/Core/CorePointer.h"
 
 #include <cstring>
 
@@ -73,6 +74,41 @@ namespace
     /* The live instance's counters, published through a module-only export so
      * the test can observe them without a test-shaped virtual on IModule. */
     ExampleState GLiveState = {};
+
+    /*
+     * === The deliberate leak, for the unload barrier ======================
+     *
+     * A module allocating a GC-tracked object with a real destructor and never
+     * releasing it is the exact violation CoreModule.h forbids: after
+     * appDLLClose, the Destruct pointer in that object's header aims at
+     * unmapped memory, and the next sweep to touch it jumps into nothing.
+     *
+     * Memory::OnImageUnloading is supposed to destroy it first, while this
+     * code is still mapped. Proving that it did is awkward, because by the
+     * time the test can look, this module and any counter in it are gone --
+     * so the destructor announces itself through CORE_LOG instead. That
+     * reaches the handler the EXECUTABLE installed, synchronously, and the
+     * test counts the message.
+     *
+     * The TRef below is at file scope on purpose. It leaves a handle node in a
+     * list EngineCore owns, which is the second half of what the barrier has
+     * to get right: the node's target must be cleared before this DLL detaches,
+     * or ~TRef releases a reference through a header that has already been
+     * freed.
+     */
+    struct BarrierProbe
+    {
+        int Id = 0;
+
+        explicit BarrierProbe(const int InId) : Id(InId) {}
+
+        ~BarrierProbe()
+        {
+            CORE_LOG("ExampleHotModule barrier probe destroyed")
+        }
+    };
+
+    EngineCore::TRef<BarrierProbe> GLeakedProbe;
 }
 
 class ExampleHotModule : public EngineCore::IModule
@@ -110,6 +146,13 @@ public:
         // If the executable's handler receives this, there is exactly one
         // GLogHandler in the process and CORE_SHARED did its job.
         CORE_LOG(std::string("ExampleHotModule ") + EXAMPLE_MODULE_VARIANT_STRING + " startup");
+
+        // Allocated HERE, in OnStartup, and never released -- see the note on
+        // BarrierProbe. Allocating from a file-scope constructor instead would
+        // land before NimbleModuleCreate has claimed this image's id, and the
+        // block would be stamped IMAGE_Host and escape the barrier entirely.
+        GLeakedProbe = EngineCore::MakeRef<BarrierProbe>(int(GLiveState.StartupCount));
+
         return true;
     }
 

@@ -444,4 +444,80 @@ ThreadID appThreadID()
 {
     return ThreadID(::GetCurrentThreadId());
 }
+
+// === Virtual memory =========================================================
+
+size_t appMemPageSize()
+{
+    /*
+     * dwPageSize, NOT dwAllocationGranularity.
+     *
+     * The two differ on Windows -- 4KB against 64KB -- and they answer
+     * different questions. Granularity is the spacing VirtualAlloc will place
+     * separate RESERVATIONS at; page size is the unit COMMIT operates in.
+     * Callers here use this to round commit ranges, so it is the page size they
+     * need. Rounding commits to 64KB instead would commit up to 60KB of
+     * untouched memory per grow, which is precisely the waste reserve/commit
+     * exists to avoid.
+     */
+    SYSTEM_INFO Info;
+    ::GetSystemInfo(&Info);
+    return size_t(Info.dwPageSize);
+}
+
+void* appMemReserve(const size_t InBytes)
+{
+    if(InBytes == 0)
+    {
+        return nullptr;
+    }
+
+    // MEM_RESERVE alone: address space, no pages, no backing store charged.
+    // PAGE_NOACCESS because a reserved-but-uncommitted page is unreadable
+    // anyway -- naming the protection here documents intent and costs nothing;
+    // the real protection is set by the commit below.
+    return ::VirtualAlloc(nullptr, InBytes, MEM_RESERVE, PAGE_NOACCESS);
+}
+
+bool appMemCommit(void* InBase, const size_t InBytes)
+{
+    if(!InBase || InBytes == 0)
+    {
+        return false;
+    }
+
+    /*
+     * VirtualAlloc rounds the range out to page boundaries itself, so no
+     * arithmetic is needed here to honour the header's "rounded up internally"
+     * promise. It also succeeds on an already-committed range rather than
+     * failing, which is what lets a pool commit greedily.
+     */
+    return ::VirtualAlloc(InBase, InBytes, MEM_COMMIT, PAGE_READWRITE) != nullptr;
+}
+
+bool appMemDecommit(void* InBase, const size_t InBytes)
+{
+    if(!InBase || InBytes == 0)
+    {
+        return false;
+    }
+
+    // MEM_DECOMMIT, never MEM_RELEASE: the address range must stay reserved so
+    // that a later commit gets the same addresses back. MEM_RELEASE here would
+    // hand the range to the next unrelated reservation in the process and turn
+    // every pointer the pool handed out into a pointer at somebody else's data.
+    return ::VirtualFree(InBase, InBytes, MEM_DECOMMIT) != FALSE;
+}
+
+void appMemRelease(void* InBase, const size_t /*InBytes*/)
+{
+    if(InBase)
+    {
+        // MEM_RELEASE requires a size of 0 and the exact base returned by the
+        // reservation -- passing the real length is an error on Windows. The
+        // parameter is still in the signature because munmap needs it; see the
+        // PAIRING RULE in CorePlatform.h.
+        ::VirtualFree(InBase, 0, MEM_RELEASE);
+    }
+}
 }
