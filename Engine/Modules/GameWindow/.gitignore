@@ -1,0 +1,48 @@
+# ===========================================================================
+# GameWindow .gitignore
+#
+# The module itself produces nothing that needs ignoring -- it has no
+# standalone configure, so there is no Build/ tree inside it. This file exists
+# for the vendored SDL tree under External/.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# SDL's examples and test suite are not vendored -- 450 files and ~17 MB that
+# this engine never builds.
+#
+# Both are gated in SDL's own CMakeLists, and both gates are forced OFF in
+# ours: add_subdirectory(examples) happens only under if(SDL_EXAMPLES), and
+# add_subdirectory(test) only under if(SDL_TESTS). Turning either on against
+# this checkout fails the configure with a missing-directory error, which is
+# the intended outcome -- the directories genuinely are not here.
+#
+# NOT excluded, and easy to confuse with the above: src/test/. That is where
+# the SDL3_test library's sources actually live (SDL globs
+# src/test/*.c for it), so it stays tracked. The pattern below is anchored to
+# this module's root and does not reach it.
+#
+# The VisualC/ paths are the .vcxproj files that BUILD the examples and tests
+# -- useless without the sources, and VisualC/VisualC/ is a nested duplicate
+# that exists upstream. Every path is listed explicitly rather than as a bare
+# "examples/" or "test/" pattern, which would be a standing trap for any future
+# SDL directory that happens to share the name.
+#
+# Xcode/SDLTest is deliberately KEPT despite the name. Unlike VisualC/tests it
+# is a mixed project: it builds the SDL3_test library from src/test/ as well as
+# the test programs, so dropping it would take a project for code we still
+# vendor. VisualC/SDL_test, the equivalent for the library alone, is kept for
+# the same reason.
+#
+# Everything else in the SDL tree IS committed, including the 14 files SDL's
+# own .gitignore would drop (the pkg-support *Config.cmake files and the .hlsl
+# shader sources, which needed git add -f). A vendored dependency should be a
+# faithful copy of what was extracted; filtering it through the upstream
+# project's development-time ignore rules produces a tree that silently differs
+# from the release and makes the next version bump diff against phantom
+# changes.
+# ---------------------------------------------------------------------------
+/External/SDL-release-3.4.16/examples/
+/External/SDL-release-3.4.16/test/
+/External/SDL-release-3.4.16/VisualC/examples/
+/External/SDL-release-3.4.16/VisualC/tests/
+/External/SDL-release-3.4.16/VisualC/VisualC/

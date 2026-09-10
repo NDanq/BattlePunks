@@ -106,3 +106,9 @@ add_subdirectory(Modules/Core)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GDI/CMakeLists.txt")
     add_subdirectory(Modules/GDI)
 endif()
+
+# GameWindow is not a subtree -- it is written for this repository -- but it is
+# guarded the same way so a checkout without it still configures.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GameWindow/CMakeLists.txt")
+    add_subdirectory(Modules/GameWindow)
+endif()
