@@ -38,9 +38,22 @@ namespace EngineCore
     using Real = double;
 
     /*
-     * Opaque native window handle -- an HWND on Windows, an NSView* on macOS,
-     * an SDL_Window* under SDL. GDI passes these through to the platform layer
-     * and never dereferences them; the Qt bridge produces one from a QWindow*.
+     * Opaque NATIVE window handle -- an HWND on Windows, an NSView* on macOS.
+     * GDI passes these through to the platform layer and never dereferences
+     * them; the Qt bridge produces one from a QWindow*.
+     *
+     * NEVER A TOOLKIT HANDLE. This holds what the OS considers a window, not
+     * what a windowing library wraps it in -- not a QWindow*, and (the case
+     * that actually came up) not an SDL_Window*. An SDL host stores the HWND
+     * it pulls out of SDL, not the SDL_Window it pulled it from.
+     *
+     * That is not a preference, it is what the consumers already assume.
+     * GDIPlatformWindows.cpp's ToHWND() does an unguarded
+     * reinterpret_cast<HWND>(InWindow.Native), and every GL context and Vulkan
+     * surface call in that file routes through it. A toolkit pointer stored
+     * here compiles clean, passes IsValid(), and then fails somewhere inside
+     * wglCreateContext or vkCreateWin32SurfaceKHR with nothing pointing back
+     * at the assignment that was actually wrong.
      */
     struct WindowHandle
     {
