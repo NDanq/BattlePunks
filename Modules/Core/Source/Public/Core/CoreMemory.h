@@ -136,7 +136,21 @@ namespace EngineCore
          * is still holding a pointer to. The flag makes the refcount path
          * decrement and stop, leaving the release to the phase that owns it.
          */
-        AF_Sweeping  = 1u << 4
+        AF_Sweeping  = 1u << 4,
+
+        /*
+         * This block was counted against its image's live-allocation total,
+         * so Free must uncount it.
+         *
+         * Not every block is. An allocation from a pool that cannot free
+         * individual blocks -- a frame arena -- is reclaimed by Reset() and
+         * never passes through Free at all, so counting it would ratchet the
+         * total up forever and report a module using a frame arena as leaking
+         * every frame's scratch. Those blocks are necessarily
+         * trivially-destructible (Allocate enforces it), which is exactly the
+         * category the barrier's report does not care about.
+         */
+        AF_ImageCounted = 1u << 5
     };
 
     /*
@@ -305,9 +319,36 @@ namespace Memory
      * object, to optimise a case that is rare. If it ever stops being rare,
      * that is the change to make.
      *
-     *   StrongCount 1 -> 0 : run the destructor, set AF_Destroyed;
-     *                        free the block if WeakCount is also 0
-     *   WeakCount   1 -> 0 : free the block if the payload is already destroyed
+     * THE IMPLICIT WEAK REFERENCE -- the part that is not obvious
+     *
+     * A tracked object is born with StrongCount 1 AND WeakCount 1. That second
+     * one belongs to nobody: the strong count holds it collectively, and gives
+     * it up only after the destructor has finished running.
+     *
+     * Without it this is a use-after-free, and a very ordinary one. A parent
+     * node holding a strong reference to a child, and the child holding a
+     * TWeakRef back at the parent, is the most natural shape there is. Drop
+     * the last handle to the parent and:
+     *
+     *   parent's StrongCount hits 0  -> ~Parent() starts
+     *     ~Parent() destroys its child reference
+     *       child's count hits 0     -> ~Child() runs
+     *         ~Child() drops its TWeakRef at the parent
+     *           parent's WeakCount hits 0 -> THE PARENT'S BLOCK IS FREED
+     *     ...and ~Parent() carries on destroying members of freed memory.
+     *
+     * The implicit reference makes that count bottom out at 1 instead of 0, so
+     * the block cannot go away while the destructor that owns it is still on
+     * the stack. std::shared_ptr does exactly this, for exactly this reason.
+     *
+     * GetWeakCount() subtracts it, so callers see the number of TWeakRefs they
+     * actually created.
+     *
+     *   StrongCount 1 -> 0 : run the destructor, set AF_Destroyed, then
+     *                        release the implicit weak reference
+     *   WeakCount   1 -> 0 : free the block -- reaching zero already implies
+     *                        the payload was destroyed, because the strong
+     *                        count would otherwise still be holding one
      */
     CORE_API void AddStrongRef    (void* InPtr);
     CORE_API void ReleaseStrongRef(void* InPtr);
