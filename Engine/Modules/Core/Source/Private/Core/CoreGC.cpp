@@ -351,28 +351,28 @@ void CollectGarbage(GCStats* OutStats)
         Stats.BytesCollected += Header->SizeBytes;
         ++Stats.ObjectsCollected;
 
-        Header->Flags &= ~uint8_t(AF_Sweeping);
-
         /*
          * Force the strong count to zero. These objects are unreachable BY
          * DEFINITION -- that is what the mark phase just proved -- so a
          * nonzero count here is the cycle's own self-reference and nothing
-         * else. Leaving it set would make ReleaseWeakRef below refuse to free
-         * the block forever.
+         * else.
          */
         Header->StrongCount.store(0, std::memory_order_relaxed);
 
-        if(Header->WeakCount.load(std::memory_order_relaxed) == 0)
-        {
-            Free(PayloadOf(Header));
-        }
-        else
-        {
-            // A TWeakRef still points here. The payload is dead but the block
-            // has to stay readable until that weak reference goes away, so
-            // hand it over to ReleaseWeakRef and take it out of the table.
-            Internal::UntrackObject(Header);
-        }
+        // Out of the table before the block can go away, and while the header
+        // is still guaranteed readable.
+        Internal::UntrackObject(Header);
+
+        Header->Flags &= ~uint8_t(AF_Sweeping);
+
+        /*
+         * Drop the implicit weak reference the strong count was holding, which
+         * is what actually frees the block -- unless a real TWeakRef still
+         * points here, in which case the payload is dead but the bytes stay
+         * readable until that reference goes away. Either outcome falls out of
+         * the one call; see THE IMPLICIT WEAK REFERENCE in CoreMemory.h.
+         */
+        ReleaseWeakRef(PayloadOf(Header));
     }
 
     GCollecting = false;
@@ -524,19 +524,17 @@ uint64_t OnImageUnloading(const ImageID InImage)
                            " strong) at unload; destroying it anyway -- the module leaked it")
         }
 
+        // Same three-step shape as the sweep, and for the same reason: flag
+        // first so a destructor dropping a reference back into this set
+        // decrements and stops, release the bytes only once it has run.
         Header->Flags |= AF_Sweeping;
         DestroyObject(PayloadOf(Header));
-        Header->Flags &= ~uint8_t(AF_Sweeping);
-        Header->StrongCount.store(0, std::memory_order_relaxed);
 
-        if(Header->WeakCount.load(std::memory_order_relaxed) == 0)
-        {
-            Free(PayloadOf(Header));
-        }
-        else
-        {
-            Internal::UntrackObject(Header);
-        }
+        Header->StrongCount.store(0, std::memory_order_relaxed);
+        Internal::UntrackObject(Header);
+        Header->Flags &= ~uint8_t(AF_Sweeping);
+
+        ReleaseWeakRef(PayloadOf(Header));
 
         ++Destroyed;
     }
