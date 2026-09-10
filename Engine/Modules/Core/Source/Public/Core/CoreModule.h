@@ -6,6 +6,14 @@
 
 #include "Public/Core/CoreAPI.h"
 
+/* For GImageID and Memory::ClaimImageID, which NIMBLE_IMPLEMENT_MODULE emits
+ * a call to. A heavier include than this header would otherwise want, and the
+ * reason it is here anyway is the unload barrier: a module that does not claim
+ * an image id allocates as IMAGE_Host, and ModuleManager then has no way to
+ * destroy its objects before its code is unmapped. See MEMORY AND IMAGE
+ * IDENTITY at the bottom of this file. */
+#include "Public/Core/CoreMemory.h"
+
 /*
  * The hot-reload module contract: what a swappable DLL must implement, and
  * what the host may assume about it.
@@ -347,6 +355,11 @@ namespace EngineCore
     }                                                                                     \
     extern "C" NIMBLE_MODULE_API ::EngineCore::IModule* NimbleModuleCreate()              \
     {                                                                                     \
+        if(::EngineCore::GImageID == ::EngineCore::IMAGE_Host)                            \
+        {                                                                                 \
+            ::EngineCore::GImageID =                                                      \
+                ::EngineCore::Memory::ClaimImageID(ModuleNameLiteral);                    \
+        }                                                                                 \
         return new ClassName();                                                           \
     }                                                                                     \
     extern "C" NIMBLE_MODULE_API void NimbleModuleDestroy(::EngineCore::IModule* InModule) \
@@ -357,5 +370,45 @@ namespace EngineCore
 /* Exactly one per DLL, at file scope, outside any namespace. */
 #define NIMBLE_IMPLEMENT_MODULE(ClassName, ModuleNameLiteral) \
     NIMBLE_IMPLEMENT_MODULE_VERSIONED(ClassName, ModuleNameLiteral, ::EngineCore::NIMBLE_MODULE_ABI_VERSION)
+
+/*
+ * ===========================================================================
+ * MEMORY AND IMAGE IDENTITY
+ * ===========================================================================
+ *
+ * "Nothing a module allocates outlives the module" is stated as a rule at the
+ * top of this file, and until the memory subsystem existed nothing enforced
+ * it. Now something does, and this is how it hangs together.
+ *
+ * NimbleModuleCreate above claims an ImageID and stores it in GImageID, of
+ * which the module has its own copy (see the note on CORE_API_LOCAL in
+ * CoreMemory.h). Every subsequent Alloc/MakeRef in that module stamps its
+ * blocks with that id. At teardown, ModuleManager calls
+ * Memory::OnImageUnloading BETWEEN destroying the module instance and closing
+ * the library -- so the destructors run while the code that implements them is
+ * still mapped.
+ *
+ * WHY THE CLAIM IS NOT AN ABI CHANGE
+ *
+ * It adds no exported symbol and changes no layout; it is a statement in the
+ * body of a function that already existed. MODULE_ABI_REVISION therefore does
+ * not move, and a module DLL built before this existed still loads -- it
+ * simply allocates as IMAGE_Host and is exempt from the barrier, which is
+ * exactly the behaviour it had before.
+ *
+ * THE GAP, STATED PLAINLY
+ *
+ * A module's FILE-SCOPE CONSTRUCTORS run during LoadLibrary, before
+ * NimbleModuleCreate is called. Anything they allocate is stamped IMAGE_Host
+ * and the barrier will not clean it up.
+ *
+ * Claiming the id earlier does not fix this: a file-scope claim object would
+ * be subject to exactly the static-initialisation-order problem CoreConfig.h
+ * describes, and would be no more likely to run first than the constructor it
+ * is trying to precede. The real answer is the one that header already gives
+ * -- do not allocate from a file-scope constructor in a module. Declare a
+ * ConfigVar (which allocates nothing by design) and do the work in OnStartup,
+ * where the module is fully alive and the barrier covers everything.
+ */
 
 #endif //ENGINECORE_COREMODULE_H

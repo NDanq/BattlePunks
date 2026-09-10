@@ -176,6 +176,14 @@ namespace EngineCore
             LogHandler     LogHandlerAtLoad = nullptr;
             IFileProvider* ProviderAtLoad   = nullptr;
 
+            /* The memory image this generation claimed, sampled straight after
+             * NimbleModuleCreate (which is what claims it). The third registry
+             * Core owns, and the one that cannot be looked up at teardown: by
+             * then NimbleModuleDestroy has returned and the module cannot be
+             * asked anything. See Memory::OnImageUnloading. IMAGE_Host means a
+             * module built before image tagging existed. */
+            ImageID        LoadedImage      = IMAGE_Host;
+
             uint32_t     Generation  = 0;
             uint32_t     ReloadCount = 0;
             EModuleState ModuleState = EModuleState::MS_Unloaded;

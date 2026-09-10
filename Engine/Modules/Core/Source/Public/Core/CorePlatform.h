@@ -149,6 +149,56 @@ namespace EngineCore
     // process's.
 
     CORE_API uint32_t appProcessID();
+
+    // === Virtual memory =====================================================
+    // Reserve/commit, as distinct from malloc. This exists for the pool
+    // allocators in CoreMemoryPool.h, which want a large CONTIGUOUS address
+    // range whose pointers stay valid as the pool grows, without paying for
+    // physical pages that are never touched.
+    //
+    // malloc cannot express that. A 256MB malloc either commits 256MB or is a
+    // lie the OS tells until first touch, depending on the platform, and a
+    // realloc to grow it is free to MOVE the block -- which would invalidate
+    // every pointer a pool has already handed out. Reserving the address range
+    // up front and committing into it as the pool grows is the only way to get
+    // "grows on demand" and "pointers never move" at the same time.
+    //
+    // WHY THIS IS BEHIND THE SEAM AND _aligned_malloc IS NOT
+    //
+    // VirtualAlloc and mmap are OS APIs and fall squarely under the rule at the
+    // top of this file. _aligned_malloc vs std::aligned_alloc is CRT
+    // divergence, not OS divergence -- CoreModule.cpp already calls
+    // std::realloc directly -- so that one stays as an #if inside
+    // CoreMemory.cpp rather than growing a seam function here.
+    //
+    // SIZES ARE ROUNDED UP INTERNALLY to page granularity, so a caller never
+    // has to know the page size to use these correctly; appMemPageSize() is
+    // for pools that want to CHOOSE a size, not for pools that must.
+    //
+    // PAIRING RULE: appMemRelease takes the same base AND the same size that
+    // were handed to appMemReserve. Windows' VirtualFree(MEM_RELEASE) ignores
+    // the length and POSIX' munmap requires it, so the seam takes the union of
+    // what the two need. Releasing a sub-range of a reservation is not
+    // expressible here and must not be attempted.
+
+    CORE_API size_t appMemPageSize();
+
+    /* Address space only -- no physical pages, no readable memory. nullptr on failure. */
+    CORE_API void*  appMemReserve(size_t InBytes);
+
+    /* Backs [InBase, InBase+InBytes) with pages and makes it readable/writable.
+     * The range must lie inside one reservation. Committing an already-committed
+     * range is legal and is a no-op, which is what lets a pool commit greedily
+     * without tracking page boundaries itself. Newly committed pages read as
+     * zero on both platforms. */
+    CORE_API bool   appMemCommit(void* InBase, size_t InBytes);
+
+    /* Returns the physical pages, keeping the address range reserved. The
+     * contents are LOST -- a subsequent commit of the same range reads as zero,
+     * it does not restore what was there. */
+    CORE_API bool   appMemDecommit(void* InBase, size_t InBytes);
+
+    CORE_API void   appMemRelease(void* InBase, size_t InBytes);
 }
 
 #endif //ENGINECORE_COREPLATFORM_H
