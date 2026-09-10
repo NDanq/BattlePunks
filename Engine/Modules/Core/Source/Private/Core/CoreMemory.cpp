@@ -277,17 +277,38 @@ void* Allocate(const size_t     InBytes,
     Header->Pool        = InPool;
     Header->Flags       = InFlags;
 
-    // A tracked object is born with one strong reference: the TRef that
-    // MakeRef is about to return. An untracked one has no refcount at all.
-    Header->StrongCount.store((InFlags & AF_GCTracked) ? 1u : 0u, std::memory_order_relaxed);
-    Header->WeakCount.store(0u, std::memory_order_relaxed);
+    /*
+     * A tracked object is born with one strong reference -- the TRef that
+     * MakeRef is about to return -- and one WEAK reference, which nobody owns.
+     * That second one is THE IMPLICIT WEAK REFERENCE described in
+     * CoreMemory.h: the strong count holds it collectively and gives it up
+     * only after the destructor has run. Without it, a destructor that drops
+     * the last TWeakRef aimed at its own object frees the block it is still
+     * running inside.
+     *
+     * An untracked allocation has no reference counting at all; Dealloc frees
+     * it outright.
+     */
+    const bool bTracked = (InFlags & AF_GCTracked) != 0;
+    Header->StrongCount.store(bTracked ? 1u : 0u, std::memory_order_relaxed);
+    Header->WeakCount.store  (bTracked ? 1u : 0u, std::memory_order_relaxed);
 
     if(InFlags & AF_GCTracked)
     {
         Internal::TrackObject(Header);
     }
 
-    Internal::NoteImageAllocation(Header->OwningImage);
+    /*
+     * Only count blocks that will actually come back through Free. A frame
+     * arena's blocks never do -- Reset() reclaims them wholesale -- so
+     * counting them would ratchet the image's total up every frame and make
+     * the unload barrier report a leak that is not one. See AF_ImageCounted.
+     */
+    if(!Pool || (Pool->GetCapabilities() & PC_IndividualFree) != 0)
+    {
+        Header->Flags |= AF_ImageCounted;
+        Internal::NoteImageAllocation(Header->OwningImage);
+    }
 
     if(!Pool)
     {
@@ -329,7 +350,10 @@ void Free(void* InPtr)
         Internal::UntrackObject(Header);
     }
 
-    Internal::NoteImageFree(Header->OwningImage);
+    if(Header->Flags & AF_ImageCounted)
+    {
+        Internal::NoteImageFree(Header->OwningImage);
+    }
 
     // Everything Free needs must be read out BEFORE the header is destroyed.
     const PoolID PoolId     = Header->Pool;
@@ -460,15 +484,18 @@ void ReleaseStrongRef(void* InPtr)
     DestroyObject(InPtr);
 
     /*
-     * AF_Sweeping means the collector owns this block's bytes and will release
-     * them after every destructor in the sweep set has run. Freeing here would
-     * pull a block out from under the loop that is still walking it -- see
-     * the flag's note in CoreMemory.h.
+     * AF_Sweeping means the collector owns this block's bytes and will drop
+     * the implicit weak reference itself, after every destructor in the sweep
+     * set has run. Doing it here would pull a block out from under the loop
+     * that is still walking it -- see the flag's note in CoreMemory.h.
      */
-    if((Header->Flags & AF_Sweeping) == 0 &&
-       Header->WeakCount.load(std::memory_order_acquire) == 0)
+    if((Header->Flags & AF_Sweeping) == 0)
     {
-        Free(InPtr);
+        // Drop the implicit weak reference the strong count was holding. This
+        // frees the block if no real TWeakRef is left. See THE IMPLICIT WEAK
+        // REFERENCE in CoreMemory.h -- doing this any earlier is the
+        // use-after-free that note describes.
+        ReleaseWeakRef(InPtr);
     }
 }
 
@@ -494,12 +521,13 @@ void ReleaseWeakRef(void* InPtr)
         return;
     }
 
-    // The block outlives the payload only to keep weak references readable.
-    // This was the last one, so if the payload is already gone the block has
-    // no reason left to exist.
-    if((Header->Flags & AF_Destroyed) != 0 &&
-       (Header->Flags & AF_Sweeping)  == 0 &&
-       Header->StrongCount.load(std::memory_order_acquire) == 0)
+    /*
+     * Reaching zero here means the payload is already destroyed, with no
+     * separate check needed: the strong count holds one of these, and gives it
+     * up only after running the destructor. So a zero weak count implies a
+     * zero strong count, which is why this reads much simpler than it used to.
+     */
+    if((Header->Flags & AF_Sweeping) == 0)
     {
         Free(InPtr);
     }
@@ -545,7 +573,18 @@ uint32_t GetStrongCount(const void* InPtr)
 uint32_t GetWeakCount(const void* InPtr)
 {
     const AllocHeader* Header = GetHeader(InPtr);
-    return Header ? Header->WeakCount.load(std::memory_order_relaxed) : 0;
+    if(!Header)
+    {
+        return 0;
+    }
+
+    const uint32_t Raw = Header->WeakCount.load(std::memory_order_relaxed);
+
+    // Subtract the implicit reference the strong count holds while the payload
+    // is alive, so this answers the question a caller is actually asking --
+    // "how many TWeakRefs point at this?" -- rather than exposing an internal.
+    const bool bImplicitHeld = (Header->Flags & AF_Destroyed) == 0;
+    return (bImplicitHeld && Raw > 0) ? (Raw - 1) : Raw;
 }
 }
 }
