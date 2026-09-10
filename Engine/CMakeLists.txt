@@ -112,3 +112,64 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GameWindow/CMakeLists.txt")
     add_subdirectory(Modules/GameWindow)
 endif()
+
+# === NimbleEngine =========================================================
+# The engine layer itself: the thing that owns the module set, drives the frame
+# and is what a game under Games/ links. Its sources live at Engine/Source, so
+# it is declared HERE rather than in a subdirectory -- nimble_add_module()
+# derives the PUBLIC include directory from CMAKE_CURRENT_SOURCE_DIR/Source, and
+# from an Engine/Source/CMakeLists.txt scope that would resolve to
+# Engine/Source/Source.
+#
+# This is not a violation of the "deliberately thin" rule at the top of this
+# file. That rule is about not reaching INTO the subtrees. The engine layer is
+# engine-level by definition and has no other home.
+#
+# ORDER IS LOAD-BEARING: this must stay below the add_subdirectory(Modules/*)
+# calls. nimble_add_module() links EngineCore::EngineCore eagerly, and a
+# namespaced ALIAS has to already exist when target_link_libraries names it.
+#
+# SHARED, for the same reason CORE_SHARED is FORCEd above: a hot-reloaded plugin
+# that calls back into the engine layer needs exactly ONE copy of it in the
+# process. A second copy is not a link error, it is a second module registry at
+# runtime with nothing to say so. The target is created at this scope, so it
+# inherits CMAKE_RUNTIME_OUTPUT_DIRECTORY and lands in
+# Binaries/<Platform>_<Config> beside EngineCore -- which is what the hot-reload
+# sibling rule requires.
+set(NIMBLEENGINE_SOURCES
+        Source/Private/NimbleEngine/NimbleEngine.cpp
+        Source/Public/NimbleEngine/NimbleEngine.h
+        Source/Public/NimbleEngine/NimbleEngineAPI.h
+)
+
+nimble_add_module(NimbleEngine SHARED
+        PREFIX  NIMBLEENGINE
+        SOURCES ${NIMBLEENGINE_SOURCES})
+
+# PRIVATE, not PUBLIC: the engine layer's headers must not leak GameWindow or
+# GDI types to a game. If either of these ever has to become PUBLIC_DEPS,
+# something in Source/Public/NimbleEngine/ grew an #include it should not have.
+#
+# if(TARGET) rather than if(EXISTS) because the module directories are already
+# guarded above -- this mirrors the same "a checkout without GDI still
+# configures" property without re-testing paths.
+#
+# Hot-reload plugins contribute NOTHING here. nimble_add_hot_module() builds
+# MODULE targets that are never linked against; NimbleEngine reaches them
+# through CoreModuleManager at runtime. What they will want once they exist is
+# add_dependencies(NimbleEngine <plugin targets>), so that building the engine
+# also rebuilds the plugins it is about to load.
+if(TARGET GameWindow)
+    target_link_libraries(NimbleEngine PRIVATE GameWindow::GameWindow)
+endif()
+
+if(TARGET GDI)
+    target_link_libraries(NimbleEngine PRIVATE GDI::GDI)
+endif()
+
+# PRIVATE so this target's own .cpp files can say "Private/NimbleEngine/...".
+# nimble_add_module already added Source/ PUBLIC for the "Public/NimbleEngine/..."
+# includes a consumer uses.
+target_include_directories(NimbleEngine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+
+source_group("NimbleEngine" FILES ${NIMBLEENGINE_SOURCES})
