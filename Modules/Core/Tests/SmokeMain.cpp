@@ -33,6 +33,7 @@
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreQueue.h"
 #include "Public/Core/CoreString.h"
+#include "Public/Core/CoreThread.h"
 #include "Public/Math/Matrix.h"
 #include "Public/Math/Vector.h"
 
@@ -572,6 +573,403 @@ static void TestQueue()
         Expect(bOrdered, "concurrent enqueue/dequeue preserves FIFO order");
         Expect(Concurrent.IsEmpty(), "nothing is left behind after a concurrent drain");
     }
+}
+
+// --- threads --------------------------------------------------------------
+
+/*
+ * A message-matching handler, in the shape BarrierLogHandler uses further down.
+ *
+ * The thread tests have to assert on WHAT was logged rather than merely that
+ * something was, because three of the behaviours under test are ONLY observable
+ * through the log: both Start refusals, and the unjoined-destructor path that
+ * has to join-and-complain rather than assert.
+ */
+static int         GThreadErrors   = 0;
+static int         GThreadWarnings = 0;
+static int         GThreadFatals   = 0;
+static std::string GThreadLog;
+
+static void ThreadLogHandler(const LogVerbosity Verbosity, const char* Message)
+{
+    if(Verbosity == LogVerbosity::Error)   { ++GThreadErrors;   }
+    if(Verbosity == LogVerbosity::Warning) { ++GThreadWarnings; }
+    if(Verbosity == LogVerbosity::Fatal)   { ++GThreadFatals;   }
+
+    if(Message)
+    {
+        GThreadLog += Message;
+        GThreadLog += "\n";
+    }
+}
+
+static bool ThreadLogHas(const char* InNeedle)
+{
+    return std::strstr(GThreadLog.c_str(), InNeedle) != nullptr;
+}
+
+static void ResetThreadLog()
+{
+    GThreadErrors   = 0;
+    GThreadWarnings = 0;
+    GThreadFatals   = 0;
+    GThreadLog.clear();
+}
+
+static void TestThreadSeam()
+{
+    std::printf("[thread seam]\n");
+
+    const uint32_t Logical  = Threads::GetHardwareThreadCount();
+    const uint32_t Physical = Threads::GetPhysicalCoreCount();
+
+    /*
+     * CorePlatform.h promises both are at least 1 and never 0, specifically so
+     * that "count - 1" at a pool-sizing call site cannot underflow into a pool
+     * of four billion workers.
+     */
+    Expect(Logical  >= 1, "the hardware thread count is at least 1");
+    Expect(Physical >= 1, "the physical core count is at least 1");
+
+    /* Physical cores cannot outnumber logical threads. This is the check that
+     * catches a record-walk bug in appThreadPhysicalCoreCount, which is
+     * otherwise invisible without knowing the machine -- the first version of
+     * the Windows implementation dropped the final record and under-reported. */
+    Expect(Physical <= Logical, "physical cores do not outnumber logical threads");
+
+    Threads::SetMainThread();
+    Expect(Threads::IsMainThread(), "the thread that called SetMainThread is the main thread");
+    Expect(Threads::GetMainThreadID() == appThreadID(), "GetMainThreadID reports that thread");
+}
+
+static void TestSemaphore()
+{
+    std::printf("[semaphore]\n");
+
+    Semaphore Sem(0);
+    Expect(!Sem.TryWait(), "TryWait fails on an empty semaphore");
+    Expect(!Sem.TryWaitFor(10), "TryWaitFor times out on an empty semaphore");
+
+    /* Signalling more than are waiting ACCUMULATES -- the whole difference from
+     * an event, and what lets "I just queued 8 jobs" be written as Signal(8)
+     * with no knowledge of how many workers happen to be awake. */
+    Sem.Signal(3);
+    Expect(Sem.TryWait(), "signal 1 of 3 is a permit");
+    Expect(Sem.TryWait(), "signal 2 of 3 is a permit");
+    Expect(Sem.TryWait(), "signal 3 of 3 is a permit");
+    Expect(!Sem.TryWait(), "the count does not go negative");
+
+    Semaphore Initial(2);
+    Expect(Initial.TryWait() && Initial.TryWait(), "the initial count is honoured");
+    Expect(!Initial.TryWait(), "the initial count is not exceeded");
+
+    /*
+     * The reason this class exists instead of a condvar at each call site: a
+     * signal must never be LOST between a waiter's check and its sleep.
+     *
+     * 5000 round trips rather than a handful, because a lost wakeup is a timing
+     * bug -- at low counts it passes and then costs somebody 30ms in a frame
+     * months later. If the predicate inside Wait is ever removed, this HANGS
+     * here, which is a far better outcome than a flaky pass.
+     */
+    {
+        Semaphore        ToWorker(0);
+        Semaphore        ToMain(0);
+        const int        kRounds = 5000;
+        std::atomic<int> Ponged{0};
+
+        Thread Worker;
+        Expect(Worker.Start("Smoke/Pong", [&]
+        {
+            for(int i = 0; i < kRounds; ++i)
+            {
+                ToWorker.Wait();
+                Ponged.fetch_add(1);
+                ToMain.Signal();
+            }
+        }), "the ping-pong worker starts");
+
+        for(int i = 0; i < kRounds; ++i)
+        {
+            ToWorker.Signal();
+            ToMain.Wait();
+        }
+        Worker.Join();
+
+        Expect(Ponged.load() == kRounds, "every signal is received exactly once, none lost");
+    }
+}
+
+static void TestThreadLifetime()
+{
+    std::printf("[thread lifetime]\n");
+
+    Expect(Threads::GetLiveThreadCount() == 0, "nothing is registered before the first start");
+
+    {
+        std::atomic<ThreadID> WorkerID{0};
+        std::atomic<bool>     bWorkerThinksItIsMain{true};
+        Semaphore             Hold(0);
+
+        Thread Worker;
+        Expect(Worker.Start("Smoke/Ident", [&]
+        {
+            WorkerID.store(appThreadID());
+            bWorkerThinksItIsMain.store(Threads::IsMainThread());
+            Hold.Wait();
+        }), "a thread starts");
+
+        Expect(Threads::GetLiveThreadCount() == 1, "a started thread is registered");
+        Expect(std::strcmp(Worker.GetName(), "Smoke/Ident") == 0, "the name round-trips");
+
+        /* The tag the image barrier filters on. A thread started by the host must
+         * read IMAGE_Host -- if this ever reads something else, Start is reading
+         * GImageID in the wrong image and the barrier silently protects nothing.
+         * See the note on Start's defaulted InOwningImage. */
+        Expect(Worker.GetOwningImage() == IMAGE_Host, "a host-started thread is tagged IMAGE_Host");
+
+        Hold.Signal();
+        Worker.Join();
+
+        Expect(WorkerID.load() != 0, "the worker published a thread id");
+        Expect(WorkerID.load() != appThreadID(), "the worker id differs from the main thread id");
+
+        /* The entire point of CORE_CHECK_MAIN_THREAD: the four subsystems
+         * documented as single-threaded can finally detect a foreign caller. */
+        Expect(!bWorkerThinksItIsMain.load(), "IsMainThread is false on a worker");
+
+        Expect(!Worker.IsRunning(), "a joined thread is not running");
+        Expect(Threads::GetLiveThreadCount() == 0, "Join unregisters the thread");
+
+        Worker.Join();
+        Expect(Threads::GetLiveThreadCount() == 0, "Join is idempotent");
+    }
+
+    /* Truncated, never rejected -- and appThreadSetName truncates again and
+     * harder (15 chars plus the null on Linux, which rejects the call outright
+     * for anything longer). A long name must never be worth error-checking. */
+    {
+        Thread Long;
+        Expect(Long.Start("Smoke/AVeryLongThreadNameWellPastTheCapacity", []{}),
+               "an over-long name still starts the thread");
+        Expect(std::strlen(Long.GetName()) == Thread::NAME_CAPACITY - 1,
+               "an over-long name is truncated to the capacity");
+        Long.Join();
+    }
+
+    /*
+     * Both ends of the priority ladder. A refusal inside the seam is NOT a Start
+     * failure and must not be: Linux cannot honour High without privileges a game
+     * will not have, and the thread still has work to do.
+     */
+    {
+        Thread Background;
+        Expect(Background.Start("Smoke/Bg", []{}, ThreadPriority::Background),
+               "a background-priority thread starts");
+        Background.Join();
+
+        Thread High;
+        Expect(High.Start("Smoke/Hi", []{}, ThreadPriority::High),
+               "a high-priority thread starts even where the OS refuses the priority");
+        High.Join();
+    }
+}
+
+static void TestThreadRefusals()
+{
+    std::printf("[thread refusals]\n");
+
+    /* Restore whatever was installed rather than clearing to nullptr: with no
+     * handler a Fatal aborts, and the tests that run after this one were written
+     * against an installed handler. */
+    const LogHandler Previous = GetLogHandler();
+    SetLogHandler(&ThreadLogHandler);
+
+    ResetThreadLog();
+    {
+        Thread Empty;
+        Expect(!Empty.Start("Smoke/Empty", Thread::EntryFn{}),
+               "Start refuses an empty entry function");
+        Expect(ThreadLogHas("empty entry function"), "the empty-entry refusal is logged");
+        Expect(Threads::GetLiveThreadCount() == 0, "a refused start registers nothing");
+    }
+
+    ResetThreadLog();
+    {
+        Semaphore Hold(0);
+        Thread    Busy;
+
+        Expect(Busy.Start("Smoke/Busy", [&Hold]{ Hold.Wait(); }), "the first start succeeds");
+        Expect(!Busy.Start("Smoke/Busy2", []{}), "Start refuses an already-started thread");
+        Expect(ThreadLogHas("already started"), "the double-start refusal is logged");
+        Expect(std::strcmp(Busy.GetName(), "Smoke/Busy") == 0,
+               "a refused restart does not overwrite the running thread's name");
+        Expect(Threads::GetLiveThreadCount() == 1, "a refused restart does not double-register");
+
+        Hold.Signal();
+        Busy.Join();
+    }
+
+    /*
+     * A Thread destroyed while running must JOIN AND COMPLAIN. It cannot assert
+     * instead: std::thread's destructor calls std::terminate on a joinable
+     * thread, so the only alternative to joining is taking the process down.
+     */
+    ResetThreadLog();
+    {
+        std::atomic<bool> bRan{false};
+        {
+            Thread Unjoined;
+            Expect(Unjoined.Start("Smoke/NoJoin", [&bRan]{ bRan.store(true); }),
+                   "the soon-to-be-abandoned thread starts");
+        }
+        Expect(bRan.load(), "the destructor joined rather than terminating");
+        Expect(GThreadErrors >= 1, "the unjoined destructor logs an error");
+        Expect(ThreadLogHas("destroyed without being joined"), "the error says what went wrong");
+        Expect(Threads::GetLiveThreadCount() == 0, "the destructor unregisters the thread");
+    }
+
+    /*
+     * CORE_CHECK_MAIN_THREAD from a worker. Fatal, and it has to be Fatal -- but
+     * per CoreLog.h's fatal semantics an installed handler logs and RETURNS,
+     * which is the only reason this is testable at all rather than aborting the
+     * suite. Same reasoning the log seam test at the top of this file relies on.
+     */
+    ResetThreadLog();
+    {
+        Thread Offender;
+        Expect(Offender.Start("Smoke/Offend", []
+        {
+            CORE_CHECK_MAIN_THREAD("ModuleManager::Tick")
+        }), "the offending thread starts");
+        Offender.Join();
+
+        Expect(GThreadFatals == 1, "CORE_CHECK_MAIN_THREAD is fatal off the main thread");
+        Expect(ThreadLogHas("ModuleManager::Tick"), "the check names the misused subsystem");
+    }
+
+    SetLogHandler(Previous);
+}
+
+static void TestThreadImageBarrier()
+{
+    std::printf("[thread image barrier]\n");
+
+    const LogHandler Previous = GetLogHandler();
+    SetLogHandler(&ThreadLogHandler);
+    ResetThreadLog();
+
+    {
+        Semaphore Hold(0);
+        Thread    A;
+        Thread    B;
+
+        Expect(A.Start("Smoke/ImgA", [&Hold]{ Hold.Wait(); }), "barrier thread A starts");
+        Expect(B.Start("Smoke/ImgB", [&Hold]{ Hold.Wait(); }), "barrier thread B starts");
+        Expect(Threads::GetLiveThreadCount() == 2, "both threads are registered");
+
+        /*
+         * RELEASED BEFORE THE BARRIER RUNS, deliberately. OnImageUnloading has no
+         * cancellation -- killing a thread at an arbitrary instruction leaves
+         * every lock it held locked -- so a worker that never returns hangs the
+         * unload. That is the documented design, and it is not something to
+         * demonstrate by deadlocking CI.
+         */
+        Hold.Signal(2);
+
+        const uint32_t Joined = Threads::OnImageUnloading(IMAGE_Host);
+        Expect(Joined == 2, "the barrier joins every thread the image started");
+        Expect(Threads::GetLiveThreadCount() == 0, "the registry is empty once it returns");
+
+        /* Logged BEFORE the waiting starts, naming each thread: when this call
+         * does hang, that line is the only evidence of which thread is holding
+         * the unload up. Written after the join it would never appear. */
+        Expect(GThreadWarnings >= 1, "the barrier warns before it waits");
+        Expect(ThreadLogHas("Smoke/ImgA"), "the warning names thread A");
+        Expect(ThreadLogHas("Smoke/ImgB"), "the warning names thread B");
+    }
+
+    Expect(Threads::OnImageUnloading(IMAGE_Host) == 0,
+           "the barrier on an image with no threads is a no-op");
+
+    /*
+     * The filter has to work in both directions. A barrier for one image joining
+     * another image's threads would be worse than one that joins nothing: it
+     * would block a module unload on the host's own workers.
+     */
+    {
+        Semaphore Hold(0);
+        Thread    HostThread;
+
+        Expect(HostThread.Start("Smoke/HostOnly", [&Hold]{ Hold.Wait(); }), "a host thread starts");
+        Expect(Threads::OnImageUnloading(ImageID(4321)) == 0,
+               "the barrier ignores threads belonging to another image");
+        Expect(Threads::GetLiveThreadCount() == 1, "the host thread is left running");
+
+        Hold.Signal();
+        HostThread.Join();
+    }
+
+    SetLogHandler(Previous);
+}
+
+static void TestThreadStress()
+{
+    std::printf("[thread stress]\n");
+
+    /*
+     * Eight threads released simultaneously onto one atomic.
+     *
+     * Not a performance measurement -- a correctness one, aimed at the registry.
+     * If its locking is wrong, this is where a slot gets lost or freed twice and
+     * GetLiveThreadCount stops returning to zero. The simultaneous release
+     * through one Semaphore is what makes the threads contend rather than
+     * politely finishing in start order.
+     */
+    const int kThreads    = 8;
+    const int kIncrements = 50000;
+
+    std::atomic<uint64_t> Counter{0};
+    Semaphore             Go(0);
+    Thread                Pool[kThreads];
+
+    bool bAllStarted = true;
+    for(int i = 0; i < kThreads; ++i)
+    {
+        char Name[16];
+        std::snprintf(Name, sizeof(Name), "Smoke/W%d", i);
+
+        if(!Pool[i].Start(Name, [&]
+        {
+            Go.Wait();
+            for(int n = 0; n < kIncrements; ++n) { Counter.fetch_add(1); }
+        }))
+        {
+            bAllStarted = false;
+        }
+    }
+
+    Expect(bAllStarted, "all eight workers start");
+    Expect(Threads::GetLiveThreadCount() == uint32_t(kThreads),
+           "all eight are registered at the same time");
+
+    Go.Signal(kThreads);
+
+    for(int i = 0; i < kThreads; ++i) { Pool[i].Join(); }
+
+    Expect(Counter.load() == uint64_t(kThreads) * uint64_t(kIncrements),
+           "every increment from every thread lands");
+    Expect(Threads::GetLiveThreadCount() == 0, "the registry returns to empty");
+}
+
+static void RunThreadTests()
+{
+    TestThreadSeam();
+    TestSemaphore();
+    TestThreadLifetime();
+    TestThreadRefusals();
+    TestThreadImageBarrier();
+    TestThreadStress();
 }
 
 // --- types / math ---------------------------------------------------------
@@ -1859,6 +2257,7 @@ int main()
     TestImage();
     TestImageFormatConversion();
     TestQueue();
+    RunThreadTests();
     TestTypes();
     TestConfigRegistry();
     TestConfigParse();
