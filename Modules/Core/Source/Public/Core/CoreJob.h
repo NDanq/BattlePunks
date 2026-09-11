@@ -217,13 +217,26 @@ namespace EngineCore
      */
     using JobFn = void (*)(void* InPayload);
 
-    /* Captures must fit. 48 bytes is six pointers, or a pointer plus four
-     * ints and room to spare, and is the same reasoning as the allocation
-     * header in CoreMemory.h: a size chosen so the whole slot stays in one
-     * cache line alongside the counter and the generation. A job that needs
-     * more state should capture a POINTER to it and own that elsewhere -- which
-     * is what a caller does anyway once the state is shared between jobs. */
-    enum : size_t { JOB_PAYLOAD_CAPACITY = 48 };
+    /*
+     * Captures must fit. The number is arithmetic, not preference:
+     *
+     *      64  one cache line
+     *    - 24  bookkeeping (function pointer 8, parent 4, generation 4,
+     *          counter 4, image 2, two flags 2)
+     *    ----
+     *      40  left for the payload
+     *
+     * and a slot must be exactly one line, so that a worker claiming a job
+     * touches one rather than two. CoreJob.cpp static_asserts sizeof(Job) == 64
+     * and is what keeps this honest -- an earlier draft of this header said 48
+     * here, which would have made the slot 72 bytes and, after alignment, 128.
+     * If that assert ever fires, shrink this rather than letting the slot spill.
+     *
+     * 40 bytes is five pointers, or a pointer plus eight ints. A job needing
+     * more should capture a POINTER to its state and own that elsewhere, which
+     * is what a caller ends up doing anyway once the state is shared.
+     */
+    enum : size_t { JOB_PAYLOAD_CAPACITY = 40 };
 
     struct JobSystemStats
     {
@@ -319,11 +332,27 @@ namespace EngineCore
          * the backpressure. A non-zero ExecutedInline in a profile means the
          * ring is too small or a producer is pathological, and both are worth
          * seeing.
+         *
+         * THE HANDLE RETURNED BY THE INLINE PATH IS INVALID, and deliberately
+         * so: the job ran to completion before this returned, so there is no
+         * slot left to name. Wait on it returns immediately and IsComplete reads
+         * true, which is the right answer for work that is already done. A
+         * caller that needs to tell the two apart is doing something this
+         * scheduler does not support.
+         *
+         * DO NOT PASS InOwningImage. Like Thread::Start's, its default argument
+         * is the mechanism: a default argument is evaluated at the CALL SITE, so
+         * GImageID is read in the caller's image. This function's body cannot
+         * read it -- the body compiles into EngineCore.dll, where GImageID is
+         * always IMAGE_Host -- and a job tagged with the wrong image is a job
+         * OnImageUnloading will not drop. See CoreMemory.h:251 for the original
+         * statement of this trap.
          */
         JobHandle Dispatch(JobFn       InFn,
                            const void* InPayload,
                            size_t      InPayloadBytes,
-                           JobHandle   InParent = {});
+                           JobHandle   InParent       = {},
+                           ImageID     InOwningImage  = GImageID);
 
         /*
          * The form call sites use. Generates the trampoline, copies the
@@ -336,6 +365,13 @@ namespace EngineCore
          * below is what brought you here, the fix is to put the state somewhere
          * with a lifetime that outlives the wait -- usually the frame arena
          * (LinearMemoryPool) -- and capture a pointer to it.
+         *
+         * THIS ONE READS GImageID IN ITS BODY, which the out-of-line overload
+         * above cannot. A template instantiates in the translation unit that
+         * calls it, so this body compiles into the CALLER'S image and the read
+         * is correct there. Same reasoning, opposite conclusion, purely because
+         * one is inline and the other is not -- which is worth knowing before
+         * "tidying" either of them.
          */
         template<typename TWork>
         JobHandle Dispatch(const TWork& InWork, JobHandle InParent = {})
@@ -349,7 +385,7 @@ namespace EngineCore
                           "must be trivial. Capturing a std::string, a vector or a TRef by "
                           "value would leak it.");
 
-            return Dispatch(&Trampoline<TWork>, &InWork, sizeof(TWork), InParent);
+            return Dispatch(&Trampoline<TWork>, &InWork, sizeof(TWork), InParent, GImageID);
         }
 
         /*
@@ -371,6 +407,14 @@ namespace EngineCore
          * A GROUP IS NEVER QUEUED and never executes. It is a counter with a
          * generation on it, occupying a job slot so that a JobHandle can name
          * it.
+         *
+         * IT CAN FAIL, unlike Dispatch. An exhausted ring returns an INVALID
+         * handle and logs, because the fallback Dispatch uses -- run the work
+         * inline right now -- does not exist for a group: a group has no work to
+         * run. A caller must therefore check IsValid() and fall back to doing
+         * the whole fan-out serially, which is what ParallelFor does. Dispatching
+         * children against an invalid parent is refused per child, which would
+         * turn one exhausted ring into a storm of identical log lines.
          */
         JobHandle OpenGroup();
 
@@ -428,7 +472,10 @@ namespace EngineCore
          * deadlock this system cannot break. Fire and forget is almost always
          * what is wanted.
          */
-        JobHandle DispatchOnMain(JobFn InFn, const void* InPayload, size_t InPayloadBytes);
+        JobHandle DispatchOnMain(JobFn       InFn,
+                                 const void* InPayload,
+                                 size_t      InPayloadBytes,
+                                 ImageID     InOwningImage = GImageID);
 
         /*
          * Runs main-thread jobs, up to InMaxJobs of them (0 = all queued now).
@@ -495,8 +542,17 @@ namespace EngineCore
         // === The image barrier ==============================================
 
         /*
-         * Drops queued jobs whose JobFn points into InImage, then waits for any
-         * that are already running. Returns how many were dropped.
+         * Drops queued jobs TAGGED WITH InImage, then waits for any already
+         * running. Returns how many were dropped.
+         *
+         * WHY A TAG AND NOT THE FUNCTION POINTER. The obvious test is whether
+         * the job's JobFn lands inside the image's mapped range, and it is the
+         * wrong one: resolving a code address to a module means
+         * GetModuleHandleExW(FROM_ADDRESS) on Windows and dladdr on POSIX, which
+         * is an OS mechanism and would need a new app* seam function on every
+         * backend, for information the dispatcher already had. So each job
+         * records the ImageID of whoever dispatched it, exactly as Thread does --
+         * one mechanism, already proven, no new seam.
          *
          * ModuleManager::TeardownInstance calls this FIRST -- before
          * Threads::OnImageUnloading, before Memory::OnImageUnloading, before
@@ -512,9 +568,10 @@ namespace EngineCore
          * which is CoreModule.h's RELOAD HAZARDS list, not something this can
          * fix from here.
          *
-         * A job dispatched by the host that merely TOUCHES module data is
-         * invisible to this: the function pointer is in the host image. That
-         * hazard belongs to the module contract and cannot be detected here.
+         * A job dispatched by the HOST that merely TOUCHES module data is
+         * invisible to this, because the host is what dispatched it and the host
+         * is what it is tagged with. That hazard belongs to the module contract
+         * and is not detectable from here under either scheme.
          */
         uint32_t OnImageUnloading(ImageID InImage);
 
@@ -530,11 +587,11 @@ namespace EngineCore
 
     private:
         /*
-         * The generated JobFn. Its ADDRESS is what gets stored in the slot, and
-         * it is instantiated in the image that called Dispatch -- which is
-         * precisely what makes OnImageUnloading able to recognise a module's
-         * jobs, and precisely why a module's queued job is dangerous after
-         * unload. Both halves of that follow from this one line.
+         * The generated JobFn, instantiated in the image that called Dispatch --
+         * so its ADDRESS points into that image, and a queued job whose image has
+         * been unloaded is a function pointer into unmapped memory. That is the
+         * hazard OnImageUnloading exists to remove; what it IDENTIFIES the job by
+         * is the ImageID tag, not this address (see the note there).
          */
         template<typename TWork>
         static void Trampoline(void* InPayload)
@@ -542,20 +599,31 @@ namespace EngineCore
             (*static_cast<TWork*>(InPayload))();
         }
 
-        /*
-         * One slot. 64 bytes, and the layout is the reason for
-         * JOB_PAYLOAD_CAPACITY being 48 rather than a rounder number: the
-         * payload, the function pointer, the atomic counter and the bookkeeping
-         * share one cache line, so a worker claiming a job touches one line
-         * rather than two. Same argument as the 48-byte allocation header in
-         * CoreMemory.h, and it is the only reason the capacity is not 64.
-         *
-         * PendingCount is atomic and counts this job plus its live children;
-         * the slot is complete at zero. Parent is an index, not a JobHandle,
-         * because a slot never outlives its own generation.
-         */
-        struct Job;
+        // === Internals ======================================================
+        // Declared here only because C++ requires it. The comment on each says
+        // whether it expects the pool's mutex to be held, which is the single
+        // most dangerous thing to get wrong in the implementation: CompleteSlot
+        // takes the lock to recycle, so calling it from inside a locked region
+        // is a self-deadlock on a non-recursive mutex.
 
+        void     WorkerMain();
+
+        /* Runs one ready job. False if the queue was empty. The ONLY place a job
+         * is executed -- workers and Wait both come through here, which is what
+         * makes a wait productive instead of idle. Mutex must NOT be held. */
+        bool     TryRunOneJob();
+
+        uint32_t AcquireSlot();                             // mutex HELD
+        void     ReleaseSlot(uint32_t InSlot);              // mutex HELD
+        void     CompleteSlot(uint32_t InSlot);             // mutex NOT held
+        bool     TryAdopt(uint32_t InParentSlot,
+                          uint32_t InExpectedGeneration);   // mutex NOT held
+        uint32_t ResolveHandle(JobHandle InHandle) const;   // mutex NOT held
+
+        /* The job slot, the ring, the queues and the workers all live in here.
+         * Keeping the SLOT out of this header as well as the queue is what makes
+         * both the 64-byte layout and the queue topology free to change without
+         * recompiling a consumer. */
         struct Impl;
         Impl* Pimpl = nullptr;   /* Hides the ring, the queue and the worker
                                   * vector, so the queue TOPOLOGY is not part of
@@ -623,6 +691,16 @@ namespace EngineCore
          * full. The group cannot complete while this loop is still running,
          * because the reference released by CloseGroup below is held here. */
         const JobHandle Group = OpenGroup();
+
+        /* An exhausted ring has no group to give, and unlike Dispatch there is no
+         * inline fallback for a thing that holds no work. Doing the whole range
+         * serially is slower and completely correct, which is the right trade for
+         * a condition that means something upstream is pathological. */
+        if(!Group.IsValid())
+        {
+            InBody(uint32_t(0), InCount);
+            return;
+        }
 
         for(uint32_t Begin = 0; Begin < InCount; Begin += InGrain)
         {

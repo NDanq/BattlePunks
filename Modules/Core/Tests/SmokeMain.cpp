@@ -33,6 +33,7 @@
 #include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreQueue.h"
 #include "Public/Core/CoreString.h"
+#include "Public/Core/CoreJob.h"
 #include "Public/Core/CoreThread.h"
 #include "Public/Math/Matrix.h"
 #include "Public/Math/Vector.h"
@@ -970,6 +971,427 @@ static void RunThreadTests()
     TestThreadRefusals();
     TestThreadImageBarrier();
     TestThreadStress();
+}
+
+// --- jobs -----------------------------------------------------------------
+
+/*
+ * Job payloads must be trivially copyable (CoreJob.h says why: they are memcpy'd
+ * into a slot and never destructed), so the shared state every job below touches
+ * is reached through a POINTER captured by value. That is the pattern the header
+ * tells a caller to use when the static_assert fires, so the tests are written
+ * the way call sites are meant to be.
+ */
+static std::atomic<int> GJobRuns{0};
+
+static void TestJobBasics()
+{
+    std::printf("[jobs]\n");
+
+    JobSystem Jobs;
+    Expect(Jobs.GetWorkerCount() >= 1, "a pool has at least one worker");
+    Expect(!Jobs.IsWorkerThread(), "the main thread is not a worker of the pool it created");
+    Expect(Jobs.IsQuiescent(), "a fresh pool is quiescent");
+
+    GJobRuns.store(0);
+    std::atomic<int>* Runs = &GJobRuns;
+
+    const JobHandle H = Jobs.Dispatch([Runs] { Runs->fetch_add(1); });
+    Expect(H.IsValid(), "Dispatch returns a valid handle");
+    Jobs.Wait(H);
+    Expect(GJobRuns.load() == 1, "a dispatched job runs exactly once");
+    Expect(Jobs.IsComplete(H) || true, "IsComplete on a finished handle does not crash");
+
+    /* Many small jobs against one group -- the fan-out shape the whole design is
+     * for, and the one ParallelFor is built on. */
+    GJobRuns.store(0);
+    {
+        const JobHandle Group = Jobs.OpenGroup();
+        Expect(Group.IsValid(), "a group opens on an empty ring");
+
+        for(int i = 0; i < 256; ++i)
+        {
+            Jobs.Dispatch([Runs] { Runs->fetch_add(1); }, Group);
+        }
+
+        Jobs.CloseGroup(Group);
+        Jobs.Wait(Group);
+    }
+    Expect(GJobRuns.load() == 256, "every child of a group runs before the group completes");
+
+    Jobs.WaitForIdle();
+    Expect(Jobs.IsQuiescent(), "the pool is quiescent once drained");
+
+    JobSystemStats Stats;
+    Jobs.GetStats(Stats);
+    Expect(Stats.Executed >= 257, "the stats count every job that ran");
+    Expect(Stats.WorkerCount == Jobs.GetWorkerCount(), "the stats report the worker count");
+}
+
+/*
+ * A job that dispatches a child and waits on it, four deep, on a ONE-WORKER
+ * pool.
+ *
+ * THIS IS THE TEST THE WHOLE DESIGN EXISTS TO PASS. If Wait blocked the calling
+ * thread instead of running jobs, the single worker would be parked inside the
+ * outermost job waiting for a child that only it could ever run, and this would
+ * hang forever -- which is precisely the deadlock CoreJob.h's opening block
+ * describes. A hang here is the failure; there is no assertion that can catch it
+ * more gently.
+ */
+struct NestPayload
+{
+    JobSystem*        Sys;
+    std::atomic<int>* Counter;
+    int               Depth;
+};
+
+static void NestJob(void* InPayload)
+{
+    const NestPayload Self = *static_cast<NestPayload*>(InPayload);
+    Self.Counter->fetch_add(1);
+
+    if(Self.Depth > 0)
+    {
+        NestPayload Child{ Self.Sys, Self.Counter, Self.Depth - 1 };
+        const JobHandle H = Self.Sys->Dispatch(&NestJob, &Child, sizeof(Child));
+        Self.Sys->Wait(H);      // must RUN the child, not block on it
+    }
+}
+
+static void TestJobNestedWait()
+{
+    std::printf("[jobs nested wait]\n");
+
+    JobSystem Jobs(1);          // one worker: no room to hide a blocking Wait
+    Expect(Jobs.GetWorkerCount() == 1, "the pool honours an explicit worker count");
+
+    std::atomic<int> Counter{0};
+    NestPayload      Root{ &Jobs, &Counter, 4 };
+
+    const JobHandle H = Jobs.Dispatch(&NestJob, &Root, sizeof(Root));
+    Jobs.Wait(H);
+
+    Expect(Counter.load() == 5, "a four-deep wait chain completes on a one-worker pool");
+}
+
+static void TestJobParallelFor()
+{
+    std::printf("[jobs parallel for]\n");
+
+    JobSystem Jobs;
+
+    const uint32_t   kCount = 20000;
+    std::vector<int> Values(kCount, 0);
+    int*             Data = Values.data();
+
+    Jobs.ParallelFor(kCount, 256, [Data](uint32_t Begin, uint32_t End)
+    {
+        for(uint32_t i = Begin; i < End; ++i) { Data[i] = int(i) * 2; }
+    });
+
+    /* Against a serial reference, and checking EVERY element: an off-by-one in
+     * the chunk bounds leaves exactly one element untouched, which a spot check
+     * of the first and last would miss. */
+    bool bAllCorrect = true;
+    for(uint32_t i = 0; i < kCount; ++i)
+    {
+        if(Values[i] != int(i) * 2) { bAllCorrect = false; break; }
+    }
+    Expect(bAllCorrect, "ParallelFor covers every element exactly once");
+
+    /* The serial path: count <= grain runs the body directly with no jobs. */
+    std::vector<int> Small(4, 0);
+    int*             SmallData = Small.data();
+    Jobs.ParallelFor(4, 256, [SmallData](uint32_t Begin, uint32_t End)
+    {
+        for(uint32_t i = Begin; i < End; ++i) { SmallData[i] = 7; }
+    });
+    Expect(Small[0] == 7 && Small[3] == 7, "ParallelFor runs serially below the grain");
+
+    Jobs.ParallelFor(0, 16, [](uint32_t, uint32_t) { Expect(false, "empty ParallelFor ran a body"); });
+    Expect(true, "ParallelFor over an empty range does nothing");
+}
+
+static void TestJobRefusals()
+{
+    std::printf("[jobs refusals]\n");
+
+    const LogHandler Previous = GetLogHandler();
+    SetLogHandler(&ThreadLogHandler);
+
+    JobSystem Jobs(1);
+
+    /* A payload larger than the slot. The templated Dispatch static_asserts this
+     * at compile time; the raw form has to refuse at runtime. */
+    ResetThreadLog();
+    {
+        unsigned char Oversized[JOB_PAYLOAD_CAPACITY + 8] = {};
+        const JobHandle H = Jobs.Dispatch(+[](void*) {}, Oversized, sizeof(Oversized));
+        Expect(!H.IsValid(), "an oversized payload is refused");
+        Expect(ThreadLogHas("JOB_PAYLOAD_CAPACITY"), "the refusal names the limit");
+    }
+
+    ResetThreadLog();
+    {
+        const JobHandle H = Jobs.Dispatch(nullptr, nullptr, 0);
+        Expect(!H.IsValid(), "a null function is refused");
+    }
+
+    /*
+     * A completed parent, which is the refusal a fan-out written WITHOUT a group
+     * actually hits.
+     *
+     * It reports "already complete" rather than "recycled", and that is worth
+     * knowing: the generation is bumped when a slot is ACQUIRED, so a finished
+     * job's slot sits on the free list still carrying its old generation and the
+     * handle keeps resolving. The count is zero, so the adoption is refused on
+     * the honest ground -- the parent finished -- instead of on an
+     * implementation detail the caller did not cause.
+     */
+    ResetThreadLog();
+    {
+        const JobHandle Done = Jobs.Dispatch([] {});
+        Jobs.Wait(Done);
+
+        const JobHandle Orphan = Jobs.Dispatch([] {}, Done);
+        Expect(!Orphan.IsValid(), "a child of a completed parent is refused");
+        Expect(ThreadLogHas("already complete"), "the refusal names the actual mistake");
+        Expect(ThreadLogHas("OpenGroup"), "the refusal points at the fix");
+    }
+
+    /*
+     * Wait on a group that was never closed. It can never complete -- the
+     * reference keeping it open belongs to this thread -- so this must be a
+     * diagnosable refusal and NOT a hang. If the explicit bail after CORE_CHECK
+     * is ever removed, this test stops returning.
+     */
+    ResetThreadLog();
+    {
+        const JobHandle Group = Jobs.OpenGroup();
+        Jobs.Wait(Group);
+        Expect(GThreadFatals >= 1, "Wait on an open group is fatal rather than a hang");
+        Expect(ThreadLogHas("never closed"), "the check says to close the group");
+        Jobs.CloseGroup(Group);
+    }
+
+    /* Closing twice would release a reference that is not the caller's, and
+     * could complete the group out from under its children. It is caught by the
+     * flag ReleaseSlot clears rather than by the generation -- see the note on
+     * the completed-parent case above for why the handle still resolves. */
+    ResetThreadLog();
+    {
+        const JobHandle Group = Jobs.OpenGroup();
+        Jobs.CloseGroup(Group);
+        Jobs.CloseGroup(Group);
+        Expect(ThreadLogHas("not an open group"), "closing a group twice is refused");
+    }
+
+    SetLogHandler(Previous);
+}
+
+static void TestJobRingExhaustion()
+{
+    std::printf("[jobs ring exhaustion]\n");
+
+    const LogHandler Previous = GetLogHandler();
+    SetLogHandler(&ThreadLogHandler);
+    ResetThreadLog();
+
+    JobSystem Jobs(1);
+
+    /*
+     * Groups occupy a slot and are never queued, so opening MAX_PENDING_JOBS of
+     * them fills the ring without tying up a single worker. That makes
+     * exhaustion testable deterministically, which it would not be if the ring
+     * had to be filled with real work.
+     */
+    std::vector<JobHandle> Groups;
+    Groups.reserve(JobSystem::MAX_PENDING_JOBS);
+
+    for(uint32_t i = 0; i < JobSystem::MAX_PENDING_JOBS; ++i)
+    {
+        const JobHandle G = Jobs.OpenGroup();
+        if(!G.IsValid()) { break; }
+        Groups.push_back(G);
+    }
+    Expect(Groups.size() == JobSystem::MAX_PENDING_JOBS, "the ring holds exactly MAX_PENDING_JOBS");
+
+    Expect(!Jobs.OpenGroup().IsValid(), "OpenGroup fails on an exhausted ring");
+
+    /* Dispatch does NOT fail -- it runs the work here and now. That is the
+     * backpressure the header describes, and the handle is invalid because the
+     * job is already done. */
+    GJobRuns.store(0);
+    std::atomic<int>* Runs = &GJobRuns;
+    const JobHandle Inline = Jobs.Dispatch([Runs] { Runs->fetch_add(1); });
+
+    Expect(!Inline.IsValid(), "an exhausted ring returns an invalid handle");
+    Expect(GJobRuns.load() == 1, "the job ran inline on the dispatching thread instead");
+
+    Jobs.Wait(Inline);      // must be a no-op, not a hang
+    Expect(true, "Wait on an inline-executed handle returns immediately");
+
+    JobSystemStats Stats;
+    Jobs.GetStats(Stats);
+    Expect(Stats.ExecutedInline >= 1, "inline execution is visible in the stats");
+
+    for(const JobHandle& G : Groups) { Jobs.CloseGroup(G); }
+
+    SetLogHandler(Previous);
+}
+
+static void TestJobMainThread()
+{
+    std::printf("[jobs main thread]\n");
+
+    JobSystem Jobs;
+
+    GJobRuns.store(0);
+    std::atomic<int>* Runs = &GJobRuns;
+
+    struct MainPayload { std::atomic<int>* Counter; ThreadID* Seen; };
+    static ThreadID GSeenOnThread = 0;
+    GSeenOnThread = 0;
+
+    MainPayload P{ Runs, &GSeenOnThread };
+    const JobHandle H = Jobs.DispatchOnMain(+[](void* InPayload)
+    {
+        const MainPayload& M = *static_cast<MainPayload*>(InPayload);
+        M.Counter->fetch_add(1);
+        *M.Seen = appThreadID();
+    }, &P, sizeof(P));
+
+    Expect(H.IsValid(), "DispatchOnMain returns a valid handle");
+
+    /* NOT run by a worker. This is the whole point of the second queue: no
+     * amount of worker idling may pick it up. */
+    Threads::SleepMs(20);
+    Expect(GJobRuns.load() == 0, "a main-thread job is never taken by a worker");
+
+    const uint32_t Ran = Jobs.TickMainThread();
+    Expect(Ran == 1, "TickMainThread runs the queued job");
+    Expect(GJobRuns.load() == 1, "the main-thread job ran");
+    Expect(GSeenOnThread == appThreadID(), "it ran ON the main thread");
+    Expect(Jobs.IsComplete(H), "the handle completes once it has run");
+
+    Expect(Jobs.TickMainThread() == 0, "ticking an empty main queue runs nothing");
+}
+
+static void TestJobImageBarrier()
+{
+    std::printf("[jobs image barrier]\n");
+
+    const LogHandler Previous = GetLogHandler();
+    SetLogHandler(&ThreadLogHandler);
+    ResetThreadLog();
+
+    JobSystem Jobs;
+
+    GJobRuns.store(0);
+    std::atomic<int>* Runs = &GJobRuns;
+
+    /*
+     * Queued on the MAIN-THREAD queue on purpose, which makes this deterministic:
+     * a worker can never claim those, so the jobs are guaranteed to still be
+     * queued when the barrier runs. The barrier filters both queues with the same
+     * loop, so this covers the Ready path too without racing a worker for it.
+     */
+    const ImageID kDoomed = ImageID(4321);
+
+    JobHandle Tagged[8];
+    for(int i = 0; i < 8; ++i)
+    {
+        Tagged[i] = Jobs.DispatchOnMain(+[](void* InPayload)
+        {
+            (*static_cast<std::atomic<int>**>(InPayload))->fetch_add(1);
+        }, &Runs, sizeof(Runs), kDoomed);
+    }
+
+    const JobHandle Survivor = Jobs.DispatchOnMain(+[](void* InPayload)
+    {
+        (*static_cast<std::atomic<int>**>(InPayload))->fetch_add(100);
+    }, &Runs, sizeof(Runs));            // host-tagged: must NOT be dropped
+
+    const uint32_t Dropped = Jobs.OnImageUnloading(kDoomed);
+    Expect(Dropped == 8, "the barrier drops every job tagged with the dying image");
+    Expect(ThreadLogHas("queued job(s) that would have called into it"),
+           "the barrier logs what it dropped");
+
+    /* Anything waiting on a dropped job is released rather than left blocked --
+     * the job is completed without having run. */
+    Jobs.Wait(Tagged[0]);
+    Expect(true, "waiting on a dropped job returns instead of hanging");
+
+    const uint32_t Ran = Jobs.TickMainThread();
+    Expect(Ran == 1, "only the untagged job is left to run");
+    Expect(GJobRuns.load() == 100, "the dropped jobs never ran and the survivor did");
+    Expect(Jobs.IsComplete(Survivor), "the survivor completed normally");
+
+    SetLogHandler(Previous);
+}
+
+static void TestJobLocator()
+{
+    std::printf("[jobs locator]\n");
+
+    Expect(GetJobSystem() == nullptr, "no pool is registered by default");
+
+    {
+        JobSystem Jobs;
+        SetJobSystem(&Jobs);
+        Expect(GetJobSystem() == &Jobs, "the locator returns the registered pool");
+        SetJobSystem(nullptr);
+    }
+
+    Expect(GetJobSystem() == nullptr, "the locator is cleared before the pool dies");
+}
+
+static void TestJobShutdown()
+{
+    std::printf("[jobs shutdown]\n");
+
+    const LogHandler Previous = GetLogHandler();
+    SetLogHandler(&ThreadLogHandler);
+    ResetThreadLog();
+
+    /*
+     * A pool destroyed with work still queued must DROP it and say so -- not run
+     * it during teardown, when whatever dispatched it may already be gone.
+     *
+     * Queued on the main thread queue so nothing can drain it first, which makes
+     * the count exact rather than a race against the workers.
+     */
+    GJobRuns.store(0);
+    std::atomic<int>* Runs = &GJobRuns;
+    {
+        JobSystem Jobs;
+        for(int i = 0; i < 4; ++i)
+        {
+            Jobs.DispatchOnMain(+[](void* InPayload)
+            {
+                (*static_cast<std::atomic<int>**>(InPayload))->fetch_add(1);
+            }, &Runs, sizeof(Runs));
+        }
+    }
+
+    Expect(GJobRuns.load() == 0, "queued jobs are dropped at destruction, not run");
+    Expect(ThreadLogHas("still queued"), "the destructor reports what it dropped");
+
+    SetLogHandler(Previous);
+}
+
+static void RunJobTests()
+{
+    TestJobBasics();
+    TestJobNestedWait();
+    TestJobParallelFor();
+    TestJobRefusals();
+    TestJobRingExhaustion();
+    TestJobMainThread();
+    TestJobImageBarrier();
+    TestJobLocator();
+    TestJobShutdown();
 }
 
 // --- types / math ---------------------------------------------------------
@@ -2258,6 +2680,7 @@ int main()
     TestImageFormatConversion();
     TestQueue();
     RunThreadTests();
+    RunJobTests();
     TestTypes();
     TestConfigRegistry();
     TestConfigParse();
