@@ -83,25 +83,42 @@ class GDIRenderCommandBase
 {
 public:
     GDIRenderCommandBase() = default;
+
+    /*
+     * The drain loop owns these and deletes them through this base pointer,
+     * while ENQUEUE_RENDERCOMMAND_* news a DERIVED type whose members are
+     * whatever the call site captured -- std::string among them. Deleting a
+     * derived object through a base without a virtual destructor is undefined
+     * behaviour and leaks every non-trivial member, so this is load-bearing
+     * rather than defensive.
+     */
+    virtual ~GDIRenderCommandBase() = default;
+
     virtual void Execute() = 0;
 };
 
 extern EngineCore::ThreadSafeQueue<GDIRenderCommandBase*> GRenderCommands;
 
 /*
- * TRANSITIONAL DIAGNOSTIC -- migration risk F4.
+ * TOPOLOGY DIAGNOSTIC -- migration risk F4.
  *
- * GRenderCommands is a QQueue, which offers no synchronization, yet it is
- * written from the UI thread (ENQUEUE_RENDERCOMMAND) and drained on the render
- * thread (QCanvasRenderer::Tick). That is a data race today; the Qt event-loop
- * handoff around it has made the race rare, not absent.
+ * These started as a transitional check from when GRenderCommands was a
+ * QQueue offering no synchronization, written from the UI thread and drained
+ * by QCanvasRenderer::Tick. That container swap has since happened -- the
+ * declaration above is an EngineCore::ThreadSafeQueue -- so the data race they
+ * were watching for is gone, and the note that used to promise their removal
+ * at that point went with it.
  *
- * Before swapping the container we want evidence about who actually touches
- * it, because replacing QQueue with an unsynchronized std::deque would keep
- * the race while removing the timing that hides it. These record the first
- * thread seen in each role and complain once if a second one appears.
+ * They are kept because they answer a question the container cannot: a
+ * thread-safe queue is not the same claim as single-producer/single-consumer
+ * discipline on top of it. These record the first thread seen in each role and
+ * complain once if a second appears, which is what turns "the game and render
+ * threads are split" from an assumption into an observation.
  *
- * Both are removed when the queue becomes EngineCore::ThreadSafeQueue.
+ * NoteDrain/NoteDrainEnd bracket the drain loop as a whole, not each command:
+ * the thread_local flag they raise between them is what lets an enqueue issued
+ * from inside a command's Execute() be told apart from an ordinary game-thread
+ * enqueue.
  */
 void GDIRenderQueue_NoteEnqueue();
 void GDIRenderQueue_NoteDrain();
