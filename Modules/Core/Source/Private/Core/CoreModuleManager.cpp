@@ -1,7 +1,7 @@
 #include "Public/Core/CoreModuleManager.h"
 
 #include "Public/Core/CoreFileProvider.h"
-#include "Public/Core/CoreGC.h"
+#include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreLog.h"
 
 #include <chrono>
