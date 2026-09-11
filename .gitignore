@@ -8,16 +8,30 @@
 
 # The flat runtime layout Engine/CMakeLists.txt sets up, and the per-generation
 # shadow copies CoreModuleManager writes underneath it during hot reload.
+#
+# It belongs to the HOST being built rather than to the engine, since there is
+# exactly one such directory per build and the exe has to be in it --
+# NIMBLE_BINARIES_DIR defaults to the Sandbox host's. Engine/Binaries stays
+# listed so that older build trees, and anyone pointing NIMBLE_BINARIES_DIR back
+# at it, do not start showing up as untracked output.
+/Games/*/Binaries/
 /Engine/Binaries/
 
 # Smoke-test scratch output. The test writes it relative to its working
 # directory, and the executable can be run from anywhere -- including here.
 /SmokeScratch/
+/Engine/SmokeScratch/
+/Games/*/Binaries/SmokeScratch/
 
 # Engine-level build trees.
 /Engine/Build/
 /Engine/build/
 /Engine/cmake-build-*/
+
+# Standalone build trees for the hosts under Games/.
+/Games/*/Build/
+/Games/*/build/
+/Games/*/cmake-build-*/
 
 # Editor / IDE / local tooling state
 .idea/
