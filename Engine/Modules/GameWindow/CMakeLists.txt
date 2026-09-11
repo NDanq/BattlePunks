@@ -54,6 +54,37 @@ set(SDL_TESTS        OFF CACHE BOOL "" FORCE)
 set(SDL_EXAMPLES     OFF CACHE BOOL "" FORCE)
 set(SDL_INSTALL      OFF CACHE BOOL "" FORCE)
 
+# SDL_RENDER is SDL's own 2D renderer -- SDL_CreateRenderer, SDL_Texture,
+# SDL_RenderPresent and the whole backend set behind them: Direct3D 9, 11 and
+# 12, Vulkan, OpenGL, OpenGL ES 2, Metal, software, and several console
+# backends. GDI is this engine's renderer and talks to the GPU through the
+# native window handle GameWindow::GetNativeHandle() hands it, so none of that
+# is reachable: there is not one SDL_Render* call anywhere outside
+# External/.
+#
+# What SDL is used for here is windowing, events and input. Those live in
+# SDL_VIDEO, which stays on -- Render merely depends on it
+# (define_sdl_subsystem(Render DEPS SDL_VIDEO)), so turning Render off takes
+# nothing the window needs with it.
+#
+# WHAT THIS ACTUALLY DOES, because it is not what the name suggests. SDL turns
+# a subsystem off by defining SDL_RENDER_DISABLED in its generated build config,
+# NOT by dropping sources from the target: every file under src/render is still
+# handed to the compiler and still produces an object. What changes is that ~29
+# of the 31 back-end translation units (Direct3D 9/11/12, Vulkan, OpenGL,
+# OpenGL ES 2, Metal, software, PS2, PSP, Vita, N-Gage) compile away to about
+# 1.7 KB of nothing, and SDL_render.c keeps only its public entry points.
+#
+# Measured on this tree: SDL object output drops from 21.9 MB to 19.4 MB, about
+# 11%, and SDL3.dll shrinks with it. So it is a real saving in code built and
+# shipped, and a modest one in wall-clock build time -- the file count, and
+# therefore the number of compiler invocations, is unchanged.
+#
+# The FORCE is effective for the same reason it is on the options above:
+# define_sdl_subsystem declares this through cmake_dependent_option, whose
+# option() call leaves an existing cache entry alone.
+set(SDL_RENDER       OFF CACHE BOOL "" FORCE)
+
 set(GAMEWINDOW_SDL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/SDL-release-3.4.16")
 
 if(NOT EXISTS "${GAMEWINDOW_SDL_DIR}/CMakeLists.txt")
