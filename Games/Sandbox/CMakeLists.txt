@@ -98,6 +98,9 @@ target_link_libraries(Sandbox PRIVATE NimbleEngine::NimbleEngine)
 # The engine's own target already knows the answer, so ask it rather than
 # recomputing the <Platform>_<Config> string here -- a second copy of that logic
 # is a second thing to keep in step.
+# Needed on both paths below, so it is read once here rather than inside either.
+get_property(SANDBOX_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+
 if(SANDBOX_STANDALONE)
     get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
     if(SANDBOX_RT_DIR)
@@ -106,7 +109,6 @@ if(SANDBOX_STANDALONE)
 
     # Multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) ignore
     # the plain property and read the per-config one, which the engine also has.
-    get_property(SANDBOX_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
     if(SANDBOX_MULTI_CONFIG)
         foreach(SANDBOX_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
             string(TOUPPER "${SANDBOX_CFG}" SANDBOX_CFG_U)
@@ -118,6 +120,11 @@ if(SANDBOX_STANDALONE)
             endif()
         endforeach()
     endif()
+else()
+    # Added from Engine, we inherited the variable itself. Captured under the
+    # same name so the config staging below has one plain path to work with
+    # whichever way we were configured.
+    set(SANDBOX_RT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 endif()
 
 # === Config staging ========================================================
@@ -130,27 +137,53 @@ endif()
 # copy in THIS directory is the master -- edits made to the staged one are
 # overwritten by the next build that changes the source.
 #
-# A SEPARATE ALL TARGET, NOT add_custom_command(TARGET ... POST_BUILD). A
-# POST_BUILD command only runs when its target actually relinks, and editing an
-# .ini does not relink an executable -- so the staged copy silently went stale
-# and the app kept reading the previous values through a rebuild that reported
-# success. That was observed, not theorised. An ALL target is considered every
-# build, and copy_if_different keeps that check to a timestamp-and-compare.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
+# NOT add_custom_command(TARGET ... POST_BUILD). A POST_BUILD command only runs
+# when its target actually relinks, and editing an .ini does not relink an
+# executable -- so the staged copy silently went stale and the app kept reading
+# the previous values through a rebuild that reported success. That was
+# observed, not theorised: a run configured for 90 frames ran forever on a stale
+# MaxFrames=0.
+#
+# A REAL OUTPUT WITH A REAL DEPENDENCY, so the build graph knows when this is up
+# to date and a no-change build genuinely does nothing. The obvious alternative,
+# a custom target marked ALL, is considered every build and therefore prints a
+# step every build -- which costs nothing but makes an incremental build look
+# like it is working when it is not, and that is the exact signal you want
+# trustworthy when you are asking "why did that rebuild?".
+set(SANDBOX_CONFIG_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
+
+if(EXISTS "${SANDBOX_CONFIG_SRC}" AND SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+    set(SANDBOX_CONFIG_DST "${SANDBOX_RT_DIR}/Config/DefaultEngine.ini")
+
+    add_custom_command(
+            OUTPUT  "${SANDBOX_CONFIG_DST}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_RT_DIR}/Config"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${SANDBOX_CONFIG_SRC}" "${SANDBOX_CONFIG_DST}"
+            DEPENDS "${SANDBOX_CONFIG_SRC}"
+            COMMENT "Sandbox: staging Config/DefaultEngine.ini beside the executable"
+            VERBATIM)
+
+    add_custom_target(SandboxStageConfig DEPENDS "${SANDBOX_CONFIG_DST}")
+    add_dependencies(Sandbox SandboxStageConfig)
+    set_target_properties(SandboxStageConfig PROPERTIES FOLDER "Games")
+
+elseif(EXISTS "${SANDBOX_CONFIG_SRC}")
+    # Multi-config fallback. The destination differs per configuration, so a
+    # single OUTPUT path cannot describe it, and a generator expression is not
+    # allowed in OUTPUT until CMake 3.20 -- above the 3.16 this project targets.
+    # An always-considered target is the honest option here; copy_if_different
+    # keeps it to a timestamp compare.
     add_custom_target(SandboxStageConfig ALL
             COMMAND ${CMAKE_COMMAND} -E make_directory
                     "$<TARGET_FILE_DIR:Sandbox>/Config"
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini"
+                    "${SANDBOX_CONFIG_SRC}"
                     "$<TARGET_FILE_DIR:Sandbox>/Config/DefaultEngine.ini"
-            DEPENDS  "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini"
+            DEPENDS "${SANDBOX_CONFIG_SRC}"
             COMMENT "Sandbox: staging Config/DefaultEngine.ini beside the executable"
             VERBATIM)
-
-    # So the destination directory exists, and so the staged config is never
-    # newer than the exe it belongs to.
     add_dependencies(SandboxStageConfig Sandbox)
-
     set_target_properties(SandboxStageConfig PROPERTIES FOLDER "Games")
 endif()
 
