@@ -61,6 +61,98 @@ namespace EngineCore
 
     CORE_API ThreadID appThreadID();
 
+    // === Thread attributes ==================================================
+    // The four thread mechanisms that are genuinely platform-divergent, and
+    // therefore the only four that belong behind this seam.
+    //
+    // CREATION AND JOINING ARE NOT HERE, DELIBERATELY. std::thread is a
+    // portable std primitive and falls under the rule at the top of this file
+    // -- "Portable std primitives are NOT OS-specific and stay as they are".
+    // CoreThread.h's Thread class is built on std::thread and calls these for
+    // the parts std::thread cannot express. A CreateThread/JoinThread pair here
+    // would add a seam function per platform to reimplement something the
+    // standard library already ports correctly.
+    //
+    // Nor is sleep or yield: std::this_thread::sleep_for and yield() are
+    // portable, and CoreThread.h wraps them without coming through here.
+
+    /*
+     * Names the CALLING thread for the debugger and the profiler.
+     *
+     * Not a cosmetic feature. A job system's worth of identically-shaped
+     * worker threads is unreadable in a debugger's thread list without this,
+     * and a capture from a profiler that shows "Thread 24188" eight times tells
+     * you nothing about which stall belongs to which pool.
+     *
+     * CALLING-THREAD-ONLY ON PURPOSE, even though Windows can name another
+     * thread and pthreads (mostly) cannot: pthread_setname_np's signature
+     * differs per platform and Apple's takes no thread argument at all, so
+     * "name yourself on entry" is the only contract all three can honour. The
+     * Thread class calls this as the first statement of its trampoline.
+     *
+     * TRUNCATED, SILENTLY. Linux caps the name at 16 bytes including the null,
+     * so a name is a short tag ("Job/3", "Render"), not a sentence. The
+     * implementations truncate rather than fail, because a truncated name is
+     * strictly better than no name and this must never be worth error-checking
+     * at a call site.
+     */
+    CORE_API void appThreadSetName(const char* InName);
+
+    /*
+     * Restricts the CALLING thread to the hardware threads set in InMask,
+     * where bit N is hardware thread N. False if the platform refused, or on
+     * any platform with no affinity mechanism to speak of.
+     *
+     * A 64-BIT MASK AND THEREFORE A 64-HARDWARE-THREAD CEILING. Windows'
+     * processor groups and Linux' arbitrarily-sized cpu_set_t can both express
+     * more; a machine that large gets no affinity rather than a wrong one, and
+     * that is an acceptable trade for a mask that fits in a register and an API
+     * that is the same shape everywhere.
+     *
+     * USE THIS SPARINGLY. Pinning workers looks like an optimization and is
+     * usually a pessimization: it forbids the OS scheduler from moving work off
+     * a core that is busy with something outside this process. It exists for
+     * measurement and for the one case that genuinely needs it -- keeping an
+     * audio or a render thread off the core the OS has decided to park.
+     */
+    CORE_API bool appThreadSetAffinity(uint64_t InMask);
+
+    /*
+     * Scheduling priority for the CALLING thread, from the three-value ladder
+     * in CoreThread.h. False if the platform refused.
+     *
+     * WHY THREE VALUES AND NOT A NUMBER: Windows takes a symbolic class from
+     * THREAD_PRIORITY_IDLE to TIME_CRITICAL, POSIX takes an integer whose valid
+     * range depends on the scheduling policy, and on Linux raising a thread's
+     * priority above normal needs privileges an engine will not have. A
+     * portable integer would be a number that means something different on
+     * every platform. Three rungs map onto all of them, and the middle one
+     * costs nothing to honour.
+     *
+     * 0 = Background, 1 = Normal, 2 = High. The enum lives in CoreThread.h
+     * rather than here because this seam is about mechanism and that ladder is
+     * policy; the cast happens in exactly one place, Thread::Start.
+     */
+    CORE_API bool appThreadSetPriority(uint8_t InPriority);
+
+    /*
+     * Hardware thread count (logical processors), and physical core count.
+     *
+     * WHY NOT std::thread::hardware_concurrency: it is permitted to return 0,
+     * it is only a hint, and it cannot distinguish the two numbers at all.
+     * Both matter for sizing a worker pool. On a hyperthreaded part the logical
+     * count double-counts execution resources, so a pool sized to it can be
+     * 2x oversubscribed for compute-bound work while being right for
+     * latency-bound work -- the caller cannot make that choice without both
+     * figures.
+     *
+     * Both return 1 rather than 0 when the platform will not say, so that
+     * "count - 1" at a call site cannot underflow into a pool of 4 billion
+     * workers.
+     */
+    CORE_API uint32_t appThreadHardwareCount();
+    CORE_API uint32_t appThreadPhysicalCoreCount();
+
     // === File metadata ======================================================
     // A change-detection stamp, NOT a date. Opaque and platform-defined --
     // 100ns ticks since 1601 on Windows, nanoseconds since the epoch on POSIX.

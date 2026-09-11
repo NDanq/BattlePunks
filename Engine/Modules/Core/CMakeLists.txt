@@ -40,6 +40,8 @@ set( CORE_SOURCES
         Source/Private/Core/CoreMemoryPool.cpp
         Source/Private/Core/CoreMemory.cpp
         Source/Private/Core/CoreGarbageCollector.cpp
+        Source/Private/Core/CoreThread.cpp
+        Source/Private/Core/CoreJob.cpp
         Source/Public/Core/CoreAPI.h
         Source/Public/Core/CoreTypes.h
         Source/Public/Core/CoreLog.h
@@ -55,6 +57,8 @@ set( CORE_SOURCES
         Source/Public/Core/CoreMemory.h
         Source/Public/Core/CorePointer.h
         Source/Public/Core/CoreGarbageCollector.h
+        Source/Public/Core/CoreThread.h
+        Source/Public/Core/CoreJob.h
         Source/Private/Core/CoreMemoryInternal.h
 )
 
@@ -103,6 +107,21 @@ target_compile_features(EngineCore PUBLIC cxx_std_17)
 # is exactly the distinction, so let CMake make it. PRIVATE because no
 # consumer's headers expose dlopen.
 target_link_libraries(EngineCore PRIVATE ${CMAKE_DL_LIBS})
+
+# === Threads ===
+# std::thread in CoreThread.cpp, and the pthread_* calls behind the thread
+# attribute seam, need the platform threading library. Let CMake make the
+# distinction rather than hardcoding it: this resolves to -pthread on Linux,
+# to nothing on Windows, and to nothing on macOS (where pthreads is in libc) --
+# exactly the shape of the ${CMAKE_DL_LIBS} argument above.
+#
+# PUBLIC, unlike dl. Thread holds a std::thread BY VALUE, so CoreThread.h is
+# part of a consumer's compile and a consumer creating a Thread links the
+# threading runtime itself. PRIVATE here would build EngineCore fine and fail
+# to link the smoke test with undefined pthread_create.
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
+target_link_libraries(EngineCore PUBLIC Threads::Threads)
 
 # === Build version stamp ===
 # Generates Generated/BuildInfo.h from git (see cmake/GitVersion.cmake). Only

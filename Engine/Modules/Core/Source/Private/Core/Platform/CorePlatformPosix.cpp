@@ -19,11 +19,17 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/mman.h>
+#include <sys/resource.h>   // setpriority -- the only SCHED_OTHER priority Linux has
 #include <unistd.h>
 #include <pthread.h>
+#include <sched.h>          // cpu_set_t, sched_get_priority_min/max
 #include <cerrno>
 #include <dlfcn.h>
 #include <dirent.h>
+
+#if defined(__APPLE__)
+    #include <sys/sysctl.h> // hw.physicalcpu
+#endif
 
 namespace EngineCore
 {
@@ -385,6 +391,273 @@ ThreadID appThreadID()
     // conventional way to get a comparable id, and comparison is all this is
     // ever used for.
     return ThreadID(reinterpret_cast<uintptr_t>(reinterpret_cast<void*>(::pthread_self())));
+#endif
+}
+
+// === Thread attributes ======================================================
+
+void appThreadSetName(const char* InName)
+{
+    if(!InName || !*InName)
+    {
+        return;
+    }
+
+    /*
+     * TRUNCATED TO 15 CHARACTERS PLUS THE NULL, because Linux rejects the whole
+     * call with ERANGE if the name is longer -- so an over-long name does not
+     * merely get clipped, it produces a thread with NO name at all. Truncating
+     * here makes the failure impossible instead of silent. macOS allows longer
+     * names and is truncated identically, so a thread has the same name on both
+     * platforms and a log line from one matches a capture from the other.
+     */
+    char Truncated[16];
+    size_t Len = 0;
+    while(Len < sizeof(Truncated) - 1 && InName[Len] != '\0')
+    {
+        Truncated[Len] = InName[Len];
+        ++Len;
+    }
+    Truncated[Len] = '\0';
+
+#if defined(__APPLE__)
+    /* Apple's takes no thread argument: it can only ever name the caller. That
+     * restriction is the reason CorePlatform.h specifies this seam as
+     * calling-thread-only for everyone. */
+    ::pthread_setname_np(Truncated);
+#else
+    ::pthread_setname_np(::pthread_self(), Truncated);
+#endif
+}
+
+bool appThreadSetAffinity(const uint64_t InMask)
+{
+    if(InMask == 0)
+    {
+        return false;
+    }
+
+#if defined(__linux__)
+    /* cpu_set_t and pthread_setaffinity_np need _GNU_SOURCE, which g++ and
+     * clang++ define for themselves when compiling C++ against libstdc++. No
+     * CMake flag is required; if that ever stops being true, this is where it
+     * breaks and the fix is a target_compile_definitions on the platform file. */
+    cpu_set_t Set;
+    CPU_ZERO(&Set);
+
+    for(int Bit = 0; Bit < 64; ++Bit)
+    {
+        if(InMask & (uint64_t(1) << Bit))
+        {
+            /* CPU_SETSIZE is 1024 on glibc, so a 64-bit mask cannot overflow the
+             * set. The 64-thread ceiling here is CorePlatform.h's, not the
+             * platform's -- Linux could express more and this cannot say it. */
+            CPU_SET(Bit, &Set);
+        }
+    }
+
+    return ::pthread_setaffinity_np(::pthread_self(), sizeof(Set), &Set) == 0;
+#else
+    /*
+     * macOS HAS NO THREAD AFFINITY API. thread_policy_set with
+     * THREAD_AFFINITY_POLICY expresses "these threads share a cache", not "run
+     * on core N", and it is a no-op on Apple silicon entirely. Returning false
+     * is the honest answer; pretending otherwise would have a caller believe it
+     * had pinned something.
+     */
+    (void)InMask;
+    return false;
+#endif
+}
+
+bool appThreadSetPriority(const uint8_t InPriority)
+{
+    if(InPriority > 2)
+    {
+        return false;
+    }
+
+#if defined(__APPLE__)
+    /*
+     * macOS honours a real priority range within SCHED_OTHER, so the ladder maps
+     * onto min/normal/max directly.
+     */
+    int          Policy = 0;
+    sched_param  Param{};
+    if(::pthread_getschedparam(::pthread_self(), &Policy, &Param) != 0)
+    {
+        return false;
+    }
+
+    const int Min = ::sched_get_priority_min(Policy);
+    const int Max = ::sched_get_priority_max(Policy);
+    if(Min < 0 || Max < 0)
+    {
+        return false;
+    }
+
+    switch(InPriority)
+    {
+        case 0: Param.sched_priority = Min;                 break;
+        case 1: Param.sched_priority = Min + (Max - Min) / 2; break;
+        case 2: Param.sched_priority = Max;                 break;
+        default: return false;
+    }
+
+    return ::pthread_setschedparam(::pthread_self(), Policy, &Param) == 0;
+#else
+    /*
+     * LINUX IS NOT SYMMETRIC AND CANNOT BE MADE SO.
+     *
+     * Under SCHED_OTHER -- which is what every thread in an engine runs unless
+     * someone has gone out of their way -- sched_get_priority_min and _max both
+     * return 0. There is exactly one valid value, so pthread_setschedparam
+     * cannot express this ladder at all. What Linux actually exposes for
+     * SCHED_OTHER is the nice value.
+     *
+     * So:
+     *   Background -> nice +5 via setpriority, which on Linux (and ONLY on
+     *                 Linux) applies to the calling THREAD when who is 0,
+     *                 because a thread is a process to that syscall.
+     *   Normal     -> nothing to do, and reporting success is correct: the
+     *                 thread already has the priority that was asked for.
+     *   High       -> refused. Lowering nice needs CAP_SYS_NICE or a raised
+     *                 RLIMIT_NICE, which a game will not have, and a real-time
+     *                 policy (SCHED_FIFO) is a much larger decision than a
+     *                 priority hint -- a spinning SCHED_FIFO thread can lock up
+     *                 a machine that has no other runnable core.
+     *
+     * Returning false for High is the point of the bool. A caller that must have
+     * it can see that it did not get it.
+     */
+    switch(InPriority)
+    {
+        case 0:
+            errno = 0;
+            if(::setpriority(PRIO_PROCESS, 0, 5) != 0 && errno != 0)
+            {
+                return false;
+            }
+            return true;
+
+        case 1:
+            return true;
+
+        default:
+            return false;
+    }
+#endif
+}
+
+uint32_t appThreadHardwareCount()
+{
+    /* _SC_NPROCESSORS_ONLN, not _CONF: online counts the processors usable right
+     * now, configured counts the ones that physically exist including any the
+     * kernel has taken offline. A pool sized to offline cores oversubscribes the
+     * ones that remain. */
+    const long Count = ::sysconf(_SC_NPROCESSORS_ONLN);
+    return Count > 0 ? uint32_t(Count) : 1u;
+}
+
+namespace
+{
+#if !defined(__APPLE__)
+    /*
+     * Reads a whole small file. NOT appFileReadAll, deliberately: that one sizes
+     * its buffer from stat(), and EVERY FILE IN sysfs REPORTS st_size 0 -- so it
+     * would return an empty success for all of these and the core count would
+     * silently degrade to the logical count. Reading until EOF is the only thing
+     * that works on a synthetic filesystem.
+     */
+    bool ReadSmallTextFile(const char* InPath, std::string& OutText)
+    {
+        OutText.clear();
+
+        FILE* F = ::fopen(InPath, "rb");
+        if(!F)
+        {
+            return false;
+        }
+
+        char   Buffer[256];
+        size_t Got = 0;
+        while((Got = ::fread(Buffer, 1, sizeof(Buffer), F)) > 0)
+        {
+            OutText.append(Buffer, Got);
+        }
+
+        ::fclose(F);
+        return true;
+    }
+#endif
+}
+
+uint32_t appThreadPhysicalCoreCount()
+{
+#if defined(__APPLE__)
+    /* Apple just answers the question. */
+    int    Cores = 0;
+    size_t Size  = sizeof(Cores);
+    if(::sysctlbyname("hw.physicalcpu", &Cores, &Size, nullptr, 0) == 0 && Cores > 0)
+    {
+        return uint32_t(Cores);
+    }
+    return appThreadHardwareCount();
+#else
+    /*
+     * Linux has no syscall for this, so it is counted from sysfs topology.
+     *
+     * THE TRICK: every logical processor on one physical core reports an
+     * IDENTICAL thread_siblings_list, so the number of DISTINCT lists is the
+     * number of physical cores. That is more robust than counting distinct
+     * core_id values, which are only unique within a package and would
+     * under-count a two-socket machine.
+     *
+     * /proc/cpuinfo is the other common approach and is worse: its format
+     * differs by architecture, and on some it omits the core id entirely.
+     *
+     * Linear scan over a vector of strings to deduplicate, because Core scans
+     * linearly everywhere (there is no std::map in this module) and this runs
+     * once at startup, not in a frame.
+     */
+    const uint32_t Logical = appThreadHardwareCount();
+
+    std::vector<std::string> Distinct;
+    Distinct.reserve(Logical);
+
+    for(uint32_t Cpu = 0; Cpu < Logical; ++Cpu)
+    {
+        char Path[128];
+        ::snprintf(Path, sizeof(Path),
+                   "/sys/devices/system/cpu/cpu%u/topology/thread_siblings_list", Cpu);
+
+        std::string List;
+        if(!ReadSmallTextFile(Path, List) || List.empty())
+        {
+            /* Topology unavailable -- a container with a restricted /sys, or an
+             * offline cpu leaving a hole in the numbering. Give up on the whole
+             * computation rather than return a count derived from a partial
+             * walk, which would be confidently wrong. */
+            return Logical;
+        }
+
+        bool bSeen = false;
+        for(const std::string& Existing : Distinct)
+        {
+            if(Existing == List)
+            {
+                bSeen = true;
+                break;
+            }
+        }
+
+        if(!bSeen)
+        {
+            Distinct.push_back(List);
+        }
+    }
+
+    return Distinct.empty() ? Logical : uint32_t(Distinct.size());
 #endif
 }
 
