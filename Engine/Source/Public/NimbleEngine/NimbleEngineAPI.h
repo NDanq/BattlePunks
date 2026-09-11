@@ -7,7 +7,7 @@
  * The same three states CoreAPI.h and GameWindowAPI.h document, for the same
  * reasons:
  *
- *   NIMBLEENGINE_SHARED_BUILD undefined       -> NIMBLEENGINE_API is empty (static)
+ *   NIMBLEENGINE_SHARED_BUILD undefined       -> NE_API is empty (static)
  *   NIMBLEENGINE_SHARED_BUILD + _BUILDING     -> dllexport (building the DLL)
  *   NIMBLEENGINE_SHARED_BUILD alone           -> dllimport (consuming the DLL)
  *
@@ -43,7 +43,7 @@
         #define NE_API NIMBLEENGINE_API_IMPORT
     #endif
 #else
-    #define NIMBLEENGINE_API
+    #define NE_API
 #endif
 
 #endif //NIMBLEENGINE_NIMBLEENGINEAPI_H
