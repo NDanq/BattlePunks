@@ -6,7 +6,7 @@
 #include <utility>
 
 #include "Public/Core/CoreAPI.h"
-#include "Public/Core/CoreGC.h"
+#include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreMemory.h"
 
 /*

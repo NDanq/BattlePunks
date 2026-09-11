@@ -23,7 +23,7 @@
  * it is demonstrating.
  */
 
-#include "Public/Core/CoreGC.h"
+#include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/Core/CoreMemoryPool.h"
