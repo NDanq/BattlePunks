@@ -173,3 +173,24 @@ endif()
 target_include_directories(NimbleEngine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 
 source_group("NimbleEngine" FILES ${NIMBLEENGINE_SOURCES})
+
+# === Games/ ================================================================
+# Hosts that link the engine layer. Added from THIS scope, below the
+# NimbleEngine target, for two reasons that are both load-bearing:
+#
+#   * CMAKE_RUNTIME_OUTPUT_DIRECTORY is inherited by targets created at or
+#     below this scope (see the Binaries/ block above). A game declared at repo
+#     root would be a SIBLING of Engine and would not inherit it -- and on
+#     Windows, landing beside NimbleEngine.dll / EngineCore.dll / SDL3.dll is
+#     the only way an exe resolves them.
+#   * NimbleEngine::NimbleEngine is an ALIAS, and target_link_libraries can only
+#     name one that already exists.
+#
+# The explicit binary directory is required because the source directory is
+# outside this one. Guarded by EXISTS so a checkout without Games/ configures,
+# matching how the module subdirectories above are handled.
+option(NIMBLE_BUILD_SANDBOX "Build the Games/Sandbox host" ON)
+if(NIMBLE_BUILD_SANDBOX AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Games/Sandbox/CMakeLists.txt")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Games/Sandbox"
+                     "${CMAKE_CURRENT_BINARY_DIR}/Games/Sandbox")
+endif()
