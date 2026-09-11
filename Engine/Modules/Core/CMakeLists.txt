@@ -21,6 +21,7 @@ option(CORE_WITH_SIMD       "AVX2 + SSE4.1 paths in Vector.h"            ON)
 option(CORE_COMPAT_GLOBAL_ALIASES "Re-export uint/uchar/Vector*/Matrix4x4 at global scope" ON)
 option(CORE_WITH_QT_BRIDGE  "Build the optional Qt interop bridge"        ON)
 option(CORE_BUILD_SMOKETEST "Build EngineCoreSmokeTest"                 OFF)
+option(CORE_BUILD_EXAMPLES  "Build the runnable examples under Examples/" OFF)
 
 if(CORE_SHARED)
     set(CORE_LIB_TYPE SHARED)
@@ -36,6 +37,9 @@ set( CORE_SOURCES
         Source/Private/Core/CoreModule.cpp
         Source/Private/Core/CoreModuleManager.cpp
         Source/Private/Core/CoreConfig.cpp
+        Source/Private/Core/CoreMemoryPool.cpp
+        Source/Private/Core/CoreMemory.cpp
+        Source/Private/Core/CoreGarbageCollector.cpp
         Source/Public/Core/CoreAPI.h
         Source/Public/Core/CoreTypes.h
         Source/Public/Core/CoreLog.h
@@ -47,6 +51,11 @@ set( CORE_SOURCES
         Source/Public/Core/CoreModule.h
         Source/Public/Core/CoreModuleManager.h
         Source/Public/Core/CoreConfig.h
+        Source/Public/Core/CoreMemoryPool.h
+        Source/Public/Core/CoreMemory.h
+        Source/Public/Core/CorePointer.h
+        Source/Public/Core/CoreGarbageCollector.h
+        Source/Private/Core/CoreMemoryInternal.h
 )
 
 # === Platform layer ===
@@ -232,6 +241,31 @@ if(CORE_BUILD_SMOKETEST)
     else()
         message("EngineCore: CORE_SHARED is OFF -- hot-reload module tests will be skipped.")
     endif()
+endif()
+
+# === Examples ==============================================================
+# Runnable documentation. CoreMemoryExample narrates the memory subsystem --
+# pools, Alloc/Dealloc, TUnique/TRef/TWeakRef and the collector -- by doing it
+# and printing what happened, so the output is readable beside the source.
+#
+# Registered with CTest as well as being runnable by hand. It returns non-zero
+# if it leaked, which makes it a second, differently-shaped check on the same
+# subsystem the smoke test covers: the smoke test asserts specific behaviours,
+# this one exercises a realistic sequence end to end and reports the balance.
+#
+# OFF by default, like the smoke test -- a consumer embedding EngineCore does
+# not want the engine's examples in their build.
+if(CORE_BUILD_EXAMPLES)
+    add_executable(CoreMemoryExample Examples/CoreMemoryExample.cpp)
+    target_link_libraries(CoreMemoryExample PRIVATE EngineCore::EngineCore)
+    set_target_properties(CoreMemoryExample PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+    enable_testing()
+    add_test(NAME EngineCore.MemoryExample COMMAND CoreMemoryExample)
+    set_tests_properties(EngineCore.MemoryExample PROPERTIES
+        TIMEOUT 60
+        LABELS  "example"
+    )
 endif()
 
 source_group("Core"     FILES ${CORE_SOURCES})

@@ -1,6 +1,7 @@
 #include "Public/Core/CoreModuleManager.h"
 
 #include "Public/Core/CoreFileProvider.h"
+#include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreLog.h"
 
 #include <chrono>
@@ -251,6 +252,30 @@ bool ModuleManager::LoadFromShadow(ModuleRecord& InRecord, const std::string& In
         return false;
     }
 
+    /*
+     * Sample the image id NOW, immediately after Create.
+     *
+     * NimbleModuleCreate is what claims it (see NIMBLE_IMPLEMENT_MODULE), so
+     * this is the first moment it exists -- and the module's own declared name
+     * is what it claimed under, which is not necessarily InRecord.Name: the
+     * host registers a module under whatever key it likes, and the DLL names
+     * itself. Looking it up here, while both are known, is why ModuleRecord
+     * carries the id at all rather than re-deriving it at teardown.
+     *
+     * IMAGE_Host means the module never claimed one -- a DLL built before
+     * image tagging existed -- and it is then exempt from the barrier, exactly
+     * as it was before any of this.
+     */
+    ImageID ClaimedImage = IMAGE_Host;
+    if(const ModuleGetNameFn GetDeclaredName =
+           reinterpret_cast<ModuleGetNameFn>(appDLLGetSymbol(Handle, MODULE_SYMBOL_NAME)))
+    {
+        if(const char* DeclaredName = GetDeclaredName())
+        {
+            ClaimedImage = Memory::FindImageID(DeclaredName);
+        }
+    }
+
     // IsEmpty rather than "did we ever load", so InPrev == nullptr reliably
     // means a cold start rather than "reloaded, but the old build wrote
     // nothing".
@@ -260,6 +285,17 @@ bool ModuleManager::LoadFromShadow(ModuleRecord& InRecord, const std::string& In
     {
         CORE_LOG_ERROR("ModuleManager: '" + InRecord.Name + "' refused to start up");
         Destroy(Instance);
+
+        // The barrier belongs on the FAILURE path too. A module that allocated
+        // and then refused to start is about to be unmapped exactly like one
+        // that shut down cleanly, and its objects' destructors live in the
+        // same pages.
+        if(ClaimedImage != IMAGE_Host && ClaimedImage != IMAGE_Unknown)
+        {
+            Memory::OnImageUnloading(ClaimedImage);
+            Memory::ReleaseImageID(ClaimedImage);
+        }
+
         appDLLClose(Handle);
         return false;
     }
@@ -272,6 +308,7 @@ bool ModuleManager::LoadFromShadow(ModuleRecord& InRecord, const std::string& In
     InRecord.ModuleState      = EModuleState::MS_Loaded;
     InRecord.LogHandlerAtLoad = HandlerBefore;
     InRecord.ProviderAtLoad   = ProviderBefore;
+    InRecord.LoadedImage      = ClaimedImage;
 
     return true;
 }
@@ -421,6 +458,40 @@ void ModuleManager::TeardownInstance(ModuleRecord& InRecord)
     }
 
     InRecord.Destroy = nullptr;
+
+    /*
+     * THE MEMORY BARRIER. Position is load-bearing: after the module instance
+     * is destroyed, before appDLLClose below.
+     *
+     * This is the same class of check as the log-handler and file-provider
+     * restores above -- a registry EngineCore owns, into which the module has
+     * put something that points into its own image -- except that here the
+     * dangling pointer is the DESTRUCTOR recorded in every block the module
+     * allocated. After the library closes, a sweep touching one of those
+     * objects jumps into unmapped memory, and the crash lands in the collector
+     * with nothing to connect it back to this module.
+     *
+     * Looked up by NAME because the module can no longer be asked anything:
+     * NimbleModuleDestroy has already returned, and the id lives in a variable
+     * inside the module that was never exported. See Memory::FindImageID.
+     *
+     * The slot is released only AFTER the barrier has run -- releasing it in
+     * NimbleModuleDestroy would clear the very id OnImageUnloading needs to
+     * find the objects by.
+     */
+    const ImageID Image = InRecord.LoadedImage;
+    if(Image != IMAGE_Unknown && Image != IMAGE_Host)
+    {
+        const uint64_t Destroyed = Memory::OnImageUnloading(Image);
+        if(Destroyed > 0)
+        {
+            CORE_LOG_WARN("ModuleManager: '" + InRecord.Name + "' left " +
+                          std::to_string(Destroyed) +
+                          " tracked object(s) alive; destroyed them before unloading");
+        }
+        Memory::ReleaseImageID(Image);
+    }
+    InRecord.LoadedImage = IMAGE_Host;
 
     if(InRecord.Handle)
     {

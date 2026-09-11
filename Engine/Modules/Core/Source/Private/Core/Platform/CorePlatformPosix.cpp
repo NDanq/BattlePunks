@@ -18,6 +18,7 @@
 
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/mman.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <cerrno>
@@ -385,5 +386,128 @@ ThreadID appThreadID()
     // ever used for.
     return ThreadID(reinterpret_cast<uintptr_t>(reinterpret_cast<void*>(::pthread_self())));
 #endif
+}
+
+// === Virtual memory =========================================================
+
+namespace
+{
+    size_t PageSizeCached()
+    {
+        // sysconf is a syscall on some libcs and this is called on every
+        // commit; caching it is safe because the page size cannot change
+        // during a process's lifetime.
+        static const size_t Cached = size_t(::sysconf(_SC_PAGESIZE));
+        return Cached;
+    }
+
+    /* Rounds [InBase, InBase+InBytes) OUT to whole pages: base down, end up.
+     * mprotect and madvise both require a page-aligned base and reject
+     * anything else with EINVAL, which is the difference from Windows -- there
+     * VirtualAlloc does this rounding itself. */
+    void PageAlignRange(void*& InOutBase, size_t& InOutBytes)
+    {
+        const size_t    Page  = PageSizeCached();
+        const uintptr_t Start = reinterpret_cast<uintptr_t>(InOutBase);
+        const uintptr_t End   = Start + InOutBytes;
+
+        const uintptr_t AlignedStart = Start & ~uintptr_t(Page - 1);
+        const uintptr_t AlignedEnd   = (End + Page - 1) & ~uintptr_t(Page - 1);
+
+        InOutBase  = reinterpret_cast<void*>(AlignedStart);
+        InOutBytes = size_t(AlignedEnd - AlignedStart);
+    }
+}
+
+size_t appMemPageSize()
+{
+    return PageSizeCached();
+}
+
+void* appMemReserve(const size_t InBytes)
+{
+    if(InBytes == 0)
+    {
+        return nullptr;
+    }
+
+    /*
+     * PROT_NONE is what makes this a reservation rather than an allocation.
+     * With MAP_NORESERVE it also keeps the kernel from charging the range
+     * against the commit limit on Linux; on macOS the flag is accepted and
+     * ignored, and PROT_NONE alone already prevents any page from being
+     * backed.
+     *
+     * MAP_ANONYMOUS | MAP_PRIVATE with fd -1 is the portable "just give me
+     * address space" spelling. Some older systems spell the flag MAP_ANON;
+     * both have meant the same thing on Linux and macOS for many years.
+     */
+    void* Base = ::mmap(nullptr, InBytes, PROT_NONE,
+                        MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+
+    // mmap signals failure with MAP_FAILED ((void*)-1), NOT nullptr. Returning
+    // it unchecked would hand callers a pointer that passes an `if(Base)` test
+    // and faults on first use.
+    return (Base == MAP_FAILED) ? nullptr : Base;
+}
+
+bool appMemCommit(void* InBase, const size_t InBytes)
+{
+    if(!InBase || InBytes == 0)
+    {
+        return false;
+    }
+
+    void*  Base  = InBase;
+    size_t Bytes = InBytes;
+    PageAlignRange(Base, Bytes);
+
+    // Committing on POSIX is granting access to a range that is already mapped
+    // PROT_NONE: the kernel faults pages in on first touch, zero-filled. There
+    // is no separate "commit" call, and re-mprotecting an already-readable
+    // range is a legal no-op -- which is the same greedy-commit property the
+    // Windows implementation has.
+    return ::mprotect(Base, Bytes, PROT_READ | PROT_WRITE) == 0;
+}
+
+bool appMemDecommit(void* InBase, const size_t InBytes)
+{
+    if(!InBase || InBytes == 0)
+    {
+        return false;
+    }
+
+    void*  Base  = InBase;
+    size_t Bytes = InBytes;
+    PageAlignRange(Base, Bytes);
+
+    /*
+     * MADV_DONTNEED first, then mprotect back to PROT_NONE.
+     *
+     * ORDER MATTERS AND SO DOES DOING BOTH. mprotect alone makes the range
+     * inaccessible but leaves the physical pages charged to the process, so a
+     * pool that decommits to release memory would release nothing. madvise
+     * alone drops the pages but leaves the range writable, so a stale pointer
+     * silently faults a fresh zero page in instead of crashing.
+     *
+     * PLATFORM ASYMMETRY -- read before relying on the "contents are lost"
+     * half of the contract. On Linux MADV_DONTNEED guarantees a subsequent
+     * read returns zero. On macOS it is advisory and the kernel MAY keep the
+     * pages, so contents may survive. That is exactly why CorePlatform.h
+     * specifies the contents as LOST rather than as ZERO: relying on either
+     * outcome is a bug, and only Linux would catch it.
+     */
+    ::madvise(Base, Bytes, MADV_DONTNEED);
+    return ::mprotect(Base, Bytes, PROT_NONE) == 0;
+}
+
+void appMemRelease(void* InBase, const size_t InBytes)
+{
+    if(InBase && InBytes > 0)
+    {
+        // munmap needs the length -- this is the half of the seam's PAIRING
+        // RULE that Windows does not care about and POSIX cannot do without.
+        ::munmap(InBase, InBytes);
+    }
 }
 }
