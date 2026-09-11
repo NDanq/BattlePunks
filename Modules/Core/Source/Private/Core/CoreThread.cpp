@@ -5,51 +5,31 @@
 #include <utility>
 
 /*
- * The portable half of the concurrency subsystem.
+ * The portable half of the concurrency subsystem. Nothing here touches an OS
+ * API: creation and joining are std::thread, the four divergent attributes come
+ * through the app* seam, and the rest is the bookkeeping the image barrier reads.
  *
- * Nothing here touches an OS API. Creation and joining are std::thread, the
- * four divergent attributes come through the app* seam, and everything else is
- * bookkeeping -- which is where the actual difficulty lives, because the
- * bookkeeping is what the image barrier reads.
- *
- * WHY THE REGISTRY IS A FIXED C ARRAY
- *
- * Same argument CoreMemoryPool.h:44 makes for GPools, and it matters more here.
- *
- *      Thread* GThreads[MAX_TRACKED_THREADS] = {};
- *
- * has no constructor, so it is constant-initialised into .bss before any
- * dynamic initialiser in any image runs. A std::vector would have a
- * constructor, therefore an ordering question, and a Thread started from a
- * file-scope constructor somewhere would register into a container that is not
- * built yet. std::mutex is constexpr-default-constructible, so the lock beside
- * it is constant-initialised too -- the same reason CoreGarbageCollector.cpp:38
- * gives for its pair.
- *
- * A linear scan over 256 slots to register and unregister is fine: this runs
- * once per thread lifetime, not once per frame. Core scans linearly everywhere.
+ * THE REGISTRY IS A FIXED C ARRAY for the reason CoreMemoryPool.h:44 gives for
+ * GPools: no constructor means constant initialisation into .bss, so a Thread
+ * started from a file-scope constructor cannot register into a container that is
+ * not built yet. std::mutex is constexpr-constructible, so the lock beside it is
+ * too. The linear scan runs once per thread lifetime, not once per frame.
  */
 
 namespace EngineCore
 {
 namespace
 {
-    /*
-     * 256 is not a budget, it is a tripwire. Nothing legitimate starts more than
-     * a couple of dozen threads, so a build that exhausts this is leaking them
-     * in a loop, and the refusal in Start says so with the count.
-     */
+    /* A tripwire, not a budget: nothing legitimate starts more than a couple of
+     * dozen threads, so exhausting this means they are leaking in a loop. */
     enum : size_t { MAX_TRACKED_THREADS = 256 };
 
     std::mutex GRegistryMutex;
     Thread*    GThreads[MAX_TRACKED_THREADS] = {};
     uint32_t   GThreadCount                  = 0;
 
-    /*
-     * The main thread, latched exactly as CoreGarbageCollector.cpp latches the
-     * collector thread -- including the defaulting behaviour, where the first
-     * caller to ask claims it.
-     */
+    /* Latched as CoreGarbageCollector.cpp latches the collector thread, including
+     * the defaulting: the first caller to ask claims it. */
     std::mutex GMainThreadMutex;
     bool       GMainThreadSet = false;
     ThreadID   GMainThread    = 0;
@@ -105,18 +85,12 @@ void Semaphore::Signal(const uint32_t InCount)
     }
 
     /*
-     * NOTIFY OUTSIDE THE LOCK, and notify_all for a count above one.
+     * Outside the lock, because a waiter woken while this thread still holds the
+     * mutex immediately blocks on it again. Correct either way, worse inside.
      *
-     * Outside, because a waiter woken while this thread still holds the mutex
-     * immediately blocks again on that same mutex -- the "hurry up and wait"
-     * pessimisation. Correct either way; measurably worse inside.
-     *
-     * notify_all rather than N notify_ones because a condition_variable has no
-     * "wake N" operation: N calls to notify_one can all land on the SAME waiter
-     * if it wakes, re-waits and is picked again, leaving the others asleep on a
-     * positive count. Waking everyone and letting the predicate send the extras
-     * back is correct at any N; the thundering herd is bounded by the worker
-     * count, which is single digits.
+     * notify_all above one because a condvar has no "wake N": N notify_ones can
+     * all land on the SAME waiter if it wakes, re-waits and is picked again,
+     * leaving the others asleep on a positive count.
      */
     if(InCount == 1)
     {
@@ -132,11 +106,10 @@ void Semaphore::Wait()
 {
     std::unique_lock<std::mutex> Lock(Mutex);
 
-    /* The predicate form, not a bare wait: it re-checks on every wake, which is
-     * what makes a spurious wakeup and a stolen count both harmless. This is the
-     * lost-wakeup bug the header block describes, and it is absent for exactly
-     * this reason -- the count is inspected under the same lock that Signal
-     * incremented it under, so there is no window to lose a signal in. */
+    /* The predicate form, not a bare wait: it re-checks on every wake, making a
+     * spurious wakeup and a stolen count both harmless. The count is inspected
+     * under the same lock Signal incremented it under, so there is no window in
+     * which to lose a signal -- the lost wakeup the header describes. */
     Condition.wait(Lock, [this] { return Count > 0; });
     --Count;
 }
@@ -172,16 +145,9 @@ Thread::~Thread()
 {
     if(Impl.joinable())
     {
-        /*
-         * Logged before the join, not after: if the join hangs -- and a
-         * destructor reached with the thread still running is exactly the
-         * situation where it might -- the log line is the only evidence of which
-         * thread was involved. After the join it would never be written.
-         *
-         * The header explains why this joins at all rather than asserting:
-         * std::thread's destructor calls std::terminate on a joinable thread, so
-         * the alternative to joining is taking the process down.
-         */
+        /* Before the join, not after: if the join hangs -- and this is exactly
+         * the situation where it might -- the log line is the only evidence of
+         * which thread was involved. */
         CORE_LOG_ERROR(std::string("Threading: Thread '") + Name +
                        "' was destroyed without being joined. Joining now -- whatever its "
                        "entry function captured is being destroyed in an order this "
@@ -224,13 +190,10 @@ bool Thread::Start(const char*          InName,
 
     OwningImage = InOwningImage;
 
-    /*
-     * REGISTERED BEFORE THE THREAD EXISTS, and that ordering is load-bearing. A
-     * running thread that is not yet in the table is a thread the image barrier
-     * cannot see, so a module unloading in that window would close its library
-     * with a worker live inside it. Registering first makes the window empty;
-     * the cost is having to unregister if creation then throws.
-     */
+    /* REGISTERED BEFORE THE THREAD EXISTS, and that ordering is load-bearing: a
+     * running thread not yet in the table is invisible to the image barrier, so a
+     * module unloading in that window closes its library with a worker inside it.
+     * The cost is unregistering again if creation throws. */
     {
         std::lock_guard<std::mutex> Lock(GRegistryMutex);
         if(!RegisterThreadLocked(this))
@@ -275,10 +238,8 @@ bool Thread::Start(const char*          InName,
              *    a crash inside Entry included -- sees it. */
             appThreadSetName(TrampolineName);
 
-            /* 2. Priority. A refusal is not fatal and not logged: on Linux a
-             *    High request cannot succeed without privileges a game will not
-             *    have, and a warning per worker per launch would be noise for a
-             *    condition the caller already learns from the seam's bool. */
+            /* 2. Priority. A refusal is neither fatal nor logged -- Linux cannot
+             *    honour High without privileges a game will not have. */
             (void)appThreadSetPriority(RawPriority);
 
             /* 3. Publish identity. Relaxed: this is a diagnostic, and nothing
@@ -288,9 +249,8 @@ bool Thread::Start(const char*          InName,
             /* 4. The actual work. */
             Entry();
 
-            /* 5. No longer running. Note that this does NOT unregister -- a
-             *    finished thread still needs joining, and the registry is the
-             *    set of things the barrier has work to do on. Join unregisters. */
+            /* 5. Does NOT unregister: a finished thread still needs joining, and
+             *    the registry is what the barrier has work to do on. */
             bRunning.store(false, std::memory_order_relaxed);
         });
     }
@@ -391,14 +351,10 @@ namespace Threads
 
         std::lock_guard<std::mutex> Lock(GMainThreadMutex);
 
-        /*
-         * CLAIMS THE THREAD IF NOBODY HAS, which makes this a query with a side
-         * effect -- deliberately, and exactly as CollectGarbage does for the
-         * collector thread. The alternative is that a host which forgot
-         * SetMainThread gets a fatal CORE_CHECK_MAIN_THREAD on its first
-         * ModuleManager::Tick, which would punish the forgetting rather than the
-         * actual mistake this is here to catch.
-         */
+        /* CLAIMS THE THREAD IF NOBODY HAS -- a query with a side effect, exactly
+         * as CollectGarbage does. Otherwise a host that forgot SetMainThread gets
+         * a fatal check on its first Tick, punishing the forgetting rather than
+         * the mistake this exists to catch. */
         if(!GMainThreadSet)
         {
             GMainThread    = Current;
@@ -418,20 +374,14 @@ namespace Threads
     uint32_t OnImageUnloading(const ImageID InImage)
     {
         /*
-         * SNAPSHOT UNDER THE LOCK, JOIN WITHOUT IT.
+         * SNAPSHOT UNDER THE LOCK, JOIN WITHOUT IT: Thread::Join takes
+         * GRegistryMutex to unregister, so joining while holding it self-deadlocks.
          *
-         * Thread::Join takes GRegistryMutex to unregister, so joining while
-         * holding it is a self-deadlock. The snapshot is a fixed local array for
-         * the same reason the registry is: no allocation on a teardown path, and
-         * nothing to construct.
-         *
-         * The window this opens: a Thread in the snapshot could in principle be
-         * destroyed by another thread before it is joined here. It cannot in
-         * practice, because unloading happens on the main thread with the module
-         * quiesced -- the same assumption ModuleManager::Tick already makes about
-         * every other part of teardown. Documented rather than defended, because
-         * defending it would mean reference-counting Thread objects to protect
-         * against a caller violating a rule that is stated in three headers.
+         * A snapshotted Thread could in principle be destroyed before it is
+         * joined. Not in practice: unloading happens on the main thread with the
+         * module quiesced, the assumption ModuleManager already makes about the
+         * rest of teardown. Documented rather than defended -- defending it means
+         * reference-counting Threads against a rule three headers state.
          */
         Thread*  Snapshot[MAX_TRACKED_THREADS];
         uint32_t Found = 0;
