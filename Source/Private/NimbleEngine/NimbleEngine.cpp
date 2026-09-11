@@ -1,5 +1,7 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
 
+#include <chrono>
+
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreGarbageCollector.h"
@@ -117,6 +119,21 @@ namespace NimbleEngine
      */
     void Application::Exec()
     {
+        ExecWithGame(nullptr);
+    }
+
+    void Application::Exec(IGame& InGame)
+    {
+        ExecWithGame(&InGame);
+    }
+
+    void Application::RequestQuit()
+    {
+        bQuitRequested = true;
+    }
+
+    void Application::ExecWithGame(IGame* InGame)
+    {
         /* First two statements in the process's life as an engine. SetMainThread
          * before anything can default it, and the collector thread immediately
          * after -- both are first-caller-wins. */
@@ -127,6 +144,20 @@ namespace NimbleEngine
         {
             const int      MaxFramesCfg = GMaxFrames.GetInt();
             const uint64_t MaxFrames    = MaxFramesCfg > 0 ? uint64_t(MaxFramesCfg) : 0;
+
+            /* After the render thread is up and past its readiness check, so a
+             * game never observes a half-built engine. A refusal here is a
+             * clean shutdown, not a crash. */
+            if(InGame && !InGame->OnStartup(*this))
+            {
+                CORE_LOG_ERROR("Game refused to start")
+                bQuitRequested = true;
+            }
+
+            /* steady_clock, not system_clock: a delta must not go backwards
+             * because someone corrected the wall clock mid-session. */
+            using Clock = std::chrono::steady_clock;
+            Clock::time_point PreviousTick = Clock::now();
 
             while(!bQuitRequested)
             {
@@ -139,7 +170,24 @@ namespace NimbleEngine
                     break;
                 }
 
-                Simulate();
+                /*
+                 * Assembled HERE, on the game thread, before anything overlaps.
+                 * ViewportPixels is read from the window on this thread for the
+                 * reason FrameContext documents: the accessor is a cached read
+                 * that asserts nothing, so reading it anywhere else is a race
+                 * nothing reports.
+                 */
+                const Clock::time_point Now = Clock::now();
+
+                FrameContext Frame;
+                Frame.DeltaSeconds  = FrameNumber == 0
+                                    ? 0.0
+                                    : std::chrono::duration<double>(Now - PreviousTick).count();
+                Frame.FrameNumber   = FrameNumber;
+                Frame.ViewportPixels = Window ? Window->GetPixelSize() : Size();
+                PreviousTick = Now;
+
+                Simulate(InGame, Frame);
 
                 if(bFrameInFlight)
                 {
@@ -182,6 +230,14 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize Application!")
         }
 
+        /* Paired with the game existing, not with OnStartup succeeding, so a
+         * game that refused to start still gets to undo whatever it did while
+         * deciding to refuse. */
+        if(InGame)
+        {
+            InGame->OnShutdown();
+        }
+
         /* UNCONDITIONAL, and every step below is null-safe and idempotent.
          * Fewer branches than unwinding each failure path separately, and it
          * closes the old leak where a failed CreateGameWindow returned without
@@ -195,8 +251,12 @@ namespace NimbleEngine
      * must not read anything a queued command captured by pointer -- which is
      * the reason commands capture by value.
      */
-    void Application::Simulate()
+    void Application::Simulate(IGame* InGame, const FrameContext& InFrame)
     {
+        if(InGame)
+        {
+            InGame->OnTick(InFrame);
+        }
     }
 
     /*
