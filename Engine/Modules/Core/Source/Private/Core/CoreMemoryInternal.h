@@ -1,7 +1,7 @@
 #ifndef ENGINECORE_COREMEMORYINTERNAL_H
 #define ENGINECORE_COREMEMORYINTERNAL_H
 
-#include "Public/Core/CoreGC.h"      // GCHandleNode; pulls in CoreMemory.h
+#include "Public/Core/CoreGarbageCollector.h"      // GCHandleNode; pulls in CoreMemory.h
 
 /*
  * The contract between CoreMemory.cpp and CoreGC.cpp. NOT a public header --

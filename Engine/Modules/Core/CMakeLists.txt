@@ -39,7 +39,7 @@ set( CORE_SOURCES
         Source/Private/Core/CoreConfig.cpp
         Source/Private/Core/CoreMemoryPool.cpp
         Source/Private/Core/CoreMemory.cpp
-        Source/Private/Core/CoreGC.cpp
+        Source/Private/Core/CoreGarbageCollector.cpp
         Source/Public/Core/CoreAPI.h
         Source/Public/Core/CoreTypes.h
         Source/Public/Core/CoreLog.h
@@ -54,7 +54,7 @@ set( CORE_SOURCES
         Source/Public/Core/CoreMemoryPool.h
         Source/Public/Core/CoreMemory.h
         Source/Public/Core/CorePointer.h
-        Source/Public/Core/CoreGC.h
+        Source/Public/Core/CoreGarbageCollector.h
         Source/Private/Core/CoreMemoryInternal.h
 )
 

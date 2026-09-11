@@ -1,4 +1,4 @@
-#include "Public/Core/CoreGC.h"
+#include "Public/Core/CoreGarbageCollector.h"
 
 #include "Private/Core/CoreMemoryInternal.h"
 #include "Public/Core/CoreLog.h"
