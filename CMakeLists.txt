@@ -38,8 +38,27 @@ include(NimbleModule)
 enable_testing()
 
 # === Binaries/ =============================================================
-# One flat runtime directory per platform+config: Binaries/<Platform>_<Config>,
-# e.g. Binaries/Windows_Debug, Binaries/Mac_Release, Binaries/Linux_RelWithDebInfo.
+# One flat runtime directory per platform+config:
+# <NIMBLE_BINARIES_DIR>/<Platform>_<Config>, e.g. Windows_Debug, Mac_Release,
+# Linux_RelWithDebInfo.
+#
+# WHERE THAT ROOT POINTS, and why it is not Engine/Binaries. Hot reload requires
+# the host executable, EngineCore and every module DLL to be siblings in one
+# directory, so there is exactly ONE such directory per build -- which means it
+# belongs to whoever is being run, not to the engine that happens to declare it.
+# The default is therefore the Sandbox host's own Binaries, and a second game
+# overrides this cache variable to claim its own instead of inheriting a folder
+# named after another title.
+#
+# Overridable rather than hardcoded, because the alternative is every future
+# host editing this line and conflicting with every other host that did.
+# Normalised before it reaches the cache, so the value shown in cmake-gui and
+# baked into every target property is a real path rather than one with an
+# "Engine/../Games" hinge in the middle of it.
+get_filename_component(NM_DEFAULT_BINARIES_DIR
+                       "${CMAKE_CURRENT_SOURCE_DIR}/../Games/Sandbox/Binaries" ABSOLUTE)
+set(NIMBLE_BINARIES_DIR "${NM_DEFAULT_BINARIES_DIR}"
+    CACHE PATH "Root of the flat runtime layout; <Platform>_<Config> is created below it")
 #
 # The <Config> half is the CMake configuration name verbatim. The <Platform>
 # half keeps a Windows build and a future Mac/Linux build from landing their
@@ -75,7 +94,7 @@ if(NM_MULTI_CONFIG)
     # would just get a /Debug tacked on by the generator and scatter output.
     foreach(NM_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
         string(TOUPPER "${NM_CFG}" NM_CFG_U)
-        set(NM_CFG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Binaries/${NM_PLATFORM}_${NM_CFG}")
+        set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${NM_CFG}")
         set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}")
         set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}")
         set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}/Lib")
@@ -86,7 +105,7 @@ else()
     if(NOT CMAKE_BUILD_TYPE)
         set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build configuration" FORCE)
     endif()
-    set(NM_CFG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Binaries/${NM_PLATFORM}_${CMAKE_BUILD_TYPE}")
+    set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${CMAKE_BUILD_TYPE}")
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${NM_CFG_DIR}")
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${NM_CFG_DIR}")
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${NM_CFG_DIR}/Lib")
@@ -134,8 +153,8 @@ endif()
 # process. A second copy is not a link error, it is a second module registry at
 # runtime with nothing to say so. The target is created at this scope, so it
 # inherits CMAKE_RUNTIME_OUTPUT_DIRECTORY and lands in
-# Binaries/<Platform>_<Config> beside EngineCore -- which is what the hot-reload
-# sibling rule requires.
+# <NIMBLE_BINARIES_DIR>/<Platform>_<Config> beside EngineCore -- which is what
+# the hot-reload sibling rule requires.
 set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
@@ -182,7 +201,8 @@ source_group("NimbleEngine" FILES ${NIMBLEENGINE_SOURCES})
 #     below this scope (see the Binaries/ block above). A game declared at repo
 #     root would be a SIBLING of Engine and would not inherit it -- and on
 #     Windows, landing beside NimbleEngine.dll / EngineCore.dll / SDL3.dll is
-#     the only way an exe resolves them.
+#     the only way an exe resolves them. NIMBLE_BINARIES_DIR defaults to this
+#     host's own Binaries, so the whole build collects there.
 #   * NimbleEngine::NimbleEngine is an ALIAS, and target_link_libraries can only
 #     name one that already exists.
 #
