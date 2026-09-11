@@ -445,6 +445,274 @@ ThreadID appThreadID()
     return ThreadID(::GetCurrentThreadId());
 }
 
+// === Thread attributes ======================================================
+
+namespace
+{
+    /*
+     * SetThreadDescription is Windows 10 1607 and newer, and resolving it at
+     * runtime rather than linking it is not defensiveness for its own sake: an
+     * import of a symbol the running OS does not export makes the PROCESS fail
+     * to start, with a loader error box and no log line. A missing thread name
+     * must degrade to the legacy path below, not to an unlaunchable engine.
+     *
+     * The function-local static is a CACHE, not a singleton -- it owns nothing
+     * and has no destructor, so the static-ordering objection CoreConfig.h and
+     * CoreModuleManager.h raise against Meyers singletons does not apply here.
+     */
+    using SetThreadDescriptionFn = HRESULT (WINAPI*)(HANDLE, PCWSTR);
+
+    SetThreadDescriptionFn ResolveSetThreadDescription()
+    {
+        static const SetThreadDescriptionFn Resolved = []() -> SetThreadDescriptionFn
+        {
+            // GetModuleHandle, not LoadLibrary: kernel32 is already mapped into
+            // every process, and this must not take a reference on it.
+            const HMODULE Kernel32 = ::GetModuleHandleW(L"kernel32.dll");
+            if(!Kernel32)
+            {
+                return nullptr;
+            }
+
+            // Through void* because GetProcAddress returns FARPROC, and casting
+            // that straight to another function pointer type warns at /W4.
+            return reinterpret_cast<SetThreadDescriptionFn>(
+                       reinterpret_cast<void*>(::GetProcAddress(Kernel32, "SetThreadDescription")));
+        }();
+
+        return Resolved;
+    }
+
+    /*
+     * The pre-1607 mechanism: raise a magic exception that only a debugger
+     * looks at.
+     *
+     * ONLY AN ATTACHED DEBUGGER EVER SEES THIS. The name is not stored anywhere
+     * the OS can report, so Task Manager, a profiler that attaches later, and a
+     * crash dump all still show a bare thread id. That asymmetry is why
+     * SetThreadDescription exists, and why this is the fallback rather than the
+     * implementation.
+     *
+     * With no debugger attached nobody handles the exception and the __except
+     * swallows it, which is what makes it safe to call unconditionally.
+     */
+    void LegacySetThreadName(const char* InName)
+    {
+        const DWORD MS_VC_EXCEPTION = 0x406D1388;
+
+#pragma pack(push, 8)
+        struct THREADNAME_INFO
+        {
+            DWORD  dwType;      // must be 0x1000
+            LPCSTR szName;
+            DWORD  dwThreadID;  // -1 means the calling thread
+            DWORD  dwFlags;     // must be 0
+        };
+#pragma pack(pop)
+
+        THREADNAME_INFO Info;
+        Info.dwType     = 0x1000;
+        Info.szName     = InName;
+        Info.dwThreadID = DWORD(-1);
+        Info.dwFlags    = 0;
+
+        /* Nothing with a destructor may live in this scope -- __try/__except and
+         * unwinding do not mix. THREADNAME_INFO is a POD and InName is borrowed,
+         * so there is nothing to unwind. */
+        __try
+        {
+            ::RaiseException(MS_VC_EXCEPTION, 0,
+                             sizeof(Info) / sizeof(ULONG_PTR),
+                             reinterpret_cast<const ULONG_PTR*>(&Info));
+        }
+        __except(EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+    }
+}
+
+void appThreadSetName(const char* InName)
+{
+    if(!InName || !*InName)
+    {
+        return;
+    }
+
+    if(const SetThreadDescriptionFn Setter = ResolveSetThreadDescription())
+    {
+        const std::wstring Wide = Widen(std::string(InName));
+        if(!Wide.empty())
+        {
+            // GetCurrentThread() is a pseudo-handle meaning "the calling
+            // thread". It needs no close, and it is the right thing to pass.
+            Setter(::GetCurrentThread(), Wide.c_str());
+        }
+    }
+
+    /* Unconditionally, not as an else. The two mechanisms are read by different
+     * tools -- SetThreadDescription by Task Manager, WPA and a dump; the
+     * exception by a debugger attached right now -- and Visual Studio's thread
+     * window still prefers the legacy name in some configurations. Naming twice
+     * costs one swallowed exception per thread, once. */
+    LegacySetThreadName(InName);
+}
+
+bool appThreadSetAffinity(const uint64_t InMask)
+{
+    if(InMask == 0)
+    {
+        return false;
+    }
+
+    /*
+     * DWORD_PTR is 32 bits in a 32-bit process, so a mask naming hardware
+     * thread 32 or above would be truncated to a DIFFERENT set of cores.
+     * Refusing is the only honest answer: a caller who asked for cores 32-39
+     * and silently got 0-7 has been actively misled.
+     */
+    if(sizeof(DWORD_PTR) < sizeof(uint64_t) && (InMask >> 32) != 0)
+    {
+        return false;
+    }
+
+    /*
+     * Ignores processor groups, and therefore means "group 0" on a machine with
+     * more than 64 logical processors. CorePlatform.h states that ceiling; group
+     * 0 is what "no affinity available here" looks like on such a machine.
+     */
+    return ::SetThreadAffinityMask(::GetCurrentThread(), DWORD_PTR(InMask)) != 0;
+}
+
+bool appThreadSetPriority(const uint8_t InPriority)
+{
+    int Win = THREAD_PRIORITY_NORMAL;
+
+    switch(InPriority)
+    {
+        /*
+         * LOWEST, NOT THREAD_PRIORITY_IDLE. Idle runs only when nothing else in
+         * the system wants a core, so a file watcher there can be starved
+         * indefinitely on a busy machine and hot reload simply stops noticing
+         * rebuilds. Background means "yield to the frame", not "never run".
+         */
+        case 0: Win = THREAD_PRIORITY_LOWEST;  break;
+
+        case 1: Win = THREAD_PRIORITY_NORMAL;  break;
+
+        /*
+         * HIGHEST, NOT TIME_CRITICAL. Time-critical outranks much of the
+         * kernel's own work: a spin at that priority does not merely cost this
+         * process, it stops the desktop responding, and recovering can mean
+         * power-cycling the machine. Nothing in an engine needs it.
+         */
+        case 2: Win = THREAD_PRIORITY_HIGHEST; break;
+
+        default: return false;
+    }
+
+    return ::SetThreadPriority(::GetCurrentThread(), Win) != FALSE;
+}
+
+uint32_t appThreadHardwareCount()
+{
+    /*
+     * ALL_PROCESSOR_GROUPS, so this reports every logical processor on a
+     * >64-thread machine rather than only the 64 in the calling thread's group.
+     *
+     * DELIBERATELY INCONSISTENT with appThreadSetAffinity, which cannot name
+     * those cores. The count is used for SIZING a pool, where being truthful is
+     * right; affinity is used for PINNING, where being unable to name a core
+     * means declining.
+     */
+    if(const DWORD Count = ::GetActiveProcessorCount(ALL_PROCESSOR_GROUPS))
+    {
+        return uint32_t(Count);
+    }
+
+    SYSTEM_INFO Info;
+    ::GetSystemInfo(&Info);
+    return Info.dwNumberOfProcessors ? uint32_t(Info.dwNumberOfProcessors) : 1u;
+}
+
+uint32_t appThreadPhysicalCoreCount()
+{
+    DWORD Bytes = 0;
+
+    /* The sizing call is EXPECTED to fail with ERROR_INSUFFICIENT_BUFFER -- that
+     * is how this API reports the length it needs. Any other failure is real. */
+    if(::GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &Bytes) == FALSE
+       && ::GetLastError() == ERROR_INSUFFICIENT_BUFFER
+       && Bytes > 0)
+    {
+        /* The size goes through a named variable because
+         * `std::vector<uint8_t> Buffer(size_t(Bytes));` is the most vexing
+         * parse: `size_t(Bytes)` reads as a parameter declaration, so that line
+         * declares a FUNCTION called Buffer and every use of it below fails with
+         * an error that points nowhere near the cause. */
+        const size_t          BufferBytes = Bytes;
+        std::vector<uint8_t>  Buffer(BufferBytes);
+
+        if(::GetLogicalProcessorInformationEx(
+               RelationProcessorCore,
+               reinterpret_cast<PSYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX>(Buffer.data()),
+               &Bytes) != FALSE)
+        {
+            uint32_t Cores  = 0;
+            DWORD    Offset = 0;
+
+            /*
+             * Variable-length records, walked by each record's own Size.
+             *
+             * THE BOUND IS THE RECORD HEADER, NOT sizeof THE UNION, and getting
+             * that wrong costs exactly one core while looking entirely correct.
+             * A RelationProcessorCore record is SMALLER than
+             * sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX), whose size is
+             * dominated by its largest arm (the GROUP_AFFINITY array in the
+             * package and cache relations). Requiring a whole union to remain in
+             * the buffer therefore drops the FINAL record, and a 6-core part
+             * reports 5 -- verified against Win32_Processor.NumberOfCores on an
+             * i7-8700K, which is the only way this class of bug gets noticed.
+             *
+             * So the loop only requires the Relationship + Size prefix, which is
+             * what has to be readable before Size can be trusted at all.
+             */
+            const DWORD PrefixBytes = DWORD(sizeof(LOGICAL_PROCESSOR_RELATIONSHIP) + sizeof(DWORD));
+
+            while(Offset + PrefixBytes <= Bytes)
+            {
+                const auto* Info = reinterpret_cast<const SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(
+                                       Buffer.data() + Offset);
+
+                /* A zero Size would spin forever and an oversized one would read
+                 * past the buffer. Neither should ever happen; both stop the walk
+                 * rather than trusting the OS to be well-formed. Subtracting
+                 * rather than adding keeps the comparison free of overflow. */
+                if(Info->Size == 0 || Info->Size > Bytes - Offset)
+                {
+                    break;
+                }
+
+                if(Info->Relationship == RelationProcessorCore)
+                {
+                    ++Cores;
+                }
+
+                Offset += Info->Size;
+            }
+
+            if(Cores > 0)
+            {
+                return Cores;
+            }
+        }
+    }
+
+    /* Degrading to the logical count over-reports on a hyperthreaded part, which
+     * sizes a pool too large rather than down to a single thread. Per
+     * CorePlatform.h, neither of these may ever return 0. */
+    return appThreadHardwareCount();
+}
+
 // === Virtual memory =========================================================
 
 size_t appMemPageSize()
