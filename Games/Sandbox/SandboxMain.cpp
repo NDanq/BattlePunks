@@ -5,13 +5,24 @@
 #include <cstdio>
 
 /*
- * The Sandbox host: the first executable in this repository, and the thing that
- * proves the engine layer actually runs.
+ * Sandbox: the example game, and the first executable in this repository.
  *
- * DELIBERATELY ALMOST EMPTY. Everything it could plausibly do -- install a log
- * handler, parse arguments, own a frame counter -- belongs either to
- * NimbleEngine::Application or to a real game, and putting any of it here would
- * make this file the place engine behaviour accumulates by accident.
+ * It exists to be the place engine features are USED -- the working reference
+ * for how a game drives NimbleEngine, and the thing that exercises each new
+ * engine implementation against something that actually runs. A feature with no
+ * caller here is a feature nothing has tried.
+ *
+ * IT IS NEARLY EMPTY TODAY BECAUSE THE ENGINE GIVES IT NOTHING TO DO. The whole
+ * public surface of NimbleEngine::Application is Exec(); the per-frame hooks
+ * (Simulate, BuildRenderCommands) are private and non-virtual, and GameWindow
+ * and GDI are linked PRIVATE so a game cannot reach a window or a draw call
+ * either. So this file currently demonstrates exactly one thing: that the
+ * engine starts, runs its game/render thread split, and shuts down clean.
+ *
+ * Growing it means giving Application a seam a game can attach to first. Until
+ * that exists, resist putting game behaviour here by reaching around the engine
+ * -- an example that bypasses the API it is meant to demonstrate is worse than
+ * a short one.
  *
  * NO LOG HANDLER IS INSTALLED, and that is a decision rather than an omission.
  * With none installed, CoreLog's Fatal path writes to stderr and abort()s.

@@ -3,7 +3,13 @@ cmake_minimum_required(VERSION 3.16)
 project(Sandbox VERSION 0.1 LANGUAGES CXX)
 
 # ===========================================================================
-# Sandbox -- the host executable for the engine layer.
+# Sandbox -- the example game.
+#
+# The working reference for how a game drives NimbleEngine, and the host each
+# new engine feature gets exercised in. It is a target under Games/ rather than
+# a test under Engine/ for that reason: it consumes the engine the way a real
+# title would, through the public API and nothing else, so anything it cannot
+# reach is a gap in that API rather than a gap here.
 #
 # CONFIGURES TWO WAYS, and both are supported:
 #
@@ -98,6 +104,7 @@ target_link_libraries(Sandbox PRIVATE NimbleEngine::NimbleEngine)
 # The engine's own target already knows the answer, so ask it rather than
 # recomputing the <Platform>_<Config> string here -- a second copy of that logic
 # is a second thing to keep in step.
+
 # Needed on both paths below, so it is read once here rather than inside either.
 get_property(SANDBOX_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 
