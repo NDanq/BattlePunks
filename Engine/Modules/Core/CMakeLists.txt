@@ -57,6 +57,7 @@ set( CORE_SOURCES
         Source/Public/Core/CorePointer.h
         Source/Public/Core/CoreGarbageCollector.h
         Source/Public/Core/CoreThread.h
+        Source/Public/Core/CoreJob.h
         Source/Private/Core/CoreMemoryInternal.h
 )
 
