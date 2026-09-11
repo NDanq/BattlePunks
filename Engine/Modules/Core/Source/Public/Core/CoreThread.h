@@ -19,112 +19,77 @@
 
 /*
  * Thread primitives: an owned, named, joinable worker, the counting semaphore
- * C++17 does not have, and the thread-affinity rules the rest of Core already
- * depends on but has never been able to check.
+ * C++17 does not have, and the thread-affinity rules the rest of Core depends on
+ * but has never been able to check.
  *
- * This is the LOWER half of the concurrency subsystem. It knows nothing about
- * work, scheduling or dependencies. CoreJob.h sits on top and adds all of
- * that. Read them in that order, the way CoreMemoryPool.h is read before
- * CoreMemory.h.
+ * The LOWER half of the concurrency subsystem -- it knows nothing about work or
+ * scheduling. CoreJob.h sits on top, and they read in that order the way
+ * CoreMemoryPool.h reads before CoreMemory.h.
  *
- * WHAT THIS IS NOT: A WRAPPER OVER std::thread
+ * NOT A WRAPPER OVER std::thread. CorePlatform.h's rule is that portable std
+ * primitives stay as they are, and creation, joining and thread_local are ported
+ * correctly by three standard libraries already. What std::thread CANNOT express
+ * is what a debugger and a profiler need -- name, affinity, priority, real core
+ * count -- and those four app* functions are all this sits on.
  *
- * CorePlatform.h's rule is that portable std primitives are not OS-specific
- * and stay as they are, and std::thread is exactly that -- creation, joining
- * and thread_local are ported correctly by three standard libraries already,
- * and reimplementing them behind the app* seam would be three files of
- * CreateThread/pthread_create for no portability that was missing.
+ * WHY A Thread CLASS, THEN. Three reasons, each a rule the codebase already
+ * states somewhere and could not enforce:
  *
- * What std::thread CANNOT express is everything a debugger and a profiler
- * need, and those four things -- name, affinity, priority, real core count --
- * are the app* functions this header sits on. Nothing else here touches the
- * OS.
- *
- * WHY A Thread CLASS AT ALL, THEN
- *
- * Three reasons, and each one is a rule this codebase already states somewhere
- * else and could not previously enforce:
- *
- *   1. NAMING IS NOT OPTIONAL. appThreadSetName has to be the first statement
- *      the new thread executes, and a caller who has to remember that will
- *      forget it. Thread::Start's trampoline does it, so an unnamed worker
- *      thread is not reachable through this API.
+ *   1. NAMING IS NOT OPTIONAL. appThreadSetName must be the first statement the
+ *      new thread runs, and a caller told to remember that will forget. The
+ *      trampoline does it, so an unnamed worker is unreachable through this API.
  *
  *   2. THE IMAGE BARRIER. CoreModule.h:37 -- "Nothing a module allocates
- *      outlives the module." A std::thread whose entry point is a lambda
- *      compiled into a module DLL is that same hazard, and a strictly worse
- *      version of it: CoreGC.h's OnImageUnloading can destroy an object whose
- *      Destruct pointer aims into a doomed image, but nothing can un-run a
- *      function that is executing in one. appDLLClose while a worker is inside
- *      module code unmaps the code under the instruction pointer, and the
- *      crash lands with a return address into nothing -- no symbol, no
- *      module, no way back to the reload that caused it.
+ *      outlives the module." A std::thread running a lambda compiled into a
+ *      module DLL is a worse version of that hazard: OnImageUnloading can
+ *      destroy an object whose Destruct aims into a doomed image, but nothing
+ *      can un-run a function EXECUTING in one. appDLLClose then unmaps the code
+ *      under the instruction pointer and the crash has no symbol, no module, and
+ *      no way back to the reload that caused it.
  *
- *      So every Thread records the ImageID that started it, and
- *      Threads::OnImageUnloading JOINS that image's threads before the library
- *      closes. This cannot be a destructor (it must happen at a point
- *      ModuleManager chooses, between destroying the instance and closing the
- *      handle) and it cannot be advisory.
+ *      So every Thread records the ImageID that started it and
+ *      Threads::OnImageUnloading joins them before the library closes. It cannot
+ *      be a destructor -- ModuleManager chooses the point, between destroying
+ *      the instance and closing the handle -- and it cannot be advisory.
  *
  *   3. THERE IS NO Detach(). See the deleted member below.
  *
- * THE AFFINITY RULES CORE ALREADY HAS, AND HAS NEVER CHECKED
- *
- * Four subsystems already state a threading contract in prose and verify none
- * of it:
+ * THE RULES CORE HAS AND HAS NEVER CHECKED. Four subsystems state a threading
+ * contract in prose and verify none of it:
  *
  *      ModuleManager.h:43   "THREADING: none" -- Tick/Load/Unload/Reload
  *      CoreConfig.h:412     the registry is not thread-safe
  *      CoreFileProvider     GetFileProvider, set once at startup
  *      CoreMemoryPool.h:33  the pool REGISTRY, same stance
  *
- * CollectGarbage is the one exception: it latches a ThreadID through
- * SetCollectorThread and refuses a foreign caller. That mechanism is right and
- * this generalises it. SetMainThread() + CORE_CHECK_MAIN_THREAD() turn the
- * four prose contracts above into something that fires on the first bad call
- * rather than on the twentieth run of a stress test.
+ * CollectGarbage is the exception -- it latches a ThreadID and refuses a foreign
+ * caller. SetMainThread() and CORE_CHECK_MAIN_THREAD() generalise that, so the
+ * four above fire on the first bad call rather than the twentieth stress run.
  *
- * WHAT IS DELIBERATELY ABSENT
- *
- *   A mutex, a lock guard, a read/write lock, an atomic wrapper. std::mutex
- *   and std::atomic are portable, already used throughout Core's .cpp files,
- *   and wrapping them would buy a house-style name and nothing else.
- *
- *   A condition-variable wrapper, for the same reason -- except that the one
- *   thing a condvar is always used for in a scheduler, "wake N of M sleeping
- *   workers", is a counting semaphore, and C++17 has none. Hence Semaphore
- *   below, and nothing else.
- *
- *   Thread-local storage. `thread_local` is a language keyword and works.
- *
- *   Stack size. std::thread cannot set it, so offering it would mean the full
- *   thread-creation seam this file exists to avoid. Revisit if a deeply
- *   recursive job ever needs it; none does yet.
+ * DELIBERATELY ABSENT: a mutex, lock guard, rwlock or atomic wrapper -- std::
+ * already has them and a house-style name buys nothing. A condvar wrapper, for
+ * the same reason, EXCEPT that what a scheduler always wants from one is "wake N
+ * of M", which is a counting semaphore, and C++17 has none. Hence Semaphore, and
+ * nothing else. Thread-local storage, since `thread_local` works. Stack size,
+ * which std::thread cannot set and which would mean the very thread-creation
+ * seam this file exists to avoid.
  */
 
 namespace EngineCore
 {
-    /*
-     * The three-rung ladder appThreadSetPriority takes. See the note there for
-     * why this is not an integer.
-     *
-     * THE VALUES ARE THE SEAM'S CONTRACT -- appThreadSetPriority takes a
-     * uint8_t and these are what it means. Do not renumber.
-     */
+    /* The ladder appThreadSetPriority takes -- see there for why it is not an
+     * integer. THE VALUES ARE THE SEAM'S CONTRACT: do not renumber. */
     enum class ThreadPriority : uint8_t
     {
-        /* Yields to everything. For file watching, asset cooking, log
-         * flushing -- work that must not cost a frame. */
+        /* Yields to everything: file watching, asset cooking, log flushing. */
         Background = 0,
 
-        /* What a worker gets unless there is a reason. A job pool at Normal on
-         * N-1 cores leaves the OS a core to run the main thread on. */
+        /* What a worker gets unless there is a reason. */
         Normal     = 1,
 
         /* Audio, and a render thread that must not be preempted by the pool it
-         * feeds. NOT for job workers: raising every worker above normal raises
-         * nothing relative to anything, and starves the main thread that is
-         * waiting on them. */
+         * feeds. NOT for job workers -- raising every worker raises nothing
+         * relative to anything, and starves the main thread waiting on them. */
         High       = 2
     };
 
@@ -132,25 +97,20 @@ namespace EngineCore
      * A counting semaphore. Signal() releases waiters; Wait() blocks until the
      * count is positive and consumes one.
      *
-     * WHY THIS EXISTS WHEN A BARE condition_variable AT THE CALL SITE DOES NOT
+     * WHY THIS AND NOT A BARE condition_variable AT EACH CALL SITE. C++17 has no
+     * std::counting_semaphore -- that is C++20, and CMakeLists.txt pins this
+     * module at 17. The alternative is a mutex/condvar/counter triple written out
+     * everywhere, and written slightly wrong it gives a LOST WAKEUP: a Signal
+     * landing between a worker's "is there work?" test and its wait is dropped,
+     * and the worker sleeps on a non-empty queue. Nothing corrupts, nothing
+     * asserts, no test fails -- the frame is just occasionally 30ms longer. The
+     * way not to have that is to write the counter down exactly once.
      *
-     * C++17 has no std::counting_semaphore -- that is C++20, and this module is
-     * pinned at cxx_std_17 by CMakeLists.txt. So the alternative is a
-     * mutex/condvar/counter triple written out at every call site, and the
-     * failure mode when it is written out slightly wrong is a LOST WAKEUP: a
-     * Signal that lands between a worker's "is there work?" test and its wait
-     * is dropped, and the worker sleeps on a queue that is not empty. Nothing
-     * is corrupted, nothing asserts, no test fails -- the frame just takes 30ms
-     * longer, sometimes. That is the worst class of bug a scheduler can have,
-     * and the way to not have it is to write the counter down exactly once.
+     * NOT A MUTEX: no owner, no recursion, and any thread may consume any
+     * Signal. Do not guard state with it.
      *
-     * NOT A MUTEX. It has no owner and no recursion, and a Signal from one
-     * thread may be consumed by any other. Do not use it to guard state.
-     *
-     * Holds a std::mutex and a std::condition_variable across the DLL boundary,
-     * which is the C4251 CMakeLists.txt suppresses under its stated condition:
-     * one toolchain and one CRT across host and modules. A shared build that
-     * violates that has larger problems than this class.
+     * Holds std:: members across the DLL boundary -- the C4251 CMakeLists.txt
+     * suppresses under its stated one-toolchain, one-CRT condition.
      */
     class CORE_API Semaphore
     {
@@ -160,10 +120,9 @@ namespace EngineCore
         Semaphore(const Semaphore&)            = delete;
         Semaphore& operator=(const Semaphore&) = delete;
 
-        /* Releases up to InCount waiters. Signalling more than are waiting is
-         * legal and ACCUMULATES -- that is the whole difference from an event,
-         * and it is what lets "I just queued 8 jobs" be expressed as Signal(8)
-         * with no knowledge of how many workers happen to be awake. */
+        /* Releases up to InCount waiters. Signalling more than are waiting
+         * ACCUMULATES -- the whole difference from an event, and what lets "I
+         * queued 8 jobs" be Signal(8) without knowing who is awake. */
         void Signal(uint32_t InCount = 1);
 
         void Wait();
@@ -171,9 +130,8 @@ namespace EngineCore
         /* False if the count was zero. Never blocks. */
         bool TryWait();
 
-        /* False on timeout. A worker's idle path uses this rather than Wait()
-         * so that a shutdown flag is still noticed when the Signal that should
-         * have woken it was consumed by a peer first. */
+        /* False on timeout. A worker idles on this rather than Wait() so a
+         * shutdown flag is noticed even if a peer consumed its Signal. */
         bool TryWaitFor(uint32_t InMilliseconds);
 
     private:
@@ -194,17 +152,11 @@ namespace EngineCore
     class CORE_API Thread
     {
     public:
-        /*
-         * std::function, and NOT the raw-function-pointer-plus-payload shape
-         * CoreJob.h insists on.
-         *
-         * The reason is arithmetic, not taste. A thread entry point is
-         * constructed once per thread -- eight times in a process, perhaps --
-         * so one heap allocation for its captures is free. A JOB payload is
-         * constructed thousands of times per frame, which is why CoreJob.h pays
-         * for inline storage and a static_assert instead. Same trade, opposite
-         * answers, because the frequencies differ by four orders of magnitude.
-         */
+        /* std::function here, and NOT the raw pointer-plus-payload CoreJob.h
+         * insists on. Arithmetic, not taste: a thread entry is constructed once
+         * per thread, so one allocation for its captures is free, where a job
+         * payload is constructed thousands of times a frame. Same trade, opposite
+         * answers, four orders of magnitude apart. */
         using EntryFn = std::function<void()>;
 
         Thread() = default;
@@ -231,39 +183,32 @@ namespace EngineCore
          * Starts the thread. False if it is already running, if InEntry is
          * empty, or if the OS refused to create it.
          *
-         * InName is COPIED into fixed storage, not held by pointer: the name is
-         * read back by GetName() and by diagnostics that may run long after a
-         * caller's temporary std::string is gone. Truncated to NAME_CAPACITY,
-         * and note that appThreadSetName truncates again and harder -- 16 bytes
-         * on Linux.
+         * InName is COPIED into fixed storage, since GetName() and diagnostics
+         * may read it long after a caller's temporary is gone. Truncated to
+         * NAME_CAPACITY, and appThreadSetName truncates again and harder.
          *
-         * ORDER INSIDE THE TRAMPOLINE, which is contract and not implementation
-         * detail:
+         * ORDER INSIDE THE TRAMPOLINE, which is contract, not detail:
          *
          *      1. appThreadSetName     -- so a debugger attached at any later
-         *                                 point sees the name, INCLUDING during
-         *                                 a crash in step 4
+         *                                 point sees it, INCLUDING during a
+         *                                 crash in step 4
          *      2. appThreadSetPriority
          *      3. publish ID + bRunning -- GetID() returns 0 until here
          *      4. InEntry()
          *      5. clear bRunning, wake any joiner
          *
-         * Step 3 after 1 and 2 is deliberate: a thread visible in the registry
-         * is a thread OnImageUnloading may try to join, so it must be fully
-         * configured before it can be seen.
+         * Step 3 last of the three because a thread visible in the registry is
+         * one OnImageUnloading may try to join.
          *
-         * DO NOT PASS InOwningImage. Its default argument is the whole
-         * mechanism: a default argument is evaluated AT THE CALL SITE, so
-         * `GImageID` there is read in the CALLER'S translation unit and
-         * therefore in the caller's image, which is the only place it means
-         * anything. Start's body cannot read it -- the body compiles into
-         * EngineCore.dll, where GImageID is always IMAGE_Host. CoreMemory.h:251
-         * documents that trap for Memory::Allocate and solves it by passing the
-         * id down; this is the same fix with the language doing the passing.
+         * DO NOT PASS InOwningImage. The default argument IS the mechanism: it is
+         * evaluated AT THE CALL SITE, so GImageID is read in the caller's image,
+         * the only place it means anything. Start's body cannot read it -- that
+         * compiles into EngineCore.dll, where GImageID is always IMAGE_Host.
+         * CoreMemory.h:251 documents the same trap for Memory::Allocate.
          *
-         * Which also means a module that calls Start through a wrapper of its
-         * own must forward GImageID explicitly, or its threads register against
-         * the host and the barrier will not join them on unload.
+         * A module wrapping Start in its own helper must forward GImageID
+         * explicitly, or its threads register against the host and the barrier
+         * will not join them.
          */
         bool Start(const char*    InName,
                    EntryFn        InEntry,
@@ -271,18 +216,15 @@ namespace EngineCore
                    ImageID        InOwningImage   = GImageID);
 
         /*
-         * Blocks until the entry function returns. Idempotent -- joining an
-         * already-joined or never-started thread is a no-op rather than an
-         * error, because the three shutdown paths that call it (the owner, a
-         * pool destructor, OnImageUnloading) legitimately overlap.
+         * Blocks until the entry function returns. Idempotent, because the three
+         * shutdown paths that call it -- the owner, a pool destructor,
+         * OnImageUnloading -- legitimately overlap.
          *
-         * DOES NOT ASK THE THREAD TO STOP. There is no cancellation here and
-         * there will not be: killing a thread at an arbitrary instruction
-         * leaves every lock it held locked and every invariant it was halfway
-         * through broken. A worker cooperates by watching its own flag --
-         * CoreJob.h's pool uses an atomic bool plus a Semaphore signal -- and
-         * Join waits for it to notice. A Join on a thread that is not
-         * cooperating hangs, which is the correct and diagnosable outcome.
+         * DOES NOT ASK THE THREAD TO STOP, and never will: killing a thread at an
+         * arbitrary instruction leaves every lock it held locked. A worker
+         * cooperates by watching its own flag and Join waits for it to notice, so
+         * a Join on a thread that is not cooperating hangs -- the correct and
+         * diagnosable outcome.
          */
         void Join();
 
@@ -291,30 +233,21 @@ namespace EngineCore
         const char* GetName()   const;
 
         /* Which image started it. Public because Threads::OnImageUnloading is a
-         * free function and has to filter on it -- and because a diagnostic that
-         * wants to say WHICH module a thread belongs to should not need a friend
-         * declaration to find out. */
+         * free function and filters on it. */
         ImageID     GetOwningImage() const;
 
-        /*
-         * Affinity is a property the OWNING thread sets on itself on POSIX, so
-         * there is no honest per-object setter -- hence a static that affects
-         * the caller. Call it as the first thing an entry function does.
-         *
-         * Read appThreadSetAffinity's note before using it at all: pinning is
-         * usually a pessimization.
-         */
+        /* POSIX only lets a thread set its OWN affinity, so there is no honest
+         * per-object setter -- hence a static affecting the caller. Call it first
+         * thing in an entry function, and read appThreadSetAffinity's note before
+         * using it at all: pinning is usually a pessimization. */
         static bool SetAffinityForThisThread(uint64_t InMask);
 
         /*
-         * DELIBERATELY ABSENT: Detach().
-         *
-         * A detached thread cannot be joined, therefore cannot be waited for,
-         * therefore cannot be stopped before appDLLClose unmaps the code it is
-         * running -- reason 2 in this file's header block. It also outlives
-         * Memory::ReportLeaks, so anything it allocates is reported as a leak
-         * nobody can account for. Every real use of detach is "I would rather
-         * not think about this thread's lifetime", and hot reload makes that
+         * DELIBERATELY ABSENT. A detached thread cannot be joined, so it cannot
+         * be stopped before appDLLClose unmaps the code it is running -- reason 2
+         * above. It also outlives Memory::ReportLeaks, so its allocations are
+         * reported as leaks nobody can account for. Every real use of detach is
+         * "I would rather not think about this lifetime", which hot reload makes
          * unaffordable.
          */
         void Detach() = delete;
@@ -330,16 +263,14 @@ namespace EngineCore
         ImageID     OwningImage = IMAGE_Host;
 
         /*
-         * ATOMIC BECAUSE THE THREAD ITSELF WRITES THEM. The trampoline publishes
-         * ID and clears bRunning; GetID, IsRunning and GetLiveThreadCount read
-         * them from other threads without taking the registry lock. Plain
-         * members here would be a data race on every one of those reads -- the
-         * kind that is invisible in a debug build and reorders in a release one.
+         * ATOMIC BECAUSE THE THREAD ITSELF WRITES THEM, while GetID, IsRunning
+         * and GetLiveThreadCount read them from other threads without the
+         * registry lock. Plain members would be a data race on every one of those
+         * -- invisible in a debug build, reordered in a release one.
          *
-         * Relaxed ordering is sufficient and is what the implementation uses:
-         * these are diagnostics, and nothing else is published through them. The
-         * ordering that actually matters -- the entry function's writes becoming
-         * visible to a joiner -- is std::thread::join's, not theirs.
+         * Relaxed is enough: these are diagnostics and nothing is published
+         * through them. The ordering that matters, the entry function's writes
+         * reaching a joiner, is std::thread::join's.
          */
         std::atomic<ThreadID> ID{0};
         std::atomic<bool>     bRunning{false};
@@ -377,16 +308,10 @@ namespace EngineCore
 
         // === The main thread ================================================
 
-        /*
-         * Names the thread that owns the subsystems documented as
-         * single-threaded -- ModuleManager, the config registry, the file
-         * provider, the pool registry.
-         *
-         * Modelled on Memory::SetCollectorThread down to the defaulting:
-         * whichever thread calls this first wins, and if nobody calls it the
-         * first CORE_CHECK_MAIN_THREAD claims it. A host calls it at the top of
-         * main() and never thinks about it again.
-         */
+        /* Names the thread owning the subsystems documented as single-threaded.
+         * Modelled on Memory::SetCollectorThread down to the defaulting: the
+         * first caller wins, and if nobody calls it the first
+         * CORE_CHECK_MAIN_THREAD claims it. */
         CORE_API void     SetMainThread();
         CORE_API bool     IsMainThread();
         CORE_API ThreadID GetMainThreadID();
@@ -394,58 +319,42 @@ namespace EngineCore
         // === The image barrier ==============================================
 
         /*
-         * Joins every thread InImage started, WHILE ITS CODE IS STILL MAPPED.
-         * Returns how many it joined.
+         * Joins every thread InImage started, WHILE ITS CODE IS STILL MAPPED, and
+         * returns how many.
          *
-         * The exact counterpart of Memory::OnImageUnloading in CoreGC.h, called
-         * from the same place -- ModuleManager::TeardownInstance, between
-         * destroying the module instance and appDLLClose -- and it must run
-         * BEFORE the memory one. A worker still inside module code can be
-         * constructing tracked objects and copying TRefs, so destroying that
-         * image's objects first would leave the collector walking a list a live
-         * thread is still appending to.
+         * The counterpart of Memory::OnImageUnloading, called from the same place
+         * -- ModuleManager::TeardownInstance -- and it must run BEFORE that one:
+         * a worker still inside module code can be constructing tracked objects
+         * and copying TRefs, so destroying the image's objects first leaves the
+         * collector walking a list a live thread is appending to.
          *
          * THIS CAN HANG, AND THAT IS THE DESIGN. There is no cancellation
          * (Thread::Join says why), so a module whose worker loops forever cannot
-         * be unloaded. The alternative -- give up after a timeout and unmap the
-         * code anyway -- is an unexplainable crash minutes later in whatever ran
-         * next. A hang has the offending thread on it in the debugger, and this
-         * logs the module and thread names BEFORE it starts waiting so the log
-         * says which one even without a debugger attached.
-         *
-         * The module author's obligation is the one CoreModule.h already states:
-         * stop what you started, in OnShutdown.
+         * be unloaded. Giving up after a timeout and unmapping anyway is an
+         * unexplainable crash minutes later. This logs the module and thread
+         * names BEFORE it starts waiting, so even without a debugger the log says
+         * which thread is holding the unload up.
          */
         CORE_API uint32_t OnImageUnloading(ImageID InImage);
 
-        /*
-         * Threads that have been STARTED AND NOT YET JOINED, all images.
-         *
-         * Note what that includes: a thread whose entry function has already
-         * returned still counts until somebody calls Join, because that is
-         * precisely the set the image barrier has work to do on. It is the
-         * shutdown-accounting number in the shape of Memory::ReportLeaks --
-         * non-zero at the end of main() means something was never joined.
-         */
+        /* STARTED AND NOT YET JOINED, all images -- which includes a thread whose
+         * entry function already returned, since that is exactly the set the
+         * barrier has work to do on. Non-zero at the end of main() means
+         * something was never joined. */
         CORE_API uint32_t GetLiveThreadCount();
     }
 }
 
 /*
- * Fires when called from anywhere but the main thread.
+ * Fires when called from anywhere but the main thread. Fatal, because what it
+ * catches is a data race -- and since an installed handler logs and RETURNS
+ * (CoreLog.h), the message names the misused subsystem: the log line has to be
+ * enough on its own.
  *
- * Fatal, via CORE_CHECK, because what it catches is a data race. Per
- * CoreLog.h's fatal semantics a host with a handler installed will log and
- * RETURN, so the message names the misused subsystem rather than just
- * complaining about the thread -- the log line has to be enough on its own.
+ * ALWAYS COMPILED IN. Two uint64_t compared, against a mistake whose other
+ * detection method is a corrupted module table three frames later.
  *
- * ALWAYS COMPILED IN, not debug-only. It is two uint64_t compared, set against
- * a mistake whose other detection method is a corrupted module table three
- * frames later. CORE_CHECK is always on for the same reason and this inherits
- * that stance.
- *
- * Shaped as a bare if, matching CORE_CHECK, so a trailing semicolon at the call
- * site is optional.
+ * A bare if, matching CORE_CHECK, so a trailing semicolon is optional.
  */
 #define CORE_CHECK_MAIN_THREAD(WhatSubsystem)                                  \
     CORE_CHECK(::EngineCore::Threads::IsMainThread(),                          \

@@ -11,34 +11,18 @@
 #include <string>
 
 /*
- * The job system.
+ * The job system. CoreJob.h carries the policy; this is the mechanism.
  *
- * Read CoreJob.h first -- all of the policy is there, and this file is the
- * mechanism that implements it. The four things worth knowing before reading
- * any of the code below:
+ * Two facts orient the whole file:
  *
- *   1. A slot's PendingCount is "this job plus its live children". It starts at
- *      one and the job is complete at zero. EVERYTHING here is that counter.
- *      Parenting adds a reference, finishing releases one, and a group is
- *      nothing but a slot whose one reference belongs to the dispatcher.
+ *   PendingCount is "this job plus its live children", starting at one and
+ *   complete at zero. Parenting adds a reference, finishing releases one, and a
+ *   group is a slot whose single reference belongs to the dispatcher.
  *
- *   2. ONE MUTEX guards the free list, the ready queue and the main-thread
- *      queue. That is the topology the header promises not to expose, and it
- *      buys something a lock-free version would have to rebuild by hand: the
- *      dispatcher writes the payload, then pushes the index under the mutex, and
- *      the worker pops it under the same mutex -- so PAYLOAD PUBLICATION NEEDS
- *      NO FENCES AT ALL. The release/acquire edge is the lock.
- *
- *      The one place ordering does matter is completion, where a waiter that
- *      observes zero must see everything the job wrote. That is the acq_rel on
- *      the PendingCount decrement, and it is commented where it happens.
- *
- *   3. Wait RUNS JOBS. It never blocks on the thing it is waiting for. See the
- *      header's block on why, and the reentrancy that buys.
- *
- *   4. Slots are recycled, so a handle can name a job that no longer exists.
- *      The generation counter is what makes that detectable rather than
- *      arbitrary, and reading it correctly takes two loads -- see IsComplete.
+ *   ONE MUTEX guards the free list and both queues. A dispatcher writes its
+ *   payload then pushes the index under that lock, and a worker pops under the
+ *   same one, so payload publication needs no fences of its own. Completion is
+ *   the exception: it is lock-free, and carries the one ordering that matters.
  */
 
 namespace EngineCore
@@ -47,34 +31,21 @@ namespace
 {
     enum : uint32_t { INVALID_SLOT = 0xFFFFFFFFu };
 
-    /*
-     * Wait depth, per thread and not per pool: the stack being protected is the
-     * thread's, and a thread waiting inside two different pools is nesting on
-     * the same stack.
-     */
+    /* Per thread, not per pool: the stack being protected is the thread's. */
     thread_local uint32_t GWaitDepth = 0;
 
-    /*
-     * Which pool owns the calling thread, so IsWorkerThread can answer without
-     * scanning. A thread_local in EngineCore.dll is one variable per THREAD per
-     * process -- not per image -- because the functions that touch it are all
-     * compiled here. That is the opposite of GImageID's situation and is the
-     * reason this does not need the defaulted-parameter treatment.
-     */
+    /* Which pool owns the calling thread, so IsWorkerThread need not scan. One
+     * copy per thread for the whole process, not per image -- every function that
+     * touches it is compiled here, which is why it needs no GImageID treatment. */
     thread_local JobSystem* GOwningPool = nullptr;
 }
 
 /*
- * One slot, exactly one cache line.
+ * One slot, exactly one cache line: 64 minus 24 of bookkeeping leaves 40 for the
+ * payload, which is where JOB_PAYLOAD_CAPACITY comes from.
  *
- * THE LAYOUT IS WHY JOB_PAYLOAD_CAPACITY IS 40. A worker claiming a job touches
- * the function pointer, the counter and the payload; if those straddle two lines
- * it pays for two. 64 minus the 24 bytes of bookkeeping below leaves 40, and the
- * static_assert under this struct is what keeps that arithmetic honest.
- *
- * Parent is an INDEX, not a JobHandle. A parent cannot outlive its children (its
- * count includes them), so there is no recycling window to protect against and
- * the generation would be dead weight.
+ * Parent is an INDEX, not a handle. A parent cannot outlive its children, so
+ * there is no recycling window here and a generation would be dead weight.
  */
 struct JobSystem::Impl
 {
@@ -90,17 +61,9 @@ struct JobSystem::Impl
         unsigned char         Payload[JOB_PAYLOAD_CAPACITY] = {};// 40  @ 24
     };                                                          // -----------
                                                                 // 64
-    /*
-     * THIS ASSERT IS THE POINT, not decoration.
-     *
-     * It is what caught JOB_PAYLOAD_CAPACITY being 48 in the first draft of the
-     * header: 48 plus 24 of bookkeeping is 72, which alignas(64) then rounds to
-     * 128 -- silently doubling the ring's footprint and putting two cache lines
-     * under every job claim, while every comment in the header went on claiming
-     * one. Nothing else would have complained.
-     *
-     * If this fires, shrink JOB_PAYLOAD_CAPACITY. Do not relax the assert.
-     */
+    /* Not decoration: this caught JOB_PAYLOAD_CAPACITY being 48, where 48 plus 24
+     * is 72 and alignas(64) rounds to 128 -- doubling the ring and putting two
+     * lines under every job claim, silently. Shrink the payload if it fires. */
     static_assert(sizeof(Job) == 64, "A job slot must be exactly one cache line.");
 
     Job*     Slots = nullptr;
@@ -141,12 +104,9 @@ JobSystem::JobSystem(const uint32_t InWorkerCount)
 {
     Pimpl = new Impl();
 
-    /*
-     * The ring is allocated ONCE and never grows. SystemAlignedAlloc rather than
-     * Memory::AllocArray because these slots are not tracked objects, must not
-     * appear in ReportLeaks, and want a 64-byte alignment the allocation header
-     * would push around.
-     */
+    /* Allocated once, never grown. SystemAlignedAlloc and not Memory::AllocArray:
+     * these are not tracked objects, must not show up in ReportLeaks, and want an
+     * alignment the allocation header would push around. */
     void* Block = SystemAlignedAlloc(sizeof(Impl::Job) * MAX_PENDING_JOBS, 64);
     CORE_CHECK(Block != nullptr, "Jobs: could not allocate the job ring.")
     if(!Block)
@@ -165,13 +125,10 @@ JobSystem::JobSystem(const uint32_t InWorkerCount)
     }
 
     /*
-     * PHYSICAL cores MINUS ONE, clamped to at least one worker.
-     *
-     * Minus one because the main thread is the one that waits, and a pool sized
-     * to every core makes the OS preempt a worker in order to run the thread
-     * that is waiting for it. Physical rather than logical because this work is
-     * compute-bound -- see appThreadHardwareCount's note on why both numbers
-     * exist.
+     * PHYSICAL cores minus one, at least one. Minus one because the main thread
+     * is the one that waits, and a pool sized to every core makes the OS preempt
+     * a worker to run the thread waiting on it. Physical because this work is
+     * compute-bound -- appThreadHardwareCount explains why both numbers exist.
      */
     uint32_t Count = InWorkerCount;
     if(Count == 0)
@@ -185,9 +142,8 @@ JobSystem::JobSystem(const uint32_t InWorkerCount)
 
     for(uint32_t Index = 0; Index < Count; ++Index)
     {
-        /* "Job/0", "Job/1" ... -- short on purpose. appThreadSetName truncates
-         * to 15 characters on Linux, and these names exist to be READ in a
-         * profiler's thread list. */
+        /* Short on purpose: Linux truncates at 15 characters, and these exist to
+         * be read in a profiler's thread list. */
         char Name[16];
         std::snprintf(Name, sizeof(Name), "Job/%u", Index);
 
@@ -207,18 +163,11 @@ JobSystem::~JobSystem()
         return;
     }
 
-    /*
-     * Release, paired with the acquire in WorkerMain's loop condition: a worker
-     * must not observe the flag before the writes that preceded it.
-     */
+    /* Release, paired with the acquire in WorkerMain's loop condition. */
     Pimpl->bShuttingDown.store(true, std::memory_order_release);
 
-    /*
-     * Signal generously. A worker blocked in TryWaitFor needs a permit or a
-     * timeout to notice the flag, and over-signalling a semaphore is harmless
-     * because the count simply accumulates. Under-signalling costs up to the
-     * timeout per worker, which is the one thing teardown should not gamble on.
-     */
+    /* Generously: a worker in TryWaitFor needs a permit or a timeout to notice
+     * the flag, and an over-signalled semaphore simply accumulates. */
     Pimpl->WorkSignal.Signal(Pimpl->WorkerCount * 2);
 
     for(uint32_t Index = 0; Index < Pimpl->WorkerCount; ++Index)
@@ -228,17 +177,10 @@ JobSystem::~JobSystem()
     delete[] Pimpl->Workers;
 
     /*
-     * DROP what is still queued, and say how much.
-     *
-     * Draining instead would be worse: a queued job may have been dispatched by
-     * something already torn down, so running it here is how a clean exit turns
-     * into a crash in the last millisecond of the process. A caller who wants
-     * everything finished calls WaitForIdle first, which is a visible statement
-     * of that intent.
-     *
-     * Every dropped job is still COMPLETED, so anything waiting on it is
-     * released. Leaving a waiter blocked forever on work that can never run is
-     * not an improvement.
+     * DROP what is queued rather than draining it: a queued job may have been
+     * dispatched by something already torn down, so running it here is how a
+     * clean exit becomes a crash. WaitForIdle first is how a caller asks for the
+     * opposite. Dropped jobs are still COMPLETED, so their waiters are released.
      */
     std::deque<uint32_t> ToRelease;
     {
@@ -250,10 +192,8 @@ JobSystem::~JobSystem()
         Pimpl->MainQueue.clear();
     }
 
-    /* COMPLETED OUTSIDE THE LOCK. CompleteSlot takes the mutex in order to
-     * recycle, so doing this in the block above would self-deadlock on a
-     * non-recursive std::mutex -- and would do so only on the teardown path,
-     * which is the worst possible place to hide a hang. */
+    /* Outside the lock: CompleteSlot takes the mutex to recycle, so doing this in
+     * the block above self-deadlocks -- on the teardown path, of all places. */
     const uint32_t Dropped = uint32_t(ToRelease.size());
     for(const uint32_t Slot : ToRelease)
     {
@@ -283,11 +223,8 @@ JobSystem::~JobSystem()
 
 // === Slots ==================================================================
 
-/*
- * Caller must hold the mutex. INVALID_SLOT when the ring is exhausted, which is
- * the condition Dispatch turns into inline execution and OpenGroup turns into an
- * invalid handle.
- */
+/* Mutex HELD. INVALID_SLOT when the ring is exhausted -- Dispatch turns that into
+ * inline execution, OpenGroup into an invalid handle. */
 uint32_t JobSystem::AcquireSlot()
 {
     if(Pimpl->FreeSlots.empty())
@@ -301,31 +238,17 @@ uint32_t JobSystem::AcquireSlot()
     Impl::Job& J = Pimpl->Slots[Slot];
 
     /*
-     * Bump the generation on ACQUIRE, not on release, and be clear about what
-     * that costs: THERE IS A WINDOW where a slot sits on the free list still
-     * carrying the generation of the job that just finished, so an old handle
-     * to that job still resolves. Bumping on release would close that window
-     * instead. This is a choice, not an oversight.
+     * Bumped on ACQUIRE, which deliberately leaves a window: a freed slot keeps
+     * its old generation until reuse, so a finished job's handle still resolves.
+     * That is safe because ReleaseSlot leaves PendingCount at 0 and bOpenGroup
+     * false, so IsComplete, Wait, TryAdopt and CloseGroup each answer correctly
+     * through it; the dangerous interleaving -- reacquisition between a caller's
+     * ResolveHandle and its TryAdopt -- is caught by the re-check in TryAdopt.
      *
-     * It is safe because ReleaseSlot leaves the slot in a state where every
-     * path through the window reaches the right answer on its own:
+     * What it buys is the diagnostic: parenting to a finished job then reports
+     * "already complete" rather than "recycled".
      *
-     *      PendingCount is 0  -> IsComplete says complete, which is TRUE
-     *                         -> Wait returns immediately, which is CORRECT
-     *                         -> TryAdopt refuses, which is CORRECT
-     *      bOpenGroup is false -> CloseGroup refuses a second close
-     *
-     * and the one genuinely dangerous interleaving -- the slot being reacquired
-     * BETWEEN a caller's ResolveHandle and its TryAdopt -- is caught by the
-     * generation re-check inside TryAdopt, not by this bump.
-     *
-     * What the window buys is a better diagnostic. A caller who parents a job to
-     * something that has already finished gets "already complete", naming the
-     * actual mistake, instead of "recycled", which describes an implementation
-     * detail they did not cause and cannot act on.
-     *
-     * Zero is skipped because JobHandle uses Generation == 0 to mean "invalid",
-     * and a wrapped counter must not manufacture a handle that reads as invalid.
+     * Zero is skipped because Generation == 0 means an invalid handle.
      */
     uint32_t NextGen = J.Generation.load(std::memory_order_relaxed) + 1;
     if(NextGen == 0)
@@ -351,14 +274,10 @@ void JobSystem::ReleaseSlot(const uint32_t InSlot)
 }
 
 /*
- * Releases one reference, and keeps going while that empties a parent.
+ * Releases one reference, continuing while that empties a parent. Mutex NOT held.
  *
- * ITERATIVE, NOT RECURSIVE, on purpose: the chain length is the depth of the job
- * tree, which is a number this class does not control. A recursive version would
- * put a caller's data structure in charge of this thread's stack.
- *
- * Takes the mutex only to recycle, so completing a deep chain does not hold the
- * lock across the whole walk.
+ * ITERATIVE: the chain is as deep as the job tree, which this class does not
+ * control, so recursion would put a caller's data in charge of this stack.
  */
 void JobSystem::CompleteSlot(uint32_t InSlot)
 {
@@ -367,14 +286,10 @@ void JobSystem::CompleteSlot(uint32_t InSlot)
         Impl::Job& J = Pimpl->Slots[InSlot];
 
         /*
-         * acq_rel IS LOAD-BEARING AND IS THE ONE ORDERING THAT MATTERS HERE.
-         *
-         * Release half: a waiter that observes zero must also see every write
-         * the job made. Acquire half: the thread that drives the count to zero
-         * must see the writes of the children that decremented before it.
-         *
-         * Everything else in this file can be relaxed because the mutex orders
-         * it. This cannot, because completion is deliberately lock-free.
+         * acq_rel is the one ordering that matters. Release: a waiter observing
+         * zero must see the job's writes. Acquire: whoever drives it to zero must
+         * see the children that decremented first. Everything else here is
+         * ordered by the mutex; completion is deliberately lock-free.
          */
         if(J.PendingCount.fetch_sub(1, std::memory_order_acq_rel) != 1)
         {
@@ -393,14 +308,11 @@ void JobSystem::CompleteSlot(uint32_t InSlot)
 }
 
 /*
- * Adds a child's reference to a parent, refusing if the parent is already
- * complete.
+ * Adds a child's reference, refusing a parent that is already complete.
  *
- * A CAS LOOP AND NOT A LOAD-THEN-INCREMENT. The check and the increment have to
- * be one operation: between a load that reads 1 and an increment, the parent's
- * own reference can be released and the count reach zero -- and then the child
- * is attached to a job whose waiters have already been let go, which is exactly
- * the "child of a completed parent" the header refuses.
+ * A CAS LOOP, not load-then-increment: the test and the increment must be one
+ * operation, or the parent's own reference can drop in between and the child
+ * attaches to a job whose waiters have already been released.
  */
 bool JobSystem::TryAdopt(const uint32_t InParentSlot, const uint32_t InExpectedGeneration)
 {
@@ -414,18 +326,14 @@ bool JobSystem::TryAdopt(const uint32_t InParentSlot, const uint32_t InExpectedG
                                                      std::memory_order_relaxed))
         {
             /*
-             * CONFIRM THE SLOT DID NOT RECYCLE UNDER US.
+             * Confirm the slot did not recycle between the caller's
+             * ResolveHandle and this CAS. Without it the child attaches to a
+             * STRANGER: an unrelated Wait blocks on it and our completion
+             * decrements someone else's counter -- not memory-unsafe, and very
+             * hard to attribute afterwards.
              *
-             * The caller resolved the handle a moment ago, but resolving and
-             * adopting are two steps: in between, the parent can complete and
-             * its slot be handed to an unrelated job. Without this check the
-             * child is attached to a STRANGER -- so an unrelated Wait blocks on
-             * our child, and our completion decrements somebody else's counter.
-             * Not memory-unsafe, and almost impossible to attribute afterwards.
-             *
-             * Giving the reference back cannot complete the stranger by
-             * accident: the CAS only fired with Count > 0, so the count is at
-             * least 2 here and at least 1 after the release.
+             * Handing the reference back cannot complete that stranger: the CAS
+             * fired with Count > 0, so the count is >= 1 after the release.
              */
             if(Parent.Generation.load(std::memory_order_acquire) != InExpectedGeneration)
             {
@@ -440,12 +348,8 @@ bool JobSystem::TryAdopt(const uint32_t InParentSlot, const uint32_t InExpectedG
     return false;
 }
 
-/*
- * Resolves a handle to a slot, or INVALID_SLOT if it is stale.
- *
- * Caller must NOT hold the mutex (this takes none) and must treat a stale result
- * as "completed long ago", which is what a recycled slot means.
- */
+/* Mutex NOT held. INVALID_SLOT means stale, which a caller must read as
+ * "completed long ago" -- that is what a recycled slot means. */
 uint32_t JobSystem::ResolveHandle(const JobHandle InHandle) const
 {
     if(!InHandle.IsValid() || InHandle.Index >= MAX_PENDING_JOBS)
@@ -553,13 +457,10 @@ JobHandle JobSystem::Dispatch(const JobFn     InFn,
     if(Slot == INVALID_SLOT)
     {
         /*
-         * THE RING IS FULL, SO RUN IT HERE -- outside the lock, which matters:
-         * the payload may dispatch, and dispatching under our own mutex is an
-         * immediate self-deadlock.
-         *
-         * This is the backpressure the header describes. The handle returned is
-         * invalid because the work is already done and there is no slot to name;
-         * a Wait on it returns at once, which is correct.
+         * Ring full, so run it here -- OUTSIDE the lock, which matters: the
+         * payload may itself dispatch, and doing that under our own mutex is an
+         * immediate self-deadlock. The handle is invalid because the work is
+         * already done and no slot names it.
          */
         Pimpl->ExecutedInline.fetch_add(1, std::memory_order_relaxed);
         Pimpl->Executed.fetch_add(1, std::memory_order_relaxed);
@@ -607,13 +508,8 @@ JobHandle JobSystem::DispatchOnMain(const JobFn   InFn,
         const uint32_t Slot = AcquireSlot();
         if(Slot == INVALID_SLOT)
         {
-            /*
-             * NO INLINE FALLBACK HERE, unlike Dispatch. The entire point of this
-             * queue is that the work must run ON THE MAIN THREAD; running it
-             * here, on whatever worker called, would do the exact thing the
-             * caller was avoiding -- touch ModuleManager or a Qt file provider
-             * from a worker. Refusing loudly is the only honest option.
-             */
+            /* No inline fallback, unlike Dispatch: running it here, on whatever
+             * worker called, would do the exact thing the caller was avoiding. */
             CORE_LOG_ERROR("Jobs: the ring is full, so a main-thread job was REFUSED rather "
                            "than run inline -- running it here would defeat the purpose of "
                            "the queue. Call TickMainThread more often.")
@@ -669,9 +565,8 @@ JobHandle JobSystem::OpenGroup()
     J.bOpenGroup      = true;
     J.bMainThreadOnly = false;
 
-    /* The one reference belongs to the caller and is released by CloseGroup. It
-     * is what makes the counter unable to reach zero while children are still
-     * being added. */
+    /* The caller's reference, released by CloseGroup. It is what stops the count
+     * reaching zero while children are still being added. */
     J.PendingCount.store(1, std::memory_order_relaxed);
 
     JobHandle Handle;
@@ -697,9 +592,8 @@ void JobSystem::CloseGroup(const JobHandle InGroup)
         return;
     }
 
-    /* Cleared before the reference is released: after CompleteSlot the slot may
-     * already belong to somebody else, and writing to it then would corrupt
-     * their job. */
+    /* Cleared BEFORE the reference is released: after CompleteSlot the slot may
+     * already belong to someone else. */
     Pimpl->Slots[Slot].bOpenGroup = false;
 
     CompleteSlot(Slot);
@@ -708,11 +602,10 @@ void JobSystem::CloseGroup(const JobHandle InGroup)
 // === Execution ==============================================================
 
 /*
- * Runs one ready job if there is one. False if the queue was empty.
+ * Runs one ready job; false if the queue was empty.
  *
- * The single place a job is ever executed, so it is also the single place the
- * Executing counter and the completion path are driven from. Called by workers
- * and by Wait, which is what makes a wait productive instead of idle.
+ * The only place a job is executed, and therefore the only place Executing and
+ * the completion path are driven from. Workers and Wait both come through here.
  */
 bool JobSystem::TryRunOneJob()
 {
@@ -727,23 +620,17 @@ bool JobSystem::TryRunOneJob()
         Slot = Pimpl->Ready.front();
         Pimpl->Ready.pop_front();
 
-        /*
-         * Incremented INSIDE the lock, together with the pop.
-         *
-         * If it were bumped after releasing the lock there would be an instant
-         * where the job is in neither the queue nor the executing count, and
-         * IsQuiescent would report an idle pool with a job in flight -- which is
-         * precisely the window in which CollectGarbage would then run against a
-         * live worker.
-         */
+        /* Incremented INSIDE the lock, with the pop. Bumped after, there would be
+         * an instant where the job is in neither the queue nor the count, and
+         * IsQuiescent would report idle with a job in flight -- exactly the window
+         * CollectGarbage must not run in. */
         Pimpl->Executing.fetch_add(1, std::memory_order_relaxed);
     }
 
     Impl::Job& J = Pimpl->Slots[Slot];
 
-    /* Copied out before running. The payload lives in a slot that CompleteSlot
-     * may recycle the moment the job finishes, and a job that dispatches more
-     * work can cause exactly that recycling while its own frame is still live. */
+    /* Copied out before running: CompleteSlot may recycle this slot the moment
+     * the job finishes, and a job that dispatches can trigger that itself. */
     const JobFn   Fn = J.Fn;
     unsigned char Local[JOB_PAYLOAD_CAPACITY];
     std::memcpy(Local, J.Payload, JOB_PAYLOAD_CAPACITY);
@@ -767,12 +654,9 @@ void JobSystem::WorkerMain()
 {
     GOwningPool = this;
 
-    /*
-     * THE SHUTDOWN CHECK IS FIRST, AND THAT IS THE POLICY, NOT A STYLE CHOICE.
-     * The destructor documents that queued-but-unstarted jobs are DROPPED;
-     * draining before checking would instead run them during teardown, which is
-     * the behaviour that turns a clean exit into a crash.
-     */
+    /* The shutdown check is FIRST, and that is policy rather than style: the
+     * destructor drops queued jobs, so draining before checking would run them
+     * during teardown instead. */
     while(!Pimpl->bShuttingDown.load(std::memory_order_acquire))
     {
         if(TryRunOneJob())
@@ -782,16 +666,10 @@ void JobSystem::WorkerMain()
 
         Pimpl->WorkerSleeps.fetch_add(1, std::memory_order_relaxed);
 
-        /*
-         * BOUNDED, not Wait().
-         *
-         * A permit can be consumed by a thread sitting in Wait() rather than by
-         * a worker, so the count and the queue drift apart: there can be work
-         * ready with no permit left to announce it. An unbounded wait would sleep
-         * a worker on a non-empty queue -- the lost-wakeup symptom, arrived at
-         * from the other direction. The timeout makes that a 2ms latency instead
-         * of a hang, and it is also how a worker notices shutdown.
-         */
+        /* Bounded, not Wait(): a thread inside Wait() can consume a permit meant
+         * for a worker, so the count and the queue drift apart. The timeout turns
+         * that into 2ms of latency rather than a worker asleep on a non-empty
+         * queue, and is also how shutdown is noticed. */
         Pimpl->WorkSignal.TryWaitFor(2);
     }
 
@@ -802,13 +680,9 @@ uint32_t JobSystem::TickMainThread(const uint32_t InMaxJobs)
 {
     CORE_CHECK_MAIN_THREAD("JobSystem::TickMainThread")
 
-    /*
-     * The batch is snapshotted by COUNT, not drained until empty: a main-thread
-     * job may itself call DispatchOnMain, and draining "until empty" would then
-     * run the new work in the same tick and, in the pathological case, never
-     * return. Taking the queue's size once bounds the tick to the work that was
-     * already pending.
-     */
+    /* Snapshotted by COUNT rather than drained until empty: a main-thread job may
+     * itself call DispatchOnMain, and "until empty" would run that in the same
+     * tick and, pathologically, never return. */
     uint32_t Budget = InMaxJobs;
     if(Budget == 0)
     {
@@ -862,18 +736,12 @@ bool JobSystem::IsComplete(const JobHandle InHandle) const
     const Impl::Job& J = Pimpl->Slots[InHandle.Index];
 
     /*
-     * TWO GENERATION READS, AROUND THE COUNT. This is the recycling race, and it
-     * is the subtlest thing in the file.
+     * TWO GENERATION READS, AROUND THE COUNT -- the subtlest thing in the file.
      *
-     * A single read is not enough: the generation can match, the job can then
-     * complete and its slot be handed to an unrelated job, and the count this
-     * reads belongs to that stranger. The waiter would then wait on somebody
-     * else's work -- not a crash, but an arbitrarily long stall with no
-     * explanation.
-     *
-     * Reading the generation again afterwards closes it. If it moved, the slot
-     * was recycled underneath us, which means our job finished: complete. If it
-     * held, the count was genuinely ours.
+     * One read is not enough: the generation can match, the job then complete and
+     * its slot go to an unrelated job, and the count read belong to that stranger.
+     * The waiter would stall on someone else's work with no explanation. If the
+     * second read moved, the slot recycled, which means our job finished.
      */
     const uint32_t Before = J.Generation.load(std::memory_order_acquire);
     if(Before != InHandle.Generation)
@@ -909,14 +777,12 @@ void JobSystem::Wait(const JobHandle InHandle)
     }
 
     /*
-     * An open group can never complete, because the reference keeping it open is
-     * held by this caller. So this is not a wait, it is a hang.
+     * An open group can never complete -- the reference holding it open belongs to
+     * this caller -- so this would be a hang, not a wait.
      *
-     * THE RETURN AFTER CORE_CHECK IS LOAD-BEARING. Per CoreLog.h's fatal
-     * semantics, a host with a handler installed logs and RETURNS -- so without
-     * the explicit bail the "fatal" check would be followed by the very hang it
-     * exists to prevent, and the log line would be the last thing the process
-     * ever printed.
+     * THE RETURN AFTER CORE_CHECK IS LOAD-BEARING: per CoreLog.h, an installed
+     * handler logs and RETURNS, so without the explicit bail the "fatal" check is
+     * followed by the very hang it exists to prevent.
      */
     if(Pimpl->Slots[Slot].bOpenGroup)
     {
@@ -925,11 +791,8 @@ void JobSystem::Wait(const JobHandle InHandle)
         return;
     }
 
-    /*
-     * Depth is capped because Wait runs jobs, so a wait chain nests real stack
-     * frames. Exceeding the cap is a diagnosable refusal; the alternative is a
-     * stack overflow in a worker thread, which is neither.
-     */
+    /* Capped because Wait runs jobs, so a wait chain nests real stack frames. The
+     * alternative to a diagnosable refusal is a stack overflow in a worker. */
     if(GWaitDepth >= MAX_WAIT_DEPTH)
     {
         CORE_CHECK(false, "Jobs: wait chain deeper than MAX_WAIT_DEPTH. A job is waiting on a "
@@ -950,16 +813,13 @@ void JobSystem::Wait(const JobHandle InHandle)
         }
 
         /*
-         * Nothing runnable, so what we are waiting on is executing on another
-         * thread. Yield first -- the common case is that it finishes almost
-         * immediately -- then fall back to sleeping, because burning a core to
-         * watch another core work helps nobody.
+         * Nothing runnable, so what we wait on is executing elsewhere. Yield
+         * first, then sleep; burning a core to watch another core work helps
+         * nobody.
          *
-         * THIS IS THE CRUDE PART OF THE FILE, and knowingly so. The principled
-         * fix is a per-job completion signal, which means a semaphore per slot
-         * and 4096 of them; the fix engines actually reach for is fibers, which
-         * the header rules out and explains why. Revisit with a profile showing
-         * time spent here, not before.
+         * KNOWINGLY THE CRUDE PART. The principled fix is a completion signal per
+         * slot, and there are 4096 of them; the fix engines reach for is fibers,
+         * which the header rules out. Revisit with a profile, not before.
          */
         if(++Spins < 64)
         {
@@ -976,9 +836,8 @@ void JobSystem::Wait(const JobHandle InHandle)
 
 void JobSystem::WaitForIdle()
 {
-    /* Same shape as Wait, against "nothing queued and nothing running" instead
-     * of one handle -- so a caller on the main thread helps drain rather than
-     * watching workers do it. */
+    /* Wait's shape, against "nothing queued and nothing running" instead of one
+     * handle, so the caller helps drain rather than watching workers do it. */
     uint32_t Spins = 0;
     while(!IsQuiescent())
     {
@@ -1050,16 +909,9 @@ void JobSystem::GetStats(JobSystemStats& OutStats) const
 uint32_t JobSystem::OnImageUnloading(const ImageID InImage)
 {
     /*
-     * Two phases, and the order is forced.
-     *
-     * First remove what is QUEUED, because a queued job in a doomed image is a
-     * function pointer into memory about to be unmapped and the whole point is
-     * that nothing can pick it up. Then wait out what is ALREADY RUNNING, which
-     * cannot be cancelled -- Thread::Join's comment says why -- so the only
-     * option is to let it finish while its code is still mapped.
-     *
-     * Doing it the other way round would let a worker pull a queued job from the
-     * dying image while we were waiting for a different one to finish.
+     * Two phases, and the order is forced: remove what is QUEUED first, then wait
+     * out what is ALREADY RUNNING. The other way round lets a worker pull a
+     * queued job from the dying image while we wait for a different one.
      */
     std::deque<uint32_t> ToRelease;
 
@@ -1074,8 +926,8 @@ uint32_t JobSystem::OnImageUnloading(const ImageID InImage)
             {
                 if(Pimpl->Slots[Slot].OwningImage == InImage)
                 {
-                    /* Cleared so that nothing can call into the dying image even
-                     * if this slot is somehow reached again before it recycles. */
+                    /* So nothing can call into the dying image even if the slot
+                     * is somehow reached again before it recycles. */
                     Pimpl->Slots[Slot].Fn = nullptr;
                     ToRelease.push_back(Slot);
                 }
@@ -1098,23 +950,17 @@ uint32_t JobSystem::OnImageUnloading(const ImageID InImage)
 
     if(Dropped > 0)
     {
-        /*
-         * Logged loudly and per-image, because a dropped job means a module was
-         * reloaded with work outstanding and SOMEBODY'S RESULT IS NOW MISSING.
-         * That is CoreModule.h's RELOAD HAZARDS list, not something this can fix
-         * from here -- but it must not be silent, or the missing result surfaces
-         * as a rendering glitch three reloads later.
-         */
+        /* Loud, because a dropped job means somebody's result is now missing --
+         * CoreModule.h's RELOAD HAZARDS, not fixable from here, but silence would
+         * surface it as a rendering glitch three reloads later. */
         CORE_LOG_WARN(std::string("Jobs: image '") + Memory::GetImageName(InImage) +
                       "' is unloading; dropped " + std::to_string(Dropped) +
                       " queued job(s) that would have called into it. Anything waiting on "
                       "them has been released without their work being done.")
     }
 
-    /* Anything already running is waited out, including jobs from other images:
-     * there is no way to wait for "only that image's" running jobs without a
-     * per-job image check the executing path does not keep. Waiting for all of
-     * them is stricter than needed and correct. */
+    /* Waits out everything running, not just this image's -- the executing path
+     * keeps no per-job image check. Stricter than needed, and correct. */
     WaitForIdle();
 
     return Dropped;
@@ -1124,11 +970,8 @@ uint32_t JobSystem::OnImageUnloading(const ImageID InImage)
 
 namespace
 {
-    /*
-     * Non-owning, no locking, set once by the host -- the same shape
-     * CoreModuleManager.h and CoreFileProvider.h use, and constant-initialised
-     * into .bss for the reason CoreConfig.h:31 gives.
-     */
+    /* Non-owning, no locking, set once by the host -- ModuleManager's shape, and
+     * constant-initialised into .bss for the reason CoreConfig.h:31 gives. */
     JobSystem* GJobSystem = nullptr;
 }
 

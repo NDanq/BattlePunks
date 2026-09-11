@@ -27,13 +27,10 @@
  *      Jobs.ParallelFor(Vertices.Num(), 256,
  *                       [&](uint32_t Begin, uint32_t End){ Skin(Begin, End); });
  *
- * and that is nearly the whole surface. There is no dependency graph, no
- * continuation, no coroutine, no priority band. Each of those is a real feature
- * of a mature scheduler and each is absent for the same reason CoreQueue.h
- * gives for not being lock-free: the work this has to schedule right now is
- * per-frame fan-out over arrays, that shape is served by a counter and a wait,
- * and the missing features cost correctness to add before there is a call site
- * that needs them.
+ * and that is nearly the whole surface. No dependency graph, no continuation, no
+ * coroutine, no priority band -- absent for the reason CoreQueue.h gives for not
+ * being lock-free: the work to schedule today is per-frame fan-out over arrays,
+ * which a counter and a wait already serve.
  *
  * ===========================================================================
  * THE RULE THAT SHAPES EVERYTHING: A WAIT MUST WORK, NOT SLEEP
@@ -42,39 +39,28 @@
  * Wait(H) does not block the calling thread. It runs OTHER JOBS until H is
  * complete, and only sleeps when the queue is empty.
  *
- * That is not an optimization, it is the difference between a job system and a
- * deadlock. Consider the obvious implementation on a 4-worker pool: job A
- * dispatches B and blocks on it. Four A-shaped jobs are in flight, all four
- * workers are blocked, B is at the head of a queue nobody will ever drain
- * again. The pool is dead and no individual piece of code did anything wrong.
- * A pool that blocks on Wait can only ever be used by code that never nests,
- * which is a rule nobody can keep.
+ * Not an optimization -- the difference between a job system and a deadlock. On
+ * a 4-worker pool: job A dispatches B and blocks on it. Four A-shaped jobs are in
+ * flight, all four workers blocked, B at the head of a queue nobody will drain
+ * again. Nothing did anything wrong. A pool that blocks on Wait can only be used
+ * by code that never nests, which is a rule nobody keeps.
  *
- * THE PRICE, AND IT IS A REAL ONE -- READ BEFORE WRITING A JOB:
+ * THE PRICE -- READ BEFORE WRITING A JOB. Inside Wait(), an unrelated job runs
+ * ON YOUR STACK, above your frame:
  *
- *   REENTRANCY. Inside Wait(), an unrelated job runs ON YOUR STACK, above your
- *   frame. So:
+ *     * A JOB MUST NOT HOLD A LOCK ACROSS Wait(). The job running underneath you
+ *       may want that same lock and cannot know you hold it. A self-deadlock
+ *       with two unrelated stacks in it, and the likeliest way to misuse this.
  *
- *     * A JOB MUST NOT HOLD A LOCK ACROSS Wait(). The job that runs underneath
- *       you may want that same lock, and it cannot possibly know you hold it.
- *       This is a self-deadlock with two unrelated call stacks in it, and it is
- *       the single most likely way to misuse this API.
- *
- *     * A job must not assume it resumes on the thread that started it. It
- *       does, in fact -- jobs are never migrated mid-execution -- but anything
- *       thread_local you read before a Wait() may have been written by the
+ *     * Anything thread_local read before a Wait() may have been written by the
  *       stranger that ran during it.
  *
- *     * Recursion depth is bounded by the wait chain, not by the job count. A
- *       job that waits on a job that waits on a job nests three stack frames
- *       deep plus whatever those jobs are. Deep fan-in trees want an explicit
- *       depth cap, which is what MAX_WAIT_DEPTH below is.
+ *     * Depth is bounded by the wait chain, not the job count -- hence
+ *       MAX_WAIT_DEPTH.
  *
- *   The alternative -- fibers, so a waiting job can be parked and its stack set
- *   aside -- is how the large engines solve this properly. It is also a
- *   platform-specific stack-switching mechanism behind the app* seam, it breaks
- *   every debugger and profiler until each is taught about it, and it makes
- *   thread_local a lie. Not now, and not without a profile that demands it.
+ * The alternative is fibers, which is how large engines solve it properly. It is
+ * also stack-switching behind the app* seam, it breaks every debugger and
+ * profiler until each is taught about it, and it makes thread_local a lie.
  *
  * ===========================================================================
  * THE COLLECTOR. THIS IS THE PART THAT WILL BITE.
@@ -84,58 +70,46 @@
  * construct, destroy, copy or assign a TRef while this runs. There is no read
  * barrier and no write barrier."
  *
- * A job pool is a machine for violating that sentence. One worker copying a
- * TRef while the collector sweeps is a corrupted object list, and it will
- * present as a crash inside CollectGarbage with a stack that has nothing to do
- * with the cause.
+ * A job pool is a machine for violating that sentence, and it presents as a
+ * crash inside CollectGarbage with a stack unrelated to the cause.
  *
- * The existing guard is not enough on its own: CollectGarbage checks that the
- * CALLER is the collector thread, which says nothing about the eight other
- * threads that are not calling it. So the contract is:
+ * The existing guard is not enough: CollectGarbage checks that the CALLER is the
+ * collector thread, which says nothing about the eight threads not calling it.
+ * So:
  *
- *   1. The host calls CollectGarbage at a frame boundary with the pool IDLE.
- *      WaitForIdle() is how you get there, and IsQuiescent() is how the
- *      collector can check rather than trust.
+ *   1. The host collects at a frame boundary with the pool IDLE. WaitForIdle()
+ *      gets there; IsQuiescent() lets the collector check rather than trust.
  *
- *   2. CoreGarbageCollector.cpp's existing thread check should be extended to
- *      refuse when a registered JobSystem reports non-quiescent -- the same
- *      shape as the refusal it already logs for a foreign thread, for a
- *      strictly worse error. That edit is a prerequisite for using this header
- *      in a build that also collects; it is called out here rather than done
- *      silently because it changes an existing refusal path.
+ *   2. CoreGarbageCollector.cpp's thread check wants extending to refuse a
+ *      non-quiescent JobSystem -- the shape of the refusal it already logs for a
+ *      foreign thread, for a worse error. A prerequisite for collecting in a
+ *      build that uses this, called out rather than done silently because it
+ *      changes an existing refusal path.
  *
- *   3. A JOB MAY NOT CALL CollectGarbage. Not "should not" -- the re-entrancy
- *      CORE_CHECK in the collector will fire, and it is right to.
+ *   3. A JOB MAY NOT CALL CollectGarbage -- the collector's re-entrancy
+ *      CORE_CHECK will fire, and rightly.
  *
  * WHAT A JOB MAY TOUCH
  *
- *   Memory::Alloc / Dealloc ....... YES. CoreMemoryPool.h:33 -- "Allocate and
- *                                   Deallocate on any pool must be safe from
- *                                   any thread; a pool that is not is a bug in
- *                                   that pool."
- *   The pool REGISTRY ............. NO. Same note, opposite half: register
- *                                   every pool at startup. Main thread only.
+ *   Memory::Alloc / Dealloc ....... YES -- CoreMemoryPool.h:33 requires every
+ *                                   pool to be safe from any thread.
+ *   The pool REGISTRY ............. NO. Same note, opposite half: register at
+ *                                   startup, main thread only.
  *   TUnique ....................... YES, if the job is the only owner.
  *   TRef copy / assign / destroy .. YES between collections (the count is
- *                                   atomic, CoreMemory.cpp:470), NEVER while
- *                                   CollectGarbage runs -- see above.
- *   TWeakRef dereference .......... NO. CorePointer.h:381 is explicit that
- *                                   another thread's last TRef can drop between
- *                                   the validity test and the dereference.
- *                                   Promote on the main thread and hand the job
- *                                   the TRef.
+ *                                   atomic), NEVER while CollectGarbage runs.
+ *   TWeakRef dereference .......... NO -- CorePointer.h:381, another thread's
+ *                                   last TRef can drop between the test and the
+ *                                   dereference. Promote on the main thread and
+ *                                   hand the job the TRef.
  *   CORE_LOG / CORE_CHECK ......... ONLY IF THE HOST'S HANDLER IS THREAD-SAFE.
- *                                   CoreLog.h's seam is a bare function
- *                                   pointer and says nothing about this; a
- *                                   handler forwarding to a GUI logger is
+ *                                   CoreLog.h's seam says nothing about this,
+ *                                   and a handler forwarding to a GUI logger is
  *                                   usually the least thread-safe object in the
- *                                   process. Treat logging from a worker as a
- *                                   host capability, not a given.
- *   ModuleManager, CoreConfig ..... NO. Both documented single-threaded. Use
- *                                   DispatchOnMain.
- *   IFileProvider ................. DEPENDS ON THE PROVIDER, and the Qt one is
- *                                   not. DispatchOnMain, or read through
- *                                   appFile* directly, which is.
+ *                                   process. A host capability, not a given.
+ *   ModuleManager, CoreConfig ..... NO, both single-threaded. DispatchOnMain.
+ *   IFileProvider ................. DEPENDS ON THE PROVIDER; the Qt one is not.
+ *                                   DispatchOnMain, or appFile* directly.
  *
  * ===========================================================================
  * WHY ONE QUEUE AND NOT PER-WORKER WORK STEALING
@@ -145,41 +119,29 @@
  * here is a few items per frame between two threads. A lock-free ring would be
  * more code, more subtle, and no faster at this volume."
  *
- * The honest difference is that a job system can leave that volume behind in a
- * single call -- ParallelFor over 100k vertices at a 256 grain is 390 pushes
- * and 390 pops through one mutex, and eight workers hammering it will show up
- * in a profile. So the shape here is deliberately chosen to make that an
- * IMPLEMENTATION change: the queue topology is not in this header. Nothing
- * public exposes a queue, a worker index, or an ordering guarantee, so
- * per-worker deques with stealing can be dropped in behind Dispatch without a
- * call site moving.
+ * A job system can leave that volume behind in one call, though -- ParallelFor
+ * over 100k vertices at a 256 grain is 390 trips through one mutex. So the shape
+ * here keeps that an IMPLEMENTATION change: nothing public exposes a queue, a
+ * worker index or an ordering guarantee, and stealing can be dropped in behind
+ * Dispatch without a call site moving. What would justify it is a capture showing
+ * time in the dispatch mutex, not the belief that real engines steal.
  *
- * WHAT WOULD JUSTIFY IT: a capture showing measurable time in the dispatch
- * mutex, not the belief that stealing is what a real engine does.
- *
- * NO ORDERING IS PROMISED, precisely so that stays true. Jobs are not FIFO,
- * not LIFO, and two jobs dispatched in sequence may run in either order or at
- * the same time. If order matters, express it with Wait.
+ * NO ORDERING IS PROMISED, so that stays true. Two jobs dispatched in sequence
+ * may run in either order or at once. If order matters, express it with Wait.
  */
 
 namespace EngineCore
 {
     /*
-     * A reference to a dispatched job.
+     * A reference to a dispatched job: INDEX PLUS GENERATION, and the generation
+     * is the point. Slots live in a fixed ring and are reused, so a bare index
+     * that outlives its job silently names a DIFFERENT one -- a Wait on it would
+     * block on unrelated work or return instantly, depending on timing.
      *
-     * INDEX PLUS GENERATION, and the generation is the entire point. Job slots
-     * live in a fixed ring and are reused, so a bare index that outlives its
-     * job silently names a DIFFERENT job -- and a Wait on it would block on
-     * unrelated work, or return instantly, depending on timing. The generation
-     * makes a stale handle detectable, so Wait can log and return rather than
-     * do something arbitrary.
-     *
-     * COPYABLE, TRIVIAL, AND 8 BYTES. A handle is passed by value everywhere
-     * and is safe to store; what is NOT safe is storing one across frames and
-     * expecting IsComplete to still mean anything, because the slot will have
-     * been recycled. A stale handle reads as complete -- which is the right
-     * answer for the common case (the job finished long ago) and is why the
-     * generation mismatch is a log, not a fatal.
+     * Trivial and 8 bytes, so safe to pass and store. What is NOT safe is storing
+     * one ACROSS FRAMES and expecting IsComplete to still mean anything. A stale
+     * handle reads as complete, which is right for the common case (the job
+     * finished long ago) and is why a mismatch logs rather than being fatal.
      */
     struct JobHandle
     {
@@ -190,30 +152,23 @@ namespace EngineCore
     };
 
     /*
-     * What a worker actually calls: a plain function pointer and the bytes it
-     * was given.
+     * What a worker calls: a plain function pointer and the bytes it was given.
      *
-     * WHY NOT std::function, WHICH CoreThread.h's Thread HAPPILY USES
+     * WHY NOT std::function, WHICH Thread HAPPILY USES. First, counting: one that
+     * does not fit its small-object buffer heap-allocates, so a frame dispatching
+     * 4000 jobs makes 4000 allocations on the hot path. The inline payload is a
+     * memcpy into a slot that already exists.
      *
-     * Two reasons, and the first is just counting. A std::function that does not
-     * fit its small-object buffer heap-allocates on construction, so a frame
-     * that dispatches 4000 jobs makes 4000 allocations and 4000 frees on the
-     * hot path, at which point the scheduler is an allocator benchmark. The
-     * inline payload below is a memcpy into a slot that already exists.
+     * Second, and this is the one that would have been found the hard way: a
+     * std::function holding a lambda DEFINED IN A MODULE DLL stores an invoker
+     * pointer into that image -- the hazard CoreThread.h's barrier exists for,
+     * and worse for a queued job, which sits there doing nothing until a worker
+     * picks it up milliseconds after the reload. A raw JobFn has the same problem
+     * but it is visible in the type and one word wide.
      *
-     * The second reason is the one that would have been found the hard way. A
-     * std::function holding a lambda DEFINED IN A MODULE DLL stores a pointer to
-     * an invoker compiled into that image -- the same hazard as the Destruct
-     * pointer CoreMemory.h:76 describes, and CoreThread.h's image barrier
-     * exists for. A queued job is worse than a live object, because it sits
-     * there being nothing until a worker picks it up some milliseconds after the
-     * reload. A raw JobFn has exactly the same problem, but it is VISIBLE in the
-     * type, one word wide, and the thing the image drain compares against.
-     *
-     * THE PAYLOAD IS memcpy'd AND NEVER DESTRUCTED. Hence the two
-     * static_asserts on the templated Dispatch below. A lambda capturing a
-     * std::string does not compile, which is the correct outcome: it would
-     * otherwise leak, or be freed twice.
+     * THE PAYLOAD IS memcpy'd AND NEVER DESTRUCTED -- hence the two
+     * static_asserts on the templated Dispatch. A std::string capture does not
+     * compile, which is correct: it would otherwise leak or be freed twice.
      */
     using JobFn = void (*)(void* InPayload);
 
@@ -269,32 +224,27 @@ namespace EngineCore
     {
     public:
         /*
-         * InWorkerCount of 0 means GetPhysicalCoreCount() - 1, clamped to at
-         * least one worker.
+         * 0 means GetPhysicalCoreCount() - 1, at least one.
          *
-         * PHYSICAL, NOT LOGICAL, and MINUS ONE. Minus one because the main
-         * thread is the one that waits, and a pool sized to every core makes
-         * the OS preempt a worker to run the thread that is waiting for it.
-         * Physical because the work this pool is for is compute-bound, and on a
-         * hyperthreaded part the logical count double-counts execution
-         * resources -- see appThreadHardwareCount's note. A host that knows
-         * better passes a number.
+         * PHYSICAL, NOT LOGICAL, and MINUS ONE: minus one because the main thread
+         * is the one that waits, so a pool sized to every core makes the OS
+         * preempt a worker to run the thread waiting for it; physical because
+         * this work is compute-bound and a hyperthreaded part double-counts
+         * execution resources. A host that knows better passes a number.
          *
-         * Workers are named "Job/0", "Job/1", ... via appThreadSetName, which
-         * is what makes a profile capture readable and is half the reason
-         * Thread exists.
+         * Workers are named "Job/0", "Job/1", ..., which is what makes a profile
+         * capture readable.
          */
         explicit JobSystem(uint32_t InWorkerCount = 0);
 
         /*
-         * Signals every worker to stop, then joins them. Queued jobs that have
-         * not started are DROPPED, and it logs how many.
+         * Signals every worker to stop, then joins them. Unstarted queued jobs
+         * are DROPPED, and it logs how many.
          *
-         * Dropping rather than draining is deliberate: a queued job may have
-         * been dispatched by something already torn down, so running it during
-         * shutdown is how a clean exit becomes a crash in the last millisecond
-         * of the process. A caller who wants everything finished calls
-         * WaitForIdle() first, which is a visible statement of that intent.
+         * Dropping rather than draining: a queued job may have been dispatched by
+         * something already torn down, so running it during shutdown is how a
+         * clean exit becomes a crash. WaitForIdle() first is how a caller says
+         * they want the opposite.
          */
         ~JobSystem();
 
@@ -312,41 +262,28 @@ namespace EngineCore
          * and is the only dependency primitive here -- fan-out and join, no
          * arbitrary graph.
          *
-         * DISPATCHING A CHILD OF A COMPLETED PARENT IS A BUG and is refused
-         * with an error: the parent's counter already hit zero and anything
-         * waiting on it has already been released, so the child would run
-         * unobserved.
+         * A CHILD OF A COMPLETED PARENT IS REFUSED with an error: the counter
+         * already hit zero and its waiters were released, so the child would run
+         * unobserved. WHICH IS WHY A PARENT IS ALMOST ALWAYS A GROUP -- using a
+         * dispatched job works only if it cannot finish before the loop adding
+         * its children does, and a worker can start it the instant it is queued.
          *
-         * WHICH IS WHY A PARENT IS ALMOST ALWAYS A GROUP, NOT A JOB. Using a
-         * dispatched job as a parent only works if it cannot possibly finish
-         * before the loop that adds its children does -- and a worker can start
-         * it the instant it is queued. OpenGroup/CloseGroup below exist to make
-         * that race unwritable.
+         * WHEN THE RING IS FULL IT RUNS THE JOB INLINE, ON THIS THREAD, counted
+         * in ExecutedInline. It does not fail and does not grow: failing would
+         * put error handling on every dispatch site for something the caller
+         * cannot act on, and growing would let a runaway producer queue unbounded
+         * work rather than be slowed by it. Running it here is the backpressure.
          *
-         * WHEN THE RING IS FULL IT RUNS THE JOB INLINE, ON THIS THREAD, and
-         * counts it in ExecutedInline. It does not fail, and it does not grow.
-         * Failing would put error handling on every dispatch site for a
-         * condition a caller cannot do anything about; growing would allocate
-         * on the hot path and, worse, would let a runaway producer queue
-         * unbounded work instead of being slowed down by it. Running it here is
-         * the backpressure. A non-zero ExecutedInline in a profile means the
-         * ring is too small or a producer is pathological, and both are worth
-         * seeing.
+         * THE HANDLE FROM THAT PATH IS INVALID -- the job finished before this
+         * returned, so no slot names it. Wait returns immediately and IsComplete
+         * reads true, both correct for work already done.
          *
-         * THE HANDLE RETURNED BY THE INLINE PATH IS INVALID, and deliberately
-         * so: the job ran to completion before this returned, so there is no
-         * slot left to name. Wait on it returns immediately and IsComplete reads
-         * true, which is the right answer for work that is already done. A
-         * caller that needs to tell the two apart is doing something this
-         * scheduler does not support.
-         *
-         * DO NOT PASS InOwningImage. Like Thread::Start's, its default argument
-         * is the mechanism: a default argument is evaluated at the CALL SITE, so
-         * GImageID is read in the caller's image. This function's body cannot
-         * read it -- the body compiles into EngineCore.dll, where GImageID is
-         * always IMAGE_Host -- and a job tagged with the wrong image is a job
-         * OnImageUnloading will not drop. See CoreMemory.h:251 for the original
-         * statement of this trap.
+         * DO NOT PASS InOwningImage. As with Thread::Start, the default argument
+         * IS the mechanism: it is evaluated at the CALL SITE, so GImageID is read
+         * in the caller's image. This body cannot read it -- it compiles into
+         * EngineCore.dll, where GImageID is always IMAGE_Host -- and a job tagged
+         * with the wrong image is one OnImageUnloading will not drop.
+         * CoreMemory.h:251 states the original trap.
          */
         JobHandle Dispatch(JobFn       InFn,
                            const void* InPayload,
@@ -391,30 +328,21 @@ namespace EngineCore
         /*
          * A parent that holds no work and is held OPEN until you close it.
          *
-         * THE RACE THIS EXISTS TO MAKE UNWRITABLE. The natural way to fan out
-         * is to dispatch an empty job and parent the chunks to it. It is also
-         * wrong, and wrong in the way that survives testing: a worker can claim
-         * that empty job the instant it is queued, run its nothing, and drive
-         * the counter to zero WHILE THE DISPATCH LOOP IS STILL ADDING CHILDREN.
-         * The waiter is released early and the remaining children are refused
-         * as children of a completed parent. On a busy pool it never happens;
-         * on an idle one with a slow first chunk it happens constantly.
+         * THE RACE THIS MAKES UNWRITABLE. The natural fan-out is to dispatch an
+         * empty job and parent the chunks to it -- and it is wrong in the way
+         * that survives testing: a worker can claim that empty job the instant it
+         * is queued and drive the counter to zero WHILE THE LOOP IS STILL ADDING
+         * CHILDREN, releasing the waiter early and orphaning the rest. Never on a
+         * busy pool; constantly on an idle one with a slow first chunk.
          *
-         * A group's counter starts at one and that one is YOURS. Children can
-         * come and go and it cannot reach zero, because the reference the
-         * dispatcher holds is not released until CloseGroup.
+         * A group's count starts at one and that one is YOURS, so it cannot reach
+         * zero until CloseGroup. It is never queued and never executes -- just a
+         * counter in a slot, so a JobHandle can name it.
          *
-         * A GROUP IS NEVER QUEUED and never executes. It is a counter with a
-         * generation on it, occupying a job slot so that a JobHandle can name
-         * it.
-         *
-         * IT CAN FAIL, unlike Dispatch. An exhausted ring returns an INVALID
-         * handle and logs, because the fallback Dispatch uses -- run the work
-         * inline right now -- does not exist for a group: a group has no work to
-         * run. A caller must therefore check IsValid() and fall back to doing
-         * the whole fan-out serially, which is what ParallelFor does. Dispatching
-         * children against an invalid parent is refused per child, which would
-         * turn one exhausted ring into a storm of identical log lines.
+         * IT CAN FAIL, unlike Dispatch: a group has no work, so there is nothing
+         * to run inline instead. An exhausted ring returns an INVALID handle, and
+         * the caller must fall back to doing the fan-out serially, as ParallelFor
+         * does.
          */
         JobHandle OpenGroup();
 
@@ -423,12 +351,11 @@ namespace EngineCore
          * its children are done -- which may be immediately, inside this call,
          * if every child has already finished.
          *
-         * EVERY OpenGroup NEEDS EXACTLY ONE OF THESE. A group left open is a
-         * Wait that never returns and a job slot that is never recycled;
-         * closing one twice releases a reference that is not yours and
-         * completes the group out from under its children. Both are refused
-         * with an error rather than corrupting the counter, and both mean the
-         * fan-out was written with an early return in it.
+         * EVERY OpenGroup NEEDS EXACTLY ONE. Left open, it is a Wait that never
+         * returns and a slot never recycled; closed twice, it releases a
+         * reference that is not yours and completes out from under its children.
+         * Both are refused rather than corrupting the counter, and both mean the
+         * fan-out has an early return in it.
          */
         void CloseGroup(JobHandle InGroup);
 
@@ -437,22 +364,18 @@ namespace EngineCore
          * one job per chunk, then waits for all of them. InBody is called as
          * InBody(Begin, End) with End exclusive.
          *
-         * SYNCHRONOUS, i.e. it waits before returning, because the asynchronous
-         * version needs InBody to outlive the call and that is a lifetime trap
-         * in a convenience function. An asynchronous fan-out is Dispatch in a
-         * loop against one parent handle, which is four lines and says what it
-         * is doing.
+         * SYNCHRONOUS, because an async version needs InBody to outlive the call
+         * -- a lifetime trap in a convenience function. Async fan-out is Dispatch
+         * in a loop against one group, which is four lines that say so.
          *
-         * InGrain IS NOT A DETAIL. Too small and the dispatch cost per chunk
-         * dominates the work in it -- a grain of 1 over 100k elements is 100k
-         * trips through the queue to do nanoseconds of work each, and will be
-         * slower than the serial loop by a wide margin. Start where a chunk is
-         * some tens of microseconds. There is no automatic choice available
-         * here: only the caller knows what one element costs.
+         * InGrain IS NOT A DETAIL: too small and dispatch cost dominates the work
+         * in each chunk -- a grain of 1 over 100k elements is 100k trips through
+         * the queue for nanoseconds of work each, far slower than the serial
+         * loop. Aim for tens of microseconds per chunk. Only the caller knows
+         * what one element costs, so there is no automatic choice here.
          *
-         * Runs the body DIRECTLY, with no jobs at all, when InCount <= InGrain.
-         * The serial path is not a special case to be embarrassed about -- it
-         * is the right answer more often than the parallel one.
+         * Runs the body DIRECTLY when InCount <= InGrain. The serial path is the
+         * right answer more often than the parallel one.
          */
         template<typename TBody>
         void ParallelFor(uint32_t InCount, uint32_t InGrain, const TBody& InBody);
@@ -460,17 +383,14 @@ namespace EngineCore
         /*
          * Queues work for the MAIN thread, drained by TickMainThread().
          *
-         * This exists because of the table at the top of this file: a worker
-         * that discovers it needs ModuleManager, the config registry, or a Qt
-         * file provider cannot touch any of them. Handing the work back is the
-         * only correct move, and a hand-rolled ThreadSafeQueue per subsystem to
-         * do it is what this replaces.
+         * For the table at the top of this file: a worker that finds it needs
+         * ModuleManager, the config registry or a Qt file provider cannot touch
+         * any of them, and handing the work back is the only correct move.
          *
-         * Returns a JobHandle that completes when the main thread runs it -- so
-         * a worker CAN Wait on it, and must think hard before doing so: if the
-         * main thread is itself inside Wait() on that worker's job, that is a
-         * deadlock this system cannot break. Fire and forget is almost always
-         * what is wanted.
+         * The handle completes when the main thread runs it, so a worker CAN Wait
+         * on it -- and should think first: if the main thread is itself inside
+         * Wait() on that worker's job, that is a deadlock this cannot break.
+         * Fire and forget is almost always what is wanted.
          */
         JobHandle DispatchOnMain(JobFn       InFn,
                                  const void* InPayload,
@@ -478,14 +398,12 @@ namespace EngineCore
                                  ImageID     InOwningImage = GImageID);
 
         /*
-         * Runs main-thread jobs, up to InMaxJobs of them (0 = all queued now).
-         * CORE_CHECK_MAIN_THREAD. Call it once per frame, near where
-         * ModuleManager::Tick is called, since that is the company this work
-         * keeps. Returns how many it ran.
+         * Runs main-thread jobs, up to InMaxJobs (0 = all queued now), and
+         * returns how many. Call it once per frame near ModuleManager::Tick,
+         * which is the company this work keeps.
          *
-         * The cap exists so a frame cannot be swallowed by a backlog: a
-         * thousand queued main-thread jobs should cost several frames of
-         * hitching, not one enormous one.
+         * The cap stops a backlog swallowing a frame: a thousand queued jobs
+         * should cost several frames of hitching, not one enormous one.
          */
         uint32_t TickMainThread(uint32_t InMaxJobs = 0);
 
@@ -512,14 +430,14 @@ namespace EngineCore
         /*
          * Runs jobs until the queue is empty and nothing is executing.
          *
-         * THE ONLY SAFE POINT TO COLLECT GARBAGE, and the reason this is public
-         * rather than an implementation detail of the destructor. A host's frame
-         * ends: WaitForIdle(), then CollectGarbage(), then start the next frame.
+         * THE ONLY SAFE POINT TO COLLECT GARBAGE, which is why it is public and
+         * not a detail of the destructor: frame ends, WaitForIdle(),
+         * CollectGarbage(), next frame.
          *
-         * Racy by nature if anything else is still dispatching -- it can only
-         * promise that the pool was idle at the instant it returned. Which is
-         * sufficient for the frame-boundary use and is why the collector should
-         * check IsQuiescent itself rather than trusting that this was called.
+         * Racy if anything else is still dispatching -- it promises only that the
+         * pool was idle when it returned. Enough for the frame boundary, and why
+         * the collector should check IsQuiescent rather than trust this was
+         * called.
          */
         void WaitForIdle();
 
@@ -545,54 +463,41 @@ namespace EngineCore
          * Drops queued jobs TAGGED WITH InImage, then waits for any already
          * running. Returns how many were dropped.
          *
-         * WHY A TAG AND NOT THE FUNCTION POINTER. The obvious test is whether
-         * the job's JobFn lands inside the image's mapped range, and it is the
-         * wrong one: resolving a code address to a module means
-         * GetModuleHandleExW(FROM_ADDRESS) on Windows and dladdr on POSIX, which
-         * is an OS mechanism and would need a new app* seam function on every
-         * backend, for information the dispatcher already had. So each job
-         * records the ImageID of whoever dispatched it, exactly as Thread does --
-         * one mechanism, already proven, no new seam.
+         * A TAG, NOT THE FUNCTION POINTER. Testing whether JobFn lands in the
+         * image's mapped range means GetModuleHandleExW(FROM_ADDRESS) or dladdr
+         * -- an OS mechanism needing a new app* seam on every backend, for
+         * information the dispatcher already had. Each job records who dispatched
+         * it instead, exactly as Thread does.
          *
-         * ModuleManager::TeardownInstance calls this FIRST -- before
-         * Threads::OnImageUnloading, before Memory::OnImageUnloading, before
-         * appDLLClose. The ordering is forced: a queued job in a doomed image is
-         * a function pointer into memory about to be unmapped, and the whole
-         * point is to remove it before anything can pick it up.
+         * ModuleManager::TeardownInstance calls this FIRST, before
+         * Threads::OnImageUnloading, Memory::OnImageUnloading and appDLLClose.
+         * Forced: a queued job in a doomed image is a function pointer into
+         * memory about to be unmapped.
          *
-         * ANYTHING WAITING ON A DROPPED JOB IS RELEASED, and the job is marked
-         * complete without having run. Leaving a waiter blocked forever on work
-         * that can never run is not better, and it hangs the unload. This logs
-         * every drop, because a dropped job means a module was reloaded with
-         * work outstanding and somebody's result is now silently missing --
-         * which is CoreModule.h's RELOAD HAZARDS list, not something this can
-         * fix from here.
+         * ANYTHING WAITING ON A DROPPED JOB IS RELEASED and the job marked
+         * complete without running -- leaving the waiter blocked would hang the
+         * unload. Every drop is logged, because it means a module was reloaded
+         * with work outstanding and somebody's result is now missing:
+         * CoreModule.h's RELOAD HAZARDS, not fixable from here.
          *
-         * A job dispatched by the HOST that merely TOUCHES module data is
-         * invisible to this, because the host is what dispatched it and the host
-         * is what it is tagged with. That hazard belongs to the module contract
-         * and is not detectable from here under either scheme.
+         * A HOST job that merely touches module data is invisible to this under
+         * either scheme; that one belongs to the module contract.
          */
         uint32_t OnImageUnloading(ImageID InImage);
 
-        /* Wait chain depth cap. Exceeding it is fatal rather than a stack
-         * overflow, which is the difference between a message naming this
-         * constant and a corrupted stack in a worker thread. */
+        /* Wait chain depth cap. Fatal rather than a stack overflow -- a message
+         * naming this constant beats a corrupted stack in a worker. */
         enum : uint32_t { MAX_WAIT_DEPTH = 32 };
 
-        /* Job slots in the ring. Fixed, allocated once in the constructor -- a
-         * power of two so the index wrap is a mask. Dispatch past it runs
-         * inline; see Dispatch. */
+        /* Ring size: fixed, allocated once, a power of two so the wrap is a mask.
+         * Dispatch past it runs inline. */
         enum : uint32_t { MAX_PENDING_JOBS = 4096 };
 
     private:
-        /*
-         * The generated JobFn, instantiated in the image that called Dispatch --
-         * so its ADDRESS points into that image, and a queued job whose image has
-         * been unloaded is a function pointer into unmapped memory. That is the
-         * hazard OnImageUnloading exists to remove; what it IDENTIFIES the job by
-         * is the ImageID tag, not this address (see the note there).
-         */
+        /* Instantiated in the image that called Dispatch, so its ADDRESS points
+         * there -- which is why a queued job outliving its image is a pointer
+         * into unmapped memory. OnImageUnloading removes that hazard, but
+         * identifies the job by its ImageID tag, not by this address. */
         template<typename TWork>
         static void Trampoline(void* InPayload)
         {
@@ -600,17 +505,15 @@ namespace EngineCore
         }
 
         // === Internals ======================================================
-        // Declared here only because C++ requires it. The comment on each says
-        // whether it expects the pool's mutex to be held, which is the single
-        // most dangerous thing to get wrong in the implementation: CompleteSlot
-        // takes the lock to recycle, so calling it from inside a locked region
-        // is a self-deadlock on a non-recursive mutex.
+        // Here only because C++ requires it. Each notes whether the pool's mutex
+        // must be held -- the most dangerous thing to get wrong, since
+        // CompleteSlot takes the lock to recycle and a non-recursive mutex makes
+        // calling it from a locked region a self-deadlock.
 
         void     WorkerMain();
 
-        /* Runs one ready job. False if the queue was empty. The ONLY place a job
-         * is executed -- workers and Wait both come through here, which is what
-         * makes a wait productive instead of idle. Mutex must NOT be held. */
+        /* Runs one ready job; false if the queue was empty. The ONLY place a job
+         * executes -- workers and Wait both come through here. Mutex NOT held. */
         bool     TryRunOneJob();
 
         uint32_t AcquireSlot();                             // mutex HELD
@@ -620,26 +523,21 @@ namespace EngineCore
                           uint32_t InExpectedGeneration);   // mutex NOT held
         uint32_t ResolveHandle(JobHandle InHandle) const;   // mutex NOT held
 
-        /* The job slot, the ring, the queues and the workers all live in here.
-         * Keeping the SLOT out of this header as well as the queue is what makes
-         * both the 64-byte layout and the queue topology free to change without
-         * recompiling a consumer. */
+        /* Slot, ring, queues and workers all live in here. Keeping the SLOT out
+         * of the header as well as the queue is what leaves both the 64-byte
+         * layout and the queue topology free to change -- which is what keeps
+         * work stealing a non-breaking change. */
         struct Impl;
-        Impl* Pimpl = nullptr;   /* Hides the ring, the queue and the worker
-                                  * vector, so the queue TOPOLOGY is not part of
-                                  * this header -- which is what keeps work
-                                  * stealing a non-breaking change. */
+        Impl* Pimpl = nullptr;
     };
 
     /*
-     * The locator pair, exactly as ModuleManager and IFileProvider have one:
-     * non-owning raw pointer, no locking, set once by the host at startup so
-     * that a subsystem can reach "the" pool without being handed one through
-     * five layers of constructor.
+     * The locator pair ModuleManager and IFileProvider both have: non-owning, no
+     * locking, set once by the host so a subsystem can reach "the" pool without
+     * being handed one through five constructors.
      *
-     * SET IT BEFORE ANY MODULE LOADS AND CLEAR IT BEFORE THE POOL DIES. A
-     * dangling pointer here is a dispatch into a destroyed thread pool. Same
-     * contract, same hazard, same reason it is still worth having.
+     * SET IT BEFORE ANY MODULE LOADS, CLEAR IT BEFORE THE POOL DIES -- a dangling
+     * pointer here is a dispatch into a destroyed thread pool.
      */
     CORE_API void       SetJobSystem(JobSystem* InSystem);
     CORE_API JobSystem* GetJobSystem();
@@ -667,14 +565,10 @@ namespace EngineCore
             return;
         }
 
-        /*
-         * The chunk descriptor is what actually lands in the job payload, and it
-         * captures the BODY BY POINTER. That is safe here and only here: this
-         * function waits before returning, so InBody outlives every job it
-         * dispatched. It is also exactly why there is no asynchronous
-         * ParallelFor -- the same code with the wait removed would leave these
-         * pointers aimed at a dead frame.
-         */
+        /* The descriptor that lands in the payload, capturing the BODY BY
+         * POINTER. Safe here and only here, because this waits before returning
+         * -- and exactly why there is no async ParallelFor: the same code without
+         * the wait leaves these pointers aimed at a dead frame. */
         struct Chunk
         {
             const TBody* Body;
@@ -692,10 +586,8 @@ namespace EngineCore
          * because the reference released by CloseGroup below is held here. */
         const JobHandle Group = OpenGroup();
 
-        /* An exhausted ring has no group to give, and unlike Dispatch there is no
-         * inline fallback for a thing that holds no work. Doing the whole range
-         * serially is slower and completely correct, which is the right trade for
-         * a condition that means something upstream is pathological. */
+        /* An exhausted ring has no group to give and nothing to run inline in its
+         * place. Serial is slower and completely correct. */
         if(!Group.IsValid())
         {
             InBody(uint32_t(0), InCount);
@@ -710,9 +602,8 @@ namespace EngineCore
             Dispatch(Work, Group);
         }
 
-        /* Close before waiting, always, and with no return path between the
-         * two: Wait on an open group is a guaranteed hang, so it is fatal
-         * rather than silent (see Wait). */
+        /* Close before waiting, with no return path between the two: Wait on an
+         * open group is a guaranteed hang. */
         CloseGroup(Group);
         Wait(Group);
     }
