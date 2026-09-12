@@ -96,6 +96,29 @@ endif()
 # SDL declares project(SDL3 LANGUAGES C), which enables C in its own scope even
 # though this project is CXX-only. Nothing to do about it, but it is the reason
 # a toolchain with no C compiler fails here rather than in our sources.
+# SDL compiles with a precompiled header, and MSVC's PCH flags make a
+# compilation uncacheable: sccache reports /Fp and /Yc as non-cacheable reasons
+# and skips those calls entirely. Measured on this tree, that was 242 of 325
+# compilations -- and those 242 ARE SDL, the one thing here big enough to be
+# worth caching in the first place. Leaving the PCH on means the compiler cache
+# does nothing for the target it was installed for.
+#
+# So when a cache is in play the PCH is turned off and the objects become
+# cacheable instead. It is a straight trade of one speedup for another: a PCH
+# makes a cold compile cheaper, a cache hit skips the compile altogether. The
+# cache wins as soon as the same objects are built a second time anywhere on the
+# machine -- another build tree, a wiped tree, a standalone Games/Sandbox
+# configure -- which is the situation this repository is actually in.
+#
+# Left ON with no cache, where the PCH is a straight win and nothing is lost.
+# Set at THIS directory scope so it reaches SDL through add_subdirectory and
+# touches nothing else; no other module here uses a PCH anyway.
+if(CMAKE_CXX_COMPILER_LAUNCHER MATCHES "sccache"
+   OR CMAKE_C_COMPILER_LAUNCHER MATCHES "sccache")
+    set(CMAKE_DISABLE_PRECOMPILE_HEADERS ON)
+    message(STATUS "GameWindow: compiler cache detected -- building SDL without its PCH so its objects cache")
+endif()
+
 if(NOT TARGET SDL3::SDL3)
     add_subdirectory("${GAMEWINDOW_SDL_DIR}" SDLBuild)
 endif()
