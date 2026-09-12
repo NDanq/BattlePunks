@@ -37,6 +37,65 @@ include(NimbleModule)
 
 enable_testing()
 
+# === Compiler cache =========================================================
+# sccache, when it is installed. Objects are cached by content hash, so the
+# expensive thing this repository builds -- the vendored SDL, ~260 translation
+# units of it -- is compiled once per MACHINE rather than once per build tree.
+# A second tree (a standalone Games/Sandbox configure, a CLion tree beside a
+# command-line one, a tree recreated after a wipe) then links SDL instead of
+# rebuilding it.
+#
+# MUST be set before the first target is created: CMAKE_<LANG>_COMPILER_LAUNCHER
+# is captured into each target as it is declared, so a value set after
+# add_subdirectory(Modules/*) would miss everything that matters.
+#
+# AUTO-DETECTED, not required. A machine without sccache builds exactly as it
+# did before; nothing here is a new prerequisite for a fresh clone, which is the
+# same stance Modules/GameWindow takes about never needing per-machine setup.
+option(NIMBLE_USE_SCCACHE "Use sccache to cache compiled objects, when available" ON)
+
+if(NIMBLE_USE_SCCACHE)
+    find_program(NM_SCCACHE_PROGRAM sccache)
+
+    if(NM_SCCACHE_PROGRAM)
+        set(CMAKE_C_COMPILER_LAUNCHER   "${NM_SCCACHE_PROGRAM}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${NM_SCCACHE_PROGRAM}")
+
+        # /Zi MUST BECOME /Z7, and the reason is not the one usually given.
+        #
+        # The common claim is that sccache cannot cache /Zi. Measured against the
+        # version installed here (0.17.0), that is FALSE: a /Zi compile reports
+        # zero non-cacheable calls and a cache hit reproduces the .pdb next to
+        # the .obj. Cacheability is not the problem.
+        #
+        # The problem is parallelism. /Zi does not write debug info into the
+        # object; it hands it to mspdbsrv.exe, which serialises many cl.exe
+        # processes onto one shared .pdb. Launch those cl.exe processes as
+        # CHILDREN OF SCCACHE and that coordination breaks: a parallel build dies
+        # with "fatal error C1041: cannot open program database ... please use
+        # /FS" -- while /FS is already on the command line, which is what makes
+        # the message so misleading. A one-file-at-a-time test never shows it.
+        #
+        # /Z7 puts the debug info in the .obj instead, so there is no shared file
+        # to contend over. The linker still produces a .pdb for each DLL and exe,
+        # so debugging is unchanged; the objects are larger, which is the trade.
+        #
+        # CMAKE_MSVC_DEBUG_INFORMATION_FORMAT would say this more directly, but
+        # that is CMake 3.25 and this project targets 3.16.
+        if(MSVC)
+            foreach(NM_FLAG_VAR
+                    CMAKE_C_FLAGS_DEBUG            CMAKE_CXX_FLAGS_DEBUG
+                    CMAKE_C_FLAGS_RELWITHDEBINFO   CMAKE_CXX_FLAGS_RELWITHDEBINFO)
+                string(REPLACE "/Zi" "/Z7" ${NM_FLAG_VAR} "${${NM_FLAG_VAR}}")
+            endforeach()
+        endif()
+
+        message(STATUS "NimbleEngine: compiler cache enabled -- ${NM_SCCACHE_PROGRAM}")
+    else()
+        message(STATUS "NimbleEngine: sccache not found; compiling without a compiler cache")
+    endif()
+endif()
+
 # === Binaries/ =============================================================
 # One flat runtime directory per platform+config:
 # <NIMBLE_BINARIES_DIR>/<Platform>_<Config>, e.g. Windows_Debug, Mac_Release,
