@@ -1,0 +1,212 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(Sandbox VERSION 0.1 LANGUAGES CXX)
+
+# ===========================================================================
+# Sandbox -- the example game.
+#
+# The working reference for how a game drives NimbleEngine, and the host each
+# new engine feature gets exercised in. It is a target under Games/ rather than
+# a test under Engine/ for that reason: it consumes the engine the way a real
+# title would, through the public API and nothing else, so anything it cannot
+# reach is a gap in that API rather than a gap here.
+#
+# CONFIGURES TWO WAYS, and both are supported:
+#
+#   1. FROM ENGINE. Engine/CMakeLists.txt add_subdirectory()s this at its own
+#      scope, which is how a full build gets it. This is the normal path.
+#
+#   2. STANDALONE. Open Games/Sandbox directly in an IDE, or point cmake at it.
+#      This directory is then the top-level project and pulls the Engine tree
+#      in itself. That is what the SANDBOX_STANDALONE block below is for.
+#
+# The same test the vendored subtrees use -- CMAKE_SOURCE_DIR STREQUAL
+# CMAKE_CURRENT_SOURCE_DIR -- separates the two, so the pattern here is the one
+# already established in Modules/Core and Modules/GDI rather than a new one.
+#
+# Nothing here reaches into a vendored subtree, so the "deliberately thin" rule
+# at the top of Engine/CMakeLists.txt does not apply: Games/ is neither
+# Modules/Core nor Modules/GDI.
+# ===========================================================================
+
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    set(SANDBOX_STANDALONE ON)
+else()
+    set(SANDBOX_STANDALONE OFF)
+endif()
+
+# === Standalone: bring the engine in ourselves =============================
+if(SANDBOX_STANDALONE)
+    message(STATUS "Sandbox: standalone configure -- adding the Engine tree")
+
+    # A cache entry rather than a hardcoded path, so a checkout with a different
+    # layout can be pointed at its engine without editing this file.
+    set(SANDBOX_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../Engine"
+        CACHE PATH "Path to the Engine tree Sandbox links against")
+
+    if(NOT EXISTS "${SANDBOX_ENGINE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR
+            "Sandbox: no Engine/CMakeLists.txt at '${SANDBOX_ENGINE_DIR}'. "
+            "Set SANDBOX_ENGINE_DIR to the Engine tree, or configure the Engine "
+            "directory instead and let it add this one.")
+    endif()
+
+    # MUST come before add_subdirectory. Engine/CMakeLists.txt add_subdirectory()s
+    # THIS directory when NIMBLE_BUILD_SANDBOX is on, which standalone would turn
+    # into Sandbox adding Engine adding Sandbox -- a duplicate target, and a
+    # confusing error a long way from its cause. option() leaves an existing
+    # cache entry alone, which is what makes setting it here effective.
+    set(NIMBLE_BUILD_SANDBOX OFF CACHE BOOL
+        "Build the Games/Sandbox host (off here: Sandbox IS the top-level project)" FORCE)
+
+    # Explicit binary dir because the source dir is outside this one.
+    add_subdirectory("${SANDBOX_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/Engine")
+endif()
+
+if(NOT TARGET NimbleEngine)
+    message(FATAL_ERROR
+        "Sandbox: the NimbleEngine target does not exist. When added from "
+        "Engine/CMakeLists.txt this directory must come AFTER the "
+        "nimble_add_module(NimbleEngine ...) call that creates it.")
+endif()
+
+# === The target ============================================================
+add_executable(Sandbox SandboxMain.cpp)
+
+# Same Qt-freedom the modules get from nimble_add_module(). Stated explicitly
+# because add_executable() does not go through that function, and a parent scope
+# that enabled AUTOMOC as a directory property would hand it down.
+set_target_properties(Sandbox PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+
+# One link is enough: nimble_add_module() gives NimbleEngine a PUBLIC include
+# directory, PUBLIC cxx_std_17 and a PUBLIC EngineCore, so all three arrive
+# transitively. GameWindow and GDI stay PRIVATE to the engine layer and are
+# deliberately NOT visible here -- a game links the engine, not the renderer.
+target_link_libraries(Sandbox PRIVATE NimbleEngine::NimbleEngine)
+
+# === Runtime layout ========================================================
+# Everything lands in Binaries/<Platform>_<Config> BELOW THIS DIRECTORY: the
+# engine DLLs, the module DLLs and this executable all together, because hot
+# reload requires them to be siblings and because the one directory that holds
+# them belongs to the host being run. Engine/CMakeLists.txt's NIMBLE_BINARIES_DIR
+# defaults here for that reason; a second game overrides it to claim its own.
+#
+# Engine/CMakeLists.txt sets CMAKE_RUNTIME_OUTPUT_DIRECTORY from that root at ITS
+# scope, and that is only inherited by targets created at or below it. Added from
+# Engine (path 1) we are below it and inherit for free.
+#
+# Standalone (path 2) we are ABOVE it -- the engine is our subdirectory -- so we
+# inherit nothing and would land in the build tree, away from NimbleEngine.dll,
+# EngineCore.dll and SDL3.dll. On Windows the loader resolves those from the
+# directory of the EXE, so that build would configure, compile, link, and then
+# fail to start.
+#
+# The engine's own target already knows the answer, so ask it rather than
+# recomputing the <Platform>_<Config> string here -- a second copy of that logic
+# is a second thing to keep in step.
+
+# Needed on both paths below, so it is read once here rather than inside either.
+get_property(SANDBOX_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+
+if(SANDBOX_STANDALONE)
+    get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
+    if(SANDBOX_RT_DIR)
+        set_target_properties(Sandbox PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SANDBOX_RT_DIR}")
+    endif()
+
+    # Multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) ignore
+    # the plain property and read the per-config one, which the engine also has.
+    if(SANDBOX_MULTI_CONFIG)
+        foreach(SANDBOX_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
+            string(TOUPPER "${SANDBOX_CFG}" SANDBOX_CFG_U)
+            get_target_property(SANDBOX_RT_CFG NimbleEngine
+                                RUNTIME_OUTPUT_DIRECTORY_${SANDBOX_CFG_U})
+            if(SANDBOX_RT_CFG)
+                set_target_properties(Sandbox PROPERTIES
+                        RUNTIME_OUTPUT_DIRECTORY_${SANDBOX_CFG_U} "${SANDBOX_RT_CFG}")
+            endif()
+        endforeach()
+    endif()
+else()
+    # Added from Engine, we inherited the variable itself. Captured under the
+    # same name so the config staging below has one plain path to work with
+    # whichever way we were configured.
+    set(SANDBOX_RT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+endif()
+
+# === Config staging ========================================================
+# Application::Initialize() reads "Config/DefaultEngine.ini" relative to the
+# working directory. Staging it beside the executable means the same file is
+# found whether the exe is launched from an IDE (see the debugger working
+# directory below) or by hand from Binaries/.
+#
+# copy_if_different, so an untouched file does not re-copy on every build. The
+# copy in THIS directory is the master -- edits made to the staged one are
+# overwritten by the next build that changes the source.
+#
+# NOT add_custom_command(TARGET ... POST_BUILD). A POST_BUILD command only runs
+# when its target actually relinks, and editing an .ini does not relink an
+# executable -- so the staged copy silently went stale and the app kept reading
+# the previous values through a rebuild that reported success. That was
+# observed, not theorised: a run configured for 90 frames ran forever on a stale
+# MaxFrames=0.
+#
+# A REAL OUTPUT WITH A REAL DEPENDENCY, so the build graph knows when this is up
+# to date and a no-change build genuinely does nothing. The obvious alternative,
+# a custom target marked ALL, is considered every build and therefore prints a
+# step every build -- which costs nothing but makes an incremental build look
+# like it is working when it is not, and that is the exact signal you want
+# trustworthy when you are asking "why did that rebuild?".
+set(SANDBOX_CONFIG_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
+
+if(EXISTS "${SANDBOX_CONFIG_SRC}" AND SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+    set(SANDBOX_CONFIG_DST "${SANDBOX_RT_DIR}/Config/DefaultEngine.ini")
+
+    add_custom_command(
+            OUTPUT  "${SANDBOX_CONFIG_DST}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_RT_DIR}/Config"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${SANDBOX_CONFIG_SRC}" "${SANDBOX_CONFIG_DST}"
+            DEPENDS "${SANDBOX_CONFIG_SRC}"
+            COMMENT "Sandbox: staging Config/DefaultEngine.ini beside the executable"
+            VERBATIM)
+
+    add_custom_target(SandboxStageConfig DEPENDS "${SANDBOX_CONFIG_DST}")
+    add_dependencies(Sandbox SandboxStageConfig)
+    set_target_properties(SandboxStageConfig PROPERTIES FOLDER "Games")
+
+elseif(EXISTS "${SANDBOX_CONFIG_SRC}")
+    # Multi-config fallback. The destination differs per configuration, so a
+    # single OUTPUT path cannot describe it, and a generator expression is not
+    # allowed in OUTPUT until CMake 3.20 -- above the 3.16 this project targets.
+    # An always-considered target is the honest option here; copy_if_different
+    # keeps it to a timestamp compare.
+    add_custom_target(SandboxStageConfig ALL
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                    "$<TARGET_FILE_DIR:Sandbox>/Config"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${SANDBOX_CONFIG_SRC}"
+                    "$<TARGET_FILE_DIR:Sandbox>/Config/DefaultEngine.ini"
+            DEPENDS "${SANDBOX_CONFIG_SRC}"
+            COMMENT "Sandbox: staging Config/DefaultEngine.ini beside the executable"
+            VERBATIM)
+    add_dependencies(SandboxStageConfig Sandbox)
+    set_target_properties(SandboxStageConfig PROPERTIES FOLDER "Games")
+endif()
+
+# === IDE ===================================================================
+# Without this, a Visual Studio or CLion run starts in the build directory and
+# the config lookup above silently misses -- the app still runs, on defaults,
+# which is the kind of difference between "ran from the IDE" and "ran from the
+# shell" that costs an afternoon.
+set_target_properties(Sandbox PROPERTIES
+        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:Sandbox>"
+        FOLDER "Games")
+
+# Only standalone: in a full Engine configure the startup project belongs to
+# whoever configured it, and quietly repointing it at a game would be rude.
+if(SANDBOX_STANDALONE)
+    set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT Sandbox)
+endif()
+
+source_group("Sandbox" FILES SandboxMain.cpp)
