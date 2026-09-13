@@ -143,6 +143,21 @@ namespace NimbleEngine
          */
         void RequestQuit();
 
+        /*
+         * Frames per second to pace the loop to. ZERO MEANS UNLIMITED: the loop
+         * runs as fast as it can, which is what bring-up and throughput
+         * measurement want and what a shipped game almost never does.
+         *
+         * Takes effect from the next frame. The initial value comes from
+         * [Display] FrameRateLimit.
+         *
+         * GAME THREAD ONLY, for the same reason RequestQuit is: the pacing state
+         * is plain, and the only thread that reads it is the one that would be
+         * writing it.
+         */
+        void     SetFrameRateLimit(uint32_t InFramesPerSecond);
+        uint32_t GetFrameRateLimit() const;
+
     private:
         bool Initialize();
         void Shutdown();
@@ -205,6 +220,19 @@ namespace NimbleEngine
         bool                     bGDIInitialized   = false;
         bool                     bQuitRequested    = false;
         uint64_t                 FrameNumber       = 0;
+
+        /* 0 = unlimited. See SetFrameRateLimit. */
+        uint32_t                 FrameRateLimit    = 0;
+
+        /* When the next frame should START, as a steady-clock nanosecond count.
+         * A DEADLINE rather than a per-frame duration, so that a frame finishing
+         * early or late does not shift every frame after it -- pacing to
+         * "now + 16ms" accumulates every overshoot forever. Zero means no
+         * deadline is established yet.
+         *
+         * int64_t rather than a chrono time_point to keep <chrono> out of this
+         * header; the .cpp does the conversion. */
+        int64_t                  NextFrameDeadlineNs = 0;
     };
 };
 

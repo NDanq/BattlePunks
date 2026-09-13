@@ -245,6 +245,16 @@ if(TARGET GDI)
     target_link_libraries(NimbleEngine PRIVATE GDI::GDI)
 endif()
 
+# winmm, for timeBeginPeriod/timeEndPeriod in the frame limiter. Without raising
+# the timer resolution every sleep rounds up to Windows' ~15.6ms scheduler tick,
+# which cannot express a 60fps frame at all -- NimbleEngine.cpp's
+# TimerResolutionScope has the measurements. PRIVATE, like the module deps
+# above: this is an implementation detail of the loop, not something a game
+# links against.
+if(WIN32)
+    target_link_libraries(NimbleEngine PRIVATE winmm)
+endif()
+
 # PRIVATE so this target's own .cpp files can say "Private/NimbleEngine/...".
 # nimble_add_module already added Source/ PUBLIC for the "Public/NimbleEngine/..."
 # includes a consumer uses.
