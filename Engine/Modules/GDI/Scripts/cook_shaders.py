@@ -3,12 +3,13 @@
 cook_shaders.py -- Offline shader preprocessing and compilation.
 
 Usage:
-    python cook_shaders.py -target <OpenGL|Vulkan|Metal>
+    python cook_shaders.py -target <OpenGL|Vulkan|Metal|D3D12>
 
 Output layout:
     Shaders/Cooked/OpenGL/     -- preprocessed GLSL + OGLShaders_Cooked.qrc
     Shaders/Cooked/Vulkan/  -- SPIR-V .spv files + VulkanShaders_Cooked.qrc
     Shaders/Cooked/Metal/   -- stub MetalShaders_Cooked.qrc (not yet implemented)
+    Shaders/Cooked/D3D12/   -- DXBC .cso files + D3D12Shaders_Cooked.qrc
 """
 
 import argparse
@@ -41,7 +42,7 @@ EXT_TO_GLSLC_EXT = {
     ".csh": ".comp"
 }
 
-PLATFORMS = ("OpenGL", "Vulkan", "Metal")
+PLATFORMS = ("OpenGL", "Vulkan", "Metal", "D3D12")
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +328,32 @@ def _find_glslc():
     sys.exit(1)
 
 
+def _compile_spirv(glslc, src, spv_path, extra_defines=None):
+    shader_type = EXT_TO_TYPE[src.suffix]
+    defines     = {shader_type: "1", "WITH_VULKAN": "1", **(extra_defines or {})}
+    processed   = preprocess(src, shader_type, SHADERS_SRC, defines)
+
+    tmp_fd, tmp_path = tempfile.mkstemp(suffix=EXT_TO_GLSLC_EXT[src.suffix])
+    try:
+        with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp:
+            tmp.write(processed)
+        result = subprocess.run(
+            [glslc, tmp_path, "-o", str(spv_path)],
+            capture_output=True,
+            text=True,
+        )
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+    if result.returncode != 0:
+        print(
+            f"ERROR: glslc failed for {src.name}:\n{result.stderr}",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
 def cook_vulkan(extra_defines=None):
     out_dir = COOKED_BASE / "Vulkan"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -337,31 +364,8 @@ def cook_vulkan(extra_defines=None):
 
     cooked = []
     for src in _collect_sources():
-        shader_type = EXT_TO_TYPE[src.suffix]
-        defines     = {shader_type: "1", "WITH_VULKAN": "1", **(extra_defines or {})}
-        processed   = preprocess(src, shader_type, SHADERS_SRC, defines)
-        spv_name    = src.name + ".spv"
-        spv_path    = out_dir / spv_name
-
-        tmp_fd, tmp_path = tempfile.mkstemp(suffix=EXT_TO_GLSLC_EXT[src.suffix])
-        try:
-            with os.fdopen(tmp_fd, "w", encoding="utf-8") as tmp:
-                tmp.write(processed)
-            result = subprocess.run(
-                [glslc, tmp_path, "-o", str(spv_path)],
-                capture_output=True,
-                text=True,
-            )
-        finally:
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
-
-        if result.returncode != 0:
-            print(
-                f"ERROR: glslc failed for {src.name}:\n{result.stderr}",
-                file=sys.stderr,
-            )
-            sys.exit(1)
+        spv_name = src.name + ".spv"
+        _compile_spirv(glslc, src, out_dir / spv_name, extra_defines)
 
         cooked.append(spv_name)
         print(f"  {src.name} -> {spv_name}")
@@ -450,6 +454,74 @@ def cook_metal(extra_defines=None):
     print(f"[Metal] Done -- {len(cooked)} shaders transpiled to MSL.")
 
 
+def _find_fxc():
+    found = shutil.which("fxc")
+    if found:
+        return found
+    kits = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Windows Kits" / "10" / "bin"
+    candidates = sorted(kits.glob("10.*/x64/fxc.exe"), reverse=True)
+    if candidates:
+        return str(candidates[0])
+    print(
+        "ERROR: fxc not found.\n"
+        "  Install the Windows SDK or add fxc to PATH.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
+def cook_d3d12(extra_defines=None):
+    """
+    GLSL -> SPIR-V (glslc) -> HLSL (spirv-cross) -> DXBC (fxc).
+
+    Vertex shaders get --flip-vert-y: D3D12 maps NDC -1 to the last row where
+    Vulkan maps it to the first, and without the flip every render target would
+    be stored upside down relative to the GL and Vulkan backends.
+    """
+    out_dir = COOKED_BASE / "D3D12"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[D3D12] Cooking shaders -> {out_dir.relative_to(SHADERS_SRC.parent)}")
+
+    glslc       = _find_glslc()
+    spirv_cross = _find_spirv_cross()
+    fxc         = _find_fxc()
+    print(f"  glslc: {glslc}\n  spirv-cross: {spirv_cross}\n  fxc: {fxc}")
+
+    cooked = []
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for src in _collect_sources():
+            is_vertex = EXT_TO_TYPE[src.suffix] == VERTEX_SHADER
+            spv_path  = Path(tmp_dir) / (src.name + ".spv")
+            hlsl_path = Path(tmp_dir) / (src.name + ".hlsl")
+            cso_name  = src.name + ".cso"
+
+            _compile_spirv(glslc, src, spv_path, extra_defines)
+
+            cross_args = [spirv_cross, "--hlsl", "--shader-model", "50"]
+            if is_vertex:
+                # One TEXCOORD per matrix column, matching the D3D12 input layouts.
+                cross_args += ["--flip-vert-y", "--hlsl-flatten-matrix-vertex-input-semantics"]
+            cross_args += [str(spv_path), "--output", str(hlsl_path)]
+
+            fxc_args = [fxc, "/nologo", "/T", "vs_5_0" if is_vertex else "ps_5_0",
+                        "/E", "main", "/O3", "/Fo", str(out_dir / cso_name), str(hlsl_path)]
+
+            for args, tool in ((cross_args, "spirv-cross"), (fxc_args, "fxc")):
+                result = subprocess.run(args, capture_output=True, text=True)
+                if result.returncode != 0:
+                    print(
+                        f"ERROR: {tool} failed for {src.name}:\n{result.stdout}{result.stderr}",
+                        file=sys.stderr,
+                    )
+                    sys.exit(1)
+
+            cooked.append(cso_name)
+            print(f"  {src.name} -> {cso_name}")
+
+    write_qrc(out_dir, cooked, "D3D12")
+    print(f"[D3D12] Done -- {len(cooked)} shaders compiled to DXBC.")
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -461,7 +533,8 @@ def main():
         epilog="Examples:\n"
                "  python cook_shaders.py -target OpenGL\n"
                "  python cook_shaders.py -target Vulkan\n"
-               "  python cook_shaders.py -target Metal",
+               "  python cook_shaders.py -target Metal\n"
+               "  python cook_shaders.py -target D3D12",
     )
     parser.add_argument(
         "-target",
@@ -489,7 +562,7 @@ def main():
         else:
             extra_defines[flag.strip()] = "1"
 
-    {"OpenGL": cook_opengl, "Vulkan": cook_vulkan, "Metal": cook_metal}[args.target](extra_defines)
+    {"OpenGL": cook_opengl, "Vulkan": cook_vulkan, "Metal": cook_metal, "D3D12": cook_d3d12}[args.target](extra_defines)
 
 
 if __name__ == "__main__":

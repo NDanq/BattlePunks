@@ -145,6 +145,7 @@ enum ERenderPlatform : char
     ERP_Vulkan,
     ERP_Metal,
     ERP_Null,
+    ERP_D3D12,
     ERP_MAX
 };
 

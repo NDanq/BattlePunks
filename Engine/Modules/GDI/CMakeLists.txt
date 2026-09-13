@@ -4,7 +4,7 @@ project(GDI VERSION 0.1 LANGUAGES CXX)
 
 # ===========================================================================
 # GDI -- Odessa's Graphics Device Interface: an Unreal-style RHI with OpenGL
-# 4.5, Vulkan and Metal backends.
+# 4.5, Vulkan, Metal and Direct3D 12 backends.
 #
 # Depends on EngineCore and, once the de-Qt work completes, on nothing else.
 # Qt interop lives exclusively in the GDIQtBridge target below; an SDL host
@@ -36,23 +36,29 @@ option(GDI_BUILD_SMOKETEST "Build GDISmokeTest"                      OFF)
 #           would need Qt itself built against it).
 #   Metal   Apple only -- and mandatory there, since macOS caps OpenGL at 4.1
 #           while the renderer hard-requires 4.4, leaving no fallback.
+#   D3D12   Windows only. Shaders are cooked GLSL -> SPIR-V -> HLSL -> DXBC, so
+#           the build needs the Vulkan SDK (glslc, spirv-cross) and fxc.
 if(APPLE)
     set(GDI_WITH_OPENGL_DEFAULT OFF)
     set(GDI_WITH_VULKAN_DEFAULT OFF)
     set(GDI_WITH_METAL_DEFAULT  ON)
+    set(GDI_WITH_D3D12_DEFAULT  OFF)
 elseif(WIN32)
     set(GDI_WITH_OPENGL_DEFAULT ON)
     set(GDI_WITH_VULKAN_DEFAULT ON)
     set(GDI_WITH_METAL_DEFAULT  OFF)
+    set(GDI_WITH_D3D12_DEFAULT  ON)
 else()  # Linux / other Unix
     set(GDI_WITH_OPENGL_DEFAULT OFF)
     set(GDI_WITH_VULKAN_DEFAULT ON)
     set(GDI_WITH_METAL_DEFAULT  OFF)
+    set(GDI_WITH_D3D12_DEFAULT  OFF)
 endif()
 
 option(GDI_WITH_OPENGL "Build the OpenGL GDI backend (Windows only)" ${GDI_WITH_OPENGL_DEFAULT})
 option(GDI_WITH_VULKAN "Build the Vulkan GDI backend"                ${GDI_WITH_VULKAN_DEFAULT})
 option(GDI_WITH_METAL  "Build the Metal GDI backend (Apple only)"    ${GDI_WITH_METAL_DEFAULT})
+option(GDI_WITH_D3D12  "Build the Direct3D 12 GDI backend (Windows only)" ${GDI_WITH_D3D12_DEFAULT})
 
 # Fail loudly at configure time rather than emitting a wall of unknown-type
 # errors from the backend headers.
@@ -61,6 +67,9 @@ if(GDI_WITH_OPENGL AND NOT WIN32)
 endif()
 if(GDI_WITH_METAL AND NOT APPLE)
     message(FATAL_ERROR "GDI_WITH_METAL requires an Apple target.")
+endif()
+if(GDI_WITH_D3D12 AND NOT WIN32)
+    message(FATAL_ERROR "GDI_WITH_D3D12 requires a Windows target.")
 endif()
 if(APPLE)
     if(GDI_WITH_VULKAN)
@@ -78,7 +87,7 @@ if(APPLE)
     set(CMAKE_OBJCXX_STANDARD_REQUIRED ON)
 endif()
 
-if(NOT GDI_WITH_OPENGL AND NOT GDI_WITH_VULKAN AND NOT GDI_WITH_METAL)
+if(NOT GDI_WITH_OPENGL AND NOT GDI_WITH_VULKAN AND NOT GDI_WITH_METAL AND NOT GDI_WITH_D3D12)
     # No longer fatal: NullGDI is always compiled in, so this configure still
     # produces a usable (headless) driver -- see GDI_NULL_SOURCES above.
     message(STATUS "No GPU-backed render backend enabled -- GDI will build with NullGDI as its only driver.")
@@ -192,6 +201,36 @@ if(GDI_WITH_VULKAN)
     )
 endif()
 
+if(GDI_WITH_D3D12)
+    set( GDI_D3D12_SOURCES
+            Source/Private/GDI/D3D12/D3D12DynamicGDI.cpp
+            Source/Private/GDI/D3D12/D3D12Commands.cpp
+            Source/Private/GDI/D3D12/D3D12Device.cpp
+            Source/Private/GDI/D3D12/D3D12CommandManager.cpp
+            Source/Private/GDI/D3D12/D3D12Swapchain.cpp
+            Source/Private/GDI/D3D12/D3D12PipelineCache.cpp
+            Source/Private/GDI/D3D12/D3D12DescriptorAllocator.cpp
+            Source/Private/GDI/D3D12/D3D12RenderTarget.cpp
+            Source/Private/GDI/D3D12/D3D12Texture.cpp
+            Source/Private/GDI/D3D12/D3D12Mesh.cpp
+            Source/Private/GDI/D3D12/D3D12Shader.cpp
+            Source/Private/GDI/D3D12/D3D12Sync.cpp
+            Source/Private/GDI/D3D12/D3D12TransientOps.h
+            Source/Public/GDI/D3D12/GDID3D12Platform.h
+            Source/Public/GDI/D3D12/D3D12DynamicGDI.h
+            Source/Public/GDI/D3D12/D3D12Device.h
+            Source/Public/GDI/D3D12/D3D12CommandManager.h
+            Source/Public/GDI/D3D12/D3D12Swapchain.h
+            Source/Public/GDI/D3D12/D3D12PipelineCache.h
+            Source/Public/GDI/D3D12/D3D12DescriptorAllocator.h
+            Source/Public/GDI/D3D12/D3D12RenderTarget.h
+            Source/Public/GDI/D3D12/D3D12Texture.h
+            Source/Public/GDI/D3D12/D3D12Mesh.h
+            Source/Public/GDI/D3D12/D3D12Shader.h
+            Source/Public/GDI/D3D12/D3D12Sync.h
+    )
+endif()
+
 if(GDI_WITH_METAL)
     # Objective-C++ sources. Everything that sends a Metal message lives in a
     # .mm; the public headers use only the MTLForward.h typedefs so plain C++
@@ -252,6 +291,7 @@ add_library(GDI ${GDI_LIB_TYPE}
         ${GDI_OPENGL_SOURCES}
         ${GDI_VULKAN_SOURCES}
         ${GDI_METAL_SOURCES}
+        ${GDI_D3D12_SOURCES}
 )
 add_library(GDI::GDI ALIAS GDI)
 
@@ -315,6 +355,10 @@ endif()
 if(GDI_WITH_METAL)
     target_compile_definitions(GDI PUBLIC WITH_METAL_GDI)
 endif()
+if(GDI_WITH_D3D12)
+    target_compile_definitions(GDI PUBLIC WITH_D3D12_GDI)
+    target_link_libraries(GDI PUBLIC d3d12 dxgi)
+endif()
 
 if(GDI_WITH_OPENGL)
     find_package(OpenGL REQUIRED)
@@ -375,7 +419,7 @@ set_target_properties(GDI PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 # is self-consistent and the script itself needs no edit.
 # Only the shader-cooking targets below need Python; a headless (Null-only)
 # configure should not have to have it installed.
-if(GDI_WITH_VULKAN OR (WIN32 AND GDI_WITH_OPENGL) OR GDI_WITH_METAL)
+if(GDI_WITH_VULKAN OR (WIN32 AND GDI_WITH_OPENGL) OR GDI_WITH_METAL OR GDI_WITH_D3D12)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
 endif()
 
@@ -441,6 +485,40 @@ if(WIN32 AND GDI_WITH_OPENGL)
     add_dependencies(GDI CookOpenGLShaders)
 endif()
 
+# GLSL -> SPIR-V (glslc) -> HLSL (spirv-cross) -> DXBC (fxc). Compiles its own
+# SPIR-V rather than depending on the Vulkan cook, so D3D12 builds without it.
+if(GDI_WITH_D3D12)
+    file(GLOB D3D12_SHADER_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.vsh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.fsh"
+    )
+    file(GLOB D3D12_SHADER_INCLUDES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.glsl")
+
+    set(D3D12_CSO_OUTPUTS "")
+    foreach(SRC IN LISTS D3D12_SHADER_SOURCES)
+        get_filename_component(FNAME "${SRC}" NAME)
+        list(APPEND D3D12_CSO_OUTPUTS
+            "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Cooked/D3D12/${FNAME}.cso"
+        )
+    endforeach()
+
+    add_custom_command(
+        OUTPUT  ${D3D12_CSO_OUTPUTS}
+        COMMAND "${Python3_EXECUTABLE}"
+                "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/cook_shaders.py"
+                -target D3D12
+        DEPENDS ${D3D12_SHADER_SOURCES}
+                ${D3D12_SHADER_INCLUDES}
+                "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/cook_shaders.py"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMENT "Cooking D3D12 shaders (SPIR-V -> HLSL -> DXBC)"
+        VERBATIM
+    )
+
+    add_custom_target(CookD3D12Shaders DEPENDS ${D3D12_CSO_OUTPUTS})
+    add_dependencies(GDI CookD3D12Shaders)
+endif()
+
 # The Metal cook TRANSPILES the Vulkan SPIR-V to MSL with spirv-cross, so it
 # needs both the .spv outputs and the spirv-cross binary. Neither is available
 # on a Mac without the Vulkan SDK, and the cooked .metal files are checked in,
@@ -499,6 +577,9 @@ endif()
 if(GDI_WITH_METAL)
     list(APPEND GDI_SHADER_QRC_FILES "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Cooked/Metal/MetalShaders_Cooked.qrc")
 endif()
+if(GDI_WITH_D3D12)
+    list(APPEND GDI_SHADER_QRC_FILES "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Cooked/D3D12/D3D12Shaders_Cooked.qrc")
+endif()
 set(GDI_SHADER_QRC_FILES "${GDI_SHADER_QRC_FILES}" CACHE INTERNAL "Cooked shader .qrc bundles, compiled by the host application")
 
 # ===========================================================================
@@ -524,4 +605,5 @@ source_group("GDI\\Shaders" FILES ${GDI_SHADERCLASS_SOURCES})
 source_group("GDI\\OpenGL"  FILES ${GDI_OPENGL_SOURCES})
 source_group("GDI\\Vulkan"  FILES ${GDI_VULKAN_SOURCES})
 source_group("GDI\\Metal"   FILES ${GDI_METAL_SOURCES})
+source_group("GDI\\D3D12"   FILES ${GDI_D3D12_SOURCES})
 source_group("GDI\\Null"    FILES ${GDI_NULL_SOURCES})

@@ -30,6 +30,11 @@
 #include "Public/GDI/Vulkan/VKSync.h"
 #endif
 
+#if WITH_D3D12_GDI
+#include "Public/GDI/D3D12/D3D12DynamicGDI.h"
+#include "Public/GDI/D3D12/D3D12Sync.h"
+#endif
+
 #if WITH_METAL_GDI
 #include "Public/GDI/Metal/MetalDynamicGDI.h"
 #include "Public/GDI/Metal/MTLSync.h"
@@ -143,6 +148,14 @@ void InitializeGDI( ERenderPlatform Platform, EngineCore::WindowHandle InWindow 
         {
             GDynamicGDI = new MetalDynamicGDI(InWindow);
             GSync = new MTLSync();
+        }
+        else
+#endif
+#if WITH_D3D12_GDI
+        if(Platform == ERP_D3D12)
+        {
+            GDynamicGDI = new D3D12DynamicGDI(InWindow);
+            GSync = new D3D12Sync();
         }
         else
 #endif
