@@ -28,9 +28,9 @@ option(GDI_BUILD_SMOKETEST "Build GDISmokeTest"                      OFF)
 # === Backend selection ===
 # Which backends are buildable is a property of the platform, not a taste:
 #
-#   OpenGL  Windows only. QOpenGLGDIContext creates its contexts through WGL --
+#   OpenGL  Windows only. OpenGLGDIContext creates its contexts through WGL --
 #           HWND / HDC / HGLRC / wglCreateContextAttribsARB appear unguarded in
-#           QOpenGLDynamicGDI.h, so the backend does not compile anywhere else.
+#           OpenGLDynamicGDI.h, so the backend does not compile anywhere else.
 #           A Linux port would need a GLX or EGL context path.
 #   Vulkan  Windows and Linux. Not available on Apple (no loader; MoltenVK
 #           would need Qt itself built against it).
@@ -57,7 +57,7 @@ option(GDI_WITH_METAL  "Build the Metal GDI backend (Apple only)"    ${GDI_WITH_
 # Fail loudly at configure time rather than emitting a wall of unknown-type
 # errors from the backend headers.
 if(GDI_WITH_OPENGL AND NOT WIN32)
-    message(FATAL_ERROR "GDI_WITH_OPENGL is Windows-only: QOpenGLGDIContext builds its contexts with WGL. Porting it needs a GLX/EGL context path.")
+    message(FATAL_ERROR "GDI_WITH_OPENGL is Windows-only: OpenGLGDIContext builds its contexts with WGL. Porting it needs a GLX/EGL context path.")
 endif()
 if(GDI_WITH_METAL AND NOT APPLE)
     message(FATAL_ERROR "GDI_WITH_METAL requires an Apple target.")
@@ -142,18 +142,18 @@ if(GDI_WITH_OPENGL)
     set( GDI_OPENGL_SOURCES
             Source/Private/GDI/OpenGL/GDIOpenGL.cpp
             Source/Public/GDI/OpenGL/GDIOpenGL.h
-            Source/Private/GDI/OpenGL/QOGLCommands.cpp
-            Source/Private/GDI/OpenGL/QOGLTexture.cpp
-            Source/Private/GDI/OpenGL/QOGLShader.cpp
-            Source/Private/GDI/OpenGL/QOGLRenderTarget.cpp
-            Source/Private/GDI/OpenGL/QOGLMesh.cpp
-            Source/Private/GDI/OpenGL/QOGLSync.cpp
-            Source/Public/GDI/OpenGL/QOpenGLDynamicGDI.h
-            Source/Public/GDI/OpenGL/QOGLTexture.h
-            Source/Public/GDI/OpenGL/QOGLShader.h
-            Source/Public/GDI/OpenGL/QOGLMesh.h
-            Source/Public/GDI/OpenGL/QOGLRenderTarget.h
-            Source/Public/GDI/OpenGL/QOGLSync.h
+            Source/Private/GDI/OpenGL/OGLCommands.cpp
+            Source/Private/GDI/OpenGL/OGLTexture.cpp
+            Source/Private/GDI/OpenGL/OGLShader.cpp
+            Source/Private/GDI/OpenGL/OGLRenderTarget.cpp
+            Source/Private/GDI/OpenGL/OGLMesh.cpp
+            Source/Private/GDI/OpenGL/OGLSync.cpp
+            Source/Public/GDI/OpenGL/OpenGLDynamicGDI.h
+            Source/Public/GDI/OpenGL/OGLTexture.h
+            Source/Public/GDI/OpenGL/OGLShader.h
+            Source/Public/GDI/OpenGL/OGLMesh.h
+            Source/Public/GDI/OpenGL/OGLRenderTarget.h
+            Source/Public/GDI/OpenGL/OGLSync.h
     )
 endif()
 
@@ -161,34 +161,34 @@ if(GDI_WITH_VULKAN)
     find_package(Vulkan REQUIRED)
 
     set( GDI_VULKAN_SOURCES
-            Source/Private/GDI/Vulkan/QVulkanDynamicGDI.cpp
-            Source/Private/GDI/Vulkan/QVKCommands.cpp
-            Source/Private/GDI/Vulkan/QVKTexture.cpp
-            Source/Private/GDI/Vulkan/QVKShader.cpp
-            Source/Private/GDI/Vulkan/QVKRenderTarget.cpp
-            Source/Private/GDI/Vulkan/QVKMesh.cpp
-            Source/Private/GDI/Vulkan/QVKSync.cpp
-            Source/Private/GDI/Vulkan/QVKDevice.cpp
-            Source/Private/GDI/Vulkan/QVKSwapchain.cpp
-            Source/Private/GDI/Vulkan/QVKCommandManager.cpp
-            Source/Private/GDI/Vulkan/QVKPipelineCache.cpp
-            Source/Private/GDI/Vulkan/QVKDescriptorAllocator.cpp
+            Source/Private/GDI/Vulkan/VulkanDynamicGDI.cpp
+            Source/Private/GDI/Vulkan/VKCommands.cpp
+            Source/Private/GDI/Vulkan/VKTexture.cpp
+            Source/Private/GDI/Vulkan/VKShader.cpp
+            Source/Private/GDI/Vulkan/VKRenderTarget.cpp
+            Source/Private/GDI/Vulkan/VKMesh.cpp
+            Source/Private/GDI/Vulkan/VKSync.cpp
+            Source/Private/GDI/Vulkan/VKDevice.cpp
+            Source/Private/GDI/Vulkan/VKSwapchain.cpp
+            Source/Private/GDI/Vulkan/VKCommandManager.cpp
+            Source/Private/GDI/Vulkan/VKPipelineCache.cpp
+            Source/Private/GDI/Vulkan/VKDescriptorAllocator.cpp
             # A real private header that was absent from CoreClient's list: it
             # compiled via inclusion but was invisible to IDE trees and to any
             # audit of the source lists.
-            Source/Private/GDI/Vulkan/QVKTransientOps.h
+            Source/Private/GDI/Vulkan/VKTransientOps.h
             Source/Public/GDI/Vulkan/GDIVulkanPlatform.h
-            Source/Public/GDI/Vulkan/QVulkanDynamicGDI.h
-            Source/Public/GDI/Vulkan/QVKTexture.h
-            Source/Public/GDI/Vulkan/QVKShader.h
-            Source/Public/GDI/Vulkan/QVKMesh.h
-            Source/Public/GDI/Vulkan/QVKRenderTarget.h
-            Source/Public/GDI/Vulkan/QVKSync.h
-            Source/Public/GDI/Vulkan/QVKDevice.h
-            Source/Public/GDI/Vulkan/QVKSwapchain.h
-            Source/Public/GDI/Vulkan/QVKCommandManager.h
-            Source/Public/GDI/Vulkan/QVKPipelineCache.h
-            Source/Public/GDI/Vulkan/QVKDescriptorAllocator.h
+            Source/Public/GDI/Vulkan/VulkanDynamicGDI.h
+            Source/Public/GDI/Vulkan/VKTexture.h
+            Source/Public/GDI/Vulkan/VKShader.h
+            Source/Public/GDI/Vulkan/VKMesh.h
+            Source/Public/GDI/Vulkan/VKRenderTarget.h
+            Source/Public/GDI/Vulkan/VKSync.h
+            Source/Public/GDI/Vulkan/VKDevice.h
+            Source/Public/GDI/Vulkan/VKSwapchain.h
+            Source/Public/GDI/Vulkan/VKCommandManager.h
+            Source/Public/GDI/Vulkan/VKPipelineCache.h
+            Source/Public/GDI/Vulkan/VKDescriptorAllocator.h
     )
 endif()
 
@@ -197,30 +197,30 @@ if(GDI_WITH_METAL)
     # .mm; the public headers use only the MTLForward.h typedefs so plain C++
     # translation units can still include them.
     set( GDI_METAL_SOURCES
-            Source/Private/GDI/Metal/QMetalDynamicGDI.mm
-            Source/Private/GDI/Metal/QMTLCommands.mm
-            Source/Private/GDI/Metal/QMTLDevice.mm
-            Source/Private/GDI/Metal/QMTLCommandManager.mm
-            Source/Private/GDI/Metal/QMTLSwapchain.mm
-            Source/Private/GDI/Metal/QMTLPipelineCache.mm
-            Source/Private/GDI/Metal/QMTLRenderTarget.mm
-            Source/Private/GDI/Metal/QMTLTexture.mm
-            Source/Private/GDI/Metal/QMTLMesh.mm
-            Source/Private/GDI/Metal/QMTLShader.mm
-            Source/Private/GDI/Metal/QMTLSync.mm
+            Source/Private/GDI/Metal/MetalDynamicGDI.mm
+            Source/Private/GDI/Metal/MTLCommands.mm
+            Source/Private/GDI/Metal/MTLDevice.mm
+            Source/Private/GDI/Metal/MTLCommandManager.mm
+            Source/Private/GDI/Metal/MTLSwapchain.mm
+            Source/Private/GDI/Metal/MTLPipelineCache.mm
+            Source/Private/GDI/Metal/MTLRenderTarget.mm
+            Source/Private/GDI/Metal/MTLTexture.mm
+            Source/Private/GDI/Metal/MTLMesh.mm
+            Source/Private/GDI/Metal/MTLShader.mm
+            Source/Private/GDI/Metal/MTLSync.mm
             Source/Private/GDI/Metal/MTLUtil.mm
             Source/Private/GDI/Metal/MTLUtil.h
-            Source/Private/GDI/Metal/QMTLPipelineCache.h
+            Source/Private/GDI/Metal/MTLPipelineCache.h
             Source/Public/GDI/Metal/MTLForward.h
-            Source/Public/GDI/Metal/QMetalDynamicGDI.h
-            Source/Public/GDI/Metal/QMTLDevice.h
-            Source/Public/GDI/Metal/QMTLCommandManager.h
-            Source/Public/GDI/Metal/QMTLSwapchain.h
-            Source/Public/GDI/Metal/QMTLRenderTarget.h
-            Source/Public/GDI/Metal/QMTLTexture.h
-            Source/Public/GDI/Metal/QMTLMesh.h
-            Source/Public/GDI/Metal/QMTLShader.h
-            Source/Public/GDI/Metal/QMTLSync.h
+            Source/Public/GDI/Metal/MetalDynamicGDI.h
+            Source/Public/GDI/Metal/MTLDevice.h
+            Source/Public/GDI/Metal/MTLCommandManager.h
+            Source/Public/GDI/Metal/MTLSwapchain.h
+            Source/Public/GDI/Metal/MTLRenderTarget.h
+            Source/Public/GDI/Metal/MTLTexture.h
+            Source/Public/GDI/Metal/MTLMesh.h
+            Source/Public/GDI/Metal/MTLShader.h
+            Source/Public/GDI/Metal/MTLSync.h
     )
 endif()
 
@@ -257,7 +257,7 @@ add_library(GDI::GDI ALIAS GDI)
 
 # PUBLIC Source  -- so every existing `#include "Public/GDI/GDI.h"` keeps
 #                   resolving verbatim through the physical move.
-# PRIVATE root   -- QOpenGLDynamicGDI.h includes
+# PRIVATE root   -- OpenGLDynamicGDI.h includes
 #                   "External/wglext/include/wglext.h", which is
 #                   PROJECT-ROOT-relative rather than Source-relative. It is
 #                   the one include in the codebase that is not Source-based,
@@ -322,7 +322,7 @@ if(GDI_WITH_OPENGL)
     target_include_directories(GDI PUBLIC ${OPENGL_INCLUDE_DIRS})
     if(WIN32)
         target_link_libraries(GDI PUBLIC opengl32 gdi32 user32)
-        # PUBLIC, not PRIVATE: QOpenGLDynamicGDI.h is a PUBLIC header and it
+        # PUBLIC, not PRIVATE: OpenGLDynamicGDI.h is a PUBLIC header and it
         # includes <wglext.h>, so every consumer that pulls it in -- Canvas
         # code in CoreClient does -- has to be able to resolve it too.
         target_include_directories(GDI PUBLIC

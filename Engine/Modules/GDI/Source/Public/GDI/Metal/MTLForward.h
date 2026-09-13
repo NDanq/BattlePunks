@@ -4,7 +4,7 @@
 // ---------------------------------------------------------------------------
 // MTLForward.h -- Objective-C <-> C++ bridge for the Metal GDI backend.
 //
-// Public GDI headers (QMetalDynamicGDI.h, QMTLDevice.h, ...) are included from
+// Public GDI headers (MetalDynamicGDI.h, MTLDevice.h, ...) are included from
 // BOTH plain C++ translation units (e.g. GDI.cpp, QCanvasRenderer.cpp) and the
 // Objective-C++ backend .mm files. The Metal object types are Objective-C ids, so
 // they cannot appear directly in a header that a .cpp compiles.

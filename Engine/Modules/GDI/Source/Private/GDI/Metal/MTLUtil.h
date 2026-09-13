@@ -12,8 +12,8 @@
 #include "Public/GDI/GDIDefinitions.h"
 
 // ---------------------------------------------------------------------------
-// State decoders -- the Metal analog of VKUtil::Decode* (QVKCommands.cpp) and the
-// sampler/compare tables in QVKTexture.cpp / QVKPipelineCache.cpp. These translate
+// State decoders -- the Metal analog of VKUtil::Decode* (VKCommands.cpp) and the
+// sampler/compare tables in VKTexture.cpp / VKPipelineCache.cpp. These translate
 // the GDI's platform-neutral render-state enums into Metal enum values, so the
 // pipeline/sampler/depth-stencil descriptors can be built directly from GDI state.
 // ---------------------------------------------------------------------------

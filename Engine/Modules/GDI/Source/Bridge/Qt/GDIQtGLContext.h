@@ -6,7 +6,7 @@
 #include <QWindow>
 
 #include "Public/GDI/OpenGL/GDIGLContextInterface.h"
-#include "Public/GDI/OpenGL/QOpenGLDynamicGDI.h"
+#include "Public/GDI/OpenGL/OpenGLDynamicGDI.h"
 
 /*
  * Qt's implementation of GDI's OpenGL drawable.
@@ -39,7 +39,7 @@ namespace GDIQt
     class GDIQtGLContext : public IGDIGLContext
     {
     public:
-        explicit GDIQtGLContext(QOpenGLGDIContext* InContext) : Context(InContext) {}
+        explicit GDIQtGLContext(OpenGLGDIContext* InContext) : Context(InContext) {}
         ~GDIQtGLContext() override;
 
         /*
@@ -66,7 +66,7 @@ namespace GDIQt
         QOpenGLContext* GetSharedContext() const { return SharedContext; }
 
     private:
-        QOpenGLGDIContext* Context       = nullptr;   // not owned
+        OpenGLGDIContext*  Context       = nullptr;   // not owned
         QOpenGLContext*    MainContext   = nullptr;
         QOpenGLContext*    SharedContext = nullptr;
         QOffscreenSurface* Surface       = nullptr;

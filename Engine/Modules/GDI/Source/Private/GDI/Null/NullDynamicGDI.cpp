@@ -10,7 +10,7 @@ void NullDynamicGDI::AssignContext(GDIContext* InContext)
 }
 
 /*
- * The one line that matters most in this file. QOpenGLDynamicGDI::Allocate()
+ * The one line that matters most in this file. OpenGLDynamicGDI::Allocate()
  * bails out when Context is null (there is no drawable to make current), which
  * is exactly the state a headless host is in. Skipping SetThreadID() would
  * leave InRenderThread() false forever, and GDIRenderTarget::DrawTexture's
@@ -184,8 +184,8 @@ GDITextureResource* NullDynamicGDI::CreateTextureResource(GDITexture2D* InParent
 
 bool NullDynamicGDI::CheckError(const std::string& FailStr)
 {
-    // false means "no error occurred" -- matches QVulkanDynamicGDI::CheckError
-    // and QMetalDynamicGDI::CheckError, both of which return false here too.
+    // false means "no error occurred" -- matches VulkanDynamicGDI::CheckError
+    // and MetalDynamicGDI::CheckError, both of which return false here too.
     return false;
 }
 
