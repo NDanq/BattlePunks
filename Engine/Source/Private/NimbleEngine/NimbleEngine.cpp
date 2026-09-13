@@ -10,6 +10,23 @@
 #include "Public/GDI/GDI.h"
 #include "Public/GDI/Null/NullDynamicGDI.h"
 
+#if defined(_WIN32)
+/*
+ * DECLARED, NOT INCLUDED. <windows.h> defines Yield() as an empty macro left
+ * over from 16-bit Windows and maps FindWindow to FindWindowA, and this file
+ * calls both EngineCore::Threads::Yield() and GameWindowSystem::FindWindow --
+ * so including it turns two correct calls into syntax errors, which is exactly
+ * what happened before this comment existed. WIN32_LEAN_AND_MEAN does not help;
+ * both live in the core headers.
+ *
+ * These two are a stable, decades-old ABI: MMRESULT and UINT are both unsigned
+ * int, and TIMERR_NOERROR is 0. Declaring them costs two lines and keeps the
+ * Win32 macro namespace out of engine code entirely.
+ */
+extern "C" __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned int uPeriod);
+extern "C" __declspec(dllimport) unsigned int __stdcall timeEndPeriod(unsigned int uPeriod);
+#endif
+
 NIMBLE_CONFIG_INT(GResolutionX, "Display", "ResolutionX", 1280, nullptr);
 NIMBLE_CONFIG_INT(GResolutionY, "Display", "ResolutionY", 720, nullptr);
 NIMBLE_CONFIG_STRING(GTitle,    "Application", "Title", "NimbleEngine", nullptr);
@@ -25,7 +42,148 @@ NIMBLE_CONFIG_INT(GRenderPlatform, "Display", "RHI", ERP_Null, nullptr);
  * something whose exit condition is an OS event. */
 NIMBLE_CONFIG_INT(GMaxFrames, "Application", "MaxFrames", 0, nullptr);
 
+/* Frames per second the loop is paced to; 0 runs unlimited. See
+ * Application::SetFrameRateLimit, which is the runtime half of this. */
+NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
+
 using namespace EngineCore;
+
+namespace
+{
+    /*
+     * Raises the OS timer resolution, once, and only if something actually
+     * needs to sleep accurately.
+     *
+     * WHY THIS IS NEEDED AT ALL. Measured on Windows with the default timer
+     * tick: SleepMs(1), SleepMs(2) and SleepMs(5) ALL sleep about 15.5ms,
+     * because every sleep is rounded up to the ~15.6ms scheduler tick. A frame
+     * limiter built on that cannot express 60fps -- a 16.67ms frame would land
+     * on 15.6ms or 31.2ms and alternate between roughly 64fps and 32fps. With
+     * timeBeginPeriod(1) the same calls measure 1.99ms, 2.94ms and 5.94ms:
+     * about 1ms of overshoot, which the spin in PaceToDeadline absorbs.
+     *
+     * WHY IT IS LAZY. An unlimited run never sleeps, so it should not pay for a
+     * raised tick, which costs a little power and wakes the scheduler more
+     * often. Nothing is raised until the first frame that actually paces.
+     *
+     * WHY IT IS HERE AND NOT IN CORE, where platform code belongs:
+     * Modules/Core is a vendored subtree and Engine/CMakeLists.txt's rule is
+     * that no local edit may be required inside one. If Core ever grows a
+     * high-resolution sleep, this should collapse into it.
+     *
+     * Scoped to Exec, so the process leaves the tick as it found it. On Windows
+     * 10 2004 and later timeBeginPeriod affects only the calling process.
+     */
+    class TimerResolutionScope
+    {
+    public:
+        TimerResolutionScope() = default;
+
+        TimerResolutionScope(const TimerResolutionScope&)            = delete;
+        TimerResolutionScope& operator=(const TimerResolutionScope&) = delete;
+
+        void EnsureRaised()
+        {
+#if defined(_WIN32)
+            /* TIMERR_NOERROR is 0; see the declaration at the top of this
+             * file for why the constant is not spelled by name. */
+            if(!bRaised && timeBeginPeriod(1) == 0)
+            {
+                bRaised = true;
+            }
+#endif
+        }
+
+        ~TimerResolutionScope()
+        {
+#if defined(_WIN32)
+            if(bRaised)
+            {
+                timeEndPeriod(1);
+            }
+#endif
+        }
+
+    private:
+        bool bRaised = false;
+    };
+
+    int64_t SteadyNowNs()
+    {
+        return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+
+    /*
+     * Waits until InOutDeadlineNs, then advances it by one frame.
+     *
+     * SLEEP THE BULK, SPIN THE TAIL. A pure spin hits the deadline exactly and
+     * burns a core doing it, which is most of what pacing exists to stop. A
+     * pure sleep gives the core back but overshoots by about a millisecond even
+     * with the tick raised, and that millisecond is 6% of a 60fps frame.
+     * Sleeping to within SpinWindowNs of the deadline and yielding through the
+     * rest costs a sliver of a core and lands inside the yield granularity.
+     */
+    void PaceToDeadline(int64_t& InOutDeadlineNs, uint32_t InLimitHz, TimerResolutionScope& InTimer)
+    {
+        if(InLimitHz == 0)
+        {
+            /* Unlimited. Forget any deadline, so switching back to a limit
+             * later starts from now rather than trying to catch up on frames
+             * that were never going to be paced. */
+            InOutDeadlineNs = 0;
+            return;
+        }
+
+        const int64_t FrameNs = 1000000000LL / int64_t(InLimitHz);
+        const int64_t NowNs   = SteadyNowNs();
+
+        /* First paced frame, or the first after a spell of running unlimited. */
+        if(InOutDeadlineNs == 0)
+        {
+            InOutDeadlineNs = NowNs + FrameNs;
+            return;
+        }
+
+        /*
+         * MORE THAN A WHOLE FRAME LATE. Do not try to catch up: the deadline is
+         * already in the past, and advancing it one frame at a time would keep
+         * it there, so every later frame would skip its wait while the engine
+         * chased a schedule it cannot meet. Start again from now.
+         */
+        if(NowNs > InOutDeadlineNs + FrameNs)
+        {
+            InOutDeadlineNs = NowNs + FrameNs;
+            return;
+        }
+
+        /* 2ms, sized from the ~1ms sleep overshoot measured above. */
+        const int64_t SpinWindowNs = 2000000;
+
+        InTimer.EnsureRaised();
+
+        for(;;)
+        {
+            const int64_t RemainingNs = InOutDeadlineNs - SteadyNowNs();
+            if(RemainingNs <= 0)
+            {
+                break;
+            }
+
+            const int64_t SleepableNs = RemainingNs - SpinWindowNs;
+            if(SleepableNs >= 1000000)
+            {
+                Threads::SleepMs(uint32_t(SleepableNs / 1000000));
+            }
+            else
+            {
+                Threads::Yield();
+            }
+        }
+
+        InOutDeadlineNs += FrameNs;
+    }
+}
 
 namespace NimbleEngine
 {
@@ -132,6 +290,20 @@ namespace NimbleEngine
         bQuitRequested = true;
     }
 
+    void Application::SetFrameRateLimit(uint32_t InFramesPerSecond)
+    {
+        FrameRateLimit = InFramesPerSecond;
+
+        /* Drop the deadline so the new rate starts from the next frame instead
+         * of inheriting a schedule computed for the old one. */
+        NextFrameDeadlineNs = 0;
+    }
+
+    uint32_t Application::GetFrameRateLimit() const
+    {
+        return FrameRateLimit;
+    }
+
     void Application::ExecWithGame(IGame* InGame)
     {
         /* First two statements in the process's life as an engine. SetMainThread
@@ -144,6 +316,15 @@ namespace NimbleEngine
         {
             const int      MaxFramesCfg = GMaxFrames.GetInt();
             const uint64_t MaxFrames    = MaxFramesCfg > 0 ? uint64_t(MaxFramesCfg) : 0;
+
+            /* Negative is meaningless here and clamps to unlimited rather than
+             * wrapping into an enormous unsigned rate. */
+            const int LimitCfg  = GFrameRateLimit.GetInt();
+            FrameRateLimit      = LimitCfg > 0 ? uint32_t(LimitCfg) : 0u;
+            NextFrameDeadlineNs = 0;
+
+            /* Lowered again when this leaves scope at the end of Exec. */
+            TimerResolutionScope TimerRes;
 
             /* After the render thread is up and past its readiness check, so a
              * game never observes a half-built engine. A refusal here is a
@@ -222,6 +403,18 @@ namespace NimbleEngine
                 if(MaxFrames != 0 && FrameNumber >= MaxFrames)
                 {
                     bQuitRequested = true;
+                }
+
+                /*
+                 * LAST THING IN THE FRAME, deliberately. The render thread is
+                 * still executing the commands just submitted, so this wait
+                 * overlaps real work rather than stalling in front of it.
+                 * Skipped when the loop is leaving anyway -- nothing should sit
+                 * out a frame's worth of pacing on the way to shutdown.
+                 */
+                if(!bQuitRequested)
+                {
+                    PaceToDeadline(NextFrameDeadlineNs, FrameRateLimit, TimerRes);
                 }
             }
         }

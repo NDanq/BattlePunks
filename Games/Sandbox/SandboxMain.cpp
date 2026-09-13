@@ -78,7 +78,11 @@ public:
 
         RunSeconds = double(GSandboxRunSeconds.GetInt());
 
+        const uint32_t Limit = InApp.GetFrameRateLimit();
+
         CORE_LOG("[Sandbox] game starting on thread " + Num(uint64_t(GameThread))
+                 + "; frame limit "
+                 + (Limit > 0 ? Num(Limit) + " fps" : std::string("unlimited"))
                  + (RunSeconds > 0.0
                     ? "; will quit after " + Fixed2(RunSeconds) + "s"
                     : "; running until the window closes"))
