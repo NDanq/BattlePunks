@@ -10,44 +10,24 @@
 #include <string>
 
 /*
- * Sandbox: the example game, and the first executable in this repository.
+ * Sandbox: the example game. CMakeLists.txt says why it exists; this is what it
+ * currently demonstrates, which is the whole of what the engine offers a game
+ * so far -- the IGame seam. Application owns the window, the frame loop and the
+ * thread split; this file owns game state and is ticked once per frame.
  *
- * It exists to be the place engine features are USED -- the working reference
- * for how a game drives NimbleEngine, and the thing that exercises each new
- * engine implementation against something that actually runs. A feature with no
- * caller here is a feature nothing has tried.
+ * No drawing: IGame is simulation-only until render proxies land. When drawing
+ * arrives it arrives as another IGame method and this file grows one.
  *
- * WHAT IT DEMONSTRATES TODAY is the whole of what the engine currently offers a
- * game: the IGame seam. NimbleEngine::Application owns the window, the frame
- * loop and the game/render thread split; this file owns game state and gets
- * ticked once per frame on the game thread.
- *
- * There is no drawing here, and that is the engine's current shape rather than
- * an omission -- IGame is simulation-only until render proxies land, because
- * render commands must capture by value for the frame pacing to be sound and
- * that rule is only enforceable while the engine authors every command. When
- * drawing arrives, it arrives as another IGame method and this file grows one.
- *
- * NO LOG HANDLER IS INSTALLED, and that is a decision rather than an omission.
- * With none installed, CoreLog's Fatal path writes to stderr and abort()s.
- * Installing one converts every CORE_CHECK and GDI_CHECK into
- * print-and-continue, which while the engine is this young is the strictly
- * harder failure to debug: the process keeps running past the violation and
- * crashes somewhere unrelated. A shipping game will want a handler. This does
- * not.
+ * NO LOG HANDLER IS INSTALLED, deliberately. Without one, CoreLog's Fatal path
+ * writes to stderr and abort()s; installing one turns every CORE_CHECK and
+ * GDI_CHECK into print-and-continue, which is the harder failure to debug while
+ * the engine is this young. A shipping game will want a handler.
  */
 
-/*
- * A GAME-OWNED config var, declared here rather than in the engine. It lands in
- * the same registry the engine's own NIMBLE_CONFIG_* use and is read from the
- * same Config/DefaultEngine.ini, which is the point worth demonstrating: a game
- * extends the config surface without the engine knowing about it.
- *
- * Distinct from the engine's [Application] MaxFrames, and deliberately so.
- * MaxFrames is an engine bring-up knob that counts iterations; this is game
- * logic expressed in game terms, and it ends the run by asking the engine to
- * stop rather than by the engine counting on the game's behalf.
- */
+/* A GAME-OWNED config var, reaching the same registry and the same .ini as the
+ * engine's own -- which is the point. Distinct from [Application] MaxFrames:
+ * that counts iterations for engine bring-up, this is game logic that ends the
+ * run by asking the engine to stop. */
 NIMBLE_CONFIG_INT(GSandboxRunSeconds, "Sandbox", "RunSeconds", 0, nullptr);
 
 namespace
@@ -70,10 +50,8 @@ public:
     {
         App = &InApp;
 
-        /* Recorded so the per-second line can assert it rather than assume it.
-         * The engine documents OnTick as game-thread-only; this is the game
-         * checking that promise from the outside, which is the sort of thing an
-         * example is for. */
+        /* Recorded so OnTick can assert the engine's game-thread-only promise
+         * from the outside, rather than assume it. */
         GameThread = EngineCore::appThreadID();
 
         RunSeconds = double(GSandboxRunSeconds.GetInt());
@@ -91,21 +69,17 @@ public:
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
-        /*
-         * Runs CONCURRENTLY with the render thread draining the previous frame.
-         * Nothing here may touch the renderer or the window -- and nothing here
-         * can, which is the point of the context being a value.
-         */
+        /* Runs CONCURRENTLY with the render thread draining the previous
+         * frame. Nothing here can touch the renderer or the window, which is
+         * the point of the context being a value. */
         CORE_CHECK(EngineCore::appThreadID() == GameThread,
                    "[Sandbox] OnTick ran on a thread other than the one OnStartup saw")
 
         ElapsedSeconds += InFrame.DeltaSeconds;
         TicksThisSecond++;
 
-        /* A moving object with no renderer to show it: the state is real, and
-         * the log line below is the only way to observe it until drawing
-         * exists. Wrapped so it stays inside the viewport rather than growing
-         * without bound. */
+        /* A moving object with no renderer to show it; the log line below is
+         * the only way to observe it until drawing exists. */
         const double SpeedPixelsPerSecond = 120.0;
         const int    ViewportWidth        = InFrame.ViewportPixels.Width > 0
                                           ? InFrame.ViewportPixels.Width
@@ -117,10 +91,8 @@ public:
             PositionX -= double(ViewportWidth);
         }
 
-        /*
-         * The game deciding it is done, which is what RequestQuit is for. The
-         * engine finishes the frame in flight and leaves the loop at the top.
-         */
+        /* The game deciding it is done. The engine finishes the frame in
+         * flight and leaves the loop at the top. */
         if(RunSeconds > 0.0 && ElapsedSeconds >= RunSeconds && App)
         {
             CORE_LOG("[Sandbox] RunSeconds reached; asking the engine to quit")
@@ -149,8 +121,7 @@ public:
     }
 
 private:
-    /* Stashed in OnStartup so OnTick can call RequestQuit(). Valid for the
-     * duration of Exec and cleared in OnShutdown. */
+    /* Stashed in OnStartup so OnTick can call RequestQuit(). */
     NimbleEngine::Application* App = nullptr;
 
     EngineCore::ThreadID GameThread = 0;
@@ -171,14 +142,10 @@ int main(int /*argc*/, char** /*argv*/)
     }
 
     /*
-     * AFTER the Application and the game are destroyed, so their own members are
-     * not counted, and explicit rather than a static destructor for the reason
-     * CoreGarbageCollector.h gives: a report at static-destruction time runs in
-     * an order nothing specifies and blames teardown ordering for leaks.
-     *
-     * This is also what proves the drain loop's `delete Command` -- and the
-     * virtual destructor it relies on -- actually work. A command leaked per
-     * frame shows up here and nowhere else.
+     * AFTER both are destroyed, so their members are not counted, and explicit
+     * rather than a static destructor -- CoreGarbageCollector.h explains why.
+     * This is also what proves the drain loop's `delete Command`, and the
+     * virtual destructor under it, actually work.
      */
     const uint64_t Leaked = EngineCore::Memory::ReportLeaks();
 
