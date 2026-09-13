@@ -13,8 +13,8 @@
 
 #include <string>
 #if WITH_OPENGL_GDI
-#include "Public/GDI/OpenGL/QOpenGLDynamicGDI.h"
-#include "Public/GDI/OpenGL/QOGLSync.h"
+#include "Public/GDI/OpenGL/OpenGLDynamicGDI.h"
+#include "Public/GDI/OpenGL/OGLSync.h"
 #endif
 #include "Public/GDI/GDIView.h"
 #include "Public/GDI/GDIMesh.h"
@@ -26,13 +26,13 @@
 #include "Public/GDI/Shaders/Classes/BrushShaders.h"
 
 #if WITH_VULKAN_GDI
-#include "Public/GDI/Vulkan/QVulkanDynamicGDI.h"
-#include "Public/GDI/Vulkan/QVKSync.h"
+#include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
+#include "Public/GDI/Vulkan/VKSync.h"
 #endif
 
 #if WITH_METAL_GDI
-#include "Public/GDI/Metal/QMetalDynamicGDI.h"
-#include "Public/GDI/Metal/QMTLSync.h"
+#include "Public/GDI/Metal/MetalDynamicGDI.h"
+#include "Public/GDI/Metal/MTLSync.h"
 #endif
 
 // Unconditional -- NullGDI has no platform dependency and is always
@@ -141,23 +141,23 @@ void InitializeGDI( ERenderPlatform Platform, EngineCore::WindowHandle InWindow 
 #if WITH_METAL_GDI
         if(Platform == ERP_Metal)
         {
-            GDynamicGDI = new QMetalDynamicGDI(InWindow);
-            GSync = new QMTLSync();
+            GDynamicGDI = new MetalDynamicGDI(InWindow);
+            GSync = new MTLSync();
         }
         else
 #endif
 #if WITH_VULKAN_GDI
         if(Platform == ERP_Vulkan)
         {
-            GDynamicGDI = new QVulkanDynamicGDI(InWindow);
-            GSync = new QVKSync();
+            GDynamicGDI = new VulkanDynamicGDI(InWindow);
+            GSync = new VKSync();
         }
         else
 #endif
         {
 #if WITH_OPENGL_GDI
-            GDynamicGDI = new QOpenGLDynamicGDI(InWindow);
-            GSync = new QOGLSync();
+            GDynamicGDI = new OpenGLDynamicGDI(InWindow);
+            GSync = new OGLSync();
 #else
             // Apple builds compile out OpenGL and Vulkan entirely, so there is
             // no fallback backend: the host clamps the platform to ERP_Metal

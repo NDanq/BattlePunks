@@ -13,7 +13,7 @@
  * This used to run the other way: Qt created a QVulkanInstance and GDI
  * borrowed the VkInstance out of it. A renderer should not need a UI toolkit
  * to open its device, so GDI creates the instance now
- * (QVulkanGDIContext::GetSharedVkInstance) and this ADOPTS it via
+ * (VulkanGDIContext::GetSharedVkInstance) and this ADOPTS it via
  * QVulkanInstance::setVkInstance.
  *
  * Adoption rather than creation is what keeps both sides happy: Qt still

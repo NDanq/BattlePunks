@@ -1,6 +1,6 @@
 #include "GDIQtVulkanInstance.h"
 
-#include "Public/GDI/Vulkan/QVulkanDynamicGDI.h"
+#include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
 
 namespace GDIQt
 {
@@ -13,7 +13,7 @@ QVulkanInstance* GDIQtVulkanInstance::Get()
     }
 
     // GDI owns the instance; this only adopts it.
-    const VkInstance Native = QVulkanGDIContext::GetSharedVkInstance();
+    const VkInstance Native = VulkanGDIContext::GetSharedVkInstance();
     if(Native == VK_NULL_HANDLE)
     {
         return nullptr;

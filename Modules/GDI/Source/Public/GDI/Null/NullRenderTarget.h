@@ -10,7 +10,7 @@
  * therefore be a real, valid object, never nullptr, and IsValid() must say so
  * (the base default is false, which would read as "the renderer is broken").
  *
- * Follows QOpenGLRenderTarget's shape: TargetGDIType stays RTGDI_None (the
+ * Follows OpenGLRenderTarget's shape: TargetGDIType stays RTGDI_None (the
  * base default -- there is no RTGDI_Null and the plan does not add one), the
  * constructor calls Allocate(), the destructor calls Release().
  */
@@ -49,7 +49,7 @@ public:
 protected:
     void Allocate() override
     {
-        // Matches QOpenGLRenderTarget::Allocate(): a real GDITexture2D backed
+        // Matches OpenGLRenderTarget::Allocate(): a real GDITexture2D backed
         // by a NullTextureResource (see NullDynamicGDI::CreateTextureResource),
         // so ToGDITexture2D() never hands back nullptr.
         OwnedTexture = new GDITexture2D(Width, Height, nullptr);
