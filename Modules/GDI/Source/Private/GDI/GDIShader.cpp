@@ -27,6 +27,8 @@ std::string GetCookedShaderPath(const std::string& File, ERenderPlatform Platfor
             return std::string("Shaders/Cooked/Vulkan/") + File + ".spv";
         case ERP_Metal:
             return std::string("Shaders/Cooked/Metal/") + File + ".metal";
+        case ERP_D3D12:
+            return std::string("Shaders/Cooked/D3D12/") + File + ".cso";
         default:
             break;
     }

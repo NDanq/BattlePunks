@@ -205,6 +205,7 @@ public:
         VulkanContext,
         MetalContext,
         NullContext,
+        D3D12Context,
         MAX_GDIContextType
     };
 

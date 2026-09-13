@@ -450,3 +450,37 @@ VkResult appVulkanCreateSurface(VkInstance InInstance,
 }
 
 #endif // WITH_VULKAN_GDI
+
+
+// ===========================================================================
+// Direct3D 12
+// ===========================================================================
+#if WITH_D3D12_GDI
+
+#include "Public/GDI/D3D12/GDID3D12Platform.h"
+
+namespace GDIPlatform
+{
+HRESULT appD3D12CreateSwapChain(IDXGIFactory2* InFactory,
+                                IUnknown* InCommandQueue,
+                                EngineCore::WindowHandle InWindow,
+                                const DXGI_SWAP_CHAIN_DESC1& InDesc,
+                                IDXGISwapChain1** OutSwapChain)
+{
+    HWND Window = ToHWND(InWindow);
+    if(InFactory == nullptr || InCommandQueue == nullptr || OutSwapChain == nullptr || Window == nullptr)
+    {
+        return E_INVALIDARG;
+    }
+
+    const HRESULT Result = InFactory->CreateSwapChainForHwnd(InCommandQueue, Window, &InDesc, nullptr, nullptr, OutSwapChain);
+    if(SUCCEEDED(Result))
+    {
+        // Alt+Enter would otherwise switch to exclusive fullscreen behind the backend.
+        InFactory->MakeWindowAssociation(Window, DXGI_MWA_NO_ALT_ENTER);
+    }
+    return Result;
+}
+}
+
+#endif // WITH_D3D12_GDI

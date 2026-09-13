@@ -1,0 +1,84 @@
+#ifndef CORECLIENT_D3D12PIPELINECACHE_H
+#define CORECLIENT_D3D12PIPELINECACHE_H
+
+#include <d3d12.h>
+#include <wrl/client.h>
+
+#include <cstdint>
+#include <unordered_map>
+
+class D3D12Device;
+class D3D12ShaderResource;
+
+/**
+ * Root parameters of the one root signature every GDI draw uses.
+ *
+ * Where Vulkan needs a descriptor layout per shader family, a D3D12 root
+ * signature may be a superset of what a shader declares, so one covers all of
+ * them: the core cbuffers at b0/b1, the custom cbuffer at b2, and the sampled
+ * texture at t2 (Screen/Cursor) or t3 (UberBrush/LayersBlit).
+ */
+enum ED3D12RootParam : UINT
+{
+    RP_ViewParameters = 0,
+    RP_Transform,
+    RP_Custom,
+    RP_Texture2,
+    RP_Texture3,
+    RP_Sampler2,
+    RP_Sampler3,
+    RP_Count
+};
+
+/**
+ * In-process PSO cache keyed on shaders, vertex layout, blend state and RT
+ * format. Pipelines are created lazily on the first draw that needs one.
+ *
+ * Vertex layout IDs:
+ *   0 -- standard:  slot 0 float3 position, slot 1 float2 texcoord
+ *   1 -- instanced: plus slot 2 float4x4 transform, slot 3 float opacity, slot 4 float3 color
+ */
+class D3D12PipelineCache
+{
+public:
+    struct PipelineKey
+    {
+        uint64_t                VertexShaderID  = 0;
+        uint64_t                PixelShaderID   = 0;
+        uint32_t                VertexLayoutID  = 0;
+
+        BOOL                    BlendEnable     = FALSE;
+        D3D12_BLEND             SrcBlend        = D3D12_BLEND_ONE;
+        D3D12_BLEND             DestBlend       = D3D12_BLEND_ZERO;
+        D3D12_BLEND_OP          BlendOp         = D3D12_BLEND_OP_ADD;
+        D3D12_BLEND_OP          BlendOpAlpha    = D3D12_BLEND_OP_ADD;
+        UINT8                   WriteMask       = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+        DXGI_FORMAT             RTFormat        = DXGI_FORMAT_R8G8B8A8_UNORM;
+    };
+
+    D3D12PipelineCache()  = default;
+    ~D3D12PipelineCache() { Shutdown(); }
+
+    bool Initialize(D3D12Device* InDevice);
+    void Shutdown();
+
+    /** Null if either shader is missing bytecode or PSO creation fails. Failures are cached too. */
+    ID3D12PipelineState* GetOrCreate(const PipelineKey& Key, const D3D12ShaderResource* VS, const D3D12ShaderResource* PS);
+
+    inline ID3D12RootSignature* GetRootSignature() const { return RootSignature.Get(); }
+    inline bool                 IsValid()          const { return RootSignature != nullptr; }
+
+private:
+    bool BuildRootSignature();
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> CreatePipeline(const PipelineKey& Key,
+                                                               const D3D12ShaderResource* VS,
+                                                               const D3D12ShaderResource* PS) const;
+    static uint64_t HashKey(const PipelineKey& Key);
+
+    D3D12Device*                                    Device = nullptr;
+    Microsoft::WRL::ComPtr<ID3D12RootSignature>     RootSignature;
+    std::unordered_map<uint64_t, Microsoft::WRL::ComPtr<ID3D12PipelineState>> Pipelines;
+};
+
+#endif //CORECLIENT_D3D12PIPELINECACHE_H
