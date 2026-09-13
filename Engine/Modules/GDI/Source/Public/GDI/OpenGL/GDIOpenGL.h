@@ -193,8 +193,8 @@ namespace GDIGLLoader
  * inside them resolves to a member here -- so no GL call site changed.
  *
  * Note the two Qt bases being replaced pinned DIFFERENT GL versions
- * (QOpenGLFunctions_4_5_Core in QOpenGLDynamicGDI, _4_4_Core in
- * QOpenGLRenderTarget), a latent inconsistency. One loader for one context
+ * (QOpenGLFunctions_4_5_Core in OpenGLDynamicGDI, _4_4_Core in
+ * OpenGLRenderTarget), a latent inconsistency. One loader for one context
  * resolves it.
  */
 class GDIGLFunctions

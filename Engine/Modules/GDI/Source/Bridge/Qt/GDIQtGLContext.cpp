@@ -10,7 +10,7 @@ GDIQtGLContext::~GDIQtGLContext()
     Surface = nullptr;
 
     // The QOpenGLContext wrappers do not own the native HGLRCs -- GDI's
-    // QOpenGLGDIContext created them and deletes them in its own destructor.
+    // OpenGLGDIContext created them and deletes them in its own destructor.
     delete SharedContext;
     delete MainContext;
     SharedContext = nullptr;
