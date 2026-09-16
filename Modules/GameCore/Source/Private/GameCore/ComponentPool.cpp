@@ -9,22 +9,8 @@
 #include "Public/GameCore/GameCoreLog.h"
 
 /*
- * The sparse set. See ComponentPool.h for the shape and the reasoning; this is
- * the mechanics.
- *
- * GROWTH. The dense buffer doubles (starting at 16 elements) via
- * SystemAlignedAlloc/SystemAlignedFree -- a fresh allocation and a memcpy of
- * the live prefix, matching what CoreMemoryPool.h's VirtualRegion-backed pools
- * do at a coarser granularity. A pool never shrinks; that mirrors
- * LinearMemoryPool's stance (Reset is the only way back to empty) rather than
- * paying for a resize on every removal in a system that adds and removes at
- * similar rates every frame.
- *
- * SPARSE ARRAY GROWTH. Sparse is a plain std::vector<SparseEntry>, grown to
- * cover the highest entity Index seen. This is bytes, not components -- 8 bytes
- * per POSSIBLE entity index, not per live one -- so it costs nothing until an
- * entity count large enough to matter, at which point EntityID's own free-list
- * reuse keeps the highest index from running away.
+ * The sparse set. See ComponentPool.h and DESIGN.md for the shape and the
+ * reasoning; this is the mechanics.
  */
 
 namespace GameCore
@@ -250,11 +236,8 @@ namespace GameCore
             return;
         }
 
-        /* Scratch buffer the same size as one growth step would allocate --
-         * a full re-layout is expected to be rare (see the header comment), so
-         * this pays one extra allocation rather than trying to permute in
-         * place, which for an arbitrary permutation needs a cycle-decomposition
-         * pass to do safely with POD memcpy. */
+        /* One extra allocation rather than permuting in place -- see
+         * DESIGN.md for why. */
         uint8_t* Scratch = static_cast<uint8_t*>(
             EngineCore::SystemAlignedAlloc(InCount * size_t(P->Type.SizeBytes), P->Type.Alignment));
         if(!Scratch)

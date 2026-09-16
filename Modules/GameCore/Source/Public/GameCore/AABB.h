@@ -90,24 +90,11 @@ namespace GameCore
         }
 
         /*
-         * The box of InLocal's eight transformed corners -- a CONSERVATIVE
-         * over-approximation under rotation, not a tight rotated box: an
-         * axis-aligned box cannot represent a rotated one exactly, and a query
-         * structure needs a box that is never too small, never one that is
-         * exact. This is the standard "transform all eight corners, take the
-         * min/max" approach; a rotating entity's world box will read larger
-         * than its silhouette, which costs query precision, not correctness.
-         *
-         * USES Vector4 WITH w=1, DELIBERATELY, NOT Matrix4x4::operator*(Vector3).
-         * That Vector3 overload is a DIRECTION transform (w=0 -- see its comment
-         * in Matrix.h): translation cancels out of every one of its four dot
-         * products. A corner run through it would rotate and scale correctly
-         * and then silently land back at the matrix's own origin, which is
-         * exactly the class of bug this file's own house style writes a comment
-         * to warn about elsewhere. Corners are POSITIONS, so w=1 and the
-         * Vector4 overload, then the w component is dropped -- Position/Scale/
-         * Rotation compose into an affine matrix, so w comes back as 1 again,
-         * not a projective divide anything here needs to perform.
+         * The box of InLocal's eight transformed corners -- a conservative
+         * over-approximation under rotation, not a tight rotated box. Uses
+         * Vector4 with w=1, NOT Matrix4x4::operator*(Vector3) -- that overload
+         * is a direction transform (w=0) and would silently drop translation.
+         * See DESIGN.md for the full reasoning.
          */
         static AABB Transformed(const AABB& InLocal, const EngineCore::Matrix4x4& InMatrix)
         {

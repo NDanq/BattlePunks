@@ -12,41 +12,16 @@
 /*
  * The Lua-visible surface: World, Entity, the component proxies for
  * Transform/Name/Bounds, TickPhase, and Events. See World.h's "The Lua
- * surface" doc comment for the full script-facing API this implements.
- *
- * USERDATA LAYOUTS
- *
- *   "Entity"    userdata: one EntityID (8 bytes), metatable __index = a table
- *               of Entity methods (IsValid, GetID, GetName, Destroy,
- *               AddComponent, GetComponent, HasComponent, RemoveComponent,
- *               AddScript).
- *
- *   Component   userdata: one packed {EntityID, ComponentTypeID}, metatable
- *   proxy       named after the component ("Transform", "Name", "Bounds"),
- *               __index = that component's own method table. EVERY method
- *               RE-FETCHES through World::GetComponentRaw before touching
- *               anything -- see World.h's public Lua surface note: a proxy
- *               held across a swap-remove must read nil/error cleanly, never
- *               alias whatever now occupies that pool slot.
- *
- * Both userdata carry NO Lua uservalue and NO __gc -- they own nothing
- * (an EntityID and a ComponentTypeID are plain data, not a resource), so
- * there is nothing to release when Lua's collector reclaims one.
+ * surface" doc comment for the API, and DESIGN.md for the userdata layouts.
  */
 
 namespace GameCore
 {
-    /*
-     * ScriptSystem.cpp's entry points. Declared HERE, at GameCore namespace
-     * scope -- NOT inside the anonymous namespace below -- because a
-     * declaration inside an anonymous namespace gets THAT namespace's unique
-     * internal linkage, which makes it a different symbol from the
-     * externally-linked GameCore::ScriptSystem_* function ScriptSystem.cpp
-     * actually defines. Declared inside the anonymous namespace, this file
-     * would compile clean and then fail to LINK: it would be declaring and
-     * calling its own never-defined local symbol of the same name, not the
-     * one across the file.
-     */
+    /* ScriptSystem.cpp's entry points. Declared HERE, at GameCore namespace
+     * scope, NOT inside the anonymous namespace below -- a declaration in an
+     * anonymous namespace gets internal linkage and silently becomes a
+     * different, never-defined symbol. See DESIGN.md for the link error that
+     * caught this. */
     bool ScriptSystem_InstantiateScript(lua_State* InState, World* InWorld, EntityID InEntity, const char* InClassName);
     void ScriptSystem_AddLuaSystem(lua_State* InState, World* InWorld, const char* InName, ETickPhase InPhase, int InFunctionRef);
     bool ScriptSystem_RemoveLuaSystem(lua_State* InState, World* InWorld, const char* InName);
@@ -63,13 +38,10 @@ namespace GameCore
 
         World* GetBoundWorld(lua_State* InState)
         {
-            /* Stashed in the registry at the top of ScriptBindings_Install,
-             * before any metatable or global is installed. A registry slot
-             * rather than a global in this file because ScriptEngine::BindWorld's
-             * "one at a time" contract already makes "the current World" a
-             * per-state concept, and the registry is where Lua-adjacent
-             * per-state state belongs (the same place luaL_ref's instance
-             * table lives). */
+            /* Stashed in the registry at the top of ScriptBindings_Install.
+             * A registry slot, not a global in this file, since BindWorld's
+             * "one at a time" contract makes "the current World" a per-state
+             * concept. */
             lua_pushlightuserdata(InState, const_cast<void*>(static_cast<const void*>(&ENTITY_METATABLE)));
             lua_gettable(InState, LUA_REGISTRYINDEX);
             World* Result = static_cast<World*>(lua_touserdata(InState, -1));
@@ -129,17 +101,8 @@ namespace GameCore
                 return 1;
             }
 
-            /* Zero-initialised init bytes: every built-in component's default
-             * constructor sets sensible defaults, and this generic by-name
-             * path has no way to call a specific type's constructor -- it only
-             * has SizeBytes. A component that needs non-zero defaults it
-             * cannot express this way should not rely on the Lua by-name Add
-             * path with no arguments; this is the same limitation
-             * World::AddComponentRaw's own contract already has (it copies
-             * whatever bytes it is given). Using a static thread-unsafe-free
-             * zeroed buffer would be wrong under any future multi-threaded
-             * script host; a std::vector<uint8_t> local is one allocation on
-             * an already-not-hot Lua call. */
+            /* Zero-initialised init bytes -- see DESIGN.md for why this
+             * generic by-name path cannot call a real constructor. */
             std::vector<uint8_t> ZeroInit(Info->SizeBytes, 0);
             if(!W->AddComponentRaw(E, Info->ID, ZeroInit.data()))
             {
@@ -470,11 +433,6 @@ namespace GameCore
             return 0;
         }
 
-        /* ScriptSystem.cpp's entry points -- World.AddSystem/RemoveSystem
-         * register a Lua function as an ordinary per-phase system, ticked
-         * alongside script components. Declared at GameCore namespace scope
-         * above, not re-declared here. */
-
         int World_AddSystem(lua_State* InState)
         {
             World* W = GetBoundWorld(InState);
@@ -509,11 +467,8 @@ namespace GameCore
 
             const AABB Box(EngineCore::Vector3(MinX, MinY, MinZ), EngineCore::Vector3(MaxX, MaxY, MaxZ));
 
-            /* World's own SpatialQueryFn is a raw function pointer + void* --
-             * the callback function itself lives at Lua stack index 7 in the
-             * CALLER's frame, which a raw C function pointer cannot close over.
-             * So the Lua function is luaL_ref'd for the duration of this one
-             * call and the context carries the state pointer plus that ref. */
+            /* The Lua callback is luaL_ref'd for this one call -- see
+             * DESIGN.md for why a raw SpatialQueryFn cannot close over it. */
             struct QueryContext { lua_State* State; int FunctionRef; bool bStop; };
             lua_pushvalue(InState, 7);
             QueryContext Ctx{ InState, luaL_ref(InState, LUA_REGISTRYINDEX), false };
@@ -584,12 +539,9 @@ namespace GameCore
 
         // === Events table ====================================================
 
-        /* The one C++ thunk every Lua Events.On() subscription shares -- see
-         * World.h's Lua-surface doc comment, "How Lua subscribes to a C++
-         * delegate". InUserData is a heap-allocated LuaEventBinding (below),
-         * owned by this module, released either by Events.Off or by
-         * ScriptSystem_Uninstall walking every binding it made at unbind time
-         * (a Lua function cannot be trusted to release it before lua_close). */
+        /* The one C++ thunk every Lua Events.On() subscription shares.
+         * InUserData is a heap-allocated LuaEventBinding, released by
+         * Events.Off or by ScriptSystem_Uninstall's sweep at unbind time. */
         struct LuaEventBinding
         {
             lua_State* State;
@@ -635,11 +587,8 @@ namespace GameCore
 
             const DelegateHandle Handle = W->GetEvents().Subscribe(Binding->Event, &LuaEventThunk, Binding);
 
-            /* The handle Events.Off needs is {Index, Serial} -- packed into one
-             * integer the same way EntityID packs into 64 bits, since Lua has
-             * no notion of a DelegateHandle struct. The Binding pointer itself
-             * is NOT exposed to Lua; leaking it would let a script corrupt this
-             * module's own bookkeeping by handing back a forged pointer. */
+            /* {Index, Serial} packed into one integer -- see DESIGN.md for
+             * why the Binding pointer itself is never exposed to Lua. */
             lua_pushinteger(InState, (lua_Integer(Handle.Serial) << 32) | lua_Integer(Handle.Index));
             return 1;
         }
@@ -654,21 +603,9 @@ namespace GameCore
             Handle.Index  = uint32_t(Packed & 0xFFFFFFFFu);
             Handle.Serial = uint32_t(uint64_t(Packed) >> 32);
 
-            /* Events.Off does not know WHICH event this handle belongs to
-             * (the packed integer only carries the DelegateList slot), so this
-             * tries every event actually interned so far -- bounded by
-             * GetEventCount(), not EVENT_MAX, so this stays cheap regardless
-             * of that ceiling. Trying a handle against the wrong event's
-             * DelegateList is harmless: each event's list has its own Slots
-             * array and its own Serial sequence (see Delegate.cpp's Serial
-             * check), so Remove() there is simply a not-found miss, never a
-             * corruption risk. The LuaEventBinding this unsubscribe logically
-             * frees is intentionally NOT deleted here -- ScriptSystem_Uninstall's
-             * sweep is the actual owner of releasing every binding still
-             * outstanding at unbind time, since this function has no reliable
-             * way to know whether it just removed the LAST reference to that
-             * specific Binding pointer or one an earlier Events.Off already
-             * handled. */
+            /* Tries every interned event, bounded by GetEventCount() -- see
+             * DESIGN.md for why this is cheap and safe, and why the
+             * LuaEventBinding is not deleted here. */
             const EventID EventCount = EventID(W->GetEvents().GetEventCount());
             for(EventID Event = 0; Event < EventCount; ++Event)
             {

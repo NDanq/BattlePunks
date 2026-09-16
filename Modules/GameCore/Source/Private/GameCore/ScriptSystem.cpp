@@ -8,23 +8,11 @@
 #include "Public/GameCore/World.h"
 
 /*
- * ScriptComponent's whole lifecycle: Script.Register, instantiation (shared by
- * the Lua e:AddScript() path and ScriptEngine::InstantiateScript), the
- * per-phase tick, Lua-defined systems (World.AddSystem), and the teardown that
- * runs at World unbind.
- *
- * THE CLASS REGISTRY. Script.Register(name, table) stores table in the Lua
- * REGISTRY under a private key, keyed by name -- registry space, not a Lua
- * global, so a script cannot accidentally clobber "Player" by assigning a
- * variable of that name at file scope. Reading it back is one lua_gettable.
- *
- * ONE SYSTEM PER PHASE, NOT ONE OVERALL. ScriptSystem_Install registers FOUR
- * systems -- one per ETickPhase -- each a thin C++ trampoline that walks the
- * ScriptComponent pool ONCE and skips any instance whose own Phase byte does
- * not match. World's own systems are per-phase buckets (see World.h), so this
- * is what lets a ScriptComponent declare TickPhase = TickPhase.PostPhysics and
- * have ITS OnTick actually run during PostPhysics without ScriptComponent
- * needing to be four different component types.
+ * ScriptComponent's whole lifecycle: Script.Register, instantiation (shared
+ * by the Lua e:AddScript() path and ScriptEngine::InstantiateScript), the
+ * per-phase tick, Lua-defined systems (World.AddSystem), and the teardown
+ * that runs at World unbind. See DESIGN.md for the class registry, why
+ * there is one system per phase, and the CallLifecycleMethod bug/fix.
  */
 
 namespace GameCore
@@ -42,16 +30,10 @@ namespace GameCore
             int         FunctionRef = LUA_NOREF;
         };
 
-        /*
-         * Per-World script state that does not belong on any single component
-         * or on ScriptEngine::Impl (which is private to ScriptEngine.cpp) --
-         * the Lua-defined systems a World is carrying, so Uninstall can
-         * release every one of their refs, and the removal-observer plumbing.
-         * Owned by ScriptSystem_Install, torn down by ScriptSystem_Uninstall;
-         * there is exactly one of these per bound World, found through a
-         * light userdata key in the Lua registry the same way GetBoundWorld
-         * finds its World in ScriptBindings.cpp.
-         */
+        /* Per-World script state: the Lua-defined systems a World is
+         * carrying, and the removal-observer plumbing. One per bound World,
+         * found through a light userdata registry key, same idiom as
+         * ScriptBindings.cpp's GetBoundWorld. */
         struct WorldScriptState
         {
             World* Owner = nullptr;
@@ -76,10 +58,8 @@ namespace GameCore
             lua_settable(InState, LUA_REGISTRYINDEX);
         }
 
-        /* Reads a script class table by name from the registry. Pushes it (or
-         * nil) onto the stack and returns whether it was found -- callers pop
-         * it themselves once done, so this never leaves the stack unbalanced
-         * relative to what the caller expects. */
+        /* Reads a script class table by name. Pushes it (or nil) and
+         * returns whether found -- callers pop it themselves. */
         bool PushScriptClass(lua_State* InState, const char* InClassName)
         {
             lua_getfield(InState, LUA_REGISTRYINDEX, CLASS_REGISTRY_KEY);
@@ -89,10 +69,8 @@ namespace GameCore
             return bFound;
         }
 
-        /* Reads ClassTable.TickPhase (an integer, defaulting to TP_PrePhysics)
-         * and ClassTable.CullOutsideActiveRegion (a boolean, defaulting to
-         * false) with ClassTable at the top of the stack. Leaves the stack
-         * exactly as it found it. */
+        /* Reads ClassTable.TickPhase and .CullOutsideActiveRegion, with
+         * ClassTable at the top of the stack. Leaves the stack as found. */
         void ReadClassFlags(lua_State* InState, uint8_t& OutPhase, uint8_t& OutCull)
         {
             lua_getfield(InState, -1, "TickPhase");
@@ -122,25 +100,11 @@ namespace GameCore
             { nullptr, nullptr }
         };
 
-        /*
-         * Runs one lifecycle method (OnStart/OnTick/OnDestroy) on a script
-         * instance, under protected call, tagged with the class and method
-         * name for the error log. Sets ScriptComponent::bErrored on failure so
-         * a broken script's OnTick is not retried every frame -- the "log one
-         * error and stay alive" contract World.h documents for the scripting
-         * cases.
-         *
-         * InDeltaSeconds is null for OnStart/OnDestroy (no argument beyond
-         * self) and points at the frame delta for OnTick -- a fixed optional
-         * argument rather than a generic "N values the caller already pushed"
-         * count, because getting the FINAL ARGUMENT ORDER right by rotating an
-         * arbitrary number of already-pushed values with lua_insert is exactly
-         * the kind of stack arithmetic that is easy to get quietly backwards
-         * (self and the extra argument trading places is invisible until a
-         * script reads dt where it expected itself). Every value this function
-         * pushes, it pushes in the order Lua should see it, and nothing is
-         * ever inserted into the middle of the stack.
-         */
+        /* Runs one lifecycle method under protected call. Sets bErrored on
+         * failure so a broken script's OnTick is not retried every frame.
+         * InDeltaSeconds is null for OnStart/OnDestroy, non-null for OnTick
+         * -- see DESIGN.md for why this is a fixed optional argument rather
+         * than a generic pushed-argument count. */
         void CallLifecycleMethod(lua_State* InState, ScriptComponent& Script, const char* InMethodName,
                                   const float* InDeltaSeconds)
         {
@@ -154,9 +118,8 @@ namespace GameCore
                 return;
             }
 
-            /* function is now on top, self one below it -- swap them so the
-             * call layout is [function, self, ...args], which is the ONLY
-             * ordering lua_pcall below is ever asked to interpret. */
+            /* Swap so the call layout is [function, self], the only
+             * ordering lua_pcall below interprets. */
             lua_insert(InState, -2);
 
             int ArgCount = 1;   // self
@@ -173,16 +136,10 @@ namespace GameCore
             }
         }
 
-        /*
-         * The system every phase's trampoline shares: walk the ScriptComponent
-         * pool ONCE (base pointer re-read every iteration -- the buffer may
-         * have grown if OnStart/OnTick added a script to a NEW entity this
-         * same pass, which World.h's Each<T> contract already forbids for
-         * mutating T's OWN pool but does not forbid for a DIFFERENT entity's
-         * ScriptComponent; re-reading Base defends the case anyway since it
-         * costs nothing), skip anything not in InPhase, skip a culled entity
-         * outside the active region, run OnStart once then OnTick every call.
-         */
+        /* Shared by every phase's trampoline: walk the ScriptComponent pool
+         * once (base re-read every iteration -- see DESIGN.md), skip
+         * anything not in InPhase, skip a culled entity outside the active
+         * region, run OnStart once then OnTick every call. */
         void RunScriptPhase(World& InWorld, const float InDeltaSeconds, const ETickPhase InPhase, lua_State* InState)
         {
             ComponentPool* Pool = InWorld.FindPool(ScriptComponent::StaticType().ID);
@@ -214,12 +171,8 @@ namespace GameCore
                 }
             }
 
-            /* Lua-defined systems (World.AddSystem) for this phase, run after
-             * every script component's own tick -- registration order between
-             * "a script's OnTick" and "a Lua system" is therefore fixed
-             * (scripts first), which is simple to state and matches what a
-             * script author intuitively expects ("my object's own behaviour
-             * runs, then whatever else is watching the world"). */
+            /* Lua-defined systems for this phase, run after every script
+             * component's own tick -- see DESIGN.md. */
             if(WorldScriptState* State = GetScriptState(InState))
             {
                 for(const LuaSystemEntry& Entry : State->LuaSystems[InPhase])
@@ -231,21 +184,16 @@ namespace GameCore
             }
         }
 
-        /* One trampoline per phase, each a plain SystemFn (function pointer +
-         * void* = the lua_State*) registered with World -- see World.h's
-         * "function pointer + void*, not a virtual interface" rule. */
+        /* One trampoline per phase, each a plain SystemFn. */
         void ScriptPhase_PrePhysics(World& InWorld, const float InDelta, void* InUserData)  { RunScriptPhase(InWorld, InDelta, TP_PrePhysics,  static_cast<lua_State*>(InUserData)); }
         void ScriptPhase_Physics(World& InWorld, const float InDelta, void* InUserData)     { RunScriptPhase(InWorld, InDelta, TP_Physics,     static_cast<lua_State*>(InUserData)); }
         void ScriptPhase_PostPhysics(World& InWorld, const float InDelta, void* InUserData) { RunScriptPhase(InWorld, InDelta, TP_PostPhysics, static_cast<lua_State*>(InUserData)); }
         void ScriptPhase_PostUpdate(World& InWorld, const float InDelta, void* InUserData)  { RunScriptPhase(InWorld, InDelta, TP_PostUpdate,  static_cast<lua_State*>(InUserData)); }
 
-        /* ComponentPool's removal observer for ScriptComponent -- runs OnDestroy
-         * under protected call, then releases the instance's registry ref.
-         * Fires from inside ComponentPool::Remove, which after World's own
-         * deferral only ever happens at the end of a phase or outside a tick --
-         * never from inside a system's own iteration of a DIFFERENT pool, so
-         * this is free to call back into Lua without re-entering the very
-         * walk that triggered it. */
+        /* ComponentPool's removal observer for ScriptComponent -- runs
+         * OnDestroy, then releases the instance's registry ref. Safe to
+         * call back into Lua here -- see DESIGN.md for why it never
+         * re-enters a walk. */
         void ScriptComponent_OnRemoved(EntityID /*InEntity*/, void* InComponent, void* InUserData)
         {
             lua_State* InState = static_cast<lua_State*>(InUserData);
@@ -282,8 +230,7 @@ namespace GameCore
         ReadClassFlags(InState, Phase, Cull);
 
         /* The instance: a fresh table whose __index metatable is the class
-         * table -- unset methods and any class-level defaults fall through to
-         * it, exactly Lua's usual OOP-by-metatable idiom. */
+         * table -- Lua's usual OOP-by-metatable idiom. */
         lua_newtable(InState);
         const int InstanceIndex = lua_gettop(InState);
 
@@ -318,7 +265,7 @@ namespace GameCore
         Entry.Name        = InName;
         Entry.FunctionRef = InFunctionRef;
         State->LuaSystems[InPhase].push_back(Entry);
-        (void)InWorld;   // the phase trampolines already read World's ScriptState by lua_State, not by World*
+        (void)InWorld;   // the phase trampolines read World's ScriptState by lua_State, not by World*
     }
 
     bool ScriptSystem_RemoveLuaSystem(lua_State* InState, World* /*InWorld*/, const char* InName)
@@ -347,9 +294,8 @@ namespace GameCore
         luaL_setfuncs(InState, GScriptFunctions, 0);
         lua_setglobal(InState, "Script");
 
-        /* The class registry: a fresh table each BindWorld, so a second bind
-         * (a test fixture binding a new World) starts with no classes left
-         * over from the previous one. */
+        /* A fresh class-registry table each BindWorld, so a second bind
+         * starts with no classes left over from the previous one. */
         lua_newtable(InState);
         lua_setfield(InState, LUA_REGISTRYINDEX, CLASS_REGISTRY_KEY);
 
@@ -377,12 +323,8 @@ namespace GameCore
         {
             Pool->SetRemovedObserver(nullptr, nullptr);
 
-            /* Every still-live script instance gets OnDestroy + unref, exactly
-             * as if its entity had been destroyed -- ScriptEngine.h's contract
-             * that UnbindWorld "runs OnDestroy and luaL_unref's every still-
-             * live script instance". Walked back-to-front is not required
-             * (this does not remove from the pool, only clears each instance's
-             * own state), so forward is fine. */
+            /* Every still-live script instance gets OnDestroy + unref,
+             * exactly as if its entity had been destroyed. */
             ScriptComponent* Base = static_cast<ScriptComponent*>(Pool->GetDenseData());
             const size_t Count = Pool->GetCount();
             for(size_t Index = 0; Index < Count; ++Index)

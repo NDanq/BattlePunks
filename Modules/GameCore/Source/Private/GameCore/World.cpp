@@ -10,21 +10,11 @@
 #include "Public/GameCore/GameCoreLog.h"
 
 /*
- * World's storage:
- *   - Entities: an index free-list plus a parallel Generation array -- the
- *     same shape EntityID.h's own comment describes, just the concrete arrays
- *     backing it.
- *   - Pools: ComponentPool*[COMPONENT_TYPE_MAX], created lazily on first
- *     GetPool() / AddComponentRaw for a given type -- most games use a small
- *     fraction of 256 possible component types, and a pool costs a real
- *     allocation (ComponentPool.h's dense buffer), so paying for one only when
- *     something actually adds that component is the right default.
- *   - Systems: one vector<SystemEntry> PER PHASE (TP_MAX buckets), each entry
- *     a function pointer + void*, in registration order.
- *   - The deferred queue: entities and (entity, type) component-removals
- *     requested while IsTicking(), applied once the CURRENT PHASE's systems
- *     have all run -- see TickPhase()'s comment for why per-phase and not
- *     per-frame.
+ * World's storage: an entity free-list plus a generation array, a
+ * ComponentPool*[COMPONENT_TYPE_MAX] table created lazily on first use, one
+ * system vector per phase, and the deferred destroy/remove queues. See
+ * DESIGN.md's "World.h / World.cpp" section for the full reasoning behind
+ * each piece below.
  */
 
 namespace GameCore
@@ -88,9 +78,8 @@ namespace GameCore
                 delete Pool;
             }
 
-            /* The manager cannot enforce that every subscriber unbound itself,
-             * but it CAN detect and warn -- CoreModuleManager's stance toward
-             * GLogHandler/GFileProvider, applied to World's own delegates. */
+            /* Cannot enforce that every subscriber unbound itself, but can
+             * detect and warn -- see DESIGN.md. */
             if(EntityCreated.GetCount() > 0 || EntityDestroyed.GetCount() > 0
                || ComponentAdded.GetCount() > 0 || ComponentRemoved.GetCount() > 0)
             {
@@ -106,17 +95,10 @@ namespace GameCore
                 && Alive[InEntity.Index] && Generations[InEntity.Index] == InEntity.Generation;
         }
 
-        /*
-         * Slot allocation ONLY -- no broadcast. A MEMBER OF Impl for the same
-         * reason DestroyEntityImmediate below is: a free function taking
-         * World::Impl& cannot access this PRIVATE nested type from outside
-         * World's own member bodies. Split out of World::CreateEntity so that
-         * CreateEntity(name) can add the NameComponent BEFORE OnEntityCreated
-         * fires, not after -- see World::CreateEntity(const char*)'s own
-         * comment for the bug this fixes (observed directly: Sandbox's
-         * OnEntityCreatedLogger printed an empty name for an entity created
-         * WITH a name).
-         */
+        /* Slot allocation ONLY -- no broadcast. Split out of CreateEntity so
+         * the name variant can add NameComponent before broadcasting -- see
+         * DESIGN.md. A member of Impl, not a free function, since Impl is
+         * private to World -- see DESIGN.md. */
         EntityID AllocateEntitySlot()
         {
             uint32_t Index;
@@ -138,33 +120,10 @@ namespace GameCore
             return EntityID(Index, Generations[Index]);
         }
 
-        /*
-         * Removes InEntity's every component IMMEDIATELY, bypassing
-         * World::RemoveComponentRaw's own deferral check entirely -- calling
-         * that public entry point here would be WRONG, not merely redundant:
-         * this only ever runs from inside World::TickPhase()'s own flush,
-         * where bTicking is still true (it is restored only after BOTH flush
-         * loops finish, so that anything the flush itself triggers still sees
-         * a consistent "we are mid-tick" state elsewhere). RemoveComponentRaw
-         * would see bTicking==true and defer AGAIN, into a queue that was just
-         * cleared and will not be looked at again this phase -- the removal
-         * would never actually happen, the entity's slot would be recycled
-         * while its "removed" components still sit in their pools under a
-         * generation that is about to be reused, and the next entity born into
-         * that slot would silently inherit them. This IS the one safe place
-         * to mutate pools directly: it never runs from inside a system's own
-         * iteration, only from the phase flush that happens after every
-         * system in that phase has already returned.
-         *
-         * A MEMBER OF Impl, NOT A FREE FUNCTION TAKING Impl&: Impl is a
-         * PRIVATE nested type of World (the PIMPL idiom every *.cpp in this
-         * module uses), and a free function outside World's own member bodies
-         * has no access to name that type as a parameter -- only World's own
-         * members, and Impl's own members, can. This function touches nothing
-         * outside Impl's own fields, so it belongs here rather than needing a
-         * friend declaration on World for a function that does not actually
-         * need World itself.
-         */
+        /* Removes InEntity's every component IMMEDIATELY, bypassing
+         * RemoveComponentRaw's own deferral -- see DESIGN.md for why calling
+         * that here would be wrong, not merely redundant. Only ever runs
+         * from TickPhase()'s flush. */
         void DestroyEntityImmediate(const EntityID InEntity)
         {
             if(!IsAliveIndex(InEntity))
@@ -173,7 +132,7 @@ namespace GameCore
             }
 
             /* BEFORE any component is removed -- a subscriber can still read
-             * what the entity had. See World.h's DestroyEntity contract. */
+             * what the entity had. */
             EntityDestroyed.Broadcast(InEntity);
 
             for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
@@ -212,12 +171,8 @@ namespace GameCore
     {
         const EntityID NewEntity = P->AllocateEntitySlot();
 
-        /* AddComponentRaw itself broadcasts OnComponentAdded for the
-         * NameComponent -- that one BEFORE OnEntityCreated is a separate,
-         * smaller ordering question (a component-added subscriber sees an
-         * entity not yet announced as created) that existing code does not
-         * depend on either order for, unlike the name-visibility gap this
-         * fix targets. Left as is rather than reordered speculatively. */
+        /* Added BEFORE the OnEntityCreated broadcast below -- see DESIGN.md
+         * for the bug this ordering fixes. */
         NameComponent Init;
         if(InName)
         {
@@ -239,9 +194,9 @@ namespace GameCore
 
         if(P->bTicking)
         {
-            /* Deferred to the end of the CURRENT phase -- see TickPhase(). A
-             * duplicate DestroyEntity for the same entity within one phase is
-             * harmless: the flush below re-checks IsAliveIndex per entry. */
+            /* Deferred to the end of the current phase. A duplicate
+             * DestroyEntity within one phase is harmless -- the flush
+             * re-checks IsAliveIndex per entry. */
             P->PendingDestroys.push_back(InEntity);
             return;
         }
@@ -305,10 +260,8 @@ namespace GameCore
             return nullptr;
         }
 
-        /* The ONE place a component's owner header is written -- see
-         * ComponentType.h's ComponentOwner comment. Written AFTER the pool
-         * copies the caller's init bytes, so it always wins over whatever (if
-         * anything) the caller's InInitBytes happened to have at offset 0. */
+        /* The ONE place a component's owner header is written -- after the
+         * pool copies the caller's init bytes, so it always wins. */
         ComponentOwner* Owner = static_cast<ComponentOwner*>(Payload);
         Owner->OwningWorld = this;
         Owner->Entity      = InEntity;
@@ -339,9 +292,7 @@ namespace GameCore
 
         if(P->bTicking)
         {
-            /* Deferred exactly like DestroyEntity -- a system iterating this
-             * pool right now must not have it swap-removed out from under the
-             * dense array it is walking. */
+            /* Deferred exactly like DestroyEntity. */
             PendingComponentRemoval Removal;
             Removal.Entity = InEntity;
             Removal.Type   = InType;
@@ -355,23 +306,9 @@ namespace GameCore
 
     namespace
     {
-        /*
-         * BoundsComponent's removal observer: pulls the entity's leaf out of
-         * the spatial index the moment the component itself is removed --
-         * whether that is because the whole entity was destroyed
-         * (World::DestroyEntityImmediate removes every pool's component,
-         * Bounds included) or because a caller removed just the Bounds off a
-         * still-live entity. Without this, a leaf outlives the component that
-         * created it and every later query keeps returning an entity that no
-         * longer has the Bounds it was found by -- exactly the "a destroyed
-         * entity is never returned by a query" contract World.h states for
-         * DestroyEntity, which cannot hold if nothing ever calls Remove() on
-         * the tree side.
-         *
-         * The World* is closed over via InUserData: SetRemovedObserver is
-         * (function pointer, void*), the same shape every other seam in this
-         * module takes, so there is nowhere else to carry it.
-         */
+        /* BoundsComponent's removal observer: pulls the entity's leaf out of
+         * the spatial index the moment the component is removed -- see
+         * DESIGN.md for the bug this fixes. */
         void BoundsComponent_OnRemoved(EntityID /*InEntity*/, void* InComponent, void* InUserData)
         {
             const BoundsComponent& Bounds = *static_cast<const BoundsComponent*>(InComponent);
@@ -399,13 +336,8 @@ namespace GameCore
             }
             P->Pools[InType] = new ComponentPool(*Info);
 
-            /* Wired here, at first-use pool creation, rather than in World's
-             * constructor: the constructor cannot name BoundsComponent
-             * without including Components.h, which would make World.cpp
-             * (and therefore every consumer of World.h) depend on the whole
-             * built-in component set purely for this one wire-up. GetPool
-             * already includes Components.h (via the CreateEntity(name) path
-             * needing NameComponent), so the dependency is already paid for. */
+            /* Wired here, at first-use, rather than in World's constructor --
+             * see DESIGN.md. */
             if(InType == BoundsComponent::StaticType().ID)
             {
                 P->Pools[InType]->SetRemovedObserver(&BoundsComponent_OnRemoved, this);
@@ -484,10 +416,7 @@ namespace GameCore
             const ETickPhase Phase = ETickPhase(PhaseIndex);
             TickPhase(Phase, InDeltaSeconds);
 
-            /* The spatial refit runs at the END of TP_Physics -- after every
-             * system registered there, before TP_PostPhysics begins -- so a
-             * physics step's own movement is reflected before anything
-             * downstream queries the tree. See TickPhase.h's TP_Physics note. */
+            /* Refit at the END of TP_Physics -- see TickPhase.h. */
             if(Phase == TP_Physics)
             {
                 RefreshSpatialIndex();
@@ -508,11 +437,8 @@ namespace GameCore
         P->bTicking     = true;
         P->CurrentPhase = InPhase;
 
-        /* Snapshot the count: a system registering ANOTHER system for this same
-         * phase mid-walk (RegisterSystem called from inside a system) is picked
-         * up next tick, not this one -- the same "an Add during a broadcast is
-         * not called this broadcast" rule Delegate.h states, applied to systems
-         * instead of delegate bindings. */
+        /* Snapshot the count: a system registered mid-walk is picked up next
+         * tick, not this one -- see DESIGN.md. */
         const std::vector<SystemEntry>& Bucket = P->Systems[InPhase];
         const size_t SystemCount = Bucket.size();
         for(size_t Index = 0; Index < SystemCount; ++Index)
@@ -524,28 +450,8 @@ namespace GameCore
             }
         }
 
-        /*
-         * Flush THIS PHASE's deferred work now, while bTicking is still true
-         * for anything the flush itself triggers (a removal observer, or a
-         * ComponentRemoved subscriber, that itself calls DestroyEntity or
-         * RemoveComponent), then restore the outer ticking state. TickPhase
-         * calls nest exactly once in practice (Tick() calling TickPhase() four
-         * times, never a system calling TickPhase() itself), so bWasTicking is
-         * always false today -- restoring it rather than hardcoding false is
-         * what makes a host's own manual TickPhase() call (see World.h's
-         * comment on why TickPhase is public) compose correctly if it is ever
-         * nested.
-         *
-         * SWAPPED OUT, NOT ITERATED IN PLACE: a ComponentRemoved subscriber (or
-         * a pool's removal observer) called from inside this very loop may
-         * itself request another deferred removal or destroy -- bTicking is
-         * still true here, so RemoveComponentRaw/DestroyEntity still defer
-         * rather than mutate immediately. That new entry lands in a FRESH
-         * PendingComponentRemovals/PendingDestroys (the member was swapped to
-         * an empty vector below before this loop started), so it is picked up
-         * by the loop below it or by the same call one phase from now, and
-         * this loop is walking a snapshot that nothing can reallocate under it.
-         */
+        /* Swapped out, not iterated in place, so a re-entrant request during
+         * the flush lands in a fresh queue -- see DESIGN.md. */
         std::vector<PendingComponentRemoval> ComponentRemovalsThisFlush;
         std::swap(ComponentRemovalsThisFlush, P->PendingComponentRemovals);
         for(const PendingComponentRemoval& Removal : ComponentRemovalsThisFlush)
@@ -609,29 +515,13 @@ namespace GameCore
         {
             BoundsComponent& Bounds = Base[Index];
 
-            /*
-             * bStatic skips RE-FITTING, never the FIRST insert -- a static
-             * Bounds still needs exactly one leaf in the tree, or it is
-             * simply invisible to every query forever (ProxyID stuck at -1).
-             * "Never re-fit after insertion" in this struct's own doc comment
-             * means what it says: AFTER insertion. An earlier version of this
-             * loop skipped bStatic entities unconditionally and never gave
-             * them a leaf at all -- caught by the smoke test's static-Bounds
-             * case finding the entity missing from every query.
-             */
+            /* bStatic skips RE-FITTING, never the FIRST insert -- see
+             * DESIGN.md for the bug this fixes. */
             if(Bounds.bStatic && Bounds.ProxyID >= 0)
             {
                 continue;
             }
 
-            /*
-             * The sibling read this component's owner header exists for: a
-             * Bounds reaches its own entity's Transform (identity if there is
-             * none) with no change to World or this pass. The day a
-             * MeshComponent exists, Local can be derived the same way -- ask
-             * the owner for the mesh, take its extents -- without touching
-             * this function's shape.
-             */
             const TransformComponent* Transform = Bounds.Owner.GetSibling<TransformComponent>();
             const EngineCore::Matrix4x4 LocalToWorld = Transform ? Transform->GetLocalMatrix() : EngineCore::Matrix4x4();
 

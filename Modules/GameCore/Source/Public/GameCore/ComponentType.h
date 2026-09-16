@@ -9,31 +9,19 @@
 #include "Public/GameCore/EntityID.h"
 
 /*
- * Forward-declared here rather than #include "World.h": ComponentOwner below
- * holds a World*, and World.h in turn needs ComponentTypeID from this file for
- * ComponentPool*[COMPONENT_TYPE_MAX] -- a genuine mutual dependency that a
- * forward declaration breaks cleanly. Nothing in this header calls a World
- * method; ComponentOwner's inline helpers do, and they live at the bottom of
- * World.h instead (see the note there), once World is a complete type.
+ * Forward-declared rather than #include "World.h": ComponentOwner below
+ * holds a World*, and World.h needs ComponentTypeID from this file -- a
+ * mutual dependency a forward declaration breaks cleanly. ComponentOwner's
+ * inline helpers that need a complete World/Entity are defined at the bottom
+ * of World.h and in Entity.h/Components.h instead -- see DESIGN.md.
  */
 namespace GameCore { class World; class Entity; }
 
 /*
  * Component identity: a small integer per type, assigned once, looked up by
- * name for Lua and by id everywhere else.
- *
- * WHY StaticType() IS AN OUT-OF-LINE FUNCTION-LOCAL STATIC AND NOT A TEMPLATE
- *
- * A template<typename T> ComponentTypeID GetTypeID() would instantiate in every
- * image that calls it -- NimbleEngine.dll, Sandbox.exe, a future hot module --
- * and CoreMemory.h's structural rule applies again: a function-local static
- * inside a TEMPLATE is one instance PER IMAGE, not one per process, so
- * TransformComponent would register itself once per image and get a different
- * id each time, with nothing to say so. GAMECORE_DEFINE_COMPONENT expands to an
- * ORDINARY out-of-line function, defined exactly once, in exactly one .cpp, so
- * there is exactly one function-local static for that type in the whole
- * process -- the same reasoning CoreConfig.h gives for putting ConfigVar's
- * registration in EngineCore.dll rather than inline in the header.
+ * name for Lua and by id everywhere else. StaticType() is an out-of-line
+ * function-local static, never a template -- see DESIGN.md for why a
+ * template here would give every image its own id for the same type.
  */
 namespace GameCore
 {
@@ -44,46 +32,23 @@ namespace GameCore
         COMPONENT_TYPE_MAX     = 256
     };
 
-    /*
-     * FROZEN LAYOUT, read directly by every image that includes this header --
-     * the same rule CoreMemory.h states for AllocHeader and CoreConfig.h for
-     * ConfigVar. This engine has no hot-reloadable component types yet (see
-     * ComponentType.cpp's registration-lifetime note), so there is no
-     * MODULE_ABI_REVISION to bump today; the comment is here so that the day a
-     * component type IS declared inside a hot module, whoever adds that reads
-     * this first.
-     */
+    /* FROZEN LAYOUT, read directly by every image that includes this header
+     * -- see DESIGN.md. */
     struct ComponentTypeInfo
     {
         ComponentTypeID ID        = COMPONENT_TYPE_INVALID;
         uint16_t        Alignment = 0;
         uint32_t        SizeBytes = 0;
-
-        /* Fixed buffer, never std::string -- CoreConfig.h's ConfigVar::Name
-         * argument, applied here: a std::string member would allocate in
-         * whichever image registered the type. */
-        char Name[48] = {};
+        char            Name[48]  = {};   // fixed buffer, never std::string -- see DESIGN.md
     };
 
-    /*
-     * Registers InName if it has not been seen before and returns its info.
-     * Called exactly once per type, by that type's own StaticType() the first
-     * time anything asks for it -- lazy, and always after main() (or after
-     * LoadLibrary for a module), which is what CoreModule.h's "do not allocate
-     * from a file-scope constructor" rule wants: nothing here runs during
-     * dynamic initialisation.
-     *
-     * Calling this twice with the SAME name and DIFFERENT size/alignment is a
-     * programming error (two types fighting over one name) and is logged loudly
-     * rather than silently keeping whichever registered first.
-     */
+    /* Registers InName if unseen and returns its info. Called exactly once
+     * per type, by that type's own StaticType() the first time anything asks
+     * for it. A name collision with mismatched size/alignment is logged
+     * loudly and keeps the first registration. */
     GAMECORE_API const ComponentTypeInfo& RegisterComponentType(const char* InName, uint32_t InSizeBytes, uint32_t InAlignment);
 
-    /* nullptr if InName was never registered. The Lua by-name path
-     * (e:AddComponent("Transform")) is the only caller that runs this on
-     * anything resembling a hot path, and even there it is once per distinct
-     * name a script uses, not once per call -- ScriptBindings.cpp caches the
-     * result the first time a proxy metatable needs it. */
+    /* nullptr if InName was never registered. */
     GAMECORE_API const ComponentTypeInfo* FindComponentType(const char* InName);
 
     /* nullptr for COMPONENT_TYPE_INVALID or an id nothing has registered yet. */
@@ -92,98 +57,45 @@ namespace GameCore
     GAMECORE_API size_t GetComponentTypeCount();
 
     /*
-     * The first 16 bytes of EVERY component: who it belongs to.
-     *
-     * Written by World::AddComponentRaw immediately after copying the caller's
-     * init bytes -- the ONE place this is ever set -- and read by everything
-     * else. Composition, not inheritance: a component stays standard-layout (no
-     * vtable, no base-class slicing question) and the erased pool can write this
-     * header at a fixed offset without knowing the derived type, the same way it
-     * already knows SizeBytes and Alignment without knowing the type.
-     *
-     * WHY A MEMBER AND NOT A LOOKUP
-     *
-     * A system iterating a ComponentPool has a T& in hand and NOTHING ELSE in
-     * scope -- no World*, no EntityID, unless it threads both through every
-     * function signature in the module. That friction is exactly what makes
-     * people reach for a cached raw pointer instead of asking properly, which is
-     * the failure CorePointer.h's "a raw T* is fine to use, not to store"
-     * warning already exists for. Sixteen bytes bought once, on every
-     * component, buys `Bounds.Owner.GetSibling<TransformComponent>()` from
-     * anywhere a component is in hand -- which is exactly the "a bounds
-     * component wants the entity's mesh component" case this was asked for.
-     *
-     * WHY STORING A World* HERE IS SAFE, UNLIKE STORING ONE ANYWHERE ELSE
-     *
-     * A component only ever EXISTS inside one World's ComponentPool. It cannot
-     * outlive that World (the pool is destroyed with it) and the World cannot
-     * be destroyed while this component is still alive to read Owner.World --
-     * so there is no dangling case to guard against, unlike a TWeakRef or a
-     * cached IModule*, both of which exist because their target's lifetime is
-     * genuinely independent of the holder's.
+     * The first 16 bytes of EVERY component: who it belongs to. Written by
+     * World::AddComponentRaw immediately after copying the caller's init
+     * bytes -- the ONE place this is ever set. Composition, not inheritance,
+     * so a component stays standard-layout. See DESIGN.md for why this is a
+     * member rather than a lookup, and why storing a World* here is safe.
      */
     struct ComponentOwner
     {
-        /*
-         * Named OwningWorld, not World -- a member named World of type World*
-         * would be LEGAL C++ (a pointer may share its pointee type's name) but
-         * shadows the type name World for every use of the bare identifier
-         * later in this class and in every inline method defined against it,
-         * which makes GetSibling<T>()'s "World->GetComponent<T>()" a trap for
-         * the next person editing this struct even though it compiles today.
-         * Not worth the risk for saving four characters.
-         */
+        /* Named OwningWorld, not World, to avoid shadowing the type name
+         * World for later uses in this class -- see DESIGN.md. */
         GameCore::World* OwningWorld = nullptr;
         EntityID         Entity;
 
-        /*
-         * Declared here, DEFINED in Entity.h (at the bottom, after both World
-         * and Entity are complete types) -- neither this header nor World.h can
-         * see a complete Entity without creating an include cycle. Header-only
-         * either way; there is no ComponentType.cpp definition for it.
-         *
-         * QUALIFIED RETURN TYPE, NOT JUST STYLE: this struct already declares a
-         * member named Entity (of type EntityID, right above) BEFORE this
-         * point, so an unqualified `Entity GetEntity() const;` would have the
-         * class-scope member hide the namespace-scope type and fail to compile
-         * as "EntityID is not callable" -- the same shadowing risk OwningWorld's
-         * naming above sidesteps, except here it is not avoidable by renaming
-         * (Owner.Entity is the name every other file in this plan already uses)
-         * so it is fixed by qualification instead.
-         */
+        /* Declared here, defined in Entity.h (after both World and Entity
+         * are complete) -- the return type is qualified because this struct
+         * already has a member named Entity; see DESIGN.md. */
         inline ::GameCore::Entity GetEntity() const;
 
-        /* T* is invalidated by any Add or Remove of T -- the same rule
-         * World::GetComponent<T> and ComponentPool::Get already state. Do not
-         * hold the result past the next mutation of T's pool. */
+        /* T* is invalidated by any Add or Remove of T on this entity's
+         * pool -- do not hold the result past the next mutation. */
         template<typename T> inline T*   GetSibling() const;
         template<typename T> inline bool HasSibling() const;
 
-        /* The most common sibling read, spelled out: "" if there is no
-         * NameComponent, never null. Defined in Components.h, after
-         * NameComponent exists -- ComponentType.h cannot name it without
-         * creating the same cycle GetEntity() avoids. */
+        /* "" if there is no NameComponent, never null. Defined in
+         * Components.h, after NameComponent exists. */
         inline const char* GetName() const;
     };
 
-    /*
-     * Every component struct begins with this macro's expansion -- see
-     * GAMECORE_DEFINE_COMPONENT's static_assert, which refuses to compile a
-     * component where it is not literally the first member. Declares both the
-     * Owner header field and the StaticType() this type registers itself
-     * through.
-     */
+    /* Every component struct begins with this macro's expansion -- declares
+     * the Owner header field and the StaticType() this type registers
+     * itself through. */
     #define GAMECORE_COMPONENT_BODY()                                        \
         ::GameCore::ComponentOwner Owner;                                    \
         static const ::GameCore::ComponentTypeInfo& StaticType();
 
-    /*
-     * Defines StaticType() out-of-line -- exactly once, in exactly one .cpp,
-     * for exactly one image. See the class comment above for why this cannot be
-     * a template. static_assert on trivial copyability is ComponentPool.h's
+    /* Defines StaticType() out-of-line -- exactly once, in exactly one .cpp.
+     * static_assert on trivial copyability is ComponentPool.h's
      * memcpy-on-swap-remove requirement; static_assert on Owner's offset is
-     * what lets the pool write the header blindly without knowing TypeName.
-     */
+     * what lets the pool write the header blindly without knowing TypeName. */
     #define GAMECORE_DEFINE_COMPONENT(TypeName, NameLiteral)                                            \
         static_assert(std::is_trivially_copyable<TypeName>::value,                                      \
                       "components must be trivially copyable -- see ComponentPool.h's memcpy contract"); \

@@ -5,21 +5,9 @@
 
 /*
  * An entity is nothing but this: an index into World's slot tables, and a
- * generation that catches a handle to a slot that has since been recycled.
- *
- * WHY A GENERATION AND NOT JUST AN INDEX
- *
- * Indices are reused the instant an entity is destroyed -- CreateEntity() pulls
- * from a free list, it does not grow forever. Without a generation, an EntityID
- * saved before a destroy would silently address whatever new entity took that
- * slot after it, which is a much worse failure than a null: it does not crash,
- * it reads and writes the wrong entity's data. World bumps Generation on every
- * DestroyEntity, and IsAlive()/every GetComponent call checks it before trusting
- * Index.
- *
- * POD, 8 bytes, trivially copyable -- an EntityID is stored BY VALUE everywhere
- * (inside ComponentOwner, inside the spatial index's leaves, across the Lua
- * boundary as a packed uint64_t) and never needs its own lifetime management.
+ * generation that catches a handle to a slot that has since been recycled --
+ * see DESIGN.md for why a generation is needed at all. POD, 8 bytes,
+ * trivially copyable, stored by value everywhere.
  */
 namespace GameCore
 {
@@ -37,10 +25,8 @@ namespace GameCore
          * fails. */
         bool IsSet() const { return Index != 0xFFFFFFFFu; }
 
-        /* Crosses into Lua as a single lua_Integer (64-bit in a default Lua 5.4
-         * build) and back. Index in the low 32 bits so a bare cast to uint32_t on
-         * the Lua side -- a mistake, but a survivable one -- still names the
-         * right slot instead of the generation. */
+        /* Crosses into Lua as a single lua_Integer and back -- see DESIGN.md
+         * for why Index is in the low bits. */
         uint64_t Pack() const { return (uint64_t(Generation) << 32) | uint64_t(Index); }
         static EntityID Unpack(uint64_t InPacked)
         {

@@ -5,34 +5,10 @@
 #include "Public/Core/CoreLog.h"
 
 /*
- * DelegateList's storage: a flat vector of slots, each carrying the serial that
- * makes a DelegateHandle safe to hold past the slot's reuse.
- *
- * BROADCAST PROTOCOL, IN FULL
- *
- * BeginBroadcast() increments BroadcastDepth and records the CURRENT slot count
- * as BroadcastCount. GetEntry() only ever looks at indices below that count, so
- * an Add() during the walk (which appends past BroadcastCount) is invisible to
- * THIS broadcast and picked up by the next one -- exactly Broadcast()'s own
- * comment: "the addition is not called this broadcast". A Remove() during the
- * walk does not erase the slot (that would shift every later index mid-walk);
- * it clears the slot's Fn to null and queues the index in PendingRemoves.
- * GetEntry() returns true with Fn == nullptr for such a slot, which
- * Broadcast()'s `if(Fn)` skips. EndBroadcast() decrements BroadcastDepth and,
- * once it reaches zero, actually erases every queued slot -- reusing entries in
- * PendingRemoves also means it does not matter that erasing shifts every index
- * after it, because nothing is walking the array anymore.
- *
- * RE-ENTRANCY GUARD
- *
- * BroadcastDepth > 0 on entry to BeginBroadcast() means THIS SAME LIST is
- * already mid-walk somewhere up the call stack -- a callback bound here just
- * broadcast this exact delegate again. That is refused with a CORE_CHECK rather
- * than silently nesting, because nesting would mean GetEntry's "indices below
- * BroadcastCount" contract now has two different BroadcastCounts in flight
- * against one PendingRemoves queue, and the inner EndBroadcast erasing while the
- * outer walk is still reading indices is exactly the corruption the whole
- * design exists to avoid.
+ * DelegateList's storage: a flat vector of slots, each carrying the serial
+ * that makes a DelegateHandle safe to hold past the slot's reuse. See
+ * DESIGN.md's "Delegate.h" section for the full broadcast protocol and the
+ * re-entrancy guard's reasoning.
  */
 
 namespace GameCore
@@ -43,7 +19,7 @@ namespace GameCore
         {
             RawFn    Fn       = nullptr;
             void*    UserData = nullptr;
-            uint32_t Serial   = 1;   // starts at 1 so a default-constructed DelegateHandle{0xFFFFFFFF, 0} never validates
+            uint32_t Serial   = 1;   // never 0, so a default DelegateHandle never validates
             bool     bInUse   = false;
         };
 
@@ -65,10 +41,6 @@ namespace GameCore
 
         void ApplyPendingRemoves()
         {
-            /* Slot state was already cleared to "not in use" at Remove() time;
-             * this only returns the index to the free list so Add() can reuse
-             * it. Order does not matter -- FreeIndices is not a queue with a
-             * meaning, just a pool. */
             for(uint32_t Index : PendingRemoves)
             {
                 FreeIndices.push_back(Index);
@@ -103,10 +75,7 @@ namespace GameCore
         S.Fn       = InFn;
         S.UserData = InUserData;
         S.bInUse   = true;
-        /* Bumped on every reuse of this slot, never on first use, so a handle
-         * from the slot's FIRST occupant and a handle from its second both work
-         * out to distinct Serials without special-casing "never used before". */
-        ++S.Serial;
+        ++S.Serial;   // bumped on reuse only -- see DESIGN.md
 
         DelegateHandle Handle;
         Handle.Index  = Index;
@@ -133,9 +102,8 @@ namespace GameCore
 
         if(P->BroadcastDepth > 0)
         {
-            /* Deferred: the slot is already inert (Fn is null, GetEntry will
-             * report it as a tombstone), but it is not returned to the free list
-             * until every broadcast walking the array has finished. */
+            /* Deferred: inert now, but not returned to the free list until
+             * every broadcast walking the array has finished. */
             P->PendingRemoves.push_back(InHandle.Index);
         }
         else
@@ -187,18 +155,11 @@ namespace GameCore
     {
         if(P->BroadcastDepth > 0)
         {
-            /* An EXPLICIT refusal, not merely a logged one -- see the long
-             * comment on this method's declaration in Delegate.h for why a
-             * bare CORE_CHECK here previously let the recursion through: with
-             * a handler installed, Fatal logs and returns, it does not stop
-             * anything. CORE_CHECK below is still the right way to SURFACE
-             * this to the log (matching how every other diagnostic in this
-             * module is reported), it is just no longer the thing doing the
-             * refusing. */
+            /* Explicit refusal, not merely a logged one -- see DESIGN.md for
+             * why a bare CORE_CHECK previously let the recursion through. */
             CORE_CHECK(false,
                        "DelegateList::Broadcast called re-entrantly on the SAME delegate -- "
-                       "a bound callback broadcast this exact delegate again. See the "
-                       "BROADCAST RE-ENTRANCY note in Delegate.h.")
+                       "a bound callback broadcast this exact delegate again.")
             return false;
         }
 
@@ -214,12 +175,7 @@ namespace GameCore
             return false;
         }
         const Impl::Slot& S = P->Slots[InIndex];
-        /* bInUse is deliberately NOT checked here: a slot removed mid-broadcast
-         * still returns true with Fn == nullptr (its natural state after
-         * Remove()), which is what lets Broadcast()'s `if(Fn)` skip it without
-         * GetEntry itself knowing about the caller's loop shape. A slot that was
-         * never in use within [0, BroadcastCount) cannot occur -- indices below
-         * BroadcastCount were all allocated before this broadcast began. */
+        /* bInUse deliberately not checked here -- see DESIGN.md. */
         OutFn       = S.Fn;
         OutUserData = S.UserData;
         return true;
