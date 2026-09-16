@@ -5,6 +5,9 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreGarbageCollector.h"
+#include "Public/Core/CoreMemory.h"
+#include "Public/GameCore/ScriptEngine.h"
+#include "Public/GameCore/World.h"
 #include "Public/GameWindow/GameWindowSystem.h"
 #include "Public/GameWindow/GameWindow.h"
 #include "Public/GDI/GDI.h"
@@ -36,6 +39,12 @@ NIMBLE_CONFIG_INT(GMaxFrames, "Application", "MaxFrames", 0, nullptr);
 
 /* 0 runs unlimited; SetFrameRateLimit is the runtime half. */
 NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
+
+/* Bundle-relative path to a Lua file run once, after IGame::OnStartup succeeds
+ * and before the first tick -- see ExecWithGame's own comment on why that
+ * ordering, not Initialize(), is where this runs. Empty (the default) skips
+ * scripting entirely; a game with nothing to say in Lua pays nothing for this. */
+NIMBLE_CONFIG_STRING(GStartupScript, "Scripting", "StartupScript", "", nullptr);
 
 using namespace EngineCore;
 
@@ -193,6 +202,25 @@ namespace NimbleEngine
             return false;
         }
 
+        /*
+         * The scene and its Lua layer. Core allocations (Memory::Alloc, not
+         * plain new) so a missed Dealloc at teardown is exactly the kind of
+         * thing Sandbox's ReportLeaks() already catches at process exit.
+         *
+         * Before GDI on purpose: nothing here touches a window or a render
+         * context, and BindWorld installs the script-tick systems into Scene
+         * before anything could conceivably tick it (the render thread is not
+         * up yet either). Ordering relative to GDI is otherwise arbitrary.
+         */
+        Scene = EngineCore::Memory::Alloc<GameCore::World>();
+        Scripts = EngineCore::Memory::Alloc<GameCore::ScriptEngine>();
+        if(!Scripts->Initialize())
+        {
+            CORE_LOG_ERROR("Failed to initialize the script engine")
+            return false;
+        }
+        Scripts->BindWorld(Scene);
+
         const ERenderPlatform Platform = ERenderPlatform(GRenderPlatform.GetInt());
 
         InitializeGDI(Platform, NativeWindow);
@@ -256,6 +284,18 @@ namespace NimbleEngine
         return FrameRateLimit;
     }
 
+    GameCore::World& Application::GetWorld()
+    {
+        CORE_CHECK(Scene != nullptr, "Application::GetWorld() called before Initialize() or after Shutdown()")
+        return *Scene;
+    }
+
+    GameCore::ScriptEngine& Application::GetScriptEngine()
+    {
+        CORE_CHECK(Scripts != nullptr, "Application::GetScriptEngine() called before Initialize() or after Shutdown()")
+        return *Scripts;
+    }
+
     void Application::ExecWithGame(IGame* InGame)
     {
         /* First, before anything defaults them. Both are first-caller-wins. */
@@ -280,6 +320,25 @@ namespace NimbleEngine
             {
                 CORE_LOG_ERROR("Game refused to start")
                 bQuitRequested = true;
+            }
+
+            /*
+             * AFTER OnStartup succeeds, not in Initialize() -- a startup
+             * script sees a started game (its own entities, its own bound
+             * config), not a half-built engine mid-construction. Skipped
+             * entirely when empty, which is the default: a game with nothing
+             * to say in Lua pays nothing for this. A failed script is logged
+             * by ScriptEngine itself and is NOT fatal to the engine -- the
+             * same "log and continue" stance CORE_LOG_WARN already takes for
+             * a missing DefaultEngine.ini just above in Initialize().
+             */
+            if(!bQuitRequested)
+            {
+                const char* StartupScriptPath = GStartupScript.GetString();
+                if(StartupScriptPath && StartupScriptPath[0] != '\0')
+                {
+                    Scripts->RunFile(StartupScriptPath);
+                }
             }
 
             /* steady_clock: a delta must not go backwards because the wall
@@ -372,6 +431,20 @@ namespace NimbleEngine
         {
             InGame->OnTick(InFrame);
         }
+
+        /*
+         * The game acts FIRST -- it may spawn or destroy something this
+         * frame -- then World's own phases run: TP_PrePhysics, TP_Physics
+         * (+ the spatial refit at its end), TP_PostPhysics, TP_PostUpdate.
+         * Still the game thread, still before the render-thread fence below
+         * in ExecWithGame -- Scene never touches GDI, so nothing here needs
+         * to wait on the render thread any more than IGame::OnTick already
+         * does not.
+         */
+        if(Scene)
+        {
+            Scene->Tick(float(InFrame.DeltaSeconds));
+        }
     }
 
     /* Runs after the fence, render thread idle and queue empty. EVERYTHING
@@ -447,6 +520,43 @@ namespace NimbleEngine
 
     void Application::Shutdown()
     {
+        /*
+         * UNCONDITIONAL, like everything below -- Shutdown() runs whether
+         * Initialize() got all the way through or failed partway, so every
+         * step here is null-safe. ORDER IS LOAD-BEARING:
+         *
+         *   1. Scripts->UnbindWorld() -- runs every live script's OnDestroy
+         *      and releases its instance ref, unregisters the script-tick
+         *      systems and the ScriptComponent removal observer from Scene.
+         *      Needs BOTH a live lua_State (Scripts) AND a live Scene to walk.
+         *   2. Dealloc(Scene) -- Scene's own destructor logs a warning for any
+         *      of its built-in delegates still holding a binding (see
+         *      World.cpp's ~Impl), which by this point should be none, since
+         *      step 1 already unregistered GameCore's own.
+         *   3. Scripts->Shutdown() -- lua_close. Must come AFTER Scene is
+         *      gone: nothing left holds a World* into a destroyed object.
+         *   4. Dealloc(Scripts).
+         *
+         * Reversed, step 3 before step 1 closes the Lua state while
+         * ScriptComponent instances still hold registry refs into it, and
+         * UnbindWorld's OnDestroy calls would run against a dead lua_State.
+         */
+        if(Scripts && Scene)
+        {
+            Scripts->UnbindWorld();
+        }
+        if(Scene)
+        {
+            EngineCore::Memory::Dealloc(Scene);
+            Scene = nullptr;
+        }
+        if(Scripts)
+        {
+            Scripts->Shutdown();
+            EngineCore::Memory::Dealloc(Scripts);
+            Scripts = nullptr;
+        }
+
         StopRenderThread();
 
         /* Only reachable when the render thread never ran; it releases GDI

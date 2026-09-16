@@ -191,6 +191,16 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GameWindow/CMakeLists.txt")
     add_subdirectory(Modules/GameWindow)
 endif()
 
+# GameCore likewise: written for this repository, guarded the same way. Added
+# AFTER GameWindow and BEFORE the NimbleEngine target below for the same
+# ordering reason GameWindow itself is -- nimble_add_module() links
+# EngineCore::EngineCore eagerly and NimbleEngine's own nimble_add_module()
+# call further down needs GameCore::GameCore to already exist as a namespaced
+# ALIAS when it is named.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GameCore/CMakeLists.txt")
+    add_subdirectory(Modules/GameCore)
+endif()
+
 # === NimbleEngine =========================================================
 # The engine layer itself: the thing that owns the module set, drives the frame
 # and is what a game under Games/ links. Its sources live at Engine/Source, so
@@ -243,6 +253,19 @@ endif()
 
 if(TARGET GDI)
     target_link_libraries(NimbleEngine PRIVATE GDI::GDI)
+endif()
+
+# PUBLIC, not PRIVATE -- the one deliberate exception to the rule stated just
+# above. World and Entity (GameCore's own headers) ARE the game-facing
+# surface: NimbleEngine.h forward-declares GameCore::World and
+# GameCore::ScriptEngine and exposes Application::GetWorld() /
+# GetScriptEngine() returning them by reference, so a game that includes
+# NimbleEngine.h needs GameCore's headers and needs to LINK GameCore to use
+# what it forward-declares. Nothing from GameWindow or GDI becomes reachable
+# through this -- PUBLIC applies to GameCore alone, and the PRIVATE links
+# above are unaffected.
+if(TARGET GameCore)
+    target_link_libraries(NimbleEngine PUBLIC GameCore::GameCore)
 endif()
 
 # winmm, for timeBeginPeriod/timeEndPeriod in the frame limiter. Without raising

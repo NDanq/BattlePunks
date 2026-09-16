@@ -1,0 +1,314 @@
+# GameCore
+
+Gameplay: entities, components, a phased tick, delegates and events, and Lua
+scripting, on Lua 5.4.
+
+`GameCore` is written for this repository, the same as `GameWindow` -- not a
+vendored subtree, free to use `nimble_add_module()`.
+
+---
+
+## Position in the tree
+
+```
+Host exe --> NimbleEngine --> GameCore  --> EngineCore
+                \-----------> GameWindow --> EngineCore
+                \-----------> GDI --------> EngineCore
+```
+
+**GameCore does not link GameWindow or GDI, and neither links back.** A World
+has no notion of a window or a renderer; `NimbleEngine::Application` is the
+one place that owns a `GameCore::World` (see `Application::GetWorld()`) and
+ticks it once per frame, after `IGame::OnTick` and before the render-thread
+fence -- `NimbleEngine.cpp`'s `Simulate()` has the exact sequencing.
+
+Unlike `GameWindow` and `GDI`, which `Engine/CMakeLists.txt` links into
+`NimbleEngine` **PRIVATE**, `GameCore` is linked **PUBLIC**. `World` and
+`Entity` are the game-facing surface -- a game includes GameCore's own headers
+to use what `Application::GetWorld()` hands back -- so the dependency has to
+be visible past `NimbleEngine`, not hidden behind it. See the PUBLIC link's
+own comment in `Engine/CMakeLists.txt` for the full reasoning.
+
+---
+
+## File layout
+
+```
+Engine/Modules/GameCore/
+|-- CMakeLists.txt
+|-- README.md                       (this file)
+|-- External/
+|   `-- lua-5.4.8/                  vendored Lua source; see "Lua" below
+|-- Source/
+|   |-- Public/GameCore/
+|   |   |-- GameCoreAPI.h           GAMECORE_API three-state export macro (always SHARED)
+|   |   |-- GameCoreLog.h           GAMECORE_LOG / _WARN / _ERROR over CoreLog
+|   |   |-- EntityID.h              EntityID {Index, Generation}, Pack()/Unpack()
+|   |   |-- AABB.h                  axis-aligned box over EngineCore::Vector3
+|   |   |-- TickPhase.h             ETickPhase: PrePhysics/Physics/PostPhysics/PostUpdate
+|   |   |-- Delegate.h              DelegateHandle, DelegateList, TDelegate, TMulticastDelegate, TScopedBinding
+|   |   |-- EventBus.h              EventID, EventArg/EventArgs, class EventBus
+|   |   |-- ComponentType.h         ComponentTypeID, ComponentTypeInfo, ComponentOwner, the BODY/DEFINE macros
+|   |   |-- ComponentPool.h         the erased sparse-set pool
+|   |   |-- SpatialIndex.h          the dynamic AABB tree (BVH)
+|   |   |-- World.h                 class World: entities, pools, phased systems, spatial queries, delegates
+|   |   |-- Entity.h                header-only handle: World* + EntityID
+|   |   |-- Components.h            TransformComponent, NameComponent, BoundsComponent, ScriptComponent
+|   |   `-- ScriptEngine.h          lua_State lifetime, RunFile/RunString, BindWorld; NO lua.h
+|   `-- Private/GameCore/
+|       |-- GameCoreInternal.h      the ONLY header that includes lua.h/lauxlib.h/lualib.h
+|       |-- ComponentType.cpp
+|       |-- ComponentPool.cpp
+|       |-- Components.cpp
+|       |-- Delegate.cpp
+|       |-- EventBus.cpp
+|       |-- TickPhase.cpp
+|       |-- SpatialIndex.cpp
+|       |-- World.cpp
+|       |-- ScriptEngine.cpp
+|       |-- ScriptBindings.cpp      World/Entity/component-proxy/TickPhase/Events Lua libraries
+|       `-- ScriptSystem.cpp        Script.Register, instantiation, the per-phase tick, the removal observer
+`-- Tests/
+    `-- SmokeMain.cpp
+```
+
+Include paths are Source-relative -- `#include "Public/GameCore/World.h"` --
+matching Core, GDI and GameWindow exactly.
+
+---
+
+## The two rules the whole design falls out of
+
+**GameCore is ALWAYS SHARED.** There is no `GAMECORE_SHARED` option, unlike
+`GameWindow`'s. `ComponentType.h` and `EventBus.h` hold their registries in
+fixed tables filled lazily behind function-local statics and out-of-line
+`GAMECORE_API` functions. A STATIC GameCore pulled PUBLIC through
+`NimbleEngine.dll` would give `NimbleEngine.dll` and `Sandbox.exe` each their
+own copy of every registry, so `TransformComponent` would register once per
+image and get a **different id** in each -- with no diagnostic anywhere, just
+a component read at the wrong offset the first time an id crossed the
+boundary. Exactly `Engine/CMakeLists.txt`'s reasoning for forcing
+`CORE_SHARED` and building `NimbleEngine` itself SHARED.
+
+**Templates compute, GameCore.dll allocates.** `World::GetComponent<T>()` and
+`TMulticastDelegate<...>::Broadcast` are templates and instantiate in
+whichever image calls them. The templates in every public header here only
+cast and forward; every allocation, every registry touch and every container
+lives in an out-of-line `GAMECORE_API` function inside `GameCore.dll`.
+Component storage is a type-erased `ComponentPool`; a delegate is a
+type-erased `DelegateList`; the spatial index is a type-erased `SpatialIndex`.
+This is `CoreMemory.h`'s "templates compute, EngineCore allocates" rule,
+applied three more times.
+
+---
+
+## Entities and components
+
+An `EntityID` is an index plus a generation -- the generation catches a stale
+handle to a recycled slot. `World` owns an index free-list, a
+`ComponentPool*[COMPONENT_TYPE_MAX]` table (created lazily on first use), and
+the registry every component's `StaticType()` registers into by name.
+
+A component is declared like this:
+
+```cpp
+struct MyComponent
+{
+    GAMECORE_COMPONENT_BODY()   // first thing in the struct, always
+
+    EngineCore::Vector3 Value;
+};
+// in exactly one .cpp:
+GAMECORE_DEFINE_COMPONENT(MyComponent, "My")
+```
+
+`GAMECORE_COMPONENT_BODY()` declares `Owner` -- a `ComponentOwner` holding a
+`World*` and this component's `EntityID`, written once by
+`World::AddComponentRaw` right after the pool copies the caller's init bytes.
+From inside any component method or any system iterating a pool:
+
+```cpp
+TransformComponent* T = Bounds.Owner.GetSibling<TransformComponent>();
+const char* Name = Bounds.Owner.GetName();
+```
+
+Components are **trivially copyable** (`GAMECORE_DEFINE_COMPONENT`
+`static_assert`s it) -- a `ComponentPool` is one contiguous, aligned byte
+array that `memcpy`s on swap-remove, which is both the cache-efficiency story
+and the cross-image story (no destructor pointer into anyone's image).
+
+**A `T*` from `GetComponent<T>()`, `AddComponent<T>()` or `Each<T>()`'s
+callback is invalidated by any Add or Remove of `T` on ANY entity.** Hold an
+`EntityID` or an `Entity` handle across a call that might mutate the pool;
+re-fetch the pointer after.
+
+---
+
+## Tick phases
+
+```cpp
+enum ETickPhase { TP_PrePhysics, TP_Physics, TP_PostPhysics, TP_PostUpdate, TP_MAX };
+```
+
+`World::RegisterSystem(name, phase, fn, userData)` puts a system into one of
+four buckets; `World::Tick()` runs them in order, and flushes the deferred
+destroy/remove queue **at the end of each phase** -- not the end of the frame
+-- so a `TP_PrePhysics` system that destroys an entity has it gone before
+`TP_Physics` runs. `World::RefreshSpatialIndex()` (the BVH refit) runs at the
+end of `TP_Physics`, after every system registered there.
+
+Calling `DestroyEntity` / `RemoveComponent<T>` from inside a tick defers to
+the current phase's flush; calling them outside a tick is immediate. Never
+destroy or remove from inside a pool walk you are not the observer of.
+
+---
+
+## Delegates and events
+
+Two layers, both `{function pointer, void*}`, never `std::function` -- see
+`Delegate.h`'s own long comment for why (the same cross-heap-free argument
+`CoreConfig.h` makes for `ConfigValue`).
+
+```cpp
+TMulticastDelegate<EntityID> MyDelegate;
+DelegateHandle H = MyDelegate.Add(&Callback, UserPtr);
+MyDelegate.Broadcast(SomeEntity);
+MyDelegate.Remove(H);                 // or RemoveAll(UserPtr)
+```
+
+`World` exposes four built-in ones: `OnEntityCreated`, `OnEntityDestroyed`,
+`OnComponentAdded`, `OnComponentRemoved`. `World::GetEvents()` is the layer
+above for callers that do not share a header -- a Lua script, most notably --
+keyed by interned name instead of a typed function pointer:
+
+```cpp
+EventID Id = World.GetEvents().GetEventID("PlayerScored");
+World.GetEvents().Subscribe(Id, &OnScored, nullptr);
+World.GetEvents().Emit(Id, /* up to four EventArgs */);
+```
+
+**A binding is a promise to unbind.** A callback into an unloaded module left
+in a `DelegateList` is `CoreModule.h`'s DANGLING CALLBACKS hazard verbatim.
+`RemoveAll(userData)` / `UnsubscribeAll(userData)` exist so an `OnShutdown` is
+one call.
+
+---
+
+## The spatial index (BVH)
+
+`World::GetSpatialIndex()` is a dynamic AABB tree (Box2D's `b2DynamicTree`
+shape) of `EntityID` leaves and fattened world-space boxes -- no component
+data, just position. A `BoundsComponent` is what puts an entity in it:
+
+```cpp
+BoundsComponent* B = W.AddComponent<BoundsComponent>(E);
+B->Local = AABB(Vector3(-0.5,-0.5,-0.5), Vector3(0.5,0.5,0.5));
+```
+
+`World::RefreshSpatialIndex()` (called automatically at the end of
+`TP_Physics`) transforms `Local` by the entity's `TransformComponent` (identity
+if none), writes the result to `World`, and `Insert`s or `Move`s the leaf.
+`bStatic = 1` gets the entity ONE leaf (its first refit) and is never re-fit
+again -- for level geometry that never moves.
+
+```cpp
+World.QueryBounds(SomeBox, [](EntityID E, void*) { return true; }, nullptr);
+World.EachInBounds<TransformComponent>(SomeBox, [](Entity E, TransformComponent& T) { ... });
+bool bHit = World.Raycast(Origin, Dir, MaxT, OutHit);
+```
+
+Iterate a pool (`Each<T>`) when a system wants *every* instance of `T`; query
+the tree (`QueryBounds` / `EachInBounds`) when it wants only what is *nearby*
+-- the per-hit fetch behind `EachInBounds` is a sparse-set lookup, the price
+of asking by region instead of walking a pool in order.
+
+`World::SetActiveRegion(box)` is a shared "what gameplay currently cares
+about" hint; `ScriptComponent`'s `CullOutsideActiveRegion` flag is the one
+built-in consumer, skipping a scripted entity's `OnTick` when it is outside.
+
+---
+
+## Scripting
+
+`ScriptEngine` owns one `lua_State`, bound to one `World` at a time
+(`BindWorld` / `UnbindWorld`). `Application` owns exactly one of each --
+`Application::GetScriptEngine()` -- initialized, bound, and torn down around
+a game's lifetime by `NimbleEngine.cpp`.
+
+```lua
+local e = World.CreateEntity("Player")
+local t = e:AddComponent("Transform")
+t:SetPosition(1, 2, 3)
+
+Script.Register("Mover", {
+    TickPhase = TickPhase.PostPhysics,          -- optional, defaults to PrePhysics
+    OnStart   = function(self) end,
+    OnTick    = function(self, dt) self.Entity:GetComponent("Transform"):Translate(dt, 0, 0) end,
+    OnDestroy = function(self) end,
+})
+e:AddScript("Mover")
+
+Events.On("EntityCreated", function(entity) print(entity:GetName()) end)
+Events.Emit("PlayerScored", 10, "Player")       -- numbers, booleans, strings, entities; up to 4 args
+```
+
+A component proxy (what `e:GetComponent("Transform")` returns) holds an
+`EntityID` and a `ComponentTypeID`, never a pointer -- every method re-fetches
+through `World::GetComponentRaw`, so a proxy held across a `RemoveComponent`
+errors cleanly instead of aliasing whatever now occupies that pool slot.
+
+**Lua is compiled as C and its errors are `longjmp`.** A `lua_CFunction` in
+this module's bindings may only have trivially destructible locals in scope
+at any point that can still raise -- see `GameCoreInternal.h`'s header
+comment. `CoreCallProtected` (used by every lifecycle call and by
+`RunFile`/`RunString`) installs a traceback handler and logs through
+`GAMECORE_LOG_ERROR`; a script error is never fatal to the engine.
+
+`ScriptComponent`'s removal observer runs `OnDestroy` and releases the
+instance's Lua registry ref when the component (or its owning entity) is
+removed. `ScriptEngine::UnbindWorld()` walks every still-live instance, every
+Lua-defined system, and every `Events.On()` binding a script made, and
+releases all of them -- a Lua function cannot be trusted to clean up before
+`lua_close`.
+
+---
+
+## Threading contract
+
+No locks anywhere in this module. Every call -- `World`, `ScriptEngine`,
+`SpatialIndex`, every delegate -- happens on the thread that runs
+`IGame::OnTick`, which `NimbleEngine.cpp` also uses as the `GameWindow` pump
+thread. The same contract `GameWindowSystem.h` states for itself.
+
+---
+
+## Lua
+
+Lua 5.4.8 is vendored in source form at:
+
+```
+Engine/Modules/GameCore/External/lua-5.4.8/
+```
+
+Mirroring how `Modules/GameWindow` carries `External/SDL-release-3.4.16`: the
+dependency lives with the one module that needs it, there is no
+`find_package`, no `FetchContent`, and no fallback to a system Lua. Lua ships
+no CMakeLists of its own (unlike SDL); `CMakeLists.txt` builds it directly
+from `src/*.c`, excluding `lua.c` and `luac.c` -- the standalone interpreter
+and compiler's own `main()`s, listed explicitly so a future Lua source
+addition does not silently join the target without review.
+
+`luaconf.h` auto-detects `_WIN32` into `LUA_USE_WINDOWS` on its own; Linux and
+macOS get `LUA_USE_LINUX` / `LUA_USE_MACOSX` defined explicitly by
+`CMakeLists.txt`, matching what `lua.c`'s own build would set.
+
+**lua.h never appears in `Public/`.** `GameCoreInternal.h`, under `Private/`,
+is the only header that includes it; `ScriptEngine.h` forward-declares
+`struct lua_State` and hands it back as an opaque pointer. `GameCoreSmokeTest`
+links `GameCore` and nothing else -- **not** `Lua::Lua` -- which is the
+structural check that this stays true: if it ever fails to link because
+something needs a raw Lua symbol, that property has broken.
+
+**Bumping Lua** is two edits: drop the new tree in beside the old one and
+change `GAMECORE_LUA_DIR` in `CMakeLists.txt`, plus the source list if any
+file was added, removed or renamed upstream.
