@@ -2,18 +2,9 @@
 
 /*
  * The four engine-built-in components' registration, plus TransformComponent's
- * one out-of-line method.
- *
- * TransformComponent::GetLocalMatrix() composes Translation * (Rz * Ry * Rx) *
- * Scale from three SEPARATE Matrix4x4::InitRotation calls -- InitRotation(angle,
- * axis) sets a matrix to ONE axis-angle rotation and returns *this by value, it
- * does not compose an existing matrix with a new rotation, so three Euler
- * angles need three matrices multiplied together, not three calls into the
- * same one. Z * Y * X (rotate about X first, then Y, then Z) matches the
- * common "yaw-pitch-roll composed outermost-last" convention and is the
- * arbitrary-but-stated choice this component makes; a game that wants a
- * different composition order rolls its own component rather than this one
- * silently meaning something else than what its member name suggests.
+ * one out-of-line method. See DESIGN.md for why GetLocalMatrix() needs three
+ * separate Matrix4x4::InitRotation calls rather than one, and for the
+ * Z * Y * X composition order.
  */
 
 namespace GameCore

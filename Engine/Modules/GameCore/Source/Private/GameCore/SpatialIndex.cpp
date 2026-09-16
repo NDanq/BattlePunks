@@ -10,31 +10,10 @@
 #include "Public/GameCore/GameCoreLog.h"
 
 /*
- * The dynamic AABB tree. This is Box2D's b2DynamicTree in structure -- a node
- * array with an intrusive free list, insertion by the surface-area heuristic,
- * rebalancing by the same two-rotation scheme -- adapted to hold an EntityID
- * per leaf instead of a fixture pointer, and grown through
- * EngineCore::SystemAlignedAlloc instead of a bespoke allocator, so
- * that it participates in the same allocation accounting the rest of GameCore
- * does.
- *
- * NODE LAYOUT. One array, referenced by int32_t index -- never a pointer --
- * with NullNode (-1) meaning "no node". A proxy id IS a node index; there is no
- * separate handle table, unlike DelegateHandle or ComponentPool's sparse array,
- * because a tree node's identity does not need to survive being "moved" the way
- * a delegate slot or a dense component slot does: Move() mutates a leaf node
- * in place when it fits its fat box, and only reinserts (which frees the old
- * node and allocates a new one, same index-stability contract as any other
- * node) when it escapes. The proxy id a caller holds is therefore stable across
- * every call that does not explicitly document otherwise -- and none do; even a
- * reinsertion inside Move() keeps the SAME node index, because Move() removes
- * and reinserts the leaf into the SAME slot rather than freeing it (see
- * Move()'s implementation).
- *
- * WHY POINTER-FREE. The array can grow by reallocation (EnsureCapacity below)
- * without invalidating anything a caller holds, because callers hold int32_t
- * indices, never Node*. This is the same reason ComponentPool's sparse array is
- * indices rather than pointers into Dense.
+ * The dynamic AABB tree -- Box2D's b2DynamicTree in structure, adapted to
+ * hold an EntityID per leaf and grown through SystemAlignedAlloc. See
+ * DESIGN.md for the node-layout reasoning, the balancing/sibling-selection
+ * algorithms, the raycast method, and Rebuild's approach.
  */
 
 namespace GameCore
@@ -116,16 +95,7 @@ namespace GameCore
             return NodeIndex == NULL_NODE ? -1 : Nodes[NodeIndex].Height;
         }
 
-        /*
-         * The single-rotation rebalance Box2D's b2DynamicTree::Balance runs
-         * bottom-up from every leaf's parent after an insert or remove. A is the
-         * node whose two children's heights differ by more than one; this picks
-         * the heavier child, promotes it, and re-parents the light grandchild
-         * onto the OTHER child -- whichever of that child's two children keeps
-         * the tree's total surface area (via each side's own height, as a
-         * proxy) smaller. Returns the new subtree root (never A when a rotation
-         * happened).
-         */
+        /* Single-rotation rebalance -- see DESIGN.md for the algorithm. */
         int32_t Balance(const int32_t IndexA)
         {
             Node& A = Nodes[IndexA];
@@ -143,9 +113,8 @@ namespace GameCore
                 return IndexA;
             }
 
-            /* Heavier side becomes the new subtree root; A is demoted to be its
-             * sibling. F/G naming matches b2DynamicTree for anyone cross-
-             * referencing the reference implementation. */
+            /* Heavier side becomes the new subtree root; A is demoted to be
+             * its sibling. F/G naming matches b2DynamicTree. */
             const int32_t IndexHeavy = BalanceFactor > 0 ? IndexC : IndexB;
             const int32_t IndexLight = BalanceFactor > 0 ? IndexB : IndexC;
             Node&         Heavy      = Nodes[IndexHeavy];
@@ -168,9 +137,8 @@ namespace GameCore
                 Root = IndexHeavy;
             }
 
-            /* Re-parent whichever of Heavy's old children (F, G) keeps F on the
-             * side with the smaller height, minimising the resulting SurfaceArea
-             * the same way the sibling-selection heuristic in Insert() does. */
+            /* Re-parent whichever of Heavy's old children (F, G) keeps F on
+             * the side with the smaller height, minimising SurfaceArea. */
             if(Height(IndexF) > Height(IndexG))
             {
                 Heavy.Right = IndexF;
@@ -192,8 +160,7 @@ namespace GameCore
                 Heavy.Height = std::max(Height(IndexA), Height(IndexG)) + 1;
             }
 
-            /* A's OTHER child (the one that was not chosen as heavy/light) keeps
-             * its slot: A.Left is whichever of B/C was not promoted. */
+            /* A's OTHER child (the one not promoted) keeps its slot. */
             A.Left = IndexLight;
 
             return IndexHeavy;
@@ -215,14 +182,8 @@ namespace GameCore
 
         // --- insert / remove ---------------------------------------------------
 
-        /*
-         * Sibling selection: the standard "minimise the SurfaceArea increase"
-         * descent (Catto, "Dynamic Bounding Volume Hierarchies") -- at each
-         * internal node, compare the cost of making the new leaf a sibling of
-         * THIS node against descending into whichever child costs less once its
-         * own enlargement is accounted for. AABB::SurfaceArea() is exactly the
-         * cost function this needs it for.
-         */
+        /* Sibling selection: minimise the SurfaceArea increase -- see
+         * DESIGN.md (Catto, Dynamic Bounding Volume Hierarchies). */
         int32_t PickSibling(const AABB& InLeafBox) const
         {
             int32_t Current = Root;
@@ -329,9 +290,8 @@ namespace GameCore
         {
             if(Root == NULL_NODE) { return; }
 
-            /* Explicit stack, no recursion, no allocation once Stack has grown
-             * to the tree's depth once -- SpatialIndex.h promises exactly this
-             * in its class comment. */
+            /* Explicit stack, no recursion, no allocation once Stack has
+             * grown to the tree's depth once. */
             std::vector<int32_t> Stack;
             Stack.push_back(Root);
 
@@ -355,12 +315,9 @@ namespace GameCore
             }
         }
 
-        /* Slab method (Kay-Kajiya / "An Efficient and Robust Ray-Box
-         * Intersection Algorithm"): intersect the ray against each axis' pair
-         * of planes, track the running [TMin, TMax] intersection of all three
-         * intervals. A zero ray component divides by zero, which produces
-         * +-inf and is handled correctly by IEEE 754 comparisons without a
-         * special case, exactly as that paper depends on. */
+        /* Slab method -- see DESIGN.md (Kay-Kajiya). A zero ray component
+         * divides by zero, producing +-inf, handled correctly by IEEE 754
+         * comparisons without a special case. */
         static bool RayIntersectsBox(const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InInvDir,
                                       const AABB& InBox, const float InMaxT, float& OutT)
         {
@@ -389,11 +346,7 @@ namespace GameCore
 
         // --- rebuild ---------------------------------------------------------
 
-        /* Top-down median split on the longest axis -- the standard bottom-up-
-         * quality-for-top-down-cost tree build used when insertion order is not
-         * trusted (a fresh level's leaves, inserted in file order, produce a
-         * badly unbalanced incremental tree; this fixes it in one pass). Returns
-         * the node index of the subtree root for InLeaves[InBegin, InEnd). */
+        /* Top-down median split on the longest axis -- see DESIGN.md. */
         int32_t BuildRecursive(std::vector<int32_t>& InLeaves, const size_t InBegin, const size_t InEnd)
         {
             const size_t Count = InEnd - InBegin;
@@ -575,10 +528,8 @@ namespace GameCore
             }
         }
 
-        /* Free every INTERNAL node (leaves are reused in place, exactly as
-         * Move()'s reinsertion does, so every proxy id a caller holds stays
-         * valid). Internal nodes are identified by Height > 0 among in-use
-         * nodes -- Height == -1 is already free and untouched. */
+        /* Free every INTERNAL node -- leaves are reused in place, so every
+         * proxy id a caller holds stays valid. */
         for(size_t Index = 0; Index < P->Nodes.size(); ++Index)
         {
             if(P->Nodes[Index].Height > 0)

@@ -8,11 +8,9 @@
 #include "Public/GameCore/GameCoreLog.h"
 
 /*
- * One DelegateList per interned event name, held in a growable array indexed by
- * EventID. Linear scan for name -> id, matching ComponentType.h's registry and
- * CoreConfig.h's ConfigVar list: this runs on Subscribe and on the rare
- * first-time Emit of a name, never per frame in a tight loop, so a linear walk
- * over at most EVENT_MAX names costs nothing worth optimising.
+ * One DelegateList per interned event name, held in a growable array indexed
+ * by EventID. Lookup by name is a linear scan -- see DESIGN.md for why that
+ * is fine here.
  */
 
 namespace GameCore
@@ -28,7 +26,7 @@ namespace GameCore
 
     struct EventBus::Impl
     {
-        std::vector<EventEntry*> Entries;   // pointer per entry: EventEntry holds a DelegateList, which is non-copyable/non-movable
+        std::vector<EventEntry*> Entries;   // pointer per entry: EventEntry holds a non-copyable DelegateList
 
         ~Impl()
         {
@@ -142,10 +140,8 @@ namespace GameCore
         if(!P->IsValid(InEvent)) { return; }
 
         DelegateList& Subscribers = P->Entries[InEvent]->Subscribers;
-        /* BeginBroadcast() returning false means a subscriber further up this
-         * call stack is already emitting THIS event -- refused, not merely
-         * logged; see Delegate.h's BeginBroadcast comment for why the check
-         * must be this explicit branch rather than a bare CORE_CHECK. */
+        /* False means a subscriber further up this call stack is already
+         * emitting THIS event -- refused, not merely logged. See Delegate.h. */
         if(!Subscribers.BeginBroadcast())
         {
             return;

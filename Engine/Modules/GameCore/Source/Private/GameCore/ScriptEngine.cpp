@@ -13,13 +13,9 @@
 #include "Public/GameCore/World.h"
 
 /*
- * The forward declarations below are ScriptBindings.cpp's and ScriptSystem.cpp's
- * entry points into this file's Impl -- deliberately free functions taking a
- * lua_State* and a World*, not methods on ScriptEngine::Impl, so that neither
- * of those two .cpp files needs to see this file's Impl definition (which is
- * private to this translation unit) or #include GameCoreInternal.h's full
- * surface twice for no reason. Each is implemented in its own file; see the
- * comment at each call site below for what it does.
+ * ScriptBindings.cpp's and ScriptSystem.cpp's entry points into this file's
+ * Impl -- free functions, not Impl methods, so neither file needs to see
+ * Impl's definition (private to this TU).
  */
 namespace GameCore
 {
@@ -33,28 +29,9 @@ namespace GameCore
 {
     namespace
     {
-        /*
-         * Routes Lua's own heap use through EngineCore::SystemAlignedAlloc/
-         * Free rather than plain malloc/free -- so a leak inside the VM (a
-         * runaway table, a script that never releases a reference) shows up in
-         * the same accounting every other allocation in this engine does,
-         * rather than being invisible to it.
-         *
-         * lua_Alloc IS realloc-shaped (osize/nsize, ptr may be null, nsize may
-         * be zero for a free), but SystemAlignedAlloc/Free are not a matched
-         * realloc pair -- there is no aligned-realloc exposed by
-         * CoreMemoryPool.h, deliberately, because nothing else in this engine
-         * needs one. So this allocates fresh, copies min(osize, nsize) bytes
-         * forward, and frees the old block -- a real cost on every grow, which
-         * for a scripting VM's typical allocation pattern (many small objects,
-         * few large reallocations) is not where time goes. If that ever shows
-         * in a profile, the fix is a dedicated pool registered through
-         * RegisterMemoryPool, not a change to this function's contract.
-         *
-         * Alignment is alignof(std::max_align_t) -- Lua itself does not ask
-         * for anything stricter, and this allocator has no type information to
-         * do better with; it is a raw byte allocator exactly as malloc is.
-         */
+        /* Routes Lua's own heap use through SystemAlignedAlloc/Free -- see
+         * DESIGN.md for why this is not a matched realloc pair and what
+         * that costs. */
         void* LuaAllocator(void* /*ud*/, void* InPtr, const size_t InOldSize, const size_t InNewSize)
         {
             if(InNewSize == 0)
@@ -80,11 +57,7 @@ namespace GameCore
             return NewPtr;
         }
 
-        /* Lua's print() rebuilt over GAMECORE_LOG instead of stdout -- tab-
-         * separated tostring() of each argument, matching lbaselib.c's own
-         * luaB_print exactly except for the destination, so script output
-         * reaches whatever LogHandler the host installed rather than a
-         * console a shipped game may not have. */
+        /* Lua's print() rebuilt over GAMECORE_LOG -- see DESIGN.md. */
         int LuaPrint(lua_State* InState)
         {
             const int ArgCount = lua_gettop(InState);
@@ -114,15 +87,9 @@ namespace GameCore
 
     namespace
     {
-        /* Registry key for the per-state error counter -- the address of this
-         * static is the key itself (a light userdata), the same "a unique
-         * static's address IS the registry key" idiom ScriptBindings.cpp's
-         * GetBoundWorld/SetBoundWorld and ScriptSystem.cpp's GetScriptState/
-         * SetScriptState both use. The VALUE stored under that key is a plain
-         * Lua number (lua_Integer), read and rewritten whole on every error --
-         * one lua_gettable/lua_settable pair per error, never a hot path,
-         * simpler than a light-userdata-boxed counter for no cost that matters
-         * here. */
+        /* Registry key for the per-state error counter -- see DESIGN.md for
+         * the "address is the key" idiom this shares with ScriptBindings.cpp
+         * and ScriptSystem.cpp. */
         int GErrorCountRegistryKey;
 
         uint32_t GetLuaErrorCount(lua_State* InState)
@@ -145,9 +112,8 @@ namespace GameCore
 
     bool LuaCallProtected(lua_State* InState, const int InNArgs, const int InNResults, const char* InContext)
     {
-        /* The message handler must sit BELOW the function and its arguments on
-         * the stack -- pushed first, then the function is moved above it via
-         * lua_insert, matching luaL_dostring's own idiom in lauxlib.c. */
+        /* The message handler sits BELOW the function and its arguments,
+         * pushed first then moved above via lua_insert. */
         const int HandlerIndex = lua_gettop(InState) - InNArgs;
         lua_pushcfunction(InState, LuaTracebackHandler);
         lua_insert(InState, HandlerIndex);
@@ -161,15 +127,8 @@ namespace GameCore
             GAMECORE_LOG_ERROR(std::string("Lua error (") + (InContext ? InContext : "?") + "): "
                                 + (ErrorText ? ErrorText : "<no message>"))
             lua_pop(InState, 1);
-            /* THE ONE CHOKE POINT every runtime error passes through --
-             * RunString/RunFile's own luaL_loadbuffer syntax-error path is the
-             * only error kind that does NOT go through here (nothing has been
-             * called yet at that point), so it increments separately below.
-             * Before this, a lifecycle callback error (ScriptSystem.cpp's
-             * CallLifecycleMethod, which calls this function directly) bumped
-             * ONLY ScriptComponent::bErrored and never reached
-             * ScriptEngine::GetErrorCount() at all -- caught by the smoke
-             * test expecting exactly one counted error per broken script. */
+            /* The one choke point every runtime error passes through --
+             * see DESIGN.md for the bug this fixed. */
             IncrementErrorCount(InState);
             return false;
         }
@@ -329,9 +288,8 @@ namespace GameCore
             return false;
         }
 
-        /* LuaCallProtected already counts this error itself (see its own
-         * comment on IncrementErrorCount) -- no ++P->ErrorCount here, or a
-         * single runtime error would be counted twice. */
+        /* LuaCallProtected already counts a runtime error itself -- no
+         * ++P->ErrorCount here, or it would be counted twice. */
         return LuaCallProtected(P->State, 0, 0, InChunkName ? InChunkName : "(RunString)");
     }
 
@@ -343,9 +301,6 @@ namespace GameCore
             return false;
         }
 
-        /* Implemented in ScriptSystem.cpp, which owns the class registry and
-         * the instance-table construction this shares with the Lua
-         * e:AddScript() path. */
         return ScriptSystem_InstantiateScript(P->State, P->BoundWorld, InEntity, InClassName);
     }
 
@@ -356,17 +311,8 @@ namespace GameCore
 
     uint32_t ScriptEngine::GetErrorCount() const
     {
-        /* P->ErrorCount counts what never reaches LuaCallProtected (a file
-         * read failure, a luaL_loadbuffer syntax error); the registry counter
-         * counts every runtime error THROUGH LuaCallProtected, from ANY
-         * caller -- RunString/RunFile's own top-level call, and every
-         * lifecycle callback ScriptSystem.cpp drives (OnStart/OnTick/
-         * OnDestroy). Summed here rather than merged into one counter at the
-         * write side, so P->ErrorCount stays a plain member for the cases
-         * that have no lua_State to stash a registry entry in yet (a read
-         * failure can happen before Initialize() -- see RunFile's own check
-         * above it -- though in practice IsInitialized() already refuses
-         * that case first). */
+        /* Sums what never reaches LuaCallProtected with what does -- see
+         * DESIGN.md. */
         return P->ErrorCount + (P->State ? GetLuaErrorCount(P->State) : 0u);
     }
 }
