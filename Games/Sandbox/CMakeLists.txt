@@ -194,6 +194,64 @@ elseif(EXISTS "${SANDBOX_CONFIG_SRC}")
     set_target_properties(SandboxStageConfig PROPERTIES FOLDER "Games")
 endif()
 
+# === Scripts/ ===============================================================
+# ScriptEngine::RunFile resolves paths the same way Application::Initialize()
+# resolves "Config/DefaultEngine.ini" -- relative to the working directory --
+# so Scripts/ is staged beside the executable by the identical mechanism as
+# Config/ above, for the identical reason (an IDE run and a shell run must
+# both find it, and a POST_BUILD step would silently go stale exactly as the
+# comment on SANDBOX_CONFIG_DST explains).
+#
+# LISTED, NOT GLOBBED: a new script is a CMakeLists.txt edit, so the build
+# graph is honest about what it stages rather than silently picking up
+# whatever a directory scan happens to find -- the same call ComponentPool.h's
+# design notes make for enumerating things explicitly over discovering them.
+set(SANDBOX_SCRIPT_FILES
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Main.lua"
+)
+
+if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+    set(SANDBOX_SCRIPT_OUTPUTS "")
+    foreach(SANDBOX_SCRIPT_SRC ${SANDBOX_SCRIPT_FILES})
+        get_filename_component(SANDBOX_SCRIPT_NAME "${SANDBOX_SCRIPT_SRC}" NAME)
+        set(SANDBOX_SCRIPT_DST "${SANDBOX_RT_DIR}/Scripts/${SANDBOX_SCRIPT_NAME}")
+
+        add_custom_command(
+                OUTPUT  "${SANDBOX_SCRIPT_DST}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_RT_DIR}/Scripts"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${SANDBOX_SCRIPT_SRC}" "${SANDBOX_SCRIPT_DST}"
+                DEPENDS "${SANDBOX_SCRIPT_SRC}"
+                COMMENT "Sandbox: staging Scripts/${SANDBOX_SCRIPT_NAME} beside the executable"
+                VERBATIM)
+        list(APPEND SANDBOX_SCRIPT_OUTPUTS "${SANDBOX_SCRIPT_DST}")
+    endforeach()
+
+    add_custom_target(SandboxStageScripts DEPENDS ${SANDBOX_SCRIPT_OUTPUTS})
+    add_dependencies(Sandbox SandboxStageScripts)
+    set_target_properties(SandboxStageScripts PROPERTIES FOLDER "Games")
+
+else()
+    # Multi-config fallback, same reasoning as SandboxStageConfig's own.
+    set(SANDBOX_SCRIPT_COMMANDS
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Sandbox>/Scripts")
+    foreach(SANDBOX_SCRIPT_SRC ${SANDBOX_SCRIPT_FILES})
+        get_filename_component(SANDBOX_SCRIPT_NAME "${SANDBOX_SCRIPT_SRC}" NAME)
+        list(APPEND SANDBOX_SCRIPT_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${SANDBOX_SCRIPT_SRC}"
+                        "$<TARGET_FILE_DIR:Sandbox>/Scripts/${SANDBOX_SCRIPT_NAME}")
+    endforeach()
+
+    add_custom_target(SandboxStageScripts ALL
+            ${SANDBOX_SCRIPT_COMMANDS}
+            DEPENDS ${SANDBOX_SCRIPT_FILES}
+            COMMENT "Sandbox: staging Scripts/ beside the executable"
+            VERBATIM)
+    add_dependencies(SandboxStageScripts Sandbox)
+    set_target_properties(SandboxStageScripts PROPERTIES FOLDER "Games")
+endif()
+
 # === IDE ===================================================================
 # Without this, a Visual Studio or CLion run starts in the build directory and
 # the config lookup above silently misses -- the app still runs, on defaults,

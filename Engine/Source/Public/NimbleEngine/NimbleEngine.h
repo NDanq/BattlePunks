@@ -17,6 +17,21 @@
 class GameWindow;
 class GDIContext;
 
+/*
+ * GameCore is the ONE exception to the above -- Engine/CMakeLists.txt links it
+ * PUBLIC, deliberately, because World and Entity ARE the game-facing surface: a
+ * game reaches its entities through Application::GetWorld() below, and that
+ * return type has to be a complete-enough declaration for a game's own
+ * #include "Public/GameCore/World.h" to make sense of. See the PUBLIC link's
+ * own comment in Engine/CMakeLists.txt for why this is the deliberate exception
+ * rather than a dependency that leaked in by accident.
+ */
+namespace GameCore
+{
+    class World;
+    class ScriptEngine;
+}
+
 namespace NimbleEngine
 {
     class Application;
@@ -158,6 +173,25 @@ namespace NimbleEngine
         void     SetFrameRateLimit(uint32_t InFramesPerSecond);
         uint32_t GetFrameRateLimit() const;
 
+        /*
+         * The scene, and the Lua layer bound to it. GAME THREAD ONLY, valid
+         * from OnStartup through OnShutdown -- the same window this class
+         * already opens and tears down around a game's lifetime. A game reads
+         * these to create/query entities (World) or to run a script directly
+         * (ScriptEngine::RunString, for a console command say); NimbleEngine.cpp's
+         * Initialize()/Shutdown() are what actually create, bind, unbind and
+         * destroy both -- see the ordering note on Shutdown() there for why
+         * the World must be destroyed before the ScriptEngine is.
+         *
+         * CORE_CHECKed non-null rather than returning a reference to nothing:
+         * calling either before Initialize() has run (or after Shutdown() has)
+         * is a programming error in the SAME class as calling GetFrameRateLimit()
+         * before Exec() -- there is no sensible fallback value, only a caller
+         * that got the lifecycle wrong.
+         */
+        GameCore::World&         GetWorld();
+        GameCore::ScriptEngine&  GetScriptEngine();
+
     private:
         bool Initialize();
         void Shutdown();
@@ -197,6 +231,16 @@ namespace NimbleEngine
         /* Owned here: ReleaseGDI() deletes GDynamicGDI and GSync, and never
          * touches the context it was assigned. */
         GDIContext*              RenderContext = nullptr;
+
+        /*
+         * Owned here, via EngineCore::Memory::Alloc/Dealloc (not new/delete --
+         * see NimbleEngine.cpp's Initialize(), which is the ONE place these
+         * are ever allocated). Simulate() ticks Scene after IGame::OnTick, on
+         * the game thread, before the render-thread fence -- see BuildRenderCommands'
+         * own comment on why nothing past that fence may touch game state.
+         */
+        GameCore::World*         Scene   = nullptr;
+        GameCore::ScriptEngine*  Scripts = nullptr;
 
         EngineCore::Thread       RenderThread;
 
