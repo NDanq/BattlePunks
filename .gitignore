@@ -41,6 +41,15 @@
 .cache/
 .claude/settings.local.json
 
+# Locally generated MSVC environment. vcvars64.bat cannot always be driven
+# through cmd.exe (some shells get its banner and no variables), so these lift
+# the toolchain environment out once into a sourceable file. Machine-specific
+# by construction -- they bake in this box's Visual Studio install path and SDK
+# version -- so they are regenerated rather than shared.
+/get_msvc_env.ps1
+/make_msvc_env.py
+/msvc_env.sh
+
 # OS cruft
 Thumbs.db
 Desktop.ini

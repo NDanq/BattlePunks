@@ -1,5 +1,6 @@
 #include "Public/RenderCore/RenderScene.h"
 
+#include <array>
 #include <vector>
 
 #include "Public/RenderCore/RenderContext.h"
@@ -26,8 +27,8 @@ namespace RenderCore
         EngineCore::Color         ClearColor{24, 26, 32, 255};
 
         /*
-         * THE OFFSCREEN MAIN RENDER TARGET, and the whole reason anything
-         * ever reaches the screen.
+         * THE SCENE'S RENDER TARGETS, and the whole reason anything ever
+         * reaches the screen.
          *
          * GDIDynamicDriver::PresentToWindow presents
          * CurrentStateData->ActiveRenderTarget -- the most recently bound RT
@@ -39,67 +40,107 @@ namespace RenderCore
          * (BeginRendering clears it) and every present silently returns --
          * which is exactly what "the quad is not visible" looked like.
          *
-         * ONE target, not a GDIRenderTargetManager: that class holds
-         * Main/Buffer1/PostBuffer1 and the Resolve/Restore pair, which are
+         * A FIXED TABLE INDEXED BY THE ENUM, not a grown container: the set
+         * of targets a scene has is decided at compile time by ERT_MAX, so
+         * std::array bakes the size in and value-initialises every slot to
+         * null. There is no reserve/resize distinction to get wrong and no
+         * allocation to fail -- a vector here only offers ways to be holding
+         * it wrong.
+         *
+         * Deliberately NOT GDIRenderTargetManager, which holds
+         * Main/Buffer1/PostBuffer1 and the Resolve/Restore pair: those are
          * paint-application concepts (they exist for canvas stroke
          * buffering). A scene with one pass needs one target; the other two
-         * would be three times the VRAM for nothing.
-         *
-         * Sized from the view's ViewportPixels and resized when that
-         * changes -- see Render(). Null until the first Render(), and on a
-         * backend whose CreateRenderTarget returns nothing.
+         * would be three times the VRAM for nothing. ERT_MAX is where a
+         * second pass would be added.
          */
-        GDIRenderTarget* MainRT      = nullptr;
-        uint             MainRTWidth  = 0;
-        uint             MainRTHeight = 0;
+        enum ERenderTarget : uint8_t
+        {
+            ERT_BackBuffer = 0,
+            ERT_MAX
+        };
 
-        /* Creates MainRT, or resizes it to match InViewport. Render thread
-         * only, like everything else on this class. */
-        void EnsureMainRT(const EngineCore::Size InViewport)
+        std::array<GDIRenderTarget*, ERT_MAX> RenderTargets{};
+
+        /* The size every entry in RenderTargets was built at; what
+         * AllocateRenderTargets compares against to decide whether this
+         * frame needs to do anything at all. Zero until the first one. */
+        uint WindowWidth  = 0;
+        uint WindowHeight = 0;
+
+        /* Creates the targets, or resizes them to match InViewportSize.
+         * Render thread only, like everything else on this class.
+         *
+         * CHEAP AND IDEMPOTENT ON PURPOSE -- Render() calls this every
+         * frame, so the steady-state path must be the early-out below.
+         * Recreating a GPU image per frame would not merely be slow, it
+         * would destroy the target the UI thread is presenting from while
+         * it may still be sampling it. */
+        void AllocateRenderTargets(const EngineCore::Size InViewportSize)
         {
             /* A zero-sized viewport (a minimised window, or a view built
              * before the first real pixel size is known) would make an
              * invalid image; keep whatever we already had and let the next
              * frame with a real size sort it out. */
-            if(InViewport.Width <= 0 || InViewport.Height <= 0)
+            if(InViewportSize.Width <= 0 || InViewportSize.Height <= 0)
             {
                 return;
             }
 
-            const uint Width  = uint(InViewport.Width);
-            const uint Height = uint(InViewport.Height);
+            const uint Width  = uint(InViewportSize.Width);
+            const uint Height = uint(InViewportSize.Height);
 
-            if(!MainRT)
+            if(WindowWidth == Width && WindowHeight == Height)
             {
-                MainRT       = GDICreateRenderTarget("RenderCore.Main", Width, Height);
-                MainRTWidth  = Width;
-                MainRTHeight = Height;
                 return;
             }
 
-            if(MainRTWidth != Width || MainRTHeight != Height)
+            if(!RenderTargets[ERT_BackBuffer])
+            {
+                RenderTargets[ERT_BackBuffer] = GDICreateRenderTarget("RenderCore.BackBuffer", Width, Height);
+            }
+            else
             {
                 /* GDIRenderTarget::Resize is the backend's own recreate
                  * path -- on Vulkan it also raises the driver's bResizing
                  * flag, which makes the UI-thread present skip until a full
                  * frame has been rendered into the new images (cleared by
-                 * EndRendering). Nothing extra to coordinate here. */
-                MainRT->Resize(Width, Height);
-                MainRTWidth  = Width;
-                MainRTHeight = Height;
+                 * EndRendering). Nothing extra to coordinate here, and it
+                 * is why this is a Resize rather than a release-and-create. */
+                RenderTargets[ERT_BackBuffer]->Resize(Width, Height);
             }
+
+            WindowWidth  = Width;
+            WindowHeight = Height;
         }
 
-        void ReleaseMainRT()
+        GDIRenderTarget* GetRenderTarget(const ERenderTarget InRenderTarget) const
         {
-            if(MainRT)
+            /* std::array carries its own bound, so this is the enum's
+             * contract being checked, not the container's. */
+            if(InRenderTarget < ERT_MAX)
             {
-                GDIReleaseRenderTarget(MainRT);
-                delete MainRT;
-                MainRT       = nullptr;
-                MainRTWidth  = 0;
-                MainRTHeight = 0;
+                return RenderTargets[InRenderTarget];
             }
+            return nullptr;
+        }
+
+        /* Idempotent: every slot is nulled as it is freed, so a scene that
+         * runs ReleaseAll() and is then destroyed does not double-free. */
+        void ReleaseRenderTargets()
+        {
+            for(GDIRenderTarget*& RenderTarget : RenderTargets)
+            {
+                if(RenderTarget)
+                {
+                    GDIReleaseRenderTarget(RenderTarget);
+                    delete RenderTarget;
+                    RenderTarget = nullptr;
+                }
+            }
+
+            WindowWidth  = 0;
+            WindowHeight = 0;
         }
     };
 
@@ -118,7 +159,7 @@ namespace RenderCore
         /* Belt and braces: ReleaseAll() is the ordinary path and already
          * did this, but a scene destroyed without it (a test, an early
          * failure) must still not leak a GPU image. Idempotent. */
-        P->ReleaseMainRT();
+        P->ReleaseRenderTargets();
 
         delete P;
     }
@@ -186,8 +227,9 @@ namespace RenderCore
         InContext.SetView(P->View);
 
         /* Created on first use and resized with the viewport -- see Impl's
-         * own comment on why a scene owns one of these at all. */
-        P->EnsureMainRT(P->View.ViewportPixels);
+         * own comment on why a scene owns these at all. Early-outs on every
+         * frame whose viewport has not changed, which is nearly all of them. */
+        P->AllocateRenderTargets(P->View.ViewportPixels);
 
         GDIBeginRendering();
 
@@ -201,14 +243,14 @@ namespace RenderCore
          * dynamic-rendering region ... or the clear and draw below are
          * silently dropped").
          *
-         * This is also what leaves MainRT as the driver's ActiveRenderTarget
-         * when EndRendering runs, which is what PresentToWindow presents and
-         * what EndRendering transitions to SHADER_READ_ONLY_OPTIMAL for the
-         * present blit to sample.
+         * This is also what leaves the back buffer as the driver's
+         * ActiveRenderTarget when EndRendering runs, which is what
+         * PresentToWindow presents and what EndRendering transitions to
+         * SHADER_READ_ONLY_OPTIMAL for the present blit to sample.
          */
-        if(P->MainRT)
+        if(GDIRenderTarget* BackBuffer = P->GetRenderTarget(Impl::ERT_BackBuffer))
         {
-            GDISetRenderTarget(P->MainRT);
+            GDISetRenderTarget(BackBuffer);
         }
 
         GDISetViewport(0, 0, uint(P->View.ViewportPixels.Width), uint(P->View.ViewportPixels.Height));
@@ -283,6 +325,6 @@ namespace RenderCore
          * render thread, like the rest of this class, and before
          * Renderer::Shutdown stops that thread -- which is what keeps the
          * GPU image's destruction on the thread that owns the context. */
-        P->ReleaseMainRT();
+        P->ReleaseRenderTargets();
     }
 }
