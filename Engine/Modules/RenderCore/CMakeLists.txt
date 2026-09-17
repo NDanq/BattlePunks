@@ -34,10 +34,10 @@ option(RENDERCORE_BUILD_SMOKETEST "Build RenderCoreSmokeTest" OFF)
 # Sources
 # ===========================================================================
 #
-# Through step 3 (proxies, scene, the quad primitive) -- the World bridge and
-# the Renderer facade arrive in the next build-order step; see DESIGN.md's
-# "Build order" section. Each step appends its own files here rather than
-# pre-declaring empty ones, so an incomplete file never silently joins the
+# Through step 4 (WorldBridge + the Renderer facade) -- only the Engine/
+# Sandbox integration remains; see DESIGN.md's "Build order" section. Each
+# step appends its own files here rather than pre-declaring empty ones, so
+# an incomplete file never silently joins the
 # build ahead of the step that actually implements it.
 set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderCoreInternal.h
@@ -51,6 +51,9 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/PrimitiveProxy.h
         Source/Private/RenderCore/PrimitiveProxy.cpp
         Source/Private/RenderCore/RenderComponents.cpp
+        Source/Private/RenderCore/WorldBridge.h
+        Source/Private/RenderCore/WorldBridge.cpp
+        Source/Private/RenderCore/Renderer.cpp
         Source/Public/RenderCore/RenderCoreAPI.h
         Source/Public/RenderCore/RenderCoreLog.h
         Source/Public/RenderCore/RenderTypes.h
@@ -62,6 +65,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RenderProxy.h
         Source/Public/RenderCore/RenderScene.h
         Source/Public/RenderCore/RenderComponents.h
+        Source/Public/RenderCore/Renderer.h
 )
 
 # ===========================================================================

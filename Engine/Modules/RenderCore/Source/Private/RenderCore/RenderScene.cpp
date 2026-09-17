@@ -116,14 +116,28 @@ namespace RenderCore
                 continue;
             }
 
-            /* An empty view Bounds (GameCore::AABB's own default state, and
-             * RenderView's before MakeOrthographic ever runs) means "cull
-             * nothing" -- AABB::Overlaps already returns false for an empty
-             * box on either side, so a caller with no real view still draws
-             * everything rather than nothing, which is the safer default for
-             * a hand-built scene in a test. */
-            const bool bViewHasBounds = !P->View.Bounds.IsEmpty();
-            const bool bVisible       = !bViewHasBounds || Proxy->GetWorldBounds().Overlaps(P->View.Bounds);
+            /*
+             * EMPTY MEANS "NO BASIS TO CULL", on EITHER side -- not "never
+             * overlaps". GameCore::AABB::Overlaps already returns false the
+             * instant either box IsEmpty(), which is exactly backwards for
+             * this decision: a caller with no real view (a hand-built scene
+             * in a test) still wants everything drawn, and a proxy that
+             * never called SetLocalBounds (RenderProxy's own default
+             * LocalBounds/WorldBounds -- AABB()'s empty state, unlike
+             * PrimitiveProxy which always sets one in ApplyComponent) has
+             * given RenderScene nothing to cull it BY -- it is not
+             * "everywhere and nowhere", it is "undeclared", and undeclared
+             * must default to visible or a proxy type that never opts into
+             * bounds can never be drawn at all, discovered the hard way by
+             * this file's own smoke test's test-defined proxy (which sets
+             * no local bounds on purpose, to prove exactly this path).
+             * Explicitly NOT AABB::Overlaps' own empty-handling, which this
+             * comment exists to override.
+             */
+            const bool bViewHasBounds  = !P->View.Bounds.IsEmpty();
+            const bool bProxyHasBounds = !Proxy->GetWorldBounds().IsEmpty();
+            const bool bVisible        = !bViewHasBounds || !bProxyHasBounds
+                                       || Proxy->GetWorldBounds().Overlaps(P->View.Bounds);
 
             if(!bVisible)
             {
