@@ -6,6 +6,7 @@
 #include "Public/RenderCore/RenderProxy.h"
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/RenderThread.h"
+#include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/WorldBridge.h"
 
 /*
@@ -144,6 +145,34 @@ namespace RenderCore
         }
 
         P->Thread.EndFrame(InFrame.FrameNumber);
+    }
+
+    void Renderer::PresentToWindow(const EngineCore::WindowHandle InWindow)
+    {
+        /*
+         * Straight through to the driver -- no command, no queue. This is
+         * the ONE piece of GPU work RenderCore deliberately does NOT route
+         * through the render thread, because GDI's present path is built
+         * for a second thread to run it (its own command pool, its own
+         * per-swapchain-image semaphores, submitted under the device queue
+         * mutex and ordered against the render thread by a timeline
+         * semaphore). Routing it through the render thread would serialise
+         * exactly the two things that machinery exists to overlap. See
+         * Renderer.h for the full contract.
+         *
+         * The render thread must be running: the driver, its swapchain and
+         * the target being presented all belong to it, and after Stop() the
+         * driver has already been destroyed and released.
+         */
+        if(!P->Thread.IsRunning())
+        {
+            return;
+        }
+
+        if(GDynamicGDI)
+        {
+            GDynamicGDI->PresentToWindow(InWindow);
+        }
     }
 
     void Renderer::SetClearColor(const EngineCore::Color InColor)

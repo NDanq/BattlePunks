@@ -24,6 +24,83 @@ namespace RenderCore
         std::vector<RenderProxy*> Proxies;
         RenderView                View;
         EngineCore::Color         ClearColor{24, 26, 32, 255};
+
+        /*
+         * THE OFFSCREEN MAIN RENDER TARGET, and the whole reason anything
+         * ever reaches the screen.
+         *
+         * GDIDynamicDriver::PresentToWindow presents
+         * CurrentStateData->ActiveRenderTarget -- the most recently bound RT
+         * -- and VulkanDynamicGDI.cpp's own comment states the contract it
+         * expects of a renderer: "the renderer always rebinds Main right
+         * before EndRendering, so CurrentStateData->ActiveRenderTarget is
+         * the main RT". Render() below is what makes that true here.
+         * Without an RT bound at all, ActiveRenderTarget stays null
+         * (BeginRendering clears it) and every present silently returns --
+         * which is exactly what "the quad is not visible" looked like.
+         *
+         * ONE target, not a GDIRenderTargetManager: that class holds
+         * Main/Buffer1/PostBuffer1 and the Resolve/Restore pair, which are
+         * paint-application concepts (they exist for canvas stroke
+         * buffering). A scene with one pass needs one target; the other two
+         * would be three times the VRAM for nothing.
+         *
+         * Sized from the view's ViewportPixels and resized when that
+         * changes -- see Render(). Null until the first Render(), and on a
+         * backend whose CreateRenderTarget returns nothing.
+         */
+        GDIRenderTarget* MainRT      = nullptr;
+        uint             MainRTWidth  = 0;
+        uint             MainRTHeight = 0;
+
+        /* Creates MainRT, or resizes it to match InViewport. Render thread
+         * only, like everything else on this class. */
+        void EnsureMainRT(const EngineCore::Size InViewport)
+        {
+            /* A zero-sized viewport (a minimised window, or a view built
+             * before the first real pixel size is known) would make an
+             * invalid image; keep whatever we already had and let the next
+             * frame with a real size sort it out. */
+            if(InViewport.Width <= 0 || InViewport.Height <= 0)
+            {
+                return;
+            }
+
+            const uint Width  = uint(InViewport.Width);
+            const uint Height = uint(InViewport.Height);
+
+            if(!MainRT)
+            {
+                MainRT       = GDICreateRenderTarget("RenderCore.Main", Width, Height);
+                MainRTWidth  = Width;
+                MainRTHeight = Height;
+                return;
+            }
+
+            if(MainRTWidth != Width || MainRTHeight != Height)
+            {
+                /* GDIRenderTarget::Resize is the backend's own recreate
+                 * path -- on Vulkan it also raises the driver's bResizing
+                 * flag, which makes the UI-thread present skip until a full
+                 * frame has been rendered into the new images (cleared by
+                 * EndRendering). Nothing extra to coordinate here. */
+                MainRT->Resize(Width, Height);
+                MainRTWidth  = Width;
+                MainRTHeight = Height;
+            }
+        }
+
+        void ReleaseMainRT()
+        {
+            if(MainRT)
+            {
+                GDIReleaseRenderTarget(MainRT);
+                delete MainRT;
+                MainRT       = nullptr;
+                MainRTWidth  = 0;
+                MainRTHeight = 0;
+            }
+        }
     };
 
     RenderScene::RenderScene() : P(new Impl())
@@ -37,6 +114,12 @@ namespace RenderCore
             RENDERCORE_LOG_WARN("RenderScene destroyed with proxies still present; "
                                  "somebody skipped RemoveProxy -- see ReleaseAll")
         }
+
+        /* Belt and braces: ReleaseAll() is the ordinary path and already
+         * did this, but a scene destroyed without it (a test, an early
+         * failure) must still not leak a GPU image. Idempotent. */
+        P->ReleaseMainRT();
+
         delete P;
     }
 
@@ -102,7 +185,32 @@ namespace RenderCore
          * leaves GetView() reporting a view nothing has drawn against yet. */
         InContext.SetView(P->View);
 
+        /* Created on first use and resized with the viewport -- see Impl's
+         * own comment on why a scene owns one of these at all. */
+        P->EnsureMainRT(P->View.ViewportPixels);
+
         GDIBeginRendering();
+
+        /*
+         * AFTER BeginRendering, never before: VulkanDynamicGDI::SetRenderTarget
+         * bails out entirely when CurrentCmd is null (i.e. outside a
+         * BeginRendering/EndRendering pair), so a bind placed above would be
+         * a silent no-op and the clear and draws below would land nowhere --
+         * GDIRenderTarget.cpp's own DrawTexture comment describes exactly
+         * this trap ("on Vulkan Bind() is a no-op -- the driver must open a
+         * dynamic-rendering region ... or the clear and draw below are
+         * silently dropped").
+         *
+         * This is also what leaves MainRT as the driver's ActiveRenderTarget
+         * when EndRendering runs, which is what PresentToWindow presents and
+         * what EndRendering transitions to SHADER_READ_ONLY_OPTIMAL for the
+         * present blit to sample.
+         */
+        if(P->MainRT)
+        {
+            GDISetRenderTarget(P->MainRT);
+        }
+
         GDISetViewport(0, 0, uint(P->View.ViewportPixels.Width), uint(P->View.ViewportPixels.Height));
         GDIClear(CM_Color | CM_Depth, P->ClearColor);
 
@@ -169,5 +277,12 @@ namespace RenderCore
              * caring which order, only that every one is actually freed. */
             RemoveProxy(P->Proxies.back(), InContext);
         }
+
+        /* AFTER the proxies, not before: a proxy's own ReleaseRenderResources
+         * may still reference the target it was drawing into. Runs on the
+         * render thread, like the rest of this class, and before
+         * Renderer::Shutdown stops that thread -- which is what keeps the
+         * GPU image's destruction on the thread that owns the context. */
+        P->ReleaseMainRT();
     }
 }
