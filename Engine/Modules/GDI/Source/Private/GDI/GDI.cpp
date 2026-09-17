@@ -399,9 +399,10 @@ EngineCore::Color GDIGetColorFromSamplePoint(const EngineCore::Point& InPoint, c
 /*
  * Hand-written rather than IMPLEMENT_GDI_FUNCTION_BODY_RET: that macro's
  * no-driver path is `return NULL`, which for an `enum : char` decays to 0 --
- * ERP_OpenGL, the most misleading answer possible for "no driver is
- * installed". ERP_Null is the honest answer here, matching
- * GDIGetColorFromSamplePoint's hand-written fallback just above.
+ * ERP_Null since GDIDefinitions.h's reorder, so the macro's own fallback
+ * would now be the honest answer too. Kept hand-written for clarity rather
+ * than out of necessity, matching GDIGetColorFromSamplePoint's hand-written
+ * fallback just above.
  */
 ERenderPlatform GDIGetRenderPlatform()
 {

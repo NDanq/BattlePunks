@@ -139,12 +139,22 @@ enum EColorMask : char
     EColM_MAX
 };
 
+/*
+ * ERP_Null IS ZERO, deliberately -- the one edit RenderCore makes inside this
+ * vendored subtree (see Engine/Modules/RenderCore/DESIGN.md). A
+ * zero-initialized or default-constructed platform value should be the one
+ * that needs no window and no GPU, not ERP_OpenGL, which needs a live WGL
+ * context. RenderCore::ERenderBackend (RenderTypes.h) mirrors these values
+ * and RenderCoreInternal.h static_asserts every pair, so a future reorder --
+ * including a subtree pull that reverts this one -- fails the build instead
+ * of silently selecting the wrong backend.
+ */
 enum ERenderPlatform : char
 {
-    ERP_OpenGL = 0,
+    ERP_Null = 0,
+    ERP_OpenGL,
     ERP_Vulkan,
     ERP_Metal,
-    ERP_Null,
     ERP_D3D12,
     ERP_MAX
 };

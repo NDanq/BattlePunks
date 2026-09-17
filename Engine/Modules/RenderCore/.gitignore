@@ -1,0 +1,18 @@
+# ===========================================================================
+# RenderCore .gitignore
+#
+# The module itself has no standalone configure -- see the FATAL_ERROR guard
+# at the top of CMakeLists.txt -- so there is no Build/ tree that belongs to
+# it specifically. This file exists for local IDE/build clutter that can
+# still land here if an editor is pointed directly at this directory, and
+# mirrors Modules/GameCore's own .gitignore for the same reason that one
+# exists despite GameCore also having no standalone configure.
+# ---------------------------------------------------------------------------
+/Build/
+/build/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json

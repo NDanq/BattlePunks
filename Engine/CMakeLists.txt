@@ -201,6 +201,24 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GameCore/CMakeLists.txt")
     add_subdirectory(Modules/GameCore)
 endif()
 
+# RenderCore: the render stack, on its own render thread. Written for this
+# repository, guarded the same way as GameCore, and for the same ordering
+# reason -- placed AFTER GameCore (it links GameCore::GameCore PUBLIC) and
+# BEFORE the NimbleEngine target below (whose own nimble_add_module() call
+# needs RenderCore::RenderCore to already exist as a namespaced ALIAS).
+#
+# ALSO guarded on TARGET GDI: RenderCore links GDI PRIVATE and is the ONLY
+# image in the process allowed to -- see RenderCoreInternal.h's comment -- so
+# it cannot configure at all without GDI already present. A checkout without
+# GDI (or without RenderCore itself) still configures, matching the existing
+# "a checkout without GDI still configures" property GameWindow's own guard
+# states.
+if(TARGET GDI AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/RenderCore/CMakeLists.txt")
+    add_subdirectory(Modules/RenderCore)
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/RenderCore/CMakeLists.txt")
+    message(STATUS "RenderCore present but GDI is not configured; skipping RenderCore")
+endif()
+
 # === NimbleEngine =========================================================
 # The engine layer itself: the thing that owns the module set, drives the frame
 # and is what a game under Games/ links. Its sources live at Engine/Source, so
