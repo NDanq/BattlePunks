@@ -332,9 +332,8 @@ namespace RenderCore
         OutStats.FramesRendered         = P->FramesRendered.load(std::memory_order_relaxed);
         OutStats.CommandsExecuted       = P->CommandsExecuted.load(std::memory_order_relaxed);
         OutStats.CommandsExecutedInline = GetInlineRenderCommandCount();
-        OutStats.DrawCalls              = 0;   // wired up once RenderContext::DrawQuad exists
-        OutStats.ProxiesLive            = 0;   // wired up once RenderScene exists
-        OutStats.ProxiesCulledLastFrame = 0;
+        OutStats.DrawCalls              = P->Context.GetDrawCallCount();
+        GetSceneStats(OutStats.ProxiesLive, OutStats.ProxiesCulledLastFrame);
         OutStats.PeakQueueDepth         = P->PeakQueueDepth.load(std::memory_order_relaxed);
     }
 
@@ -343,6 +342,15 @@ namespace RenderCore
     namespace
     {
         RenderThread* GActiveRenderThread = nullptr;
+
+        /* Written only from inside RenderScene::Render() (render thread),
+         * read only from RenderThread::GetStats() (any thread) -- a plain
+         * pair rather than atomics would be a data race under that reading,
+         * so both fields are atomic despite there being exactly one writer;
+         * cheap, and correct without having to argue that "one writer" stays
+         * true as this module grows more than one RenderScene. */
+        std::atomic<uint64_t> GProxiesLive{0};
+        std::atomic<uint64_t> GProxiesCulled{0};
     }
 
     void SetActiveRenderThread(RenderThread* InThread)
@@ -353,5 +361,17 @@ namespace RenderCore
     RenderThread* GetActiveRenderThread()
     {
         return GActiveRenderThread;
+    }
+
+    void SetSceneStats(const uint64_t InProxiesLive, const uint64_t InProxiesCulled)
+    {
+        GProxiesLive.store(InProxiesLive, std::memory_order_relaxed);
+        GProxiesCulled.store(InProxiesCulled, std::memory_order_relaxed);
+    }
+
+    void GetSceneStats(uint64_t& OutProxiesLive, uint64_t& OutProxiesCulled)
+    {
+        OutProxiesLive   = GProxiesLive.load(std::memory_order_relaxed);
+        OutProxiesCulled = GProxiesCulled.load(std::memory_order_relaxed);
     }
 }

@@ -34,11 +34,11 @@ option(RENDERCORE_BUILD_SMOKETEST "Build RenderCoreSmokeTest" OFF)
 # Sources
 # ===========================================================================
 #
-# Through step 2 (RenderThread + commands) -- RenderProxy, RenderScene, the
-# World bridge and the Renderer facade arrive in later build-order steps; see
-# DESIGN.md's "Build order" section. Each step appends its own files here
-# rather than pre-declaring empty ones, so an incomplete file never silently
-# joins the build ahead of the step that actually implements it.
+# Through step 3 (proxies, scene, the quad primitive) -- the World bridge and
+# the Renderer facade arrive in the next build-order step; see DESIGN.md's
+# "Build order" section. Each step appends its own files here rather than
+# pre-declaring empty ones, so an incomplete file never silently joins the
+# build ahead of the step that actually implements it.
 set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderCoreInternal.h
         Source/Private/RenderCore/RenderCore.cpp
@@ -46,6 +46,11 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderThread.cpp
         Source/Private/RenderCore/RenderCommand.cpp
         Source/Private/RenderCore/RenderContext.cpp
+        Source/Private/RenderCore/RenderProxy.cpp
+        Source/Private/RenderCore/RenderScene.cpp
+        Source/Private/RenderCore/PrimitiveProxy.h
+        Source/Private/RenderCore/PrimitiveProxy.cpp
+        Source/Private/RenderCore/RenderComponents.cpp
         Source/Public/RenderCore/RenderCoreAPI.h
         Source/Public/RenderCore/RenderCoreLog.h
         Source/Public/RenderCore/RenderTypes.h
@@ -53,6 +58,10 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RenderCommand.h
         Source/Public/RenderCore/RenderThread.h
         Source/Public/RenderCore/RenderContext.h
+        Source/Public/RenderCore/RenderView.h
+        Source/Public/RenderCore/RenderProxy.h
+        Source/Public/RenderCore/RenderScene.h
+        Source/Public/RenderCore/RenderComponents.h
 )
 
 # ===========================================================================
