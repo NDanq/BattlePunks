@@ -127,7 +127,16 @@ public:
         EntityCreatedHandle = World.OnEntityCreated().Add(&OnEntityCreatedLogger, &World);
 
         MarkerEntity = World.CreateEntity("Marker");
-        World.AddComponent<GameCore::TransformComponent>(MarkerEntity);
+        {
+            /* Lifted off y=0 deliberately. The view is orthographic with its
+             * origin at the camera entity's own position -- (0,0,0) here --
+             * so y=0 is the BOTTOM edge of the window, and a 32x32 quad
+             * centred there would hang half out of the viewport. Roughly
+             * mid-height keeps the whole quad on screen as it sweeps. */
+            GameCore::TransformComponent MarkerTransform;
+            MarkerTransform.Position = EngineCore::Vector3(0.0, 360.0, 0.0);
+            World.AddComponent<GameCore::TransformComponent>(MarkerEntity, MarkerTransform);
+        }
         GameCore::BoundsComponent Bounds;
         Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, -0.5), EngineCore::Vector3(0.5, 0.5, 0.5));
         World.AddComponent<GameCore::BoundsComponent>(MarkerEntity, Bounds);

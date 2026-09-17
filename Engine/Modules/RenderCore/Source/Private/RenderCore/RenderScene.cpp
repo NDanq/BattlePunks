@@ -254,6 +254,33 @@ namespace RenderCore
         }
 
         GDISetViewport(0, 0, uint(P->View.ViewportPixels.Width), uint(P->View.ViewportPixels.Height));
+
+        /*
+         * THE COLOUR MASK IS NOT OPTIONAL, and nothing supplies a usable
+         * default: VKBlendState's ColorAttachment is a value-initialised
+         * VkPipelineColorBlendAttachmentState, so colorWriteMask starts at
+         * ZERO -- every channel masked off. The pipeline builds, the draw is
+         * recorded, vkCmdDraw executes, fragments are shaded, and not one
+         * byte reaches the attachment. An entirely clear image with healthy
+         * draw-call counts and no validation error is exactly what that
+         * looks like from the outside, and is what it looked like here.
+         *
+         * GDI's own GDIRenderTarget::DrawTexture opens with this same call
+         * for this same reason; it was simply the only caller, because every
+         * other drawing path in the tree goes through it. A scene that
+         * renders its own geometry is the case nobody had written yet.
+         *
+         * Blend and depth are set alongside it rather than left implicit:
+         * the pipeline key is built from whatever VKCurrentStateData happens
+         * to hold, so "never set it" means "inherit whatever the last
+         * unrelated caller left there", which is not a contract a scene can
+         * rely on. Straight alpha blending and a plain less-than depth test
+         * are what a 2D sprite pass wants.
+         */
+        GDISetColorMask(EColM_RGBA);
+        GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
+        GDISetDepthState(IDepthStateDesc());
+
         GDIClear(CM_Color | CM_Depth, P->ClearColor);
 
         uint64_t VisibleCount = 0;
