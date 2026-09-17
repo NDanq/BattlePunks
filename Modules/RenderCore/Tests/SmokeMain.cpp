@@ -3,24 +3,27 @@
  * CMakeLists.txt's comment: it must NOT link GDI::GDI, which is the
  * structural check that no GDI header has leaked into Public/).
  *
- * Through step 3 (proxies, scene, the quad primitive). The World-driven
- * cases, the test-defined proxy type and teardown/leak checks arrive with
- * step 4 (WorldBridge + the Renderer facade); see DESIGN.md's "Build order"
- * and this module's own "Smoke test" section for the full list. Written in
- * GameCoreSmokeTest's Expect()-counter style.
+ * Through step 4 (WorldBridge + the Renderer facade) -- the whole surface
+ * exists now; see DESIGN.md's "Build order" and this module's own "Smoke
+ * test" section for the full case list. Written in GameCoreSmokeTest's
+ * Expect()-counter style.
  */
 
 #include <atomic>
 #include <cstdio>
 #include <cstring>
 
+#include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/AABB.h"
+#include "Public/GameCore/Components.h"
 #include "Public/GameCore/EntityID.h"
+#include "Public/GameCore/World.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderCoreVersion.h"
+#include "Public/RenderCore/Renderer.h"
 #include "Public/RenderCore/RenderProxy.h"
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/RenderThread.h"
@@ -293,11 +296,192 @@ static void TestHandBuiltScene(RenderThread& InThread)
            "UnregisterProxyType clears the factory table slot");
 }
 
+// ============================================================================
+// A test-defined proxy type, registered from THIS executable -- a different
+// image from RenderCore.dll -- proving RegisterProxyType/CreateProxyFn work
+// across the image boundary the way GameCore's own component registry does.
+// ============================================================================
+
+namespace
+{
+    struct TestProxyStats
+    {
+        int InitCalls    = 0;
+        int ApplyCalls   = 0;
+        int DrawCalls    = 0;
+        int ReleaseCalls = 0;
+    };
+    TestProxyStats GTestProxyStats;
+
+    struct TestComponent
+    {
+        GAMECORE_COMPONENT_BODY()
+        RENDERCORE_PROXY_BODY()
+        int Value = 0;
+    };
+
+    class TestProxy final : public RenderProxy
+    {
+    public:
+        TestProxy(const GameCore::EntityID InOwner, const TestComponent& InInit) : RenderProxy(InOwner)
+        {
+            ApplyComponent(&InInit);
+        }
+
+        void InitRenderResources(RenderContext&) override { ++GTestProxyStats.InitCalls; }
+        void ReleaseRenderResources(RenderContext&) override { ++GTestProxyStats.ReleaseCalls; }
+
+        void ApplyComponent(const void* InComponentBytes) override
+        {
+            Value = static_cast<const TestComponent*>(InComponentBytes)->Value;
+            ++GTestProxyStats.ApplyCalls;
+        }
+
+        void Draw(RenderContext&) override { ++GTestProxyStats.DrawCalls; }
+
+    private:
+        int Value = 0;
+    };
+}
+GAMECORE_DEFINE_COMPONENT(TestComponent, "RenderCoreSmokeTest.Test")
+
+namespace
+{
+    RenderProxy* TestComponent_CreateProxy(const GameCore::EntityID InEntity, const void* InBytes)
+    {
+        return EngineCore::Memory::Alloc<TestProxy>(InEntity, *static_cast<const TestComponent*>(InBytes));
+    }
+}
+
+// ============================================================================
+// The World-driven suite: a real GameCore::World bound to a Renderer.
+// ============================================================================
+
+static void TestRendererWithWorld()
+{
+    std::printf("[renderer + world]\n");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds");
+    if(!bInit)
+    {
+        return;
+    }
+
+    const bool bTestTypeRegistered = RegisterProxyType(TestComponent::StaticType().ID, &TestComponent_CreateProxy);
+    Expect(bTestTypeRegistered, "a test-defined proxy type registers from a different image than RenderCore.dll");
+
+    /* One World for the whole suite. A component added BEFORE BindWorld
+     * exercises the existing-components sweep, not the OnComponentAdded
+     * delegate path -- created here, first, so BindWorld genuinely finds it
+     * already present. */
+    GameCore::World World;
+
+    const GameCore::EntityID PreExisting = World.CreateEntity();
+    World.AddComponent<GameCore::TransformComponent>(PreExisting);
+    PrimitiveComponent PrimInit;
+    World.AddComponent<PrimitiveComponent>(PreExisting, PrimInit);
+
+    Rend.BindWorld(World);
+
+    RenderStats StatsAfterSweep;
+    Rend.WaitForPreviousFrame();
+    Rend.EndFrame(FrameInfo{100, 0.016, EngineCore::Size(1280, 720)});
+    Rend.WaitForPreviousFrame();
+    Rend.GetStats(StatsAfterSweep);
+    Expect(StatsAfterSweep.ProxiesLive == 1, "BindWorld's existing-components sweep created a proxy for the pre-existing PrimitiveComponent");
+
+    World.DestroyEntity(PreExisting);
+    Rend.EndFrame(FrameInfo{101, 0.016, EngineCore::Size(1280, 720)});
+    Rend.WaitForPreviousFrame();
+
+    const GameCore::EntityID E1 = World.CreateEntity();
+    World.AddComponent<GameCore::TransformComponent>(E1);
+    PrimitiveComponent Prim;
+    Prim.Width  = 1.0f;
+    Prim.Height = 1.0f;
+    World.AddComponent<PrimitiveComponent>(E1, Prim);
+
+    const GameCore::EntityID TestEntity = World.CreateEntity();
+    World.AddComponent<GameCore::TransformComponent>(TestEntity);
+    TestComponent TestInit;
+    TestInit.Value = 42;
+    World.AddComponent<TestComponent>(TestEntity, TestInit);
+
+    Rend.WaitForPreviousFrame();
+    Rend.EndFrame(FrameInfo{0, 0.016, EngineCore::Size(1280, 720)});
+    Rend.WaitForPreviousFrame();
+
+    RenderStats Stats;
+    Rend.GetStats(Stats);
+    Expect(Stats.ProxiesLive == 2, "OnComponentAdded created a proxy for each of the two render components");
+    Expect(GTestProxyStats.InitCalls == 1, "the test proxy's InitRenderResources ran once, on the render thread, after AddProxy");
+    Expect(GTestProxyStats.ApplyCalls >= 2, "ApplyComponent ran at least once from the constructor plus once from extraction");
+    Expect(GTestProxyStats.DrawCalls >= 1, "the test proxy's Draw ran during Render()");
+
+    /* Move the entity, tick another frame, confirm extraction actually
+     * carries the CURRENT transform, not merely the one from creation. */
+    GameCore::TransformComponent* Transform = World.GetComponent<GameCore::TransformComponent>(E1);
+    Transform->Position = EngineCore::Vector3(500.0, 500.0, 0.0);
+
+    Rend.EndFrame(FrameInfo{1, 0.016, EngineCore::Size(1280, 720)});
+    Rend.WaitForPreviousFrame();
+
+    /* RemoveComponent -- proves OnComponentRemoved's teardown path. */
+    World.RemoveComponent<PrimitiveComponent>(E1);
+    Rend.EndFrame(FrameInfo{2, 0.016, EngineCore::Size(1280, 720)});
+    Rend.WaitForPreviousFrame();
+
+    RenderStats StatsAfterRemove;
+    Rend.GetStats(StatsAfterRemove);
+    Expect(StatsAfterRemove.ProxiesLive == 1, "RemoveComponent<PrimitiveComponent> removed exactly its own proxy");
+
+    /* DestroyEntity -- proves the OTHER teardown path (World.cpp broadcasts
+     * OnComponentRemoved for every component before the entity's slot is
+     * recycled). */
+    World.DestroyEntity(TestEntity);
+    Rend.EndFrame(FrameInfo{3, 0.016, EngineCore::Size(1280, 720)});
+    Rend.WaitForPreviousFrame();
+
+    RenderStats StatsAfterDestroy;
+    Rend.GetStats(StatsAfterDestroy);
+    Expect(StatsAfterDestroy.ProxiesLive == 0, "DestroyEntity removed the last remaining proxy");
+    Expect(GTestProxyStats.ReleaseCalls == 1, "ReleaseRenderResources ran once for the destroyed test proxy");
+
+    /* Camera: an active CameraComponent at a known position moves the view's
+     * origin -- read back through a render command against the scene's
+     * current view, the same technique a real caller would use to debug one. */
+    const GameCore::EntityID CameraEntity = World.CreateEntity();
+    GameCore::TransformComponent* CamTransform = World.AddComponent<GameCore::TransformComponent>(CameraEntity);
+    CamTransform->Position = EngineCore::Vector3(100.0, 50.0, 0.0);
+    CameraComponent Cam;
+    World.AddComponent<CameraComponent>(CameraEntity, Cam);
+
+    Rend.EndFrame(FrameInfo{4, 0.016, EngineCore::Size(1280, 720)});
+    Rend.WaitForPreviousFrame();
+
+    std::atomic<double> SeenOriginX{-1.0};
+    ENQUEUE_RENDER_COMMAND(ReadViewOrigin)([&SeenOriginX](RenderContext& Ctx)
+    {
+        SeenOriginX.store(Ctx.GetView().Origin.GetX(), std::memory_order_release);
+    });
+    FlushRenderCommands();
+    Expect(SeenOriginX.load(std::memory_order_acquire) == 100.0, "an active CameraComponent's sibling Transform sets the view's origin");
+
+    UnregisterProxyType(TestComponent::StaticType().ID);
+    Expect(FindProxyFactory(TestComponent::StaticType().ID) == nullptr, "UnregisterProxyType clears the test type's table slot");
+
+    Rend.UnbindWorld();
+    Rend.Shutdown();
+}
+
 int main()
 {
     std::printf("RenderCore smoke test\n");
 
     Threads::SetMainThread();
+    Memory::SetCollectorThread();
 
     TestModuleName();
 
@@ -317,6 +501,12 @@ int main()
         Expect(!Thread.IsRunning(), "RenderThread::Stop() leaves IsRunning() false");
         Expect(Threads::GetLiveThreadCount() == 0, "no thread is left unjoined after Stop()");
     }
+
+    TestRendererWithWorld();
+
+    const uint64_t Leaked = Memory::ReportLeaks();
+    Expect(Leaked == 0, "no allocations leaked across the whole run -- every command, extraction "
+                         "batch and proxy was freed on the render thread");
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
