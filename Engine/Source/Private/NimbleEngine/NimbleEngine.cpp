@@ -406,6 +406,30 @@ namespace NimbleEngine
                  * is a separate question from location. */
                 Memory::CollectGarbage();
 
+                /*
+                 * PUTS THE PREVIOUS FRAME ON SCREEN, and the only place in
+                 * this loop that touches the window's pixels.
+                 *
+                 * HERE, specifically: WaitForPreviousFrame() above has just
+                 * returned, so the frame being presented is complete and
+                 * submitted -- which is precisely GDI's own stated
+                 * precondition ("Called from the UI thread after
+                 * RendererFinished()", GDI.h). Any earlier and there would
+                 * be nothing finished to present; any later and it would
+                 * race the frame EndFrame() is about to start building.
+                 *
+                 * GAME THREAD BY DESIGN, not by accident -- GDI's present
+                 * path keeps its own command pool and semaphores so a second
+                 * thread can record and submit it alongside the render
+                 * thread; see Renderer::PresentToWindow's own comment.
+                 *
+                 * NativeWindow, not Window->GetNativeHandle(): the handle was
+                 * captured once in Initialize() precisely because
+                 * GetNativeHandle() is a live SDL query rather than a cached
+                 * read -- see this class's own member comment.
+                 */
+                Rendering->PresentToWindow(NativeWindow);
+
                 RenderCore::FrameInfo Info;
                 Info.FrameNumber    = FrameNumber;
                 Info.DeltaSeconds   = Frame.DeltaSeconds;
