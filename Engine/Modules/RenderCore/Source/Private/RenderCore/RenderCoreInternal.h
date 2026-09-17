@@ -1,7 +1,9 @@
 #ifndef RENDERCORE_RENDERCOREINTERNAL_H
 #define RENDERCORE_RENDERCOREINTERNAL_H
 
+#include "Public/GDI/GDI.h"
 #include "Public/GDI/GDIDefinitions.h"
+#include "Public/GDI/Null/NullDynamicGDI.h"
 #include "Public/RenderCore/RenderTypes.h"
 
 /*
@@ -18,6 +20,14 @@
  * library: two images linking it would each get their own GDynamicGDI, their
  * own GRenderCommands and their own render-thread latch, with nothing to say
  * so.
+ *
+ * GDI.h is included for InitializeGDI/AssignContextGDI/AllocateResourcesGDI/
+ * ReleaseGDI, GDynamicGDI, GDISwapBuffers and the GDIBeginDrawEvent/EndDrawEvent
+ * pair -- RenderThread.cpp and RenderContext.cpp's whole reason for including
+ * this header. NullDynamicGDI.h is included so a caller with no real drawable
+ * (RenderCoreSmokeTest, and Sandbox's own ERP_Null default) can hand
+ * AssignContextGDI a NullGDIContext, matching NimbleEngine.cpp's own
+ * ERP_Null path before this module existed.
  */
 namespace RenderCore
 {

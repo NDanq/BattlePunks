@@ -34,19 +34,25 @@ option(RENDERCORE_BUILD_SMOKETEST "Build RenderCoreSmokeTest" OFF)
 # Sources
 # ===========================================================================
 #
-# Step 1 (skeleton) only -- RenderCommand, RenderThread, RenderContext,
-# RenderProxy, RenderScene, the World bridge and the Renderer facade arrive in
-# later build-order steps; see DESIGN.md's "Build order" section. Each step
-# appends its own files here rather than pre-declaring empty ones, so an
-# incomplete file never silently joins the build ahead of the step that
-# actually implements it.
+# Through step 2 (RenderThread + commands) -- RenderProxy, RenderScene, the
+# World bridge and the Renderer facade arrive in later build-order steps; see
+# DESIGN.md's "Build order" section. Each step appends its own files here
+# rather than pre-declaring empty ones, so an incomplete file never silently
+# joins the build ahead of the step that actually implements it.
 set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderCoreInternal.h
         Source/Private/RenderCore/RenderCore.cpp
+        Source/Private/RenderCore/RenderThreadInternal.h
+        Source/Private/RenderCore/RenderThread.cpp
+        Source/Private/RenderCore/RenderCommand.cpp
+        Source/Private/RenderCore/RenderContext.cpp
         Source/Public/RenderCore/RenderCoreAPI.h
         Source/Public/RenderCore/RenderCoreLog.h
         Source/Public/RenderCore/RenderTypes.h
         Source/Public/RenderCore/RenderCoreVersion.h
+        Source/Public/RenderCore/RenderCommand.h
+        Source/Public/RenderCore/RenderThread.h
+        Source/Public/RenderCore/RenderContext.h
 )
 
 # ===========================================================================
