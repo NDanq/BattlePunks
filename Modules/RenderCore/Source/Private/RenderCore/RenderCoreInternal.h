@@ -3,6 +3,7 @@
 
 #include "Public/GDI/GDI.h"
 #include "Public/GDI/GDIDefinitions.h"
+#include "Public/GDI/GDIView.h"
 #include "Public/GDI/Null/NullDynamicGDI.h"
 #include "Public/RenderCore/RenderTypes.h"
 
@@ -24,9 +25,12 @@
  * GDI.h is included for InitializeGDI/AssignContextGDI/AllocateResourcesGDI/
  * ReleaseGDI, GDynamicGDI, GDISwapBuffers and the GDIBeginDrawEvent/EndDrawEvent
  * pair -- RenderThread.cpp and RenderContext.cpp's whole reason for including
- * this header. NullDynamicGDI.h is included so a caller with no real drawable
- * (RenderCoreSmokeTest, and Sandbox's own ERP_Null default) can hand
- * AssignContextGDI a NullGDIContext, matching NimbleEngine.cpp's own
+ * this header. GDIView.h is included for GDIView/GDIViewObject/GDITransform,
+ * which GDIShader.h (pulled in by GDI.h) only forward-declares --
+ * RenderContext.cpp's DrawQuad needs the complete types to construct and
+ * mutate them. NullDynamicGDI.h is included so a caller with no real
+ * drawable (RenderCoreSmokeTest, and Sandbox's own ERP_Null default) can
+ * hand AssignContextGDI a NullGDIContext, matching NimbleEngine.cpp's own
  * ERP_Null path before this module existed.
  */
 namespace RenderCore

@@ -3,8 +3,10 @@
 
 #include <cstdint>
 
+#include "Public/Core/CoreTypes.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderTypes.h"
+#include "Public/RenderCore/RenderView.h"
 
 /*
  * What a render command and a RenderProxy draw with. RENDER THREAD ONLY --
@@ -16,12 +18,6 @@
  * (see its own comment). A proxy or a command written against this class
  * never needs to know GDI exists, which is what makes RenderCore.dll the
  * ONLY image in the process that links it -- see RenderCoreAPI.h.
- *
- * STEP 2 (this file's current state): the frame/backend/view accessors and
- * draw-event bracketing RenderThread's own drain loop already needs. Real
- * drawing (DrawQuad) arrives in the build-order step that also brings
- * RenderView and RenderProxy -- see DESIGN.md -- since a quad mesh and the
- * Basic shaders belong with the code that first has something to draw.
  */
 namespace RenderCore
 {
@@ -34,8 +30,24 @@ namespace RenderCore
         RenderContext(const RenderContext&)            = delete;
         RenderContext& operator=(const RenderContext&) = delete;
 
-        ERenderBackend GetBackend()     const;
-        uint64_t       GetFrameNumber() const;
+        ERenderBackend    GetBackend()     const;
+        uint64_t          GetFrameNumber() const;
+        const RenderView& GetView()        const;
+
+        /*
+         * Draws a quad centred on InTransform's position (scaled by
+         * InWidth/InHeight, rotated and offset the same way
+         * TransformComponent::GetLocalMatrix composes -- see
+         * RenderTypes.h's RenderTransform::ToMatrix), tinted InTint, through
+         * the Basic vertex/pixel shaders every backend already registers in
+         * InitializeGDI (GDI.cpp). One 1x1 quad mesh serves every size and
+         * every proxy -- scaled through GDITransform::Scale rather than
+         * GDICreateQuadMesh(w, h) allocating a mesh per size.
+         *
+         * Counts one draw call, read back through
+         * RenderThread::GetStats()'s RenderStats::DrawCalls.
+         */
+        void DrawQuad(const RenderTransform& InTransform, float InWidth, float InHeight, EngineCore::Color InTint);
 
         /* Render-thread only, matching GDI's own GDIBeginDrawEvent/EndDrawEvent
          * (Public/GDI/GDI.h) -- a scoped pair for a profiler's capture, cheap
@@ -43,14 +55,23 @@ namespace RenderCore
         void BeginDrawEvent(const char* InName);
         void EndDrawEvent();
 
+        /* Lifetime total of DrawQuad calls -- what RenderThread::GetStats()
+         * reads into RenderStats::DrawCalls. Not reset per frame: a snapshot
+         * consumer (a per-second log line) differences two reads itself,
+         * the same convention RenderStats's own comment states. */
+        uint64_t GetDrawCallCount() const;
+
     private:
         friend class RenderThread;
+        friend class RenderScene;
 
-        /* RenderThread::Start()/EndFrame() write these directly -- both live
-         * in this DLL and both run on the render thread, so there is no
-         * cross-image or cross-thread hazard in bypassing an accessor here. */
+        /* RenderThread::Start()/EndFrame() and RenderScene::SetView() write
+         * these directly -- all three live in this DLL and all run on the
+         * render thread, so there is no cross-image or cross-thread hazard
+         * in bypassing an accessor here. */
         void SetBackend(ERenderBackend InBackend);
         void SetFrameNumber(uint64_t InFrameNumber);
+        void SetView(const RenderView& InView);
 
         struct Impl;
         Impl* P;

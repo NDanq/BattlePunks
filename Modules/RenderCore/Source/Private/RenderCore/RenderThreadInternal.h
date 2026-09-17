@@ -34,6 +34,17 @@ namespace RenderCore
      * RenderCommandEnqueuer::operator() and NoteInlineRenderCommand(). Read
      * by RenderThread::GetStats() into RenderStats::CommandsExecutedInline. */
     uint64_t GetInlineRenderCommandCount();
+
+    /*
+     * RenderScene::Render() reports its own proxy/cull counts here, once per
+     * frame, and RenderThread::GetStats() reads them back into
+     * RenderStats::ProxiesLive/ProxiesCulledLastFrame -- a scene has no
+     * reach into RenderThread's own counters (there may be more than one
+     * RenderScene in a test, and only ever one active RenderThread), so the
+     * relay is the same shape as NoteInlineRenderCommand's own one-way feed.
+     */
+    void SetSceneStats(uint64_t InProxiesLive, uint64_t InProxiesCulled);
+    void GetSceneStats(uint64_t& OutProxiesLive, uint64_t& OutProxiesCulled);
 }
 
 #endif //RENDERCORE_RENDERTHREADINTERNAL_H
