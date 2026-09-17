@@ -178,16 +178,53 @@ namespace RenderCore
 
         InitializeGDI(Platform, InWindow);
 
-        /* Only the Null backend can be handed a context with no real
-         * drawable -- everything else needs one the caller does not provide
-         * here (a GL context, a Vulkan surface). This is NimbleEngine.cpp's
-         * own Initialize() check, carried over: leaving no context assigned
-         * lets Start's readiness check below turn that into a clean startup
-         * failure rather than a fatal GDI_CHECK three calls later. */
+        /*
+         * WHICH BACKENDS CAN BE HANDED A CONTEXT FROM HERE.
+         *
+         * Null: trivially, it dereferences nothing.
+         *
+         * Vulkan: also yes, and this is NOT the "the host does not provide a
+         * drawable yet" case an older comment here (inherited from
+         * NimbleEngine.cpp, from before this module existed) claimed for
+         * every non-Null backend. Vulkan needs no drawable AT THIS POINT:
+         * VulkanGDIContext's own constructor calls GetSharedVkInstance(),
+         * which creates the process-wide VkInstance from
+         * GDIPlatform::appVulkanRequiredInstanceExtensions() alone, and the
+         * SURFACE is created much later, by VKSwapchain::Initialize, out of
+         * the WindowHandle GDI already stored in InitializeGDI above (it
+         * calls GDIPlatform::appVulkanCreateSurface itself). Both halves of
+         * that platform seam are already implemented for Windows in
+         * GDIPlatformWindows.cpp. So the ONLY thing that was ever missing
+         * was this assignment -- without it VulkanDynamicGDI::Allocate()
+         * early-outs at its `if(!VKCtx || !VKCtx->VKContext)` guard, leaving
+         * a driver with no device, no swapchain and no sync that silently
+         * discards every draw call, which is exactly what "the quad is not
+         * visible" looked like from the outside.
+         *
+         * OpenGL and Metal genuinely DO still need a drawable this function
+         * has no way to build -- a GL context wants an HDC made current on
+         * THIS thread (and OpenGLDynamicGDI::Allocate bails before even
+         * latching the render thread without one, which is why selecting it
+         * fails startup outright rather than drawing nothing). Those keep
+         * the old behaviour: no context, and Start's readiness check below
+         * turns that into a clean startup failure rather than a fatal
+         * GDI_CHECK three calls later.
+         */
         if(InBackend == ERenderBackend::Null)
         {
             AssignContextGDI(new NullGDIContext());
         }
+#if WITH_VULKAN_GDI
+        else if(InBackend == ERenderBackend::Vulkan)
+        {
+            if(!InWindow.IsValid())
+            {
+                RENDERCORE_LOG_WARN("RenderThread::Start: the Vulkan backend needs a window to present "
+                                     "to; the swapchain will fail to initialise")
+            }
+            AssignContextGDI(new VulkanGDIContext());
+        }
+#endif
         else if(!InWindow.IsValid())
         {
             RENDERCORE_LOG_WARN("RenderThread::Start: backend is not Null and InWindow has no native "
