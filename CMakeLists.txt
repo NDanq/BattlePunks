@@ -252,13 +252,20 @@ nimble_add_module(NimbleEngine SHARED
         PREFIX  NIMBLEENGINE
         SOURCES ${NIMBLEENGINE_SOURCES})
 
-# PRIVATE, not PUBLIC: the engine layer's headers must not leak GameWindow or
-# GDI types to a game. If either of these ever has to become PUBLIC_DEPS,
-# something in Source/Public/NimbleEngine/ grew an #include it should not have.
+# PRIVATE, not PUBLIC: the engine layer's headers must not leak GameWindow
+# types to a game. If this ever has to become a PUBLIC_DEP, something in
+# Source/Public/NimbleEngine/ grew an #include it should not have.
 #
-# if(TARGET) rather than if(EXISTS) because the module directories are already
-# guarded above -- this mirrors the same "a checkout without GDI still
+# if(TARGET) rather than if(EXISTS) because the module directory is already
+# guarded above -- this mirrors the same "a checkout without GameWindow still
 # configures" property without re-testing paths.
+#
+# GDI is NOT linked here at all, and that is new: GDI is a STATIC library, so
+# it may live in exactly ONE image in the whole process (see
+# RenderCoreInternal.h's comment for what a second copy would corrupt), and
+# RenderCore.dll is that image. NimbleEngine reaches drawing exclusively
+# through RenderCore::Renderer and ENQUEUE_RENDER_COMMAND -- see the PUBLIC
+# link just below -- and never through GDI directly.
 #
 # Hot-reload plugins contribute NOTHING here. nimble_add_hot_module() builds
 # MODULE targets that are never linked against; NimbleEngine reaches them
@@ -269,21 +276,21 @@ if(TARGET GameWindow)
     target_link_libraries(NimbleEngine PRIVATE GameWindow::GameWindow)
 endif()
 
-if(TARGET GDI)
-    target_link_libraries(NimbleEngine PRIVATE GDI::GDI)
-endif()
-
-# PUBLIC, not PRIVATE -- the one deliberate exception to the rule stated just
-# above. World and Entity (GameCore's own headers) ARE the game-facing
-# surface: NimbleEngine.h forward-declares GameCore::World and
-# GameCore::ScriptEngine and exposes Application::GetWorld() /
-# GetScriptEngine() returning them by reference, so a game that includes
-# NimbleEngine.h needs GameCore's headers and needs to LINK GameCore to use
-# what it forward-declares. Nothing from GameWindow or GDI becomes reachable
-# through this -- PUBLIC applies to GameCore alone, and the PRIVATE links
-# above are unaffected.
+# PUBLIC, not PRIVATE -- the two deliberate exceptions to the rule stated
+# just above. World/Entity (GameCore) and Renderer/RenderCommand/RenderProxy
+# (RenderCore) ARE the game-facing surface: NimbleEngine.h forward-declares
+# GameCore::World, GameCore::ScriptEngine and RenderCore::Renderer, and
+# exposes Application::GetWorld()/GetScriptEngine()/GetRenderer() returning
+# them by reference, so a game that includes NimbleEngine.h needs both
+# modules' headers and needs to LINK both to use what it forward-declares.
+# Nothing from GameWindow becomes reachable through this -- PUBLIC applies to
+# GameCore and RenderCore alone, and the PRIVATE link above is unaffected.
 if(TARGET GameCore)
     target_link_libraries(NimbleEngine PUBLIC GameCore::GameCore)
+endif()
+
+if(TARGET RenderCore)
+    target_link_libraries(NimbleEngine PUBLIC RenderCore::RenderCore)
 endif()
 
 # winmm, for timeBeginPeriod/timeEndPeriod in the frame limiter. Without raising
