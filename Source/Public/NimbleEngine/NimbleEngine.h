@@ -2,6 +2,7 @@
 #define NIMBLEENGINE_NIMBLEENGINE_H
 
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
+#include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreTypes.h"
 #include "Public/Core/CoreThread.h"
 
@@ -242,6 +243,19 @@ namespace NimbleEngine
          * loop is what calls Rendering->WaitForPreviousFrame()/EndFrame()
          * around this. */
         void Simulate(IGame* InGame, const FrameContext& InFrame);
+
+        /*
+         * WHERE ASSETS COME FROM, for every subsystem that reads one --
+         * GDI's cooked shaders above all. Installed into EngineCore's
+         * locator by Initialize() and cleared by Shutdown(); see the comment
+         * at the SetFileProvider call for why this is a member (it must
+         * outlive the render thread's own shader loads) rather than a local.
+         *
+         * A member by value, not a pointer: it owns no resources beyond a
+         * base-directory string, so there is nothing to allocate and nothing
+         * for a failed Initialize() to leak.
+         */
+        EngineCore::FilesystemProvider AssetProvider;
 
         GameWindow*              Window        = nullptr;
 

@@ -4,6 +4,7 @@
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/ScriptEngine.h"
@@ -173,6 +174,37 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to Initialize Window")
             return false;
         }
+
+        /*
+         * THE RESOURCE SEAM, installed before anything can ask for an asset.
+         *
+         * CoreFileProvider.h's own comment describes FilesystemProvider as
+         * "what the smoke tests and a non-Qt host use" -- this engine is
+         * that non-Qt host, and until now it simply never installed one, so
+         * EngineCore::GetFileProvider() returned null and every asset read
+         * failed. That was invisible while the only backend that started was
+         * Null (which never loads a shader), and surfaced the moment Vulkan
+         * came up for real as:
+         *
+         *   [VKShaderResource] No file provider installed for:
+         *   Shaders/Cooked/Vulkan/Basic.vsh.spv
+         *
+         * Empty base directory: paths handed to a provider are
+         * bundle-relative ("Shaders/Cooked/Vulkan/Basic.vsh.spv"), and the
+         * working directory is already the one holding the executable and
+         * its staged Config/ and Scripts/ -- the same assumption
+         * LoadConfigFile's own relative path just below makes, and that
+         * Games/Sandbox/CMakeLists.txt's staging steps and
+         * VS_DEBUGGER_WORKING_DIRECTORY are built around.
+         *
+         * OWNED BY THE APPLICATION, as a member rather than a local or a
+         * static: the provider must outlive every subsystem that might read
+         * through it (GDI's shader loads run on the render thread, well
+         * after this function returns), and Shutdown() clears the locator
+         * before it goes away -- a dangling IFileProvider* is the same
+         * hazard CoreJob.h's own locator warns about.
+         */
+        SetFileProvider(&AssetProvider);
 
         ConfigLoadStats Stats;
         if(!LoadConfigFile("Config/DefaultEngine.ini", &Stats))
@@ -511,5 +543,17 @@ namespace NimbleEngine
         Window = nullptr;
 
         GameWindowSystem::Shutdown();
+
+        /*
+         * LAST, and after the renderer is stopped: GDI's own teardown path
+         * can still read an asset (a shader reload, a cached pipeline blob),
+         * so the locator must stay valid until every subsystem that might
+         * use it is down. Cleared rather than left dangling because
+         * AssetProvider is a member about to be destroyed with this object
+         * -- the same "clear it before the pool dies" discipline CoreJob.h's
+         * own locator states. Unconditional and idempotent like everything
+         * else here.
+         */
+        SetFileProvider(nullptr);
     }
 };

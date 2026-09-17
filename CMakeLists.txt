@@ -310,6 +310,51 @@ target_include_directories(NimbleEngine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Sour
 
 source_group("NimbleEngine" FILES ${NIMBLEENGINE_SOURCES})
 
+# === Cooked shaders ========================================================
+# GDI's cooked shaders staged beside the executable, so that
+# EngineCore::FilesystemProvider -- which Application::Initialize() installs,
+# resolving bundle-relative paths against the working directory -- can find
+# them at the path GDI asks for ("Shaders/Cooked/Vulkan/Basic.vsh.spv").
+#
+# AT ENGINE SCOPE, not in a game's own CMakeLists, and that is the whole
+# point: Games/Sandbox stages its OWN Config/ and Scripts/ because those
+# belong to that game, but the cooked shaders belong to GDI and every game
+# that ever links this engine needs exactly the same set. Staging them per
+# game would duplicate this block into every future host, each free to get
+# it subtly wrong.
+#
+# A DIRECTORY COPY rather than one rule per file: the cooked set is produced
+# by cook_shaders.py (whose outputs the Cook*Shaders targets already depend
+# on), so the file list is not knowable here without duplicating that
+# script's own naming rules. The dependency on the cook targets is what
+# orders this after the shaders actually exist; without it a clean build
+# races an empty source directory.
+#
+# copy_directory, NOT copy_directory_if_different: the latter is CMake 3.26+
+# and this project pins 3.16 (see cmake_minimum_required at the top). The
+# cost is that this target is considered on every build -- acceptable for a
+# handful of small files, and the same trade Games/Sandbox's own multi-config
+# staging fallback already makes for the same reason.
+if(TARGET GDI AND GDI_COOKED_SHADER_DIR AND CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    add_custom_target(NimbleStageShaders ALL
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${GDI_COOKED_SHADER_DIR}"
+                    "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cooked"
+            COMMENT "NimbleEngine: staging GDI's cooked shaders beside the executable"
+            VERBATIM)
+
+    # Ordered after whichever cook targets this configure actually created --
+    # each is guarded by its own GDI_WITH_* option in Modules/GDI.
+    foreach(NM_COOK_TARGET CookVulkanShaders CookOpenGLShaders CookD3D12Shaders CookMetalShaders)
+        if(TARGET ${NM_COOK_TARGET})
+            add_dependencies(NimbleStageShaders ${NM_COOK_TARGET})
+        endif()
+    endforeach()
+
+    add_dependencies(NimbleEngine NimbleStageShaders)
+    set_target_properties(NimbleStageShaders PROPERTIES FOLDER "Engine")
+endif()
+
 # === Games/ ================================================================
 # Hosts that link the engine layer. Added from THIS scope, below the
 # NimbleEngine target, for two reasons that are both load-bearing:

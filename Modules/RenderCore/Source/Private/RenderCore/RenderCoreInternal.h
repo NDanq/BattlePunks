@@ -7,6 +7,16 @@
 #include "Public/GDI/Null/NullDynamicGDI.h"
 #include "Public/RenderCore/RenderTypes.h"
 
+/* Guarded because the Vulkan backend is optional (GDI_WITH_VULKAN) and this
+ * header pulls in vulkan.h through it -- GDI's own GDI.cpp guards its
+ * equivalent include the same way, and GDIVulkanPlatform.h's comment states
+ * the reason: a build with Vulkan off must not pay for vulkan.h, and a
+ * machine without the SDK must still configure. RenderThread.cpp's
+ * VulkanGDIContext construction sits behind the same #if. */
+#if WITH_VULKAN_GDI
+#include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
+#endif
+
 /*
  * This is the ONLY header that includes a GDI header, and it lives under
  * Private/ so it cannot be reached from outside -- exactly the discipline
