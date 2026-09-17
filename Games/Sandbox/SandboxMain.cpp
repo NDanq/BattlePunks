@@ -7,6 +7,8 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/RenderComponents.h"
+#include "Public/RenderCore/Renderer.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -14,15 +16,16 @@
 
 /*
  * Sandbox: the example game. CMakeLists.txt says why it exists; this is what it
- * currently demonstrates -- the IGame seam, and now GameCore's World/Entity/
- * delegate surface: a C++-owned entity ("Marker") ticked by a registered
- * PostPhysics system, a C++ subscriber on World's OnEntityCreated delegate
- * with the bind/unbind pair shown explicitly, and a Lua-owned entity
- * ("Scripted", created by Scripts/Main.lua) whose position this file reads
- * back every second to show the two sides agreeing on one World.
- *
- * No drawing: IGame is simulation-only until render proxies land. When drawing
- * arrives it arrives as another IGame method and this file grows one.
+ * currently demonstrates -- the IGame seam, GameCore's World/Entity/delegate
+ * surface (a C++-owned entity, "Marker", ticked by a registered PostPhysics
+ * system; a C++ subscriber on World's OnEntityCreated delegate with the
+ * bind/unbind pair shown explicitly; a Lua-owned entity, "Scripted", created
+ * by Scripts/Main.lua, whose position this file reads back every second to
+ * show the two sides agreeing on one World) -- and now RenderCore's drawing
+ * surface: Marker carries a PrimitiveComponent, so RenderCore::Renderer's
+ * WorldBridge draws it automatically every frame with no OnRender method
+ * anywhere in this file, and a dedicated "Camera" entity gives the scene a
+ * view centred on the action rather than the default origin.
  *
  * NO LOG HANDLER IS INSTALLED, deliberately. Without one, CoreLog's Fatal path
  * writes to stderr and abort()s; installing one turns every CORE_CHECK and
@@ -129,6 +132,25 @@ public:
         Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, -0.5), EngineCore::Vector3(0.5, 0.5, 0.5));
         World.AddComponent<GameCore::BoundsComponent>(MarkerEntity, Bounds);
 
+        /* Drawn automatically, every frame, by RenderCore::Renderer's
+         * WorldBridge -- adding this component is the whole of what this
+         * file does to make Marker visible; nothing here calls DrawQuad or
+         * touches a RenderProxy directly. */
+        RenderCore::PrimitiveComponent Primitive;
+        Primitive.Width  = 32.0f;
+        Primitive.Height = 32.0f;
+        Primitive.Tint   = EngineCore::Color(255, 200, 40);
+        World.AddComponent<RenderCore::PrimitiveComponent>(MarkerEntity, Primitive);
+
+        /* A camera entity so the view is centred on where Marker actually
+         * moves rather than the default (0, 1, -1) origin -- WorldBridge's
+         * per-frame view build reads whichever active CameraComponent it
+         * finds first, and its position from this entity's own Transform. */
+        const GameCore::EntityID CameraEntity = World.CreateEntity("Camera");
+        World.AddComponent<GameCore::TransformComponent>(CameraEntity);
+        RenderCore::CameraComponent Camera;
+        World.AddComponent<RenderCore::CameraComponent>(CameraEntity, Camera);
+
         /* Closed over via a small POD blob rather than two separate void*
          * parameters -- SystemFn's contract is exactly one void*, matching
          * every other seam in GameCore (ComponentRemovedFn, EventFn). */
@@ -189,6 +211,9 @@ public:
                 ScriptedPart = " scripted_x=" + Fixed2(Scripted->Position.GetX());
             }
 
+            RenderCore::RenderStats RenderStats;
+            App->GetRenderer().GetStats(RenderStats);
+
             CORE_LOG("[Sandbox] t=" + Fixed2(ElapsedSeconds) + "s"
                      + " frame=" + Num(InFrame.FrameNumber)
                      + " fps=" + Num(TicksThisSecond)
@@ -196,7 +221,9 @@ public:
                      + " viewport=" + Num(uint64_t(InFrame.ViewportPixels.Width))
                      + "x" + Num(uint64_t(InFrame.ViewportPixels.Height))
                      + " marker_x=" + Fixed2(MarkerX)
-                     + ScriptedPart)
+                     + ScriptedPart
+                     + " frames_rendered=" + Num(RenderStats.FramesRendered)
+                     + " draw_calls=" + Num(RenderStats.DrawCalls))
 
             LastReportSeconds = ElapsedSeconds;
             TicksThisSecond   = 0;

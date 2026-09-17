@@ -10,8 +10,8 @@
 #include "Public/GameCore/World.h"
 #include "Public/GameWindow/GameWindowSystem.h"
 #include "Public/GameWindow/GameWindow.h"
-#include "Public/GDI/GDI.h"
-#include "Public/GDI/Null/NullDynamicGDI.h"
+#include "Public/RenderCore/RenderTypes.h"
+#include "Public/RenderCore/Renderer.h"
 
 #if defined(_WIN32)
 /*
@@ -29,9 +29,11 @@ NIMBLE_CONFIG_INT(GResolutionX, "Display", "ResolutionX", 1280, nullptr);
 NIMBLE_CONFIG_INT(GResolutionY, "Display", "ResolutionY", 720, nullptr);
 NIMBLE_CONFIG_STRING(GTitle,    "Application", "Title", "NimbleEngine", nullptr);
 
-/* ERP_Null draws nothing and needs no GPU, which removes every variable except
- * the threading. Games/Sandbox/Config/DefaultEngine.ini documents all three. */
-NIMBLE_CONFIG_INT(GRenderPlatform, "Display", "RHI", ERP_Null, nullptr);
+/* RenderCore::ERenderBackend::Null draws nothing and needs no GPU, which
+ * removes every variable except the threading. Games/Sandbox/Config/
+ * DefaultEngine.ini documents all five backends -- see GDIDefinitions.h's own
+ * comment on why Null is zero. */
+NIMBLE_CONFIG_INT(GRenderPlatform, "Display", "RHI", int(RenderCore::ERenderBackend::Null), nullptr);
 
 /* 0 runs until the window closes. Non-zero is the only way to get a
  * deterministic run out of something whose exit condition is an OS event. */
@@ -198,7 +200,7 @@ namespace NimbleEngine
         NativeWindow = Window->GetNativeHandle();
         if(!NativeWindow.IsValid())
         {
-            CORE_LOG_ERROR("Window has no native handle; cannot initialize GDI")
+            CORE_LOG_ERROR("Window has no native handle; cannot initialize the renderer")
             return false;
         }
 
@@ -207,10 +209,11 @@ namespace NimbleEngine
          * plain new) so a missed Dealloc at teardown is exactly the kind of
          * thing Sandbox's ReportLeaks() already catches at process exit.
          *
-         * Before GDI on purpose: nothing here touches a window or a render
-         * context, and BindWorld installs the script-tick systems into Scene
-         * before anything could conceivably tick it (the render thread is not
-         * up yet either). Ordering relative to GDI is otherwise arbitrary.
+         * Before the renderer on purpose: nothing here touches a window or a
+         * render context, and BindWorld installs the script-tick systems into
+         * Scene before anything could conceivably tick it (the render thread
+         * is not up yet either). Ordering relative to the renderer is
+         * otherwise arbitrary.
          */
         Scene = EngineCore::Memory::Alloc<GameCore::World>();
         Scripts = EngineCore::Memory::Alloc<GameCore::ScriptEngine>();
@@ -221,40 +224,19 @@ namespace NimbleEngine
         }
         Scripts->BindWorld(Scene);
 
-        const ERenderPlatform Platform = ERenderPlatform(GRenderPlatform.GetInt());
+        const RenderCore::ERenderBackend Backend = RenderCore::ERenderBackend(GRenderPlatform.GetInt());
 
-        InitializeGDI(Platform, NativeWindow);
-        bGDIInitialized = true;
-
-        /* Only the null backend can be handed a context from here; GL and
-         * Vulkan need a real drawable the host does not provide yet. Leaving it
-         * null lets StartRenderThread's readiness check turn that into a clean
-         * startup failure -- see RenderThreadMain for why it is not a
-         * tautology. */
-        if(Platform == ERP_Null)
+        Rendering = EngineCore::Memory::Alloc<RenderCore::Renderer>();
+        if(!Rendering->Initialize(Backend, NativeWindow))
         {
-            RenderContext = new NullGDIContext();
-            AssignContextGDI(RenderContext);
+            CORE_LOG_ERROR("Failed to initialize RenderCore")
+            return false;
         }
-        else
-        {
-            CORE_LOG_WARN("RHI is not ERP_Null and no drawable is available; "
-                          "the render thread will fail to allocate")
-        }
+        Rendering->BindWorld(*Scene);
 
-        return StartRenderThread();
+        return true;
     }
 
-    /*
-     * WHY SUBMISSION IS FENCED (the topology itself is in NimbleEngine.h).
-     * The drain must be `while(TryDequeue)` -- GDI relies on commands enqueued
-     * from inside Execute() running the same frame, per CoreQueue.h's DrainTo
-     * warning -- and such a loop cannot tell frame N's commands from N-1's, so
-     * enqueueing N mid-drain would swallow both as one frame silently.
-     *
-     * Overlapping command BUILDING too is the render-proxy work; only this
-     * fence changes when that lands.
-     */
     void Application::Exec()
     {
         ExecWithGame(nullptr);
@@ -296,6 +278,12 @@ namespace NimbleEngine
         return *Scripts;
     }
 
+    RenderCore::Renderer& Application::GetRenderer()
+    {
+        CORE_CHECK(Rendering != nullptr, "Application::GetRenderer() called before Initialize() or after Shutdown()")
+        return *Rendering;
+    }
+
     void Application::ExecWithGame(IGame* InGame)
     {
         /* First, before anything defaults them. Both are first-caller-wins. */
@@ -314,7 +302,7 @@ namespace NimbleEngine
 
             TimerResolutionScope TimerRes;
 
-            /* After the render thread is up, so a game never observes a
+            /* After the renderer is up, so a game never observes a
              * half-built engine. A refusal is a clean shutdown. */
             if(InGame && !InGame->OnStartup(*this))
             {
@@ -370,26 +358,27 @@ namespace NimbleEngine
 
                 Simulate(InGame, Frame);
 
-                if(bFrameInFlight)
-                {
-                    FrameDone.Wait();
-                    bFrameInFlight = false;
-                }
+                /* THE FENCE: at most one frame in flight. A game may have
+                 * ENQUEUE_RENDER_COMMAND'd at any point during Simulate()
+                 * above -- see NimbleEngine.h's own comment on the frame
+                 * marker mechanism that makes that safe -- so this waits for
+                 * the PREVIOUS frame's marker, not for the queue to be empty
+                 * of everything ever enqueued. */
+                Rendering->WaitForPreviousFrame();
 
-                /* THE SAFE POINT, and the only sound location: render thread
-                 * blocked in TryWaitFor, queue empty -- the stopped world
-                 * CollectGarbage requires. Cadence is a separate question.
-                 * JobSystem's WaitForIdle()/IsQuiescent() go just above. */
+                /* THE SAFE POINT, and the only sound location: the render
+                 * thread is idle here (WaitForPreviousFrame just returned)
+                 * and never touches a TRef at all -- RenderCommand.h's
+                 * capture rule keeps it that way -- so nothing outside this
+                 * call stack can be mutating a TRef while this runs. Cadence
+                 * is a separate question from location. */
                 Memory::CollectGarbage();
 
-                BuildRenderCommands();
-                RenderKick.Signal();
-                bFrameInFlight = true;
-
-                /* PresentToWindow() would go here -- UI-thread by contract,
-                 * and deliberately not wired: no-op on the base and on GL,
-                 * Vulkan-only, no callers. SwapBuffers on the render thread is
-                 * the OTHER present; the two are easy to get backwards. */
+                RenderCore::FrameInfo Info;
+                Info.FrameNumber    = FrameNumber;
+                Info.DeltaSeconds   = Frame.DeltaSeconds;
+                Info.ViewportPixels = Frame.ViewportPixels;
+                Rendering->EndFrame(Info);
 
                 ++FrameNumber;
                 if(MaxFrames != 0 && FrameNumber >= MaxFrames)
@@ -423,8 +412,10 @@ namespace NimbleEngine
         Shutdown();
     }
 
-    /* Runs CONCURRENTLY with the render thread executing the previous frame:
-     * no enqueues, no GDI. See IGame::OnTick. */
+    /* Runs CONCURRENTLY with the render thread executing the previous
+     * frame's commands: no ENQUEUE_RENDER_COMMAND from here would be
+     * unsound (see IGame's own header comment), but this method itself
+     * enqueues nothing -- a game's OnTick is where that happens. */
     void Application::Simulate(IGame* InGame, const FrameContext& InFrame)
     {
         if(InGame)
@@ -436,86 +427,15 @@ namespace NimbleEngine
          * The game acts FIRST -- it may spawn or destroy something this
          * frame -- then World's own phases run: TP_PrePhysics, TP_Physics
          * (+ the spatial refit at its end), TP_PostPhysics, TP_PostUpdate.
-         * Still the game thread, still before the render-thread fence below
-         * in ExecWithGame -- Scene never touches GDI, so nothing here needs
-         * to wait on the render thread any more than IGame::OnTick already
-         * does not.
+         * Still the game thread, still before ExecWithGame's
+         * WaitForPreviousFrame()/EndFrame() calls -- Scene never touches
+         * RenderCore directly; WorldBridge (inside Renderer::EndFrame)
+         * reaches into it through World's own public delegates and pools.
          */
         if(Scene)
         {
             Scene->Tick(float(InFrame.DeltaSeconds));
         }
-    }
-
-    /* Runs after the fence, render thread idle and queue empty. EVERYTHING
-     * HERE IS CAPTURED BY VALUE -- a captured pointer would be a live race
-     * against the next frame's simulation. */
-    void Application::BuildRenderCommands()
-    {
-        const Size  Viewport   = Window ? Window->GetPixelSize() : Size();
-        const Color ClearColor = Color(24, 26, 32, 255);
-
-        /* The macro declares a class at the call site and expands to a comma
-         * expression: the name must be unique here, and the semicolon is
-         * required. */
-        ENQUEUE_RENDERCOMMAND_TWOPARAM(FrameClear,
-            EngineCore::Color, CmdClearColor, ClearColor,
-            EngineCore::Size,  CmdViewport,   Viewport,
-        {
-            GDISetViewport(0, 0, uint(CmdViewport.Width), uint(CmdViewport.Height));
-            GDIClear(CM_Color | CM_Depth, CmdClearColor);
-        });
-    }
-
-    bool Application::StartRenderThread()
-    {
-        bRenderStopRequested.store(false, std::memory_order_release);
-        bRenderInitOK.store(false, std::memory_order_release);
-
-        /* DO NOT pass InOwningImage: the default argument IS the mechanism,
-         * evaluating at this call site so GImageID resolves in NimbleEngine.dll
-         * rather than EngineCore.dll. See CoreThread.h's Start note. High
-         * priority so the render thread is not preempted by what it feeds. */
-        if(!RenderThread.Start("NimbleRender",
-                               [this]() { RenderThreadMain(); },
-                               ThreadPriority::High))
-        {
-            CORE_LOG_ERROR("Failed to start the render thread")
-            return false;
-        }
-
-        bRenderThreadLive = true;
-
-        RenderReady.Wait();
-
-        if(!bRenderInitOK.load(std::memory_order_acquire))
-        {
-            CORE_LOG_ERROR("Render thread failed to allocate GDI resources; "
-                           "the backend never latched a render thread")
-            return false;
-        }
-
-        return true;
-    }
-
-    void Application::StopRenderThread()
-    {
-        if(!bRenderThreadLive)
-        {
-            return;
-        }
-
-        /* FLAG FIRST, THEN WAKE. Reversed, the thread could consume the
-         * signal, loop and re-sleep without seeing the flag. TryWaitFor bounds
-         * that, but leaning on the timeout is how it stops being a safety
-         * net. */
-        bRenderStopRequested.store(true, std::memory_order_release);
-        RenderKick.Signal();
-
-        RenderThread.Join();
-
-        bRenderThreadLive = false;
-        bFrameInFlight    = false;
     }
 
     void Application::Shutdown()
@@ -529,21 +449,34 @@ namespace NimbleEngine
          *      and releases its instance ref, unregisters the script-tick
          *      systems and the ScriptComponent removal observer from Scene.
          *      Needs BOTH a live lua_State (Scripts) AND a live Scene to walk.
-         *   2. Dealloc(Scene) -- Scene's own destructor logs a warning for any
-         *      of its built-in delegates still holding a binding (see
-         *      World.cpp's ~Impl), which by this point should be none, since
-         *      step 1 already unregistered GameCore's own.
-         *   3. Scripts->Shutdown() -- lua_close. Must come AFTER Scene is
+         *   2. Rendering->UnbindWorld() -- must precede Scene's destruction:
+         *      WorldBridge holds bindings on Scene's own OnComponentAdded/
+         *      OnComponentRemoved delegates, and ~World logs a warning for
+         *      any built-in delegate still holding entries at destruction
+         *      (World.cpp's ~Impl) -- exactly the diagnostic that would fire
+         *      if this ran after step 3 instead of before it.
+         *   3. Dealloc(Scene) -- by this point nothing holds a binding on it.
+         *   4. Scripts->Shutdown() -- lua_close. Must come AFTER Scene is
          *      gone: nothing left holds a World* into a destroyed object.
-         *   4. Dealloc(Scripts).
+         *   5. Dealloc(Scripts).
+         *   6. Rendering->Shutdown() -- drains the scene and stops the render
+         *      thread. Runs LAST among these five: nothing above touches
+         *      RenderCore, so there is no ordering constraint forcing it
+         *      earlier, and stopping the render thread before Scene/Scripts
+         *      are torn down would buy nothing.
+         *   7. Dealloc(Rendering).
          *
-         * Reversed, step 3 before step 1 closes the Lua state while
+         * Reversed, step 4 before step 1 closes the Lua state while
          * ScriptComponent instances still hold registry refs into it, and
          * UnbindWorld's OnDestroy calls would run against a dead lua_State.
          */
         if(Scripts && Scene)
         {
             Scripts->UnbindWorld();
+        }
+        if(Rendering && Scene)
+        {
+            Rendering->UnbindWorld();
         }
         if(Scene)
         {
@@ -556,22 +489,12 @@ namespace NimbleEngine
             EngineCore::Memory::Dealloc(Scripts);
             Scripts = nullptr;
         }
-
-        StopRenderThread();
-
-        /* Only reachable when the render thread never ran; it releases GDI
-         * itself otherwise. Nothing was allocated on this path, so releasing
-         * from the main thread frees no GPU objects. */
-        if(bGDIInitialized && GDynamicGDI)
+        if(Rendering)
         {
-            GDynamicGDI->Destroy();
-            ReleaseGDI();
+            Rendering->Shutdown();
+            EngineCore::Memory::Dealloc(Rendering);
+            Rendering = nullptr;
         }
-        bGDIInitialized = false;
-
-        /* ReleaseGDI deletes the driver and GSync; the context was always ours. */
-        delete RenderContext;
-        RenderContext = nullptr;
 
         /* RE-RESOLVED THROUGH THE ID, never through the stored pointer:
          * PumpEvents reaps windows the user closed, so the ordinary exit is
@@ -588,84 +511,5 @@ namespace NimbleEngine
         Window = nullptr;
 
         GameWindowSystem::Shutdown();
-    }
-
-    /* ====================== RENDER THREAD FROM HERE ON ====================== */
-
-    void Application::RenderThreadMain()
-    {
-        /*
-         * THE LATCH, and the most important line in this file: whichever thread
-         * calls this BECOMES the render thread for GDIInRenderThread(), because
-         * the backend records appThreadID() inside Allocate().
-         * GDIRenderTarget.cpp guards a FATAL GDI_CHECK on that predicate.
-         */
-        AllocateResourcesGDI();
-
-        /* A real test, not a restatement of "we called Allocate": a GL
-         * backend with no drawable early-outs before SetThreadID, leaving that
-         * fatal check armed to fire frames later. */
-        const bool bOK = GDIInRenderThread();
-        bRenderInitOK.store(bOK, std::memory_order_release);
-        RenderReady.Signal();
-
-        if(bOK)
-        {
-            while(!bRenderStopRequested.load(std::memory_order_acquire))
-            {
-                /* BOUNDED, never Wait(): the stop flag is noticed even if a
-                 * signal was lost or consumed, which makes shutdown
-                 * deadlock-proof however flag and signal interleave. */
-                if(RenderKick.TryWaitFor(2))
-                {
-                    DrainRenderCommands();
-
-                    /* Render-thread present, offscreen. NOT PresentToWindow,
-                     * which is the UI thread's. */
-                    GDISwapBuffers();
-
-                    /*
-                     * ONLY when a kick was consumed. Semaphore::Signal
-                     * ACCUMULATES, so signalling on a timeout tick banks a
-                     * count and the next FrameDone.Wait() returns instantly --
-                     * silently unfencing submission. Kicks and frames are 1:1.
-                     */
-                    FrameDone.Signal();
-                }
-            }
-        }
-
-        /* Stragglers from a frame that will never be kicked; nothing else
-         * deletes them. */
-        DrainRenderCommands();
-
-        /* ReleaseGDI deletes the driver WITHOUT calling Destroy(), so GPU
-         * objects would outlive their owner. Both belong on the context's
-         * thread. */
-        if(GDynamicGDI)
-        {
-            GDynamicGDI->Destroy();
-        }
-        ReleaseGDI();
-    }
-
-    void Application::DrainRenderCommands()
-    {
-        /* Brackets the WHOLE loop, not each command: GDI.cpp's thread_local
-         * in-drain flag is what distinguishes an enqueue issued from inside an
-         * Execute(), and per-command bracketing would erase that. */
-        GDIRenderQueue_NoteDrain();
-
-        GDIRenderCommandBase* Command = nullptr;
-        while(GRenderCommands.TryDequeue(Command))
-        {
-            Command->Execute();
-
-            /* Sound only because GDIRenderCommandBase has a virtual
-             * destructor. */
-            delete Command;
-        }
-
-        GDIRenderQueue_NoteDrainEnd();
     }
 };
