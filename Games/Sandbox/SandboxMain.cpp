@@ -97,10 +97,10 @@ namespace
     }
 }
 
-class SandboxGame : public NimbleEngine::IGame
+class SandboxGameMode : public NimbleEngine::IGameMode
 {
 public:
-    bool OnStartup(NimbleEngine::Application& InApp) override
+    bool OnLoad(NimbleEngine::Application& InApp) override
     {
         App = &InApp;
 
@@ -110,19 +110,10 @@ public:
 
         RunSeconds = double(GSandboxRunSeconds.GetInt());
 
-        const uint32_t Limit = InApp.GetFrameRateLimit();
-
-        CORE_LOG("[Sandbox] game starting on thread " + Num(uint64_t(GameThread))
-                 + "; frame limit "
-                 + (Limit > 0 ? Num(Limit) + " fps" : std::string("unlimited"))
-                 + (RunSeconds > 0.0
-                    ? "; will quit after " + Fixed2(RunSeconds) + "s"
-                    : "; running until the window closes"))
-
         GameCore::World& World = InApp.GetWorld();
 
         /* The bind/unbind pair, spelled out: Remove(EntityCreatedHandle) in
-         * OnShutdown is what makes this safe rather than merely convenient --
+         * OnUnload is what makes this safe rather than merely convenient --
          * see Delegate.h's RELOAD note. */
         EntityCreatedHandle = World.OnEntityCreated().Add(&OnEntityCreatedLogger, &World);
 
@@ -168,6 +159,29 @@ public:
         World.RegisterSystem("Sandbox.WrapMarker", GameCore::TP_PostPhysics, &WrapMarkerSystem, &SystemContext);
 
         return true;
+    }
+
+    /*
+     * The startup script has run by now -- Scripts/Main.lua, per
+     * Config/DefaultEngine.ini's [Scripting] StartupScript -- so "Scripted"
+     * exists here and did NOT during OnLoad. That ordering is the whole
+     * reason this phase is separate; see IGameMode's lifecycle comment.
+     */
+    void OnStart() override
+    {
+        const uint32_t Limit = App->GetFrameRateLimit();
+
+        const GameCore::EntityID Scripted = App->GetWorld().FindEntityByName("Scripted");
+
+        CORE_LOG("[Sandbox] game starting on thread " + Num(uint64_t(GameThread))
+                 + "; frame limit "
+                 + (Limit > 0 ? Num(Limit) + " fps" : std::string("unlimited"))
+                 + (RunSeconds > 0.0
+                    ? "; will quit after " + Fixed2(RunSeconds) + "s"
+                    : "; running until the window closes")
+                 + (Scripted.IsSet()
+                    ? "; the startup script's entity is present"
+                    : "; no scripted entity (no startup script ran)"))
     }
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
@@ -239,11 +253,11 @@ public:
         }
     }
 
-    void OnShutdown() override
+    void OnUnload() override
     {
         CORE_LOG("[Sandbox] game stopping after " + Fixed2(ElapsedSeconds) + "s")
 
-        /* The other half of the bind/unbind pair from OnStartup -- see
+        /* The other half of the bind/unbind pair from OnLoad -- see
          * Delegate.h's RELOAD note on why this is not optional even for a
          * binding that lives exactly as long as the engine's own World. */
         if(App)
@@ -255,7 +269,8 @@ public:
     }
 
 private:
-    /* Stashed in OnStartup so OnTick can call RequestQuit() and reach World. */
+    /* Stashed in OnLoad so OnStart/OnTick can call RequestQuit() and reach
+     * World. */
     NimbleEngine::Application* App = nullptr;
 
     EngineCore::ThreadID GameThread = 0;
@@ -274,9 +289,9 @@ private:
 int main(int /*argc*/, char** /*argv*/)
 {
     {
-        SandboxGame Game;
+        SandboxGameMode Mode;
         NimbleEngine::Application App;
-        App.Exec(Game);
+        App.Exec(Mode);
     }
 
     /*
