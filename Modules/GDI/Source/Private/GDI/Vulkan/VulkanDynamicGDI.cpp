@@ -26,6 +26,11 @@
 #include <unordered_map>
 #include "Public/Core/CoreString.h"
 
+// At global scope, not inside a module namespace, so these are wider than the
+// usual directive -- contained only because nothing includes a .cpp.
+using namespace EngineCore;
+using namespace VKOps;
+
 // External global declared in GDI.h.
 extern GDISync* GSync;
 
@@ -114,7 +119,7 @@ VKCurrentStateData::~VKCurrentStateData()
 
 #pragma region VulkanDynamicGDI
 
-VulkanDynamicGDI::VulkanDynamicGDI(EngineCore::WindowHandle InWindow)
+VulkanDynamicGDI::VulkanDynamicGDI(WindowHandle InWindow)
     : GDIDynamicDriver(InWindow)
 {
 }
@@ -133,7 +138,7 @@ void VulkanDynamicGDI::Allocate()
 {
     if(bInitialized) return;
 
-    SetThreadID(EngineCore::appThreadID());
+    SetThreadID(appThreadID());
 
     auto* VKCtx = static_cast<VulkanGDIContext*>(Context);
     if(!VKCtx || !VKCtx->VKContext)
@@ -198,7 +203,7 @@ void VulkanDynamicGDI::Allocate()
     {
         // Zero-initialised by construction, i.e. transparent black --
         // the same thing QImage::fill(Qt::transparent) produced.
-        EngineCore::Image NullImg(1, 1, EngineCore::EImageFormat::RGBA8);
+        Image NullImg(1, 1, EImageFormat::RGBA8);
         NullTexture = new VKTextureResource(DeviceObj, NullImg, GDI_TB_Repeat, GDI_TF_Nearest);
     }
 
@@ -259,7 +264,7 @@ void VulkanDynamicGDI::Flush()
     // No-op: EndRendering already submits and signals the fence/semaphore.
 }
 
-void VulkanDynamicGDI::PresentToWindow(EngineCore::WindowHandle InWindow)
+void VulkanDynamicGDI::PresentToWindow(WindowHandle InWindow)
 {
     if(!bInitialized || !Swapchain || !InWindow.IsValid()) return;
 
@@ -498,11 +503,11 @@ void VulkanDynamicGDI::RecordResolve(VKRenderTarget* Src, VKRenderTarget* Dst)
     CurrentStateData->ActiveRenderTarget = nullptr;
 
     // Transition Src → TRANSFER_SRC, Dst → TRANSFER_DST from their tracked layouts.
-    VKOps::RecordBarrier(Cmd, VKOps::MakeImageBarrier(
+    RecordBarrier(Cmd, MakeImageBarrier(
         Src->GetImage(), Src->GetCurrentLayout(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
         VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_READ_BIT));
-    VKOps::RecordBarrier(Cmd, VKOps::MakeImageBarrier(
+    RecordBarrier(Cmd, MakeImageBarrier(
         Dst->GetImage(), Dst->GetCurrentLayout(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT,
         VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_WRITE_BIT));
@@ -520,11 +525,11 @@ void VulkanDynamicGDI::RecordResolve(VKRenderTarget* Src, VKRenderTarget* Dst)
 
     // Leave both in SHADER_READ_ONLY_OPTIMAL — the canonical idle layout that the
     // next SetRenderTarget / sampler bind expects.
-    VKOps::RecordBarrier(Cmd, VKOps::MakeImageBarrier(
+    RecordBarrier(Cmd, MakeImageBarrier(
         Src->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_READ_BIT,
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT));
-    VKOps::RecordBarrier(Cmd, VKOps::MakeImageBarrier(
+    RecordBarrier(Cmd, MakeImageBarrier(
         Dst->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_WRITE_BIT,
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_SAMPLED_READ_BIT));
@@ -619,7 +624,7 @@ GDIMesh* VulkanDynamicGDI::CreateQuadMesh(const float& InWidth, const float& InH
 #pragma region Texture creation
 
 GDITextureResource* VulkanDynamicGDI::CreateTextureResource(
-        const EngineCore::Image& InImage,
+        const Image& InImage,
         const EGDITextureBorder InBorder,
         const EGDITextureFilter InFilter)
 {
@@ -629,7 +634,7 @@ GDITextureResource* VulkanDynamicGDI::CreateTextureResource(
 
 GDITextureResource* VulkanDynamicGDI::CreateTextureResource(
         GDITexture2D* InParent,
-        const EngineCore::Image& InImage,
+        const Image& InImage,
         const EGDITextureBorder InBorder,
         const EGDITextureFilter InFilter)
 {
@@ -762,7 +767,7 @@ static uint32_t PackCustomUBO(const std::unordered_map<std::string, VKUniformVal
     for(auto It = S.begin(); It != S.end(); ++It)
     {
         const std::string& N = It->first;
-        if(EngineCore::StartsWith(N, "ViewParameters.") || EngineCore::StartsWith(N, "Transform.")) continue;
+        if(StartsWith(N, "ViewParameters.") || StartsWith(N, "Transform.")) continue;
         Offset = PackScalar(It->second, D, Offset, MaxBytes);
     }
     return (Offset > 0) ? Offset : 1u; // minimum 1 byte range for vkUpdateDescriptorSets
@@ -805,7 +810,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             It != PSRes->GetScalars().end(); ++It)
         {
             const std::string& N = It->first;
-            if(!EngineCore::StartsWith(N, "ViewParameters.") && !EngineCore::StartsWith(N, "Transform."))
+            if(!StartsWith(N, "ViewParameters.") && !StartsWith(N, "Transform."))
             {
                 bHasCustomUBO = true;
                 break;
@@ -1076,15 +1081,15 @@ void VulkanDynamicGDI::DrawScreenQuadPrimitive()
 
 bool VulkanDynamicGDI::CheckError(const std::string&) { return false; }
 
-EngineCore::Color VulkanDynamicGDI::GetColorFromSamplePoint(const EngineCore::Point& InPoint, const EngineCore::Size& InSize)
+Color VulkanDynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& InSize)
 {
-    if(!DeviceObj || !CurrentStateData) return EngineCore::Color();
+    if(!DeviceObj || !CurrentStateData) return Color();
 
     // Make sure the just-composited frame is on the GPU before we sample it.
     FlushForReadback();
 
     VKRenderTarget* RT = CurrentStateData->ActiveRenderTarget;
-    if(!RT || !RT->IsValid()) return EngineCore::Color();
+    if(!RT || !RT->IsValid()) return Color();
 
     // RT memory is GL-oriented (row 0 = visual bottom — same matrices as the GL
     // backend), so flip Y from Qt screen space exactly like the OpenGL path's
@@ -1092,26 +1097,26 @@ EngineCore::Color VulkanDynamicGDI::GetColorFromSamplePoint(const EngineCore::Po
     const int X = InPoint.X;
     const int Y = InSize.Height - InPoint.Y;
     if(X < 0 || Y < 0 || X >= int(RT->GetWidth()) || Y >= int(RT->GetHeight()))
-        return EngineCore::Color();
+        return Color();
 
     VkDevice Dev = DeviceObj->GetDevice();
 
     VkBuffer       Buf = VK_NULL_HANDLE;
     VkDeviceMemory Mem = VK_NULL_HANDLE;
-    if(!VKOps::AllocStagingBuffer(DeviceObj, 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem))
-        return EngineCore::Color();
+    if(!AllocStagingBuffer(DeviceObj, 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem))
+        return Color();
 
     VkCommandPool   Pool = VK_NULL_HANDLE;
     VkCommandBuffer Cmd  = VK_NULL_HANDLE;
-    if(!VKOps::BeginTransientCmd(DeviceObj, Pool, Cmd))
+    if(!BeginTransientCmd(DeviceObj, Pool, Cmd))
     {
         vkDestroyBuffer(Dev, Buf, nullptr);
         vkFreeMemory(Dev, Mem, nullptr);
-        return EngineCore::Color();
+        return Color();
     }
 
     const VkImageLayout Cur = RT->GetCurrentLayout();
-    VKOps::RecordBarrier(Cmd, VKOps::MakeImageBarrier(
+    RecordBarrier(Cmd, MakeImageBarrier(
         RT->GetImage(), Cur, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
         VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_READ_BIT));
@@ -1124,17 +1129,17 @@ EngineCore::Color VulkanDynamicGDI::GetColorFromSamplePoint(const EngineCore::Po
     vkCmdCopyImageToBuffer(Cmd, RT->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Buf, 1, &Region);
 
     // Restore the RT to the layout the resumed rendering region expects.
-    VKOps::RecordBarrier(Cmd, VKOps::MakeImageBarrier(
+    RecordBarrier(Cmd, MakeImageBarrier(
         RT->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Cur,
         VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_READ_BIT,
         VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT));
 
-    VKOps::EndAndSubmitTransientCmd(DeviceObj, Pool, Cmd);
+    EndAndSubmitTransientCmd(DeviceObj, Pool, Cmd);
 
     void* Mapped = nullptr;
     vkMapMemory(Dev, Mem, 0, 4, 0, &Mapped);
     const uchar* Px = static_cast<const uchar*>(Mapped);
-    EngineCore::Color Out(Px[0], Px[1], Px[2]);   // VK_FORMAT_R8G8B8A8_UNORM byte order
+    Color Out(Px[0], Px[1], Px[2]);   // VK_FORMAT_R8G8B8A8_UNORM byte order
     vkUnmapMemory(Dev, Mem);
 
     vkDestroyBuffer(Dev, Buf, nullptr);

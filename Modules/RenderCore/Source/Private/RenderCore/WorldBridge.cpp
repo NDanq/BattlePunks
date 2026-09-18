@@ -11,6 +11,10 @@
 #include "Public/RenderCore/RenderProxy.h"
 #include "Public/RenderCore/RenderScene.h"
 
+// GameCore is this file's whole subject -- it reads World's pools and
+// components on every line.
+using namespace GameCore;
+
 /*
  * See WorldBridge.h for the contract; this is the "how". Three pieces:
  * proxy lifecycle (bound to World's own delegates), the per-frame extraction
@@ -34,7 +38,7 @@ namespace RenderCore
             // component bytes follow immediately after this header
         };
 
-        size_t RecordStrideFor(const GameCore::ComponentTypeInfo& InType)
+        size_t RecordStrideFor(const ComponentTypeInfo& InType)
         {
             /* Rounded up to InType's own alignment so the component bytes
              * that follow ExtractHeader land aligned -- the same rounding
@@ -54,7 +58,7 @@ namespace RenderCore
         UnbindWorld();
     }
 
-    void WorldBridge::BindWorld(GameCore::World& InWorld)
+    void WorldBridge::BindWorld(World& InWorld)
     {
         if(BoundWorld)
         {
@@ -72,14 +76,14 @@ namespace RenderCore
          * already populated its World (Renderer::BindWorld, a later
          * integration step, runs once at startup). A component added from
          * here on is caught by the delegate above instead. */
-        for(GameCore::ComponentTypeID Type = 0; Type < GameCore::COMPONENT_TYPE_MAX; ++Type)
+        for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
         {
             if(!FindProxyFactory(Type))
             {
                 continue;
             }
 
-            GameCore::ComponentPool* Pool = InWorld.FindPool(Type);
+            ComponentPool* Pool = InWorld.FindPool(Type);
             if(!Pool)
             {
                 continue;
@@ -104,14 +108,14 @@ namespace RenderCore
          * on its owning component -- walk every registered type's pool one
          * more time and remove what is still there, the same sweep BindWorld
          * uses to catch what came before it. */
-        for(GameCore::ComponentTypeID Type = 0; Type < GameCore::COMPONENT_TYPE_MAX; ++Type)
+        for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
         {
             if(!FindProxyFactory(Type))
             {
                 continue;
             }
 
-            GameCore::ComponentPool* Pool = BoundWorld->FindPool(Type);
+            ComponentPool* Pool = BoundWorld->FindPool(Type);
             if(!Pool)
             {
                 continue;
@@ -128,8 +132,8 @@ namespace RenderCore
 
         BoundWorld->OnComponentAdded().Remove(AddedHandle);
         BoundWorld->OnComponentRemoved().Remove(RemovedHandle);
-        AddedHandle   = GameCore::DelegateHandle();
-        RemovedHandle = GameCore::DelegateHandle();
+        AddedHandle   = DelegateHandle();
+        RemovedHandle = DelegateHandle();
 
         BoundWorld = nullptr;
     }
@@ -139,7 +143,7 @@ namespace RenderCore
         return BoundWorld != nullptr;
     }
 
-    void WorldBridge::OnComponentAdded(const GameCore::EntityID InEntity, const GameCore::ComponentTypeID InType, void* InUserData)
+    void WorldBridge::OnComponentAdded(const EntityID InEntity, const ComponentTypeID InType, void* InUserData)
     {
         auto* Bridge = static_cast<WorldBridge*>(InUserData);
 
@@ -168,7 +172,7 @@ namespace RenderCore
         /* Second thing in the struct, right after ComponentOwner --
          * RENDERCORE_PROXY_BODY()'s whole contract, checked at compile time
          * by RENDERCORE_DEFINE_PROXY_COMPONENT's own static_assert. */
-        auto* HandleSlot = reinterpret_cast<RenderProxyHandle*>(static_cast<uint8_t*>(Bytes) + sizeof(GameCore::ComponentOwner));
+        auto* HandleSlot = reinterpret_cast<RenderProxyHandle*>(static_cast<uint8_t*>(Bytes) + sizeof(ComponentOwner));
         HandleSlot->Ptr = Proxy;
 
         RenderScene* Scene = Bridge->Scene;
@@ -178,7 +182,7 @@ namespace RenderCore
         });
     }
 
-    void WorldBridge::OnComponentRemoved(const GameCore::EntityID InEntity, const GameCore::ComponentTypeID InType, void* InUserData)
+    void WorldBridge::OnComponentRemoved(const EntityID InEntity, const ComponentTypeID InType, void* InUserData)
     {
         auto* Bridge = static_cast<WorldBridge*>(InUserData);
 
@@ -198,7 +202,7 @@ namespace RenderCore
             return;
         }
 
-        auto* HandleSlot = reinterpret_cast<RenderProxyHandle*>(static_cast<uint8_t*>(Bytes) + sizeof(GameCore::ComponentOwner));
+        auto* HandleSlot = reinterpret_cast<RenderProxyHandle*>(static_cast<uint8_t*>(Bytes) + sizeof(ComponentOwner));
         RenderProxy* Proxy = HandleSlot->Ptr;
         HandleSlot->Ptr = nullptr;
 
@@ -223,7 +227,7 @@ namespace RenderCore
 
         if(BoundWorld)
         {
-            GameCore::ComponentPool* CameraPool = BoundWorld->FindPool(CameraComponent::StaticType().ID);
+            ComponentPool* CameraPool = BoundWorld->FindPool(CameraComponent::StaticType().ID);
             if(CameraPool)
             {
                 const auto* Cameras = static_cast<const CameraComponent*>(CameraPool->GetDenseData());
@@ -236,7 +240,7 @@ namespace RenderCore
                         continue;
                     }
 
-                    if(const GameCore::TransformComponent* Transform = Camera.Owner.GetSibling<GameCore::TransformComponent>())
+                    if(const TransformComponent* Transform = Camera.Owner.GetSibling<TransformComponent>())
                     {
                         Origin = Transform->Position;
                     }
@@ -256,14 +260,14 @@ namespace RenderCore
             return;
         }
 
-        for(GameCore::ComponentTypeID Type = 0; Type < GameCore::COMPONENT_TYPE_MAX; ++Type)
+        for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
         {
             if(!FindProxyFactory(Type))
             {
                 continue;
             }
 
-            GameCore::ComponentPool* Pool = BoundWorld->FindPool(Type);
+            ComponentPool* Pool = BoundWorld->FindPool(Type);
             if(!Pool)
             {
                 continue;
@@ -275,7 +279,7 @@ namespace RenderCore
                 continue;
             }
 
-            const GameCore::ComponentTypeInfo& TypeInfo = Pool->GetType();
+            const ComponentTypeInfo& TypeInfo = Pool->GetType();
             const size_t Stride = RecordStrideFor(TypeInfo);
             const uint8_t* Dense = static_cast<const uint8_t*>(Pool->GetDenseData());
 
@@ -296,8 +300,8 @@ namespace RenderCore
             for(size_t Index = 0; Index < Count; ++Index)
             {
                 const uint8_t* Component = Dense + Index * TypeInfo.SizeBytes;
-                const auto&    Owner     = *reinterpret_cast<const GameCore::ComponentOwner*>(Component);
-                const auto&    Handle    = *reinterpret_cast<const RenderProxyHandle*>(Component + sizeof(GameCore::ComponentOwner));
+                const auto&    Owner     = *reinterpret_cast<const ComponentOwner*>(Component);
+                const auto&    Handle    = *reinterpret_cast<const RenderProxyHandle*>(Component + sizeof(ComponentOwner));
 
                 /* Built as a real, fully-constructed local -- not assigned
                  * into Blob's raw, never-constructed bytes, which would be
@@ -308,7 +312,7 @@ namespace RenderCore
                 ExtractHeader Record;
                 Record.Handle = Handle;
 
-                if(const GameCore::TransformComponent* Transform = Owner.GetSibling<GameCore::TransformComponent>())
+                if(const TransformComponent* Transform = Owner.GetSibling<TransformComponent>())
                 {
                     Record.Transform.Position = Transform->Position;
                     Record.Transform.Rotation = Transform->Rotation;

@@ -11,6 +11,10 @@
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
 
+// Threading primitives end to end: every Thread/Semaphore/ThreadSafeQueue
+// below comes from EngineCore.
+using namespace EngineCore;
+
 /*
  * The drain loop, and everything around it. See RenderThread.h for the
  * per-method contracts; this file is the "how", modelled directly on
@@ -24,16 +28,17 @@ namespace RenderCore
 {
     struct RenderThread::Impl
     {
-        EngineCore::Thread    OSThread;
-        EngineCore::Semaphore ReadyForUse;      // render -> caller: AllocateResourcesGDI() has run, bAllocateOK is readable
-        EngineCore::Semaphore Kick;              // caller -> render: something is queued
-        EngineCore::Semaphore FrameDone;         // render -> caller: the most recent frame marker was reached
-        EngineCore::Semaphore FlushDone;         // render -> caller: the most recent flush marker was reached
+        Thread    OSThread;
+        Semaphore ReadyForUse;      // render -> caller: AllocateResourcesGDI() has run, bAllocateOK is readable
+        Semaphore Kick;              // caller -> render: something is queued
+        Semaphore FrameDone;         // render -> caller: the most recent frame marker was reached
+        Semaphore FlushDone;         // render -> caller: the most recent flush marker was reached
 
-        EngineCore::ThreadSafeQueue<RenderCommandHeader*> Queue;
+        ThreadSafeQueue<RenderCommandHeader*> Queue;
 
         std::atomic<bool> bStopRequested{false};
         std::atomic<bool> bAllocateOK{false};
+        // Qualified because the member shadows the type name.
         std::atomic<EngineCore::ThreadID> ThreadID{0};
 
         bool bFrameInFlight = false;   // game-thread only; guarded by there being exactly one caller
@@ -81,7 +86,7 @@ namespace RenderCore
                 CommandsExecuted.fetch_add(1, std::memory_order_relaxed);
             }
 
-            EngineCore::Memory::Free(Cmd);
+            Memory::Free(Cmd);
             return bWasMarker;
         }
 
@@ -96,7 +101,7 @@ namespace RenderCore
              * exactly the boundary RenderContext.h's own comment states.
              */
             AllocateResourcesGDI();
-            ThreadID.store(EngineCore::appThreadID(), std::memory_order_release);
+            ThreadID.store(appThreadID(), std::memory_order_release);
 
             /* A real test, not a restatement of "we called Allocate": a GL
              * backend with no drawable early-outs before SetThreadID, leaving
@@ -166,7 +171,7 @@ namespace RenderCore
         delete P;
     }
 
-    bool RenderThread::Start(const ERenderBackend InBackend, const EngineCore::WindowHandle InWindow)
+    bool RenderThread::Start(const ERenderBackend InBackend, const WindowHandle InWindow)
     {
         if(IsRunning())
         {
@@ -242,7 +247,7 @@ namespace RenderCore
          * evaluating at this call site so GImageID resolves in RenderCore.dll
          * -- see CoreThread.h's own note on Thread::Start. High priority so
          * the render thread is not preempted by what feeds it. */
-        if(!P->OSThread.Start("NimbleRender", [this]() { P->ThreadMain(); }, EngineCore::ThreadPriority::High))
+        if(!P->OSThread.Start("NimbleRender", [this]() { P->ThreadMain(); }, ThreadPriority::High))
         {
             RENDERCORE_LOG_ERROR("RenderThread::Start: failed to start the render thread")
             SetActiveRenderThread(nullptr);
@@ -308,10 +313,10 @@ namespace RenderCore
 
     void RenderThread::EndFrame(const uint64_t InFrameNumber)
     {
-        auto* Marker = EngineCore::Memory::Alloc<RenderCommandHeader>();
+        auto* Marker = Memory::Alloc<RenderCommandHeader>();
         Marker->Kind = RCK_FrameMarker;
         Marker->DebugName = "FrameMarker";
-        Marker->OwningImage = EngineCore::GImageID;
+        Marker->OwningImage = GImageID;
 
         P->Context.SetFrameNumber(InFrameNumber);
 
@@ -349,10 +354,10 @@ namespace RenderCore
             return;
         }
 
-        auto* Marker = EngineCore::Memory::Alloc<RenderCommandHeader>();
+        auto* Marker = Memory::Alloc<RenderCommandHeader>();
         Marker->Kind = RCK_FlushMarker;
         Marker->DebugName = "FlushMarker";
-        Marker->OwningImage = EngineCore::GImageID;
+        Marker->OwningImage = GImageID;
 
         Enqueue(Marker);
         P->Kick.Signal();
