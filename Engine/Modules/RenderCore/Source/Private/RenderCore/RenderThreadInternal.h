@@ -11,14 +11,10 @@
  * reads back.
  *
  * FREE FUNCTIONS OVER A NON-OWNING POINTER, not a class -- the same call
- * CoreJob.h makes for SetJobSystem/GetJobSystem and CoreModule.h makes for
- * ModuleManager's own locator: a seam with no state of its own belongs here,
- * and the OWNING object -- the RenderThread the host actually constructs and
- * destroys, at a point of ITS choosing -- lives in Renderer (later steps).
- * Private because RenderCommand.h's public free functions (EnqueueRenderCommand,
- * IsInRenderThread, ...) are the only surface a consumer needs; the locator
- * itself would just be one more way to reach the same RenderThread a caller
- * either already has (Renderer's owner) or has no business reaching directly.
+ * CoreJob.h makes for SetJobSystem/GetJobSystem: a seam with no state of its
+ * own belongs here, while the OWNING object lives in Renderer. Private because
+ * RenderCommand.h's public free functions (EnqueueRenderCommand,
+ * IsInRenderThread, ...) are the only surface a consumer needs.
  *
  * SET IT BEFORE ANY COMMAND IS ENQUEUED, CLEAR IT BEFORE THE RenderThread
  * DIES -- a dangling pointer here is a dispatch into a destroyed thread, the

@@ -10,19 +10,16 @@
 
 /*
  * The render thread's whole life: the OS thread itself, the command queue
- * between it and the game thread, GDI's lifetime, and the frame/flush
- * fences. Replaces NimbleEngine.cpp's RenderThreadMain/DrainRenderCommands/
- * StartRenderThread/StopRenderThread, moved here so the render thread is
- * RenderCore's to own rather than the engine layer's.
+ * between it and the game thread, GDI's lifetime, and the frame/flush fences.
  *
- * ONE PER PROCESS in practice (a game constructs exactly one, inside
- * Renderer -- a later build-order step), located by RenderCommand.h's free
- * functions through RenderThreadInternal.h's locator, the way JobSystem's
- * GetJobSystem()/SetJobSystem() work (CoreJob.h). A CLASS and not a
- * G-pointer with free functions alone, for CoreJob.h's own reason: this owns
- * an OS thread, and the host -- not a Meyers singleton's unspecified static
- * destruction order -- must be able to choose when it is constructed and
- * destroyed relative to everything else tearing down.
+ * ONE PER PROCESS in practice -- a game constructs exactly one, inside
+ * Renderer -- located by RenderCommand.h's free functions through
+ * RenderThreadInternal.h's locator, the way CoreJob.h's
+ * GetJobSystem()/SetJobSystem() work. A CLASS rather than free functions over
+ * a G-pointer, for CoreJob.h's own reason: this owns an OS thread, and the
+ * host must be able to choose when it is constructed and destroyed relative to
+ * everything else tearing down, rather than inheriting a Meyers singleton's
+ * unspecified static destruction order.
  */
 namespace RenderCore
 {
@@ -40,19 +37,16 @@ namespace RenderCore
 
         /*
          * InitializeGDI(InBackend, InWindow) runs on THIS call's thread (the
-         * game thread) -- matching NimbleEngine.cpp's own Initialize(), which
-         * did the same before handing a context to the render thread. Starts
-         * a Thread named "NimbleRender" at ThreadPriority::High (a render
-         * thread must not be preempted by the work it feeds -- CoreThread.h's
-         * own reasoning for the priority ladder) and blocks until the render
-         * thread has called AllocateResourcesGDI() and reported whether that
-         * succeeded.
+         * game thread), then a Thread named "NimbleRender" starts at
+         * ThreadPriority::High -- a render thread must not be preempted by the
+         * work it feeds, CoreThread.h's reasoning for the priority ladder --
+         * and this blocks until that thread has called AllocateResourcesGDI()
+         * and reported whether it succeeded.
          *
          * False if InBackend is not ERenderBackend::Null and InWindow has no
-         * native handle (GDI needs a real drawable for anything else -- see
-         * NimbleEngine.cpp's own equivalent check before this module
-         * existed), if the OS thread failed to start, or if
-         * AllocateResourcesGDI() failed to latch the render thread.
+         * native handle (GDI needs a real drawable for anything else), if the
+         * OS thread failed to start, or if AllocateResourcesGDI() failed to
+         * latch the render thread.
          */
         bool Start(ERenderBackend InBackend, EngineCore::WindowHandle InWindow);
 

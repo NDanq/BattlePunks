@@ -63,27 +63,24 @@ namespace RenderCore
         void EndFrame(const FrameInfo& InFrame);
 
         /*
-         * Presents the most recently completed frame to InWindow. GAME
-         * THREAD ONLY -- and that is GDI's own contract, not a choice made
-         * here: GDI.h documents PresentToWindow as "Called from the UI
-         * thread after RendererFinished()", and on Vulkan the swapchain
-         * keeps its own command pool and per-image semaphores precisely so
-         * that a second thread can record and submit the present blit while
-         * the render thread records the next frame (both submit under the
-         * device's queue mutex, ordered by a timeline semaphore -- see
-         * VKCommands.cpp's EndRendering and VKSwapchain::PresentFrame).
+         * Presents the most recently completed frame to InWindow. GAME THREAD
+         * ONLY -- GDI's contract, not a choice made here: GDI.h documents it as
+         * "Called from the UI thread after RendererFinished()", and Vulkan's
+         * swapchain keeps its own command pool and per-image semaphores so this
+         * thread can submit the present blit while the render thread records
+         * the next frame (both under the device queue mutex, ordered by a
+         * timeline semaphore -- VKCommands.cpp EndRendering, VKSwapchain::PresentFrame).
          *
-         * CALL IT AFTER WaitForPreviousFrame(), which is the point at which
-         * the frame being presented is known to be complete and submitted.
-         * Presenting frame N-1 while the game thread builds frame N is the
-         * one-frame-of-lag this design already has, not an extra cost.
+         * CALL IT AFTER WaitForPreviousFrame(), the point at which the frame
+         * being presented is known complete and submitted. Presenting N-1 while
+         * the game thread builds N is the one-frame-of-lag this design already
+         * has, not an extra cost.
          *
-         * Safe to call before the first frame, with no World bound, or on a
-         * backend that does not present this way: every backend's own
-         * implementation early-outs on its preconditions (no swapchain, no
-         * rendered target yet, mid-resize), and the GDIDynamicDriver base
-         * class default is an empty body -- which is what OpenGL uses
-         * deliberately, presenting through its own SwapBuffers path instead.
+         * Safe before the first frame, with no World bound, or on a backend
+         * that presents differently: every implementation early-outs on its own
+         * preconditions (no swapchain, nothing rendered yet, mid-resize) and the
+         * GDIDynamicDriver default is empty -- which OpenGL uses deliberately,
+         * presenting through SwapBuffers instead.
          */
         void PresentToWindow(EngineCore::WindowHandle InWindow);
 

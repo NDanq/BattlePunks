@@ -18,30 +18,25 @@
 #endif
 
 /*
- * This is the ONLY header that includes a GDI header, and it lives under
- * Private/ so it cannot be reached from outside -- exactly the discipline
- * GameCoreInternal.h states for lua.h and GameWindowInternal.h states for
- * SDL.h ("this is the only header in the module that includes SDL.h"). That
- * is what makes the PRIVATE link of GDI::GDI in CMakeLists.txt true rather
- * than aspirational: no public RenderCore header ever names a GDI type, so a
- * consumer of RenderCore.dll never sees one either.
+ * THE ONLY HEADER THAT INCLUDES A GDI HEADER, and it lives under Private/ so
+ * it cannot be reached from outside -- the same discipline GameCoreInternal.h
+ * states for lua.h and GameWindowInternal.h for SDL.h. That is what makes the
+ * PRIVATE link of GDI::GDI in CMakeLists.txt true rather than aspirational: no
+ * public RenderCore header names a GDI type, so a consumer of RenderCore.dll
+ * never sees one.
  *
  * RenderCore.dll is therefore the ONLY image in the process that links GDI.
- * See RenderCoreAPI.h and DESIGN.md for why that has to be true of a STATIC
- * library: two images linking it would each get their own GDynamicGDI, their
- * own GRenderCommands and their own render-thread latch, with nothing to say
- * so.
+ * Two images linking a STATIC GDI would each get their own GDynamicGDI,
+ * GRenderCommands and render-thread latch, with nothing to say so -- see
+ * RenderCoreAPI.h and DESIGN.md.
  *
- * GDI.h is included for InitializeGDI/AssignContextGDI/AllocateResourcesGDI/
- * ReleaseGDI, GDynamicGDI, GDISwapBuffers and the GDIBeginDrawEvent/EndDrawEvent
- * pair -- RenderThread.cpp and RenderContext.cpp's whole reason for including
- * this header. GDIView.h is included for GDIView/GDIViewObject/GDITransform,
- * which GDIShader.h (pulled in by GDI.h) only forward-declares --
- * RenderContext.cpp's DrawQuad needs the complete types to construct and
- * mutate them. NullDynamicGDI.h is included so a caller with no real
- * drawable (RenderCoreSmokeTest, and Sandbox's own ERP_Null default) can
- * hand AssignContextGDI a NullGDIContext, matching NimbleEngine.cpp's own
- * ERP_Null path before this module existed.
+ * What each include is for: GDI.h, the Initialize/AssignContext/
+ * AllocateResources/Release entry points plus GDynamicGDI, GDISwapBuffers and
+ * the GDIBeginDrawEvent/EndDrawEvent pair. GDIView.h, the complete
+ * GDIView/GDIViewObject/GDITransform types that GDIShader.h only
+ * forward-declares and RenderContext.cpp's DrawQuad must construct.
+ * NullDynamicGDI.h, so a caller with no real drawable (RenderCoreSmokeTest,
+ * Sandbox's ERP_Null default) can hand AssignContextGDI a NullGDIContext.
  */
 namespace RenderCore
 {

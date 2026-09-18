@@ -27,32 +27,22 @@ namespace RenderCore
         EngineCore::Color         ClearColor{24, 26, 32, 255};
 
         /*
-         * THE SCENE'S RENDER TARGETS, and the whole reason anything ever
-         * reaches the screen.
+         * THE SCENE'S RENDER TARGETS, and the whole reason anything reaches
+         * the screen. GDIDynamicDriver::PresentToWindow presents
+         * CurrentStateData->ActiveRenderTarget -- the most recently bound RT --
+         * so Render() below must rebind Main right before EndRendering, the
+         * contract VulkanDynamicGDI.cpp states. With no RT bound at all,
+         * ActiveRenderTarget stays null and every present silently returns.
          *
-         * GDIDynamicDriver::PresentToWindow presents
-         * CurrentStateData->ActiveRenderTarget -- the most recently bound RT
-         * -- and VulkanDynamicGDI.cpp's own comment states the contract it
-         * expects of a renderer: "the renderer always rebinds Main right
-         * before EndRendering, so CurrentStateData->ActiveRenderTarget is
-         * the main RT". Render() below is what makes that true here.
-         * Without an RT bound at all, ActiveRenderTarget stays null
-         * (BeginRendering clears it) and every present silently returns --
-         * which is exactly what "the quad is not visible" looked like.
+         * A FIXED TABLE INDEXED BY THE ENUM: the set of targets is decided at
+         * compile time by ERT_MAX, so std::array bakes the size in and
+         * value-initialises every slot to null -- no reserve/resize
+         * distinction to get wrong, no allocation to fail.
          *
-         * A FIXED TABLE INDEXED BY THE ENUM, not a grown container: the set
-         * of targets a scene has is decided at compile time by ERT_MAX, so
-         * std::array bakes the size in and value-initialises every slot to
-         * null. There is no reserve/resize distinction to get wrong and no
-         * allocation to fail -- a vector here only offers ways to be holding
-         * it wrong.
-         *
-         * Deliberately NOT GDIRenderTargetManager, which holds
-         * Main/Buffer1/PostBuffer1 and the Resolve/Restore pair: those are
-         * paint-application concepts (they exist for canvas stroke
-         * buffering). A scene with one pass needs one target; the other two
-         * would be three times the VRAM for nothing. ERT_MAX is where a
-         * second pass would be added.
+         * Deliberately NOT GDIRenderTargetManager, whose Main/Buffer1/
+         * PostBuffer1 and Resolve/Restore pair are paint-application concepts
+         * (canvas stroke buffering). A scene with one pass needs one target.
+         * ERT_MAX is where a second pass would be added.
          */
         enum ERenderTarget : uint8_t
         {
@@ -257,24 +247,17 @@ namespace RenderCore
 
         /*
          * THE COLOUR MASK IS NOT OPTIONAL, and nothing supplies a usable
-         * default: VKBlendState's ColorAttachment is a value-initialised
-         * VkPipelineColorBlendAttachmentState, so colorWriteMask starts at
-         * ZERO -- every channel masked off. The pipeline builds, the draw is
-         * recorded, vkCmdDraw executes, fragments are shaded, and not one
-         * byte reaches the attachment. An entirely clear image with healthy
-         * draw-call counts and no validation error is exactly what that
-         * looks like from the outside, and is what it looked like here.
+         * default: VKBlendState's ColorAttachment is value-initialised, so
+         * colorWriteMask starts at ZERO -- every channel masked off. The
+         * pipeline builds, vkCmdDraw executes, fragments are shaded, and not
+         * one byte reaches the attachment. From the outside that looks like a
+         * clear image with healthy draw-call counts and no validation error.
+         * GDI's own GDIRenderTarget::DrawTexture opens with this same call.
          *
-         * GDI's own GDIRenderTarget::DrawTexture opens with this same call
-         * for this same reason; it was simply the only caller, because every
-         * other drawing path in the tree goes through it. A scene that
-         * renders its own geometry is the case nobody had written yet.
-         *
-         * Blend and depth are set alongside it rather than left implicit:
-         * the pipeline key is built from whatever VKCurrentStateData happens
-         * to hold, so "never set it" means "inherit whatever the last
-         * unrelated caller left there", which is not a contract a scene can
-         * rely on. Straight alpha blending and a plain less-than depth test
+         * Blend and depth are set alongside it rather than left implicit: the
+         * pipeline key is built from whatever VKCurrentStateData happens to
+         * hold, so leaving them unset means inheriting the last unrelated
+         * caller's state. Straight alpha blending and a less-than depth test
          * are what a 2D sprite pass wants.
          */
         GDISetColorMask(EColM_RGBA);
@@ -295,21 +278,15 @@ namespace RenderCore
 
             /*
              * EMPTY MEANS "NO BASIS TO CULL", on EITHER side -- not "never
-             * overlaps". GameCore::AABB::Overlaps already returns false the
-             * instant either box IsEmpty(), which is exactly backwards for
-             * this decision: a caller with no real view (a hand-built scene
-             * in a test) still wants everything drawn, and a proxy that
-             * never called SetLocalBounds (RenderProxy's own default
-             * LocalBounds/WorldBounds -- AABB()'s empty state, unlike
-             * PrimitiveProxy which always sets one in ApplyComponent) has
-             * given RenderScene nothing to cull it BY -- it is not
-             * "everywhere and nowhere", it is "undeclared", and undeclared
-             * must default to visible or a proxy type that never opts into
-             * bounds can never be drawn at all, discovered the hard way by
-             * this file's own smoke test's test-defined proxy (which sets
-             * no local bounds on purpose, to prove exactly this path).
-             * Explicitly NOT AABB::Overlaps' own empty-handling, which this
-             * comment exists to override.
+             * overlaps", which is what GameCore::AABB::Overlaps gives (it
+             * returns false the instant either box IsEmpty()) and is exactly
+             * backwards here. A caller with no real view still wants
+             * everything drawn, and a proxy that never called SetLocalBounds
+             * has given RenderScene nothing to cull it BY: undeclared, not
+             * "everywhere and nowhere". Undeclared must default to visible or
+             * a proxy type that never opts into bounds could never be drawn --
+             * this file's smoke test has one, deliberately, to prove the path.
+             * Explicitly overrides AABB::Overlaps' own empty-handling.
              */
             const bool bViewHasBounds  = !P->View.Bounds.IsEmpty();
             const bool bProxyHasBounds = !Proxy->GetWorldBounds().IsEmpty();
