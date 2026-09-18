@@ -1,35 +1,48 @@
 #ifndef NIMBLEENGINE_NIMBLEENGINE_H
 #define NIMBLEENGINE_NIMBLEENGINE_H
 
-#include <atomic>
-
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
+#include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreTypes.h"
 #include "Public/Core/CoreThread.h"
 
 /*
- * Forward-declared, NOT included. Engine/CMakeLists.txt:149-151 links GameWindow
- * and GDI PRIVATE precisely so this header cannot leak either one to a game, and
- * the comment there says that an #include appearing here is the signal that
- * something grew a dependency it should not have. Both are only ever held as
- * pointers, so a declaration is all this needs.
+ * Forward-declared, NOT included. Engine/CMakeLists.txt links GameWindow
+ * PRIVATE precisely so this header cannot leak it to a game, and the comment
+ * there says that an #include appearing here is the signal that something
+ * grew a dependency it should not have. Only ever held as a pointer, so a
+ * declaration is all this needs.
+ *
+ * GDI is NOT forward-declared here, or anywhere in this header, and that is
+ * new: GDI moved entirely behind RenderCore (Engine/Modules/RenderCore), the
+ * one image now allowed to link it -- see RenderCoreInternal.h's own comment
+ * for why. NimbleEngine no longer owns a GDIContext, no longer starts a
+ * render thread, and no longer drains a command queue; RenderCore::Renderer
+ * does all three, and this header reaches it only through the forward
+ * declaration below.
  */
 class GameWindow;
-class GDIContext;
 
 /*
- * GameCore is the ONE exception to the above -- Engine/CMakeLists.txt links it
- * PUBLIC, deliberately, because World and Entity ARE the game-facing surface: a
- * game reaches its entities through Application::GetWorld() below, and that
- * return type has to be a complete-enough declaration for a game's own
- * #include "Public/GameCore/World.h" to make sense of. See the PUBLIC link's
- * own comment in Engine/CMakeLists.txt for why this is the deliberate exception
- * rather than a dependency that leaked in by accident.
+ * GameCore and RenderCore are the two PUBLIC exceptions to the rule above --
+ * Engine/CMakeLists.txt links both PUBLIC, deliberately, because World/Entity
+ * and Renderer/RenderCommand ARE the game-facing surface: a game reaches its
+ * entities through Application::GetWorld() and draws through
+ * Application::GetRenderer() plus ENQUEUE_RENDER_COMMAND, and both return
+ * types have to be complete enough for a game's own #include to make sense
+ * of. See the PUBLIC link's own comment in Engine/CMakeLists.txt for why
+ * these are the deliberate exceptions rather than a dependency that leaked
+ * in by accident.
  */
 namespace GameCore
 {
     class World;
     class ScriptEngine;
+}
+
+namespace RenderCore
+{
+    class Renderer;
 }
 
 namespace NimbleEngine
@@ -76,19 +89,30 @@ namespace NimbleEngine
      * EVERY METHOD HERE RUNS ON THE GAME THREAD, which is also the main thread
      * and the SDL pump thread. OnTick in particular runs CONCURRENTLY with the
      * render thread executing the PREVIOUS frame's commands -- that overlap is
-     * the point of the split -- so a game must not touch renderer state, and
-     * there is deliberately no way from here to do so.
+     * the point of the split -- so a game must not touch RenderCore::RenderContext
+     * or a RenderProxy directly; both are render-thread-only types.
      * ========================================================================
      *
-     * SIMULATION ONLY, FOR NOW. There is no OnRender and no drawing call,
-     * because commands must capture strictly by value for the frame pacing to be
-     * sound, and that rule is only enforceable while the engine authors every
-     * command. Handing a game the enqueue macros would make a captured pointer a
-     * live data race against the next frame's simulation with nothing to catch
-     * it. Drawing arrives with render proxies, as one piece of work.
+     * A GAME DRAWS THROUGH THREE DOORS, none of which is an OnRender method:
      *
-     * Not NE_API: a pure interface with no out-of-line members has nothing to
-     * export. The engine calls through the vtable the game's own compiler built.
+     *   1. Add a RenderCore::PrimitiveComponent to an entity (via
+     *      Application::GetWorld()) and it draws itself, automatically, every
+     *      frame -- Application::GetRenderer()'s own WorldBridge extracts it.
+     *   2. Register a game-defined component + RenderProxy pair through
+     *      RenderCore::RegisterProxyType before binding the World, the same
+     *      way PrimitiveComponent registers itself.
+     *   3. ENQUEUE_RENDER_COMMAND from any game-thread code, at any point
+     *      during OnTick -- ONE FRAME OF LAG, not a fence: the command sits
+     *      behind whatever frame boundary Application::Simulate's own
+     *      EndFrame() call draws next, so a command issued mid-tick still
+     *      lands in a specific, well-defined frame rather than racing ahead
+     *      of one already presenting.
+     *
+     * WHAT A COMMAND MAY CAPTURE. Trivially copyable and trivially
+     * destructible only -- see RenderCommand.h's own capture rule. A
+     * RenderProxy* or RenderProxyHandle is fine to capture; a pointer into
+     * plain game-thread state (an IGame member, a local) is not, for the
+     * same live-data-race reason FrameContext itself is a value.
      */
     class IGame
     {
@@ -115,7 +139,8 @@ namespace NimbleEngine
     };
 
     /*
-     * The application: the game thread, and the render thread it owns.
+     * The application: the game thread, and the render thread RenderCore owns
+     * on its behalf.
      *
      * =========================== THREAD TOPOLOGY ============================
      *
@@ -124,17 +149,19 @@ namespace NimbleEngine
      * it, and on macOS that thread must be the process main thread -- so there
      * is no freedom here to give the game its own thread.
      *
-     * RENDER THREAD owns GDI. It is the thread that calls AllocateResourcesGDI(),
-     * which is what makes GDIInRenderThread() true for it, and it is the sole
-     * consumer of GRenderCommands.
+     * RENDER THREAD is RenderCore::RenderThread's, reached only through
+     * Application::GetRenderer() and ENQUEUE_RENDER_COMMAND -- this class
+     * never touches GDI, a GDIContext, or a command queue directly.
      *
-     * The split is genuine: simulation of frame N overlaps the render thread
-     * draining frame N-1. Command SUBMISSION is fenced behind FrameDone, so no
-     * snapshotting or render proxies are needed yet -- see Exec().
-     *
-     * WHAT A COMMAND MAY CAPTURE. By value, always. Under this fence a captured
-     * pointer into game state is a live data race against the simulation of the
-     * next frame, not merely bad style.
+     * ONE FRAME OF LAG, NOT A FENCE. Application::Simulate() runs a game's
+     * OnTick CONCURRENTLY with the render thread draining the PREVIOUS
+     * frame's commands -- that overlap is the point of the split -- but
+     * unlike the fenced design this replaces, a game may ENQUEUE_RENDER_COMMAND
+     * at any point during OnTick, not only from a single designated place.
+     * RenderCore::RenderThread::EndFrame's own frame marker is what makes a
+     * command issued mid-tick land in a specific frame rather than racing
+     * the boundary -- see RenderCommand.h's header comment for the full
+     * mechanism.
      * ========================================================================
      */
     class NE_API Application
@@ -192,6 +219,17 @@ namespace NimbleEngine
         GameCore::World&         GetWorld();
         GameCore::ScriptEngine&  GetScriptEngine();
 
+        /*
+         * The renderer. GAME THREAD ONLY, valid from OnStartup through
+         * OnShutdown -- the same lifetime GetWorld()/GetScriptEngine() have,
+         * and the same CORE_CHECKed-non-null contract. A game reads this to
+         * call RegisterProxyType before its World is populated, or to read
+         * RenderStats for a debug overlay; it never needs to call
+         * WaitForPreviousFrame()/EndFrame() itself -- Application's own frame
+         * loop already does, in NimbleEngine.cpp's Simulate/ExecWithGame.
+         */
+        RenderCore::Renderer& GetRenderer();
+
     private:
         bool Initialize();
         void Shutdown();
@@ -200,18 +238,24 @@ namespace NimbleEngine
          * have a game to pass. */
         void ExecWithGame(IGame* InGame);
 
-        /* Game-thread half of the frame. Neither touches GDI. */
+        /* Game-thread half of the frame: IGame::OnTick, then Scene->Tick.
+         * Touches neither GDI nor RenderCore directly -- ExecWithGame's own
+         * loop is what calls Rendering->WaitForPreviousFrame()/EndFrame()
+         * around this. */
         void Simulate(IGame* InGame, const FrameContext& InFrame);
-        void BuildRenderCommands();
 
-        /* Main-thread side of the handshake with the render thread. */
-        bool StartRenderThread();
-        void StopRenderThread();
-
-        /* The render thread's entire life, and the drain it runs. Both execute
-         * on the render thread and nowhere else. */
-        void RenderThreadMain();
-        void DrainRenderCommands();
+        /*
+         * WHERE ASSETS COME FROM, for every subsystem that reads one --
+         * GDI's cooked shaders above all. Installed into EngineCore's
+         * locator by Initialize() and cleared by Shutdown(); see the comment
+         * at the SetFileProvider call for why this is a member (it must
+         * outlive the render thread's own shader loads) rather than a local.
+         *
+         * A member by value, not a pointer: it owns no resources beyond a
+         * base-directory string, so there is nothing to allocate and nothing
+         * for a failed Initialize() to leak.
+         */
+        EngineCore::FilesystemProvider AssetProvider;
 
         GameWindow*              Window        = nullptr;
 
@@ -225,43 +269,23 @@ namespace NimbleEngine
 
         /* Captured ONCE, on the main thread, in Initialize(). GetNativeHandle()
          * is a live SDL query rather than a cached read, so it is not something
-         * to call per frame or from the render thread. */
+         * to call per frame or from the render thread. Handed to
+         * Rendering->Initialize(), which is RenderCore's own render-thread
+         * startup from here on. */
         EngineCore::WindowHandle NativeWindow;
-
-        /* Owned here: ReleaseGDI() deletes GDynamicGDI and GSync, and never
-         * touches the context it was assigned. */
-        GDIContext*              RenderContext = nullptr;
 
         /*
          * Owned here, via EngineCore::Memory::Alloc/Dealloc (not new/delete --
          * see NimbleEngine.cpp's Initialize(), which is the ONE place these
          * are ever allocated). Simulate() ticks Scene after IGame::OnTick, on
-         * the game thread, before the render-thread fence -- see BuildRenderCommands'
-         * own comment on why nothing past that fence may touch game state.
+         * the game thread, before ExecWithGame's Rendering->EndFrame() call --
+         * see NimbleEngine.cpp's own comment on why nothing past that call may
+         * touch game state.
          */
-        GameCore::World*         Scene   = nullptr;
-        GameCore::ScriptEngine*  Scripts = nullptr;
+        GameCore::World*         Scene     = nullptr;
+        GameCore::ScriptEngine*  Scripts   = nullptr;
+        RenderCore::Renderer*    Rendering = nullptr;
 
-        EngineCore::Thread       RenderThread;
-
-        /* render -> main: AllocateResourcesGDI() has run, bRenderInitOK is
-         * readable. */
-        EngineCore::Semaphore    RenderReady;
-
-        /* main -> render: commands for a frame are queued. */
-        EngineCore::Semaphore    RenderKick;
-
-        /* render -> main: that frame is drained and the queue is empty. */
-        EngineCore::Semaphore    FrameDone;
-
-        /* Cross-thread, hence atomic. Everything below them is main-thread only
-         * and stays plain. */
-        std::atomic<bool>        bRenderStopRequested{false};
-        std::atomic<bool>        bRenderInitOK{false};
-
-        bool                     bFrameInFlight    = false;
-        bool                     bRenderThreadLive = false;
-        bool                     bGDIInitialized   = false;
         bool                     bQuitRequested    = false;
         uint64_t                 FrameNumber       = 0;
 

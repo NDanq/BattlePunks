@@ -29,8 +29,28 @@ public:
                 * Matrix4x4().InitRotation(Rotate.GetY(), Vector3(0, 1, 0))
                 * Matrix4x4().InitRotation(Rotate.GetX(), Vector3(1, 0, 0));
         Matrix4x4 ScaleMat = Matrix4x4().InitScale(Scale);
-        return ScaleMat * Rotation * Translation;
-        //return Translation;
+
+        /*
+         * TRS, and the order matters: Matrix4x4 is row-major storage with a
+         * COLUMN-VECTOR convention (v' = M * v -- translation lives in the
+         * last column, Data[i][3], and LookAt below is Orient * Translation
+         * for exactly this reason), so composition reads RIGHT TO LEFT: the
+         * rightmost factor is applied to the vertex first.
+         *
+         * This used to read `ScaleMat * Rotation * Translation`, which
+         * applies the translation FIRST and then scales it -- the object's
+         * world position came out multiplied by its own scale. A 32x32 quad
+         * at x=120 was drawn at x=3840 and clipped off-screen entirely.
+         *
+         * It went unnoticed because nothing combined a non-unit scale with a
+         * translation: GDICamera's own transform is the only other one in
+         * the tree and it leaves Scale at (1,1,1), where both orderings are
+         * identical, while the cursor and brush objects bake their size into
+         * the mesh via GDICreateQuadMesh(w, h) and never scale. RenderCore's
+         * DrawQuad is the first caller to scale a shared unit quad AND place
+         * it, which is what surfaced this.
+         */
+        return Translation * Rotation * ScaleMat;
     }
     static GDITransform* Identity()
     {
