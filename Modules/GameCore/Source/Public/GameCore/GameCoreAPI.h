@@ -2,29 +2,22 @@
 #define GAMECORE_GAMECOREAPI_H
 
 /*
- * Symbol visibility for GameCore.
- *
- * The same three states CoreAPI.h documents, for the same reasons:
+ * Symbol visibility for GameCore. The same three states CoreAPI.h documents,
+ * for the same reasons:
  *
  *   GAMECORE_SHARED_BUILD undefined         -> GAMECORE_API is empty (static)
  *   GAMECORE_SHARED_BUILD + _BUILDING       -> dllexport (building the DLL)
  *   GAMECORE_SHARED_BUILD alone             -> dllimport (consuming the DLL)
  *
- * UNLIKE GameWindow, this is not a choice a game gets to make: CMakeLists.txt
- * calls nimble_add_module(GameCore SHARED ...) unconditionally, with no
- * GAMECORE_SHARED option. Component and event names are held in fixed-size
- * registries (ComponentType.h, EventBus.h) built from lazily-run, function-local
- * statics. A STATIC GameCore pulled PUBLIC through NimbleEngine.dll would give
- * NimbleEngine.dll and Sandbox.exe each their own copy of every registry, so
- * TransformComponent would register once per image and get two different ids --
- * with no diagnostic anywhere, just component data read at the wrong offset the
- * first time an id crossed the boundary. Exactly the reasoning
- * Engine/CMakeLists.txt gives for forcing CORE_SHARED and building NimbleEngine
- * itself SHARED.
- *
- * nimble_add_module() sets GAMECORE_SHARED_BUILD PUBLIC and GAMECORE_BUILDING
- * PRIVATE on the target, so the two states fall out of the link graph and nobody
- * has to remember which one they are in.
+ * ALWAYS SHARED, unlike GameWindow: component and event names live in
+ * fixed-size registries (ComponentType.h, EventBus.h) built from function-local
+ * statics. Built STATIC and pulled PUBLIC through NimbleEngine.dll, each image
+ * would get its own copy, so TransformComponent would register once per image
+ * and get two different ids -- no diagnostic, just component data read at the
+ * wrong offset the first time an id crossed the boundary. CMakeLists.txt
+ * therefore calls nimble_add_module(GameCore SHARED ...) with no opt-out,
+ * setting GAMECORE_SHARED_BUILD PUBLIC and GAMECORE_BUILDING PRIVATE so the
+ * state falls out of the link graph.
  *
  * Annotate types with out-of-line virtuals and free functions. Do NOT annotate
  * the header-only POD structs (EntityID.h, AABB.h, TickPhase.h, Entity.h) --

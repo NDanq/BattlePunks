@@ -12,31 +12,26 @@
 
 /*
  * ENQUEUE_RENDER_COMMAND: the game-thread -> render-thread bridge, and the
- * primary way work crosses from one to the other. Modelled on GDI's own
- * ENQUEUE_RENDERCOMMAND_* macros (Public/GDI/GDI.h) but rebuilt over
- * CoreMemory.h's Alloc/Free rather than bare new/delete, so a command
- * allocated by a hot-reloadable module is destroyed correctly relative to
- * the image barrier -- see EnqueueRenderCommand's own comment.
+ * primary way work crosses between them. Modelled on GDI's own
+ * ENQUEUE_RENDERCOMMAND_* macros (Public/GDI/GDI.h) but built over
+ * CoreMemory.h's Alloc/Free rather than new/delete, so a command allocated by
+ * a hot-reloadable module is destroyed correctly relative to the image
+ * barrier -- see EnqueueRenderCommand's own comment.
  *
  * WHAT A COMMAND MAY CAPTURE. Trivially copyable and trivially destructible
  * only -- values, POD, a RenderProxy* or RenderProxyHandle. No std::string,
- * no TRef: the payload is memcpy-constructed into an allocation and its
- * destructor is NEVER RUN (see EnqueueRenderCommand's comment on why), so a
- * capture that owns anything would leak, and a captured TRef would be
- * refcount traffic off the collector's thread with nothing to catch it.
- * RenderCommandEnqueuer::operator() enforces both with a static_assert --
- * exactly JobSystem::Dispatch's rule (CoreJob.h), for the same reason.
+ * no TRef: the payload is memcpy-constructed and its destructor is NEVER RUN,
+ * so a capture that owns anything leaks, and a captured TRef would be refcount
+ * traffic off the collector's thread with nothing to catch it.
+ * RenderCommandEnqueuer::operator() static_asserts both -- JobSystem::Dispatch's
+ * rule (CoreJob.h), for the same reason.
  *
- * ONE FRAME OF LAG, NOT A FENCE. Unlike GDI's own command queue (drained
- * whole every frame under NimbleEngine.cpp's old fence), a game-thread
- * caller may enqueue at ANY POINT during its tick -- there is no rule that
- * the render thread must be idle first. RenderThread::EndFrame enqueues a
- * FRAME MARKER that tells the drain loop where this frame's commands end;
- * commands enqueued after EndFrame() sit behind that marker and are not
- * touched until the NEXT kick. That is what makes "commands enqueued
- * throughout the tick" and "the drain loop cannot tell frame N's commands
- * from N-1's" both true at once -- the marker is the boundary the old GDI
- * comment said a while(TryDequeue) loop could not express.
+ * ONE FRAME OF LAG, NOT A FENCE. A game-thread caller may enqueue at ANY POINT
+ * during its tick; the render thread need not be idle first.
+ * RenderThread::EndFrame enqueues a FRAME MARKER telling the drain loop where
+ * this frame's commands end, so commands enqueued after it sit behind the
+ * marker untouched until the next kick. That is what makes "enqueue throughout
+ * the tick" and "the drain loop can tell frame N from N-1" both true at once.
  */
 
 namespace RenderCore

@@ -2,29 +2,22 @@
 #define RENDERCORE_RENDERCOREAPI_H
 
 /*
- * Symbol visibility for RenderCore.
- *
- * The same three states GameCoreAPI.h documents, for the same reasons:
+ * Symbol visibility for RenderCore. The same three states GameCoreAPI.h
+ * documents, for the same reasons:
  *
  *   RENDERCORE_SHARED_BUILD undefined         -> RENDERCORE_API is empty (static)
  *   RENDERCORE_SHARED_BUILD + _BUILDING       -> dllexport (building the DLL)
  *   RENDERCORE_SHARED_BUILD alone             -> dllimport (consuming the DLL)
  *
- * UNLIKE GameWindow, this is not a choice a game gets to make: CMakeLists.txt
- * calls nimble_add_module(RenderCore SHARED ...) unconditionally, with no
- * RENDERCORE_SHARED option. RenderCore owns process-global state that must
- * exist exactly once per process -- the render-command queue, the
- * render-thread identity behind IsInRenderThread(), and the proxy-type table
- * RegisterProxyType fills. A STATIC RenderCore pulled PUBLIC through
- * NimbleEngine.dll would give NimbleEngine.dll and Sandbox.exe each their own
- * copy of all three, so a command enqueued from one image would sit in a
- * queue the render thread (latched against the OTHER copy) never drains --
- * exactly the GameCoreAPI.h argument for GameCore's own registries, applied
- * here.
- *
- * nimble_add_module() sets RENDERCORE_SHARED_BUILD PUBLIC and RENDERCORE_BUILDING
- * PRIVATE on the target, so the two states fall out of the link graph and nobody
- * has to remember which one they are in.
+ * ALWAYS SHARED, unlike GameWindow: RenderCore owns process-global state that
+ * must exist exactly once -- the render-command queue, the render-thread
+ * identity behind IsInRenderThread(), and RegisterProxyType's proxy-type table.
+ * Built STATIC and pulled PUBLIC through NimbleEngine.dll, each image would get
+ * its own copy of all three, and a command enqueued from one would sit in a
+ * queue the render thread never drains. CMakeLists.txt therefore calls
+ * nimble_add_module(RenderCore SHARED ...) with no opt-out, setting
+ * RENDERCORE_SHARED_BUILD PUBLIC and RENDERCORE_BUILDING PRIVATE so the state
+ * falls out of the link graph.
  *
  * Annotate types with out-of-line virtuals and free functions. Do NOT annotate
  * a header-only POD struct with no out-of-line members (RenderTypes.h,
