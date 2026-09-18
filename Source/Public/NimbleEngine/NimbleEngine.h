@@ -82,15 +82,44 @@ namespace NimbleEngine
     };
 
     /*
-     * What a game implements, and the whole of what the engine calls.
+     * THE GAME'S RULES -- game mode, game state, win conditions, whatever a
+     * specific game means by "the game" -- and the whole of what the engine
+     * calls into.
+     *
+     * Application owns the frame loop unconditionally: pumping events, pacing,
+     * the render fence, present, garbage collection and World::Tick are all
+     * its business and none of them are reachable from here. What a mode
+     * contributes is game LOGIC, at four points in a lifecycle the engine
+     * drives.
      *
      * =============================== THREADING ===============================
      *
      * EVERY METHOD HERE RUNS ON THE GAME THREAD, which is also the main thread
      * and the SDL pump thread. OnTick in particular runs CONCURRENTLY with the
      * render thread executing the PREVIOUS frame's commands -- that overlap is
-     * the point of the split -- so a game must not touch RenderCore::RenderContext
+     * the point of the split -- so a mode must not touch RenderCore::RenderContext
      * or a RenderProxy directly; both are render-thread-only types.
+     * ========================================================================
+     *
+     * =============================== LIFECYCLE ===============================
+     *
+     *   OnLoad    engine up, nothing running yet. The World, ScriptEngine and
+     *             Renderer are all valid and EMPTY. Build the mode's entities
+     *             and register its systems here.
+     *
+     *   OnStart   everything loaded, including the startup Lua script, and the
+     *             first tick has not run. Read what OnLoad and the script both
+     *             produced, and start the game proper.
+     *
+     *   OnTick    once per frame, for the life of the game.
+     *
+     *   OnUnload  the loop has ended. Undo what OnLoad did -- above all, unbind
+     *             any delegate it bound.
+     *
+     * The split between OnLoad and OnStart is the startup script: a mode that
+     * wants to see entities Lua created must read them in OnStart, because at
+     * OnLoad the script has not run yet. A mode with no such dependency can
+     * leave OnStart alone entirely.
      * ========================================================================
      *
      * A GAME DRAWS THROUGH THREE DOORS, none of which is an OnRender method:
@@ -103,39 +132,60 @@ namespace NimbleEngine
      *      way PrimitiveComponent registers itself.
      *   3. ENQUEUE_RENDER_COMMAND from any game-thread code, at any point
      *      during OnTick -- ONE FRAME OF LAG, not a fence: the command sits
-     *      behind whatever frame boundary Application::Simulate's own
-     *      EndFrame() call draws next, so a command issued mid-tick still
-     *      lands in a specific, well-defined frame rather than racing ahead
-     *      of one already presenting.
+     *      behind whatever frame boundary Application's own EndFrame() call
+     *      draws next, so a command issued mid-tick still lands in a specific,
+     *      well-defined frame rather than racing ahead of one already
+     *      presenting.
      *
      * WHAT A COMMAND MAY CAPTURE. Trivially copyable and trivially
      * destructible only -- see RenderCommand.h's own capture rule. A
      * RenderProxy* or RenderProxyHandle is fine to capture; a pointer into
-     * plain game-thread state (an IGame member, a local) is not, for the
+     * plain game-thread state (an IGameMode member, a local) is not, for the
      * same live-data-race reason FrameContext itself is a value.
      */
-    class IGame
+    class IGameMode
     {
     public:
-        virtual ~IGame() = default;
+        virtual ~IGameMode() = default;
 
         /*
-         * After the engine is up -- window created, render thread running and
-         * past its readiness check -- and before the first tick. Returning false
-         * aborts startup and the engine shuts down cleanly.
+         * The mode is being loaded: the engine is up -- window created, render
+         * thread running and past its readiness check -- and the World,
+         * ScriptEngine and Renderer are all valid. Nothing has ticked, and the
+         * startup script has NOT run yet.
          *
-         * InApp outlives the game for the duration of Exec, so stashing it to
-         * call RequestQuit() later is the intended use.
+         * Returning false aborts startup and the engine shuts down cleanly.
+         * OnUnload still runs, so a mode that fails halfway through still gets
+         * to undo the half it did.
+         *
+         * InApp outlives the mode for the duration of Exec, so stashing it to
+         * reach World/Renderer or call RequestQuit() later is the intended use.
          */
-        virtual bool OnStartup(Application& InApp) { (void)InApp; return true; }
+        virtual bool OnLoad(Application& InApp) { (void)InApp; return true; }
 
-        /* Once per frame. The only method a game must implement. */
+        /*
+         * The game is starting: everything is loaded, the startup Lua script
+         * has run, and the first tick has not. This is where a mode reads
+         * script-created state, or flips itself from "built" to "playing".
+         *
+         * Not called if OnLoad returned false.
+         */
+        virtual void OnStart() {}
+
+        /* Once per frame. The only method a mode must implement. */
         virtual void OnTick(const FrameContext& InFrame) = 0;
 
-        /* After the loop ends, before the window and render thread go away. Runs
-         * whether the loop ended by quit request, window close, or a failed
-         * OnStartup -- so it pairs with construction, not with OnStartup. */
-        virtual void OnShutdown() {}
+        /*
+         * The mode is being unloaded, after the loop ends and before the
+         * window and render thread go away. The World and Renderer are still
+         * valid here.
+         *
+         * PAIRS WITH OnLoad HAVING BEEN CALLED AT ALL, not with it having
+         * succeeded -- a mode that refused to load still undoes what it did
+         * while deciding. Whatever OnLoad bound, this unbinds; see Delegate.h's
+         * RELOAD note for why that is not optional.
+         */
+        virtual void OnUnload() {}
     };
 
     /*
@@ -167,21 +217,21 @@ namespace NimbleEngine
     class NE_API Application
     {
     public:
-        /* The engine with no game attached: opens the window, runs the frame
+        /* The engine with no mode attached: opens the window, runs the frame
          * loop and the thread split, draws the clear. What the repository had
-         * before IGame existed, and what the engine's own bring-up uses. */
+         * before IGameMode existed, and what the engine's own bring-up uses. */
         void Exec();
 
-        /* Runs InGame, which must outlive the call. */
-        void Exec(IGame& InGame);
+        /* Runs InMode, which must outlive the call. */
+        void Exec(IGameMode& InMode);
 
         /*
          * Ends the loop after the current frame completes.
          *
-         * GAME THREAD ONLY -- from inside OnTick or OnStartup. It is a plain
-         * bool, not an atomic, because the only writer is the thread that reads
-         * it; making it callable from anywhere would be a different and much
-         * larger promise about shutdown ordering.
+         * GAME THREAD ONLY -- from inside OnLoad, OnStart or OnTick. It is a
+         * plain bool, not an atomic, because the only writer is the thread that
+         * reads it; making it callable from anywhere would be a different and
+         * much larger promise about shutdown ordering.
          */
         void RequestQuit();
 
@@ -202,7 +252,7 @@ namespace NimbleEngine
 
         /*
          * The scene, and the Lua layer bound to it. GAME THREAD ONLY, valid
-         * from OnStartup through OnShutdown -- the same window this class
+         * from OnLoad through OnUnload -- the same window this class
          * already opens and tears down around a game's lifetime. A game reads
          * these to create/query entities (World) or to run a script directly
          * (ScriptEngine::RunString, for a console command say); NimbleEngine.cpp's
@@ -220,13 +270,13 @@ namespace NimbleEngine
         GameCore::ScriptEngine&  GetScriptEngine();
 
         /*
-         * The renderer. GAME THREAD ONLY, valid from OnStartup through
-         * OnShutdown -- the same lifetime GetWorld()/GetScriptEngine() have,
+         * The renderer. GAME THREAD ONLY, valid from OnLoad through
+         * OnUnload -- the same lifetime GetWorld()/GetScriptEngine() have,
          * and the same CORE_CHECKed-non-null contract. A game reads this to
          * call RegisterProxyType before its World is populated, or to read
          * RenderStats for a debug overlay; it never needs to call
          * WaitForPreviousFrame()/EndFrame() itself -- Application's own frame
-         * loop already does, in NimbleEngine.cpp's Simulate/ExecWithGame.
+         * loop already does, in NimbleEngine.cpp's Simulate/RunFrame.
          */
         RenderCore::Renderer& GetRenderer();
 
@@ -234,15 +284,41 @@ namespace NimbleEngine
         bool Initialize();
         void Shutdown();
 
-        /* The real Exec. The two public overloads differ only in whether they
-         * have a game to pass. */
-        void ExecWithGame(IGame* InGame);
+        /* The real Exec, and the owner of the whole lifecycle: engine up, mode
+         * loaded and started, loop, mode unloaded, engine down. The two public
+         * overloads differ only in whether they have a mode to pass. */
+        void ExecWithMode(IGameMode* InMode);
 
-        /* Game-thread half of the frame: IGame::OnTick, then Scene->Tick.
-         * Touches neither GDI nor RenderCore directly -- ExecWithGame's own
-         * loop is what calls Rendering->WaitForPreviousFrame()/EndFrame()
-         * around this. */
-        void Simulate(IGame* InGame, const FrameContext& InFrame);
+        /*
+         * OnLoad, then the startup script, then OnStart -- the ordering
+         * IGameMode's own lifecycle comment states, in one place rather than
+         * spread through the loop's preamble. Returns false if the mode
+         * refused to load, which is a clean shutdown and not an error.
+         *
+         * Split out from ExecWithMode because it is the part a reader has to
+         * get exactly right: the script runs BETWEEN the two mode callbacks,
+         * and that is the whole distinction between them.
+         */
+        bool LoadAndStartMode(IGameMode* InMode);
+
+        /*
+         * One iteration: pump, assemble the FrameContext, Simulate, fence,
+         * collect, present, end the frame. Returns false when the loop should
+         * stop -- window closed, quit requested, or the frame cap hit. Every
+         * engine-side step of a frame lives here; a mode contributes only the
+         * OnTick that Simulate calls.
+         *
+         * Does NOT pace: ExecWithMode does that, after this returns, because
+         * the timer-resolution scope pacing needs is a .cpp-local type that
+         * cannot be named in this header -- and because pacing is the one step
+         * that must be skipped on the way out of the loop.
+         */
+        bool RunFrame(IGameMode* InMode, uint64_t InMaxFrames);
+
+        /* Game-thread half of the frame: IGameMode::OnTick, then Scene->Tick.
+         * Touches neither GDI nor RenderCore directly -- RunFrame is what calls
+         * Rendering->WaitForPreviousFrame()/EndFrame() around this. */
+        void Simulate(IGameMode* InMode, const FrameContext& InFrame);
 
         /*
          * WHERE ASSETS COME FROM, for every subsystem that reads one --
@@ -277,8 +353,8 @@ namespace NimbleEngine
         /*
          * Owned here, via EngineCore::Memory::Alloc/Dealloc (not new/delete --
          * see NimbleEngine.cpp's Initialize(), which is the ONE place these
-         * are ever allocated). Simulate() ticks Scene after IGame::OnTick, on
-         * the game thread, before ExecWithGame's Rendering->EndFrame() call --
+         * are ever allocated). Simulate() ticks Scene after IGameMode::OnTick, on
+         * the game thread, before RunFrame's Rendering->EndFrame() call --
          * see NimbleEngine.cpp's own comment on why nothing past that call may
          * touch game state.
          */
@@ -288,6 +364,14 @@ namespace NimbleEngine
 
         bool                     bQuitRequested    = false;
         uint64_t                 FrameNumber       = 0;
+
+        /* When the previous tick was assembled, as a steady-clock nanosecond
+         * count -- what the next frame's DeltaSeconds is measured from. A
+         * member rather than a local in the loop because RunFrame is one
+         * iteration and the delta spans two; int64_t rather than a chrono
+         * time_point for the same reason NextFrameDeadlineNs is one, to keep
+         * <chrono> out of this header. Zero until the first frame assembles. */
+        int64_t                  PreviousTickNs      = 0;
 
         /* 0 = unlimited. See SetFrameRateLimit. */
         uint32_t                 FrameRateLimit    = 0;

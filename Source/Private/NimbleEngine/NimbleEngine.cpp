@@ -43,8 +43,8 @@ NIMBLE_CONFIG_INT(GMaxFrames, "Application", "MaxFrames", 0, nullptr);
 /* 0 runs unlimited; SetFrameRateLimit is the runtime half. */
 NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
 
-/* Bundle-relative path to a Lua file run once, after IGame::OnStartup succeeds
- * and before the first tick -- see ExecWithGame's own comment on why that
+/* Bundle-relative path to a Lua file run once, after IGameMode::OnLoad succeeds
+ * and before the first tick -- see LoadAndStartMode's own comment on why that
  * ordering, not Initialize(), is where this runs. Empty (the default) skips
  * scripting entirely; a game with nothing to say in Lua pays nothing for this. */
 NIMBLE_CONFIG_STRING(GStartupScript, "Scripting", "StartupScript", "", nullptr);
@@ -271,12 +271,12 @@ namespace NimbleEngine
 
     void Application::Exec()
     {
-        ExecWithGame(nullptr);
+        ExecWithMode(nullptr);
     }
 
-    void Application::Exec(IGame& InGame)
+    void Application::Exec(IGameMode& InMode)
     {
-        ExecWithGame(&InGame);
+        ExecWithMode(&InMode);
     }
 
     void Application::RequestQuit()
@@ -316,7 +316,125 @@ namespace NimbleEngine
         return *Rendering;
     }
 
-    void Application::ExecWithGame(IGame* InGame)
+    bool Application::LoadAndStartMode(IGameMode* InMode)
+    {
+        /* After the renderer is up, so a mode never observes a half-built
+         * engine. A refusal is a clean shutdown, not an error. */
+        if(InMode && !InMode->OnLoad(*this))
+        {
+            CORE_LOG_ERROR("Game mode refused to load")
+            return false;
+        }
+
+        /*
+         * BETWEEN THE TWO MODE CALLBACKS, and that placement is the whole
+         * distinction between them -- see IGameMode's lifecycle comment. A
+         * startup script sees a loaded mode (its own entities, its own bound
+         * config), not a half-built engine mid-construction; and OnStart below
+         * sees whatever the script created.
+         *
+         * Skipped entirely when empty, which is the default: a game with
+         * nothing to say in Lua pays nothing for this. A failed script is
+         * logged by ScriptEngine itself and is NOT fatal to the engine -- the
+         * same "log and continue" stance CORE_LOG_WARN already takes for a
+         * missing DefaultEngine.ini in Initialize().
+         */
+        const char* StartupScriptPath = GStartupScript.GetString();
+        if(StartupScriptPath && StartupScriptPath[0] != '\0')
+        {
+            Scripts->RunFile(StartupScriptPath);
+        }
+
+        if(InMode)
+        {
+            InMode->OnStart();
+        }
+
+        return true;
+    }
+
+    bool Application::RunFrame(IGameMode* InMode, const uint64_t InMaxFrames)
+    {
+        /* steady_clock: a delta must not go backwards because the wall clock
+         * was corrected mid-session. */
+        using Clock = std::chrono::steady_clock;
+
+        /* PumpEvents' return IS the exit condition; delegates run inside it,
+         * on this thread. */
+        if(!GameWindowSystem::PumpEvents())
+        {
+            return false;
+        }
+
+        /* Assembled on the game thread before anything overlaps; see
+         * FrameContext for why the viewport is read here. */
+        const int64_t NowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                  Clock::now().time_since_epoch()).count();
+
+        FrameContext Frame;
+        Frame.DeltaSeconds   = FrameNumber == 0
+                             ? 0.0
+                             : double(NowNs - PreviousTickNs) / 1'000'000'000.0;
+        Frame.FrameNumber    = FrameNumber;
+        Frame.ViewportPixels = Window ? Window->GetPixelSize() : Size();
+        PreviousTickNs       = NowNs;
+
+        Simulate(InMode, Frame);
+
+        /* THE FENCE: at most one frame in flight. A mode may have
+         * ENQUEUE_RENDER_COMMAND'd at any point during Simulate() above --
+         * see NimbleEngine.h's own comment on the frame marker mechanism that
+         * makes that safe -- so this waits for the PREVIOUS frame's marker,
+         * not for the queue to be empty of everything ever enqueued. */
+        Rendering->WaitForPreviousFrame();
+
+        /* THE SAFE POINT, and the only sound location: the render thread is
+         * idle here (WaitForPreviousFrame just returned) and never touches a
+         * TRef at all -- RenderCommand.h's capture rule keeps it that way --
+         * so nothing outside this call stack can be mutating a TRef while this
+         * runs. Cadence is a separate question from location. */
+        Memory::CollectGarbage();
+
+        /*
+         * PUTS THE PREVIOUS FRAME ON SCREEN, and the only place in the loop
+         * that touches the window's pixels.
+         *
+         * HERE, specifically: WaitForPreviousFrame() above has just returned,
+         * so the frame being presented is complete and submitted -- which is
+         * precisely GDI's own stated precondition ("Called from the UI thread
+         * after RendererFinished()", GDI.h). Any earlier and there would be
+         * nothing finished to present; any later and it would race the frame
+         * EndFrame() is about to start building.
+         *
+         * GAME THREAD BY DESIGN, not by accident -- GDI's present path keeps
+         * its own command pool and semaphores so a second thread can record
+         * and submit it alongside the render thread; see
+         * Renderer::PresentToWindow's own comment.
+         *
+         * NativeWindow, not Window->GetNativeHandle(): the handle was captured
+         * once in Initialize() precisely because GetNativeHandle() is a live
+         * SDL query rather than a cached read -- see this class's own member
+         * comment.
+         */
+        Rendering->PresentToWindow(NativeWindow);
+
+        RenderCore::FrameInfo Info;
+        Info.FrameNumber    = FrameNumber;
+        Info.DeltaSeconds   = Frame.DeltaSeconds;
+        Info.ViewportPixels = Frame.ViewportPixels;
+        Rendering->EndFrame(Info);
+
+        ++FrameNumber;
+        if(InMaxFrames != 0 && FrameNumber >= InMaxFrames)
+        {
+            return false;
+        }
+
+        /* A mode may have called RequestQuit() from inside OnTick. */
+        return !bQuitRequested;
+    }
+
+    void Application::ExecWithMode(IGameMode* InMode)
     {
         /* First, before anything defaults them. Both are first-caller-wins. */
         Threads::SetMainThread();
@@ -334,121 +452,24 @@ namespace NimbleEngine
 
             TimerResolutionScope TimerRes;
 
-            /* After the renderer is up, so a game never observes a
-             * half-built engine. A refusal is a clean shutdown. */
-            if(InGame && !InGame->OnStartup(*this))
+            if(!LoadAndStartMode(InMode))
             {
-                CORE_LOG_ERROR("Game refused to start")
                 bQuitRequested = true;
             }
 
-            /*
-             * AFTER OnStartup succeeds, not in Initialize() -- a startup
-             * script sees a started game (its own entities, its own bound
-             * config), not a half-built engine mid-construction. Skipped
-             * entirely when empty, which is the default: a game with nothing
-             * to say in Lua pays nothing for this. A failed script is logged
-             * by ScriptEngine itself and is NOT fatal to the engine -- the
-             * same "log and continue" stance CORE_LOG_WARN already takes for
-             * a missing DefaultEngine.ini just above in Initialize().
-             */
-            if(!bQuitRequested)
-            {
-                const char* StartupScriptPath = GStartupScript.GetString();
-                if(StartupScriptPath && StartupScriptPath[0] != '\0')
-                {
-                    Scripts->RunFile(StartupScriptPath);
-                }
-            }
-
-            /* steady_clock: a delta must not go backwards because the wall
-             * clock was corrected mid-session. */
-            using Clock = std::chrono::steady_clock;
-            Clock::time_point PreviousTick = Clock::now();
-
             while(!bQuitRequested)
             {
-                /* PumpEvents' return IS the exit condition; delegates run
-                 * inside it, on this thread. */
-                if(!GameWindowSystem::PumpEvents())
+                if(!RunFrame(InMode, MaxFrames))
                 {
                     bQuitRequested = true;
                     break;
                 }
 
-                /* Assembled on the game thread before anything overlaps; see
-                 * FrameContext for why the viewport is read here. */
-                const Clock::time_point Now = Clock::now();
-
-                FrameContext Frame;
-                Frame.DeltaSeconds  = FrameNumber == 0
-                                    ? 0.0
-                                    : std::chrono::duration<double>(Now - PreviousTick).count();
-                Frame.FrameNumber   = FrameNumber;
-                Frame.ViewportPixels = Window ? Window->GetPixelSize() : Size();
-                PreviousTick = Now;
-
-                Simulate(InGame, Frame);
-
-                /* THE FENCE: at most one frame in flight. A game may have
-                 * ENQUEUE_RENDER_COMMAND'd at any point during Simulate()
-                 * above -- see NimbleEngine.h's own comment on the frame
-                 * marker mechanism that makes that safe -- so this waits for
-                 * the PREVIOUS frame's marker, not for the queue to be empty
-                 * of everything ever enqueued. */
-                Rendering->WaitForPreviousFrame();
-
-                /* THE SAFE POINT, and the only sound location: the render
-                 * thread is idle here (WaitForPreviousFrame just returned)
-                 * and never touches a TRef at all -- RenderCommand.h's
-                 * capture rule keeps it that way -- so nothing outside this
-                 * call stack can be mutating a TRef while this runs. Cadence
-                 * is a separate question from location. */
-                Memory::CollectGarbage();
-
-                /*
-                 * PUTS THE PREVIOUS FRAME ON SCREEN, and the only place in
-                 * this loop that touches the window's pixels.
-                 *
-                 * HERE, specifically: WaitForPreviousFrame() above has just
-                 * returned, so the frame being presented is complete and
-                 * submitted -- which is precisely GDI's own stated
-                 * precondition ("Called from the UI thread after
-                 * RendererFinished()", GDI.h). Any earlier and there would
-                 * be nothing finished to present; any later and it would
-                 * race the frame EndFrame() is about to start building.
-                 *
-                 * GAME THREAD BY DESIGN, not by accident -- GDI's present
-                 * path keeps its own command pool and semaphores so a second
-                 * thread can record and submit it alongside the render
-                 * thread; see Renderer::PresentToWindow's own comment.
-                 *
-                 * NativeWindow, not Window->GetNativeHandle(): the handle was
-                 * captured once in Initialize() precisely because
-                 * GetNativeHandle() is a live SDL query rather than a cached
-                 * read -- see this class's own member comment.
-                 */
-                Rendering->PresentToWindow(NativeWindow);
-
-                RenderCore::FrameInfo Info;
-                Info.FrameNumber    = FrameNumber;
-                Info.DeltaSeconds   = Frame.DeltaSeconds;
-                Info.ViewportPixels = Frame.ViewportPixels;
-                Rendering->EndFrame(Info);
-
-                ++FrameNumber;
-                if(MaxFrames != 0 && FrameNumber >= MaxFrames)
-                {
-                    bQuitRequested = true;
-                }
-
                 /* LAST IN THE FRAME, so the wait overlaps the render thread
-                 * still executing what was just submitted. Skipped on the way
-                 * out. */
-                if(!bQuitRequested)
-                {
-                    PaceToDeadline(NextFrameDeadlineNs, FrameRateLimit, TimerRes);
-                }
+                 * still executing what was just submitted. Outside RunFrame
+                 * because it is skipped entirely on the way out -- the break
+                 * above is what makes that true. */
+                PaceToDeadline(NextFrameDeadlineNs, FrameRateLimit, TimerRes);
             }
         }
         else
@@ -456,11 +477,11 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize Application!")
         }
 
-        /* Paired with the game EXISTING, not with OnStartup succeeding: a game
-         * that refused to start still undoes what it did while deciding. */
-        if(InGame)
+        /* Paired with the mode EXISTING, not with OnLoad succeeding: a mode
+         * that refused to load still undoes what it did while deciding. */
+        if(InMode)
         {
-            InGame->OnShutdown();
+            InMode->OnUnload();
         }
 
         /* UNCONDITIONAL; every step below is null-safe and idempotent. Closes
@@ -470,20 +491,20 @@ namespace NimbleEngine
 
     /* Runs CONCURRENTLY with the render thread executing the previous
      * frame's commands: no ENQUEUE_RENDER_COMMAND from here would be
-     * unsound (see IGame's own header comment), but this method itself
-     * enqueues nothing -- a game's OnTick is where that happens. */
-    void Application::Simulate(IGame* InGame, const FrameContext& InFrame)
+     * unsound (see IGameMode's own header comment), but this method itself
+     * enqueues nothing -- a mode's OnTick is where that happens. */
+    void Application::Simulate(IGameMode* InMode, const FrameContext& InFrame)
     {
-        if(InGame)
+        if(InMode)
         {
-            InGame->OnTick(InFrame);
+            InMode->OnTick(InFrame);
         }
 
         /*
          * The game acts FIRST -- it may spawn or destroy something this
          * frame -- then World's own phases run: TP_PrePhysics, TP_Physics
          * (+ the spatial refit at its end), TP_PostPhysics, TP_PostUpdate.
-         * Still the game thread, still before ExecWithGame's
+         * Still the game thread, still before RunFrame's
          * WaitForPreviousFrame()/EndFrame() calls -- Scene never touches
          * RenderCore directly; WorldBridge (inside Renderer::EndFrame)
          * reaches into it through World's own public delegates and pools.
