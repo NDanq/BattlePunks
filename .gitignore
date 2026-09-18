@@ -24,6 +24,14 @@
 /Games/*/Binaries/SmokeScratch/
 
 # Engine-level build trees.
+#
+# The repo-root entries are for a tree configured from here with -B build --
+# `cmake -S Engine -B build` is the usual invocation and writes the tree
+# beside Engine/ rather than inside it, so the /Engine/ entries below do not
+# catch it.
+/Build/
+/build/
+/cmake-build-*/
 /Engine/Build/
 /Engine/build/
 /Engine/cmake-build-*/

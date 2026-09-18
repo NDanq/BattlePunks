@@ -1,18 +1,67 @@
 # ===========================================================================
 # RenderCore .gitignore
 #
-# The module itself has no standalone configure -- see the FATAL_ERROR guard
-# at the top of CMakeLists.txt -- so there is no Build/ tree that belongs to
-# it specifically. This file exists for local IDE/build clutter that can
-# still land here if an editor is pointed directly at this directory, and
-# mirrors Modules/GameCore's own .gitignore for the same reason that one
-# exists despite GameCore also having no standalone configure.
+# The module has no standalone configure -- see the FATAL_ERROR guard at the
+# top of CMakeLists.txt -- so there is no Build/ tree that belongs to it
+# specifically. This file exists for local IDE/build clutter that can still
+# land here if an editor is pointed directly at this directory.
+#
+# Carries the same build-output patterns as Modules/Core and Modules/GDI. The
+# directory entries cover the realistic case (a stray cmake tree); the
+# extension entries cover an artifact written somewhere other than a build
+# directory, which the directory patterns alone would miss. The Qt moc/qrc/ui
+# entries those two files also carry are deliberately absent: nothing in this
+# module is built with Qt.
+#
+# GDI's cooked shaders are NOT excluded here -- they are staged beside the
+# executable by Engine/CMakeLists.txt, and it is Modules/GDI/.gitignore that
+# owns the /Shaders/Cooked/ entry for the tree they are cooked into.
 # ---------------------------------------------------------------------------
+
+# Build trees
 /Build/
-/build/
-/cmake-build-*/
+/Binaries/
+build/
+cmake-build-*/
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 CTestTestfile.cmake
+CMakeUserPresets.json
 compile_commands.json
+Testing/
+
+# Build output, wherever it lands
+*.obj
+*.o
+*.lib
+*.a
+*.exe
+*.dll
+*.so
+*.so.*
+*.dylib
+*.pdb
+*.ilk
+*.exp
+*.idb
+*.pch
+*.gch
+
+# Compiled shader blobs, if one is ever produced in-tree here
+*.spv
+
+# Logs
+/Logs/
+*.log
+
+# Editors and OS
+.idea/
+.vs/
+.vscode/
+*.user
+.cache/
+.claude/settings.local.json
+Thumbs.db
+Desktop.ini
+.DS_Store
