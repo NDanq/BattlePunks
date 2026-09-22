@@ -48,6 +48,8 @@ namespace RenderCore
 namespace NimbleEngine
 {
     class Application;
+    class GameState;
+    class ILevel;
 
     /*
      * What a game is told about the frame it is ticking.
@@ -88,8 +90,10 @@ namespace NimbleEngine
      *
      * Application owns the frame loop unconditionally: pumping events, pacing,
      * the render fence, present, garbage collection and World::Tick are all
-     * its business and none of them are reachable from here. What a mode
-     * contributes is game LOGIC, at four points in a lifecycle the engine
+     * its business and none of them are reachable from here. ILevel owns the
+     * entities (Level.h). What a mode contributes is game LOGIC, and almost
+     * nothing else -- it acts on a World the level already populated and a
+     * GameState the level holds, at four points in a lifecycle the engine
      * drives.
      *
      * =============================== THREADING ===============================
@@ -103,18 +107,18 @@ namespace NimbleEngine
      *
      * =============================== LIFECYCLE ===============================
      *
-     *   OnLoad    engine up, nothing running yet. The World, ScriptEngine and
-     *             Renderer are all valid and EMPTY. Build the mode's entities
-     *             and register its systems here.
+     *   OnLoad    engine up, ILevel::OnLoad has already populated the World.
+     *             Cache what the rules need and bind what they listen to.
      *
      *   OnStart   everything loaded, including the startup Lua script, and the
-     *             first tick has not run. Read what OnLoad and the script both
-     *             produced, and start the game proper.
+     *             GameState has been reset. The first tick has not run. Read
+     *             what the level and the script both produced, and start the
+     *             game proper.
      *
      *   OnTick    once per frame, for the life of the game.
      *
-     *   OnUnload  the loop has ended. Undo what OnLoad did -- above all, unbind
-     *             any delegate it bound.
+     *   OnUnload  the loop has ended, or another level was requested. Undo what
+     *             OnLoad did -- above all, unbind any delegate it bound.
      *
      * The split between OnLoad and OnStart is the startup script: a mode that
      * wants to see entities Lua created must read them in OnStart, because at
@@ -149,24 +153,28 @@ namespace NimbleEngine
         virtual ~IGameMode() = default;
 
         /*
-         * The mode is being loaded: the engine is up -- window created, render
-         * thread running and past its readiness check -- and the World,
-         * ScriptEngine and Renderer are all valid. Nothing has ticked, and the
-         * startup script has NOT run yet.
+         * The mode is being loaded. The engine is up, and the level's World is
+         * ALREADY POPULATED -- ILevel::OnLoad ran first and spawned whatever
+         * the level contains. Nothing has ticked, and the startup script has
+         * NOT run yet.
          *
-         * Returning false aborts startup and the engine shuts down cleanly.
-         * OnUnload still runs, so a mode that fails halfway through still gets
-         * to undo the half it did.
+         * A mode does not spawn the scene it acts on; that is the level's job.
+         * What belongs here is what the RULES need: caching entity handles the
+         * level created, binding to World delegates, reading config.
+         *
+         * Returning false aborts the load. OnUnload still runs, so a mode that
+         * fails halfway through still gets to undo the half it did.
          *
          * InApp outlives the mode for the duration of Exec, so stashing it to
-         * reach World/Renderer or call RequestQuit() later is the intended use.
+         * reach the level, the renderer or RequestQuit() is the intended use.
          */
         virtual bool OnLoad(Application& InApp) { (void)InApp; return true; }
 
         /*
          * The game is starting: everything is loaded, the startup Lua script
-         * has run, and the first tick has not. This is where a mode reads
-         * script-created state, or flips itself from "built" to "playing".
+         * has run, the GameState has been reset, and the first tick has not.
+         * This is where a mode reads script-created state, or flips itself
+         * from "built" to "playing".
          *
          * Not called if OnLoad returned false.
          */
@@ -217,13 +225,51 @@ namespace NimbleEngine
     class NE_API Application
     {
     public:
-        /* The engine with no mode attached: opens the window, runs the frame
-         * loop and the thread split, draws the clear. What the repository had
-         * before IGameMode existed, and what the engine's own bring-up uses. */
+        /* The engine with no level attached: opens the window, runs the frame
+         * loop and the thread split, draws the clear. A World still exists (an
+         * empty one, inside an engine-owned level), so the renderer and script
+         * engine have something to bind. What the engine's own bring-up uses. */
         void Exec();
 
-        /* Runs InMode, which must outlive the call. */
+        /* Runs InLevel, which must outlive the call. The primary entry point:
+         * the level brings its own entities, its mode and its state. */
+        void Exec(ILevel& InLevel);
+
+        /*
+         * Runs InMode against an empty engine-owned level.
+         *
+         * The pre-ILevel shape, kept because a mode that spawns its own
+         * entities in OnLoad is still a reasonable thing to write for a small
+         * game or a test, and because the smoke tests use it. Equivalent to
+         * writing a level whose OnLoad does nothing and whose GetGameMode()
+         * returns InMode.
+         */
         void Exec(IGameMode& InMode);
+
+        /*
+         * Swap to InLevel, which must outlive the call.
+         *
+         * DEFERRED, ALWAYS: the swap happens at the top of the next frame,
+         * never inside the call. Tearing a World down from inside its own
+         * Tick -- which is where a mode's OnTick runs -- would destroy the
+         * pools and systems being iterated. World::IsTicking() is CORE_CHECKed
+         * against exactly that.
+         *
+         * The outgoing level is fully unloaded (mode OnUnload, level OnUnload,
+         * World destroyed) before the incoming one is loaded, so the two never
+         * coexist and a game cannot accidentally reference across them.
+         *
+         * GAME THREAD ONLY, like RequestQuit.
+         */
+        void RequestLevel(ILevel& InLevel);
+
+        /* The level currently loaded, or nullptr before the first load and
+         * after the last unload. GAME THREAD ONLY. */
+        ILevel* GetLevel();
+
+        /* The active level's state, or nullptr if there is no level or it
+         * holds none. Shorthand for GetLevel()->GetGameState(). */
+        GameState* GetGameState();
 
         /*
          * Ends the loop after the current frame completes.
@@ -251,14 +297,18 @@ namespace NimbleEngine
         uint32_t GetFrameRateLimit() const;
 
         /*
-         * The scene, and the Lua layer bound to it. GAME THREAD ONLY, valid
-         * from OnLoad through OnUnload -- the same window this class
-         * already opens and tears down around a game's lifetime. A game reads
-         * these to create/query entities (World) or to run a script directly
-         * (ScriptEngine::RunString, for a console command say); NimbleEngine.cpp's
-         * Initialize()/Shutdown() are what actually create, bind, unbind and
-         * destroy both -- see the ordering note on Shutdown() there for why
-         * the World must be destroyed before the ScriptEngine is.
+         * The ACTIVE LEVEL'S scene, and the Lua layer bound to it. GAME THREAD
+         * ONLY, valid from OnLoad through OnUnload.
+         *
+         * GetWorld() forwards to GetLevel()->GetWorld() -- the World belongs to
+         * the level now, not to this class, and a level swap replaces it. A
+         * game that holds the reference across a RequestLevel() is holding a
+         * destroyed object; hold the Application and re-ask instead.
+         *
+         * The ScriptEngine, by contrast, outlives every level: one lua_State
+         * per process, rebound to each level's World as it loads. That is why
+         * registered script classes survive a swap while script INSTANCES do
+         * not -- see ScriptSystem_Uninstall.
          *
          * CORE_CHECKed non-null rather than returning a reference to nothing:
          * calling either before Initialize() has run (or after Shutdown() has)
@@ -284,22 +334,41 @@ namespace NimbleEngine
         bool Initialize();
         void Shutdown();
 
-        /* The real Exec, and the owner of the whole lifecycle: engine up, mode
-         * loaded and started, loop, mode unloaded, engine down. The two public
-         * overloads differ only in whether they have a mode to pass. */
-        void ExecWithMode(IGameMode* InMode);
+        /* The real Exec, and the owner of the whole lifecycle: engine up, level
+         * loaded and started, loop, level unloaded, engine down. All three
+         * public overloads funnel here; the two without a level of their own
+         * pass a .cpp-local default whose World is simply empty. */
+        void ExecWithLevel(ILevel* InLevel);
 
         /*
-         * OnLoad, then the startup script, then OnStart -- the ordering
-         * IGameMode's own lifecycle comment states, in one place rather than
-         * spread through the loop's preamble. Returns false if the mode
-         * refused to load, which is a clean shutdown and not an error.
+         * Create the World, bind the script engine and renderer to it, run
+         * ILevel::OnLoad, then IGameMode::OnLoad, then the startup script, then
+         * GameState::OnReset, then IGameMode::OnStart.
          *
-         * Split out from ExecWithMode because it is the part a reader has to
-         * get exactly right: the script runs BETWEEN the two mode callbacks,
-         * and that is the whole distinction between them.
+         * That ordering is the part a reader has to get exactly right, which is
+         * why it lives in one function rather than spread through the loop's
+         * preamble. The script runs BETWEEN the mode's two callbacks -- the
+         * whole distinction between them -- and the level populates the World
+         * before the mode sees it at all.
+         *
+         * Returns false if the level or its mode refused to load. The level is
+         * left loaded either way, so UnloadLevel() still runs and OnUnload
+         * still pairs with OnLoad having been CALLED.
          */
-        bool LoadAndStartMode(IGameMode* InMode);
+        bool LoadLevel(ILevel* InLevel);
+
+        /*
+         * The reverse, in the order Shutdown()'s own comment establishes:
+         * IGameMode::OnUnload, ILevel::OnUnload, unbind scripts, unbind the
+         * renderer, destroy the World. Null-safe and idempotent -- it runs on
+         * the failure path of LoadLevel as well as at teardown.
+         */
+        void UnloadLevel();
+
+        /* Applies a pending RequestLevel() at a point where no World is
+         * ticking: UnloadLevel() then LoadLevel(). Called at the top of
+         * RunFrame, never from inside Simulate. */
+        void ApplyPendingLevel();
 
         /*
          * One iteration: pump, assemble the FrameContext, Simulate, fence,
@@ -308,17 +377,19 @@ namespace NimbleEngine
          * engine-side step of a frame lives here; a mode contributes only the
          * OnTick that Simulate calls.
          *
-         * Does NOT pace: ExecWithMode does that, after this returns, because
+         * Does NOT pace: ExecWithLevel does that, after this returns, because
          * the timer-resolution scope pacing needs is a .cpp-local type that
          * cannot be named in this header -- and because pacing is the one step
          * that must be skipped on the way out of the loop.
          */
-        bool RunFrame(IGameMode* InMode, uint64_t InMaxFrames);
+        bool RunFrame(uint64_t InMaxFrames);
 
-        /* Game-thread half of the frame: IGameMode::OnTick, then Scene->Tick.
-         * Touches neither GDI nor RenderCore directly -- RunFrame is what calls
-         * Rendering->WaitForPreviousFrame()/EndFrame() around this. */
-        void Simulate(IGameMode* InMode, const FrameContext& InFrame);
+        /* Game-thread half of the frame: IGameMode::OnTick, then the level
+         * World's Tick. Touches neither GDI nor RenderCore directly -- RunFrame
+         * is what calls Rendering->WaitForPreviousFrame()/EndFrame() around
+         * this. Reads the mode from the active level rather than taking one:
+         * a level swap may have replaced it since the last frame. */
+        void Simulate(const FrameContext& InFrame);
 
         /*
          * WHERE ASSETS COME FROM, for every subsystem that reads one --
@@ -351,16 +422,37 @@ namespace NimbleEngine
         EngineCore::WindowHandle NativeWindow;
 
         /*
-         * Owned here, via EngineCore::Memory::Alloc/Dealloc (not new/delete --
-         * see NimbleEngine.cpp's Initialize(), which is the ONE place these
-         * are ever allocated). Simulate() ticks Scene after IGameMode::OnTick, on
-         * the game thread, before RunFrame's Rendering->EndFrame() call --
-         * see NimbleEngine.cpp's own comment on why nothing past that call may
-         * touch game state.
+         * Owned here, via EngineCore::Memory::Alloc/Dealloc (not new/delete),
+         * and for the whole process lifetime: Initialize() creates both,
+         * Shutdown() destroys both. Neither belongs to a level -- one lua_State
+         * and one render thread serve every level in turn, rebound as each
+         * loads. The World that USED to sit beside these now belongs to the
+         * active level instead; see ActiveLevel below.
          */
-        GameCore::World*         Scene     = nullptr;
         GameCore::ScriptEngine*  Scripts   = nullptr;
         RenderCore::Renderer*    Rendering = nullptr;
+
+        /*
+         * The level currently loaded, and its World.
+         *
+         * LevelWorld is allocated by LoadLevel and destroyed by UnloadLevel --
+         * a level's subclass never touches it (Level.h says why), and
+         * ILevel::OwnedWorld points at this same object for the level's
+         * lifetime. Simulate() ticks it after IGameMode::OnTick, on the game
+         * thread, before RunFrame's Rendering->EndFrame() call.
+         */
+        ILevel*                  ActiveLevel = nullptr;
+        GameCore::World*         LevelWorld  = nullptr;
+
+        /*
+         * Set by RequestLevel, consumed at the top of the next RunFrame.
+         *
+         * A separate pointer rather than swapping ActiveLevel directly,
+         * because the request almost always arrives from inside OnTick -- that
+         * is, from inside the outgoing World's own Tick -- and tearing that
+         * World down there would destroy the pools being iterated.
+         */
+        ILevel*                  PendingLevel = nullptr;
 
         bool                     bQuitRequested    = false;
         uint64_t                 FrameNumber       = 0;

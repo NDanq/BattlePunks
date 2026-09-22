@@ -1,4 +1,6 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
+#include "Public/NimbleEngine/GameState.h"
+#include "Public/NimbleEngine/Level.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreLog.h"
@@ -12,20 +14,30 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
 
 /*
  * Sandbox: the example game. CMakeLists.txt says why it exists; this is what it
- * currently demonstrates -- the IGame seam, GameCore's World/Entity/delegate
- * surface (a C++-owned entity, "Marker", ticked by a registered PostPhysics
- * system; a C++ subscriber on World's OnEntityCreated delegate with the
- * bind/unbind pair shown explicitly; a Lua-owned entity, "Scripted", created
- * by Scripts/Main.lua, whose position this file reads back every second to
- * show the two sides agreeing on one World) -- and now RenderCore's drawing
- * surface: Marker carries a PrimitiveComponent, so RenderCore::Renderer's
+ * currently demonstrates -- the ILevel/IGameMode/GameState split, GameCore's
+ * World/Entity/delegate surface (a C++-owned entity, "Marker", ticked by a
+ * registered PostPhysics system; a C++ subscriber on World's OnEntityCreated
+ * delegate with the bind/unbind pair shown explicitly; a Lua-owned entity,
+ * "Scripted", created by Scripts/Main.lua, whose position this file reads back
+ * every second to show the two sides agreeing on one World) -- and RenderCore's
+ * drawing surface: Marker carries a PrimitiveComponent, so RenderCore::Renderer's
  * WorldBridge draws it automatically every frame with no OnRender method
  * anywhere in this file, and a dedicated "Camera" entity gives the scene a
  * view centred on the action rather than the default origin.
+ *
+ * THE THREE-WAY SPLIT, which is the point of this file's shape:
+ *
+ *   SandboxLevel      CONTAINS the entities. Spawns Marker and Camera,
+ *                     registers the wrap system, owns the mode and the state.
+ *   SandboxGameMode   the RULES, and nothing else. Moves Marker, decides when
+ *                     the run is over, reports. Spawns nothing.
+ *   SandboxGameState  the PROGRESS. Elapsed time and tick counts, reset when
+ *                     the level (re)starts.
  *
  * NO LOG HANDLER IS INSTALLED, deliberately. Without one, CoreLog's Fatal path
  * writes to stderr and abort()s; installing one turns every CORE_CHECK and
@@ -84,8 +96,8 @@ namespace
     }
 
     /*
-     * World::OnEntityCreated's C++ subscriber, bound in OnStartup and
-     * unbound in OnShutdown -- the "whatever OnStartup binds, OnShutdown
+     * World::OnEntityCreated's C++ subscriber, bound in SandboxLevel::OnLoad
+     * and unbound in its OnUnload -- the "whatever OnLoad binds, OnUnload
      * unbinds" rule Delegate.h states, demonstrated explicitly rather than
      * left implicit. Logs the new entity's name so the log shows BOTH
      * entities this file and Scripts/Main.lua create, from one delegate.
@@ -97,9 +109,34 @@ namespace
     }
 }
 
+/*
+ * What this run is tracking. Owned by SandboxLevel, read and written by
+ * SandboxGameMode -- the split GameState.h describes, at its smallest useful
+ * size. OnReset is what makes restarting the level a real operation rather
+ * than a fiction: everything here goes back to zero without the mode being
+ * rebuilt.
+ */
+class SandboxGameState : public NimbleEngine::GameState
+{
+public:
+    void OnReset() override
+    {
+        ElapsedSeconds    = 0.0;
+        LastReportSeconds = 0.0;
+        TicksThisSecond   = 0;
+    }
+
+    double   ElapsedSeconds    = 0.0;
+    double   LastReportSeconds = 0.0;
+    uint64_t TicksThisSecond   = 0;
+};
+
 class SandboxGameMode : public NimbleEngine::IGameMode
 {
 public:
+    SandboxGameMode(GameCore::EntityID InMarker, SandboxGameState& InState)
+        : MarkerEntity(InMarker), State(&InState) {}
+
     bool OnLoad(NimbleEngine::Application& InApp) override
     {
         App = &InApp;
@@ -110,7 +147,150 @@ public:
 
         RunSeconds = double(GSandboxRunSeconds.GetInt());
 
-        GameCore::World& World = InApp.GetWorld();
+        /* NOTHING IS SPAWNED HERE. SandboxLevel::OnLoad already built the
+         * scene -- Marker, Camera, the wrap system -- and handed this mode the
+         * one entity its rules actually need. That is the whole distinction
+         * between a level and a mode; see IGameMode's class comment. */
+        return true;
+    }
+
+    /*
+     * The startup script has run by now -- Scripts/Main.lua, per
+     * Config/DefaultEngine.ini's [Scripting] StartupScript -- so "Scripted"
+     * exists here and did NOT during OnLoad. That ordering is the whole
+     * reason this phase is separate; see IGameMode's lifecycle comment.
+     */
+    void OnStart() override
+    {
+        const uint32_t Limit = App->GetFrameRateLimit();
+
+        const GameCore::EntityID Scripted = App->GetWorld().FindEntityByName("Scripted");
+
+        CORE_LOG("[Sandbox] game starting on thread " + Num(uint64_t(GameThread))
+                 + "; frame limit "
+                 + (Limit > 0 ? Num(Limit) + " fps" : std::string("unlimited"))
+                 + (RunSeconds > 0.0
+                    ? "; will quit after " + Fixed2(RunSeconds) + "s"
+                    : "; running until the window closes")
+                 + (Scripted.IsSet()
+                    ? "; the startup script's entity is present"
+                    : "; no scripted entity (no startup script ran)"))
+    }
+
+    void OnTick(const NimbleEngine::FrameContext& InFrame) override
+    {
+        /* Runs CONCURRENTLY with the render thread draining the previous
+         * frame. Nothing here can touch the renderer or the window, which is
+         * the point of the context being a value. */
+        CORE_CHECK(EngineCore::appThreadID() == GameThread,
+                   "[Sandbox] OnTick ran on a thread other than the one OnStartup saw")
+
+        State->ElapsedSeconds += InFrame.DeltaSeconds;
+        State->TicksThisSecond++;
+
+        GameCore::World& World = App->GetWorld();
+        if(GameCore::TransformComponent* Marker = World.GetComponent<GameCore::TransformComponent>(MarkerEntity))
+        {
+            const double SpeedPixelsPerSecond = 120.0;
+            Marker->Position.SetX(Marker->Position.GetX() + SpeedPixelsPerSecond * InFrame.DeltaSeconds);
+            /* Wrapping itself happens in Sandbox.WrapMarker, TP_PostPhysics --
+             * this only advances the position; World::Tick (called by
+             * NimbleEngine.cpp's Simulate, right after this method returns)
+             * is what actually runs that system this same frame. */
+        }
+
+        /* The game deciding it is done. The engine finishes the frame in
+         * flight and leaves the loop at the top. */
+        if(RunSeconds > 0.0 && State->ElapsedSeconds >= RunSeconds && App)
+        {
+            CORE_LOG("[Sandbox] RunSeconds reached; asking the engine to quit")
+            App->RequestQuit();
+        }
+
+        if(State->ElapsedSeconds - State->LastReportSeconds >= 1.0)
+        {
+            const double MarkerX = World.GetComponent<GameCore::TransformComponent>(MarkerEntity)
+                                  ? World.GetComponent<GameCore::TransformComponent>(MarkerEntity)->Position.GetX()
+                                  : 0.0;
+
+            /* "Scripted" is created by Scripts/Main.lua, run once at startup
+             * (see Config/DefaultEngine.ini's [Scripting] StartupScript) --
+             * absent until that script has actually run, and this reads it
+             * purely through World, with no dependency on Lua itself. Proves
+             * C++ can read what a script wrote to the same World. */
+            const GameCore::EntityID ScriptedEntity = World.FindEntityByName("Scripted");
+            std::string ScriptedPart;
+            if(GameCore::TransformComponent* Scripted = World.GetComponent<GameCore::TransformComponent>(ScriptedEntity))
+            {
+                ScriptedPart = " scripted_x=" + Fixed2(Scripted->Position.GetX());
+            }
+
+            RenderCore::RenderStats RenderStats;
+            App->GetRenderer().GetStats(RenderStats);
+
+            CORE_LOG("[Sandbox] t=" + Fixed2(State->ElapsedSeconds) + "s"
+                     + " frame=" + Num(InFrame.FrameNumber)
+                     + " fps=" + Num(State->TicksThisSecond)
+                     + " dt=" + Fixed2(InFrame.DeltaSeconds * 1000.0) + "ms"
+                     + " viewport=" + Num(uint64_t(InFrame.ViewportPixels.Width))
+                     + "x" + Num(uint64_t(InFrame.ViewportPixels.Height))
+                     + " marker_x=" + Fixed2(MarkerX)
+                     + ScriptedPart
+                     + " frames_rendered=" + Num(RenderStats.FramesRendered)
+                     + " draw_calls=" + Num(RenderStats.DrawCalls))
+
+            State->LastReportSeconds = State->ElapsedSeconds;
+            State->TicksThisSecond   = 0;
+        }
+    }
+
+    void OnUnload() override
+    {
+        /* NOTHING TO UNBIND HERE. The OnEntityCreated subscription belongs to
+         * SandboxLevel, which bound it and unbinds it in its own OnUnload --
+         * the mode never touched a World delegate. */
+        CORE_LOG("[Sandbox] game stopping after " + Fixed2(State->ElapsedSeconds) + "s")
+        App = nullptr;
+    }
+
+private:
+    /* Stashed in OnLoad so OnStart/OnTick can call RequestQuit() and reach
+     * World. */
+    NimbleEngine::Application* App = nullptr;
+
+    EngineCore::ThreadID GameThread = 0;
+
+    double RunSeconds = 0.0;
+
+    /* Handed in by the level at construction -- the mode does not look them
+     * up, because it did not create them. */
+    GameCore::EntityID MarkerEntity;
+    SandboxGameState*  State = nullptr;
+};
+
+/*
+ * WHAT CONTAINS THE SCENE. Spawns Marker and Camera, registers the wrap
+ * system, subscribes the entity logger, and owns both the mode and the state
+ * that act on all of it.
+ *
+ * Everything here used to live in SandboxGameMode::OnLoad. The move is the
+ * whole point of this iteration: unloading this level destroys its World and
+ * with it every entity below, and the mode survives that as pure logic with
+ * nothing of its own to clean up.
+ */
+class SandboxLevel : public NimbleEngine::ILevel
+{
+public:
+    const char* GetName() const override { return "Sandbox"; }
+
+    bool OnLoad(NimbleEngine::Application& InApp) override
+    {
+        (void)InApp;
+
+        /* GetWorld(), not InApp.GetWorld(): they are the same object during
+         * OnLoad, but this one stays correct regardless of what else the
+         * engine has loaded -- Level.h says so. */
+        GameCore::World& World = GetWorld();
 
         /* The bind/unbind pair, spelled out: Remove(EntityCreatedHandle) in
          * OnUnload is what makes this safe rather than merely convenient --
@@ -153,145 +333,63 @@ public:
 
         /* Closed over via a small POD blob rather than two separate void*
          * parameters -- SystemFn's contract is exactly one void*, matching
-         * every other seam in GameCore (ComponentRemovedFn, EventFn). */
+         * every other seam in GameCore (ComponentRemovedFn, EventFn).
+         *
+         * ViewportWidth is set once here from the window rather than every
+         * frame from the FrameContext: the wrap boundary only has to be
+         * roughly right, and reading it here keeps the mode from needing to
+         * reach into the level's system state at all. */
         SystemContext.Entity        = MarkerEntity;
-        SystemContext.ViewportWidth = 0;   // filled in on the first OnTick, once a real viewport is known
-        World.RegisterSystem("Sandbox.WrapMarker", GameCore::TP_PostPhysics, &WrapMarkerSystem, &SystemContext);
+        SystemContext.ViewportWidth = 1280;
+        World.RegisterSystem("Sandbox.WrapMarker", GameCore::TP_PostPhysics,
+                             &WrapMarkerSystem, &SystemContext);
+
+        /* Constructed HERE, not as a member initialiser, because it needs
+         * MarkerEntity -- which only exists once the World above is built. */
+        Mode.emplace(MarkerEntity, State);
 
         return true;
     }
 
-    /*
-     * The startup script has run by now -- Scripts/Main.lua, per
-     * Config/DefaultEngine.ini's [Scripting] StartupScript -- so "Scripted"
-     * exists here and did NOT during OnLoad. That ordering is the whole
-     * reason this phase is separate; see IGameMode's lifecycle comment.
-     */
-    void OnStart() override
-    {
-        const uint32_t Limit = App->GetFrameRateLimit();
-
-        const GameCore::EntityID Scripted = App->GetWorld().FindEntityByName("Scripted");
-
-        CORE_LOG("[Sandbox] game starting on thread " + Num(uint64_t(GameThread))
-                 + "; frame limit "
-                 + (Limit > 0 ? Num(Limit) + " fps" : std::string("unlimited"))
-                 + (RunSeconds > 0.0
-                    ? "; will quit after " + Fixed2(RunSeconds) + "s"
-                    : "; running until the window closes")
-                 + (Scripted.IsSet()
-                    ? "; the startup script's entity is present"
-                    : "; no scripted entity (no startup script ran)"))
-    }
-
-    void OnTick(const NimbleEngine::FrameContext& InFrame) override
-    {
-        /* Runs CONCURRENTLY with the render thread draining the previous
-         * frame. Nothing here can touch the renderer or the window, which is
-         * the point of the context being a value. */
-        CORE_CHECK(EngineCore::appThreadID() == GameThread,
-                   "[Sandbox] OnTick ran on a thread other than the one OnStartup saw")
-
-        ElapsedSeconds += InFrame.DeltaSeconds;
-        TicksThisSecond++;
-
-        SystemContext.ViewportWidth = InFrame.ViewportPixels.Width > 0 ? InFrame.ViewportPixels.Width : 1;
-
-        GameCore::World& World = App->GetWorld();
-        if(GameCore::TransformComponent* Marker = World.GetComponent<GameCore::TransformComponent>(MarkerEntity))
-        {
-            const double SpeedPixelsPerSecond = 120.0;
-            Marker->Position.SetX(Marker->Position.GetX() + SpeedPixelsPerSecond * InFrame.DeltaSeconds);
-            /* Wrapping itself happens in Sandbox.WrapMarker, TP_PostPhysics --
-             * this only advances the position; World::Tick (called by
-             * NimbleEngine.cpp's Simulate, right after this method returns)
-             * is what actually runs that system this same frame. */
-        }
-
-        /* The game deciding it is done. The engine finishes the frame in
-         * flight and leaves the loop at the top. */
-        if(RunSeconds > 0.0 && ElapsedSeconds >= RunSeconds && App)
-        {
-            CORE_LOG("[Sandbox] RunSeconds reached; asking the engine to quit")
-            App->RequestQuit();
-        }
-
-        if(ElapsedSeconds - LastReportSeconds >= 1.0)
-        {
-            const double MarkerX = World.GetComponent<GameCore::TransformComponent>(MarkerEntity)
-                                  ? World.GetComponent<GameCore::TransformComponent>(MarkerEntity)->Position.GetX()
-                                  : 0.0;
-
-            /* "Scripted" is created by Scripts/Main.lua, run once at startup
-             * (see Config/DefaultEngine.ini's [Scripting] StartupScript) --
-             * absent until that script has actually run, and this reads it
-             * purely through World, with no dependency on Lua itself. Proves
-             * C++ can read what a script wrote to the same World. */
-            const GameCore::EntityID ScriptedEntity = World.FindEntityByName("Scripted");
-            std::string ScriptedPart;
-            if(GameCore::TransformComponent* Scripted = World.GetComponent<GameCore::TransformComponent>(ScriptedEntity))
-            {
-                ScriptedPart = " scripted_x=" + Fixed2(Scripted->Position.GetX());
-            }
-
-            RenderCore::RenderStats RenderStats;
-            App->GetRenderer().GetStats(RenderStats);
-
-            CORE_LOG("[Sandbox] t=" + Fixed2(ElapsedSeconds) + "s"
-                     + " frame=" + Num(InFrame.FrameNumber)
-                     + " fps=" + Num(TicksThisSecond)
-                     + " dt=" + Fixed2(InFrame.DeltaSeconds * 1000.0) + "ms"
-                     + " viewport=" + Num(uint64_t(InFrame.ViewportPixels.Width))
-                     + "x" + Num(uint64_t(InFrame.ViewportPixels.Height))
-                     + " marker_x=" + Fixed2(MarkerX)
-                     + ScriptedPart
-                     + " frames_rendered=" + Num(RenderStats.FramesRendered)
-                     + " draw_calls=" + Num(RenderStats.DrawCalls))
-
-            LastReportSeconds = ElapsedSeconds;
-            TicksThisSecond   = 0;
-        }
-    }
-
     void OnUnload() override
     {
-        CORE_LOG("[Sandbox] game stopping after " + Fixed2(ElapsedSeconds) + "s")
-
-        /* The other half of the bind/unbind pair from OnLoad -- see
-         * Delegate.h's RELOAD note on why this is not optional even for a
-         * binding that lives exactly as long as the engine's own World. */
-        if(App)
+        /* The other half of the bind/unbind pair from OnLoad. The World is
+         * still alive at this point (Level.h guarantees it), which is exactly
+         * what makes this possible -- ~World logs a warning for any built-in
+         * delegate still holding entries, and this is what keeps it quiet. */
+        if(OwnedWorldIsLive())
         {
-            App->GetWorld().OnEntityCreated().Remove(EntityCreatedHandle);
+            GetWorld().OnEntityCreated().Remove(EntityCreatedHandle);
         }
-
-        App = nullptr;
     }
 
+    NimbleEngine::IGameMode* GetGameMode() override
+    {
+        return Mode ? &*Mode : nullptr;
+    }
+
+    NimbleEngine::GameState* GetGameState() override { return &State; }
+
 private:
-    /* Stashed in OnLoad so OnStart/OnTick can call RequestQuit() and reach
-     * World. */
-    NimbleEngine::Application* App = nullptr;
+    /* True between OnLoad and OnUnload. GetWorld() CORE_CHECKs rather than
+     * returning null, so this is the guard that keeps OnUnload safe on the
+     * path where OnLoad never ran. */
+    bool OwnedWorldIsLive() const { return MarkerEntity.IsSet(); }
 
-    EngineCore::ThreadID GameThread = 0;
-
-    double   RunSeconds        = 0.0;
-    double   ElapsedSeconds    = 0.0;
-    double   LastReportSeconds = 0.0;
-    uint64_t TicksThisSecond   = 0;
-
-    GameCore::EntityID     MarkerEntity;
-    GameCore::DelegateHandle EntityCreatedHandle;
-
+    GameCore::EntityID         MarkerEntity;
+    GameCore::DelegateHandle   EntityCreatedHandle;
     SandboxMarkerSystemContext SystemContext;
+
+    SandboxGameState                 State;
+    std::optional<SandboxGameMode>   Mode;
 };
 
 int main(int /*argc*/, char** /*argv*/)
 {
     {
-        SandboxGameMode Mode;
+        SandboxLevel Level;
         NimbleEngine::Application App;
-        App.Exec(Mode);
+        App.Exec(Level);
     }
 
     /*

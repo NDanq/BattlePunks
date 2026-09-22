@@ -100,6 +100,11 @@ GLenum OpenGLDynamicGDI::DecodeStencilOp(EStencilOp InStencilOP)
 
 void OpenGLDynamicGDI::Destroy()
 {
+    /* BEFORE the guard below, and before Context is deleted: cached shaders
+     * and textures hold GL objects owned by that context -- see
+     * ~GDIDynamicDriver. */
+    ReleaseCachedResources();
+
     if( bInitialized && Context )
     {
         bInitialized = false;

@@ -106,6 +106,10 @@ void D3D12DynamicGDI::Allocate()
 
 void D3D12DynamicGDI::Destroy()
 {
+    /* BEFORE the early-out, and before the device goes: cached shaders and
+     * textures hold a raw Device pointer -- see ~GDIDynamicDriver. */
+    ReleaseCachedResources();
+
     // Allocate may have failed part way; tear down whatever it built.
     if(!DeviceObj) return;
 

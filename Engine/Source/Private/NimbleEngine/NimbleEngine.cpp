@@ -1,6 +1,10 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
 
 #include <chrono>
+#include <string>
+
+#include "Public/NimbleEngine/GameState.h"
+#include "Public/NimbleEngine/Level.h"
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
@@ -43,10 +47,11 @@ NIMBLE_CONFIG_INT(GMaxFrames, "Application", "MaxFrames", 0, nullptr);
 /* 0 runs unlimited; SetFrameRateLimit is the runtime half. */
 NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
 
-/* Bundle-relative path to a Lua file run once, after IGameMode::OnLoad succeeds
- * and before the first tick -- see LoadAndStartMode's own comment on why that
- * ordering, not Initialize(), is where this runs. Empty (the default) skips
- * scripting entirely; a game with nothing to say in Lua pays nothing for this. */
+/* Bundle-relative path to a Lua file run once per LEVEL LOAD, after
+ * IGameMode::OnLoad and before the first tick -- see LoadLevel's own comment on
+ * why that ordering, not Initialize(), is where this runs, and why it re-runs
+ * on every swap. Empty (the default) skips scripting entirely; a game with
+ * nothing to say in Lua pays nothing for this. */
 NIMBLE_CONFIG_STRING(GStartupScript, "Scripting", "StartupScript", "", nullptr);
 
 using namespace EngineCore;
@@ -167,6 +172,31 @@ namespace
 
 namespace NimbleEngine
 {
+    namespace
+    {
+        /*
+         * The level Exec() and Exec(IGameMode&) run when the caller brought
+         * none: an empty World and, optionally, a mode.
+         *
+         * Here rather than in the header because nothing outside this file
+         * needs the type -- a caller that wants a real level writes one. Held
+         * on ExecWithLevel's own stack frame, which outlives every use of it:
+         * ActiveLevel points at it only between LoadLevel and UnloadLevel, and
+         * both happen inside that call.
+         */
+        class DefaultLevelImpl final : public ILevel
+        {
+        public:
+            explicit DefaultLevelImpl(IGameMode* InMode) : Mode(InMode) {}
+
+            const char* GetName() const override { return "Default"; }
+            IGameMode*  GetGameMode() override   { return Mode; }
+
+        private:
+            IGameMode* Mode = nullptr;
+        };
+    }
+
     bool Application::Initialize()
     {
         if(!GameWindowSystem::Initialize())
@@ -237,24 +267,26 @@ namespace NimbleEngine
         }
 
         /*
-         * The scene and its Lua layer. Core allocations (Memory::Alloc, not
-         * plain new) so a missed Dealloc at teardown is exactly the kind of
-         * thing Sandbox's ReportLeaks() already catches at process exit.
+         * The Lua layer. Core allocations (Memory::Alloc, not plain new) so a
+         * missed Dealloc at teardown is exactly the kind of thing Sandbox's
+         * ReportLeaks() already catches at process exit.
+         *
+         * NO WORLD HERE, and no BindWorld: the World belongs to whichever level
+         * is loaded (Level.h), so LoadLevel creates it and binds both of these
+         * to it. What survives every level is exactly these two -- one
+         * lua_State and one render thread per process, rebound as levels come
+         * and go.
          *
          * Before the renderer on purpose: nothing here touches a window or a
-         * render context, and BindWorld installs the script-tick systems into
-         * Scene before anything could conceivably tick it (the render thread
-         * is not up yet either). Ordering relative to the renderer is
-         * otherwise arbitrary.
+         * render context. Ordering relative to the renderer is otherwise
+         * arbitrary.
          */
-        Scene = EngineCore::Memory::Alloc<GameCore::World>();
         Scripts = EngineCore::Memory::Alloc<GameCore::ScriptEngine>();
         if(!Scripts->Initialize())
         {
             CORE_LOG_ERROR("Failed to initialize the script engine")
             return false;
         }
-        Scripts->BindWorld(Scene);
 
         const RenderCore::ERenderBackend Backend = RenderCore::ERenderBackend(GRenderPlatform.GetInt());
 
@@ -264,19 +296,199 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize RenderCore")
             return false;
         }
-        Rendering->BindWorld(*Scene);
 
         return true;
     }
 
+    bool Application::LoadLevel(ILevel* InLevel)
+    {
+        CORE_CHECK(InLevel != nullptr, "Application::LoadLevel given a null level")
+        CORE_CHECK(LevelWorld == nullptr, "Application::LoadLevel called with a level already loaded")
+
+        /*
+         * THE WORLD FIRST, and bound before OnLoad sees it: a level populates
+         * entities in OnLoad, and both the script engine's tick systems and the
+         * renderer's WorldBridge have to be installed before the first entity
+         * appears or neither would ever learn about it.
+         */
+        LevelWorld = EngineCore::Memory::Alloc<GameCore::World>();
+
+        ActiveLevel             = InLevel;
+        ActiveLevel->OwnedWorld = LevelWorld;
+
+        Scripts->BindWorld(LevelWorld);
+        Rendering->BindWorld(*LevelWorld);
+
+        CORE_LOG("[Level] loading '" + std::string(InLevel->GetName()) + "'")
+
+        if(!InLevel->OnLoad(*this))
+        {
+            CORE_LOG_ERROR("Level '" + std::string(InLevel->GetName()) + "' refused to load")
+            return false;
+        }
+
+        /* AFTER the level populated the World -- a mode acts on entities that
+         * already exist, and OnLoad's own comment says so. */
+        IGameMode* Mode = InLevel->GetGameMode();
+        if(Mode && !Mode->OnLoad(*this))
+        {
+            CORE_LOG_ERROR("Game mode refused to load")
+            return false;
+        }
+
+        /*
+         * BETWEEN THE MODE'S TWO CALLBACKS, and that placement is the whole
+         * distinction between them -- see IGameMode's lifecycle comment. A
+         * startup script sees a loaded level (its entities, its bound config),
+         * and OnStart below sees whatever the script created.
+         *
+         * Skipped entirely when empty, which is the default. A failed script is
+         * logged by ScriptEngine itself and is NOT fatal -- the same "log and
+         * continue" stance CORE_LOG_WARN takes for a missing DefaultEngine.ini
+         * in Initialize().
+         *
+         * RUNS ON EVERY LEVEL LOAD, not just the first. The script's registered
+         * classes survive a swap (they live in the Lua registry), but anything
+         * it spawned does not -- it went down with the previous World -- so a
+         * level that expects script-created entities needs the script re-run.
+         */
+        const char* StartupScriptPath = GStartupScript.GetString();
+        if(StartupScriptPath && StartupScriptPath[0] != '\0')
+        {
+            Scripts->RunFile(StartupScriptPath);
+        }
+
+        /* Before OnStart, so a mode's OnStart always sees state that has just
+         * been put back to its starting values -- GameState.h states that. */
+        if(GameState* State = InLevel->GetGameState())
+        {
+            State->OnReset();
+        }
+
+        if(Mode)
+        {
+            Mode->OnStart();
+        }
+
+        return true;
+    }
+
+    void Application::UnloadLevel()
+    {
+        if(!ActiveLevel)
+        {
+            return;
+        }
+
+        /*
+         * THE SAME ORDER Shutdown() uses, and for the same reasons -- this is
+         * steps 1-3 of that sequence performed at runtime rather than at exit.
+         * See Shutdown()'s own comment for the full argument; in brief:
+         *
+         *   1. the mode, then the level, undo what they bound -- both need a
+         *      live World to unbind FROM.
+         *   2. Scripts->UnbindWorld() runs every live script's OnDestroy and
+         *      unregisters the script-tick systems. Needs a live lua_State AND
+         *      a live World.
+         *   3. Rendering->UnbindWorld() must precede the World's destruction:
+         *      WorldBridge holds bindings on its OnComponentAdded/Removed
+         *      delegates, and ~World logs a warning for any built-in delegate
+         *      still holding entries at destruction.
+         *   4. destroy the World.
+         *
+         * Every step is null-safe: this also runs on LoadLevel's failure path,
+         * where OnLoad may have got halfway through.
+         */
+        if(IGameMode* Mode = ActiveLevel->GetGameMode())
+        {
+            Mode->OnUnload();
+        }
+
+        ActiveLevel->OnUnload();
+
+        if(Scripts && LevelWorld)
+        {
+            Scripts->UnbindWorld();
+        }
+        if(Rendering && LevelWorld)
+        {
+            Rendering->UnbindWorld();
+        }
+
+        if(LevelWorld)
+        {
+            EngineCore::Memory::Dealloc(LevelWorld);
+            LevelWorld = nullptr;
+        }
+
+        CORE_LOG("[Level] unloaded '" + std::string(ActiveLevel->GetName()) + "'")
+
+        ActiveLevel->OwnedWorld = nullptr;
+        ActiveLevel             = nullptr;
+    }
+
+    void Application::ApplyPendingLevel()
+    {
+        if(!PendingLevel)
+        {
+            return;
+        }
+
+        /* The whole reason RequestLevel defers: tearing a World down from
+         * inside its own Tick would destroy the pools being iterated. */
+        CORE_CHECK(!LevelWorld || !LevelWorld->IsTicking(),
+                   "Application::ApplyPendingLevel ran while the World was ticking")
+
+        ILevel* Next = PendingLevel;
+        PendingLevel = nullptr;
+
+        /* Fully down before the next one comes up, so the two never coexist
+         * and a game cannot accidentally reference across them. */
+        UnloadLevel();
+
+        if(!LoadLevel(Next))
+        {
+            CORE_LOG_ERROR("Requested level failed to load; quitting")
+            UnloadLevel();
+            bQuitRequested = true;
+        }
+    }
+
     void Application::Exec()
     {
-        ExecWithMode(nullptr);
+        DefaultLevelImpl Fallback(nullptr);
+        ExecWithLevel(&Fallback);
     }
 
     void Application::Exec(IGameMode& InMode)
     {
-        ExecWithMode(&InMode);
+        DefaultLevelImpl Fallback(&InMode);
+        ExecWithLevel(&Fallback);
+    }
+
+    void Application::Exec(ILevel& InLevel)
+    {
+        ExecWithLevel(&InLevel);
+    }
+
+    void Application::RequestLevel(ILevel& InLevel)
+    {
+        if(PendingLevel)
+        {
+            CORE_LOG_WARN("Application::RequestLevel called twice before the first took effect; "
+                          "the later request wins")
+        }
+        PendingLevel = &InLevel;
+    }
+
+    ILevel* Application::GetLevel()
+    {
+        return ActiveLevel;
+    }
+
+    GameState* Application::GetGameState()
+    {
+        return ActiveLevel ? ActiveLevel->GetGameState() : nullptr;
     }
 
     void Application::RequestQuit()
@@ -300,8 +512,12 @@ namespace NimbleEngine
 
     GameCore::World& Application::GetWorld()
     {
-        CORE_CHECK(Scene != nullptr, "Application::GetWorld() called before Initialize() or after Shutdown()")
-        return *Scene;
+        /* The active level's, not this class's -- see the header. Null outside
+         * a loaded level, which is the same programming error the old
+         * "before Initialize()" check caught, just with a wider window. */
+        CORE_CHECK(LevelWorld != nullptr,
+                   "Application::GetWorld() called with no level loaded")
+        return *LevelWorld;
     }
 
     GameCore::ScriptEngine& Application::GetScriptEngine()
@@ -316,48 +532,22 @@ namespace NimbleEngine
         return *Rendering;
     }
 
-    bool Application::LoadAndStartMode(IGameMode* InMode)
-    {
-        /* After the renderer is up, so a mode never observes a half-built
-         * engine. A refusal is a clean shutdown, not an error. */
-        if(InMode && !InMode->OnLoad(*this))
-        {
-            CORE_LOG_ERROR("Game mode refused to load")
-            return false;
-        }
-
-        /*
-         * BETWEEN THE TWO MODE CALLBACKS, and that placement is the whole
-         * distinction between them -- see IGameMode's lifecycle comment. A
-         * startup script sees a loaded mode (its own entities, its own bound
-         * config), not a half-built engine mid-construction; and OnStart below
-         * sees whatever the script created.
-         *
-         * Skipped entirely when empty, which is the default: a game with
-         * nothing to say in Lua pays nothing for this. A failed script is
-         * logged by ScriptEngine itself and is NOT fatal to the engine -- the
-         * same "log and continue" stance CORE_LOG_WARN already takes for a
-         * missing DefaultEngine.ini in Initialize().
-         */
-        const char* StartupScriptPath = GStartupScript.GetString();
-        if(StartupScriptPath && StartupScriptPath[0] != '\0')
-        {
-            Scripts->RunFile(StartupScriptPath);
-        }
-
-        if(InMode)
-        {
-            InMode->OnStart();
-        }
-
-        return true;
-    }
-
-    bool Application::RunFrame(IGameMode* InMode, const uint64_t InMaxFrames)
+    bool Application::RunFrame(const uint64_t InMaxFrames)
     {
         /* steady_clock: a delta must not go backwards because the wall clock
          * was corrected mid-session. */
         using Clock = std::chrono::steady_clock;
+
+        /*
+         * FIRST IN THE FRAME, before anything can tick: this is the point at
+         * which no World is ticking, which is exactly what a deferred level
+         * swap needs. May set bQuitRequested if the incoming level fails.
+         */
+        ApplyPendingLevel();
+        if(bQuitRequested)
+        {
+            return false;
+        }
 
         /* PumpEvents' return IS the exit condition; delegates run inside it,
          * on this thread. */
@@ -379,7 +569,7 @@ namespace NimbleEngine
         Frame.ViewportPixels = Window ? Window->GetPixelSize() : Size();
         PreviousTickNs       = NowNs;
 
-        Simulate(InMode, Frame);
+        Simulate(Frame);
 
         /* THE FENCE: at most one frame in flight. A mode may have
          * ENQUEUE_RENDER_COMMAND'd at any point during Simulate() above --
@@ -434,7 +624,7 @@ namespace NimbleEngine
         return !bQuitRequested;
     }
 
-    void Application::ExecWithMode(IGameMode* InMode)
+    void Application::ExecWithLevel(ILevel* InLevel)
     {
         /* First, before anything defaults them. Both are first-caller-wins. */
         Threads::SetMainThread();
@@ -452,14 +642,14 @@ namespace NimbleEngine
 
             TimerResolutionScope TimerRes;
 
-            if(!LoadAndStartMode(InMode))
+            if(!LoadLevel(InLevel))
             {
                 bQuitRequested = true;
             }
 
             while(!bQuitRequested)
             {
-                if(!RunFrame(InMode, MaxFrames))
+                if(!RunFrame(MaxFrames))
                 {
                     bQuitRequested = true;
                     break;
@@ -477,12 +667,11 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize Application!")
         }
 
-        /* Paired with the mode EXISTING, not with OnLoad succeeding: a mode
-         * that refused to load still undoes what it did while deciding. */
-        if(InMode)
-        {
-            InMode->OnUnload();
-        }
+        /* Whatever is loaded at this point -- the level Exec was given, or a
+         * different one a RequestLevel swapped in. Runs the mode's and the
+         * level's OnUnload and destroys the World; null-safe if the load never
+         * got that far. */
+        UnloadLevel();
 
         /* UNCONDITIONAL; every step below is null-safe and idempotent. Closes
          * the old leak where a failed CreateGameWindow never shut SDL down. */
@@ -493,11 +682,16 @@ namespace NimbleEngine
      * frame's commands: no ENQUEUE_RENDER_COMMAND from here would be
      * unsound (see IGameMode's own header comment), but this method itself
      * enqueues nothing -- a mode's OnTick is where that happens. */
-    void Application::Simulate(IGameMode* InMode, const FrameContext& InFrame)
+    void Application::Simulate(const FrameContext& InFrame)
     {
-        if(InMode)
+        /* Read fresh rather than cached: ApplyPendingLevel may have replaced
+         * the level, and with it the mode, since the last frame. */
+        if(ActiveLevel)
         {
-            InMode->OnTick(InFrame);
+            if(IGameMode* Mode = ActiveLevel->GetGameMode())
+            {
+                Mode->OnTick(InFrame);
+            }
         }
 
         /*
@@ -505,13 +699,13 @@ namespace NimbleEngine
          * frame -- then World's own phases run: TP_PrePhysics, TP_Physics
          * (+ the spatial refit at its end), TP_PostPhysics, TP_PostUpdate.
          * Still the game thread, still before RunFrame's
-         * WaitForPreviousFrame()/EndFrame() calls -- Scene never touches
+         * WaitForPreviousFrame()/EndFrame() calls -- the World never touches
          * RenderCore directly; WorldBridge (inside Renderer::EndFrame)
          * reaches into it through World's own public delegates and pools.
          */
-        if(Scene)
+        if(LevelWorld)
         {
-            Scene->Tick(float(InFrame.DeltaSeconds));
+            LevelWorld->Tick(float(InFrame.DeltaSeconds));
         }
     }
 
@@ -520,46 +714,26 @@ namespace NimbleEngine
         /*
          * UNCONDITIONAL, like everything below -- Shutdown() runs whether
          * Initialize() got all the way through or failed partway, so every
-         * step here is null-safe. ORDER IS LOAD-BEARING:
+         * step here is null-safe.
          *
-         *   1. Scripts->UnbindWorld() -- runs every live script's OnDestroy
-         *      and releases its instance ref, unregisters the script-tick
-         *      systems and the ScriptComponent removal observer from Scene.
-         *      Needs BOTH a live lua_State (Scripts) AND a live Scene to walk.
-         *   2. Rendering->UnbindWorld() -- must precede Scene's destruction:
-         *      WorldBridge holds bindings on Scene's own OnComponentAdded/
-         *      OnComponentRemoved delegates, and ~World logs a warning for
-         *      any built-in delegate still holding entries at destruction
-         *      (World.cpp's ~Impl) -- exactly the diagnostic that would fire
-         *      if this ran after step 3 instead of before it.
-         *   3. Dealloc(Scene) -- by this point nothing holds a binding on it.
-         *   4. Scripts->Shutdown() -- lua_close. Must come AFTER Scene is
-         *      gone: nothing left holds a World* into a destroyed object.
-         *   5. Dealloc(Scripts).
-         *   6. Rendering->Shutdown() -- drains the scene and stops the render
-         *      thread. Runs LAST among these five: nothing above touches
-         *      RenderCore, so there is no ordering constraint forcing it
-         *      earlier, and stopping the render thread before Scene/Scripts
-         *      are torn down would buy nothing.
-         *   7. Dealloc(Rendering).
+         * THE WORLD IS ALREADY GONE by the time this runs: ExecWithLevel calls
+         * UnloadLevel() first, and that is what unbinds the script engine and
+         * the renderer from the level's World and destroys it. UnloadLevel's
+         * own comment carries the ordering argument that used to live here --
+         * it is the part that is genuinely load-bearing, and it now runs on
+         * every level swap rather than only at exit.
          *
-         * Reversed, step 4 before step 1 closes the Lua state while
-         * ScriptComponent instances still hold registry refs into it, and
-         * UnbindWorld's OnDestroy calls would run against a dead lua_State.
+         * What is left is the two process-lifetime objects, and the one
+         * ordering rule between them:
+         *
+         *   1. Scripts->Shutdown() -- lua_close. Safe here because no World
+         *      remains for a ScriptComponent to hold a registry ref from.
+         *   2. Dealloc(Scripts).
+         *   3. Rendering->Shutdown() -- drains the scene and stops the render
+         *      thread. Nothing above touches RenderCore, so there is no
+         *      constraint forcing it earlier.
+         *   4. Dealloc(Rendering).
          */
-        if(Scripts && Scene)
-        {
-            Scripts->UnbindWorld();
-        }
-        if(Rendering && Scene)
-        {
-            Rendering->UnbindWorld();
-        }
-        if(Scene)
-        {
-            EngineCore::Memory::Dealloc(Scene);
-            Scene = nullptr;
-        }
         if(Scripts)
         {
             Scripts->Shutdown();

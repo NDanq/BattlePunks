@@ -215,6 +215,12 @@ void VulkanDynamicGDI::Allocate()
 
 void VulkanDynamicGDI::Destroy()
 {
+    /* BEFORE the early-out, and before DeviceObj is deleted below: cached
+     * shaders and textures hold a raw Device pointer and must be released
+     * while it is still alive -- see ~GDIDynamicDriver. Idempotent, so the
+     * !bInitialized path below still runs it exactly once. */
+    ReleaseCachedResources();
+
     if(!bInitialized) return;
 
     if(DeviceObj && DeviceObj->IsValid())

@@ -29,6 +29,10 @@ void NullDynamicGDI::Allocate()
 
 void NullDynamicGDI::Destroy()
 {
+    /* Nothing else to tear down -- this backend owns no device -- but the base
+     * class still expects its caches empty by destruction time, and a caller
+     * that loaded a shader against the Null backend has one to free. */
+    ReleaseCachedResources();
 }
 
 void NullDynamicGDI::SwapBuffers()
