@@ -235,16 +235,56 @@ public:
 
     virtual ~GDIDynamicDriver()
     {
+        /* A BACKEND MUST HAVE CALLED ReleaseCachedResources() BY NOW, from its
+         * own Destroy(), or this is a use-after-free rather than a cleanup:
+         * every cached shader and texture holds a raw pointer to the DEVICE,
+         * and ~VulkanDynamicGDI (like every other backend) runs Destroy() --
+         * which deletes that device -- BEFORE this base destructor runs.
+         *
+         * The crash that proved it, with the debug heap's freed-memory fill
+         * still in the register:
+         *
+         *   vulkan_1!vkResetEvent            ds:feeefeee`feeefeee
+         *   RenderCore!VKShaderResource::Release
+         *   RenderCore!GDIShader::~GDIShader
+         *   RenderCore!GDIDynamicDriver::~GDIDynamicDriver   <- here
+         *   RenderCore!VulkanDynamicGDI::~VulkanDynamicGDI
+         *
+         * Kept as a safety net rather than removed, because a backend that
+         * never allocated anything still has to be destructible: both maps are
+         * cleared by ReleaseCachedResources(), so this loop does nothing on the
+         * correct path and only catches a backend that forgot to call it --
+         * where leaking is the better failure than dereferencing freed memory.
+         */
+        GDI_CHECK(LoadedShaderMap.empty() && LoadedTextures.empty(),
+                  "[GDI] ~GDIDynamicDriver: cached resources still live -- the backend's "
+                  "Destroy() must call ReleaseCachedResources() before deleting its device");
+    }
+
+    /*
+     * Releases every cached shader and texture, while the device they point at
+     * is STILL ALIVE.
+     *
+     * EVERY BACKEND'S Destroy() MUST CALL THIS, first, before tearing down its
+     * device -- see ~GDIDynamicDriver for what happens otherwise. Idempotent:
+     * a second call finds both maps empty, which is what makes it safe for a
+     * Destroy() that early-outs on !bInitialized and for one that runs twice.
+     */
+    void ReleaseCachedResources()
+    {
         // std::unordered_map iterates key/value PAIRS, where QHash iterated
         // values -- hence .second rather than the bare element.
         for(auto& Entry : LoadedShaderMap)
         {
             delete Entry.second;
         }
+        LoadedShaderMap.clear();
+
         for(auto& Entry : LoadedTextures)
         {
             delete Entry.second;
         }
+        LoadedTextures.clear();
     }
 
     /* Assign Context */

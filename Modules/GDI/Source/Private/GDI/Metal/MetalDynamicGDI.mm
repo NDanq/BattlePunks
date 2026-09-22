@@ -116,6 +116,10 @@ void MetalDynamicGDI::Allocate()
 
 void MetalDynamicGDI::Destroy()
 {
+    /* BEFORE the early-out, and before the device goes: cached shaders and
+     * textures hold a raw device pointer -- see ~GDIDynamicDriver. */
+    ReleaseCachedResources();
+
     if(!bInitialized) return;
 
     WaitIdle();
