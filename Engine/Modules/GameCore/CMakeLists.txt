@@ -152,6 +152,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/ArchiveTextDump.cpp
         Source/Private/GameCore/ComponentScript.cpp
         Source/Private/GameCore/ComponentScripts.cpp
+        Source/Private/GameCore/ComponentProperties.cpp
         Source/Public/GameCore/GameCoreAPI.h
         Source/Public/GameCore/GameCoreLog.h
         Source/Public/GameCore/EntityID.h
@@ -170,6 +171,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/WorldSerializer.h
         Source/Public/GameCore/ArchiveTextDump.h
         Source/Public/GameCore/ComponentScript.h
+        Source/Public/GameCore/ComponentProperties.h
 )
 
 # ===========================================================================

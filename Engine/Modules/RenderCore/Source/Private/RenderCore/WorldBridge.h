@@ -49,8 +49,10 @@ namespace RenderCore
         /* Builds this frame's RenderView (see DESIGN.md's "View"), enqueues
          * one extraction command per registered proxy type, then enqueues
          * [Scene](Ctx){ Scene->SetView(View); Scene->Render(Ctx); } against
-         * the RenderScene this bridge was constructed with. */
-        void ExtractAndRender(const FrameInfo& InFrame);
+         * the RenderScene this bridge was constructed with. A non-null
+         * InViewOverride replaces the camera lookup (Renderer::SetViewOverride);
+         * its ViewportPixels is taken from InFrame regardless. */
+        void ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride = nullptr);
 
     private:
         static void OnComponentAdded(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);
