@@ -32,7 +32,7 @@ namespace NimbleEngine
         /*
          * To and from a save, inside this state's own chunk. The default writes
          * nothing, which is correct for a game that does not save or whose
-         * progress is all in the World. Application::LoadLevel documents when
+         * progress is all in the World. GameSession::LoadLevel documents when
          * this runs.
          *
          * To add a field, override GetSerialVersion() to return the next

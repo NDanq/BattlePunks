@@ -25,8 +25,8 @@ namespace GameCore { class Entity; }
  * The scene: entities, their components, phased systems, the spatial index
  * and the event bus a Lua script or a decoupled module reaches through.
  *
- * Owned by NimbleEngine::Application (see Application::GetWorld()), ticked
- * once per frame after IGame::OnTick. Game thread only -- no locks anywhere
+ * Owned by NimbleEngine::GameSession (see GameSession::GetWorld()), ticked
+ * once per frame after IGameMode::OnTick. Game thread only -- no locks anywhere
  * in this class. See DESIGN.md for the full ownership/threading rationale.
  */
 namespace GameCore

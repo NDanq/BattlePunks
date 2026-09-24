@@ -224,8 +224,8 @@ both `CORE_CHECK` `IsInRenderThread()` for exactly this reason: a proxy
 pointer is only meaningful inside a render command's own lambda.
 
 `WorldBridge`, `Renderer`'s own facade methods, and everything reached
-through `Application::GetWorld()`/`GetRenderer()` run on the game thread --
-the same thread that runs `IGame::OnTick`, matching `GameCoreSmokeTest` and
+through `GameSession::GetWorld()`/`GetRenderer()` run on the game thread --
+the same thread that runs `IGameMode::OnTick`, matching `GameCoreSmokeTest` and
 `GameWindowSystem`'s own single-thread contracts.
 
 ---

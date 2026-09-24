@@ -9,7 +9,7 @@ namespace GameCore { class World; }
 
 namespace NimbleEngine
 {
-    class Application;
+    class GameSession;
     class GameState;
     class IGameMode;
 
@@ -25,7 +25,7 @@ namespace NimbleEngine
      *   OnUnload   the World is still valid and populated; unbind anything
      *              bound to it from outside.
      *
-     * Application::LoadLevel has the full sequence. A level does not tick; for
+     * GameSession::LoadLevel has the full sequence. A level does not tick; for
      * per-frame work it registers a World system.
      *
      * The engine allocates and frees the World (Memory::Alloc/Dealloc), so a
@@ -46,11 +46,12 @@ namespace NimbleEngine
 
         /*
          * Populate the World. False aborts the load: OnUnload still runs, and a
-         * startup level that fails shuts the engine down cleanly. InApp outlives
-         * the level. Use GetWorld() below rather than Application::GetWorld(),
-         * which only matches while this is the active level.
+         * startup level that fails shuts the engine down cleanly. InSession
+         * outlives the level. Use GetWorld() below rather than
+         * GameSession::GetWorld(), which only matches while this is the active
+         * level.
          */
-        virtual bool OnLoad(Application& InApp) { (void)InApp; return true; }
+        virtual bool OnLoad(GameSession& InSession) { (void)InSession; return true; }
 
         /* The World is about to be destroyed. Pairs with OnLoad having been
          * called, not with it succeeding. Unbind what OnLoad bound -- ~World
@@ -85,9 +86,9 @@ namespace NimbleEngine
         NE_API GameCore::World& GetWorld();
 
     private:
-        /* Set by Application around OnLoad/OnUnload. A friend rather than
+        /* Set by GameSession around OnLoad/OnUnload. A friend rather than
          * protected, so a subclass cannot assign its own World. */
-        friend class Application;
+        friend class GameSession;
         GameCore::World* OwnedWorld = nullptr;
     };
 }

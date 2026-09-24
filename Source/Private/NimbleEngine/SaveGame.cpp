@@ -16,7 +16,7 @@
 
 /*
  * Writes saves, arms loads, and resolves level names. The restore itself is in
- * Application::LoadLevel, which owns the ordering it has to fit into.
+ * GameSession::LoadLevel, which owns the ordering it has to fit into.
  */
 
 namespace NimbleEngine
@@ -117,9 +117,9 @@ size_t GetRegisteredLevelCount() { return GRegisteredLevelCount; }
 
 // === Saving =================================================================
 
-bool SaveGameToFile(Application& InApp, const std::string& InPath)
+bool SaveGameToFile(GameSession& InSession, const std::string& InPath)
 {
-    ILevel* Level = InApp.GetLevel();
+    ILevel* Level = InSession.GetLevel();
     if(Level == nullptr)
     {
         CORE_LOG_ERROR("SaveGameToFile: there is no level loaded to save")
@@ -129,7 +129,7 @@ bool SaveGameToFile(Application& InApp, const std::string& InPath)
     /* Refused here, before anything is built, rather than left to
      * SerializeWorld's CORE_CHECK -- with a log handler installed that returns
      * instead of aborting. Mid-tick, deferred destroys have not run yet. */
-    GameCore::World& World = InApp.GetWorld();
+    GameCore::World& World = InSession.GetWorld();
     if(World.IsTicking())
     {
         CORE_LOG_ERROR("SaveGameToFile: refusing to save while the World is ticking -- "
@@ -160,7 +160,7 @@ bool SaveGameToFile(Application& InApp, const std::string& InPath)
 
     /* The same call LoadLevel makes, so the two paths cannot drift; its script
      * work only happens on load. */
-    if(!GameCore::SerializeWorldWithScripts(Ar, World, InApp.GetScriptEngine()))
+    if(!GameCore::SerializeWorldWithScripts(Ar, World, InSession.GetScriptEngine()))
     {
         CORE_LOG_ERROR("SaveGameToFile: failed to serialize the World")
         return false;
@@ -263,7 +263,7 @@ bool PeekSaveGameHeader(const std::string& InPath, SaveGameHeader& OutHeader)
     return true;
 }
 
-bool LoadGameFromFile(Application& InApp, const std::string& InPath)
+bool LoadGameFromFile(GameSession& InSession, const std::string& InPath)
 {
     EngineCore::Archive Ar = EngineCore::Archive::ForReading({});
     if(!EngineCore::LoadArchiveFromFile(InPath, Ar))
@@ -292,15 +292,15 @@ bool LoadGameFromFile(Application& InApp, const std::string& InPath)
      * Everything from the cursor on -- the WRLD chunk, then the optional GMST --
      * so LoadLevel starts at WRLD without re-reading the header. */
     const std::vector<uint8_t>& Bytes = Ar.GetBytes();
-    InApp.PendingSaveBytes.assign(Bytes.begin() + std::ptrdiff_t(Ar.GetCursor()), Bytes.end());
+    InSession.PendingSaveBytes.assign(Bytes.begin() + std::ptrdiff_t(Ar.GetCursor()), Bytes.end());
 
-    if(InApp.PendingSaveBytes.empty())
+    if(InSession.PendingSaveBytes.empty())
     {
         CORE_LOG_ERROR("LoadGameFromFile: the save's header is valid but it contains no scene")
         return false;
     }
 
-    InApp.RequestLevel(*Level);
+    InSession.RequestLevel(*Level);
 
     CORE_LOG("[Save] loading '" + InPath + "' into level '" + std::string(Header.LevelName)
              + "'; the swap happens at the top of the next frame")

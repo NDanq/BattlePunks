@@ -8,7 +8,7 @@
 
 namespace NimbleEngine
 {
-    class Application;
+    class GameSession;
     class ILevel;
 
     /*
@@ -19,7 +19,7 @@ namespace NimbleEngine
      *
      * A load is DEFERRED. LoadGameFromFile resolves the level and calls
      * RequestLevel, and the restore runs inside the next LoadLevel -- see
-     * Application::LoadLevel for exactly where, and why there. Loading from
+     * GameSession::LoadLevel for exactly where, and why there. Loading from
      * inside OnTick is therefore safe.
      *
      * The level's own OnLoad runs before the restore, so a level that spawns
@@ -47,7 +47,7 @@ namespace NimbleEngine
      * IGameMode::OnPreSaveGame. False, with nothing written, if there is no
      * level, the World is ticking, or the write fails.
      */
-    NE_API bool SaveGameToFile(Application& InApp, const std::string& InPath);
+    NE_API bool SaveGameToFile(GameSession& InSession, const std::string& InPath);
 
     /*
      * Reads InPath and requests its level; the scene is restored next frame.
@@ -55,7 +55,7 @@ namespace NimbleEngine
      * IGameMode::OnPostLoadSave. On any failure (missing or malformed file,
      * unregistered level) the running game is untouched.
      */
-    NE_API bool LoadGameFromFile(Application& InApp, const std::string& InPath);
+    NE_API bool LoadGameFromFile(GameSession& InSession, const std::string& InPath);
 
     /* The header alone. False if the file is missing or not a save. */
     NE_API bool PeekSaveGameHeader(const std::string& InPath, SaveGameHeader& OutHeader);

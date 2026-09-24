@@ -479,7 +479,7 @@ flag.
 **Ownership and threading.** `NimbleEngine::Application` owns exactly one
 `World` and ticks it once per frame, after `IGame::OnTick` -- so a game acts
 first (it may spawn something this frame), then the World's own phases run.
-A game reaches entities through `Application::GetWorld()`, never by
+A game reaches entities through `GameSession::GetWorld()`, never by
 constructing its own `World`. No locks anywhere in this class, matching
 `GameWindowSystem`'s stated thread contract: every call happens on the
 thread that runs `IGame::OnTick`, which is also the thread that pumps
