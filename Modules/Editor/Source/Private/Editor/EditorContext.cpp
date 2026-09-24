@@ -147,57 +147,70 @@ void EditorContext::NewScene()
     ReplaceWorld();
 }
 
-void EditorContext::CreateDemoScene()
+void EditorContext::CreateSandboxScene()
 {
     ReplaceWorld();
 
-    struct DemoPrimitive
-    {
-        const char*       Name;
-        double            X, Y, Z;
-        float             Width, Height;
-        EngineCore::Color Tint;
-        double            RotationZ;
-    };
+    /*
+     * WHAT SANDBOX'S LEVEL LOOKS LIKE WHEN IT HAS LOADED -- before its first
+     * tick, since the editor simulates nothing. A hand-kept MIRROR of two
+     * sources, with the same names, components and values:
+     *
+     *   Games/Sandbox/SandboxMain.cpp   SandboxLevel::OnLoad -- Marker, Camera
+     *   Games/Sandbox/Scripts/Main.lua  the startup script   -- Scripted
+     *
+     * Keep it in step when either changes. It exists only until the editor can
+     * load the game's own level (the game code in a module DLL, on the way to
+     * Play-in-Editor); then this becomes "open the Sandbox level" and the
+     * mirror goes away.
+     *
+     * Not mirrored, because they are behaviour rather than scene: the
+     * Sandbox.WrapMarker system, the mode moving Marker 120 px/s, the Mover
+     * script moving Scripted 60 px/s, and the OnEntityCreated logger.
+     */
 
-    /* World units are the game's pixels, +Y down -- RenderView's convention. */
-    const DemoPrimitive Demo[] =
+    // --- Marker (SandboxLevel::OnLoad) ---------------------------------------
+    /* Bounds is +-0.5 while the quad is 32 x 32 -- as in Sandbox, so the
+     * selection outline (drawn from Bounds) shows the game's real bounds. */
+    const EntityID MarkerID = CreateEntity(QStringLiteral("Marker"), EngineCore::Vector3(0.0, 360.0, 0.0));
     {
-        { "Floor",      400.0, 520.0, 60.0, 900.0,  40.0, EngineCore::Color( 70,  76,  90),  0.0 },
-        { "RedBox",     200.0, 400.0,  0.0, 120.0, 120.0, EngineCore::Color(220,  70,  60),  0.0 },
-        { "GreenBox",   420.0, 380.0, 30.0, 140.0, 180.0, EngineCore::Color( 80, 200, 110), 15.0 },
-        { "BlueBox",    640.0, 420.0,-40.0, 100.0, 100.0, EngineCore::Color( 70, 130, 230), 45.0 },
-        { "Sun",        650.0, 120.0,120.0,  80.0,  80.0, EngineCore::Color(250, 210,  80),  0.0 },
-    };
+        const GameCore::Entity Marker = EditedWorld->GetEntity(MarkerID);
 
-    for(const DemoPrimitive& Item : Demo)
-    {
-        const EntityID ID = CreateEntity(QString::fromLatin1(Item.Name), EngineCore::Vector3(Item.X, Item.Y, Item.Z));
-        const GameCore::Entity E = EditedWorld->GetEntity(ID);
-
-        if(GameCore::TransformComponent* Transform = E.GetComponent<GameCore::TransformComponent>())
-        {
-            Transform->Rotation = EngineCore::Vector3(0.0, 0.0, Item.RotationZ);
-        }
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, -0.5), EngineCore::Vector3(0.5, 0.5, 0.5));
+        Marker.AddComponent(Bounds);
 
         RenderCore::PrimitiveComponent Primitive;
-        Primitive.Width  = Item.Width;
-        Primitive.Height = Item.Height;
-        Primitive.Tint   = Item.Tint;
-        E.AddComponent(Primitive);
-
-        /* The quad's own extent in entity space -- the refit carries it
-         * through the Transform, Scale included, as the proxy draws it. */
-        GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5 * Item.Width, -0.5 * Item.Height, 0.0),
-                                      EngineCore::Vector3( 0.5 * Item.Width,  0.5 * Item.Height, 0.0));
-        E.AddComponent(Bounds);
+        Primitive.Width  = 32.0f;
+        Primitive.Height = 32.0f;
+        Primitive.Tint   = EngineCore::Color(255, 200, 40);
+        Marker.AddComponent(Primitive);
     }
 
-    /* The game's camera -- what Sandbox-style hosts render through. The editor
-     * viewport overrides it, but it is still an entity to select and edit. */
-    const EntityID CameraID = CreateEntity(QStringLiteral("Camera"), EngineCore::Vector3(0.0, 0.0, -1.0));
+    // --- Camera (SandboxLevel::OnLoad) ---------------------------------------
+    /* A default Transform (the origin) and a default CameraComponent: the
+     * game's orthographic view spans the window from here. The editor viewport
+     * uses its own camera, but this is the entity the game renders through. */
+    const EntityID CameraID = CreateEntity(QStringLiteral("Camera"), EngineCore::Vector3(0.0, 0.0, 0.0));
     EditedWorld->GetEntity(CameraID).AddComponent<RenderCore::CameraComponent>();
+
+    // --- Scripted (Scripts/Main.lua) ------------------------------------------
+    /* Created by the startup script in the game. The editor runs no Lua, so the
+     * ScriptComponent carries the class name and phase only -- what a save of
+     * this entity would hold -- with no script instance behind it. */
+    const EntityID ScriptedID = CreateEntity(QStringLiteral("Scripted"), EngineCore::Vector3(0.0, 0.0, 0.0));
+    {
+        const GameCore::Entity Scripted = EditedWorld->GetEntity(ScriptedID);
+
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, -0.5), EngineCore::Vector3(0.5, 0.5, 0.5));
+        Scripted.AddComponent(Bounds);
+
+        GameCore::ScriptComponent Script;
+        std::strncpy(Script.ClassName, "Mover", sizeof(Script.ClassName) - 1);
+        Script.Phase = GameCore::TP_PostPhysics;   // Main.lua: TickPhase = TickPhase.PostPhysics
+        Scripted.AddComponent(Script);
+    }
 
     EditedWorld->RefreshSpatialIndex();
     QueueEntitiesChanged();

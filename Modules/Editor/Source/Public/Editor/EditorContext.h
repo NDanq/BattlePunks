@@ -78,8 +78,10 @@ public:
     /* An empty World. The previous one is destroyed; the selection clears. */
     void NewScene();
 
-    /* NewScene, then a handful of primitives and a camera -- something to look at. */
-    void CreateDemoScene();
+    /* NewScene, then the entities Sandbox's level has once it has loaded --
+     * Marker, Camera and the startup script's Scripted. See the definition for
+     * where each comes from. */
+    void CreateSandboxScene();
 
     /* Through GameCore::SerializeWorld -- the World alone, not a SaveGame's
      * GameState. Script components keep their data but get no Lua instance:
