@@ -385,17 +385,14 @@ public:
         {
             /* Lifted off y=0 deliberately. The view is orthographic with its
              * origin at the camera entity's own position -- (0,0,0) here --
-             * so y=0 is the BOTTOM edge of the window, and a 32x32 quad
-             * centred there would hang half out of the viewport. Roughly
-             * mid-height keeps the whole quad on screen as it sweeps. */
+             * and +Y runs DOWN the window (RenderView::MakeOrthographic), so
+             * y=0 is the TOP edge, and a 32x32 quad centred there would hang
+             * half out of the viewport. Roughly mid-height keeps the whole
+             * quad on screen as it sweeps. */
             GameCore::TransformComponent MarkerTransform;
             MarkerTransform.Position = EngineCore::Vector3(0.0, 360.0, 0.0);
             Marker.AddComponent(MarkerTransform);
         }
-        GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, -0.5), EngineCore::Vector3(0.5, 0.5, 0.5));
-        Marker.AddComponent(Bounds);
-
         /* Drawn automatically, every frame, by RenderCore::Renderer's
          * WorldBridge -- adding this component is the whole of what this
          * file does to make Marker visible; nothing here calls DrawQuad or
@@ -405,6 +402,19 @@ public:
         Primitive.Height = 32.0f;
         Primitive.Tint   = EngineCore::Color(255, 200, 40);
         Marker.AddComponent(Primitive);
+
+        /* The quad's own extent, in entity space: a centred Width x Height,
+         * flat in Z like the quad. Derived from the Primitive rather than
+         * written out, so the two cannot drift -- they did, when this was a
+         * hard-coded +-0.5 cube on a 32 x 32 quad and spatial queries, picking
+         * and the editor's selection outline all saw a 1-unit Marker. The
+         * refit carries Local through the Transform, Scale included, the same
+         * way the proxy draws the quad. */
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(
+            EngineCore::Vector3(-0.5 * Primitive.Width, -0.5 * Primitive.Height, 0.0),
+            EngineCore::Vector3( 0.5 * Primitive.Width,  0.5 * Primitive.Height, 0.0));
+        Marker.AddComponent(Bounds);
 
         /* A camera entity so the view is centred on where Marker actually
          * moves rather than the default (0, 1, -1) origin -- WorldBridge's
