@@ -99,10 +99,12 @@ void EditorMainWindow::BuildMenus()
         UpdateTitle();
     });
 
-    QAction* Demo = File->addAction(QStringLiteral("New &Demo Scene"));
-    connect(Demo, &QAction::triggered, this, [this]()
+    QAction* SandboxScene = File->addAction(QStringLiteral("New &Sandbox Scene"));
+    SandboxScene->setToolTip(QStringLiteral("The Sandbox level as it stands once loaded: Marker, Camera and Scripted"));
+    connect(SandboxScene, &QAction::triggered, this, [this]()
     {
-        Context.CreateDemoScene();
+        Context.CreateSandboxScene();
+        Viewport->ApplySandboxView();
         CurrentPath.clear();
         UpdateTitle();
     });
@@ -185,7 +187,8 @@ void EditorMainWindow::StartRenderer()
     }
     else
     {
-        Context.CreateDemoScene();
+        Context.CreateSandboxScene();
+        Viewport->ApplySandboxView();
     }
     UpdateTitle();
 

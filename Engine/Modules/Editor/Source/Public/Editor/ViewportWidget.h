@@ -62,6 +62,11 @@ public:
     void ApplyPreset(EditorCamera::EPreset InPreset);
     void SetSpeedScale(float InScale) { Camera.SpeedScale = InScale; }
 
+    /* Front view onto the rectangle Sandbox's game camera shows at its
+     * default resolution -- (0,0) to (1280,720) in world units -- so the
+     * scene reads the way the game draws it. */
+    void ApplySandboxView();
+
     /* Draw every entity's bounds, not just the selection's. */
     void SetShowAllBounds(bool bInShow) { bShowAllBounds = bInShow; }
     bool IsShowingAllBounds() const     { return bShowAllBounds; }

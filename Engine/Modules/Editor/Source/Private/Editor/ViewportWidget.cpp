@@ -38,6 +38,15 @@ namespace
     const EngineCore::Color AllBoundsColor(120, 126, 140);
     constexpr float         AllBoundsThickness  = 1.0f;
 
+    /* The game camera's screen, outlined on the z = 0 plane where the 2D scene
+     * lives. The orthographic game view maps world units 1:1 to pixels from the
+     * camera's position over [Display] ResolutionX x ResolutionY; 1280 x 720 is
+     * that default, and the width SandboxLevel's wrap system assumes. */
+    constexpr double            GameScreenWidth  = 1280.0;
+    constexpr double            GameScreenHeight = 720.0;
+    const EngineCore::Color     GameScreenColor(90, 150, 230);
+    constexpr float             GameScreenThickness = 1.5f;
+
     /* The axis gizmo: bottom-left, a fixed size on screen. */
     constexpr double GizmoMarginPixels = 60.0;    // from the left and bottom edges to its origin
     constexpr double GizmoAxisPixels   = 40.0;
@@ -193,6 +202,16 @@ void ViewportWidget::ApplyPreset(const EditorCamera::EPreset InPreset)
     Camera.ApplyPreset(InPreset, GetPivot());
 }
 
+void ViewportWidget::ApplySandboxView()
+{
+    /* The game camera's screen from the origin -- see GameScreenWidth. */
+    const GameCore::AABB GameScreen(EngineCore::Vector3(0.0, 0.0, 0.0), EngineCore::Vector3(GameScreenWidth, GameScreenHeight, 0.0));
+
+    Camera.Yaw   = 0.0f;   // Front: along +Z, the game's own view direction
+    Camera.Pitch = 0.0f;
+    Camera.Frame(GameScreen);
+}
+
 EngineCore::Vector3 ViewportWidget::GetPivot() const
 {
     const GameCore::AABB Box = Context.GetEntityBounds(Context.GetSelection());
@@ -261,6 +280,22 @@ void ViewportWidget::QueueOverlay()
             }
         }, &C);
     }
+
+    /* Where the game draws: each active camera's screen. The editor's own view
+     * replaces the camera, so this is the only sign of what the game shows. */
+    Context.GetWorld().Each<RenderCore::CameraComponent>(
+        [this, Ratio](const GameCore::Entity& InEntity, RenderCore::CameraComponent& InCamera)
+    {
+        if(!InCamera.bActive)
+        {
+            return;
+        }
+        const GameCore::TransformComponent* Transform = InEntity.GetComponent<GameCore::TransformComponent>();
+        const EngineCore::Vector3 Origin = Transform ? Transform->Position : EngineCore::Vector3(0.0, 0.0, 0.0);
+        const GameCore::AABB Screen(EngineCore::Vector3(Origin.GetX(), Origin.GetY(), 0.0),
+                                    EngineCore::Vector3(Origin.GetX() + GameScreenWidth, Origin.GetY() + GameScreenHeight, 0.0));
+        Context.DrawDebugBox(Screen, GameScreenColor, GameScreenThickness * Ratio);
+    });
 
     /* Last, so it sits over the grey boxes where they overlap. Padded by a
      * few pixels' worth of world units at the box's depth, so the outline
