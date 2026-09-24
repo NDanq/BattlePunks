@@ -4,7 +4,7 @@
 -- Demonstrates the pieces GameCore's Lua surface offers a game that never
 -- touches C++ for its own gameplay: a registered class with a chosen tick
 -- phase, a Transform and a Bounds component, and the Events bus reaching a
--- C++ subscriber (SandboxMain.cpp binds "EntityCreated" the same way this
+-- C++ subscriber (SandboxGame.cpp binds "EntityCreated" the same way this
 -- script does, from the other side of the language boundary).
 
 Events.On("EntityCreated", function(entity)

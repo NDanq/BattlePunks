@@ -21,6 +21,17 @@ Shipping is Client/Server only. Configuring Editor + Shipping fails on purpose.
 Both `WITH_EDITOR` and `NIMBLE_SHIPPING` are always defined, to 1 or 0, and
 reach every target through EngineCore.
 
+### Games are modules
+
+A game's code is a module DLL, not part of an executable. Sandbox builds
+`SandboxGame.dll` (`SandboxGame.cpp`: levels, mode, state, systems) and a thin
+`Sandbox.exe` launcher that calls `Application::ExecGame`. The launcher loads
+the module named by `[Game] Module` in `Config/DefaultEngine.ini` and runs
+`[Game] StartLevel`, or the module's own start level. The module implements
+`NimbleEngine::IGameModule` with `NIMBLE_IMPLEMENT_GAME_MODULE` and registers its
+levels on startup (`Engine/Source/Public/NimbleEngine/GameModule.h`). Nothing
+links the game, which is what lets the editor load it for Play-in-Editor.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:
@@ -99,6 +110,6 @@ namespace, so their directives are wider than the RenderCore ones. That is still
 contained — nothing includes a `.cpp` — but it is the reason those two carry a
 note saying so.
 
-Game code under `Games/` decides for itself; `SandboxMain.cpp` qualifies
+Game code under `Games/` decides for itself; `SandboxGame.cpp` qualifies
 everything deliberately, which doubles as a check that the public surface is
 usable without any directive at all.
