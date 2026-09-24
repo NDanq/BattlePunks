@@ -1,5 +1,53 @@
 # NimbleEngine
 
+## Building
+
+Two settings pick a build: the **target** (`NIMBLE_TARGET`) and the
+**configuration** (`CMAKE_BUILD_TYPE`).
+
+| Target | What it builds | `WITH_EDITOR` |
+|---|---|---|
+| Editor | every module, `NimbleEditor`, and the game | 1 |
+| Client | the modules and the game; editor-only code compiled out | 0 |
+| Server | same as Client for now | 0 |
+
+| Configuration | Optimised | Debug info | `NIMBLE_SHIPPING` |
+|---|---|---|---|
+| Debug | no | yes | 0 |
+| RelWithDebInfo | yes | yes | 0 |
+| Shipping | yes (Release flags) | no | 1 |
+
+Shipping is Client/Server only. Configuring Editor + Shipping fails on purpose.
+Both `WITH_EDITOR` and `NIMBLE_SHIPPING` are always defined, to 1 or 0, and
+reach every target through EngineCore.
+
+### CLion
+
+Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:
+**Editor - Debug**, **Editor - RelWithDebInfo**, **Client - Debug**,
+**Client - RelWithDebInfo** and **Client - Shipping**. Each has its own build
+tree (`Games/Sandbox/cmake-build-<preset>`). Enable the ones you want under
+*Settings > Build, Execution, Deployment > CMake*. Pick a profile, then pick a
+run target:
+
+- `NimbleEditor` launches the editor (Editor profiles only).
+- `Sandbox` launches the game (any profile).
+
+Both run from `Games/Sandbox/Binaries/<Platform>_<Config>[_<Target>]`, e.g.
+`Windows_Debug`, `Windows_Shipping_Client`. They switch to their own
+directory on startup, so CLion's default working directory is fine and no run
+configuration needs editing.
+
+### Command line
+
+```
+cd Games/Sandbox
+cmake --preset client-shipping
+cmake --build --preset client-shipping
+```
+
+Or configure the engine directly: `cmake -S Engine -B build -DNIMBLE_TARGET=Client -DCMAKE_BUILD_TYPE=Shipping`.
+
 ## Conventions
 
 ### Namespaces
