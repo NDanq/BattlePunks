@@ -75,6 +75,15 @@ namespace NimbleEngine
          * its own entities, small games and the smoke tests. */
         void Exec(IGameMode& InMode);
 
+        /*
+         * A game in a module DLL (GameModule.h): engine up, then the game
+         * module named by [Game] Module -- or InDefaultModule when that is
+         * unset -- loaded, and its start level run. The module is unloaded
+         * after its level, before the engine goes down. What a game's
+         * launcher calls; the game's code is not linked into it.
+         */
+        void ExecGame(const char* InDefaultModule);
+
         /* Ends the loop after this frame -- the host's own quit, e.g. from a
          * close request. A game asks through GameSession::RequestQuit, which
          * the loop reads the same way. Game thread only. */
@@ -95,9 +104,13 @@ namespace NimbleEngine
         bool Initialize();
         void Shutdown();
 
-        /* The real Exec: engine up, level loaded, loop, level unloaded, engine
-         * down. The level-less overloads pass a .cpp-local empty level. */
+        /* Run(&InLevel). The level-less overloads pass a .cpp-local empty level. */
         void ExecWithLevel(ILevel& InLevel);
+
+        /* The real Exec: engine up, level loaded, loop, level unloaded, engine
+         * down. The level is InLevel or, when that is null, the start level of
+         * the game module InGameModule (ExecGame). */
+        void Run(ILevel* InLevel, const char* InGameModule);
 
         /*
          * One frame: apply a pending level swap, pump, FrameContext, the

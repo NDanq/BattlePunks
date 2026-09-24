@@ -110,7 +110,7 @@ The backend is `[Editor] RHI` in `Config/DefaultEngine.ini` (default 2, Vulkan),
 overridden by `--rhi` -- a separate key from the game's `[Display] RHI`. With no
 file argument the editor opens the Sandbox scene -- the entities Sandbox's
 level has once loaded (Marker, Camera, and the startup script's Scripted),
-mirrored by hand from `SandboxMain.cpp` and `Scripts/Main.lua` until the editor
+mirrored by hand from `SandboxGame.cpp` and `Scripts/Main.lua` until the editor
 can load the game's own level. File > Open/Save read and write
 bare `GameCore::SerializeWorld` archives (`.nmworld`), not SaveGame files;
 script components keep their data but get no Lua instance, since the editor runs

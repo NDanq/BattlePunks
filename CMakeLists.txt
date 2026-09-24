@@ -355,12 +355,14 @@ endif()
 set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
         Source/Private/NimbleEngine/GameSession.cpp
+        Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
         Source/Private/NimbleEngine/SaveGameFormat.h
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/GameSession.h
+        Source/Public/NimbleEngine/GameModule.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
         Source/Public/NimbleEngine/Level.h
         Source/Public/NimbleEngine/GameState.h

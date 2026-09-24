@@ -5,6 +5,7 @@
 #include <string>
 #include <system_error>
 
+#include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
 
 #include "Public/Core/CoreLog.h"
@@ -398,14 +399,41 @@ namespace NimbleEngine
         return !bQuitRequested && !Session->IsQuitRequested();
     }
 
+    void Application::ExecGame(const char* InDefaultModule)
+    {
+        Run(nullptr, InDefaultModule ? InDefaultModule : "");
+    }
+
     void Application::ExecWithLevel(ILevel& InLevel)
+    {
+        Run(&InLevel, nullptr);
+    }
+
+    void Application::Run(ILevel* InLevel, const char* InGameModule)
     {
         /* First, before anything defaults them. Both are first-caller-wins. */
         Threads::SetMainThread();
         Memory::SetCollectorThread();
 
+        /* Outlives the loop and the level: the level's code is in the module.
+         * Constructed after SetCollectorThread, since it allocates. */
+        GameModuleHost Game;
+
         if(Initialize())
         {
+            /* After Initialize, which read the config naming the module -- and
+             * the module's own config vars back-fill from that same file as
+             * they register. */
+            ILevel* Level = InLevel;
+            if(!Level && Game.Load(InGameModule ? InGameModule : ""))
+            {
+                Level = Game.ResolveStartLevel();
+                if(!Level)
+                {
+                    CORE_LOG_ERROR("Game module '" + Game.GetModuleName() + "' has no start level")
+                }
+            }
+
             const int      MaxFramesCfg = GMaxFrames.GetInt();
             const uint64_t MaxFrames    = MaxFramesCfg > 0 ? uint64_t(MaxFramesCfg) : 0;
 
@@ -416,7 +444,7 @@ namespace NimbleEngine
 
             TimerResolutionScope TimerRes;
 
-            if(!Session->LoadLevel(InLevel))
+            if(!Level || !Session->LoadLevel(*Level))
             {
                 bQuitRequested = true;
             }
@@ -446,6 +474,10 @@ namespace NimbleEngine
         {
             Session->UnloadLevel();
         }
+
+        /* After the level, whose code it is; before the engine, which its
+         * OnShutdown may still log through. */
+        Game.Unload();
 
         /* Unconditional -- null-safe and idempotent, so a failed Initialize()
          * still shuts SDL down. */

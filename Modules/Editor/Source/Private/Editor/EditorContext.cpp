@@ -156,7 +156,7 @@ void EditorContext::CreateSandboxScene()
      * tick, since the editor simulates nothing. A hand-kept MIRROR of two
      * sources, with the same names, components and values:
      *
-     *   Games/Sandbox/SandboxMain.cpp   SandboxLevel::OnLoad -- Marker, Camera
+     *   Games/Sandbox/SandboxGame.cpp   SandboxLevel::OnLoad -- Marker, Camera
      *   Games/Sandbox/Scripts/Main.lua  the startup script   -- Scripted
      *
      * Keep it in step when either changes. It exists only until the editor can
