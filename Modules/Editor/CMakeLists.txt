@@ -38,6 +38,9 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorMain.cpp
         Source/Private/Editor/EditorContext.cpp
         Source/Private/Editor/EditorCamera.cpp
+        Source/Private/Editor/EditorLog.cpp
+        Source/Private/Editor/EditorConsole.cpp
+        Source/Private/Editor/ConsolePanel.cpp
         Source/Private/Editor/EditorMainWindow.cpp
         Source/Private/Editor/ViewportPanel.cpp
         Source/Private/Editor/ViewportWidget.cpp
@@ -49,6 +52,9 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/SDLInputProbe.h
         Source/Public/Editor/EditorContext.h
         Source/Public/Editor/EditorCamera.h
+        Source/Public/Editor/EditorLog.h
+        Source/Public/Editor/EditorConsole.h
+        Source/Public/Editor/ConsolePanel.h
         Source/Public/Editor/EditorMainWindow.h
         Source/Public/Editor/ViewportPanel.h
         Source/Public/Editor/ViewportWidget.h

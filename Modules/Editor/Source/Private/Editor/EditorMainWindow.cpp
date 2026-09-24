@@ -14,6 +14,8 @@
 #include <QSignalBlocker>
 #include <QStatusBar>
 
+#include "Public/GameCore/World.h"
+#include "Public/Editor/ConsolePanel.h"
 #include "Public/Editor/DetailsPanel.h"
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/OutlinerPanel.h"
@@ -63,7 +65,16 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     DetailsDock->setWidget(Details);
     addDockWidget(Qt::RightDockWidgetArea, DetailsDock);
 
+    auto* ConsoleDock = new QDockWidget(QStringLiteral("Console"), this);
+    ConsoleDock->setObjectName(QStringLiteral("ConsoleDock"));
+    ConsoleArea = new ConsolePanel(Console, ConsoleDock);
+    ConsoleDock->setWidget(ConsoleArea);
+    addDockWidget(Qt::BottomDockWidgetArea, ConsoleDock);
+
     resizeDocks({ OutlinerDock, DetailsDock }, { 300, 360 }, Qt::Horizontal);
+    resizeDocks({ ConsoleDock }, { 200 }, Qt::Vertical);
+
+    RegisterConsoleCommands();
 
     StatsLabel = new QLabel(this);
     statusBar()->addPermanentWidget(StatsLabel);
@@ -154,6 +165,16 @@ void EditorMainWindow::BuildMenus()
     {
         View->addAction(Dock->toggleViewAction());
     }
+    QAction* FocusConsole = View->addAction(QStringLiteral("Focus &Console"));
+    FocusConsole->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_QuoteLeft));
+    connect(FocusConsole, &QAction::triggered, this, [this]()
+    {
+        auto* Dock = static_cast<QDockWidget*>(ConsoleArea->parentWidget());
+        Dock->show();
+        Dock->raise();
+        ConsoleArea->FocusInput();
+    });
+
     View->addSeparator();
     View->addAction(ViewportArea->GetShowAllBoundsAction());
     QAction* ResetCamera = View->addAction(QStringLiteral("&Reset Camera"));
@@ -164,6 +185,163 @@ void EditorMainWindow::BuildMenus()
     InputProbeAction->setCheckable(true);
     InputProbeAction->setToolTip(QStringLiteral("Route the viewport's input through SDL and report it -- the Play-in-Editor input spike"));
     connect(InputProbeAction, &QAction::toggled, this, &EditorMainWindow::SetSDLInputProbe);
+}
+
+void EditorMainWindow::RegisterConsoleCommands()
+{
+    using GameCore::EntityID;
+
+    /* "#12" is entity index 12; anything else is a name. */
+    const auto Resolve = [this](const QString& InWhich) -> EntityID
+    {
+        GameCore::World& World = Context.GetWorld();
+        if(InWhich.startsWith(QLatin1Char('#')))
+        {
+            bool bOk = false;
+            const uint32_t Index = InWhich.mid(1).toUInt(&bOk);
+            EntityID Found = GameCore::InvalidEntityID();
+            if(bOk)
+            {
+                struct Search { uint32_t Index; EntityID* Out; } State{ Index, &Found };
+                World.ForEachEntity([](const EntityID InEntity, void* InUserData)
+                {
+                    auto* S = static_cast<Search*>(InUserData);
+                    if(InEntity.Index == S->Index)
+                    {
+                        *S->Out = InEntity;
+                    }
+                }, &State);
+            }
+            return Found;
+        }
+        return World.FindEntityByName(InWhich.toUtf8().constData());
+    };
+
+    Console.Register(QStringLiteral("entities"), QStringLiteral("[filter]"),
+                     QStringLiteral("List the scene's entities, the selected one marked *"),
+                     [this](const QStringList& InArgs)
+    {
+        std::vector<EntityID> Entities;
+        Context.GetWorld().ForEachEntity([](const EntityID InEntity, void* InUserData)
+        {
+            static_cast<std::vector<EntityID>*>(InUserData)->push_back(InEntity);
+        }, &Entities);
+
+        const QString Filter = InArgs.isEmpty() ? QString() : InArgs.front();
+        QStringList Lines;
+        for(const EntityID ID : Entities)
+        {
+            const QString Name = Context.GetDisplayName(ID);
+            if(!Filter.isEmpty() && !Name.contains(Filter, Qt::CaseInsensitive))
+            {
+                continue;
+            }
+            Lines << QStringLiteral("%1 #%2 %3")
+                     .arg(ID == Context.GetSelection() ? QLatin1Char('*') : QLatin1Char(' '))
+                     .arg(QString::number(ID.Index), -4)
+                     .arg(Name);
+        }
+        Lines << QStringLiteral("%1 of %2 entities").arg(Lines.size()).arg(Entities.size());
+        Console.Print(Lines.join(QLatin1Char('\n')));
+    });
+
+    Console.Register(QStringLiteral("select"), QStringLiteral("<name | #index | none>"),
+                     QStringLiteral("Select an entity"),
+                     [this, Resolve](const QStringList& InArgs)
+    {
+        if(InArgs.size() != 1)
+        {
+            Console.PrintError(QStringLiteral("Usage: select <name | #index | none>"));
+            return;
+        }
+        if(InArgs.front().compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0)
+        {
+            Context.SetSelection(GameCore::InvalidEntityID());
+            return;
+        }
+        const EntityID Found = Resolve(InArgs.front());
+        if(!Found.IsSet() || !Context.GetWorld().IsAlive(Found))
+        {
+            Console.PrintError(QStringLiteral("No entity '%1'").arg(InArgs.front()));
+            return;
+        }
+        Context.SetSelection(Found);
+        Console.Print(QStringLiteral("Selected %1 #%2").arg(Context.GetDisplayName(Found)).arg(Found.Index));
+    });
+
+    Console.Register(QStringLiteral("create"), QStringLiteral("[name]"),
+                     QStringLiteral("Create an empty entity in front of the camera and select it"),
+                     [this](const QStringList& InArgs)
+    {
+        const EditorCamera& Camera = Viewport->GetCamera();
+        const QString Name = InArgs.isEmpty() ? QStringLiteral("Entity") : InArgs.join(QLatin1Char(' '));
+        const EntityID Created = Context.CreateEntity(Name, Camera.Position + Camera.GetForward() * 600.0);
+        Context.SetSelection(Created);
+        Console.Print(QStringLiteral("Created %1 #%2").arg(Context.GetDisplayName(Created)).arg(Created.Index));
+    });
+
+    Console.Register(QStringLiteral("delete"), QStringLiteral("[name | #index]"),
+                     QStringLiteral("Destroy an entity, or the selection"),
+                     [this, Resolve](const QStringList& InArgs)
+    {
+        const EntityID Target = InArgs.isEmpty() ? Context.GetSelection() : Resolve(InArgs.front());
+        if(!Target.IsSet() || !Context.GetWorld().IsAlive(Target))
+        {
+            Console.PrintError(InArgs.isEmpty() ? QStringLiteral("Nothing is selected")
+                                                : QStringLiteral("No entity '%1'").arg(InArgs.front()));
+            return;
+        }
+        const QString Name = Context.GetDisplayName(Target);
+        Context.DestroyEntity(Target);
+        Console.Print(QStringLiteral("Destroyed %1").arg(Name));
+    });
+
+    Console.Register(QStringLiteral("frame"), QStringLiteral("[all]"),
+                     QStringLiteral("Frame the selection in the viewport, or the whole scene"),
+                     [this](const QStringList& InArgs)
+    {
+        const bool bAll = !InArgs.isEmpty() && InArgs.front().compare(QStringLiteral("all"), Qt::CaseInsensitive) == 0;
+        (bAll ? ViewportArea->GetFrameAllAction() : ViewportArea->GetFrameSelectionAction())->trigger();
+    });
+
+    Console.Register(QStringLiteral("scene"), QStringLiteral("<new | sandbox>"),
+                     QStringLiteral("Replace the scene with an empty one, or Sandbox's"),
+                     [this](const QStringList& InArgs)
+    {
+        const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
+        if(Which == QStringLiteral("new"))
+        {
+            Context.NewScene();
+        }
+        else if(Which == QStringLiteral("sandbox"))
+        {
+            Context.CreateSandboxScene();
+            Viewport->ApplySandboxView();
+        }
+        else
+        {
+            Console.PrintError(QStringLiteral("Usage: scene <new | sandbox>"));
+            return;
+        }
+        CurrentPath.clear();
+        UpdateTitle();
+        Console.Print(QStringLiteral("%1 entities").arg(Context.GetWorld().GetEntityCount()));
+    });
+
+    Console.Register(QStringLiteral("stats"), QString(), QStringLiteral("Print the renderer's counters"),
+                     [this](const QStringList&)
+    {
+        RenderCore::RenderStats Stats;
+        if(!Context.GetRenderStats(Stats))
+        {
+            Console.PrintError(QStringLiteral("The renderer is not running"));
+            return;
+        }
+        Console.Print(QStringLiteral("%1: %2 frames rendered, %3 proxies live")
+                      .arg(QString::fromLatin1(BackendName(Backend)))
+                      .arg(Stats.FramesRendered)
+                      .arg(Stats.ProxiesLive));
+    });
 }
 
 void EditorMainWindow::showEvent(QShowEvent* InEvent)

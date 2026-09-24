@@ -22,7 +22,10 @@ if(NOT COMMAND nimble_add_module)
             "the top of this file and the README.")
 endif()
 
-option(GAMEWINDOW_SHARED "Build GameWindow as a shared library" OFF)
+# The old GAMEWINDOW_SHARED option, gone: GameWindow is always shared (see the
+# target below). Dropped from the cache so a tree configured before the change
+# does not keep showing a switch that no longer does anything.
+unset(GAMEWINDOW_SHARED CACHE)
 
 # === Vendored SDL3 =========================================================
 # SDL3 lives in source form under External/, the way Modules/GDI carries
@@ -172,17 +175,21 @@ endif()
 # own window-system seam and takes an EngineCore::WindowHandle; GameWindow's job
 # ends at producing one. That is what keeps SDL out of GDI's backends, exactly
 # as GDIVulkanPlatform.h anticipates.
-if(GAMEWINDOW_SHARED)
-    nimble_add_module(GameWindow SHARED
-            PREFIX       GAMEWINDOW
-            SOURCES      ${GAMEWINDOW_SOURCES}
-            PRIVATE_DEPS SDL3::SDL3)
-else()
-    nimble_add_module(GameWindow
-            PREFIX       GAMEWINDOW
-            SOURCES      ${GAMEWINDOW_SOURCES}
-            PRIVATE_DEPS SDL3::SDL3)
-endif()
+#
+# ALWAYS SHARED -- there is no GAMEWINDOW_SHARED option any more, matching
+# GameCore and RenderCore. GameWindowSystem is process-global state -- the SDL
+# video subsystem, the window registry events are routed through, the
+# host-owns-the-message-loop switch, the injected-text queue -- and it must
+# exist exactly once. While NimbleEngine.dll was GameWindow's only consumer a
+# static copy inside it was that one copy. Play-in-Editor ends that: the editor
+# wraps its viewport through GameWindowSystem AND hosts a GameSession through
+# NimbleEngine, so both images reach GameWindow, and two static copies would be
+# two registries -- a window wrapped by the editor that the engine's pump has
+# never heard of, with nothing to say so. One DLL makes that impossible.
+nimble_add_module(GameWindow SHARED
+        PREFIX       GAMEWINDOW
+        SOURCES      ${GAMEWINDOW_SOURCES}
+        PRIVATE_DEPS SDL3::SDL3)
 
 # PRIVATE, not PUBLIC: Private/GameWindow/GameWindowInternal.h is included as
 # "Private/GameWindow/..." from this module's own .cpp files and must not be

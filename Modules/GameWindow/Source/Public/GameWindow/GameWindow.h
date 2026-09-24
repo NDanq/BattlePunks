@@ -155,8 +155,8 @@ private:
 
     /*
      * Pimpl so that this header needs no SDL type, and so the class layout does
-     * not change when the cached-state set grows -- which matters as soon as
-     * GAMEWINDOW_SHARED is on.
+     * not change when the cached-state set grows -- which matters because
+     * GameWindow is a DLL and its consumers are built against this header.
      */
     struct Impl;
     Impl* P;

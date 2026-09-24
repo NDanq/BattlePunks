@@ -2,9 +2,9 @@
 
 `NimbleEditor`, the Qt Widgets editor: an **Outliner** listing every entity in
 the World, a **Details** panel showing the selected entity's editor-visible
-component properties, and a **3D viewport** drawn by RenderCore through GDI --
+component properties, a **3D viewport** drawn by RenderCore through GDI --
 the same renderer the game uses, into a native child window instead of an SDL
-one.
+one -- and a **Console** showing the process's log and running commands.
 
 Written for this repository. An executable, not a module: nothing links it.
 
@@ -68,6 +68,9 @@ uses it.
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
 | `OutlinerPanel` | Entity list with component summary, filter, create/destroy |
 | `DetailsPanel` + `PropertyWidgets` | One section per component, one editor per property type, reset-to-default, add/remove component |
+| `EditorLog` | EngineCore's log handler: a thread-safe, bounded history of every log line, still forwarded to Qt/the debugger |
+| `EditorConsole` | Command registry; unknown words fall through to Core's `ExecConfigCommand` |
+| `ConsolePanel` | The Console dock: filtered transcript over a command line with history and completion |
 
 ## Editor-visible properties
 
@@ -148,6 +151,37 @@ lists every type with a property list that the entity lacks; the new component
 starts from its default-constructed bytes. A type opts out of that list with
 `Props.NotAddable()` -- `ScriptComponent` does, since a script needs a Lua
 class and is attached with `ScriptEngine::AddScript`.
+
+## Console
+
+Docked below the viewport; **Ctrl+`** (View > Focus Console) jumps to its
+command line. The transcript holds everything logged since startup -- Core,
+GDI, GameWindow, GameCore, RenderCore and the editor, from any thread -- with
+**Log / Warnings / Errors** toggles (each showing its count), a text filter and
+optional timestamps. It follows new output while scrolled to the bottom.
+
+The command line keeps a history (Up/Down) and completes command and config var
+names (Tab). A line is split shell-style (quotes group words); the first word
+is looked up among the commands, and anything else goes to Core's config
+grammar, so every `NIMBLE_CONFIG_*` var in the process is reachable with nothing
+registered:
+
+| Command | |
+|---|---|
+| `help [command]` | List commands, or describe one |
+| `echo <text>`, `clear` | |
+| `cvars [filter]` | Config vars and values; `*` marks one set by an .ini or the console |
+| `reset <Section.Name>` | A config var back to its compiled default |
+| `Section.Name [value]` | Print a config var, or set it |
+| `entities [filter]` | The scene's entities, the selection marked `*` |
+| `select <name \| #index \| none>` | Select an entity (drives Outliner and Details) |
+| `create [name]`, `delete [name \| #index]` | As the Edit menu |
+| `frame [all]` | Frame the selection, or the scene |
+| `scene <new \| sandbox>` | As the File menu |
+| `stats` | The renderer's counters |
+
+`EditorMainWindow::RegisterConsoleCommands` registers the scene commands;
+`EditorConsole::Register` is the one call to add another.
 
 ## Known limits
 
