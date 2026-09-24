@@ -71,6 +71,9 @@ int main(int argc, char* argv[])
                                        QStringLiteral("Render backend: 0=Null 1=OpenGL 2=Vulkan 3=Metal 4=D3D12."),
                                        QStringLiteral("N"));
     Parser.addOption(RhiOption);
+    const QCommandLineOption ProbeOption(QStringLiteral("sdl-input-probe"),
+                                         QStringLiteral("Route viewport input through SDL and report it (Play-in-Editor spike)."));
+    Parser.addOption(ProbeOption);
     Parser.addPositionalArgument(QStringLiteral("world"), QStringLiteral("A .nmworld file to open."), QStringLiteral("[world]"));
     Parser.process(App);
 
@@ -112,6 +115,7 @@ int main(int argc, char* argv[])
         EditorContext    Context;
         EditorMainWindow Window(Context, RenderCore::ERenderBackend(Rhi));
         Window.SetInitialWorld(InitialWorld);
+        Window.SetStartSDLInputProbe(Parser.isSet(ProbeOption));
         Window.show();
 
         Result = App.exec();

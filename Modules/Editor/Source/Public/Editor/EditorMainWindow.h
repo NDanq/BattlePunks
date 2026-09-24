@@ -12,7 +12,9 @@
 class DetailsPanel;
 class EditorContext;
 class OutlinerPanel;
+class QAction;
 class QLabel;
+class SDLInputProbe;
 class ViewportPanel;
 class ViewportWidget;
 
@@ -36,6 +38,10 @@ public:
     /* Opens InPath on startup instead of the demo scene; call before show(). */
     void SetInitialWorld(const QString& InPath) { InitialWorld = InPath; }
 
+    /* Starts the SDL input probe as soon as the viewport is up (the
+     * --sdl-input-probe switch); see SDLInputProbe.h. Call before show(). */
+    void SetStartSDLInputProbe(bool bInStart) { bStartSDLInputProbe = bInStart; }
+
 protected:
     void showEvent(QShowEvent* InEvent) override;
     void closeEvent(QCloseEvent* InEvent) override;
@@ -45,6 +51,7 @@ private:
     void StartRenderer();
     void UpdateTitle();
     void UpdateStats();
+    void SetSDLInputProbe(bool bInOn);
 
     void OpenWorld();
     bool SaveWorld();
@@ -62,6 +69,10 @@ private:
     QString CurrentPath;
     QString InitialWorld;
     bool    bRendererStarted = false;
+
+    SDLInputProbe* InputProbe = nullptr;
+    QAction*       InputProbeAction = nullptr;
+    bool           bStartSDLInputProbe = false;
 
     QTimer   StatsTimer;
     uint64_t LastFramesRendered = 0;

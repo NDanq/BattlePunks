@@ -1,3 +1,4 @@
+#include <deque>
 #include <string>
 #include <vector>
 
@@ -109,6 +110,11 @@ namespace
             D.OnQuit(D.UserData);
         }
     }
+
+    /* InjectTextInput's strings, alive until the pump that delivers them. A
+     * deque: appending never relocates an earlier element, whose c_str() an
+     * already-queued event points at. */
+    std::deque<std::string> GInjectedText;
 
     void RouteEvent(const SDL_Event& InEvent)
     {
@@ -312,6 +318,7 @@ void GameWindowSystem::Shutdown()
     GWindows.clear();
 
     SDL_Quit();
+    GInjectedText.clear();   // any still-queued injected text went with the queue
 
     GPumpThread        = 0;
     GQuitRequested     = false;
@@ -324,6 +331,88 @@ bool GameWindowSystem::IsInitialized()
 }
 
 // === Windows ================================================================
+
+void GameWindowSystem::SetHostOwnsMessageLoop(const bool bInHostOwnsLoop)
+{
+    /* A hint, so it may be set before SDL_Init -- and must be, for the very
+     * first pump to respect it. Harmless on platforms that ignore it. */
+    SDL_SetHint(SDL_HINT_WINDOWS_ENABLE_MESSAGELOOP, bInHostOwnsLoop ? "0" : "1");
+}
+
+GameWindow* GameWindowSystem::WrapNativeWindow(const EngineCore::WindowHandle InNativeWindow)
+{
+    if(!IsInitialized())
+    {
+        GW_LOG_ERROR("WrapNativeWindow called before Initialize().");
+        return nullptr;
+    }
+    if(!InNativeWindow.IsValid())
+    {
+        GW_LOG_ERROR("WrapNativeWindow given an invalid native handle.");
+        return nullptr;
+    }
+
+    CheckPumpThread("GameWindowSystem::WrapNativeWindow");
+
+#if defined(_WIN32)
+    const SDL_PropertiesID Props = SDL_CreateProperties();
+    SDL_SetPointerProperty(Props, SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER, InNativeWindow.Native);
+    SDL_Window* SdlWindow = SDL_CreateWindowWithProperties(Props);
+    SDL_DestroyProperties(Props);
+#else
+    SDL_Window* SdlWindow = nullptr;
+    SDL_SetError("wrapping a native window is only implemented on Windows");
+#endif
+
+    if(!SdlWindow)
+    {
+        GW_LOG_ERROR(std::string("WrapNativeWindow: SDL could not adopt the window: ") + SDL_GetError());
+        return nullptr;
+    }
+
+    GameWindow* Window = GameWindowSystem_Impl::Construct();
+    auto& I  = GameWindowSystem_Impl::Get(*Window);
+    I.Window = SdlWindow;
+    I.ID     = SDL_GetWindowID(SdlWindow);
+
+    GameWindowSystem_Impl::RefreshCachedState(*Window);
+
+    /* Not GEverCreatedWindow: "the last window closed" is the host's business
+     * when the host owns the window, and must not end a loop it does not run. */
+    GWindows.push_back(Window);
+    return Window;
+}
+
+void GameWindowSystem::InjectTextInput(GameWindow* InWindow, const char* InUtf8)
+{
+    if(!InWindow || !InUtf8 || InUtf8[0] == '\0')
+    {
+        return;
+    }
+    CheckPumpThread("GameWindowSystem::InjectTextInput");
+
+    SDL_Window* SdlWindow = static_cast<SDL_Window*>(InWindow->GetSDLWindow());
+    if(!SdlWindow || !SDL_TextInputActive(SdlWindow) || static_cast<unsigned char>(InUtf8[0]) < 0x20)
+    {
+        return;
+    }
+
+    /* SDL owns the text only of events it made itself (its internal temporary
+     * strings); a pushed event's pointer is the pusher's to keep alive until
+     * the event is consumed. The next PumpEvents/WaitEvents drains the whole
+     * queue on this same thread, so each string lives exactly until then. */
+    GInjectedText.emplace_back(InUtf8);
+
+    SDL_Event Event;
+    SDL_zero(Event);
+    Event.type          = SDL_EVENT_TEXT_INPUT;
+    Event.text.windowID = SDL_GetWindowID(SdlWindow);
+    Event.text.text     = GInjectedText.back().c_str();
+    if(!SDL_PushEvent(&Event))
+    {
+        GInjectedText.pop_back();
+    }
+}
 
 GameWindow* GameWindowSystem::CreateGameWindow(const WindowDesc& InDesc)
 {
@@ -426,6 +515,7 @@ bool GameWindowSystem::PumpEvents()
     {
         RouteEvent(Event);
     }
+    GInjectedText.clear();   // every event pointing at them has been routed
 
     ReapClosedWindows();
 
@@ -453,6 +543,7 @@ bool GameWindowSystem::WaitEvents(const int InTimeoutMilliseconds)
         {
             RouteEvent(Event);
         }
+        GInjectedText.clear();
     }
 
     ReapClosedWindows();

@@ -11,6 +11,7 @@
 #include <QLabel>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QSignalBlocker>
 #include <QStatusBar>
 
 #include "Public/Editor/DetailsPanel.h"
@@ -18,6 +19,7 @@
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
 #include "Public/Editor/ViewportWidget.h"
+#include "Private/Editor/SDLInputProbe.h"
 
 namespace
 {
@@ -77,6 +79,10 @@ EditorMainWindow::~EditorMainWindow()
 {
     /* Normally already done by closeEvent; this covers a window destroyed
      * without being closed. The viewport's native window is still alive here. */
+    if(InputProbe)
+    {
+        InputProbe->Stop();
+    }
     Context.Shutdown();
 }
 
@@ -150,6 +156,12 @@ void EditorMainWindow::BuildMenus()
     View->addAction(ViewportArea->GetShowAllBoundsAction());
     QAction* ResetCamera = View->addAction(QStringLiteral("&Reset Camera"));
     connect(ResetCamera, &QAction::triggered, this, [this]() { Viewport->GetCamera() = EditorCamera(); });
+
+    View->addSeparator();
+    InputProbeAction = View->addAction(QStringLiteral("SDL Input &Probe"));
+    InputProbeAction->setCheckable(true);
+    InputProbeAction->setToolTip(QStringLiteral("Route the viewport's input through SDL and report it -- the Play-in-Editor input spike"));
+    connect(InputProbeAction, &QAction::toggled, this, &EditorMainWindow::SetSDLInputProbe);
 }
 
 void EditorMainWindow::showEvent(QShowEvent* InEvent)
@@ -186,6 +198,11 @@ void EditorMainWindow::StartRenderer()
 
     Viewport->StartRendering();
     StatsTimer.start(1000);
+
+    if(bStartSDLInputProbe)
+    {
+        InputProbeAction->setChecked(true);   // -> SetSDLInputProbe(true)
+    }
     UpdateStats();
 }
 
@@ -194,8 +211,38 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
     /* Before any widget is destroyed: the Renderer releases its swapchain
      * against the viewport's native window, which must still exist. */
     StatsTimer.stop();
+    if(InputProbe)
+    {
+        InputProbe->Stop();   // before the viewport's native window goes: SDL must detach first
+    }
     Context.Shutdown();
     InEvent->accept();
+}
+
+void EditorMainWindow::SetSDLInputProbe(const bool bInOn)
+{
+    if(!InputProbe)
+    {
+        InputProbe = new SDLInputProbe(this);
+        connect(InputProbe, &SDLInputProbe::EventReported, this, [this](const QString& InLine)
+        {
+            statusBar()->showMessage(QStringLiteral("SDL: ") + InLine, 4000);
+        });
+    }
+
+    if(bInOn)
+    {
+        Viewport->setFocus(Qt::OtherFocusReason);
+        if(!InputProbe->Start(Viewport))
+        {
+            const QSignalBlocker Block(InputProbeAction);
+            InputProbeAction->setChecked(false);
+        }
+    }
+    else
+    {
+        InputProbe->Stop();
+    }
 }
 
 void EditorMainWindow::UpdateTitle()
