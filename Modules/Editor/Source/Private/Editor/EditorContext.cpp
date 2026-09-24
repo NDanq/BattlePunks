@@ -170,21 +170,22 @@ void EditorContext::CreateSandboxScene()
      */
 
     // --- Marker (SandboxLevel::OnLoad) ---------------------------------------
-    /* Bounds is +-0.5 while the quad is 32 x 32 -- as in Sandbox, so the
-     * selection outline (drawn from Bounds) shows the game's real bounds. */
     const EntityID MarkerID = CreateEntity(QStringLiteral("Marker"), EngineCore::Vector3(0.0, 360.0, 0.0));
     {
         const GameCore::Entity Marker = EditedWorld->GetEntity(MarkerID);
-
-        GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, -0.5), EngineCore::Vector3(0.5, 0.5, 0.5));
-        Marker.AddComponent(Bounds);
 
         RenderCore::PrimitiveComponent Primitive;
         Primitive.Width  = 32.0f;
         Primitive.Height = 32.0f;
         Primitive.Tint   = EngineCore::Color(255, 200, 40);
         Marker.AddComponent(Primitive);
+
+        /* The quad's extent, derived from the Primitive as Sandbox does. */
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(
+            EngineCore::Vector3(-0.5 * Primitive.Width, -0.5 * Primitive.Height, 0.0),
+            EngineCore::Vector3( 0.5 * Primitive.Width,  0.5 * Primitive.Height, 0.0));
+        Marker.AddComponent(Bounds);
     }
 
     // --- Camera (SandboxLevel::OnLoad) ---------------------------------------
