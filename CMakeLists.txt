@@ -245,10 +245,14 @@ endif()
 set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
         Source/Private/NimbleEngine/Level.cpp
+        Source/Private/NimbleEngine/SaveGame.cpp
+        Source/Private/NimbleEngine/SaveGameFormat.h
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
         Source/Public/NimbleEngine/Level.h
         Source/Public/NimbleEngine/GameState.h
+        Source/Public/NimbleEngine/SaveGame.h
+        Source/Public/NimbleEngine/NimbleEngineTypes.h
 )
 
 nimble_add_module(NimbleEngine SHARED

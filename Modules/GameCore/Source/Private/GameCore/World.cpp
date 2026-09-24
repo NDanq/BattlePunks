@@ -160,14 +160,14 @@ namespace GameCore
 
     // === Entities ===============================================================
 
-    EntityID World::CreateEntity()
+    Entity World::CreateEntity()
     {
         const EntityID NewEntity = P->AllocateEntitySlot();
         P->EntityCreated.Broadcast(NewEntity);
-        return NewEntity;
+        return Entity(this, NewEntity);
     }
 
-    EntityID World::CreateEntity(const char* InName)
+    Entity World::CreateEntity(const char* InName)
     {
         const EntityID NewEntity = P->AllocateEntitySlot();
 
@@ -179,10 +179,10 @@ namespace GameCore
             std::strncpy(Init.Name, InName, sizeof(Init.Name) - 1);
             Init.Name[sizeof(Init.Name) - 1] = '\0';
         }
-        AddComponent<NameComponent>(NewEntity, Init);
+        AddComponentRaw(NewEntity, NameComponent::StaticType().ID, &Init);
 
         P->EntityCreated.Broadcast(NewEntity);
-        return NewEntity;
+        return Entity(this, NewEntity);
     }
 
     void World::DestroyEntity(const EntityID InEntity)
@@ -236,6 +236,21 @@ namespace GameCore
             }
         }
         return EntityID();
+    }
+
+    void World::ForEachEntity(void (*InFn)(EntityID InEntity, void* InUserData), void* InUserData) const
+    {
+        if(!InFn) { return; }
+
+        /* Bounded by the slot table, not LiveEntityCount -- slots have holes.
+         * Re-read per iteration so a rule-breaking InFn stays in bounds. */
+        for(uint32_t Index = 0; Index < P->Alive.size(); ++Index)
+        {
+            if(P->Alive[Index])
+            {
+                InFn(EntityID(Index, P->Generations[Index]), InUserData);
+            }
+        }
     }
 
     // === Components: erased =====================================================

@@ -155,9 +155,9 @@ namespace RenderCore
 
         /* The owner header is already written at this point -- World::AddComponentRaw
          * writes it immediately after copying the caller's init bytes, before
-         * broadcasting OnComponentAdded (World.cpp) -- so GetComponentRaw here
+         * broadcasting OnComponentAdded (World.cpp) -- so GetComponentByType here
          * sees a fully-formed component. */
-        void* Bytes = Bridge->BoundWorld->GetComponentRaw(InEntity, InType);
+        void* Bytes = GameCore::Entity(Bridge->BoundWorld, InEntity).GetComponentByType(InType);
         if(!Bytes)
         {
             return;
@@ -196,7 +196,7 @@ namespace RenderCore
          * bytes (World::RemoveComponentRaw / TickPhase's flush / World.cpp's
          * DestroyEntityImmediate all broadcast first), so the handle is
          * still readable here. */
-        void* Bytes = Bridge->BoundWorld->GetComponentRaw(InEntity, InType);
+        void* Bytes = GameCore::Entity(Bridge->BoundWorld, InEntity).GetComponentByType(InType);
         if(!Bytes)
         {
             return;

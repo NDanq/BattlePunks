@@ -66,7 +66,9 @@ Engine/Modules/GameCore/
 |       |-- SpatialIndex.cpp
 |       |-- World.cpp
 |       |-- ScriptEngine.cpp
-|       |-- ScriptBindings.cpp      World/Entity/component-proxy/TickPhase/Events Lua libraries
+|       |-- ScriptBindings.cpp      World/Entity/TickPhase/Events Lua libraries
+|       |-- ComponentScript.cpp     component proxies: the binding registry and the one dispatcher
+|       |-- ComponentScripts.cpp    what Transform/Name/Bounds expose to Lua
 |       `-- ScriptSystem.cpp        Script.Register, instantiation, the per-phase tick, the removal observer
 `-- Tests/
     `-- SmokeMain.cpp
@@ -90,7 +92,7 @@ a component read at the wrong offset the first time an id crossed the
 boundary. Exactly `Engine/CMakeLists.txt`'s reasoning for forcing
 `CORE_SHARED` and building `NimbleEngine` itself SHARED.
 
-**Templates compute, GameCore.dll allocates.** `World::GetComponent<T>()` and
+**Templates compute, GameCore.dll allocates.** `Entity::GetComponent<T>()` and
 `TMulticastDelegate<...>::Broadcast` are templates and instantiate in
 whichever image calls them. The templates in every public header here only
 cast and forward; every allocation, every registry touch and every container
@@ -201,7 +203,7 @@ shape) of `EntityID` leaves and fattened world-space boxes -- no component
 data, just position. A `BoundsComponent` is what puts an entity in it:
 
 ```cpp
-BoundsComponent* B = W.AddComponent<BoundsComponent>(E);
+BoundsComponent* B = E.AddComponent<BoundsComponent>();   // E: the Entity CreateEntity returned
 B->Local = AABB(Vector3(-0.5,-0.5,-0.5), Vector3(0.5,0.5,0.5));
 ```
 
@@ -254,8 +256,35 @@ Events.Emit("PlayerScored", 10, "Player")       -- numbers, booleans, strings, e
 
 A component proxy (what `e:GetComponent("Transform")` returns) holds an
 `EntityID` and a `ComponentTypeID`, never a pointer -- every method re-fetches
-through `World::GetComponentRaw`, so a proxy held across a `RemoveComponent`
+through `Entity::GetComponentByType(ComponentTypeID)`, so a proxy held across a `RemoveComponent`
 errors cleanly instead of aliasing whatever now occupies that pool slot.
+
+**A component chooses what Lua sees** (`ComponentScript.h`). Anything not
+listed is invisible; every component also gets `GetEntity()`. Binding code
+never includes `lua.h`:
+
+```cpp
+GAMECORE_DEFINE_COMPONENT_SCRIPT(PrimitiveComponent)
+{
+    Bind.Field("Width", &PrimitiveComponent::Width);      // GetWidth / SetWidth
+    Bind.Field("Tint",  &PrimitiveComponent::Tint);       // r, g, b[, a]
+    Bind.Flag("Visible", &PrimitiveComponent::bVisible);  // uint8_t as a boolean
+}
+
+GAMECORE_DEFINE_COMPONENT_SCRIPT(TransformComponent)
+{
+    Bind.Field("Position", &TransformComponent::Position);   // three numbers
+    Bind.Method("Translate", [](TransformComponent& C, ScriptCall& Call)
+    {
+        const EngineCore::Vector3 Delta = Call.GetVector3(1);
+        if(Call.HasError()) { return; }
+        C.Position = C.Position + Delta;
+    });
+}
+```
+
+`Bind.ReadOnly` gives a getter only. Field types: float, double, int32,
+uint8, bool, Vector3, AABB, Color and `char[N]`.
 
 **Lua is compiled as C and its errors are `longjmp`.** A `lua_CFunction` in
 this module's bindings may only have trivially destructible locals in scope

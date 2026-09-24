@@ -16,8 +16,9 @@
 #include "Public/GameCore/TickPhase.h"
 
 /* Forward-declared; Entity.h includes World.h itself, so this header cannot
- * include Entity.h without a cycle. GetEntity() is defined out-of-line in
- * World.cpp instead, where Entity.h is visible. */
+ * include Entity.h without a cycle. CreateEntity() and GetEntity() return one
+ * and are defined out-of-line in World.cpp, where Entity.h is visible; a
+ * caller needs Entity.h (or Components.h) to use the result. */
 namespace GameCore { class Entity; }
 
 /*
@@ -43,9 +44,14 @@ namespace GameCore
 
         // === Entities ========================================================
 
-        EntityID CreateEntity();
+        /* Returns the handle, so components attach directly:
+         *     Entity Marker = World.CreateEntity("Marker");
+         *     Marker.AddComponent(Transform);
+         * Entity converts implicitly to EntityID, so storing the result as an
+         * EntityID still works. */
+        Entity CreateEntity();
         /* Convenience: also adds a NameComponent set to InName. */
-        EntityID CreateEntity(const char* InName);
+        Entity CreateEntity(const char* InName);
 
         /* DEFERRED to the end of the current phase when called during a
          * tick; immediate otherwise. Broadcasts OnEntityDestroyed() BEFORE
@@ -62,33 +68,14 @@ namespace GameCore
          * nothing matches. */
         EntityID FindEntityByName(const char* InName) const;
 
-        // === Components: typed ==============================================
-        // Inline, cast-and-forward only. Every one calls the *Raw sibling below.
+        /* Every live entity in slot order, whatever it carries -- Each<T> only
+         * sees entities with a T. InFn must not create or destroy an entity
+         * (that mutates the slot tables being walked); components are fine. */
+        void ForEachEntity(void (*InFn)(EntityID InEntity, void* InUserData), void* InUserData) const;
 
-        template<typename T>
-        T* AddComponent(EntityID InEntity, const T& InInit = T())
-        {
-            return static_cast<T*>(AddComponentRaw(InEntity, T::StaticType().ID, &InInit));
-        }
-
-        template<typename T>
-        T* GetComponent(EntityID InEntity) const
-        {
-            return static_cast<T*>(GetComponentRaw(InEntity, T::StaticType().ID));
-        }
-
-        template<typename T>
-        bool HasComponent(EntityID InEntity) const
-        {
-            return HasComponentRaw(InEntity, T::StaticType().ID);
-        }
-
-        /* DEFERRED inside a tick, exactly like DestroyEntity. */
-        template<typename T>
-        bool RemoveComponent(EntityID InEntity)
-        {
-            return RemoveComponentRaw(InEntity, T::StaticType().ID);
-        }
+        // === Components ======================================================
+        // Added, fetched and removed through Entity (Entity.h) only -- World
+        // owns the pools but exposes no per-entity component calls.
 
         /* Visits every live T, in dense (pool) order. InFn must not Add or
          * Remove a T on ANY entity while this runs -- see DESIGN.md. */
@@ -104,18 +91,6 @@ namespace GameCore
                 InFn(GetEntity(Pool->GetEntityAt(Index)), Base[Index]);
             }
         }
-
-        // === Components: erased =============================================
-        // The by-name (Lua) and by-type (C++) paths are THE SAME CODE from here.
-
-        /* Copies InInitBytes, then writes ComponentOwner at offset 0 -- the
-         * ONE place that happens. nullptr if InEntity is not alive, InType
-         * is unregistered, or InEntity already has this component. */
-        void* AddComponentRaw(EntityID InEntity, ComponentTypeID InType, const void* InInitBytes);
-        void* GetComponentRaw(EntityID InEntity, ComponentTypeID InType) const;
-        bool  HasComponentRaw(EntityID InEntity, ComponentTypeID InType) const;
-        /* DEFERRED inside a tick -- see DestroyEntity. */
-        bool  RemoveComponentRaw(EntityID InEntity, ComponentTypeID InType);
 
         /* Creates the pool on first use; nullptr for an unregistered id. */
         ComponentPool* GetPool(ComponentTypeID InType);
@@ -161,9 +136,9 @@ namespace GameCore
             QueryBounds(InBox, [](const EntityID InEntity, void* InUserData) -> bool
             {
                 Context& C = *static_cast<Context*>(InUserData);
-                if(T* Component = C.Self->GetComponent<T>(InEntity))
+                if(void* Component = C.Self->GetComponentRaw(InEntity, T::StaticType().ID))
                 {
-                    (*C.Fn)(C.Self->GetEntity(InEntity), *Component);
+                    (*C.Fn)(C.Self->GetEntity(InEntity), *static_cast<T*>(Component));
                 }
                 return true;
             }, &Ctx);
@@ -195,26 +170,23 @@ namespace GameCore
         EventBus& GetEvents();
 
     private:
+        /* The erased component path -- the by-name (Lua) and by-type (C++)
+         * paths are THE SAME CODE from here. Private: Entity is the only
+         * caller, so there is exactly one public way to touch a component. */
+        friend class Entity;
+
+        /* Copies InInitBytes, then writes ComponentOwner at offset 0 -- the
+         * ONE place that happens. nullptr if InEntity is not alive, InType
+         * is unregistered, or InEntity already has this component. */
+        void* AddComponentRaw(EntityID InEntity, ComponentTypeID InType, const void* InInitBytes);
+        void* GetComponentRaw(EntityID InEntity, ComponentTypeID InType) const;
+        bool  HasComponentRaw(EntityID InEntity, ComponentTypeID InType) const;
+        /* DEFERRED inside a tick -- see DestroyEntity. */
+        bool  RemoveComponentRaw(EntityID InEntity, ComponentTypeID InType);
+
         struct Impl;
         Impl* P;
     };
-
-    /* ComponentOwner's inline methods needing only a complete World (not
-     * Entity) -- defined here since World is forward-declared in
-     * ComponentType.h. GetEntity()/GetName() need a complete Entity and live
-     * in Entity.h/Components.h instead. */
-
-    template<typename T>
-    T* ComponentOwner::GetSibling() const
-    {
-        return OwningWorld ? OwningWorld->GetComponent<T>(Entity) : nullptr;
-    }
-
-    template<typename T>
-    bool ComponentOwner::HasSibling() const
-    {
-        return OwningWorld && OwningWorld->HasComponent<T>(Entity);
-    }
 }
 
 #endif //GAMECORE_WORLD_H

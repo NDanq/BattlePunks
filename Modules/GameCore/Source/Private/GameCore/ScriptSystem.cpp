@@ -210,7 +210,7 @@ namespace GameCore
 
     bool ScriptSystem_InstantiateScript(lua_State* InState, World* InWorld, const EntityID InEntity, const char* InClassName)
     {
-        if(InWorld->HasComponentRaw(InEntity, ScriptComponent::StaticType().ID))
+        if(Entity(InWorld, InEntity).HasComponent<ScriptComponent>())
         {
             GAMECORE_LOG_WARN(std::string("InstantiateScript: entity already has a ScriptComponent (class \"")
                                + InClassName + "\" not added)")
@@ -252,7 +252,7 @@ namespace GameCore
         Init.Phase                    = Phase;
         Init.bCullOutsideActiveRegion = Cull;
 
-        InWorld->AddComponentRaw(InEntity, ScriptComponent::StaticType().ID, &Init);
+        Entity(InWorld, InEntity).AddComponent(Init);
         return true;
     }
 

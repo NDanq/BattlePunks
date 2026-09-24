@@ -136,14 +136,14 @@ on, drawing is one of three doors, none of which is an `OnRender` method:
 
 ```cpp
 GameCore::World& World = App.GetWorld();
-GameCore::EntityID E = World.CreateEntity("Box");
-World.AddComponent<GameCore::TransformComponent>(E);
+GameCore::Entity E = World.CreateEntity("Box");
+E.AddComponent<GameCore::TransformComponent>();
 
 RenderCore::PrimitiveComponent Prim;
 Prim.Width  = 32.0f;
 Prim.Height = 32.0f;
 Prim.Tint   = EngineCore::Color(255, 200, 40);
-World.AddComponent<RenderCore::PrimitiveComponent>(E, Prim);
+E.AddComponent(Prim);
 ```
 
 Adding the component is the whole of it: `Renderer`'s `WorldBridge` sees the
@@ -158,9 +158,9 @@ A camera works the same way -- the first entity with an active
 `TransformComponent`:
 
 ```cpp
-GameCore::EntityID Cam = World.CreateEntity("Camera");
-World.AddComponent<GameCore::TransformComponent>(Cam);
-World.AddComponent<RenderCore::CameraComponent>(Cam);
+GameCore::Entity Cam = World.CreateEntity("Camera");
+Cam.AddComponent<GameCore::TransformComponent>();
+Cam.AddComponent<RenderCore::CameraComponent>();
 ```
 
 With no active camera, the view is an orthographic projection over the whole

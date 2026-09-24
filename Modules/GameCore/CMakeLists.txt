@@ -146,6 +146,12 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/ScriptEngine.cpp
         Source/Private/GameCore/ScriptBindings.cpp
         Source/Private/GameCore/ScriptSystem.cpp
+        Source/Private/GameCore/ComponentSerializer.cpp
+        Source/Private/GameCore/ComponentSerializers.cpp
+        Source/Private/GameCore/WorldSerializer.cpp
+        Source/Private/GameCore/ArchiveTextDump.cpp
+        Source/Private/GameCore/ComponentScript.cpp
+        Source/Private/GameCore/ComponentScripts.cpp
         Source/Public/GameCore/GameCoreAPI.h
         Source/Public/GameCore/GameCoreLog.h
         Source/Public/GameCore/EntityID.h
@@ -160,6 +166,10 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/Entity.h
         Source/Public/GameCore/Components.h
         Source/Public/GameCore/ScriptEngine.h
+        Source/Public/GameCore/ComponentSerializer.h
+        Source/Public/GameCore/WorldSerializer.h
+        Source/Public/GameCore/ArchiveTextDump.h
+        Source/Public/GameCore/ComponentScript.h
 )
 
 # ===========================================================================

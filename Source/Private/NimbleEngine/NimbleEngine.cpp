@@ -13,10 +13,15 @@
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/WorldSerializer.h"
 #include "Public/GameWindow/GameWindowSystem.h"
 #include "Public/GameWindow/GameWindow.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/Renderer.h"
+
+/* The save format's own tags, shared with SaveGame.cpp -- LoadLevel reads the
+ * World and GameState chunks that file wrote. */
+#include "Private/NimbleEngine/SaveGameFormat.h"
 
 #if defined(_WIN32)
 /*
@@ -206,33 +211,13 @@ namespace NimbleEngine
         }
 
         /*
-         * THE RESOURCE SEAM, installed before anything can ask for an asset.
-         *
-         * CoreFileProvider.h's own comment describes FilesystemProvider as
-         * "what the smoke tests and a non-Qt host use" -- this engine is
-         * that non-Qt host, and until now it simply never installed one, so
-         * EngineCore::GetFileProvider() returned null and every asset read
-         * failed. That was invisible while the only backend that started was
-         * Null (which never loads a shader), and surfaced the moment Vulkan
-         * came up for real as:
-         *
-         *   [VKShaderResource] No file provider installed for:
-         *   Shaders/Cooked/Vulkan/Basic.vsh.spv
-         *
-         * Empty base directory: paths handed to a provider are
-         * bundle-relative ("Shaders/Cooked/Vulkan/Basic.vsh.spv"), and the
-         * working directory is already the one holding the executable and
-         * its staged Config/ and Scripts/ -- the same assumption
-         * LoadConfigFile's own relative path just below makes, and that
-         * Games/Sandbox/CMakeLists.txt's staging steps and
-         * VS_DEBUGGER_WORKING_DIRECTORY are built around.
-         *
-         * OWNED BY THE APPLICATION, as a member rather than a local or a
-         * static: the provider must outlive every subsystem that might read
-         * through it (GDI's shader loads run on the render thread, well
-         * after this function returns), and Shutdown() clears the locator
-         * before it goes away -- a dangling IFileProvider* is the same
-         * hazard CoreJob.h's own locator warns about.
+         * The asset seam, before anything asks for an asset. Without a provider
+         * every read fails -- Vulkan reports "No file provider installed" for
+         * its shaders. Empty base directory: provider paths are bundle-relative,
+         * and the working directory holds the executable and its staged Config/
+         * and Scripts/, as LoadConfigFile below and Sandbox's
+         * VS_DEBUGGER_WORKING_DIRECTORY assume. A member because the render
+         * thread's shader loads outlive this function; Shutdown() clears it.
          */
         SetFileProvider(&AssetProvider);
 
@@ -267,19 +252,9 @@ namespace NimbleEngine
         }
 
         /*
-         * The Lua layer. Core allocations (Memory::Alloc, not plain new) so a
-         * missed Dealloc at teardown is exactly the kind of thing Sandbox's
-         * ReportLeaks() already catches at process exit.
-         *
-         * NO WORLD HERE, and no BindWorld: the World belongs to whichever level
-         * is loaded (Level.h), so LoadLevel creates it and binds both of these
-         * to it. What survives every level is exactly these two -- one
-         * lua_State and one render thread per process, rebound as levels come
-         * and go.
-         *
-         * Before the renderer on purpose: nothing here touches a window or a
-         * render context. Ordering relative to the renderer is otherwise
-         * arbitrary.
+         * Memory::Alloc so a missed Dealloc shows in ReportLeaks(). No World and
+         * no BindWorld here -- the World is the level's, and LoadLevel binds
+         * both of these to it. Order relative to the renderer is arbitrary.
          */
         Scripts = EngineCore::Memory::Alloc<GameCore::ScriptEngine>();
         if(!Scripts->Initialize())
@@ -305,12 +280,8 @@ namespace NimbleEngine
         CORE_CHECK(InLevel != nullptr, "Application::LoadLevel given a null level")
         CORE_CHECK(LevelWorld == nullptr, "Application::LoadLevel called with a level already loaded")
 
-        /*
-         * THE WORLD FIRST, and bound before OnLoad sees it: a level populates
-         * entities in OnLoad, and both the script engine's tick systems and the
-         * renderer's WorldBridge have to be installed before the first entity
-         * appears or neither would ever learn about it.
-         */
+        /* Bound before OnLoad, or scripts and WorldBridge would miss the
+         * level's first entities. */
         LevelWorld = EngineCore::Memory::Alloc<GameCore::World>();
 
         ActiveLevel             = InLevel;
@@ -327,8 +298,7 @@ namespace NimbleEngine
             return false;
         }
 
-        /* AFTER the level populated the World -- a mode acts on entities that
-         * already exist, and OnLoad's own comment says so. */
+        /* After the level has populated the World. */
         IGameMode* Mode = InLevel->GetGameMode();
         if(Mode && !Mode->OnLoad(*this))
         {
@@ -337,20 +307,10 @@ namespace NimbleEngine
         }
 
         /*
-         * BETWEEN THE MODE'S TWO CALLBACKS, and that placement is the whole
-         * distinction between them -- see IGameMode's lifecycle comment. A
-         * startup script sees a loaded level (its entities, its bound config),
-         * and OnStart below sees whatever the script created.
-         *
-         * Skipped entirely when empty, which is the default. A failed script is
-         * logged by ScriptEngine itself and is NOT fatal -- the same "log and
-         * continue" stance CORE_LOG_WARN takes for a missing DefaultEngine.ini
-         * in Initialize().
-         *
-         * RUNS ON EVERY LEVEL LOAD, not just the first. The script's registered
-         * classes survive a swap (they live in the Lua registry), but anything
-         * it spawned does not -- it went down with the previous World -- so a
-         * level that expects script-created entities needs the script re-run.
+         * Between the mode's two callbacks: the script sees the loaded level,
+         * OnStart sees what the script made. Skipped when empty; a failure is
+         * logged, not fatal. Re-run on every load -- registered classes survive
+         * a swap, but what the script spawned died with the old World.
          */
         const char* StartupScriptPath = GStartupScript.GetString();
         if(StartupScriptPath && StartupScriptPath[0] != '\0')
@@ -358,11 +318,42 @@ namespace NimbleEngine
             Scripts->RunFile(StartupScriptPath);
         }
 
-        /* Before OnStart, so a mode's OnStart always sees state that has just
-         * been put back to its starting values -- GameState.h states that. */
-        if(GameState* State = InLevel->GetGameState())
+        /* Before the restore and OnStart -- see the header's sequence. */
+        GameState* State = InLevel->GetGameState();
+        if(State)
         {
             State->OnReset();
+        }
+
+        /* The save restore; the header says why here. PendingSaveBytes is
+         * emptied first, so a failed restore is not retried by the next
+         * ordinary level load. */
+        if(!PendingSaveBytes.empty())
+        {
+            std::vector<uint8_t> SaveBytes;
+            SaveBytes.swap(PendingSaveBytes);
+
+            /* The level clears what OnLoad and the script made (Level.h). */
+            InLevel->OnPrepareForLoadedGame();
+
+            EngineCore::Archive Ar = EngineCore::Archive::ForReading(std::move(SaveBytes));
+
+            if(RestoreSaveInto(Ar, *InLevel, State))
+            {
+                CORE_LOG("[Level] restored a saved game into '" + std::string(InLevel->GetName()) + "'")
+
+                if(Mode)
+                {
+                    /* Handles cached in OnLoad are stale; re-derive before OnStart. */
+                    Mode->OnPostLoadSave();
+                }
+            }
+            else
+            {
+                /* Left loaded and playable: a bad save costs progress, not the game. */
+                CORE_LOG_ERROR("Failed to restore the saved game into '"
+                               + std::string(InLevel->GetName()) + "'; continuing with a fresh level")
+            }
         }
 
         if(Mode)
@@ -373,6 +364,38 @@ namespace NimbleEngine
         return true;
     }
 
+    bool Application::RestoreSaveInto(EngineCore::Archive& Ar, ILevel& InLevel, GameState* InState)
+    {
+        /* The World first, so a GameState can look entities up while it loads.
+         * The WithScripts overload re-instantiates restored ScriptComponents. */
+        if(!GameCore::SerializeWorldWithScripts(Ar, *LevelWorld, *Scripts))
+        {
+            return false;
+        }
+
+        /* Optional: absent when the saving level had no GameState. Missing, the
+         * state keeps its reset values, so older saves still load. */
+        uint16_t StateVersion = 0;
+        if(Ar.OpenChunk(TAG_GAMESTATE, StateVersion))
+        {
+            if(InState)
+            {
+                /* Inside the GMST chunk, so Serialize reads StateVersion through
+                 * Ar.GetChunkVersion(). */
+                InState->Serialize(Ar);
+            }
+            else
+            {
+                /* Skipped by chunk size, not fatal. */
+                CORE_LOG_WARN("[Level] the save contains game state but '"
+                              + std::string(InLevel.GetName()) + "' has none; skipping it")
+            }
+            Ar.CloseChunk();
+        }
+
+        return !Ar.HasError();
+    }
+
     void Application::UnloadLevel()
     {
         if(!ActiveLevel)
@@ -381,23 +404,13 @@ namespace NimbleEngine
         }
 
         /*
-         * THE SAME ORDER Shutdown() uses, and for the same reasons -- this is
-         * steps 1-3 of that sequence performed at runtime rather than at exit.
-         * See Shutdown()'s own comment for the full argument; in brief:
-         *
-         *   1. the mode, then the level, undo what they bound -- both need a
-         *      live World to unbind FROM.
-         *   2. Scripts->UnbindWorld() runs every live script's OnDestroy and
-         *      unregisters the script-tick systems. Needs a live lua_State AND
-         *      a live World.
-         *   3. Rendering->UnbindWorld() must precede the World's destruction:
-         *      WorldBridge holds bindings on its OnComponentAdded/Removed
-         *      delegates, and ~World logs a warning for any built-in delegate
-         *      still holding entries at destruction.
+         *   1. mode, then level, OnUnload -- both unbind from a live World.
+         *   2. Scripts->UnbindWorld(): OnDestroy for live scripts; needs the
+         *      lua_State and the World.
+         *   3. Rendering->UnbindWorld(): WorldBridge's delegate bindings must go
+         *      before ~World, which warns about any left.
          *   4. destroy the World.
-         *
-         * Every step is null-safe: this also runs on LoadLevel's failure path,
-         * where OnLoad may have got halfway through.
+         * Null-safe throughout: LoadLevel's failure path runs this too.
          */
         if(IGameMode* Mode = ActiveLevel->GetGameMode())
         {
@@ -434,16 +447,14 @@ namespace NimbleEngine
             return;
         }
 
-        /* The whole reason RequestLevel defers: tearing a World down from
-         * inside its own Tick would destroy the pools being iterated. */
+        /* Why RequestLevel defers: never tear a World down inside its Tick. */
         CORE_CHECK(!LevelWorld || !LevelWorld->IsTicking(),
                    "Application::ApplyPendingLevel ran while the World was ticking")
 
         ILevel* Next = PendingLevel;
         PendingLevel = nullptr;
 
-        /* Fully down before the next one comes up, so the two never coexist
-         * and a game cannot accidentally reference across them. */
+        /* Fully down before the next comes up; the two never coexist. */
         UnloadLevel();
 
         if(!LoadLevel(Next))
@@ -512,9 +523,7 @@ namespace NimbleEngine
 
     GameCore::World& Application::GetWorld()
     {
-        /* The active level's, not this class's -- see the header. Null outside
-         * a loaded level, which is the same programming error the old
-         * "before Initialize()" check caught, just with a wider window. */
+        /* The active level's -- null outside a loaded level. */
         CORE_CHECK(LevelWorld != nullptr,
                    "Application::GetWorld() called with no level loaded")
         return *LevelWorld;
@@ -538,11 +547,7 @@ namespace NimbleEngine
          * was corrected mid-session. */
         using Clock = std::chrono::steady_clock;
 
-        /*
-         * FIRST IN THE FRAME, before anything can tick: this is the point at
-         * which no World is ticking, which is exactly what a deferred level
-         * swap needs. May set bQuitRequested if the incoming level fails.
-         */
+        /* First, where no World is ticking. May set bQuitRequested. */
         ApplyPendingLevel();
         if(bQuitRequested)
         {
@@ -571,40 +576,20 @@ namespace NimbleEngine
 
         Simulate(Frame);
 
-        /* THE FENCE: at most one frame in flight. A mode may have
-         * ENQUEUE_RENDER_COMMAND'd at any point during Simulate() above --
-         * see NimbleEngine.h's own comment on the frame marker mechanism that
-         * makes that safe -- so this waits for the PREVIOUS frame's marker,
-         * not for the queue to be empty of everything ever enqueued. */
+        /* The fence: at most one frame in flight. Waits for the PREVIOUS
+         * frame's marker, not an empty queue -- Simulate may have enqueued. */
         Rendering->WaitForPreviousFrame();
 
-        /* THE SAFE POINT, and the only sound location: the render thread is
-         * idle here (WaitForPreviousFrame just returned) and never touches a
-         * TRef at all -- RenderCommand.h's capture rule keeps it that way --
-         * so nothing outside this call stack can be mutating a TRef while this
-         * runs. Cadence is a separate question from location. */
+        /* The only sound point: the render thread is idle and never touches a
+         * TRef (RenderCommand.h's capture rule), so nothing else mutates one. */
         Memory::CollectGarbage();
 
         /*
-         * PUTS THE PREVIOUS FRAME ON SCREEN, and the only place in the loop
-         * that touches the window's pixels.
-         *
-         * HERE, specifically: WaitForPreviousFrame() above has just returned,
-         * so the frame being presented is complete and submitted -- which is
-         * precisely GDI's own stated precondition ("Called from the UI thread
-         * after RendererFinished()", GDI.h). Any earlier and there would be
-         * nothing finished to present; any later and it would race the frame
-         * EndFrame() is about to start building.
-         *
-         * GAME THREAD BY DESIGN, not by accident -- GDI's present path keeps
-         * its own command pool and semaphores so a second thread can record
-         * and submit it alongside the render thread; see
-         * Renderer::PresentToWindow's own comment.
-         *
-         * NativeWindow, not Window->GetNativeHandle(): the handle was captured
-         * once in Initialize() precisely because GetNativeHandle() is a live
-         * SDL query rather than a cached read -- see this class's own member
-         * comment.
+         * Puts the previous frame on screen. Here because the fence has just
+         * returned, so that frame is complete -- GDI's precondition -- and
+         * EndFrame has not started the next. On the game thread by design: GDI's
+         * present path has its own command pool and semaphores
+         * (Renderer::PresentToWindow). NativeWindow, not a live SDL query.
          */
         Rendering->PresentToWindow(NativeWindow);
 
@@ -655,10 +640,8 @@ namespace NimbleEngine
                     break;
                 }
 
-                /* LAST IN THE FRAME, so the wait overlaps the render thread
-                 * still executing what was just submitted. Outside RunFrame
-                 * because it is skipped entirely on the way out -- the break
-                 * above is what makes that true. */
+                /* Last, so the wait overlaps the render thread's work. The
+                 * break above skips it on the way out. */
                 PaceToDeadline(NextFrameDeadlineNs, FrameRateLimit, TimerRes);
             }
         }
@@ -667,25 +650,20 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize Application!")
         }
 
-        /* Whatever is loaded at this point -- the level Exec was given, or a
-         * different one a RequestLevel swapped in. Runs the mode's and the
-         * level's OnUnload and destroys the World; null-safe if the load never
-         * got that far. */
+        /* Whatever is loaded now, possibly a level RequestLevel swapped in.
+         * Null-safe if the load never happened. */
         UnloadLevel();
 
-        /* UNCONDITIONAL; every step below is null-safe and idempotent. Closes
-         * the old leak where a failed CreateGameWindow never shut SDL down. */
+        /* Unconditional -- null-safe and idempotent, so a failed Initialize()
+         * still shuts SDL down. */
         Shutdown();
     }
 
-    /* Runs CONCURRENTLY with the render thread executing the previous
-     * frame's commands: no ENQUEUE_RENDER_COMMAND from here would be
-     * unsound (see IGameMode's own header comment), but this method itself
-     * enqueues nothing -- a mode's OnTick is where that happens. */
+    /* Runs concurrently with the render thread executing the previous frame.
+     * Enqueues nothing itself; a mode's OnTick may. */
     void Application::Simulate(const FrameContext& InFrame)
     {
-        /* Read fresh rather than cached: ApplyPendingLevel may have replaced
-         * the level, and with it the mode, since the last frame. */
+        /* Re-read: a level swap may have replaced the mode. */
         if(ActiveLevel)
         {
             if(IGameMode* Mode = ActiveLevel->GetGameMode())
@@ -694,15 +672,9 @@ namespace NimbleEngine
             }
         }
 
-        /*
-         * The game acts FIRST -- it may spawn or destroy something this
-         * frame -- then World's own phases run: TP_PrePhysics, TP_Physics
-         * (+ the spatial refit at its end), TP_PostPhysics, TP_PostUpdate.
-         * Still the game thread, still before RunFrame's
-         * WaitForPreviousFrame()/EndFrame() calls -- the World never touches
-         * RenderCore directly; WorldBridge (inside Renderer::EndFrame)
-         * reaches into it through World's own public delegates and pools.
-         */
+        /* The game first, then World's phases (the spatial refit ends
+         * TP_Physics). The World never touches RenderCore; WorldBridge reads it
+         * inside Renderer::EndFrame. */
         if(LevelWorld)
         {
             LevelWorld->Tick(float(InFrame.DeltaSeconds));
@@ -712,27 +684,10 @@ namespace NimbleEngine
     void Application::Shutdown()
     {
         /*
-         * UNCONDITIONAL, like everything below -- Shutdown() runs whether
-         * Initialize() got all the way through or failed partway, so every
-         * step here is null-safe.
-         *
-         * THE WORLD IS ALREADY GONE by the time this runs: ExecWithLevel calls
-         * UnloadLevel() first, and that is what unbinds the script engine and
-         * the renderer from the level's World and destroys it. UnloadLevel's
-         * own comment carries the ordering argument that used to live here --
-         * it is the part that is genuinely load-bearing, and it now runs on
-         * every level swap rather than only at exit.
-         *
-         * What is left is the two process-lifetime objects, and the one
-         * ordering rule between them:
-         *
-         *   1. Scripts->Shutdown() -- lua_close. Safe here because no World
-         *      remains for a ScriptComponent to hold a registry ref from.
-         *   2. Dealloc(Scripts).
-         *   3. Rendering->Shutdown() -- drains the scene and stops the render
-         *      thread. Nothing above touches RenderCore, so there is no
-         *      constraint forcing it earlier.
-         *   4. Dealloc(Rendering).
+         * Null-safe throughout: runs even if Initialize() failed partway. The
+         * World is already gone (UnloadLevel, which owns the ordering that
+         * matters). lua_close is safe because no ScriptComponent remains to
+         * hold a registry ref; the renderer then drains and stops its thread.
          */
         if(Scripts)
         {
@@ -747,10 +702,8 @@ namespace NimbleEngine
             Rendering = nullptr;
         }
 
-        /* RE-RESOLVED THROUGH THE ID, never through the stored pointer:
-         * PumpEvents reaps windows the user closed, so the ordinary exit is
-         * exactly when `Window` is already dangling. Passing it to
-         * DestroyGameWindow is a use-after-free that merely goes unpunished. */
+        /* Through the id, never the pointer: PumpEvents reaps closed windows,
+         * so on an ordinary exit `Window` is already dangling. */
         if(WindowID != 0)
         {
             if(GameWindow* LiveWindow = GameWindowSystem::FindWindow(WindowID))
@@ -763,16 +716,8 @@ namespace NimbleEngine
 
         GameWindowSystem::Shutdown();
 
-        /*
-         * LAST, and after the renderer is stopped: GDI's own teardown path
-         * can still read an asset (a shader reload, a cached pipeline blob),
-         * so the locator must stay valid until every subsystem that might
-         * use it is down. Cleared rather than left dangling because
-         * AssetProvider is a member about to be destroyed with this object
-         * -- the same "clear it before the pool dies" discipline CoreJob.h's
-         * own locator states. Unconditional and idempotent like everything
-         * else here.
-         */
+        /* Last: GDI's teardown can still read an asset. Cleared because
+         * AssetProvider dies with this object (CoreJob.h's locator rule). */
         SetFileProvider(nullptr);
     }
 };

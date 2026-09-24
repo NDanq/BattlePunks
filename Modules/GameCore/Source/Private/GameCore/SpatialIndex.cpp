@@ -1,6 +1,7 @@
 #include "Public/GameCore/SpatialIndex.h"
 
 #include <algorithm>
+#include <string>
 #include <cfloat>
 #include <cmath>
 #include <vector>
@@ -442,6 +443,16 @@ namespace GameCore
 
     bool SpatialIndex::Move(const int32_t InProxy, const AABB& InWorldBox)
     {
+        /* Validated as Remove() is. RefreshSpatialIndex dispatches on
+         * ProxyID < 0, so a stale id from another tree lands here -- see
+         * DESIGN.md. False is "nothing moved", which callers already handle. */
+        if(InProxy == NULL_NODE || size_t(InProxy) >= P->Nodes.size() || P->Nodes[InProxy].Height == -1)
+        {
+            GAMECORE_LOG_WARN("SpatialIndex::Move given an invalid or already-freed proxy id ("
+                              + std::to_string(InProxy) + "); ignoring")
+            return false;
+        }
+
         Node& N = P->Nodes[InProxy];
         if(N.Box.Contains(InWorldBox))
         {
