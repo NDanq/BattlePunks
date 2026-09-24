@@ -21,11 +21,17 @@
 #include "Public/Core/CoreString.h"
 #include "Public/GDI/GDILog.h"
 
+// At global scope, not inside a module namespace, so these are wider than the
+// usual directive -- contained only because nothing includes a .cpp.
+using namespace EngineCore;
+using namespace D3D12Ops;
+using namespace D3D12Util;
+
 extern GDISync* GSync;
 
 #pragma region D3D12DynamicGDI
 
-D3D12DynamicGDI::D3D12DynamicGDI(EngineCore::WindowHandle InWindow)
+D3D12DynamicGDI::D3D12DynamicGDI(WindowHandle InWindow)
     : GDIDynamicDriver(InWindow)
 {
 }
@@ -44,7 +50,7 @@ void D3D12DynamicGDI::Allocate()
 {
     if(bInitialized) return;
 
-    SetThreadID(EngineCore::appThreadID());
+    SetThreadID(appThreadID());
 
     if(!Context || Context->ContextType != GDIContext::D3D12Context)
     {
@@ -89,7 +95,7 @@ void D3D12DynamicGDI::Allocate()
     }
 
     // Transparent 1x1 fallback for draws whose texture slot is unbound.
-    EngineCore::Image NullImg(1, 1, EngineCore::EImageFormat::RGBA8);
+    Image NullImg(1, 1, EImageFormat::RGBA8);
     NullTexture = new D3D12TextureResource(DeviceObj, NullImg, GDI_TB_Repeat, GDI_TF_Nearest);
 
     CurrentStateData = new D3D12CurrentStateData();
@@ -100,6 +106,10 @@ void D3D12DynamicGDI::Allocate()
 
 void D3D12DynamicGDI::Destroy()
 {
+    /* BEFORE the early-out, and before the device goes: cached shaders and
+     * textures hold a raw Device pointer -- see ~GDIDynamicDriver. */
+    ReleaseCachedResources();
+
     // Allocate may have failed part way; tear down whatever it built.
     if(!DeviceObj) return;
 
@@ -144,7 +154,7 @@ void D3D12DynamicGDI::Flush()
     // EndRendering already submits.
 }
 
-void D3D12DynamicGDI::PresentToWindow(EngineCore::WindowHandle InWindow)
+void D3D12DynamicGDI::PresentToWindow(WindowHandle InWindow)
 {
     if(!bInitialized || !Swapchain || !InWindow.IsValid()) return;
     if(bResizing.load()) return;
@@ -204,12 +214,12 @@ void D3D12DynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
         if(RT == NewRT || !RT->IsValid()) continue;
         if(RT->GetCurrentState() != D3D12_RESOURCE_STATE_RENDER_TARGET) continue;
 
-        D3D12Ops::RecordTransition(List, RT->GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+        RecordTransition(List, RT->GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET,
                                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
         RT->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     }
 
-    D3D12Ops::RecordTransition(List, NewRT->GetResource(), NewRT->GetCurrentState(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+    RecordTransition(List, NewRT->GetResource(), NewRT->GetCurrentState(), D3D12_RESOURCE_STATE_RENDER_TARGET);
     NewRT->SetCurrentState(D3D12_RESOURCE_STATE_RENDER_TARGET);
 
     const D3D12_CPU_DESCRIPTOR_HANDLE RTV = NewRT->GetRTV();
@@ -288,8 +298,8 @@ void D3D12DynamicGDI::RecordResolve(D3D12RenderTarget* Src, D3D12RenderTarget* D
     CurrentStateData->bRenderingActive   = false;
     List->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
 
-    D3D12Ops::RecordTransition(List, Src->GetResource(), Src->GetCurrentState(), D3D12_RESOURCE_STATE_COPY_SOURCE);
-    D3D12Ops::RecordTransition(List, Dst->GetResource(), Dst->GetCurrentState(), D3D12_RESOURCE_STATE_COPY_DEST);
+    RecordTransition(List, Src->GetResource(), Src->GetCurrentState(), D3D12_RESOURCE_STATE_COPY_SOURCE);
+    RecordTransition(List, Dst->GetResource(), Dst->GetCurrentState(), D3D12_RESOURCE_STATE_COPY_DEST);
 
     D3D12_TEXTURE_COPY_LOCATION SrcLoc{};
     SrcLoc.pResource = Src->GetResource();
@@ -302,8 +312,8 @@ void D3D12DynamicGDI::RecordResolve(D3D12RenderTarget* Src, D3D12RenderTarget* D
     const D3D12_BOX Box{ 0, 0, 0, (std::min)(Src->GetWidth(), Dst->GetWidth()), (std::min)(Src->GetHeight(), Dst->GetHeight()), 1 };
     List->CopyTextureRegion(&DstLoc, 0, 0, 0, &SrcLoc, &Box);
 
-    D3D12Ops::RecordTransition(List, Src->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-    D3D12Ops::RecordTransition(List, Dst->GetResource(), D3D12_RESOURCE_STATE_COPY_DEST,   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    RecordTransition(List, Src->GetResource(), D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+    RecordTransition(List, Dst->GetResource(), D3D12_RESOURCE_STATE_COPY_DEST,   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     Src->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     Dst->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 }
@@ -381,7 +391,7 @@ GDIMesh* D3D12DynamicGDI::CreateQuadMesh(const float& InWidth, const float& InHe
     return CreateQuadMesh(VertQuadData, VertTexData, 18, 12, bIsInstanced);
 }
 
-GDITextureResource* D3D12DynamicGDI::CreateTextureResource(const EngineCore::Image& InImage,
+GDITextureResource* D3D12DynamicGDI::CreateTextureResource(const Image& InImage,
                                                            const EGDITextureBorder InBorder,
                                                            const EGDITextureFilter InFilter)
 {
@@ -390,7 +400,7 @@ GDITextureResource* D3D12DynamicGDI::CreateTextureResource(const EngineCore::Ima
 }
 
 GDITextureResource* D3D12DynamicGDI::CreateTextureResource(GDITexture2D* InParent,
-                                                           const EngineCore::Image& InImage,
+                                                           const Image& InImage,
                                                            const EGDITextureBorder InBorder,
                                                            const EGDITextureFilter InFilter)
 {
@@ -463,7 +473,7 @@ namespace
         uint32_t Offset = 0;
         for(const auto& Entry : S)
         {
-            if(EngineCore::StartsWith(Entry.first, "ViewParameters.") || EngineCore::StartsWith(Entry.first, "Transform.")) continue;
+            if(StartsWith(Entry.first, "ViewParameters.") || StartsWith(Entry.first, "Transform.")) continue;
 
             const D3D12UniformValue& V = Entry.second;
             float    IntAsFloat = 0.f;
@@ -501,11 +511,11 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     Key.PixelShaderID  = PSRes->GetID();
     Key.VertexLayoutID = bIsInstanced ? 1u : 0u;
     Key.BlendEnable    = Blend.bBlend ? TRUE : FALSE;
-    Key.SrcBlend       = D3D12Util::DecodeBlendFactor(Blend.Source);
-    Key.DestBlend      = D3D12Util::DecodeBlendFactor(Blend.Dest);
-    Key.BlendOp        = D3D12Util::DecodeBlendOp(Blend.Op);
-    Key.BlendOpAlpha   = D3D12Util::DecodeBlendOp(Blend.AlphaOp);
-    Key.WriteMask      = D3D12Util::DecodeColorMask(CurrentStateData->ColorMask);
+    Key.SrcBlend       = DecodeBlendFactor(Blend.Source);
+    Key.DestBlend      = DecodeBlendFactor(Blend.Dest);
+    Key.BlendOp        = DecodeBlendOp(Blend.Op);
+    Key.BlendOpAlpha   = DecodeBlendOp(Blend.AlphaOp);
+    Key.WriteMask      = DecodeColorMask(CurrentStateData->ColorMask);
     Key.RTFormat       = CurrentStateData->ActiveRenderTarget->GetFormat();
 
     ID3D12PipelineState* Pipeline = PipelineCache->GetOrCreate(Key, VSRes, PSRes);
@@ -613,26 +623,26 @@ bool D3D12DynamicGDI::CheckError(const std::string&)
     return false;
 }
 
-EngineCore::Color D3D12DynamicGDI::GetColorFromSamplePoint(const EngineCore::Point& InPoint, const EngineCore::Size& InSize)
+Color D3D12DynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& InSize)
 {
-    if(!DeviceObj || !CurrentStateData) return EngineCore::Color();
+    if(!DeviceObj || !CurrentStateData) return Color();
 
     FlushForReadback();
 
     D3D12RenderTarget* RT = CurrentStateData->ActiveRenderTarget;
-    if(!RT || !RT->IsValid()) return EngineCore::Color();
+    if(!RT || !RT->IsValid()) return Color();
 
     // RT rows are GL-ordered; flip from top-down screen space like glReadPixels(x, height - y).
     const int X = InPoint.X;
     const int Y = InSize.Height - InPoint.Y;
-    if(X < 0 || Y < 0 || X >= int(RT->GetWidth()) || Y >= int(RT->GetHeight())) return EngineCore::Color();
+    if(X < 0 || Y < 0 || X >= int(RT->GetWidth()) || Y >= int(RT->GetHeight())) return Color();
 
     std::vector<uint8_t> Pixel;
-    if(!D3D12Ops::ReadbackTexture(DeviceObj, RT->GetResource(), RT->GetCurrentState(), uint32_t(X), uint32_t(Y), 1, 1, Pixel))
+    if(!ReadbackTexture(DeviceObj, RT->GetResource(), RT->GetCurrentState(), uint32_t(X), uint32_t(Y), 1, 1, Pixel))
     {
-        return EngineCore::Color();
+        return Color();
     }
-    return EngineCore::Color(Pixel[0], Pixel[1], Pixel[2]);
+    return Color(Pixel[0], Pixel[1], Pixel[2]);
 }
 
 #pragma endregion

@@ -1,14 +1,27 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
 
 #include <chrono>
+#include <string>
+
+#include "Public/NimbleEngine/GameState.h"
+#include "Public/NimbleEngine/Level.h"
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
+#include "Public/Core/CoreMemory.h"
+#include "Public/GameCore/ScriptEngine.h"
+#include "Public/GameCore/World.h"
+#include "Public/GameCore/WorldSerializer.h"
 #include "Public/GameWindow/GameWindowSystem.h"
 #include "Public/GameWindow/GameWindow.h"
-#include "Public/GDI/GDI.h"
-#include "Public/GDI/Null/NullDynamicGDI.h"
+#include "Public/RenderCore/RenderTypes.h"
+#include "Public/RenderCore/Renderer.h"
+
+/* The save format's own tags, shared with SaveGame.cpp -- LoadLevel reads the
+ * World and GameState chunks that file wrote. */
+#include "Private/NimbleEngine/SaveGameFormat.h"
 
 #if defined(_WIN32)
 /*
@@ -26,9 +39,11 @@ NIMBLE_CONFIG_INT(GResolutionX, "Display", "ResolutionX", 1280, nullptr);
 NIMBLE_CONFIG_INT(GResolutionY, "Display", "ResolutionY", 720, nullptr);
 NIMBLE_CONFIG_STRING(GTitle,    "Application", "Title", "NimbleEngine", nullptr);
 
-/* ERP_Null draws nothing and needs no GPU, which removes every variable except
- * the threading. Games/Sandbox/Config/DefaultEngine.ini documents all three. */
-NIMBLE_CONFIG_INT(GRenderPlatform, "Display", "RHI", ERP_Null, nullptr);
+/* RenderCore::ERenderBackend::Null draws nothing and needs no GPU, which
+ * removes every variable except the threading. Games/Sandbox/Config/
+ * DefaultEngine.ini documents all five backends -- see GDIDefinitions.h's own
+ * comment on why Null is zero. */
+NIMBLE_CONFIG_INT(GRenderPlatform, "Display", "RHI", int(RenderCore::ERenderBackend::Null), nullptr);
 
 /* 0 runs until the window closes. Non-zero is the only way to get a
  * deterministic run out of something whose exit condition is an OS event. */
@@ -36,6 +51,13 @@ NIMBLE_CONFIG_INT(GMaxFrames, "Application", "MaxFrames", 0, nullptr);
 
 /* 0 runs unlimited; SetFrameRateLimit is the runtime half. */
 NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
+
+/* Bundle-relative path to a Lua file run once per LEVEL LOAD, after
+ * IGameMode::OnLoad and before the first tick -- see LoadLevel's own comment on
+ * why that ordering, not Initialize(), is where this runs, and why it re-runs
+ * on every swap. Empty (the default) skips scripting entirely; a game with
+ * nothing to say in Lua pays nothing for this. */
+NIMBLE_CONFIG_STRING(GStartupScript, "Scripting", "StartupScript", "", nullptr);
 
 using namespace EngineCore;
 
@@ -155,6 +177,31 @@ namespace
 
 namespace NimbleEngine
 {
+    namespace
+    {
+        /*
+         * The level Exec() and Exec(IGameMode&) run when the caller brought
+         * none: an empty World and, optionally, a mode.
+         *
+         * Here rather than in the header because nothing outside this file
+         * needs the type -- a caller that wants a real level writes one. Held
+         * on ExecWithLevel's own stack frame, which outlives every use of it:
+         * ActiveLevel points at it only between LoadLevel and UnloadLevel, and
+         * both happen inside that call.
+         */
+        class DefaultLevelImpl final : public ILevel
+        {
+        public:
+            explicit DefaultLevelImpl(IGameMode* InMode) : Mode(InMode) {}
+
+            const char* GetName() const override { return "Default"; }
+            IGameMode*  GetGameMode() override   { return Mode; }
+
+        private:
+            IGameMode* Mode = nullptr;
+        };
+    }
+
     bool Application::Initialize()
     {
         if(!GameWindowSystem::Initialize())
@@ -162,6 +209,17 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to Initialize Window")
             return false;
         }
+
+        /*
+         * The asset seam, before anything asks for an asset. Without a provider
+         * every read fails -- Vulkan reports "No file provider installed" for
+         * its shaders. Empty base directory: provider paths are bundle-relative,
+         * and the working directory holds the executable and its staged Config/
+         * and Scripts/, as LoadConfigFile below and Sandbox's
+         * VS_DEBUGGER_WORKING_DIRECTORY assume. A member because the render
+         * thread's shader loads outlive this function; Shutdown() clears it.
+         */
+        SetFileProvider(&AssetProvider);
 
         ConfigLoadStats Stats;
         if(!LoadConfigFile("Config/DefaultEngine.ini", &Stats))
@@ -189,52 +247,259 @@ namespace NimbleEngine
         NativeWindow = Window->GetNativeHandle();
         if(!NativeWindow.IsValid())
         {
-            CORE_LOG_ERROR("Window has no native handle; cannot initialize GDI")
+            CORE_LOG_ERROR("Window has no native handle; cannot initialize the renderer")
             return false;
         }
 
-        const ERenderPlatform Platform = ERenderPlatform(GRenderPlatform.GetInt());
-
-        InitializeGDI(Platform, NativeWindow);
-        bGDIInitialized = true;
-
-        /* Only the null backend can be handed a context from here; GL and
-         * Vulkan need a real drawable the host does not provide yet. Leaving it
-         * null lets StartRenderThread's readiness check turn that into a clean
-         * startup failure -- see RenderThreadMain for why it is not a
-         * tautology. */
-        if(Platform == ERP_Null)
+        /*
+         * Memory::Alloc so a missed Dealloc shows in ReportLeaks(). No World and
+         * no BindWorld here -- the World is the level's, and LoadLevel binds
+         * both of these to it. Order relative to the renderer is arbitrary.
+         */
+        Scripts = EngineCore::Memory::Alloc<GameCore::ScriptEngine>();
+        if(!Scripts->Initialize())
         {
-            RenderContext = new NullGDIContext();
-            AssignContextGDI(RenderContext);
-        }
-        else
-        {
-            CORE_LOG_WARN("RHI is not ERP_Null and no drawable is available; "
-                          "the render thread will fail to allocate")
+            CORE_LOG_ERROR("Failed to initialize the script engine")
+            return false;
         }
 
-        return StartRenderThread();
+        const RenderCore::ERenderBackend Backend = RenderCore::ERenderBackend(GRenderPlatform.GetInt());
+
+        Rendering = EngineCore::Memory::Alloc<RenderCore::Renderer>();
+        if(!Rendering->Initialize(Backend, NativeWindow))
+        {
+            CORE_LOG_ERROR("Failed to initialize RenderCore")
+            return false;
+        }
+
+        return true;
     }
 
-    /*
-     * WHY SUBMISSION IS FENCED (the topology itself is in NimbleEngine.h).
-     * The drain must be `while(TryDequeue)` -- GDI relies on commands enqueued
-     * from inside Execute() running the same frame, per CoreQueue.h's DrainTo
-     * warning -- and such a loop cannot tell frame N's commands from N-1's, so
-     * enqueueing N mid-drain would swallow both as one frame silently.
-     *
-     * Overlapping command BUILDING too is the render-proxy work; only this
-     * fence changes when that lands.
-     */
+    bool Application::LoadLevel(ILevel* InLevel)
+    {
+        CORE_CHECK(InLevel != nullptr, "Application::LoadLevel given a null level")
+        CORE_CHECK(LevelWorld == nullptr, "Application::LoadLevel called with a level already loaded")
+
+        /* Bound before OnLoad, or scripts and WorldBridge would miss the
+         * level's first entities. */
+        LevelWorld = EngineCore::Memory::Alloc<GameCore::World>();
+
+        ActiveLevel             = InLevel;
+        ActiveLevel->OwnedWorld = LevelWorld;
+
+        Scripts->BindWorld(LevelWorld);
+        Rendering->BindWorld(*LevelWorld);
+
+        CORE_LOG("[Level] loading '" + std::string(InLevel->GetName()) + "'")
+
+        if(!InLevel->OnLoad(*this))
+        {
+            CORE_LOG_ERROR("Level '" + std::string(InLevel->GetName()) + "' refused to load")
+            return false;
+        }
+
+        /* After the level has populated the World. */
+        IGameMode* Mode = InLevel->GetGameMode();
+        if(Mode && !Mode->OnLoad(*this))
+        {
+            CORE_LOG_ERROR("Game mode refused to load")
+            return false;
+        }
+
+        /*
+         * Between the mode's two callbacks: the script sees the loaded level,
+         * OnStart sees what the script made. Skipped when empty; a failure is
+         * logged, not fatal. Re-run on every load -- registered classes survive
+         * a swap, but what the script spawned died with the old World.
+         */
+        const char* StartupScriptPath = GStartupScript.GetString();
+        if(StartupScriptPath && StartupScriptPath[0] != '\0')
+        {
+            Scripts->RunFile(StartupScriptPath);
+        }
+
+        /* Before the restore and OnStart -- see the header's sequence. */
+        GameState* State = InLevel->GetGameState();
+        if(State)
+        {
+            State->OnReset();
+        }
+
+        /* The save restore; the header says why here. PendingSaveBytes is
+         * emptied first, so a failed restore is not retried by the next
+         * ordinary level load. */
+        if(!PendingSaveBytes.empty())
+        {
+            std::vector<uint8_t> SaveBytes;
+            SaveBytes.swap(PendingSaveBytes);
+
+            /* The level clears what OnLoad and the script made (Level.h). */
+            InLevel->OnPrepareForLoadedGame();
+
+            EngineCore::Archive Ar = EngineCore::Archive::ForReading(std::move(SaveBytes));
+
+            if(RestoreSaveInto(Ar, *InLevel, State))
+            {
+                CORE_LOG("[Level] restored a saved game into '" + std::string(InLevel->GetName()) + "'")
+
+                if(Mode)
+                {
+                    /* Handles cached in OnLoad are stale; re-derive before OnStart. */
+                    Mode->OnPostLoadSave();
+                }
+            }
+            else
+            {
+                /* Left loaded and playable: a bad save costs progress, not the game. */
+                CORE_LOG_ERROR("Failed to restore the saved game into '"
+                               + std::string(InLevel->GetName()) + "'; continuing with a fresh level")
+            }
+        }
+
+        if(Mode)
+        {
+            Mode->OnStart();
+        }
+
+        return true;
+    }
+
+    bool Application::RestoreSaveInto(EngineCore::Archive& Ar, ILevel& InLevel, GameState* InState)
+    {
+        /* The World first, so a GameState can look entities up while it loads.
+         * The WithScripts overload re-instantiates restored ScriptComponents. */
+        if(!GameCore::SerializeWorldWithScripts(Ar, *LevelWorld, *Scripts))
+        {
+            return false;
+        }
+
+        /* Optional: absent when the saving level had no GameState. Missing, the
+         * state keeps its reset values, so older saves still load. */
+        uint16_t StateVersion = 0;
+        if(Ar.OpenChunk(TAG_GAMESTATE, StateVersion))
+        {
+            if(InState)
+            {
+                /* Inside the GMST chunk, so Serialize reads StateVersion through
+                 * Ar.GetChunkVersion(). */
+                InState->Serialize(Ar);
+            }
+            else
+            {
+                /* Skipped by chunk size, not fatal. */
+                CORE_LOG_WARN("[Level] the save contains game state but '"
+                              + std::string(InLevel.GetName()) + "' has none; skipping it")
+            }
+            Ar.CloseChunk();
+        }
+
+        return !Ar.HasError();
+    }
+
+    void Application::UnloadLevel()
+    {
+        if(!ActiveLevel)
+        {
+            return;
+        }
+
+        /*
+         *   1. mode, then level, OnUnload -- both unbind from a live World.
+         *   2. Scripts->UnbindWorld(): OnDestroy for live scripts; needs the
+         *      lua_State and the World.
+         *   3. Rendering->UnbindWorld(): WorldBridge's delegate bindings must go
+         *      before ~World, which warns about any left.
+         *   4. destroy the World.
+         * Null-safe throughout: LoadLevel's failure path runs this too.
+         */
+        if(IGameMode* Mode = ActiveLevel->GetGameMode())
+        {
+            Mode->OnUnload();
+        }
+
+        ActiveLevel->OnUnload();
+
+        if(Scripts && LevelWorld)
+        {
+            Scripts->UnbindWorld();
+        }
+        if(Rendering && LevelWorld)
+        {
+            Rendering->UnbindWorld();
+        }
+
+        if(LevelWorld)
+        {
+            EngineCore::Memory::Dealloc(LevelWorld);
+            LevelWorld = nullptr;
+        }
+
+        CORE_LOG("[Level] unloaded '" + std::string(ActiveLevel->GetName()) + "'")
+
+        ActiveLevel->OwnedWorld = nullptr;
+        ActiveLevel             = nullptr;
+    }
+
+    void Application::ApplyPendingLevel()
+    {
+        if(!PendingLevel)
+        {
+            return;
+        }
+
+        /* Why RequestLevel defers: never tear a World down inside its Tick. */
+        CORE_CHECK(!LevelWorld || !LevelWorld->IsTicking(),
+                   "Application::ApplyPendingLevel ran while the World was ticking")
+
+        ILevel* Next = PendingLevel;
+        PendingLevel = nullptr;
+
+        /* Fully down before the next comes up; the two never coexist. */
+        UnloadLevel();
+
+        if(!LoadLevel(Next))
+        {
+            CORE_LOG_ERROR("Requested level failed to load; quitting")
+            UnloadLevel();
+            bQuitRequested = true;
+        }
+    }
+
     void Application::Exec()
     {
-        ExecWithGame(nullptr);
+        DefaultLevelImpl Fallback(nullptr);
+        ExecWithLevel(&Fallback);
     }
 
-    void Application::Exec(IGame& InGame)
+    void Application::Exec(IGameMode& InMode)
     {
-        ExecWithGame(&InGame);
+        DefaultLevelImpl Fallback(&InMode);
+        ExecWithLevel(&Fallback);
+    }
+
+    void Application::Exec(ILevel& InLevel)
+    {
+        ExecWithLevel(&InLevel);
+    }
+
+    void Application::RequestLevel(ILevel& InLevel)
+    {
+        if(PendingLevel)
+        {
+            CORE_LOG_WARN("Application::RequestLevel called twice before the first took effect; "
+                          "the later request wins")
+        }
+        PendingLevel = &InLevel;
+    }
+
+    ILevel* Application::GetLevel()
+    {
+        return ActiveLevel;
+    }
+
+    GameState* Application::GetGameState()
+    {
+        return ActiveLevel ? ActiveLevel->GetGameState() : nullptr;
     }
 
     void Application::RequestQuit()
@@ -256,7 +521,95 @@ namespace NimbleEngine
         return FrameRateLimit;
     }
 
-    void Application::ExecWithGame(IGame* InGame)
+    GameCore::World& Application::GetWorld()
+    {
+        /* The active level's -- null outside a loaded level. */
+        CORE_CHECK(LevelWorld != nullptr,
+                   "Application::GetWorld() called with no level loaded")
+        return *LevelWorld;
+    }
+
+    GameCore::ScriptEngine& Application::GetScriptEngine()
+    {
+        CORE_CHECK(Scripts != nullptr, "Application::GetScriptEngine() called before Initialize() or after Shutdown()")
+        return *Scripts;
+    }
+
+    RenderCore::Renderer& Application::GetRenderer()
+    {
+        CORE_CHECK(Rendering != nullptr, "Application::GetRenderer() called before Initialize() or after Shutdown()")
+        return *Rendering;
+    }
+
+    bool Application::RunFrame(const uint64_t InMaxFrames)
+    {
+        /* steady_clock: a delta must not go backwards because the wall clock
+         * was corrected mid-session. */
+        using Clock = std::chrono::steady_clock;
+
+        /* First, where no World is ticking. May set bQuitRequested. */
+        ApplyPendingLevel();
+        if(bQuitRequested)
+        {
+            return false;
+        }
+
+        /* PumpEvents' return IS the exit condition; delegates run inside it,
+         * on this thread. */
+        if(!GameWindowSystem::PumpEvents())
+        {
+            return false;
+        }
+
+        /* Assembled on the game thread before anything overlaps; see
+         * FrameContext for why the viewport is read here. */
+        const int64_t NowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                  Clock::now().time_since_epoch()).count();
+
+        FrameContext Frame;
+        Frame.DeltaSeconds   = FrameNumber == 0
+                             ? 0.0
+                             : double(NowNs - PreviousTickNs) / 1'000'000'000.0;
+        Frame.FrameNumber    = FrameNumber;
+        Frame.ViewportPixels = Window ? Window->GetPixelSize() : Size();
+        PreviousTickNs       = NowNs;
+
+        Simulate(Frame);
+
+        /* The fence: at most one frame in flight. Waits for the PREVIOUS
+         * frame's marker, not an empty queue -- Simulate may have enqueued. */
+        Rendering->WaitForPreviousFrame();
+
+        /* The only sound point: the render thread is idle and never touches a
+         * TRef (RenderCommand.h's capture rule), so nothing else mutates one. */
+        Memory::CollectGarbage();
+
+        /*
+         * Puts the previous frame on screen. Here because the fence has just
+         * returned, so that frame is complete -- GDI's precondition -- and
+         * EndFrame has not started the next. On the game thread by design: GDI's
+         * present path has its own command pool and semaphores
+         * (Renderer::PresentToWindow). NativeWindow, not a live SDL query.
+         */
+        Rendering->PresentToWindow(NativeWindow);
+
+        RenderCore::FrameInfo Info;
+        Info.FrameNumber    = FrameNumber;
+        Info.DeltaSeconds   = Frame.DeltaSeconds;
+        Info.ViewportPixels = Frame.ViewportPixels;
+        Rendering->EndFrame(Info);
+
+        ++FrameNumber;
+        if(InMaxFrames != 0 && FrameNumber >= InMaxFrames)
+        {
+            return false;
+        }
+
+        /* A mode may have called RequestQuit() from inside OnTick. */
+        return !bQuitRequested;
+    }
+
+    void Application::ExecWithLevel(ILevel* InLevel)
     {
         /* First, before anything defaults them. Both are first-caller-wins. */
         Threads::SetMainThread();
@@ -274,77 +627,22 @@ namespace NimbleEngine
 
             TimerResolutionScope TimerRes;
 
-            /* After the render thread is up, so a game never observes a
-             * half-built engine. A refusal is a clean shutdown. */
-            if(InGame && !InGame->OnStartup(*this))
+            if(!LoadLevel(InLevel))
             {
-                CORE_LOG_ERROR("Game refused to start")
                 bQuitRequested = true;
             }
 
-            /* steady_clock: a delta must not go backwards because the wall
-             * clock was corrected mid-session. */
-            using Clock = std::chrono::steady_clock;
-            Clock::time_point PreviousTick = Clock::now();
-
             while(!bQuitRequested)
             {
-                /* PumpEvents' return IS the exit condition; delegates run
-                 * inside it, on this thread. */
-                if(!GameWindowSystem::PumpEvents())
+                if(!RunFrame(MaxFrames))
                 {
                     bQuitRequested = true;
                     break;
                 }
 
-                /* Assembled on the game thread before anything overlaps; see
-                 * FrameContext for why the viewport is read here. */
-                const Clock::time_point Now = Clock::now();
-
-                FrameContext Frame;
-                Frame.DeltaSeconds  = FrameNumber == 0
-                                    ? 0.0
-                                    : std::chrono::duration<double>(Now - PreviousTick).count();
-                Frame.FrameNumber   = FrameNumber;
-                Frame.ViewportPixels = Window ? Window->GetPixelSize() : Size();
-                PreviousTick = Now;
-
-                Simulate(InGame, Frame);
-
-                if(bFrameInFlight)
-                {
-                    FrameDone.Wait();
-                    bFrameInFlight = false;
-                }
-
-                /* THE SAFE POINT, and the only sound location: render thread
-                 * blocked in TryWaitFor, queue empty -- the stopped world
-                 * CollectGarbage requires. Cadence is a separate question.
-                 * JobSystem's WaitForIdle()/IsQuiescent() go just above. */
-                Memory::CollectGarbage();
-
-                BuildRenderCommands();
-                RenderKick.Signal();
-                bFrameInFlight = true;
-
-                /* PresentToWindow() would go here -- UI-thread by contract,
-                 * and deliberately not wired: no-op on the base and on GL,
-                 * Vulkan-only, no callers. SwapBuffers on the render thread is
-                 * the OTHER present; the two are easy to get backwards. */
-
-                ++FrameNumber;
-                if(MaxFrames != 0 && FrameNumber >= MaxFrames)
-                {
-                    bQuitRequested = true;
-                }
-
-                /* LAST IN THE FRAME, so the wait overlaps the render thread
-                 * still executing what was just submitted. Skipped on the way
-                 * out. */
-                if(!bQuitRequested)
-                {
-                    PaceToDeadline(NextFrameDeadlineNs, FrameRateLimit, TimerRes);
-                }
+                /* Last, so the wait overlaps the render thread's work. The
+                 * break above skips it on the way out. */
+                PaceToDeadline(NextFrameDeadlineNs, FrameRateLimit, TimerRes);
             }
         }
         else
@@ -352,121 +650,60 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize Application!")
         }
 
-        /* Paired with the game EXISTING, not with OnStartup succeeding: a game
-         * that refused to start still undoes what it did while deciding. */
-        if(InGame)
-        {
-            InGame->OnShutdown();
-        }
+        /* Whatever is loaded now, possibly a level RequestLevel swapped in.
+         * Null-safe if the load never happened. */
+        UnloadLevel();
 
-        /* UNCONDITIONAL; every step below is null-safe and idempotent. Closes
-         * the old leak where a failed CreateGameWindow never shut SDL down. */
+        /* Unconditional -- null-safe and idempotent, so a failed Initialize()
+         * still shuts SDL down. */
         Shutdown();
     }
 
-    /* Runs CONCURRENTLY with the render thread executing the previous frame:
-     * no enqueues, no GDI. See IGame::OnTick. */
-    void Application::Simulate(IGame* InGame, const FrameContext& InFrame)
+    /* Runs concurrently with the render thread executing the previous frame.
+     * Enqueues nothing itself; a mode's OnTick may. */
+    void Application::Simulate(const FrameContext& InFrame)
     {
-        if(InGame)
+        /* Re-read: a level swap may have replaced the mode. */
+        if(ActiveLevel)
         {
-            InGame->OnTick(InFrame);
-        }
-    }
-
-    /* Runs after the fence, render thread idle and queue empty. EVERYTHING
-     * HERE IS CAPTURED BY VALUE -- a captured pointer would be a live race
-     * against the next frame's simulation. */
-    void Application::BuildRenderCommands()
-    {
-        const Size  Viewport   = Window ? Window->GetPixelSize() : Size();
-        const Color ClearColor = Color(24, 26, 32, 255);
-
-        /* The macro declares a class at the call site and expands to a comma
-         * expression: the name must be unique here, and the semicolon is
-         * required. */
-        ENQUEUE_RENDERCOMMAND_TWOPARAM(FrameClear,
-            EngineCore::Color, CmdClearColor, ClearColor,
-            EngineCore::Size,  CmdViewport,   Viewport,
-        {
-            GDISetViewport(0, 0, uint(CmdViewport.Width), uint(CmdViewport.Height));
-            GDIClear(CM_Color | CM_Depth, CmdClearColor);
-        });
-    }
-
-    bool Application::StartRenderThread()
-    {
-        bRenderStopRequested.store(false, std::memory_order_release);
-        bRenderInitOK.store(false, std::memory_order_release);
-
-        /* DO NOT pass InOwningImage: the default argument IS the mechanism,
-         * evaluating at this call site so GImageID resolves in NimbleEngine.dll
-         * rather than EngineCore.dll. See CoreThread.h's Start note. High
-         * priority so the render thread is not preempted by what it feeds. */
-        if(!RenderThread.Start("NimbleRender",
-                               [this]() { RenderThreadMain(); },
-                               ThreadPriority::High))
-        {
-            CORE_LOG_ERROR("Failed to start the render thread")
-            return false;
+            if(IGameMode* Mode = ActiveLevel->GetGameMode())
+            {
+                Mode->OnTick(InFrame);
+            }
         }
 
-        bRenderThreadLive = true;
-
-        RenderReady.Wait();
-
-        if(!bRenderInitOK.load(std::memory_order_acquire))
+        /* The game first, then World's phases (the spatial refit ends
+         * TP_Physics). The World never touches RenderCore; WorldBridge reads it
+         * inside Renderer::EndFrame. */
+        if(LevelWorld)
         {
-            CORE_LOG_ERROR("Render thread failed to allocate GDI resources; "
-                           "the backend never latched a render thread")
-            return false;
+            LevelWorld->Tick(float(InFrame.DeltaSeconds));
         }
-
-        return true;
-    }
-
-    void Application::StopRenderThread()
-    {
-        if(!bRenderThreadLive)
-        {
-            return;
-        }
-
-        /* FLAG FIRST, THEN WAKE. Reversed, the thread could consume the
-         * signal, loop and re-sleep without seeing the flag. TryWaitFor bounds
-         * that, but leaning on the timeout is how it stops being a safety
-         * net. */
-        bRenderStopRequested.store(true, std::memory_order_release);
-        RenderKick.Signal();
-
-        RenderThread.Join();
-
-        bRenderThreadLive = false;
-        bFrameInFlight    = false;
     }
 
     void Application::Shutdown()
     {
-        StopRenderThread();
-
-        /* Only reachable when the render thread never ran; it releases GDI
-         * itself otherwise. Nothing was allocated on this path, so releasing
-         * from the main thread frees no GPU objects. */
-        if(bGDIInitialized && GDynamicGDI)
+        /*
+         * Null-safe throughout: runs even if Initialize() failed partway. The
+         * World is already gone (UnloadLevel, which owns the ordering that
+         * matters). lua_close is safe because no ScriptComponent remains to
+         * hold a registry ref; the renderer then drains and stops its thread.
+         */
+        if(Scripts)
         {
-            GDynamicGDI->Destroy();
-            ReleaseGDI();
+            Scripts->Shutdown();
+            EngineCore::Memory::Dealloc(Scripts);
+            Scripts = nullptr;
         }
-        bGDIInitialized = false;
+        if(Rendering)
+        {
+            Rendering->Shutdown();
+            EngineCore::Memory::Dealloc(Rendering);
+            Rendering = nullptr;
+        }
 
-        /* ReleaseGDI deletes the driver and GSync; the context was always ours. */
-        delete RenderContext;
-        RenderContext = nullptr;
-
-        /* RE-RESOLVED THROUGH THE ID, never through the stored pointer:
-         * PumpEvents reaps windows the user closed, so the ordinary exit is
-         * exactly when `Window` is already dangling. Passing it to
-         * DestroyGameWindow is a use-after-free that merely goes unpunished. */
+        /* Through the id, never the pointer: PumpEvents reaps closed windows,
+         * so on an ordinary exit `Window` is already dangling. */
         if(WindowID != 0)
         {
             if(GameWindow* LiveWindow = GameWindowSystem::FindWindow(WindowID))
@@ -478,84 +715,9 @@ namespace NimbleEngine
         Window = nullptr;
 
         GameWindowSystem::Shutdown();
-    }
 
-    /* ====================== RENDER THREAD FROM HERE ON ====================== */
-
-    void Application::RenderThreadMain()
-    {
-        /*
-         * THE LATCH, and the most important line in this file: whichever thread
-         * calls this BECOMES the render thread for GDIInRenderThread(), because
-         * the backend records appThreadID() inside Allocate().
-         * GDIRenderTarget.cpp guards a FATAL GDI_CHECK on that predicate.
-         */
-        AllocateResourcesGDI();
-
-        /* A real test, not a restatement of "we called Allocate": a GL
-         * backend with no drawable early-outs before SetThreadID, leaving that
-         * fatal check armed to fire frames later. */
-        const bool bOK = GDIInRenderThread();
-        bRenderInitOK.store(bOK, std::memory_order_release);
-        RenderReady.Signal();
-
-        if(bOK)
-        {
-            while(!bRenderStopRequested.load(std::memory_order_acquire))
-            {
-                /* BOUNDED, never Wait(): the stop flag is noticed even if a
-                 * signal was lost or consumed, which makes shutdown
-                 * deadlock-proof however flag and signal interleave. */
-                if(RenderKick.TryWaitFor(2))
-                {
-                    DrainRenderCommands();
-
-                    /* Render-thread present, offscreen. NOT PresentToWindow,
-                     * which is the UI thread's. */
-                    GDISwapBuffers();
-
-                    /*
-                     * ONLY when a kick was consumed. Semaphore::Signal
-                     * ACCUMULATES, so signalling on a timeout tick banks a
-                     * count and the next FrameDone.Wait() returns instantly --
-                     * silently unfencing submission. Kicks and frames are 1:1.
-                     */
-                    FrameDone.Signal();
-                }
-            }
-        }
-
-        /* Stragglers from a frame that will never be kicked; nothing else
-         * deletes them. */
-        DrainRenderCommands();
-
-        /* ReleaseGDI deletes the driver WITHOUT calling Destroy(), so GPU
-         * objects would outlive their owner. Both belong on the context's
-         * thread. */
-        if(GDynamicGDI)
-        {
-            GDynamicGDI->Destroy();
-        }
-        ReleaseGDI();
-    }
-
-    void Application::DrainRenderCommands()
-    {
-        /* Brackets the WHOLE loop, not each command: GDI.cpp's thread_local
-         * in-drain flag is what distinguishes an enqueue issued from inside an
-         * Execute(), and per-command bracketing would erase that. */
-        GDIRenderQueue_NoteDrain();
-
-        GDIRenderCommandBase* Command = nullptr;
-        while(GRenderCommands.TryDequeue(Command))
-        {
-            Command->Execute();
-
-            /* Sound only because GDIRenderCommandBase has a virtual
-             * destructor. */
-            delete Command;
-        }
-
-        GDIRenderQueue_NoteDrainEnd();
+        /* Last: GDI's teardown can still read an asset. Cleared because
+         * AssetProvider dies with this object (CoreJob.h's locator rule). */
+        SetFileProvider(nullptr);
     }
 };

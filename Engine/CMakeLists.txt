@@ -191,6 +191,34 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GameWindow/CMakeLists.txt")
     add_subdirectory(Modules/GameWindow)
 endif()
 
+# GameCore likewise: written for this repository, guarded the same way. Added
+# AFTER GameWindow and BEFORE the NimbleEngine target below for the same
+# ordering reason GameWindow itself is -- nimble_add_module() links
+# EngineCore::EngineCore eagerly and NimbleEngine's own nimble_add_module()
+# call further down needs GameCore::GameCore to already exist as a namespaced
+# ALIAS when it is named.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GameCore/CMakeLists.txt")
+    add_subdirectory(Modules/GameCore)
+endif()
+
+# RenderCore: the render stack, on its own render thread. Written for this
+# repository, guarded the same way as GameCore, and for the same ordering
+# reason -- placed AFTER GameCore (it links GameCore::GameCore PUBLIC) and
+# BEFORE the NimbleEngine target below (whose own nimble_add_module() call
+# needs RenderCore::RenderCore to already exist as a namespaced ALIAS).
+#
+# ALSO guarded on TARGET GDI: RenderCore links GDI PRIVATE and is the ONLY
+# image in the process allowed to -- see RenderCoreInternal.h's comment -- so
+# it cannot configure at all without GDI already present. A checkout without
+# GDI (or without RenderCore itself) still configures, matching the existing
+# "a checkout without GDI still configures" property GameWindow's own guard
+# states.
+if(TARGET GDI AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/RenderCore/CMakeLists.txt")
+    add_subdirectory(Modules/RenderCore)
+elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/RenderCore/CMakeLists.txt")
+    message(STATUS "RenderCore present but GDI is not configured; skipping RenderCore")
+endif()
+
 # === NimbleEngine =========================================================
 # The engine layer itself: the thing that owns the module set, drives the frame
 # and is what a game under Games/ links. Its sources live at Engine/Source, so
@@ -216,21 +244,35 @@ endif()
 # the hot-reload sibling rule requires.
 set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
+        Source/Private/NimbleEngine/Level.cpp
+        Source/Private/NimbleEngine/SaveGame.cpp
+        Source/Private/NimbleEngine/SaveGameFormat.h
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
+        Source/Public/NimbleEngine/Level.h
+        Source/Public/NimbleEngine/GameState.h
+        Source/Public/NimbleEngine/SaveGame.h
+        Source/Public/NimbleEngine/NimbleEngineTypes.h
 )
 
 nimble_add_module(NimbleEngine SHARED
         PREFIX  NIMBLEENGINE
         SOURCES ${NIMBLEENGINE_SOURCES})
 
-# PRIVATE, not PUBLIC: the engine layer's headers must not leak GameWindow or
-# GDI types to a game. If either of these ever has to become PUBLIC_DEPS,
-# something in Source/Public/NimbleEngine/ grew an #include it should not have.
+# PRIVATE, not PUBLIC: the engine layer's headers must not leak GameWindow
+# types to a game. If this ever has to become a PUBLIC_DEP, something in
+# Source/Public/NimbleEngine/ grew an #include it should not have.
 #
-# if(TARGET) rather than if(EXISTS) because the module directories are already
-# guarded above -- this mirrors the same "a checkout without GDI still
+# if(TARGET) rather than if(EXISTS) because the module directory is already
+# guarded above -- this mirrors the same "a checkout without GameWindow still
 # configures" property without re-testing paths.
+#
+# GDI is NOT linked here at all, and that is new: GDI is a STATIC library, so
+# it may live in exactly ONE image in the whole process (see
+# RenderCoreInternal.h's comment for what a second copy would corrupt), and
+# RenderCore.dll is that image. NimbleEngine reaches drawing exclusively
+# through RenderCore::Renderer and ENQUEUE_RENDER_COMMAND -- see the PUBLIC
+# link just below -- and never through GDI directly.
 #
 # Hot-reload plugins contribute NOTHING here. nimble_add_hot_module() builds
 # MODULE targets that are never linked against; NimbleEngine reaches them
@@ -241,8 +283,21 @@ if(TARGET GameWindow)
     target_link_libraries(NimbleEngine PRIVATE GameWindow::GameWindow)
 endif()
 
-if(TARGET GDI)
-    target_link_libraries(NimbleEngine PRIVATE GDI::GDI)
+# PUBLIC, not PRIVATE -- the two deliberate exceptions to the rule stated
+# just above. World/Entity (GameCore) and Renderer/RenderCommand/RenderProxy
+# (RenderCore) ARE the game-facing surface: NimbleEngine.h forward-declares
+# GameCore::World, GameCore::ScriptEngine and RenderCore::Renderer, and
+# exposes Application::GetWorld()/GetScriptEngine()/GetRenderer() returning
+# them by reference, so a game that includes NimbleEngine.h needs both
+# modules' headers and needs to LINK both to use what it forward-declares.
+# Nothing from GameWindow becomes reachable through this -- PUBLIC applies to
+# GameCore and RenderCore alone, and the PRIVATE link above is unaffected.
+if(TARGET GameCore)
+    target_link_libraries(NimbleEngine PUBLIC GameCore::GameCore)
+endif()
+
+if(TARGET RenderCore)
+    target_link_libraries(NimbleEngine PUBLIC RenderCore::RenderCore)
 endif()
 
 # winmm, for timeBeginPeriod/timeEndPeriod in the frame limiter. Without raising
@@ -261,6 +316,51 @@ endif()
 target_include_directories(NimbleEngine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 
 source_group("NimbleEngine" FILES ${NIMBLEENGINE_SOURCES})
+
+# === Cooked shaders ========================================================
+# GDI's cooked shaders staged beside the executable, so that
+# EngineCore::FilesystemProvider -- which Application::Initialize() installs,
+# resolving bundle-relative paths against the working directory -- can find
+# them at the path GDI asks for ("Shaders/Cooked/Vulkan/Basic.vsh.spv").
+#
+# AT ENGINE SCOPE, not in a game's own CMakeLists, and that is the whole
+# point: Games/Sandbox stages its OWN Config/ and Scripts/ because those
+# belong to that game, but the cooked shaders belong to GDI and every game
+# that ever links this engine needs exactly the same set. Staging them per
+# game would duplicate this block into every future host, each free to get
+# it subtly wrong.
+#
+# A DIRECTORY COPY rather than one rule per file: the cooked set is produced
+# by cook_shaders.py (whose outputs the Cook*Shaders targets already depend
+# on), so the file list is not knowable here without duplicating that
+# script's own naming rules. The dependency on the cook targets is what
+# orders this after the shaders actually exist; without it a clean build
+# races an empty source directory.
+#
+# copy_directory, NOT copy_directory_if_different: the latter is CMake 3.26+
+# and this project pins 3.16 (see cmake_minimum_required at the top). The
+# cost is that this target is considered on every build -- acceptable for a
+# handful of small files, and the same trade Games/Sandbox's own multi-config
+# staging fallback already makes for the same reason.
+if(TARGET GDI AND GDI_COOKED_SHADER_DIR AND CMAKE_RUNTIME_OUTPUT_DIRECTORY)
+    add_custom_target(NimbleStageShaders ALL
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${GDI_COOKED_SHADER_DIR}"
+                    "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cooked"
+            COMMENT "NimbleEngine: staging GDI's cooked shaders beside the executable"
+            VERBATIM)
+
+    # Ordered after whichever cook targets this configure actually created --
+    # each is guarded by its own GDI_WITH_* option in Modules/GDI.
+    foreach(NM_COOK_TARGET CookVulkanShaders CookOpenGLShaders CookD3D12Shaders CookMetalShaders)
+        if(TARGET ${NM_COOK_TARGET})
+            add_dependencies(NimbleStageShaders ${NM_COOK_TARGET})
+        endif()
+    endforeach()
+
+    add_dependencies(NimbleEngine NimbleStageShaders)
+    set_target_properties(NimbleStageShaders PROPERTIES FOLDER "Engine")
+endif()
 
 # === Games/ ================================================================
 # Hosts that link the engine layer. Added from THIS scope, below the

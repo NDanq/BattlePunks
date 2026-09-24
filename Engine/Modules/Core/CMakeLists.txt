@@ -42,6 +42,7 @@ set( CORE_SOURCES
         Source/Private/Core/CoreGarbageCollector.cpp
         Source/Private/Core/CoreThread.cpp
         Source/Private/Core/CoreJob.cpp
+        Source/Private/Core/CoreArchive.cpp
         Source/Public/Core/CoreAPI.h
         Source/Public/Core/CoreTypes.h
         Source/Public/Core/CoreLog.h
@@ -59,6 +60,7 @@ set( CORE_SOURCES
         Source/Public/Core/CoreGarbageCollector.h
         Source/Public/Core/CoreThread.h
         Source/Public/Core/CoreJob.h
+        Source/Public/Core/CoreArchive.h
         Source/Private/Core/CoreMemoryInternal.h
 )
 
