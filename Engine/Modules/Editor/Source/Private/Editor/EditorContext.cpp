@@ -1,4 +1,6 @@
-#include "Editor/EditorContext.h"
+#if WITH_EDITOR
+
+#include "Public/Editor/EditorContext.h"
 
 #include <chrono>
 #include <cstring>
@@ -435,3 +437,5 @@ void EditorContext::DestroyWorld()
     EngineCore::Memory::Dealloc(EditedWorld);
     EditedWorld = nullptr;
 }
+
+#endif // WITH_EDITOR

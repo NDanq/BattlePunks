@@ -1,4 +1,6 @@
-#include "Editor/PropertyWidgets.h"
+#if WITH_EDITOR
+
+#include "Private/Editor/PropertyWidgets.h"
 
 #include <algorithm>
 #include <cfloat>
@@ -462,3 +464,5 @@ PropertyEditor* CreatePropertyEditor(const GameCore::ComponentPropertyEntry& InE
     }
     return nullptr;
 }
+
+#endif // WITH_EDITOR

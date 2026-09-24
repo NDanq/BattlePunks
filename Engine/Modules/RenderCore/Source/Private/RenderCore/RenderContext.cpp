@@ -120,6 +120,7 @@ namespace RenderCore
         P->DrawCallCount.fetch_add(1, std::memory_order_relaxed);
     }
 
+#if WITH_EDITOR
     void RenderContext::DrawLine(const EngineCore::Vector3& InStart, const EngineCore::Vector3& InEnd,
                                  const EngineCore::Color InColor, const float InThicknessPixels)
     {
@@ -215,6 +216,7 @@ namespace RenderCore
 
         P->DrawCallCount.fetch_add(1, std::memory_order_relaxed);
     }
+#endif // WITH_EDITOR
 
     void RenderContext::BeginDrawEvent(const char* InName)
     {

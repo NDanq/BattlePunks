@@ -49,7 +49,10 @@ namespace RenderCore
          */
         void DrawQuad(const RenderTransform& InTransform, float InWidth, float InHeight, EngineCore::Color InTint);
 
+#if WITH_EDITOR
         /*
+         * EDITOR ONLY -- the draw behind Renderer::DrawDebugLine.
+         *
          * A world-space segment as a flat ribbon facing the camera,
          * InThicknessPixels wide on screen at any distance, extended by half
          * that at each end so segments meeting at a corner close it. Drawn
@@ -63,6 +66,7 @@ namespace RenderCore
          */
         void DrawLine(const EngineCore::Vector3& InStart, const EngineCore::Vector3& InEnd,
                       EngineCore::Color InColor, float InThicknessPixels);
+#endif // WITH_EDITOR
 
         /* Render-thread only, matching GDI's own GDIBeginDrawEvent/EndDrawEvent
          * (Public/GDI/GDI.h) -- a scoped pair for a profiler's capture, cheap

@@ -1,4 +1,6 @@
-#include "Editor/OutlinerPanel.h"
+#if WITH_EDITOR
+
+#include "Public/Editor/OutlinerPanel.h"
 
 #include <vector>
 
@@ -12,7 +14,7 @@
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
-#include "Editor/EditorContext.h"
+#include "Public/Editor/EditorContext.h"
 
 using GameCore::EntityID;
 
@@ -171,3 +173,5 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
         Context.DestroyEntity(Target);
     }
 }
+
+#endif // WITH_EDITOR

@@ -21,6 +21,10 @@
 #   NOT NimbleEngine. Application owns an SDL window and its own event loop on
 #   the main thread; the editor's main thread belongs to Qt. EditorContext drives
 #   the same frame sequence (fence, collect, present, EndFrame) from a Qt timer.
+#
+# EDITOR TARGETS ONLY. Engine/CMakeLists.txt adds this directory only when
+# NIMBLE_TARGET is Editor (WITH_EDITOR=1), and every source below is wrapped in
+# `#if WITH_EDITOR` as well; EditorMain.cpp #errors if built any other way.
 # ===========================================================================
 
 find_package(Qt6 6.8 COMPONENTS Core Gui Widgets QUIET)
@@ -31,23 +35,23 @@ if(NOT Qt6Widgets_FOUND)
 endif()
 
 set(NIMBLE_EDITOR_SOURCES
-        Source/Editor/EditorMain.cpp
-        Source/Editor/EditorContext.cpp
-        Source/Editor/EditorContext.h
-        Source/Editor/EditorCamera.cpp
-        Source/Editor/EditorCamera.h
-        Source/Editor/EditorMainWindow.cpp
-        Source/Editor/EditorMainWindow.h
-        Source/Editor/ViewportPanel.cpp
-        Source/Editor/ViewportPanel.h
-        Source/Editor/ViewportWidget.cpp
-        Source/Editor/ViewportWidget.h
-        Source/Editor/OutlinerPanel.cpp
-        Source/Editor/OutlinerPanel.h
-        Source/Editor/DetailsPanel.cpp
-        Source/Editor/DetailsPanel.h
-        Source/Editor/PropertyWidgets.cpp
-        Source/Editor/PropertyWidgets.h
+        Source/Private/Editor/EditorMain.cpp
+        Source/Private/Editor/EditorContext.cpp
+        Source/Private/Editor/EditorCamera.cpp
+        Source/Private/Editor/EditorMainWindow.cpp
+        Source/Private/Editor/ViewportPanel.cpp
+        Source/Private/Editor/ViewportWidget.cpp
+        Source/Private/Editor/OutlinerPanel.cpp
+        Source/Private/Editor/DetailsPanel.cpp
+        Source/Private/Editor/PropertyWidgets.cpp
+        Source/Private/Editor/PropertyWidgets.h
+        Source/Public/Editor/EditorContext.h
+        Source/Public/Editor/EditorCamera.h
+        Source/Public/Editor/EditorMainWindow.h
+        Source/Public/Editor/ViewportPanel.h
+        Source/Public/Editor/ViewportWidget.h
+        Source/Public/Editor/OutlinerPanel.h
+        Source/Public/Editor/DetailsPanel.h
 )
 
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})

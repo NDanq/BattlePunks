@@ -1,4 +1,6 @@
-#include "Editor/ViewportWidget.h"
+#if WITH_EDITOR
+
+#include "Public/Editor/ViewportWidget.h"
 
 #include <algorithm>
 #include <cmath>
@@ -14,7 +16,7 @@
 #include "Public/Math/Matrix.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderTypes.h"
-#include "Editor/EditorContext.h"
+#include "Public/Editor/EditorContext.h"
 
 namespace
 {
@@ -546,3 +548,5 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
 
     return Best;
 }
+
+#endif // WITH_EDITOR

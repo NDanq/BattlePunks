@@ -7,8 +7,11 @@
 
 /*
  * The editor-visible property registry, and the built-in components' own
- * property lists. See ComponentProperties.h.
+ * property lists. See ComponentProperties.h. Editor targets only -- in a
+ * Client or Server build this translation unit compiles to nothing.
  */
+
+#if WITH_EDITOR
 
 namespace GameCore
 {
@@ -158,3 +161,4 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(ScriptComponent)
     Props.Flag("CullOutsideActiveRegion", &ScriptComponent::bCullOutsideActiveRegion);
 }
 }
+#endif // WITH_EDITOR

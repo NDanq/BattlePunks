@@ -10,6 +10,16 @@
 #include "Public/GameCore/GameCoreAPI.h"
 
 /*
+ * EDITOR ONLY. Nothing below exists in a Client or Server target
+ * (Engine/CMakeLists.txt, NIMBLE_TARGET): a game never shows a Details panel,
+ * so it carries neither the registry nor any type's property list. Every
+ * GAMECORE_DEFINE_COMPONENT_PROPERTIES use site is wrapped in `#if WITH_EDITOR`
+ * to match -- the macro does not exist otherwise, so a forgotten wrapper is a
+ * compile error in a game build rather than dead metadata shipped in it.
+ */
+#if WITH_EDITOR
+
+/*
  * Editor-visible properties: which fields of a component a tool (the editor's
  * Details panel) may show and edit. Opt-in, exactly like the Lua bindings in
  * ComponentScript.h -- and deliberately a SEPARATE list from them, so a field
@@ -184,5 +194,7 @@ namespace GameCore
         TypeName##_PropertiesRegistrar G##TypeName##_PropertiesRegistrar;                             \
     }                                                                                                 \
     static void TypeName##_PropertiesBody(::GameCore::ComponentPropertyBinder<TypeName>& Props)
+
+#endif // WITH_EDITOR
 
 #endif //GAMECORE_COMPONENTPROPERTIES_H

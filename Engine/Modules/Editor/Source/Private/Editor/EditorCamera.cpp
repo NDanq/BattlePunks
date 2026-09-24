@@ -1,4 +1,6 @@
-#include "Editor/EditorCamera.h"
+#if WITH_EDITOR
+
+#include "Public/Editor/EditorCamera.h"
 
 #include <algorithm>
 #include <cmath>
@@ -175,3 +177,5 @@ bool EditorCamera::WorldToScreen(const EngineCore::Vector3& InPoint, const Engin
     OutY = (1.0 - NdcY) * 0.5 * Height;
     return true;
 }
+
+#endif // WITH_EDITOR

@@ -1,4 +1,6 @@
-#include "Editor/DetailsPanel.h"
+#if WITH_EDITOR
+
+#include "Public/Editor/DetailsPanel.h"
 
 #include <cstring>
 
@@ -13,7 +15,8 @@
 
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
-#include "Editor/EditorContext.h"
+#include "Public/Editor/EditorContext.h"
+#include "Private/Editor/PropertyWidgets.h"
 
 using GameCore::ComponentTypeID;
 using GameCore::EntityID;
@@ -460,3 +463,5 @@ void DetailsPanel::RefreshValues()
         }
     }
 }
+
+#endif // WITH_EDITOR

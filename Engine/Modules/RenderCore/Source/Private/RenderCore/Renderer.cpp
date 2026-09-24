@@ -23,8 +23,10 @@
 
 namespace RenderCore
 {
+#if WITH_EDITOR
     static_assert(std::is_trivially_copyable<DebugLine>::value,
                   "DebugLine crosses to the render thread by memcpy -- see Renderer::EndFrame");
+#endif
 
     struct Renderer::Impl
     {
@@ -34,6 +36,7 @@ namespace RenderCore
 
         bool bPrimitiveRegistered = false;
 
+#if WITH_EDITOR
         /* Set by SetViewOverride; replaces the camera lookup every frame. */
         bool       bHasViewOverride = false;
         RenderView ViewOverride;
@@ -41,6 +44,33 @@ namespace RenderCore
         /* Game-thread side of DrawDebugLine; handed over and cleared by
          * every EndFrame(). */
         std::vector<DebugLine> PendingDebugLines;
+
+        /* Hands this frame's lines to the scene, ahead of the render command
+         * EndFrame enqueues, so the scene holds them when it renders. One
+         * Memory::Allocate'd copy, freed by the command -- DebugLine is
+         * trivially copyable, and a command may only capture values
+         * (RenderCommand.h). */
+        void SubmitDebugLines()
+        {
+            if(Scene && !PendingDebugLines.empty())
+            {
+                const size_t Count = PendingDebugLines.size();
+                void* Blob = EngineCore::Memory::Allocate(sizeof(DebugLine) * Count, alignof(DebugLine), EngineCore::POOL_Default,
+                                                          nullptr, EngineCore::AF_None, EngineCore::GImageID);
+                if(Blob)
+                {
+                    std::memcpy(Blob, PendingDebugLines.data(), sizeof(DebugLine) * Count);
+                    RenderScene* SceneCapture = Scene;
+                    ENQUEUE_RENDER_COMMAND(SetDebugLines)([SceneCapture, Blob, Count](RenderContext&)
+                    {
+                        SceneCapture->SetDebugLines(static_cast<const DebugLine*>(Blob), Count);
+                        EngineCore::Memory::Free(Blob);
+                    });
+                }
+            }
+            PendingDebugLines.clear();
+        }
+#endif
     };
 
     Renderer::Renderer() : P(new Impl())
@@ -141,6 +171,7 @@ namespace RenderCore
         P->Thread.WaitForFrame();
     }
 
+#if WITH_EDITOR
     void Renderer::DrawDebugLine(const DebugLine& InLine)
     {
         P->PendingDebugLines.push_back(InLine);
@@ -192,33 +223,30 @@ namespace RenderCore
         }
     }
 
+    void Renderer::SetViewOverride(const RenderView* InView)
+    {
+        P->bHasViewOverride = InView != nullptr;
+        if(InView)
+        {
+            P->ViewOverride = *InView;
+        }
+    }
+#endif // WITH_EDITOR
+
     void Renderer::EndFrame(const FrameInfo& InFrame)
     {
-        /* Ahead of the render command below, so the scene holds this frame's
-         * lines when it renders. One Memory::Allocate'd copy, freed by the
-         * command -- DebugLine is trivially copyable, and a command may only
-         * capture values (RenderCommand.h). */
-        if(P->Scene && !P->PendingDebugLines.empty())
-        {
-            const size_t Count = P->PendingDebugLines.size();
-            void* Blob = EngineCore::Memory::Allocate(sizeof(DebugLine) * Count, alignof(DebugLine), EngineCore::POOL_Default,
-                                                      nullptr, EngineCore::AF_None, EngineCore::GImageID);
-            if(Blob)
-            {
-                std::memcpy(Blob, P->PendingDebugLines.data(), sizeof(DebugLine) * Count);
-                RenderScene* Scene = P->Scene;
-                ENQUEUE_RENDER_COMMAND(SetDebugLines)([Scene, Blob, Count](RenderContext&)
-                {
-                    Scene->SetDebugLines(static_cast<const DebugLine*>(Blob), Count);
-                    EngineCore::Memory::Free(Blob);
-                });
-            }
-        }
-        P->PendingDebugLines.clear();
+        /* The editor's two hooks into the frame: its overlay lines and its own
+         * camera. A Client or Server target has neither -- the view always
+         * comes from the World's CameraComponent. */
+        const RenderView* ViewOverride = nullptr;
+#if WITH_EDITOR
+        P->SubmitDebugLines();
+        ViewOverride = P->bHasViewOverride ? &P->ViewOverride : nullptr;
+#endif
 
         if(P->Bridge && P->Bridge->IsBound())
         {
-            P->Bridge->ExtractAndRender(InFrame, P->bHasViewOverride ? &P->ViewOverride : nullptr);
+            P->Bridge->ExtractAndRender(InFrame, ViewOverride);
         }
         else if(P->Scene)
         {
@@ -226,8 +254,8 @@ namespace RenderCore
              * so a host's stats and pacing stay meaningful, matching
              * Renderer.h's own comment. */
             RenderScene* Scene = P->Scene;
-            RenderView View = P->bHasViewOverride
-                            ? P->ViewOverride
+            RenderView View = ViewOverride
+                            ? *ViewOverride
                             : RenderView::MakeOrthographic(InFrame.ViewportPixels, EngineCore::Vector3(0, 1, -1), -1.0f, 1000.0f);
             View.ViewportPixels = InFrame.ViewportPixels;
             ENQUEUE_RENDER_COMMAND(SetViewAndRenderEmpty)([Scene, View](RenderContext& Ctx)
@@ -279,15 +307,6 @@ namespace RenderCore
         {
             Scene->SetClearColor(InColor);
         });
-    }
-
-    void Renderer::SetViewOverride(const RenderView* InView)
-    {
-        P->bHasViewOverride = InView != nullptr;
-        if(InView)
-        {
-            P->ViewOverride = *InView;
-        }
     }
 
     void Renderer::GetStats(RenderStats& OutStats) const

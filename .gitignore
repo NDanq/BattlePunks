@@ -32,6 +32,9 @@
 /Build/
 /build/
 /cmake-build-*/
+# A second tree per NIMBLE_TARGET, e.g. `cmake -S Engine -B build-client
+# -DNIMBLE_TARGET=Client`.
+/build-*/
 /Engine/Build/
 /Engine/build/
 /Engine/cmake-build-*/

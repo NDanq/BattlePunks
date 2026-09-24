@@ -1,6 +1,8 @@
 #ifndef NIMBLEEDITOR_DETAILSPANEL_H
 #define NIMBLEEDITOR_DETAILSPANEL_H
 
+#if WITH_EDITOR
+
 #include <memory>
 #include <vector>
 
@@ -10,9 +12,9 @@
 #include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityID.h"
-#include "Editor/PropertyWidgets.h"
 
 class EditorContext;
+class PropertyEditor;
 class QLabel;
 class QMenu;
 class QScrollArea;
@@ -98,5 +100,7 @@ private:
 
     QTimer RefreshTimer;
 };
+
+#endif // WITH_EDITOR
 
 #endif //NIMBLEEDITOR_DETAILSPANEL_H

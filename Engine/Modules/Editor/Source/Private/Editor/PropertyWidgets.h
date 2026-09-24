@@ -1,6 +1,8 @@
 #ifndef NIMBLEEDITOR_PROPERTYWIDGETS_H
 #define NIMBLEEDITOR_PROPERTYWIDGETS_H
 
+#if WITH_EDITOR
+
 #include <cstdint>
 #include <functional>
 
@@ -70,5 +72,7 @@ bool IsPropertyAtDefault(const GameCore::ComponentPropertyEntry& InEntry, const 
 /* nullptr for a type with no editor (none today; kept for future types). */
 PropertyEditor* CreatePropertyEditor(const GameCore::ComponentPropertyEntry& InEntry,
                                      PropertyEditor::ResolveFn InResolve, QWidget* InParent);
+
+#endif // WITH_EDITOR
 
 #endif //NIMBLEEDITOR_PROPERTYWIDGETS_H

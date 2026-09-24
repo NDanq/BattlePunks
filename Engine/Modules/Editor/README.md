@@ -8,6 +8,28 @@ one.
 
 Written for this repository. An executable, not a module: nothing links it.
 
+**Editor targets only.** The build has a target type, `NIMBLE_TARGET` (Editor,
+Client or Server, default Editor), which defines `WITH_EDITOR` to 1 or 0 for
+every module. Only an Editor configure adds this directory, and every source
+here is additionally wrapped in `#if WITH_EDITOR`. The engine's editor-only
+code is gated the same way, so a Client or Server build compiles none of it:
+
+| Gated code | Where |
+|---|---|
+| Property registry and every `GAMECORE_DEFINE_COMPONENT_PROPERTIES` list | GameCore `ComponentProperties.h/.cpp`, RenderCore `RenderComponents.cpp` |
+| `Renderer::SetViewOverride`, `DrawDebugLine`, `DrawDebugBox` | RenderCore `Renderer.h/.cpp` |
+| The debug-line pass in `RenderScene::Render`, `RenderContext::DrawLine`, `DebugLine` | RenderCore |
+
+In a Client or Server build the render loop always takes its view from the
+World's CameraComponent and draws no overlay. Those builds write to
+`Binaries/<Platform>_<Config>_<Target>` (e.g. `Windows_Debug_Client`) so their
+DLLs, which lack the editor exports, never land on top of the editor's.
+
+```
+cmake -S Engine -B build                                  # Editor (default)
+cmake -S Engine -B build-client -DNIMBLE_TARGET=Client    # no editor anywhere
+```
+
 ---
 
 ## Position in the tree
@@ -32,6 +54,11 @@ from the viewport's timer, without `World::Tick` -- nothing simulates in the
 editor yet.
 
 ## Pieces
+
+Sources follow the engine's layout: class headers in `Source/Public/Editor/`,
+implementation in `Source/Private/Editor/`, included as `"Public/Editor/..."` /
+`"Private/Editor/..."`. `PropertyWidgets.h` is private -- only the Details panel
+uses it.
 
 | File | Role |
 |---|---|

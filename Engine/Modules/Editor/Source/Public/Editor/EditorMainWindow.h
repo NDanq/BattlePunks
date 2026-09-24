@@ -1,6 +1,8 @@
 #ifndef NIMBLEEDITOR_EDITORMAINWINDOW_H
 #define NIMBLEEDITOR_EDITORMAINWINDOW_H
 
+#if WITH_EDITOR
+
 #include <QMainWindow>
 #include <QString>
 #include <QTimer>
@@ -64,5 +66,7 @@ private:
     QTimer   StatsTimer;
     uint64_t LastFramesRendered = 0;
 };
+
+#endif // WITH_EDITOR
 
 #endif //NIMBLEEDITOR_EDITORMAINWINDOW_H
