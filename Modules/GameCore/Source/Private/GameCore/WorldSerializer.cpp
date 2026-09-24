@@ -10,14 +10,14 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/GameCoreLog.h"
-#include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
 
 /*
  * The World walk; the format is in DESIGN.md. Saving builds the dense entity
  * table before writing any component, since slot order has holes. Loading
- * creates every entity before any component, so a reference to an entity whose
- * components come later in the file still resolves.
+ * creates every entity -- with its members: name, script path -- before any
+ * component, so a reference to an entity whose components come later in the
+ * file still resolves.
  */
 
 namespace GameCore
@@ -124,12 +124,20 @@ namespace
         uint32_t EntityCount = uint32_t(OutTable.GetSavedOrder().size());
         Ar << EntityCount;
 
-        /* Redundant today (always 0..count-1), written so a later version can
-         * omit entities without changing what an index means. */
-        for(const EntityID Entity : OutTable.GetSavedOrder())
+        /* The index is redundant today (always 0..count-1), written so a
+         * later version can omit entities without changing what an index
+         * means. Then the entity's members, which are not components. */
+        for(const EntityID EntityId : OutTable.GetSavedOrder())
         {
-            uint32_t Index = OutTable.IndexOf(Entity);
+            uint32_t Index = OutTable.IndexOf(EntityId);
             Ar << Index;
+
+            const Entity Handle = InWorld.GetEntity(EntityId);
+            std::string Name(Handle.GetName());
+            std::string ScriptPath(Handle.GetScriptPath());
+            const EntityScriptState* Script = Handle.GetScriptState();
+            uint8_t bCull = Script ? Script->bCullOutsideActiveRegion : 0;
+            Ar << Name << ScriptPath << bCull;
         }
 
         /* Type id order, so saving the same World twice gives identical bytes. */
@@ -227,7 +235,25 @@ namespace
                 return false;
             }
 
-            OutTable.AddForLoading(InWorld.CreateEntity());
+            std::string Name;
+            std::string ScriptPath;
+            uint8_t     bCull = 0;
+            Ar << Name << ScriptPath << bCull;
+            if(Ar.HasError()) { Ar.CloseChunk(); return false; }
+
+            /* Named at creation, so OnEntityCreated sees the name. The script
+             * is only a path here; a bound ScriptEngine instantiates it on
+             * the next tick, by which time every component is in place. */
+            const Entity Loaded = InWorld.CreateEntity(Name.c_str());
+            if(!ScriptPath.empty())
+            {
+                Loaded.SetScript(ScriptPath.c_str());
+                if(EntityScriptState* Script = Loaded.GetScriptState())
+                {
+                    Script->bCullOutsideActiveRegion = bCull ? 1 : 0;
+                }
+            }
+            OutTable.AddForLoading(Loaded);
         }
 
         /* A non-CMPT tag ends the loop; CloseChunk below skips the rest. */
@@ -331,54 +357,4 @@ bool SerializeWorld(EngineCore::Archive& Ar, World& InOutWorld)
                           : SaveWorld(Ar, InOutWorld, Table);
 }
 
-bool SerializeWorldWithScripts(EngineCore::Archive& Ar, World& InOutWorld, ScriptEngine& InScripts)
-{
-    CORE_CHECK(!InOutWorld.IsTicking(),
-               "SerializeWorldWithScripts called while the World is ticking -- see WorldSerializer.h")
-    if(InOutWorld.IsTicking()) { return false; }
-
-    EntityTable Table;
-    const bool bOk = Ar.IsLoading() ? LoadWorld(Ar, InOutWorld, Table)
-                                    : SaveWorld(Ar, InOutWorld, Table);
-
-    if(!bOk || Ar.IsSaving()) { return bOk; }
-
-    /* Restored ScriptComponents carry a ClassName but InstanceRef -2 (no live
-     * instance). Collected first: InstantiateScript runs Lua, which may add a
-     * ScriptComponent -- not allowed inside Each<ScriptComponent>. */
-    struct PendingScript
-    {
-        EntityID Entity;
-        char     ClassName[48];
-    };
-
-    std::vector<PendingScript> Pending;
-    InOutWorld.Each<ScriptComponent>([&Pending](Entity InEntity, ScriptComponent& InScript)
-    {
-        /* Already live -- do not stack a second instance on it. */
-        if(InScript.InstanceRef != -2) { return; }
-        if(InScript.ClassName[0] == '\0') { return; }
-
-        PendingScript Entry;
-        Entry.Entity = InEntity.GetID();
-        std::memcpy(Entry.ClassName, InScript.ClassName, sizeof(Entry.ClassName));
-        Pending.push_back(Entry);
-    });
-
-    for(const PendingScript& Entry : Pending)
-    {
-        /* InstantiateScript refuses a second ScriptComponent, so remove the
-         * restored one first; outside a tick that is immediate. The fresh
-         * instance takes its Phase from the registered class. */
-        Entity(&InOutWorld, Entry.Entity).RemoveComponent<ScriptComponent>();
-
-        if(!InScripts.InstantiateScript(Entry.Entity, Entry.ClassName))
-        {
-            GAMECORE_LOG_WARN(std::string("WorldSerializer: could not re-instantiate script class '")
-                              + Entry.ClassName + "'; the entity keeps its other components")
-        }
-    }
-
-    return true;
-}
 }

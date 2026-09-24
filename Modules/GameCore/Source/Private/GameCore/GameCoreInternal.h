@@ -52,6 +52,15 @@ namespace GameCore
      * see DESIGN.md. InContext names what was being run, for the log line. */
     bool LuaCallProtected(lua_State* InState, int InNArgs, int InNResults, const char* InContext);
 
+    /* Adds one to the error tally ScriptEngine::GetErrorCount reports, for a
+     * failure that never reached LuaCallProtected (a missing file, a syntax
+     * error, a script that returned no class). */
+    void LuaCountError(lua_State* InState);
+
+    /* Reads a script file through EngineCore's file seam (the file provider
+     * if one is installed, else the platform read). False if unreadable. */
+    bool LuaReadScriptFile(const char* InPath, std::string& OutSource);
+
     /* Packs an EntityID as a full userdata with the "Entity" metatable.
      * Every binding that hands Lua an entity goes through this. */
     void LuaPushEntity(lua_State* InState, EntityID InEntity);

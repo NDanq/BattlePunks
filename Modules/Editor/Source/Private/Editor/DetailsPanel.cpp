@@ -4,10 +4,14 @@
 
 #include <cstring>
 
+#include <QCheckBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QScrollArea>
 #include <QToolButton>
@@ -131,14 +135,19 @@ void DetailsPanel::RebuildIfComponentsChanged()
         Rebuild();
         return;
     }
-    /* Same components -- only the name may have changed. */
+    /* Same components -- only the members may have changed. */
     UpdateHeader();
+    RefreshEntitySection();
 }
 
 void DetailsPanel::Rebuild()
 {
     Rows.clear();
     Sections.clear();
+    NameEdit     = nullptr;
+    ScriptEdit   = nullptr;
+    ScriptStatus = nullptr;
+    CullCheck    = nullptr;
     ShownEntity = Context.GetSelection();
     ShownTypes  = CollectComponentTypes(ShownEntity);
 
@@ -152,6 +161,7 @@ void DetailsPanel::Rebuild()
     UpdateHeader();
     if(ShownEntity.IsSet())
     {
+        BodyLayout->addWidget(BuildEntitySection(ShownEntity));
         for(const ComponentTypeID Type : ShownTypes)
         {
             BodyLayout->addWidget(BuildComponentSection(ShownEntity, Type));
@@ -163,6 +173,164 @@ void DetailsPanel::Rebuild()
     Scroll->setWidget(Body);
 
     RefreshValues();
+}
+
+QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
+{
+    auto* Section = new QFrame(Body);
+    Section->setFrameShape(QFrame::StyledPanel);
+    auto* SectionLayout = new QVBoxLayout(Section);
+    SectionLayout->setContentsMargins(4, 2, 4, 4);
+    SectionLayout->setSpacing(2);
+
+    auto* Title = new QLabel(QStringLiteral("<b>Entity</b>"), Section);
+    SectionLayout->addWidget(Title);
+
+    auto* Content = new QWidget(Section);
+    auto* Form    = new QFormLayout(Content);
+    Form->setContentsMargins(14, 0, 0, 0);
+    Form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    Form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    SectionLayout->addWidget(Content);
+
+    // --- Name ----------------------------------------------------------------
+    NameEdit = new QLineEdit(Content);
+    NameEdit->setPlaceholderText(QStringLiteral("(unnamed)"));
+    connect(NameEdit, &QLineEdit::editingFinished, this, [this, InEntity]()
+    {
+        if(NameEdit)
+        {
+            Context.RenameEntity(InEntity, NameEdit->text());
+        }
+    });
+    Form->addRow(QStringLiteral("Name"), NameEdit);
+
+    // --- Script: a path, typed or browsed -------------------------------------
+    auto* ScriptField = new QWidget(Content);
+    auto* ScriptRow   = new QHBoxLayout(ScriptField);
+    ScriptRow->setContentsMargins(0, 0, 0, 0);
+    ScriptRow->setSpacing(2);
+
+    ScriptEdit = new QLineEdit(ScriptField);
+    ScriptEdit->setPlaceholderText(QStringLiteral("(none) -- e.g. Scripts/Mover.lua"));
+    ScriptEdit->setToolTip(QStringLiteral("A .lua file that returns its class table. Relative paths resolve "
+                                          "from the game's working directory."));
+    connect(ScriptEdit, &QLineEdit::editingFinished, this, [this, InEntity]()
+    {
+        if(ScriptEdit)
+        {
+            Context.SetEntityScript(InEntity, ScriptEdit->text());
+        }
+    });
+    ScriptRow->addWidget(ScriptEdit, 1);
+
+    auto* Browse = new QToolButton(ScriptField);
+    Browse->setText(QStringLiteral("..."));
+    Browse->setToolTip(QStringLiteral("Choose a Lua script"));
+    Browse->setAutoRaise(true);
+    connect(Browse, &QToolButton::clicked, this, [this, InEntity]()
+    {
+        const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a Lua script"),
+                                                            QDir::currentPath(),
+                                                            QStringLiteral("Lua scripts (*.lua);;All files (*)"));
+        if(Chosen.isEmpty())
+        {
+            return;
+        }
+        /* Relative to the working directory when it is under it -- how the
+         * game resolves script paths -- so the path survives a move. */
+        const QString Relative = QDir::current().relativeFilePath(Chosen);
+        Context.SetEntityScript(InEntity, Relative.startsWith(QStringLiteral("..")) ? Chosen : Relative);
+        RefreshEntitySection();
+    });
+    ScriptRow->addWidget(Browse);
+
+    auto* Clear = new QToolButton(ScriptField);
+    Clear->setText(QString(QChar(0x2715)));   // multiplication x; code points keep the source ASCII
+    Clear->setToolTip(QStringLiteral("Clear the script"));
+    Clear->setAutoRaise(true);
+    connect(Clear, &QToolButton::clicked, this, [this, InEntity]()
+    {
+        Context.SetEntityScript(InEntity, QString());
+        RefreshEntitySection();
+    });
+    ScriptRow->addWidget(Clear);
+
+    Form->addRow(QStringLiteral("Script"), ScriptField);
+
+    ScriptStatus = new QLabel(Content);
+    ScriptStatus->setStyleSheet(QStringLiteral("color: gray;"));
+    Form->addRow(QStringLiteral("Status"), ScriptStatus);
+
+    CullCheck = new QCheckBox(QStringLiteral("Cull outside active region"), Content);
+    CullCheck->setToolTip(QStringLiteral("Skip this script's tick while its Bounds are outside the World's "
+                                         "active region. The script's class can override this."));
+    connect(CullCheck, &QCheckBox::toggled, this, [this, InEntity](const bool bInChecked)
+    {
+        GameCore::World& World = Context.GetWorld();
+        if(GameCore::EntityScriptState* Script = World.GetEntity(InEntity).GetScriptState())
+        {
+            Script->bCullOutsideActiveRegion = bInChecked ? 1 : 0;
+        }
+    });
+    Form->addRow(QString(), CullCheck);
+
+    return Section;
+}
+
+void DetailsPanel::RefreshEntitySection()
+{
+    if(!NameEdit || !ScriptEdit || !ScriptStatus || !CullCheck)
+    {
+        return;
+    }
+    GameCore::World& World = Context.GetWorld();
+    const GameCore::Entity E = World.GetEntity(ShownEntity);
+
+    /* Not while the user is typing into it. */
+    const QString Name = QString::fromUtf8(E.GetName());
+    if(!NameEdit->hasFocus() && NameEdit->text() != Name)
+    {
+        NameEdit->setText(Name);
+    }
+    const QString Path = QString::fromUtf8(E.GetScriptPath());
+    if(!ScriptEdit->hasFocus() && ScriptEdit->text() != Path)
+    {
+        ScriptEdit->setText(Path);
+    }
+
+    const GameCore::EntityScriptState* Script = E.GetScriptState();
+    QString Status;
+    if(!Script)
+    {
+        Status = QStringLiteral("No script");
+    }
+    else if(!World.HasScriptDriver())
+    {
+        Status = QStringLiteral("Not running (scripts run in Play)");
+    }
+    else if(Script->bErrored)
+    {
+        Status = QStringLiteral("Errored -- see the Console");
+    }
+    else if(Script->bPendingInstantiate)
+    {
+        Status = QStringLiteral("Loading on the next tick");
+    }
+    else
+    {
+        Status = QStringLiteral("Running in %1").arg(QString::fromLatin1(
+            GameCore::TickPhaseName(GameCore::ETickPhase(Script->Phase))));
+    }
+    ScriptStatus->setText(Status);
+
+    CullCheck->setEnabled(Script != nullptr);
+    const bool bCull = Script && Script->bCullOutsideActiveRegion;
+    if(CullCheck->isChecked() != bCull)
+    {
+        const QSignalBlocker Block(CullCheck);
+        CullCheck->setChecked(bCull);
+    }
 }
 
 QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const ComponentTypeID InType)
@@ -434,6 +602,8 @@ void DetailsPanel::RefreshValues()
     {
         return;
     }
+
+    RefreshEntitySection();
 
     for(ComponentSection& Section : Sections)
     {

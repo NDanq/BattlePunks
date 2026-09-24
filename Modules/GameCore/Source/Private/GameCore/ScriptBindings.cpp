@@ -22,7 +22,6 @@ namespace GameCore
      * anonymous namespace gets internal linkage and silently becomes a
      * different, never-defined symbol. See DESIGN.md for the link error that
      * caught this. */
-    bool ScriptSystem_InstantiateScript(lua_State* InState, World* InWorld, EntityID InEntity, const char* InClassName);
     void ScriptSystem_AddLuaSystem(lua_State* InState, World* InWorld, const char* InName, ETickPhase InPhase, int InFunctionRef);
     bool ScriptSystem_RemoveLuaSystem(lua_State* InState, World* InWorld, const char* InName);
 
@@ -71,8 +70,17 @@ namespace GameCore
         {
             const EntityID E = LuaCheckEntity(InState, 1);
             World* W = GetBoundWorld(InState);
-            const NameComponent* Name = Entity(W, E).GetComponent<NameComponent>();
-            lua_pushstring(InState, Name ? Name->Name : "");
+            lua_pushstring(InState, Entity(W, E).GetName());
+            return 1;
+        }
+
+        /* e:SetName(name) -- nil clears. */
+        int Entity_SetName(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            const char* Name = luaL_optstring(InState, 2, nullptr);
+            World* W = GetBoundWorld(InState);
+            lua_pushboolean(InState, Entity(W, E).SetName(Name));
             return 1;
         }
 
@@ -142,16 +150,34 @@ namespace GameCore
             return 1;
         }
 
-        /* ScriptSystem.cpp's entry point -- e:AddScript("ClassName") is the
-         * Lua spelling of ScriptEngine::InstantiateScript, sharing the exact
-         * same implementation. Declared at GameCore namespace scope above,
-         * not re-declared here. */
-        int Entity_AddScript(lua_State* InState)
+        /* e:SetScript("Scripts/Mover.lua") -- Entity::SetScript: stores the
+         * path; the driver loads it at the start of the next phase. nil or ""
+         * clears. Deferred when called from a script (the World is ticking). */
+        int Entity_SetScript(lua_State* InState)
         {
             const EntityID E = LuaCheckEntity(InState, 1);
-            const char* ClassName = luaL_checkstring(InState, 2);
+            const char* Path = luaL_optstring(InState, 2, nullptr);
             World* W = GetBoundWorld(InState);
-            lua_pushboolean(InState, W && ScriptSystem_InstantiateScript(InState, W, E, ClassName));
+            lua_pushboolean(InState, Entity(W, E).SetScript(Path));
+            return 1;
+        }
+
+        int Entity_ClearScript(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            lua_pushboolean(InState, Entity(W, E).ClearScript());
+            return 1;
+        }
+
+        /* The path, or nil if there is none. */
+        int Entity_GetScript(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            const char* Path = Entity(W, E).GetScriptPath();
+            if(Path[0] == '\0') { lua_pushnil(InState); }
+            else                 { lua_pushstring(InState, Path); }
             return 1;
         }
 
@@ -159,12 +185,15 @@ namespace GameCore
             { "IsValid",         Entity_IsValid },
             { "GetID",           Entity_GetID },
             { "GetName",         Entity_GetName },
+            { "SetName",         Entity_SetName },
             { "Destroy",         Entity_Destroy },
             { "AddComponent",    Entity_AddComponent },
             { "GetComponent",    Entity_GetComponent },
             { "HasComponent",    Entity_HasComponent },
             { "RemoveComponent", Entity_RemoveComponent },
-            { "AddScript",       Entity_AddScript },
+            { "SetScript",       Entity_SetScript },
+            { "GetScript",       Entity_GetScript },
+            { "ClearScript",     Entity_ClearScript },
             { nullptr, nullptr }
         };
 

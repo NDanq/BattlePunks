@@ -3,7 +3,6 @@
 #include "Public/Editor/EditorContext.h"
 
 #include <chrono>
-#include <cstring>
 #include <string>
 
 #include <QTimer>
@@ -225,8 +224,8 @@ void EditorContext::CreateSandboxScene()
 
     // --- Scripted (Scripts/Main.lua) ------------------------------------------
     /* Created by the startup script in the game. The editor runs no Lua, so the
-     * ScriptComponent carries the class name and phase only -- what a save of
-     * this entity would hold -- with no script instance behind it. */
+     * entity carries only its script path -- what a save of it would hold --
+     * with no script instance behind it. */
     const EntityID ScriptedID = CreateEntity(QStringLiteral("Scripted"), EngineCore::Vector3(0.0, 0.0, 0.0));
     {
         const GameCore::Entity Scripted = EditedWorld->GetEntity(ScriptedID);
@@ -235,10 +234,7 @@ void EditorContext::CreateSandboxScene()
         Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, -0.5), EngineCore::Vector3(0.5, 0.5, 0.5));
         Scripted.AddComponent(Bounds);
 
-        GameCore::ScriptComponent Script;
-        std::strncpy(Script.ClassName, "Mover", sizeof(Script.ClassName) - 1);
-        Script.Phase = GameCore::TP_PostPhysics;   // Main.lua: TickPhase = TickPhase.PostPhysics
-        Scripted.AddComponent(Script);
+        Scripted.SetScript("Scripts/Mover.lua");   // Main.lua's scripted:SetScript(...)
     }
 
     EditedWorld->RefreshSpatialIndex();
@@ -296,6 +292,22 @@ EntityID EditorContext::CreateEntity(const QString& InName, const EngineCore::Ve
     E.AddComponent(Transform);
 
     return E.GetID();
+}
+
+void EditorContext::RenameEntity(const EntityID InEntity, const QString& InName)
+{
+    if(ActiveWorld && ActiveWorld->GetEntity(InEntity).SetName(InName.toUtf8().constData()))
+    {
+        QueueEntitiesChanged();
+    }
+}
+
+void EditorContext::SetEntityScript(const EntityID InEntity, const QString& InPath)
+{
+    if(ActiveWorld && ActiveWorld->GetEntity(InEntity).SetScript(InPath.trimmed().toUtf8().constData()))
+    {
+        QueueEntitiesChanged();
+    }
 }
 
 void EditorContext::DestroyEntity(const EntityID InEntity)
@@ -390,11 +402,6 @@ void EditorContext::SetSelection(EntityID InEntity)
 
 void EditorContext::NotifyPropertyEdited(const EntityID InEntity, const GameCore::ComponentTypeID InType)
 {
-    /* A rename changes what the outliner shows. */
-    if(InType == GameCore::NameComponent::StaticType().ID)
-    {
-        QueueEntitiesChanged();
-    }
     emit PropertyEdited(InEntity, InType);
 }
 

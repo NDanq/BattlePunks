@@ -130,8 +130,8 @@ public:
     void CreateSandboxScene();
 
     /* Through GameCore::SerializeWorld -- the World alone, not a SaveGame's
-     * GameState. Script components keep their data but get no Lua instance:
-     * the editor runs no scripts. False (World unchanged on a read failure) on
+     * GameState. Script paths are kept but get no Lua instance: the editor
+     * runs no scripts. False (World unchanged on a read failure) on
      * error; a corrupt file leaves an empty World. */
     bool LoadWorld(const QString& InPath);
     bool SaveWorld(const QString& InPath);
@@ -140,9 +140,15 @@ public:
     //
     // On the active World: while playing, these reach into the running game.
 
-    /* With a Transform and a Name, placed at InPosition. */
+    /* Named InName, with a Transform placed at InPosition. */
     GameCore::EntityID CreateEntity(const QString& InName, const EngineCore::Vector3& InPosition);
     void               DestroyEntity(GameCore::EntityID InEntity);
+
+    /* The entity members (Entity::SetName / SetScript). Both refresh the
+     * outliner. On the edited World a script path is only stored -- it runs
+     * when Play loads a World that carries it. */
+    void RenameEntity(GameCore::EntityID InEntity, const QString& InName);
+    void SetEntityScript(GameCore::EntityID InEntity, const QString& InPath);
 
     /* Name if it has one, "Entity <index>" otherwise. */
     QString GetDisplayName(GameCore::EntityID InEntity) const;

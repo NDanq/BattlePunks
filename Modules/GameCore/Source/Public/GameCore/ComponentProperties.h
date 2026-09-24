@@ -79,7 +79,7 @@ namespace GameCore
     {
         CPF_None         = 0,
         /* Not offered by a tool's "Add Component" -- the type only makes sense
-         * attached some other way (a ScriptComponent needs a Lua class). */
+         * attached some other way (e.g. one a system adds and owns). */
         CPF_NotAddable   = 1 << 0,
     };
 

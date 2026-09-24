@@ -70,7 +70,7 @@ uses it.
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
 | `OutlinerPanel` | Entity list with component summary, filter, create/destroy |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession` |
-| `DetailsPanel` + `PropertyWidgets` | One section per component, one editor per property type, reset-to-default, add/remove component |
+| `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, reset-to-default, add/remove component |
 | `EditorLog` | EngineCore's log handler: a thread-safe, bounded history of every log line, still forwarded to Qt/the debugger |
 | `EditorConsole` | Command registry; unknown words fall through to Core's `ExecConfigCommand` |
 | `ConsolePanel` | The Console dock: filtered transcript over a command line with history and completion |
@@ -118,7 +118,7 @@ level has once loaded (Marker, Camera, and the startup script's Scripted),
 mirrored by hand from `SandboxGame.cpp` and `Scripts/Main.lua` until the editor
 can load the game's own level. File > Open/Save read and write
 bare `GameCore::SerializeWorld` archives (`.nmworld`), not SaveGame files;
-script components keep their data but get no Lua instance, since the editor runs
+an entity's script path is kept but gets no Lua instance, since the editor runs
 no scripts.
 
 **Viewport controls:**
@@ -147,6 +147,14 @@ The XYZ gizmo sits bottom-left.
 
 ## Details panel
 
+The top **Entity** section edits what an entity carries besides its
+components: its **Name** (what the Outliner shows) and its **Script** -- a
+`.lua` path, typed or picked with **...** (made relative to the working
+directory when it is under it), cleared with **x**. Below that, a read-only
+status says whether the script is running, which only happens in a playing
+World, and the **Cull outside active region** checkbox sets the script's cull
+flag. The script's class can override that flag when it loads.
+
 Each property with a writable default shows an orange reset arrow to its right
 while its value differs from the type's default-constructed one; clicking it
 restores that property. A component header's **Reset** restores every writable
@@ -154,8 +162,8 @@ property of that component (per-run state such as a render proxy handle is left
 alone), and its **x** removes the component. **+ Add Component** at the bottom
 lists every type with a property list that the entity lacks; the new component
 starts from its default-constructed bytes. A type opts out of that list with
-`Props.NotAddable()` -- `ScriptComponent` does, since a script needs a Lua
-class and is attached with `ScriptEngine::AddScript`.
+`Props.NotAddable()`, for a component that only makes sense attached some other
+way.
 
 ## Console
 

@@ -132,33 +132,12 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(TransformComponent)
     Props.Field("Scale",    &TransformComponent::Scale);
 }
 
-GAMECORE_DEFINE_COMPONENT_PROPERTIES(NameComponent)
-{
-    Props.Field("Name", &NameComponent::Name);
-}
-
 /* World is the refit's output, so read-only. ProxyID stays hidden. */
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(BoundsComponent)
 {
     Props.Field("Local", &BoundsComponent::Local);
     Props.Field("World", &BoundsComponent::World, PF_ReadOnly);
     Props.Flag("Static", &BoundsComponent::bStatic);
-}
-
-/* The class is fixed at AddScript time -- renaming it here would not rebind
- * the Lua instance -- so everything but the culling hint is read-only.
- * InstanceRef stays hidden. */
-GAMECORE_DEFINE_COMPONENT_PROPERTIES(ScriptComponent)
-{
-    /* Attached through ScriptEngine::AddScript with a registered class; a bare
-     * one added by a tool would be a script with no instance. */
-    Props.NotAddable();
-
-    Props.Field("ClassName", &ScriptComponent::ClassName, PF_ReadOnly);
-    Props.Field("Phase",     &ScriptComponent::Phase,     PF_ReadOnly);
-    Props.Flag("Started",    &ScriptComponent::bStarted,  PF_ReadOnly);
-    Props.Flag("Errored",    &ScriptComponent::bErrored,  PF_ReadOnly);
-    Props.Flag("CullOutsideActiveRegion", &ScriptComponent::bCullOutsideActiveRegion);
 }
 }
 #endif // WITH_EDITOR

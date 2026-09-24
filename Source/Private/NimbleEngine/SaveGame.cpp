@@ -158,9 +158,8 @@ bool SaveGameToFile(GameSession& InSession, const std::string& InPath)
     uint64_t SavedAt = NowUnixSeconds();
     Ar << SavedAt;
 
-    /* The same call LoadLevel makes, so the two paths cannot drift; its script
-     * work only happens on load. */
-    if(!GameCore::SerializeWorldWithScripts(Ar, World, InSession.GetScriptEngine()))
+    /* The same call LoadLevel makes, so the two paths cannot drift. */
+    if(!GameCore::SerializeWorld(Ar, World))
     {
         CORE_LOG_ERROR("SaveGameToFile: failed to serialize the World")
         return false;

@@ -489,8 +489,8 @@ namespace NimbleEngine
         /*
          * Null-safe throughout: runs even if Initialize() failed partway. The
          * World is already gone (GameSession::UnloadLevel, which owns the
-         * ordering that matters). lua_close is safe because no ScriptComponent remains to
-         * hold a registry ref; the renderer then drains and stops its thread.
+         * ordering that matters). lua_close is safe because UnbindWorld released every
+         * script instance's registry ref; the renderer then drains and stops its thread.
          */
         /* First: it holds references to both services below. Its level is
          * already unloaded (ExecWithLevel), so this only frees it. */
