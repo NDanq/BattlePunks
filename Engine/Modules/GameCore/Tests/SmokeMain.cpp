@@ -11,6 +11,8 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -171,10 +173,8 @@ static void TestComponentProperties()
            "a type with no property list has no defaults, and the buffer is left alone");
 
     Expect(IsComponentAddable(TransformComponent::StaticType().ID), "Transform is addable");
-    Expect(!IsComponentAddable(ScriptComponent::StaticType().ID), "Script opts out of Add Component");
     Expect(!IsComponentAddable(TestOnlyComponent::StaticType().ID), "a type with no property list is not addable");
 
-    Expect(FindComponentProperties(NameComponent::StaticType().ID, Count) != nullptr && Count == 1, "Name exposes Name");
     Expect(FindComponentProperties(TestOnlyComponent::StaticType().ID, Count) == nullptr && Count == 0,
            "a component with no property list reports none");
 }
@@ -206,6 +206,84 @@ static void TestEntities()
 }
 
 // ============================================================================
+// Entity members -- name and script path, stored on the entity, not in a pool
+// ============================================================================
+
+namespace
+{
+    struct DeferProbe
+    {
+        Entity Target;
+        bool   bRan               = false;
+        bool   bVisibleImmediately = true;
+    };
+
+    /* Sets a script from inside a tick, and records whether it took effect
+     * before the phase ended. */
+    void DeferScriptSystem(World& /*InWorld*/, float /*InDeltaSeconds*/, void* InUserData)
+    {
+        DeferProbe& Probe = *static_cast<DeferProbe*>(InUserData);
+        if(Probe.bRan) { return; }
+        Probe.bRan = true;
+        Probe.Target.SetScript("Scripts/Later.lua");
+        Probe.bVisibleImmediately = Probe.Target.HasScript();
+    }
+}
+
+static void TestEntityMembers()
+{
+    std::printf("[entity members]\n");
+
+    World W;
+    const Entity A = W.CreateEntity("Alpha");
+    const Entity B = W.CreateEntity();
+    Expect(std::strcmp(A.GetName(), "Alpha") == 0, "CreateEntity(name) sets the name");
+    Expect(B.GetName() != nullptr && B.GetName()[0] == '\0', "an unnamed entity reads \"\", never null");
+
+    /* The members live in a deque, so this pointer must survive the slot
+     * table growing well past its first block. */
+    const char* Held = A.GetName();
+    for(int Index = 0; Index < 200; ++Index) { W.CreateEntity(); }
+    Expect(Held == A.GetName() && std::strcmp(Held, "Alpha") == 0,
+           "a GetName() pointer survives other entities being created");
+
+    Expect(B.SetName("Beta"), "SetName on a live entity");
+    Expect(W.FindEntityByName("Beta") == B.GetID(), "FindEntityByName sees a rename");
+    Expect(!W.FindEntityByName("").IsSet(), "FindEntityByName(\"\") matches nothing, not every unnamed entity");
+    Expect(B.SetName(nullptr) && B.GetName()[0] == '\0', "SetName(nullptr) clears");
+
+    /* With no script driver (the editor's case) a path is only data. */
+    Expect(A.SetScript("Scripts/Nothing.lua"), "SetScript on a live entity");
+    Expect(A.HasScript() && std::strcmp(A.GetScriptPath(), "Scripts/Nothing.lua") == 0, "the path is stored");
+    Expect(W.GetScriptedEntityCount() == 1 && W.GetScriptedEntityAt(0) == A.GetID(), "the entity is listed as scripted");
+    Expect(A.SetScript("Scripts/Nothing.lua") && W.GetScriptedEntityCount() == 1, "setting the same path again is a no-op");
+    W.Tick(0.016f);
+    Expect(A.GetScriptState() && A.GetScriptState()->bPendingInstantiate, "with no driver the script just stays pending");
+    Expect(!B.HasScript() && B.GetScriptState() == nullptr && B.GetScriptPath()[0] == '\0', "no script: empty path, null state");
+
+    /* Inside a tick, SetScript is deferred to the end of the phase. */
+    DeferProbe Probe;
+    Probe.Target = B;
+    W.RegisterSystem("Test.DeferScript", TP_PrePhysics, &DeferScriptSystem, &Probe);
+    W.Tick(0.016f);
+    W.UnregisterSystem(&DeferScriptSystem, &Probe);
+    Expect(Probe.bRan && !Probe.bVisibleImmediately, "SetScript inside a tick is not visible until the phase ends");
+    Expect(B.HasScript(), "and has applied once the tick is over");
+    Expect(W.GetScriptedEntityAt(1) == B.GetID(), "scripted entities keep the order their paths were set in");
+
+    Expect(B.ClearScript() && !B.HasScript() && W.GetScriptedEntityCount() == 1, "ClearScript removes it from the list");
+
+    /* Destroying clears everything; the recycled slot starts clean. */
+    W.DestroyEntity(A);
+    Expect(W.GetScriptedEntityCount() == 0, "a destroyed entity leaves the scripted list");
+    Expect(!W.FindEntityByName("Alpha").IsSet(), "a destroyed entity is not found by name");
+    Expect(A.GetName()[0] == '\0' && !A.SetName("Ghost") && !A.SetScript("x.lua"), "a dead handle has no members and takes none");
+    const Entity Recycled = W.CreateEntity();
+    Expect(Recycled.GetID().Index == A.GetID().Index, "(the slot is recycled)");
+    Expect(Recycled.GetName()[0] == '\0' && !Recycled.HasScript(), "the recycled slot has no name and no script");
+}
+
+// ============================================================================
 // Components + owner header
 // ============================================================================
 
@@ -233,7 +311,7 @@ static void TestComponents()
 
     Expect(T1->Owner.OwningWorld == &W, "owner header's World is set");
     Expect(T1->Owner.Entity == E1, "owner header's Entity is set");
-    Expect(std::strcmp(T1->Owner.GetName(), "Alice") == 0, "GetSibling<Name> through the owner header finds the right entity's name");
+    Expect(std::strcmp(T1->Owner.GetName(), "Alice") == 0, "the owner header finds the right entity's name");
     Expect(std::strcmp(T2->Owner.GetName(), "Bob") == 0, "same, for the second entity");
 
     Expect(E1.RemoveComponent<TransformComponent>(), "RemoveComponent succeeds");
@@ -796,10 +874,10 @@ static void TestComponentScripting()
         "assert(x == 2, 'and moves nothing')\n"
         "t:SetScale(2, 2, 2)\n"
         "assert(t:GetScale() == 2, 'Set/GetScale')\n"
-        "local n = e:GetComponent('Name')\n"
-        "assert(n:Get() == 'Builtins', 'Name:Get')\n"
-        "n:Set('Renamed')\n"
-        "assert(e:GetName() == 'Renamed', 'Name:Set')\n"
+        "assert(e:GetComponent('Name') == nil, 'the name is not a component')\n"
+        "assert(e:GetName() == 'Builtins', 'GetName')\n"
+        "assert(e:SetName('Renamed') == true, 'SetName')\n"
+        "assert(World.FindEntity('Renamed') ~= nil, 'FindEntity sees SetName')\n"
         "local b = e:AddComponent('Bounds')\n"
         "b:SetLocal(-1, -1, -1, 1, 1, 1)\n"
         "assert(b:GetLocal() == -1, 'Bounds:GetLocal')\n"
@@ -818,14 +896,43 @@ static void TestComponentScripting()
     Scripts.Shutdown();
 }
 
+/* Scripts are attached by path, so these tests need real files: written
+ * fresh under the temp directory, returned with forward slashes. */
+static std::string WriteTestScript(const char* InName, const char* InSource)
+{
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke";
+    std::error_code Ignored;
+    std::filesystem::create_directories(Dir, Ignored);
+    const std::filesystem::path File = Dir / InName;
+    std::ofstream(File, std::ios::binary | std::ios::trunc) << InSource;
+    return File.generic_string();
+}
+
+namespace
+{
+    double GOrderProbeSawX = -1.0;
+
+    /* Registered BEFORE BindWorld, in the phase the "Ordered" script ticks
+     * in: it must still see the script's write from the same phase. */
+    void OrderProbeSystem(World& InWorld, float /*InDeltaSeconds*/, void* /*InUserData*/)
+    {
+        const EntityID Ordered = InWorld.FindEntityByName("Ordered");
+        const TransformComponent* T = InWorld.GetEntity(Ordered).GetComponent<TransformComponent>();
+        GOrderProbeSawX = T ? double(T->Position.GetX()) : -1.0;
+    }
+}
+
 static void TestScripting()
 {
     std::printf("[scripting]\n");
 
     World W;
+    W.RegisterSystem("Test.OrderProbe", TP_PrePhysics, &OrderProbeSystem);
+
     ScriptEngine Scripts;
     Expect(Scripts.Initialize(), "ScriptEngine::Initialize succeeds");
     Scripts.BindWorld(&W);
+    Expect(W.HasScriptDriver(), "BindWorld installs the World's script driver");
 
     Expect(Scripts.RunString(
         "local e = World.CreateEntity(\"Scripted\")\n"
@@ -838,46 +945,113 @@ static void TestScripting()
     TransformComponent* T = W.GetEntity(Found).GetComponent<TransformComponent>();
     Expect(T != nullptr && T->Position.GetX() == 1.0, "a component set from Lua is readable from C++");
 
-    // A registered class ticks through the phase system.
-    Expect(Scripts.RunString(
-        "TickStarts = 0\n"
-        "TickCalls = 0\n"
-        "Script.Register(\"Counter\", {\n"
+    // A script file drives an entity through the World's script driver.
+    const std::string CounterPath = WriteTestScript("Counter.lua",
+        "CounterLoads = (CounterLoads or 0) + 1\n"
+        "TickStarts = TickStarts or 0\n"
+        "TickCalls = TickCalls or 0\n"
+        "return {\n"
         "    OnStart = function(self) TickStarts = TickStarts + 1 end,\n"
         "    OnTick  = function(self, dt) TickCalls = TickCalls + 1 end,\n"
-        "})\n",
-        "test-class"), "RunString registers a script class");
+        "}\n");
 
-    const EntityID Counted = W.CreateEntity();
-    Expect(Scripts.InstantiateScript(Counted, "Counter"), "InstantiateScript succeeds for a registered class");
+    const Entity Counted = W.CreateEntity("Counted");
+    Expect(Counted.SetScript(CounterPath.c_str()), "SetScript accepts a file path");
+    Expect(Counted.GetScriptState() && Counted.GetScriptState()->bPendingInstantiate,
+           "the script is pending until the next tick");
 
     W.Tick(0.016f);
     W.Tick(0.016f);
     W.Tick(0.016f);
 
-    Scripts.RunString("assert(TickStarts == 1, 'expected OnStart once, got ' .. TickStarts)", "assert-starts");
-    Scripts.RunString("assert(TickCalls == 3, 'expected OnTick 3 times, got ' .. TickCalls)", "assert-ticks");
+    Expect(Scripts.RunString("assert(TickStarts == 1, 'expected OnStart once, got ' .. TickStarts)", "assert-starts"),
+           "OnStart runs once");
+    Expect(Scripts.RunString("assert(TickCalls == 3, 'expected OnTick 3 times, got ' .. TickCalls)", "assert-ticks"),
+           "OnTick runs every tick");
+    Expect(Counted.GetScriptState() && !Counted.GetScriptState()->bPendingInstantiate
+           && Counted.GetScriptState()->InstanceRef != -2, "the instance is live after the first tick");
+
+    // A second entity on the same path shares the loaded class, not the instance.
+    const Entity CountedToo = W.CreateEntity("CountedToo");
+    CountedToo.SetScript(CounterPath.c_str());
+    W.Tick(0.016f);
+    Expect(Scripts.RunString("assert(CounterLoads == 1, 'the file ran ' .. CounterLoads .. ' times')", "assert-cache"),
+           "a script file is loaded once per bind, whatever uses it");
+    Expect(Scripts.RunString("assert(TickStarts == 2, 'expected a second OnStart, got ' .. TickStarts)", "assert-second"),
+           "each entity gets its own instance");
+
+    // Scripts tick before every registered system in their phase.
+    const std::string OrderedPath = WriteTestScript("Ordered.lua",
+        "return { OnTick = function(self, dt)\n"
+        "    local t = self.Entity:GetComponent('Transform')\n"
+        "    local x = t:GetPosition()\n"
+        "    t:SetPosition(x + 1, 0, 0)\n"
+        "end }\n");
+    const Entity Ordered = W.CreateEntity("Ordered");
+    Ordered.AddComponent<TransformComponent>();
+    Ordered.SetScript(OrderedPath.c_str());
+    W.Tick(0.016f);
+    Expect(GOrderProbeSawX == 1.0, "a script ticks before a system registered earlier in the same phase");
 
     // A script that errors logs one error and the loop stays alive.
-    const uint32_t ErrorsBefore = Scripts.GetErrorCount();
-    Expect(Scripts.RunString(
-        "Script.Register(\"Broken\", { OnTick = function(self, dt) error('boom') end })",
-        "test-broken"), "registering a class that will error still succeeds");
-    const EntityID BrokenEntity = W.CreateEntity();
-    Scripts.InstantiateScript(BrokenEntity, "Broken");
+    const std::string BrokenPath = WriteTestScript("Broken.lua",
+        "return { OnTick = function(self, dt) error('boom') end }\n");
+    uint32_t ErrorsBefore = Scripts.GetErrorCount();
+    const Entity BrokenEntity = W.CreateEntity();
+    BrokenEntity.SetScript(BrokenPath.c_str());
     W.Tick(0.016f);
     W.Tick(0.016f);   // second tick must not re-raise -- bErrored gates it
     Expect(Scripts.GetErrorCount() == ErrorsBefore + 1, "exactly one error is logged, not one per tick");
+    Expect(BrokenEntity.GetScriptState() && BrokenEntity.GetScriptState()->bErrored, "the script is marked errored");
+
+    // A missing file and a file that returns no class: one error per path, not per entity.
+    const std::string NotAClassPath = WriteTestScript("NotAClass.lua", "return 42\n");
+    const std::string MissingPath   = (std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "DoesNotExist.lua").generic_string();
+    ErrorsBefore = Scripts.GetErrorCount();
+    const Entity MissingA = W.CreateEntity();
+    const Entity MissingB = W.CreateEntity();
+    const Entity NotAClass = W.CreateEntity();
+    MissingA.SetScript(MissingPath.c_str());
+    MissingB.SetScript(MissingPath.c_str());
+    NotAClass.SetScript(NotAClassPath.c_str());
+    W.Tick(0.016f);
+    Expect(Scripts.GetErrorCount() == ErrorsBefore + 2, "a missing file and a non-table return log one error each");
+    Expect(MissingA.GetScriptState()->bErrored && MissingB.GetScriptState()->bErrored
+           && NotAClass.GetScriptState()->bErrored, "and every entity using them is marked errored");
 
     // OnDestroy runs and the instance ref is released.
-    Expect(Scripts.RunString(
-        "Destroyed = false\n"
-        "Script.Register(\"Notify\", { OnDestroy = function(self) Destroyed = true end })",
-        "test-destroy"), "registering a destroy-notifying class succeeds");
-    const EntityID NotifyEntity = W.CreateEntity();
-    Scripts.InstantiateScript(NotifyEntity, "Notify");
+    const std::string NotifyPath = WriteTestScript("Notify.lua",
+        "return { OnDestroy = function(self) Destroyed = (Destroyed or 0) + 1 end }\n");
+    const Entity NotifyEntity = W.CreateEntity();
+    NotifyEntity.SetScript(NotifyPath.c_str());
+    W.Tick(0.016f);
     W.DestroyEntity(NotifyEntity);
-    Scripts.RunString("assert(Destroyed == true, 'OnDestroy did not run')", "assert-destroyed");
+    Expect(Scripts.RunString("assert(Destroyed == 1, 'OnDestroy ran ' .. tostring(Destroyed) .. ' times')", "assert-destroyed"),
+           "destroying the entity runs OnDestroy once");
+
+    // A script replacing itself from its own OnTick: deferred to the phase end.
+    const std::string OtherPath = WriteTestScript("Other.lua",
+        "return { OnStart = function(self) OtherStarted = true end }\n");
+    const std::string SwapperPath = WriteTestScript("Swapper.lua",
+        "return {\n"
+        "    OnTick = function(self, dt)\n"
+        "        self.Entity:SetScript(OtherPath)\n"
+        "        SwapDeferred = (self.Entity:GetScript() ~= OtherPath)\n"
+        "    end,\n"
+        "    OnDestroy = function(self) SwapperDestroyed = true end,\n"
+        "}\n");
+    Scripts.RunString(("OtherPath = '" + OtherPath + "'").c_str(), "set-other-path");
+    const Entity Swapper = W.CreateEntity();
+    Swapper.SetScript(SwapperPath.c_str());
+    W.Tick(0.016f);
+    Expect(Scripts.RunString("assert(SwapDeferred == true, 'SetScript applied mid-tick')", "assert-swap-deferred"),
+           "SetScript from inside a script is deferred");
+    Expect(Scripts.RunString("assert(SwapperDestroyed == true, 'no OnDestroy for the replaced script')", "assert-swapped"),
+           "the replaced script gets OnDestroy at the phase end");
+    Expect(std::strcmp(Swapper.GetScriptPath(), OtherPath.c_str()) == 0, "the new path is in place after the tick");
+    W.Tick(0.016f);
+    Expect(Scripts.RunString("assert(OtherStarted == true, 'the new script never started')", "assert-other-started"),
+           "the new script starts on a following tick");
 
     // A proxy held across a component removal errors cleanly rather than aliasing.
     Expect(Scripts.RunString(
@@ -887,6 +1061,37 @@ static void TestScripting()
         "local ok, err = pcall(function() t:GetPosition() end)\n"
         "assert(ok == false, 'expected the stale proxy to error')\n",
         "test-stale-proxy"), "a proxy held across RemoveComponent errors instead of aliasing");
+
+    // The Lua spelling of the members.
+    Expect(Scripts.RunString(
+        ("local e = World.CreateEntity('LuaMembers')\n"
+         "assert(e:GetScript() == nil, 'no script yet')\n"
+         "assert(e:SetScript('" + OtherPath + "') == true, 'SetScript')\n"
+         "assert(e:GetScript() == '" + OtherPath + "', 'outside a tick, SetScript applies at once')\n").c_str(),
+        "test-lua-members"), "e:SetScript / e:GetScript are bound");
+    const Entity LuaMembers = W.GetEntity(W.FindEntityByName("LuaMembers"));
+    Expect(std::strcmp(LuaMembers.GetScriptPath(), OtherPath.c_str()) == 0, "e:SetScript outside a tick applies at once");
+    Expect(Scripts.RunString("local e = World.FindEntity('LuaMembers')\n"
+                             "assert(e:ClearScript() == true and e:GetScript() == nil, 'ClearScript')\n",
+                             "test-lua-clear"), "e:ClearScript clears");
+
+    // Unbind releases every instance but keeps the paths; a rebind restarts them.
+    const std::string RebindPath = WriteTestScript("Rebind.lua",
+        "return {\n"
+        "    OnStart   = function(self) RebindStarts = (RebindStarts or 0) + 1 end,\n"
+        "    OnDestroy = function(self) RebindDestroys = (RebindDestroys or 0) + 1 end,\n"
+        "}\n");
+    const Entity Rebound = W.CreateEntity();
+    Rebound.SetScript(RebindPath.c_str());
+    W.Tick(0.016f);
+    Scripts.UnbindWorld();
+    Expect(!W.HasScriptDriver(), "UnbindWorld removes the driver");
+    Expect(Rebound.HasScript() && Rebound.GetScriptState()->bPendingInstantiate, "the path survives an unbind, pending again");
+    Scripts.BindWorld(&W);
+    W.Tick(0.016f);
+    Expect(Scripts.RunString("assert(RebindStarts == 2 and RebindDestroys == 1, "
+                             "'starts ' .. tostring(RebindStarts) .. ', destroys ' .. tostring(RebindDestroys))",
+                             "assert-rebind"), "unbind runs OnDestroy; the next bind starts the script again");
 
     Scripts.UnbindWorld();
     Scripts.Shutdown();
@@ -1104,6 +1309,10 @@ static void TestWorldSerialization()
 
         Bob.AddComponent<OpaqueComponent>();
 
+        /* The members travel in the entity table, not as components. */
+        Alice.SetScript("Scripts/Alice.lua");
+        Alice.GetScriptState()->bCullOutsideActiveRegion = 1;
+
         /* A destroyed entity must not appear in the save, and its hole in the
          * slot table must not break the dense index mapping. */
         const EntityID Doomed = W.CreateEntity("Doomed");
@@ -1131,6 +1340,14 @@ static void TestWorldSerialization()
         Expect(Alice.IsSet(), "Alice came back, by name");
         Expect(Bob.IsSet(),   "Bob came back, by name");
         Expect(!W.FindEntityByName("Doomed").IsSet(), "the destroyed entity did NOT come back");
+
+        const Entity AliceHandle = W.GetEntity(Alice);
+        Expect(std::strcmp(AliceHandle.GetScriptPath(), "Scripts/Alice.lua") == 0, "Alice's script path came back");
+        Expect(AliceHandle.GetScriptState() && AliceHandle.GetScriptState()->bCullOutsideActiveRegion,
+               "and its cull flag");
+        Expect(AliceHandle.GetScriptState() && AliceHandle.GetScriptState()->bPendingInstantiate,
+               "a restored script is pending: it starts on the next tick of a bound World");
+        Expect(!W.GetEntity(Bob).HasScript(), "Bob, who had none, has no script");
 
         TransformComponent* Transform = W.GetEntity(Alice).GetComponent<TransformComponent>();
         Expect(Transform != nullptr, "Alice's Transform came back");
@@ -1275,6 +1492,11 @@ static std::vector<uint8_t> BuildVersionedSave(const uint16_t InDataVersion, con
     {
         uint32_t SavedIndex = Index;
         Ar << SavedIndex;
+
+        std::string Name;
+        std::string ScriptPath;
+        uint8_t     bCull = 0;
+        Ar << Name << ScriptPath << bCull;
     }
 
     uint16_t ComponentVersion = InDataVersion;
@@ -1391,6 +1613,7 @@ int main()
 
     TestComponentRegistry();
     TestEntities();
+    TestEntityMembers();
     TestComponents();
     TestTickPhases();
     TestDelegates();

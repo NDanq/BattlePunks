@@ -15,17 +15,25 @@
 
 class EditorContext;
 class PropertyEditor;
+class QCheckBox;
 class QLabel;
+class QLineEdit;
 class QMenu;
 class QScrollArea;
 class QToolButton;
 class QVBoxLayout;
 
 /*
- * The selected entity's components, one collapsible section each, showing
- * only the fields its type registered with GAMECORE_DEFINE_COMPONENT_PROPERTIES.
- * A component with no property list still gets a header, so the panel tells
- * the whole truth about what the entity carries.
+ * The selected entity: first its members (name and script path -- not
+ * components, so not removable), then its components, one collapsible section
+ * each, showing only the fields its type registered with
+ * GAMECORE_DEFINE_COMPONENT_PROPERTIES. A component with no property list
+ * still gets a header, so the panel tells the whole truth about what the
+ * entity carries.
+ *
+ *   Entity         Name, Script (a .lua path, typed or browsed), the script's
+ *                  run status (only a playing World runs scripts) and its
+ *                  cull-outside-active-region flag.
  *
  *   Per property   a reset arrow to the right, shown only while the value
  *                  differs from the type's default-constructed one; clicking
@@ -74,6 +82,8 @@ private:
     /* The component types InEntity carries, in type-id order. */
     std::vector<GameCore::ComponentTypeID> CollectComponentTypes(GameCore::EntityID InEntity) const;
 
+    QWidget* BuildEntitySection(GameCore::EntityID InEntity);
+    void     RefreshEntitySection();
     QWidget* BuildComponentSection(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
     QWidget* BuildAddComponentButton();
     void     PopulateAddMenu(QMenu* InMenu);
@@ -92,6 +102,12 @@ private:
     QScrollArea* Scroll      = nullptr;
     QWidget*     Body        = nullptr;
     QVBoxLayout* BodyLayout  = nullptr;
+
+    /* The Entity section's editors; null when nothing is shown. */
+    QLineEdit* NameEdit     = nullptr;
+    QLineEdit* ScriptEdit   = nullptr;
+    QLabel*    ScriptStatus = nullptr;
+    QCheckBox* CullCheck    = nullptr;
 
     GameCore::EntityID                     ShownEntity;
     std::vector<GameCore::ComponentTypeID> ShownTypes;

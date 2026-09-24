@@ -8,11 +8,12 @@
 #include "Public/GameCore/World.h"
 
 /*
- * ScriptComponent's whole lifecycle: Script.Register, instantiation (shared
- * by the Lua e:AddScript() path and ScriptEngine::InstantiateScript), the
- * per-phase tick, Lua-defined systems (World.AddSystem), and the teardown
- * that runs at World unbind. See DESIGN.md for the class registry, why
- * there is one system per phase, and the CallLifecycleMethod bug/fix.
+ * The entity-script lifecycle, as the World's ScriptDriver: loading a script
+ * file into a class table (cached by path), instantiating it for an entity,
+ * the per-phase tick that runs before every registered system, Lua-defined
+ * systems (World.AddSystem), and the release that runs OnDestroy. See
+ * DESIGN.md for the class cache, why scripts tick first, and the
+ * CallLifecycleMethod bug/fix.
  */
 
 namespace GameCore
@@ -22,7 +23,10 @@ namespace GameCore
 
     namespace
     {
-        constexpr const char* CLASS_REGISTRY_KEY = "GameCore.ScriptClasses";
+        /* path -> class table, or false for a path that failed to load (so a
+         * broken file is read and reported once per bind, not once per
+         * entity). Rebuilt on every BindWorld, which is what picks up edits. */
+        constexpr const char* CLASS_CACHE_KEY = "GameCore.ScriptClasses";
 
         struct LuaSystemEntry
         {
@@ -31,9 +35,8 @@ namespace GameCore
         };
 
         /* Per-World script state: the Lua-defined systems a World is
-         * carrying, and the removal-observer plumbing. One per bound World,
-         * found through a light userdata registry key, same idiom as
-         * ScriptBindings.cpp's GetBoundWorld. */
+         * carrying. One per bound World, found through a light userdata
+         * registry key, same idiom as ScriptBindings.cpp's GetBoundWorld. */
         struct WorldScriptState
         {
             World* Owner = nullptr;
@@ -58,20 +61,86 @@ namespace GameCore
             lua_settable(InState, LUA_REGISTRYINDEX);
         }
 
-        /* Reads a script class table by name. Pushes it (or nil) and
-         * returns whether found -- callers pop it themselves. */
-        bool PushScriptClass(lua_State* InState, const char* InClassName)
+        bool IsLiveRef(const int32_t InRef) { return InRef != LUA_NOREF && InRef != LUA_REFNIL; }
+
+        /* Pushes the class table a script file returns, loading and caching it
+         * on first use. False (nothing pushed) if the file is unreadable, does
+         * not compile, errors, or returns anything but a table -- each logged
+         * and counted once. */
+        bool PushScriptClass(lua_State* InState, const char* InPath)
         {
-            lua_getfield(InState, LUA_REGISTRYINDEX, CLASS_REGISTRY_KEY);
-            lua_getfield(InState, -1, InClassName);
-            lua_remove(InState, -2);   // drop the outer class-registry table, keep only the result
-            const bool bFound = !lua_isnil(InState, -1);
-            return bFound;
+            lua_getfield(InState, LUA_REGISTRYINDEX, CLASS_CACHE_KEY);   // cache
+            lua_getfield(InState, -1, InPath);                           // cache, entry
+            if(lua_istable(InState, -1))
+            {
+                lua_remove(InState, -2);
+                return true;
+            }
+            const bool bKnownBad = !lua_isnil(InState, -1);
+            lua_pop(InState, 1);                                         // cache
+
+            if(bKnownBad)
+            {
+                lua_pop(InState, 1);
+                return false;
+            }
+
+            /* Everything below leaves exactly one value (the class, or false)
+             * above the cache before storing it. */
+            bool bLoaded = false;
+            std::string Source;
+            if(!LuaReadScriptFile(InPath, Source))
+            {
+                GAMECORE_LOG_ERROR(std::string("Script: could not read \"") + InPath + "\"")
+                LuaCountError(InState);
+            }
+            else
+            {
+                const std::string ChunkName = std::string("@") + InPath;
+                if(luaL_loadbuffer(InState, Source.data(), Source.size(), ChunkName.c_str()) != LUA_OK)
+                {
+                    const char* ErrorText = lua_tostring(InState, -1);
+                    GAMECORE_LOG_ERROR(std::string("Lua load error (") + InPath + "): "
+                                       + (ErrorText ? ErrorText : "<no message>"))
+                    lua_pop(InState, 1);
+                    LuaCountError(InState);
+                }
+                else if(LuaCallProtected(InState, 0, 1, InPath))   // counts its own error
+                {
+                    if(lua_istable(InState, -1))
+                    {
+                        bLoaded = true;
+                    }
+                    else
+                    {
+                        GAMECORE_LOG_ERROR(std::string("Script: \"") + InPath
+                                           + "\" must return its class table (got "
+                                           + luaL_typename(InState, -1) + ")")
+                        lua_pop(InState, 1);
+                        LuaCountError(InState);
+                    }
+                }
+            }
+
+            if(!bLoaded)
+            {
+                lua_pushboolean(InState, 0);
+            }
+            lua_pushvalue(InState, -1);
+            lua_setfield(InState, -3, InPath);   // cache[path] = class or false
+            lua_remove(InState, -2);             // drop the cache
+
+            if(!bLoaded)
+            {
+                lua_pop(InState, 1);
+            }
+            return bLoaded;
         }
 
         /* Reads ClassTable.TickPhase and .CullOutsideActiveRegion, with
-         * ClassTable at the top of the stack. Leaves the stack as found. */
-        void ReadClassFlags(lua_State* InState, uint8_t& OutPhase, uint8_t& OutCull)
+         * ClassTable at the top of the stack. Leaves the stack as found. A
+         * missing CullOutsideActiveRegion keeps the entity's own setting. */
+        void ReadClassFlags(lua_State* InState, uint8_t& OutPhase, uint8_t& InOutCull)
         {
             lua_getfield(InState, -1, "TickPhase");
             const lua_Integer PhaseValue = lua_isinteger(InState, -1) ? lua_tointeger(InState, -1) : TP_PrePhysics;
@@ -79,43 +148,27 @@ namespace GameCore
             lua_pop(InState, 1);
 
             lua_getfield(InState, -1, "CullOutsideActiveRegion");
-            OutCull = lua_toboolean(InState, -1) ? 1 : 0;
+            if(!lua_isnil(InState, -1))
+            {
+                InOutCull = lua_toboolean(InState, -1) ? 1 : 0;
+            }
             lua_pop(InState, 1);
         }
 
-        int Script_Register(lua_State* InState)
+        /* Runs one method on the instance InRef under protected call. True if
+         * it ran cleanly or does not exist. InDeltaSeconds is null for
+         * OnStart/OnDestroy, non-null for OnTick -- see DESIGN.md for why this
+         * is a fixed optional argument rather than a generic pushed-argument
+         * count. */
+        bool CallMethod(lua_State* InState, const int InRef, const std::string& InPath,
+                        const char* InMethodName, const float* InDeltaSeconds)
         {
-            const char* ClassName = luaL_checkstring(InState, 1);
-            luaL_checktype(InState, 2, LUA_TTABLE);
-
-            lua_getfield(InState, LUA_REGISTRYINDEX, CLASS_REGISTRY_KEY);
-            lua_pushvalue(InState, 2);
-            lua_setfield(InState, -2, ClassName);
-            lua_pop(InState, 1);
-            return 0;
-        }
-
-        const luaL_Reg GScriptFunctions[] = {
-            { "Register", Script_Register },
-            { nullptr, nullptr }
-        };
-
-        /* Runs one lifecycle method under protected call. Sets bErrored on
-         * failure so a broken script's OnTick is not retried every frame.
-         * InDeltaSeconds is null for OnStart/OnDestroy, non-null for OnTick
-         * -- see DESIGN.md for why this is a fixed optional argument rather
-         * than a generic pushed-argument count. */
-        void CallLifecycleMethod(lua_State* InState, ScriptComponent& Script, const char* InMethodName,
-                                  const float* InDeltaSeconds)
-        {
-            if(Script.bErrored) { return; }
-
-            lua_rawgeti(InState, LUA_REGISTRYINDEX, Script.InstanceRef);   // the instance table (self)
-            lua_getfield(InState, -1, InMethodName);                       // self[InMethodName]
+            lua_rawgeti(InState, LUA_REGISTRYINDEX, InRef);   // the instance table (self)
+            lua_getfield(InState, -1, InMethodName);           // self[InMethodName]
             if(lua_isnil(InState, -1))
             {
                 lua_pop(InState, 2);   // method (nil), self
-                return;
+                return true;
             }
 
             /* Swap so the call layout is [function, self], the only
@@ -129,50 +182,124 @@ namespace GameCore
                 ++ArgCount;
             }
 
-            const std::string Context = std::string(Script.ClassName) + "." + InMethodName;
-            if(!LuaCallProtected(InState, ArgCount, 0, Context.c_str()))
+            const std::string Context = InPath + "." + InMethodName;
+            return LuaCallProtected(InState, ArgCount, 0, Context.c_str());
+        }
+
+        /* A tick-time lifecycle call. Sets bErrored on failure so a broken
+         * script's OnTick is not retried every frame. The state is looked up
+         * again after the call rather than held across it. */
+        void CallLifecycleMethod(lua_State* InState, World& InWorld, const EntityID InEntity,
+                                 const char* InMethodName, const float* InDeltaSeconds)
+        {
+            const Entity Handle(&InWorld, InEntity);
+            const EntityScriptState* Script = Handle.GetScriptState();
+            if(!Script || Script->bErrored || !IsLiveRef(Script->InstanceRef)) { return; }
+
+            const int Ref = Script->InstanceRef;
+            if(!CallMethod(InState, Ref, Handle.GetScriptPath(), InMethodName, InDeltaSeconds))
             {
-                Script.bErrored = 1;
+                EntityScriptState* After = Handle.GetScriptState();
+                if(After && After->InstanceRef == Ref)
+                {
+                    After->bErrored = 1;
+                }
             }
         }
 
-        /* Shared by every phase's trampoline: walk the ScriptComponent pool
-         * once (base re-read every iteration -- see DESIGN.md), skip
-         * anything not in InPhase, skip a culled entity outside the active
-         * region, run OnStart once then OnTick every call. */
-        void RunScriptPhase(World& InWorld, const float InDeltaSeconds, const ETickPhase InPhase, lua_State* InState)
+        /* Loads the entity's script file (or takes it from the cache) and
+         * builds its instance. A failure marks the script errored, so it is
+         * reported once and never ticked. */
+        void InstantiateScript(lua_State* InState, World& InWorld, const EntityID InEntity)
         {
-            ComponentPool* Pool = InWorld.FindPool(ScriptComponent::StaticType().ID);
-            if(Pool)
+            const Entity Handle(&InWorld, InEntity);
+            EntityScriptState* Script = Handle.GetScriptState();
+            if(!Script) { return; }
+            Script->bPendingInstantiate = 0;
+
+            const std::string Path = Handle.GetScriptPath();
+
+            LuaStackGuard Guard(InState);
+            const bool bHaveClass = PushScriptClass(InState, Path.c_str());
+
+            /* A first load ran the file's top level, which may have destroyed
+             * this entity or queued a new path for it. */
+            Script = Handle.GetScriptState();
+            if(!Script || Path != Handle.GetScriptPath()) { return; }
+
+            if(!bHaveClass)
             {
-                const size_t Count = Pool->GetCount();
-                for(size_t Index = 0; Index < Count; ++Index)
+                Script->bErrored = 1;
+                return;
+            }
+            const int ClassIndex = lua_gettop(InState);
+
+            ReadClassFlags(InState, Script->Phase, Script->bCullOutsideActiveRegion);
+
+            /* The instance: a fresh table whose __index metatable is the class
+             * table -- Lua's usual OOP-by-metatable idiom. */
+            lua_newtable(InState);
+            const int InstanceIndex = lua_gettop(InState);
+
+            lua_newtable(InState);                       // the instance's own metatable
+            lua_pushvalue(InState, ClassIndex);
+            lua_setfield(InState, -2, "__index");
+            lua_setmetatable(InState, InstanceIndex);
+
+            LuaPushEntity(InState, InEntity);
+            lua_setfield(InState, InstanceIndex, "Entity");
+
+            lua_pushvalue(InState, InstanceIndex);
+            Script->InstanceRef = luaL_ref(InState, LUA_REGISTRYINDEX);
+        }
+
+        /* ScriptDriver::TickPhase. Walks the scripted entities in set order:
+         * instantiate anything pending, skip anything not in InPhase or culled
+         * outside the active region, run OnStart once then OnTick every call.
+         * The walk's list is stable -- World defers every SetScript and
+         * destroy while ticking. */
+        void ScriptDriver_TickPhase(World& InWorld, const ETickPhase InPhase, const float InDeltaSeconds, void* InUserData)
+        {
+            lua_State* InState = static_cast<lua_State*>(InUserData);
+
+            const size_t Count = InWorld.GetScriptedEntityCount();
+            for(size_t Index = 0; Index < Count; ++Index)
+            {
+                const EntityID EntityId = InWorld.GetScriptedEntityAt(Index);
+                const Entity Handle(&InWorld, EntityId);
+
+                EntityScriptState* Script = Handle.GetScriptState();
+                if(!Script) { continue; }
+
+                if(Script->bPendingInstantiate)
                 {
-                    ScriptComponent* Base = static_cast<ScriptComponent*>(Pool->GetDenseData());
-                    ScriptComponent& Script = Base[Index];
-                    if(Script.Phase != InPhase) { continue; }
-
-                    if(Script.bCullOutsideActiveRegion && InWorld.HasActiveRegion())
-                    {
-                        const BoundsComponent* Bounds = Script.Owner.GetSibling<BoundsComponent>();
-                        if(Bounds && !Bounds->World.Overlaps(InWorld.GetActiveRegion()))
-                        {
-                            continue;
-                        }
-                    }
-
-                    if(!Script.bStarted)
-                    {
-                        Script.bStarted = 1;
-                        CallLifecycleMethod(InState, Script, "OnStart", nullptr);
-                    }
-
-                    CallLifecycleMethod(InState, Script, "OnTick", &InDeltaSeconds);
+                    InstantiateScript(InState, InWorld, EntityId);
+                    Script = Handle.GetScriptState();
+                    if(!Script) { continue; }
                 }
+
+                if(Script->bErrored || Script->Phase != InPhase || !IsLiveRef(Script->InstanceRef)) { continue; }
+
+                if(Script->bCullOutsideActiveRegion && InWorld.HasActiveRegion())
+                {
+                    const BoundsComponent* Bounds = Handle.GetComponent<BoundsComponent>();
+                    if(Bounds && !Bounds->World.Overlaps(InWorld.GetActiveRegion()))
+                    {
+                        continue;
+                    }
+                }
+
+                if(!Script->bStarted)
+                {
+                    Script->bStarted = 1;
+                    CallLifecycleMethod(InState, InWorld, EntityId, "OnStart", nullptr);
+                }
+
+                CallLifecycleMethod(InState, InWorld, EntityId, "OnTick", &InDeltaSeconds);
             }
 
-            /* Lua-defined systems for this phase, run after every script
-             * component's own tick -- see DESIGN.md. */
+            /* Lua-defined systems for this phase, after every entity script
+             * and still ahead of every C++ system -- see DESIGN.md. */
             if(WorldScriptState* State = GetScriptState(InState))
             {
                 for(const LuaSystemEntry& Entry : State->LuaSystems[InPhase])
@@ -184,76 +311,28 @@ namespace GameCore
             }
         }
 
-        /* One trampoline per phase, each a plain SystemFn. */
-        void ScriptPhase_PrePhysics(World& InWorld, const float InDelta, void* InUserData)  { RunScriptPhase(InWorld, InDelta, TP_PrePhysics,  static_cast<lua_State*>(InUserData)); }
-        void ScriptPhase_Physics(World& InWorld, const float InDelta, void* InUserData)     { RunScriptPhase(InWorld, InDelta, TP_Physics,     static_cast<lua_State*>(InUserData)); }
-        void ScriptPhase_PostPhysics(World& InWorld, const float InDelta, void* InUserData) { RunScriptPhase(InWorld, InDelta, TP_PostPhysics, static_cast<lua_State*>(InUserData)); }
-        void ScriptPhase_PostUpdate(World& InWorld, const float InDelta, void* InUserData)  { RunScriptPhase(InWorld, InDelta, TP_PostUpdate,  static_cast<lua_State*>(InUserData)); }
-
-        /* ComponentPool's removal observer for ScriptComponent -- runs
-         * OnDestroy, then releases the instance's registry ref. Safe to
-         * call back into Lua here -- see DESIGN.md for why it never
-         * re-enters a walk. */
-        void ScriptComponent_OnRemoved(EntityID /*InEntity*/, void* InComponent, void* InUserData)
+        /* ScriptDriver::Release -- runs OnDestroy, then releases the instance's
+         * registry ref. The ref is cleared BEFORE OnDestroy runs, so a
+         * re-entrant release of the same entity finds nothing left to do. An
+         * errored script gets no OnDestroy (nothing else of it runs either). */
+        void ScriptDriver_Release(World& InWorld, const EntityID InEntity, void* InUserData)
         {
             lua_State* InState = static_cast<lua_State*>(InUserData);
-            ScriptComponent& Script = *static_cast<ScriptComponent*>(InComponent);
+            const Entity Handle(&InWorld, InEntity);
 
-            if(Script.InstanceRef != LUA_NOREF && Script.InstanceRef != LUA_REFNIL)
+            EntityScriptState* Script = Handle.GetScriptState();
+            if(!Script || !IsLiveRef(Script->InstanceRef)) { return; }
+
+            const int  Ref       = Script->InstanceRef;
+            const bool bErrored  = Script->bErrored != 0;
+            Script->InstanceRef  = LUA_NOREF;
+
+            if(!bErrored)
             {
-                CallLifecycleMethod(InState, Script, "OnDestroy", nullptr);
-                luaL_unref(InState, LUA_REGISTRYINDEX, Script.InstanceRef);
-                Script.InstanceRef = LUA_NOREF;
+                CallMethod(InState, Ref, Handle.GetScriptPath(), "OnDestroy", nullptr);
             }
+            luaL_unref(InState, LUA_REGISTRYINDEX, Ref);
         }
-    }
-
-    bool ScriptSystem_InstantiateScript(lua_State* InState, World* InWorld, const EntityID InEntity, const char* InClassName)
-    {
-        if(Entity(InWorld, InEntity).HasComponent<ScriptComponent>())
-        {
-            GAMECORE_LOG_WARN(std::string("InstantiateScript: entity already has a ScriptComponent (class \"")
-                               + InClassName + "\" not added)")
-            return false;
-        }
-
-        LuaStackGuard Guard(InState);
-        if(!PushScriptClass(InState, InClassName))
-        {
-            GAMECORE_LOG_ERROR(std::string("InstantiateScript: no class registered as \"") + InClassName + "\"")
-            return false;
-        }
-        const int ClassIndex = lua_gettop(InState);
-
-        uint8_t Phase = TP_PrePhysics;
-        uint8_t Cull  = 0;
-        ReadClassFlags(InState, Phase, Cull);
-
-        /* The instance: a fresh table whose __index metatable is the class
-         * table -- Lua's usual OOP-by-metatable idiom. */
-        lua_newtable(InState);
-        const int InstanceIndex = lua_gettop(InState);
-
-        lua_newtable(InState);                       // the instance's own metatable
-        lua_pushvalue(InState, ClassIndex);
-        lua_setfield(InState, -2, "__index");
-        lua_setmetatable(InState, InstanceIndex);
-
-        LuaPushEntity(InState, InEntity);
-        lua_setfield(InState, InstanceIndex, "Entity");
-
-        lua_pushvalue(InState, InstanceIndex);
-        const int InstanceRef = luaL_ref(InState, LUA_REGISTRYINDEX);
-
-        ScriptComponent Init;
-        Init.InstanceRef = InstanceRef;
-        std::strncpy(Init.ClassName, InClassName, sizeof(Init.ClassName) - 1);
-        Init.ClassName[sizeof(Init.ClassName) - 1] = '\0';
-        Init.Phase                    = Phase;
-        Init.bCullOutsideActiveRegion = Cull;
-
-        Entity(InWorld, InEntity).AddComponent(Init);
-        return true;
     }
 
     void ScriptSystem_AddLuaSystem(lua_State* InState, World* InWorld, const char* InName, const ETickPhase InPhase, const int InFunctionRef)
@@ -265,7 +344,7 @@ namespace GameCore
         Entry.Name        = InName;
         Entry.FunctionRef = InFunctionRef;
         State->LuaSystems[InPhase].push_back(Entry);
-        (void)InWorld;   // the phase trampolines read World's ScriptState by lua_State, not by World*
+        (void)InWorld;   // the driver reads World's ScriptState by lua_State, not by World*
     }
 
     bool ScriptSystem_RemoveLuaSystem(lua_State* InState, World* /*InWorld*/, const char* InName)
@@ -290,54 +369,50 @@ namespace GameCore
 
     void ScriptSystem_Install(lua_State* InState, World* InWorld)
     {
+        /* A fresh class cache each BindWorld, so a rebind re-reads every
+         * script file rather than running last bind's classes. */
         lua_newtable(InState);
-        luaL_setfuncs(InState, GScriptFunctions, 0);
-        lua_setglobal(InState, "Script");
-
-        /* A fresh class-registry table each BindWorld, so a second bind
-         * starts with no classes left over from the previous one. */
-        lua_newtable(InState);
-        lua_setfield(InState, LUA_REGISTRYINDEX, CLASS_REGISTRY_KEY);
+        lua_setfield(InState, LUA_REGISTRYINDEX, CLASS_CACHE_KEY);
 
         WorldScriptState* State = new WorldScriptState();
         State->Owner = InWorld;
         SetScriptState(InState, State);
 
-        InWorld->RegisterSystem("Script.PrePhysics",  TP_PrePhysics,  &ScriptPhase_PrePhysics,  InState);
-        InWorld->RegisterSystem("Script.Physics",     TP_Physics,     &ScriptPhase_Physics,     InState);
-        InWorld->RegisterSystem("Script.PostPhysics", TP_PostPhysics, &ScriptPhase_PostPhysics, InState);
-        InWorld->RegisterSystem("Script.PostUpdate",  TP_PostUpdate,  &ScriptPhase_PostUpdate,  InState);
-
-        ComponentPool* Pool = InWorld->GetPool(ScriptComponent::StaticType().ID);
-        if(Pool)
-        {
-            Pool->SetRemovedObserver(&ScriptComponent_OnRemoved, InState);
-        }
+        ScriptDriver Driver;
+        Driver.TickPhase = &ScriptDriver_TickPhase;
+        Driver.Release   = &ScriptDriver_Release;
+        Driver.UserData  = InState;
+        InWorld->SetScriptDriver(&Driver);
     }
 
     void ScriptSystem_Uninstall(lua_State* InState, World* InWorld)
     {
-        InWorld->UnregisterAllSystems(InState);
-
-        if(ComponentPool* Pool = InWorld->FindPool(ScriptComponent::StaticType().ID))
+        /* Every live instance gets OnDestroy + unref, exactly as if its entity
+         * had been destroyed -- but keeps its path, reset to pending, so the
+         * next bind starts it afresh. Collected first: OnDestroy may set or
+         * clear scripts, which reorders the list. */
+        std::vector<EntityID> Scripted;
+        const size_t Count = InWorld->GetScriptedEntityCount();
+        Scripted.reserve(Count);
+        for(size_t Index = 0; Index < Count; ++Index)
         {
-            Pool->SetRemovedObserver(nullptr, nullptr);
+            Scripted.push_back(InWorld->GetScriptedEntityAt(Index));
+        }
 
-            /* Every still-live script instance gets OnDestroy + unref,
-             * exactly as if its entity had been destroyed. */
-            ScriptComponent* Base = static_cast<ScriptComponent*>(Pool->GetDenseData());
-            const size_t Count = Pool->GetCount();
-            for(size_t Index = 0; Index < Count; ++Index)
+        for(const EntityID EntityId : Scripted)
+        {
+            ScriptDriver_Release(*InWorld, EntityId, InState);
+
+            if(EntityScriptState* Script = Entity(InWorld, EntityId).GetScriptState())
             {
-                ScriptComponent& Script = Base[Index];
-                if(Script.InstanceRef != LUA_NOREF && Script.InstanceRef != LUA_REFNIL)
-                {
-                    CallLifecycleMethod(InState, Script, "OnDestroy", nullptr);
-                    luaL_unref(InState, LUA_REGISTRYINDEX, Script.InstanceRef);
-                    Script.InstanceRef = LUA_NOREF;
-                }
+                const uint8_t Cull = Script->bCullOutsideActiveRegion;
+                *Script = EntityScriptState();
+                Script->bCullOutsideActiveRegion = Cull;
+                Script->bPendingInstantiate      = 1;
             }
         }
+
+        InWorld->SetScriptDriver(nullptr);
 
         if(WorldScriptState* State = GetScriptState(InState))
         {
@@ -352,6 +427,7 @@ namespace GameCore
             SetScriptState(InState, nullptr);
         }
 
-        (void)InWorld;
+        lua_pushnil(InState);
+        lua_setfield(InState, LUA_REGISTRYINDEX, CLASS_CACHE_KEY);
     }
 }

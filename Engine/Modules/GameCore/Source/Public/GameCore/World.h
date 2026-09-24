@@ -33,6 +33,53 @@ namespace GameCore
 {
     using SystemFn = void (*)(World& InWorld, float InDeltaSeconds, void* InUserData);
 
+    /*
+     * The runtime half of an entity's script -- the persistent half is its
+     * path (Entity::GetScriptPath). World stores this per entity slot but never
+     * interprets it: every field belongs to the ScriptDriver. Reset whenever
+     * the path changes, so a new path always starts fresh.
+     */
+    struct EntityScriptState
+    {
+        /* A luaL_ref for this entity's instance table; -2 is LUA_NOREF spelled
+         * as a literal -- lua.h never appears in Public/. */
+        int32_t InstanceRef = -2;
+
+        /* Read from the script's class table when it is instantiated;
+         * TP_PrePhysics if unspecified. */
+        uint8_t Phase = TP_PrePhysics;
+
+        uint8_t bStarted = 0;
+        uint8_t bErrored = 0;
+
+        /* Set by SetScript; the driver loads the file and clears it at the
+         * start of the next phase it runs. */
+        uint8_t bPendingInstantiate = 0;
+
+        /* Only meaningful with a BoundsComponent on the same entity -- see
+         * DESIGN.md. Persisted with the path; the class table's
+         * CullOutsideActiveRegion field, when present, overrides it. */
+        uint8_t bCullOutsideActiveRegion = 0;
+    };
+
+    /*
+     * What runs entity scripts. One per World (ScriptEngine::BindWorld installs
+     * it); World calls it but knows nothing of Lua. See DESIGN.md.
+     */
+    struct ScriptDriver
+    {
+        /* Runs at the START of every phase, before any registered system --
+         * scripts always update first. */
+        void (*TickPhase)(World& InWorld, ETickPhase InPhase, float InDeltaSeconds, void* InUserData) = nullptr;
+
+        /* An entity's script is going away: the entity is being destroyed or
+         * its path replaced. Runs while the path and state are still in place;
+         * World clears both after it returns. */
+        void (*Release)(World& InWorld, EntityID InEntity, void* InUserData) = nullptr;
+
+        void* UserData = nullptr;
+    };
+
     class GAMECORE_API World
     {
     public:
@@ -50,7 +97,7 @@ namespace GameCore
          * Entity converts implicitly to EntityID, so storing the result as an
          * EntityID still works. */
         Entity CreateEntity();
-        /* Convenience: also adds a NameComponent set to InName. */
+        /* Also sets the entity's name, before OnEntityCreated fires. */
         Entity CreateEntity(const char* InName);
 
         /* DEFERRED to the end of the current phase when called during a
@@ -64,8 +111,8 @@ namespace GameCore
         /* The handle -- valid (Entity::IsValid()) regardless of IsAlive(). */
         Entity GetEntity(EntityID InEntity);
 
-        /* Linear scan over the NameComponent pool. InvalidEntityID() if
-         * nothing matches. */
+        /* Linear scan over the live entities' names, in slot order.
+         * InvalidEntityID() if nothing matches (or InName is ""). */
         EntityID FindEntityByName(const char* InName) const;
 
         /* Every live entity in slot order, whatever it carries -- Each<T> only
@@ -109,13 +156,29 @@ namespace GameCore
          * spatial refit at the end of TP_Physics. */
         void Tick(float InDeltaSeconds);
 
-        /* Runs InPhase's systems, then flushes THIS PHASE's deferred
-         * destroy/remove queue. Public so a host can interleave work between
-         * phases -- see DESIGN.md. */
+        /* Runs the script driver's pass for InPhase, then InPhase's systems,
+         * then flushes THIS PHASE's deferred destroy/remove/script queue.
+         * Public so a host can interleave work between phases -- see
+         * DESIGN.md. */
         void TickPhase(ETickPhase InPhase, float InDeltaSeconds);
 
         bool       IsTicking() const;
         ETickPhase GetCurrentPhase() const;
+
+        // === Entity scripts: the driver side ==================================
+        // A script is attached through Entity::SetScript; these are for
+        // whatever RUNS scripts (ScriptEngine), not for gameplay code.
+
+        /* Copies InDriver; nullptr clears. One driver at a time -- installing
+         * a second replaces the first without releasing anything. */
+        void SetScriptDriver(const ScriptDriver* InDriver);
+        bool HasScriptDriver() const;
+
+        /* Every entity with a script path, in the order the paths were set --
+         * the order scripts tick in. Stable while the World ticks, since every
+         * SetScript and destroy is deferred then. */
+        size_t   GetScriptedEntityCount() const;
+        EntityID GetScriptedEntityAt(size_t InIndex) const;
 
         // === Spatial =========================================================
         // The tree is the World's; systems query it, they do not own it.
@@ -150,7 +213,7 @@ namespace GameCore
         void RefreshSpatialIndex();
 
         /* A shared "region gameplay currently cares about" hint -- see
-         * DESIGN.md. ScriptComponent::CullOutsideActiveRegion is the one
+         * DESIGN.md. An entity script's bCullOutsideActiveRegion is the one
          * built-in consumer. */
         void        SetActiveRegion(const AABB& InBox);
         bool        HasActiveRegion() const;
@@ -183,6 +246,15 @@ namespace GameCore
         bool  HasComponentRaw(EntityID InEntity, ComponentTypeID InType) const;
         /* DEFERRED inside a tick -- see DestroyEntity. */
         bool  RemoveComponentRaw(EntityID InEntity, ComponentTypeID InType);
+
+        /* The entity members -- private for the same reason: Entity is the
+         * one public way to reach them. */
+        const char*        GetEntityName(EntityID InEntity) const;
+        bool               SetEntityName(EntityID InEntity, const char* InName);
+        const char*        GetEntityScriptPath(EntityID InEntity) const;
+        /* DEFERRED inside a tick -- see DestroyEntity. */
+        bool               SetEntityScript(EntityID InEntity, const char* InPath);
+        EntityScriptState* GetEntityScriptState(EntityID InEntity) const;
 
         struct Impl;
         Impl* P;

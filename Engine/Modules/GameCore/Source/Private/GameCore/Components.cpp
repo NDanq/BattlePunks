@@ -1,7 +1,7 @@
 #include "Public/GameCore/Components.h"
 
 /*
- * The four engine-built-in components' registration, plus TransformComponent's
+ * The engine-built-in components' registration, plus TransformComponent's
  * one out-of-line method. See DESIGN.md for why GetLocalMatrix() needs three
  * separate Matrix4x4::InitRotation calls rather than one, and for the
  * Z * Y * X composition order.
@@ -22,7 +22,5 @@ namespace GameCore
     }
 
     GAMECORE_DEFINE_COMPONENT(TransformComponent, "Transform")
-    GAMECORE_DEFINE_COMPONENT(NameComponent,      "Name")
     GAMECORE_DEFINE_COMPONENT(BoundsComponent,    "Bounds")
-    GAMECORE_DEFINE_COMPONENT(ScriptComponent,    "Script")
 }

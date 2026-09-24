@@ -131,8 +131,8 @@ namespace NimbleEngine
     bool GameSession::RestoreSaveInto(EngineCore::Archive& Ar, ILevel& InLevel, GameState* InState)
     {
         /* The World first, so a GameState can look entities up while it loads.
-         * The WithScripts overload re-instantiates restored ScriptComponents. */
-        if(!GameCore::SerializeWorldWithScripts(Ar, *LevelWorld, Scripts))
+         * Restored script paths start fresh on the World's next tick. */
+        if(!GameCore::SerializeWorld(Ar, *LevelWorld))
         {
             return false;
         }

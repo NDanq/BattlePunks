@@ -56,9 +56,37 @@ namespace GameCore
         bool  HasComponentByType(ComponentTypeID InType) const { return OwningWorld && OwningWorld->HasComponentRaw(ID, InType); }
         bool  RemoveComponentByType(ComponentTypeID InType) const { return OwningWorld && OwningWorld->RemoveComponentRaw(ID, InType); }
 
-        /* "" if there is no NameComponent, never null. Defined in
-         * Components.h, after NameComponent exists. */
-        const char* GetName() const;
+        // === Members ========================================================
+        // Stored on the entity itself (World's slot tables), not in a
+        // component pool -- every entity has exactly one of each.
+
+        /* "" if unnamed or not alive, never null. Valid until the next
+         * SetName on this entity or its destruction. */
+        const char* GetName() const { return OwningWorld ? OwningWorld->GetEntityName(ID) : ""; }
+        /* nullptr clears. False if not alive. Names need not be unique;
+         * World::FindEntityByName returns the first in slot order. */
+        bool SetName(const char* InName) const { return OwningWorld && OwningWorld->SetEntityName(ID, InName); }
+
+        /* Declares the Lua script that drives this entity, by file path (read
+         * through EngineCore's file seam, like ScriptEngine::RunFile). The
+         * file must return its class table. Only the path is stored here; the
+         * script driver loads and instantiates it at the start of the next
+         * phase it runs, and ticks it BEFORE every registered system in its
+         * phase. A World with no driver (the editor) just keeps the path.
+         *
+         * nullptr or "" clears. Setting a different path releases the old
+         * script (OnDestroy) first; setting the same path again is a no-op.
+         * DEFERRED inside a tick, exactly like Destroy(). False if not
+         * alive. */
+        bool SetScript(const char* InPath) const { return OwningWorld && OwningWorld->SetEntityScript(ID, InPath); }
+        bool ClearScript() const { return SetScript(nullptr); }
+        bool HasScript() const { return GetScriptPath()[0] != '\0'; }
+        /* "" if none, never null. Valid until the next SetScript applies or
+         * the entity is destroyed. */
+        const char* GetScriptPath() const { return OwningWorld ? OwningWorld->GetEntityScriptPath(ID) : ""; }
+        /* nullptr if there is no script. Stable while the entity lives and its
+         * script is unchanged -- creating other entities does not move it. */
+        EntityScriptState* GetScriptState() const { return OwningWorld ? OwningWorld->GetEntityScriptState(ID) : nullptr; }
 
         void Destroy() const { if(OwningWorld) { OwningWorld->DestroyEntity(ID); } }
 
@@ -89,6 +117,11 @@ namespace GameCore
     bool ComponentOwner::HasSibling() const
     {
         return GetEntity().template HasComponent<T>();
+    }
+
+    inline const char* ComponentOwner::GetName() const
+    {
+        return GetEntity().GetName();
     }
 }
 

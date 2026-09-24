@@ -243,6 +243,7 @@ endif()
 # design notes make for enumerating things explicitly over discovering them.
 set(SANDBOX_SCRIPT_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Main.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Mover.lua"
 )
 
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
