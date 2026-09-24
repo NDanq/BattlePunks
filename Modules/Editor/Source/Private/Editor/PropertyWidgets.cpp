@@ -79,8 +79,19 @@ namespace
         return Spin;
     }
 
+    /*
+     * Only when the value differs. The Details panel refreshes every editor
+     * ten times a second, and Qt's setValue repaints the box even when nothing
+     * changed -- across a panel of spin boxes that alone cost the viewport a
+     * third of its frame rate. Compared after the box's own rounding, so a
+     * value it cannot show more precisely does not count as a change.
+     */
     void SetSpin(QDoubleSpinBox* InSpin, const double InValue)
     {
+        if(InSpin->value() == InSpin->valueFromText(InSpin->textFromValue(InValue)))
+        {
+            return;
+        }
         const QSignalBlocker Block(InSpin);
         InSpin->setValue(InValue);
     }
@@ -178,15 +189,21 @@ namespace
     protected:
         void ReadFrom(const uint8_t* InField) override
         {
-            const QSignalBlocker Block(Spin);
+            int Value = 0;
             if(Entry.Type == EPropertyType::UInt8)
             {
-                Spin->setValue(int(*InField));
+                Value = int(*InField);
             }
             else
             {
-                int32_t Value; std::memcpy(&Value, InField, sizeof(int32_t));
-                Spin->setValue(int(Value));
+                int32_t Raw; std::memcpy(&Raw, InField, sizeof(int32_t));
+                Value = int(Raw);
+            }
+            /* Unchanged is skipped -- see SetSpin. */
+            if(Spin->value() != Value)
+            {
+                const QSignalBlocker Block(Spin);
+                Spin->setValue(Value);
             }
         }
 
@@ -228,8 +245,12 @@ namespace
     protected:
         void ReadFrom(const uint8_t* InField) override
         {
-            const QSignalBlocker Block(Check);
-            Check->setChecked(*InField != 0);
+            const bool bValue = *InField != 0;
+            if(Check->isChecked() != bValue)
+            {
+                const QSignalBlocker Block(Check);
+                Check->setChecked(bValue);
+            }
         }
 
     private:
@@ -357,6 +378,12 @@ namespace
     private:
         void Show(const QColor& InColor)
         {
+            /* setStyleSheet re-polishes the widget even for the same sheet --
+             * the costliest call in a refresh. Only on a real change. */
+            if(InColor == Current && Swatch->styleSheet().size() != 0)
+            {
+                return;
+            }
             Current = InColor;
             Swatch->setStyleSheet(QStringLiteral("background-color: %1; border: 1px solid palette(mid);").arg(InColor.name()));
             Text->setText(QStringLiteral("%1, %2, %3, %4").arg(InColor.red()).arg(InColor.green()).arg(InColor.blue()).arg(InColor.alpha()));

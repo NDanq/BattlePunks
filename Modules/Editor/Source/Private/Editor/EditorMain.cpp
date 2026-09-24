@@ -27,7 +27,7 @@
 /*
  * NimbleEditor's entry point.
  *
- *   NimbleEditor [--rhi N] [world.nmworld]
+ *   NimbleEditor [--rhi N] [--play] [world.nmworld]
  *
  * The backend comes from [Editor] RHI in Config/DefaultEngine.ini when that
  * file is beside the executable (a game's staged config usually is), then
@@ -57,6 +57,9 @@ int main(int argc, char* argv[])
     const QCommandLineOption ProbeOption(QStringLiteral("sdl-input-probe"),
                                          QStringLiteral("Route viewport input through SDL and report it (Play-in-Editor spike)."));
     Parser.addOption(ProbeOption);
+    const QCommandLineOption PlayOption(QStringLiteral("play"),
+                                        QStringLiteral("Start Play-in-Editor once the viewport is up."));
+    Parser.addOption(PlayOption);
     Parser.addPositionalArgument(QStringLiteral("world"), QStringLiteral("A .nmworld file to open."), QStringLiteral("[world]"));
     Parser.process(App);
 
@@ -99,6 +102,7 @@ int main(int argc, char* argv[])
         EditorMainWindow Window(Context, RenderCore::ERenderBackend(Rhi));
         Window.SetInitialWorld(InitialWorld);
         Window.SetStartSDLInputProbe(Parser.isSet(ProbeOption));
+        Window.SetStartPlay(Parser.isSet(PlayOption));
         Window.show();
 
         Result = App.exec();

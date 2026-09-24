@@ -46,6 +46,7 @@ namespace NimbleEngine
         /* Bound before OnLoad, or scripts and WorldBridge would miss the
          * level's first entities. */
         LevelWorld = EngineCore::Memory::Alloc<GameCore::World>();
+        ++LoadCount;
 
         ActiveLevel             = &InLevel;
         ActiveLevel->OwnedWorld = LevelWorld;

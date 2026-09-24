@@ -162,6 +162,17 @@ ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
     FrameTimer.setTimerType(Qt::PreciseTimer);
     FrameTimer.setInterval(16);
     connect(&FrameTimer, &QTimer::timeout, this, &ViewportWidget::OnFrame);
+
+    /* Handing the view to or from the game mid-drag would leave the camera
+     * flying on keys whose release it never sees. */
+    const auto ResetNavigation = [this]()
+    {
+        HeldKeys.clear();
+        Drag       = EDrag::None;
+        DragButton = Qt::NoButton;
+    };
+    connect(&Context, &EditorContext::PlayStateChanged,       this, ResetNavigation);
+    connect(&Context, &EditorContext::PlayViewEjectedChanged, this, ResetNavigation);
 }
 
 EngineCore::WindowHandle ViewportWidget::GetWindowHandle()
@@ -229,9 +240,14 @@ void ViewportWidget::paintEvent(QPaintEvent* /*InEvent*/)
 void ViewportWidget::OnFrame()
 {
     const float DeltaSeconds = float(FrameClock.restart()) / 1000.0f;
-    ApplyFlyInput(DeltaSeconds);
 
-    QueueOverlay();
+    /* Navigation and overlays belong to the editor's view; while playing
+     * through the game's camera the viewport shows the game alone. */
+    if(Context.IsEditorViewActive())
+    {
+        ApplyFlyInput(DeltaSeconds);
+        QueueOverlay();
+    }
 
     const EngineCore::Size Pixels = GetPixelSize();
     Context.RenderFrame(Camera.BuildView(Pixels), Pixels, GetWindowHandle());
@@ -386,6 +402,11 @@ int ViewportWidget::HitGizmoAxis(const QPoint& InLogicalPos) const
 
 void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
 {
+    /* The game's view while playing: the editor camera does not move. */
+    if(!Context.IsEditorViewActive())
+    {
+        return;
+    }
     setFocus(Qt::MouseFocusReason);
     LastMousePos = InEvent->position().toPoint();
     PressPos     = LastMousePos;
@@ -409,6 +430,11 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
 {
+    /* The game's view while playing: the editor camera does not move. */
+    if(!Context.IsEditorViewActive())
+    {
+        return;
+    }
     const QPoint Pos   = InEvent->position().toPoint();
     const QPoint Delta = Pos - LastMousePos;
     LastMousePos = Pos;
@@ -451,6 +477,11 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
 {
+    /* The game's view while playing: the editor camera does not move. */
+    if(!Context.IsEditorViewActive())
+    {
+        return;
+    }
     const bool bWasDragging = Drag != EDrag::None;
     if(InEvent->button() == DragButton)
     {
@@ -487,6 +518,11 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
 
 void ViewportWidget::wheelEvent(QWheelEvent* InEvent)
 {
+    /* The game's view while playing: the editor camera does not move. */
+    if(!Context.IsEditorViewActive())
+    {
+        return;
+    }
     const double Notches = double(InEvent->angleDelta().y()) / 120.0;
     Camera.Dolly(GetPivot(), Notches * double(Camera.FocusDistance) * DollyFractionPerNotch * double(Camera.SpeedScale));
 }
@@ -497,6 +533,18 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
     {
         return;
     }
+    /* Esc ends a run, as in most editors -- here rather than as a window
+     * shortcut, so Esc in a text field (the console) is left alone. */
+    if(InEvent->key() == Qt::Key_Escape && Context.IsPlaying())
+    {
+        Context.StopPlay();
+        return;
+    }
+    if(!Context.IsEditorViewActive())
+    {
+        return;
+    }
+
     switch(InEvent->key())
     {
         case Qt::Key_F:    FrameSelection(); return;

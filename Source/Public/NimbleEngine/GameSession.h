@@ -161,6 +161,17 @@ namespace NimbleEngine
         GameCore::World& GetWorld();
         bool             HasWorld() const { return LevelWorld != nullptr; }
 
+        /* Bumped by every LoadLevel, a save restore's reload included. How a
+         * host that watches the World (the editor's panels) tells that it was
+         * replaced: comparing World pointers is not enough, since a new World
+         * can be allocated at the address the old one was freed from. */
+        uint32_t GetLoadCount() const { return LoadCount; }
+
+        /* A RequestLevel (or a save load) is waiting for the next
+         * ApplyPendingLevel, which will free the current World. A host with
+         * bindings on that World drops them first. */
+        bool HasPendingLevel() const { return PendingLevel != nullptr; }
+
         /* The host's, lent to the session. The ScriptEngine outlives every level
          * (one lua_State, rebound per level): registered classes survive a swap,
          * instances do not. The Renderer is for RegisterProxyType and
@@ -203,6 +214,8 @@ namespace NimbleEngine
         std::vector<uint8_t> PendingSaveBytes;
 
         bool bQuitRequested = false;
+
+        uint32_t LoadCount = 0;
     };
 }
 

@@ -3,6 +3,7 @@
 
 #if WITH_EDITOR
 
+#include <QList>
 #include <QMainWindow>
 #include <QString>
 #include <QTimer>
@@ -45,13 +46,20 @@ public:
      * --sdl-input-probe switch); see SDLInputProbe.h. Call before show(). */
     void SetStartSDLInputProbe(bool bInStart) { bStartSDLInputProbe = bInStart; }
 
+    /* Starts Play-in-Editor as soon as the renderer is up (the --play
+     * switch). Call before show(). */
+    void SetStartPlay(bool bInStart) { bStartPlay = bInStart; }
+
 protected:
     void showEvent(QShowEvent* InEvent) override;
     void closeEvent(QCloseEvent* InEvent) override;
 
 private:
     void BuildMenus();
+    void BuildPlayControls();
     void RegisterConsoleCommands();
+    void OnPlayStateChanged(bool bInPlaying);
+    void StartPlay();
     void StartRenderer();
     void UpdateTitle();
     void UpdateStats();
@@ -71,6 +79,14 @@ private:
     ConsolePanel*   ConsoleArea = nullptr;
     EditorConsole   Console;
     QLabel*         StatsLabel = nullptr;
+    QLabel*         PlayLabel  = nullptr;
+
+    QAction*        PlayAction  = nullptr;
+    QAction*        StopAction  = nullptr;
+    QAction*        EjectAction = nullptr;
+
+    /* Replace the edited World, so unavailable while playing. */
+    QList<QAction*> SceneActions;
 
     QString CurrentPath;
     QString InitialWorld;
@@ -79,6 +95,7 @@ private:
     SDLInputProbe* InputProbe = nullptr;
     QAction*       InputProbeAction = nullptr;
     bool           bStartSDLInputProbe = false;
+    bool           bStartPlay = false;
 
     QTimer   StatsTimer;
     uint64_t LastFramesRendered = 0;
