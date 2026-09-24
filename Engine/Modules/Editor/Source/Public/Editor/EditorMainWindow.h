@@ -8,7 +8,9 @@
 #include <QTimer>
 
 #include "Public/RenderCore/RenderTypes.h"
+#include "Public/Editor/EditorConsole.h"
 
+class ConsolePanel;
 class DetailsPanel;
 class EditorContext;
 class OutlinerPanel;
@@ -20,8 +22,9 @@ class ViewportWidget;
 
 /*
  * The editor's frame: the viewport (with its navigation toolbar) in the
- * centre, the Outliner docked left and the Details panel docked right,
- * File/Edit/View menus and a status bar with render stats.
+ * centre, the Outliner docked left, the Details panel docked right and the
+ * Console docked below, File/Edit/View menus and a status bar with render
+ * stats. Owns the EditorConsole and registers the scene commands on it.
  *
  * The Renderer is started from here, once the window has been shown -- the
  * viewport's native window must exist before GDI builds a swapchain on it --
@@ -48,6 +51,7 @@ protected:
 
 private:
     void BuildMenus();
+    void RegisterConsoleCommands();
     void StartRenderer();
     void UpdateTitle();
     void UpdateStats();
@@ -64,6 +68,8 @@ private:
     ViewportWidget* Viewport = nullptr;   // ViewportArea's, cached
     OutlinerPanel*  Outliner = nullptr;
     DetailsPanel*   Details  = nullptr;
+    ConsolePanel*   ConsoleArea = nullptr;
+    EditorConsole   Console;
     QLabel*         StatsLabel = nullptr;
 
     QString CurrentPath;

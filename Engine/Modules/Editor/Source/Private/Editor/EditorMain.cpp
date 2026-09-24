@@ -21,6 +21,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorLog.h"
 #include "Public/Editor/EditorMainWindow.h"
 
 /*
@@ -36,33 +37,15 @@
  */
 NIMBLE_CONFIG_INT(GEditorRHI, "Editor", "RHI", int(RenderCore::ERenderBackend::Vulkan), nullptr);
 
-namespace
-{
-    /*
-     * CoreLog into Qt's message system, so output reaches the debugger (a
-     * WIN32 exe has no console for the default stderr sink). Fatal stays
-     * fatal: qFatal aborts, as the default handler would.
-     */
-    void EditorLogHandler(const EngineCore::LogVerbosity InVerbosity, const char* InMessage)
-    {
-        const char* Message = InMessage ? InMessage : "";
-        switch(InVerbosity)
-        {
-            case EngineCore::LogVerbosity::Log:     qInfo("%s", Message);     break;
-            case EngineCore::LogVerbosity::Warning: qWarning("%s", Message);  break;
-            case EngineCore::LogVerbosity::Error:   qCritical("%s", Message); break;
-            case EngineCore::LogVerbosity::Fatal:   qFatal("%s", Message);    break;
-        }
-    }
-}
-
 int main(int argc, char* argv[])
 {
     QApplication App(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Nimble Editor"));
     QApplication::setOrganizationName(QStringLiteral("NimbleEngine"));
 
-    EngineCore::SetLogHandler(&EditorLogHandler);
+    /* First, so the Console panel's history starts with everything logged
+     * from here on -- config load and renderer startup included. */
+    EditorLog::Install();
 
     QCommandLineParser Parser;
     Parser.setApplicationDescription(QStringLiteral("NimbleEngine editor"));
@@ -121,7 +104,7 @@ int main(int argc, char* argv[])
         Result = App.exec();
     }
 
-    EngineCore::SetLogHandler(nullptr);
+    EditorLog::Uninstall();
     return Result;
 }
 

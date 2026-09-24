@@ -529,7 +529,6 @@ project(GameWindow VERSION 0.1 LANGUAGES CXX)
 # engine-level nimble_add_module() -- which is exactly what that helper was
 # written for and has had no consumer for until now.
 
-option(GAMEWINDOW_SHARED          "Build GameWindow as a shared library" OFF)
 option(GAMEWINDOW_BUILD_SMOKETEST "Build GameWindowSmokeTest"            OFF)
 
 # === Vendored SDL3 =========================================================
@@ -583,17 +582,14 @@ endif()
 # includes SDL.h, which is why GetSDLWindow() returns void* and the input enums
 # are engine-owned rather than SDL's. A host links GameWindow and never sees
 # SDL at all. If this ever has to become PUBLIC, something leaked.
-if(GAMEWINDOW_SHARED)
-    nimble_add_module(GameWindow SHARED
-            PREFIX       GAMEWINDOW
-            SOURCES      ${GAMEWINDOW_SOURCES}
-            PRIVATE_DEPS SDL3::SDL3)
-else()
-    nimble_add_module(GameWindow
-            PREFIX       GAMEWINDOW
-            SOURCES      ${GAMEWINDOW_SOURCES}
-            PRIVATE_DEPS SDL3::SDL3)
-endif()
+#
+# Always SHARED: GameWindowSystem is process-global (the SDL video subsystem,
+# the window registry) and both NimbleEngine.dll and the editor reach it, so it
+# has to live in exactly one image. See the CMakeLists for the full argument.
+nimble_add_module(GameWindow SHARED
+        PREFIX       GAMEWINDOW
+        SOURCES      ${GAMEWINDOW_SOURCES}
+        PRIVATE_DEPS SDL3::SDL3)
 
 if(GAMEWINDOW_BUILD_SMOKETEST)
     add_executable(GameWindowSmokeTest Tests/SmokeMain.cpp)
