@@ -65,7 +65,8 @@ uses it.
 | File | Role |
 |---|---|
 | `EditorContext` | Owns the World and Renderer; selection; signals every panel listens to |
-| `EditorMainWindow` | Docks, menus (File / Edit / View), status bar; starts and stops the Renderer |
+| `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Help), status bar; starts and stops the Renderer |
+| `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
 | `OutlinerPanel` | Entity list with component summary, filter, create/destroy |

@@ -42,6 +42,8 @@ endif()
 
 set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorMain.cpp
+        Source/Private/Editor/AboutDialog.cpp
+        Source/Private/Editor/AboutDialog.h
         Source/Private/Editor/EditorContext.cpp
         Source/Private/Editor/EditorCamera.cpp
         Source/Private/Editor/EditorLog.cpp
@@ -93,6 +95,28 @@ target_link_libraries(NimbleEditor PRIVATE
         Qt6::Gui
         Qt6::Widgets
 )
+
+# === Build version stamp ======================================================
+# Help > About shows the commit this editor was built from. Core's
+# GitVersion.cmake does the stamping (Core only stamps itself when configured
+# standalone, so an engine build has no stamp otherwise); included by path, not
+# via CMAKE_MODULE_PATH, so nothing about Core's own configure changes. It
+# re-stamps on every build but only rewrites the header when a value changed,
+# and only AboutDialog.cpp includes it.
+include("${CMAKE_CURRENT_SOURCE_DIR}/../Core/cmake/GitVersion.cmake")
+git_version_stamp(
+        PREFIX   NIMBLEEDITOR
+        VERSION  "${NimbleEngine_VERSION}"
+        TEMPLATE "${CMAKE_CURRENT_SOURCE_DIR}/Source/Private/Editor/EditorBuildInfo.h.in"
+        OUTPUT   "${CMAKE_CURRENT_BINARY_DIR}/Generated/EditorBuildInfo.h"
+        TARGET   NimbleEditor
+)
+target_include_directories(NimbleEditor PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+
+# What git cannot know. Bare tokens (AboutDialog.cpp stringizes them), and on
+# that one file so a configuration switch does not recompile the editor.
+set_source_files_properties(Source/Private/Editor/AboutDialog.cpp PROPERTIES
+        COMPILE_DEFINITIONS "NIMBLE_BUILD_CONFIG=$<CONFIG>;NIMBLE_BUILD_TARGET=${NIMBLE_TARGET}")
 
 # The cooked shaders the Renderer loads at startup, staged by the engine.
 if(TARGET NimbleStageShaders)

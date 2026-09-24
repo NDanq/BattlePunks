@@ -24,7 +24,7 @@ class ViewportWidget;
 /*
  * The editor's frame: the viewport (with its navigation toolbar) in the
  * centre, the Outliner docked left, the Details panel docked right and the
- * Console docked below, File/Edit/View menus and a status bar with render
+ * Console docked below, File/Edit/View/Play/Help menus and a status bar with render
  * stats. Owns the EditorConsole and registers the scene commands on it.
  *
  * The Renderer is started from here, once the window has been shown -- the
@@ -57,6 +57,7 @@ protected:
 private:
     void BuildMenus();
     void BuildPlayControls();
+    void BuildHelpMenu();
     void RegisterConsoleCommands();
     void OnPlayStateChanged(bool bInPlaying);
     void StartPlay();
