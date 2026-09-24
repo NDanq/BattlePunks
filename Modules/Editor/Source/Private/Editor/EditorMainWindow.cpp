@@ -22,6 +22,7 @@
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
 #include "Public/Editor/ViewportWidget.h"
+#include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/SDLInputProbe.h"
 
 namespace
@@ -86,6 +87,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     BuildMenus();
     BuildPlayControls();
+    BuildHelpMenu();   // last, so Help is the rightmost menu
     connect(&Context, &EditorContext::PlayStateChanged, this, &EditorMainWindow::OnPlayStateChanged);
 
     connect(&StatsTimer, &QTimer::timeout, this, &EditorMainWindow::UpdateStats);
@@ -195,6 +197,20 @@ void EditorMainWindow::BuildMenus()
     InputProbeAction->setCheckable(true);
     InputProbeAction->setToolTip(QStringLiteral("Route the viewport's input through SDL and report it -- the Play-in-Editor input spike"));
     connect(InputProbeAction, &QAction::toggled, this, &EditorMainWindow::SetSDLInputProbe);
+}
+
+void EditorMainWindow::BuildHelpMenu()
+{
+    QMenu* Help = menuBar()->addMenu(QStringLiteral("&Help"));
+
+    QAction* About = Help->addAction(QStringLiteral("&About NimbleEditor..."));
+    About->setMenuRole(QAction::AboutRole);
+    connect(About, &QAction::triggered, this, [this]()
+    {
+        /* Modal; deletes itself on close. */
+        auto* Dialog = new AboutDialog(QString::fromLatin1(BackendName(Backend)), this);
+        Dialog->open();
+    });
 }
 
 void EditorMainWindow::BuildPlayControls()
