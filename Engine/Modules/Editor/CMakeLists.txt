@@ -45,6 +45,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/DetailsPanel.cpp
         Source/Private/Editor/PropertyWidgets.cpp
         Source/Private/Editor/PropertyWidgets.h
+        Source/Private/Editor/SDLInputProbe.cpp
+        Source/Private/Editor/SDLInputProbe.h
         Source/Public/Editor/EditorContext.h
         Source/Public/Editor/EditorCamera.h
         Source/Public/Editor/EditorMainWindow.h
@@ -70,6 +72,7 @@ target_include_directories(NimbleEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Sour
 target_link_libraries(NimbleEditor PRIVATE
         GameCore::GameCore
         RenderCore::RenderCore
+        GameWindow::GameWindow
         EngineCore::QtBridge
         Qt6::Core
         Qt6::Gui

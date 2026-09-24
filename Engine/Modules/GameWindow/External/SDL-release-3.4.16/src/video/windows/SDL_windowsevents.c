@@ -336,6 +336,17 @@ static void WIN_UpdateFocus(SDL_Window *window, bool expect_focus, LPPOINT pos)
     bool had_focus = (SDL_GetKeyboardFocus() == window);
     bool has_focus = (GetForegroundWindow() == hwnd);
 
+    /* NimbleEngine local patch -- see Engine/Modules/GameWindow/README.md,
+       "Local patches to SDL". A CHILD window SDL adopted from its host
+       (SDL_WINDOW_EXTERNAL, e.g. an editor viewport inside a Qt main window)
+       is never the foreground window, so the test above never gives it
+       keyboard focus: its key events would carry no window and its text
+       input would be dropped. For such a window, focus is the Win32 keyboard
+       focus -- the same test SetupWindowData already makes at adoption. */
+    if ((window->flags & SDL_WINDOW_EXTERNAL) && (GetWindowLong(hwnd, GWL_STYLE) & WS_CHILD)) {
+        has_focus = (GetFocus() == hwnd);
+    }
+
     if (had_focus == has_focus || has_focus != expect_focus) {
         return;
     }
