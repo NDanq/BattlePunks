@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
 #include "Public/GameWindow/GameWindowAPI.h"
 #include "Public/GameWindow/GameWindowTypes.h"
@@ -84,6 +85,14 @@ namespace GameWindowSystem
     GAMEWINDOW_API GameWindow* GetPrimaryWindow();
 
     GAMEWINDOW_API size_t GetWindowCount();
+
+    /*
+     * The directory holding the running executable, with a trailing separator
+     * -- SDL_GetBasePath(). Empty if the platform cannot say. Valid before
+     * Initialize(): SDL answers this without SDL_Init, which is what lets a
+     * host fix its working directory before reading any config.
+     */
+    GAMEWINDOW_API std::string GetExecutableDir();
 }
 
 #endif //GAMEWINDOW_GAMEWINDOWSYSTEM_H

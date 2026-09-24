@@ -242,6 +242,13 @@ void GameWindowSystem::CheckPumpThread(const char* InWhat)
 
 // === Lifetime ===============================================================
 
+std::string GameWindowSystem::GetExecutableDir()
+{
+    /* SDL owns the returned string (SDL3); copied out, never freed here. */
+    const char* BasePath = SDL_GetBasePath();
+    return BasePath ? std::string(BasePath) : std::string();
+}
+
 bool GameWindowSystem::Initialize()
 {
     if(GInitRefCount > 0)

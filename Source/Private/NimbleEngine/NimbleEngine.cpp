@@ -1,7 +1,9 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
 
 #include <chrono>
+#include <filesystem>
 #include <string>
+#include <system_error>
 
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
@@ -204,6 +206,30 @@ namespace NimbleEngine
 
     bool Application::Initialize()
     {
+        /*
+         * FIRST: run from the executable's own directory. Every asset path
+         * below is bundle-relative -- Config/, Scripts/, the cooked shaders,
+         * Saves/ -- and all of them are staged beside the exe. An IDE does not
+         * start a program there on its own: CLion starts it in the CMake build
+         * tree and ignores VS_DEBUGGER_WORKING_DIRECTORY, and the app then ran
+         * on built-in defaults (a Null renderer, a black window) with nothing
+         * to say why. Setting it here makes every launcher equivalent.
+         */
+        const std::string ExecutableDir = GameWindowSystem::GetExecutableDir();
+        if(ExecutableDir.empty())
+        {
+            CORE_LOG_WARN("Could not determine the executable's directory; assets resolve against the launch directory")
+        }
+        else
+        {
+            std::error_code DirError;
+            std::filesystem::current_path(std::filesystem::u8path(ExecutableDir), DirError);
+            if(DirError)
+            {
+                CORE_LOG_WARN("Could not change to the executable's directory '" + ExecutableDir + "': " + DirError.message())
+            }
+        }
+
         if(!GameWindowSystem::Initialize())
         {
             CORE_LOG_ERROR("Failed to Initialize Window")

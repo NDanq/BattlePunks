@@ -109,9 +109,11 @@ endif()
 #
 # ONE PER CONFIGURE, not per target: WITH_EDITOR changes class layouts and
 # exported symbols (Renderer grows members under it), and every image in the
-# process must agree, so it is a directory-wide definition set HERE, before any
-# add_subdirectory, and inherited by every module, the subtrees and the games.
-# The subtrees need no edit for it; they just see one more -D.
+# process must agree. It travels as a PUBLIC compile definition on EngineCore
+# (set just after Modules/Core is added, below), so every target that links the
+# engine inherits it -- including a game configured STANDALONE, whose own
+# directory sits ABOVE this one and so would never see a directory-scoped
+# add_compile_definitions() made here. The subtrees need no edit for it.
 #
 # Always defined, to 1 or 0 -- never left undefined. GameCoreAPI.h and
 # RenderCoreAPI.h #error if it is missing, because `#if WITH_EDITOR` on an
@@ -130,8 +132,59 @@ else()
     set(NIMBLE_WITH_EDITOR 0)
 endif()
 
-add_compile_definitions(WITH_EDITOR=${NIMBLE_WITH_EDITOR})
 message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR})")
+
+# === Configurations ========================================================
+# Debug, RelWithDebInfo and Shipping are the three this project builds:
+#
+#   Debug            unoptimised, full debug info -- day-to-day work.
+#   RelWithDebInfo   optimised, WITH debug info -- profiling, and debugging an
+#                    optimised build. CMake's own flags.
+#   Shipping         optimised, NO debug info, NDEBUG -- what a player runs.
+#                    NIMBLE_SHIPPING is 1 here and 0 everywhere else, for code
+#                    that must not ship (dev cheats, verbose logging).
+#
+# Shipping is a custom configuration, so its flags are declared here. CACHE
+# variables rather than plain ones, for the same reason WITH_EDITOR rides on
+# EngineCore: a game configured standalone is the TOP-LEVEL project and adds
+# this directory beneath it, so a normal variable set here would never reach
+# the game's own targets -- the game exe would build Shipping unoptimised.
+#
+# Seeded from Release while EMPTY, not while undefined, and FORCEd: when
+# CMAKE_BUILD_TYPE names a custom configuration, project() itself creates these
+# cache entries -- empty -- so an "if not defined" guard never fires and
+# Shipping silently compiles with no optimisation at all (observed). A value a
+# user has set is non-empty and is left alone.
+foreach(NM_LANG C CXX)
+    if("${CMAKE_${NM_LANG}_FLAGS_SHIPPING}" STREQUAL "")
+        set(CMAKE_${NM_LANG}_FLAGS_SHIPPING "${CMAKE_${NM_LANG}_FLAGS_RELEASE}"
+            CACHE STRING "Flags used by the ${NM_LANG} compiler during Shipping builds" FORCE)
+    endif()
+endforeach()
+foreach(NM_KIND EXE SHARED MODULE STATIC)
+    if("${CMAKE_${NM_KIND}_LINKER_FLAGS_SHIPPING}" STREQUAL "" AND NOT "${CMAKE_${NM_KIND}_LINKER_FLAGS_RELEASE}" STREQUAL "")
+        set(CMAKE_${NM_KIND}_LINKER_FLAGS_SHIPPING "${CMAKE_${NM_KIND}_LINKER_FLAGS_RELEASE}"
+            CACHE STRING "Flags used by the linker for ${NM_KIND} targets during Shipping builds" FORCE)
+    endif()
+endforeach()
+mark_as_advanced(CMAKE_C_FLAGS_SHIPPING CMAKE_CXX_FLAGS_SHIPPING
+                 CMAKE_EXE_LINKER_FLAGS_SHIPPING CMAKE_SHARED_LINKER_FLAGS_SHIPPING
+                 CMAKE_MODULE_LINKER_FLAGS_SHIPPING CMAKE_STATIC_LINKER_FLAGS_SHIPPING)
+
+get_property(NM_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NM_MULTI_CONFIG)
+    # Offer it in Visual Studio / Xcode / Ninja Multi-Config. Checked, so a
+    # re-configure does not append it twice.
+    if(NOT "Shipping" IN_LIST CMAKE_CONFIGURATION_TYPES)
+        list(APPEND CMAKE_CONFIGURATION_TYPES Shipping)
+        set(CMAKE_CONFIGURATION_TYPES "${CMAKE_CONFIGURATION_TYPES}" CACHE STRING "Available build configurations" FORCE)
+    endif()
+elseif(CMAKE_BUILD_TYPE STREQUAL "Shipping" AND NIMBLE_WITH_EDITOR)
+    # An editor is a development tool; nothing ships it. Refused outright
+    # rather than built half-way, so a mis-picked preset fails at configure.
+    message(FATAL_ERROR "Shipping is a Client or Server configuration -- configure with "
+                        "-DNIMBLE_TARGET=Client (or Server), or pick Debug / RelWithDebInfo for the Editor")
+endif()
 
 # === Binaries/ =============================================================
 # One flat runtime directory per platform+config:
@@ -195,7 +248,7 @@ else()
     set(NM_PLATFORM Linux)
 endif()
 
-get_property(NM_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+# NM_MULTI_CONFIG was read in the Configurations block above.
 if(NM_MULTI_CONFIG)
     # Visual Studio / Xcode / Ninja Multi-Config: only the per-config variables
     # matter, and CMake appends nothing to them. Setting the plain variable here
@@ -229,6 +282,14 @@ endif()
 set(CORE_SHARED ON CACHE BOOL "Build EngineCore as a shared library" FORCE)
 
 add_subdirectory(Modules/Core)
+
+# The build-wide switches, as EngineCore usage requirements -- every module,
+# the editor and every game link EngineCore, so each one compiles with the same
+# values whichever directory it was declared in. See the Target type and
+# Configurations blocks above. Both are always defined, to 1 or 0.
+target_compile_definitions(EngineCore PUBLIC
+        WITH_EDITOR=${NIMBLE_WITH_EDITOR}
+        NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>)
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GDI/CMakeLists.txt")
     add_subdirectory(Modules/GDI)
