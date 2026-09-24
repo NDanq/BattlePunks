@@ -8,6 +8,7 @@
 
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreTypes.h"
+#include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/EntityID.h"
@@ -65,6 +66,11 @@ public:
     void RenderFrame(const RenderCore::RenderView& InView, EngineCore::Size InViewportPixels,
                      EngineCore::WindowHandle InWindow);
 
+    /* Queue overlay lines for the next RenderFrame() -- see
+     * Renderer::DrawDebugLine. Dropped when the Renderer is not running. */
+    void DrawDebugLine(const RenderCore::DebugLine& InLine);
+    void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels);
+
     // === Scene ==============================================================
 
     /* An empty World. The previous one is destroyed; the selection clears. */
@@ -88,6 +94,18 @@ public:
 
     /* Name if it has one, "Entity <index>" otherwise. */
     QString GetDisplayName(GameCore::EntityID InEntity) const;
+
+    /*
+     * The world-space box the editor shows for InEntity, best source first:
+     *   BoundsComponent::World     what the spatial index and culling use
+     *   a Primitive's quad         its corners through the Transform
+     *   the Transform alone        a small cube at its position
+     * An empty box for a dead entity or one with none of these.
+     */
+    GameCore::AABB GetEntityBounds(GameCore::EntityID InEntity) const;
+
+    /* The union of every entity's GetEntityBounds. */
+    GameCore::AABB GetSceneBounds() const;
 
     // === Selection ==========================================================
 

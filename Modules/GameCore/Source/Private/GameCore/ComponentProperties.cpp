@@ -20,9 +20,11 @@ namespace
 
     struct PropertyTypeRange
     {
-        uint16_t First       = 0;
-        uint16_t Count       = 0;
-        bool     bRegistered = false;
+        uint16_t                    First       = 0;
+        uint16_t                    Count       = 0;
+        bool                        bRegistered = false;
+        uint8_t                     TypeFlags   = CPF_None;
+        ComponentPropertyDefaultsFn DefaultsFn  = nullptr;
     };
 
     ComponentPropertyEntry GPropertyEntries[PROPERTY_ENTRY_MAX];
@@ -37,7 +39,8 @@ namespace
 }
 
 bool RegisterComponentProperties(const ComponentTypeID InType, const ComponentPropertyEntry* InEntries,
-                                 const size_t InCount, const size_t InRejected)
+                                 const size_t InCount, const size_t InRejected,
+                                 const ComponentPropertyDefaultsFn InDefaultsFn, const uint8_t InTypeFlags)
 {
     if(InType == COMPONENT_TYPE_INVALID || InType >= COMPONENT_TYPE_MAX)
     {
@@ -72,6 +75,8 @@ bool RegisterComponentProperties(const ComponentTypeID InType, const ComponentPr
     GPropertyTypes[InType].First       = uint16_t(GPropertyEntryCount);
     GPropertyTypes[InType].Count       = uint16_t(InCount);
     GPropertyTypes[InType].bRegistered = true;
+    GPropertyTypes[InType].TypeFlags   = InTypeFlags;
+    GPropertyTypes[InType].DefaultsFn  = InDefaultsFn;
     for(size_t Index = 0; Index < InCount; ++Index)
     {
         GPropertyEntries[GPropertyEntryCount++] = InEntries[Index];
@@ -88,6 +93,31 @@ const ComponentPropertyEntry* FindComponentProperties(const ComponentTypeID InTy
     }
     OutCount = GPropertyTypes[InType].Count;
     return &GPropertyEntries[GPropertyTypes[InType].First];
+}
+
+bool GetComponentPropertyDefaults(const ComponentTypeID InType, void* OutBytes)
+{
+    if(InType == COMPONENT_TYPE_INVALID || InType >= COMPONENT_TYPE_MAX || OutBytes == nullptr)
+    {
+        return false;
+    }
+    const PropertyTypeRange& Range = GPropertyTypes[InType];
+    if(!Range.bRegistered || Range.DefaultsFn == nullptr)
+    {
+        return false;
+    }
+    Range.DefaultsFn(OutBytes);
+    return true;
+}
+
+bool IsComponentAddable(const ComponentTypeID InType)
+{
+    if(InType == COMPONENT_TYPE_INVALID || InType >= COMPONENT_TYPE_MAX)
+    {
+        return false;
+    }
+    const PropertyTypeRange& Range = GPropertyTypes[InType];
+    return Range.bRegistered && Range.DefaultsFn != nullptr && (Range.TypeFlags & CPF_NotAddable) == 0;
 }
 
 // === Built-in components ====================================================
@@ -117,6 +147,10 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(BoundsComponent)
  * InstanceRef stays hidden. */
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(ScriptComponent)
 {
+    /* Attached through ScriptEngine::AddScript with a registered class; a bare
+     * one added by a tool would be a script with no instance. */
+    Props.NotAddable();
+
     Props.Field("ClassName", &ScriptComponent::ClassName, PF_ReadOnly);
     Props.Field("Phase",     &ScriptComponent::Phase,     PF_ReadOnly);
     Props.Flag("Started",    &ScriptComponent::bStarted,  PF_ReadOnly);

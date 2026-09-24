@@ -5,7 +5,7 @@
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderTypes.h"
 
-namespace GameCore { class World; }
+namespace GameCore { class World; struct AABB; }
 
 /*
  * The facade NimbleEngine::Application owns (a later build-order step) --
@@ -98,6 +98,20 @@ namespace RenderCore
          * render targets are sized from it. GAME THREAD ONLY.
          */
         void SetViewOverride(const RenderView* InView);
+
+        /*
+         * Queue a world-space line for the NEXT EndFrame() only -- an
+         * immediate-mode overlay for tools (selection bounds, gizmos), drawn
+         * after every proxy and never culled. Call again every frame the line
+         * should stay. See DebugLine (RenderTypes.h) and
+         * RenderContext::DrawLine for how it is drawn. GAME THREAD ONLY.
+         */
+        void DrawDebugLine(const DebugLine& InLine);
+
+        /* The twelve edges of InBox, through DrawDebugLine. An empty box
+         * (GameCore::AABB's default) draws nothing; a box flat on an axis
+         * draws its outline once, that axis collapsed. */
+        void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels = 2.0f);
 
         void GetStats(RenderStats& OutStats) const;
 

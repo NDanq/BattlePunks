@@ -151,6 +151,26 @@ static void TestComponentProperties()
     Expect(bProxyHidden, "Bounds does not expose ProxyID");
     Expect(bWorldReadOnly, "Bounds' World box is read-only");
 
+    /* Defaults are the default-constructed instance, never zeroes. */
+    PropertyProbeComponent ProbeDefaults;
+    ProbeDefaults.Speed = -1.0f;
+    Expect(GetComponentPropertyDefaults(PropertyProbeComponent::StaticType().ID, &ProbeDefaults)
+           && ProbeDefaults.Speed == 1.5f && std::strcmp(ProbeDefaults.Label, "probe") == 0,
+           "GetComponentPropertyDefaults writes the default-constructed instance");
+
+    BoundsComponent BoundsDefaults;
+    BoundsDefaults.ProxyID = 7;
+    Expect(GetComponentPropertyDefaults(BoundsComponent::StaticType().ID, &BoundsDefaults) && BoundsDefaults.ProxyID == -1,
+           "Bounds defaults keep ProxyID at -1, not a zeroed 0");
+
+    int32_t Untouched = 42;
+    Expect(!GetComponentPropertyDefaults(TestOnlyComponent::StaticType().ID, &Untouched) && Untouched == 42,
+           "a type with no property list has no defaults, and the buffer is left alone");
+
+    Expect(IsComponentAddable(TransformComponent::StaticType().ID), "Transform is addable");
+    Expect(!IsComponentAddable(ScriptComponent::StaticType().ID), "Script opts out of Add Component");
+    Expect(!IsComponentAddable(TestOnlyComponent::StaticType().ID), "a type with no property list is not addable");
+
     Expect(FindComponentProperties(NameComponent::StaticType().ID, Count) != nullptr && Count == 1, "Name exposes Name");
     Expect(FindComponentProperties(TestOnlyComponent::StaticType().ID, Count) == nullptr && Count == 0,
            "a component with no property list reports none");

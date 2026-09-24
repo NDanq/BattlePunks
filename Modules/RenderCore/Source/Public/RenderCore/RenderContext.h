@@ -49,6 +49,21 @@ namespace RenderCore
          */
         void DrawQuad(const RenderTransform& InTransform, float InWidth, float InHeight, EngineCore::Color InTint);
 
+        /*
+         * A world-space segment as a flat ribbon facing the camera,
+         * InThicknessPixels wide on screen at any distance, extended by half
+         * that at each end so segments meeting at a corner close it. Drawn
+         * with the same unit quad and shaders as DrawQuad: the ribbon's
+         * placement is folded into the view matrix for this one draw, and the
+         * model transform is identity -- so no rotation is ever built, and
+         * any orientation works. Uses the view from the last SetView().
+         *
+         * Nothing is drawn for a segment seen end-on (it would be a point) or
+         * shorter than a millionth of a unit. Counts one draw call.
+         */
+        void DrawLine(const EngineCore::Vector3& InStart, const EngineCore::Vector3& InEnd,
+                      EngineCore::Color InColor, float InThicknessPixels);
+
         /* Render-thread only, matching GDI's own GDIBeginDrawEvent/EndDrawEvent
          * (Public/GDI/GDI.h) -- a scoped pair for a profiler's capture, cheap
          * to call even with no profiler attached. */

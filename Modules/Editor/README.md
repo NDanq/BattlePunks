@@ -37,9 +37,10 @@ editor yet.
 |---|---|
 | `EditorContext` | Owns the World and Renderer; selection; signals every panel listens to |
 | `EditorMainWindow` | Docks, menus (File / Edit / View), status bar; starts and stops the Renderer |
-| `ViewportWidget` + `EditorCamera` | Native render surface, fly camera, click-to-select |
+| `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
+| `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
 | `OutlinerPanel` | Entity list with component summary, filter, create/destroy |
-| `DetailsPanel` + `PropertyWidgets` | One section per component, one editor per property type |
+| `DetailsPanel` + `PropertyWidgets` | One section per component, one editor per property type, reset-to-default, add/remove component |
 
 ## Editor-visible properties
 
@@ -82,13 +83,46 @@ bare `GameCore::SerializeWorld` archives (`.nmworld`), not SaveGame files;
 script components keep their data but get no Lua instance, since the editor runs
 no scripts.
 
-**Viewport controls:** right-drag to look (with WASD / Q E to fly, Shift for
-speed), middle-drag to pan, wheel to dolly, left-click to select, F to frame the
-selection.
+**Viewport controls:**
+
+| Input | Does |
+|---|---|
+| Right drag (+ WASD / Q E, Shift faster) | Look / fly |
+| Alt + Left drag | Orbit the pivot -- the selection's bounds centre, else the focus point |
+| Alt + Right drag, wheel | Dolly toward the pivot |
+| Middle drag | Pan |
+| Left click | Select the primitive under the cursor; on the axis gizmo, view from that axis (Shift: the opposite side) |
+| F / Home | Frame the selection / the whole scene |
+
+The toolbar above the viewport has the view presets (Persp, Front, Back, Top,
+Bottom, Left, Right -- each orbits about the pivot to that axis), Frame
+Selected / Frame All, All Bounds and a camera speed slider (1/8x to 8x). "Top"
+looks from screen-up, which is world -Y: the editor keeps the game's +Y-down
+convention.
+
+**Overlays** are Renderer debug lines (`Renderer::DrawDebugLine` /
+`DrawDebugBox`), not Qt painting -- nothing Qt draws can sit over the native
+render surface. The selection is outlined in orange from its bounds: the
+entity's `BoundsComponent::World` when it has one, else its Primitive quad, else
+a small cube at its Transform. All Bounds adds every other entity's box in grey.
+The XYZ gizmo sits bottom-left.
+
+## Details panel
+
+Each property with a writable default shows an orange reset arrow to its right
+while its value differs from the type's default-constructed one; clicking it
+restores that property. A component header's **Reset** restores every writable
+property of that component (per-run state such as a render proxy handle is left
+alone), and its **x** removes the component. **+ Add Component** at the bottom
+lists every type with a property list that the entity lacks; the new component
+starts from its default-constructed bytes. A type opts out of that list with
+`Props.NotAddable()` -- `ScriptComponent` does, since a script needs a Lua
+class and is attached with `ScriptEngine::AddScript`.
 
 ## Known limits
 
-- No play mode, undo, gizmos or selection highlight in the viewport.
+- No play mode, undo, or transform gizmos (move/rotate/scale handles).
+- View presets stay in perspective; there are no orthographic views yet.
 - The viewport has no depth sorting: RenderScene draws in submission order.
 - Rotated primitives render sheared -- `Matrix4x4::InitRotation` in Core builds
   a non-orthogonal matrix; at 45 degrees about Z it collapses to a line. Picking

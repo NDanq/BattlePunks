@@ -78,6 +78,21 @@ namespace RenderCore
     };
 
     /*
+     * One world-space line segment for Renderer::DrawDebugLine -- a tool's
+     * overlay (the editor's selection bounds and axis gizmo), not scene
+     * geometry. Drawn after every proxy, with no culling, as a camera-facing
+     * ribbon ThicknessPixels wide on screen whatever its distance.
+     * Trivially copyable: whole batches cross to the render thread by memcpy.
+     */
+    struct DebugLine
+    {
+        EngineCore::Vector3 Start;
+        EngineCore::Vector3 End;
+        EngineCore::Color   Color{255, 255, 255};
+        float               ThicknessPixels = 2.0f;
+    };
+
+    /*
      * A snapshot of RenderThread's live counters (each an atomic there),
      * copied out by RenderThread::GetStats() / Renderer::GetStats() for a
      * host to log or display. Not itself updated atomically as a whole --

@@ -31,8 +31,10 @@ public:
 
     PropertyEditor(const GameCore::ComponentPropertyEntry& InEntry, ResolveFn InResolve, QWidget* InParent);
 
-    /* Pulls the current value from the component, if it still exists. */
-    void Refresh();
+    /* Pulls the current value from the component, if it still exists.
+     * Skipped while the user is typing in this editor unless bInForce --
+     * a reset must show even in the field that has focus. */
+    void Refresh(bool bInForce = false);
 
     const GameCore::ComponentPropertyEntry& GetEntry() const { return Entry; }
 
@@ -55,6 +57,15 @@ protected:
     GameCore::ComponentPropertyEntry Entry;
     ResolveFn                        Resolve;
 };
+
+/*
+ * Whether a property's live value equals its default, compared by VALUE for
+ * its type: Vector3/AABB on X/Y/Z only (a SIMD Vector3 carries a fourth lane
+ * that is not part of the value), a FixedString up to its NUL, everything
+ * else byte for byte. InField and InDefault point at the property in a live
+ * component and in a default-constructed one.
+ */
+bool IsPropertyAtDefault(const GameCore::ComponentPropertyEntry& InEntry, const uint8_t* InField, const uint8_t* InDefault);
 
 /* nullptr for a type with no editor (none today; kept for future types). */
 PropertyEditor* CreatePropertyEditor(const GameCore::ComponentPropertyEntry& InEntry,

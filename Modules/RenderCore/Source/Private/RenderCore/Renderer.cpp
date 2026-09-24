@@ -1,5 +1,11 @@
 #include "Public/RenderCore/Renderer.h"
 
+#include <cstring>
+#include <type_traits>
+#include <vector>
+
+#include "Public/Core/CoreMemory.h"
+#include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderCoreLog.h"
@@ -17,6 +23,9 @@
 
 namespace RenderCore
 {
+    static_assert(std::is_trivially_copyable<DebugLine>::value,
+                  "DebugLine crosses to the render thread by memcpy -- see Renderer::EndFrame");
+
     struct Renderer::Impl
     {
         RenderThread Thread;
@@ -28,6 +37,10 @@ namespace RenderCore
         /* Set by SetViewOverride; replaces the camera lookup every frame. */
         bool       bHasViewOverride = false;
         RenderView ViewOverride;
+
+        /* Game-thread side of DrawDebugLine; handed over and cleared by
+         * every EndFrame(). */
+        std::vector<DebugLine> PendingDebugLines;
     };
 
     Renderer::Renderer() : P(new Impl())
@@ -128,8 +141,81 @@ namespace RenderCore
         P->Thread.WaitForFrame();
     }
 
+    void Renderer::DrawDebugLine(const DebugLine& InLine)
+    {
+        P->PendingDebugLines.push_back(InLine);
+    }
+
+    void Renderer::DrawDebugBox(const GameCore::AABB& InBox, const EngineCore::Color InColor, const float InThicknessPixels)
+    {
+        if(InBox.IsEmpty())
+        {
+            return;
+        }
+
+        /* Corner i takes Max on axis k when bit k of i is set. An edge joins
+         * two corners that differ in exactly one bit -- twelve of them. An
+         * axis with no extent is collapsed first: its corners coincide, and
+         * walking both would draw every remaining edge twice. */
+        int FlatAxes = 0;
+        if(InBox.Min.GetX() == InBox.Max.GetX()) { FlatAxes |= 1; }
+        if(InBox.Min.GetY() == InBox.Max.GetY()) { FlatAxes |= 2; }
+        if(InBox.Min.GetZ() == InBox.Max.GetZ()) { FlatAxes |= 4; }
+
+        EngineCore::Vector3 Corners[8];
+        for(int Index = 0; Index < 8; ++Index)
+        {
+            Corners[Index] = EngineCore::Vector3((Index & 1) ? InBox.Max.GetX() : InBox.Min.GetX(),
+                                                 (Index & 2) ? InBox.Max.GetY() : InBox.Min.GetY(),
+                                                 (Index & 4) ? InBox.Max.GetZ() : InBox.Min.GetZ());
+        }
+        for(int From = 0; From < 8; ++From)
+        {
+            if(From & FlatAxes)
+            {
+                continue;
+            }
+            for(int Bit = 1; Bit < 8; Bit <<= 1)
+            {
+                const int To = From | Bit;
+                if(To == From || (Bit & FlatAxes))
+                {
+                    continue;
+                }
+                DebugLine Line;
+                Line.Start           = Corners[From];
+                Line.End             = Corners[To];
+                Line.Color           = InColor;
+                Line.ThicknessPixels = InThicknessPixels;
+                P->PendingDebugLines.push_back(Line);
+            }
+        }
+    }
+
     void Renderer::EndFrame(const FrameInfo& InFrame)
     {
+        /* Ahead of the render command below, so the scene holds this frame's
+         * lines when it renders. One Memory::Allocate'd copy, freed by the
+         * command -- DebugLine is trivially copyable, and a command may only
+         * capture values (RenderCommand.h). */
+        if(P->Scene && !P->PendingDebugLines.empty())
+        {
+            const size_t Count = P->PendingDebugLines.size();
+            void* Blob = EngineCore::Memory::Allocate(sizeof(DebugLine) * Count, alignof(DebugLine), EngineCore::POOL_Default,
+                                                      nullptr, EngineCore::AF_None, EngineCore::GImageID);
+            if(Blob)
+            {
+                std::memcpy(Blob, P->PendingDebugLines.data(), sizeof(DebugLine) * Count);
+                RenderScene* Scene = P->Scene;
+                ENQUEUE_RENDER_COMMAND(SetDebugLines)([Scene, Blob, Count](RenderContext&)
+                {
+                    Scene->SetDebugLines(static_cast<const DebugLine*>(Blob), Count);
+                    EngineCore::Memory::Free(Blob);
+                });
+            }
+        }
+        P->PendingDebugLines.clear();
+
         if(P->Bridge && P->Bridge->IsBound())
         {
             P->Bridge->ExtractAndRender(InFrame, P->bHasViewOverride ? &P->ViewOverride : nullptr);

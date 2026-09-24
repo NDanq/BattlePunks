@@ -16,7 +16,9 @@ class EditorContext;
 /*
  * The 3D viewport: a native child window the Renderer draws into, exactly as
  * it draws into the game's SDL window. Qt never paints here -- paintEngine()
- * is null and WA_PaintOnScreen hands the surface to the GPU backend.
+ * is null and WA_PaintOnScreen hands the surface to the GPU backend -- so
+ * every overlay (selection bounds, the axis gizmo) is drawn by the Renderer
+ * as debug lines, not by QPainter.
  *
  * The native handle is winId() cast to a WindowHandle -- the HWND on Windows,
  * the same thing GDIQt::ToWindowHandle produces, without linking GDIQtBridge
@@ -24,10 +26,14 @@ class EditorContext;
  *
  * CONTROLS
  *   Right drag          look around; with WASD / Q E held, fly (Shift = faster)
- *   Middle drag         pan
- *   Wheel               dolly along the view direction
- *   Left click          select the primitive under the cursor (empty space clears)
- *   F                   frame the selection
+ *   Alt + Left drag     orbit the pivot (the selection, else the focus point)
+ *   Alt + Right drag    dolly toward / away from the pivot
+ *   Middle drag         pan (also Alt + Middle)
+ *   Wheel               dolly toward the pivot
+ *   Left click          select the primitive under the cursor (empty space
+ *                       clears); on the axis gizmo, view from that axis
+ *                       (Shift: from the opposite side)
+ *   F / Home            frame the selection / the whole scene
  */
 class ViewportWidget : public QWidget
 {
@@ -47,8 +53,16 @@ public:
 
     EditorCamera& GetCamera() { return Camera; }
 
-    /* Moves the camera to look at InEntity's position from a fixed distance. */
-    void FrameEntity(GameCore::EntityID InEntity);
+    // === Navigation commands (toolbar, menus, keys) ==========================
+
+    void FrameSelection();
+    void FrameAll();
+    void ApplyPreset(EditorCamera::EPreset InPreset);
+    void SetSpeedScale(float InScale) { Camera.SpeedScale = InScale; }
+
+    /* Draw every entity's bounds, not just the selection's. */
+    void SetShowAllBounds(bool bInShow) { bShowAllBounds = bInShow; }
+    bool IsShowingAllBounds() const     { return bShowAllBounds; }
 
     QPaintEngine* paintEngine() const override { return nullptr; }
 
@@ -63,13 +77,34 @@ protected:
     void focusOutEvent(QFocusEvent* InEvent) override;
 
 private:
+    /* What a held mouse button is doing. One at a time. */
+    enum class EDrag { None, Look, Orbit, Dolly, Pan };
+
     void OnFrame();
 
-    /* WASD/QE flying while the right button is held. */
+    /* WASD/QE flying while looking. */
     void ApplyFlyInput(float InDeltaSeconds);
+
+    /* Selection bounds, optional all-bounds, and the axis gizmo -- queued as
+     * debug lines for the frame about to be rendered. */
+    void QueueOverlay();
+    void QueueAxisGizmo();
+
+    /* What orbit, dolly and presets turn about: the selection's centre if it
+     * has bounds, else the camera's focus point. */
+    EngineCore::Vector3 GetPivot() const;
+
+    /* The gizmo's origin in world space and its axis length there -- it sits
+     * at a fixed pixel position and size, so this is re-derived every frame. */
+    void GetGizmoFrame(EngineCore::Vector3& OutOrigin, double& OutAxisLength) const;
+
+    /* 0/1/2 for the X/Y/Z tip under InLogicalPos, -1 for none. */
+    int HitGizmoAxis(const QPoint& InLogicalPos) const;
 
     /* The nearest primitive quad under the pixel, or an unset id. */
     GameCore::EntityID Pick(const QPoint& InLogicalPos) const;
+
+    EngineCore::Size GetLogicalSize() const { return EngineCore::Size(width(), height()); }
 
     EditorContext& Context;
     EditorCamera   Camera;
@@ -77,11 +112,14 @@ private:
     QTimer        FrameTimer;
     QElapsedTimer FrameClock;
 
-    QPoint     LastMousePos;
-    QPoint     PressPos;
-    bool       bLooking = false;
-    bool       bPanning = false;
-    QSet<int>  HeldKeys;
+    EDrag               Drag = EDrag::None;
+    Qt::MouseButton     DragButton = Qt::NoButton;
+    EngineCore::Vector3 DragPivot;
+    QPoint              LastMousePos;
+    QPoint              PressPos;
+    QSet<int>           HeldKeys;
+
+    bool bShowAllBounds = false;
 };
 
 #endif //NIMBLEEDITOR_VIEWPORTWIDGET_H

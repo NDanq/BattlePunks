@@ -14,6 +14,7 @@
 #include "Editor/DetailsPanel.h"
 #include "Editor/EditorContext.h"
 #include "Editor/OutlinerPanel.h"
+#include "Editor/ViewportPanel.h"
 #include "Editor/ViewportWidget.h"
 
 namespace
@@ -42,8 +43,9 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     resize(1600, 900);
     setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowTabbedDocks);
 
-    Viewport = new ViewportWidget(Context, this);
-    setCentralWidget(Viewport);
+    ViewportArea = new ViewportPanel(Context, this);
+    Viewport     = ViewportArea->GetViewport();
+    setCentralWidget(ViewportArea);
 
     auto* OutlinerDock = new QDockWidget(QStringLiteral("Outliner"), this);
     OutlinerDock->setObjectName(QStringLiteral("OutlinerDock"));
@@ -133,9 +135,9 @@ void EditorMainWindow::BuildMenus()
     Delete->setShortcut(QKeySequence::Delete);
     connect(Delete, &QAction::triggered, this, [this]() { Context.DestroyEntity(Context.GetSelection()); });
 
-    QAction* Frame = Edit->addAction(QStringLiteral("&Frame Selection"));
-    Frame->setToolTip(QStringLiteral("F in the viewport"));
-    connect(Frame, &QAction::triggered, this, [this]() { Viewport->FrameEntity(Context.GetSelection()); });
+    Edit->addSeparator();
+    Edit->addAction(ViewportArea->GetFrameSelectionAction());
+    Edit->addAction(ViewportArea->GetFrameAllAction());
 
     QMenu* View = menuBar()->addMenu(QStringLiteral("&View"));
     for(QDockWidget* Dock : findChildren<QDockWidget*>())
@@ -143,6 +145,7 @@ void EditorMainWindow::BuildMenus()
         View->addAction(Dock->toggleViewAction());
     }
     View->addSeparator();
+    View->addAction(ViewportArea->GetShowAllBoundsAction());
     QAction* ResetCamera = View->addAction(QStringLiteral("&Reset Camera"));
     connect(ResetCamera, &QAction::triggered, this, [this]() { Viewport->GetCamera() = EditorCamera(); });
 }
