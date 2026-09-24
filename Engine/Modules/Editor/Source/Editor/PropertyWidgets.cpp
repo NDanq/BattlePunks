@@ -33,9 +33,9 @@ PropertyEditor::PropertyEditor(const GameCore::ComponentPropertyEntry& InEntry, 
 {
 }
 
-void PropertyEditor::Refresh()
+void PropertyEditor::Refresh(const bool bInForce)
 {
-    if(IsBeingEdited())
+    if(!bInForce && IsBeingEdited())
     {
         return;
     }
@@ -414,6 +414,34 @@ namespace
     private:
         QLineEdit* Edit = nullptr;
     };
+}
+
+bool IsPropertyAtDefault(const GameCore::ComponentPropertyEntry& InEntry, const uint8_t* InField, const uint8_t* InDefault)
+{
+    auto SameVector = [](const EngineCore::Vector3& A, const EngineCore::Vector3& B)
+    {
+        return A.GetX() == B.GetX() && A.GetY() == B.GetY() && A.GetZ() == B.GetZ();
+    };
+
+    switch(InEntry.Type)
+    {
+        case EPropertyType::Vector3:
+            return SameVector(*reinterpret_cast<const EngineCore::Vector3*>(InField),
+                              *reinterpret_cast<const EngineCore::Vector3*>(InDefault));
+
+        case EPropertyType::AABB:
+        {
+            const auto& A = *reinterpret_cast<const GameCore::AABB*>(InField);
+            const auto& B = *reinterpret_cast<const GameCore::AABB*>(InDefault);
+            return SameVector(A.Min, B.Min) && SameVector(A.Max, B.Max);
+        }
+
+        case EPropertyType::FixedString:
+            return std::strncmp(reinterpret_cast<const char*>(InField), reinterpret_cast<const char*>(InDefault), InEntry.Size) == 0;
+
+        default:
+            return std::memcmp(InField, InDefault, InEntry.Size) == 0;
+    }
 }
 
 PropertyEditor* CreatePropertyEditor(const GameCore::ComponentPropertyEntry& InEntry,

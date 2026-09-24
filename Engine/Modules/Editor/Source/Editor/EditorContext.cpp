@@ -122,6 +122,22 @@ void EditorContext::RenderFrame(const RenderCore::RenderView& InView, const Engi
     ++FrameNumber;
 }
 
+void EditorContext::DrawDebugLine(const RenderCore::DebugLine& InLine)
+{
+    if(bRendererReady)
+    {
+        Renderer->DrawDebugLine(InLine);
+    }
+}
+
+void EditorContext::DrawDebugBox(const GameCore::AABB& InBox, const EngineCore::Color InColor, const float InThicknessPixels)
+{
+    if(bRendererReady)
+    {
+        Renderer->DrawDebugBox(InBox, InColor, InThicknessPixels);
+    }
+}
+
 // === Scene ===================================================================
 
 void EditorContext::NewScene()
@@ -167,6 +183,13 @@ void EditorContext::CreateDemoScene()
         Primitive.Height = Item.Height;
         Primitive.Tint   = Item.Tint;
         E.AddComponent(Primitive);
+
+        /* The quad's own extent in entity space -- the refit carries it
+         * through the Transform, Scale included, as the proxy draws it. */
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5 * Item.Width, -0.5 * Item.Height, 0.0),
+                                      EngineCore::Vector3( 0.5 * Item.Width,  0.5 * Item.Height, 0.0));
+        E.AddComponent(Bounds);
     }
 
     /* The game's camera -- what Sandbox-style hosts render through. The editor
@@ -174,6 +197,7 @@ void EditorContext::CreateDemoScene()
     const EntityID CameraID = CreateEntity(QStringLiteral("Camera"), EngineCore::Vector3(0.0, 0.0, -1.0));
     EditedWorld->GetEntity(CameraID).AddComponent<RenderCore::CameraComponent>();
 
+    EditedWorld->RefreshSpatialIndex();
     QueueEntitiesChanged();
 }
 
@@ -245,6 +269,57 @@ QString EditorContext::GetDisplayName(const EntityID InEntity) const
         return QString::fromUtf8(Name);
     }
     return QStringLiteral("Entity %1").arg(InEntity.Index);
+}
+
+GameCore::AABB EditorContext::GetEntityBounds(const EntityID InEntity) const
+{
+    if(!EditedWorld || !EditedWorld->IsAlive(InEntity))
+    {
+        return GameCore::AABB();
+    }
+    const GameCore::Entity E = EditedWorld->GetEntity(InEntity);
+
+    if(const GameCore::BoundsComponent* Bounds = E.GetComponent<GameCore::BoundsComponent>())
+    {
+        if(!Bounds->World.IsEmpty())
+        {
+            return Bounds->World;
+        }
+    }
+
+    const GameCore::TransformComponent* Transform = E.GetComponent<GameCore::TransformComponent>();
+    if(!Transform)
+    {
+        return GameCore::AABB();
+    }
+
+    if(const RenderCore::PrimitiveComponent* Primitive = E.GetComponent<RenderCore::PrimitiveComponent>())
+    {
+        const GameCore::AABB Quad(EngineCore::Vector3(-0.5 * Primitive->Width, -0.5 * Primitive->Height, 0.0),
+                                  EngineCore::Vector3( 0.5 * Primitive->Width,  0.5 * Primitive->Height, 0.0));
+        return GameCore::AABB::Transformed(Quad, Transform->GetLocalMatrix());
+    }
+
+    /* A marker for anything with only a position (a camera, an empty). */
+    const double Half = 25.0;
+    return GameCore::AABB(Transform->Position - EngineCore::Vector3(Half, Half, Half),
+                          Transform->Position + EngineCore::Vector3(Half, Half, Half));
+}
+
+GameCore::AABB EditorContext::GetSceneBounds() const
+{
+    if(!EditedWorld)
+    {
+        return GameCore::AABB();
+    }
+
+    struct Collect { const EditorContext* Self; GameCore::AABB Box; } Ctx{ this, GameCore::AABB() };
+    EditedWorld->ForEachEntity([](const EntityID InEntity, void* InUserData)
+    {
+        auto& C = *static_cast<Collect*>(InUserData);
+        C.Box = GameCore::AABB::Union(C.Box, C.Self->GetEntityBounds(InEntity));
+    }, &Ctx);
+    return Ctx.Box;
 }
 
 // === Selection ===============================================================

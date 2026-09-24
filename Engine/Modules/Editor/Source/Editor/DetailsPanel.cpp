@@ -1,17 +1,19 @@
 #include "Editor/DetailsPanel.h"
 
+#include <cstring>
+
 #include <QFormLayout>
 #include <QFrame>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QScrollArea>
 #include <QToolButton>
 #include <QVBoxLayout>
 
-#include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Editor/EditorContext.h"
-#include "Editor/PropertyWidgets.h"
 
 using GameCore::ComponentTypeID;
 using GameCore::EntityID;
@@ -19,6 +21,23 @@ using GameCore::EntityID;
 namespace
 {
     constexpr int RefreshIntervalMs = 100;
+
+    /* The reset arrow: small, flat, and holding its space while hidden so the
+     * editors do not shift sideways as values change. */
+    QToolButton* MakeResetButton(QWidget* InParent, const QString& InTip)
+    {
+        auto* Button = new QToolButton(InParent);
+        Button->setText(QString(QChar(0x21BA)));   // anticlockwise open circle arrow
+        Button->setToolTip(InTip);
+        Button->setAutoRaise(true);
+        Button->setFixedSize(22, 22);
+        Button->setStyleSheet(QStringLiteral("QToolButton { color: #ffa51e; font-weight: bold; }"));
+        QSizePolicy Policy = Button->sizePolicy();
+        Policy.setRetainSizeWhenHidden(true);
+        Button->setSizePolicy(Policy);
+        Button->setVisible(false);
+        return Button;
+    }
 }
 
 DetailsPanel::DetailsPanel(EditorContext& InContext, QWidget* InParent)
@@ -68,6 +87,40 @@ std::vector<ComponentTypeID> DetailsPanel::CollectComponentTypes(const EntityID 
     return Types;
 }
 
+uint8_t* DetailsPanel::ResolveComponent(const ComponentTypeID InType) const
+{
+    GameCore::World& World = Context.GetWorld();
+    if(!World.IsAlive(ShownEntity))
+    {
+        return nullptr;
+    }
+    return static_cast<uint8_t*>(World.GetEntity(ShownEntity).GetComponentByType(InType));
+}
+
+const DetailsPanel::ComponentSection* DetailsPanel::FindSection(const ComponentTypeID InType) const
+{
+    for(const ComponentSection& Section : Sections)
+    {
+        if(Section.Type == InType)
+        {
+            return &Section;
+        }
+    }
+    return nullptr;
+}
+
+void DetailsPanel::UpdateHeader()
+{
+    if(!ShownEntity.IsSet())
+    {
+        Header->setText(QStringLiteral("<span style='color:gray'>Nothing selected</span>"));
+        return;
+    }
+    Header->setText(QStringLiteral("<b>%1</b> &nbsp;<span style='color:gray'>#%2 gen %3</span>")
+                    .arg(Context.GetDisplayName(ShownEntity).toHtmlEscaped())
+                    .arg(ShownEntity.Index).arg(ShownEntity.Generation));
+}
+
 void DetailsPanel::RebuildIfComponentsChanged()
 {
     if(ShownEntity != Context.GetSelection() || CollectComponentTypes(ShownEntity) != ShownTypes)
@@ -76,17 +129,13 @@ void DetailsPanel::RebuildIfComponentsChanged()
         return;
     }
     /* Same components -- only the name may have changed. */
-    if(ShownEntity.IsSet())
-    {
-        Header->setText(QStringLiteral("<b>%1</b> &nbsp;<span style='color:gray'>#%2 gen %3</span>")
-                        .arg(Context.GetDisplayName(ShownEntity).toHtmlEscaped())
-                        .arg(ShownEntity.Index).arg(ShownEntity.Generation));
-    }
+    UpdateHeader();
 }
 
 void DetailsPanel::Rebuild()
 {
-    Editors.clear();
+    Rows.clear();
+    Sections.clear();
     ShownEntity = Context.GetSelection();
     ShownTypes  = CollectComponentTypes(ShownEntity);
 
@@ -97,20 +146,14 @@ void DetailsPanel::Rebuild()
     BodyLayout->setContentsMargins(0, 0, 0, 0);
     BodyLayout->setSpacing(6);
 
-    if(!ShownEntity.IsSet())
+    UpdateHeader();
+    if(ShownEntity.IsSet())
     {
-        Header->setText(QStringLiteral("<span style='color:gray'>Nothing selected</span>"));
-    }
-    else
-    {
-        Header->setText(QStringLiteral("<b>%1</b> &nbsp;<span style='color:gray'>#%2 gen %3</span>")
-                        .arg(Context.GetDisplayName(ShownEntity).toHtmlEscaped())
-                        .arg(ShownEntity.Index).arg(ShownEntity.Generation));
-
         for(const ComponentTypeID Type : ShownTypes)
         {
             BodyLayout->addWidget(BuildComponentSection(ShownEntity, Type));
         }
+        BodyLayout->addWidget(BuildAddComponentButton());
     }
 
     BodyLayout->addStretch(1);
@@ -124,11 +167,28 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(InType);
     const QString TypeName = Info ? QString::fromLatin1(Info->Name) : QStringLiteral("Component %1").arg(InType);
 
+    /* The type's default-constructed bytes, once per section -- what every
+     * reset arrow in it compares against and restores. */
+    ComponentSection State;
+    State.Type = InType;
+    if(Info)
+    {
+        auto Defaults = std::make_shared<std::vector<uint8_t>>(Info->SizeBytes);
+        if(GameCore::GetComponentPropertyDefaults(InType, Defaults->data()))
+        {
+            State.Defaults = Defaults;
+        }
+    }
+
     auto* Section = new QFrame(Body);
     Section->setFrameShape(QFrame::StyledPanel);
     auto* SectionLayout = new QVBoxLayout(Section);
     SectionLayout->setContentsMargins(4, 2, 4, 4);
     SectionLayout->setSpacing(2);
+
+    // --- Header: collapse toggle, Reset, Remove ------------------------------
+    auto* HeaderRow = new QHBoxLayout();
+    HeaderRow->setContentsMargins(0, 0, 0, 0);
 
     auto* Toggle = new QToolButton(Section);
     Toggle->setText(TypeName);
@@ -138,8 +198,39 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     Toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
     Toggle->setAutoRaise(true);
     Toggle->setStyleSheet(QStringLiteral("QToolButton { font-weight: bold; }"));
-    SectionLayout->addWidget(Toggle);
+    HeaderRow->addWidget(Toggle);
+    HeaderRow->addStretch(1);
 
+    if(State.Defaults)
+    {
+        State.ResetAll = new QToolButton(Section);
+        State.ResetAll->setText(QStringLiteral("Reset"));
+        State.ResetAll->setToolTip(QStringLiteral("Reset every property of %1 to its default").arg(TypeName));
+        State.ResetAll->setAutoRaise(true);
+        State.ResetAll->setEnabled(false);
+        connect(State.ResetAll, &QToolButton::clicked, this, [this, InType]() { ResetComponent(InType); });
+        HeaderRow->addWidget(State.ResetAll);
+    }
+
+    auto* Remove = new QToolButton(Section);
+    Remove->setText(QString(QChar(0x2715)));   // multiplication x; code points keep the source ASCII
+    Remove->setToolTip(QStringLiteral("Remove %1 from this entity").arg(TypeName));
+    Remove->setAutoRaise(true);
+    connect(Remove, &QToolButton::clicked, this, [this, InEntity, InType]()
+    {
+        /* Immediate outside a tick; the World's OnComponentRemoved then
+         * rebuilds this panel on the next turn, not inside this click. */
+        GameCore::World& World = Context.GetWorld();
+        if(World.IsAlive(InEntity))
+        {
+            World.GetEntity(InEntity).RemoveComponentByType(InType);
+        }
+    });
+    HeaderRow->addWidget(Remove);
+
+    SectionLayout->addLayout(HeaderRow);
+
+    // --- Properties ----------------------------------------------------------
     auto* Content = new QWidget(Section);
     auto* Form    = new QFormLayout(Content);
     Form->setContentsMargins(14, 0, 0, 0);
@@ -152,6 +243,8 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
         Toggle->setArrowType(bInOpen ? Qt::DownArrow : Qt::RightArrow);
         Content->setVisible(bInOpen);
     });
+
+    Sections.push_back(State);
 
     size_t Count = 0;
     const GameCore::ComponentPropertyEntry* Entries = GameCore::FindComponentProperties(InType, Count);
@@ -177,18 +270,49 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
 
     for(size_t Index = 0; Index < Count; ++Index)
     {
-        PropertyEditor* Editor = CreatePropertyEditor(Entries[Index], Resolve, Content);
+        const GameCore::ComponentPropertyEntry& Entry = Entries[Index];
+
+        auto* Field  = new QWidget(Content);
+        auto* FieldRow = new QHBoxLayout(Field);
+        FieldRow->setContentsMargins(0, 0, 0, 0);
+        FieldRow->setSpacing(2);
+
+        PropertyEditor* Editor = CreatePropertyEditor(Entry, Resolve, Field);
         if(!Editor)
         {
+            delete Field;
             continue;
         }
-        QString Label = QString::fromLatin1(Entries[Index].Name);
-        if(Entries[Index].IsReadOnly())
+        FieldRow->addWidget(Editor, 1);
+
+        PropertyRow Row;
+        Row.Editor = Editor;
+        Row.Type   = InType;
+        Row.Entry  = Entry;
+
+        if(Entry.IsReadOnly())
         {
             Editor->setToolTip(QStringLiteral("Read-only"));
+            /* Keeps read-only editors aligned with writable ones. */
+            FieldRow->addSpacing(24);
         }
-        Form->addRow(Label, Editor);
-        Editors.push_back(Editor);
+        else if(State.Defaults)
+        {
+            Row.Reset = MakeResetButton(Field, QStringLiteral("Changed from the default -- click to reset %1")
+                                                .arg(QString::fromLatin1(Entry.Name)));
+            FieldRow->addWidget(Row.Reset);
+            const size_t RowIndex = Rows.size();
+            connect(Row.Reset, &QToolButton::clicked, this, [this, RowIndex]()
+            {
+                if(RowIndex < Rows.size())
+                {
+                    ResetProperty(Rows[RowIndex]);
+                }
+            });
+        }
+
+        Form->addRow(QString::fromLatin1(Entry.Name), Field);
+        Rows.push_back(Row);
 
         connect(Editor, &PropertyEditor::Written, this, [Ctx, InEntity, InType]()
         {
@@ -199,14 +323,140 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     return Section;
 }
 
+QWidget* DetailsPanel::BuildAddComponentButton()
+{
+    auto* Button = new QToolButton(Body);
+    Button->setText(QStringLiteral("+ Add Component"));
+    Button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    Button->setPopupMode(QToolButton::InstantPopup);
+    Button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    Button->setMinimumHeight(28);
+
+    /* Filled when opened, not now: another panel (or a script) may add or
+     * remove a component between this rebuild and the click. */
+    auto* Menu = new QMenu(Button);
+    connect(Menu, &QMenu::aboutToShow, this, [this, Menu]() { PopulateAddMenu(Menu); });
+    Button->setMenu(Menu);
+    return Button;
+}
+
+void DetailsPanel::PopulateAddMenu(QMenu* InMenu)
+{
+    InMenu->clear();
+
+    GameCore::World& World = Context.GetWorld();
+    if(!World.IsAlive(ShownEntity))
+    {
+        return;
+    }
+    const GameCore::Entity E = World.GetEntity(ShownEntity);
+
+    const size_t TypeCount = GameCore::GetComponentTypeCount();
+    for(size_t Index = 0; Index < TypeCount && Index < GameCore::COMPONENT_TYPE_MAX; ++Index)
+    {
+        const ComponentTypeID Type = ComponentTypeID(Index);
+        const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(Type);
+        if(!Info || !GameCore::IsComponentAddable(Type) || E.HasComponentByType(Type))
+        {
+            continue;
+        }
+
+        QAction* Action = InMenu->addAction(QString::fromLatin1(Info->Name));
+        const EntityID Target = ShownEntity;
+        connect(Action, &QAction::triggered, this, [this, Target, Type]()
+        {
+            GameCore::World& W = Context.GetWorld();
+            const GameCore::ComponentTypeInfo* TypeInfo = GameCore::GetComponentType(Type);
+            if(!TypeInfo || !W.IsAlive(Target))
+            {
+                return;
+            }
+            /* From the default-constructed bytes -- never zeroes -- exactly as
+             * the type's own `T{}` would start. */
+            std::vector<uint8_t> Init(TypeInfo->SizeBytes);
+            if(GameCore::GetComponentPropertyDefaults(Type, Init.data()))
+            {
+                W.GetEntity(Target).AddComponentByType(Type, Init.data());
+            }
+        });
+    }
+
+    if(InMenu->isEmpty())
+    {
+        InMenu->addAction(QStringLiteral("(every addable component is present)"))->setEnabled(false);
+    }
+}
+
+void DetailsPanel::ResetProperty(const PropertyRow& InRow)
+{
+    const ComponentSection* Section = FindSection(InRow.Type);
+    uint8_t* Component = ResolveComponent(InRow.Type);
+    if(!Section || !Section->Defaults || !Component || InRow.Entry.IsReadOnly())
+    {
+        return;
+    }
+
+    std::memcpy(Component + InRow.Entry.Offset, Section->Defaults->data() + InRow.Entry.Offset, InRow.Entry.Size);
+    InRow.Editor->Refresh(true);
+    Context.NotifyPropertyEdited(ShownEntity, InRow.Type);
+    RefreshValues();
+}
+
+void DetailsPanel::ResetComponent(const ComponentTypeID InType)
+{
+    /* Property by property rather than the whole block: the default bytes also
+     * hold per-run state (Owner, a proxy handle, ProxyID) that must survive. */
+    const ComponentSection* Section = FindSection(InType);
+    uint8_t* Component = ResolveComponent(InType);
+    if(!Section || !Section->Defaults || !Component)
+    {
+        return;
+    }
+
+    for(const PropertyRow& Row : Rows)
+    {
+        if(Row.Type == InType && !Row.Entry.IsReadOnly())
+        {
+            std::memcpy(Component + Row.Entry.Offset, Section->Defaults->data() + Row.Entry.Offset, Row.Entry.Size);
+            Row.Editor->Refresh(true);
+        }
+    }
+    Context.NotifyPropertyEdited(ShownEntity, InType);
+    RefreshValues();
+}
+
 void DetailsPanel::RefreshValues()
 {
     if(!isVisible())
     {
         return;
     }
-    for(PropertyEditor* Editor : Editors)
+
+    for(ComponentSection& Section : Sections)
     {
-        Editor->Refresh();
+        if(Section.ResetAll)
+        {
+            Section.ResetAll->setEnabled(false);
+        }
+    }
+
+    for(const PropertyRow& Row : Rows)
+    {
+        Row.Editor->Refresh();
+
+        if(!Row.Reset)
+        {
+            continue;
+        }
+        const ComponentSection* Section = FindSection(Row.Type);
+        const uint8_t* Component = ResolveComponent(Row.Type);
+        const bool bChanged = Section && Section->Defaults && Component
+                           && !IsPropertyAtDefault(Row.Entry, Component + Row.Entry.Offset,
+                                                   Section->Defaults->data() + Row.Entry.Offset);
+        Row.Reset->setVisible(bChanged);
+        if(bChanged && Section->ResetAll)
+        {
+            Section->ResetAll->setEnabled(true);
+        }
     }
 }

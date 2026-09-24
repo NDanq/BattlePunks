@@ -1,5 +1,6 @@
 #include "Editor/ViewportWidget.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 
@@ -12,18 +13,54 @@
 #include "Public/GameCore/World.h"
 #include "Public/Math/Matrix.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Public/RenderCore/RenderTypes.h"
 #include "Editor/EditorContext.h"
 
 namespace
 {
-    constexpr float LookDegreesPerPixel = 0.2f;
-    constexpr float FlyUnitsPerSecond   = 600.0f;
-    constexpr float FastMultiplier      = 4.0f;
-    constexpr float DollyUnitsPerNotch  = 80.0f;
-    constexpr float FrameDistance       = 600.0f;
+    constexpr float  LookDegreesPerPixel   = 0.2f;
+    constexpr float  OrbitDegreesPerPixel  = 0.3f;
+    constexpr float  FlyUnitsPerSecond     = 600.0f;
+    constexpr float  FastMultiplier        = 4.0f;
+    constexpr double DollyFractionPerNotch = 0.15;    // of the distance to the pivot
+    constexpr double DollyFractionPerPixel = 0.005;
 
     /* A press-release that moved less than this is a click, not a drag. */
     constexpr int ClickSlopPixels = 4;
+
+    /* Thicknesses and paddings in LOGICAL pixels; scaled by the device pixel
+     * ratio before they reach the Renderer, which works in physical ones. */
+    const EngineCore::Color SelectionColor(255, 165, 30);
+    constexpr float         SelectionThickness  = 2.5f;
+    constexpr double        SelectionPadPixels  = 4.0;   // outline sits just outside the shape
+    const EngineCore::Color AllBoundsColor(120, 126, 140);
+    constexpr float         AllBoundsThickness  = 1.0f;
+
+    /* The axis gizmo: bottom-left, a fixed size on screen. */
+    constexpr double GizmoMarginPixels = 60.0;    // from the left and bottom edges to its origin
+    constexpr double GizmoAxisPixels   = 40.0;
+    constexpr double GizmoDepth        = 100.0;   // world units in front of the camera; well past ZNear
+    constexpr double GizmoHitPixels    = 12.0;
+    const EngineCore::Color GizmoAxisColors[3] = { EngineCore::Color(230, 70, 70),
+                                                   EngineCore::Color(90, 200, 80),
+                                                   EngineCore::Color(70, 130, 240) };
+    const EngineCore::Color GizmoNegativeColor(100, 104, 116);
+
+    /* AABB::Fattened, except an axis with no extent stays flat -- padding a
+     * quad's box in depth would outline it twice, front and back. */
+    GameCore::AABB PadNonFlat(const GameCore::AABB& InBox, const double InPad)
+    {
+        const EngineCore::Vector3 Extent = InBox.Extent();
+        const EngineCore::Vector3 Pad(Extent.GetX() > 0.0 ? InPad : 0.0,
+                                      Extent.GetY() > 0.0 ? InPad : 0.0,
+                                      Extent.GetZ() > 0.0 ? InPad : 0.0);
+        return GameCore::AABB(InBox.Min - Pad, InBox.Max + Pad);
+    }
+
+    EngineCore::Vector3 UnitAxis(const int InAxis)
+    {
+        return EngineCore::Vector3(InAxis == 0 ? 1.0 : 0.0, InAxis == 1 ? 1.0 : 0.0, InAxis == 2 ? 1.0 : 0.0);
+    }
 
     /* An affine transform's inverse, as a 3x4 (the bottom row is 0 0 0 1). */
     struct Affine3x4
@@ -133,20 +170,34 @@ void ViewportWidget::StartRendering()
     FrameTimer.start();
 }
 
-void ViewportWidget::FrameEntity(const GameCore::EntityID InEntity)
+// === Navigation commands =====================================================
+
+void ViewportWidget::FrameSelection()
 {
-    GameCore::World& World = Context.GetWorld();
-    if(!World.IsAlive(InEntity))
+    const GameCore::AABB Box = Context.GetEntityBounds(Context.GetSelection());
+    if(!Box.IsEmpty())
     {
-        return;
+        Camera.Frame(Box);
     }
-    const GameCore::TransformComponent* Transform = World.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>();
-    if(!Transform)
-    {
-        return;
-    }
-    Camera.Position = Transform->Position - Camera.GetForward() * double(FrameDistance);
 }
+
+void ViewportWidget::FrameAll()
+{
+    Camera.Frame(Context.GetSceneBounds());
+}
+
+void ViewportWidget::ApplyPreset(const EditorCamera::EPreset InPreset)
+{
+    Camera.ApplyPreset(InPreset, GetPivot());
+}
+
+EngineCore::Vector3 ViewportWidget::GetPivot() const
+{
+    const GameCore::AABB Box = Context.GetEntityBounds(Context.GetSelection());
+    return Box.IsEmpty() ? Camera.GetFocusPoint() : Box.Center();
+}
+
+// === Frame ===================================================================
 
 void ViewportWidget::paintEvent(QPaintEvent* /*InEvent*/)
 {
@@ -159,13 +210,15 @@ void ViewportWidget::OnFrame()
     const float DeltaSeconds = float(FrameClock.restart()) / 1000.0f;
     ApplyFlyInput(DeltaSeconds);
 
+    QueueOverlay();
+
     const EngineCore::Size Pixels = GetPixelSize();
     Context.RenderFrame(Camera.BuildView(Pixels), Pixels, GetWindowHandle());
 }
 
 void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
 {
-    if(!bLooking || HeldKeys.isEmpty())
+    if(Drag != EDrag::Look || HeldKeys.isEmpty())
     {
         return;
     }
@@ -178,7 +231,7 @@ void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
     if(HeldKeys.contains(Qt::Key_E)) { Up      += 1.0; }
     if(HeldKeys.contains(Qt::Key_Q)) { Up      -= 1.0; }
 
-    double Speed = double(FlyUnitsPerSecond) * double(InDeltaSeconds);
+    double Speed = double(FlyUnitsPerSecond) * double(Camera.SpeedScale) * double(InDeltaSeconds);
     if(HeldKeys.contains(Qt::Key_Shift)) { Speed *= double(FastMultiplier); }
 
     Camera.Position = Camera.Position
@@ -187,20 +240,134 @@ void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
                     + Camera.GetUp()      * (Up * Speed);
 }
 
+// === Overlay =================================================================
+
+void ViewportWidget::QueueOverlay()
+{
+    const GameCore::EntityID Selected = Context.GetSelection();
+    const float Ratio = float(devicePixelRatioF());
+
+    if(bShowAllBounds)
+    {
+        struct Collect { EditorContext* Ctx; GameCore::EntityID Skip; float Thickness; } C{ &Context, Selected, AllBoundsThickness * Ratio };
+        Context.GetWorld().ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
+        {
+            const auto& Data = *static_cast<const Collect*>(InUserData);
+            if(InEntity != Data.Skip)
+            {
+                Data.Ctx->DrawDebugBox(Data.Ctx->GetEntityBounds(InEntity), AllBoundsColor, Data.Thickness);
+            }
+        }, &C);
+    }
+
+    /* Last, so it sits over the grey boxes where they overlap. Padded by a
+     * few pixels' worth of world units at the box's depth, so the outline
+     * frames the shape instead of covering its edge. An unset selection has
+     * empty bounds, which draw nothing. */
+    const GameCore::AABB Box = Context.GetEntityBounds(Selected);
+    if(!Box.IsEmpty())
+    {
+        const double Depth = std::max(double((Box.Center() - Camera.Position).Dot(Camera.GetForward())), double(Camera.ZNear));
+        const double Pad   = SelectionPadPixels * Camera.GetWorldPerPixel(Depth, height());
+        Context.DrawDebugBox(PadNonFlat(Box, Pad), SelectionColor, SelectionThickness * Ratio);
+    }
+
+    QueueAxisGizmo();
+}
+
+void ViewportWidget::GetGizmoFrame(EngineCore::Vector3& OutOrigin, double& OutAxisLength) const
+{
+    /* Through the gizmo's pixel, at a fixed depth in front of the camera --
+     * so it turns with the view but never moves on screen. */
+    EngineCore::Vector3 RayOrigin, RayDir;
+    Camera.ScreenRay(GizmoMarginPixels, double(height()) - GizmoMarginPixels, GetLogicalSize(), RayOrigin, RayDir);
+
+    const double AlongForward = std::max(double(RayDir.Dot(Camera.GetForward())), 1e-3);
+    OutOrigin     = RayOrigin + RayDir * (GizmoDepth / AlongForward);
+    OutAxisLength = GizmoAxisPixels * Camera.GetWorldPerPixel(GizmoDepth, height());
+}
+
+void ViewportWidget::QueueAxisGizmo()
+{
+    EngineCore::Vector3 Origin;
+    double AxisLength = 0.0;
+    GetGizmoFrame(Origin, AxisLength);
+    const float Ratio = float(devicePixelRatioF());
+
+    for(int Axis = 0; Axis < 3; ++Axis)
+    {
+        const EngineCore::Vector3 Dir = UnitAxis(Axis);
+
+        RenderCore::DebugLine Negative;
+        Negative.Start           = Origin;
+        Negative.End             = Origin - Dir * (AxisLength * 0.5);
+        Negative.Color           = GizmoNegativeColor;
+        Negative.ThicknessPixels = 1.5f * Ratio;
+        Context.DrawDebugLine(Negative);
+
+        RenderCore::DebugLine Shaft;
+        Shaft.Start           = Origin;
+        Shaft.End             = Origin + Dir * AxisLength;
+        Shaft.Color           = GizmoAxisColors[Axis];
+        Shaft.ThicknessPixels = 2.5f * Ratio;
+        Context.DrawDebugLine(Shaft);
+
+        /* A fat stub at the positive end marks direction and is the click target. */
+        RenderCore::DebugLine Tip = Shaft;
+        Tip.Start           = Origin + Dir * (AxisLength * 0.78);
+        Tip.ThicknessPixels = 7.0f * Ratio;
+        Context.DrawDebugLine(Tip);
+    }
+}
+
+int ViewportWidget::HitGizmoAxis(const QPoint& InLogicalPos) const
+{
+    EngineCore::Vector3 Origin;
+    double AxisLength = 0.0;
+    GetGizmoFrame(Origin, AxisLength);
+
+    int    Best     = -1;
+    double BestDist = GizmoHitPixels;
+    for(int Axis = 0; Axis < 3; ++Axis)
+    {
+        double X = 0.0, Y = 0.0;
+        if(!Camera.WorldToScreen(Origin + UnitAxis(Axis) * (AxisLength * 0.9), GetLogicalSize(), X, Y))
+        {
+            continue;
+        }
+        const double Dist = std::hypot(X - double(InLogicalPos.x()), Y - double(InLogicalPos.y()));
+        if(Dist < BestDist)
+        {
+            BestDist = Dist;
+            Best     = Axis;
+        }
+    }
+    return Best;
+}
+
+// === Input ===================================================================
+
 void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
 {
     setFocus(Qt::MouseFocusReason);
     LastMousePos = InEvent->position().toPoint();
     PressPos     = LastMousePos;
 
-    if(InEvent->button() == Qt::RightButton)
+    if(Drag != EDrag::None)
     {
-        bLooking = true;
+        return;   // one drag at a time; another button is ignored until release
     }
-    else if(InEvent->button() == Qt::MiddleButton)
+
+    const bool bAlt = (InEvent->modifiers() & Qt::AltModifier) != 0;
+    switch(InEvent->button())
     {
-        bPanning = true;
+        case Qt::LeftButton:   Drag = bAlt ? EDrag::Orbit : EDrag::None; break;
+        case Qt::RightButton:  Drag = bAlt ? EDrag::Dolly : EDrag::Look; break;
+        case Qt::MiddleButton: Drag = EDrag::Pan;                        break;
+        default:               return;
     }
+    DragButton = InEvent->button();
+    DragPivot  = GetPivot();
 }
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
@@ -209,45 +376,82 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
     const QPoint Delta = Pos - LastMousePos;
     LastMousePos = Pos;
 
-    if(bLooking)
+    switch(Drag)
     {
-        /* Drag right turns right; drag up looks up. */
-        Camera.AddYawPitch(float(Delta.x()) * LookDegreesPerPixel, float(-Delta.y()) * LookDegreesPerPixel);
-    }
-    else if(bPanning)
-    {
-        /* Scaled so the scene roughly tracks the cursor at a typical distance. */
-        const double UnitsPerPixel = 1.5;
-        Camera.Position = Camera.Position
-                        - Camera.GetRight() * (double(Delta.x()) * UnitsPerPixel)
-                        + Camera.GetUp()    * (double(Delta.y()) * UnitsPerPixel);
+        case EDrag::Look:
+            /* Drag right turns right; drag up looks up. */
+            Camera.AddYawPitch(float(Delta.x()) * LookDegreesPerPixel, float(-Delta.y()) * LookDegreesPerPixel);
+            break;
+
+        case EDrag::Orbit:
+            Camera.Orbit(DragPivot, float(Delta.x()) * OrbitDegreesPerPixel, float(-Delta.y()) * OrbitDegreesPerPixel);
+            break;
+
+        case EDrag::Dolly:
+        {
+            /* Right or down pulls in; proportional to the distance, so it
+             * feels the same close up and far away. */
+            const double Amount = double(Delta.x() + Delta.y()) * double(Camera.FocusDistance) * DollyFractionPerPixel;
+            Camera.Dolly(DragPivot, Amount * double(Camera.SpeedScale));
+            break;
+        }
+
+        case EDrag::Pan:
+        {
+            /* One pixel of drag moves the focus plane one pixel: the scene
+             * at the focus distance stays under the cursor. */
+            const double UnitsPerPixel = Camera.GetWorldPerPixel(Camera.FocusDistance, height());
+            Camera.Position = Camera.Position
+                            - Camera.GetRight() * (double(Delta.x()) * UnitsPerPixel)
+                            + Camera.GetUp()    * (double(Delta.y()) * UnitsPerPixel);
+            break;
+        }
+
+        case EDrag::None:
+            break;
     }
 }
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
 {
-    if(InEvent->button() == Qt::RightButton)
+    const bool bWasDragging = Drag != EDrag::None;
+    if(InEvent->button() == DragButton)
     {
-        bLooking = false;
+        Drag       = EDrag::None;
+        DragButton = Qt::NoButton;
     }
-    else if(InEvent->button() == Qt::MiddleButton)
+
+    /* Only a plain left click (no drag, no Alt-orbit) selects. */
+    if(InEvent->button() != Qt::LeftButton || bWasDragging)
     {
-        bPanning = false;
+        return;
     }
-    else if(InEvent->button() == Qt::LeftButton)
+    const QPoint Pos = InEvent->position().toPoint();
+    if((Pos - PressPos).manhattanLength() > ClickSlopPixels)
     {
-        const QPoint Pos = InEvent->position().toPoint();
-        if((Pos - PressPos).manhattanLength() <= ClickSlopPixels)
-        {
-            Context.SetSelection(Pick(Pos));
-        }
+        return;
     }
+
+    /* The gizmo first: it floats over the scene. */
+    const int Axis = HitGizmoAxis(Pos);
+    if(Axis >= 0)
+    {
+        /* View FROM the clicked axis' positive side, toward the pivot. */
+        using EPreset = EditorCamera::EPreset;
+        static const EPreset FromPositive[3] = { EPreset::Right, EPreset::Bottom, EPreset::Back  };
+        static const EPreset FromNegative[3] = { EPreset::Left,  EPreset::Top,    EPreset::Front };
+        const bool bOpposite = (InEvent->modifiers() & Qt::ShiftModifier) != 0;
+        ApplyPreset(bOpposite ? FromNegative[Axis] : FromPositive[Axis]);
+        return;
+    }
+
+    Context.SetSelection(Pick(Pos));
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* InEvent)
 {
     const double Notches = double(InEvent->angleDelta().y()) / 120.0;
-    Camera.Position = Camera.Position + Camera.GetForward() * (Notches * double(DollyUnitsPerNotch));
+    Camera.Dolly(GetPivot(), Notches * double(Camera.FocusDistance) * DollyFractionPerNotch * double(Camera.SpeedScale));
 }
 
 void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
@@ -256,10 +460,11 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
     {
         return;
     }
-    if(InEvent->key() == Qt::Key_F)
+    switch(InEvent->key())
     {
-        FrameEntity(Context.GetSelection());
-        return;
+        case Qt::Key_F:    FrameSelection(); return;
+        case Qt::Key_Home: FrameAll();       return;
+        default:           break;
     }
     HeldKeys.insert(InEvent->key());
 }
@@ -275,17 +480,19 @@ void ViewportWidget::keyReleaseEvent(QKeyEvent* InEvent)
 void ViewportWidget::focusOutEvent(QFocusEvent* InEvent)
 {
     /* A release that lands in another widget would otherwise leave the
-     * camera flying forever. */
+     * camera flying, or a drag stuck on. */
     HeldKeys.clear();
-    bLooking = false;
-    bPanning = false;
+    Drag       = EDrag::None;
+    DragButton = Qt::NoButton;
     QWidget::focusOutEvent(InEvent);
 }
+
+// === Picking =================================================================
 
 GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
 {
     EngineCore::Vector3 RayOrigin, RayDir;
-    Camera.ScreenRay(InLogicalPos.x(), InLogicalPos.y(), EngineCore::Size(width(), height()), RayOrigin, RayDir);
+    Camera.ScreenRay(InLogicalPos.x(), InLogicalPos.y(), GetLogicalSize(), RayOrigin, RayDir);
 
     GameCore::EntityID Best;
     double BestT = std::numeric_limits<double>::max();

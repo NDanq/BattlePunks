@@ -501,6 +501,67 @@ static void TestRendererWithWorld()
     Rend.Shutdown();
 }
 
+// ============================================================================
+// Debug lines: queued on the game thread, drawn once, then gone
+// ============================================================================
+
+static void TestDebugLines()
+{
+    std::printf("[debug lines]\n");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the debug-line test");
+    if(!bInit)
+    {
+        Rend.Shutdown();
+        return;
+    }
+
+    /* A perspective camera at the origin looking down +Z, as the editor sets. */
+    const EngineCore::Size Viewport(1280, 720);
+    const RenderView View = RenderView::MakePerspective(Viewport, EngineCore::Vector3(0.0, 0.0, 0.0),
+                                                        EngineCore::Vector3(0.0, 0.0, 1.0), 60.0f, 1.0f, 10000.0f);
+    Rend.SetViewOverride(&View);
+
+    auto DrawCallsForFrame = [&Rend, &Viewport](const uint64_t InFrame) -> uint64_t
+    {
+        RenderStats Before;
+        Rend.GetStats(Before);
+        Rend.EndFrame(FrameInfo{InFrame, 0.016, Viewport});
+        Rend.WaitForPreviousFrame();
+        RenderStats After;
+        Rend.GetStats(After);
+        return After.DrawCalls - Before.DrawCalls;
+    };
+
+    Rend.DrawDebugBox(GameCore::AABB(EngineCore::Vector3(-50.0, -50.0, 400.0), EngineCore::Vector3(50.0, 50.0, 500.0)),
+                      EngineCore::Color(255, 160, 0));
+    Expect(DrawCallsForFrame(0) == 12, "a solid box draws its twelve edges");
+
+    Expect(DrawCallsForFrame(1) == 0, "lines last one frame: the next EndFrame draws none");
+
+    Rend.DrawDebugBox(GameCore::AABB(EngineCore::Vector3(-50.0, -50.0, 400.0), EngineCore::Vector3(50.0, 50.0, 400.0)),
+                      EngineCore::Color(255, 160, 0));
+    Expect(DrawCallsForFrame(2) == 4, "a flat box draws its outline; zero-length edges are skipped");
+
+    DebugLine EndOn;
+    EndOn.Start = EngineCore::Vector3(0.0, 0.0, 100.0);
+    EndOn.End   = EngineCore::Vector3(0.0, 0.0, 200.0);
+    Rend.DrawDebugLine(EndOn);
+    DebugLine Behind;
+    Behind.Start = EngineCore::Vector3(-10.0, 0.0, -100.0);
+    Behind.End   = EngineCore::Vector3( 10.0, 0.0, -100.0);
+    Rend.DrawDebugLine(Behind);
+    Expect(DrawCallsForFrame(3) == 0, "a segment seen end-on, or behind the camera, is not drawn");
+
+    Rend.DrawDebugBox(GameCore::AABB(), EngineCore::Color(255, 255, 255));
+    Expect(DrawCallsForFrame(4) == 0, "an empty AABB draws nothing");
+
+    Rend.SetViewOverride(nullptr);
+    Rend.Shutdown();
+}
+
 int main()
 {
     std::printf("RenderCore smoke test\n");
@@ -529,6 +590,7 @@ int main()
     }
 
     TestRendererWithWorld();
+    TestDebugLines();
 
     const uint64_t Leaked = Memory::ReportLeaks();
     Expect(Leaked == 0, "no allocations leaked across the whole run -- every command, extraction "

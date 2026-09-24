@@ -23,6 +23,7 @@ namespace RenderCore
     struct RenderScene::Impl
     {
         std::vector<RenderProxy*> Proxies;
+        std::vector<DebugLine>    DebugLines;   // consumed by the next Render()
         RenderView                View;
         EngineCore::Color         ClearColor{24, 26, 32, 255};
 
@@ -207,6 +208,11 @@ namespace RenderCore
         P->ClearColor = InColor;
     }
 
+    void RenderScene::SetDebugLines(const DebugLine* InLines, const size_t InCount)
+    {
+        P->DebugLines.assign(InLines, InLines + InCount);
+    }
+
     void RenderScene::Render(RenderContext& InContext)
     {
         /* Pushed here, not in SetView(), so GetView() is always in step with
@@ -304,6 +310,19 @@ namespace RenderCore
         }
 
         SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
+
+        /* Over everything, never culled -- a tool's overlay, not scene
+         * content. Consumed here so a frame that sets none draws none. */
+        if(!P->DebugLines.empty())
+        {
+            InContext.BeginDrawEvent("DebugLines");
+            for(const DebugLine& Line : P->DebugLines)
+            {
+                InContext.DrawLine(Line.Start, Line.End, Line.Color, Line.ThicknessPixels);
+            }
+            InContext.EndDrawEvent();
+            P->DebugLines.clear();
+        }
 
         GDIEndRendering();
     }

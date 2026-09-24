@@ -38,6 +38,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Editor/EditorCamera.h
         Source/Editor/EditorMainWindow.cpp
         Source/Editor/EditorMainWindow.h
+        Source/Editor/ViewportPanel.cpp
+        Source/Editor/ViewportPanel.h
         Source/Editor/ViewportWidget.cpp
         Source/Editor/ViewportWidget.h
         Source/Editor/OutlinerPanel.cpp

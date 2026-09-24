@@ -11,12 +11,13 @@ class DetailsPanel;
 class EditorContext;
 class OutlinerPanel;
 class QLabel;
+class ViewportPanel;
 class ViewportWidget;
 
 /*
- * The editor's frame: the viewport in the centre, the Outliner docked left and
- * the Details panel docked right, File/Edit/View menus and a status bar with
- * render stats.
+ * The editor's frame: the viewport (with its navigation toolbar) in the
+ * centre, the Outliner docked left and the Details panel docked right,
+ * File/Edit/View menus and a status bar with render stats.
  *
  * The Renderer is started from here, once the window has been shown -- the
  * viewport's native window must exist before GDI builds a swapchain on it --
@@ -50,7 +51,8 @@ private:
     EditorContext&             Context;
     RenderCore::ERenderBackend Backend;
 
-    ViewportWidget* Viewport = nullptr;
+    ViewportPanel*  ViewportArea = nullptr;
+    ViewportWidget* Viewport = nullptr;   // ViewportArea's, cached
     OutlinerPanel*  Outliner = nullptr;
     DetailsPanel*   Details  = nullptr;
     QLabel*         StatsLabel = nullptr;
