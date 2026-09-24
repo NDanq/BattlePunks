@@ -18,9 +18,15 @@
 #   the editor's exe. The viewport hands the Renderer a native handle taken from
 #   QWidget::winId() instead, which is all GDIQt::ToWindowHandle would do.
 #
-#   NOT NimbleEngine. Application owns an SDL window and its own event loop on
-#   the main thread; the editor's main thread belongs to Qt. EditorContext drives
-#   the same frame sequence (fence, collect, present, EndFrame) from a Qt timer.
+#   NimbleEngine       GameSession and GameModuleHost, for Play-in-Editor: the
+#                      editor hosts a game session the way Application does.
+#                      NOT Application itself -- it owns an SDL window and its
+#                      own event loop, and the editor's main thread belongs to
+#                      Qt. EditorContext drives the same frame sequence (tick,
+#                      fence, collect, present, EndFrame) from a Qt timer.
+#
+#   NOT the game. The game module ([Game] Module) is loaded at Play by name;
+#   the game's CMakeLists makes NimbleEditor depend on it so it is built.
 #
 # EDITOR TARGETS ONLY. Engine/CMakeLists.txt adds this directory only when
 # NIMBLE_TARGET is Editor (WITH_EDITOR=1), and every source below is wrapped in
@@ -49,6 +55,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/PropertyWidgets.cpp
         Source/Private/Editor/PropertyWidgets.h
         Source/Private/Editor/SDLInputProbe.cpp
+        Source/Private/Editor/PlaySession.cpp
+        Source/Private/Editor/PlaySession.h
         Source/Private/Editor/SDLInputProbe.h
         Source/Public/Editor/EditorContext.h
         Source/Public/Editor/EditorCamera.h
@@ -79,6 +87,7 @@ target_link_libraries(NimbleEditor PRIVATE
         GameCore::GameCore
         RenderCore::RenderCore
         GameWindow::GameWindow
+        NimbleEngine::NimbleEngine
         EngineCore::QtBridge
         Qt6::Core
         Qt6::Gui

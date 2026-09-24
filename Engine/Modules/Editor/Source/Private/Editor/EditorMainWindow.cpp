@@ -13,6 +13,7 @@
 #include <QMessageBox>
 #include <QSignalBlocker>
 #include <QStatusBar>
+#include <QToolBar>
 
 #include "Public/GameCore/World.h"
 #include "Public/Editor/ConsolePanel.h"
@@ -76,10 +77,16 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     RegisterConsoleCommands();
 
+    PlayLabel = new QLabel(this);
+    PlayLabel->setStyleSheet(QStringLiteral("QLabel { color: rgb(90, 200, 110); font-weight: bold; }"));
+    statusBar()->addPermanentWidget(PlayLabel);
+
     StatsLabel = new QLabel(this);
     statusBar()->addPermanentWidget(StatsLabel);
 
     BuildMenus();
+    BuildPlayControls();
+    connect(&Context, &EditorContext::PlayStateChanged, this, &EditorMainWindow::OnPlayStateChanged);
 
     connect(&StatsTimer, &QTimer::timeout, this, &EditorMainWindow::UpdateStats);
 
@@ -134,6 +141,9 @@ void EditorMainWindow::BuildMenus()
     SaveAs->setShortcut(QKeySequence::SaveAs);
     connect(SaveAs, &QAction::triggered, this, &EditorMainWindow::SaveWorldAs);
 
+    /* Save stays: it writes the edited World, which a run never touches. */
+    SceneActions = { New, SandboxScene, Open };
+
     File->addSeparator();
 
     QAction* Exit = File->addAction(QStringLiteral("E&xit"));
@@ -185,6 +195,69 @@ void EditorMainWindow::BuildMenus()
     InputProbeAction->setCheckable(true);
     InputProbeAction->setToolTip(QStringLiteral("Route the viewport's input through SDL and report it -- the Play-in-Editor input spike"));
     connect(InputProbeAction, &QAction::toggled, this, &EditorMainWindow::SetSDLInputProbe);
+}
+
+void EditorMainWindow::BuildPlayControls()
+{
+    QMenu* PlayMenu = menuBar()->addMenu(QStringLiteral("&Play"));
+
+    PlayAction = PlayMenu->addAction(QStringLiteral("&Play"));
+    PlayAction->setShortcut(QKeySequence(Qt::Key_F5));
+    PlayAction->setToolTip(QStringLiteral("Run the game ([Game] Module) from its start level in the viewport (F5)"));
+    connect(PlayAction, &QAction::triggered, this, &EditorMainWindow::StartPlay);
+
+    StopAction = PlayMenu->addAction(QStringLiteral("&Stop"));
+    StopAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F5));
+    StopAction->setToolTip(QStringLiteral("End the run and return to the edited scene (Shift+F5, or Esc in the viewport)"));
+    StopAction->setEnabled(false);
+    connect(StopAction, &QAction::triggered, this, [this]() { Context.StopPlay(); });
+
+    PlayMenu->addSeparator();
+
+    EjectAction = PlayMenu->addAction(QStringLiteral("&Eject"));
+    EjectAction->setCheckable(true);
+    EjectAction->setShortcut(QKeySequence(Qt::Key_F8));
+    EjectAction->setToolTip(QStringLiteral("While playing, look around with the editor camera instead of the game's (F8)"));
+    EjectAction->setEnabled(false);
+    connect(EjectAction, &QAction::toggled, this, [this](const bool bInOn) { Context.SetPlayViewEjected(bInOn); });
+    connect(&Context, &EditorContext::PlayViewEjectedChanged, this, [this](const bool bInEjected)
+    {
+        const QSignalBlocker Block(EjectAction);
+        EjectAction->setChecked(bInEjected);
+    });
+
+    /* In front of the navigation buttons, where a run is started and ended. */
+    QToolBar* Bar = ViewportArea->GetToolbar();
+    QAction*  First = Bar->actions().isEmpty() ? nullptr : Bar->actions().front();
+    Bar->insertAction(First, PlayAction);
+    Bar->insertAction(First, StopAction);
+    Bar->insertAction(First, EjectAction);
+    Bar->insertSeparator(First);
+}
+
+void EditorMainWindow::StartPlay()
+{
+    if(!Context.StartPlay())
+    {
+        statusBar()->showMessage(QStringLiteral("Play failed -- see the Console"), 5000);
+        return;
+    }
+    /* So keys reach the viewport (Esc to stop) rather than the last panel. */
+    Viewport->setFocus(Qt::OtherFocusReason);
+}
+
+void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
+{
+    PlayAction->setEnabled(!bInPlaying);
+    StopAction->setEnabled(bInPlaying);
+    EjectAction->setEnabled(bInPlaying);
+    for(QAction* Action : SceneActions)
+    {
+        Action->setEnabled(!bInPlaying);
+    }
+
+    PlayLabel->setText(bInPlaying ? QStringLiteral("Playing %1").arg(Context.DescribePlay()) : QString());
+    UpdateTitle();
 }
 
 void EditorMainWindow::RegisterConsoleCommands()
@@ -304,10 +377,57 @@ void EditorMainWindow::RegisterConsoleCommands()
         (bAll ? ViewportArea->GetFrameAllAction() : ViewportArea->GetFrameSelectionAction())->trigger();
     });
 
+    Console.Register(QStringLiteral("play"), QString(), QStringLiteral("Run the game in the viewport (F5)"),
+                     [this](const QStringList&)
+    {
+        if(Context.IsPlaying())
+        {
+            Console.PrintError(QStringLiteral("Already playing %1").arg(Context.DescribePlay()));
+            return;
+        }
+        StartPlay();
+        if(Context.IsPlaying())
+        {
+            Console.Print(QStringLiteral("Playing %1").arg(Context.DescribePlay()));
+        }
+    });
+
+    Console.Register(QStringLiteral("stop"), QString(), QStringLiteral("End the run (Shift+F5)"),
+                     [this](const QStringList&)
+    {
+        if(!Context.IsPlaying())
+        {
+            Console.PrintError(QStringLiteral("Not playing"));
+            return;
+        }
+        Context.StopPlay();
+    });
+
+    Console.Register(QStringLiteral("eject"), QStringLiteral("[on | off]"),
+                     QStringLiteral("While playing, switch between the game's camera and the editor's (F8)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(!Context.IsPlaying())
+        {
+            Console.PrintError(QStringLiteral("Not playing"));
+            return;
+        }
+        const QString Arg = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
+        Context.SetPlayViewEjected(Arg == QStringLiteral("on")  ? true
+                                 : Arg == QStringLiteral("off") ? false
+                                 : !Context.IsPlayViewEjected());
+        Console.Print(Context.IsPlayViewEjected() ? QStringLiteral("Editor camera") : QStringLiteral("Game camera"));
+    });
+
     Console.Register(QStringLiteral("scene"), QStringLiteral("<new | sandbox>"),
                      QStringLiteral("Replace the scene with an empty one, or Sandbox's"),
                      [this](const QStringList& InArgs)
     {
+        if(Context.IsPlaying())
+        {
+            Console.PrintError(QStringLiteral("Not while playing; 'stop' first"));
+            return;
+        }
         const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
         if(Which == QStringLiteral("new"))
         {
@@ -384,11 +504,19 @@ void EditorMainWindow::StartRenderer()
     {
         InputProbeAction->setChecked(true);   // -> SetSDLInputProbe(true)
     }
+    if(bStartPlay)
+    {
+        StartPlay();
+    }
     UpdateStats();
 }
 
 void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
+    /* Spontaneous: the window system asked (the close button, Alt+F4, a
+     * WM_CLOSE from outside); otherwise something in the editor called close(). */
+    CORE_LOG(std::string("[Editor] closing -- ") + (InEvent->spontaneous() ? "requested by the window system" : "requested by the editor"))
+
     /* Before any widget is destroyed: the Renderer releases its swapchain
      * against the viewport's native window, which must still exist. */
     StatsTimer.stop();
@@ -429,7 +557,8 @@ void EditorMainWindow::SetSDLInputProbe(const bool bInOn)
 void EditorMainWindow::UpdateTitle()
 {
     const QString Scene = CurrentPath.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(CurrentPath).fileName();
-    setWindowTitle(QStringLiteral("%1 - Nimble Editor").arg(Scene));
+    const QString Play  = Context.IsPlaying() ? QStringLiteral(" [Playing]") : QString();
+    setWindowTitle(QStringLiteral("%1%2 - Nimble Editor").arg(Scene, Play));
 }
 
 void EditorMainWindow::UpdateStats()

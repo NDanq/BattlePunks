@@ -19,6 +19,7 @@
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderView.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Private/Editor/PlaySession.h"
 
 using GameCore::EntityID;
 
@@ -34,7 +35,7 @@ EditorContext::EditorContext(QObject* InParent)
 
 EditorContext::~EditorContext()
 {
-    Shutdown();
+    Shutdown();   // stops a run first
     DestroyWorld();
 
     /* Last: the render thread's shader loads read through it until Shutdown. */
@@ -66,6 +67,9 @@ bool EditorContext::InitializeRenderer(const RenderCore::ERenderBackend InBacken
 
 void EditorContext::Shutdown()
 {
+    /* First: the game's level and module go while the Renderer still runs. */
+    StopPlay();
+
     /* The Renderer first: Shutdown() unbinds the World and drains the scene,
      * which needs the World still alive. Null-safe on a failed Initialize. */
     if(Renderer)
@@ -97,10 +101,25 @@ void EditorContext::RenderFrame(const RenderCore::RenderView& InView, const Engi
 
     using Clock = std::chrono::steady_clock;
     const int64_t NowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now().time_since_epoch()).count();
+    const double  DeltaSeconds = FrameNumber == 0 ? 0.0 : double(NowNs - PreviousFrameNs) / 1'000'000'000.0;
+
+    /* The game's frame, where Application::RunFrame has it: before the fence,
+     * so its render commands join this frame. */
+    if(Play)
+    {
+        /* The swap frees the World our panel delegates are bound to; take
+         * them off while it is still alive. SyncPlayWorld hooks the new one. */
+        if(Play->IsLevelSwapPending())
+        {
+            UnhookActiveWorld();
+        }
+        Play->Tick(DeltaSeconds, InViewportPixels);
+        SyncPlayWorld();
+    }
 
     /* No World::Tick -- but an edited Transform or Bounds still has to reach
      * the spatial index, which picking and a later play mode read. */
-    if(EditedWorld)
+    else if(EditedWorld)
     {
         EditedWorld->RefreshSpatialIndex();
     }
@@ -112,11 +131,12 @@ void EditorContext::RenderFrame(const RenderCore::RenderView& InView, const Engi
     EngineCore::Memory::CollectGarbage();
     Renderer->PresentToWindow(InWindow);
 
-    Renderer->SetViewOverride(&InView);
+    /* Null hands the view back to the World's CameraComponent: the game's. */
+    Renderer->SetViewOverride(IsEditorViewActive() ? &InView : nullptr);
 
     RenderCore::FrameInfo Info;
     Info.FrameNumber    = FrameNumber;
-    Info.DeltaSeconds   = FrameNumber == 0 ? 0.0 : double(NowNs - PreviousFrameNs) / 1'000'000'000.0;
+    Info.DeltaSeconds   = DeltaSeconds;
     Info.ViewportPixels = InViewportPixels;
     Renderer->EndFrame(Info);
 
@@ -144,11 +164,19 @@ void EditorContext::DrawDebugBox(const GameCore::AABB& InBox, const EngineCore::
 
 void EditorContext::NewScene()
 {
+    if(RefuseWhilePlaying("New Scene"))
+    {
+        return;
+    }
     ReplaceWorld();
 }
 
 void EditorContext::CreateSandboxScene()
 {
+    if(RefuseWhilePlaying("New Sandbox Scene"))
+    {
+        return;
+    }
     ReplaceWorld();
 
     /*
@@ -219,6 +247,10 @@ void EditorContext::CreateSandboxScene()
 
 bool EditorContext::LoadWorld(const QString& InPath)
 {
+    if(RefuseWhilePlaying("Open World"))
+    {
+        return false;
+    }
     EngineCore::Archive Ar = EngineCore::Archive::ForReading({});
     if(!EngineCore::LoadArchiveFromFile(InPath.toStdString(), Ar))
     {
@@ -241,6 +273,8 @@ bool EditorContext::LoadWorld(const QString& InPath)
 
 bool EditorContext::SaveWorld(const QString& InPath)
 {
+    /* The edited World, not the playing one -- allowed while playing, since
+     * the edited World is untouched by the run. */
     EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
     if(!GameCore::SerializeWorld(Ar, *EditedWorld) || Ar.HasError())
     {
@@ -255,7 +289,7 @@ bool EditorContext::SaveWorld(const QString& InPath)
 EntityID EditorContext::CreateEntity(const QString& InName, const EngineCore::Vector3& InPosition)
 {
     const QByteArray Name = InName.toUtf8();
-    const GameCore::Entity E = EditedWorld->CreateEntity(Name.constData());
+    const GameCore::Entity E = ActiveWorld->CreateEntity(Name.constData());
 
     GameCore::TransformComponent Transform;
     Transform.Position = InPosition;
@@ -266,7 +300,7 @@ EntityID EditorContext::CreateEntity(const QString& InName, const EngineCore::Ve
 
 void EditorContext::DestroyEntity(const EntityID InEntity)
 {
-    if(!EditedWorld || !EditedWorld->IsAlive(InEntity))
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
     {
         return;
     }
@@ -274,12 +308,12 @@ void EditorContext::DestroyEntity(const EntityID InEntity)
     {
         SetSelection(GameCore::InvalidEntityID());
     }
-    EditedWorld->DestroyEntity(InEntity);
+    ActiveWorld->DestroyEntity(InEntity);
 }
 
 QString EditorContext::GetDisplayName(const EntityID InEntity) const
 {
-    const char* Name = EditedWorld ? EditedWorld->GetEntity(InEntity).GetName() : "";
+    const char* Name = ActiveWorld ? ActiveWorld->GetEntity(InEntity).GetName() : "";
     if(Name[0] != '\0')
     {
         return QString::fromUtf8(Name);
@@ -289,11 +323,11 @@ QString EditorContext::GetDisplayName(const EntityID InEntity) const
 
 GameCore::AABB EditorContext::GetEntityBounds(const EntityID InEntity) const
 {
-    if(!EditedWorld || !EditedWorld->IsAlive(InEntity))
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
     {
         return GameCore::AABB();
     }
-    const GameCore::Entity E = EditedWorld->GetEntity(InEntity);
+    const GameCore::Entity E = ActiveWorld->GetEntity(InEntity);
 
     if(const GameCore::BoundsComponent* Bounds = E.GetComponent<GameCore::BoundsComponent>())
     {
@@ -324,13 +358,13 @@ GameCore::AABB EditorContext::GetEntityBounds(const EntityID InEntity) const
 
 GameCore::AABB EditorContext::GetSceneBounds() const
 {
-    if(!EditedWorld)
+    if(!ActiveWorld)
     {
         return GameCore::AABB();
     }
 
     struct Collect { const EditorContext* Self; GameCore::AABB Box; } Ctx{ this, GameCore::AABB() };
-    EditedWorld->ForEachEntity([](const EntityID InEntity, void* InUserData)
+    ActiveWorld->ForEachEntity([](const EntityID InEntity, void* InUserData)
     {
         auto& C = *static_cast<Collect*>(InUserData);
         C.Box = GameCore::AABB::Union(C.Box, C.Self->GetEntityBounds(InEntity));
@@ -342,7 +376,7 @@ GameCore::AABB EditorContext::GetSceneBounds() const
 
 void EditorContext::SetSelection(EntityID InEntity)
 {
-    if(!EditedWorld || !EditedWorld->IsAlive(InEntity))
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
     {
         InEntity = GameCore::InvalidEntityID();
     }
@@ -418,11 +452,8 @@ void EditorContext::ReplaceWorld()
 void EditorContext::CreateWorld()
 {
     EditedWorld = EngineCore::Memory::Alloc<GameCore::World>();
-
-    CreatedHandle          = EditedWorld->OnEntityCreated().Add(&EditorContext::OnEntityCreated, this);
-    DestroyedHandle        = EditedWorld->OnEntityDestroyed().Add(&EditorContext::OnEntityDestroyed, this);
-    ComponentAddedHandle   = EditedWorld->OnComponentAdded().Add(&EditorContext::OnComponentChanged, this);
-    ComponentRemovedHandle = EditedWorld->OnComponentRemoved().Add(&EditorContext::OnComponentChanged, this);
+    ActiveWorld = EditedWorld;
+    HookActiveWorld();
 
     if(bRendererReady)
     {
@@ -437,19 +468,186 @@ void EditorContext::DestroyWorld()
         return;
     }
 
-    /* The Renderer's proxies must go before the components they mirror. */
+    /* Before the World goes: the bridge holds its delegate handles. */
     if(Renderer)
     {
         Renderer->UnbindWorld();
     }
 
-    EditedWorld->OnEntityCreated().Remove(CreatedHandle);
-    EditedWorld->OnEntityDestroyed().Remove(DestroyedHandle);
-    EditedWorld->OnComponentAdded().Remove(ComponentAddedHandle);
-    EditedWorld->OnComponentRemoved().Remove(ComponentRemovedHandle);
+    if(ActiveWorld == EditedWorld)
+    {
+        UnhookActiveWorld();
+    }
+    ActiveWorld = nullptr;
 
     EngineCore::Memory::Dealloc(EditedWorld);
     EditedWorld = nullptr;
+}
+
+void EditorContext::HookActiveWorld()
+{
+    if(!ActiveWorld || HookedWorld == ActiveWorld)
+    {
+        return;
+    }
+    HookedWorld = ActiveWorld;
+    CreatedHandle          = ActiveWorld->OnEntityCreated().Add(&EditorContext::OnEntityCreated, this);
+    DestroyedHandle        = ActiveWorld->OnEntityDestroyed().Add(&EditorContext::OnEntityDestroyed, this);
+    ComponentAddedHandle   = ActiveWorld->OnComponentAdded().Add(&EditorContext::OnComponentChanged, this);
+    ComponentRemovedHandle = ActiveWorld->OnComponentRemoved().Add(&EditorContext::OnComponentChanged, this);
+}
+
+void EditorContext::UnhookActiveWorld()
+{
+    if(!HookedWorld)
+    {
+        return;
+    }
+    HookedWorld->OnEntityCreated().Remove(CreatedHandle);
+    HookedWorld->OnEntityDestroyed().Remove(DestroyedHandle);
+    HookedWorld->OnComponentAdded().Remove(ComponentAddedHandle);
+    HookedWorld->OnComponentRemoved().Remove(ComponentRemovedHandle);
+    ForgetHooks();
+}
+
+void EditorContext::ForgetHooks()
+{
+    HookedWorld            = nullptr;
+    CreatedHandle          = GameCore::DelegateHandle();
+    DestroyedHandle        = GameCore::DelegateHandle();
+    ComponentAddedHandle   = GameCore::DelegateHandle();
+    ComponentRemovedHandle = GameCore::DelegateHandle();
+}
+
+void EditorContext::ActivateWorld(GameCore::World* InWorld, const EntityID InSelection)
+{
+    ActiveWorld = InWorld;
+    HookActiveWorld();
+
+    Selection = ActiveWorld && ActiveWorld->IsAlive(InSelection) ? InSelection : GameCore::InvalidEntityID();
+    emit WorldReset();
+    emit SelectionChanged(Selection);
+}
+
+// === Play-in-Editor ==========================================================
+
+bool EditorContext::RefuseWhilePlaying(const char* InWhat) const
+{
+    if(!Play)
+    {
+        return false;
+    }
+    CORE_LOG_WARN(std::string("[Editor] ") + InWhat + " is not available while playing; stop first")
+    return true;
+}
+
+bool EditorContext::StartPlay()
+{
+    if(Play)
+    {
+        return true;
+    }
+    if(!bRendererReady)
+    {
+        CORE_LOG_ERROR("[PIE] the renderer is not running")
+        return false;
+    }
+
+    /* Set the edited World aside: no panel hooks, no renderer binding. The
+     * session binds its own level's World. */
+    EditedSelection = Selection;
+    UnhookActiveWorld();
+    Renderer->UnbindWorld();
+
+    Play = EngineCore::Memory::Alloc<PlaySession>(*Renderer);
+    if(!Play->Start())
+    {
+        EngineCore::Memory::Dealloc(Play);
+        Play = nullptr;
+
+        Renderer->BindWorld(*EditedWorld);
+        HookActiveWorld();   // ActiveWorld is still EditedWorld
+        return false;
+    }
+
+    PlayLoadCount    = Play->GetLoadCount();
+    bPlayViewEjected = false;
+    ActivateWorld(Play->GetWorld(), GameCore::InvalidEntityID());
+
+    emit PlayStateChanged(true);
+    return true;
+}
+
+void EditorContext::StopPlay()
+{
+    if(!Play)
+    {
+        return;
+    }
+
+    /* The playing World is still alive here; Stop frees it. */
+    UnhookActiveWorld();
+    ActiveWorld = nullptr;
+
+    Play->Stop();   // unbinds the renderer from the game's World
+    EngineCore::Memory::Dealloc(Play);
+    Play = nullptr;
+    bPlayViewEjected = false;
+
+    if(bRendererReady)
+    {
+        Renderer->BindWorld(*EditedWorld);
+    }
+    ActivateWorld(EditedWorld, EditedSelection);
+
+    emit PlayStateChanged(false);
+}
+
+void EditorContext::SyncPlayWorld()
+{
+    /* The game replaced its level's World -- a save restore does. Our
+     * delegates came off the old World before the swap (RenderFrame); forget
+     * anything left, since that World is gone. The load count, not the
+     * pointer: the new World can sit at the old one's address. */
+    const bool bReplaced = Play->GetLoadCount() != PlayLoadCount;
+    if(bReplaced)
+    {
+        PlayLoadCount = Play->GetLoadCount();
+        ForgetHooks();
+        ActiveWorld = nullptr;
+    }
+
+    /* The game asked to quit, or a swap failed and left no World. Stopped
+     * here and now: this runs in RenderFrame BEFORE the fence, the point at
+     * which Application's loop ends a session too, and the rest of the frame
+     * then draws the edited World. */
+    if(Play->IsQuitRequested() || !Play->GetWorld())
+    {
+        CORE_LOG("[PIE] the game ended its session; stopping")
+        StopPlay();
+        return;
+    }
+
+    if(bReplaced)
+    {
+        ActivateWorld(Play->GetWorld(), GameCore::InvalidEntityID());
+    }
+}
+
+QString EditorContext::DescribePlay() const
+{
+    return Play ? QString::fromStdString(Play->Describe()) : QString();
+}
+
+void EditorContext::SetPlayViewEjected(const bool bInEjected)
+{
+    const bool bEjected = Play && bInEjected;
+    if(bEjected == bPlayViewEjected)
+    {
+        return;
+    }
+    bPlayViewEjected = bEjected;
+    emit PlayViewEjectedChanged(bPlayViewEjected);
 }
 
 #endif // WITH_EDITOR

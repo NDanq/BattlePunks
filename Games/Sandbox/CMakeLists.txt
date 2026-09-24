@@ -96,6 +96,13 @@ set_target_properties(SandboxGame PROPERTIES FOLDER "Games")
 add_executable(Sandbox SandboxMain.cpp)
 add_dependencies(Sandbox SandboxGame)
 
+# The editor loads this game at Play ([Game] Module), so building the editor
+# builds the game too. The editor's directory is added before this one on both
+# configure paths, so the target exists here when it exists at all.
+if(TARGET NimbleEditor)
+    add_dependencies(NimbleEditor SandboxGame)
+endif()
+
 # Same Qt-freedom the modules get from nimble_add_module(). Stated explicitly
 # because add_executable() does not go through that function, and a parent scope
 # that enabled AUTOMOC as a directory property would hand it down.

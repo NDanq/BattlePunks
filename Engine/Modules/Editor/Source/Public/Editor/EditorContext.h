@@ -19,21 +19,32 @@
 namespace GameCore   { class World; }
 namespace RenderCore { class Renderer; struct RenderView; }
 
+class PlaySession;
+
 Q_DECLARE_METATYPE(GameCore::EntityID)
 
 /*
- * The editor's model: the World being edited, the Renderer that draws it, and
- * the selection. Every panel reads and writes through this object and hears
- * about changes through its signals -- no panel talks to another directly.
+ * The editor's model: the World being edited, the Renderer that draws it, the
+ * selection, and Play-in-Editor. Every panel reads and writes through this
+ * object and hears about changes through its signals -- no panel talks to
+ * another directly.
  *
  * THREADING. The Qt main thread IS the game thread here. World and Renderer
  * are game-thread-only, and every call below happens from a Qt event, so
  * nothing needs a lock -- the same single-thread rule Application keeps with
  * SDL, with Qt's loop in place of PumpEvents.
  *
- * THE FRAME. Application::RunFrame's sequence, minus the simulation: the
- * editor does not tick the World (there is no play mode yet), so scripts and
- * systems never run and nothing moves unless the user moves it.
+ * THE FRAME. Application::RunFrame's sequence. While editing there is no
+ * simulation: the edited World never ticks, so scripts and systems never run
+ * and nothing moves unless the user moves it. While playing, the game's
+ * session ticks first, as it would in its own launcher.
+ *
+ * TWO WORLDS. GetWorld() is the ACTIVE World -- the one the panels show. It is
+ * the edited World, except between StartPlay and StopPlay, when it is the
+ * playing level's World. Playing never touches the edited World: the game
+ * loads its own level into a World of its own, and StopPlay hands the edited
+ * one back exactly as it was, selection included. Switching emits WorldReset,
+ * which is what every panel already rebuilds on.
  */
 class EditorContext : public QObject
 {
@@ -58,12 +69,15 @@ public:
     /* False, leaving OutStats untouched, when the Renderer is not running. */
     bool GetRenderStats(RenderCore::RenderStats& OutStats) const;
 
-    GameCore::World& GetWorld() { return *EditedWorld; }
+    /* The active World -- see TWO WORLDS above. Re-ask after WorldReset. */
+    GameCore::World& GetWorld() { return *ActiveWorld; }
 
     /*
-     * One editor frame: refit the spatial index (edits may have moved bounds),
-     * then the fence, garbage collection, present and EndFrame, in
-     * Application::RunFrame's order. InView replaces the World's camera.
+     * One editor frame: the playing game's tick, or a refit of the edited
+     * World's spatial index (edits may have moved bounds); then the fence,
+     * garbage collection, present and EndFrame, in Application::RunFrame's
+     * order. InView replaces the World's camera -- except while playing with
+     * the view not ejected, when the game's own camera draws.
      */
     void RenderFrame(const RenderCore::RenderView& InView, EngineCore::Size InViewportPixels,
                      EngineCore::WindowHandle InWindow);
@@ -73,7 +87,39 @@ public:
     void DrawDebugLine(const RenderCore::DebugLine& InLine);
     void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels);
 
+    // === Play-in-Editor =====================================================
+
+    /*
+     * Runs the game named by [Game] Module from its start level, in the
+     * viewport, with the game's own camera (see PlaySession). The edited World
+     * is set aside, not modified. False, with the reason logged, if the game
+     * would not start -- the editor is then exactly as it was.
+     */
+    bool StartPlay();
+
+    /* Ends the run and restores the edited World and its selection. Also
+     * happens by itself when the game asks to quit. Idempotent. */
+    void StopPlay();
+
+    bool IsPlaying() const { return Play != nullptr; }
+
+    /* "SandboxGame / Sandbox" while playing; empty otherwise. */
+    QString DescribePlay() const;
+
+    /*
+     * EJECTED: while playing, the viewport shows the editor camera, with its
+     * navigation and overlays, instead of the game's camera -- to look around
+     * a running game. Reset by StartPlay.
+     */
+    void SetPlayViewEjected(bool bInEjected);
+    bool IsPlayViewEjected() const { return bPlayViewEjected; }
+
+    /* The editor camera's view and the overlays apply: editing, or ejected. */
+    bool IsEditorViewActive() const { return !Play || bPlayViewEjected; }
+
     // === Scene ==============================================================
+    //
+    // Scene operations act on the EDITED World and are refused while playing.
 
     /* An empty World. The previous one is destroyed; the selection clears. */
     void NewScene();
@@ -91,6 +137,8 @@ public:
     bool SaveWorld(const QString& InPath);
 
     // === Entities ===========================================================
+    //
+    // On the active World: while playing, these reach into the running game.
 
     /* With a Transform and a Name, placed at InPosition. */
     GameCore::EntityID CreateEntity(const QString& InName, const EngineCore::Vector3& InPosition);
@@ -123,8 +171,14 @@ public:
     void NotifyPropertyEdited(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
 
 signals:
-    /* The World was replaced (new, demo, load). Every cached EntityID is stale. */
+    /* The active World was replaced (new, Sandbox scene, load, Play, Stop, or
+     * the game swapping its level). Every cached EntityID is stale. */
     void WorldReset();
+
+    /* After StartPlay succeeds, and after StopPlay. */
+    void PlayStateChanged(bool bInPlaying);
+
+    void PlayViewEjectedChanged(bool bInEjected);
 
     /* Entities were created or destroyed, or a component was added or removed.
      * Coalesced: at most once per event-loop turn, never from inside a
@@ -143,6 +197,24 @@ private:
     /* Defers EntitiesChanged to the next event-loop turn, once. */
     void QueueEntitiesChanged();
 
+    /* Subscribe to / drop the active World's entity delegates. Unhook only
+     * while that World is alive; a World the game has already freed took its
+     * delegates with it, and ForgetHooks is the answer then. */
+    void HookActiveWorld();
+    void UnhookActiveWorld();
+    void ForgetHooks();
+
+    /* Makes InWorld the active one: hooks it, clears the selection (or sets
+     * InSelection), emits WorldReset and SelectionChanged. */
+    void ActivateWorld(GameCore::World* InWorld, GameCore::EntityID InSelection);
+
+    /* After a play Tick: follows the game to a new World if it replaced its
+     * level, and stops the run if the game asked to quit. */
+    void SyncPlayWorld();
+
+    /* Logs and returns true while playing -- the scene operations' guard. */
+    bool RefuseWhilePlaying(const char* InWhat) const;
+
     /* Destroys the current World (unbinding the Renderer first) and creates an
      * empty one bound in its place. Emits WorldReset. */
     void ReplaceWorld();
@@ -155,6 +227,7 @@ private:
     EngineCore::FilesystemProvider AssetProvider;
 
     GameCore::World*      EditedWorld = nullptr;
+    GameCore::World*      ActiveWorld = nullptr;   // EditedWorld, or the playing level's
     RenderCore::Renderer* Renderer    = nullptr;
     bool                  bRendererReady = false;
 
@@ -165,6 +238,12 @@ private:
     GameCore::DelegateHandle ComponentAddedHandle;
     GameCore::DelegateHandle ComponentRemovedHandle;
     bool                     bEntitiesChangedQueued = false;
+    GameCore::World*         HookedWorld = nullptr;
+
+    PlaySession*       Play = nullptr;
+    GameCore::EntityID EditedSelection;     // restored by StopPlay
+    uint32_t           PlayLoadCount = 0;   // PlaySession::GetLoadCount at the last sync
+    bool               bPlayViewEjected = false;
 
     uint64_t FrameNumber     = 0;
     int64_t  PreviousFrameNs = 0;
