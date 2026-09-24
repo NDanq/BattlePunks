@@ -1,4 +1,6 @@
-#include "Editor/EditorMainWindow.h"
+#if WITH_EDITOR
+
+#include "Public/Editor/EditorMainWindow.h"
 
 #include <QAction>
 #include <QCloseEvent>
@@ -11,11 +13,11 @@
 #include <QMessageBox>
 #include <QStatusBar>
 
-#include "Editor/DetailsPanel.h"
-#include "Editor/EditorContext.h"
-#include "Editor/OutlinerPanel.h"
-#include "Editor/ViewportPanel.h"
-#include "Editor/ViewportWidget.h"
+#include "Public/Editor/DetailsPanel.h"
+#include "Public/Editor/EditorContext.h"
+#include "Public/Editor/OutlinerPanel.h"
+#include "Public/Editor/ViewportPanel.h"
+#include "Public/Editor/ViewportWidget.h"
 
 namespace
 {
@@ -269,3 +271,5 @@ bool EditorMainWindow::SaveWorldAs()
     UpdateTitle();
     return SaveWorld();
 }
+
+#endif // WITH_EDITOR

@@ -20,7 +20,9 @@
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ArchiveTextDump.h"
+#if WITH_EDITOR
 #include "Public/GameCore/ComponentProperties.h"
+#endif
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
@@ -84,6 +86,7 @@ static void TestComponentRegistry()
     Expect(sizeof(TransformComponent) == 64, "TransformComponent is 64 bytes (one cache line) under WITH_SIMD");
 }
 
+#if WITH_EDITOR
 // ============================================================================
 // Editor-visible properties
 // ============================================================================
@@ -175,6 +178,7 @@ static void TestComponentProperties()
     Expect(FindComponentProperties(TestOnlyComponent::StaticType().ID, Count) == nullptr && Count == 0,
            "a component with no property list reports none");
 }
+#endif // WITH_EDITOR
 
 // ============================================================================
 // Entities
@@ -1401,7 +1405,9 @@ int main()
     TestChunkVersion();
     TestComponentVersioning();
     TestComponentScripting();
+#if WITH_EDITOR
     TestComponentProperties();
+#endif
 
     SetLogHandler(nullptr);
 

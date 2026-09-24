@@ -1,6 +1,8 @@
 #ifndef NIMBLEEDITOR_VIEWPORTPANEL_H
 #define NIMBLEEDITOR_VIEWPORTPANEL_H
 
+#if WITH_EDITOR
+
 #include <QWidget>
 
 class EditorContext;
@@ -44,5 +46,7 @@ private:
     QAction* FrameAllAction       = nullptr;
     QAction* ShowAllBoundsAction  = nullptr;
 };
+
+#endif // WITH_EDITOR
 
 #endif //NIMBLEEDITOR_VIEWPORTPANEL_H

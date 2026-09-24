@@ -88,6 +88,13 @@ namespace RenderCore
 
         void SetClearColor(EngineCore::Color InColor);
 
+#if WITH_EDITOR
+        // === Editor only =====================================================
+        // Compiled out of Client and Server targets (Engine/CMakeLists.txt,
+        // NIMBLE_TARGET): a game renders through its CameraComponent and has
+        // no overlay, so neither the entry points nor their per-frame work
+        // exist there.
+
         /*
          * Replaces the view WorldBridge would build from the World's first
          * active CameraComponent -- for a tool with its own camera (the
@@ -112,6 +119,7 @@ namespace RenderCore
          * (GameCore::AABB's default) draws nothing; a box flat on an axis
          * draws its outline once, that axis collapsed. */
         void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels = 2.0f);
+#endif // WITH_EDITOR
 
         void GetStats(RenderStats& OutStats) const;
 

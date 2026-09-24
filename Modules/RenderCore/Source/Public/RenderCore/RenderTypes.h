@@ -6,6 +6,7 @@
 #include "Public/Core/CoreTypes.h"
 #include "Public/Math/Matrix.h"
 #include "Public/Math/Vector.h"
+#include "Public/RenderCore/RenderCoreAPI.h"   // the WITH_EDITOR check; no RENDERCORE_API is used here
 
 /*
  * The small POD vocabulary shared across every RenderCore header: the
@@ -77,6 +78,7 @@ namespace RenderCore
         }
     };
 
+#if WITH_EDITOR
     /*
      * One world-space line segment for Renderer::DrawDebugLine -- a tool's
      * overlay (the editor's selection bounds and axis gizmo), not scene
@@ -91,6 +93,7 @@ namespace RenderCore
         EngineCore::Color   Color{255, 255, 255};
         float               ThicknessPixels = 2.0f;
     };
+#endif // WITH_EDITOR
 
     /*
      * A snapshot of RenderThread's live counters (each an atomic there),

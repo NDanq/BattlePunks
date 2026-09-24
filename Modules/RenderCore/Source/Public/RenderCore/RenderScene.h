@@ -51,9 +51,12 @@ namespace RenderCore
         void SetView(const RenderView& InView);
         void SetClearColor(EngineCore::Color InColor);
 
-        /* Replaces the lines the NEXT Render() draws over the proxies; that
-         * Render() consumes them, so a frame that sets none draws none. */
+#if WITH_EDITOR
+        /* EDITOR ONLY. Replaces the lines the NEXT Render() draws over the
+         * proxies; that Render() consumes them, so a frame that sets none
+         * draws none. */
         void SetDebugLines(const DebugLine* InLines, size_t InCount);
+#endif
 
         /* BeginRendering, SetViewport, Clear, draw every visible proxy whose
          * WorldBounds overlaps the current view's Bounds (or whose Bounds is

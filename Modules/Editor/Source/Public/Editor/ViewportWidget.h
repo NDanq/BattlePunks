@@ -1,6 +1,8 @@
 #ifndef NIMBLEEDITOR_VIEWPORTWIDGET_H
 #define NIMBLEEDITOR_VIEWPORTWIDGET_H
 
+#if WITH_EDITOR
+
 #include <QElapsedTimer>
 #include <QPoint>
 #include <QSet>
@@ -9,7 +11,7 @@
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/EntityID.h"
-#include "Editor/EditorCamera.h"
+#include "Public/Editor/EditorCamera.h"
 
 class EditorContext;
 
@@ -121,5 +123,7 @@ private:
 
     bool bShowAllBounds = false;
 };
+
+#endif // WITH_EDITOR
 
 #endif //NIMBLEEDITOR_VIEWPORTWIDGET_H

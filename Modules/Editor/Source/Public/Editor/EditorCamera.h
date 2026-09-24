@@ -1,6 +1,8 @@
 #ifndef NIMBLEEDITOR_EDITORCAMERA_H
 #define NIMBLEEDITOR_EDITORCAMERA_H
 
+#if WITH_EDITOR
+
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/Math/Vector.h"
@@ -85,5 +87,7 @@ public:
     bool WorldToScreen(const EngineCore::Vector3& InPoint, EngineCore::Size InViewport,
                        double& OutX, double& OutY) const;
 };
+
+#endif // WITH_EDITOR
 
 #endif //NIMBLEEDITOR_EDITORCAMERA_H

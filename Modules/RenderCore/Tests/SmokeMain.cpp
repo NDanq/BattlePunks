@@ -501,6 +501,7 @@ static void TestRendererWithWorld()
     Rend.Shutdown();
 }
 
+#if WITH_EDITOR
 // ============================================================================
 // Debug lines: queued on the game thread, drawn once, then gone
 // ============================================================================
@@ -561,6 +562,7 @@ static void TestDebugLines()
     Rend.SetViewOverride(nullptr);
     Rend.Shutdown();
 }
+#endif // WITH_EDITOR
 
 int main()
 {
@@ -590,7 +592,9 @@ int main()
     }
 
     TestRendererWithWorld();
+#if WITH_EDITOR
     TestDebugLines();
+#endif
 
     const uint64_t Leaked = Memory::ReportLeaks();
     Expect(Leaked == 0, "no allocations leaked across the whole run -- every command, extraction "

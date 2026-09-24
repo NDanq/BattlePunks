@@ -96,10 +96,48 @@ if(NIMBLE_USE_SCCACHE)
     endif()
 endif()
 
+# === Target type ===========================================================
+# What this configure builds, the way a shipped engine splits it:
+#
+#   Editor   the default: every module, the Qt editor, and editor-only engine
+#            code (the property registry, the Renderer's debug lines and view
+#            override) compiled in.
+#   Client   a game build: WITH_EDITOR=0, no editor executable, and none of
+#            that editor-only code in any module.
+#   Server   the same as Client today. The distinct name exists so server-only
+#            gating has a switch to hang on when it is needed.
+#
+# ONE PER CONFIGURE, not per target: WITH_EDITOR changes class layouts and
+# exported symbols (Renderer grows members under it), and every image in the
+# process must agree, so it is a directory-wide definition set HERE, before any
+# add_subdirectory, and inherited by every module, the subtrees and the games.
+# The subtrees need no edit for it; they just see one more -D.
+#
+# Always defined, to 1 or 0 -- never left undefined. GameCoreAPI.h and
+# RenderCoreAPI.h #error if it is missing, because `#if WITH_EDITOR` on an
+# undefined name is a silent 0: a build that forgot the flag would drop the
+# editor code without a word.
+set(NIMBLE_TARGET "Editor" CACHE STRING "What this configure builds: Editor, Client or Server")
+set_property(CACHE NIMBLE_TARGET PROPERTY STRINGS Editor Client Server)
+
+if(NOT NIMBLE_TARGET MATCHES "^(Editor|Client|Server)$")
+    message(FATAL_ERROR "NIMBLE_TARGET must be Editor, Client or Server (got '${NIMBLE_TARGET}')")
+endif()
+
+if(NIMBLE_TARGET STREQUAL "Editor")
+    set(NIMBLE_WITH_EDITOR 1)
+else()
+    set(NIMBLE_WITH_EDITOR 0)
+endif()
+
+add_compile_definitions(WITH_EDITOR=${NIMBLE_WITH_EDITOR})
+message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR})")
+
 # === Binaries/ =============================================================
 # One flat runtime directory per platform+config:
 # <NIMBLE_BINARIES_DIR>/<Platform>_<Config>, e.g. Windows_Debug, Mac_Release,
-# Linux_RelWithDebInfo.
+# Linux_RelWithDebInfo -- with a _<Target> suffix for a Client or Server
+# target (Windows_Debug_Client); see the Target type block above.
 #
 # WHERE THAT ROOT POINTS, and why it is not Engine/Binaries. Hot reload requires
 # the host executable, EngineCore and every module DLL to be siblings in one
@@ -138,6 +176,17 @@ set(NIMBLE_BINARIES_DIR "${NM_DEFAULT_BINARIES_DIR}"
 #
 # Import libs / .exp go to <dir>/Lib so .lib clutter stays out of the flat
 # runtime directory.
+# A Client or Server build gets its own folder, <Platform>_<Config>_<Target>:
+# its DLLs lack the editor-only exports, and landing them over the editor
+# build's would leave NimbleEditor.exe unable to load. The Editor keeps the
+# unsuffixed name every existing path (VS_DEBUGGER_WORKING_DIRECTORY, docs)
+# already uses.
+if(NIMBLE_TARGET STREQUAL "Editor")
+    set(NM_TARGET_SUFFIX "")
+else()
+    set(NM_TARGET_SUFFIX "_${NIMBLE_TARGET}")
+endif()
+
 if(WIN32)
     set(NM_PLATFORM Windows)
 elseif(APPLE)
@@ -153,7 +202,7 @@ if(NM_MULTI_CONFIG)
     # would just get a /Debug tacked on by the generator and scatter output.
     foreach(NM_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
         string(TOUPPER "${NM_CFG}" NM_CFG_U)
-        set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${NM_CFG}")
+        set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${NM_CFG}${NM_TARGET_SUFFIX}")
         set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}")
         set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}")
         set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}/Lib")
@@ -164,7 +213,7 @@ else()
     if(NOT CMAKE_BUILD_TYPE)
         set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build configuration" FORCE)
     endif()
-    set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${CMAKE_BUILD_TYPE}")
+    set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${CMAKE_BUILD_TYPE}${NM_TARGET_SUFFIX}")
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${NM_CFG_DIR}")
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${NM_CFG_DIR}")
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${NM_CFG_DIR}/Lib")
@@ -367,10 +416,15 @@ endif()
 # guarded on RenderCore because the viewport draws through it. Skipped (with a
 # status line, from inside its own CMakeLists) when Qt6 Widgets is not found,
 # so a machine without Qt still configures the engine and the games.
-option(NIMBLE_BUILD_EDITOR "Build the Qt editor (Modules/Editor)" ON)
-if(NIMBLE_BUILD_EDITOR AND TARGET RenderCore
+#
+# Editor targets only: a Client or Server configure never adds the directory,
+# and the editor's sources are additionally wrapped in `#if WITH_EDITOR`.
+option(NIMBLE_BUILD_EDITOR "Build the Qt editor (Modules/Editor) in an Editor target" ON)
+if(NIMBLE_BUILD_EDITOR AND NIMBLE_WITH_EDITOR AND TARGET RenderCore
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Editor/CMakeLists.txt")
     add_subdirectory(Modules/Editor)
+elseif(NOT NIMBLE_WITH_EDITOR)
+    message(STATUS "NimbleEditor: not built for a ${NIMBLE_TARGET} target")
 endif()
 
 # === Games/ ================================================================

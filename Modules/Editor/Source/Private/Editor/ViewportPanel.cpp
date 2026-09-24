@@ -1,4 +1,6 @@
-#include "Editor/ViewportPanel.h"
+#if WITH_EDITOR
+
+#include "Public/Editor/ViewportPanel.h"
 
 #include <cmath>
 
@@ -8,8 +10,8 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 
-#include "Editor/EditorCamera.h"
-#include "Editor/ViewportWidget.h"
+#include "Public/Editor/EditorCamera.h"
+#include "Public/Editor/ViewportWidget.h"
 
 namespace
 {
@@ -109,3 +111,5 @@ void ViewportPanel::SetSpeedStep(const int InStep)
     SpeedLabel->setText(Scale < 1.0f ? QStringLiteral(" 1/%1x").arg(int(std::lround(1.0f / Scale)))
                                      : QStringLiteral(" %1x").arg(int(std::lround(Scale))));
 }
+
+#endif // WITH_EDITOR

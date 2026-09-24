@@ -1,7 +1,9 @@
 #include "Public/RenderCore/RenderComponents.h"
 
-#include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/ComponentScript.h"
+#if WITH_EDITOR
+#include "Public/GameCore/ComponentProperties.h"
+#endif
 #include "Public/GameCore/ComponentSerializer.h"
 
 #include "Private/RenderCore/PrimitiveProxy.h"
@@ -88,9 +90,10 @@ namespace RenderCore
         Bind.Flag("Active", &CameraComponent::bActive);
     }
 
+#if WITH_EDITOR
     /* WHAT THE EDITOR SHOWS -- the same fields as the Lua list above, kept as
      * a separate list on purpose (ComponentProperties.h). C.Proxy is not
-     * listed. */
+     * listed. Editor targets only. */
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(PrimitiveComponent)
     {
         Props.Field("Width",  &PrimitiveComponent::Width);
@@ -105,4 +108,5 @@ namespace RenderCore
         Props.Field("ZFar",  &CameraComponent::ZFar);
         Props.Flag("Active", &CameraComponent::bActive);
     }
+#endif // WITH_EDITOR
 }

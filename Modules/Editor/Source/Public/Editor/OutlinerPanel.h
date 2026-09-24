@@ -1,6 +1,8 @@
 #ifndef NIMBLEEDITOR_OUTLINERPANEL_H
 #define NIMBLEEDITOR_OUTLINERPANEL_H
 
+#if WITH_EDITOR
+
 #include <QWidget>
 
 #include "Public/GameCore/EntityID.h"
@@ -45,5 +47,7 @@ private:
      * tree's own signal does not echo it straight back. */
     bool bSyncing = false;
 };
+
+#endif // WITH_EDITOR
 
 #endif //NIMBLEEDITOR_OUTLINERPANEL_H

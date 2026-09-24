@@ -1,3 +1,17 @@
+/*
+ * Every editor source is wrapped in `#if WITH_EDITOR`, and Engine/CMakeLists.txt
+ * only adds this module to an Editor target. This check is here, in the entry
+ * point, because a missing definition would otherwise empty every file and
+ * surface as a baffling "no main" link error.
+ */
+#ifndef WITH_EDITOR
+    #error "WITH_EDITOR is not defined -- configure through Engine/CMakeLists.txt"
+#elif !WITH_EDITOR
+    #error "NimbleEditor is built only for an Editor target (NIMBLE_TARGET=Editor)"
+#endif
+
+#if WITH_EDITOR
+
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QDir>
@@ -6,8 +20,8 @@
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/RenderCore/RenderTypes.h"
-#include "Editor/EditorContext.h"
-#include "Editor/EditorMainWindow.h"
+#include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorMainWindow.h"
 
 /*
  * NimbleEditor's entry point.
@@ -106,3 +120,5 @@ int main(int argc, char* argv[])
     EngineCore::SetLogHandler(nullptr);
     return Result;
 }
+
+#endif // WITH_EDITOR

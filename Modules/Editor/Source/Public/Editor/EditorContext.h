@@ -1,6 +1,8 @@
 #ifndef NIMBLEEDITOR_EDITORCONTEXT_H
 #define NIMBLEEDITOR_EDITORCONTEXT_H
 
+#if WITH_EDITOR
+
 #include <cstdint>
 
 #include <QObject>
@@ -165,5 +167,7 @@ private:
     uint64_t FrameNumber     = 0;
     int64_t  PreviousFrameNs = 0;
 };
+
+#endif // WITH_EDITOR
 
 #endif //NIMBLEEDITOR_EDITORCONTEXT_H
