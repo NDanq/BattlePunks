@@ -1,5 +1,6 @@
 #include "Public/RenderCore/RenderComponents.h"
 
+#include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentSerializer.h"
 
@@ -85,5 +86,23 @@ namespace RenderCore
         Bind.Field("ZNear", &CameraComponent::ZNear);
         Bind.Field("ZFar",  &CameraComponent::ZFar);
         Bind.Flag("Active", &CameraComponent::bActive);
+    }
+
+    /* WHAT THE EDITOR SHOWS -- the same fields as the Lua list above, kept as
+     * a separate list on purpose (ComponentProperties.h). C.Proxy is not
+     * listed. */
+    GAMECORE_DEFINE_COMPONENT_PROPERTIES(PrimitiveComponent)
+    {
+        Props.Field("Width",  &PrimitiveComponent::Width);
+        Props.Field("Height", &PrimitiveComponent::Height);
+        Props.Field("Tint",   &PrimitiveComponent::Tint);
+        Props.Flag("Visible", &PrimitiveComponent::bVisible);
+    }
+
+    GAMECORE_DEFINE_COMPONENT_PROPERTIES(CameraComponent)
+    {
+        Props.Field("ZNear", &CameraComponent::ZNear);
+        Props.Field("ZFar",  &CameraComponent::ZFar);
+        Props.Flag("Active", &CameraComponent::bActive);
     }
 }

@@ -362,6 +362,17 @@ if(TARGET GDI AND GDI_COOKED_SHADER_DIR AND CMAKE_RUNTIME_OUTPUT_DIRECTORY)
     set_target_properties(NimbleStageShaders PROPERTIES FOLDER "Engine")
 endif()
 
+# === Editor ================================================================
+# The Qt editor. Below the NimbleStageShaders block, which it depends on, and
+# guarded on RenderCore because the viewport draws through it. Skipped (with a
+# status line, from inside its own CMakeLists) when Qt6 Widgets is not found,
+# so a machine without Qt still configures the engine and the games.
+option(NIMBLE_BUILD_EDITOR "Build the Qt editor (Modules/Editor)" ON)
+if(NIMBLE_BUILD_EDITOR AND TARGET RenderCore
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Editor/CMakeLists.txt")
+    add_subdirectory(Modules/Editor)
+endif()
+
 # === Games/ ================================================================
 # Hosts that link the engine layer. Added from THIS scope, below the
 # NimbleEngine target, for two reasons that are both load-bearing:

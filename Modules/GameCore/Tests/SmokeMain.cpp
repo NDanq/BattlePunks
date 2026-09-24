@@ -8,6 +8,7 @@
  */
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -19,6 +20,7 @@
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ArchiveTextDump.h"
+#include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
@@ -80,6 +82,78 @@ static void TestComponentRegistry()
     Expect(TestOnlyID != TransformID1, "a locally-defined component gets a distinct id");
 
     Expect(sizeof(TransformComponent) == 64, "TransformComponent is 64 bytes (one cache line) under WITH_SIMD");
+}
+
+// ============================================================================
+// Editor-visible properties
+// ============================================================================
+
+struct PropertyProbeComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    float   Speed   = 1.5f;
+    uint8_t bArmed  = 0;
+    char    Label[16] = "probe";
+};
+GAMECORE_DEFINE_COMPONENT(PropertyProbeComponent, "TestPropertyProbe")
+
+GAMECORE_DEFINE_COMPONENT_PROPERTIES(PropertyProbeComponent)
+{
+    Props.Field("Speed", &PropertyProbeComponent::Speed);
+    Props.Flag("Armed",  &PropertyProbeComponent::bArmed, PF_ReadOnly);
+    Props.Field("Label", &PropertyProbeComponent::Label);
+    Props.Field("ThisNameIsFarTooLongToBeStoredInThePropertyTable", &PropertyProbeComponent::Speed);
+}
+
+static void TestComponentProperties()
+{
+    std::printf("[properties]\n");
+
+    size_t Count = 0;
+    const ComponentPropertyEntry* Entries = FindComponentProperties(PropertyProbeComponent::StaticType().ID, Count);
+    Expect(Entries != nullptr && Count == 3, "three properties registered; the over-long name is rejected");
+    if(Entries && Count == 3)
+    {
+        Expect(std::strcmp(Entries[0].Name, "Speed") == 0, "registration order is kept");
+        Expect(Entries[0].Type == EPropertyType::Float, "a float field is typed Float");
+        Expect(Entries[0].Offset == offsetof(PropertyProbeComponent, Speed), "Speed's offset matches offsetof");
+        Expect(!Entries[0].IsReadOnly(), "a field is writable by default");
+
+        Expect(Entries[1].Type == EPropertyType::Flag && Entries[1].IsReadOnly(), "Flag with PF_ReadOnly");
+        Expect(Entries[1].Offset == offsetof(PropertyProbeComponent, bArmed), "bArmed's offset matches offsetof");
+
+        Expect(Entries[2].Type == EPropertyType::FixedString && Entries[2].Size == 16, "a char[16] is a 16-byte FixedString");
+    }
+
+    /* A tool writes through the offset alone, with no knowledge of the type. */
+    World W;
+    const Entity E = W.CreateEntity("PropertyProbe");
+    E.AddComponent<PropertyProbeComponent>();
+    if(Entries && Count >= 1)
+    {
+        auto* Bytes = static_cast<uint8_t*>(E.GetComponentByType(PropertyProbeComponent::StaticType().ID));
+        const float NewSpeed = 9.0f;
+        std::memcpy(Bytes + Entries[0].Offset, &NewSpeed, sizeof(NewSpeed));
+        Expect(E.GetComponent<PropertyProbeComponent>()->Speed == 9.0f, "a write through the offset lands in the live component");
+    }
+
+    /* Built-ins, and what they deliberately leave out. */
+    FindComponentProperties(TransformComponent::StaticType().ID, Count);
+    Expect(Count == 3, "Transform exposes Position, Rotation, Scale");
+
+    Entries = FindComponentProperties(BoundsComponent::StaticType().ID, Count);
+    bool bProxyHidden = true, bWorldReadOnly = false;
+    for(size_t Index = 0; Entries && Index < Count; ++Index)
+    {
+        if(Entries[Index].Offset == offsetof(BoundsComponent, ProxyID)) { bProxyHidden = false; }
+        if(std::strcmp(Entries[Index].Name, "World") == 0) { bWorldReadOnly = Entries[Index].IsReadOnly(); }
+    }
+    Expect(bProxyHidden, "Bounds does not expose ProxyID");
+    Expect(bWorldReadOnly, "Bounds' World box is read-only");
+
+    Expect(FindComponentProperties(NameComponent::StaticType().ID, Count) != nullptr && Count == 1, "Name exposes Name");
+    Expect(FindComponentProperties(TestOnlyComponent::StaticType().ID, Count) == nullptr && Count == 0,
+           "a component with no property list reports none");
 }
 
 // ============================================================================
@@ -1307,6 +1381,7 @@ int main()
     TestChunkVersion();
     TestComponentVersioning();
     TestComponentScripting();
+    TestComponentProperties();
 
     SetLogHandler(nullptr);
 

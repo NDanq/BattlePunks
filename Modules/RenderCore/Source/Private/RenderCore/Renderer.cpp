@@ -24,6 +24,10 @@ namespace RenderCore
         WorldBridge* Bridge = nullptr;   // game-thread-owned; wraps Scene
 
         bool bPrimitiveRegistered = false;
+
+        /* Set by SetViewOverride; replaces the camera lookup every frame. */
+        bool       bHasViewOverride = false;
+        RenderView ViewOverride;
     };
 
     Renderer::Renderer() : P(new Impl())
@@ -128,7 +132,7 @@ namespace RenderCore
     {
         if(P->Bridge && P->Bridge->IsBound())
         {
-            P->Bridge->ExtractAndRender(InFrame);
+            P->Bridge->ExtractAndRender(InFrame, P->bHasViewOverride ? &P->ViewOverride : nullptr);
         }
         else if(P->Scene)
         {
@@ -136,7 +140,10 @@ namespace RenderCore
              * so a host's stats and pacing stay meaningful, matching
              * Renderer.h's own comment. */
             RenderScene* Scene = P->Scene;
-            const RenderView View = RenderView::MakeOrthographic(InFrame.ViewportPixels, EngineCore::Vector3(0, 1, -1), -1.0f, 1000.0f);
+            RenderView View = P->bHasViewOverride
+                            ? P->ViewOverride
+                            : RenderView::MakeOrthographic(InFrame.ViewportPixels, EngineCore::Vector3(0, 1, -1), -1.0f, 1000.0f);
+            View.ViewportPixels = InFrame.ViewportPixels;
             ENQUEUE_RENDER_COMMAND(SetViewAndRenderEmpty)([Scene, View](RenderContext& Ctx)
             {
                 Scene->SetView(View);
@@ -186,6 +193,15 @@ namespace RenderCore
         {
             Scene->SetClearColor(InColor);
         });
+    }
+
+    void Renderer::SetViewOverride(const RenderView* InView)
+    {
+        P->bHasViewOverride = InView != nullptr;
+        if(InView)
+        {
+            P->ViewOverride = *InView;
+        }
     }
 
     void Renderer::GetStats(RenderStats& OutStats) const

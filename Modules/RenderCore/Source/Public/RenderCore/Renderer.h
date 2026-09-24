@@ -15,6 +15,8 @@ namespace GameCore { class World; }
  */
 namespace RenderCore
 {
+    struct RenderView;
+
     class RENDERCORE_API Renderer
     {
     public:
@@ -85,6 +87,17 @@ namespace RenderCore
         void PresentToWindow(EngineCore::WindowHandle InWindow);
 
         void SetClearColor(EngineCore::Color InColor);
+
+        /*
+         * Replaces the view WorldBridge would build from the World's first
+         * active CameraComponent -- for a tool with its own camera (the
+         * editor viewport), which must not have to move an entity to look
+         * around. Copied, so InView need not outlive the call; applies from
+         * the next EndFrame() until SetViewOverride(nullptr). The frame's
+         * ViewportPixels still wins over InView->ViewportPixels, since the
+         * render targets are sized from it. GAME THREAD ONLY.
+         */
+        void SetViewOverride(const RenderView* InView);
 
         void GetStats(RenderStats& OutStats) const;
 

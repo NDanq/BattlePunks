@@ -1,6 +1,8 @@
 #ifndef RENDERCORE_RENDERVIEW_H
 #define RENDERCORE_RENDERVIEW_H
 
+#include <cmath>
+
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/Math/Matrix.h"
@@ -67,6 +69,52 @@ namespace RenderCore
                 EngineCore::Vector3(InOrigin.GetX(), InOrigin.GetY(), InOrigin.GetZ() + InZNear),
                 EngineCore::Vector3(InOrigin.GetX() + Width, InOrigin.GetY() + Height, InOrigin.GetZ() + InZFar));
 
+            return Result;
+        }
+
+        /*
+         * A perspective view for tools (the editor viewport) -- nothing in the
+         * game path builds one. Same conventions as MakeOrthographic, so a
+         * scene looks the same way up in both:
+         *
+         *   View       LookAt(InEye, InForward, (0,1,0)) -- view-space +Z is
+         *              InForward, exactly as the orthographic view's is.
+         *   Projection negates Y, as InitOrthographicView(0, Height, ...)
+         *              does, so world +Y runs DOWN the screen -- the game's
+         *              pixel-space convention. Screen-up is world -Y.
+         *   Depth      near -> 0, far -> w: inside both the [-w,w] and [0,w]
+         *              clip conventions, so every backend keeps the geometry.
+         *
+         * Built by hand into Data rather than as a Matrix4x4::InitPerspective,
+         * so the vendored Core subtree needs no edit. Row-major with the
+         * translation column in [i][3], matching every Init* in Matrix.h.
+         *
+         * Bounds is left empty -- "cull nothing" -- since a frustum is not an
+         * AABB and a loose box would buy little for an editor scene.
+         * InForward must not be parallel to world Y (the caller clamps pitch).
+         */
+        static RenderView MakePerspective(const EngineCore::Size InViewport, const EngineCore::Vector3& InEye,
+                                          const EngineCore::Vector3& InForward, const float InFovYDegrees,
+                                          const float InZNear, const float InZFar)
+        {
+            RenderView Result;
+            Result.Origin         = InEye;
+            Result.ViewportPixels = InViewport;
+            Result.ZNear          = InZNear;
+            Result.ZFar           = InZFar;
+
+            const float Aspect = InViewport.Height > 0 ? float(InViewport.Width) / float(InViewport.Height) : 1.0f;
+            const float FocalY = 1.0f / std::tan(InFovYDegrees * 0.5f * 3.14159265f / 180.0f);
+            const float FocalX = FocalY / Aspect;
+            const float Range  = InZFar - InZNear;
+
+            EngineCore::Matrix4x4& P = Result.Projection;
+            P.Data[0][0] = FocalX; P.Data[0][1] = 0.0f;    P.Data[0][2] = 0.0f;            P.Data[0][3] = 0.0f;
+            P.Data[1][0] = 0.0f;   P.Data[1][1] = -FocalY; P.Data[1][2] = 0.0f;            P.Data[1][3] = 0.0f;
+            P.Data[2][0] = 0.0f;   P.Data[2][1] = 0.0f;    P.Data[2][2] = InZFar / Range;  P.Data[2][3] = -InZFar * InZNear / Range;
+            P.Data[3][0] = 0.0f;   P.Data[3][1] = 0.0f;    P.Data[3][2] = 1.0f;            P.Data[3][3] = 0.0f;
+
+            Result.View = EngineCore::Matrix4x4().LookAt(InEye, InForward, EngineCore::Vector3(0, 1, 0));
             return Result;
         }
     };
