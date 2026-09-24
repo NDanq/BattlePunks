@@ -16,6 +16,7 @@
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/AABB.h"
+#include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/World.h"
@@ -50,6 +51,30 @@ static void TestModuleName()
     std::printf("[module]\n");
     Expect(std::strcmp(GetModuleName(), "RenderCore") == 0,
            "GetModuleName() names this module, proving the link against RenderCore.dll");
+}
+
+/* RenderComponents.cpp registers these from RenderCore.dll into GameCore.dll's
+ * one registry. The Lua side is covered by GameCore's own smoke test; this
+ * proves the registration crosses the image boundary and lists what it should. */
+static void TestScriptBindings()
+{
+    std::printf("[script bindings]\n");
+
+    size_t PrimitiveCount = 0;
+    const GameCore::ScriptBindingEntry* Primitive =
+        GameCore::FindComponentScript(PrimitiveComponent::StaticType().ID, PrimitiveCount);
+    Expect(Primitive != nullptr && PrimitiveCount == 4, "Primitive exposes Width, Height, Tint and Visible");
+
+    bool bProxyExposed = false;
+    for(size_t Index = 0; Index < PrimitiveCount; ++Index)
+    {
+        if(std::strstr(Primitive[Index].Name, "Proxy") != nullptr) { bProxyExposed = true; }
+    }
+    Expect(!bProxyExposed, "the render proxy handle is not exposed");
+
+    size_t CameraCount = 0;
+    GameCore::FindComponentScript(CameraComponent::StaticType().ID, CameraCount);
+    Expect(CameraCount == 3, "Camera exposes ZNear, ZFar and Active");
 }
 
 static void TestThreadLifecycle(RenderThread& InThread)
@@ -378,10 +403,10 @@ static void TestRendererWithWorld()
      * already present. */
     GameCore::World World;
 
-    const GameCore::EntityID PreExisting = World.CreateEntity();
-    World.AddComponent<GameCore::TransformComponent>(PreExisting);
+    const GameCore::Entity PreExisting = World.CreateEntity();
+    PreExisting.AddComponent<GameCore::TransformComponent>();
     PrimitiveComponent PrimInit;
-    World.AddComponent<PrimitiveComponent>(PreExisting, PrimInit);
+    PreExisting.AddComponent(PrimInit);
 
     Rend.BindWorld(World);
 
@@ -396,18 +421,18 @@ static void TestRendererWithWorld()
     Rend.EndFrame(FrameInfo{101, 0.016, EngineCore::Size(1280, 720)});
     Rend.WaitForPreviousFrame();
 
-    const GameCore::EntityID E1 = World.CreateEntity();
-    World.AddComponent<GameCore::TransformComponent>(E1);
+    const GameCore::Entity E1 = World.CreateEntity();
+    E1.AddComponent<GameCore::TransformComponent>();
     PrimitiveComponent Prim;
     Prim.Width  = 1.0f;
     Prim.Height = 1.0f;
-    World.AddComponent<PrimitiveComponent>(E1, Prim);
+    E1.AddComponent(Prim);
 
-    const GameCore::EntityID TestEntity = World.CreateEntity();
-    World.AddComponent<GameCore::TransformComponent>(TestEntity);
+    const GameCore::Entity TestEntity = World.CreateEntity();
+    TestEntity.AddComponent<GameCore::TransformComponent>();
     TestComponent TestInit;
     TestInit.Value = 42;
-    World.AddComponent<TestComponent>(TestEntity, TestInit);
+    TestEntity.AddComponent(TestInit);
 
     Rend.WaitForPreviousFrame();
     Rend.EndFrame(FrameInfo{0, 0.016, EngineCore::Size(1280, 720)});
@@ -422,14 +447,14 @@ static void TestRendererWithWorld()
 
     /* Move the entity, tick another frame, confirm extraction actually
      * carries the CURRENT transform, not merely the one from creation. */
-    GameCore::TransformComponent* Transform = World.GetComponent<GameCore::TransformComponent>(E1);
+    GameCore::TransformComponent* Transform = E1.GetComponent<GameCore::TransformComponent>();
     Transform->Position = EngineCore::Vector3(500.0, 500.0, 0.0);
 
     Rend.EndFrame(FrameInfo{1, 0.016, EngineCore::Size(1280, 720)});
     Rend.WaitForPreviousFrame();
 
     /* RemoveComponent -- proves OnComponentRemoved's teardown path. */
-    World.RemoveComponent<PrimitiveComponent>(E1);
+    E1.RemoveComponent<PrimitiveComponent>();
     Rend.EndFrame(FrameInfo{2, 0.016, EngineCore::Size(1280, 720)});
     Rend.WaitForPreviousFrame();
 
@@ -452,11 +477,11 @@ static void TestRendererWithWorld()
     /* Camera: an active CameraComponent at a known position moves the view's
      * origin -- read back through a render command against the scene's
      * current view, the same technique a real caller would use to debug one. */
-    const GameCore::EntityID CameraEntity = World.CreateEntity();
-    GameCore::TransformComponent* CamTransform = World.AddComponent<GameCore::TransformComponent>(CameraEntity);
+    const GameCore::Entity CameraEntity = World.CreateEntity();
+    GameCore::TransformComponent* CamTransform = CameraEntity.AddComponent<GameCore::TransformComponent>();
     CamTransform->Position = EngineCore::Vector3(100.0, 50.0, 0.0);
     CameraComponent Cam;
-    World.AddComponent<CameraComponent>(CameraEntity, Cam);
+    CameraEntity.AddComponent(Cam);
 
     Rend.EndFrame(FrameInfo{4, 0.016, EngineCore::Size(1280, 720)});
     Rend.WaitForPreviousFrame();
@@ -484,6 +509,7 @@ int main()
     Memory::SetCollectorThread();
 
     TestModuleName();
+    TestScriptBindings();
 
     RenderThread Thread;
     const bool bStarted = Thread.Start(ERenderBackend::Null, WindowHandle());

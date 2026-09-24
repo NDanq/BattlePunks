@@ -12,8 +12,8 @@
  * Forward-declared rather than #include "World.h": ComponentOwner below
  * holds a World*, and World.h needs ComponentTypeID from this file -- a
  * mutual dependency a forward declaration breaks cleanly. ComponentOwner's
- * inline helpers that need a complete World/Entity are defined at the bottom
- * of World.h and in Entity.h/Components.h instead -- see DESIGN.md.
+ * inline helpers that need a complete Entity are defined in
+ * Entity.h/Components.h instead -- see DESIGN.md.
  */
 namespace GameCore { class World; class Entity; }
 

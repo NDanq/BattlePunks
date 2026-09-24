@@ -25,6 +25,8 @@ struct lua_State;
 
 namespace GameCore
 {
+    class World;
+
     /* Restores the Lua stack to its size at construction, on any exit path.
      * Does not defend against a longjmp past its own scope -- see DESIGN.md. */
     class LuaStackGuard
@@ -58,11 +60,14 @@ namespace GameCore
      * Entity userdata. A raising call; no non-trivial local across it. */
     EntityID LuaCheckEntity(lua_State* InState, int InIndex);
 
-    /* Packs {EntityID, ComponentTypeID} as a full userdata with the
-     * metatable for InType's component name. Every method on it re-fetches
-     * through World::GetComponentRaw, so holding one across a swap-remove
-     * reads nil rather than aliasing another entity. */
+    /* Packs {EntityID, ComponentTypeID} as a full userdata with InType's
+     * metatable, building it on first use (ComponentScript.cpp). Every method
+     * re-fetches through World::GetComponentRaw, so a proxy held across a
+     * swap-remove errors rather than aliasing another entity. */
     void LuaPushComponentProxy(lua_State* InState, EntityID InEntity, ComponentTypeID InType);
+
+    /* The World ScriptEngine::BindWorld bound to InState, or nullptr. */
+    World* LuaGetBoundWorld(lua_State* InState);
 }
 
 #endif //GAMECORE_GAMECOREINTERNAL_H

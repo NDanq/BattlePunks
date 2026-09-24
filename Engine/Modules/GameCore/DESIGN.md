@@ -325,7 +325,7 @@ data with a loud error logged, rather than undefined behavior.
 ## ComponentPool.h / ComponentPool.cpp
 
 **Why erased, like `DelegateList`.** `ComponentPool` deals in bytes with a
-stride; `World::AddComponent<T>` and `Entity::GetComponent<T>` are the typed
+stride; `Entity::AddComponent<T>` and `Entity::GetComponent<T>` are the typed
 views that cast `T*` to and from what this class hands back. A type-erased
 pool means the Lua by-name path (`e:AddComponent("Transform")`) and the C++
 typed path are the same code, rather than a duplicate untyped implementation
@@ -378,11 +378,35 @@ trade.
 **Why `Entity` is a thin `{World*, EntityID}` pair and not `ComponentOwner`'s
 own storage.** `ComponentOwner` (in `ComponentType.h`) keeps a raw `World*`
 and `EntityID` rather than an `Entity`, because `Entity.h` depends on
-`World.h` (for the template forwards) and `ComponentType.h` -- where
+`World.h` (for the private component calls it forwards to) and `ComponentType.h` -- where
 `ComponentOwner` lives -- is included *by* `World.h`. An `Entity` member
 there would be the same include cycle `GetEntity()`'s placement already
 works around; two raw fields cost nothing extra and `Entity::GetEntity()`
 reconstructs the same value on demand.
+
+**Components go through `Entity`, and only `Entity`.** `World` has no
+public `AddComponent<T>(EntityID)` / `GetComponent<T>(EntityID)` family, typed
+or erased: its `*ComponentRaw` functions are private, with `Entity` a friend.
+So there is one spelling for "the component on this entity" everywhere --
+`E.GetComponent<T>()` in C++, `e:GetComponent("T")` in Lua -- and the `*ByType`
+methods on `Entity` (`GetComponentByType(ComponentTypeID)` and siblings) serve the
+callers that only have an id (Lua bindings, the serializer, RenderCore's
+bridge). Code holding a bare `EntityID` writes `World.GetEntity(Id)` or
+`Entity(&World, Id)` first. `ComponentOwner::GetSibling<T>` is defined in
+`Entity.h` for the same reason: it goes through `GetEntity()`.
+
+**`World::CreateEntity` returns an `Entity`, not an `EntityID`,** so a
+component attaches straight to what was just created --
+`World.CreateEntity("Marker").AddComponent(Transform)` -- with no
+`GetEntity(id)` step in between. `Entity` converts implicitly to `EntityID`, so
+code that stores or passes the id keeps compiling unchanged. The conversion is
+one-way on purpose: going from an `EntityID` back to an `Entity` needs a
+`World`, which is what `World::GetEntity` is for. Storing the id rather than
+the handle is still the right choice for anything long-lived (a level's cached
+entities, a system's `void*` context). The handle's `World*` is only valid for
+that World's lifetime; the id says so explicitly by needing a World to be used.
+`World.h` forward-declares `Entity` (the include cycle above), so a caller
+needs `Entity.h` -- or `Components.h`, which includes it -- to use the result.
 
 `Entity` is not `GAMECORE_API` -- header-only, no out-of-line members,
 instantiates in the consumer, the same rule `GameCoreAPI.h` states for
@@ -762,12 +786,11 @@ everything that does).
 
 **Userdata layouts.** An `"Entity"` userdata is one `EntityID` (8 bytes),
 with a metatable `__index` pointing at a table of Entity methods. A
-component-proxy userdata is one packed `{EntityID, ComponentTypeID}`, with a
-metatable named after the component (`"Transform"`, `"Name"`, `"Bounds"`)
-whose `__index` is that component's own method table -- every method
-re-fetches through `World::GetComponentRaw` before touching anything, so a
-proxy held across a swap-remove reads nil/errors cleanly instead of
-aliasing whatever now occupies that pool slot. Neither userdata has a Lua
+component-proxy userdata is one packed `{EntityID, ComponentTypeID}`; its
+metatable and methods now come from `ComponentScript.cpp` (see below) -- every
+method re-fetches through `Entity::GetComponentByType(ComponentTypeID)` before touching anything,
+so a proxy held across a swap-remove errors cleanly instead of aliasing
+whatever now occupies that pool slot. Neither userdata has a Lua
 uservalue or a `__gc`: they own nothing (an `EntityID` and a
 `ComponentTypeID` are plain data), so there is nothing to release when
 Lua's collector reclaims one.
@@ -874,3 +897,153 @@ watching the world."
 happens at the end of a phase or outside a tick, never from inside a
 system's own iteration of a *different* pool. So it never re-enters the
 walk that triggered it.
+
+---
+
+## ComponentSerializer.h / ComponentSerializer.cpp / ComponentSerializers.cpp
+
+**Why serializers are opt-in per type.** `ComponentTypeInfo` has a name, a size
+and an alignment, and no fields, so a type has to say what it persists. Writing
+`SizeBytes` raw bytes is not a shortcut, it is wrong:
+`EngineCore::Vector3` is `alignas(16) float[4]` under `WITH_SIMD` and
+`double[3]` without it, so a `TransformComponent` written by one build reads as
+garbage in the other. Several fields are also per-run identities that mean
+nothing in the next process: `ComponentOwner::OwningWorld` (a live pointer),
+`BoundsComponent::ProxyID` (a `SpatialIndex` leaf) and
+`ScriptComponent::InstanceRef` (a `luaL_ref`). A type with no serializer is
+skipped with a warning on save and on load, so one unpersisted game component
+does not break the save path.
+
+**One registry per process**, for `ComponentType.h`'s reason: a function-local
+static in a template is one per image. `GSerializers` is a plain array, so it
+is constant-initialised before any registrar runs, and it is indexed by
+`ComponentTypeID` directly. `RenderCore::RegisterProxyType` is the same shape.
+
+**`ComponentDefaultsFn`, and the hang that motivated it.** The loader first
+wrote each restored component from a zeroed buffer. A zeroed component is not a
+default-constructed one: `BoundsComponent::ProxyID` defaults to -1 ("no leaf
+yet"), and zeroed it reads 0. `RefreshSpatialIndex` dispatches on
+`ProxyID < 0 ? Insert : Move`, so it moved a leaf that was never inserted and
+indexed past the end of the node vector. In a debug build that shows up as a
+*hang*, not a crash, because MSVC's CRT assertion dialog waits for input that
+never comes. `TransformComponent::Scale` (1,1,1) and `InstanceRef` (-2) hit the
+same trap in quieter ways. The macro now generates a defaults function that
+copies out a `TypeName{}`; this is sound because `GAMECORE_DEFINE_COMPONENT`
+asserts trivial copyability. `SpatialIndex::Move` also gained the proxy
+validation `Remove` always had, so a stale id is a warning rather than an
+out-of-bounds read.
+
+**What the built-in serializers leave out.** Transform: nothing. Name: written
+length-prefixed and re-clamped on load, so a larger-buffer build's save still
+fits. Bounds: `Local` and `bStatic` only. `World` and `ProxyID` are a cache,
+and the loader's `RefreshSpatialIndex` rebuilds both, including the first
+insert a static Bounds needs. Script: `ClassName`, `Phase` and
+`bCullOutsideActiveRegion`. The Lua instance is re-created from the class, so
+whatever its table held is lost; persisting that would need a per-class
+Lua save convention.
+
+---
+
+## WorldSerializer.h / WorldSerializer.cpp
+
+**Format.**
+
+    WRLD  uint32 entity count, then count x uint32 save-local index
+      CMPT  per type with a pool and a serializer
+            string type NAME, uint32 instance count,
+            then per instance: uint32 owner index + DATA chunk (the serializer's bytes)
+
+Chunks are keyed by type **name** because a `ComponentTypeID` is assigned in
+first-use order and shifts when startup changes. Every payload is sized, so a
+type this build lacks (RenderCore absent, a removed game component) is skipped
+and the rest loads. A cross-configuration test confirmed this: a non-SIMD build
+(24-byte `Vector3`) read a SIMD save (16-byte), skipping only the RenderCore
+chunks it had no serializers for. Types are written in id order so identical
+Worlds save to identical bytes. The index table is redundant today (always
+`0..n-1`) and is written so a later version can omit entities without
+redefining what an index means. A newer `WRLD` version is refused rather than
+skipped, because every index depends on the entity table.
+
+**Entity references.** A saved `{Index, Generation}` addresses nothing in a
+fresh World. Entities go out as dense save-local indices, and any `EntityID`
+field crosses through `IEntityRemapper`. Loading creates every entity before
+any component, so a reference to an entity whose components come later in the
+file still resolves. After a load every handle held *outside* the World is
+stale; `IGameMode::OnPostLoadSave` exists to re-derive them.
+
+**Not persisted:** systems and delegate/event bindings (function pointers into
+an image; the level's `OnLoad` re-registers them), the spatial index (rebuilt),
+render proxies (WorldBridge re-extracts them) and Lua instance state.
+
+**Never mid-tick.** Deferred destroys would be half-applied: a save would
+capture entities the next phase deletes, and a load would mutate pools a system
+is iterating.
+
+**Scripts last.** `SerializeWorldWithScripts` re-instantiates restored
+`ScriptComponent`s only after every component is in place, so a script's
+`OnStart` sees its siblings. It collects them first because `InstantiateScript`
+runs Lua, which may add a `ScriptComponent` inside `Each<ScriptComponent>`. It
+also removes the restored component before re-adding it, because
+`InstantiateScript` refuses a second one.
+
+**Versioning.** Each instance's DATA chunk carries its serializer's
+registered version, and the serializer reads it with `Ar.GetChunkVersion()`
+(save: the version being written; load: the file's). New fields go at the
+*end*, behind `if(Ar.GetChunkVersion() >= N)`. That covers both directions:
+an older save leaves the new field at its default (the loader starts from
+`ComponentDefaultsFn`, not zeroes), and a newer save read by an older build
+has its unknown trailing fields skipped by `CloseChunk`. Reordering or
+removing a field is not covered; that needs its own version branch.
+
+---
+
+## ComponentScript.h / ComponentScript.cpp / ComponentScripts.cpp
+
+**Selective by construction.** A component lists what Lua may touch with
+`GAMECORE_DEFINE_COMPONENT_SCRIPT`: `Field` (generates `Get<Name>`/`Set<Name>`),
+`ReadOnly` (getter only), `Flag` (a `uint8_t` exposed as a boolean) and `Method`
+(a typed function). Anything unlisted -- above all per-run state like
+`BoundsComponent::ProxyID` or `PrimitiveComponent::Proxy` -- does not exist in
+Lua. Every component, bound or not, also answers `GetEntity()`. The built-in
+Transform/Name/Bounds bindings used to be hand-written `lua_CFunction`s here and
+moved onto this mechanism with their Lua API unchanged (Bounds gained `GetLocal`
+and `GetStatic`).
+
+**No `lua.h` outside GameCore.** Lua is a static library linked into
+`GameCore.dll`. A binding elsewhere that included `lua.h` would carry a second
+copy of the Lua core operating on GameCore's `lua_State`. That happens to work
+with 5.4.8 (`isdummy` tests `lastfree`, not an address), but 5.4's
+`luaL_checkversion` no longer detects a second copy, so a future break would be
+silent -- the same one-static-library-one-image rule GDI follows. So bindings
+see typed values only: fields are described as data (type, offset, size) and
+GameCore reads and writes them; methods receive a `ScriptCall`.
+
+**The longjmp rule, and why `ScriptCall` never raises.** Lua is compiled as C,
+so a Lua error is a `longjmp`, which skips C++ destructors. Binder code is C++
+that may hold objects with destructors, so nothing may raise while it runs:
+`ScriptCall`'s getters record the first error and return a default, and
+`ComponentDispatch` raises only after the method has returned. `ScriptCall`
+itself is `static_assert`ed trivially destructible, because the dispatcher
+raises with it still in scope. A method that writes should check
+`Call.HasError()` first, or a bad argument can half-apply (Transform's
+`Translate` does).
+
+**One dispatcher.** Each Lua method is a C closure over `ComponentDispatch`
+with three upvalues: the binding entry, the type id and the mode (get field,
+set field, method, `GetEntity`). A type's metatable is built the first time
+one of its proxies is pushed into a given `lua_State`, and stored in the
+registry under `GameCore.Component:<Name>` so a component called `"Camera"`
+cannot collide with another library's metatable.
+
+**Registration.** The macro registers at static initialisation into a
+constant-initialised table (`ComponentType.cpp`'s argument again), so a type in
+another image -- RenderCore's Primitive and Camera -- registers into GameCore's
+one table. Names that would have to be truncated are rejected rather than
+shortened, since a shortened name is a different Lua API; rejections and a
+duplicate registration are logged. A binding registered *after* a type's
+metatable was built in some `lua_State` (a hot module loading late) is not
+picked up by that state.
+
+**Not covered.** A component added from Lua with `e:AddComponent(name)` still
+starts from zeroed bytes, not its defaults (see `Entity_AddComponent` above) --
+so a Lua-added Transform has scale 0 and a Lua-added Bounds a `ProxyID` of 0.

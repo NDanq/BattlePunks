@@ -10,9 +10,9 @@
 #include "Public/GameCore/World.h"
 
 /*
- * The Lua-visible surface: World, Entity, the component proxies for
- * Transform/Name/Bounds, TickPhase, and Events. See World.h's "The Lua
- * surface" doc comment for the API, and DESIGN.md for the userdata layouts.
+ * The Lua-visible surface: World, Entity, TickPhase and Events. Component
+ * proxies and their methods live in ComponentScript.cpp, and the built-in
+ * components' bindings in ComponentScripts.cpp. See DESIGN.md.
  */
 
 namespace GameCore
@@ -29,12 +29,6 @@ namespace GameCore
     namespace
     {
         constexpr const char* ENTITY_METATABLE = "GameCore.Entity";
-
-        struct ComponentProxy
-        {
-            EntityID        Entity;
-            ComponentTypeID Type = COMPONENT_TYPE_INVALID;
-        };
 
         World* GetBoundWorld(lua_State* InState)
         {
@@ -77,7 +71,7 @@ namespace GameCore
         {
             const EntityID E = LuaCheckEntity(InState, 1);
             World* W = GetBoundWorld(InState);
-            const NameComponent* Name = W ? static_cast<const NameComponent*>(W->GetComponentRaw(E, NameComponent::StaticType().ID)) : nullptr;
+            const NameComponent* Name = Entity(W, E).GetComponent<NameComponent>();
             lua_pushstring(InState, Name ? Name->Name : "");
             return 1;
         }
@@ -104,7 +98,7 @@ namespace GameCore
             /* Zero-initialised init bytes -- see DESIGN.md for why this
              * generic by-name path cannot call a real constructor. */
             std::vector<uint8_t> ZeroInit(Info->SizeBytes, 0);
-            if(!W->AddComponentRaw(E, Info->ID, ZeroInit.data()))
+            if(!Entity(W, E).AddComponentByType(Info->ID, ZeroInit.data()))
             {
                 lua_pushnil(InState);
                 return 1;
@@ -119,7 +113,7 @@ namespace GameCore
             const char* TypeName = luaL_checkstring(InState, 2);
             World* W = GetBoundWorld(InState);
             const ComponentTypeInfo* Info = FindComponentType(TypeName);
-            if(!W || !Info || !W->HasComponentRaw(E, Info->ID))
+            if(!W || !Info || !Entity(W, E).HasComponentByType(Info->ID))
             {
                 lua_pushnil(InState);
                 return 1;
@@ -134,7 +128,7 @@ namespace GameCore
             const char* TypeName = luaL_checkstring(InState, 2);
             World* W = GetBoundWorld(InState);
             const ComponentTypeInfo* Info = FindComponentType(TypeName);
-            lua_pushboolean(InState, W && Info && W->HasComponentRaw(E, Info->ID));
+            lua_pushboolean(InState, Info && Entity(W, E).HasComponentByType(Info->ID));
             return 1;
         }
 
@@ -144,7 +138,7 @@ namespace GameCore
             const char* TypeName = luaL_checkstring(InState, 2);
             World* W = GetBoundWorld(InState);
             const ComponentTypeInfo* Info = FindComponentType(TypeName);
-            lua_pushboolean(InState, W && Info && W->RemoveComponentRaw(E, Info->ID));
+            lua_pushboolean(InState, Info && Entity(W, E).RemoveComponentByType(Info->ID));
             return 1;
         }
 
@@ -171,201 +165,6 @@ namespace GameCore
             { "HasComponent",    Entity_HasComponent },
             { "RemoveComponent", Entity_RemoveComponent },
             { "AddScript",       Entity_AddScript },
-            { nullptr, nullptr }
-        };
-
-        // === Transform proxy ================================================
-
-        TransformComponent* CheckTransformProxy(lua_State* InState, const int InIndex)
-        {
-            const ComponentProxy* Proxy = static_cast<const ComponentProxy*>(luaL_checkudata(InState, InIndex, "Transform"));
-            World* W = GetBoundWorld(InState);
-            return W ? static_cast<TransformComponent*>(W->GetComponentRaw(Proxy->Entity, Proxy->Type)) : nullptr;
-        }
-
-        int Transform_GetEntity(lua_State* InState)
-        {
-            const ComponentProxy* Proxy = static_cast<const ComponentProxy*>(luaL_checkudata(InState, 1, "Transform"));
-            LuaPushEntity(InState, Proxy->Entity);
-            return 1;
-        }
-
-        int Transform_GetPosition(lua_State* InState)
-        {
-            TransformComponent* T = CheckTransformProxy(InState, 1);
-            if(!T) { return luaL_error(InState, "Transform proxy no longer refers to a live component"); }
-            lua_pushnumber(InState, T->Position.GetX());
-            lua_pushnumber(InState, T->Position.GetY());
-            lua_pushnumber(InState, T->Position.GetZ());
-            return 3;
-        }
-
-        int Transform_SetPosition(lua_State* InState)
-        {
-            TransformComponent* T = CheckTransformProxy(InState, 1);
-            const double X = luaL_checknumber(InState, 2);
-            const double Y = luaL_checknumber(InState, 3);
-            const double Z = luaL_checknumber(InState, 4);
-            if(!T) { return luaL_error(InState, "Transform proxy no longer refers to a live component"); }
-            T->Position = EngineCore::Vector3(X, Y, Z);
-            return 0;
-        }
-
-        int Transform_Translate(lua_State* InState)
-        {
-            TransformComponent* T = CheckTransformProxy(InState, 1);
-            const double DX = luaL_checknumber(InState, 2);
-            const double DY = luaL_checknumber(InState, 3);
-            const double DZ = luaL_checknumber(InState, 4);
-            if(!T) { return luaL_error(InState, "Transform proxy no longer refers to a live component"); }
-            T->Position = T->Position + EngineCore::Vector3(DX, DY, DZ);
-            return 0;
-        }
-
-        int Transform_GetRotation(lua_State* InState)
-        {
-            TransformComponent* T = CheckTransformProxy(InState, 1);
-            if(!T) { return luaL_error(InState, "Transform proxy no longer refers to a live component"); }
-            lua_pushnumber(InState, T->Rotation.GetX());
-            lua_pushnumber(InState, T->Rotation.GetY());
-            lua_pushnumber(InState, T->Rotation.GetZ());
-            return 3;
-        }
-
-        int Transform_SetRotation(lua_State* InState)
-        {
-            TransformComponent* T = CheckTransformProxy(InState, 1);
-            const double X = luaL_checknumber(InState, 2);
-            const double Y = luaL_checknumber(InState, 3);
-            const double Z = luaL_checknumber(InState, 4);
-            if(!T) { return luaL_error(InState, "Transform proxy no longer refers to a live component"); }
-            T->Rotation = EngineCore::Vector3(X, Y, Z);
-            return 0;
-        }
-
-        int Transform_GetScale(lua_State* InState)
-        {
-            TransformComponent* T = CheckTransformProxy(InState, 1);
-            if(!T) { return luaL_error(InState, "Transform proxy no longer refers to a live component"); }
-            lua_pushnumber(InState, T->Scale.GetX());
-            lua_pushnumber(InState, T->Scale.GetY());
-            lua_pushnumber(InState, T->Scale.GetZ());
-            return 3;
-        }
-
-        int Transform_SetScale(lua_State* InState)
-        {
-            TransformComponent* T = CheckTransformProxy(InState, 1);
-            const double X = luaL_checknumber(InState, 2);
-            const double Y = luaL_checknumber(InState, 3);
-            const double Z = luaL_checknumber(InState, 4);
-            if(!T) { return luaL_error(InState, "Transform proxy no longer refers to a live component"); }
-            T->Scale = EngineCore::Vector3(X, Y, Z);
-            return 0;
-        }
-
-        const luaL_Reg GTransformMethods[] = {
-            { "GetEntity",    Transform_GetEntity },
-            { "GetPosition",  Transform_GetPosition },
-            { "SetPosition",  Transform_SetPosition },
-            { "Translate",    Transform_Translate },
-            { "GetRotation",  Transform_GetRotation },
-            { "SetRotation",  Transform_SetRotation },
-            { "GetScale",     Transform_GetScale },
-            { "SetScale",     Transform_SetScale },
-            { nullptr, nullptr }
-        };
-
-        // === Name proxy ======================================================
-
-        NameComponent* CheckNameProxy(lua_State* InState, const int InIndex)
-        {
-            const ComponentProxy* Proxy = static_cast<const ComponentProxy*>(luaL_checkudata(InState, InIndex, "Name"));
-            World* W = GetBoundWorld(InState);
-            return W ? static_cast<NameComponent*>(W->GetComponentRaw(Proxy->Entity, Proxy->Type)) : nullptr;
-        }
-
-        int Name_GetEntity(lua_State* InState)
-        {
-            const ComponentProxy* Proxy = static_cast<const ComponentProxy*>(luaL_checkudata(InState, 1, "Name"));
-            LuaPushEntity(InState, Proxy->Entity);
-            return 1;
-        }
-
-        int Name_Get(lua_State* InState)
-        {
-            NameComponent* N = CheckNameProxy(InState, 1);
-            if(!N) { return luaL_error(InState, "Name proxy no longer refers to a live component"); }
-            lua_pushstring(InState, N->Name);
-            return 1;
-        }
-
-        int Name_Set(lua_State* InState)
-        {
-            NameComponent* N = CheckNameProxy(InState, 1);
-            const char* NewName = luaL_checkstring(InState, 2);
-            if(!N) { return luaL_error(InState, "Name proxy no longer refers to a live component"); }
-            std::strncpy(N->Name, NewName, sizeof(N->Name) - 1);
-            N->Name[sizeof(N->Name) - 1] = '\0';
-            return 0;
-        }
-
-        const luaL_Reg GNameMethods[] = {
-            { "GetEntity", Name_GetEntity },
-            { "Get",       Name_Get },
-            { "Set",       Name_Set },
-            { nullptr, nullptr }
-        };
-
-        // === Bounds proxy ====================================================
-
-        BoundsComponent* CheckBoundsProxy(lua_State* InState, const int InIndex)
-        {
-            const ComponentProxy* Proxy = static_cast<const ComponentProxy*>(luaL_checkudata(InState, InIndex, "Bounds"));
-            World* W = GetBoundWorld(InState);
-            return W ? static_cast<BoundsComponent*>(W->GetComponentRaw(Proxy->Entity, Proxy->Type)) : nullptr;
-        }
-
-        int Bounds_GetEntity(lua_State* InState)
-        {
-            const ComponentProxy* Proxy = static_cast<const ComponentProxy*>(luaL_checkudata(InState, 1, "Bounds"));
-            LuaPushEntity(InState, Proxy->Entity);
-            return 1;
-        }
-
-        int Bounds_SetLocal(lua_State* InState)
-        {
-            BoundsComponent* B = CheckBoundsProxy(InState, 1);
-            const double MinX = luaL_checknumber(InState, 2), MinY = luaL_checknumber(InState, 3), MinZ = luaL_checknumber(InState, 4);
-            const double MaxX = luaL_checknumber(InState, 5), MaxY = luaL_checknumber(InState, 6), MaxZ = luaL_checknumber(InState, 7);
-            if(!B) { return luaL_error(InState, "Bounds proxy no longer refers to a live component"); }
-            B->Local = AABB(EngineCore::Vector3(MinX, MinY, MinZ), EngineCore::Vector3(MaxX, MaxY, MaxZ));
-            return 0;
-        }
-
-        int Bounds_GetWorld(lua_State* InState)
-        {
-            BoundsComponent* B = CheckBoundsProxy(InState, 1);
-            if(!B) { return luaL_error(InState, "Bounds proxy no longer refers to a live component"); }
-            lua_pushnumber(InState, B->World.Min.GetX()); lua_pushnumber(InState, B->World.Min.GetY()); lua_pushnumber(InState, B->World.Min.GetZ());
-            lua_pushnumber(InState, B->World.Max.GetX()); lua_pushnumber(InState, B->World.Max.GetY()); lua_pushnumber(InState, B->World.Max.GetZ());
-            return 6;
-        }
-
-        int Bounds_SetStatic(lua_State* InState)
-        {
-            BoundsComponent* B = CheckBoundsProxy(InState, 1);
-            const bool bStatic = lua_toboolean(InState, 2) != 0;
-            if(!B) { return luaL_error(InState, "Bounds proxy no longer refers to a live component"); }
-            B->bStatic = bStatic ? 1 : 0;
-            return 0;
-        }
-
-        const luaL_Reg GBoundsMethods[] = {
-            { "GetEntity", Bounds_GetEntity },
-            { "SetLocal",  Bounds_SetLocal },
-            { "GetWorld",  Bounds_GetWorld },
-            { "SetStatic", Bounds_SetStatic },
             { nullptr, nullptr }
         };
 
@@ -680,23 +479,18 @@ namespace GameCore
         return *Slot;
     }
 
-    void LuaPushComponentProxy(lua_State* InState, const EntityID InEntity, const ComponentTypeID InType)
+    World* LuaGetBoundWorld(lua_State* InState)
     {
-        const ComponentTypeInfo* Info = GetComponentType(InType);
-        ComponentProxy* Proxy = static_cast<ComponentProxy*>(lua_newuserdatauv(InState, sizeof(ComponentProxy), 0));
-        Proxy->Entity = InEntity;
-        Proxy->Type   = InType;
-        luaL_setmetatable(InState, Info ? Info->Name : "Unknown");
+        return GetBoundWorld(InState);
     }
 
     void ScriptBindings_Install(lua_State* InState, World* InWorld)
     {
         SetBoundWorld(InState, InWorld);
 
+        /* Component metatables are not registered here: ComponentScript.cpp
+         * builds each type's the first time one of its proxies is pushed. */
         RegisterMetatable(InState, ENTITY_METATABLE, GEntityMethods);
-        RegisterMetatable(InState, "Transform", GTransformMethods);
-        RegisterMetatable(InState, "Name",      GNameMethods);
-        RegisterMetatable(InState, "Bounds",    GBoundsMethods);
 
         lua_newtable(InState);
         luaL_setfuncs(InState, GWorldFunctions, 0);

@@ -7,14 +7,20 @@
  * counter and a nonzero exit status, which is exactly what add_test() checks.
  */
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <utility>
 #include <vector>
 
+#include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/GameCore/AABB.h"
+#include "Public/GameCore/ArchiveTextDump.h"
+#include "Public/GameCore/ComponentScript.h"
+#include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/Entity.h"
@@ -22,6 +28,7 @@
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/WorldSerializer.h"
 
 using namespace GameCore;
 using namespace EngineCore;
@@ -109,21 +116,21 @@ static void TestComponents()
     std::printf("[components]\n");
 
     World W;
-    const EntityID E1 = W.CreateEntity("Alice");
-    const EntityID E2 = W.CreateEntity("Bob");
+    const Entity E1 = W.CreateEntity("Alice");
+    const Entity E2 = W.CreateEntity("Bob");
 
-    TransformComponent* T1 = W.AddComponent<TransformComponent>(E1);
+    TransformComponent* T1 = E1.AddComponent<TransformComponent>();
     Expect(T1 != nullptr, "AddComponent succeeds");
-    Expect(W.HasComponent<TransformComponent>(E1), "HasComponent true after Add");
+    Expect(E1.HasComponent<TransformComponent>(), "HasComponent true after Add");
 
     T1->Position = Vector3(1.0, 2.0, 3.0);
 
-    Expect(W.GetComponent<TransformComponent>(E2) == nullptr, "GetComponent on an entity without one is null");
+    Expect(E2.GetComponent<TransformComponent>() == nullptr, "GetComponent on an entity without one is null");
 
     const EntityID Dead = EntityID(9999, 0);
-    Expect(W.GetComponent<TransformComponent>(Dead) == nullptr, "GetComponent on a dead entity is null");
+    Expect(W.GetEntity(Dead).GetComponent<TransformComponent>() == nullptr, "GetComponent on a dead entity is null");
 
-    TransformComponent* T2 = W.AddComponent<TransformComponent>(E2);
+    TransformComponent* T2 = E2.AddComponent<TransformComponent>();
     T2->Position = Vector3(4.0, 5.0, 6.0);
 
     Expect(T1->Owner.OwningWorld == &W, "owner header's World is set");
@@ -131,14 +138,31 @@ static void TestComponents()
     Expect(std::strcmp(T1->Owner.GetName(), "Alice") == 0, "GetSibling<Name> through the owner header finds the right entity's name");
     Expect(std::strcmp(T2->Owner.GetName(), "Bob") == 0, "same, for the second entity");
 
-    Expect(W.RemoveComponent<TransformComponent>(E1), "RemoveComponent succeeds");
-    Expect(!W.HasComponent<TransformComponent>(E1), "HasComponent false after Remove");
-    Expect(W.GetComponent<TransformComponent>(E2) != nullptr, "the survivor's component is intact after swap-remove");
-    Expect(W.GetComponent<TransformComponent>(E2)->Position.GetX() == 4.0, "the survivor's DATA is intact after swap-remove");
+    Expect(E1.RemoveComponent<TransformComponent>(), "RemoveComponent succeeds");
+    Expect(!E1.HasComponent<TransformComponent>(), "HasComponent false after Remove");
+    Expect(E2.GetComponent<TransformComponent>() != nullptr, "the survivor's component is intact after swap-remove");
+    Expect(E2.GetComponent<TransformComponent>()->Position.GetX() == 4.0, "the survivor's DATA is intact after swap-remove");
 
     int VisitCount = 0;
     W.Each<TransformComponent>([&](Entity /*E*/, TransformComponent& /*T*/) { ++VisitCount; });
     Expect(VisitCount == 1, "Each visits exactly the live set");
+
+    // The handle CreateEntity returns attaches components directly.
+    const Entity Handle = W.CreateEntity("Carol");
+    Expect(Handle.IsAlive() && Handle.GetWorld() == &W, "CreateEntity returns a live handle bound to this World");
+
+    TransformComponent HandleInit;
+    HandleInit.Position = Vector3(7.0, 8.0, 9.0);
+    TransformComponent* Attached = Handle.AddComponent(HandleInit);
+    Expect(Attached != nullptr && Attached->Position.GetX() == 7.0f, "Entity::AddComponent deduces T and copies the init values");
+    Expect(Attached->Owner.Entity == Handle.GetID(), "the attached component's owner is the handle's entity");
+    Expect(Handle.AddComponent<BoundsComponent>() != nullptr, "Entity::AddComponent<T>() with no init adds a default component");
+    Expect(Handle.AddComponent(HandleInit) == nullptr, "a second component of the same type is still refused");
+
+    const EntityID AsId = Handle;
+    Expect(AsId == Handle.GetID() && W.IsAlive(Handle), "an Entity converts implicitly to its EntityID");
+
+    Expect(Entity().AddComponent<TransformComponent>() == nullptr, "a default (unbound) handle adds nothing");
 }
 
 // ============================================================================
@@ -480,22 +504,22 @@ static void TestWorldSpatialIntegration()
     std::printf("[world + spatial]\n");
 
     World W;
-    const EntityID E1 = W.CreateEntity();
-    BoundsComponent* B1 = W.AddComponent<BoundsComponent>(E1);
+    const Entity E1 = W.CreateEntity();
+    BoundsComponent* B1 = E1.AddComponent<BoundsComponent>();
     B1->Local = MakeBox(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5);
 
     Expect(B1->ProxyID == -1, "a freshly-added Bounds has no proxy yet");
     W.RefreshSpatialIndex();
-    Expect(W.GetComponent<BoundsComponent>(E1)->ProxyID >= 0, "the first refit inserts the leaf");
+    Expect(E1.GetComponent<BoundsComponent>()->ProxyID >= 0, "the first refit inserts the leaf");
 
     // Add a Transform AFTER the Bounds -- the "may not have its Transform yet" case.
-    const EntityID E2 = W.CreateEntity();
-    BoundsComponent* B2 = W.AddComponent<BoundsComponent>(E2);
+    const Entity E2 = W.CreateEntity();
+    BoundsComponent* B2 = E2.AddComponent<BoundsComponent>();
     B2->Local = MakeBox(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5);
-    TransformComponent* T2 = W.AddComponent<TransformComponent>(E2);
+    TransformComponent* T2 = E2.AddComponent<TransformComponent>();
     T2->Position = Vector3(100.0, 0.0, 0.0);
     W.RefreshSpatialIndex();
-    Expect(W.GetComponent<BoundsComponent>(E2)->World.Min.GetX() > 99.0, "a Bounds added before its Transform is placed correctly once both exist");
+    Expect(E2.GetComponent<BoundsComponent>()->World.Min.GetX() > 99.0, "a Bounds added before its Transform is placed correctly once both exist");
 
     QueryCollector NearOrigin;
     W.QueryBounds(MakeBox(-10, -10, -10, 10, 10, 10), &CollectHit, &NearOrigin);
@@ -513,17 +537,17 @@ static void TestWorldSpatialIntegration()
     Expect(bFoundE2AfterMove, "after moving the Transform and refreshing, the entity shows up in its new region");
 
     // Static bounds ignore a Transform change entirely.
-    const EntityID E3 = W.CreateEntity();
-    BoundsComponent* B3 = W.AddComponent<BoundsComponent>(E3);
+    const Entity E3 = W.CreateEntity();
+    BoundsComponent* B3 = E3.AddComponent<BoundsComponent>();
     B3->Local    = MakeBox(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5);
     B3->bStatic  = 1;
-    TransformComponent* T3 = W.AddComponent<TransformComponent>(E3);
+    TransformComponent* T3 = E3.AddComponent<TransformComponent>();
     T3->Position = Vector3(500.0, 0.0, 0.0);
     W.RefreshSpatialIndex();
-    const AABB StaticWorldBoxBefore = W.GetComponent<BoundsComponent>(E3)->World;
+    const AABB StaticWorldBoxBefore = E3.GetComponent<BoundsComponent>()->World;
     T3->Position = Vector3(-500.0, 0.0, 0.0);
     W.RefreshSpatialIndex();
-    const AABB StaticWorldBoxAfter = W.GetComponent<BoundsComponent>(E3)->World;
+    const AABB StaticWorldBoxAfter = E3.GetComponent<BoundsComponent>()->World;
     Expect(StaticWorldBoxBefore.Min.GetX() == StaticWorldBoxAfter.Min.GetX(), "a static Bounds never re-fits, regardless of Transform changes");
 
     // EachInBounds only visits hits that actually have T.
@@ -546,6 +570,156 @@ static void TestWorldSpatialIntegration()
 // Scripting
 // ============================================================================
 
+// ============================================================================
+// Component script bindings -- what a component chooses to expose to Lua.
+// ============================================================================
+
+/* One field of every supported shape, a read-only one, an unlisted one, and
+ * custom methods. */
+struct ScriptProbeComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    float               Speed  = 1.5f;
+    int32_t             Count  = 3;
+    uint8_t             Level  = 7;
+    uint8_t             bArmed = 0;
+    EngineCore::Color   Tint{10, 20, 30};
+    char                Label[16] = "probe";
+    EngineCore::Vector3 Offset{4.0, 5.0, 6.0};
+    int32_t             Secret = 99;   // deliberately not bound
+};
+GAMECORE_DEFINE_COMPONENT(ScriptProbeComponent, "TestScriptProbe")
+GAMECORE_DEFINE_COMPONENT_SCRIPT(ScriptProbeComponent)
+{
+    Bind.Field("Speed", &ScriptProbeComponent::Speed);
+    Bind.Field("Count", &ScriptProbeComponent::Count);
+    Bind.Field("Level", &ScriptProbeComponent::Level);
+    Bind.Flag("Armed",  &ScriptProbeComponent::bArmed);
+    Bind.Field("Tint",  &ScriptProbeComponent::Tint);
+    Bind.Field("Label", &ScriptProbeComponent::Label);
+    Bind.ReadOnly("Offset", &ScriptProbeComponent::Offset);
+
+    Bind.Method("Scaled", [](ScriptProbeComponent& C, ScriptCall& Call)
+    {
+        Call.PushNumber(C.Speed * Call.GetNumber(1));
+    });
+
+    /* Several results, including an entity. */
+    Bind.Method("Describe", [](ScriptProbeComponent& C, ScriptCall& Call)
+    {
+        Call.PushString(C.Label);
+        Call.PushNumber(C.Count);
+        Call.PushEntity(Call.GetOwner());
+    });
+}
+
+/* One binding stored, one rejected: a name that would have to be truncated. */
+struct ScriptRejectComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    float A = 0.0f;
+};
+GAMECORE_DEFINE_COMPONENT(ScriptRejectComponent, "TestScriptReject")
+GAMECORE_DEFINE_COMPONENT_SCRIPT(ScriptRejectComponent)
+{
+    Bind.Field("A", &ScriptRejectComponent::A);
+    Bind.Field("ThisBindingNameIsFarTooLongToStoreUnchanged", &ScriptRejectComponent::A);
+}
+
+static void TestComponentScripting()
+{
+    std::printf("Component script bindings\n");
+
+    size_t RejectCount = 0;
+    FindComponentScript(ScriptRejectComponent::StaticType().ID, RejectCount);
+    Expect(RejectCount == 1, "an over-long binding name is rejected, not truncated");
+
+    World W;
+    ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "ScriptEngine::Initialize succeeds");
+    Scripts.BindWorld(&W);
+
+    const Entity Probe = W.CreateEntity("Probe");
+    ScriptProbeComponent* C = Probe.AddComponent<ScriptProbeComponent>();
+    Expect(C != nullptr, "the probe component is added");
+
+    Expect(Scripts.RunString(
+        "local c = World.FindEntity('Probe'):GetComponent('TestScriptProbe')\n"
+        "assert(c:GetSpeed() == 1.5, 'float get')\n"
+        "c:SetSpeed(4)\n"
+        "assert(c:GetCount() == 3, 'int32 get')\n"
+        "c:SetCount(12)\n"
+        "assert(c:GetLevel() == 7, 'uint8 get')\n"
+        "c:SetLevel(200)\n"
+        "assert(c:GetArmed() == false, 'flag reads as a boolean')\n"
+        "c:SetArmed(true)\n"
+        "local r, g, b, a = c:GetTint()\n"
+        "assert(r == 10 and g == 20 and b == 30 and a == 255, 'color get')\n"
+        "c:SetTint(1, 2, 3)\n"
+        "assert(c:GetLabel() == 'probe', 'fixed string get')\n"
+        "c:SetLabel('renamed')\n"
+        "local x, y, z = c:GetOffset()\n"
+        "assert(x == 4 and y == 5 and z == 6, 'vector get')\n"
+        "assert(c.SetOffset == nil, 'a read-only field has no setter')\n"
+        "assert(c.GetSecret == nil and c.SetSecret == nil, 'an unlisted field is invisible')\n"
+        "assert(c:Scaled(2) == 8, 'a custom method reads args and returns a value')\n"
+        "local label, count, owner = c:Describe()\n"
+        "assert(label == 'renamed' and count == 12 and owner:GetName() == 'Probe', 'several results')\n"
+        "assert(c:GetEntity():GetName() == 'Probe', 'GetEntity on a bound component')\n",
+        "test-component-bindings"), "fields and methods work from Lua");
+
+    Expect(C->Speed == 4.0f && C->Count == 12 && C->Level == 200 && C->bArmed == 1,
+           "scalar and flag writes from Lua reach the component");
+    Expect(C->Tint.R == 1 && C->Tint.G == 2 && C->Tint.B == 3 && C->Tint.A == 255,
+           "a color write with no alpha defaults it to opaque");
+    Expect(std::strcmp(C->Label, "renamed") == 0, "a fixed-string write reaches the component");
+    Expect(C->Secret == 99, "the unlisted field is untouched");
+
+    // Errors are raised to Lua cleanly, with the method named, and nothing is half-applied.
+    Expect(Scripts.RunString(
+        "local c = World.FindEntity('Probe'):GetComponent('TestScriptProbe')\n"
+        "local ok, err = pcall(function() c:Scaled('x') end)\n"
+        "assert(not ok and string.find(err, \"bad argument #1 to 'Scaled'\", 1, true), tostring(err))\n"
+        "ok = pcall(function() c:SetLevel(300) end)\n"
+        "assert(not ok, 'a uint8 field rejects 300')\n"
+        "assert(c:GetLevel() == 200, 'and keeps its value')\n",
+        "test-component-binding-errors"), "binding errors surface as Lua errors");
+
+    // The built-in components keep their Lua API on the new mechanism.
+    Expect(Scripts.RunString(
+        "local e = World.CreateEntity('Builtins')\n"
+        "local t = e:AddComponent('Transform')\n"
+        "t:SetPosition(1, 2, 3)\n"
+        "t:Translate(1, 1, 1)\n"
+        "local x, y, z = t:GetPosition()\n"
+        "assert(x == 2 and y == 3 and z == 4, 'Set/GetPosition and Translate')\n"
+        "assert(not pcall(function() t:Translate(1, 'nope', 1) end), 'a bad Translate errors')\n"
+        "x = t:GetPosition()\n"
+        "assert(x == 2, 'and moves nothing')\n"
+        "t:SetScale(2, 2, 2)\n"
+        "assert(t:GetScale() == 2, 'Set/GetScale')\n"
+        "local n = e:GetComponent('Name')\n"
+        "assert(n:Get() == 'Builtins', 'Name:Get')\n"
+        "n:Set('Renamed')\n"
+        "assert(e:GetName() == 'Renamed', 'Name:Set')\n"
+        "local b = e:AddComponent('Bounds')\n"
+        "b:SetLocal(-1, -1, -1, 1, 1, 1)\n"
+        "assert(b:GetLocal() == -1, 'Bounds:GetLocal')\n"
+        "b:SetStatic(true)\n"
+        "assert(b:GetStatic() == true, 'Bounds static flag')\n"
+        "assert(b.SetWorld == nil, 'Bounds World is read-only')\n"
+        "assert(b.GetProxyID == nil and b.SetProxyID == nil, 'ProxyID is not exposed')\n"
+        "assert(select('#', b:GetWorld()) == 6, 'GetWorld returns six numbers')\n"
+        "assert(t:GetEntity():GetName() == 'Renamed', 'Transform:GetEntity')\n"
+        "local u = e:AddComponent('TestOnly')\n"
+        "assert(u:GetEntity():GetName() == 'Renamed', 'an unbound component still has GetEntity')\n"
+        "assert(u.GetValue == nil, 'and nothing else')\n",
+        "test-builtin-bindings"), "the built-in component API is unchanged");
+
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+}
+
 static void TestScripting()
 {
     std::printf("[scripting]\n");
@@ -563,7 +737,7 @@ static void TestScripting()
 
     const EntityID Found = W.FindEntityByName("Scripted");
     Expect(Found.IsSet(), "an entity created from Lua is findable from C++");
-    TransformComponent* T = W.GetComponent<TransformComponent>(Found);
+    TransformComponent* T = W.GetEntity(Found).GetComponent<TransformComponent>();
     Expect(T != nullptr && T->Position.GetX() == 1.0, "a component set from Lua is readable from C++");
 
     // A registered class ticks through the phase system.
@@ -621,6 +795,496 @@ static void TestScripting()
     Expect(!Scripts.IsInitialized(), "ScriptEngine reports not-initialized after Shutdown");
 }
 
+// ============================================================================
+// Archive -- the byte layer, on its own, before anything built on it.
+// ============================================================================
+
+/* The archive has ONE operator (<<) for both directions, so a round trip reads
+ * with the same operator it wrote with -- which is the whole design, and the
+ * reason this test reads identically to the code that produced the bytes. */
+static void TestArchiveRoundTrip()
+{
+    std::printf("Archive: round trip\n");
+
+    uint32_t U32 = 0xDEADBEEFu;
+    int32_t  I32 = -12345;
+    float    F   = 3.5f;
+    double   D   = -1.25;
+    bool     B   = true;
+    std::string S = "hello archive";
+    char     Fixed[16] = "fixed";
+
+    Archive Out = Archive::ForWriting();
+    Out << U32 << I32 << F << D << B << S;
+    Out.SerializeFixedString(Fixed, sizeof(Fixed));
+    Expect(!Out.HasError(), "writing leaves the archive healthy");
+
+    Archive In = Archive::ForReading(Out.GetBytes());
+
+    uint32_t RU32 = 0;
+    int32_t  RI32 = 0;
+    float    RF   = 0.0f;
+    double   RD   = 0.0;
+    bool     RB   = false;
+    std::string RS;
+    char     RFixed[16] = {};
+
+    In << RU32 << RI32 << RF << RD << RB << RS;
+    In.SerializeFixedString(RFixed, sizeof(RFixed));
+
+    Expect(!In.HasError(), "reading back leaves the archive healthy");
+    Expect(RU32 == U32, "uint32 round-trips");
+    Expect(RI32 == I32, "a NEGATIVE int32 round-trips");
+    Expect(RF == F, "float round-trips exactly");
+    Expect(RD == D, "double round-trips exactly");
+    Expect(RB == B, "bool round-trips");
+    Expect(RS == S, "std::string round-trips");
+    Expect(std::strcmp(RFixed, "fixed") == 0, "a fixed char buffer round-trips");
+
+    // Reading past the end must SET THE ERROR, not return garbage -- the whole
+    // reason the flag is sticky.
+    uint32_t Overrun = 0;
+    In << Overrun;
+    Expect(In.HasError(), "reading past the end sets the error flag");
+}
+
+static void TestArchiveChunks()
+{
+    std::printf("Archive: chunks and forward compatibility\n");
+
+    const uint32_t TAG_AAAA = MakeArchiveTag('A','A','A','A');
+    const uint32_t TAG_BBBB = MakeArchiveTag('B','B','B','B');
+
+    Archive Out = Archive::ForWriting();
+    {
+        uint16_t Version = 3;
+        Out.OpenChunk(TAG_AAAA, Version);
+        uint32_t Payload = 111;
+        Out << Payload;
+        // A nested chunk, to prove the size back-patching survives nesting.
+        uint16_t InnerVersion = 1;
+        Out.OpenChunk(TAG_BBBB, InnerVersion);
+        uint32_t Inner = 222;
+        Out << Inner;
+        Out.CloseChunk();
+        Out.CloseChunk();
+    }
+    {
+        uint16_t Version = 1;
+        Out.OpenChunk(TAG_BBBB, Version);
+        uint32_t Payload = 333;
+        Out << Payload;
+        Out.CloseChunk();
+    }
+    Expect(!Out.HasError(), "writing nested chunks leaves the archive healthy");
+
+    // A reader that knows both chunks.
+    {
+        Archive In = Archive::ForReading(Out.GetBytes());
+
+        uint16_t Version = 0;
+        Expect(In.OpenChunk(TAG_AAAA, Version), "the first chunk opens");
+        Expect(Version == 3, "the chunk's version comes back");
+        uint32_t Payload = 0;
+        In << Payload;
+        Expect(Payload == 111, "the chunk's payload reads");
+
+        uint16_t InnerVersion = 0;
+        Expect(In.OpenChunk(TAG_BBBB, InnerVersion), "the nested chunk opens");
+        uint32_t Inner = 0;
+        In << Inner;
+        Expect(Inner == 222, "the nested chunk's payload reads");
+        In.CloseChunk();
+        In.CloseChunk();
+
+        Expect(In.OpenChunk(TAG_BBBB, Version), "the sibling chunk opens after the first closes");
+        uint32_t Second = 0;
+        In << Second;
+        Expect(Second == 333, "the sibling chunk's payload reads");
+        In.CloseChunk();
+        Expect(In.IsAtEnd(), "the buffer is exhausted");
+    }
+
+    // THE FORWARD-COMPATIBILITY CLAIM, tested rather than asserted: a reader
+    // that does not care about the first chunk skips it by size and still finds
+    // the second one correctly. This is what lets an older build load a newer
+    // build's save.
+    {
+        Archive In = Archive::ForReading(Out.GetBytes());
+
+        uint16_t Version = 0;
+        Expect(!In.OpenChunk(TAG_BBBB, Version),
+               "probing for the wrong tag returns false WITHOUT consuming anything");
+        Expect(In.PeekChunkTag() == TAG_AAAA, "the cursor did not move on a failed probe");
+
+        // Open it, read NOTHING of its payload, and close it.
+        Expect(In.OpenChunk(TAG_AAAA, Version), "the unwanted chunk still opens");
+        In.CloseChunk();
+
+        Expect(In.OpenChunk(TAG_BBBB, Version),
+               "the NEXT chunk is found correctly after skipping an unread payload");
+        uint32_t Second = 0;
+        In << Second;
+        Expect(Second == 333, "and its payload is intact");
+        In.CloseChunk();
+    }
+
+    // A chunk whose size escapes the buffer is corruption and must be caught,
+    // not trusted -- otherwise every following read is nonsense.
+    {
+        std::vector<uint8_t> Corrupt = Out.GetBytes();
+        Expect(Corrupt.size() > 10, "there are bytes to corrupt");
+        Corrupt[6] = 0xFF; Corrupt[7] = 0xFF; Corrupt[8] = 0xFF; Corrupt[9] = 0x7F;
+
+        Archive In = Archive::ForReading(Corrupt);
+        uint16_t Version = 0;
+        In.OpenChunk(TAG_AAAA, Version);
+        Expect(In.HasError(), "a chunk size past the end of the buffer is rejected");
+    }
+}
+
+// ============================================================================
+// WorldSerializer -- a whole scene out and back into a FRESH World.
+// ============================================================================
+
+/* A component holding an entity reference, to exercise IEntityRemapper -- the
+ * built-in components have no such field, and the remap is the single most
+ * load-bearing piece of the design (EntityID is a per-run slot handle). */
+struct LinkComponent
+{
+    GAMECORE_COMPONENT_BODY()
+
+    EntityID Target;
+    int32_t  Payload = 0;
+};
+GAMECORE_DEFINE_COMPONENT(LinkComponent, "TestLink")
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(LinkComponent, 1)
+{
+    Remap.RemapEntity(Ar, C.Target);
+    Ar << C.Payload;
+}
+
+/* Registered as a type but given NO serializer, to prove an unserializable
+ * component does not fail the save or the load. */
+struct OpaqueComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    int32_t Whatever = 7;
+};
+GAMECORE_DEFINE_COMPONENT(OpaqueComponent, "TestOpaque")
+
+static void TestWorldSerialization()
+{
+    std::printf("WorldSerializer: round trip into a fresh World\n");
+
+    std::vector<uint8_t> Saved;
+    EntityID             SavedAlice;
+    EntityID             SavedBob;
+
+    {
+        World W;
+
+        const Entity Alice = W.CreateEntity("Alice");
+        const Entity Bob   = W.CreateEntity("Bob");
+        SavedAlice = Alice;
+        SavedBob   = Bob;
+
+        TransformComponent AliceTransform;
+        AliceTransform.Position = Vector3(1.5, 2.5, 3.5);
+        AliceTransform.Scale    = Vector3(2.0, 2.0, 2.0);
+        Alice.AddComponent(AliceTransform);
+
+        BoundsComponent Bounds;
+        Bounds.Local = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(1.0, 1.0, 1.0));
+        Alice.AddComponent(Bounds);
+
+        /* Bob points AT Alice, so the remap has something real to resolve. */
+        LinkComponent Link;
+        Link.Target  = Alice;
+        Link.Payload = 42;
+        Bob.AddComponent(Link);
+
+        Bob.AddComponent<OpaqueComponent>();
+
+        /* A destroyed entity must not appear in the save, and its hole in the
+         * slot table must not break the dense index mapping. */
+        const EntityID Doomed = W.CreateEntity("Doomed");
+        W.DestroyEntity(Doomed);
+
+        Archive Out = Archive::ForWriting();
+        Expect(SerializeWorld(Out, W), "SerializeWorld succeeds when saving");
+        Expect(!Out.HasError(), "the save archive is healthy");
+        Saved = Out.GetBytes();
+        Expect(!Saved.empty(), "the save produced bytes");
+    }
+
+    // A FRESH World -- the point of the test. Nothing from the old one survives.
+    {
+        World W;
+
+        Archive In = Archive::ForReading(Saved);
+        Expect(SerializeWorld(In, W), "SerializeWorld succeeds when loading");
+        Expect(!In.HasError(), "the load archive is healthy");
+
+        Expect(W.GetEntityCount() == 2, "exactly the two live entities came back (not the destroyed one)");
+
+        const EntityID Alice = W.FindEntityByName("Alice");
+        const EntityID Bob   = W.FindEntityByName("Bob");
+        Expect(Alice.IsSet(), "Alice came back, by name");
+        Expect(Bob.IsSet(),   "Bob came back, by name");
+        Expect(!W.FindEntityByName("Doomed").IsSet(), "the destroyed entity did NOT come back");
+
+        TransformComponent* Transform = W.GetEntity(Alice).GetComponent<TransformComponent>();
+        Expect(Transform != nullptr, "Alice's Transform came back");
+        if(Transform)
+        {
+            Expect(Transform->Position.GetX() == 1.5f, "Position.X survived");
+            Expect(Transform->Position.GetY() == 2.5f, "Position.Y survived");
+            Expect(Transform->Position.GetZ() == 3.5f, "Position.Z survived");
+            Expect(Transform->Scale.GetX()    == 2.0f, "Scale survived");
+            Expect(Transform->Owner.OwningWorld == &W,
+                   "the restored component's Owner points at the NEW World");
+            Expect(Transform->Owner.Entity == Alice, "the restored component's Owner names the new entity");
+        }
+
+        /* THE REMAP UNDER TEST. The handles are new -- the file could not have
+         * contained them -- and the cross-entity reference still resolves. */
+        LinkComponent* Link = W.GetEntity(Bob).GetComponent<LinkComponent>();
+        Expect(Link != nullptr, "Bob's Link came back");
+        if(Link)
+        {
+            Expect(Link->Payload == 42, "the Link's scalar field survived");
+            Expect(Link->Target == Alice, "the entity REFERENCE resolved to the new Alice");
+            Expect(!(Link->Target == SavedAlice) || Alice == SavedAlice,
+                   "the reference points at a live handle, not the saved bytes");
+        }
+
+        /* The type with no serializer: the save warned and skipped it, and the
+         * load did not fail. Its absence is the correct outcome. */
+        Expect(!W.GetEntity(Bob).HasComponent<OpaqueComponent>(),
+               "a component type with no registered serializer is skipped, not faked");
+
+        /* THE BOUNDS FIX-UP. ProxyID is deliberately not saved, so the loader's
+         * RefreshSpatialIndex is what must have given this one its leaf. */
+        BoundsComponent* Bounds = W.GetEntity(Alice).GetComponent<BoundsComponent>();
+        Expect(Bounds != nullptr, "Alice's Bounds came back");
+        if(Bounds)
+        {
+            Expect(Bounds->ProxyID >= 0, "the restored Bounds got a spatial leaf from the loader's refit");
+
+            /* And the tree actually contains it -- a ProxyID alone could be a
+             * number nobody inserted. */
+            int Hits = 0;
+            W.QueryBounds(AABB(Vector3(-10.0, -10.0, -10.0), Vector3(10.0, 10.0, 10.0)),
+                          [](EntityID, void* InUserData) -> bool
+                          {
+                              ++(*static_cast<int*>(InUserData));
+                              return true;
+                          }, &Hits);
+            Expect(Hits >= 1, "a spatial query finds the restored entity");
+        }
+    }
+}
+
+static void TestArchiveTextDump()
+{
+    std::printf("ArchiveTextDump\n");
+
+    World W;
+    W.CreateEntity("Dumped").AddComponent<TransformComponent>();
+
+    Archive Out = Archive::ForWriting();
+    Expect(SerializeWorld(Out, W), "a World saves for the dump");
+
+    std::string Text;
+    Expect(DumpArchiveToText(Out, Text), "DumpArchiveToText succeeds");
+    Expect(Text.find("WRLD") != std::string::npos, "the dump names the WRLD chunk");
+    Expect(Text.find("CMPT") != std::string::npos, "the dump names a CMPT chunk");
+
+    /* An empty archive is a legal thing to dump, and a crash here would be in
+     * the one tool a developer reaches for when a save is already broken. */
+    Archive Empty = Archive::ForWriting();
+    std::string EmptyText;
+    Expect(DumpArchiveToText(Empty, EmptyText), "dumping an empty archive succeeds");
+}
+
+// ============================================================================
+// Versioning -- one Serialize body reading both older and newer saves.
+// ============================================================================
+
+static void TestChunkVersion()
+{
+    std::printf("Archive: chunk versions\n");
+
+    const uint32_t TAG_OUTER = MakeArchiveTag('O','U','T','R');
+    const uint32_t TAG_INNER = MakeArchiveTag('I','N','N','R');
+
+    Archive Out = Archive::ForWriting();
+    Expect(Out.GetChunkVersion() == 0, "no chunk open: version 0");
+
+    uint16_t OuterVersion = 5;
+    Out.OpenChunk(TAG_OUTER, OuterVersion);
+    Expect(Out.GetChunkVersion() == 5, "saving: the version being written");
+    uint16_t InnerVersion = 2;
+    Out.OpenChunk(TAG_INNER, InnerVersion);
+    Expect(Out.GetChunkVersion() == 2, "saving: the innermost chunk's version");
+    Out.CloseChunk();
+    Expect(Out.GetChunkVersion() == 5, "saving: back to the parent's after close");
+    Out.CloseChunk();
+
+    Archive In = Archive::ForReading(Out.GetBytes());
+    uint16_t Read = 0;
+    In.OpenChunk(TAG_OUTER, Read);
+    Expect(In.GetChunkVersion() == 5, "loading: the file's version");
+    In.OpenChunk(TAG_INNER, Read);
+    Expect(In.GetChunkVersion() == 2, "loading: the innermost chunk's version");
+    In.CloseChunk();
+    Expect(In.GetChunkVersion() == 5, "loading: back to the parent's after close");
+    In.CloseChunk();
+    Expect(In.GetChunkVersion() == 0, "loading: 0 once every chunk is closed");
+}
+
+/* Registered at version 2: B was added in v2, with a non-zero default so an old
+ * save visibly leaves it at the default rather than at zero. */
+struct VersionedComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    int32_t A = 0;
+    int32_t B = 77;
+};
+GAMECORE_DEFINE_COMPONENT(VersionedComponent, "TestVersioned")
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(VersionedComponent, 2)
+{
+    Ar << C.A;
+    if(Ar.GetChunkVersion() >= 2) { Ar << C.B; }
+}
+
+/* A save as a build with a different VersionedComponent would write it: two
+ * entities, each with A = 10+i and optionally B = 20+i and a trailing field
+ * this build has never heard of. Hand-built, because this build's registry can
+ * only ever write version 2 -- which is the point. Mirrors WorldSerializer's
+ * format (DESIGN.md). */
+static std::vector<uint8_t> BuildVersionedSave(const uint16_t InDataVersion, const bool bWriteB,
+                                               const bool bWriteExtra)
+{
+    Archive Ar = Archive::ForWriting();
+
+    uint16_t WorldVersion = 1;
+    Ar.OpenChunk(MakeArchiveTag('W','R','L','D'), WorldVersion);
+    uint32_t EntityCount = 2;
+    Ar << EntityCount;
+    for(uint32_t Index = 0; Index < EntityCount; ++Index)
+    {
+        uint32_t SavedIndex = Index;
+        Ar << SavedIndex;
+    }
+
+    uint16_t ComponentVersion = InDataVersion;
+    Ar.OpenChunk(MakeArchiveTag('C','M','P','T'), ComponentVersion);
+    std::string TypeName = "TestVersioned";
+    Ar << TypeName;
+    uint32_t InstanceCount = 2;
+    Ar << InstanceCount;
+
+    for(uint32_t Index = 0; Index < InstanceCount; ++Index)
+    {
+        uint32_t Owner = Index;
+        Ar << Owner;
+
+        uint16_t DataVersion = InDataVersion;
+        Ar.OpenChunk(MakeArchiveTag('D','A','T','A'), DataVersion);
+        int32_t A = int32_t(10 + Index);
+        Ar << A;
+        if(bWriteB)
+        {
+            int32_t B = int32_t(20 + Index);
+            Ar << B;
+        }
+        if(bWriteExtra)
+        {
+            uint64_t FutureField = 0xDEADBEEFCAFEull;
+            Ar << FutureField;
+        }
+        Ar.CloseChunk();
+    }
+
+    Ar.CloseChunk();
+    Ar.CloseChunk();
+    return Ar.GetBytes();
+}
+
+/* Loads InBytes into a fresh World and returns each VersionedComponent's
+ * (A, B), sorted by A so the order of the pool does not matter. */
+static std::vector<std::pair<int32_t, int32_t>> LoadVersioned(const std::vector<uint8_t>& InBytes, bool& OutbOk)
+{
+    World W;
+    Archive In = Archive::ForReading(InBytes);
+    OutbOk = SerializeWorld(In, W) && !In.HasError();
+
+    std::vector<std::pair<int32_t, int32_t>> Values;
+    W.Each<VersionedComponent>([&Values](Entity, VersionedComponent& InComponent)
+    {
+        Values.emplace_back(InComponent.A, InComponent.B);
+    });
+    std::sort(Values.begin(), Values.end());
+    return Values;
+}
+
+static void TestComponentVersioning()
+{
+    std::printf("WorldSerializer: component versioning\n");
+
+    // Current version, both ways through SerializeWorld.
+    {
+        std::vector<uint8_t> Saved;
+        {
+            World W;
+            VersionedComponent Init;
+            Init.A = 1;
+            Init.B = 2;
+            W.CreateEntity().AddComponent(Init);
+
+            Archive Out = Archive::ForWriting();
+            Expect(SerializeWorld(Out, W), "a v2 component saves");
+            Saved = Out.GetBytes();
+        }
+
+        bool bOk = false;
+        const auto Values = LoadVersioned(Saved, bOk);
+        Expect(bOk, "a v2 save loads");
+        Expect(Values.size() == 1 && Values[0].first == 1 && Values[0].second == 2,
+               "v2 round trip keeps the field added in v2");
+    }
+
+    // An OLDER save: v1 had no B. The v2 body must skip reading it.
+    {
+        bool bOk = false;
+        const auto Values = LoadVersioned(BuildVersionedSave(1, false, false), bOk);
+        Expect(bOk, "a v1 save loads into a v2 build");
+        Expect(Values.size() == 2, "both v1 instances load");
+        if(Values.size() == 2)
+        {
+            Expect(Values[0].first == 10 && Values[1].first == 11,
+                   "v1: A reads correctly, and the second instance is not desynchronised");
+            Expect(Values[0].second == 77 && Values[1].second == 77,
+                   "v1: the field v1 lacked keeps its default, not zero");
+        }
+    }
+
+    // A NEWER save: v3 appended a field this build does not know.
+    {
+        bool bOk = false;
+        const auto Values = LoadVersioned(BuildVersionedSave(3, true, true), bOk);
+        Expect(bOk, "a v3 save loads into a v2 build");
+        Expect(Values.size() == 2, "both v3 instances load");
+        if(Values.size() == 2)
+        {
+            Expect(Values[0] == std::make_pair(10, 20) && Values[1] == std::make_pair(11, 21),
+                   "v3: known fields read, the unknown trailing field is skipped");
+        }
+    }
+}
+
 int main()
 {
     std::printf("GameCore smoke test\n");
@@ -636,6 +1300,13 @@ int main()
     TestSpatialIndex();
     TestWorldSpatialIntegration();
     TestScripting();
+    TestArchiveRoundTrip();
+    TestArchiveChunks();
+    TestWorldSerialization();
+    TestArchiveTextDump();
+    TestChunkVersion();
+    TestComponentVersioning();
+    TestComponentScripting();
 
     SetLogHandler(nullptr);
 
