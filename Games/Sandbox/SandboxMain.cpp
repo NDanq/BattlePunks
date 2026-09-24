@@ -162,9 +162,9 @@ public:
     SandboxGameMode(SandboxLevel& InLevel, GameCore::EntityID InMarker, SandboxGameState& InState)
         : OwningLevel(&InLevel), MarkerEntity(InMarker), State(&InState) {}
 
-    bool OnLoad(NimbleEngine::Application& InApp) override
+    bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        App = &InApp;
+        Session = &InSession;
 
         /* Recorded so OnTick can assert the engine's game-thread-only promise
          * from the outside, rather than assume it. */
@@ -187,9 +187,9 @@ public:
      */
     void OnStart() override
     {
-        const uint32_t Limit = App->GetFrameRateLimit();
+        const uint32_t Limit = Session->GetHost().GetFrameRateLimit();
 
-        const GameCore::EntityID Scripted = App->GetWorld().FindEntityByName("Scripted");
+        const GameCore::EntityID Scripted = Session->GetWorld().FindEntityByName("Scripted");
 
         CORE_LOG("[Sandbox] game starting on thread " + Num(uint64_t(GameThread))
                  + "; frame limit "
@@ -213,7 +213,7 @@ public:
         State->ElapsedSeconds += InFrame.DeltaSeconds;
         State->TicksThisSecond++;
 
-        GameCore::World& World = App->GetWorld();
+        GameCore::World& World = Session->GetWorld();
         if(GameCore::TransformComponent* Marker = World.GetEntity(MarkerEntity).GetComponent<GameCore::TransformComponent>())
         {
             const double SpeedPixelsPerSecond = 120.0;
@@ -226,10 +226,10 @@ public:
 
         /* The game deciding it is done. The engine finishes the frame in
          * flight and leaves the loop at the top. */
-        if(RunSeconds > 0.0 && State->ElapsedSeconds >= RunSeconds && App)
+        if(RunSeconds > 0.0 && State->ElapsedSeconds >= RunSeconds && Session)
         {
             CORE_LOG("[Sandbox] RunSeconds reached; asking the engine to quit")
-            App->RequestQuit();
+            Session->RequestQuit();
         }
 
         /* The save/load demo, on a timer so a plain run exercises it. The load
@@ -248,7 +248,7 @@ public:
             CORE_LOG("[Sandbox] saving at t=" + Fixed2(State->ElapsedSeconds)
                      + "s marker_x=" + Fixed2(SavedMarkerX))
 
-            if(!NimbleEngine::SaveGameToFile(*App, GSandboxSavePath))
+            if(!NimbleEngine::SaveGameToFile(*Session, GSandboxSavePath))
             {
                 CORE_LOG_ERROR("[Sandbox] the save failed")
             }
@@ -262,7 +262,7 @@ public:
                      + "s (expect elapsed and marker_x to jump back to the saved values)")
 
             /* Deferred to the next frame, so safe from inside OnTick. */
-            if(!NimbleEngine::LoadGameFromFile(*App, GSandboxSavePath))
+            if(!NimbleEngine::LoadGameFromFile(*Session, GSandboxSavePath))
             {
                 CORE_LOG_ERROR("[Sandbox] the load failed")
             }
@@ -287,7 +287,7 @@ public:
             }
 
             RenderCore::RenderStats RenderStats;
-            App->GetRenderer().GetStats(RenderStats);
+            Session->GetRenderer().GetStats(RenderStats);
 
             CORE_LOG("[Sandbox] t=" + Fixed2(State->ElapsedSeconds) + "s"
                      + " frame=" + Num(InFrame.FrameNumber)
@@ -315,13 +315,14 @@ public:
          * SandboxLevel, which bound it and unbinds it in its own OnUnload --
          * the mode never touched a World delegate. */
         CORE_LOG("[Sandbox] game stopping after " + Fixed2(State->ElapsedSeconds) + "s")
-        App = nullptr;
+        Session = nullptr;
     }
 
 private:
     /* Stashed in OnLoad so OnStart/OnTick can call RequestQuit() and reach
-     * World. */
-    NimbleEngine::Application* App = nullptr;
+     * World. The session, never the host: this mode runs unchanged whichever
+     * program is running the game. */
+    NimbleEngine::GameSession* Session = nullptr;
 
     EngineCore::ThreadID GameThread = 0;
 
@@ -359,11 +360,11 @@ class SandboxLevel : public NimbleEngine::ILevel
 public:
     const char* GetName() const override { return "Sandbox"; }
 
-    bool OnLoad(NimbleEngine::Application& InApp) override
+    bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
-        (void)InApp;
+        (void)InSession;
 
-        /* GetWorld(), not InApp.GetWorld(): they are the same object during
+        /* GetWorld(), not InSession.GetWorld(): they are the same object during
          * OnLoad, but this one stays correct regardless of what else the
          * engine has loaded -- Level.h says so. */
         GameCore::World& World = GetWorld();
@@ -516,10 +517,10 @@ private:
  * declaration where this method is declared. */
 void SandboxGameMode::OnPostLoadSave()
 {
-    const GameCore::EntityID Restored = App->GetWorld().FindEntityByName("Marker");
+    const GameCore::EntityID Restored = Session->GetWorld().FindEntityByName("Marker");
 
     CORE_LOG(std::string("[Sandbox] save restored; re-deriving Marker (old handle ")
-             + (App->GetWorld().IsAlive(MarkerEntity) ? "still alive" : "now dead")
+             + (Session->GetWorld().IsAlive(MarkerEntity) ? "still alive" : "now dead")
              + ", new handle " + (Restored.IsSet() ? "found" : "MISSING") + ")")
 
     MarkerEntity = Restored;

@@ -17,15 +17,16 @@ Host exe --> NimbleEngine --> GameCore  --> EngineCore
 ```
 
 **GameCore does not link GameWindow or GDI, and neither links back.** A World
-has no notion of a window or a renderer; `NimbleEngine::Application` is the
-one place that owns a `GameCore::World` (see `Application::GetWorld()`) and
-ticks it once per frame, after `IGame::OnTick` and before the render-thread
-fence -- `NimbleEngine.cpp`'s `Simulate()` has the exact sequencing.
+has no notion of a window or a renderer; `NimbleEngine::GameSession` is the
+one place that owns a `GameCore::World` (see `GameSession::GetWorld()`) and
+ticks it once per frame, after `IGameMode::OnTick` -- `GameSession::Tick` --
+before the host's render-thread fence (`Application::RunFrame` has the exact
+sequencing).
 
 Unlike `GameWindow` and `GDI`, which `Engine/CMakeLists.txt` links into
 `NimbleEngine` **PRIVATE**, `GameCore` is linked **PUBLIC**. `World` and
 `Entity` are the game-facing surface -- a game includes GameCore's own headers
-to use what `Application::GetWorld()` hands back -- so the dependency has to
+to use what `GameSession::GetWorld()` hands back -- so the dependency has to
 be visible past `NimbleEngine`, not hidden behind it. See the PUBLIC link's
 own comment in `Engine/CMakeLists.txt` for the full reasoning.
 
@@ -233,9 +234,9 @@ built-in consumer, skipping a scripted entity's `OnTick` when it is outside.
 ## Scripting
 
 `ScriptEngine` owns one `lua_State`, bound to one `World` at a time
-(`BindWorld` / `UnbindWorld`). `Application` owns exactly one of each --
-`Application::GetScriptEngine()` -- initialized, bound, and torn down around
-a game's lifetime by `NimbleEngine.cpp`.
+(`BindWorld` / `UnbindWorld`). The host (`Application`) owns exactly one,
+lent to its `GameSession` -- `GameSession::GetScriptEngine()` -- which binds it
+to each level's World as the level loads and unbinds it as it unloads.
 
 ```lua
 local e = World.CreateEntity("Player")

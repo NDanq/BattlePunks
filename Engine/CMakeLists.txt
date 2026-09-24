@@ -354,10 +354,13 @@ endif()
 # the hot-reload sibling rule requires.
 set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
+        Source/Private/NimbleEngine/GameSession.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
         Source/Private/NimbleEngine/SaveGameFormat.h
         Source/Public/NimbleEngine/NimbleEngine.h
+        Source/Public/NimbleEngine/GameMode.h
+        Source/Public/NimbleEngine/GameSession.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
         Source/Public/NimbleEngine/Level.h
         Source/Public/NimbleEngine/GameState.h
@@ -395,9 +398,9 @@ endif()
 
 # PUBLIC, not PRIVATE -- the two deliberate exceptions to the rule stated
 # just above. World/Entity (GameCore) and Renderer/RenderCommand/RenderProxy
-# (RenderCore) ARE the game-facing surface: NimbleEngine.h forward-declares
+# (RenderCore) ARE the game-facing surface: GameSession.h forward-declares
 # GameCore::World, GameCore::ScriptEngine and RenderCore::Renderer, and
-# exposes Application::GetWorld()/GetScriptEngine()/GetRenderer() returning
+# exposes GameSession::GetWorld()/GetScriptEngine()/GetRenderer() returning
 # them by reference, so a game that includes NimbleEngine.h needs both
 # modules' headers and needs to LINK both to use what it forward-declares.
 # Nothing from GameWindow becomes reachable through this -- PUBLIC applies to
