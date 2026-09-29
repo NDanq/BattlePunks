@@ -69,6 +69,7 @@ uses it.
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
+| `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity list with component summary, filter, create/destroy |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession` |
 | `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, reset-to-default, add/remove component |
@@ -131,9 +132,13 @@ no scripts.
 | Alt + Right drag, wheel | Dolly toward the pivot |
 | Middle drag | Pan |
 | Left click | Select the primitive under the cursor; on the axis gizmo, view from that axis (Shift: the opposite side) |
+| Left drag on a handle | Move / rotate / scale the selection (Ctrl inverts Snap); Esc or a right click cancels the drag |
+| Q / W / E / R | Handles off (Select) / Move / Rotate / Scale -- not while right-dragging, where W E Q fly |
+| X | Handles in world or local space |
 | F / Home | Frame the selection / the whole scene |
 
-The toolbar above the viewport has the view presets (Persp, Front, Back, Top,
+The toolbar above the viewport starts with the handle mode (Select, Move,
+Rotate, Scale), Local and Snap, then has the view presets (Persp, Front, Back, Top,
 Bottom, Left, Right -- each orbits about the pivot to that axis), Frame
 Selected / Frame All, All Bounds and a camera speed slider (1/8x to 8x). "Top"
 looks from screen-up, which is world -Y: the editor keeps the game's +Y-down
@@ -145,6 +150,32 @@ render surface. The selection is outlined in orange from its bounds: the
 entity's `BoundsComponent::World` when it has one, else its Primitive quad, else
 a small cube at its Transform. All Bounds adds every other entity's box in grey.
 The XYZ gizmo sits bottom-left.
+
+**Transform handles** sit on the selection's Transform position, a fixed size
+on screen, and highlight yellow under the cursor:
+
+- **Move**: an arrow per axis, a square per plane (XY, YZ, XZ) and a centre
+  square that moves in the screen plane. An arrow pointing straight at the
+  camera, or a plane seen edge-on, is hidden rather than offered as a sliver.
+- **Rotate**: a ring per axis -- the far half dimmed and not clickable -- and an
+  outer ring about the line of sight. Where rings cross, the one facing the
+  camera wins. Dragging follows the cursor around the ring (and keeps counting
+  past a full turn); an edge-on ring drags along its on-screen length instead.
+  Spokes show the start and current angle.
+- **Scale**: an axis per cube-tipped handle, the centre square for all three.
+  Always in the entity's own axes (scale applies before rotation). Dragging
+  through the centre mirrors; no component goes below 0.001 in size.
+
+**Local** puts Move and Rotate on the entity's rotated axes. **Snap** (or Ctrl
+held during a drag, which inverts it) steps by `Editor.SnapTranslate` (10;
+a world grid in world space, a step along the handle in local), `SnapRotate`
+(15 degrees) and `SnapScale` (0.1) -- config vars, so the console sets them.
+The status bar shows what a drag has done so far. Every drag is computed from
+where it started, so it never drifts, and a cancel restores that exactly. The
+entity's bounds are refit as it moves, a static Bounds included
+(`World::RefreshEntityBounds`). Rotation stays in the Transform's Euler angles,
+chosen closest to the previous ones, so values do not jump between equivalent
+forms mid-drag (`GameCore/TransformMath.h`).
 
 ## Details panel
 
@@ -193,6 +224,8 @@ registered:
 | `frame [all]` | Frame the selection, or the scene |
 | `scene <new \| sandbox>` | As the File menu |
 | `stats` | The renderer's counters |
+| `gizmo [none \| move \| rotate \| scale] [world \| local]` | Set the transform handles, or print them |
+| `snap [on \| off]` | Snap handle drags, or print whether they do |
 
 `EditorMainWindow::RegisterConsoleCommands` registers the scene commands;
 `EditorConsole::Register` is the one call to add another.
@@ -232,10 +265,8 @@ reported to it but not enforced -- the viewport's timer paces the run.
 
 ## Known limits
 
-- No undo, or transform gizmos (move/rotate/scale handles).
+- No undo. A handle drag has one start and one end, the natural unit for it.
+- Transform handles act on one entity; there is no multi-selection.
 - Play-in-Editor has no game input yet (see above).
 - View presets stay in perspective; there are no orthographic views yet.
 - The viewport has no depth sorting: RenderScene draws in submission order.
-- Rotated primitives render sheared -- `Matrix4x4::InitRotation` in Core builds
-  a non-orthogonal matrix; at 45 degrees about Z it collapses to a line. Picking
-  follows what is drawn, and skips a transform too degenerate to invert.

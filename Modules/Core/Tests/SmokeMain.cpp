@@ -11,6 +11,8 @@
  * coverage's sake -- see the comments on each.
  */
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -1430,6 +1432,29 @@ static void TestTypes()
     const Vector3 V(3.0, 4.0, 0.0);
     Expect(V.GetLength() > 4.99 && V.GetLength() < 5.01, "Vector3 length");
     Expect(Matrix4x4().InitIdentity().Data[0][0] == 1, "Matrix4x4 identity");
+
+    // Right-handed axis-angle, column vectors: 90 degrees about +Z turns +X
+    // into +Y, and every rotation is orthonormal -- a symmetric off-diagonal
+    // here once rendered rotated quads as shears.
+    const Vector3 TurnedX = Matrix4x4().InitRotation(90.0f, Vector3(0.0, 0.0, 1.0)) * Vector3(1.0, 0.0, 0.0);
+    Expect(std::abs(TurnedX.GetX()) < 1e-5 && std::abs(TurnedX.GetY() - 1.0) < 1e-5, "InitRotation: 90 about Z maps X to Y");
+    const Vector3 TurnedY = Matrix4x4().InitRotation(90.0f, Vector3(1.0, 0.0, 0.0)) * Vector3(0.0, 1.0, 0.0);
+    Expect(std::abs(TurnedY.GetZ() - 1.0) < 1e-5, "InitRotation: 90 about X maps Y to Z");
+    const Vector3 TurnedZ = Matrix4x4().InitRotation(90.0f, Vector3(0.0, 1.0, 0.0)) * Vector3(0.0, 0.0, 1.0);
+    Expect(std::abs(TurnedZ.GetX() - 1.0) < 1e-5, "InitRotation: 90 about Y maps Z to X");
+
+    const Matrix4x4 Oblique = Matrix4x4().InitRotation(37.0f, Vector3(1.0, 2.0, -3.0));
+    double WorstOrtho = 0.0;
+    for(int A = 0; A < 3; ++A)
+    {
+        for(int B = 0; B < 3; ++B)
+        {
+            double Dot = 0.0;
+            for(int K = 0; K < 3; ++K) { Dot += double(Oblique.Data[K][A]) * double(Oblique.Data[K][B]); }
+            WorstOrtho = std::max(WorstOrtho, std::abs(Dot - (A == B ? 1.0 : 0.0)));
+        }
+    }
+    Expect(WorstOrtho < 1e-5, "InitRotation: an oblique-axis rotation is orthonormal");
 }
 
 // --- config ----------------------------------------------------------------

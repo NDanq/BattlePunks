@@ -725,6 +725,29 @@ namespace GameCore
         }
     }
 
+    void World::RefreshEntityBounds(const EntityID InEntity)
+    {
+        auto* Bounds = static_cast<BoundsComponent*>(GetComponentRaw(InEntity, BoundsComponent::StaticType().ID));
+        if(!Bounds)
+        {
+            return;
+        }
+
+        const auto* Transform = static_cast<const TransformComponent*>(GetComponentRaw(InEntity, TransformComponent::StaticType().ID));
+        const EngineCore::Matrix4x4 LocalToWorld = Transform ? Transform->GetLocalMatrix() : EngineCore::Matrix4x4();
+
+        Bounds->World = AABB::Transformed(Bounds->Local, LocalToWorld);
+
+        if(Bounds->ProxyID < 0)
+        {
+            Bounds->ProxyID = P->Spatial.Insert(InEntity, Bounds->World);
+        }
+        else
+        {
+            P->Spatial.Move(Bounds->ProxyID, Bounds->World);
+        }
+    }
+
     void World::SetActiveRegion(const AABB& InBox)
     {
         P->ActiveRegion     = InBox;

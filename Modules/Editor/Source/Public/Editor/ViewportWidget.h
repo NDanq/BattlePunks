@@ -12,8 +12,10 @@
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/Editor/EditorCamera.h"
+#include "Public/Editor/TransformGizmo.h"
 
 class EditorContext;
+namespace GameCore { struct TransformComponent; }
 
 /*
  * The 3D viewport: a native child window the Renderer draws into, exactly as
@@ -35,6 +37,10 @@ class EditorContext;
  *   Left click          select the primitive under the cursor (empty space
  *                       clears); on the axis gizmo, view from that axis
  *                       (Shift: from the opposite side)
+ *   Left drag on a      move / rotate / scale the selection (Ctrl inverts
+ *   transform handle    snapping; Esc or a right click cancels the drag)
+ *   Q / W / E / R       transform handles off / move / rotate / scale
+ *   X                   handles in world or local space
  *   F / Home            frame the selection / the whole scene
  */
 class ViewportWidget : public QWidget
@@ -71,7 +77,29 @@ public:
     void SetShowAllBounds(bool bInShow) { bShowAllBounds = bInShow; }
     bool IsShowingAllBounds() const     { return bShowAllBounds; }
 
+    // === Transform handles ==================================================
+
+    void SetGizmoMode(TransformGizmo::EMode InMode);
+    TransformGizmo::EMode GetGizmoMode() const { return Gizmo.GetMode(); }
+
+    void SetGizmoSpace(TransformGizmo::ESpace InSpace);
+    TransformGizmo::ESpace GetGizmoSpace() const { return Gizmo.GetSpace(); }
+
+    /* Snap every drag to [Editor] SnapTranslate / SnapRotate / SnapScale;
+     * holding Ctrl during a drag inverts this. */
+    void SetGizmoSnap(bool bInSnap);
+    bool IsGizmoSnapEnabled() const { return bGizmoSnap; }
+
     QPaintEngine* paintEngine() const override { return nullptr; }
+
+signals:
+    /* From the keys as well as the setters, so a toolbar can follow. */
+    void GizmoModeChanged(TransformGizmo::EMode InMode);
+    void GizmoSpaceChanged(TransformGizmo::ESpace InSpace);
+    void GizmoSnapChanged(bool bInSnap);
+
+    /* What the drag in progress has done ("Move X +120 ..."); empty when it ends. */
+    void GizmoDragStatus(const QString& InText);
 
 protected:
     void paintEvent(QPaintEvent* InEvent) override;
@@ -85,7 +113,7 @@ protected:
 
 private:
     /* What a held mouse button is doing. One at a time. */
-    enum class EDrag { None, Look, Orbit, Dolly, Pan };
+    enum class EDrag { None, Look, Orbit, Dolly, Pan, Gizmo };
 
     void OnFrame();
 
@@ -108,6 +136,18 @@ private:
     /* 0/1/2 for the X/Y/Z tip under InLogicalPos, -1 for none. */
     int HitGizmoAxis(const QPoint& InLogicalPos) const;
 
+    /* The selection's transform, when its handles should show: the editor
+     * view is active, a mode is on and the selection has a Transform. */
+    GameCore::TransformComponent* GetGizmoTarget() const;
+
+    /* Writes a gizmo pose into InEntity's Transform and tells the panels. */
+    void ApplyGizmoPose(GameCore::EntityID InEntity, const TransformGizmo::Pose& InPose);
+
+    /* Ends a handle drag, keeping what it did or restoring where it began. */
+    void FinishGizmoDrag(bool bInCancel);
+
+    TransformGizmo::Snap GetGizmoSnap(Qt::KeyboardModifiers InModifiers) const;
+
     /* The nearest primitive quad under the pixel, or an unset id. */
     GameCore::EntityID Pick(const QPoint& InLogicalPos) const;
 
@@ -127,6 +167,11 @@ private:
     QSet<int>           HeldKeys;
 
     bool bShowAllBounds = false;
+
+    TransformGizmo          Gizmo;
+    TransformGizmo::EHandle GizmoHover = TransformGizmo::EHandle::None;
+    GameCore::EntityID      GizmoEntity;   // the one being dragged
+    bool                    bGizmoSnap = false;
 };
 
 #endif // WITH_EDITOR

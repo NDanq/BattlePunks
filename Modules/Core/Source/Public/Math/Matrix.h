@@ -8,7 +8,7 @@
 #include "Public/Core/CoreLog.h"
 
 #ifndef DEG_TO_RAD
-#define DEG_TO_RAD(X) X * 3.141952f / 180.0f
+#define DEG_TO_RAD(X) ((X) * 3.14159265358979f / 180.0f)
 #endif
 
 namespace EngineCore
@@ -59,34 +59,47 @@ public:
         return *this;
     }
 
+    /*
+     * InAngle degrees about InRotationAxis (need not be unit length; a zero
+     * axis gives the identity). Right-handed, for column vectors (v' = M * v):
+     * a positive angle about +Z turns +X toward +Y. Rodrigues' formula,
+     * R = cI + s[k]x + (1 - c)kk^T, which is orthonormal with determinant 1.
+     *
+     * This used to put +W*sin in BOTH [0][1] and [1][0] (and swapped the
+     * UV/UW/VW products in row 2), so a rotation about Z came out symmetric
+     * -- a shear that collapsed a quad to a line at 45 degrees.
+     */
     inline Matrix4x4 InitRotation(const float& InAngle, const Vector3& InRotationAxis)
     {
-        const Real U = InRotationAxis.GetX();
-        const Real V = InRotationAxis.GetY();
-        const Real W = InRotationAxis.GetZ();
+        const Real Length = sqrt(InRotationAxis.GetX() * InRotationAxis.GetX()
+                               + InRotationAxis.GetY() * InRotationAxis.GetY()
+                               + InRotationAxis.GetZ() * InRotationAxis.GetZ());
+        if(Length <= 0.0)
+        {
+            return InitIdentity();
+        }
+        const Real U = InRotationAxis.GetX() / Length;
+        const Real V = InRotationAxis.GetY() / Length;
+        const Real W = InRotationAxis.GetZ() / Length;
 
-        const Real U2 = pow(U, 2);
-        const Real V2 = pow(V, 2);
-        const Real W2 = pow(W, 2);
-        const Real L    = U2 + V2 + W2;
-        const Real SqrtL = sqrt(L);
-        const float Angle    = DEG_TO_RAD(InAngle);
-        const float CosAngle = cos(Angle);
-        const float SinAngle = sin(Angle);
+        const double Angle = double(InAngle) * 3.14159265358979323846 / 180.0;
+        const Real   C     = Real(cos(Angle));
+        const Real   S     = Real(sin(Angle));
+        const Real   T     = 1 - C;
 
-        Data[0][0] = (U2 + (V2 + W2) * CosAngle) / L;
-        Data[0][1] = (U * V * (1 - CosAngle) + W * SqrtL * SinAngle) / L;
-        Data[0][2] = (U * W * (1 - CosAngle) + V * SqrtL * SinAngle) / L;
+        Data[0][0] = C + U * U * T;
+        Data[0][1] = U * V * T - W * S;
+        Data[0][2] = U * W * T + V * S;
         Data[0][3] = 0.0f;
 
-        Data[1][0] = (U * V * (1 - CosAngle) + W * SqrtL * SinAngle) / L;
-        Data[1][1] = (V2 + (U2 + W2) * CosAngle) / L;
-        Data[1][2] = (V * W * (1 - CosAngle) - U * SqrtL * SinAngle) / L;
+        Data[1][0] = U * V * T + W * S;
+        Data[1][1] = C + V * V * T;
+        Data[1][2] = V * W * T - U * S;
         Data[1][3] = 0.0f;
 
-        Data[2][0] = (U * V * (1 - CosAngle) - V * SqrtL * SinAngle) / L;
-        Data[2][1] = (U * W * (1 - CosAngle) + U * SqrtL * SinAngle) / L;
-        Data[2][2] = (W2 + (U2 + V2) * CosAngle) / L;
+        Data[2][0] = U * W * T - V * S;
+        Data[2][1] = V * W * T + U * S;
+        Data[2][2] = C + W * W * T;
         Data[2][3] = 0.0f;
 
         Data[3][0] = 0.0f; Data[3][1] = 0.0f; Data[3][2] = 0.0f; Data[3][3] = 1.0f;

@@ -212,6 +212,12 @@ namespace GameCore
          * again mid-frame. */
         void RefreshSpatialIndex();
 
+        /* Refits InEntity's Bounds (if it has one) from its Transform now,
+         * static or not -- for a tool that moved it by hand. RefreshSpatialIndex
+         * never re-fits a static Bounds, so without this an edited static
+         * entity keeps its old world box. */
+        void RefreshEntityBounds(EntityID InEntity);
+
         /* A shared "region gameplay currently cares about" hint -- see
          * DESIGN.md. An entity script's bCullOutsideActiveRegion is the one
          * built-in consumer. */

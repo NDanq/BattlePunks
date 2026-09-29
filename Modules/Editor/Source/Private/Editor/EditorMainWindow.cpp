@@ -85,6 +85,19 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     StatsLabel = new QLabel(this);
     statusBar()->addPermanentWidget(StatsLabel);
 
+    /* What a handle drag has done so far, in the status bar's message area. */
+    connect(Viewport, &ViewportWidget::GizmoDragStatus, this, [this](const QString& InText)
+    {
+        if(InText.isEmpty())
+        {
+            statusBar()->clearMessage();
+        }
+        else
+        {
+            statusBar()->showMessage(InText);
+        }
+    });
+
     BuildMenus();
     BuildPlayControls();
     BuildHelpMenu();   // last, so Help is the rightmost menu
@@ -477,6 +490,60 @@ void EditorMainWindow::RegisterConsoleCommands()
                       .arg(QString::fromLatin1(BackendName(Backend)))
                       .arg(Stats.FramesRendered)
                       .arg(Stats.ProxiesLive));
+    });
+
+    Console.Register(QStringLiteral("gizmo"), QStringLiteral("[none | move | rotate | scale] [world | local]"),
+                     QStringLiteral("Set the viewport's transform handles, or print them (as Q W E R and X)"),
+                     [this](const QStringList& InArgs)
+    {
+        using EMode  = TransformGizmo::EMode;
+        using ESpace = TransformGizmo::ESpace;
+        static const char* const ModeNames[4] = { "none", "move", "rotate", "scale" };
+
+        for(const QString& Arg : InArgs)
+        {
+            const QString Word = Arg.toLower();
+            if(Word == QStringLiteral("world") || Word == QStringLiteral("local"))
+            {
+                Viewport->SetGizmoSpace(Word == QStringLiteral("local") ? ESpace::Local : ESpace::World);
+                continue;
+            }
+            int Mode = -1;
+            for(int Index = 0; Index < 4; ++Index)
+            {
+                if(Word == QLatin1String(ModeNames[Index]))
+                {
+                    Mode = Index;
+                }
+            }
+            if(Mode < 0)
+            {
+                Console.PrintError(QStringLiteral("Usage: gizmo [none | move | rotate | scale] [world | local]"));
+                return;
+            }
+            Viewport->SetGizmoMode(EMode(Mode));
+        }
+        Console.Print(QStringLiteral("gizmo %1 %2%3")
+                      .arg(QLatin1String(ModeNames[int(Viewport->GetGizmoMode())]))
+                      .arg(Viewport->GetGizmoSpace() == ESpace::Local ? QStringLiteral("local") : QStringLiteral("world"))
+                      .arg(Viewport->IsGizmoSnapEnabled() ? QStringLiteral(", snapping") : QString()));
+    });
+
+    Console.Register(QStringLiteral("snap"), QStringLiteral("[on | off]"),
+                     QStringLiteral("Snap handle drags to Editor.SnapTranslate / SnapRotate / SnapScale"),
+                     [this](const QStringList& InArgs)
+    {
+        if(!InArgs.isEmpty())
+        {
+            const QString Word = InArgs.front().toLower();
+            if(Word != QStringLiteral("on") && Word != QStringLiteral("off"))
+            {
+                Console.PrintError(QStringLiteral("Usage: snap [on | off]"));
+                return;
+            }
+            Viewport->SetGizmoSnap(Word == QStringLiteral("on"));
+        }
+        Console.Print(QStringLiteral("snap %1").arg(Viewport->IsGizmoSnapEnabled() ? QStringLiteral("on") : QStringLiteral("off")));
     });
 }
 

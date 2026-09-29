@@ -13,7 +13,8 @@ class QToolBar;
 class ViewportWidget;
 
 /*
- * The viewport plus its navigation toolbar: view presets (Perspective and the
+ * The viewport plus its toolbar: the transform handle mode (Select / Move /
+ * Rotate / Scale), Local space and Snap; view presets (Perspective and the
  * six axis views), Frame Selected / Frame All, the all-bounds toggle and the
  * camera speed. A toolbar ABOVE the native render surface rather than drawn
  * over it -- nothing Qt paints can sit on top of a window the GPU presents to.
@@ -44,6 +45,11 @@ private:
     QToolBar*       Toolbar  = nullptr;
     QSlider*        Speed    = nullptr;
     QLabel*         SpeedLabel = nullptr;
+
+    /* Indexed by TransformGizmo::EMode. */
+    QAction* GizmoModeActions[4] = {};
+    QAction* GizmoLocalAction    = nullptr;
+    QAction* GizmoSnapAction     = nullptr;
 
     QAction* FrameSelectionAction = nullptr;
     QAction* FrameAllAction       = nullptr;

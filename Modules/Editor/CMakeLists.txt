@@ -52,6 +52,7 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/EditorMainWindow.cpp
         Source/Private/Editor/ViewportPanel.cpp
         Source/Private/Editor/ViewportWidget.cpp
+        Source/Private/Editor/TransformGizmo.cpp
         Source/Private/Editor/OutlinerPanel.cpp
         Source/Private/Editor/DetailsPanel.cpp
         Source/Private/Editor/PropertyWidgets.cpp
@@ -68,6 +69,7 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Public/Editor/EditorMainWindow.h
         Source/Public/Editor/ViewportPanel.h
         Source/Public/Editor/ViewportWidget.h
+        Source/Public/Editor/TransformGizmo.h
         Source/Public/Editor/OutlinerPanel.h
         Source/Public/Editor/DetailsPanel.h
 )

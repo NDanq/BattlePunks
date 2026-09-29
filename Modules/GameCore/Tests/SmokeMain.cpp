@@ -8,6 +8,7 @@
  */
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstdio>
 #include <cstring>
@@ -33,6 +34,7 @@
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/SpatialIndex.h"
+#include "Public/GameCore/TransformMath.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldSerializer.h"
 
@@ -1605,6 +1607,105 @@ static void TestComponentVersioning()
     }
 }
 
+// ============================================================================
+// TransformMath
+// ============================================================================
+
+namespace
+{
+    double RotationDistance(const Rotation3& InA, const Rotation3& InB)
+    {
+        double Worst = 0.0;
+        for(int Row = 0; Row < 3; ++Row)
+        {
+            for(int Col = 0; Col < 3; ++Col) { Worst = std::max(Worst, std::abs(InA.M[Row][Col] - InB.M[Row][Col])); }
+        }
+        return Worst;
+    }
+
+    bool Near(const double InA, const double InB, const double InTolerance = 1e-3)
+    {
+        return std::abs(InA - InB) < InTolerance;
+    }
+}
+
+static void TestTransformMath()
+{
+    std::printf("[transform math]\n");
+    using namespace TransformMath;
+
+    /* EulerToRotation is the rotation part of GetLocalMatrix. */
+    TransformComponent T;
+    T.Rotation = Vector3(20.0, -35.0, 110.0);
+    const Matrix4x4 Local = T.GetLocalMatrix();
+    const Rotation3 R     = EulerToRotation(T.Rotation);
+    double Worst = 0.0;
+    for(int Row = 0; Row < 3; ++Row)
+    {
+        for(int Col = 0; Col < 3; ++Col) { Worst = std::max(Worst, std::abs(double(Local.Data[Row][Col]) - R.M[Row][Col])); }
+    }
+    Expect(Worst < 1e-5, "EulerToRotation matches TransformComponent::GetLocalMatrix");
+
+    /* 90 about Z turns +X into +Y (right-handed, column vectors). */
+    const Vector3 X = AxisAngle(Vector3(0.0, 0.0, 1.0), 90.0) * Vector3(1.0, 0.0, 0.0);
+    Expect(Near(X.GetX(), 0.0) && Near(X.GetY(), 1.0), "AxisAngle: 90 about Z maps X to Y");
+
+    /* Round trips, generic and near the second solution. */
+    const Vector3 Cases[] = { Vector3(0.0, 0.0, 0.0), Vector3(10.0, 20.0, 30.0), Vector3(-170.0, 60.0, 95.0),
+                              Vector3(0.0, 0.0, 45.0), Vector3(33.0, -80.0, -120.0) };
+    bool bAllRoundTrip = true;
+    for(const Vector3& Case : Cases)
+    {
+        const Vector3 Back = RotationToEuler(EulerToRotation(Case), Case);
+        bAllRoundTrip = bAllRoundTrip && Near(Back.GetX(), Case.GetX()) && Near(Back.GetY(), Case.GetY()) && Near(Back.GetZ(), Case.GetZ());
+    }
+    Expect(bAllRoundTrip, "RotationToEuler(EulerToRotation(e), e) == e");
+
+    /* A different starting guess still gives the same rotation. */
+    const Vector3 Other = RotationToEuler(EulerToRotation(Vector3(10.0, 20.0, 30.0)), Vector3(0.0, 0.0, 0.0));
+    Expect(RotationDistance(EulerToRotation(Other), EulerToRotation(Vector3(10.0, 20.0, 30.0))) < 1e-5,
+           "RotationToEuler is an equivalent rotation from any starting guess");
+
+    /* Unwrapping: past 180 from 179 reads 181, not -179. */
+    const Vector3 Past = RotationToEuler(AxisAngle(Vector3(0.0, 0.0, 1.0), 181.0), Vector3(0.0, 0.0, 179.0));
+    Expect(Near(Past.GetZ(), 181.0) && Near(Past.GetX(), 0.0) && Near(Past.GetY(), 0.0), "RotationToEuler unwraps toward InNear");
+
+    /* Gimbal lock: Y at 90 keeps X and puts the rest in Z. */
+    const Vector3 Locked(25.0, 90.0, 40.0);
+    const Vector3 LockedBack = RotationToEuler(EulerToRotation(Locked), Vector3(25.0, 90.0, 0.0));
+    Expect(Near(LockedBack.GetX(), 25.0) && RotationDistance(EulerToRotation(LockedBack), EulerToRotation(Locked)) < 1e-5,
+           "RotationToEuler at +90 gimbal lock keeps X and the rotation");
+    const Vector3 LockedNeg(25.0, -90.0, 40.0);
+    const Vector3 LockedNegBack = RotationToEuler(EulerToRotation(LockedNeg), Vector3(25.0, -90.0, 0.0));
+    Expect(RotationDistance(EulerToRotation(LockedNegBack), EulerToRotation(LockedNeg)) < 1e-5,
+           "RotationToEuler at -90 gimbal lock keeps the rotation");
+
+    /* Composing a world-space turn onto an existing rotation. */
+    const Rotation3 Composed = AxisAngle(Vector3(0.0, 0.0, 1.0), 30.0) * EulerToRotation(Vector3(0.0, 0.0, 15.0));
+    const Vector3   Sum      = RotationToEuler(Composed, Vector3(0.0, 0.0, 15.0));
+    Expect(Near(Sum.GetZ(), 45.0) && Near(Sum.GetX(), 0.0) && Near(Sum.GetY(), 0.0), "a Z turn composes onto a Z rotation");
+}
+
+static void TestRefreshEntityBounds()
+{
+    std::printf("[refresh entity bounds]\n");
+
+    World W;
+    const Entity E = W.CreateEntity("Static");
+    TransformComponent* T = E.AddComponent<TransformComponent>();
+    BoundsComponent*    B = E.AddComponent<BoundsComponent>();
+    B->Local   = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(1.0, 1.0, 1.0));
+    B->bStatic = 1;
+    W.RefreshSpatialIndex();
+
+    T->Position = Vector3(100.0, 0.0, 0.0);
+    W.RefreshSpatialIndex();
+    Expect(B->World.Center().GetX() < 1.0, "RefreshSpatialIndex leaves a static Bounds where it was");
+
+    W.RefreshEntityBounds(E.GetID());
+    Expect(Near(B->World.Center().GetX(), 100.0), "RefreshEntityBounds refits a static Bounds");
+}
+
 int main()
 {
     std::printf("GameCore smoke test\n");
@@ -1628,6 +1729,8 @@ int main()
     TestChunkVersion();
     TestComponentVersioning();
     TestComponentScripting();
+    TestTransformMath();
+    TestRefreshEntityBounds();
 #if WITH_EDITOR
     TestComponentProperties();
 #endif

@@ -10,6 +10,7 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
@@ -17,6 +18,13 @@
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorContext.h"
+
+/* Snap steps for the transform handles (the viewport toolbar's Snap, or Ctrl
+ * held during a drag). Translate is a world grid in World space and a step
+ * along the handle in Local space. */
+NIMBLE_CONFIG_FLOAT(GEditorSnapTranslate, "Editor", "SnapTranslate", 10.0f, nullptr);
+NIMBLE_CONFIG_FLOAT(GEditorSnapRotate,    "Editor", "SnapRotate",    15.0f, nullptr);
+NIMBLE_CONFIG_FLOAT(GEditorSnapScale,     "Editor", "SnapScale",     0.1f,  nullptr);
 
 namespace
 {
@@ -71,6 +79,15 @@ namespace
     EngineCore::Vector3 UnitAxis(const int InAxis)
     {
         return EngineCore::Vector3(InAxis == 0 ? 1.0 : 0.0, InAxis == 1 ? 1.0 : 0.0, InAxis == 2 ? 1.0 : 0.0);
+    }
+
+    TransformGizmo::Pose PoseOf(const GameCore::TransformComponent& InTransform)
+    {
+        TransformGizmo::Pose Pose;
+        Pose.Position = InTransform.Position;
+        Pose.Rotation = InTransform.Rotation;
+        Pose.Scale    = InTransform.Scale;
+        return Pose;
     }
 
     /* An affine transform's inverse, as a 3x4 (the bottom row is 0 0 0 1). */
@@ -156,7 +173,7 @@ ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
     setAttribute(Qt::WA_OpaquePaintEvent);
 
     setFocusPolicy(Qt::StrongFocus);
-    setMouseTracking(false);
+    setMouseTracking(true);   // for the transform handles' hover highlight
     setMinimumSize(64, 64);
 
     FrameTimer.setTimerType(Qt::PreciseTimer);
@@ -167,12 +184,22 @@ ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
      * flying on keys whose release it never sees. */
     const auto ResetNavigation = [this]()
     {
+        FinishGizmoDrag(false);
         HeldKeys.clear();
         Drag       = EDrag::None;
         DragButton = Qt::NoButton;
     };
     connect(&Context, &EditorContext::PlayStateChanged,       this, ResetNavigation);
     connect(&Context, &EditorContext::PlayViewEjectedChanged, this, ResetNavigation);
+
+    /* A drag's entity is only good while it stays selected in the same World. */
+    const auto DropGizmoDrag = [this]()
+    {
+        FinishGizmoDrag(false);
+        GizmoHover = TransformGizmo::EHandle::None;
+    };
+    connect(&Context, &EditorContext::SelectionChanged, this, DropGizmoDrag);
+    connect(&Context, &EditorContext::WorldReset,       this, DropGizmoDrag);
 }
 
 EngineCore::WindowHandle ViewportWidget::GetWindowHandle()
@@ -246,6 +273,7 @@ void ViewportWidget::OnFrame()
     if(Context.IsEditorViewActive())
     {
         ApplyFlyInput(DeltaSeconds);
+        Gizmo.SetView(Camera, GetLogicalSize(), float(devicePixelRatioF()));
         QueueOverlay();
     }
 
@@ -323,6 +351,11 @@ void ViewportWidget::QueueOverlay()
         const double Depth = std::max(double((Box.Center() - Camera.Position).Dot(Camera.GetForward())), double(Camera.ZNear));
         const double Pad   = SelectionPadPixels * Camera.GetWorldPerPixel(Depth, height());
         Context.DrawDebugBox(PadNonFlat(Box, Pad), SelectionColor, SelectionThickness * Ratio);
+    }
+
+    if(const GameCore::TransformComponent* Target = GetGizmoTarget())
+    {
+        Gizmo.Queue(Context, PoseOf(*Target), GizmoHover);
     }
 
     QueueAxisGizmo();
@@ -411,12 +444,42 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
     LastMousePos = InEvent->position().toPoint();
     PressPos     = LastMousePos;
 
+    /* A right click abandons a handle drag, as Esc does. */
+    if(Drag == EDrag::Gizmo)
+    {
+        if(InEvent->button() == Qt::RightButton)
+        {
+            FinishGizmoDrag(true);
+        }
+        return;
+    }
     if(Drag != EDrag::None)
     {
         return;   // one drag at a time; another button is ignored until release
     }
 
     const bool bAlt = (InEvent->modifiers() & Qt::AltModifier) != 0;
+
+    /* A transform handle takes the press -- before click-to-select, which
+     * waits for the release. The axis gizmo in the corner keeps its clicks. */
+    if(InEvent->button() == Qt::LeftButton && !bAlt && HitGizmoAxis(PressPos) < 0)
+    {
+        if(const GameCore::TransformComponent* Target = GetGizmoTarget())
+        {
+            const QPointF At = InEvent->position();
+            Gizmo.SetView(Camera, GetLogicalSize(), float(devicePixelRatioF()));
+            const TransformGizmo::EHandle Handle = Gizmo.Hit(PoseOf(*Target), At.x(), At.y());
+            if(Handle != TransformGizmo::EHandle::None && Gizmo.BeginDrag(Handle, PoseOf(*Target), At.x(), At.y()))
+            {
+                Drag        = EDrag::Gizmo;
+                DragButton  = Qt::LeftButton;
+                GizmoEntity = Context.GetSelection();
+                GizmoHover  = Handle;
+                emit GizmoDragStatus(Gizmo.DescribeDrag());
+                return;
+            }
+        }
+    }
     switch(InEvent->button())
     {
         case Qt::LeftButton:   Drag = bAlt ? EDrag::Orbit : EDrag::None; break;
@@ -438,6 +501,21 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
     const QPoint Pos   = InEvent->position().toPoint();
     const QPoint Delta = Pos - LastMousePos;
     LastMousePos = Pos;
+
+    const QPointF At = InEvent->position();
+    if(Drag == EDrag::Gizmo)
+    {
+        Gizmo.SetView(Camera, GetLogicalSize(), float(devicePixelRatioF()));
+        ApplyGizmoPose(GizmoEntity, Gizmo.UpdateDrag(At.x(), At.y(), GetGizmoSnap(InEvent->modifiers())));
+        emit GizmoDragStatus(Gizmo.DescribeDrag());
+        return;
+    }
+    if(Drag == EDrag::None)
+    {
+        const GameCore::TransformComponent* Target = GetGizmoTarget();
+        Gizmo.SetView(Camera, GetLogicalSize(), float(devicePixelRatioF()));
+        GizmoHover = Target ? Gizmo.Hit(PoseOf(*Target), At.x(), At.y()) : TransformGizmo::EHandle::None;
+    }
 
     switch(Drag)
     {
@@ -471,6 +549,7 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
         }
 
         case EDrag::None:
+        case EDrag::Gizmo:
             break;
     }
 }
@@ -482,6 +561,15 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
     {
         return;
     }
+    if(Drag == EDrag::Gizmo)
+    {
+        if(InEvent->button() == DragButton)
+        {
+            FinishGizmoDrag(false);
+        }
+        return;   // a handle drag never selects
+    }
+
     const bool bWasDragging = Drag != EDrag::None;
     if(InEvent->button() == DragButton)
     {
@@ -533,8 +621,14 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
     {
         return;
     }
-    /* Esc ends a run, as in most editors -- here rather than as a window
-     * shortcut, so Esc in a text field (the console) is left alone. */
+    /* Esc abandons a handle drag first; otherwise it ends a run, as in most
+     * editors -- here rather than as a window shortcut, so Esc in a text
+     * field (the console) is left alone. */
+    if(InEvent->key() == Qt::Key_Escape && Drag == EDrag::Gizmo)
+    {
+        FinishGizmoDrag(true);
+        return;
+    }
     if(InEvent->key() == Qt::Key_Escape && Context.IsPlaying())
     {
         Context.StopPlay();
@@ -551,6 +645,27 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
         case Qt::Key_Home: FrameAll();       return;
         default:           break;
     }
+
+    /* Handle modes -- except while flying, where W E Q steer the camera, and
+     * mid-drag. Still recorded as held below, so a right drag that starts
+     * with the key down flies as it always has. */
+    const bool bPlainKey = (InEvent->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) == 0;
+    if(bPlainKey && Drag != EDrag::Look && Drag != EDrag::Gizmo)
+    {
+        using EMode = TransformGizmo::EMode;
+        switch(InEvent->key())
+        {
+            case Qt::Key_Q: SetGizmoMode(EMode::None);      break;
+            case Qt::Key_W: SetGizmoMode(EMode::Translate); break;
+            case Qt::Key_E: SetGizmoMode(EMode::Rotate);    break;
+            case Qt::Key_R: SetGizmoMode(EMode::Scale);     break;
+            case Qt::Key_X:
+                SetGizmoSpace(Gizmo.GetSpace() == TransformGizmo::ESpace::World ? TransformGizmo::ESpace::Local
+                                                                               : TransformGizmo::ESpace::World);
+                return;
+            default: break;
+        }
+    }
     HeldKeys.insert(InEvent->key());
 }
 
@@ -566,10 +681,111 @@ void ViewportWidget::focusOutEvent(QFocusEvent* InEvent)
 {
     /* A release that lands in another widget would otherwise leave the
      * camera flying, or a drag stuck on. */
+    FinishGizmoDrag(false);
     HeldKeys.clear();
     Drag       = EDrag::None;
     DragButton = Qt::NoButton;
     QWidget::focusOutEvent(InEvent);
+}
+
+// === Transform handles =======================================================
+
+void ViewportWidget::SetGizmoMode(const TransformGizmo::EMode InMode)
+{
+    if(Gizmo.GetMode() == InMode)
+    {
+        return;
+    }
+    FinishGizmoDrag(false);
+    Gizmo.SetMode(InMode);
+    GizmoHover = TransformGizmo::EHandle::None;
+    emit GizmoModeChanged(InMode);
+}
+
+void ViewportWidget::SetGizmoSpace(const TransformGizmo::ESpace InSpace)
+{
+    if(Gizmo.GetSpace() == InSpace)
+    {
+        return;
+    }
+    FinishGizmoDrag(false);
+    Gizmo.SetSpace(InSpace);
+    GizmoHover = TransformGizmo::EHandle::None;
+    emit GizmoSpaceChanged(InSpace);
+}
+
+void ViewportWidget::SetGizmoSnap(const bool bInSnap)
+{
+    if(bGizmoSnap == bInSnap)
+    {
+        return;
+    }
+    bGizmoSnap = bInSnap;
+    emit GizmoSnapChanged(bInSnap);
+}
+
+TransformGizmo::Snap ViewportWidget::GetGizmoSnap(const Qt::KeyboardModifiers InModifiers) const
+{
+    TransformGizmo::Snap Snap;
+    Snap.bEnabled      = bGizmoSnap != ((InModifiers & Qt::ControlModifier) != 0);
+    Snap.Translate     = double(GEditorSnapTranslate.GetFloat());
+    Snap.RotateDegrees = double(GEditorSnapRotate.GetFloat());
+    Snap.Scale         = double(GEditorSnapScale.GetFloat());
+    return Snap;
+}
+
+GameCore::TransformComponent* ViewportWidget::GetGizmoTarget() const
+{
+    if(!Context.IsEditorViewActive() || Gizmo.GetMode() == TransformGizmo::EMode::None)
+    {
+        return nullptr;
+    }
+    const GameCore::EntityID Target = Drag == EDrag::Gizmo ? GizmoEntity : Context.GetSelection();
+    GameCore::World& World = Context.GetWorld();
+    if(!World.IsAlive(Target))
+    {
+        return nullptr;
+    }
+    return World.GetEntity(Target).GetComponent<GameCore::TransformComponent>();
+}
+
+void ViewportWidget::ApplyGizmoPose(const GameCore::EntityID InEntity, const TransformGizmo::Pose& InPose)
+{
+    GameCore::World& World = Context.GetWorld();
+    if(!World.IsAlive(InEntity))
+    {
+        return;
+    }
+    GameCore::TransformComponent* Transform = World.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>();
+    if(!Transform)
+    {
+        return;
+    }
+    Transform->Position = InPose.Position;
+    Transform->Rotation = InPose.Rotation;
+    Transform->Scale    = InPose.Scale;
+
+    /* The render proxy picks the Transform up on its own next frame; the
+     * bounds need a refit now, static or not, so the outline follows. */
+    World.RefreshEntityBounds(InEntity);
+    Context.NotifyPropertyEdited(InEntity, GameCore::TransformComponent::StaticType().ID);
+}
+
+void ViewportWidget::FinishGizmoDrag(const bool bInCancel)
+{
+    if(Drag != EDrag::Gizmo)
+    {
+        return;
+    }
+    if(bInCancel)
+    {
+        ApplyGizmoPose(GizmoEntity, Gizmo.GetDragStart());
+    }
+    Gizmo.EndDrag();
+    Drag        = EDrag::None;
+    DragButton  = Qt::NoButton;
+    GizmoEntity = GameCore::InvalidEntityID();
+    emit GizmoDragStatus(QString());
 }
 
 // === Picking =================================================================

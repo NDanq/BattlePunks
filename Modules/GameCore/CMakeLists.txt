@@ -166,6 +166,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/World.h
         Source/Public/GameCore/Entity.h
         Source/Public/GameCore/Components.h
+        Source/Public/GameCore/TransformMath.h
         Source/Public/GameCore/ScriptEngine.h
         Source/Public/GameCore/ComponentSerializer.h
         Source/Public/GameCore/WorldSerializer.h
