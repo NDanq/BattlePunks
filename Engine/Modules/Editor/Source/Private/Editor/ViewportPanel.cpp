@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include <QAction>
+#include <QActionGroup>
 #include <QLabel>
 #include <QSlider>
 #include <QToolBar>
@@ -25,6 +26,22 @@ namespace
         const char*           Label;
         const char*           Tip;
         EditorCamera::EPreset Preset;
+    };
+
+    struct GizmoModeButton
+    {
+        const char*           Label;
+        const char*           Tip;
+        TransformGizmo::EMode Mode;
+    };
+
+    /* In EMode order: GizmoModeActions is indexed by it. */
+    const GizmoModeButton GizmoModes[] =
+    {
+        { "Select", "No transform handles -- click to select (Q)",       TransformGizmo::EMode::None      },
+        { "Move",   "Move handles: axes, planes, screen centre (W)",     TransformGizmo::EMode::Translate },
+        { "Rotate", "Rotate rings: one per axis, the outer about the view (E)", TransformGizmo::EMode::Rotate },
+        { "Scale",  "Scale handles: per axis, the centre for all three (R)",    TransformGizmo::EMode::Scale  },
     };
 
     const PresetButton Presets[] =
@@ -53,6 +70,51 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, QWidget* InParent)
 
     Viewport = new ViewportWidget(InContext, this);
     Layout->addWidget(Viewport, 1);
+
+    // --- Transform handles ---------------------------------------------------
+    /* No shortcuts here: the keys are the viewport's own (see ViewportWidget),
+     * so typing Q W E R in a text field never switches modes. */
+    auto* ModeGroup = new QActionGroup(this);
+    ModeGroup->setExclusive(true);
+    for(const GizmoModeButton& Button : GizmoModes)
+    {
+        QAction* Action = Toolbar->addAction(QString::fromLatin1(Button.Label));
+        Action->setToolTip(QString::fromLatin1(Button.Tip));
+        Action->setCheckable(true);
+        ModeGroup->addAction(Action);
+        const TransformGizmo::EMode Mode = Button.Mode;
+        GizmoModeActions[int(Mode)] = Action;
+        connect(Action, &QAction::triggered, this, [this, Mode]() { Viewport->SetGizmoMode(Mode); });
+    }
+    GizmoModeActions[int(Viewport->GetGizmoMode())]->setChecked(true);
+    connect(Viewport, &ViewportWidget::GizmoModeChanged, this, [this](const TransformGizmo::EMode InMode)
+    {
+        GizmoModeActions[int(InMode)]->setChecked(true);
+    });
+
+    GizmoLocalAction = Toolbar->addAction(QStringLiteral("Local"));
+    GizmoLocalAction->setCheckable(true);
+    GizmoLocalAction->setToolTip(QStringLiteral("Move and rotate along the entity's own axes rather than the world's (X). "
+                                                "Scale always uses the entity's axes."));
+    GizmoLocalAction->setChecked(Viewport->GetGizmoSpace() == TransformGizmo::ESpace::Local);
+    connect(GizmoLocalAction, &QAction::toggled, this, [this](const bool bInLocal)
+    {
+        Viewport->SetGizmoSpace(bInLocal ? TransformGizmo::ESpace::Local : TransformGizmo::ESpace::World);
+    });
+    connect(Viewport, &ViewportWidget::GizmoSpaceChanged, this, [this](const TransformGizmo::ESpace InSpace)
+    {
+        GizmoLocalAction->setChecked(InSpace == TransformGizmo::ESpace::Local);
+    });
+
+    GizmoSnapAction = Toolbar->addAction(QStringLiteral("Snap"));
+    GizmoSnapAction->setCheckable(true);
+    GizmoSnapAction->setToolTip(QStringLiteral("Snap handle drags to [Editor] SnapTranslate / SnapRotate / SnapScale "
+                                               "(Ctrl during a drag inverts this)"));
+    GizmoSnapAction->setChecked(Viewport->IsGizmoSnapEnabled());
+    connect(GizmoSnapAction, &QAction::toggled, Viewport, &ViewportWidget::SetGizmoSnap);
+    connect(Viewport, &ViewportWidget::GizmoSnapChanged, GizmoSnapAction, &QAction::setChecked);
+
+    Toolbar->addSeparator();
 
     // --- View presets --------------------------------------------------------
     /* Each orbits about the selection (or the focus point) to its axis. */

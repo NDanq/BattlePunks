@@ -475,6 +475,22 @@ arbitrary-but-stated choice; a game that wants a different order rolls its
 own component rather than this one silently meaning something else than what
 its member name suggests.
 
+Rotations are right-handed for column vectors: a positive angle about +Z turns
++X toward +Y -- which, with the game's +Y down the screen, reads clockwise.
+`InitRotation` once got this wrong (the same `+W*sin` in both `[0][1]` and
+`[1][0]`, and the row-2 products swapped), making a Z rotation a shear that
+collapsed a quad to a line at 45 degrees; Core's smoke test now checks that
+axis rotations map axes to axes and that an oblique one is orthonormal.
+
+**`TransformMath.h`** is the same composition in double precision, header-only:
+`EulerToRotation` (Rz * Ry * Rx), `AxisAngle`, and `RotationToEuler`, which
+picks, of the two Euler solutions every rotation has, the one nearest a given
+set of angles, each shifted by whole turns to within 180 of it. A tool that
+composes rotations as matrices -- the editor's rotate handles -- turns the
+result back into angles that continue from the ones it started with, so a drag
+from 179 degrees reads 181, not -179. At gimbal lock (Y at +-90) X keeps the
+given value and Z takes the rest. Tested against `GetLocalMatrix` itself.
+
 **`BoundsComponent::ProxyID`** starts at -1 until the first refit inserts it
 -- a Bounds added mid-frame may not have its Transform yet (see
 SpatialIndex's design notes on the refit pass). **`bStatic`** means never
@@ -566,6 +582,10 @@ world box from its owner's Transform (identity if none) and pushes it into
 the `SpatialIndex` via `Move()`. `Tick()` calls this once, at the end of
 `TP_Physics`; a host may call it again mid-frame (after moving something
 outside the normal tick) at the cost of walking the Bounds pool again.
+**`RefreshEntityBounds(id)`** does the same for one entity and ignores
+`bStatic`: it is for a tool that moved an entity by hand (the editor's
+transform handles), where "never moves" was a statement about gameplay, not
+about editing.
 
 **The active region** is a shared hint for "the region gameplay currently
 cares about" -- the common "around the player" case. `World` enforces
