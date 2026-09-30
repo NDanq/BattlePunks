@@ -6,7 +6,7 @@ runtime never loads a graph.
 
 | Graph | File | Generates | Consumed by |
 |---|---|---|---|
-| Material | `Glow.material.nmgraph` | `Glow.fsh`, the engine's macro GLSL | GDI's shader cook (`cook_material_graphs.py`, below) |
+| Material | `Glow.material.nmgraph` | `Glow.fsh` (the engine's macro GLSL) and `Glow.material` (parameter defaults) | `PrimitiveComponent::Material = "Glow"`, once cooked (below) |
 | Script | `Mover.script.nmgraph` | `Mover.lua`, a class table | `Entity:SetScript("Scripts/Mover.lua")`, like any script |
 
 Written for this repository. **Editor targets only**, and Qt-free: the editor
@@ -145,11 +145,51 @@ arguments, and a compile warning.
 
 ## Material graphs
 
-The output has the shape of `GDI/Shaders/Basic.fsh`: `#include <Common.glsl>`,
-`OUTPUT(0, vec4, Output)`, then one `UBO_BEGIN(2, <Name>_Block)` of the
-parameters. Bindings 0 and 1 are Common.glsl's view and transform blocks. The
-inputs are the interpolated TexCoord and Position, `gl_FragCoord`, the
-viewport size and the mouse.
+A material graph `Materials/Glow.material.nmgraph` generates two files beside
+it, both committed:
+
+- **`Glow.fsh`**, a pixel shader with the shape of `GDI/Shaders/Basic.fsh`:
+  `#include <Common.glsl>`, `OUTPUT(0, vec4, Output)`, and **one uniform**,
+  `mat4 MaterialParams`, alone in a UBO at binding 2. Bindings 0 and 1 are
+  Common.glsl's view and transform blocks.
+- **`Glow.material`**, the parameters' defaults, which the renderer reads with
+  the shader:
+
+  ```
+  NimbleMaterial 1
+  Param Color 0 vec3 0.2 0.8 1 0
+  ```
+
+**Why one `mat4`.** GDI's backends pack a shader's custom uniforms back to
+back, in hash-map order, with no std140 padding (`PackCustomUBO` in the Vulkan
+backend, `PackCustom` in D3D12). That is exactly right for one value and wrong
+for two. So the four columns of `MaterialParams` are the slots:
+
+| Column | Holds |
+|---|---|
+| 0, 1, 2 | Parameters, in name order: a `vec3` parameter reads `MaterialParams[i].xyz` |
+| 3 | The drawing primitive's Tint (RGBA, 0 to 1): the **Instance Tint** input |
+
+A material therefore has **at most three parameters**, and more is a compile
+error. Slots follow names, not links, so a slot never moves because a link was
+drawn elsewhere.
+
+The inputs are:
+
+- the interpolated TexCoord and Position;
+- `gl_FragCoord`;
+- the viewport size and the mouse;
+- Instance Tint.
+
+**Drawing one.** A primitive names the material by its base name:
+`PrimitiveComponent::Material = "Glow"`. RenderCore then loads
+`Materials/Glow.material` and the cooked shader under
+`Shaders/Cooked/<Platform>/Materials/`, as GDI names its own shaders (see
+RenderCore's DESIGN.md, "Materials"). A game's build cooks and stages them with
+`nimble_stage_materials` (`Engine/cmake/NimbleMaterials.cmake`), for every
+backend GDI is built with. The editor cooks one for its viewport on save and,
+with Live Preview, on every clean recompile. The graph window's **Preview** dock
+then shows it, drawn by that same renderer.
 
 GDI is a vendored subtree and is never edited from here. So
 `Scripts/cook_material_graphs.py` **imports** its `cook_shaders.py` read-only
@@ -157,12 +197,11 @@ and reuses its preprocessor and tool lookup. `#include <Common.glsl>` resolves
 against GDI's `Shaders/`.
 
 ```
-python Scripts/cook_material_graphs.py -check Games/Sandbox/Shaders/Glow.fsh
-python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Shaders -out <dir>
+python Scripts/cook_material_graphs.py -check Games/Sandbox/Materials/Glow.fsh
+python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Materials -out <runtime>/Shaders/Cooked -subdir Materials
 ```
 
-There is no live preview yet: RenderCore has no material path to draw a
-generated shader with. That is the next piece of work.
+`-src` takes a shader file or a folder.
 
 ## Tests
 

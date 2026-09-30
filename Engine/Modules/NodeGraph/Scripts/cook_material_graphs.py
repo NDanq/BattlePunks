@@ -14,12 +14,17 @@ Usage:
         failure's compiler output; exits 1 if any failed. The editor runs this
         after saving a material graph.
 
-    python cook_material_graphs.py -target <OpenGL|Vulkan|D3D12> -src DIR [-src DIR ...] -out DIR
-        Cook every .vsh/.fsh under each DIR (recursively) into
-        DIR_OUT/<Platform>/, named as GDI names its own:
+    python cook_material_graphs.py -target <OpenGL|Vulkan|D3D12> -src PATH [-src PATH ...] -out DIR [-subdir NAME]
+        Cook each shader PATH, or every .vsh/.fsh under a directory PATH
+        (recursively), into DIR/<Platform>/[NAME/], named as GDI names its own:
             OpenGL  <name>          preprocessed GLSL
             Vulkan  <name>.spv      SPIR-V
             D3D12   <name>.cso      DXBC (via spirv-cross and fxc)
+
+        The renderer loads a material "Glow" from Shaders/Cooked/<Platform>/
+        Materials/Glow.fsh[.spv|.cso] -- so the editor, and a game's build
+        (Engine/cmake/NimbleMaterials.cmake), cook with -subdir Materials into
+        the runtime directory's Shaders/Cooked.
 """
 
 import argparse
@@ -33,6 +38,9 @@ GDI_SCRIPTS_DIR = SCRIPT_DIR.parent.parent / "GDI" / "Scripts"
 
 
 def _import_cook_shaders(scripts_dir):
+    # No __pycache__ inside GDI's tree: it is a vendored subtree, and an
+    # import would otherwise leave compiled bytecode beside cook_shaders.py.
+    sys.dont_write_bytecode = True
     sys.path.insert(0, str(scripts_dir))
     try:
         import cook_shaders
@@ -46,8 +54,11 @@ def _sources(dirs, cs):
     found = []
     for directory in dirs:
         root = Path(directory)
+        if root.is_file() and root.suffix in cs.EXT_TO_TYPE:
+            found.append(root.resolve())
+            continue
         if not root.is_dir():
-            print(f"ERROR: -src {directory} is not a directory", file=sys.stderr)
+            print(f"ERROR: -src {directory} is neither a shader nor a directory", file=sys.stderr)
             sys.exit(2)
         found += [f for f in root.rglob("*") if f.suffix in cs.EXT_TO_TYPE]
     return sorted(found)
@@ -80,8 +91,8 @@ def check(cs, files):
     return failures
 
 
-def cook(cs, target, src_dirs, out_root):
-    out_dir = Path(out_root) / target
+def cook(cs, target, src_dirs, out_root, subdir=""):
+    out_dir = Path(out_root) / target / subdir if subdir else Path(out_root) / target
     out_dir.mkdir(parents=True, exist_ok=True)
     sources = _sources(src_dirs, cs)
     print(f"[{target}] {len(sources)} graph shader(s) -> {out_dir}")
@@ -140,6 +151,7 @@ def main():
     parser.add_argument("-target", choices=("OpenGL", "Vulkan", "D3D12"), help="cook for this platform")
     parser.add_argument("-src", action="append", metavar="DIR", help="a directory of generated shaders (repeatable)")
     parser.add_argument("-out", metavar="DIR", help="cooked output root; <Platform>/ is created below it")
+    parser.add_argument("-subdir", default="", metavar="NAME", help="a folder below <Platform>/ to cook into (the runtime uses Materials)")
     parser.add_argument("-gdi-scripts", default=str(GDI_SCRIPTS_DIR), metavar="DIR",
                         help="where GDI's cook_shaders.py lives (default: beside this module)")
     args = parser.parse_args()
@@ -149,7 +161,7 @@ def main():
     if args.check:
         sys.exit(1 if check(cs, args.check) else 0)
     if args.target and args.src and args.out:
-        sys.exit(1 if cook(cs, args.target, args.src, args.out) else 0)
+        sys.exit(1 if cook(cs, args.target, args.src, args.out, args.subdir) else 0)
 
     parser.error("give -check FILE..., or -target with -src and -out")
 

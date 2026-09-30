@@ -1,5 +1,7 @@
 #include "Private/RenderCore/PrimitiveProxy.h"
 
+#include <cstring>
+
 #include "Public/RenderCore/RenderComponents.h"
 
 namespace RenderCore
@@ -19,6 +21,11 @@ namespace RenderCore
         Tint              = Component.Tint;
         bComponentVisible = Component.bVisible != 0;
 
+        /* Bounded copy: the component's buffer need not be NUL-terminated. */
+        static_assert(sizeof(Material) == PRIMITIVE_MATERIAL_NAME_MAX, "PrimitiveProxy::Material must match the component's");
+        std::memcpy(Material, Component.Material, sizeof(Material));
+        Material[sizeof(Material) - 1] = '\0';
+
         SetVisible(bComponentVisible);
 
         /* A unit box in entity space, half-extents (Width/2, Height/2) on X
@@ -32,6 +39,11 @@ namespace RenderCore
 
     void PrimitiveProxy::Draw(RenderContext& InContext)
     {
+        if(Material[0] != '\0')
+        {
+            InContext.DrawQuadWithMaterial(GetTransform(), Width, Height, Tint, Material);
+            return;
+        }
         InContext.DrawQuad(GetTransform(), Width, Height, Tint);
     }
 }

@@ -12,8 +12,14 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 
+#include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
+#include "Public/Core/CoreImage.h"
+#include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ComponentScript.h"
@@ -63,7 +69,7 @@ static void TestScriptBindings()
     size_t PrimitiveCount = 0;
     const GameCore::ScriptBindingEntry* Primitive =
         GameCore::FindComponentScript(PrimitiveComponent::StaticType().ID, PrimitiveCount);
-    Expect(Primitive != nullptr && PrimitiveCount == 4, "Primitive exposes Width, Height, Tint and Visible");
+    Expect(Primitive != nullptr && PrimitiveCount == 5, "Primitive exposes Width, Height, Tint, Visible and Material");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < PrimitiveCount; ++Index)
@@ -562,6 +568,123 @@ static void TestDebugLines()
     Rend.SetViewOverride(nullptr);
     Rend.Shutdown();
 }
+
+// ============================================================================
+// Materials: a primitive naming a material, missing then present
+// ============================================================================
+
+namespace
+{
+    std::atomic<int> GMaterialLoads{0};
+    std::atomic<int> GMaterialFallbacks{0};
+    LogHandler       GPreviousLogHandler = nullptr;
+
+    /* Counts RenderContext's two material outcomes -- the only way to tell
+     * from outside whether a draw went through the material or fell back,
+     * since the Null backend draws nothing either way. */
+    void MaterialLogHandler(const LogVerbosity InVerbosity, const char* InMessage)
+    {
+        const std::string Text = InMessage ? InMessage : "";
+        if(Text.find("material 'SmokeGlow' loaded") != std::string::npos)  { ++GMaterialLoads; }
+        if(Text.find("material 'SmokeGlow':") != std::string::npos
+           && Text.find("plain tint") != std::string::npos)                { ++GMaterialFallbacks; }
+        if(GPreviousLogHandler) { GPreviousLogHandler(InVerbosity, InMessage); }
+    }
+}
+
+static void TestMaterials()
+{
+    std::printf("[materials]\n");
+
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreMaterials";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Root, Ignored);
+    std::filesystem::create_directories(Root / "Materials", Ignored);
+
+    FilesystemProvider Provider(Root.generic_string());
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Provider);
+    GPreviousLogHandler = GetLogHandler();
+    SetLogHandler(&MaterialLogHandler);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the material test");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(640, 360);
+        const RenderView View = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+        Rend.SetViewOverride(&View);
+
+        GameCore::World World;
+        const GameCore::Entity Quad = World.CreateEntity("Glowing");
+        Quad.AddComponent<GameCore::TransformComponent>();
+        PrimitiveComponent Prim;
+        Prim.Width = 100.0f;
+        Prim.Height = 100.0f;
+        std::strcpy(Prim.Material, "SmokeGlow");
+        Quad.AddComponent(Prim);
+        Rend.BindWorld(World);
+
+        uint64_t Frame = 200;
+        auto DrawFrame = [&]() -> uint64_t
+        {
+            RenderStats Before;
+            Rend.GetStats(Before);
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            RenderStats After;
+            Rend.GetStats(After);
+            return After.DrawCalls - Before.DrawCalls;
+        };
+
+        DrawFrame();   // extracts; the proxy draws from the next frame
+        const uint64_t MissingDraws = DrawFrame();
+        Expect(MissingDraws == 1, "a primitive whose material is missing still draws, as the plain tint");
+        Expect(GMaterialFallbacks == 1 && GMaterialLoads == 0, "a missing material is warned about");
+        DrawFrame();
+        Expect(GMaterialFallbacks == 1, "and warned about once, not every frame");
+
+        std::ofstream(Root / "Materials" / "SmokeGlow.material")
+            << "# a test material\nNimbleMaterial 1\nParam Tint 0 vec3 1 0.5 0.25 0\n";
+        Rend.ReloadMaterial("SmokeGlow");
+        const uint64_t LoadedDraws = DrawFrame();
+        Expect(GMaterialLoads == 1, "ReloadMaterial makes the next draw read the material afresh");
+        Expect(LoadedDraws == 1, "a primitive with a loaded material draws once");
+
+        DrawFrame();
+        Expect(GMaterialLoads == 1, "a loaded material is kept, not reloaded per frame");
+
+        /* Previews: answered by the next frame, once. The Null backend draws
+         * and reads back nothing, which is itself the answer to check. */
+        const uint64_t Preview = Rend.RequestMaterialPreview("SmokeGlow", 64, EngineCore::Color(255, 255, 255));
+        const uint64_t Missing = Rend.RequestMaterialPreview("NoSuchMaterial", 64, EngineCore::Color(255, 255, 255));
+        Expect(Preview != 0 && Missing != 0 && Preview != Missing, "a preview request gets its own id");
+        EngineCore::Image Pixels;
+        std::string       Error;
+        Expect(!Rend.TakeMaterialPreview(Preview, Pixels, Error), "a preview is not ready before a frame renders it");
+        DrawFrame();
+        Expect(Rend.TakeMaterialPreview(Preview, Pixels, Error) && Error.find("reads nothing back") != std::string::npos,
+               "the Null backend answers a preview with why it has no picture");
+        Expect(!Rend.TakeMaterialPreview(Preview, Pixels, Error), "a preview is taken once");
+        Expect(Rend.TakeMaterialPreview(Missing, Pixels, Error) && Error.find("could not be loaded") != std::string::npos,
+               "a preview of a missing material says so");
+        Expect(Rend.RequestMaterialPreview("", 64, EngineCore::Color()) == 0, "a preview needs a name");
+
+        std::ofstream(Root / "Materials" / "SmokeGlow.material", std::ios::trunc) << "NimbleMaterial 7\n";
+        Rend.ReloadMaterial(nullptr);
+        DrawFrame();
+        Expect(GMaterialFallbacks == 2, "a material file of an unknown version falls back, warned");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+    }
+    Rend.Shutdown();
+
+    SetLogHandler(GPreviousLogHandler);
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
 #endif // WITH_EDITOR
 
 int main()
@@ -594,6 +717,7 @@ int main()
     TestRendererWithWorld();
 #if WITH_EDITOR
     TestDebugLines();
+    TestMaterials();
 #endif
 
     const uint64_t Leaked = Memory::ReportLeaks();

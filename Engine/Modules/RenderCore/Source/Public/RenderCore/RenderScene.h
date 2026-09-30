@@ -25,6 +25,20 @@ namespace RenderCore
 {
     class RenderContext;
     class RenderProxy;
+    class MaterialPreviewMailbox;
+
+#if WITH_EDITOR
+    /* EDITOR ONLY -- one Renderer::RequestMaterialPreview, as a render command
+     * carries it: trivially copyable, the mailbox by pointer. */
+    struct MaterialPreviewRequest
+    {
+        uint64_t                Request = 0;
+        char                    Material[48] = {};   // PRIMITIVE_MATERIAL_NAME_MAX
+        int32_t                 Size = 256;
+        EngineCore::Color       Tint{255, 255, 255, 255};
+        MaterialPreviewMailbox* Mailbox = nullptr;
+    };
+#endif
 
     class RENDERCORE_API RenderScene
     {
@@ -56,6 +70,12 @@ namespace RenderCore
          * proxies; that Render() consumes them, so a frame that sets none
          * draws none. */
         void SetDebugLines(const DebugLine* InLines, size_t InCount);
+
+        /* EDITOR ONLY. The NEXT Render() draws this material preview into its
+         * own small target, reads it back into the request's mailbox, and only
+         * then binds the scene's back buffer -- so the viewport never shows
+         * it. See RenderContext::RenderMaterialPreview. */
+        void AddMaterialPreview(const MaterialPreviewRequest& InRequest);
 #endif
 
         /* BeginRendering, SetViewport, Clear, draw every visible proxy whose

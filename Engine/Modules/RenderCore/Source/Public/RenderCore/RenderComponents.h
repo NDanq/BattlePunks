@@ -22,7 +22,14 @@ namespace RenderCore
      * engine can draw. Width/Height are in the same world units as
      * TransformComponent::Scale; the proxy multiplies them together (see
      * PrimitiveProxy.cpp), so a Scale of (2,2,2) on the entity's Transform
-     * doubles an already-sized quad rather than fighting it. */
+     * doubles an already-sized quad rather than fighting it.
+     *
+     * Material names a material graph's output -- "Glow" is the shader
+     * Materials/Glow.fsh and its parameters Materials/Glow.material (see
+     * RenderContext::DrawQuadWithMaterial). Empty draws the plain Tint; a
+     * material that cannot be loaded does the same, once warned. */
+    enum : size_t { PRIMITIVE_MATERIAL_NAME_MAX = 48 };   // including the NUL
+
     struct RENDERCORE_API PrimitiveComponent
     {
         GAMECORE_COMPONENT_BODY()
@@ -32,6 +39,7 @@ namespace RenderCore
         float             Height = 1.0f;
         EngineCore::Color Tint{255, 255, 255};
         uint8_t           bVisible = 1;
+        char              Material[PRIMITIVE_MATERIAL_NAME_MAX] = {};
     };
 
     /* "Camera". Position comes from the sibling TransformComponent (identity

@@ -399,7 +399,8 @@ std::vector<NodeGuid> GraphDocument::Paste(const std::string& InFragment, const 
 
 // === File =======================================================================
 
-bool GraphDocument::Save(QString& OutError, QString& OutMessage)
+bool GraphDocument::Save(QString& OutError, QString& OutMessage,
+                         QObject* InContext, std::function<void(bool, const QString&)> InStaged)
 {
     std::string Error;
     if(!SaveGraphFile(ToStd(Path), Model, Error))
@@ -410,7 +411,7 @@ bool GraphDocument::Save(QString& OutError, QString& OutMessage)
     History->setClean();
 
     CompileResult Result;
-    EditorGraphs::WriteOutput(Path, Model, Result, OutMessage);
+    EditorGraphs::WriteOutput(Path, Model, Result, OutMessage, InContext, std::move(InStaged));
     emit Saved();
     return true;
 }

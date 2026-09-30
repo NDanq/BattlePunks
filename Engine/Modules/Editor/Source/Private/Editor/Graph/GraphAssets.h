@@ -6,6 +6,8 @@
 #include <functional>
 #include <string>
 
+#include <QColor>
+#include <QImage>
 #include <QString>
 #include <QStringList>
 
@@ -13,6 +15,7 @@
 #include "Public/NodeGraph/GraphCompiler.h"
 #include "Public/NodeGraph/Schema.h"
 
+class EditorContext;
 class QObject;
 class QWidget;
 class GraphEditorWindow;
@@ -29,6 +32,14 @@ class GraphEditorWindow;
  * path relative to the project root: the next Play uses the new script with
  * no build in between. A new graph's output still has to be added to the
  * game's staged list for a clean build to ship it.
+ *
+ * MATERIALS are staged by NAME, not path: RenderCore loads material "Glow"
+ * from <runtime>/Materials/Glow.material and the cooked shader under
+ * <runtime>/Shaders/Cooked/<Platform>/Materials/, wherever the graph lives. A
+ * save (and, with Live Preview on, every successful recompile) writes the
+ * .material there, cooks the shader for the viewport's backend in the
+ * background, and has the renderer reload it -- so a primitive naming the
+ * material shows the change on the next frame.
  */
 namespace EditorGraphs
 {
@@ -50,7 +61,8 @@ namespace EditorGraphs
      * what happened, for a status bar. False if it did not compile or a file
      * could not be written. */
     bool WriteOutput(const QString& InGraphPath, const NodeGraph::Graph& InGraph,
-                     NodeGraph::CompileResult& OutResult, QString& OutMessage);
+                     NodeGraph::CompileResult& OutResult, QString& OutMessage,
+                     QObject* InContext = nullptr, std::function<void(bool, const QString&)> InStaged = nullptr);
 
     /* Runs cook_material_graphs.py -check on a generated shader, in the
      * background; InDone gets (passed, compiler output). Skipped -- InDone is
@@ -62,6 +74,42 @@ namespace EditorGraphs
      * rewritten if changed. Returns the number that failed; OutLines gets one
      * line per graph. */
     int RegenerateAll(QStringList& OutLines);
+
+    // --- Materials in the viewport ----------------------------------------------
+
+    /* The context whose renderer materials are cooked for and reloaded into.
+     * Set by the main window; nullptr before it has one or once it is gone. */
+    void SetEditorContext(EditorContext* InContext);
+
+    /* A material graph's name at run time: its file's base name, "Glow". */
+    QString GetMaterialName(const QString& InGraphPath);
+
+    /*
+     * Stages a compiled material -- InResult's shader and .material -- for the
+     * viewport: the .material into <runtime>/Materials/, the shader cooked in
+     * the background for the renderer's backend, then the renderer told to
+     * reload it. InDone gets (worked, what happened), on InContext's thread;
+     * never called if InContext goes first. Requests for one material while
+     * its cook runs are coalesced: the latest runs next, the rest are dropped.
+     */
+    void StageMaterial(const QString& InName, const NodeGraph::CompileResult& InResult, QObject* InContext,
+                       std::function<void(bool, const QString&)> InDone);
+
+    /* Asks the viewport's renderer for a picture of material InName -- a quad
+     * filling InSize x InSize pixels, InTint its Instance Tint -- and calls
+     * InDone with it once drawn, or with a null image and why not. Polled on
+     * InContext's thread; never called if InContext goes first. */
+    void RequestMaterialPreview(const QString& InName, int InSize, const QColor& InTint, QObject* InContext,
+                                std::function<void(const QImage&, const QString&)> InDone);
+
+    /* Stages the graph SAVED at InGraphPath -- after a preview of unsaved
+     * changes was discarded, so the viewport shows what is on disk again. */
+    void RestoreMaterial(const QString& InGraphPath);
+
+    /* Points the selected entity's Primitive at material InName, adding a
+     * Primitive if it has none -- recorded, undoable. False, with why, when
+     * there is no selection or the name is too long. */
+    bool ApplyMaterialToSelection(const QString& InName, QString& OutMessage);
 
     // --- Windows ----------------------------------------------------------------
 

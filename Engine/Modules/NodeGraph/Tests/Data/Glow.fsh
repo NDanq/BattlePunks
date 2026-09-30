@@ -5,15 +5,16 @@
 
 OUTPUT(0, vec4, Output)
 
+// Columns 0-2: parameters (see Glow.material); column 3: the primitive's tint.
 UBO_BEGIN(2, Glow_Block)
-    SHADER_UNIFORM(vec3, Tint)
+    SHADER_UNIFORM(mat4, MaterialParams)
 UBO_END(Glow_Block)
 
 void main(void)
 {
     float t0 = distance(Interpolants.TexCoord, vec2(0.5));
     float t1 = 1.0 - t0;
-    vec3 t2 = Tint * vec3(t1);
+    vec3 t2 = MaterialParams[0].xyz * vec3(t1);
     vec3 t3 = clamp(t2, 0.0, 1.0);
     Output = vec4(t3, 1.0);
 }

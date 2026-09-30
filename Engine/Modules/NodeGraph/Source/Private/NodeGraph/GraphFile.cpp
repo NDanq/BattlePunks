@@ -524,7 +524,12 @@ bool GenerateGraphOutput(const std::string& InGraphPath, CompileResult& OutResul
     if(OutResult.HasErrors()) { return true; }
 
     const Schema* S = FindSchema(Loaded.SchemaName);
-    return WriteTextFileIfChanged(GetGraphOutputPath(InGraphPath, *S), OutResult.Code, OutError);
+    if(!WriteTextFileIfChanged(GetGraphOutputPath(InGraphPath, *S), OutResult.Code, OutError)) { return false; }
+    for(const auto& Companion : OutResult.Companions)
+    {
+        if(!WriteTextFileIfChanged(StripGraphExtension(InGraphPath) + Companion.first, Companion.second, OutError)) { return false; }
+    }
+    return true;
 }
 
 // === Clipboard ==================================================================

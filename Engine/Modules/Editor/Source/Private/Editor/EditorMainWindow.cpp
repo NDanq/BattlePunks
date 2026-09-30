@@ -121,6 +121,9 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     connect(&StatsTimer, &QTimer::timeout, this, &EditorMainWindow::UpdateStats);
 
+    /* Material graphs cook for, and reload into, this context's renderer. */
+    EditorGraphs::SetEditorContext(&Context);
+
     UpdateTitle();
 }
 
@@ -132,6 +135,7 @@ EditorMainWindow::~EditorMainWindow()
     {
         InputProbe->Stop();
     }
+    EditorGraphs::SetEditorContext(nullptr);
     Context.Shutdown();
 }
 

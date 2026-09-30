@@ -34,6 +34,7 @@ project(NimbleEngine VERSION 0.1 LANGUAGES CXX)
 
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(NimbleModule)
+include(NimbleMaterials)
 
 enable_testing()
 

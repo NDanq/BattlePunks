@@ -293,6 +293,18 @@ else()
     set_target_properties(SandboxStageScripts PROPERTIES FOLDER "Games")
 endif()
 
+# === Materials/ =============================================================
+# Material graphs (Materials/*.material.nmgraph, edited in NimbleEditor) and
+# what they generate -- the .fsh and .material beside each. Cooked for every
+# backend GDI is built with and staged where RenderCore loads a material by
+# name; see Engine/cmake/NimbleMaterials.cmake. The editor recooks one for its
+# own viewport on save; a build is what a Client or Server target gets.
+if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" RUNTIME_DIR "${SANDBOX_RT_DIR}")
+else()
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials")
+endif()
+
 # === IDE ===================================================================
 # Without this, a Visual Studio or CLion run starts in the build directory and
 # the config lookup above silently misses -- the app still runs, on defaults,

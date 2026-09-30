@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <vector>
 
+#include <QImage>
 #include <QObject>
 #include <QString>
 
@@ -69,6 +70,22 @@ public:
     void Shutdown();
 
     bool IsRendererReady() const { return bRendererReady; }
+
+    /* The backend InitializeRenderer was asked for -- what a material has to
+     * be cooked for to show in the viewport. Null before then. */
+    RenderCore::ERenderBackend GetRenderBackend() const { return Backend; }
+
+    /* Forgets material InName (empty: every material) so the viewport's next
+     * frame reads it from disk again -- after a material graph was recooked.
+     * Nothing when the Renderer is not running. */
+    void ReloadMaterial(const QString& InName);
+
+    /* A picture of material InName drawn by the viewport's own renderer --
+     * see Renderer::RequestMaterialPreview. 0 when the Renderer is not
+     * running; otherwise poll TakeMaterialPreview, which is true once, with
+     * the image or (OutImage null) why there is none. */
+    uint64_t RequestMaterialPreview(const QString& InName, int InSize, EngineCore::Color InTint);
+    bool     TakeMaterialPreview(uint64_t InRequest, QImage& OutImage, QString& OutError);
 
     /* False, leaving OutStats untouched, when the Renderer is not running. */
     bool GetRenderStats(RenderCore::RenderStats& OutStats) const;
@@ -309,6 +326,7 @@ private:
     GameCore::World*      ActiveWorld = nullptr;   // EditedWorld, or the playing level's
     RenderCore::Renderer* Renderer    = nullptr;
     bool                  bRendererReady = false;
+    RenderCore::ERenderBackend Backend   = RenderCore::ERenderBackend::Null;
 
     GameCore::EntityID    Selection;
 

@@ -12,8 +12,18 @@
 #include <QProcess>
 #include <QUndoStack>
 
+#include <cstring>
+#include <map>
+#include <memory>
+
+#include <QTimer>
+
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/Entity.h"
+#include "Public/GameCore/World.h"
 #include "Public/NodeGraph/GraphFile.h"
+#include "Public/RenderCore/RenderComponents.h"
+#include "Public/Editor/EditorContext.h"
 #include "Private/Editor/Graph/GraphDocument.h"
 #include "Private/Editor/Graph/GraphEditorWindow.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
@@ -34,6 +44,118 @@ namespace
     {
         static QList<QPointer<GraphEditorWindow>> Windows;
         return Windows;
+    }
+
+    /* SetEditorContext's; a QPointer, so a destroyed context reads as null. */
+    QPointer<EditorContext>& Context()
+    {
+        static QPointer<EditorContext> Current;
+        return Current;
+    }
+
+    /* One material's cook: running, and whether a newer request waits. */
+    struct MaterialCook
+    {
+        bool                                      bRunning = false;
+        bool                                      bPending = false;
+        QPointer<QObject>                         PendingContext;
+        std::function<void(bool, const QString&)> PendingDone;
+    };
+
+    std::map<QString, MaterialCook>& MaterialCooks()
+    {
+        static std::map<QString, MaterialCook> Cooks;
+        return Cooks;
+    }
+
+    /* cook_material_graphs.py's -target for a backend; empty for one it
+     * cannot cook (Null draws nothing; Metal's cook is not wired up). */
+    QString CookTarget(const RenderCore::ERenderBackend InBackend)
+    {
+        switch(InBackend)
+        {
+            case RenderCore::ERenderBackend::OpenGL: return QStringLiteral("OpenGL");
+            case RenderCore::ERenderBackend::Vulkan: return QStringLiteral("Vulkan");
+            case RenderCore::ERenderBackend::D3D12:  return QStringLiteral("D3D12");
+            default:                                 return QString();
+        }
+    }
+
+    /* Where a material's shader waits to be cooked: the cook names its
+     * output after the file, so the file is <Name>.fsh, in a folder of its own. */
+    QString CookSourcePath(const QString& InName)
+    {
+        return QDir(QDir::temp().filePath(QStringLiteral("NimbleMaterialCook"))).filePath(InName + QStringLiteral(".fsh"));
+    }
+
+    void RunMaterialCook(const QString& InName, QObject* InContext, std::function<void(bool, const QString&)> InDone);
+
+    /* A cook finished: reload, report, and start the one that waited, if any. */
+    void FinishMaterialCook(const QString& InName, const bool bInWorked, const QString& InMessage,
+                            const QPointer<QObject>& InContext, const std::function<void(bool, const QString&)>& InDone)
+    {
+        if(bInWorked && Context()) { Context()->ReloadMaterial(InName); }
+        if(InContext && InDone) { InDone(bInWorked, InMessage); }
+
+        MaterialCook& Cook = MaterialCooks()[InName];
+        Cook.bRunning = false;
+        if(Cook.bPending)
+        {
+            Cook.bPending = false;
+            RunMaterialCook(InName, Cook.PendingContext, std::move(Cook.PendingDone));
+        }
+    }
+
+    void RunMaterialCook(const QString& InName, QObject* InContext, std::function<void(bool, const QString&)> InDone)
+    {
+        MaterialCook& Cook = MaterialCooks()[InName];
+        Cook.bRunning = true;
+
+        const RenderCore::ERenderBackend Backend = Context() ? Context()->GetRenderBackend() : RenderCore::ERenderBackend::Null;
+        const QString Target = CookTarget(Backend);
+        const QPointer<QObject> Guard(InContext);
+
+        if(Target.isEmpty())
+        {
+            /* Nothing to compile for Null; the reload alone re-reads the .material. */
+            const bool bNull = Backend == RenderCore::ERenderBackend::Null;
+            FinishMaterialCook(InName, bNull, bNull ? QStringLiteral("staged (the Null backend compiles nothing)")
+                                                    : QStringLiteral("no shader cook for this backend"), Guard, InDone);
+            return;
+        }
+        if(!EditorGraphs::CanCheckShaders())
+        {
+            FinishMaterialCook(InName, false, QStringLiteral("cannot cook: the editor was built without Python "
+                                                             "(see NodeGraph's CMakeLists)"), Guard, InDone);
+            return;
+        }
+
+        const QString Out = QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("Shaders/Cooked"));
+        auto* Process = new QProcess(qApp);
+        Process->setProcessChannelMode(QProcess::MergedChannels);
+        QObject::connect(Process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), qApp,
+                         [Process, InName, Target, Guard, InDone](const int InCode, const QProcess::ExitStatus InStatus)
+        {
+            const QString Output = QString::fromUtf8(Process->readAll()).trimmed();
+            const bool bWorked = InStatus == QProcess::NormalExit && InCode == 0;
+            if(!bWorked)
+            {
+                CORE_LOG_WARN("[Graph] cooking material '" + EditorGraphs::ToStd(InName) + "' failed:\n" + EditorGraphs::ToStd(Output))
+            }
+            Process->deleteLater();
+            FinishMaterialCook(InName, bWorked, bWorked ? QStringLiteral("cooked for %1").arg(Target) : Output, Guard, InDone);
+        });
+        QObject::connect(Process, &QProcess::errorOccurred, qApp, [Process, InName, Guard, InDone](const QProcess::ProcessError InError)
+        {
+            if(InError != QProcess::FailedToStart) { return; }   // finished() reports the rest
+            Process->deleteLater();
+            FinishMaterialCook(InName, false, QStringLiteral("could not run the shader cook: ") + Process->errorString(), Guard, InDone);
+        });
+
+        Process->start(QString::fromUtf8(NIMBLEEDITOR_PYTHON),
+                       { QString::fromUtf8(NIMBLEEDITOR_MATERIAL_CHECK_SCRIPT), QStringLiteral("-target"), Target,
+                         QStringLiteral("-src"), CookSourcePath(InName), QStringLiteral("-out"), Out,
+                         QStringLiteral("-subdir"), QStringLiteral("Materials") });
     }
 
     QString Canonical(const QString& InPath)
@@ -117,7 +239,7 @@ namespace EditorGraphs
 
     QString GetDefaultFolder(const Schema& InSchema)
     {
-        return QDir(GetProjectRoot()).filePath(InSchema.GetName() == "Script" ? QStringLiteral("Scripts") : QStringLiteral("Shaders"));
+        return QDir(GetProjectRoot()).filePath(InSchema.GetName() == "Script" ? QStringLiteral("Scripts") : QStringLiteral("Materials"));
     }
 
     QString GetFileFilter(const Schema* InOnly)
@@ -134,7 +256,8 @@ namespace EditorGraphs
         return Filters.join(QStringLiteral(";;"));
     }
 
-    bool WriteOutput(const QString& InGraphPath, const Graph& InGraph, CompileResult& OutResult, QString& OutMessage)
+    bool WriteOutput(const QString& InGraphPath, const Graph& InGraph, CompileResult& OutResult, QString& OutMessage,
+                     QObject* InContext, std::function<void(bool, const QString&)> InStaged)
     {
         const QString Name = QFileInfo(InGraphPath).fileName();
         const Schema* S = FindSchema(InGraph.SchemaName);
@@ -161,15 +284,201 @@ namespace EditorGraphs
             return false;
         }
 
+        for(const auto& Companion : OutResult.Companions)
+        {
+            const std::string CompanionPath = StripGraphExtension(ToStd(InGraphPath)) + Companion.first;
+            if(!WriteTextFileIfChanged(CompanionPath, Companion.second, Error))
+            {
+                OutMessage = QStringLiteral("Saved %1, but could not write %2: %3").arg(Name, ToQ(CompanionPath), ToQ(Error));
+                CORE_LOG_ERROR("[Graph] " + ToStd(OutMessage))
+                return false;
+            }
+        }
+
         OutMessage = QStringLiteral("Saved %1 -> %2").arg(Name, QFileInfo(Output).fileName());
 
-        const QString Staged = StagedPathFor(Output);
-        if(!Staged.isEmpty())
+        if(S->GetName() == "Material")
         {
-            if(WriteTextFileIfChanged(ToStd(Staged), OutResult.Code, Error)) { OutMessage += QStringLiteral(" (staged for Play)"); }
-            else { CORE_LOG_WARN("[Graph] could not stage " + ToStd(Staged) + ": " + Error) }
+            /* By name, cooked for the viewport; see the header. */
+            const QString Material = GetMaterialName(InGraphPath);
+            if(InStaged)
+            {
+                StageMaterial(Material, OutResult, InContext ? InContext : qApp, std::move(InStaged));
+            }
+            else
+            {
+                StageMaterial(Material, OutResult, qApp, [Material](const bool bInWorked, const QString& InWhat)
+                {
+                    if(bInWorked) { CORE_LOG("[Graph] material '" + ToStd(Material) + "': " + ToStd(InWhat)) }
+                });
+            }
+            OutMessage += QStringLiteral(" (cooking for the viewport)");
+        }
+        else
+        {
+            const QString Staged = StagedPathFor(Output);
+            if(!Staged.isEmpty())
+            {
+                if(WriteTextFileIfChanged(ToStd(Staged), OutResult.Code, Error)) { OutMessage += QStringLiteral(" (staged for Play)"); }
+                else { CORE_LOG_WARN("[Graph] could not stage " + ToStd(Staged) + ": " + Error) }
+            }
         }
         CORE_LOG("[Graph] " + ToStd(OutMessage))
+        return true;
+    }
+
+    // === Materials in the viewport ===========================================
+
+    void SetEditorContext(EditorContext* InContext)
+    {
+        Context() = InContext;
+    }
+
+    QString GetMaterialName(const QString& InGraphPath)
+    {
+        return ToQ(GetGraphBaseName(ToStd(InGraphPath)));
+    }
+
+    void StageMaterial(const QString& InName, const CompileResult& InResult, QObject* InContext,
+                       std::function<void(bool, const QString&)> InDone)
+    {
+        const QPointer<QObject> Guard(InContext);
+        const auto Fail = [&](const QString& InWhy) { if(Guard && InDone) { InDone(false, InWhy); } };
+
+        if(InResult.HasErrors() || InResult.Code.empty())
+        {
+            Fail(QStringLiteral("the graph has errors"));
+            return;
+        }
+        if(InName.toUtf8().size() >= int(RenderCore::PRIMITIVE_MATERIAL_NAME_MAX))
+        {
+            Fail(QStringLiteral("the name '%1' is too long for a primitive to refer to").arg(InName));
+            return;
+        }
+
+        /* The parameters, where RenderCore reads them... */
+        std::string Error;
+        for(const auto& Companion : InResult.Companions)
+        {
+            const QString Staged = QDir(QCoreApplication::applicationDirPath())
+                                   .filePath(QStringLiteral("Materials/") + InName + ToQ(Companion.first));
+            if(!WriteTextFileIfChanged(ToStd(Staged), Companion.second, Error))
+            {
+                Fail(QStringLiteral("could not write %1: %2").arg(Staged, ToQ(Error)));
+                return;
+            }
+        }
+
+        /* ...and the shader, where the cook picks it up. */
+        const QString Source = CookSourcePath(InName);
+        if(!WriteTextFileIfChanged(ToStd(Source), InResult.Code, Error))
+        {
+            Fail(QStringLiteral("could not write %1: %2").arg(Source, ToQ(Error)));
+            return;
+        }
+
+        MaterialCook& Cook = MaterialCooks()[InName];
+        if(Cook.bRunning)
+        {
+            /* Replaces any request already waiting: only the newest matters. */
+            Cook.bPending       = true;
+            Cook.PendingContext = Guard;
+            Cook.PendingDone    = std::move(InDone);
+            return;
+        }
+        RunMaterialCook(InName, InContext, std::move(InDone));
+    }
+
+    void RequestMaterialPreview(const QString& InName, const int InSize, const QColor& InTint, QObject* InContext,
+                                std::function<void(const QImage&, const QString&)> InDone)
+    {
+        EditorContext* Ctx = Context();
+        const uint64_t Request = Ctx ? Ctx->RequestMaterialPreview(InName, InSize,
+                                           EngineCore::Color(uint8_t(InTint.red()), uint8_t(InTint.green()),
+                                                             uint8_t(InTint.blue()), uint8_t(InTint.alpha())))
+                                     : 0;
+        if(Request == 0)
+        {
+            InDone(QImage(), QStringLiteral("The viewport's renderer is not running"));
+            return;
+        }
+
+        /* The render thread draws it during the viewport's next frame; poll
+         * for it, giving up after a few seconds (a minimised editor renders
+         * nothing). */
+        auto* Poll = new QTimer(InContext);
+        auto  Tries = std::make_shared<int>(0);
+        QObject::connect(Poll, &QTimer::timeout, InContext, [Poll, Request, Tries, InDone]()
+        {
+            QImage  Image;
+            QString Error;
+            EditorContext* Now = Context();
+            if(Now && Now->TakeMaterialPreview(Request, Image, Error))
+            {
+                Poll->deleteLater();
+                InDone(Image, Error);
+                return;
+            }
+            if(!Now || ++*Tries > 150)
+            {
+                Poll->deleteLater();
+                InDone(QImage(), QStringLiteral("No frame was rendered to draw the preview (is the viewport visible?)"));
+            }
+        });
+        Poll->start(20);
+    }
+
+    void RestoreMaterial(const QString& InGraphPath)
+    {
+        Graph Saved;
+        std::string Error;
+        if(!LoadGraphFile(ToStd(InGraphPath), Saved, Error)) { return; }
+
+        CompileResult Result;
+        CompileGraph(Saved, Result);
+        if(!Result.HasErrors())
+        {
+            StageMaterial(GetMaterialName(InGraphPath), Result, qApp, nullptr);
+        }
+    }
+
+    bool ApplyMaterialToSelection(const QString& InName, QString& OutMessage)
+    {
+        EditorContext* Ctx = Context();
+        if(!Ctx)
+        {
+            OutMessage = QStringLiteral("No scene to apply it to");
+            return false;
+        }
+        const GameCore::EntityID Target = Ctx->GetSelection();
+        if(!Target.IsSet() || !Ctx->GetWorld().IsAlive(Target))
+        {
+            OutMessage = QStringLiteral("Select an entity in the Outliner or the viewport first");
+            return false;
+        }
+        const QByteArray Name = InName.toUtf8();
+        if(Name.size() >= int(RenderCore::PRIMITIVE_MATERIAL_NAME_MAX))
+        {
+            OutMessage = QStringLiteral("The material name '%1' is too long").arg(InName);
+            return false;
+        }
+
+        const GameCore::ComponentTypeID Type = RenderCore::PrimitiveComponent::StaticType().ID;
+        const GameCore::Entity Handle = Ctx->GetWorld().GetEntity(Target);
+        if(!Handle.GetComponent<RenderCore::PrimitiveComponent>() && !Ctx->AddComponent(Target, Type))
+        {
+            OutMessage = QStringLiteral("Could not add a Primitive to %1").arg(Ctx->GetDisplayName(Target));
+            return false;
+        }
+
+        /* Written in place, then reported -- the context records it against
+         * the values it held before, as a Details panel edit would be. */
+        RenderCore::PrimitiveComponent* Primitive = Handle.GetComponent<RenderCore::PrimitiveComponent>();
+        std::memset(Primitive->Material, 0, sizeof(Primitive->Material));
+        std::memcpy(Primitive->Material, Name.constData(), size_t(Name.size()));
+        Ctx->NotifyPropertyEdited(Target, Type);
+
+        OutMessage = QStringLiteral("%1 now draws with %2").arg(Ctx->GetDisplayName(Target), InName);
         return true;
     }
 

@@ -149,6 +149,10 @@ namespace RenderCore
                 RunDrainStep(Cmd);
             }
 
+            /* What the context created itself (material shaders) goes first,
+             * while the device it belongs to is still alive. */
+            Context.ReleaseGPUResources();
+
             /* ReleaseGDI deletes the driver WITHOUT calling Destroy(), so GPU
              * objects would outlive their owner. Both belong on the
              * context's thread -- NimbleEngine.cpp's own comment, carried

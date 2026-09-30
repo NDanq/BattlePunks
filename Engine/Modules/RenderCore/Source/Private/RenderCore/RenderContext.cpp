@@ -2,8 +2,15 @@
 
 #include <atomic>
 #include <cmath>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
+#include "Public/Core/CoreFileProvider.h"
+#include "Public/Core/CoreImage.h"
 #include "Public/GDI/Shaders/Classes/TestbedShaders.h"
+#include "Public/RenderCore/RenderCoreLog.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 
 /*
@@ -14,10 +21,104 @@
  * GDICamera would have produced, without RenderContext owning one itself
  * (GDICamera's own UpdateDimensions recomputes from a width/height it does
  * not have here; RenderView already carries the finished matrices).
+ *
+ * DrawQuadWithMaterial swaps in a material's pixel shader for Basic_PS -- the
+ * vertex side is Basic_VS either way, whose interpolants (Common.glsl) are
+ * what a material graph's inputs read.
  */
 
 namespace RenderCore
 {
+    namespace
+    {
+        const char* const MATERIAL_FOLDER  = "Materials/";
+        const char* const MATERIAL_UNIFORM = "MaterialParams";
+        constexpr int     MATERIAL_SLOTS   = 3;   // columns 0-2; column 3 is the tint
+
+        /* A material's pixel shader: GDI's registry keys shaders by C++
+         * type, one instance per type, so a material -- one of any number,
+         * named at run time -- is created and owned here instead. */
+        class MaterialPixelShader final : public GDIShader
+        {
+        public:
+            explicit MaterialPixelShader(const std::string& InName) : GDIShader(InName) {}
+
+            void InitUniformBindings() override
+            {
+                RegisterUniform(MATERIAL_UNIFORM, EngineCore::Matrix4x4());
+            }
+        };
+
+        struct Material
+        {
+            GDIShader* Pixel = nullptr;           // null: failed to load, drawn as DrawQuad
+            float      Slots[MATERIAL_SLOTS][4] = {};
+        };
+
+        /* Where GDI's own cooked-path rule (GDIShader.cpp's GetCookedShaderPath)
+         * puts a material's shader -- checked before InitResource, which on
+         * OpenGL treats a missing file as a hard error. */
+        std::string CookedMaterialPath(const std::string& InName, const ERenderBackend InBackend)
+        {
+            const std::string File = std::string(MATERIAL_FOLDER) + InName + ".fsh";
+            switch(InBackend)
+            {
+                case ERenderBackend::OpenGL: return "Shaders/Cooked/OpenGL/" + File;
+                case ERenderBackend::Vulkan: return "Shaders/Cooked/Vulkan/" + File + ".spv";
+                case ERenderBackend::Metal:  return "Shaders/Cooked/Metal/"  + File + ".metal";
+                case ERenderBackend::D3D12:  return "Shaders/Cooked/D3D12/"  + File + ".cso";
+                case ERenderBackend::Null:   break;
+            }
+            return std::string();
+        }
+
+        /* Materials/<Name>.material: "Param <Name> <Slot> <Type> x y z w"
+         * lines (NodeGraph's MaterialSchema.cpp writes them). False if the
+         * file is not a material. */
+        bool ParseMaterial(const std::string& InText, Material& OutMaterial, std::string& OutError)
+        {
+            std::istringstream Lines(InText);
+            std::string Line;
+            bool bHeader = false;
+            while(std::getline(Lines, Line))
+            {
+                const size_t Hash = Line.find('#');
+                if(Hash != std::string::npos) { Line.resize(Hash); }
+
+                std::istringstream Words(Line);
+                std::string Keyword;
+                if(!(Words >> Keyword)) { continue; }
+
+                if(Keyword == "NimbleMaterial")
+                {
+                    int Version = 0;
+                    Words >> Version;
+                    if(Version != 1)
+                    {
+                        OutError = "unsupported material version " + std::to_string(Version);
+                        return false;
+                    }
+                    bHeader = true;
+                }
+                else if(Keyword == "Param")
+                {
+                    std::string Name, Type;
+                    int Slot = -1;
+                    float Values[4] = {};
+                    Words >> Name >> Slot >> Type >> Values[0] >> Values[1] >> Values[2] >> Values[3];
+                    if(Words.fail() || Slot < 0 || Slot >= MATERIAL_SLOTS)
+                    {
+                        OutError = "bad parameter line '" + Line + "'";
+                        return false;
+                    }
+                    for(int Lane = 0; Lane < 4; ++Lane) { OutMaterial.Slots[Slot][Lane] = Values[Lane]; }
+                }
+            }
+            if(!bHeader) { OutError = "no NimbleMaterial header"; }
+            return bHeader;
+        }
+    }
+
     struct RenderContext::Impl
     {
         ERenderBackend Backend      = ERenderBackend::Null;
@@ -26,7 +127,19 @@ namespace RenderCore
 
         GDIView*       View3D    = nullptr;   // owns the GDICamera DrawQuad overwrites per SetView()
         GDIViewObject* ViewObject = nullptr;   // owns the shared unit quad mesh
-        bool           bShadersBound = false;
+
+        /* What GDISetBoundShader last got from here -- rebinding is skipped
+         * when a draw wants the same pair. Forgotten at every frame start,
+         * in case something outside this class bound others in between. */
+        GDIShader*     BoundVertex = nullptr;
+        GDIShader*     BoundPixel  = nullptr;
+
+        std::unordered_map<std::string, Material> Materials;
+        std::vector<GDIShader*>                   RetiredShaders;   // see RenderContext::ReloadMaterial
+
+        /* RenderMaterialPreview's target, square, resized as asked. */
+        GDIRenderTarget* PreviewTarget = nullptr;
+        int              PreviewSize   = 0;
 
         std::atomic<uint64_t> DrawCallCount{0};
 
@@ -51,6 +164,76 @@ namespace RenderCore
              * GDITransform::Scale (set per call below) is what actually
              * varies a primitive's on-screen size. */
             ViewObject = new GDIViewObject(View3D);
+        }
+
+        void Bind(GDIShader* InVertex, GDIShader* InPixel)
+        {
+            if(InVertex != BoundVertex || InPixel != BoundPixel)
+            {
+                GDISetBoundShader(InVertex, InPixel);
+                BoundVertex = InVertex;
+                BoundPixel  = InPixel;
+            }
+        }
+
+        /* The camera and the quad's placement, shared by both quad draws. */
+        void PlaceQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight)
+        {
+            /* Camera's matrices are the finished RenderView's, not recomputed
+             * from a width/height GDICamera would otherwise need -- overwritten
+             * here rather than in SetView() so a RenderContext used with no
+             * RenderScene at all (a hand-built scene in a test) still draws
+             * correctly as long as SetView() was called at least once. */
+            View3D->Camera->Projection = View.Projection;
+            View3D->Camera->ViewMat    = View.View;
+
+            GDITransform* Transform = ViewObject->Transform;
+            Transform->Translate = InTransform.Position;
+            Transform->Rotate    = InTransform.Rotation;
+            Transform->Scale     = EngineCore::Vector3(InTransform.Scale.GetX() * double(InWidth),
+                                                       InTransform.Scale.GetY() * double(InHeight),
+                                                       InTransform.Scale.GetZ());
+        }
+
+        /* The material, loaded on first use. A failed load is remembered (as
+         * a Material with no shader) so it is warned about once, not per frame. */
+        Material& FindMaterial(const std::string& InName)
+        {
+            const auto Found = Materials.find(InName);
+            if(Found != Materials.end())
+            {
+                return Found->second;
+            }
+
+            Material& Loaded = Materials[InName];
+            EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
+            const std::string DataPath   = std::string(MATERIAL_FOLDER) + InName + ".material";
+            const std::string ShaderPath = CookedMaterialPath(InName, Backend);
+
+            std::string Text, Error;
+            if(!Provider || !Provider->ReadAllText(DataPath, Text))
+            {
+                RENDERCORE_LOG_WARN("material '" + InName + "': cannot read " + DataPath + "; drawing the plain tint")
+                return Loaded;
+            }
+            if(!ParseMaterial(Text, Loaded, Error))
+            {
+                RENDERCORE_LOG_WARN("material '" + InName + "': " + DataPath + ": " + Error + "; drawing the plain tint")
+                return Loaded;
+            }
+            if(!ShaderPath.empty() && !Provider->Exists(ShaderPath))
+            {
+                RENDERCORE_LOG_WARN("material '" + InName + "': no cooked shader at " + ShaderPath
+                                    + " -- cook it for this backend; drawing the plain tint")
+                return Loaded;
+            }
+
+            auto* Shader = new MaterialPixelShader("Material:" + InName);
+            Shader->InitResource(ST_Pixel, std::string(MATERIAL_FOLDER) + InName + ".fsh");
+            Shader->InitUniformBindings();
+            Loaded.Pixel = Shader;
+            RENDERCORE_LOG("material '" + InName + "' loaded")
+            return Loaded;
         }
     };
 
@@ -82,28 +265,8 @@ namespace RenderCore
                                   const EngineCore::Color InTint)
     {
         P->EnsureInitialised();
-
-        if(!P->bShadersBound)
-        {
-            GDISetBoundShader(GDIGetShader<Basic_VS>(), GDIGetShader<Basic_PS>());
-            P->bShadersBound = true;
-        }
-
-        /* Camera's matrices are the finished RenderView's, not recomputed
-         * from a width/height GDICamera would otherwise need -- overwritten
-         * here rather than in SetView() so a RenderContext used with no
-         * RenderScene at all (a hand-built scene in a test, per this
-         * build-order step's own smoke cases) still draws correctly as long
-         * as SetView() was called at least once. */
-        P->View3D->Camera->Projection = P->View.Projection;
-        P->View3D->Camera->ViewMat    = P->View.View;
-
-        GDITransform* Transform = P->ViewObject->Transform;
-        Transform->Translate = InTransform.Position;
-        Transform->Rotate    = InTransform.Rotation;
-        Transform->Scale     = EngineCore::Vector3(InTransform.Scale.GetX() * double(InWidth),
-                                                    InTransform.Scale.GetY() * double(InHeight),
-                                                    InTransform.Scale.GetZ());
+        P->Bind(GDIGetShader<Basic_VS>(), GDIGetShader<Basic_PS>());
+        P->PlaceQuad(InTransform, InWidth, InHeight);
 
         /* Basic_PS::InitUniformBindings (TestbedShaders.h) registers
          * "TestColor" as a Vector3 -- overwritten here, per draw, with
@@ -114,6 +277,38 @@ namespace RenderCore
         {
             Pixel->SetUniform("TestColor", EngineCore::Vector3(InTint.Rf(), InTint.Gf(), InTint.Bf()));
         }
+
+        GDIDrawObject(P->ViewObject);
+
+        P->DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void RenderContext::DrawQuadWithMaterial(const RenderTransform& InTransform, const float InWidth, const float InHeight,
+                                             const EngineCore::Color InTint, const char* InMaterial)
+    {
+        const Material& Found = P->FindMaterial(InMaterial ? std::string(InMaterial) : std::string());
+        if(!Found.Pixel)
+        {
+            DrawQuad(InTransform, InWidth, InHeight, InTint);
+            return;
+        }
+
+        P->EnsureInitialised();
+        P->Bind(GDIGetShader<Basic_VS>(), Found.Pixel);
+        P->PlaceQuad(InTransform, InWidth, InHeight);
+
+        /* Column c of the shader's mat4 is Matrix4x4 column c: every backend
+         * transposes Matrix4x4's rows into the column-major upload. */
+        EngineCore::Matrix4x4 Params;
+        for(int Column = 0; Column < MATERIAL_SLOTS; ++Column)
+        {
+            for(int Row = 0; Row < 4; ++Row) { Params.Data[Row][Column] = Found.Slots[Column][Row]; }
+        }
+        Params.Data[0][3] = InTint.Rf();
+        Params.Data[1][3] = InTint.Gf();
+        Params.Data[2][3] = InTint.Bf();
+        Params.Data[3][3] = InTint.Af();
+        Found.Pixel->SetUniform(MATERIAL_UNIFORM, Params);
 
         GDIDrawObject(P->ViewObject);
 
@@ -189,11 +384,7 @@ namespace RenderCore
         Segment.Data[3][0] = 0.0f;         Segment.Data[3][1] = 0.0f;         Segment.Data[3][2] = 0.0f;          Segment.Data[3][3] = 1.0f;
 
         P->EnsureInitialised();
-        if(!P->bShadersBound)
-        {
-            GDISetBoundShader(GDIGetShader<Basic_VS>(), GDIGetShader<Basic_PS>());
-            P->bShadersBound = true;
-        }
+        P->Bind(GDIGetShader<Basic_VS>(), GDIGetShader<Basic_PS>());
 
         /* The shader computes Projection * View * Model * v; with Model the
          * identity, View * Segment places the quad. Both uniforms are
@@ -241,10 +432,119 @@ namespace RenderCore
     void RenderContext::SetFrameNumber(const uint64_t InFrameNumber)
     {
         P->FrameNumber = InFrameNumber;
+        P->BoundVertex = nullptr;
+        P->BoundPixel  = nullptr;
     }
 
     void RenderContext::SetView(const RenderView& InView)
     {
         P->View = InView;
+    }
+
+    void RenderContext::ReloadMaterial(const char* InName)
+    {
+        const auto Retire = [this](Material& InMaterial)
+        {
+            if(InMaterial.Pixel)
+            {
+                if(P->BoundPixel == InMaterial.Pixel) { P->BoundPixel = nullptr; }
+                P->RetiredShaders.push_back(InMaterial.Pixel);
+                InMaterial.Pixel = nullptr;
+            }
+        };
+
+        if(!InName || InName[0] == '\0')
+        {
+            for(auto& Each : P->Materials) { Retire(Each.second); }
+            P->Materials.clear();
+            return;
+        }
+
+        const auto Found = P->Materials.find(InName);
+        if(Found != P->Materials.end())
+        {
+            Retire(Found->second);
+            P->Materials.erase(Found);
+        }
+    }
+
+#if WITH_EDITOR
+    bool RenderContext::RenderMaterialPreview(const char* InMaterial, const int InSize, const EngineCore::Color InTint,
+                                              EngineCore::Image& OutImage, std::string& OutError)
+    {
+        const std::string Name = InMaterial ? InMaterial : "";
+        const int Size = InSize < 16 ? 16 : (InSize > 1024 ? 1024 : InSize);
+
+        /* Loaded (or failed) exactly as the viewport's draw would. */
+        if(!P->FindMaterial(Name).Pixel)
+        {
+            OutError = "material '" + Name + "' could not be loaded -- see the log";
+            return false;
+        }
+
+        P->EnsureInitialised();
+        if(!P->PreviewTarget)
+        {
+            P->PreviewTarget = GDICreateRenderTarget("RenderCore.MaterialPreview", uint(Size), uint(Size));
+        }
+        else if(P->PreviewSize != Size)
+        {
+            P->PreviewTarget->Resize(uint(Size), uint(Size));
+        }
+        P->PreviewSize = Size;
+        if(!P->PreviewTarget)
+        {
+            OutError = "could not create the preview render target";
+            return false;
+        }
+
+        /* A pixel-space view over exactly the target, and the quad filling
+         * it -- the scene's own view is put back afterwards. The eye sits at
+         * the quad's own depth, as a game's camera does: with ZNear -1 the
+         * orthographic volume admits view-space z up to +1 only, so an eye
+         * pulled back along -z would clip the quad away. */
+        const RenderView Saved = P->View;
+        P->View = RenderView::MakeOrthographic(EngineCore::Size(Size, Size), EngineCore::Vector3(0.0, 0.0, 0.0), -1.0f, 1000.0f);
+
+        GDISetRenderTarget(P->PreviewTarget);
+        GDISetViewport(0, 0, uint(Size), uint(Size));
+        GDISetColorMask(EColM_RGBA);   // see RenderScene::Render: nothing reaches a target without it
+        GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
+        GDISetDepthState(IDepthStateDesc());
+        GDIClear(CM_Color | CM_Depth, EngineCore::Color(38, 40, 46, 255));   // the editor viewport's clear
+
+        RenderTransform Quad;
+        Quad.Position = EngineCore::Vector3(double(Size) * 0.5, double(Size) * 0.5, 0.0);
+        DrawQuadWithMaterial(Quad, float(Size), float(Size), InTint, Name.c_str());
+
+        /* Flushes the frame so far, reads back, and resumes it (every backend's
+         * ToImage does); the caller binds its own target next. */
+        OutImage = P->PreviewTarget->ToImage();
+        P->View  = Saved;
+
+        if(OutImage.GetWidth() == 0)
+        {
+            OutError = "this backend reads nothing back (the Null backend draws nothing)";
+            return false;
+        }
+        return true;
+    }
+#endif // WITH_EDITOR
+
+    void RenderContext::ReleaseGPUResources()
+    {
+        if(P->PreviewTarget)
+        {
+            GDIReleaseRenderTarget(P->PreviewTarget);
+            delete P->PreviewTarget;
+            P->PreviewTarget = nullptr;
+            P->PreviewSize   = 0;
+        }
+
+        ReloadMaterial(nullptr);
+        for(GDIShader* Each : P->RetiredShaders) { delete Each; }   // ~GDIShader releases its resource
+        P->RetiredShaders.clear();
+        P->BoundVertex = nullptr;
+        P->BoundPixel  = nullptr;
     }
 }
