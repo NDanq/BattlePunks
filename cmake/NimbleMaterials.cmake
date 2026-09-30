@@ -28,6 +28,8 @@
 # would say it directly, but that is CMake 3.17 and this project targets 3.16.)
 get_filename_component(NM_COOK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Modules/NodeGraph/Scripts/cook_material_graphs.py" ABSOLUTE)
 set(NIMBLE_MATERIAL_COOK_SCRIPT "${NM_COOK_SCRIPT}" CACHE INTERNAL "NodeGraph's material cook, for nimble_stage_materials")
+get_filename_component(NM_PLATFORM_HEADER "${CMAKE_CURRENT_LIST_DIR}/../Modules/NodeGraph/Shaders/MaterialPlatform.glsl" ABSOLUTE)
+set(NIMBLE_MATERIAL_PLATFORM_HEADER "${NM_PLATFORM_HEADER}" CACHE INTERNAL "NodeGraph's MaterialPlatform.glsl, which cooked materials may include")
 
 function(nimble_stage_materials)
     cmake_parse_arguments(NM "" "TARGET;DIR;RUNTIME_DIR" "" ${ARGN})
@@ -79,7 +81,7 @@ function(nimble_stage_materials)
             OUTPUT  "${NM_STAMP}"
             ${NM_COMMANDS}
             COMMAND ${CMAKE_COMMAND} -E touch "${NM_STAMP}"
-            DEPENDS ${NM_SHADERS} ${NM_MATERIALS} "${NIMBLE_MATERIAL_COOK_SCRIPT}"
+            DEPENDS ${NM_SHADERS} ${NM_MATERIALS} "${NIMBLE_MATERIAL_COOK_SCRIPT}" "${NIMBLE_MATERIAL_PLATFORM_HEADER}"
             COMMENT "${NM_TARGET}: cooking and staging materials from ${NM_DIR}"
             VERBATIM)
 

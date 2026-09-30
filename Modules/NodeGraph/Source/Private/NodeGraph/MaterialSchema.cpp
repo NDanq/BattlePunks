@@ -1,5 +1,7 @@
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <functional>
 #include <map>
 #include <set>
 
@@ -28,6 +30,14 @@
  *
  * The parameters' defaults go in a companion text file, <Name>.material, which
  * the renderer reads with the shader (MaterialFormat below).
+ *
+ * CONTROL FLOW. A Branch is a real `if`, and a For Loop / For Loop End pair a
+ * real `for` whose body is everything between them. A value is computed in
+ * the innermost block all of its uses share (AnalyseScopes): one that only a
+ * Branch's True side needs is computed inside that side, and skipped when the
+ * other runs; one both sides need, before the `if`. Hints ([branch],
+ * [unroll], ...) are the HINT_* macros of NodeGraph/Shaders/
+ * MaterialPlatform.glsl, which a shader includes only when it uses one.
  */
 namespace NodeGraph
 {
@@ -41,11 +51,16 @@ namespace
         MOP_Output,          // the root
         MOP_Mask,            // Component Mask: the ticked components, in order
         MOP_Swizzle,         // Swizzle: any components, any order, repeats allowed
+        MOP_Branch,          // an if: True or False, by comparing A with B
+        MOP_LoopBegin,       // For Loop: Index and Value, inside its loop only
+        MOP_LoopEnd,         // For Loop End: Next each time round, Result after
     };
 
     constexpr int UNIFORM_BLOCK_BINDING = 2;
     constexpr int PARAMETER_SLOTS       = 3;   // MaterialParams columns 0-2; 3 is the tint
     const char* const PARAMS_UNIFORM    = "MaterialParams";
+    const char* const PLATFORM_HEADER   = "MaterialPlatform.glsl";   // NodeGraph/Shaders/
+    const char* const LOOP_TYPE         = "loop";                    // For Loop -> its For Loop End
 
     const std::vector<std::string> GFloatTypes  = { "float", "vec2", "vec3", "vec4" };
     const std::vector<std::string> GVectorTypes = { "vec3", "vec2", "vec4" };
@@ -145,6 +160,47 @@ namespace
         return bXyzw && bRgba ? std::string() : Out;
     }
 
+    /* A Branch's and a For Loop's settings. A hint of "None" leaves it to the driver. */
+    const std::vector<std::string> GCompareChoices    = { ">", ">=", "<", "<=", "==", "!=" };
+    const std::vector<std::string> GBranchHintChoices = { "None", "Branch", "Flatten" };
+    const std::vector<std::string> GLoopHintChoices   = { "None", "Loop", "Unroll" };
+
+    /*
+     * The block an input's value is computed in when that is not its node's
+     * own: a Branch's True (arm 0) and False (arm 1), a For Loop End's Next
+     * (the loop body, arm 0). -1 for every other input.
+     */
+    int ArmOf(const NodeDefinition& InDef, const std::string& InPin)
+    {
+        if(InDef.Op == MOP_Branch)
+        {
+            if(InPin == "True")  { return 0; }
+            if(InPin == "False") { return 1; }
+        }
+        if(InDef.Op == MOP_LoopEnd && InPin == "Next") { return 0; }
+        return -1;
+    }
+
+    /* The node linked into InNode's input InPin, or nullptr. */
+    const Node* NodeInto(const Graph& InGraph, const Node& InNode, const char* InPin)
+    {
+        for(const Link& Each : InGraph.Links)
+        {
+            if(Each.To.Node == InNode.Id && Each.To.Pin == InPin) { return InGraph.FindNode(Each.From.Node); }
+        }
+        return nullptr;
+    }
+
+    /* The first node InNode's output InPin links to, or nullptr. */
+    const Node* NodeOutOf(const Graph& InGraph, const Node& InNode, const char* InPin)
+    {
+        for(const Link& Each : InGraph.Links)
+        {
+            if(Each.From.Node == InNode.Id && Each.From.Pin == InPin) { return InGraph.FindNode(Each.To.Node); }
+        }
+        return nullptr;
+    }
+
     class MaterialSchema final : public Schema
     {
     public:
@@ -165,11 +221,70 @@ namespace
             return Schema::ResolvePinType(InGraph, InNode, InPin);
         }
 
-        /* ".xz -> vec2" -- what a mask or swizzle takes, and what it makes. */
+        /*
+         * A For Loop and its For Loop End carry one value, so one type: the
+         * For Loop's, which the End follows. Unless Details sets it, the For
+         * Loop's type is the widest its own links or its End's suggest -- a
+         * vec3 fed to the End's Next widens the loop.
+         */
+        std::string ResolveWildcard(const Graph& InGraph, const Node& InNode, const NodeDefinition& InDef) const override
+        {
+            const auto Paired = [&](const Node* InOther, const uint32_t InOp) -> const NodeDefinition*
+            {
+                const NodeDefinition* Def = InOther ? FindNode(InOther->Type) : nullptr;
+                return Def && Def->Op == InOp ? Def : nullptr;
+            };
+
+            if(InDef.Op == MOP_LoopEnd)
+            {
+                const Node* Begin = NodeInto(InGraph, InNode, "Loop");
+                if(const NodeDefinition* BeginDef = Paired(Begin, MOP_LoopBegin)) { return ResolveWildcard(InGraph, *Begin, *BeginDef); }
+            }
+            else if(InDef.Op == MOP_LoopBegin
+                    && std::find(InDef.WildcardTypes.begin(), InDef.WildcardTypes.end(), InNode.WildcardType) == InDef.WildcardTypes.end())
+            {
+                const std::string Own = Schema::ResolveWildcard(InGraph, InNode, InDef);
+                const Node* End = NodeOutOf(InGraph, InNode, "Loop");
+                const NodeDefinition* EndDef = Paired(End, MOP_LoopEnd);
+                if(!EndDef) { return Own; }
+
+                const std::string Theirs = Schema::ResolveWildcard(InGraph, *End, *EndDef);
+                const auto Rank = [&](const std::string& InType)
+                {
+                    return std::find(InDef.WildcardTypes.begin(), InDef.WildcardTypes.end(), InType) - InDef.WildcardTypes.begin();
+                };
+                return Rank(Theirs) > Rank(Own) && Rank(Theirs) < std::ptrdiff_t(InDef.WildcardTypes.size()) ? Theirs : Own;
+            }
+            return Schema::ResolveWildcard(InGraph, InNode, InDef);
+        }
+
+        /* ".xz -> vec2" -- what a mask or swizzle takes, and what it makes.
+         * "vec3 . A > B . [branch]" for a Branch; "vec3 . 4 times" for a loop. */
         std::string DescribeNode(const Graph& InGraph, const Node& InNode) const override
         {
             const NodeDefinition* Def = FindNode(InNode.Type);
-            if(!Def || (Def->Op != MOP_Mask && Def->Op != MOP_Swizzle)) { return std::string(); }
+            if(!Def) { return std::string(); }
+
+            const std::string Dot = " \xC2\xB7 ";   // U+00B7
+            const auto Hint = [&]
+            {
+                std::string Value = InNode.GetProperty("Hint", "None");
+                if(Value == "None") { return std::string(); }
+                std::transform(Value.begin(), Value.end(), Value.begin(), [](const unsigned char Ch) { return char(std::tolower(Ch)); });
+                return Dot + "[" + Value + "]";
+            };
+
+            if(Def->Op == MOP_Branch)
+            {
+                return GetWildcardType(InGraph, InNode) + Dot + "A " + InNode.GetProperty("Compare", ">") + " B" + Hint();
+            }
+            if(Def->Op == MOP_LoopBegin)
+            {
+                const std::string* Count = InNode.FindConstant("Count");
+                const std::string Times = NodeInto(InGraph, InNode, "Count") ? std::string("Count") : Count ? *Count : std::string("4");
+                return GetWildcardType(InGraph, InNode) + Dot + Times + " times" + Hint();
+            }
+            if(Def->Op != MOP_Mask && Def->Op != MOP_Swizzle) { return std::string(); }
 
             const std::string Selected = SelectedComponents(InNode, Def->Op);
             if(Selected.empty()) { return Def->Op == MOP_Mask ? "nothing selected" : "invalid"; }
@@ -196,9 +311,37 @@ namespace
             std::string Default;
         };
 
+        /* Where a value is computed: the blocks around it, outermost first.
+         * (Branch, 0) is that Branch's True side; (For Loop End, 0) that
+         * loop's body. The function's own block is the empty scope. */
+        struct Frame
+        {
+            NodeGuid Owner;
+            int      Arm = 0;
+            bool operator==(const Frame& InOther) const { return Owner == InOther.Owner && Arm == InOther.Arm; }
+        };
+        using Scope = std::vector<Frame>;
+
+        struct OpenLoop
+        {
+            std::string Value;   // the carried value's variable
+            std::string Index;   // the int counter
+        };
+
         void CollectParameters();
+        void AnalyseScopes(const Node& InRoot);
+        void ValidateLoops();
 
         std::string Output(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
+        std::string EmitBranch(const Node& InNode, const NodeDefinition& InDef, const std::string& InType);
+        std::string EmitLoop(const Node& InEnd, const NodeDefinition& InEndDef, const std::string& InType);
+        std::string HintPrefix(const Node& InNode);
+
+        void Hoist(const Node& InOwner, const NodeDefinition& InDef, int InArm);
+        void HoistFrom(const Node& InNode, const PinDefinition& InPin, const Scope& InArm, std::set<NodeGuid>& InOutSeen);
+        void OpenBlock();
+        void CloseBlock();
+
         std::string Input(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
         std::string Literal(const Node& InNode, const PinDefinition& InPin, const std::string& InType);
         std::string Expand(const Node& InNode, const NodeDefinition& InDef, const std::string& InTemplate);
@@ -211,7 +354,20 @@ namespace
         std::set<NodeGuid>               InProgress;
         std::map<std::string, Parameter> Parameters;   // by name: sorted, so the block layout is stable
         int                              NextTemp = 0;
+
+        std::map<NodeGuid, Scope>        Scopes;          // every node the output reaches; empty after a cycle
+        std::map<NodeGuid, OpenLoop>     OpenLoops;       // by For Loop, while its body is written
+        std::vector<std::vector<PinRef>> Blocks;          // the values cached in each open block
+        int                              NextLoop = 0;
+        bool                             bUsesPlatform = false;   // a HINT_* macro was written
     };
+
+    /* Whether InInner is InOuter or a block inside it. */
+    template<typename TScope>
+    bool IsWithin(const TScope& InInner, const TScope& InOuter)
+    {
+        return InInner.size() >= InOuter.size() && std::equal(InOuter.begin(), InOuter.end(), InInner.begin());
+    }
 
     void MaterialCompiler::Run()
     {
@@ -236,6 +392,8 @@ namespace
         }
 
         CollectParameters();
+        AnalyseScopes(*Root);
+        ValidateLoops();
         if(Result.HasErrors()) { return; }
 
         const PinDefinition* ColorPin = RootDef->FindPin("Color", EPinDirection::Input);
@@ -248,6 +406,7 @@ namespace
         Out.Line("#version 440 core");
         Out.Line("// Generated by NimbleEditor from the material graph \"" + G.Name + "\". Do not edit.");
         Out.Blank();
+        if(bUsesPlatform) { Out.Line("#include <" + std::string(PLATFORM_HEADER) + ">"); }   // first: it may declare an #extension
         Out.Line("#include <Common.glsl>");
         Out.Blank();
         Out.Line("OUTPUT(0, vec4, Output)");
@@ -343,6 +502,131 @@ namespace
         for(auto& Each : Parameters) { Each.second.Slot = Slot++; }
     }
 
+    /*
+     * Every reachable node's scope: the innermost block that all of its uses
+     * share. Consumers come before what they read (reverse post-order from
+     * the root), so each node's scope is final when its inputs are visited;
+     * an input a Branch or For Loop End runs in one of its blocks is used
+     * inside that block. A cycle leaves Scopes empty, for Output to report.
+     */
+    void MaterialCompiler::AnalyseScopes(const Node& InRoot)
+    {
+        std::vector<const Node*> Order;
+        std::map<NodeGuid, int>  State;   // 1 visiting, 2 done
+        bool bCycle = false;
+
+        const std::function<void(const Node&)> Visit = [&](const Node& InNode)
+        {
+            State[InNode.Id] = 1;
+            if(const NodeDefinition* Def = Index.FindDefinition(InNode))
+            {
+                for(const PinDefinition& Pin : Def->Pins)
+                {
+                    const Link* Into = Pin.IsInput() ? Index.LinkInto(InNode.Id, Pin.Name) : nullptr;
+                    const Node* Source = Into ? Index.FindNode(Into->From.Node) : nullptr;
+                    if(!Source) { continue; }
+
+                    const int Seen = State.count(Source->Id) ? State[Source->Id] : 0;
+                    if(Seen == 1) { bCycle = true; }
+                    if(Seen == 0) { Visit(*Source); }
+                }
+            }
+            State[InNode.Id] = 2;
+            Order.push_back(&InNode);
+        };
+        Visit(InRoot);
+        if(bCycle) { return; }
+
+        Scopes[InRoot.Id] = Scope();
+        for(auto It = Order.rbegin(); It != Order.rend(); ++It)
+        {
+            const Node& Each = **It;
+            const NodeDefinition* Def = Index.FindDefinition(Each);
+            if(!Def) { continue; }
+
+            const Scope Own = Scopes[Each.Id];
+            for(const PinDefinition& Pin : Def->Pins)
+            {
+                const Link* Into = Pin.IsInput() ? Index.LinkInto(Each.Id, Pin.Name) : nullptr;
+                if(!Into || !Index.FindNode(Into->From.Node)) { continue; }
+
+                Scope Use = Own;
+                const int Arm = ArmOf(*Def, Pin.Name);
+                if(Arm >= 0) { Use.push_back({ Each.Id, Arm }); }
+
+                const auto Found = Scopes.find(Into->From.Node);
+                if(Found == Scopes.end())
+                {
+                    Scopes.emplace(Into->From.Node, std::move(Use));
+                    continue;
+                }
+                size_t Common = 0;
+                while(Common < Found->second.size() && Common < Use.size() && Found->second[Common] == Use[Common]) { ++Common; }
+                Found->second.resize(Common);
+            }
+        }
+    }
+
+    /*
+     * A For Loop's Index and Value exist only in its body, and it closes at
+     * exactly one For Loop End: each is an error on the node that breaks it,
+     * found here, before any code is written.
+     */
+    void MaterialCompiler::ValidateLoops()
+    {
+        std::set<NodeGuid> Reported;
+        for(const auto& Each : Scopes)
+        {
+            const Node* N = Index.FindNode(Each.first);
+            const NodeDefinition* Def = N ? Index.FindDefinition(*N) : nullptr;
+            if(!Def) { continue; }
+
+            if(Def->Op == MOP_LoopEnd && !Index.LinkInto(N->Id, "Loop"))
+            {
+                Result.Error(N->Id, "Loop", "'" + Def->DisplayName + "' closes a loop: link a For Loop's Loop pin into it");
+            }
+            if(Def->Op == MOP_LoopBegin && Index.LinksOutOf(N->Id, "Loop").size() > 1)
+            {
+                Result.Error(N->Id, "Loop", "'" + Def->DisplayName + "' closes at one For Loop End, and this one links to "
+                             + std::to_string(Index.LinksOutOf(N->Id, "Loop").size()));
+            }
+
+            for(const PinDefinition& Pin : Def->Pins)
+            {
+                const Link* Into = Pin.IsInput() ? Index.LinkInto(N->Id, Pin.Name) : nullptr;
+                const Node* Begin = Into ? Index.FindNode(Into->From.Node) : nullptr;
+                const NodeDefinition* BeginDef = Begin ? Index.FindDefinition(*Begin) : nullptr;
+                if(!BeginDef || BeginDef->Op != MOP_LoopBegin || Into->From.Pin == "Loop") { continue; }
+
+                const std::vector<const Link*>& Ends = Index.LinksOutOf(Begin->Id, "Loop");
+                if(Ends.empty())
+                {
+                    if(Reported.insert(Begin->Id).second)
+                    {
+                        Result.Error(Begin->Id, "Loop", "'" + BeginDef->DisplayName + "' has no For Loop End: link its Loop pin"
+                                     " to one, and read its Index and Value in between");
+                    }
+                    continue;
+                }
+                if(Ends.size() > 1) { continue; }   // reported above
+
+                const auto EndScope = Scopes.find(Ends[0]->To.Node);
+                Scope Body = EndScope != Scopes.end() ? EndScope->second : Scope();
+                Body.push_back({ Ends[0]->To.Node, 0 });
+
+                Scope Use = Each.second;
+                const int Arm = ArmOf(*Def, Pin.Name);
+                if(Arm >= 0) { Use.push_back({ N->Id, Arm }); }
+
+                if(EndScope == Scopes.end() || !IsWithin(Use, Body))
+                {
+                    Result.Error(N->Id, Pin.Name, "'" + Def->DisplayName + "' reads the For Loop's " + Into->From.Pin
+                                 + " outside its loop: only what leads into its For Loop End's Next is in the loop");
+                }
+            }
+        }
+    }
+
     std::string MaterialCompiler::Output(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin)
     {
         const PinRef Key{ InNode.Id, InPin.Name };
@@ -428,6 +712,30 @@ namespace
                 break;
             }
 
+            case MOP_Branch:
+                Value = EmitBranch(InNode, InDef, Type);
+                break;
+
+            case MOP_LoopEnd:
+                Value = EmitLoop(InNode, InDef, Type);
+                break;
+
+            case MOP_LoopBegin:
+            {
+                /* ValidateLoops already refused a read from outside the body;
+                 * this is the backstop for a graph it could not analyse. */
+                const auto Open = OpenLoops.find(InNode.Id);
+                if(Open == OpenLoops.end() || InPin.Name == "Loop")
+                {
+                    Result.Error(InNode.Id, InPin.Name, "'" + InDef.DisplayName + "''s " + InPin.Name
+                                 + " exists only inside its loop, before its For Loop End");
+                    Value = "0.0";
+                    break;
+                }
+                Value = InPin.Name == "Index" ? "float(" + Open->second.Index + ")" : Open->second.Value;
+                break;
+            }
+
             default:
             {
                 const bool bHasInputs = InPin.Expression.find('{') != std::string::npos;
@@ -447,7 +755,183 @@ namespace
 
         InProgress.erase(InNode.Id);
         Values.emplace(Key, Value);
+        if(!Blocks.empty()) { Blocks.back().push_back(Key); }   // its temporary ends with the block
         return Value;
+    }
+
+    /*
+     * A Branch, as
+     *
+     *     vec3 t3;
+     *     HINT_BRANCH if(t1 > 0.5)
+     *     {
+     *         ...what only True needs...
+     *         t3 = <True>;
+     *     }
+     *     else
+     *     { ... }
+     */
+    std::string MaterialCompiler::EmitBranch(const Node& InNode, const NodeDefinition& InDef, const std::string& InType)
+    {
+        const std::string A = Input(InNode, InDef, *InDef.FindPin("A", EPinDirection::Input));
+        const std::string B = Input(InNode, InDef, *InDef.FindPin("B", EPinDirection::Input));
+        Hoist(InNode, InDef, 0);
+        Hoist(InNode, InDef, 1);
+
+        const std::string Temp = "t" + std::to_string(NextTemp++);
+        Body.Line(InType + " " + Temp + ";", InNode.Id);
+        Body.Line(HintPrefix(InNode) + "if(" + A + " " + InNode.GetProperty("Compare", ">") + " " + B + ")", InNode.Id);
+
+        for(const char* Arm : { "True", "False" })
+        {
+            if(Arm[0] == 'F') { Body.Line("else", InNode.Id); }
+            Body.Line("{", InNode.Id);
+            OpenBlock();
+            const std::string Value = Input(InNode, InDef, *InDef.FindPin(Arm, EPinDirection::Input));
+            Body.Line(Temp + " = " + Value + ";", InNode.Id);
+            CloseBlock();
+            Body.Line("}", InNode.Id);
+        }
+        return Temp;
+    }
+
+    /*
+     * A For Loop End and its For Loop, as
+     *
+     *     vec3 t4 = <Initial>;
+     *     HINT_UNROLL for(int i0 = 0; i0 < 4; ++i0)
+     *     {
+     *         ...the body, reading float(i0) and t4...
+     *         t4 = <Next>;
+     *     }
+     *
+     * and t4 is the Result.
+     */
+    std::string MaterialCompiler::EmitLoop(const Node& InEnd, const NodeDefinition& InEndDef, const std::string& InType)
+    {
+        const Link* Into = Index.LinkInto(InEnd.Id, "Loop");
+        const Node* Begin = Into ? Index.FindNode(Into->From.Node) : nullptr;
+        const NodeDefinition* BeginDef = Begin ? Index.FindDefinition(*Begin) : nullptr;
+        if(!BeginDef || BeginDef->Op != MOP_LoopBegin)
+        {
+            Result.Error(InEnd.Id, "Loop", "'" + InEndDef.DisplayName + "' closes a loop: link a For Loop's Loop pin into it");
+            return "0.0";
+        }
+
+        /* A constant count is written as one, so a driver (or [unroll]) sees it. */
+        const PinDefinition* CountPin = BeginDef->FindPin("Count", EPinDirection::Input);
+        const bool bUnroll = Begin->GetProperty("Hint", "None") == "Unroll";
+        std::string Count;
+        if(Index.LinkInto(Begin->Id, "Count"))
+        {
+            if(bUnroll)
+            {
+                Result.Error(Begin->Id, "Count", "'" + BeginDef->DisplayName + "' is set to Unroll, which needs a constant"
+                             " Count: unlink Count, or choose another hint");
+            }
+            Count = "int(" + Input(*Begin, *BeginDef, *CountPin) + ")";
+        }
+        else
+        {
+            const std::string* Given = Begin->FindConstant("Count");
+            const std::string Text = Given ? *Given : CountPin->Default;
+            double Number = 0.0;
+            if(!ParseNumber(Text, Number) || Number < 0.0 || Number != std::floor(Number) || Number > 1e6)
+            {
+                Result.Error(Begin->Id, "Count", "'" + BeginDef->DisplayName + "''s Count must be a whole number, 0 or more, not '"
+                             + Text + "'");
+                Number = 0.0;
+            }
+            Count = std::to_string(int64_t(Number));
+        }
+
+        Hoist(InEnd, InEndDef, 0);
+        const std::string Initial = Input(*Begin, *BeginDef, *BeginDef->FindPin("Initial", EPinDirection::Input));
+
+        const std::string Carried = "t" + std::to_string(NextTemp++);
+        const std::string Counter = "i" + std::to_string(NextLoop++);
+        Body.Line(InType + " " + Carried + " = " + Initial + ";", Begin->Id);
+        Body.Line(HintPrefix(*Begin) + "for(int " + Counter + " = 0; " + Counter + " < " + Count + "; ++" + Counter + ")", Begin->Id);
+        Body.Line("{", Begin->Id);
+        OpenBlock();
+        OpenLoops[Begin->Id] = { Carried, Counter };
+        const std::string Next = Input(InEnd, InEndDef, *InEndDef.FindPin("Next", EPinDirection::Input));
+        Body.Line(Carried + " = " + Next + ";", InEnd.Id);
+        OpenLoops.erase(Begin->Id);
+        CloseBlock();
+        Body.Line("}", InEnd.Id);
+        return Carried;
+    }
+
+    /* "HINT_UNROLL " for a node whose Hint asks for one; "" for None. */
+    std::string MaterialCompiler::HintPrefix(const Node& InNode)
+    {
+        std::string Hint = InNode.GetProperty("Hint", "None");
+        if(Hint == "None") { return std::string(); }
+
+        bUsesPlatform = true;
+        std::transform(Hint.begin(), Hint.end(), Hint.begin(), [](const unsigned char Ch) { return char(std::toupper(Ch)); });
+        return "HINT_" + Hint + " ";
+    }
+
+    /*
+     * Before InOwner opens its block InArm: writes, here, every value that
+     * block reads but that belongs further out -- shared with the other side
+     * of a Branch, or with what comes after -- so it is computed once, and
+     * not inside a block the other users cannot see.
+     */
+    void MaterialCompiler::Hoist(const Node& InOwner, const NodeDefinition& InDef, const int InArm)
+    {
+        const auto Found = Scopes.find(InOwner.Id);
+        if(Found == Scopes.end()) { return; }   // no analysis (a cycle): values are computed where used
+
+        Scope Arm = Found->second;
+        Arm.push_back({ InOwner.Id, InArm });
+
+        std::set<NodeGuid> Seen;
+        for(const PinDefinition& Pin : InDef.Pins)
+        {
+            if(Pin.IsInput() && ArmOf(InDef, Pin.Name) == InArm) { HoistFrom(InOwner, Pin, Arm, Seen); }
+        }
+    }
+
+    void MaterialCompiler::HoistFrom(const Node& InNode, const PinDefinition& InPin, const Scope& InArm, std::set<NodeGuid>& InOutSeen)
+    {
+        const Link* Into = Index.LinkInto(InNode.Id, InPin.Name);
+        const Node* Source = Into ? Index.FindNode(Into->From.Node) : nullptr;
+        const NodeDefinition* SourceDef = Source ? Index.FindDefinition(*Source) : nullptr;
+        const PinDefinition* SourcePin = SourceDef ? SourceDef->FindPin(Into->From.Pin, EPinDirection::Output) : nullptr;
+        if(!SourcePin) { return; }
+
+        /* A For Loop's own outputs exist only in its body, never out here;
+         * what it reads is evaluated with its For Loop End, so look past it. */
+        const auto Found = Scopes.find(Source->Id);
+        const bool bInside = SourceDef->Op == MOP_LoopBegin || Found == Scopes.end() || IsWithin(Found->second, InArm);
+        if(!bInside)
+        {
+            Output(*Source, *SourceDef, *SourcePin);
+            return;
+        }
+
+        if(!InOutSeen.insert(Source->Id).second) { return; }
+        for(const PinDefinition& Pin : SourceDef->Pins)
+        {
+            if(Pin.IsInput()) { HoistFrom(*Source, Pin, InArm, InOutSeen); }
+        }
+    }
+
+    void MaterialCompiler::OpenBlock()
+    {
+        Body.Indent();
+        Blocks.emplace_back();
+    }
+
+    /* The block's temporaries go out of scope with it, so their cached names do too. */
+    void MaterialCompiler::CloseBlock()
+    {
+        for(const PinRef& Each : Blocks.back()) { Values.erase(Each); }
+        Blocks.pop_back();
+        Body.Outdent();
     }
 
     std::string MaterialCompiler::Input(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin)
@@ -549,6 +1033,7 @@ namespace
         AddType({ "vec2",  "Vector2", 0x6AC9D9, "0" });
         AddType({ "vec3",  "Vector3", 0xE8C95A, "0" });
         AddType({ "vec4",  "Vector4", 0xD9786A, "0" });
+        AddType({ LOOP_TYPE, "Loop",  0xC8C8C8, "", false });   // pairs a For Loop with its End; no literal
 
         for(const std::string& From : GFloatTypes)
         {
@@ -696,6 +1181,40 @@ namespace
             Def.Tooltip = "Components in any order, repeats allowed: 'zyx' reverses a vec3, 'xxx' spreads x.";
             Def.Properties = { { GSwizzleProperty, EPropertyKind::String, GSwizzleDefault, {},
                                  "1 to 4 of x, y, z, w (or r, g, b, a)" } };
+        }
+
+        // --- Logic: real control flow -------------------------------------------------
+        {
+            NodeDefinition& Def = Pure("Logic.Branch", "Branch", "Logic",
+                                       { In("A", "float"), In("B", "float", "0"), In("True", W, "1"), In("False", W, "0"),
+                                         Out("Out", W, "") }, GFloatTypes, "if else condition compare select");
+            Def.Op      = MOP_Branch;
+            Def.Tooltip = "True if A compares so with B, else False -- an if statement, so what only one side needs "
+                          "is computed only when that side is taken.";
+            Def.Properties = { { "Compare", EPropertyKind::Choice, ">", GCompareChoices, "How A is compared with B" },
+                               { "Hint", EPropertyKind::Choice, "None", GBranchHintChoices,
+                                 "Branch: really jump, skipping the side not taken. Flatten: run both and select. "
+                                 "None: the driver decides. Ignored on OpenGL." } };
+        }
+        {
+            NodeDefinition& Def = Pure("Logic.ForLoop", "For Loop", "Logic",
+                                       { In("Count", "float", "4"), In("Initial", W), Out("Loop", LOOP_TYPE, ""),
+                                         Out("Index", "float", ""), Out("Value", W, "") }, GFloatTypes, "repeat iterate for");
+            Def.Op      = MOP_LoopBegin;
+            Def.Tooltip = "Runs what lies between it and its For Loop End Count times. Value starts as Initial and "
+                          "becomes Next each time; Index counts 0, 1, 2... Both exist only inside the loop.";
+            Def.Properties = { { "Hint", EPropertyKind::Choice, "None", GLoopHintChoices,
+                                 "Loop: keep it a loop. Unroll: repeat the body in the code (Count must be constant). "
+                                 "None: the driver decides. Ignored on OpenGL." } };
+        }
+        {
+            NodeDefinition& Def = Pure("Logic.ForLoopEnd", "For Loop End", "Logic",
+                                       { In("Loop", LOOP_TYPE), In("Next", W), Out("Result", W, "") }, GFloatTypes,
+                                       "repeat iterate for result");
+            Def.Op                  = MOP_LoopEnd;
+            Def.bWildcardFromSchema = true;   // its For Loop's type
+            Def.Tooltip = "Closes a For Loop: Next is the loop's Value for the next time round, and Result its value "
+                          "after the last.";
         }
     }
 

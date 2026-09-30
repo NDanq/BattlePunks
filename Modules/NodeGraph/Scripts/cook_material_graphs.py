@@ -6,7 +6,8 @@ A material graph (*.material.nmgraph) compiles to a .fsh in the engine's macro
 GLSL, next to the graph. This script puts those files through the SAME
 preprocessor and tools as GDI's own shaders, by importing GDI's
 cook_shaders.py -- read-only: Modules/GDI is a vendored subtree and is never
-edited from here. #include <Common.glsl> resolves against GDI's Shaders/.
+edited from here. #include <Common.glsl> resolves against GDI's Shaders/; an
+include GDI does not have (MaterialPlatform.glsl) against this module's Shaders/.
 
 Usage:
     python cook_material_graphs.py -check Glow.fsh [More.fsh ...]
@@ -35,6 +36,7 @@ from pathlib import Path
 
 SCRIPT_DIR      = Path(__file__).parent.resolve()
 GDI_SCRIPTS_DIR = SCRIPT_DIR.parent.parent / "GDI" / "Scripts"
+MATERIAL_SHADERS_DIR = SCRIPT_DIR.parent / "Shaders"
 
 
 def _import_cook_shaders(scripts_dir):
@@ -47,6 +49,19 @@ def _import_cook_shaders(scripts_dir):
     except ImportError as exc:
         print(f"ERROR: cannot import GDI's cook_shaders.py from {scripts_dir}: {exc}", file=sys.stderr)
         sys.exit(2)
+
+    # Includes resolve against GDI's Shaders/, then this module's Shaders/
+    # (MaterialPlatform.glsl). preprocess() recurses through its module-global
+    # name, so wrapping it here covers every #include, on every target.
+    gdi_preprocess = cook_shaders.preprocess
+
+    def preprocess(file_path, *args, **kwargs):
+        own = MATERIAL_SHADERS_DIR / Path(file_path).name
+        if not Path(file_path).exists() and own.exists():
+            file_path = own
+        return gdi_preprocess(file_path, *args, **kwargs)
+
+    cook_shaders.preprocess = preprocess
     return cook_shaders
 
 
