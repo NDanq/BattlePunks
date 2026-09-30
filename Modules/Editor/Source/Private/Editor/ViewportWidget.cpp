@@ -471,6 +471,10 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
             const TransformGizmo::EHandle Handle = Gizmo.Hit(PoseOf(*Target), At.x(), At.y());
             if(Handle != TransformGizmo::EHandle::None && Gizmo.BeginDrag(Handle, PoseOf(*Target), At.x(), At.y()))
             {
+                /* The whole drag is one undo entry. */
+                static const char* const Labels[4] = { "Edit", "Move", "Rotate", "Scale" };
+                Context.BeginEditGesture(QString::fromLatin1(Labels[int(Gizmo.GetMode())]));
+
                 Drag        = EDrag::Gizmo;
                 DragButton  = Qt::LeftButton;
                 GizmoEntity = Context.GetSelection();
@@ -777,10 +781,13 @@ void ViewportWidget::FinishGizmoDrag(const bool bInCancel)
     {
         return;
     }
+    /* A cancel writes the start pose back inside the gesture, so the entry
+     * merges back to nothing and is dropped. */
     if(bInCancel)
     {
         ApplyGizmoPose(GizmoEntity, Gizmo.GetDragStart());
     }
+    Context.EndEditGesture();
     Gizmo.EndDrag();
     Drag        = EDrag::None;
     DragButton  = Qt::NoButton;

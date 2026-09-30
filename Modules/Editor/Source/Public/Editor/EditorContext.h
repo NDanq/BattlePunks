@@ -4,6 +4,7 @@
 #if WITH_EDITOR
 
 #include <cstdint>
+#include <vector>
 
 #include <QObject>
 #include <QString>
@@ -20,6 +21,9 @@ namespace GameCore   { class World; }
 namespace RenderCore { class Renderer; struct RenderView; }
 
 class PlaySession;
+class QUndoCommand;
+class QUndoStack;
+namespace EditorHistory { struct EntityMembers; }
 
 Q_DECLARE_METATYPE(GameCore::EntityID)
 
@@ -71,6 +75,9 @@ public:
 
     /* The active World -- see TWO WORLDS above. Re-ask after WorldReset. */
     GameCore::World& GetWorld() { return *ActiveWorld; }
+
+    /* The World being edited, even while playing -- what the history acts on. */
+    GameCore::World& GetEditedWorld() { return *EditedWorld; }
 
     /*
      * One editor frame: the playing game's tick, or a refit of the edited
@@ -154,6 +161,14 @@ public:
     void RenameEntity(GameCore::EntityID InEntity, const QString& InName);
     void SetEntityScript(GameCore::EntityID InEntity, const QString& InPath);
 
+    /* The script's bCullOutsideActiveRegion; nothing without a script. */
+    void SetEntityScriptCull(GameCore::EntityID InEntity, bool bInCull);
+
+    /* From the type's default-constructed bytes, as "+ Add Component" does.
+     * False if it is already there or cannot be made. */
+    bool AddComponent(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
+    bool RemoveComponent(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
+
     /* Name if it has one, "Entity <index>" otherwise. */
     QString GetDisplayName(GameCore::EntityID InEntity) const;
 
@@ -177,8 +192,39 @@ public:
      * when it actually changes. */
     void SetSelection(GameCore::EntityID InEntity);
 
-    /* A panel wrote into InType's component on InEntity. */
+    /* A panel wrote into InType's component on InEntity. Records the change
+     * (see History) when InEntity is the selection -- the only entity whose
+     * values before the write are known. */
     void NotifyPropertyEdited(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
+
+    // === History ============================================================
+    //
+    // Undo and redo for the EDITED World (EditorHistory.h). Every change made
+    // through this object is recorded -- create, delete, rename, script, add
+    // or remove a component, and property writes reported through
+    // NotifyPropertyEdited -- except while playing, when changes go to the
+    // running game and are not recorded, and undo and redo are refused.
+    //
+    // New, Open and the Sandbox scene start an empty history. The history is
+    // "clean" at the last save or load; the title shows when it is not.
+
+    QUndoStack& GetHistory() { return *History; }
+
+    bool CanUndo() const;
+    bool CanRedo() const;
+    void Undo();
+    void Redo();
+
+    /* Brackets one continuous edit -- a handle drag -- so every property write
+     * between them is ONE history entry, named "<InLabel> <entity>". A
+     * gesture that ends where it began leaves no entry. Undo and redo are
+     * refused while one is open. */
+    void BeginEditGesture(const QString& InLabel);
+    void EndEditGesture();
+
+    /* True if InCommand is the entry most recently recorded and nothing has
+     * been undone or redone since -- the only one a new edit may merge into. */
+    bool IsLatestRecorded(const QUndoCommand* InCommand) const;
 
 signals:
     /* The active World was replaced (new, Sandbox scene, load, Play, Stop, or
@@ -198,6 +244,10 @@ signals:
     void SelectionChanged(GameCore::EntityID InEntity);
 
     void PropertyEdited(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
+
+    /* Something undo / redo depends on changed: an entry recorded, undone or
+     * redone, the history cleared or saved, play started or stopped. */
+    void HistoryChanged();
 
 private:
     static void OnEntityCreated(GameCore::EntityID InEntity, void* InUserData);
@@ -224,6 +274,25 @@ private:
 
     /* Logs and returns true while playing -- the scene operations' guard. */
     bool RefuseWhilePlaying(const char* InWhat) const;
+
+    /* Changes are recorded: editing (not playing), not inside an undo or redo,
+     * and not while a scene is being built or loaded. */
+    bool IsRecording() const;
+
+    /* Pushes an already-applied command. Takes ownership. */
+    void Record(QUndoCommand* InCommand);
+
+    /* Records a name / script / cull change from InBefore to what InEntity
+     * has now, if recording. */
+    void RecordMembersChange(GameCore::EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText);
+
+    /* Empties the history and marks it clean -- a new scene. */
+    void ResetHistory();
+
+    /* Re-takes the selection's property values: the "before" of the next
+     * NotifyPropertyEdited. Called whenever they may have changed other than
+     * by a recorded write. */
+    void RefreshShadow();
 
     /* Destroys the current World (unbinding the Renderer first) and creates an
      * empty one bound in its place. Emits WorldReset. */
@@ -257,6 +326,24 @@ private:
 
     uint64_t FrameNumber     = 0;
     int64_t  PreviousFrameNs = 0;
+
+    // === History ============================================================
+    QUndoStack*         History = nullptr;
+    const QUndoCommand* LatestRecorded = nullptr;   // see IsLatestRecorded
+    bool                bApplyingHistory  = false;  // inside Undo / Redo
+    bool                bSuspendRecording = false;  // building or loading a scene
+    uint64_t            GestureSerial = 0;
+    uint64_t            OpenGesture   = 0;          // 0: none
+    QString             GestureLabel;
+
+    /* The selection's property values as of the last recorded change. */
+    struct ShadowComponent
+    {
+        GameCore::ComponentTypeID Type;
+        std::vector<uint8_t>      Values;
+    };
+    GameCore::EntityID           ShadowEntity;
+    std::vector<ShadowComponent> Shadow;
 };
 
 #endif // WITH_EDITOR

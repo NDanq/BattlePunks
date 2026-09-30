@@ -267,11 +267,7 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
                                          "active region. The script's class can override this."));
     connect(CullCheck, &QCheckBox::toggled, this, [this, InEntity](const bool bInChecked)
     {
-        GameCore::World& World = Context.GetWorld();
-        if(GameCore::EntityScriptState* Script = World.GetEntity(InEntity).GetScriptState())
-        {
-            Script->bCullOutsideActiveRegion = bInChecked ? 1 : 0;
-        }
+        Context.SetEntityScriptCull(InEntity, bInChecked);
     });
     Form->addRow(QString(), CullCheck);
 
@@ -389,13 +385,9 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     Remove->setAutoRaise(true);
     connect(Remove, &QToolButton::clicked, this, [this, InEntity, InType]()
     {
-        /* Immediate outside a tick; the World's OnComponentRemoved then
-         * rebuilds this panel on the next turn, not inside this click. */
-        GameCore::World& World = Context.GetWorld();
-        if(World.IsAlive(InEntity))
-        {
-            World.GetEntity(InEntity).RemoveComponentByType(InType);
-        }
+        /* The World's OnComponentRemoved then rebuilds this panel on the
+         * next turn, not inside this click. */
+        Context.RemoveComponent(InEntity, InType);
     });
     HeaderRow->addWidget(Remove);
 
@@ -536,19 +528,7 @@ void DetailsPanel::PopulateAddMenu(QMenu* InMenu)
         const EntityID Target = ShownEntity;
         connect(Action, &QAction::triggered, this, [this, Target, Type]()
         {
-            GameCore::World& W = Context.GetWorld();
-            const GameCore::ComponentTypeInfo* TypeInfo = GameCore::GetComponentType(Type);
-            if(!TypeInfo || !W.IsAlive(Target))
-            {
-                return;
-            }
-            /* From the default-constructed bytes -- never zeroes -- exactly as
-             * the type's own `T{}` would start. */
-            std::vector<uint8_t> Init(TypeInfo->SizeBytes);
-            if(GameCore::GetComponentPropertyDefaults(Type, Init.data()))
-            {
-                W.GetEntity(Target).AddComponentByType(Type, Init.data());
-            }
+            Context.AddComponent(Target, Type);
         });
     }
 
