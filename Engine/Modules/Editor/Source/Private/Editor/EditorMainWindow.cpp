@@ -29,7 +29,9 @@
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
 #include "Public/Editor/ViewportWidget.h"
+#include "Public/NodeGraph/Schema.h"
 #include "Private/Editor/AboutDialog.h"
+#include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 #include "Private/Editor/SDLInputProbe.h"
 #include "Private/Editor/SettingsDialog.h"
@@ -172,6 +174,26 @@ void EditorMainWindow::BuildMenus()
 
     /* Save stays: it writes the edited World, which a run never touches. */
     SceneActions = { New, SandboxScene, Open };
+
+    File->addSeparator();
+
+    /* Node graphs open in windows of their own, beside the scene. */
+    for(const NodeGraph::Schema* Schema : NodeGraph::GetSchemas())
+    {
+        QAction* NewGraph = File->addAction(QStringLiteral("New %1 &Graph...").arg(QString::fromStdString(Schema->GetName())));
+        NewGraph->setToolTip(QStringLiteral("A %1 graph: generates %2")
+                             .arg(QString::fromStdString(Schema->GetName()), QString::fromStdString(Schema->GetOutputExtension())));
+        connect(NewGraph, &QAction::triggered, this, [this, Schema]() { EditorGraphs::CreateGraph(*Schema, this); });
+    }
+
+    QAction* OpenGraph = File->addAction(QStringLiteral("Open Grap&h..."));
+    OpenGraph->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
+    connect(OpenGraph, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Graph"), EditorGraphs::GetProjectRoot(),
+                                                          EditorGraphs::GetFileFilter());
+        if(!Path.isEmpty()) { EditorGraphs::OpenGraph(Path, this); }
+    });
 
     File->addSeparator();
 
@@ -337,7 +359,7 @@ void EditorMainWindow::BuildBuildMenu()
     BuildMenu->addSeparator();
 
     QAction* Cook = BuildMenu->addAction(QStringLiteral("C&ook Content"));
-    Cook->setToolTip(QStringLiteral("Not yet: cook the project's content for a Client build"));
+    Cook->setToolTip(QStringLiteral("Regenerate every node graph's code; cooking the rest of the content is not implemented yet"));
     connect(Cook, &QAction::triggered, this, &EditorMainWindow::CookContent);
 }
 
@@ -436,12 +458,22 @@ void EditorMainWindow::OpenProjectSettings()
 
 void EditorMainWindow::CookContent()
 {
-    /* A stub until cooking has a definition: which content, from where, to
-     * where, for which target. Until then the Console's `cook` does one world. */
-    CORE_LOG_WARN("[Build] Cook Content is not implemented yet; 'cook [world] [out]' in the Console cooks a single world")
+    /* The node graphs' generated code, which is defined: every .nmgraph under
+     * the project, compiled, its output rewritten where it changed. The rest
+     * is a stub until cooking has a definition -- which content, from where,
+     * to where, for which target. Until then the Console's `cook` does one world. */
+    QStringList Lines;
+    const int Failures = EditorGraphs::RegenerateAll(Lines);
+    for(const QString& Line : Lines) { CORE_LOG("[Build] " + std::string(Line.toUtf8().constData())) }
+    statusBar()->showMessage(Failures == 0 ? QStringLiteral("Node graphs regenerated")
+                                           : QStringLiteral("%1 node graph(s) failed -- see the Console").arg(Failures), 5000);
+
+    CORE_LOG_WARN("[Build] cooking worlds and other content is not implemented yet; 'cook [world] [out]' in the Console cooks a single world")
     QMessageBox::information(this, QStringLiteral("Cook Content"),
-                             QStringLiteral("Cooking the project's content is not implemented yet.\n\n"
-                                            "The Console's cook command cooks a single world file to binary."));
+                             QStringLiteral("Node graphs: %1 regenerated, %2 failed (details in the Console).\n\n"
+                                            "Cooking the rest of the project's content is not implemented yet. "
+                                            "The Console's cook command cooks a single world file to binary.")
+                             .arg(Lines.size() - Failures).arg(Failures));
 }
 
 void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
@@ -687,6 +719,31 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
     });
 
+    Console.Register(QStringLiteral("graph"), QStringLiteral("<path>"),
+                     QStringLiteral("Open a node graph (*.material.nmgraph, *.script.nmgraph); relative to the project"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: graph <path>"));
+            return;
+        }
+        const QString Given = InArgs.join(QLatin1Char(' '));
+        const QString Path = QDir::isAbsolutePath(Given) ? Given : QDir(EditorGraphs::GetProjectRoot()).filePath(Given);
+        if(EditorGraphs::OpenGraph(Path, this)) { Console.Print(QStringLiteral("Opened %1").arg(Path)); }
+    });
+
+    Console.Register(QStringLiteral("graphs"), QString(),
+                     QStringLiteral("Regenerate the code of every node graph in the project"),
+                     [this](const QStringList&)
+    {
+        QStringList Lines;
+        const int Failures = EditorGraphs::RegenerateAll(Lines);
+        Lines << QStringLiteral("%1 failed").arg(Failures);
+        if(Failures > 0) { Console.PrintError(Lines.join(QLatin1Char('\n'))); }
+        else             { Console.Print(Lines.join(QLatin1Char('\n'))); }
+    });
+
     Console.Register(QStringLiteral("scene"), QStringLiteral("<new | sandbox>"),
                      QStringLiteral("Replace the scene with an empty one, or Sandbox's"),
                      [this](const QStringList& InArgs)
@@ -876,6 +933,13 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
     /* Spontaneous: the window system asked (the close button, Alt+F4, a
      * WM_CLOSE from outside); otherwise something in the editor called close(). */
+    /* Open graphs first: an unsaved one may cancel the close. */
+    if(!EditorGraphs::CloseAllGraphs())
+    {
+        InEvent->ignore();
+        return;
+    }
+
     CORE_LOG(std::string("[Editor] closing -- ") + (InEvent->spontaneous() ? "requested by the window system" : "requested by the editor"))
 
     /* Before any widget is destroyed: the Renderer releases its swapchain

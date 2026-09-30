@@ -11,6 +11,9 @@
 #
 #   GameCore, RenderCore   the World it edits and the Renderer that draws it.
 #   EngineCore::QtBridge   value conversions (QColor <-> Color). Qt-only, no GDI.
+#   NodeGraph              material and script graphs: the model, the .nmgraph
+#                          files and the GLSL / Lua generators the graph
+#                          windows (Source/Private/Editor/Graph/) edit and run.
 #
 #   NOT GDI, and NOT GDI::QtBridge. GDI is a static library that may live in
 #   exactly one image in the process -- RenderCore.dll (RenderCoreInternal.h).
@@ -73,6 +76,22 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/SettingsDialog.h
         Source/Private/Editor/SourceBuild.cpp
         Source/Private/Editor/SourceBuild.h
+        Source/Private/Editor/Graph/GraphAssets.cpp
+        Source/Private/Editor/Graph/GraphAssets.h
+        Source/Private/Editor/Graph/GraphDetailsPanel.cpp
+        Source/Private/Editor/Graph/GraphDetailsPanel.h
+        Source/Private/Editor/Graph/GraphDocument.cpp
+        Source/Private/Editor/Graph/GraphDocument.h
+        Source/Private/Editor/Graph/GraphEditorWindow.cpp
+        Source/Private/Editor/Graph/GraphEditorWindow.h
+        Source/Private/Editor/Graph/GraphItems.cpp
+        Source/Private/Editor/Graph/GraphItems.h
+        Source/Private/Editor/Graph/GraphScene.cpp
+        Source/Private/Editor/Graph/GraphScene.h
+        Source/Private/Editor/Graph/GraphView.cpp
+        Source/Private/Editor/Graph/GraphView.h
+        Source/Private/Editor/Graph/NodePalette.cpp
+        Source/Private/Editor/Graph/NodePalette.h
         Source/Public/Editor/EditorContext.h
         Source/Public/Editor/EditorCamera.h
         Source/Public/Editor/EditorLog.h
@@ -105,10 +124,18 @@ target_link_libraries(NimbleEditor PRIVATE
         GameWindow::GameWindow
         NimbleEngine::NimbleEngine
         EngineCore::QtBridge
+        NodeGraph::NodeGraph
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
 )
+
+# === Node graphs ================================================================
+# A saved material graph's shader is checked by NodeGraph's
+# cook_material_graphs.py, with the Python NodeGraph found (both published by
+# its CMakeLists). Empty when either is missing: the editor then skips the check.
+set_source_files_properties(Source/Private/Editor/Graph/GraphAssets.cpp PROPERTIES
+        COMPILE_DEFINITIONS "NIMBLEEDITOR_PYTHON=\"${NODEGRAPH_PYTHON}\";NIMBLEEDITOR_MATERIAL_CHECK_SCRIPT=\"${NODEGRAPH_COOK_SCRIPT}\"")
 
 # === Build version stamp ======================================================
 # Help > About shows the commit this editor was built from. Core's

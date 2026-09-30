@@ -329,6 +329,14 @@ elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/RenderCore/CMakeLists.txt")
     message(STATUS "RenderCore present but GDI is not configured; skipping RenderCore")
 endif()
 
+# NodeGraph: material and script graphs that generate GLSL and Lua, for the
+# editor. Editor targets only -- nothing at runtime reads a graph -- and after
+# GameCore, whose EntityGuid, component registry and pugixml target it uses.
+if(NIMBLE_WITH_EDITOR AND TARGET GameCore
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/NodeGraph/CMakeLists.txt")
+    add_subdirectory(Modules/NodeGraph)
+endif()
+
 # === NimbleEngine =========================================================
 # The engine layer itself: the thing that owns the module set, drives the frame
 # and is what a game under Games/ links. Its sources live at Engine/Source, so

@@ -126,6 +126,7 @@ namespace GameCore
     {
         SCRIPT_BINDING_NAME_MAX      = 40,   // including the NUL; accessors add Get/Set
         SCRIPT_BINDINGS_PER_TYPE_MAX = 32,
+        SCRIPT_SIGNATURE_MAX         = 96,   // including the NUL
     };
 
     struct ScriptBindingEntry
@@ -138,6 +139,13 @@ namespace GameCore
         uint32_t            Size      = 0;
         ScriptMethodInvoker Invoker   = nullptr;
         void              (*Method)() = nullptr;
+
+        /* A method's parameters and results, for tools -- Lua never reads it.
+         * "Name:type, ..." then optionally " -> Name:type, ...", the types
+         * being number, integer, bool, string, Vector3, Color, Entity. "" when
+         * the binding gave none (or one too long to store). Copied, not
+         * pointed at, so it outlives a hot-reloaded module that registered it. */
+        char                Signature[SCRIPT_SIGNATURE_MAX] = {};
     };
 
     /*
@@ -176,14 +184,23 @@ namespace GameCore
             AddField(InName, InMember, EScriptFieldType::Flag, bInReadOnly);
         }
 
-        /* A capture-less lambda converts to MethodFn. */
-        void Method(const char* InName, const MethodFn InFn)
+        /* A capture-less lambda converts to MethodFn. InSignature describes the
+         * arguments for tools (see ScriptBindingEntry::Signature), e.g.
+         * "Delta:Vector3" or "Factor:number -> Result:number". */
+        void Method(const char* InName, const MethodFn InFn, const char* InSignature = nullptr)
         {
             ScriptBindingEntry* Entry = NewEntry(InName);
             if(!Entry) { return; }
             Entry->bMethod = true;
             Entry->Method  = reinterpret_cast<void (*)()>(InFn);
             Entry->Invoker = &Invoke;
+
+            size_t Length = 0;
+            while(InSignature != nullptr && InSignature[Length] != '\0') { ++Length; }
+            if(Length < SCRIPT_SIGNATURE_MAX)
+            {
+                for(size_t Index = 0; Index < Length; ++Index) { Entry->Signature[Index] = InSignature[Index]; }
+            }
         }
 
         void Commit() { RegisterComponentScript(T::StaticType().ID, Entries, Count, Rejected); }
