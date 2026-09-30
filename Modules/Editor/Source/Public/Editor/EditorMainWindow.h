@@ -65,6 +65,7 @@ private:
     void StartPlay();
     void CompileSource();
     void CookContent();
+    void OpenSettings();
     void OnCompileFinished(bool bInSucceeded);
     void StartRenderer();
     void UpdateTitle();
