@@ -66,6 +66,7 @@ private:
     void CompileSource();
     void CookContent();
     void OpenSettings();
+    void OpenProjectSettings();
     void OnCompileFinished(bool bInSucceeded);
     void StartRenderer();
     void UpdateTitle();
