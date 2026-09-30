@@ -23,7 +23,7 @@ namespace GameCore
             const EngineCore::Vector3 Delta = Call.GetVector3(1);
             if(Call.HasError()) { return; }   // do not apply a half-read delta
             C.Position = C.Position + Delta;
-        });
+        }, "Delta:Vector3");
     }
 
     /* GetLocal/SetLocal (six numbers), GetWorld (read-only -- the refit owns
