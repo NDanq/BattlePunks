@@ -168,11 +168,14 @@ namespace
     /*
      * The block an input's value is computed in when that is not its node's
      * own: a Branch's True (arm 0) and False (arm 1), a For Loop End's Next
-     * (the loop body, arm 0). -1 for every other input.
+     * (the loop body, arm 0). -1 for every other input -- and for a ternary
+     * Branch's, which are one expression computed where the Branch is.
      */
-    int ArmOf(const NodeDefinition& InDef, const std::string& InPin)
+    bool IsTernary(const Node& InNode) { return InNode.GetProperty("Ternary", "false") == "true"; }
+
+    int ArmOf(const Node& InNode, const NodeDefinition& InDef, const std::string& InPin)
     {
-        if(InDef.Op == MOP_Branch)
+        if(InDef.Op == MOP_Branch && !IsTernary(InNode))
         {
             if(InPin == "True")  { return 0; }
             if(InPin == "False") { return 1; }
@@ -276,7 +279,8 @@ namespace
 
             if(Def->Op == MOP_Branch)
             {
-                return GetWildcardType(InGraph, InNode) + Dot + "A " + InNode.GetProperty("Compare", ">") + " B" + Hint();
+                return GetWildcardType(InGraph, InNode) + Dot + "A " + InNode.GetProperty("Compare", ">") + " B"
+                       + (IsTernary(InNode) ? Dot + "? :" : Hint());
             }
             if(Def->Op == MOP_LoopBegin)
             {
@@ -551,7 +555,7 @@ namespace
                 if(!Into || !Index.FindNode(Into->From.Node)) { continue; }
 
                 Scope Use = Own;
-                const int Arm = ArmOf(*Def, Pin.Name);
+                const int Arm = ArmOf(Each, *Def, Pin.Name);
                 if(Arm >= 0) { Use.push_back({ Each.Id, Arm }); }
 
                 const auto Found = Scopes.find(Into->From.Node);
@@ -615,7 +619,7 @@ namespace
                 Body.push_back({ Ends[0]->To.Node, 0 });
 
                 Scope Use = Each.second;
-                const int Arm = ArmOf(*Def, Pin.Name);
+                const int Arm = ArmOf(*N, *Def, Pin.Name);
                 if(Arm >= 0) { Use.push_back({ N->Id, Arm }); }
 
                 if(EndScope == Scopes.end() || !IsWithin(Use, Body))
@@ -770,17 +774,36 @@ namespace
      *     }
      *     else
      *     { ... }
+     *
+     * or, set to Ternary, `vec3 t3 = t1 > 0.5 ? t2 : t0;` -- both sides
+     * computed first, then one chosen.
      */
     std::string MaterialCompiler::EmitBranch(const Node& InNode, const NodeDefinition& InDef, const std::string& InType)
     {
         const std::string A = Input(InNode, InDef, *InDef.FindPin("A", EPinDirection::Input));
         const std::string B = Input(InNode, InDef, *InDef.FindPin("B", EPinDirection::Input));
+        const std::string Test = A + " " + InNode.GetProperty("Compare", ">") + " " + B;
+
+        if(IsTernary(InNode))
+        {
+            if(InNode.GetProperty("Hint", "None") != "None")
+            {
+                Result.Warning(InNode.Id, std::string(), "'" + InDef.DisplayName + "' is a ternary, an expression, which"
+                               " takes no Hint; its Hint is ignored");
+            }
+            const std::string True  = Input(InNode, InDef, *InDef.FindPin("True", EPinDirection::Input));
+            const std::string False = Input(InNode, InDef, *InDef.FindPin("False", EPinDirection::Input));
+            const std::string Temp  = "t" + std::to_string(NextTemp++);
+            Body.Line(InType + " " + Temp + " = " + Test + " ? " + True + " : " + False + ";", InNode.Id);
+            return Temp;
+        }
+
         Hoist(InNode, InDef, 0);
         Hoist(InNode, InDef, 1);
 
         const std::string Temp = "t" + std::to_string(NextTemp++);
         Body.Line(InType + " " + Temp + ";", InNode.Id);
-        Body.Line(HintPrefix(InNode) + "if(" + A + " " + InNode.GetProperty("Compare", ">") + " " + B + ")", InNode.Id);
+        Body.Line(HintPrefix(InNode) + "if(" + Test + ")", InNode.Id);
 
         for(const char* Arm : { "True", "False" })
         {
@@ -891,7 +914,7 @@ namespace
         std::set<NodeGuid> Seen;
         for(const PinDefinition& Pin : InDef.Pins)
         {
-            if(Pin.IsInput() && ArmOf(InDef, Pin.Name) == InArm) { HoistFrom(InOwner, Pin, Arm, Seen); }
+            if(Pin.IsInput() && ArmOf(InOwner, InDef, Pin.Name) == InArm) { HoistFrom(InOwner, Pin, Arm, Seen); }
         }
     }
 
@@ -1194,7 +1217,10 @@ namespace
             Def.Properties = { { "Compare", EPropertyKind::Choice, ">", GCompareChoices, "How A is compared with B" },
                                { "Hint", EPropertyKind::Choice, "None", GBranchHintChoices,
                                  "Branch: really jump, skipping the side not taken. Flatten: run both and select. "
-                                 "None: the driver decides. Ignored on OpenGL." } };
+                                 "None: the driver decides. Ignored on OpenGL, and by a ternary." },
+                               { "Ternary", EPropertyKind::Bool, "false", {},
+                                 "Write one expression, A > B ? True : False, instead of an if block: both sides are "
+                                 "computed, then one is chosen" } };
         }
         {
             NodeDefinition& Def = Pure("Logic.ForLoop", "For Loop", "Logic",

@@ -73,7 +73,7 @@ falls back to the attribute, with a warning.
 </NodeGraph>
 ```
 
-`Tests/Data/Mover.script.nmgraph` is a complete example.
+`Tests/Data/Mover.script.nmgraph` is a complete example; `Games/Sandbox/Materials/Ripples.material.nmgraph` is a material with a For Loop.
 
 - **Deterministic.** Nodes are sorted by GUID and links by their ends, and
   attributes come in a fixed order. Numbers use the shortest round-trip form
@@ -207,10 +207,12 @@ A component the input does not have (B of a vec2, `z` of a vec2) is an error on
 the node, never a silent clamp. `DescribeNode` gives the editor the node's
 header text, `.xz → vec2`.
 
-**Control flow.** The Logic nodes write real statements, not selects:
+**Control flow.** The Logic nodes write real statements:
 
 - **Branch** compares A with B (`>`, `>=`, `<`, `<=`, `==`, `!=`) and gives
-  True or False. It is an `if`.
+  True or False. It is an `if` block. With **Ternary** ticked in Details it is
+  one expression instead, `A > B ? True : False`: both sides are computed
+  first, and a Hint does not apply (it is a warning).
 - **For Loop** and **For Loop End** are a pair, joined by their Loop pins, and
   everything between them is the body of a `for`. Value starts as Initial and
   becomes Next each time round. Index counts 0, 1, 2 and so on. Result is the
