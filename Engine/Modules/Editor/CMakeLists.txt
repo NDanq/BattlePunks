@@ -63,6 +63,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/PlaySession.cpp
         Source/Private/Editor/PlaySession.h
         Source/Private/Editor/SDLInputProbe.h
+        Source/Private/Editor/SourceBuild.cpp
+        Source/Private/Editor/SourceBuild.h
         Source/Public/Editor/EditorContext.h
         Source/Public/Editor/EditorCamera.h
         Source/Public/Editor/EditorLog.h
@@ -121,6 +123,41 @@ target_include_directories(NimbleEditor PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Gen
 # that one file so a configuration switch does not recompile the editor.
 set_source_files_properties(Source/Private/Editor/AboutDialog.cpp PROPERTIES
         COMPILE_DEFINITIONS "NIMBLE_BUILD_CONFIG=$<CONFIG>;NIMBLE_BUILD_TARGET=${NIMBLE_TARGET}")
+
+# === Build tree =================================================================
+# Build > Compile Source runs `cmake --build` on this tree for the game module,
+# so the editor has to know where the tree is and which CMake made it.
+#
+# With MSVC under Ninja the compiler also needs vcvarsall's environment
+# (INCLUDE, LIB, PATH). An editor launched from an IDE or a developer prompt
+# inherits it; one started from Explorer does not, so SourceBuild calls
+# vcvarsall.bat first when INCLUDE is unset. Its arguments come from the
+# compiler's own path: .../VC/Tools/MSVC/<ver>/bin/Host<host>/<target>/cl.exe.
+set(NM_EDITOR_VCVARSALL "")
+set(NM_EDITOR_VCVARS_ARGS "")
+if(MSVC AND CMAKE_CXX_COMPILER MATCHES "^(.*)/VC/Tools/MSVC/([^/]+)/bin/Host([^/]+)/([^/]+)/cl\\.exe$")
+    set(NM_EDITOR_VS_ROOT       "${CMAKE_MATCH_1}")
+    set(NM_EDITOR_MSVC_VERSION  "${CMAKE_MATCH_2}")
+    string(TOLOWER "${CMAKE_MATCH_3}" NM_EDITOR_VC_HOST)
+    string(TOLOWER "${CMAKE_MATCH_4}" NM_EDITOR_VC_TARGET)
+    # vcvarsall spells x64 "amd64".
+    string(REPLACE "x64" "amd64" NM_EDITOR_VC_HOST   "${NM_EDITOR_VC_HOST}")
+    string(REPLACE "x64" "amd64" NM_EDITOR_VC_TARGET "${NM_EDITOR_VC_TARGET}")
+    if(NM_EDITOR_VC_HOST STREQUAL NM_EDITOR_VC_TARGET)
+        set(NM_EDITOR_VC_ARCH "${NM_EDITOR_VC_TARGET}")
+    else()
+        set(NM_EDITOR_VC_ARCH "${NM_EDITOR_VC_HOST}_${NM_EDITOR_VC_TARGET}")
+    endif()
+    if(EXISTS "${NM_EDITOR_VS_ROOT}/VC/Auxiliary/Build/vcvarsall.bat")
+        set(NM_EDITOR_VCVARSALL   "${NM_EDITOR_VS_ROOT}/VC/Auxiliary/Build/vcvarsall.bat")
+        set(NM_EDITOR_VCVARS_ARGS "${NM_EDITOR_VC_ARCH} -vcvars_ver=${NM_EDITOR_MSVC_VERSION}")
+    endif()
+endif()
+configure_file("${CMAKE_CURRENT_SOURCE_DIR}/Source/Private/Editor/EditorBuildTree.h.in"
+               "${CMAKE_CURRENT_BINARY_DIR}/Generated/EditorBuildTree.h" @ONLY)
+
+set_source_files_properties(Source/Private/Editor/SourceBuild.cpp PROPERTIES
+        COMPILE_DEFINITIONS "NIMBLE_BUILD_CONFIG=$<CONFIG>")
 
 # The cooked shaders the Renderer loads at startup, staged by the engine.
 if(TARGET NimbleStageShaders)
