@@ -649,6 +649,151 @@ namespace
         }
     }
 
+    /*
+     * UV.x > 0.5 ? sin(UV) * 2 : sin(UV), then four times: Value += Index * sin(UV).
+     * sin(UV) is shared by both sides and the loop, so it comes before the
+     * if; the * 2 only the True side needs is inside it.
+     */
+    Graph MakeLogicGraph(const char* InBranchHint = "Branch", const char* InLoopHint = "Unroll")
+    {
+        Graph G;
+        G.SchemaName = "Material";
+        G.Name       = "Logic";
+
+        AddNode(G, 1, "Output.Pixel", 900, 0);
+        AddNode(G, 2, "Input.TexCoord", -500, 0);
+        AddNode(G, 3, "Vector.ComponentMask", -300, -100);                              // R: UV.x
+        AddNode(G, 4, "Math.Sin", -300, 100);
+        AddNode(G, 5, "Logic.Branch", 100, 0).Properties["Hint"] = InBranchHint;
+        AddNode(G, 6, "Math.Multiply", -100, 0).Constants["B"] = "2";
+        AddNode(G, 7, "Logic.ForLoop", 300, 0).Properties["Hint"] = InLoopHint;
+        AddNode(G, 8, "Math.Add", 500, 0);
+        AddNode(G, 9, "Math.Multiply", 500, 150);
+        AddNode(G, 10, "Logic.ForLoopEnd", 700, 0);
+        G.FindNode(Id(5))->Constants["B"] = "0.5";
+
+        Connect(G, 2, "UV", 3, "Vector");
+        Connect(G, 2, "UV", 4, "X");
+        Connect(G, 3, "Out", 5, "A");
+        Connect(G, 4, "Out", 6, "A");
+        Connect(G, 6, "Out", 5, "True");
+        Connect(G, 4, "Out", 5, "False");
+        Connect(G, 5, "Out", 7, "Initial");
+        Connect(G, 7, "Value", 8, "A");
+        Connect(G, 7, "Index", 9, "A");
+        Connect(G, 4, "Out", 9, "B");
+        Connect(G, 9, "Out", 8, "B");
+        Connect(G, 7, "Loop", 10, "Loop");
+        Connect(G, 8, "Out", 10, "Next");
+        Connect(G, 10, "Result", 1, "Color");
+        return G;
+    }
+
+    void TestLogic()
+    {
+        std::printf("[branch and loop]\n");
+
+        const Schema* S = FindSchema("Material");
+        const Graph Logic = MakeLogicGraph();
+        Expect(S->GetWildcardType(Logic, *Logic.FindNode(Id(5))) == "vec2", "a Branch takes its sides' type");
+        Expect(S->GetWildcardType(Logic, *Logic.FindNode(Id(10))) == "vec2", "a For Loop End takes its For Loop's type");
+        Expect(S->DescribeNode(Logic, *Logic.FindNode(Id(5))) == "vec2 \xC2\xB7 A > B \xC2\xB7 [branch]",
+               "the Branch describes its test and hint");
+        Expect(S->DescribeNode(Logic, *Logic.FindNode(Id(7))) == "vec2 \xC2\xB7 4 times \xC2\xB7 [unroll]",
+               "the For Loop describes its count and hint");
+
+        CompileResult R;
+        CompileGraph(Logic, R);
+        Expect(!R.HasErrors(), "the logic graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Logic, R).c_str()); }
+        ExpectGolden("Logic.fsh", R.Code);
+
+        const auto At = [&](const char* InText) { return R.Code.find(InText); };
+        Expect(At("#include <MaterialPlatform.glsl>") < At("#include <Common.glsl>"), "hints include the platform header first");
+        Expect(At("HINT_BRANCH if(Interpolants.TexCoord.x > 0.5)") != std::string::npos, "a Branch is a hinted if");
+        Expect(At("HINT_UNROLL for(int i0 = 0; i0 < 4; ++i0)") != std::string::npos, "a For Loop is a hinted for");
+        Expect(At("sin(Interpolants.TexCoord)") < At("if("), "a value both sides use is computed before the if");
+        Expect(At("* vec2(2.0)") > At("if(") && At("* vec2(2.0)") < At("else"), "a value only True uses is computed inside it");
+        Expect(At("vec2(float(i0))") > At("for("), "the loop's Index is read inside the loop");
+
+        Graph Loaded;
+        Loaded.Name = "Logic";
+        std::string Error;
+        Expect(ReadGraphText(WriteGraphText(Logic), Loaded, Error) && WriteGraphText(Loaded) == WriteGraphText(Logic),
+               "branch and loop settings round-trip");
+
+        {
+            CompileResult Plain;
+            CompileGraph(MakeLogicGraph("None", "None"), Plain);
+            Expect(!Plain.HasErrors() && Plain.Code.find("MaterialPlatform") == std::string::npos
+                   && Plain.Code.find("HINT_") == std::string::npos && Plain.Code.find("    if(") != std::string::npos,
+                   "without hints: a plain if and for, and no platform header");
+        }
+        {
+            Graph Wide = MakeLogicGraph();
+            Wide.Links.erase(std::remove_if(Wide.Links.begin(), Wide.Links.end(),
+                                            [](const Link& L) { return L.To.Node == Id(7) && L.To.Pin == "Initial"; }),
+                             Wide.Links.end());
+            AddNode(Wide, 11, "Input.Position");
+            Wide.Links.erase(std::remove_if(Wide.Links.begin(), Wide.Links.end(),
+                                            [](const Link& L) { return L.To.Node == Id(10) && L.To.Pin == "Next"; }),
+                             Wide.Links.end());
+            Connect(Wide, 11, "Position", 10, "Next");
+            Expect(S->GetWildcardType(Wide, *Wide.FindNode(Id(7))) == "vec3", "a vec3 into the End's Next widens the loop");
+        }
+        {
+            Graph Outside = MakeLogicGraph();
+            Outside.Links.pop_back();                      // Result -> Color
+            Connect(Outside, 8, "Out", 1, "Color");        // the body's Add, read after the loop
+            CompileResult Bad;
+            CompileGraph(Outside, Bad);
+            Expect(HasErrorOn(Bad, Id(8)) || HasErrorOn(Bad, Id(1)), "reading the loop's Value outside the loop is an error");
+        }
+        {
+            Graph Linked = MakeLogicGraph();
+            Connect(Linked, 3, "Out", 7, "Count");
+            CompileResult Bad;
+            CompileGraph(Linked, Bad);
+            Expect(HasErrorOn(Bad, Id(7)), "Unroll with a linked Count is an error on the For Loop");
+
+            Graph Dynamic = MakeLogicGraph("Branch", "Loop");
+            Connect(Dynamic, 3, "Out", 7, "Count");
+            CompileResult Good;
+            CompileGraph(Dynamic, Good);
+            Expect(!Good.HasErrors() && Good.Code.find("< int(Interpolants.TexCoord.x);") != std::string::npos,
+                   "a linked Count is a run-time bound");
+        }
+        {
+            Graph Fraction = MakeLogicGraph();
+            Fraction.FindNode(Id(7))->Constants["Count"] = "2.5";
+            CompileResult Bad;
+            CompileGraph(Fraction, Bad);
+            Expect(HasErrorOn(Bad, Id(7)), "a Count that is not a whole number is an error");
+        }
+        {
+            Graph Open = MakeLogicGraph();
+            Open.Links.erase(std::remove_if(Open.Links.begin(), Open.Links.end(),
+                                            [](const Link& L) { return L.To.Pin == "Loop"; }),
+                             Open.Links.end());
+            CompileResult Bad;
+            CompileGraph(Open, Bad);
+            Expect(HasErrorOn(Bad, Id(10)), "a For Loop End with no For Loop is an error on it");
+        }
+        {
+            Graph Unclosed = MakeLogicGraph();
+            Unclosed.Links.erase(std::remove_if(Unclosed.Links.begin(), Unclosed.Links.end(),
+                                                [](const Link& L) { return L.To.Node == Id(1); }),
+                                 Unclosed.Links.end());
+            Unclosed.Links.erase(std::remove_if(Unclosed.Links.begin(), Unclosed.Links.end(),
+                                                [](const Link& L) { return L.To.Pin == "Loop"; }),
+                                 Unclosed.Links.end());
+            Connect(Unclosed, 8, "Out", 1, "Color");
+            CompileResult Bad;
+            CompileGraph(Unclosed, Bad);
+            Expect(HasErrorOn(Bad, Id(7)), "a For Loop read without a For Loop End is an error on it");
+        }
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -686,6 +831,7 @@ int main()
     TestScriptRuntime();
     TestMaterialCodegen();
     TestComponentSelection();
+    TestLogic();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

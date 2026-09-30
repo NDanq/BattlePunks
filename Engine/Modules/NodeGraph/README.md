@@ -33,7 +33,8 @@ registries, by whichever executable links this: the editor or the test.
 | `Schema.h` | What the names mean: pin types and conversions, node definitions, wildcard resolution, one compiler per schema. `GetSchemas()` |
 | `GraphFile.h` | `.nmgraph` read and write, the path rules, the clipboard fragment, `GenerateGraphOutput` |
 | `GraphCompiler.h` | `ValidateGraph` (what every schema shares), then `CompileGraph` into the schema's compiler; diagnostics name their node |
-| `MaterialSchema.cpp` | Material to GLSL: pure data flow from Pixel Output back, one `tN` temporary per computed value, parameters as `SHADER_UNIFORM`s at binding 2 |
+| `MaterialSchema.cpp` | Material to GLSL: data flow from Pixel Output back, one `tN` temporary per computed value, Branch and For Loop as real `if` and `for` blocks, parameters in one `mat4` at binding 2 |
+| `Shaders/MaterialPlatform.glsl` | Per-platform macros a generated shader may include: the control-flow hints |
 | `ScriptSchema.cpp` | Script to Lua: exec flow from event nodes, pure values re-evaluated per statement; component nodes generated from the script bindings |
 | `Scripts/cook_material_graphs.py` | `-check` a generated shader with glslc, or cook a folder of them, through GDI's own `cook_shaders.py` |
 
@@ -205,6 +206,40 @@ a vec2 mask becomes vec2.
 A component the input does not have (B of a vec2, `z` of a vec2) is an error on
 the node, never a silent clamp. `DescribeNode` gives the editor the node's
 header text, `.xz → vec2`.
+
+**Control flow.** The Logic nodes write real statements, not selects:
+
+- **Branch** compares A with B (`>`, `>=`, `<`, `<=`, `==`, `!=`) and gives
+  True or False. It is an `if`.
+- **For Loop** and **For Loop End** are a pair, joined by their Loop pins, and
+  everything between them is the body of a `for`. Value starts as Initial and
+  becomes Next each time round. Index counts 0, 1, 2 and so on. Result is the
+  value after the last time round. Count is a constant unless something is
+  linked to it.
+
+Each value is computed in the innermost block that all of its uses share. A
+value only the True side needs is computed inside that side, so it is skipped
+when False runs. A value both sides need is computed once, before the `if`.
+Index and Value exist only in the body. Reading them anywhere else is an error
+on the reading node, as is a For Loop without exactly one For Loop End. The
+For Loop End takes its For Loop's type. Unless Details sets that type, it is
+the widest suggested by the links of either node.
+
+**Hints.** Branch has a Hint of None, Branch or Flatten; For Loop has None, Loop
+or Unroll. Unroll needs a constant Count. A hint becomes a `HINT_*` macro from
+`Shaders/MaterialPlatform.glsl`. A shader includes that header first, and only
+when it uses a hint. The header maps each hint per platform:
+
+| Platform | `HINT_BRANCH` becomes |
+|---|---|
+| Vulkan (glslc) | `[[branch]]`, under `GL_EXT_control_flow_attributes`, into the SPIR-V |
+| D3D12 | `[branch]`, written by spirv-cross from that SPIR-V |
+| OpenGL | `/* branch */`, a no-op: drivers do not take the attributes |
+
+The macros are comments rather than empty because `cook_shaders.py`'s
+preprocessor substitutes only defines that have a value.
+`cook_material_graphs.py` resolves an `#include` against GDI's `Shaders/`
+first, then this module's.
 
 The inputs are:
 
