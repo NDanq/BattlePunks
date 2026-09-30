@@ -67,6 +67,7 @@ uses it.
 | `EditorContext` | Owns the World and Renderer; selection; the undo history; signals every panel listens to |
 | `EditorHistory` (private) | Undo / redo commands and the entity and component snapshots they hold |
 | `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Build / Help), status bar; starts and stops the Renderer |
+| `EditorTheme` (private) | `Editor.Theme`: light, dark or the system's, applied live through Fusion and an explicit palette |
 | `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
@@ -313,6 +314,7 @@ editor's own config vars as a form:
 
 | Group | Setting | Var |
 |---|---|---|
+| Appearance | Theme: System, Light, Dark (applies at once) | `Editor.Theme` |
 | Viewport | Move / Rotate / Scale snap | `Editor.SnapTranslate`, `SnapRotate`, `SnapScale` |
 | Rendering | Render backend (on restart) | `Editor.RHI` |
 | Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
@@ -332,6 +334,13 @@ go back to the project's values.
 
 Adding a setting is a `NIMBLE_CONFIG_*` var and one row in
 `SettingsDialog.cpp`.
+
+**Theme.** The editor always uses Qt's Fusion style: the native Windows 10
+style draws light whatever the palette says, so it cannot do dark. Light and
+dark are explicit palettes (`EditorTheme.cpp`), so they look the same on every
+machine; System picks between them from the OS's app mode and follows it if
+that changes while the editor runs. `Editor.Theme 2` in the Console switches
+too.
 
 ## Build menu
 
