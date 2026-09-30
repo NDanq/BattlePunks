@@ -68,6 +68,7 @@ uses it.
 | `EditorHistory` (private) | Undo / redo commands and the entity and component snapshots they hold |
 | `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Build / Help), status bar; starts and stops the Renderer |
 | `EditorTheme` (private) | `Editor.Theme`: light, dark or the system's, applied live through Fusion and an explicit palette |
+| `ProjectSettingsDialog` + `ConfigIniFile` (private) | Edit > Project Settings: the project's `DefaultEngine.ini` as pages of settings, edited line by line so its comments stay |
 | `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
@@ -265,6 +266,7 @@ registered:
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `Cooked/` beside it |
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
 | `settings` | Open Edit > Editor Settings, and print where they are saved |
+| `projectsettings` | Open Edit > Project Settings, and print the file it saves to |
 | `stats` | The renderer's counters |
 | `gizmo [none \| move \| rotate \| scale] [world \| local]` | Set the transform handles, or print them |
 | `snap [on \| off]` | Snap handle drags, or print whether they do |
@@ -341,6 +343,44 @@ dark are explicit palettes (`EditorTheme.cpp`), so they look the same on every
 machine; System picks between them from the OS's app mode and follows it if
 that changes while the editor runs. `Editor.Theme 2` in the Console switches
 too.
+
+## Project settings
+
+**Edit > Project Settings...** (`projectsettings` in the Console) edits the
+project's `Config/DefaultEngine.ini` -- the game's and the engine's settings,
+shared by everyone on the project, where Editor Settings are one person's.
+
+- **Project** page: title, game module, start level and startup script, and
+  where the file is.
+- **One page per config section**: every registered `NIMBLE_CONFIG_*` var in
+  it (outside `[Editor]`), with an editor for its type -- checkbox, spin box,
+  text, or a list for known choices such as `Display.RHI` -- and a reset to
+  its compiled default. **Bold** means the file sets it; the rest run on their
+  default.
+- **A game module's own settings** (`[Sandbox] RunSeconds`) are registered only
+  while the module is loaded, which is during Play. Otherwise they are read
+  from the file and edited as text, in italics.
+
+**Which file.** The master copy in the game's source tree
+(`Games/Sandbox/Config/DefaultEngine.ini`), not the copy staged beside the
+executable, which a build overwrites. The game names it for the editor at
+configure time:
+
+```cmake
+set_property(TARGET NimbleEditor PROPERTY NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
+```
+
+(`EditorProject.h` is generated from that). After a save the staged copy is
+refreshed too, so the next Play sees the change without a build. With no game
+setting the property, the dialog edits the staged copy and warns that a build
+will overwrite it.
+
+**How it writes.** Only values that changed, each on its own line
+(`ConfigIniFile`): every comment, blank line and key order stays as it was. A
+key the file lacks goes at the end of its section; a section it lacks, at the
+end of the file. Values Core would not parse are refused. Apply also sets the
+vars in the running editor, as the Console would, but most are read at startup
+or at Play and take effect then.
 
 ## Build menu
 

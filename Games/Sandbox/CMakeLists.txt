@@ -101,6 +101,11 @@ add_dependencies(Sandbox SandboxGame)
 # configure paths, so the target exists here when it exists at all.
 if(TARGET NimbleEditor)
     add_dependencies(NimbleEditor SandboxGame)
+
+    # Edit > Project Settings edits this game's master config, not the staged
+    # copy (see the Editor's CMakeLists.txt).
+    set_property(TARGET NimbleEditor PROPERTY
+            NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
 endif()
 
 # Same Qt-freedom the modules get from nimble_add_module(). Stated explicitly

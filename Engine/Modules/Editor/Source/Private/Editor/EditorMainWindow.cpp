@@ -30,6 +30,7 @@
 #include "Public/Editor/ViewportPanel.h"
 #include "Public/Editor/ViewportWidget.h"
 #include "Private/Editor/AboutDialog.h"
+#include "Private/Editor/ProjectSettingsDialog.h"
 #include "Private/Editor/SDLInputProbe.h"
 #include "Private/Editor/SettingsDialog.h"
 #include "Private/Editor/SourceBuild.h"
@@ -219,6 +220,10 @@ void EditorMainWindow::BuildMenus()
     Settings->setMenuRole(QAction::PreferencesRole);
     Settings->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
     connect(Settings, &QAction::triggered, this, &EditorMainWindow::OpenSettings);
+
+    QAction* ProjectSettings = Edit->addAction(QStringLiteral("&Project Settings..."));
+    ProjectSettings->setToolTip(QStringLiteral("The project's Config/DefaultEngine.ini: the game's and the engine's settings"));
+    connect(ProjectSettings, &QAction::triggered, this, &EditorMainWindow::OpenProjectSettings);
 
     QMenu* View = menuBar()->addMenu(QStringLiteral("&View"));
     for(QDockWidget* Dock : findChildren<QDockWidget*>())
@@ -417,6 +422,18 @@ void EditorMainWindow::OpenSettings()
     Dialog->show();
 }
 
+void EditorMainWindow::OpenProjectSettings()
+{
+    if(auto* Open = findChild<ProjectSettingsDialog*>())
+    {
+        Open->raise();
+        Open->activateWindow();
+        return;
+    }
+    auto* Dialog = new ProjectSettingsDialog(this);   // deletes itself on close
+    Dialog->show();
+}
+
 void EditorMainWindow::CookContent()
 {
     /* A stub until cooking has a definition: which content, from where, to
@@ -607,6 +624,15 @@ void EditorMainWindow::RegisterConsoleCommands()
         OpenSettings();
         Console.Print(QStringLiteral("Settings are saved to %1")
                       .arg(QDir::toNativeSeparators(SettingsDialog::GetUserSettingsPath())));
+    });
+
+    Console.Register(QStringLiteral("projectsettings"), QString(),
+                     QStringLiteral("Open Edit > Project Settings"),
+                     [this](const QStringList&)
+    {
+        OpenProjectSettings();
+        Console.Print(QStringLiteral("Project settings are saved to %1")
+                      .arg(QDir::toNativeSeparators(ProjectSettingsDialog::GetProjectConfigPath())));
     });
 
     Console.Register(QStringLiteral("compile"), QStringLiteral("[cancel]"),
