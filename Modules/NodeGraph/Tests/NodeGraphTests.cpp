@@ -730,6 +730,26 @@ namespace
                    "without hints: a plain if and for, and no platform header");
         }
         {
+            Graph Ternary = MakeLogicGraph("None", "None");
+            Ternary.FindNode(Id(5))->Properties["Ternary"] = "true";
+            CompileResult T;
+            CompileGraph(Ternary, T);
+            Expect(!T.HasErrors() && T.Code.find("vec2 t2 = Interpolants.TexCoord.x > 0.5 ? t1 : t0;") != std::string::npos
+                   && T.Code.find("if(") == std::string::npos, "a ternary Branch is one expression, both sides computed before it");
+            Expect(S->DescribeNode(Ternary, *Ternary.FindNode(Id(5))) == "vec2 \xC2\xB7 A > B \xC2\xB7 ? :",
+                   "a ternary Branch says so in its header");
+
+            Ternary.FindNode(Id(5))->Properties["Hint"] = "Branch";
+            CompileResult Hinted;
+            CompileGraph(Ternary, Hinted);
+            const bool bWarned = std::any_of(Hinted.Diagnostics.begin(), Hinted.Diagnostics.end(), [](const Diagnostic& D)
+            {
+                return D.Severity == ESeverity::Warning && D.Node == Id(5);
+            });
+            Expect(!Hinted.HasErrors() && bWarned && Hinted.Code.find("HINT_BRANCH") == std::string::npos,
+                   "a hint on a ternary is a warning, and not written");
+        }
+        {
             Graph Wide = MakeLogicGraph();
             Wide.Links.erase(std::remove_if(Wide.Links.begin(), Wide.Links.end(),
                                             [](const Link& L) { return L.To.Node == Id(7) && L.To.Pin == "Initial"; }),
