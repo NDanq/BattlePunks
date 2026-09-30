@@ -31,7 +31,8 @@ namespace
             if(Pin.IsExec()) { return true; }
 
             std::vector<std::string> Types;
-            if(Pin.Type != WILDCARD_TYPE)             { Types = { Pin.Type }; }
+            if(Pin.Type == DERIVED_TYPE)              { Types = InDef.WildcardTypes; }   // any it could come out as
+            else if(Pin.Type != WILDCARD_TYPE)        { Types = { Pin.Type }; }
             else if(!InVariableType.empty())          { Types = { InVariableType }; }
             else                                      { Types = InDef.WildcardTypes; }
 

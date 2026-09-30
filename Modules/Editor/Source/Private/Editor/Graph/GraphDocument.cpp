@@ -157,7 +157,8 @@ bool GraphDocument::PlanLink(const NodeGraph::Graph& InGraph, const PinRef& InA,
                                 const PinRef& InSelf, bool& bOutFree) -> std::vector<std::string>
     {
         bOutFree = false;
-        if(InPin.Type != WILDCARD_TYPE) { return { InPin.Type }; }
+        /* Fixed, or derived from the node's settings: either way, not ours to choose. */
+        if(InPin.Type != WILDCARD_TYPE) { return { SchemaPtr->GetPinType(InGraph, InNode, InPin) }; }
         if(InDef.bWildcardFromSchema || HasOtherWildcardLinks(InGraph, InNode, InDef, InSelf))
         {
             return { SchemaPtr->GetPinType(InGraph, InNode, InPin) };

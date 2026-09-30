@@ -32,6 +32,12 @@ namespace NodeGraph
      * -- Math.Add is float, vec2, vec3 or vec4 in a material, as its links say. */
     constexpr const char* WILDCARD_TYPE = "*";
 
+    /* A pin whose type follows the node's settings rather than its links -- a
+     * component mask's output is float, vec2, vec3 or vec4 by how many
+     * components are ticked. Schema::ResolvePinType computes it; the node's
+     * WildcardTypes list what it can come out as (for the palette). */
+    constexpr const char* DERIVED_TYPE = "?";
+
     struct PinTypeInfo
     {
         std::string Name;          // "vec3", "number", "Component:Transform"
@@ -65,6 +71,7 @@ namespace NodeGraph
         Identifier,   // letters, digits, '_', not starting with a digit
         Choice,       // one of Choices
         Variable,     // the name of one of the graph's Variables
+        Bool,         // "true" or "false" -- a checkbox
     };
 
     struct PropertyDefinition
@@ -142,9 +149,22 @@ namespace NodeGraph
          * or one the compiler converts. Neither may be the wildcard. */
         bool CanConvert(const std::string& InFrom, const std::string& InTo) const;
 
-        /* The concrete type of a pin on a node: the pin's own type, or for a
-         * wildcard the node's resolved type (see ResolveWildcard). */
+        /* The concrete type of a pin on a node -- ResolvePinType's answer. */
         std::string GetPinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const;
+
+        /*
+         * The concrete type of InPin on InNode: the pin's own type; for a
+         * wildcard, the node's resolved type (ResolveWildcard); for a
+         * DERIVED_TYPE pin, whatever the schema computes from the node's
+         * settings -- an override's job. Every question about a pin's type,
+         * in the compilers, the validation and the editor, comes through here.
+         */
+        virtual std::string ResolvePinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const;
+
+        /* A few words about how this node is set up, for its header in the
+         * editor -- ".xz -> vec2" for a component mask. "" shows the resolved
+         * wildcard type, if any, as before. */
+        virtual std::string DescribeNode(const Graph& InGraph, const Node& InNode) const;
 
         /* The type a wildcard node's "*" pins have; "" for a node without them. */
         std::string GetWildcardType(const Graph& InGraph, const Node& InNode) const;

@@ -38,7 +38,7 @@ namespace NodeGraph
         /* Every link out of an output pin, in graph order. */
         const std::vector<const Link*>& LinksOutOf(const NodeGuid& InNode, const std::string& InPin) const;
 
-        /* The concrete type of a pin (the wildcard resolved). */
+        /* The concrete type of a pin -- Schema::ResolvePinType, cached. */
         std::string PinType(const Node& InNode, const PinDefinition& InPin) const;
 
         /* The nodes, in GUID order -- the order every compiler walks roots in,
@@ -52,7 +52,7 @@ namespace NodeGraph
         std::map<PinRef, const Link*>              Into;
         std::map<PinRef, std::vector<const Link*>> OutOf;
         std::vector<const Node*>                   Sorted;
-        mutable std::map<const Node*, std::string> WildcardCache;
+        mutable std::map<std::pair<const Node*, std::string>, std::string> TypeCache;
     };
 
     // === Literals ===============================================================

@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -535,6 +536,119 @@ namespace
         }
     }
 
+    /* Position -> Component Mask (R, B) -> Add 0.5 -> Swizzle "yxyx" -> output. */
+    Graph MakeMasksGraph()
+    {
+        Graph G;
+        G.SchemaName = "Material";
+        G.Name       = "Masks";
+
+        AddNode(G, 1, "Output.Pixel", 600, 0);
+        AddNode(G, 2, "Input.Position", -300, 0);
+        Node& Mask = AddNode(G, 3, "Vector.ComponentMask", -100, 0);
+        Mask.Properties["R"] = "true";
+        Mask.Properties["B"] = "true";
+        AddNode(G, 4, "Math.Add", 100, 0).Constants["B"] = "0.5";
+        AddNode(G, 5, "Vector.Swizzle", 300, 0).Properties["Swizzle"] = "yxyx";
+        Connect(G, 2, "Position", 3, "Vector");
+        Connect(G, 3, "Out", 4, "A");
+        Connect(G, 4, "Out", 5, "Vector");
+        Connect(G, 5, "Out", 1, "Color");
+        return G;
+    }
+
+    /* One node of InType reading InSource's InPin, into a Pixel Output. */
+    Graph MakeSelectGraph(const char* InSource, const char* InPin, const char* InType,
+                          const std::map<std::string, std::string>& InProperties)
+    {
+        Graph G;
+        G.SchemaName = "Material";
+        G.Name       = "Select";
+        AddNode(G, 1, "Output.Pixel");
+        AddNode(G, 2, InSource);
+        AddNode(G, 3, InType).Properties = InProperties;
+        Connect(G, 2, InPin, 3, "Vector");
+        Connect(G, 3, "Out", 1, "Color");
+        return G;
+    }
+
+    void TestComponentSelection()
+    {
+        std::printf("[mask and swizzle]\n");
+
+        const Schema* S = FindSchema("Material");
+        const Graph Masks = MakeMasksGraph();
+        const Node* Mask    = Masks.FindNode(Id(3));
+        const Node* Add     = Masks.FindNode(Id(4));
+        const Node* Swizzle = Masks.FindNode(Id(5));
+
+        Expect(S->GetPinType(Masks, *Mask, *S->FindNode(Mask->Type)->FindPin("Out")) == "vec2",
+               "R and B ticked make the mask's output a vec2");
+        Expect(S->GetWildcardType(Masks, *Add) == "vec2", "a wildcard node takes the mask's derived type");
+        Expect(S->GetPinType(Masks, *Swizzle, *S->FindNode(Swizzle->Type)->FindPin("Out")) == "vec4",
+               "four letters make the swizzle's output a vec4");
+        Expect(S->DescribeNode(Masks, *Mask) == ".xz \xE2\x86\x92 vec2", "the mask describes itself for its header");
+
+        CompileResult R;
+        CompileGraph(Masks, R);
+        Expect(!R.HasErrors(), "the mask graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Masks, R).c_str()); }
+        ExpectGolden("Masks.fsh", R.Code);
+        Expect(R.Code.find("Interpolants.Position.xz") != std::string::npos, "the mask is a swizzle of its input");
+        Expect(R.Code.find("t0.yxyx") != std::string::npos, "the swizzle reorders and repeats");
+
+        Graph Loaded;
+        Loaded.Name = "Masks";
+        std::string Error;
+        Expect(ReadGraphText(WriteGraphText(Masks), Loaded, Error) && WriteGraphText(Loaded) == WriteGraphText(Masks),
+               "mask and swizzle settings round-trip");
+
+        const auto Compile = [](const Graph& InGraph, CompileResult& OutResult) { CompileGraph(InGraph, OutResult); };
+        {
+            CompileResult All;
+            Compile(MakeSelectGraph("Input.FragCoord", "Coord", "Vector.ComponentMask",
+                                    { { "R", "true" }, { "G", "true" }, { "B", "true" }, { "A", "true" } }), All);
+            Expect(!All.HasErrors() && All.Code.find("Output = gl_FragCoord;") != std::string::npos,
+                   "all four of a vec4 pass it through untouched");
+        }
+        {
+            CompileResult None;
+            Compile(MakeSelectGraph("Input.TexCoord", "UV", "Vector.ComponentMask", { { "R", "false" } }), None);
+            Expect(HasErrorOn(None, Id(3)), "a mask with nothing ticked is an error on it");
+
+            CompileResult Wide;
+            Compile(MakeSelectGraph("Input.TexCoord", "UV", "Vector.ComponentMask", { { "B", "true" } }), Wide);
+            Expect(HasErrorOn(Wide, Id(3)), "B on a vec2 is an error on the mask");
+        }
+        {
+            CompileResult Rgba;
+            Compile(MakeSelectGraph("Input.Position", "Position", "Vector.Swizzle", { { "Swizzle", "BGR" } }), Rgba);
+            Expect(!Rgba.HasErrors() && Rgba.Code.find("Interpolants.Position.zyx") != std::string::npos,
+                   "rgba letters, in either case, mean xyzw");
+
+            CompileResult Splat;
+            Compile(MakeSelectGraph("Input.Mouse", "Down", "Vector.Swizzle", { { "Swizzle", "xxx" } }), Splat);
+            Expect(!Splat.HasErrors() && Splat.Code.find("vec3(ViewParameters.MouseCoords.z)") != std::string::npos,
+                   "swizzling a float spreads it with a constructor");
+
+            for(const char* Bad : { "xq", "xr", "xyzwx", "" })
+            {
+                CompileResult Invalid;
+                Compile(MakeSelectGraph("Input.Position", "Position", "Vector.Swizzle", { { "Swizzle", Bad } }), Invalid);
+                Expect(HasErrorOn(Invalid, Id(3)), std::string("swizzle '") + Bad + "' is refused");
+            }
+
+            CompileResult Narrow;
+            Compile(MakeSelectGraph("Input.TexCoord", "UV", "Vector.Swizzle", { { "Swizzle", "xz" } }), Narrow);
+            Expect(HasErrorOn(Narrow, Id(3)), "z of a vec2 is an error on the swizzle");
+        }
+        {
+            CompileResult BadBool;
+            Compile(MakeSelectGraph("Input.Position", "Position", "Vector.ComponentMask", { { "G", "yes" } }), BadBool);
+            Expect(HasErrorOn(BadBool, Id(3)), "a checkbox property holds true or false");
+        }
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -553,7 +667,7 @@ namespace
             {
                 for(const PinDefinition& Pin : Def.Pins)
                 {
-                    if(Pin.IsExec() || Pin.Type == WILDCARD_TYPE) { continue; }
+                    if(Pin.IsExec() || Pin.Type == WILDCARD_TYPE || Pin.Type == DERIVED_TYPE) { continue; }
                     Expect(Each->FindType(Pin.Type) != nullptr, Each->GetName() + " " + Def.Type + "." + Pin.Name + " has a known type");
                 }
             }
@@ -571,6 +685,7 @@ int main()
     TestScriptCodegen();
     TestScriptRuntime();
     TestMaterialCodegen();
+    TestComponentSelection();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

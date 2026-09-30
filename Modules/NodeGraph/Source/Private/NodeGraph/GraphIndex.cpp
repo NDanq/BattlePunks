@@ -51,14 +51,15 @@ namespace NodeGraph
 
     std::string GraphIndex::PinType(const Node& InNode, const PinDefinition& InPin) const
     {
-        if(InPin.Type != WILDCARD_TYPE) { return InPin.Type; }
+        if(InPin.Type != WILDCARD_TYPE && InPin.Type != DERIVED_TYPE) { return InPin.Type; }
 
-        const auto Cached = WildcardCache.find(&InNode);
-        if(Cached != WildcardCache.end()) { return Cached->second; }
+        /* Resolving a wildcard walks its neighbours; ask once per pin. */
+        const std::pair<const Node*, std::string> Key{ &InNode, InPin.Name };
+        const auto Cached = TypeCache.find(Key);
+        if(Cached != TypeCache.end()) { return Cached->second; }
 
-        const NodeDefinition* Def = FindDefinition(InNode);
-        std::string Type = Def ? S.ResolveWildcard(G, InNode, *Def) : std::string();
-        WildcardCache.emplace(&InNode, Type);
+        std::string Type = FindDefinition(InNode) ? S.ResolvePinType(G, InNode, InPin) : std::string();
+        TypeCache.emplace(Key, Type);
         return Type;
     }
 

@@ -64,6 +64,13 @@ namespace NodeGraph
                             OutResult.Error(InNode.Id, std::string(), NodeLabel(InNode, &InDef) + ": no variable named '" + Value + "'");
                         }
                         break;
+                    case EPropertyKind::Bool:
+                        if(Value != "true" && Value != "false")
+                        {
+                            OutResult.Error(InNode.Id, std::string(), NodeLabel(InNode, &InDef) + ": " + Property.Name + " must be true or false, not '"
+                                            + Value + "'");
+                        }
+                        break;
                 }
             }
         }

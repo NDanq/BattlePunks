@@ -69,10 +69,22 @@ namespace NodeGraph
 
     std::string Schema::GetPinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const
     {
-        if(InPin.Type != WILDCARD_TYPE) { return InPin.Type; }
+        return ResolvePinType(InGraph, InNode, InPin);
+    }
 
+    std::string Schema::ResolvePinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const
+    {
+        if(InPin.Type != WILDCARD_TYPE && InPin.Type != DERIVED_TYPE) { return InPin.Type; }
+
+        /* A derived pin no override claimed has no better answer than the
+         * node's own type. */
         const NodeDefinition* Def = FindNode(InNode.Type);
         return Def ? ResolveWildcard(InGraph, InNode, *Def) : std::string();
+    }
+
+    std::string Schema::DescribeNode(const Graph& /*InGraph*/, const Node& /*InNode*/) const
+    {
+        return std::string();
     }
 
     std::string Schema::GetWildcardType(const Graph& InGraph, const Node& InNode) const
@@ -131,7 +143,7 @@ namespace NodeGraph
 
                 const std::string FarType = FarPin->Type == WILDCARD_TYPE
                                           ? ResolveWildcardDepth(InGraph, *FarNode, *FarDef, InDepth + 1)
-                                          : FarPin->Type;
+                                          : ResolvePinType(InGraph, *FarNode, *FarPin);   // fixed, or derived
                 const auto Found = std::find(InDef.WildcardTypes.begin(), InDef.WildcardTypes.end(), FarType);
                 if(Found != InDef.WildcardTypes.end())
                 {

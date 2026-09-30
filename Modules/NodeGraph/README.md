@@ -92,6 +92,20 @@ falls back to the attribute, with a warning.
 - **Clipboard.** Copy writes the selection as a `<NodeGraphFragment>`. Paste
   gives each node a fresh GUID and remaps the copied links onto the copies.
 
+## Pin types and settings
+
+A pin's type is one of three things. `Schema::ResolvePinType` is the one place
+that turns any of them into a concrete type:
+
+- **fixed**: `vec3`;
+- **wildcard** (`*`): resolved from links, below;
+- **derived** (`?`): computed by the schema from the node's settings, as the
+  Component Mask's output is.
+
+Node settings are properties of kind String, Identifier, Choice, Variable or
+**Bool**. A Bool is a checkbox in the editor, stored as `true`/`false`, and
+anything else is a validation error.
+
 ## Wildcards
 
 Math nodes are `*`-typed: a material Add is float, vec2, vec3 or vec4, and a
@@ -173,6 +187,24 @@ for two. So the four columns of `MaterialParams` are the slots:
 A material therefore has **at most three parameters**, and more is a compile
 error. Slots follow names, not links, so a slot never moves because a link was
 drawn elsewhere.
+
+**Selecting components.** There are two nodes for picking out parts of a vector:
+
+- **Component Mask** has R, G, B and A checkboxes and passes the ticked
+  components through in that order. R and B of a vec3 is `.xz`, a vec2.
+- **Swizzle** takes 1 to 4 letters, `xyzw` or `rgba`, in any case, but not
+  mixed. It reorders and repeats: `zyx` reverses a vec3; `xxx` of a float
+  becomes `vec3(f)`.
+
+Either node's output type follows its settings, not its links. The pin is
+declared `DERIVED_TYPE`, and `MaterialSchema::ResolvePinType` computes it.
+Every type question in the compilers, the validation and the editor goes
+through that one hook, so a downstream wildcard node follows along: an Add fed
+a vec2 mask becomes vec2.
+
+A component the input does not have (B of a vec2, `z` of a vec2) is an error on
+the node, never a silent clamp. `DescribeNode` gives the editor the node's
+header text, `.xz → vec2`.
 
 The inputs are:
 
