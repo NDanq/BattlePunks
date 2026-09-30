@@ -137,12 +137,15 @@ no scripts.
 | X | Handles in world or local space |
 | F / Home | Frame the selection / the whole scene |
 
-The toolbar above the viewport starts with the handle mode (Select, Move,
-Rotate, Scale), Local and Snap, then has the view presets (Persp, Front, Back, Top,
-Bottom, Left, Right -- each orbits about the pivot to that axis), Frame
-Selected / Frame All, All Bounds and a camera speed slider (1/8x to 8x). "Top"
-looks from screen-up, which is world -Y: the editor keeps the game's +Y-down
-convention.
+The toolbar above the viewport, after Play / Stop / Eject, is mostly combo
+boxes: the handle mode (Select, Move, Rotate, Scale), the space (World,
+Local), then Snap; the view preset (Persp, Front, Back, Top, Bottom, Left,
+Right -- each orbits about the pivot to that axis; picking the shown one again
+snaps back to it); a **Frame** button (the selection -- its arrow menu has
+Frame All); All Bounds; and camera speed (1/8x to 8x). The combo boxes never
+take keyboard focus, so the viewport's keys keep working after one is used.
+"Top" looks from screen-up, which is world -Y: the editor keeps the game's
++Y-down convention.
 
 **Overlays** are Renderer debug lines (`Renderer::DrawDebugLine` /
 `DrawDebugBox`), not Qt painting -- nothing Qt draws can sit over the native
@@ -166,7 +169,7 @@ on screen, and highlight yellow under the cursor:
   Always in the entity's own axes (scale applies before rotation). Dragging
   through the centre mirrors; no component goes below 0.001 in size.
 
-**Local** puts Move and Rotate on the entity's rotated axes. **Snap** (or Ctrl
+**Local** space puts Move and Rotate on the entity's rotated axes. **Snap** (or Ctrl
 held during a drag, which inverts it) steps by `Editor.SnapTranslate` (10;
 a world grid in world space, a step along the handle in local), `SnapRotate`
 (15 degrees) and `SnapScale` (0.1) -- config vars, so the console sets them.
