@@ -5,10 +5,10 @@
 #include <cmath>
 
 #include <QAction>
-#include <QActionGroup>
-#include <QLabel>
-#include <QSlider>
+#include <QComboBox>
+#include <QMenu>
 #include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 
 #include "Public/Editor/EditorCamera.h"
@@ -35,7 +35,7 @@ namespace
         TransformGizmo::EMode Mode;
     };
 
-    /* In EMode order: GizmoModeActions is indexed by it. */
+    /* In EMode order: the mode combo's index is the mode. */
     const GizmoModeButton GizmoModes[] =
     {
         { "Select", "No transform handles -- click to select (Q)",       TransformGizmo::EMode::None      },
@@ -43,6 +43,17 @@ namespace
         { "Rotate", "Rotate rings: one per axis, the outer about the view (E)", TransformGizmo::EMode::Rotate },
         { "Scale",  "Scale handles: per axis, the centre for all three (R)",    TransformGizmo::EMode::Scale  },
     };
+
+    /* A toolbar combo box that leaves keyboard focus where it was. */
+    QComboBox* MakeCombo(QToolBar* InToolbar, const QString& InTip)
+    {
+        auto* Combo = new QComboBox(InToolbar);
+        Combo->setFocusPolicy(Qt::NoFocus);
+        Combo->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+        Combo->setToolTip(InTip);
+        InToolbar->addWidget(Combo);
+        return Combo;
+    }
 
     const PresetButton Presets[] =
     {
@@ -74,36 +85,33 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, QWidget* InParent)
     // --- Transform handles ---------------------------------------------------
     /* No shortcuts here: the keys are the viewport's own (see ViewportWidget),
      * so typing Q W E R in a text field never switches modes. */
-    auto* ModeGroup = new QActionGroup(this);
-    ModeGroup->setExclusive(true);
+    ModeCombo = MakeCombo(Toolbar, QStringLiteral("Transform handles (Q / W / E / R)"));
     for(const GizmoModeButton& Button : GizmoModes)
     {
-        QAction* Action = Toolbar->addAction(QString::fromLatin1(Button.Label));
-        Action->setToolTip(QString::fromLatin1(Button.Tip));
-        Action->setCheckable(true);
-        ModeGroup->addAction(Action);
-        const TransformGizmo::EMode Mode = Button.Mode;
-        GizmoModeActions[int(Mode)] = Action;
-        connect(Action, &QAction::triggered, this, [this, Mode]() { Viewport->SetGizmoMode(Mode); });
+        ModeCombo->addItem(QString::fromLatin1(Button.Label));
+        ModeCombo->setItemData(ModeCombo->count() - 1, QString::fromLatin1(Button.Tip), Qt::ToolTipRole);
     }
-    GizmoModeActions[int(Viewport->GetGizmoMode())]->setChecked(true);
-    connect(Viewport, &ViewportWidget::GizmoModeChanged, this, [this](const TransformGizmo::EMode InMode)
+    ModeCombo->setCurrentIndex(int(Viewport->GetGizmoMode()));
+    connect(ModeCombo, &QComboBox::currentIndexChanged, this, [this](const int InIndex)
     {
-        GizmoModeActions[int(InMode)]->setChecked(true);
+        Viewport->SetGizmoMode(TransformGizmo::EMode(InIndex));
+    });
+    connect(Viewport, &ViewportWidget::GizmoModeChanged, ModeCombo, [this](const TransformGizmo::EMode InMode)
+    {
+        ModeCombo->setCurrentIndex(int(InMode));
     });
 
-    GizmoLocalAction = Toolbar->addAction(QStringLiteral("Local"));
-    GizmoLocalAction->setCheckable(true);
-    GizmoLocalAction->setToolTip(QStringLiteral("Move and rotate along the entity's own axes rather than the world's (X). "
-                                                "Scale always uses the entity's axes."));
-    GizmoLocalAction->setChecked(Viewport->GetGizmoSpace() == TransformGizmo::ESpace::Local);
-    connect(GizmoLocalAction, &QAction::toggled, this, [this](const bool bInLocal)
+    SpaceCombo = MakeCombo(Toolbar, QStringLiteral("Move and rotate along the world's axes or the entity's own (X). "
+                                                   "Scale always uses the entity's axes."));
+    SpaceCombo->addItems({ QStringLiteral("World"), QStringLiteral("Local") });
+    SpaceCombo->setCurrentIndex(int(Viewport->GetGizmoSpace()));
+    connect(SpaceCombo, &QComboBox::currentIndexChanged, this, [this](const int InIndex)
     {
-        Viewport->SetGizmoSpace(bInLocal ? TransformGizmo::ESpace::Local : TransformGizmo::ESpace::World);
+        Viewport->SetGizmoSpace(TransformGizmo::ESpace(InIndex));
     });
-    connect(Viewport, &ViewportWidget::GizmoSpaceChanged, this, [this](const TransformGizmo::ESpace InSpace)
+    connect(Viewport, &ViewportWidget::GizmoSpaceChanged, SpaceCombo, [this](const TransformGizmo::ESpace InSpace)
     {
-        GizmoLocalAction->setChecked(InSpace == TransformGizmo::ESpace::Local);
+        SpaceCombo->setCurrentIndex(int(InSpace));
     });
 
     GizmoSnapAction = Toolbar->addAction(QStringLiteral("Snap"));
@@ -117,25 +125,43 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, QWidget* InParent)
     Toolbar->addSeparator();
 
     // --- View presets --------------------------------------------------------
-    /* Each orbits about the selection (or the focus point) to its axis. */
+    /* Each orbits about the selection (or the focus point) to its axis.
+     * Activated rather than index-changed, so picking the shown view again
+     * snaps back to it after orbiting away. */
+    ViewCombo = MakeCombo(Toolbar, QStringLiteral("View preset -- orbits about the selection to that axis"));
     for(const PresetButton& Button : Presets)
     {
-        QAction* Action = Toolbar->addAction(QString::fromLatin1(Button.Label));
-        Action->setToolTip(QString::fromLatin1(Button.Tip));
-        const EditorCamera::EPreset Preset = Button.Preset;
-        connect(Action, &QAction::triggered, this, [this, Preset]() { Viewport->ApplyPreset(Preset); });
+        ViewCombo->addItem(QString::fromLatin1(Button.Label), int(Button.Preset));
+        ViewCombo->setItemData(ViewCombo->count() - 1, QString::fromLatin1(Button.Tip), Qt::ToolTipRole);
     }
-
-    Toolbar->addSeparator();
+    connect(ViewCombo, &QComboBox::activated, this, [this](const int InIndex)
+    {
+        Viewport->ApplyPreset(EditorCamera::EPreset(ViewCombo->itemData(InIndex).toInt()));
+    });
 
     // --- Framing -------------------------------------------------------------
-    FrameSelectionAction = Toolbar->addAction(QStringLiteral("Frame Selected"));
+    /* Commands, not a setting: one Frame button (the selection), with Frame
+     * All on its menu. The actions themselves are shared with the Edit menu. */
+    FrameSelectionAction = new QAction(QStringLiteral("Frame Selected"), this);
     FrameSelectionAction->setToolTip(QStringLiteral("Fit the selection's bounds in view (F)"));
     connect(FrameSelectionAction, &QAction::triggered, this, [this]() { Viewport->FrameSelection(); });
 
-    FrameAllAction = Toolbar->addAction(QStringLiteral("Frame All"));
+    FrameAllAction = new QAction(QStringLiteral("Frame All"), this);
     FrameAllAction->setToolTip(QStringLiteral("Fit every entity in view (Home)"));
     connect(FrameAllAction, &QAction::triggered, this, [this]() { Viewport->FrameAll(); });
+
+    auto* FrameMenu = new QMenu(this);
+    FrameMenu->addAction(FrameSelectionAction);
+    FrameMenu->addAction(FrameAllAction);
+
+    auto* FrameButton = new QToolButton(Toolbar);
+    FrameButton->setText(QStringLiteral("Frame"));
+    FrameButton->setToolTip(QStringLiteral("Fit the selection in view (F); the arrow has Frame All (Home)"));
+    FrameButton->setFocusPolicy(Qt::NoFocus);
+    FrameButton->setPopupMode(QToolButton::MenuButtonPopup);
+    FrameButton->setMenu(FrameMenu);
+    connect(FrameButton, &QToolButton::clicked, FrameSelectionAction, &QAction::trigger);
+    Toolbar->addWidget(FrameButton);
 
     Toolbar->addSeparator();
 
@@ -148,30 +174,21 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, QWidget* InParent)
     Toolbar->addSeparator();
 
     // --- Camera speed --------------------------------------------------------
-    Toolbar->addWidget(new QLabel(QStringLiteral(" Speed "), Toolbar));
-
-    Speed = new QSlider(Qt::Horizontal, Toolbar);
-    Speed->setRange(SpeedStepMin, SpeedStepMax);
-    Speed->setPageStep(1);
-    Speed->setFixedWidth(110);
-    Speed->setToolTip(QStringLiteral("Fly, pan and dolly speed"));
-    Toolbar->addWidget(Speed);
-
-    SpeedLabel = new QLabel(Toolbar);
-    SpeedLabel->setMinimumWidth(40);
-    Toolbar->addWidget(SpeedLabel);
-
-    connect(Speed, &QSlider::valueChanged, this, &ViewportPanel::SetSpeedStep);
-    Speed->setValue(SpeedStepOne);
+    SpeedCombo = MakeCombo(Toolbar, QStringLiteral("Camera speed: fly, pan and dolly"));
+    for(int Step = SpeedStepMin; Step <= SpeedStepMax; ++Step)
+    {
+        const int Power = Step - SpeedStepOne;
+        SpeedCombo->addItem(Power < 0 ? QStringLiteral("Speed 1/%1x").arg(1 << -Power)
+                                      : QStringLiteral("Speed %1x").arg(1 << Power));
+    }
+    connect(SpeedCombo, &QComboBox::currentIndexChanged, this, &ViewportPanel::SetSpeedStep);
+    SpeedCombo->setCurrentIndex(SpeedStepOne);
     SetSpeedStep(SpeedStepOne);
 }
 
 void ViewportPanel::SetSpeedStep(const int InStep)
 {
-    const float Scale = std::pow(2.0f, float(InStep - SpeedStepOne));
-    Viewport->SetSpeedScale(Scale);
-    SpeedLabel->setText(Scale < 1.0f ? QStringLiteral(" 1/%1x").arg(int(std::lround(1.0f / Scale)))
-                                     : QStringLiteral(" %1x").arg(int(std::lround(Scale))));
+    Viewport->SetSpeedScale(std::pow(2.0f, float(InStep - SpeedStepOne)));
 }
 
 #endif // WITH_EDITOR
