@@ -66,7 +66,8 @@ uses it.
 |---|---|
 | `EditorContext` | Owns the World and Renderer; selection; the undo history; signals every panel listens to |
 | `EditorHistory` (private) | Undo / redo commands and the entity and component snapshots they hold |
-| `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Help), status bar; starts and stops the Renderer |
+| `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Build / Help), status bar; starts and stops the Renderer |
+| `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
@@ -260,6 +261,7 @@ registered:
 | `frame [all]` | Frame the selection, or the scene |
 | `scene <new \| sandbox>` | As the File menu |
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `Cooked/` beside it |
+| `compile [cancel]` | As Build > Compile Source, or cancel the build running |
 | `stats` | The renderer's counters |
 | `gizmo [none \| move \| rotate \| scale] [world \| local]` | Set the transform handles, or print them |
 | `snap [on \| off]` | Snap handle drags, or print whether they do |
@@ -301,6 +303,33 @@ Not yet: game input. Games have no input API to feed, so a run receives no
 keyboard or mouse; the SDL path proven by the input probe (View > SDL Input
 Probe) is what will deliver it. The game's `[Display] FrameRateLimit` is
 reported to it but not enforced -- the viewport's timer paces the run.
+
+## Build menu
+
+**Compile Source** (F7, or `compile` in the Console) builds the game module --
+the target named by `[Game] Module`, e.g. `SandboxGame` -- with `cmake --build`
+on the tree this editor was built from, in the editor's configuration. It runs
+in the background; every line it prints lands in the Console as `[Build] ...`,
+errors and warnings at their own level. **Cancel Compile** (`compile cancel`)
+kills it. When it succeeds:
+
+- **Playing**: the run is stopped and started again, so it picks up the new
+  DLL. Like any Stop, the run's state is lost.
+- **Not playing**: nothing holds the module, so the next Play loads it.
+
+Only the game module can be rebuilt from inside the editor. The engine DLLs
+and the editor exe are loaded by the editor and cannot be relinked while it
+runs; a change to engine code makes the game's build fail at that link --
+close the editor and build from the IDE instead.
+
+With MSVC the compiler needs Visual Studio's environment. An editor started
+from an IDE or a developer prompt has it; otherwise (`INCLUDE` unset) the
+build runs through the `vcvarsall.bat` of the Visual Studio that compiled the
+editor, found at configure time from the compiler's path.
+
+**Cook Content** is a stub: it says it is not implemented yet. What it should
+cook (which worlds and assets, from where, to where, for which target) is not
+decided. The Console's `cook` still cooks a single world.
 
 ## Known limits
 

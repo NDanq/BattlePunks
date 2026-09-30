@@ -19,6 +19,8 @@
 #include <QToolBar>
 #include <QUndoStack>
 
+#include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreLog.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/Editor/ConsolePanel.h"
@@ -29,6 +31,7 @@
 #include "Public/Editor/ViewportWidget.h"
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/SDLInputProbe.h"
+#include "Private/Editor/SourceBuild.h"
 
 namespace
 {
@@ -105,6 +108,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     BuildMenus();
     BuildPlayControls();
+    BuildBuildMenu();
     BuildHelpMenu();   // last, so Help is the rightmost menu
     connect(&Context, &EditorContext::PlayStateChanged, this, &EditorMainWindow::OnPlayStateChanged);
 
@@ -296,6 +300,103 @@ void EditorMainWindow::StartPlay()
     Viewport->setFocus(Qt::OtherFocusReason);
 }
 
+void EditorMainWindow::BuildBuildMenu()
+{
+    QMenu* BuildMenu = menuBar()->addMenu(QStringLiteral("&Build"));
+
+    Compiler = new SourceBuild(this);
+    connect(Compiler, &SourceBuild::Finished, this, [this](const bool bInSucceeded, const QString&)
+    {
+        OnCompileFinished(bInSucceeded);
+    });
+
+    CompileAction = BuildMenu->addAction(QStringLiteral("&Compile Source"));
+    CompileAction->setShortcut(QKeySequence(Qt::Key_F7));
+    CompileAction->setToolTip(QStringLiteral("Build the game module ([Game] Module) and reload it into a running game (F7)"));
+    connect(CompileAction, &QAction::triggered, this, &EditorMainWindow::CompileSource);
+
+    CancelCompileAction = BuildMenu->addAction(QStringLiteral("C&ancel Compile"));
+    CancelCompileAction->setEnabled(false);
+    connect(CancelCompileAction, &QAction::triggered, Compiler, &SourceBuild::Cancel);
+
+    BuildMenu->addSeparator();
+
+    QAction* Cook = BuildMenu->addAction(QStringLiteral("C&ook Content"));
+    Cook->setToolTip(QStringLiteral("Not yet: cook the project's content for a Client build"));
+    connect(Cook, &QAction::triggered, this, &EditorMainWindow::CookContent);
+}
+
+void EditorMainWindow::CompileSource()
+{
+    if(Compiler->IsRunning())
+    {
+        statusBar()->showMessage(QStringLiteral("Already compiling %1").arg(Compiler->GetTarget()), 3000);
+        return;
+    }
+
+    /* The module's name is its target's: nimble_add_hot_module(SandboxGame). */
+    const EngineCore::ConfigVar* ModuleVar = EngineCore::ConfigFindVar("Game", "Module");
+    const QString Module = ModuleVar ? QString::fromUtf8(ModuleVar->GetString()) : QString();
+    if(Module.isEmpty())
+    {
+        CORE_LOG_ERROR("[Build] no game module to compile -- set [Game] Module in Config/DefaultEngine.ini")
+        statusBar()->showMessage(QStringLiteral("Compile failed -- see the Console"), 5000);
+        return;
+    }
+
+    if(!Compiler->Start(Module))
+    {
+        statusBar()->showMessage(QStringLiteral("Compile failed -- see the Console"), 5000);
+        return;
+    }
+    if(Compiler->IsRunning())
+    {
+        CompileAction->setEnabled(false);
+        CancelCompileAction->setEnabled(true);
+        statusBar()->showMessage(QStringLiteral("Compiling %1...").arg(Module));
+    }
+}
+
+void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
+{
+    CompileAction->setEnabled(true);
+    CancelCompileAction->setEnabled(false);
+
+    const QString Module = Compiler->GetTarget();
+    if(!bInSucceeded)
+    {
+        statusBar()->showMessage(QStringLiteral("Compiling %1 failed -- see the Console").arg(Module), 5000);
+        return;
+    }
+
+    /* Nothing holds the module between runs, so the next Play loads the new
+     * DLL by itself. A run in progress still has the old one: restart it. */
+    if(!Context.IsPlaying())
+    {
+        CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play")
+        statusBar()->showMessage(QStringLiteral("Compiled %1").arg(Module), 5000);
+        return;
+    }
+
+    CORE_LOG("[Build] reloading " + std::string(Module.toUtf8().constData()) + ": restarting the run")
+    Context.StopPlay();
+    StartPlay();
+    if(Context.IsPlaying())
+    {
+        statusBar()->showMessage(QStringLiteral("Compiled and reloaded %1").arg(Module), 5000);
+    }
+}
+
+void EditorMainWindow::CookContent()
+{
+    /* A stub until cooking has a definition: which content, from where, to
+     * where, for which target. Until then the Console's `cook` does one world. */
+    CORE_LOG_WARN("[Build] Cook Content is not implemented yet; 'cook [world] [out]' in the Console cooks a single world")
+    QMessageBox::information(this, QStringLiteral("Cook Content"),
+                             QStringLiteral("Cooking the project's content is not implemented yet.\n\n"
+                                            "The Console's cook command cooks a single world file to binary."));
+}
+
 void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
 {
     PlayAction->setEnabled(!bInPlaying);
@@ -467,6 +568,28 @@ void EditorMainWindow::RegisterConsoleCommands()
                                  : Arg == QStringLiteral("off") ? false
                                  : !Context.IsPlayViewEjected());
         Console.Print(Context.IsPlayViewEjected() ? QStringLiteral("Editor camera") : QStringLiteral("Game camera"));
+    });
+
+    Console.Register(QStringLiteral("compile"), QStringLiteral("[cancel]"),
+                     QStringLiteral("Build the game module and reload it into a running game (F7)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(!InArgs.isEmpty() && InArgs.front().compare(QStringLiteral("cancel"), Qt::CaseInsensitive) == 0)
+        {
+            if(!Compiler->IsRunning())
+            {
+                Console.PrintError(QStringLiteral("Not compiling"));
+                return;
+            }
+            Compiler->Cancel();
+            return;
+        }
+        if(!InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: compile [cancel]"));
+            return;
+        }
+        CompileSource();
     });
 
     Console.Register(QStringLiteral("cook"), QStringLiteral("[world] [out]"),

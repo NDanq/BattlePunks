@@ -18,13 +18,14 @@ class OutlinerPanel;
 class QAction;
 class QLabel;
 class SDLInputProbe;
+class SourceBuild;
 class ViewportPanel;
 class ViewportWidget;
 
 /*
  * The editor's frame: the viewport (with its navigation toolbar) in the
  * centre, the Outliner docked left, the Details panel docked right and the
- * Console docked below, File/Edit/View/Play/Help menus and a status bar with render
+ * Console docked below, File/Edit/View/Play/Build/Help menus and a status bar with render
  * stats. Owns the EditorConsole and registers the scene commands on it.
  *
  * The Renderer is started from here, once the window has been shown -- the
@@ -57,10 +58,14 @@ protected:
 private:
     void BuildMenus();
     void BuildPlayControls();
+    void BuildBuildMenu();
     void BuildHelpMenu();
     void RegisterConsoleCommands();
     void OnPlayStateChanged(bool bInPlaying);
     void StartPlay();
+    void CompileSource();
+    void CookContent();
+    void OnCompileFinished(bool bInSucceeded);
     void StartRenderer();
     void UpdateTitle();
     void UpdateHistoryActions();
@@ -89,6 +94,10 @@ private:
     QAction*        PlayAction  = nullptr;
     QAction*        StopAction  = nullptr;
     QAction*        EjectAction = nullptr;
+
+    SourceBuild*    Compiler            = nullptr;
+    QAction*        CompileAction       = nullptr;
+    QAction*        CancelCompileAction = nullptr;
 
     /* Replace the edited World, so unavailable while playing. */
     QList<QAction*> SceneActions;
