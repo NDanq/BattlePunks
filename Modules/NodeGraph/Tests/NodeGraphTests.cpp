@@ -217,6 +217,7 @@ namespace
         AddNode(G, 4, "Math.OneMinus", -40, 0);
         AddNode(G, 5, "Parameter", -200, 120).Properties["Name"] = "Tint";
         G.FindNode(Id(5))->WildcardType = "vec3";
+        G.FindNode(Id(5))->Properties["Default"] = "1 0.6 0.2";
         AddNode(G, 6, "Math.Multiply", 120, 40);
         AddNode(G, 7, "Math.Saturate", 260, 40);
         Connect(G, 2, "UV", 3, "A");
@@ -453,7 +454,33 @@ namespace
         Expect(!Glow.HasErrors(), "the Glow graph compiles");
         if(Glow.HasErrors()) { std::printf("%s\n", FormatDiagnostics(MakeGlowGraph(), Glow).c_str()); }
         ExpectGolden("Glow.fsh", Glow.Code);
-        Expect(Glow.Code.find("SHADER_UNIFORM(vec3, Tint)") != std::string::npos, "the parameter is a uniform");
+        Expect(Glow.Code.find("SHADER_UNIFORM(mat4, MaterialParams)") != std::string::npos, "one mat4 carries every parameter");
+        Expect(Glow.Code.find("MaterialParams[0].xyz") != std::string::npos, "a vec3 parameter reads its column's xyz");
+        Expect(Glow.Companions.size() == 1 && Glow.Companions[0].first == ".material", "a material writes a .material companion");
+        if(!Glow.Companions.empty()) { ExpectGolden("Glow.material", Glow.Companions[0].second); }
+
+        {
+            /* Slots follow names, not graph order; a fourth parameter is refused. */
+            Graph G = MakeGlowGraph();
+            const char* Names[] = { "Zeta", "Alpha", "Mid" };
+            for(uint64_t Index = 0; Index < 3; ++Index)
+            {
+                Node& Added = AddNode(G, 40 + Index, "Parameter");
+                Added.Properties["Name"] = Names[Index];
+            }
+            CompileResult R;
+            CompileGraph(G, R);
+            Expect(R.HasErrors(), "four parameters are one too many");
+
+            G.RemoveNode(Id(42));   // "Mid" goes: Alpha, Tint, Zeta
+            G.RemoveNode(Id(40));   // "Zeta" goes: Alpha, Tint
+            CompileResult Two;
+            CompileGraph(G, Two);
+            Expect(!Two.HasErrors() && Two.Code.find("MaterialParams[1].xyz") != std::string::npos,
+                   "Tint sorts after Alpha, into slot 1");
+            Expect(!Two.Companions.empty() && Two.Companions[0].second.find("Param Alpha 0 float") != std::string::npos,
+                   "and the companion lists Alpha in slot 0");
+        }
 
         /* A wildcard node fed a float and a vec3 is vec3 whichever link is
          * stored first -- and a saved-then-loaded graph (links sorted) makes

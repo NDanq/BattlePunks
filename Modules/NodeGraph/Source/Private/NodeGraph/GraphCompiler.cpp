@@ -230,6 +230,7 @@ namespace NodeGraph
     {
         OutResult.Code.clear();
         OutResult.LineNodes.clear();
+        OutResult.Companions.clear();
 
         const Schema* S = FindSchema(InGraph.SchemaName);
         if(!S)
@@ -246,6 +247,7 @@ namespace NodeGraph
         {
             OutResult.Code.clear();
             OutResult.LineNodes.clear();
+            OutResult.Companions.clear();
         }
     }
 

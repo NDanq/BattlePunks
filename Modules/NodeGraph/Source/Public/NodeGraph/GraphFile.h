@@ -81,8 +81,9 @@ namespace NodeGraph
     bool WriteTextFileIfChanged(const std::string& InPath, const std::string& InText, std::string& OutError);
 
     /*
-     * Loads InGraphPath, compiles it and writes the output beside it (only if
-     * the text changed). False with OutError when the file cannot be read or
+     * Loads InGraphPath, compiles it and writes the output -- and any
+     * companion files (CompileResult::Companions) -- beside it, each only if
+     * its text changed. False with OutError when the file cannot be read or
      * written; a graph that fails to COMPILE returns true with the errors in
      * OutResult and the old output left in place.
      */

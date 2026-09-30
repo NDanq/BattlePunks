@@ -2,10 +2,18 @@
 
 #include "Private/Editor/Graph/GraphEditorWindow.h"
 
+#include <functional>
+
 #include <QAction>
 #include <QApplication>
 #include <QClipboard>
 #include <QCloseEvent>
+#include <QColorDialog>
+#include <QHBoxLayout>
+#include <QLabel>
+#include <QPixmap>
+#include <QPushButton>
+#include <QVBoxLayout>
 #include <QDockWidget>
 #include <QFileInfo>
 #include <QFontDatabase>
@@ -37,6 +45,7 @@ using EditorGraphs::ToStd;
 namespace
 {
     constexpr int CompileDelayMs = 250;
+    constexpr int PreviewPixels  = 256;
     constexpr int NodeRole = Qt::UserRole;
 
     /* A GUID in a QVariant, as its text. */
@@ -81,6 +90,14 @@ GraphEditorWindow::GraphEditorWindow(GraphDocument* InDocument, QWidget* InParen
     resizeDocks({ DetailsDock }, { 320 }, Qt::Horizontal);
     resizeDocks({ CodeDock }, { 230 }, Qt::Vertical);
     resizeDocks({ CodeDock, MessagesDock }, { 700, 400 }, Qt::Horizontal);
+
+    bIsMaterial = Document->GetSchema().GetName() == "Material";
+    if(bIsMaterial)
+    {
+        BuildPreviewDock();
+        /* Over Details, on the right: the picture first. */
+        splitDockWidget(findChild<QDockWidget*>(QStringLiteral("GraphPreviewDock")), DetailsDock, Qt::Vertical);
+    }
 
     BuildActions();
 
@@ -178,6 +195,38 @@ void GraphEditorWindow::BuildActions()
     });
     CanvasAction(QStringLiteral("Add Co&mment"), QKeySequence(Qt::Key_C), &GraphEditorWindow::AddCommentAroundSelection);
 
+    // --- Material ------------------------------------------------------------------
+    if(bIsMaterial)
+    {
+        QMenu* Material = menuBar()->addMenu(QStringLiteral("&Material"));
+
+        QAction* Live = Material->addAction(QStringLiteral("&Live Preview"));
+        Live->setCheckable(true);
+        Live->setChecked(bLivePreview);
+        Live->setToolTip(QStringLiteral("Cook every clean recompile into the viewport, so primitives using this material "
+                                        "show the change at once -- before it is saved"));
+        connect(Live, &QAction::toggled, this, [this](const bool bInOn)
+        {
+            bLivePreview = bInOn;
+            if(bInOn) { Recompile(); }
+        });
+
+        QAction* Apply = Material->addAction(QStringLiteral("&Apply to Selected Entity"));
+        Apply->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
+        Apply->setToolTip(QStringLiteral("Set the selected entity's Primitive Material to this one (adds a Primitive if it has none)"));
+        connect(Apply, &QAction::triggered, this, [this]()
+        {
+            QString Message;
+            EditorGraphs::ApplyMaterialToSelection(EditorGraphs::GetMaterialName(Document->GetPath()), Message);
+            statusBar()->showMessage(Message, 6000);
+        });
+
+        Material->addSeparator();
+        QAction* Name = Material->addAction(QStringLiteral("Primitives refer to it as \"%1\"")
+                                            .arg(EditorGraphs::GetMaterialName(Document->GetPath())));
+        Name->setEnabled(false);
+    }
+
     // --- View ----------------------------------------------------------------------
     QMenu* ViewMenu = menuBar()->addMenu(QStringLiteral("&View"));
     QAction* Frame = ViewMenu->addAction(QStringLiteral("&Frame All"));
@@ -231,17 +280,113 @@ void GraphEditorWindow::Recompile()
     }
 
     Scene->SetDiagnostics(LastResult);
+
+    if(bIsMaterial && bLivePreview && !LastResult.HasErrors())
+    {
+        bPreviewedUnsaved = Document->IsDirty();
+        const QString Name = EditorGraphs::GetMaterialName(Document->GetPath());
+        EditorGraphs::StageMaterial(Name, LastResult, this, [this, Name](const bool bInWorked, const QString& InWhat)
+        {
+            auto* Item = new QListWidgetItem(QStringLiteral("Preview: %1 %2").arg(Name, InWhat), Messages);
+            if(!bInWorked)
+            {
+                Item->setForeground(QColor(0xE0, 0x50, 0x50));
+                PreviewStatus->setText(QStringLiteral("Not updated: %1").arg(InWhat));
+                return;
+            }
+            RefreshPreview();
+        });
+    }
+}
+
+// === Preview ====================================================================
+
+void GraphEditorWindow::BuildPreviewDock()
+{
+    auto* Dock = new QDockWidget(QStringLiteral("Preview"), this);
+    Dock->setObjectName(QStringLiteral("GraphPreviewDock"));
+
+    auto* Page   = new QWidget(Dock);
+    auto* Layout = new QVBoxLayout(Page);
+
+    PreviewImage = new QLabel(Page);
+    PreviewImage->setObjectName(QStringLiteral("GraphPreviewImage"));
+    PreviewImage->setAlignment(Qt::AlignCenter);
+    PreviewImage->setMinimumSize(PreviewPixels, PreviewPixels);
+    PreviewImage->setToolTip(QStringLiteral("This material on a quad, drawn by the viewport's renderer"));
+    Layout->addWidget(PreviewImage, 1);
+
+    PreviewStatus = new QLabel(QStringLiteral("Waiting for the first cook..."), Page);
+    PreviewStatus->setWordWrap(true);
+    PreviewStatus->setForegroundRole(QPalette::PlaceholderText);
+    Layout->addWidget(PreviewStatus);
+
+    auto* Row = new QHBoxLayout();
+    auto* Tint = new QPushButton(QStringLiteral("Instance Tint..."), Page);
+    Tint->setToolTip(QStringLiteral("The tint the preview quad passes to the Instance Tint input -- "
+                                    "in the level, each Primitive's own Tint"));
+    connect(Tint, &QPushButton::clicked, this, [this]()
+    {
+        const QColor Picked = QColorDialog::getColor(PreviewTint, this, QStringLiteral("Instance Tint"),
+                                                     QColorDialog::ShowAlphaChannel);
+        if(Picked.isValid())
+        {
+            PreviewTint = Picked;
+            RefreshPreview();
+        }
+    });
+    Row->addWidget(Tint);
+
+    auto* Refresh = new QPushButton(QStringLiteral("Refresh"), Page);
+    Refresh->setToolTip(QStringLiteral("Draw the preview again (the last cooked version)"));
+    connect(Refresh, &QPushButton::clicked, this, &GraphEditorWindow::RefreshPreview);
+    Row->addWidget(Refresh);
+    Row->addStretch(1);
+    Layout->addLayout(Row);
+
+    Dock->setWidget(Page);
+    addDockWidget(Qt::RightDockWidgetArea, Dock);
+}
+
+void GraphEditorWindow::RefreshPreview()
+{
+    if(!PreviewImage) { return; }
+
+    const uint64_t Generation = ++PreviewGeneration;
+    PreviewStatus->setText(QStringLiteral("Drawing..."));
+    EditorGraphs::RequestMaterialPreview(EditorGraphs::GetMaterialName(Document->GetPath()), PreviewPixels, PreviewTint, this,
+                                         [this, Generation](const QImage& InImage, const QString& InError)
+    {
+        if(Generation != PreviewGeneration) { return; }   // a newer request is on its way
+        if(InImage.isNull())
+        {
+            PreviewImage->setPixmap(QPixmap());
+            PreviewImage->setText(QStringLiteral("No preview"));
+            PreviewStatus->setText(InError);
+            return;
+        }
+        PreviewImage->setPixmap(QPixmap::fromImage(InImage));
+        PreviewStatus->setText(bLivePreview || !Document->IsDirty()
+                               ? QStringLiteral("As the level draws it")
+                               : QStringLiteral("The saved version (Live Preview is off)"));
+    });
 }
 
 bool GraphEditorWindow::Save()
 {
     QString Error, Message;
-    if(!Document->Save(Error, Message))
+    const auto Staged = [this](const bool bInWorked, const QString& InWhat)
+    {
+        if(bInWorked) { RefreshPreview(); }
+        else if(PreviewStatus) { PreviewStatus->setText(QStringLiteral("Not updated: %1").arg(InWhat)); }
+    };
+    if(!Document->Save(Error, Message, this, bIsMaterial ? std::function<void(bool, const QString&)>(Staged) : nullptr))
     {
         QMessageBox::warning(this, QStringLiteral("Save Graph"), QStringLiteral("Could not save\n%1\n\n%2").arg(Document->GetPath(), Error));
         return false;
     }
     statusBar()->showMessage(Message, 6000);
+    bPreviewedUnsaved = false;   // the save staged what is now on disk
 
     /* A material's output through the real shader compiler, in the background. */
     const Schema* S = FindSchema(Document->GetGraph().SchemaName);
@@ -370,6 +515,9 @@ bool GraphEditorWindow::ConfirmClose()
 
     if(Answer == QMessageBox::Cancel) { return false; }
     if(Answer == QMessageBox::Save)   { return Save(); }
+
+    /* Discarded: the viewport goes back to what is saved. */
+    if(bIsMaterial && bPreviewedUnsaved) { EditorGraphs::RestoreMaterial(Document->GetPath()); }
     return true;
 }
 

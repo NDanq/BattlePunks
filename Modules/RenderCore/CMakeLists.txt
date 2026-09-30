@@ -50,6 +50,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderProxy.cpp
         Source/Private/RenderCore/RenderScene.cpp
         Source/Private/RenderCore/PrimitiveProxy.h
+        Source/Private/RenderCore/MaterialPreview.h
         Source/Private/RenderCore/PrimitiveProxy.cpp
         Source/Private/RenderCore/RenderComponents.cpp
         Source/Private/RenderCore/WorldBridge.h

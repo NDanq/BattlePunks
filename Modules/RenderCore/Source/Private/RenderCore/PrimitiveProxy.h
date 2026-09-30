@@ -30,6 +30,7 @@ namespace RenderCore
         float             Height = 1.0f;
         EngineCore::Color Tint{255, 255, 255};
         bool              bComponentVisible = true;
+        char              Material[48] = {};   // PRIMITIVE_MATERIAL_NAME_MAX; "" = the plain tint
     };
 }
 

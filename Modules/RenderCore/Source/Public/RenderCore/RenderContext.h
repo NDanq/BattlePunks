@@ -2,6 +2,7 @@
 #define RENDERCORE_RENDERCONTEXT_H
 
 #include <cstdint>
+#include <string>
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
@@ -19,6 +20,8 @@
  * never needs to know GDI exists, which is what makes RenderCore.dll the
  * ONLY image in the process that links it -- see RenderCoreAPI.h.
  */
+namespace EngineCore { class Image; }
+
 namespace RenderCore
 {
     class RENDERCORE_API RenderContext
@@ -48,6 +51,21 @@ namespace RenderCore
          * RenderThread::GetStats()'s RenderStats::DrawCalls.
          */
         void DrawQuad(const RenderTransform& InTransform, float InWidth, float InHeight, EngineCore::Color InTint);
+
+        /*
+         * DrawQuad through a material graph's pixel shader instead of Basic's:
+         * material "Glow" is the cooked Materials/Glow.fsh (under Shaders/Cooked/
+         * <Platform>/, as GDI names its own) with the parameter defaults in
+         * Materials/Glow.material, both read through the file provider on first
+         * use and kept. The shader's one uniform, MaterialParams, is those
+         * defaults in columns 0-2 and InTint (0-1 RGBA) in column 3 -- see
+         * NodeGraph's MaterialSchema.cpp for the layout and why it is one mat4.
+         *
+         * A material that cannot be loaded (no .material, or no cooked shader
+         * for this backend) is warned about once and drawn as DrawQuad would.
+         */
+        void DrawQuadWithMaterial(const RenderTransform& InTransform, float InWidth, float InHeight,
+                                  EngineCore::Color InTint, const char* InMaterial);
 
 #if WITH_EDITOR
         /*
@@ -83,6 +101,7 @@ namespace RenderCore
     private:
         friend class RenderThread;
         friend class RenderScene;
+        friend class Renderer;
 
         /* RenderThread::Start()/EndFrame() and RenderScene::SetView() write
          * these directly -- all three live in this DLL and all run on the
@@ -91,6 +110,33 @@ namespace RenderCore
         void SetBackend(ERenderBackend InBackend);
         void SetFrameNumber(uint64_t InFrameNumber);
         void SetView(const RenderView& InView);
+
+        /* Forgets material InName (or every material, for nullptr) so its
+         * next draw loads it afresh -- Renderer::ReloadMaterial's command.
+         * The old shader is kept, not released, until ReleaseGPUResources:
+         * a backend may cache pipelines by the shader module's handle, and a
+         * released handle can come back as the new shader's. */
+        void ReloadMaterial(const char* InName);
+
+        /* Releases every GPU object this context created itself -- the
+         * material shaders and the preview target. RenderThread's exit calls
+         * it before the driver's Destroy(), while the device they belong to
+         * still exists. */
+        void ReleaseGPUResources();
+
+#if WITH_EDITOR
+        /*
+         * EDITOR ONLY -- RenderScene::Render's, for a material preview: material
+         * InMaterial on a quad filling an InSize x InSize target of this
+         * context's own, InTint as its Instance Tint, read back into OutImage
+         * (RGBA8, top row first). Between GDIBeginRendering and the scene's
+         * own target bind; leaves the view as it found it. False, with
+         * OutError, when the material cannot be drawn or the backend reads
+         * nothing back (Null).
+         */
+        bool RenderMaterialPreview(const char* InMaterial, int InSize, EngineCore::Color InTint,
+                                   EngineCore::Image& OutImage, std::string& OutError);
+#endif
 
         struct Impl;
         Impl* P;

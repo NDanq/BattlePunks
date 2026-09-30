@@ -8,7 +8,9 @@
 #include <QTimer>
 #include <QUndoStack>
 
+#include "CoreQtConversions.h"
 #include "Public/Core/CoreGarbageCollector.h"
+#include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/ComponentProperties.h"
@@ -84,6 +86,7 @@ bool EditorContext::InitializeRenderer(const RenderCore::ERenderBackend InBacken
         return bRendererReady;
     }
 
+    Backend  = InBackend;
     Renderer = EngineCore::Memory::Alloc<RenderCore::Renderer>();
     bRendererReady = Renderer->Initialize(InBackend, InWindow);
     if(!bRendererReady)
@@ -97,6 +100,41 @@ bool EditorContext::InitializeRenderer(const RenderCore::ERenderBackend InBacken
     {
         Renderer->BindWorld(*EditedWorld);
     }
+    return true;
+}
+
+void EditorContext::ReloadMaterial(const QString& InName)
+{
+    if(Renderer && bRendererReady)
+    {
+        Renderer->ReloadMaterial(InName.toUtf8().constData());
+    }
+}
+
+uint64_t EditorContext::RequestMaterialPreview(const QString& InName, const int InSize, const EngineCore::Color InTint)
+{
+    if(!Renderer || !bRendererReady)
+    {
+        return 0;
+    }
+    return Renderer->RequestMaterialPreview(InName.toUtf8().constData(), InSize, InTint);
+}
+
+bool EditorContext::TakeMaterialPreview(const uint64_t InRequest, QImage& OutImage, QString& OutError)
+{
+    if(!Renderer)
+    {
+        return false;
+    }
+
+    EngineCore::Image Pixels;
+    std::string       Error;
+    if(!Renderer->TakeMaterialPreview(InRequest, Pixels, Error))
+    {
+        return false;
+    }
+    OutImage = Pixels.GetWidth() > 0 ? EngineCore::QtBridge::ToQImage(Pixels) : QImage();
+    OutError = QString::fromUtf8(Error.c_str());
     return true;
 }
 

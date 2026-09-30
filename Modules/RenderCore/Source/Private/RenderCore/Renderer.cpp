@@ -8,10 +8,12 @@
 #include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/RenderThread.h"
+#include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/WorldBridge.h"
 
@@ -44,6 +46,10 @@ namespace RenderCore
         /* Game-thread side of DrawDebugLine; handed over and cleared by
          * every EndFrame(). */
         std::vector<DebugLine> PendingDebugLines;
+
+        /* RequestMaterialPreview's results, delivered by the render thread. */
+        MaterialPreviewMailbox Previews;
+        uint64_t               LastPreviewRequest = 0;
 
         /* Hands this frame's lines to the scene, ahead of the render command
          * EndFrame enqueues, so the scene holds them when it renders. One
@@ -221,6 +227,58 @@ namespace RenderCore
                 P->PendingDebugLines.push_back(Line);
             }
         }
+    }
+
+    void Renderer::ReloadMaterial(const char* InName)
+    {
+        if(!P->Thread.IsRunning())
+        {
+            return;
+        }
+
+        /* A fixed buffer, by value: a command may only capture trivially
+         * copyable values (RenderCommand.h). */
+        struct NameBuffer { char Text[PRIMITIVE_MATERIAL_NAME_MAX]; };
+        NameBuffer Name{};
+        const size_t Length = InName ? std::strlen(InName) : 0;
+        if(Length >= sizeof(Name.Text))
+        {
+            return;
+        }
+        if(Length > 0) { std::memcpy(Name.Text, InName, Length); }
+
+        ENQUEUE_RENDER_COMMAND(ReloadMaterial)([Name](RenderContext& Ctx)
+        {
+            Ctx.ReloadMaterial(Name.Text[0] ? Name.Text : nullptr);
+        });
+    }
+
+    uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
+    {
+        const size_t Length = InName ? std::strlen(InName) : 0;
+        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= PRIMITIVE_MATERIAL_NAME_MAX)
+        {
+            return 0;
+        }
+
+        MaterialPreviewRequest Request;
+        Request.Request = ++P->LastPreviewRequest;
+        std::memcpy(Request.Material, InName, Length);
+        Request.Size    = InSize;
+        Request.Tint    = InTint;
+        Request.Mailbox = &P->Previews;
+
+        RenderScene* Scene = P->Scene;
+        ENQUEUE_RENDER_COMMAND(AddMaterialPreview)([Scene, Request](RenderContext&)
+        {
+            Scene->AddMaterialPreview(Request);
+        });
+        return Request.Request;
+    }
+
+    bool Renderer::TakeMaterialPreview(const uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError)
+    {
+        return P->Previews.Take(InRequest, OutImage, OutError);
     }
 
     void Renderer::SetViewOverride(const RenderView* InView)

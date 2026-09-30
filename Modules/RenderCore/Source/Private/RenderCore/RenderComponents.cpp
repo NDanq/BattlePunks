@@ -50,12 +50,13 @@ namespace RenderCore
      * PrimitiveComponent gets a fresh proxy on the first frame after the load,
      * from the values below, with nothing here having to arrange it.
      */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PrimitiveComponent, 1)
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PrimitiveComponent, 2)
     {
         Ar.Field("Width",  C.Width);
         Ar.Field("Height", C.Height);
         Ar.Field("Tint",   C.Tint);
         Ar.Flag("Visible", C.bVisible);
+        if(Ar.GetVersion() >= 2) { Ar.Field("Material", C.Material); }   // version 1 had none
     }
 
     /* Every field is real data -- a CameraComponent holds no per-run state at
@@ -81,6 +82,7 @@ namespace RenderCore
         Bind.Field("Height", &PrimitiveComponent::Height);
         Bind.Field("Tint",   &PrimitiveComponent::Tint);     // r, g, b[, a]
         Bind.Flag("Visible", &PrimitiveComponent::bVisible);
+        Bind.Field("Material", &PrimitiveComponent::Material);
     }
 
     GAMECORE_DEFINE_COMPONENT_SCRIPT(CameraComponent)
@@ -100,6 +102,7 @@ namespace RenderCore
         Props.Field("Height", &PrimitiveComponent::Height);
         Props.Field("Tint",   &PrimitiveComponent::Tint);
         Props.Flag("Visible", &PrimitiveComponent::bVisible);
+        Props.Field("Material", &PrimitiveComponent::Material);
     }
 
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(CameraComponent)

@@ -60,7 +60,7 @@ Engine/Modules/RenderCore/
 |       |-- RenderThreadInternal.h  the process-wide RenderThread locator
 |       |-- RenderThread.cpp        the drain loop, GDI lifetime, markers, present
 |       |-- RenderCommand.cpp       EnqueueRenderCommand, IsInRenderThread, FlushRenderCommands
-|       |-- RenderContext.cpp       the shared unit quad + Basic shaders; DrawQuad
+|       |-- RenderContext.cpp       the shared unit quad + Basic shaders; DrawQuad; the material library
 |       |-- RenderProxy.cpp         the fixed proxy-type table
 |       |-- RenderScene.cpp         the proxy vector, culling, Render()
 |       |-- PrimitiveProxy.h/.cpp   the quad proxy
@@ -152,6 +152,14 @@ addition through `World`'s own `OnComponentAdded` delegate, constructs a
 component's current transform and bytes into that proxy once per frame.
 Removing the component or destroying the entity removes the proxy the same
 way, through `OnComponentRemoved`.
+
+**A material** replaces the plain tint: set `Prim.Material` to a material
+graph's name, e.g. `std::strcpy(Prim.Material, "Glow");`. The quad then draws
+with the cooked `Materials/Glow.fsh`, its parameters from
+`Materials/Glow.material`, and `Tint` passed to the shader as the Instance
+Tint. A material that is missing or not cooked for the running backend is
+warned about once and drawn as the plain tint. See DESIGN.md's "Materials" and
+NodeGraph's README.
 
 A camera works the same way -- the first entity with an active
 `CameraComponent` wins, and its position comes from its own sibling

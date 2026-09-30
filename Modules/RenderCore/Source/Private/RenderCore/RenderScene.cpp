@@ -6,6 +6,7 @@
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
+#include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
 
@@ -25,6 +26,7 @@ namespace RenderCore
         std::vector<RenderProxy*> Proxies;
 #if WITH_EDITOR
         std::vector<DebugLine>    DebugLines;   // consumed by the next Render()
+        std::vector<MaterialPreviewRequest> Previews;   // likewise
 #endif
         RenderView                View;
         EngineCore::Color         ClearColor{24, 26, 32, 255};
@@ -215,6 +217,11 @@ namespace RenderCore
     {
         P->DebugLines.assign(InLines, InLines + InCount);
     }
+
+    void RenderScene::AddMaterialPreview(const MaterialPreviewRequest& InRequest)
+    {
+        P->Previews.push_back(InRequest);
+    }
 #endif
 
     void RenderScene::Render(RenderContext& InContext)
@@ -232,6 +239,24 @@ namespace RenderCore
         P->AllocateRenderTargets(P->View.ViewportPixels);
 
         GDIBeginRendering();
+
+#if WITH_EDITOR
+        /*
+         * Material previews FIRST, inside the frame but before the back buffer
+         * is bound: each draws into RenderContext's own preview target and is
+         * read back there (the readback flushes and resumes the frame). The
+         * back buffer bound below is then the driver's ActiveRenderTarget at
+         * EndRendering, which is what the present shows -- never a preview.
+         */
+        for(const MaterialPreviewRequest& Each : P->Previews)
+        {
+            EngineCore::Image Pixels;
+            std::string       Error;
+            InContext.RenderMaterialPreview(Each.Material, Each.Size, Each.Tint, Pixels, Error);
+            if(Each.Mailbox) { Each.Mailbox->Deliver(Each.Request, std::move(Pixels), std::move(Error)); }
+        }
+        P->Previews.clear();
+#endif
 
         /*
          * AFTER BeginRendering, never before: VulkanDynamicGDI::SetRenderTarget

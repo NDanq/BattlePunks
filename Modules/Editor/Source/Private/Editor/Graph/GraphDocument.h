@@ -91,7 +91,8 @@ public:
     /* Writes the .nmgraph, then compiles and writes (and stages) its output.
      * False with OutError only if the graph file itself could not be written;
      * a compile failure is reported in OutMessage and leaves the old output. */
-    bool Save(QString& OutError, QString& OutMessage);
+    bool Save(QString& OutError, QString& OutMessage,
+              QObject* InContext = nullptr, std::function<void(bool, const QString&)> InStaged = nullptr);
 
 signals:
     void Changed();

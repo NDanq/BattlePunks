@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "Public/NodeGraph/Graph.h"
@@ -29,6 +30,10 @@ namespace NodeGraph
     {
         /* The generated source; empty if compilation failed. */
         std::string Code;
+
+        /* Further files the output needs, written beside it with the same
+         * base name: {".material", text} for a material's parameter defaults. */
+        std::vector<std::pair<std::string, std::string>> Companions;
 
         std::vector<Diagnostic> Diagnostics;
 
