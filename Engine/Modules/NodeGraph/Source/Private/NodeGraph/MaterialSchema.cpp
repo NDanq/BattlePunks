@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <set>
 
@@ -38,6 +39,8 @@ namespace
         MOP_Pass,            // the "Value" input, unchanged (Constant / reroute)
         MOP_Parameter,       // a uniform
         MOP_Output,          // the root
+        MOP_Mask,            // Component Mask: the ticked components, in order
+        MOP_Swizzle,         // Swizzle: any components, any order, repeats allowed
     };
 
     constexpr int UNIFORM_BLOCK_BINDING = 2;
@@ -98,11 +101,80 @@ namespace
         return "vec4(" + InExpr + ", 1.0)";   // vec3 -> vec4
     }
 
+    std::string VectorType(const size_t InComponents)
+    {
+        return InComponents <= 1 ? "float" : "vec" + std::to_string(InComponents > 4 ? 4 : InComponents);
+    }
+
+    /* A Component Mask's four checkboxes, and what each is off by default. */
+    const char* const GMaskProperties[4] = { "R", "G", "B", "A" };
+    const char* const GMaskDefaults[4]   = { "true", "false", "false", "false" };
+    const char* const GSwizzleProperty   = "Swizzle";
+    const char* const GSwizzleDefault    = "xyz";
+
+    /*
+     * The components a Component Mask or Swizzle selects, as GLSL letters in
+     * output order -- "xz". A Swizzle may be written with rgba instead of
+     * xyzw (not both at once), in either case. "" when nothing is selected or
+     * the text is not 1 to 4 components.
+     */
+    std::string SelectedComponents(const Node& InNode, const uint32_t InOp)
+    {
+        std::string Out;
+        if(InOp == MOP_Mask)
+        {
+            for(int Index = 0; Index < 4; ++Index)
+            {
+                if(InNode.GetProperty(GMaskProperties[Index], GMaskDefaults[Index]) == "true") { Out += "xyzw"[Index]; }
+            }
+            return Out;
+        }
+
+        const std::string Text = InNode.GetProperty(GSwizzleProperty, GSwizzleDefault);
+        if(Text.empty() || Text.size() > 4) { return std::string(); }
+        bool bXyzw = false, bRgba = false;
+        for(const char Raw : Text)
+        {
+            const char Ch = char(std::tolower(static_cast<unsigned char>(Raw)));
+            const size_t Xyzw = std::string("xyzw").find(Ch);
+            const size_t Rgba = std::string("rgba").find(Ch);
+            if(Xyzw != std::string::npos)      { bXyzw = true; Out += Ch; }
+            else if(Rgba != std::string::npos) { bRgba = true; Out += "xyzw"[Rgba]; }
+            else                               { return std::string(); }
+        }
+        return bXyzw && bRgba ? std::string() : Out;
+    }
+
     class MaterialSchema final : public Schema
     {
     public:
         MaterialSchema();
         void Compile(const Graph& InGraph, CompileResult& OutResult) const override;
+
+        /* A mask's or swizzle's output: one component per letter selected. */
+        std::string ResolvePinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const override
+        {
+            if(InPin.Type == DERIVED_TYPE)
+            {
+                const NodeDefinition* Def = FindNode(InNode.Type);
+                if(Def && (Def->Op == MOP_Mask || Def->Op == MOP_Swizzle))
+                {
+                    return VectorType(SelectedComponents(InNode, Def->Op).size());
+                }
+            }
+            return Schema::ResolvePinType(InGraph, InNode, InPin);
+        }
+
+        /* ".xz -> vec2" -- what a mask or swizzle takes, and what it makes. */
+        std::string DescribeNode(const Graph& InGraph, const Node& InNode) const override
+        {
+            const NodeDefinition* Def = FindNode(InNode.Type);
+            if(!Def || (Def->Op != MOP_Mask && Def->Op != MOP_Swizzle)) { return std::string(); }
+
+            const std::string Selected = SelectedComponents(InNode, Def->Op);
+            if(Selected.empty()) { return Def->Op == MOP_Mask ? "nothing selected" : "invalid"; }
+            return "." + Selected + " \xE2\x86\x92 " + VectorType(Selected.size());   // U+2192
+        }
     };
 
     // === The compiler ===========================================================
@@ -294,6 +366,58 @@ namespace
                 static const char* const Masks[] = { "", ".x", ".xy", ".xyz", "" };
                 Value = std::string(PARAMS_UNIFORM) + "[" + std::to_string(Found != Parameters.end() ? Found->second.Slot : 0) + "]"
                       + Masks[Components(Type)];
+                break;
+            }
+
+            case MOP_Mask:
+            case MOP_Swizzle:
+            {
+                /* A swizzle expression, used where it is needed -- no temporary. */
+                const PinDefinition* In = InDef.FindPin("Vector", EPinDirection::Input);
+                const std::string InType   = Index.PinType(InNode, *In);
+                const size_t      Width    = Components(InType);
+                const std::string Selected = SelectedComponents(InNode, InDef.Op);
+                const std::string Label    = "'" + InDef.DisplayName + "'";
+
+                if(Selected.empty())
+                {
+                    Result.Error(InNode.Id, std::string(), InDef.Op == MOP_Mask
+                                 ? Label + ": enable at least one of R, G, B, A"
+                                 : Label + ": '" + InNode.GetProperty(GSwizzleProperty, GSwizzleDefault)
+                                   + "' is not 1 to 4 of x, y, z, w (or of r, g, b, a)");
+                    Value = "0.0";
+                    break;
+                }
+
+                bool bInRange = true;
+                for(const char Ch : Selected)
+                {
+                    const size_t Component = std::string("xyzw").find(Ch);
+                    if(Component < Width) { continue; }
+                    const std::string Name = InDef.Op == MOP_Mask ? std::string(GMaskProperties[Component]) : std::string(1, Ch);
+                    Result.Error(InNode.Id, "Vector", Label + " reads " + Name + ", but its input is " + InType);
+                    bInRange = false;
+                    break;
+                }
+                if(!bInRange)
+                {
+                    Value = "0.0";
+                    break;
+                }
+
+                const std::string Source = Input(InNode, InDef, *In);
+                if(Width == 1)
+                {
+                    Value = Selected.size() == 1 ? Source : VectorType(Selected.size()) + "(" + Source + ")";   // splat
+                }
+                else if(Selected == std::string("xyzw").substr(0, Width))
+                {
+                    Value = Source;   // everything, in order: nothing to swizzle
+                }
+                else
+                {
+                    Value = Swizzle(Source, Selected.c_str());
+                }
                 break;
             }
 
@@ -550,6 +674,29 @@ namespace
         Pure("Vector.Make4", "Make Vector4", "Vector",
              { In("X", "float"), In("Y", "float"), In("Z", "float"), In("W", "float", "1"),
                Out("Out", "vec4", "vec4({X}, {Y}, {Z}, {W})") }, {}, "combine append color rgba");
+
+        // --- Selecting components ---------------------------------------------------
+        {
+            NodeDefinition& Def = Pure("Vector.ComponentMask", "Component Mask", "Vector",
+                                       { In("Vector", W), Out("Out", DERIVED_TYPE, "") }, GFloatTypes,
+                                       "mask channel select rgba xyzw");
+            Def.Op      = MOP_Mask;
+            Def.Tooltip = "The ticked components of the input, in R G B A order: R and B of a vec3 is a vec2 (.xz).";
+            for(int Index = 0; Index < 4; ++Index)
+            {
+                Def.Properties.push_back({ GMaskProperties[Index], EPropertyKind::Bool, GMaskDefaults[Index], {},
+                                           std::string("Pass the input's ") + GMaskProperties[Index] + " component through" });
+            }
+        }
+        {
+            NodeDefinition& Def = Pure("Vector.Swizzle", "Swizzle", "Vector",
+                                       { In("Vector", W), Out("Out", DERIVED_TYPE, "") }, GFloatTypes,
+                                       "reorder shuffle repeat rgba xyzw");
+            Def.Op      = MOP_Swizzle;
+            Def.Tooltip = "Components in any order, repeats allowed: 'zyx' reverses a vec3, 'xxx' spreads x.";
+            Def.Properties = { { GSwizzleProperty, EPropertyKind::String, GSwizzleDefault, {},
+                                 "1 to 4 of x, y, z, w (or r, g, b, a)" } };
+        }
     }
 
     void MaterialSchema::Compile(const Graph& InGraph, CompileResult& OutResult) const

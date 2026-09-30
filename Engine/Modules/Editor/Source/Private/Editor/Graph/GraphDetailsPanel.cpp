@@ -183,7 +183,17 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
         const std::string Name  = Property.Name;
         QWidget* Editor = nullptr;
 
-        if(Property.Kind == EPropertyKind::Choice || Property.Kind == EPropertyKind::Variable)
+        if(Property.Kind == EPropertyKind::Bool)
+        {
+            auto* Check = new QCheckBox();
+            Check->setChecked(Value == "true");
+            connect(Check, &QCheckBox::toggled, this, [this, Id, Name](const bool bInOn)
+            {
+                Document.SetProperty(Id, Name, bInOn ? "true" : "false");
+            });
+            Editor = Check;
+        }
+        else if(Property.Kind == EPropertyKind::Choice || Property.Kind == EPropertyKind::Variable)
         {
             auto* Combo = new QComboBox();
             if(Property.Kind == EPropertyKind::Choice)

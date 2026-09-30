@@ -101,8 +101,9 @@ NodeItem::NodeItem(GraphScene& InScene, const Node& InNode, const NodeDefinition
         HeaderColor = CategoryColor(InDef->Category, InDef->Role);
 
         /* The node's first setting names it: "Get Speed", "Parameter: Tint",
-         * "On Event: Hit". */
-        if(!InDef->Properties.empty())
+         * "On Event: Hit". Not a checkbox -- "Component Mask: true" says
+         * nothing; the schema's description covers those. */
+        if(!InDef->Properties.empty() && InDef->Properties.front().Kind != EPropertyKind::Bool)
         {
             const PropertyDefinition& First = InDef->Properties.front();
             const QString Value = ToQ(InNode.GetProperty(First.Name, First.Default));
@@ -112,7 +113,11 @@ NodeItem::NodeItem(GraphScene& InScene, const Node& InNode, const NodeDefinition
                                                               : Title + QStringLiteral(": ") + Value;
             }
         }
-        if(InDef->HasWildcard() && !InDef->bWildcardFromSchema)
+
+        /* The schema's own words for its setup (".xz -> vec2"), else the
+         * resolved wildcard type. */
+        Subtitle = ToQ(Doc.GetSchema().DescribeNode(G, InNode));
+        if(Subtitle.isEmpty() && InDef->HasWildcard() && !InDef->bWildcardFromSchema)
         {
             Subtitle = ToQ(Doc.GetSchema().GetWildcardType(G, InNode));
         }
