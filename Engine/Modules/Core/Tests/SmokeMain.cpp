@@ -1579,6 +1579,7 @@ static void TestConfigCallbacks()
     ConfigApplyAll();
     Expect(GConfigCallbackCount == 2, "ConfigApplyAll fires every callback regardless of change");
 
+    Expect(GSmokeMaxFPS.DefaultToString() == "60", "DefaultToString gives the compiled default while the value differs");
     Expect(GSmokeMaxFPS.ResetToDefault(), "ResetToDefault reports a change when the value was not the default");
     Expect(GSmokeMaxFPS.GetInt() == 60, "reset restores the compiled default");
 

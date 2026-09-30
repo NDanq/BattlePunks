@@ -23,6 +23,7 @@
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/EditorLog.h"
 #include "Public/Editor/EditorMainWindow.h"
+#include "Private/Editor/SettingsDialog.h"
 
 /*
  * NimbleEditor's entry point.
@@ -31,7 +32,7 @@
  *
  * The backend comes from [Editor] RHI in Config/DefaultEngine.ini when that
  * file is beside the executable (a game's staged config usually is), then
- * from --rhi. Same numbering as [Display] RHI: 0=Null, 1=OpenGL, 2=Vulkan,
+ * the user's EditorSettings.ini (Edit > Editor Settings), then --rhi. Same numbering as [Display] RHI: 0=Null, 1=OpenGL, 2=Vulkan,
  * 3=Metal, 4=D3D12. A separate key from the game's, so a game configured for
  * one backend does not force the editor onto it.
  */
@@ -80,6 +81,8 @@ int main(int argc, char* argv[])
     {
         EngineCore::LoadConfigFile("Config/DefaultEngine.ini");
     }
+    /* The user's own choices, over the project's (Edit > Editor Settings). */
+    SettingsDialog::LoadUserSettings();
 
     int Rhi = GEditorRHI.GetInt();
     if(Parser.isSet(RhiOption))

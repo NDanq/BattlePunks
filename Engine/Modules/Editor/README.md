@@ -67,6 +67,7 @@ uses it.
 | `EditorContext` | Owns the World and Renderer; selection; the undo history; signals every panel listens to |
 | `EditorHistory` (private) | Undo / redo commands and the entity and component snapshots they hold |
 | `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Build / Help), status bar; starts and stops the Renderer |
+| `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
@@ -116,7 +117,7 @@ NimbleEditor [--rhi N] [--play] [world.nmworld]
 `--play` starts Play-in-Editor as soon as the viewport is up.
 
 The backend is `[Editor] RHI` in `Config/DefaultEngine.ini` (default 2, Vulkan),
-overridden by `--rhi` -- a separate key from the game's `[Display] RHI`. With no
+then the user's settings (see Editor settings), then `--rhi` -- a separate key from the game's `[Display] RHI`. With no
 file argument the editor opens the Sandbox scene -- the entities Sandbox's
 level has once loaded (Marker, Camera, and the startup script's Scripted),
 mirrored by hand from `SandboxGame.cpp` and `Scripts/Main.lua` until the editor
@@ -262,6 +263,7 @@ registered:
 | `scene <new \| sandbox>` | As the File menu |
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `Cooked/` beside it |
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
+| `settings` | Open Edit > Editor Settings, and print where they are saved |
 | `stats` | The renderer's counters |
 | `gizmo [none \| move \| rotate \| scale] [world \| local]` | Set the transform handles, or print them |
 | `snap [on \| off]` | Snap handle drags, or print whether they do |
@@ -304,6 +306,33 @@ keyboard or mouse; the SDL path proven by the input probe (View > SDL Input
 Probe) is what will deliver it. The game's `[Display] FrameRateLimit` is
 reported to it but not enforced -- the viewport's timer paces the run.
 
+## Editor settings
+
+**Edit > Editor Settings...** (Ctrl+,, or `settings` in the Console) shows the
+editor's own config vars as a form:
+
+| Group | Setting | Var |
+|---|---|---|
+| Viewport | Move / Rotate / Scale snap | `Editor.SnapTranslate`, `SnapRotate`, `SnapScale` |
+| Rendering | Render backend (on restart) | `Editor.RHI` |
+| Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
+
+The settings are those config vars themselves; the dialog keeps no copy.
+**Apply** and **OK** set them the way the Console would and save them;
+**Restore Defaults** puts the compiled defaults in the form, for Apply to keep.
+A value set from the Console shows the next time the dialog opens.
+
+They save to `EditorSettings.ini` in the user's config directory
+(`%LOCALAPPDATA%/NimbleEngine/Nimble Editor` on Windows), in the same
+grammar as `DefaultEngine.ini`, and load over it at startup: the project's
+file gives the defaults, the user's file overrides them, and `--rhi` overrides
+both. Once saved, every setting in the dialog is in that file, so a later
+change to the project's value does not reach that user. Delete the file to
+go back to the project's values.
+
+Adding a setting is a `NIMBLE_CONFIG_*` var and one row in
+`SettingsDialog.cpp`.
+
 ## Build menu
 
 **Compile Source** (F7, or `compile` in the Console) builds the game module --
@@ -314,7 +343,9 @@ errors and warnings at their own level. **Cancel Compile** (`compile cancel`)
 kills it. When it succeeds:
 
 - **Playing**: the run is stopped and started again, so it picks up the new
-  DLL. Like any Stop, the run's state is lost.
+  DLL. Like any Stop, the run's state is lost. With *Restart a running game
+  after Compile* off (Editor Settings, `Editor.ReloadAfterCompile`) the run
+  keeps going on the old DLL instead.
 - **Not playing**: nothing holds the module, so the next Play loads it.
 
 Only the game module can be rebuilt from inside the editor. The engine DLLs

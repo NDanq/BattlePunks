@@ -31,7 +31,11 @@
 #include "Public/Editor/ViewportWidget.h"
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/SDLInputProbe.h"
+#include "Private/Editor/SettingsDialog.h"
 #include "Private/Editor/SourceBuild.h"
+
+/* Edit > Editor Settings > Build. */
+NIMBLE_CONFIG_BOOL(GEditorReloadAfterCompile, "Editor", "ReloadAfterCompile", true, nullptr);
 
 namespace
 {
@@ -210,6 +214,12 @@ void EditorMainWindow::BuildMenus()
     Edit->addAction(ViewportArea->GetFrameSelectionAction());
     Edit->addAction(ViewportArea->GetFrameAllAction());
 
+    Edit->addSeparator();
+    QAction* Settings = Edit->addAction(QStringLiteral("Editor &Settings..."));
+    Settings->setMenuRole(QAction::PreferencesRole);
+    Settings->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
+    connect(Settings, &QAction::triggered, this, &EditorMainWindow::OpenSettings);
+
     QMenu* View = menuBar()->addMenu(QStringLiteral("&View"));
     for(QDockWidget* Dock : findChildren<QDockWidget*>())
     {
@@ -312,7 +322,7 @@ void EditorMainWindow::BuildBuildMenu()
 
     CompileAction = BuildMenu->addAction(QStringLiteral("&Compile Source"));
     CompileAction->setShortcut(QKeySequence(Qt::Key_F7));
-    CompileAction->setToolTip(QStringLiteral("Build the game module ([Game] Module) and reload it into a running game (F7)"));
+    CompileAction->setToolTip(QStringLiteral("Build the game module ([Game] Module) and restart a running game on it (F7)"));
     connect(CompileAction, &QAction::triggered, this, &EditorMainWindow::CompileSource);
 
     CancelCompileAction = BuildMenu->addAction(QStringLiteral("C&ancel Compile"));
@@ -370,7 +380,14 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     }
 
     /* Nothing holds the module between runs, so the next Play loads the new
-     * DLL by itself. A run in progress still has the old one: restart it. */
+     * DLL by itself. A run in progress still has the old one: restart it,
+     * unless Editor.ReloadAfterCompile says to leave it running. */
+    if(Context.IsPlaying() && !GEditorReloadAfterCompile.GetBool())
+    {
+        CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play; the run keeps the old one")
+        statusBar()->showMessage(QStringLiteral("Compiled %1 -- Stop and Play to load it").arg(Module), 5000);
+        return;
+    }
     if(!Context.IsPlaying())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play")
@@ -385,6 +402,19 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     {
         statusBar()->showMessage(QStringLiteral("Compiled and reloaded %1").arg(Module), 5000);
     }
+}
+
+void EditorMainWindow::OpenSettings()
+{
+    /* One at a time: a second request raises the open one. */
+    if(auto* Open = findChild<SettingsDialog*>())
+    {
+        Open->raise();
+        Open->activateWindow();
+        return;
+    }
+    auto* Dialog = new SettingsDialog(this);   // deletes itself on close
+    Dialog->show();
 }
 
 void EditorMainWindow::CookContent()
@@ -568,6 +598,15 @@ void EditorMainWindow::RegisterConsoleCommands()
                                  : Arg == QStringLiteral("off") ? false
                                  : !Context.IsPlayViewEjected());
         Console.Print(Context.IsPlayViewEjected() ? QStringLiteral("Editor camera") : QStringLiteral("Game camera"));
+    });
+
+    Console.Register(QStringLiteral("settings"), QString(),
+                     QStringLiteral("Open Edit > Editor Settings (Ctrl+,)"),
+                     [this](const QStringList&)
+    {
+        OpenSettings();
+        Console.Print(QStringLiteral("Settings are saved to %1")
+                      .arg(QDir::toNativeSeparators(SettingsDialog::GetUserSettingsPath())));
     });
 
     Console.Register(QStringLiteral("compile"), QStringLiteral("[cancel]"),

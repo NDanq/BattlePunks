@@ -370,21 +370,34 @@ bool ConfigVar::SetFromString(const std::string& InText, bool* OutbChanged)
     return bParsed;
 }
 
+namespace
+{
+    std::string ConfigValueToString(const EConfigType InType, const ConfigValue& InValue)
+    {
+        switch(InType)
+        {
+            case EConfigType::CT_Bool:   return InValue.AsBool ? "true" : "false";
+            case EConfigType::CT_Int:    return std::to_string(InValue.AsInt);
+            case EConfigType::CT_Float:
+            {
+                char Buffer[64];
+                std::snprintf(Buffer, sizeof(Buffer), "%g", InValue.AsFloat);
+                return Buffer;
+            }
+            case EConfigType::CT_String: return InValue.AsString;
+        }
+        return "";
+    }
+}
+
 std::string ConfigVar::ToString() const
 {
-    switch(Type)
-    {
-        case EConfigType::CT_Bool:   return Value.AsBool ? "true" : "false";
-        case EConfigType::CT_Int:    return std::to_string(Value.AsInt);
-        case EConfigType::CT_Float:
-        {
-            char Buffer[64];
-            std::snprintf(Buffer, sizeof(Buffer), "%g", Value.AsFloat);
-            return Buffer;
-        }
-        case EConfigType::CT_String: return Value.AsString;
-    }
-    return "";
+    return ConfigValueToString(Type, Value);
+}
+
+std::string ConfigVar::DefaultToString() const
+{
+    return ConfigValueToString(Type, Default);
 }
 
 std::string ConfigVar::GetQualifiedName() const

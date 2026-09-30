@@ -63,6 +63,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/PlaySession.cpp
         Source/Private/Editor/PlaySession.h
         Source/Private/Editor/SDLInputProbe.h
+        Source/Private/Editor/SettingsDialog.cpp
+        Source/Private/Editor/SettingsDialog.h
         Source/Private/Editor/SourceBuild.cpp
         Source/Private/Editor/SourceBuild.h
         Source/Public/Editor/EditorContext.h

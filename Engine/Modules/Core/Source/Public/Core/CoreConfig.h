@@ -219,6 +219,7 @@ namespace EngineCore
         bool SetFromString(const std::string& InText, bool* OutbChanged = nullptr);
 
         std::string ToString() const;             // "true" / "60" / "1.5" / the text
+        std::string DefaultToString() const;      // the compiled default, in the same form
         std::string GetQualifiedName() const;      // "Section.Name", or "Name" if sectionless
 
         bool ResetToDefault();                     // fires the callback if it changed
