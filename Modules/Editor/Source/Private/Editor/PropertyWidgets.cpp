@@ -263,7 +263,7 @@ namespace
      * Vector3 and AABB (two Vector3s). Always read and written through
      * GetX/SetX on the real Vector3 object, never its raw floats -- the layout
      * differs between SIMD and scalar builds (ComponentSerializer.h's
-     * SerializeVector3 note).
+     * note on ComponentArchive's Vector3 field).
      */
     class VectorEditor final : public PropertyEditor
     {

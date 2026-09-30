@@ -133,6 +133,11 @@ namespace
             Ar << Index;
 
             const Entity Handle = InWorld.GetEntity(EntityId);
+            const EntityGuid Guid = Handle.GetGuid();
+            uint64_t GuidHi = Guid.Hi;
+            uint64_t GuidLo = Guid.Lo;
+            Ar << GuidHi << GuidLo;
+
             std::string Name(Handle.GetName());
             std::string ScriptPath(Handle.GetScriptPath());
             const EntityScriptState* Script = Handle.GetScriptState();
@@ -182,7 +187,8 @@ namespace
                 Ar.OpenChunk(TAG_DATA, DataVersion);
 
                 uint8_t* Bytes = static_cast<uint8_t*>(Pool->GetDenseData()) + Dense * Info->SizeBytes;
-                Serializer->Fn(Ar, Bytes, OutTable);
+                BinaryComponentArchive ComponentAr(Ar, OutTable);
+                Serializer->Fn(ComponentAr, Bytes);
 
                 Ar.CloseChunk();
             }
@@ -235,16 +241,18 @@ namespace
                 return false;
             }
 
+            EntityGuid  Guid;
             std::string Name;
             std::string ScriptPath;
             uint8_t     bCull = 0;
-            Ar << Name << ScriptPath << bCull;
+            Ar << Guid.Hi << Guid.Lo << Name << ScriptPath << bCull;
             if(Ar.HasError()) { Ar.CloseChunk(); return false; }
 
-            /* Named at creation, so OnEntityCreated sees the name. The script
+            /* Named and identified at creation, so OnEntityCreated sees both
+             * (a GUID already in this World is replaced, with a warning). The script
              * is only a path here; a bound ScriptEngine instantiates it on
              * the next tick, by which time every component is in place. */
-            const Entity Loaded = InWorld.CreateEntity(Name.c_str());
+            const Entity Loaded = InWorld.CreateEntity(Name.c_str(), Guid);
             if(!ScriptPath.empty())
             {
                 Loaded.SetScript(ScriptPath.c_str());
@@ -323,7 +331,8 @@ namespace
                     continue;
                 }
 
-                Serializer->Fn(Ar, Component, OutTable);
+                BinaryComponentArchive ComponentAr(Ar, OutTable);
+                Serializer->Fn(ComponentAr, Component);
                 Ar.CloseChunk();
             }
 

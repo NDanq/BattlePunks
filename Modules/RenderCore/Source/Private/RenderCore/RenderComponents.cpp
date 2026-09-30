@@ -52,10 +52,10 @@ namespace RenderCore
      */
     GAMECORE_DEFINE_COMPONENT_SERIALIZER(PrimitiveComponent, 1)
     {
-        Ar << C.Width;
-        Ar << C.Height;
-        GameCore::SerializeColor(Ar, C.Tint);
-        Ar << C.bVisible;
+        Ar.Field("Width",  C.Width);
+        Ar.Field("Height", C.Height);
+        Ar.Field("Tint",   C.Tint);
+        Ar.Flag("Visible", C.bVisible);
     }
 
     /* Every field is real data -- a CameraComponent holds no per-run state at
@@ -63,9 +63,9 @@ namespace RenderCore
      * serializer). */
     GAMECORE_DEFINE_COMPONENT_SERIALIZER(CameraComponent, 1)
     {
-        Ar << C.ZNear;
-        Ar << C.ZFar;
-        Ar << C.bActive;
+        Ar.Field("ZNear", C.ZNear);
+        Ar.Field("ZFar",  C.ZFar);
+        Ar.Flag("Active", C.bActive);
     }
 
     /*

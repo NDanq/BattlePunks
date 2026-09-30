@@ -36,6 +36,7 @@
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/TransformMath.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/WorldPackage.h"
 #include "Public/GameCore/WorldSerializer.h"
 
 using namespace GameCore;
@@ -283,6 +284,26 @@ static void TestEntityMembers()
     const Entity Recycled = W.CreateEntity();
     Expect(Recycled.GetID().Index == A.GetID().Index, "(the slot is recycled)");
     Expect(Recycled.GetName()[0] == '\0' && !Recycled.HasScript(), "the recycled slot has no name and no script");
+
+    /* GUIDs: set, unique, findable, kept only while the entity lives. */
+    const EntityGuid RecycledGuid = Recycled.GetGuid();
+    Expect(RecycledGuid.IsSet() && B.GetGuid().IsSet() && RecycledGuid != B.GetGuid(), "every entity gets its own GUID");
+    Expect(RecycledGuid != A.GetGuid() && !A.GetGuid().IsSet(), "a recycled slot gets a new GUID; a dead handle reads none");
+    Expect(W.FindEntityByGuid(B.GetGuid()) == B.GetID(), "FindEntityByGuid finds a live entity");
+
+    const EntityGuid Chosen = EntityGuid::Generate();
+    const Entity Placed = W.CreateEntity("Placed", Chosen);
+    Expect(Placed.GetGuid() == Chosen, "CreateEntity(name, guid) keeps the GUID it is given");
+    const Entity Clash = W.CreateEntity("Clash", Chosen);
+    Expect(Clash.GetGuid().IsSet() && Clash.GetGuid() != Chosen, "a GUID already in use is replaced with a fresh one");
+    W.DestroyEntity(Placed);
+    Expect(!W.FindEntityByGuid(Chosen).IsSet(), "a destroyed entity's GUID is no longer found");
+
+    char Text[EntityGuid::STRING_BUFFER];
+    Chosen.ToString(Text);
+    EntityGuid Parsed;
+    Expect(std::strlen(Text) == 32 && EntityGuid::Parse(Text, Parsed) && Parsed == Chosen, "a GUID round-trips through its text");
+    Expect(!EntityGuid::Parse("not-a-guid", Parsed) && !EntityGuid::Parse("0123", Parsed), "malformed GUID text is refused");
 }
 
 // ============================================================================
@@ -880,6 +901,7 @@ static void TestComponentScripting()
         "assert(e:GetName() == 'Builtins', 'GetName')\n"
         "assert(e:SetName('Renamed') == true, 'SetName')\n"
         "assert(World.FindEntity('Renamed') ~= nil, 'FindEntity sees SetName')\n"
+        "assert(#e:GetGuid() == 32 and e:GetGuid():match('^%x+$'), 'GetGuid is 32 hex digits')\n"
         "local b = e:AddComponent('Bounds')\n"
         "b:SetLocal(-1, -1, -1, 1, 1, 1)\n"
         "assert(b:GetLocal() == -1, 'Bounds:GetLocal')\n"
@@ -1265,8 +1287,8 @@ struct LinkComponent
 GAMECORE_DEFINE_COMPONENT(LinkComponent, "TestLink")
 GAMECORE_DEFINE_COMPONENT_SERIALIZER(LinkComponent, 1)
 {
-    Remap.RemapEntity(Ar, C.Target);
-    Ar << C.Payload;
+    Ar.Entity("Target", C.Target);
+    Ar.Field("Payload", C.Payload);
 }
 
 /* Registered as a type but given NO serializer, to prove an unserializable
@@ -1285,14 +1307,16 @@ static void TestWorldSerialization()
     std::vector<uint8_t> Saved;
     EntityID             SavedAlice;
     EntityID             SavedBob;
+    EntityGuid           SavedAliceGuid;
 
     {
         World W;
 
         const Entity Alice = W.CreateEntity("Alice");
         const Entity Bob   = W.CreateEntity("Bob");
-        SavedAlice = Alice;
-        SavedBob   = Bob;
+        SavedAlice     = Alice;
+        SavedBob       = Bob;
+        SavedAliceGuid = Alice.GetGuid();
 
         TransformComponent AliceTransform;
         AliceTransform.Position = Vector3(1.5, 2.5, 3.5);
@@ -1350,6 +1374,7 @@ static void TestWorldSerialization()
         Expect(AliceHandle.GetScriptState() && AliceHandle.GetScriptState()->bPendingInstantiate,
                "a restored script is pending: it starts on the next tick of a bound World");
         Expect(!W.GetEntity(Bob).HasScript(), "Bob, who had none, has no script");
+        Expect(AliceHandle.GetGuid() == SavedAliceGuid, "Alice kept her GUID through the binary round trip");
 
         TransformComponent* Transform = W.GetEntity(Alice).GetComponent<TransformComponent>();
         Expect(Transform != nullptr, "Alice's Transform came back");
@@ -1402,6 +1427,212 @@ static void TestWorldSerialization()
         }
     }
 }
+
+#if WITH_EDITOR
+// ============================================================================
+// WorldPackage -- the editor's text world: .nmworld + one .nmentity per entity
+// ============================================================================
+
+namespace
+{
+    std::string ReadFileText(const std::filesystem::path& InPath)
+    {
+        std::ifstream In(InPath, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(In), std::istreambuf_iterator<char>());
+    }
+
+    void WriteFileText(const std::filesystem::path& InPath, const std::string& InText)
+    {
+        std::ofstream(InPath, std::ios::binary | std::ios::trunc) << InText;
+    }
+
+    std::string GuidFileName(const EntityGuid& InGuid)
+    {
+        char Text[EntityGuid::STRING_BUFFER];
+        InGuid.ToString(Text);
+        return std::string(Text) + ".nmentity";
+    }
+
+    size_t CountEntityFiles(const std::filesystem::path& InFolder)
+    {
+        size_t Count = 0;
+        for(const auto& Item : std::filesystem::directory_iterator(InFolder))
+        {
+            if(Item.path().extension() == ".nmentity") { ++Count; }
+        }
+        return Count;
+    }
+}
+
+static void TestWorldPackage()
+{
+    std::printf("WorldPackage: text worlds\n");
+
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "Package";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Dir, Ignored);
+    std::filesystem::create_directories(Dir, Ignored);
+
+    const std::string WorldPath  = (Dir / "Level.nmworld").generic_string();
+    const std::filesystem::path Folder = Dir / "Level";
+
+    World Original;
+    const Entity Alice = Original.CreateEntity("Alice");
+    const Entity Bob   = Original.CreateEntity("Bob");
+    const Entity Carol = Original.CreateEntity();
+
+    TransformComponent AliceTransform;
+    AliceTransform.Position = Vector3(1.5, -2.25, 0.1);   // 0.1 is not exact in binary: the text must still round-trip it
+    AliceTransform.Rotation = Vector3(0.0, 45.0, 0.0);
+    Alice.AddComponent(AliceTransform);
+    BoundsComponent AliceBounds;
+    AliceBounds.Local   = AABB(Vector3(-1.0, -2.0, -3.0), Vector3(1.0, 2.0, 3.0));
+    AliceBounds.bStatic = 1;
+    Alice.AddComponent(AliceBounds);
+    Alice.SetScript("Scripts/Alice.lua");
+    Alice.GetScriptState()->bCullOutsideActiveRegion = 1;
+
+    LinkComponent Link;
+    Link.Target  = Alice;
+    Link.Payload = -7;
+    Bob.AddComponent(Link);
+    Bob.AddComponent<OpaqueComponent>();   // no serializer: skipped, not fatal
+
+    Carol.AddComponent<TransformComponent>();
+
+    // --- Save ---------------------------------------------------------------
+    Expect(SaveWorldPackage(WorldPath.c_str(), Original), "SaveWorldPackage succeeds");
+    Expect(DetectWorldFileFormat(WorldPath.c_str()) == EWorldFileFormat::Text, "a saved package reads as text");
+    Expect(std::filesystem::is_directory(Folder), "the entities go in a sibling folder named after the world");
+    Expect(CountEntityFiles(Folder) == 3, "one .nmentity per entity");
+    Expect(std::filesystem::exists(Folder / GuidFileName(Alice.GetGuid())), "entity files are named by GUID");
+
+    const std::string AliceText = ReadFileText(Folder / GuidFileName(Alice.GetGuid()));
+    Expect(AliceText.find("Name=\"Alice\"") != std::string::npos
+           && AliceText.find("<Component Type=\"Bounds\"") < AliceText.find("<Component Type=\"Transform\""),
+           "an entity file is readable XML, components sorted by type name");
+    Expect(AliceText.find("Path=\"Scripts/Alice.lua\"") != std::string::npos, "the script path is in the entity file");
+
+    // --- Load into a fresh World ------------------------------------------------
+    {
+        World Loaded;
+        EWorldFileFormat Format = EWorldFileFormat::Unknown;
+        Expect(LoadWorldFile(WorldPath.c_str(), Loaded, &Format) && Format == EWorldFileFormat::Text, "LoadWorldFile reads it back");
+        Expect(Loaded.GetEntityCount() == 3, "every entity came back");
+
+        const Entity A = Loaded.GetEntity(Loaded.FindEntityByGuid(Alice.GetGuid()));
+        const Entity B = Loaded.GetEntity(Loaded.FindEntityByGuid(Bob.GetGuid()));
+        const Entity C = Loaded.GetEntity(Loaded.FindEntityByGuid(Carol.GetGuid()));
+        Expect(A.IsAlive() && B.IsAlive() && C.IsAlive(), "each entity kept its GUID");
+        Expect(std::strcmp(A.GetName(), "Alice") == 0 && C.GetName()[0] == '\0', "names came back, unnamed stays unnamed");
+
+        const TransformComponent* T = A.GetComponent<TransformComponent>();
+        Expect(T && T->Position.GetX() == 1.5f && T->Position.GetY() == -2.25f && T->Position.GetZ() == 0.1f
+               && T->Rotation.GetY() == 45.0f && T->Scale.GetX() == 1.0f, "float values round-trip exactly through text");
+        const BoundsComponent* Bounds = A.GetComponent<BoundsComponent>();
+        Expect(Bounds && Bounds->bStatic == 1 && Bounds->Local.Max.GetZ() == 3.0f && Bounds->ProxyID >= 0,
+               "Bounds came back, and the load gave it a spatial leaf");
+        Expect(std::strcmp(A.GetScriptPath(), "Scripts/Alice.lua") == 0 && A.GetScriptState()->bCullOutsideActiveRegion,
+               "the script path and cull flag came back");
+
+        const LinkComponent* L = B.GetComponent<LinkComponent>();
+        Expect(L && L->Payload == -7 && L->Target == A.GetID(), "an entity reference resolves by GUID to the loaded entity");
+        Expect(!B.HasComponent<OpaqueComponent>(), "a type with no serializer is not saved");
+
+        /* Saving what was loaded gives the same bytes: deterministic output. */
+        const std::string SecondPath = (Dir / "Second.nmworld").generic_string();
+        Expect(SaveWorldPackage(SecondPath.c_str(), Loaded), "the loaded world saves");
+        Expect(ReadFileText(Dir / "Second" / GuidFileName(Alice.GetGuid())) == AliceText,
+               "a load/save round trip reproduces an entity file byte for byte");
+    }
+
+    // --- Resave: unchanged files untouched; a deleted entity's file removed ------
+    const auto AliceStamp = std::filesystem::last_write_time(Folder / GuidFileName(Alice.GetGuid()));
+    const EntityGuid BobGuid = Bob.GetGuid();
+    Original.DestroyEntity(Bob);
+    WriteFileText(Folder / "Notes.txt", "not an entity file");
+    Expect(SaveWorldPackage(WorldPath.c_str(), Original), "a second save succeeds");
+    Expect(!std::filesystem::exists(Folder / GuidFileName(BobGuid)), "a deleted entity's file is removed");
+    Expect(std::filesystem::exists(Folder / "Notes.txt"), "a file that is not an entity file is left alone");
+    Expect(std::filesystem::last_write_time(Folder / GuidFileName(Alice.GetGuid())) == AliceStamp,
+           "an unchanged entity file is not rewritten");
+
+    // --- Load: unlisted files are ignored; missing and unknown fields tolerated --
+    {
+        const EntityGuid Stray = EntityGuid::Generate();
+        WriteFileText(Folder / GuidFileName(Stray),
+                      "<?xml version=\"1.0\"?>\n<Entity Guid=\"x\" Name=\"Stray\"/>\n");
+
+        /* Carol's Transform with Scale removed and a field no build knows. */
+        const std::filesystem::path CarolFile = Folder / GuidFileName(Carol.GetGuid());
+        char CarolGuid[EntityGuid::STRING_BUFFER];
+        Carol.GetGuid().ToString(CarolGuid);
+        WriteFileText(CarolFile,
+                      std::string("<?xml version=\"1.0\"?>\n<Entity Guid=\"") + CarolGuid + "\" Name=\"Carol\">\n"
+                      "  <Component Type=\"Transform\" Version=\"1\">\n"
+                      "    <Position X=\"4\" Y=\"5\" Z=\"6\" />\n"
+                      "    <Wobble Value=\"9\" />\n"
+                      "  </Component>\n"
+                      "</Entity>\n");
+
+        World Loaded;
+        Expect(LoadWorldFile(WorldPath.c_str(), Loaded), "a hand-edited package still loads");
+        Expect(Loaded.GetEntityCount() == 2 && !Loaded.FindEntityByName("Stray").IsSet(),
+               "an entity file the manifest does not list is ignored");
+        const TransformComponent* T = Loaded.GetEntity(Loaded.FindEntityByName("Carol")).GetComponent<TransformComponent>();
+        Expect(T && T->Position.GetZ() == 6.0f && T->Scale.GetX() == 1.0f,
+               "a missing field keeps its default; an unknown one is skipped");
+
+        Expect(SaveWorldPackage(WorldPath.c_str(), Original), "saving again succeeds");
+        Expect(!std::filesystem::exists(Folder / GuidFileName(Stray)), "the next save removes the unlisted file");
+    }
+
+    // --- A failed write leaves the old world exactly as it was --------------------
+    {
+        const std::string ManifestBefore = ReadFileText(WorldPath);
+        const std::filesystem::path AliceFile = Folder / GuidFileName(Alice.GetGuid());
+        const std::string AliceBefore = ReadFileText(AliceFile);
+
+        /* A directory where Alice's temporary would go makes that write fail. */
+        std::filesystem::create_directories(Folder / (GuidFileName(Alice.GetGuid()) + ".tmp"), Ignored);
+        Alice.SetName("Renamed");
+        const Entity Extra = Original.CreateEntity("Extra");
+
+        Expect(!SaveWorldPackage(WorldPath.c_str(), Original), "a save whose write fails reports failure");
+        Expect(ReadFileText(WorldPath) == ManifestBefore && ReadFileText(AliceFile) == AliceBefore,
+               "the manifest and entity files are untouched");
+        Expect(!std::filesystem::exists(Folder / GuidFileName(Extra.GetGuid()))
+               && !std::filesystem::exists(Folder / (GuidFileName(Extra.GetGuid()) + ".tmp")),
+               "no new entity file or temporary is left behind");
+
+        std::filesystem::remove(Folder / (GuidFileName(Alice.GetGuid()) + ".tmp"), Ignored);
+        Expect(SaveWorldPackage(WorldPath.c_str(), Original), "once the obstacle is gone the save succeeds");
+    }
+
+    // --- Cook: text in, binary out, same world ---------------------------------------
+    {
+        const std::string CookedPath = (Dir / "Cooked" / "Level.nmworld").generic_string();
+        Expect(CookWorldFile(WorldPath.c_str(), CookedPath.c_str()), "CookWorldFile succeeds");
+        Expect(DetectWorldFileFormat(CookedPath.c_str()) == EWorldFileFormat::Binary, "the cooked file is binary");
+
+        World Cooked;
+        EWorldFileFormat Format = EWorldFileFormat::Unknown;
+        Expect(LoadWorldFile(CookedPath.c_str(), Cooked, &Format) && Format == EWorldFileFormat::Binary,
+               "LoadWorldFile reads the cooked world");
+        Expect(Cooked.GetEntityCount() == Original.GetEntityCount(), "the cooked world has every entity");
+        const Entity A = Cooked.GetEntity(Cooked.FindEntityByGuid(Alice.GetGuid()));
+        const TransformComponent* T = A.GetComponent<TransformComponent>();
+        Expect(std::strcmp(A.GetName(), "Renamed") == 0 && T && T->Position.GetZ() == 0.1f
+               && std::strcmp(A.GetScriptPath(), "Scripts/Alice.lua") == 0,
+               "cooked values, names, scripts and GUIDs match the source");
+    }
+
+    Expect(DetectWorldFileFormat((Dir / "Missing.nmworld").generic_string().c_str()) == EWorldFileFormat::Unknown,
+           "a missing file is Unknown");
+    World Nothing;
+    Expect(!LoadWorldFile((Dir / "Missing.nmworld").generic_string().c_str(), Nothing), "loading a missing file fails");
+}
+#endif // WITH_EDITOR
 
 static void TestArchiveTextDump()
 {
@@ -1472,8 +1703,8 @@ struct VersionedComponent
 GAMECORE_DEFINE_COMPONENT(VersionedComponent, "TestVersioned")
 GAMECORE_DEFINE_COMPONENT_SERIALIZER(VersionedComponent, 2)
 {
-    Ar << C.A;
-    if(Ar.GetChunkVersion() >= 2) { Ar << C.B; }
+    Ar.Field("A", C.A);
+    if(Ar.GetVersion() >= 2) { Ar.Field("B", C.B); }
 }
 
 /* A save as a build with a different VersionedComponent would write it: two
@@ -1495,10 +1726,12 @@ static std::vector<uint8_t> BuildVersionedSave(const uint16_t InDataVersion, con
         uint32_t SavedIndex = Index;
         Ar << SavedIndex;
 
+        uint64_t    GuidHi = 0;
+        uint64_t    GuidLo = Index + 1;   // any distinct, set GUID
         std::string Name;
         std::string ScriptPath;
         uint8_t     bCull = 0;
-        Ar << Name << ScriptPath << bCull;
+        Ar << GuidHi << GuidLo << Name << ScriptPath << bCull;
     }
 
     uint16_t ComponentVersion = InDataVersion;
@@ -1733,6 +1966,7 @@ int main()
     TestRefreshEntityBounds();
 #if WITH_EDITOR
     TestComponentProperties();
+    TestWorldPackage();
 #endif
 
     SetLogHandler(nullptr);

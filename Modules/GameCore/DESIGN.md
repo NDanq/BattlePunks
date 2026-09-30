@@ -178,6 +178,30 @@ nothing worth optimizing.
 
 ---
 
+## EntityGuid.h
+
+**Why a second identity at all.** `EntityID` is a slot and a generation --
+cheap, dense, and meaningless in the next process. A save could get away with
+dense save-local indices (the binary format still uses them), but a text world
+cannot: an entity's file needs a name that survives other entities being
+added and removed, and an entity reference inside a file needs something that
+does not renumber when a colleague adds an entity in another branch. Names
+cannot do it (not unique, arbitrary characters). So every entity gets 128
+random bits at creation (`std::random_device`, the OS generator), kept by every
+save and load.
+
+**Unique per World, enforced.** `World` keeps a GUID -> slot map; creating an
+entity with a GUID already in use -- loading a world into one that already holds
+it -- gives the newcomer a fresh GUID with a warning rather than two entities
+answering to one identity. The text loader resolves references through its own
+map of what *it* created, so such a clash never redirects a reference to the
+pre-existing entity.
+
+**Hex, Hi then Lo, lowercase** -- 32 characters, no dashes: a filename on every
+filesystem, and one string format everywhere (files, Lua's `e:GetGuid()`, logs).
+
+---
+
 ## EntityID.h
 
 **Why a generation and not just an index.** Indices are reused the instant
@@ -1021,6 +1045,32 @@ asserts trivial copyability. `SpatialIndex::Move` also gained the proxy
 validation `Remove` always had, so a stale id is a warning rather than an
 out-of-bounds read.
 
+**Named fields, and why the macro body changed.** Serializer bodies used to be
+positional `Ar << C.Width`. That is exactly one format. The editor's text worlds
+need names -- to write readable XML, and to match fields on load regardless of
+order -- so the body now writes through `ComponentArchive`
+(`Ar.Field("Width", C.Width)`), an abstract class with two implementations:
+
+- `BinaryComponentArchive` ignores the names and writes each value exactly as
+  the old `Ar << x` did, so cooked worlds and save games kept their bytes (the
+  smoke test's hand-built versioned save still loads unchanged).
+- `XmlComponentArchive` (WorldPackage.cpp, editor builds only) writes one
+  element per field and reads by name.
+
+The alternatives were worse: deriving the text format from
+`ComponentProperties` would tie persistence to editor visibility (a field can
+be one without the other) and does not exist in game builds; a second
+serializer per type would let the two formats drift. `Flag` exists separately
+from `Field(uint8_t&)` because the byte is identical in binary but reads as a
+boolean in text. `Entity` is the one field whose *meaning* differs by format --
+a save-local index through `IEntityRemapper` in binary, the target's GUID in
+text.
+
+**Text needs fewer version branches.** A missing element keeps the default the
+loader started from, and an element nothing asks for is ignored, so adding or
+removing a field just works in text. Binary is positional; its version guard
+is still required, and harmless in text.
+
 **What the built-in serializers leave out.** Transform: nothing. Bounds:
 `Local` and `bStatic` only. `World` and `ProxyID` are a cache, and the
 loader's `RefreshSpatialIndex` rebuilds both, including the first insert a
@@ -1034,7 +1084,8 @@ World serializer writes them with the entity (below).
 **Format.**
 
     WRLD  uint32 entity count, then per entity:
-            uint32 save-local index, string name, string script path,
+            uint32 save-local index, uint64 GUID Hi, uint64 GUID Lo,
+            string name, string script path,
             uint8 script cull-outside-active-region flag
       CMPT  per type with a pool and a serializer
             string type NAME, uint32 instance count,
@@ -1077,13 +1128,77 @@ capture entities the next phase deletes, and a load would mutate pools a system
 is iterating.
 
 **Versioning.** Each instance's DATA chunk carries its serializer's
-registered version, and the serializer reads it with `Ar.GetChunkVersion()`
+registered version, and the serializer reads it with `Ar.GetVersion()`
 (save: the version being written; load: the file's). New fields go at the
-*end*, behind `if(Ar.GetChunkVersion() >= N)`. That covers both directions:
+*end*, behind `if(Ar.GetVersion() >= N)`. That covers both directions:
 an older save leaves the new field at its default (the loader starts from
 `ComponentDefaultsFn`, not zeroes), and a newer save read by an older build
 has its unknown trailing fields skipped by `CloseChunk`. Reordering or
 removing a field is not covered; that needs its own version branch.
+
+---
+
+## WorldPackage.h / WorldPackage.cpp
+
+**Two formats, one extension.** Both are `.nmworld`; the first non-whitespace
+byte decides (`<` is text -- XML -- and anything else is a binary archive,
+which starts with its WRLD chunk tag). One extension means a level has one
+name whether a designer or the game opens it; the cooked copy lives in a
+`Cooked/` folder, not under a different suffix.
+
+**Text layout.** `<Name>.nmworld` is a manifest -- `<World Format="1">` and one
+`<Entity Guid>` per entity, in slot order (so load order, and with it
+`FindEntityByName`'s first match and script tick order, survive a round trip).
+Entities live in the sibling folder `<Name>/`, one `<guid>.nmentity` each:
+`<Entity Guid Name>`, an optional `<Script Path CullOutsideActiveRegion>`, then
+`<Component Type Version>` elements sorted by type **name** (ids are
+assignment order). Names live only in the entity file -- the manifest is just
+the list, so a rename touches one file.
+
+**Deterministic output**, because the point of text is diffs: pugixml's
+`format_indent` with a fixed two-space indent and `\n` newlines, attributes in
+code order, and numbers through `std::to_chars` -- the shortest form that
+parses back to the same float, the same text every time, and independent of
+the C locale (a German-locale `printf` would write `0,1`). `.gitattributes`
+pins both extensions to LF, since `core.autocrlf` would otherwise convert them
+on checkout and every save would see every file as changed.
+
+**The save's commit order.** Separate files cannot be replaced atomically as a
+set, so the order is chosen to make every intermediate state loadable:
+
+1. Build every file in memory. A file whose bytes are unchanged is skipped
+   entirely -- no write, no new timestamp, no VCS noise.
+2. Write each changed file to `<file>.tmp`. A failure here deletes the
+   temporaries and returns with the old world untouched (the smoke test forces
+   this with a directory where a temporary must go).
+3. Rename the temporaries over their targets, entities first, the manifest
+   last. The manifest is what a load trusts, so its rename is the commit. A
+   rename failing midway (a file locked by another program) leaves whole files
+   only: some entities newer, the manifest old -- logged, and fixed by saving
+   again.
+4. Only after the commit, delete `.nmentity` files the new manifest does not
+   list, and stale `.nmentity.tmp` files. Only in the sibling folder, only
+   files whose stem parses as a GUID -- a stray note in the folder survives.
+
+`std::filesystem::rename` is used for step 3 because Core's platform seam has
+no replacing rename and Core is a vendored subtree; everything else goes
+through `appFile*`.
+
+**The two-pass load.** Pass 1 reads each listed file and creates its entity with
+its GUID and name; pass 2 adds scripts and components. References resolve
+through a GUID -> EntityID map of what this load created -- a reference to an
+entity listed later in the manifest works, and one to an entity not in the
+world loads unset with a warning. A listed file that is missing or unparsable
+costs that entity only. An unlisted `.nmentity` (a crashed save's leftover, or
+one merged in without its manifest line) is ignored and counted in a warning;
+the next save deletes it.
+
+**Why pugixml, and only in the editor.** The text format is editor-only by
+design -- a game loads the cooked binary -- so the parser is compiled only when
+`WITH_EDITOR`, keeping it out of shipped binaries entirely. pugixml is one
+.cpp, MIT, no dependencies, and fast enough that parsing is never the cost of
+opening a level. `PUGIXML_NO_XPATH` drops the half of it nothing here uses. Qt's
+XML classes were not an option: GameCore is Qt-free.
 
 ---
 

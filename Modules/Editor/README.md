@@ -118,9 +118,13 @@ overridden by `--rhi` -- a separate key from the game's `[Display] RHI`. With no
 file argument the editor opens the Sandbox scene -- the entities Sandbox's
 level has once loaded (Marker, Camera, and the startup script's Scripted),
 mirrored by hand from `SandboxGame.cpp` and `Scripts/Main.lua` until the editor
-can load the game's own level. File > Open/Save read and write
-bare `GameCore::SerializeWorld` archives (`.nmworld`), not SaveGame files;
-an entity's script path is kept but gets no Lua instance, since the editor runs
+can load the game's own level. File > Save writes a text
+world (`GameCore::SaveWorldPackage`): the `.nmworld` manifest plus one
+`.nmentity` XML file per entity in a sibling folder of the same name, so a
+change to one entity is a diff in one file. File > Open reads text or cooked
+(binary) worlds; a cooked one opens without a save path, so Save asks where to
+write it rather than overwriting cooked output. Neither is a SaveGame file.
+An entity's script path is kept but gets no Lua instance, since the editor runs
 no scripts.
 
 **Viewport controls:**
@@ -226,6 +230,7 @@ registered:
 | `create [name]`, `delete [name \| #index]` | As the Edit menu |
 | `frame [all]` | Frame the selection, or the scene |
 | `scene <new \| sandbox>` | As the File menu |
+| `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `Cooked/` beside it |
 | `stats` | The renderer's counters |
 | `gizmo [none \| move \| rotate \| scale] [world \| local]` | Set the transform handles, or print them |
 | `snap [on \| off]` | Snap handle drags, or print whether they do |
