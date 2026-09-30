@@ -60,6 +60,10 @@ namespace GameCore
         // Stored on the entity itself (World's slot tables), not in a
         // component pool -- every entity has exactly one of each.
 
+        /* Persistent identity: kept by every save and load, unique within a
+         * World. Unset (IsSet() false) if not alive. */
+        EntityGuid GetGuid() const { return OwningWorld ? OwningWorld->GetEntityGuid(ID) : EntityGuid(); }
+
         /* "" if unnamed or not alive, never null. Valid until the next
          * SetName on this entity or its destruction. */
         const char* GetName() const { return OwningWorld ? OwningWorld->GetEntityName(ID) : ""; }

@@ -7,14 +7,13 @@
 
 #include <QTimer>
 
-#include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
-#include "Public/GameCore/WorldSerializer.h"
+#include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderView.h"
 #include "Public/RenderCore/Renderer.h"
@@ -241,28 +240,34 @@ void EditorContext::CreateSandboxScene()
     QueueEntitiesChanged();
 }
 
-bool EditorContext::LoadWorld(const QString& InPath)
+bool EditorContext::LoadWorld(const QString& InPath, bool* OutbCooked)
 {
+    if(OutbCooked) { *OutbCooked = false; }
     if(RefuseWhilePlaying("Open World"))
     {
         return false;
     }
-    EngineCore::Archive Ar = EngineCore::Archive::ForReading({});
-    if(!EngineCore::LoadArchiveFromFile(InPath.toStdString(), Ar))
+
+    /* Checked before the current scene is replaced, so an unreadable path
+     * leaves it alone. */
+    const QByteArray Path = InPath.toUtf8();
+    if(GameCore::DetectWorldFileFormat(Path.constData()) == GameCore::EWorldFileFormat::Unknown)
     {
+        CORE_LOG_ERROR("[Editor] could not read '" + std::string(Path.constData()) + "'")
         return false;
     }
 
     ReplaceWorld();
 
-    if(!GameCore::SerializeWorld(Ar, *EditedWorld) || Ar.HasError())
+    GameCore::EWorldFileFormat Format = GameCore::EWorldFileFormat::Unknown;
+    if(!GameCore::LoadWorldFile(Path.constData(), *EditedWorld, &Format))
     {
-        CORE_LOG_ERROR("[Editor] '" + InPath.toStdString() + "' is not a readable world; starting an empty scene")
+        CORE_LOG_ERROR("[Editor] '" + std::string(Path.constData()) + "' is not a readable world; starting an empty scene")
         ReplaceWorld();
         return false;
     }
+    if(OutbCooked) { *OutbCooked = Format == GameCore::EWorldFileFormat::Binary; }
 
-    EditedWorld->RefreshSpatialIndex();
     QueueEntitiesChanged();
     return true;
 }
@@ -271,13 +276,7 @@ bool EditorContext::SaveWorld(const QString& InPath)
 {
     /* The edited World, not the playing one -- allowed while playing, since
      * the edited World is untouched by the run. */
-    EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
-    if(!GameCore::SerializeWorld(Ar, *EditedWorld) || Ar.HasError())
-    {
-        CORE_LOG_ERROR("[Editor] could not serialize the world")
-        return false;
-    }
-    return EngineCore::SaveArchiveToFile(InPath.toStdString(), Ar);
+    return GameCore::SaveWorldPackage(InPath.toUtf8().constData(), *EditedWorld);
 }
 
 // === Entities ================================================================

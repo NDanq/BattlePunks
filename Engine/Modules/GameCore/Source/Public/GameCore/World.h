@@ -9,6 +9,7 @@
 #include "Public/GameCore/ComponentPool.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/Delegate.h"
+#include "Public/GameCore/EntityGuid.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/GameCoreAPI.h"
@@ -99,6 +100,11 @@ namespace GameCore
         Entity CreateEntity();
         /* Also sets the entity's name, before OnEntityCreated fires. */
         Entity CreateEntity(const char* InName);
+        /* With a specific GUID -- what a loader uses to keep an entity's
+         * identity. An unset InGuid, or one already in use here (warned),
+         * gets a fresh one; read the result back with Entity::GetGuid(). Every
+         * other overload generates one. */
+        Entity CreateEntity(const char* InName, const EntityGuid& InGuid);
 
         /* DEFERRED to the end of the current phase when called during a
          * tick; immediate otherwise. Broadcasts OnEntityDestroyed() BEFORE
@@ -114,6 +120,9 @@ namespace GameCore
         /* Linear scan over the live entities' names, in slot order.
          * InvalidEntityID() if nothing matches (or InName is ""). */
         EntityID FindEntityByName(const char* InName) const;
+
+        /* A hash lookup. InvalidEntityID() if no live entity has InGuid. */
+        EntityID FindEntityByGuid(const EntityGuid& InGuid) const;
 
         /* Every live entity in slot order, whatever it carries -- Each<T> only
          * sees entities with a T. InFn must not create or destroy an entity
@@ -255,6 +264,7 @@ namespace GameCore
 
         /* The entity members -- private for the same reason: Entity is the
          * one public way to reach them. */
+        EntityGuid         GetEntityGuid(EntityID InEntity) const;
         const char*        GetEntityName(EntityID InEntity) const;
         bool               SetEntityName(EntityID InEntity, const char* InName);
         const char*        GetEntityScriptPath(EntityID InEntity) const;

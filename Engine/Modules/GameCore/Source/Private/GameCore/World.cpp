@@ -3,7 +3,9 @@
 #include <algorithm>
 #include <cstring>
 #include <deque>
+#include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Public/Core/CoreLog.h"
@@ -39,6 +41,7 @@ namespace GameCore
         /* What an entity carries besides its components. */
         struct EntityMembers
         {
+            EntityGuid        Guid;
             std::string       Name;
             std::string       ScriptPath;   // empty = no script
             EntityScriptState Script;
@@ -65,6 +68,10 @@ namespace GameCore
          * entities being created -- a vector would move every std::string
          * (and its short-string buffer) on reallocation. */
         std::deque<EntityMembers> Members;
+
+        /* Every live entity's GUID -> its slot, for FindEntityByGuid and the
+         * uniqueness check at creation. */
+        std::unordered_map<EntityGuid, uint32_t, EntityGuidHash> GuidToSlot;
 
         /* Slot indices with a script path, in the order the paths were set --
          * the script driver's walk order. */
@@ -126,12 +133,26 @@ namespace GameCore
                 && Alive[InEntity.Index] && Generations[InEntity.Index] == InEntity.Generation;
         }
 
-        /* Slot allocation ONLY -- no broadcast. Split out of CreateEntity so
-         * the name variant can set the name before broadcasting -- see
-         * DESIGN.md. A member of Impl, not a free function, since Impl is
-         * private to World -- see DESIGN.md. */
-        EntityID AllocateEntitySlot()
+        /* Slot allocation and members ONLY -- no broadcast. Split out of
+         * CreateEntity so the name and GUID are in place before broadcasting
+         * -- see DESIGN.md. A member of Impl, not a free function, since Impl
+         * is private to World -- see DESIGN.md. An unset or already-used
+         * InGuid gets a fresh one (the latter with a warning). */
+        EntityID AllocateEntitySlot(const char* InName, EntityGuid InGuid)
         {
+            if(InGuid.IsSet() && GuidToSlot.count(InGuid) != 0)
+            {
+                char Text[EntityGuid::STRING_BUFFER];
+                InGuid.ToString(Text);
+                GAMECORE_LOG_WARN(std::string("CreateEntity: GUID ") + Text
+                                  + " is already in use in this World; giving the new entity a fresh one")
+                InGuid = EntityGuid();
+            }
+            while(!InGuid.IsSet() || GuidToSlot.count(InGuid) != 0)
+            {
+                InGuid = EntityGuid::Generate();
+            }
+
             uint32_t Index;
             if(!FreeIndices.empty())
             {
@@ -148,6 +169,10 @@ namespace GameCore
 
             Alive[Index] = true;
             ++LiveEntityCount;
+
+            Members[Index].Guid = InGuid;
+            Members[Index].Name = InName ? InName : "";
+            GuidToSlot[InGuid]  = Index;
 
             return EntityID(Index, Generations[Index]);
         }
@@ -237,6 +262,7 @@ namespace GameCore
                 }
             }
 
+            GuidToSlot.erase(Members[InEntity.Index].Guid);
             Members[InEntity.Index] = EntityMembers();
             Alive[InEntity.Index] = false;
             ++Generations[InEntity.Index];
@@ -244,6 +270,22 @@ namespace GameCore
             --LiveEntityCount;
         }
     };
+
+    EntityGuid EntityGuid::Generate()
+    {
+        /* std::random_device is the OS generator on every supported platform
+         * (rand_s / getrandom); 128 bits of it make a collision a non-event,
+         * and CreateEntity still re-rolls one inside a World. */
+        static std::random_device Device;
+        EntityGuid Result;
+        do
+        {
+            Result.Hi = (uint64_t(Device()) << 32) | uint64_t(Device());
+            Result.Lo = (uint64_t(Device()) << 32) | uint64_t(Device());
+        }
+        while(!Result.IsSet());
+        return Result;
+    }
 
     World::World() : P(new Impl()) {}
 
@@ -256,19 +298,19 @@ namespace GameCore
 
     Entity World::CreateEntity()
     {
-        const EntityID NewEntity = P->AllocateEntitySlot();
-        P->EntityCreated.Broadcast(NewEntity);
-        return Entity(this, NewEntity);
+        return CreateEntity(nullptr, EntityGuid());
     }
 
     Entity World::CreateEntity(const char* InName)
     {
-        const EntityID NewEntity = P->AllocateEntitySlot();
+        return CreateEntity(InName, EntityGuid());
+    }
 
-        /* Set BEFORE the OnEntityCreated broadcast below -- see DESIGN.md
-         * for the bug this ordering fixes. */
-        P->Members[NewEntity.Index].Name = InName ? InName : "";
-
+    Entity World::CreateEntity(const char* InName, const EntityGuid& InGuid)
+    {
+        /* Name and GUID are set BEFORE the OnEntityCreated broadcast below --
+         * see DESIGN.md for the bug this ordering fixes. */
+        const EntityID NewEntity = P->AllocateEntitySlot(InName, InGuid);
         P->EntityCreated.Broadcast(NewEntity);
         return Entity(this, NewEntity);
     }
@@ -321,6 +363,13 @@ namespace GameCore
         return EntityID();
     }
 
+    EntityID World::FindEntityByGuid(const EntityGuid& InGuid) const
+    {
+        const auto Found = P->GuidToSlot.find(InGuid);
+        if(Found == P->GuidToSlot.end()) { return EntityID(); }
+        return EntityID(Found->second, P->Generations[Found->second]);
+    }
+
     void World::ForEachEntity(void (*InFn)(EntityID InEntity, void* InUserData), void* InUserData) const
     {
         if(!InFn) { return; }
@@ -337,6 +386,11 @@ namespace GameCore
     }
 
     // === Entity members ==========================================================
+
+    EntityGuid World::GetEntityGuid(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].Guid : EntityGuid();
+    }
 
     const char* World::GetEntityName(const EntityID InEntity) const
     {

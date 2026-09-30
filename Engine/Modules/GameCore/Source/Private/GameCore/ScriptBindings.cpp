@@ -74,6 +74,18 @@ namespace GameCore
             return 1;
         }
 
+        /* The persistent GUID as 32 hex digits; "" if not alive. */
+        int Entity_GetGuid(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            const EntityGuid Guid = Entity(W, E).GetGuid();
+            char Text[EntityGuid::STRING_BUFFER] = {};
+            if(Guid.IsSet()) { Guid.ToString(Text); }
+            lua_pushstring(InState, Text);
+            return 1;
+        }
+
         /* e:SetName(name) -- nil clears. */
         int Entity_SetName(lua_State* InState)
         {
@@ -185,6 +197,7 @@ namespace GameCore
             { "IsValid",         Entity_IsValid },
             { "GetID",           Entity_GetID },
             { "GetName",         Entity_GetName },
+            { "GetGuid",         Entity_GetGuid },
             { "SetName",         Entity_SetName },
             { "Destroy",         Entity_Destroy },
             { "AddComponent",    Entity_AddComponent },

@@ -13,16 +13,16 @@ namespace GameCore
     /* Every field is real data. */
     GAMECORE_DEFINE_COMPONENT_SERIALIZER(TransformComponent, 1)
     {
-        SerializeVector3(Ar, C.Position);
-        SerializeVector3(Ar, C.Rotation);
-        SerializeVector3(Ar, C.Scale);
+        Ar.Field("Position", C.Position);
+        Ar.Field("Rotation", C.Rotation);
+        Ar.Field("Scale",    C.Scale);
     }
 
     /* Local and bStatic only. World and ProxyID are a cache of the spatial
      * index; the loader's RefreshSpatialIndex rebuilds both. */
     GAMECORE_DEFINE_COMPONENT_SERIALIZER(BoundsComponent, 1)
     {
-        SerializeAABB(Ar, C.Local);
-        Ar << C.bStatic;
+        Ar.Field("Local", C.Local);
+        Ar.Flag("Static", C.bStatic);
     }
 }

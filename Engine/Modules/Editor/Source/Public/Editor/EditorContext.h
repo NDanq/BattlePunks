@@ -129,11 +129,15 @@ public:
      * where each comes from. */
     void CreateSandboxScene();
 
-    /* Through GameCore::SerializeWorld -- the World alone, not a SaveGame's
-     * GameState. Script paths are kept but get no Lua instance: the editor
-     * runs no scripts. False (World unchanged on a read failure) on
+    /* Through GameCore::LoadWorldFile / SaveWorldPackage (WorldPackage.h) --
+     * the World alone, not a SaveGame's GameState. Saving writes the text
+     * form: the .nmworld manifest plus one .nmentity per entity in the sibling
+     * folder. Loading reads either form; OutbCooked says it was a cooked
+     * (binary) world, which the editor opens but should save elsewhere.
+     * Script paths are kept but get no Lua instance: the editor runs no
+     * scripts. False (World unchanged if the file cannot be read at all) on
      * error; a corrupt file leaves an empty World. */
-    bool LoadWorld(const QString& InPath);
+    bool LoadWorld(const QString& InPath, bool* OutbCooked = nullptr);
     bool SaveWorld(const QString& InPath);
 
     // === Entities ===========================================================

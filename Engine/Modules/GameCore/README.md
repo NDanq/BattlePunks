@@ -39,12 +39,14 @@ Engine/Modules/GameCore/
 |-- CMakeLists.txt
 |-- README.md                       (this file)
 |-- External/
-|   `-- lua-5.4.8/                  vendored Lua source; see "Lua" below
+|   |-- lua-5.4.8/                  vendored Lua source; see "Lua" below
+|   `-- pugixml-1.16/               vendored XML parser, editor builds only; see "World files" below
 |-- Source/
 |   |-- Public/GameCore/
 |   |   |-- GameCoreAPI.h           GAMECORE_API three-state export macro (always SHARED)
 |   |   |-- GameCoreLog.h           GAMECORE_LOG / _WARN / _ERROR over CoreLog
 |   |   |-- EntityID.h              EntityID {Index, Generation}, Pack()/Unpack()
+|   |   |-- EntityGuid.h            EntityGuid: an entity's persistent 128-bit identity
 |   |   |-- AABB.h                  axis-aligned box over EngineCore::Vector3
 |   |   |-- TickPhase.h             ETickPhase: PrePhysics/Physics/PostPhysics/PostUpdate
 |   |   |-- Delegate.h              DelegateHandle, DelegateList, TDelegate, TMulticastDelegate, TScopedBinding
@@ -56,6 +58,9 @@ Engine/Modules/GameCore/
 |   |   |                           the script driver slot, spatial queries, delegates
 |   |   |-- Entity.h                header-only handle: World* + EntityID; components, name, script path
 |   |   |-- Components.h            TransformComponent, BoundsComponent
+|   |   |-- ComponentSerializer.h   ComponentArchive (named fields), the serializer macro and registry
+|   |   |-- WorldSerializer.h       SerializeWorld: the binary world (cooked data, save games)
+|   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
 |   |   `-- ScriptEngine.h          lua_State lifetime, RunFile/RunString, BindWorld; NO lua.h
 |   `-- Private/GameCore/
 |       |-- GameCoreInternal.h      the ONLY header that includes lua.h/lauxlib.h/lualib.h
@@ -71,6 +76,7 @@ Engine/Modules/GameCore/
 |       |-- ScriptBindings.cpp      World/Entity/TickPhase/Events Lua libraries
 |       |-- ComponentScript.cpp     component proxies: the binding registry and the one dispatcher
 |       |-- ComponentScripts.cpp    what Transform/Bounds expose to Lua
+|       |-- WorldPackage.cpp        the XML ComponentArchive, package save (atomic), two-pass load, cook
 |       `-- ScriptSystem.cpp        the World's script driver: file -> class cache, instantiation,
 |                                   the per-phase tick (ahead of every system), release/OnDestroy
 `-- Tests/
@@ -143,6 +149,7 @@ generation, and reached through the handle:
 
 ```cpp
 GameCore::Entity Player = World.CreateEntity("Player");   // named before OnEntityCreated fires
+GameCore::EntityGuid Id = Player.GetGuid();               // persistent; World.FindEntityByGuid(Id)
 Player.SetName("Hero");
 Player.SetScript("Scripts/Player.lua");                   // a path; "" or nullptr clears
 const char* Path = Player.GetScriptPath();                // "" if none, never null
@@ -345,6 +352,54 @@ every still-live instance, every Lua-defined system, and every `Events.On()`
 binding a script made, and releases all of them -- a Lua function cannot be
 trusted to clean up before `lua_close`. Script paths survive an unbind; the
 next `BindWorld` starts them again.
+
+---
+
+## World files
+
+A `.nmworld` is text or binary, told apart by its first bytes
+(`DetectWorldFileFormat`); `LoadWorldFile` reads either.
+
+```
+Levels/Sandbox.nmworld               text: <World Format="1"> listing entity GUIDs
+Levels/Sandbox/<guid>.nmentity       text: one entity -- name, script, components
+Levels/Cooked/Sandbox.nmworld        binary: what a game ships (CookWorldFile)
+```
+
+**Text is the editor's format** (`SaveWorldPackage`, editor builds only). One
+small XML file per entity, named by its `EntityGuid`, so an edit to one entity
+is a diff in one file, and output is deterministic: components sorted by type
+name, floats in their shortest exact form, LF line endings. A save only
+rewrites files whose bytes changed, commits the manifest last (temporaries,
+then renames), and afterwards removes the files of deleted entities. A load
+creates every listed entity first, then their components, so references
+between entities resolve; files the manifest does not list are ignored.
+`.gitattributes` keeps both extensions LF.
+
+**Binary is the shipped format** -- `SerializeWorld`'s archive, one file.
+`CookWorldFile(text, out)` produces it; the editor's `cook` console command
+wraps that. A game build has no XML parser and refuses a text world.
+
+**Serializers name their fields**, which is what lets one serializer write
+both formats:
+
+```cpp
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(PrimitiveComponent, 1)
+{
+    Ar.Field("Width",  C.Width);
+    Ar.Field("Tint",   C.Tint);
+    Ar.Flag("Visible", C.bVisible);
+    Ar.Entity("Owner", C.OwnerEntity);            // an EntityID: a GUID in text, an index in binary
+    if(Ar.GetVersion() >= 2) { Ar.Field("Depth", C.Depth); }   // added later: binary needs the guard
+}
+```
+
+In text a missing field keeps its default and an unknown one is skipped; binary
+is positional, so new fields go at the end behind a version check.
+
+pugixml 1.16 is vendored at `External/pugixml-1.16/` (MIT, `LICENSE.md`
+there) the way Lua is, built by `CMakeLists.txt` only when `WITH_EDITOR`, with
+`PUGIXML_NO_XPATH`. `pugixml.hpp` is included only by `WorldPackage.cpp`.
 
 ---
 

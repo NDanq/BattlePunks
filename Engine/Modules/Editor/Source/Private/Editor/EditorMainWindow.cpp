@@ -4,6 +4,7 @@
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QDir>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -16,6 +17,7 @@
 #include <QToolBar>
 
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/WorldPackage.h"
 #include "Public/Editor/ConsolePanel.h"
 #include "Public/Editor/DetailsPanel.h"
 #include "Public/Editor/EditorContext.h"
@@ -448,6 +450,36 @@ void EditorMainWindow::RegisterConsoleCommands()
         Console.Print(Context.IsPlayViewEjected() ? QStringLiteral("Editor camera") : QStringLiteral("Game camera"));
     });
 
+    Console.Register(QStringLiteral("cook"), QStringLiteral("[world] [out]"),
+                     QStringLiteral("Cook a world file to binary (default: the open world, to Cooked/ beside it)"),
+                     [this](const QStringList& InArgs)
+    {
+        /* The file on disk, not the scene in memory: save first to cook edits. */
+        const QString Source = InArgs.size() >= 1 ? InArgs[0] : CurrentPath;
+        if(Source.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("No world file is open; save it or give a path"));
+            return;
+        }
+        const QFileInfo SourceInfo(Source);
+        const QString Out = InArgs.size() >= 2
+                          ? InArgs[1]
+                          : SourceInfo.dir().filePath(QStringLiteral("Cooked/") + SourceInfo.fileName());
+        if(QFileInfo(Out).absoluteFilePath() == SourceInfo.absoluteFilePath())
+        {
+            Console.PrintError(QStringLiteral("Refusing to cook a world over itself"));
+            return;
+        }
+        if(GameCore::CookWorldFile(Source.toUtf8().constData(), Out.toUtf8().constData()))
+        {
+            Console.Print(QStringLiteral("Cooked %1 -> %2").arg(Source, Out));
+        }
+        else
+        {
+            Console.PrintError(QStringLiteral("Cook failed; see the log"));
+        }
+    });
+
     Console.Register(QStringLiteral("scene"), QStringLiteral("<new | sandbox>"),
                      QStringLiteral("Replace the scene with an empty one, or Sandbox's"),
                      [this](const QStringList& InArgs)
@@ -671,11 +703,21 @@ void EditorMainWindow::OpenWorld()
     {
         return;
     }
-    if(!Context.LoadWorld(Path))
+    bool bCooked = false;
+    if(!Context.LoadWorld(Path, &bCooked))
     {
         QMessageBox::warning(this, QStringLiteral("Open World"),
                              QStringLiteral("Could not read a world from\n%1").arg(Path));
         CurrentPath.clear();
+    }
+    else if(bCooked)
+    {
+        /* No path: Save asks for one, rather than overwriting cooked output
+         * with text. */
+        CurrentPath.clear();
+        QMessageBox::information(this, QStringLiteral("Open World"),
+                                 QStringLiteral("%1\nis a cooked world. It is open for viewing; Save will ask "
+                                                "where to write it as an editable world.").arg(Path));
     }
     else
     {
