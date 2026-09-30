@@ -137,6 +137,12 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
 
     // === The settings ========================================================
 
+    QFormLayout* Appearance = AddGroup(QStringLiteral("Appearance"));
+    AddChoice(Appearance, "Editor.Theme", QStringLiteral("Theme"),
+              QStringLiteral("Light or dark UI, or follow the system's app mode. Applies at once"),
+              { { "System", 0 }, { "Light", 1 }, { "Dark", 2 } },
+              false);
+
     QFormLayout* Viewport = AddGroup(QStringLiteral("Viewport"));
     AddFloat(Viewport, "Editor.SnapTranslate", QStringLiteral("Move snap"),
              QStringLiteral("Step for snapped Move drags: a world grid in World space, a step along the handle in Local"),
