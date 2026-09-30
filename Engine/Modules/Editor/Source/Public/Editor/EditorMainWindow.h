@@ -63,6 +63,7 @@ private:
     void StartPlay();
     void StartRenderer();
     void UpdateTitle();
+    void UpdateHistoryActions();
     void UpdateStats();
     void SetSDLInputProbe(bool bInOn);
 
@@ -81,6 +82,9 @@ private:
     EditorConsole   Console;
     QLabel*         StatsLabel = nullptr;
     QLabel*         PlayLabel  = nullptr;
+
+    QAction*        UndoAction  = nullptr;
+    QAction*        RedoAction  = nullptr;
 
     QAction*        PlayAction  = nullptr;
     QAction*        StopAction  = nullptr;

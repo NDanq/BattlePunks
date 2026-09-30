@@ -6,10 +6,12 @@
 #include <string>
 
 #include <QTimer>
+#include <QUndoStack>
 
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
+#include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
@@ -17,9 +19,32 @@
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderView.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Private/Editor/EditorHistory.h"
 #include "Private/Editor/PlaySession.h"
 
 using GameCore::EntityID;
+
+namespace
+{
+    /* Undo entries are capped; each holds a component's values or an
+     * entity's serialized components -- small. */
+    constexpr int HistoryLimit = 500;
+
+    QString ComponentName(const GameCore::ComponentTypeID InType)
+    {
+        const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(InType);
+        return Info ? QString::fromLatin1(Info->Name) : QStringLiteral("Component");
+    }
+
+    /* Sets a flag for a scope: recording suspended while a scene is built. */
+    struct FlagScope
+    {
+        explicit FlagScope(bool& InFlag) : Flag(InFlag), bPrevious(InFlag) { Flag = true; }
+        ~FlagScope() { Flag = bPrevious; }
+        bool& Flag;
+        bool  bPrevious;
+    };
+}
 
 EditorContext::EditorContext(QObject* InParent)
     : QObject(InParent)
@@ -27,6 +52,18 @@ EditorContext::EditorContext(QObject* InParent)
     /* Before anything asks for an asset -- the Renderer loads its cooked
      * shaders through this on the render thread. */
     EngineCore::SetFileProvider(&AssetProvider);
+
+    History = new QUndoStack(this);
+    History->setUndoLimit(HistoryLimit);
+    connect(History, &QUndoStack::indexChanged, this, &EditorContext::HistoryChanged);
+    connect(History, &QUndoStack::cleanChanged, this, &EditorContext::HistoryChanged);
+    connect(this, &EditorContext::PlayStateChanged, this, &EditorContext::HistoryChanged);
+
+    /* The "before" of the next property write follows the selection and
+     * anything that adds or removes its components. */
+    connect(this, &EditorContext::SelectionChanged, this, &EditorContext::RefreshShadow);
+    connect(this, &EditorContext::EntitiesChanged,  this, &EditorContext::RefreshShadow);
+    connect(this, &EditorContext::WorldReset,       this, &EditorContext::RefreshShadow);
 
     CreateWorld();
 }
@@ -167,6 +204,7 @@ void EditorContext::NewScene()
         return;
     }
     ReplaceWorld();
+    ResetHistory();
 }
 
 void EditorContext::CreateSandboxScene()
@@ -176,6 +214,8 @@ void EditorContext::CreateSandboxScene()
         return;
     }
     ReplaceWorld();
+    ResetHistory();
+    const FlagScope Building(bSuspendRecording);   // the scene is the starting point, not an edit
 
     /*
      * WHAT SANDBOX'S LEVEL LOOKS LIKE WHEN IT HAS LOADED -- before its first
@@ -258,12 +298,14 @@ bool EditorContext::LoadWorld(const QString& InPath, bool* OutbCooked)
     }
 
     ReplaceWorld();
+    ResetHistory();
 
     GameCore::EWorldFileFormat Format = GameCore::EWorldFileFormat::Unknown;
     if(!GameCore::LoadWorldFile(Path.constData(), *EditedWorld, &Format))
     {
         CORE_LOG_ERROR("[Editor] '" + std::string(Path.constData()) + "' is not a readable world; starting an empty scene")
         ReplaceWorld();
+        ResetHistory();
         return false;
     }
     if(OutbCooked) { *OutbCooked = Format == GameCore::EWorldFileFormat::Binary; }
@@ -276,7 +318,12 @@ bool EditorContext::SaveWorld(const QString& InPath)
 {
     /* The edited World, not the playing one -- allowed while playing, since
      * the edited World is untouched by the run. */
-    return GameCore::SaveWorldPackage(InPath.toUtf8().constData(), *EditedWorld);
+    if(!GameCore::SaveWorldPackage(InPath.toUtf8().constData(), *EditedWorld))
+    {
+        return false;
+    }
+    History->setClean();
+    return true;
 }
 
 // === Entities ================================================================
@@ -290,23 +337,128 @@ EntityID EditorContext::CreateEntity(const QString& InName, const EngineCore::Ve
     Transform.Position = InPosition;
     E.AddComponent(Transform);
 
+    if(IsRecording())
+    {
+        Record(new EditorHistory::EntityLifetimeCommand(*this, QStringLiteral("Create %1").arg(GetDisplayName(E.GetID())),
+                                                        true, EditorHistory::CaptureEntity(*EditedWorld, E.GetID())));
+    }
     return E.GetID();
 }
 
 void EditorContext::RenameEntity(const EntityID InEntity, const QString& InName)
 {
-    if(ActiveWorld && ActiveWorld->GetEntity(InEntity).SetName(InName.toUtf8().constData()))
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
+    {
+        return;
+    }
+    const QString OldName = GetDisplayName(InEntity);
+    const EditorHistory::EntityMembers Before = EditorHistory::CaptureMembers(*ActiveWorld, InEntity);
+    if(ActiveWorld->GetEntity(InEntity).SetName(InName.toUtf8().constData()))
     {
         QueueEntitiesChanged();
+        RecordMembersChange(InEntity, Before, QStringLiteral("Rename %1 to %2").arg(OldName, GetDisplayName(InEntity)));
     }
 }
 
 void EditorContext::SetEntityScript(const EntityID InEntity, const QString& InPath)
 {
-    if(ActiveWorld && ActiveWorld->GetEntity(InEntity).SetScript(InPath.trimmed().toUtf8().constData()))
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
+    {
+        return;
+    }
+    const EditorHistory::EntityMembers Before = EditorHistory::CaptureMembers(*ActiveWorld, InEntity);
+    const QString Path = InPath.trimmed();
+    if(ActiveWorld->GetEntity(InEntity).SetScript(Path.toUtf8().constData()))
     {
         QueueEntitiesChanged();
+        RecordMembersChange(InEntity, Before, (Path.isEmpty() ? QStringLiteral("Clear Script on %1")
+                                                              : QStringLiteral("Set Script on %1")).arg(GetDisplayName(InEntity)));
     }
+}
+
+void EditorContext::SetEntityScriptCull(const EntityID InEntity, const bool bInCull)
+{
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
+    {
+        return;
+    }
+    GameCore::EntityScriptState* Script = ActiveWorld->GetEntity(InEntity).GetScriptState();
+    if(!Script || (Script->bCullOutsideActiveRegion != 0) == bInCull)
+    {
+        return;
+    }
+    const EditorHistory::EntityMembers Before = EditorHistory::CaptureMembers(*ActiveWorld, InEntity);
+    Script->bCullOutsideActiveRegion = bInCull ? 1 : 0;
+    RecordMembersChange(InEntity, Before, (bInCull ? QStringLiteral("Cull Script on %1")
+                                                   : QStringLiteral("Stop Culling Script on %1")).arg(GetDisplayName(InEntity)));
+}
+
+void EditorContext::RecordMembersChange(const EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText)
+{
+    if(IsRecording())
+    {
+        Record(new EditorHistory::EntityMembersCommand(*this, InText, EditedWorld->GetEntity(InEntity).GetGuid(), InBefore,
+                                                       EditorHistory::CaptureMembers(*EditedWorld, InEntity)));
+    }
+}
+
+bool EditorContext::AddComponent(const EntityID InEntity, const GameCore::ComponentTypeID InType)
+{
+    const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(InType);
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || !Info)
+    {
+        return false;
+    }
+    const GameCore::Entity E = ActiveWorld->GetEntity(InEntity);
+    if(E.HasComponentByType(InType))
+    {
+        return false;
+    }
+
+    /* From the default-constructed bytes -- never zeroes -- exactly as the
+     * type's own `T{}` would start. */
+    std::vector<uint8_t> Init(Info->SizeBytes);
+    if(!GameCore::GetComponentPropertyDefaults(InType, Init.data()) || !E.AddComponentByType(InType, Init.data()))
+    {
+        return false;
+    }
+    ActiveWorld->RefreshEntityBounds(InEntity);
+
+    if(IsRecording())
+    {
+        Record(new EditorHistory::ComponentLifetimeCommand(
+            *this, QStringLiteral("Add %1 to %2").arg(ComponentName(InType), GetDisplayName(InEntity)), true,
+            EditedWorld->GetEntity(InEntity).GetGuid(), EditorHistory::CaptureComponent(*EditedWorld, InEntity, InType)));
+    }
+    return true;
+}
+
+bool EditorContext::RemoveComponent(const EntityID InEntity, const GameCore::ComponentTypeID InType)
+{
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || !ActiveWorld->GetEntity(InEntity).HasComponentByType(InType))
+    {
+        return false;
+    }
+    const bool bRecord = IsRecording();
+    EditorHistory::ComponentSnapshot Snapshot;
+    if(bRecord)
+    {
+        Snapshot = EditorHistory::CaptureComponent(*EditedWorld, InEntity, InType);
+    }
+
+    /* Immediate outside a tick; OnComponentRemoved rebuilds the panels on the
+     * next turn. */
+    if(!ActiveWorld->GetEntity(InEntity).RemoveComponentByType(InType))
+    {
+        return false;
+    }
+    if(bRecord)
+    {
+        Record(new EditorHistory::ComponentLifetimeCommand(
+            *this, QStringLiteral("Remove %1 from %2").arg(ComponentName(InType), GetDisplayName(InEntity)), false,
+            EditedWorld->GetEntity(InEntity).GetGuid(), std::move(Snapshot)));
+    }
+    return true;
 }
 
 void EditorContext::DestroyEntity(const EntityID InEntity)
@@ -315,11 +467,24 @@ void EditorContext::DestroyEntity(const EntityID InEntity)
     {
         return;
     }
+    const bool bRecord = IsRecording();
+    const QString Text = QStringLiteral("Delete %1").arg(GetDisplayName(InEntity));
+    EditorHistory::EntitySnapshot Snapshot;
+    if(bRecord)
+    {
+        Snapshot = EditorHistory::CaptureEntity(*EditedWorld, InEntity);
+    }
+
     if(InEntity == Selection)
     {
         SetSelection(GameCore::InvalidEntityID());
     }
     ActiveWorld->DestroyEntity(InEntity);
+
+    if(bRecord)
+    {
+        Record(new EditorHistory::EntityLifetimeCommand(*this, Text, false, std::move(Snapshot)));
+    }
 }
 
 QString EditorContext::GetDisplayName(const EntityID InEntity) const
@@ -402,6 +567,127 @@ void EditorContext::SetSelection(EntityID InEntity)
 void EditorContext::NotifyPropertyEdited(const EntityID InEntity, const GameCore::ComponentTypeID InType)
 {
     emit PropertyEdited(InEntity, InType);
+
+    /* Only the selection's values from before the write are known (the
+     * shadow); every panel that writes properties edits the selection. */
+    if(!IsRecording() || InEntity != ShadowEntity)
+    {
+        return;
+    }
+    for(ShadowComponent& Entry : Shadow)
+    {
+        if(Entry.Type != InType)
+        {
+            continue;
+        }
+        std::vector<uint8_t> After = EditorHistory::CaptureProperties(*EditedWorld, InEntity, InType);
+        if(After == Entry.Values)
+        {
+            return;
+        }
+        const QString Text = OpenGesture != 0
+            ? QStringLiteral("%1 %2").arg(GestureLabel, GetDisplayName(InEntity))
+            : QStringLiteral("Edit %1 on %2").arg(ComponentName(InType), GetDisplayName(InEntity));
+        Record(new EditorHistory::PropertyEditCommand(*this, Text, EditedWorld->GetEntity(InEntity).GetGuid(), InType,
+                                                      Entry.Values, After, OpenGesture));
+        Entry.Values = std::move(After);
+        return;
+    }
+}
+
+// === History =================================================================
+
+bool EditorContext::IsRecording() const
+{
+    return !Play && !bApplyingHistory && !bSuspendRecording && ActiveWorld == EditedWorld;
+}
+
+void EditorContext::Record(QUndoCommand* InCommand)
+{
+    History->push(InCommand);   // merged or dropped (obsolete) inside, or appended
+    LatestRecorded = History->index() > 0 ? History->command(History->index() - 1) : nullptr;
+    emit HistoryChanged();
+}
+
+void EditorContext::ResetHistory()
+{
+    History->clear();   // also clean
+    LatestRecorded = nullptr;
+    OpenGesture    = 0;
+    emit HistoryChanged();
+}
+
+bool EditorContext::CanUndo() const
+{
+    return !Play && OpenGesture == 0 && History->canUndo();
+}
+
+bool EditorContext::CanRedo() const
+{
+    return !Play && OpenGesture == 0 && History->canRedo();
+}
+
+void EditorContext::Undo()
+{
+    if(!CanUndo())
+    {
+        return;
+    }
+    {
+        const FlagScope Applying(bApplyingHistory);
+        History->undo();
+    }
+    LatestRecorded = nullptr;   // nothing merges into an entry once it has been stepped over
+    RefreshShadow();
+    emit HistoryChanged();
+}
+
+void EditorContext::Redo()
+{
+    if(!CanRedo())
+    {
+        return;
+    }
+    {
+        const FlagScope Applying(bApplyingHistory);
+        History->redo();
+    }
+    LatestRecorded = nullptr;
+    RefreshShadow();
+    emit HistoryChanged();
+}
+
+void EditorContext::BeginEditGesture(const QString& InLabel)
+{
+    OpenGesture  = ++GestureSerial;
+    GestureLabel = InLabel;
+    emit HistoryChanged();
+}
+
+void EditorContext::EndEditGesture()
+{
+    OpenGesture = 0;
+    emit HistoryChanged();
+}
+
+bool EditorContext::IsLatestRecorded(const QUndoCommand* InCommand) const
+{
+    return InCommand && InCommand == LatestRecorded;
+}
+
+void EditorContext::RefreshShadow()
+{
+    Shadow.clear();
+    ShadowEntity = GameCore::InvalidEntityID();
+    if(Play || !EditedWorld || !EditedWorld->IsAlive(Selection))
+    {
+        return;
+    }
+    ShadowEntity = Selection;
+    for(const GameCore::ComponentTypeID Type : EditorHistory::ComponentTypesOf(*EditedWorld, Selection))
+    {
+        Shadow.push_back({ Type, EditorHistory::CaptureProperties(*EditedWorld, Selection, Type) });
+    }
 }
 
 // === World lifetime ==========================================================

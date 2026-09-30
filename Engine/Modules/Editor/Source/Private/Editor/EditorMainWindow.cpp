@@ -2,6 +2,8 @@
 
 #include "Public/Editor/EditorMainWindow.h"
 
+#include <algorithm>
+
 #include <QAction>
 #include <QCloseEvent>
 #include <QDir>
@@ -15,6 +17,7 @@
 #include <QSignalBlocker>
 #include <QStatusBar>
 #include <QToolBar>
+#include <QUndoStack>
 
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
@@ -168,6 +171,22 @@ void EditorMainWindow::BuildMenus()
     connect(Exit, &QAction::triggered, this, &QWidget::close);
 
     QMenu* Edit = menuBar()->addMenu(QStringLiteral("&Edit"));
+
+    /* Not QUndoStack::createUndoAction: these go through the context, which
+     * refuses while playing or mid-drag and keeps its own state in step. A
+     * text field with focus still gets Ctrl+Z for its own text first. */
+    UndoAction = Edit->addAction(QStringLiteral("&Undo"));
+    UndoAction->setShortcut(QKeySequence::Undo);
+    connect(UndoAction, &QAction::triggered, &Context, &EditorContext::Undo);
+
+    RedoAction = Edit->addAction(QStringLiteral("&Redo"));
+    RedoAction->setShortcuts({ QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) });
+    connect(RedoAction, &QAction::triggered, &Context, &EditorContext::Redo);
+
+    connect(&Context, &EditorContext::HistoryChanged, this, &EditorMainWindow::UpdateHistoryActions);
+    UpdateHistoryActions();
+
+    Edit->addSeparator();
 
     QAction* Create = Edit->addAction(QStringLiteral("&Create Empty Entity"));
     Create->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
@@ -524,6 +543,45 @@ void EditorMainWindow::RegisterConsoleCommands()
                       .arg(Stats.ProxiesLive));
     });
 
+    Console.Register(QStringLiteral("undo"), QStringLiteral("[count]"), QStringLiteral("Undo the last change (Ctrl+Z)"),
+                     [this](const QStringList& InArgs)
+    {
+        const int Count = InArgs.isEmpty() ? 1 : std::max(1, InArgs.front().toInt());
+        for(int Step = 0; Step < Count && Context.CanUndo(); ++Step)
+        {
+            Console.Print(QStringLiteral("Undo %1").arg(Context.GetHistory().undoText()));
+            Context.Undo();
+        }
+    });
+
+    Console.Register(QStringLiteral("redo"), QStringLiteral("[count]"), QStringLiteral("Redo an undone change (Ctrl+Y)"),
+                     [this](const QStringList& InArgs)
+    {
+        const int Count = InArgs.isEmpty() ? 1 : std::max(1, InArgs.front().toInt());
+        for(int Step = 0; Step < Count && Context.CanRedo(); ++Step)
+        {
+            Console.Print(QStringLiteral("Redo %1").arg(Context.GetHistory().redoText()));
+            Context.Redo();
+        }
+    });
+
+    Console.Register(QStringLiteral("history"), QString(),
+                     QStringLiteral("List the undo history: > marks the current point, * the last save"),
+                     [this](const QStringList&)
+    {
+        const QUndoStack& History = Context.GetHistory();
+        QStringList Lines;
+        for(int Index = 0; Index < History.count(); ++Index)
+        {
+            Lines << QStringLiteral("%1%2 %3")
+                     .arg(Index + 1 == History.index() ? QLatin1Char('>') : QLatin1Char(' '))
+                     .arg(Index + 1 == History.cleanIndex() ? QLatin1Char('*') : QLatin1Char(' '))
+                     .arg(History.text(Index));
+        }
+        Lines << QStringLiteral("%1 entries, %2 undoable").arg(History.count()).arg(History.index());
+        Console.Print(Lines.join(QLatin1Char('\n')));
+    });
+
     Console.Register(QStringLiteral("gizmo"), QStringLiteral("[none | move | rotate | scale] [world | local]"),
                      QStringLiteral("Set the viewport's transform handles, or print them (as Q W E R and X)"),
                      [this](const QStringList& InArgs)
@@ -672,8 +730,19 @@ void EditorMainWindow::SetSDLInputProbe(const bool bInOn)
 void EditorMainWindow::UpdateTitle()
 {
     const QString Scene = CurrentPath.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(CurrentPath).fileName();
+    const QString Dirty = Context.GetHistory().isClean() ? QString() : QStringLiteral("*");
     const QString Play  = Context.IsPlaying() ? QStringLiteral(" [Playing]") : QString();
-    setWindowTitle(QStringLiteral("%1%2 - Nimble Editor").arg(Scene, Play));
+    setWindowTitle(QStringLiteral("%1%2%3 - Nimble Editor").arg(Scene, Dirty, Play));
+}
+
+void EditorMainWindow::UpdateHistoryActions()
+{
+    const QUndoStack& History = Context.GetHistory();
+    UndoAction->setEnabled(Context.CanUndo());
+    RedoAction->setEnabled(Context.CanRedo());
+    UndoAction->setText(History.canUndo() ? QStringLiteral("&Undo %1").arg(History.undoText()) : QStringLiteral("&Undo"));
+    RedoAction->setText(History.canRedo() ? QStringLiteral("&Redo %1").arg(History.redoText()) : QStringLiteral("&Redo"));
+    UpdateTitle();
 }
 
 void EditorMainWindow::UpdateStats()

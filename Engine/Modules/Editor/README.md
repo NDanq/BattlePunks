@@ -64,7 +64,8 @@ uses it.
 
 | File | Role |
 |---|---|
-| `EditorContext` | Owns the World and Renderer; selection; signals every panel listens to |
+| `EditorContext` | Owns the World and Renderer; selection; the undo history; signals every panel listens to |
+| `EditorHistory` (private) | Undo / redo commands and the entity and component snapshots they hold |
 | `EditorMainWindow` | Docks, menus (File / Edit / View / Play / Help), status bar; starts and stops the Renderer |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
@@ -204,6 +205,34 @@ starts from its default-constructed bytes. A type opts out of that list with
 `Props.NotAddable()`, for a component that only makes sense attached some other
 way.
 
+## Undo and redo
+
+**Edit > Undo** (Ctrl+Z) and **Redo** (Ctrl+Y, Ctrl+Shift+Z) step through every
+change to the edited scene: creating and deleting entities, renaming them,
+setting or clearing a script and its cull flag, adding and removing
+components, and every property write -- Details fields, the reset arrows,
+and transform handle drags. The menu names the step ("Undo Move Marker");
+the Console's `history` lists them all.
+
+- **One drag, one step.** A handle drag is a single entry however far it
+  went; a cancelled drag leaves none. Quick edits to the same component (a
+  spin box's arrows, a few fields in a row) less than a second apart merge.
+- **Deleted entities come back whole** -- the same GUID, name, script and
+  components -- so later steps still apply to them and a save afterwards
+  writes the same `.nmentity` file.
+- **Unsaved changes** show as `*` in the title: the history remembers where
+  the last save (or load) was, and undoing back to it clears the mark.
+- New, Open and the Sandbox scene start an empty history.
+- While playing, undo and redo are off, and changes to the running game are
+  not recorded; the edited scene's history is there again after Stop.
+- A text field with focus keeps Ctrl+Z for its own text.
+
+Everything that changes the World goes through `EditorContext`, which records
+it (`EditorHistory.h` has the details). Property writes are recorded from
+`NotifyPropertyEdited`, against a copy of the selection's values taken before
+the write -- so a new tool that writes components needs only to call that,
+and to bracket a continuous edit with `BeginEditGesture` / `EndEditGesture`.
+
 ## Console
 
 Docked below the viewport; **Ctrl+`** (View > Focus Console) jumps to its
@@ -234,6 +263,8 @@ registered:
 | `stats` | The renderer's counters |
 | `gizmo [none \| move \| rotate \| scale] [world \| local]` | Set the transform handles, or print them |
 | `snap [on \| off]` | Snap handle drags, or print whether they do |
+| `undo [count]`, `redo [count]` | Step back or forward through the history |
+| `history` | The undo history: `>` the current step, `*` the last save |
 
 `EditorMainWindow::RegisterConsoleCommands` registers the scene commands;
 `EditorConsole::Register` is the one call to add another.
@@ -273,7 +304,10 @@ reported to it but not enforced -- the viewport's timer paces the run.
 
 ## Known limits
 
-- No undo. A handle drag has one start and one end, the natural unit for it.
+- Undo does not reach other entities' references to a deleted one: a
+  component that pointed at it still points at the old, dead EntityID after
+  the delete is undone.
+- No prompt to save unsaved changes on close, New or Open yet.
 - Transform handles act on one entity; there is no multi-selection.
 - Play-in-Editor has no game input yet (see above).
 - View presets stay in perspective; there are no orthographic views yet.
