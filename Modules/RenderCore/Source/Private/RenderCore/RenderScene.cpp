@@ -292,12 +292,19 @@ namespace RenderCore
          * Blend and depth are set alongside it rather than left implicit: the
          * pipeline key is built from whatever VKCurrentStateData happens to
          * hold, so leaving them unset means inheriting the last unrelated
-         * caller's state. Straight alpha blending and a less-than depth test
-         * are what a 2D sprite pass wants.
+         * caller's state. Straight alpha blending, and a depth test that
+         * writes, so meshes hide what is behind them whatever the order.
+         * LESS-OR-EQUAL, not LESS: quads in one plane (a 2D scene) have equal
+         * depth, and must still draw over one another in submission order.
          */
         GDISetColorMask(EColM_RGBA);
         GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
-        GDISetDepthState(IDepthStateDesc());
+
+        IDepthStateDesc SceneDepth;
+        SceneDepth.bDepthTest = true;
+        SceneDepth.bDepthMask = true;
+        SceneDepth.DepthMode  = CTM_LEQUAL;
+        GDISetDepthState(SceneDepth);
 
         GDIClear(CM_Color | CM_Depth, P->ClearColor);
 
@@ -346,6 +353,8 @@ namespace RenderCore
          * compiled into a Client or Server target at all. */
         if(!P->DebugLines.empty())
         {
+            /* No depth test: an outline or a gizmo shows through what it marks. */
+            GDISetDepthState(IDepthStateDesc());
             InContext.BeginDrawEvent("DebugLines");
             for(const DebugLine& Line : P->DebugLines)
             {

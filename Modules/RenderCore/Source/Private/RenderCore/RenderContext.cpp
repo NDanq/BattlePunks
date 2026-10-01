@@ -10,6 +10,7 @@
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/GDI/Shaders/Classes/TestbedShaders.h"
+#include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 
@@ -25,6 +26,11 @@
  * DrawQuadWithMaterial swaps in a material's pixel shader for Basic_PS -- the
  * vertex side is Basic_VS either way, whose interpolants (Common.glsl) are
  * what a material graph's inputs read.
+ *
+ * DrawMesh is the same with Mesh_VS, which writes those interpolants too (and
+ * a normal), so any material draws on a mesh as it does on a quad. Its GPU
+ * meshes are built from MeshAssetCache's, one per path, and rebuilt when the
+ * cache hands back a different mesh -- which is how a reimport shows.
  */
 
 namespace RenderCore
@@ -128,6 +134,20 @@ namespace RenderCore
         GDIView*       View3D    = nullptr;   // owns the GDICamera DrawQuad overwrites per SetView()
         GDIViewObject* ViewObject = nullptr;   // owns the shared unit quad mesh
 
+        /* DrawMesh's: its own Transform, and a Mesh pointed at whichever
+         * GDI mesh is drawing -- never owned by it. */
+        GDIViewObject* MeshObject = nullptr;
+
+        /* A mesh's GPU copy, keyed by path. Source is what it was built from;
+         * a different pointer from MeshAssetCache means rebuild. Gpu null
+         * with Source set: this backend could not build it (drawn as a quad). */
+        struct GpuMesh
+        {
+            std::shared_ptr<const MeshData> Source;
+            GDIMesh*                        Gpu = nullptr;
+        };
+        std::unordered_map<std::string, GpuMesh> Meshes;
+
         /* What GDISetBoundShader last got from here -- rebinding is skipped
          * when a draw wants the same pair. Forgotten at every frame start,
          * in case something outside this class bound others in between. */
@@ -145,6 +165,11 @@ namespace RenderCore
 
         ~Impl()
         {
+            if(MeshObject)
+            {
+                delete MeshObject->Transform;
+                delete MeshObject;
+            }
             delete ViewObject;
             delete View3D;
         }
@@ -164,6 +189,9 @@ namespace RenderCore
              * GDITransform::Scale (set per call below) is what actually
              * varies a primitive's on-screen size. */
             ViewObject = new GDIViewObject(View3D);
+
+            MeshObject = new GDIViewObject();
+            MeshObject->Init(View3D);
         }
 
         void Bind(GDIShader* InVertex, GDIShader* InPixel)
@@ -176,8 +204,9 @@ namespace RenderCore
             }
         }
 
-        /* The camera and the quad's placement, shared by both quad draws. */
-        void PlaceQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight)
+        /* The camera and InObject's placement: InTransform, its scale times
+         * InScaleX/Y -- a quad's size, or 1 for a mesh. */
+        void Place(GDIViewObject* InObject, const RenderTransform& InTransform, const float InScaleX, const float InScaleY)
         {
             /* Camera's matrices are the finished RenderView's, not recomputed
              * from a width/height GDICamera would otherwise need -- overwritten
@@ -187,17 +216,77 @@ namespace RenderCore
             View3D->Camera->Projection = View.Projection;
             View3D->Camera->ViewMat    = View.View;
 
-            GDITransform* Transform = ViewObject->Transform;
+            GDITransform* Transform = InObject->Transform;
             Transform->Translate = InTransform.Position;
             Transform->Rotate    = InTransform.Rotation;
-            Transform->Scale     = EngineCore::Vector3(InTransform.Scale.GetX() * double(InWidth),
-                                                       InTransform.Scale.GetY() * double(InHeight),
+            Transform->Scale     = EngineCore::Vector3(InTransform.Scale.GetX() * double(InScaleX),
+                                                       InTransform.Scale.GetY() * double(InScaleY),
                                                        InTransform.Scale.GetZ());
         }
 
+        /* The camera and the quad's placement, shared by both quad draws. */
+        void PlaceQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight)
+        {
+            Place(ViewObject, InTransform, InWidth, InHeight);
+        }
+
+        /* InMaterial's slots, with InTint in column 3, into its MaterialParams. */
+        static void SetMaterialParams(const Material& InMaterial, const EngineCore::Color InTint)
+        {
+            /* Column c of the shader's mat4 is Matrix4x4 column c: every backend
+             * transposes Matrix4x4's rows into the column-major upload. */
+            EngineCore::Matrix4x4 Params;
+            for(int Column = 0; Column < MATERIAL_SLOTS; ++Column)
+            {
+                for(int Row = 0; Row < 4; ++Row) { Params.Data[Row][Column] = InMaterial.Slots[Column][Row]; }
+            }
+            Params.Data[0][3] = InTint.Rf();
+            Params.Data[1][3] = InTint.Gf();
+            Params.Data[2][3] = InTint.Bf();
+            Params.Data[3][3] = InTint.Af();
+            InMaterial.Pixel->SetUniform(MATERIAL_UNIFORM, Params);
+        }
+
+        /* InPath's GPU mesh, built (or rebuilt) from MeshAssetCache's. Null if
+         * the mesh cannot be loaded or this backend cannot build it; OutSource
+         * is the mesh either way it was found. */
+        GDIMesh* FindMesh(const std::string& InPath, std::shared_ptr<const MeshData>& OutSource)
+        {
+            OutSource = MeshAssetCache::Find(InPath);
+            GpuMesh& Entry = Meshes[InPath];
+            if(Entry.Source == OutSource)
+            {
+                return Entry.Gpu;
+            }
+
+            delete Entry.Gpu;   // each backend defers the buffers past any frame still using them
+            Entry.Gpu    = nullptr;
+            Entry.Source = OutSource;
+            if(!OutSource)
+            {
+                return nullptr;
+            }
+
+            GDIMeshDesc Desc;
+            Desc.Positions   = OutSource->Positions.data();
+            Desc.Normals     = OutSource->Normals.data();
+            Desc.UV0         = OutSource->UV0.data();
+            Desc.NumVertices = OutSource->GetVertexCount();
+            Desc.Indices     = OutSource->Indices.data();
+            Desc.NumIndices  = uint32_t(OutSource->Indices.size());
+            Entry.Gpu = GDICreateMesh(Desc);
+            if(!Entry.Gpu)
+            {
+                RENDERCORE_LOG_WARN("mesh '" + InPath + "': this backend cannot draw it; drawing a quad")
+            }
+            return Entry.Gpu;
+        }
+
         /* The material, loaded on first use. A failed load is remembered (as
-         * a Material with no shader) so it is warned about once, not per frame. */
-        Material& FindMaterial(const std::string& InName)
+         * a Material with no shader) so it is warned about once, not per frame.
+         * bQuietIfMissing: say nothing if there is no such material at all --
+         * for a mesh section's imported material name, which usually has none. */
+        Material& FindMaterial(const std::string& InName, const bool bQuietIfMissing = false)
         {
             const auto Found = Materials.find(InName);
             if(Found != Materials.end())
@@ -213,7 +302,10 @@ namespace RenderCore
             std::string Text, Error;
             if(!Provider || !Provider->ReadAllText(DataPath, Text))
             {
-                RENDERCORE_LOG_WARN("material '" + InName + "': cannot read " + DataPath + "; drawing the plain tint")
+                if(!bQuietIfMissing)
+                {
+                    RENDERCORE_LOG_WARN("material '" + InName + "': cannot read " + DataPath + "; drawing the plain tint")
+                }
                 return Loaded;
             }
             if(!ParseMaterial(Text, Loaded, Error))
@@ -296,23 +388,81 @@ namespace RenderCore
         P->EnsureInitialised();
         P->Bind(GDIGetShader<Basic_VS>(), Found.Pixel);
         P->PlaceQuad(InTransform, InWidth, InHeight);
-
-        /* Column c of the shader's mat4 is Matrix4x4 column c: every backend
-         * transposes Matrix4x4's rows into the column-major upload. */
-        EngineCore::Matrix4x4 Params;
-        for(int Column = 0; Column < MATERIAL_SLOTS; ++Column)
-        {
-            for(int Row = 0; Row < 4; ++Row) { Params.Data[Row][Column] = Found.Slots[Column][Row]; }
-        }
-        Params.Data[0][3] = InTint.Rf();
-        Params.Data[1][3] = InTint.Gf();
-        Params.Data[2][3] = InTint.Bf();
-        Params.Data[3][3] = InTint.Af();
-        Found.Pixel->SetUniform(MATERIAL_UNIFORM, Params);
+        Impl::SetMaterialParams(Found, InTint);
 
         GDIDrawObject(P->ViewObject);
 
         P->DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    bool RenderContext::DrawMesh(const RenderTransform& InTransform, const char* InMeshPath,
+                                 const EngineCore::Color InTint, const char* InMaterial)
+    {
+        if(!InMeshPath || InMeshPath[0] == '\0')
+        {
+            return false;
+        }
+
+        std::shared_ptr<const MeshData> Source;
+        GDIMesh* Mesh = P->FindMesh(InMeshPath, Source);
+        if(!Mesh || !Source)
+        {
+            return false;
+        }
+
+        P->EnsureInitialised();
+        P->Place(P->MeshObject, InTransform, 1.0f, 1.0f);
+        P->MeshObject->Mesh = Mesh;
+
+        /* A section per material; a mesh with none is one section of everything. */
+        static const MeshSection Everything;
+        const std::vector<MeshSection>& Sections = Source->Sections;
+        const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
+
+        const bool        bOverride = InMaterial && InMaterial[0] != '\0';
+        const std::string Override  = bOverride ? std::string(InMaterial) : std::string();
+
+        for(size_t Index = 0; Index < SectionCount; ++Index)
+        {
+            const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
+
+            /* The override if it loads; else the section's own material if
+             * there is one by that name; else Mesh_PS, the tint lit. */
+            const Material* Chosen = nullptr;
+            if(bOverride)
+            {
+                const Material& Found = P->FindMaterial(Override);
+                if(Found.Pixel) { Chosen = &Found; }
+            }
+            else if(!Section.Material.empty())
+            {
+                const Material& Found = P->FindMaterial(Section.Material, /*bQuietIfMissing*/ true);
+                if(Found.Pixel) { Chosen = &Found; }
+            }
+
+            if(Chosen)
+            {
+                P->Bind(GDIGetShader<Mesh_VS>(), Chosen->Pixel);
+                Impl::SetMaterialParams(*Chosen, InTint);
+            }
+            else
+            {
+                GDIShader* Pixel = GDIGetShader<Mesh_PS>();
+                P->Bind(GDIGetShader<Mesh_VS>(), Pixel);
+                if(Pixel)
+                {
+                    Pixel->SetUniform("Tint", EngineCore::Vector3(InTint.Rf(), InTint.Gf(), InTint.Bf()));
+                }
+            }
+
+            Mesh->SetDrawRange(Section.FirstIndex, Sections.empty() ? 0u : Section.IndexCount);
+            GDIDrawObject(P->MeshObject);
+            P->DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        Mesh->SetDrawRange(0, 0);
+        P->MeshObject->Mesh = nullptr;
+        return true;
     }
 
 #if WITH_EDITOR
@@ -540,6 +690,9 @@ namespace RenderCore
             P->PreviewTarget = nullptr;
             P->PreviewSize   = 0;
         }
+
+        for(auto& Each : P->Meshes) { delete Each.second.Gpu; }
+        P->Meshes.clear();
 
         ReloadMaterial(nullptr);
         for(GDIShader* Each : P->RetiredShaders) { delete Each; }   // ~GDIShader releases its resource
