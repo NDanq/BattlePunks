@@ -53,7 +53,7 @@ Engine/Modules/RenderCore/
 |   |   |-- RenderContext.h         the render-thread draw interface a proxy uses; NO GDI types
 |   |   |-- RenderProxy.h           class RenderProxy, RenderProxyHandle, the PROXY_BODY/DEFINE_PROXY_COMPONENT macros
 |   |   |-- RenderScene.h           render-thread container of proxies: Add/Remove/SetView/Render
-|   |   |-- RenderComponents.h      PrimitiveComponent, CameraComponent (GameCore components)
+|   |   |-- RenderComponents.h      RenderComponent, CameraComponent (GameCore components)
 |   |   `-- Renderer.h              the facade a host owns: Initialize/Shutdown/BindWorld/EndFrame
 |   `-- Private/RenderCore/
 |       |-- RenderCoreInternal.h    the ONLY header that includes a GDI header
@@ -63,7 +63,7 @@ Engine/Modules/RenderCore/
 |       |-- RenderContext.cpp       the shared unit quad + Basic shaders; DrawQuad; the material library
 |       |-- RenderProxy.cpp         the fixed proxy-type table
 |       |-- RenderScene.cpp         the proxy vector, culling, Render()
-|       |-- PrimitiveProxy.h/.cpp   the quad proxy
+|       |-- RenderComponentProxy.h/.cpp   the quad proxy
 |       |-- RenderComponents.cpp    component registration
 |       |-- WorldBridge.h/.cpp      game-thread side: proxy lifecycle, extraction, view build
 |       `-- Renderer.cpp
@@ -139,7 +139,7 @@ GameCore::World& World = App.GetWorld();
 GameCore::Entity E = World.CreateEntity("Box");
 E.AddComponent<GameCore::TransformComponent>();
 
-RenderCore::PrimitiveComponent Prim;
+RenderCore::RenderComponent Prim;
 Prim.Width  = 32.0f;
 Prim.Height = 32.0f;
 Prim.Tint   = EngineCore::Color(255, 200, 40);
@@ -148,7 +148,7 @@ E.AddComponent(Prim);
 
 Adding the component is the whole of it: `Renderer`'s `WorldBridge` sees the
 addition through `World`'s own `OnComponentAdded` delegate, constructs a
-`RenderCore::PrimitiveProxy` mirroring it, and from then on extracts the
+`RenderCore::RenderComponentProxy` mirroring it, and from then on extracts the
 component's current transform and bytes into that proxy once per frame.
 Removing the component or destroying the entity removes the proxy the same
 way, through `OnComponentRemoved`.
@@ -174,7 +174,7 @@ Cam.AddComponent<RenderCore::CameraComponent>();
 With no active camera, the view is an orthographic projection over the whole
 viewport, centred at GDI's own default origin `(0, 1, -1)`.
 
-**A game's own drawable type** registers the same way `PrimitiveComponent`
+**A game's own drawable type** registers the same way `RenderComponent`
 does:
 
 ```cpp
@@ -203,8 +203,8 @@ RENDERCORE_DEFINE_PROXY_COMPONENT(MyComponent, "My", MyProxy)
 // linkage -- exactly like GAMECORE_DEFINE_COMPONENT's StaticType(), it is
 // meant to be defined once, in this one .cpp. RegisterProxyType therefore
 // has to be called from HERE too (or through a small exported wrapper, the
-// way RenderComponents.h's GetPrimitiveComponentFactory() does for
-// PrimitiveComponent) -- not from an arbitrary caller elsewhere that only
+// way RenderComponents.h's GetRenderComponentFactory() does for
+// RenderComponent) -- not from an arbitrary caller elsewhere that only
 // has MyComponent.h.
 void RegisterMyComponentProxyType()
 {
@@ -242,5 +242,5 @@ the same thread that runs `IGameMode::OnTick`, matching `GameCoreSmokeTest` and
 
 `RenderCore`'s components have no Lua bindings yet -- `ScriptEngine`'s proxy
 metatables are private to `GameCore`, and extending them is future work, not
-in scope for this module's first cut. A game that wants `PrimitiveComponent`
+in scope for this module's first cut. A game that wants `RenderComponent`
 from a script currently has to bind it itself.

@@ -813,10 +813,10 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
      * The hit parameter t is the same in both spaces, since the transform is
      * affine and the direction is carried with w = 0.
      */
-    Context.GetWorld().Each<RenderCore::PrimitiveComponent>(
-        [&](const GameCore::Entity& InEntity, RenderCore::PrimitiveComponent& InPrimitive)
+    Context.GetWorld().Each<RenderCore::RenderComponent>(
+        [&](const GameCore::Entity& InEntity, RenderCore::RenderComponent& InRender)
     {
-        if(!InPrimitive.bVisible)
+        if(!InRender.bVisible)
         {
             return;
         }
@@ -845,7 +845,7 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
 
         const double HitX = LocalOrigin.GetX() + LocalDir.GetX() * T;
         const double HitY = LocalOrigin.GetY() + LocalDir.GetY() * T;
-        if(std::abs(HitX) <= 0.5 * double(InPrimitive.Width) && std::abs(HitY) <= 0.5 * double(InPrimitive.Height))
+        if(std::abs(HitX) <= 0.5 * double(InRender.Width) && std::abs(HitY) <= 0.5 * double(InRender.Height))
         {
             BestT = T;
             Best  = InEntity.GetID();

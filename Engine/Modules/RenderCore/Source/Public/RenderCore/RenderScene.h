@@ -33,7 +33,7 @@ namespace RenderCore
     struct MaterialPreviewRequest
     {
         uint64_t                Request = 0;
-        char                    Material[48] = {};   // PRIMITIVE_MATERIAL_NAME_MAX
+        char                    Material[48] = {};   // RENDER_MATERIAL_NAME_MAX
         int32_t                 Size = 256;
         EngineCore::Color       Tint{255, 255, 255, 255};
         MaterialPreviewMailbox* Mailbox = nullptr;

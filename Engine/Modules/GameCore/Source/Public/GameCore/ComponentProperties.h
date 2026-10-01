@@ -25,10 +25,10 @@
  * ComponentScript.h -- and deliberately a SEPARATE list from them, so a field
  * can be editable without being scriptable and the other way round.
  *
- *     GAMECORE_DEFINE_COMPONENT_PROPERTIES(PrimitiveComponent)
+ *     GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
  *     {
- *         Props.Field("Width", &PrimitiveComponent::Width);
- *         Props.Flag("Visible", &PrimitiveComponent::bVisible);
+ *         Props.Field("Width", &RenderComponent::Width);
+ *         Props.Flag("Visible", &RenderComponent::bVisible);
  *         Props.Field("World", &BoundsComponent::World, PF_ReadOnly);
  *     }
  *
@@ -51,6 +51,12 @@ namespace GameCore
     {
         PF_None     = 0,
         PF_ReadOnly = 1 << 0,   // shown, never written by a tool
+
+        /* Hints for a tool's editor, on a string field: what it names, so
+         * the editor can offer a picker and accept a dragged asset. GameCore
+         * gives them no meaning of its own. */
+        PF_AssetMesh     = 1 << 1,   // a runtime-relative path to a mesh asset
+        PF_AssetMaterial = 1 << 2,   // a material's name
     };
 
     enum : size_t

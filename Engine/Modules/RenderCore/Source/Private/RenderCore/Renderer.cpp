@@ -36,7 +36,7 @@ namespace RenderCore
         RenderScene* Scene  = nullptr;   // constructed on the render thread by Initialize(); render-thread-owned from then on
         WorldBridge* Bridge = nullptr;   // game-thread-owned; wraps Scene
 
-        bool bPrimitiveRegistered = false;
+        bool bRenderRegistered = false;
 
 #if WITH_EDITOR
         /* Set by SetViewOverride; replaces the camera lookup every frame. */
@@ -95,9 +95,9 @@ namespace RenderCore
          * a duplicate), but Initialize() may run more than once across a
          * test's lifetime -- guard rather than log a spurious error every
          * time. */
-        if(!P->bPrimitiveRegistered)
+        if(!P->bRenderRegistered)
         {
-            P->bPrimitiveRegistered = RegisterProxyType(PrimitiveComponent::StaticType().ID, GetPrimitiveComponentFactory());
+            P->bRenderRegistered = RegisterProxyType(RenderComponent::StaticType().ID, GetRenderComponentFactory());
         }
 
         if(!P->Thread.Start(InBackend, InWindow))
@@ -238,7 +238,7 @@ namespace RenderCore
 
         /* A fixed buffer, by value: a command may only capture trivially
          * copyable values (RenderCommand.h). */
-        struct NameBuffer { char Text[PRIMITIVE_MATERIAL_NAME_MAX]; };
+        struct NameBuffer { char Text[RENDER_MATERIAL_NAME_MAX]; };
         NameBuffer Name{};
         const size_t Length = InName ? std::strlen(InName) : 0;
         if(Length >= sizeof(Name.Text))
@@ -256,7 +256,7 @@ namespace RenderCore
     uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
     {
         const size_t Length = InName ? std::strlen(InName) : 0;
-        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= PRIMITIVE_MATERIAL_NAME_MAX)
+        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_NAME_MAX)
         {
             return 0;
         }

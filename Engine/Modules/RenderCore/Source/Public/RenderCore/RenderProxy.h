@@ -173,7 +173,7 @@ namespace RenderCore
     /*
      * Fixed [COMPONENT_TYPE_MAX] table in RenderCore.dll -- GAME THREAD, at
      * startup, before any component of InType is ever added (Renderer::Initialize
-     * registers PrimitiveComponent; a game registers its own the same way
+     * registers RenderComponent; a game registers its own the same way
      * before BindWorld). False on a duplicate registration of the same type.
      */
     RENDERCORE_API bool RegisterProxyType(GameCore::ComponentTypeID InType, CreateProxyFn InFn,

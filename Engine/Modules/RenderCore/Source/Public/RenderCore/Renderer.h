@@ -30,7 +30,7 @@ namespace RenderCore
         Renderer(const Renderer&)            = delete;
         Renderer& operator=(const Renderer&) = delete;
 
-        /* Registers PrimitiveComponent's proxy type, starts the render
+        /* Registers RenderComponent's proxy type, starts the render
          * thread (see RenderThread::Start for the InBackend/InWindow
          * contract), and constructs the RenderScene commands from here on
          * touch exclusively through the queue. False on any failure --
@@ -129,7 +129,7 @@ namespace RenderCore
          * its next draw reads Materials/<Name>.material and its cooked shader
          * from disk again. For the editor, after it recooks a material graph:
          * the change shows from the next frame. GAME THREAD ONLY; queued like
-         * any render command. Names longer than PRIMITIVE_MATERIAL_NAME_MAX
+         * any render command. Names longer than RENDER_MATERIAL_NAME_MAX
          * are ignored, as no primitive can refer to them.
          */
         void ReloadMaterial(const char* InName);

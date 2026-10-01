@@ -211,7 +211,7 @@ exactly the access pattern `ComponentPool` is built for.
 component's bytes are in the record, not just the transform, a proxy type's
 `ApplyComponent` override is the *entire* extraction contract a proxy author
 has to implement -- there is no separate "did the width change" path to
-wire up. `PrimitiveProxy::ApplyComponent` copies `Width`/`Height`/`Tint`/
+wire up. `RenderComponentProxy::ApplyComponent` copies `Width`/`Height`/`Tint`/
 `bVisible` unconditionally, every frame; the cost of that unconditional copy
 is a handful of bytes, not worth avoiding.
 
@@ -297,7 +297,7 @@ real view still wants everything drawn, not nothing.
 It is exactly the **wrong** default for a proxy's own bounds, and this
 module shipped that bug once. `RenderProxy`'s default `LocalBounds`/
 `WorldBounds` are the same empty `AABB()` state -- a proxy that never calls
-`SetLocalBounds` (which `PrimitiveProxy::ApplyComponent` always does, but a
+`SetLocalBounds` (which `RenderComponentProxy::ApplyComponent` always does, but a
 game's own proxy type is not required to) has an empty `WorldBounds`, and
 under `AABB::Overlaps`'s own semantics that reads as "never overlaps
 anything" -- such a proxy would be permanently culled against any real view,
@@ -363,7 +363,7 @@ every `GDIDrawObject` call answers by construction.
 
 ## Materials -- one shader per name, owned here, never released mid-run
 
-`PrimitiveComponent::Material` names a material graph's output, and
+`RenderComponent::Material` names a material graph's output, and
 `RenderContext::DrawQuadWithMaterial` draws the quad through its pixel shader,
 with `Basic_VS` still on the vertex side. Everything below happens on the
 render thread, inside `RenderContext`.
@@ -443,7 +443,7 @@ others in between.
 ## What arrived deliberately incomplete
 
 - **No Lua bindings.** `ScriptEngine`'s proxy metatables (`ScriptBindings.cpp`)
-  are private to GameCore; extending them for `PrimitiveComponent` needs an
+  are private to GameCore; extending them for `RenderComponent` needs an
   extension point that does not exist yet. A game that wants this from a
   script currently binds it itself.
 - **No frame-arena allocator for commands or extraction blobs.** Both

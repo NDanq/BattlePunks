@@ -18,19 +18,27 @@
  */
 namespace RenderCore
 {
-    /* "Primitive". A flat, tinted quad -- the first concrete thing this
-     * engine can draw. Width/Height are in the same world units as
+    /* "Render". What an entity draws: a Mesh if it names one, else a flat,
+     * tinted quad. Width/Height size the quad, in the same world units as
      * TransformComponent::Scale; the proxy multiplies them together (see
-     * PrimitiveProxy.cpp), so a Scale of (2,2,2) on the entity's Transform
-     * doubles an already-sized quad rather than fighting it.
+     * RenderComponentProxy.cpp), so a Scale of (2,2,2) on the entity's
+     * Transform doubles an already-sized quad rather than fighting it. A mesh
+     * ignores Width/Height -- it has its own size, scaled by the Transform.
+     *
+     * Mesh is a runtime-relative path to a .nmmesh ("Content/Props/Crate
+     * .nmmesh", see MeshAsset.h); empty draws the quad, and a mesh that cannot
+     * be loaded draws the quad too, once warned.
      *
      * Material names a material graph's output -- "Glow" is the shader
      * Materials/Glow.fsh and its parameters Materials/Glow.material (see
-     * RenderContext::DrawQuadWithMaterial). Empty draws the plain Tint; a
-     * material that cannot be loaded does the same, once warned. */
-    enum : size_t { PRIMITIVE_MATERIAL_NAME_MAX = 48 };   // including the NUL
+     * RenderContext::DrawQuadWithMaterial). On a mesh it replaces every
+     * section's own material. Empty draws the plain Tint (lit, on a mesh, or
+     * a section's imported material if that one loads); a material that
+     * cannot be loaded does the same, once warned. */
+    enum : size_t { RENDER_MATERIAL_NAME_MAX = 48 };   // including the NUL
+    enum : size_t { RENDER_MESH_PATH_MAX     = 128 };  // including the NUL
 
-    struct RENDERCORE_API PrimitiveComponent
+    struct RENDERCORE_API RenderComponent
     {
         GAMECORE_COMPONENT_BODY()
         RENDERCORE_PROXY_BODY()
@@ -39,7 +47,8 @@ namespace RenderCore
         float             Height = 1.0f;
         EngineCore::Color Tint{255, 255, 255};
         uint8_t           bVisible = 1;
-        char              Material[PRIMITIVE_MATERIAL_NAME_MAX] = {};
+        char              Material[RENDER_MATERIAL_NAME_MAX] = {};
+        char              Mesh[RENDER_MESH_PATH_MAX] = {};
     };
 
     /* "Camera". Position comes from the sibling TransformComponent (identity
@@ -58,13 +67,13 @@ namespace RenderCore
     };
 
     /*
-     * PrimitiveComponent's own factory, exported for a caller that wants to
+     * RenderComponent's own factory, exported for a caller that wants to
      * register it directly -- Renderer::Initialize (a later build-order
      * step) does exactly this. RENDERCORE_DEFINE_PROXY_COMPONENT's own
      * generated factory function is a plain `static` in RenderComponents.cpp
      * and never leaves that translation unit; this is the one door out.
      */
-    RENDERCORE_API CreateProxyFn GetPrimitiveComponentFactory();
+    RENDERCORE_API CreateProxyFn GetRenderComponentFactory();
 }
 
 #endif //RENDERCORE_RENDERCOMPONENTS_H

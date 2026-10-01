@@ -316,11 +316,11 @@ listed is invisible; every component also gets `GetEntity()`. Binding code
 never includes `lua.h`:
 
 ```cpp
-GAMECORE_DEFINE_COMPONENT_SCRIPT(PrimitiveComponent)
+GAMECORE_DEFINE_COMPONENT_SCRIPT(RenderComponent)
 {
-    Bind.Field("Width", &PrimitiveComponent::Width);      // GetWidth / SetWidth
-    Bind.Field("Tint",  &PrimitiveComponent::Tint);       // r, g, b[, a]
-    Bind.Flag("Visible", &PrimitiveComponent::bVisible);  // uint8_t as a boolean
+    Bind.Field("Width", &RenderComponent::Width);      // GetWidth / SetWidth
+    Bind.Field("Tint",  &RenderComponent::Tint);       // r, g, b[, a]
+    Bind.Flag("Visible", &RenderComponent::bVisible);  // uint8_t as a boolean
 }
 
 GAMECORE_DEFINE_COMPONENT_SCRIPT(TransformComponent)
@@ -384,7 +384,7 @@ wraps that. A game build has no XML parser and refuses a text world.
 both formats:
 
 ```cpp
-GAMECORE_DEFINE_COMPONENT_SERIALIZER(PrimitiveComponent, 1)
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 1)
 {
     Ar.Field("Width",  C.Width);
     Ar.Field("Tint",   C.Tint);

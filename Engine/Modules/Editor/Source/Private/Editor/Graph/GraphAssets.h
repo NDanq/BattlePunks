@@ -106,8 +106,8 @@ namespace EditorGraphs
      * changes was discarded, so the viewport shows what is on disk again. */
     void RestoreMaterial(const QString& InGraphPath);
 
-    /* Points the selected entity's Primitive at material InName, adding a
-     * Primitive if it has none -- recorded, undoable. False, with why, when
+    /* Points the selected entity's RenderComponent at material InName, adding a
+     * RenderComponent if it has none -- recorded, undoable. False, with why, when
      * there is no selection or the name is too long. */
     bool ApplyMaterialToSelection(const QString& InName, QString& OutMessage);
 

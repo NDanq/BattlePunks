@@ -55,7 +55,7 @@ namespace NimbleEngine
      *   OnTick    once per frame.
      *   OnUnload  undo OnLoad -- above all, unbind delegates.
      *
-     * DRAWING has no OnRender. Add a PrimitiveComponent (WorldBridge draws it),
+     * DRAWING has no OnRender. Add a RenderComponent (WorldBridge draws it),
      * register a component + RenderProxy pair with RegisterProxyType, or
      * ENQUEUE_RENDER_COMMAND anywhere in OnTick -- one frame of lag, landing in a
      * well-defined frame. Commands capture trivially copyable, trivially

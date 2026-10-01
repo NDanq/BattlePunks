@@ -30,7 +30,7 @@
  * Sandbox: the example game. It demonstrates a C++ entity ("Marker") moved by
  * the mode and wrapped by a PostPhysics system; a Lua entity ("Scripted") from
  * Scripts/Main.lua, read back from C++; an OnEntityCreated binding with its
- * unbind; drawing through a PrimitiveComponent and a Camera entity, with no
+ * unbind; drawing through a RenderComponent and a Camera entity, with no
  * OnRender anywhere; and a save/load cycle on a timer.
  *
  *   SandboxLevel      the entities: spawns Marker and Camera, registers the
@@ -403,14 +403,14 @@ public:
          * WorldBridge -- adding this component is the whole of what this
          * file does to make Marker visible; nothing here calls DrawQuad or
          * touches a RenderProxy directly. */
-        RenderCore::PrimitiveComponent Primitive;
-        Primitive.Width  = 32.0f;
-        Primitive.Height = 32.0f;
-        Primitive.Tint   = EngineCore::Color(255, 200, 40);
-        Marker.AddComponent(Primitive);
+        RenderCore::RenderComponent Render;
+        Render.Width  = 32.0f;
+        Render.Height = 32.0f;
+        Render.Tint   = EngineCore::Color(255, 200, 40);
+        Marker.AddComponent(Render);
 
         /* The quad's own extent, in entity space: a centred Width x Height,
-         * flat in Z like the quad. Derived from the Primitive rather than
+         * flat in Z like the quad. Derived from the RenderComponent rather than
          * written out, so the two cannot drift -- they did, when this was a
          * hard-coded +-0.5 cube on a 32 x 32 quad and spatial queries, picking
          * and the editor's selection outline all saw a 1-unit Marker. The
@@ -418,8 +418,8 @@ public:
          * way the proxy draws the quad. */
         GameCore::BoundsComponent Bounds;
         Bounds.Local = GameCore::AABB(
-            EngineCore::Vector3(-0.5 * Primitive.Width, -0.5 * Primitive.Height, 0.0),
-            EngineCore::Vector3( 0.5 * Primitive.Width,  0.5 * Primitive.Height, 0.0));
+            EngineCore::Vector3(-0.5 * Render.Width, -0.5 * Render.Height, 0.0),
+            EngineCore::Vector3( 0.5 * Render.Width,  0.5 * Render.Height, 0.0));
         Marker.AddComponent(Bounds);
 
         /* A camera entity so the view is centred on where Marker actually
