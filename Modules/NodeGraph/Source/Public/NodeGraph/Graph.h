@@ -8,24 +8,19 @@
 #include "Public/GameCore/EntityGuid.h"
 
 /*
- * A node graph as data: what a .nmgraph file holds and what the editor edits.
- * Nothing here knows what a node DOES -- a node is a type name plus values,
- * and its pins are looked up in the Schema that the graph names (Schema.h).
- * That is what lets a graph whose node type has since disappeared still load,
- * keep its links and save unchanged (Node::PlaceholderXml).
+ * A node graph as data. A node is a type name plus values; meaning comes from
+ * the graph's Schema (Schema.h), so unknown node types still load and save
+ * unchanged (Node::PlaceholderXml).
  */
 namespace NodeGraph
 {
-    /* A node's persistent identity: the entity GUID type, reused -- 128 random
-     * bits, written as 32 hex digits. Links name nodes by it, never by index,
-     * so a merge that adds nodes on both sides does not renumber anything. */
+    /* Links name nodes by GUID, never index, so merges don't renumber. */
     using NodeGuid = GameCore::EntityGuid;
 
     std::string GuidToString(const NodeGuid& InGuid);
     bool        GuidFromString(const std::string& InText, NodeGuid& OutGuid);
 
-    /* One pin of one node. Pins are named, not numbered, so adding a pin to a
-     * node type leaves every existing link pointing where it did. */
+    /* Pins are named, so adding one doesn't break existing links. */
     struct PinRef
     {
         NodeGuid    Node;
@@ -54,22 +49,18 @@ namespace NodeGraph
         float       X = 0.0f;
         float       Y = 0.0f;
 
-        /* Literal values of UNLINKED input pins, as text in the pin type's
-         * literal form ("0.5", "1 0 0", "Hello"). Only values that differ from
-         * the pin's default are kept, so a default change reaches old graphs. */
+        /* Unlinked input literals ("0.5", "1 0 0"), only where they differ
+         * from the pin default. */
         std::map<std::string, std::string> Constants;
 
         /* Per-node settings that are not pins: a parameter's name, the event a
          * handler listens to, the variable a getter reads. */
         std::map<std::string, std::string> Properties;
 
-        /* The concrete type a wildcard ("*") node was resolved to -- "vec3",
-         * "number". Empty lets the compiler infer it from the links. */
+        /* A wildcard node's chosen type; empty infers it from links. */
         std::string WildcardType;
 
-        /* Non-empty: this node's type is unknown to its schema. The element
-         * as read, written back verbatim on save so nothing is lost; the node
-         * shows as an error and fails compilation. */
+        /* Set for an unknown node type: the original XML, saved verbatim. */
         std::string PlaceholderXml;
 
         bool IsPlaceholder() const { return !PlaceholderXml.empty(); }
@@ -115,8 +106,7 @@ namespace NodeGraph
 
         std::string GetProperty(const std::string& InName, const std::string& InDefault = std::string()) const;
 
-        /* The link feeding an input pin, or nullptr. A data input has at most
-         * one; for an exec input this is the first of possibly several. */
+        /* The link into InInput (the first, for an exec input), or nullptr. */
         const Link* FindLinkTo(const PinRef& InInput) const;
 
         /* Every link leaving an output pin, in stored order. */

@@ -18,23 +18,18 @@ class ContentListProxy;
 class ContentTreeProxy;
 
 /*
- * The Content Browser dock: the project's files -- the game's folder, the one
- * holding Config/DefaultEngine.ini -- as a folder tree beside the current
- * folder's contents, minus build trees and dot-folders.
+ * The Content Browser dock: the game's project folder as a tree plus the
+ * current folder's contents (build trees and dot-folders hidden).
  *
- *   Navigate     click a folder in the tree, double-click one in the list,
- *                Back / Up, or a segment of the path bar
- *   Organise     New Folder, Rename (F2), Delete (to the recycle bin), and
- *                drag items onto a folder to move them. A graph's generated
- *                files and a world's entity folder go wherever it goes; a
- *                graph open in a window, or the open world, is left alone.
- *   Open         a graph in its window, a world in the viewport, anything
- *                else with the system's own application
- *   Import       drop files from outside the project, or Import...: meshes
- *                and images go through the Import Wizard into engine assets
+ *   Navigate     tree, double-click, Back / Up, or the path bar
+ *   Organise     New Folder, Rename (F2), Delete (recycle bin), drag to move.
+ *                Generated files and entity folders move with their owner;
+ *                open graphs and the open world are protected.
+ *   Open         graphs in their window, worlds in the viewport, else the
+ *                system application
+ *   Import       drop external files or Import... (Import Wizard)
  *
- * Assets drag out as files: onto the viewport, or onto a Details field that
- * names one (a RenderComponent's Mesh or Material).
+ * Assets drag out onto the viewport or a matching Details field.
  */
 class ContentBrowserPanel : public QWidget
 {
@@ -49,8 +44,7 @@ public:
     /* Shows InFolder (inside the project), remembering where it came from. */
     void SetCurrentFolder(const QString& InFolder);
 
-    /* Where an import lands when nothing more specific is asked: the current
-     * folder, or <root>/Content when the browser is at the root. */
+    /* The current folder, or <root>/Content at the root. */
     QString GetImportFolder() const;
 
     /* Opens the Import Wizard for InFiles into InDestFolder. */
@@ -89,8 +83,7 @@ private:
     void ReimportSelected();
     void ShowInExplorer(const QString& InPath);
 
-    /* Drops onto the list (from ContentItemView): moves from inside the
-     * project, imports or copies from outside. */
+    /* Moves from inside the project; imports or copies from outside. */
     void HandleDrop(const QStringList& InFiles, const QString& InTargetFolder);
     void MoveInto(const QStringList& InPaths, const QString& InTargetFolder);
 

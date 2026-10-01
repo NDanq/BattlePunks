@@ -18,17 +18,10 @@
 class QUndoStack;
 
 /*
- * One open .nmgraph: the graph, its file, and its own undo history -- separate
- * from the scene's (EditorContext's), which is about the World.
+ * One open .nmgraph with its own undo history.
  *
- * EVERY CHANGE IS A SNAPSHOT. Edit() copies the graph, applies the change to
- * the copy, and pushes a command holding both. Graphs are small, so whole
- * copies cost nothing that matters, and undo can never drift out of step with
- * a hand-written inverse. An edit that changes nothing pushes nothing.
- *
- * Changed() is emitted after every edit, undo and redo. Listeners rebuild from
- * GetGraph() -- the canvas does so queued, so it never deletes an item from
- * inside that item's own mouse handler.
+ * Every edit stores whole before/after copies (graphs are small); no-op edits
+ * push nothing. Changed() follows every edit, undo and redo.
  */
 class GraphDocument : public QObject
 {
@@ -61,14 +54,12 @@ public:
 
     // --- Edits (each one undoable step) --------------------------------------
 
-    /* The new node's GUID. InConnectFrom, if set, is linked to the new node's
-     * first compatible pin in the same step. */
+    /* InConnectFrom, if set, links to the first compatible pin in the same step. */
     NodeGraph::NodeGuid AddNode(const std::string& InType, const QPointF& InPos,
                                 const std::map<std::string, std::string>& InProperties = {},
                                 const NodeGraph::PinRef* InConnectFrom = nullptr);
 
-    /* InReplacing, if set, is removed in the same step (a link dragged off
-     * one input onto another). */
+    /* InReplacing, if set, is removed in the same step. */
     void Connect(const NodeGraph::PinRef& InA, const NodeGraph::PinRef& InB, const NodeGraph::Link* InReplacing = nullptr);
     void DisconnectPin(const NodeGraph::PinRef& InPin);
     void RemoveLink(const NodeGraph::Link& InLink);
@@ -82,15 +73,13 @@ public:
     void AddComment(const NodeGraph::Comment& InComment);
     void SetCommentText(int InIndex, const QString& InText);
 
-    /* Pastes a clipboard fragment with its top-left node at InAt; the new
-     * nodes' GUIDs, empty if the text was not a fragment for this schema. */
+    /* Pastes with the top-left node at InAt; empty if not a valid fragment. */
     std::vector<NodeGraph::NodeGuid> Paste(const std::string& InFragment, const QPointF& InAt);
 
     // --- File -----------------------------------------------------------------
 
-    /* Writes the .nmgraph, then compiles and writes (and stages) its output.
-     * False with OutError only if the graph file itself could not be written;
-     * a compile failure is reported in OutMessage and leaves the old output. */
+    /* Writes the graph, then its output. False only if the graph file failed;
+     * compile errors go to OutMessage. */
     bool Save(QString& OutError, QString& OutMessage,
               QObject* InContext = nullptr, std::function<void(bool, const QString&)> InStaged = nullptr);
 
@@ -103,8 +92,7 @@ private:
     friend class GraphSnapshotCommand;
     void Restore(const NodeGraph::Graph& InGraph);
 
-    /* How a link between InA and InB would be made: the link in output ->
-     * input order, and the wildcard types either end's node would take. */
+    /* The ordered link and the wildcard types each end would take. */
     struct LinkPlan
     {
         NodeGraph::Link Made;

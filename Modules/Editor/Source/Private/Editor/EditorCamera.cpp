@@ -16,9 +16,7 @@ namespace
     /* Closest a dolly may bring the camera to its pivot. */
     constexpr double MinFocusDistance = 5.0;
 
-    /* LookAt's own basis (Matrix.h): R = Up ^ D with Up = (0,1,0), U = D ^ R.
-     * Restated so a ray leaves the camera through the same axes the view
-     * matrix projects along. */
+    /* LookAt's basis (Matrix.h): R = Up ^ D, U = D ^ R, Up = (0,1,0). */
     EngineCore::Vector3 ViewRight(const EngineCore::Vector3& InForward)
     {
         return (EngineCore::Vector3(0.0, 1.0, 0.0) ^ InForward).GetNormalize();

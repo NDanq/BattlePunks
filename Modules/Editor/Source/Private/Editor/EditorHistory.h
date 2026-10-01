@@ -18,30 +18,18 @@ namespace GameCore { class World; }
 class EditorContext;
 
 /*
- * Undo / redo for the edited World: the snapshots commands hold, and the
- * commands themselves. EditorContext is the only user -- it records a
- * command wherever it changes the World (see "History" in EditorContext.h),
- * and runs undo and redo.
+ * Undo / redo commands and snapshots for the edited World, used only by
+ * EditorContext.
  *
- * ENTITIES ARE NAMED BY GUID, never EntityID. Undoing a delete recreates the
- * entity under a new EntityID but its old GUID (World::CreateEntity(name,
- * guid)), so every older command still finds it, and a save after the undo
- * writes the same .nmentity it would have before the delete.
+ * ENTITIES ARE NAMED BY GUID: an undone delete recreates the entity with its
+ * old GUID, so older commands still find it.
  *
- * TWO KINDS OF SNAPSHOT:
- *   Property values   the writable fields of a component's property list
- *                     (ComponentProperties.h), back to back -- exactly what
- *                     the Details panel and the transform handles can change.
- *   Whole components  through the type's serializer, what a save holds --
- *                     for recreating a deleted entity or removed component.
- *                     Never the raw bytes: those carry the Owner header and
- *                     per-run state (a render proxy handle, a spatial index
- *                     leaf) that must be made fresh, not copied back.
+ * SNAPSHOTS:
+ *   Property values   the writable registered properties, back to back.
+ *   Whole components  via the serializer (never raw bytes, which hold the
+ *                     Owner and per-run state).
  *
- * RECORDED AFTER THE FACT. The editor changes the World first and records
- * second (a property editor has already written its field when it says so),
- * so each command's first redo() -- the one QUndoStack::push runs -- does
- * nothing.
+ * Commands are recorded after the change, so the first redo() is a no-op.
  */
 namespace EditorHistory
 {
@@ -64,8 +52,7 @@ namespace EditorHistory
     /* Every component type InEntity has, in type order. */
     std::vector<GameCore::ComponentTypeID> ComponentTypesOf(GameCore::World& InWorld, GameCore::EntityID InEntity);
 
-    /* The writable property values; empty if the component or its property
-     * list is missing. */
+    /* Empty if the component or its property list is missing. */
     std::vector<uint8_t> CaptureProperties(GameCore::World& InWorld, GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
     bool ApplyProperties(GameCore::World& InWorld, GameCore::EntityID InEntity, GameCore::ComponentTypeID InType,
                          const std::vector<uint8_t>& InValues);
@@ -101,11 +88,8 @@ namespace EditorHistory
         bool bRecorded = true;   // the change is already in the World
     };
 
-    /* One component's property values, before and after. Consecutive edits
-     * to the same component merge: all of one open gesture (a handle drag),
-     * or edits outside any gesture less than a second apart. A merge that
-     * lands back on the starting values makes the command obsolete, so a
-     * cancelled drag leaves no entry. */
+    /* Before/after property values. Merges within a gesture, or edits under a
+     * second apart; becomes obsolete if it returns to the start. */
     class PropertyEditCommand final : public Command
     {
     public:
@@ -162,9 +146,7 @@ namespace EditorHistory
         EntityMembers        After;
     };
 
-    /* Creating (bInCreated) or deleting an entity. The snapshot is taken when
-     * it goes away -- at the delete, or at the undo of a create -- so it holds
-     * whatever the entity had become by then. */
+    /* Create (bInCreated) or delete. Snapshotted when the entity goes away. */
     class EntityLifetimeCommand final : public Command
     {
     public:

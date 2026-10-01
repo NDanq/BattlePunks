@@ -9,11 +9,8 @@
 #include "Public/NodeGraph/Graph.h"
 #include "Public/NodeGraph/Schema.h"
 
-/*
- * Graph -> source text. CompileGraph() validates what every schema shares
- * (ValidateGraph), then hands the graph to its schema's compiler. Every
- * message names the node (and pin) it is about, so the editor can mark it.
- */
+/* Graph -> source text: ValidateGraph, then the schema's compiler. Messages
+ * name their node (and pin). */
 namespace NodeGraph
 {
     enum class ESeverity : uint8_t { Info, Warning, Error };
@@ -31,15 +28,12 @@ namespace NodeGraph
         /* The generated source; empty if compilation failed. */
         std::string Code;
 
-        /* Further files the output needs, written beside it with the same
-         * base name: {".material", text} for a material's parameter defaults. */
+        /* Extra files beside the output, e.g. {".material", text}. */
         std::vector<std::pair<std::string, std::string>> Companions;
 
         std::vector<Diagnostic> Diagnostics;
 
-        /* For each line of Code (0-based), the node that produced it -- unset
-         * for lines no single node owns. Lets the editor go from a line of the
-         * code view to its node. */
+        /* Per line of Code, the node that produced it (unset if none). */
         std::vector<NodeGuid> LineNodes;
 
         bool HasErrors() const;
@@ -48,12 +42,8 @@ namespace NodeGraph
         void Warning(const NodeGuid& InNode, const std::string& InPin, const std::string& InMessage);
     };
 
-    /*
-     * The checks every schema needs: known node types, unique ids, links that
-     * join an output to an input of the same kind and compatible type, at
-     * most one link into a data input or out of an exec output, unique nodes
-     * that appear at most once, valid property values. Appends to OutResult.
-     */
+    /* Schema-independent checks: node types, ids, link kinds and types, link
+     * multiplicity, unique nodes, property values. */
     void ValidateGraph(const Graph& InGraph, const Schema& InSchema, CompileResult& OutResult);
 
     /* Validates and compiles. On any error Code is left empty. */

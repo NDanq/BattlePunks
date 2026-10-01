@@ -28,8 +28,7 @@ namespace RenderCore
     class MaterialPreviewMailbox;
 
 #if WITH_EDITOR
-    /* EDITOR ONLY -- one Renderer::RequestMaterialPreview, as a render command
-     * carries it: trivially copyable, the mailbox by pointer. */
+    /* EDITOR ONLY -- a RequestMaterialPreview as a (trivially copyable) command. */
     struct MaterialPreviewRequest
     {
         uint64_t                Request = 0;
@@ -66,15 +65,11 @@ namespace RenderCore
         void SetClearColor(EngineCore::Color InColor);
 
 #if WITH_EDITOR
-        /* EDITOR ONLY. Replaces the lines the NEXT Render() draws over the
-         * proxies; that Render() consumes them, so a frame that sets none
-         * draws none. */
+        /* EDITOR ONLY. Lines for the next Render() only. */
         void SetDebugLines(const DebugLine* InLines, size_t InCount);
 
-        /* EDITOR ONLY. The NEXT Render() draws this material preview into its
-         * own small target, reads it back into the request's mailbox, and only
-         * then binds the scene's back buffer -- so the viewport never shows
-         * it. See RenderContext::RenderMaterialPreview. */
+        /* EDITOR ONLY. Drawn off-screen by the next Render(), before the back
+         * buffer bind (RenderContext::RenderMaterialPreview). */
         void AddMaterialPreview(const MaterialPreviewRequest& InRequest);
 #endif
 

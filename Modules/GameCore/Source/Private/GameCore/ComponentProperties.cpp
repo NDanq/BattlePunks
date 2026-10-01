@@ -5,11 +5,8 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/GameCoreLog.h"
 
-/*
- * The editor-visible property registry, and the built-in components' own
- * property lists. See ComponentProperties.h. Editor targets only -- in a
- * Client or Server build this translation unit compiles to nothing.
- */
+/* The editor property registry and the built-in components' lists. Editor
+ * targets only. See ComponentProperties.h. */
 
 #if WITH_EDITOR
 
@@ -17,8 +14,7 @@ namespace GameCore
 {
 namespace
 {
-    /* Constant-initialised, so registrars running during static init find a
-     * valid table -- the same argument as ComponentScript.cpp's tables. */
+    /* Constant-initialised, so static-init registrars find a valid table. */
     enum : size_t { PROPERTY_ENTRY_MAX = 1024 };
 
     struct PropertyTypeRange

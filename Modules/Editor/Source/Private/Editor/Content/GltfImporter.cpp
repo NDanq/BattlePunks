@@ -27,10 +27,8 @@ namespace EditorContent
 {
     namespace
     {
-        /* cgltf opens files by UTF-8 path with fopen, which on Windows reads
-         * the path as the ANSI code page -- a model under a non-ASCII folder
-         * would not load. QFile reads it instead, for the .gltf and every
-         * .bin it names. */
+        /* cgltf's fopen reads paths as ANSI on Windows, breaking non-ASCII
+         * folders; QFile reads the .gltf and its .bin files instead. */
         cgltf_result ReadFile(const cgltf_memory_options*, const cgltf_file_options*, const char* InPath,
                               cgltf_size* OutSize, void** OutData)
         {
@@ -170,9 +168,8 @@ namespace EditorContent
             return nullptr;
         }
 
-        /* Smooth normals for the vertices from InFirstVertex on, from the
-         * triangles from InFirstIndex on: each vertex the area-weighted
-         * average of the faces it is in. */
+        /* Area-weighted smooth normals for vertices / triangles from the
+         * given offsets on. */
         void GenerateNormals(RenderCore::MeshData& InOutMesh, const uint32_t InFirstVertex, const size_t InFirstIndex)
         {
             for(size_t At = InFirstIndex; At + 2 < InOutMesh.Indices.size(); At += 3)
@@ -274,9 +271,7 @@ namespace EditorContent
                 InOutMesh.UV0.push_back(UV[1]);
             }
 
-            /* A mirroring node transform turns triangles inside out; swap two
-             * corners to keep them facing the way the source meant. The axis
-             * conversion is a rotation, so it never needs this. */
+            /* A mirroring transform flips winding; swap two corners to undo it. */
             const size_t FirstIndex = InOutMesh.Indices.size();
             for(cgltf_size At = 0; At < IndexCount; At += 3)
             {

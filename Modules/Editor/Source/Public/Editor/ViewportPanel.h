@@ -12,19 +12,10 @@ class QToolBar;
 class ViewportWidget;
 
 /*
- * The viewport plus its toolbar, kept compact: combo boxes for the transform
- * handle mode (Select / Move / Rotate / Scale), World / Local space, the view
- * preset (Perspective and the six axis views) and camera speed; a Snap
- * toggle; a Frame split button (Selected, or All from its menu); and the
- * all-bounds toggle. A toolbar ABOVE the native render surface rather than
- * drawn over it -- nothing Qt paints can sit on top of a window the GPU
- * presents to.
- *
- * The combo boxes never take keyboard focus, so Q W E R, X, F and flying keep
- * going to the viewport after one is used.
- *
- * The frame and bounds actions are exposed so the main window's menus share
- * them (one QAction, one checked state, one shortcut).
+ * The viewport and its toolbar (handle mode, space, view preset, camera
+ * speed, snap, frame, all-bounds). The toolbar sits above the native surface,
+ * since Qt cannot paint over it. Combos never take focus, so viewport keys
+ * keep working. Frame and bounds actions are shared with the menus.
  */
 class ViewportPanel : public QWidget
 {

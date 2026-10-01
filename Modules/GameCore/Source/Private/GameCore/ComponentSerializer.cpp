@@ -5,12 +5,8 @@
 #include "Public/GameCore/AABB.h"
 #include "Public/Math/Vector.h"
 
-/*
- * The serializer registry and the binary ComponentArchive. GSerializers is a
- * plain array so it is constant-initialised before any registrar runs --
- * ComponentType.cpp's GRegistry argument. Indexed by ComponentTypeID directly;
- * ids are dense and bounded by COMPONENT_TYPE_MAX.
- */
+/* The serializer registry (a constant-initialised array indexed by
+ * ComponentTypeID) and the binary ComponentArchive. */
 
 namespace GameCore
 {
@@ -77,9 +73,7 @@ const ComponentSerializerInfo* FindComponentSerializer(const ComponentTypeID InT
 size_t GetComponentSerializerCount() { return GSerializerCount; }
 
 // === The binary backend =====================================================
-// Positional: every name is ignored, and each call writes exactly the bytes the
-// equivalent `Ar << x` did before fields were named, so cooked data and save
-// games did not change format.
+// Positional; names are ignored, so the bytes match plain `Ar << x`.
 
 bool     BinaryComponentArchive::IsLoading() const  { return Ar.IsLoading(); }
 uint16_t BinaryComponentArchive::GetVersion() const { return Ar.GetChunkVersion(); }

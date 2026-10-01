@@ -207,9 +207,7 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
     Desc.RasterizerState.CullMode        = D3D12_CULL_MODE_NONE;
     Desc.RasterizerState.DepthClipEnable = TRUE;
 
-    // No depth attachment exists yet on any backend.
-    // A depth test needs a depth buffer to test against; without one the
-    // PSO must not enable it.
+    // Depth testing needs a depth buffer.
     const bool bDepth = Key.DSVFormat != DXGI_FORMAT_UNKNOWN && Key.DepthEnable;
     Desc.DepthStencilState.DepthEnable    = bDepth ? TRUE : FALSE;
     Desc.DepthStencilState.DepthWriteMask = (bDepth && Key.DepthWrite) ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;

@@ -374,9 +374,8 @@ void VulkanDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
     Barrier.subresourceRange.layerCount = 1;
     Barriers.push_back(Barrier);
 
-    // The depth image: out of UNDEFINED on first use (and cleared by the
-    // loadOp below, as its contents are garbage); otherwise ordered after the
-    // previous pass's depth writes.
+    // Depth: from UNDEFINED (and cleared) on first use, else after the
+    // previous pass's writes.
     const bool bHasDepth      = VKRT->HasDepth();
     const bool bDepthIsFresh  = bHasDepth && VKRT->GetDepthLayout() == VK_IMAGE_LAYOUT_UNDEFINED;
     if(bHasDepth)

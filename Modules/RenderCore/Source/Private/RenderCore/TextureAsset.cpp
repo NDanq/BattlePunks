@@ -15,8 +15,7 @@ namespace RenderCore
         /* THDR's pixel format byte. Only RGBA8 so far. */
         constexpr uint8_t FORMAT_RGBA8 = 0;
 
-        /* THDR, shared by the full load and LoadTextureHeader. False (archive
-         * failed) for values this build does not know. */
+        /* THDR. False (archive failed) for unknown values. */
         bool SerializeHeader(EngineCore::Archive& Ar, TextureHeader& InOutHeader)
         {
             int32_t Width  = InOutHeader.Width;
@@ -84,8 +83,7 @@ namespace RenderCore
             }
         }
 
-        /* Bytes, not scalars: RGBA8 has no byte order, and the rows are
-         * tightly packed by Image's own contract. */
+        /* Raw bytes: RGBA8 has no byte order; rows are tightly packed. */
         if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_PIXELS, 1, "texture: no TPIX chunk"))
         {
             Ar.SerializeBytes(InOutTexture.Pixels.GetData(), InOutTexture.Pixels.GetSizeBytes());

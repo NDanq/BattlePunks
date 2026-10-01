@@ -125,9 +125,7 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, QWidget* InParent)
     Toolbar->addSeparator();
 
     // --- View presets --------------------------------------------------------
-    /* Each orbits about the selection (or the focus point) to its axis.
-     * Activated rather than index-changed, so picking the shown view again
-     * snaps back to it after orbiting away. */
+    /* `activated`, so re-picking the shown view snaps back to it. */
     ViewCombo = MakeCombo(Toolbar, QStringLiteral("View preset -- orbits about the selection to that axis"));
     for(const PresetButton& Button : Presets)
     {
@@ -140,8 +138,7 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, QWidget* InParent)
     });
 
     // --- Framing -------------------------------------------------------------
-    /* Commands, not a setting: one Frame button (the selection), with Frame
-     * All on its menu. The actions themselves are shared with the Edit menu. */
+    /* Frame (selection) with Frame All on its menu; shared with the Edit menu. */
     FrameSelectionAction = new QAction(QStringLiteral("Frame Selected"), this);
     FrameSelectionAction->setToolTip(QStringLiteral("Fit the selection's bounds in view (F)"));
     connect(FrameSelectionAction, &QAction::triggered, this, [this]() { Viewport->FrameSelection(); });

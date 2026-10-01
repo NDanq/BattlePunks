@@ -18,14 +18,9 @@ class LinkItem;
 class NodeItem;
 
 /*
- * The canvas's contents and its mouse work: dragging links between pins
- * (Alt+click a pin breaks its links; dragging from a linked input picks its
- * link up), committing moved nodes, and asking for the node palette on a
- * right-click or a link dropped on empty space.
- *
- * Rebuilt whole from the document after every change -- queued, so no item is
- * deleted inside its own event handler. A drag never changes the document
- * until it ends.
+ * Canvas contents and mouse handling: link dragging (Alt+click breaks; drag
+ * from a linked input picks it up), node moves, and palette requests.
+ * Rebuilt (queued) after every change; drags commit on release.
  */
 class GraphScene : public QGraphicsScene
 {

@@ -189,8 +189,7 @@ bool EditorConsole::Execute(const QString& InLine)
         return true;
     }
 
-    /* "Unknown config variable 'x'" alone reads as if only config vars were
-     * possible; say that it is not a command either. */
+    /* Also say it is not a command. */
     const bool bUnknown = Response.rfind("Unknown config variable", 0) == 0;
     PrintError(bUnknown ? QStringLiteral("Unknown command or config var '%1' -- 'help' lists commands, 'cvars' lists vars")
                           .arg(Words.front())

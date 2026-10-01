@@ -85,13 +85,8 @@ namespace
         return Spin;
     }
 
-    /*
-     * Only when the value differs. The Details panel refreshes every editor
-     * ten times a second, and Qt's setValue repaints the box even when nothing
-     * changed -- across a panel of spin boxes that alone cost the viewport a
-     * third of its frame rate. Compared after the box's own rounding, so a
-     * value it cannot show more precisely does not count as a change.
-     */
+    /* Only on a change (after the box's rounding): setValue always repaints,
+     * and the 10 Hz refresh cost a third of the viewport's frame rate. */
     void SetSpin(QDoubleSpinBox* InSpin, const double InValue)
     {
         if(InSpin->value() == InSpin->valueFromText(InSpin->textFromValue(InValue)))
@@ -265,12 +260,7 @@ namespace
 
     // --- Vectors -------------------------------------------------------------
 
-    /*
-     * Vector3 and AABB (two Vector3s). Always read and written through
-     * GetX/SetX on the real Vector3 object, never its raw floats -- the layout
-     * differs between SIMD and scalar builds (ComponentSerializer.h's
-     * note on ComponentArchive's Vector3 field).
-     */
+    /* Vector3 and AABB, always via GetX/SetX (layout differs under SIMD). */
     class VectorEditor final : public PropertyEditor
     {
     public:

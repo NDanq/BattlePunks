@@ -60,14 +60,9 @@ public:
     }
 
     /*
-     * InAngle degrees about InRotationAxis (need not be unit length; a zero
-     * axis gives the identity). Right-handed, for column vectors (v' = M * v):
-     * a positive angle about +Z turns +X toward +Y. Rodrigues' formula,
-     * R = cI + s[k]x + (1 - c)kk^T, which is orthonormal with determinant 1.
-     *
-     * This used to put +W*sin in BOTH [0][1] and [1][0] (and swapped the
-     * UV/UW/VW products in row 2), so a rotation about Z came out symmetric
-     * -- a shear that collapsed a quad to a line at 45 degrees.
+     * InAngle degrees about InRotationAxis (any length; zero gives identity).
+     * Right-handed, column vectors: +Z turns +X toward +Y. Rodrigues' formula,
+     * R = cI + s[k]x + (1 - c)kk^T.
      */
     inline Matrix4x4 InitRotation(const float& InAngle, const Vector3& InRotationAxis)
     {

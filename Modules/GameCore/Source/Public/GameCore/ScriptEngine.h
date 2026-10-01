@@ -40,17 +40,14 @@ namespace GameCore
 
         bool IsInitialized() const;
 
-        /* Installs the Lua libraries, the World's script driver (entity
-         * scripts tick first in every phase), and the built-in delegate/event
-         * bridge -- see DESIGN.md. Entities that already carry a script path
-         * are instantiated on the first tick. One World at a time; rebinding
-         * un-installs the previous one first. */
+        /* Installs the Lua libraries, the script driver and the event bridge
+         * (DESIGN.md). Existing script paths start on the first tick. One
+         * World at a time. */
         void BindWorld(World* InWorld);
 
-        /* Reverses everything BindWorld() did: runs OnDestroy and releases
-         * every live script instance, Lua system and Events.On() binding.
-         * Script PATHS stay on their entities, so a later BindWorld starts
-         * them again from scratch. Safe to call with no World bound. */
+        /* Reverses BindWorld(): OnDestroy and release for every script
+         * instance, Lua system and Events.On() binding. Script paths stay.
+         * Safe with no World bound. */
         void UnbindWorld();
 
         /* Reads InPath through EngineCore's file seam, then loads and runs

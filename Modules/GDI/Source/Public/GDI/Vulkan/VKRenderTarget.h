@@ -13,10 +13,8 @@
 class VKDevice;
 
 /**
- * A color image (R8G8B8A8_UNORM) and a depth image (D32_SFLOAT) for 3D
- * draws' depth test. The depth image is only ever an attachment -- never
- * sampled or copied -- and starts UNDEFINED, so the first pass that binds it
- * clears it. Memory is allocated via raw vkAllocateMemory; Phase 2 will
+ * A color image (R8G8B8A8_UNORM) and a depth attachment (D32_SFLOAT, starts
+ * UNDEFINED so its first pass clears it). Raw vkAllocateMemory; Phase 2 will
  * migrate to VMA.
  */
 class VKRenderTarget : public GDIRenderTarget
@@ -52,8 +50,7 @@ protected:
 private:
     void DestroyImage();
 
-    /* The depth image beside the color one. A failure leaves the target
-     * without depth (HasDepth false), logged, rather than unusable. */
+    /* On failure the target just lacks depth (logged). */
     void AllocateDepth();
 
     VKDevice*       Device          = nullptr;

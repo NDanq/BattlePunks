@@ -71,10 +71,8 @@ namespace
         return EngineCore::Archive::ForReading(std::vector<uint8_t>(InBytes.begin(), InBytes.end()));
     }
 
-    /* The files that travel with InPath: a graph's generated output beside
-     * it (Glow.material.nmgraph -> Glow.fsh, Glow.material; a script graph's
-     * .lua), a world's entity folder (Level.nmworld -> Level/). Only those
-     * that exist. */
+    /* Existing files that travel with InPath: a graph's generated output, a
+     * world's entity folder. */
     QStringList CompanionsOf(const QString& InPath)
     {
         const QFileInfo Info(InPath);
@@ -105,9 +103,7 @@ namespace
         return Out;
     }
 
-    /* Companion InCompanion renamed the way its owner went from InOld to
-     * InNew: Glow.fsh follows Glow.material.nmgraph -> Shine.material.nmgraph
-     * to Shine.fsh. */
+    /* InCompanion renamed as its owner was (Glow.fsh -> Shine.fsh). */
     QString CompanionTarget(const QString& InCompanion, const QString& InOldOwner, const QString& InNewOwnerPath)
     {
         const auto BaseOf = [](const QString& InName)
@@ -169,9 +165,8 @@ private:
     QString Root;
 };
 
-/* The list: one folder's contents, folders first, the text filter on names,
- * thumbnails for images and textures, a summary tooltip for assets -- and
- * renames routed through the panel, so companions follow. */
+/* One folder's contents: folders first, name filter, thumbnails, asset
+ * tooltips; renames go through the panel so companions follow. */
 class ContentListProxy final : public QSortFilterProxyModel
 {
 public:

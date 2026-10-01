@@ -6,17 +6,11 @@
 #include "Public/Math/Vector.h"
 
 /*
- * Rotation helpers for TransformComponent's Euler angles, in double precision
- * (Matrix4x4 is float under WITH_SIMD, which is too coarse to round-trip
- * angles through). Header-only: nothing here needs to cross the DLL boundary.
+ * Double-precision rotation helpers for TransformComponent's Euler angles
+ * (float Matrix4x4 is too coarse to round-trip angles).
  *
- * CONVENTIONS match TransformComponent::GetLocalMatrix and Matrix4x4:
- * column vectors (v' = M * v), right-handed rotations, Euler degrees applied
- * X first, then Y, then Z -- R = Rz * Ry * Rx.
- *
- * The editor's rotate gizmo is the first user: it composes a drag's rotation
- * with the entity's, as matrices, and turns the result back into angles close
- * to the ones the entity started with (see RotationToEuler's InNear).
+ * Conventions match GetLocalMatrix: column vectors, right-handed, Euler
+ * degrees applied X, Y, then Z (R = Rz * Ry * Rx).
  */
 namespace GameCore
 {
@@ -97,14 +91,11 @@ namespace GameCore
         }
 
         /*
-         * The Euler angles (degrees, Rz * Ry * Rx) of a pure rotation, picked
-         * to be as close as possible to InNear: of the two solutions every
-         * rotation has -- (x, y, z) and (x + 180, 180 - y, z + 180) -- the one
-         * nearer InNear, each angle then shifted by whole turns to within 180
-         * of InNear's. So a gizmo drag from 179 degrees reads 181, not -179.
+         * Euler degrees of a pure rotation, nearest InNear: picks between
+         * (x, y, z) and (x + 180, 180 - y, z + 180), then shifts each angle by
+         * whole turns, so a drag from 179 reads 181, not -179.
          *
-         * At gimbal lock (Y at +-90) only x - z or x + z is determined; X
-         * keeps InNear's value and Z takes the rest.
+         * At gimbal lock (Y at +-90) X keeps InNear's value; Z takes the rest.
          */
         inline EngineCore::Vector3 RotationToEuler(const Rotation3& InR, const EngineCore::Vector3& InNear)
         {

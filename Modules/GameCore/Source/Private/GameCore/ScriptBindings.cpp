@@ -162,9 +162,8 @@ namespace GameCore
             return 1;
         }
 
-        /* e:SetScript("Scripts/Mover.lua") -- Entity::SetScript: stores the
-         * path; the driver loads it at the start of the next phase. nil or ""
-         * clears. Deferred when called from a script (the World is ticking). */
+        /* e:SetScript("Scripts/Mover.lua") -- Entity::SetScript. nil or ""
+         * clears. Deferred (the World is ticking). */
         int Entity_SetScript(lua_State* InState)
         {
             const EntityID E = LuaCheckEntity(InState, 1);

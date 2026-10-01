@@ -1,39 +1,18 @@
 # ===========================================================================
-# NimbleEditor -- the Qt Widgets editor.
+# NimbleEditor -- the Qt Widgets editor. An executable in the flat Binaries
+# directory, beside the engine DLLs.
 #
-# An EXECUTABLE, not a nimble_add_module library: nothing links against the
-# editor. Added from Engine/CMakeLists.txt, so it inherits the flat
-# <NIMBLE_BINARIES_DIR>/<Platform>_<Config> runtime directory and lands beside
-# EngineCore.dll, GameCore.dll and RenderCore.dll -- the same sibling rule a
-# game host follows.
+#   GameCore, RenderCore   the World and the Renderer.
+#   EngineCore::QtBridge   value conversions. Qt-only, no GDI.
+#   NodeGraph              material and script graphs.
+#   NimbleEngine           GameSession / GameModuleHost for Play-in-Editor
+#                          (not Application: Qt owns the main loop).
 #
-# WHAT IT LINKS, AND WHAT IT MUST NOT
+#   NOT GDI or GDI::QtBridge: GDI is static and must live only in
+#   RenderCore.dll. The viewport passes QWidget::winId() instead.
+#   NOT the game: loaded by name at Play.
 #
-#   GameCore, RenderCore   the World it edits and the Renderer that draws it.
-#   EngineCore::QtBridge   value conversions (QColor <-> Color). Qt-only, no GDI.
-#   NodeGraph              material and script graphs: the model, the .nmgraph
-#                          files and the GLSL / Lua generators the graph
-#                          windows (Source/Private/Editor/Graph/) edit and run.
-#
-#   NOT GDI, and NOT GDI::QtBridge. GDI is a static library that may live in
-#   exactly one image in the process -- RenderCore.dll (RenderCoreInternal.h).
-#   GDIQtBridge links GDI PUBLIC, so linking it here would put a second copy in
-#   the editor's exe. The viewport hands the Renderer a native handle taken from
-#   QWidget::winId() instead, which is all GDIQt::ToWindowHandle would do.
-#
-#   NimbleEngine       GameSession and GameModuleHost, for Play-in-Editor: the
-#                      editor hosts a game session the way Application does.
-#                      NOT Application itself -- it owns an SDL window and its
-#                      own event loop, and the editor's main thread belongs to
-#                      Qt. EditorContext drives the same frame sequence (tick,
-#                      fence, collect, present, EndFrame) from a Qt timer.
-#
-#   NOT the game. The game module ([Game] Module) is loaded at Play by name;
-#   the game's CMakeLists makes NimbleEditor depend on it so it is built.
-#
-# EDITOR TARGETS ONLY. Engine/CMakeLists.txt adds this directory only when
-# NIMBLE_TARGET is Editor (WITH_EDITOR=1), and every source below is wrapped in
-# `#if WITH_EDITOR` as well; EditorMain.cpp #errors if built any other way.
+# Editor targets only; sources are also wrapped in `#if WITH_EDITOR`.
 # ===========================================================================
 
 find_package(Qt6 6.8 COMPONENTS Core Gui Widgets QUIET)
@@ -113,9 +92,7 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Content/ImportWizard.h
 )
 
-# The importers behind the Content Browser's Import Wizard: glTF / images into
-# .nmmesh / .nmtexture. No widgets, so NimbleEditorImportTests (below) builds
-# them on their own.
+# glTF / image importers. Widget-free, so the import tests build them alone.
 set(NIMBLE_EDITOR_IMPORT_SOURCES
         Source/Private/Editor/Content/AssetImport.cpp
         Source/Private/Editor/Content/AssetImport.h
@@ -124,14 +101,12 @@ set(NIMBLE_EDITOR_IMPORT_SOURCES
 )
 list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_IMPORT_SOURCES})
 
-# cgltf: a single-header glTF 2.0 parser (MIT), vendored as released. Only
-# GltfImporter.cpp includes it, and compiles its implementation.
+# cgltf (MIT), vendored; implemented in GltfImporter.cpp.
 set(NIMBLE_EDITOR_CGLTF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/cgltf-1.15")
 
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})
 
-# The only engine target with moc on: the editor is a Qt application, and its
-# panels talk through signals. Every other target keeps AUTOMOC OFF.
+# The only engine target with AUTOMOC on.
 set_target_properties(NimbleEditor PROPERTIES
         AUTOMOC ON
         AUTOUIC OFF
@@ -154,9 +129,7 @@ target_link_libraries(NimbleEditor PRIVATE
 )
 
 # === Import tests =================================================================
-# The importers alone: glTF and images in, .nmmesh / .nmtexture out, Reimport.
-# Runs from the shared Binaries directory, where NimbleEditor's windeployqt has
-# put Qt (hence the dependency).
+# Runs from Binaries, where NimbleEditor's windeployqt put Qt (hence the dependency).
 option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests" ON)
 if(NIMBLEEDITOR_BUILD_TESTS)
     add_executable(NimbleEditorImportTests Tests/ImportTests.cpp ${NIMBLE_EDITOR_IMPORT_SOURCES})
@@ -174,19 +147,14 @@ if(NIMBLEEDITOR_BUILD_TESTS)
 endif()
 
 # === Node graphs ================================================================
-# A saved material graph's shader is checked by NodeGraph's
-# cook_material_graphs.py, with the Python NodeGraph found (both published by
-# its CMakeLists). Empty when either is missing: the editor then skips the check.
+# Shader check on save via NodeGraph's cook_material_graphs.py; skipped if
+# either path is empty.
 set_source_files_properties(Source/Private/Editor/Graph/GraphAssets.cpp PROPERTIES
         COMPILE_DEFINITIONS "NIMBLEEDITOR_PYTHON=\"${NODEGRAPH_PYTHON}\";NIMBLEEDITOR_MATERIAL_CHECK_SCRIPT=\"${NODEGRAPH_COOK_SCRIPT}\"")
 
 # === Build version stamp ======================================================
-# Help > About shows the commit this editor was built from. Core's
-# GitVersion.cmake does the stamping (Core only stamps itself when configured
-# standalone, so an engine build has no stamp otherwise); included by path, not
-# via CMAKE_MODULE_PATH, so nothing about Core's own configure changes. It
-# re-stamps on every build but only rewrites the header when a value changed,
-# and only AboutDialog.cpp includes it.
+# For Help > About, via Core's GitVersion.cmake (included by path). The header
+# is rewritten only when a value changes; only AboutDialog.cpp includes it.
 include("${CMAKE_CURRENT_SOURCE_DIR}/../Core/cmake/GitVersion.cmake")
 git_version_stamp(
         PREFIX   NIMBLEEDITOR
@@ -197,20 +165,14 @@ git_version_stamp(
 )
 target_include_directories(NimbleEditor PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
 
-# What git cannot know. Bare tokens (AboutDialog.cpp stringizes them), and on
-# that one file so a configuration switch does not recompile the editor.
+# Bare tokens (stringized), on one file so a config switch recompiles only it.
 set_source_files_properties(Source/Private/Editor/AboutDialog.cpp PROPERTIES
         COMPILE_DEFINITIONS "NIMBLE_BUILD_CONFIG=$<CONFIG>;NIMBLE_BUILD_TARGET=${NIMBLE_TARGET}")
 
 # === Build tree =================================================================
-# Build > Compile Source runs `cmake --build` on this tree for the game module,
-# so the editor has to know where the tree is and which CMake made it.
-#
-# With MSVC under Ninja the compiler also needs vcvarsall's environment
-# (INCLUDE, LIB, PATH). An editor launched from an IDE or a developer prompt
-# inherits it; one started from Explorer does not, so SourceBuild calls
-# vcvarsall.bat first when INCLUDE is unset. Its arguments come from the
-# compiler's own path: .../VC/Tools/MSVC/<ver>/bin/Host<host>/<target>/cl.exe.
+# For Build > Compile Source (`cmake --build` on this tree). With MSVC under
+# Ninja, SourceBuild runs vcvarsall.bat when INCLUDE is unset; its arguments
+# come from cl.exe's path (.../bin/Host<host>/<target>/cl.exe).
 set(NM_EDITOR_VCVARSALL "")
 set(NM_EDITOR_VCVARS_ARGS "")
 if(MSVC AND CMAKE_CXX_COMPILER MATCHES "^(.*)/VC/Tools/MSVC/([^/]+)/bin/Host([^/]+)/([^/]+)/cl\\.exe$")
@@ -235,16 +197,13 @@ configure_file("${CMAKE_CURRENT_SOURCE_DIR}/Source/Private/Editor/EditorBuildTre
                "${CMAKE_CURRENT_BINARY_DIR}/Generated/EditorBuildTree.h" @ONLY)
 
 # === The project ================================================================
-# Edit > Project Settings edits the game's own Config/DefaultEngine.ini -- the
-# master copy in its source tree, not the one staged beside the exe, which a
-# build overwrites. The game's CMakeLists names it, on this target:
+# Edit > Project Settings edits the game's master Config/DefaultEngine.ini,
+# not the staged copy. The game's CMakeLists sets:
 #
 #   set_property(TARGET NimbleEditor PROPERTY NIMBLE_PROJECT_CONFIG "<path>")
 #
-# The game's directory is added after this one, so the property is not set
-# yet here; file(GENERATE) reads it at generate time, once every directory has
-# been configured. Empty when no game sets it: the dialog then edits the
-# staged copy and says so.
+# Read by file(GENERATE), since the game's directory is configured later.
+# Empty: the dialog edits the staged copy.
 file(GENERATE
         OUTPUT  "${CMAKE_CURRENT_BINARY_DIR}/Generated/EditorProject.h"
         CONTENT "#pragma once
@@ -260,9 +219,7 @@ if(TARGET NimbleStageShaders)
     add_dependencies(NimbleEditor NimbleStageShaders)
 endif()
 
-# Qt's own DLLs and platform plugin beside the exe, so it runs from the
-# Binaries directory without Qt on PATH. windeployqt picks debug or release Qt
-# from the exe it is given.
+# Qt's DLLs beside the exe, so it runs without Qt on PATH.
 if(WIN32)
     get_target_property(NM_QT_QMAKE Qt6::qmake IMPORTED_LOCATION)
     get_filename_component(NM_QT_BIN_DIR "${NM_QT_QMAKE}" DIRECTORY)

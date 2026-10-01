@@ -153,11 +153,7 @@ private:
 
     GameWindow();
 
-    /*
-     * Pimpl so that this header needs no SDL type, and so the class layout does
-     * not change when the cached-state set grows -- which matters because
-     * GameWindow is a DLL and its consumers are built against this header.
-     */
+    /* Pimpl: no SDL types here, and a stable layout across the DLL boundary. */
     struct Impl;
     Impl* P;
 };

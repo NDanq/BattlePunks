@@ -15,23 +15,17 @@ namespace EngineCore
 }
 
 /*
- * .nmmesh -- a static mesh, as the editor's importer writes it and a
- * RenderComponent's Mesh names it. An EngineCore::Archive of chunks:
+ * .nmmesh -- a static mesh. An EngineCore::Archive of chunks:
  *
  *   NMSH v1                the file
  *     MHDR v1              vertex, index and section counts; bounds
- *     MVTX v1              positions (xyz), normals (xyz), UV0 (uv) -- one
- *                          entry per vertex in each, floats
+ *     MVTX v1              positions, normals, UV0 (float arrays)
  *     MIDX v1              a triangle list, uint32 indices
  *     MSEC v1              sections: name, material, first index, index count
- *     ISRC v1 (optional)   AssetImportInfo -- the editor's, for Reimport
+ *     ISRC v1 (optional)   AssetImportInfo, for Reimport
  *
- * Every vertex has a normal and a UV; the importer fills in what the source
- * lacks. Loading checks every index against the vertex count and every
- * section against the index range, so a draw never reads past a buffer.
- *
- * Positions are in the engine's convention (+Y down) and world units; the
- * importer converts. A section is one material's run of triangles.
+ * Every vertex has a normal and UV. Loading bounds-checks indices and
+ * sections. Positions are engine convention (+Y down), world units.
  */
 namespace RenderCore
 {
@@ -71,31 +65,25 @@ namespace RenderCore
     /* Sets BoundsMin/Max from the positions; zero for an empty mesh. */
     RENDERCORE_API void ComputeMeshBounds(MeshData& InOutMesh);
 
-    /* Both directions. False, with the archive failed and why logged, for a
-     * file that is not a mesh or does not hold together. */
+    /* Both directions. False, logged, for an invalid mesh. */
     RENDERCORE_API bool SerializeMesh(EngineCore::Archive& Ar, MeshData& InOutMesh);
 
-    /* Through the file provider, so a runtime-relative path ("Content/Crate
-     * .nmmesh") finds the staged copy. */
+    /* Through the file provider, so runtime-relative paths work. */
     RENDERCORE_API bool LoadMeshFile(const std::string& InPath, MeshData& OutMesh);
 
-    /* Only MHDR. Still reads the whole file -- archives are whole-buffer --
-     * but builds none of the arrays. */
+    /* Only MHDR (still reads the whole file). */
     RENDERCORE_API bool LoadMeshHeader(const std::string& InPath, MeshHeader& OutHeader);
 
 #if WITH_EDITOR
-    /* Writes InMesh to InPath, creating folders. The importer writes to a
-     * temporary name and renames, so a failed import leaves the old file. */
+    /* Creates folders. */
     RENDERCORE_API bool SaveMeshFile(const std::string& InPath, MeshData& InMesh);
 #endif
 
     /*
-     * Loaded meshes by path, shared by the game thread (bounds, editor
-     * picking) and the render thread (which builds GPU buffers from them).
-     * Thread-safe. A mesh that fails to load is warned about once and
-     * remembered as missing, until Invalidate -- which is how a reimport
-     * reaches everything: the next Find loads the new file, and the render
-     * thread rebuilds when it sees a different pointer.
+     * Loaded meshes by path, shared by game and render threads. Thread-safe.
+     * A failed load is warned once and remembered until Invalidate, which is
+     * also how a reimport propagates (the render thread rebuilds on a new
+     * pointer).
      */
     class RENDERCORE_API MeshAssetCache
     {

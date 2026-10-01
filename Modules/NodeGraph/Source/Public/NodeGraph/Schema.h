@@ -11,15 +11,9 @@
 #include "Public/NodeGraph/Graph.h"
 
 /*
- * What a graph's nodes mean. A Schema is one kind of graph -- Material,
- * Script -- and owns its pin types, which types connect (and by what
- * conversion), its node definitions, and the compiler that turns a graph
- * into source text. Graph.h holds only names; this is where they resolve.
- *
- * The schemas are built once, on first use (GetSchemas()). The script schema
- * reads GameCore's component script bindings at that moment, so every
- * component a loaded image registered shows up as nodes with no per-component
- * code here.
+ * One kind of graph (Material, Script): pin types and conversions, node
+ * definitions, and the compiler. Built on first use (GetSchemas()); the
+ * script schema generates component nodes from GameCore's script bindings.
  */
 namespace NodeGraph
 {
@@ -32,10 +26,8 @@ namespace NodeGraph
      * -- Math.Add is float, vec2, vec3 or vec4 in a material, as its links say. */
     constexpr const char* WILDCARD_TYPE = "*";
 
-    /* A pin whose type follows the node's settings rather than its links -- a
-     * component mask's output is float, vec2, vec3 or vec4 by how many
-     * components are ticked. Schema::ResolvePinType computes it; the node's
-     * WildcardTypes list what it can come out as (for the palette). */
+    /* Type set by the node's settings (a mask's output width), computed by
+     * Schema::ResolvePinType; WildcardTypes lists the options. */
     constexpr const char* DERIVED_TYPE = "?";
 
     struct PinTypeInfo
@@ -105,13 +97,10 @@ namespace NodeGraph
         std::vector<PinDefinition>      Pins;
         std::vector<PropertyDefinition> Properties;
 
-        /* What "*" pins may resolve to, narrowest first: the first is the type
-         * when nothing links the node, and when links disagree the latest of
-         * theirs wins (see Schema::ResolveWildcard). */
+        /* Narrowest first; the first is the unlinked default (ResolveWildcard). */
         std::vector<std::string> WildcardTypes;
 
-        /* The schema resolves this node's wildcard itself (a variable node
-         * takes its variable's type): links and the editor never change it. */
+        /* The schema fixes the type (e.g. a variable's); links can't change it. */
         bool bWildcardFromSchema = false;
 
         /* The schema's own emit instruction -- which operation, and a template
@@ -152,33 +141,22 @@ namespace NodeGraph
         /* The concrete type of a pin on a node -- ResolvePinType's answer. */
         std::string GetPinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const;
 
-        /*
-         * The concrete type of InPin on InNode: the pin's own type; for a
-         * wildcard, the node's resolved type (ResolveWildcard); for a
-         * DERIVED_TYPE pin, whatever the schema computes from the node's
-         * settings -- an override's job. Every question about a pin's type,
-         * in the compilers, the validation and the editor, comes through here.
-         */
+        /* InPin's concrete type: its own, the resolved wildcard, or (override)
+         * a DERIVED_TYPE. All pin-type queries go through here. */
         virtual std::string ResolvePinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const;
 
-        /* A few words about how this node is set up, for its header in the
-         * editor -- ".xz -> vec2" for a component mask. "" shows the resolved
-         * wildcard type, if any, as before. */
+        /* A short setup summary for the node header (".xz -> vec2"); "" shows
+         * the resolved wildcard type. */
         virtual std::string DescribeNode(const Graph& InGraph, const Node& InNode) const;
 
         /* The type a wildcard node's "*" pins have; "" for a node without them. */
         std::string GetWildcardType(const Graph& InGraph, const Node& InNode) const;
 
-        /*
-         * The type a wildcard node resolves to: Node::WildcardType if it is
-         * allowed; else inferred from what its wildcard pins link to; else the
-         * first allowed type. A schema overrides it for nodes whose type comes
-         * from elsewhere (a variable getter takes its variable's type).
-         */
+        /* Node::WildcardType if allowed, else inferred from links, else the
+         * first allowed type. Overridden for schema-fixed types. */
         virtual std::string ResolveWildcard(const Graph& InGraph, const Node& InNode, const NodeDefinition& InDef) const;
 
-        /* Validates InGraph beyond what ValidateGraph() checks generically and
-         * writes the source. Called by CompileGraph(), never directly. */
+        /* Schema-specific validation and codegen. Called by CompileGraph(). */
         virtual void Compile(const Graph& InGraph, CompileResult& OutResult) const = 0;
 
     protected:

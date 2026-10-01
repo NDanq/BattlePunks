@@ -84,8 +84,7 @@ void OpenGLRenderTarget::Allocate()
         glBindFramebuffer(GL_FRAMEBUFFER, FrameBuffer.FrameBufferID);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, TextureResource->TextureHandle, 0);
 
-        // Depth for 3D draws. Every target has one, so depth-off 2D drawing is
-        // unchanged and ResolveRenderTarget's depth blit always has a match.
+        // Every target has depth, so ResolveRenderTarget's depth blit matches.
         glGenRenderbuffers(1, &FrameBuffer.DepthBufferID);
         glBindRenderbuffer(GL_RENDERBUFFER, FrameBuffer.DepthBufferID);
         glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, GLsizei(Width), GLsizei(Height));

@@ -375,9 +375,7 @@ void TransformGizmo::QueueRotate(EditorContext& InContext, const Frame& InFrame,
     {
         const EHandle Handle = Ring < 3 ? AxisHandle(Ring) : EHandle::Center;
 
-        /* While dragging, only the ring in use -- the others would only
-         * clutter the spokes. It is drawn where the drag began: the ring
-         * about the rotation axis does not move as it turns. */
+        /* While dragging, only the active ring, at its starting place. */
         if(IsDragging() && Handle != Active)
         {
             continue;
@@ -662,12 +660,9 @@ bool TransformGizmo::BeginDrag(const EHandle InHandle, const Pose& InPose, const
                                || (StartHit - F.Origin).GetLength() < 1e-6 * F.Size;
             if(bRotateAlongTangent)
             {
-                /* Along the ring's on-screen tangent at its point nearest the
-                 * eye: the near half is what is drawn and grabbed, and it
-                 * moves that way as the ring turns. The grabbed point's own
-                 * tangent would be useless at the ends of an edge-on ring,
-                 * where it points straight at the eye. Positive turns move a
-                 * ring point along Axis x radius. */
+                /* The on-screen tangent at the ring point nearest the eye (the
+                 * grabbed point's tangent degenerates at the ends of an
+                 * edge-on ring). Positive turns move along Axis x radius. */
                 Vector3 Nearest = F.ToCamera - RotateAxis * F.ToCamera.Dot(RotateAxis);
                 Nearest = Nearest.GetLength() > 1e-3 ? Normalized(Nearest) : RotateStartDir;
                 const Vector3 Anchor  = F.Origin + Nearest * Radius;
@@ -781,8 +776,7 @@ TransformGizmo::Pose TransformGizmo::UpdateTranslate(const double InX, const dou
 
     if(bGrid && (bWorldGrid || Active == EHandle::Center))
     {
-        /* Only the coordinates the drag moved: the screen plane often leaves
-         * depth alone, and snapping it would pop the entity off its plane. */
+        /* Snap only the moved coordinates, so depth doesn't pop. */
         for(int C = 0; C < 3; ++C)
         {
             if(std::abs(Component(Delta, C)) > 1e-6 * F.Size)

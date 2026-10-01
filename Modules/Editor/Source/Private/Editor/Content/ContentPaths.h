@@ -8,33 +8,27 @@
 class QMimeData;
 
 /*
- * Project files as the engine names them. A RenderComponent's Mesh is a
- * runtime-relative path -- "Content/Props/Crate.nmmesh" -- that is the file's
- * path under the project root, and also where the build (and StageAsset)
- * copies it beside the executable, which is where the running game reads it.
- * A material is named by its graph's base name ("Glow").
+ * Project files as the engine names them: assets by project-relative path
+ * ("Content/Props/Crate.nmmesh", staged at the same path beside the exe),
+ * materials by base name ("Glow").
  */
 namespace EditorContent
 {
-    /* InPath relative to the project root, forward slashes; empty if it is
-     * outside the project. */
+    /* Project-relative, forward slashes; empty if outside. */
     QString ToRuntimePath(const QString& InPath);
 
     /* The material a file names: "Glow" for Glow.material.nmgraph,
      * Glow.material or Glow.fsh under a Materials folder. Empty otherwise. */
     QString MaterialNameFor(const QString& InPath);
 
-    /* The one local file in a drag's data, or empty if it carries none or
-     * several. */
+    /* The single local file in a drag, else empty. */
     QString SingleDroppedFile(const QMimeData* InData);
 
-    /* Copies a freshly written asset to its staged place beside the
-     * executable and forgets any cached copy, so the viewport draws the new
-     * one on its next frame. Nothing for a file outside the project. */
+    /* Copies the asset beside the exe and invalidates caches, so the viewport
+     * shows it next frame. */
     void StageAsset(const QString& InPath);
 
-    /* Removes InPath's staged copy, after the project file was deleted or
-     * moved away. */
+    /* Removes the staged copy. */
     void UnstageAsset(const QString& InPath);
 }
 

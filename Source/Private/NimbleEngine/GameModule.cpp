@@ -10,8 +10,7 @@
 #include "Public/Core/CoreModuleManager.h"
 #include "Public/GameWindow/GameWindowSystem.h"
 
-/* Which game a host runs, and where it starts. In the game's own
- * Config/DefaultEngine.ini, so its launcher and the editor agree. */
+/* Set in the game's Config/DefaultEngine.ini so launcher and editor agree. */
 NIMBLE_CONFIG_STRING(GGameModule,     "Game", "Module",     "", nullptr);
 NIMBLE_CONFIG_STRING(GGameStartLevel, "Game", "StartLevel", "", nullptr);
 
@@ -51,8 +50,7 @@ namespace NimbleEngine
             return false;
         }
 
-        /* Beside the executable, not the working directory: an editor or a
-         * test may run from elsewhere. */
+        /* Beside the executable: the working directory may differ. */
         const std::filesystem::path Path =
             std::filesystem::u8path(GameWindowSystem::GetExecutableDir()) / std::filesystem::u8path(Name + ModuleSuffix);
         const std::string PathText = Path.u8string();

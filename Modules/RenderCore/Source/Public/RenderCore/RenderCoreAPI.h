@@ -45,12 +45,8 @@
     #define RENDERCORE_API
 #endif
 
-/*
- * WITH_EDITOR is set to 1 or 0 for every target by Engine/CMakeLists.txt (the
- * NIMBLE_TARGET block). Never undefined: `#if WITH_EDITOR` on a missing name
- * is a silent 0, which would compile the editor-only code out of an Editor
- * build without a word. A consumer configured some other way must define it.
- */
+/* Engine/CMakeLists.txt defines WITH_EDITOR as 1 or 0 for every target; an
+ * undefined name would silently read as 0. */
 #ifndef WITH_EDITOR
     #error "WITH_EDITOR is not defined -- configure through Engine/CMakeLists.txt, or define it to 0 or 1"
 #endif

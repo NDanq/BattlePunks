@@ -23,10 +23,8 @@ struct GDITransform
 // by value.  The actual VS->PS interface uses a GLSL interface block (below),
 // which is valid on both OpenGL 4.x core and Vulkan without any #if guards.
 //
-// Normal is world space, and LAST on purpose: a pixel shader cooked before it
-// existed reads a prefix of what a vertex shader now writes, which Vulkan,
-// D3D12 and Metal all accept. Shaders without one (quads, the screen blit)
-// write the quad's own facing, -Z, toward the default camera.
+// Normal is world space and LAST, so older pixel shaders read a valid prefix.
+// Shaders without one (quads, the blit) write -Z.
 struct GDIVSToPSInterpolants
 {
     vec3 Position;

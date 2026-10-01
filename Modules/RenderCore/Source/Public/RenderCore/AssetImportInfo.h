@@ -4,21 +4,16 @@
 #include <cstdint>
 #include <string>
 
-/*
- * Where an imported asset came from, kept in the asset itself (an optional
- * 'ISRC' chunk) so the editor can import it again with the same settings.
- * Nothing at run time reads it; a cooked asset without one loads the same.
- */
+/* An imported asset's source and settings (optional 'ISRC' chunk), for
+ * Reimport. Ignored at run time. */
 namespace RenderCore
 {
     struct AssetImportInfo
     {
-        /* The source file, relative to the project root when it is under it
-         * ("Source/Crate.glb"), else absolute. Forward slashes. */
+        /* Project-relative if under the project root, else absolute. Forward slashes. */
         std::string SourcePath;
 
-        /* The source's modification time when imported, in seconds since the
-         * epoch -- so the editor can say the source has changed since. */
+        /* Source mtime at import (epoch seconds), to detect a changed source. */
         int64_t SourceTime = 0;
 
         /* The importer's options as "Key=Value" lines; the editor's to define. */

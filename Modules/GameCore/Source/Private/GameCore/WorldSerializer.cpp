@@ -12,13 +12,9 @@
 #include "Public/GameCore/GameCoreLog.h"
 #include "Public/GameCore/World.h"
 
-/*
- * The World walk; the format is in DESIGN.md. Saving builds the dense entity
- * table before writing any component, since slot order has holes. Loading
- * creates every entity -- with its members: name, script path -- before any
- * component, so a reference to an entity whose components come later in the
- * file still resolves.
- */
+/* The World walk (format: DESIGN.md). Saving builds a dense entity table
+ * first; loading creates all entities before any component, so forward
+ * references resolve. */
 
 namespace GameCore
 {
@@ -124,9 +120,8 @@ namespace
         uint32_t EntityCount = uint32_t(OutTable.GetSavedOrder().size());
         Ar << EntityCount;
 
-        /* The index is redundant today (always 0..count-1), written so a
-         * later version can omit entities without changing what an index
-         * means. Then the entity's members, which are not components. */
+        /* The index is redundant today (0..count-1) but lets later versions
+         * skip entities. Then the entity's members. */
         for(const EntityID EntityId : OutTable.GetSavedOrder())
         {
             uint32_t Index = OutTable.IndexOf(EntityId);
@@ -248,10 +243,8 @@ namespace
             Ar << Guid.Hi << Guid.Lo << Name << ScriptPath << bCull;
             if(Ar.HasError()) { Ar.CloseChunk(); return false; }
 
-            /* Named and identified at creation, so OnEntityCreated sees both
-             * (a GUID already in this World is replaced, with a warning). The script
-             * is only a path here; a bound ScriptEngine instantiates it on
-             * the next tick, by which time every component is in place. */
+            /* Name and GUID at creation, so OnEntityCreated sees both. The
+             * script instantiates next tick, after every component is in. */
             const Entity Loaded = InWorld.CreateEntity(Name.c_str(), Guid);
             if(!ScriptPath.empty())
             {

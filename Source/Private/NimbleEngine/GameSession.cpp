@@ -14,15 +14,11 @@
 #include "Public/GameCore/WorldSerializer.h"
 #include "Public/RenderCore/Renderer.h"
 
-/* The save format's own tags, shared with SaveGame.cpp -- LoadLevel reads the
- * World and GameState chunks that file wrote. */
+/* Chunk tags shared with SaveGame.cpp. */
 #include "Private/NimbleEngine/SaveGameFormat.h"
 
-/* Bundle-relative path to a Lua file run once per LEVEL LOAD, after
- * IGameMode::OnLoad and before the first tick -- see LoadLevel's own comment on
- * why that ordering is where this runs, and why it re-runs on every swap. Empty
- * (the default) skips scripting entirely; a game with nothing to say in Lua
- * pays nothing for this. */
+/* Lua file run on every level load, after IGameMode::OnLoad (see LoadLevel).
+ * Empty skips it. */
 NIMBLE_CONFIG_STRING(GStartupScript, "Scripting", "StartupScript", "", nullptr);
 
 namespace NimbleEngine
@@ -70,12 +66,9 @@ namespace NimbleEngine
             return false;
         }
 
-        /*
-         * Between the mode's two callbacks: the script sees the loaded level,
-         * OnStart sees what the script made. Skipped when empty; a failure is
-         * logged, not fatal. Re-run on every load -- registered classes survive
-         * a swap, but what the script spawned died with the old World.
-         */
+        /* The script sees the loaded level; OnStart sees what it made. Failure
+         * is logged, not fatal. Re-run per load: spawned entities died with the
+         * old World. */
         const char* StartupScriptPath = GStartupScript.GetString();
         if(StartupScriptPath && StartupScriptPath[0] != '\0')
         {
@@ -89,9 +82,7 @@ namespace NimbleEngine
             State->OnReset();
         }
 
-        /* The save restore; the header says why here. PendingSaveBytes is
-         * emptied first, so a failed restore is not retried by the next
-         * ordinary level load. */
+        /* Emptied first so a failed restore is not retried. */
         if(!PendingSaveBytes.empty())
         {
             std::vector<uint8_t> SaveBytes;
@@ -130,22 +121,19 @@ namespace NimbleEngine
 
     bool GameSession::RestoreSaveInto(EngineCore::Archive& Ar, ILevel& InLevel, GameState* InState)
     {
-        /* The World first, so a GameState can look entities up while it loads.
-         * Restored script paths start fresh on the World's next tick. */
+        /* World first, so the GameState can look entities up. */
         if(!GameCore::SerializeWorld(Ar, *LevelWorld))
         {
             return false;
         }
 
-        /* Optional: absent when the saving level had no GameState. Missing, the
-         * state keeps its reset values, so older saves still load. */
+        /* Optional; when absent the state keeps its reset values. */
         uint16_t StateVersion = 0;
         if(Ar.OpenChunk(TAG_GAMESTATE, StateVersion))
         {
             if(InState)
             {
-                /* Inside the GMST chunk, so Serialize reads StateVersion through
-                 * Ar.GetChunkVersion(). */
+                /* Inside the chunk, so Ar.GetChunkVersion() is StateVersion. */
                 InState->Serialize(Ar);
             }
             else
@@ -168,13 +156,10 @@ namespace NimbleEngine
         }
 
         /*
-         *   1. mode, then level, OnUnload -- both unbind from a live World.
-         *   2. Scripts.UnbindWorld(): OnDestroy for live scripts; needs the
-         *      lua_State and the World.
-         *   3. Rendering.UnbindWorld(): WorldBridge's delegate bindings must go
-         *      before ~World, which warns about any left.
+         *   1. mode, then level, OnUnload (World still live).
+         *   2. Scripts.UnbindWorld(): runs OnDestroy, needs the World.
+         *   3. Rendering.UnbindWorld(): before ~World, which warns otherwise.
          *   4. destroy the World.
-         * Null-safe throughout: LoadLevel's failure path runs this too.
          */
         if(IGameMode* Mode = ActiveLevel->GetGameMode())
         {
@@ -234,9 +219,7 @@ namespace NimbleEngine
             }
         }
 
-        /* The game first, then World's phases (the spatial refit ends
-         * TP_Physics). The World never touches RenderCore; WorldBridge reads it
-         * inside Renderer::EndFrame, which the host calls. */
+        /* WorldBridge reads the World later, in the host's Renderer::EndFrame. */
         if(LevelWorld)
         {
             LevelWorld->Tick(float(InFrame.DeltaSeconds));

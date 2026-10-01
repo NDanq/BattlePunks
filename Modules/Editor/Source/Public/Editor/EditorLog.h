@@ -13,24 +13,14 @@
 #include <QTime>
 
 /*
- * Everything the editor process logs, kept for the Console panel.
+ * The process's log transcript for the Console panel. Install() makes it
+ * EngineCore's log handler (still forwarding to Qt's message system);
+ * console commands and replies are appended alongside.
  *
- * Install() makes this EngineCore's log handler, so every CORE_LOG from Core,
- * GDI, GameWindow, GameCore, RenderCore and the editor itself lands here -- and
- * is still forwarded to Qt's message system, so the debugger's output window
- * sees it too. The console's own traffic (a typed command, its reply) is
- * appended alongside, so the panel is one ordered transcript.
+ * THREADS. Append works from any thread: it queues under a mutex and posts a
+ * Flush to the GUI thread, preserving order. Everything else is GUI-only.
  *
- * THREADS. Append is callable from any thread: the render thread logs, and so
- * do module loads. It queues under a mutex and posts one Flush to the GUI
- * thread, which moves the batch into the history and emits EntriesAppended.
- * Everything else -- GetEntries, Clear, the signals -- is GUI-thread only. A
- * message logged on the GUI thread is queued the same way, so entries keep the
- * order they were logged in whichever thread wrote them.
- *
- * The history is a bounded ring (MaxEntries): a console left open all day must
- * not grow without limit. Logs from before the panel exists -- the renderer's
- * startup, the config load -- are in it, so the panel shows them when it opens.
+ * A bounded ring (MaxEntries), filled from startup on.
  */
 class EditorLog : public QObject
 {
@@ -59,12 +49,10 @@ public:
 
     static constexpr size_t MaxEntries = 20000;
 
-    /* Creates the log (on the calling thread, which must be the GUI thread) and
-     * installs it as EngineCore's handler. Call once QApplication exists. */
+    /* On the GUI thread, once QApplication exists. */
     static void Install();
 
-    /* Restores EngineCore's default handler and destroys the log. Call before
-     * QApplication goes. */
+    /* Before QApplication is destroyed. */
     static void Uninstall();
 
     /* Null outside Install/Uninstall. */
@@ -83,8 +71,7 @@ public:
     void Clear();
 
 signals:
-    /* The last InCount entries of GetEntries() are new. Older ones may have
-     * been dropped off the front to stay under MaxEntries. */
+    /* The last InCount entries are new; older ones may have been dropped. */
     void EntriesAppended(int InCount);
 
     void Cleared();

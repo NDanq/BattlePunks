@@ -36,8 +36,7 @@ namespace
     }
 
     // === Files ==================================================================
-    // Core's appFile* for reading and writing (UTF-8 paths); std::filesystem
-    // only for what Core has no call for, a replacing rename -- as WorldPackage.
+    // Core's appFile*; std::filesystem only for the replacing rename.
 
     bool ReadWholeFile(const std::string& InPath, std::string& OutText)
     {
@@ -76,8 +75,7 @@ namespace
         void write(const void* InData, const size_t InSize) override { Text.append(static_cast<const char*>(InData), InSize); }
     };
 
-    /* Two-space indent, '\n' line endings, UTF-8 -- fixed, so the bytes depend
-     * on the data alone. */
+    /* Fixed formatting, so the bytes depend on the data alone. */
     std::string DocumentText(const pugi::xml_document& InDoc)
     {
         StringWriter Writer;
@@ -97,8 +95,7 @@ namespace
         return GuidToString(InRef.Node) + "." + InRef.Pin;
     }
 
-    /* "<32 hex>.<pin>" -- split at the fixed GUID length, so a pin name may
-     * itself contain a '.'. */
+    /* "<32 hex>.<pin>", split at the GUID length (pin names may contain '.'). */
     bool ParsePinRef(const char* InText, PinRef& OutRef)
     {
         const std::string Text = InText ? InText : "";
@@ -216,9 +213,8 @@ namespace
         return true;
     }
 
-    /* The <Nodes> and <Links> of a graph or fragment. Links to nodes that are
-     * not there are dropped with a warning; links to pins a node no longer has
-     * are KEPT -- ValidateGraph flags them, and the user decides. */
+    /* Links to missing nodes are dropped (warned); links to missing pins are
+     * kept for ValidateGraph to flag. */
     void ReadNodesAndLinks(const pugi::xml_node InRoot, const Schema& InSchema, Graph& OutGraph, std::vector<std::string>& OutWarnings)
     {
         std::set<NodeGuid> Ids;
@@ -456,9 +452,7 @@ bool LoadGraphFile(const std::string& InPath, Graph& OutGraph, std::string& OutE
         return false;
     }
 
-    /* The extension and the attribute must agree -- a mismatch means the file
-     * was renamed into the wrong kind, and the output would land under the
-     * wrong extension. A bare .nmgraph has only the attribute to go on. */
+    /* Extension and attribute must agree; a bare .nmgraph uses the attribute. */
     const std::string Tag = GetGraphFileTag(InPath);
     const Schema* ByPath = Tag.empty() ? nullptr : FindSchemaByFileTag(Tag);
     if(ByPath && ByPath->GetName() != Loaded.SchemaName)

@@ -9,15 +9,9 @@
 #include <QString>
 
 /*
- * Help > About: which build this is -- the commit it was built from (git
- * describe, full SHA, branch, commit date, whether the tree had uncommitted
- * changes), the version and CI build number, and the configuration, target,
- * compiler, Qt and renderer it runs with. Copy to Clipboard puts the same
- * lines on the clipboard for a bug report.
- *
- * The git values are stamped at build time (EditorBuildInfo.h.in), so they
- * describe the source the binary was built from, not the checkout it is run
- * beside.
+ * Help > About: the build's commit, version, configuration, compiler, Qt and
+ * renderer, with Copy to Clipboard for bug reports. Git values are stamped at
+ * build time (EditorBuildInfo.h.in).
  */
 class AboutDialog : public QDialog
 {

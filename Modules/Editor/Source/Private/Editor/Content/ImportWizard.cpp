@@ -422,9 +422,8 @@ void ImportWizard::StartImport()
     Log->clear();
     Log->appendPlainText(QStringLiteral("Importing %1 file(s) into %2").arg(JobsLeft).arg(QDir::toNativeSeparators(Dest)));
 
-    /* One worker, the files in order: a log that reads top to bottom, and
-     * no two jobs writing one texture a pair of meshes share. Results come
-     * back to this thread; the wizard cannot close until the last one has. */
+    /* One worker, in order: a readable log, and no two jobs writing a shared
+     * texture. The wizard can't close until the last result is back. */
     QThreadPool::globalInstance()->start([this, Jobs]()
     {
         for(const Job& Each : *Jobs)

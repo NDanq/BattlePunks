@@ -14,10 +14,7 @@
 
 #include "Private/NimbleEngine/SaveGameFormat.h"
 
-/*
- * Writes saves, arms loads, and resolves level names. The restore itself is in
- * GameSession::LoadLevel, which owns the ordering it has to fit into.
- */
+/* Writes saves, arms loads, resolves level names. Restore: GameSession::LoadLevel. */
 
 namespace NimbleEngine
 {

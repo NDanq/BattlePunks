@@ -111,9 +111,8 @@ namespace
         }
     }
 
-    /* InjectTextInput's strings, alive until the pump that delivers them. A
-     * deque: appending never relocates an earlier element, whose c_str() an
-     * already-queued event points at. */
+    /* Alive until the pump delivers them. A deque, so queued events' c_str()
+     * pointers stay valid. */
     std::deque<std::string> GInjectedText;
 
     void RouteEvent(const SDL_Event& InEvent)
@@ -334,8 +333,7 @@ bool GameWindowSystem::IsInitialized()
 
 void GameWindowSystem::SetHostOwnsMessageLoop(const bool bInHostOwnsLoop)
 {
-    /* A hint, so it may be set before SDL_Init -- and must be, for the very
-     * first pump to respect it. Harmless on platforms that ignore it. */
+    /* A hint, set before SDL_Init so the first pump respects it. */
     SDL_SetHint(SDL_HINT_WINDOWS_ENABLE_MESSAGELOOP, bInHostOwnsLoop ? "0" : "1");
 }
 
@@ -377,8 +375,7 @@ GameWindow* GameWindowSystem::WrapNativeWindow(const EngineCore::WindowHandle In
 
     GameWindowSystem_Impl::RefreshCachedState(*Window);
 
-    /* Not GEverCreatedWindow: "the last window closed" is the host's business
-     * when the host owns the window, and must not end a loop it does not run. */
+    /* Not GEverCreatedWindow: closing a host-owned window must not end our loop. */
     GWindows.push_back(Window);
     return Window;
 }
@@ -397,10 +394,7 @@ void GameWindowSystem::InjectTextInput(GameWindow* InWindow, const char* InUtf8)
         return;
     }
 
-    /* SDL owns the text only of events it made itself (its internal temporary
-     * strings); a pushed event's pointer is the pusher's to keep alive until
-     * the event is consumed. The next PumpEvents/WaitEvents drains the whole
-     * queue on this same thread, so each string lives exactly until then. */
+    /* A pushed event's text is ours to keep alive until the next pump drains it. */
     GInjectedText.emplace_back(InUtf8);
 
     SDL_Event Event;

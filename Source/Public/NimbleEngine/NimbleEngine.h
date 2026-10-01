@@ -38,22 +38,14 @@ namespace NimbleEngine
     class ILevel;
 
     /*
-     * THE GAME EXECUTABLE'S HOST: the program around a GameSession. It owns what
-     * a game never sees directly -- the working directory and config, the SDL
-     * window and event pump, frame pacing, the process-lifetime ScriptEngine
-     * and Renderer, and each frame's fence, garbage collection, present and
-     * EndFrame -- and drives one GameSession through it. The game itself (level,
-     * World, mode, state, save/load) is the session's; see GameSession.h for why
-     * the two are separate.
+     * THE GAME EXECUTABLE'S HOST. Owns the working directory and config, the
+     * SDL window and pump, pacing, the process-lifetime ScriptEngine and
+     * Renderer, and each frame's fence, GC, present and EndFrame; drives one
+     * GameSession (see GameSession.h).
      *
-     * The main thread is the game thread and the SDL pump thread; GameWindowSystem
-     * CORE_CHECKs that, and macOS requires it, so the game cannot have its own
-     * thread. The render thread is reached only through the Renderer and
-     * ENQUEUE_RENDER_COMMAND.
-     *
-     * One frame of lag, not a fence: the session's Tick runs OnTick while the
-     * render thread drains the previous frame, and EndFrame's frame marker is
-     * what lets a mid-tick command land in a specific frame (RenderCommand.h).
+     * The main thread is both game and SDL pump thread (macOS requires it).
+     * The render thread is reached only via the Renderer and
+     * ENQUEUE_RENDER_COMMAND, with one frame of lag (RenderCommand.h).
      */
     class NE_API Application final : public IGameHost
     {
@@ -75,28 +67,19 @@ namespace NimbleEngine
          * its own entities, small games and the smoke tests. */
         void Exec(IGameMode& InMode);
 
-        /*
-         * A game in a module DLL (GameModule.h): engine up, then the game
-         * module named by [Game] Module -- or InDefaultModule when that is
-         * unset -- loaded, and its start level run. The module is unloaded
-         * after its level, before the engine goes down. What a game's
-         * launcher calls; the game's code is not linked into it.
-         */
+        /* Runs the game module named by [Game] Module (else InDefaultModule)
+         * from its start level. What a game's launcher calls (GameModule.h). */
         void ExecGame(const char* InDefaultModule);
 
-        /* Ends the loop after this frame -- the host's own quit, e.g. from a
-         * close request. A game asks through GameSession::RequestQuit, which
-         * the loop reads the same way. Game thread only. */
+        /* Ends the loop after this frame. Games use GameSession::RequestQuit. */
         void RequestQuit() { bQuitRequested = true; }
 
-        /* The running session, valid while Exec runs (after Initialize, before
-         * Shutdown). CORE_CHECKed outside that window. */
+        /* Valid between Initialize and Shutdown (CORE_CHECKed). */
         GameSession& GetSession();
 
         // === IGameHost ===========================================================
 
-        /* Pacing target; 0 is unlimited. Next frame on; initial value from
-         * [Display] FrameRateLimit. Game thread only. */
+        /* 0 is unlimited. Defaults to [Display] FrameRateLimit. */
         void     SetFrameRateLimit(uint32_t InFramesPerSecond) override;
         uint32_t GetFrameRateLimit() const override;
 
@@ -107,17 +90,12 @@ namespace NimbleEngine
         /* Run(&InLevel). The level-less overloads pass a .cpp-local empty level. */
         void ExecWithLevel(ILevel& InLevel);
 
-        /* The real Exec: engine up, level loaded, loop, level unloaded, engine
-         * down. The level is InLevel or, when that is null, the start level of
-         * the game module InGameModule (ExecGame). */
+        /* Engine up, level loaded, loop, unload, engine down. InLevel, or when
+         * null the start level of InGameModule. */
         void Run(ILevel* InLevel, const char* InGameModule);
 
-        /*
-         * One frame: apply a pending level swap, pump, FrameContext, the
-         * session's Tick, fence, collect, present, end. False when the loop
-         * should stop. Pacing is in ExecWithLevel instead: its timer scope is a
-         * .cpp-local type, and it is skipped on the way out.
-         */
+        /* Level swap, pump, Tick, fence, collect, present, end. False to stop.
+         * Pacing lives in the caller. */
         bool RunFrame(uint64_t InMaxFrames);
 
         /* Where assets (cooked shaders above all) come from; installed by
@@ -135,13 +113,11 @@ namespace NimbleEngine
          * query -- and handed to Rendering->Initialize(). */
         EngineCore::WindowHandle NativeWindow;
 
-        /* Process lifetime, via Memory::Alloc/Dealloc. One lua_State and one
-         * render thread serve every level, lent to the session. */
+        /* Process lifetime; lent to the session. */
         GameCore::ScriptEngine*  Scripts   = nullptr;
         RenderCore::Renderer*    Rendering = nullptr;
 
-        /* Created by Initialize() once Scripts and Rendering exist; destroyed by
-         * Shutdown() before them. */
+        /* Created after Scripts and Rendering; destroyed before them. */
         GameSession*             Session   = nullptr;
 
         bool                     bQuitRequested    = false;

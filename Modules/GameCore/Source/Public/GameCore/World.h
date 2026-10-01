@@ -34,32 +34,24 @@ namespace GameCore
 {
     using SystemFn = void (*)(World& InWorld, float InDeltaSeconds, void* InUserData);
 
-    /*
-     * The runtime half of an entity's script -- the persistent half is its
-     * path (Entity::GetScriptPath). World stores this per entity slot but never
-     * interprets it: every field belongs to the ScriptDriver. Reset whenever
-     * the path changes, so a new path always starts fresh.
-     */
+    /* Runtime state of an entity's script, owned by the ScriptDriver; World
+     * only stores it. Reset when the path changes. */
     struct EntityScriptState
     {
-        /* A luaL_ref for this entity's instance table; -2 is LUA_NOREF spelled
-         * as a literal -- lua.h never appears in Public/. */
+        /* luaL_ref of the instance table; -2 is LUA_NOREF (no lua.h here). */
         int32_t InstanceRef = -2;
 
-        /* Read from the script's class table when it is instantiated;
-         * TP_PrePhysics if unspecified. */
+        /* From the class table; TP_PrePhysics if unspecified. */
         uint8_t Phase = TP_PrePhysics;
 
         uint8_t bStarted = 0;
         uint8_t bErrored = 0;
 
-        /* Set by SetScript; the driver loads the file and clears it at the
-         * start of the next phase it runs. */
+        /* Set by SetScript, cleared when the driver loads it. */
         uint8_t bPendingInstantiate = 0;
 
-        /* Only meaningful with a BoundsComponent on the same entity -- see
-         * DESIGN.md. Persisted with the path; the class table's
-         * CullOutsideActiveRegion field, when present, overrides it. */
+        /* Needs a BoundsComponent (DESIGN.md). Persisted; the class table's
+         * CullOutsideActiveRegion overrides it. */
         uint8_t bCullOutsideActiveRegion = 0;
     };
 
@@ -69,13 +61,11 @@ namespace GameCore
      */
     struct ScriptDriver
     {
-        /* Runs at the START of every phase, before any registered system --
-         * scripts always update first. */
+        /* At the start of every phase, before any system. */
         void (*TickPhase)(World& InWorld, ETickPhase InPhase, float InDeltaSeconds, void* InUserData) = nullptr;
 
-        /* An entity's script is going away: the entity is being destroyed or
-         * its path replaced. Runs while the path and state are still in place;
-         * World clears both after it returns. */
+        /* A script is going away (destroy or new path); path and state are
+         * still set, and cleared afterwards. */
         void (*Release)(World& InWorld, EntityID InEntity, void* InUserData) = nullptr;
 
         void* UserData = nullptr;
@@ -100,10 +90,8 @@ namespace GameCore
         Entity CreateEntity();
         /* Also sets the entity's name, before OnEntityCreated fires. */
         Entity CreateEntity(const char* InName);
-        /* With a specific GUID -- what a loader uses to keep an entity's
-         * identity. An unset InGuid, or one already in use here (warned),
-         * gets a fresh one; read the result back with Entity::GetGuid(). Every
-         * other overload generates one. */
+        /* For loaders. An unset or already-used (warned) InGuid gets a fresh
+         * one; read it back with Entity::GetGuid(). */
         Entity CreateEntity(const char* InName, const EntityGuid& InGuid);
 
         /* DEFERRED to the end of the current phase when called during a
@@ -165,27 +153,21 @@ namespace GameCore
          * spatial refit at the end of TP_Physics. */
         void Tick(float InDeltaSeconds);
 
-        /* Runs the script driver's pass for InPhase, then InPhase's systems,
-         * then flushes THIS PHASE's deferred destroy/remove/script queue.
-         * Public so a host can interleave work between phases -- see
-         * DESIGN.md. */
+        /* Scripts, then InPhase's systems, then THIS PHASE's deferred queue.
+         * Public so a host can interleave work (DESIGN.md). */
         void TickPhase(ETickPhase InPhase, float InDeltaSeconds);
 
         bool       IsTicking() const;
         ETickPhase GetCurrentPhase() const;
 
         // === Entity scripts: the driver side ==================================
-        // A script is attached through Entity::SetScript; these are for
-        // whatever RUNS scripts (ScriptEngine), not for gameplay code.
+        // For ScriptEngine, not gameplay code (use Entity::SetScript).
 
-        /* Copies InDriver; nullptr clears. One driver at a time -- installing
-         * a second replaces the first without releasing anything. */
+        /* Copies InDriver; nullptr clears. Replacing releases nothing. */
         void SetScriptDriver(const ScriptDriver* InDriver);
         bool HasScriptDriver() const;
 
-        /* Every entity with a script path, in the order the paths were set --
-         * the order scripts tick in. Stable while the World ticks, since every
-         * SetScript and destroy is deferred then. */
+        /* Scripted entities in tick order. Stable during a tick. */
         size_t   GetScriptedEntityCount() const;
         EntityID GetScriptedEntityAt(size_t InIndex) const;
 
@@ -221,15 +203,12 @@ namespace GameCore
          * again mid-frame. */
         void RefreshSpatialIndex();
 
-        /* Refits InEntity's Bounds (if it has one) from its Transform now,
-         * static or not -- for a tool that moved it by hand. RefreshSpatialIndex
-         * never re-fits a static Bounds, so without this an edited static
-         * entity keeps its old world box. */
+        /* Refits InEntity's Bounds now, even static ones (which
+         * RefreshSpatialIndex skips), for a tool that moved it. */
         void RefreshEntityBounds(EntityID InEntity);
 
-        /* A shared "region gameplay currently cares about" hint -- see
-         * DESIGN.md. An entity script's bCullOutsideActiveRegion is the one
-         * built-in consumer. */
+        /* The region gameplay cares about (DESIGN.md); used by
+         * bCullOutsideActiveRegion. */
         void        SetActiveRegion(const AABB& InBox);
         bool        HasActiveRegion() const;
         const AABB& GetActiveRegion() const;
@@ -262,8 +241,7 @@ namespace GameCore
         /* DEFERRED inside a tick -- see DestroyEntity. */
         bool  RemoveComponentRaw(EntityID InEntity, ComponentTypeID InType);
 
-        /* The entity members -- private for the same reason: Entity is the
-         * one public way to reach them. */
+        /* Private: reached through Entity. */
         EntityGuid         GetEntityGuid(EntityID InEntity) const;
         const char*        GetEntityName(EntityID InEntity) const;
         bool               SetEntityName(EntityID InEntity, const char* InName);

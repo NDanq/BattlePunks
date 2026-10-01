@@ -582,9 +582,7 @@ namespace
     std::atomic<int> GMaterialFallbacks{0};
     LogHandler       GPreviousLogHandler = nullptr;
 
-    /* Counts RenderContext's two material outcomes -- the only way to tell
-     * from outside whether a draw went through the material or fell back,
-     * since the Null backend draws nothing either way. */
+    /* Counts material vs fallback draws via the log; Null draws nothing. */
     void MaterialLogHandler(const LogVerbosity InVerbosity, const char* InMessage)
     {
         const std::string Text = InMessage ? InMessage : "";
@@ -658,8 +656,7 @@ static void TestMaterials()
         DrawFrame();
         Expect(GMaterialLoads == 1, "a loaded material is kept, not reloaded per frame");
 
-        /* Previews: answered by the next frame, once. The Null backend draws
-         * and reads back nothing, which is itself the answer to check. */
+        /* Answered once, next frame; Null reads back nothing. */
         const uint64_t Preview = Rend.RequestMaterialPreview("SmokeGlow", 64, EngineCore::Color(255, 255, 255));
         const uint64_t Missing = Rend.RequestMaterialPreview("NoSuchMaterial", 64, EngineCore::Color(255, 255, 255));
         Expect(Preview != 0 && Missing != 0 && Preview != Missing, "a preview request gets its own id");
@@ -844,8 +841,7 @@ static void TestTextureAssets()
     Expect(!SerializeTexture(WrongTag, WrongTagLoaded), "a mesh is not a texture");
 }
 
-/* A RenderComponent naming a mesh, through the Null backend: one draw per
- * section, the mesh's bounds, and the quad when the mesh is missing. */
+/* Null backend: one draw per section, mesh bounds, quad fallback. */
 static void TestMeshDrawing()
 {
     std::printf("[mesh drawing]\n");

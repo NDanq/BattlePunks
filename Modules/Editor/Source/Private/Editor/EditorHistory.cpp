@@ -27,13 +27,9 @@ namespace
             std::chrono::steady_clock::now().time_since_epoch()).count();
     }
 
-    /*
-     * A ComponentArchive over a byte vector, for snapshots that live only as
-     * long as the process: each field's bytes as they are in memory, in the
-     * order the serializer names them. Vectors go through GetX/SetX so SIMD
-     * padding never enters. An EntityID crosses as that entity's GUID, so a
-     * reference survives the target being deleted and restored.
-     */
+    /* In-process ComponentArchive over raw field bytes in serializer order.
+     * Vectors via GetX/SetX (no SIMD padding); EntityIDs as GUIDs, so
+     * references survive delete/restore. */
     class SnapshotArchive final : public GameCore::ComponentArchive
     {
     public:

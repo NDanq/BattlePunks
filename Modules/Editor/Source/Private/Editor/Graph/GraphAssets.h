@@ -21,45 +21,30 @@ class QWidget;
 class GraphEditorTab;
 
 /*
- * Graphs as project files: where they live, what a save writes, and the
- * editor-wide operations on them (open one, make one, regenerate them all).
+ * Graphs as project files: locations, saving, and open / create / regenerate.
  *
- * WHERE OUTPUT GOES. A graph's output is written beside it -- Scripts/Mover
- * .script.nmgraph -> Scripts/Mover.lua -- and committed like any source. A run
- * reads scripts relative to the working directory, which is the executable's
- * folder, where the build stages Scripts/ (Games/Sandbox's CMakeLists, which
- * lists each script). So a save ALSO copies the output there, at the same
- * path relative to the project root: the next Play uses the new script with
- * no build in between. A new graph's output still has to be added to the
- * game's staged list for a clean build to ship it.
+ * OUTPUT is written beside the graph (committed) and also staged beside the
+ * exe, so the next Play uses it without a build. New scripts still need
+ * adding to the game's staged list.
  *
- * MATERIALS are staged by NAME, not path: RenderCore loads material "Glow"
- * from <runtime>/Materials/Glow.material and the cooked shader under
- * <runtime>/Shaders/Cooked/<Platform>/Materials/, wherever the graph lives. A
- * save (and, with Live Preview on, every successful recompile) writes the
- * .material there, cooks the shader for the viewport's backend in the
- * background, and has the renderer reload it -- so a primitive naming the
- * material shows the change on the next frame.
+ * MATERIALS are staged by name (<runtime>/Materials, cooked shaders under
+ * Shaders/Cooked/<Platform>/Materials) and reloaded by the renderer.
  */
 namespace EditorGraphs
 {
     inline QString     ToQ(const std::string& InText) { return QString::fromUtf8(InText.c_str()); }
     inline std::string ToStd(const QString& InText)   { return std::string(InText.toUtf8().constData()); }
 
-    /* The game's root: the folder holding Config/DefaultEngine.ini. The
-     * working directory if the editor was built without a project. */
+    /* The folder holding Config/DefaultEngine.ini, else the working directory. */
     QString GetProjectRoot();
 
     /* Where a new graph of this schema is offered: <root>/Scripts, <root>/Materials. */
     QString GetDefaultFolder(const NodeGraph::Schema& InSchema);
 
-    /* A folder under the project that holds no content -- build trees,
-     * Binaries, dot-folders -- so walks over the project skip it. */
+    /* Build trees, Binaries, dot-folders. */
     bool IsIgnoredFolder(const QString& InName);
 
-    /* Where a project file is staged for the running editor and game: the
-     * same path relative to the root, under the executable's folder. Empty
-     * for a file outside the project (or when the project IS that folder). */
+    /* The same relative path under the exe's folder; empty if not applicable. */
     QString GetStagedPath(const QString& InPath);
 
     /* True if InGraphPath is open in a graph window. */
@@ -68,72 +53,55 @@ namespace EditorGraphs
     /* "Node Graphs (*.material.nmgraph *.script.nmgraph);;Material Graphs (...)". */
     QString GetFileFilter(const NodeGraph::Schema* InOnly = nullptr);
 
-    /* Compiles InGraph and, if it compiled, writes its output beside
-     * InGraphPath and stages a copy into the runtime folder. OutMessage says
-     * what happened, for a status bar. False if it did not compile or a file
-     * could not be written. */
+    /* Compiles, writes and stages the output. False on compile or write
+     * failure; OutMessage is for the status bar. */
     bool WriteOutput(const QString& InGraphPath, const NodeGraph::Graph& InGraph,
                      NodeGraph::CompileResult& OutResult, QString& OutMessage,
                      QObject* InContext = nullptr, std::function<void(bool, const QString&)> InStaged = nullptr);
 
-    /* Runs cook_material_graphs.py -check on a generated shader, in the
-     * background; InDone gets (passed, compiler output). Skipped -- InDone is
-     * never called -- when the editor was built without Python. */
+    /* Background cook_material_graphs.py -check; InDone(passed, output).
+     * Never calls InDone without Python. */
     void CheckShader(const QString& InShaderPath, QObject* InContext, std::function<void(bool, const QString&)> InDone);
     bool CanCheckShaders();
 
-    /* Every *.nmgraph under the project root, recompiled and its output
-     * rewritten if changed. Returns the number that failed; OutLines gets one
-     * line per graph. */
+    /* Recompiles every graph in the project; returns the failure count. */
     int RegenerateAll(QStringList& OutLines);
 
     // --- Materials in the viewport ----------------------------------------------
 
-    /* The context whose renderer materials are cooked for and reloaded into.
-     * Set by the main window; nullptr before it has one or once it is gone. */
+    /* Set by the main window; nullptr when there is none. */
     void SetEditorContext(EditorContext* InContext);
 
     /* A material graph's name at run time: its file's base name, "Glow". */
     QString GetMaterialName(const QString& InGraphPath);
 
-    /*
-     * Stages a compiled material -- InResult's shader and .material -- for the
-     * viewport: the .material into <runtime>/Materials/, the shader cooked in
-     * the background for the renderer's backend, then the renderer told to
-     * reload it. InDone gets (worked, what happened), on InContext's thread;
-     * never called if InContext goes first. Requests for one material while
-     * its cook runs are coalesced: the latest runs next, the rest are dropped.
-     */
+    /* Stages, cooks (in the background) and reloads a compiled material.
+     * InDone(worked, message) on InContext's thread, unless it is gone.
+     * Requests during a cook coalesce to the latest. */
     void StageMaterial(const QString& InName, const NodeGraph::CompileResult& InResult, QObject* InContext,
                        std::function<void(bool, const QString&)> InDone);
 
-    /* Asks the viewport's renderer for a picture of material InName -- a quad
-     * filling InSize x InSize pixels, InTint its Instance Tint -- and calls
-     * InDone with it once drawn, or with a null image and why not. Polled on
-     * InContext's thread; never called if InContext goes first. */
+    /* Renderer preview of InName; InDone gets the image or null and why.
+     * Not called if InContext is gone. */
     void RequestMaterialPreview(const QString& InName, int InSize, const QColor& InTint, QObject* InContext,
                                 std::function<void(const QImage&, const QString&)> InDone);
 
-    /* Stages the graph SAVED at InGraphPath -- after a preview of unsaved
-     * changes was discarded, so the viewport shows what is on disk again. */
+    /* Restages the saved graph after unsaved preview changes are discarded. */
     void RestoreMaterial(const QString& InGraphPath);
 
-    /* Points the selected entity's RenderComponent at material InName, adding a
-     * RenderComponent if it has none -- recorded, undoable. False, with why, when
-     * there is no selection or the name is too long. */
+    /* Undoably sets the selection's RenderComponent material (adding one if
+     * needed). False with why. */
     bool ApplyMaterialToSelection(const QString& InName, QString& OutMessage);
 
     // --- Windows ----------------------------------------------------------------
 
-    /* The graph's tab in the graph editor window, added or brought forward.
-     * nullptr (with a message box on InParent) if the file cannot be loaded. */
+    /* Adds or focuses the tab; nullptr (message box shown) on load failure. */
     GraphEditorTab* OpenGraph(const QString& InPath, QWidget* InParent);
 
     /* Asks where, writes a starter graph of InSchema there, and opens it. */
     GraphEditorTab* CreateGraph(const NodeGraph::Schema& InSchema, QWidget* InParent);
 
-    /* Offers to save each open graph with unsaved changes. False if the user
-     * cancelled -- the caller should not close. */
+    /* Offers to save each dirty graph. False if cancelled. */
     bool CloseAllGraphs();
 }
 

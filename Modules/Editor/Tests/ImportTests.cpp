@@ -1,11 +1,6 @@
 /*
- * NimbleEditorImportTests -- the Content importers (Source/Private/Editor/
- * Content/AssetImport, GltfImporter) without the editor around them: glTF
- * into .nmmesh, images into .nmtexture, and Reimport.
- *
- * The glTF is built here rather than kept as a data file, so every number the
- * checks expect is visible next to the bytes that produce it. Written in the
- * engine smoke tests' Expect()-counter style.
+ * NimbleEditorImportTests -- glTF -> .nmmesh, images -> .nmtexture, Reimport.
+ * The glTF is built inline so expected numbers sit beside their source.
  */
 
 #include <cmath>

@@ -7,11 +7,8 @@
 #include "Public/GameCore/GameCoreAPI.h"
 
 /*
- * An entity's persistent identity: 128 random bits, assigned when the entity
- * is created and kept by every save and load. EntityID is a per-run slot
- * handle and means nothing in the next process; this is what a file names an
- * entity by -- a text world's .nmentity filename, and an entity reference
- * inside one. See DESIGN.md.
+ * An entity's persistent identity: 128 random bits kept across saves. Files
+ * name entities by this (EntityID is per-run). See DESIGN.md.
  *
  * POD, 16 bytes. Written as 32 lowercase hex digits, Hi then Lo.
  */
@@ -39,8 +36,7 @@ namespace GameCore
             OutText[STRING_LENGTH] = '\0';
         }
 
-        /* Exactly 32 hex digits (either case), nothing else. False, and
-         * OutGuid untouched, otherwise. */
+        /* Exactly 32 hex digits (either case); else false, OutGuid untouched. */
         static bool Parse(const char* InText, EntityGuid& OutGuid)
         {
             if(!InText) { return false; }
@@ -62,8 +58,7 @@ namespace GameCore
             return true;
         }
 
-        /* A fresh random GUID. Out-of-line so every image draws from the one
-         * generator in GameCore.dll. */
+        /* Out-of-line: one generator, in GameCore.dll. */
         static GAMECORE_API EntityGuid Generate();
 
         friend bool operator==(const EntityGuid& L, const EntityGuid& R) { return L.Hi == R.Hi && L.Lo == R.Lo; }

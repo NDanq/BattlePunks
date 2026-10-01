@@ -10,34 +10,20 @@
 #include "Private/NodeGraph/GraphIndex.h"
 
 /*
- * Material graphs -> a pixel shader in the engine's macro GLSL: what
- * Engine/Modules/GDI/Shaders/Basic.fsh looks like, so GDI's cook_shaders.py
- * takes it on every backend (GLSL for OpenGL, SPIR-V for Vulkan, and on from
- * there to HLSL and MSL) with nothing new in the toolchain.
+ * Material graphs -> a pixel shader in the engine's macro GLSL (like GDI's
+ * Basic.fsh), so cook_shaders.py handles every backend unchanged.
  *
- * Pure data flow: every node is a value, evaluated once, from the Pixel Output
- * node back. Each result that is more than a name or a literal becomes a
- * `<type> tN = ...;` temporary, so a value used twice is computed once.
+ * Evaluated once per node from the Pixel Output back; anything more than a
+ * name or literal becomes a `<type> tN` temporary.
  *
- * ONE UNIFORM, ALWAYS: `mat4 MaterialParams`, alone in a UBO at binding 2 (0
- * and 1 are Common.glsl's view and transform blocks). Its columns are four
- * vec4 slots -- parameters take 0 to 2, sorted by name; slot 3 is the drawing
- * primitive's Tint (the Instance Tint input). A single uniform because GDI's
- * backends pack a shader's custom uniforms back to back in hash-map order,
- * with no std140 padding (VulkanDynamicGDI.cpp's PackCustomUBO, D3D12's
- * PackCustom): exactly right for one value, and wrong for two. RenderCore's
- * RenderContext fills it -- see its DrawQuadWithMaterial.
+ * ONE UNIFORM: `mat4 MaterialParams` in a UBO at binding 2. Columns 0-2 are
+ * parameters (sorted by name), column 3 the primitive's Tint. Only one,
+ * because GDI packs custom uniforms in hash-map order with no std140 padding
+ * (PackCustomUBO / PackCustom). Defaults go in <Name>.material.
  *
- * The parameters' defaults go in a companion text file, <Name>.material, which
- * the renderer reads with the shader (MaterialFormat below).
- *
- * CONTROL FLOW. A Branch is a real `if`, and a For Loop / For Loop End pair a
- * real `for` whose body is everything between them. A value is computed in
- * the innermost block all of its uses share (AnalyseScopes): one that only a
- * Branch's True side needs is computed inside that side, and skipped when the
- * other runs; one both sides need, before the `if`. Hints ([branch],
- * [unroll], ...) are the HINT_* macros of NodeGraph/Shaders/
- * MaterialPlatform.glsl, which a shader includes only when it uses one.
+ * CONTROL FLOW. Branch is a real `if`; For Loop / For Loop End a real `for`.
+ * Each value is computed in the innermost block all its uses share
+ * (AnalyseScopes). Hints are MaterialPlatform.glsl's HINT_* macros.
  */
 namespace NodeGraph
 {
@@ -82,8 +68,7 @@ namespace
         return Text;
     }
 
-    /* Letters, digits, '_' and '.': a name or a member access, safe to swizzle
-     * without parentheses. */
+    /* A name or member access: safe to swizzle without parentheses. */
     bool IsName(const std::string& InExpr)
     {
         if(InExpr.empty()) { return false; }
@@ -128,12 +113,8 @@ namespace
     const char* const GSwizzleProperty   = "Swizzle";
     const char* const GSwizzleDefault    = "xyz";
 
-    /*
-     * The components a Component Mask or Swizzle selects, as GLSL letters in
-     * output order -- "xz". A Swizzle may be written with rgba instead of
-     * xyzw (not both at once), in either case. "" when nothing is selected or
-     * the text is not 1 to 4 components.
-     */
+    /* A Component Mask's or Swizzle's selection as GLSL letters ("xz").
+     * Swizzles accept xyzw or rgba, any case. "" if empty or invalid. */
     std::string SelectedComponents(const Node& InNode, const uint32_t InOp)
     {
         std::string Out;
@@ -166,12 +147,9 @@ namespace
     const std::vector<std::string> GBranchHintChoices = { "None", "Branch", "Flatten" };
     const std::vector<std::string> GLoopHintChoices   = { "None", "Loop", "Unroll" };
 
-    /*
-     * The block an input's value is computed in when that is not its node's
-     * own: a Branch's True (arm 0) and False (arm 1), a For Loop End's Next
-     * (the loop body, arm 0). -1 for every other input -- and for a ternary
-     * Branch's, which are one expression computed where the Branch is.
-     */
+    /* The block an input is computed in, if not its node's: a Branch's True
+     * (0) / False (1), a For Loop End's Next (0). Otherwise -1 (including
+     * ternary Branches). */
     bool IsTernary(const Node& InNode) { return InNode.GetProperty("Ternary", "false") == "true"; }
 
     int ArmOf(const Node& InNode, const NodeDefinition& InDef, const std::string& InPin)
@@ -225,12 +203,8 @@ namespace
             return Schema::ResolvePinType(InGraph, InNode, InPin);
         }
 
-        /*
-         * A For Loop and its For Loop End carry one value, so one type: the
-         * For Loop's, which the End follows. Unless Details sets it, the For
-         * Loop's type is the widest its own links or its End's suggest -- a
-         * vec3 fed to the End's Next widens the loop.
-         */
+        /* A For Loop and its End share one type: the widest suggested by
+         * either's links, unless set in Details. */
         std::string ResolveWildcard(const Graph& InGraph, const Node& InNode, const NodeDefinition& InDef) const override
         {
             const auto Paired = [&](const Node* InOther, const uint32_t InOp) -> const NodeDefinition*
@@ -317,9 +291,8 @@ namespace
             std::string Default;
         };
 
-        /* Where a value is computed: the blocks around it, outermost first.
-         * (Branch, 0) is that Branch's True side; (For Loop End, 0) that
-         * loop's body. The function's own block is the empty scope. */
+        /* Enclosing blocks, outermost first: (Branch, 0) is its True side,
+         * (For Loop End, 0) the loop body. Empty is the function block. */
         struct Frame
         {
             NodeGuid Owner;
@@ -397,8 +370,7 @@ namespace
             return;
         }
 
-        /* The other roots: each Discard, in GUID order, is written before the
-         * colour -- a discarded pixel needs nothing more. */
+        /* Discards, in GUID order, before the colour. */
         std::vector<const Node*> Roots;
         for(const Node* Each : Index.SortedNodes())
         {
@@ -437,8 +409,7 @@ namespace
         Out.Line("OUTPUT(0, vec4, Output)");
         Out.Blank();
 
-        /* Declared even when nothing reads it: the renderer always sets it,
-         * and a shader without the block would not match that layout. */
+        /* Always declared: the renderer always sets it. */
         Out.Line("// Columns 0-2: parameters (see " + (G.Name.empty() ? std::string("<Name>") : G.Name)
                  + ".material); column 3: the primitive's tint.");
         Out.Line("UBO_BEGIN(" + std::to_string(UNIFORM_BLOCK_BINDING) + ", " + BlockName + ")");
@@ -481,8 +452,7 @@ namespace
         Result.Companions.push_back({ ".material", Material });
     }
 
-    /* Every Parameter node, used or not, gets its slot up front -- by name, so
-     * a slot never moves because a link was drawn somewhere else. */
+    /* Every Parameter, used or not, gets a slot by name, so slots are stable. */
     void MaterialCompiler::CollectParameters()
     {
         for(const Node* Each : Index.SortedNodes())
@@ -528,12 +498,9 @@ namespace
     }
 
     /*
-     * Every reachable node's scope: the innermost block that all of its uses
-     * share. Consumers come before what they read (reverse post-order from
-     * the roots: the Pixel Output and every Discard), so each node's scope is
-     * final when its inputs are visited;
-     * an input a Branch or For Loop End runs in one of its blocks is used
-     * inside that block. A cycle leaves Scopes empty, for Output to report.
+     * Each reachable node's scope: the innermost block all its uses share.
+     * Visited in reverse post-order from the roots, so a node's scope is final
+     * before its inputs. A cycle leaves Scopes empty, for Output to report.
      */
     void MaterialCompiler::AnalyseScopes(const std::vector<const Node*>& InRoots)
     {
@@ -593,11 +560,8 @@ namespace
         }
     }
 
-    /*
-     * A For Loop's Index and Value exist only in its body, and it closes at
-     * exactly one For Loop End: each is an error on the node that breaks it,
-     * found here, before any code is written.
-     */
+    /* A For Loop's outputs are body-only and it needs exactly one End;
+     * violations are reported here, before codegen. */
     void MaterialCompiler::ValidateLoops()
     {
         std::set<NodeGuid> Reported;
@@ -748,8 +712,7 @@ namespace
 
             case MOP_LoopBegin:
             {
-                /* ValidateLoops already refused a read from outside the body;
-                 * this is the backstop for a graph it could not analyse. */
+                /* Backstop for what ValidateLoops could not analyse. */
                 const auto Open = OpenLoops.find(InNode.Id);
                 if(Open == OpenLoops.end() || InPin.Name == "Loop")
                 {
@@ -767,8 +730,7 @@ namespace
                 const bool bHasInputs = InPin.Expression.find('{') != std::string::npos;
                 Value = Expand(InNode, InDef, InPin.Expression);
 
-                /* Anything computed gets a temporary; a bare name or built-in
-                 * (Interpolants.TexCoord) is used where it is needed. */
+                /* Computed values get a temporary; bare names are inlined. */
                 if(bHasInputs)
                 {
                     const std::string Temp = "t" + std::to_string(NextTemp++);
@@ -919,12 +881,8 @@ namespace
         return "HINT_" + Hint + " ";
     }
 
-    /*
-     * Before InOwner opens its block InArm: writes, here, every value that
-     * block reads but that belongs further out -- shared with the other side
-     * of a Branch, or with what comes after -- so it is computed once, and
-     * not inside a block the other users cannot see.
-     */
+    /* Before InOwner opens block InArm, emits the values that block reads but
+     * that belong to an outer scope. */
     void MaterialCompiler::Hoist(const Node& InOwner, const NodeDefinition& InDef, const int InArm)
     {
         const auto Found = Scopes.find(InOwner.Id);
@@ -948,8 +906,7 @@ namespace
         const PinDefinition* SourcePin = SourceDef ? SourceDef->FindPin(Into->From.Pin, EPinDirection::Output) : nullptr;
         if(!SourcePin) { return; }
 
-        /* A For Loop's own outputs exist only in its body, never out here;
-         * what it reads is evaluated with its For Loop End, so look past it. */
+        /* A For Loop's inputs are evaluated with its End; look past it. */
         const auto Found = Scopes.find(Source->Id);
         const bool bInside = SourceDef->Op == MOP_LoopBegin || Found == Scopes.end() || IsWithin(Found->second, InArm);
         if(!bInside)
@@ -1117,8 +1074,7 @@ namespace
             AddNode(std::move(Def));
         }
         {
-            /* A root like Pixel Output, so it needs no link out -- a side
-             * effect has nowhere to lead. Any number per graph. */
+            /* A root, like Pixel Output; any number per graph. */
             NodeDefinition Def;
             Def.Type        = "Output.Discard";
             Def.DisplayName = "Discard";

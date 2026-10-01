@@ -11,11 +11,7 @@ namespace NimbleEngine
 {
     GameCore::World& ILevel::GetWorld()
     {
-        /* Same contract, and the same reasoning, as GameSession::GetWorld():
-         * there is no sensible reference to return when no World exists, only
-         * a caller that got the lifecycle wrong. Outside OnLoad..OnUnload this
-         * is null by construction -- GameSession clears it after the World is
-         * destroyed. */
+        /* As GameSession::GetWorld(): null outside OnLoad..OnUnload. */
         CORE_CHECK(OwnedWorld != nullptr,
                    "ILevel::GetWorld() called on a level that is not loaded")
         return *OwnedWorld;

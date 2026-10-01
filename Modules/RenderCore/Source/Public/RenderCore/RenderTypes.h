@@ -79,13 +79,8 @@ namespace RenderCore
     };
 
 #if WITH_EDITOR
-    /*
-     * One world-space line segment for Renderer::DrawDebugLine -- a tool's
-     * overlay (the editor's selection bounds and axis gizmo), not scene
-     * geometry. Drawn after every proxy, with no culling, as a camera-facing
-     * ribbon ThicknessPixels wide on screen whatever its distance.
-     * Trivially copyable: whole batches cross to the render thread by memcpy.
-     */
+    /* A tool overlay segment for Renderer::DrawDebugLine: drawn after every
+     * proxy, unculled, ThicknessPixels wide. Trivially copyable. */
     struct DebugLine
     {
         EngineCore::Vector3 Start;

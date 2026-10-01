@@ -27,9 +27,8 @@
 #include "Public/Editor/EditorContext.h"
 #include "Private/Editor/Content/ContentPaths.h"
 
-/* Snap steps for the transform handles (the viewport toolbar's Snap, or Ctrl
- * held during a drag). Translate is a world grid in World space and a step
- * along the handle in Local space. */
+/* Handle snap steps. Translate is a world grid in World space, a step along
+ * the handle in Local. */
 NIMBLE_CONFIG_FLOAT(GEditorSnapTranslate, "Editor", "SnapTranslate", 10.0f, nullptr);
 NIMBLE_CONFIG_FLOAT(GEditorSnapRotate,    "Editor", "SnapRotate",    15.0f, nullptr);
 NIMBLE_CONFIG_FLOAT(GEditorSnapScale,     "Editor", "SnapScale",     0.1f,  nullptr);
@@ -54,10 +53,8 @@ namespace
     const EngineCore::Color AllBoundsColor(120, 126, 140);
     constexpr float         AllBoundsThickness  = 1.0f;
 
-    /* The game camera's screen, outlined on the z = 0 plane where the 2D scene
-     * lives. The orthographic game view maps world units 1:1 to pixels from the
-     * camera's position over [Display] ResolutionX x ResolutionY; 1280 x 720 is
-     * that default, and the width SandboxLevel's wrap system assumes. */
+    /* The game camera's screen on z = 0: ortho, 1:1 units to pixels, at the
+     * default 1280 x 720. */
     constexpr double            GameScreenWidth  = 1280.0;
     constexpr double            GameScreenHeight = 720.0;
     const EngineCore::Color     GameScreenColor(90, 150, 230);
@@ -113,13 +110,8 @@ namespace
         }
     };
 
-    /*
-     * Not Matrix4x4::Inverse: that CORE_CHECKs (fatal) on a zero determinant,
-     * and a degenerate transform -- a zero scale, or a rotation Core builds
-     * singular -- is something a user can type into the Details panel. False
-     * for anything near-singular, measured relative to the column lengths so
-     * a small but honest scale still inverts.
-     */
+    /* Not Matrix4x4::Inverse, which is fatal on a singular matrix (a user can
+     * type a zero scale). False if near-singular relative to column lengths. */
     bool InvertAffine(const EngineCore::Matrix4x4& InMatrix, Affine3x4& Out)
     {
         double A[3][3];
@@ -390,10 +382,7 @@ void ViewportWidget::QueueOverlay()
         Context.DrawDebugBox(Screen, GameScreenColor, GameScreenThickness * Ratio);
     });
 
-    /* Last, so it sits over the grey boxes where they overlap. Padded by a
-     * few pixels' worth of world units at the box's depth, so the outline
-     * frames the shape instead of covering its edge. An unset selection has
-     * empty bounds, which draw nothing. */
+    /* Last, over the grey boxes; padded a few pixels so it frames the shape. */
     const GameCore::AABB Box = Context.GetEntityBounds(Selected);
     if(!Box.IsEmpty())
     {
@@ -674,9 +663,8 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
     {
         return;
     }
-    /* Esc abandons a handle drag first; otherwise it ends a run, as in most
-     * editors -- here rather than as a window shortcut, so Esc in a text
-     * field (the console) is left alone. */
+    /* Esc cancels a drag, else ends a run. Not a window shortcut, so text
+     * fields keep Esc. */
     if(InEvent->key() == Qt::Key_Escape && Drag == EDrag::Gizmo)
     {
         FinishGizmoDrag(true);
@@ -699,9 +687,7 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
         default:           break;
     }
 
-    /* Handle modes -- except while flying, where W E Q steer the camera, and
-     * mid-drag. Still recorded as held below, so a right drag that starts
-     * with the key down flies as it always has. */
+    /* Handle modes, except while flying or dragging. Still recorded as held. */
     const bool bPlainKey = (InEvent->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) == 0;
     if(bPlainKey && Drag != EDrag::Look && Drag != EDrag::Gizmo)
     {
@@ -866,12 +852,8 @@ void ViewportWidget::dragMoveEvent(QDragMoveEvent* InEvent)
     else { InEvent->ignore(); }
 }
 
-/*
- * A new entity drawing the mesh, where the cursor points: on the z = 0 plane
- * the 2D scene lives on, when the ray meets it in front of the camera and not
- * absurdly far; else 600 units out along the ray, as Edit > Create puts one.
- * One undo step, and selected.
- */
+/* Creates (one undo step) and selects an entity drawing the mesh: where the
+ * ray meets z = 0 if reasonably near, else 600 units along it. */
 void ViewportWidget::dropEvent(QDropEvent* InEvent)
 {
     const QString Path = DroppedMesh(InEvent->mimeData());
@@ -916,14 +898,8 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
     GameCore::EntityID Best;
     double BestT = std::numeric_limits<double>::max();
 
-    /*
-     * Ray against each primitive's quad, in the quad's own space: the inverse
-     * of TransformComponent::GetLocalMatrix() -- the matrix the proxy draws
-     * with -- takes the ray to where the quad is the unit square at z = 0,
-     * scaled by Width x Height (GDI's half-unit quad, RenderContext::DrawQuad).
-     * The hit parameter t is the same in both spaces, since the transform is
-     * affine and the direction is carried with w = 0.
-     */
+    /* Ray vs each quad in its local space (inverse GetLocalMatrix, where it is
+     * a Width x Height square at z = 0). t is preserved by the affine map. */
     Context.GetWorld().Each<RenderCore::RenderComponent>(
         [&](const GameCore::Entity& InEntity, RenderCore::RenderComponent& InRender)
     {

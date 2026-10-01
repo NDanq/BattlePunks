@@ -57,39 +57,27 @@ namespace GameCore
         bool  RemoveComponentByType(ComponentTypeID InType) const { return OwningWorld && OwningWorld->RemoveComponentRaw(ID, InType); }
 
         // === Members ========================================================
-        // Stored on the entity itself (World's slot tables), not in a
-        // component pool -- every entity has exactly one of each.
+        // In World's slot tables, not component pools: one each per entity.
 
-        /* Persistent identity: kept by every save and load, unique within a
-         * World. Unset (IsSet() false) if not alive. */
+        /* Persistent, unique within a World. Unset if not alive. */
         EntityGuid GetGuid() const { return OwningWorld ? OwningWorld->GetEntityGuid(ID) : EntityGuid(); }
 
-        /* "" if unnamed or not alive, never null. Valid until the next
-         * SetName on this entity or its destruction. */
+        /* Never null. Valid until the next SetName or destruction. */
         const char* GetName() const { return OwningWorld ? OwningWorld->GetEntityName(ID) : ""; }
-        /* nullptr clears. False if not alive. Names need not be unique;
-         * World::FindEntityByName returns the first in slot order. */
+        /* nullptr clears. False if not alive. Names need not be unique. */
         bool SetName(const char* InName) const { return OwningWorld && OwningWorld->SetEntityName(ID, InName); }
 
-        /* Declares the Lua script that drives this entity, by file path (read
-         * through EngineCore's file seam, like ScriptEngine::RunFile). The
-         * file must return its class table. Only the path is stored here; the
-         * script driver loads and instantiates it at the start of the next
-         * phase it runs, and ticks it BEFORE every registered system in its
-         * phase. A World with no driver (the editor) just keeps the path.
-         *
-         * nullptr or "" clears. Setting a different path releases the old
-         * script (OnDestroy) first; setting the same path again is a no-op.
-         * DEFERRED inside a tick, exactly like Destroy(). False if not
-         * alive. */
+        /* The Lua file (returning its class table) that drives this entity.
+         * The driver instantiates it at the start of the next phase and ticks
+         * it before that phase's systems; without a driver only the path is
+         * kept. nullptr or "" clears; a new path releases the old script.
+         * DEFERRED inside a tick. False if not alive. */
         bool SetScript(const char* InPath) const { return OwningWorld && OwningWorld->SetEntityScript(ID, InPath); }
         bool ClearScript() const { return SetScript(nullptr); }
         bool HasScript() const { return GetScriptPath()[0] != '\0'; }
-        /* "" if none, never null. Valid until the next SetScript applies or
-         * the entity is destroyed. */
+        /* Never null. Valid until the next SetScript applies or destruction. */
         const char* GetScriptPath() const { return OwningWorld ? OwningWorld->GetEntityScriptPath(ID) : ""; }
-        /* nullptr if there is no script. Stable while the entity lives and its
-         * script is unchanged -- creating other entities does not move it. */
+        /* nullptr without a script. Stable while the script is unchanged. */
         EntityScriptState* GetScriptState() const { return OwningWorld ? OwningWorld->GetEntityScriptState(ID) : nullptr; }
 
         void Destroy() const { if(OwningWorld) { OwningWorld->DestroyEntity(ID); } }

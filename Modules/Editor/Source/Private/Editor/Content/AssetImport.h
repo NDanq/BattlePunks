@@ -10,16 +10,9 @@
 #include "Public/RenderCore/TextureAsset.h"
 
 /*
- * Turning outside files into engine assets: glTF / GLB meshes into .nmmesh,
- * images into .nmtexture (RenderCore's MeshAsset.h / TextureAsset.h). No
- * widgets, and nothing that must run on the UI thread -- the Import Wizard
- * runs these on a worker, and NimbleEditorImportTests calls them directly.
- *
- * Every output records where it came from and with which options (its ISRC
- * chunk), so Reimport can do it again without asking.
- *
- * Writes are all-or-nothing: an asset is serialized in memory and saved
- * through QSaveFile, so a failed import leaves any old file as it was.
+ * glTF / GLB -> .nmmesh and images -> .nmtexture. Widget-free and
+ * thread-safe (the wizard runs these on a worker). Outputs record their
+ * source and options for Reimport. Writes are atomic (QSaveFile).
  */
 namespace EditorContent
 {
@@ -42,21 +35,17 @@ namespace EditorContent
 
     struct MeshImportOptions
     {
-        /* Multiplies every position: glTF is in metres, so 100 makes a
-         * one-metre box a hundred engine units. */
+        /* glTF is in metres: 100 makes 1 m = 100 units. */
         float Scale = 100.0f;
 
-        /* glTF is +Y up and faces +Z; the engine is +Y down with the camera
-         * looking down +Z. On: rotate the model 180 degrees about X, so up
-         * stays up and the model's front faces the default camera. */
+        /* glTF is +Y up; the engine is +Y down. Rotates 180 degrees about X so
+         * up stays up and the front faces the default camera. */
         bool bConvertCoordinates = true;
 
-        /* Smooth normals for primitives that have none (else they are flat
-         * zero, and draw unlit-dark). */
+        /* For primitives without normals (else they draw dark). */
         bool bGenerateNormals = true;
 
-        /* One .nmmesh for the whole scene (each primitive a section), or one
-         * per glTF mesh, named after it. */
+        /* One .nmmesh for the scene (primitives as sections), or one per mesh. */
         bool bCombineMeshes = true;
 
         /* Import the images the glTF refers to as .nmtexture beside the mesh. */
@@ -98,14 +87,11 @@ namespace EditorContent
         QList<ReferencedImage> Images;     // ImportMesh: what the glTF refers to
     };
 
-    /* The images InGltfPath refers to, without importing anything -- for the
-     * wizard to list. False, with OutError, if it cannot be read. */
+    /* Lists InGltfPath's images without importing. */
     bool FindReferencedImages(const QString& InGltfPath, QList<ReferencedImage>& OutImages, QString& OutError);
 
-    /* InSource (glTF / GLB) into InDestFolder/InBaseName.nmmesh -- or, with
-     * bCombineMeshes off, InBaseName_<mesh>.nmmesh per glTF mesh. With
-     * bImportTextures, also each referenced image, using InTextureOptions.
-     * InProjectRoot makes the recorded source path relative. */
+    /* Writes InBaseName.nmmesh (or InBaseName_<mesh>.nmmesh each), plus
+     * textures if enabled. InProjectRoot relativizes the recorded source. */
     ImportResult ImportMesh(const QString& InSource, const QString& InDestFolder, const QString& InBaseName,
                             const MeshImportOptions& InOptions, const TextureImportOptions& InTextureOptions,
                             const QString& InProjectRoot);
@@ -119,9 +105,8 @@ namespace EditorContent
                                        const QString& InDestFolder, const QString& InBaseName,
                                        const TextureImportOptions& InOptions, const QString& InProjectRoot);
 
-    /* An existing .nmmesh / .nmtexture imported again from the source and
-     * options it records. Fails, saying why, if it records none or the
-     * source is gone. A combined mesh reimports alone, without its textures. */
+    /* From the recorded source and options; fails if none or the source is
+     * gone. Meshes reimport without their textures. */
     ImportResult Reimport(const QString& InAssetPath, const QString& InProjectRoot);
 }
 

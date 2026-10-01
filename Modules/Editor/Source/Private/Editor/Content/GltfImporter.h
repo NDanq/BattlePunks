@@ -23,9 +23,8 @@ namespace EditorContent
         RenderCore::MeshData Data;   // bounds computed; no import info yet
     };
 
-    /* With InOptions.bCombineMeshes, OutMeshes has one entry for the whole
-     * scene; otherwise one per node with a mesh, names made unique. False,
-     * with OutError, if the file cannot be read or holds no triangles. */
+    /* One mesh (combined) or one per mesh node, uniquely named. False if
+     * unreadable or triangle-free. */
     bool LoadGltf(const QString& InPath, const MeshImportOptions& InOptions, QList<GltfMesh>& OutMeshes,
                   QList<ReferencedImage>& OutImages, QStringList& OutWarnings, QString& OutError);
 

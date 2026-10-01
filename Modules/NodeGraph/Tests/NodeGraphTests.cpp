@@ -1,15 +1,10 @@
 /*
- * NodeGraphTests -- the .nmgraph format, the path rules, validation, and both
- * code generators, in Modules/Core/Tests/SmokeMain.cpp's style: an Expect()
- * counter and a nonzero exit status.
+ * NodeGraphTests -- format, paths, validation and both code generators.
  *
- * GOLDEN FILES. Generated code is compared with Tests/Data/<name>; a missing
- * golden file is written and reported as a failure, so a new case has to be
- * looked at once. Set NODEGRAPH_UPDATE_GOLDEN=1 to rewrite them all after an
- * intended change to the output, then review the diff.
+ * GOLDEN FILES in Tests/Data/; a missing one is written and fails once. Set
+ * NODEGRAPH_UPDATE_GOLDEN=1 to rewrite them after an intended change.
  *
- * The generated Lua is also RUN: a World, a ScriptEngine and an entity with
- * the script attached, ticked, and its Transform checked.
+ * The generated Lua is also run on a ticked entity.
  */
 
 #include <algorithm>
@@ -483,9 +478,8 @@ namespace
                    "and the companion lists Alpha in slot 0");
         }
 
-        /* A wildcard node fed a float and a vec3 is vec3 whichever link is
-         * stored first -- and a saved-then-loaded graph (links sorted) makes
-         * the same code as the one in memory. */
+        /* float + vec3 resolves to vec3 regardless of link order, and a
+         * round-tripped graph compiles identically. */
         {
             Graph Reordered = MakeGlowGraph();
             std::reverse(Reordered.Links.begin(), Reordered.Links.end());
@@ -649,11 +643,8 @@ namespace
         }
     }
 
-    /*
-     * UV.x > 0.5 ? sin(UV) * 2 : sin(UV), then four times: Value += Index * sin(UV).
-     * sin(UV) is shared by both sides and the loop, so it comes before the
-     * if; the * 2 only the True side needs is inside it.
-     */
+    /* UV.x > 0.5 ? sin(UV) * 2 : sin(UV), then 4x Value += Index * sin(UV).
+     * Shared sin(UV) is hoisted; the * 2 stays inside True. */
     Graph MakeLogicGraph(const char* InBranchHint = "Branch", const char* InLoopHint = "Unroll")
     {
         Graph G;

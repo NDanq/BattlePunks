@@ -10,15 +10,9 @@ class GraphEditorTab;
 class QTabWidget;
 
 /*
- * The graph editor: ONE top-level window, a tab per open graph, material and
- * script alike. Each tab (GraphEditorTab) brings its own menus and docks, so
- * the menu bar and the Details, code and Messages docks are the current
- * graph's -- and so are the shortcuts, since a hidden tab's are inactive.
- *
- * Made by the first graph opened, and gone with the last tab closed. Closing
- * the window offers to save every graph with unsaved changes; cancelling any
- * one keeps it open. Ctrl+Tab and Ctrl+Shift+Tab step through the tabs; a
- * middle click closes one.
+ * One window, a tab per open graph; menus, docks and shortcuts follow the
+ * current tab. Created with the first graph, closed with the last. Closing
+ * prompts for unsaved graphs. Ctrl+(Shift+)Tab cycles; middle-click closes.
  */
 class GraphEditorWindow : public QMainWindow
 {
@@ -37,8 +31,7 @@ public:
     /* Brings the window forward with InTab current. */
     void ShowTab(GraphEditorTab* InTab);
 
-    /* Asks InTab to confirm, then removes and deletes it -- and the window
-     * with its last tab. False if the user cancelled. */
+    /* Closes after confirmation (and the window with its last tab). */
     bool CloseTab(GraphEditorTab* InTab);
 
     QList<GraphEditorTab*> GetTabs() const;

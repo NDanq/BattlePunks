@@ -1,9 +1,5 @@
-/*
- * Every editor source is wrapped in `#if WITH_EDITOR`, and Engine/CMakeLists.txt
- * only adds this module to an Editor target. This check is here, in the entry
- * point, because a missing definition would otherwise empty every file and
- * surface as a baffling "no main" link error.
- */
+/* Without WITH_EDITOR every file compiles empty and the link fails with a
+ * baffling "no main"; fail clearly here instead. */
 #ifndef WITH_EDITOR
     #error "WITH_EDITOR is not defined -- configure through Engine/CMakeLists.txt"
 #elif !WITH_EDITOR
@@ -31,11 +27,9 @@
  *
  *   NimbleEditor [--rhi N] [--play] [world.nmworld]
  *
- * The backend comes from [Editor] RHI in Config/DefaultEngine.ini when that
- * file is beside the executable (a game's staged config usually is), then
- * the user's EditorSettings.ini (Edit > Editor Settings), then --rhi. Same numbering as [Display] RHI: 0=Null, 1=OpenGL, 2=Vulkan,
- * 3=Metal, 4=D3D12. A separate key from the game's, so a game configured for
- * one backend does not force the editor onto it.
+ * Backend: [Editor] RHI from the staged DefaultEngine.ini, then the user's
+ * EditorSettings.ini, then --rhi. Numbered as [Display] RHI (0=Null,
+ * 1=OpenGL, 2=Vulkan, 3=Metal, 4=D3D12), but separate from the game's key.
  */
 NIMBLE_CONFIG_INT(GEditorRHI, "Editor", "RHI", int(RenderCore::ERenderBackend::Vulkan), nullptr);
 
@@ -73,9 +67,7 @@ int main(int argc, char* argv[])
         InitialWorld = QFileInfo(Parser.positionalArguments().front()).absoluteFilePath();
     }
 
-    /* The cooked shaders and Config/ are staged beside the executable, and
-     * every asset path is bundle-relative -- the working directory the game
-     * hosts also run from. */
+    /* Asset paths are relative to the exe's folder, as for the game hosts. */
     QDir::setCurrent(QCoreApplication::applicationDirPath());
 
     if(QFileInfo::exists(QStringLiteral("Config/DefaultEngine.ini")))

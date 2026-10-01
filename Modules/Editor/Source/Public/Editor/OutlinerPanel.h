@@ -14,13 +14,8 @@ class QTreeWidget;
 class QTreeWidgetItem;
 
 /*
- * Every live entity in the World, by display name, with the components each
- * one carries -- flat, since GameCore has no hierarchy yet. Selection is
- * two-way with EditorContext. Rebuilt on EntitiesChanged, which the context
- * coalesces to at most once per event-loop turn.
- *
- * Right-click creates an empty entity or destroys the one under the cursor
- * (Edit > Delete, on the main window, destroys the selection).
+ * A flat list of live entities and their components, selection synced with
+ * EditorContext, rebuilt on EntitiesChanged. Right-click creates or destroys.
  */
 class OutlinerPanel : public QWidget
 {
@@ -43,8 +38,7 @@ private:
     QTreeWidget* Tree   = nullptr;
     QLabel*      Footer = nullptr;
 
-    /* Set while this panel is pushing a selection into the tree, so the
-     * tree's own signal does not echo it straight back. */
+    /* Suppresses the tree's echo while we set its selection. */
     bool bSyncing = false;
 };
 

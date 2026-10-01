@@ -239,7 +239,7 @@ namespace GameCore
         }
 
         ScriptBindings_Install(P->State, InWorld);   // World/Entity/component-proxy/TickPhase/Events libraries
-        ScriptSystem_Install(P->State, InWorld);     // the World's script driver: class loading, the per-phase tick, release
+        ScriptSystem_Install(P->State, InWorld);     // the World's script driver
 
         P->BoundWorld = InWorld;
     }

@@ -17,12 +17,8 @@
 class GraphScene;
 class LinkItem;
 
-/*
- * What the graph canvas draws. Items are views of the document, rebuilt from
- * it after every change (GraphScene::Rebuild) -- they hold copies, never
- * pointers into the graph. Only a drag changes an item ahead of the document,
- * and the drop commits it.
- */
+/* Canvas items: copies of document state, rebuilt after every change. Only a
+ * drag runs ahead of the document. */
 
 /* One node: a coloured header, then a row per pin -- inputs on the left,
  * outputs on the right, execution pins first. */
