@@ -59,6 +59,15 @@ namespace
             EngineCore::MakeArchiveTag('D','A','T','A'),   // GameCore: one component instance
             EngineCore::MakeArchiveTag('N','M','S','G'),   // NimbleEngine: the save-file root
             EngineCore::MakeArchiveTag('G','M','S','T'),   // NimbleEngine: the game's GameState
+            EngineCore::MakeArchiveTag('N','M','S','H'),   // RenderCore: a .nmmesh
+            EngineCore::MakeArchiveTag('M','H','D','R'),   // RenderCore: mesh counts and bounds
+            EngineCore::MakeArchiveTag('M','V','T','X'),   // RenderCore: mesh vertices
+            EngineCore::MakeArchiveTag('M','I','D','X'),   // RenderCore: mesh indices
+            EngineCore::MakeArchiveTag('M','S','E','C'),   // RenderCore: mesh sections
+            EngineCore::MakeArchiveTag('N','T','E','X'),   // RenderCore: a .nmtexture
+            EngineCore::MakeArchiveTag('T','H','D','R'),   // RenderCore: texture size and sampling
+            EngineCore::MakeArchiveTag('T','P','I','X'),   // RenderCore: texture pixels
+            EngineCore::MakeArchiveTag('I','S','R','C'),   // RenderCore: where an imported asset came from
         };
 
         for(const uint32_t Known : KnownTags)

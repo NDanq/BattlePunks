@@ -16,6 +16,7 @@
 #include <fstream>
 #include <string>
 
+#include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreImage.h"
@@ -26,6 +27,7 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderContext.h"
@@ -35,6 +37,7 @@
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/RenderThread.h"
 #include "Public/RenderCore/RenderView.h"
+#include "Public/RenderCore/TextureAsset.h"
 
 using namespace RenderCore;
 using namespace EngineCore;
@@ -685,6 +688,161 @@ static void TestMaterials()
     SetFileProvider(PreviousProvider);
     std::filesystem::remove_all(Root, Ignored);
 }
+
+/* A two-triangle square in two sections -- small enough to check by hand. */
+static MeshData MakeSmokeMesh()
+{
+    MeshData Mesh;
+    Mesh.Positions = { 0, 0, 0,   10, 0, 0,   10, -10, 0,   0, -10, 5 };
+    Mesh.Normals   = { 0, 0, -1,  0, 0, -1,   0, 0, -1,     0, 0, -1 };
+    Mesh.UV0       = { 0, 0,      1, 0,       1, 1,         0, 1 };
+    Mesh.Indices   = { 0, 1, 2,   0, 2, 3 };
+    Mesh.Sections  = { MeshSection{ "Front", "Glow", 0, 3 }, MeshSection{ "Back", "", 3, 3 } };
+    Mesh.ImportInfo.SourcePath = "Source/Square.glb";
+    Mesh.ImportInfo.SourceTime = 1234;
+    Mesh.ImportInfo.Settings   = "Scale=1\n";
+    ComputeMeshBounds(Mesh);
+    return Mesh;
+}
+
+static bool LoadMeshFrom(const Archive& InSaved, MeshData& OutMesh)
+{
+    Archive Reader = Archive::ForReading(InSaved.GetBytes());
+    return SerializeMesh(Reader, OutMesh);
+}
+
+static void TestMeshAssets()
+{
+    std::printf("[mesh assets]\n");
+
+    MeshData Mesh = MakeSmokeMesh();
+    Expect(Mesh.BoundsMin[0] == 0.0f && Mesh.BoundsMin[1] == -10.0f && Mesh.BoundsMax[0] == 10.0f && Mesh.BoundsMax[2] == 5.0f,
+           "ComputeMeshBounds spans every position");
+
+    Archive Writer = Archive::ForWriting();
+    Expect(SerializeMesh(Writer, Mesh), "a well-formed mesh saves");
+
+    MeshData Loaded;
+    Expect(LoadMeshFrom(Writer, Loaded), "and loads back");
+    Expect(Loaded.Positions == Mesh.Positions && Loaded.Normals == Mesh.Normals && Loaded.UV0 == Mesh.UV0
+           && Loaded.Indices == Mesh.Indices, "with the same vertices and indices");
+    Expect(Loaded.Sections.size() == 2 && Loaded.Sections[0].Name == "Front" && Loaded.Sections[0].Material == "Glow"
+           && Loaded.Sections[1].FirstIndex == 3 && Loaded.Sections[1].IndexCount == 3, "the same sections");
+    Expect(Loaded.BoundsMax[2] == 5.0f && Loaded.ImportInfo.SourcePath == "Source/Square.glb"
+           && Loaded.ImportInfo.SourceTime == 1234 && Loaded.ImportInfo.Settings == "Scale=1\n",
+           "the same bounds and import source");
+
+    MeshData NoSource = MakeSmokeMesh();
+    NoSource.ImportInfo = AssetImportInfo();
+    Archive NoSourceWriter = Archive::ForWriting();
+    MeshData NoSourceLoaded;
+    Expect(SerializeMesh(NoSourceWriter, NoSource) && LoadMeshFrom(NoSourceWriter, NoSourceLoaded)
+           && NoSourceLoaded.ImportInfo.IsEmpty(), "the import source is optional");
+
+    MeshData BadIndex = MakeSmokeMesh();
+    BadIndex.Indices[4] = 9;
+    Archive BadIndexWriter = Archive::ForWriting();
+    SerializeMesh(BadIndexWriter, BadIndex);
+    MeshData BadIndexLoaded;
+    Expect(!LoadMeshFrom(BadIndexWriter, BadIndexLoaded), "an index past the last vertex is refused on load");
+
+    MeshData BadSection = MakeSmokeMesh();
+    BadSection.Sections[1].IndexCount = 6;
+    Archive BadSectionWriter = Archive::ForWriting();
+    SerializeMesh(BadSectionWriter, BadSection);
+    MeshData BadSectionLoaded;
+    Expect(!LoadMeshFrom(BadSectionWriter, BadSectionLoaded), "a section past the last index is refused on load");
+
+    MeshData NoNormals = MakeSmokeMesh();
+    NoNormals.Normals.pop_back();
+    Archive NoNormalsWriter = Archive::ForWriting();
+    Expect(!SerializeMesh(NoNormalsWriter, NoNormals), "a mesh missing a normal does not save");
+
+    std::vector<uint8_t> Truncated = Writer.GetBytes();
+    Truncated.resize(Truncated.size() / 2);
+    Archive TruncatedReader = Archive::ForReading(Truncated);
+    MeshData TruncatedLoaded;
+    Expect(!SerializeMesh(TruncatedReader, TruncatedLoaded), "a truncated mesh fails to load");
+
+    TextureData Texture;
+    Texture.Pixels = Image(2, 2, EImageFormat::RGBA8);
+    Archive TextureWriter = Archive::ForWriting();
+    SerializeTexture(TextureWriter, Texture);
+    Archive WrongTag = Archive::ForReading(TextureWriter.GetBytes());
+    MeshData WrongTagLoaded;
+    Expect(!SerializeMesh(WrongTag, WrongTagLoaded), "a texture is not a mesh");
+
+    /* Through files and the cache, as a RenderComponent finds one. */
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreMeshes";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Root, Ignored);
+    FilesystemProvider Provider(Root.generic_string());
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Provider);
+
+    MeshData ToSave = MakeSmokeMesh();
+    Expect(SaveMeshFile((Root / "Content" / "Square.nmmesh").generic_string(), ToSave), "SaveMeshFile writes, making folders");
+
+    MeshHeader Header;
+    Expect(LoadMeshHeader("Content/Square.nmmesh", Header) && Header.VertexCount == 4 && Header.IndexCount == 6
+           && Header.SectionCount == 2 && Header.BoundsMin[1] == -10.0f, "LoadMeshHeader reads counts and bounds");
+
+    MeshAssetCache::Invalidate(std::string());
+    const std::shared_ptr<const MeshData> First = MeshAssetCache::Find("Content/Square.nmmesh");
+    Expect(First && First->GetTriangleCount() == 2, "MeshAssetCache::Find loads through the file provider");
+    Expect(MeshAssetCache::Find("Content/Square.nmmesh") == First, "and keeps what it loaded");
+    Expect(!MeshAssetCache::Find("Content/Missing.nmmesh"), "a missing mesh is null");
+    MeshAssetCache::Invalidate("Content/Square.nmmesh");
+    const std::shared_ptr<const MeshData> Second = MeshAssetCache::Find("Content/Square.nmmesh");
+    Expect(Second && Second != First, "Invalidate makes the next Find load afresh");
+    MeshAssetCache::Invalidate(std::string());
+
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
+
+static void TestTextureAssets()
+{
+    std::printf("[texture assets]\n");
+
+    TextureData Texture;
+    Texture.Pixels = Image(3, 2, EImageFormat::RGBA8);
+    for(size_t At = 0; At < Texture.Pixels.GetSizeBytes(); ++At) { Texture.Pixels.GetData()[At] = uint8_t(At * 7); }
+    Texture.bSRGB  = false;
+    Texture.Filter = ETextureFilter::Nearest;
+    Texture.Wrap   = ETextureWrap::Mirror;
+    Texture.ImportInfo.SourcePath = "Source/Bricks.png";
+
+    Archive Writer = Archive::ForWriting();
+    Expect(SerializeTexture(Writer, Texture), "an RGBA8 texture saves");
+
+    TextureData Loaded;
+    Archive Reader = Archive::ForReading(Writer.GetBytes());
+    Expect(SerializeTexture(Reader, Loaded), "and loads back");
+    Expect(Loaded.Pixels.GetWidth() == 3 && Loaded.Pixels.GetHeight() == 2
+           && std::memcmp(Loaded.Pixels.GetData(), Texture.Pixels.GetData(), Texture.Pixels.GetSizeBytes()) == 0,
+           "with the same pixels");
+    Expect(!Loaded.bSRGB && Loaded.Filter == ETextureFilter::Nearest && Loaded.Wrap == ETextureWrap::Mirror
+           && Loaded.ImportInfo.SourcePath == "Source/Bricks.png", "the same sampling and import source");
+
+    TextureData Gray;
+    Gray.Pixels = Image(2, 2, EImageFormat::Gray8);
+    Archive GrayWriter = Archive::ForWriting();
+    Expect(!SerializeTexture(GrayWriter, Gray), "a non-RGBA8 texture does not save");
+
+    std::vector<uint8_t> Truncated = Writer.GetBytes();
+    Truncated.resize(Truncated.size() - 8);
+    Archive TruncatedReader = Archive::ForReading(Truncated);
+    TextureData TruncatedLoaded;
+    Expect(!SerializeTexture(TruncatedReader, TruncatedLoaded), "a truncated texture fails to load");
+
+    MeshData Mesh = MakeSmokeMesh();
+    Archive MeshWriter = Archive::ForWriting();
+    SerializeMesh(MeshWriter, Mesh);
+    Archive WrongTag = Archive::ForReading(MeshWriter.GetBytes());
+    TextureData WrongTagLoaded;
+    Expect(!SerializeTexture(WrongTag, WrongTagLoaded), "a mesh is not a texture");
+}
 #endif // WITH_EDITOR
 
 int main()
@@ -718,6 +876,8 @@ int main()
 #if WITH_EDITOR
     TestDebugLines();
     TestMaterials();
+    TestMeshAssets();
+    TestTextureAssets();
 #endif
 
     const uint64_t Leaked = Memory::ReportLeaks();

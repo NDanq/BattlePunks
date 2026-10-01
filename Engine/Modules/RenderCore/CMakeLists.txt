@@ -53,6 +53,9 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/MaterialPreview.h
         Source/Private/RenderCore/RenderComponentProxy.cpp
         Source/Private/RenderCore/RenderComponents.cpp
+        Source/Private/RenderCore/AssetFileCommon.h
+        Source/Private/RenderCore/MeshAsset.cpp
+        Source/Private/RenderCore/TextureAsset.cpp
         Source/Private/RenderCore/WorldBridge.h
         Source/Private/RenderCore/WorldBridge.cpp
         Source/Private/RenderCore/Renderer.cpp
@@ -66,6 +69,9 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RenderView.h
         Source/Public/RenderCore/RenderProxy.h
         Source/Public/RenderCore/RenderScene.h
+        Source/Public/RenderCore/AssetImportInfo.h
+        Source/Public/RenderCore/MeshAsset.h
+        Source/Public/RenderCore/TextureAsset.h
         Source/Public/RenderCore/RenderComponents.h
         Source/Public/RenderCore/Renderer.h
 )
