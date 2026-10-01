@@ -38,6 +38,7 @@ protected:
     struct OGLFrameBuffer{
         uint FrameBufferID = 0;
         GDITexture2D* FrameTexture;
+        uint DepthBufferID = 0;   // a 24-bit depth renderbuffer, for 3D draws' depth test
     } FrameBuffer;
 };
 

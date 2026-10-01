@@ -374,12 +374,37 @@ void VulkanDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
     Barrier.subresourceRange.layerCount = 1;
     Barriers.push_back(Barrier);
 
+    // The depth image: out of UNDEFINED on first use (and cleared by the
+    // loadOp below, as its contents are garbage); otherwise ordered after the
+    // previous pass's depth writes.
+    const bool bHasDepth      = VKRT->HasDepth();
+    const bool bDepthIsFresh  = bHasDepth && VKRT->GetDepthLayout() == VK_IMAGE_LAYOUT_UNDEFINED;
+    if(bHasDepth)
+    {
+        VkImageMemoryBarrier2 DepthBarrier{};
+        DepthBarrier.sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        DepthBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        DepthBarrier.dstStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        DepthBarrier.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        DepthBarrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        DepthBarrier.oldLayout     = VKRT->GetDepthLayout();
+        DepthBarrier.newLayout     = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        DepthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        DepthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        DepthBarrier.image         = VKRT->GetDepthImage();
+        DepthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+        DepthBarrier.subresourceRange.levelCount = 1;
+        DepthBarrier.subresourceRange.layerCount = 1;
+        Barriers.push_back(DepthBarrier);
+    }
+
     VkDependencyInfo Dep{};
     Dep.sType                   = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
     Dep.imageMemoryBarrierCount = uint32_t(Barriers.size());
     Dep.pImageMemoryBarriers    = Barriers.data();
     vkCmdPipelineBarrier2(CurrentStateData->CurrentCmd, &Dep);
     VKRT->SetCurrentLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    if(bHasDepth) VKRT->SetDepthLayout(VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
     // Begin dynamic rendering region.
     VkRenderingAttachmentInfo ColorAttachment{};
@@ -396,6 +421,18 @@ void VulkanDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
     RenderingInfo.layerCount           = 1;
     RenderingInfo.colorAttachmentCount = 1;
     RenderingInfo.pColorAttachments    = &ColorAttachment;
+
+    VkRenderingAttachmentInfo DepthAttachment{};
+    if(bHasDepth)
+    {
+        DepthAttachment.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        DepthAttachment.imageView   = VKRT->GetDepthView();
+        DepthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+        DepthAttachment.loadOp      = bDepthIsFresh ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
+        DepthAttachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
+        DepthAttachment.clearValue.depthStencil.depth = 1.0f;
+        RenderingInfo.pDepthAttachment = &DepthAttachment;
+    }
     vkCmdBeginRendering(CurrentStateData->CurrentCmd, &RenderingInfo);
 
     CurrentStateData->ActiveRenderTarget = VKRT;
@@ -595,6 +632,19 @@ GDIMesh* VulkanDynamicGDI::CreateQuadMesh(const float* VertData, const float* Te
     auto* Mesh = new VKMesh(DeviceObj, CurrentStateData);
     Mesh->SetRenderData(RenderData);
     Mesh->SetSupportsInstanced(bIsInstanced);
+    Mesh->InitResource();
+    return Mesh;
+}
+
+GDIMesh* VulkanDynamicGDI::CreateMesh(const GDIMeshDesc& InDesc)
+{
+    if(!DeviceObj || !CurrentStateData) return nullptr;
+
+    GDIMesh::ORenderData RenderData;
+    if(!GDIMakeIndexedRenderData(InDesc, RenderData)) return nullptr;
+
+    auto* Mesh = new VKMesh(DeviceObj, CurrentStateData);
+    Mesh->SetRenderData(RenderData);
     Mesh->InitResource();
     return Mesh;
 }
@@ -836,7 +886,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     VKPipelineCache::PipelineKey Key{};
     Key.VertexShader    = CurrentStateData->BoundVSModule;
     Key.FragmentShader  = CurrentStateData->BoundFSModule;
-    Key.VertexLayoutID  = bIsInstanced ? 1u : 0u;
+    Key.VertexLayoutID  = InMesh->IsIndexed() ? 2u : (bIsInstanced ? 1u : 0u);
     Key.DescLayoutGroup = Group;
 
     if(CurrentStateData->BlendState)
@@ -855,10 +905,14 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
         const VkPipelineDepthStencilStateCreateInfo& DS =
             CurrentStateData->DepthStencilState->StateInfo;
         VKPipelineCache::ApplyDepthStencilState(Key,
-            DS.depthTestEnable, DS.depthWriteEnable, DS.stencilTestEnable);
+            DS.depthTestEnable, DS.depthWriteEnable, DS.stencilTestEnable,
+            DS.depthCompareOp);
     }
     if(CurrentStateData->ActiveRenderTarget)
-        Key.RTFormat = CurrentStateData->ActiveRenderTarget->GetFormat();
+    {
+        Key.RTFormat    = CurrentStateData->ActiveRenderTarget->GetFormat();
+        Key.DepthFormat = CurrentStateData->ActiveRenderTarget->GetDepthFormat();
+    }
 
     // ----------------------------------------------------------------
     // 4. Fetch pipeline + layouts

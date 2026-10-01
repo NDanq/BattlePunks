@@ -60,6 +60,8 @@ enum EDescriptorLayoutGroup : uint32_t
  * Vertex layout IDs (PipelineKey::VertexLayoutID):
  *   0 — standard:  binding 0 = vec3 position, binding 1 = vec2 texcoord
  *   1 — instanced: bindings 0+1 as above, binding 2 = mat4 per-instance transform
+ *   2 — mesh:      bindings 0+1 as above, binding 2 = vec3 normal (location 8);
+ *                  an indexed mesh from GDICreateMesh
  */
 class VKPipelineCache
 {
@@ -99,6 +101,9 @@ public:
 
         // Render-target format and primitive topology.
         VkFormat              RTFormat          = VK_FORMAT_R8G8B8A8_UNORM;
+        // The render target's depth attachment, UNDEFINED for none. Part of the
+        // pipeline (dynamic rendering requires it to match the attachment).
+        VkFormat              DepthFormat       = VK_FORMAT_UNDEFINED;
         VkPrimitiveTopology   Topology          = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
     };
 
@@ -129,7 +134,8 @@ public:
     static void ApplyDepthStencilState(PipelineKey& Key,
                                        VkBool32     DepthTest,
                                        VkBool32     DepthWrite,
-                                       VkBool32     StencilTest);
+                                       VkBool32     StencilTest,
+                                       VkCompareOp  DepthCompare = VK_COMPARE_OP_LESS);
 
     // -------------------------------------------------------------------
     // Life-cycle

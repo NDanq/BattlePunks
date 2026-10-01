@@ -52,6 +52,16 @@ GDIMesh* OpenGLDynamicGDI::CreateQuadMesh(const float* VertData, const float* Te
     return (GDIMesh*)Mesh;
 }
 
+GDIMesh* OpenGLDynamicGDI::CreateMesh(const GDIMeshDesc& InDesc)
+{
+    GDIMesh::ORenderData RenderData;
+    if(!GDIMakeIndexedRenderData(InDesc, RenderData)) return nullptr;
+
+    auto* Mesh = new OpenGLMesh(RenderData);
+    Mesh->InitResource();
+    return Mesh;
+}
+
 GDIMesh* OpenGLDynamicGDI::CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced)
 {
     const float HalfWidth = InWidth * 0.5f;
@@ -114,10 +124,28 @@ void OpenGLMesh::InitResource()
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
 
+    // NumVertices counts position FLOATS (3 per vertex); a texcoord is 2.
     glBindBuffer(GL_ARRAY_BUFFER, VBO[ORenderData::Buffers::TEXCOORD_BUFFER]);
-    glBufferData(GL_ARRAY_BUFFER, NumVertices*sizeof(float), RenderData.TexCoord, GL_STATIC_DRAW);
+    glBufferData(GL_ARRAY_BUFFER, (NumVertices / 3) * 2 * sizeof(float), RenderData.TexCoord, GL_STATIC_DRAW);
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+
+    if( RenderData.Normal )
+    {
+        glGenBuffers(1, &NormalVBO);
+        glBindBuffer(GL_ARRAY_BUFFER, NormalVBO);
+        glBufferData(GL_ARRAY_BUFFER, NumVertices * sizeof(float), RenderData.Normal, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(8);
+        glVertexAttribPointer(8, 3, GL_FLOAT, GL_FALSE, 0, nullptr);
+    }
+
+    if( IsIndexed() )
+    {
+        // Bound while the VAO is: the VAO records the element buffer.
+        glGenBuffers(1, &IndexEBO);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexEBO);
+        glBufferData(GL_ELEMENT_ARRAY_BUFFER, RenderData.NumIndices * sizeof(uint32_t), RenderData.Indices, GL_STATIC_DRAW);
+    }
 
     if( bSupportsInstanced )
     {
@@ -168,9 +196,10 @@ void OpenGLMesh::Release()
     const int NumBuffersToDelete = bSupportsInstanced ? (int)ORenderData::Buffers::NUM_BUFFERS
                                                        : (int)ORenderData::Buffers::INSTANCED_TRANSFORM_BUFFER;
     glDeleteBuffers(NumBuffersToDelete, VBO);
+    if(NormalVBO) { glDeleteBuffers(1, &NormalVBO); NormalVBO = 0; }
+    if(IndexEBO)  { glDeleteBuffers(1, &IndexEBO);  IndexEBO  = 0; }
     glDeleteVertexArrays(1, &VAO);
-    free(RenderData.Position);
-    free(RenderData.TexCoord);
+    FreeRenderData();
 }
 
 void OpenGLMesh::Draw()
@@ -180,7 +209,17 @@ void OpenGLMesh::Draw()
 
     const uint DrawCount = RenderData.NumVertices / 3;
 
-    if( bSupportsInstanced )
+    if( IsIndexed() )
+    {
+        uint32_t First = 0, Count = 0;
+        GetClampedDrawRange(First, Count);
+        if( Count > 0 )
+        {
+            glDrawElements(GL_TRIANGLES, GLsizei(Count), GL_UNSIGNED_INT,
+                           reinterpret_cast<const void*>(uintptr_t(First) * sizeof(uint32_t)));
+        }
+    }
+    else if( bSupportsInstanced )
     {
         //GDI_LOG("Instances Drawn: " + ::GDILogDetail::GDINum(NumInstanced));
         glDrawArraysInstanced(GL_TRIANGLES, 0, DrawCount, NumInstanced);

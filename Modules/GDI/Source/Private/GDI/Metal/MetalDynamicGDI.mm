@@ -385,6 +385,17 @@ GDIMesh* MetalDynamicGDI::CreateQuadMesh(const float* VertData, const float* Tex
     return Mesh;
 }
 
+GDIMesh* MetalDynamicGDI::CreateMesh(const GDIMeshDesc& /*InDesc*/)
+{
+    static bool bWarned = false;
+    if(!bWarned)
+    {
+        GDI_LOG("[MetalDynamicGDI] indexed meshes are not supported on Metal yet; meshes draw as quads")
+        bWarned = true;
+    }
+    return nullptr;
+}
+
 GDIMesh* MetalDynamicGDI::CreateQuadMesh(const float& InWidth, const float& InHeight,
                                           bool bIsInstanced)
 {

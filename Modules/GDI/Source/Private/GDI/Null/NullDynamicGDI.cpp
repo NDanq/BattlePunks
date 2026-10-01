@@ -168,6 +168,14 @@ GDIMesh* NullDynamicGDI::CreateQuadMesh(const float& InWidth, const float& InHei
     return Mesh;
 }
 
+GDIMesh* NullDynamicGDI::CreateMesh(const GDIMeshDesc& InDesc)
+{
+    GDIMesh::ORenderData Data;
+    if(!GDIMakeIndexedRenderData(InDesc, Data)) return nullptr;
+    Stats.MeshesCreated++;
+    return new NullMesh(Data);
+}
+
 GDITextureResource* NullDynamicGDI::CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
 {
     Stats.TextureResourcesCreated++;

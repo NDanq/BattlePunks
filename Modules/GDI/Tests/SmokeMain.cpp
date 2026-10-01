@@ -136,6 +136,40 @@ static void TestResourceCreation()
     delete Mesh;
     GDIReleaseRenderTarget(RT);
     delete RT;
+
+    // An indexed mesh: two triangles over four vertices.
+    const float    Positions[] = { 0, 0, 0,   1, 0, 0,   1, 1, 0,   0, 1, 0 };
+    const float    Normals[]   = { 0, 0, -1,  0, 0, -1,  0, 0, -1,  0, 0, -1 };
+    const float    UVs[]       = { 0, 0,      1, 0,      1, 1,      0, 1 };
+    const uint32_t Indices[]   = { 0, 1, 2,   0, 2, 3 };
+
+    GDIMeshDesc Desc;
+    Desc.Positions   = Positions;
+    Desc.Normals     = Normals;
+    Desc.UV0         = UVs;
+    Desc.NumVertices = 4;
+    Desc.Indices     = Indices;
+    Desc.NumIndices  = 6;
+
+    GDIMesh* Indexed = GDICreateMesh(Desc);
+    Expect(Indexed != nullptr && Indexed->IsIndexed() && Indexed->GetNumIndices() == 6,
+           "GDICreateMesh builds an indexed mesh");
+    if(Indexed)
+    {
+        Indexed->SetDrawRange(3, 3);
+        Indexed->Draw();
+        Indexed->Release();
+        delete Indexed;
+    }
+
+    const uint32_t BadIndices[] = { 0, 1, 4 };
+    Desc.Indices    = BadIndices;
+    Desc.NumIndices = 3;
+    Expect(GDICreateMesh(Desc) == nullptr, "GDICreateMesh refuses an index past the last vertex");
+
+    Desc.Indices    = Indices;
+    Desc.NumIndices = 5;
+    Expect(GDICreateMesh(Desc) == nullptr, "GDICreateMesh refuses a partial triangle");
 }
 
 static void TestRenderTargetManagerCycle()

@@ -96,6 +96,12 @@ private:
     VkBuffer             TexCoordBuffer  = VK_NULL_HANDLE;
     VkDeviceMemory       TexCoordMemory  = VK_NULL_HANDLE;
 
+    /** Indexed meshes only (GDICreateMesh): vec3 normals (binding 2, location 8) and uint32 indices. */
+    VkBuffer             NormalBuffer    = VK_NULL_HANDLE;
+    VkDeviceMemory       NormalMemory    = VK_NULL_HANDLE;
+    VkBuffer             IndexBuffer     = VK_NULL_HANDLE;
+    VkDeviceMemory       IndexMemory     = VK_NULL_HANDLE;
+
     /** Only valid when bSupportsInstanced == true. */
     VkBuffer             InstanceBuffer  = VK_NULL_HANDLE;
     VkDeviceMemory       InstanceMemory  = VK_NULL_HANDLE;

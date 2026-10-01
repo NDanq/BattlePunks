@@ -55,6 +55,12 @@ public:
         UINT8                   WriteMask       = D3D12_COLOR_WRITE_ENABLE_ALL;
 
         DXGI_FORMAT             RTFormat        = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+        // The render target's depth buffer (UNKNOWN for none) and its test.
+        DXGI_FORMAT             DSVFormat       = DXGI_FORMAT_UNKNOWN;
+        BOOL                    DepthEnable     = FALSE;
+        BOOL                    DepthWrite      = FALSE;
+        D3D12_COMPARISON_FUNC   DepthFunc       = D3D12_COMPARISON_FUNC_LESS;
     };
 
     D3D12PipelineCache()  = default;

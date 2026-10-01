@@ -188,6 +188,8 @@ void InitializeGDI( ERenderPlatform Platform, EngineCore::WindowHandle InWindow 
         GDIRegisterShader<UberBrush_PS>("UberBrush.fsh", ST_Pixel);
         GDIRegisterShader<LayerBlit_PS>("LayersBlit.fsh", ST_Pixel);
         GDIRegisterShader<Checkerboard_PS>("Checkerboard.fsh", ST_Pixel);
+        GDIRegisterShader<Mesh_VS>("Mesh.vsh", ST_Vertex);
+        GDIRegisterShader<Mesh_PS>("Mesh.fsh", ST_Pixel);
     }
 }
 
@@ -210,6 +212,44 @@ void ReleaseGDI()
     // InitializeGDI() call would leak the old one.
     delete GSync;
     GSync = nullptr;
+}
+
+bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& OutData)
+{
+    if(!InDesc.Positions || !InDesc.Normals || !InDesc.UV0 || !InDesc.Indices) return false;
+    if(InDesc.NumVertices == 0 || InDesc.NumIndices == 0 || InDesc.NumIndices % 3 != 0) return false;
+    for(uint32_t At = 0; At < InDesc.NumIndices; ++At)
+    {
+        if(InDesc.Indices[At] >= InDesc.NumVertices) return false;
+    }
+
+    const auto Copy = [](const void* InSource, const size_t InBytes) -> void*
+    {
+        void* Block = malloc(InBytes);
+        if(Block) memcpy(Block, InSource, InBytes);
+        return Block;
+    };
+
+    GDIMesh::ORenderData Data;
+    Data.Position   = static_cast<float*>(Copy(InDesc.Positions, sizeof(float) * 3 * InDesc.NumVertices));
+    Data.Normal     = static_cast<float*>(Copy(InDesc.Normals, sizeof(float) * 3 * InDesc.NumVertices));
+    Data.TexCoord   = static_cast<float*>(Copy(InDesc.UV0, sizeof(float) * 2 * InDesc.NumVertices));
+    Data.Indices    = static_cast<uint32_t*>(Copy(InDesc.Indices, sizeof(uint32_t) * InDesc.NumIndices));
+    Data.NumIndices = InDesc.NumIndices;
+
+    /* As CreateQuadMesh: the POSITION FLOAT count, not the vertex count. */
+    Data.NumVertices = InDesc.NumVertices * 3;
+
+    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Indices)
+    {
+        free(Data.Position);
+        free(Data.Normal);
+        free(Data.TexCoord);
+        free(Data.Indices);
+        return false;
+    }
+    OutData = Data;
+    return true;
 }
 
 void GDIDynamicDriver::DrawObject(GDIViewObject *InObject)
@@ -340,6 +380,13 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(GDIMesh*,
                             (const float& InWidth, const float& InHeight, bool bIsInstanced),
                             return,
                             (InWidth, InHeight, bIsInstanced)
+                            )
+
+IMPLEMENT_GDI_FUNCTION_BODY_RET(GDIMesh*,
+                            CreateMesh,
+                            (const GDIMeshDesc& InDesc),
+                            return,
+                            (InDesc)
                             )
 
 IMPLEMENT_GDI_FUNCTION_BODY(void,
