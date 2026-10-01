@@ -326,12 +326,15 @@ if(SANDBOX_CONTENT_FILES)
 endif()
 
 # === Materials/ =============================================================
-# Material graphs and their generated .fsh / .material, cooked for every built
-# backend and staged by name (Engine/cmake/NimbleMaterials.cmake).
+# Material graphs and their generated .mtl.glsl / .material, cooked for every
+# built backend into SandboxGame's shader cache, which GameModuleHost mounts
+# with the module -- and, in Editor targets, staged loose as well
+# (Engine/cmake/NimbleMaterials.cmake).
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
-    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" RUNTIME_DIR "${SANDBOX_RT_DIR}")
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" MODULE SandboxGame
+                           RUNTIME_DIR "${SANDBOX_RT_DIR}")
 else()
-    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials")
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" MODULE SandboxGame)
 endif()
 
 # === IDE ===================================================================
