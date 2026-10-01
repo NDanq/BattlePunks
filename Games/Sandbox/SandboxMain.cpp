@@ -5,13 +5,11 @@
 #include <cstdio>
 
 /*
- * Sandbox's launcher. The game itself -- levels, mode, state, systems -- is in
- * the SandboxGame module (SandboxGame.cpp), which this does not link: it runs
- * the engine and lets Application::ExecGame load the module named by
- * [Game] Module in Config/DefaultEngine.ini, "SandboxGame" if unset.
+ * Sandbox's launcher. The game is the SandboxGame module, loaded (not linked)
+ * by Application::ExecGame from [Game] Module, "SandboxGame" if unset.
  *
- * No log handler, deliberately: without one a Fatal aborts, while a handler
- * turns every CORE_CHECK into print-and-continue -- harder to debug this early.
+ * No log handler, deliberately: without one a Fatal aborts instead of
+ * continuing.
  */
 int main(int /*argc*/, char** /*argv*/)
 {
@@ -20,9 +18,7 @@ int main(int /*argc*/, char** /*argv*/)
         App.ExecGame("SandboxGame");
     }
 
-    /* After the Application is destroyed and the module unloaded, so neither's
-     * members are counted; explicit rather than a static destructor
-     * (CoreGarbageCollector.h). */
+    /* After the Application and module are gone (CoreGarbageCollector.h). */
     const uint64_t Leaked = EngineCore::Memory::ReportLeaks();
 
     if(Leaked != 0)

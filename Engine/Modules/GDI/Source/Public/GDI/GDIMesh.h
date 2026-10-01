@@ -8,14 +8,12 @@
 #include <vector>
 
 /*
- * What GDICreateMesh builds an indexed, lit mesh from: one position (xyz),
- * normal (xyz) and UV (uv) per vertex, and a triangle list of indices. Copied;
- * the caller keeps its arrays. Vertex attributes are at fixed locations,
- * shared by every backend and shader:
+ * Input to GDICreateMesh: per-vertex position, normal and UV, plus a triangle
+ * index list. Copied. Fixed attribute locations on every backend:
  *
- *   location 0  vec3 position      (as every GDIMesh)
- *   location 1  vec2 texcoord      (as every GDIMesh)
- *   location 8  vec3 normal        (indexed meshes only; 2-7 are instancing's)
+ *   location 0  vec3 position
+ *   location 1  vec2 texcoord
+ *   location 8  vec3 normal        (indexed only; 2-7 are instancing's)
  */
 struct GDIMeshDesc
 {
@@ -161,13 +159,8 @@ public:
     inline bool     IsIndexed()     const { return RenderData.Indices != nullptr && RenderData.NumIndices > 0; }
     inline uint32_t GetNumIndices() const { return RenderData.NumIndices; }
 
-    /*
-     * Which indices the next Draw() of an indexed mesh uses: InCount from
-     * InFirst, clamped to the mesh. A count of 0 means all of them. Lets one
-     * mesh draw its sections one at a time, each with its own shaders,
-     * through the same DrawObject path every other mesh takes. Ignored by
-     * non-indexed meshes.
-     */
+    /* Index range for the next Draw() of an indexed mesh (clamped; count 0 =
+     * all), so sections can draw with different shaders. */
     inline void SetDrawRange(const uint32_t InFirst, const uint32_t InCount)
     {
         DrawFirstIndex = InFirst;

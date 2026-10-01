@@ -43,19 +43,15 @@ namespace RenderCore
         bool       bHasViewOverride = false;
         RenderView ViewOverride;
 
-        /* Game-thread side of DrawDebugLine; handed over and cleared by
-         * every EndFrame(). */
+        /* Handed over and cleared by every EndFrame(). */
         std::vector<DebugLine> PendingDebugLines;
 
         /* RequestMaterialPreview's results, delivered by the render thread. */
         MaterialPreviewMailbox Previews;
         uint64_t               LastPreviewRequest = 0;
 
-        /* Hands this frame's lines to the scene, ahead of the render command
-         * EndFrame enqueues, so the scene holds them when it renders. One
-         * Memory::Allocate'd copy, freed by the command -- DebugLine is
-         * trivially copyable, and a command may only capture values
-         * (RenderCommand.h). */
+        /* Enqueued ahead of EndFrame's render command, as one allocated copy
+         * the command frees (commands capture values only). */
         void SubmitDebugLines()
         {
             if(Scene && !PendingDebugLines.empty())
@@ -190,10 +186,8 @@ namespace RenderCore
             return;
         }
 
-        /* Corner i takes Max on axis k when bit k of i is set. An edge joins
-         * two corners that differ in exactly one bit -- twelve of them. An
-         * axis with no extent is collapsed first: its corners coincide, and
-         * walking both would draw every remaining edge twice. */
+        /* Corner i takes Max on axis k when bit k is set; edges join corners
+         * one bit apart. Flat axes are collapsed to avoid duplicate edges. */
         int FlatAxes = 0;
         if(InBox.Min.GetX() == InBox.Max.GetX()) { FlatAxes |= 1; }
         if(InBox.Min.GetY() == InBox.Max.GetY()) { FlatAxes |= 2; }
@@ -236,8 +230,7 @@ namespace RenderCore
             return;
         }
 
-        /* A fixed buffer, by value: a command may only capture trivially
-         * copyable values (RenderCommand.h). */
+        /* By value: commands capture trivially copyable values only. */
         struct NameBuffer { char Text[RENDER_MATERIAL_NAME_MAX]; };
         NameBuffer Name{};
         const size_t Length = InName ? std::strlen(InName) : 0;
@@ -293,9 +286,7 @@ namespace RenderCore
 
     void Renderer::EndFrame(const FrameInfo& InFrame)
     {
-        /* The editor's two hooks into the frame: its overlay lines and its own
-         * camera. A Client or Server target has neither -- the view always
-         * comes from the World's CameraComponent. */
+        /* The editor's overlay lines and camera override. */
         const RenderView* ViewOverride = nullptr;
 #if WITH_EDITOR
         P->SubmitDebugLines();

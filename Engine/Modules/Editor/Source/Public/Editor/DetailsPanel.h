@@ -24,30 +24,17 @@ class QToolButton;
 class QVBoxLayout;
 
 /*
- * The selected entity: first its members (name and script path -- not
- * components, so not removable), then its components, one collapsible section
- * each, showing only the fields its type registered with
- * GAMECORE_DEFINE_COMPONENT_PROPERTIES. A component with no property list
- * still gets a header, so the panel tells the whole truth about what the
- * entity carries.
+ * The selected entity: its members (name, script), then one collapsible
+ * section per component with its registered properties (a header even if it
+ * has none).
  *
- *   Entity         Name, Script (a .lua path, typed or browsed), the script's
- *                  run status (only a playing World runs scripts) and its
- *                  cull-outside-active-region flag.
+ *   Entity         Name, Script, the script's run status, cull flag.
+ *   Per property   a reset arrow while the value differs from the default.
+ *   Per component  Reset and Remove in the header.
+ *   At the bottom  Add Component (addable types the entity lacks).
  *
- *   Per property   a reset arrow to the right, shown only while the value
- *                  differs from the type's default-constructed one; clicking
- *                  it puts that property back.
- *   Per component  Reset (every writable property to default) and Remove, in
- *                  the section header.
- *   At the bottom  Add Component: every type with a property list that the
- *                  entity lacks and that did not opt out (CPF_NotAddable),
- *                  added from its default-constructed bytes.
- *
- * Rebuilt when the selection or the entity's set of components changes;
- * otherwise the editors and reset arrows re-read their values on a short
- * timer, so a change made elsewhere (the viewport, a script) shows up
- * without a signal per field.
+ * Rebuilt when the selection or component set changes; values are re-read on
+ * a short timer to pick up outside changes.
  */
 class DetailsPanel : public QWidget
 {

@@ -181,8 +181,7 @@ namespace EditorContent
             return Image;
         }
 
-        /* An existing asset's import record, read straight from the file --
-         * not through the file provider, which is rooted at the executable. */
+        /* Read directly, not via the file provider (rooted at the exe). */
         bool ReadImportInfo(const QString& InAssetPath, EImportKind& OutKind, RenderCore::AssetImportInfo& OutInfo, QString& OutError)
         {
             QFile File(InAssetPath);
@@ -464,9 +463,8 @@ namespace EditorContent
             return ImportTexture(Source, Folder, Base, TextureImportOptions::FromSettings(Settings), InProjectRoot);
         }
 
-        /* A mesh: the same options, written back over this one file -- a
-         * split mesh picks its own part out of the scene again. Textures are
-         * reimported on their own. */
+        /* Same options, over this one file (a split mesh finds its part
+         * again). Textures reimport separately. */
         MeshImportOptions Options = MeshImportOptions::FromSettings(Settings);
         Options.bImportTextures = false;
         const QString Part = ParseSettings(Settings).value(QStringLiteral("Mesh"));

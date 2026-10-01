@@ -24,14 +24,11 @@ class ViewportPanel;
 class ViewportWidget;
 
 /*
- * The editor's frame: the viewport (with its navigation toolbar) in the
- * centre, the Outliner docked left, the Details panel docked right and the
- * Console docked below, File/Edit/View/Play/Build/Help menus and a status bar with render
- * stats. Owns the EditorConsole and registers the scene commands on it.
+ * The editor's frame: viewport, docks (Outliner, Details, Console), menus and
+ * a render-stats status bar. Owns the EditorConsole's scene commands.
  *
- * The Renderer is started from here, once the window has been shown -- the
- * viewport's native window must exist before GDI builds a swapchain on it --
- * and shut down in closeEvent, while that window still exists to be released.
+ * Starts the Renderer once shown (the native window must exist) and stops it
+ * in closeEvent (while it still does).
  */
 class EditorMainWindow : public QMainWindow
 {
@@ -44,12 +41,10 @@ public:
     /* Opens InPath on startup instead of the demo scene; call before show(). */
     void SetInitialWorld(const QString& InPath) { InitialWorld = InPath; }
 
-    /* Starts the SDL input probe as soon as the viewport is up (the
-     * --sdl-input-probe switch); see SDLInputProbe.h. Call before show(). */
+    /* --sdl-input-probe (SDLInputProbe.h). Call before show(). */
     void SetStartSDLInputProbe(bool bInStart) { bStartSDLInputProbe = bInStart; }
 
-    /* Starts Play-in-Editor as soon as the renderer is up (the --play
-     * switch). Call before show(). */
+    /* --play. Call before show(). */
     void SetStartPlay(bool bInStart) { bStartPlay = bInStart; }
 
 protected:

@@ -8,8 +8,7 @@ UBO_BEGIN(2, Mesh_Block)
     SHADER_UNIFORM(vec3, Tint)
 UBO_END(Mesh_Block)
 
-// A mesh with no material: its Tint, lit by one fixed light. The engine's
-// world is +Y down, so the light comes from above (-Y), a little in front.
+// A mesh with no material: its Tint, lit from above (-Y, since +Y is down).
 void main(void)
 {
     vec3  Normal  = normalize(GetInterpolants().Normal);

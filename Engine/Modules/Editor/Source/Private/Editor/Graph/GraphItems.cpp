@@ -100,9 +100,7 @@ NodeItem::NodeItem(GraphScene& InScene, const Node& InNode, const NodeDefinition
         Title       = ToQ(InDef->DisplayName);
         HeaderColor = CategoryColor(InDef->Category, InDef->Role);
 
-        /* The node's first setting names it: "Get Speed", "Parameter: Tint",
-         * "On Event: Hit". Not a checkbox -- "Component Mask: true" says
-         * nothing; the schema's description covers those. */
+        /* The first non-bool setting names it ("Get Speed", "Parameter: Tint"). */
         if(!InDef->Properties.empty() && InDef->Properties.front().Kind != EPropertyKind::Bool)
         {
             const PropertyDefinition& First = InDef->Properties.front();

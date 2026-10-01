@@ -46,12 +46,9 @@ namespace RenderCore
 
         bool IsBound() const;
 
-        /* Builds this frame's RenderView (see DESIGN.md's "View"), enqueues
-         * one extraction command per registered proxy type, then enqueues
-         * [Scene](Ctx){ Scene->SetView(View); Scene->Render(Ctx); } against
-         * the RenderScene this bridge was constructed with. A non-null
-         * InViewOverride replaces the camera lookup (Renderer::SetViewOverride);
-         * its ViewportPixels is taken from InFrame regardless. */
+        /* Builds the RenderView (DESIGN.md's "View"), enqueues one extraction
+         * per proxy type, then the scene render. InViewOverride replaces the
+         * camera; ViewportPixels always comes from InFrame. */
         void ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride = nullptr);
 
     private:

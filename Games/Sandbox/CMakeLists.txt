@@ -71,34 +71,22 @@ if(NOT TARGET NimbleEngine)
 endif()
 
 # === The game module =======================================================
-# The game's code -- SandboxGame.cpp's levels, mode, state and systems -- as a
-# module DLL, loaded at runtime by name (NimbleEngine/GameModule.h) rather than
-# linked: the launcher below loads it, and so will the editor's Play-in-Editor.
-#
-# nimble_add_hot_module(), because a game module IS a Core module: MODULE
-# library (never linked against), no "lib" prefix, the ABI check, and a PDB
-# path that survives the module manager's shadow copy. It lands beside the
-# engine's DLLs through the LIBRARY output directory, which Engine/CMakeLists.txt
-# sets alongside the RUNTIME one -- on Windows a MODULE's .dll is a LIBRARY
-# artifact, not a RUNTIME one.
-#
-# The engine is a PRIVATE dependency: the module uses it, nothing links the
-# module to inherit it.
+# SandboxGame.cpp as a module DLL, loaded by name (NimbleEngine/GameModule.h)
+# by the launcher and the editor's Play-in-Editor, never linked. A game module
+# is a Core module, hence nimble_add_hot_module(); its .dll is a LIBRARY
+# artifact, so it lands via LIBRARY_OUTPUT_DIRECTORY.
 nimble_add_hot_module(SandboxGame
         SOURCES      SandboxGame.cpp
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(SandboxGame PROPERTIES FOLDER "Games")
 
 # === The launcher ==========================================================
-# A thin executable: engine up, game module loaded, its start level run
-# (Application::ExecGame). It does not link SandboxGame -- add_dependencies
-# only makes building the launcher build the game it is going to load.
+# Thin executable (Application::ExecGame). add_dependencies only ensures the
+# game module is built; it is not linked.
 add_executable(Sandbox SandboxMain.cpp)
 add_dependencies(Sandbox SandboxGame)
 
-# The editor loads this game at Play ([Game] Module), so building the editor
-# builds the game too. The editor's directory is added before this one on both
-# configure paths, so the target exists here when it exists at all.
+# The editor loads this game at Play, so building the editor builds it too.
 if(TARGET NimbleEditor)
     add_dependencies(NimbleEditor SandboxGame)
 
@@ -147,8 +135,7 @@ if(SANDBOX_STANDALONE)
     get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
     if(SANDBOX_RT_DIR)
         set_target_properties(Sandbox PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SANDBOX_RT_DIR}")
-        # The game module too, or the launcher looks beside itself and finds
-        # nothing. LIBRARY, since that is what a MODULE's .dll is.
+        # The launcher looks for the module beside itself.
         set_target_properties(SandboxGame PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SANDBOX_RT_DIR}")
     endif()
 
@@ -294,15 +281,10 @@ else()
 endif()
 
 # === Content/ ===============================================================
-# Imported assets -- the .nmmesh and .nmtexture files NimbleEditor's Import
-# Wizard writes under Content/ -- staged at the same relative path beside the
-# executable, which is how a RenderComponent's Mesh names them at run time
-# ("Content/Props/Crate.nmmesh"). The editor stages each one as it imports it;
-# this is what puts them there on a clean build.
-#
-# GLOBBED, unlike Scripts/ above, and on purpose: the editor creates these, so
-# listing them would make every import a CMakeLists.txt edit. Only the two
-# engine formats, with CONFIGURE_DEPENDS so a new asset is noticed at build.
+# Imported .nmmesh / .nmtexture files, staged at the same relative path beside
+# the executable (how a RenderComponent names them). Globbed, unlike Scripts/:
+# the editor creates these, so listing them would mean editing this file on
+# every import.
 file(GLOB_RECURSE SANDBOX_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmtexture"
@@ -344,11 +326,8 @@ if(SANDBOX_CONTENT_FILES)
 endif()
 
 # === Materials/ =============================================================
-# Material graphs (Materials/*.material.nmgraph, edited in NimbleEditor) and
-# what they generate -- the .fsh and .material beside each. Cooked for every
-# backend GDI is built with and staged where RenderCore loads a material by
-# name; see Engine/cmake/NimbleMaterials.cmake. The editor recooks one for its
-# own viewport on save; a build is what a Client or Server target gets.
+# Material graphs and their generated .fsh / .material, cooked for every built
+# backend and staged by name (Engine/cmake/NimbleMaterials.cmake).
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
     nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" RUNTIME_DIR "${SANDBOX_RT_DIR}")
 else()

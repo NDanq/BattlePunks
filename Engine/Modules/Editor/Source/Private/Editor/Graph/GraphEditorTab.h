@@ -20,21 +20,12 @@ class QListWidget;
 class QPlainTextEdit;
 
 /*
- * One graph, as a tab of the graph editor window (GraphEditorWindow), with
- * its own menus and docks: the canvas in the middle, Details on the
- * right, and below it the code the graph generates and the compiler's
- * messages -- both live, recompiled a moment after every change. Clicking a
- * line of code or a message selects the node it came from.
+ * One graph tab with its own menus and docks: canvas, Details, live
+ * generated code and messages (click to select the source node). Save writes
+ * the graph and output; material shaders are then checked in the background.
  *
- * Save (Ctrl+S) writes the .nmgraph and its output; a material's output is
- * then checked by the real shader compiler in the background.
- *
- * A MATERIAL has a Preview dock: the material on a quad, drawn by the
- * viewport's own renderer into a target of its own and read back -- the same
- * backend and cooked shader the level uses. With Material > Live Preview on
- * (the default) each clean recompile is cooked, so the dock AND every
- * primitive in the level naming this material show it -- saved or not.
- * Material > Apply to Selected Entity points the selection at it.
+ * Materials get a Preview dock rendered by the viewport's renderer. Live
+ * Preview (default on) cooks each clean recompile into the level too.
  */
 class GraphEditorTab : public QMainWindow
 {
@@ -86,16 +77,12 @@ private:
     QTimer                   CompileTimer;
     NodeGraph::CompileResult LastResult;
 
-    /* Material graphs: every clean recompile is cooked into the viewport
-     * (EditorGraphs::StageMaterial). bPreviewedUnsaved is set when what the
-     * viewport shows is not what is saved, so a discard can put it back. */
+    /* bPreviewedUnsaved: the viewport shows unsaved changes, to restore on discard. */
     bool bIsMaterial       = false;
     bool bLivePreview      = true;
     bool bPreviewedUnsaved = false;
 
-    /* The Preview dock: the material drawn by the viewport's own renderer
-     * (EditorGraphs::RequestMaterialPreview), refreshed after every cook.
-     * PreviewGeneration drops an answer that a newer request overtook. */
+    /* Refreshed after every cook; PreviewGeneration drops stale answers. */
     QLabel*   PreviewImage  = nullptr;
     QLabel*   PreviewStatus = nullptr;
     QColor    PreviewTint   = QColor(255, 255, 255);

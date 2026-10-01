@@ -31,8 +31,7 @@ public:
     inline uint32_t                    GetSRVSlot()  const { return SRVSlot; }
     inline DXGI_FORMAT                 GetFormat()   const { return Format; }
 
-    /* A D32 depth buffer for 3D draws' depth test, always in DEPTH_WRITE.
-     * Missing (HasDepth false, logged) only if it could not be created. */
+    /* D32, always in DEPTH_WRITE. False only if creation failed (logged). */
     inline bool                        HasDepth()       const { return DepthResource != nullptr; }
     inline D3D12_CPU_DESCRIPTOR_HANDLE GetDSV()         const { return DSVHeap->GetCPUDescriptorHandleForHeapStart(); }
     inline DXGI_FORMAT                 GetDepthFormat() const { return HasDepth() ? DepthFormat : DXGI_FORMAT_UNKNOWN; }

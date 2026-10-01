@@ -22,9 +22,7 @@ if(NOT COMMAND nimble_add_module)
             "the top of this file and the README.")
 endif()
 
-# The old GAMEWINDOW_SHARED option, gone: GameWindow is always shared (see the
-# target below). Dropped from the cache so a tree configured before the change
-# does not keep showing a switch that no longer does anything.
+# GAMEWINDOW_SHARED is obsolete (always shared, below); drop it from old caches.
 unset(GAMEWINDOW_SHARED CACHE)
 
 # === Vendored SDL3 =========================================================
@@ -176,16 +174,9 @@ endif()
 # ends at producing one. That is what keeps SDL out of GDI's backends, exactly
 # as GDIVulkanPlatform.h anticipates.
 #
-# ALWAYS SHARED -- there is no GAMEWINDOW_SHARED option any more, matching
-# GameCore and RenderCore. GameWindowSystem is process-global state -- the SDL
-# video subsystem, the window registry events are routed through, the
-# host-owns-the-message-loop switch, the injected-text queue -- and it must
-# exist exactly once. While NimbleEngine.dll was GameWindow's only consumer a
-# static copy inside it was that one copy. Play-in-Editor ends that: the editor
-# wraps its viewport through GameWindowSystem AND hosts a GameSession through
-# NimbleEngine, so both images reach GameWindow, and two static copies would be
-# two registries -- a window wrapped by the editor that the engine's pump has
-# never heard of, with nothing to say so. One DLL makes that impossible.
+# ALWAYS SHARED: GameWindowSystem is process-global (SDL video, the window
+# registry, the injected-text queue). The editor and NimbleEngine both use it,
+# and two static copies would be two silently disjoint registries.
 nimble_add_module(GameWindow SHARED
         PREFIX       GAMEWINDOW
         SOURCES      ${GAMEWINDOW_SOURCES}

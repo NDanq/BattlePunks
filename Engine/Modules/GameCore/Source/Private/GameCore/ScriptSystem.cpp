@@ -8,12 +8,9 @@
 #include "Public/GameCore/World.h"
 
 /*
- * The entity-script lifecycle, as the World's ScriptDriver: loading a script
- * file into a class table (cached by path), instantiating it for an entity,
- * the per-phase tick that runs before every registered system, Lua-defined
- * systems (World.AddSystem), and the release that runs OnDestroy. See
- * DESIGN.md for the class cache, why scripts tick first, and the
- * CallLifecycleMethod bug/fix.
+ * The World's ScriptDriver: class loading (cached by path), instantiation,
+ * the per-phase tick ahead of every system, Lua systems (World.AddSystem),
+ * and release (OnDestroy). See DESIGN.md.
  */
 
 namespace GameCore
@@ -23,9 +20,8 @@ namespace GameCore
 
     namespace
     {
-        /* path -> class table, or false for a path that failed to load (so a
-         * broken file is read and reported once per bind, not once per
-         * entity). Rebuilt on every BindWorld, which is what picks up edits. */
+        /* path -> class table, or false if it failed (reported once per bind).
+         * Rebuilt on every BindWorld, which picks up edits. */
         constexpr const char* CLASS_CACHE_KEY = "GameCore.ScriptClasses";
 
         struct LuaSystemEntry
@@ -34,9 +30,7 @@ namespace GameCore
             int         FunctionRef = LUA_NOREF;
         };
 
-        /* Per-World script state: the Lua-defined systems a World is
-         * carrying. One per bound World, found through a light userdata
-         * registry key, same idiom as ScriptBindings.cpp's GetBoundWorld. */
+        /* The bound World's Lua systems, under a light userdata registry key. */
         struct WorldScriptState
         {
             World* Owner = nullptr;
@@ -63,10 +57,8 @@ namespace GameCore
 
         bool IsLiveRef(const int32_t InRef) { return InRef != LUA_NOREF && InRef != LUA_REFNIL; }
 
-        /* Pushes the class table a script file returns, loading and caching it
-         * on first use. False (nothing pushed) if the file is unreadable, does
-         * not compile, errors, or returns anything but a table -- each logged
-         * and counted once. */
+        /* Pushes the script's class table, loading it on first use. False
+         * (nothing pushed, logged once) unless it returns a table. */
         bool PushScriptClass(lua_State* InState, const char* InPath)
         {
             lua_getfield(InState, LUA_REGISTRYINDEX, CLASS_CACHE_KEY);   // cache
@@ -137,9 +129,8 @@ namespace GameCore
             return bLoaded;
         }
 
-        /* Reads ClassTable.TickPhase and .CullOutsideActiveRegion, with
-         * ClassTable at the top of the stack. Leaves the stack as found. A
-         * missing CullOutsideActiveRegion keeps the entity's own setting. */
+        /* Reads TickPhase and CullOutsideActiveRegion (if present) from the
+         * class table at the stack top. Stack-neutral. */
         void ReadClassFlags(lua_State* InState, uint8_t& OutPhase, uint8_t& InOutCull)
         {
             lua_getfield(InState, -1, "TickPhase");
@@ -155,11 +146,8 @@ namespace GameCore
             lua_pop(InState, 1);
         }
 
-        /* Runs one method on the instance InRef under protected call. True if
-         * it ran cleanly or does not exist. InDeltaSeconds is null for
-         * OnStart/OnDestroy, non-null for OnTick -- see DESIGN.md for why this
-         * is a fixed optional argument rather than a generic pushed-argument
-         * count. */
+        /* Protected call of one method on instance InRef. True if clean or
+         * absent. InDeltaSeconds is non-null only for OnTick (DESIGN.md). */
         bool CallMethod(lua_State* InState, const int InRef, const std::string& InPath,
                         const char* InMethodName, const float* InDeltaSeconds)
         {
@@ -186,9 +174,8 @@ namespace GameCore
             return LuaCallProtected(InState, ArgCount, 0, Context.c_str());
         }
 
-        /* A tick-time lifecycle call. Sets bErrored on failure so a broken
-         * script's OnTick is not retried every frame. The state is looked up
-         * again after the call rather than held across it. */
+        /* Sets bErrored on failure so a broken OnTick isn't retried. The state
+         * is re-fetched after the call. */
         void CallLifecycleMethod(lua_State* InState, World& InWorld, const EntityID InEntity,
                                  const char* InMethodName, const float* InDeltaSeconds)
         {
@@ -207,9 +194,8 @@ namespace GameCore
             }
         }
 
-        /* Loads the entity's script file (or takes it from the cache) and
-         * builds its instance. A failure marks the script errored, so it is
-         * reported once and never ticked. */
+        /* Builds the entity's instance. A failure marks it errored (reported
+         * once, never ticked). */
         void InstantiateScript(lua_State* InState, World& InWorld, const EntityID InEntity)
         {
             const Entity Handle(&InWorld, InEntity);
@@ -236,8 +222,7 @@ namespace GameCore
 
             ReadClassFlags(InState, Script->Phase, Script->bCullOutsideActiveRegion);
 
-            /* The instance: a fresh table whose __index metatable is the class
-             * table -- Lua's usual OOP-by-metatable idiom. */
+            /* A fresh table with the class as its __index. */
             lua_newtable(InState);
             const int InstanceIndex = lua_gettop(InState);
 
@@ -253,11 +238,9 @@ namespace GameCore
             Script->InstanceRef = luaL_ref(InState, LUA_REGISTRYINDEX);
         }
 
-        /* ScriptDriver::TickPhase. Walks the scripted entities in set order:
-         * instantiate anything pending, skip anything not in InPhase or culled
-         * outside the active region, run OnStart once then OnTick every call.
-         * The walk's list is stable -- World defers every SetScript and
-         * destroy while ticking. */
+        /* ScriptDriver::TickPhase: per scripted entity, instantiate if
+         * pending, skip if another phase or culled, then OnStart once and
+         * OnTick. The list is stable while ticking. */
         void ScriptDriver_TickPhase(World& InWorld, const ETickPhase InPhase, const float InDeltaSeconds, void* InUserData)
         {
             lua_State* InState = static_cast<lua_State*>(InUserData);
@@ -298,8 +281,7 @@ namespace GameCore
                 CallLifecycleMethod(InState, InWorld, EntityId, "OnTick", &InDeltaSeconds);
             }
 
-            /* Lua-defined systems for this phase, after every entity script
-             * and still ahead of every C++ system -- see DESIGN.md. */
+            /* Lua systems: after entity scripts, before C++ systems. */
             if(WorldScriptState* State = GetScriptState(InState))
             {
                 for(const LuaSystemEntry& Entry : State->LuaSystems[InPhase])
@@ -311,10 +293,8 @@ namespace GameCore
             }
         }
 
-        /* ScriptDriver::Release -- runs OnDestroy, then releases the instance's
-         * registry ref. The ref is cleared BEFORE OnDestroy runs, so a
-         * re-entrant release of the same entity finds nothing left to do. An
-         * errored script gets no OnDestroy (nothing else of it runs either). */
+        /* ScriptDriver::Release: OnDestroy, then unref. The ref is cleared
+         * first so re-entrant releases are no-ops. Errored scripts are skipped. */
         void ScriptDriver_Release(World& InWorld, const EntityID InEntity, void* InUserData)
         {
             lua_State* InState = static_cast<lua_State*>(InUserData);
@@ -369,8 +349,7 @@ namespace GameCore
 
     void ScriptSystem_Install(lua_State* InState, World* InWorld)
     {
-        /* A fresh class cache each BindWorld, so a rebind re-reads every
-         * script file rather than running last bind's classes. */
+        /* A fresh class cache per bind, so edits are picked up. */
         lua_newtable(InState);
         lua_setfield(InState, LUA_REGISTRYINDEX, CLASS_CACHE_KEY);
 
@@ -387,10 +366,8 @@ namespace GameCore
 
     void ScriptSystem_Uninstall(lua_State* InState, World* InWorld)
     {
-        /* Every live instance gets OnDestroy + unref, exactly as if its entity
-         * had been destroyed -- but keeps its path, reset to pending, so the
-         * next bind starts it afresh. Collected first: OnDestroy may set or
-         * clear scripts, which reorders the list. */
+        /* OnDestroy + unref each instance, keeping its path as pending.
+         * Collected first: OnDestroy may reorder the list. */
         std::vector<EntityID> Scripted;
         const size_t Count = InWorld->GetScriptedEntityCount();
         Scripted.reserve(Count);

@@ -10,13 +10,7 @@
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderProxy.h"
 
-/*
- * The render-thread mirror of a RenderComponent: its mesh, or its quad when
- * it names none (or names one that cannot be drawn).
- * Private: nothing outside this module needs to subclass THIS proxy, only
- * RenderProxy itself (a game's own proxy type registers through
- * RegisterProxyType the same way RenderComponent does, in Renderer::Initialize).
- */
+/* The render-thread mirror of a RenderComponent: its mesh, or else its quad. */
 namespace RenderCore
 {
     struct RenderComponent;
@@ -37,8 +31,7 @@ namespace RenderCore
         bool              bComponentVisible = true;
         char              Material[48] = {};   // RENDER_MATERIAL_NAME_MAX; "" = the plain tint
 
-        /* The component's Mesh, and the mesh it found -- kept so the bounds
-         * are only redone when either changes. Null source: draw the quad. */
+        /* Bounds are redone only when these change. Null source: the quad. */
         std::string                            MeshPath;
         std::shared_ptr<const MeshData>        MeshSource;
         bool                                   bBoundsAreMesh = false;

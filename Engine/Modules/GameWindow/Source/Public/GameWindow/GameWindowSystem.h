@@ -46,14 +46,10 @@ namespace GameWindowSystem
     GAMEWINDOW_API bool IsInitialized();
 
     /*
-     * For a host whose OWN event loop dispatches the platform's messages -- a
-     * Qt editor. Call before Initialize(). On Windows, SDL_PumpEvents()
-     * normally runs the Win32 message loop itself; two loops on one thread
-     * would each steal the other's messages, so with this set SDL's pump only
-     * drains events SDL has already queued (SDL_HINT_WINDOWS_ENABLE_MESSAGELOOP
-     * = 0). Input still arrives: a window from WrapNativeWindow() has SDL's
-     * window procedure chained in front of the host's, which turns each
-     * message into an SDL event as the host's loop dispatches it.
+     * For a host whose own loop dispatches platform messages (Qt). Call before
+     * Initialize(). SDL's pump then only drains already-queued events instead
+     * of running a second Win32 loop; wrapped windows still feed SDL through
+     * the chained window procedure.
      */
     GAMEWINDOW_API void SetHostOwnsMessageLoop(bool bInHostOwnsLoop);
 
@@ -61,29 +57,18 @@ namespace GameWindowSystem
     GAMEWINDOW_API GameWindow* CreateGameWindow(const WindowDesc& InDesc);
 
     /*
-     * A GameWindow over a native window someone else created and still owns --
-     * an editor viewport. SDL chains its window procedure in front of the
-     * owner's (SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER; the owner's procedure
-     * still sees every message after SDL), so the window's input reaches the
-     * same GameWindowDelegates a window from CreateGameWindow would fire.
-     *
-     * DestroyGameWindow() detaches SDL and restores the owner's procedure; it
-     * never destroys the native window. Call it before the owner does.
-     *
-     * Windows only for now (null, with an error logged, elsewhere). Null on
-     * failure, with the reason logged.
+     * A GameWindow over a native window owned by someone else (an editor
+     * viewport). SDL chains its window procedure ahead of the owner's, so
+     * input reaches the usual GameWindowDelegates. DestroyGameWindow()
+     * restores the owner's procedure without destroying the window; call it
+     * first. Windows only. Null on failure, logged.
      */
     GAMEWINDOW_API GameWindow* WrapNativeWindow(EngineCore::WindowHandle InNativeWindow);
 
     /*
-     * Queues InUtf8 as text input on InWindow, delivered by the next
-     * PumpEvents() through OnText exactly like typed text. For a host whose
-     * toolkit CONSUMES character messages before they reach the wrapped
-     * window: Qt pulls each WM_CHAR off the queue while translating the
-     * WM_KEYDOWN before it and never dispatches it, so SDL's window procedure
-     * never sees one. The host forwards the characters it saw; nothing else
-     * about text changes. Ignored unless text input is active on InWindow
-     * (SetTextInputActive), and for control characters -- SDL's own rules.
+     * Queues InUtf8 as text input, delivered by the next PumpEvents() via
+     * OnText. For hosts that swallow WM_CHAR (Qt does). Ignored unless text
+     * input is active on InWindow, and for control characters.
      */
     GAMEWINDOW_API void InjectTextInput(GameWindow* InWindow, const char* InUtf8);
 
@@ -126,12 +111,8 @@ namespace GameWindowSystem
 
     GAMEWINDOW_API size_t GetWindowCount();
 
-    /*
-     * The directory holding the running executable, with a trailing separator
-     * -- SDL_GetBasePath(). Empty if the platform cannot say. Valid before
-     * Initialize(): SDL answers this without SDL_Init, which is what lets a
-     * host fix its working directory before reading any config.
-     */
+    /* The executable's directory with a trailing separator; empty if unknown.
+     * Valid before Initialize(). */
     GAMEWINDOW_API std::string GetExecutableDir();
 }
 

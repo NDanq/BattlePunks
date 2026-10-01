@@ -171,16 +171,8 @@ namespace NimbleEngine
 {
     namespace
     {
-        /*
-         * The level Exec() and Exec(IGameMode&) run when the caller brought
-         * none: an empty World and, optionally, a mode.
-         *
-         * Here rather than in the header because nothing outside this file
-         * needs the type -- a caller that wants a real level writes one. Held
-         * on Exec's own stack frame, which outlives every use of it: the
-         * session points at it only between LoadLevel and UnloadLevel, and
-         * both happen inside that call.
-         */
+        /* What Exec() and Exec(IGameMode&) run when given no level: an empty
+         * World and optionally a mode. Lives on Exec's stack frame. */
         class DefaultLevelImpl final : public ILevel
         {
         public:
@@ -196,15 +188,8 @@ namespace NimbleEngine
 
     bool Application::Initialize()
     {
-        /*
-         * FIRST: run from the executable's own directory. Every asset path
-         * below is bundle-relative -- Config/, Scripts/, the cooked shaders,
-         * Saves/ -- and all of them are staged beside the exe. An IDE does not
-         * start a program there on its own: CLion starts it in the CMake build
-         * tree and ignores VS_DEBUGGER_WORKING_DIRECTORY, and the app then ran
-         * on built-in defaults (a Null renderer, a black window) with nothing
-         * to say why. Setting it here makes every launcher equivalent.
-         */
+        /* FIRST: every asset path is relative to the exe's folder, and IDEs
+         * (CLion) don't start there, silently falling back to defaults. */
         const std::string ExecutableDir = GameWindowSystem::GetExecutableDir();
         if(ExecutableDir.empty())
         {
@@ -336,8 +321,7 @@ namespace NimbleEngine
          * was corrected mid-session. */
         using Clock = std::chrono::steady_clock;
 
-        /* First, where no World is ticking. A requested level that fails to
-         * load ends the session, and with it this loop. */
+        /* First, where no World is ticking. A failed load ends the session. */
         Session->ApplyPendingLevel();
         if(bQuitRequested || Session->IsQuitRequested())
         {
@@ -415,15 +399,13 @@ namespace NimbleEngine
         Threads::SetMainThread();
         Memory::SetCollectorThread();
 
-        /* Outlives the loop and the level: the level's code is in the module.
-         * Constructed after SetCollectorThread, since it allocates. */
+        /* Outlives the level, whose code it holds. After SetCollectorThread:
+         * it allocates. */
         GameModuleHost Game;
 
         if(Initialize())
         {
-            /* After Initialize, which read the config naming the module -- and
-             * the module's own config vars back-fill from that same file as
-             * they register. */
+            /* After Initialize, which read the config naming the module. */
             ILevel* Level = InLevel;
             if(!Level && Game.Load(InGameModule ? InGameModule : ""))
             {
@@ -467,16 +449,13 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize Application!")
         }
 
-        /* Whatever is loaded now, possibly a level RequestLevel swapped in.
-         * Null-safe if the load never happened, or Initialize failed before the
-         * session existed. */
+        /* Whatever is loaded now, possibly a swapped-in level. */
         if(Session)
         {
             Session->UnloadLevel();
         }
 
-        /* After the level, whose code it is; before the engine, which its
-         * OnShutdown may still log through. */
+        /* After the level (its code), before the engine (OnShutdown may log). */
         Game.Unload();
 
         /* Unconditional -- null-safe and idempotent, so a failed Initialize()
@@ -487,13 +466,11 @@ namespace NimbleEngine
     void Application::Shutdown()
     {
         /*
-         * Null-safe throughout: runs even if Initialize() failed partway. The
-         * World is already gone (GameSession::UnloadLevel, which owns the
-         * ordering that matters). lua_close is safe because UnbindWorld released every
-         * script instance's registry ref; the renderer then drains and stops its thread.
+         * Null-safe: runs even if Initialize() failed partway. The World is
+         * already gone (GameSession::UnloadLevel), so lua_close is safe; the
+         * renderer then drains and stops its thread.
          */
-        /* First: it holds references to both services below. Its level is
-         * already unloaded (ExecWithLevel), so this only frees it. */
+        /* First: it references both services below. */
         if(Session)
         {
             EngineCore::Memory::Dealloc(Session);

@@ -11,12 +11,9 @@
 #include "Public/Core/CoreImage.h"
 
 /*
- * EDITOR ONLY -- where Renderer::RequestMaterialPreview's results wait. The
- * render thread delivers (RenderScene::Render), the game thread takes
- * (Renderer::TakeMaterialPreview); an Image owns a buffer, so it cannot ride
- * in a render command's captures (RenderCommand.h) and crosses here instead,
- * under a lock. Owned by Renderer::Impl, which outlives every command that
- * could deliver into it (Renderer::Shutdown flushes the queue first).
+ * EDITOR ONLY -- locked mailbox for material previews: the render thread
+ * delivers, the game thread takes. (An Image owns a buffer, so it cannot be a
+ * command capture.) Owned by Renderer::Impl, which outlives the queue.
  */
 namespace RenderCore
 {

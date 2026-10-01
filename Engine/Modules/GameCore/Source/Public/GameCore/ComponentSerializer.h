@@ -14,30 +14,23 @@
 #include "Public/Math/Vector.h"
 
 /*
- * Per-type serializers, opt-in: a component names its fields explicitly and
- * skips per-run state (Owner, ProxyID, a render proxy). A raw SizeBytes copy is
- * wrong, not just fragile -- Vector3's layout depends on WITH_SIMD. A type with
- * no serializer is skipped with a warning, never a failure. One registry per
- * process, like RenderCore::RegisterProxyType. Game thread only. See DESIGN.md.
+ * Opt-in per-type serializers naming each field and skipping per-run state. (A
+ * raw byte copy is wrong: Vector3's layout depends on WITH_SIMD.) Types
+ * without one are skipped with a warning. Game thread only. See DESIGN.md.
  *
- * Every field is NAMED, because the same serializer writes two formats:
+ * Fields are NAMED because one serializer writes two formats:
  *
- *   binary   the cooked world and save games (WorldSerializer.h). Names are
- *            ignored; fields are written in call order, so the bytes are
- *            exactly what positional `Ar << x` produced.
- *   text     the editor's .nmworld/.nmentity XML (WorldPackage.h, editor
- *            builds only). One element per field, matched by name on load: a
- *            missing field keeps its default and an unknown one is skipped.
+ *   binary   cooked worlds and saves (WorldSerializer.h): call order, names
+ *            ignored.
+ *   text     the editor's XML (WorldPackage.h): matched by name; missing
+ *            fields keep defaults, unknown ones are skipped.
  */
 
 namespace GameCore
 {
     /*
-     * What a serializer body writes through (`Ar` inside the macro). Saving and
-     * loading are the same calls, reading or writing the reference given.
-     *
-     * Names must be unique within one component and valid XML element names
-     * (letters, digits, underscore; not starting with a digit).
+     * `Ar` inside the macro; the same calls save and load. Names must be
+     * unique per component and valid XML element names.
      */
     class GAMECORE_API ComponentArchive
     {
@@ -47,17 +40,15 @@ namespace GameCore
         virtual bool IsLoading() const = 0;
         bool IsSaving() const { return !IsLoading(); }
 
-        /* The version being written on save; the file's on load. A binary
-         * field added later needs `if(Ar.GetVersion() >= N)`; text does not
-         * (a missing element keeps its default), but the guard is harmless. */
+        /* Current version on save, the file's on load. Guard later fields
+         * with `if(Ar.GetVersion() >= N)` (needed for binary). */
         virtual uint16_t GetVersion() const = 0;
 
         virtual void Field(const char* InName, float& InOut)    = 0;
         virtual void Field(const char* InName, double& InOut)   = 0;
         virtual void Field(const char* InName, int32_t& InOut)  = 0;
         virtual void Field(const char* InName, uint32_t& InOut) = 0;
-        /* A number 0..255. For a 0/1 flag use Flag(), which reads as a
-         * boolean in text and is the same byte in binary. */
+        /* 0..255. Use Flag() for a 0/1 flag (a boolean in text). */
         virtual void Field(const char* InName, uint8_t& InOut)  = 0;
         virtual void Field(const char* InName, bool& InOut)     = 0;
         /* Three floats through GetX/SetX, never Data[], so SIMD and scalar
@@ -74,13 +65,8 @@ namespace GameCore
 
         virtual void Flag(const char* InName, uint8_t& InOut) = 0;
 
-        /*
-         * An EntityID field. Crosses as something that survives the process --
-         * a save-local index in binary, the target's EntityGuid in text -- and
-         * is resolved back to the loaded entity. Unset round-trips as unset;
-         * an unresolvable reference loads as InvalidEntityID() with a warning
-         * rather than failing the load.
-         */
+        /* Stored as a save-local index (binary) or EntityGuid (text) and
+         * resolved on load. Unresolvable loads as InvalidEntityID(), warned. */
         virtual void Entity(const char* InName, EntityID& InOut) = 0;
     };
 
@@ -101,10 +87,8 @@ namespace GameCore
         ComponentDefaultsFn  DefaultsFn = nullptr;
     };
 
-    /* Called once per type by GAMECORE_DEFINE_COMPONENT_SERIALIZER. InVersion
-     * is what Ar.GetVersion() reports while saving, and what each saved
-     * instance records. False on a duplicate -- the first registration is
-     * kept, as RegisterComponentType does. */
+    /* Called by the macro. InVersion is the saving version. False on a
+     * duplicate (first kept). */
     GAMECORE_API bool RegisterComponentSerializer(ComponentTypeID InType, uint16_t InVersion,
                                                   ComponentSerializeFn InFn,
                                                   ComponentDefaultsFn InDefaultsFn);
@@ -116,9 +100,7 @@ namespace GameCore
 
     // === The binary backend =================================================
 
-    /* How a binary EntityID field crosses the archive: saved as a save-local
-     * index, resolved to the newly-created entity on load. Implemented by
-     * WorldSerializer.cpp. */
+    /* Maps binary EntityID fields to save-local indices (WorldSerializer.cpp). */
     class GAMECORE_API IEntityRemapper
     {
     public:
@@ -126,8 +108,7 @@ namespace GameCore
         virtual void RemapEntity(EngineCore::Archive& Ar, EntityID& InOut) = 0;
     };
 
-    /* ComponentArchive over an EngineCore::Archive, positionally. Constructed
-     * inside the instance's DATA chunk, so the version is that chunk's. */
+    /* Positional, inside the instance's DATA chunk (whose version it reports). */
     class GAMECORE_API BinaryComponentArchive final : public ComponentArchive
     {
     public:
@@ -157,9 +138,7 @@ namespace GameCore
 }
 
 /*
- * One per component type, at file scope, in exactly one .cpp -- a header
- * definition registers once per including TU. The body that follows has Ar (a
- * ComponentArchive&) and C (a TypeName&) in scope:
+ * Once per type, at file scope in one .cpp. The body has Ar and C in scope:
  *
  *     GAMECORE_DEFINE_COMPONENT_SERIALIZER(TransformComponent, 1)
  *     {
@@ -168,17 +147,12 @@ namespace GameCore
  *         Ar.Field("Scale",    C.Scale);
  *     }
  *
- * To add a field, bump Version and append it behind a check, so an older
- * BINARY save (cooked data, a save game) leaves it at its default:
+ * To add a field, bump Version and append it behind a check:
  *
  *     if(Ar.GetVersion() >= 2) { Ar.Field("NewField", C.NewField); }
  *
- * Never reorder or rename a field without thinking about both formats: binary
- * depends on the order, text on the name.
- *
- * Never serialize C.Owner: AddComponentRaw writes it, and it holds a live
- * World*. Registration runs from a file-scope object's constructor into a
- * constant-initialised table, the ordering CoreConfig.h's GConfigHead relies on.
+ * Binary depends on field order, text on names: never reorder or rename
+ * casually. Never serialize C.Owner (a live World*).
  */
 #define GAMECORE_DEFINE_COMPONENT_SERIALIZER(TypeName, Version)                                   \
     /* Declared first so the void* trampoline below can forward to it. */                          \

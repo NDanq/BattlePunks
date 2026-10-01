@@ -18,15 +18,9 @@ class EditorContext;
 namespace GameCore { struct TransformComponent; }
 
 /*
- * The 3D viewport: a native child window the Renderer draws into, exactly as
- * it draws into the game's SDL window. Qt never paints here -- paintEngine()
- * is null and WA_PaintOnScreen hands the surface to the GPU backend -- so
- * every overlay (selection bounds, the axis gizmo) is drawn by the Renderer
- * as debug lines, not by QPainter.
- *
- * The native handle is winId() cast to a WindowHandle -- the HWND on Windows,
- * the same thing GDIQt::ToWindowHandle produces, without linking GDIQtBridge
- * (see Modules/Editor/CMakeLists.txt for why the editor must not).
+ * The 3D viewport: a native child window the Renderer draws into. Qt never
+ * paints here, so overlays are Renderer debug lines. The handle is winId()
+ * (no GDIQtBridge; see Modules/Editor/CMakeLists.txt).
  *
  * CONTROLS
  *   Right drag          look around; with WASD / Q E held, fly (Shift = faster)
@@ -68,9 +62,7 @@ public:
     void ApplyPreset(EditorCamera::EPreset InPreset);
     void SetSpeedScale(float InScale) { Camera.SpeedScale = InScale; }
 
-    /* Front view onto the rectangle Sandbox's game camera shows at its
-     * default resolution -- (0,0) to (1280,720) in world units -- so the
-     * scene reads the way the game draws it. */
+    /* Front view of (0,0)-(1280,720), what Sandbox's camera shows. */
     void ApplySandboxView();
 
     /* Draw every entity's bounds, not just the selection's. */
@@ -123,24 +115,20 @@ private:
     /* WASD/QE flying while looking. */
     void ApplyFlyInput(float InDeltaSeconds);
 
-    /* Selection bounds, optional all-bounds, and the axis gizmo -- queued as
-     * debug lines for the frame about to be rendered. */
+    /* Selection bounds, all-bounds and the axis gizmo, as debug lines. */
     void QueueOverlay();
     void QueueAxisGizmo();
 
-    /* What orbit, dolly and presets turn about: the selection's centre if it
-     * has bounds, else the camera's focus point. */
+    /* The selection's centre if it has bounds, else the focus point. */
     EngineCore::Vector3 GetPivot() const;
 
-    /* The gizmo's origin in world space and its axis length there -- it sits
-     * at a fixed pixel position and size, so this is re-derived every frame. */
+    /* Re-derived each frame: the axis gizmo has a fixed screen spot and size. */
     void GetGizmoFrame(EngineCore::Vector3& OutOrigin, double& OutAxisLength) const;
 
     /* 0/1/2 for the X/Y/Z tip under InLogicalPos, -1 for none. */
     int HitGizmoAxis(const QPoint& InLogicalPos) const;
 
-    /* The selection's transform, when its handles should show: the editor
-     * view is active, a mode is on and the selection has a Transform. */
+    /* The selection's Transform if handles should show, else null. */
     GameCore::TransformComponent* GetGizmoTarget() const;
 
     /* Writes a gizmo pose into InEntity's Transform and tells the panels. */

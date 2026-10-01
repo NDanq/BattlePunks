@@ -20,8 +20,7 @@ public:
     /* Fits InRect (scene coordinates) in view, never zooming in past 1:1. */
     void Frame(const QRectF& InRect);
 
-    /* The scene position under the cursor, or the view's centre if the
-     * cursor is outside it -- where pasted and palette nodes appear. */
+    /* Under the cursor, else the view centre: where new nodes appear. */
     QPointF CursorScenePos() const;
 
 protected:

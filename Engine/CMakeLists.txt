@@ -98,28 +98,13 @@ if(NIMBLE_USE_SCCACHE)
 endif()
 
 # === Target type ===========================================================
-# What this configure builds, the way a shipped engine splits it:
+#   Editor   the default: every module, the Qt editor and editor-only code.
+#   Client   a game build: WITH_EDITOR=0, no editor.
+#   Server   same as Client for now; a switch for future server-only gating.
 #
-#   Editor   the default: every module, the Qt editor, and editor-only engine
-#            code (the property registry, the Renderer's debug lines and view
-#            override) compiled in.
-#   Client   a game build: WITH_EDITOR=0, no editor executable, and none of
-#            that editor-only code in any module.
-#   Server   the same as Client today. The distinct name exists so server-only
-#            gating has a switch to hang on when it is needed.
-#
-# ONE PER CONFIGURE, not per target: WITH_EDITOR changes class layouts and
-# exported symbols (Renderer grows members under it), and every image in the
-# process must agree. It travels as a PUBLIC compile definition on EngineCore
-# (set just after Modules/Core is added, below), so every target that links the
-# engine inherits it -- including a game configured STANDALONE, whose own
-# directory sits ABOVE this one and so would never see a directory-scoped
-# add_compile_definitions() made here. The subtrees need no edit for it.
-#
-# Always defined, to 1 or 0 -- never left undefined. GameCoreAPI.h and
-# RenderCoreAPI.h #error if it is missing, because `#if WITH_EDITOR` on an
-# undefined name is a silent 0: a build that forgot the flag would drop the
-# editor code without a word.
+# ONE PER CONFIGURE: WITH_EDITOR changes class layouts and exports, so every
+# image must agree. It is a PUBLIC definition on EngineCore (below), so even
+# a standalone game configure inherits it. Always 1 or 0, never undefined.
 set(NIMBLE_TARGET "Editor" CACHE STRING "What this configure builds: Editor, Client or Server")
 set_property(CACHE NIMBLE_TARGET PROPERTY STRINGS Editor Client Server)
 
@@ -136,26 +121,14 @@ endif()
 message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR})")
 
 # === Configurations ========================================================
-# Debug, RelWithDebInfo and Shipping are the three this project builds:
+#   Debug            unoptimised, full debug info.
+#   RelWithDebInfo   optimised with debug info (CMake's flags).
+#   Shipping         optimised, no debug info, NDEBUG; NIMBLE_SHIPPING=1.
 #
-#   Debug            unoptimised, full debug info -- day-to-day work.
-#   RelWithDebInfo   optimised, WITH debug info -- profiling, and debugging an
-#                    optimised build. CMake's own flags.
-#   Shipping         optimised, NO debug info, NDEBUG -- what a player runs.
-#                    NIMBLE_SHIPPING is 1 here and 0 everywhere else, for code
-#                    that must not ship (dev cheats, verbose logging).
-#
-# Shipping is a custom configuration, so its flags are declared here. CACHE
-# variables rather than plain ones, for the same reason WITH_EDITOR rides on
-# EngineCore: a game configured standalone is the TOP-LEVEL project and adds
-# this directory beneath it, so a normal variable set here would never reach
-# the game's own targets -- the game exe would build Shipping unoptimised.
-#
-# Seeded from Release while EMPTY, not while undefined, and FORCEd: when
-# CMAKE_BUILD_TYPE names a custom configuration, project() itself creates these
-# cache entries -- empty -- so an "if not defined" guard never fires and
-# Shipping silently compiles with no optimisation at all (observed). A value a
-# user has set is non-empty and is left alone.
+# Shipping's flags are CACHE variables so a standalone game configure (the
+# top-level project) sees them. Seeded from Release while EMPTY and FORCEd:
+# project() pre-creates them empty for a custom build type, so an "if not
+# defined" guard would leave Shipping unoptimised.
 foreach(NM_LANG C CXX)
     if("${CMAKE_${NM_LANG}_FLAGS_SHIPPING}" STREQUAL "")
         set(CMAKE_${NM_LANG}_FLAGS_SHIPPING "${CMAKE_${NM_LANG}_FLAGS_RELEASE}"
@@ -174,15 +147,13 @@ mark_as_advanced(CMAKE_C_FLAGS_SHIPPING CMAKE_CXX_FLAGS_SHIPPING
 
 get_property(NM_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
 if(NM_MULTI_CONFIG)
-    # Offer it in Visual Studio / Xcode / Ninja Multi-Config. Checked, so a
-    # re-configure does not append it twice.
+    # Offer it in multi-config generators, once.
     if(NOT "Shipping" IN_LIST CMAKE_CONFIGURATION_TYPES)
         list(APPEND CMAKE_CONFIGURATION_TYPES Shipping)
         set(CMAKE_CONFIGURATION_TYPES "${CMAKE_CONFIGURATION_TYPES}" CACHE STRING "Available build configurations" FORCE)
     endif()
 elseif(CMAKE_BUILD_TYPE STREQUAL "Shipping" AND NIMBLE_WITH_EDITOR)
-    # An editor is a development tool; nothing ships it. Refused outright
-    # rather than built half-way, so a mis-picked preset fails at configure.
+    # Nothing ships the editor; fail at configure.
     message(FATAL_ERROR "Shipping is a Client or Server configuration -- configure with "
                         "-DNIMBLE_TARGET=Client (or Server), or pick Debug / RelWithDebInfo for the Editor")
 endif()
@@ -230,11 +201,8 @@ set(NIMBLE_BINARIES_DIR "${NM_DEFAULT_BINARIES_DIR}"
 #
 # Import libs / .exp go to <dir>/Lib so .lib clutter stays out of the flat
 # runtime directory.
-# A Client or Server build gets its own folder, <Platform>_<Config>_<Target>:
-# its DLLs lack the editor-only exports, and landing them over the editor
-# build's would leave NimbleEditor.exe unable to load. The Editor keeps the
-# unsuffixed name every existing path (VS_DEBUGGER_WORKING_DIRECTORY, docs)
-# already uses.
+# Client/Server builds get their own folder: their DLLs lack editor exports
+# and would break NimbleEditor.exe if they overwrote its DLLs.
 if(NIMBLE_TARGET STREQUAL "Editor")
     set(NM_TARGET_SUFFIX "")
 else()
@@ -284,10 +252,8 @@ set(CORE_SHARED ON CACHE BOOL "Build EngineCore as a shared library" FORCE)
 
 add_subdirectory(Modules/Core)
 
-# The build-wide switches, as EngineCore usage requirements -- every module,
-# the editor and every game link EngineCore, so each one compiles with the same
-# values whichever directory it was declared in. See the Target type and
-# Configurations blocks above. Both are always defined, to 1 or 0.
+# The build-wide switches, as EngineCore usage requirements so everything that
+# links it agrees. Always 1 or 0.
 target_compile_definitions(EngineCore PUBLIC
         WITH_EDITOR=${NIMBLE_WITH_EDITOR}
         NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>)
@@ -330,9 +296,8 @@ elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/RenderCore/CMakeLists.txt")
     message(STATUS "RenderCore present but GDI is not configured; skipping RenderCore")
 endif()
 
-# NodeGraph: material and script graphs that generate GLSL and Lua, for the
-# editor. Editor targets only -- nothing at runtime reads a graph -- and after
-# GameCore, whose EntityGuid, component registry and pugixml target it uses.
+# NodeGraph: material/script graphs generating GLSL and Lua. Editor only;
+# after GameCore, which it uses.
 if(NIMBLE_WITH_EDITOR AND TARGET GameCore
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/NodeGraph/CMakeLists.txt")
     add_subdirectory(Modules/NodeGraph)
@@ -487,13 +452,8 @@ if(TARGET GDI AND GDI_COOKED_SHADER_DIR AND CMAKE_RUNTIME_OUTPUT_DIRECTORY)
 endif()
 
 # === Editor ================================================================
-# The Qt editor. Below the NimbleStageShaders block, which it depends on, and
-# guarded on RenderCore because the viewport draws through it. Skipped (with a
-# status line, from inside its own CMakeLists) when Qt6 Widgets is not found,
-# so a machine without Qt still configures the engine and the games.
-#
-# Editor targets only: a Client or Server configure never adds the directory,
-# and the editor's sources are additionally wrapped in `#if WITH_EDITOR`.
+# The Qt editor: after NimbleStageShaders, and needs RenderCore. Skips itself
+# when Qt6 Widgets is missing. Editor targets only.
 option(NIMBLE_BUILD_EDITOR "Build the Qt editor (Modules/Editor) in an Editor target" ON)
 if(NIMBLE_BUILD_EDITOR AND NIMBLE_WITH_EDITOR AND TARGET RenderCore
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Editor/CMakeLists.txt")

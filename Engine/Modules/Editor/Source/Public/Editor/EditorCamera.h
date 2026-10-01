@@ -9,24 +9,18 @@
 #include "Public/RenderCore/RenderView.h"
 
 /*
- * The viewport's camera: a position plus yaw and pitch, turned into a
- * RenderView::MakePerspective every frame. Owned by the viewport, never an
- * entity -- looking around must not edit the World.
+ * The viewport's camera (position, yaw, pitch), not an entity, so looking
+ * around never edits the World.
  *
- * AXES follow RenderView's conventions, i.e. the game's: +X right, +Y DOWN the
- * screen, +Z into it. Yaw 0 / pitch 0 looks down +Z at the XY plane with +X to
- * the right, which is exactly the orthographic game view, in perspective.
- * Positive pitch looks toward screen-up, which is world -Y.
+ * AXES as RenderView: +X right, +Y DOWN, +Z into the screen. Yaw/pitch 0
+ * matches the game's ortho view; positive pitch looks toward world -Y.
  *
- * FOCUS. FocusDistance is how far ahead the camera's point of interest sits
- * when nothing more specific is known -- the pivot an orbit or a view preset
- * turns about. Framing and orbiting keep it current.
+ * FOCUS. FocusDistance places the default pivot for orbits and presets.
  */
 class EditorCamera
 {
 public:
-    /* The snap views on the viewport toolbar and axis gizmo. Named for where
-     * the camera looks FROM: Top looks from -Y (screen-up) toward +Y. */
+    /* Named for where the camera looks FROM: Top looks from -Y toward +Y. */
     enum class EPreset
     {
         Perspective,
@@ -56,12 +50,10 @@ public:
 
     void AddYawPitch(float InYawDegrees, float InPitchDegrees);
 
-    /* Turns about InPivot, keeping the distance to it; FocusDistance becomes
-     * that distance. */
+    /* Keeps the distance to InPivot, which becomes FocusDistance. */
     void Orbit(const EngineCore::Vector3& InPivot, float InYawDegrees, float InPitchDegrees);
 
-    /* Moves along the view toward InPivot (positive) or away, never closer
-     * than a few units. */
+    /* Toward InPivot (positive) or away; never closer than a few units. */
     void Dolly(const EngineCore::Vector3& InPivot, double InDistance);
 
     /* Keeps the orientation, backs off until InBox fits the view. */
@@ -72,18 +64,14 @@ public:
 
     RenderCore::RenderView BuildView(EngineCore::Size InViewportPixels) const;
 
-    /* World units covered by one pixel at InDepth along the view, for a
-     * viewport InViewportHeight pixels tall (logical or physical, as the
-     * caller measures). */
+    /* World units per pixel at InDepth (pixels in the caller's units). */
     double GetWorldPerPixel(double InDepth, int InViewportHeight) const;
 
-    /* The world-space ray through a pixel (logical or physical, as long as
-     * InViewport uses the same units). OutDirection is normalised. */
+    /* World ray through a pixel (same units as InViewport); normalised. */
     void ScreenRay(double InX, double InY, EngineCore::Size InViewport,
                    EngineCore::Vector3& OutOrigin, EngineCore::Vector3& OutDirection) const;
 
-    /* The pixel InPoint projects to, in InViewport's units. False if it is
-     * behind the near plane. */
+    /* False if InPoint is behind the near plane. */
     bool WorldToScreen(const EngineCore::Vector3& InPoint, EngineCore::Size InViewport,
                        double& OutX, double& OutY) const;
 };

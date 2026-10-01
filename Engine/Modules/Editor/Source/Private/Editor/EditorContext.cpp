@@ -182,8 +182,7 @@ void EditorContext::RenderFrame(const RenderCore::RenderView& InView, const Engi
      * so its render commands join this frame. */
     if(Play)
     {
-        /* The swap frees the World our panel delegates are bound to; take
-         * them off while it is still alive. SyncPlayWorld hooks the new one. */
+        /* Unhook before the swap frees the World; SyncPlayWorld hooks the new one. */
         if(Play->IsLevelSwapPending())
         {
             UnhookActiveWorld();
@@ -192,16 +191,13 @@ void EditorContext::RenderFrame(const RenderCore::RenderView& InView, const Engi
         SyncPlayWorld();
     }
 
-    /* No World::Tick -- but an edited Transform or Bounds still has to reach
-     * the spatial index, which picking and a later play mode read. */
+    /* No Tick, but edits must still reach the spatial index. */
     else if(EditedWorld)
     {
         EditedWorld->RefreshSpatialIndex();
     }
 
-    /* Application::RunFrame's order, and for its reasons: the fence, then the
-     * only point where collecting is sound, then present the frame the fence
-     * just completed, then kick the next. */
+    /* Application::RunFrame's order: fence, collect, present, kick. */
     Renderer->WaitForPreviousFrame();
     EngineCore::Memory::CollectGarbage();
     Renderer->PresentToWindow(InWindow);
@@ -258,21 +254,13 @@ void EditorContext::CreateSandboxScene()
     const FlagScope Building(bSuspendRecording);   // the scene is the starting point, not an edit
 
     /*
-     * WHAT SANDBOX'S LEVEL LOOKS LIKE WHEN IT HAS LOADED -- before its first
-     * tick, since the editor simulates nothing. A hand-kept MIRROR of two
-     * sources, with the same names, components and values:
+     * Sandbox's level as loaded, before its first tick. A hand-kept MIRROR of:
      *
      *   Games/Sandbox/SandboxGame.cpp   SandboxLevel::OnLoad -- Marker, Camera
      *   Games/Sandbox/Scripts/Main.lua  the startup script   -- Scripted
      *
-     * Keep it in step when either changes. It exists only until the editor can
-     * load the game's own level (the game code in a module DLL, on the way to
-     * Play-in-Editor); then this becomes "open the Sandbox level" and the
-     * mirror goes away.
-     *
-     * Not mirrored, because they are behaviour rather than scene: the
-     * Sandbox.WrapMarker system, the mode moving Marker 120 px/s, the Mover
-     * script moving Scripted 60 px/s, and the OnEntityCreated logger.
+     * Keep it in step. Behaviour (systems, the mode, scripts, the logger) is
+     * not mirrored.
      */
 
     // --- Marker (SandboxLevel::OnLoad) ---------------------------------------
@@ -295,16 +283,12 @@ void EditorContext::CreateSandboxScene()
     }
 
     // --- Camera (SandboxLevel::OnLoad) ---------------------------------------
-    /* A default Transform (the origin) and a default CameraComponent: the
-     * game's orthographic view spans the window from here. The editor viewport
-     * uses its own camera, but this is the entity the game renders through. */
+    /* The camera the game renders through (the editor uses its own). */
     const EntityID CameraID = CreateEntity(QStringLiteral("Camera"), EngineCore::Vector3(0.0, 0.0, 0.0));
     EditedWorld->GetEntity(CameraID).AddComponent<RenderCore::CameraComponent>();
 
     // --- Scripted (Scripts/Main.lua) ------------------------------------------
-    /* Created by the startup script in the game. The editor runs no Lua, so the
-     * entity carries only its script path -- what a save of it would hold --
-     * with no script instance behind it. */
+    /* Only the script path: the editor runs no Lua. */
     const EntityID ScriptedID = CreateEntity(QStringLiteral("Scripted"), EngineCore::Vector3(0.0, 0.0, 0.0));
     {
         const GameCore::Entity Scripted = EditedWorld->GetEntity(ScriptedID);
@@ -951,10 +935,8 @@ void EditorContext::StopPlay()
 
 void EditorContext::SyncPlayWorld()
 {
-    /* The game replaced its level's World -- a save restore does. Our
-     * delegates came off the old World before the swap (RenderFrame); forget
-     * anything left, since that World is gone. The load count, not the
-     * pointer: the new World can sit at the old one's address. */
+    /* The game replaced its World (e.g. a save restore). Compare load counts,
+     * not pointers, which can be reused. */
     const bool bReplaced = Play->GetLoadCount() != PlayLoadCount;
     if(bReplaced)
     {
@@ -963,10 +945,8 @@ void EditorContext::SyncPlayWorld()
         ActiveWorld = nullptr;
     }
 
-    /* The game asked to quit, or a swap failed and left no World. Stopped
-     * here and now: this runs in RenderFrame BEFORE the fence, the point at
-     * which Application's loop ends a session too, and the rest of the frame
-     * then draws the edited World. */
+    /* Quit requested or no World left: stop now, before the fence, as
+     * Application would; the rest of the frame draws the edited World. */
     if(Play->IsQuitRequested() || !Play->GetWorld())
     {
         CORE_LOG("[PIE] the game ended its session; stopping")

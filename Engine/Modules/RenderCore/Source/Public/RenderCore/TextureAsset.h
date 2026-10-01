@@ -14,16 +14,14 @@ namespace EngineCore
 }
 
 /*
- * .nmtexture -- a 2D texture, as the editor's importer writes it. Pixels are
- * already decoded, so the runtime needs no image decoder:
+ * .nmtexture -- a pre-decoded 2D texture:
  *
  *   NTEX v1                the file
  *     THDR v1              width, height, pixel format, sRGB, filter, wrap
- *     TPIX v1              the pixels, tightly packed rows (CoreImage.h)
- *     ISRC v1 (optional)   AssetImportInfo -- the editor's, for Reimport
+ *     TPIX v1              tightly packed rows (CoreImage.h)
+ *     ISRC v1 (optional)   AssetImportInfo, for Reimport
  *
- * Only RGBA8 for now. Materials cannot sample textures yet; this is the
- * format they will read.
+ * RGBA8 only. Materials cannot sample textures yet.
  */
 namespace RenderCore
 {

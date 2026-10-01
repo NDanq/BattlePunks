@@ -3,26 +3,12 @@ cmake_minimum_required(VERSION 3.16)
 project(NodeGraph VERSION 0.1 LANGUAGES CXX)
 
 # ===========================================================================
-# NodeGraph -- node graphs that GENERATE SOURCE: material graphs to the
-# engine's macro GLSL (cooked by GDI's cook_shaders.py like any hand-written
-# shader), script graphs to a Lua class table (attached with SetScript like any
-# hand-written script). The runtime never sees a graph.
+# NodeGraph -- graphs that GENERATE SOURCE: material graphs to GLSL, script
+# graphs to Lua class tables. The runtime never sees a graph.
 #
-# EDITOR TARGETS ONLY, and Qt-free: the editor draws graphs, but loading,
-# saving and compiling them live here so Build > Cook Content and the tests can
-# regenerate every graph without a window. Engine/CMakeLists.txt adds this
-# directory only when NIMBLE_WITH_EDITOR is 1.
-#
-# STATIC, unlike GameCore. Nothing here is a process-wide registry that two
-# images would each get a copy of in a harmful way: the schemas are rebuilt
-# from GameCore's registries (which DO live in one place, GameCore.dll) by
-# whichever executable links this -- the editor, or the test.
-#
-# Links GameCore PUBLIC: node identity is GameCore::EntityGuid, and the script
-# schema reads the component script bindings. pugixml PRIVATE, as GameCore
-# links it -- no public header here includes pugixml.hpp. A second static
-# copy is harmless: pugixml keeps no global state (Lua's reason for living in
-# exactly one image does not apply).
+# Editor targets only, and Qt-free, so cooking and tests need no window.
+# STATIC: it holds no process-wide state (schemas are rebuilt from GameCore's
+# registries). pugixml PRIVATE; a second static copy is harmless.
 # ===========================================================================
 
 if(NOT COMMAND nimble_add_module)
@@ -72,8 +58,7 @@ if(NODEGRAPH_BUILD_TESTS)
             AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
             FOLDER  "Editor")
 
-    # Run from the flat Binaries directory so GameCore.dll and EngineCore.dll
-    # resolve, as every other test and host does.
+    # From Binaries, so the engine DLLs resolve.
     add_test(NAME NodeGraph.Tests COMMAND NodeGraphTests)
     set_tests_properties(NodeGraph.Tests PROPERTIES
             TIMEOUT 120
@@ -82,11 +67,9 @@ if(NODEGRAPH_BUILD_TESTS)
 endif()
 
 # === Material shader checks ===================================================
-# Scripts/cook_material_graphs.py puts generated shaders through GDI's own
-# cook_shaders.py and glslc. Python is looked up HERE, not taken from GDI's
-# find_package: FindPython's Python3_EXECUTABLE is a directory-scope variable,
-# invisible outside Modules/GDI. Optional -- without Python or glslc the
-# editor skips the check and the test below is not added.
+# cook_material_graphs.py runs generated shaders through GDI's cook_shaders.py
+# and glslc. Python is found here (GDI's result is directory-scoped).
+# Optional: without Python or glslc the check and test are skipped.
 find_package(Python3 COMPONENTS Interpreter QUIET)
 find_program(NODEGRAPH_GLSLC glslc HINTS "$ENV{VULKAN_SDK}/Bin")
 

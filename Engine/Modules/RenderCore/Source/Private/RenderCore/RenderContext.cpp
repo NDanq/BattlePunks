@@ -15,22 +15,15 @@
 #include "Private/RenderCore/RenderCoreInternal.h"
 
 /*
- * DrawQuad's whole job: one 1x1 quad mesh, the Basic_VS/Basic_PS pair every
- * backend already registers in InitializeGDI (GDI.cpp), and a GDIView/
- * GDIViewObject pair whose Camera projection/view matrices are overwritten
- * from RenderView every SetView() -- so the shaders see exactly what a
- * GDICamera would have produced, without RenderContext owning one itself
- * (GDICamera's own UpdateDimensions recomputes from a width/height it does
- * not have here; RenderView already carries the finished matrices).
+ * DrawQuad: a 1x1 quad mesh, Basic_VS/Basic_PS, and a GDIView whose camera
+ * matrices are copied from the RenderView.
  *
- * DrawQuadWithMaterial swaps in a material's pixel shader for Basic_PS -- the
- * vertex side is Basic_VS either way, whose interpolants (Common.glsl) are
- * what a material graph's inputs read.
+ * DrawQuadWithMaterial swaps Basic_PS for a material's pixel shader; material
+ * inputs read Basic_VS's interpolants (Common.glsl).
  *
- * DrawMesh is the same with Mesh_VS, which writes those interpolants too (and
- * a normal), so any material draws on a mesh as it does on a quad. Its GPU
- * meshes are built from MeshAssetCache's, one per path, and rebuilt when the
- * cache hands back a different mesh -- which is how a reimport shows.
+ * DrawMesh uses Mesh_VS, which writes the same interpolants (plus a normal),
+ * so any material works on a mesh. GPU meshes are per path, rebuilt when
+ * MeshAssetCache's copy changes.
  */
 
 namespace RenderCore
@@ -41,9 +34,8 @@ namespace RenderCore
         const char* const MATERIAL_UNIFORM = "MaterialParams";
         constexpr int     MATERIAL_SLOTS   = 3;   // columns 0-2; column 3 is the tint
 
-        /* A material's pixel shader: GDI's registry keys shaders by C++
-         * type, one instance per type, so a material -- one of any number,
-         * named at run time -- is created and owned here instead. */
+        /* GDI's registry is one shader per C++ type, so material shaders
+         * (named at run time) are owned here. */
         class MaterialPixelShader final : public GDIShader
         {
         public:
@@ -61,9 +53,8 @@ namespace RenderCore
             float      Slots[MATERIAL_SLOTS][4] = {};
         };
 
-        /* Where GDI's own cooked-path rule (GDIShader.cpp's GetCookedShaderPath)
-         * puts a material's shader -- checked before InitResource, which on
-         * OpenGL treats a missing file as a hard error. */
+        /* GDI's cooked-path rule. Checked first: OpenGL errors hard on a
+         * missing file. */
         std::string CookedMaterialPath(const std::string& InName, const ERenderBackend InBackend)
         {
             const std::string File = std::string(MATERIAL_FOLDER) + InName + ".fsh";
@@ -78,9 +69,7 @@ namespace RenderCore
             return std::string();
         }
 
-        /* Materials/<Name>.material: "Param <Name> <Slot> <Type> x y z w"
-         * lines (NodeGraph's MaterialSchema.cpp writes them). False if the
-         * file is not a material. */
+        /* "Param <Name> <Slot> <Type> x y z w" lines (MaterialSchema.cpp). */
         bool ParseMaterial(const std::string& InText, Material& OutMaterial, std::string& OutError)
         {
             std::istringstream Lines(InText);
@@ -134,13 +123,11 @@ namespace RenderCore
         GDIView*       View3D    = nullptr;   // owns the GDICamera DrawQuad overwrites per SetView()
         GDIViewObject* ViewObject = nullptr;   // owns the shared unit quad mesh
 
-        /* DrawMesh's: its own Transform, and a Mesh pointed at whichever
-         * GDI mesh is drawing -- never owned by it. */
+        /* DrawMesh's; its Mesh borrows whichever GDI mesh is drawing. */
         GDIViewObject* MeshObject = nullptr;
 
-        /* A mesh's GPU copy, keyed by path. Source is what it was built from;
-         * a different pointer from MeshAssetCache means rebuild. Gpu null
-         * with Source set: this backend could not build it (drawn as a quad). */
+        /* Keyed by path; rebuilt when MeshAssetCache's pointer differs from
+         * Source. Gpu null with Source set: the backend couldn't build it. */
         struct GpuMesh
         {
             std::shared_ptr<const MeshData> Source;
@@ -148,9 +135,7 @@ namespace RenderCore
         };
         std::unordered_map<std::string, GpuMesh> Meshes;
 
-        /* What GDISetBoundShader last got from here -- rebinding is skipped
-         * when a draw wants the same pair. Forgotten at every frame start,
-         * in case something outside this class bound others in between. */
+        /* Skips redundant rebinds. Reset each frame. */
         GDIShader*     BoundVertex = nullptr;
         GDIShader*     BoundPixel  = nullptr;
 
@@ -204,15 +189,11 @@ namespace RenderCore
             }
         }
 
-        /* The camera and InObject's placement: InTransform, its scale times
-         * InScaleX/Y -- a quad's size, or 1 for a mesh. */
+        /* Camera, and InTransform with scale times InScaleX/Y (1 for a mesh). */
         void Place(GDIViewObject* InObject, const RenderTransform& InTransform, const float InScaleX, const float InScaleY)
         {
-            /* Camera's matrices are the finished RenderView's, not recomputed
-             * from a width/height GDICamera would otherwise need -- overwritten
-             * here rather than in SetView() so a RenderContext used with no
-             * RenderScene at all (a hand-built scene in a test) still draws
-             * correctly as long as SetView() was called at least once. */
+            /* Here rather than in SetView(), so a RenderContext without a
+             * RenderScene (tests) still draws. */
             View3D->Camera->Projection = View.Projection;
             View3D->Camera->ViewMat    = View.View;
 
@@ -233,8 +214,7 @@ namespace RenderCore
         /* InMaterial's slots, with InTint in column 3, into its MaterialParams. */
         static void SetMaterialParams(const Material& InMaterial, const EngineCore::Color InTint)
         {
-            /* Column c of the shader's mat4 is Matrix4x4 column c: every backend
-             * transposes Matrix4x4's rows into the column-major upload. */
+            /* Shader mat4 column c = Matrix4x4 column c (backends transpose). */
             EngineCore::Matrix4x4 Params;
             for(int Column = 0; Column < MATERIAL_SLOTS; ++Column)
             {
@@ -247,9 +227,7 @@ namespace RenderCore
             InMaterial.Pixel->SetUniform(MATERIAL_UNIFORM, Params);
         }
 
-        /* InPath's GPU mesh, built (or rebuilt) from MeshAssetCache's. Null if
-         * the mesh cannot be loaded or this backend cannot build it; OutSource
-         * is the mesh either way it was found. */
+        /* Null if unloadable or unbuildable; OutSource is set if found. */
         GDIMesh* FindMesh(const std::string& InPath, std::shared_ptr<const MeshData>& OutSource)
         {
             OutSource = MeshAssetCache::Find(InPath);
@@ -282,10 +260,8 @@ namespace RenderCore
             return Entry.Gpu;
         }
 
-        /* The material, loaded on first use. A failed load is remembered (as
-         * a Material with no shader) so it is warned about once, not per frame.
-         * bQuietIfMissing: say nothing if there is no such material at all --
-         * for a mesh section's imported material name, which usually has none. */
+        /* Loaded on first use; failures are remembered and warned once.
+         * bQuietIfMissing: no warning if it doesn't exist (mesh sections). */
         Material& FindMaterial(const std::string& InName, const bool bQuietIfMissing = false)
         {
             const auto Found = Materials.find(InName);
@@ -426,8 +402,7 @@ namespace RenderCore
         {
             const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
 
-            /* The override if it loads; else the section's own material if
-             * there is one by that name; else Mesh_PS, the tint lit. */
+            /* Override, else section material, else Mesh_PS (lit tint). */
             const Material* Chosen = nullptr;
             if(bOverride)
             {
@@ -481,14 +456,9 @@ namespace RenderCore
         const Vector3 Along = Delta * (1.0 / Length);
         const Vector3 Mid   = (InStart + InEnd) * 0.5;
 
-        /*
-         * World units per pixel at the segment's depth, read back from the
-         * projection so any view works: Data[1][1] is the Y focal scale in
-         * both MakeOrthographic and MakePerspective. An orthographic
-         * projection has no w-divide (bottom row 0 0 0 1), so its scale is
-         * the same at every depth; a perspective one grows with view depth.
-         * The view's own row 2 is its forward axis (Matrix4x4::LookAt).
-         */
+        /* World units per pixel at the segment's depth. Data[1][1] is the Y
+         * focal scale in both projections; only perspective varies with
+         * depth. View row 2 is forward (LookAt). */
         const EngineCore::Matrix4x4& Proj = View.Projection;
         const Vector3 Forward(View.View.Data[2][0], View.View.Data[2][1], View.View.Data[2][2]);
         const bool    bOrthographic = Proj.Data[3][2] == 0.0f && Proj.Data[3][3] != 0.0f;
@@ -509,8 +479,7 @@ namespace RenderCore
         }
         const double Width = double(InThicknessPixels) * WorldPerPixel;
 
-        /* The ribbon's width axis: across the segment and across the line of
-         * sight, so the flat quad faces the camera. End-on, there is none. */
+        /* Width axis: perpendicular to segment and sight line. */
         const Vector3 Sight = bOrthographic ? Forward : (Mid - View.Origin);
         Vector3 Side = Along ^ Sight;
         const double SideLength = Side.GetLength();
@@ -521,9 +490,8 @@ namespace RenderCore
         Side = Side * (1.0 / SideLength);
         const Vector3 Normal = Along ^ Side;
 
-        /* Unit quad (+-0.5 in X and Y, z = 0) -> the ribbon: X along the
-         * segment (capped by half a width at each end), Y across it. Columns
-         * are the images of the quad's axes; translation is the midpoint. */
+        /* Unit quad -> ribbon: X along the segment (plus caps), Y across,
+         * translated to the midpoint. */
         const Vector3 AxisX = Along * (Length + Width);
         const Vector3 AxisY = Side * Width;
 
@@ -536,10 +504,8 @@ namespace RenderCore
         P->EnsureInitialised();
         P->Bind(GDIGetShader<Basic_VS>(), GDIGetShader<Basic_PS>());
 
-        /* The shader computes Projection * View * Model * v; with Model the
-         * identity, View * Segment places the quad. Both uniforms are
-         * uploaded per draw (GDIShader::UpdateCoreUniforms), so the next
-         * DrawQuad's own View is unaffected. */
+        /* Model is identity; View * Segment places the quad. Uniforms are
+         * per draw, so later DrawQuads are unaffected. */
         P->View3D->Camera->Projection = View.Projection;
         P->View3D->Camera->ViewMat    = View.View * Segment;
 
@@ -648,11 +614,8 @@ namespace RenderCore
             return false;
         }
 
-        /* A pixel-space view over exactly the target, and the quad filling
-         * it -- the scene's own view is put back afterwards. The eye sits at
-         * the quad's own depth, as a game's camera does: with ZNear -1 the
-         * orthographic volume admits view-space z up to +1 only, so an eye
-         * pulled back along -z would clip the quad away. */
+        /* Pixel-space view over the target, restored afterwards. The eye sits
+         * at the quad's depth: with ZNear -1, pulling it back would clip. */
         const RenderView Saved = P->View;
         P->View = RenderView::MakeOrthographic(EngineCore::Size(Size, Size), EngineCore::Vector3(0.0, 0.0, 0.0), -1.0f, 1000.0f);
 
@@ -667,8 +630,7 @@ namespace RenderCore
         Quad.Position = EngineCore::Vector3(double(Size) * 0.5, double(Size) * 0.5, 0.0);
         DrawQuadWithMaterial(Quad, float(Size), float(Size), InTint, Name.c_str());
 
-        /* Flushes the frame so far, reads back, and resumes it (every backend's
-         * ToImage does); the caller binds its own target next. */
+        /* Flushes, reads back, resumes the frame. */
         OutImage = P->PreviewTarget->ToImage();
         P->View  = Saved;
 

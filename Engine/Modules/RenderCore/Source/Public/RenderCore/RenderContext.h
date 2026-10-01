@@ -53,50 +53,34 @@ namespace RenderCore
         void DrawQuad(const RenderTransform& InTransform, float InWidth, float InHeight, EngineCore::Color InTint);
 
         /*
-         * DrawQuad through a material graph's pixel shader instead of Basic's:
-         * material "Glow" is the cooked Materials/Glow.fsh (under Shaders/Cooked/
-         * <Platform>/, as GDI names its own) with the parameter defaults in
-         * Materials/Glow.material, both read through the file provider on first
-         * use and kept. The shader's one uniform, MaterialParams, is those
-         * defaults in columns 0-2 and InTint (0-1 RGBA) in column 3 -- see
-         * NodeGraph's MaterialSchema.cpp for the layout and why it is one mat4.
+         * DrawQuad with a material graph's pixel shader: "Glow" is the cooked
+         * Materials/Glow.fsh plus defaults from Glow.material, loaded on first
+         * use. MaterialParams holds the defaults in columns 0-2 and InTint in
+         * column 3 (layout: NodeGraph's MaterialSchema.cpp).
          *
-         * A material that cannot be loaded (no .material, or no cooked shader
-         * for this backend) is warned about once and drawn as DrawQuad would.
+         * An unloadable material is warned once and drawn as DrawQuad.
          */
         void DrawQuadWithMaterial(const RenderTransform& InTransform, float InWidth, float InHeight,
                                   EngineCore::Color InTint, const char* InMaterial);
 
         /*
-         * Draws the .nmmesh at InMeshPath (runtime-relative, MeshAsset.h) at
-         * InTransform, its own size times the transform's scale. One draw per
-         * section, each with:
-         *   - InMaterial, when given and it loads (as DrawQuadWithMaterial);
-         *   - else the section's own material, if one by that name exists;
-         *   - else InTint, lit by one fixed light (Mesh.fsh).
-         * The GPU mesh is built on first use and rebuilt when MeshAssetCache
-         * has a different one (MeshAssetCache::Invalidate, after a reimport).
+         * Draws the .nmmesh at InMeshPath, one draw per section, with the
+         * first that loads of: InMaterial, the section's material, or InTint
+         * lit by a fixed light (Mesh.fsh). The GPU mesh is rebuilt when
+         * MeshAssetCache's copy changes.
          *
-         * False, drawing nothing, if the mesh cannot be loaded or this backend
-         * has no indexed meshes -- the caller draws something else.
+         * False, drawing nothing, if the mesh cannot be loaded or the backend
+         * lacks indexed meshes.
          */
         bool DrawMesh(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
                       const char* InMaterial);
 
 #if WITH_EDITOR
         /*
-         * EDITOR ONLY -- the draw behind Renderer::DrawDebugLine.
-         *
-         * A world-space segment as a flat ribbon facing the camera,
-         * InThicknessPixels wide on screen at any distance, extended by half
-         * that at each end so segments meeting at a corner close it. Drawn
-         * with the same unit quad and shaders as DrawQuad: the ribbon's
-         * placement is folded into the view matrix for this one draw, and the
-         * model transform is identity -- so no rotation is ever built, and
-         * any orientation works. Uses the view from the last SetView().
-         *
-         * Nothing is drawn for a segment seen end-on (it would be a point) or
-         * shorter than a millionth of a unit. Counts one draw call.
+         * EDITOR ONLY -- Renderer::DrawDebugLine's draw: a camera-facing
+         * ribbon InThicknessPixels wide at any distance, extended half that at
+         * each end so corners close. Uses DrawQuad's quad with the placement
+         * folded into the view matrix. Skips degenerate or end-on segments.
          */
         void DrawLine(const EngineCore::Vector3& InStart, const EngineCore::Vector3& InEnd,
                       EngineCore::Color InColor, float InThicknessPixels);
@@ -127,28 +111,20 @@ namespace RenderCore
         void SetFrameNumber(uint64_t InFrameNumber);
         void SetView(const RenderView& InView);
 
-        /* Forgets material InName (or every material, for nullptr) so its
-         * next draw loads it afresh -- Renderer::ReloadMaterial's command.
-         * The old shader is kept, not released, until ReleaseGPUResources:
-         * a backend may cache pipelines by the shader module's handle, and a
-         * released handle can come back as the new shader's. */
+        /* Renderer::ReloadMaterial's command (nullptr: all). Old shaders are
+         * kept until ReleaseGPUResources: pipelines may be cached by shader
+         * handle, and a freed handle could be reused. */
         void ReloadMaterial(const char* InName);
 
-        /* Releases every GPU object this context created itself -- the
-         * material shaders and the preview target. RenderThread's exit calls
-         * it before the driver's Destroy(), while the device they belong to
-         * still exists. */
+        /* Material shaders and the preview target; before the driver's Destroy(). */
         void ReleaseGPUResources();
 
 #if WITH_EDITOR
         /*
-         * EDITOR ONLY -- RenderScene::Render's, for a material preview: material
-         * InMaterial on a quad filling an InSize x InSize target of this
-         * context's own, InTint as its Instance Tint, read back into OutImage
-         * (RGBA8, top row first). Between GDIBeginRendering and the scene's
-         * own target bind; leaves the view as it found it. False, with
-         * OutError, when the material cannot be drawn or the backend reads
-         * nothing back (Null).
+         * EDITOR ONLY -- draws InMaterial on an InSize x InSize quad into a
+         * private target and reads it back (RGBA8, top row first). Called by
+         * RenderScene::Render before the scene's target bind; restores the
+         * view. False, with OutError, if it cannot draw or read back.
          */
         bool RenderMaterialPreview(const char* InMaterial, int InSize, EngineCore::Color InTint,
                                    EngineCore::Image& OutImage, std::string& OutError);

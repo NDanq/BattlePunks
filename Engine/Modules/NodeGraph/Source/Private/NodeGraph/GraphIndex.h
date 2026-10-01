@@ -10,11 +10,8 @@
 #include "Public/NodeGraph/Graph.h"
 #include "Public/NodeGraph/Schema.h"
 
-/*
- * What the schema compilers share: lookups over one graph that the model's
- * linear searches would make quadratic, and the text helpers every literal
- * goes through. Private to the module.
- */
+/* Shared by the schema compilers: indexed lookups over one graph and the
+ * literal text helpers. */
 namespace NodeGraph
 {
     /* The schema factories, called once by GetSchemas(). */
@@ -41,8 +38,7 @@ namespace NodeGraph
         /* The concrete type of a pin -- Schema::ResolvePinType, cached. */
         std::string PinType(const Node& InNode, const PinDefinition& InPin) const;
 
-        /* The nodes, in GUID order -- the order every compiler walks roots in,
-         * so output does not depend on the order nodes were created. */
+        /* GUID order, so output doesn't depend on creation order. */
         const std::vector<const Node*>& SortedNodes() const { return Sorted; }
 
     private:
@@ -57,18 +53,14 @@ namespace NodeGraph
 
     // === Literals ===============================================================
 
-    /* std::to_chars' shortest round-trip form -- the same text for the same
-     * value every time, and locale-independent. */
+    /* Shortest round-trip form; stable and locale-independent. */
     std::string FormatNumber(double InValue);
     std::string FormatNumber(float InValue);
 
     bool ParseNumber(const std::string& InText, double& OutValue);
 
-    /*
-     * Whitespace-separated numbers into exactly InCount values. One number
-     * fills every lane ("1" as a vec3 is 1 1 1); an empty string is all zeros.
-     * False if the text is neither.
-     */
+    /* Exactly InCount whitespace-separated numbers; one number fills every
+     * lane, empty is all zeros. */
     bool ParseNumbers(const std::string& InText, size_t InCount, std::vector<double>& OutValues);
 
     /* A-Z, a-z, 0-9 and '_' kept, everything else '_'; a leading digit gets a

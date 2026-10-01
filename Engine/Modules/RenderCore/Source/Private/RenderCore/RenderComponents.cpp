@@ -8,14 +8,7 @@
 
 #include "Private/RenderCore/RenderComponentProxy.h"
 
-/*
- * The two built-in components' registration. Nothing else to define --
- * unlike GameCore::Components.cpp's TransformComponent::GetLocalMatrix,
- * neither RenderComponent nor CameraComponent has an out-of-line method
- * of its own; RENDERCORE_API is only for StaticType() itself, the same
- * reason GameCore::DESIGN.md gives for annotating even its plain-looking
- * components.
- */
+/* Registration for the two built-in components. */
 
 namespace RenderCore
 {
@@ -33,22 +26,11 @@ namespace RenderCore
     }
 
     /*
-     * THE SERIALIZERS, here beside the definitions rather than in GameCore --
-     * the module that owns a component type owns its serializer, the same rule
-     * that puts these two types' GAMECORE_DEFINE_COMPONENT calls here rather
-     * than in GameCore::Components.cpp.
+     * The owning module owns the serializer, so a build without RenderCore
+     * skips these chunks by size and warns.
      *
-     * That placement is also what makes a build WITHOUT RenderCore able to load
-     * a save that contains these components: nothing registers them, so
-     * WorldSerializer skips both chunks by size and warns. See
-     * WorldSerializer.h's format note on why every payload is sized.
-     *
-     * C.Proxy IS NOT SAVED, and cannot be. A RenderProxyHandle names a live
-     * render-thread object that RenderCore's WorldBridge creates by extracting
-     * this component every frame -- the same "it is a rebuildable cache, not
-     * data" reason BoundsComponent::ProxyID is skipped. A restored
-     * RenderComponent gets a fresh proxy on the first frame after the load,
-     * from the values below, with nothing here having to arrange it.
+     * C.Proxy is not saved: it names a live render-thread object that
+     * WorldBridge recreates on the first frame after a load.
      */
     GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 1)
     {
@@ -95,9 +77,8 @@ namespace RenderCore
     }
 
 #if WITH_EDITOR
-    /* WHAT THE EDITOR SHOWS -- the same fields as the Lua list above, kept as
-     * a separate list on purpose (ComponentProperties.h). C.Proxy is not
-     * listed. Editor targets only. */
+    /* Editor-visible fields; deliberately separate from the Lua list
+     * (ComponentProperties.h). */
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
     {
         Props.Field("Width",  &RenderComponent::Width);

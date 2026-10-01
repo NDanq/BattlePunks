@@ -1433,9 +1433,7 @@ static void TestTypes()
     Expect(V.GetLength() > 4.99 && V.GetLength() < 5.01, "Vector3 length");
     Expect(Matrix4x4().InitIdentity().Data[0][0] == 1, "Matrix4x4 identity");
 
-    // Right-handed axis-angle, column vectors: 90 degrees about +Z turns +X
-    // into +Y, and every rotation is orthonormal -- a symmetric off-diagonal
-    // here once rendered rotated quads as shears.
+    // 90 degrees about +Z turns +X into +Y, and rotations are orthonormal.
     const Vector3 TurnedX = Matrix4x4().InitRotation(90.0f, Vector3(0.0, 0.0, 1.0)) * Vector3(1.0, 0.0, 0.0);
     Expect(std::abs(TurnedX.GetX()) < 1e-5 && std::abs(TurnedX.GetY() - 1.0) < 1e-5, "InitRotation: 90 about Z maps X to Y");
     const Vector3 TurnedY = Matrix4x4().InitRotation(90.0f, Vector3(1.0, 0.0, 0.0)) * Vector3(0.0, 1.0, 0.0);

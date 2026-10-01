@@ -16,13 +16,10 @@ class GraphScene;
 class QFormLayout;
 
 /*
- * The graph window's Details dock. With one node selected: its settings, its
- * wildcard type, and the literal value of each unlinked input. With nothing
- * selected: the graph's own settings and (for a script) its variables.
- *
- * Every edit is committed when it is finished (Enter, focus leaving, a pick)
- * as one undoable step. Rebuilt only when what it shows actually changed, so
- * an unrelated edit elsewhere does not throw away a half-typed value.
+ * The graph Details dock: the selected node's settings, wildcard type and
+ * unlinked literals, or with nothing selected the graph's settings and
+ * variables. Edits commit on finish as one undo step; rebuilt only when its
+ * content changes, so half-typed values survive.
  */
 class GraphDetailsPanel : public QScrollArea
 {

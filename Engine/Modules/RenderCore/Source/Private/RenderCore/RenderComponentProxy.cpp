@@ -29,8 +29,7 @@ namespace RenderCore
 
         SetVisible(bComponentVisible);
 
-        /* Asked every frame, so a reimport (MeshAssetCache::Invalidate) is
-         * noticed: the cache hands back a different mesh, and the bounds follow. */
+        /* Every frame, so a reimport's new mesh is noticed. */
         const std::string Path(Component.Mesh, strnlen(Component.Mesh, RENDER_MESH_PATH_MAX));
         std::shared_ptr<const MeshData> Source = Path.empty() ? nullptr : MeshAssetCache::Find(Path);
         const bool bSameMesh = Path == MeshPath && Source == MeshSource;
@@ -50,10 +49,7 @@ namespace RenderCore
             return;
         }
 
-        /* A unit box in entity space, half-extents (Width/2, Height/2) on X
-         * and Y -- the flat quad's own local bounds, matching how
-         * BoundsComponent's default unit box is used in Sandbox. Zero depth:
-         * a flat quad has no Z extent to speak of. */
+        /* The flat quad's local bounds: (Width/2, Height/2, 0) half-extents. */
         SetLocalBounds(GameCore::AABB(
             EngineCore::Vector3(-double(Width) * 0.5, -double(Height) * 0.5, 0.0),
             EngineCore::Vector3(double(Width) * 0.5, double(Height) * 0.5, 0.0)));

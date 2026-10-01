@@ -149,8 +149,7 @@ namespace RenderCore
                 RunDrainStep(Cmd);
             }
 
-            /* What the context created itself (material shaders) goes first,
-             * while the device it belongs to is still alive. */
+            /* While the device is still alive. */
             Context.ReleaseGPUResources();
 
             /* ReleaseGDI deletes the driver WITHOUT calling Destroy(), so GPU

@@ -130,14 +130,9 @@ if(NOT TARGET Lua::Lua)
 endif()
 
 # === Vendored pugixml (editor builds only) ==================================
-# The editor's worlds are XML -- a .nmworld manifest plus one .nmentity per
-# entity (WorldPackage.h) -- so they diff and merge as text. Only an editor
-# build reads or writes them; a game loads the cooked binary form, so a Client
-# or Server build does not compile pugixml at all. Vendored in source form under
-# External/ for Lua's reasons above; built by hand, like Lua, rather than
-# through pugixml's own CMakeLists.txt (not vendored), so its options are
-# spelled out here. PUGIXML_NO_XPATH: nothing here queries by path, and it is
-# most of the library.
+# The editor's text worlds are XML (WorldPackage.h); games load the cooked
+# binary form, so only editor builds compile pugixml. Built by hand, like Lua.
+# PUGIXML_NO_XPATH: unused, and most of the library.
 set(GAMECORE_PUGIXML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/pugixml-1.16")
 
 if(NIMBLE_WITH_EDITOR AND NOT TARGET PugiXml::PugiXml)

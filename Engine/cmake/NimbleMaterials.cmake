@@ -1,31 +1,18 @@
 # ===========================================================================
 # nimble_stage_materials(TARGET <game> DIR <folder> [RUNTIME_DIR <dir>])
 #
-# A game's MATERIALS, ready for its runtime directory: every <Name>.fsh and
-# <Name>.material a material graph generated into <folder> (the editor writes
-# them beside Glow.material.nmgraph and they are committed), laid out where
-# RenderCore's material loader reads them --
+# Cooks and stages the committed <Name>.fsh / <Name>.material pairs in
+# <folder> for every built GDI backend:
 #
 #     <runtime>/Materials/<Name>.material
 #     <runtime>/Shaders/Cooked/<Platform>/Materials/<Name>.fsh[.spv|.cso]
 #
-# -- for every backend GDI is built with (GDI_WITH_OPENGL / VULKAN / D3D12).
-# The shaders go through NodeGraph's cook_material_graphs.py, which reuses
-# GDI's own cook_shaders.py, so the toolchain is the one GDI's shaders already
-# need (Python, the Vulkan SDK's glslc and spirv-cross, fxc).
-#
-# Works in every target type: nothing here needs the editor or the NodeGraph
-# module, only the committed generated files and the script beside it.
-#
-# GLOBBED, unlike Sandbox's scripts, and on purpose: the files are generated
-# output, one pair per graph, and the editor adds new ones -- listing them by
-# hand would only be a second place to forget. CONFIGURE_DEPENDS re-globs when
-# one appears. Rebuilt only when a source changes (a stamp file).
+# Uses cook_material_graphs.py (GDI's toolchain). Works in every target type.
+# Globbed (generated files) with CONFIGURE_DEPENDS; stamp-file incremental.
 # ===========================================================================
 
-# CACHE, not a plain variable: the function runs in the GAME's directory scope,
-# which never sees a variable set in Engine's. (CMAKE_CURRENT_FUNCTION_LIST_DIR
-# would say it directly, but that is CMake 3.17 and this project targets 3.16.)
+# CACHE: the function runs in the game's scope. (CMAKE_CURRENT_FUNCTION_LIST_DIR
+# needs CMake 3.17.)
 get_filename_component(NM_COOK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Modules/NodeGraph/Scripts/cook_material_graphs.py" ABSOLUTE)
 set(NIMBLE_MATERIAL_COOK_SCRIPT "${NM_COOK_SCRIPT}" CACHE INTERNAL "NodeGraph's material cook, for nimble_stage_materials")
 get_filename_component(NM_PLATFORM_HEADER "${CMAKE_CURRENT_LIST_DIR}/../Modules/NodeGraph/Shaders/MaterialPlatform.glsl" ABSOLUTE)
@@ -50,11 +37,8 @@ function(nimble_stage_materials)
         return()
     endif()
 
-    # A known runtime directory stages BEFORE the game builds (a Play right
-    # after a build finds them); without one -- a multi-config generator,
-    # where it is only a generator expression -- the staging runs AFTER the
-    # game, since naming $<TARGET_FILE_DIR> of a target makes a dependency on
-    # it. The same split Games/Sandbox's own Scripts/ staging makes.
+    # With a known runtime directory, stage before the game builds; otherwise
+    # (multi-config) after it, since $<TARGET_FILE_DIR> adds a dependency.
     if(NM_RUNTIME_DIR)
         set(NM_RUNTIME "${NM_RUNTIME_DIR}")
     else()

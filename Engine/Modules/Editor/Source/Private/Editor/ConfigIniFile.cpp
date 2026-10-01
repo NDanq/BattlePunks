@@ -154,9 +154,8 @@ void ConfigIniFile::Set(const QString& InSection, const QString& InKey, const QS
 
     const QString NewLine = InKey + QLatin1Char('=') + Value;
 
-    /* After the section's last key, so comments above the next section stay
-     * with it; after the header if the section has no keys yet. The section's
-     * last header wins, like its last key. */
+    /* After the section's last key (or its header), so comments above the
+     * next section stay put. The last header of a section wins. */
     int Header = -1;
     for(const QPair<QString, int>& Section : Sections)
     {

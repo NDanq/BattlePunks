@@ -7,20 +7,14 @@
 #include "Public/NodeGraph/Graph.h"
 
 /*
- * .nmgraph files: XML, one graph per file, the schema named twice -- by the
- * compound extension and by the root's Schema attribute:
+ * .nmgraph files: XML, one graph each, the schema named by both the compound
+ * extension and the Schema attribute (a mismatch fails the load):
  *
  *     Scripts/Mover.script.nmgraph      -> Scripts/Mover.lua
  *     Shaders/Glow.material.nmgraph     -> Shaders/Glow.fsh
  *
- * The extension is what tools route on (File > Open, Cook Content's search,
- * the output's name); the attribute is a check, and a mismatch is a load
- * error. A bare *.nmgraph falls back to the attribute, with a warning.
- *
- * Written deterministically -- nodes by GUID, links by their ends, fixed
- * attribute order, shortest round-trip numbers -- so an unchanged graph saves
- * to the same bytes and a changed one diffs as the change. See README.md for
- * the element-by-element format.
+ * Tools route on the extension; a bare *.nmgraph falls back to the attribute.
+ * Written deterministically for clean diffs. Format: README.md.
  */
 namespace NodeGraph
 {
@@ -39,8 +33,7 @@ namespace NodeGraph
     /* The schema the extension names; nullptr for a bare or unknown tag. */
     const Schema* FindSchemaForPath(const std::string& InPath);
 
-    /* "a/Glow.material.nmgraph" -> "a/Glow": the whole compound extension off
-     * the file name (not just ".nmgraph"); a bare "a/Glow.nmgraph" -> "a/Glow". */
+    /* "a/Glow.material.nmgraph" or "a/Glow.nmgraph" -> "a/Glow". */
     std::string StripGraphExtension(const std::string& InPath);
 
     /* "a/Glow" -> "a/Glow.material.nmgraph". */
@@ -57,12 +50,8 @@ namespace NodeGraph
     /* The file's bytes for InGraph. */
     std::string WriteGraphText(const Graph& InGraph);
 
-    /*
-     * Parses a file's text. False, with OutError, on bad XML, an unknown
-     * schema or a malformed element that cannot be skipped. Recoverable
-     * problems (a link to a missing node, an unknown node type) load anyway
-     * and are described in OutWarnings.
-     */
+    /* False, with OutError, on unrecoverable problems; recoverable ones load
+     * with OutWarnings. */
     bool ReadGraphText(const std::string& InText, Graph& OutGraph, std::string& OutError,
                        std::vector<std::string>* OutWarnings = nullptr);
 
@@ -80,13 +69,9 @@ namespace NodeGraph
     /* Writes InText to InPath the same way, if it differs from what is there. */
     bool WriteTextFileIfChanged(const std::string& InPath, const std::string& InText, std::string& OutError);
 
-    /*
-     * Loads InGraphPath, compiles it and writes the output -- and any
-     * companion files (CompileResult::Companions) -- beside it, each only if
-     * its text changed. False with OutError when the file cannot be read or
-     * written; a graph that fails to COMPILE returns true with the errors in
-     * OutResult and the old output left in place.
-     */
+    /* Compiles InGraphPath and writes changed outputs and companions beside
+     * it. False only on I/O errors; compile errors return true with OutResult
+     * set and the old output kept. */
     bool GenerateGraphOutput(const std::string& InGraphPath, CompileResult& OutResult, std::string& OutError);
 
     // === Clipboard ==============================================================
@@ -94,12 +79,8 @@ namespace NodeGraph
     /* The selected nodes and the links among them, as a <NodeGraphFragment>. */
     std::string WriteGraphFragment(const Graph& InGraph, const std::vector<NodeGuid>& InSelection);
 
-    /*
-     * Adds a fragment to InOutGraph: every node gets a fresh GUID and is
-     * offset by (InOffsetX, InOffsetY); links are remapped onto the copies.
-     * False if the text is not a fragment for InOutGraph's schema. OutNewNodes
-     * receives the copies' GUIDs.
-     */
+    /* Pastes with fresh GUIDs, offset by (InOffsetX, InOffsetY), links
+     * remapped. False if not a fragment for this schema. */
     bool PasteGraphFragment(const std::string& InText, Graph& InOutGraph, float InOffsetX, float InOffsetY,
                             std::vector<NodeGuid>& OutNewNodes);
 }

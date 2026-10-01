@@ -227,9 +227,8 @@ void EditorMainWindow::BuildMenus()
 
     QMenu* Edit = menuBar()->addMenu(QStringLiteral("&Edit"));
 
-    /* Not QUndoStack::createUndoAction: these go through the context, which
-     * refuses while playing or mid-drag and keeps its own state in step. A
-     * text field with focus still gets Ctrl+Z for its own text first. */
+    /* Through the context, which refuses while playing or mid-drag. Focused
+     * text fields still get Ctrl+Z first. */
     UndoAction = Edit->addAction(QStringLiteral("&Undo"));
     UndoAction->setShortcut(QKeySequence::Undo);
     connect(UndoAction, &QAction::triggered, &Context, &EditorContext::Undo);
@@ -430,9 +429,8 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
         return;
     }
 
-    /* Nothing holds the module between runs, so the next Play loads the new
-     * DLL by itself. A run in progress still has the old one: restart it,
-     * unless Editor.ReloadAfterCompile says to leave it running. */
+    /* The next Play loads the new DLL anyway; restart a running one unless
+     * Editor.ReloadAfterCompile says otherwise. */
     if(Context.IsPlaying() && !GEditorReloadAfterCompile.GetBool())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play; the run keeps the old one")
@@ -482,10 +480,8 @@ void EditorMainWindow::OpenProjectSettings()
 
 void EditorMainWindow::CookContent()
 {
-    /* The node graphs' generated code, which is defined: every .nmgraph under
-     * the project, compiled, its output rewritten where it changed. The rest
-     * is a stub until cooking has a definition -- which content, from where,
-     * to where, for which target. Until then the Console's `cook` does one world. */
+    /* Only graph regeneration so far; the rest of cooking is undefined (the
+     * Console's `cook` does one world). */
     QStringList Lines;
     const int Failures = EditorGraphs::RegenerateAll(Lines);
     for(const QString& Line : Lines) { CORE_LOG("[Build] " + std::string(Line.toUtf8().constData())) }
@@ -955,8 +951,6 @@ void EditorMainWindow::StartRenderer()
 
 void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
-    /* Spontaneous: the window system asked (the close button, Alt+F4, a
-     * WM_CLOSE from outside); otherwise something in the editor called close(). */
     /* Open graphs first: an unsaved one may cancel the close. */
     if(!EditorGraphs::CloseAllGraphs())
     {

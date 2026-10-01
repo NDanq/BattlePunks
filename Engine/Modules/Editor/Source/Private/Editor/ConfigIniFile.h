@@ -9,35 +9,25 @@
 #include <QStringList>
 
 /*
- * An .ini in Core's config grammar (CoreConfig.cpp's LoadConfigText), edited
- * in place: Set changes one key's line and leaves every other line -- the
- * comments that explain each key, blank lines, ordering -- exactly as it was.
- * A config file here is documentation as much as data (see Sandbox's
- * DefaultEngine.ini), so rewriting it from the registry would lose the part
- * people read.
+ * An .ini in Core's config grammar, edited in place: Set rewrites only the
+ * key's line, preserving comments and layout.
  *
- * The grammar, as Core reads it: whole-line comments starting ';' or '#',
- * "[Section]" headers, "Key = Value" with the value optionally in double
- * quotes. No inline comments. Sections and keys match case-insensitively.
- *
- * Private to the editor.
+ * Grammar: whole-line ';' / '#' comments, "[Section]", "Key = Value" (value
+ * optionally quoted). Case-insensitive sections and keys.
  */
 class ConfigIniFile
 {
 public:
-    /* False if the file exists but cannot be read; a missing file is an
-     * empty document, so Save creates it. */
+    /* False if unreadable; a missing file is empty (Save creates it). */
     bool Load(const QString& InPath);
 
     /* Writes every line back, with the line ending the file had. */
     bool Save(const QString& InPath) const;
 
-    /* The value as Core would read it (quotes stripped); OutbFound false and
-     * an empty string when the key is not in the file. */
+    /* Quotes stripped; empty with OutbFound false if absent. */
     QString Get(const QString& InSection, const QString& InKey, bool* OutbFound = nullptr) const;
 
-    /* Replaces the key's value on its own line, or adds the key at the end of
-     * its section -- adding the section at the end of the file if needed. */
+    /* Replaces in place, or appends to the section (creating it if needed). */
     void Set(const QString& InSection, const QString& InKey, const QString& InValue);
 
     /* Every Section / Key pair in the file, in file order. */

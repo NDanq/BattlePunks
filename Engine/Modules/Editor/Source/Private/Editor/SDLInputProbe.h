@@ -20,19 +20,12 @@ struct MouseMoveEvent;
 struct MouseWheelEvent;
 
 /*
- * THE SPIKE for Play-in-Editor input: can the game's own SDL input path run
- * inside the Qt editor, so PIE needs no second (Qt -> game) input layer?
+ * SPIKE: can the game's SDL input path run inside the Qt editor? Wraps the
+ * viewport (WrapNativeWindow, Qt owning the loop), pumps SDL each tick and
+ * reports what reaches the GameWindowDelegates.
  *
- * Wraps the viewport's native window with GameWindowSystem::WrapNativeWindow
- * -- SDL's window procedure chained in front of Qt's -- with Qt left owning the
- * message loop (SetHostOwnsMessageLoop). Each tick drains SDL's queue through
- * the ordinary GameWindowSystem::PumpEvents(), and reports what arrives on the
- * very GameWindowDelegates a game subscribes to. Nothing here is PIE; it only
- * answers whether the events arrive, with focus and capture intact, while Qt
- * keeps working.
- *
- * Enabled from View > SDL Input Probe, or --sdl-input-probe. Must be stopped
- * before the viewport's native window is destroyed (EditorMainWindow does).
+ * View > SDL Input Probe or --sdl-input-probe. Stop before the viewport's
+ * native window is destroyed.
  */
 class SDLInputProbe : public QObject, public QAbstractNativeEventFilter
 {
@@ -42,8 +35,7 @@ public:
     explicit SDLInputProbe(QObject* InParent = nullptr);
     ~SDLInputProbe() override;
 
-    /* Wraps InViewport's native window. False (with the reason logged) if
-     * SDL refused. InViewport must have a native window (WA_NativeWindow). */
+    /* InViewport needs WA_NativeWindow. False, logged, if SDL refused. */
     bool Start(QWidget* InViewport);
 
     /* Unwraps and restores Qt's window procedure. Idempotent. */
@@ -55,37 +47,20 @@ protected:
     /* Focus-in and mouse-press on the viewport: hand the Win32 focus over. */
     bool eventFilter(QObject* InWatched, QEvent* InEvent) override;
 
-    /*
-     * TEXT. Qt pulls each WM_CHAR off the queue while translating the
-     * WM_KEYDOWN before it, and never dispatches it -- measured: every WM_CHAR
-     * is fetched, none reaches the viewport's window procedure -- so SDL's
-     * chained procedure makes no text. The native filter still sees each one
-     * as Qt fetches it, and hands the character to
-     * GameWindowSystem::InjectTextInput, which queues an ordinary SDL text
-     * event: the game still receives it through PumpEvents and OnText.
-     */
+    /* TEXT. Qt consumes WM_CHAR without dispatching it, so SDL sees no text.
+     * This filter forwards each one to GameWindowSystem::InjectTextInput. */
     bool nativeEventFilter(const QByteArray& InEventType, void* InMessage, qintptr* OutResult) override;
 
 signals:
-    /* One line per discrete event (key, button, wheel, focus); mouse motion
-     * is summarised once per second rather than per event. */
+    /* One line per discrete event; mouse motion summarised per second. */
     void EventReported(const QString& InLine);
 
 private:
     void Pump();
 
-    /*
-     * KEYBOARD FOCUS, the one thing wrapping alone does not give. Qt keeps
-     * the Win32 focus on the TOP-LEVEL window and routes key events to widgets
-     * internally, so no WM_KEYDOWN ever reaches the viewport's own HWND -- and
-     * SDL's chained procedure, which lives on that HWND, sees none. Mouse
-     * messages are hit-tested to the child and arrive regardless.
-     *
-     * So whenever Qt gives the viewport focus, the Win32 focus follows it to
-     * the viewport's HWND. Key messages then pass SDL's procedure first and
-     * continue to Qt's procedure for that same window, which still delivers
-     * them to the focused widget -- Qt keeps working.
-     */
+    /* KEYBOARD FOCUS. Qt keeps Win32 focus on the top-level window, so key
+     * messages never reach the viewport HWND. When Qt focuses the viewport,
+     * move the Win32 focus there; Qt still receives the keys after SDL. */
     void OnQtFocusChanged(QWidget* InOld, QWidget* InNow);
     void GiveNativeFocusToViewport();
 

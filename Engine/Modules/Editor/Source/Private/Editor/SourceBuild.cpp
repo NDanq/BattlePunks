@@ -95,11 +95,8 @@ bool SourceBuild::Start(const QString& InTarget)
     QString       Shown     = Quoted(CMake) + QLatin1Char(' ') + Args.join(QLatin1Char(' '));
 
 #ifdef _WIN32
-    /* Not from a developer prompt or an IDE: cl.exe would find no headers.
-     * vcvarsall is silenced (it chatters about vswhere); if it fails, the
-     * build that follows says so.
-     * One cmd line so vcvarsall's environment reaches the build; /s strips
-     * the outer quotes and keeps the inner ones. */
+    /* Outside a developer prompt cl.exe finds no headers: run vcvarsall
+     * (silenced) in the same cmd line. /s strips only the outer quotes. */
     if(!VCVarsAll.isEmpty() && qEnvironmentVariableIsEmpty("INCLUDE"))
     {
         QStringList Quoting;

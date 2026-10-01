@@ -24,13 +24,9 @@ class QToolButton;
  *   Time                      prefix each line with when it was logged
  *   Clear                     empty the history (the `clear` command does too)
  *
- * The command line runs through EditorConsole. Up/Down walk the lines entered
- * this session; Tab / the popup complete command and config var names. The
- * transcript follows new output only while it is scrolled to the bottom, so
- * scrolling up to read something holds still.
- *
- * Commands and their replies always show, whatever the filters -- they are
- * the conversation, not the log.
+ * The command line runs through EditorConsole: Up/Down for history, Tab to
+ * complete. The transcript auto-scrolls only while at the bottom. Commands
+ * and replies ignore the filters.
  */
 class ConsolePanel : public QWidget
 {

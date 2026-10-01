@@ -1,11 +1,7 @@
--- The Mover class: slides its entity along +x at 60 units/s. Attached by path
--- -- scripted:SetScript("Scripts/Mover.lua") in Main.lua -- so this file
--- returns its class table rather than registering it anywhere. Each entity
--- that uses this path gets its own instance, with self.Entity set.
+-- Slides its entity along +x at 60 units/s. Attached by path (Main.lua), so
+-- it returns its class table; each entity gets an instance with self.Entity.
 return {
-    -- PostPhysics, not the PrePhysics default: this class's own movement
-    -- should be reflected before anything downstream (a camera, a trigger)
-    -- reads this frame's resolved position.
+    -- Not the PrePhysics default: settle before downstream readers this frame.
     TickPhase = TickPhase.PostPhysics,
 
     OnStart = function(self)

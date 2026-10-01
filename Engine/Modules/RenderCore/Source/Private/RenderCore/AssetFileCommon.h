@@ -12,8 +12,7 @@ namespace RenderCore
 {
     constexpr uint32_t TAG_IMPORT_SOURCE = EngineCore::MakeArchiveTag('I','S','R','C');
 
-    /* The optional 'ISRC' chunk: written when InOutInfo has a source, read if
-     * the file has one. Call at the end of a file's outer chunk. */
+    /* The optional 'ISRC' chunk. Call at the end of a file's outer chunk. */
     inline void SerializeImportInfo(EngineCore::Archive& Ar, AssetImportInfo& InOutInfo)
     {
         if(Ar.IsSaving() && InOutInfo.IsEmpty()) { return; }
@@ -27,9 +26,8 @@ namespace RenderCore
         Ar.CloseChunk();
     }
 
-    /* Before resizing an array from a count read off disk: false (and the
-     * archive failed) if that many elements cannot be in what is left, so a
-     * corrupt count never allocates gigabytes. Always true when saving. */
+    /* Guards a resize from an on-disk count: false (archive failed) if the
+     * remaining bytes cannot hold that many. Always true when saving. */
     inline bool CanHoldElements(EngineCore::Archive& Ar, const uint64_t InCount, const size_t InElementBytes,
                                 const char* InWhat)
     {

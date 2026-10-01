@@ -14,12 +14,9 @@
 #include "Public/GameCore/GameCoreLog.h"
 
 /*
- * World's storage: an entity free-list plus a generation array, the
- * per-entity members (name, script), a ComponentPool*[COMPONENT_TYPE_MAX]
- * table created lazily on first use, one system vector per phase, and the
- * deferred destroy/remove/script queues. See
- * DESIGN.md's "World.h / World.cpp" section for the full reasoning behind
- * each piece below.
+ * World's storage: entity free-list and generations, per-entity members,
+ * lazily created component pools, per-phase systems, and the deferred
+ * queues. See DESIGN.md's "World.h / World.cpp".
  */
 
 namespace GameCore
@@ -63,18 +60,14 @@ namespace GameCore
         std::vector<uint32_t> FreeIndices;
         size_t                LiveEntityCount = 0;
 
-        /* Parallel to Generations. A deque, not a vector: slots only ever grow
-         * at the back, so a GetName()/GetScriptState() pointer survives other
-         * entities being created -- a vector would move every std::string
-         * (and its short-string buffer) on reallocation. */
+        /* Parallel to Generations. A deque so GetName()/GetScriptState()
+         * pointers survive growth. */
         std::deque<EntityMembers> Members;
 
-        /* Every live entity's GUID -> its slot, for FindEntityByGuid and the
-         * uniqueness check at creation. */
+        /* GUID -> slot, for lookup and uniqueness. */
         std::unordered_map<EntityGuid, uint32_t, EntityGuidHash> GuidToSlot;
 
-        /* Slot indices with a script path, in the order the paths were set --
-         * the script driver's walk order. */
+        /* Scripted slots in the order paths were set (tick order). */
         std::vector<uint32_t> ScriptedSlots;
 
         ScriptDriver Driver;
@@ -133,11 +126,9 @@ namespace GameCore
                 && Alive[InEntity.Index] && Generations[InEntity.Index] == InEntity.Generation;
         }
 
-        /* Slot allocation and members ONLY -- no broadcast. Split out of
-         * CreateEntity so the name and GUID are in place before broadcasting
-         * -- see DESIGN.md. A member of Impl, not a free function, since Impl
-         * is private to World -- see DESIGN.md. An unset or already-used
-         * InGuid gets a fresh one (the latter with a warning). */
+        /* Slot and members only, no broadcast, so name and GUID are set
+         * before OnEntityCreated (DESIGN.md). An unset or used InGuid gets a
+         * fresh one (warned if used). */
         EntityID AllocateEntitySlot(const char* InName, EntityGuid InGuid)
         {
             if(InGuid.IsSet() && GuidToSlot.count(InGuid) != 0)
@@ -177,9 +168,7 @@ namespace GameCore
             return EntityID(Index, Generations[Index]);
         }
 
-        /* Hands InEntity's script to the driver (OnDestroy), then forgets it.
-         * The driver runs Lua, which may create entities or set scripts, so
-         * nothing is held across the call. */
+        /* Driver Release, then forget. Nothing is held across the Lua call. */
         void ReleaseScript(World& InWorld, const EntityID InEntity)
         {
             if(bHasDriver && Driver.Release)
@@ -246,8 +235,7 @@ namespace GameCore
                 ReleaseScript(InWorld, InEntity);
             }
 
-            /* A subscriber or OnDestroy already destroyed it re-entrantly --
-             * finishing again would free the slot twice. */
+            /* Destroyed re-entrantly already; don't free the slot twice. */
             if(!IsAliveIndex(InEntity))
             {
                 return;
@@ -273,9 +261,7 @@ namespace GameCore
 
     EntityGuid EntityGuid::Generate()
     {
-        /* std::random_device is the OS generator on every supported platform
-         * (rand_s / getrandom); 128 bits of it make a collision a non-event,
-         * and CreateEntity still re-rolls one inside a World. */
+        /* The OS generator on every supported platform. */
         static std::random_device Device;
         EntityGuid Result;
         do
@@ -308,8 +294,7 @@ namespace GameCore
 
     Entity World::CreateEntity(const char* InName, const EntityGuid& InGuid)
     {
-        /* Name and GUID are set BEFORE the OnEntityCreated broadcast below --
-         * see DESIGN.md for the bug this ordering fixes. */
+        /* Name and GUID before OnEntityCreated (DESIGN.md). */
         const EntityID NewEntity = P->AllocateEntitySlot(InName, InGuid);
         P->EntityCreated.Broadcast(NewEntity);
         return Entity(this, NewEntity);
@@ -416,8 +401,7 @@ namespace GameCore
         std::string Path(InPath ? InPath : "");
         if(P->bTicking)
         {
-            /* Deferred exactly like DestroyEntity -- the driver may be
-             * mid-walk over ScriptedSlots, or inside this very script. */
+            /* Deferred like DestroyEntity: the driver may be mid-walk. */
             PendingScriptChange Change;
             Change.Entity = InEntity;
             Change.Path   = std::move(Path);
@@ -660,9 +644,7 @@ namespace GameCore
         P->bTicking     = true;
         P->CurrentPhase = InPhase;
 
-        /* Scripts first, ahead of every registered system, whatever order
-         * anything was registered in -- see DESIGN.md. Copied: the pass
-         * itself must not swap drivers, but a copy costs nothing. */
+        /* Scripts before every system (DESIGN.md). */
         if(P->bHasDriver && P->Driver.TickPhase)
         {
             const ScriptDriver Driver = P->Driver;
@@ -696,8 +678,7 @@ namespace GameCore
             }
         }
 
-        /* Before the destroys, so a script set and a destroy queued in the
-         * same phase both release through ReleaseScript, once each. */
+        /* Before destroys, so each releases through ReleaseScript once. */
         std::vector<PendingScriptChange> ScriptChangesThisFlush;
         std::swap(ScriptChangesThisFlush, P->PendingScriptChanges);
         for(const PendingScriptChange& Change : ScriptChangesThisFlush)

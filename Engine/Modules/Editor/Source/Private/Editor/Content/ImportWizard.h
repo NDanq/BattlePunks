@@ -24,11 +24,8 @@ class QTableWidget;
  *   Texture Options   only with an image (or a mesh's textures to import)
  *   Import            the conversions, on a worker thread, with a log
  *
- * The options start from the [Editor] Import* settings and are saved back to
- * them, so the next import offers what was used last. Imported() lists every
- * file written, each already staged beside the executable.
- *
- * Modeless; deletes itself on close.
+ * Options persist in [Editor] Import*. Imported() lists the written (and
+ * staged) files. Modeless; deletes itself on close.
  */
 class ImportWizard : public QWizard
 {

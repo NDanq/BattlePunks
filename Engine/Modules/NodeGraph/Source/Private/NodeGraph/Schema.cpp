@@ -113,14 +113,10 @@ namespace NodeGraph
             return InNode.WildcardType;
         }
 
-        /* Inferred from the far end of each link on a wildcard pin -- types
-         * flow from sources, so the inputs' links decide, and the outputs'
-         * only when no input does (a Constant feeding a vec3 input). When
-         * links disagree, the type LATEST in WildcardTypes wins -- the widest,
-         * as schemas order them (float before vec3) -- so the answer never
-         * depends on the order links happen to be stored in. A chain of
-         * wildcard nodes (Add into Multiply into Lerp) resolves through its
-         * neighbours; the depth bound stops a cycle of them. */
+        /* From the far end of each wildcard link: inputs decide, outputs only
+         * if no input does. On disagreement the latest (widest) WildcardType
+         * wins, independent of link order. Wildcard chains resolve through
+         * neighbours; the depth bound stops cycles. */
         int Best = -1;
         for(int Pass = 0; Pass < 2 && Best < 0 && InDepth < 8; ++Pass)
         {
@@ -188,9 +184,8 @@ namespace NodeGraph
 
     const std::vector<const Schema*>& GetSchemas()
     {
-        /* Built on first use, not at static initialisation: the script schema
-         * reads GameCore's binding registry, which the other images fill in
-         * during THEIR static initialisation. */
+        /* On first use: the script schema reads bindings other images register
+         * during their static init. */
         static const std::vector<std::unique_ptr<Schema>> Owned = []
         {
             std::vector<std::unique_ptr<Schema>> Result;

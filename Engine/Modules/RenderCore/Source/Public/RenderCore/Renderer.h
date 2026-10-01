@@ -30,12 +30,8 @@ namespace RenderCore
         Renderer(const Renderer&)            = delete;
         Renderer& operator=(const Renderer&) = delete;
 
-        /* Registers RenderComponent's proxy type, starts the render
-         * thread (see RenderThread::Start for the InBackend/InWindow
-         * contract), and constructs the RenderScene commands from here on
-         * touch exclusively through the queue. False on any failure --
-         * see RenderThread::Start's own comment on what that means for
-         * InBackend/InWindow. */
+        /* Registers RenderComponent's proxy type, starts the render thread
+         * (RenderThread::Start) and builds the RenderScene. False on failure. */
         bool Initialize(ERenderBackend InBackend, EngineCore::WindowHandle InWindow);
 
         /* UnbindWorld() if a World is still bound, drains the scene
@@ -94,62 +90,33 @@ namespace RenderCore
 
 #if WITH_EDITOR
         // === Editor only =====================================================
-        // Compiled out of Client and Server targets (Engine/CMakeLists.txt,
-        // NIMBLE_TARGET): a game renders through its CameraComponent and has
-        // no overlay, so neither the entry points nor their per-frame work
-        // exist there.
+        // Compiled out of Client and Server targets.
 
-        /*
-         * Replaces the view WorldBridge would build from the World's first
-         * active CameraComponent -- for a tool with its own camera (the
-         * editor viewport), which must not have to move an entity to look
-         * around. Copied, so InView need not outlive the call; applies from
-         * the next EndFrame() until SetViewOverride(nullptr). The frame's
-         * ViewportPixels still wins over InView->ViewportPixels, since the
-         * render targets are sized from it. GAME THREAD ONLY.
-         */
+        /* Replaces the CameraComponent view from the next EndFrame() until
+         * SetViewOverride(nullptr). Copied. The frame's ViewportPixels still
+         * wins. GAME THREAD ONLY. */
         void SetViewOverride(const RenderView* InView);
 
-        /*
-         * Queue a world-space line for the NEXT EndFrame() only -- an
-         * immediate-mode overlay for tools (selection bounds, gizmos), drawn
-         * after every proxy and never culled. Call again every frame the line
-         * should stay. See DebugLine (RenderTypes.h) and
-         * RenderContext::DrawLine for how it is drawn. GAME THREAD ONLY.
-         */
+        /* Immediate-mode overlay line for the next EndFrame() only (see
+         * DebugLine). GAME THREAD ONLY. */
         void DrawDebugLine(const DebugLine& InLine);
 
-        /* The twelve edges of InBox, through DrawDebugLine. An empty box
-         * (GameCore::AABB's default) draws nothing; a box flat on an axis
-         * draws its outline once, that axis collapsed. */
+        /* InBox's edges via DrawDebugLine. Empty draws nothing. */
         void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels = 2.0f);
 
-        /*
-         * Forgets material InName -- every material, for nullptr or "" -- so
-         * its next draw reads Materials/<Name>.material and its cooked shader
-         * from disk again. For the editor, after it recooks a material graph:
-         * the change shows from the next frame. GAME THREAD ONLY; queued like
-         * any render command. Names longer than RENDER_MATERIAL_NAME_MAX
-         * are ignored, as no primitive can refer to them.
-         */
+        /* Reloads material InName (nullptr or "": all) from disk on its next
+         * draw, e.g. after a recook. Names over RENDER_MATERIAL_NAME_MAX are
+         * ignored. GAME THREAD ONLY. */
         void ReloadMaterial(const char* InName);
 
-        /*
-         * Asks the render thread for a picture of material InName: a quad
-         * filling InSize x InSize pixels (16 to 1024), InTint as its Instance
-         * Tint, drawn by this renderer -- same backend, same material library,
-         * same cooked shader the viewport uses -- into a target of its own
-         * during the next EndFrame(), and read back. Returns a request id for
-         * TakeMaterialPreview; 0 if the renderer is not running. GAME THREAD
-         * ONLY. The readback stalls that frame briefly: a tool asks after an
-         * edit, not every frame.
-         */
+        /* Renders material InName on an InSize (16-1024) square quad during
+         * the next EndFrame() and reads it back; the readback stalls briefly,
+         * so don't call every frame. Returns an id for TakeMaterialPreview, 0
+         * if not running. GAME THREAD ONLY. */
         uint64_t RequestMaterialPreview(const char* InName, int InSize, EngineCore::Color InTint);
 
-        /* The preview for InRequest once the render thread has drawn it: true
-         * exactly once, moving it into OutImage (RGBA8, top row first) --
-         * empty, with OutError, if it could not be drawn. False while it is
-         * still pending. GAME THREAD ONLY. */
+        /* True once, when done: OutImage (RGBA8, top row first), or empty with
+         * OutError. False while pending. GAME THREAD ONLY. */
         bool TakeMaterialPreview(uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError);
 #endif // WITH_EDITOR
 

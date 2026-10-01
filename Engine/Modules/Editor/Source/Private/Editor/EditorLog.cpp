@@ -27,12 +27,8 @@ namespace
         return EditorLog::EKind::Log;
     }
 
-    /*
-     * CoreLog into the console's history AND Qt's message system, so output
-     * still reaches the debugger (a WIN32 exe has no console for the default
-     * stderr sink). Fatal stays fatal: qFatal aborts, as the default handler
-     * would -- after the history has the line, for a debugger stopped there.
-     */
+    /* To the history and Qt's message system (a WIN32 exe has no stderr).
+     * Fatal still aborts via qFatal, after recording the line. */
     void EditorLogHandler(const EngineCore::LogVerbosity InVerbosity, const char* InMessage)
     {
         const char* Message = InMessage ? InMessage : "";
@@ -65,9 +61,7 @@ void EditorLog::Install()
 void EditorLog::Uninstall()
 {
     EngineCore::SetLogHandler(nullptr);
-    /* Nothing logs through the handler after this, but a thread already inside
-     * it may still hold the pointer -- by Uninstall the render thread has been
-     * joined (EditorContext::Shutdown), which is what makes the delete safe. */
+    /* Safe: the render thread was joined in EditorContext::Shutdown. */
     delete GEditorLog.exchange(nullptr);
 }
 
@@ -94,10 +88,8 @@ void EditorLog::Append(const EKind InKind, const QString& InText)
         }
     }
 
-    /* One posted Flush per batch, however many lines the render thread writes
-     * before the GUI thread gets round to it. Queued even from the GUI thread:
-     * a log line can come from inside a paint or a model reset, which is no
-     * place to be emitting into the console's text view. */
+    /* One Flush per batch. Queued even on the GUI thread: logs can come from
+     * inside a paint or model reset. */
     if(bQueueFlush)
     {
         QMetaObject::invokeMethod(this, "Flush", Qt::QueuedConnection);

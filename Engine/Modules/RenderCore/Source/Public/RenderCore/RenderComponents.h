@@ -18,23 +18,13 @@
  */
 namespace RenderCore
 {
-    /* "Render". What an entity draws: a Mesh if it names one, else a flat,
-     * tinted quad. Width/Height size the quad, in the same world units as
-     * TransformComponent::Scale; the proxy multiplies them together (see
-     * RenderComponentProxy.cpp), so a Scale of (2,2,2) on the entity's
-     * Transform doubles an already-sized quad rather than fighting it. A mesh
-     * ignores Width/Height -- it has its own size, scaled by the Transform.
+    /* "Render". Draws Mesh (a runtime-relative .nmmesh path) if set and
+     * loadable, else a Width x Height tinted quad; both scaled by the
+     * Transform.
      *
-     * Mesh is a runtime-relative path to a .nmmesh ("Content/Props/Crate
-     * .nmmesh", see MeshAsset.h); empty draws the quad, and a mesh that cannot
-     * be loaded draws the quad too, once warned.
-     *
-     * Material names a material graph's output -- "Glow" is the shader
-     * Materials/Glow.fsh and its parameters Materials/Glow.material (see
-     * RenderContext::DrawQuadWithMaterial). On a mesh it replaces every
-     * section's own material. Empty draws the plain Tint (lit, on a mesh, or
-     * a section's imported material if that one loads); a material that
-     * cannot be loaded does the same, once warned. */
+     * Material names a material graph's output ("Glow" = Materials/Glow.fsh +
+     * Glow.material) and overrides every mesh section's material. Empty, or
+     * unloadable (warned once), draws Tint or the sections' own materials. */
     enum : size_t { RENDER_MATERIAL_NAME_MAX = 48 };   // including the NUL
     enum : size_t { RENDER_MESH_PATH_MAX     = 128 };  // including the NUL
 
@@ -66,13 +56,7 @@ namespace RenderCore
         uint8_t bActive  = 1;
     };
 
-    /*
-     * RenderComponent's own factory, exported for a caller that wants to
-     * register it directly -- Renderer::Initialize (a later build-order
-     * step) does exactly this. RENDERCORE_DEFINE_PROXY_COMPONENT's own
-     * generated factory function is a plain `static` in RenderComponents.cpp
-     * and never leaves that translation unit; this is the one door out.
-     */
+    /* RenderComponent's proxy factory, for Renderer::Initialize to register. */
     RENDERCORE_API CreateProxyFn GetRenderComponentFactory();
 }
 

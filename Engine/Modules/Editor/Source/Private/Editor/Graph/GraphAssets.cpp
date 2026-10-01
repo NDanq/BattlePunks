@@ -424,9 +424,7 @@ namespace EditorGraphs
             return;
         }
 
-        /* The render thread draws it during the viewport's next frame; poll
-         * for it, giving up after a few seconds (a minimised editor renders
-         * nothing). */
+        /* Poll, giving up after a few seconds (a minimised editor renders nothing). */
         auto* Poll = new QTimer(InContext);
         auto  Tries = std::make_shared<int>(0);
         QObject::connect(Poll, &QTimer::timeout, InContext, [Poll, Request, Tries, InDone]()
@@ -492,8 +490,7 @@ namespace EditorGraphs
             return false;
         }
 
-        /* Written in place, then reported -- the context records it against
-         * the values it held before, as a Details panel edit would be. */
+        /* Written in place, then reported, like a Details edit. */
         RenderCore::RenderComponent* Render = Handle.GetComponent<RenderCore::RenderComponent>();
         std::memset(Render->Material, 0, sizeof(Render->Material));
         std::memcpy(Render->Material, Name.constData(), size_t(Name.size()));
@@ -605,10 +602,8 @@ namespace EditorGraphs
                                                     GetFileFilter(&InSchema));
         if(Path.isEmpty()) { return nullptr; }
 
-        /* Whatever was typed, the file gets this schema's compound extension,
-         * once. The Windows dialog sees only ".nmgraph" as the extension, so it
-         * appends the filter's whole "script.nmgraph" to a name that already
-         * ends in it -- every graph extension comes off before one goes back on. */
+        /* Normalize to one compound extension: the Windows dialog may append
+         * "script.nmgraph" to a name that already has it. */
         std::string Base = ToStd(Path);
         for(std::string Stripped = StripGraphExtension(Base); Stripped != Base; Stripped = StripGraphExtension(Base))
         {

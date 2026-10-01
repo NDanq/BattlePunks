@@ -73,25 +73,15 @@ namespace RenderCore
         }
 
         /*
-         * A perspective view for tools (the editor viewport) -- nothing in the
-         * game path builds one. Same conventions as MakeOrthographic, so a
-         * scene looks the same way up in both:
+         * A perspective view for tools. Same conventions as MakeOrthographic:
          *
-         *   View       LookAt(InEye, InForward, (0,1,0)) -- view-space +Z is
-         *              InForward, exactly as the orthographic view's is.
-         *   Projection negates Y, as InitOrthographicView(0, Height, ...)
-         *              does, so world +Y runs DOWN the screen -- the game's
-         *              pixel-space convention. Screen-up is world -Y.
-         *   Depth      near -> 0, far -> w: inside both the [-w,w] and [0,w]
-         *              clip conventions, so every backend keeps the geometry.
+         *   View       LookAt(InEye, InForward, (0,1,0)); view +Z is InForward.
+         *   Projection negates Y, so world +Y runs DOWN the screen.
+         *   Depth      near -> 0, far -> w: valid for [-w,w] and [0,w] clip.
          *
-         * Built by hand into Data rather than as a Matrix4x4::InitPerspective,
-         * so the vendored Core subtree needs no edit. Row-major with the
-         * translation column in [i][3], matching every Init* in Matrix.h.
-         *
-         * Bounds is left empty -- "cull nothing" -- since a frustum is not an
-         * AABB and a loose box would buy little for an editor scene.
-         * InForward must not be parallel to world Y (the caller clamps pitch).
+         * Built by hand (row-major, translation in [i][3]) so the vendored
+         * Core subtree needs no edit. Bounds is empty (cull nothing).
+         * InForward must not be parallel to world Y.
          */
         static RenderView MakePerspective(const EngineCore::Size InViewport, const EngineCore::Vector3& InEye,
                                           const EngineCore::Vector3& InForward, const float InFovYDegrees,

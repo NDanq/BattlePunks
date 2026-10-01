@@ -21,20 +21,15 @@
  *         OnTick = function(self, dt) ... end,
  *     }
  *
- * attached with Entity:SetScript like any other script, so the runtime has
- * nothing graph-specific in it.
+ * so the runtime needs nothing graph-specific.
  *
- * EXEC FLOW AND VALUES. Event nodes start a function; each statement node's
- * "Then" leads to the next. A pure node (no exec pins) is evaluated where a
- * statement needs it, again for every statement that does -- so a Get after a
- * Set sees the new value -- into `local tN` temporaries. A statement's own
- * outputs (a raycast's hit) are locals declared at the top of its function,
- * assigned when it runs, and readable only within that function.
+ * EXEC FLOW AND VALUES. Event nodes start a function; "Then" chains
+ * statements. Pure nodes are re-evaluated per statement that uses them (so a
+ * Get after a Set sees the new value) into `local tN`. A statement's outputs
+ * are function-level locals.
  *
- * LANES. The Lua bindings pass a Vector3 as three numbers, a Color as four and
- * an AABB as six (ComponentScript.cpp), never as a table. So does this: a value
- * is a list of Lua expressions, one per lane, and vector math is written out
- * per component. Nothing allocates.
+ * LANES. As in the Lua bindings, Vector3 / Color / AABB are 3 / 4 / 6
+ * numbers, never tables; vector math is written per component.
  */
 namespace NodeGraph
 {
@@ -543,8 +538,7 @@ namespace
 
             case SOP_Emit:
             {
-                /* Only up to the last linked argument: Events.Emit counts what
-                 * it is given, and a trailing nil would arrive as a 0. */
+                /* Up to the last linked argument: a trailing nil arrives as 0. */
                 const Lanes Name = Input(S, Cache, InNode, InDef, "Event");
                 int LastArg = 0;
                 for(int Arg = 1; Arg <= CUSTOM_EVENT_ARGS; ++Arg)
@@ -644,8 +638,7 @@ namespace
             return Fallback;
         }
 
-        /* A marker while the node is being evaluated: meeting it again means
-         * the node feeds itself. */
+        /* Marks a node mid-evaluation, to detect cycles. */
         static const Lanes InFlight = { "\x01" };
 
         const auto Cached = Cache.find(Key);
@@ -1112,10 +1105,8 @@ namespace
         AddComponentNodes();
     }
 
-    /* One set of nodes per registered component type, from its script
-     * bindings: get/has/add/remove on an entity, then a getter and setter per
-     * field and a call per method. A component a later-loaded module registers
-     * appears the next time the schemas are built (the next editor start). */
+    /* Per component type: get/has/add/remove, a getter/setter per field and a
+     * call per method. Late-registered components appear next editor start. */
     void ScriptSchema::AddComponentNodes()
     {
         for(size_t Id = 0; Id < GameCore::GetComponentTypeCount(); ++Id)

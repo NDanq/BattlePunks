@@ -241,13 +241,8 @@ namespace RenderCore
         GDIBeginRendering();
 
 #if WITH_EDITOR
-        /*
-         * Material previews FIRST, inside the frame but before the back buffer
-         * is bound: each draws into RenderContext's own preview target and is
-         * read back there (the readback flushes and resumes the frame). The
-         * back buffer bound below is then the driver's ActiveRenderTarget at
-         * EndRendering, which is what the present shows -- never a preview.
-         */
+        /* Previews FIRST, before the back buffer bind, so the back buffer is
+         * the active target at EndRendering and the present never shows one. */
         for(const MaterialPreviewRequest& Each : P->Previews)
         {
             EngineCore::Image Pixels;
@@ -281,21 +276,13 @@ namespace RenderCore
         GDISetViewport(0, 0, uint(P->View.ViewportPixels.Width), uint(P->View.ViewportPixels.Height));
 
         /*
-         * THE COLOUR MASK IS NOT OPTIONAL, and nothing supplies a usable
-         * default: VKBlendState's ColorAttachment is value-initialised, so
-         * colorWriteMask starts at ZERO -- every channel masked off. The
-         * pipeline builds, vkCmdDraw executes, fragments are shaded, and not
-         * one byte reaches the attachment. From the outside that looks like a
-         * clear image with healthy draw-call counts and no validation error.
-         * GDI's own GDIRenderTarget::DrawTexture opens with this same call.
+         * THE COLOUR MASK IS REQUIRED: Vulkan's default colorWriteMask is
+         * zero, so everything draws with no validation error and nothing
+         * reaches the attachment.
          *
-         * Blend and depth are set alongside it rather than left implicit: the
-         * pipeline key is built from whatever VKCurrentStateData happens to
-         * hold, so leaving them unset means inheriting the last unrelated
-         * caller's state. Straight alpha blending, and a depth test that
-         * writes, so meshes hide what is behind them whatever the order.
-         * LESS-OR-EQUAL, not LESS: quads in one plane (a 2D scene) have equal
-         * depth, and must still draw over one another in submission order.
+         * Blend and depth are explicit too, or the pipeline key inherits the
+         * last caller's state. Depth LESS-OR-EQUAL so coplanar 2D quads still
+         * draw in submission order.
          */
         GDISetColorMask(EColM_RGBA);
         GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
@@ -348,9 +335,7 @@ namespace RenderCore
         SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
 
 #if WITH_EDITOR
-        /* Over everything, never culled -- a tool's overlay, not scene
-         * content. Consumed here so a frame that sets none draws none. Not
-         * compiled into a Client or Server target at all. */
+        /* Tool overlay over everything, unculled; consumed each frame. */
         if(!P->DebugLines.empty())
         {
             /* No depth test: an outline or a gizmo shows through what it marks. */

@@ -53,9 +53,7 @@ void GraphScene::Rebuild()
 
     if(DragLink) { EndLinkDrag(); }
 
-    /* Deleting a selected item emits selectionChanged, and its listeners ask
-     * this scene what is selected: the maps must be empty before clear(), and
-     * the signal quiet until the new items are in (SelectNodes emits once). */
+    /* Quiet selectionChanged during the rebuild; maps cleared before clear(). */
     QSignalBlocker Block(this);
     Nodes.clear();
     Comments.clear();

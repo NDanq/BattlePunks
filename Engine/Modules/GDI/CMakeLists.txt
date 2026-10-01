@@ -425,8 +425,7 @@ endif()
 
 set(GDI_COOKED_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Cooked" CACHE INTERNAL "GDI cooked shader output root")
 
-# Every shader #includes these, so a change to one (Common.glsl's interpolants)
-# must recook them all -- not only a change to a .vsh/.fsh.
+# Every shader includes these, so a change must recook them all.
 file(GLOB GDI_SHADER_INCLUDES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.glsl")
 
 if(GDI_WITH_VULKAN)

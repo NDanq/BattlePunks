@@ -237,8 +237,7 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
         {
             return;
         }
-        /* Relative to the working directory when it is under it -- how the
-         * game resolves script paths -- so the path survives a move. */
+        /* Relative to the working directory, as the game resolves scripts. */
         const QString Relative = QDir::current().relativeFilePath(Chosen);
         Context.SetEntityScript(InEntity, Relative.startsWith(QStringLiteral("..")) ? Chosen : Relative);
         RefreshEntitySection();
@@ -555,8 +554,7 @@ void DetailsPanel::ResetProperty(const PropertyRow& InRow)
 
 void DetailsPanel::ResetComponent(const ComponentTypeID InType)
 {
-    /* Property by property rather than the whole block: the default bytes also
-     * hold per-run state (Owner, a proxy handle, ProxyID) that must survive. */
+    /* Per property: the default bytes also hold per-run state to keep. */
     const ComponentSection* Section = FindSection(InType);
     uint8_t* Component = ResolveComponent(InType);
     if(!Section || !Section->Defaults || !Component)

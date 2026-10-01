@@ -221,8 +221,7 @@ namespace
         bool   bVisibleImmediately = true;
     };
 
-    /* Sets a script from inside a tick, and records whether it took effect
-     * before the phase ended. */
+    /* Sets a script mid-tick and records whether it applied before phase end. */
     void DeferScriptSystem(World& /*InWorld*/, float /*InDeltaSeconds*/, void* InUserData)
     {
         DeferProbe& Probe = *static_cast<DeferProbe*>(InUserData);
@@ -243,8 +242,7 @@ static void TestEntityMembers()
     Expect(std::strcmp(A.GetName(), "Alpha") == 0, "CreateEntity(name) sets the name");
     Expect(B.GetName() != nullptr && B.GetName()[0] == '\0', "an unnamed entity reads \"\", never null");
 
-    /* The members live in a deque, so this pointer must survive the slot
-     * table growing well past its first block. */
+    /* Must survive the slot table growing (members are in a deque). */
     const char* Held = A.GetName();
     for(int Index = 0; Index < 200; ++Index) { W.CreateEntity(); }
     Expect(Held == A.GetName() && std::strcmp(Held, "Alpha") == 0,
@@ -920,8 +918,7 @@ static void TestComponentScripting()
     Scripts.Shutdown();
 }
 
-/* Scripts are attached by path, so these tests need real files: written
- * fresh under the temp directory, returned with forward slashes. */
+/* Writes a script under the temp directory; returns a forward-slash path. */
 static std::string WriteTestScript(const char* InName, const char* InSource)
 {
     const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke";
@@ -936,8 +933,7 @@ namespace
 {
     double GOrderProbeSawX = -1.0;
 
-    /* Registered BEFORE BindWorld, in the phase the "Ordered" script ticks
-     * in: it must still see the script's write from the same phase. */
+    /* Registered before BindWorld; must still see the same-phase script write. */
     void OrderProbeSystem(World& InWorld, float /*InDeltaSeconds*/, void* /*InUserData*/)
     {
         const EntityID Ordered = InWorld.FindEntityByName("Ordered");

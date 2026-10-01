@@ -31,8 +31,7 @@ namespace RenderCore
             for(int Axis = 0; Axis < 3; ++Axis) { Ar << InOutHeader.BoundsMax[Axis]; }
         }
 
-        /* The rules a loaded mesh must keep for a draw to stay inside its
-         * buffers. Null if it keeps them, else why not. */
+        /* Why a draw of InMesh could read out of bounds; null if it cannot. */
         const char* FindDefect(const MeshData& InMesh)
         {
             const uint32_t VertexCount = InMesh.GetVertexCount();
@@ -80,7 +79,7 @@ namespace RenderCore
     {
         if(!OpenRequiredChunk(Ar, TAG_MESH, 1, "not a mesh (no NMSH chunk)")) { return false; }
 
-        /* Counts first, so the arrays below can be sized before they are read. */
+        /* Counts first, to size the arrays. */
         MeshHeader Header;
         if(Ar.IsSaving())
         {
@@ -248,9 +247,7 @@ namespace RenderCore
             }
         }
 
-        /* Loaded outside the lock: a big mesh must not stall the other
-         * thread's lookups. Two threads may both load it the first time;
-         * the first one stored wins and the other's copy is dropped. */
+        /* Loaded outside the lock; if two threads race, the first stored wins. */
         auto Loaded = std::make_shared<MeshData>();
         std::shared_ptr<const MeshData> Result;
         if(LoadMeshFile(InPath, *Loaded))

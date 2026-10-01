@@ -225,8 +225,7 @@ void D3D12DynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
     const D3D12_CPU_DESCRIPTOR_HANDLE RTV = NewRT->GetRTV();
     if(NewRT->HasDepth())
     {
-        // Lives in DEPTH_WRITE, so needs no transition; cleared the first time
-        // it is bound, since a new depth buffer's contents are undefined.
+        // Always in DEPTH_WRITE; cleared on first bind (contents undefined).
         const D3D12_CPU_DESCRIPTOR_HANDLE DSV = NewRT->GetDSV();
         List->OMSetRenderTargets(1, &RTV, FALSE, &DSV);
         if(NewRT->TakeDepthNeedsClear())

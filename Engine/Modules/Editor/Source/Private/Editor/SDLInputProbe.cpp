@@ -168,9 +168,7 @@ void SDLInputProbe::Stop()
 
 void SDLInputProbe::Pump()
 {
-    /* The game loop's own call. With the host owning the message loop this
-     * only drains what SDL's chained window procedure has already queued. The
-     * return value ("keep running") is the host's business, not the probe's. */
+    /* Only drains what SDL already queued; the return value is ignored. */
     GameWindowSystem::PumpEvents();
 }
 

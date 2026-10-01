@@ -27,13 +27,8 @@
 #include "Public/GameCore/EntityGuid.h"
 #endif
 
-/*
- * World files: format detection and the binary load in every build; the text
- * package (XML manifest + one .nmentity per entity), its save, its load and
- * cooking in editor builds only -- pugixml is not compiled into a game. The
- * layout and the save's commit order are documented in WorldPackage.h and
- * DESIGN.md.
- */
+/* Format detection and binary load in every build; the text package (save,
+ * load, cook) in editor builds only. See WorldPackage.h and DESIGN.md. */
 
 namespace GameCore
 {
@@ -58,8 +53,7 @@ namespace
     using GuidSet = std::unordered_set<EntityGuid, EntityGuidHash>;
 
     // === Paths and files ====================================================
-    // Core's appFile* for reading and writing (UTF-8 paths); std::filesystem
-    // only for the one thing Core has no call for, a replacing rename.
+    // Core's appFile*; std::filesystem only for the replacing rename.
 
     bool EndsWith(const std::string& InText, const char* InSuffix)
     {
@@ -67,8 +61,7 @@ namespace
         return InText.size() >= Length && InText.compare(InText.size() - Length, Length, InSuffix) == 0;
     }
 
-    /* "Levels/Sandbox.nmworld" -> "Levels/Sandbox": the extension off the
-     * file name only, so a dot in a directory name is left alone. */
+    /* "Levels/Sandbox.nmworld" -> "Levels/Sandbox". */
     std::string EntityFolderFor(const std::string& InWorldPath)
     {
         const size_t Slash = InWorldPath.find_last_of("/\\");
@@ -131,9 +124,8 @@ namespace
     }
 
     // === Text values ========================================================
-    // std::to_chars' shortest round-trip form: exact on reload, the same text
-    // for the same value every save (so an untouched entity diffs as nothing),
-    // and locale-independent in both directions.
+    // std::to_chars' shortest round-trip form: exact, stable across saves,
+    // locale-independent.
 
     template<typename T>
     std::string FormatNumber(const T InValue)
@@ -163,8 +155,7 @@ namespace
         return false;
     }
 
-    /* Letters, digits and '_', not starting with a digit -- a safe subset of
-     * XML's element names that every serializer's field names fit. */
+    /* [A-Za-z_][A-Za-z0-9_]*: a safe subset of XML element names. */
     bool IsElementName(const char* InName)
     {
         if(!InName || InName[0] == '\0' || (InName[0] >= '0' && InName[0] <= '9')) { return false; }
@@ -193,8 +184,7 @@ namespace
         }
     };
 
-    /* Two-space indent, '\n' line endings, UTF-8 -- fixed, so the bytes depend
-     * on the data alone. */
+    /* Fixed formatting, so the bytes depend on the data alone. */
     std::string DocumentText(const pugi::xml_document& InDoc)
     {
         StringWriter Writer;
@@ -225,13 +215,9 @@ namespace
 
     // === The text ComponentArchive ==========================================
 
-    /*
-     * One element per field, named for the field, its value in attributes --
-     * <Width Value="32"/>, <Position X="0" Y="360" Z="0"/>. Saving appends to
-     * the <Component> element; loading reads it by name, so a missing field
-     * keeps its default (the loader starts every component from its defaults)
-     * and an element nothing asks for is ignored.
-     */
+    /* One element per field, value in attributes: <Width Value="32"/>,
+     * <Position X="0" Y="360" Z="0"/>. Loaded by name; missing fields keep
+     * defaults, unknown elements are ignored. */
     class XmlComponentArchive final : public ComponentArchive
     {
     public:
@@ -239,9 +225,7 @@ namespace
         XmlComponentArchive(const pugi::xml_node InNode, const uint16_t InVersion, World& InWorld, std::string InContext)
             : Node(InNode), bLoading(false), Version(InVersion), SavingWorld(&InWorld), Context(std::move(InContext)) {}
 
-        /* Loading: entity references resolve through the GUIDs of the entities
-         * this load created -- never through the World, which may already hold
-         * other entities. */
+        /* References resolve only against entities this load created. */
         XmlComponentArchive(const pugi::xml_node InNode, const uint16_t InVersion, const GuidMap& InLoaded, std::string InContext)
             : Node(InNode), bLoading(true), Version(InVersion), Loaded(&InLoaded), Context(std::move(InContext)) {}
 
@@ -391,8 +375,8 @@ namespace
         }
 
     private:
-        /* Saving: the new element (null, with an error, for a name XML cannot
-         * hold). Loading: the element, or null if absent -- the default stays. */
+        /* Save: the new element (null on an invalid name). Load: the element,
+         * or null if absent. */
         pugi::xml_node Begin(const char* InName)
         {
             if(bLoading)
@@ -559,8 +543,7 @@ namespace
 
         const std::string Folder = EntityFolderFor(InPath);
 
-        /* Pass 1: every listed entity, with its GUID and name, before any
-         * component -- so a reference to an entity listed later resolves. */
+        /* Pass 1: all entities before any component, so forward references resolve. */
         std::vector<PendingEntity> Pending;
         GuidMap Loaded;
         GuidSet Listed;
@@ -645,8 +628,7 @@ namespace
                     continue;
                 }
 
-                /* Default-constructed, NOT zeroed -- see DESIGN.md -- so a
-                 * field the file lacks keeps its real default. */
+                /* Default-constructed, not zeroed (DESIGN.md). */
                 std::vector<uint8_t> Init(Info->SizeBytes, 0);
                 if(Serializer->DefaultsFn)
                 {
@@ -664,8 +646,7 @@ namespace
             }
         }
 
-        /* Files in the folder the manifest does not list are ignored -- a
-         * crashed save's leftovers, or one merged in without its manifest line. */
+        /* Files the manifest doesn't list are ignored. */
         std::vector<std::string> Names;
         if(EngineCore::appDirectoryList(Folder, Names))
         {
@@ -795,7 +776,7 @@ bool SaveWorldPackage(const char* InPath, World& InWorld)
         std::string Existing;
         if(ReadWholeFile(File.Path, Existing) && Existing == File.Text)
         {
-            continue;   // unchanged: not rewritten, so its timestamp and VCS state stay put
+            continue;   // unchanged: leave timestamp and VCS state alone
         }
         if(!WriteWholeFile(File.Path + TEMP_SUFFIX, File.Text))
         {

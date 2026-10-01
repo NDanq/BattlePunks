@@ -1,11 +1,6 @@
--- Sandbox's startup script: run once by NimbleEngine.cpp after IGame::OnStartup
--- succeeds, per [Scripting] StartupScript in Config/DefaultEngine.ini.
---
--- Demonstrates the pieces GameCore's Lua surface offers a game that never
--- touches C++ for its own gameplay: an entity driven by a script file (with
--- its own tick phase), a Transform and a Bounds component, and the Events bus
--- reaching a C++ subscriber (SandboxGame.cpp binds "EntityCreated" the same
--- way this script does, from the other side of the language boundary).
+-- Sandbox's startup script ([Scripting] StartupScript), run on every level
+-- load. Demonstrates a script-driven entity with its own tick phase, Transform
+-- and Bounds components, and the Events bus reaching a C++ subscriber.
 
 Events.On("EntityCreated", function(entity)
     print("EntityCreated: " .. entity:GetName())

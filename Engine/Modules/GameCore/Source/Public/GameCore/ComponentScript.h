@@ -140,11 +140,9 @@ namespace GameCore
         ScriptMethodInvoker Invoker   = nullptr;
         void              (*Method)() = nullptr;
 
-        /* A method's parameters and results, for tools -- Lua never reads it.
-         * "Name:type, ..." then optionally " -> Name:type, ...", the types
-         * being number, integer, bool, string, Vector3, Color, Entity. "" when
-         * the binding gave none (or one too long to store). Copied, not
-         * pointed at, so it outlives a hot-reloaded module that registered it. */
+        /* For tools only: "Name:type, ..." optionally " -> Name:type, ...",
+         * types number, integer, bool, string, Vector3, Color, Entity. Copied,
+         * so it survives a hot reload of the registering module. */
         char                Signature[SCRIPT_SIGNATURE_MAX] = {};
     };
 
@@ -184,9 +182,8 @@ namespace GameCore
             AddField(InName, InMember, EScriptFieldType::Flag, bInReadOnly);
         }
 
-        /* A capture-less lambda converts to MethodFn. InSignature describes the
-         * arguments for tools (see ScriptBindingEntry::Signature), e.g.
-         * "Delta:Vector3" or "Factor:number -> Result:number". */
+        /* A capture-less lambda converts to MethodFn. InSignature: see
+         * ScriptBindingEntry::Signature, e.g. "Factor:number -> Result:number". */
         void Method(const char* InName, const MethodFn InFn, const char* InSignature = nullptr)
         {
             ScriptBindingEntry* Entry = NewEntry(InName);
