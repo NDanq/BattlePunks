@@ -23,11 +23,15 @@ namespace RenderCore
      * loadable, else a Width x Height tinted quad; both scaled by the
      * Transform.
      *
-     * Material names a material graph's output ("Glow" = Materials/Glow.fsh +
-     * Glow.material) and overrides every mesh section's material. Empty, or
-     * unloadable (warned once), draws Tint or the sections' own materials. */
+     * Materials are slots, one per mesh section: each names a material
+     * graph's output ("Glow" = Materials/Glow.material and its cooked
+     * permutations). Section i draws with slot i, else its own material from
+     * the mesh, else DefaultLit; a quad uses slot 0. Each material's Domain
+     * and Shading pick the stage it draws in (RENDERPIPELINE.md), so one mesh
+     * can draw in several. An unloadable slot is warned once and falls back. */
     enum : size_t { RENDER_MATERIAL_NAME_MAX = 48 };   // including the NUL
     enum : size_t { RENDER_MESH_PATH_MAX     = 128 };  // including the NUL
+    enum : size_t { RENDER_MATERIAL_SLOTS    = 8 };
 
     struct RENDERCORE_API RenderComponent
     {
@@ -38,7 +42,7 @@ namespace RenderCore
         float             Height = 1.0f;
         EngineCore::Color Tint{255, 255, 255};
         uint8_t           bVisible = 1;
-        char              Material[RENDER_MATERIAL_NAME_MAX] = {};
+        char              Materials[RENDER_MATERIAL_SLOTS][RENDER_MATERIAL_NAME_MAX] = {};
         char              Mesh[RENDER_MESH_PATH_MAX] = {};
     };
 

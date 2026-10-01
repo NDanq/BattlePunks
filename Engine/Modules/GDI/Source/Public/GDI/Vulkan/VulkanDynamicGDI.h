@@ -123,8 +123,12 @@ public:
     VKBlendState*           BlendState          = nullptr;
     VKDepthStencilState*    DepthStencilState   = nullptr;
 
-    // Active dynamic-rendering region (the RT currently bound via SetRenderTarget).
+    // Active dynamic-rendering region (the RTs bound via SetRenderTargets).
+    // ActiveRenderTarget is colour 0: what the present shows and Clear sizes by.
     VKRenderTarget*         ActiveRenderTarget  = nullptr;
+    VKRenderTarget*         ActiveColors[GDI_MAX_COLOR_TARGETS] = {};
+    uint32_t                ActiveColorCount    = 0;
+    VKRenderTarget*         ActiveDepth         = nullptr;   // whose depth is attached; null for none
     bool                    bRenderingActive    = false;
     VkCommandBuffer         CurrentCmd          = VK_NULL_HANDLE;
 
@@ -166,6 +170,7 @@ public:
 
     GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) override;
     void SetRenderTarget(GDIRenderTarget* InRenderTarget) override;
+    void SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom) override;
     void ReleaseRenderTarget(GDIRenderTarget* InRenderTarget) override;
 
     GDIShaderResource* CreateShaderResource(EShaderType InType, const std::string& SourceCode) override;

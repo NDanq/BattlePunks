@@ -41,18 +41,19 @@ templates, beside the engine's other shaders.
 
 ## Domains and shading
 
-| Domain | Pass | Blend | Depth write | Notes |
+| Domain | Stage (Lit / Unlit) | Blend | Depth write | Notes |
 |---|---|---|---|---|
-| Opaque | opaque | off | on | |
-| Masked | opaque | off | on | `discard` when OpacityMask < Clip Value |
-| Translucent | translucent | alpha | off | sorted back to front |
-| PostProcess | after the scene | off | off | full-screen, Unlit only, samples Scene Color; no WPO |
+| Opaque | Base Pass / Unlit | off | on | |
+| Masked | Base Pass / Unlit | off | on | `discard` when OpacityMask < Clip Value |
+| Translucent | Translucent Lit / Translucent Unlit | alpha | off | sorted back to front |
+| PostProcess | PostProcess | off | off | full-screen, Unlit only, samples Scene Color; no WPO |
 
-Inside a scene, draws are queued and issued in passes: opaque in submission
-order (plain tinted quads and meshes with Mesh_PS too, in their old blended,
-depth-written state), then translucent back to front by view depth, ties in
-submission order so coplanar 2D quads keep their layering. Outside a scene (a
-preview, a test) a draw is issued at once.
+The domain and shading are the key to where a material draws:
+[RENDERPIPELINE.md](RENDERPIPELINE.md) has the stages, their draw policies and
+deferred lighting. Opaque and Masked **Lit** materials write the G-buffer in the
+Base Pass and are lit by the Lighting stage's full-screen pass; everything else
+writes its colour directly. Plain tinted quads and meshes drawn with Mesh_PS go
+to the Unlit stage, in their old blended, depth-written state.
 
 Shading is **Lit** (Emissive plus `ShadeSurface`) or **Unlit** (Emissive is the
 colour). The legacy Pixel Output node compiles as Unlit + Translucent, which is
@@ -100,7 +101,7 @@ uploads verbatim.
 |---|---|---|---|
 | 0, 1 | View, Transform | GDI, per draw | Common.glsl (unchanged) |
 | 2 | `<Name>_Block`: `Material_Tint`, `Material_ClipValue`, `Material_TwoSided`, two reserved floats, then `Param_<Name>` for each parameter | RenderContext, per draw | MaterialSchema (offsets in `.material`) |
-| 3 | `Scene_Block`: camera, time, light, ambient | RenderContext, per frame | SceneUniforms.glsl, mirrored by `SceneUniforms` in RenderContext.cpp with static_asserts |
+| 3 | `Scene_Block`: camera, time, light, ambient, and the inverse view-projection (the Lighting stage's) | RenderContext, per frame | SceneUniforms.glsl, mirrored by `SceneUniforms` in RenderContext.cpp with static_asserts |
 | 4-11 | Material textures (slot 0-7); slot 0 is Scene Color for PostProcess | RenderContext | fixed |
 
 Both blocks are visible to both stages, so World Position Offset can read
@@ -245,16 +246,20 @@ light matching the old `Mesh.fsh` (from above, -Y). `Lighting.glsl`: GGX
 distribution, Smith-Schlick geometry, Schlick Fresnel; BaseColor, Emissive
 and light colours are authored in display space, lit linear, and encoded back
 (no HDR target yet). Meshes without a material draw with the engine's
-`DefaultLit` (Tint times vertex colour, Lit).
+`DefaultLit` (Tint times vertex colour, Lit). Opaque and Masked Lit surfaces
+are shaded once per pixel by `DeferredLighting.fsh` from the G-buffer;
+Translucent Lit ones by their own pixel shader. Both call `ShadeSurface`, so
+the same surface lights the same either way (RENDERPIPELINE.md).
 
 ## PostProcess
 
 `PostProcessComponent`s (material, priority; at most 8 run, low priority
-first) draw full-screen passes after the scene: each samples the previous
-result as material texture 0 and writes the other of two targets (the back
-buffer and a second one made on first use). The last target written stays
-bound, which is what the present shows. A material of another domain is
-warned about and skipped.
+first) are the PostProcess stage's draws: each samples the previous result as
+material texture 0 and writes the other of two targets (the scene colour and a
+second one made on first use). The last target written stays bound, which is
+what the present shows. A material of another domain is warned about and
+skipped. A preview of a PostProcess material runs it over the preview's clear
+colour.
 
 ## GDI changes
 
@@ -271,26 +276,32 @@ warned about and skipped.
 - Vertex colour at location 9 on Vulkan, D3D12 and OpenGL.
 - Metal: not done. The engine does not cook Metal, and Metal has no indexed
   meshes yet.
+- Several colour targets in one pass and depth as a texture, for the
+  G-buffer: RENDERPIPELINE.md, "GDI".
+- `cook_shaders.py`'s `#if` evaluator handles parentheses and C precedence
+  (`A && (B || C)`, `!A && B`); it used to read both wrongly, and silently.
 
 ## Status and verification
 
 | Backend | Compiles | Verified drawing |
 |---|---|---|
-| Vulkan | yes | yes -- RenderCore smoke `NIMBLE_SMOKE_GPU=Vulkan` renders DefaultLit, Glow, Wave (WPO) and Negative (PostProcess) through the caches and checks their pixels; Sandbox (Editor and Client targets) loads every material and its cache |
+| Vulkan | yes | yes -- RenderCore smoke `NIMBLE_SMOKE_GPU=Vulkan` renders DefaultLit and Wave (WPO) through the G-buffer, Glow and Negative (PostProcess) through the caches and checks their pixels (clean under the validation layer); Sandbox (Editor and Client targets) loads every material and its cache |
 | D3D12 | yes (every permutation through spirv-cross and fxc; registers match the root signature) | yes -- the same smoke check with `NIMBLE_SMOKE_GPU=D3D12` gives Vulkan's pixels; Sandbox and the editor viewport (`--rhi 4`) run on it |
-| OpenGL | yes (preprocessed) | no -- the host does not create a WGL context yet |
+| OpenGL | yes (preprocessed; the backend's multiple targets and depth textures compile) | no -- the host does not create a WGL context yet |
 | Metal | -- | -- |
 
 Tests: NodeGraph (codegen goldens including Wave's two stages, std140
 offsets, stage errors, `CanLinkStages`, PostProcess and domain rules),
 `NodeGraph.MaterialGLSL` (every permutation through glslc), RenderCore smoke
 (`.material` v2, block layout, permutation names, cache reader, layered
-providers, vertex colours; the opt-in GPU check), Editor.Import (`COLOR_0`).
+providers, vertex colours, stage routing and material slots, the RenderComponent
+serializer's versions; the opt-in GPU check), Editor.Import (`COLOR_0`).
 
 ## Later
 
 Texture parameters and Texture Sample nodes (the slots exist); tangents for
 normal maps; an RGBA16F scene target and tonemapping (needs a render-target
 format in GDI); material instances; a cull mode; more light types; Scene
-Depth for PostProcess (needs depth targets as textures); an Unlit view mode
-(and its permutation); OpenGL bring-up through the window path.
+Depth for PostProcess (depth targets can be textures now; a node and a slot
+remain); an Unlit view mode (and its permutation); OpenGL bring-up through the
+window path.

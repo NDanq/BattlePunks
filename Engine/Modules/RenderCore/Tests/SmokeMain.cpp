@@ -28,6 +28,7 @@
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ComponentScript.h"
+#include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/World.h"
@@ -78,7 +79,16 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 6, "Render exposes Width, Height, Tint, Visible, Material and Mesh");
+    Expect(Render != nullptr && RenderCount == 14,
+           "Render exposes Width, Height, Tint, Visible, Material (slot 0), Material0-7 and Mesh");
+    bool bSlot7 = false, bSlot0Alias = false;
+    for(size_t Index = 0; Render && Index < RenderCount; ++Index)
+    {
+        bSlot7      |= std::strcmp(Render[Index].Name, "Material7") == 0;
+        bSlot0Alias |= std::strcmp(Render[Index].Name, "Material") == 0
+                       && Render[Index].Offset == uint32_t(offsetof(RenderComponent, Materials));
+    }
+    Expect(bSlot7 && bSlot0Alias, "each material slot is its own field, and Material is still slot 0");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < RenderCount; ++Index)
@@ -629,7 +639,7 @@ static void TestMaterials()
         RenderComponent Prim;
         Prim.Width = 100.0f;
         Prim.Height = 100.0f;
-        std::strcpy(Prim.Material, "SmokeGlow");
+        std::strcpy(Prim.Materials[0], "SmokeGlow");
         Quad.AddComponent(Prim);
         Rend.BindWorld(World);
 
@@ -934,8 +944,8 @@ static void TestMaterialsOnGpu()
         Expect(Glow.bOk && Near(Glow.Rgb[0], 51) && Near(Glow.Rgb[1], 204) && Near(Glow.Rgb[2], 255),
                "Glow's centre is its Color parameter, read from the material block");
         Expect(Wave.bOk && Wave.Rgb[2] > Wave.Rgb[0] + 40, "Wave (Lit, World Position Offset) draws its blue Color, lit");
-        Expect(Negative.bOk && Negative.Rgb[0] > 240 && Negative.Rgb[1] > 240 && Negative.Rgb[2] > 240,
-               "Negative (PostProcess) turns its empty scene texture white");
+        Expect(Negative.bOk && Near(Negative.Rgb[0], 255 - 38) && Near(Negative.Rgb[1], 255 - 40) && Near(Negative.Rgb[2], 255 - 46),
+               "Negative (PostProcess) inverts the scene it runs over: the preview's clear colour");
 
         Rend.UnbindWorld();
         Rend.SetViewOverride(nullptr);
@@ -1100,6 +1110,226 @@ static void TestTextureAssets()
     Expect(!SerializeTexture(WrongTag, WrongTagLoaded), "a mesh is not a texture");
 }
 
+/*
+ * RenderComponent's serializer: version 1's one Material loads into slot 0;
+ * version 2 writes every slot by name. Through a recording archive, so no
+ * file format is involved.
+ */
+static void TestRenderComponentSerializer()
+{
+    std::printf("[render component serializer]\n");
+
+    struct RecordingArchive final : GameCore::ComponentArchive
+    {
+        bool                     bLoading = false;
+        uint16_t                 Version  = 2;
+        std::map<std::string, std::string> Strings;   // what a load reads, and what a save wrote
+        std::vector<std::string> Names;
+
+        bool     IsLoading()  const override { return bLoading; }
+        uint16_t GetVersion() const override { return Version; }
+        void Field(const char* InName, float&) override               { Names.push_back(InName); }
+        void Field(const char* InName, double&) override              { Names.push_back(InName); }
+        void Field(const char* InName, int32_t&) override             { Names.push_back(InName); }
+        void Field(const char* InName, uint32_t&) override            { Names.push_back(InName); }
+        void Field(const char* InName, uint8_t&) override             { Names.push_back(InName); }
+        void Field(const char* InName, bool&) override                { Names.push_back(InName); }
+        void Field(const char* InName, EngineCore::Vector3&) override { Names.push_back(InName); }
+        void Field(const char* InName, GameCore::AABB&) override      { Names.push_back(InName); }
+        void Field(const char* InName, EngineCore::Color&) override   { Names.push_back(InName); }
+        void Flag(const char* InName, uint8_t&) override              { Names.push_back(InName); }
+        void Entity(const char* InName, GameCore::EntityID&) override { Names.push_back(InName); }
+        void FixedString(const char* InName, char* InOutBuffer, const size_t InCapacity) override
+        {
+            Names.push_back(InName);
+            if(!bLoading)
+            {
+                Strings[InName] = InOutBuffer;
+                return;
+            }
+            const auto Found = Strings.find(InName);
+            if(Found != Strings.end())
+            {
+                std::strncpy(InOutBuffer, Found->second.c_str(), InCapacity - 1);
+                InOutBuffer[InCapacity - 1] = '\0';
+            }
+        }
+    };
+
+    const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
+    Expect(Info && Info->Version == 2, "RenderComponent saves as version 2");
+    if(!Info) { return; }
+
+    RecordingArchive Old;
+    Old.bLoading = true;
+    Old.Version  = 1;
+    Old.Strings["Material"]  = "Glow";
+    Old.Strings["Material1"] = "Ignored";   // version 1 has no such field
+    RenderComponent Loaded;
+    Info->Fn(Old, &Loaded);
+    Expect(std::strcmp(Loaded.Materials[0], "Glow") == 0 && Loaded.Materials[1][0] == '\0',
+           "a version 1 Material loads into slot 0, and only there");
+
+    RenderComponent Saved;
+    std::strcpy(Saved.Materials[0], "Body");
+    std::strcpy(Saved.Materials[7], "Visor");
+    RecordingArchive Out;
+    Info->Fn(Out, &Saved);
+    Expect(Out.Strings["Material0"] == "Body" && Out.Strings["Material7"] == "Visor" && Out.Strings.count("Material") == 0,
+           "version 2 writes each slot as Material0 to Material7");
+
+    RecordingArchive Back;
+    Back.bLoading = true;
+    Back.Strings  = Out.Strings;
+    RenderComponent Again;
+    Info->Fn(Back, &Again);
+    Expect(std::strcmp(Again.Materials[0], "Body") == 0 && std::strcmp(Again.Materials[7], "Visor") == 0,
+           "and reads them back");
+}
+
+/*
+ * The stages (RENDERPIPELINE.md), on the Null backend: each material lands in
+ * the stage its Domain and Shading name; a mesh's sections take their slots,
+ * falling back to their own material; culling pads by the slots' reach.
+ */
+static void TestRenderStages()
+{
+    std::printf("[render stages]\n");
+
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreStages";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Root, Ignored);
+    std::filesystem::create_directories(Root / "Materials", Ignored);
+
+    const auto WriteMaterial = [&](const char* InName, const char* InDomain, const char* InShading, const char* InExtra)
+    {
+        std::ofstream(Root / "Materials" / (std::string(InName) + ".material"))
+            << "NimbleMaterial 2\nDomain " << InDomain << "\nShading " << InShading << "\nBlockSize 32\n" << InExtra;
+    };
+    WriteMaterial("LitOpaque",   "Opaque",      "Lit",   "");
+    WriteMaterial("UnlitMasked", "Masked",      "Unlit", "");
+    WriteMaterial("TransLit",    "Translucent", "Lit",   "");
+    WriteMaterial("TransUnlit",  "Translucent", "Unlit", "");
+    WriteMaterial("Glow",        "Translucent", "Unlit", "");    // the smoke mesh's Front section names it
+    WriteMaterial("Post",        "PostProcess", "Unlit", "");
+    WriteMaterial("Reach",       "Opaque",      "Lit",   "MaxOffset 5\nHasOffset 1\n");
+
+    FilesystemProvider Provider(Root.generic_string());
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Provider);
+    MeshAssetCache::Invalidate(std::string());
+    MeshData Square = MakeSmokeMesh();   // Front (material Glow), Back (none)
+    SaveMeshFile((Root / "Content" / "Square.nmmesh").generic_string(), Square);
+
+    Expect(GetMaterialRenderStage(EMaterialDomain::Opaque, EMaterialShading::Lit) == ERenderStage::BasePass
+           && GetMaterialRenderStage(EMaterialDomain::Masked, EMaterialShading::Unlit) == ERenderStage::Unlit
+           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Lit) == ERenderStage::TranslucentLit
+           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Unlit) == ERenderStage::TranslucentUnlit
+           && GetMaterialRenderStage(EMaterialDomain::PostProcess, EMaterialShading::Lit) == ERenderStage::PostProcess,
+           "a material's Domain and Shading name its stage");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the stage test");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(640, 360);
+        const RenderView View = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+        Rend.SetViewOverride(&View);
+
+        GameCore::World World;
+        const auto AddPrimitive = [&](const char* InName, const EngineCore::Vector3& InAt, const char* InMesh,
+                                      std::initializer_list<const char*> InSlots)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            Each.AddComponent<GameCore::TransformComponent>()->Position = InAt;
+            RenderComponent Render;
+            Render.Width  = 10.0f;
+            Render.Height = 10.0f;
+            std::strcpy(Render.Mesh, InMesh);
+            size_t Slot = 0;
+            for(const char* Name : InSlots) { std::strcpy(Render.Materials[Slot++], Name); }
+            Each.AddComponent(Render);
+            return Each;
+        };
+        const EngineCore::Vector3 Inside(100.0, 100.0, 0.0);
+        AddPrimitive("Lit",        Inside, "", { "LitOpaque" });               // Base Pass
+        AddPrimitive("Masked",     Inside, "", { "UnlitMasked" });             // Unlit
+        AddPrimitive("Glass",      Inside, "", { "TransLit" });                // Translucent Lit
+        AddPrimitive("Smoke",      Inside, "", { "TransUnlit" });              // Translucent Unlit
+        AddPrimitive("Plain",      Inside, "", {});                            // Unlit
+        AddPrimitive("Slotted",    Inside, "Content/Square.nmmesh", { "TransLit", "" });   // Translucent Lit; Back: Unlit
+        AddPrimitive("Sections",   Inside, "Content/Square.nmmesh", { "", "" });           // Glow: Translucent Unlit; Back: Unlit
+        AddPrimitive("BadSlot",    Inside, "Content/Square.nmmesh", { "Nope", "" });       // falls back to Glow; Back: Unlit
+        PostProcessComponent Post;
+        std::strcpy(Post.Material, "Post");
+        World.CreateEntity("Post").AddComponent(Post);
+        Rend.BindWorld(World);
+
+        uint64_t Frame = 500;
+        const auto DrawFrame = [&]
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        };
+        const auto ReadStages = [](uint32_t (&OutCounts)[size_t(ERenderStage::Count)])
+        {
+            ENQUEUE_RENDER_COMMAND(ReadStageCounts)([&OutCounts](RenderContext& InContext)
+            {
+                for(size_t Index = 0; Index < size_t(ERenderStage::Count); ++Index)
+                {
+                    OutCounts[Index] = InContext.GetStageDrawCount(ERenderStage(Index));
+                }
+            });
+            FlushRenderCommands();
+        };
+
+        DrawFrame();   // extracts; the proxies draw from the next frame
+        DrawFrame();
+        uint32_t Counts[size_t(ERenderStage::Count)] = {};
+        ReadStages(Counts);
+        const auto At = [&Counts](const ERenderStage InStage) { return Counts[size_t(InStage)]; };
+        Expect(At(ERenderStage::BasePass) == 1, "an Opaque Lit material draws in the Base Pass");
+        Expect(At(ERenderStage::Unlit) == 5, "Masked Unlit, a plain quad and three meshes' material-less sections draw in Unlit");
+        Expect(At(ERenderStage::TranslucentLit) == 2, "Translucent Lit takes a quad and the section whose slot names one");
+        Expect(At(ERenderStage::TranslucentUnlit) == 3,
+               "Translucent Unlit takes a quad and the sections falling back to their own material (an empty slot, a missing one)");
+        Expect(At(ERenderStage::PostProcess) == 1, "a Post Process component's material is a PostProcess draw");
+        Expect(At(ERenderStage::PrePass) == 0 && At(ERenderStage::Shadows) == 0, "PrePass and Shadows draw nothing yet");
+
+        /* Culling: a mesh 3 units past the view's right edge, visible only
+         * while one of its slots reaches 5 (World Position Offset). */
+        Rend.UnbindWorld();
+        GameCore::World Edge;
+        const GameCore::Entity Reaching = Edge.CreateEntity("Reaching");
+        Reaching.AddComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(643.0, 100.0, 0.0);
+        RenderComponent Render;
+        std::strcpy(Render.Mesh, "Content/Square.nmmesh");
+        std::strcpy(Render.Materials[1], "Reach");
+        Reaching.AddComponent(Render);
+        Rend.BindWorld(Edge);
+        DrawFrame();
+        DrawFrame();
+        RenderStats Stats;
+        Rend.GetStats(Stats);
+        Expect(Stats.ProxiesCulledLastFrame == 0, "a section's slot with World Position Offset pads the bounds past the edge");
+
+        Reaching.GetComponent<RenderComponent>()->Materials[1][0] = '\0';
+        DrawFrame();
+        DrawFrame();
+        Rend.GetStats(Stats);
+        Expect(Stats.ProxiesCulledLastFrame == 1, "without it the same mesh is culled");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+    }
+    Rend.Shutdown();
+
+    MeshAssetCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
+
 /* Null backend: one draw per section, mesh bounds, quad fallback. */
 static void TestMeshDrawing()
 {
@@ -1177,6 +1407,9 @@ int main()
     TestModuleName();
     TestScriptBindings();
     TestMaterialRuntime();
+#if WITH_EDITOR
+    TestRenderComponentSerializer();
+#endif
 
     RenderThread Thread;
     const bool bStarted = Thread.Start(ERenderBackend::Null, WindowHandle());
@@ -1203,6 +1436,7 @@ int main()
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();
+    TestRenderStages();
 #endif
 
     const uint64_t Leaked = Memory::ReportLeaks();

@@ -146,7 +146,8 @@ void VKRenderTarget::AllocateDepth()
     ImageInfo.arrayLayers   = 1;
     ImageInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
     ImageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
-    ImageInfo.usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    ImageInfo.usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT
+                            | VK_IMAGE_USAGE_SAMPLED_BIT;                // ToDepthTexture2D
     ImageInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
     ImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -215,6 +216,17 @@ void VKRenderTarget::DestroyImage()
         delete TextureWrapper;
         TextureWrapper = nullptr;
     }
+    if(DepthWrapper)
+    {
+        if(DepthWrapper->Resource)
+        {
+            DepthWrapper->Resource->Release();
+            delete DepthWrapper->Resource;
+            DepthWrapper->Resource = nullptr;
+        }
+        delete DepthWrapper;
+        DepthWrapper = nullptr;
+    }
 
     if(ImageView   != VK_NULL_HANDLE) { vkDestroyImageView(Dev, ImageView, nullptr);   ImageView = VK_NULL_HANDLE; }
     if(Image       != VK_NULL_HANDLE) { vkDestroyImage(Dev, Image, nullptr);           Image = VK_NULL_HANDLE; }
@@ -235,6 +247,9 @@ void VKRenderTarget::Bind()
 
 void VKRenderTarget::Release()
 {
+    // Submitted frames (and the UI-thread present) may still use the images:
+    // wait for them, as Resize does. Releases are rare -- teardown, mostly.
+    if(Device && Device->IsValid() && Image != VK_NULL_HANDLE) Device->WaitIdle();
     DestroyImage();
 }
 
@@ -345,6 +360,23 @@ GDITexture2D* VKRenderTarget::ToGDITexture2D()
             new VKTextureResource(Device, ImageView, TextureWrapper, GDI_TB_Clamp_To_Edge, GDI_TF_Linear);
     }
     return TextureWrapper;
+}
+
+GDITexture2D* VKRenderTarget::ToDepthTexture2D()
+{
+    if(DepthView == VK_NULL_HANDLE) return nullptr;
+
+    // As ToGDITexture2D, over the depth view. Point-filtered: linear filtering
+    // of D32_SFLOAT is optional, and depth is read texel by texel anyway.
+    if(!DepthWrapper)
+    {
+        DepthWrapper         = new GDITexture2D();
+        DepthWrapper->Width  = Width;
+        DepthWrapper->Height = Height;
+        DepthWrapper->Resource =
+            new VKTextureResource(Device, DepthView, DepthWrapper, GDI_TB_Clamp_To_Edge, GDI_TF_Nearest);
+    }
+    return DepthWrapper;
 }
 
 void VKRenderTarget::ResolveRenderTarget(GDIRenderTarget* Dest)

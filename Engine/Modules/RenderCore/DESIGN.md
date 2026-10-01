@@ -364,9 +364,11 @@ every `GDIDrawObject` call answers by construction.
 ## Materials -- one shader per name, owned here, never released mid-run
 
 > **Superseded in part by [MATERIALS.md](MATERIALS.md)**: templates and
-> permutations, raw uniform blocks instead of one `mat4`, passes by domain,
-> lighting, PostProcess and shader caches. What follows about ownership,
-> fallbacks, retiring on reload and previews still holds.
+> permutations, raw uniform blocks instead of one `mat4`, lighting,
+> PostProcess and shader caches; and by [RENDERPIPELINE.md](RENDERPIPELINE.md):
+> stages, draw policies, material slots and deferred lighting. What follows
+> about ownership, fallbacks, retiring on reload and previews still holds;
+> `RenderComponent::Material` is now slot 0 of `Materials`.
 
 `RenderComponent::Material` names a material graph's output, and
 `RenderContext::DrawQuadWithMaterial` draws the quad through its pixel shader,

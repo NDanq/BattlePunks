@@ -167,6 +167,7 @@ uint64_t D3D12PipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.BlendOpAlpha,   sizeof(K.BlendOpAlpha));
     Mix(&K.WriteMask,      sizeof(K.WriteMask));
     Mix(&K.RTFormat,       sizeof(K.RTFormat));
+    Mix(&K.ColorCount,     sizeof(K.ColorCount));
     Mix(&K.DSVFormat,      sizeof(K.DSVFormat));
     Mix(&K.DepthEnable,    sizeof(K.DepthEnable));
     Mix(&K.DepthWrite,     sizeof(K.DepthWrite));
@@ -239,8 +240,12 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
 
     Desc.SampleMask            = UINT_MAX;
     Desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    Desc.NumRenderTargets      = 1;
-    Desc.RTVFormats[0]         = Key.RTFormat;
+    // RenderTarget[0]'s blend covers them all (IndependentBlendEnable is off).
+    Desc.NumRenderTargets      = Key.ColorCount == 0 ? 1u : (Key.ColorCount > GDI_MAX_COLOR_TARGETS ? GDI_MAX_COLOR_TARGETS : Key.ColorCount);
+    for(UINT Index = 0; Index < Desc.NumRenderTargets; ++Index)
+    {
+        Desc.RTVFormats[Index] = Key.RTFormat;
+    }
     Desc.DSVFormat             = Key.DSVFormat;
     Desc.SampleDesc.Count      = 1;
 

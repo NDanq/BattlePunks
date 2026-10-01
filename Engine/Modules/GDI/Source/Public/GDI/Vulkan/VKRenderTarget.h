@@ -14,8 +14,9 @@ class VKDevice;
 
 /**
  * A color image (R8G8B8A8_UNORM) and a depth attachment (D32_SFLOAT, starts
- * UNDEFINED so its first pass clears it). Raw vkAllocateMemory; Phase 2 will
- * migrate to VMA.
+ * UNDEFINED so its first pass clears it; sampleable through ToDepthTexture2D,
+ * in SHADER_READ_ONLY_OPTIMAL whenever it is not the bound depth). Raw
+ * vkAllocateMemory; Phase 2 will migrate to VMA.
  */
 class VKRenderTarget : public GDIRenderTarget
 {
@@ -29,6 +30,7 @@ public:
     bool IsValid() override;
     EngineCore::Image ToImage() override;
     GDITexture2D* ToGDITexture2D() override;
+    GDITexture2D* ToDepthTexture2D() override;
     void ResolveRenderTarget(GDIRenderTarget* Dest) override;
 
     inline VkImage      GetImage() const        { return Image; }
@@ -73,6 +75,9 @@ private:
      * Invalidated on Resize because the underlying image view is recreated.
      */
     GDITexture2D*   TextureWrapper  = nullptr;
+
+    /* Likewise for the depth view, point-filtered. */
+    GDITexture2D*   DepthWrapper    = nullptr;
 };
 
 #endif //CORECLIENT_VKRENDERTARGET_H

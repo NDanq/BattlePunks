@@ -273,4 +273,7 @@ constexpr unsigned GDI_MATERIAL_TEXTURE_BINDING = 4;
 constexpr unsigned GDI_MATERIAL_TEXTURE_SLOTS   = 8;
 constexpr unsigned GDI_MATERIAL_BLOCK_MAX_BYTES = 1024;
 
+/* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's. */
+constexpr unsigned GDI_MAX_COLOR_TARGETS        = 4;
+
 #endif //CORECLIENT_GDIDEFINITIONS_H

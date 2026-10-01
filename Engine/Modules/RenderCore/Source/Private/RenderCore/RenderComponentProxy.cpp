@@ -23,10 +23,13 @@ namespace RenderCore
         Tint              = Component.Tint;
         bComponentVisible = Component.bVisible != 0;
 
-        /* Bounded copy: the component's buffer need not be NUL-terminated. */
-        static_assert(sizeof(Material) == RENDER_MATERIAL_NAME_MAX, "RenderComponentProxy::Material must match the component's");
-        std::memcpy(Material, Component.Material, sizeof(Material));
-        Material[sizeof(Material) - 1] = '\0';
+        /* Bounded copy: the component's buffers need not be NUL-terminated. */
+        static_assert(sizeof(Materials) == sizeof(Component.Materials), "RenderComponentProxy::Materials must match the component's");
+        std::memcpy(Materials, Component.Materials, sizeof(Materials));
+        for(char (&Slot)[RENDER_MATERIAL_NAME_MAX] : Materials)
+        {
+            Slot[RENDER_MATERIAL_NAME_MAX - 1] = '\0';
+        }
 
         SetVisible(bComponentVisible);
 
@@ -59,17 +62,25 @@ namespace RenderCore
 
     float RenderComponentProxy::GetBoundsPadding(RenderContext& InContext)
     {
-        /* The override, else the furthest any section's material reaches. */
-        if(Material[0] != '\0')
+        /* The furthest any material it draws with reaches: each section's
+         * slot when set (one that fails to load pads by nothing, like the
+         * fallback it draws), else the section's own. A quad: slot 0. */
+        if(!MeshSource)
         {
-            return InContext.GetMaterialMaxOffset(Material);
+            return InContext.GetMaterialMaxOffset(Materials[0]);
         }
         float Padding = 0.0f;
-        if(MeshSource)
+        const size_t SectionCount = std::max<size_t>(MeshSource->Sections.size(), 1);
+        for(size_t Index = 0; Index < SectionCount; ++Index)
         {
-            for(const MeshSection& Section : MeshSource->Sections)
+            if(Index < RENDER_MATERIAL_SLOTS && Materials[Index][0] != '\0')
             {
-                Padding = std::max(Padding, InContext.GetMaterialMaxOffset(Section.Material.c_str(), /*bQuietIfMissing*/ true));
+                Padding = std::max(Padding, InContext.GetMaterialMaxOffset(Materials[Index]));
+            }
+            else if(Index < MeshSource->Sections.size())
+            {
+                Padding = std::max(Padding, InContext.GetMaterialMaxOffset(MeshSource->Sections[Index].Material.c_str(),
+                                                                           /*bQuietIfMissing*/ true));
             }
         }
         return Padding;
@@ -77,14 +88,17 @@ namespace RenderCore
 
     void RenderComponentProxy::Draw(RenderContext& InContext)
     {
+        const char* Slots[RENDER_MATERIAL_SLOTS];
+        for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot) { Slots[Slot] = Materials[Slot]; }
+
         /* A mesh this backend cannot draw falls back to the quad. */
-        if(MeshSource && InContext.DrawMesh(GetTransform(), MeshPath.c_str(), Tint, Material))
+        if(MeshSource && InContext.DrawMesh(GetTransform(), MeshPath.c_str(), Tint, Slots, uint32_t(RENDER_MATERIAL_SLOTS)))
         {
             return;
         }
-        if(Material[0] != '\0')
+        if(Materials[0][0] != '\0')
         {
-            InContext.DrawQuadWithMaterial(GetTransform(), Width, Height, Tint, Material);
+            InContext.DrawQuadWithMaterial(GetTransform(), Width, Height, Tint, Materials[0]);
             return;
         }
         InContext.DrawQuad(GetTransform(), Width, Height, Tint);

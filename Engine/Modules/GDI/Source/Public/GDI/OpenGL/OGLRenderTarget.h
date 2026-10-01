@@ -27,19 +27,24 @@ public:
     EngineCore::Image ToImage() override;
 
     GDITexture2D* ToGDITexture2D() override;
+    GDITexture2D* ToDepthTexture2D() override;
 
     void ResolveRenderTarget(GDIRenderTarget* Dest) override;
 
     uint GetFramebufferID() const;
 
     uint GetFramebufferTexture() const;
+    uint GetDepthTexture() const { return FrameBuffer.DepthTextureID; }
 protected:
     void Allocate() override;
     struct OGLFrameBuffer{
         uint FrameBufferID = 0;
         GDITexture2D* FrameTexture;
-        uint DepthBufferID = 0;   // a 24-bit depth renderbuffer, for 3D draws' depth test
+        uint DepthTextureID = 0;  // a 24-bit depth texture: 3D draws' depth test, and sampleable
     } FrameBuffer;
+
+    /* Borrows DepthTextureID (ToDepthTexture2D); never deletes it. */
+    GDITexture2D* DepthWrapper = nullptr;
 };
 
 #endif //CORECLIENT_OGLRENDERTARGET_H

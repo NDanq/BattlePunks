@@ -60,6 +60,7 @@ public:
         UINT8                   WriteMask       = D3D12_COLOR_WRITE_ENABLE_ALL;
 
         DXGI_FORMAT             RTFormat        = DXGI_FORMAT_R8G8B8A8_UNORM;
+        UINT                    ColorCount      = 1;   // render targets, every one RTFormat
 
         // The render target's depth buffer (UNKNOWN for none) and its test.
         DXGI_FORMAT             DSVFormat       = DXGI_FORMAT_UNKNOWN;

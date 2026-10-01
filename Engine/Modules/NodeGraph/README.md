@@ -277,7 +277,8 @@ The inputs read `MaterialInputs`, which each stage's template fills:
 - Scene Texture (PostProcess materials only).
 
 **Drawing one.** A primitive names the material by its base name:
-`RenderComponent::Material = "Glow"`. RenderCore loads `Materials/Glow.material`
+a slot of `RenderComponent::Materials`, "Glow" -- slot *i* for mesh section
+*i*, slot 0 for a quad. RenderCore loads `Materials/Glow.material`
 and the permutations its domain and shading need, named `Glow@<key>` under
 `Shaders/Cooked/<Platform>/Materials/`. A game's build cooks them into its
 module's shader cache with `nimble_stage_materials`

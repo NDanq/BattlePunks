@@ -502,8 +502,9 @@ namespace EditorGraphs
 
         /* Written in place, then reported, like a Details edit. */
         RenderCore::RenderComponent* Render = Handle.GetComponent<RenderCore::RenderComponent>();
-        std::memset(Render->Material, 0, sizeof(Render->Material));
-        std::memcpy(Render->Material, Name.constData(), size_t(Name.size()));
+        /* Slot 0: the quad's, and a mesh's first section's. */
+        std::memset(Render->Materials[0], 0, sizeof(Render->Materials[0]));
+        std::memcpy(Render->Materials[0], Name.constData(), size_t(Name.size()));
         Ctx->NotifyPropertyEdited(Target, Type);
 
         OutMessage = QStringLiteral("%1 now draws with %2").arg(Ctx->GetDisplayName(Target), InName);
