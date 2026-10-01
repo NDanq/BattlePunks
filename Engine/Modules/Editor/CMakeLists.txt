@@ -103,7 +103,26 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Public/Editor/TransformGizmo.h
         Source/Public/Editor/OutlinerPanel.h
         Source/Public/Editor/DetailsPanel.h
+        Source/Private/Editor/Content/ContentPaths.cpp
+        Source/Private/Editor/Content/ContentPaths.h
+        Source/Private/Editor/Content/ImportWizard.cpp
+        Source/Private/Editor/Content/ImportWizard.h
 )
+
+# The importers behind the Content Browser's Import Wizard: glTF / images into
+# .nmmesh / .nmtexture. No widgets, so NimbleEditorImportTests (below) builds
+# them on their own.
+set(NIMBLE_EDITOR_IMPORT_SOURCES
+        Source/Private/Editor/Content/AssetImport.cpp
+        Source/Private/Editor/Content/AssetImport.h
+        Source/Private/Editor/Content/GltfImporter.cpp
+        Source/Private/Editor/Content/GltfImporter.h
+)
+list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_IMPORT_SOURCES})
+
+# cgltf: a single-header glTF 2.0 parser (MIT), vendored as released. Only
+# GltfImporter.cpp includes it, and compiles its implementation.
+set(NIMBLE_EDITOR_CGLTF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/cgltf-1.15")
 
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})
 
@@ -116,7 +135,7 @@ set_target_properties(NimbleEditor PROPERTIES
         FOLDER  "Editor"
 )
 
-target_include_directories(NimbleEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+target_include_directories(NimbleEditor PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
 
 target_link_libraries(NimbleEditor PRIVATE
         GameCore::GameCore
@@ -129,6 +148,26 @@ target_link_libraries(NimbleEditor PRIVATE
         Qt6::Gui
         Qt6::Widgets
 )
+
+# === Import tests =================================================================
+# The importers alone: glTF and images in, .nmmesh / .nmtexture out, Reimport.
+# Runs from the shared Binaries directory, where NimbleEditor's windeployqt has
+# put Qt (hence the dependency).
+option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests" ON)
+if(NIMBLEEDITOR_BUILD_TESTS)
+    add_executable(NimbleEditorImportTests Tests/ImportTests.cpp ${NIMBLE_EDITOR_IMPORT_SOURCES})
+    target_include_directories(NimbleEditorImportTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
+    target_link_libraries(NimbleEditorImportTests PRIVATE
+            RenderCore::RenderCore
+            EngineCore::QtBridge
+            Qt6::Core
+            Qt6::Gui
+    )
+    set_target_properties(NimbleEditorImportTests PROPERTIES FOLDER "Editor")
+    add_dependencies(NimbleEditorImportTests NimbleEditor)
+    add_test(NAME Editor.Import COMMAND NimbleEditorImportTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorImportTests>")
+endif()
 
 # === Node graphs ================================================================
 # A saved material graph's shader is checked by NodeGraph's

@@ -50,8 +50,20 @@ namespace EditorGraphs
      * working directory if the editor was built without a project. */
     QString GetProjectRoot();
 
-    /* Where a new graph of this schema is offered: <root>/Scripts, <root>/Shaders. */
+    /* Where a new graph of this schema is offered: <root>/Scripts, <root>/Materials. */
     QString GetDefaultFolder(const NodeGraph::Schema& InSchema);
+
+    /* A folder under the project that holds no content -- build trees,
+     * Binaries, dot-folders -- so walks over the project skip it. */
+    bool IsIgnoredFolder(const QString& InName);
+
+    /* Where a project file is staged for the running editor and game: the
+     * same path relative to the root, under the executable's folder. Empty
+     * for a file outside the project (or when the project IS that folder). */
+    QString GetStagedPath(const QString& InPath);
+
+    /* True if InGraphPath is open in a graph window. */
+    bool IsGraphOpen(const QString& InGraphPath);
 
     /* "Node Graphs (*.material.nmgraph *.script.nmgraph);;Material Graphs (...)". */
     QString GetFileFilter(const NodeGraph::Schema* InOnly = nullptr);

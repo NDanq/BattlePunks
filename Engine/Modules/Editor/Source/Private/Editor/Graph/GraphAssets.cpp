@@ -242,6 +242,26 @@ namespace EditorGraphs
         return QDir(GetProjectRoot()).filePath(InSchema.GetName() == "Script" ? QStringLiteral("Scripts") : QStringLiteral("Materials"));
     }
 
+    bool IsIgnoredFolder(const QString& InName)
+    {
+        return IsSkippedFolder(InName);
+    }
+
+    QString GetStagedPath(const QString& InPath)
+    {
+        return StagedPathFor(InPath);
+    }
+
+    bool IsGraphOpen(const QString& InGraphPath)
+    {
+        const QString Key = Canonical(InGraphPath);
+        for(const QPointer<GraphEditorWindow>& Each : OpenWindows())
+        {
+            if(Each && Canonical(Each->GetDocument().GetPath()) == Key) { return true; }
+        }
+        return false;
+    }
+
     QString GetFileFilter(const Schema* InOnly)
     {
         QStringList AllPatterns, Filters;

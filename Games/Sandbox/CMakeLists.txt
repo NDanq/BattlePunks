@@ -293,6 +293,56 @@ else()
     set_target_properties(SandboxStageScripts PROPERTIES FOLDER "Games")
 endif()
 
+# === Content/ ===============================================================
+# Imported assets -- the .nmmesh and .nmtexture files NimbleEditor's Import
+# Wizard writes under Content/ -- staged at the same relative path beside the
+# executable, which is how a RenderComponent's Mesh names them at run time
+# ("Content/Props/Crate.nmmesh"). The editor stages each one as it imports it;
+# this is what puts them there on a clean build.
+#
+# GLOBBED, unlike Scripts/ above, and on purpose: the editor creates these, so
+# listing them would make every import a CMakeLists.txt edit. Only the two
+# engine formats, with CONFIGURE_DEPENDS so a new asset is noticed at build.
+file(GLOB_RECURSE SANDBOX_CONTENT_FILES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmtexture"
+)
+
+if(SANDBOX_CONTENT_FILES)
+    if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+        set(SANDBOX_CONTENT_OUTPUTS "")
+        foreach(SANDBOX_CONTENT_SRC ${SANDBOX_CONTENT_FILES})
+            file(RELATIVE_PATH SANDBOX_CONTENT_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_CONTENT_SRC}")
+            set(SANDBOX_CONTENT_DST "${SANDBOX_RT_DIR}/${SANDBOX_CONTENT_REL}")
+            get_filename_component(SANDBOX_CONTENT_DIR "${SANDBOX_CONTENT_DST}" DIRECTORY)
+
+            add_custom_command(
+                    OUTPUT  "${SANDBOX_CONTENT_DST}"
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_CONTENT_DIR}"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${SANDBOX_CONTENT_SRC}" "${SANDBOX_CONTENT_DST}"
+                    DEPENDS "${SANDBOX_CONTENT_SRC}"
+                    COMMENT "Sandbox: staging ${SANDBOX_CONTENT_REL} beside the executable"
+                    VERBATIM)
+            list(APPEND SANDBOX_CONTENT_OUTPUTS "${SANDBOX_CONTENT_DST}")
+        endforeach()
+
+        add_custom_target(SandboxStageContent DEPENDS ${SANDBOX_CONTENT_OUTPUTS})
+        add_dependencies(Sandbox SandboxStageContent)
+        set_target_properties(SandboxStageContent PROPERTIES FOLDER "Games")
+    else()
+        # Multi-config fallback, as SandboxStageScripts': the whole folder.
+        add_custom_target(SandboxStageContent ALL
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                        "${CMAKE_CURRENT_SOURCE_DIR}/Content" "$<TARGET_FILE_DIR:Sandbox>/Content"
+                DEPENDS ${SANDBOX_CONTENT_FILES}
+                COMMENT "Sandbox: staging Content/ beside the executable"
+                VERBATIM)
+        add_dependencies(SandboxStageContent Sandbox)
+        set_target_properties(SandboxStageContent PROPERTIES FOLDER "Games")
+    endif()
+endif()
+
 # === Materials/ =============================================================
 # Material graphs (Materials/*.material.nmgraph, edited in NimbleEditor) and
 # what they generate -- the .fsh and .material beside each. Cooked for every
