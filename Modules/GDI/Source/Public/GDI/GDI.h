@@ -437,6 +437,10 @@ public:
     {
         return ThreadID == EngineCore::appThreadID();
     }
+
+    /* Allocate() finished. A backend records its thread before it can fail,
+     * so InRenderThread() alone does not mean it has a device. */
+    bool IsInitialized() const { return bInitialized; }
 protected:
     inline void SetThreadID(const EngineCore::ThreadID InThreadID)
     {
