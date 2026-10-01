@@ -25,6 +25,7 @@
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/Editor/EditorContext.h"
 #include "Private/Editor/Graph/GraphDocument.h"
+#include "Private/Editor/Graph/GraphEditorTab.h"
 #include "Private/Editor/Graph/GraphEditorWindow.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 
@@ -39,11 +40,11 @@ using namespace NodeGraph;
 
 namespace
 {
-    /* Every open graph window; QPointer, so a closed one reads as null. */
-    QList<QPointer<GraphEditorWindow>>& OpenWindows()
+    /* Every open graph: the graph editor window's tabs. */
+    QList<GraphEditorTab*> OpenTabs()
     {
-        static QList<QPointer<GraphEditorWindow>> Windows;
-        return Windows;
+        GraphEditorWindow* Window = GraphEditorWindow::Find();
+        return Window ? Window->GetTabs() : QList<GraphEditorTab*>();
     }
 
     /* SetEditorContext's; a QPointer, so a destroyed context reads as null. */
@@ -255,9 +256,9 @@ namespace EditorGraphs
     bool IsGraphOpen(const QString& InGraphPath)
     {
         const QString Key = Canonical(InGraphPath);
-        for(const QPointer<GraphEditorWindow>& Each : OpenWindows())
+        for(GraphEditorTab* Each : OpenTabs())
         {
-            if(Each && Canonical(Each->GetDocument().GetPath()) == Key) { return true; }
+            if(Canonical(Each->GetDocument().GetPath()) == Key) { return true; }
         }
         return false;
     }
@@ -566,16 +567,14 @@ namespace EditorGraphs
         return Failures;
     }
 
-    GraphEditorWindow* OpenGraph(const QString& InPath, QWidget* InParent)
+    GraphEditorTab* OpenGraph(const QString& InPath, QWidget* InParent)
     {
         const QString Key = Canonical(InPath);
-        for(const QPointer<GraphEditorWindow>& Each : OpenWindows())
+        for(GraphEditorTab* Each : OpenTabs())
         {
-            if(Each && Canonical(Each->GetDocument().GetPath()) == Key)
+            if(Canonical(Each->GetDocument().GetPath()) == Key)
             {
-                Each->show();
-                Each->raise();
-                Each->activateWindow();
+                GraphEditorWindow::Get().ShowTab(Each);
                 return Each;
             }
         }
@@ -590,15 +589,13 @@ namespace EditorGraphs
         }
         for(const std::string& Each : Warnings) { CORE_LOG_WARN("[Graph] " + Each) }
 
-        /* Top-level and unowned: a graph window may sit behind the main one. */
-        auto* Window = new GraphEditorWindow(new GraphDocument(QFileInfo(InPath).absoluteFilePath(), std::move(Loaded)));
-        OpenWindows().removeAll(nullptr);
-        OpenWindows() << Window;
-        Window->show();
-        return Window;
+        /* A tab of the one graph editor window. */
+        auto* Tab = new GraphEditorTab(new GraphDocument(QFileInfo(InPath).absoluteFilePath(), std::move(Loaded)));
+        GraphEditorWindow::Get().AddTab(Tab);
+        return Tab;
     }
 
-    GraphEditorWindow* CreateGraph(const Schema& InSchema, QWidget* InParent)
+    GraphEditorTab* CreateGraph(const Schema& InSchema, QWidget* InParent)
     {
         const QString Folder = GetDefaultFolder(InSchema);
         QDir().mkpath(Folder);
@@ -637,20 +634,9 @@ namespace EditorGraphs
 
     bool CloseAllGraphs()
     {
-        for(const QPointer<GraphEditorWindow>& Each : OpenWindows())
-        {
-            if(Each && !Each->ConfirmClose()) { return false; }
-        }
-        for(const QPointer<GraphEditorWindow>& Each : OpenWindows())
-        {
-            if(Each)
-            {
-                Each->GetDocument().GetHistory().setClean();   // already confirmed; do not ask twice
-                Each->close();
-            }
-        }
-        OpenWindows().clear();
-        return true;
+        /* The window asks each graph in turn; it stays open on a Cancel. */
+        GraphEditorWindow* Window = GraphEditorWindow::Find();
+        return !Window || Window->close();
     }
 }
 

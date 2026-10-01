@@ -82,6 +82,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Graph/GraphDetailsPanel.h
         Source/Private/Editor/Graph/GraphDocument.cpp
         Source/Private/Editor/Graph/GraphDocument.h
+        Source/Private/Editor/Graph/GraphEditorTab.cpp
+        Source/Private/Editor/Graph/GraphEditorTab.h
         Source/Private/Editor/Graph/GraphEditorWindow.cpp
         Source/Private/Editor/Graph/GraphEditorWindow.h
         Source/Private/Editor/Graph/GraphItems.cpp

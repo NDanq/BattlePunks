@@ -18,7 +18,7 @@
 class EditorContext;
 class QObject;
 class QWidget;
-class GraphEditorWindow;
+class GraphEditorTab;
 
 /*
  * Graphs as project files: where they live, what a save writes, and the
@@ -125,12 +125,12 @@ namespace EditorGraphs
 
     // --- Windows ----------------------------------------------------------------
 
-    /* The graph's editor window, opened or raised. nullptr (with a message box
-     * on InParent) if the file cannot be loaded. */
-    GraphEditorWindow* OpenGraph(const QString& InPath, QWidget* InParent);
+    /* The graph's tab in the graph editor window, added or brought forward.
+     * nullptr (with a message box on InParent) if the file cannot be loaded. */
+    GraphEditorTab* OpenGraph(const QString& InPath, QWidget* InParent);
 
     /* Asks where, writes a starter graph of InSchema there, and opens it. */
-    GraphEditorWindow* CreateGraph(const NodeGraph::Schema& InSchema, QWidget* InParent);
+    GraphEditorTab* CreateGraph(const NodeGraph::Schema& InSchema, QWidget* InParent);
 
     /* Offers to save each open graph with unsaved changes. False if the user
      * cancelled -- the caller should not close. */
