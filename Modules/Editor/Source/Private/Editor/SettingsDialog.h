@@ -46,6 +46,10 @@ public:
      * after Config/DefaultEngine.ini. */
     static void LoadUserSettings();
 
+    /* Writes every setting's current value to the user file, as Apply does --
+     * for a tool that sets one of these vars itself (the Import Wizard). */
+    static bool SaveUserSettings();
+
 private:
     /* One var's widget. The text is the var's own (ConfigVar::ToString /
      * SetFromString), so a row needs no knowledge of the var's type. */

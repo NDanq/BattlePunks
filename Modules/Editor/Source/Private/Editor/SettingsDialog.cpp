@@ -167,6 +167,27 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
              QStringLiteral("When Compile Source succeeds during Play, stop the run and start it again on the new "
                             "game module. Off: the run keeps the old one until the next Play"));
 
+    /* What the Import Wizard starts with; it saves back what was last used. */
+    QFormLayout* Import = AddGroup(QStringLiteral("Import"));
+    AddFloat(Import, "Editor.ImportMeshScale", QStringLiteral("Mesh scale"),
+             QStringLiteral("Multiplies an imported mesh's positions. glTF is in metres: 100 makes a metre 100 units"),
+             0.0001, 100000.0, 4, QString());
+    AddCheck(Import, "Editor.ImportConvertCoordinates", QStringLiteral("Convert glTF axes"),
+             QStringLiteral("Turn a glTF's +Y-up model the engine's way up (+Y down), facing the default camera"));
+    AddCheck(Import, "Editor.ImportGenerateNormals", QStringLiteral("Generate missing normals"),
+             QStringLiteral("Smooth normals for a primitive that has none"));
+    AddCheck(Import, "Editor.ImportCombineMeshes", QStringLiteral("Combine meshes"),
+             QStringLiteral("One .nmmesh for a whole glTF scene, or one per glTF mesh"));
+    AddCheck(Import, "Editor.ImportMeshTextures", QStringLiteral("Import a mesh's textures"),
+             QStringLiteral("Import the images a glTF refers to as .nmtexture beside the mesh"));
+    AddCheck(Import, "Editor.ImportTextureSRGB", QStringLiteral("Textures are sRGB"),
+             QStringLiteral("Colour images are sRGB; turn off for masks and normal maps"));
+    AddChoice(Import, "Editor.ImportTextureMaxSize", QStringLiteral("Largest texture"),
+              QStringLiteral("An image bigger than this on either side is scaled down to fit"),
+              { { "256", 256 }, { "512", 512 }, { "1024", 1024 }, { "2048", 2048 }, { "4096", 4096 },
+                { "8192", 8192 }, { "16384", 16384 } },
+              false);
+
     Layout->addStretch(1);
 
     auto* Note = new QLabel(QStringLiteral("* Takes effect when the editor restarts.\nSaved to %1")
@@ -298,6 +319,13 @@ bool SettingsDialog::Save() const
         return false;
     }
     return true;
+}
+
+bool SettingsDialog::SaveUserSettings()
+{
+    /* The rows say which vars are the user's; a dialog never shown has them. */
+    SettingsDialog Rows;
+    return Rows.Save();
 }
 
 void SettingsDialog::RestoreDefaults()
