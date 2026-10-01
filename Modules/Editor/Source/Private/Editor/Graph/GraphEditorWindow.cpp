@@ -213,7 +213,7 @@ void GraphEditorWindow::BuildActions()
 
         QAction* Apply = Material->addAction(QStringLiteral("&Apply to Selected Entity"));
         Apply->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_A));
-        Apply->setToolTip(QStringLiteral("Set the selected entity's Primitive Material to this one (adds a Primitive if it has none)"));
+        Apply->setToolTip(QStringLiteral("Set the selected entity's RenderComponent Material to this one (adds a RenderComponent if it has none)"));
         connect(Apply, &QAction::triggered, this, [this]()
         {
             QString Message;
@@ -222,7 +222,7 @@ void GraphEditorWindow::BuildActions()
         });
 
         Material->addSeparator();
-        QAction* Name = Material->addAction(QStringLiteral("Primitives refer to it as \"%1\"")
+        QAction* Name = Material->addAction(QStringLiteral("RenderComponents refer to it as \"%1\"")
                                             .arg(EditorGraphs::GetMaterialName(Document->GetPath())));
         Name->setEnabled(false);
     }
@@ -324,7 +324,7 @@ void GraphEditorWindow::BuildPreviewDock()
     auto* Row = new QHBoxLayout();
     auto* Tint = new QPushButton(QStringLiteral("Instance Tint..."), Page);
     Tint->setToolTip(QStringLiteral("The tint the preview quad passes to the Instance Tint input -- "
-                                    "in the level, each Primitive's own Tint"));
+                                    "in the level, each RenderComponent's own Tint"));
     connect(Tint, &QPushButton::clicked, this, [this]()
     {
         const QColor Picked = QColorDialog::getColor(PreviewTint, this, QStringLiteral("Instance Tint"),

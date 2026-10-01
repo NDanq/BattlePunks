@@ -192,7 +192,7 @@ public:
     /*
      * The world-space box the editor shows for InEntity, best source first:
      *   BoundsComponent::World     what the spatial index and culling use
-     *   a Primitive's quad         its corners through the Transform
+     *   a RenderComponent's quad   its corners through the Transform
      *   the Transform alone        a small cube at its position
      * An empty box for a dead entity or one with none of these.
      */

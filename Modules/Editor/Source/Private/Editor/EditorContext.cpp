@@ -278,17 +278,17 @@ void EditorContext::CreateSandboxScene()
     {
         const GameCore::Entity Marker = EditedWorld->GetEntity(MarkerID);
 
-        RenderCore::PrimitiveComponent Primitive;
-        Primitive.Width  = 32.0f;
-        Primitive.Height = 32.0f;
-        Primitive.Tint   = EngineCore::Color(255, 200, 40);
-        Marker.AddComponent(Primitive);
+        RenderCore::RenderComponent Render;
+        Render.Width  = 32.0f;
+        Render.Height = 32.0f;
+        Render.Tint   = EngineCore::Color(255, 200, 40);
+        Marker.AddComponent(Render);
 
-        /* The quad's extent, derived from the Primitive as Sandbox does. */
+        /* The quad's extent, derived from the RenderComponent as Sandbox does. */
         GameCore::BoundsComponent Bounds;
         Bounds.Local = GameCore::AABB(
-            EngineCore::Vector3(-0.5 * Primitive.Width, -0.5 * Primitive.Height, 0.0),
-            EngineCore::Vector3( 0.5 * Primitive.Width,  0.5 * Primitive.Height, 0.0));
+            EngineCore::Vector3(-0.5 * Render.Width, -0.5 * Render.Height, 0.0),
+            EngineCore::Vector3( 0.5 * Render.Width,  0.5 * Render.Height, 0.0));
         Marker.AddComponent(Bounds);
     }
 
@@ -557,10 +557,10 @@ GameCore::AABB EditorContext::GetEntityBounds(const EntityID InEntity) const
         return GameCore::AABB();
     }
 
-    if(const RenderCore::PrimitiveComponent* Primitive = E.GetComponent<RenderCore::PrimitiveComponent>())
+    if(const RenderCore::RenderComponent* Render = E.GetComponent<RenderCore::RenderComponent>())
     {
-        const GameCore::AABB Quad(EngineCore::Vector3(-0.5 * Primitive->Width, -0.5 * Primitive->Height, 0.0),
-                                  EngineCore::Vector3( 0.5 * Primitive->Width,  0.5 * Primitive->Height, 0.0));
+        const GameCore::AABB Quad(EngineCore::Vector3(-0.5 * Render->Width, -0.5 * Render->Height, 0.0),
+                                  EngineCore::Vector3( 0.5 * Render->Width,  0.5 * Render->Height, 0.0));
         return GameCore::AABB::Transformed(Quad, Transform->GetLocalMatrix());
     }
 

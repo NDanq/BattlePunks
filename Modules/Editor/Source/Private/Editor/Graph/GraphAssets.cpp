@@ -350,7 +350,7 @@ namespace EditorGraphs
             Fail(QStringLiteral("the graph has errors"));
             return;
         }
-        if(InName.toUtf8().size() >= int(RenderCore::PRIMITIVE_MATERIAL_NAME_MAX))
+        if(InName.toUtf8().size() >= int(RenderCore::RENDER_MATERIAL_NAME_MAX))
         {
             Fail(QStringLiteral("the name '%1' is too long for a primitive to refer to").arg(InName));
             return;
@@ -457,25 +457,25 @@ namespace EditorGraphs
             return false;
         }
         const QByteArray Name = InName.toUtf8();
-        if(Name.size() >= int(RenderCore::PRIMITIVE_MATERIAL_NAME_MAX))
+        if(Name.size() >= int(RenderCore::RENDER_MATERIAL_NAME_MAX))
         {
             OutMessage = QStringLiteral("The material name '%1' is too long").arg(InName);
             return false;
         }
 
-        const GameCore::ComponentTypeID Type = RenderCore::PrimitiveComponent::StaticType().ID;
+        const GameCore::ComponentTypeID Type = RenderCore::RenderComponent::StaticType().ID;
         const GameCore::Entity Handle = Ctx->GetWorld().GetEntity(Target);
-        if(!Handle.GetComponent<RenderCore::PrimitiveComponent>() && !Ctx->AddComponent(Target, Type))
+        if(!Handle.GetComponent<RenderCore::RenderComponent>() && !Ctx->AddComponent(Target, Type))
         {
-            OutMessage = QStringLiteral("Could not add a Primitive to %1").arg(Ctx->GetDisplayName(Target));
+            OutMessage = QStringLiteral("Could not add a RenderComponent to %1").arg(Ctx->GetDisplayName(Target));
             return false;
         }
 
         /* Written in place, then reported -- the context records it against
          * the values it held before, as a Details panel edit would be. */
-        RenderCore::PrimitiveComponent* Primitive = Handle.GetComponent<RenderCore::PrimitiveComponent>();
-        std::memset(Primitive->Material, 0, sizeof(Primitive->Material));
-        std::memcpy(Primitive->Material, Name.constData(), size_t(Name.size()));
+        RenderCore::RenderComponent* Render = Handle.GetComponent<RenderCore::RenderComponent>();
+        std::memset(Render->Material, 0, sizeof(Render->Material));
+        std::memcpy(Render->Material, Name.constData(), size_t(Name.size()));
         Ctx->NotifyPropertyEdited(Target, Type);
 
         OutMessage = QStringLiteral("%1 now draws with %2").arg(Ctx->GetDisplayName(Target), InName);

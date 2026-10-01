@@ -20,10 +20,10 @@ struct lua_State;
  * Selectively exposing a component to Lua. A component lists what scripts may
  * touch; anything not listed is invisible. See DESIGN.md.
  *
- *     GAMECORE_DEFINE_COMPONENT_SCRIPT(PrimitiveComponent)
+ *     GAMECORE_DEFINE_COMPONENT_SCRIPT(RenderComponent)
  *     {
- *         Bind.Field("Width", &PrimitiveComponent::Width);    // GetWidth / SetWidth
- *         Bind.Flag("Visible", &PrimitiveComponent::bVisible); // uint8_t as a Lua boolean
+ *         Bind.Field("Width", &RenderComponent::Width);    // GetWidth / SetWidth
+ *         Bind.Flag("Visible", &RenderComponent::bVisible); // uint8_t as a Lua boolean
  *         Bind.ReadOnly("World", &BoundsComponent::World);     // GetWorld only
  *         Bind.Method("Translate", [](TransformComponent& C, ScriptCall& Call) { ... });
  *     }

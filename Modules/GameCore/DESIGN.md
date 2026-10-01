@@ -1208,7 +1208,7 @@ XML classes were not an option: GameCore is Qt-free.
 `GAMECORE_DEFINE_COMPONENT_SCRIPT`: `Field` (generates `Get<Name>`/`Set<Name>`),
 `ReadOnly` (getter only), `Flag` (a `uint8_t` exposed as a boolean) and `Method`
 (a typed function). Anything unlisted -- above all per-run state like
-`BoundsComponent::ProxyID` or `PrimitiveComponent::Proxy` -- does not exist in
+`BoundsComponent::ProxyID` or `RenderComponent::Proxy` -- does not exist in
 Lua. Every component, bound or not, also answers `GetEntity()`. The built-in
 Transform/Name/Bounds bindings used to be hand-written `lua_CFunction`s here and
 moved onto this mechanism with their Lua API unchanged (Bounds gained `GetLocal`
@@ -1242,7 +1242,7 @@ cannot collide with another library's metatable.
 
 **Registration.** The macro registers at static initialisation into a
 constant-initialised table (`ComponentType.cpp`'s argument again), so a type in
-another image -- RenderCore's Primitive and Camera -- registers into GameCore's
+another image -- RenderCore's Render and Camera -- registers into GameCore's
 one table. Names that would have to be truncated are rejected rather than
 shortened, since a shortened name is a different Lua API; rejections and a
 duplicate registration are logged. A binding registered *after* a type's

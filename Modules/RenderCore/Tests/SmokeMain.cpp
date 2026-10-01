@@ -66,15 +66,15 @@ static void TestScriptBindings()
 {
     std::printf("[script bindings]\n");
 
-    size_t PrimitiveCount = 0;
-    const GameCore::ScriptBindingEntry* Primitive =
-        GameCore::FindComponentScript(PrimitiveComponent::StaticType().ID, PrimitiveCount);
-    Expect(Primitive != nullptr && PrimitiveCount == 5, "Primitive exposes Width, Height, Tint, Visible and Material");
+    size_t RenderCount = 0;
+    const GameCore::ScriptBindingEntry* Render =
+        GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
+    Expect(Render != nullptr && RenderCount == 6, "Render exposes Width, Height, Tint, Visible, Material and Mesh");
 
     bool bProxyExposed = false;
-    for(size_t Index = 0; Index < PrimitiveCount; ++Index)
+    for(size_t Index = 0; Index < RenderCount; ++Index)
     {
-        if(std::strstr(Primitive[Index].Name, "Proxy") != nullptr) { bProxyExposed = true; }
+        if(std::strstr(Render[Index].Name, "Proxy") != nullptr) { bProxyExposed = true; }
     }
     Expect(!bProxyExposed, "the render proxy handle is not exposed");
 
@@ -207,7 +207,7 @@ static void TestHandBuiltScene(RenderThread& InThread)
 {
     std::printf("[scene]\n");
 
-    const bool bRegistered = RegisterProxyType(PrimitiveComponent::StaticType().ID, GetPrimitiveComponentFactory());
+    const bool bRegistered = RegisterProxyType(RenderComponent::StaticType().ID, GetRenderComponentFactory());
     Expect(bRegistered, "RegisterProxyType succeeds for a fresh component type");
 
     RenderScene* Scene = nullptr;
@@ -221,13 +221,13 @@ static void TestHandBuiltScene(RenderThread& InThread)
     /* Built on the game thread -- CreateProxyFn's contract -- then handed to
      * AddProxy through a command, exactly WorldBridge's own lifecycle
      * (a later step) will drive it. */
-    PrimitiveComponent Init;
+    RenderComponent Init;
     Init.Width  = 2.0f;
     Init.Height = 4.0f;
     Init.Tint   = EngineCore::Color(10, 20, 30);
 
     const GameCore::EntityID Owner(1, 0);
-    CreateProxyFn Factory = FindProxyFactory(PrimitiveComponent::StaticType().ID);
+    CreateProxyFn Factory = FindProxyFactory(RenderComponent::StaticType().ID);
     Expect(Factory != nullptr, "FindProxyFactory returns the factory RegisterProxyType installed");
 
     RenderProxy* Proxy = Factory(Owner, &Init);
@@ -288,7 +288,7 @@ static void TestHandBuiltScene(RenderThread& InThread)
     Expect(StatsAfterCulled.ProxiesCulledLastFrame == 1, "the out-of-view proxy is counted as culled");
 
     /* Component update through ApplyComponent, not just SetTransform. */
-    PrimitiveComponent Updated = Init;
+    RenderComponent Updated = Init;
     Updated.bVisible = 0;
     ENQUEUE_RENDER_COMMAND(ApplyUpdate)([Proxy, Updated](RenderContext&)
     {
@@ -322,8 +322,8 @@ static void TestHandBuiltScene(RenderThread& InThread)
     });
     FlushRenderCommands();
 
-    UnregisterProxyType(PrimitiveComponent::StaticType().ID);
-    Expect(FindProxyFactory(PrimitiveComponent::StaticType().ID) == nullptr,
+    UnregisterProxyType(RenderComponent::StaticType().ID);
+    Expect(FindProxyFactory(RenderComponent::StaticType().ID) == nullptr,
            "UnregisterProxyType clears the factory table slot");
 }
 
@@ -411,7 +411,7 @@ static void TestRendererWithWorld()
 
     const GameCore::Entity PreExisting = World.CreateEntity();
     PreExisting.AddComponent<GameCore::TransformComponent>();
-    PrimitiveComponent PrimInit;
+    RenderComponent PrimInit;
     PreExisting.AddComponent(PrimInit);
 
     Rend.BindWorld(World);
@@ -421,7 +421,7 @@ static void TestRendererWithWorld()
     Rend.EndFrame(FrameInfo{100, 0.016, EngineCore::Size(1280, 720)});
     Rend.WaitForPreviousFrame();
     Rend.GetStats(StatsAfterSweep);
-    Expect(StatsAfterSweep.ProxiesLive == 1, "BindWorld's existing-components sweep created a proxy for the pre-existing PrimitiveComponent");
+    Expect(StatsAfterSweep.ProxiesLive == 1, "BindWorld's existing-components sweep created a proxy for the pre-existing RenderComponent");
 
     World.DestroyEntity(PreExisting);
     Rend.EndFrame(FrameInfo{101, 0.016, EngineCore::Size(1280, 720)});
@@ -429,7 +429,7 @@ static void TestRendererWithWorld()
 
     const GameCore::Entity E1 = World.CreateEntity();
     E1.AddComponent<GameCore::TransformComponent>();
-    PrimitiveComponent Prim;
+    RenderComponent Prim;
     Prim.Width  = 1.0f;
     Prim.Height = 1.0f;
     E1.AddComponent(Prim);
@@ -460,13 +460,13 @@ static void TestRendererWithWorld()
     Rend.WaitForPreviousFrame();
 
     /* RemoveComponent -- proves OnComponentRemoved's teardown path. */
-    E1.RemoveComponent<PrimitiveComponent>();
+    E1.RemoveComponent<RenderComponent>();
     Rend.EndFrame(FrameInfo{2, 0.016, EngineCore::Size(1280, 720)});
     Rend.WaitForPreviousFrame();
 
     RenderStats StatsAfterRemove;
     Rend.GetStats(StatsAfterRemove);
-    Expect(StatsAfterRemove.ProxiesLive == 1, "RemoveComponent<PrimitiveComponent> removed exactly its own proxy");
+    Expect(StatsAfterRemove.ProxiesLive == 1, "RemoveComponent<RenderComponent> removed exactly its own proxy");
 
     /* DestroyEntity -- proves the OTHER teardown path (World.cpp broadcasts
      * OnComponentRemoved for every component before the entity's slot is
@@ -619,7 +619,7 @@ static void TestMaterials()
         GameCore::World World;
         const GameCore::Entity Quad = World.CreateEntity("Glowing");
         Quad.AddComponent<GameCore::TransformComponent>();
-        PrimitiveComponent Prim;
+        RenderComponent Prim;
         Prim.Width = 100.0f;
         Prim.Height = 100.0f;
         std::strcpy(Prim.Material, "SmokeGlow");

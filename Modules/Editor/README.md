@@ -82,7 +82,7 @@ uses it.
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
 | `Graph/GraphScene`, `GraphView`, `GraphItems`, `NodePalette`, `GraphDetailsPanel` (private) | The canvas: nodes, links and comments. Drag between pins to link; Alt+click a pin breaks its links; drag a linked input's link off to move it. Right-click or Tab opens the node palette, and a link dropped on empty space opens it filtered. Wheel zooms, middle-drag pans |
 | `Graph/GraphAssets` (private) | Graphs as project files: where new ones go, the output written beside the graph and **staged beside the executable** so the next Play runs it without a build, the background glslc check, Build > Cook Content regenerating every graph. A material is staged by name and **cooked for the viewport's backend**, then reloaded into the renderer |
-| Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on a quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMaterialPreview`), so it is the backend and cooked shader the level uses. It has an Instance Tint picker. Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's Primitive Material (adding a Primitive if needed), undoably |
+| Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on a quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMaterialPreview`), so it is the backend and cooked shader the level uses. It has an Instance Tint picker. Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's RenderComponent Material (adding one if needed), undoably |
 | `EditorLog` | EngineCore's log handler: a thread-safe, bounded history of every log line, still forwarded to Qt/the debugger |
 | `EditorConsole` | Command registry; unknown words fall through to Core's `ExecConfigCommand` |
 | `ConsolePanel` | The Console dock: filtered transcript over a command line with history and completion |
@@ -95,11 +95,11 @@ next to its other registrations:
 ```cpp
 #include "Public/GameCore/ComponentProperties.h"
 
-GAMECORE_DEFINE_COMPONENT_PROPERTIES(PrimitiveComponent)
+GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
 {
-    Props.Field("Width",  &PrimitiveComponent::Width);
-    Props.Field("Tint",   &PrimitiveComponent::Tint);
-    Props.Flag("Visible", &PrimitiveComponent::bVisible);
+    Props.Field("Width",  &RenderComponent::Width);
+    Props.Field("Tint",   &RenderComponent::Tint);
+    Props.Flag("Visible", &RenderComponent::bVisible);
     Props.Field("World",  &BoundsComponent::World, GameCore::PF_ReadOnly);   // shown, never written
 }
 ```
@@ -164,7 +164,7 @@ take keyboard focus, so the viewport's keys keep working after one is used.
 **Overlays** are Renderer debug lines (`Renderer::DrawDebugLine` /
 `DrawDebugBox`), not Qt painting -- nothing Qt draws can sit over the native
 render surface. The selection is outlined in orange from its bounds: the
-entity's `BoundsComponent::World` when it has one, else its Primitive quad, else
+entity's `BoundsComponent::World` when it has one, else its RenderComponent quad, else
 a small cube at its Transform. All Bounds adds every other entity's box in grey.
 The XYZ gizmo sits bottom-left.
 
