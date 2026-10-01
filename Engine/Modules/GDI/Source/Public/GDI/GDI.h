@@ -404,6 +404,11 @@ public:
 
     virtual GDIMesh* CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced = false) = 0;
 
+    /* An indexed triangle mesh with normals (GDIMesh.h's GDIMeshDesc), drawn
+     * a range at a time (GDIMesh::SetDrawRange). Null if the backend has no
+     * indexed meshes, or the description is empty or inconsistent. */
+    virtual GDIMesh* CreateMesh(const GDIMeshDesc& InDesc) = 0;
+
     virtual GDITextureResource* CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) = 0;
 
     virtual GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) = 0;
@@ -481,6 +486,13 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, DrawScreenQuadPrimitive, ())
 IMPLEMENT_GDI_FUNCTION_DECLARATION(GDIMesh*, CreateQuadMesh, (const float* VertData, const float* TexCoordData, const int InNumVerts, const int InNumTexCoords, bool bIsInstanced = false))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(GDIMesh*, CreateQuadMesh, (const float& InWidth, const float& InHeight, bool bIsInstanced = false))
+
+IMPLEMENT_GDI_FUNCTION_DECLARATION(GDIMesh*, CreateMesh, (const GDIMeshDesc& InDesc))
+
+/* InDesc copied into a RenderData a backend's mesh can own -- malloc'd, as
+ * CreateQuadMesh's are. False (OutData untouched) if InDesc is empty, has an
+ * index past its last vertex, or is not whole triangles. */
+bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& OutData);
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, DrawObject, (class GDIViewObject*))
 

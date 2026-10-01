@@ -13,9 +13,11 @@
 class VKDevice;
 
 /**
- * Phase 1 render target: a single color image (R8G8B8A8_UNORM).
- * No depth attachment yet. Memory is allocated via raw vkAllocateMemory;
- * Phase 2 will migrate to VMA.
+ * A color image (R8G8B8A8_UNORM) and a depth image (D32_SFLOAT) for 3D
+ * draws' depth test. The depth image is only ever an attachment -- never
+ * sampled or copied -- and starts UNDEFINED, so the first pass that binds it
+ * clears it. Memory is allocated via raw vkAllocateMemory; Phase 2 will
+ * migrate to VMA.
  */
 class VKRenderTarget : public GDIRenderTarget
 {
@@ -37,11 +39,22 @@ public:
     inline VkImageLayout GetCurrentLayout() const { return CurrentLayout; }
     inline void         SetCurrentLayout(VkImageLayout InLayout) { CurrentLayout = InLayout; }
 
+    inline bool          HasDepth() const        { return DepthView != VK_NULL_HANDLE; }
+    inline VkImage       GetDepthImage() const   { return DepthImage; }
+    inline VkImageView   GetDepthView() const    { return DepthView; }
+    inline VkFormat      GetDepthFormat() const  { return HasDepth() ? DepthFormat : VK_FORMAT_UNDEFINED; }
+    inline VkImageLayout GetDepthLayout() const  { return DepthLayout; }
+    inline void          SetDepthLayout(VkImageLayout InLayout) { DepthLayout = InLayout; }
+
 protected:
     void Allocate() override;
 
 private:
     void DestroyImage();
+
+    /* The depth image beside the color one. A failure leaves the target
+     * without depth (HasDepth false), logged, rather than unusable. */
+    void AllocateDepth();
 
     VKDevice*       Device          = nullptr;
     std::string         Name;
@@ -50,6 +63,12 @@ private:
     VkDeviceMemory  ImageMemory     = VK_NULL_HANDLE;
     VkImageView     ImageView       = VK_NULL_HANDLE;
     VkImageLayout   CurrentLayout   = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    VkFormat        DepthFormat     = VK_FORMAT_D32_SFLOAT;
+    VkImage         DepthImage      = VK_NULL_HANDLE;
+    VkDeviceMemory  DepthMemory     = VK_NULL_HANDLE;
+    VkImageView     DepthView       = VK_NULL_HANDLE;
+    VkImageLayout   DepthLayout     = VK_IMAGE_LAYOUT_UNDEFINED;
 
     /**
      * Lazily-created GDITexture2D that adopts this RT's image view so the render

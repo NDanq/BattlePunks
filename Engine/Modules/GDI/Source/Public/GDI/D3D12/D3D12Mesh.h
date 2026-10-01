@@ -53,6 +53,11 @@ private:
     UINT                                    PositionBytes = 0;
     UINT                                    TexCoordBytes = 0;
 
+    // Indexed meshes only (GDICreateMesh): normals in slot 2, uint32 indices.
+    Microsoft::WRL::ComPtr<ID3D12Resource>  NormalBuffer;
+    Microsoft::WRL::ComPtr<ID3D12Resource>  IndexBuffer;
+    UINT                                    IndexBytes    = 0;
+
     RingBuffer                              TransformRing;
     RingBuffer                              OpacityRing;
     RingBuffer                              ColorRing;

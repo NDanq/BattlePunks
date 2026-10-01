@@ -62,6 +62,7 @@ typedef struct __GLsync* GLsync;
 // ---------------------------------------------------------------------------
 
 #define GL_ARRAY_BUFFER                   0x8892
+#define GL_ELEMENT_ARRAY_BUFFER           0x8893
 #define GL_STREAM_DRAW                    0x88E0
 #define GL_STATIC_DRAW                    0x88E4
 #define GL_DYNAMIC_DRAW                   0x88E8
@@ -84,6 +85,9 @@ typedef struct __GLsync* GLsync;
 #define GL_COLOR_ATTACHMENT0              0x8CE0
 #define GL_FRAMEBUFFER_COMPLETE           0x8CD5
 #define GL_INVALID_FRAMEBUFFER_OPERATION  0x0506
+#define GL_RENDERBUFFER                   0x8D41
+#define GL_DEPTH_ATTACHMENT               0x8D00
+#define GL_DEPTH_COMPONENT24              0x81A6
 
 #define GL_FUNC_ADD                       0x8006
 #define GL_MIN                            0x8007
@@ -119,6 +123,7 @@ typedef struct __GLsync* GLsync;
     X(void,   glAttachShader,            (GLuint program, GLuint shader), (program, shader)) \
     X(void,   glBindBuffer,              (GLenum target, GLuint buffer), (target, buffer)) \
     X(void,   glBindFramebuffer,         (GLenum target, GLuint framebuffer), (target, framebuffer)) \
+    X(void,   glBindRenderbuffer,        (GLenum target, GLuint renderbuffer), (target, renderbuffer)) \
     X(void,   glBindVertexArray,         (GLuint array), (array)) \
     X(void,   glBlendEquationSeparate,   (GLenum modeRGB, GLenum modeAlpha), (modeRGB, modeAlpha)) \
     X(void,   glBlitFramebuffer,         (GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter), (srcX0, srcY0, srcX1, srcY1, dstX0, dstY0, dstX1, dstY1, mask, filter)) \
@@ -132,15 +137,18 @@ typedef struct __GLsync* GLsync;
     X(void,   glDeleteBuffers,           (GLsizei n, const GLuint* buffers), (n, buffers)) \
     X(void,   glDeleteFramebuffers,      (GLsizei n, const GLuint* framebuffers), (n, framebuffers)) \
     X(void,   glDeleteProgram,           (GLuint program), (program)) \
+    X(void,   glDeleteRenderbuffers,     (GLsizei n, const GLuint* renderbuffers), (n, renderbuffers)) \
     X(void,   glDeleteShader,            (GLuint shader), (shader)) \
     X(void,   glDeleteSync,              (GLsync sync), (sync)) \
     X(void,   glDeleteVertexArrays,      (GLsizei n, const GLuint* arrays), (n, arrays)) \
     X(void,   glDrawArraysInstanced,     (GLenum mode, GLint first, GLsizei count, GLsizei instancecount), (mode, first, count, instancecount)) \
     X(void,   glEnableVertexAttribArray, (GLuint index), (index)) \
     X(GLsync, glFenceSync,               (GLenum condition, GLbitfield flags), (condition, flags)) \
+    X(void,   glFramebufferRenderbuffer, (GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer), (target, attachment, renderbuffertarget, renderbuffer)) \
     X(void,   glFramebufferTexture2D,    (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level), (target, attachment, textarget, texture, level)) \
     X(void,   glGenBuffers,              (GLsizei n, GLuint* buffers), (n, buffers)) \
     X(void,   glGenFramebuffers,         (GLsizei n, GLuint* framebuffers), (n, framebuffers)) \
+    X(void,   glGenRenderbuffers,        (GLsizei n, GLuint* renderbuffers), (n, renderbuffers)) \
     X(void,   glGenVertexArrays,         (GLsizei n, GLuint* arrays), (n, arrays)) \
     X(void,   glGenerateMipmap,          (GLenum target), (target)) \
     X(void,   glGetProgramInfoLog,       (GLuint program, GLsizei bufSize, GLsizei* length, GLchar* infoLog), (program, bufSize, length, infoLog)) \
@@ -151,6 +159,7 @@ typedef struct __GLsync* GLsync;
     X(void,   glLinkProgram,             (GLuint program), (program)) \
     X(void,   glPopDebugGroup,           (void), ()) \
     X(void,   glPushDebugGroup,          (GLenum source, GLuint id, GLsizei length, const GLchar* message), (source, id, length, message)) \
+    X(void,   glRenderbufferStorage,     (GLenum target, GLenum internalformat, GLsizei width, GLsizei height), (target, internalformat, width, height)) \
     X(void,   glShaderSource,            (GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length), (shader, count, string, length)) \
     X(void,   glUniform1f,               (GLint location, GLfloat v0), (location, v0)) \
     X(void,   glUniform1i,               (GLint location, GLint v0), (location, v0)) \

@@ -22,10 +22,16 @@ struct GDITransform
 // GDIVSToPSInterpolants is kept as a struct so GetInterpolants() can return it
 // by value.  The actual VS->PS interface uses a GLSL interface block (below),
 // which is valid on both OpenGL 4.x core and Vulkan without any #if guards.
+//
+// Normal is world space, and LAST on purpose: a pixel shader cooked before it
+// existed reads a prefix of what a vertex shader now writes, which Vulkan,
+// D3D12 and Metal all accept. Shaders without one (quads, the screen blit)
+// write the quad's own facing, -Z, toward the default camera.
 struct GDIVSToPSInterpolants
 {
     vec3 Position;
     vec2 TexCoord;
+    vec3 Normal;
 };
 
 #if VERTEX_SHADER
@@ -33,12 +39,19 @@ layout(location=0) out Interp_Block
 {
     vec3 Position;
     vec2 TexCoord;
+    vec3 Normal;
 } Interpolants;
 
-void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord )
+void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal )
 {
     Interpolants.Position = InPosition;
     Interpolants.TexCoord = InTexCoord;
+    Interpolants.Normal   = InNormal;
+}
+
+void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord )
+{
+    CalculateInterpolants(InPosition, InTexCoord, vec3(0.0, 0.0, -1.0));
 }
 #endif
 
@@ -47,6 +60,7 @@ layout(location=0) in Interp_Block
 {
     vec3 Position;
     vec2 TexCoord;
+    vec3 Normal;
 } Interpolants;
 
 GDIVSToPSInterpolants GetInterpolants()
@@ -54,6 +68,7 @@ GDIVSToPSInterpolants GetInterpolants()
     GDIVSToPSInterpolants Out;
     Out.Position = Interpolants.Position;
     Out.TexCoord = Interpolants.TexCoord;
+    Out.Normal   = Interpolants.Normal;
     return Out;
 }
 #endif

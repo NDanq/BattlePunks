@@ -185,6 +185,34 @@ void VKMesh::InitResource()
         return;
     }
 
+    // --- Normals and indices (device-local; indexed meshes only) ---
+    if(RenderData.Normal)
+    {
+        const VkDeviceSize NormalSize = static_cast<VkDeviceSize>(NumPosFloats) * sizeof(float);
+        if(!CreateBuffer(NormalSize,
+                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                         NormalBuffer, NormalMemory)
+           || !UploadBufferData(NormalBuffer, RenderData.Normal, NormalSize))
+        {
+            Release();
+            return;
+        }
+    }
+    if(IsIndexed())
+    {
+        const VkDeviceSize IndexSize = static_cast<VkDeviceSize>(RenderData.NumIndices) * sizeof(uint32_t);
+        if(!CreateBuffer(IndexSize,
+                         VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                         IndexBuffer, IndexMemory)
+           || !UploadBufferData(IndexBuffer, RenderData.Indices, IndexSize))
+        {
+            Release();
+            return;
+        }
+    }
+
     // --- Instance transform buffer (host-coherent, persistently mapped) ---
     if(bSupportsInstanced)
     {
@@ -285,12 +313,13 @@ void VKMesh::Release()
     DestroyOrDefer(InstanceBuffer, InstanceMemory);
     DestroyOrDefer(OpacityBuffer,  OpacityMemory);
     DestroyOrDefer(ColorBuffer,    ColorMemory);
+    DestroyOrDefer(IndexBuffer,    IndexMemory);
+    DestroyOrDefer(NormalBuffer,   NormalMemory);
     DestroyOrDefer(TexCoordBuffer, TexCoordMemory);
     DestroyOrDefer(PositionBuffer, PositionMemory);
 
-    // Free the CPU-side copies that were malloc'd by CreateQuadMesh.
-    if(RenderData.Position) { free(RenderData.Position); RenderData.Position = nullptr; }
-    if(RenderData.TexCoord) { free(RenderData.TexCoord); RenderData.TexCoord = nullptr; }
+    // Free the CPU-side copies malloc'd by CreateQuadMesh / CreateMesh.
+    FreeRenderData();
 
     bResourcesValid = false;
 }
@@ -321,7 +350,19 @@ void VKMesh::Draw()
     const VkDeviceSize Offsets[2] = { 0, 0 };
     vkCmdBindVertexBuffers(Cmd, 0, 2, Buffers, Offsets);
 
-    if(bSupportsInstanced)
+    if(IndexBuffer != VK_NULL_HANDLE)
+    {
+        // Vertex layout 2 (VKPipelineCache): normals at binding 2.
+        uint32_t First = 0, Count = 0;
+        GetClampedDrawRange(First, Count);
+        if(Count == 0 || NormalBuffer == VK_NULL_HANDLE) return;
+
+        const VkDeviceSize NormalOffset = 0;
+        vkCmdBindVertexBuffers(Cmd, 2, 1, &NormalBuffer, &NormalOffset);
+        vkCmdBindIndexBuffer(Cmd, IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdDrawIndexed(Cmd, Count, 1, First, 0, 0);
+    }
+    else if(bSupportsInstanced)
     {
         // Zero instances draws nothing — same as glDrawArraysInstanced(..., 0).
         // (Falling through to a non-instanced draw would render one phantom quad

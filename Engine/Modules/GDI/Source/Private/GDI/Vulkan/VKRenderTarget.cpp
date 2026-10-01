@@ -129,6 +129,73 @@ void VKRenderTarget::Allocate()
 #endif
 
     CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    AllocateDepth();
+}
+
+void VKRenderTarget::AllocateDepth()
+{
+    VkDevice Dev = Device->GetDevice();
+
+    VkImageCreateInfo ImageInfo{};
+    ImageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+    ImageInfo.imageType     = VK_IMAGE_TYPE_2D;
+    ImageInfo.format        = DepthFormat;
+    ImageInfo.extent        = { Width, Height, 1 };
+    ImageInfo.mipLevels     = 1;
+    ImageInfo.arrayLayers   = 1;
+    ImageInfo.samples       = VK_SAMPLE_COUNT_1_BIT;
+    ImageInfo.tiling        = VK_IMAGE_TILING_OPTIMAL;
+    ImageInfo.usage         = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    ImageInfo.sharingMode   = VK_SHARING_MODE_EXCLUSIVE;
+    ImageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    if(vkCreateImage(Dev, &ImageInfo, nullptr, &DepthImage) != VK_SUCCESS)
+    {
+        GDI_LOG("[VKRenderTarget] no depth image for " + Name + "; it draws without a depth test")
+        DepthImage = VK_NULL_HANDLE;
+        return;
+    }
+
+    VkMemoryRequirements MemReqs{};
+    vkGetImageMemoryRequirements(Dev, DepthImage, &MemReqs);
+    const uint32_t MemTypeIdx = Device->FindMemoryType(MemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+
+    VkMemoryAllocateInfo AllocInfo{};
+    AllocInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    AllocInfo.allocationSize  = MemReqs.size;
+    AllocInfo.memoryTypeIndex = MemTypeIdx;
+
+    if(MemTypeIdx == UINT32_MAX || vkAllocateMemory(Dev, &AllocInfo, nullptr, &DepthMemory) != VK_SUCCESS)
+    {
+        GDI_LOG("[VKRenderTarget] no depth memory for " + Name + "; it draws without a depth test")
+        vkDestroyImage(Dev, DepthImage, nullptr);
+        DepthImage  = VK_NULL_HANDLE;
+        DepthMemory = VK_NULL_HANDLE;
+        return;
+    }
+    vkBindImageMemory(Dev, DepthImage, DepthMemory, 0);
+
+    VkImageViewCreateInfo ViewInfo{};
+    ViewInfo.sType                       = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    ViewInfo.image                       = DepthImage;
+    ViewInfo.viewType                    = VK_IMAGE_VIEW_TYPE_2D;
+    ViewInfo.format                      = DepthFormat;
+    ViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    ViewInfo.subresourceRange.levelCount = 1;
+    ViewInfo.subresourceRange.layerCount = 1;
+
+    if(vkCreateImageView(Dev, &ViewInfo, nullptr, &DepthView) != VK_SUCCESS)
+    {
+        GDI_LOG("[VKRenderTarget] no depth view for " + Name + "; it draws without a depth test")
+        vkDestroyImage(Dev, DepthImage, nullptr);
+        vkFreeMemory(Dev, DepthMemory, nullptr);
+        DepthImage  = VK_NULL_HANDLE;
+        DepthMemory = VK_NULL_HANDLE;
+        DepthView   = VK_NULL_HANDLE;
+        return;
+    }
+    DepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
 void VKRenderTarget::DestroyImage()
@@ -153,6 +220,11 @@ void VKRenderTarget::DestroyImage()
     if(Image       != VK_NULL_HANDLE) { vkDestroyImage(Dev, Image, nullptr);           Image = VK_NULL_HANDLE; }
     if(ImageMemory != VK_NULL_HANDLE) { vkFreeMemory(Dev, ImageMemory, nullptr);       ImageMemory = VK_NULL_HANDLE; }
     CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    if(DepthView   != VK_NULL_HANDLE) { vkDestroyImageView(Dev, DepthView, nullptr);   DepthView = VK_NULL_HANDLE; }
+    if(DepthImage  != VK_NULL_HANDLE) { vkDestroyImage(Dev, DepthImage, nullptr);      DepthImage = VK_NULL_HANDLE; }
+    if(DepthMemory != VK_NULL_HANDLE) { vkFreeMemory(Dev, DepthMemory, nullptr);       DepthMemory = VK_NULL_HANDLE; }
+    DepthLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 }
 
 void VKRenderTarget::Bind()

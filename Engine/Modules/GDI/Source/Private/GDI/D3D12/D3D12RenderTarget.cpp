@@ -94,6 +94,46 @@ void D3D12RenderTarget::Allocate()
 
     CurrentState = D3D12_RESOURCE_STATE_COMMON;
     SubmittedState.store(D3D12_RESOURCE_STATE_COMMON);
+
+    AllocateDepth();
+}
+
+void D3D12RenderTarget::AllocateDepth()
+{
+    ID3D12Device* Dev = Device->GetDevice();
+
+    D3D12_HEAP_PROPERTIES Heap{};
+    Heap.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    D3D12_RESOURCE_DESC Desc{};
+    Desc.Dimension        = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    Desc.Width            = Width;
+    Desc.Height           = Height;
+    Desc.DepthOrArraySize = 1;
+    Desc.MipLevels        = 1;
+    Desc.Format           = DepthFormat;
+    Desc.SampleDesc.Count = 1;
+    Desc.Flags            = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL | D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
+
+    D3D12_CLEAR_VALUE Clear{};
+    Clear.Format             = DepthFormat;
+    Clear.DepthStencil.Depth = 1.0f;
+
+    D3D12_DESCRIPTOR_HEAP_DESC DSVDesc{};
+    DSVDesc.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    DSVDesc.NumDescriptors = 1;
+
+    if(FAILED(Dev->CreateCommittedResource(&Heap, D3D12_HEAP_FLAG_NONE, &Desc, D3D12_RESOURCE_STATE_DEPTH_WRITE,
+                                           &Clear, IID_PPV_ARGS(&DepthResource)))
+       || FAILED(Dev->CreateDescriptorHeap(&DSVDesc, IID_PPV_ARGS(&DSVHeap))))
+    {
+        GDI_LOG_ERROR("[D3D12RenderTarget] no depth buffer for " + Name + "; it draws without a depth test")
+        DepthResource.Reset();
+        DSVHeap.Reset();
+        return;
+    }
+    Dev->CreateDepthStencilView(DepthResource.Get(), nullptr, DSVHeap->GetCPUDescriptorHandleForHeapStart());
+    bDepthNeedsClear = true;
 }
 
 void D3D12RenderTarget::DestroyImage()
@@ -114,11 +154,15 @@ void D3D12RenderTarget::DestroyImage()
     if(D3D12DynamicGDI* GDI = GetD3D12Driver())
     {
         if(Resource) GDI->DeferRelease(Resource);
+        if(DepthResource) GDI->DeferRelease(DepthResource);
         if(SRVSlot != UINT32_MAX) GDI->DeferFreeSRV(SRVSlot);
     }
 
     Resource.Reset();
     RTVHeap.Reset();
+    DepthResource.Reset();
+    DSVHeap.Reset();
+    bDepthNeedsClear = false;
     SRVSlot      = UINT32_MAX;
     CurrentState = D3D12_RESOURCE_STATE_COMMON;
     SubmittedState.store(D3D12_RESOURCE_STATE_COMMON);

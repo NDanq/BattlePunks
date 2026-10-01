@@ -57,6 +57,20 @@ void D3D12Mesh::InitResource()
         return;
     }
 
+    if(RenderData.Normal && IsIndexed())
+    {
+        IndexBytes   = RenderData.NumIndices * sizeof(uint32_t);
+        NormalBuffer = D3D12Ops::CreateBuffer(Device, PositionBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        IndexBuffer  = D3D12Ops::CreateBuffer(Device, IndexBytes,    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        if(!NormalBuffer || !IndexBuffer ||
+           !D3D12Ops::UploadBuffer(Device, NormalBuffer.Get(), RenderData.Normal, PositionBytes) ||
+           !D3D12Ops::UploadBuffer(Device, IndexBuffer.Get(), RenderData.Indices, IndexBytes))
+        {
+            Release();
+            return;
+        }
+    }
+
     if(bSupportsInstanced)
     {
         if(!CreateRing(TransformRing, sizeof(float) * 16) ||
@@ -89,9 +103,10 @@ void D3D12Mesh::Release()
     }
     ReleaseOrDefer(PositionBuffer);
     ReleaseOrDefer(TexCoordBuffer);
+    ReleaseOrDefer(NormalBuffer);
+    ReleaseOrDefer(IndexBuffer);
 
-    if(RenderData.Position) { free(RenderData.Position); RenderData.Position = nullptr; }
-    if(RenderData.TexCoord) { free(RenderData.TexCoord); RenderData.TexCoord = nullptr; }
+    FreeRenderData();
 
     bResourcesValid = false;
 }
@@ -127,7 +142,26 @@ void D3D12Mesh::Draw()
     Views[1].StrideInBytes  = sizeof(float) * 2;
     List->IASetVertexBuffers(0, 2, Views);
 
-    if(bSupportsInstanced)
+    if(IndexBuffer)
+    {
+        uint32_t First = 0, Count = 0;
+        GetClampedDrawRange(First, Count);
+        if(Count == 0) return;
+
+        D3D12_VERTEX_BUFFER_VIEW NormalView{};
+        NormalView.BufferLocation = NormalBuffer->GetGPUVirtualAddress();
+        NormalView.SizeInBytes    = PositionBytes;
+        NormalView.StrideInBytes  = sizeof(float) * 3;
+        List->IASetVertexBuffers(2, 1, &NormalView);
+
+        D3D12_INDEX_BUFFER_VIEW IndexView{};
+        IndexView.BufferLocation = IndexBuffer->GetGPUVirtualAddress();
+        IndexView.SizeInBytes    = IndexBytes;
+        IndexView.Format         = DXGI_FORMAT_R32_UINT;
+        List->IASetIndexBuffer(&IndexView);
+        List->DrawIndexedInstanced(Count, 1, First, 0, 0);
+    }
+    else if(bSupportsInstanced)
     {
         // Zero instances draws nothing, as glDrawArraysInstanced(..., 0) would.
         if(NumInstanced <= 0 || !TransformRing.Buffer) return;

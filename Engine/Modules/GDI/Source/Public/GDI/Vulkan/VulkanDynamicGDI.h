@@ -46,6 +46,7 @@ namespace VKUtil
     VkBlendFactor DecodeBlendFactor(EBlendMode InMode);
     VkBlendOp     DecodeBlendOp(EBlendOp InOp);
     VkFlags       DecodeColorMask(EColorMask InColorMask);
+    VkCompareOp   DecodeCompareOp(ECompareTestMode InMode);
 }
 
 class VKRasterizationState
@@ -67,7 +68,9 @@ public:
     }
     void SetDepthState(IDepthStateDesc InDepthState)
     {
-        StateInfo.depthTestEnable = InDepthState.bDepthTest ? VK_TRUE : VK_FALSE;
+        StateInfo.depthTestEnable  = InDepthState.bDepthTest ? VK_TRUE : VK_FALSE;
+        StateInfo.depthWriteEnable = InDepthState.bDepthMask ? VK_TRUE : VK_FALSE;
+        StateInfo.depthCompareOp   = VKUtil::DecodeCompareOp(InDepthState.DepthMode);
     }
     void SetStencilState(IStencilStateDesc InStencilState)
     {
@@ -176,6 +179,7 @@ public:
 
     GDIMesh* CreateQuadMesh(const float* VertData, const float* TexData, const int InNumVerts, const int NumTexCoords, bool bIsInstanced = false) override;
     GDIMesh* CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced = false) override;
+    GDIMesh* CreateMesh(const GDIMeshDesc& InDesc) override;
 
     GDITextureResource* CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;

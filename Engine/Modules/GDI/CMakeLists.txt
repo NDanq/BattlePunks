@@ -425,6 +425,10 @@ endif()
 
 set(GDI_COOKED_SHADER_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Cooked" CACHE INTERNAL "GDI cooked shader output root")
 
+# Every shader #includes these, so a change to one (Common.glsl's interpolants)
+# must recook them all -- not only a change to a .vsh/.fsh.
+file(GLOB GDI_SHADER_INCLUDES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.glsl")
+
 if(GDI_WITH_VULKAN)
     file(GLOB VULKAN_SHADER_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/*.vsh"
@@ -444,7 +448,7 @@ if(GDI_WITH_VULKAN)
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/cook_shaders.py"
                 -target Vulkan
-        DEPENDS ${VULKAN_SHADER_SOURCES}
+        DEPENDS ${VULKAN_SHADER_SOURCES} ${GDI_SHADER_INCLUDES}
                 "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/cook_shaders.py"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "Cooking Vulkan shaders (SPIR-V)"
@@ -474,7 +478,7 @@ if(WIN32 AND GDI_WITH_OPENGL)
         COMMAND "${Python3_EXECUTABLE}"
                 "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/cook_shaders.py"
                 -target OpenGL
-        DEPENDS ${OPENGL_SHADER_SOURCES}
+        DEPENDS ${OPENGL_SHADER_SOURCES} ${GDI_SHADER_INCLUDES}
                 "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/cook_shaders.py"
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "Cooking OpenGL shaders"

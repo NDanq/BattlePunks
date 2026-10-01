@@ -4,7 +4,28 @@
 
 #include "Public/Math/Vector.h"
 #include "Public/Math/Matrix.h"
+#include <cstdint>
 #include <vector>
+
+/*
+ * What GDICreateMesh builds an indexed, lit mesh from: one position (xyz),
+ * normal (xyz) and UV (uv) per vertex, and a triangle list of indices. Copied;
+ * the caller keeps its arrays. Vertex attributes are at fixed locations,
+ * shared by every backend and shader:
+ *
+ *   location 0  vec3 position      (as every GDIMesh)
+ *   location 1  vec2 texcoord      (as every GDIMesh)
+ *   location 8  vec3 normal        (indexed meshes only; 2-7 are instancing's)
+ */
+struct GDIMeshDesc
+{
+    const float*    Positions   = nullptr;
+    const float*    Normals     = nullptr;
+    const float*    UV0         = nullptr;
+    uint32_t        NumVertices = 0;
+    const uint32_t* Indices     = nullptr;
+    uint32_t        NumIndices  = 0;
+};
 
 class GDIMesh
 {
@@ -20,8 +41,14 @@ public:
             INSTANCED_COLOR_BUFFER,
             NUM_BUFFERS
         };
-        float* Position;
-        float* TexCoord;
+        float* Position = nullptr;
+        float* TexCoord = nullptr;
+
+        /* Indexed meshes only (GDICreateMesh); null for the quads. malloc'd,
+         * freed by the backend's Release with the other two. */
+        float*    Normal     = nullptr;
+        uint32_t* Indices    = nullptr;
+        uint32_t  NumIndices = 0;
 
         uint NumVertices = 0;
         std::vector<float> PositionBuffer;
@@ -130,9 +157,46 @@ public:
     virtual void Release() = 0;
 
     virtual void Draw() = 0;
+
+    inline bool     IsIndexed()     const { return RenderData.Indices != nullptr && RenderData.NumIndices > 0; }
+    inline uint32_t GetNumIndices() const { return RenderData.NumIndices; }
+
+    /*
+     * Which indices the next Draw() of an indexed mesh uses: InCount from
+     * InFirst, clamped to the mesh. A count of 0 means all of them. Lets one
+     * mesh draw its sections one at a time, each with its own shaders,
+     * through the same DrawObject path every other mesh takes. Ignored by
+     * non-indexed meshes.
+     */
+    inline void SetDrawRange(const uint32_t InFirst, const uint32_t InCount)
+    {
+        DrawFirstIndex = InFirst;
+        DrawIndexCount = InCount;
+    }
+
 protected:
+    /* The range SetDrawRange asked for, clamped; Count 0 if there is nothing to draw. */
+    inline void GetClampedDrawRange(uint32_t& OutFirst, uint32_t& OutCount) const
+    {
+        const uint32_t Total = RenderData.NumIndices;
+        OutFirst = DrawFirstIndex < Total ? DrawFirstIndex : Total;
+        const uint32_t Left = Total - OutFirst;
+        OutCount = (DrawIndexCount == 0 || DrawIndexCount > Left) ? Left : DrawIndexCount;
+    }
+
+    /* Frees the malloc'd arrays in RenderData -- for each backend's Release. */
+    inline void FreeRenderData()
+    {
+        free(RenderData.Position); RenderData.Position = nullptr;
+        free(RenderData.TexCoord); RenderData.TexCoord = nullptr;
+        free(RenderData.Normal);   RenderData.Normal   = nullptr;
+        free(RenderData.Indices);  RenderData.Indices  = nullptr;
+    }
+
     EPrimitiveType  PrimitiveType;
     ORenderData     RenderData;
+    uint32_t        DrawFirstIndex = 0;
+    uint32_t        DrawIndexCount = 0;
     bool            bSupportsInstanced = false;
     int             NumInstanced = 0;
     std::vector<Matrix4x4> InstancedTransforms;
