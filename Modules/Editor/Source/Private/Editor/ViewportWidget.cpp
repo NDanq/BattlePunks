@@ -6,7 +6,13 @@
 #include <cmath>
 #include <limits>
 
+#include <cstring>
+
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileInfo>
 #include <QKeyEvent>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QWheelEvent>
 
@@ -15,9 +21,11 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/Math/Matrix.h"
+#include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorContext.h"
+#include "Private/Editor/Content/ContentPaths.h"
 
 /* Snap steps for the transform handles (the viewport toolbar's Snap, or Ctrl
  * held during a drag). Translate is a world grid in World space and a step
@@ -159,6 +167,46 @@ namespace
         }
         return true;
     }
+
+    /* The nearest t > 0 at which the ray InOrigin + t * InDir meets one of
+     * InMesh's triangles, either face (Moller-Trumbore); 0 for a miss. */
+    double RayHitsMesh(const RenderCore::MeshData& InMesh, const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InDir)
+    {
+        const double O[3] = { InOrigin.GetX(), InOrigin.GetY(), InOrigin.GetZ() };
+        const double D[3] = { InDir.GetX(), InDir.GetY(), InDir.GetZ() };
+        const auto Vertex = [&](const uint32_t InIndex, double* OutP)
+        {
+            for(int Axis = 0; Axis < 3; ++Axis) { OutP[Axis] = double(InMesh.Positions[size_t(InIndex) * 3 + size_t(Axis)]); }
+        };
+
+        double Best = 0.0;
+        for(size_t At = 0; At + 2 < InMesh.Indices.size(); At += 3)
+        {
+            double P0[3], P1[3], P2[3];
+            Vertex(InMesh.Indices[At], P0);
+            Vertex(InMesh.Indices[At + 1], P1);
+            Vertex(InMesh.Indices[At + 2], P2);
+
+            const double E1[3] = { P1[0] - P0[0], P1[1] - P0[1], P1[2] - P0[2] };
+            const double E2[3] = { P2[0] - P0[0], P2[1] - P0[1], P2[2] - P0[2] };
+            const double H[3]  = { D[1] * E2[2] - D[2] * E2[1], D[2] * E2[0] - D[0] * E2[2], D[0] * E2[1] - D[1] * E2[0] };
+            const double A     = E1[0] * H[0] + E1[1] * H[1] + E1[2] * H[2];
+            if(std::abs(A) < 1e-12) { continue; }   // parallel to the triangle
+
+            const double F = 1.0 / A;
+            const double S[3] = { O[0] - P0[0], O[1] - P0[1], O[2] - P0[2] };
+            const double U = F * (S[0] * H[0] + S[1] * H[1] + S[2] * H[2]);
+            if(U < 0.0 || U > 1.0) { continue; }
+
+            const double Q[3] = { S[1] * E1[2] - S[2] * E1[1], S[2] * E1[0] - S[0] * E1[2], S[0] * E1[1] - S[1] * E1[0] };
+            const double V = F * (D[0] * Q[0] + D[1] * Q[1] + D[2] * Q[2]);
+            if(V < 0.0 || U + V > 1.0) { continue; }
+
+            const double T = F * (E2[0] * Q[0] + E2[1] * Q[1] + E2[2] * Q[2]);
+            if(T > 1e-9 && (Best == 0.0 || T < Best)) { Best = T; }
+        }
+        return Best;
+    }
 }
 
 ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
@@ -175,6 +223,7 @@ ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);   // for the transform handles' hover highlight
     setMinimumSize(64, 64);
+    setAcceptDrops(true);     // a mesh dragged from the Content Browser
 
     FrameTimer.setTimerType(Qt::PreciseTimer);
     FrameTimer.setInterval(16);
@@ -795,6 +844,68 @@ void ViewportWidget::FinishGizmoDrag(const bool bInCancel)
     emit GizmoDragStatus(QString());
 }
 
+// === Dropping a mesh =========================================================
+
+/* The .nmmesh in a drag, inside the project, as its runtime path; else empty. */
+QString ViewportWidget::DroppedMesh(const QMimeData* InData) const
+{
+    const QString File = EditorContent::SingleDroppedFile(InData);
+    if(!File.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive)) { return QString(); }
+    return EditorContent::ToRuntimePath(File);
+}
+
+void ViewportWidget::dragEnterEvent(QDragEnterEvent* InEvent)
+{
+    if(!Context.IsPlaying() && !DroppedMesh(InEvent->mimeData()).isEmpty()) { InEvent->acceptProposedAction(); }
+    else { InEvent->ignore(); }
+}
+
+void ViewportWidget::dragMoveEvent(QDragMoveEvent* InEvent)
+{
+    if(!Context.IsPlaying() && !DroppedMesh(InEvent->mimeData()).isEmpty()) { InEvent->acceptProposedAction(); }
+    else { InEvent->ignore(); }
+}
+
+/*
+ * A new entity drawing the mesh, where the cursor points: on the z = 0 plane
+ * the 2D scene lives on, when the ray meets it in front of the camera and not
+ * absurdly far; else 600 units out along the ray, as Edit > Create puts one.
+ * One undo step, and selected.
+ */
+void ViewportWidget::dropEvent(QDropEvent* InEvent)
+{
+    const QString Path = DroppedMesh(InEvent->mimeData());
+    const QByteArray Utf8 = Path.toUtf8();
+    if(Path.isEmpty() || Context.IsPlaying() || Utf8.size() >= int(RenderCore::RENDER_MESH_PATH_MAX))
+    {
+        InEvent->ignore();
+        return;
+    }
+
+    EngineCore::Vector3 RayOrigin, RayDir;
+    const QPointF At = InEvent->position();
+    Camera.ScreenRay(At.x(), At.y(), GetLogicalSize(), RayOrigin, RayDir);
+    double T = 600.0;
+    if(std::abs(RayDir.GetZ()) > 1e-6)
+    {
+        const double OnPlane = -RayOrigin.GetZ() / RayDir.GetZ();
+        if(OnPlane > 0.0 && OnPlane < 20000.0) { T = OnPlane; }
+    }
+    const EngineCore::Vector3 Spot = RayOrigin + RayDir * T;
+
+    const GameCore::EntityID Made = Context.CreateEntity(QFileInfo(Path).completeBaseName(), Spot,
+                                                         [&Utf8](const GameCore::Entity& InEntity)
+    {
+        RenderCore::RenderComponent Render;
+        std::memcpy(Render.Mesh, Utf8.constData(), size_t(Utf8.size()));
+        InEntity.AddComponent(Render);
+    });
+    Context.SetSelection(Made);
+
+    InEvent->acceptProposedAction();
+    setFocus();
+}
+
 // === Picking =================================================================
 
 GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
@@ -832,6 +943,20 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
         }
         const EngineCore::Vector3 LocalOrigin = Inverse.Apply(RayOrigin, 1.0);
         const EngineCore::Vector3 LocalDir    = Inverse.Apply(RayDir, 0.0);
+
+        /* A mesh: its triangles, in the same local space, nearest hit wins.
+         * One whose file cannot be loaded draws a quad, and is picked as one. */
+        const std::string MeshPath(InRender.Mesh, strnlen(InRender.Mesh, RenderCore::RENDER_MESH_PATH_MAX));
+        if(const std::shared_ptr<const RenderCore::MeshData> Mesh = MeshPath.empty() ? nullptr : RenderCore::MeshAssetCache::Find(MeshPath))
+        {
+            const double T = RayHitsMesh(*Mesh, LocalOrigin, LocalDir);
+            if(T > 0.0 && T < BestT)
+            {
+                BestT = T;
+                Best  = InEntity.GetID();
+            }
+            return;
+        }
 
         if(std::abs(LocalDir.GetZ()) < 1e-9)
         {

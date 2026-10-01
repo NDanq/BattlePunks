@@ -3,6 +3,7 @@
 #include "Public/Editor/EditorContext.h"
 
 #include <chrono>
+#include <cstring>
 #include <string>
 
 #include <QTimer>
@@ -18,6 +19,7 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
+#include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderView.h"
 #include "Public/RenderCore/Renderer.h"
@@ -366,7 +368,8 @@ bool EditorContext::SaveWorld(const QString& InPath)
 
 // === Entities ================================================================
 
-EntityID EditorContext::CreateEntity(const QString& InName, const EngineCore::Vector3& InPosition)
+EntityID EditorContext::CreateEntity(const QString& InName, const EngineCore::Vector3& InPosition,
+                                     const std::function<void(const GameCore::Entity&)>& InSetup)
 {
     const QByteArray Name = InName.toUtf8();
     const GameCore::Entity E = ActiveWorld->CreateEntity(Name.constData());
@@ -374,6 +377,11 @@ EntityID EditorContext::CreateEntity(const QString& InName, const EngineCore::Ve
     GameCore::TransformComponent Transform;
     Transform.Position = InPosition;
     E.AddComponent(Transform);
+
+    if(InSetup)
+    {
+        InSetup(E);
+    }
 
     if(IsRecording())
     {
@@ -559,6 +567,14 @@ GameCore::AABB EditorContext::GetEntityBounds(const EntityID InEntity) const
 
     if(const RenderCore::RenderComponent* Render = E.GetComponent<RenderCore::RenderComponent>())
     {
+        /* A mesh's own box, as the renderer culls it (RenderComponentProxy). */
+        const std::string MeshPath(Render->Mesh, strnlen(Render->Mesh, RenderCore::RENDER_MESH_PATH_MAX));
+        if(const std::shared_ptr<const RenderCore::MeshData> Mesh = MeshPath.empty() ? nullptr : RenderCore::MeshAssetCache::Find(MeshPath))
+        {
+            const GameCore::AABB Local(EngineCore::Vector3(Mesh->BoundsMin[0], Mesh->BoundsMin[1], Mesh->BoundsMin[2]),
+                                       EngineCore::Vector3(Mesh->BoundsMax[0], Mesh->BoundsMax[1], Mesh->BoundsMax[2]));
+            return GameCore::AABB::Transformed(Local, Transform->GetLocalMatrix());
+        }
         const GameCore::AABB Quad(EngineCore::Vector3(-0.5 * Render->Width, -0.5 * Render->Height, 0.0),
                                   EngineCore::Vector3( 0.5 * Render->Width,  0.5 * Render->Height, 0.0));
         return GameCore::AABB::Transformed(Quad, Transform->GetLocalMatrix());

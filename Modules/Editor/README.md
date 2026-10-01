@@ -86,6 +86,69 @@ uses it.
 | `EditorLog` | EngineCore's log handler: a thread-safe, bounded history of every log line, still forwarded to Qt/the debugger |
 | `EditorConsole` | Command registry; unknown words fall through to Core's `ExecConfigCommand` |
 | `ConsolePanel` | The Console dock: filtered transcript over a command line with history and completion |
+| `ContentBrowserPanel` | The Content Browser dock: the project's files, organised, opened, and imported into (see Content Browser) |
+| `Content/ImportWizard` (private) | File > Import and drops from outside: the wizard that turns glTF and images into `.nmmesh` / `.nmtexture` |
+| `Content/AssetImport`, `GltfImporter` (private) | The conversions themselves, no widgets (cgltf, `External/cgltf-1.15`, reads glTF); tested by `NimbleEditorImportTests` |
+| `Content/ContentPaths` (private) | Project files as the engine names them: runtime-relative paths, material names, staging beside the executable |
+
+## Content Browser
+
+Docked below the viewport, tabbed with the Console: the project's own folder
+(the one holding `Config/DefaultEngine.ini`, e.g. `Games/Sandbox`) as a folder
+tree beside the current folder's contents. Build trees, `Binaries` and
+dot-folders are hidden. Images and `.nmtexture` files show thumbnails; hovering
+an asset shows what it is (vertices and triangles, or size and colour space)
+and where it was imported from.
+
+| Do | How |
+|---|---|
+| Navigate | Click a folder in the tree, double-click one in the list, Back, Up (Backspace), or a segment of the path bar |
+| New folder | The toolbar, the context menu, or Ctrl+Shift+N; type its name |
+| Rename | F2, or the context menu |
+| Delete | Del: confirmed, then moved to the Recycle Bin -- never deleted outright |
+| Move | Drag items onto a folder (in the list) |
+| Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), anything else with the system's own application |
+| Import | Drop files from Explorer, the toolbar's Import..., or File > Import (Ctrl+I) |
+| Reimport | The context menu on a `.nmmesh` / `.nmtexture`: the same source, the same options |
+
+**Companions travel together.** A graph's generated files (`Glow.material.nmgraph`
+-> `Glow.fsh`, `Glow.material`; a script graph's `.lua`) and a world's entity
+folder are renamed, moved and deleted with it. A graph open in a window and the
+world open in the editor are refused, as are the project folder and `Config/`.
+Moving or renaming an asset does not update what names it -- a
+RenderComponent's `Mesh` still holds the old path.
+
+**Importing.** A drop of files from outside the project opens the **Import
+Wizard** for the meshes (`.gltf`, `.glb`) and images (whatever Qt reads) among
+them; other files are copied in as they are, after asking. Into the folder
+dropped on, or the one shown -- `Content/` when the browser is at the root.
+
+1. **Files**: each file's kind and the asset name it gets (editable), and a
+   warning beside one that will replace an existing asset.
+2. **Mesh options**: scale (glTF is in metres; 100 by default), convert axes
+   (glTF is +Y up; the model is turned a half-turn about X so up stays up and it
+   faces the default camera), generate missing normals, combine the scene into
+   one mesh or one per glTF mesh, and import the textures it uses -- listed.
+3. **Texture options**: sRGB, filtering, wrapping, largest size (bigger images
+   are scaled down), flip vertically.
+4. **Import**: on a worker thread, with a log. Each asset is written whole or
+   not at all, staged beside the executable at once, and logged to the Console.
+
+The options start from Edit > Editor Settings > Import and are saved back there.
+Every asset records its source and options (relative to the project), which is
+what Reimport uses; a texture that was embedded in a GLB is found in it again.
+
+**Using a mesh.** Drag a `.nmmesh` onto the viewport: a new entity named after
+it, with a RenderComponent drawing it, lands where the cursor meets the z = 0
+plane (or 600 units out) -- one undo step, selected. Or drag it onto a
+RenderComponent's **Mesh** field in Details (or pick one with **...**); a
+material graph (or its `.material`) dropped on **Material** sets that. Selection
+outlines fit the mesh's box, and a click picks the mesh by its triangles.
+
+**Shipping.** The editor stages what it imports; a clean build of the game
+stages `Content/**/*.nmmesh` and `*.nmtexture` itself (Sandbox's CMakeLists,
+`SandboxStageContent`). Textures are imported but not drawn yet: materials have
+no texture input.
 
 ## Editor-visible properties
 
@@ -325,6 +388,7 @@ editor's own config vars as a form:
 | Viewport | Move / Rotate / Scale snap | `Editor.SnapTranslate`, `SnapRotate`, `SnapScale` |
 | Rendering | Render backend (on restart) | `Editor.RHI` |
 | Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
+| Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, combine meshes, import a mesh's textures, sRGB, largest texture | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize` |
 
 The settings are those config vars themselves; the dialog keeps no copy.
 **Apply** and **OK** set them the way the Console would and save them;
@@ -425,4 +489,6 @@ decided. The Console's `cook` still cooks a single world.
 - Transform handles act on one entity; there is no multi-selection.
 - Play-in-Editor has no game input yet (see above).
 - View presets stay in perspective; there are no orthographic views yet.
-- The viewport has no depth sorting: RenderScene draws in submission order.
+- Moving or renaming an asset in the Content Browser leaves components that
+  name it pointing at the old path.
+- Imported textures are not sampled by anything yet.

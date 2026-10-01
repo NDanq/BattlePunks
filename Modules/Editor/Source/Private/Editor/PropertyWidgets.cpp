@@ -11,18 +11,24 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QDoubleSpinBox>
+#include <QDropEvent>
+#include <QFileDialog>
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMimeData>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
+#include <QToolButton>
 
 #include "CoreQtConversions.h"
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/Math/Vector.h"
+#include "Private/Editor/Content/ContentPaths.h"
+#include "Private/Editor/Graph/GraphAssets.h"
 
 using GameCore::EPropertyType;
 
@@ -409,22 +415,63 @@ namespace
             Layout->addWidget(Edit);
 
             /* Committed on Enter or focus-out, not per keystroke. */
-            connect(Edit, &QLineEdit::editingFinished, this, [this]()
-            {
-                uint8_t* Field = FieldForWrite();
-                if(!Field || Entry.Size == 0) { return; }
+            connect(Edit, &QLineEdit::editingFinished, this, [this]() { Commit(); });
 
-                /* Truncated to the buffer on a UTF-8 byte count, always
-                 * NUL-terminated -- the buffer is fixed, the string is not. */
-                const QByteArray Utf8 = Edit->text().toUtf8();
-                const size_t Length = std::min(size_t(Utf8.size()), size_t(Entry.Size) - 1);
-                std::memset(Field, 0, Entry.Size);
-                std::memcpy(Field, Utf8.constData(), Length);
-                NotifyWritten();
-            });
+            /* An asset field takes the asset dragged from the Content Browser
+             * (or Explorer, if it is in the project); a mesh also has a picker. */
+            const bool bMesh     = (Entry.Flags & GameCore::PF_AssetMesh) != 0;
+            const bool bMaterial = (Entry.Flags & GameCore::PF_AssetMaterial) != 0;
+            if((bMesh || bMaterial) && !Entry.IsReadOnly())
+            {
+                AssetKind = bMesh ? EAsset::Mesh : EAsset::Material;
+                Edit->setPlaceholderText(bMesh ? QStringLiteral("Drop a .nmmesh here") : QStringLiteral("Drop a material here"));
+                Edit->installEventFilter(this);
+                if(bMesh)
+                {
+                    auto* Pick = new QToolButton(this);
+                    Pick->setText(QStringLiteral("..."));
+                    Pick->setToolTip(QStringLiteral("Choose a mesh in the project"));
+                    Layout->addWidget(Pick);
+                    connect(Pick, &QToolButton::clicked, this, [this]()
+                    {
+                        const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a Mesh"),
+                                                                            EditorGraphs::GetProjectRoot(),
+                                                                            QStringLiteral("Meshes (*.nmmesh)"));
+                        const QString Value = Chosen.isEmpty() ? QString() : ValueForFile(Chosen);
+                        if(!Value.isEmpty()) { SetAndCommit(Value); }
+                    });
+                }
+            }
         }
 
     protected:
+        bool eventFilter(QObject* InWatched, QEvent* InEvent) override
+        {
+            if(InWatched == Edit && AssetKind != EAsset::None)
+            {
+                if(InEvent->type() == QEvent::DragEnter || InEvent->type() == QEvent::DragMove)
+                {
+                    auto* Drag = static_cast<QDropEvent*>(InEvent);
+                    const QString File = EditorContent::SingleDroppedFile(Drag->mimeData());
+                    if(!File.isEmpty() && !ValueForFile(File).isEmpty()) { Drag->acceptProposedAction(); }
+                    else { Drag->ignore(); }
+                    return true;
+                }
+                if(InEvent->type() == QEvent::Drop)
+                {
+                    auto* Drop = static_cast<QDropEvent*>(InEvent);
+                    const QString Value = ValueForFile(EditorContent::SingleDroppedFile(Drop->mimeData()));
+                    if(!Value.isEmpty())
+                    {
+                        SetAndCommit(Value);
+                        Drop->acceptProposedAction();
+                    }
+                    return true;
+                }
+            }
+            return PropertyEditor::eventFilter(InWatched, InEvent);
+        }
+
         void ReadFrom(const uint8_t* InField) override
         {
             /* strnlen bound: a buffer written by something else might lack its NUL. */
@@ -441,7 +488,49 @@ namespace
         }
 
     private:
-        QLineEdit* Edit = nullptr;
+        enum class EAsset { None, Mesh, Material };
+
+        void Commit()
+        {
+            uint8_t* Field = FieldForWrite();
+            if(!Field || Entry.Size == 0) { return; }
+
+            /* Truncated to the buffer on a UTF-8 byte count, always
+             * NUL-terminated -- the buffer is fixed, the string is not. */
+            const QByteArray Utf8 = Edit->text().toUtf8();
+            const size_t Length = std::min(size_t(Utf8.size()), size_t(Entry.Size) - 1);
+            std::memset(Field, 0, Entry.Size);
+            std::memcpy(Field, Utf8.constData(), Length);
+            NotifyWritten();
+        }
+
+        void SetAndCommit(const QString& InValue)
+        {
+            {
+                const QSignalBlocker Block(Edit);
+                Edit->setText(InValue);
+            }
+            Commit();
+        }
+
+        /* What this field stores for a file, or empty if it is the wrong kind
+         * or outside the project (a mesh's path must resolve at run time). */
+        QString ValueForFile(const QString& InFile) const
+        {
+            if(InFile.isEmpty()) { return QString(); }
+            if(AssetKind == EAsset::Mesh)
+            {
+                return InFile.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive) ? EditorContent::ToRuntimePath(InFile) : QString();
+            }
+            if(AssetKind == EAsset::Material)
+            {
+                return EditorContent::MaterialNameFor(InFile);
+            }
+            return QString();
+        }
+
+        QLineEdit* Edit      = nullptr;
+        EAsset     AssetKind = EAsset::None;
     };
 }
 

@@ -110,6 +110,9 @@ protected:
     void keyPressEvent(QKeyEvent* InEvent) override;
     void keyReleaseEvent(QKeyEvent* InEvent) override;
     void focusOutEvent(QFocusEvent* InEvent) override;
+    void dragEnterEvent(QDragEnterEvent* InEvent) override;
+    void dragMoveEvent(QDragMoveEvent* InEvent) override;
+    void dropEvent(QDropEvent* InEvent) override;
 
 private:
     /* What a held mouse button is doing. One at a time. */
@@ -150,6 +153,9 @@ private:
 
     /* The nearest primitive quad under the pixel, or an unset id. */
     GameCore::EntityID Pick(const QPoint& InLogicalPos) const;
+
+    /* A dragged .nmmesh in the project, as its runtime path; else empty. */
+    QString DroppedMesh(const class QMimeData* InData) const;
 
     EngineCore::Size GetLogicalSize() const { return EngineCore::Size(width(), height()); }
 
