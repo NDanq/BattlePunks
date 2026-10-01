@@ -74,7 +74,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     OutlinerDock->setObjectName(QStringLiteral("OutlinerDock"));
     Outliner = new OutlinerPanel(Context, OutlinerDock);
     OutlinerDock->setWidget(Outliner);
-    addDockWidget(Qt::LeftDockWidgetArea, OutlinerDock);
+    addDockWidget(Qt::RightDockWidgetArea, OutlinerDock);
 
     auto* DetailsDock = new QDockWidget(QStringLiteral("Details"), this);
     DetailsDock->setObjectName(QStringLiteral("DetailsDock"));
@@ -222,22 +222,6 @@ void EditorMainWindow::BuildMenus()
     UpdateHistoryActions();
 
     Edit->addSeparator();
-
-    QAction* Create = Edit->addAction(QStringLiteral("&Create Empty Entity"));
-    Create->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
-    connect(Create, &QAction::triggered, this, [this]()
-    {
-        /* In front of the camera, so the new entity is somewhere visible. */
-        const EditorCamera& Camera = Viewport->GetCamera();
-        const EngineCore::Vector3 Spot = Camera.Position + Camera.GetForward() * 600.0;
-        Context.SetSelection(Context.CreateEntity(QStringLiteral("Entity"), Spot));
-    });
-
-    QAction* Delete = Edit->addAction(QStringLiteral("&Delete"));
-    Delete->setShortcut(QKeySequence::Delete);
-    connect(Delete, &QAction::triggered, this, [this]() { Context.DestroyEntity(Context.GetSelection()); });
-
-    Edit->addSeparator();
     Edit->addAction(ViewportArea->GetFrameSelectionAction());
     Edit->addAction(ViewportArea->GetFrameAllAction());
 
@@ -250,6 +234,22 @@ void EditorMainWindow::BuildMenus()
     QAction* ProjectSettings = Edit->addAction(QStringLiteral("&Project Settings..."));
     ProjectSettings->setToolTip(QStringLiteral("The project's Config/DefaultEngine.ini: the game's and the engine's settings"));
     connect(ProjectSettings, &QAction::triggered, this, &EditorMainWindow::OpenProjectSettings);
+
+    QMenu* World = menuBar()->addMenu(QStringLiteral("&World"));
+
+    QAction* CreateEntity = World->addAction(QStringLiteral("&Create Empty Entity"));
+    CreateEntity->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_N));
+    connect(CreateEntity, &QAction::triggered, this, [this]()
+    {
+        /* In front of the camera, so the new entity is somewhere visible. */
+        const EditorCamera& Camera = Viewport->GetCamera();
+        const EngineCore::Vector3 Spot = Camera.Position + Camera.GetForward() * 600.0;
+        Context.SetSelection(Context.CreateEntity(QStringLiteral("Entity"), Spot));
+    });
+
+    QAction* DeleteEntity = World->addAction(QStringLiteral("&Delete"));
+    DeleteEntity->setShortcut(QKeySequence::Delete);
+    connect(DeleteEntity, &QAction::triggered, this, [this]() { Context.DestroyEntity(Context.GetSelection()); });
 
     QMenu* View = menuBar()->addMenu(QStringLiteral("&View"));
     for(QDockWidget* Dock : findChildren<QDockWidget*>())
