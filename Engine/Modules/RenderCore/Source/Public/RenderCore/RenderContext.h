@@ -67,6 +67,22 @@ namespace RenderCore
         void DrawQuadWithMaterial(const RenderTransform& InTransform, float InWidth, float InHeight,
                                   EngineCore::Color InTint, const char* InMaterial);
 
+        /*
+         * Draws the .nmmesh at InMeshPath (runtime-relative, MeshAsset.h) at
+         * InTransform, its own size times the transform's scale. One draw per
+         * section, each with:
+         *   - InMaterial, when given and it loads (as DrawQuadWithMaterial);
+         *   - else the section's own material, if one by that name exists;
+         *   - else InTint, lit by one fixed light (Mesh.fsh).
+         * The GPU mesh is built on first use and rebuilt when MeshAssetCache
+         * has a different one (MeshAssetCache::Invalidate, after a reimport).
+         *
+         * False, drawing nothing, if the mesh cannot be loaded or this backend
+         * has no indexed meshes -- the caller draws something else.
+         */
+        bool DrawMesh(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
+                      const char* InMaterial);
+
 #if WITH_EDITOR
         /*
          * EDITOR ONLY -- the draw behind Renderer::DrawDebugLine.

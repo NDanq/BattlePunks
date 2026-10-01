@@ -843,6 +843,73 @@ static void TestTextureAssets()
     TextureData WrongTagLoaded;
     Expect(!SerializeTexture(WrongTag, WrongTagLoaded), "a mesh is not a texture");
 }
+
+/* A RenderComponent naming a mesh, through the Null backend: one draw per
+ * section, the mesh's bounds, and the quad when the mesh is missing. */
+static void TestMeshDrawing()
+{
+    std::printf("[mesh drawing]\n");
+
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreMeshDraw";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Root, Ignored);
+    FilesystemProvider Provider(Root.generic_string());
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Provider);
+    MeshAssetCache::Invalidate(std::string());
+
+    MeshData Square = MakeSmokeMesh();
+    SaveMeshFile((Root / "Content" / "Square.nmmesh").generic_string(), Square);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the mesh test");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(640, 360);
+        const RenderView View = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+        Rend.SetViewOverride(&View);
+
+        GameCore::World World;
+        const GameCore::Entity Meshed = World.CreateEntity("Meshed");
+        Meshed.AddComponent<GameCore::TransformComponent>();
+        RenderComponent Render;
+        std::strcpy(Render.Mesh, "Content/Square.nmmesh");
+        Meshed.AddComponent(Render);
+        Rend.BindWorld(World);
+
+        uint64_t Frame = 400;
+        auto DrawFrame = [&]() -> uint64_t
+        {
+            RenderStats Before;
+            Rend.GetStats(Before);
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            RenderStats After;
+            Rend.GetStats(After);
+            return After.DrawCalls - Before.DrawCalls;
+        };
+
+        DrawFrame();   // extracts; the proxy draws from the next frame
+        Expect(DrawFrame() == 2, "a two-section mesh draws once per section");
+
+        std::strcpy(Meshed.GetComponent<RenderComponent>()->Mesh, "Content/Missing.nmmesh");
+        DrawFrame();
+        Expect(DrawFrame() == 1, "a mesh that cannot be loaded draws the quad instead");
+
+        Meshed.GetComponent<RenderComponent>()->Mesh[0] = '\0';
+        DrawFrame();
+        Expect(DrawFrame() == 1, "no mesh draws the quad");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+    }
+    Rend.Shutdown();
+
+    MeshAssetCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
 #endif // WITH_EDITOR
 
 int main()
@@ -878,6 +945,7 @@ int main()
     TestMaterials();
     TestMeshAssets();
     TestTextureAssets();
+    TestMeshDrawing();
 #endif
 
     const uint64_t Leaked = Memory::ReportLeaks();
