@@ -12,6 +12,7 @@
 #include "Public/Editor/EditorConsole.h"
 
 class ConsolePanel;
+class ContentBrowserPanel;
 class DetailsPanel;
 class EditorContext;
 class OutlinerPanel;
@@ -75,6 +76,7 @@ private:
     void SetSDLInputProbe(bool bInOn);
 
     void OpenWorld();
+    void OpenWorldFile(const QString& InPath);
     bool SaveWorld();
     bool SaveWorldAs();
 
@@ -86,6 +88,7 @@ private:
     OutlinerPanel*  Outliner = nullptr;
     DetailsPanel*   Details  = nullptr;
     ConsolePanel*   ConsoleArea = nullptr;
+    ContentBrowserPanel* ContentArea = nullptr;
     EditorConsole   Console;
     QLabel*         StatsLabel = nullptr;
     QLabel*         PlayLabel  = nullptr;

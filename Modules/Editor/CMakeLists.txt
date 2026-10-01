@@ -103,6 +103,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Public/Editor/TransformGizmo.h
         Source/Public/Editor/OutlinerPanel.h
         Source/Public/Editor/DetailsPanel.h
+        Source/Private/Editor/ContentBrowserPanel.cpp
+        Source/Public/Editor/ContentBrowserPanel.h
         Source/Private/Editor/Content/ContentPaths.cpp
         Source/Private/Editor/Content/ContentPaths.h
         Source/Private/Editor/Content/ImportWizard.cpp

@@ -24,6 +24,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/Editor/ConsolePanel.h"
+#include "Public/Editor/ContentBrowserPanel.h"
 #include "Public/Editor/DetailsPanel.h"
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/OutlinerPanel.h"
@@ -88,8 +89,22 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     ConsoleDock->setWidget(ConsoleArea);
     addDockWidget(Qt::BottomDockWidgetArea, ConsoleDock);
 
+    /* Beside the Console, in front: the project's files, where imports land. */
+    auto* ContentDock = new QDockWidget(QStringLiteral("Content Browser"), this);
+    ContentDock->setObjectName(QStringLiteral("ContentBrowserDock"));
+    ContentArea = new ContentBrowserPanel(ContentDock);
+    ContentDock->setWidget(ContentArea);
+    addDockWidget(Qt::BottomDockWidgetArea, ContentDock);
+    tabifyDockWidget(ConsoleDock, ContentDock);
+    ContentDock->raise();
+    connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
+    connect(ContentArea, &ContentBrowserPanel::StatusMessage, this, [this](const QString& InText)
+    {
+        statusBar()->showMessage(InText, 6000);
+    });
+
     resizeDocks({ OutlinerDock, DetailsDock }, { 300, 360 }, Qt::Horizontal);
-    resizeDocks({ ConsoleDock }, { 200 }, Qt::Vertical);
+    resizeDocks({ ConsoleDock }, { 240 }, Qt::Vertical);
 
     RegisterConsoleCommands();
 
@@ -189,6 +204,11 @@ void EditorMainWindow::BuildMenus()
                              .arg(QString::fromStdString(Schema->GetName()), QString::fromStdString(Schema->GetOutputExtension())));
         connect(NewGraph, &QAction::triggered, this, [this, Schema]() { EditorGraphs::CreateGraph(*Schema, this); });
     }
+
+    QAction* Import = File->addAction(QStringLiteral("&Import..."));
+    Import->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
+    Import->setToolTip(QStringLiteral("glTF meshes and images into engine assets, in the Content Browser's folder"));
+    connect(Import, &QAction::triggered, this, [this]() { ContentArea->ImportWithDialog(); });
 
     QAction* OpenGraph = File->addAction(QStringLiteral("Open Grap&h..."));
     OpenGraph->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
@@ -989,6 +1009,9 @@ void EditorMainWindow::UpdateTitle()
     const QString Dirty = Context.GetHistory().isClean() ? QString() : QStringLiteral("*");
     const QString Play  = Context.IsPlaying() ? QStringLiteral(" [Playing]") : QString();
     setWindowTitle(QStringLiteral("%1%2%3 - Nimble Editor").arg(Scene, Dirty, Play));
+
+    /* The browser will not move or delete the world that is open. */
+    if(ContentArea) { ContentArea->SetOpenWorld(CurrentPath); }
 }
 
 void EditorMainWindow::UpdateHistoryActions()
@@ -1024,8 +1047,18 @@ void EditorMainWindow::OpenWorld()
 {
     const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open World"), CurrentPath,
                                                       QString::fromLatin1(WorldFileFilter));
-    if(Path.isEmpty())
+    if(!Path.isEmpty())
     {
+        OpenWorldFile(Path);
+    }
+}
+
+void EditorMainWindow::OpenWorldFile(const QString& Path)
+{
+    /* As File > Open is: the edited World cannot be replaced mid-run. */
+    if(Context.IsPlaying())
+    {
+        statusBar()->showMessage(QStringLiteral("Stop playing to open another world"), 4000);
         return;
     }
     bool bCooked = false;
