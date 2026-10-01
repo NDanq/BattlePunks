@@ -25,6 +25,11 @@
  * clip value, two-sided), then every Parameter by name, at offsets computed
  * here and written to the .material. The renderer fills it byte for byte.
  *
+ * TEXTURES: each distinct texture and sampler setting a Texture Sample names
+ * takes a material texture slot from 1 (slot 0 is a PostProcess material's
+ * scene), declared as Material_Texture<slot>; the .material says which file
+ * and sampler fill it.
+ *
  * CONTROL FLOW. Branch is a real `if`; For Loop / For Loop End a real `for`.
  * Each value is computed in the innermost block all its uses share
  * (AnalyseScopes). Hints are MaterialPlatform.glsl's HINT_* macros, which the
@@ -48,6 +53,7 @@ namespace
         MOP_Discard,         // a second kind of root: discard the pixel when A compares so with B
         MOP_MaterialOutput,  // the root: Material Output's surface pins and World Position Offset
         MOP_SceneTexture,    // PostProcess only
+        MOP_TextureSample,   // a texture asset, at UV (the texture coordinate unlinked)
     };
 
     /* NodeDefinition::StageMask / PinDefinition::Stage bits. */
@@ -61,6 +67,16 @@ namespace
     const char* const TINT_UNIFORM      = "Material_Tint";
     const char* const OFFSET_PIN        = "WorldPositionOffset";
     const char* const LOOP_TYPE         = "loop";  // For Loop -> its For Loop End
+
+    /* Material texture slots: GDI binding 4 + slot (GDI_MATERIAL_TEXTURE_BINDING). */
+    constexpr int TEXTURE_BINDING       = 4;
+    constexpr int TEXTURE_SLOT_FIRST    = 1;       // slot 0 is Scene Color (MaterialCommon.glsl)
+    constexpr int TEXTURE_SLOT_COUNT    = 8;       // GDI_MATERIAL_TEXTURE_SLOTS
+    const char* const TEXTURE_PREFIX    = "Material_Texture";
+
+    /* A Texture Sample's sampler settings; Default keeps the texture asset's own. */
+    const std::vector<std::string> GFilterChoices = { "Default", "Nearest", "Linear" };
+    const std::vector<std::string> GWrapChoices   = { "Default", "Repeat", "Clamp", "Mirror" };
 
     const std::vector<std::string> GDomainChoices  = { "Opaque", "Masked", "Translucent", "PostProcess" };
     const std::vector<std::string> GShadingChoices = { "Lit", "Unlit" };
@@ -289,6 +305,17 @@ namespace
                 return GetWildcardType(InGraph, InNode) + Dot + Times + " times" + Hint();
             }
             if(Def->Op == MOP_Discard) { return "if A " + InNode.GetProperty("Compare", "<") + " B"; }
+            if(Def->Op == MOP_TextureSample)
+            {
+                /* The overridden sampler settings: "Nearest Â· Clamp". */
+                std::string Settings;
+                for(const char* Name : { "Filter", "Wrap" })
+                {
+                    const std::string Value = InNode.GetProperty(Name, "Default");
+                    if(Value != "Default") { Settings += (Settings.empty() ? std::string() : Dot) + Value; }
+                }
+                return InNode.GetProperty("Texture", "").empty() ? std::string("no texture") : Settings;
+            }
             if(Def->Op != MOP_Mask && Def->Op != MOP_Swizzle) { return std::string(); }
 
             const std::string Selected = SelectedComponents(InNode, Def->Op);
@@ -316,6 +343,16 @@ namespace
             std::string Default;
         };
 
+        /* A material texture slot: one texture with one set of sampler settings. */
+        struct TextureSlot
+        {
+            int         Slot = 0;
+            std::string Path;
+            std::string Filter = "Default";
+            std::string Wrap   = "Default";
+            NodeGuid    Node;     // the first Texture Sample to name it
+        };
+
         /* Enclosing blocks, outermost first: (Branch, 0) is its True side,
          * (For Loop End, 0) the loop body. Empty is the function block. */
         struct Frame
@@ -333,6 +370,8 @@ namespace
         };
 
         void CollectParameters();
+        void CollectTextures();
+        std::string EmitTextureSample(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
         void CheckStages(const Node& InRoot, const NodeDefinition& InRootDef);
         void BeginStage(const std::vector<const Node*>& InRoots, const std::set<std::string>& InRootPins);
         void AnalyseScopes(const std::vector<const Node*>& InRoots);
@@ -361,6 +400,9 @@ namespace
         std::map<PinRef, std::string>    Values;
         std::set<NodeGuid>               InProgress;
         std::map<std::string, Parameter> Parameters;   // by name: sorted, so the block layout is stable
+        std::vector<TextureSlot>         Textures;     // by slot
+        std::map<NodeGuid, int>          TextureSlotOf;   // each Texture Sample's slot
+        bool                             bVertexStage = false;   // textureLod: no derivatives there
         int                              BlockBytes = ENGINE_BLOCK_BYTES;
         int                              NextTemp = 0;
 
@@ -457,6 +499,7 @@ namespace
         }
 
         CollectParameters();
+        CollectTextures();
         CheckStages(*Root, *RootDef);
         if(Result.HasErrors()) { return; }
 
@@ -475,6 +518,7 @@ namespace
             if(Pin.IsInput() && Pin.Stage == STAGE_PIXEL) { PixelPins.insert(Pin.Name); }
         }
 
+        bVertexStage = false;
         BeginStage(PixelRoots, PixelPins);
         if(Result.HasErrors()) { return; }
 
@@ -516,6 +560,7 @@ namespace
         CodeWriter VertexBody;
         if(bHasOffset)
         {
+            bVertexStage = true;
             BeginStage({ Root }, { OFFSET_PIN });
             if(Result.HasErrors()) { return; }
             const std::string Offset = Input(*Root, *RootDef, *OffsetPin);
@@ -549,6 +594,17 @@ namespace
         }
         Out.Outdent();
         Out.Line("UBO_BLOCK_END(" + BlockName + ")");
+
+        if(!Textures.empty())
+        {
+            Out.Blank();
+            Out.Line("// Textures, by material texture slot; " + Name + ".material names each one's file and sampler.");
+            for(const TextureSlot& Each : Textures)
+            {
+                Out.Line("MATERIAL_SAMPLER2D(" + std::to_string(TEXTURE_BINDING + Each.Slot) + ", " + TEXTURE_PREFIX
+                         + std::to_string(Each.Slot) + ")", Each.Node);
+            }
+        }
 
         if(bHasOffset)
         {
@@ -588,8 +644,11 @@ namespace
          *     HasOffset <0|1>
          *     BlockSize <bytes>
          *     Param <Name> <Type> <Offset> <x> <y> <z> <w>
+         *     Texture <Slot> <Default|Nearest|Linear> <Default|Repeat|Clamp|Mirror> <Path>
          *
-         * '#' starts a comment. Unused components are 0.
+         * '#' starts a comment. Unused components are 0. A Texture's path is
+         * the rest of its line (it may hold spaces); Default keeps the
+         * texture asset's own filter or wrap.
          */
         std::string Material = "# Generated by NimbleEditor from the material graph \"" + G.Name + "\". Do not edit.\n"
                                "NimbleMaterial 2\n";
@@ -608,6 +667,10 @@ namespace
             Material += "Param " + Each.first + " " + Each.second.Type + " " + std::to_string(Each.second.Offset);
             for(const double Value : Values) { Material += " " + FormatNumber(float(Value)); }
             Material += "\n";
+        }
+        for(const TextureSlot& Each : Textures)
+        {
+            Material += "Texture " + std::to_string(Each.Slot) + " " + Each.Filter + " " + Each.Wrap + " " + Each.Path + "\n";
         }
         Result.Companions.push_back({ ".material", Material });
     }
@@ -737,6 +800,93 @@ namespace
             Result.Error(NodeGuid(), std::string(), "the material's parameters take " + std::to_string(BlockBytes)
                          + " bytes; a material block holds at most " + std::to_string(MAX_BLOCK_BYTES));
         }
+    }
+
+    /*
+     * Every Texture Sample, used or not, in GUID order, so slots are stable:
+     * one slot per distinct texture and sampler settings, from slot 1.
+     */
+    void MaterialCompiler::CollectTextures()
+    {
+        for(const Node* Each : Index.SortedNodes())
+        {
+            const NodeDefinition* Def = Index.FindDefinition(*Each);
+            if(!Def || Def->Op != MOP_TextureSample) { continue; }
+
+            TextureSlot Wanted;
+            Wanted.Path   = Each->GetProperty("Texture", "");
+            Wanted.Filter = Each->GetProperty("Filter", "Default");
+            Wanted.Wrap   = Each->GetProperty("Wrap", "Default");
+            Wanted.Node   = Each->Id;
+            if(Wanted.Path.empty())
+            {
+                Result.Error(Each->Id, std::string(), "'" + Def->DisplayName + "' has no texture: choose a .nmtexture in its Details");
+                continue;
+            }
+
+            const auto Same = std::find_if(Textures.begin(), Textures.end(), [&](const TextureSlot& InOther)
+            {
+                return InOther.Path == Wanted.Path && InOther.Filter == Wanted.Filter && InOther.Wrap == Wanted.Wrap;
+            });
+            if(Same != Textures.end())
+            {
+                TextureSlotOf[Each->Id] = Same->Slot;
+                continue;
+            }
+
+            Wanted.Slot = TEXTURE_SLOT_FIRST + int(Textures.size());
+            if(Wanted.Slot >= TEXTURE_SLOT_COUNT)
+            {
+                Result.Error(Each->Id, std::string(), "a material samples at most " + std::to_string(TEXTURE_SLOT_COUNT - TEXTURE_SLOT_FIRST)
+                             + " textures (each distinct texture and sampler setting is one); this would be one more");
+                continue;
+            }
+            TextureSlotOf[Each->Id] = Wanted.Slot;
+            Textures.push_back(Wanted);
+        }
+    }
+
+    /*
+     * One sample per node per block, as a vec4 temporary; RGB, R, G, B and A
+     * swizzle it. The vertex stage has no derivatives, so it reads level 0.
+     */
+    std::string MaterialCompiler::EmitTextureSample(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin)
+    {
+        const PinRef Whole{ InNode.Id, "RGBA" };
+        std::string Sample;
+        const auto Cached = Values.find(Whole);
+        if(Cached != Values.end())
+        {
+            Sample = Cached->second;
+        }
+        else
+        {
+            const auto Slot = TextureSlotOf.find(InNode.Id);
+            if(Slot == TextureSlotOf.end())
+            {
+                Sample = "vec4(0.0)";   // CollectTextures reported why
+            }
+            else
+            {
+                const PinDefinition* UVPin = InDef.FindPin("UV", EPinDirection::Input);
+                const bool bGiven = UVPin && (Index.LinkInto(InNode.Id, "UV") || InNode.FindConstant("UV"));
+                const std::string UV      = bGiven ? Input(InNode, InDef, *UVPin) : std::string("Inputs.TexCoord");
+                const std::string Sampler = TEXTURE_PREFIX + std::to_string(Slot->second);
+                Sample = "t" + std::to_string(NextTemp++);
+                Body.Line("vec4 " + Sample + " = " + (bVertexStage ? "textureLod(" + Sampler + ", " + UV + ", 0.0)"
+                                                                   : "texture(" + Sampler + ", " + UV + ")") + ";", InNode.Id);
+            }
+            if(InPin.Name != Whole.Pin)
+            {
+                Values.emplace(Whole, Sample);
+                if(!Blocks.empty()) { Blocks.back().push_back(Whole); }
+            }
+        }
+
+        if(InPin.Name == "RGBA") { return Sample; }
+        if(InPin.Name == "RGB")  { return Swizzle(Sample, "rgb"); }
+        const std::string Channel(1, char(std::tolower(static_cast<unsigned char>(InPin.Name[0]))));
+        return Swizzle(Sample, Channel.c_str());
     }
 
     /*
@@ -880,6 +1030,10 @@ namespace
             case MOP_Parameter:
                 /* Its member of the material block. */
                 Value = PARAM_PREFIX + InNode.GetProperty("Name", "Param");
+                break;
+
+            case MOP_TextureSample:
+                Value = EmitTextureSample(InNode, InDef, InPin);
                 break;
 
             case MOP_SceneTexture:
@@ -1423,6 +1577,28 @@ namespace
                                        "scene color screen post process");
             Def.Op = MOP_SceneTexture;
             PixelOnly(Def, "PostProcess only: the scene drawn so far, at this pixel.");
+        }
+
+        // --- Textures ------------------------------------------------------------
+        {
+            PinDefinition UV = In("UV", "vec2");
+            UV.Implicit = "Texture Coordinate";
+            UV.Tooltip  = "Where to sample, 0-1 across the texture. Unlinked: the vertex's Texture Coordinate";
+            NodeDefinition& Def = Pure("Texture.Sample", "Texture Sample", "Textures",
+                                       { UV, Out("RGBA", "vec4", ""), Out("RGB", "vec3", ""), Out("R", "float", ""),
+                                         Out("G", "float", ""), Out("B", "float", ""), Out("A", "float", "") }, {},
+                                       "texture image bitmap sampler map lookup");
+            Def.Op      = MOP_TextureSample;
+            Def.Tooltip = "A texture asset's colour at UV. Colour textures read as authored (display space), like "
+                          "every colour a material uses. In World Position Offset it reads the full-size level.";
+            Def.Properties = {
+                { "Texture", EPropertyKind::Texture, "", {}, "The .nmtexture to sample, by its path in the game's runtime "
+                  "folder: Content/Textures/Brick.nmtexture. Drop one from the Content Browser" },
+                { "Filter", EPropertyKind::Choice, "Default", GFilterChoices,
+                  "Default: the texture's own (set when it was imported). Nearest: hard texels. Linear: blended" },
+                { "Wrap", EPropertyKind::Choice, "Default", GWrapChoices,
+                  "Outside 0-1. Default: the texture's own. Repeat tiles; Clamp stretches the edge; Mirror tiles reflected" },
+            };
         }
 
         // --- Values --------------------------------------------------------------

@@ -7,6 +7,7 @@
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
+#include "Public/RenderCore/TextureAsset.h"
 
 /*
  * What a material is to the renderer: <Name>.material (version 2), written by
@@ -58,6 +59,21 @@ namespace RenderCore
         float       Default[4] = {};
     };
 
+    /* A Texture Sample's texture: which material texture slot it fills, from
+     * which file, and the sampler settings its node overrides. */
+    constexpr uint32_t MATERIAL_TEXTURE_SLOT_FIRST = 1;   // slot 0: a PostProcess material's Scene Color
+    constexpr uint32_t MATERIAL_TEXTURE_SLOTS      = 8;   // GDI_MATERIAL_TEXTURE_SLOTS
+
+    struct MaterialTexture
+    {
+        uint32_t       Slot = MATERIAL_TEXTURE_SLOT_FIRST;
+        std::string    Path;                              // runtime-relative .nmtexture
+        bool           bFilter = false;                   // false: the texture asset's own
+        ETextureFilter Filter  = ETextureFilter::Linear;
+        bool           bWrap   = false;                   // false: the texture asset's own
+        ETextureWrap   Wrap    = ETextureWrap::Repeat;
+    };
+
     struct RENDERCORE_API MaterialDescription
     {
         EMaterialDomain  Domain     = EMaterialDomain::Opaque;
@@ -68,6 +84,7 @@ namespace RenderCore
         bool             bHasOffset = false;
         uint32_t         BlockSize  = MATERIAL_ENGINE_BLOCK_BYTES;
         std::vector<MaterialParameter> Parameters;
+        std::vector<MaterialTexture>   Textures;
 
         const MaterialParameter* FindParameter(const std::string& InName) const;
     };

@@ -1055,6 +1055,142 @@ namespace
         }
     }
 
+    /*
+     * Texture Samples: Brick twice with its own sampler (one slot, two
+     * samples; RGB and A of the first share one), Brick again Nearest and
+     * Clamp at UV * 4 (a second slot), and a height map with a space in its
+     * path moving each vertex along its normal (the vertex stage: textureLod).
+     */
+    Graph MakeTexturedGraph()
+    {
+        Graph G;
+        G.SchemaName = "Material";
+        G.Name       = "Textured";
+
+        Node& Output = AddNode(G, 1, "Output.Material", 700, 0);
+        Output.Properties["MaxOffset"] = "1";
+        Node& Albedo = AddNode(G, 2, "Texture.Sample", 300, -200);
+        Albedo.Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+        Node& Rough = AddNode(G, 3, "Texture.Sample", 300, 0);
+        Rough.Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+        AddNode(G, 4, "Input.TexCoord", -100, 200);
+        AddNode(G, 5, "Math.Multiply", 100, 200).Constants["B"] = "4";
+        Node& Tiled = AddNode(G, 6, "Texture.Sample", 300, 200);
+        Tiled.Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+        Tiled.Properties["Filter"]  = "Nearest";
+        Tiled.Properties["Wrap"]    = "Clamp";
+        Node& Height = AddNode(G, 7, "Texture.Sample", 300, 400);
+        Height.Properties["Texture"] = "Content/Textures/Height Map.nmtexture";
+        AddNode(G, 8, "Math.Multiply", 500, 400);
+        AddNode(G, 9, "Input.VertexNormal", 300, 550);
+
+        Connect(G, 2, "RGB", 1, "BaseColor");
+        Connect(G, 2, "A", 1, "AmbientOcclusion");
+        Connect(G, 3, "R", 1, "Roughness");
+        Connect(G, 4, "UV", 5, "A");
+        Connect(G, 5, "Out", 6, "UV");
+        Connect(G, 6, "G", 1, "Metallic");
+        Connect(G, 9, "Normal", 8, "A");
+        Connect(G, 7, "R", 8, "B");
+        Connect(G, 8, "Out", 1, "WorldPositionOffset");
+        return G;
+    }
+
+    void TestTextureSample()
+    {
+        std::printf("[texture sample]\n");
+
+        const Graph Textured = MakeTexturedGraph();
+        CompileResult R;
+        CompileGraph(Textured, R);
+        Expect(!R.HasErrors(), "the Textured graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Textured, R).c_str()); }
+        ExpectGolden("Textured.mtl.glsl", R.Code);
+        const std::string Data = R.Companions.empty() ? std::string() : R.Companions[0].second;
+        if(!Data.empty()) { ExpectGolden("Textured.material", Data); }
+
+        Expect(Count(R.Code, "MATERIAL_SAMPLER2D(") == 3 && R.Code.find("MATERIAL_SAMPLER2D(5, Material_Texture1)") != std::string::npos
+               && R.Code.find("MATERIAL_SAMPLER2D(7, Material_Texture3)") != std::string::npos,
+               "each distinct texture and sampler is one slot, from slot 1 (binding 5)");
+        Expect(Count(R.Code, "texture(Material_Texture1, Inputs.TexCoord)") == 2,
+               "two nodes sample the shared slot once each; one node's RGB and A share its sample");
+        Expect(R.Code.find("texture(Material_Texture2, t") != std::string::npos, "a linked UV is sampled at");
+        Expect(R.Code.find("textureLod(Material_Texture3, Inputs.TexCoord, 0.0)") != std::string::npos
+               && R.Code.find("texture(Material_Texture3") == std::string::npos,
+               "World Position Offset reads level 0 (the vertex stage has no derivatives)");
+        Expect(Data.find("Texture 1 Default Default Content/Textures/Brick.nmtexture\n") != std::string::npos
+               && Data.find("Texture 2 Nearest Clamp Content/Textures/Brick.nmtexture\n") != std::string::npos
+               && Data.find("Texture 3 Default Default Content/Textures/Height Map.nmtexture\n") != std::string::npos,
+               "the .material names each slot's file and the sampler settings its node overrides");
+
+        const Schema* Material = FindSchema("Material");
+        const NodeDefinition* Def = Material ? Material->FindNode("Texture.Sample") : nullptr;
+        Expect(Def && Def->FindPin("UV") && Def->FindPin("UV")->Implicit == "Texture Coordinate",
+               "an unlinked UV is the texture coordinate, not a constant");
+        Expect(Material && Material->DescribeNode(Textured, *Textured.FindNode(Id(6))).find("Nearest") != std::string::npos
+               && Material->DescribeNode(Textured, *Textured.FindNode(Id(6))).find("Clamp") != std::string::npos,
+               "a node describes the sampler settings it overrides");
+
+        {
+            Graph G = MakeTexturedGraph();
+            G.FindNode(Id(3))->Constants["UV"] = "0.5 0.25";
+            CompileResult Given;
+            CompileGraph(G, Given);
+            Expect(!Given.HasErrors() && Given.Code.find("texture(Material_Texture1, vec2(0.5, 0.25))") != std::string::npos,
+                   "a UV given a constant samples there");
+        }
+        {
+            Graph G = MakeTexturedGraph();
+            G.FindNode(Id(2))->Properties["Texture"] = "";
+            CompileResult Empty;
+            CompileGraph(G, Empty);
+            Expect(Empty.HasErrors(), "a Texture Sample without a texture is an error");
+        }
+        {
+            Graph G = MakeTexturedGraph();
+            G.FindNode(Id(2))->Properties["Texture"] = "Content/Textures/Brick.png";
+            CompileResult Wrong;
+            CompileGraph(G, Wrong);
+            Expect(Wrong.HasErrors(), "a texture must be a .nmtexture");
+        }
+        {
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Many";
+            AddNode(G, 1, "Output.Material");
+            for(uint64_t Index = 0; Index < 8; ++Index)
+            {
+                AddNode(G, 10 + Index, "Texture.Sample").Properties["Texture"] = "Content/T" + std::to_string(Index) + ".nmtexture";
+            }
+            CompileResult Eight;
+            CompileGraph(G, Eight);
+            Expect(Eight.HasErrors(), "eight distinct textures are one more than a material's seven slots");
+            G.Nodes.pop_back();
+            CompileResult Seven;
+            CompileGraph(G, Seven);
+            Expect(!Seven.HasErrors() && Count(Seven.Code, "MATERIAL_SAMPLER2D(") == 7, "seven fit");
+        }
+        {
+            /* A PostProcess material's scene is slot 0; its textures start at 1 all the same. */
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Overlay";
+            Node& Out = AddNode(G, 1, "Output.Material");
+            Out.Properties["Domain"]  = "PostProcess";
+            Out.Properties["Shading"] = "Unlit";
+            AddNode(G, 2, "Texture.Sample").Properties["Texture"] = "Content/Textures/Vignette.nmtexture";
+            AddNode(G, 3, "Input.SceneTexture");
+            AddNode(G, 4, "Math.Multiply");
+            Connect(G, 3, "Color", 4, "A");
+            Connect(G, 2, "RGBA", 4, "B");
+            Connect(G, 4, "Out", 1, "Emissive");
+            CompileResult Post;
+            CompileGraph(G, Post);
+            Expect(!Post.HasErrors() && Post.Code.find("MATERIAL_SAMPLER2D(5, Material_Texture1)") != std::string::npos,
+                   "a PostProcess material samples textures beside the scene");
+        }
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -1095,6 +1231,7 @@ int main()
     TestLogic();
     TestDiscard();
     TestMaterialStages();
+    TestTextureSample();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

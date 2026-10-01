@@ -19,6 +19,7 @@
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderPipeline.h"
 #include "Public/RenderCore/ShaderCache.h"
+#include "Public/RenderCore/TextureAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/SceneTargets.h"
@@ -145,6 +146,18 @@ namespace RenderCore
             GDIMesh*                        Gpu = nullptr;
         };
         std::unordered_map<std::string, GpuMesh> Meshes;
+
+        /* A material's textures, keyed by path and the sampler settings they
+         * resolve to; rebuilt when TextureAssetCache's pointer differs from
+         * Source. Replaced ones are kept until ReleaseGPUResources: a frame in
+         * flight may still sample them. */
+        struct GpuTexture
+        {
+            std::shared_ptr<const TextureData> Source;
+            GDITextureResource*                Gpu = nullptr;
+        };
+        std::unordered_map<std::string, GpuTexture> Textures;
+        std::vector<GDITextureResource*>            RetiredTextures;
 
         /* Skips redundant rebinds. Reset each frame. */
         GDIShader*     BoundVertex = nullptr;
@@ -299,6 +312,39 @@ namespace RenderCore
             if(!Entry.Gpu)
             {
                 RENDERCORE_LOG_WARN("mesh '" + InPath + "': this backend cannot draw it; drawing a quad")
+            }
+            return Entry.Gpu;
+        }
+
+        /* A material texture's GPU copy with its sampler: the node's settings
+         * where it overrides them, else the asset's. Null (warned by the
+         * cache) if the file cannot be loaded: the slot reads transparent. */
+        GDITextureResource* FindTexture(const MaterialTexture& InTexture)
+        {
+            std::shared_ptr<const TextureData> Source = TextureAssetCache::Find(InTexture.Path);
+            if(!Source)
+            {
+                return nullptr;
+            }
+
+            const ETextureFilter Filter = InTexture.bFilter ? InTexture.Filter : Source->Filter;
+            const ETextureWrap   Wrap   = InTexture.bWrap ? InTexture.Wrap : Source->Wrap;
+            const std::string    Key    = InTexture.Path + "|" + std::to_string(int(Filter)) + std::to_string(int(Wrap));
+
+            GpuTexture& Entry = Textures[Key];
+            if(Entry.Source == Source)
+            {
+                return Entry.Gpu;
+            }
+            if(Entry.Gpu) { RetiredTextures.push_back(Entry.Gpu); }
+            Entry.Source = Source;
+
+            const EGDITextureBorder Border = Wrap == ETextureWrap::Clamp  ? GDI_TB_Clamp_To_Edge
+                                           : Wrap == ETextureWrap::Mirror ? GDI_TB_Mirrored_Repeat : GDI_TB_Repeat;
+            Entry.Gpu = GDICreateTextureResource(Source->Pixels, Border, Filter == ETextureFilter::Nearest ? GDI_TF_Nearest : GDI_TF_Linear);
+            if(!Entry.Gpu)
+            {
+                WarnOnce(InTexture.Path + "|texture", "texture '" + InTexture.Path + "': this backend could not create it");
             }
             return Entry.Gpu;
         }
@@ -481,6 +527,18 @@ namespace RenderCore
             std::memcpy(Block.data(), Tint, sizeof(Tint));
             GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Block.data(), uint(Block.size()));
             GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+
+            /* Its textures, every other slot cleared; slot 0 (a PostProcess
+             * pass's scene) is the caller's. */
+            for(uint32_t Slot = MATERIAL_TEXTURE_SLOT_FIRST; Slot < MATERIAL_TEXTURE_SLOTS; ++Slot)
+            {
+                GDISetMaterialTexture(Slot, nullptr);
+            }
+            for(const MaterialTexture& Each : InMaterial.Description.Textures)
+            {
+                GDISetMaterialTexture(Each.Slot, FindTexture(Each));
+            }
+
             ApplyDomainState(InMaterial.Description.Domain);
             return true;
         }
@@ -1304,6 +1362,19 @@ namespace RenderCore
 
         for(auto& Each : P->Meshes) { delete Each.second.Gpu; }
         P->Meshes.clear();
+
+        for(uint Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+        for(auto& Each : P->Textures)
+        {
+            if(Each.second.Gpu) { P->RetiredTextures.push_back(Each.second.Gpu); }
+        }
+        P->Textures.clear();
+        for(GDITextureResource* Each : P->RetiredTextures)
+        {
+            Each->Release();
+            delete Each;
+        }
+        P->RetiredTextures.clear();
 
         if(P->ScreenObject)
         {

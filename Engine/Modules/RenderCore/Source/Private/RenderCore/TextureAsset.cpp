@@ -1,5 +1,8 @@
 #include "Public/RenderCore/TextureAsset.h"
 
+#include <mutex>
+#include <unordered_map>
+
 #include "Public/Core/CoreArchive.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Private/RenderCore/AssetFileCommon.h"
@@ -144,4 +147,69 @@ namespace RenderCore
         return EngineCore::SaveArchiveToFile(InPath, Ar);
     }
 #endif
+
+    // === TextureAssetCache ====================================================
+
+    namespace
+    {
+        struct TextureCacheState
+        {
+            std::mutex                                                          Lock;
+            std::unordered_map<std::string, std::shared_ptr<const TextureData>> Textures;   // null: failed
+        };
+
+        /* Function-local, so it exists before any static initialiser asks. */
+        TextureCacheState& GetTextureCache()
+        {
+            static TextureCacheState State;
+            return State;
+        }
+    }
+
+    std::shared_ptr<const TextureData> TextureAssetCache::Find(const std::string& InPath)
+    {
+        if(InPath.empty())
+        {
+            return nullptr;
+        }
+
+        TextureCacheState& Cache = GetTextureCache();
+        {
+            std::lock_guard<std::mutex> Guard(Cache.Lock);
+            const auto Found = Cache.Textures.find(InPath);
+            if(Found != Cache.Textures.end())
+            {
+                return Found->second;
+            }
+        }
+
+        /* Loaded outside the lock; if two threads race, the first stored wins. */
+        auto Loaded = std::make_shared<TextureData>();
+        std::shared_ptr<const TextureData> Result;
+        if(LoadTextureFile(InPath, *Loaded))
+        {
+            Result = std::move(Loaded);
+        }
+        else
+        {
+            RENDERCORE_LOG_WARN("texture '" + InPath + "' cannot be loaded; a material sampling it reads transparent black")
+        }
+
+        std::lock_guard<std::mutex> Guard(Cache.Lock);
+        return Cache.Textures.emplace(InPath, Result).first->second;
+    }
+
+    void TextureAssetCache::Invalidate(const std::string& InPath)
+    {
+        TextureCacheState& Cache = GetTextureCache();
+        std::lock_guard<std::mutex> Guard(Cache.Lock);
+        if(InPath.empty())
+        {
+            Cache.Textures.clear();
+        }
+        else
+        {
+            Cache.Textures.erase(InPath);
+        }
+    }
 }

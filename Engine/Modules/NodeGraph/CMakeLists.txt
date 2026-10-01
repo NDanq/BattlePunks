@@ -93,7 +93,8 @@ if(NODEGRAPH_BUILD_TESTS AND Python3_EXECUTABLE AND NODEGRAPH_GLSLC)
                             "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Masks.mtl.glsl"
                             "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Logic.mtl.glsl"
                             "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Cutout.mtl.glsl"
-                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Wave.mtl.glsl")
+                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Wave.mtl.glsl"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Textured.mtl.glsl")
     set_tests_properties(NodeGraph.MaterialGLSL PROPERTIES TIMEOUT 120 LABELS "smoke")
 endif()
 
