@@ -142,6 +142,7 @@ about them generically. Enforced:
 | Math, Vector, Logic | yes | yes |
 | Pixel Coordinate, Pixel Depth, Clip Position | no | yes |
 | Scene Texture (PostProcess only) | no | yes |
+| Texture Sample (level 0 in the vertex stage) | yes | yes |
 
 **Time** reads `Scene_Time`: seconds since the renderer started (real time,
 so editor previews animate), and the last frame's length.
@@ -187,11 +188,42 @@ HasOffset 0
 BlockSize 48
 Param Color vec3 32 0.2 0.8 1 0
 Param Intensity float 44 1 0 0 0
+Texture 1 Default Default Content/Textures/Brick.nmtexture
+Texture 2 Nearest Clamp Content/Textures/Height Map.nmtexture
 ```
 
 Offsets are bytes into the material block; the first 32 are the engine's.
+`Texture <slot> <filter> <wrap> <path>`: a material texture slot (1-7), the
+node's sampler settings (`Default` keeps the asset's own), and the texture's
+runtime path -- the rest of the line, so it may hold spaces (not `#`).
 `ParseMaterialDescription` refuses version 1 (recompile the graph) and skips
 lines it does not know.
+
+## Textures
+
+A material graph's **Texture Sample** node (NodeGraph's README) names a
+`.nmtexture` and, optionally, its own Filter and Wrap. The renderer, per draw:
+
+- binds slots 1-7 from the material's `Texture` lines, clearing the rest; slot
+  0 stays the caller's (a PostProcess pass's scene);
+- loads each file through `TextureAssetCache` (shared, thread-safe, like
+  `MeshAssetCache`) and makes one GPU texture per path and *resolved* sampler
+  -- the node's setting, else the asset's -- rebuilt when the cache's copy
+  changes. The editor invalidates it when it stages a texture, so a reimport
+  shows next frame;
+- a texture that cannot be loaded is warned once and its slot reads the
+  backend's transparent black.
+
+Texels are read as stored: a colour texture is display space, like every
+colour a material authors, so nothing converts it (`sRGB` on a texture marks
+colour data for later, for an sRGB format). The image's top row is v = 0 --
+glTF's convention, so imported meshes need no flip -- and a quad shows it
+upright. No mipmaps on Vulkan and D3D12 yet (OpenGL generates them): Linear
+filters between texels at the full-size level.
+
+`Games/Sandbox/Materials/Textured` samples `Content/Textures/Quadrants.nmtexture`
+(red, green / blue, white) with its Linear filter overridden to Nearest; the GPU
+smoke check reads its four quarters and its centre.
 
 ## The shader cache
 
@@ -295,12 +327,15 @@ offsets, stage errors, `CanLinkStages`, PostProcess and domain rules),
 `NodeGraph.MaterialGLSL` (every permutation through glslc), RenderCore smoke
 (`.material` v2, block layout, permutation names, cache reader, layered
 providers, vertex colours, stage routing and material slots, the RenderComponent
-serializer's versions; the opt-in GPU check), Editor.Import (`COLOR_0`).
+serializer's versions, `Texture` lines; the opt-in GPU check, which draws
+Textured upright and with its node's filter), Editor.Import (`COLOR_0`), and
+NodeGraph's Texture Sample codegen (slots, shared samples, the vertex stage,
+the errors; `Textured.mtl.glsl` through glslc).
 
 ## Later
 
-Texture parameters and Texture Sample nodes (the slots exist); tangents for
-normal maps; an RGBA16F scene target and tonemapping (needs a render-target
+Texture parameters (a texture an instance or a component can swap); mipmaps
+(and a Mip Level input); separate U and V wrap; tangents for normal maps; an RGBA16F scene target and tonemapping (needs a render-target
 format in GDI); material instances; a cull mode; more light types; Scene
 Depth for PostProcess (depth targets can be textures now; a node and a slot
 remain); an Unlit view mode (and its permutation); OpenGL bring-up through the

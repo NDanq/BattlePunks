@@ -9,6 +9,7 @@
 #include <QUrl>
 
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 
 namespace EditorContent
@@ -57,6 +58,7 @@ namespace EditorContent
         if(!Runtime.isEmpty())
         {
             RenderCore::MeshAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::TextureAssetCache::Invalidate(Runtime.toStdString());
         }
     }
 
@@ -71,6 +73,7 @@ namespace EditorContent
         if(!Runtime.isEmpty())
         {
             RenderCore::MeshAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::TextureAssetCache::Invalidate(Runtime.toStdString());
         }
     }
 }

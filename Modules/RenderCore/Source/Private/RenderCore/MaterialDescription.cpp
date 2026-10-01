@@ -114,6 +114,35 @@ namespace RenderCore
                 }
                 Result.Parameters.push_back(Param);
             }
+            else if(Keyword == "Texture")
+            {
+                /* Texture <Slot> <Filter> <Wrap> <Path>: the path is the rest of the line. */
+                MaterialTexture Texture;
+                std::string Filter, Wrap, Path;
+                Words >> Texture.Slot >> Filter >> Wrap;
+                std::getline(Words, Path);
+                const size_t First = Path.find_first_not_of(" \t");
+                const size_t Last  = Path.find_last_not_of(" \t\r");
+                Texture.Path = First == std::string::npos ? std::string() : Path.substr(First, Last - First + 1);
+
+                bool bKnown = true;
+                if(Filter == "Nearest")      { Texture.bFilter = true; Texture.Filter = ETextureFilter::Nearest; }
+                else if(Filter == "Linear")  { Texture.bFilter = true; Texture.Filter = ETextureFilter::Linear; }
+                else if(Filter != "Default") { bKnown = false; }
+                if(Wrap == "Repeat")         { Texture.bWrap = true; Texture.Wrap = ETextureWrap::Repeat; }
+                else if(Wrap == "Clamp")     { Texture.bWrap = true; Texture.Wrap = ETextureWrap::Clamp; }
+                else if(Wrap == "Mirror")    { Texture.bWrap = true; Texture.Wrap = ETextureWrap::Mirror; }
+                else if(Wrap != "Default")   { bKnown = false; }
+
+                if(Words.bad() || !bKnown || Texture.Path.empty()
+                   || Texture.Slot < MATERIAL_TEXTURE_SLOT_FIRST || Texture.Slot >= MATERIAL_TEXTURE_SLOTS)
+                {
+                    OutError = "bad texture line '" + Line + "'";
+                    return false;
+                }
+                Result.Textures.push_back(Texture);
+                continue;   // getline leaves the stream at its end: not a failure
+            }
             else
             {
                 continue;   // a newer line this build does not know

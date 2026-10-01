@@ -103,9 +103,16 @@ that turns any of them into a concrete type:
 - **derived** (`?`): computed by the schema from the node's settings, as the
   Component Mask's output is.
 
-Node settings are properties of kind String, Identifier, Choice, Variable or
-**Bool**. A Bool is a checkbox in the editor, stored as `true`/`false`, and
-anything else is a validation error.
+Node settings are properties of kind String, Identifier, Choice, Variable,
+**Bool** or **Texture**. A Bool is a checkbox in the editor, stored as
+`true`/`false`, and anything else is a validation error. A Texture is a texture
+asset's runtime-relative path (`Content/Textures/Brick.nmtexture`), typed,
+browsed for or dropped from the Content Browser; anything but a `.nmtexture`
+is a validation error.
+
+An input pin with `Implicit` set has no constant: unlinked, the schema
+supplies what it names -- a Texture Sample's UV is "Texture Coordinate". The
+node and the Details panel show those words instead of a value.
 
 ## Wildcards
 
@@ -180,6 +187,7 @@ it, both committed (RenderCore's MATERIALS.md has the whole design):
   HasOffset 0
   BlockSize 48
   Param Color vec3 32 0.2 0.8 1 0
+  Texture 1 Nearest Default Content/Textures/Brick.nmtexture
   ```
 
 **Material Output.** Its pins are the surface -- BaseColor, Metallic,
@@ -197,6 +205,18 @@ after the engine's 32 bytes (the tint, Clip Value, Two Sided). The offsets are
 computed here and written to the `.material`, and the renderer fills the block
 byte for byte (GDI's `GDISetUniformBlock`). Any number fit, up to the block's
 1024 bytes.
+
+**Texture Sample** reads a texture asset at UV (unlinked: the texture
+coordinate) and gives RGBA, RGB, R, G, B and A. Its settings are the Texture
+and the sampler: **Filter** (Default, Nearest, Linear) and **Wrap** (Default,
+Repeat, Clamp, Mirror); Default keeps what the texture was imported with. Each
+distinct texture-and-sampler combination is one material texture slot, from 1
+(slot 0 is a PostProcess material's scene), declared `Material_Texture<slot>`
+at binding 4 + slot; seven fit. The `.material`'s `Texture` lines say which file
+and settings fill each slot. One node's outputs share one sample. It works in
+both stages; in World Position Offset it reads the full-size level
+(`textureLod`), as the vertex stage has no derivatives. A Texture Sample with
+no texture is an error.
 
 **Two stages.** World Position Offset is the vertex stage's root; everything
 else is the pixel stage's. Each stage is compiled from its own roots, so a
@@ -274,7 +294,8 @@ The inputs read `MaterialInputs`, which each stage's template fills:
   stages; World Position is before the offset in the vertex stage);
 - Clip Position, Pixel Coordinate and Pixel Depth (linear and device; pixel only);
 - Viewport Size, Mouse, Instance Tint and Time (both);
-- Scene Texture (PostProcess materials only).
+- Scene Texture (PostProcess materials only);
+- Texture Sample (both; Textures in the palette).
 
 **Drawing one.** A primitive names the material by its base name:
 a slot of `RenderComponent::Materials`, "Glow" -- slot *i* for mesh section

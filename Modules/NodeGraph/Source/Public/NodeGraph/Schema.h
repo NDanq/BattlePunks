@@ -57,6 +57,11 @@ namespace NodeGraph
          * 0: no requirement. */
         uint32_t      Stage = 0;
 
+        /* An input with no literal: unlinked, the schema supplies this --
+         * "Texture Coordinate" for a Texture Sample's UV. Tools show the
+         * words instead of a constant editor. "" for an ordinary input. */
+        std::string   Implicit;
+
         bool IsInput()  const { return Direction == EPinDirection::Input; }
         bool IsOutput() const { return Direction == EPinDirection::Output; }
         bool IsExec()   const { return Kind == EPinKind::Exec; }
@@ -69,6 +74,7 @@ namespace NodeGraph
         Choice,       // one of Choices
         Variable,     // the name of one of the graph's Variables
         Bool,         // "true" or "false" -- a checkbox
+        Texture,      // a texture asset's runtime-relative path ("Content/Textures/Brick.nmtexture"), or ""
     };
 
     struct PropertyDefinition

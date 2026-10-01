@@ -737,6 +737,32 @@ static void TestMaterialRuntime()
            "a parameter outside the block is refused");
     Expect(!ParseMaterialDescription("NimbleMaterial 2\nDomain Sideways\n", Desc, Error), "an unknown domain is refused");
 
+    // --- Texture lines: what a Texture Sample writes -----------------------------------
+    const char* Textured = "NimbleMaterial 2\nBlockSize 32\n"
+                           "Texture 1 Default Default Content/Textures/Brick.nmtexture\n"
+                           "Texture 2 Nearest Clamp Content/Textures/Height Map.nmtexture\r\n"
+                           "Texture 3 Linear Mirror Content/Water.nmtexture\n";
+    Expect(ParseMaterialDescription(Textured, Desc, Error) && Desc.Textures.size() == 3, "Texture lines parse");
+    if(Desc.Textures.size() == 3)
+    {
+        const MaterialTexture& Brick  = Desc.Textures[0];
+        const MaterialTexture& Height = Desc.Textures[1];
+        const MaterialTexture& Water  = Desc.Textures[2];
+        Expect(Brick.Slot == 1 && Brick.Path == "Content/Textures/Brick.nmtexture" && !Brick.bFilter && !Brick.bWrap,
+               "Default keeps the texture asset's own filter and wrap");
+        Expect(Height.Slot == 2 && Height.Path == "Content/Textures/Height Map.nmtexture"
+               && Height.bFilter && Height.Filter == ETextureFilter::Nearest && Height.bWrap && Height.Wrap == ETextureWrap::Clamp,
+               "a node's overrides are read, and a path is the rest of its line, spaces and all");
+        Expect(Water.bFilter && Water.Filter == ETextureFilter::Linear && Water.bWrap && Water.Wrap == ETextureWrap::Mirror,
+               "Linear and Mirror are read too");
+    }
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nTexture 0 Default Default Content/A.nmtexture\n", Desc, Error)
+           && !ParseMaterialDescription("NimbleMaterial 2\nTexture 8 Default Default Content/A.nmtexture\n", Desc, Error),
+           "slot 0 (a PostProcess scene's) and slots past 7 are refused");
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nTexture 1 Blurry Default Content/A.nmtexture\n", Desc, Error)
+           && !ParseMaterialDescription("NimbleMaterial 2\nTexture 1 Default Default\n", Desc, Error),
+           "an unknown sampler setting, or no path, is refused");
+
     // --- Permutation names: what cook_material_graphs.py writes ---------------------
     Expect(GetPermutationFileName("Glow", GetPixelPermutationKey(EMaterialDomain::Translucent, EMaterialShading::Unlit), false)
            == "Glow@0000000a.fsh", "Translucent Unlit is pixel key 0xa");
@@ -906,10 +932,12 @@ static void TestMaterialsOnGpu()
                && std::find(Layers_.begin(), Layers_.end(), GetShaderCacheLayerName("SandboxGame")) != Layers_.end(),
                "the Engine and SandboxGame caches are mounted");
 
-        /* The centre pixel of each preview, as R, G, B. */
-        struct Check { const char* Material; uint64_t Request; int Rgb[3]; bool bOk; };
-        Check Checks[] = { { "DefaultLit", 0, {}, false }, { "Glow", 0, {}, false },
-                           { "Wave", 0, {}, false },       { "Negative", 0, {}, false } };
+        /* The centre pixel of each preview, as R, G, B; and its quarter
+         * points -- top-left, top-right, bottom-left, bottom-right. */
+        struct Check { const char* Material; uint64_t Request; int Rgb[3]; bool bOk; int Quarter[4][3]; };
+        Check Checks[] = { { "DefaultLit", 0, {}, false, {} }, { "Glow", 0, {}, false, {} },
+                           { "Wave", 0, {}, false, {} },       { "Negative", 0, {}, false, {} },
+                           { "Textured", 0, {}, false, {} } };
         for(Check& Each : Checks)
         {
             Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
@@ -926,11 +954,19 @@ static void TestMaterialsOnGpu()
                 std::printf("    %s: %s\n", Each.Material, Error.c_str());
                 continue;
             }
-            const uint8_t* Px = Pixels.GetData() + Pixels.GetStride() * 32 + 32 * BytesPerPixel(Pixels.GetFormat());
             const bool bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
-            Each.Rgb[0] = bBgra ? Px[2] : Px[0];
-            Each.Rgb[1] = Px[1];
-            Each.Rgb[2] = bBgra ? Px[0] : Px[2];
+            const auto Read = [&](const int InX, const int InY, int (&OutRgb)[3])
+            {
+                const uint8_t* Px = Pixels.GetData() + Pixels.GetStride() * InY + InX * BytesPerPixel(Pixels.GetFormat());
+                OutRgb[0] = bBgra ? Px[2] : Px[0];
+                OutRgb[1] = Px[1];
+                OutRgb[2] = bBgra ? Px[0] : Px[2];
+            };
+            Read(32, 32, Each.Rgb);
+            Read(16, 16, Each.Quarter[0]);
+            Read(48, 16, Each.Quarter[1]);
+            Read(16, 48, Each.Quarter[2]);
+            Read(48, 48, Each.Quarter[3]);
             std::printf("    %s centre = %d %d %d\n", Each.Material, Each.Rgb[0], Each.Rgb[1], Each.Rgb[2]);
         }
 
@@ -946,6 +982,24 @@ static void TestMaterialsOnGpu()
         Expect(Wave.bOk && Wave.Rgb[2] > Wave.Rgb[0] + 40, "Wave (Lit, World Position Offset) draws its blue Color, lit");
         Expect(Negative.bOk && Near(Negative.Rgb[0], 255 - 38) && Near(Negative.Rgb[1], 255 - 40) && Near(Negative.Rgb[2], 255 - 46),
                "Negative (PostProcess) inverts the scene it runs over: the preview's clear colour");
+
+        /* Quadrants.nmtexture: red, green / blue, white, rows top first. */
+        const Check& Textured = Checks[4];
+        const auto Is = [&](const int (&InRgb)[3], const int InR, const int InG, const int InB)
+        {
+            return Near(InRgb[0], InR) && Near(InRgb[1], InG) && Near(InRgb[2], InB);
+        };
+        std::printf("    Textured quarters = %d %d %d / %d %d %d / %d %d %d / %d %d %d\n",
+                    Textured.Quarter[0][0], Textured.Quarter[0][1], Textured.Quarter[0][2],
+                    Textured.Quarter[1][0], Textured.Quarter[1][1], Textured.Quarter[1][2],
+                    Textured.Quarter[2][0], Textured.Quarter[2][1], Textured.Quarter[2][2],
+                    Textured.Quarter[3][0], Textured.Quarter[3][1], Textured.Quarter[3][2]);
+        Expect(Textured.bOk && Is(Textured.Quarter[0], 255, 0, 0) && Is(Textured.Quarter[1], 0, 255, 0)
+               && Is(Textured.Quarter[2], 0, 0, 255) && Is(Textured.Quarter[3], 255, 255, 255),
+               "Textured shows its texture upright: the image's top row at the quad's top");
+        const bool bOneTexel = Is(Textured.Rgb, 255, 0, 0) || Is(Textured.Rgb, 0, 255, 0) || Is(Textured.Rgb, 0, 0, 255)
+                            || Is(Textured.Rgb, 255, 255, 255);
+        Expect(Textured.bOk && bOneTexel, "its node's Nearest overrides the texture's Linear: the centre is one texel, not a blend");
 
         Rend.UnbindWorld();
         Rend.SetViewOverride(nullptr);
