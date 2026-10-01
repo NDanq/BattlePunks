@@ -10,20 +10,25 @@
 #include "Private/NodeGraph/GraphIndex.h"
 
 /*
- * Material graphs -> a pixel shader in the engine's macro GLSL (like GDI's
- * Basic.fsh), so cook_shaders.py handles every backend unchanged.
+ * Material graphs -> a material function (<Name>.mtl.glsl) that the engine's
+ * templates (Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl) include, and
+ * <Name>.material describing it. See RenderCore/MATERIALS.md.
  *
- * Evaluated once per node from the Pixel Output back; anything more than a
- * name or literal becomes a `<type> tN` temporary.
+ * TWO STAGES. World Position Offset is the vertex stage's only root; every
+ * other Material Output pin and every Discard is the pixel stage's. Each stage
+ * is compiled on its own, from its roots back, so a node both reach is
+ * emitted in both functions. A node whose StageMask lacks a stage it is
+ * reached from is an error (CheckStages). Anything more than a name or
+ * literal becomes a `<type> tN` temporary.
  *
- * ONE UNIFORM: `mat4 MaterialParams` in a UBO at binding 2. Columns 0-2 are
- * parameters (sorted by name), column 3 the primitive's Tint. Only one,
- * because GDI packs custom uniforms in hash-map order with no std140 padding
- * (PackCustomUBO / PackCustom). Defaults go in <Name>.material.
+ * UNIFORMS: one std140 block at binding 2 -- the engine's 32 bytes (tint,
+ * clip value, two-sided), then every Parameter by name, at offsets computed
+ * here and written to the .material. The renderer fills it byte for byte.
  *
  * CONTROL FLOW. Branch is a real `if`; For Loop / For Loop End a real `for`.
  * Each value is computed in the innermost block all its uses share
- * (AnalyseScopes). Hints are MaterialPlatform.glsl's HINT_* macros.
+ * (AnalyseScopes). Hints are MaterialPlatform.glsl's HINT_* macros, which the
+ * templates always include.
  */
 namespace NodeGraph
 {
@@ -34,20 +39,35 @@ namespace
         MOP_Template  = 0,   // outputs from PinDefinition::Expression
         MOP_Pass,            // the "Value" input, unchanged (Constant / reroute)
         MOP_Parameter,       // a uniform
-        MOP_Output,          // the root
+        MOP_Output,          // the legacy root: Pixel Output's Color (Unlit, Translucent)
         MOP_Mask,            // Component Mask: the ticked components, in order
         MOP_Swizzle,         // Swizzle: any components, any order, repeats allowed
         MOP_Branch,          // an if: True or False, by comparing A with B
         MOP_LoopBegin,       // For Loop: Index and Value, inside its loop only
         MOP_LoopEnd,         // For Loop End: Next each time round, Result after
         MOP_Discard,         // a second kind of root: discard the pixel when A compares so with B
+        MOP_MaterialOutput,  // the root: Material Output's surface pins and World Position Offset
+        MOP_SceneTexture,    // PostProcess only
     };
 
-    constexpr int UNIFORM_BLOCK_BINDING = 2;
-    constexpr int PARAMETER_SLOTS       = 3;   // MaterialParams columns 0-2; 3 is the tint
-    const char* const PARAMS_UNIFORM    = "MaterialParams";
-    const char* const PLATFORM_HEADER   = "MaterialPlatform.glsl";   // Engine/Content/Shaders/
-    const char* const LOOP_TYPE         = "loop";                    // For Loop -> its For Loop End
+    /* NodeDefinition::StageMask / PinDefinition::Stage bits. */
+    constexpr uint32_t STAGE_VERTEX = 1;
+    constexpr uint32_t STAGE_PIXEL  = 2;
+
+    constexpr int UNIFORM_BLOCK_BINDING = 2;       // GDI_MATERIAL_BLOCK_BINDING
+    constexpr int ENGINE_BLOCK_BYTES    = 32;      // Material_Tint .. Material_Reserved1
+    constexpr int MAX_BLOCK_BYTES       = 1024;    // GDI_MATERIAL_BLOCK_MAX_BYTES
+    const char* const PARAM_PREFIX      = "Param_";
+    const char* const TINT_UNIFORM      = "Material_Tint";
+    const char* const OFFSET_PIN        = "WorldPositionOffset";
+    const char* const LOOP_TYPE         = "loop";  // For Loop -> its For Loop End
+
+    const std::vector<std::string> GDomainChoices  = { "Opaque", "Masked", "Translucent", "PostProcess" };
+    const std::vector<std::string> GShadingChoices = { "Lit", "Unlit" };
+
+    /* std140 base alignment and size of a float type. */
+    int Std140Align(const std::string& InType) { return InType == "float" ? 4 : InType == "vec2" ? 8 : 16; }
+    int Std140Size(const std::string& InType)  { return InType == "float" ? 4 : InType == "vec2" ? 8 : InType == "vec3" ? 12 : 16; }
 
     const std::vector<std::string> GFloatTypes  = { "float", "vec2", "vec3", "vec4" };
     const std::vector<std::string> GVectorTypes = { "vec3", "vec2", "vec4" };
@@ -189,6 +209,11 @@ namespace
         MaterialSchema();
         void Compile(const Graph& InGraph, CompileResult& OutResult) const override;
 
+        std::string GetStageName(const uint32_t InStageBit) const override
+        {
+            return InStageBit == STAGE_VERTEX ? "vertex" : InStageBit == STAGE_PIXEL ? "pixel" : std::string();
+        }
+
         /* A mask's or swizzle's output: one component per letter selected. */
         std::string ResolvePinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const override
         {
@@ -287,7 +312,7 @@ namespace
         {
             std::string Type;
             NodeGuid    Node;
-            int         Slot = 0;
+            int         Offset = 0;   // bytes into the material block
             std::string Default;
         };
 
@@ -308,8 +333,12 @@ namespace
         };
 
         void CollectParameters();
+        void CheckStages(const Node& InRoot, const NodeDefinition& InRootDef);
+        void BeginStage(const std::vector<const Node*>& InRoots, const std::set<std::string>& InRootPins);
         void AnalyseScopes(const std::vector<const Node*>& InRoots);
         void ValidateLoops();
+        bool IsRootPinSkipped(const Node& InNode, const PinDefinition& InPin) const;
+        bool IsPinSet(const Node& InNode, const PinDefinition& InPin) const;
 
         std::string Output(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
         std::string EmitBranch(const Node& InNode, const NodeDefinition& InDef, const std::string& InType);
@@ -332,13 +361,21 @@ namespace
         std::map<PinRef, std::string>    Values;
         std::set<NodeGuid>               InProgress;
         std::map<std::string, Parameter> Parameters;   // by name: sorted, so the block layout is stable
+        int                              BlockBytes = ENGINE_BLOCK_BYTES;
         int                              NextTemp = 0;
+
+        std::string                      Domain  = "Opaque";
+        std::string                      Shading = "Lit";
+
+        /* The stage being compiled: its Output node, and the pins of it that
+         * are this stage's roots (AnalyseScopes looks only through those). */
+        const Node*                      RootNode = nullptr;
+        std::set<std::string>            RootPins;
 
         std::map<NodeGuid, Scope>        Scopes;          // every node the output reaches; empty after a cycle
         std::map<NodeGuid, OpenLoop>     OpenLoops;       // by For Loop, while its body is written
         std::vector<std::vector<PinRef>> Blocks;          // the values cached in each open block
         int                              NextLoop = 0;
-        bool                             bUsesPlatform = false;   // a HINT_* macro was written
     };
 
     /* Whether InInner is InOuter or a block inside it. */
@@ -357,34 +394,91 @@ namespace
         for(const Node* Each : Index.SortedNodes())
         {
             const NodeDefinition* Def = Index.FindDefinition(*Each);
-            if(Def && Def->Op == MOP_Output)
+            if(!Def || (Def->Op != MOP_Output && Def->Op != MOP_MaterialOutput)) { continue; }
+            if(Root)
             {
-                Root = Each;
-                RootDef = Def;
-                break;
+                Result.Error(Each->Id, std::string(), "a material has one output: this '" + Def->DisplayName
+                             + "' and a '" + RootDef->DisplayName + "' are both here");
+                continue;
             }
+            Root = Each;
+            RootDef = Def;
         }
         if(!Root)
         {
-            Result.Error(NodeGuid(), std::string(), "a material needs a Pixel Output node");
+            Result.Error(NodeGuid(), std::string(), "a material needs a Material Output node");
             return;
         }
 
-        /* Discards, in GUID order, before the colour. */
-        std::vector<const Node*> Roots;
+        /* The legacy Pixel Output is Unlit and Translucent: how every material drew before. */
+        const bool bLegacy = RootDef->Op == MOP_Output;
+        Domain  = bLegacy ? "Translucent" : Root->GetProperty("Domain", "Opaque");
+        Shading = bLegacy ? "Unlit" : Root->GetProperty("Shading", "Lit");
+
+        double ClipValue = 0.5, MaxOffset = 0.0;
+        if(!bLegacy)
+        {
+            if(!ParseNumber(Root->GetProperty("ClipValue", "0.5"), ClipValue))
+            {
+                Result.Error(Root->Id, std::string(), "Clip Value must be a number");
+            }
+            if(!ParseNumber(Root->GetProperty("MaxOffset", "0"), MaxOffset) || MaxOffset < 0.0)
+            {
+                Result.Error(Root->Id, std::string(), "Max Offset must be a number, 0 or more");
+            }
+        }
+        const bool bTwoSided = !bLegacy && Root->GetProperty("TwoSided", "false") == "true";
+
+        const PinDefinition* OffsetPin = RootDef->FindPin(OFFSET_PIN, EPinDirection::Input);
+        const bool bHasOffset = OffsetPin && IsPinSet(*Root, *OffsetPin);
+
+        if(Domain == "PostProcess" && Shading == "Lit")
+        {
+            Result.Error(Root->Id, std::string(), "a PostProcess material is Unlit: set Shading to Unlit");
+        }
+        if(Domain == "PostProcess" && bHasOffset)
+        {
+            Result.Error(Root->Id, OFFSET_PIN, "a PostProcess material draws a full-screen pass: it has no World Position Offset");
+        }
+        if(!bLegacy)
+        {
+            /* Pins this domain or shading never reads: a link to one is a mistake worth a word. */
+            for(const PinDefinition& Pin : RootDef->Pins)
+            {
+                if(!Pin.IsInput() || !Index.LinkInto(Root->Id, Pin.Name)) { continue; }
+                const bool bLitOnly = Pin.Name == "BaseColor" || Pin.Name == "Metallic" || Pin.Name == "Roughness"
+                                   || Pin.Name == "Specular" || Pin.Name == "Normal" || Pin.Name == "AmbientOcclusion";
+                std::string Why;
+                if(bLitOnly && Shading == "Unlit")                       { Why = "an Unlit material"; }
+                if(Pin.Name == "Opacity" && Domain != "Translucent")    { Why = "a " + Domain + " material (only Translucent blends)"; }
+                if(Pin.Name == "OpacityMask" && Domain != "Masked")     { Why = "a " + Domain + " material (only Masked clips)"; }
+                if(!Why.empty()) { Result.Warning(Root->Id, Pin.Name, Pin.Name + " is unused by " + Why); }
+            }
+        }
+
+        CollectParameters();
+        CheckStages(*Root, *RootDef);
+        if(Result.HasErrors()) { return; }
+
+        // --- Pixel stage: the Discards, in GUID order, then the surface --------
+        std::vector<const Node*> PixelRoots;
         for(const Node* Each : Index.SortedNodes())
         {
             const NodeDefinition* Def = Index.FindDefinition(*Each);
-            if(Def && Def->Op == MOP_Discard) { Roots.push_back(Each); }
+            if(Def && Def->Op == MOP_Discard) { PixelRoots.push_back(Each); }
         }
-        Roots.push_back(Root);
+        PixelRoots.push_back(Root);
 
-        CollectParameters();
-        AnalyseScopes(Roots);
-        ValidateLoops();
+        std::set<std::string> PixelPins;
+        for(const PinDefinition& Pin : RootDef->Pins)
+        {
+            if(Pin.IsInput() && Pin.Stage == STAGE_PIXEL) { PixelPins.insert(Pin.Name); }
+        }
+
+        BeginStage(PixelRoots, PixelPins);
         if(Result.HasErrors()) { return; }
 
-        for(const Node* Each : Roots)
+        for(const Node* Each : PixelRoots)
         {
             if(Each == Root) { continue; }
             const NodeDefinition& Def = *Index.FindDefinition(*Each);
@@ -393,39 +487,91 @@ namespace
             Body.Line("if(" + A + " " + Each->GetProperty("Compare", "<") + " " + B + ") { discard; }", Each->Id);
         }
 
-        const PinDefinition* ColorPin = RootDef->FindPin("Color", EPinDirection::Input);
-        const std::string Color = Input(*Root, *RootDef, *ColorPin);
+        if(bLegacy)
+        {
+            std::string Color = Input(*Root, *RootDef, *RootDef->FindPin("Color", EPinDirection::Input));
+            if(!IsName(Color))
+            {
+                const std::string Temp = "t" + std::to_string(NextTemp++);
+                Body.Line("vec4 " + Temp + " = " + Color + ";", Root->Id);
+                Color = Temp;
+            }
+            Body.Line("Surface.Emissive = " + Color + ".rgb;", Root->Id);
+            Body.Line("Surface.Opacity = " + Color + ".a;", Root->Id);
+        }
+        else
+        {
+            /* Only what is linked or set: the rest keeps DefaultMaterialSurface's value. */
+            for(const PinDefinition& Pin : RootDef->Pins)
+            {
+                if(!Pin.IsInput() || Pin.Stage != STAGE_PIXEL || !IsPinSet(*Root, Pin)) { continue; }
+                const std::string Value = Input(*Root, *RootDef, Pin);
+                Body.Line("Surface." + Pin.Name + " = " + Value + ";", Root->Id);
+            }
+        }
         if(Result.HasErrors()) { return; }
+        const CodeWriter PixelBody = Body;
 
-        const std::string BlockName = SanitizeIdentifier(G.Name.empty() ? std::string("Material") : G.Name) + "_Block";
+        // --- Vertex stage: World Position Offset ------------------------------
+        CodeWriter VertexBody;
+        if(bHasOffset)
+        {
+            BeginStage({ Root }, { OFFSET_PIN });
+            if(Result.HasErrors()) { return; }
+            const std::string Offset = Input(*Root, *RootDef, *OffsetPin);
+            Body.Line("return " + Offset + ";", Root->Id);
+            if(Result.HasErrors()) { return; }
+            VertexBody = Body;
+        }
+
+        // --- The file -----------------------------------------------------------
+        const std::string Name      = G.Name.empty() ? std::string("Material") : G.Name;
+        const std::string BlockName = SanitizeIdentifier(Name) + "_Block";
 
         CodeWriter Out;
-        Out.Line("#version 440 core");
         Out.Line("// Generated by NimbleEditor from the material graph \"" + G.Name + "\". Do not edit.");
-        Out.Blank();
-        if(bUsesPlatform) { Out.Line("#include <" + std::string(PLATFORM_HEADER) + ">"); }   // first: it may declare an #extension
-        Out.Line("#include <Common.glsl>");
-        Out.Blank();
-        Out.Line("OUTPUT(0, vec4, Output)");
+        Out.Line("// " + Domain + ", " + Shading + ". Included by Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl.");
         Out.Blank();
 
-        /* Always declared: the renderer always sets it. */
-        Out.Line("// Columns 0-2: parameters (see " + (G.Name.empty() ? std::string("<Name>") : G.Name)
-                 + ".material); column 3: the primitive's tint.");
-        Out.Line("UBO_BEGIN(" + std::to_string(UNIFORM_BLOCK_BINDING) + ", " + BlockName + ")");
+        /* Declared in both stages that include it, so both see the same block. */
+        Out.Line("// Bytes 0-31 are the engine's; the parameters' offsets are in " + Name + ".material.");
+        Out.Line("UBO_BLOCK_BEGIN(" + std::to_string(UNIFORM_BLOCK_BINDING) + ", " + BlockName + ")");
         Out.Indent();
-        Out.Line("SHADER_UNIFORM(mat4, " + std::string(PARAMS_UNIFORM) + ")");
+        Out.Line("vec4  Material_Tint;");
+        Out.Line("float Material_ClipValue;");
+        Out.Line("float Material_TwoSided;");
+        Out.Line("float Material_Reserved0;");
+        Out.Line("float Material_Reserved1;");
+        for(const auto& Each : Parameters)
+        {
+            Out.Line(Each.second.Type + std::string(Each.second.Type == "float" ? " " : "  ") + PARAM_PREFIX + Each.first + ";",
+                     Each.second.Node);
+        }
         Out.Outdent();
-        Out.Line("UBO_END(" + BlockName + ")");
+        Out.Line("UBO_BLOCK_END(" + BlockName + ")");
+
+        if(bHasOffset)
+        {
+            Out.Blank();
+            Out.Line("#if VERTEX_SHADER");
+            Out.Line("vec3 CalcMaterialOffset(in MaterialInputs Inputs)");
+            Out.Line("{");
+            Out.Indent();
+            Out.Append(VertexBody);
+            Out.Outdent();
+            Out.Line("}");
+            Out.Line("#endif");
+        }
 
         Out.Blank();
-        Out.Line("void main(void)");
+        Out.Line("#if PIXEL_SHADER");
+        Out.Line("void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)");
         Out.Line("{");
         Out.Indent();
-        Out.Append(Body);
-        Out.Line("Output = " + Color + ";", Root->Id);
+        Out.Append(PixelBody);
         Out.Outdent();
         Out.Line("}");
+        Out.Line("#endif");
 
         Result.Code      = std::move(Out.Text);
         Result.LineNodes = std::move(Out.LineNodes);
@@ -433,23 +579,112 @@ namespace
         /*
          * The companion: what the renderer loads beside the shader.
          *
-         *     NimbleMaterial 1
-         *     Param <Name> <Slot> <Type> <x> <y> <z> <w>
+         *     NimbleMaterial 2
+         *     Domain <Opaque|Masked|Translucent|PostProcess>
+         *     Shading <Lit|Unlit>
+         *     TwoSided <0|1>
+         *     ClipValue <x>
+         *     MaxOffset <x>
+         *     HasOffset <0|1>
+         *     BlockSize <bytes>
+         *     Param <Name> <Type> <Offset> <x> <y> <z> <w>
          *
          * '#' starts a comment. Unused components are 0.
          */
         std::string Material = "# Generated by NimbleEditor from the material graph \"" + G.Name + "\". Do not edit.\n"
-                               "NimbleMaterial 1\n";
+                               "NimbleMaterial 2\n";
+        Material += "Domain " + Domain + "\n";
+        Material += "Shading " + Shading + "\n";
+        Material += std::string("TwoSided ") + (bTwoSided ? "1" : "0") + "\n";
+        Material += "ClipValue " + FormatNumber(ClipValue) + "\n";
+        Material += "MaxOffset " + FormatNumber(MaxOffset) + "\n";
+        Material += std::string("HasOffset ") + (bHasOffset ? "1" : "0") + "\n";
+        Material += "BlockSize " + std::to_string(BlockBytes) + "\n";
         for(const auto& Each : Parameters)
         {
             std::vector<double> Values;
             ParseNumbers(Each.second.Default, Components(Each.second.Type), Values);
             Values.resize(4, 0.0);
-            Material += "Param " + Each.first + " " + std::to_string(Each.second.Slot) + " " + Each.second.Type;
+            Material += "Param " + Each.first + " " + Each.second.Type + " " + std::to_string(Each.second.Offset);
             for(const double Value : Values) { Material += " " + FormatNumber(float(Value)); }
             Material += "\n";
         }
         Result.Companions.push_back({ ".material", Material });
+    }
+
+    /* Whether an Output pin says anything: linked, or given a constant other
+     * than its default. An unset pin keeps the template's default. */
+    bool MaterialCompiler::IsPinSet(const Node& InNode, const PinDefinition& InPin) const
+    {
+        if(Index.LinkInto(InNode.Id, InPin.Name)) { return true; }
+        const std::string* Given = InNode.FindConstant(InPin.Name);
+        if(!Given) { return false; }
+
+        std::vector<double> A, B;
+        const size_t Count = Components(InPin.Type);
+        return !(ParseNumbers(*Given, Count, A) && ParseNumbers(InPin.Default, Count, B) && A == B);
+    }
+
+    /* AnalyseScopes and the Hoist walk look into the Output node only through
+     * the current stage's pins. */
+    bool MaterialCompiler::IsRootPinSkipped(const Node& InNode, const PinDefinition& InPin) const
+    {
+        return &InNode == RootNode && !RootPins.count(InPin.Name);
+    }
+
+    /* Starts a stage afresh: its own temporaries, scopes and blocks. */
+    void MaterialCompiler::BeginStage(const std::vector<const Node*>& InRoots, const std::set<std::string>& InRootPins)
+    {
+        Body = CodeWriter();
+        Values.clear();
+        InProgress.clear();
+        Scopes.clear();
+        OpenLoops.clear();
+        Blocks.clear();
+        NextTemp = 0;
+        NextLoop = 0;
+
+        RootNode = InRoots.empty() ? nullptr : InRoots.back();
+        RootPins = InRootPins;
+
+        AnalyseScopes(InRoots);
+        ValidateLoops();
+    }
+
+    /*
+     * Every node a stage's root pins reach must have that stage in its
+     * StageMask. Reported once per node, on the node, naming the root pin --
+     * the editor refuses such links (Schema::CanLinkStages), but a file can
+     * still hold one.
+     */
+    void MaterialCompiler::CheckStages(const Node& InRoot, const NodeDefinition& InRootDef)
+    {
+        std::set<NodeGuid> Reported;
+        for(const PinDefinition& RootPin : InRootDef.Pins)
+        {
+            if(!RootPin.IsInput() || RootPin.Stage == 0) { continue; }
+
+            std::set<NodeGuid> Seen;
+            const std::function<void(const Node&, const PinDefinition&)> Walk = [&](const Node& InNode, const PinDefinition& InPin)
+            {
+                const Link* Into = Index.LinkInto(InNode.Id, InPin.Name);
+                const Node* Source = Into ? Index.FindNode(Into->From.Node) : nullptr;
+                const NodeDefinition* SourceDef = Source ? Index.FindDefinition(*Source) : nullptr;
+                if(!SourceDef || !Seen.insert(Source->Id).second) { return; }
+
+                if(!(SourceDef->StageMask & RootPin.Stage) && Reported.insert(Source->Id).second)
+                {
+                    const std::string Stage = RootPin.Stage == STAGE_VERTEX ? "vertex" : "pixel";
+                    Result.Error(Source->Id, std::string(), "'" + SourceDef->DisplayName + "' is not available in the " + Stage
+                                 + " stage, and it feeds " + RootPin.Name);
+                }
+                for(const PinDefinition& Pin : SourceDef->Pins)
+                {
+                    if(Pin.IsInput()) { Walk(*Source, Pin); }
+                }
+            };
+            Walk(InRoot, RootPin);
+        }
     }
 
     /* Every Parameter, used or not, gets a slot by name, so slots are stable. */
@@ -486,15 +721,22 @@ namespace
             Parameters.emplace(Name, Added);
         }
 
-        if(int(Parameters.size()) > PARAMETER_SLOTS)
+        /* std140, in name order: each at its base alignment after the engine's 32 bytes. */
+        int Offset = ENGINE_BLOCK_BYTES;
+        for(auto& Each : Parameters)
         {
-            Result.Error(NodeGuid(), std::string(), "a material has at most " + std::to_string(PARAMETER_SLOTS)
-                         + " parameters (MaterialParams columns 0-2; column 3 is the instance tint), and this one has "
-                         + std::to_string(Parameters.size()));
+            const int Align = Std140Align(Each.second.Type);
+            Offset = (Offset + Align - 1) / Align * Align;
+            Each.second.Offset = Offset;
+            Offset += Std140Size(Each.second.Type);
         }
+        BlockBytes = (Offset + 15) / 16 * 16;
 
-        int Slot = 0;
-        for(auto& Each : Parameters) { Each.second.Slot = Slot++; }
+        if(BlockBytes > MAX_BLOCK_BYTES)
+        {
+            Result.Error(NodeGuid(), std::string(), "the material's parameters take " + std::to_string(BlockBytes)
+                         + " bytes; a material block holds at most " + std::to_string(MAX_BLOCK_BYTES));
+        }
     }
 
     /*
@@ -515,6 +757,7 @@ namespace
             {
                 for(const PinDefinition& Pin : Def->Pins)
                 {
+                    if(IsRootPinSkipped(InNode, Pin)) { continue; }
                     const Link* Into = Pin.IsInput() ? Index.LinkInto(InNode.Id, Pin.Name) : nullptr;
                     const Node* Source = Into ? Index.FindNode(Into->From.Node) : nullptr;
                     if(!Source) { continue; }
@@ -540,6 +783,7 @@ namespace
             const Scope Own = Scopes[Each.Id];
             for(const PinDefinition& Pin : Def->Pins)
             {
+                if(IsRootPinSkipped(Each, Pin)) { continue; }
                 const Link* Into = Pin.IsInput() ? Index.LinkInto(Each.Id, Pin.Name) : nullptr;
                 if(!Into || !Index.FindNode(Into->From.Node)) { continue; }
 
@@ -634,14 +878,18 @@ namespace
         switch(InDef.Op)
         {
             case MOP_Parameter:
-            {
-                /* Its column of MaterialParams, narrowed to its type. */
-                const auto Found = Parameters.find(InNode.GetProperty("Name", "Param"));
-                static const char* const Masks[] = { "", ".x", ".xy", ".xyz", "" };
-                Value = std::string(PARAMS_UNIFORM) + "[" + std::to_string(Found != Parameters.end() ? Found->second.Slot : 0) + "]"
-                      + Masks[Components(Type)];
+                /* Its member of the material block. */
+                Value = PARAM_PREFIX + InNode.GetProperty("Name", "Param");
                 break;
-            }
+
+            case MOP_SceneTexture:
+                if(Domain != "PostProcess")
+                {
+                    Result.Error(InNode.Id, InPin.Name, "'" + InDef.DisplayName + "' is the scene a PostProcess material "
+                                 "draws over; this material is " + Domain);
+                }
+                Value = InPin.Expression;
+                break;
 
             case MOP_Mask:
             case MOP_Swizzle:
@@ -876,7 +1124,6 @@ namespace
         std::string Hint = InNode.GetProperty("Hint", "None");
         if(Hint == "None") { return std::string(); }
 
-        bUsesPlatform = true;
         std::transform(Hint.begin(), Hint.end(), Hint.begin(), [](const unsigned char Ch) { return char(std::toupper(Ch)); });
         return "HINT_" + Hint + " ";
     }
@@ -1029,7 +1276,7 @@ namespace
     }
 
     MaterialSchema::MaterialSchema()
-        : Schema("Material", "material", ".fsh")
+        : Schema("Material", "material", ".mtl.glsl")
     {
         AddType({ "float", "Float",   0x9BD96A, "0" });
         AddType({ "vec2",  "Vector2", 0x6AC9D9, "0" });
@@ -1061,16 +1308,60 @@ namespace
         };
 
         // --- Output --------------------------------------------------------------
+        const auto Staged = [](PinDefinition InPin, const uint32_t InStage, const std::string& InTooltip)
+        {
+            InPin.Stage   = InStage;
+            InPin.Tooltip = InTooltip;
+            return InPin;
+        };
+        {
+            NodeDefinition Def;
+            Def.Type        = "Output.Material";
+            Def.DisplayName = "Material Output";
+            Def.Category    = "Output";
+            Def.Keywords    = "surface pbr result";
+            Def.Tooltip     = "The surface: what the pixel stage shades, and how far the vertex stage moves each vertex. "
+                              "An unlinked pin keeps its default.";
+            Def.Role        = ENodeRole::Output;
+            Def.bUnique     = true;
+            Def.Op          = MOP_MaterialOutput;
+            Def.StageMask   = STAGE_VERTEX | STAGE_PIXEL;
+            Def.Pins        = {
+                Staged(In("BaseColor", "vec3", "1 1 1"), STAGE_PIXEL, "Lit: the surface's albedo (metals: their reflectance)"),
+                Staged(In("Metallic", "float", "0"), STAGE_PIXEL, "Lit: 0 dielectric, 1 metal"),
+                Staged(In("Roughness", "float", "0.5"), STAGE_PIXEL, "Lit: 0 mirror, 1 fully rough"),
+                Staged(In("Specular", "float", "0.5"), STAGE_PIXEL, "Lit: a dielectric's reflectance; 0.5 is 4%"),
+                Staged(In("Emissive", "vec3", "0 0 0"), STAGE_PIXEL, "Light the surface gives off; an Unlit material's colour"),
+                Staged(In("Opacity", "float", "1"), STAGE_PIXEL, "Translucent: 0 clear, 1 solid"),
+                Staged(In("OpacityMask", "float", "1"), STAGE_PIXEL, "Masked: the pixel is discarded below Clip Value"),
+                Staged(In("Normal", "vec3", "0 0 -1"), STAGE_PIXEL, "Lit: the world-space normal; unlinked, the vertex normal"),
+                Staged(In("AmbientOcclusion", "float", "1"), STAGE_PIXEL, "Lit: how much ambient light reaches the surface"),
+                Staged(In(OFFSET_PIN, "vec3", "0 0 0"), STAGE_VERTEX,
+                       "World-space offset added to each vertex. Vertex stage: pixel-only nodes cannot feed it"),
+            };
+            Def.Properties  = {
+                { "Domain", EPropertyKind::Choice, "Opaque", GDomainChoices,
+                  "Opaque, Masked (clips at Clip Value), Translucent (blends, drawn after) or PostProcess (a full-screen pass)" },
+                { "Shading", EPropertyKind::Choice, "Lit", GShadingChoices, "Lit: physically based, by the scene's light. Unlit: Emissive only" },
+                { "TwoSided", EPropertyKind::Bool, "false", {}, "Light back faces with a flipped normal" },
+                { "ClipValue", EPropertyKind::String, "0.5", {}, "Masked: Opacity Mask below this discards the pixel" },
+                { "MaxOffset", EPropertyKind::String, "0", {},
+                  "The farthest World Position Offset moves a vertex, in world units: pads the culling bounds" },
+            };
+            AddNode(std::move(Def));
+        }
         {
             NodeDefinition Def;
             Def.Type        = "Output.Pixel";
             Def.DisplayName = "Pixel Output";
-            Def.Category    = "Output";
-            Def.Tooltip     = "The colour this pixel shader writes.";
+            Def.Category    = "Output/Legacy";
+            Def.Tooltip     = "The first material output: one colour, drawn Unlit and Translucent (alpha blends). "
+                              "Material Output supersedes it.";
             Def.Role        = ENodeRole::Output;
             Def.bUnique     = true;
             Def.Op          = MOP_Output;
-            Def.Pins        = { In("Color", "vec4", "1 1 1 1") };
+            Def.StageMask   = STAGE_PIXEL;
+            Def.Pins        = { Staged(In("Color", "vec4", "1 1 1 1"), STAGE_PIXEL, "RGB is the colour, A the opacity") };
             AddNode(std::move(Def));
         }
         {
@@ -1084,22 +1375,55 @@ namespace
                               "with the default '<', when A is below B (an alpha below 0.5).";
             Def.Role        = ENodeRole::Output;
             Def.Op          = MOP_Discard;
-            Def.Pins        = { In("A", "float"), In("B", "float", "0.5") };
+            Def.StageMask   = STAGE_PIXEL;
+            Def.Pins        = { Staged(In("A", "float"), STAGE_PIXEL, std::string()), Staged(In("B", "float", "0.5"), STAGE_PIXEL, std::string()) };
             Def.Properties  = { { "Compare", EPropertyKind::Choice, "<", GCompareChoices, "Discard when A compares so with B" } };
             AddNode(std::move(Def));
         }
 
         // --- Inputs --------------------------------------------------------------
-        Pure("Input.TexCoord",   "Texture Coordinate", "Inputs", { Out("UV", "vec2", "Interpolants.TexCoord") }, {}, "uv");
-        Pure("Input.Position",   "Interpolated Position", "Inputs", { Out("Position", "vec3", "Interpolants.Position") });
-        Pure("Input.FragCoord",  "Pixel Coordinate", "Inputs", { Out("Coord", "vec4", "gl_FragCoord") }, {}, "screen frag");
+        /* Inputs read MaterialInputs (MaterialCommon.glsl), which each stage's
+         * template fills -- so one expression serves both stages. */
+        const auto PixelOnly = [](NodeDefinition& InDef, const std::string& InTooltip)
+        {
+            InDef.StageMask = STAGE_PIXEL;
+            InDef.Tooltip   = InTooltip + " Pixel stage only: it cannot feed World Position Offset.";
+        };
+
+        Pure("Input.TexCoord",   "Texture Coordinate", "Inputs", { Out("UV", "vec2", "Inputs.TexCoord") }, {}, "uv");
+        Pure("Input.VertexNormal", "Vertex Normal", "Inputs", { Out("Normal", "vec3", "Inputs.WorldNormal") }, {}, "world normal")
+            .Tooltip = "The interpolated world-space normal (a quad's faces -Z before its rotation).";
+        Pure("Input.VertexColor", "Vertex Color", "Inputs",
+             { Out("Color", "vec4", "Inputs.Color"), Out("RGB", "vec3", "Inputs.Color.rgb"), Out("A", "float", "Inputs.Color.a") },
+             {}, "colour rgba painted")
+            .Tooltip = "The mesh's per-vertex colour; white when it has none (and on quads).";
+        Pure("Input.WorldPosition", "World Position", "Inputs", { Out("Position", "vec3", "Inputs.WorldPosition") }, {}, "absolute")
+            .Tooltip = "Where this point is in the world. In the vertex stage, before World Position Offset moves it.";
+        PixelOnly(Pure("Input.Position", "Clip Position", "Inputs", { Out("Position", "vec3", "Inputs.ClipPosition") }, {},
+                       "interpolated projected"),
+                  "The interpolated clip-space position (before the divide by w).");
+        PixelOnly(Pure("Input.FragCoord", "Pixel Coordinate", "Inputs", { Out("Coord", "vec4", "Inputs.FragCoord") }, {}, "screen frag"),
+                  "gl_FragCoord: the pixel's window coordinates, depth and 1/w.");
+        PixelOnly(Pure("Input.PixelDepth", "Pixel Depth", "Inputs",
+                       { Out("Linear", "float", "Inputs.ViewDepth"), Out("Device", "float", "Inputs.DeviceDepth") }, {}, "z distance"),
+                  "Linear: distance in front of the camera, in world units. Device: the depth buffer's 0-1 value.");
         Pure("Input.Viewport",   "Viewport Size", "Inputs",
              { Out("Size", "vec2", "ViewParameters.Resolution.xy"), Out("InvSize", "vec2", "ViewParameters.Resolution.zw") },
              {}, "resolution");
         Pure("Input.InstanceTint", "Instance Tint", "Inputs",
-             { Out("Tint", "vec4", std::string(PARAMS_UNIFORM) + "[3]") }, {}, "color colour primitive per-entity");
+             { Out("Tint", "vec4", TINT_UNIFORM) }, {}, "color colour primitive per-entity");
         Pure("Input.Mouse",      "Mouse", "Inputs",
              { Out("Position", "vec2", "ViewParameters.MouseCoords.xy"), Out("Down", "float", "ViewParameters.MouseCoords.z") });
+        Pure("Input.Time", "Time", "Inputs", { Out("Time", "float", "Scene_Time.x"), Out("Delta", "float", "Scene_Time.y") },
+             {}, "seconds clock animate elapsed")
+            .Tooltip = "Seconds since the renderer started, and the last frame's length.";
+        {
+            NodeDefinition& Def = Pure("Input.SceneTexture", "Scene Texture", "Inputs",
+                                       { Out("Color", "vec4", "texture(Material_SceneColor, Inputs.TexCoord)") }, {},
+                                       "scene color screen post process");
+            Def.Op = MOP_SceneTexture;
+            PixelOnly(Def, "PostProcess only: the scene drawn so far, at this pixel.");
+        }
 
         // --- Values --------------------------------------------------------------
         {
@@ -1110,9 +1434,9 @@ namespace
         {
             NodeDefinition& Def = Pure("Parameter", "Parameter", "Values", { Out("Value", WILDCARD_TYPE, "") }, GFloatTypes, "uniform");
             Def.Op      = MOP_Parameter;
-            Def.Tooltip = "A value the renderer supplies: one column of MaterialParams, its default from <Name>.material. "
-                          "At most three per material.";
-            Def.Properties = { { "Name", EPropertyKind::Identifier, "Param", {}, "The parameter's name; parameters take their slots in name order" },
+            Def.Tooltip = "A value the renderer supplies: a member of the material's uniform block, its default from "
+                          "<Name>.material. Any number, within the block's 1024 bytes.";
+            Def.Properties = { { "Name", EPropertyKind::Identifier, "Param", {}, "The parameter's name; parameters are laid out in name order" },
                                { "Default", EPropertyKind::String, "0", {}, "The value the renderer uses, e.g. \"1 0.5 0\"" } };
         }
 
@@ -1241,6 +1565,19 @@ namespace
     void MaterialSchema::Compile(const Graph& InGraph, CompileResult& OutResult) const
     {
         MaterialCompiler(InGraph, *this, OutResult).Run();
+
+        /* A node both stages reach is checked twice; say each thing once. */
+        std::vector<Diagnostic> Unique;
+        for(const Diagnostic& Each : OutResult.Diagnostics)
+        {
+            const bool bSeen = std::any_of(Unique.begin(), Unique.end(), [&](const Diagnostic& InOther)
+            {
+                return InOther.Severity == Each.Severity && InOther.Node == Each.Node && InOther.Pin == Each.Pin
+                    && InOther.Message == Each.Message;
+            });
+            if(!bSeen) { Unique.push_back(Each); }
+        }
+        OutResult.Diagnostics = std::move(Unique);
     }
 }
 

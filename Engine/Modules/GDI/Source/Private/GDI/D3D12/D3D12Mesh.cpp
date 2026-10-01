@@ -57,13 +57,16 @@ void D3D12Mesh::InitResource()
         return;
     }
 
-    if(RenderData.Normal && IsIndexed())
+    if(RenderData.Normal && RenderData.Color && IsIndexed())
     {
+        const UINT ColorBytes = NumVerts * 4 * sizeof(float);
         IndexBytes   = RenderData.NumIndices * sizeof(uint32_t);
         NormalBuffer = D3D12Ops::CreateBuffer(Device, PositionBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        ColorBuffer  = D3D12Ops::CreateBuffer(Device, ColorBytes,    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
         IndexBuffer  = D3D12Ops::CreateBuffer(Device, IndexBytes,    D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
-        if(!NormalBuffer || !IndexBuffer ||
+        if(!NormalBuffer || !ColorBuffer || !IndexBuffer ||
            !D3D12Ops::UploadBuffer(Device, NormalBuffer.Get(), RenderData.Normal, PositionBytes) ||
+           !D3D12Ops::UploadBuffer(Device, ColorBuffer.Get(), RenderData.Color, ColorBytes) ||
            !D3D12Ops::UploadBuffer(Device, IndexBuffer.Get(), RenderData.Indices, IndexBytes))
         {
             Release();
@@ -104,6 +107,7 @@ void D3D12Mesh::Release()
     ReleaseOrDefer(PositionBuffer);
     ReleaseOrDefer(TexCoordBuffer);
     ReleaseOrDefer(NormalBuffer);
+    ReleaseOrDefer(ColorBuffer);
     ReleaseOrDefer(IndexBuffer);
 
     FreeRenderData();
@@ -148,11 +152,14 @@ void D3D12Mesh::Draw()
         GetClampedDrawRange(First, Count);
         if(Count == 0) return;
 
-        D3D12_VERTEX_BUFFER_VIEW NormalView{};
-        NormalView.BufferLocation = NormalBuffer->GetGPUVirtualAddress();
-        NormalView.SizeInBytes    = PositionBytes;
-        NormalView.StrideInBytes  = sizeof(float) * 3;
-        List->IASetVertexBuffers(2, 1, &NormalView);
+        D3D12_VERTEX_BUFFER_VIEW MeshViews[2]{};
+        MeshViews[0].BufferLocation = NormalBuffer->GetGPUVirtualAddress();
+        MeshViews[0].SizeInBytes    = PositionBytes;
+        MeshViews[0].StrideInBytes  = sizeof(float) * 3;
+        MeshViews[1].BufferLocation = ColorBuffer->GetGPUVirtualAddress();
+        MeshViews[1].SizeInBytes    = (PositionBytes / 3) * 4;
+        MeshViews[1].StrideInBytes  = sizeof(float) * 4;
+        List->IASetVertexBuffers(2, 2, MeshViews);
 
         D3D12_INDEX_BUFFER_VIEW IndexView{};
         IndexView.BufferLocation = IndexBuffer->GetGPUVirtualAddress();

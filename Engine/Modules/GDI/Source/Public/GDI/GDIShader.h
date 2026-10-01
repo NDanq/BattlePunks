@@ -35,8 +35,14 @@ public:
     virtual void SetUniform(std::string UniformName, GDITextureResource* InTextureResource, const uint InIdx) = 0;
 
     virtual void Release(void) = 0;
+
+    /* Selects the material binding layout (GDIDefinitions.h) for any draw
+     * this shader is bound to. Set once, after creation. */
+    void SetMaterialLayout(const bool bInMaterialLayout) { bMaterialLayout = bInMaterialLayout; }
+    [[nodiscard]] bool UsesMaterialLayout() const { return bMaterialLayout; }
 protected:
     bool        bInitialized=false;
+    bool        bMaterialLayout=false;
     EShaderType ShaderType = EShaderType::ST_MAX;
 };
 

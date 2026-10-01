@@ -118,6 +118,7 @@ void MTLMesh::Release()
     // Free the CPU-side copies malloc'd by CreateQuadMesh.
     if(RenderData.Position) { free(RenderData.Position); RenderData.Position = nullptr; }
     if(RenderData.TexCoord) { free(RenderData.TexCoord); RenderData.TexCoord = nullptr; }
+    if(RenderData.Color)    { free(RenderData.Color);    RenderData.Color    = nullptr; }
 
     bResourcesValid = false;
 }

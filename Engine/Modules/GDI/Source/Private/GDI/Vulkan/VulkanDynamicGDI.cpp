@@ -878,6 +878,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     if     ( bHasCustomUBO && !bHasCustomSampler) Group = DLG_CustomUBO;
     else if(!bHasCustomUBO &&  bHasCustomSampler) Group = DLG_Sampler;
     else if( bHasCustomUBO &&  bHasCustomSampler) Group = DLG_UBOAndSampler;
+    if(IsMaterialDraw()) Group = DLG_Material;
 
     // ----------------------------------------------------------------
     // 3. Build pipeline key
@@ -950,9 +951,9 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     TrBuf.range  = 80;
 
     // ----------------------------------------------------------------
-    // 7. Collect descriptor writes (up to 4 bindings)
+    // 7. Collect descriptor writes (up to 4 bindings; the material layout's 12)
     // ----------------------------------------------------------------
-    VkWriteDescriptorSet Writes[4]{};
+    VkWriteDescriptorSet Writes[GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS]{};
     uint32_t WriteCount = 0;
 
     // VP UBO (binding 0)
@@ -997,6 +998,54 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
         Writes[WriteCount].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
         Writes[WriteCount].pBufferInfo     = &CustBuf;
         ++WriteCount;
+    }
+
+    // --- Material layout: raw blocks at 2 and 3, textures at 4-11 ---
+    VkDescriptorBufferInfo BlockBufs[2]{};
+    VkDescriptorImageInfo  MaterialImages[GDI_MATERIAL_TEXTURE_SLOTS]{};
+    if(Group == DLG_Material)
+    {
+        for(uint32_t b = 0; b < 2; ++b)
+        {
+            const std::vector<uint8_t>& Bytes = MaterialBlocks[b];
+            // Never an empty range: a shader that declares the block still reads it.
+            const uint32_t Size = Bytes.empty() ? 16u : uint32_t(Bytes.size());
+            const VKUBOAllocation Block = DescAlloc->AllocateUBO(Size);
+            if(Block.Buffer == VK_NULL_HANDLE) return false;
+            memset(Block.MappedPtr, 0, Size);
+            if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
+
+            BlockBufs[b].buffer = Block.Buffer;
+            BlockBufs[b].offset = Block.Offset;
+            BlockBufs[b].range  = Size;
+
+            Writes[WriteCount].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            Writes[WriteCount].dstSet          = DescSet;
+            Writes[WriteCount].dstBinding      = GDI_MATERIAL_BLOCK_BINDING + b;
+            Writes[WriteCount].descriptorCount = 1;
+            Writes[WriteCount].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            Writes[WriteCount].pBufferInfo     = &BlockBufs[b];
+            ++WriteCount;
+        }
+
+        for(uint32_t s = 0; s < GDI_MATERIAL_TEXTURE_SLOTS; ++s)
+        {
+            auto* VKTex = dynamic_cast<VKTextureResource*>(MaterialTextures[s]);
+            if(!VKTex) VKTex = dynamic_cast<VKTextureResource*>(NullTexture);
+            if(!VKTex) return false;
+
+            MaterialImages[s].sampler     = VKTex->GetSampler();
+            MaterialImages[s].imageView   = VKTex->GetImageView();
+            MaterialImages[s].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+            Writes[WriteCount].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            Writes[WriteCount].dstSet          = DescSet;
+            Writes[WriteCount].dstBinding      = GDI_MATERIAL_TEXTURE_BINDING + s;
+            Writes[WriteCount].descriptorCount = 1;
+            Writes[WriteCount].descriptorType  = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+            Writes[WriteCount].pImageInfo      = &MaterialImages[s];
+            ++WriteCount;
+        }
     }
 
     // --- Sampler bindings (DLG_Sampler uses binding 2; DLG_UBOAndSampler uses binding 3) ---

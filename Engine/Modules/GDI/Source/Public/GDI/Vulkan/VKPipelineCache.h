@@ -28,6 +28,11 @@ class VKDevice;
  *                        Fragment shaders with both a custom UBO at binding 2
  *                        AND a sampler at binding 3 (e.g. UberBrush.fsh).
  *
+ *   DLG_Material      — {UBO@0-3, Sampler@4-11}
+ *                        The material layout (GDIDefinitions.h): any draw whose
+ *                        shader UsesMaterialLayout(). Chosen by that flag, not
+ *                        by inspecting uniform maps.
+ *
  * Each group gets its own VkDescriptorSetLayout and VkPipelineLayout.
  * ExecuteDrawCalls determines the correct group at draw time by inspecting
  * the bound shader's uniform maps.
@@ -38,7 +43,8 @@ enum EDescriptorLayoutGroup : uint32_t
     DLG_CustomUBO     = 1,
     DLG_Sampler       = 2,
     DLG_UBOAndSampler = 3,
-    DLG_Count         = 4
+    DLG_Material      = 4,
+    DLG_Count         = 5
 };
 
 /**
@@ -60,8 +66,9 @@ enum EDescriptorLayoutGroup : uint32_t
  * Vertex layout IDs (PipelineKey::VertexLayoutID):
  *   0 — standard:  binding 0 = vec3 position, binding 1 = vec2 texcoord
  *   1 — instanced: bindings 0+1 as above, binding 2 = mat4 per-instance transform
- *   2 — mesh:      bindings 0+1 as above, binding 2 = vec3 normal (location 8);
- *                  an indexed mesh from GDICreateMesh
+ *   2 — mesh:      bindings 0+1 as above, binding 2 = vec3 normal (location 8),
+ *                  binding 3 = vec4 colour (location 9); an indexed mesh from
+ *                  GDICreateMesh
  */
 class VKPipelineCache
 {

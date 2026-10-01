@@ -158,7 +158,7 @@ bool VKDescriptorAllocator::GrowPool()
     PoolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     PoolSizes[0].descriptorCount = kSetsPerPool * 4;
     PoolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-    PoolSizes[1].descriptorCount = kSetsPerPool * 2;
+    PoolSizes[1].descriptorCount = kSetsPerPool * 8;   // a material set holds GDI_MATERIAL_TEXTURE_SLOTS
 
     VkDescriptorPoolCreateInfo PoolCI{};
     PoolCI.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;

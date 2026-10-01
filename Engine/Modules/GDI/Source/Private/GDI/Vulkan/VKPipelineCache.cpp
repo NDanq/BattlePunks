@@ -1,5 +1,6 @@
 #include "Public/GDI/Vulkan/VKPipelineCache.h"
 #include "Public/GDI/Vulkan/VKDevice.h"
+#include "Public/GDI/GDIDefinitions.h"
 
 #include "Public/GDI/GDILog.h"
 #include <string>
@@ -149,8 +150,18 @@ void VKPipelineCache::GetVertexInputState(
         OutAttribs[2].format   = VK_FORMAT_R32G32B32_SFLOAT;
         OutAttribs[2].offset   = 0;
 
-        OutBindingCount = 3;
-        OutAttribCount  = 3;
+        // Binding 3 / location 9: vec4 colour, per vertex.
+        OutBindings[3].binding   = 3;
+        OutBindings[3].stride    = sizeof(float) * 4;
+        OutBindings[3].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        OutAttribs[3].location = 9;
+        OutAttribs[3].binding  = 3;
+        OutAttribs[3].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+        OutAttribs[3].offset   = 0;
+
+        OutBindingCount = 4;
+        OutAttribCount  = 4;
         return;
     }
 
@@ -356,7 +367,7 @@ bool VKPipelineCache::BuildLayouts()
     // --- Descriptor set layout bindings per group ---
     struct GroupDef
     {
-        VkDescriptorSetLayoutBinding Bindings[4];
+        VkDescriptorSetLayoutBinding Bindings[GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS];
         uint32_t                     Count;
     } Groups[DLG_Count];
 
@@ -383,6 +394,20 @@ bool VKPipelineCache::BuildLayouts()
     Groups[DLG_UBOAndSampler].Bindings[2] = MakeUBO(2);
     Groups[DLG_UBOAndSampler].Bindings[3] = MakeSampler(3);
     Groups[DLG_UBOAndSampler].Count       = 4;
+
+    // DLG_Material: {UBO@0-3, Sampler@4-11}; textures visible to both stages
+    // so a vertex offset can sample one later.
+    for(uint32_t b = 0; b < GDI_MATERIAL_TEXTURE_BINDING; ++b)
+    {
+        Groups[DLG_Material].Bindings[b] = MakeUBO(b);
+    }
+    for(uint32_t s = 0; s < GDI_MATERIAL_TEXTURE_SLOTS; ++s)
+    {
+        VkDescriptorSetLayoutBinding Sampler = MakeSampler(GDI_MATERIAL_TEXTURE_BINDING + s);
+        Sampler.stageFlags = kAllStages;
+        Groups[DLG_Material].Bindings[GDI_MATERIAL_TEXTURE_BINDING + s] = Sampler;
+    }
+    Groups[DLG_Material].Count = GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS;
 
     for(uint32_t g = 0; g < DLG_Count; ++g)
     {

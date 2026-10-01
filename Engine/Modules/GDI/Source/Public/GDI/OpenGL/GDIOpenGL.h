@@ -63,6 +63,9 @@ typedef struct __GLsync* GLsync;
 
 #define GL_ARRAY_BUFFER                   0x8892
 #define GL_ELEMENT_ARRAY_BUFFER           0x8893
+#ifndef GL_UNIFORM_BUFFER
+#define GL_UNIFORM_BUFFER                 0x8A11
+#endif
 #define GL_STREAM_DRAW                    0x88E0
 #define GL_STATIC_DRAW                    0x88E4
 #define GL_DYNAMIC_DRAW                   0x88E8
@@ -122,6 +125,7 @@ typedef struct __GLsync* GLsync;
     X(void,   glActiveTexture,           (GLenum texture), (texture)) \
     X(void,   glAttachShader,            (GLuint program, GLuint shader), (program, shader)) \
     X(void,   glBindBuffer,              (GLenum target, GLuint buffer), (target, buffer)) \
+    X(void,   glBindBufferBase,          (GLenum target, GLuint index, GLuint buffer), (target, index, buffer)) \
     X(void,   glBindFramebuffer,         (GLenum target, GLuint framebuffer), (target, framebuffer)) \
     X(void,   glBindRenderbuffer,        (GLenum target, GLuint renderbuffer), (target, renderbuffer)) \
     X(void,   glBindVertexArray,         (GLuint array), (array)) \

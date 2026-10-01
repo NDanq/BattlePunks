@@ -11,7 +11,7 @@
  * extension and the Schema attribute (a mismatch fails the load):
  *
  *     Scripts/Mover.script.nmgraph      -> Scripts/Mover.lua
- *     Shaders/Glow.material.nmgraph     -> Shaders/Glow.fsh
+ *     Materials/Glow.material.nmgraph   -> Materials/Glow.mtl.glsl (+ Glow.material)
  *
  * Tools route on the extension; a bare *.nmgraph falls back to the attribute.
  * Written deterministically for clean diffs. Format: README.md.
@@ -39,7 +39,7 @@ namespace NodeGraph
     /* "a/Glow" -> "a/Glow.material.nmgraph". */
     std::string MakeGraphPath(const std::string& InBasePath, const Schema& InSchema);
 
-    /* Where the generated source goes: "a/Glow.material.nmgraph" -> "a/Glow.fsh". */
+    /* Where the generated source goes: "a/Glow.material.nmgraph" -> "a/Glow.mtl.glsl". */
     std::string GetGraphOutputPath(const std::string& InGraphPath, const Schema& InSchema);
 
     /* The file name without directory or extension: "a/Glow.material.nmgraph" -> "Glow". */
