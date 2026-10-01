@@ -4,6 +4,7 @@
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/RenderView.h"
 
@@ -56,6 +57,12 @@ namespace RenderCore
         static void OnComponentRemoved(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);
 
         RenderView BuildView(const FrameInfo& InFrame) const;
+
+        /* The first active DirectionalLightComponent and SkyLightComponent,
+         * over RenderLighting's defaults; every enabled PostProcessComponent,
+         * Priority low first. Game thread, like BuildView. */
+        RenderLighting    BuildLighting() const;
+        RenderPostProcess BuildPostProcess() const;
 
         RenderScene*    Scene = nullptr;
         GameCore::World* BoundWorld = nullptr;

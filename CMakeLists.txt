@@ -416,9 +416,14 @@ source_group("NimbleEngine" FILES ${NIMBLEENGINE_SOURCES})
 # Content/Shaders cooked straight into the runtime directory, at the paths GDI
 # and RenderCore ask EngineCore::FilesystemProvider for
 # ("Shaders/Cooked/Vulkan/Basic.vsh.spv"). Content/Shaders holds only what the
-# engine draws with -- Basic, Mesh, Screen and the shared includes -- not
-# GDI's Odessa set (brush, cursor, layer blit, checkerboard), which GDI
-# registers but only loads on request.
+# engine draws with -- Basic, Mesh, Screen, the material templates and the
+# shared includes -- not GDI's Odessa set (brush, cursor, layer blit,
+# checkerboard), which GDI registers but only loads on request.
+#
+# Content/Materials (DefaultLit) and the shared MaterialDefault vertex shaders
+# go into the Engine shader cache, Shaders/Cache/Engine.<Platform>.nmsc, which
+# Renderer::Initialize mounts (RenderCore/MATERIALS.md); Editor targets stage
+# them loose too.
 #
 # Nothing is written into the source tree and no .qrc is generated: the
 # runtime reads plain files, so the cook is a staging step for the host, not
@@ -434,19 +439,43 @@ if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
     file(GLOB NM_ENGINE_SHADERS CONFIGURE_DEPENDS
             "${NIMBLE_ENGINE_SHADER_DIR}/*.vsh"
             "${NIMBLE_ENGINE_SHADER_DIR}/*.fsh")
+    file(GLOB NM_ENGINE_MATERIALS CONFIGURE_DEPENDS
+            "${NIMBLE_ENGINE_MATERIAL_DIR}/*.mtl.glsl"
+            "${NIMBLE_ENGINE_MATERIAL_DIR}/*.material")
     nimble_shader_cook_commands(NM_SHADER_COOK_COMMANDS
             SRC "${NIMBLE_ENGINE_SHADER_DIR}"
             OUT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cooked")
+    nimble_shader_cook_commands(NM_ENGINE_CACHE_COMMANDS DEFAULTS
+            SRC    "${NIMBLE_ENGINE_MATERIAL_DIR}"
+            CACHE  "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cache"
+            MODULE Engine
+            SUBDIR Materials)
+    list(APPEND NM_SHADER_COOK_COMMANDS ${NM_ENGINE_CACHE_COMMANDS})
+    if(NIMBLE_WITH_EDITOR)
+        nimble_shader_cook_commands(NM_ENGINE_LOOSE_COMMANDS DEFAULTS
+                SRC    "${NIMBLE_ENGINE_MATERIAL_DIR}"
+                OUT    "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cooked"
+                SUBDIR Materials)
+        list(APPEND NM_SHADER_COOK_COMMANDS
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Materials")
+        foreach(NM_MATERIAL ${NM_ENGINE_MATERIALS})
+            if(NM_MATERIAL MATCHES "[.]material$")
+                list(APPEND NM_SHADER_COOK_COMMANDS
+                        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NM_MATERIAL}" "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Materials/")
+            endif()
+        endforeach()
+        list(APPEND NM_SHADER_COOK_COMMANDS ${NM_ENGINE_LOOSE_COMMANDS})
+    endif()
 
     set(NM_SHADER_STAMP "${CMAKE_CURRENT_BINARY_DIR}/NimbleEngine_Shaders.stamp")
     add_custom_command(
             OUTPUT  "${NM_SHADER_STAMP}"
             ${NM_SHADER_COOK_COMMANDS}
             COMMAND ${CMAKE_COMMAND} -E touch "${NM_SHADER_STAMP}"
-            DEPENDS ${NM_ENGINE_SHADERS} ${NIMBLE_SHADER_INCLUDES}
+            DEPENDS ${NM_ENGINE_SHADERS} ${NM_ENGINE_MATERIALS} ${NIMBLE_SHADER_INCLUDES}
                     "${NIMBLE_MATERIAL_COOK_SCRIPT}"
                     "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GDI/Scripts/cook_shaders.py"
-            COMMENT "NimbleEngine: cooking Content/Shaders into the runtime directory"
+            COMMENT "NimbleEngine: cooking Content/Shaders and the Engine shader cache"
             VERBATIM)
 
     add_custom_target(NimbleStageShaders ALL DEPENDS "${NM_SHADER_STAMP}")

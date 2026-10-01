@@ -116,6 +116,9 @@ namespace RenderCore
         }
 
         P->Bridge = new WorldBridge(*P->Scene);
+
+        /* The engine's own materials (DefaultLit) and shared vertex shaders. */
+        MountShaderCache("Engine");
         return true;
     }
 
@@ -243,6 +246,49 @@ namespace RenderCore
         ENQUEUE_RENDER_COMMAND(ReloadMaterial)([Name](RenderContext& Ctx)
         {
             Ctx.ReloadMaterial(Name.Text[0] ? Name.Text : nullptr);
+        });
+    }
+
+    namespace
+    {
+        /* A module name, by value for a command's capture. */
+        struct ModuleName
+        {
+            char Text[64] = {};
+
+            bool Set(const char* InName)
+            {
+                const size_t Length = InName ? std::strlen(InName) : 0;
+                if(Length == 0 || Length >= sizeof(Text)) { return false; }
+                std::memcpy(Text, InName, Length);
+                return true;
+            }
+        };
+    }
+
+    void Renderer::MountShaderCache(const char* InModule)
+    {
+        ModuleName Name;
+        if(!P->Thread.IsRunning() || !Name.Set(InModule))
+        {
+            return;
+        }
+        ENQUEUE_RENDER_COMMAND(MountShaderCache)([Name](RenderContext& Ctx)
+        {
+            Ctx.MountShaderCache(Name.Text);
+        });
+    }
+
+    void Renderer::UnmountShaderCache(const char* InModule)
+    {
+        ModuleName Name;
+        if(!P->Thread.IsRunning() || !Name.Set(InModule))
+        {
+            return;
+        }
+        ENQUEUE_RENDER_COMMAND(UnmountShaderCache)([Name](RenderContext& Ctx)
+        {
+            Ctx.UnmountShaderCache(Name.Text);
         });
     }
 

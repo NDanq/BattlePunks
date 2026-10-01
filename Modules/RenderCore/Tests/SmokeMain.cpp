@@ -9,11 +9,14 @@
  * Expect()-counter style.
  */
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 
 #include "Public/Core/CoreArchive.h"
@@ -21,12 +24,14 @@
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
@@ -37,6 +42,7 @@
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/RenderThread.h"
 #include "Public/RenderCore/RenderView.h"
+#include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
 
 using namespace RenderCore;
@@ -647,7 +653,8 @@ static void TestMaterials()
         Expect(GMaterialFallbacks == 1, "and warned about once, not every frame");
 
         std::ofstream(Root / "Materials" / "SmokeGlow.material")
-            << "# a test material\nNimbleMaterial 1\nParam Tint 0 vec3 1 0.5 0.25 0\n";
+            << "# a test material\nNimbleMaterial 2\nDomain Translucent\nShading Unlit\nBlockSize 48\n"
+               "Param Tint vec3 32 1 0.5 0.25 0\n";
         Rend.ReloadMaterial("SmokeGlow");
         const uint64_t LoadedDraws = DrawFrame();
         Expect(GMaterialLoads == 1, "ReloadMaterial makes the next draw read the material afresh");
@@ -685,6 +692,272 @@ static void TestMaterials()
     SetFileProvider(PreviousProvider);
     std::filesystem::remove_all(Root, Ignored);
 }
+
+/* .material v2, the material block, permutation names, the shader cache and
+ * the layered provider it mounts on -- no renderer needed. */
+static void TestMaterialRuntime()
+{
+    std::printf("[material runtime]\n");
+
+    // --- .material v2 -------------------------------------------------------------
+    MaterialDescription Desc;
+    std::string Error;
+    const char* Wave = "# generated\nNimbleMaterial 2\nDomain Masked\nShading Lit\nTwoSided 1\nClipValue 0.25\n"
+                       "MaxOffset 2\nHasOffset 1\nBlockSize 48\nParam Color vec3 32 0.2 0.6 1 0\n"
+                       "Param Height float 44 0.5 0 0 0\nSomeFutureLine 1 2 3\n";
+    Expect(ParseMaterialDescription(Wave, Desc, Error), "a version 2 .material parses");
+    Expect(Desc.Domain == EMaterialDomain::Masked && Desc.Shading == EMaterialShading::Lit && Desc.bTwoSided
+           && Desc.bHasOffset && Desc.MaxOffset == 2.0f && Desc.ClipValue == 0.25f && Desc.BlockSize == 48,
+           "its header lines are read");
+    const MaterialParameter* Height = Desc.FindParameter("Height");
+    Expect(Desc.Parameters.size() == 2 && Height && Height->Offset == 44 && Height->Type == "float" && Height->Default[0] == 0.5f,
+           "its parameters keep their offsets and defaults");
+
+    std::vector<uint8_t> Block;
+    BuildMaterialBlock(Desc, EngineCore::Color(255, 0, 0, 255), Block);
+    float Read[12] = {};
+    if(Block.size() == 48) { std::memcpy(Read, Block.data(), sizeof(Read)); }
+    Expect(Block.size() == 48 && Read[0] == 1.0f && Read[1] == 0.0f && Read[3] == 1.0f && Read[4] == 0.25f && Read[5] == 1.0f
+           && Read[8] == 0.2f && Read[10] == 1.0f && Read[11] == 0.5f,
+           "the block is the tint, clip value and two-sided flag, then each default at its offset");
+
+    Expect(!ParseMaterialDescription("NimbleMaterial 1\nParam Tint 0 vec3 1 1 1 0\n", Desc, Error)
+           && Error.find("recompile") != std::string::npos, "a version 1 .material is refused, asking for a recompile");
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nBlockSize 32\nParam X vec4 32 0 0 0 0\n", Desc, Error),
+           "a parameter outside the block is refused");
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nDomain Sideways\n", Desc, Error), "an unknown domain is refused");
+
+    // --- Permutation names: what cook_material_graphs.py writes ---------------------
+    Expect(GetPermutationFileName("Glow", GetPixelPermutationKey(EMaterialDomain::Translucent, EMaterialShading::Unlit), false)
+           == "Glow@0000000a.fsh", "Translucent Unlit is pixel key 0xa");
+    Expect(GetPermutationFileName(MATERIAL_DEFAULT_VERTEX, GetVertexPermutationKey(EMaterialVertexInput::Mesh), true)
+           == "MaterialDefault@00000100.vsh", "the shared mesh vertex shader is key 0x100");
+    Expect(GetShaderCachePath("SandboxGame", ERenderBackend::Vulkan) == "Shaders/Cache/SandboxGame.Vulkan.nmsc",
+           "a module's cache is named by module and platform");
+
+    // --- The shader cache ---------------------------------------------------------------
+    const auto Fnv = [](const std::vector<uint8_t>& InBytes)
+    {
+        uint64_t Hash = 0xcbf29ce484222325ull;
+        for(const uint8_t Byte : InBytes) { Hash ^= Byte; Hash *= 0x100000001b3ull; }
+        return Hash;
+    };
+    const auto MakeCache = [&](const uint32_t InTemplateVersion, const bool bInCorrupt)
+    {
+        Archive Ar = Archive::ForWriting();
+        uint16_t Version = 1;
+        std::string Module = "Smoke", Platform = "Vulkan";
+        uint32_t Template = InTemplateVersion;
+        Ar.OpenChunk(MakeArchiveTag('N','M','S','C'), Version);
+        Ar << Module << Platform << Template;
+        Ar.CloseChunk();
+
+        std::vector<uint8_t> Shader = { 1, 2, 3, 4, 5 };
+        uint64_t Hash = Fnv(Shader);
+        uint32_t Size = uint32_t(Shader.size());
+        if(bInCorrupt) { Shader[2] = 9; }
+        Ar.OpenChunk(MakeArchiveTag('B','L','O','B'), Version);
+        Ar << Hash << Size;
+        Ar.SerializeBytes(Shader.data(), Shader.size());
+        Ar.CloseChunk();
+        for(const char* Path : { "Shaders/Cooked/Vulkan/Materials/A@00000000.fsh.spv", "Shaders/Cooked/Vulkan/Materials/B@00000000.fsh.spv" })
+        {
+            std::string Text = Path;
+            Ar.OpenChunk(MakeArchiveTag('F','I','L','E'), Version);
+            Ar << Text << Hash;
+            Ar.CloseChunk();
+        }
+        return Ar.GetBytes();
+    };
+
+    ShaderCacheContents Contents;
+    Expect(ReadShaderCache(MakeCache(MATERIAL_TEMPLATE_VERSION, false), Contents, Error)
+           && Contents.Module == "Smoke" && Contents.Platform == "Vulkan" && Contents.TemplateVersion == MATERIAL_TEMPLATE_VERSION
+           && Contents.Files.size() == 2, "a cache reads its header and every file");
+    const auto A = Contents.Files.find("Shaders/Cooked/Vulkan/Materials/A@00000000.fsh.spv");
+    const auto B = Contents.Files.find("Shaders/Cooked/Vulkan/Materials/B@00000000.fsh.spv");
+    Expect(A != Contents.Files.end() && B != Contents.Files.end() && A->second == B->second && A->second->size() == 5,
+           "two paths with the same bytes share one blob");
+    Expect(!ReadShaderCache(MakeCache(MATERIAL_TEMPLATE_VERSION, true), Contents, Error) && Error.find("corrupt") != std::string::npos,
+           "a blob whose bytes do not match its hash is refused");
+    std::vector<uint8_t> Truncated = MakeCache(MATERIAL_TEMPLATE_VERSION, false);
+    Truncated.resize(Truncated.size() - 7);
+    Expect(!ReadShaderCache(Truncated, Contents, Error), "a truncated cache is refused");
+    Expect(!ReadShaderCache({ 'n', 'o', 'p', 'e' }, Contents, Error), "a file that is not a cache is refused");
+
+    /* One the build cooked, when this runs from the runtime directory. */
+    std::vector<uint8_t> Cooked;
+    if(appFileReadAll(GetShaderCachePath("Engine", ERenderBackend::Vulkan), Cooked))
+    {
+        Expect(ReadShaderCache(Cooked, Contents, Error) && Contents.Module == "Engine"
+               && Contents.Files.count("Materials/DefaultLit.material") == 1
+               && Contents.Files.count("Shaders/Cooked/Vulkan/Materials/MaterialDefault@00000100.vsh.spv") == 1,
+               "the Engine cache cook_material_graphs.py wrote reads back, DefaultLit and the shared vertex shaders in it");
+    }
+
+    // --- The layered provider ----------------------------------------------------------------
+    std::map<std::string, MemoryFileProvider::FileBytes> First, Second;
+    First["Shared.txt"]  = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{ 'f' });
+    First["First.txt"]   = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{ '1' });
+    Second["Shared.txt"] = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{ 's' });
+
+    MemoryFileProvider Base({ { "Shared.txt", std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{ 'b' }) } });
+    LayeredFileProvider Layers(&Base, false);
+    std::string Text;
+    Expect(Layers.ReadAllText("Shared.txt", Text) && Text == "b", "with no layers the base answers");
+    Expect(Layers.MountLayer("First", std::make_shared<MemoryFileProvider>(First))
+           && Layers.MountLayer("Second", std::make_shared<MemoryFileProvider>(Second)), "layers mount");
+    Expect(Layers.ReadAllText("Shared.txt", Text) && Text == "s", "the newest layer shadows the older and the base");
+    Expect(Layers.ReadAllText("First.txt", Text) && Text == "1" && Layers.Exists("First.txt"), "an older layer still answers what it alone has");
+    Expect(Layers.UnmountLayer("Second") && Layers.ReadAllText("Shared.txt", Text) && Text == "f", "unmounting uncovers the layer below");
+    Expect(!Layers.UnmountLayer("Second"), "a layer unmounts once");
+
+    LayeredFileProvider BaseFirst(&Base, true);
+    BaseFirst.MountLayer("First", std::make_shared<MemoryFileProvider>(First));
+    Expect(BaseFirst.ReadAllText("Shared.txt", Text) && Text == "b" && BaseFirst.ReadAllText("First.txt", Text) && Text == "1",
+           "base-first (the editor's) asks the disk before any layer");
+    Expect(!FilesystemProvider().MountLayer("X", std::make_shared<MemoryFileProvider>(First)), "a plain provider takes no layers");
+
+    // --- Vertex colours in .nmmesh ---------------------------------------------------------
+    MeshData Coloured;
+    Coloured.Positions = { 0, 0, 0,  1, 0, 0,  0, 1, 0 };
+    Coloured.Normals   = { 0, 0, -1, 0, 0, -1, 0, 0, -1 };
+    Coloured.UV0       = { 0, 0,  1, 0,  0, 1 };
+    Coloured.Colors    = { 1, 0, 0, 1,  0, 1, 0, 1,  0, 0, 1, 0.5f };
+    Coloured.Indices   = { 0, 1, 2 };
+    Archive Save = Archive::ForWriting();
+    Expect(SerializeMesh(Save, Coloured), "a mesh with vertex colours saves");
+    Archive Load = Archive::ForReading(Save.GetBytes());
+    MeshData Back;
+    Expect(SerializeMesh(Load, Back) && Back.Colors == Coloured.Colors, "and loads them back");
+
+    MeshData Plain = Coloured;
+    Plain.Colors.clear();
+    Archive SavePlain = Archive::ForWriting();
+    SerializeMesh(SavePlain, Plain);
+    Archive LoadPlain = Archive::ForReading(SavePlain.GetBytes());
+    MeshData PlainBack;
+    Expect(SerializeMesh(LoadPlain, PlainBack) && PlainBack.Colors.empty() && PlainBack.Indices == Plain.Indices,
+           "a mesh without colours has no colour chunk, and loads without one (white)");
+
+    Coloured.Colors.pop_back();
+    Archive Bad = Archive::ForWriting();
+    Expect(!SerializeMesh(Bad, Coloured), "colours for only some vertices are refused");
+}
+
+#if WITH_EDITOR
+/*
+ * OPT-IN, on a real GPU: NIMBLE_SMOKE_GPU=Vulkan (or D3D12), run from a
+ * runtime directory the build staged (Binaries/<Platform>_<Config>). Renders
+ * material previews offscreen -- no window, no present -- through the mounted
+ * Engine and SandboxGame shader caches, asked before any loose file, and
+ * checks the pixels: the templates, the uniform blocks, World Position
+ * Offset's vertex shaders and a PostProcess pass, end to end.
+ */
+static void TestMaterialsOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[materials on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[materials on the GPU: %s]\n", GetShaderPlatformName(Backend));
+
+    FilesystemProvider  Disk;                       // the working directory
+    LayeredFileProvider Layers(&Disk, false);       // caches first: they are what is tested
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");   // Initialize mounted Engine
+
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        uint64_t Frame = 1;
+        const auto DrawFrame = [&]
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        };
+        DrawFrame();
+
+        const std::vector<std::string> Layers_ = Layers.GetLayerNames();
+        Expect(std::find(Layers_.begin(), Layers_.end(), GetShaderCacheLayerName("Engine")) != Layers_.end()
+               && std::find(Layers_.begin(), Layers_.end(), GetShaderCacheLayerName("SandboxGame")) != Layers_.end(),
+               "the Engine and SandboxGame caches are mounted");
+
+        /* The centre pixel of each preview, as R, G, B. */
+        struct Check { const char* Material; uint64_t Request; int Rgb[3]; bool bOk; };
+        Check Checks[] = { { "DefaultLit", 0, {}, false }, { "Glow", 0, {}, false },
+                           { "Wave", 0, {}, false },       { "Negative", 0, {}, false } };
+        for(Check& Each : Checks)
+        {
+            Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
+        }
+        DrawFrame();
+        DrawFrame();
+        bool bNoTargets = false;
+        for(Check& Each : Checks)
+        {
+            EngineCore::Image Pixels;
+            std::string Error;
+            Each.bOk = Rend.TakeMaterialPreview(Each.Request, Pixels, Error) && Pixels.GetWidth() == 64 && Pixels.GetData();
+            if(!Each.bOk)
+            {
+                bNoTargets |= Error.find("render target") != std::string::npos;
+                std::printf("    %s: %s\n", Each.Material, Error.c_str());
+                continue;
+            }
+            const uint8_t* Px = Pixels.GetData() + Pixels.GetStride() * 32 + 32 * BytesPerPixel(Pixels.GetFormat());
+            const bool bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
+            Each.Rgb[0] = bBgra ? Px[2] : Px[0];
+            Each.Rgb[1] = Px[1];
+            Each.Rgb[2] = bBgra ? Px[0] : Px[2];
+            std::printf("    %s centre = %d %d %d\n", Each.Material, Each.Rgb[0], Each.Rgb[1], Each.Rgb[2]);
+        }
+
+        /* D3D12 builds its device from a window's context: with none it has
+         * no render targets to draw a preview into. */
+        if(bNoTargets)
+        {
+            std::printf("  this backend cannot render without a window; pixel checks skipped\n");
+            Rend.UnbindWorld();
+            Rend.SetViewOverride(nullptr);
+            Rend.Shutdown();
+            SetFileProvider(PreviousProvider);
+            return;
+        }
+
+        const auto Near = [](const int InValue, const int InWant) { return InValue >= InWant - 12 && InValue <= InWant + 12; };
+        const Check& DefaultLit = Checks[0];
+        const Check& Glow       = Checks[1];
+        const Check& Wave       = Checks[2];
+        const Check& Negative   = Checks[3];
+        Expect(DefaultLit.bOk && DefaultLit.Rgb[0] > 60 && std::abs(DefaultLit.Rgb[0] - DefaultLit.Rgb[2]) < 16,
+               "DefaultLit draws its white tint lit grey, not the clear colour");
+        Expect(Glow.bOk && Near(Glow.Rgb[0], 51) && Near(Glow.Rgb[1], 204) && Near(Glow.Rgb[2], 255),
+               "Glow's centre is its Color parameter, read from the material block");
+        Expect(Wave.bOk && Wave.Rgb[2] > Wave.Rgb[0] + 40, "Wave (Lit, World Position Offset) draws its blue Color, lit");
+        Expect(Negative.bOk && Negative.Rgb[0] > 240 && Negative.Rgb[1] > 240 && Negative.Rgb[2] > 240,
+               "Negative (PostProcess) turns its empty scene texture white");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+    }
+    Rend.Shutdown();
+    SetFileProvider(PreviousProvider);
+}
+#endif
 
 /* A two-triangle square in two sections -- small enough to check by hand. */
 static MeshData MakeSmokeMesh()
@@ -917,6 +1190,7 @@ int main()
 
     TestModuleName();
     TestScriptBindings();
+    TestMaterialRuntime();
 
     RenderThread Thread;
     const bool bStarted = Thread.Start(ERenderBackend::Null, WindowHandle());
@@ -939,6 +1213,7 @@ int main()
 #if WITH_EDITOR
     TestDebugLines();
     TestMaterials();
+    TestMaterialsOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();

@@ -55,7 +55,7 @@ EditorContext::EditorContext(QObject* InParent)
 {
     /* Before anything asks for an asset -- the Renderer loads its cooked
      * shaders through this on the render thread. */
-    EngineCore::SetFileProvider(&AssetProvider);
+    EngineCore::SetFileProvider(&LayeredAssets);
 
     History = new QUndoStack(this);
     History->setUndoLimit(HistoryLimit);

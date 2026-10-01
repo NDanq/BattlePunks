@@ -30,6 +30,8 @@ namespace RenderCore
 #endif
         RenderView                View;
         EngineCore::Color         ClearColor{24, 26, 32, 255};
+        RenderLighting            Lighting;
+        RenderPostProcess         PostProcess;
 
         /*
          * THE SCENE'S RENDER TARGETS, and the whole reason anything reaches
@@ -46,12 +48,14 @@ namespace RenderCore
          *
          * Deliberately NOT GDIRenderTargetManager, whose Main/Buffer1/
          * PostBuffer1 and Resolve/Restore pair are paint-application concepts
-         * (canvas stroke buffering). A scene with one pass needs one target.
-         * ERT_MAX is where a second pass would be added.
+         * (canvas stroke buffering). The scene draws into the back buffer;
+         * PostProcess passes ping-pong between it and ERT_PostProcess, made
+         * only once a scene has one.
          */
         enum ERenderTarget : uint8_t
         {
             ERT_BackBuffer = 0,
+            ERT_PostProcess,
             ERT_MAX
         };
 
@@ -104,9 +108,60 @@ namespace RenderCore
                  * is why this is a Resize rather than a release-and-create. */
                 RenderTargets[ERT_BackBuffer]->Resize(Width, Height);
             }
+            if(RenderTargets[ERT_PostProcess])
+            {
+                RenderTargets[ERT_PostProcess]->Resize(Width, Height);
+            }
 
             WindowWidth  = Width;
             WindowHeight = Height;
+        }
+
+        /* The second PostProcess target, the size of the first. */
+        GDIRenderTarget* EnsurePostProcessTarget()
+        {
+            if(!RenderTargets[ERT_PostProcess] && WindowWidth > 0 && WindowHeight > 0)
+            {
+                RenderTargets[ERT_PostProcess] = GDICreateRenderTarget("RenderCore.PostProcess", WindowWidth, WindowHeight);
+            }
+            return RenderTargets[ERT_PostProcess];
+        }
+
+        /* Runs PostProcess's passes, ping-ponging from the back buffer, and
+         * returns the target holding the result -- bound, so it is what the
+         * present shows. */
+        GDIRenderTarget* RunPostProcess(RenderContext& InContext)
+        {
+            GDIRenderTarget* Source = RenderTargets[ERT_BackBuffer];
+            if(PostProcess.Count == 0 || !Source)
+            {
+                return Source;
+            }
+            GDIRenderTarget* Dest = EnsurePostProcessTarget();
+            if(!Dest)
+            {
+                return Source;
+            }
+
+            InContext.BeginDrawEvent("PostProcess");
+            for(uint32_t Index = 0; Index < PostProcess.Count && Index < RENDER_POST_PROCESS_MAX; ++Index)
+            {
+                GDITexture2D* Scene = Source->ToGDITexture2D();
+                GDISetRenderTarget(Dest);
+                GDISetViewport(0, 0, WindowWidth, WindowHeight);
+                GDISetMaterialTexture(0, Scene ? Scene->Resource : nullptr);
+                if(InContext.DrawPostProcessPass(PostProcess.Materials[Index]))
+                {
+                    std::swap(Source, Dest);
+                }
+                else
+                {
+                    GDISetRenderTarget(Source);   // a skipped pass leaves the result where it was
+                }
+            }
+            GDISetMaterialTexture(0, nullptr);
+            InContext.EndDrawEvent();
+            return Source;
         }
 
         GDIRenderTarget* GetRenderTarget(const ERenderTarget InRenderTarget) const
@@ -212,6 +267,16 @@ namespace RenderCore
         P->ClearColor = InColor;
     }
 
+    void RenderScene::SetLighting(const RenderLighting& InLighting)
+    {
+        P->Lighting = InLighting;
+    }
+
+    void RenderScene::SetPostProcess(const RenderPostProcess& InPostProcess)
+    {
+        P->PostProcess = InPostProcess;
+    }
+
 #if WITH_EDITOR
     void RenderScene::SetDebugLines(const DebugLine* InLines, const size_t InCount)
     {
@@ -232,6 +297,7 @@ namespace RenderCore
          * between SetView() and Render() (unlikely, but not forbidden) never
          * leaves GetView() reporting a view nothing has drawn against yet. */
         InContext.SetView(P->View);
+        InContext.SetLighting(P->Lighting);
 
         /* Created on first use and resized with the viewport -- see Impl's
          * own comment on why a scene owns these at all. Early-outs on every
@@ -280,20 +346,15 @@ namespace RenderCore
          * zero, so everything draws with no validation error and nothing
          * reaches the attachment.
          *
-         * Blend and depth are explicit too, or the pipeline key inherits the
-         * last caller's state. Depth LESS-OR-EQUAL so coplanar 2D quads still
-         * draw in submission order.
+         * Blend and depth are set per draw by RenderContext from here on --
+         * by material domain, or the plain quads' old blended, depth-written
+         * state; LESS-OR-EQUAL so coplanar 2D quads still draw in order.
          */
         GDISetColorMask(EColM_RGBA);
-        GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
-
-        IDepthStateDesc SceneDepth;
-        SceneDepth.bDepthTest = true;
-        SceneDepth.bDepthMask = true;
-        SceneDepth.DepthMode  = CTM_LEQUAL;
-        GDISetDepthState(SceneDepth);
-
         GDIClear(CM_Color | CM_Depth, P->ClearColor);
+
+        /* Queued, then issued in passes: opaque, then translucent back to front. */
+        InContext.BeginSceneDraws();
 
         uint64_t VisibleCount = 0;
         uint64_t CulledCount  = 0;
@@ -319,8 +380,17 @@ namespace RenderCore
              */
             const bool bViewHasBounds  = !P->View.Bounds.IsEmpty();
             const bool bProxyHasBounds = !Proxy->GetWorldBounds().IsEmpty();
-            const bool bVisible        = !bViewHasBounds || !bProxyHasBounds
-                                       || Proxy->GetWorldBounds().Overlaps(P->View.Bounds);
+
+            /* World Position Offset can move geometry past its bounds: pad
+             * them by the material's Max Offset. */
+            GameCore::AABB Bounds = Proxy->GetWorldBounds();
+            const float Padding = bViewHasBounds && bProxyHasBounds ? Proxy->GetBoundsPadding(InContext) : 0.0f;
+            if(Padding > 0.0f)
+            {
+                const EngineCore::Vector3 Pad(Padding, Padding, Padding);
+                Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
+            }
+            const bool bVisible = !bViewHasBounds || !bProxyHasBounds || Bounds.Overlaps(P->View.Bounds);
 
             if(!bVisible)
             {
@@ -332,7 +402,13 @@ namespace RenderCore
             ++VisibleCount;
         }
 
+        InContext.FlushSceneDraws();
+
         SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
+
+        /* Over the finished scene; leaves the result bound, for the present
+         * and the overlay below. */
+        P->RunPostProcess(InContext);
 
 #if WITH_EDITOR
         /* Tool overlay over everything, unculled; consumed each frame. */

@@ -1,20 +1,31 @@
 # ===========================================================================
-# nimble_stage_materials(TARGET <game> DIR <folder> [RUNTIME_DIR <dir>])
+# nimble_stage_materials(TARGET <game> DIR <folder> [MODULE <name>] [RUNTIME_DIR <dir>])
 #
-# Cooks and stages the committed <Name>.fsh / <Name>.material pairs in
-# <folder> for every built GDI backend:
+# Cooks the committed material functions in <folder> (<Name>.mtl.glsl and
+# <Name>.material, generated from material graphs) for every built GDI
+# backend, into the module's shader cache -- what GameModuleHost mounts when
+# MODULE loads (RenderCore/MATERIALS.md):
+#
+#     <runtime>/Shaders/Cache/<MODULE>.<Platform>.nmsc
+#
+# Editor targets also stage them loose, which the editor's own on-save cook
+# overwrites and its file provider prefers over any cache:
 #
 #     <runtime>/Materials/<Name>.material
-#     <runtime>/Shaders/Cooked/<Platform>/Materials/<Name>.fsh[.spv|.cso]
+#     <runtime>/Shaders/Cooked/<Platform>/Materials/<Name>@<key>.<stage>[.spv|.cso]
 #
-# Uses cook_material_graphs.py (GDI's toolchain). Works in every target type.
-# Globbed (generated files) with CONFIGURE_DEPENDS; stamp-file incremental.
+# Without MODULE nothing is cached, and a Client build stages nothing at all.
+# Uses cook_material_graphs.py (GDI's toolchain). Globbed (generated files)
+# with CONFIGURE_DEPENDS; stamp-file incremental.
 #
-# nimble_shader_cook_commands(<out-var> SRC <file-or-dir> OUT <dir> [SUBDIR <name>])
+# nimble_shader_cook_commands(<out-var> SRC <file-or-dir> (OUT <dir> | CACHE <dir> MODULE <name>)
+#                             [SUBDIR <name>] [DEFAULTS])
 #
-# The COMMAND list that cooks SRC into OUT/<Platform>/[SUBDIR/] for every
-# built GDI backend. Shared by the above and the engine's own shader staging
-# (Engine/CMakeLists.txt). Includes resolve against Engine/Content/Shaders.
+# The COMMAND list that cooks SRC for every built GDI backend: loose into
+# OUT/<Platform>/[SUBDIR/], or as CACHE/<MODULE>.<Platform>.nmsc. DEFAULTS adds
+# the shared MaterialDefault vertex shaders. Shared by the above and the
+# engine's own staging (Engine/CMakeLists.txt). Includes resolve against
+# Engine/Content/Shaders.
 # ===========================================================================
 
 # CACHE: the functions run in the caller's scope. (CMAKE_CURRENT_FUNCTION_LIST_DIR
@@ -23,15 +34,23 @@ get_filename_component(NM_COOK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Modules/Node
 set(NIMBLE_MATERIAL_COOK_SCRIPT "${NM_COOK_SCRIPT}" CACHE INTERNAL "NodeGraph's material cook, for nimble_stage_materials")
 get_filename_component(NM_ENGINE_SHADER_DIR "${CMAKE_CURRENT_LIST_DIR}/../Content/Shaders" ABSOLUTE)
 set(NIMBLE_ENGINE_SHADER_DIR "${NM_ENGINE_SHADER_DIR}" CACHE INTERNAL "Engine/Content/Shaders: the engine's shaders, and the include root of every cook")
+get_filename_component(NM_ENGINE_MATERIAL_DIR "${CMAKE_CURRENT_LIST_DIR}/../Content/Materials" ABSOLUTE)
+set(NIMBLE_ENGINE_MATERIAL_DIR "${NM_ENGINE_MATERIAL_DIR}" CACHE INTERNAL "Engine/Content/Materials: the engine's own materials (DefaultLit)")
 file(GLOB NM_SHADER_INCLUDES CONFIGURE_DEPENDS "${NM_ENGINE_SHADER_DIR}/*.glsl")
-set(NIMBLE_SHADER_INCLUDES "${NM_SHADER_INCLUDES}" CACHE INTERNAL "Engine/Content/Shaders/*.glsl; a change recooks everything that includes them")
+set(NIMBLE_SHADER_INCLUDES "${NM_SHADER_INCLUDES}" CACHE INTERNAL "Engine/Content/Shaders/*.glsl (templates included); a change recooks everything")
 
 function(nimble_shader_cook_commands NM_OUT_VAR)
-    cmake_parse_arguments(NC "" "SRC;OUT;SUBDIR" "" ${ARGN})
+    cmake_parse_arguments(NC "DEFAULTS" "SRC;OUT;CACHE;MODULE;SUBDIR" "" ${ARGN})
 
-    set(NC_SUBDIR_ARGS)
+    set(NC_EXTRA_ARGS)
     if(NC_SUBDIR)
-        set(NC_SUBDIR_ARGS -subdir ${NC_SUBDIR})
+        list(APPEND NC_EXTRA_ARGS -subdir ${NC_SUBDIR})
+    endif()
+    if(NC_DEFAULTS)
+        list(APPEND NC_EXTRA_ARGS -defaults)
+    endif()
+    if(NC_SRC)
+        list(APPEND NC_EXTRA_ARGS -src "${NC_SRC}")
     endif()
 
     # Metal is not cooked: cook_material_graphs.py has no Metal target, and on
@@ -39,26 +58,31 @@ function(nimble_shader_cook_commands NM_OUT_VAR)
     set(NC_COMMANDS)
     foreach(NC_PLATFORM OpenGL Vulkan D3D12)
         string(TOUPPER "${NC_PLATFORM}" NC_PLATFORM_UPPER)
-        if(GDI_WITH_${NC_PLATFORM_UPPER})
-            list(APPEND NC_COMMANDS
-                    COMMAND "${Python3_EXECUTABLE}" "${NIMBLE_MATERIAL_COOK_SCRIPT}"
-                            -target ${NC_PLATFORM} -src "${NC_SRC}"
-                            -out "${NC_OUT}" ${NC_SUBDIR_ARGS})
+        if(NOT GDI_WITH_${NC_PLATFORM_UPPER})
+            continue()
         endif()
+        if(NC_CACHE)
+            set(NC_WHERE -cache "${NC_CACHE}/${NC_MODULE}.${NC_PLATFORM}.nmsc" -module ${NC_MODULE})
+        else()
+            set(NC_WHERE -out "${NC_OUT}")
+        endif()
+        list(APPEND NC_COMMANDS
+                COMMAND "${Python3_EXECUTABLE}" "${NIMBLE_MATERIAL_COOK_SCRIPT}"
+                        -target ${NC_PLATFORM} ${NC_WHERE} ${NC_EXTRA_ARGS})
     endforeach()
     set(${NM_OUT_VAR} ${NC_COMMANDS} PARENT_SCOPE)
 endfunction()
 
 function(nimble_stage_materials)
-    cmake_parse_arguments(NM "" "TARGET;DIR;RUNTIME_DIR" "" ${ARGN})
+    cmake_parse_arguments(NM "" "TARGET;DIR;MODULE;RUNTIME_DIR" "" ${ARGN})
 
     if(NOT NM_TARGET OR NOT NM_DIR)
-        message(FATAL_ERROR "nimble_stage_materials(TARGET <game> DIR <folder>)")
+        message(FATAL_ERROR "nimble_stage_materials(TARGET <game> DIR <folder> [MODULE <name>])")
     endif()
 
-    file(GLOB NM_SHADERS   CONFIGURE_DEPENDS "${NM_DIR}/*.fsh")
+    file(GLOB NM_FUNCTIONS CONFIGURE_DEPENDS "${NM_DIR}/*.mtl.glsl")
     file(GLOB NM_MATERIALS CONFIGURE_DEPENDS "${NM_DIR}/*.material")
-    if(NOT NM_SHADERS)
+    if(NOT NM_FUNCTIONS OR (NOT NM_MODULE AND NOT NIMBLE_TARGET STREQUAL "Editor"))
         return()
     endif()
 
@@ -75,22 +99,29 @@ function(nimble_stage_materials)
     else()
         set(NM_RUNTIME "$<TARGET_FILE_DIR:${NM_TARGET}>")
     endif()
-    set(NM_COMMANDS
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${NM_RUNTIME}/Materials")
-    foreach(NM_MATERIAL ${NM_MATERIALS})
-        list(APPEND NM_COMMANDS COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NM_MATERIAL}" "${NM_RUNTIME}/Materials/")
-    endforeach()
 
-    nimble_shader_cook_commands(NM_COOK_COMMANDS SRC "${NM_DIR}" OUT "${NM_RUNTIME}/Shaders/Cooked" SUBDIR Materials)
-    list(APPEND NM_COMMANDS ${NM_COOK_COMMANDS})
+    set(NM_COMMANDS)
+    if(NM_MODULE)
+        nimble_shader_cook_commands(NM_CACHE_COMMANDS SRC "${NM_DIR}" CACHE "${NM_RUNTIME}/Shaders/Cache"
+                                    MODULE ${NM_MODULE} SUBDIR Materials)
+        list(APPEND NM_COMMANDS ${NM_CACHE_COMMANDS})
+    endif()
+    if(NIMBLE_TARGET STREQUAL "Editor")   # a cache variable: visible from a standalone game configure too
+        list(APPEND NM_COMMANDS COMMAND ${CMAKE_COMMAND} -E make_directory "${NM_RUNTIME}/Materials")
+        foreach(NM_MATERIAL ${NM_MATERIALS})
+            list(APPEND NM_COMMANDS COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NM_MATERIAL}" "${NM_RUNTIME}/Materials/")
+        endforeach()
+        nimble_shader_cook_commands(NM_LOOSE_COMMANDS SRC "${NM_DIR}" OUT "${NM_RUNTIME}/Shaders/Cooked" SUBDIR Materials)
+        list(APPEND NM_COMMANDS ${NM_LOOSE_COMMANDS})
+    endif()
 
     set(NM_STAMP "${CMAKE_CURRENT_BINARY_DIR}/${NM_TARGET}_Materials.stamp")
     add_custom_command(
             OUTPUT  "${NM_STAMP}"
             ${NM_COMMANDS}
             COMMAND ${CMAKE_COMMAND} -E touch "${NM_STAMP}"
-            DEPENDS ${NM_SHADERS} ${NM_MATERIALS} "${NIMBLE_MATERIAL_COOK_SCRIPT}" ${NIMBLE_SHADER_INCLUDES}
-            COMMENT "${NM_TARGET}: cooking and staging materials from ${NM_DIR}"
+            DEPENDS ${NM_FUNCTIONS} ${NM_MATERIALS} "${NIMBLE_MATERIAL_COOK_SCRIPT}" ${NIMBLE_SHADER_INCLUDES}
+            COMMENT "${NM_TARGET}: cooking materials from ${NM_DIR}"
             VERBATIM)
 
     if(NM_RUNTIME_DIR)

@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "Public/Core/CoreTypes.h"
+#include "Public/Math/Vector.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderProxy.h"
@@ -54,6 +55,44 @@ namespace RenderCore
         float   ZNear    = -1.0f;
         float   ZFar     = 1000.0f;
         uint8_t bActive  = 1;
+    };
+
+    /* "Directional Light". The scene's sun: the first active one WorldBridge
+     * finds lights every Lit material (RenderLighting.h). Direction is the
+     * way light travels, world space; +Y is down. Without one the scene keeps
+     * the default light -- from above, as Mesh.fsh always was. */
+    struct RENDERCORE_API DirectionalLightComponent
+    {
+        GAMECORE_COMPONENT_BODY()
+
+        EngineCore::Vector3 Direction{ 0.35, 1.0, 0.55 };
+        EngineCore::Color   Color{ 255, 255, 255 };
+        float               Intensity = 3.0f;
+        uint8_t             bActive   = 1;
+    };
+
+    /* "Sky Light". Ambient for Lit materials: SkyColor from above (-Y),
+     * GroundColor from below, blended by the normal. The first active one wins. */
+    struct RENDERCORE_API SkyLightComponent
+    {
+        GAMECORE_COMPONENT_BODY()
+
+        EngineCore::Color SkyColor{ 120, 130, 150 };
+        EngineCore::Color GroundColor{ 60, 55, 50 };
+        float             Intensity = 0.6f;
+        uint8_t           bActive   = 1;
+    };
+
+    /* "Post Process". A PostProcess-domain material drawn over the whole
+     * scene. Every enabled one runs, Priority low first (RENDER_POST_PROCESS_MAX
+     * at most); a material of another domain is warned about and skipped. */
+    struct RENDERCORE_API PostProcessComponent
+    {
+        GAMECORE_COMPONENT_BODY()
+
+        char    Material[RENDER_MATERIAL_NAME_MAX] = {};
+        int32_t Priority = 0;
+        uint8_t bEnabled = 1;
     };
 
     /* RenderComponent's proxy factory, for Renderer::Initialize to register. */

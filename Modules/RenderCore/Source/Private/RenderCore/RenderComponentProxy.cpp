@@ -1,5 +1,6 @@
 #include "Private/RenderCore/RenderComponentProxy.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include "Public/RenderCore/MeshAsset.h"
@@ -54,6 +55,24 @@ namespace RenderCore
             EngineCore::Vector3(-double(Width) * 0.5, -double(Height) * 0.5, 0.0),
             EngineCore::Vector3(double(Width) * 0.5, double(Height) * 0.5, 0.0)));
         bBoundsAreMesh = false;
+    }
+
+    float RenderComponentProxy::GetBoundsPadding(RenderContext& InContext)
+    {
+        /* The override, else the furthest any section's material reaches. */
+        if(Material[0] != '\0')
+        {
+            return InContext.GetMaterialMaxOffset(Material);
+        }
+        float Padding = 0.0f;
+        if(MeshSource)
+        {
+            for(const MeshSection& Section : MeshSource->Sections)
+            {
+                Padding = std::max(Padding, InContext.GetMaterialMaxOffset(Section.Material.c_str(), /*bQuietIfMissing*/ true));
+            }
+        }
+        return Padding;
     }
 
     void RenderComponentProxy::Draw(RenderContext& InContext)

@@ -20,6 +20,11 @@ namespace RenderCore
      * this one needs. */
     GAMECORE_DEFINE_COMPONENT(CameraComponent, "Camera")
 
+    /* Read by WorldBridge's per-frame lighting build, like the camera. */
+    GAMECORE_DEFINE_COMPONENT(DirectionalLightComponent, "Directional Light")
+    GAMECORE_DEFINE_COMPONENT(SkyLightComponent, "Sky Light")
+    GAMECORE_DEFINE_COMPONENT(PostProcessComponent, "Post Process")
+
     CreateProxyFn GetRenderComponentFactory()
     {
         return &RenderComponent_CreateProxy;
@@ -52,6 +57,29 @@ namespace RenderCore
         Ar.Flag("Active", C.bActive);
     }
 
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(DirectionalLightComponent, 1)
+    {
+        Ar.Field("Direction", C.Direction);
+        Ar.Field("Color",     C.Color);
+        Ar.Field("Intensity", C.Intensity);
+        Ar.Flag("Active",     C.bActive);
+    }
+
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(SkyLightComponent, 1)
+    {
+        Ar.Field("SkyColor",    C.SkyColor);
+        Ar.Field("GroundColor", C.GroundColor);
+        Ar.Field("Intensity",   C.Intensity);
+        Ar.Flag("Active",       C.bActive);
+    }
+
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PostProcessComponent, 1)
+    {
+        Ar.Field("Material", C.Material);
+        Ar.Field("Priority", C.Priority);
+        Ar.Flag("Enabled",   C.bEnabled);
+    }
+
     /*
      * WHAT LUA MAY TOUCH. Written through GameCore's typed binding API -- this
      * module never includes lua.h (ComponentScript.h says why). A change made
@@ -76,6 +104,28 @@ namespace RenderCore
         Bind.Flag("Active", &CameraComponent::bActive);
     }
 
+    GAMECORE_DEFINE_COMPONENT_SCRIPT(DirectionalLightComponent)
+    {
+        Bind.Field("Direction", &DirectionalLightComponent::Direction);
+        Bind.Field("Color",     &DirectionalLightComponent::Color);
+        Bind.Field("Intensity", &DirectionalLightComponent::Intensity);
+        Bind.Flag("Active",     &DirectionalLightComponent::bActive);
+    }
+
+    GAMECORE_DEFINE_COMPONENT_SCRIPT(SkyLightComponent)
+    {
+        Bind.Field("SkyColor",    &SkyLightComponent::SkyColor);
+        Bind.Field("GroundColor", &SkyLightComponent::GroundColor);
+        Bind.Field("Intensity",   &SkyLightComponent::Intensity);
+        Bind.Flag("Active",       &SkyLightComponent::bActive);
+    }
+
+    GAMECORE_DEFINE_COMPONENT_SCRIPT(PostProcessComponent)
+    {
+        Bind.Field("Material", &PostProcessComponent::Material);
+        Bind.Flag("Enabled",   &PostProcessComponent::bEnabled);
+    }
+
 #if WITH_EDITOR
     /* Editor-visible fields; deliberately separate from the Lua list
      * (ComponentProperties.h). */
@@ -94,6 +144,29 @@ namespace RenderCore
         Props.Field("ZNear", &CameraComponent::ZNear);
         Props.Field("ZFar",  &CameraComponent::ZFar);
         Props.Flag("Active", &CameraComponent::bActive);
+    }
+
+    GAMECORE_DEFINE_COMPONENT_PROPERTIES(DirectionalLightComponent)
+    {
+        Props.Field("Direction", &DirectionalLightComponent::Direction);
+        Props.Field("Color",     &DirectionalLightComponent::Color);
+        Props.Field("Intensity", &DirectionalLightComponent::Intensity);
+        Props.Flag("Active",     &DirectionalLightComponent::bActive);
+    }
+
+    GAMECORE_DEFINE_COMPONENT_PROPERTIES(SkyLightComponent)
+    {
+        Props.Field("SkyColor",    &SkyLightComponent::SkyColor);
+        Props.Field("GroundColor", &SkyLightComponent::GroundColor);
+        Props.Field("Intensity",   &SkyLightComponent::Intensity);
+        Props.Flag("Active",       &SkyLightComponent::bActive);
+    }
+
+    GAMECORE_DEFINE_COMPONENT_PROPERTIES(PostProcessComponent)
+    {
+        Props.Field("Material", &PostProcessComponent::Material, GameCore::PF_AssetMaterial);
+        Props.Field("Priority", &PostProcessComponent::Priority);
+        Props.Flag("Enabled",   &PostProcessComponent::bEnabled);
     }
 #endif // WITH_EDITOR
 }

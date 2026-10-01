@@ -2,6 +2,9 @@
 #define ENGINECORE_COREFILEPROVIDER_H
 
 #include <cstdint>
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -36,6 +39,17 @@ namespace EngineCore
         virtual bool ReadAllText(const std::string& InPath, std::string& OutText);
 
         virtual bool Exists(const std::string& InPath) = 0;
+
+        /*
+         * Optional: a provider that can take extra read-only layers
+         * (LayeredFileProvider) mounts InLayer under InName, consulted before
+         * the layers mounted earlier; a second mount under the same name
+         * replaces the first. False from a provider that cannot. Thread safe
+         * where implemented: readers on any thread see a layer whole or not
+         * at all.
+         */
+        virtual bool MountLayer(const std::string& InName, std::shared_ptr<IFileProvider> InLayer) { return false; }
+        virtual bool UnmountLayer(const std::string& InName) { return false; }
     };
 
     /*
@@ -58,6 +72,63 @@ namespace EngineCore
         std::string Resolve(const std::string& InPath) const;
 
         std::string BaseDir;
+    };
+
+    /*
+     * Read-only files held in memory, by bundle-relative path: what a mounted
+     * shader cache is (RenderCore's ShaderCache.h). Immutable once built, so
+     * any thread may read it.
+     */
+    class CORE_API MemoryFileProvider : public IFileProvider
+    {
+    public:
+        using FileBytes = std::shared_ptr<const std::vector<uint8_t>>;
+
+        explicit MemoryFileProvider(std::map<std::string, FileBytes> InFiles) : Files(std::move(InFiles)) {}
+
+        bool ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes) override;
+        bool Exists (const std::string& InPath) override;
+
+        size_t GetFileCount() const { return Files.size(); }
+
+    private:
+        std::map<std::string, FileBytes> Files;
+    };
+
+    /*
+     * A base provider plus named layers mounted on top (MountLayer), newest
+     * first. With bInBaseFirst the base is asked before every layer instead:
+     * the editor's choice, so a material it just cooked to disk beats the
+     * cache cooked by the last build. Not owning the base.
+     */
+    class CORE_API LayeredFileProvider : public IFileProvider
+    {
+    public:
+        LayeredFileProvider(IFileProvider* InBase, const bool bInBaseFirst) : Base(InBase), bBaseFirst(bInBaseFirst) {}
+
+        bool ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes) override;
+        bool Exists (const std::string& InPath) override;
+
+        bool MountLayer(const std::string& InName, std::shared_ptr<IFileProvider> InLayer) override;
+        bool UnmountLayer(const std::string& InName) override;
+
+        std::vector<std::string> GetLayerNames() const;
+
+    private:
+        struct Layer
+        {
+            std::string                    Name;
+            std::shared_ptr<IFileProvider> Provider;
+        };
+
+        /* The order to ask in, taken under the lock; the providers are then
+         * read outside it, kept alive by the copies. */
+        std::vector<std::shared_ptr<IFileProvider>> Snapshot() const;
+
+        IFileProvider*     Base = nullptr;
+        bool               bBaseFirst = false;
+        mutable std::mutex Mutex;
+        std::vector<Layer> Layers;   // oldest first
     };
 
     /* Process-wide provider used by GDI's shader loading. Not owned. */
