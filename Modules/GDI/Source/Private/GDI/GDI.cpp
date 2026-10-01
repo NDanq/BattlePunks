@@ -271,6 +271,22 @@ void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData,
     Block.assign(Bytes, Bytes + (InData ? Size : 0));
 }
 
+void GDIDynamicDriver::SetRenderTargets(GDIRenderTarget* const* InColors, const uint InCount, GDIRenderTarget* InDepthFrom)
+{
+    if(!InColors || InCount == 0 || !InColors[0]) return;
+    if(InCount > 1 || InDepthFrom != InColors[0])
+    {
+        static bool bWarned = false;
+        if(!bWarned)
+        {
+            bWarned = true;
+            GDI_LOG("[GDI] this backend binds one render target with its own depth; "
+                    "SetRenderTargets draws into the first only")
+        }
+    }
+    SetRenderTarget(InColors[0]);
+}
+
 void GDIDynamicDriver::SetMaterialTexture(const uint InSlot, GDITextureResource* InTexture)
 {
     if(InSlot < GDI_MATERIAL_TEXTURE_SLOTS) MaterialTextures[InSlot] = InTexture;
@@ -358,6 +374,12 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
                             (GDIRenderTarget* InRenderTarget),
                             ,
                             (InRenderTarget))
+
+IMPLEMENT_GDI_FUNCTION_BODY(void,
+                            SetRenderTargets,
+                            (GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom),
+                            ,
+                            (InColors, InCount, InDepthFrom))
 
 IMPLEMENT_GDI_FUNCTION_BODY(void,
                             ReleaseRenderTarget,

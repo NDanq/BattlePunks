@@ -47,6 +47,9 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderThread.cpp
         Source/Private/RenderCore/RenderCommand.cpp
         Source/Private/RenderCore/RenderContext.cpp
+        Source/Private/RenderCore/DrawPolicy.h
+        Source/Private/RenderCore/RenderPipeline.cpp
+        Source/Private/RenderCore/SceneTargets.h
         Source/Private/RenderCore/RenderProxy.cpp
         Source/Private/RenderCore/RenderScene.cpp
         Source/Private/RenderCore/RenderComponentProxy.h
@@ -78,6 +81,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/Renderer.h
         Source/Public/RenderCore/MaterialDescription.h
         Source/Public/RenderCore/RenderLighting.h
+        Source/Public/RenderCore/RenderPipeline.h
         Source/Public/RenderCore/ShaderCache.h
 )
 

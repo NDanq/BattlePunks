@@ -318,83 +318,139 @@ GDIRenderTarget* VulkanDynamicGDI::CreateRenderTarget(std::string Name, uint InW
 
 void VulkanDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
 {
-    auto* VKRT = dynamic_cast<VKRenderTarget*>(InRenderTarget);
-    if(!VKRT || !CurrentStateData) return;
+    SetRenderTargets(&InRenderTarget, 1, InRenderTarget);
+}
+
+void VulkanDynamicGDI::SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom)
+{
+    if(!CurrentStateData || !InColors || InCount == 0) return;
     if(CurrentStateData->CurrentCmd == VK_NULL_HANDLE) return;
+    if(InCount > GDI_MAX_COLOR_TARGETS) InCount = GDI_MAX_COLOR_TARGETS;
+
+    VKRenderTarget* Colors[GDI_MAX_COLOR_TARGETS] = {};
+    for(uint Index = 0; Index < InCount; ++Index)
+    {
+        Colors[Index] = dynamic_cast<VKRenderTarget*>(InColors[Index]);
+        if(!Colors[Index] || !Colors[Index]->IsValid()) return;
+        if(Colors[Index]->GetWidth() != Colors[0]->GetWidth() || Colors[Index]->GetHeight() != Colors[0]->GetHeight())
+        {
+            GDI_LOG("[VulkanDynamicGDI] SetRenderTargets: targets of different sizes; nothing bound")
+            return;
+        }
+    }
+    VKRenderTarget* DepthRT = dynamic_cast<VKRenderTarget*>(InDepthFrom);
+    if(DepthRT && (!DepthRT->HasDepth() || DepthRT->GetWidth() != Colors[0]->GetWidth()
+                   || DepthRT->GetHeight() != Colors[0]->GetHeight()))
+    {
+        DepthRT = nullptr;
+    }
+    const auto IsBoundColor = [&](const VKRenderTarget* InRT)
+    {
+        for(uint Index = 0; Index < InCount; ++Index) { if(Colors[Index] == InRT) { return true; } }
+        return false;
+    };
 
     EndActiveRenderingRegion();
 
-    // Transition EVERY render target still in COLOR_ATTACHMENT layout (except the one
+    // Transition EVERY render target still in COLOR_ATTACHMENT layout (except those
     // being bound) to SHADER_READ_ONLY_OPTIMAL so it can be sampled by the upcoming
     // pass. The sampler descriptors written by BindDrawState always declare
     // SHADER_READ_ONLY, and layers/stroke buffers are sampled in arbitrary order —
-    // transitioning only the immediately-previous RT is not enough.
+    // transitioning only the immediately-previous RT is not enough. Depth likewise:
+    // every depth image but the one being attached becomes sampleable.
     std::vector<VkImageMemoryBarrier2> Barriers;
     for(VKRenderTarget* RT : LiveRenderTargets)
     {
-        if(RT == VKRT || !RT->IsValid()) continue;
-        if(RT->GetCurrentLayout() != VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL) continue;
+        if(!RT->IsValid()) continue;
 
-        VkImageMemoryBarrier2 ToRead{};
-        ToRead.sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        ToRead.srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-        ToRead.dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
-        ToRead.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-        ToRead.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
-        ToRead.oldLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-        ToRead.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        ToRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        ToRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        ToRead.image         = RT->GetImage();
-        ToRead.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-        ToRead.subresourceRange.levelCount = 1;
-        ToRead.subresourceRange.layerCount = 1;
-        Barriers.push_back(ToRead);
-        RT->SetCurrentLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        if(!IsBoundColor(RT) && RT->GetCurrentLayout() == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL)
+        {
+            VkImageMemoryBarrier2 ToRead{};
+            ToRead.sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            ToRead.srcStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+            ToRead.dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+            ToRead.srcAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+            ToRead.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+            ToRead.oldLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+            ToRead.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            ToRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            ToRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            ToRead.image         = RT->GetImage();
+            ToRead.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+            ToRead.subresourceRange.levelCount = 1;
+            ToRead.subresourceRange.layerCount = 1;
+            Barriers.push_back(ToRead);
+            RT->SetCurrentLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
+
+        if(RT != DepthRT && RT->HasDepth() && RT->GetDepthLayout() == VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL)
+        {
+            VkImageMemoryBarrier2 ToRead{};
+            ToRead.sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+            ToRead.srcStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+            ToRead.dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
+            ToRead.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+            ToRead.dstAccessMask = VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
+            ToRead.oldLayout     = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
+            ToRead.newLayout     = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+            ToRead.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            ToRead.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+            ToRead.image         = RT->GetDepthImage();
+            ToRead.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+            ToRead.subresourceRange.levelCount = 1;
+            ToRead.subresourceRange.layerCount = 1;
+            Barriers.push_back(ToRead);
+            RT->SetDepthLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        }
     }
 
-    // Transition new RT to COLOR_ATTACHMENT_OPTIMAL. srcStage/srcAccess must cover
+    // Transition the new RTs to COLOR_ATTACHMENT_OPTIMAL. srcStage/srcAccess must cover
     // prior reads AND writes: the UI-thread present blit samples this image
     // (fragment-shader read), so this write-after-read barrier is what orders a
     // subsequently-submitted frame against an earlier-submitted present.
-    VkImageLayout OldLayout = VKRT->GetCurrentLayout();
-    VkImageMemoryBarrier2 Barrier{};
-    Barrier.sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-    Barrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
-    Barrier.dstStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
-    Barrier.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
-    Barrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
-    Barrier.oldLayout     = OldLayout;
-    Barrier.newLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    Barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    Barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-    Barrier.image         = VKRT->GetImage();
-    Barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    Barrier.subresourceRange.levelCount = 1;
-    Barrier.subresourceRange.layerCount = 1;
-    Barriers.push_back(Barrier);
+    for(uint Index = 0; Index < InCount; ++Index)
+    {
+        VKRenderTarget* RT = Colors[Index];
+        VkImageMemoryBarrier2 Barrier{};
+        Barrier.sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        Barrier.srcStageMask  = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        Barrier.dstStageMask  = VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT;
+        Barrier.srcAccessMask = VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT;
+        Barrier.dstAccessMask = VK_ACCESS_2_COLOR_ATTACHMENT_WRITE_BIT;
+        Barrier.oldLayout     = RT->GetCurrentLayout();
+        Barrier.newLayout     = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        Barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        Barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        Barrier.image         = RT->GetImage();
+        Barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        Barrier.subresourceRange.levelCount = 1;
+        Barrier.subresourceRange.layerCount = 1;
+        Barriers.push_back(Barrier);
+        RT->SetCurrentLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+    }
 
-    // Depth: from UNDEFINED (and cleared) on first use, else after the
-    // previous pass's writes.
-    const bool bHasDepth      = VKRT->HasDepth();
-    const bool bDepthIsFresh  = bHasDepth && VKRT->GetDepthLayout() == VK_IMAGE_LAYOUT_UNDEFINED;
-    if(bHasDepth)
+    // Depth: from UNDEFINED (and cleared) on first use, else after the previous
+    // pass's writes or a pass that sampled it.
+    const bool bDepthIsFresh = DepthRT && DepthRT->GetDepthLayout() == VK_IMAGE_LAYOUT_UNDEFINED;
+    if(DepthRT)
     {
         VkImageMemoryBarrier2 DepthBarrier{};
         DepthBarrier.sType         = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
-        DepthBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+        DepthBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT
+                                   | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT;
         DepthBarrier.dstStageMask  = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
-        DepthBarrier.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+        DepthBarrier.srcAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT | VK_ACCESS_2_SHADER_SAMPLED_READ_BIT;
         DepthBarrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-        DepthBarrier.oldLayout     = VKRT->GetDepthLayout();
+        DepthBarrier.oldLayout     = DepthRT->GetDepthLayout();
         DepthBarrier.newLayout     = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         DepthBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
         DepthBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-        DepthBarrier.image         = VKRT->GetDepthImage();
+        DepthBarrier.image         = DepthRT->GetDepthImage();
         DepthBarrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
         DepthBarrier.subresourceRange.levelCount = 1;
         DepthBarrier.subresourceRange.layerCount = 1;
         Barriers.push_back(DepthBarrier);
+        DepthRT->SetDepthLayout(VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
     }
 
     VkDependencyInfo Dep{};
@@ -402,30 +458,32 @@ void VulkanDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
     Dep.imageMemoryBarrierCount = uint32_t(Barriers.size());
     Dep.pImageMemoryBarriers    = Barriers.data();
     vkCmdPipelineBarrier2(CurrentStateData->CurrentCmd, &Dep);
-    VKRT->SetCurrentLayout(VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
-    if(bHasDepth) VKRT->SetDepthLayout(VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
 
     // Begin dynamic rendering region.
-    VkRenderingAttachmentInfo ColorAttachment{};
-    ColorAttachment.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-    ColorAttachment.imageView   = VKRT->GetImageView();
-    ColorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-    ColorAttachment.loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD;
-    ColorAttachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
+    VkRenderingAttachmentInfo ColorAttachments[GDI_MAX_COLOR_TARGETS]{};
+    for(uint Index = 0; Index < InCount; ++Index)
+    {
+        VkRenderingAttachmentInfo& ColorAttachment = ColorAttachments[Index];
+        ColorAttachment.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
+        ColorAttachment.imageView   = Colors[Index]->GetImageView();
+        ColorAttachment.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+        ColorAttachment.loadOp      = VK_ATTACHMENT_LOAD_OP_LOAD;
+        ColorAttachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
+    }
 
     VkRenderingInfo RenderingInfo{};
     RenderingInfo.sType                = VK_STRUCTURE_TYPE_RENDERING_INFO;
     RenderingInfo.renderArea.offset    = { 0, 0 };
-    RenderingInfo.renderArea.extent    = { VKRT->GetWidth(), VKRT->GetHeight() };
+    RenderingInfo.renderArea.extent    = { Colors[0]->GetWidth(), Colors[0]->GetHeight() };
     RenderingInfo.layerCount           = 1;
-    RenderingInfo.colorAttachmentCount = 1;
-    RenderingInfo.pColorAttachments    = &ColorAttachment;
+    RenderingInfo.colorAttachmentCount = InCount;
+    RenderingInfo.pColorAttachments    = ColorAttachments;
 
     VkRenderingAttachmentInfo DepthAttachment{};
-    if(bHasDepth)
+    if(DepthRT)
     {
         DepthAttachment.sType       = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        DepthAttachment.imageView   = VKRT->GetDepthView();
+        DepthAttachment.imageView   = DepthRT->GetDepthView();
         DepthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL;
         DepthAttachment.loadOp      = bDepthIsFresh ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         DepthAttachment.storeOp     = VK_ATTACHMENT_STORE_OP_STORE;
@@ -434,8 +492,14 @@ void VulkanDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
     }
     vkCmdBeginRendering(CurrentStateData->CurrentCmd, &RenderingInfo);
 
-    CurrentStateData->ActiveRenderTarget = VKRT;
-    CurrentStateData->bRenderingActive   = true;
+    CurrentStateData->ActiveRenderTarget = Colors[0];
+    for(uint Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
+    {
+        CurrentStateData->ActiveColors[Index] = Index < InCount ? Colors[Index] : nullptr;
+    }
+    CurrentStateData->ActiveColorCount = InCount;
+    CurrentStateData->ActiveDepth      = DepthRT;
+    CurrentStateData->bRenderingActive = true;
 }
 
 void VulkanDynamicGDI::ReleaseRenderTarget(GDIRenderTarget* InRenderTarget)
@@ -494,6 +558,10 @@ void VulkanDynamicGDI::FlushForReadback(bool bResumeActiveRegion)
 
     VKRenderTarget*  RT          = CurrentStateData->ActiveRenderTarget;
     const bool       bWasActive  = CurrentStateData->bRenderingActive;
+    GDIRenderTarget* Colors[GDI_MAX_COLOR_TARGETS] = {};
+    const uint32_t   ColorCount  = CurrentStateData->ActiveColorCount;
+    for(uint32_t Index = 0; Index < ColorCount; ++Index) { Colors[Index] = CurrentStateData->ActiveColors[Index]; }
+    GDIRenderTarget* Depth       = CurrentStateData->ActiveDepth;
 
     EndActiveRenderingRegion();
     CommandManager->EndFrame();
@@ -514,6 +582,8 @@ void VulkanDynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     DrainDeferredDestruction();
     CurrentStateData->CurrentCmd         = NewCmd;
     CurrentStateData->ActiveRenderTarget = nullptr;
+    CurrentStateData->ActiveColorCount   = 0;
+    CurrentStateData->ActiveDepth        = nullptr;
     CurrentStateData->bRenderingActive   = false;
     CurrentStateData->DebugLabelDepth    = 0;
 
@@ -524,8 +594,8 @@ void VulkanDynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     // Re-open the rendering region on the RT that was active, so the frame
     // continues exactly as before the flush (loadOp=LOAD preserves contents).
     // Skipped for resize, where RT is about to be destroyed.
-    if(bResumeActiveRegion && bWasActive && RT)
-        SetRenderTarget(RT);
+    if(bResumeActiveRegion && bWasActive && RT && ColorCount > 0)
+        SetRenderTargets(Colors, ColorCount, Depth);
 }
 
 void VulkanDynamicGDI::RecordResolve(VKRenderTarget* Src, VKRenderTarget* Dst)
@@ -543,6 +613,8 @@ void VulkanDynamicGDI::RecordResolve(VKRenderTarget* Src, VKRenderTarget* Dst)
     // A copy cannot happen inside a dynamic-rendering region.
     EndActiveRenderingRegion();
     CurrentStateData->ActiveRenderTarget = nullptr;
+    CurrentStateData->ActiveColorCount   = 0;
+    CurrentStateData->ActiveDepth        = nullptr;
 
     // Transition Src → TRANSFER_SRC, Dst → TRANSFER_DST from their tracked layouts.
     RecordBarrier(Cmd, MakeImageBarrier(
@@ -911,7 +983,8 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     if(CurrentStateData->ActiveRenderTarget)
     {
         Key.RTFormat    = CurrentStateData->ActiveRenderTarget->GetFormat();
-        Key.DepthFormat = CurrentStateData->ActiveRenderTarget->GetDepthFormat();
+        Key.ColorCount  = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
+        Key.DepthFormat = CurrentStateData->ActiveDepth ? CurrentStateData->ActiveDepth->GetDepthFormat() : VK_FORMAT_UNDEFINED;
     }
 
     // ----------------------------------------------------------------

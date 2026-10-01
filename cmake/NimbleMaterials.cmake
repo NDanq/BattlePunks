@@ -32,6 +32,8 @@
 # needs CMake 3.17.)
 get_filename_component(NM_COOK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Modules/NodeGraph/Scripts/cook_material_graphs.py" ABSOLUTE)
 set(NIMBLE_MATERIAL_COOK_SCRIPT "${NM_COOK_SCRIPT}" CACHE INTERNAL "NodeGraph's material cook, for nimble_stage_materials")
+get_filename_component(NM_GDI_COOK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Modules/GDI/Scripts/cook_shaders.py" ABSOLUTE)
+set(NIMBLE_GDI_COOK_SCRIPT "${NM_GDI_COOK_SCRIPT}" CACHE INTERNAL "GDI's cook_shaders.py, which the material cook preprocesses and compiles through")
 get_filename_component(NM_ENGINE_SHADER_DIR "${CMAKE_CURRENT_LIST_DIR}/../Content/Shaders" ABSOLUTE)
 set(NIMBLE_ENGINE_SHADER_DIR "${NM_ENGINE_SHADER_DIR}" CACHE INTERNAL "Engine/Content/Shaders: the engine's shaders, and the include root of every cook")
 get_filename_component(NM_ENGINE_MATERIAL_DIR "${CMAKE_CURRENT_LIST_DIR}/../Content/Materials" ABSOLUTE)
@@ -120,7 +122,7 @@ function(nimble_stage_materials)
             OUTPUT  "${NM_STAMP}"
             ${NM_COMMANDS}
             COMMAND ${CMAKE_COMMAND} -E touch "${NM_STAMP}"
-            DEPENDS ${NM_FUNCTIONS} ${NM_MATERIALS} "${NIMBLE_MATERIAL_COOK_SCRIPT}" ${NIMBLE_SHADER_INCLUDES}
+            DEPENDS ${NM_FUNCTIONS} ${NM_MATERIALS} "${NIMBLE_MATERIAL_COOK_SCRIPT}" "${NIMBLE_GDI_COOK_SCRIPT}" ${NIMBLE_SHADER_INCLUDES}
             COMMENT "${NM_TARGET}: cooking materials from ${NM_DIR}"
             VERBATIM)
 

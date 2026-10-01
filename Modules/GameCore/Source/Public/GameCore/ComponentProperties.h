@@ -105,6 +105,22 @@ namespace GameCore
             Add(InName, InMember, EPropertyType::Flag, InFlags);
         }
 
+        /* One element of an array member, as its own field: a list of slots
+         * (RenderComponent's materials) without an array property type. */
+        template<typename TElement, size_t N>
+        void Element(const char* InName, TElement (T::* InArray)[N], const size_t InIndex, const uint8_t InFlags = PF_None)
+        {
+            if(InIndex >= N)
+            {
+                ++Rejected;
+                return;
+            }
+            const T Probe{};
+            const char* Base   = reinterpret_cast<const char*>(&Probe);
+            const char* Member = reinterpret_cast<const char*>(&((Probe.*InArray)[InIndex]));
+            AddAt(InName, uint32_t(Member - Base), uint32_t(sizeof(TElement)), ScriptFieldTypeOf<TElement>::Value, InFlags);
+        }
+
         /* Keeps the type out of a tool's "Add Component" (CPF_NotAddable). */
         void NotAddable() { TypeFlags |= CPF_NotAddable; }
 
@@ -121,6 +137,16 @@ namespace GameCore
         template<typename TField>
         void Add(const char* InName, TField T::* InMember, const EPropertyType InType, const uint8_t InFlags)
         {
+            /* Measured on a default-constructed instance. */
+            const T Probe{};
+            const char* Base   = reinterpret_cast<const char*>(&Probe);
+            const char* Member = reinterpret_cast<const char*>(&(Probe.*InMember));
+            AddAt(InName, uint32_t(Member - Base), uint32_t(sizeof(TField)), InType, InFlags);
+        }
+
+        void AddAt(const char* InName, const uint32_t InOffset, const uint32_t InSize, const EPropertyType InType,
+                   const uint8_t InFlags)
+        {
             size_t Length = 0;
             while(InName != nullptr && InName[Length] != '\0') { ++Length; }
 
@@ -133,15 +159,10 @@ namespace GameCore
             ComponentPropertyEntry& Entry = Entries[Count++];
             for(size_t Index = 0; Index < Length; ++Index) { Entry.Name[Index] = InName[Index]; }
 
-            /* Measured on a default-constructed instance. */
-            const T Probe{};
-            const char* Base   = reinterpret_cast<const char*>(&Probe);
-            const char* Member = reinterpret_cast<const char*>(&(Probe.*InMember));
-
             Entry.Type   = InType;
             Entry.Flags  = InFlags;
-            Entry.Offset = uint32_t(Member - Base);
-            Entry.Size   = uint32_t(sizeof(TField));
+            Entry.Offset = InOffset;
+            Entry.Size   = InSize;
         }
 
         ComponentPropertyEntry Entries[COMPONENT_PROPERTIES_PER_TYPE_MAX];

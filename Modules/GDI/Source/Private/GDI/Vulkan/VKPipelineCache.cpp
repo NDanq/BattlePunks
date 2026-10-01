@@ -97,6 +97,7 @@ uint64_t VKPipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.DepthCompareOp,    sizeof(K.DepthCompareOp));
     Mix(&K.StencilTestEnable, sizeof(K.StencilTestEnable));
     Mix(&K.RTFormat,          sizeof(K.RTFormat));
+    Mix(&K.ColorCount,        sizeof(K.ColorCount));
     Mix(&K.DepthFormat,       sizeof(K.DepthFormat));
     Mix(&K.Topology,          sizeof(K.Topology));
     return H;
@@ -561,11 +562,21 @@ VkPipeline VKPipelineCache::CreatePipeline(const PipelineKey& Key) const
     BlendAtt.alphaBlendOp        = Key.AlphaBlendOp;
     BlendAtt.colorWriteMask      = Key.ColorWriteMask;
 
+    // The same blend for every colour attachment.
+    const uint32_t ColorCount = Key.ColorCount == 0 ? 1u : (Key.ColorCount > GDI_MAX_COLOR_TARGETS ? GDI_MAX_COLOR_TARGETS : Key.ColorCount);
+    VkPipelineColorBlendAttachmentState BlendAtts[GDI_MAX_COLOR_TARGETS];
+    VkFormat                            ColorFormats[GDI_MAX_COLOR_TARGETS];
+    for(uint32_t Index = 0; Index < ColorCount; ++Index)
+    {
+        BlendAtts[Index]    = BlendAtt;
+        ColorFormats[Index] = Key.RTFormat;
+    }
+
     VkPipelineColorBlendStateCreateInfo ColorBlend{};
     ColorBlend.sType           = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
     ColorBlend.logicOpEnable   = VK_FALSE;
-    ColorBlend.attachmentCount = 1;
-    ColorBlend.pAttachments    = &BlendAtt;
+    ColorBlend.attachmentCount = ColorCount;
+    ColorBlend.pAttachments    = BlendAtts;
 
     // --- Dynamic state ---
     static const VkDynamicState DynStates[] = {
@@ -580,8 +591,8 @@ VkPipeline VKPipelineCache::CreatePipeline(const PipelineKey& Key) const
     // --- Dynamic rendering pNext (no VkRenderPass needed) ---
     VkPipelineRenderingCreateInfo RenderingInfo{};
     RenderingInfo.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
-    RenderingInfo.colorAttachmentCount    = 1;
-    RenderingInfo.pColorAttachmentFormats = &Key.RTFormat;
+    RenderingInfo.colorAttachmentCount    = ColorCount;
+    RenderingInfo.pColorAttachmentFormats = ColorFormats;
     RenderingInfo.depthAttachmentFormat   = Key.DepthFormat;
 
     // --- Assemble ---

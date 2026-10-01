@@ -17,8 +17,11 @@
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCoreLog.h"
+#include "Public/RenderCore/RenderPipeline.h"
 #include "Public/RenderCore/ShaderCache.h"
+#include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
+#include "Private/RenderCore/SceneTargets.h"
 
 /*
  * DrawQuad: a 1x1 quad mesh, Basic_VS/Basic_PS, and a GDIView whose camera
@@ -31,18 +34,30 @@
  * the description's defaults plus the tint, and the scene block (binding 3)
  * once a frame, through GDISetUniformBlock.
  *
- * PASSES. Inside a scene (BeginSceneDraws/FlushSceneDraws) draws are queued
- * and issued opaque first -- Opaque, Masked, plain quads and tinted meshes,
- * in submission order -- then Translucent, back to front. Outside one (a
- * preview, a test) they are issued at once.
+ * STAGES (RENDERPIPELINE.md). Inside a scene (BeginSceneDraws to
+ * RenderSceneStages) each draw is queued in the draw policy of the stage its
+ * material names -- Base Pass (the G-buffer), Unlit, Translucent Lit,
+ * Translucent Unlit, PostProcess -- and the stages then run in order, with
+ * the Lighting stage resolving the G-buffer between the Base Pass and Unlit.
+ * Outside a scene (a test) draws are issued at once.
  */
 
 namespace RenderCore
 {
+    /* A loaded material: DrawCommand points at one (DrawPolicy.h). */
+    struct RenderMaterial
+    {
+        MaterialDescription  Description;
+        GDIShader*           Pixel = nullptr;      // null: failed to load, drawn as the fallback
+        GDIShader*           Vertex[2] = {};       // its own Quad and Mesh shaders, with an offset only
+        std::vector<uint8_t> Block;                // the defaults; the tint is written per draw
+    };
+
     namespace
     {
         const char* const MATERIAL_FOLDER      = "Materials/";
-        const char* const DEFAULT_LIT_MATERIAL = "DefaultLit";   // Engine/Content/Materials: a mesh with none
+        const char* const DEFAULT_LIT_MATERIAL = "DefaultLit";            // Engine/Content/Materials: a mesh with none
+        const char* const LIGHTING_SHADER      = "DeferredLighting.fsh";  // Engine/Content/Shaders: the Lighting stage
 
         /* A material's shader: no name-based uniforms, the material binding layout. */
         class MaterialShader final : public GDIShader
@@ -52,50 +67,24 @@ namespace RenderCore
             void InitUniformBindings() override {}
         };
 
-        struct Material
-        {
-            MaterialDescription  Description;
-            GDIShader*           Pixel = nullptr;      // null: failed to load, drawn as the fallback
-            GDIShader*           Vertex[2] = {};       // its own Quad and Mesh shaders, with an offset only
-            std::vector<uint8_t> Block;                // the defaults; the tint is written per draw
-        };
+        using Material = RenderMaterial;
 
-        /* SceneUniforms.glsl's Scene_Block, byte for byte: every member a vec4. */
+        /* SceneUniforms.glsl's Scene_Block, byte for byte: vec4s, then a mat4
+         * (column-major, as GDI uploads matrices). */
         struct SceneUniforms
         {
-            float CameraPosition[4] = {};
-            float Time[4]           = {};
-            float LightDirection[4] = {};
-            float LightColor[4]     = {};
-            float SkyColor[4]       = {};
-            float GroundColor[4]    = {};
+            float CameraPosition[4]     = {};
+            float Time[4]               = {};
+            float LightDirection[4]     = {};
+            float LightColor[4]         = {};
+            float SkyColor[4]           = {};
+            float GroundColor[4]        = {};
+            float InvViewProjection[16] = {};
         };
-        static_assert(sizeof(SceneUniforms) == 96, "SceneUniforms must match Scene_Block (SceneUniforms.glsl)");
+        static_assert(sizeof(SceneUniforms) == 160, "SceneUniforms must match Scene_Block (SceneUniforms.glsl)");
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
-                      && offsetof(SceneUniforms, GroundColor) == 80, "Scene_Block's members are vec4s in this order");
-
-        enum EPass : uint8_t
-        {
-            PASS_Opaque      = 0,   // Opaque, Masked, plain quads, tinted meshes
-            PASS_Translucent = 1,
-        };
-
-        struct DrawItem
-        {
-            enum class EKind : uint8_t { Quad, MaterialQuad, MeshSection };
-
-            EKind             Kind  = EKind::Quad;
-            uint8_t           Pass  = PASS_Opaque;
-            float             Depth = 0.0f;          // view depth, for the translucent sort
-            RenderTransform   Transform;
-            float             Width  = 1.0f;
-            float             Height = 1.0f;
-            EngineCore::Color Tint{255, 255, 255};
-            Material*         Mat   = nullptr;       // MaterialQuad; MeshSection (null: Mesh_PS)
-            GDIMesh*          Mesh  = nullptr;
-            uint32_t          First = 0;
-            uint32_t          Count = 0;             // 0: the whole mesh
-        };
+                      && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
+                      "Scene_Block's members are in this order");
 
         void PutColor(float (&OutValue)[4], const EngineCore::Color InColor, const float InAlpha)
         {
@@ -105,10 +94,11 @@ namespace RenderCore
             OutValue[3] = InAlpha;
         }
 
-        /* A shader file's cooked path, as GDI resolves it (GetCookedShaderPath). */
+        /* A shader file's cooked path, as GDI resolves it (GetCookedShaderPath).
+         * InFile is relative to the cooked folder: "Materials/Glow@0000000a.fsh". */
         std::string CookedPath(const std::string& InFile, const ERenderBackend InBackend)
         {
-            const std::string File = std::string(MATERIAL_FOLDER) + InFile;
+            const std::string& File = InFile;
             switch(InBackend)
             {
                 case ERenderBackend::OpenGL: return "Shaders/Cooked/OpenGL/" + File;
@@ -173,14 +163,34 @@ namespace RenderCore
         std::chrono::steady_clock::time_point LastFrame = Start;
         float                                 FrameDelta = 0.0f;
 
-        bool                  bDeferring = false;
-        std::vector<DrawItem> Items;
+        /* Inside a scene (BeginSceneDraws to RenderSceneStages) draws queue in
+         * their stage's policy; outside one they are issued at once. */
+        bool       bDeferring = false;
+        DrawPolicy Policies[size_t(ERenderStage::Count)];
+        uint32_t   StageDrawCounts[size_t(ERenderStage::Count)] = {};   // the last RenderSceneStages'
 
-        /* RenderMaterialPreview's target, square, resized as asked. */
-        GDIRenderTarget* PreviewTarget = nullptr;
-        int              PreviewSize   = 0;
+        /* DeferredLighting.fsh, loaded on first use; null if it cannot be (warned). */
+        GDIShader* LightingShader = nullptr;
+        bool       bLightingTried = false;
+
+        /* RenderMaterialPreview's targets, square, resized as asked; and the
+         * target the last RenderSceneStages finished in. */
+        SceneTargets     PreviewTargets{"RenderCore.MaterialPreview"};
+        GDIRenderTarget* FinalTarget = nullptr;
 
         std::atomic<uint64_t> DrawCallCount{0};
+
+        Impl()
+        {
+            for(size_t Index = 0; Index < size_t(ERenderStage::Count); ++Index)
+            {
+                const ERenderStage Stage        = ERenderStage(Index);
+                const bool         bBackToFront = Stage == ERenderStage::TranslucentLit || Stage == ERenderStage::TranslucentUnlit;
+                Policies[Index].Init(Stage, bBackToFront ? EDrawSort::BackToFront : EDrawSort::Submission);
+            }
+        }
+
+        DrawPolicy& PolicyFor(const ERenderStage InStage) { return Policies[size_t(InStage)]; }
 
         ~Impl()
         {
@@ -303,7 +313,9 @@ namespace RenderCore
 
         // === Shaders and materials ===========================================
 
-        /* A cooked permutation, or null (warned) if this backend has none. */
+        /* A cooked shader with the material binding layout -- a permutation
+         * ("Materials/Glow@0000000a.fsh") or an engine one -- or null
+         * (warned) if this backend has none. */
         GDIShader* LoadShader(const std::string& InFile, const EShaderType InType, const std::string& InWho, const bool bInQuiet)
         {
             EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
@@ -320,7 +332,7 @@ namespace RenderCore
             }
 
             auto* Shader = new MaterialShader("Material:" + InFile);
-            Shader->InitResource(InType, std::string(MATERIAL_FOLDER) + InFile);
+            Shader->InitResource(InType, InFile);
             if(Shader->Resource)
             {
                 Shader->Resource->SetMaterialLayout(true);
@@ -335,10 +347,20 @@ namespace RenderCore
             if(!bDefaultVertexTried[Index])
             {
                 bDefaultVertexTried[Index] = true;
-                DefaultVertex[Index] = LoadShader(GetPermutationFileName(MATERIAL_DEFAULT_VERTEX, GetVertexPermutationKey(InInput), true),
+                DefaultVertex[Index] = LoadShader(MATERIAL_FOLDER + GetPermutationFileName(MATERIAL_DEFAULT_VERTEX, GetVertexPermutationKey(InInput), true),
                                                   ST_Vertex, "the shared material vertex shaders", false);
             }
             return DefaultVertex[Index];
+        }
+
+        GDIShader* GetLightingShader()
+        {
+            if(!bLightingTried)
+            {
+                bLightingTried = true;
+                LightingShader = LoadShader(LIGHTING_SHADER, ST_Pixel, "the Lighting stage", false);
+            }
+            return LightingShader;
         }
 
         /* Loaded on first use; failures are remembered and warned once.
@@ -373,7 +395,7 @@ namespace RenderCore
 
             const MaterialDescription& Desc = Loaded.Description;
             const uint32_t PixelKey = GetPixelPermutationKey(Desc.Domain, Desc.Shading);
-            GDIShader* Pixel = LoadShader(GetPermutationFileName(InName, PixelKey, false), ST_Pixel, Who, false);
+            GDIShader* Pixel = LoadShader(MATERIAL_FOLDER + GetPermutationFileName(InName, PixelKey, false), ST_Pixel, Who, false);
             if(!Pixel)
             {
                 return Loaded;   // warned; drawn as the fallback
@@ -383,7 +405,7 @@ namespace RenderCore
             {
                 for(const EMaterialVertexInput Input : { EMaterialVertexInput::Quad, EMaterialVertexInput::Mesh })
                 {
-                    GDIShader* Vertex = LoadShader(GetPermutationFileName(InName, GetVertexPermutationKey(Input), true), ST_Vertex, Who, false);
+                    GDIShader* Vertex = LoadShader(MATERIAL_FOLDER + GetPermutationFileName(InName, GetVertexPermutationKey(Input), true), ST_Vertex, Who, false);
                     if(!Vertex)
                     {
                         RetiredShaders.push_back(Pixel);
@@ -499,11 +521,22 @@ namespace RenderCore
             PutColor(Scene.LightColor,  Lighting.LightColor, 1.0f);
             PutColor(Scene.SkyColor,    Lighting.SkyColor, Lighting.SkyIntensity);
             PutColor(Scene.GroundColor, Lighting.GroundColor, 1.0f);
+
+            /* Clip back to world, for the Lighting stage: the inverse of
+             * Projection * View, column-major as GDI uploads a mat4. */
+            const EngineCore::Matrix4x4 InvViewProjection = EngineCore::Matrix4x4::Inverse(View.Projection * View.View);
+            for(int Row = 0; Row < 4; ++Row)
+            {
+                for(int Col = 0; Col < 4; ++Col)
+                {
+                    Scene.InvViewProjection[Col * 4 + Row] = float(InvViewProjection.Data[Row][Col]);
+                }
+            }
         }
 
         // === Issuing ============================================================
 
-        void IssueQuad(const DrawItem& InItem)
+        void IssueQuad(const DrawCommand& InItem)
         {
             EnsureInitialised();
             Bind(GDIGetShader<Basic_VS>(), GDIGetShader<Basic_PS>());
@@ -522,12 +555,12 @@ namespace RenderCore
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
         }
 
-        void IssueMaterialQuad(const DrawItem& InItem)
+        void IssueMaterialQuad(const DrawCommand& InItem)
         {
             EnsureInitialised();
             if(!BindMaterial(*InItem.Mat, EMaterialVertexInput::Quad, InItem.Tint))
             {
-                DrawItem Plain = InItem;
+                DrawCommand Plain = InItem;
                 IssueQuad(Plain);
                 return;
             }
@@ -536,7 +569,7 @@ namespace RenderCore
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
         }
 
-        void IssueMeshSection(const DrawItem& InItem)
+        void IssueMeshSection(const DrawCommand& InItem)
         {
             EnsureInitialised();
             Place(MeshObject, InItem.Transform, 1.0f, 1.0f);
@@ -560,17 +593,33 @@ namespace RenderCore
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
         }
 
-        void Issue(const DrawItem& InItem)
+        /* A PostProcess material over the bound target; the scene so far is
+         * material texture 0. False if its shaders are missing. */
+        bool IssueFullscreen(const DrawCommand& InItem)
+        {
+            EnsureInitialised();
+            if(!InItem.Mat || !BindMaterial(*InItem.Mat, EMaterialVertexInput::Fullscreen, EngineCore::Color(255, 255, 255, 255)))
+            {
+                return false;
+            }
+            GDIDrawObject(ScreenObject);
+            DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+            return true;
+        }
+
+        void Issue(const DrawCommand& InItem)
         {
             switch(InItem.Kind)
             {
-                case DrawItem::EKind::Quad:         IssueQuad(InItem);        break;
-                case DrawItem::EKind::MaterialQuad: IssueMaterialQuad(InItem); break;
-                case DrawItem::EKind::MeshSection:  IssueMeshSection(InItem); break;
+                case DrawCommand::EKind::Quad:         IssueQuad(InItem);         break;
+                case DrawCommand::EKind::MaterialQuad: IssueMaterialQuad(InItem); break;
+                case DrawCommand::EKind::MeshSection:  IssueMeshSection(InItem);  break;
+                case DrawCommand::EKind::Fullscreen:   IssueFullscreen(InItem);   break;
             }
         }
 
-        void Submit(DrawItem InItem)
+        /* Into InStage's policy inside a scene; at once outside one. */
+        void Submit(DrawCommand InItem, const ERenderStage InStage)
         {
             if(!bDeferring)
             {
@@ -579,12 +628,82 @@ namespace RenderCore
             }
             const EngineCore::Vector3 Offset = InItem.Transform.Position - View.Origin;
             InItem.Depth = float(Offset.Dot(ViewForward(View)));
-            Items.push_back(InItem);
+            PolicyFor(InStage).Add(InItem);
         }
 
-        static uint8_t PassOf(const Material& InMaterial)
+        /* A usable material's stage; Unlit for the plain fallbacks. */
+        static ERenderStage StageOf(const Material* InMaterial)
         {
-            return InMaterial.Description.Domain == EMaterialDomain::Translucent ? PASS_Translucent : PASS_Opaque;
+            return InMaterial ? GetMaterialRenderStage(InMaterial->Description.Domain, InMaterial->Description.Shading)
+                              : ERenderStage::Unlit;
+        }
+
+        /* Issues InStage's policy in its order, under a draw event. */
+        void IssueStage(const ERenderStage InStage)
+        {
+            const DrawPolicy& Policy = PolicyFor(InStage);
+            StageDrawCounts[size_t(InStage)] = uint32_t(Policy.Num());
+            if(Policy.IsEmpty())
+            {
+                return;
+            }
+            GDIBeginDrawEvent(GetRenderStageName(InStage));
+            for(const uint32_t Index : Policy.GetIssueOrder())
+            {
+                Issue(Policy[Index]);
+            }
+            GDIEndDrawEvent();
+        }
+
+        /*
+         * The Lighting stage: DeferredLighting.fsh over InTargets' G-buffer
+         * into the bound scene colour, whose depth is a texture here -- bound
+         * as material texture 4, after GBuffer0-3. False (warned) if this
+         * backend cannot.
+         */
+        bool IssueLighting(SceneTargets& InTargets)
+        {
+            GDIShader* Pixel  = GetLightingShader();
+            GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
+            GDITexture2D* Depth = InTargets.SceneColor ? InTargets.SceneColor->ToDepthTexture2D() : nullptr;
+            if(!Pixel || !Vertex)
+            {
+                return false;   // warned by LoadShader
+            }
+            if(!Depth)
+            {
+                if(Backend == ERenderBackend::Null)
+                {
+                    return false;   // draws nothing by design; nothing to warn about
+                }
+                WarnOnce("|lighting-depth", "the Lighting stage: this backend cannot sample the scene depth; "
+                                            "Opaque and Masked Lit materials draw nothing");
+                return false;
+            }
+
+            for(uint32_t Index = 0; Index < RENDER_GBUFFER_TARGETS; ++Index)
+            {
+                GDITexture2D* Texture = InTargets.GBuffer[Index]->ToGDITexture2D();
+                GDISetMaterialTexture(Index, Texture ? Texture->Resource : nullptr);
+            }
+            GDISetMaterialTexture(RENDER_GBUFFER_TARGETS, Depth->Resource);
+
+            EnsureInitialised();
+            Bind(Vertex, Pixel);
+            static const uint8_t NoMaterial[MATERIAL_ENGINE_BLOCK_BYTES] = {};
+            GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, NoMaterial, uint(sizeof(NoMaterial)));
+            GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+            GDISetDepthState(IDepthStateDesc());   // no depth test: there is no depth bound
+            GDISetBlendState(IBlendStateDesc());
+            GDIDrawObject(ScreenObject);
+            DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+
+            /* Unbound again: the depth is about to be an attachment. */
+            for(uint32_t Index = 0; Index <= RENDER_GBUFFER_TARGETS; ++Index)
+            {
+                GDISetMaterialTexture(Index, nullptr);
+            }
+            return true;
         }
 
         /* Retires every material and the shared vertex shaders. */
@@ -605,6 +724,9 @@ namespace RenderCore
                 DefaultVertex[Index] = nullptr;
                 bDefaultVertexTried[Index] = false;
             }
+            if(LightingShader) { RetiredShaders.push_back(LightingShader); }
+            LightingShader = nullptr;
+            bLightingTried = false;
             Warned.clear();
             BoundVertex = nullptr;
             BoundPixel  = nullptr;
@@ -638,13 +760,13 @@ namespace RenderCore
     void RenderContext::DrawQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight,
                                   const EngineCore::Color InTint)
     {
-        DrawItem Item;
-        Item.Kind      = DrawItem::EKind::Quad;
+        DrawCommand Item;
+        Item.Kind      = DrawCommand::EKind::Quad;
         Item.Transform = InTransform;
         Item.Width     = InWidth;
         Item.Height    = InHeight;
         Item.Tint      = InTint;
-        P->Submit(Item);
+        P->Submit(Item, ERenderStage::Unlit);
     }
 
     void RenderContext::DrawQuadWithMaterial(const RenderTransform& InTransform, const float InWidth, const float InHeight,
@@ -663,19 +785,32 @@ namespace RenderCore
             return;
         }
 
-        DrawItem Item;
-        Item.Kind      = DrawItem::EKind::MaterialQuad;
-        Item.Pass      = Impl::PassOf(Found);
+        DrawCommand Item;
+        Item.Kind      = DrawCommand::EKind::MaterialQuad;
         Item.Transform = InTransform;
         Item.Width     = InWidth;
         Item.Height    = InHeight;
         Item.Tint      = InTint;
         Item.Mat       = &Found;
-        P->Submit(Item);
+        P->Submit(Item, Impl::StageOf(&Found));
     }
 
     bool RenderContext::DrawMesh(const RenderTransform& InTransform, const char* InMeshPath,
                                  const EngineCore::Color InTint, const char* InMaterial)
+    {
+        const char* Every[1] = { InMaterial };
+        return DrawMeshSections(InTransform, InMeshPath, InTint, Every, 1, /*bInEvery*/ true);
+    }
+
+    bool RenderContext::DrawMesh(const RenderTransform& InTransform, const char* InMeshPath,
+                                 const EngineCore::Color InTint, const char* const* InSlots, const uint32_t InSlotCount)
+    {
+        return DrawMeshSections(InTransform, InMeshPath, InTint, InSlots, InSlotCount, /*bInEvery*/ false);
+    }
+
+    bool RenderContext::DrawMeshSections(const RenderTransform& InTransform, const char* InMeshPath,
+                                         const EngineCore::Color InTint, const char* const* InSlots,
+                                         const uint32_t InSlotCount, const bool bInEvery)
     {
         if(!InMeshPath || InMeshPath[0] == '\0')
         {
@@ -694,9 +829,6 @@ namespace RenderCore
         const std::vector<MeshSection>& Sections = Source->Sections;
         const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
 
-        const bool        bOverride = InMaterial && InMaterial[0] != '\0';
-        const std::string Override  = bOverride ? std::string(InMaterial) : std::string();
-
         /* Usable, and drawable on a mesh. */
         const auto Usable = [](Material& InFound) -> Material*
         {
@@ -707,13 +839,16 @@ namespace RenderCore
         {
             const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
 
-            /* Override, else section material, else DefaultLit, else Mesh_PS (lit tint). */
+            /* The slot, else the section's material, else DefaultLit, else Mesh_PS (lit tint). */
+            const size_t SlotIndex = bInEvery ? 0 : Index;
+            const char*  Slot      = InSlots && SlotIndex < InSlotCount && InSlots[SlotIndex] && InSlots[SlotIndex][0] != '\0'
+                                   ? InSlots[SlotIndex] : nullptr;
             Material* Chosen = nullptr;
-            if(bOverride)
+            if(Slot)
             {
-                Chosen = Usable(P->FindMaterial(Override));
+                Chosen = Usable(P->FindMaterial(Slot));
             }
-            else if(!Section.Material.empty())
+            if(!Chosen && !Section.Material.empty())
             {
                 Chosen = Usable(P->FindMaterial(Section.Material, /*bQuietIfMissing*/ true));
             }
@@ -722,16 +857,15 @@ namespace RenderCore
                 Chosen = Usable(P->FindMaterial(DEFAULT_LIT_MATERIAL, /*bQuietIfMissing*/ true));
             }
 
-            DrawItem Item;
-            Item.Kind      = DrawItem::EKind::MeshSection;
-            Item.Pass      = Chosen ? Impl::PassOf(*Chosen) : uint8_t(PASS_Opaque);
+            DrawCommand Item;
+            Item.Kind      = DrawCommand::EKind::MeshSection;
             Item.Transform = InTransform;
             Item.Tint      = InTint;
             Item.Mat       = Chosen;
             Item.Mesh      = Mesh;
             Item.First     = Section.FirstIndex;
             Item.Count     = Sections.empty() ? 0u : Section.IndexCount;
-            P->Submit(Item);
+            P->Submit(Item, Impl::StageOf(Chosen));
         }
         return true;
     }
@@ -846,6 +980,11 @@ namespace RenderCore
         return P->DrawCallCount.load(std::memory_order_relaxed);
     }
 
+    uint32_t RenderContext::GetStageDrawCount(const ERenderStage InStage) const
+    {
+        return InStage < ERenderStage::Count ? P->StageDrawCounts[size_t(InStage)] : 0u;
+    }
+
     void RenderContext::SetBackend(const ERenderBackend InBackend)
     {
         P->Backend = InBackend;
@@ -876,47 +1015,117 @@ namespace RenderCore
 
     void RenderContext::BeginSceneDraws()
     {
-        P->Items.clear();
+        for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
         P->bDeferring = true;
     }
 
-    void RenderContext::FlushSceneDraws()
+    void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor)
     {
-        P->bDeferring = false;
+        P->bDeferring  = false;
+        P->FinalTarget = nullptr;
+        for(uint32_t& Count : P->StageDrawCounts) { Count = 0; }
 
-        /* Opaque first in submission order; translucent back to front, ties
-         * in submission order (coplanar 2D quads keep their layering).
-         * Indices are sorted, not the items: a DrawItem's SIMD math is
-         * over-aligned, which std::stable_sort's buffer refuses on MSVC. */
-        std::vector<uint32_t> Order(P->Items.size());
-        for(uint32_t Index = 0; Index < uint32_t(Order.size()); ++Index) { Order[Index] = Index; }
-        const std::vector<DrawItem>& Items = P->Items;
-        std::stable_sort(Order.begin(), Order.end(), [&Items](const uint32_t InA, const uint32_t InB)
+        const auto Finish = [this]()
         {
-            const DrawItem& A = Items[InA];
-            const DrawItem& B = Items[InB];
-            if(A.Pass != B.Pass) { return A.Pass < B.Pass; }
-            return A.Pass == PASS_Translucent && A.Depth > B.Depth;
-        });
+            for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
+        };
 
-        BeginDrawEvent("Opaque");
-        bool bTranslucent = false;
-        for(const uint32_t Index : Order)
+        /* Nothing to draw into (an empty viewport): the routing still counts. */
+        GDIRenderTarget* SceneColor = InTargets.SceneColor;
+        if(!SceneColor)
         {
-            const DrawItem& Each = Items[Index];
-            if(Each.Pass == PASS_Translucent && !bTranslucent)
+            for(size_t Index = 0; Index < size_t(ERenderStage::Count); ++Index)
             {
-                EndDrawEvent();
-                BeginDrawEvent("Translucent");
-                bTranslucent = true;
+                P->StageDrawCounts[Index] = uint32_t(P->Policies[Index].Num());
             }
-            P->Issue(Each);
+            Finish();
+            return;
         }
-        EndDrawEvent();
-        P->Items.clear();
+
+        const uint Width  = InTargets.Width;
+        const uint Height = InTargets.Height;
+        const auto BindTargets = [Width, Height](GDIRenderTarget* const* InColors, const uint InCount, GDIRenderTarget* InDepthFrom)
+        {
+            GDISetRenderTargets(InColors, InCount, InDepthFrom);
+            GDISetViewport(0, 0, Width, Height);
+            /* THE COLOUR MASK IS REQUIRED: Vulkan's default colorWriteMask is
+             * zero, so everything draws with no validation error and nothing
+             * reaches the attachment. Blend and depth are set per draw. */
+            GDISetColorMask(EColM_RGBA);
+        };
+
+        BindTargets(&SceneColor, 1, SceneColor);
+        GDIClear(CM_Color | CM_Depth, InClearColor);
+
+        /* PrePass: RenderScene culled before the draws were queued. */
+        P->IssueStage(ERenderStage::PrePass);
+
+        /* Base Pass: the G-buffer, created the first time something needs it. */
+        const DrawPolicy& Base = P->PolicyFor(ERenderStage::BasePass);
+        const bool bDeferred = !Base.IsEmpty() && InTargets.EnsureGBuffer();
+        if(bDeferred)
+        {
+            BindTargets(InTargets.GBuffer, RENDER_GBUFFER_TARGETS, SceneColor);
+            GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 0));   // alpha 0 in GBuffer1: no lit surface
+            P->IssueStage(ERenderStage::BasePass);
+        }
+        else if(!Base.IsEmpty())
+        {
+            P->StageDrawCounts[size_t(ERenderStage::BasePass)] = uint32_t(Base.Num());
+            P->WarnOnce("|gbuffer", "the Base Pass: this backend could not create the G-buffer; "
+                                    "Opaque and Masked Lit materials draw nothing");
+        }
+
+        /* Lighting: Shadows (none yet), then the resolve into the scene colour. */
+        P->IssueStage(ERenderStage::Shadows);
+        if(bDeferred)
+        {
+            BindTargets(&SceneColor, 1, nullptr);
+            BeginDrawEvent(GetRenderStageName(ERenderStage::Lighting));
+            if(P->IssueLighting(InTargets))
+            {
+                P->StageDrawCounts[size_t(ERenderStage::Lighting)] = 1;
+            }
+            EndDrawEvent();
+        }
+
+        /* Forward, over the lit scene and against its depth. */
+        BindTargets(&SceneColor, 1, SceneColor);
+        P->IssueStage(ERenderStage::Unlit);
+        P->IssueStage(ERenderStage::TranslucentLit);
+        P->IssueStage(ERenderStage::TranslucentUnlit);
+
+        /* PostProcess: ping-pong between the scene colour and a second target. */
+        GDIRenderTarget*  Source = SceneColor;
+        const DrawPolicy& Post   = P->PolicyFor(ERenderStage::PostProcess);
+        P->StageDrawCounts[size_t(ERenderStage::PostProcess)] = uint32_t(Post.Num());
+        GDIRenderTarget* Dest = Post.IsEmpty() ? nullptr : InTargets.EnsurePostProcess();
+        if(Dest)
+        {
+            BeginDrawEvent(GetRenderStageName(ERenderStage::PostProcess));
+            for(const uint32_t Index : Post.GetIssueOrder())
+            {
+                GDITexture2D* Scene = Source->ToGDITexture2D();
+                BindTargets(&Dest, 1, Dest);
+                GDISetMaterialTexture(0, Scene ? Scene->Resource : nullptr);
+                if(P->IssueFullscreen(Post[Index]))
+                {
+                    std::swap(Source, Dest);
+                }
+                else
+                {
+                    BindTargets(&Source, 1, Source);   // a skipped pass leaves the result where it was
+                }
+            }
+            GDISetMaterialTexture(0, nullptr);
+            EndDrawEvent();
+        }
+
+        P->FinalTarget = Source;
+        Finish();
     }
 
-    bool RenderContext::DrawPostProcessPass(const char* InMaterial)
+    bool RenderContext::SubmitPostProcess(const char* InMaterial)
     {
         const std::string Name = InMaterial ? std::string(InMaterial) : std::string();
         Material& Found = P->FindMaterial(Name);
@@ -931,13 +1140,10 @@ namespace RenderCore
             return false;
         }
 
-        P->EnsureInitialised();
-        if(!P->BindMaterial(Found, EMaterialVertexInput::Fullscreen, EngineCore::Color(255, 255, 255, 255)))
-        {
-            return false;
-        }
-        GDIDrawObject(P->ScreenObject);
-        P->DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+        DrawCommand Item;
+        Item.Kind = DrawCommand::EKind::Fullscreen;
+        Item.Mat  = &Found;
+        P->Submit(Item, ERenderStage::PostProcess);
         return true;
     }
 
@@ -1047,16 +1253,7 @@ namespace RenderCore
         }
 
         P->EnsureInitialised();
-        if(!P->PreviewTarget)
-        {
-            P->PreviewTarget = GDICreateRenderTarget("RenderCore.MaterialPreview", uint(Size), uint(Size));
-        }
-        else if(P->PreviewSize != Size)
-        {
-            P->PreviewTarget->Resize(uint(Size), uint(Size));
-        }
-        P->PreviewSize = Size;
-        if(!P->PreviewTarget)
+        if(!P->PreviewTargets.Allocate(uint(Size), uint(Size)))
         {
             OutError = "could not create the preview render target";
             return false;
@@ -1070,18 +1267,12 @@ namespace RenderCore
         const EngineCore::Vector3 Eye(double(Size) * 0.5, double(Size) * 0.5, -double(Size));
         P->UpdateScene(&Eye);
 
-        GDISetRenderTarget(P->PreviewTarget);
-        GDISetViewport(0, 0, uint(Size), uint(Size));
-        GDISetColorMask(EColM_RGBA);   // see RenderScene::Render: nothing reaches a target without it
-        GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
-        GDISetDepthState(IDepthStateDesc());
-        GDIClear(CM_Color | CM_Depth, EngineCore::Color(38, 40, 46, 255));   // the editor viewport's clear
-
+        /* Through the same stages as the viewport: an Opaque Lit material
+         * goes through the G-buffer; a PostProcess one runs over the clear. */
+        BeginSceneDraws();
         if(Found.Description.Domain == EMaterialDomain::PostProcess)
         {
-            /* Over the clear colour's own black: slot 0 has no scene here. */
-            GDISetMaterialTexture(0, nullptr);
-            DrawPostProcessPass(Name.c_str());
+            SubmitPostProcess(Name.c_str());
         }
         else
         {
@@ -1089,9 +1280,11 @@ namespace RenderCore
             Quad.Position = EngineCore::Vector3(double(Size) * 0.5, double(Size) * 0.5, 0.0);
             DrawQuadWithMaterial(Quad, float(Size), float(Size), InTint, Name.c_str());
         }
+        RenderSceneStages(P->PreviewTargets, EngineCore::Color(38, 40, 46, 255));   // the editor viewport's clear
 
         /* Flushes, reads back, resumes the frame. */
-        OutImage = P->PreviewTarget->ToImage();
+        GDIRenderTarget* Final = P->FinalTarget ? P->FinalTarget : P->PreviewTargets.SceneColor;
+        OutImage = Final->ToImage();
         P->View  = Saved;
         P->UpdateScene();
 
@@ -1106,13 +1299,8 @@ namespace RenderCore
 
     void RenderContext::ReleaseGPUResources()
     {
-        if(P->PreviewTarget)
-        {
-            GDIReleaseRenderTarget(P->PreviewTarget);
-            delete P->PreviewTarget;
-            P->PreviewTarget = nullptr;
-            P->PreviewSize   = 0;
-        }
+        P->PreviewTargets.Release();
+        P->FinalTarget = nullptr;
 
         for(auto& Each : P->Meshes) { delete Each.second.Gpu; }
         P->Meshes.clear();

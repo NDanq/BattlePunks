@@ -51,7 +51,10 @@ public:
     IDepthStateDesc             DepthState;
     IStencilStateDesc           StencilState;
 
-    D3D12RenderTarget*          ActiveRenderTarget  = nullptr;
+    D3D12RenderTarget*          ActiveRenderTarget  = nullptr;   // colour 0: what the present shows
+    D3D12RenderTarget*          ActiveColors[GDI_MAX_COLOR_TARGETS] = {};
+    uint32_t                    ActiveColorCount    = 0;
+    D3D12RenderTarget*          ActiveDepth         = nullptr;   // whose depth is bound; null for none
     bool                        bRenderingActive    = false;
     ID3D12GraphicsCommandList*  CurrentCmd          = nullptr;
 
@@ -93,6 +96,7 @@ public:
 
     GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) override;
     void SetRenderTarget(GDIRenderTarget* InRenderTarget) override;
+    void SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom) override;
     void ReleaseRenderTarget(GDIRenderTarget* InRenderTarget) override;
 
     GDIShaderResource* CreateShaderResource(EShaderType InType, const std::string& SourceCode) override;

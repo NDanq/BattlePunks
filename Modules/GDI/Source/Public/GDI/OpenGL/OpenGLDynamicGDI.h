@@ -200,6 +200,7 @@ public:
     GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) override;
 
     void SetRenderTarget(GDIRenderTarget* InRenderTarget) override;
+    void SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom) override;
 
     void ReleaseRenderTarget(GDIRenderTarget* InRenderTarget) override;
 
@@ -266,6 +267,7 @@ private:
     OpenGLGDIContext*   Context;
     uint                BoundShaderProgram;
     uint                MaterialUBOs[2] = {};
+    uint                ScratchFramebuffer = 0;   // SetRenderTargets' attachments
     class OpenGLMesh*   ScreenMesh = nullptr;
     GLsync              ThreadSync;
 };

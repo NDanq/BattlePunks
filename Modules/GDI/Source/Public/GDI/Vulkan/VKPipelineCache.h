@@ -108,6 +108,8 @@ public:
 
         // Render-target format and primitive topology.
         VkFormat              RTFormat          = VK_FORMAT_R8G8B8A8_UNORM;
+        // How many colour attachments, every one RTFormat (SetRenderTargets).
+        uint32_t              ColorCount        = 1;
         // The render target's depth attachment, UNDEFINED for none. Part of the
         // pipeline (dynamic rendering requires it to match the attachment).
         VkFormat              DepthFormat       = VK_FORMAT_UNDEFINED;

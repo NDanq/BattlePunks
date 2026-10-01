@@ -30,6 +30,15 @@ namespace RenderCore
         return &RenderComponent_CreateProxy;
     }
 
+    namespace
+    {
+        /* RenderComponent's slots: in saved worlds and Lua, and in the editor. */
+        const char* const MATERIAL_SLOT_FIELDS[RENDER_MATERIAL_SLOTS] = {
+            "Material0", "Material1", "Material2", "Material3", "Material4", "Material5", "Material6", "Material7" };
+        const char* const MATERIAL_SLOT_LABELS[RENDER_MATERIAL_SLOTS] = {
+            "Material 0", "Material 1", "Material 2", "Material 3", "Material 4", "Material 5", "Material 6", "Material 7" };
+    }
+
     /*
      * The owning module owns the serializer, so a build without RenderCore
      * skips these chunks by size and warns.
@@ -37,13 +46,24 @@ namespace RenderCore
      * C.Proxy is not saved: it names a live render-thread object that
      * WorldBridge recreates on the first frame after a load.
      */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 1)
+    /* Version 2: a material per slot. Version 1's one Material is slot 0. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 2)
     {
         Ar.Field("Width",    C.Width);
         Ar.Field("Height",   C.Height);
         Ar.Field("Tint",     C.Tint);
         Ar.Flag("Visible",   C.bVisible);
-        Ar.Field("Material", C.Material);
+        if(Ar.GetVersion() < 2)
+        {
+            Ar.Field("Material", C.Materials[0]);
+        }
+        else
+        {
+            for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
+            {
+                Ar.Field(MATERIAL_SLOT_FIELDS[Slot], C.Materials[Slot]);
+            }
+        }
         Ar.Field("Mesh",     C.Mesh);
     }
 
@@ -93,7 +113,11 @@ namespace RenderCore
         Bind.Field("Height", &RenderComponent::Height);
         Bind.Field("Tint",   &RenderComponent::Tint);     // r, g, b[, a]
         Bind.Flag("Visible", &RenderComponent::bVisible);
-        Bind.Field("Material", &RenderComponent::Material);
+        Bind.Element("Material", &RenderComponent::Materials, 0);   // slot 0, as before slots
+        for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
+        {
+            Bind.Element(MATERIAL_SLOT_FIELDS[Slot], &RenderComponent::Materials, Slot);
+        }
         Bind.Field("Mesh",     &RenderComponent::Mesh);
     }
 
@@ -135,8 +159,11 @@ namespace RenderCore
         Props.Field("Height", &RenderComponent::Height);
         Props.Field("Tint",   &RenderComponent::Tint);
         Props.Flag("Visible", &RenderComponent::bVisible);
-        Props.Field("Material", &RenderComponent::Material, GameCore::PF_AssetMaterial);
         Props.Field("Mesh",     &RenderComponent::Mesh, GameCore::PF_AssetMesh);
+        for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
+        {
+            Props.Element(MATERIAL_SLOT_LABELS[Slot], &RenderComponent::Materials, Slot, GameCore::PF_AssetMaterial);
+        }
     }
 
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(CameraComponent)

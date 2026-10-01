@@ -1,6 +1,5 @@
 #include "Public/RenderCore/RenderScene.h"
 
-#include <array>
 #include <vector>
 
 #include "Public/RenderCore/RenderContext.h"
@@ -9,6 +8,7 @@
 #include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
+#include "Private/RenderCore/SceneTargets.h"
 
 /*
  * A plain dense vector of proxies, swap-removed by the SceneIndex each proxy
@@ -37,161 +37,20 @@ namespace RenderCore
          * THE SCENE'S RENDER TARGETS, and the whole reason anything reaches
          * the screen. GDIDynamicDriver::PresentToWindow presents
          * CurrentStateData->ActiveRenderTarget -- the most recently bound RT --
-         * so Render() below must rebind Main right before EndRendering, the
-         * contract VulkanDynamicGDI.cpp states. With no RT bound at all,
+         * which RenderContext::RenderSceneStages leaves as the scene's final
+         * colour (after PostProcess, if any). With no RT bound at all,
          * ActiveRenderTarget stays null and every present silently returns.
-         *
-         * A FIXED TABLE INDEXED BY THE ENUM: the set of targets is decided at
-         * compile time by ERT_MAX, so std::array bakes the size in and
-         * value-initialises every slot to null -- no reserve/resize
-         * distinction to get wrong, no allocation to fail.
          *
          * Deliberately NOT GDIRenderTargetManager, whose Main/Buffer1/
          * PostBuffer1 and Resolve/Restore pair are paint-application concepts
-         * (canvas stroke buffering). The scene draws into the back buffer;
-         * PostProcess passes ping-pong between it and ERT_PostProcess, made
-         * only once a scene has one.
-         */
-        enum ERenderTarget : uint8_t
-        {
-            ERT_BackBuffer = 0,
-            ERT_PostProcess,
-            ERT_MAX
-        };
-
-        std::array<GDIRenderTarget*, ERT_MAX> RenderTargets{};
-
-        /* The size every entry in RenderTargets was built at; what
-         * AllocateRenderTargets compares against to decide whether this
-         * frame needs to do anything at all. Zero until the first one. */
-        uint WindowWidth  = 0;
-        uint WindowHeight = 0;
-
-        /* Creates the targets, or resizes them to match InViewportSize.
-         * Render thread only, like everything else on this class.
+         * (canvas stroke buffering). See SceneTargets.h.
          *
-         * CHEAP AND IDEMPOTENT ON PURPOSE -- Render() calls this every
-         * frame, so the steady-state path must be the early-out below.
-         * Recreating a GPU image per frame would not merely be slow, it
-         * would destroy the target the UI thread is presenting from while
-         * it may still be sampling it. */
-        void AllocateRenderTargets(const EngineCore::Size InViewportSize)
-        {
-            /* A zero-sized viewport (a minimised window, or a view built
-             * before the first real pixel size is known) would make an
-             * invalid image; keep whatever we already had and let the next
-             * frame with a real size sort it out. */
-            if(InViewportSize.Width <= 0 || InViewportSize.Height <= 0)
-            {
-                return;
-            }
-
-            const uint Width  = uint(InViewportSize.Width);
-            const uint Height = uint(InViewportSize.Height);
-
-            if(WindowWidth == Width && WindowHeight == Height)
-            {
-                return;
-            }
-
-            if(!RenderTargets[ERT_BackBuffer])
-            {
-                RenderTargets[ERT_BackBuffer] = GDICreateRenderTarget("RenderCore.BackBuffer", Width, Height);
-            }
-            else
-            {
-                /* GDIRenderTarget::Resize is the backend's own recreate
-                 * path -- on Vulkan it also raises the driver's bResizing
-                 * flag, which makes the UI-thread present skip until a full
-                 * frame has been rendered into the new images (cleared by
-                 * EndRendering). Nothing extra to coordinate here, and it
-                 * is why this is a Resize rather than a release-and-create. */
-                RenderTargets[ERT_BackBuffer]->Resize(Width, Height);
-            }
-            if(RenderTargets[ERT_PostProcess])
-            {
-                RenderTargets[ERT_PostProcess]->Resize(Width, Height);
-            }
-
-            WindowWidth  = Width;
-            WindowHeight = Height;
-        }
-
-        /* The second PostProcess target, the size of the first. */
-        GDIRenderTarget* EnsurePostProcessTarget()
-        {
-            if(!RenderTargets[ERT_PostProcess] && WindowWidth > 0 && WindowHeight > 0)
-            {
-                RenderTargets[ERT_PostProcess] = GDICreateRenderTarget("RenderCore.PostProcess", WindowWidth, WindowHeight);
-            }
-            return RenderTargets[ERT_PostProcess];
-        }
-
-        /* Runs PostProcess's passes, ping-ponging from the back buffer, and
-         * returns the target holding the result -- bound, so it is what the
-         * present shows. */
-        GDIRenderTarget* RunPostProcess(RenderContext& InContext)
-        {
-            GDIRenderTarget* Source = RenderTargets[ERT_BackBuffer];
-            if(PostProcess.Count == 0 || !Source)
-            {
-                return Source;
-            }
-            GDIRenderTarget* Dest = EnsurePostProcessTarget();
-            if(!Dest)
-            {
-                return Source;
-            }
-
-            InContext.BeginDrawEvent("PostProcess");
-            for(uint32_t Index = 0; Index < PostProcess.Count && Index < RENDER_POST_PROCESS_MAX; ++Index)
-            {
-                GDITexture2D* Scene = Source->ToGDITexture2D();
-                GDISetRenderTarget(Dest);
-                GDISetViewport(0, 0, WindowWidth, WindowHeight);
-                GDISetMaterialTexture(0, Scene ? Scene->Resource : nullptr);
-                if(InContext.DrawPostProcessPass(PostProcess.Materials[Index]))
-                {
-                    std::swap(Source, Dest);
-                }
-                else
-                {
-                    GDISetRenderTarget(Source);   // a skipped pass leaves the result where it was
-                }
-            }
-            GDISetMaterialTexture(0, nullptr);
-            InContext.EndDrawEvent();
-            return Source;
-        }
-
-        GDIRenderTarget* GetRenderTarget(const ERenderTarget InRenderTarget) const
-        {
-            /* std::array carries its own bound, so this is the enum's
-             * contract being checked, not the container's. */
-            if(InRenderTarget < ERT_MAX)
-            {
-                return RenderTargets[InRenderTarget];
-            }
-            return nullptr;
-        }
-
-        /* Idempotent: every slot is nulled as it is freed, so a scene that
-         * runs ReleaseAll() and is then destroyed does not double-free. */
-        void ReleaseRenderTargets()
-        {
-            for(GDIRenderTarget*& RenderTarget : RenderTargets)
-            {
-                if(RenderTarget)
-                {
-                    GDIReleaseRenderTarget(RenderTarget);
-                    delete RenderTarget;
-                    RenderTarget = nullptr;
-                }
-            }
-
-            WindowWidth  = 0;
-            WindowHeight = 0;
-        }
+         * Resized every frame the viewport changes, and cheap otherwise:
+         * recreating a GPU image per frame would destroy the target the UI
+         * thread is presenting from while it may still be sampling it. A
+         * zero-sized viewport (a minimised window) keeps what there was.
+         */
+        SceneTargets Targets{"RenderCore.Scene"};
     };
 
     RenderScene::RenderScene() : P(new Impl())
@@ -209,7 +68,7 @@ namespace RenderCore
         /* Belt and braces: ReleaseAll() is the ordinary path and already
          * did this, but a scene destroyed without it (a test, an early
          * failure) must still not leak a GPU image. Idempotent. */
-        P->ReleaseRenderTargets();
+        P->Targets.Release();
 
         delete P;
     }
@@ -302,13 +161,17 @@ namespace RenderCore
         /* Created on first use and resized with the viewport -- see Impl's
          * own comment on why a scene owns these at all. Early-outs on every
          * frame whose viewport has not changed, which is nearly all of them. */
-        P->AllocateRenderTargets(P->View.ViewportPixels);
+        if(P->View.ViewportPixels.Width > 0 && P->View.ViewportPixels.Height > 0)
+        {
+            P->Targets.Allocate(uint(P->View.ViewportPixels.Width), uint(P->View.ViewportPixels.Height));
+        }
 
         GDIBeginRendering();
 
 #if WITH_EDITOR
-        /* Previews FIRST, before the back buffer bind, so the back buffer is
-         * the active target at EndRendering and the present never shows one. */
+        /* Previews FIRST, before the scene's own stages, so the scene's final
+         * target is the active one at EndRendering and the present never
+         * shows a preview. */
         for(const MaterialPreviewRequest& Each : P->Previews)
         {
             EngineCore::Image Pixels;
@@ -320,40 +183,12 @@ namespace RenderCore
 #endif
 
         /*
-         * AFTER BeginRendering, never before: VulkanDynamicGDI::SetRenderTarget
-         * bails out entirely when CurrentCmd is null (i.e. outside a
-         * BeginRendering/EndRendering pair), so a bind placed above would be
-         * a silent no-op and the clear and draws below would land nowhere --
-         * GDIRenderTarget.cpp's own DrawTexture comment describes exactly
-         * this trap ("on Vulkan Bind() is a no-op -- the driver must open a
-         * dynamic-rendering region ... or the clear and draw below are
-         * silently dropped").
-         *
-         * This is also what leaves the back buffer as the driver's
-         * ActiveRenderTarget when EndRendering runs, which is what
-         * PresentToWindow presents and what EndRendering transitions to
-         * SHADER_READ_ONLY_OPTIMAL for the present blit to sample.
+         * PrePass: queue each visible proxy's draws in their stages' draw
+         * policies (RENDERPIPELINE.md). The stages themselves run below, AFTER
+         * BeginRendering, never before: VulkanDynamicGDI::SetRenderTarget bails
+         * out entirely when CurrentCmd is null (outside a BeginRendering/
+         * EndRendering pair), so a bind placed above it would be a silent no-op.
          */
-        if(GDIRenderTarget* BackBuffer = P->GetRenderTarget(Impl::ERT_BackBuffer))
-        {
-            GDISetRenderTarget(BackBuffer);
-        }
-
-        GDISetViewport(0, 0, uint(P->View.ViewportPixels.Width), uint(P->View.ViewportPixels.Height));
-
-        /*
-         * THE COLOUR MASK IS REQUIRED: Vulkan's default colorWriteMask is
-         * zero, so everything draws with no validation error and nothing
-         * reaches the attachment.
-         *
-         * Blend and depth are set per draw by RenderContext from here on --
-         * by material domain, or the plain quads' old blended, depth-written
-         * state; LESS-OR-EQUAL so coplanar 2D quads still draw in order.
-         */
-        GDISetColorMask(EColM_RGBA);
-        GDIClear(CM_Color | CM_Depth, P->ClearColor);
-
-        /* Queued, then issued in passes: opaque, then translucent back to front. */
         InContext.BeginSceneDraws();
 
         uint64_t VisibleCount = 0;
@@ -382,7 +217,7 @@ namespace RenderCore
             const bool bProxyHasBounds = !Proxy->GetWorldBounds().IsEmpty();
 
             /* World Position Offset can move geometry past its bounds: pad
-             * them by the material's Max Offset. */
+             * them by the largest Max Offset among its materials. */
             GameCore::AABB Bounds = Proxy->GetWorldBounds();
             const float Padding = bViewHasBounds && bProxyHasBounds ? Proxy->GetBoundsPadding(InContext) : 0.0f;
             if(Padding > 0.0f)
@@ -402,13 +237,17 @@ namespace RenderCore
             ++VisibleCount;
         }
 
-        InContext.FlushSceneDraws();
+        /* The scene's Post Process components, Priority low first (WorldBridge sorted them). */
+        for(uint32_t Index = 0; Index < P->PostProcess.Count && Index < RENDER_POST_PROCESS_MAX; ++Index)
+        {
+            InContext.SubmitPostProcess(P->PostProcess.Materials[Index]);
+        }
+
+        /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
+         * leaves the final colour bound, for the present and the overlay. */
+        InContext.RenderSceneStages(P->Targets, P->ClearColor);
 
         SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
-
-        /* Over the finished scene; leaves the result bound, for the present
-         * and the overlay below. */
-        P->RunPostProcess(InContext);
 
 #if WITH_EDITOR
         /* Tool overlay over everything, unculled; consumed each frame. */
@@ -450,6 +289,6 @@ namespace RenderCore
          * render thread, like the rest of this class, and before
          * Renderer::Shutdown stops that thread -- which is what keeps the
          * GPU image's destruction on the thread that owns the context. */
-        P->ReleaseRenderTargets();
+        P->Targets.Release();
     }
 }

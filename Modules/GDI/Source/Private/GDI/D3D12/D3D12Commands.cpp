@@ -99,6 +99,8 @@ void D3D12DynamicGDI::BeginRendering()
 
     CurrentStateData->CurrentCmd         = List;
     CurrentStateData->ActiveRenderTarget = nullptr;
+    CurrentStateData->ActiveColorCount   = 0;
+    CurrentStateData->ActiveDepth        = nullptr;
     CurrentStateData->bRenderingActive   = false;
     CurrentStateData->DebugEventDepth    = 0;
 
@@ -135,14 +137,21 @@ void D3D12DynamicGDI::Clear(uint InClearMode, EngineCore::Color InClearColor, fl
     D3D12RenderTarget* RT = CurrentStateData->ActiveRenderTarget;
     if(!RT || !RT->IsValid()) return;
 
+    // Every bound colour target, and the bound depth.
     if(InClearMode & CM_Color)
     {
         const float Color[4] = { InClearColor.Rf(), InClearColor.Gf(), InClearColor.Bf(), InClearColor.Af() };
-        CurrentStateData->CurrentCmd->ClearRenderTargetView(RT->GetRTV(), Color, 0, nullptr);
+        const uint32_t ColorCount = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
+        for(uint32_t Index = 0; Index < ColorCount; ++Index)
+        {
+            D3D12RenderTarget* Each = CurrentStateData->ActiveColors[Index] ? CurrentStateData->ActiveColors[Index] : RT;
+            CurrentStateData->CurrentCmd->ClearRenderTargetView(Each->GetRTV(), Color, 0, nullptr);
+        }
     }
-    if((InClearMode & CM_Depth) && RT->HasDepth())
+    if((InClearMode & CM_Depth) && CurrentStateData->ActiveDepth)
     {
-        CurrentStateData->CurrentCmd->ClearDepthStencilView(RT->GetDSV(), D3D12_CLEAR_FLAG_DEPTH, InDepth, 0, 0, nullptr);
+        CurrentStateData->CurrentCmd->ClearDepthStencilView(CurrentStateData->ActiveDepth->GetDSV(), D3D12_CLEAR_FLAG_DEPTH,
+                                                            InDepth, 0, 0, nullptr);
     }
 }
 

@@ -30,7 +30,7 @@ namespace RenderCore
         float             Height = 1.0f;
         EngineCore::Color Tint{255, 255, 255};
         bool              bComponentVisible = true;
-        char              Material[48] = {};   // RENDER_MATERIAL_NAME_MAX; "" = the plain tint
+        char              Materials[8][48] = {};   // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_NAME_MAX; "" = none
 
         /* Bounds are redone only when these change. Null source: the quad. */
         std::string                            MeshPath;

@@ -324,6 +324,18 @@ public:
 
     virtual void SetRenderTarget( GDIRenderTarget* InRenderTarget ) = 0;
 
+    /*
+     * One pass writing InCount colour targets (at most GDI_MAX_COLOR_TARGETS,
+     * all the same size) and the depth attachment of InDepthFrom, or none when
+     * it is null. Fragment output N goes to InColors[N]; blend and colour mask
+     * apply to every target; Clear clears them all. SetRenderTarget(RT) is
+     * SetRenderTargets(&RT, 1, RT). A target whose colour or depth is not bound
+     * is kept sampleable (ToGDITexture2D, ToDepthTexture2D).
+     *
+     * The default binds InColors[0] alone, for a backend without it (Metal).
+     */
+    virtual void SetRenderTargets( GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom );
+
     virtual void ReleaseRenderTarget( GDIRenderTarget* InRenderTarget ) = 0;
 
     virtual GDIShaderResource* CreateShaderResource(EShaderType InType, const std::string& SourceCode) = 0;
@@ -490,6 +502,7 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetColorMask, (EColorMask))
 IMPLEMENT_GDI_FUNCTION_DECLARATION(ERenderPlatform, GetRenderPlatform, ())
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetRenderTarget, (GDIRenderTarget*))
+IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetRenderTargets, (GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, ReleaseRenderTarget, (GDIRenderTarget*))
 
