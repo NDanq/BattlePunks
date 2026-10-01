@@ -88,7 +88,7 @@ namespace
         if(Name.endsWith(QStringLiteral(".material.nmgraph"), Qt::CaseInsensitive))
         {
             const QString Base = Name.left(Name.size() - int(qstrlen(".material.nmgraph")));
-            AddIfExists(Base + QStringLiteral(".fsh"));
+            AddIfExists(Base + QStringLiteral(".mtl.glsl"));
             AddIfExists(Base + QStringLiteral(".material"));
         }
         else if(Name.endsWith(QStringLiteral(".script.nmgraph"), Qt::CaseInsensitive))
@@ -103,7 +103,7 @@ namespace
         return Out;
     }
 
-    /* InCompanion renamed as its owner was (Glow.fsh -> Shine.fsh). */
+    /* InCompanion renamed as its owner was (Glow.mtl.glsl -> Shine.mtl.glsl). */
     QString CompanionTarget(const QString& InCompanion, const QString& InOldOwner, const QString& InNewOwnerPath)
     {
         const auto BaseOf = [](const QString& InName)

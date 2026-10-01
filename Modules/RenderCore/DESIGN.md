@@ -363,6 +363,11 @@ every `GDIDrawObject` call answers by construction.
 
 ## Materials -- one shader per name, owned here, never released mid-run
 
+> **Superseded in part by [MATERIALS.md](MATERIALS.md)**: templates and
+> permutations, raw uniform blocks instead of one `mat4`, passes by domain,
+> lighting, PostProcess and shader caches. What follows about ownership,
+> fallbacks, retiring on reload and previews still holds.
+
 `RenderComponent::Material` names a material graph's output, and
 `RenderContext::DrawQuadWithMaterial` draws the quad through its pixel shader,
 with `Basic_VS` still on the vertex side. Everything below happens on the

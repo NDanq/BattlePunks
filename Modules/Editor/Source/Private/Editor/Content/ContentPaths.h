@@ -18,7 +18,7 @@ namespace EditorContent
     QString ToRuntimePath(const QString& InPath);
 
     /* The material a file names: "Glow" for Glow.material.nmgraph,
-     * Glow.material or Glow.fsh under a Materials folder. Empty otherwise. */
+     * Glow.material or Glow.mtl.glsl. Empty otherwise. */
     QString MaterialNameFor(const QString& InPath);
 
     /* The single local file in a drag, else empty. */

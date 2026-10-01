@@ -82,11 +82,17 @@ namespace
         }
     }
 
-    /* Where a material's shader waits to be cooked: the cook names its
-     * output after the file, so the file is <Name>.fsh, in a folder of its own. */
+    /* Where a material's function waits to be cooked: the cook names its
+     * permutations after the file, and reads <Name>.material beside it, so
+     * both go in a folder of their own. */
+    QString CookSourceDir()
+    {
+        return QDir::temp().filePath(QStringLiteral("NimbleMaterialCook"));
+    }
+
     QString CookSourcePath(const QString& InName)
     {
-        return QDir(QDir::temp().filePath(QStringLiteral("NimbleMaterialCook"))).filePath(InName + QStringLiteral(".fsh"));
+        return QDir(CookSourceDir()).filePath(InName + QStringLiteral(".mtl.glsl"));
     }
 
     void RunMaterialCook(const QString& InName, QObject* InContext, std::function<void(bool, const QString&)> InDone);
@@ -377,20 +383,24 @@ namespace EditorGraphs
             return;
         }
 
-        /* The parameters, where RenderCore reads them... */
+        /* The description, where RenderCore reads it and beside the function
+         * for the cook (which picks the permutations from it)... */
         std::string Error;
         for(const auto& Companion : InResult.Companions)
         {
-            const QString Staged = QDir(QCoreApplication::applicationDirPath())
-                                   .filePath(QStringLiteral("Materials/") + InName + ToQ(Companion.first));
-            if(!WriteTextFileIfChanged(ToStd(Staged), Companion.second, Error))
+            for(const QString& Folder : { QDir(QCoreApplication::applicationDirPath()).filePath(QStringLiteral("Materials")),
+                                          CookSourceDir() })
             {
-                Fail(QStringLiteral("could not write %1: %2").arg(Staged, ToQ(Error)));
-                return;
+                const QString Staged = QDir(Folder).filePath(InName + ToQ(Companion.first));
+                if(!WriteTextFileIfChanged(ToStd(Staged), Companion.second, Error))
+                {
+                    Fail(QStringLiteral("could not write %1: %2").arg(Staged, ToQ(Error)));
+                    return;
+                }
             }
         }
 
-        /* ...and the shader, where the cook picks it up. */
+        /* ...and the function, where the cook picks it up. */
         const QString Source = CookSourcePath(InName);
         if(!WriteTextFileIfChanged(ToStd(Source), InResult.Code, Error))
         {

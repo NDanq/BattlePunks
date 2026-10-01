@@ -151,6 +151,12 @@ bool GraphDocument::PlanLink(const NodeGraph::Graph& InGraph, const PinRef& InA,
     OutPlan.Made = Link{ PinRef{ FromNode.Id, FromPin.Name }, PinRef{ ToNode.Id, ToPin.Name } };
     if(FromPin.IsExec()) { return true; }
 
+    /* A value must be computable in every stage the input leads to: a
+     * material's pixel-only nodes cannot reach World Position Offset, even
+     * through other nodes (Schema::CanLinkStages). */
+    std::string StageWhy;
+    if(!SchemaPtr->CanLinkStages(InGraph, FromNode, ToNode, ToPin.Name, &StageWhy)) { return Fail(ToQ(StageWhy)); }
+
     /* A wildcard end that nothing else pins down takes whatever type makes
      * this link exact, if it can; otherwise its current type stands. */
     const auto Candidates = [&](const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin,
