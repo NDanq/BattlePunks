@@ -5,6 +5,7 @@
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
+#include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/RenderView.h"
 
 /*
@@ -24,6 +25,19 @@ namespace RenderCore
 {
     class RenderContext;
     class RenderProxy;
+    class MaterialPreviewMailbox;
+
+#if WITH_EDITOR
+    /* EDITOR ONLY -- a RequestMaterialPreview as a (trivially copyable) command. */
+    struct MaterialPreviewRequest
+    {
+        uint64_t                Request = 0;
+        char                    Material[48] = {};   // RENDER_MATERIAL_NAME_MAX
+        int32_t                 Size = 256;
+        EngineCore::Color       Tint{255, 255, 255, 255};
+        MaterialPreviewMailbox* Mailbox = nullptr;
+    };
+#endif
 
     class RENDERCORE_API RenderScene
     {
@@ -49,6 +63,15 @@ namespace RenderCore
 
         void SetView(const RenderView& InView);
         void SetClearColor(EngineCore::Color InColor);
+
+#if WITH_EDITOR
+        /* EDITOR ONLY. Lines for the next Render() only. */
+        void SetDebugLines(const DebugLine* InLines, size_t InCount);
+
+        /* EDITOR ONLY. Drawn off-screen by the next Render(), before the back
+         * buffer bind (RenderContext::RenderMaterialPreview). */
+        void AddMaterialPreview(const MaterialPreviewRequest& InRequest);
+#endif
 
         /* BeginRendering, SetViewport, Clear, draw every visible proxy whose
          * WorldBounds overlaps the current view's Bounds (or whose Bounds is

@@ -1,0 +1,68 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "description": "Standalone Sandbox configure (adds ../../Engine). One build tree per preset; every tree stages its binaries into Binaries/<Platform>_<Config>[_<Target>].",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/cmake-build-${presetName}"
+    },
+    {
+      "name": "editor",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": { "NIMBLE_TARGET": "Editor" }
+    },
+    {
+      "name": "client",
+      "hidden": true,
+      "inherits": "base",
+      "cacheVariables": { "NIMBLE_TARGET": "Client" }
+    },
+
+    {
+      "name": "editor-debug",
+      "displayName": "Editor - Debug",
+      "description": "NimbleEditor and Sandbox with WITH_EDITOR=1, unoptimised.",
+      "inherits": "editor",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "editor-relwithdebinfo",
+      "displayName": "Editor - RelWithDebInfo",
+      "description": "NimbleEditor and Sandbox with WITH_EDITOR=1, optimised with debug info.",
+      "inherits": "editor",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    },
+    {
+      "name": "client-debug",
+      "displayName": "Client - Debug",
+      "description": "Sandbox with WITH_EDITOR=0, unoptimised. No editor is built.",
+      "inherits": "client",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+    },
+    {
+      "name": "client-relwithdebinfo",
+      "displayName": "Client - RelWithDebInfo",
+      "description": "Sandbox with WITH_EDITOR=0, optimised with debug info.",
+      "inherits": "client",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+    },
+    {
+      "name": "client-shipping",
+      "displayName": "Client - Shipping",
+      "description": "Sandbox with WITH_EDITOR=0 and NIMBLE_SHIPPING=1: optimised, no debug info. The Editor has no Shipping build.",
+      "inherits": "client",
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Shipping" }
+    }
+  ],
+  "buildPresets": [
+    { "name": "editor-debug",          "displayName": "Editor - Debug",          "configurePreset": "editor-debug" },
+    { "name": "editor-relwithdebinfo", "displayName": "Editor - RelWithDebInfo", "configurePreset": "editor-relwithdebinfo" },
+    { "name": "client-debug",          "displayName": "Client - Debug",          "configurePreset": "client-debug" },
+    { "name": "client-relwithdebinfo", "displayName": "Client - RelWithDebInfo", "configurePreset": "client-relwithdebinfo" },
+    { "name": "client-shipping",       "displayName": "Client - Shipping",       "configurePreset": "client-shipping" }
+  ]
+}

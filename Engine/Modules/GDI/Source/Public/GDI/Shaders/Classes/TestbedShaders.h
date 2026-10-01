@@ -50,5 +50,35 @@ public:
     }
 };
 
+/* Mesh.vsh: an indexed mesh's vertices, normal at location 8 (GDIMesh.h). */
+class Mesh_VS : public GDIShader
+{
+public:
+    Mesh_VS(std::string InName) : GDIShader(InName)
+    {
+
+    }
+
+    void InitUniformBindings() override
+    {
+
+    }
+};
+
+/* Mesh.fsh: an unmaterialed mesh -- its Tint, lit by one fixed light. */
+class Mesh_PS : public GDIShader
+{
+public:
+    Mesh_PS(std::string InName) : GDIShader(InName)
+    {
+
+    }
+
+    void InitUniformBindings() override
+    {
+        RegisterUniform("Tint", Vector3(1,1,1));
+    }
+};
+
 
 #endif //CORECLIENT_TESTBEDSHADERS_H

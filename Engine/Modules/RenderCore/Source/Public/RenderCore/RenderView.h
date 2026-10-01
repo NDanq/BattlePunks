@@ -1,6 +1,8 @@
 #ifndef RENDERCORE_RENDERVIEW_H
 #define RENDERCORE_RENDERVIEW_H
 
+#include <cmath>
+
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/Math/Matrix.h"
@@ -67,6 +69,42 @@ namespace RenderCore
                 EngineCore::Vector3(InOrigin.GetX(), InOrigin.GetY(), InOrigin.GetZ() + InZNear),
                 EngineCore::Vector3(InOrigin.GetX() + Width, InOrigin.GetY() + Height, InOrigin.GetZ() + InZFar));
 
+            return Result;
+        }
+
+        /*
+         * A perspective view for tools. Same conventions as MakeOrthographic:
+         *
+         *   View       LookAt(InEye, InForward, (0,1,0)); view +Z is InForward.
+         *   Projection negates Y, so world +Y runs DOWN the screen.
+         *   Depth      near -> 0, far -> w: valid for [-w,w] and [0,w] clip.
+         *
+         * Built by hand (row-major, translation in [i][3]) so the vendored
+         * Core subtree needs no edit. Bounds is empty (cull nothing).
+         * InForward must not be parallel to world Y.
+         */
+        static RenderView MakePerspective(const EngineCore::Size InViewport, const EngineCore::Vector3& InEye,
+                                          const EngineCore::Vector3& InForward, const float InFovYDegrees,
+                                          const float InZNear, const float InZFar)
+        {
+            RenderView Result;
+            Result.Origin         = InEye;
+            Result.ViewportPixels = InViewport;
+            Result.ZNear          = InZNear;
+            Result.ZFar           = InZFar;
+
+            const float Aspect = InViewport.Height > 0 ? float(InViewport.Width) / float(InViewport.Height) : 1.0f;
+            const float FocalY = 1.0f / std::tan(InFovYDegrees * 0.5f * 3.14159265f / 180.0f);
+            const float FocalX = FocalY / Aspect;
+            const float Range  = InZFar - InZNear;
+
+            EngineCore::Matrix4x4& P = Result.Projection;
+            P.Data[0][0] = FocalX; P.Data[0][1] = 0.0f;    P.Data[0][2] = 0.0f;            P.Data[0][3] = 0.0f;
+            P.Data[1][0] = 0.0f;   P.Data[1][1] = -FocalY; P.Data[1][2] = 0.0f;            P.Data[1][3] = 0.0f;
+            P.Data[2][0] = 0.0f;   P.Data[2][1] = 0.0f;    P.Data[2][2] = InZFar / Range;  P.Data[2][3] = -InZFar * InZNear / Range;
+            P.Data[3][0] = 0.0f;   P.Data[3][1] = 0.0f;    P.Data[3][2] = 1.0f;            P.Data[3][3] = 0.0f;
+
+            Result.View = EngineCore::Matrix4x4().LookAt(InEye, InForward, EngineCore::Vector3(0, 1, 0));
             return Result;
         }
     };

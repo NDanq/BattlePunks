@@ -70,8 +70,31 @@ if(NOT TARGET NimbleEngine)
         "nimble_add_module(NimbleEngine ...) call that creates it.")
 endif()
 
-# === The target ============================================================
+# === The game module =======================================================
+# SandboxGame.cpp as a module DLL, loaded by name (NimbleEngine/GameModule.h)
+# by the launcher and the editor's Play-in-Editor, never linked. A game module
+# is a Core module, hence nimble_add_hot_module(); its .dll is a LIBRARY
+# artifact, so it lands via LIBRARY_OUTPUT_DIRECTORY.
+nimble_add_hot_module(SandboxGame
+        SOURCES      SandboxGame.cpp
+        PRIVATE_DEPS NimbleEngine::NimbleEngine)
+set_target_properties(SandboxGame PROPERTIES FOLDER "Games")
+
+# === The launcher ==========================================================
+# Thin executable (Application::ExecGame). add_dependencies only ensures the
+# game module is built; it is not linked.
 add_executable(Sandbox SandboxMain.cpp)
+add_dependencies(Sandbox SandboxGame)
+
+# The editor loads this game at Play, so building the editor builds it too.
+if(TARGET NimbleEditor)
+    add_dependencies(NimbleEditor SandboxGame)
+
+    # Edit > Project Settings edits this game's master config, not the staged
+    # copy (see the Editor's CMakeLists.txt).
+    set_property(TARGET NimbleEditor PROPERTY
+            NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
+endif()
 
 # Same Qt-freedom the modules get from nimble_add_module(). Stated explicitly
 # because add_executable() does not go through that function, and a parent scope
@@ -112,6 +135,8 @@ if(SANDBOX_STANDALONE)
     get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
     if(SANDBOX_RT_DIR)
         set_target_properties(Sandbox PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SANDBOX_RT_DIR}")
+        # The launcher looks for the module beside itself.
+        set_target_properties(SandboxGame PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SANDBOX_RT_DIR}")
     endif()
 
     # Multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) ignore
@@ -124,6 +149,8 @@ if(SANDBOX_STANDALONE)
             if(SANDBOX_RT_CFG)
                 set_target_properties(Sandbox PROPERTIES
                         RUNTIME_OUTPUT_DIRECTORY_${SANDBOX_CFG_U} "${SANDBOX_RT_CFG}")
+                set_target_properties(SandboxGame PROPERTIES
+                        LIBRARY_OUTPUT_DIRECTORY_${SANDBOX_CFG_U} "${SANDBOX_RT_CFG}")
             endif()
         endforeach()
     endif()
@@ -208,6 +235,7 @@ endif()
 # design notes make for enumerating things explicitly over discovering them.
 set(SANDBOX_SCRIPT_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Main.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Mover.lua"
 )
 
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
@@ -252,6 +280,60 @@ else()
     set_target_properties(SandboxStageScripts PROPERTIES FOLDER "Games")
 endif()
 
+# === Content/ ===============================================================
+# Imported .nmmesh / .nmtexture files, staged at the same relative path beside
+# the executable (how a RenderComponent names them). Globbed, unlike Scripts/:
+# the editor creates these, so listing them would mean editing this file on
+# every import.
+file(GLOB_RECURSE SANDBOX_CONTENT_FILES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmtexture"
+)
+
+if(SANDBOX_CONTENT_FILES)
+    if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+        set(SANDBOX_CONTENT_OUTPUTS "")
+        foreach(SANDBOX_CONTENT_SRC ${SANDBOX_CONTENT_FILES})
+            file(RELATIVE_PATH SANDBOX_CONTENT_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_CONTENT_SRC}")
+            set(SANDBOX_CONTENT_DST "${SANDBOX_RT_DIR}/${SANDBOX_CONTENT_REL}")
+            get_filename_component(SANDBOX_CONTENT_DIR "${SANDBOX_CONTENT_DST}" DIRECTORY)
+
+            add_custom_command(
+                    OUTPUT  "${SANDBOX_CONTENT_DST}"
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_CONTENT_DIR}"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                            "${SANDBOX_CONTENT_SRC}" "${SANDBOX_CONTENT_DST}"
+                    DEPENDS "${SANDBOX_CONTENT_SRC}"
+                    COMMENT "Sandbox: staging ${SANDBOX_CONTENT_REL} beside the executable"
+                    VERBATIM)
+            list(APPEND SANDBOX_CONTENT_OUTPUTS "${SANDBOX_CONTENT_DST}")
+        endforeach()
+
+        add_custom_target(SandboxStageContent DEPENDS ${SANDBOX_CONTENT_OUTPUTS})
+        add_dependencies(Sandbox SandboxStageContent)
+        set_target_properties(SandboxStageContent PROPERTIES FOLDER "Games")
+    else()
+        # Multi-config fallback, as SandboxStageScripts': the whole folder.
+        add_custom_target(SandboxStageContent ALL
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                        "${CMAKE_CURRENT_SOURCE_DIR}/Content" "$<TARGET_FILE_DIR:Sandbox>/Content"
+                DEPENDS ${SANDBOX_CONTENT_FILES}
+                COMMENT "Sandbox: staging Content/ beside the executable"
+                VERBATIM)
+        add_dependencies(SandboxStageContent Sandbox)
+        set_target_properties(SandboxStageContent PROPERTIES FOLDER "Games")
+    endif()
+endif()
+
+# === Materials/ =============================================================
+# Material graphs and their generated .fsh / .material, cooked for every built
+# backend and staged by name (Engine/cmake/NimbleMaterials.cmake).
+if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" RUNTIME_DIR "${SANDBOX_RT_DIR}")
+else()
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials")
+endif()
+
 # === IDE ===================================================================
 # Without this, a Visual Studio or CLion run starts in the build directory and
 # the config lookup above silently misses -- the app still runs, on defaults,
@@ -267,4 +349,4 @@ if(SANDBOX_STANDALONE)
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT Sandbox)
 endif()
 
-source_group("Sandbox" FILES SandboxMain.cpp)
+source_group("Sandbox" FILES SandboxMain.cpp SandboxGame.cpp)

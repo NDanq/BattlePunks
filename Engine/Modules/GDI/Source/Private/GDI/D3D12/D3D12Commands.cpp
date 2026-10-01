@@ -62,6 +62,22 @@ UINT8 D3D12Util::DecodeColorMask(EColorMask InColorMask)
     }
 }
 
+D3D12_COMPARISON_FUNC D3D12Util::DecodeCompareFunc(ECompareTestMode InMode)
+{
+    switch(InMode)
+    {
+        case CTM_Never:    return D3D12_COMPARISON_FUNC_NEVER;
+        case CTM_ALWAYS:   return D3D12_COMPARISON_FUNC_ALWAYS;
+        case CTM_LESS:     return D3D12_COMPARISON_FUNC_LESS;
+        case CTM_LEQUAL:   return D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        case CTM_GREATER:  return D3D12_COMPARISON_FUNC_GREATER;
+        case CTM_GEQUAL:   return D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+        case CTM_EQUAL:    return D3D12_COMPARISON_FUNC_EQUAL;
+        case CTM_NOTEQUAL: return D3D12_COMPARISON_FUNC_NOT_EQUAL;
+        default:           return D3D12_COMPARISON_FUNC_LESS;
+    }
+}
+
 #pragma endregion
 
 #pragma region Frame begin/end and clear
@@ -115,13 +131,19 @@ void D3D12DynamicGDI::EndRendering()
 void D3D12DynamicGDI::Clear(uint InClearMode, EngineCore::Color InClearColor, float InDepth, uint InStencilMask)
 {
     if(!CurrentStateData || !CurrentStateData->bRenderingActive) return;
-    if(!(InClearMode & CM_Color)) return;
 
     D3D12RenderTarget* RT = CurrentStateData->ActiveRenderTarget;
     if(!RT || !RT->IsValid()) return;
 
-    const float Color[4] = { InClearColor.Rf(), InClearColor.Gf(), InClearColor.Bf(), InClearColor.Af() };
-    CurrentStateData->CurrentCmd->ClearRenderTargetView(RT->GetRTV(), Color, 0, nullptr);
+    if(InClearMode & CM_Color)
+    {
+        const float Color[4] = { InClearColor.Rf(), InClearColor.Gf(), InClearColor.Bf(), InClearColor.Af() };
+        CurrentStateData->CurrentCmd->ClearRenderTargetView(RT->GetRTV(), Color, 0, nullptr);
+    }
+    if((InClearMode & CM_Depth) && RT->HasDepth())
+    {
+        CurrentStateData->CurrentCmd->ClearDepthStencilView(RT->GetDSV(), D3D12_CLEAR_FLAG_DEPTH, InDepth, 0, 0, nullptr);
+    }
 }
 
 void D3D12DynamicGDI::SetViewport(uint InX, uint InY, uint InWidth, uint InHeight)

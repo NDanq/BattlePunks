@@ -404,6 +404,10 @@ public:
 
     virtual GDIMesh* CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced = false) = 0;
 
+    /* An indexed mesh with normals (GDIMeshDesc), drawn by range
+     * (SetDrawRange). Null if unsupported or InDesc is invalid. */
+    virtual GDIMesh* CreateMesh(const GDIMeshDesc& InDesc) = 0;
+
     virtual GDITextureResource* CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) = 0;
 
     virtual GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) = 0;
@@ -481,6 +485,12 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, DrawScreenQuadPrimitive, ())
 IMPLEMENT_GDI_FUNCTION_DECLARATION(GDIMesh*, CreateQuadMesh, (const float* VertData, const float* TexCoordData, const int InNumVerts, const int InNumTexCoords, bool bIsInstanced = false))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(GDIMesh*, CreateQuadMesh, (const float& InWidth, const float& InHeight, bool bIsInstanced = false))
+
+IMPLEMENT_GDI_FUNCTION_DECLARATION(GDIMesh*, CreateMesh, (const GDIMeshDesc& InDesc))
+
+/* Copies InDesc into malloc'd RenderData. False (OutData untouched) if empty,
+ * out of range, or not whole triangles. */
+bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& OutData);
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, DrawObject, (class GDIViewObject*))
 

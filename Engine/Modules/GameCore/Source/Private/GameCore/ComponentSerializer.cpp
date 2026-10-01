@@ -3,13 +3,10 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
+#include "Public/Math/Vector.h"
 
-/*
- * The serializer registry and the shared field helpers. GSerializers is a
- * plain array so it is constant-initialised before any registrar runs --
- * ComponentType.cpp's GRegistry argument. Indexed by ComponentTypeID directly;
- * ids are dense and bounded by COMPONENT_TYPE_MAX.
- */
+/* The serializer registry (a constant-initialised array indexed by
+ * ComponentTypeID) and the binary ComponentArchive. */
 
 namespace GameCore
 {
@@ -75,34 +72,56 @@ const ComponentSerializerInfo* FindComponentSerializer(const ComponentTypeID InT
 
 size_t GetComponentSerializerCount() { return GSerializerCount; }
 
-// === Shared field helpers ===================================================
+// === The binary backend =====================================================
+// Positional; names are ignored, so the bytes match plain `Ar << x`.
 
-void SerializeVector3(EngineCore::Archive& Ar, EngineCore::Vector3& InOutValue)
+bool     BinaryComponentArchive::IsLoading() const  { return Ar.IsLoading(); }
+uint16_t BinaryComponentArchive::GetVersion() const { return Ar.GetChunkVersion(); }
+
+void BinaryComponentArchive::Field(const char*, float& InOut)    { Ar << InOut; }
+void BinaryComponentArchive::Field(const char*, double& InOut)   { Ar << InOut; }
+void BinaryComponentArchive::Field(const char*, int32_t& InOut)  { Ar << InOut; }
+void BinaryComponentArchive::Field(const char*, uint32_t& InOut) { Ar << InOut; }
+void BinaryComponentArchive::Field(const char*, uint8_t& InOut)  { Ar << InOut; }
+void BinaryComponentArchive::Field(const char*, bool& InOut)     { Ar << InOut; }
+void BinaryComponentArchive::Flag(const char*, uint8_t& InOut)   { Ar << InOut; }
+
+void BinaryComponentArchive::Field(const char*, EngineCore::Vector3& InOut)
 {
     /* Through the accessors, never GetData() -- see the header. Locals because
      * the accessors return by value. */
-    float X = float(InOutValue.GetX());
-    float Y = float(InOutValue.GetY());
-    float Z = float(InOutValue.GetZ());
+    float X = float(InOut.GetX());
+    float Y = float(InOut.GetY());
+    float Z = float(InOut.GetZ());
 
     Ar << X << Y << Z;
 
     if(Ar.IsLoading() && !Ar.HasError())
     {
-        InOutValue.SetX(X);
-        InOutValue.SetY(Y);
-        InOutValue.SetZ(Z);
+        InOut.SetX(X);
+        InOut.SetY(Y);
+        InOut.SetZ(Z);
     }
 }
 
-void SerializeAABB(EngineCore::Archive& Ar, AABB& InOutValue)
+void BinaryComponentArchive::Field(const char* InName, AABB& InOut)
 {
-    SerializeVector3(Ar, InOutValue.Min);
-    SerializeVector3(Ar, InOutValue.Max);
+    Field(InName, InOut.Min);
+    Field(InName, InOut.Max);
 }
 
-void SerializeColor(EngineCore::Archive& Ar, EngineCore::Color& InOutValue)
+void BinaryComponentArchive::Field(const char*, EngineCore::Color& InOut)
 {
-    Ar << InOutValue.R << InOutValue.G << InOutValue.B << InOutValue.A;
+    Ar << InOut.R << InOut.G << InOut.B << InOut.A;
+}
+
+void BinaryComponentArchive::FixedString(const char*, char* InOutBuffer, const size_t InCapacity)
+{
+    Ar.SerializeFixedString(InOutBuffer, InCapacity);
+}
+
+void BinaryComponentArchive::Entity(const char*, EntityID& InOut)
+{
+    Remap.RemapEntity(Ar, InOut);
 }
 }

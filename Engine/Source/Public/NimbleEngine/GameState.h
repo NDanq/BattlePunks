@@ -30,14 +30,10 @@ namespace NimbleEngine
         virtual void OnReset() {}
 
         /*
-         * To and from a save, inside this state's own chunk. The default writes
-         * nothing, which is correct for a game that does not save or whose
-         * progress is all in the World. Application::LoadLevel documents when
-         * this runs.
+         * To and from a save, inside this state's own chunk. Default: nothing.
          *
-         * To add a field, override GetSerialVersion() to return the next
-         * number and append the field behind a check; Ar.GetChunkVersion() is
-         * that number on save and the file's on load:
+         * To add a field, bump GetSerialVersion() and guard it (the chunk
+         * version is the current one on save, the file's on load):
          *
          *     if(Ar.GetChunkVersion() >= 2) { Ar << NewField; }
          */

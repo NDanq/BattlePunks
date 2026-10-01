@@ -22,7 +22,6 @@ namespace GameCore
     void ScriptBindings_Install(lua_State* InState, World* InWorld); // ScriptBindings.cpp
     void ScriptSystem_Install(lua_State* InState, World* InWorld);   // ScriptSystem.cpp
     void ScriptSystem_Uninstall(lua_State* InState, World* InWorld);
-    bool ScriptSystem_InstantiateScript(lua_State* InState, World* InWorld, EntityID InEntity, const char* InClassName);
 }
 
 namespace GameCore
@@ -108,6 +107,27 @@ namespace GameCore
             lua_pushinteger(InState, lua_Integer(NewCount));
             lua_settable(InState, LUA_REGISTRYINDEX);
         }
+    }
+
+    void LuaCountError(lua_State* InState)
+    {
+        IncrementErrorCount(InState);
+    }
+
+    bool LuaReadScriptFile(const char* InPath, std::string& OutSource)
+    {
+        if(EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider())
+        {
+            return Provider->ReadAllText(InPath, OutSource);
+        }
+
+        std::vector<uint8_t> Bytes;
+        if(!EngineCore::appFileReadAll(InPath, Bytes))
+        {
+            return false;
+        }
+        OutSource.assign(reinterpret_cast<const char*>(Bytes.data()), Bytes.size());
+        return true;
     }
 
     bool LuaCallProtected(lua_State* InState, const int InNArgs, const int InNResults, const char* InContext)
@@ -219,7 +239,7 @@ namespace GameCore
         }
 
         ScriptBindings_Install(P->State, InWorld);   // World/Entity/component-proxy/TickPhase/Events libraries
-        ScriptSystem_Install(P->State, InWorld);     // Script.Register, the per-phase tick, the removal observer
+        ScriptSystem_Install(P->State, InWorld);     // the World's script driver
 
         P->BoundWorld = InWorld;
     }
@@ -243,22 +263,7 @@ namespace GameCore
         }
 
         std::string Source;
-        bool bRead = false;
-        if(EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider())
-        {
-            bRead = Provider->ReadAllText(InPath, Source);
-        }
-        else
-        {
-            std::vector<uint8_t> Bytes;
-            bRead = EngineCore::appFileReadAll(InPath, Bytes);
-            if(bRead)
-            {
-                Source.assign(reinterpret_cast<const char*>(Bytes.data()), Bytes.size());
-            }
-        }
-
-        if(!bRead)
+        if(!LuaReadScriptFile(InPath, Source))
         {
             GAMECORE_LOG_ERROR(std::string("RunFile: could not read \"") + InPath + "\"")
             ++P->ErrorCount;
@@ -291,17 +296,6 @@ namespace GameCore
         /* LuaCallProtected already counts a runtime error itself -- no
          * ++P->ErrorCount here, or it would be counted twice. */
         return LuaCallProtected(P->State, 0, 0, InChunkName ? InChunkName : "(RunString)");
-    }
-
-    bool ScriptEngine::InstantiateScript(const EntityID InEntity, const char* InClassName)
-    {
-        if(!P->State || !P->BoundWorld)
-        {
-            GAMECORE_LOG_ERROR("InstantiateScript called before Initialize()/BindWorld(); ignoring")
-            return false;
-        }
-
-        return ScriptSystem_InstantiateScript(P->State, P->BoundWorld, InEntity, InClassName);
     }
 
     lua_State* ScriptEngine::GetState() const

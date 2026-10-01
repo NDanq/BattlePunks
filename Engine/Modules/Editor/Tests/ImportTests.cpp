@@ -1,0 +1,278 @@
+/*
+ * NimbleEditorImportTests -- glTF -> .nmmesh, images -> .nmtexture, Reimport.
+ * The glTF is built inline so expected numbers sit beside their source.
+ */
+
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QImage>
+#include <QTemporaryDir>
+
+#include "Public/Core/CoreArchive.h"
+#include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/TextureAsset.h"
+#include "Private/Editor/Content/AssetImport.h"
+
+using namespace EditorContent;
+
+static int GChecks   = 0;
+static int GFailures = 0;
+
+static void Expect(const bool bCondition, const char* What)
+{
+    ++GChecks;
+    if(!bCondition)
+    {
+        ++GFailures;
+        std::printf("  FAIL  %s\n", What);
+    }
+}
+
+static bool Near(const float A, const float B) { return std::fabs(A - B) < 1e-4f; }
+
+/* Reads a written asset back the way the editor's Reimport does. */
+template<typename TData, typename TSerialize>
+static bool ReadAsset(const QString& InPath, TData& OutData, TSerialize InSerialize)
+{
+    QFile File(InPath);
+    if(!File.open(QIODevice::ReadOnly)) { return false; }
+    const QByteArray Bytes = File.readAll();
+    EngineCore::Archive Ar = EngineCore::Archive::ForReading(std::vector<uint8_t>(Bytes.begin(), Bytes.end()));
+    return InSerialize(Ar, OutData);
+}
+
+static bool ReadMesh(const QString& InPath, RenderCore::MeshData& OutMesh)
+{
+    return ReadAsset(InPath, OutMesh, &RenderCore::SerializeMesh);
+}
+
+static bool ReadTexture(const QString& InPath, RenderCore::TextureData& OutTexture)
+{
+    return ReadAsset(InPath, OutTexture, &RenderCore::SerializeTexture);
+}
+
+/*
+ * Scene.gltf, beside Checker.png:
+ *   node "Moved"  (translation 1,2,3)  -> mesh "Box", two primitives:
+ *       0: a triangle at z=0, indexed, normals +Z, material "Red"
+ *       1: a triangle at z=1, no indices, no normals
+ *   node "Mirror" (scale -1,1,1)       -> mesh "Tri": primitive 0's data again
+ */
+static void WriteScene(const QDir& InFolder)
+{
+    const float PosA[9]  = { 0, 0, 0,   1, 0, 0,   0, 1, 0 };
+    const float NrmA[9]  = { 0, 0, 1,   0, 0, 1,   0, 0, 1 };
+    const float UVA[6]   = { 0, 0,      1, 0,      0, 1 };
+    const uint16_t Idx[4] = { 0, 1, 2, 0 };   // the 4th is padding, to keep the next view aligned
+    const float PosB[9]  = { 0, 0, 1,   1, 0, 1,   0, 1, 1 };
+
+    QByteArray Buffer;
+    Buffer.append(reinterpret_cast<const char*>(PosA), sizeof(PosA));   //   0..36
+    Buffer.append(reinterpret_cast<const char*>(NrmA), sizeof(NrmA));   //  36..72
+    Buffer.append(reinterpret_cast<const char*>(UVA),  sizeof(UVA));    //  72..96
+    Buffer.append(reinterpret_cast<const char*>(Idx),  sizeof(Idx));    //  96..104 (6 used)
+    Buffer.append(reinterpret_cast<const char*>(PosB), sizeof(PosB));   // 104..140
+
+    const QString Json = QStringLiteral(R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [0, 1] } ],
+  "nodes": [
+    { "name": "Moved",  "mesh": 0, "translation": [1, 2, 3] },
+    { "name": "Mirror", "mesh": 1, "scale": [-1, 1, 1] }
+  ],
+  "meshes": [
+    { "name": "Box", "primitives": [
+        { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3, "material": 0 },
+        { "attributes": { "POSITION": 4 } } ] },
+    { "name": "Tri", "primitives": [
+        { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 } ] }
+  ],
+  "materials": [ { "name": "Red" } ],
+  "images": [ { "uri": "Checker.png" } ],
+  "textures": [ { "source": 0 } ],
+  "buffers": [ { "byteLength": %1, "uri": "data:application/octet-stream;base64,%2" } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,   "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 36,  "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 72,  "byteLength": 24 },
+    { "buffer": 0, "byteOffset": 96,  "byteLength": 6 },
+    { "buffer": 0, "byteOffset": 104, "byteLength": 36 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] },
+    { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3" },
+    { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2" },
+    { "bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR" },
+    { "bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,1], "max": [1,1,1] }
+  ]
+})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64()));
+
+    QFile File(InFolder.filePath(QStringLiteral("Scene.gltf")));
+    File.open(QIODevice::WriteOnly);
+    File.write(Json.toUtf8());
+    File.close();
+
+    /* 8 x 4 blue, the top-right 2x2 block green -- one pixel of the 4 x 2 it
+     * scales down to, so a vertical flip shows. */
+    QImage Checker(8, 4, QImage::Format_RGBA8888);
+    Checker.fill(QColor(0, 0, 255));
+    for(int Y = 0; Y < 2; ++Y)
+    {
+        for(int X = 6; X < 8; ++X) { Checker.setPixelColor(X, Y, QColor(0, 255, 0)); }
+    }
+    Checker.save(InFolder.filePath(QStringLiteral("Checker.png")));
+}
+
+static void TestClassify()
+{
+    std::printf("[classify]\n");
+    Expect(ClassifySource(QStringLiteral("a/b/Crate.GLB")) == EImportKind::Mesh, ".glb is a mesh, case-insensitively");
+    Expect(ClassifySource(QStringLiteral("Crate.gltf")) == EImportKind::Mesh, ".gltf is a mesh");
+    Expect(ClassifySource(QStringLiteral("Bricks.png")) == EImportKind::Texture, ".png is a texture");
+    Expect(ClassifySource(QStringLiteral("Notes.txt")) == EImportKind::None, ".txt is not importable");
+    Expect(GetImportFileFilter().contains(QStringLiteral("*.glb")), "the file filter offers .glb");
+
+    MeshImportOptions Mesh;
+    Mesh.Scale = 2.5f;
+    Mesh.bCombineMeshes = false;
+    const MeshImportOptions MeshBack = MeshImportOptions::FromSettings(Mesh.ToSettings());
+    Expect(Near(MeshBack.Scale, 2.5f) && !MeshBack.bCombineMeshes && MeshBack.bConvertCoordinates,
+           "mesh options survive their settings text");
+
+    TextureImportOptions Texture;
+    Texture.bSRGB = false;
+    Texture.Wrap  = RenderCore::ETextureWrap::Clamp;
+    Texture.MaxDimension = 512;
+    const TextureImportOptions TextureBack = TextureImportOptions::FromSettings(Texture.ToSettings());
+    Expect(!TextureBack.bSRGB && TextureBack.Wrap == RenderCore::ETextureWrap::Clamp && TextureBack.MaxDimension == 512,
+           "texture options survive their settings text");
+}
+
+static void TestMeshImport(const QDir& InRoot)
+{
+    std::printf("[mesh import]\n");
+
+    MeshImportOptions Options;
+    Options.Scale = 1.0f;
+    TextureImportOptions TextureOptions;
+    const QString Source = InRoot.filePath(QStringLiteral("Source/Scene.gltf"));
+    const QString Content = InRoot.filePath(QStringLiteral("Content"));
+
+    const ImportResult Result = ImportMesh(Source, Content, QStringLiteral("Scene"), Options, TextureOptions, InRoot.absolutePath());
+    Expect(Result.bOK, "a glTF imports");
+    if(!Result.bOK) { std::printf("        %s\n", qPrintable(Result.Message)); return; }
+    Expect(Result.Written.size() == 2, "one combined mesh and its one texture are written");
+    Expect(Result.Images.size() == 1 && Result.Images[0].SourcePath.endsWith(QStringLiteral("Checker.png")),
+           "the referenced image is found beside the glTF");
+
+    RenderCore::MeshData Mesh;
+    Expect(ReadMesh(QDir(Content).filePath(QStringLiteral("Scene.nmmesh")), Mesh), "the .nmmesh loads");
+    Expect(Mesh.GetVertexCount() == 9 && Mesh.Indices.size() == 9, "every primitive's vertices and indices, combined");
+    Expect(Mesh.Sections.size() == 3, "a section per primitive");
+    if(Mesh.Sections.size() == 3 && Mesh.GetVertexCount() == 9)
+    {
+        Expect(Mesh.Sections[0].Name == "Box.0" && Mesh.Sections[0].Material == "Red" && Mesh.Sections[1].Material.empty(),
+               "sections are named after their mesh, with the glTF material name");
+        Expect(Near(Mesh.Positions[0], 1.0f) && Near(Mesh.Positions[1], -2.0f) && Near(Mesh.Positions[2], -3.0f),
+               "the node's translation is baked in, then y and z flip into engine space");
+        Expect(Near(Mesh.Normals[2], -1.0f), "a +Z normal faces -Z in engine space");
+        Expect(Near(Mesh.Normals[3 * 3 + 2], -1.0f) && Near(Mesh.Normals[3 * 3 + 0], 0.0f),
+               "a primitive with no normals gets generated ones, facing the same way");
+        Expect(Mesh.Indices[6] == 6 && Mesh.Indices[7] == 8 && Mesh.Indices[8] == 7,
+               "a mirroring node transform swaps its triangles' winding");
+        Expect(Near(Mesh.BoundsMin[0], -1.0f) && Near(Mesh.BoundsMax[0], 2.0f), "bounds span both nodes");
+        Expect(Near(Mesh.UV0[2], 1.0f), "UVs carry over");
+    }
+    Expect(Mesh.ImportInfo.SourcePath == "Source/Scene.gltf", "the source is recorded relative to the project");
+
+    RenderCore::TextureData Texture;
+    Expect(ReadTexture(QDir(Content).filePath(QStringLiteral("Checker.nmtexture")), Texture)
+           && Texture.Pixels.GetWidth() == 8, "the referenced image becomes a .nmtexture");
+
+    /* Split: a file per glTF mesh. */
+    Options.bCombineMeshes  = false;
+    Options.bImportTextures = false;
+    const ImportResult Split = ImportMesh(Source, Content, QStringLiteral("Split"), Options, TextureOptions, InRoot.absolutePath());
+    Expect(Split.bOK && Split.Written.size() == 2, "split, a file per mesh");
+    RenderCore::MeshData Tri;
+    Expect(ReadMesh(QDir(Content).filePath(QStringLiteral("Split_Tri.nmmesh")), Tri) && Tri.GetTriangleCount() == 1,
+           "named <base>_<mesh>");
+
+    /* Reimport: the same file, from its own record; scale 100 is the default,
+     * so prove the recorded scale (1) is the one used. */
+    const ImportResult Again = Reimport(QDir(Content).filePath(QStringLiteral("Split_Tri.nmmesh")), InRoot.absolutePath());
+    Expect(Again.bOK, "a split mesh reimports");
+    RenderCore::MeshData TriAgain;
+    Expect(ReadMesh(QDir(Content).filePath(QStringLiteral("Split_Tri.nmmesh")), TriAgain)
+           && TriAgain.Positions == Tri.Positions, "with the options it was imported with");
+
+    const ImportResult TextureAgain = Reimport(QDir(Content).filePath(QStringLiteral("Checker.nmtexture")), InRoot.absolutePath());
+    Expect(TextureAgain.bOK, "a texture reimports");
+}
+
+static void TestTextureImport(const QDir& InRoot)
+{
+    std::printf("[texture import]\n");
+
+    TextureImportOptions Options;
+    Options.MaxDimension    = 4;
+    Options.bFlipVertically = true;
+    Options.bSRGB           = false;
+    Options.Filter          = RenderCore::ETextureFilter::Nearest;
+    const QString Content = InRoot.filePath(QStringLiteral("Content"));
+
+    const ImportResult Result = ImportTexture(InRoot.filePath(QStringLiteral("Source/Checker.png")), Content,
+                                              QStringLiteral("Small"), Options, InRoot.absolutePath());
+    Expect(Result.bOK, "a PNG imports");
+    Expect(Result.Warnings.size() == 1, "and says it was scaled down");
+
+    RenderCore::TextureData Texture;
+    Expect(ReadTexture(QDir(Content).filePath(QStringLiteral("Small.nmtexture")), Texture), "the .nmtexture loads");
+    Expect(Texture.Pixels.GetWidth() == 4 && Texture.Pixels.GetHeight() == 2, "scaled to fit 4, keeping its shape");
+    Expect(!Texture.bSRGB && Texture.Filter == RenderCore::ETextureFilter::Nearest, "with its sampling options");
+    if(Texture.Pixels.GetWidth() == 4)
+    {
+        /* Flipped: the top-right green pixel is now in the bottom row. */
+        const uint8_t* Top    = Texture.Pixels.GetScanline(0);
+        const uint8_t* Bottom = Texture.Pixels.GetScanline(1);
+        Expect(Bottom[3 * 4 + 1] > 200 && Bottom[3 * 4 + 2] < 50 && Top[3 * 4 + 2] > 200,
+               "flipped vertically, rows in RGBA order");
+    }
+
+    QFile Garbage(InRoot.filePath(QStringLiteral("Source/Broken.gltf")));
+    Garbage.open(QIODevice::WriteOnly);
+    Garbage.write("this is not json");
+    Garbage.close();
+    const ImportResult Broken = ImportMesh(Garbage.fileName(), Content, QStringLiteral("Broken"), MeshImportOptions(),
+                                           TextureImportOptions(), InRoot.absolutePath());
+    Expect(!Broken.bOK && !Broken.Message.isEmpty(), "a broken glTF fails, saying why");
+    Expect(!QFile::exists(QDir(Content).filePath(QStringLiteral("Broken.nmmesh"))), "and writes nothing");
+
+    const ImportResult Missing = ImportTexture(InRoot.filePath(QStringLiteral("Source/None.png")), Content,
+                                               QStringLiteral("None"), Options, InRoot.absolutePath());
+    Expect(!Missing.bOK, "a missing image fails");
+}
+
+int main(int argc, char** argv)
+{
+    QCoreApplication App(argc, argv);   // image format plugins load through it
+    std::printf("Editor import tests\n");
+
+    QTemporaryDir Temp;
+    const QDir Root(Temp.path());
+    Root.mkpath(QStringLiteral("Source"));
+    WriteScene(QDir(Root.filePath(QStringLiteral("Source"))));
+
+    TestClassify();
+    TestMeshImport(Root);
+    TestTextureImport(Root);
+
+    std::printf("%d checks, %d failures\n", GChecks, GFailures);
+    return GFailures == 0 ? 0 : 1;
+}

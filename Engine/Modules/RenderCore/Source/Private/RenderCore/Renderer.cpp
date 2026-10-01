@@ -1,11 +1,19 @@
 #include "Public/RenderCore/Renderer.h"
 
+#include <cstring>
+#include <type_traits>
+#include <vector>
+
+#include "Public/Core/CoreMemory.h"
+#include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/RenderThread.h"
+#include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/WorldBridge.h"
 
@@ -17,13 +25,54 @@
 
 namespace RenderCore
 {
+#if WITH_EDITOR
+    static_assert(std::is_trivially_copyable<DebugLine>::value,
+                  "DebugLine crosses to the render thread by memcpy -- see Renderer::EndFrame");
+#endif
+
     struct Renderer::Impl
     {
         RenderThread Thread;
         RenderScene* Scene  = nullptr;   // constructed on the render thread by Initialize(); render-thread-owned from then on
         WorldBridge* Bridge = nullptr;   // game-thread-owned; wraps Scene
 
-        bool bPrimitiveRegistered = false;
+        bool bRenderRegistered = false;
+
+#if WITH_EDITOR
+        /* Set by SetViewOverride; replaces the camera lookup every frame. */
+        bool       bHasViewOverride = false;
+        RenderView ViewOverride;
+
+        /* Handed over and cleared by every EndFrame(). */
+        std::vector<DebugLine> PendingDebugLines;
+
+        /* RequestMaterialPreview's results, delivered by the render thread. */
+        MaterialPreviewMailbox Previews;
+        uint64_t               LastPreviewRequest = 0;
+
+        /* Enqueued ahead of EndFrame's render command, as one allocated copy
+         * the command frees (commands capture values only). */
+        void SubmitDebugLines()
+        {
+            if(Scene && !PendingDebugLines.empty())
+            {
+                const size_t Count = PendingDebugLines.size();
+                void* Blob = EngineCore::Memory::Allocate(sizeof(DebugLine) * Count, alignof(DebugLine), EngineCore::POOL_Default,
+                                                          nullptr, EngineCore::AF_None, EngineCore::GImageID);
+                if(Blob)
+                {
+                    std::memcpy(Blob, PendingDebugLines.data(), sizeof(DebugLine) * Count);
+                    RenderScene* SceneCapture = Scene;
+                    ENQUEUE_RENDER_COMMAND(SetDebugLines)([SceneCapture, Blob, Count](RenderContext&)
+                    {
+                        SceneCapture->SetDebugLines(static_cast<const DebugLine*>(Blob), Count);
+                        EngineCore::Memory::Free(Blob);
+                    });
+                }
+            }
+            PendingDebugLines.clear();
+        }
+#endif
     };
 
     Renderer::Renderer() : P(new Impl())
@@ -42,9 +91,9 @@ namespace RenderCore
          * a duplicate), but Initialize() may run more than once across a
          * test's lifetime -- guard rather than log a spurious error every
          * time. */
-        if(!P->bPrimitiveRegistered)
+        if(!P->bRenderRegistered)
         {
-            P->bPrimitiveRegistered = RegisterProxyType(PrimitiveComponent::StaticType().ID, GetPrimitiveComponentFactory());
+            P->bRenderRegistered = RegisterProxyType(RenderComponent::StaticType().ID, GetRenderComponentFactory());
         }
 
         if(!P->Thread.Start(InBackend, InWindow))
@@ -124,11 +173,129 @@ namespace RenderCore
         P->Thread.WaitForFrame();
     }
 
+#if WITH_EDITOR
+    void Renderer::DrawDebugLine(const DebugLine& InLine)
+    {
+        P->PendingDebugLines.push_back(InLine);
+    }
+
+    void Renderer::DrawDebugBox(const GameCore::AABB& InBox, const EngineCore::Color InColor, const float InThicknessPixels)
+    {
+        if(InBox.IsEmpty())
+        {
+            return;
+        }
+
+        /* Corner i takes Max on axis k when bit k is set; edges join corners
+         * one bit apart. Flat axes are collapsed to avoid duplicate edges. */
+        int FlatAxes = 0;
+        if(InBox.Min.GetX() == InBox.Max.GetX()) { FlatAxes |= 1; }
+        if(InBox.Min.GetY() == InBox.Max.GetY()) { FlatAxes |= 2; }
+        if(InBox.Min.GetZ() == InBox.Max.GetZ()) { FlatAxes |= 4; }
+
+        EngineCore::Vector3 Corners[8];
+        for(int Index = 0; Index < 8; ++Index)
+        {
+            Corners[Index] = EngineCore::Vector3((Index & 1) ? InBox.Max.GetX() : InBox.Min.GetX(),
+                                                 (Index & 2) ? InBox.Max.GetY() : InBox.Min.GetY(),
+                                                 (Index & 4) ? InBox.Max.GetZ() : InBox.Min.GetZ());
+        }
+        for(int From = 0; From < 8; ++From)
+        {
+            if(From & FlatAxes)
+            {
+                continue;
+            }
+            for(int Bit = 1; Bit < 8; Bit <<= 1)
+            {
+                const int To = From | Bit;
+                if(To == From || (Bit & FlatAxes))
+                {
+                    continue;
+                }
+                DebugLine Line;
+                Line.Start           = Corners[From];
+                Line.End             = Corners[To];
+                Line.Color           = InColor;
+                Line.ThicknessPixels = InThicknessPixels;
+                P->PendingDebugLines.push_back(Line);
+            }
+        }
+    }
+
+    void Renderer::ReloadMaterial(const char* InName)
+    {
+        if(!P->Thread.IsRunning())
+        {
+            return;
+        }
+
+        /* By value: commands capture trivially copyable values only. */
+        struct NameBuffer { char Text[RENDER_MATERIAL_NAME_MAX]; };
+        NameBuffer Name{};
+        const size_t Length = InName ? std::strlen(InName) : 0;
+        if(Length >= sizeof(Name.Text))
+        {
+            return;
+        }
+        if(Length > 0) { std::memcpy(Name.Text, InName, Length); }
+
+        ENQUEUE_RENDER_COMMAND(ReloadMaterial)([Name](RenderContext& Ctx)
+        {
+            Ctx.ReloadMaterial(Name.Text[0] ? Name.Text : nullptr);
+        });
+    }
+
+    uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
+    {
+        const size_t Length = InName ? std::strlen(InName) : 0;
+        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_NAME_MAX)
+        {
+            return 0;
+        }
+
+        MaterialPreviewRequest Request;
+        Request.Request = ++P->LastPreviewRequest;
+        std::memcpy(Request.Material, InName, Length);
+        Request.Size    = InSize;
+        Request.Tint    = InTint;
+        Request.Mailbox = &P->Previews;
+
+        RenderScene* Scene = P->Scene;
+        ENQUEUE_RENDER_COMMAND(AddMaterialPreview)([Scene, Request](RenderContext&)
+        {
+            Scene->AddMaterialPreview(Request);
+        });
+        return Request.Request;
+    }
+
+    bool Renderer::TakeMaterialPreview(const uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError)
+    {
+        return P->Previews.Take(InRequest, OutImage, OutError);
+    }
+
+    void Renderer::SetViewOverride(const RenderView* InView)
+    {
+        P->bHasViewOverride = InView != nullptr;
+        if(InView)
+        {
+            P->ViewOverride = *InView;
+        }
+    }
+#endif // WITH_EDITOR
+
     void Renderer::EndFrame(const FrameInfo& InFrame)
     {
+        /* The editor's overlay lines and camera override. */
+        const RenderView* ViewOverride = nullptr;
+#if WITH_EDITOR
+        P->SubmitDebugLines();
+        ViewOverride = P->bHasViewOverride ? &P->ViewOverride : nullptr;
+#endif
+
         if(P->Bridge && P->Bridge->IsBound())
         {
-            P->Bridge->ExtractAndRender(InFrame);
+            P->Bridge->ExtractAndRender(InFrame, ViewOverride);
         }
         else if(P->Scene)
         {
@@ -136,7 +303,10 @@ namespace RenderCore
              * so a host's stats and pacing stay meaningful, matching
              * Renderer.h's own comment. */
             RenderScene* Scene = P->Scene;
-            const RenderView View = RenderView::MakeOrthographic(InFrame.ViewportPixels, EngineCore::Vector3(0, 1, -1), -1.0f, 1000.0f);
+            RenderView View = ViewOverride
+                            ? *ViewOverride
+                            : RenderView::MakeOrthographic(InFrame.ViewportPixels, EngineCore::Vector3(0, 1, -1), -1.0f, 1000.0f);
+            View.ViewportPixels = InFrame.ViewportPixels;
             ENQUEUE_RENDER_COMMAND(SetViewAndRenderEmpty)([Scene, View](RenderContext& Ctx)
             {
                 Scene->SetView(View);

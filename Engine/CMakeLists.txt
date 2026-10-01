@@ -34,6 +34,7 @@ project(NimbleEngine VERSION 0.1 LANGUAGES CXX)
 
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(NimbleModule)
+include(NimbleMaterials)
 
 enable_testing()
 
@@ -96,10 +97,72 @@ if(NIMBLE_USE_SCCACHE)
     endif()
 endif()
 
+# === Target type ===========================================================
+#   Editor   the default: every module, the Qt editor and editor-only code.
+#   Client   a game build: WITH_EDITOR=0, no editor.
+#   Server   same as Client for now; a switch for future server-only gating.
+#
+# ONE PER CONFIGURE: WITH_EDITOR changes class layouts and exports, so every
+# image must agree. It is a PUBLIC definition on EngineCore (below), so even
+# a standalone game configure inherits it. Always 1 or 0, never undefined.
+set(NIMBLE_TARGET "Editor" CACHE STRING "What this configure builds: Editor, Client or Server")
+set_property(CACHE NIMBLE_TARGET PROPERTY STRINGS Editor Client Server)
+
+if(NOT NIMBLE_TARGET MATCHES "^(Editor|Client|Server)$")
+    message(FATAL_ERROR "NIMBLE_TARGET must be Editor, Client or Server (got '${NIMBLE_TARGET}')")
+endif()
+
+if(NIMBLE_TARGET STREQUAL "Editor")
+    set(NIMBLE_WITH_EDITOR 1)
+else()
+    set(NIMBLE_WITH_EDITOR 0)
+endif()
+
+message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR})")
+
+# === Configurations ========================================================
+#   Debug            unoptimised, full debug info.
+#   RelWithDebInfo   optimised with debug info (CMake's flags).
+#   Shipping         optimised, no debug info, NDEBUG; NIMBLE_SHIPPING=1.
+#
+# Shipping's flags are CACHE variables so a standalone game configure (the
+# top-level project) sees them. Seeded from Release while EMPTY and FORCEd:
+# project() pre-creates them empty for a custom build type, so an "if not
+# defined" guard would leave Shipping unoptimised.
+foreach(NM_LANG C CXX)
+    if("${CMAKE_${NM_LANG}_FLAGS_SHIPPING}" STREQUAL "")
+        set(CMAKE_${NM_LANG}_FLAGS_SHIPPING "${CMAKE_${NM_LANG}_FLAGS_RELEASE}"
+            CACHE STRING "Flags used by the ${NM_LANG} compiler during Shipping builds" FORCE)
+    endif()
+endforeach()
+foreach(NM_KIND EXE SHARED MODULE STATIC)
+    if("${CMAKE_${NM_KIND}_LINKER_FLAGS_SHIPPING}" STREQUAL "" AND NOT "${CMAKE_${NM_KIND}_LINKER_FLAGS_RELEASE}" STREQUAL "")
+        set(CMAKE_${NM_KIND}_LINKER_FLAGS_SHIPPING "${CMAKE_${NM_KIND}_LINKER_FLAGS_RELEASE}"
+            CACHE STRING "Flags used by the linker for ${NM_KIND} targets during Shipping builds" FORCE)
+    endif()
+endforeach()
+mark_as_advanced(CMAKE_C_FLAGS_SHIPPING CMAKE_CXX_FLAGS_SHIPPING
+                 CMAKE_EXE_LINKER_FLAGS_SHIPPING CMAKE_SHARED_LINKER_FLAGS_SHIPPING
+                 CMAKE_MODULE_LINKER_FLAGS_SHIPPING CMAKE_STATIC_LINKER_FLAGS_SHIPPING)
+
+get_property(NM_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NM_MULTI_CONFIG)
+    # Offer it in multi-config generators, once.
+    if(NOT "Shipping" IN_LIST CMAKE_CONFIGURATION_TYPES)
+        list(APPEND CMAKE_CONFIGURATION_TYPES Shipping)
+        set(CMAKE_CONFIGURATION_TYPES "${CMAKE_CONFIGURATION_TYPES}" CACHE STRING "Available build configurations" FORCE)
+    endif()
+elseif(CMAKE_BUILD_TYPE STREQUAL "Shipping" AND NIMBLE_WITH_EDITOR)
+    # Nothing ships the editor; fail at configure.
+    message(FATAL_ERROR "Shipping is a Client or Server configuration -- configure with "
+                        "-DNIMBLE_TARGET=Client (or Server), or pick Debug / RelWithDebInfo for the Editor")
+endif()
+
 # === Binaries/ =============================================================
 # One flat runtime directory per platform+config:
 # <NIMBLE_BINARIES_DIR>/<Platform>_<Config>, e.g. Windows_Debug, Mac_Release,
-# Linux_RelWithDebInfo.
+# Linux_RelWithDebInfo -- with a _<Target> suffix for a Client or Server
+# target (Windows_Debug_Client); see the Target type block above.
 #
 # WHERE THAT ROOT POINTS, and why it is not Engine/Binaries. Hot reload requires
 # the host executable, EngineCore and every module DLL to be siblings in one
@@ -138,6 +201,14 @@ set(NIMBLE_BINARIES_DIR "${NM_DEFAULT_BINARIES_DIR}"
 #
 # Import libs / .exp go to <dir>/Lib so .lib clutter stays out of the flat
 # runtime directory.
+# Client/Server builds get their own folder: their DLLs lack editor exports
+# and would break NimbleEditor.exe if they overwrote its DLLs.
+if(NIMBLE_TARGET STREQUAL "Editor")
+    set(NM_TARGET_SUFFIX "")
+else()
+    set(NM_TARGET_SUFFIX "_${NIMBLE_TARGET}")
+endif()
+
 if(WIN32)
     set(NM_PLATFORM Windows)
 elseif(APPLE)
@@ -146,14 +217,14 @@ else()
     set(NM_PLATFORM Linux)
 endif()
 
-get_property(NM_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+# NM_MULTI_CONFIG was read in the Configurations block above.
 if(NM_MULTI_CONFIG)
     # Visual Studio / Xcode / Ninja Multi-Config: only the per-config variables
     # matter, and CMake appends nothing to them. Setting the plain variable here
     # would just get a /Debug tacked on by the generator and scatter output.
     foreach(NM_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
         string(TOUPPER "${NM_CFG}" NM_CFG_U)
-        set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${NM_CFG}")
+        set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${NM_CFG}${NM_TARGET_SUFFIX}")
         set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}")
         set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}")
         set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_CFG_DIR}/Lib")
@@ -164,7 +235,7 @@ else()
     if(NOT CMAKE_BUILD_TYPE)
         set(CMAKE_BUILD_TYPE Debug CACHE STRING "Build configuration" FORCE)
     endif()
-    set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${CMAKE_BUILD_TYPE}")
+    set(NM_CFG_DIR "${NIMBLE_BINARIES_DIR}/${NM_PLATFORM}_${CMAKE_BUILD_TYPE}${NM_TARGET_SUFFIX}")
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${NM_CFG_DIR}")
     set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${NM_CFG_DIR}")
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${NM_CFG_DIR}/Lib")
@@ -180,6 +251,12 @@ endif()
 set(CORE_SHARED ON CACHE BOOL "Build EngineCore as a shared library" FORCE)
 
 add_subdirectory(Modules/Core)
+
+# The build-wide switches, as EngineCore usage requirements so everything that
+# links it agrees. Always 1 or 0.
+target_compile_definitions(EngineCore PUBLIC
+        WITH_EDITOR=${NIMBLE_WITH_EDITOR}
+        NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>)
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GDI/CMakeLists.txt")
     add_subdirectory(Modules/GDI)
@@ -219,6 +296,13 @@ elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/RenderCore/CMakeLists.txt")
     message(STATUS "RenderCore present but GDI is not configured; skipping RenderCore")
 endif()
 
+# NodeGraph: material/script graphs generating GLSL and Lua. Editor only;
+# after GameCore, which it uses.
+if(NIMBLE_WITH_EDITOR AND TARGET GameCore
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/NodeGraph/CMakeLists.txt")
+    add_subdirectory(Modules/NodeGraph)
+endif()
+
 # === NimbleEngine =========================================================
 # The engine layer itself: the thing that owns the module set, drives the frame
 # and is what a game under Games/ links. Its sources live at Engine/Source, so
@@ -244,10 +328,15 @@ endif()
 # the hot-reload sibling rule requires.
 set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
+        Source/Private/NimbleEngine/GameSession.cpp
+        Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
         Source/Private/NimbleEngine/SaveGameFormat.h
         Source/Public/NimbleEngine/NimbleEngine.h
+        Source/Public/NimbleEngine/GameMode.h
+        Source/Public/NimbleEngine/GameSession.h
+        Source/Public/NimbleEngine/GameModule.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
         Source/Public/NimbleEngine/Level.h
         Source/Public/NimbleEngine/GameState.h
@@ -285,9 +374,9 @@ endif()
 
 # PUBLIC, not PRIVATE -- the two deliberate exceptions to the rule stated
 # just above. World/Entity (GameCore) and Renderer/RenderCommand/RenderProxy
-# (RenderCore) ARE the game-facing surface: NimbleEngine.h forward-declares
+# (RenderCore) ARE the game-facing surface: GameSession.h forward-declares
 # GameCore::World, GameCore::ScriptEngine and RenderCore::Renderer, and
-# exposes Application::GetWorld()/GetScriptEngine()/GetRenderer() returning
+# exposes GameSession::GetWorld()/GetScriptEngine()/GetRenderer() returning
 # them by reference, so a game that includes NimbleEngine.h needs both
 # modules' headers and needs to LINK both to use what it forward-declares.
 # Nothing from GameWindow becomes reachable through this -- PUBLIC applies to
@@ -360,6 +449,17 @@ if(TARGET GDI AND GDI_COOKED_SHADER_DIR AND CMAKE_RUNTIME_OUTPUT_DIRECTORY)
 
     add_dependencies(NimbleEngine NimbleStageShaders)
     set_target_properties(NimbleStageShaders PROPERTIES FOLDER "Engine")
+endif()
+
+# === Editor ================================================================
+# The Qt editor: after NimbleStageShaders, and needs RenderCore. Skips itself
+# when Qt6 Widgets is missing. Editor targets only.
+option(NIMBLE_BUILD_EDITOR "Build the Qt editor (Modules/Editor) in an Editor target" ON)
+if(NIMBLE_BUILD_EDITOR AND NIMBLE_WITH_EDITOR AND TARGET RenderCore
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/Editor/CMakeLists.txt")
+    add_subdirectory(Modules/Editor)
+elseif(NOT NIMBLE_WITH_EDITOR)
+    message(STATUS "NimbleEditor: not built for a ${NIMBLE_TARGET} target")
 endif()
 
 # === Games/ ================================================================

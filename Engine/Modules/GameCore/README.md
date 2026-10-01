@@ -17,15 +17,16 @@ Host exe --> NimbleEngine --> GameCore  --> EngineCore
 ```
 
 **GameCore does not link GameWindow or GDI, and neither links back.** A World
-has no notion of a window or a renderer; `NimbleEngine::Application` is the
-one place that owns a `GameCore::World` (see `Application::GetWorld()`) and
-ticks it once per frame, after `IGame::OnTick` and before the render-thread
-fence -- `NimbleEngine.cpp`'s `Simulate()` has the exact sequencing.
+has no notion of a window or a renderer; `NimbleEngine::GameSession` is the
+one place that owns a `GameCore::World` (see `GameSession::GetWorld()`) and
+ticks it once per frame, after `IGameMode::OnTick` -- `GameSession::Tick` --
+before the host's render-thread fence (`Application::RunFrame` has the exact
+sequencing).
 
 Unlike `GameWindow` and `GDI`, which `Engine/CMakeLists.txt` links into
 `NimbleEngine` **PRIVATE**, `GameCore` is linked **PUBLIC**. `World` and
 `Entity` are the game-facing surface -- a game includes GameCore's own headers
-to use what `Application::GetWorld()` hands back -- so the dependency has to
+to use what `GameSession::GetWorld()` hands back -- so the dependency has to
 be visible past `NimbleEngine`, not hidden behind it. See the PUBLIC link's
 own comment in `Engine/CMakeLists.txt` for the full reasoning.
 
@@ -38,12 +39,14 @@ Engine/Modules/GameCore/
 |-- CMakeLists.txt
 |-- README.md                       (this file)
 |-- External/
-|   `-- lua-5.4.8/                  vendored Lua source; see "Lua" below
+|   |-- lua-5.4.8/                  vendored Lua source; see "Lua" below
+|   `-- pugixml-1.16/               vendored XML parser, editor builds only; see "World files" below
 |-- Source/
 |   |-- Public/GameCore/
 |   |   |-- GameCoreAPI.h           GAMECORE_API three-state export macro (always SHARED)
 |   |   |-- GameCoreLog.h           GAMECORE_LOG / _WARN / _ERROR over CoreLog
 |   |   |-- EntityID.h              EntityID {Index, Generation}, Pack()/Unpack()
+|   |   |-- EntityGuid.h            EntityGuid: an entity's persistent 128-bit identity
 |   |   |-- AABB.h                  axis-aligned box over EngineCore::Vector3
 |   |   |-- TickPhase.h             ETickPhase: PrePhysics/Physics/PostPhysics/PostUpdate
 |   |   |-- Delegate.h              DelegateHandle, DelegateList, TDelegate, TMulticastDelegate, TScopedBinding
@@ -51,9 +54,13 @@ Engine/Modules/GameCore/
 |   |   |-- ComponentType.h         ComponentTypeID, ComponentTypeInfo, ComponentOwner, the BODY/DEFINE macros
 |   |   |-- ComponentPool.h         the erased sparse-set pool
 |   |   |-- SpatialIndex.h          the dynamic AABB tree (BVH)
-|   |   |-- World.h                 class World: entities, pools, phased systems, spatial queries, delegates
-|   |   |-- Entity.h                header-only handle: World* + EntityID
-|   |   |-- Components.h            TransformComponent, NameComponent, BoundsComponent, ScriptComponent
+|   |   |-- World.h                 class World: entities (+ name/script members), pools, phased systems,
+|   |   |                           the script driver slot, spatial queries, delegates
+|   |   |-- Entity.h                header-only handle: World* + EntityID; components, name, script path
+|   |   |-- Components.h            TransformComponent, BoundsComponent
+|   |   |-- ComponentSerializer.h   ComponentArchive (named fields), the serializer macro and registry
+|   |   |-- WorldSerializer.h       SerializeWorld: the binary world (cooked data, save games)
+|   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
 |   |   `-- ScriptEngine.h          lua_State lifetime, RunFile/RunString, BindWorld; NO lua.h
 |   `-- Private/GameCore/
 |       |-- GameCoreInternal.h      the ONLY header that includes lua.h/lauxlib.h/lualib.h
@@ -68,8 +75,10 @@ Engine/Modules/GameCore/
 |       |-- ScriptEngine.cpp
 |       |-- ScriptBindings.cpp      World/Entity/TickPhase/Events Lua libraries
 |       |-- ComponentScript.cpp     component proxies: the binding registry and the one dispatcher
-|       |-- ComponentScripts.cpp    what Transform/Name/Bounds expose to Lua
-|       `-- ScriptSystem.cpp        Script.Register, instantiation, the per-phase tick, the removal observer
+|       |-- ComponentScripts.cpp    what Transform/Bounds expose to Lua
+|       |-- WorldPackage.cpp        the XML ComponentArchive, package save (atomic), two-pass load, cook
+|       `-- ScriptSystem.cpp        the World's script driver: file -> class cache, instantiation,
+|                                   the per-phase tick (ahead of every system), release/OnDestroy
 `-- Tests/
     `-- SmokeMain.cpp
 ```
@@ -134,6 +143,22 @@ TransformComponent* T = Bounds.Owner.GetSibling<TransformComponent>();
 const char* Name = Bounds.Owner.GetName();
 ```
 
+**Name and script are entity members, not components.** Every entity has
+exactly one of each, stored in `World`'s slot tables alongside the
+generation, and reached through the handle:
+
+```cpp
+GameCore::Entity Player = World.CreateEntity("Player");   // named before OnEntityCreated fires
+GameCore::EntityGuid Id = Player.GetGuid();               // persistent; World.FindEntityByGuid(Id)
+Player.SetName("Hero");
+Player.SetScript("Scripts/Player.lua");                   // a path; "" or nullptr clears
+const char* Path = Player.GetScriptPath();                // "" if none, never null
+```
+
+`World::FindEntityByName` is a linear scan over the live names. A
+`GetName()`/`GetScriptPath()` pointer stays valid while other entities come
+and go; only a `SetName`/`SetScript` on that entity, or destroying it, moves it.
+
 Components are **trivially copyable** (`GAMECORE_DEFINE_COMPONENT`
 `static_assert`s it) -- a `ComponentPool` is one contiguous, aligned byte
 array that `memcpy`s on swap-remove, which is both the cache-efficiency story
@@ -153,13 +178,15 @@ enum ETickPhase { TP_PrePhysics, TP_Physics, TP_PostPhysics, TP_PostUpdate, TP_M
 ```
 
 `World::RegisterSystem(name, phase, fn, userData)` puts a system into one of
-four buckets; `World::Tick()` runs them in order, and flushes the deferred
-destroy/remove queue **at the end of each phase** -- not the end of the frame
+four buckets; `World::Tick()` runs them in order -- each phase opening with
+the script driver's pass, so entity scripts always update before that phase's
+systems -- and flushes the deferred destroy/remove/script queue **at the end
+of each phase** -- not the end of the frame
 -- so a `TP_PrePhysics` system that destroys an entity has it gone before
 `TP_Physics` runs. `World::RefreshSpatialIndex()` (the BVH refit) runs at the
 end of `TP_Physics`, after every system registered there.
 
-Calling `DestroyEntity` / `RemoveComponent<T>` from inside a tick defers to
+Calling `DestroyEntity` / `RemoveComponent<T>` / `SetScript` from inside a tick defers to
 the current phase's flush; calling them outside a tick is immediate. Never
 destroy or remove from inside a pool walk you are not the observer of.
 
@@ -225,7 +252,7 @@ the tree (`QueryBounds` / `EachInBounds`) when it wants only what is *nearby*
 of asking by region instead of walking a pool in order.
 
 `World::SetActiveRegion(box)` is a shared "what gameplay currently cares
-about" hint; `ScriptComponent`'s `CullOutsideActiveRegion` flag is the one
+about" hint; an entity script's `CullOutsideActiveRegion` flag is the one
 built-in consumer, skipping a scripted entity's `OnTick` when it is outside.
 
 ---
@@ -233,26 +260,51 @@ built-in consumer, skipping a scripted entity's `OnTick` when it is outside.
 ## Scripting
 
 `ScriptEngine` owns one `lua_State`, bound to one `World` at a time
-(`BindWorld` / `UnbindWorld`). `Application` owns exactly one of each --
-`Application::GetScriptEngine()` -- initialized, bound, and torn down around
-a game's lifetime by `NimbleEngine.cpp`.
+(`BindWorld` / `UnbindWorld`). The host (`Application`) owns exactly one,
+lent to its `GameSession` -- `GameSession::GetScriptEngine()` -- which binds it
+to each level's World as the level loads and unbinds it as it unloads.
+
+**An entity's script is a file.** The file returns its class table; every
+entity that names the path gets its own instance (`self`), with
+`self.Entity` set:
+
+```lua
+-- Scripts/Mover.lua
+return {
+    TickPhase = TickPhase.PostPhysics,          -- optional, defaults to PrePhysics
+    CullOutsideActiveRegion = true,             -- optional; overrides the entity's own flag
+    OnStart   = function(self) end,
+    OnTick    = function(self, dt) self.Entity:GetComponent("Transform"):Translate(dt, 0, 0) end,
+    OnDestroy = function(self) end,
+}
+```
 
 ```lua
 local e = World.CreateEntity("Player")
 local t = e:AddComponent("Transform")
 t:SetPosition(1, 2, 3)
-
-Script.Register("Mover", {
-    TickPhase = TickPhase.PostPhysics,          -- optional, defaults to PrePhysics
-    OnStart   = function(self) end,
-    OnTick    = function(self, dt) self.Entity:GetComponent("Transform"):Translate(dt, 0, 0) end,
-    OnDestroy = function(self) end,
-})
-e:AddScript("Mover")
+e:SetScript("Scripts/Mover.lua")                -- also e:GetScript(), e:ClearScript(), e:SetName(n)
 
 Events.On("EntityCreated", function(entity) print(entity:GetName()) end)
 Events.Emit("PlayerScored", 10, "Player")       -- numbers, booleans, strings, entities; up to 4 args
 ```
+
+How it runs:
+
+- **Scripts update first.** `BindWorld` installs a `ScriptDriver` on the
+  World, and `World::TickPhase` runs it at the start of every phase, before
+  any registered system, whatever order anything was registered in. Within
+  that pass, entity scripts run in the order their paths were set, then the
+  Lua-defined systems (`World.AddSystem`).
+- **Lazy.** `SetScript` only stores the path. The driver loads the file (once
+  per path per bind, cached) and builds the instance at the start of the next
+  phase it runs; `OnStart` follows in the script's own phase. A World with no
+  driver -- the editor's -- just keeps the path, and so does a save.
+- **Deferred inside a tick,** like `Destroy`: a script that replaces or clears
+  a script sees the change at the end of the phase.
+- **Errors are reported once.** A missing file, a syntax error or a file that
+  does not return a table logs one error per path; an `OnStart`/`OnTick` error
+  logs once and stops that instance.
 
 A component proxy (what `e:GetComponent("Transform")` returns) holds an
 `EntityID` and a `ComponentTypeID`, never a pointer -- every method re-fetches
@@ -264,11 +316,11 @@ listed is invisible; every component also gets `GetEntity()`. Binding code
 never includes `lua.h`:
 
 ```cpp
-GAMECORE_DEFINE_COMPONENT_SCRIPT(PrimitiveComponent)
+GAMECORE_DEFINE_COMPONENT_SCRIPT(RenderComponent)
 {
-    Bind.Field("Width", &PrimitiveComponent::Width);      // GetWidth / SetWidth
-    Bind.Field("Tint",  &PrimitiveComponent::Tint);       // r, g, b[, a]
-    Bind.Flag("Visible", &PrimitiveComponent::bVisible);  // uint8_t as a boolean
+    Bind.Field("Width", &RenderComponent::Width);      // GetWidth / SetWidth
+    Bind.Field("Tint",  &RenderComponent::Tint);       // r, g, b[, a]
+    Bind.Flag("Visible", &RenderComponent::bVisible);  // uint8_t as a boolean
 }
 
 GAMECORE_DEFINE_COMPONENT_SCRIPT(TransformComponent)
@@ -293,12 +345,61 @@ comment. `CoreCallProtected` (used by every lifecycle call and by
 `RunFile`/`RunString`) installs a traceback handler and logs through
 `GAMECORE_LOG_ERROR`; a script error is never fatal to the engine.
 
-`ScriptComponent`'s removal observer runs `OnDestroy` and releases the
-instance's Lua registry ref when the component (or its owning entity) is
-removed. `ScriptEngine::UnbindWorld()` walks every still-live instance, every
-Lua-defined system, and every `Events.On()` binding a script made, and
-releases all of them -- a Lua function cannot be trusted to clean up before
-`lua_close`.
+The driver's release runs `OnDestroy` and releases the instance's Lua
+registry ref when the entity is destroyed (before any of its components go)
+or its script is replaced or cleared. `ScriptEngine::UnbindWorld()` walks
+every still-live instance, every Lua-defined system, and every `Events.On()`
+binding a script made, and releases all of them -- a Lua function cannot be
+trusted to clean up before `lua_close`. Script paths survive an unbind; the
+next `BindWorld` starts them again.
+
+---
+
+## World files
+
+A `.nmworld` is text or binary, told apart by its first bytes
+(`DetectWorldFileFormat`); `LoadWorldFile` reads either.
+
+```
+Levels/Sandbox.nmworld               text: <World Format="1"> listing entity GUIDs
+Levels/Sandbox/<guid>.nmentity       text: one entity -- name, script, components
+Levels/Cooked/Sandbox.nmworld        binary: what a game ships (CookWorldFile)
+```
+
+**Text is the editor's format** (`SaveWorldPackage`, editor builds only). One
+small XML file per entity, named by its `EntityGuid`, so an edit to one entity
+is a diff in one file, and output is deterministic: components sorted by type
+name, floats in their shortest exact form, LF line endings. A save only
+rewrites files whose bytes changed, commits the manifest last (temporaries,
+then renames), and afterwards removes the files of deleted entities. A load
+creates every listed entity first, then their components, so references
+between entities resolve; files the manifest does not list are ignored.
+`.gitattributes` keeps both extensions LF.
+
+**Binary is the shipped format** -- `SerializeWorld`'s archive, one file.
+`CookWorldFile(text, out)` produces it; the editor's `cook` console command
+wraps that. A game build has no XML parser and refuses a text world.
+
+**Serializers name their fields**, which is what lets one serializer write
+both formats:
+
+```cpp
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 1)
+{
+    Ar.Field("Width",  C.Width);
+    Ar.Field("Tint",   C.Tint);
+    Ar.Flag("Visible", C.bVisible);
+    Ar.Entity("Owner", C.OwnerEntity);            // an EntityID: a GUID in text, an index in binary
+    if(Ar.GetVersion() >= 2) { Ar.Field("Depth", C.Depth); }   // added later: binary needs the guard
+}
+```
+
+In text a missing field keeps its default and an unknown one is skipped; binary
+is positional, so new fields go at the end behind a version check.
+
+pugixml 1.16 is vendored at `External/pugixml-1.16/` (MIT, `LICENSE.md`
+there) the way Lua is, built by `CMakeLists.txt` only when `WITH_EDITOR`, with
+`PUGIXML_NO_XPATH`. `pugixml.hpp` is included only by `WorldPackage.cpp`.
 
 ---
 

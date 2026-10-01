@@ -8,23 +8,16 @@
 
 namespace NimbleEngine
 {
-    class Application;
+    class GameSession;
     class ILevel;
 
     /*
-     * Saving and restoring a game: the level's name, its World, and its
-     * GameState. The IGameMode is not saved -- it is the rules, rebuilt by
-     * loading the level, and anything a mode needs kept belongs in the
-     * GameState (GameState.h).
+     * Saves the level name, its World and its GameState. The IGameMode is not
+     * saved; mode state that must persist belongs in the GameState.
      *
-     * A load is DEFERRED. LoadGameFromFile resolves the level and calls
-     * RequestLevel, and the restore runs inside the next LoadLevel -- see
-     * Application::LoadLevel for exactly where, and why there. Loading from
-     * inside OnTick is therefore safe.
-     *
-     * The level's own OnLoad runs before the restore, so a level that spawns
-     * entities must clear them in ILevel::OnPrepareForLoadedGame or the scene
-     * is doubled.
+     * Loads are DEFERRED (RequestLevel; restored inside the next LoadLevel), so
+     * loading from OnTick is safe. The level's OnLoad runs first: clear spawned
+     * entities in ILevel::OnPrepareForLoadedGame or the scene is doubled.
      *
      * Game thread only.
      */
@@ -47,7 +40,7 @@ namespace NimbleEngine
      * IGameMode::OnPreSaveGame. False, with nothing written, if there is no
      * level, the World is ticking, or the write fails.
      */
-    NE_API bool SaveGameToFile(Application& InApp, const std::string& InPath);
+    NE_API bool SaveGameToFile(GameSession& InSession, const std::string& InPath);
 
     /*
      * Reads InPath and requests its level; the scene is restored next frame.
@@ -55,7 +48,7 @@ namespace NimbleEngine
      * IGameMode::OnPostLoadSave. On any failure (missing or malformed file,
      * unregistered level) the running game is untouched.
      */
-    NE_API bool LoadGameFromFile(Application& InApp, const std::string& InPath);
+    NE_API bool LoadGameFromFile(GameSession& InSession, const std::string& InPath);
 
     /* The header alone. False if the file is missing or not a save. */
     NE_API bool PeekSaveGameHeader(const std::string& InPath, SaveGameHeader& OutHeader);

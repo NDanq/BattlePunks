@@ -9,28 +9,20 @@ namespace GameCore { class World; }
 
 namespace NimbleEngine
 {
-    class Application;
+    class GameSession;
     class GameState;
     class IGameMode;
 
     /*
-     * WHAT CONTAINS THE ENTITIES: the unit of load/unload. A level holds a World,
-     * the IGameMode acting on it and the GameState that mode uses. Unloading
-     * destroys the World and everything in it -- isolation is structural, which
-     * is why each level owns a World rather than tagging entities in a shared one.
+     * The unit of load/unload: a World, the IGameMode acting on it and its
+     * GameState. Each level owns its World, so unloading destroys everything.
      *
-     *   OnLoad     the World exists, is empty, and has scripts and the renderer
-     *              bound. Spawn entities, register systems. The startup script
-     *              has not run yet.
-     *   OnUnload   the World is still valid and populated; unbind anything
-     *              bound to it from outside.
+     *   OnLoad     empty World, scripts and renderer bound, startup script not
+     *              yet run. Spawn entities, register systems.
+     *   OnUnload   World still populated; unbind anything bound from outside.
      *
-     * Application::LoadLevel has the full sequence. A level does not tick; for
-     * per-frame work it registers a World system.
-     *
-     * The engine allocates and frees the World (Memory::Alloc/Dealloc), so a
-     * missed teardown shows up in ReportLeaks(). Not NE_API, like GameState;
-     * GetWorld() is the one out-of-line member and carries its own annotation.
+     * Full sequence: GameSession::LoadLevel. A level does not tick; register a
+     * World system for per-frame work. Not NE_API; GetWorld() is annotated.
      */
     class ILevel
     {
@@ -44,13 +36,9 @@ namespace NimbleEngine
          */
         virtual const char* GetName() const = 0;
 
-        /*
-         * Populate the World. False aborts the load: OnUnload still runs, and a
-         * startup level that fails shuts the engine down cleanly. InApp outlives
-         * the level. Use GetWorld() below rather than Application::GetWorld(),
-         * which only matches while this is the active level.
-         */
-        virtual bool OnLoad(Application& InApp) { (void)InApp; return true; }
+        /* Populate the World. False aborts the load (OnUnload still runs).
+         * Prefer GetWorld() to GameSession::GetWorld(). */
+        virtual bool OnLoad(GameSession& InSession) { (void)InSession; return true; }
 
         /* The World is about to be destroyed. Pairs with OnLoad having been
          * called, not with it succeeding. Unbind what OnLoad bound -- ~World
@@ -85,9 +73,8 @@ namespace NimbleEngine
         NE_API GameCore::World& GetWorld();
 
     private:
-        /* Set by Application around OnLoad/OnUnload. A friend rather than
-         * protected, so a subclass cannot assign its own World. */
-        friend class Application;
+        /* Sets OwnedWorld; a friend so subclasses cannot. */
+        friend class GameSession;
         GameCore::World* OwnedWorld = nullptr;
     };
 }

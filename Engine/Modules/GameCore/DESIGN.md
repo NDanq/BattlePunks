@@ -178,6 +178,30 @@ nothing worth optimizing.
 
 ---
 
+## EntityGuid.h
+
+**Why a second identity at all.** `EntityID` is a slot and a generation --
+cheap, dense, and meaningless in the next process. A save could get away with
+dense save-local indices (the binary format still uses them), but a text world
+cannot: an entity's file needs a name that survives other entities being
+added and removed, and an entity reference inside a file needs something that
+does not renumber when a colleague adds an entity in another branch. Names
+cannot do it (not unique, arbitrary characters). So every entity gets 128
+random bits at creation (`std::random_device`, the OS generator), kept by every
+save and load.
+
+**Unique per World, enforced.** `World` keeps a GUID -> slot map; creating an
+entity with a GUID already in use -- loading a world into one that already holds
+it -- gives the newcomer a fresh GUID with a warning rather than two entities
+answering to one identity. The text loader resolves references through its own
+map of what *it* created, so such a clash never redirects a reference to the
+pre-existing entity.
+
+**Hex, Hi then Lo, lowercase** -- 32 characters, no dashes: a filename on every
+filesystem, and one string format everywhere (files, Lua's `e:GetGuid()`, logs).
+
+---
+
 ## EntityID.h
 
 **Why a generation and not just an index.** Indices are reused the instant
@@ -395,6 +419,22 @@ bridge). Code holding a bare `EntityID` writes `World.GetEntity(Id)` or
 `Entity(&World, Id)` first. `ComponentOwner::GetSibling<T>` is defined in
 `Entity.h` for the same reason: it goes through `GetEntity()`.
 
+**Name and script are members, not components.** Both used to be pooled
+components (`NameComponent`, a `char[64]`; `ScriptComponent`, a Lua class
+name plus run state). Neither earned it: every entity has at most one of each,
+nothing iterates them as data the way a system iterates Transforms, and the
+script in particular is not a *part* of the entity but what *drives* it -- it
+needs its own guarantee about when it runs (first in every phase), which a
+component in a pool walked by a registered system could only get by
+registration-order accident. So `World` stores them per slot, beside the
+generation, and `Entity` forwards to private `World` accessors exactly as it
+does for components -- `GetName`/`SetName`, `SetScript`/`GetScriptPath`/
+`GetScriptState`. A name is a `std::string` now, not a fixed buffer: it lives
+in `World::Impl`, allocated and freed only inside `GameCore.dll`, and crosses
+the API as `const char*`, so the cross-heap hazard `CoreConfig.h` describes
+never applies. The slot storage is a `std::deque` for the pointer-stability
+reason in `World.cpp`.
+
 **`World::CreateEntity` returns an `Entity`, not an `EntityID`,** so a
 component attaches straight to what was just created --
 `World.CreateEntity("Marker").AddComponent(Transform)` -- with no
@@ -437,11 +477,12 @@ rule is about a type with *nothing* out-of-line; `StaticType()` means that
 exception never actually applies to a component struct, whatever its data
 members look like. Without the annotation, MSVC's dllexport model does not
 export `StaticType()` from `GameCore.dll`, and every other translation unit
-that names e.g. `NameComponent::StaticType()` fails to link against it --
+that names e.g. `BoundsComponent::StaticType()` fails to link against it --
 which is exactly what happened during development: `TransformComponent`
 happened to need `GAMECORE_API` anyway for `GetLocalMatrix()`, so it never
-exposed the gap until `NameComponent` and `BoundsComponent` were linked
-against from `SmokeMain.cpp` and failed with unresolved externals.
+exposed the gap until `BoundsComponent` (and the since-removed
+`NameComponent`) were linked against from `SmokeMain.cpp` and failed with
+unresolved externals.
 
 **`TransformComponent` is 64 bytes.** With the 16-byte `ComponentOwner`
 header plus three `Vector3` at 16 bytes each under `WITH_SIMD` (per
@@ -458,19 +499,30 @@ arbitrary-but-stated choice; a game that wants a different order rolls its
 own component rather than this one silently meaning something else than what
 its member name suggests.
 
+Rotations are right-handed for column vectors: a positive angle about +Z turns
++X toward +Y -- which, with the game's +Y down the screen, reads clockwise.
+`InitRotation` once got this wrong (the same `+W*sin` in both `[0][1]` and
+`[1][0]`, and the row-2 products swapped), making a Z rotation a shear that
+collapsed a quad to a line at 45 degrees; Core's smoke test now checks that
+axis rotations map axes to axes and that an oblique one is orthonormal.
+
+**`TransformMath.h`** is the same composition in double precision, header-only:
+`EulerToRotation` (Rz * Ry * Rx), `AxisAngle`, and `RotationToEuler`, which
+picks, of the two Euler solutions every rotation has, the one nearest a given
+set of angles, each shifted by whole turns to within 180 of it. A tool that
+composes rotations as matrices -- the editor's rotate handles -- turns the
+result back into angles that continue from the ones it started with, so a drag
+from 179 degrees reads 181, not -179. At gimbal lock (Y at +-90) X keeps the
+given value and Z takes the rest. Tested against `GetLocalMatrix` itself.
+
 **`BoundsComponent::ProxyID`** starts at -1 until the first refit inserts it
 -- a Bounds added mid-frame may not have its Transform yet (see
 SpatialIndex's design notes on the refit pass). **`bStatic`** means never
 re-fit after insertion, for level geometry that never moves; the refit pass
 skips a static Bounds entirely after its first Insert.
 
-**`ScriptComponent::InstanceRef`** defaults to `-2`, spelled as a literal
-matching `LUA_NOREF`, rather than pulling `lua.h` into a public header (see
-`GameCoreInternal.h`'s note on why `lua.h` never appears in `Public/`).
-**`bCullOutsideActiveRegion`** is only meaningful if the entity also has a
-`BoundsComponent` -- an entity with no Bounds is never in the tree and so is
-never "outside" any region; the per-phase tick ticks it regardless of this
-flag.
+Name and script are not here -- they are entity members (see `Entity.h`
+above and `World.h` below).
 
 ---
 
@@ -479,7 +531,7 @@ flag.
 **Ownership and threading.** `NimbleEngine::Application` owns exactly one
 `World` and ticks it once per frame, after `IGame::OnTick` -- so a game acts
 first (it may spawn something this frame), then the World's own phases run.
-A game reaches entities through `Application::GetWorld()`, never by
+A game reaches entities through `GameSession::GetWorld()`, never by
 constructing its own `World`. No locks anywhere in this class, matching
 `GameWindowSystem`'s stated thread contract: every call happens on the
 thread that runs `IGame::OnTick`, which is also the thread that pumps
@@ -489,9 +541,12 @@ thread that runs `IGame::OnTick`, which is also the thread that pumps
 current phase** when called from inside `Tick()`/`TickPhase()`; outside a
 tick, both are immediate. `DestroyEntity` broadcasts `OnEntityDestroyed`
 *before* removing a single component, so a subscriber can still read what
-the entity had; only after that does every pool's `Remove()` run (firing
-`ScriptComponent`'s removal observer among them), the generation bump, and
-the free-list recycle.
+the entity had; then its script is released (the driver's `Release`:
+`OnDestroy`, then the registry ref), still before any component goes, so
+`OnDestroy` can read its siblings; only after that does every pool's
+`Remove()` run, then the members are cleared, the generation bumped and the
+slot recycled. If a subscriber or `OnDestroy` destroyed the same entity
+re-entrantly, the outer call stops there rather than freeing the slot twice.
 
 **`Each<T>`'s one rule:** the callback must not Add or Remove a `T` on *any*
 entity while it runs -- doing so would relocate or shrink the very buffer
@@ -508,6 +563,38 @@ registered system itself -- a future physics module stepping between
 `TP_PrePhysics` and `TP_PostPhysics`, say. `Tick()` is simply four calls to
 `TickPhase()` in a row plus the spatial refit.
 
+**Entity members live in a `std::deque`, not a `std::vector`.** Slots only
+grow at the back (a freed slot is recycled, never erased), and a deque's
+`push_back` never moves existing elements. With a vector, creating an entity
+could reallocate and move every `std::string` -- and for a short name the
+characters live *inside* the string object (small-string optimisation), so
+even the heap-pointer argument would not save a held `GetName()` pointer.
+The deque makes `GetName()`, `GetScriptPath()` and `GetScriptState()`
+pointers stable across other entities being created, which is also what lets
+the script driver hold an `EntityScriptState*` across a Lua call that spawns.
+
+**Scripts update first, by construction.** A World has one `ScriptDriver`
+slot (`SetScriptDriver`; `ScriptEngine::BindWorld` fills it), and
+`TickPhase` calls its `TickPhase` hook *before* walking the phase's system
+bucket. Entity scripts used to run as four ordinary registered systems, one
+per phase, so "scripts before game systems" held only because
+`GameSession::LoadLevel` happened to bind scripts before a level's `OnLoad`
+registered its own; a system registered earlier (a test fixture, another
+module) would have run first. The driver slot makes the order part of
+`World`'s contract instead. `World` still knows nothing of Lua: it stores the
+path and an opaque `EntityScriptState` per slot, keeps `ScriptedSlots` (the
+walk order, which is set order), and calls the driver's two hooks.
+
+**`SetScript` is deferred inside a tick, like `DestroyEntity`.** The driver
+walks `ScriptedSlots` by index with a snapshot count; a script replacing or
+clearing a script mid-walk -- possibly its own, while its `OnTick` is on the
+Lua stack -- would shrink the list under the walk and run `OnDestroy` on a
+live frame. Queued instead, and applied in the phase flush *before* the
+destroys, so a set and a destroy queued in the same phase each release
+through `ReleaseScript` once. Because nothing can add or remove a scripted
+slot while the World ticks, the driver's walk needs no re-validation of the
+list itself -- only of each entity's state after a Lua call.
+
 **`EachInBounds<T>`** is `QueryBounds` followed by `GetComponent<T>` on each
 hit -- only entities that have `T` are passed to the callback. The extra
 fetch per hit is a sparse-set lookup (random access), which is the cost of
@@ -519,6 +606,10 @@ world box from its owner's Transform (identity if none) and pushes it into
 the `SpatialIndex` via `Move()`. `Tick()` calls this once, at the end of
 `TP_Physics`; a host may call it again mid-frame (after moving something
 outside the normal tick) at the cost of walking the Bounds pool again.
+**`RefreshEntityBounds(id)`** does the same for one entity and ignores
+`bStatic`: it is for a tool that moved an entity by hand (the editor's
+transform handles), where "never moves" was a statement about gameplay, not
+about editing.
 
 **The active region** is a shared hint for "the region gameplay currently
 cares about" -- the common "around the player" case. `World` enforces
@@ -528,8 +619,8 @@ for an entity whose world box misses the region. A `World` with no active
 region set ticks everything, which is also what `ClearActiveRegion()`
 restores.
 
-**`OnEntityCreated` fires before or after the `NameComponent` is added,**
-and this mattered enough to fix once: an earlier version of
+**`OnEntityCreated` fires after the name is set,** and this mattered enough
+to fix once (when the name was still a `NameComponent`): an earlier version of
 `CreateEntity(name)` called the plain `CreateEntity()` (which broadcasts
 immediately) and added the name afterward, so a subscriber to
 `OnEntityCreated` -- including the `Events.On("EntityCreated")` bridge -- saw
@@ -537,8 +628,7 @@ an entity with no name yet, even though one had been requested. Caught by
 watching Sandbox's own log print an empty name for an entity it had
 explicitly created with one. Fixed by splitting slot allocation
 (`Impl::AllocateEntitySlot`, no broadcast) out of both `CreateEntity`
-overloads, so `CreateEntity(name)` can add the `NameComponent` before
-broadcasting.
+overloads, so `CreateEntity(name)` can set the name before broadcasting.
 
 **Why `AllocateEntitySlot` and `DestroyEntityImmediate` are members of
 `Impl`, not free functions taking `World::Impl&`.** `Impl` is a *private*
@@ -574,7 +664,8 @@ rather than mutating immediately. That new entry needs to land in a *fresh*
 queue, not the one being iterated (which would either invalidate the
 iterator or execute the same-phase re-entrant request too eagerly), so
 `TickPhase` swaps `PendingComponentRemovals`/`PendingDestroys` into local
-vectors before looping, leaving a clean member queue for anything that
+vectors (and `PendingScriptChanges` likewise) before looping, leaving a
+clean member queue for anything that
 fires during the walk. Anything added during this flush is picked up one
 phase later, which is an acceptable, documented delay for a rare re-entrant
 case, not a silent drop.
@@ -732,14 +823,12 @@ stack leak across thousands of calls.
 one `ScriptEngine` alongside its one `World`, initializes it once, binds it
 to that `World`, and unbinds + shuts it down in the reverse order at
 teardown -- see `NimbleEngine.cpp`'s `Shutdown()` for why that order matters:
-instances reference the `World`; the `World`'s pools fire the removal
-observer, which needs a live `lua_State`.
+instances reference the `World`; destroying a scripted entity calls the
+driver's `Release`, which needs a live `lua_State`.
 
 **`BindWorld` installs, in one call:** the World/Entity/component-proxy/
-TickPhase/Events Lua libraries; the script-tick system into every
-`ETickPhase` bucket (a `ScriptComponent`'s own `Phase` byte decides which
-bucket's pass actually runs it); the `ScriptComponent` removal observer; and
-a bridge of `World`'s four built-in delegates onto its `EventBus` under
+TickPhase/Events Lua libraries; the World's `ScriptDriver` (see
+`ScriptSystem.cpp`); and a bridge of `World`'s four built-in delegates onto its `EventBus` under
 fixed names. One `World` at a time -- calling it again before `UnbindWorld()`
 un-installs the previous binding first and logs a warning; rebinding is not
 a supported way to swap worlds mid-session, it exists so a test fixture can
@@ -769,7 +858,7 @@ installed rather than a console a shipped game may not have.
 originally only counted `RunFile`/`RunString`'s own failures (a read failure,
 a `luaL_loadbuffer` syntax error). A lifecycle callback error --
 `ScriptSystem.cpp`'s `CallLifecycleMethod`, which calls `LuaCallProtected`
-directly -- bumped only `ScriptComponent::bErrored` and never reached
+directly -- bumped only the script's `bErrored` flag and never reached
 `GetErrorCount()` at all. Caught by the smoke test expecting exactly one
 counted error per broken script. Fixed by making `LuaCallProtected` itself
 the one choke point every runtime error passes through: it increments a
@@ -778,7 +867,9 @@ same "address is the key" idiom `ScriptBindings.cpp`'s `GetBoundWorld`/
 `SetBoundWorld` and `ScriptSystem.cpp`'s `GetScriptState`/`SetScriptState`
 both use), and `ScriptEngine::GetErrorCount()` sums the plain member (for
 what never reaches `LuaCallProtected`) with the registry counter (for
-everything that does).
+everything that does). A script-file failure that never reaches a call -- a
+missing file, a syntax error, a file that returns no table -- is counted
+through `LuaCountError`, the same registry counter.
 
 ---
 
@@ -848,18 +939,39 @@ handled.
 
 ## ScriptSystem.cpp
 
-**The class registry.** `Script.Register(name, table)` stores `table` in the
-Lua registry under a private key, keyed by name -- registry space, not a Lua
-global, so a script cannot accidentally clobber `"Player"` by assigning a
-variable of that name at file scope.
+**A script is a file that returns its class.** An entity names a path;
+the file's chunk returns a table, and each entity using the path gets an
+instance whose `__index` is that table. This replaced `Script.Register(name,
+table)` plus `e:AddScript(name)`: with registration, *where* a class came from
+was whichever file happened to run first, a class name in a save meant
+nothing unless the same startup script ran again, and the editor could not
+show or pick a script without running Lua. A path is self-describing data --
+the editor stores it, a save carries it, and loading needs nothing but the
+file.
 
-**One system per phase, not one overall.** `ScriptSystem_Install` registers
-four systems, one per `ETickPhase`, each a thin C++ trampoline that walks
-the `ScriptComponent` pool once and skips any instance whose own `Phase`
-byte does not match. This is what lets a `ScriptComponent` declare
-`TickPhase = TickPhase.PostPhysics` and have its `OnTick` actually run
-during `PostPhysics` without `ScriptComponent` needing to be four different
-component types.
+**The class cache.** Loaded classes live in a registry table keyed by path
+-- registry space, not a Lua global, so a script cannot clobber it by
+assigning a variable at file scope. A file runs once per bind no matter how
+many entities use it (its top level is the class's static initialiser). A
+path that fails to load caches `false`, so a broken or missing file is read
+and reported once, not once per entity per frame; every entity using it is
+marked errored. The cache is rebuilt on each `BindWorld`, which is also what
+picks up an edited file on the next level load.
+
+**Lazy instantiation.** `SetScript` only records the path and marks the state
+pending. The driver instantiates pending scripts at the start of the next
+phase pass, then filters by the instance's `Phase` (read from the class's
+`TickPhase`), so `OnStart` runs in the script's own phase. That one rule
+covers every way a path arrives: set from C++ or Lua, loaded from a save
+(every component is in place by the first tick -- what
+`SerializeWorldWithScripts` used to arrange by hand), present before
+`BindWorld`, or restarted after an unbind. A World with no driver keeps the
+path forever, which is exactly the editor's behaviour.
+
+**One pass per phase, run by the World.** The driver's `TickPhase` hook is
+called by `World::TickPhase` for every phase and skips instances whose
+`Phase` does not match -- what lets a class declare `TickPhase =
+TickPhase.PostPhysics` without four kinds of script.
 
 **`CallLifecycleMethod`'s argument order, and the bug it fixes.** An earlier
 version took a generic "N values the caller already pushed" count and used
@@ -878,25 +990,25 @@ already-pushed values is exactly the kind of stack arithmetic that is easy
 to get quietly backwards, since the mistake produces no error, just swapped
 arguments a script reads as if they were correct.
 
-**`RunScriptPhase`'s base-pointer re-read.** The `ScriptComponent` pool's
-base pointer is re-read every loop iteration, not hoisted once, because the
-buffer may have grown if `OnStart`/`OnTick` added a script to a *different*
-entity during this same pass -- `World.h`'s `Each<T>` contract forbids
-mutating `T`'s *own* pool during iteration, but does not forbid a different
-entity's `ScriptComponent` being added mid-walk. Re-reading the base
-defends this case at no real cost.
+**State is re-fetched after every Lua call, never held across one.** The
+state pointer itself is stable (World's deque), but a call can queue a new
+path or destroy the entity outside a tick, so `CallLifecycleMethod` looks the
+state up again to record an error, and only if the instance ref still
+matches -- an error from a replaced instance must not mark its successor.
+Instantiation likewise re-checks that the path is unchanged after the file's
+first load ran its top level.
 
-**Lua systems run after script components, in the same phase.** Registration
-order between "a script's `OnTick`" and "a Lua system" is therefore fixed
-(scripts first) -- simple to state, and matches what a script author
-intuitively expects: "my object's own behavior runs, then whatever else is
-watching the world."
+**Lua systems run after entity scripts, in the same pass.** So the order
+within a phase is fixed: entity scripts, then Lua systems, then C++ systems --
+"my object's own behaviour runs, then whatever else is watching the world."
 
-**The removal observer can safely call back into Lua.** It fires from inside
-`ComponentPool::Remove`, which -- after `World`'s own deferral -- only ever
-happens at the end of a phase or outside a tick, never from inside a
-system's own iteration of a *different* pool. So it never re-enters the
-walk that triggered it.
+**Release clears the ref before running `OnDestroy`.** `OnDestroy` is Lua and
+may destroy or re-script the same entity; with the ref already `LUA_NOREF`, a
+re-entrant release finds nothing to do instead of calling `OnDestroy` twice or
+unref'ing twice. An errored script gets no `OnDestroy`, matching how nothing
+else of it runs. `ScriptSystem_Uninstall` releases every instance the same
+way but keeps the path and resets the state to pending, so the next
+`BindWorld` starts the script afresh.
 
 ---
 
@@ -909,8 +1021,8 @@ and an alignment, and no fields, so a type has to say what it persists. Writing
 `double[3]` without it, so a `TransformComponent` written by one build reads as
 garbage in the other. Several fields are also per-run identities that mean
 nothing in the next process: `ComponentOwner::OwningWorld` (a live pointer),
-`BoundsComponent::ProxyID` (a `SpatialIndex` leaf) and
-`ScriptComponent::InstanceRef` (a `luaL_ref`). A type with no serializer is
+`BoundsComponent::ProxyID` (a `SpatialIndex` leaf) and, outside the
+component set, a script's `InstanceRef` (a `luaL_ref`). A type with no serializer is
 skipped with a warning on save and on load, so one unpersisted game component
 does not break the save path.
 
@@ -926,21 +1038,44 @@ yet"), and zeroed it reads 0. `RefreshSpatialIndex` dispatches on
 `ProxyID < 0 ? Insert : Move`, so it moved a leaf that was never inserted and
 indexed past the end of the node vector. In a debug build that shows up as a
 *hang*, not a crash, because MSVC's CRT assertion dialog waits for input that
-never comes. `TransformComponent::Scale` (1,1,1) and `InstanceRef` (-2) hit the
-same trap in quieter ways. The macro now generates a defaults function that
+never comes. `TransformComponent::Scale` (1,1,1) hit the same trap in a
+quieter way. The macro now generates a defaults function that
 copies out a `TypeName{}`; this is sound because `GAMECORE_DEFINE_COMPONENT`
 asserts trivial copyability. `SpatialIndex::Move` also gained the proxy
 validation `Remove` always had, so a stale id is a warning rather than an
 out-of-bounds read.
 
-**What the built-in serializers leave out.** Transform: nothing. Name: written
-length-prefixed and re-clamped on load, so a larger-buffer build's save still
-fits. Bounds: `Local` and `bStatic` only. `World` and `ProxyID` are a cache,
-and the loader's `RefreshSpatialIndex` rebuilds both, including the first
-insert a static Bounds needs. Script: `ClassName`, `Phase` and
-`bCullOutsideActiveRegion`. The Lua instance is re-created from the class, so
-whatever its table held is lost; persisting that would need a per-class
-Lua save convention.
+**Named fields, and why the macro body changed.** Serializer bodies used to be
+positional `Ar << C.Width`. That is exactly one format. The editor's text worlds
+need names -- to write readable XML, and to match fields on load regardless of
+order -- so the body now writes through `ComponentArchive`
+(`Ar.Field("Width", C.Width)`), an abstract class with two implementations:
+
+- `BinaryComponentArchive` ignores the names and writes each value exactly as
+  the old `Ar << x` did, so cooked worlds and save games kept their bytes (the
+  smoke test's hand-built versioned save still loads unchanged).
+- `XmlComponentArchive` (WorldPackage.cpp, editor builds only) writes one
+  element per field and reads by name.
+
+The alternatives were worse: deriving the text format from
+`ComponentProperties` would tie persistence to editor visibility (a field can
+be one without the other) and does not exist in game builds; a second
+serializer per type would let the two formats drift. `Flag` exists separately
+from `Field(uint8_t&)` because the byte is identical in binary but reads as a
+boolean in text. `Entity` is the one field whose *meaning* differs by format --
+a save-local index through `IEntityRemapper` in binary, the target's GUID in
+text.
+
+**Text needs fewer version branches.** A missing element keeps the default the
+loader started from, and an element nothing asks for is ignored, so adding or
+removing a field just works in text. Binary is positional; its version guard
+is still required, and harmless in text.
+
+**What the built-in serializers leave out.** Transform: nothing. Bounds:
+`Local` and `bStatic` only. `World` and `ProxyID` are a cache, and the
+loader's `RefreshSpatialIndex` rebuilds both, including the first insert a
+static Bounds needs. The entity's name and script are not components; the
+World serializer writes them with the entity (below).
 
 ---
 
@@ -948,7 +1083,10 @@ Lua save convention.
 
 **Format.**
 
-    WRLD  uint32 entity count, then count x uint32 save-local index
+    WRLD  uint32 entity count, then per entity:
+            uint32 save-local index, uint64 GUID Hi, uint64 GUID Lo,
+            string name, string script path,
+            uint8 script cull-outside-active-region flag
       CMPT  per type with a pool and a serializer
             string type NAME, uint32 instance count,
             then per instance: uint32 owner index + DATA chunk (the serializer's bytes)
@@ -971,29 +1109,96 @@ any component, so a reference to an entity whose components come later in the
 file still resolves. After a load every handle held *outside* the World is
 stale; `IGameMode::OnPostLoadSave` exists to re-derive them.
 
+**Entity members travel in the entity table.** An entity is created with its
+name (so `OnEntityCreated` sees it), then given its script path and cull
+flag. The path is all a script needs: a bound `ScriptEngine` instantiates it on
+the World's next tick, after every component is in place, so a script's
+`OnStart` sees its siblings. `Phase` is not saved; it comes from the class
+again. The format changed in place, at `WORLD_CHUNK_VERSION` 1, since no save
+of consequence existed yet.
+
 **Not persisted:** systems and delegate/event bindings (function pointers into
 an image; the level's `OnLoad` re-registers them), the spatial index (rebuilt),
-render proxies (WorldBridge re-extracts them) and Lua instance state.
+render proxies (WorldBridge re-extracts them) and Lua instance state -- a
+restored script starts fresh, and whatever its instance table held is lost;
+persisting that would need a per-class Lua save convention.
 
 **Never mid-tick.** Deferred destroys would be half-applied: a save would
 capture entities the next phase deletes, and a load would mutate pools a system
 is iterating.
 
-**Scripts last.** `SerializeWorldWithScripts` re-instantiates restored
-`ScriptComponent`s only after every component is in place, so a script's
-`OnStart` sees its siblings. It collects them first because `InstantiateScript`
-runs Lua, which may add a `ScriptComponent` inside `Each<ScriptComponent>`. It
-also removes the restored component before re-adding it, because
-`InstantiateScript` refuses a second one.
-
 **Versioning.** Each instance's DATA chunk carries its serializer's
-registered version, and the serializer reads it with `Ar.GetChunkVersion()`
+registered version, and the serializer reads it with `Ar.GetVersion()`
 (save: the version being written; load: the file's). New fields go at the
-*end*, behind `if(Ar.GetChunkVersion() >= N)`. That covers both directions:
+*end*, behind `if(Ar.GetVersion() >= N)`. That covers both directions:
 an older save leaves the new field at its default (the loader starts from
 `ComponentDefaultsFn`, not zeroes), and a newer save read by an older build
 has its unknown trailing fields skipped by `CloseChunk`. Reordering or
 removing a field is not covered; that needs its own version branch.
+
+---
+
+## WorldPackage.h / WorldPackage.cpp
+
+**Two formats, one extension.** Both are `.nmworld`; the first non-whitespace
+byte decides (`<` is text -- XML -- and anything else is a binary archive,
+which starts with its WRLD chunk tag). One extension means a level has one
+name whether a designer or the game opens it; the cooked copy lives in a
+`Cooked/` folder, not under a different suffix.
+
+**Text layout.** `<Name>.nmworld` is a manifest -- `<World Format="1">` and one
+`<Entity Guid>` per entity, in slot order (so load order, and with it
+`FindEntityByName`'s first match and script tick order, survive a round trip).
+Entities live in the sibling folder `<Name>/`, one `<guid>.nmentity` each:
+`<Entity Guid Name>`, an optional `<Script Path CullOutsideActiveRegion>`, then
+`<Component Type Version>` elements sorted by type **name** (ids are
+assignment order). Names live only in the entity file -- the manifest is just
+the list, so a rename touches one file.
+
+**Deterministic output**, because the point of text is diffs: pugixml's
+`format_indent` with a fixed two-space indent and `\n` newlines, attributes in
+code order, and numbers through `std::to_chars` -- the shortest form that
+parses back to the same float, the same text every time, and independent of
+the C locale (a German-locale `printf` would write `0,1`). `.gitattributes`
+pins both extensions to LF, since `core.autocrlf` would otherwise convert them
+on checkout and every save would see every file as changed.
+
+**The save's commit order.** Separate files cannot be replaced atomically as a
+set, so the order is chosen to make every intermediate state loadable:
+
+1. Build every file in memory. A file whose bytes are unchanged is skipped
+   entirely -- no write, no new timestamp, no VCS noise.
+2. Write each changed file to `<file>.tmp`. A failure here deletes the
+   temporaries and returns with the old world untouched (the smoke test forces
+   this with a directory where a temporary must go).
+3. Rename the temporaries over their targets, entities first, the manifest
+   last. The manifest is what a load trusts, so its rename is the commit. A
+   rename failing midway (a file locked by another program) leaves whole files
+   only: some entities newer, the manifest old -- logged, and fixed by saving
+   again.
+4. Only after the commit, delete `.nmentity` files the new manifest does not
+   list, and stale `.nmentity.tmp` files. Only in the sibling folder, only
+   files whose stem parses as a GUID -- a stray note in the folder survives.
+
+`std::filesystem::rename` is used for step 3 because Core's platform seam has
+no replacing rename and Core is a vendored subtree; everything else goes
+through `appFile*`.
+
+**The two-pass load.** Pass 1 reads each listed file and creates its entity with
+its GUID and name; pass 2 adds scripts and components. References resolve
+through a GUID -> EntityID map of what this load created -- a reference to an
+entity listed later in the manifest works, and one to an entity not in the
+world loads unset with a warning. A listed file that is missing or unparsable
+costs that entity only. An unlisted `.nmentity` (a crashed save's leftover, or
+one merged in without its manifest line) is ignored and counted in a warning;
+the next save deletes it.
+
+**Why pugixml, and only in the editor.** The text format is editor-only by
+design -- a game loads the cooked binary -- so the parser is compiled only when
+`WITH_EDITOR`, keeping it out of shipped binaries entirely. pugixml is one
+.cpp, MIT, no dependencies, and fast enough that parsing is never the cost of
+opening a level. `PUGIXML_NO_XPATH` drops the half of it nothing here uses. Qt's
+XML classes were not an option: GameCore is Qt-free.
 
 ---
 
@@ -1003,7 +1208,7 @@ removing a field is not covered; that needs its own version branch.
 `GAMECORE_DEFINE_COMPONENT_SCRIPT`: `Field` (generates `Get<Name>`/`Set<Name>`),
 `ReadOnly` (getter only), `Flag` (a `uint8_t` exposed as a boolean) and `Method`
 (a typed function). Anything unlisted -- above all per-run state like
-`BoundsComponent::ProxyID` or `PrimitiveComponent::Proxy` -- does not exist in
+`BoundsComponent::ProxyID` or `RenderComponent::Proxy` -- does not exist in
 Lua. Every component, bound or not, also answers `GetEntity()`. The built-in
 Transform/Name/Bounds bindings used to be hand-written `lua_CFunction`s here and
 moved onto this mechanism with their Lua API unchanged (Bounds gained `GetLocal`
@@ -1037,7 +1242,7 @@ cannot collide with another library's metatable.
 
 **Registration.** The macro registers at static initialisation into a
 constant-initialised table (`ComponentType.cpp`'s argument again), so a type in
-another image -- RenderCore's Primitive and Camera -- registers into GameCore's
+another image -- RenderCore's Render and Camera -- registers into GameCore's
 one table. Names that would have to be truncated are rejected rather than
 shortened, since a shortened name is a different Lua API; rejections and a
 duplicate registration are logged. A binding registered *after* a type's

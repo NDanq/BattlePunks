@@ -149,6 +149,9 @@ namespace RenderCore
                 RunDrainStep(Cmd);
             }
 
+            /* While the device is still alive. */
+            Context.ReleaseGPUResources();
+
             /* ReleaseGDI deletes the driver WITHOUT calling Destroy(), so GPU
              * objects would outlive their owner. Both belong on the
              * context's thread -- NimbleEngine.cpp's own comment, carried

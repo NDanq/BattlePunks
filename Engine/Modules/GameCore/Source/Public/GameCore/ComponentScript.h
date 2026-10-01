@@ -20,10 +20,10 @@ struct lua_State;
  * Selectively exposing a component to Lua. A component lists what scripts may
  * touch; anything not listed is invisible. See DESIGN.md.
  *
- *     GAMECORE_DEFINE_COMPONENT_SCRIPT(PrimitiveComponent)
+ *     GAMECORE_DEFINE_COMPONENT_SCRIPT(RenderComponent)
  *     {
- *         Bind.Field("Width", &PrimitiveComponent::Width);    // GetWidth / SetWidth
- *         Bind.Flag("Visible", &PrimitiveComponent::bVisible); // uint8_t as a Lua boolean
+ *         Bind.Field("Width", &RenderComponent::Width);    // GetWidth / SetWidth
+ *         Bind.Flag("Visible", &RenderComponent::bVisible); // uint8_t as a Lua boolean
  *         Bind.ReadOnly("World", &BoundsComponent::World);     // GetWorld only
  *         Bind.Method("Translate", [](TransformComponent& C, ScriptCall& Call) { ... });
  *     }
@@ -126,6 +126,7 @@ namespace GameCore
     {
         SCRIPT_BINDING_NAME_MAX      = 40,   // including the NUL; accessors add Get/Set
         SCRIPT_BINDINGS_PER_TYPE_MAX = 32,
+        SCRIPT_SIGNATURE_MAX         = 96,   // including the NUL
     };
 
     struct ScriptBindingEntry
@@ -138,6 +139,11 @@ namespace GameCore
         uint32_t            Size      = 0;
         ScriptMethodInvoker Invoker   = nullptr;
         void              (*Method)() = nullptr;
+
+        /* For tools only: "Name:type, ..." optionally " -> Name:type, ...",
+         * types number, integer, bool, string, Vector3, Color, Entity. Copied,
+         * so it survives a hot reload of the registering module. */
+        char                Signature[SCRIPT_SIGNATURE_MAX] = {};
     };
 
     /*
@@ -176,14 +182,22 @@ namespace GameCore
             AddField(InName, InMember, EScriptFieldType::Flag, bInReadOnly);
         }
 
-        /* A capture-less lambda converts to MethodFn. */
-        void Method(const char* InName, const MethodFn InFn)
+        /* A capture-less lambda converts to MethodFn. InSignature: see
+         * ScriptBindingEntry::Signature, e.g. "Factor:number -> Result:number". */
+        void Method(const char* InName, const MethodFn InFn, const char* InSignature = nullptr)
         {
             ScriptBindingEntry* Entry = NewEntry(InName);
             if(!Entry) { return; }
             Entry->bMethod = true;
             Entry->Method  = reinterpret_cast<void (*)()>(InFn);
             Entry->Invoker = &Invoke;
+
+            size_t Length = 0;
+            while(InSignature != nullptr && InSignature[Length] != '\0') { ++Length; }
+            if(Length < SCRIPT_SIGNATURE_MAX)
+            {
+                for(size_t Index = 0; Index < Length; ++Index) { Entry->Signature[Index] = InSignature[Index]; }
+            }
         }
 
         void Commit() { RegisterComponentScript(T::StaticType().ID, Entries, Count, Rejected); }

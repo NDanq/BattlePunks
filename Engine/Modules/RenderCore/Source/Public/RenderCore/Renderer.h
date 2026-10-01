@@ -5,7 +5,11 @@
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderTypes.h"
 
-namespace GameCore { class World; }
+#include <cstdint>
+#include <string>
+
+namespace GameCore { class World; struct AABB; }
+namespace EngineCore { class Image; }
 
 /*
  * The facade NimbleEngine::Application owns (a later build-order step) --
@@ -15,6 +19,8 @@ namespace GameCore { class World; }
  */
 namespace RenderCore
 {
+    struct RenderView;
+
     class RENDERCORE_API Renderer
     {
     public:
@@ -24,12 +30,8 @@ namespace RenderCore
         Renderer(const Renderer&)            = delete;
         Renderer& operator=(const Renderer&) = delete;
 
-        /* Registers PrimitiveComponent's proxy type, starts the render
-         * thread (see RenderThread::Start for the InBackend/InWindow
-         * contract), and constructs the RenderScene commands from here on
-         * touch exclusively through the queue. False on any failure --
-         * see RenderThread::Start's own comment on what that means for
-         * InBackend/InWindow. */
+        /* Registers RenderComponent's proxy type, starts the render thread
+         * (RenderThread::Start) and builds the RenderScene. False on failure. */
         bool Initialize(ERenderBackend InBackend, EngineCore::WindowHandle InWindow);
 
         /* UnbindWorld() if a World is still bound, drains the scene
@@ -85,6 +87,38 @@ namespace RenderCore
         void PresentToWindow(EngineCore::WindowHandle InWindow);
 
         void SetClearColor(EngineCore::Color InColor);
+
+#if WITH_EDITOR
+        // === Editor only =====================================================
+        // Compiled out of Client and Server targets.
+
+        /* Replaces the CameraComponent view from the next EndFrame() until
+         * SetViewOverride(nullptr). Copied. The frame's ViewportPixels still
+         * wins. GAME THREAD ONLY. */
+        void SetViewOverride(const RenderView* InView);
+
+        /* Immediate-mode overlay line for the next EndFrame() only (see
+         * DebugLine). GAME THREAD ONLY. */
+        void DrawDebugLine(const DebugLine& InLine);
+
+        /* InBox's edges via DrawDebugLine. Empty draws nothing. */
+        void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels = 2.0f);
+
+        /* Reloads material InName (nullptr or "": all) from disk on its next
+         * draw, e.g. after a recook. Names over RENDER_MATERIAL_NAME_MAX are
+         * ignored. GAME THREAD ONLY. */
+        void ReloadMaterial(const char* InName);
+
+        /* Renders material InName on an InSize (16-1024) square quad during
+         * the next EndFrame() and reads it back; the readback stalls briefly,
+         * so don't call every frame. Returns an id for TakeMaterialPreview, 0
+         * if not running. GAME THREAD ONLY. */
+        uint64_t RequestMaterialPreview(const char* InName, int InSize, EngineCore::Color InTint);
+
+        /* True once, when done: OutImage (RGBA8, top row first), or empty with
+         * OutError. False while pending. GAME THREAD ONLY. */
+        bool TakeMaterialPreview(uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError);
+#endif // WITH_EDITOR
 
         void GetStats(RenderStats& OutStats) const;
 

@@ -40,14 +40,14 @@ namespace GameCore
 
         bool IsInitialized() const;
 
-        /* Installs the Lua libraries, the script-tick systems, the removal
-         * observer, and the built-in delegate/event bridge -- see DESIGN.md.
-         * One World at a time; rebinding un-installs the previous one first. */
+        /* Installs the Lua libraries, the script driver and the event bridge
+         * (DESIGN.md). Existing script paths start on the first tick. One
+         * World at a time. */
         void BindWorld(World* InWorld);
 
-        /* Reverses everything BindWorld() did: runs OnDestroy and releases
-         * every live script instance, Lua system and Events.On() binding.
-         * Safe to call with no World bound. */
+        /* Reverses BindWorld(): OnDestroy and release for every script
+         * instance, Lua system and Events.On() binding. Script paths stay.
+         * Safe with no World bound. */
         void UnbindWorld();
 
         /* Reads InPath through EngineCore's file seam, then loads and runs
@@ -56,11 +56,6 @@ namespace GameCore
         bool RunFile(const char* InPath);
 
         bool RunString(const char* InSource, const char* InChunkName);
-
-        /* The C++ entry point to what Lua's e:AddScript("ClassName") does.
-         * False if InClassName was never registered, or InEntity already
-         * has a ScriptComponent. */
-        bool InstantiateScript(EntityID InEntity, const char* InClassName);
 
         /* For a game's own bindings. nullptr if !IsInitialized(). */
         lua_State* GetState() const;

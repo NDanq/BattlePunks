@@ -1,0 +1,29 @@
+#pragma once
+// ==========================================================================
+// Generated from this template by Modules/Core/cmake/GitVersion.cmake, at
+// configure time and again on every build (the Editor's CMakeLists.txt). DO
+// NOT EDIT the generated header, and DO NOT commit it -- it lands in the build
+// tree (Generated/EditorBuildInfo.h). Only AboutDialog.cpp includes it, so a
+// changed stamp recompiles one file.
+//
+// The configuration and target are not here: GitVersion re-stamps from a
+// script that knows only git, so those arrive as compile definitions instead.
+// ==========================================================================
+
+#define NIMBLEEDITOR_VERSION           "@NIMBLEEDITOR_VERSION@"
+
+// `git describe`: "v0.2.0-14-gabc123def456[-dirty]" once release tags exist,
+// a bare short SHA (optionally "-dirty") until then.
+#define NIMBLEEDITOR_GIT_DESCRIBE      "@NIMBLEEDITOR_GIT_DESCRIBE@"
+#define NIMBLEEDITOR_GIT_SHA           "@NIMBLEEDITOR_GIT_SHA@"
+#define NIMBLEEDITOR_GIT_SHA_SHORT     "@NIMBLEEDITOR_GIT_SHA_SHORT@"
+#define NIMBLEEDITOR_GIT_BRANCH        "@NIMBLEEDITOR_GIT_BRANCH@"
+#define NIMBLEEDITOR_GIT_COMMIT_DATE   "@NIMBLEEDITOR_GIT_COMMIT_DATE@"   // ISO 8601 UTC
+#define NIMBLEEDITOR_GIT_DIRTY         @NIMBLEEDITOR_GIT_DIRTY@           // 0 or 1
+
+// Monotonic build counter from CI ($BUILD_NUMBER, else $GITHUB_RUN_NUMBER);
+// 0 for local developer builds.
+#define NIMBLEEDITOR_BUILD_NUMBER      @NIMBLEEDITOR_BUILD_NUMBER@
+
+// One-line summary for logs / diagnostics.
+#define NIMBLEEDITOR_VERSION_STRING    "@NIMBLEEDITOR_VERSION_STRING@"

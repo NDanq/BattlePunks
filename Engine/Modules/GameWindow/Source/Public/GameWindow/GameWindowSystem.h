@@ -3,7 +3,9 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 
+#include "Public/Core/CoreTypes.h"
 #include "Public/GameWindow/GameWindowAPI.h"
 #include "Public/GameWindow/GameWindowTypes.h"
 
@@ -43,8 +45,32 @@ namespace GameWindowSystem
 
     GAMEWINDOW_API bool IsInitialized();
 
+    /*
+     * For a host whose own loop dispatches platform messages (Qt). Call before
+     * Initialize(). SDL's pump then only drains already-queued events instead
+     * of running a second Win32 loop; wrapped windows still feed SDL through
+     * the chained window procedure.
+     */
+    GAMEWINDOW_API void SetHostOwnsMessageLoop(bool bInHostOwnsLoop);
+
     /* Null on failure, with the reason logged. */
     GAMEWINDOW_API GameWindow* CreateGameWindow(const WindowDesc& InDesc);
+
+    /*
+     * A GameWindow over a native window owned by someone else (an editor
+     * viewport). SDL chains its window procedure ahead of the owner's, so
+     * input reaches the usual GameWindowDelegates. DestroyGameWindow()
+     * restores the owner's procedure without destroying the window; call it
+     * first. Windows only. Null on failure, logged.
+     */
+    GAMEWINDOW_API GameWindow* WrapNativeWindow(EngineCore::WindowHandle InNativeWindow);
+
+    /*
+     * Queues InUtf8 as text input, delivered by the next PumpEvents() via
+     * OnText. For hosts that swallow WM_CHAR (Qt does). Ignored unless text
+     * input is active on InWindow, and for control characters.
+     */
+    GAMEWINDOW_API void InjectTextInput(GameWindow* InWindow, const char* InUtf8);
 
     /*
      * Immediate destruction. Safe from host code between frames; NOT safe from
@@ -84,6 +110,10 @@ namespace GameWindowSystem
     GAMEWINDOW_API GameWindow* GetPrimaryWindow();
 
     GAMEWINDOW_API size_t GetWindowCount();
+
+    /* The executable's directory with a trailing separator; empty if unknown.
+     * Valid before Initialize(). */
+    GAMEWINDOW_API std::string GetExecutableDir();
 }
 
 #endif //GAMEWINDOW_GAMEWINDOWSYSTEM_H

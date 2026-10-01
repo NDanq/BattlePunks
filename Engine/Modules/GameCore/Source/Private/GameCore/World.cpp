@@ -1,7 +1,11 @@
 #include "Public/GameCore/World.h"
 
+#include <algorithm>
 #include <cstring>
+#include <deque>
+#include <random>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "Public/Core/CoreLog.h"
@@ -10,11 +14,9 @@
 #include "Public/GameCore/GameCoreLog.h"
 
 /*
- * World's storage: an entity free-list plus a generation array, a
- * ComponentPool*[COMPONENT_TYPE_MAX] table created lazily on first use, one
- * system vector per phase, and the deferred destroy/remove queues. See
- * DESIGN.md's "World.h / World.cpp" section for the full reasoning behind
- * each piece below.
+ * World's storage: entity free-list and generations, per-entity members,
+ * lazily created component pools, per-phase systems, and the deferred
+ * queues. See DESIGN.md's "World.h / World.cpp".
  */
 
 namespace GameCore
@@ -32,6 +34,21 @@ namespace GameCore
             EntityID        Entity;
             ComponentTypeID Type = COMPONENT_TYPE_INVALID;
         };
+
+        /* What an entity carries besides its components. */
+        struct EntityMembers
+        {
+            EntityGuid        Guid;
+            std::string       Name;
+            std::string       ScriptPath;   // empty = no script
+            EntityScriptState Script;
+        };
+
+        struct PendingScriptChange
+        {
+            EntityID    Entity;
+            std::string Path;   // empty = clear
+        };
     }
 
     struct World::Impl
@@ -42,6 +59,19 @@ namespace GameCore
         std::vector<bool>     Alive;            // parallel to Generations
         std::vector<uint32_t> FreeIndices;
         size_t                LiveEntityCount = 0;
+
+        /* Parallel to Generations. A deque so GetName()/GetScriptState()
+         * pointers survive growth. */
+        std::deque<EntityMembers> Members;
+
+        /* GUID -> slot, for lookup and uniqueness. */
+        std::unordered_map<EntityGuid, uint32_t, EntityGuidHash> GuidToSlot;
+
+        /* Scripted slots in the order paths were set (tick order). */
+        std::vector<uint32_t> ScriptedSlots;
+
+        ScriptDriver Driver;
+        bool         bHasDriver = false;
 
         // --- components --------------------------------------------------------
 
@@ -56,6 +86,7 @@ namespace GameCore
 
         std::vector<EntityID>               PendingDestroys;
         std::vector<PendingComponentRemoval> PendingComponentRemovals;
+        std::vector<PendingScriptChange>     PendingScriptChanges;
 
         // --- spatial -----------------------------------------------------------
 
@@ -95,12 +126,24 @@ namespace GameCore
                 && Alive[InEntity.Index] && Generations[InEntity.Index] == InEntity.Generation;
         }
 
-        /* Slot allocation ONLY -- no broadcast. Split out of CreateEntity so
-         * the name variant can add NameComponent before broadcasting -- see
-         * DESIGN.md. A member of Impl, not a free function, since Impl is
-         * private to World -- see DESIGN.md. */
-        EntityID AllocateEntitySlot()
+        /* Slot and members only, no broadcast, so name and GUID are set
+         * before OnEntityCreated (DESIGN.md). An unset or used InGuid gets a
+         * fresh one (warned if used). */
+        EntityID AllocateEntitySlot(const char* InName, EntityGuid InGuid)
         {
+            if(InGuid.IsSet() && GuidToSlot.count(InGuid) != 0)
+            {
+                char Text[EntityGuid::STRING_BUFFER];
+                InGuid.ToString(Text);
+                GAMECORE_LOG_WARN(std::string("CreateEntity: GUID ") + Text
+                                  + " is already in use in this World; giving the new entity a fresh one")
+                InGuid = EntityGuid();
+            }
+            while(!InGuid.IsSet() || GuidToSlot.count(InGuid) != 0)
+            {
+                InGuid = EntityGuid::Generate();
+            }
+
             uint32_t Index;
             if(!FreeIndices.empty())
             {
@@ -112,19 +155,69 @@ namespace GameCore
                 Index = uint32_t(Generations.size());
                 Generations.push_back(0);
                 Alive.push_back(false);
+                Members.emplace_back();
             }
 
             Alive[Index] = true;
             ++LiveEntityCount;
 
+            Members[Index].Guid = InGuid;
+            Members[Index].Name = InName ? InName : "";
+            GuidToSlot[InGuid]  = Index;
+
             return EntityID(Index, Generations[Index]);
+        }
+
+        /* Driver Release, then forget. Nothing is held across the Lua call. */
+        void ReleaseScript(World& InWorld, const EntityID InEntity)
+        {
+            if(bHasDriver && Driver.Release)
+            {
+                Driver.Release(InWorld, InEntity, Driver.UserData);
+            }
+
+            EntityMembers& Slot = Members[InEntity.Index];
+            Slot.ScriptPath.clear();
+            Slot.Script = EntityScriptState();
+
+            const auto Found = std::find(ScriptedSlots.begin(), ScriptedSlots.end(), InEntity.Index);
+            if(Found != ScriptedSlots.end())
+            {
+                ScriptedSlots.erase(Found);   // ordered: tick order is set order
+            }
+        }
+
+        /* SetScript's immediate half, also run by the phase flush. */
+        void ApplyScriptChange(World& InWorld, const EntityID InEntity, const std::string& InPath)
+        {
+            if(!IsAliveIndex(InEntity) || Members[InEntity.Index].ScriptPath == InPath)
+            {
+                return;
+            }
+
+            if(!Members[InEntity.Index].ScriptPath.empty())
+            {
+                ReleaseScript(InWorld, InEntity);
+                if(!IsAliveIndex(InEntity)) { return; }   // its OnDestroy destroyed it
+            }
+
+            if(InPath.empty())
+            {
+                return;
+            }
+
+            EntityMembers& Slot = Members[InEntity.Index];
+            Slot.ScriptPath                 = InPath;
+            Slot.Script                     = EntityScriptState();
+            Slot.Script.bPendingInstantiate = 1;
+            ScriptedSlots.push_back(InEntity.Index);
         }
 
         /* Removes InEntity's every component IMMEDIATELY, bypassing
          * RemoveComponentRaw's own deferral -- see DESIGN.md for why calling
          * that here would be wrong, not merely redundant. Only ever runs
          * from TickPhase()'s flush. */
-        void DestroyEntityImmediate(const EntityID InEntity)
+        void DestroyEntityImmediate(World& InWorld, const EntityID InEntity)
         {
             if(!IsAliveIndex(InEntity))
             {
@@ -135,6 +228,19 @@ namespace GameCore
              * what the entity had. */
             EntityDestroyed.Broadcast(InEntity);
 
+            /* The script next, still before any component goes, so its
+             * OnDestroy can read its siblings. */
+            if(IsAliveIndex(InEntity) && !Members[InEntity.Index].ScriptPath.empty())
+            {
+                ReleaseScript(InWorld, InEntity);
+            }
+
+            /* Destroyed re-entrantly already; don't free the slot twice. */
+            if(!IsAliveIndex(InEntity))
+            {
+                return;
+            }
+
             for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
             {
                 if(Pools[Type] && Pools[Type]->Has(InEntity))
@@ -144,12 +250,28 @@ namespace GameCore
                 }
             }
 
+            GuidToSlot.erase(Members[InEntity.Index].Guid);
+            Members[InEntity.Index] = EntityMembers();
             Alive[InEntity.Index] = false;
             ++Generations[InEntity.Index];
             FreeIndices.push_back(InEntity.Index);
             --LiveEntityCount;
         }
     };
+
+    EntityGuid EntityGuid::Generate()
+    {
+        /* The OS generator on every supported platform. */
+        static std::random_device Device;
+        EntityGuid Result;
+        do
+        {
+            Result.Hi = (uint64_t(Device()) << 32) | uint64_t(Device());
+            Result.Lo = (uint64_t(Device()) << 32) | uint64_t(Device());
+        }
+        while(!Result.IsSet());
+        return Result;
+    }
 
     World::World() : P(new Impl()) {}
 
@@ -162,25 +284,18 @@ namespace GameCore
 
     Entity World::CreateEntity()
     {
-        const EntityID NewEntity = P->AllocateEntitySlot();
-        P->EntityCreated.Broadcast(NewEntity);
-        return Entity(this, NewEntity);
+        return CreateEntity(nullptr, EntityGuid());
     }
 
     Entity World::CreateEntity(const char* InName)
     {
-        const EntityID NewEntity = P->AllocateEntitySlot();
+        return CreateEntity(InName, EntityGuid());
+    }
 
-        /* Added BEFORE the OnEntityCreated broadcast below -- see DESIGN.md
-         * for the bug this ordering fixes. */
-        NameComponent Init;
-        if(InName)
-        {
-            std::strncpy(Init.Name, InName, sizeof(Init.Name) - 1);
-            Init.Name[sizeof(Init.Name) - 1] = '\0';
-        }
-        AddComponentRaw(NewEntity, NameComponent::StaticType().ID, &Init);
-
+    Entity World::CreateEntity(const char* InName, const EntityGuid& InGuid)
+    {
+        /* Name and GUID before OnEntityCreated (DESIGN.md). */
+        const EntityID NewEntity = P->AllocateEntitySlot(InName, InGuid);
         P->EntityCreated.Broadcast(NewEntity);
         return Entity(this, NewEntity);
     }
@@ -201,7 +316,7 @@ namespace GameCore
             return;
         }
 
-        P->DestroyEntityImmediate(InEntity);
+        P->DestroyEntityImmediate(*this, InEntity);
     }
 
     bool World::IsAlive(const EntityID InEntity) const
@@ -221,21 +336,23 @@ namespace GameCore
 
     EntityID World::FindEntityByName(const char* InName) const
     {
-        if(!InName) { return EntityID(); }
+        if(!InName || InName[0] == '\0') { return EntityID(); }
 
-        ComponentPool* Pool = FindPool(NameComponent::StaticType().ID);
-        if(!Pool) { return EntityID(); }
-
-        const NameComponent* Base = static_cast<const NameComponent*>(Pool->GetDenseData());
-        const size_t Count = Pool->GetCount();
-        for(size_t Index = 0; Index < Count; ++Index)
+        for(uint32_t Index = 0; Index < P->Alive.size(); ++Index)
         {
-            if(std::strcmp(Base[Index].Name, InName) == 0)
+            if(P->Alive[Index] && P->Members[Index].Name == InName)
             {
-                return Pool->GetEntityAt(Index);
+                return EntityID(Index, P->Generations[Index]);
             }
         }
         return EntityID();
+    }
+
+    EntityID World::FindEntityByGuid(const EntityGuid& InGuid) const
+    {
+        const auto Found = P->GuidToSlot.find(InGuid);
+        if(Found == P->GuidToSlot.end()) { return EntityID(); }
+        return EntityID(Found->second, P->Generations[Found->second]);
     }
 
     void World::ForEachEntity(void (*InFn)(EntityID InEntity, void* InUserData), void* InUserData) const
@@ -251,6 +368,81 @@ namespace GameCore
                 InFn(EntityID(Index, P->Generations[Index]), InUserData);
             }
         }
+    }
+
+    // === Entity members ==========================================================
+
+    EntityGuid World::GetEntityGuid(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].Guid : EntityGuid();
+    }
+
+    const char* World::GetEntityName(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].Name.c_str() : "";
+    }
+
+    bool World::SetEntityName(const EntityID InEntity, const char* InName)
+    {
+        if(!P->IsAliveIndex(InEntity)) { return false; }
+        P->Members[InEntity.Index].Name = InName ? InName : "";
+        return true;
+    }
+
+    const char* World::GetEntityScriptPath(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].ScriptPath.c_str() : "";
+    }
+
+    bool World::SetEntityScript(const EntityID InEntity, const char* InPath)
+    {
+        if(!P->IsAliveIndex(InEntity)) { return false; }
+
+        std::string Path(InPath ? InPath : "");
+        if(P->bTicking)
+        {
+            /* Deferred like DestroyEntity: the driver may be mid-walk. */
+            PendingScriptChange Change;
+            Change.Entity = InEntity;
+            Change.Path   = std::move(Path);
+            P->PendingScriptChanges.push_back(std::move(Change));
+            return true;
+        }
+
+        P->ApplyScriptChange(*this, InEntity, Path);
+        return true;
+    }
+
+    EntityScriptState* World::GetEntityScriptState(const EntityID InEntity) const
+    {
+        if(!P->IsAliveIndex(InEntity) || P->Members[InEntity.Index].ScriptPath.empty())
+        {
+            return nullptr;
+        }
+        return &P->Members[InEntity.Index].Script;
+    }
+
+    void World::SetScriptDriver(const ScriptDriver* InDriver)
+    {
+        P->Driver     = InDriver ? *InDriver : ScriptDriver();
+        P->bHasDriver = InDriver != nullptr;
+    }
+
+    bool World::HasScriptDriver() const
+    {
+        return P->bHasDriver;
+    }
+
+    size_t World::GetScriptedEntityCount() const
+    {
+        return P->ScriptedSlots.size();
+    }
+
+    EntityID World::GetScriptedEntityAt(const size_t InIndex) const
+    {
+        if(InIndex >= P->ScriptedSlots.size()) { return EntityID(); }
+        const uint32_t Slot = P->ScriptedSlots[InIndex];
+        return EntityID(Slot, P->Generations[Slot]);
     }
 
     // === Components: erased =====================================================
@@ -452,6 +644,13 @@ namespace GameCore
         P->bTicking     = true;
         P->CurrentPhase = InPhase;
 
+        /* Scripts before every system (DESIGN.md). */
+        if(P->bHasDriver && P->Driver.TickPhase)
+        {
+            const ScriptDriver Driver = P->Driver;
+            Driver.TickPhase(*this, InPhase, InDeltaSeconds, Driver.UserData);
+        }
+
         /* Snapshot the count: a system registered mid-walk is picked up next
          * tick, not this one -- see DESIGN.md. */
         const std::vector<SystemEntry>& Bucket = P->Systems[InPhase];
@@ -479,11 +678,19 @@ namespace GameCore
             }
         }
 
+        /* Before destroys, so each releases through ReleaseScript once. */
+        std::vector<PendingScriptChange> ScriptChangesThisFlush;
+        std::swap(ScriptChangesThisFlush, P->PendingScriptChanges);
+        for(const PendingScriptChange& Change : ScriptChangesThisFlush)
+        {
+            P->ApplyScriptChange(*this, Change.Entity, Change.Path);
+        }
+
         std::vector<EntityID> DestroysThisFlush;
         std::swap(DestroysThisFlush, P->PendingDestroys);
         for(const EntityID& Entity : DestroysThisFlush)
         {
-            P->DestroyEntityImmediate(Entity);
+            P->DestroyEntityImmediate(*this, Entity);
         }
 
         P->bTicking     = bWasTicking;
@@ -550,6 +757,29 @@ namespace GameCore
             {
                 P->Spatial.Move(Bounds.ProxyID, Bounds.World);
             }
+        }
+    }
+
+    void World::RefreshEntityBounds(const EntityID InEntity)
+    {
+        auto* Bounds = static_cast<BoundsComponent*>(GetComponentRaw(InEntity, BoundsComponent::StaticType().ID));
+        if(!Bounds)
+        {
+            return;
+        }
+
+        const auto* Transform = static_cast<const TransformComponent*>(GetComponentRaw(InEntity, TransformComponent::StaticType().ID));
+        const EngineCore::Matrix4x4 LocalToWorld = Transform ? Transform->GetLocalMatrix() : EngineCore::Matrix4x4();
+
+        Bounds->World = AABB::Transformed(Bounds->Local, LocalToWorld);
+
+        if(Bounds->ProxyID < 0)
+        {
+            Bounds->ProxyID = P->Spatial.Insert(InEntity, Bounds->World);
+        }
+        else
+        {
+            P->Spatial.Move(Bounds->ProxyID, Bounds->World);
         }
     }
 

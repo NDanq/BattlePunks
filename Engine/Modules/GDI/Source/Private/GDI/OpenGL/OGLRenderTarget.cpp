@@ -60,6 +60,11 @@ void OpenGLRenderTarget::Release()
     FrameBuffer.FrameTexture = nullptr;
     glDeleteFramebuffers(1, &FrameBuffer.FrameBufferID);
     FrameBuffer.FrameBufferID = 0;
+    if(FrameBuffer.DepthBufferID)
+    {
+        glDeleteRenderbuffers(1, &FrameBuffer.DepthBufferID);
+        FrameBuffer.DepthBufferID = 0;
+    }
 }
 
 bool OpenGLRenderTarget::IsValid()
@@ -78,6 +83,13 @@ void OpenGLRenderTarget::Allocate()
         GDI_CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "[QOpenGLFrameBuffer] Error, framebuffer generation incomplete!");
         glBindFramebuffer(GL_FRAMEBUFFER, FrameBuffer.FrameBufferID);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, TextureResource->TextureHandle, 0);
+
+        // Every target has depth, so ResolveRenderTarget's depth blit matches.
+        glGenRenderbuffers(1, &FrameBuffer.DepthBufferID);
+        glBindRenderbuffer(GL_RENDERBUFFER, FrameBuffer.DepthBufferID);
+        glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, GLsizei(Width), GLsizei(Height));
+        glBindRenderbuffer(GL_RENDERBUFFER, 0);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, FrameBuffer.DepthBufferID);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
         glFlush();

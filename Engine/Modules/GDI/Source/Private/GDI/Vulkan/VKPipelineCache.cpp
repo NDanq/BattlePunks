@@ -17,6 +17,7 @@
 /** Vertex layout IDs */
 static constexpr uint32_t kLayoutStandard  = 0;
 static constexpr uint32_t kLayoutInstanced = 1;
+static constexpr uint32_t kLayoutMesh      = 2;
 
 /** Maximum vertex bindings / attributes across all known layouts */
 static constexpr uint32_t kMaxBindings = 5;
@@ -52,11 +53,13 @@ void VKPipelineCache::ApplyBlendState(PipelineKey&          Key,
 void VKPipelineCache::ApplyDepthStencilState(PipelineKey& Key,
                                                VkBool32     DepthTest,
                                                VkBool32     DepthWrite,
-                                               VkBool32     StencilTest)
+                                               VkBool32     StencilTest,
+                                               VkCompareOp  DepthCompare)
 {
     Key.DepthTestEnable   = DepthTest;
     Key.DepthWriteEnable  = DepthWrite;
     Key.StencilTestEnable = StencilTest;
+    Key.DepthCompareOp    = DepthCompare;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,6 +96,7 @@ uint64_t VKPipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.DepthCompareOp,    sizeof(K.DepthCompareOp));
     Mix(&K.StencilTestEnable, sizeof(K.StencilTestEnable));
     Mix(&K.RTFormat,          sizeof(K.RTFormat));
+    Mix(&K.DepthFormat,       sizeof(K.DepthFormat));
     Mix(&K.Topology,          sizeof(K.Topology));
     return H;
 }
@@ -132,6 +136,23 @@ void VKPipelineCache::GetVertexInputState(
 
     OutBindingCount = 2;
     OutAttribCount  = 2;
+
+    if(LayoutID == kLayoutMesh)
+    {
+        // Binding 2 / location 8: vec3 normal, per vertex.
+        OutBindings[2].binding   = 2;
+        OutBindings[2].stride    = sizeof(float) * 3;
+        OutBindings[2].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        OutAttribs[2].location = 8;
+        OutAttribs[2].binding  = 2;
+        OutAttribs[2].format   = VK_FORMAT_R32G32B32_SFLOAT;
+        OutAttribs[2].offset   = 0;
+
+        OutBindingCount = 3;
+        OutAttribCount  = 3;
+        return;
+    }
 
     if(LayoutID == kLayoutInstanced)
     {
@@ -536,6 +557,7 @@ VkPipeline VKPipelineCache::CreatePipeline(const PipelineKey& Key) const
     RenderingInfo.sType                   = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO;
     RenderingInfo.colorAttachmentCount    = 1;
     RenderingInfo.pColorAttachmentFormats = &Key.RTFormat;
+    RenderingInfo.depthAttachmentFormat   = Key.DepthFormat;
 
     // --- Assemble ---
     VkGraphicsPipelineCreateInfo PipelineCI{};

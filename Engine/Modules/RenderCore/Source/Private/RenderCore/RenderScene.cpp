@@ -6,6 +6,7 @@
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
+#include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
 
@@ -23,6 +24,10 @@ namespace RenderCore
     struct RenderScene::Impl
     {
         std::vector<RenderProxy*> Proxies;
+#if WITH_EDITOR
+        std::vector<DebugLine>    DebugLines;   // consumed by the next Render()
+        std::vector<MaterialPreviewRequest> Previews;   // likewise
+#endif
         RenderView                View;
         EngineCore::Color         ClearColor{24, 26, 32, 255};
 
@@ -207,6 +212,18 @@ namespace RenderCore
         P->ClearColor = InColor;
     }
 
+#if WITH_EDITOR
+    void RenderScene::SetDebugLines(const DebugLine* InLines, const size_t InCount)
+    {
+        P->DebugLines.assign(InLines, InLines + InCount);
+    }
+
+    void RenderScene::AddMaterialPreview(const MaterialPreviewRequest& InRequest)
+    {
+        P->Previews.push_back(InRequest);
+    }
+#endif
+
     void RenderScene::Render(RenderContext& InContext)
     {
         /* Pushed here, not in SetView(), so GetView() is always in step with
@@ -222,6 +239,19 @@ namespace RenderCore
         P->AllocateRenderTargets(P->View.ViewportPixels);
 
         GDIBeginRendering();
+
+#if WITH_EDITOR
+        /* Previews FIRST, before the back buffer bind, so the back buffer is
+         * the active target at EndRendering and the present never shows one. */
+        for(const MaterialPreviewRequest& Each : P->Previews)
+        {
+            EngineCore::Image Pixels;
+            std::string       Error;
+            InContext.RenderMaterialPreview(Each.Material, Each.Size, Each.Tint, Pixels, Error);
+            if(Each.Mailbox) { Each.Mailbox->Deliver(Each.Request, std::move(Pixels), std::move(Error)); }
+        }
+        P->Previews.clear();
+#endif
 
         /*
          * AFTER BeginRendering, never before: VulkanDynamicGDI::SetRenderTarget
@@ -246,23 +276,22 @@ namespace RenderCore
         GDISetViewport(0, 0, uint(P->View.ViewportPixels.Width), uint(P->View.ViewportPixels.Height));
 
         /*
-         * THE COLOUR MASK IS NOT OPTIONAL, and nothing supplies a usable
-         * default: VKBlendState's ColorAttachment is value-initialised, so
-         * colorWriteMask starts at ZERO -- every channel masked off. The
-         * pipeline builds, vkCmdDraw executes, fragments are shaded, and not
-         * one byte reaches the attachment. From the outside that looks like a
-         * clear image with healthy draw-call counts and no validation error.
-         * GDI's own GDIRenderTarget::DrawTexture opens with this same call.
+         * THE COLOUR MASK IS REQUIRED: Vulkan's default colorWriteMask is
+         * zero, so everything draws with no validation error and nothing
+         * reaches the attachment.
          *
-         * Blend and depth are set alongside it rather than left implicit: the
-         * pipeline key is built from whatever VKCurrentStateData happens to
-         * hold, so leaving them unset means inheriting the last unrelated
-         * caller's state. Straight alpha blending and a less-than depth test
-         * are what a 2D sprite pass wants.
+         * Blend and depth are explicit too, or the pipeline key inherits the
+         * last caller's state. Depth LESS-OR-EQUAL so coplanar 2D quads still
+         * draw in submission order.
          */
         GDISetColorMask(EColM_RGBA);
         GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
-        GDISetDepthState(IDepthStateDesc());
+
+        IDepthStateDesc SceneDepth;
+        SceneDepth.bDepthTest = true;
+        SceneDepth.bDepthMask = true;
+        SceneDepth.DepthMode  = CTM_LEQUAL;
+        GDISetDepthState(SceneDepth);
 
         GDIClear(CM_Color | CM_Depth, P->ClearColor);
 
@@ -304,6 +333,22 @@ namespace RenderCore
         }
 
         SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
+
+#if WITH_EDITOR
+        /* Tool overlay over everything, unculled; consumed each frame. */
+        if(!P->DebugLines.empty())
+        {
+            /* No depth test: an outline or a gizmo shows through what it marks. */
+            GDISetDepthState(IDepthStateDesc());
+            InContext.BeginDrawEvent("DebugLines");
+            for(const DebugLine& Line : P->DebugLines)
+            {
+                InContext.DrawLine(Line.Start, Line.End, Line.Color, Line.ThicknessPixels);
+            }
+            InContext.EndDrawEvent();
+            P->DebugLines.clear();
+        }
+#endif
 
         GDIEndRendering();
     }

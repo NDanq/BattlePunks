@@ -45,4 +45,10 @@
     #define GAMECORE_API
 #endif
 
+/* Engine/CMakeLists.txt defines WITH_EDITOR as 1 or 0 for every target; an
+ * undefined name would silently read as 0. */
+#ifndef WITH_EDITOR
+    #error "WITH_EDITOR is not defined -- configure through Engine/CMakeLists.txt, or define it to 0 or 1"
+#endif
+
 #endif //GAMECORE_GAMECOREAPI_H

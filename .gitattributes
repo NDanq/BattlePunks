@@ -1,0 +1,5 @@
+# Editor world files (GameCore's WorldPackage.h) are written with LF line
+# endings and skipped on save when their bytes are unchanged; converting them
+# to CRLF on checkout would make every save rewrite every file.
+*.nmworld  text eol=lf
+*.nmentity text eol=lf

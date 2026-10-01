@@ -129,6 +129,33 @@ if(NOT TARGET Lua::Lua)
     source_group("External/Lua" FILES ${GAMECORE_LUA_SOURCES})
 endif()
 
+# === Vendored pugixml (editor builds only) ==================================
+# The editor's text worlds are XML (WorldPackage.h); games load the cooked
+# binary form, so only editor builds compile pugixml. Built by hand, like Lua.
+# PUGIXML_NO_XPATH: unused, and most of the library.
+set(GAMECORE_PUGIXML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/pugixml-1.16")
+
+if(NIMBLE_WITH_EDITOR AND NOT TARGET PugiXml::PugiXml)
+    if(NOT EXISTS "${GAMECORE_PUGIXML_DIR}/src/pugixml.hpp")
+        message(FATAL_ERROR "Vendored pugixml not found at ${GAMECORE_PUGIXML_DIR}.")
+    endif()
+
+    add_library(PugiXml STATIC "${GAMECORE_PUGIXML_DIR}/src/pugixml.cpp")
+    add_library(PugiXml::PugiXml ALIAS PugiXml)
+    target_include_directories(PugiXml PUBLIC "${GAMECORE_PUGIXML_DIR}/src")
+    target_compile_definitions(PugiXml PUBLIC PUGIXML_NO_XPATH)
+    target_compile_features(PugiXml PUBLIC cxx_std_17)
+
+    # Linked into GameCore.dll, so position-independent for Lua's reason.
+    set_target_properties(PugiXml PROPERTIES
+            POSITION_INDEPENDENT_CODE ON
+            AUTOMOC OFF
+            AUTOUIC OFF
+            AUTORCC OFF
+    )
+    source_group("External/pugixml" FILES "${GAMECORE_PUGIXML_DIR}/src/pugixml.cpp")
+endif()
+
 # ===========================================================================
 # Sources
 # ===========================================================================
@@ -149,12 +176,15 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/ComponentSerializer.cpp
         Source/Private/GameCore/ComponentSerializers.cpp
         Source/Private/GameCore/WorldSerializer.cpp
+        Source/Private/GameCore/WorldPackage.cpp
         Source/Private/GameCore/ArchiveTextDump.cpp
         Source/Private/GameCore/ComponentScript.cpp
         Source/Private/GameCore/ComponentScripts.cpp
+        Source/Private/GameCore/ComponentProperties.cpp
         Source/Public/GameCore/GameCoreAPI.h
         Source/Public/GameCore/GameCoreLog.h
         Source/Public/GameCore/EntityID.h
+        Source/Public/GameCore/EntityGuid.h
         Source/Public/GameCore/AABB.h
         Source/Public/GameCore/SpatialIndex.h
         Source/Public/GameCore/TickPhase.h
@@ -165,11 +195,14 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/World.h
         Source/Public/GameCore/Entity.h
         Source/Public/GameCore/Components.h
+        Source/Public/GameCore/TransformMath.h
         Source/Public/GameCore/ScriptEngine.h
         Source/Public/GameCore/ComponentSerializer.h
         Source/Public/GameCore/WorldSerializer.h
+        Source/Public/GameCore/WorldPackage.h
         Source/Public/GameCore/ArchiveTextDump.h
         Source/Public/GameCore/ComponentScript.h
+        Source/Public/GameCore/ComponentProperties.h
 )
 
 # ===========================================================================
@@ -198,6 +231,11 @@ nimble_add_module(GameCore SHARED
         PREFIX       GAMECORE
         SOURCES      ${GAMECORE_SOURCES}
         PRIVATE_DEPS Lua::Lua)
+
+# PRIVATE, like Lua: no public header includes pugixml.hpp.
+if(TARGET PugiXml::PugiXml)
+    target_link_libraries(GameCore PRIVATE PugiXml::PugiXml)
+endif()
 
 # PRIVATE, not PUBLIC: GameCoreInternal.h is included as
 # "Private/GameCore/GameCoreInternal.h" from this module's own .cpp files and

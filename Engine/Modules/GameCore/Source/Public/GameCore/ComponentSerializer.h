@@ -1,43 +1,78 @@
 #ifndef GAMECORE_COMPONENTSERIALIZER_H
 #define GAMECORE_COMPONENTSERIALIZER_H
 
+#include <cstddef>
 #include <cstdint>
 #include <cstring>     // std::memcpy, for the defaults function the macro generates
 
 #include "Public/Core/CoreArchive.h"
-#include "Public/Core/CoreTypes.h"      // EngineCore::Color, for SerializeColor
-#include "Public/GameCore/AABB.h"       // complete, for SerializeAABB's by-reference parameter
+#include "Public/Core/CoreTypes.h"      // EngineCore::Color
+#include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/GameCoreAPI.h"
+#include "Public/Math/Vector.h"
 
 /*
- * Per-type serializers, opt-in: a component names its fields explicitly and
- * skips per-run state (Owner, ProxyID, InstanceRef). A raw SizeBytes copy is
- * wrong, not just fragile -- Vector3's layout depends on WITH_SIMD. A type with
- * no serializer is skipped with a warning, never a failure. One registry per
- * process, like RenderCore::RegisterProxyType. Game thread only. See DESIGN.md.
+ * Opt-in per-type serializers naming each field and skipping per-run state. (A
+ * raw byte copy is wrong: Vector3's layout depends on WITH_SIMD.) Types
+ * without one are skipped with a warning. Game thread only. See DESIGN.md.
+ *
+ * Fields are NAMED because one serializer writes two formats:
+ *
+ *   binary   cooked worlds and saves (WorldSerializer.h): call order, names
+ *            ignored.
+ *   text     the editor's XML (WorldPackage.h): matched by name; missing
+ *            fields keep defaults, unknown ones are skipped.
  */
 
 namespace GameCore
 {
-    /* How an EntityID field crosses the archive: saved as a save-local index,
-     * resolved to the newly-created entity on load. A saved {Index, Generation}
-     * means nothing in a fresh World. Implemented by WorldSerializer.cpp. */
-    class GAMECORE_API IEntityRemapper
+    /*
+     * `Ar` inside the macro; the same calls save and load. Names must be
+     * unique per component and valid XML element names.
+     */
+    class GAMECORE_API ComponentArchive
     {
     public:
-        virtual ~IEntityRemapper() = default;
+        virtual ~ComponentArchive() = default;
 
-        /* Unset round-trips as unset; an unresolvable index loads as
-         * InvalidEntityID() with a warning rather than failing the load. */
-        virtual void RemapEntity(EngineCore::Archive& Ar, EntityID& InOut) = 0;
+        virtual bool IsLoading() const = 0;
+        bool IsSaving() const { return !IsLoading(); }
+
+        /* Current version on save, the file's on load. Guard later fields
+         * with `if(Ar.GetVersion() >= N)` (needed for binary). */
+        virtual uint16_t GetVersion() const = 0;
+
+        virtual void Field(const char* InName, float& InOut)    = 0;
+        virtual void Field(const char* InName, double& InOut)   = 0;
+        virtual void Field(const char* InName, int32_t& InOut)  = 0;
+        virtual void Field(const char* InName, uint32_t& InOut) = 0;
+        /* 0..255. Use Flag() for a 0/1 flag (a boolean in text). */
+        virtual void Field(const char* InName, uint8_t& InOut)  = 0;
+        virtual void Field(const char* InName, bool& InOut)     = 0;
+        /* Three floats through GetX/SetX, never Data[], so SIMD and scalar
+         * builds agree. */
+        virtual void Field(const char* InName, EngineCore::Vector3& InOut) = 0;
+        virtual void Field(const char* InName, AABB& InOut) = 0;
+        /* The four channel bytes, so a round trip is exact. */
+        virtual void Field(const char* InName, EngineCore::Color& InOut) = 0;
+        /* A NUL-terminated char buffer of InCapacity bytes, re-clamped on load. */
+        virtual void FixedString(const char* InName, char* InOutBuffer, size_t InCapacity) = 0;
+
+        template<size_t N>
+        void Field(const char* InName, char (&InOutBuffer)[N]) { FixedString(InName, InOutBuffer, N); }
+
+        virtual void Flag(const char* InName, uint8_t& InOut) = 0;
+
+        /* Stored as a save-local index (binary) or EntityGuid (text) and
+         * resolved on load. Unresolvable loads as InvalidEntityID(), warned. */
+        virtual void Entity(const char* InName, EntityID& InOut) = 0;
     };
 
     /* InComponent points into the pool, so a loading serializer writes live
      * storage directly. Raw function pointer, for SystemFn's reasons. */
-    using ComponentSerializeFn = void (*)(EngineCore::Archive& Ar, void* InComponent,
-                                          IEntityRemapper& InRemap);
+    using ComponentSerializeFn = void (*)(ComponentArchive& Ar, void* InComponent);
 
     /* Writes a default-constructed instance into OutBytes (SizeBytes long).
      * What the loader starts each component from -- a zeroed buffer is not a
@@ -52,10 +87,8 @@ namespace GameCore
         ComponentDefaultsFn  DefaultsFn = nullptr;
     };
 
-    /* Called once per type by GAMECORE_DEFINE_COMPONENT_SERIALIZER. InVersion
-     * is each instance's DATA chunk version, which the serializer reads back
-     * with Ar.GetChunkVersion(). False on a duplicate -- the first
-     * registration is kept, as RegisterComponentType does. */
+    /* Called by the macro. InVersion is the saving version. False on a
+     * duplicate (first kept). */
     GAMECORE_API bool RegisterComponentSerializer(ComponentTypeID InType, uint16_t InVersion,
                                                   ComponentSerializeFn InFn,
                                                   ComponentDefaultsFn InDefaultsFn);
@@ -65,50 +98,68 @@ namespace GameCore
 
     GAMECORE_API size_t GetComponentSerializerCount();
 
-    /* Three floats through GetX/SetX, never Data[], so SIMD and scalar builds
-     * read and write the same twelve bytes. Float because that is what the SIMD
-     * path stores. Every Vector3 field goes through this. */
-    GAMECORE_API void SerializeVector3(EngineCore::Archive& Ar, EngineCore::Vector3& InOutValue);
+    // === The binary backend =================================================
 
-    /* Min then Max, each through SerializeVector3. */
-    GAMECORE_API void SerializeAABB(EngineCore::Archive& Ar, AABB& InOutValue);
+    /* Maps binary EntityID fields to save-local indices (WorldSerializer.cpp). */
+    class GAMECORE_API IEntityRemapper
+    {
+    public:
+        virtual ~IEntityRemapper() = default;
+        virtual void RemapEntity(EngineCore::Archive& Ar, EntityID& InOut) = 0;
+    };
 
-    /* The four channel bytes, so a round trip is exact. */
-    GAMECORE_API void SerializeColor(EngineCore::Archive& Ar, EngineCore::Color& InOutValue);
+    /* Positional, inside the instance's DATA chunk (whose version it reports). */
+    class GAMECORE_API BinaryComponentArchive final : public ComponentArchive
+    {
+    public:
+        BinaryComponentArchive(EngineCore::Archive& InAr, IEntityRemapper& InRemap) : Ar(InAr), Remap(InRemap) {}
+
+        bool     IsLoading() const override;
+        uint16_t GetVersion() const override;
+
+        using ComponentArchive::Field;
+        void Field(const char* InName, float& InOut) override;
+        void Field(const char* InName, double& InOut) override;
+        void Field(const char* InName, int32_t& InOut) override;
+        void Field(const char* InName, uint32_t& InOut) override;
+        void Field(const char* InName, uint8_t& InOut) override;
+        void Field(const char* InName, bool& InOut) override;
+        void Field(const char* InName, EngineCore::Vector3& InOut) override;
+        void Field(const char* InName, AABB& InOut) override;
+        void Field(const char* InName, EngineCore::Color& InOut) override;
+        void FixedString(const char* InName, char* InOutBuffer, size_t InCapacity) override;
+        void Flag(const char* InName, uint8_t& InOut) override;
+        void Entity(const char* InName, EntityID& InOut) override;
+
+    private:
+        EngineCore::Archive& Ar;
+        IEntityRemapper&     Remap;
+    };
 }
 
 /*
- * One per component type, at file scope, in exactly one .cpp -- a header
- * definition registers once per including TU. The body that follows has Ar,
- * C (a TypeName&) and Remap in scope:
+ * Once per type, at file scope in one .cpp. The body has Ar and C in scope:
  *
  *     GAMECORE_DEFINE_COMPONENT_SERIALIZER(TransformComponent, 1)
  *     {
- *         SerializeVector3(Ar, C.Position);
- *         SerializeVector3(Ar, C.Rotation);
- *         SerializeVector3(Ar, C.Scale);
+ *         Ar.Field("Position", C.Position);
+ *         Ar.Field("Rotation", C.Rotation);
+ *         Ar.Field("Scale",    C.Scale);
  *     }
  *
- * To add a field, bump Version and append it behind a check -- the body runs
- * inside the instance's DATA chunk, so Ar.GetChunkVersion() is the version
- * being written on save and the file's on load:
+ * To add a field, bump Version and append it behind a check:
  *
- *     if(Ar.GetChunkVersion() >= 2) { Ar << C.NewField; }
+ *     if(Ar.GetVersion() >= 2) { Ar.Field("NewField", C.NewField); }
  *
- * An older save then leaves NewField at its default.
- *
- * Never serialize C.Owner: AddComponentRaw writes it, and it holds a live
- * World*. Registration runs from a file-scope object's constructor into a
- * constant-initialised table, the ordering CoreConfig.h's GConfigHead relies on.
+ * Binary depends on field order, text on names: never reorder or rename
+ * casually. Never serialize C.Owner (a live World*).
  */
 #define GAMECORE_DEFINE_COMPONENT_SERIALIZER(TypeName, Version)                                   \
     /* Declared first so the void* trampoline below can forward to it. */                          \
-    static void SerializeBody_##TypeName(::EngineCore::Archive& Ar, TypeName& C,                   \
-                                         ::GameCore::IEntityRemapper& Remap);                      \
-    static void TypeName##_Serialize(::EngineCore::Archive& Ar, void* InComponent,                 \
-                                     ::GameCore::IEntityRemapper& Remap)                           \
+    static void SerializeBody_##TypeName(::GameCore::ComponentArchive& Ar, TypeName& C);           \
+    static void TypeName##_Serialize(::GameCore::ComponentArchive& Ar, void* InComponent)          \
     {                                                                                              \
-        SerializeBody_##TypeName(Ar, *static_cast<TypeName*>(InComponent), Remap);                  \
+        SerializeBody_##TypeName(Ar, *static_cast<TypeName*>(InComponent));                        \
     }                                                                                              \
     /* memcpy is sound: GAMECORE_DEFINE_COMPONENT asserts trivial copyability. */                 \
     static void TypeName##_Defaults(void* OutBytes)                                                \
@@ -129,7 +180,6 @@ namespace GameCore
         };                                                                                         \
         TypeName##_SerializerRegistrar G##TypeName##_SerializerRegistrar;                           \
     }                                                                                              \
-    static void SerializeBody_##TypeName(::EngineCore::Archive& Ar, TypeName& C,                   \
-                                         ::GameCore::IEntityRemapper& Remap)
+    static void SerializeBody_##TypeName(::GameCore::ComponentArchive& Ar, TypeName& C)
 
 #endif //GAMECORE_COMPONENTSERIALIZER_H

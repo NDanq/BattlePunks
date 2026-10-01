@@ -18,12 +18,17 @@
  */
 namespace RenderCore
 {
-    /* "Primitive". A flat, tinted quad -- the first concrete thing this
-     * engine can draw. Width/Height are in the same world units as
-     * TransformComponent::Scale; the proxy multiplies them together (see
-     * PrimitiveProxy.cpp), so a Scale of (2,2,2) on the entity's Transform
-     * doubles an already-sized quad rather than fighting it. */
-    struct RENDERCORE_API PrimitiveComponent
+    /* "Render". Draws Mesh (a runtime-relative .nmmesh path) if set and
+     * loadable, else a Width x Height tinted quad; both scaled by the
+     * Transform.
+     *
+     * Material names a material graph's output ("Glow" = Materials/Glow.fsh +
+     * Glow.material) and overrides every mesh section's material. Empty, or
+     * unloadable (warned once), draws Tint or the sections' own materials. */
+    enum : size_t { RENDER_MATERIAL_NAME_MAX = 48 };   // including the NUL
+    enum : size_t { RENDER_MESH_PATH_MAX     = 128 };  // including the NUL
+
+    struct RENDERCORE_API RenderComponent
     {
         GAMECORE_COMPONENT_BODY()
         RENDERCORE_PROXY_BODY()
@@ -32,6 +37,8 @@ namespace RenderCore
         float             Height = 1.0f;
         EngineCore::Color Tint{255, 255, 255};
         uint8_t           bVisible = 1;
+        char              Material[RENDER_MATERIAL_NAME_MAX] = {};
+        char              Mesh[RENDER_MESH_PATH_MAX] = {};
     };
 
     /* "Camera". Position comes from the sibling TransformComponent (identity
@@ -49,14 +56,8 @@ namespace RenderCore
         uint8_t bActive  = 1;
     };
 
-    /*
-     * PrimitiveComponent's own factory, exported for a caller that wants to
-     * register it directly -- Renderer::Initialize (a later build-order
-     * step) does exactly this. RENDERCORE_DEFINE_PROXY_COMPONENT's own
-     * generated factory function is a plain `static` in RenderComponents.cpp
-     * and never leaves that translation unit; this is the one door out.
-     */
-    RENDERCORE_API CreateProxyFn GetPrimitiveComponentFactory();
+    /* RenderComponent's proxy factory, for Renderer::Initialize to register. */
+    RENDERCORE_API CreateProxyFn GetRenderComponentFactory();
 }
 
 #endif //RENDERCORE_RENDERCOMPONENTS_H

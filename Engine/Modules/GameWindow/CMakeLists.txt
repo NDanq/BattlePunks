@@ -22,7 +22,8 @@ if(NOT COMMAND nimble_add_module)
             "the top of this file and the README.")
 endif()
 
-option(GAMEWINDOW_SHARED "Build GameWindow as a shared library" OFF)
+# GAMEWINDOW_SHARED is obsolete (always shared, below); drop it from old caches.
+unset(GAMEWINDOW_SHARED CACHE)
 
 # === Vendored SDL3 =========================================================
 # SDL3 lives in source form under External/, the way Modules/GDI carries
@@ -172,17 +173,14 @@ endif()
 # own window-system seam and takes an EngineCore::WindowHandle; GameWindow's job
 # ends at producing one. That is what keeps SDL out of GDI's backends, exactly
 # as GDIVulkanPlatform.h anticipates.
-if(GAMEWINDOW_SHARED)
-    nimble_add_module(GameWindow SHARED
-            PREFIX       GAMEWINDOW
-            SOURCES      ${GAMEWINDOW_SOURCES}
-            PRIVATE_DEPS SDL3::SDL3)
-else()
-    nimble_add_module(GameWindow
-            PREFIX       GAMEWINDOW
-            SOURCES      ${GAMEWINDOW_SOURCES}
-            PRIVATE_DEPS SDL3::SDL3)
-endif()
+#
+# ALWAYS SHARED: GameWindowSystem is process-global (SDL video, the window
+# registry, the injected-text queue). The editor and NimbleEngine both use it,
+# and two static copies would be two silently disjoint registries.
+nimble_add_module(GameWindow SHARED
+        PREFIX       GAMEWINDOW
+        SOURCES      ${GAMEWINDOW_SOURCES}
+        PRIVATE_DEPS SDL3::SDL3)
 
 # PRIVATE, not PUBLIC: Private/GameWindow/GameWindowInternal.h is included as
 # "Private/GameWindow/..." from this module's own .cpp files and must not be

@@ -80,8 +80,8 @@ namespace GameCore
         template<typename T> inline T*   GetSibling() const;
         template<typename T> inline bool HasSibling() const;
 
-        /* "" if there is no NameComponent, never null. Defined in
-         * Components.h, after NameComponent exists. */
+        /* The entity's name; "" if unnamed, never null. Defined in
+         * Entity.h, after Entity is complete. */
         inline const char* GetName() const;
     };
 

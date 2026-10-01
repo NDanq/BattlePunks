@@ -64,6 +64,22 @@ VkFlags VKUtil::DecodeColorMask(EColorMask InColorMask)
     }
 }
 
+VkCompareOp VKUtil::DecodeCompareOp(ECompareTestMode InMode)
+{
+    switch(InMode)
+    {
+        case CTM_Never:    return VK_COMPARE_OP_NEVER;
+        case CTM_ALWAYS:   return VK_COMPARE_OP_ALWAYS;
+        case CTM_LESS:     return VK_COMPARE_OP_LESS;
+        case CTM_LEQUAL:   return VK_COMPARE_OP_LESS_OR_EQUAL;
+        case CTM_GREATER:  return VK_COMPARE_OP_GREATER;
+        case CTM_GEQUAL:   return VK_COMPARE_OP_GREATER_OR_EQUAL;
+        case CTM_EQUAL:    return VK_COMPARE_OP_EQUAL;
+        case CTM_NOTEQUAL: return VK_COMPARE_OP_NOT_EQUAL;
+        default:           return VK_COMPARE_OP_LESS;
+    }
+}
+
 #pragma endregion
 
 #pragma region Frame begin/end and clear
@@ -182,24 +198,39 @@ void VulkanDynamicGDI::EndRendering()
 void VulkanDynamicGDI::Clear(uint InClearMode, EngineCore::Color InClearColor, float InDepth, uint InStencilMask)
 {
     if(!CurrentStateData || !CurrentStateData->bRenderingActive) return;
-    if(!(InClearMode & CM_Color)) return;
 
-    VkClearAttachment ClearAtt{};
-    ClearAtt.aspectMask                 = VK_IMAGE_ASPECT_COLOR_BIT;
-    ClearAtt.colorAttachment            = 0;
-    ClearAtt.clearValue.color.float32[0] = float(InClearColor.Rf());
-    ClearAtt.clearValue.color.float32[1] = float(InClearColor.Gf());
-    ClearAtt.clearValue.color.float32[2] = float(InClearColor.Bf());
-    ClearAtt.clearValue.color.float32[3] = float(InClearColor.Af());
+    VKRenderTarget* RT = CurrentStateData->ActiveRenderTarget;
+    const bool bClearColor = (InClearMode & CM_Color) != 0;
+    const bool bClearDepth = (InClearMode & CM_Depth) != 0 && RT && RT->HasDepth();
+    if(!bClearColor && !bClearDepth) return;
+
+    VkClearAttachment ClearAtts[2]{};
+    uint32_t          NumClears = 0;
+    if(bClearColor)
+    {
+        VkClearAttachment& ClearAtt = ClearAtts[NumClears++];
+        ClearAtt.aspectMask                 = VK_IMAGE_ASPECT_COLOR_BIT;
+        ClearAtt.colorAttachment            = 0;
+        ClearAtt.clearValue.color.float32[0] = float(InClearColor.Rf());
+        ClearAtt.clearValue.color.float32[1] = float(InClearColor.Gf());
+        ClearAtt.clearValue.color.float32[2] = float(InClearColor.Bf());
+        ClearAtt.clearValue.color.float32[3] = float(InClearColor.Af());
+    }
+    if(bClearDepth)
+    {
+        VkClearAttachment& ClearAtt = ClearAtts[NumClears++];
+        ClearAtt.aspectMask                    = VK_IMAGE_ASPECT_DEPTH_BIT;
+        ClearAtt.clearValue.depthStencil.depth = InDepth;
+    }
 
     VkClearRect ClearRect{};
-    if(VKRenderTarget* RT = CurrentStateData->ActiveRenderTarget)
+    if(RT)
     {
         ClearRect.rect.extent = { RT->GetWidth(), RT->GetHeight() };
     }
     ClearRect.layerCount = 1;
 
-    vkCmdClearAttachments(CurrentStateData->CurrentCmd, 1, &ClearAtt, 1, &ClearRect);
+    vkCmdClearAttachments(CurrentStateData->CurrentCmd, NumClears, ClearAtts, 1, &ClearRect);
 }
 
 void VulkanDynamicGDI::SetViewport(uint InX, uint InY, uint InWidth, uint InHeight)

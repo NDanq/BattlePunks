@@ -253,7 +253,7 @@ namespace RenderCore
         return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, -1.0f, 1000.0f);
     }
 
-    void WorldBridge::ExtractAndRender(const FrameInfo& InFrame)
+    void WorldBridge::ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride)
     {
         if(!BoundWorld)
         {
@@ -350,7 +350,8 @@ namespace RenderCore
             });
         }
 
-        const RenderView View = BuildView(InFrame);
+        RenderView View = InViewOverride ? *InViewOverride : BuildView(InFrame);
+        View.ViewportPixels = InFrame.ViewportPixels;   // the render targets are sized from this
         RenderScene* SceneCapture = Scene;
 
         ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View](RenderContext& Ctx)

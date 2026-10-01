@@ -331,6 +331,45 @@ designed for. The registry is a `std::vector<GameWindow*>` scanned linearly,
 which is the same call `CoreConfig.h` makes about its intrusive list: linear is
 correct at N ~ 1, and the scan happens per event, never per pixel.
 
+### Hosted windows (an editor viewport)
+
+A host with its own UI toolkit and event loop -- the Qt editor -- can put a
+window it owns under GameWindow, so a game running inside it receives input
+through exactly the `GameWindowDelegates` it gets standalone:
+
+```cpp
+GameWindowSystem::SetHostOwnsMessageLoop(true);   // before Initialize()
+GameWindowSystem::Initialize();
+GameWindow* View = GameWindowSystem::WrapNativeWindow(ViewportHandle);
+// ... every frame: GameWindowSystem::PumpEvents();
+// ... characters the toolkit swallowed: GameWindowSystem::InjectTextInput(View, Utf8);
+GameWindowSystem::DestroyGameWindow(View);         // before the host destroys the window
+```
+
+* **`SetHostOwnsMessageLoop`** sets `SDL_HINT_WINDOWS_ENABLE_MESSAGELOOP=0`:
+  the host's loop dispatches the platform messages, and `PumpEvents` only
+  drains what SDL has queued. Two loops on one thread would steal each other's
+  messages.
+* **`WrapNativeWindow`** adopts the host's window
+  (`SDL_PROP_WINDOW_CREATE_WIN32_HWND_POINTER`). SDL chains its window
+  procedure in front of the host's, so both see every message; destroying the
+  GameWindow restores the host's procedure and leaves the window alive.
+  Windows only for now.
+* **Keyboard focus** follows the Win32 focus for a wrapped child window, via
+  the SDL patch below. The host must put the Win32 focus on the window -- Qt,
+  for one, keeps it on the top-level window unless told otherwise.
+* **`InjectTextInput`** exists because Qt removes each `WM_CHAR` from the queue
+  while translating the `WM_KEYDOWN` before it and never dispatches it
+  (measured: every `WM_CHAR` fetched, none delivered), so SDL makes no text.
+  The host forwards the characters it saw; they arrive through `OnText` like
+  any other. GameWindow keeps each string alive until the pump that delivers
+  it, since SDL owns only the text of events it created.
+
+Measured end to end with the editor's SDL input probe (View > SDL Input
+Probe, `--sdl-input-probe`): mouse enter/leave, motion, buttons, wheel and drag
+capture, keys with modifiers, text, and focus gain/loss all arrive, while Qt
+still handles the same input for the editor.
+
 ---
 
 ## Threading contract
@@ -464,6 +503,18 @@ GameWindow, added from the root. A shared SDL3 therefore lands in
 `EngineCore.dll` with no copy step, satisfying the flat-layout requirement the
 root file explains at length.
 
+### Local patches to SDL
+
+The tree is a faithful copy of the release **except** for the patches listed
+here. Each is marked in the source with `NimbleEngine local patch` and must be
+re-applied (or confirmed fixed upstream) when SDL is bumped:
+
+| File | Function | What and why |
+|---|---|---|
+| `src/video/windows/SDL_windowsevents.c` | `WIN_UpdateFocus` | For an adopted **child** window (`SDL_WINDOW_EXTERNAL` + `WS_CHILD`), keyboard focus is the Win32 focus (`GetFocus() == hwnd`), not "is the foreground window". A child is never the foreground window, so without this a wrapped editor viewport never gets SDL keyboard focus: its key events carry window 0 and its text is dropped. `SetupWindowData` already applies the same `GetFocus()` test when the window is adopted; this makes later focus changes agree with it. A candidate to upstream. |
+
+`grep -rn "NimbleEngine local patch" External/` lists them.
+
 ---
 
 ## CMakeLists.txt
@@ -478,7 +529,6 @@ project(GameWindow VERSION 0.1 LANGUAGES CXX)
 # engine-level nimble_add_module() -- which is exactly what that helper was
 # written for and has had no consumer for until now.
 
-option(GAMEWINDOW_SHARED          "Build GameWindow as a shared library" OFF)
 option(GAMEWINDOW_BUILD_SMOKETEST "Build GameWindowSmokeTest"            OFF)
 
 # === Vendored SDL3 =========================================================
@@ -532,17 +582,14 @@ endif()
 # includes SDL.h, which is why GetSDLWindow() returns void* and the input enums
 # are engine-owned rather than SDL's. A host links GameWindow and never sees
 # SDL at all. If this ever has to become PUBLIC, something leaked.
-if(GAMEWINDOW_SHARED)
-    nimble_add_module(GameWindow SHARED
-            PREFIX       GAMEWINDOW
-            SOURCES      ${GAMEWINDOW_SOURCES}
-            PRIVATE_DEPS SDL3::SDL3)
-else()
-    nimble_add_module(GameWindow
-            PREFIX       GAMEWINDOW
-            SOURCES      ${GAMEWINDOW_SOURCES}
-            PRIVATE_DEPS SDL3::SDL3)
-endif()
+#
+# Always SHARED: GameWindowSystem is process-global (the SDL video subsystem,
+# the window registry) and both NimbleEngine.dll and the editor reach it, so it
+# has to live in exactly one image. See the CMakeLists for the full argument.
+nimble_add_module(GameWindow SHARED
+        PREFIX       GAMEWINDOW
+        SOURCES      ${GAMEWINDOW_SOURCES}
+        PRIVATE_DEPS SDL3::SDL3)
 
 if(GAMEWINDOW_BUILD_SMOKETEST)
     add_executable(GameWindowSmokeTest Tests/SmokeMain.cpp)

@@ -31,6 +31,11 @@ protected:
 private:
     uint VAO;
     uint VBO[ORenderData::Buffers::NUM_BUFFERS];
+
+    /* Indexed meshes only (GDICreateMesh): normals at location 8, and the
+     * element buffer the VAO records. 0 for the quads. */
+    uint NormalVBO = 0;
+    uint IndexEBO  = 0;
     inline GLenum DecodeMeshType()
     {
         switch(MeshType)

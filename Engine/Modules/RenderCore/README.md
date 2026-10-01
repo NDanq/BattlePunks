@@ -53,17 +53,21 @@ Engine/Modules/RenderCore/
 |   |   |-- RenderContext.h         the render-thread draw interface a proxy uses; NO GDI types
 |   |   |-- RenderProxy.h           class RenderProxy, RenderProxyHandle, the PROXY_BODY/DEFINE_PROXY_COMPONENT macros
 |   |   |-- RenderScene.h           render-thread container of proxies: Add/Remove/SetView/Render
-|   |   |-- RenderComponents.h      PrimitiveComponent, CameraComponent (GameCore components)
+|   |   |-- RenderComponents.h      RenderComponent, CameraComponent (GameCore components)
+|   |   |-- MeshAsset.h             .nmmesh: MeshData, Save/Load, MeshAssetCache
+|   |   |-- TextureAsset.h          .nmtexture: TextureData, Save/Load
+|   |   |-- AssetImportInfo.h       where an imported asset came from (for Reimport)
 |   |   `-- Renderer.h              the facade a host owns: Initialize/Shutdown/BindWorld/EndFrame
 |   `-- Private/RenderCore/
 |       |-- RenderCoreInternal.h    the ONLY header that includes a GDI header
 |       |-- RenderThreadInternal.h  the process-wide RenderThread locator
 |       |-- RenderThread.cpp        the drain loop, GDI lifetime, markers, present
 |       |-- RenderCommand.cpp       EnqueueRenderCommand, IsInRenderThread, FlushRenderCommands
-|       |-- RenderContext.cpp       the shared unit quad + Basic shaders; DrawQuad
+|       |-- RenderContext.cpp       the shared unit quad + Basic shaders; DrawQuad; DrawMesh; the material and mesh libraries
 |       |-- RenderProxy.cpp         the fixed proxy-type table
 |       |-- RenderScene.cpp         the proxy vector, culling, Render()
-|       |-- PrimitiveProxy.h/.cpp   the quad proxy
+|       |-- RenderComponentProxy.h/.cpp   a RenderComponent's mesh, or its quad
+|       |-- MeshAsset.cpp, TextureAsset.cpp, AssetFileCommon.h   the asset formats
 |       |-- RenderComponents.cpp    component registration
 |       |-- WorldBridge.h/.cpp      game-thread side: proxy lifecycle, extraction, view build
 |       `-- Renderer.cpp
@@ -139,7 +143,7 @@ GameCore::World& World = App.GetWorld();
 GameCore::Entity E = World.CreateEntity("Box");
 E.AddComponent<GameCore::TransformComponent>();
 
-RenderCore::PrimitiveComponent Prim;
+RenderCore::RenderComponent Prim;
 Prim.Width  = 32.0f;
 Prim.Height = 32.0f;
 Prim.Tint   = EngineCore::Color(255, 200, 40);
@@ -148,10 +152,41 @@ E.AddComponent(Prim);
 
 Adding the component is the whole of it: `Renderer`'s `WorldBridge` sees the
 addition through `World`'s own `OnComponentAdded` delegate, constructs a
-`RenderCore::PrimitiveProxy` mirroring it, and from then on extracts the
+`RenderCore::RenderComponentProxy` mirroring it, and from then on extracts the
 component's current transform and bytes into that proxy once per frame.
 Removing the component or destroying the entity removes the proxy the same
 way, through `OnComponentRemoved`.
+
+**A material** replaces the plain tint: set `Prim.Material` to a material
+graph's name, e.g. `std::strcpy(Prim.Material, "Glow");`. The quad then draws
+with the cooked `Materials/Glow.fsh`, its parameters from
+`Materials/Glow.material`, and `Tint` passed to the shader as the Instance
+Tint. A material that is missing or not cooked for the running backend is
+warned about once and drawn as the plain tint. See DESIGN.md's "Materials" and
+NodeGraph's README.
+
+**A mesh** replaces the quad: set `Prim.Mesh` to a `.nmmesh`'s runtime-relative
+path, e.g. `"Content/Props/Crate.nmmesh"` (NimbleEditor's Import Wizard makes
+them from glTF; the game stages `Content/` beside the executable). It draws at
+its own size times the Transform's scale -- `Width`/`Height` are the quad's --
+one draw per section, lit by one fixed light in `Tint` (GDI's `Mesh.fsh`), or
+with `Material` when set, or with a section's imported material name if a
+material of that name exists. A mesh that cannot be loaded, or a backend
+without indexed meshes (Metal, so far), draws the quad instead, warned once.
+Meshes are loaded through `MeshAssetCache`, shared with the game thread (the
+editor's picking and bounds); `MeshAssetCache::Invalidate` makes the next frame
+load the file again.
+
+**Depth.** The scene pass tests and writes depth (less-or-equal, so quads in
+one plane still draw in submission order) into every render target's own depth
+buffer; editor debug lines draw over it. Before meshes there was no depth
+buffer at all, and draws landed in submission order.
+
+**Asset formats.** `.nmmesh` and `.nmtexture` are `EngineCore::Archive` chunk
+files (tags in MeshAsset.h / TextureAsset.h; `ArchiveTextDump` knows them).
+Loading checks every index against the vertex count and every section against
+the index range. Textures are imported and stored but not yet sampled by any
+shader -- materials have no texture input yet.
 
 A camera works the same way -- the first entity with an active
 `CameraComponent` wins, and its position comes from its own sibling
@@ -166,7 +201,7 @@ Cam.AddComponent<RenderCore::CameraComponent>();
 With no active camera, the view is an orthographic projection over the whole
 viewport, centred at GDI's own default origin `(0, 1, -1)`.
 
-**A game's own drawable type** registers the same way `PrimitiveComponent`
+**A game's own drawable type** registers the same way `RenderComponent`
 does:
 
 ```cpp
@@ -195,8 +230,8 @@ RENDERCORE_DEFINE_PROXY_COMPONENT(MyComponent, "My", MyProxy)
 // linkage -- exactly like GAMECORE_DEFINE_COMPONENT's StaticType(), it is
 // meant to be defined once, in this one .cpp. RegisterProxyType therefore
 // has to be called from HERE too (or through a small exported wrapper, the
-// way RenderComponents.h's GetPrimitiveComponentFactory() does for
-// PrimitiveComponent) -- not from an arbitrary caller elsewhere that only
+// way RenderComponents.h's GetRenderComponentFactory() does for
+// RenderComponent) -- not from an arbitrary caller elsewhere that only
 // has MyComponent.h.
 void RegisterMyComponentProxyType()
 {
@@ -224,8 +259,8 @@ both `CORE_CHECK` `IsInRenderThread()` for exactly this reason: a proxy
 pointer is only meaningful inside a render command's own lambda.
 
 `WorldBridge`, `Renderer`'s own facade methods, and everything reached
-through `Application::GetWorld()`/`GetRenderer()` run on the game thread --
-the same thread that runs `IGame::OnTick`, matching `GameCoreSmokeTest` and
+through `GameSession::GetWorld()`/`GetRenderer()` run on the game thread --
+the same thread that runs `IGameMode::OnTick`, matching `GameCoreSmokeTest` and
 `GameWindowSystem`'s own single-thread contracts.
 
 ---
@@ -234,5 +269,5 @@ the same thread that runs `IGame::OnTick`, matching `GameCoreSmokeTest` and
 
 `RenderCore`'s components have no Lua bindings yet -- `ScriptEngine`'s proxy
 metatables are private to `GameCore`, and extending them is future work, not
-in scope for this module's first cut. A game that wants `PrimitiveComponent`
+in scope for this module's first cut. A game that wants `RenderComponent`
 from a script currently has to bind it itself.

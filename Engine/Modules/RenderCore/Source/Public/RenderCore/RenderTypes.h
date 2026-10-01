@@ -6,6 +6,7 @@
 #include "Public/Core/CoreTypes.h"
 #include "Public/Math/Matrix.h"
 #include "Public/Math/Vector.h"
+#include "Public/RenderCore/RenderCoreAPI.h"   // the WITH_EDITOR check; no RENDERCORE_API is used here
 
 /*
  * The small POD vocabulary shared across every RenderCore header: the
@@ -76,6 +77,18 @@ namespace RenderCore
             return T * (Rz * Ry * Rx) * S;
         }
     };
+
+#if WITH_EDITOR
+    /* A tool overlay segment for Renderer::DrawDebugLine: drawn after every
+     * proxy, unculled, ThicknessPixels wide. Trivially copyable. */
+    struct DebugLine
+    {
+        EngineCore::Vector3 Start;
+        EngineCore::Vector3 End;
+        EngineCore::Color   Color{255, 255, 255};
+        float               ThicknessPixels = 2.0f;
+    };
+#endif // WITH_EDITOR
 
     /*
      * A snapshot of RenderThread's live counters (each an atomic there),

@@ -12,14 +12,22 @@
 #include <atomic>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <string>
 
+#include "Public/Core/CoreArchive.h"
+#include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
+#include "Public/Core/CoreImage.h"
+#include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderContext.h"
@@ -29,6 +37,7 @@
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/RenderThread.h"
 #include "Public/RenderCore/RenderView.h"
+#include "Public/RenderCore/TextureAsset.h"
 
 using namespace RenderCore;
 using namespace EngineCore;
@@ -60,15 +69,15 @@ static void TestScriptBindings()
 {
     std::printf("[script bindings]\n");
 
-    size_t PrimitiveCount = 0;
-    const GameCore::ScriptBindingEntry* Primitive =
-        GameCore::FindComponentScript(PrimitiveComponent::StaticType().ID, PrimitiveCount);
-    Expect(Primitive != nullptr && PrimitiveCount == 4, "Primitive exposes Width, Height, Tint and Visible");
+    size_t RenderCount = 0;
+    const GameCore::ScriptBindingEntry* Render =
+        GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
+    Expect(Render != nullptr && RenderCount == 6, "Render exposes Width, Height, Tint, Visible, Material and Mesh");
 
     bool bProxyExposed = false;
-    for(size_t Index = 0; Index < PrimitiveCount; ++Index)
+    for(size_t Index = 0; Index < RenderCount; ++Index)
     {
-        if(std::strstr(Primitive[Index].Name, "Proxy") != nullptr) { bProxyExposed = true; }
+        if(std::strstr(Render[Index].Name, "Proxy") != nullptr) { bProxyExposed = true; }
     }
     Expect(!bProxyExposed, "the render proxy handle is not exposed");
 
@@ -201,7 +210,7 @@ static void TestHandBuiltScene(RenderThread& InThread)
 {
     std::printf("[scene]\n");
 
-    const bool bRegistered = RegisterProxyType(PrimitiveComponent::StaticType().ID, GetPrimitiveComponentFactory());
+    const bool bRegistered = RegisterProxyType(RenderComponent::StaticType().ID, GetRenderComponentFactory());
     Expect(bRegistered, "RegisterProxyType succeeds for a fresh component type");
 
     RenderScene* Scene = nullptr;
@@ -215,13 +224,13 @@ static void TestHandBuiltScene(RenderThread& InThread)
     /* Built on the game thread -- CreateProxyFn's contract -- then handed to
      * AddProxy through a command, exactly WorldBridge's own lifecycle
      * (a later step) will drive it. */
-    PrimitiveComponent Init;
+    RenderComponent Init;
     Init.Width  = 2.0f;
     Init.Height = 4.0f;
     Init.Tint   = EngineCore::Color(10, 20, 30);
 
     const GameCore::EntityID Owner(1, 0);
-    CreateProxyFn Factory = FindProxyFactory(PrimitiveComponent::StaticType().ID);
+    CreateProxyFn Factory = FindProxyFactory(RenderComponent::StaticType().ID);
     Expect(Factory != nullptr, "FindProxyFactory returns the factory RegisterProxyType installed");
 
     RenderProxy* Proxy = Factory(Owner, &Init);
@@ -282,7 +291,7 @@ static void TestHandBuiltScene(RenderThread& InThread)
     Expect(StatsAfterCulled.ProxiesCulledLastFrame == 1, "the out-of-view proxy is counted as culled");
 
     /* Component update through ApplyComponent, not just SetTransform. */
-    PrimitiveComponent Updated = Init;
+    RenderComponent Updated = Init;
     Updated.bVisible = 0;
     ENQUEUE_RENDER_COMMAND(ApplyUpdate)([Proxy, Updated](RenderContext&)
     {
@@ -316,8 +325,8 @@ static void TestHandBuiltScene(RenderThread& InThread)
     });
     FlushRenderCommands();
 
-    UnregisterProxyType(PrimitiveComponent::StaticType().ID);
-    Expect(FindProxyFactory(PrimitiveComponent::StaticType().ID) == nullptr,
+    UnregisterProxyType(RenderComponent::StaticType().ID);
+    Expect(FindProxyFactory(RenderComponent::StaticType().ID) == nullptr,
            "UnregisterProxyType clears the factory table slot");
 }
 
@@ -405,7 +414,7 @@ static void TestRendererWithWorld()
 
     const GameCore::Entity PreExisting = World.CreateEntity();
     PreExisting.AddComponent<GameCore::TransformComponent>();
-    PrimitiveComponent PrimInit;
+    RenderComponent PrimInit;
     PreExisting.AddComponent(PrimInit);
 
     Rend.BindWorld(World);
@@ -415,7 +424,7 @@ static void TestRendererWithWorld()
     Rend.EndFrame(FrameInfo{100, 0.016, EngineCore::Size(1280, 720)});
     Rend.WaitForPreviousFrame();
     Rend.GetStats(StatsAfterSweep);
-    Expect(StatsAfterSweep.ProxiesLive == 1, "BindWorld's existing-components sweep created a proxy for the pre-existing PrimitiveComponent");
+    Expect(StatsAfterSweep.ProxiesLive == 1, "BindWorld's existing-components sweep created a proxy for the pre-existing RenderComponent");
 
     World.DestroyEntity(PreExisting);
     Rend.EndFrame(FrameInfo{101, 0.016, EngineCore::Size(1280, 720)});
@@ -423,7 +432,7 @@ static void TestRendererWithWorld()
 
     const GameCore::Entity E1 = World.CreateEntity();
     E1.AddComponent<GameCore::TransformComponent>();
-    PrimitiveComponent Prim;
+    RenderComponent Prim;
     Prim.Width  = 1.0f;
     Prim.Height = 1.0f;
     E1.AddComponent(Prim);
@@ -454,13 +463,13 @@ static void TestRendererWithWorld()
     Rend.WaitForPreviousFrame();
 
     /* RemoveComponent -- proves OnComponentRemoved's teardown path. */
-    E1.RemoveComponent<PrimitiveComponent>();
+    E1.RemoveComponent<RenderComponent>();
     Rend.EndFrame(FrameInfo{2, 0.016, EngineCore::Size(1280, 720)});
     Rend.WaitForPreviousFrame();
 
     RenderStats StatsAfterRemove;
     Rend.GetStats(StatsAfterRemove);
-    Expect(StatsAfterRemove.ProxiesLive == 1, "RemoveComponent<PrimitiveComponent> removed exactly its own proxy");
+    Expect(StatsAfterRemove.ProxiesLive == 1, "RemoveComponent<RenderComponent> removed exactly its own proxy");
 
     /* DestroyEntity -- proves the OTHER teardown path (World.cpp broadcasts
      * OnComponentRemoved for every component before the entity's slot is
@@ -501,6 +510,404 @@ static void TestRendererWithWorld()
     Rend.Shutdown();
 }
 
+#if WITH_EDITOR
+// ============================================================================
+// Debug lines: queued on the game thread, drawn once, then gone
+// ============================================================================
+
+static void TestDebugLines()
+{
+    std::printf("[debug lines]\n");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the debug-line test");
+    if(!bInit)
+    {
+        Rend.Shutdown();
+        return;
+    }
+
+    /* A perspective camera at the origin looking down +Z, as the editor sets. */
+    const EngineCore::Size Viewport(1280, 720);
+    const RenderView View = RenderView::MakePerspective(Viewport, EngineCore::Vector3(0.0, 0.0, 0.0),
+                                                        EngineCore::Vector3(0.0, 0.0, 1.0), 60.0f, 1.0f, 10000.0f);
+    Rend.SetViewOverride(&View);
+
+    auto DrawCallsForFrame = [&Rend, &Viewport](const uint64_t InFrame) -> uint64_t
+    {
+        RenderStats Before;
+        Rend.GetStats(Before);
+        Rend.EndFrame(FrameInfo{InFrame, 0.016, Viewport});
+        Rend.WaitForPreviousFrame();
+        RenderStats After;
+        Rend.GetStats(After);
+        return After.DrawCalls - Before.DrawCalls;
+    };
+
+    Rend.DrawDebugBox(GameCore::AABB(EngineCore::Vector3(-50.0, -50.0, 400.0), EngineCore::Vector3(50.0, 50.0, 500.0)),
+                      EngineCore::Color(255, 160, 0));
+    Expect(DrawCallsForFrame(0) == 12, "a solid box draws its twelve edges");
+
+    Expect(DrawCallsForFrame(1) == 0, "lines last one frame: the next EndFrame draws none");
+
+    Rend.DrawDebugBox(GameCore::AABB(EngineCore::Vector3(-50.0, -50.0, 400.0), EngineCore::Vector3(50.0, 50.0, 400.0)),
+                      EngineCore::Color(255, 160, 0));
+    Expect(DrawCallsForFrame(2) == 4, "a flat box draws its outline; zero-length edges are skipped");
+
+    DebugLine EndOn;
+    EndOn.Start = EngineCore::Vector3(0.0, 0.0, 100.0);
+    EndOn.End   = EngineCore::Vector3(0.0, 0.0, 200.0);
+    Rend.DrawDebugLine(EndOn);
+    DebugLine Behind;
+    Behind.Start = EngineCore::Vector3(-10.0, 0.0, -100.0);
+    Behind.End   = EngineCore::Vector3( 10.0, 0.0, -100.0);
+    Rend.DrawDebugLine(Behind);
+    Expect(DrawCallsForFrame(3) == 0, "a segment seen end-on, or behind the camera, is not drawn");
+
+    Rend.DrawDebugBox(GameCore::AABB(), EngineCore::Color(255, 255, 255));
+    Expect(DrawCallsForFrame(4) == 0, "an empty AABB draws nothing");
+
+    Rend.SetViewOverride(nullptr);
+    Rend.Shutdown();
+}
+
+// ============================================================================
+// Materials: a primitive naming a material, missing then present
+// ============================================================================
+
+namespace
+{
+    std::atomic<int> GMaterialLoads{0};
+    std::atomic<int> GMaterialFallbacks{0};
+    LogHandler       GPreviousLogHandler = nullptr;
+
+    /* Counts material vs fallback draws via the log; Null draws nothing. */
+    void MaterialLogHandler(const LogVerbosity InVerbosity, const char* InMessage)
+    {
+        const std::string Text = InMessage ? InMessage : "";
+        if(Text.find("material 'SmokeGlow' loaded") != std::string::npos)  { ++GMaterialLoads; }
+        if(Text.find("material 'SmokeGlow':") != std::string::npos
+           && Text.find("plain tint") != std::string::npos)                { ++GMaterialFallbacks; }
+        if(GPreviousLogHandler) { GPreviousLogHandler(InVerbosity, InMessage); }
+    }
+}
+
+static void TestMaterials()
+{
+    std::printf("[materials]\n");
+
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreMaterials";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Root, Ignored);
+    std::filesystem::create_directories(Root / "Materials", Ignored);
+
+    FilesystemProvider Provider(Root.generic_string());
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Provider);
+    GPreviousLogHandler = GetLogHandler();
+    SetLogHandler(&MaterialLogHandler);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the material test");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(640, 360);
+        const RenderView View = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+        Rend.SetViewOverride(&View);
+
+        GameCore::World World;
+        const GameCore::Entity Quad = World.CreateEntity("Glowing");
+        Quad.AddComponent<GameCore::TransformComponent>();
+        RenderComponent Prim;
+        Prim.Width = 100.0f;
+        Prim.Height = 100.0f;
+        std::strcpy(Prim.Material, "SmokeGlow");
+        Quad.AddComponent(Prim);
+        Rend.BindWorld(World);
+
+        uint64_t Frame = 200;
+        auto DrawFrame = [&]() -> uint64_t
+        {
+            RenderStats Before;
+            Rend.GetStats(Before);
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            RenderStats After;
+            Rend.GetStats(After);
+            return After.DrawCalls - Before.DrawCalls;
+        };
+
+        DrawFrame();   // extracts; the proxy draws from the next frame
+        const uint64_t MissingDraws = DrawFrame();
+        Expect(MissingDraws == 1, "a primitive whose material is missing still draws, as the plain tint");
+        Expect(GMaterialFallbacks == 1 && GMaterialLoads == 0, "a missing material is warned about");
+        DrawFrame();
+        Expect(GMaterialFallbacks == 1, "and warned about once, not every frame");
+
+        std::ofstream(Root / "Materials" / "SmokeGlow.material")
+            << "# a test material\nNimbleMaterial 1\nParam Tint 0 vec3 1 0.5 0.25 0\n";
+        Rend.ReloadMaterial("SmokeGlow");
+        const uint64_t LoadedDraws = DrawFrame();
+        Expect(GMaterialLoads == 1, "ReloadMaterial makes the next draw read the material afresh");
+        Expect(LoadedDraws == 1, "a primitive with a loaded material draws once");
+
+        DrawFrame();
+        Expect(GMaterialLoads == 1, "a loaded material is kept, not reloaded per frame");
+
+        /* Answered once, next frame; Null reads back nothing. */
+        const uint64_t Preview = Rend.RequestMaterialPreview("SmokeGlow", 64, EngineCore::Color(255, 255, 255));
+        const uint64_t Missing = Rend.RequestMaterialPreview("NoSuchMaterial", 64, EngineCore::Color(255, 255, 255));
+        Expect(Preview != 0 && Missing != 0 && Preview != Missing, "a preview request gets its own id");
+        EngineCore::Image Pixels;
+        std::string       Error;
+        Expect(!Rend.TakeMaterialPreview(Preview, Pixels, Error), "a preview is not ready before a frame renders it");
+        DrawFrame();
+        Expect(Rend.TakeMaterialPreview(Preview, Pixels, Error) && Error.find("reads nothing back") != std::string::npos,
+               "the Null backend answers a preview with why it has no picture");
+        Expect(!Rend.TakeMaterialPreview(Preview, Pixels, Error), "a preview is taken once");
+        Expect(Rend.TakeMaterialPreview(Missing, Pixels, Error) && Error.find("could not be loaded") != std::string::npos,
+               "a preview of a missing material says so");
+        Expect(Rend.RequestMaterialPreview("", 64, EngineCore::Color()) == 0, "a preview needs a name");
+
+        std::ofstream(Root / "Materials" / "SmokeGlow.material", std::ios::trunc) << "NimbleMaterial 7\n";
+        Rend.ReloadMaterial(nullptr);
+        DrawFrame();
+        Expect(GMaterialFallbacks == 2, "a material file of an unknown version falls back, warned");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+    }
+    Rend.Shutdown();
+
+    SetLogHandler(GPreviousLogHandler);
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
+
+/* A two-triangle square in two sections -- small enough to check by hand. */
+static MeshData MakeSmokeMesh()
+{
+    MeshData Mesh;
+    Mesh.Positions = { 0, 0, 0,   10, 0, 0,   10, -10, 0,   0, -10, 5 };
+    Mesh.Normals   = { 0, 0, -1,  0, 0, -1,   0, 0, -1,     0, 0, -1 };
+    Mesh.UV0       = { 0, 0,      1, 0,       1, 1,         0, 1 };
+    Mesh.Indices   = { 0, 1, 2,   0, 2, 3 };
+    Mesh.Sections  = { MeshSection{ "Front", "Glow", 0, 3 }, MeshSection{ "Back", "", 3, 3 } };
+    Mesh.ImportInfo.SourcePath = "Source/Square.glb";
+    Mesh.ImportInfo.SourceTime = 1234;
+    Mesh.ImportInfo.Settings   = "Scale=1\n";
+    ComputeMeshBounds(Mesh);
+    return Mesh;
+}
+
+static bool LoadMeshFrom(const Archive& InSaved, MeshData& OutMesh)
+{
+    Archive Reader = Archive::ForReading(InSaved.GetBytes());
+    return SerializeMesh(Reader, OutMesh);
+}
+
+static void TestMeshAssets()
+{
+    std::printf("[mesh assets]\n");
+
+    MeshData Mesh = MakeSmokeMesh();
+    Expect(Mesh.BoundsMin[0] == 0.0f && Mesh.BoundsMin[1] == -10.0f && Mesh.BoundsMax[0] == 10.0f && Mesh.BoundsMax[2] == 5.0f,
+           "ComputeMeshBounds spans every position");
+
+    Archive Writer = Archive::ForWriting();
+    Expect(SerializeMesh(Writer, Mesh), "a well-formed mesh saves");
+
+    MeshData Loaded;
+    Expect(LoadMeshFrom(Writer, Loaded), "and loads back");
+    Expect(Loaded.Positions == Mesh.Positions && Loaded.Normals == Mesh.Normals && Loaded.UV0 == Mesh.UV0
+           && Loaded.Indices == Mesh.Indices, "with the same vertices and indices");
+    Expect(Loaded.Sections.size() == 2 && Loaded.Sections[0].Name == "Front" && Loaded.Sections[0].Material == "Glow"
+           && Loaded.Sections[1].FirstIndex == 3 && Loaded.Sections[1].IndexCount == 3, "the same sections");
+    Expect(Loaded.BoundsMax[2] == 5.0f && Loaded.ImportInfo.SourcePath == "Source/Square.glb"
+           && Loaded.ImportInfo.SourceTime == 1234 && Loaded.ImportInfo.Settings == "Scale=1\n",
+           "the same bounds and import source");
+
+    MeshData NoSource = MakeSmokeMesh();
+    NoSource.ImportInfo = AssetImportInfo();
+    Archive NoSourceWriter = Archive::ForWriting();
+    MeshData NoSourceLoaded;
+    Expect(SerializeMesh(NoSourceWriter, NoSource) && LoadMeshFrom(NoSourceWriter, NoSourceLoaded)
+           && NoSourceLoaded.ImportInfo.IsEmpty(), "the import source is optional");
+
+    MeshData BadIndex = MakeSmokeMesh();
+    BadIndex.Indices[4] = 9;
+    Archive BadIndexWriter = Archive::ForWriting();
+    SerializeMesh(BadIndexWriter, BadIndex);
+    MeshData BadIndexLoaded;
+    Expect(!LoadMeshFrom(BadIndexWriter, BadIndexLoaded), "an index past the last vertex is refused on load");
+
+    MeshData BadSection = MakeSmokeMesh();
+    BadSection.Sections[1].IndexCount = 6;
+    Archive BadSectionWriter = Archive::ForWriting();
+    SerializeMesh(BadSectionWriter, BadSection);
+    MeshData BadSectionLoaded;
+    Expect(!LoadMeshFrom(BadSectionWriter, BadSectionLoaded), "a section past the last index is refused on load");
+
+    MeshData NoNormals = MakeSmokeMesh();
+    NoNormals.Normals.pop_back();
+    Archive NoNormalsWriter = Archive::ForWriting();
+    Expect(!SerializeMesh(NoNormalsWriter, NoNormals), "a mesh missing a normal does not save");
+
+    std::vector<uint8_t> Truncated = Writer.GetBytes();
+    Truncated.resize(Truncated.size() / 2);
+    Archive TruncatedReader = Archive::ForReading(Truncated);
+    MeshData TruncatedLoaded;
+    Expect(!SerializeMesh(TruncatedReader, TruncatedLoaded), "a truncated mesh fails to load");
+
+    TextureData Texture;
+    Texture.Pixels = Image(2, 2, EImageFormat::RGBA8);
+    Archive TextureWriter = Archive::ForWriting();
+    SerializeTexture(TextureWriter, Texture);
+    Archive WrongTag = Archive::ForReading(TextureWriter.GetBytes());
+    MeshData WrongTagLoaded;
+    Expect(!SerializeMesh(WrongTag, WrongTagLoaded), "a texture is not a mesh");
+
+    /* Through files and the cache, as a RenderComponent finds one. */
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreMeshes";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Root, Ignored);
+    FilesystemProvider Provider(Root.generic_string());
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Provider);
+
+    MeshData ToSave = MakeSmokeMesh();
+    Expect(SaveMeshFile((Root / "Content" / "Square.nmmesh").generic_string(), ToSave), "SaveMeshFile writes, making folders");
+
+    MeshHeader Header;
+    Expect(LoadMeshHeader("Content/Square.nmmesh", Header) && Header.VertexCount == 4 && Header.IndexCount == 6
+           && Header.SectionCount == 2 && Header.BoundsMin[1] == -10.0f, "LoadMeshHeader reads counts and bounds");
+
+    MeshAssetCache::Invalidate(std::string());
+    const std::shared_ptr<const MeshData> First = MeshAssetCache::Find("Content/Square.nmmesh");
+    Expect(First && First->GetTriangleCount() == 2, "MeshAssetCache::Find loads through the file provider");
+    Expect(MeshAssetCache::Find("Content/Square.nmmesh") == First, "and keeps what it loaded");
+    Expect(!MeshAssetCache::Find("Content/Missing.nmmesh"), "a missing mesh is null");
+    MeshAssetCache::Invalidate("Content/Square.nmmesh");
+    const std::shared_ptr<const MeshData> Second = MeshAssetCache::Find("Content/Square.nmmesh");
+    Expect(Second && Second != First, "Invalidate makes the next Find load afresh");
+    MeshAssetCache::Invalidate(std::string());
+
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
+
+static void TestTextureAssets()
+{
+    std::printf("[texture assets]\n");
+
+    TextureData Texture;
+    Texture.Pixels = Image(3, 2, EImageFormat::RGBA8);
+    for(size_t At = 0; At < Texture.Pixels.GetSizeBytes(); ++At) { Texture.Pixels.GetData()[At] = uint8_t(At * 7); }
+    Texture.bSRGB  = false;
+    Texture.Filter = ETextureFilter::Nearest;
+    Texture.Wrap   = ETextureWrap::Mirror;
+    Texture.ImportInfo.SourcePath = "Source/Bricks.png";
+
+    Archive Writer = Archive::ForWriting();
+    Expect(SerializeTexture(Writer, Texture), "an RGBA8 texture saves");
+
+    TextureData Loaded;
+    Archive Reader = Archive::ForReading(Writer.GetBytes());
+    Expect(SerializeTexture(Reader, Loaded), "and loads back");
+    Expect(Loaded.Pixels.GetWidth() == 3 && Loaded.Pixels.GetHeight() == 2
+           && std::memcmp(Loaded.Pixels.GetData(), Texture.Pixels.GetData(), Texture.Pixels.GetSizeBytes()) == 0,
+           "with the same pixels");
+    Expect(!Loaded.bSRGB && Loaded.Filter == ETextureFilter::Nearest && Loaded.Wrap == ETextureWrap::Mirror
+           && Loaded.ImportInfo.SourcePath == "Source/Bricks.png", "the same sampling and import source");
+
+    TextureData Gray;
+    Gray.Pixels = Image(2, 2, EImageFormat::Gray8);
+    Archive GrayWriter = Archive::ForWriting();
+    Expect(!SerializeTexture(GrayWriter, Gray), "a non-RGBA8 texture does not save");
+
+    std::vector<uint8_t> Truncated = Writer.GetBytes();
+    Truncated.resize(Truncated.size() - 8);
+    Archive TruncatedReader = Archive::ForReading(Truncated);
+    TextureData TruncatedLoaded;
+    Expect(!SerializeTexture(TruncatedReader, TruncatedLoaded), "a truncated texture fails to load");
+
+    MeshData Mesh = MakeSmokeMesh();
+    Archive MeshWriter = Archive::ForWriting();
+    SerializeMesh(MeshWriter, Mesh);
+    Archive WrongTag = Archive::ForReading(MeshWriter.GetBytes());
+    TextureData WrongTagLoaded;
+    Expect(!SerializeTexture(WrongTag, WrongTagLoaded), "a mesh is not a texture");
+}
+
+/* Null backend: one draw per section, mesh bounds, quad fallback. */
+static void TestMeshDrawing()
+{
+    std::printf("[mesh drawing]\n");
+
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreMeshDraw";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Root, Ignored);
+    FilesystemProvider Provider(Root.generic_string());
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Provider);
+    MeshAssetCache::Invalidate(std::string());
+
+    MeshData Square = MakeSmokeMesh();
+    SaveMeshFile((Root / "Content" / "Square.nmmesh").generic_string(), Square);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the mesh test");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(640, 360);
+        const RenderView View = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+        Rend.SetViewOverride(&View);
+
+        GameCore::World World;
+        const GameCore::Entity Meshed = World.CreateEntity("Meshed");
+        Meshed.AddComponent<GameCore::TransformComponent>();
+        RenderComponent Render;
+        std::strcpy(Render.Mesh, "Content/Square.nmmesh");
+        Meshed.AddComponent(Render);
+        Rend.BindWorld(World);
+
+        uint64_t Frame = 400;
+        auto DrawFrame = [&]() -> uint64_t
+        {
+            RenderStats Before;
+            Rend.GetStats(Before);
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            RenderStats After;
+            Rend.GetStats(After);
+            return After.DrawCalls - Before.DrawCalls;
+        };
+
+        DrawFrame();   // extracts; the proxy draws from the next frame
+        Expect(DrawFrame() == 2, "a two-section mesh draws once per section");
+
+        std::strcpy(Meshed.GetComponent<RenderComponent>()->Mesh, "Content/Missing.nmmesh");
+        DrawFrame();
+        Expect(DrawFrame() == 1, "a mesh that cannot be loaded draws the quad instead");
+
+        Meshed.GetComponent<RenderComponent>()->Mesh[0] = '\0';
+        DrawFrame();
+        Expect(DrawFrame() == 1, "no mesh draws the quad");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+    }
+    Rend.Shutdown();
+
+    MeshAssetCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
+#endif // WITH_EDITOR
+
 int main()
 {
     std::printf("RenderCore smoke test\n");
@@ -529,6 +936,13 @@ int main()
     }
 
     TestRendererWithWorld();
+#if WITH_EDITOR
+    TestDebugLines();
+    TestMaterials();
+    TestMeshAssets();
+    TestTextureAssets();
+    TestMeshDrawing();
+#endif
 
     const uint64_t Leaked = Memory::ReportLeaks();
     Expect(Leaked == 0, "no allocations leaked across the whole run -- every command, extraction "

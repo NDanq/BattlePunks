@@ -211,7 +211,7 @@ exactly the access pattern `ComponentPool` is built for.
 component's bytes are in the record, not just the transform, a proxy type's
 `ApplyComponent` override is the *entire* extraction contract a proxy author
 has to implement -- there is no separate "did the width change" path to
-wire up. `PrimitiveProxy::ApplyComponent` copies `Width`/`Height`/`Tint`/
+wire up. `RenderComponentProxy::ApplyComponent` copies `Width`/`Height`/`Tint`/
 `bVisible` unconditionally, every frame; the cost of that unconditional copy
 is a handful of bytes, not worth avoiding.
 
@@ -297,7 +297,7 @@ real view still wants everything drawn, not nothing.
 It is exactly the **wrong** default for a proxy's own bounds, and this
 module shipped that bug once. `RenderProxy`'s default `LocalBounds`/
 `WorldBounds` are the same empty `AABB()` state -- a proxy that never calls
-`SetLocalBounds` (which `PrimitiveProxy::ApplyComponent` always does, but a
+`SetLocalBounds` (which `RenderComponentProxy::ApplyComponent` always does, but a
 game's own proxy type is not required to) has an empty `WorldBounds`, and
 under `AABB::Overlaps`'s own semantics that reads as "never overlaps
 anything" -- such a proxy would be permanently culled against any real view,
@@ -361,10 +361,89 @@ every `GDIDrawObject` call answers by construction.
 
 ---
 
+## Materials -- one shader per name, owned here, never released mid-run
+
+`RenderComponent::Material` names a material graph's output, and
+`RenderContext::DrawQuadWithMaterial` draws the quad through its pixel shader,
+with `Basic_VS` still on the vertex side. Everything below happens on the
+render thread, inside `RenderContext`.
+
+**Why RenderContext owns the shaders, not GDI's registry.** `GDIGetShader<T>()`
+keys shaders by C++ type: one instance per class, registered at startup with a
+fixed path. A material is one of any number, named at run time. So
+`RenderContext.cpp` defines one `MaterialPixelShader` class and creates an
+instance per material itself: `InitResource(ST_Pixel, "Materials/<Name>.fsh")`,
+which each backend resolves through GDI's own cooked-path rule. It keeps them
+in a name map. That makes it responsible for releasing them while the device
+still exists. `RenderThread`'s exit calls `RenderContext::ReleaseGPUResources()`
+before the driver's `Destroy()`, for the same reason
+`GDIDynamicDriver::ReleaseCachedResources` exists.
+
+**Why one `mat4`.** Each backend packs a pixel shader's non-core uniforms back
+to back, in `unordered_map` order, without std140 padding. See Vulkan's
+`PackCustomUBO` and D3D12's `PackCustom`; the latter's comment says "each
+custom cbuffer holds one today". That is correct for exactly one uniform.
+Rather than change GDI (a vendored subtree), a generated material declares
+exactly one, `mat4 MaterialParams`. Its columns are the slots:
+
+- 0 to 2: parameter values, from `Materials/<Name>.material`;
+- 3: the primitive's Tint.
+
+Every backend transposes a `Matrix4x4` into its column-major upload, so shader
+column c is `Matrix4x4` column c. The generator is NodeGraph's
+`MaterialSchema.cpp`.
+
+**Why a failed load falls back instead of skipping the draw.** A missing
+`.material`, or no cooked shader for the running backend (checked with
+`IFileProvider::Exists` first: OpenGL's `InitResource` treats a missing file as
+a hard error), leaves a map entry with no shader. That is warned about once and
+drawn as `DrawQuad`, so a typo in `Material` shows a plain quad and one log
+line, not an invisible entity.
+
+**Why a reload retires the old shader instead of deleting it.** The editor
+recooks a material and calls `Renderer::ReloadMaterial` (editor-only), which
+drops the map entry so the next draw loads it afresh. The old shader goes on a
+retired list, released only by `ReleaseGPUResources`. Two reasons:
+
+- A backend may cache pipelines keyed by the shader module's handle. A handle
+  released mid-run can come back as the new shader's, and a pipeline built from
+  the old code would be served for it.
+- A frame in flight may still reference the old one.
+
+The retired list grows by one small module per edit, which an editing session
+never notices.
+
+**Previews (editor only): the same renderer, a target of its own.**
+`Renderer::RequestMaterialPreview` queues a request. `RenderScene::Render`
+draws it at the start of the next frame, after `GDIBeginRendering` and before
+the back buffer is bound. It uses `RenderContext::RenderMaterialPreview`: the
+material on a quad filling a small render target the context owns, then
+`GDIRenderTarget::ToImage()`. Every backend's `ToImage` flushes the frame so
+far, reads back, and resumes.
+
+The order matters. `PresentToWindow` shows the driver's most recently bound
+target, so the back buffer is bound after the preview and the viewport never
+shows it.
+
+The image crosses back to the game thread through a mutex-guarded mailbox
+(`MaterialPreview.h`), since it owns a buffer and so cannot ride in a
+command's captures. The readback stalls that one frame, so the editor asks
+after an edit, never per frame. The preview's view keeps the eye at the
+quad's depth: `MakeOrthographic`'s ZNear of -1 admits view-space z up to +1
+only.
+
+**Bind tracking.** `DrawQuad` used to bind `Basic_VS`/`Basic_PS` once for the
+life of the thread. With a second pixel shader in play, `RenderContext`
+remembers the pair it last bound and rebinds only on a change. It forgets that
+at every frame start (`SetFrameNumber`), in case something outside it bound
+others in between.
+
+---
+
 ## What arrived deliberately incomplete
 
 - **No Lua bindings.** `ScriptEngine`'s proxy metatables (`ScriptBindings.cpp`)
-  are private to GameCore; extending them for `PrimitiveComponent` needs an
+  are private to GameCore; extending them for `RenderComponent` needs an
   extension point that does not exist yet. A game that wants this from a
   script currently binds it itself.
 - **No frame-arena allocator for commands or extraction blobs.** Both

@@ -12,12 +12,20 @@ using Microsoft::WRL::ComPtr;
 namespace
 {
     constexpr uint32_t kLayoutInstanced = 1;
+    constexpr uint32_t kLayoutMesh      = 2;
 
     // spirv-cross emits TEXCOORD<location> for every stage input, matrices
     // flattened one column per location (--hlsl-flatten-matrix-vertex-input-semantics).
     const D3D12_INPUT_ELEMENT_DESC GStandardLayout[] = {
         { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+
+    // An indexed mesh (GDICreateMesh): the normal at location 8, slot 2.
+    const D3D12_INPUT_ELEMENT_DESC GMeshLayout[] = {
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT, 2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     const D3D12_INPUT_ELEMENT_DESC GInstancedLayout[] = {
@@ -136,6 +144,10 @@ uint64_t D3D12PipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.BlendOpAlpha,   sizeof(K.BlendOpAlpha));
     Mix(&K.WriteMask,      sizeof(K.WriteMask));
     Mix(&K.RTFormat,       sizeof(K.RTFormat));
+    Mix(&K.DSVFormat,      sizeof(K.DSVFormat));
+    Mix(&K.DepthEnable,    sizeof(K.DepthEnable));
+    Mix(&K.DepthWrite,     sizeof(K.DepthWrite));
+    Mix(&K.DepthFunc,      sizeof(K.DepthFunc));
     return H;
 }
 
@@ -167,7 +179,11 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
     Desc.VS                    = { VS->GetBytecode().data(), VS->GetBytecode().size() };
     Desc.PS                    = { PS->GetBytecode().data(), PS->GetBytecode().size() };
 
-    if(Key.VertexLayoutID == kLayoutInstanced)
+    if(Key.VertexLayoutID == kLayoutMesh)
+    {
+        Desc.InputLayout = { GMeshLayout, UINT(sizeof(GMeshLayout) / sizeof(GMeshLayout[0])) };
+    }
+    else if(Key.VertexLayoutID == kLayoutInstanced)
     {
         Desc.InputLayout = { GInstancedLayout, UINT(sizeof(GInstancedLayout) / sizeof(GInstancedLayout[0])) };
     }
@@ -191,15 +207,18 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
     Desc.RasterizerState.CullMode        = D3D12_CULL_MODE_NONE;
     Desc.RasterizerState.DepthClipEnable = TRUE;
 
-    // No depth attachment exists yet on any backend.
-    Desc.DepthStencilState.DepthEnable   = FALSE;
-    Desc.DepthStencilState.StencilEnable = FALSE;
+    // Depth testing needs a depth buffer.
+    const bool bDepth = Key.DSVFormat != DXGI_FORMAT_UNKNOWN && Key.DepthEnable;
+    Desc.DepthStencilState.DepthEnable    = bDepth ? TRUE : FALSE;
+    Desc.DepthStencilState.DepthWriteMask = (bDepth && Key.DepthWrite) ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+    Desc.DepthStencilState.DepthFunc      = Key.DepthFunc;
+    Desc.DepthStencilState.StencilEnable  = FALSE;
 
     Desc.SampleMask            = UINT_MAX;
     Desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
     Desc.NumRenderTargets      = 1;
     Desc.RTVFormats[0]         = Key.RTFormat;
-    Desc.DSVFormat             = DXGI_FORMAT_UNKNOWN;
+    Desc.DSVFormat             = Key.DSVFormat;
     Desc.SampleDesc.Count      = 1;
 
     ComPtr<ID3D12PipelineState> Pipeline;

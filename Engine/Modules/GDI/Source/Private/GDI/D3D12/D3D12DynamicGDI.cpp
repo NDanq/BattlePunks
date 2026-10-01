@@ -223,7 +223,20 @@ void D3D12DynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
     NewRT->SetCurrentState(D3D12_RESOURCE_STATE_RENDER_TARGET);
 
     const D3D12_CPU_DESCRIPTOR_HANDLE RTV = NewRT->GetRTV();
-    List->OMSetRenderTargets(1, &RTV, FALSE, nullptr);
+    if(NewRT->HasDepth())
+    {
+        // Always in DEPTH_WRITE; cleared on first bind (contents undefined).
+        const D3D12_CPU_DESCRIPTOR_HANDLE DSV = NewRT->GetDSV();
+        List->OMSetRenderTargets(1, &RTV, FALSE, &DSV);
+        if(NewRT->TakeDepthNeedsClear())
+        {
+            List->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+        }
+    }
+    else
+    {
+        List->OMSetRenderTargets(1, &RTV, FALSE, nullptr);
+    }
 
     CurrentStateData->ActiveRenderTarget = NewRT;
     CurrentStateData->bRenderingActive   = true;
@@ -362,6 +375,19 @@ GDIMesh* D3D12DynamicGDI::CreateQuadMesh(const float* VertData, const float* Tex
     auto* Mesh = new D3D12Mesh(DeviceObj, CurrentStateData);
     Mesh->SetRenderData(RenderData);
     Mesh->SetSupportsInstanced(bIsInstanced);
+    Mesh->InitResource();
+    return Mesh;
+}
+
+GDIMesh* D3D12DynamicGDI::CreateMesh(const GDIMeshDesc& InDesc)
+{
+    if(!DeviceObj || !CurrentStateData) return nullptr;
+
+    GDIMesh::ORenderData RenderData;
+    if(!GDIMakeIndexedRenderData(InDesc, RenderData)) return nullptr;
+
+    auto* Mesh = new D3D12Mesh(DeviceObj, CurrentStateData);
+    Mesh->SetRenderData(RenderData);
     Mesh->InitResource();
     return Mesh;
 }
@@ -509,7 +535,7 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     D3D12PipelineCache::PipelineKey Key;
     Key.VertexShaderID = VSRes->GetID();
     Key.PixelShaderID  = PSRes->GetID();
-    Key.VertexLayoutID = bIsInstanced ? 1u : 0u;
+    Key.VertexLayoutID = InMesh->IsIndexed() ? 2u : (bIsInstanced ? 1u : 0u);
     Key.BlendEnable    = Blend.bBlend ? TRUE : FALSE;
     Key.SrcBlend       = DecodeBlendFactor(Blend.Source);
     Key.DestBlend      = DecodeBlendFactor(Blend.Dest);
@@ -517,6 +543,10 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     Key.BlendOpAlpha   = DecodeBlendOp(Blend.AlphaOp);
     Key.WriteMask      = DecodeColorMask(CurrentStateData->ColorMask);
     Key.RTFormat       = CurrentStateData->ActiveRenderTarget->GetFormat();
+    Key.DSVFormat      = CurrentStateData->ActiveRenderTarget->GetDepthFormat();
+    Key.DepthEnable    = CurrentStateData->DepthState.bDepthTest ? TRUE : FALSE;
+    Key.DepthWrite     = CurrentStateData->DepthState.bDepthMask ? TRUE : FALSE;
+    Key.DepthFunc      = DecodeCompareFunc(CurrentStateData->DepthState.DepthMode);
 
     ID3D12PipelineState* Pipeline = PipelineCache->GetOrCreate(Key, VSRes, PSRes);
     if(!Pipeline) return false;

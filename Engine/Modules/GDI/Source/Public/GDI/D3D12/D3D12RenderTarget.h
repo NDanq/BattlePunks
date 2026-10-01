@@ -31,6 +31,14 @@ public:
     inline uint32_t                    GetSRVSlot()  const { return SRVSlot; }
     inline DXGI_FORMAT                 GetFormat()   const { return Format; }
 
+    /* D32, always in DEPTH_WRITE. False only if creation failed (logged). */
+    inline bool                        HasDepth()       const { return DepthResource != nullptr; }
+    inline D3D12_CPU_DESCRIPTOR_HANDLE GetDSV()         const { return DSVHeap->GetCPUDescriptorHandleForHeapStart(); }
+    inline DXGI_FORMAT                 GetDepthFormat() const { return HasDepth() ? DepthFormat : DXGI_FORMAT_UNKNOWN; }
+
+    /* True once after the depth buffer is (re)created: its first bind clears it. */
+    inline bool TakeDepthNeedsClear() { const bool bWas = bDepthNeedsClear; bDepthNeedsClear = false; return bWas; }
+
     /** State as of the last command recorded on the render thread. */
     inline D3D12_RESOURCE_STATES GetCurrentState() const              { return CurrentState; }
     inline void                  SetCurrentState(D3D12_RESOURCE_STATES InState) { CurrentState = InState; }
@@ -48,6 +56,7 @@ protected:
 
 private:
     void DestroyImage();
+    void AllocateDepth();
 
     D3D12Device*                                    Device  = nullptr;
     std::string                                     Name;
@@ -55,6 +64,11 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource>          Resource;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>    RTVHeap;
     uint32_t                                        SRVSlot = UINT32_MAX;
+
+    DXGI_FORMAT                                     DepthFormat = DXGI_FORMAT_D32_FLOAT;
+    Microsoft::WRL::ComPtr<ID3D12Resource>          DepthResource;
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>    DSVHeap;
+    bool                                            bDepthNeedsClear = false;
 
     D3D12_RESOURCE_STATES                           CurrentState = D3D12_RESOURCE_STATE_COMMON;
     std::atomic<D3D12_RESOURCE_STATES>              SubmittedState{D3D12_RESOURCE_STATE_COMMON};

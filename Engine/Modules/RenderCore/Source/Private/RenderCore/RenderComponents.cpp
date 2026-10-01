@@ -1,22 +1,18 @@
 #include "Public/RenderCore/RenderComponents.h"
 
 #include "Public/GameCore/ComponentScript.h"
+#if WITH_EDITOR
+#include "Public/GameCore/ComponentProperties.h"
+#endif
 #include "Public/GameCore/ComponentSerializer.h"
 
-#include "Private/RenderCore/PrimitiveProxy.h"
+#include "Private/RenderCore/RenderComponentProxy.h"
 
-/*
- * The two built-in components' registration. Nothing else to define --
- * unlike GameCore::Components.cpp's TransformComponent::GetLocalMatrix,
- * neither PrimitiveComponent nor CameraComponent has an out-of-line method
- * of its own; RENDERCORE_API is only for StaticType() itself, the same
- * reason GameCore::DESIGN.md gives for annotating even its plain-looking
- * components.
- */
+/* Registration for the two built-in components. */
 
 namespace RenderCore
 {
-    RENDERCORE_DEFINE_PROXY_COMPONENT(PrimitiveComponent, "Primitive", PrimitiveProxy)
+    RENDERCORE_DEFINE_PROXY_COMPONENT(RenderComponent, "Render", RenderComponentProxy)
 
     /* No RENDERCORE_PROXY_BODY() -- a CameraComponent drives WorldBridge's
      * view build directly (a later build-order step reads it, it does not
@@ -24,35 +20,26 @@ namespace RenderCore
      * this one needs. */
     GAMECORE_DEFINE_COMPONENT(CameraComponent, "Camera")
 
-    CreateProxyFn GetPrimitiveComponentFactory()
+    CreateProxyFn GetRenderComponentFactory()
     {
-        return &PrimitiveComponent_CreateProxy;
+        return &RenderComponent_CreateProxy;
     }
 
     /*
-     * THE SERIALIZERS, here beside the definitions rather than in GameCore --
-     * the module that owns a component type owns its serializer, the same rule
-     * that puts these two types' GAMECORE_DEFINE_COMPONENT calls here rather
-     * than in GameCore::Components.cpp.
+     * The owning module owns the serializer, so a build without RenderCore
+     * skips these chunks by size and warns.
      *
-     * That placement is also what makes a build WITHOUT RenderCore able to load
-     * a save that contains these components: nothing registers them, so
-     * WorldSerializer skips both chunks by size and warns. See
-     * WorldSerializer.h's format note on why every payload is sized.
-     *
-     * C.Proxy IS NOT SAVED, and cannot be. A RenderProxyHandle names a live
-     * render-thread object that RenderCore's WorldBridge creates by extracting
-     * this component every frame -- the same "it is a rebuildable cache, not
-     * data" reason BoundsComponent::ProxyID is skipped. A restored
-     * PrimitiveComponent gets a fresh proxy on the first frame after the load,
-     * from the values below, with nothing here having to arrange it.
+     * C.Proxy is not saved: it names a live render-thread object that
+     * WorldBridge recreates on the first frame after a load.
      */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PrimitiveComponent, 1)
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 1)
     {
-        Ar << C.Width;
-        Ar << C.Height;
-        GameCore::SerializeColor(Ar, C.Tint);
-        Ar << C.bVisible;
+        Ar.Field("Width",    C.Width);
+        Ar.Field("Height",   C.Height);
+        Ar.Field("Tint",     C.Tint);
+        Ar.Flag("Visible",   C.bVisible);
+        Ar.Field("Material", C.Material);
+        Ar.Field("Mesh",     C.Mesh);
     }
 
     /* Every field is real data -- a CameraComponent holds no per-run state at
@@ -60,9 +47,9 @@ namespace RenderCore
      * serializer). */
     GAMECORE_DEFINE_COMPONENT_SERIALIZER(CameraComponent, 1)
     {
-        Ar << C.ZNear;
-        Ar << C.ZFar;
-        Ar << C.bActive;
+        Ar.Field("ZNear", C.ZNear);
+        Ar.Field("ZFar",  C.ZFar);
+        Ar.Flag("Active", C.bActive);
     }
 
     /*
@@ -72,12 +59,14 @@ namespace RenderCore
      * re-extracts the component into its proxy every frame. C.Proxy is not
      * listed, so scripts cannot see the render handle.
      */
-    GAMECORE_DEFINE_COMPONENT_SCRIPT(PrimitiveComponent)
+    GAMECORE_DEFINE_COMPONENT_SCRIPT(RenderComponent)
     {
-        Bind.Field("Width",  &PrimitiveComponent::Width);
-        Bind.Field("Height", &PrimitiveComponent::Height);
-        Bind.Field("Tint",   &PrimitiveComponent::Tint);     // r, g, b[, a]
-        Bind.Flag("Visible", &PrimitiveComponent::bVisible);
+        Bind.Field("Width",  &RenderComponent::Width);
+        Bind.Field("Height", &RenderComponent::Height);
+        Bind.Field("Tint",   &RenderComponent::Tint);     // r, g, b[, a]
+        Bind.Flag("Visible", &RenderComponent::bVisible);
+        Bind.Field("Material", &RenderComponent::Material);
+        Bind.Field("Mesh",     &RenderComponent::Mesh);
     }
 
     GAMECORE_DEFINE_COMPONENT_SCRIPT(CameraComponent)
@@ -86,4 +75,25 @@ namespace RenderCore
         Bind.Field("ZFar",  &CameraComponent::ZFar);
         Bind.Flag("Active", &CameraComponent::bActive);
     }
+
+#if WITH_EDITOR
+    /* Editor-visible fields; deliberately separate from the Lua list
+     * (ComponentProperties.h). */
+    GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
+    {
+        Props.Field("Width",  &RenderComponent::Width);
+        Props.Field("Height", &RenderComponent::Height);
+        Props.Field("Tint",   &RenderComponent::Tint);
+        Props.Flag("Visible", &RenderComponent::bVisible);
+        Props.Field("Material", &RenderComponent::Material, GameCore::PF_AssetMaterial);
+        Props.Field("Mesh",     &RenderComponent::Mesh, GameCore::PF_AssetMesh);
+    }
+
+    GAMECORE_DEFINE_COMPONENT_PROPERTIES(CameraComponent)
+    {
+        Props.Field("ZNear", &CameraComponent::ZNear);
+        Props.Field("ZFar",  &CameraComponent::ZFar);
+        Props.Flag("Active", &CameraComponent::bActive);
+    }
+#endif // WITH_EDITOR
 }

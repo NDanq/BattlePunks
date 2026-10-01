@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c01" Type="Output.Pixel" Version="1" X="620" Y="0" />
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c02" Type="Input.TexCoord" Version="1" X="-560" Y="-40" />
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c03" Type="Vector.Distance" Version="1" X="-380" Y="-40">
+      <Const Pin="B" Value="0.5" />
+    </Node>
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c04" Type="Math.Multiply" Version="1" X="-220" Y="-40">
+      <Const Pin="B" Value="2" />
+    </Node>
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c05" Type="Math.OneMinus" Version="1" X="-60" Y="-40" />
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c06" Type="Math.Saturate" Version="1" X="100" Y="-40" />
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c07" Type="Parameter" Version="1" X="-60" Y="100" Wildcard="vec3">
+      <Prop Name="Default" Value="0.2 0.8 1" />
+      <Prop Name="Name" Value="Color" />
+    </Node>
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c08" Type="Input.InstanceTint" Version="1" X="100" Y="180" />
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c09" Type="Math.Multiply" Version="1" X="260" Y="20" />
+    <Node Id="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c0a" Type="Math.Multiply" Version="1" X="440" Y="60" />
+  </Nodes>
+  <Links>
+    <Link From="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c02.UV" To="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c03.A" />
+    <Link From="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c03.Out" To="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c04.A" />
+    <Link From="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c04.Out" To="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c05.X" />
+    <Link From="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c05.Out" To="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c06.X" />
+    <Link From="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c06.Out" To="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c09.B" />
+    <Link From="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c07.Value" To="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c09.A" />
+    <Link From="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c08.Tint" To="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c0a.B" />
+    <Link From="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c09.Out" To="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c0a.A" />
+    <Link From="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c0a.Out" To="5a0d1c9e7f3b4e2a8c6d1f0b3e5a7c01.Color" />
+  </Links>
+  <Comments>
+    <Comment X="-580" Y="-100" Width="1340" Height="360" Text="A soft radial glow: the Color parameter, times the primitive's Tint" />
+  </Comments>
+</NodeGraph>

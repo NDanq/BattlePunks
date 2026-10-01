@@ -1,13 +1,11 @@
 #include "Public/GameCore/ComponentScript.h"
 
-#include <cstring>
-
 #include "Public/GameCore/Components.h"
 
 /*
  * What the built-in components expose to Lua. Anything not listed here is
- * invisible to scripts -- above all the per-run state (Owner, ProxyID,
- * InstanceRef). Every component also has GetEntity(), added by the engine.
+ * invisible to scripts -- above all the per-run state (Owner, ProxyID).
+ * Every component also has GetEntity(), added by the engine.
  */
 
 namespace GameCore
@@ -25,25 +23,7 @@ namespace GameCore
             const EngineCore::Vector3 Delta = Call.GetVector3(1);
             if(Call.HasError()) { return; }   // do not apply a half-read delta
             C.Position = C.Position + Delta;
-        });
-    }
-
-    /* Get() and Set(name), kept as methods rather than a "Name" field so the
-     * existing name:Get() / name:Set() API is unchanged. */
-    GAMECORE_DEFINE_COMPONENT_SCRIPT(NameComponent)
-    {
-        Bind.Method("Get", [](NameComponent& C, ScriptCall& Call)
-        {
-            Call.PushString(C.Name);
-        });
-
-        Bind.Method("Set", [](NameComponent& C, ScriptCall& Call)
-        {
-            const char* NewName = Call.GetString(1);
-            if(Call.HasError()) { return; }
-            std::strncpy(C.Name, NewName, sizeof(C.Name) - 1);
-            C.Name[sizeof(C.Name) - 1] = '\0';
-        });
+        }, "Delta:Vector3");
     }
 
     /* GetLocal/SetLocal (six numbers), GetWorld (read-only -- the refit owns
