@@ -159,7 +159,7 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
      * a file that sets either still shows as Other. */
     AddChoice(Rendering, "Editor.RHI", QStringLiteral("Render backend"),
               QStringLiteral("The viewport's renderer. --rhi on the command line overrides it"),
-              { { "Vulkan", 2 }, { "D3D12 (not brought up yet)", 4 }, { "Null (draws nothing)", 0 } },
+              { { "Vulkan", 2 }, { "D3D12", 4 }, { "Null (draws nothing)", 0 } },
               true);
 
     QFormLayout* Build = AddGroup(QStringLiteral("Build"));

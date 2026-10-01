@@ -66,7 +66,7 @@ namespace
     };
     const IntChoice RhiChoices[] = {
         { "Null (draws nothing)", 0 }, { "OpenGL (does not start yet)", 1 }, { "Vulkan", 2 },
-        { "Metal (Apple only)", 3 },   { "D3D12 (not brought up yet)", 4 },
+        { "Metal (Apple only)", 3 },   { "D3D12", 4 },
     };
     const ChoiceList ChoiceLists[] = {
         { "Display", "RHI", RhiChoices, int(std::size(RhiChoices)) },

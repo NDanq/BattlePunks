@@ -277,7 +277,7 @@ warned about and skipped.
 | Backend | Compiles | Verified drawing |
 |---|---|---|
 | Vulkan | yes | yes -- RenderCore smoke `NIMBLE_SMOKE_GPU=Vulkan` renders DefaultLit, Glow, Wave (WPO) and Negative (PostProcess) through the caches and checks their pixels; Sandbox (Editor and Client targets) loads every material and its cache |
-| D3D12 | yes (every permutation through spirv-cross and fxc; registers match the root signature) | no -- its device needs a window-backed context, and the Sandbox config notes D3D12 has not been brought up through this path |
+| D3D12 | yes (every permutation through spirv-cross and fxc; registers match the root signature) | yes -- the same smoke check with `NIMBLE_SMOKE_GPU=D3D12` gives Vulkan's pixels; Sandbox and the editor viewport (`--rhi 4`) run on it |
 | OpenGL | yes (preprocessed) | no -- the host does not create a WGL context yet |
 | Metal | -- | -- |
 
@@ -293,4 +293,4 @@ Texture parameters and Texture Sample nodes (the slots exist); tangents for
 normal maps; an RGBA16F scene target and tonemapping (needs a render-target
 format in GDI); material instances; a cull mode; more light types; Scene
 Depth for PostProcess (needs depth targets as textures); an Unlit view mode
-(and its permutation); D3D12 and OpenGL bring-up through the window path.
+(and its permutation); OpenGL bring-up through the window path.

@@ -11,6 +11,12 @@
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
 
+/* Here rather than in RenderCoreInternal.h: d3d12.h brings windows.h, whose
+ * macros break GameCore headers in the files that include both. */
+#if WITH_D3D12_GDI
+#include "Public/GDI/D3D12/D3D12DynamicGDI.h"
+#endif
+
 // Threading primitives end to end: every Thread/Semaphore/ThreadSafeQueue
 // below comes from EngineCore.
 using namespace EngineCore;
@@ -106,8 +112,10 @@ namespace RenderCore
             /* A real test, not a restatement of "we called Allocate": a GL
              * backend with no drawable early-outs before SetThreadID, leaving
              * GDIInRenderThread() false forever -- NimbleEngine.cpp's own
-             * comment on this exact check, carried over verbatim. */
-            const bool bOK = GDIInRenderThread();
+             * comment on this exact check, carried over verbatim. And Vulkan
+             * and D3D12 record the thread FIRST, then can still fail (no
+             * context, no device), so the driver must also say it finished. */
+            const bool bOK = GDIInRenderThread() && GDynamicGDI && GDynamicGDI->IsInitialized();
             bAllocateOK.store(bOK, std::memory_order_release);
             ReadyForUse.Signal();
 
@@ -189,13 +197,14 @@ namespace RenderCore
         /*
          * WHICH BACKENDS CAN BE HANDED A CONTEXT FROM HERE.
          *
-         * Null and Vulkan can: neither needs a drawable at this point.
+         * Null, Vulkan and D3D12 can: none needs a drawable at this point.
          * VulkanGDIContext's constructor only creates the process-wide
          * VkInstance; the surface comes much later, from VKSwapchain::Initialize
          * out of the WindowHandle InitializeGDI stored above. Without this
          * assignment VulkanDynamicGDI::Allocate() early-outs on its
          * `if(!VKCtx || !VKCtx->VKContext)` guard and silently discards every
-         * draw call.
+         * draw call. D3D12 is the same: its device needs no window, and its
+         * swapchain is made by the first PresentToWindow.
          *
          * OpenGL and Metal cannot: a GL context wants an HDC made current on
          * THIS thread, which this function has no way to build. They get no
@@ -215,6 +224,12 @@ namespace RenderCore
                                      "to; the swapchain will fail to initialise")
             }
             AssignContextGDI(new VulkanGDIContext());
+        }
+#endif
+#if WITH_D3D12_GDI
+        else if(InBackend == ERenderBackend::D3D12)
+        {
+            AssignContextGDI(new D3D12GDIContext());
         }
 #endif
         else if(!InWindow.IsValid())

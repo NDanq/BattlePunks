@@ -906,7 +906,6 @@ static void TestMaterialsOnGpu()
         }
         DrawFrame();
         DrawFrame();
-        bool bNoTargets = false;
         for(Check& Each : Checks)
         {
             EngineCore::Image Pixels;
@@ -914,7 +913,6 @@ static void TestMaterialsOnGpu()
             Each.bOk = Rend.TakeMaterialPreview(Each.Request, Pixels, Error) && Pixels.GetWidth() == 64 && Pixels.GetData();
             if(!Each.bOk)
             {
-                bNoTargets |= Error.find("render target") != std::string::npos;
                 std::printf("    %s: %s\n", Each.Material, Error.c_str());
                 continue;
             }
@@ -924,18 +922,6 @@ static void TestMaterialsOnGpu()
             Each.Rgb[1] = Px[1];
             Each.Rgb[2] = bBgra ? Px[0] : Px[2];
             std::printf("    %s centre = %d %d %d\n", Each.Material, Each.Rgb[0], Each.Rgb[1], Each.Rgb[2]);
-        }
-
-        /* D3D12 builds its device from a window's context: with none it has
-         * no render targets to draw a preview into. */
-        if(bNoTargets)
-        {
-            std::printf("  this backend cannot render without a window; pixel checks skipped\n");
-            Rend.UnbindWorld();
-            Rend.SetViewOverride(nullptr);
-            Rend.Shutdown();
-            SetFileProvider(PreviousProvider);
-            return;
         }
 
         const auto Near = [](const int InValue, const int InWant) { return InValue >= InWant - 12 && InValue <= InWant + 12; };
