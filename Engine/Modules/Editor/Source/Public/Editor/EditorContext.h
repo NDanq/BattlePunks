@@ -4,6 +4,7 @@
 #if WITH_EDITOR
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include <QImage>
@@ -168,8 +169,12 @@ public:
     //
     // On the active World: while playing, these reach into the running game.
 
-    /* Named InName, with a Transform placed at InPosition. */
-    GameCore::EntityID CreateEntity(const QString& InName, const EngineCore::Vector3& InPosition);
+    /* Named InName, with a Transform placed at InPosition. InSetup, if
+     * given, adds or fills in more before the step is recorded -- so an
+     * entity made with its components (a mesh dropped on the viewport) is
+     * one undo step, and comes back whole. */
+    GameCore::EntityID CreateEntity(const QString& InName, const EngineCore::Vector3& InPosition,
+                                    const std::function<void(const GameCore::Entity&)>& InSetup = nullptr);
     void               DestroyEntity(GameCore::EntityID InEntity);
 
     /* The entity members (Entity::SetName / SetScript). Both refresh the
@@ -192,6 +197,7 @@ public:
     /*
      * The world-space box the editor shows for InEntity, best source first:
      *   BoundsComponent::World     what the spatial index and culling use
+     *   a RenderComponent's mesh   its box through the Transform
      *   a RenderComponent's quad   its corners through the Transform
      *   the Transform alone        a small cube at its position
      * An empty box for a dead entity or one with none of these.
