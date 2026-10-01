@@ -814,6 +814,73 @@ namespace
         }
     }
 
+    /* A disc: discard where distance(UV, 0.5) > 0.4; the colour is 1 - that distance. */
+    Graph MakeCutoutGraph()
+    {
+        Graph G;
+        G.SchemaName = "Material";
+        G.Name       = "Cutout";
+
+        AddNode(G, 1, "Output.Pixel", 400, 0);
+        AddNode(G, 2, "Input.TexCoord", -300, 0);
+        AddNode(G, 3, "Vector.Distance", -100, 0).Constants["B"] = "0.5";
+        Node& Discard = AddNode(G, 4, "Output.Discard", 200, 150);
+        Discard.Constants["B"]       = "0.4";
+        Discard.Properties["Compare"] = ">";
+        AddNode(G, 5, "Math.OneMinus", 200, 0);
+        Connect(G, 2, "UV", 3, "A");
+        Connect(G, 3, "Out", 4, "A");
+        Connect(G, 3, "Out", 5, "X");
+        Connect(G, 5, "Out", 1, "Color");
+        return G;
+    }
+
+    void TestDiscard()
+    {
+        std::printf("[discard]\n");
+
+        const Schema* S = FindSchema("Material");
+        const Graph Cutout = MakeCutoutGraph();
+        Expect(S->DescribeNode(Cutout, *Cutout.FindNode(Id(4))) == "if A > B", "a Discard describes its test");
+
+        CompileResult R;
+        CompileGraph(Cutout, R);
+        Expect(!R.HasErrors(), "the cutout graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Cutout, R).c_str()); }
+        ExpectGolden("Cutout.fsh", R.Code);
+
+        const size_t Discard = R.Code.find("if(t0 > 0.4) { discard; }");
+        Expect(Discard != std::string::npos, "a Discard is an if around discard");
+        Expect(Discard < R.Code.find("1.0 - t0"), "the discard comes before the colour");
+        Expect(R.Code.find("distance(") == R.Code.rfind("distance("), "a value the discard and the colour share is computed once");
+
+        Graph Loaded;
+        Loaded.Name = "Cutout";
+        std::string Error;
+        Expect(ReadGraphText(WriteGraphText(Cutout), Loaded, Error) && WriteGraphText(Loaded) == WriteGraphText(Cutout),
+               "a Discard round-trips");
+
+        {
+            Graph Two = MakeCutoutGraph();
+            AddNode(Two, 6, "Output.Discard").Constants["B"] = "0.1";   // A unlinked: 0 < 0.1, always
+            Two.FindNode(Id(6))->Constants["A"] = "0";
+            CompileResult Both;
+            CompileGraph(Two, Both);
+            const size_t First  = Both.Code.find("if(t0 > 0.4) { discard; }");
+            const size_t Second = Both.Code.find("if(0.0 < 0.1) { discard; }");
+            Expect(!Both.HasErrors() && First != std::string::npos && Second != std::string::npos && First < Second,
+                   "several Discards are allowed, each written, in GUID order");
+        }
+        {
+            Graph Only;
+            Only.SchemaName = "Material";
+            AddNode(Only, 1, "Output.Discard");
+            CompileResult None;
+            CompileGraph(Only, None);
+            Expect(None.HasErrors(), "a Discard does not replace the Pixel Output");
+        }
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -852,6 +919,7 @@ int main()
     TestMaterialCodegen();
     TestComponentSelection();
     TestLogic();
+    TestDiscard();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

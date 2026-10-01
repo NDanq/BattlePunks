@@ -54,6 +54,7 @@ namespace
         MOP_Branch,          // an if: True or False, by comparing A with B
         MOP_LoopBegin,       // For Loop: Index and Value, inside its loop only
         MOP_LoopEnd,         // For Loop End: Next each time round, Result after
+        MOP_Discard,         // a second kind of root: discard the pixel when A compares so with B
     };
 
     constexpr int UNIFORM_BLOCK_BINDING = 2;
@@ -288,6 +289,7 @@ namespace
                 const std::string Times = NodeInto(InGraph, InNode, "Count") ? std::string("Count") : Count ? *Count : std::string("4");
                 return GetWildcardType(InGraph, InNode) + Dot + Times + " times" + Hint();
             }
+            if(Def->Op == MOP_Discard) { return "if A " + InNode.GetProperty("Compare", "<") + " B"; }
             if(Def->Op != MOP_Mask && Def->Op != MOP_Swizzle) { return std::string(); }
 
             const std::string Selected = SelectedComponents(InNode, Def->Op);
@@ -333,7 +335,7 @@ namespace
         };
 
         void CollectParameters();
-        void AnalyseScopes(const Node& InRoot);
+        void AnalyseScopes(const std::vector<const Node*>& InRoots);
         void ValidateLoops();
 
         std::string Output(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
@@ -395,10 +397,29 @@ namespace
             return;
         }
 
+        /* The other roots: each Discard, in GUID order, is written before the
+         * colour -- a discarded pixel needs nothing more. */
+        std::vector<const Node*> Roots;
+        for(const Node* Each : Index.SortedNodes())
+        {
+            const NodeDefinition* Def = Index.FindDefinition(*Each);
+            if(Def && Def->Op == MOP_Discard) { Roots.push_back(Each); }
+        }
+        Roots.push_back(Root);
+
         CollectParameters();
-        AnalyseScopes(*Root);
+        AnalyseScopes(Roots);
         ValidateLoops();
         if(Result.HasErrors()) { return; }
+
+        for(const Node* Each : Roots)
+        {
+            if(Each == Root) { continue; }
+            const NodeDefinition& Def = *Index.FindDefinition(*Each);
+            const std::string A = Input(*Each, Def, *Def.FindPin("A", EPinDirection::Input));
+            const std::string B = Input(*Each, Def, *Def.FindPin("B", EPinDirection::Input));
+            Body.Line("if(" + A + " " + Each->GetProperty("Compare", "<") + " " + B + ") { discard; }", Each->Id);
+        }
 
         const PinDefinition* ColorPin = RootDef->FindPin("Color", EPinDirection::Input);
         const std::string Color = Input(*Root, *RootDef, *ColorPin);
@@ -509,11 +530,12 @@ namespace
     /*
      * Every reachable node's scope: the innermost block that all of its uses
      * share. Consumers come before what they read (reverse post-order from
-     * the root), so each node's scope is final when its inputs are visited;
+     * the roots: the Pixel Output and every Discard), so each node's scope is
+     * final when its inputs are visited;
      * an input a Branch or For Loop End runs in one of its blocks is used
      * inside that block. A cycle leaves Scopes empty, for Output to report.
      */
-    void MaterialCompiler::AnalyseScopes(const Node& InRoot)
+    void MaterialCompiler::AnalyseScopes(const std::vector<const Node*>& InRoots)
     {
         std::vector<const Node*> Order;
         std::map<NodeGuid, int>  State;   // 1 visiting, 2 done
@@ -538,10 +560,10 @@ namespace
             State[InNode.Id] = 2;
             Order.push_back(&InNode);
         };
-        Visit(InRoot);
+        for(const Node* Root : InRoots) { if(!State.count(Root->Id)) { Visit(*Root); } }
         if(bCycle) { return; }
 
-        Scopes[InRoot.Id] = Scope();
+        for(const Node* Root : InRoots) { Scopes[Root->Id] = Scope(); }   // every root is the function's own block
         for(auto It = Order.rbegin(); It != Order.rend(); ++It)
         {
             const Node& Each = **It;
@@ -1092,6 +1114,22 @@ namespace
             Def.bUnique     = true;
             Def.Op          = MOP_Output;
             Def.Pins        = { In("Color", "vec4", "1 1 1 1") };
+            AddNode(std::move(Def));
+        }
+        {
+            /* A root like Pixel Output, so it needs no link out -- a side
+             * effect has nowhere to lead. Any number per graph. */
+            NodeDefinition Def;
+            Def.Type        = "Output.Discard";
+            Def.DisplayName = "Discard";
+            Def.Category    = "Output";
+            Def.Keywords    = "clip kill cutout alpha mask test";
+            Def.Tooltip     = "Throws the pixel away -- nothing is written -- when A compares so with B: "
+                              "with the default '<', when A is below B (an alpha below 0.5).";
+            Def.Role        = ENodeRole::Output;
+            Def.Op          = MOP_Discard;
+            Def.Pins        = { In("A", "float"), In("B", "float", "0.5") };
+            Def.Properties  = { { "Compare", EPropertyKind::Choice, "<", GCompareChoices, "Discard when A compares so with B" } };
             AddNode(std::move(Def));
         }
 

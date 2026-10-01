@@ -101,7 +101,8 @@ if(NODEGRAPH_BUILD_TESTS AND Python3_EXECUTABLE AND NODEGRAPH_GLSLC)
              COMMAND "${Python3_EXECUTABLE}" "${NODEGRAPH_COOK_SCRIPT}"
                      -check "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Glow.fsh"
                             "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Masks.fsh"
-                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Logic.fsh")
+                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Logic.fsh"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Cutout.fsh")
     set_tests_properties(NodeGraph.MaterialGLSL PROPERTIES TIMEOUT 120 LABELS "smoke")
 endif()
 
