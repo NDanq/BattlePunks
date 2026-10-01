@@ -33,7 +33,7 @@ registries, by whichever executable links this: the editor or the test.
 | `Schema.h` | What the names mean: pin types and conversions, node definitions, wildcard resolution, one compiler per schema. `GetSchemas()` |
 | `GraphFile.h` | `.nmgraph` read and write, the path rules, the clipboard fragment, `GenerateGraphOutput` |
 | `GraphCompiler.h` | `ValidateGraph` (what every schema shares), then `CompileGraph` into the schema's compiler; diagnostics name their node |
-| `MaterialSchema.cpp` | Material to GLSL: data flow from Pixel Output back, one `tN` temporary per computed value, Branch and For Loop as real `if` and `for` blocks, parameters in one `mat4` at binding 2 |
+| `MaterialSchema.cpp` | Material to GLSL: data flow from Pixel Output (and each Discard) back, one `tN` temporary per computed value, Branch and For Loop as real `if` and `for` blocks, parameters in one `mat4` at binding 2 |
 | `Shaders/MaterialPlatform.glsl` | Per-platform macros a generated shader may include: the control-flow hints |
 | `ScriptSchema.cpp` | Script to Lua: exec flow from event nodes, pure values re-evaluated per statement; component nodes generated from the script bindings |
 | `Scripts/cook_material_graphs.py` | `-check` a generated shader with glslc, or cook a folder of them, through GDI's own `cook_shaders.py` |
@@ -226,6 +226,13 @@ Index and Value exist only in the body. Reading them anywhere else is an error
 on the reading node, as is a For Loop without exactly one For Loop End. The
 For Loop End takes its For Loop's type. Unless Details sets that type, it is
 the widest suggested by the links of either node.
+
+**Discard.** A Discard node throws the pixel away when A compares with B as
+its Compare says. The default is `<` and B is 0.5, so it discards when an alpha
+is below 0.5. Like Pixel Output it is a root, so it needs no link out, and a
+graph may have any number of them. Each becomes `if(A < B) { discard; }` at the
+top of `main`, in GUID order, before the colour. A value that a Discard and the
+colour share is computed once, above both.
 
 **Hints.** Branch has a Hint of None, Branch or Flatten; For Loop has None, Loop
 or Unroll. Unroll needs a constant Count. A hint becomes a `HINT_*` macro from
