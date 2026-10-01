@@ -98,10 +98,13 @@ namespace NimbleEngine
          * Pacing lives in the caller. */
         bool RunFrame(uint64_t InMaxFrames);
 
-        /* Where assets (cooked shaders above all) come from; installed by
-         * Initialize(). A member because it must outlive the render thread's
-         * shader loads, and by value because it owns only a string. */
-        EngineCore::FilesystemProvider AssetProvider;
+        /* Where assets (cooked shaders above all) come from: the disk, with
+         * mounted shader caches layered on top (RenderCore's ShaderCache.h);
+         * installed by Initialize(). Members because they must outlive the
+         * render thread's shader loads. An editor build asks the disk first,
+         * so freshly cooked materials beat the last build's cache. */
+        EngineCore::FilesystemProvider  AssetProvider;
+        EngineCore::LayeredFileProvider LayeredAssets{ &AssetProvider, WITH_EDITOR != 0 };
 
         GameWindow*              Window        = nullptr;
 

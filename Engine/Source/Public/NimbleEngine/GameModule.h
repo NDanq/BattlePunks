@@ -11,6 +11,11 @@ namespace EngineCore
     class ModuleManager;
 }
 
+namespace RenderCore
+{
+    class Renderer;
+}
+
 namespace NimbleEngine
 {
     class ILevel;
@@ -70,9 +75,16 @@ namespace NimbleEngine
         /* [Game] StartLevel if registered, else GetStartLevel(); may be null. */
         ILevel* ResolveStartLevel() const;
 
+        /* The renderer a loaded module's shader cache is mounted into: Load
+         * mounts Shaders/Cache/<Module>.<Platform>.nmsc once the module has
+         * started, Unload unmounts it first. Set before Load; null mounts
+         * nothing. Not owned. */
+        void SetRenderer(RenderCore::Renderer* InRenderer) { Rendering = InRenderer; }
+
     private:
-        EngineCore::ModuleManager* Modules = nullptr;
-        IGameModule*               Game    = nullptr;
+        EngineCore::ModuleManager* Modules   = nullptr;
+        IGameModule*               Game      = nullptr;
+        RenderCore::Renderer*      Rendering = nullptr;
         std::string                ModuleName;
     };
 }

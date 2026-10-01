@@ -259,7 +259,10 @@ private:
 
     /* Resolves cooked shaders against the working directory (the exe's
      * folder). A member: render-thread loads outlive any call. */
-    EngineCore::FilesystemProvider AssetProvider;
+    EngineCore::FilesystemProvider  AssetProvider;
+    /* The disk first, then mounted shader caches: a material the editor just
+     * cooked beats the last build's cache. */
+    EngineCore::LayeredFileProvider LayeredAssets{ &AssetProvider, true };
 
     GameCore::World*      EditedWorld = nullptr;
     GameCore::World*      ActiveWorld = nullptr;   // EditedWorld, or the playing level's

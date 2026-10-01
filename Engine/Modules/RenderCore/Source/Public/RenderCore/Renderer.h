@@ -109,6 +109,18 @@ namespace RenderCore
          * ignored. GAME THREAD ONLY. */
         void ReloadMaterial(const char* InName);
 
+        /*
+         * Mounts InModule's shader cache, Shaders/Cache/<Module>.<Platform>.nmsc
+         * (ShaderCache.h), as a read-only file layer over the installed
+         * provider, and reloads every material through it; Unmount takes it
+         * away again. Initialize() mounts "Engine"; GameModuleHost mounts a
+         * game module's own after it starts up. A missing cache is not an
+         * error: the materials load from loose files. Names of 64 characters
+         * or more are ignored. GAME THREAD ONLY.
+         */
+        void MountShaderCache(const char* InModule);
+        void UnmountShaderCache(const char* InModule);
+
         /* Renders material InName on an InSize (16-1024) square quad during
          * the next EndFrame() and reads it back; the readback stalls briefly,
          * so don't call every frame. Returns an id for TakeMaterialPreview, 0

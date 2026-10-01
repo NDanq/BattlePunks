@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="9e6a7e00000000000000000000000001" Type="Output.Material" Version="1" X="300" Y="0">
+      <Prop Name="Domain" Value="PostProcess" />
+      <Prop Name="Shading" Value="Unlit" />
+    </Node>
+    <Node Id="9e6a7e00000000000000000000000002" Type="Input.SceneTexture" Version="1" X="-100" Y="0" />
+    <Node Id="9e6a7e00000000000000000000000003" Type="Math.OneMinus" Version="1" X="100" Y="0" Wildcard="vec4" />
+  </Nodes>
+  <Links>
+    <Link From="9e6a7e00000000000000000000000002.Color" To="9e6a7e00000000000000000000000003.X" />
+    <Link From="9e6a7e00000000000000000000000003.Out" To="9e6a7e00000000000000000000000001.Emissive" />
+  </Links>
+  <Comments>
+    <Comment X="-120" Y="-60" Width="520" Height="160" Text="A PostProcess sample: the scene drawn so far, inverted. Add a Post Process component naming it to use it" />
+  </Comments>
+</NodeGraph>

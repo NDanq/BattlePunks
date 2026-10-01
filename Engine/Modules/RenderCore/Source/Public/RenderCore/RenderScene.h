@@ -5,6 +5,7 @@
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
+#include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/RenderView.h"
 
@@ -63,6 +64,12 @@ namespace RenderCore
 
         void SetView(const RenderView& InView);
         void SetClearColor(EngineCore::Color InColor);
+
+        /* The light the next Render() shades Lit materials with, and the
+         * PostProcess materials it draws over the scene afterwards. Both are
+         * re-sent every frame by WorldBridge. */
+        void SetLighting(const RenderLighting& InLighting);
+        void SetPostProcess(const RenderPostProcess& InPostProcess);
 
 #if WITH_EDITOR
         /* EDITOR ONLY. Lines for the next Render() only. */

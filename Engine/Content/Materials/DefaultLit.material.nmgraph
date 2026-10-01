@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Material">
+  <Nodes>
+    <Node Id="d3fa017e000000000000000000000001" Type="Output.Material" Version="1" X="300" Y="0">
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="Shading" Value="Lit" />
+    </Node>
+    <Node Id="d3fa017e000000000000000000000002" Type="Input.InstanceTint" Version="1" X="0" Y="0" />
+    <Node Id="d3fa017e000000000000000000000003" Type="Input.VertexColor" Version="1" X="0" Y="120" />
+    <Node Id="d3fa017e000000000000000000000004" Type="Math.Multiply" Version="1" X="160" Y="40" Wildcard="vec3" />
+  </Nodes>
+  <Links>
+    <Link From="d3fa017e000000000000000000000002.Tint" To="d3fa017e000000000000000000000004.A" />
+    <Link From="d3fa017e000000000000000000000003.RGB" To="d3fa017e000000000000000000000004.B" />
+    <Link From="d3fa017e000000000000000000000004.Out" To="d3fa017e000000000000000000000001.BaseColor" />
+  </Links>
+  <Comments>
+    <Comment X="-20" Y="-60" Width="520" Height="260" Text="What a mesh with no material draws with: its Render component's Tint times its vertex colour, lit by the scene" />
+  </Comments>
+</NodeGraph>

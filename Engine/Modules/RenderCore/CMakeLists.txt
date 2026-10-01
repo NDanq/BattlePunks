@@ -59,6 +59,8 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/WorldBridge.h
         Source/Private/RenderCore/WorldBridge.cpp
         Source/Private/RenderCore/Renderer.cpp
+        Source/Private/RenderCore/MaterialDescription.cpp
+        Source/Private/RenderCore/ShaderCache.cpp
         Source/Public/RenderCore/RenderCoreAPI.h
         Source/Public/RenderCore/RenderCoreLog.h
         Source/Public/RenderCore/RenderTypes.h
@@ -74,6 +76,9 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/TextureAsset.h
         Source/Public/RenderCore/RenderComponents.h
         Source/Public/RenderCore/Renderer.h
+        Source/Public/RenderCore/MaterialDescription.h
+        Source/Public/RenderCore/RenderLighting.h
+        Source/Public/RenderCore/ShaderCache.h
 )
 
 # ===========================================================================

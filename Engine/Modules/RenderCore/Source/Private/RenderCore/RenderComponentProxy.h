@@ -23,6 +23,7 @@ namespace RenderCore
 
         void ApplyComponent(const void* InComponentBytes) override;
         void Draw(RenderContext& InContext) override;
+        float GetBoundsPadding(RenderContext& InContext) override;
 
     private:
         float             Width  = 1.0f;
