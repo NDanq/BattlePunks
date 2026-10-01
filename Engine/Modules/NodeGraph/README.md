@@ -35,7 +35,8 @@ registries, by whichever executable links this: the editor or the test.
 | `GraphCompiler.h` | `ValidateGraph` (what every schema shares), then `CompileGraph` into the schema's compiler; diagnostics name their node |
 | `MaterialSchema.cpp` | Material to GLSL: data flow from Pixel Output (and each Discard) back, one `tN` temporary per computed value, Branch and For Loop as real `if` and `for` blocks, parameters in one `mat4` at binding 2 |
 | `ScriptSchema.cpp` | Script to Lua: exec flow from event nodes, pure values re-evaluated per statement; component nodes generated from the script bindings |
-| `Scripts/cook_material_graphs.py` | `-check` a generated shader with glslc, or cook a folder of them, through GDI's own `cook_shaders.py`. Also cooks the engine's `Content/Shaders` |
+| `Scripts/cook_material_graphs.py` | `-check` a material function's permutations with glslc, cook them loose or into a shader cache, through GDI's own `cook_shaders.py`. Also cooks the engine's `Content/Shaders` |
+| `Tools/NodeGraphGenerate.cpp` | Regenerates graphs' outputs from the command line, as the editor does on save |
 
 ## The `.nmgraph` format
 
@@ -160,33 +161,51 @@ arguments, and a compile warning.
 ## Material graphs
 
 A material graph `Materials/Glow.material.nmgraph` generates two files beside
-it, both committed:
+it, both committed (RenderCore's MATERIALS.md has the whole design):
 
-- **`Glow.fsh`**, a pixel shader with the shape of `Engine/Content/Shaders/Basic.fsh`:
-  `#include <Common.glsl>`, `OUTPUT(0, vec4, Output)`, and **one uniform**,
-  `mat4 MaterialParams`, alone in a UBO at binding 2. Bindings 0 and 1 are
-  Common.glsl's view and transform blocks.
-- **`Glow.material`**, the parameters' defaults, which the renderer reads with
-  the shader:
+- **`Glow.mtl.glsl`**, a *material function*, not a whole shader: the
+  material's uniform block and `CalcMaterial(Inputs, Surface)` -- plus
+  `CalcMaterialOffset(Inputs)` when World Position Offset is linked. The
+  engine's templates (`Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl`)
+  own `main()` and include it as `<Material.glsl>`, once per permutation.
+- **`Glow.material`**, what the renderer needs to draw it:
 
   ```
-  NimbleMaterial 1
-  Param Color 0 vec3 0.2 0.8 1 0
+  NimbleMaterial 2
+  Domain Opaque
+  Shading Lit
+  TwoSided 0
+  ClipValue 0.5
+  MaxOffset 0
+  HasOffset 0
+  BlockSize 48
+  Param Color vec3 32 0.2 0.8 1 0
   ```
 
-**Why one `mat4`.** GDI's backends pack a shader's custom uniforms back to
-back, in hash-map order, with no std140 padding (`PackCustomUBO` in the Vulkan
-backend, `PackCustom` in D3D12). That is exactly right for one value and wrong
-for two. So the four columns of `MaterialParams` are the slots:
+**Material Output.** Its pins are the surface -- BaseColor, Metallic,
+Roughness, Specular, Emissive, Opacity, OpacityMask, Normal,
+AmbientOcclusion -- and World Position Offset; its settings are Domain
+(Opaque, Masked, Translucent, PostProcess), Shading (Lit, Unlit), Two Sided,
+Clip Value and Max Offset. Only a linked pin, or one set to something other
+than its default, is written; the rest keep `DefaultMaterialSurface`'s value.
+A pin the domain or shading never reads (BaseColor on an Unlit material) is a
+warning. The first output, **Pixel Output** (one colour), still compiles: as
+Unlit and Translucent, how every material drew before.
 
-| Column | Holds |
-|---|---|
-| 0, 1, 2 | Parameters, in name order: a `vec3` parameter reads `MaterialParams[i].xyz` |
-| 3 | The drawing primitive's Tint (RGBA, 0 to 1): the **Instance Tint** input |
+**Parameters** are members of one std140 block at binding 2, in name order,
+after the engine's 32 bytes (the tint, Clip Value, Two Sided). The offsets are
+computed here and written to the `.material`, and the renderer fills the block
+byte for byte (GDI's `GDISetUniformBlock`). Any number fit, up to the block's
+1024 bytes.
 
-A material therefore has **at most three parameters**, and more is a compile
-error. Slots follow names, not links, so a slot never moves because a link was
-drawn elsewhere.
+**Two stages.** World Position Offset is the vertex stage's root; everything
+else is the pixel stage's. Each stage is compiled from its own roots, so a
+node both reach is written in both functions. A node's `StageMask` says where
+it can run: Pixel Coordinate, Pixel Depth, Clip Position and Scene Texture are
+pixel-only. A pixel-only node feeding World Position Offset, however
+indirectly, is a compile error on that node; the editor refuses the link
+(`Schema::CanLinkStages`), greys such nodes in the palette when dragging from
+a vertex path, and badges them "Pixel".
 
 **Selecting components.** There are two nodes for picking out parts of a vector:
 
@@ -249,22 +268,23 @@ preprocessor substitutes only defines that have a value.
 `cook_material_graphs.py` resolves every `#include` against
 `Engine/Content/Shaders`.
 
-The inputs are:
+The inputs read `MaterialInputs`, which each stage's template fills:
 
-- the interpolated TexCoord and Position;
-- `gl_FragCoord`;
-- the viewport size and the mouse;
-- Instance Tint.
+- Texture Coordinate, Vertex Color, Vertex Normal and World Position (both
+  stages; World Position is before the offset in the vertex stage);
+- Clip Position, Pixel Coordinate and Pixel Depth (linear and device; pixel only);
+- Viewport Size, Mouse, Instance Tint and Time (both);
+- Scene Texture (PostProcess materials only).
 
 **Drawing one.** A primitive names the material by its base name:
-`PrimitiveComponent::Material = "Glow"`. RenderCore then loads
-`Materials/Glow.material` and the cooked shader under
-`Shaders/Cooked/<Platform>/Materials/`, as GDI names its own shaders (see
-RenderCore's DESIGN.md, "Materials"). A game's build cooks and stages them with
-`nimble_stage_materials` (`Engine/cmake/NimbleMaterials.cmake`), for every
-backend GDI is built with. The editor cooks one for its viewport on save and,
-with Live Preview, on every clean recompile. The graph window's **Preview** dock
-then shows it, drawn by that same renderer.
+`RenderComponent::Material = "Glow"`. RenderCore loads `Materials/Glow.material`
+and the permutations its domain and shading need, named `Glow@<key>` under
+`Shaders/Cooked/<Platform>/Materials/`. A game's build cooks them into its
+module's shader cache with `nimble_stage_materials`
+(`Engine/cmake/NimbleMaterials.cmake`), mounted when the module loads; Editor
+targets also stage them loose. The editor cooks one for its viewport on save
+and, with Live Preview, on every clean recompile. The graph window's **Preview**
+dock then shows it, drawn by that same renderer.
 
 GDI is a vendored subtree and is never edited from here. So
 `Scripts/cook_material_graphs.py` **imports** its `cook_shaders.py` read-only
@@ -275,11 +295,14 @@ the runtime directory the same way; GDI's own cook (and its `.qrc` bundles,
 which only a Qt host needs) is switched off with `GDI_COOK_SHADERS`.
 
 ```
-python Scripts/cook_material_graphs.py -check Games/Sandbox/Materials/Glow.fsh
+python Scripts/cook_material_graphs.py -check Games/Sandbox/Materials/Glow.mtl.glsl
 python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Materials -out <runtime>/Shaders/Cooked -subdir Materials
+python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Materials -subdir Materials -cache <runtime>/Shaders/Cache/SandboxGame.Vulkan.nmsc -module SandboxGame
 ```
 
-`-src` takes a shader file or a folder.
+`-src` takes a file or a folder; `-defaults` adds the shared MaterialDefault
+vertex shaders. `NodeGraphGenerate <graph.nmgraph>...` regenerates graphs'
+outputs from the command line, as the editor does on save.
 
 ## Tests
 
@@ -295,8 +318,8 @@ python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Materia
 - a **run** of the generated Lua: an entity with the Mover script attached
   moves 60 units in a second.
 
-`NodeGraph.MaterialGLSL` compiles the golden shader with glslc when Python and
-the Vulkan SDK are present.
+`NodeGraph.MaterialGLSL` compiles every permutation of the golden material
+functions with glslc when Python and the Vulkan SDK are present.
 
 A missing golden file is written and fails once, so a new one is always looked
 at. After an intended change to the output, run with

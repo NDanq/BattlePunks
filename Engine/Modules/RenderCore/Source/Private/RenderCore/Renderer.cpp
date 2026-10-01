@@ -249,6 +249,44 @@ namespace RenderCore
         });
     }
 
+    uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
+    {
+        const size_t Length = InName ? std::strlen(InName) : 0;
+        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_NAME_MAX)
+        {
+            return 0;
+        }
+
+        MaterialPreviewRequest Request;
+        Request.Request = ++P->LastPreviewRequest;
+        std::memcpy(Request.Material, InName, Length);
+        Request.Size    = InSize;
+        Request.Tint    = InTint;
+        Request.Mailbox = &P->Previews;
+
+        RenderScene* Scene = P->Scene;
+        ENQUEUE_RENDER_COMMAND(AddMaterialPreview)([Scene, Request](RenderContext&)
+        {
+            Scene->AddMaterialPreview(Request);
+        });
+        return Request.Request;
+    }
+
+    bool Renderer::TakeMaterialPreview(const uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError)
+    {
+        return P->Previews.Take(InRequest, OutImage, OutError);
+    }
+
+    void Renderer::SetViewOverride(const RenderView* InView)
+    {
+        P->bHasViewOverride = InView != nullptr;
+        if(InView)
+        {
+            P->ViewOverride = *InView;
+        }
+    }
+#endif // WITH_EDITOR
+
     namespace
     {
         /* A module name, by value for a command's capture. */
@@ -291,44 +329,6 @@ namespace RenderCore
             Ctx.UnmountShaderCache(Name.Text);
         });
     }
-
-    uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
-    {
-        const size_t Length = InName ? std::strlen(InName) : 0;
-        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_NAME_MAX)
-        {
-            return 0;
-        }
-
-        MaterialPreviewRequest Request;
-        Request.Request = ++P->LastPreviewRequest;
-        std::memcpy(Request.Material, InName, Length);
-        Request.Size    = InSize;
-        Request.Tint    = InTint;
-        Request.Mailbox = &P->Previews;
-
-        RenderScene* Scene = P->Scene;
-        ENQUEUE_RENDER_COMMAND(AddMaterialPreview)([Scene, Request](RenderContext&)
-        {
-            Scene->AddMaterialPreview(Request);
-        });
-        return Request.Request;
-    }
-
-    bool Renderer::TakeMaterialPreview(const uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError)
-    {
-        return P->Previews.Take(InRequest, OutImage, OutError);
-    }
-
-    void Renderer::SetViewOverride(const RenderView* InView)
-    {
-        P->bHasViewOverride = InView != nullptr;
-        if(InView)
-        {
-            P->ViewOverride = *InView;
-        }
-    }
-#endif // WITH_EDITOR
 
     void Renderer::EndFrame(const FrameInfo& InFrame)
     {

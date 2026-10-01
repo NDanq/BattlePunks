@@ -120,6 +120,23 @@ NodeItem::NodeItem(GraphScene& InScene, const Node& InNode, const NodeDefinition
             Subtitle = ToQ(Doc.GetSchema().GetWildcardType(G, InNode));
         }
 
+        /* A node limited to some of the schema's stages says which: "Pixel". */
+        QStringList Stages;
+        bool bLimited = false;
+        for(uint32_t Bit = 1; Bit != 0; Bit <<= 1)
+        {
+            const std::string Stage = Doc.GetSchema().GetStageName(Bit);
+            if(Stage.empty()) { continue; }
+            if(InDef->StageMask & Bit) { Stages << ToQ(Stage); }
+            else                       { bLimited = true; }
+        }
+        if(bLimited && !Stages.isEmpty())
+        {
+            QString Badge = Stages.join(QStringLiteral(", "));
+            Badge[0] = Badge[0].toUpper();
+            Subtitle = Subtitle.isEmpty() ? Badge : Subtitle + QStringLiteral(" \u00B7 ") + Badge;
+        }
+
         for(const PinDefinition& Pin : InDef->Pins)
         {
             PinSlot Slot;

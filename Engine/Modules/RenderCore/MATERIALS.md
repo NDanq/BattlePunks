@@ -16,9 +16,9 @@ stage and include the function. The cook compiles each template once per
 ```
 Glow.material.nmgraph --(NodeGraph)--> Glow.mtl.glsl + Glow.material
                                               |
-            MaterialTemplate.vsh/.fsh + defines per permutation key
+       MaterialTemplate_VS/PS.glsl + defines per permutation key
                                               |
-                       cook_material_graphs.py --> loose files (editor)
+                       cook_material_graphs.py --> loose files (Editor targets)
                                               \--> Shaders/Cache/<Module>.<Platform>.nmsc
 ```
 
@@ -31,19 +31,28 @@ shader types carry no prefix:
 |---|---|
 | `MaterialInputs` | What input nodes read, built by each stage's template (`Inputs.TexCoord`, `Inputs.Color`, ...). Pixel-only fields exist only under `#if PIXEL_SHADER`. |
 | `MaterialSurface` | What the pixel function writes: BaseColor, Metallic, Roughness, Specular, Normal, Emissive, Opacity, OpacityMask, AmbientOcclusion. |
-| `DefaultMaterialSurface()` | Its defaults. |
+| `DefaultMaterialSurface()` | Its defaults; the Normal is the vertex normal. |
 | `CalcMaterial(in MaterialInputs, inout MaterialSurface)` | The generated pixel function. |
 | `CalcMaterialOffset(in MaterialInputs)` | The generated vertex function: World Position Offset. |
 | `ShadeSurface(...)` | Lighting.glsl's PBR shading. |
+
+All in `MaterialCommon.glsl`, `SceneUniforms.glsl`, `Lighting.glsl` and the two
+templates, beside the engine's other shaders.
 
 ## Domains and shading
 
 | Domain | Pass | Blend | Depth write | Notes |
 |---|---|---|---|---|
-| Opaque | 1 | off | on | |
-| Masked | 2 | off | on | `discard` when OpacityMask < Clip Value |
-| Translucent | 3 | alpha | off | sorted back to front |
+| Opaque | opaque | off | on | |
+| Masked | opaque | off | on | `discard` when OpacityMask < Clip Value |
+| Translucent | translucent | alpha | off | sorted back to front |
 | PostProcess | after the scene | off | off | full-screen, Unlit only, samples Scene Color; no WPO |
+
+Inside a scene, draws are queued and issued in passes: opaque in submission
+order (plain tinted quads and meshes with Mesh_PS too, in their old blended,
+depth-written state), then translucent back to front by view depth, ties in
+submission order so coplanar 2D quads keep their layering. Outside a scene (a
+preview, a test) a draw is issued at once.
 
 Shading is **Lit** (Emissive plus `ShadeSurface`) or **Unlit** (Emissive is the
 colour). The legacy Pixel Output node compiles as Unlit + Translucent, which is
@@ -55,7 +64,7 @@ A cull mode in GDI's draw state is future work.
 
 ## Permutations
 
-A permutation key is a `uint32_t`:
+A permutation key is a `uint32_t` (`MaterialDescription.h`):
 
 | Bits | Field | Values |
 |---|---|---|
@@ -65,17 +74,18 @@ A permutation key is a `uint32_t`:
 | rest | reserved | quality levels, static switches |
 
 Each field becomes 0/1 defines (`MATERIAL_DOMAIN_MASKED`, `MATERIAL_SHADING_LIT`,
-`MATERIAL_VERTEX_MESH`), because the cook's preprocessor has no `#elif`.
+`MATERIAL_VERTEX_MESH`), because the cook's preprocessor has no `#elif`. Files
+are named `<Name>@<key as 8 hex digits>.vsh/.fsh`.
 
-**Which keys a material builds (decided):** its own Domain and Shading for the
-pixel stage, plus an Unlit sibling of a Lit material (for an unlit view mode
-and as a fallback). Building every combination for every material would
-triple cook time and cache size for permutations nothing draws.
+**Which keys a material builds:** its own Domain and Shading for the pixel
+stage -- one pixel shader per material. (An Unlit sibling of a Lit material,
+for an unlit view mode, was considered and left out until something draws
+with it.)
 
 Vertex stage: only a material whose World Position Offset is linked compiles
-its own vertex shaders, one per vertex input it can be drawn with (Quad, Mesh).
-Every other material shares the engine's `MaterialDefault` vertex shaders, so
-most materials add no vertex shaders at all.
+its own vertex shaders, one per vertex input it can be drawn with (Quad,
+Mesh). Every other material shares the engine's `MaterialDefault` vertex
+shaders (Quad, Mesh, Fullscreen), so most materials add no vertex shaders.
 
 ## Uniforms
 
@@ -89,36 +99,39 @@ uploads verbatim.
 | Binding | Block | Filled | Layout source |
 |---|---|---|---|
 | 0, 1 | View, Transform | GDI, per draw | Common.glsl (unchanged) |
-| 2 | `Material_Block`: `Material_Tint`, `Material_ClipValue`, then user parameters | RenderContext, per draw | MaterialSchema (offsets in `.material`) |
-| 3 | `Scene_Block`: camera, time, light, ambient | RenderContext, per frame | SceneUniforms.glsl, mirrored by `SceneUniforms` in C++ with static_asserts |
+| 2 | `<Name>_Block`: `Material_Tint`, `Material_ClipValue`, `Material_TwoSided`, two reserved floats, then `Param_<Name>` for each parameter | RenderContext, per draw | MaterialSchema (offsets in `.material`) |
+| 3 | `Scene_Block`: camera, time, light, ambient | RenderContext, per frame | SceneUniforms.glsl, mirrored by `SceneUniforms` in RenderContext.cpp with static_asserts |
 | 4-11 | Material textures (slot 0-7); slot 0 is Scene Color for PostProcess | RenderContext | fixed |
 
 Both blocks are visible to both stages, so World Position Offset can read
-parameters and time. Parameters are float, vec2, vec3 or vec4; the block's
-size is capped at `MATERIAL_BLOCK_MAX_BYTES` (1024), a compile error past it.
+parameters and time. Parameters are float, vec2, vec3 or vec4, in name order;
+the block is capped at 1024 bytes (a compile error past it). A material
+without an offset never declares its block in a vertex stage: the shared
+vertex shaders include `MaterialDefault.mtl.glsl`, which declares nothing, so
+OpenGL never links two different blocks under one name.
 
-GDI's side (`GDISetUniformBlock`, `GDISetMaterialTexture`, and a shader
-resource flag that selects the material binding layout) is described in
-"GDI changes" below. Shaders written against the old name-based uniforms
-(Basic, Mesh, Screen, Odessa's) are unaffected.
+Shaders written against the old name-based uniforms (Basic, Mesh, Screen,
+Odessa's) are unaffected.
 
 ## Stages and node restrictions
 
 World Position Offset is the only vertex-stage root; every other Material
-Output pin and every Discard node is pixel-stage. The compiler walks back from
-each root and tags nodes with the stages that reach them. A node reached from
-both is emitted in both functions (temporaries numbered per stage); parameters
-are collected once.
+Output pin and every Discard node is pixel-stage. The compiler compiles each
+stage from its own roots, so a node reached from both is emitted in both
+functions (temporaries numbered per stage); parameters are collected once.
 
 `NodeDefinition::StageMask` and `PinDefinition::Stage` are schema-defined bit
-masks (Material: Vertex 1, Pixel 2; Script leaves them at all). Enforced:
+masks (Material: Vertex 1, Pixel 2; Script leaves them at all).
+`Schema::GetRequiredStages` / `GetAvailableStages` / `CanLinkStages` reason
+about them generically. Enforced:
 
 - **Compiler** (authoritative, covers hand-edited files): a pixel-only node
   that reaches World Position Offset is an error on that node.
-- **Editor links:** `Schema::CanLink` is called from `GraphDocument::PlanLink`;
-  the material schema refuses a link that would carry a pixel-only value into
-  a vertex root, even through intermediate nodes.
-- **Editor palette:** dragging from a vertex path greys out pixel-only nodes.
+- **Editor links:** `GraphDocument::PlanLink` refuses a link that would carry
+  a pixel-only value into a vertex root, even through intermediate nodes.
+- **Editor palette:** dragging from an input that leads to the vertex stage
+  shows pixel-only nodes greyed out, with the reason as their tooltip.
+- **Editor nodes:** a stage-limited node's header says so ("Pixel").
 
 | Input node | Vertex | Pixel |
 |---|---|---|
@@ -129,21 +142,21 @@ masks (Material: Vertex 1, Pixel 2; Script leaves them at all). Enforced:
 | Pixel Coordinate, Pixel Depth, Clip Position | no | yes |
 | Scene Texture (PostProcess only) | no | yes |
 
-**Time** reads `Scene_Block.Time`: seconds since the renderer started (real
-time, so editor previews animate), plus a Delta output.
+**Time** reads `Scene_Time`: seconds since the renderer started (real time,
+so editor previews animate), and the last frame's length.
 
 ## World Position Offset
 
-`MaterialTemplate.vsh` computes the world position, adds
+`MaterialTemplate_VS.glsl` computes the world position, adds
 `CalcMaterialOffset(Inputs)` when `MATERIAL_HAS_OFFSET`, then applies view and
 projection. Normals are not recomputed after the offset. The Material Output
-node's **Max Offset** (world units, set by hand -- decided) pads the proxy's
-culling bounds so displaced geometry does not pop at screen edges. The
-editor's CPU mesh picking ignores the offset.
+node's **Max Offset** (world units, set by hand) pads the proxy's culling
+bounds (`RenderProxy::GetBoundsPadding`) so displaced geometry does not pop at
+screen edges. The editor's CPU mesh picking ignores the offset.
 
 ## Interpolants
 
-`Interp_Block` (Common.glsl) gains, after `Normal` so older pixel shaders still
+`Interp_Block` (Common.glsl) gained, after `Normal` so older pixel shaders still
 read a valid prefix:
 
 ```glsl
@@ -158,7 +171,7 @@ Clip Position; its type id is unchanged so saved graphs load).
 Vertex colour is a mesh attribute at location 9 (`GDIMeshDesc::Colors`, RGBA
 float); a mesh without colours gets white from `GDIMakeIndexedRenderData`, so
 every backend's vertex layout is fixed. `.nmmesh` stores it as an optional
-chunk; the glTF importer reads `COLOR_0`.
+`MCOL` chunk (older files load white); the glTF importer reads `COLOR_0`.
 
 ## The `.material` file, version 2
 
@@ -175,55 +188,73 @@ Param Color vec3 32 0.2 0.8 1 0
 Param Intensity float 44 1 0 0 0
 ```
 
-Offsets are bytes into `Material_Block`. The first 32 bytes are the engine's
-(`Material_Tint` vec4 at 0, `Material_ClipValue` float at 16).
+Offsets are bytes into the material block; the first 32 are the engine's.
+`ParseMaterialDescription` refuses version 1 (recompile the graph) and skips
+lines it does not know.
 
 ## The shader cache
 
 One file per module per backend: `Shaders/Cache/<Module>.<Platform>.nmsc`,
-an `EngineCore::Archive` chunked file like `.nmmesh`:
+`EngineCore::Archive` chunks (`ShaderCache.h`):
 
-- header: magic, format version, backend, `MATERIAL_TEMPLATE_VERSION`;
-- one record per material: name, domain, shading, flags, uniform layout and
-  defaults -- so a shipped game needs no loose `.material` files;
-- one record per entry: material index, permutation key, stage, code hash,
-  offset, size;
-- code, 16-byte aligned, identical code stored once.
+| Chunk | Payload |
+|---|---|
+| `NMSC` | string Module, string Platform, u32 `MATERIAL_TEMPLATE_VERSION` |
+| `BLOB` | u64 FNV-1a hash, u32 size, the bytes -- one per distinct content |
+| `FILE` | string path, u64 hash -- one per file |
 
-Written by the Python cook (`-cache`), read by `ShaderCache.cpp`.
+The files are exactly what a loose cook writes, at their runtime paths:
+`Shaders/Cooked/<Platform>/Materials/<Name>@<key>...` and
+`Materials/<Name>.material`. So a shipped game needs no loose material files,
+and nothing that loads a shader or a material knows which it read.
 
-**Loading without changing GDI's load path.** Every backend reads shader bytes
-through `EngineCore::IFileProvider`. NimbleEngine and the editor install a
-`LayeredFileProvider` (Core); a mounted cache adds an in-memory layer that
-serves the paths GDI already asks for. Lookup order: editor loose overrides
-(editor builds) -> mounted caches, newest first -> disk.
+Written by `cook_material_graphs.py -cache`, read by `ReadShaderCache`, which
+checks every blob's hash.
 
-**Mounting.** RenderCore mounts `Engine` at render-thread startup.
-`GameModuleHost::Load` mounts `<ModuleName>` once `OnStartup` succeeds; `Unload`
-unmounts it first. The host does it, not the module DLL, so nothing points
-into an unloaded image (CoreModule.h, RELOAD HAZARDS). Mount and unmount run
-on the render thread; unmounted materials' shaders go to the retired list.
+**Mounting.** Every backend reads shader bytes through
+`EngineCore::IFileProvider`. NimbleEngine and the editor install a
+`LayeredFileProvider` (Core) over the disk; a mounted cache is a
+`MemoryFileProvider` layer on it, newest first. Editor builds ask the disk
+first instead, so a material the editor just cooked beats the last build's
+cache.
 
-**Name clashes (decided):** a later mount overrides an earlier one -- game
-materials override engine materials of the same name -- with a warning.
+- `Renderer::Initialize` mounts `Engine` (DefaultLit and the shared vertex
+  shaders, from `Engine/Content/Materials`).
+- `GameModuleHost::Load` mounts `<ModuleName>` once the module has started;
+  `Unload` unmounts it first. The host does it, not the module DLL, so
+  nothing points into an unloaded image (CoreModule.h, RELOAD HAZARDS). Both
+  the game launcher and Play-in-Editor go through it.
+- Mount and unmount run on the render thread; every material is retired and
+  reloads through the new layers.
 
-A cache whose template version differs is refused and logged; the editor then
-falls back to cooking loose files.
+A later mount shadows an earlier one: game materials override engine
+materials of the same name. A cache cooked for another platform or template
+version is refused and logged, and its materials fall back to loose files.
+
+**Building them.** `nimble_stage_materials(TARGET <game> DIR <folder> MODULE
+<name>)` cooks a game's caches; `NimbleStageShaders` cooks the Engine cache.
+Editor targets also stage loose files; Client and Server targets stage only
+the caches.
 
 ## Lighting
 
-`DirectionalLightComponent` (colour, intensity; direction from the entity's
-rotation) and `SkyLightComponent` (sky and ground ambient). Without either the
-scene uses a default light matching the old `Mesh.fsh` (from above, -Y).
-`Lighting.glsl`: GGX distribution, Smith-Schlick geometry, Schlick Fresnel,
-gamma-encoded output (no HDR target yet).
+`DirectionalLightComponent` (direction, colour, intensity) and
+`SkyLightComponent` (sky and ground ambient), the first active of each, built
+by WorldBridge into `RenderLighting`. Without them the scene uses a default
+light matching the old `Mesh.fsh` (from above, -Y). `Lighting.glsl`: GGX
+distribution, Smith-Schlick geometry, Schlick Fresnel; BaseColor, Emissive
+and light colours are authored in display space, lit linear, and encoded back
+(no HDR target yet). Meshes without a material draw with the engine's
+`DefaultLit` (Tint times vertex colour, Lit).
 
 ## PostProcess
 
-The scene renders to its back buffer target; `PostProcessComponent`s
-(material, priority) then draw full-screen passes, ping-ponging between two
-targets with Scene Color in texture slot 0, and the last result is copied back
-to the back buffer for the present.
+`PostProcessComponent`s (material, priority; at most 8 run, low priority
+first) draw full-screen passes after the scene: each samples the previous
+result as material texture 0 and writes the other of two targets (the back
+buffer and a second one made on first use). The last target written stays
+bound, which is what the present shows. A material of another domain is
+warned about and skipped.
 
 ## GDI changes
 
@@ -231,8 +262,9 @@ to the back buffer for the present.
   `SetMaterialTexture(Slot, GDITextureResource*)`: draw state, copied.
 - `GDIShaderResource::SetMaterialLayout(true)`: a draw whose vertex or pixel
   shader has it uses the material layout instead of the name-based one.
-- `UBO_BLOCK_BEGIN/END` and `MATERIAL_SAMPLER2D` macros: real std140 blocks
-  and bound samplers on OpenGL too.
+- `UBO_BLOCK_BEGIN/END` and `MATERIAL_SAMPLER2D` macros (engine copies of
+  OpenGLCommon/VulkanCommon.glsl): real std140 blocks and bound samplers on
+  OpenGL too.
 - Vulkan: descriptor layout group `DLG_Material` (UBO 0-3, samplers 4-11).
 - D3D12: root parameters for b3 and t4-t11/s4-s11.
 - OpenGL: a UBO per binding, `glBindBufferBase`; texture units 4-11.
@@ -240,9 +272,25 @@ to the back buffer for the present.
 - Metal: not done. The engine does not cook Metal, and Metal has no indexed
   meshes yet.
 
+## Status and verification
+
+| Backend | Compiles | Verified drawing |
+|---|---|---|
+| Vulkan | yes | yes -- RenderCore smoke `NIMBLE_SMOKE_GPU=Vulkan` renders DefaultLit, Glow, Wave (WPO) and Negative (PostProcess) through the caches and checks their pixels; Sandbox (Editor and Client targets) loads every material and its cache |
+| D3D12 | yes (every permutation through spirv-cross and fxc; registers match the root signature) | no -- its device needs a window-backed context, and the Sandbox config notes D3D12 has not been brought up through this path |
+| OpenGL | yes (preprocessed) | no -- the host does not create a WGL context yet |
+| Metal | -- | -- |
+
+Tests: NodeGraph (codegen goldens including Wave's two stages, std140
+offsets, stage errors, `CanLinkStages`, PostProcess and domain rules),
+`NodeGraph.MaterialGLSL` (every permutation through glslc), RenderCore smoke
+(`.material` v2, block layout, permutation names, cache reader, layered
+providers, vertex colours; the opt-in GPU check), Editor.Import (`COLOR_0`).
+
 ## Later
 
 Texture parameters and Texture Sample nodes (the slots exist); tangents for
 normal maps; an RGBA16F scene target and tonemapping (needs a render-target
 format in GDI); material instances; a cull mode; more light types; Scene
-Depth for PostProcess (needs depth targets as textures).
+Depth for PostProcess (needs depth targets as textures); an Unlit view mode
+(and its permutation); D3D12 and OpenGL bring-up through the window path.

@@ -27,15 +27,9 @@ namespace EditorContent
     {
         const QString Name = QFileInfo(InPath).fileName();
         const QString Lower = Name.toLower();
-        for(const QString& Suffix : { QStringLiteral(".material.nmgraph"), QStringLiteral(".material") })
+        for(const QString& Suffix : { QStringLiteral(".material.nmgraph"), QStringLiteral(".material"), QStringLiteral(".mtl.glsl") })
         {
             if(Lower.endsWith(Suffix)) { return Name.left(Name.size() - Suffix.size()); }
-        }
-        /* A generated shader is only a material's inside a Materials folder. */
-        if(Lower.endsWith(QStringLiteral(".fsh"))
-           && QFileInfo(InPath).absoluteDir().dirName().compare(QStringLiteral("Materials"), Qt::CaseInsensitive) == 0)
-        {
-            return QFileInfo(InPath).completeBaseName();
         }
         return QString();
     }
