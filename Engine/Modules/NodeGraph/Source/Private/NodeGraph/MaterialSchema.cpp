@@ -46,7 +46,7 @@ namespace
     constexpr int UNIFORM_BLOCK_BINDING = 2;
     constexpr int PARAMETER_SLOTS       = 3;   // MaterialParams columns 0-2; 3 is the tint
     const char* const PARAMS_UNIFORM    = "MaterialParams";
-    const char* const PLATFORM_HEADER   = "MaterialPlatform.glsl";   // NodeGraph/Shaders/
+    const char* const PLATFORM_HEADER   = "MaterialPlatform.glsl";   // Engine/Content/Shaders/
     const char* const LOOP_TYPE         = "loop";                    // For Loop -> its For Loop End
 
     const std::vector<std::string> GFloatTypes  = { "float", "vec2", "vec3", "vec4" };

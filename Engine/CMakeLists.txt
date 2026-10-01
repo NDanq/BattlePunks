@@ -258,6 +258,12 @@ target_compile_definitions(EngineCore PUBLIC
         WITH_EDITOR=${NIMBLE_WITH_EDITOR}
         NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>)
 
+# The engine cooks its own shader set from Content/Shaders (see "Cooked
+# shaders" below), so GDI's cook -- its full Odessa set, into its own source
+# tree, plus .qrc bundles nothing here compiles -- is off. FORCE, as with
+# CORE_SHARED: a stale cache would cook both and stage neither consistently.
+set(GDI_COOK_SHADERS OFF CACHE BOOL "Cook Shaders/ into Shaders/Cooked as part of the GDI build" FORCE)
+
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GDI/CMakeLists.txt")
     add_subdirectory(Modules/GDI)
 endif()
@@ -407,46 +413,43 @@ target_include_directories(NimbleEngine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Sour
 source_group("NimbleEngine" FILES ${NIMBLEENGINE_SOURCES})
 
 # === Cooked shaders ========================================================
-# GDI's cooked shaders staged beside the executable, so that
-# EngineCore::FilesystemProvider -- which Application::Initialize() installs,
-# resolving bundle-relative paths against the working directory -- can find
-# them at the path GDI asks for ("Shaders/Cooked/Vulkan/Basic.vsh.spv").
+# Content/Shaders cooked straight into the runtime directory, at the paths GDI
+# and RenderCore ask EngineCore::FilesystemProvider for
+# ("Shaders/Cooked/Vulkan/Basic.vsh.spv"). Content/Shaders holds only what the
+# engine draws with -- Basic, Mesh, Screen and the shared includes -- not
+# GDI's Odessa set (brush, cursor, layer blit, checkerboard), which GDI
+# registers but only loads on request.
 #
-# AT ENGINE SCOPE, not in a game's own CMakeLists, and that is the whole
-# point: Games/Sandbox stages its OWN Config/ and Scripts/ because those
-# belong to that game, but the cooked shaders belong to GDI and every game
-# that ever links this engine needs exactly the same set. Staging them per
-# game would duplicate this block into every future host, each free to get
-# it subtly wrong.
+# Nothing is written into the source tree and no .qrc is generated: the
+# runtime reads plain files, so the cook is a staging step for the host, not
+# a prerequisite of compiling GDI. Stamp-file incremental, like
+# nimble_stage_materials.
 #
-# A DIRECTORY COPY rather than one rule per file: the cooked set is produced
-# by cook_shaders.py (whose outputs the Cook*Shaders targets already depend
-# on), so the file list is not knowable here without duplicating that
-# script's own naming rules. The dependency on the cook targets is what
-# orders this after the shaders actually exist; without it a clean build
-# races an empty source directory.
-#
-# copy_directory, NOT copy_directory_if_different: the latter is CMake 3.26+
-# and this project pins 3.16 (see cmake_minimum_required at the top). The
-# cost is that this target is considered on every build -- acceptable for a
-# handful of small files, and the same trade Games/Sandbox's own multi-config
-# staging fallback already makes for the same reason.
-if(TARGET GDI AND GDI_COOKED_SHADER_DIR AND CMAKE_RUNTIME_OUTPUT_DIRECTORY)
-    add_custom_target(NimbleStageShaders ALL
-            COMMAND ${CMAKE_COMMAND} -E copy_directory
-                    "${GDI_COOKED_SHADER_DIR}"
-                    "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cooked"
-            COMMENT "NimbleEngine: staging GDI's cooked shaders beside the executable"
+# Single-config only (needs CMAKE_RUNTIME_OUTPUT_DIRECTORY), as the copy it
+# replaces was.
+if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
+   AND (GDI_WITH_OPENGL OR GDI_WITH_VULKAN OR GDI_WITH_D3D12))
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
+    file(GLOB NM_ENGINE_SHADERS CONFIGURE_DEPENDS
+            "${NIMBLE_ENGINE_SHADER_DIR}/*.vsh"
+            "${NIMBLE_ENGINE_SHADER_DIR}/*.fsh")
+    nimble_shader_cook_commands(NM_SHADER_COOK_COMMANDS
+            SRC "${NIMBLE_ENGINE_SHADER_DIR}"
+            OUT "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Shaders/Cooked")
+
+    set(NM_SHADER_STAMP "${CMAKE_CURRENT_BINARY_DIR}/NimbleEngine_Shaders.stamp")
+    add_custom_command(
+            OUTPUT  "${NM_SHADER_STAMP}"
+            ${NM_SHADER_COOK_COMMANDS}
+            COMMAND ${CMAKE_COMMAND} -E touch "${NM_SHADER_STAMP}"
+            DEPENDS ${NM_ENGINE_SHADERS} ${NIMBLE_SHADER_INCLUDES}
+                    "${NIMBLE_MATERIAL_COOK_SCRIPT}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/Modules/GDI/Scripts/cook_shaders.py"
+            COMMENT "NimbleEngine: cooking Content/Shaders into the runtime directory"
             VERBATIM)
 
-    # Ordered after whichever cook targets this configure actually created --
-    # each is guarded by its own GDI_WITH_* option in Modules/GDI.
-    foreach(NM_COOK_TARGET CookVulkanShaders CookOpenGLShaders CookD3D12Shaders CookMetalShaders)
-        if(TARGET ${NM_COOK_TARGET})
-            add_dependencies(NimbleStageShaders ${NM_COOK_TARGET})
-        endif()
-    endforeach()
-
+    add_custom_target(NimbleStageShaders ALL DEPENDS "${NM_SHADER_STAMP}")
     add_dependencies(NimbleEngine NimbleStageShaders)
     set_target_properties(NimbleStageShaders PROPERTIES FOLDER "Engine")
 endif()
