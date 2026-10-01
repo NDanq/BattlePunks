@@ -1,6 +1,7 @@
 // MaterialPlatform.glsl -- per-platform helpers for material shaders beyond
-// Common.glsl. Included first, only when used. Lives beside it in
-// Engine/Content/Shaders, the include root of every cook.
+// Common.glsl. Included first by both material templates (it may declare an
+// #extension). Lives beside it in Engine/Content/Shaders, the include root of
+// every cook.
 //
 // --- Control-flow hints -------------------------------------------------------
 // Branch / For Loop hints, via GL_EXT_control_flow_attributes on SPIR-V (and

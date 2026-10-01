@@ -25,5 +25,13 @@
 #define SHADER_UNIFORM(type, name)    uniform type name;
 #define UBO_END(BlockName)
 
+// Raw std140 block, filled byte for byte by GDISetUniformBlock (the material
+// layout, GDIDefinitions.h): a real UBO here, unlike UBO_BEGIN.
+#define UBO_BLOCK_BEGIN(slot, BlockName) layout(std140, binding=slot) uniform BlockName {
+#define UBO_BLOCK_END(BlockName)         };
+
+// A material texture (GDISetMaterialTexture), at its unit (4 + slot).
+#define MATERIAL_SAMPLER2D(slot, name) layout(binding=slot) uniform sampler2D name;
+
 // Legacy compatibility — kept for any remaining callers.
 #define UNIFORM(type, name) uniform type name;

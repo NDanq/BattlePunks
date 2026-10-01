@@ -555,14 +555,40 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     const ScalarMap& Scalars = PSRes->GetScalars();
 
     static constexpr uint32_t kCustomBytes = 256;
+    const bool bMaterial = IsMaterialDraw();
+
+    /* A cbuffer is read in 256-byte units; the material layout's blocks are
+     * raw bytes (GDISetUniformBlock), rounded up, never empty. */
+    const auto BlockBytes = [](const std::vector<uint8_t>& InBlock)
+    {
+        return InBlock.empty() ? 256u : uint32_t((InBlock.size() + 255) & ~size_t(255));
+    };
+    const uint32_t CustomBytes = bMaterial ? BlockBytes(MaterialBlocks[0]) : kCustomBytes;
+
     const D3D12CBAllocation VP     = DescAlloc->AllocateCB(160);
     const D3D12CBAllocation TR     = DescAlloc->AllocateCB(80);
-    const D3D12CBAllocation Custom = DescAlloc->AllocateCB(kCustomBytes);
+    const D3D12CBAllocation Custom = DescAlloc->AllocateCB(CustomBytes);
     if(!VP.MappedPtr || !TR.MappedPtr || !Custom.MappedPtr) return false;
 
     PackViewParams(Scalars, VP.MappedPtr);
     PackTransform(Scalars, TR.MappedPtr);
-    PackCustom(Scalars, Custom.MappedPtr, kCustomBytes);
+
+    D3D12CBAllocation Scene{};
+    if(bMaterial)
+    {
+        Scene = DescAlloc->AllocateCB(BlockBytes(MaterialBlocks[1]));
+        if(!Scene.MappedPtr) return false;
+        for(int b = 0; b < 2; ++b)
+        {
+            void* Dst = b == 0 ? Custom.MappedPtr : Scene.MappedPtr;
+            memset(Dst, 0, BlockBytes(MaterialBlocks[b]));
+            if(!MaterialBlocks[b].empty()) memcpy(Dst, MaterialBlocks[b].data(), MaterialBlocks[b].size());
+        }
+    }
+    else
+    {
+        PackCustom(Scalars, Custom.MappedPtr, kCustomBytes);
+    }
 
     GDITextureResource* TexRes = nullptr;
     for(const auto& Entry : PSRes->GetTextures())
@@ -592,6 +618,19 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     List->SetGraphicsRootDescriptorTable(RP_Texture3, SRV);
     List->SetGraphicsRootDescriptorTable(RP_Sampler2, Sampler);
     List->SetGraphicsRootDescriptorTable(RP_Sampler3, Sampler);
+
+    if(bMaterial)
+    {
+        List->SetGraphicsRootConstantBufferView(RP_Scene, Scene.GPUAddress);
+        for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
+        {
+            auto* SlotTexture = dynamic_cast<D3D12TextureResource*>(MaterialTextures[Slot]);
+            if(!SlotTexture || SlotTexture->GetSRVSlot() == UINT32_MAX) SlotTexture = NullTexture;
+            List->SetGraphicsRootDescriptorTable(RP_MaterialTexture0 + Slot, DescAlloc->GetSRVGPUHandle(SlotTexture->GetSRVSlot()));
+            List->SetGraphicsRootDescriptorTable(RP_MaterialSampler0 + Slot,
+                                                 DescAlloc->GetSamplerGPUHandle(SlotTexture->GetBorder(), SlotTexture->GetFilter()));
+        }
+    }
     return true;
 }
 

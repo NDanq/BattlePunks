@@ -16,6 +16,7 @@
 // they are explicit now, and each one disappears as its type converts.
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 class GDIContext;
 class GDIRenderTarget;
@@ -400,6 +401,18 @@ public:
 
     virtual void SetBoundShader(GDIShader*, GDIShader*) = 0;
 
+    /*
+     * Material draw state (GDIDefinitions.h): raw std140 bytes for binding 2
+     * or 3, copied, and a texture per slot. Read by a draw only when a bound
+     * shader UsesMaterialLayout(); persists until changed. A null texture
+     * draws the backend's fallback.
+     */
+    void SetUniformBlock(uint InBinding, const void* InData, uint InSize);
+    void SetMaterialTexture(uint InSlot, GDITextureResource* InTexture);
+
+    /* Whether the bound pair asks for the material layout. */
+    bool IsMaterialDraw() const;
+
     virtual GDIMesh* CreateQuadMesh(const float* VertData, const float* TexData, const int InNumVerts, const int NumTexCoords, bool bIsInstanced = false) = 0;
 
     virtual GDIMesh* CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced = false) = 0;
@@ -443,6 +456,10 @@ protected:
     GDIShader* BoundVertexShader;
     GDIShader* BoundPixelShader;
     bool bInitialized = false;
+
+    /* SetUniformBlock's bytes for bindings 2 and 3, and SetMaterialTexture's. */
+    std::vector<uint8_t>  MaterialBlocks[2];
+    GDITextureResource*   MaterialTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
 };
 
 //Expose to global context
@@ -497,6 +514,10 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, DrawObject, (class GDIViewObject*))
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, DrawObject, (class GDIViewObject*, class GDIView*))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetBoundShader, (GDIShader*, GDIShader*))
+
+IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetUniformBlock, (uint InBinding, const void* InData, uint InSize))
+
+IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetMaterialTexture, (uint InSlot, GDITextureResource* InTexture))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(GDITextureResource*, CreateTextureResource, (const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest))
 

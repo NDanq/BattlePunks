@@ -16,7 +16,9 @@ class D3D12ShaderResource;
  * Where Vulkan needs a descriptor layout per shader family, a D3D12 root
  * signature may be a superset of what a shader declares, so one covers all of
  * them: the core cbuffers at b0/b1, the custom cbuffer at b2, and the sampled
- * texture at t2 (Screen/Cursor) or t3 (UberBrush/LayersBlit).
+ * texture at t2 (Screen/Cursor) or t3 (UberBrush/LayersBlit). The material
+ * layout (GDIDefinitions.h) adds the scene cbuffer at b3 and one table each
+ * for t4-t11 and s4-s11; b2 is then the material block.
  */
 enum ED3D12RootParam : UINT
 {
@@ -27,7 +29,10 @@ enum ED3D12RootParam : UINT
     RP_Texture3,
     RP_Sampler2,
     RP_Sampler3,
-    RP_Count
+    RP_Scene,
+    RP_MaterialTexture0,
+    RP_MaterialSampler0 = RP_MaterialTexture0 + 8,   // GDI_MATERIAL_TEXTURE_SLOTS
+    RP_Count            = RP_MaterialSampler0 + 8
 };
 
 /**

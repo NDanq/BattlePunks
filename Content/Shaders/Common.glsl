@@ -23,8 +23,10 @@ struct GDITransform
 // by value.  The actual VS->PS interface uses a GLSL interface block (below),
 // which is valid on both OpenGL 4.x core and Vulkan without any #if guards.
 //
-// Normal is world space and LAST, so older pixel shaders read a valid prefix.
-// Shaders without one (quads, the blit) write -Z.
+// Normal is world space; shaders without one (quads, the blit) write -Z.
+// Color, WorldPosition and ViewDepth come after it, so older pixel shaders
+// read a valid prefix; only the material templates write them for real
+// (RenderCore/MATERIALS.md, "Interpolants").
 struct GDIVSToPSInterpolants
 {
     vec3 Position;
@@ -35,16 +37,27 @@ struct GDIVSToPSInterpolants
 #if VERTEX_SHADER
 layout(location=0) out Interp_Block
 {
-    vec3 Position;
-    vec2 TexCoord;
-    vec3 Normal;
+    vec3  Position;
+    vec2  TexCoord;
+    vec3  Normal;
+    vec4  Color;
+    vec3  WorldPosition;
+    float ViewDepth;
 } Interpolants;
+
+void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal, vec4 InColor, vec3 InWorldPosition, float InViewDepth )
+{
+    Interpolants.Position      = InPosition;
+    Interpolants.TexCoord      = InTexCoord;
+    Interpolants.Normal        = InNormal;
+    Interpolants.Color         = InColor;
+    Interpolants.WorldPosition = InWorldPosition;
+    Interpolants.ViewDepth     = InViewDepth;
+}
 
 void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal )
 {
-    Interpolants.Position = InPosition;
-    Interpolants.TexCoord = InTexCoord;
-    Interpolants.Normal   = InNormal;
+    CalculateInterpolants(InPosition, InTexCoord, InNormal, vec4(1.0), vec3(0.0), 0.0);
 }
 
 void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord )
@@ -56,9 +69,12 @@ void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord )
 #if PIXEL_SHADER
 layout(location=0) in Interp_Block
 {
-    vec3 Position;
-    vec2 TexCoord;
-    vec3 Normal;
+    vec3  Position;
+    vec2  TexCoord;
+    vec3  Normal;
+    vec4  Color;
+    vec3  WorldPosition;
+    float ViewDepth;
 } Interpolants;
 
 GDIVSToPSInterpolants GetInterpolants()

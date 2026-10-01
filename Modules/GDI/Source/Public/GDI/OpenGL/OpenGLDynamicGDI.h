@@ -209,6 +209,12 @@ public:
 
     void SetBoundShader(GDIShader*, GDIShader*) override;
 
+    using GDIDynamicDriver::DrawObject;
+
+    /* The base draw, after binding the material layout's UBOs and texture
+     * units when the bound pair asks for it. */
+    void DrawObject(class GDIViewObject* InObject, class GDIView* InView) override;
+
     GDIMesh* CreateQuadMesh(const float* VertData, const float* TexCoordData, const int InNumVerts, const int NumTexCoords, bool bIsInstanced = false) override;
 
     GDIMesh* CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced = false) override;
@@ -254,8 +260,12 @@ private:
         GDI_CHECK(0, "[GDIThread]Attempted to set context while outside render thread!");
     }
 
+    /* Uploads the material blocks (bindings 2, 3) and binds texture units 4-11. */
+    void ApplyMaterialBindings();
+
     OpenGLGDIContext*   Context;
     uint                BoundShaderProgram;
+    uint                MaterialUBOs[2] = {};
     class OpenGLMesh*   ScreenMesh = nullptr;
     GLsync              ThreadSync;
 };

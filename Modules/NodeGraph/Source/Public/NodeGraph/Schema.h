@@ -52,6 +52,11 @@ namespace NodeGraph
          * templates -- "{A} + {B}". Its meaning is the schema's. */
         std::string   Expression;
 
+        /* An Output node's input: the stage bits (the schema's, e.g. a
+         * material's vertex or pixel) whatever feeds it is computed in.
+         * 0: no requirement. */
+        uint32_t      Stage = 0;
+
         bool IsInput()  const { return Direction == EPinDirection::Input; }
         bool IsOutput() const { return Direction == EPinDirection::Output; }
         bool IsExec()   const { return Kind == EPinKind::Exec; }
@@ -108,6 +113,10 @@ namespace NodeGraph
         uint32_t    Op = 0;
         std::string Template;
 
+        /* The stages (PinDefinition::Stage bits) this node can be computed
+         * in. All by default; a material's Pixel Depth is pixel-only. */
+        uint32_t    StageMask = ~0u;
+
         const PinDefinition*      FindPin(const std::string& InName) const;
         const PinDefinition*      FindPin(const std::string& InName, EPinDirection InDirection) const;
         const PropertyDefinition* FindProperty(const std::string& InName) const;
@@ -137,6 +146,24 @@ namespace NodeGraph
         /* Whether an output of InFrom may feed an input of InTo: the same type,
          * or one the compiler converts. Neither may be the wildcard. */
         bool CanConvert(const std::string& InFrom, const std::string& InTo) const;
+
+        /*
+         * STAGES. A value linked into InNode's input InPin must be computable
+         * in every stage GetRequiredStages returns: the PinDefinition::Stage
+         * bits of the Output pins it eventually reaches (0: none). A node's
+         * outputs can be computed in GetAvailableStages: its own StageMask
+         * and every node upstream of it.
+         */
+        uint32_t GetRequiredStages(const Graph& InGraph, const Node& InNode, const std::string& InPin) const;
+        uint32_t GetAvailableStages(const Graph& InGraph, const Node& InNode) const;
+
+        /* Whether linking InFromNode's output into InToNode's input InToPin
+         * respects stages; OutWhy says which stage cannot be had. */
+        bool CanLinkStages(const Graph& InGraph, const Node& InFromNode, const Node& InToNode, const std::string& InToPin,
+                           std::string* OutWhy = nullptr) const;
+
+        /* A stage bit's name for messages ("vertex"); "" for none. */
+        virtual std::string GetStageName(uint32_t InStageBit) const { return std::string(); }
 
         /* The concrete type of a pin on a node -- ResolvePinType's answer. */
         std::string GetPinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const;

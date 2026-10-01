@@ -50,6 +50,14 @@
 #define SHADER_UNIFORM(type, name) type name;
 #define UBO_END(BlockName)         };
 
+// Raw std140 block, filled byte for byte by GDISetUniformBlock (the material
+// layout, GDIDefinitions.h). Members are plain declarations.
+#define UBO_BLOCK_BEGIN(slot, BlockName) layout(std140, set=0, binding=slot) uniform BlockName {
+#define UBO_BLOCK_END(BlockName)         };
+
+// A material texture (GDISetMaterialTexture), at its binding (4 + slot).
+#define MATERIAL_SAMPLER2D(slot, name) layout(set=0, binding=slot) uniform sampler2D name;
+
 // No-op: bare uniform variables are illegal in Vulkan GLSL.
 // UBOs are declared via DECLARE_UBO or UBO_BEGIN/END.
 #define UNIFORM(type, name)

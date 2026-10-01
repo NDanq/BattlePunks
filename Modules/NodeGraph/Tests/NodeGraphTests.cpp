@@ -248,7 +248,7 @@ namespace
                "a doubled extension (as the Windows save dialog makes) strips one at a time");
         Expect(StripGraphExtension(StripGraphExtension("Scripts/Foo.script.nmgraph.script.nmgraph")) == "Scripts/Foo",
                "and twice down to the base name");
-        Expect(Material && GetGraphOutputPath("Shaders/Glow.material.nmgraph", *Material) == "Shaders/Glow.fsh", "a material outputs .fsh");
+        Expect(Material && GetGraphOutputPath("Shaders/Glow.material.nmgraph", *Material) == "Shaders/Glow.mtl.glsl", "a material outputs .mtl.glsl");
         Expect(Script && GetGraphOutputPath("Scripts/Mover.Script.NMGRAPH", *Script) == "Scripts/Mover.lua", "a script outputs .lua");
         Expect(Script && MakeGraphPath("Scripts/Mover", *Script) == "Scripts/Mover.script.nmgraph", "MakeGraphPath adds the tag");
         Expect(GetGraphBaseName("a/b/Glow.material.nmgraph") == "Glow", "the base name");
@@ -449,14 +449,16 @@ namespace
         CompileGraph(MakeGlowGraph(), Glow);
         Expect(!Glow.HasErrors(), "the Glow graph compiles");
         if(Glow.HasErrors()) { std::printf("%s\n", FormatDiagnostics(MakeGlowGraph(), Glow).c_str()); }
-        ExpectGolden("Glow.fsh", Glow.Code);
-        Expect(Glow.Code.find("SHADER_UNIFORM(mat4, MaterialParams)") != std::string::npos, "one mat4 carries every parameter");
-        Expect(Glow.Code.find("MaterialParams[0].xyz") != std::string::npos, "a vec3 parameter reads its column's xyz");
+        ExpectGolden("Glow.mtl.glsl", Glow.Code);
+        Expect(Glow.Code.find("UBO_BLOCK_BEGIN(2, Glow_Block)") != std::string::npos, "the parameters are one std140 block at binding 2");
+        Expect(Glow.Code.find("Param_Tint * ") != std::string::npos, "a parameter reads its member of the block");
+        Expect(Glow.Code.find("Surface.Emissive = t") != std::string::npos && Glow.Code.find("Surface.Opacity = t") != std::string::npos,
+               "Pixel Output's colour is an Unlit, Translucent surface");
         Expect(Glow.Companions.size() == 1 && Glow.Companions[0].first == ".material", "a material writes a .material companion");
         if(!Glow.Companions.empty()) { ExpectGolden("Glow.material", Glow.Companions[0].second); }
 
         {
-            /* Slots follow names, not graph order; a fourth parameter is refused. */
+            /* Offsets follow names, not graph order, and any number fit. */
             Graph G = MakeGlowGraph();
             const char* Names[] = { "Zeta", "Alpha", "Mid" };
             for(uint64_t Index = 0; Index < 3; ++Index)
@@ -466,16 +468,17 @@ namespace
             }
             CompileResult R;
             CompileGraph(G, R);
-            Expect(R.HasErrors(), "four parameters are one too many");
+            Expect(!R.HasErrors(), "four parameters fit in the block");
 
             G.RemoveNode(Id(42));   // "Mid" goes: Alpha, Tint, Zeta
             G.RemoveNode(Id(40));   // "Zeta" goes: Alpha, Tint
             CompileResult Two;
             CompileGraph(G, Two);
-            Expect(!Two.HasErrors() && Two.Code.find("MaterialParams[1].xyz") != std::string::npos,
-                   "Tint sorts after Alpha, into slot 1");
-            Expect(!Two.Companions.empty() && Two.Companions[0].second.find("Param Alpha 0 float") != std::string::npos,
-                   "and the companion lists Alpha in slot 0");
+            Expect(!Two.HasErrors() && Two.Code.find("float Param_Alpha;\n    vec3  Param_Tint;") != std::string::npos,
+                   "Tint is declared after Alpha");
+            Expect(!Two.Companions.empty() && Two.Companions[0].second.find("Param Alpha float 32") != std::string::npos
+                   && Two.Companions[0].second.find("Param Tint vec3 48") != std::string::npos,
+                   "and the companion gives Alpha the first offset, Tint the next 16-byte one");
         }
 
         /* float + vec3 resolves to vec3 regardless of link order, and a
@@ -501,7 +504,7 @@ namespace
             G.RemoveNode(Id(1));
             CompileResult R;
             CompileGraph(G, R);
-            Expect(R.HasErrors(), "a material without a Pixel Output fails");
+            Expect(R.HasErrors(), "a material without an output fails");
         }
         {
             Graph G = MakeGlowGraph();
@@ -587,8 +590,9 @@ namespace
         CompileGraph(Masks, R);
         Expect(!R.HasErrors(), "the mask graph compiles");
         if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Masks, R).c_str()); }
-        ExpectGolden("Masks.fsh", R.Code);
-        Expect(R.Code.find("Interpolants.Position.xz") != std::string::npos, "the mask is a swizzle of its input");
+        ExpectGolden("Masks.mtl.glsl", R.Code);
+        if(!R.Companions.empty()) { ExpectGolden("Masks.material", R.Companions[0].second); }
+        Expect(R.Code.find("Inputs.ClipPosition.xz") != std::string::npos, "the mask is a swizzle of its input");
         Expect(R.Code.find("t0.yxyx") != std::string::npos, "the swizzle reorders and repeats");
 
         Graph Loaded;
@@ -602,7 +606,7 @@ namespace
             CompileResult All;
             Compile(MakeSelectGraph("Input.FragCoord", "Coord", "Vector.ComponentMask",
                                     { { "R", "true" }, { "G", "true" }, { "B", "true" }, { "A", "true" } }), All);
-            Expect(!All.HasErrors() && All.Code.find("Output = gl_FragCoord;") != std::string::npos,
+            Expect(!All.HasErrors() && All.Code.find("Surface.Emissive = Inputs.FragCoord.rgb;") != std::string::npos,
                    "all four of a vec4 pass it through untouched");
         }
         {
@@ -617,7 +621,7 @@ namespace
         {
             CompileResult Rgba;
             Compile(MakeSelectGraph("Input.Position", "Position", "Vector.Swizzle", { { "Swizzle", "BGR" } }), Rgba);
-            Expect(!Rgba.HasErrors() && Rgba.Code.find("Interpolants.Position.zyx") != std::string::npos,
+            Expect(!Rgba.HasErrors() && Rgba.Code.find("Inputs.ClipPosition.zyx") != std::string::npos,
                    "rgba letters, in either case, mean xyzw");
 
             CompileResult Splat;
@@ -697,13 +701,14 @@ namespace
         CompileGraph(Logic, R);
         Expect(!R.HasErrors(), "the logic graph compiles");
         if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Logic, R).c_str()); }
-        ExpectGolden("Logic.fsh", R.Code);
+        ExpectGolden("Logic.mtl.glsl", R.Code);
+        if(!R.Companions.empty()) { ExpectGolden("Logic.material", R.Companions[0].second); }
 
         const auto At = [&](const char* InText) { return R.Code.find(InText); };
-        Expect(At("#include <MaterialPlatform.glsl>") < At("#include <Common.glsl>"), "hints include the platform header first");
-        Expect(At("HINT_BRANCH if(Interpolants.TexCoord.x > 0.5)") != std::string::npos, "a Branch is a hinted if");
+        Expect(At("#include") == std::string::npos, "a material function includes nothing: the templates bring MaterialPlatform.glsl");
+        Expect(At("HINT_BRANCH if(Inputs.TexCoord.x > 0.5)") != std::string::npos, "a Branch is a hinted if");
         Expect(At("HINT_UNROLL for(int i0 = 0; i0 < 4; ++i0)") != std::string::npos, "a For Loop is a hinted for");
-        Expect(At("sin(Interpolants.TexCoord)") < At("if("), "a value both sides use is computed before the if");
+        Expect(At("sin(Inputs.TexCoord)") < At("if("), "a value both sides use is computed before the if");
         Expect(At("* vec2(2.0)") > At("if(") && At("* vec2(2.0)") < At("else"), "a value only True uses is computed inside it");
         Expect(At("vec2(float(i0))") > At("for("), "the loop's Index is read inside the loop");
 
@@ -725,7 +730,7 @@ namespace
             Ternary.FindNode(Id(5))->Properties["Ternary"] = "true";
             CompileResult T;
             CompileGraph(Ternary, T);
-            Expect(!T.HasErrors() && T.Code.find("vec2 t2 = Interpolants.TexCoord.x > 0.5 ? t1 : t0;") != std::string::npos
+            Expect(!T.HasErrors() && T.Code.find("vec2 t2 = Inputs.TexCoord.x > 0.5 ? t1 : t0;") != std::string::npos
                    && T.Code.find("if(") == std::string::npos, "a ternary Branch is one expression, both sides computed before it");
             Expect(S->DescribeNode(Ternary, *Ternary.FindNode(Id(5))) == "vec2 \xC2\xB7 A > B \xC2\xB7 ? :",
                    "a ternary Branch says so in its header");
@@ -771,7 +776,7 @@ namespace
             Connect(Dynamic, 3, "Out", 7, "Count");
             CompileResult Good;
             CompileGraph(Dynamic, Good);
-            Expect(!Good.HasErrors() && Good.Code.find("< int(Interpolants.TexCoord.x);") != std::string::npos,
+            Expect(!Good.HasErrors() && Good.Code.find("< int(Inputs.TexCoord.x);") != std::string::npos,
                    "a linked Count is a run-time bound");
         }
         {
@@ -838,7 +843,8 @@ namespace
         CompileGraph(Cutout, R);
         Expect(!R.HasErrors(), "the cutout graph compiles");
         if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Cutout, R).c_str()); }
-        ExpectGolden("Cutout.fsh", R.Code);
+        ExpectGolden("Cutout.mtl.glsl", R.Code);
+        if(!R.Companions.empty()) { ExpectGolden("Cutout.material", R.Companions[0].second); }
 
         const size_t Discard = R.Code.find("if(t0 > 0.4) { discard; }");
         Expect(Discard != std::string::npos, "a Discard is an if around discard");
@@ -869,6 +875,183 @@ namespace
             CompileResult None;
             CompileGraph(Only, None);
             Expect(None.HasErrors(), "a Discard does not replace the Pixel Output");
+        }
+    }
+
+    /*
+     * A Lit, Masked material whose surface and World Position Offset share a
+     * value: Height * sin(Time) moves each vertex along its normal and is the
+     * Roughness too. BaseColor is a Color parameter times the vertex colour;
+     * Opacity Mask is the UV's x.
+     */
+    Graph MakeWaveGraph()
+    {
+        Graph G;
+        G.SchemaName = "Material";
+        G.Name       = "Wave";
+
+        Node& Output = AddNode(G, 1, "Output.Material", 700, 0);
+        Output.Properties["Domain"]    = "Masked";
+        Output.Properties["MaxOffset"] = "2";
+        AddNode(G, 2, "Input.Time", -400, 0);
+        AddNode(G, 3, "Math.Sin", -250, 0);
+        Node& Height = AddNode(G, 4, "Parameter", -250, 120);
+        Height.Properties["Name"]    = "Height";
+        Height.Properties["Default"] = "0.5";
+        Height.WildcardType          = "float";
+        AddNode(G, 5, "Math.Multiply", -100, 60);
+        AddNode(G, 6, "Input.VertexNormal", -100, 200);
+        AddNode(G, 7, "Math.Multiply", 100, 200);
+        Node& Color = AddNode(G, 8, "Parameter", -100, -200);
+        Color.Properties["Name"]    = "Color";
+        Color.Properties["Default"] = "0.2 0.6 1";
+        Color.WildcardType          = "vec3";
+        AddNode(G, 9, "Input.VertexColor", -100, -100);
+        AddNode(G, 10, "Math.Multiply", 100, -150);
+        AddNode(G, 11, "Input.TexCoord", 100, 350);
+        AddNode(G, 12, "Vector.Split", 300, 350);
+
+        Connect(G, 2, "Time", 3, "X");
+        Connect(G, 4, "Value", 5, "A");
+        Connect(G, 3, "Out", 5, "B");
+        Connect(G, 6, "Normal", 7, "A");
+        Connect(G, 5, "Out", 7, "B");
+        Connect(G, 7, "Out", 1, "WorldPositionOffset");
+        Connect(G, 5, "Out", 1, "Roughness");
+        Connect(G, 8, "Value", 10, "A");
+        Connect(G, 9, "RGB", 10, "B");
+        Connect(G, 10, "Out", 1, "BaseColor");
+        Connect(G, 11, "UV", 12, "Vector");
+        Connect(G, 12, "X", 1, "OpacityMask");
+        return G;
+    }
+
+    size_t Count(const std::string& InText, const std::string& InWhat)
+    {
+        size_t Found = 0;
+        for(size_t At = InText.find(InWhat); At != std::string::npos; At = InText.find(InWhat, At + 1)) { ++Found; }
+        return Found;
+    }
+
+    void TestMaterialStages()
+    {
+        std::printf("[material stages]\n");
+
+        const Graph Wave = MakeWaveGraph();
+        CompileResult R;
+        CompileGraph(Wave, R);
+        Expect(!R.HasErrors(), "the Wave graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Wave, R).c_str()); }
+        ExpectGolden("Wave.mtl.glsl", R.Code);
+        const std::string Data = R.Companions.empty() ? std::string() : R.Companions[0].second;
+        if(!Data.empty()) { ExpectGolden("Wave.material", Data); }
+
+        Expect(R.Code.find("vec3 CalcMaterialOffset(in MaterialInputs Inputs)") != std::string::npos
+               && R.Code.find("#if VERTEX_SHADER") != std::string::npos, "World Position Offset makes a vertex function");
+        Expect(Count(R.Code, "sin(Scene_Time.x)") == 2, "a value both stages use is computed in each");
+        Expect(R.Code.find("Surface.BaseColor = ") != std::string::npos && R.Code.find("Surface.Roughness = ") != std::string::npos
+               && R.Code.find("Surface.OpacityMask = ") != std::string::npos, "each linked pin sets its surface field");
+        Expect(R.Code.find("Surface.Metallic") == std::string::npos, "an unset pin keeps the template's default");
+        Expect(R.Code.find("Inputs.Color.rgb") != std::string::npos && R.Code.find("Inputs.WorldNormal") != std::string::npos,
+               "Vertex Color and Vertex Normal read MaterialInputs");
+        Expect(Data.find("Domain Masked") != std::string::npos && Data.find("Shading Lit") != std::string::npos
+               && Data.find("HasOffset 1") != std::string::npos && Data.find("MaxOffset 2") != std::string::npos,
+               "the .material describes the domain, shading and offset");
+        Expect(Data.find("Param Color vec3 32") != std::string::npos && Data.find("Param Height float 44") != std::string::npos
+               && Data.find("BlockSize 48") != std::string::npos, "a float packs into a vec3's last four bytes (std140)");
+
+        {
+            /* std140 alignment: float 4, vec2 8, vec3 and vec4 16. */
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Layout";
+            AddNode(G, 1, "Output.Material");
+            const char* Names[] = { "A", "B", "C", "D" };
+            const char* Types[] = { "float", "vec3", "vec2", "vec4" };
+            for(uint64_t Index = 0; Index < 4; ++Index)
+            {
+                Node& Added = AddNode(G, 50 + Index, "Parameter");
+                Added.Properties["Name"] = Names[Index];
+                Added.WildcardType       = Types[Index];
+            }
+            CompileResult Layout;
+            CompileGraph(G, Layout);
+            const std::string Text = Layout.Companions.empty() ? std::string() : Layout.Companions[0].second;
+            Expect(!Layout.HasErrors() && Text.find("Param A float 32") != std::string::npos
+                   && Text.find("Param B vec3 48") != std::string::npos && Text.find("Param C vec2 64") != std::string::npos
+                   && Text.find("Param D vec4 80") != std::string::npos, "each parameter sits at its std140 offset");
+        }
+
+        // --- Stage restrictions ------------------------------------------------------
+        const Schema* S = FindSchema("Material");
+        {
+            Graph G = MakeWaveGraph();
+            AddNode(G, 20, "Input.PixelDepth");
+            const Node& Depth  = *G.FindNode(Id(20));
+            const Node& Offset = *G.FindNode(Id(7));
+            const Node& Base   = *G.FindNode(Id(10));
+            const Node& Shared = *G.FindNode(Id(5));
+
+            std::string Why;
+            Expect(!S->CanLinkStages(G, Depth, Offset, "B", &Why) && Why.find("vertex") != std::string::npos,
+                   "Pixel Depth cannot be linked toward World Position Offset");
+            Expect(!S->CanLinkStages(G, Depth, Shared, "A"), "nor into a node that reaches it further on");
+            Expect(S->CanLinkStages(G, Depth, Base, "A"), "but it can feed the surface");
+            Expect(S->GetRequiredStages(G, Shared, "A") == 3u, "a value both stages use needs both");
+
+            Connect(G, 20, "Linear", 5, "A");   // what the editor refuses, as a file could hold it
+            G.Links.erase(std::remove_if(G.Links.begin(), G.Links.end(),
+                                         [](const Link& L) { return L.From.Node == Id(4); }), G.Links.end());
+            CompileResult Bad;
+            CompileGraph(G, Bad);
+            Expect(HasErrorOn(Bad, Id(20)) && Bad.Code.empty(), "a pixel-only node feeding the vertex stage is an error on it");
+        }
+        {
+            Graph G = MakeWaveGraph();
+            G.FindNode(Id(1))->Properties["Shading"] = "Unlit";
+            CompileResult Unlit;
+            CompileGraph(G, Unlit);
+            bool bWarned = false;
+            for(const Diagnostic& Each : Unlit.Diagnostics)
+            {
+                bWarned |= Each.Severity == ESeverity::Warning && Each.Pin == "BaseColor";
+            }
+            Expect(!Unlit.HasErrors() && bWarned, "a pin the shading ignores is a warning");
+        }
+        {
+            Graph G = MakeWaveGraph();
+            G.FindNode(Id(1))->Properties["Domain"] = "PostProcess";
+            CompileResult Post;
+            CompileGraph(G, Post);
+            Expect(HasErrorOn(Post, Id(1)), "a PostProcess material is Unlit and has no offset");
+        }
+        {
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Invert";
+            Node& Output = AddNode(G, 1, "Output.Material");
+            Output.Properties["Domain"]  = "PostProcess";
+            Output.Properties["Shading"] = "Unlit";
+            AddNode(G, 2, "Input.SceneTexture");
+            AddNode(G, 3, "Math.OneMinus");
+            Connect(G, 2, "Color", 3, "X");
+            Connect(G, 3, "Out", 1, "Emissive");
+            CompileResult Post;
+            CompileGraph(G, Post);
+            Expect(!Post.HasErrors() && Post.Code.find("texture(Material_SceneColor, Inputs.TexCoord)") != std::string::npos,
+                   "Scene Texture reads the scene in a PostProcess material");
+
+            G.FindNode(Id(1))->Properties["Domain"] = "Opaque";
+            CompileResult Opaque;
+            CompileGraph(G, Opaque);
+            Expect(HasErrorOn(Opaque, Id(2)), "and is an error anywhere else");
+        }
+        {
+            Graph G = MakeWaveGraph();
+            AddNode(G, 30, "Output.Pixel");
+            CompileResult Two;
+            CompileGraph(G, Two);
+            Expect(Two.HasErrors(), "a material has one output node");
         }
     }
 
@@ -911,6 +1094,7 @@ int main()
     TestComponentSelection();
     TestLogic();
     TestDiscard();
+    TestMaterialStages();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

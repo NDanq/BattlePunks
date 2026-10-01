@@ -234,22 +234,52 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
     Data.Position   = static_cast<float*>(Copy(InDesc.Positions, sizeof(float) * 3 * InDesc.NumVertices));
     Data.Normal     = static_cast<float*>(Copy(InDesc.Normals, sizeof(float) * 3 * InDesc.NumVertices));
     Data.TexCoord   = static_cast<float*>(Copy(InDesc.UV0, sizeof(float) * 2 * InDesc.NumVertices));
+    if(InDesc.Colors)
+    {
+        Data.Color = static_cast<float*>(Copy(InDesc.Colors, sizeof(float) * 4 * InDesc.NumVertices));
+    }
+    else if((Data.Color = static_cast<float*>(malloc(sizeof(float) * 4 * InDesc.NumVertices))) != nullptr)
+    {
+        /* White, so every backend's mesh layout always has a colour stream. */
+        for(uint32_t At = 0; At < InDesc.NumVertices * 4; ++At) { Data.Color[At] = 1.0f; }
+    }
     Data.Indices    = static_cast<uint32_t*>(Copy(InDesc.Indices, sizeof(uint32_t) * InDesc.NumIndices));
     Data.NumIndices = InDesc.NumIndices;
 
     /* As CreateQuadMesh: the POSITION FLOAT count, not the vertex count. */
     Data.NumVertices = InDesc.NumVertices * 3;
 
-    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Indices)
+    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.Indices)
     {
         free(Data.Position);
         free(Data.Normal);
+        free(Data.Color);
         free(Data.TexCoord);
         free(Data.Indices);
         return false;
     }
     OutData = Data;
     return true;
+}
+
+void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData, const uint InSize)
+{
+    if(InBinding < GDI_MATERIAL_BLOCK_BINDING || InBinding > GDI_SCENE_BLOCK_BINDING) return;
+    std::vector<uint8_t>& Block = MaterialBlocks[InBinding - GDI_MATERIAL_BLOCK_BINDING];
+    const uint Size = InSize < GDI_MATERIAL_BLOCK_MAX_BYTES ? InSize : GDI_MATERIAL_BLOCK_MAX_BYTES;
+    const auto* Bytes = static_cast<const uint8_t*>(InData);
+    Block.assign(Bytes, Bytes + (InData ? Size : 0));
+}
+
+void GDIDynamicDriver::SetMaterialTexture(const uint InSlot, GDITextureResource* InTexture)
+{
+    if(InSlot < GDI_MATERIAL_TEXTURE_SLOTS) MaterialTextures[InSlot] = InTexture;
+}
+
+bool GDIDynamicDriver::IsMaterialDraw() const
+{
+    return (BoundVertexShader && BoundVertexShader->Resource && BoundVertexShader->Resource->UsesMaterialLayout())
+        || (BoundPixelShader  && BoundPixelShader->Resource  && BoundPixelShader->Resource->UsesMaterialLayout());
 }
 
 void GDIDynamicDriver::DrawObject(GDIViewObject *InObject)
@@ -392,6 +422,14 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(GDIMesh*,
 IMPLEMENT_GDI_FUNCTION_BODY(void,
                             SetBoundShader,
                             (GDIShader* In_VS, GDIShader* In_PS), ,(In_VS, In_PS))
+
+IMPLEMENT_GDI_FUNCTION_BODY(void,
+                            SetUniformBlock,
+                            (uint InBinding, const void* InData, uint InSize), ,(InBinding, InData, InSize))
+
+IMPLEMENT_GDI_FUNCTION_BODY(void,
+                            SetMaterialTexture,
+                            (uint InSlot, GDITextureResource* InTexture), ,(InSlot, InTexture))
 
 IMPLEMENT_GDI_FUNCTION_BODY_RET(GDITextureResource*,
                             CreateTextureResource,
