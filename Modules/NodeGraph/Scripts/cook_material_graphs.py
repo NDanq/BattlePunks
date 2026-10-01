@@ -3,11 +3,12 @@
 cook_material_graphs.py -- check or cook the shaders material graphs generate.
 
 A material graph (*.material.nmgraph) compiles to a .fsh in the engine's macro
-GLSL, next to the graph. This script puts those files through the SAME
-preprocessor and tools as GDI's own shaders, by importing GDI's
-cook_shaders.py -- read-only: Modules/GDI is a vendored subtree and is never
-edited from here. #include <Common.glsl> resolves against GDI's Shaders/; an
-include GDI does not have (MaterialPlatform.glsl) against this module's Shaders/.
+GLSL, next to the graph. This script puts those files -- and the engine's own
+shaders in Engine/Content/Shaders -- through GDI's preprocessor and tool
+lookup, by importing GDI's cook_shaders.py read-only (Modules/GDI is a
+vendored subtree). Every #include resolves against Engine/Content/Shaders, not
+GDI's Shaders/, and no .qrc is written: the output is plain files the
+runtime's file provider reads.
 
 Usage:
     python cook_material_graphs.py -check Glow.fsh [More.fsh ...]
@@ -25,7 +26,8 @@ Usage:
         The renderer loads a material "Glow" from Shaders/Cooked/<Platform>/
         Materials/Glow.fsh[.spv|.cso] -- so the editor, and a game's build
         (Engine/cmake/NimbleMaterials.cmake), cook with -subdir Materials into
-        the runtime directory's Shaders/Cooked.
+        the runtime directory's Shaders/Cooked. The engine's build cooks
+        Engine/Content/Shaders the same way, without -subdir.
 """
 
 import argparse
@@ -34,9 +36,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-SCRIPT_DIR      = Path(__file__).parent.resolve()
-GDI_SCRIPTS_DIR = SCRIPT_DIR.parent.parent / "GDI" / "Scripts"
-MATERIAL_SHADERS_DIR = SCRIPT_DIR.parent / "Shaders"
+SCRIPT_DIR         = Path(__file__).parent.resolve()
+GDI_SCRIPTS_DIR    = SCRIPT_DIR.parent.parent / "GDI" / "Scripts"
+ENGINE_SHADERS_DIR = SCRIPT_DIR.parent.parent.parent / "Content" / "Shaders"
 
 
 def _import_cook_shaders(scripts_dir):
@@ -50,18 +52,10 @@ def _import_cook_shaders(scripts_dir):
         print(f"ERROR: cannot import GDI's cook_shaders.py from {scripts_dir}: {exc}", file=sys.stderr)
         sys.exit(2)
 
-    # Includes resolve against GDI's Shaders/, then this module's Shaders/
-    # (MaterialPlatform.glsl). preprocess() recurses through its module-global
-    # name, so wrapping it here covers every #include, on every target.
-    gdi_preprocess = cook_shaders.preprocess
-
-    def preprocess(file_path, *args, **kwargs):
-        own = MATERIAL_SHADERS_DIR / Path(file_path).name
-        if not Path(file_path).exists() and own.exists():
-            file_path = own
-        return gdi_preprocess(file_path, *args, **kwargs)
-
-    cook_shaders.preprocess = preprocess
+    # Includes resolve against the engine's Content/Shaders. Every call (here
+    # and inside _compile_spirv) passes the module-global SHADERS_SRC as the
+    # include root, so rebinding it reroutes them all.
+    cook_shaders.SHADERS_SRC = ENGINE_SHADERS_DIR
     return cook_shaders
 
 
@@ -164,7 +158,7 @@ def main():
     parser = argparse.ArgumentParser(description="Check or cook the shaders material graphs generate.")
     parser.add_argument("-check", nargs="+", metavar="FILE", help="compile these to SPIR-V and report errors")
     parser.add_argument("-target", choices=("OpenGL", "Vulkan", "D3D12"), help="cook for this platform")
-    parser.add_argument("-src", action="append", metavar="DIR", help="a directory of generated shaders (repeatable)")
+    parser.add_argument("-src", action="append", metavar="DIR", help="a shader, or a directory of shaders (repeatable)")
     parser.add_argument("-out", metavar="DIR", help="cooked output root; <Platform>/ is created below it")
     parser.add_argument("-subdir", default="", metavar="NAME", help="a folder below <Platform>/ to cook into (the runtime uses Materials)")
     parser.add_argument("-gdi-scripts", default=str(GDI_SCRIPTS_DIR), metavar="DIR",

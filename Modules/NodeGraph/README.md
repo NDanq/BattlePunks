@@ -34,9 +34,8 @@ registries, by whichever executable links this: the editor or the test.
 | `GraphFile.h` | `.nmgraph` read and write, the path rules, the clipboard fragment, `GenerateGraphOutput` |
 | `GraphCompiler.h` | `ValidateGraph` (what every schema shares), then `CompileGraph` into the schema's compiler; diagnostics name their node |
 | `MaterialSchema.cpp` | Material to GLSL: data flow from Pixel Output (and each Discard) back, one `tN` temporary per computed value, Branch and For Loop as real `if` and `for` blocks, parameters in one `mat4` at binding 2 |
-| `Shaders/MaterialPlatform.glsl` | Per-platform macros a generated shader may include: the control-flow hints |
 | `ScriptSchema.cpp` | Script to Lua: exec flow from event nodes, pure values re-evaluated per statement; component nodes generated from the script bindings |
-| `Scripts/cook_material_graphs.py` | `-check` a generated shader with glslc, or cook a folder of them, through GDI's own `cook_shaders.py` |
+| `Scripts/cook_material_graphs.py` | `-check` a generated shader with glslc, or cook a folder of them, through GDI's own `cook_shaders.py`. Also cooks the engine's `Content/Shaders` |
 
 ## The `.nmgraph` format
 
@@ -163,7 +162,7 @@ arguments, and a compile warning.
 A material graph `Materials/Glow.material.nmgraph` generates two files beside
 it, both committed:
 
-- **`Glow.fsh`**, a pixel shader with the shape of `GDI/Shaders/Basic.fsh`:
+- **`Glow.fsh`**, a pixel shader with the shape of `Engine/Content/Shaders/Basic.fsh`:
   `#include <Common.glsl>`, `OUTPUT(0, vec4, Output)`, and **one uniform**,
   `mat4 MaterialParams`, alone in a UBO at binding 2. Bindings 0 and 1 are
   Common.glsl's view and transform blocks.
@@ -236,7 +235,7 @@ colour share is computed once, above both.
 
 **Hints.** Branch has a Hint of None, Branch or Flatten; For Loop has None, Loop
 or Unroll. Unroll needs a constant Count. A hint becomes a `HINT_*` macro from
-`Shaders/MaterialPlatform.glsl`. A shader includes that header first, and only
+`Engine/Content/Shaders/MaterialPlatform.glsl`. A shader includes that header first, and only
 when it uses a hint. The header maps each hint per platform:
 
 | Platform | `HINT_BRANCH` becomes |
@@ -247,8 +246,8 @@ when it uses a hint. The header maps each hint per platform:
 
 The macros are comments rather than empty because `cook_shaders.py`'s
 preprocessor substitutes only defines that have a value.
-`cook_material_graphs.py` resolves an `#include` against GDI's `Shaders/`
-first, then this module's.
+`cook_material_graphs.py` resolves every `#include` against
+`Engine/Content/Shaders`.
 
 The inputs are:
 
@@ -270,7 +269,10 @@ then shows it, drawn by that same renderer.
 GDI is a vendored subtree and is never edited from here. So
 `Scripts/cook_material_graphs.py` **imports** its `cook_shaders.py` read-only
 and reuses its preprocessor and tool lookup. `#include <Common.glsl>` resolves
-against GDI's `Shaders/`.
+against `Engine/Content/Shaders`, which holds the engine's own shaders (Basic,
+Mesh, Screen and their includes). The engine's build cooks that folder into
+the runtime directory the same way; GDI's own cook (and its `.qrc` bundles,
+which only a Qt host needs) is switched off with `GDI_COOK_SHADERS`.
 
 ```
 python Scripts/cook_material_graphs.py -check Games/Sandbox/Materials/Glow.fsh

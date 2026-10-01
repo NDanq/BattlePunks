@@ -9,14 +9,45 @@
 #
 # Uses cook_material_graphs.py (GDI's toolchain). Works in every target type.
 # Globbed (generated files) with CONFIGURE_DEPENDS; stamp-file incremental.
+#
+# nimble_shader_cook_commands(<out-var> SRC <file-or-dir> OUT <dir> [SUBDIR <name>])
+#
+# The COMMAND list that cooks SRC into OUT/<Platform>/[SUBDIR/] for every
+# built GDI backend. Shared by the above and the engine's own shader staging
+# (Engine/CMakeLists.txt). Includes resolve against Engine/Content/Shaders.
 # ===========================================================================
 
-# CACHE: the function runs in the game's scope. (CMAKE_CURRENT_FUNCTION_LIST_DIR
+# CACHE: the functions run in the caller's scope. (CMAKE_CURRENT_FUNCTION_LIST_DIR
 # needs CMake 3.17.)
 get_filename_component(NM_COOK_SCRIPT "${CMAKE_CURRENT_LIST_DIR}/../Modules/NodeGraph/Scripts/cook_material_graphs.py" ABSOLUTE)
 set(NIMBLE_MATERIAL_COOK_SCRIPT "${NM_COOK_SCRIPT}" CACHE INTERNAL "NodeGraph's material cook, for nimble_stage_materials")
-get_filename_component(NM_PLATFORM_HEADER "${CMAKE_CURRENT_LIST_DIR}/../Modules/NodeGraph/Shaders/MaterialPlatform.glsl" ABSOLUTE)
-set(NIMBLE_MATERIAL_PLATFORM_HEADER "${NM_PLATFORM_HEADER}" CACHE INTERNAL "NodeGraph's MaterialPlatform.glsl, which cooked materials may include")
+get_filename_component(NM_ENGINE_SHADER_DIR "${CMAKE_CURRENT_LIST_DIR}/../Content/Shaders" ABSOLUTE)
+set(NIMBLE_ENGINE_SHADER_DIR "${NM_ENGINE_SHADER_DIR}" CACHE INTERNAL "Engine/Content/Shaders: the engine's shaders, and the include root of every cook")
+file(GLOB NM_SHADER_INCLUDES CONFIGURE_DEPENDS "${NM_ENGINE_SHADER_DIR}/*.glsl")
+set(NIMBLE_SHADER_INCLUDES "${NM_SHADER_INCLUDES}" CACHE INTERNAL "Engine/Content/Shaders/*.glsl; a change recooks everything that includes them")
+
+function(nimble_shader_cook_commands NM_OUT_VAR)
+    cmake_parse_arguments(NC "" "SRC;OUT;SUBDIR" "" ${ARGN})
+
+    set(NC_SUBDIR_ARGS)
+    if(NC_SUBDIR)
+        set(NC_SUBDIR_ARGS -subdir ${NC_SUBDIR})
+    endif()
+
+    # Metal is not cooked: cook_material_graphs.py has no Metal target, and on
+    # Apple GDI_WITH_VULKAN is forced off, which GDI's own Metal cook needed.
+    set(NC_COMMANDS)
+    foreach(NC_PLATFORM OpenGL Vulkan D3D12)
+        string(TOUPPER "${NC_PLATFORM}" NC_PLATFORM_UPPER)
+        if(GDI_WITH_${NC_PLATFORM_UPPER})
+            list(APPEND NC_COMMANDS
+                    COMMAND "${Python3_EXECUTABLE}" "${NIMBLE_MATERIAL_COOK_SCRIPT}"
+                            -target ${NC_PLATFORM} -src "${NC_SRC}"
+                            -out "${NC_OUT}" ${NC_SUBDIR_ARGS})
+        endif()
+    endforeach()
+    set(${NM_OUT_VAR} ${NC_COMMANDS} PARENT_SCOPE)
+endfunction()
 
 function(nimble_stage_materials)
     cmake_parse_arguments(NM "" "TARGET;DIR;RUNTIME_DIR" "" ${ARGN})
@@ -50,22 +81,15 @@ function(nimble_stage_materials)
         list(APPEND NM_COMMANDS COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NM_MATERIAL}" "${NM_RUNTIME}/Materials/")
     endforeach()
 
-    foreach(NM_PLATFORM OpenGL Vulkan D3D12)
-        string(TOUPPER "${NM_PLATFORM}" NM_PLATFORM_UPPER)
-        if(GDI_WITH_${NM_PLATFORM_UPPER})
-            list(APPEND NM_COMMANDS
-                    COMMAND "${Python3_EXECUTABLE}" "${NIMBLE_MATERIAL_COOK_SCRIPT}"
-                            -target ${NM_PLATFORM} -src "${NM_DIR}"
-                            -out "${NM_RUNTIME}/Shaders/Cooked" -subdir Materials)
-        endif()
-    endforeach()
+    nimble_shader_cook_commands(NM_COOK_COMMANDS SRC "${NM_DIR}" OUT "${NM_RUNTIME}/Shaders/Cooked" SUBDIR Materials)
+    list(APPEND NM_COMMANDS ${NM_COOK_COMMANDS})
 
     set(NM_STAMP "${CMAKE_CURRENT_BINARY_DIR}/${NM_TARGET}_Materials.stamp")
     add_custom_command(
             OUTPUT  "${NM_STAMP}"
             ${NM_COMMANDS}
             COMMAND ${CMAKE_COMMAND} -E touch "${NM_STAMP}"
-            DEPENDS ${NM_SHADERS} ${NM_MATERIALS} "${NIMBLE_MATERIAL_COOK_SCRIPT}" "${NIMBLE_MATERIAL_PLATFORM_HEADER}"
+            DEPENDS ${NM_SHADERS} ${NM_MATERIALS} "${NIMBLE_MATERIAL_COOK_SCRIPT}" ${NIMBLE_SHADER_INCLUDES}
             COMMENT "${NM_TARGET}: cooking and staging materials from ${NM_DIR}"
             VERBATIM)
 

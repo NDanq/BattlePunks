@@ -169,7 +169,7 @@ NodeGraph's README.
 path, e.g. `"Content/Props/Crate.nmmesh"` (NimbleEditor's Import Wizard makes
 them from glTF; the game stages `Content/` beside the executable). It draws at
 its own size times the Transform's scale -- `Width`/`Height` are the quad's --
-one draw per section, lit by one fixed light in `Tint` (GDI's `Mesh.fsh`), or
+one draw per section, lit by one fixed light in `Tint` (`Engine/Content/Shaders/Mesh.fsh`), or
 with `Material` when set, or with a section's imported material name if a
 material of that name exists. A mesh that cannot be loaded, or a backend
 without indexed meshes (Metal, so far), draws the quad instead, warned once.
