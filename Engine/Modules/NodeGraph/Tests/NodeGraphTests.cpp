@@ -42,6 +42,56 @@ static void Expect(const bool bCondition, const std::string& What)
     }
 }
 
+// === A script struct, as a game module declares one =============================
+
+struct TestStats
+{
+    GAMECORE_SCRIPT_STRUCT_BODY()
+    int32_t             Hits   = 0;
+    float               Scale  = 1.0f;
+    EngineCore::Vector3 Where;
+    uint8_t             bLucky = 0;
+};
+GAMECORE_DEFINE_SCRIPT_STRUCT(TestStats, "TestStats")
+{
+    Struct.Field("Hits",  &TestStats::Hits);
+    Struct.Field("Scale", &TestStats::Scale);
+    Struct.Field("Where", &TestStats::Where);
+    Struct.Flag("Lucky",  &TestStats::bLucky);
+}
+
+/* A component holding one, as a field, and returning one from a member. */
+struct StatsHolderComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    TestStats Stats;
+
+    TestStats Bumped(const int32_t InBy) const
+    {
+        TestStats Out = Stats;
+        Out.Hits += InBy;
+        return Out;
+    }
+};
+GAMECORE_DEFINE_COMPONENT(StatsHolderComponent, "TestStatsHolder")
+GAMECORE_DEFINE_COMPONENT_SCRIPT(StatsHolderComponent)
+{
+    Bind.Field("Stats", &StatsHolderComponent::Stats);
+    Bind.Native<&StatsHolderComponent::Bumped>("Bumped", "By -> Stats");
+}
+
+static TestStats GTestStats;
+
+static TestStats NativeMerge(const TestStats& InA, const TestStats& InB)
+{
+    TestStats Out;
+    Out.Hits   = InA.Hits + InB.Hits;
+    Out.Scale  = InA.Scale + InB.Scale;
+    Out.Where  = InA.Where + InB.Where;
+    Out.bLucky = uint8_t(InA.bLucky | InB.bLucky);
+    return Out;
+}
+
 // === A script library, as a game module declares one ===========================
 
 static int32_t GTestScore    = 0;
@@ -102,6 +152,9 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(TestLib)
     Lib.NativePure<&NativeGreet>("Greet");                           // unnamed: Arg1, Arg2, Result
     Lib.Native<&NativeSpawnAt>("SpawnAt", "At -> Spawned");          // World& is filled in
     Lib.Native<&NativeFail>("Fail");
+
+    Lib.Variable("Stats", &GTestStats);                              // a script struct variable
+    Lib.NativePure<&NativeMerge>("Merge", "A, B -> Sum");            // script structs in and out
 }
 
 /* A component whose bindings are withdrawn and registered again, as a game
@@ -316,6 +369,44 @@ namespace
         Connect(G, 10, "Total", 13, "A");
         Connect(G, 12, "Version", 13, "B");
         Connect(G, 13, "Out", 11, "Value");
+        return G;
+    }
+
+    /* TestStats through a graph: a component field read, broken, changed,
+     * made again and written back; a struct variable merged into each tick. */
+    Graph MakeStatsGraph()
+    {
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Stats";
+        G.Variables.push_back({ "Best", "TestStats", "" });
+
+        AddNode(G, 1, "Event.OnTick");
+        AddNode(G, 2, "Component.TestStatsHolder.Get");
+        AddNode(G, 3, "Component.TestStatsHolder.GetStats");
+        AddNode(G, 4, "Struct.TestStats.Break");
+        AddNode(G, 5, "Math.Add").Constants["B"] = "1";
+        AddNode(G, 6, "Struct.TestStats.Make").Constants["Lucky"] = "true";
+        AddNode(G, 7, "Component.TestStatsHolder.SetStats");
+        AddNode(G, 8, "Variable.Set").Properties["Variable"] = "Best";
+        AddNode(G, 9, "Library.TestLib.Merge");
+        AddNode(G, 10, "Variable.Get").Properties["Variable"] = "Best";
+        AddNode(G, 11, "Library.TestLib.SetStats");
+        Connect(G, 1, "Then", 7, "Exec");
+        Connect(G, 2, "TestStatsHolder", 3, "Target");
+        Connect(G, 2, "TestStatsHolder", 7, "Target");
+        Connect(G, 3, "Stats", 4, "TestStats");
+        Connect(G, 4, "Hits", 5, "A");
+        Connect(G, 5, "Out", 6, "Hits");
+        Connect(G, 4, "Scale", 6, "Scale");
+        Connect(G, 4, "Where", 6, "Where");
+        Connect(G, 6, "TestStats", 7, "Stats");
+        Connect(G, 7, "Then", 8, "Exec");
+        Connect(G, 10, "Value", 9, "A");
+        Connect(G, 3, "Stats", 9, "B");
+        Connect(G, 9, "Sum", 8, "Value");
+        Connect(G, 8, "Then", 11, "Exec");
+        Connect(G, 10, "Value", 11, "Stats");
         return G;
     }
 
@@ -1182,6 +1273,93 @@ namespace
         }
     }
 
+    void TestScriptStructs()
+    {
+        std::printf("[script structs]\n");
+
+        // --- Registry ---------------------------------------------------------------
+        const GameCore::ScriptStructID Id = TestStats::StaticScriptStruct();
+        const GameCore::ScriptStructInfo* Info = GameCore::GetScriptStruct(Id);
+        Expect(Info && std::string(Info->Name) == "TestStats" && Info->FieldCount == 4 && Info->Lanes == 6,
+               "a struct registers its fields; a Vector3 field is three lanes");
+        Expect(GameCore::FindOrAddScriptStruct("TestStats") == Id, "an id is found by name, so a reload keeps it");
+
+        // --- Nodes ------------------------------------------------------------------
+        const Schema* S = FindSchema("Script");
+        const PinTypeInfo* Type = S ? S->FindType("TestStats") : nullptr;
+        Expect(Type && !Type->bHasLiteral, "a struct is a pin type, built rather than typed in");
+        const NodeDefinition* MakeDef = S ? S->FindNode("Struct.TestStats.Make") : nullptr;
+        Expect(MakeDef && MakeDef->FindPin("Where", EPinDirection::Input) && MakeDef->FindPin("Where", EPinDirection::Input)->Type == "Vector3"
+               && MakeDef->FindPin("Lucky", EPinDirection::Input)->Type == "bool"
+               && MakeDef->FindPin("TestStats", EPinDirection::Output), "Make has a typed input per field");
+        Expect(S && S->FindNode("Struct.TestStats.Break"), "and Break the outputs");
+        const NodeDefinition* GetStats = S ? S->FindNode("Component.TestStatsHolder.GetStats") : nullptr;
+        Expect(GetStats && GetStats->FindPin("Stats", EPinDirection::Output)->Type == "TestStats", "a component's struct field is a struct pin");
+        const NodeDefinition* Merge = S ? S->FindNode("Library.TestLib.Merge") : nullptr;
+        Expect(Merge && Merge->FindPin("Sum", EPinDirection::Output) && Merge->FindPin("Sum", EPinDirection::Output)->Type == "TestStats",
+               "a Native signature names the struct");
+        const std::vector<std::string>& VarTypes = S->GetVariableTypes();
+        Expect(std::find(VarTypes.begin(), VarTypes.end(), "TestStats") != VarTypes.end(), "a graph variable may be a struct");
+
+        // --- Code -------------------------------------------------------------------
+        CompileResult Stats;
+        CompileGraph(MakeStatsGraph(), Stats);
+        Expect(!Stats.HasErrors(), "the struct graph compiles");
+        if(Stats.HasErrors()) { std::printf("%s\n", FormatDiagnostics(MakeStatsGraph(), Stats).c_str()); }
+        ExpectGolden("Stats.lua", Stats.Code);
+
+        // --- Run --------------------------------------------------------------------
+        const std::string Path = TempDir() + "/Stats.lua";
+        WriteFile(Path, Stats.Code);
+        {
+            GameCore::World W;
+            GameCore::ScriptEngine Scripts;
+            Scripts.Initialize();
+            Scripts.BindWorld(&W);
+
+            GTestStats = TestStats();
+            GameCore::Entity Holder = W.CreateEntity("Holder");
+            Holder.AddComponent<StatsHolderComponent>();
+            Holder.SetScript(Path.c_str());
+            for(int Frame = 0; Frame < 3; ++Frame) { W.Tick(0.1f); }
+
+            const StatsHolderComponent* C = Holder.GetComponent<StatsHolderComponent>();
+            Expect(C && C->Stats.Hits == 3 && C->Stats.bLucky == 1 && std::fabs(C->Stats.Scale - 1.0f) < 1e-6f,
+                   "Break, change, Make and set: three ticks count three hits");
+            Expect(GTestStats.Hits == 6 && std::fabs(GTestStats.Scale - 3.0f) < 1e-6f && GTestStats.bLucky == 1,
+                   "a struct variable merged each tick, then written to the library (got Hits "
+                   + std::to_string(GTestStats.Hits) + ")");
+            Expect(Scripts.GetErrorCount() == 0, "the struct script raised no Lua errors");
+
+            Expect(Scripts.RunString(
+                "local h = World.FindEntity('Holder'):GetComponent('TestStatsHolder') "
+                "h:SetStats(5, 0.5, 1, 2, 3, false) "
+                "local hits, scale, x, y, z, lucky = h:GetStats() "
+                "assert(hits == 5 and scale == 0.5 and x == 1 and y == 2 and z == 3 and lucky == false) "
+                "local b = { h:Bumped(10) } assert(#b == 6 and b[1] == 15) "
+                "local m = { TestLib.Merge(1, 1, 0, 0, 0, false, 2, 1, 1, 1, 1, true) } "
+                "assert(m[1] == 3 and m[2] == 2 and m[3] == 1 and m[6] == true)", "struct-lua"),
+                   "in Lua a struct is its fields' values, in order, for fields, Native members and functions");
+            Expect(!Scripts.RunString("TestLib.Merge(1, 'x')", "struct-bad"), "a bad struct argument is a Lua error");
+
+            // --- Across an unload ---------------------------------------------------
+            GameCore::UnregisterScriptStruct(Id);
+            Expect(GameCore::GetScriptStruct(Id) == nullptr && std::string(GameCore::GetScriptStructName(Id)) == "TestStats",
+                   "unregistering drops the fields and keeps the name");
+            Expect(!Scripts.RunString("TestLib.GetStats()", "struct-unloaded"), "reading an unloaded struct is a Lua error");
+            GameCore::ScriptStructBinder<TestStats> Again;
+            Again.Field("Hits", &TestStats::Hits);
+            Again.Field("Scale", &TestStats::Scale);
+            Again.Field("Where", &TestStats::Where);
+            Again.Flag("Lucky", &TestStats::bLucky);
+            Expect(Again.Commit() && GameCore::GetScriptStruct(Id) != nullptr, "and it registers again under the same id");
+            Expect(Scripts.RunString("assert(select('#', TestLib.GetStats()) == 6)", "struct-reloaded"), "and works again");
+
+            Scripts.UnbindWorld();
+            Scripts.Shutdown();
+        }
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -1218,6 +1396,7 @@ int main()
     TestScriptCodegen();
     TestScriptRuntime();
     TestLibraries();
+    TestScriptStructs();
     TestMaterialCodegen();
     TestComponentSelection();
     TestLogic();

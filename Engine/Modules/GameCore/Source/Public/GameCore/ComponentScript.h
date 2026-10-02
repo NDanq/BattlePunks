@@ -13,6 +13,7 @@
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/GameCoreAPI.h"
+#include "Public/GameCore/ScriptStruct.h"
 #include "Public/Math/Vector.h"
 
 /* Lua's own type, forward-declared at global scope -- lua.h never appears in a
@@ -74,6 +75,11 @@ namespace GameCore
         EngineCore::Color   GetColor  (int InFirstArg);   // three or four integers 0..255; alpha defaults to 255
         EntityID            GetEntity (int InArg);        // an Entity value; nil is an unset id, not an error
 
+        /* A script struct (ScriptStruct.h) from its fields' values, starting
+         * at InFirstArg, into OutValue (the struct's size). False, with an
+         * error, if a value is bad or the struct is not registered. */
+        bool GetStruct(int InFirstArg, ScriptStructID InStruct, void* OutValue);
+
         void PushNumber (double InValue);
         void PushInteger(int64_t InValue);   // a Lua integer: prints as 3, not 3.0
         void PushBool   (bool InValue);
@@ -81,6 +87,7 @@ namespace GameCore
         void PushVector3(const EngineCore::Vector3& InValue);   // three numbers
         void PushColor  (const EngineCore::Color& InValue);     // four integers
         void PushEntity (EntityID InEntity);
+        void PushStruct (ScriptStructID InStruct, const void* InValue);   // its fields' values, in order
         void PushNil    ();
 
         /* Fails the call with InMessage (the first error wins). */
@@ -116,31 +123,8 @@ namespace GameCore
     // === Binding descriptions ================================================
     // Built by ComponentScriptBinder below; nothing here is written by hand.
 
-    enum class EScriptFieldType : uint8_t
-    {
-        Float, Double, Int32, UInt8, Bool, Flag, Vector3, AABB, Color, FixedString
-    };
-
-    template<typename TField> struct ScriptFieldTypeOf;   // unsupported types fail to compile
-    template<> struct ScriptFieldTypeOf<float>               { static constexpr EScriptFieldType Value = EScriptFieldType::Float;   };
-    template<> struct ScriptFieldTypeOf<double>              { static constexpr EScriptFieldType Value = EScriptFieldType::Double;  };
-    template<> struct ScriptFieldTypeOf<int32_t>             { static constexpr EScriptFieldType Value = EScriptFieldType::Int32;   };
-    template<> struct ScriptFieldTypeOf<uint8_t>             { static constexpr EScriptFieldType Value = EScriptFieldType::UInt8;   };
-    template<> struct ScriptFieldTypeOf<bool>                { static constexpr EScriptFieldType Value = EScriptFieldType::Bool;    };
-    template<> struct ScriptFieldTypeOf<EngineCore::Vector3> { static constexpr EScriptFieldType Value = EScriptFieldType::Vector3; };
-    template<> struct ScriptFieldTypeOf<AABB>                { static constexpr EScriptFieldType Value = EScriptFieldType::AABB;    };
-    template<> struct ScriptFieldTypeOf<EngineCore::Color>   { static constexpr EScriptFieldType Value = EScriptFieldType::Color;   };
-    template<size_t N> struct ScriptFieldTypeOf<char[N]>     { static constexpr EScriptFieldType Value = EScriptFieldType::FixedString; };
-
     /* Calls a typed method through its type-erased pointer. */
     using ScriptMethodInvoker = void (*)(void (*InMethod)(), void* InComponent, ScriptCall& InCall);
-
-    enum : size_t
-    {
-        SCRIPT_BINDING_NAME_MAX      = 40,   // including the NUL; accessors add Get/Set
-        SCRIPT_BINDINGS_PER_TYPE_MAX = 32,
-        SCRIPT_SIGNATURE_MAX         = 96,   // including the NUL
-    };
 
     struct ScriptBindingEntry
     {
@@ -150,6 +134,7 @@ namespace GameCore
         EScriptFieldType    FieldType = EScriptFieldType::Float;
         uint32_t            Offset    = 0;
         uint32_t            Size      = 0;
+        ScriptStructID      FieldStruct = SCRIPT_STRUCT_INVALID;   // a Struct field's struct
         ScriptMethodInvoker Invoker   = nullptr;
         void              (*Method)() = nullptr;
 
@@ -194,7 +179,7 @@ namespace GameCore
          * to read it from a ScriptCall and how to push it back. A type without
          * a specialisation fails to compile at the Native call that uses it.
          */
-        template<typename T> struct Traits
+        template<typename T, typename = void> struct Traits
         {
             /* Enough for the static_asserts below to report it, and no more. */
             static constexpr bool        bSupported = false;
@@ -290,6 +275,35 @@ namespace GameCore
             static ScriptCall& Use(ScriptCall* InStored)   { return *InStored; }
         };
 
+        /* Any script struct (ScriptStruct.h): its fields' values, in order.
+         * Its width and name are the registered struct's, so they are read
+         * at run time (Lanes -1; LaneCountOf, TypeNameOf). */
+        template<typename T> struct Traits<T, std::enable_if_t<IsScriptStruct<T>::value>>
+        {
+            static constexpr bool        bSupported = true;
+            static constexpr int         Lanes      = -1;
+            static constexpr const char* Type       = "";
+            using Stored = T;
+            static T&   Use(T& InStored) { return InStored; }
+            static T    Get(ScriptCall& C, const int A)   { T Value{}; C.GetStruct(A, T::StaticScriptStruct(), &Value); return Value; }
+            static void Push(ScriptCall& C, const T& InV) { C.PushStruct(T::StaticScriptStruct(), &InV); }
+        };
+
+        template<typename B>
+        int LaneCountOf()
+        {
+            if constexpr(IsScriptStruct<B>::value) { return GetScriptFieldLanes(EScriptFieldType::Struct, B::StaticScriptStruct()); }
+            else                                   { return Traits<B>::Lanes; }
+        }
+
+        /* nullptr for a context parameter (World&, ScriptCall&). */
+        template<typename B>
+        const char* TypeNameOf()
+        {
+            if constexpr(IsScriptStruct<B>::value) { return GetScriptStructName(B::StaticScriptStruct()); }
+            else                                   { return Traits<B>::Type; }
+        }
+
         /* A parameter is read from Lua, so it may be a value or a const
          * reference; World& and ScriptCall& are the only mutable references. */
         template<typename TParam>
@@ -311,7 +325,7 @@ namespace GameCore
         {
             if constexpr(std::is_void<TReturn>::value) { return true; }
             else if constexpr(!Traits<Bare<TReturn>>::bSupported) { return false; }
-            else { return Traits<Bare<TReturn>>::Lanes > 0; }
+            else { return Traits<Bare<TReturn>>::Lanes != 0; }
         }
 
         template<typename TFn> struct FnTraits { static constexpr bool bKnown = false; };
@@ -377,30 +391,25 @@ namespace GameCore
         {
             static_assert((IsSupportedParameter<A>() && ...),
                           "Native: a parameter type has no script mapping. Supported: float, double, int32_t, bool, "
-                          "const char*, std::string, Vector3, Color, EntityID (by value or const&), and World& or "
+                          "const char*, std::string, Vector3, Color, EntityID, script structs (by value or const&), and World& or "
                           "ScriptCall& for context. Bind it with Method and a ScriptCall instead.");
             static_assert(IsSupportedReturn<R>(),
                           "Native: the return type has no script mapping (see the parameter list above). For several "
                           "results, bind with Method and push each one.");
 
-            static constexpr int LaneCounts[] = { Traits<Bare<A>>::Lanes..., 0 };
-
-            /* The first Lua argument of parameter I: the lanes before it, plus one. */
-            template<size_t I>
-            static constexpr int FirstArg()
-            {
-                int Arg = 1;
-                for(size_t Index = 0; Index < I; ++Index) { Arg += LaneCounts[Index]; }
-                return Arg;
-            }
-
             /* Reads every argument (left to right: a braced list), stops if
              * any was bad, then calls and pushes the result. Never raises, as
-             * ScriptCall promises. */
+             * ScriptCall promises. Each parameter's first Lua argument is the
+             * lanes before it plus one -- counted at run time, since a script
+             * struct's width is known only once it is registered. */
             template<typename TFn, size_t... I>
             static void Run(ScriptCall& InCall, TFn& InFn, std::index_sequence<I...>)
             {
-                std::tuple<typename Traits<Bare<A>>::Stored...> Values{ Traits<Bare<A>>::Get(InCall, FirstArg<I>())... };
+                const int Lanes[] = { LaneCountOf<Bare<A>>()..., 0 };
+                int       First[sizeof...(A) + 1] = { 1 };
+                for(size_t Index = 0; Index < sizeof...(A); ++Index) { First[Index + 1] = First[Index] + Lanes[Index]; }
+
+                std::tuple<typename Traits<Bare<A>>::Stored...> Values{ Traits<Bare<A>>::Get(InCall, First[I])... };
                 if(InCall.HasError()) { return; }
                 if constexpr(std::is_void<R>::value)
                 {
@@ -438,7 +447,7 @@ namespace GameCore
                 const char* NamesEnd = Names;
                 while(*NamesEnd != '\0') { ++NamesEnd; }
 
-                const char* const Types[] = { Traits<Bare<A>>::Type..., nullptr };
+                const char* const Types[] = { TypeNameOf<Bare<A>>()..., nullptr };
                 int Visible = 0;
                 for(size_t Index = 0; Index + 1 < sizeof(Types) / sizeof(Types[0]); ++Index)
                 {
@@ -463,7 +472,7 @@ namespace GameCore
                     if(!(Append(OutBuffer, InCapacity, Length, Visible > 0 ? " -> " : "-> ")
                          && Append(OutBuffer, InCapacity, Length, Name)
                          && Append(OutBuffer, InCapacity, Length, ":")
-                         && Append(OutBuffer, InCapacity, Length, Traits<Bare<R>>::Type))) { return; }
+                         && Append(OutBuffer, InCapacity, Length, TypeNameOf<Bare<R>>()))) { return; }
                 }
             }
         };
@@ -481,16 +490,16 @@ namespace GameCore
 
         /* Get<Name> and Set<Name>. */
         template<typename TField>
-        void Field(const char* InName, TField T::* InMember) { AddField(InName, InMember, ScriptFieldTypeOf<TField>::Value, false); }
+        void Field(const char* InName, TField T::* InMember) { AddField(InName, InMember, ScriptFieldDescOf<TField>(), false); }
 
         /* Get<Name> only. */
         template<typename TField>
-        void ReadOnly(const char* InName, TField T::* InMember) { AddField(InName, InMember, ScriptFieldTypeOf<TField>::Value, true); }
+        void ReadOnly(const char* InName, TField T::* InMember) { AddField(InName, InMember, ScriptFieldDescOf<TField>(), true); }
 
         /* A uint8_t 0/1 flag exposed as a Lua boolean. */
         void Flag(const char* InName, uint8_t T::* InMember, const bool bInReadOnly = false)
         {
-            AddField(InName, InMember, EScriptFieldType::Flag, bInReadOnly);
+            AddField(InName, InMember, ScriptFieldDesc{ EScriptFieldType::Flag, SCRIPT_STRUCT_INVALID }, bInReadOnly);
         }
 
         /* A capture-less lambda converts to MethodFn. InSignature: see
@@ -555,7 +564,7 @@ namespace GameCore
         }
 
         template<typename TField>
-        void AddField(const char* InName, TField T::* InMember, const EScriptFieldType InType, const bool bInReadOnly)
+        void AddField(const char* InName, TField T::* InMember, const ScriptFieldDesc InType, const bool bInReadOnly)
         {
             ScriptBindingEntry* Entry = NewEntry(InName);
             if(!Entry) { return; }
@@ -567,7 +576,8 @@ namespace GameCore
             const char* Base   = reinterpret_cast<const char*>(&Probe);
             const char* Member = reinterpret_cast<const char*>(&(Probe.*InMember));
 
-            Entry->FieldType = InType;
+            Entry->FieldType   = InType.Type;
+            Entry->FieldStruct = InType.Struct;
             Entry->bReadOnly = bInReadOnly;
             Entry->Offset    = uint32_t(Member - Base);
             Entry->Size      = uint32_t(sizeof(TField));

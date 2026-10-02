@@ -108,10 +108,11 @@ namespace
         switch(Mode)
         {
         case LM_Get:
-            return LuaPushScriptValue(InState, Member.FieldType, Member.Size, static_cast<const uint8_t*>(Member.Storage));
+            return LuaPushScriptValue(InState, Member.FieldType, Member.Size, Member.FieldStruct,
+                                      static_cast<const uint8_t*>(Member.Storage));
 
         case LM_Set:
-            LuaReadScriptValue(InState, Member.FieldType, Member.Size, 1, static_cast<uint8_t*>(Member.Storage));
+            LuaReadScriptValue(InState, Member.FieldType, Member.Size, Member.FieldStruct, 1, static_cast<uint8_t*>(Member.Storage));
             return 0;
 
         default:

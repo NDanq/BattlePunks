@@ -77,7 +77,8 @@ namespace
     // Shared with ScriptLibrary.cpp (LuaPushScriptValue / LuaReadScriptValue).
     // Both run in a dispatcher's frame, where raising is safe.
 
-    int PushField(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const uint8_t* InField)
+    int PushField(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const ScriptStructID InStruct,
+                  const uint8_t* InField)
     {
         switch(InType)
         {
@@ -119,6 +120,22 @@ namespace
             lua_pushlstring(InState, Text, Length);
             return 1;
         }
+        case EScriptFieldType::Struct:
+        {
+            /* Its fields' values, in order -- a Vector3's way, generalised. */
+            const ScriptStructInfo* Info = GetScriptStruct(InStruct);
+            if(!Info)
+            {
+                return luaL_error(InState, "script struct '%s' belongs to a module that has unloaded", GetScriptStructName(InStruct));
+            }
+            int Pushed = 0;
+            for(uint16_t Index = 0; Index < Info->FieldCount; ++Index)
+            {
+                const ScriptStructField& Field = Info->Fields[Index];
+                Pushed += PushField(InState, Field.Type, Field.Size, SCRIPT_STRUCT_INVALID, InField + Field.Offset);
+            }
+            return Pushed;
+        }
         }
         return 0;
     }
@@ -131,7 +148,8 @@ namespace
     }
 
     /* The value starts at stack slot First: 2 after a proxy, 1 in a library setter. */
-    void ReadField(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const int First, uint8_t* OutField)
+    void ReadField(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const ScriptStructID InStruct,
+                   const int First, uint8_t* OutField)
     {
         switch(InType)
         {
@@ -178,6 +196,25 @@ namespace
             std::memset(Buffer + Copy, 0, InSize - Copy);
             return;
         }
+        case EScriptFieldType::Struct:
+        {
+            /* Field by field, each from the lanes after the last. A Color is
+             * four values here, since a field follows it. */
+            const ScriptStructInfo* Info = GetScriptStruct(InStruct);
+            if(!Info)
+            {
+                luaL_error(InState, "script struct '%s' belongs to a module that has unloaded", GetScriptStructName(InStruct));
+                return;
+            }
+            int Arg = First;
+            for(uint16_t Index = 0; Index < Info->FieldCount; ++Index)
+            {
+                const ScriptStructField& Field = Info->Fields[Index];
+                ReadField(InState, Field.Type, Field.Size, SCRIPT_STRUCT_INVALID, Arg, OutField + Field.Offset);
+                Arg += GetScriptFieldLanes(Field.Type, SCRIPT_STRUCT_INVALID);
+            }
+            return;
+        }
         }
     }
 
@@ -212,10 +249,10 @@ namespace
         switch(Mode)
         {
         case DM_GetField:
-            return PushField(InState, Entry->FieldType, Entry->Size, Field);
+            return PushField(InState, Entry->FieldType, Entry->Size, Entry->FieldStruct, Field);
 
         case DM_SetField:
-            ReadField(InState, Entry->FieldType, Entry->Size, 2, Field);   // 1 is the proxy
+            ReadField(InState, Entry->FieldType, Entry->Size, Entry->FieldStruct, 2, Field);   // 1 is the proxy
             return 0;
 
         case DM_Method:
@@ -309,15 +346,16 @@ namespace
     }
 }
 
-int LuaPushScriptValue(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const uint8_t* InValue)
+int LuaPushScriptValue(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const ScriptStructID InStruct,
+                       const uint8_t* InValue)
 {
-    return PushField(InState, InType, InSize, InValue);
+    return PushField(InState, InType, InSize, InStruct, InValue);
 }
 
-void LuaReadScriptValue(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const int InFirstArg,
-                        uint8_t* OutValue)
+void LuaReadScriptValue(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const ScriptStructID InStruct,
+                        const int InFirstArg, uint8_t* OutValue)
 {
-    ReadField(InState, InType, InSize, InFirstArg, OutValue);
+    ReadField(InState, InType, InSize, InStruct, InFirstArg, OutValue);
 }
 
 // === Registry ===============================================================
@@ -501,6 +539,75 @@ EngineCore::Color ScriptCall::GetColor(const int InFirstArg)
     return Result;
 }
 
+bool ScriptCall::GetStruct(const int InFirstArg, const ScriptStructID InStruct, void* OutValue)
+{
+    if(HasError()) { return false; }
+    const ScriptStructInfo* Info = GetScriptStruct(InStruct);
+    if(!Info)
+    {
+        Error("its script struct belongs to a module that has unloaded");
+        return false;
+    }
+
+    /* Field by field, with the getters that never raise. A Color takes four
+     * values here: the next field follows it. */
+    uint8_t* Base = static_cast<uint8_t*>(OutValue);
+    int Arg = InFirstArg;
+    for(uint16_t Index = 0; Index < Info->FieldCount && !HasError(); ++Index)
+    {
+        const ScriptStructField& Field = Info->Fields[Index];
+        uint8_t* Out = Base + Field.Offset;
+        switch(Field.Type)
+        {
+        case EScriptFieldType::Float:   *reinterpret_cast<float*>(Out)   = GetFloat(Arg);  break;
+        case EScriptFieldType::Double:  *reinterpret_cast<double*>(Out)  = GetNumber(Arg); break;
+        case EScriptFieldType::Int32:   *reinterpret_cast<int32_t*>(Out) = GetInt(Arg);    break;
+        case EScriptFieldType::Bool:    *reinterpret_cast<bool*>(Out)    = GetBool(Arg);   break;
+        case EScriptFieldType::Flag:    *Out = GetBool(Arg) ? 1 : 0;                       break;
+        case EScriptFieldType::UInt8:
+        {
+            const int32_t Value = GetInt(Arg);
+            if(!HasError() && (Value < 0 || Value > 255)) { ArgError(Arg, "integer 0..255"); }
+            *Out = uint8_t(Value);
+            break;
+        }
+        case EScriptFieldType::Vector3: *reinterpret_cast<EngineCore::Vector3*>(Out) = GetVector3(Arg); break;
+        case EScriptFieldType::AABB:
+        {
+            const EngineCore::Vector3 Min = GetVector3(Arg);
+            const EngineCore::Vector3 Max = GetVector3(Arg + 3);
+            *reinterpret_cast<AABB*>(Out) = AABB(Min, Max);
+            break;
+        }
+        case EScriptFieldType::Color:
+        {
+            int32_t Lanes[4] = {};
+            for(int Lane = 0; Lane < 4; ++Lane)
+            {
+                Lanes[Lane] = GetInt(Arg + Lane);
+                if(!HasError() && (Lanes[Lane] < 0 || Lanes[Lane] > 255)) { ArgError(Arg + Lane, "integer 0..255"); }
+            }
+            EngineCore::Color& C = *reinterpret_cast<EngineCore::Color*>(Out);
+            C.R = uint8_t(Lanes[0]); C.G = uint8_t(Lanes[1]); C.B = uint8_t(Lanes[2]); C.A = uint8_t(Lanes[3]);
+            break;
+        }
+        case EScriptFieldType::FixedString:
+        {
+            const char* Text = GetString(Arg);
+            size_t Length = 0;
+            while(Text[Length] != '\0' && Length + 1 < Field.Size) { ++Length; }
+            std::memcpy(Out, Text, Length);
+            std::memset(Out + Length, 0, Field.Size - Length);
+            break;
+        }
+        case EScriptFieldType::Struct:
+            break;   // refused at registration
+        }
+        Arg += GetScriptFieldLanes(Field.Type, SCRIPT_STRUCT_INVALID);
+    }
+    return !HasError();
+}
+
 EntityID ScriptCall::GetEntity(const int InArg)
 {
     if(HasError() || !HasArg(InArg)) { return EntityID(); }
@@ -529,6 +636,55 @@ void ScriptCall::PushVector3(const EngineCore::Vector3& InValue)
     lua_pushnumber(State, InValue.GetY());
     lua_pushnumber(State, InValue.GetZ());
     Results += 3;
+}
+
+void ScriptCall::PushStruct(const ScriptStructID InStruct, const void* InValue)
+{
+    if(HasError()) { return; }
+    const ScriptStructInfo* Info = GetScriptStruct(InStruct);
+    if(!Info)
+    {
+        Error("its script struct belongs to a module that has unloaded");
+        return;
+    }
+    SCRIPTCALL_RESERVE(Info->Lanes)
+
+    const uint8_t* Base = static_cast<const uint8_t*>(InValue);
+    for(uint16_t Index = 0; Index < Info->FieldCount; ++Index)
+    {
+        const ScriptStructField& Field = Info->Fields[Index];
+        const uint8_t* In = Base + Field.Offset;
+        switch(Field.Type)
+        {
+        case EScriptFieldType::Float:   PushNumber(*reinterpret_cast<const float*>(In));   break;
+        case EScriptFieldType::Double:  PushNumber(*reinterpret_cast<const double*>(In));  break;
+        case EScriptFieldType::Int32:   PushInteger(*reinterpret_cast<const int32_t*>(In)); break;
+        case EScriptFieldType::UInt8:   PushInteger(*In);                                   break;
+        case EScriptFieldType::Bool:    PushBool(*reinterpret_cast<const bool*>(In));      break;
+        case EScriptFieldType::Flag:    PushBool(*In != 0);                                 break;
+        case EScriptFieldType::Vector3: PushVector3(*reinterpret_cast<const EngineCore::Vector3*>(In)); break;
+        case EScriptFieldType::AABB:
+        {
+            const AABB& Box = *reinterpret_cast<const AABB*>(In);
+            PushVector3(Box.Min);
+            PushVector3(Box.Max);
+            break;
+        }
+        case EScriptFieldType::Color:   PushColor(*reinterpret_cast<const EngineCore::Color*>(In)); break;
+        case EScriptFieldType::FixedString:
+        {
+            /* Bounded by the buffer, as a component's string field is. */
+            const char* Text = reinterpret_cast<const char*>(In);
+            size_t Length = 0;
+            while(Length < Field.Size && Text[Length] != '\0') { ++Length; }
+            lua_pushlstring(State, Text, Length);
+            ++Results;
+            break;
+        }
+        case EScriptFieldType::Struct:
+            break;   // refused at registration
+        }
+    }
 }
 
 void ScriptCall::PushColor(const EngineCore::Color& InValue)

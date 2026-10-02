@@ -23,9 +23,10 @@ return {
     end,
 
     Event_PickupCollected = function(self, Arg1, Arg2, Arg3, Arg4)
-        local t1 = Arg1:GetName()
-        local t2 = t1 .. " collected, worth "
-        local t3 = t2 .. tostring(math.floor(Arg2 or 0))
-        print(t3)
+        local t1 = Arg1:GetComponent("Pickup")
+        local t2_Value, t2_ID = t1:GetStats()
+        local t3 = Sandbox.DescribeStats(t2_Value, t2_ID)
+        local t4 = "Collected " .. t3
+        print(t4)
     end,
 }

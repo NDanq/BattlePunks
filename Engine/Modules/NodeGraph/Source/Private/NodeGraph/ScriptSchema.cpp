@@ -77,7 +77,32 @@ namespace
         return InType.compare(0, std::strlen(COMPONENT_TYPE_PREFIX), COMPONENT_TYPE_PREFIX) == 0;
     }
 
-    /* The lane suffixes of a multi-lane type; empty for a one-lane type. */
+    /* A script struct's lanes (GameCore/ScriptStruct.h): one per Lua value,
+     * named after its fields ("Value", "Where_X"), each of a one-value type. */
+    struct StructLayout
+    {
+        std::vector<std::string>                         LaneNames;
+        std::vector<std::string>                         LaneTypes;   // number, integer, bool or string
+        std::vector<std::pair<std::string, std::string>> Fields;      // name, pin type
+    };
+
+    /* By struct name. Filled when a schema is built and never cleared, so a
+     * graph still open on a retired schema compiles after a refresh, without
+     * its module loaded. */
+    std::map<std::string, StructLayout>& StructLayouts()
+    {
+        static std::map<std::string, StructLayout> Layouts;
+        return Layouts;
+    }
+
+    const StructLayout* FindStructLayout(const std::string& InType)
+    {
+        const auto Found = StructLayouts().find(InType);
+        return Found == StructLayouts().end() ? nullptr : &Found->second;
+    }
+
+    /* The lane suffixes of a multi-lane type; empty for a one-lane type. A
+     * struct's are its lanes' names, even when it has one. */
     const std::vector<std::string>& LaneNames(const std::string& InType)
     {
         static const std::vector<std::string> One;
@@ -87,6 +112,7 @@ namespace
         if(InType == "Vector3") { return Vector; }
         if(InType == "Color")   { return Color; }
         if(InType == "Box")     { return Box; }
+        if(const StructLayout* Layout = FindStructLayout(InType)) { return Layout->LaneNames; }
         return One;
     }
 
@@ -144,10 +170,11 @@ namespace
         return FormatNumber(InValue);
     }
 
-    std::string ScriptTypeOf(const GameCore::EScriptFieldType InType)
+    std::string ScriptTypeOf(const GameCore::EScriptFieldType InType, const GameCore::ScriptStructID InStruct)
     {
         switch(InType)
         {
+            case GameCore::EScriptFieldType::Struct:      return GameCore::GetScriptStructName(InStruct);
             case GameCore::EScriptFieldType::Float:
             case GameCore::EScriptFieldType::Double:      return "number";
             case GameCore::EScriptFieldType::Int32:
@@ -191,7 +218,8 @@ namespace
             Pin.Direction = InDirection;
             if(Pin.Name.empty()) { return false; }
             if(Pin.Type != "number" && Pin.Type != "integer" && Pin.Type != "bool" && Pin.Type != "string"
-               && Pin.Type != "Vector3" && Pin.Type != "Color" && Pin.Type != "Entity" && Pin.Type != "Box")
+               && Pin.Type != "Vector3" && Pin.Type != "Color" && Pin.Type != "Entity" && Pin.Type != "Box"
+               && !FindStructLayout(Pin.Type))
             {
                 return false;
             }
@@ -233,6 +261,7 @@ namespace
     private:
         void AddComponentNodes();
         void AddLibraryNodes();
+        std::vector<std::string> AddStructTypes();
     };
 
     // === The compiler ===========================================================
@@ -852,6 +881,18 @@ namespace
             return { "nil" };
         }
 
+        /* A struct has no literal of its own (Make <Struct> builds one): unlinked,
+         * each lane is its type's zero. */
+        if(const StructLayout* Layout = FindStructLayout(InType))
+        {
+            Lanes Out;
+            for(const std::string& LaneType : Layout->LaneTypes)
+            {
+                Out.push_back(LaneType == "bool" ? "false" : LaneType == "string" ? "\"\"" : "0");
+            }
+            return Out;
+        }
+
         const std::string* Given = InNode.FindConstant(InPin.Name);
         std::string Text = Given ? *Given : InPin.Default;
         if(Text.empty() && !Given)
@@ -965,7 +1006,9 @@ namespace
             AddConversion("Any", Each);
         }
 
+        /* Script structs first: variables and signatures may use them. */
         VariableTypes = GVariableTypes;
+        for(std::string& Each : AddStructTypes()) { VariableTypes.push_back(std::move(Each)); }
         GraphProperties.push_back({ "TickPhase", EPropertyKind::Choice, "PrePhysics", GTickPhases,
                                     "When this script's OnTick runs relative to the World's systems" });
 
@@ -1038,12 +1081,12 @@ namespace
         // --- Variables -----------------------------------------------------------
         {
             NodeDefinition& Get = Pure("Variable.Get", "Get Variable", "Variables", SOP_VarGet, { Out("Value", WILDCARD_TYPE) },
-                                       std::string(), GVariableTypes);
+                                       std::string(), VariableTypes);
             Get.Properties = { { "Variable", EPropertyKind::Variable, "", {}, "The graph variable to read" } };
             Get.bWildcardFromSchema = true;
 
             NodeDefinition& Set = Statement("Variable.Set", "Set Variable", "Variables", SOP_VarSet, { In("Value", WILDCARD_TYPE) });
-            Set.WildcardTypes = GVariableTypes;
+            Set.WildcardTypes = VariableTypes;
             Set.Properties = { { "Variable", EPropertyKind::Variable, "", {}, "The graph variable to write" } };
             Set.bWildcardFromSchema = true;
         }
@@ -1215,7 +1258,7 @@ namespace
 
                 if(!Entry.bMethod)
                 {
-                    const std::string FieldType = ScriptTypeOf(Entry.FieldType);
+                    const std::string FieldType = ScriptTypeOf(Entry.FieldType, Entry.FieldStruct);
                     Make("Get" + Member, Name + ": Get " + Member, ENodeRole::Pure,
                          { In("Target", TypeName), Out(Member, FieldType) }, "{Target}:Get" + Member + "()");
                     if(!Entry.bReadOnly)
@@ -1250,6 +1293,71 @@ namespace
                 }
             }
         }
+    }
+
+    /* Per registered script struct (GameCore/ScriptStruct.h): a pin type,
+     * which must be linked or is all zeros, and Make / Break nodes. Records the
+     * lane layout the compiler writes it with. Returns the type names. */
+    std::vector<std::string> ScriptSchema::AddStructTypes()
+    {
+        std::vector<std::string> Names;
+        for(size_t Id = 0; Id < GameCore::GetScriptStructCount(); ++Id)
+        {
+            const GameCore::ScriptStructInfo* Info = GameCore::GetScriptStruct(GameCore::ScriptStructID(Id));
+            if(!Info || Info->FieldCount == 0) { continue; }
+
+            const std::string Name = Info->Name;
+            StructLayout Layout;
+            std::vector<PinDefinition> FieldInputs, FieldOutputs;
+            for(uint16_t Index = 0; Index < Info->FieldCount; ++Index)
+            {
+                const GameCore::ScriptStructField& Field = Info->Fields[Index];
+                const std::string FieldName = Field.Name;
+                const std::string PinType   = ScriptTypeOf(Field.Type, GameCore::SCRIPT_STRUCT_INVALID);
+                Layout.Fields.emplace_back(FieldName, PinType);
+
+                const std::vector<std::string>& Suffixes = LaneNames(PinType);
+                const std::string LaneType = PinType == "Color" ? "integer" : Suffixes.empty() ? PinType : "number";
+                if(Suffixes.empty())
+                {
+                    Layout.LaneNames.push_back(FieldName);
+                    Layout.LaneTypes.push_back(LaneType);
+                }
+                for(const std::string& Suffix : Suffixes)
+                {
+                    Layout.LaneNames.push_back(FieldName + "_" + Suffix);
+                    Layout.LaneTypes.push_back(LaneType);
+                }
+
+                FieldInputs.push_back(In(FieldName, PinType));
+                FieldOutputs.push_back(Out(FieldName, PinType));
+            }
+            StructLayouts()[Name] = std::move(Layout);
+
+            AddType({ Name, Name, 0xC77DFF, "", false });
+            Names.push_back(Name);
+
+            const auto Make = [&](const std::string& InType, const std::string& InDisplay, const uint32_t InOp,
+                                  std::vector<PinDefinition> InPins, const std::string& InTooltip)
+            {
+                NodeDefinition Def;
+                Def.Type        = "Struct." + Name + "." + InType;
+                Def.DisplayName = InDisplay;
+                Def.Category    = "Structs";
+                Def.Keywords    = Name + " struct";
+                Def.Tooltip     = InTooltip;
+                Def.Role        = ENodeRole::Pure;
+                Def.Op          = InOp;
+                Def.Pins        = std::move(InPins);
+                AddNode(std::move(Def));
+            };
+
+            FieldInputs.push_back(Out(Name, Name));
+            Make("Make", "Make " + Name, SOP_Compose, std::move(FieldInputs), "A " + Name + " from its fields");
+            FieldOutputs.insert(FieldOutputs.begin(), In(Name, Name));
+            Make("Break", "Break " + Name, SOP_Decompose, std::move(FieldOutputs), "A " + Name + "'s fields");
+        }
+        return Names;
     }
 
     /* Per script library (GameCore/ScriptLibrary.h), under the library's name
@@ -1320,7 +1428,7 @@ namespace
 
                 case GameCore::EScriptLibraryMember::Variable:
                 {
-                    const std::string Type = ScriptTypeOf(Entry.FieldType);
+                    const std::string Type = ScriptTypeOf(Entry.FieldType, Entry.FieldStruct);
                     Make("Get" + Member, "Get " + Member, ENodeRole::Pure, SOP_Call, { Out(Member, Type) },
                          Library + ".Get" + Member + "()", Tooltip);
                     if(!Entry.bReadOnly)

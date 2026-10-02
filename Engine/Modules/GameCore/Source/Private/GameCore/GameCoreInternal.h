@@ -85,8 +85,10 @@ namespace GameCore
      * and back from the lanes starting at InFirstArg. Shared by component
      * fields (ComponentScript.cpp) and library variables (ScriptLibrary.cpp).
      * The read raises on a bad argument. */
-    int  LuaPushScriptValue(lua_State* InState, EScriptFieldType InType, uint32_t InSize, const uint8_t* InValue);
-    void LuaReadScriptValue(lua_State* InState, EScriptFieldType InType, uint32_t InSize, int InFirstArg, uint8_t* OutValue);
+    int  LuaPushScriptValue(lua_State* InState, EScriptFieldType InType, uint32_t InSize, ScriptStructID InStruct,
+                            const uint8_t* InValue);
+    void LuaReadScriptValue(lua_State* InState, EScriptFieldType InType, uint32_t InSize, ScriptStructID InStruct,
+                            int InFirstArg, uint8_t* OutValue);
 
     /* One global table per registered script library (ScriptLibrary.cpp);
      * called by ScriptBindings_Install. */

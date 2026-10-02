@@ -31,8 +31,10 @@ end
 World.CreateEntity("ScoreBoard"):SetScript("Scripts/ScoreBoard.lua")
 
 -- The same events, from hand-written Lua: the library publishes their names.
+-- PickupStats, a script struct, is its fields' values in order: Value, ID.
 Events.On(Sandbox.PickupCollected, function(pickup, value)
-    if Sandbox.GetScore() >= 12 then print("Sandbox: all pickups collected") end
+    local worth, id = pickup:GetComponent("Pickup"):GetStats()
+    if id == 5 then print("Sandbox: the last pickup collected, score " .. Sandbox.GetScore()) end
 end)
 
 Events.Emit("SandboxReady")
