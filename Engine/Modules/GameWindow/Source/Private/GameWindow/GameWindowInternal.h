@@ -104,10 +104,19 @@ EMouseButton GameWindowMouseButtonFromSDL(uint8_t InButton);
 
 /*
  * The native OS handle behind an SDL_Window -- an HWND on Windows, an NSView*
- * on macOS. Defined by exactly one file under Private/GameWindow/Platform/,
- * chosen by CMakeLists.txt, so a port adds a file and changes nothing else.
+ * on macOS, an X11 Window id on Linux. Defined by exactly one file under
+ * Private/GameWindow/Platform/, chosen by CMakeLists.txt, so a port adds a file
+ * and changes nothing else.
  */
 void* GameWindowGetNativeHandle(SDL_Window* InWindow);
+
+/*
+ * Called by GameWindowSystem::Initialize immediately before SDL_Init, for hints
+ * that decide which SDL video driver comes up. Same file as the native-handle
+ * function, because the two have to agree: Linux pins SDL to x11 here precisely
+ * so that GameWindowGetNativeHandle has an X11 Window to return.
+ */
+void GameWindowPlatformPreInit();
 
 namespace GameWindowSystem
 {

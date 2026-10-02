@@ -18,6 +18,11 @@
  * clean, passes IsValid(), and dies inside wglCreateContext.
  */
 
+void GameWindowPlatformPreInit()
+{
+    /* Nothing to choose: SDL has exactly one video driver on Windows. */
+}
+
 void* GameWindowGetNativeHandle(SDL_Window* InWindow)
 {
     if(!InWindow)
