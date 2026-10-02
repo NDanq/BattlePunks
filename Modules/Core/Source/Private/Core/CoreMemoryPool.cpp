@@ -321,7 +321,7 @@ void VirtualRegion::Release()
 
 HeapMemoryPool::HeapMemoryPool(const char* InName)
 {
-    CopyName(Name, NAME_MAX, InName);
+    CopyName(Name, NAME_CAPACITY, InName);
 }
 
 HeapMemoryPool::~HeapMemoryPool()
@@ -375,7 +375,7 @@ FixedBlockPool::FixedBlockPool(const char*  InName,
                                const size_t InBlockAlign,
                                const size_t InMaxBlocks)
 {
-    CopyName(Name, NAME_MAX, InName);
+    CopyName(Name, NAME_CAPACITY, InName);
 
     /*
      * A free block stores the next free block's address in its own first
@@ -519,7 +519,7 @@ LinearMemoryPool::LinearMemoryPool(const char*  InName,
                                    const bool   bInThreadSafe)
     : bThreadSafe(bInThreadSafe)
 {
-    CopyName(Name, NAME_MAX, InName);
+    CopyName(Name, NAME_CAPACITY, InName);
 
     if(!Region.Reserve(InReserveBytes))
     {

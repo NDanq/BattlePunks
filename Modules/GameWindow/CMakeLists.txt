@@ -147,16 +147,18 @@ set(GAMEWINDOW_SOURCES
 # Exactly one implementation compiles, so a port adds one file here and changes
 # nothing else -- the arrangement GDI's Source/Private/GDI/Platform/ uses.
 #
-# The Mac and Linux files arrive at build step 7. Failing the configure is the
-# honest response until then: the alternative is a module that builds and hands
+# Linux is X11-only (XWayland on a Wayland desktop); GameWindowNativeLinux.cpp
+# says why. The Mac file is still to come. Failing the configure is the honest
+# response until it exists: the alternative is a module that builds and hands
 # GDI a null window handle.
 if(WIN32)
     list(APPEND GAMEWINDOW_SOURCES Source/Private/GameWindow/Platform/GameWindowNativeWindows.cpp)
+elseif(UNIX AND NOT APPLE)
+    list(APPEND GAMEWINDOW_SOURCES Source/Private/GameWindow/Platform/GameWindowNativeLinux.cpp)
 else()
     message(FATAL_ERROR
             "GameWindow has no native-handle implementation for this platform yet. "
-            "Only Source/Private/GameWindow/Platform/GameWindowNativeWindows.cpp exists; "
-            "the Mac and Linux files are build step 7 in the README.")
+            "Only the Windows and Linux files exist under Source/Private/GameWindow/Platform/.")
 endif()
 
 # ===========================================================================
