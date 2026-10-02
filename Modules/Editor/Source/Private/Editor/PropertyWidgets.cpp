@@ -9,6 +9,7 @@
 
 #include <QApplication>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QColorDialog>
 #include <QCompleter>
 #include <QDoubleSpinBox>
@@ -154,6 +155,63 @@ namespace
 
     private:
         QDoubleSpinBox* Spin = nullptr;
+    };
+
+    /* A choice (Props.Choice): the field's integer as a dropdown of labels. */
+    class ChoiceEditor final : public PropertyEditor
+    {
+    public:
+        ChoiceEditor(const GameCore::ComponentPropertyEntry& InEntry, ResolveFn InResolve, QWidget* InParent)
+            : PropertyEditor(InEntry, std::move(InResolve), InParent)
+        {
+            auto* Layout = new QHBoxLayout(this);
+            Layout->setContentsMargins(0, 0, 0, 0);
+            Combo = new QComboBox(this);
+            Combo->addItems(QString::fromUtf8(Entry.Choices).split(QLatin1Char('|')));
+            Combo->setEnabled(!Entry.IsReadOnly());
+            Layout->addWidget(Combo);
+
+            connect(Combo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](const int InIndex)
+            {
+                uint8_t* Field = FieldForWrite();
+                if(!Field || InIndex < 0) { return; }
+                if(Entry.Type == EPropertyType::UInt8)
+                {
+                    *Field = uint8_t(InIndex);
+                }
+                else
+                {
+                    const int32_t Value = int32_t(InIndex);
+                    std::memcpy(Field, &Value, sizeof(int32_t));
+                }
+                NotifyWritten();
+            });
+        }
+
+    protected:
+        void ReadFrom(const uint8_t* InField) override
+        {
+            int Value = 0;
+            if(Entry.Type == EPropertyType::UInt8)
+            {
+                Value = int(*InField);
+            }
+            else
+            {
+                int32_t Raw; std::memcpy(&Raw, InField, sizeof(int32_t));
+                Value = int(Raw);
+            }
+            /* A value past the labels shows as no selection, not a wrong one. */
+            const int Index = Value >= 0 && Value < Combo->count() ? Value : -1;
+            if(Combo->currentIndex() != Index)
+            {
+                const QSignalBlocker Block(Combo);
+                Combo->setCurrentIndex(Index);
+            }
+        }
+
+    private:
+        QComboBox* Combo = nullptr;
     };
 
     class IntEditor final : public PropertyEditor
@@ -576,6 +634,11 @@ bool IsPropertyAtDefault(const GameCore::ComponentPropertyEntry& InEntry, const 
 PropertyEditor* CreatePropertyEditor(const GameCore::ComponentPropertyEntry& InEntry,
                                      PropertyEditor::ResolveFn InResolve, QWidget* InParent)
 {
+    if(InEntry.IsChoice() && (InEntry.Type == EPropertyType::UInt8 || InEntry.Type == EPropertyType::Int32))
+    {
+        return new ChoiceEditor(InEntry, std::move(InResolve), InParent);
+    }
+
     switch(InEntry.Type)
     {
         case EPropertyType::Float:

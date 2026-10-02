@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/ScriptEngine.h"
@@ -258,6 +259,17 @@ int main()
     TestFilters();
     TestScripts();
     TestMeshShapes();
+
+    /* What the editor's Details panel builds its Source dropdown from. */
+    size_t Count = 0;
+    const ComponentPropertyEntry* Props = FindComponentProperties(CollisionComponent::StaticType().ID, Count);
+    const ComponentPropertyEntry* Source = nullptr;
+    for(size_t Index = 0; Props && Index < Count; ++Index)
+    {
+        if(std::string(Props[Index].Name) == "Source") { Source = &Props[Index]; }
+    }
+    Expect(Source && Source->IsChoice() && std::string(Source->Choices) == "Bounds component|Render component mesh",
+           "Source is a choice property: a dropdown of the shape sources");
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }
