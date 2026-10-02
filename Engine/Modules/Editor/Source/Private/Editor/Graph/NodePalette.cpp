@@ -119,6 +119,43 @@ NodePalette::NodePalette(const GraphDocument& InDocument, const bool bInFromPin,
             continue;
         }
 
+        /* So is a function node, per graph function: its pins are that function's. */
+        const PropertyDefinition* FunctionProperty = nullptr;
+        for(const PropertyDefinition& Property : Def.Properties)
+        {
+            if(Property.Kind == EPropertyKind::Function) { FunctionProperty = &Property; }
+        }
+
+        if(FunctionProperty)
+        {
+            for(const GraphFunction& Function : G.Functions)
+            {
+                Node Probe;
+                Probe.Type = Def.Type;
+                Probe.Properties[FunctionProperty->Name] = Function.Name;
+                const NodeDefinition* Placed = S.FindDefinition(G, Probe);
+                if(!Placed || (FromPin && !CanJoin(S, *Placed, std::string(), *FromPin, FromType))) { continue; }
+
+                /* One Entry per function. */
+                const bool bEntry = Placed->Role == ENodeRole::Event;
+                const bool bHasEntry = std::any_of(G.Nodes.begin(), G.Nodes.end(), [&](const Node& Each)
+                {
+                    return Each.Type == Def.Type && Each.GetProperty(FunctionProperty->Name) == Function.Name;
+                });
+                if(bEntry && bHasEntry) { continue; }
+
+                Entry Added;
+                Added.Type       = Def.Type;
+                Added.Properties = { { FunctionProperty->Name, Function.Name } };
+                Added.Label      = bEntry ? QStringLiteral("%1 (Entry)").arg(ToQ(Function.Name)) : ToQ(Placed->DisplayName);
+                Added.Category   = ToQ(Def.Category);
+                Added.Tooltip    = ToQ(Def.Tooltip);
+                Added.SearchText = (Added.Label + QLatin1Char(' ') + Added.Category + QLatin1Char(' ') + ToQ(Def.Keywords)).toLower();
+                Entries.push_back(Added);
+            }
+            continue;
+        }
+
         if(FromPin && !CanJoin(S, Def, std::string(), *FromPin, FromType)) { continue; }
 
         Entry Added;

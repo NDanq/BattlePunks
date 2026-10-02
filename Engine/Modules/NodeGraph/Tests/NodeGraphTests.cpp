@@ -1892,6 +1892,209 @@ namespace
                "the Collision library is in the palette");
     }
 
+    /* Three graph functions -- two numbers in and one out, a recursive
+     * factorial, a Vector3 in and out -- called in a chain from On Start. */
+    Graph MakeFunctionsGraph()
+    {
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Functions";
+        G.Functions.push_back({ "Add2", { { "A", "number" }, { "B", "number" } }, { { "Sum", "number" } } });
+        G.Functions.push_back({ "Fact", { { "N", "integer" } }, { { "R", "integer" } } });
+        G.Functions.push_back({ "Offset", { { "V", "Vector3" } }, { { "Out", "Vector3" } } });
+
+        const auto Named = [&](const uint64_t InId, const char* InType, const char* InFunction) -> Node&
+        {
+            Node& Added = AddNode(G, InId, InType);
+            Added.Properties["Function"] = InFunction;
+            return Added;
+        };
+
+        // On Start: Record(Fact(Add2(2, 3))), then Nudge self by Offset(1 2 3).
+        AddNode(G, 1, "Event.OnStart");
+        Node& Sum = Named(2, "Function.Call", "Add2");
+        Sum.Constants["A"] = "2";
+        Sum.Constants["B"] = "3";
+        Named(3, "Function.Call", "Fact");
+        AddNode(G, 4, "Library.TestLib.Record");
+        Named(5, "Function.Call", "Offset").Constants["V"] = "1 2 3";
+        AddNode(G, 6, "Library.TestLib.Nudge");
+        Connect(G, 1, "Then", 2, "Exec");
+        Connect(G, 2, "Then", 3, "Exec");
+        Connect(G, 3, "Then", 4, "Exec");
+        Connect(G, 4, "Then", 5, "Exec");
+        Connect(G, 5, "Then", 6, "Exec");
+        Connect(G, 2, "Sum", 3, "N");
+        Connect(G, 3, "R", 4, "Value");
+        Connect(G, 5, "Out", 6, "Delta");
+
+        // Add2: Sum = A + B.
+        Named(10, "Function.Entry", "Add2");
+        AddNode(G, 11, "Math.Add");
+        Named(12, "Function.Return", "Add2");
+        Connect(G, 10, "Then", 12, "Exec");
+        Connect(G, 10, "A", 11, "A");
+        Connect(G, 10, "B", 11, "B");
+        Connect(G, 11, "Out", 12, "Sum");
+
+        // Fact: N <= 1 ? 1 : N * Fact(N - 1).
+        Named(20, "Function.Entry", "Fact");
+        AddNode(G, 21, "Flow.Branch");
+        AddNode(G, 22, "Compare.LessEqual").Constants["B"] = "1";
+        Named(23, "Function.Return", "Fact").Constants["R"] = "1";
+        AddNode(G, 24, "Math.Subtract").Constants["B"] = "1";
+        Named(25, "Function.Call", "Fact");
+        AddNode(G, 26, "Math.Multiply");
+        Named(27, "Function.Return", "Fact");
+        Connect(G, 20, "Then", 21, "Exec");
+        Connect(G, 20, "N", 22, "A");
+        Connect(G, 22, "Out", 21, "Condition");
+        Connect(G, 21, "True", 23, "Exec");
+        Connect(G, 21, "False", 25, "Exec");
+        Connect(G, 20, "N", 24, "A");
+        Connect(G, 24, "Out", 25, "N");
+        Connect(G, 25, "Then", 27, "Exec");
+        Connect(G, 20, "N", 26, "A");
+        Connect(G, 25, "R", 26, "B");
+        Connect(G, 26, "Out", 27, "R");
+
+        // Offset: Out = V * 2.
+        Named(30, "Function.Entry", "Offset");
+        AddNode(G, 31, "Vector.Scale").Constants["Scale"] = "2";
+        Named(32, "Function.Return", "Offset");
+        Connect(G, 30, "Then", 32, "Exec");
+        Connect(G, 30, "V", 31, "Vector");
+        Connect(G, 31, "Out", 32, "Out");
+        return G;
+    }
+
+    void TestGraphFunctions()
+    {
+        std::printf("[graph functions]\n");
+        const Graph G = MakeFunctionsGraph();
+        const Schema* S = FindSchema("Script");
+
+        // --- Their nodes' pins are the function's -----------------------------------
+        {
+            const auto PinNames = [&](const uint64_t InNode)
+            {
+                std::string Names;
+                const NodeDefinition* Def = S ? S->FindDefinition(G, *G.FindNode(Id(InNode))) : nullptr;
+                for(const PinDefinition& Pin : Def ? Def->Pins : std::vector<PinDefinition>())
+                {
+                    Names += (Pin.IsInput() ? "<" : ">") + Pin.Name + (Pin.IsExec() ? "" : ":" + Pin.Type) + " ";
+                }
+                return Names;
+            };
+            Expect(PinNames(2) == "<Exec >Then <A:number <B:number >Sum:number ", "a Call has the function's inputs and outputs (" + PinNames(2) + ")");
+            Expect(PinNames(10) == ">Then >A:number >B:number ", "an Entry gives the inputs (" + PinNames(10) + ")");
+            Expect(PinNames(12) == "<Exec <Sum:number ", "a Return takes the outputs, and ends the chain (" + PinNames(12) + ")");
+            Expect(S && S->FindDefinition(G, *G.FindNode(Id(2))) == S->FindDefinition(G, *G.FindNode(Id(2))),
+                   "the same signature is the same definition");
+
+            Graph Renamed = G;
+            Renamed.Functions[0].Outputs[0].Name = "Total";
+            const NodeDefinition* After = S ? S->FindDefinition(Renamed, *Renamed.FindNode(Id(2))) : nullptr;
+            Expect(After && After->FindPin("Total", EPinDirection::Output) && !After->FindPin("Sum"), "a changed signature changes the pins");
+        }
+
+        // --- Codegen ------------------------------------------------------------------
+        CompileResult R;
+        CompileGraph(G, R);
+        Expect(!R.HasErrors(), "the Functions graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(G, R).c_str()); }
+        ExpectGolden("Functions.lua", R.Code);
+        Expect(R.Code.find("local Fn_Add2, Fn_Fact, Fn_Offset") != std::string::npos
+               && R.Code.find("Fn_Offset = function(self, In_V_X, In_V_Y, In_V_Z)") != std::string::npos
+               && R.Code.find("= Fn_Add2(self, 2, 3)") != std::string::npos,
+               "functions are locals declared up front, a Vector3 input is three parameters, a Call passes self");
+
+        // --- Round trip -----------------------------------------------------------------
+        {
+            const std::string Text = WriteGraphText(G);
+            Graph Loaded;
+            std::string Error;
+            Expect(ReadGraphText(Text, Loaded, Error) && WriteGraphText(Loaded) == Text, "functions save and load back: " + Error);
+            Expect(Loaded.Functions.size() == 3 && Loaded.Functions[2].Outputs.size() == 1
+                   && Loaded.Functions[2].Outputs[0].Type == "Vector3", "with their inputs and outputs");
+        }
+
+        // --- Mistakes ---------------------------------------------------------------------
+        {
+            Graph Bad = G;
+            Bad.RemoveNode(Id(30));
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(Out.HasErrors(), "a function with no Entry is an error");
+        }
+        {
+            Graph Bad = G;
+            AddNode(Bad, 40, "Function.Entry").Properties["Function"] = "Add2";
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(HasErrorOn(Out, Id(40)), "a second Entry for a function is an error on it");
+        }
+        {
+            Graph Bad = G;
+            AddNode(Bad, 41, "Function.Call").Properties["Function"] = "Nope";
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(HasErrorOn(Out, Id(41)), "calling a function the graph lacks is an error on the call");
+        }
+        {
+            Graph Bad = G;
+            AddNode(Bad, 42, "Function.Return").Properties["Function"] = "Add2";
+            Connect(Bad, 6, "Then", 42, "Exec");
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(HasErrorOn(Out, Id(42)), "a Return reached from outside its function is an error");
+        }
+        {
+            Graph Bad = G;
+            Bad.Links.erase(std::remove_if(Bad.Links.begin(), Bad.Links.end(), [](const Link& L) { return L.To.Node == Id(4); }),
+                            Bad.Links.end());
+            Connect(Bad, 3, "Then", 4, "Exec");
+            Connect(Bad, 20, "N", 4, "Value");   // Fact's input, read in On Start
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(HasErrorOn(Out, Id(20)), "a function's input read outside its body is an error");
+        }
+        {
+            Graph Bad = G;
+            Bad.Functions[0].Inputs[0].Type = "Any";
+            Bad.Functions[1].Name = "not valid";
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(Out.HasErrors(), "a function input of a type it cannot take, or a bad name, is an error");
+        }
+
+        // --- Runtime ----------------------------------------------------------------------
+        {
+            const std::string Path = TempDir() + "/Functions.lua";
+            WriteFile(Path, R.Code);
+
+            GameCore::World W;
+            GameCore::ScriptEngine Scripts;
+            Expect(Scripts.Initialize(), "ScriptEngine::Initialize");
+            Scripts.BindWorld(&W);
+
+            GTestRecorded = -1;
+            GameCore::Entity Caller = W.CreateEntity("Caller");
+            Caller.AddComponent<GameCore::TransformComponent>();
+            Expect(Caller.SetScript(Path.c_str()), "the generated script attaches");
+            W.Tick(0.1f);
+
+            Expect(GTestRecorded == 120, "Fact(Add2(2, 3)) is 120, recursion included (got " + std::to_string(GTestRecorded) + ")");
+            const GameCore::TransformComponent* T = Caller.GetComponent<GameCore::TransformComponent>();
+            Expect(T && std::fabs(double(T->Position.GetX()) - 2.0) < 0.001 && std::fabs(double(T->Position.GetY()) - 4.0) < 0.001
+                   && std::fabs(double(T->Position.GetZ()) - 6.0) < 0.001, "Offset(1 2 3) gives 2 4 6, a Vector3 in and out");
+            Expect(Scripts.GetErrorCount() == 0, "the generated script raised no Lua errors");
+
+            Scripts.UnbindWorld();
+            Scripts.Shutdown();
+        }
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -1930,6 +2133,7 @@ int main()
     TestLibraries();
     TestScriptStructs();
     TestOverlapEvents();
+    TestGraphFunctions();
     TestMaterialCodegen();
     TestComponentSelection();
     TestLogic();

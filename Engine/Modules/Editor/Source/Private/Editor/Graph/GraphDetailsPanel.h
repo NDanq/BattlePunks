@@ -17,8 +17,8 @@ class QFormLayout;
 
 /*
  * The graph Details dock: the selected node's settings, wildcard type and
- * unlinked literals, or with nothing selected the graph's settings and
- * variables. Edits commit on finish as one undo step; rebuilt only when its
+ * unlinked literals, or with nothing selected the graph's settings,
+ * variables and functions. Edits commit on finish as one undo step; rebuilt only when its
  * content changes, so half-typed values survive.
  */
 class GraphDetailsPanel : public QScrollArea
@@ -33,6 +33,7 @@ public:
 private:
     void BuildNode(QFormLayout* InForm, const NodeGraph::Node& InNode);
     void BuildGraph(QFormLayout* InForm);
+    void BuildFunctions(QFormLayout* InForm);
     QWidget* MakeLiteralEditor(const NodeGraph::PinRef& InPin, const std::string& InType, const std::string& InValue);
 
     GraphDocument& Document;

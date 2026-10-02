@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -165,6 +166,14 @@ void GraphDetailsPanel::Refresh()
     {
         Next = "node:" + WriteGraphFragment(G, Selected);
         for(const Variable& Each : G.Variables) { Next += Each.Name + ":" + Each.Type + ";"; }
+        for(const GraphFunction& Each : G.Functions)
+        {
+            Next += Each.Name + "(";
+            for(const FunctionPin& Pin : Each.Inputs)  { Next += Pin.Name + ":" + Pin.Type + ","; }
+            Next += ")->(";
+            for(const FunctionPin& Pin : Each.Outputs) { Next += Pin.Name + ":" + Pin.Type + ","; }
+            Next += ");";
+        }
         for(const Link& Each : G.Links)
         {
             if(Each.To.Node == Selected.front() || Each.From.Node == Selected.front()) { Next += Each.From.Pin + ">" + Each.To.Pin + ";"; }
@@ -176,6 +185,7 @@ void GraphDetailsPanel::Refresh()
         Settings.SchemaName = G.SchemaName;
         Settings.Properties = G.Properties;
         Settings.Variables  = G.Variables;
+        Settings.Functions  = G.Functions;
         Next = "graph:" + WriteGraphText(Settings);
     }
     else
@@ -254,17 +264,23 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
             });
             Editor = Check;
         }
-        else if(Property.Kind == EPropertyKind::Choice || Property.Kind == EPropertyKind::Variable)
+        else if(Property.Kind == EPropertyKind::Choice || Property.Kind == EPropertyKind::Variable
+                || Property.Kind == EPropertyKind::Function)
         {
             auto* Combo = new QComboBox();
             if(Property.Kind == EPropertyKind::Choice)
             {
                 for(const std::string& Choice : Property.Choices) { Combo->addItem(ToQ(Choice)); }
             }
-            else
+            else if(Property.Kind == EPropertyKind::Variable)
             {
                 for(const Variable& Each : Document.GetGraph().Variables) { Combo->addItem(ToQ(Each.Name)); }
                 if(Combo->findText(ToQ(Value)) < 0) { Combo->addItem(ToQ(Value)); }   // a missing variable stays visible
+            }
+            else
+            {
+                for(const GraphFunction& Each : Document.GetGraph().Functions) { Combo->addItem(ToQ(Each.Name)); }
+                if(Combo->findText(ToQ(Value)) < 0) { Combo->addItem(ToQ(Value)); }   // and a missing function
             }
             Combo->setCurrentText(ToQ(Value));
             connect(Combo, QOverload<int>::of(&QComboBox::activated), this, [this, Combo, Id, Name](int)
@@ -463,6 +479,152 @@ void GraphDetailsPanel::BuildGraph(QFormLayout* InForm)
         }
         Next.push_back({ Name, Types.front(), std::string() });
         Document.SetVariables(Next);
+    });
+    InForm->addRow(Add);
+
+    BuildFunctions(InForm);
+}
+
+void GraphDetailsPanel::BuildFunctions(QFormLayout* InForm)
+{
+    const Schema& S = Document.GetSchema();
+    const Graph&  G = Document.GetGraph();
+    if(!S.FindNode("Function.Call")) { return; }   // a schema without graph functions
+
+    /* What an input or output may be: any variable type, or an Entity. */
+    std::vector<std::string> Types = S.GetVariableTypes();
+    Types.push_back("Entity");
+
+    InForm->addRow(Heading(QStringLiteral("Functions")));
+    if(G.Functions.empty())
+    {
+        InForm->addRow(Note(QStringLiteral("None yet. A function is a chain you call from anywhere in this graph: its "
+                                           "Entry node starts it, Return from it gives its outputs.")));
+    }
+
+    /* Every edit: a copy of the list, changed, as one step. */
+    const auto Change = [this](const std::function<void(std::vector<GraphFunction>&)>& InChange)
+    {
+        std::vector<GraphFunction> Next = Document.GetGraph().Functions;
+        InChange(Next);
+        Document.SetFunctions(Next);
+    };
+
+    const auto UniqueName = [](const std::string& InBase, const auto& InTaken)
+    {
+        std::string Name = InBase;
+        for(int Suffix = 2; std::any_of(InTaken.begin(), InTaken.end(), [&](const auto& Each) { return Each.Name == Name; }); ++Suffix)
+        {
+            Name = InBase + std::to_string(Suffix);
+        }
+        return Name;
+    };
+
+    for(size_t Index = 0; Index < G.Functions.size(); ++Index)
+    {
+        const GraphFunction& Function = G.Functions[Index];
+
+        auto* Header = new QWidget();
+        auto* HeaderLayout = new QHBoxLayout(Header);
+        HeaderLayout->setContentsMargins(0, 8, 0, 0);
+
+        QLineEdit* Name = CommitEdit(ToQ(Function.Name), [Change, Index](const QString& InText)
+        {
+            Change([&](std::vector<GraphFunction>& Next) { Next[Index].Name = ToStd(InText.trimmed()); });
+        });
+        Name->setPlaceholderText(QStringLiteral("Function name"));
+        QFont Bold = Name->font();
+        Bold.setBold(true);
+        Name->setFont(Bold);
+        HeaderLayout->addWidget(Name, 1);
+
+        auto* Remove = new QToolButton();
+        Remove->setText(QStringLiteral("x"));
+        Remove->setToolTip(QStringLiteral("Remove this function (its nodes stay, and no longer compile)"));
+        connect(Remove, &QToolButton::clicked, this, [Change, Index]()
+        {
+            Change([&](std::vector<GraphFunction>& Next) { Next.erase(Next.begin() + std::ptrdiff_t(Index)); });
+        });
+        HeaderLayout->addWidget(Remove);
+        InForm->addRow(Header);
+
+        /* One list: the function's inputs (bOutputs false) or its outputs. */
+        for(const bool bOutputs : { false, true })
+        {
+            const std::vector<FunctionPin>& Pins = bOutputs ? Function.Outputs : Function.Inputs;
+            const auto ListOf = [bOutputs, Index](std::vector<GraphFunction>& InFunctions) -> std::vector<FunctionPin>&
+            {
+                return bOutputs ? InFunctions[Index].Outputs : InFunctions[Index].Inputs;
+            };
+
+            for(size_t PinIndex = 0; PinIndex < Pins.size(); ++PinIndex)
+            {
+                const FunctionPin& Pin = Pins[PinIndex];
+                auto* Row = new QWidget();
+                auto* Layout = new QHBoxLayout(Row);
+                Layout->setContentsMargins(0, 0, 0, 0);
+
+                QLineEdit* PinName = CommitEdit(ToQ(Pin.Name), [Change, ListOf, PinIndex](const QString& InText)
+                {
+                    Change([&](std::vector<GraphFunction>& Next) { ListOf(Next)[PinIndex].Name = ToStd(InText.trimmed()); });
+                });
+                PinName->setPlaceholderText(QStringLiteral("Name"));
+                Layout->addWidget(PinName, 2);
+
+                auto* Type = new QComboBox();
+                for(const std::string& Each : Types) { Type->addItem(ToQ(Each)); }
+                if(Type->findText(ToQ(Pin.Type)) < 0) { Type->addItem(ToQ(Pin.Type)); }   // an unknown type stays visible
+                Type->setCurrentText(ToQ(Pin.Type));
+                connect(Type, QOverload<int>::of(&QComboBox::activated), this, [Change, ListOf, PinIndex, Type](int)
+                {
+                    Change([&](std::vector<GraphFunction>& Next) { ListOf(Next)[PinIndex].Type = ToStd(Type->currentText()); });
+                });
+                Layout->addWidget(Type, 1);
+
+                auto* RemovePin = new QToolButton();
+                RemovePin->setText(QStringLiteral("x"));
+                RemovePin->setToolTip(bOutputs ? QStringLiteral("Remove this output") : QStringLiteral("Remove this input"));
+                connect(RemovePin, &QToolButton::clicked, this, [Change, ListOf, PinIndex]()
+                {
+                    Change([&](std::vector<GraphFunction>& Next) { ListOf(Next).erase(ListOf(Next).begin() + std::ptrdiff_t(PinIndex)); });
+                });
+                Layout->addWidget(RemovePin);
+
+                InForm->addRow(PinIndex == 0 ? (bOutputs ? QStringLiteral("Outputs") : QStringLiteral("Inputs")) : QString(), Row);
+            }
+        }
+
+        auto* Buttons = new QWidget();
+        auto* ButtonLayout = new QHBoxLayout(Buttons);
+        ButtonLayout->setContentsMargins(0, 0, 0, 0);
+        for(const bool bOutputs : { false, true })
+        {
+            auto* AddPin = new QPushButton(bOutputs ? QStringLiteral("Add Output") : QStringLiteral("Add Input"));
+            connect(AddPin, &QPushButton::clicked, this, [Change, UniqueName, Types, Index, bOutputs]()
+            {
+                Change([&](std::vector<GraphFunction>& Next)
+                {
+                    /* Unique across both lists: a Call node has every one as a pin. */
+                    std::vector<FunctionPin> Taken = Next[Index].Inputs;
+                    Taken.insert(Taken.end(), Next[Index].Outputs.begin(), Next[Index].Outputs.end());
+                    const std::string Name = UniqueName(bOutputs ? "Result" : "Value", Taken);
+                    (bOutputs ? Next[Index].Outputs : Next[Index].Inputs).push_back({ Name, Types.front() });
+                });
+            });
+            ButtonLayout->addWidget(AddPin);
+        }
+        InForm->addRow(Buttons);
+    }
+
+    auto* Add = new QPushButton(QStringLiteral("Add Function"));
+    connect(Add, &QPushButton::clicked, this, [Change, UniqueName]()
+    {
+        Change([&](std::vector<GraphFunction>& Next)
+        {
+            GraphFunction Added;
+            Added.Name = UniqueName("NewFunction", Next);
+            Next.push_back(std::move(Added));
+        });
     });
     InForm->addRow(Add);
 }

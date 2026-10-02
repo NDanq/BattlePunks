@@ -65,6 +65,12 @@ namespace NodeGraph
                             OutResult.Error(InNode.Id, std::string(), NodeLabel(InNode, &InDef) + ": no variable named '" + Value + "'");
                         }
                         break;
+                    case EPropertyKind::Function:
+                        if(!InGraph.FindFunction(Value))
+                        {
+                            OutResult.Error(InNode.Id, std::string(), NodeLabel(InNode, &InDef) + ": no function named '" + Value + "'");
+                        }
+                        break;
                     case EPropertyKind::Bool:
                         if(Value != "true" && Value != "false")
                         {
@@ -234,6 +240,38 @@ namespace NodeGraph
             if(std::find(Allowed.begin(), Allowed.end(), Each.Type) == Allowed.end())
             {
                 OutResult.Error(NodeGuid(), std::string(), "variable '" + Each.Name + "' has the unknown type '" + Each.Type + "'");
+            }
+        }
+
+        // --- Functions -----------------------------------------------------------
+        /* Their pin types are the schema's to judge, in its Compile. */
+        std::set<std::string> FunctionNames;
+        for(const GraphFunction& Each : InGraph.Functions)
+        {
+            if(!IsIdentifier(Each.Name))
+            {
+                OutResult.Error(NodeGuid(), std::string(), "function '" + Each.Name + "' must be letters, digits and '_', not starting with a digit");
+            }
+            if(!FunctionNames.insert(Each.Name).second)
+            {
+                OutResult.Error(NodeGuid(), std::string(), "two functions are named '" + Each.Name + "'");
+            }
+
+            std::set<std::string> PinNames;
+            for(const std::vector<FunctionPin>* List : { &Each.Inputs, &Each.Outputs })
+            {
+                for(const FunctionPin& Pin : *List)
+                {
+                    if(!IsIdentifier(Pin.Name))
+                    {
+                        OutResult.Error(NodeGuid(), std::string(), "function '" + Each.Name + "': '" + Pin.Name
+                                        + "' must be letters, digits and '_', not starting with a digit");
+                    }
+                    else if(!PinNames.insert(Pin.Name).second)
+                    {
+                        OutResult.Error(NodeGuid(), std::string(), "function '" + Each.Name + "' has two inputs or outputs named '" + Pin.Name + "'");
+                    }
+                }
             }
         }
 
