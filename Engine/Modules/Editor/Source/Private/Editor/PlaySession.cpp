@@ -45,6 +45,7 @@ bool PlaySession::Start()
     FrameNumber    = 0;
 
     Game = EngineCore::Memory::Alloc<NimbleEngine::GameModuleHost>();
+    Game->SetRenderer(&Rendering);
     if(!Game->Load(""))
     {
         CORE_LOG_ERROR("[PIE] no game module to play -- set [Game] Module in Config/DefaultEngine.ini")

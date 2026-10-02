@@ -202,44 +202,93 @@ GDIRenderTarget* D3D12DynamicGDI::CreateRenderTarget(std::string Name, uint InWi
 
 void D3D12DynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
 {
-    auto* NewRT = dynamic_cast<D3D12RenderTarget*>(InRenderTarget);
-    if(!NewRT || !NewRT->IsValid() || !CurrentStateData || !CurrentStateData->CurrentCmd) return;
+    SetRenderTargets(&InRenderTarget, 1, InRenderTarget);
+}
+
+void D3D12DynamicGDI::SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom)
+{
+    if(!CurrentStateData || !CurrentStateData->CurrentCmd || !InColors || InCount == 0) return;
+    if(InCount > GDI_MAX_COLOR_TARGETS) InCount = GDI_MAX_COLOR_TARGETS;
+
+    D3D12RenderTarget* Colors[GDI_MAX_COLOR_TARGETS] = {};
+    for(uint Index = 0; Index < InCount; ++Index)
+    {
+        Colors[Index] = dynamic_cast<D3D12RenderTarget*>(InColors[Index]);
+        if(!Colors[Index] || !Colors[Index]->IsValid()) return;
+        if(Colors[Index]->GetWidth() != Colors[0]->GetWidth() || Colors[Index]->GetHeight() != Colors[0]->GetHeight())
+        {
+            GDI_LOG("[D3D12DynamicGDI] SetRenderTargets: targets of different sizes; nothing bound")
+            return;
+        }
+    }
+    D3D12RenderTarget* DepthRT = dynamic_cast<D3D12RenderTarget*>(InDepthFrom);
+    if(DepthRT && (!DepthRT->HasDepth() || DepthRT->GetWidth() != Colors[0]->GetWidth()
+                   || DepthRT->GetHeight() != Colors[0]->GetHeight()))
+    {
+        DepthRT = nullptr;
+    }
+    const auto IsBoundColor = [&](const D3D12RenderTarget* InRT)
+    {
+        for(uint Index = 0; Index < InCount; ++Index) { if(Colors[Index] == InRT) { return true; } }
+        return false;
+    };
 
     ID3D12GraphicsCommandList* List = CurrentStateData->CurrentCmd;
 
     // Every other target still bound for writing becomes sampleable, since
-    // layers and stroke buffers are sampled in no particular order.
+    // layers and stroke buffers are sampled in no particular order -- and
+    // every depth buffer but the one being bound, likewise.
     for(D3D12RenderTarget* RT : LiveRenderTargets)
     {
-        if(RT == NewRT || !RT->IsValid()) continue;
-        if(RT->GetCurrentState() != D3D12_RESOURCE_STATE_RENDER_TARGET) continue;
-
-        RecordTransition(List, RT->GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET,
-                                   D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-        RT->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        if(!RT->IsValid()) continue;
+        if(!IsBoundColor(RT) && RT->GetCurrentState() == D3D12_RESOURCE_STATE_RENDER_TARGET)
+        {
+            RecordTransition(List, RT->GetResource(), D3D12_RESOURCE_STATE_RENDER_TARGET,
+                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            RT->SetCurrentState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
+        if(RT != DepthRT && RT->HasDepth() && RT->GetDepthState() == D3D12_RESOURCE_STATE_DEPTH_WRITE)
+        {
+            RecordTransition(List, RT->GetDepthResource(), D3D12_RESOURCE_STATE_DEPTH_WRITE,
+                                       D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+            RT->SetDepthState(D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+        }
     }
 
-    RecordTransition(List, NewRT->GetResource(), NewRT->GetCurrentState(), D3D12_RESOURCE_STATE_RENDER_TARGET);
-    NewRT->SetCurrentState(D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-    const D3D12_CPU_DESCRIPTOR_HANDLE RTV = NewRT->GetRTV();
-    if(NewRT->HasDepth())
+    D3D12_CPU_DESCRIPTOR_HANDLE RTVs[GDI_MAX_COLOR_TARGETS]{};
+    for(uint Index = 0; Index < InCount; ++Index)
     {
-        // Always in DEPTH_WRITE; cleared on first bind (contents undefined).
-        const D3D12_CPU_DESCRIPTOR_HANDLE DSV = NewRT->GetDSV();
-        List->OMSetRenderTargets(1, &RTV, FALSE, &DSV);
-        if(NewRT->TakeDepthNeedsClear())
+        RecordTransition(List, Colors[Index]->GetResource(), Colors[Index]->GetCurrentState(), D3D12_RESOURCE_STATE_RENDER_TARGET);
+        Colors[Index]->SetCurrentState(D3D12_RESOURCE_STATE_RENDER_TARGET);
+        RTVs[Index] = Colors[Index]->GetRTV();
+    }
+
+    if(DepthRT)
+    {
+        RecordTransition(List, DepthRT->GetDepthResource(), DepthRT->GetDepthState(), D3D12_RESOURCE_STATE_DEPTH_WRITE);
+        DepthRT->SetDepthState(D3D12_RESOURCE_STATE_DEPTH_WRITE);
+
+        // Cleared on first bind (contents undefined).
+        const D3D12_CPU_DESCRIPTOR_HANDLE DSV = DepthRT->GetDSV();
+        List->OMSetRenderTargets(InCount, RTVs, FALSE, &DSV);
+        if(DepthRT->TakeDepthNeedsClear())
         {
             List->ClearDepthStencilView(DSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
         }
     }
     else
     {
-        List->OMSetRenderTargets(1, &RTV, FALSE, nullptr);
+        List->OMSetRenderTargets(InCount, RTVs, FALSE, nullptr);
     }
 
-    CurrentStateData->ActiveRenderTarget = NewRT;
-    CurrentStateData->bRenderingActive   = true;
+    CurrentStateData->ActiveRenderTarget = Colors[0];
+    for(uint Index = 0; Index < GDI_MAX_COLOR_TARGETS; ++Index)
+    {
+        CurrentStateData->ActiveColors[Index] = Index < InCount ? Colors[Index] : nullptr;
+    }
+    CurrentStateData->ActiveColorCount = InCount;
+    CurrentStateData->ActiveDepth      = DepthRT;
+    CurrentStateData->bRenderingActive = true;
 }
 
 void D3D12DynamicGDI::ReleaseRenderTarget(GDIRenderTarget* InRenderTarget)
@@ -276,6 +325,10 @@ void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
 
     D3D12RenderTarget* RT         = CurrentStateData->ActiveRenderTarget;
     const bool         bWasActive = CurrentStateData->bRenderingActive;
+    GDIRenderTarget*   Colors[GDI_MAX_COLOR_TARGETS] = {};
+    const uint32_t     ColorCount = CurrentStateData->ActiveColorCount;
+    for(uint32_t Index = 0; Index < ColorCount; ++Index) { Colors[Index] = CurrentStateData->ActiveColors[Index]; }
+    GDIRenderTarget*   Depth      = CurrentStateData->ActiveDepth;
 
     SubmitFrame();
 
@@ -285,6 +338,8 @@ void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
 
     CurrentStateData->CurrentCmd         = List;
     CurrentStateData->ActiveRenderTarget = nullptr;
+    CurrentStateData->ActiveColorCount   = 0;
+    CurrentStateData->ActiveDepth        = nullptr;
     CurrentStateData->bRenderingActive   = false;
     CurrentStateData->DebugEventDepth    = 0;
     if(!List) return;
@@ -293,9 +348,9 @@ void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     List->RSSetViewports(1, &CurrentStateData->ViewportRect);
     List->RSSetScissorRects(1, &CurrentStateData->ScissorRect);
 
-    if(bResumeActiveRegion && bWasActive && RT)
+    if(bResumeActiveRegion && bWasActive && RT && ColorCount > 0)
     {
-        SetRenderTarget(RT);
+        SetRenderTargets(Colors, ColorCount, Depth);
     }
 }
 
@@ -308,6 +363,8 @@ void D3D12DynamicGDI::RecordResolve(D3D12RenderTarget* Src, D3D12RenderTarget* D
 
     // Unbind first: a copy destination may not also be the bound render target.
     CurrentStateData->ActiveRenderTarget = nullptr;
+    CurrentStateData->ActiveColorCount   = 0;
+    CurrentStateData->ActiveDepth        = nullptr;
     CurrentStateData->bRenderingActive   = false;
     List->OMSetRenderTargets(0, nullptr, FALSE, nullptr);
 
@@ -543,7 +600,8 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     Key.BlendOpAlpha   = DecodeBlendOp(Blend.AlphaOp);
     Key.WriteMask      = DecodeColorMask(CurrentStateData->ColorMask);
     Key.RTFormat       = CurrentStateData->ActiveRenderTarget->GetFormat();
-    Key.DSVFormat      = CurrentStateData->ActiveRenderTarget->GetDepthFormat();
+    Key.ColorCount     = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
+    Key.DSVFormat      = CurrentStateData->ActiveDepth ? CurrentStateData->ActiveDepth->GetDepthFormat() : DXGI_FORMAT_UNKNOWN;
     Key.DepthEnable    = CurrentStateData->DepthState.bDepthTest ? TRUE : FALSE;
     Key.DepthWrite     = CurrentStateData->DepthState.bDepthMask ? TRUE : FALSE;
     Key.DepthFunc      = DecodeCompareFunc(CurrentStateData->DepthState.DepthMode);
@@ -555,14 +613,40 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     const ScalarMap& Scalars = PSRes->GetScalars();
 
     static constexpr uint32_t kCustomBytes = 256;
+    const bool bMaterial = IsMaterialDraw();
+
+    /* A cbuffer is read in 256-byte units; the material layout's blocks are
+     * raw bytes (GDISetUniformBlock), rounded up, never empty. */
+    const auto BlockBytes = [](const std::vector<uint8_t>& InBlock)
+    {
+        return InBlock.empty() ? 256u : uint32_t((InBlock.size() + 255) & ~size_t(255));
+    };
+    const uint32_t CustomBytes = bMaterial ? BlockBytes(MaterialBlocks[0]) : kCustomBytes;
+
     const D3D12CBAllocation VP     = DescAlloc->AllocateCB(160);
     const D3D12CBAllocation TR     = DescAlloc->AllocateCB(80);
-    const D3D12CBAllocation Custom = DescAlloc->AllocateCB(kCustomBytes);
+    const D3D12CBAllocation Custom = DescAlloc->AllocateCB(CustomBytes);
     if(!VP.MappedPtr || !TR.MappedPtr || !Custom.MappedPtr) return false;
 
     PackViewParams(Scalars, VP.MappedPtr);
     PackTransform(Scalars, TR.MappedPtr);
-    PackCustom(Scalars, Custom.MappedPtr, kCustomBytes);
+
+    D3D12CBAllocation Scene{};
+    if(bMaterial)
+    {
+        Scene = DescAlloc->AllocateCB(BlockBytes(MaterialBlocks[1]));
+        if(!Scene.MappedPtr) return false;
+        for(int b = 0; b < 2; ++b)
+        {
+            void* Dst = b == 0 ? Custom.MappedPtr : Scene.MappedPtr;
+            memset(Dst, 0, BlockBytes(MaterialBlocks[b]));
+            if(!MaterialBlocks[b].empty()) memcpy(Dst, MaterialBlocks[b].data(), MaterialBlocks[b].size());
+        }
+    }
+    else
+    {
+        PackCustom(Scalars, Custom.MappedPtr, kCustomBytes);
+    }
 
     GDITextureResource* TexRes = nullptr;
     for(const auto& Entry : PSRes->GetTextures())
@@ -592,6 +676,19 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     List->SetGraphicsRootDescriptorTable(RP_Texture3, SRV);
     List->SetGraphicsRootDescriptorTable(RP_Sampler2, Sampler);
     List->SetGraphicsRootDescriptorTable(RP_Sampler3, Sampler);
+
+    if(bMaterial)
+    {
+        List->SetGraphicsRootConstantBufferView(RP_Scene, Scene.GPUAddress);
+        for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
+        {
+            auto* SlotTexture = dynamic_cast<D3D12TextureResource*>(MaterialTextures[Slot]);
+            if(!SlotTexture || SlotTexture->GetSRVSlot() == UINT32_MAX) SlotTexture = NullTexture;
+            List->SetGraphicsRootDescriptorTable(RP_MaterialTexture0 + Slot, DescAlloc->GetSRVGPUHandle(SlotTexture->GetSRVSlot()));
+            List->SetGraphicsRootDescriptorTable(RP_MaterialSampler0 + Slot,
+                                                 DescAlloc->GetSamplerGPUHandle(SlotTexture->GetBorder(), SlotTexture->GetFilter()));
+        }
+    }
     return true;
 }
 

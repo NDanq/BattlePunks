@@ -35,6 +35,7 @@ private:
     /* Indexed meshes only (GDICreateMesh): normals at location 8, and the
      * element buffer the VAO records. 0 for the quads. */
     uint NormalVBO = 0;
+    uint ColorVBO  = 0;   // indexed only; location 9
     uint IndexEBO  = 0;
     inline GLenum DecodeMeshType()
     {

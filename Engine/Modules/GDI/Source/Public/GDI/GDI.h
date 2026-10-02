@@ -16,6 +16,7 @@
 // they are explicit now, and each one disappears as its type converts.
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 class GDIContext;
 class GDIRenderTarget;
@@ -323,6 +324,18 @@ public:
 
     virtual void SetRenderTarget( GDIRenderTarget* InRenderTarget ) = 0;
 
+    /*
+     * One pass writing InCount colour targets (at most GDI_MAX_COLOR_TARGETS,
+     * all the same size) and the depth attachment of InDepthFrom, or none when
+     * it is null. Fragment output N goes to InColors[N]; blend and colour mask
+     * apply to every target; Clear clears them all. SetRenderTarget(RT) is
+     * SetRenderTargets(&RT, 1, RT). A target whose colour or depth is not bound
+     * is kept sampleable (ToGDITexture2D, ToDepthTexture2D).
+     *
+     * The default binds InColors[0] alone, for a backend without it (Metal).
+     */
+    virtual void SetRenderTargets( GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom );
+
     virtual void ReleaseRenderTarget( GDIRenderTarget* InRenderTarget ) = 0;
 
     virtual GDIShaderResource* CreateShaderResource(EShaderType InType, const std::string& SourceCode) = 0;
@@ -400,6 +413,18 @@ public:
 
     virtual void SetBoundShader(GDIShader*, GDIShader*) = 0;
 
+    /*
+     * Material draw state (GDIDefinitions.h): raw std140 bytes for binding 2
+     * or 3, copied, and a texture per slot. Read by a draw only when a bound
+     * shader UsesMaterialLayout(); persists until changed. A null texture
+     * draws the backend's fallback.
+     */
+    void SetUniformBlock(uint InBinding, const void* InData, uint InSize);
+    void SetMaterialTexture(uint InSlot, GDITextureResource* InTexture);
+
+    /* Whether the bound pair asks for the material layout. */
+    bool IsMaterialDraw() const;
+
     virtual GDIMesh* CreateQuadMesh(const float* VertData, const float* TexData, const int InNumVerts, const int NumTexCoords, bool bIsInstanced = false) = 0;
 
     virtual GDIMesh* CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced = false) = 0;
@@ -424,6 +449,10 @@ public:
     {
         return ThreadID == EngineCore::appThreadID();
     }
+
+    /* Allocate() finished. A backend records its thread before it can fail,
+     * so InRenderThread() alone does not mean it has a device. */
+    bool IsInitialized() const { return bInitialized; }
 protected:
     inline void SetThreadID(const EngineCore::ThreadID InThreadID)
     {
@@ -443,6 +472,10 @@ protected:
     GDIShader* BoundVertexShader;
     GDIShader* BoundPixelShader;
     bool bInitialized = false;
+
+    /* SetUniformBlock's bytes for bindings 2 and 3, and SetMaterialTexture's. */
+    std::vector<uint8_t>  MaterialBlocks[2];
+    GDITextureResource*   MaterialTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
 };
 
 //Expose to global context
@@ -469,6 +502,7 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetColorMask, (EColorMask))
 IMPLEMENT_GDI_FUNCTION_DECLARATION(ERenderPlatform, GetRenderPlatform, ())
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetRenderTarget, (GDIRenderTarget*))
+IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetRenderTargets, (GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, ReleaseRenderTarget, (GDIRenderTarget*))
 
@@ -497,6 +531,10 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, DrawObject, (class GDIViewObject*))
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, DrawObject, (class GDIViewObject*, class GDIView*))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetBoundShader, (GDIShader*, GDIShader*))
+
+IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetUniformBlock, (uint InBinding, const void* InData, uint InSize))
+
+IMPLEMENT_GDI_FUNCTION_DECLARATION(void, SetMaterialTexture, (uint InSlot, GDITextureResource* InTexture))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(GDITextureResource*, CreateTextureResource, (const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest))
 

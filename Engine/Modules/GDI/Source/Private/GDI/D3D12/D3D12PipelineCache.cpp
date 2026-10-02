@@ -25,7 +25,8 @@ namespace
     const D3D12_INPUT_ELEMENT_DESC GMeshLayout[] = {
         { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT, 2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
     };
 
     const D3D12_INPUT_ELEMENT_DESC GInstancedLayout[] = {
@@ -70,14 +71,36 @@ void D3D12PipelineCache::Shutdown()
 
 bool D3D12PipelineCache::BuildRootSignature()
 {
+    static_assert(RP_MaterialSampler0 - RP_MaterialTexture0 == GDI_MATERIAL_TEXTURE_SLOTS, "one root table per material texture");
+
     D3D12_ROOT_PARAMETER Params[RP_Count]{};
-    D3D12_DESCRIPTOR_RANGE Ranges[4]{};
+    D3D12_DESCRIPTOR_RANGE Ranges[4 + 2 * GDI_MATERIAL_TEXTURE_SLOTS]{};
 
     for(UINT CB = 0; CB < 3; ++CB)
     {
         Params[RP_ViewParameters + CB].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
         Params[RP_ViewParameters + CB].Descriptor.ShaderRegister = CB;
         Params[RP_ViewParameters + CB].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+    }
+    Params[RP_Scene].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_Scene].Descriptor.ShaderRegister = GDI_SCENE_BLOCK_BINDING;
+    Params[RP_Scene].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+
+    for(UINT Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
+    {
+        for(UINT Kind = 0; Kind < 2; ++Kind)
+        {
+            D3D12_DESCRIPTOR_RANGE& Range = Ranges[4 + Slot * 2 + Kind];
+            Range.RangeType          = Kind == 0 ? D3D12_DESCRIPTOR_RANGE_TYPE_SRV : D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
+            Range.NumDescriptors     = 1;
+            Range.BaseShaderRegister = GDI_MATERIAL_TEXTURE_BINDING + Slot;
+
+            D3D12_ROOT_PARAMETER& P               = Params[(Kind == 0 ? RP_MaterialTexture0 : RP_MaterialSampler0) + Slot];
+            P.ParameterType                       = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            P.DescriptorTable.NumDescriptorRanges = 1;
+            P.DescriptorTable.pDescriptorRanges   = &Range;
+            P.ShaderVisibility                    = D3D12_SHADER_VISIBILITY_ALL;
+        }
     }
 
     const struct { ED3D12RootParam Param; D3D12_DESCRIPTOR_RANGE_TYPE Type; UINT Register; } Tables[4] = {
@@ -144,6 +167,7 @@ uint64_t D3D12PipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.BlendOpAlpha,   sizeof(K.BlendOpAlpha));
     Mix(&K.WriteMask,      sizeof(K.WriteMask));
     Mix(&K.RTFormat,       sizeof(K.RTFormat));
+    Mix(&K.ColorCount,     sizeof(K.ColorCount));
     Mix(&K.DSVFormat,      sizeof(K.DSVFormat));
     Mix(&K.DepthEnable,    sizeof(K.DepthEnable));
     Mix(&K.DepthWrite,     sizeof(K.DepthWrite));
@@ -216,8 +240,12 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
 
     Desc.SampleMask            = UINT_MAX;
     Desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
-    Desc.NumRenderTargets      = 1;
-    Desc.RTVFormats[0]         = Key.RTFormat;
+    // RenderTarget[0]'s blend covers them all (IndependentBlendEnable is off).
+    Desc.NumRenderTargets      = Key.ColorCount == 0 ? 1u : (Key.ColorCount > GDI_MAX_COLOR_TARGETS ? GDI_MAX_COLOR_TARGETS : Key.ColorCount);
+    for(UINT Index = 0; Index < Desc.NumRenderTargets; ++Index)
+    {
+        Desc.RTVFormats[Index] = Key.RTFormat;
+    }
     Desc.DSVFormat             = Key.DSVFormat;
     Desc.SampleDesc.Count      = 1;
 

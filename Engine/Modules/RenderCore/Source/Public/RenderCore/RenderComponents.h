@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "Public/Core/CoreTypes.h"
+#include "Public/Math/Vector.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderProxy.h"
@@ -19,25 +20,27 @@
 namespace RenderCore
 {
     /* "Render". Draws Mesh (a runtime-relative .nmmesh path) if set and
-     * loadable, else a Width x Height tinted quad; both scaled by the
-     * Transform.
+     * loadable, else a unit quad (1 x 1, centred); both sized by the
+     * Transform's Scale.
      *
-     * Material names a material graph's output ("Glow" = Materials/Glow.fsh +
-     * Glow.material) and overrides every mesh section's material. Empty, or
-     * unloadable (warned once), draws Tint or the sections' own materials. */
-    enum : size_t { RENDER_MATERIAL_NAME_MAX = 48 };   // including the NUL
+     * Materials are slots, one per mesh section: each names a material
+     * graph by its runtime path ("Materials/Glow.material.nmgraph"; the cook
+     * makes its permutations from the graph's <gen_code>). Section i draws
+     * with slot i, else its own material from the mesh, else DefaultLit; a
+     * quad uses slot 0. Each material's Domain and Shading pick the stage it
+     * draws in (RENDERPIPELINE.md), so one mesh can draw in several. An
+     * unloadable slot is warned once and falls back. */
+    enum : size_t { RENDER_MATERIAL_PATH_MAX = 128 };  // including the NUL
     enum : size_t { RENDER_MESH_PATH_MAX     = 128 };  // including the NUL
+    enum : size_t { RENDER_MATERIAL_SLOTS    = 8 };
 
     struct RENDERCORE_API RenderComponent
     {
         GAMECORE_COMPONENT_BODY()
         RENDERCORE_PROXY_BODY()
 
-        float             Width  = 1.0f;
-        float             Height = 1.0f;
-        EngineCore::Color Tint{255, 255, 255};
         uint8_t           bVisible = 1;
-        char              Material[RENDER_MATERIAL_NAME_MAX] = {};
+        char              Materials[RENDER_MATERIAL_SLOTS][RENDER_MATERIAL_PATH_MAX] = {};
         char              Mesh[RENDER_MESH_PATH_MAX] = {};
     };
 
@@ -54,6 +57,44 @@ namespace RenderCore
         float   ZNear    = -1.0f;
         float   ZFar     = 1000.0f;
         uint8_t bActive  = 1;
+    };
+
+    /* "Directional Light". The scene's sun: the first active one WorldBridge
+     * finds lights every Lit material (RenderLighting.h). Direction is the
+     * way light travels, world space; +Y is down. Without one the scene keeps
+     * the default light -- from above, as Mesh.fsh always was. */
+    struct RENDERCORE_API DirectionalLightComponent
+    {
+        GAMECORE_COMPONENT_BODY()
+
+        EngineCore::Vector3 Direction{ 0.35, 1.0, 0.55 };
+        EngineCore::Color   Color{ 255, 255, 255 };
+        float               Intensity = 3.0f;
+        uint8_t             bActive   = 1;
+    };
+
+    /* "Sky Light". Ambient for Lit materials: SkyColor from above (-Y),
+     * GroundColor from below, blended by the normal. The first active one wins. */
+    struct RENDERCORE_API SkyLightComponent
+    {
+        GAMECORE_COMPONENT_BODY()
+
+        EngineCore::Color SkyColor{ 120, 130, 150 };
+        EngineCore::Color GroundColor{ 60, 55, 50 };
+        float             Intensity = 0.6f;
+        uint8_t           bActive   = 1;
+    };
+
+    /* "Post Process". A PostProcess-domain material (a material graph's
+     * runtime path) drawn over the whole scene. Every enabled one runs, Priority low first (RENDER_POST_PROCESS_MAX
+     * at most); a material of another domain is warned about and skipped. */
+    struct RENDERCORE_API PostProcessComponent
+    {
+        GAMECORE_COMPONENT_BODY()
+
+        char    Material[RENDER_MATERIAL_PATH_MAX] = {};
+        int32_t Priority = 0;
+        uint8_t bEnabled = 1;
     };
 
     /* RenderComponent's proxy factory, for Renderer::Initialize to register. */

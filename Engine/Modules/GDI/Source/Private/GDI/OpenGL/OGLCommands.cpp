@@ -108,6 +108,8 @@ void OpenGLDynamicGDI::Destroy()
     if( bInitialized && Context )
     {
         bInitialized = false;
+        if(MaterialUBOs[0]) { glDeleteBuffers(2, MaterialUBOs); MaterialUBOs[0] = MaterialUBOs[1] = 0; }
+        if(ScratchFramebuffer) { glDeleteFramebuffers(1, &ScratchFramebuffer); ScratchFramebuffer = 0; }
         delete ScreenMesh;
         delete Context;
     }

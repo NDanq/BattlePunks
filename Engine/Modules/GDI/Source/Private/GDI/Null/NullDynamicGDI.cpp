@@ -95,6 +95,11 @@ void NullDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
 {
 }
 
+/* Any number of targets draws nothing as well as one does. */
+void NullDynamicGDI::SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom)
+{
+}
+
 void NullDynamicGDI::ReleaseRenderTarget(GDIRenderTarget* InRenderTarget)
 {
     if(InRenderTarget)

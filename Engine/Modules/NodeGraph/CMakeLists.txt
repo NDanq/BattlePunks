@@ -66,6 +66,13 @@ if(NODEGRAPH_BUILD_TESTS)
 
 endif()
 
+# === NodeGraphGenerate ========================================================
+# The editor's on-save generation from the command line: compiles graphs and
+# writes their outputs (a material's .mtl.glsl and .material) beside them.
+add_executable(NodeGraphGenerate Tools/NodeGraphGenerate.cpp)
+target_link_libraries(NodeGraphGenerate PRIVATE NodeGraph::NodeGraph)
+set_target_properties(NodeGraphGenerate PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Editor")
+
 # === Material shader checks ===================================================
 # cook_material_graphs.py runs generated shaders through GDI's cook_shaders.py
 # and glslc. Python is found here (GDI's result is directory-scoped).
@@ -82,10 +89,12 @@ set(NODEGRAPH_COOK_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/cook_material_gra
 if(NODEGRAPH_BUILD_TESTS AND Python3_EXECUTABLE AND NODEGRAPH_GLSLC)
     add_test(NAME NodeGraph.MaterialGLSL
              COMMAND "${Python3_EXECUTABLE}" "${NODEGRAPH_COOK_SCRIPT}"
-                     -check "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Glow.fsh"
-                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Masks.fsh"
-                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Logic.fsh"
-                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Cutout.fsh")
+                     -check "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Glow.mtl.glsl"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Masks.mtl.glsl"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Logic.mtl.glsl"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Cutout.mtl.glsl"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Wave.mtl.glsl"
+                            "${CMAKE_CURRENT_SOURCE_DIR}/Tests/Data/Textured.mtl.glsl")
     set_tests_properties(NodeGraph.MaterialGLSL PROPERTIES TIMEOUT 120 LABELS "smoke")
 endif()
 

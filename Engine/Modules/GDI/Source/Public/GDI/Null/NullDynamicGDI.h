@@ -103,6 +103,7 @@ public:
     GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) override;
 
     void SetRenderTarget(GDIRenderTarget* InRenderTarget) override;
+    void SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom) override;
 
     void ReleaseRenderTarget(GDIRenderTarget* InRenderTarget) override;
 

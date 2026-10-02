@@ -73,6 +73,12 @@ public:
     uint64_t RequestMaterialPreview(const QString& InName, int InSize, EngineCore::Color InTint);
     bool     TakeMaterialPreview(uint64_t InRequest, QImage& OutImage, QString& OutError);
 
+    /* See Renderer::RequestMeshPreview: InMesh (a runtime path) framed by an
+     * orbiting camera, with InMaterial on every section, else InSections.
+     * Answered through TakeMaterialPreview. 0 when the Renderer is not running. */
+    uint64_t RequestMeshPreview(const QString& InMesh, const QString& InMaterial, const QStringList& InSections,
+                                int InWidth, int InHeight, float InYaw, float InPitch, float InZoom, EngineCore::Color InTint);
+
     /* False, leaving OutStats untouched, when the Renderer is not running. */
     bool GetRenderStats(RenderCore::RenderStats& OutStats) const;
 
@@ -259,7 +265,10 @@ private:
 
     /* Resolves cooked shaders against the working directory (the exe's
      * folder). A member: render-thread loads outlive any call. */
-    EngineCore::FilesystemProvider AssetProvider;
+    EngineCore::FilesystemProvider  AssetProvider;
+    /* The disk first, then mounted shader caches: a material the editor just
+     * cooked beats the last build's cache. */
+    EngineCore::LayeredFileProvider LayeredAssets{ &AssetProvider, true };
 
     GameCore::World*      EditedWorld = nullptr;
     GameCore::World*      ActiveWorld = nullptr;   // EditedWorld, or the playing level's

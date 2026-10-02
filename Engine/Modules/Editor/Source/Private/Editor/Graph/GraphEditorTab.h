@@ -13,6 +13,8 @@
 
 class GraphDetailsPanel;
 class GraphDocument;
+class MeshPreviewView;
+class QComboBox;
 class QLabel;
 class GraphScene;
 class GraphView;
@@ -24,7 +26,8 @@ class QPlainTextEdit;
  * generated code and messages (click to select the source node). Save writes
  * the graph and output; material shaders are then checked in the background.
  *
- * Materials get a Preview dock rendered by the viewport's renderer. Live
+ * Materials get a Preview dock rendered by the viewport's renderer -- on one
+ * of the engine's meshes (Sphere, Box, Plane) to orbit, or a flat quad. Live
  * Preview (default on) cooks each clean recompile into the level too.
  */
 class GraphEditorTab : public QMainWindow
@@ -33,6 +36,7 @@ class GraphEditorTab : public QMainWindow
 
 public:
     GraphEditorTab(GraphDocument* InDocument, QWidget* InParent = nullptr);
+    ~GraphEditorTab() override;
 
     GraphDocument& GetDocument() const { return *Document; }
 
@@ -82,11 +86,11 @@ private:
     bool bLivePreview      = true;
     bool bPreviewedUnsaved = false;
 
-    /* Refreshed after every cook; PreviewGeneration drops stale answers. */
-    QLabel*   PreviewImage  = nullptr;
-    QLabel*   PreviewStatus = nullptr;
-    QColor    PreviewTint   = QColor(255, 255, 255);
-    uint64_t  PreviewGeneration = 0;
+    /* Refreshed after every cook. */
+    MeshPreviewView* PreviewView   = nullptr;
+    QComboBox*       PreviewShape  = nullptr;
+    QLabel*          PreviewStatus = nullptr;
+    QColor           PreviewTint   = QColor(255, 255, 255);
 };
 
 #endif // WITH_EDITOR

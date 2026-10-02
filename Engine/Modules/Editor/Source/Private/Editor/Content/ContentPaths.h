@@ -14,12 +14,38 @@ class QMimeData;
  */
 namespace EditorContent
 {
-    /* Project-relative, forward slashes; empty if outside. */
+    /* Project-relative, forward slashes ("Content/Props/Crate.nmmesh"), or
+     * "Engine/Content/..." for the engine's own content; empty if outside both. */
     QString ToRuntimePath(const QString& InPath);
 
-    /* The material a file names: "Glow" for Glow.material.nmgraph,
-     * Glow.material or Glow.fsh under a Materials folder. Empty otherwise. */
-    QString MaterialNameFor(const QString& InPath);
+    /*
+     * The engine's content folder (Engine/Content: its meshes, materials and
+     * shaders), absolute, forward slashes: the source tree this editor was
+     * built from when it is there, else the copy staged beside the executable.
+     * Empty if neither exists. Read-only to the editor; staged at
+     * "Engine/Content/..." beside every game.
+     */
+    QString GetEngineContentRoot();
+
+    /* Whether InPath is the engine content folder or inside it. */
+    bool IsEngineContent(const QString& InPath);
+
+    /* Every material graph's runtime path, sorted: the project's and the
+     * engine's ("Materials/Glow.material.nmgraph", "Engine/Content/Materials/..."). */
+    QStringList ListMaterialPaths();
+
+    /* What a material field stores for a file: the runtime path of a
+     * *.material.nmgraph in the project or the engine's content. Empty for
+     * anything else -- material fields take material graphs only. */
+    QString MaterialPathFor(const QString& InPath);
+
+    /* Whether InText is what a material field may hold: "" or a runtime path
+     * ending .material.nmgraph. */
+    bool IsMaterialFieldValue(const QString& InText);
+
+    /* What a Script field stores for a file: the runtime path of a .lua or a
+     * *.script.nmgraph in the project. Empty for anything else. */
+    QString ScriptPathFor(const QString& InPath);
 
     /* The single local file in a drag, else empty. */
     QString SingleDroppedFile(const QMimeData* InData);

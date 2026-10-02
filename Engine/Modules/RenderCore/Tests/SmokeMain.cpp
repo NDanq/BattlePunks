@@ -9,11 +9,14 @@
  * Expect()-counter style.
  */
 
+#include <algorithm>
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 
 #include "Public/Core/CoreArchive.h"
@@ -21,12 +24,15 @@
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ComponentScript.h"
+#include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
@@ -37,6 +43,7 @@
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/RenderThread.h"
 #include "Public/RenderCore/RenderView.h"
+#include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
 
 using namespace RenderCore;
@@ -72,7 +79,16 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 6, "Render exposes Width, Height, Tint, Visible, Material and Mesh");
+    Expect(Render != nullptr && RenderCount == 11,
+           "Render exposes Visible, Material (slot 0), Material0-7 and Mesh");
+    bool bSlot7 = false, bSlot0Alias = false;
+    for(size_t Index = 0; Render && Index < RenderCount; ++Index)
+    {
+        bSlot7      |= std::strcmp(Render[Index].Name, "Material7") == 0;
+        bSlot0Alias |= std::strcmp(Render[Index].Name, "Material") == 0
+                       && Render[Index].Offset == uint32_t(offsetof(RenderComponent, Materials));
+    }
+    Expect(bSlot7 && bSlot0Alias, "each material slot is its own field, and Material is still slot 0");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < RenderCount; ++Index)
@@ -225,9 +241,6 @@ static void TestHandBuiltScene(RenderThread& InThread)
      * AddProxy through a command, exactly WorldBridge's own lifecycle
      * (a later step) will drive it. */
     RenderComponent Init;
-    Init.Width  = 2.0f;
-    Init.Height = 4.0f;
-    Init.Tint   = EngineCore::Color(10, 20, 30);
 
     const GameCore::EntityID Owner(1, 0);
     CreateProxyFn Factory = FindProxyFactory(RenderComponent::StaticType().ID);
@@ -432,10 +445,7 @@ static void TestRendererWithWorld()
 
     const GameCore::Entity E1 = World.CreateEntity();
     E1.AddComponent<GameCore::TransformComponent>();
-    RenderComponent Prim;
-    Prim.Width  = 1.0f;
-    Prim.Height = 1.0f;
-    E1.AddComponent(Prim);
+    E1.AddComponent<RenderComponent>();
 
     const GameCore::Entity TestEntity = World.CreateEntity();
     TestEntity.AddComponent<GameCore::TransformComponent>();
@@ -619,11 +629,9 @@ static void TestMaterials()
 
         GameCore::World World;
         const GameCore::Entity Quad = World.CreateEntity("Glowing");
-        Quad.AddComponent<GameCore::TransformComponent>();
+        Quad.AddComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(100.0, 100.0, 1.0);
         RenderComponent Prim;
-        Prim.Width = 100.0f;
-        Prim.Height = 100.0f;
-        std::strcpy(Prim.Material, "SmokeGlow");
+        std::strcpy(Prim.Materials[0], "SmokeGlow");
         Quad.AddComponent(Prim);
         Rend.BindWorld(World);
 
@@ -647,7 +655,8 @@ static void TestMaterials()
         Expect(GMaterialFallbacks == 1, "and warned about once, not every frame");
 
         std::ofstream(Root / "Materials" / "SmokeGlow.material")
-            << "# a test material\nNimbleMaterial 1\nParam Tint 0 vec3 1 0.5 0.25 0\n";
+            << "# a test material\nNimbleMaterial 2\nDomain Translucent\nShading Unlit\nBlockSize 48\n"
+               "Param Tint vec3 32 1 0.5 0.25 0\n";
         Rend.ReloadMaterial("SmokeGlow");
         const uint64_t LoadedDraws = DrawFrame();
         Expect(GMaterialLoads == 1, "ReloadMaterial makes the next draw read the material afresh");
@@ -685,6 +694,395 @@ static void TestMaterials()
     SetFileProvider(PreviousProvider);
     std::filesystem::remove_all(Root, Ignored);
 }
+
+/* .material v2, the material block, permutation names, the shader cache and
+ * the layered provider it mounts on -- no renderer needed. */
+static void TestMaterialRuntime()
+{
+    std::printf("[material runtime]\n");
+
+    // --- .material v2 -------------------------------------------------------------
+    MaterialDescription Desc;
+    std::string Error;
+    const char* Wave = "# generated\nNimbleMaterial 2\nDomain Masked\nShading Lit\nTwoSided 1\nClipValue 0.25\n"
+                       "MaxOffset 2\nHasOffset 1\nBlockSize 48\nParam Color vec3 32 0.2 0.6 1 0\n"
+                       "Param Height float 44 0.5 0 0 0\nSomeFutureLine 1 2 3\n";
+    Expect(ParseMaterialDescription(Wave, Desc, Error), "a version 2 .material parses");
+    Expect(Desc.Domain == EMaterialDomain::Masked && Desc.Shading == EMaterialShading::Lit && Desc.bTwoSided
+           && Desc.bHasOffset && Desc.MaxOffset == 2.0f && Desc.ClipValue == 0.25f && Desc.BlockSize == 48,
+           "its header lines are read");
+    const MaterialParameter* Height = Desc.FindParameter("Height");
+    Expect(Desc.Parameters.size() == 2 && Height && Height->Offset == 44 && Height->Type == "float" && Height->Default[0] == 0.5f,
+           "its parameters keep their offsets and defaults");
+
+    std::vector<uint8_t> Block;
+    BuildMaterialBlock(Desc, EngineCore::Color(255, 0, 0, 255), Block);
+    float Read[12] = {};
+    if(Block.size() == 48) { std::memcpy(Read, Block.data(), sizeof(Read)); }
+    Expect(Block.size() == 48 && Read[0] == 1.0f && Read[1] == 0.0f && Read[3] == 1.0f && Read[4] == 0.25f && Read[5] == 1.0f
+           && Read[8] == 0.2f && Read[10] == 1.0f && Read[11] == 0.5f,
+           "the block is the tint, clip value and two-sided flag, then each default at its offset");
+
+    Expect(!ParseMaterialDescription("NimbleMaterial 1\nParam Tint 0 vec3 1 1 1 0\n", Desc, Error)
+           && Error.find("recompile") != std::string::npos, "a version 1 .material is refused, asking for a recompile");
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nBlockSize 32\nParam X vec4 32 0 0 0 0\n", Desc, Error),
+           "a parameter outside the block is refused");
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nDomain Sideways\n", Desc, Error), "an unknown domain is refused");
+
+    // --- Texture lines: what a Texture Sample writes -----------------------------------
+    const char* Textured = "NimbleMaterial 2\nBlockSize 32\n"
+                           "Texture 1 Default Default Content/Textures/Brick.nmtexture\n"
+                           "Texture 2 Nearest Clamp Content/Textures/Height Map.nmtexture\r\n"
+                           "Texture 3 Linear Mirror Content/Water.nmtexture\n";
+    Expect(ParseMaterialDescription(Textured, Desc, Error) && Desc.Textures.size() == 3, "Texture lines parse");
+    if(Desc.Textures.size() == 3)
+    {
+        const MaterialTexture& Brick  = Desc.Textures[0];
+        const MaterialTexture& Height = Desc.Textures[1];
+        const MaterialTexture& Water  = Desc.Textures[2];
+        Expect(Brick.Slot == 1 && Brick.Path == "Content/Textures/Brick.nmtexture" && !Brick.bFilter && !Brick.bWrap,
+               "Default keeps the texture asset's own filter and wrap");
+        Expect(Height.Slot == 2 && Height.Path == "Content/Textures/Height Map.nmtexture"
+               && Height.bFilter && Height.Filter == ETextureFilter::Nearest && Height.bWrap && Height.Wrap == ETextureWrap::Clamp,
+               "a node's overrides are read, and a path is the rest of its line, spaces and all");
+        Expect(Water.bFilter && Water.Filter == ETextureFilter::Linear && Water.bWrap && Water.Wrap == ETextureWrap::Mirror,
+               "Linear and Mirror are read too");
+    }
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nTexture 0 Default Default Content/A.nmtexture\n", Desc, Error)
+           && !ParseMaterialDescription("NimbleMaterial 2\nTexture 8 Default Default Content/A.nmtexture\n", Desc, Error),
+           "slot 0 (a PostProcess scene's) and slots past 7 are refused");
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nTexture 1 Blurry Default Content/A.nmtexture\n", Desc, Error)
+           && !ParseMaterialDescription("NimbleMaterial 2\nTexture 1 Default Default\n", Desc, Error),
+           "an unknown sampler setting, or no path, is refused");
+
+    // --- Permutation names: what cook_material_graphs.py writes ---------------------
+    Expect(GetPermutationFileName("Glow", GetPixelPermutationKey(EMaterialDomain::Translucent, EMaterialShading::Unlit), false)
+           == "Glow@0000000a.fsh", "Translucent Unlit is pixel key 0xa");
+    Expect(GetPermutationFileName(MATERIAL_DEFAULT_VERTEX, GetVertexPermutationKey(EMaterialVertexInput::Mesh), true)
+           == "MaterialDefault@00000100.vsh", "the shared mesh vertex shader is key 0x100");
+
+    // --- Material names: a graph's runtime path, or an older bare name ------------------
+    {
+        std::string Stem;
+        Expect(GetMaterialStem("Materials/Glow.material.nmgraph", Stem) && Stem == "Materials/Glow",
+               "a material graph's path names its cooked files by its stem");
+        Expect(GetMaterialStem("Engine/Content/Materials/DefaultLit.material.nmgraph", Stem)
+               && Stem == "Engine/Content/Materials/DefaultLit", "the engine's are below Engine/Content");
+        Expect(GetMaterialStem("Glow", Stem) && Stem == "Materials/Glow", "a bare name, as worlds saved them before, is Materials/<name>");
+        Expect(!GetMaterialStem("Materials/Glow.material", Stem) && !GetMaterialStem("Scripts/Mover.lua", Stem)
+               && !GetMaterialStem("Material.001", Stem) && !GetMaterialStem("", Stem),
+               "anything else names no material (an imported mesh's own material names, say)");
+        Expect(GetPermutationFileName("Materials/Glow", 0xa, false) == "Materials/Glow@0000000a.fsh",
+               "a permutation is named by the stem, folders and all");
+    }
+    Expect(GetShaderCachePath("SandboxGame", ERenderBackend::Vulkan) == "Shaders/Cache/SandboxGame.Vulkan.nmsc",
+           "a module's cache is named by module and platform");
+
+    // --- The shader cache ---------------------------------------------------------------
+    const auto Fnv = [](const std::vector<uint8_t>& InBytes)
+    {
+        uint64_t Hash = 0xcbf29ce484222325ull;
+        for(const uint8_t Byte : InBytes) { Hash ^= Byte; Hash *= 0x100000001b3ull; }
+        return Hash;
+    };
+    const auto MakeCache = [&](const uint32_t InTemplateVersion, const bool bInCorrupt)
+    {
+        Archive Ar = Archive::ForWriting();
+        uint16_t Version = 1;
+        std::string Module = "Smoke", Platform = "Vulkan";
+        uint32_t Template = InTemplateVersion;
+        Ar.OpenChunk(MakeArchiveTag('N','M','S','C'), Version);
+        Ar << Module << Platform << Template;
+        Ar.CloseChunk();
+
+        std::vector<uint8_t> Shader = { 1, 2, 3, 4, 5 };
+        uint64_t Hash = Fnv(Shader);
+        uint32_t Size = uint32_t(Shader.size());
+        if(bInCorrupt) { Shader[2] = 9; }
+        Ar.OpenChunk(MakeArchiveTag('B','L','O','B'), Version);
+        Ar << Hash << Size;
+        Ar.SerializeBytes(Shader.data(), Shader.size());
+        Ar.CloseChunk();
+        for(const char* Path : { "Shaders/Cooked/Vulkan/Materials/A@00000000.fsh.spv", "Shaders/Cooked/Vulkan/Materials/B@00000000.fsh.spv" })
+        {
+            std::string Text = Path;
+            Ar.OpenChunk(MakeArchiveTag('F','I','L','E'), Version);
+            Ar << Text << Hash;
+            Ar.CloseChunk();
+        }
+        return Ar.GetBytes();
+    };
+
+    ShaderCacheContents Contents;
+    Expect(ReadShaderCache(MakeCache(MATERIAL_TEMPLATE_VERSION, false), Contents, Error)
+           && Contents.Module == "Smoke" && Contents.Platform == "Vulkan" && Contents.TemplateVersion == MATERIAL_TEMPLATE_VERSION
+           && Contents.Files.size() == 2, "a cache reads its header and every file");
+    const auto A = Contents.Files.find("Shaders/Cooked/Vulkan/Materials/A@00000000.fsh.spv");
+    const auto B = Contents.Files.find("Shaders/Cooked/Vulkan/Materials/B@00000000.fsh.spv");
+    Expect(A != Contents.Files.end() && B != Contents.Files.end() && A->second == B->second && A->second->size() == 5,
+           "two paths with the same bytes share one blob");
+    Expect(!ReadShaderCache(MakeCache(MATERIAL_TEMPLATE_VERSION, true), Contents, Error) && Error.find("corrupt") != std::string::npos,
+           "a blob whose bytes do not match its hash is refused");
+    std::vector<uint8_t> Truncated = MakeCache(MATERIAL_TEMPLATE_VERSION, false);
+    Truncated.resize(Truncated.size() - 7);
+    Expect(!ReadShaderCache(Truncated, Contents, Error), "a truncated cache is refused");
+    Expect(!ReadShaderCache({ 'n', 'o', 'p', 'e' }, Contents, Error), "a file that is not a cache is refused");
+
+    /* One the build cooked, when this runs from the runtime directory. */
+    std::vector<uint8_t> Cooked;
+    if(appFileReadAll(GetShaderCachePath("Engine", ERenderBackend::Vulkan), Cooked))
+    {
+        Expect(ReadShaderCache(Cooked, Contents, Error) && Contents.Module == "Engine"
+               && Contents.Files.count("Engine/Content/Materials/DefaultLit.material") == 1
+               && Contents.Files.count("Shaders/Cooked/Vulkan/Engine/Content/Materials/DefaultLit@00000000.fsh.spv") == 1
+               && Contents.Files.count("Shaders/Cooked/Vulkan/Materials/MaterialDefault@00000100.vsh.spv") == 1,
+               "the Engine cache cook_material_graphs.py wrote reads back: DefaultLit, cooked from its graph's <gen_code> "
+               "at its graph's path, and the shared vertex shaders");
+    }
+
+    // --- The layered provider ----------------------------------------------------------------
+    std::map<std::string, MemoryFileProvider::FileBytes> First, Second;
+    First["Shared.txt"]  = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{ 'f' });
+    First["First.txt"]   = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{ '1' });
+    Second["Shared.txt"] = std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{ 's' });
+
+    MemoryFileProvider Base({ { "Shared.txt", std::make_shared<const std::vector<uint8_t>>(std::vector<uint8_t>{ 'b' }) } });
+    LayeredFileProvider Layers(&Base, false);
+    std::string Text;
+    Expect(Layers.ReadAllText("Shared.txt", Text) && Text == "b", "with no layers the base answers");
+    Expect(Layers.MountLayer("First", std::make_shared<MemoryFileProvider>(First))
+           && Layers.MountLayer("Second", std::make_shared<MemoryFileProvider>(Second)), "layers mount");
+    Expect(Layers.ReadAllText("Shared.txt", Text) && Text == "s", "the newest layer shadows the older and the base");
+    Expect(Layers.ReadAllText("First.txt", Text) && Text == "1" && Layers.Exists("First.txt"), "an older layer still answers what it alone has");
+    Expect(Layers.UnmountLayer("Second") && Layers.ReadAllText("Shared.txt", Text) && Text == "f", "unmounting uncovers the layer below");
+    Expect(!Layers.UnmountLayer("Second"), "a layer unmounts once");
+
+    LayeredFileProvider BaseFirst(&Base, true);
+    BaseFirst.MountLayer("First", std::make_shared<MemoryFileProvider>(First));
+    Expect(BaseFirst.ReadAllText("Shared.txt", Text) && Text == "b" && BaseFirst.ReadAllText("First.txt", Text) && Text == "1",
+           "base-first (the editor's) asks the disk before any layer");
+    Expect(!FilesystemProvider().MountLayer("X", std::make_shared<MemoryFileProvider>(First)), "a plain provider takes no layers");
+
+    // --- Vertex colours in .nmmesh ---------------------------------------------------------
+    MeshData Coloured;
+    Coloured.Positions = { 0, 0, 0,  1, 0, 0,  0, 1, 0 };
+    Coloured.Normals   = { 0, 0, -1, 0, 0, -1, 0, 0, -1 };
+    Coloured.UV0       = { 0, 0,  1, 0,  0, 1 };
+    Coloured.Colors    = { 1, 0, 0, 1,  0, 1, 0, 1,  0, 0, 1, 0.5f };
+    Coloured.Indices   = { 0, 1, 2 };
+    Archive Save = Archive::ForWriting();
+    Expect(SerializeMesh(Save, Coloured), "a mesh with vertex colours saves");
+    Archive Load = Archive::ForReading(Save.GetBytes());
+    MeshData Back;
+    Expect(SerializeMesh(Load, Back) && Back.Colors == Coloured.Colors, "and loads them back");
+
+    MeshData Plain = Coloured;
+    Plain.Colors.clear();
+    Archive SavePlain = Archive::ForWriting();
+    SerializeMesh(SavePlain, Plain);
+    Archive LoadPlain = Archive::ForReading(SavePlain.GetBytes());
+    MeshData PlainBack;
+    Expect(SerializeMesh(LoadPlain, PlainBack) && PlainBack.Colors.empty() && PlainBack.Indices == Plain.Indices,
+           "a mesh without colours has no colour chunk, and loads without one (white)");
+
+    Coloured.Colors.pop_back();
+    Archive Bad = Archive::ForWriting();
+    Expect(!SerializeMesh(Bad, Coloured), "colours for only some vertices are refused");
+}
+
+#if WITH_EDITOR
+/*
+ * OPT-IN, on a real GPU: NIMBLE_SMOKE_GPU=Vulkan (or D3D12), run from a
+ * runtime directory the build staged (Binaries/<Platform>_<Config>). Renders
+ * material previews offscreen -- no window, no present -- through the mounted
+ * Engine and SandboxGame shader caches, asked before any loose file, and
+ * checks the pixels: the templates, the uniform blocks, World Position
+ * Offset's vertex shaders and a PostProcess pass, end to end.
+ */
+static void TestMaterialsOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[materials on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[materials on the GPU: %s]\n", GetShaderPlatformName(Backend));
+
+    FilesystemProvider  Disk;                       // the working directory
+    LayeredFileProvider Layers(&Disk, false);       // caches first: they are what is tested
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");   // Initialize mounted Engine
+
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        uint64_t Frame = 1;
+        const auto DrawFrame = [&]
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        };
+        DrawFrame();
+
+        const std::vector<std::string> Layers_ = Layers.GetLayerNames();
+        Expect(std::find(Layers_.begin(), Layers_.end(), GetShaderCacheLayerName("Engine")) != Layers_.end()
+               && std::find(Layers_.begin(), Layers_.end(), GetShaderCacheLayerName("SandboxGame")) != Layers_.end(),
+               "the Engine and SandboxGame caches are mounted");
+
+        /* The centre pixel of each preview, as R, G, B; and its quarter
+         * points -- top-left, top-right, bottom-left, bottom-right. */
+        struct Check { const char* Material; uint64_t Request; int Rgb[3]; bool bOk; int Quarter[4][3]; };
+        Check Checks[] = { { "Engine/Content/Materials/DefaultLit.material.nmgraph", 0, {}, false, {} },
+                           { "Materials/Glow.material.nmgraph", 0, {}, false, {} },
+                           { "Wave", 0, {}, false, {} },       { "Negative", 0, {}, false, {} },
+                           { "Textured", 0, {}, false, {} } };
+        for(Check& Each : Checks)
+        {
+            Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
+        }
+        DrawFrame();
+        DrawFrame();
+        for(Check& Each : Checks)
+        {
+            EngineCore::Image Pixels;
+            std::string Error;
+            Each.bOk = Rend.TakeMaterialPreview(Each.Request, Pixels, Error) && Pixels.GetWidth() == 64 && Pixels.GetData();
+            if(!Each.bOk)
+            {
+                std::printf("    %s: %s\n", Each.Material, Error.c_str());
+                continue;
+            }
+            const bool bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
+            const auto Read = [&](const int InX, const int InY, int (&OutRgb)[3])
+            {
+                const uint8_t* Px = Pixels.GetData() + Pixels.GetStride() * InY + InX * BytesPerPixel(Pixels.GetFormat());
+                OutRgb[0] = bBgra ? Px[2] : Px[0];
+                OutRgb[1] = Px[1];
+                OutRgb[2] = bBgra ? Px[0] : Px[2];
+            };
+            Read(32, 32, Each.Rgb);
+            Read(16, 16, Each.Quarter[0]);
+            Read(48, 16, Each.Quarter[1]);
+            Read(16, 48, Each.Quarter[2]);
+            Read(48, 48, Each.Quarter[3]);
+            std::printf("    %s centre = %d %d %d\n", Each.Material, Each.Rgb[0], Each.Rgb[1], Each.Rgb[2]);
+        }
+
+        const auto Near = [](const int InValue, const int InWant) { return InValue >= InWant - 12 && InValue <= InWant + 12; };
+        const Check& DefaultLit = Checks[0];
+        const Check& Glow       = Checks[1];
+        const Check& Wave       = Checks[2];
+        const Check& Negative   = Checks[3];
+        Expect(DefaultLit.bOk && DefaultLit.Rgb[0] > 60 && std::abs(DefaultLit.Rgb[0] - DefaultLit.Rgb[2]) < 16,
+               "DefaultLit draws its white tint lit grey, not the clear colour");
+        Expect(Glow.bOk && Near(Glow.Rgb[0], 51) && Near(Glow.Rgb[1], 204) && Near(Glow.Rgb[2], 255),
+               "Glow's centre is its Color parameter, read from the material block");
+        Expect(Wave.bOk && Wave.Rgb[2] > Wave.Rgb[0] + 40, "Wave (Lit, World Position Offset) draws its blue Color, lit");
+        Expect(Negative.bOk && Near(Negative.Rgb[0], 255 - 38) && Near(Negative.Rgb[1], 255 - 40) && Near(Negative.Rgb[2], 255 - 46),
+               "Negative (PostProcess) inverts the scene it runs over: the preview's clear colour");
+
+        /* Quadrants.nmtexture: red, green / blue, white, rows top first. */
+        const Check& Textured = Checks[4];
+        const auto Is = [&](const int (&InRgb)[3], const int InR, const int InG, const int InB)
+        {
+            return Near(InRgb[0], InR) && Near(InRgb[1], InG) && Near(InRgb[2], InB);
+        };
+        std::printf("    Textured quarters = %d %d %d / %d %d %d / %d %d %d / %d %d %d\n",
+                    Textured.Quarter[0][0], Textured.Quarter[0][1], Textured.Quarter[0][2],
+                    Textured.Quarter[1][0], Textured.Quarter[1][1], Textured.Quarter[1][2],
+                    Textured.Quarter[2][0], Textured.Quarter[2][1], Textured.Quarter[2][2],
+                    Textured.Quarter[3][0], Textured.Quarter[3][1], Textured.Quarter[3][2]);
+        Expect(Textured.bOk && Is(Textured.Quarter[0], 255, 0, 0) && Is(Textured.Quarter[1], 0, 255, 0)
+               && Is(Textured.Quarter[2], 0, 0, 255) && Is(Textured.Quarter[3], 255, 255, 255),
+               "Textured shows its texture upright: the image's top row at the quad's top");
+        const bool bOneTexel = Is(Textured.Rgb, 255, 0, 0) || Is(Textured.Rgb, 0, 255, 0) || Is(Textured.Rgb, 0, 0, 255)
+                            || Is(Textured.Rgb, 255, 255, 255);
+        Expect(Textured.bOk && bOneTexel, "its node's Nearest overrides the texture's Linear: the centre is one texel, not a blend");
+
+        /* Mesh previews: the engine's primitives, as the mesh viewer and the
+         * material editor draw them. */
+        const auto Preview = [&](Renderer::MeshPreview InPreview, EngineCore::Image& OutPixels, std::string& OutError)
+        {
+            InPreview.Width  = 96;
+            InPreview.Height = 64;
+            const uint64_t Request = Rend.RequestMeshPreview(InPreview);
+            DrawFrame();
+            DrawFrame();
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, OutError) && OutPixels.GetWidth() == 96;
+        };
+        const auto Pixel = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        {
+            Renderer::MeshPreview Sphere;
+            Sphere.Mesh = "Engine/Content/Meshes/Sphere.nmmesh";
+            EngineCore::Image Pixels;
+            std::string Error;
+            const bool bOk = Preview(Sphere, Pixels, Error);
+            int Centre[3] = {}, Corner[3] = {};
+            if(bOk) { Pixel(Pixels, 48, 32, Centre); Pixel(Pixels, 2, 2, Corner); }
+            std::printf("    Sphere centre = %d %d %d, corner = %d %d %d%s\n", Centre[0], Centre[1], Centre[2],
+                        Corner[0], Corner[1], Corner[2], bOk ? "" : (" -- " + Error).c_str());
+            Expect(bOk && Is(Corner, 38, 40, 46) && !Is(Centre, 38, 40, 46) && Centre[0] > 60 && std::abs(Centre[0] - Centre[2]) < 24,
+                   "a mesh preview frames the Sphere, its own material (DefaultLit) lit grey on the clear colour");
+        }
+        {
+            Renderer::MeshPreview Box;
+            Box.Mesh     = "Engine/Content/Meshes/Box.nmmesh";
+            Box.Material = "Textured";
+            Box.Yaw      = 0.0f;
+            Box.Pitch    = 0.0f;
+            EngineCore::Image Pixels;
+            std::string Error;
+            int Centre[3] = {};
+            const bool bOk = Preview(Box, Pixels, Error);
+            if(bOk) { Pixel(Pixels, 48, 32, Centre); }
+            Expect(bOk && (Is(Centre, 255, 0, 0) || Is(Centre, 0, 255, 0) || Is(Centre, 0, 0, 255) || Is(Centre, 255, 255, 255)),
+                   "a preview's Material goes on every section: the Box's face shows Quadrants");
+
+            Box.Material.clear();
+            Box.Sections = { "Textured" };
+            int Slotted[3] = {};
+            const bool bSlotted = Preview(Box, Pixels, Error);
+            if(bSlotted) { Pixel(Pixels, 48, 32, Slotted); }
+            Expect(bSlotted && Slotted[0] == Centre[0] && Slotted[1] == Centre[1] && Slotted[2] == Centre[2],
+                   "or a section's own slot does");
+        }
+        {
+            Renderer::MeshPreview Missing;
+            Missing.Mesh = "Engine/Content/Meshes/Nope.nmmesh";
+            EngineCore::Image Pixels;
+            std::string Error;
+            Expect(!Preview(Missing, Pixels, Error) && Error.find("could not be loaded") != std::string::npos,
+                   "a preview of a missing mesh says so");
+            Renderer::MeshPreview Nothing;
+            Expect(Rend.RequestMeshPreview(Nothing) == 0, "a mesh preview needs a mesh");
+        }
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+    }
+    Rend.Shutdown();
+    SetFileProvider(PreviousProvider);
+}
+#endif
 
 /* A two-triangle square in two sections -- small enough to check by hand. */
 static MeshData MakeSmokeMesh()
@@ -841,6 +1239,323 @@ static void TestTextureAssets()
     Expect(!SerializeTexture(WrongTag, WrongTagLoaded), "a mesh is not a texture");
 }
 
+/*
+ * RenderComponent's serializer: version 1's one Material loads into slot 0;
+ * version 2 writes every slot by name; version 3 drops Width, Height and Tint. Through a recording archive, so no
+ * file format is involved.
+ */
+static void TestRenderComponentSerializer()
+{
+    std::printf("[render component serializer]\n");
+
+    struct RecordingArchive final : GameCore::ComponentArchive
+    {
+        bool                     bLoading = false;
+        uint16_t                 Version  = 4;
+        std::map<std::string, std::string> Strings;   // what a load reads, and what a save wrote
+        std::vector<std::string> Names;
+
+        bool     IsLoading()  const override { return bLoading; }
+        uint16_t GetVersion() const override { return Version; }
+        void Field(const char* InName, float&) override               { Names.push_back(InName); }
+        void Field(const char* InName, double&) override              { Names.push_back(InName); }
+        void Field(const char* InName, int32_t&) override             { Names.push_back(InName); }
+        void Field(const char* InName, uint32_t&) override            { Names.push_back(InName); }
+        void Field(const char* InName, uint8_t&) override             { Names.push_back(InName); }
+        void Field(const char* InName, bool&) override                { Names.push_back(InName); }
+        void Field(const char* InName, EngineCore::Vector3&) override { Names.push_back(InName); }
+        void Field(const char* InName, GameCore::AABB&) override      { Names.push_back(InName); }
+        void Field(const char* InName, EngineCore::Color&) override   { Names.push_back(InName); }
+        void Flag(const char* InName, uint8_t&) override              { Names.push_back(InName); }
+        void Entity(const char* InName, GameCore::EntityID&) override { Names.push_back(InName); }
+        void FixedString(const char* InName, char* InOutBuffer, const size_t InCapacity) override
+        {
+            Names.push_back(InName);
+            if(!bLoading)
+            {
+                Strings[InName] = InOutBuffer;
+                return;
+            }
+            const auto Found = Strings.find(InName);
+            if(Found != Strings.end())
+            {
+                std::strncpy(InOutBuffer, Found->second.c_str(), InCapacity - 1);
+                InOutBuffer[InCapacity - 1] = '\0';
+            }
+        }
+    };
+
+    const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
+    Expect(Info && Info->Version == 4, "RenderComponent saves as version 4");
+    if(!Info) { return; }
+
+    RecordingArchive Old;
+    Old.bLoading = true;
+    Old.Version  = 1;
+    Old.Strings["Material"]  = "Glow";
+    Old.Strings["Material1"] = "Ignored";   // version 1 has no such field
+    RenderComponent Loaded;
+    Info->Fn(Old, &Loaded);
+    Expect(std::strcmp(Loaded.Materials[0], "Materials/Glow.material.nmgraph") == 0 && Loaded.Materials[1][0] == '\0',
+           "a version 1 Material loads into slot 0, and only there, its bare name upgraded to the graph's path");
+    Expect(Old.Names.size() >= 3 && Old.Names[0] == "Width" && Old.Names[1] == "Height" && Old.Names[2] == "Tint",
+           "a version 1 or 2 record's Width, Height and Tint are still read, first (binary keeps call order)");
+
+    RenderComponent Saved;
+    std::strcpy(Saved.Materials[0], "Materials/Body.material.nmgraph");
+    std::strcpy(Saved.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph");
+    RecordingArchive Out;
+    Info->Fn(Out, &Saved);
+    Expect(Out.Strings["Material0"] == "Materials/Body.material.nmgraph"
+           && Out.Strings["Material7"] == "Engine/Content/Materials/DefaultLit.material.nmgraph" && Out.Strings.count("Material") == 0,
+           "version 4 writes each slot as Material0 to Material7, a graph path (longer than the old 48-byte names)");
+    Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("Width")) == Out.Names.end()
+           && std::find(Out.Names.begin(), Out.Names.end(), std::string("Tint")) == Out.Names.end(),
+           "and no Width, Height or Tint");
+
+    RecordingArchive Back;
+    Back.bLoading = true;
+    Back.Strings  = Out.Strings;
+    RenderComponent Again;
+    Info->Fn(Back, &Again);
+    Expect(std::strcmp(Again.Materials[0], "Materials/Body.material.nmgraph") == 0
+           && std::strcmp(Again.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph") == 0,
+           "and reads them back unchanged");
+
+    RecordingArchive Three;
+    Three.bLoading = true;
+    Three.Version  = 3;
+    Three.Strings["Material0"] = "Body";
+    Three.Strings["Material1"] = "Materials/Already.material.nmgraph";
+    RenderComponent Upgraded;
+    Info->Fn(Three, &Upgraded);
+    Expect(std::strcmp(Upgraded.Materials[0], "Materials/Body.material.nmgraph") == 0
+           && std::strcmp(Upgraded.Materials[1], "Materials/Already.material.nmgraph") == 0 && Upgraded.Materials[2][0] == '\0',
+           "a version 3 world's bare names are upgraded; a path and an empty slot are left alone");
+
+    const GameCore::ComponentSerializerInfo* PostInfo = GameCore::FindComponentSerializer(PostProcessComponent::StaticType().ID);
+    RecordingArchive OldPost;
+    OldPost.bLoading = true;
+    OldPost.Version  = 1;
+    OldPost.Strings["Material"] = "Negative";
+    PostProcessComponent LoadedPost;
+    if(PostInfo) { PostInfo->Fn(OldPost, &LoadedPost); }
+    Expect(PostInfo && PostInfo->Version == 2 && std::strcmp(LoadedPost.Material, "Materials/Negative.material.nmgraph") == 0,
+           "a version 1 Post Process's bare name is upgraded too");
+}
+
+/*
+ * The stages (RENDERPIPELINE.md), on the Null backend: each material lands in
+ * the stage its Domain and Shading name; a mesh's sections take their slots,
+ * falling back to their own material; culling pads by the slots' reach.
+ */
+static void TestRenderStages()
+{
+    std::printf("[render stages]\n");
+
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreStages";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Root, Ignored);
+    std::filesystem::create_directories(Root / "Materials", Ignored);
+
+    const auto WriteMaterial = [&](const char* InName, const char* InDomain, const char* InShading, const char* InExtra)
+    {
+        std::ofstream(Root / "Materials" / (std::string(InName) + ".material"))
+            << "NimbleMaterial 2\nDomain " << InDomain << "\nShading " << InShading << "\nBlockSize 32\n" << InExtra;
+    };
+    WriteMaterial("LitOpaque",   "Opaque",      "Lit",   "");
+    WriteMaterial("UnlitMasked", "Masked",      "Unlit", "");
+    WriteMaterial("TransLit",    "Translucent", "Lit",   "");
+    WriteMaterial("TransUnlit",  "Translucent", "Unlit", "");
+    WriteMaterial("Glow",        "Translucent", "Unlit", "");    // the smoke mesh's Front section names it
+    WriteMaterial("Post",        "PostProcess", "Unlit", "");
+    WriteMaterial("Reach",       "Opaque",      "Lit",   "MaxOffset 5\nHasOffset 1\n");
+    std::filesystem::create_directories(Root / "Props", Ignored);   // a graph in another folder: Props/Crate.material.nmgraph
+    std::ofstream(Root / "Props" / "Crate.material") << "NimbleMaterial 2\nDomain Opaque\nShading Lit\nBlockSize 32\n";
+
+    FilesystemProvider Provider(Root.generic_string());
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Provider);
+    MeshAssetCache::Invalidate(std::string());
+    MeshData Square = MakeSmokeMesh();   // Front (material Glow), Back (none)
+    SaveMeshFile((Root / "Content" / "Square.nmmesh").generic_string(), Square);
+
+    Expect(GetMaterialRenderStage(EMaterialDomain::Opaque, EMaterialShading::Lit) == ERenderStage::BasePass
+           && GetMaterialRenderStage(EMaterialDomain::Masked, EMaterialShading::Unlit) == ERenderStage::Unlit
+           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Lit) == ERenderStage::TranslucentLit
+           && GetMaterialRenderStage(EMaterialDomain::Translucent, EMaterialShading::Unlit) == ERenderStage::TranslucentUnlit
+           && GetMaterialRenderStage(EMaterialDomain::PostProcess, EMaterialShading::Lit) == ERenderStage::PostProcess,
+           "a material's Domain and Shading name its stage");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the stage test");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(640, 360);
+        const RenderView View = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+        Rend.SetViewOverride(&View);
+
+        GameCore::World World;
+        const auto AddPrimitive = [&](const char* InName, const EngineCore::Vector3& InAt, const char* InMesh,
+                                      std::initializer_list<const char*> InSlots)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent* Transform = Each.AddComponent<GameCore::TransformComponent>();
+            Transform->Position = InAt;
+            if(InMesh[0] == '\0') { Transform->Scale = EngineCore::Vector3(10.0, 10.0, 1.0); }   // a quad is 1 x 1
+            RenderComponent Render;
+            std::strcpy(Render.Mesh, InMesh);
+            size_t Slot = 0;
+            for(const char* Name : InSlots) { std::strcpy(Render.Materials[Slot++], Name); }
+            Each.AddComponent(Render);
+            return Each;
+        };
+        const EngineCore::Vector3 Inside(100.0, 100.0, 0.0);
+        AddPrimitive("Lit",        Inside, "", { "Materials/LitOpaque.material.nmgraph" });   // Base Pass
+        AddPrimitive("Crate",      Inside, "", { "Props/Crate.material.nmgraph" });           // Base Pass, from another folder
+        AddPrimitive("Masked",     Inside, "", { "UnlitMasked" });             // Unlit (a bare name, as older worlds)
+        AddPrimitive("Glass",      Inside, "", { "Materials/TransLit.material.nmgraph" });    // Translucent Lit
+        AddPrimitive("Smoke",      Inside, "", { "TransUnlit" });              // Translucent Unlit
+        AddPrimitive("Plain",      Inside, "", {});                            // Unlit
+        AddPrimitive("Slotted",    Inside, "Content/Square.nmmesh", { "TransLit", "" });   // Translucent Lit; Back: Unlit
+        AddPrimitive("Sections",   Inside, "Content/Square.nmmesh", { "", "" });           // Glow: Translucent Unlit; Back: Unlit
+        AddPrimitive("BadSlot",    Inside, "Content/Square.nmmesh", { "Nope", "" });       // falls back to Glow; Back: Unlit
+        PostProcessComponent Post;
+        std::strcpy(Post.Material, "Materials/Post.material.nmgraph");
+        World.CreateEntity("Post").AddComponent(Post);
+        Rend.BindWorld(World);
+
+        uint64_t Frame = 500;
+        const auto DrawFrame = [&]
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        };
+        const auto ReadStages = [](uint32_t (&OutCounts)[size_t(ERenderStage::Count)])
+        {
+            ENQUEUE_RENDER_COMMAND(ReadStageCounts)([&OutCounts](RenderContext& InContext)
+            {
+                for(size_t Index = 0; Index < size_t(ERenderStage::Count); ++Index)
+                {
+                    OutCounts[Index] = InContext.GetStageDrawCount(ERenderStage(Index));
+                }
+            });
+            FlushRenderCommands();
+        };
+
+        DrawFrame();   // extracts; the proxies draw from the next frame
+        DrawFrame();
+        uint32_t Counts[size_t(ERenderStage::Count)] = {};
+        ReadStages(Counts);
+        const auto At = [&Counts](const ERenderStage InStage) { return Counts[size_t(InStage)]; };
+        Expect(At(ERenderStage::BasePass) == 2, "an Opaque Lit material draws in the Base Pass, by its graph's path from any folder");
+        Expect(At(ERenderStage::Unlit) == 5, "Masked Unlit, a plain quad and three meshes' material-less sections draw in Unlit");
+        Expect(At(ERenderStage::TranslucentLit) == 2, "Translucent Lit takes a quad and the section whose slot names one");
+        Expect(At(ERenderStage::TranslucentUnlit) == 3,
+               "Translucent Unlit takes a quad and the sections falling back to their own material (an empty slot, a missing one)");
+        Expect(At(ERenderStage::PostProcess) == 1, "a Post Process component's material is a PostProcess draw");
+        Expect(At(ERenderStage::PrePass) == 0 && At(ERenderStage::Shadows) == 0, "PrePass and Shadows draw nothing yet");
+
+        /* Culling: a mesh 3 units past the view's right edge, visible only
+         * while one of its slots reaches 5 (World Position Offset). */
+        Rend.UnbindWorld();
+        GameCore::World Edge;
+        const GameCore::Entity Reaching = Edge.CreateEntity("Reaching");
+        Reaching.AddComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(643.0, 100.0, 0.0);
+        RenderComponent Render;
+        std::strcpy(Render.Mesh, "Content/Square.nmmesh");
+        std::strcpy(Render.Materials[1], "Reach");
+        Reaching.AddComponent(Render);
+        Rend.BindWorld(Edge);
+        DrawFrame();
+        DrawFrame();
+        RenderStats Stats;
+        Rend.GetStats(Stats);
+        Expect(Stats.ProxiesCulledLastFrame == 0, "a section's slot with World Position Offset pads the bounds past the edge");
+
+        Reaching.GetComponent<RenderComponent>()->Materials[1][0] = '\0';
+        DrawFrame();
+        DrawFrame();
+        Rend.GetStats(Stats);
+        Expect(Stats.ProxiesCulledLastFrame == 1, "without it the same mesh is culled");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+    }
+    Rend.Shutdown();
+
+    MeshAssetCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
+
+/*
+ * The engine's primitive meshes (Engine/Scripts/generate_primitive_meshes.py),
+ * as staged beside this executable: they load, and each triangle faces the way
+ * its normals do -- counter-clockwise seen from outside, as imported meshes.
+ */
+static void TestEngineMeshes()
+{
+    std::printf("[engine meshes]\n");
+
+    struct Expected { const char* Path; uint32_t Vertices; uint32_t Triangles; float MinY; float MaxY; };
+    const Expected Meshes[] = {
+        { "Engine/Content/Meshes/Box.nmmesh",    24,  12,  -0.5f, 0.5f },
+        { "Engine/Content/Meshes/Sphere.nmmesh", 561, 960, -0.5f, 0.5f },
+        { "Engine/Content/Meshes/Plane.nmmesh",  289, 512,  0.0f, 0.0f },
+    };
+    for(const Expected& Each : Meshes)
+    {
+        MeshData Mesh;
+        const bool bLoaded = LoadMeshFile(Each.Path, Mesh);
+        Expect(bLoaded, (std::string(Each.Path) + " loads").c_str());
+        if(!bLoaded) { continue; }
+
+        Expect(Mesh.GetVertexCount() == Each.Vertices && Mesh.GetTriangleCount() == Each.Triangles,
+               (std::string(Each.Path) + " has its vertices and triangles").c_str());
+        Expect(Mesh.BoundsMin[0] == -0.5f && Mesh.BoundsMax[0] == 0.5f && Mesh.BoundsMin[2] == -0.5f && Mesh.BoundsMax[2] == 0.5f
+               && std::fabs(Mesh.BoundsMin[1] - Each.MinY) < 1e-5f && std::fabs(Mesh.BoundsMax[1] - Each.MaxY) < 1e-5f,
+               (std::string(Each.Path) + " is one unit across, centred on the origin").c_str());
+        Expect(Mesh.Sections.size() == 1 && Mesh.Sections[0].Material.empty() && Mesh.Sections[0].IndexCount == Mesh.Indices.size(),
+               (std::string(Each.Path) + " is one section with no material (DefaultLit)").c_str());
+
+        bool bUnitNormals = true, bUVsInRange = true, bFacing = true;
+        for(uint32_t Vertex = 0; Vertex < Mesh.GetVertexCount(); ++Vertex)
+        {
+            const float* N = &Mesh.Normals[Vertex * 3];
+            bUnitNormals &= std::fabs(N[0] * N[0] + N[1] * N[1] + N[2] * N[2] - 1.0f) < 1e-4f;
+            const float* UV = &Mesh.UV0[Vertex * 2];
+            bUVsInRange &= UV[0] >= 0.0f && UV[0] <= 1.0f && UV[1] >= 0.0f && UV[1] <= 1.0f;
+        }
+        for(size_t At = 0; At + 2 < Mesh.Indices.size(); At += 3)
+        {
+            const float* A = &Mesh.Positions[Mesh.Indices[At] * 3];
+            const float* B = &Mesh.Positions[Mesh.Indices[At + 1] * 3];
+            const float* C = &Mesh.Positions[Mesh.Indices[At + 2] * 3];
+            const float AB[3] = { B[0] - A[0], B[1] - A[1], B[2] - A[2] };
+            const float AC[3] = { C[0] - A[0], C[1] - A[1], C[2] - A[2] };
+            const float Face[3] = { AB[1] * AC[2] - AB[2] * AC[1], AB[2] * AC[0] - AB[0] * AC[2], AB[0] * AC[1] - AB[1] * AC[0] };
+            float Normal[3] = {};
+            for(int Corner = 0; Corner < 3; ++Corner)
+            {
+                const float* N = &Mesh.Normals[Mesh.Indices[At + size_t(Corner)] * 3];
+                for(int Axis = 0; Axis < 3; ++Axis) { Normal[Axis] += N[Axis]; }
+            }
+            const float Area = Face[0] * Face[0] + Face[1] * Face[1] + Face[2] * Face[2];
+            bFacing &= Area < 1e-12f || Face[0] * Normal[0] + Face[1] * Normal[1] + Face[2] * Normal[2] > 0.0f;
+        }
+        Expect(bUnitNormals && bUVsInRange, (std::string(Each.Path) + " has unit normals and 0-1 UVs").c_str());
+        Expect(bFacing, (std::string(Each.Path) + " winds every triangle counter-clockwise seen from outside").c_str());
+    }
+
+    MeshData Plane;
+    if(LoadMeshFile("Engine/Content/Meshes/Plane.nmmesh", Plane))
+    {
+        Expect(Plane.Normals[1] == -1.0f, "the Plane faces up (-Y)");
+    }
+}
+
 /* Null backend: one draw per section, mesh bounds, quad fallback. */
 static void TestMeshDrawing()
 {
@@ -917,6 +1632,10 @@ int main()
 
     TestModuleName();
     TestScriptBindings();
+    TestMaterialRuntime();
+#if WITH_EDITOR
+    TestRenderComponentSerializer();
+#endif
 
     RenderThread Thread;
     const bool bStarted = Thread.Start(ERenderBackend::Null, WindowHandle());
@@ -939,9 +1658,12 @@ int main()
 #if WITH_EDITOR
     TestDebugLines();
     TestMaterials();
+    TestMaterialsOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();
+    TestEngineMeshes();
+    TestRenderStages();
 #endif
 
     const uint64_t Leaked = Memory::ReportLeaks();

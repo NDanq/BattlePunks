@@ -5,6 +5,7 @@
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
+#include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/RenderView.h"
 
@@ -29,11 +30,19 @@ namespace RenderCore
 
 #if WITH_EDITOR
     /* EDITOR ONLY -- a RequestMaterialPreview as a (trivially copyable) command. */
+    /* One preview, as Renderer::RequestMaterialPreview / RequestMeshPreview
+     * queue it: plain bytes, so it rides in a render command. */
     struct MaterialPreviewRequest
     {
         uint64_t                Request = 0;
-        char                    Material[48] = {};   // RENDER_MATERIAL_NAME_MAX
-        int32_t                 Size = 256;
+        char                    Material[128] = {};     // RENDER_MATERIAL_PATH_MAX; every section's, or "" for Slots
+        char                    Mesh[128] = {};         // RENDER_MESH_PATH_MAX; "" draws Material on a quad
+        char                    Slots[8][128] = {};     // RENDER_MATERIAL_SLOTS: per section, when Material is ""
+        int32_t                 Width  = 256;
+        int32_t                 Height = 256;
+        float                   Yaw   = 30.0f;          // degrees round the mesh, 0 looking along +Z
+        float                   Pitch = 20.0f;          // degrees above it
+        float                   Zoom  = 1.0f;           // 1 frames the mesh's bounds
         EngineCore::Color       Tint{255, 255, 255, 255};
         MaterialPreviewMailbox* Mailbox = nullptr;
     };
@@ -63,6 +72,12 @@ namespace RenderCore
 
         void SetView(const RenderView& InView);
         void SetClearColor(EngineCore::Color InColor);
+
+        /* The light the next Render() shades Lit materials with, and the
+         * PostProcess materials it draws over the scene afterwards. Both are
+         * re-sent every frame by WorldBridge. */
+        void SetLighting(const RenderLighting& InLighting);
+        void SetPostProcess(const RenderPostProcess& InPostProcess);
 
 #if WITH_EDITOR
         /* EDITOR ONLY. Lines for the next Render() only. */

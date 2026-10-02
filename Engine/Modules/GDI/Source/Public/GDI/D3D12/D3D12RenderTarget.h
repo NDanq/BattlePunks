@@ -24,6 +24,7 @@ public:
     bool IsValid() override;
     EngineCore::Image ToImage() override;
     GDITexture2D* ToGDITexture2D() override;
+    GDITexture2D* ToDepthTexture2D() override;
     void ResolveRenderTarget(GDIRenderTarget* Dest) override;
 
     inline ID3D12Resource*             GetResource() const { return Resource.Get(); }
@@ -31,8 +32,13 @@ public:
     inline uint32_t                    GetSRVSlot()  const { return SRVSlot; }
     inline DXGI_FORMAT                 GetFormat()   const { return Format; }
 
-    /* D32, always in DEPTH_WRITE. False only if creation failed (logged). */
+    /* D32 (an R32_TYPELESS resource, so it can also be sampled): DEPTH_WRITE
+     * while bound, PIXEL_SHADER_RESOURCE otherwise (SetRenderTargets). False
+     * only if creation failed (logged). */
     inline bool                        HasDepth()       const { return DepthResource != nullptr; }
+    inline ID3D12Resource*             GetDepthResource() const { return DepthResource.Get(); }
+    inline D3D12_RESOURCE_STATES       GetDepthState()  const { return DepthState; }
+    inline void                        SetDepthState(D3D12_RESOURCE_STATES InState) { DepthState = InState; }
     inline D3D12_CPU_DESCRIPTOR_HANDLE GetDSV()         const { return DSVHeap->GetCPUDescriptorHandleForHeapStart(); }
     inline DXGI_FORMAT                 GetDepthFormat() const { return HasDepth() ? DepthFormat : DXGI_FORMAT_UNKNOWN; }
 
@@ -69,6 +75,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource>          DepthResource;
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>    DSVHeap;
     bool                                            bDepthNeedsClear = false;
+    D3D12_RESOURCE_STATES                           DepthState = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    uint32_t                                        DepthSRVSlot = UINT32_MAX;
+    GDITexture2D*                                   DepthWrapper = nullptr;
 
     D3D12_RESOURCE_STATES                           CurrentState = D3D12_RESOURCE_STATE_COMMON;
     std::atomic<D3D12_RESOURCE_STATES>              SubmittedState{D3D12_RESOURCE_STATE_COMMON};

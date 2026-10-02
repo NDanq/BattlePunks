@@ -46,6 +46,110 @@ bool FilesystemProvider::Exists(const std::string& InPath)
     return appFileExists(Resolve(InPath));
 }
 
+bool MemoryFileProvider::ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes)
+{
+    const auto Found = Files.find(InPath);
+    if(Found == Files.end() || !Found->second)
+    {
+        return false;
+    }
+    OutBytes = *Found->second;
+    return true;
+}
+
+bool MemoryFileProvider::Exists(const std::string& InPath)
+{
+    return Files.count(InPath) != 0;
+}
+
+std::vector<std::shared_ptr<IFileProvider>> LayeredFileProvider::Snapshot() const
+{
+    std::vector<std::shared_ptr<IFileProvider>> Order;
+    std::lock_guard<std::mutex> Lock(Mutex);
+    Order.reserve(Layers.size());
+    for(auto It = Layers.rbegin(); It != Layers.rend(); ++It)
+    {
+        Order.push_back(It->Provider);
+    }
+    return Order;
+}
+
+bool LayeredFileProvider::ReadAll(const std::string& InPath, std::vector<uint8_t>& OutBytes)
+{
+    if(bBaseFirst && Base && Base->ReadAll(InPath, OutBytes))
+    {
+        return true;
+    }
+    for(const std::shared_ptr<IFileProvider>& Each : Snapshot())
+    {
+        if(Each->ReadAll(InPath, OutBytes))
+        {
+            return true;
+        }
+    }
+    return !bBaseFirst && Base && Base->ReadAll(InPath, OutBytes);
+}
+
+bool LayeredFileProvider::Exists(const std::string& InPath)
+{
+    if(Base && Base->Exists(InPath))
+    {
+        return true;
+    }
+    for(const std::shared_ptr<IFileProvider>& Each : Snapshot())
+    {
+        if(Each->Exists(InPath))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool LayeredFileProvider::MountLayer(const std::string& InName, std::shared_ptr<IFileProvider> InLayer)
+{
+    if(!InLayer)
+    {
+        return false;
+    }
+    std::lock_guard<std::mutex> Lock(Mutex);
+    for(Layer& Each : Layers)
+    {
+        if(Each.Name == InName)
+        {
+            Each.Provider = std::move(InLayer);
+            return true;
+        }
+    }
+    Layers.push_back({ InName, std::move(InLayer) });
+    return true;
+}
+
+bool LayeredFileProvider::UnmountLayer(const std::string& InName)
+{
+    std::lock_guard<std::mutex> Lock(Mutex);
+    for(auto It = Layers.begin(); It != Layers.end(); ++It)
+    {
+        if(It->Name == InName)
+        {
+            Layers.erase(It);
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<std::string> LayeredFileProvider::GetLayerNames() const
+{
+    std::lock_guard<std::mutex> Lock(Mutex);
+    std::vector<std::string> Names;
+    for(const Layer& Each : Layers)
+    {
+        Names.push_back(Each.Name);
+    }
+    return Names;
+}
+
 void SetFileProvider(IFileProvider* InProvider)
 {
     GFileProvider = InProvider;

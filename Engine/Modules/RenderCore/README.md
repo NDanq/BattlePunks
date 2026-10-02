@@ -141,14 +141,12 @@ on, drawing is one of three doors, none of which is an `OnRender` method:
 ```cpp
 GameCore::World& World = App.GetWorld();
 GameCore::Entity E = World.CreateEntity("Box");
-E.AddComponent<GameCore::TransformComponent>();
-
-RenderCore::RenderComponent Prim;
-Prim.Width  = 32.0f;
-Prim.Height = 32.0f;
-Prim.Tint   = EngineCore::Color(255, 200, 40);
-E.AddComponent(Prim);
+E.AddComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(32.0, 32.0, 1.0);
+E.AddComponent<RenderCore::RenderComponent>();
 ```
+
+With no mesh it draws a unit quad (1 x 1, centred), white; the Transform's
+Scale sizes it, as it does a mesh.
 
 Adding the component is the whole of it: `Renderer`'s `WorldBridge` sees the
 addition through `World`'s own `OnComponentAdded` delegate, constructs a
@@ -157,29 +155,31 @@ component's current transform and bytes into that proxy once per frame.
 Removing the component or destroying the entity removes the proxy the same
 way, through `OnComponentRemoved`.
 
-**A material** replaces the plain tint: set `Prim.Material` to a material
-graph's name, e.g. `std::strcpy(Prim.Material, "Glow");`. The quad then draws
-with the cooked `Materials/Glow.fsh`, its parameters from
-`Materials/Glow.material`, and `Tint` passed to the shader as the Instance
-Tint. A material that is missing or not cooked for the running backend is
-warned about once and drawn as the plain tint. See DESIGN.md's "Materials" and
-NodeGraph's README.
+**A material** replaces the plain white: set slot 0 of the component's
+`Materials` to a material graph's runtime path, e.g.
+`std::strcpy(Render.Materials[0], "Materials/Glow.material.nmgraph");`. The
+quad then draws with Glow's cooked permutations and its parameters from
+`Materials/Glow.material` (both cooked from the graph's `<gen_code>`), in the
+stage Glow's domain and shading name; a component's Instance Tint is white
+(the editor's Preview dock sets its own). A material that is missing or not
+cooked for the running backend is warned about once and drawn plain. See MATERIALS.md, RENDERPIPELINE.md and NodeGraph's README.
 
 **A mesh** replaces the quad: set `Prim.Mesh` to a `.nmmesh`'s runtime-relative
 path, e.g. `"Content/Props/Crate.nmmesh"` (NimbleEditor's Import Wizard makes
 them from glTF; the game stages `Content/` beside the executable). It draws at
-its own size times the Transform's scale -- `Width`/`Height` are the quad's --
-one draw per section, lit by one fixed light in `Tint` (GDI's `Mesh.fsh`), or
-with `Material` when set, or with a section's imported material name if a
-material of that name exists. A mesh that cannot be loaded, or a backend
+its own size times the Transform's scale, one draw per section. Section *i* draws with `Materials[i]` when set (eight
+slots), else with its imported material name if a material of that name
+exists, else with the engine's DefaultLit -- or, when that is unavailable, lit
+by one fixed light in white (`Engine/Content/Shaders/Mesh.fsh`). Each section
+draws in its own material's stage. A mesh that cannot be loaded, or a backend
 without indexed meshes (Metal, so far), draws the quad instead, warned once.
 Meshes are loaded through `MeshAssetCache`, shared with the game thread (the
 editor's picking and bounds); `MeshAssetCache::Invalidate` makes the next frame
 load the file again.
 
-**Depth.** The scene pass tests and writes depth (less-or-equal, so quads in
-one plane still draw in submission order) into every render target's own depth
-buffer; editor debug lines draw over it. Before meshes there was no depth
+**Depth.** The opaque stages test and write depth (less-or-equal, so quads in
+one plane still draw in submission order) into the scene colour target's depth
+buffer, which the Lighting stage then reads; editor debug lines draw over it. Before meshes there was no depth
 buffer at all, and draws landed in submission order.
 
 **Asset formats.** `.nmmesh` and `.nmtexture` are `EngineCore::Archive` chunk

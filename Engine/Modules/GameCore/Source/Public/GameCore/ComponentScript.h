@@ -176,6 +176,28 @@ namespace GameCore
         template<typename TField>
         void ReadOnly(const char* InName, TField T::* InMember) { AddField(InName, InMember, ScriptFieldTypeOf<TField>::Value, true); }
 
+        /* One element of an array member, as Get<Name> and Set<Name>. */
+        template<typename TElement, size_t N>
+        void Element(const char* InName, TElement (T::* InArray)[N], const size_t InIndex)
+        {
+            if(InIndex >= N)
+            {
+                ++Rejected;
+                return;
+            }
+            ScriptBindingEntry* Entry = NewEntry(InName);
+            if(!Entry) { return; }
+
+            const T Probe{};
+            const char* Base   = reinterpret_cast<const char*>(&Probe);
+            const char* Member = reinterpret_cast<const char*>(&((Probe.*InArray)[InIndex]));
+
+            Entry->FieldType = ScriptFieldTypeOf<TElement>::Value;
+            Entry->bReadOnly = false;
+            Entry->Offset    = uint32_t(Member - Base);
+            Entry->Size      = uint32_t(sizeof(TElement));
+        }
+
         /* A uint8_t 0/1 flag exposed as a Lua boolean. */
         void Flag(const char* InName, uint8_t T::* InMember, const bool bInReadOnly = false)
         {
