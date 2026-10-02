@@ -2,6 +2,7 @@
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/GameState.h"
+#include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/Core/CoreConfig.h"
@@ -16,6 +17,7 @@
 #include "Public/RenderCore/Renderer.h"
 #include "SandboxScripting.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <optional>
@@ -26,8 +28,9 @@
  * SandboxGame: the example game, built as a game module DLL loaded by name by
  * SandboxMain.cpp's launcher and the editor's Play-in-Editor.
  *
- * Demonstrates: a C++ entity ("Marker") moved by the mode and wrapped by a
- * PostPhysics system; a Lua entity ("Scripted") read back from C++; an
+ * Demonstrates: a C++ entity ("Marker") steered by the player through an
+ * Input component (SandboxInput.cpp's map) and wrapped by a PostPhysics
+ * system; a Lua entity ("Scripted") read back from C++; an
  * OnEntityCreated bind/unbind; drawing via RenderComponent and a Camera
  * entity; and a timed save/load cycle. The game's own component and script
  * library -- what scripts and script graphs can call -- are in
@@ -52,11 +55,15 @@ static const char* const GSandboxSavePath = "Saves/Quick.nmsg";
 static bool GSandboxHasSaved  = false;
 static bool GSandboxHasLoaded = false;
 
-/* What Sandbox.WrapMarker's void* points at. */
+/* What Sandbox.DriveMarker's and Sandbox.WrapMarker's void* points at. */
 struct SandboxMarkerSystemContext
 {
     GameCore::EntityID Entity;
     int                ViewportWidth = 0;
+
+    /* Marker drifts right on its own until the player first steers it, so an
+     * unattended run (RunSeconds) still sweeps up the pickups. */
+    bool               bPlayerSteering = false;
 };
 
 namespace
@@ -69,6 +76,37 @@ namespace
         char Buffer[64];
         std::snprintf(Buffer, sizeof(Buffer), "%.2f", InValue);
         return std::string(Buffer);
+    }
+
+    /* PrePhysics system: moves Marker from its Input component -- MoveX and
+     * MoveY, faster with Boost. Registered after the scripts (the default
+     * order), which saw the same input: the engine resolved it first. */
+    void DriveMarkerSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    {
+        auto& Context = *static_cast<SandboxMarkerSystemContext*>(InUserData);
+        const GameCore::Entity Marker = InWorld.GetEntity(Context.Entity);
+        GameCore::TransformComponent* Transform = Marker.GetComponent<GameCore::TransformComponent>();
+        const NimbleEngine::InputComponent* Input = Marker.GetComponent<NimbleEngine::InputComponent>();
+        if(!Transform)
+        {
+            return;
+        }
+
+        const double X = Input ? double(Input->GetAxis("MoveX")) : 0.0;
+        const double Y = Input ? double(Input->GetAxis("MoveY")) : 0.0;
+        if(X != 0.0 || Y != 0.0)
+        {
+            Context.bPlayerSteering = true;
+        }
+
+        const double Speed = Input && Input->IsDown("Boost") ? 480.0 : 240.0;
+        const EngineCore::Vector3 Velocity = Context.bPlayerSteering ? EngineCore::Vector3(X * Speed, Y * Speed, 0.0)
+                                                                     : EngineCore::Vector3(120.0, 0.0, 0.0);
+        EngineCore::Vector3 Position = Transform->Position + Velocity * double(InDeltaSeconds);
+
+        /* Kept on screen vertically; Sandbox.WrapMarker handles x. */
+        Position.SetY(std::max(16.0, std::min(704.0, double(Position.GetY()))));
+        Transform->Position = Position;
     }
 
     /* PostPhysics system: wraps Marker's X at the viewport width. State comes
@@ -183,13 +221,8 @@ public:
         SandboxScripting::SetElapsedSeconds(State->ElapsedSeconds);   // Sandbox.GetElapsed() in scripts
         State->TicksThisSecond++;
 
+        /* Marker moves in Sandbox.DriveMarker, from its Input component. */
         GameCore::World& World = Session->GetWorld();
-        if(GameCore::TransformComponent* Marker = World.GetEntity(MarkerEntity).GetComponent<GameCore::TransformComponent>())
-        {
-            const double SpeedPixelsPerSecond = 120.0;
-            Marker->Position.SetX(Marker->Position.GetX() + SpeedPixelsPerSecond * InFrame.DeltaSeconds);
-            /* Sandbox.WrapMarker wraps it later this frame, in World::Tick. */
-        }
 
         /* The engine finishes this frame, then exits the loop. */
         if(RunSeconds > 0.0 && State->ElapsedSeconds >= RunSeconds && Session)
@@ -257,6 +290,7 @@ public:
                      + " viewport=" + Num(uint64_t(InFrame.ViewportPixels.Width))
                      + "x" + Num(uint64_t(InFrame.ViewportPixels.Height))
                      + " marker_x=" + Fixed2(MarkerX)
+                     + DescribeSteering()
                      + ScriptedPart
                      + " score=" + std::to_string(SandboxScripting::GetScore())
                      + " frames_rendered=" + Num(RenderStats.FramesRendered)
@@ -269,6 +303,9 @@ public:
 
     /* Re-derives MarkerEntity by name: the restored Marker is a new entity. */
     void OnPostLoadSave() override;
+
+    /* " steering=player" once the player has moved Marker, else " steering=auto". */
+    std::string DescribeSteering() const;
 
     void OnUnload() override
     {
@@ -336,6 +373,11 @@ public:
         Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
         Marker.AddComponent(Bounds);
 
+        /* Steered by the player: Sandbox.DriveMarker reads it (SandboxInput.cpp's
+         * "Default" map), and a script graph counts its jumps. */
+        Marker.AddComponent<NimbleEngine::InputComponent>();
+        Marker.SetScript("Scripts/JumpCounter.script.nmgraph");
+
         /* Centres the view on Marker's path. WorldBridge uses the first active
          * CameraComponent. */
         const GameCore::Entity CameraEntity = World.CreateEntity("Camera");
@@ -346,6 +388,8 @@ public:
         /* ViewportWidth is read once; the wrap boundary need only be rough. */
         SystemContext.Entity        = MarkerEntity;
         SystemContext.ViewportWidth = 1280;
+        World.RegisterSystem("Sandbox.DriveMarker", GameCore::TP_PrePhysics,
+                             &DriveMarkerSystem, &SystemContext);
         World.RegisterSystem("Sandbox.WrapMarker", GameCore::TP_PostPhysics,
                              &WrapMarkerSystem, &SystemContext);
 
@@ -399,6 +443,8 @@ public:
 
     /* Re-points the wrap system at the restored Marker (from the mode's
      * OnPostLoadSave). Otherwise Marker silently stops wrapping. */
+    bool IsPlayerSteering() const { return SystemContext.bPlayerSteering; }
+
     void OnMarkerRestored(const GameCore::EntityID InMarker)
     {
         MarkerEntity         = InMarker;
@@ -417,6 +463,12 @@ private:
     SandboxGameState                 State;
     std::optional<SandboxGameMode>   Mode;
 };
+
+/* Out-of-line: needs SandboxLevel's definition. */
+std::string SandboxGameMode::DescribeSteering() const
+{
+    return OwningLevel->IsPlayerSteering() ? " steering=player" : " steering=auto";
+}
 
 /* Out-of-line: needs SandboxLevel's definition. */
 void SandboxGameMode::OnPostLoadSave()

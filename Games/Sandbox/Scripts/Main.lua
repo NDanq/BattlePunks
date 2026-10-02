@@ -30,6 +30,12 @@ end
 -- Prints the typed events the library declares (ScoreBoard.script.nmgraph).
 World.CreateEntity("ScoreBoard"):SetScript("Scripts/ScoreBoard.script.nmgraph")
 
+-- Input, from hand-written Lua: an entity with an "Input" component reading
+-- SandboxInput.cpp's "Default" map (Scripts/InputDemo.lua).
+local demo = World.CreateEntity("InputDemo")
+demo:AddComponent("Input")   -- its defaults: enabled, reading the "Default" map
+demo:SetScript("Scripts/InputDemo.lua")
+
 -- The same events, from hand-written Lua: the library publishes their names.
 -- PickupStats, a script struct, is its fields' values in order: Value, ID.
 Events.On(Sandbox.PickupCollected, function(pickup, value)
