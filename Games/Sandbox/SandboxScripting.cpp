@@ -92,7 +92,7 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(SandboxPickupComponent)
     /* Member functions, exposed as they are: the glue and the pin types come
      * from their C++ signatures; the string only names the pins. */
     Bind.Native<&SandboxPickupComponent::Collect>("Collect", "-> Value");
-    Bind.Native<&SandboxPickupComponent::BobbedPosition>("BobbedPosition", "Seconds -> Position");
+    Bind.NativePure<&SandboxPickupComponent::BobbedPosition>("BobbedPosition", "Seconds -> Position");   // a query
 }
 
 // === The "Sandbox" script library ===========================================

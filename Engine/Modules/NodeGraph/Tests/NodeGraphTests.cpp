@@ -176,7 +176,7 @@ GAMECORE_DEFINE_COMPONENT(ReloadProbeComponent, "TestReloadProbe")
 GAMECORE_DEFINE_COMPONENT_SCRIPT(ReloadProbeComponent)
 {
     Bind.Method("Ping", [](ReloadProbeComponent&, GameCore::ScriptCall& Call) { Call.PushBool(true); }, "-> Ok:bool");
-    Bind.Native<&ReloadProbeComponent::Scaled>("Scaled", "Factor -> Value");
+    Bind.NativePure<&ReloadProbeComponent::Scaled>("Scaled", "Factor -> Value");
     Bind.Native<&ReloadProbeComponent::SetSpeedTo>("SetSpeedTo", "Speed");
     Bind.Native<&ReloadProbeComponent::Along>("Along", "Direction, Weight -> Offset");
 }
@@ -1288,6 +1288,9 @@ namespace
             const NodeDefinition* Along = Now ? Now->FindNode("Component.TestReloadProbe.Along") : nullptr;
             Expect(Along && Along->FindPin("Weight", EPinDirection::Input) && Along->FindPin("Weight", EPinDirection::Input)->Type == "Color",
                    "a Bind.Native method is a node with typed pins");
+            const NodeDefinition* Scaled = Now ? Now->FindNode("Component.TestReloadProbe.Scaled") : nullptr;
+            Expect(Scaled && Scaled->Role == ENodeRole::Pure && Along->Role == ENodeRole::Statement,
+                   "Bind.NativePure is a value node; Bind.Native a statement");
 
             GameCore::World W;
             GameCore::ScriptEngine Scripts;

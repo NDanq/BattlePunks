@@ -1283,7 +1283,8 @@ namespace
                     Pins.insert(Pins.end(), Results.begin(), Results.end());
                 }
 
-                Make(Member, Name + ": " + Member, ENodeRole::Statement, std::move(Pins), "{Target}:" + Member + "(" + Arguments + ")");
+                Make(Member, Name + ": " + Member, Entry.bPure ? ENodeRole::Pure : ENodeRole::Statement, std::move(Pins),
+                     "{Target}:" + Member + "(" + Arguments + ")");
                 if(!bParsed)
                 {
                     NodeDefinition& Def = const_cast<NodeDefinition&>(*FindNode(Prefix + Member));

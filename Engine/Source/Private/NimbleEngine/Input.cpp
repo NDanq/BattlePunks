@@ -597,10 +597,11 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(InputComponent)
     Bind.Field("PlayerIndex", &InputComponent::PlayerIndex);
     Bind.Flag("Enabled",      &InputComponent::bEnabled);
 
-    Bind.Native<&InputComponent::IsDown>("IsDown", "Action -> Down");
-    Bind.Native<&InputComponent::WasPressed>("WasPressed", "Action -> Pressed");
-    Bind.Native<&InputComponent::WasReleased>("WasReleased", "Action -> Released");
-    Bind.Native<&InputComponent::GetAxis>("GetAxis", "Axis -> Value");
+    /* Queries: value nodes in a graph, feeding a Branch directly. */
+    Bind.NativePure<&InputComponent::IsDown>("IsDown", "Action -> Down");
+    Bind.NativePure<&InputComponent::WasPressed>("WasPressed", "Action -> Pressed");
+    Bind.NativePure<&InputComponent::WasReleased>("WasReleased", "Action -> Released");
+    Bind.NativePure<&InputComponent::GetAxis>("GetAxis", "Axis -> Value");
 }
 
 #if WITH_EDITOR

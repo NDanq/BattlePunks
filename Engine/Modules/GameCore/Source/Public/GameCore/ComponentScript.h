@@ -131,6 +131,7 @@ namespace GameCore
         char                Name[SCRIPT_BINDING_NAME_MAX] = {};   // "Width" -> GetWidth/SetWidth
         bool                bMethod   = false;
         bool                bReadOnly = false;
+        bool                bPure     = false;   // a method without effects: a value node in a graph
         EScriptFieldType    FieldType = EScriptFieldType::Float;
         uint32_t            Offset    = 0;
         uint32_t            Size      = 0;
@@ -528,9 +529,44 @@ namespace GameCore
          * ScriptBindingEntry::Signature, e.g. "Factor:number -> Result:number". */
         void Method(const char* InName, const MethodFn InFn, const char* InSignature = nullptr)
         {
+            AddMethod(InName, InFn, InSignature, false);
+        }
+
+        /* The same for a method without effects -- a query. A script graph
+         * makes it a value node, evaluated where it is used, rather than a
+         * statement in the execution chain. Lua calls it the same way. */
+        void Pure(const char* InName, const MethodFn InFn, const char* InSignature = nullptr)
+        {
+            AddMethod(InName, InFn, InSignature, true);
+        }
+
+        /*
+         * A member function of the component, called as it is: the Lua glue
+         * and the graph signature come from its C++ types (ScriptNative).
+         *
+         *     Bind.Native<&PickupComponent::Collect>("Collect", "-> Value");
+         *     Bind.NativePure<&PickupComponent::PositionAt>("PositionAt", "Time -> Position");
+         *
+         * InNames names the parameters and the result for the graph's pins;
+         * omitted, they are Arg1, Arg2, ... and Result. A World& or ScriptCall&
+         * parameter is filled in and is not a script argument. NativePure is
+         * for a query (a const member, usually): a value node in a graph.
+         */
+        template<auto TFn>
+        void Native(const char* InName, const char* InNames = nullptr)     { AddNative<TFn>(InName, InNames, false); }
+
+        template<auto TFn>
+        void NativePure(const char* InName, const char* InNames = nullptr) { AddNative<TFn>(InName, InNames, true); }
+
+        bool Commit() { return RegisterComponentScript(T::StaticType().ID, Entries, Count, Rejected); }
+
+    private:
+        void AddMethod(const char* InName, const MethodFn InFn, const char* InSignature, const bool bInPure)
+        {
             ScriptBindingEntry* Entry = NewEntry(InName);
             if(!Entry) { return; }
             Entry->bMethod = true;
+            Entry->bPure   = bInPure;
             Entry->Method  = reinterpret_cast<void (*)()>(InFn);
             Entry->Invoker = &Invoke;
 
@@ -542,19 +578,8 @@ namespace GameCore
             }
         }
 
-        /*
-         * A member function of the component, called as it is: the Lua glue
-         * and the graph signature come from its C++ types (ScriptNative).
-         *
-         *     Bind.Native<&PickupComponent::Collect>("Collect", "-> Value");
-         *     Bind.Native<&PickupComponent::PositionAt>("PositionAt", "Time -> Position");
-         *
-         * InNames names the parameters and the result for the graph's pins;
-         * omitted, they are Arg1, Arg2, ... and Result. A World& or ScriptCall&
-         * parameter is filled in and is not a script argument.
-         */
         template<auto TFn>
-        void Native(const char* InName, const char* InNames = nullptr)
+        void AddNative(const char* InName, const char* InNames, const bool bInPure)
         {
             using FT = ScriptNative::FnTraits<decltype(TFn)>;
             static_assert(FT::bKnown && FT::bMember, "Bind.Native takes a member function: &Component::Function");
@@ -563,12 +588,9 @@ namespace GameCore
 
             char Signature[SCRIPT_SIGNATURE_MAX];
             Call::BuildSignature(InNames, Signature, sizeof(Signature));
-            Method(InName, &NativeThunk<TFn>, Signature);
+            AddMethod(InName, &NativeThunk<TFn>, Signature, bInPure);
         }
 
-        bool Commit() { return RegisterComponentScript(T::StaticType().ID, Entries, Count, Rejected); }
-
-    private:
         template<auto TFn>
         static void NativeThunk(T& InComponent, ScriptCall& InCall)
         {
