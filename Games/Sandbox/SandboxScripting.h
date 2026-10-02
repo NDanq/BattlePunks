@@ -32,7 +32,7 @@ struct PickupStats
 };
 
 /* A collectible that bobs around Home until Marker comes within the library's
- * PickupRadius. Spawned by Sandbox.SpawnPickup; driven by Scripts/Pickup.script.nmgraph. */
+ * Collision box. Spawned by Sandbox.SpawnPickup; driven by Scripts/Pickup.script.nmgraph. */
 struct SandboxPickupComponent
 {
     GAMECORE_COMPONENT_BODY()
@@ -51,6 +51,18 @@ struct SandboxPickupComponent
     /* Home, raised or lowered by the bob at InSeconds. */
     EngineCore::Vector3 BobbedPosition(double InSeconds) const;
 };
+
+/* Collision layers: what each collider is, and (as its Mask) what it meets. */
+namespace SandboxLayers
+{
+    enum : int32_t
+    {
+        Player = 1 << 0,   // Marker
+        Pickup = 1 << 1,
+        Hazard = 1 << 2,
+        Zone   = 1 << 3,
+    };
+}
 
 namespace SandboxScripting
 {

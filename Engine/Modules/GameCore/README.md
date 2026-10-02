@@ -259,6 +259,13 @@ or *Render component mesh*. It is a choice property,
 an enum-like `uint8_t` or `int32_t` field. The editor runs the overlap pass
 on the edited scene too, so choosing the mesh shapes the entity right away.
 
+Sandbox has one example of each:
+- **C++:** the mesh-shaped "Hazard" and `OnHazardTouched` on `World::OnOverlapBegin()`, in `SandboxGame.cpp`.
+- **Lua:** the trigger "Zone", in `Scripts/Main.lua` and `Scripts/Zone.lua`.
+- **Script graph:** pickups collected on *On Overlap Begin*, in `Scripts/Pickup.script.nmgraph`.
+
+Layers are in `SandboxLayers`.
+
 ---
 
 ## Delegates and events

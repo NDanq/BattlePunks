@@ -20,7 +20,6 @@ scripted:SetScript("Scripts/Mover.lua")
 -- The game's own script library (SandboxScripting.cpp): pickups along
 -- Marker's path, each a game-defined "Pickup" component driven by a script
 -- stored in Scripts/Pickup.script.nmgraph.
-Sandbox.SetPickupRadius(24)
 for i = 1, 5 do
     local pickup = Sandbox.SpawnPickup(i * 220, 360, 0, i)
     pickup:GetComponent("Pickup"):SetBobHeight(4 + 2 * i)
@@ -29,6 +28,16 @@ end
 
 -- Prints the typed events the library declares (ScoreBoard.script.nmgraph).
 World.CreateEntity("ScoreBoard"):SetScript("Scripts/ScoreBoard.script.nmgraph")
+
+-- A trigger zone in Marker's path, from hand-written Lua: a Collision on its
+-- Bounds, and OnOverlapBegin / OnOverlapEnd in Scripts/Zone.lua.
+local zone = World.CreateEntity("Zone")
+zone:AddComponent("Transform"):SetPosition(600, 360, 0)
+zone:AddComponent("Bounds"):SetLocal(-60, -40, -1, 60, 40, 1)
+local zoneCollision = zone:AddComponent("Collision")
+zoneCollision:SetLayer(8)   -- SandboxLayers::Zone
+zoneCollision:SetMask(1)    -- meets the player only
+zone:SetScript("Scripts/Zone.lua")
 
 -- Input, from hand-written Lua: an entity with an "Input" component reading
 -- SandboxInput.cpp's "Default" map (Scripts/InputDemo.lua).

@@ -26,7 +26,6 @@
  *
  *     local pickup = Sandbox.SpawnPickup(220, 360, 0, 1)
  *     local value, id = pickup:GetComponent("Pickup"):GetStats()
- *     Sandbox.SetPickupRadius(32)
  *     Events.On(Sandbox.ScoreChanged, function(score) ... end)
  *
  * In a script graph: Components/Pickup and Sandbox in the node palette.
@@ -103,7 +102,6 @@ namespace
      * statics of this module. */
     int32_t GScore        = 0;
     double  GElapsed      = 0.0;
-    float   GPickupRadius = 24.0f;
     int32_t GNextPickupID = 0;
 
     /* Plain C++ functions. Lib.Native reads their arguments from the script,
@@ -132,6 +130,13 @@ namespace
         GameCore::BoundsComponent Bounds;
         Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
         Pickup.AddComponent(Bounds);
+
+        /* Collected on overlap (Scripts/Pickup.script.nmgraph's On Overlap
+         * Begin): only the player's layer sets it off. */
+        GameCore::CollisionComponent Collision;
+        Collision.Layer = SandboxLayers::Pickup;
+        Collision.Mask  = SandboxLayers::Player;
+        Pickup.AddComponent(Collision);
 
         return Pickup.GetID();
     }
@@ -167,8 +172,6 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Sandbox)
        .Tooltip("The player's score; AddScore also announces it");
     Lib.ReadOnly("Elapsed", &GElapsed)
        .Tooltip("Seconds since the game started, advanced by the game mode");
-    Lib.Variable("PickupRadius", &GPickupRadius)
-       .Tooltip("How close Marker must come to collect a pickup");
 
     /* The names become the graph's pins; the types come from C++. */
     Lib.Native<&SpawnPickup>("SpawnPickup", "Position, Value -> Pickup")

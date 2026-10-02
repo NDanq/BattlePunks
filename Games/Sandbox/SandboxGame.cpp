@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <optional>
 #include <vector>
@@ -30,7 +31,8 @@
  *
  * Demonstrates: a C++ entity ("Marker") steered by the player through an
  * Input component (SandboxInput.cpp's map) and wrapped by a PostPhysics
- * system; a Lua entity ("Scripted") read back from C++; an
+ * system; colliders -- Marker, pickups, a mesh-shaped hazard answered by a
+ * C++ overlap delegate (OnHazardTouched); a Lua entity ("Scripted") read back from C++; an
  * OnEntityCreated bind/unbind; drawing via RenderComponent and a Camera
  * entity; and a timed save/load cycle. The game's own component and script
  * library -- what scripts and script graphs can call -- are in
@@ -123,6 +125,22 @@ namespace
                 Transform->Position.SetX(X - double(Context.ViewportWidth));
             }
         }
+    }
+
+    /* OnOverlapBegin subscriber (World's collision delegate), bound in
+     * SandboxLevel::OnLoad and unbound in OnUnload: touching the hazard costs
+     * a point. Self is each side of the pair in turn, so this only answers
+     * when Self is the hazard. */
+    void OnHazardTouched(const GameCore::EntityID InSelf, const GameCore::EntityID InOther, void* InUserData)
+    {
+        auto* World = static_cast<GameCore::World*>(InUserData);
+        if(std::strcmp(World->GetEntity(InSelf).GetName(), "Hazard") != 0)
+        {
+            return;
+        }
+        SandboxScripting::SetScore(std::max(0, SandboxScripting::GetScore() - 1));
+        CORE_LOG("[Sandbox] " + std::string(World->GetEntity(InOther).GetName()) + " touched the hazard: score "
+                 + std::to_string(SandboxScripting::GetScore()))
     }
 
     /* OnEntityCreated subscriber, bound in SandboxLevel::OnLoad and unbound in
@@ -376,6 +394,32 @@ public:
         /* Steered by the player: Sandbox.DriveMarker reads it (SandboxInput.cpp's
          * "Default" map), and a script graph counts its jumps. */
         Marker.AddComponent<NimbleEngine::InputComponent>();
+
+        /* Its Bounds box is its collider: the player's layer, meeting all. */
+        GameCore::CollisionComponent MarkerCollision;
+        MarkerCollision.Layer = SandboxLayers::Player;
+        Marker.AddComponent(MarkerCollision);
+
+        /* A hazard shaped by its MESH: no Bounds is authored -- the Collision
+         * component reads the box mesh's bounds and adds one (Source = Mesh). */
+        const GameCore::Entity Hazard = World.CreateEntity("Hazard");
+        {
+            GameCore::TransformComponent HazardTransform;
+            HazardTransform.Position = EngineCore::Vector3(1200.0, 360.0, 0.0);
+            HazardTransform.Scale    = EngineCore::Vector3(40.0, 40.0, 40.0);
+            Hazard.AddComponent(HazardTransform);
+
+            RenderCore::RenderComponent HazardRender;
+            std::snprintf(HazardRender.Mesh, sizeof(HazardRender.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+            Hazard.AddComponent(HazardRender);
+
+            GameCore::CollisionComponent HazardCollision;
+            HazardCollision.Source = GameCore::CS_Mesh;
+            HazardCollision.Layer  = SandboxLayers::Hazard;
+            HazardCollision.Mask   = SandboxLayers::Player;
+            Hazard.AddComponent(HazardCollision);
+        }
+        HazardHandle = World.OnOverlapBegin().Add(&OnHazardTouched, &World);
         Marker.SetScript("Scripts/JumpCounter.script.nmgraph");
 
         /* Centres the view on Marker's path. WorldBridge uses the first active
@@ -431,6 +475,7 @@ public:
         if(OwnedWorldIsLive())
         {
             GetWorld().OnEntityCreated().Remove(EntityCreatedHandle);
+            GetWorld().OnOverlapBegin().Remove(HazardHandle);
         }
     }
 
@@ -458,6 +503,7 @@ private:
     bool                       bLoaded = false;
     GameCore::EntityID         MarkerEntity;
     GameCore::DelegateHandle   EntityCreatedHandle;
+    GameCore::DelegateHandle   HazardHandle;
     SandboxMarkerSystemContext SystemContext;
 
     SandboxGameState                 State;

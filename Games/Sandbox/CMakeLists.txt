@@ -243,6 +243,7 @@ set(SANDBOX_SCRIPT_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/ScoreBoard.script.nmgraph"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/InputDemo.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/JumpCounter.script.nmgraph"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Zone.lua"
 )
 
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
