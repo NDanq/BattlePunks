@@ -45,11 +45,15 @@
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/ImportWizard.h"
+#include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 
 namespace
 {
     constexpr int ThumbnailSize = 64;
+
+    /* The engine's content folder as the tree and the path bar name it. */
+    const char* const ENGINE_CONTENT_LABEL = "Engine Content";
 
     /* Thumbnails and tooltips past this size are not read on hover. */
     constexpr qint64 PreviewByteLimit = 64 * 1024 * 1024;
@@ -135,12 +139,27 @@ namespace
 
 // === Models ==========================================================================
 
-/* The tree: folders only -- the project root, the folders leading to it,
- * and its folders, minus the ones IsIgnoredFolder names. */
+/* The trees: folders only -- each root (the project's, the engine's
+ * content), the folders leading to it, and its folders, minus the ones
+ * IsIgnoredFolder names. Each tree view starts at its own root's parent. */
 class ContentTreeProxy final : public QSortFilterProxyModel
 {
 public:
-    ContentTreeProxy(const QString& InRoot, QObject* InParent) : QSortFilterProxyModel(InParent), Root(InRoot) {}
+    ContentTreeProxy(const QString& InRoot, const QString& InEngineRoot, QObject* InParent)
+        : QSortFilterProxyModel(InParent), Root(InRoot), EngineRoot(InEngineRoot) {}
+
+    QVariant data(const QModelIndex& InIndex, const int InRole) const override
+    {
+        if(InRole == Qt::DisplayRole && InIndex.column() == 0 && !EngineRoot.isEmpty())
+        {
+            const auto* Source = static_cast<const QFileSystemModel*>(sourceModel());
+            if(Source->filePath(mapToSource(InIndex)).compare(EngineRoot, Qt::CaseInsensitive) == 0)
+            {
+                return QString::fromLatin1(ENGINE_CONTENT_LABEL);
+            }
+        }
+        return QSortFilterProxyModel::data(InIndex, InRole);
+    }
 
 protected:
     bool filterAcceptsRow(const int InRow, const QModelIndex& InParent) const override
@@ -150,9 +169,13 @@ protected:
         if(!Source->isDir(Index)) { return false; }
 
         const QString Path = Source->filePath(Index);
-        if(IsInside(Root, Path)) { return true; }   // the root or a folder above it
-        if(!IsInside(Path, Root)) { return false; } // somewhere else on the disk
-        return !EditorGraphs::IsIgnoredFolder(Source->fileName(Index));
+        for(const QString& Each : { Root, EngineRoot })
+        {
+            if(Each.isEmpty()) { continue; }
+            if(IsInside(Each, Path)) { return true; }   // the root or a folder above it
+            if(IsInside(Path, Each)) { return !EditorGraphs::IsIgnoredFolder(Source->fileName(Index)); }
+        }
+        return false;                                   // somewhere else on the disk
     }
 
     bool lessThan(const QModelIndex& InLeft, const QModelIndex& InRight) const override
@@ -163,6 +186,7 @@ protected:
 
 private:
     QString Root;
+    QString EngineRoot;
 };
 
 /* One folder's contents: folders first, name filter, thumbnails, asset
@@ -216,7 +240,8 @@ protected:
         const QModelIndex Index = Source->index(InRow, 0, InParent);
         const QString Path = Source->filePath(Index);
 
-        if(!IsInside(Path, Root) || Path.compare(Root, Qt::CaseInsensitive) == 0) { return true; }
+        const QString Base = Panel->RootOf(Path);
+        if(Base.isEmpty() || Path.compare(Base, Qt::CaseInsensitive) == 0) { return true; }
         if(Source->isDir(Index) && EditorGraphs::IsIgnoredFolder(Source->fileName(Index))) { return false; }
         /* The filter narrows the folder being shown, not the folders above it. */
         if(!NameFilter.isEmpty() && Source->filePath(InParent).compare(Panel->GetCurrentFolder(), Qt::CaseInsensitive) == 0)
@@ -379,13 +404,14 @@ private:
 ContentBrowserPanel::ContentBrowserPanel(QWidget* InParent)
     : QWidget(InParent)
     , Root(QDir::fromNativeSeparators(QDir(EditorGraphs::GetProjectRoot()).absolutePath()))
+    , EngineRoot(EditorContent::GetEngineContentRoot())
 {
     Model = new QFileSystemModel(this);
     Model->setReadOnly(false);   // renames, through ContentListProxy::setData
     Model->setFilter(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::AllDirs);
     Model->setRootPath(Root);
 
-    TreeProxy = new ContentTreeProxy(Root, this);
+    TreeProxy = new ContentTreeProxy(Root, EngineRoot, this);
     TreeProxy->setSourceModel(Model);
     TreeProxy->setDynamicSortFilter(true);
     TreeProxy->sort(0);
@@ -418,6 +444,30 @@ ContentBrowserPanel::ContentBrowserPanel(QWidget* InParent)
         SetCurrentFolder(Model->filePath(TreeProxy->mapToSource(InIndex)));
     });
 
+    /* The engine's content, below the project's: its meshes (Box, Sphere,
+     * Plane), materials and shaders, to drag into the level or a Details
+     * field. Read-only here. */
+    EngineTree = new QTreeView(this);
+    EngineTree->setModel(TreeProxy);
+    for(int Column = 1; Column < Model->columnCount(); ++Column) { EngineTree->hideColumn(Column); }
+    EngineTree->setHeaderHidden(true);
+    EngineTree->setDragDropMode(QAbstractItemView::NoDragDrop);
+    EngineTree->setToolTip(QStringLiteral("The engine's own content, read-only here: drag its meshes and materials "
+                                          "into the level or a Details field"));
+    if(!EngineRoot.isEmpty())
+    {
+        EngineTree->setRootIndex(TreeProxy->mapFromSource(Model->index(QFileInfo(EngineRoot).absolutePath())));
+        EngineTree->expand(TreeProxy->mapFromSource(Model->index(EngineRoot)));
+    }
+    else
+    {
+        EngineTree->hide();
+    }
+    connect(EngineTree, &QTreeView::clicked, this, [this](const QModelIndex& InIndex)
+    {
+        SetCurrentFolder(Model->filePath(TreeProxy->mapToSource(InIndex)));
+    });
+
     List = new ContentItemView(this);
     List->setModel(ListProxy);
     List->setViewMode(QListView::IconMode);
@@ -431,8 +481,14 @@ ContentBrowserPanel::ContentBrowserPanel(QWidget* InParent)
     connect(List, &QWidget::customContextMenuRequested, this, &ContentBrowserPanel::ShowContextMenu);
     connect(List->selectionModel(), &QItemSelectionModel::selectionChanged, this, &ContentBrowserPanel::UpdateActions);
 
+    auto* Trees = new QSplitter(Qt::Vertical, this);
+    Trees->addWidget(Tree);
+    Trees->addWidget(EngineTree);
+    Trees->setStretchFactor(0, 3);
+    Trees->setStretchFactor(1, 1);
+
     auto* Split = new QSplitter(Qt::Horizontal, this);
-    Split->addWidget(Tree);
+    Split->addWidget(Trees);
     Split->addWidget(List);
     Split->setStretchFactor(0, 0);
     Split->setStretchFactor(1, 1);
@@ -521,7 +577,7 @@ void ContentBrowserPanel::BuildToolBar(QHBoxLayout* InLayout)
 void ContentBrowserPanel::SetCurrentFolder(const QString& InFolder)
 {
     QString Folder = QDir::fromNativeSeparators(QDir(InFolder).absolutePath());
-    if(!IsInside(Folder, Root) || !QFileInfo(Folder).isDir()) { Folder = Root; }
+    if(RootOf(Folder).isEmpty() || !QFileInfo(Folder).isDir()) { Folder = Root; }
     if(Folder.compare(CurrentFolder, Qt::CaseInsensitive) == 0) { return; }
 
     if(!CurrentFolder.isEmpty()) { History << CurrentFolder; }
@@ -531,10 +587,15 @@ void ContentBrowserPanel::SetCurrentFolder(const QString& InFolder)
     List->setRootIndex(ListProxy->mapFromSource(Source));
     ListProxy->invalidate();   // the name filter applies to this folder now
 
+    /* In whichever tree holds it; the other shows nothing current. */
     const QModelIndex InTree = TreeProxy->mapFromSource(Source);
-    Tree->setCurrentIndex(InTree);
-    Tree->scrollTo(InTree);
-    Tree->expand(InTree);
+    QTreeView* Shown = IsEngine(CurrentFolder) ? EngineTree : Tree;
+    QTreeView* Other = Shown == Tree ? EngineTree : Tree;
+    Other->selectionModel()->clearSelection();
+    Other->setCurrentIndex(QModelIndex());
+    Shown->setCurrentIndex(InTree);
+    Shown->scrollTo(InTree);
+    Shown->expand(InTree);
 
     RebuildPathBar();
     UpdateActions();
@@ -551,7 +612,7 @@ void ContentBrowserPanel::NavigateBack()
 
 void ContentBrowserPanel::NavigateUp()
 {
-    if(CurrentFolder.compare(Root, Qt::CaseInsensitive) == 0) { return; }
+    if(CurrentFolder.compare(RootOf(CurrentFolder), Qt::CaseInsensitive) == 0) { return; }
     SetCurrentFolder(QFileInfo(CurrentFolder).absolutePath());
 }
 
@@ -564,10 +625,11 @@ void ContentBrowserPanel::RebuildPathBar()
         delete Item;
     }
 
-    QStringList Parts = QDir(Root).relativeFilePath(CurrentFolder).split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    const QString Base = RootOf(CurrentFolder).isEmpty() ? Root : RootOf(CurrentFolder);
+    QStringList Parts = QDir(Base).relativeFilePath(CurrentFolder).split(QLatin1Char('/'), Qt::SkipEmptyParts);
     if(Parts.size() == 1 && Parts.front() == QStringLiteral(".")) { Parts.clear(); }
 
-    QString Path = Root;
+    QString Path = Base;
     const auto AddSegment = [this](const QString& InText, const QString& InPath, const bool bInLast)
     {
         auto* Segment = new QToolButton(this);
@@ -578,7 +640,7 @@ void ContentBrowserPanel::RebuildPathBar()
         PathBar->addWidget(Segment);
     };
 
-    AddSegment(QFileInfo(Root).fileName(), Root, Parts.isEmpty());
+    AddSegment(Base == EngineRoot ? QString::fromLatin1(ENGINE_CONTENT_LABEL) : QFileInfo(Root).fileName(), Base, Parts.isEmpty());
     for(int At = 0; At < Parts.size(); ++At)
     {
         auto* Arrow = new QLabel(QStringLiteral(" > "), this);
@@ -592,17 +654,31 @@ void ContentBrowserPanel::RebuildPathBar()
 
 void ContentBrowserPanel::UpdateActions()
 {
-    const bool bAny = !SelectedPaths().isEmpty();
+    const bool bAny    = !SelectedPaths().isEmpty();
+    const bool bEngine = IsEngine(CurrentFolder);   // read-only here
     BackButton->setEnabled(!History.isEmpty());
-    UpButton->setEnabled(CurrentFolder.compare(Root, Qt::CaseInsensitive) != 0);
-    RenameAction->setEnabled(SelectedPaths().size() == 1);
-    DeleteAction->setEnabled(bAny);
+    UpButton->setEnabled(CurrentFolder.compare(RootOf(CurrentFolder), Qt::CaseInsensitive) != 0);
+    RenameAction->setEnabled(SelectedPaths().size() == 1 && !bEngine);
+    DeleteAction->setEnabled(bAny && !bEngine);
 }
 
 QString ContentBrowserPanel::GetImportFolder() const
 {
-    if(CurrentFolder.compare(Root, Qt::CaseInsensitive) != 0) { return CurrentFolder; }
+    if(CurrentFolder.compare(Root, Qt::CaseInsensitive) != 0 && !IsEngine(CurrentFolder)) { return CurrentFolder; }
     return QDir(Root).filePath(QStringLiteral("Content"));
+}
+
+QString ContentBrowserPanel::RootOf(const QString& InPath) const
+{
+    const QString Path = QDir::fromNativeSeparators(InPath);
+    if(!EngineRoot.isEmpty() && IsInside(Path, EngineRoot)) { return EngineRoot; }   // first: it may lie in the project's Binaries
+    if(IsInside(Path, Root)) { return Root; }
+    return QString();
+}
+
+bool ContentBrowserPanel::IsEngine(const QString& InPath) const
+{
+    return !EngineRoot.isEmpty() && RootOf(QDir::fromNativeSeparators(QFileInfo(InPath).absoluteFilePath())) == EngineRoot;
 }
 
 QString ContentBrowserPanel::PathOf(const QModelIndex& InListIndex) const
@@ -654,9 +730,14 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         emit OpenWorldRequested(InPath);
         return;
     }
+    if(InPath.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive))
+    {
+        MeshViewerWindow::Open(InPath, window());
+        return;
+    }
     if(IsAsset(InPath))
     {
-        emit StatusMessage(QStringLiteral("Drag %1 onto the viewport, or onto a Mesh field in Details").arg(Info.fileName()));
+        emit StatusMessage(QStringLiteral("Drag %1 onto a Texture Sample's Texture, in a material graph").arg(Info.fileName()));
         return;
     }
     QDesktopServices::openUrl(QUrl::fromLocalFile(InPath));
@@ -693,20 +774,21 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
         });
         Menu.addSeparator();
     }
+    const bool bEngine = IsEngine(CurrentFolder);
     bool bAnyAsset = false;
     for(const QString& Path : Selected) { bAnyAsset |= IsAsset(Path); }
-    if(bAnyAsset)
+    if(bAnyAsset && !bEngine)
     {
         Menu.addAction(QStringLiteral("Reimport"), this, &ContentBrowserPanel::ReimportSelected);
         Menu.addSeparator();
     }
-    if(!Selected.isEmpty())
+    if(!Selected.isEmpty() && !bEngine)
     {
         Menu.addAction(RenameAction);
         Menu.addAction(DeleteAction);
         Menu.addSeparator();
     }
-    Menu.addAction(QStringLiteral("New Folder"), this, &ContentBrowserPanel::NewFolder);
+    if(!bEngine) { Menu.addAction(QStringLiteral("New Folder"), this, &ContentBrowserPanel::NewFolder); }
     Menu.addAction(QStringLiteral("Import..."), this, &ContentBrowserPanel::ImportWithDialog);
     Menu.addAction(QStringLiteral("Show Folder in Explorer"), this, [this]()
     {
@@ -720,6 +802,10 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
 QString ContentBrowserPanel::WhyProtected(const QString& InPath) const
 {
     const QString Path = QDir::fromNativeSeparators(QFileInfo(InPath).absoluteFilePath());
+    if(IsEngine(Path))
+    {
+        return QStringLiteral("it is the engine's content, which the editor does not change");
+    }
     if(Path.compare(Root, Qt::CaseInsensitive) == 0)
     {
         return QStringLiteral("the project folder itself");
@@ -756,6 +842,11 @@ QString ContentBrowserPanel::WhyProtected(const QString& InPath) const
 
 void ContentBrowserPanel::NewFolder()
 {
+    if(IsEngine(CurrentFolder))
+    {
+        emit StatusMessage(QStringLiteral("The engine's content is read-only here"));
+        return;
+    }
     QString Name = QStringLiteral("New Folder");
     for(int Suffix = 2; QFileInfo::exists(QDir(CurrentFolder).filePath(Name)); ++Suffix)
     {
@@ -869,7 +960,7 @@ void ContentBrowserPanel::ReimportSelected()
     QStringList Problems;
     for(const QString& Path : SelectedPaths())
     {
-        if(!IsAsset(Path)) { continue; }
+        if(!IsAsset(Path) || IsEngine(Path)) { continue; }
         const EditorContent::ImportResult Result = EditorContent::Reimport(Path, Root);
         CORE_LOG("[Import] " + Result.Message.toStdString())
         if(Result.bOK)
@@ -891,10 +982,17 @@ void ContentBrowserPanel::ReimportSelected()
 
 void ContentBrowserPanel::HandleDrop(const QStringList& InFiles, const QString& InTargetFolder)
 {
+    if(IsEngine(InTargetFolder))
+    {
+        emit StatusMessage(QStringLiteral("The engine's content is read-only here: drop into the project's folders"));
+        return;
+    }
+
+    /* The project's own move; anything else -- the engine's content too -- is copied or imported. */
     QStringList Inside, Outside;
     for(const QString& File : InFiles)
     {
-        (IsInside(QDir::fromNativeSeparators(File), Root) ? Inside : Outside) << File;
+        (RootOf(QDir::fromNativeSeparators(QFileInfo(File).absoluteFilePath())) == Root ? Inside : Outside) << File;
     }
     if(!Inside.isEmpty()) { MoveInto(Inside, InTargetFolder); }
     if(Outside.isEmpty()) { return; }

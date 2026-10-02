@@ -206,17 +206,33 @@ computed here and written to the `.material`, and the renderer fills the block
 byte for byte (GDI's `GDISetUniformBlock`). Any number fit, up to the block's
 1024 bytes.
 
-**Texture Sample** reads a texture asset at UV (unlinked: the texture
-coordinate) and gives RGBA, RGB, R, G, B and A. Its settings are the Texture
-and the sampler: **Filter** (Default, Nearest, Linear) and **Wrap** (Default,
-Repeat, Clamp, Mirror); Default keeps what the texture was imported with. Each
-distinct texture-and-sampler combination is one material texture slot, from 1
-(slot 0 is a PostProcess material's scene), declared `Material_Texture<slot>`
-at binding 4 + slot; seven fit. The `.material`'s `Texture` lines say which file
-and settings fill each slot. One node's outputs share one sample. It works in
-both stages; in World Position Offset it reads the full-size level
-(`textureLod`), as the vertex stage has no derivatives. A Texture Sample with
-no texture is an error.
+**Textures** are two nodes. A **Texture Object** names a texture asset and how
+it is sampled: its settings are the Texture and the sampler, **Filter**
+(Default, Nearest, Linear) and **Wrap** (Default, Repeat, Clamp, Mirror);
+Default keeps what the texture was imported with. Its **Texture** output is of
+the type `texture` -- a sampler, not a value: no constant, no conversions --
+and its **Size** output is the texture's width and height in texels (one texel
+is `1 / Size` in UV). A **Texture Sample** reads the Texture Object linked into
+its **Texture** at its **UV** (unlinked: the texture coordinate) and gives RGBA,
+RGB, R, G, B and A. One Texture Object feeds any number of samples, each at its
+own UV -- a blur, a detail layer, a flipbook.
+
+Each distinct texture-and-sampler combination is one material texture slot,
+from 1 (slot 0 is a PostProcess material's scene), declared
+`Material_Texture<slot>` at binding 4 + slot; seven fit. Texture Objects take
+slots in GUID order, used or not, and two naming the same texture and sampler
+share one. The `.material`'s `Texture` lines say which file and settings fill
+each slot. One sample node's outputs share one sample. Both stages sample; in
+World Position Offset a sample reads the full-size level (`textureLod`), as the
+vertex stage has no derivatives. A Texture Object with no texture, or a Texture
+Sample with no Texture Object linked, is an error.
+
+**Upgrading.** A schema can rewrite a graph an older editor saved as it is read
+(`Schema::UpgradeGraph`, for files and pasted fragments). Texture Sample
+version 1 named its texture itself; read now, each gains a Texture Object --
+one per distinct texture and sampler, shared by the samples that named them,
+with an id derived from the first one's so the slots stay put -- and the
+reader warns that the graph was upgraded. Saving writes the new form.
 
 **Two stages.** World Position Offset is the vertex stage's root; everything
 else is the pixel stage's. Each stage is compiled from its own roots, so a
@@ -295,7 +311,7 @@ The inputs read `MaterialInputs`, which each stage's template fills:
 - Clip Position, Pixel Coordinate and Pixel Depth (linear and device; pixel only);
 - Viewport Size, Mouse, Instance Tint and Time (both);
 - Scene Texture (PostProcess materials only);
-- Texture Sample (both; Textures in the palette).
+- Texture Object and Texture Sample (both; Textures in the palette).
 
 **Drawing one.** A primitive names the material by its base name:
 a slot of `RenderComponent::Materials`, "Glow" -- slot *i* for mesh section

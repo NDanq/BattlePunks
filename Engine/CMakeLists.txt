@@ -483,6 +483,31 @@ if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
     set_target_properties(NimbleStageShaders PROPERTIES FOLDER "Engine")
 endif()
 
+# === Engine/Content/Meshes =================================================
+# The engine's primitive meshes (Box, Sphere, Plane; made by
+# Scripts/generate_primitive_meshes.py), staged beside the executable at the
+# same path, so a RenderComponent names one "Engine/Content/Meshes/Box.nmmesh"
+# in every target. Single-config only, as the shader staging above.
+file(GLOB NM_ENGINE_MESHES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Meshes/*.nmmesh")
+if(TARGET NimbleEngine AND CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NM_ENGINE_MESHES)
+    set(NM_MESH_OUTPUTS)
+    foreach(NM_MESH ${NM_ENGINE_MESHES})
+        get_filename_component(NM_MESH_NAME "${NM_MESH}" NAME)
+        set(NM_MESH_DST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Engine/Content/Meshes/${NM_MESH_NAME}")
+        add_custom_command(
+                OUTPUT  "${NM_MESH_DST}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Engine/Content/Meshes"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NM_MESH}" "${NM_MESH_DST}"
+                DEPENDS "${NM_MESH}"
+                COMMENT "NimbleEngine: staging Engine/Content/Meshes/${NM_MESH_NAME}"
+                VERBATIM)
+        list(APPEND NM_MESH_OUTPUTS "${NM_MESH_DST}")
+    endforeach()
+    add_custom_target(NimbleStageMeshes ALL DEPENDS ${NM_MESH_OUTPUTS})
+    add_dependencies(NimbleEngine NimbleStageMeshes)
+    set_target_properties(NimbleStageMeshes PROPERTIES FOLDER "Engine")
+endif()
+
 # === Editor ================================================================
 # The Qt editor: after NimbleStageShaders, and needs RenderCore. Skips itself
 # when Qt6 Widgets is missing. Editor targets only.

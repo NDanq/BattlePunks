@@ -18,6 +18,7 @@
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderPipeline.h"
+#include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
@@ -59,6 +60,7 @@ namespace RenderCore
         const char* const MATERIAL_FOLDER      = "Materials/";
         const char* const DEFAULT_LIT_MATERIAL = "DefaultLit";            // Engine/Content/Materials: a mesh with none
         const char* const LIGHTING_SHADER      = "DeferredLighting.fsh";  // Engine/Content/Shaders: the Lighting stage
+        constexpr size_t  RENDER_PREVIEW_SLOTS = 8;                       // MaterialPreviewRequest::Slots
 
         /* A material's shader: no name-based uniforms, the material binding layout. */
         class MaterialShader final : public GDIShader
@@ -1296,54 +1298,137 @@ namespace RenderCore
     }
 
 #if WITH_EDITOR
-    bool RenderContext::RenderMaterialPreview(const char* InMaterial, const int InSize, const EngineCore::Color InTint,
-                                              EngineCore::Image& OutImage, std::string& OutError)
+    bool RenderContext::RenderMaterialPreview(const MaterialPreviewRequest& InRequest, EngineCore::Image& OutImage, std::string& OutError)
     {
-        const std::string Name = InMaterial ? InMaterial : "";
-        const int Size = InSize < 16 ? 16 : (InSize > 1024 ? 1024 : InSize);
+        const std::string Name(InRequest.Material, strnlen(InRequest.Material, sizeof(InRequest.Material)));
+        const std::string Mesh(InRequest.Mesh, strnlen(InRequest.Mesh, sizeof(InRequest.Mesh)));
+        const auto Clamp = [](const int InValue) { return InValue < 16 ? 16 : (InValue > 1024 ? 1024 : InValue); };
+        const int Width  = Clamp(InRequest.Width);
+        const int Height = Clamp(InRequest.Height);
 
         /* Loaded (or failed) exactly as the viewport's draw would. */
-        Material& Found = P->FindMaterial(Name);
-        if(!Found.Pixel)
+        Material* Found = Name.empty() ? nullptr : &P->FindMaterial(Name);
+        if(Found && !Found->Pixel)
         {
             OutError = "material '" + Name + "' could not be loaded -- see the log";
             return false;
         }
+        if(!Found && Mesh.empty())
+        {
+            OutError = "a preview needs a material or a mesh";
+            return false;
+        }
+        const bool bPostProcess = Found && Found->Description.Domain == EMaterialDomain::PostProcess;
+        const bool bMesh        = !Mesh.empty() && !bPostProcess;
+
+        std::shared_ptr<const MeshData> Source;
+        if(bMesh)
+        {
+            Source = MeshAssetCache::Find(Mesh);
+            if(!Source)
+            {
+                OutError = "mesh '" + Mesh + "' could not be loaded -- see the log";
+                return false;
+            }
+        }
 
         P->EnsureInitialised();
-        if(!P->PreviewTargets.Allocate(uint(Size), uint(Size)))
+        if(!P->PreviewTargets.Allocate(uint(Width), uint(Height)))
         {
             OutError = "could not create the preview render target";
             return false;
         }
 
-        /* Pixel-space view over the target, restored afterwards. The eye sits
-         * at the quad's depth: with ZNear -1, pulling it back would clip. For
-         * lighting, though, the eye is a quad's width in front of it. */
-        const RenderView Saved = P->View;
-        P->View = RenderView::MakeOrthographic(EngineCore::Size(Size, Size), EngineCore::Vector3(0.0, 0.0, 0.0), -1.0f, 1000.0f);
-        const EngineCore::Vector3 Eye(double(Size) * 0.5, double(Size) * 0.5, -double(Size));
-        P->UpdateScene(&Eye);
-
-        /* Through the same stages as the viewport: an Opaque Lit material
-         * goes through the G-buffer; a PostProcess one runs over the clear. */
+        /* The view and lighting, restored afterwards. */
+        const RenderView     SavedView     = P->View;
+        const RenderLighting SavedLighting = P->Lighting;
         BeginSceneDraws();
-        if(Found.Description.Domain == EMaterialDomain::PostProcess)
+
+        if(!bMesh)
         {
-            SubmitPostProcess(Name.c_str());
+            /* Pixel-space view over the target. The eye sits at the quad's
+             * depth: with ZNear -1, pulling it back would clip. For lighting,
+             * though, the eye is a quad's width in front of it. */
+            P->View = RenderView::MakeOrthographic(EngineCore::Size(Width, Height), EngineCore::Vector3(0.0, 0.0, 0.0), -1.0f, 1000.0f);
+            const EngineCore::Vector3 Eye(double(Width) * 0.5, double(Height) * 0.5, -double(std::max(Width, Height)));
+            P->UpdateScene(&Eye);
+
+            /* An Opaque Lit material goes through the G-buffer; a PostProcess
+             * one runs over the clear. */
+            if(bPostProcess)
+            {
+                SubmitPostProcess(Name.c_str());
+            }
+            else
+            {
+                RenderTransform Quad;
+                Quad.Position = EngineCore::Vector3(double(Width) * 0.5, double(Height) * 0.5, 0.0);
+                DrawQuadWithMaterial(Quad, float(Width), float(Height), InRequest.Tint, Name.c_str());
+            }
         }
         else
         {
-            RenderTransform Quad;
-            Quad.Position = EngineCore::Vector3(double(Size) * 0.5, double(Size) * 0.5, 0.0);
-            DrawQuadWithMaterial(Quad, float(Size), float(Size), InTint, Name.c_str());
+            /* Orbit the bounds' centre at a distance that frames their sphere. */
+            constexpr float FovY = 40.0f;
+            const double Pi = 3.14159265358979;
+            EngineCore::Vector3 Centre, Extent;
+            Centre = EngineCore::Vector3((Source->BoundsMin[0] + Source->BoundsMax[0]) * 0.5, (Source->BoundsMin[1] + Source->BoundsMax[1]) * 0.5,
+                                         (Source->BoundsMin[2] + Source->BoundsMax[2]) * 0.5);
+            Extent = EngineCore::Vector3(Source->BoundsMax[0] - Source->BoundsMin[0], Source->BoundsMax[1] - Source->BoundsMin[1],
+                                         Source->BoundsMax[2] - Source->BoundsMin[2]);
+            const double Radius = std::max(Extent.GetLength() * 0.5, 0.01);
+
+            const double Yaw   = double(InRequest.Yaw) * Pi / 180.0;
+            const double Pitch = double(std::clamp(InRequest.Pitch, -85.0f, 85.0f)) * Pi / 180.0;
+            const double Zoom  = double(std::clamp(InRequest.Zoom, 0.1f, 20.0f));
+            /* +Y is down, so a camera above looks down along +Y. */
+            const EngineCore::Vector3 Forward(std::sin(Yaw) * std::cos(Pitch), std::sin(Pitch), std::cos(Yaw) * std::cos(Pitch));
+            const double Distance = Radius / std::sin(double(FovY) * 0.5 * Pi / 180.0) * 1.1 / Zoom;
+            const EngineCore::Vector3 Eye = Centre - Forward * Distance;
+            const float Near = float(std::max(Distance - Radius * 1.5, Distance * 0.01));
+            const float Far  = float(Distance + Radius * 2.0);
+            P->View = RenderView::MakePerspective(EngineCore::Size(Width, Height), Eye, Forward, FovY, Near, Far);
+
+            /* A studio light from over the camera's shoulder, the same
+             * whatever the scene's; the default sky. */
+            const EngineCore::Vector3 Down(0.0, 1.0, 0.0);
+            EngineCore::Vector3 Side = Forward ^ Down;
+            const double SideLength = Side.GetLength();
+            Side = SideLength > 1e-6 ? Side * (1.0 / SideLength) : EngineCore::Vector3(1.0, 0.0, 0.0);
+            RenderLighting Studio;
+            Studio.LightDirection = Forward + Down * 0.7 + Side * 0.4;
+            Studio.LightIntensity = 2.2f;
+            P->Lighting = Studio;
+            P->UpdateScene();
+
+            /* The material in every section, else the request's slots. */
+            const char* Slots[RENDER_PREVIEW_SLOTS];
+            char SlotText[RENDER_PREVIEW_SLOTS][sizeof(InRequest.Slots[0])];
+            for(size_t Slot = 0; Slot < RENDER_PREVIEW_SLOTS; ++Slot)
+            {
+                std::memcpy(SlotText[Slot], InRequest.Slots[Slot], sizeof(SlotText[Slot]));
+                SlotText[Slot][sizeof(SlotText[Slot]) - 1] = '\0';
+                Slots[Slot] = SlotText[Slot];
+            }
+            const bool bDrawn = Found ? DrawMesh(RenderTransform(), Mesh.c_str(), InRequest.Tint, Name.c_str())
+                                      : DrawMesh(RenderTransform(), Mesh.c_str(), InRequest.Tint, Slots, uint32_t(RENDER_PREVIEW_SLOTS));
+            if(!bDrawn)
+            {
+                RenderSceneStages(P->PreviewTargets, EngineCore::Color(38, 40, 46, 255));   // drop the queued draws
+                P->View     = SavedView;
+                P->Lighting = SavedLighting;
+                P->UpdateScene();
+                OutError = "this backend cannot draw mesh '" + Mesh + "'";
+                return false;
+            }
         }
         RenderSceneStages(P->PreviewTargets, EngineCore::Color(38, 40, 46, 255));   // the editor viewport's clear
 
         /* Flushes, reads back, resumes the frame. */
         GDIRenderTarget* Final = P->FinalTarget ? P->FinalTarget : P->PreviewTargets.SceneColor;
-        OutImage = Final->ToImage();
-        P->View  = Saved;
+        OutImage    = Final->ToImage();
+        P->View     = SavedView;
+        P->Lighting = SavedLighting;
         P->UpdateScene();
 
         if(OutImage.GetWidth() == 0)

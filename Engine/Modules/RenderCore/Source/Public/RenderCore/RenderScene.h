@@ -30,11 +30,19 @@ namespace RenderCore
 
 #if WITH_EDITOR
     /* EDITOR ONLY -- a RequestMaterialPreview as a (trivially copyable) command. */
+    /* One preview, as Renderer::RequestMaterialPreview / RequestMeshPreview
+     * queue it: plain bytes, so it rides in a render command. */
     struct MaterialPreviewRequest
     {
         uint64_t                Request = 0;
-        char                    Material[48] = {};   // RENDER_MATERIAL_NAME_MAX
-        int32_t                 Size = 256;
+        char                    Material[48] = {};      // RENDER_MATERIAL_NAME_MAX; every section's, or "" for Slots
+        char                    Mesh[128] = {};         // RENDER_MESH_PATH_MAX; "" draws Material on a quad
+        char                    Slots[8][48] = {};      // RENDER_MATERIAL_SLOTS: per section, when Material is ""
+        int32_t                 Width  = 256;
+        int32_t                 Height = 256;
+        float                   Yaw   = 30.0f;          // degrees round the mesh, 0 looking along +Z
+        float                   Pitch = 20.0f;          // degrees above it
+        float                   Zoom  = 1.0f;           // 1 frames the mesh's bounds
         EngineCore::Color       Tint{255, 255, 255, 255};
         MaterialPreviewMailbox* Mailbox = nullptr;
     };

@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <NodeGraph Version="1" Schema="Material">
   <Nodes>
-    <Node Id="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a601" Type="Output.Pixel" Version="1" X="1500" Y="0" />
     <Node Id="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a602" Type="Input.TexCoord" Version="1" X="-520" Y="-120" />
     <Node Id="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a603" Type="Logic.ForLoop" Version="1" X="-520" Y="80" Wildcard="float">
       <Const Pin="Count" Value="5" />
@@ -39,6 +38,13 @@
     <Node Id="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a612" Type="Math.Multiply" Version="1" X="1260" Y="320" />
     <Node Id="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a613" Type="Input.InstanceTint" Version="1" X="1260" Y="440" />
     <Node Id="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a614" Type="Math.Multiply" Version="1" X="1380" Y="360" />
+    <Node Id="ab951ba8bd8807745d2bc3aeaae1b38c" Type="Output.Material" Version="1" X="1828.2781" Y="181.12971">
+      <Prop Name="ClipValue" Value="0.5" />
+      <Prop Name="Domain" Value="Opaque" />
+      <Prop Name="MaxOffset" Value="0" />
+      <Prop Name="Shading" Value="Lit" />
+      <Prop Name="TwoSided" Value="false" />
+    </Node>
   </Nodes>
   <Links>
     <Link From="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a602.UV" To="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a60a.A" />
@@ -62,7 +68,7 @@
     <Link From="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a611.Value" To="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a612.A" />
     <Link From="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a612.Out" To="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a614.A" />
     <Link From="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a613.Tint" To="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a614.B" />
-    <Link From="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a614.Out" To="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a601.Color" />
+    <Link From="3f6a2b8d9c4e4d1fa0b7e5c2d8f1a614.Out" To="ab951ba8bd8807745d2bc3aeaae1b38c.BaseColor" />
   </Links>
   <Comments>
     <Comment X="-540" Y="-180" Width="1840" Height="440" Text="Five wave sources on a circle (angle = Index * 2pi/5), their rings summed by an unrolled For Loop" />

@@ -416,6 +416,7 @@ bool ReadGraphText(const std::string& InText, Graph& OutGraph, std::string& OutE
     }
 
     ReadNodesAndLinks(Root, *S, Result, Warnings);
+    S->UpgradeGraph(Result, Warnings);
 
     for(const pugi::xml_node Item : Root.child("Comments").children("Comment"))
     {
@@ -565,6 +566,7 @@ bool PasteGraphFragment(const std::string& InText, Graph& InOutGraph, const floa
     Graph Fragment;
     std::vector<std::string> Warnings;
     ReadNodesAndLinks(Root, *S, Fragment, Warnings);
+    S->UpgradeGraph(Fragment, Warnings);
 
     std::map<NodeGuid, NodeGuid> Remap;
     for(Node& Each : Fragment.Nodes)

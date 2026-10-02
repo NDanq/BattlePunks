@@ -73,6 +73,12 @@ public:
     uint64_t RequestMaterialPreview(const QString& InName, int InSize, EngineCore::Color InTint);
     bool     TakeMaterialPreview(uint64_t InRequest, QImage& OutImage, QString& OutError);
 
+    /* See Renderer::RequestMeshPreview: InMesh (a runtime path) framed by an
+     * orbiting camera, with InMaterial on every section, else InSections.
+     * Answered through TakeMaterialPreview. 0 when the Renderer is not running. */
+    uint64_t RequestMeshPreview(const QString& InMesh, const QString& InMaterial, const QStringList& InSections,
+                                int InWidth, int InHeight, float InYaw, float InPitch, float InZoom, EngineCore::Color InTint);
+
     /* False, leaving OutStats untouched, when the Renderer is not running. */
     bool GetRenderStats(RenderCore::RenderStats& OutStats) const;
 

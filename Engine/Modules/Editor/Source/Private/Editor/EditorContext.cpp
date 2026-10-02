@@ -122,6 +122,27 @@ uint64_t EditorContext::RequestMaterialPreview(const QString& InName, const int 
     return Renderer->RequestMaterialPreview(InName.toUtf8().constData(), InSize, InTint);
 }
 
+uint64_t EditorContext::RequestMeshPreview(const QString& InMesh, const QString& InMaterial, const QStringList& InSections,
+                                           const int InWidth, const int InHeight, const float InYaw, const float InPitch,
+                                           const float InZoom, const EngineCore::Color InTint)
+{
+    if(!Renderer || !bRendererReady)
+    {
+        return 0;
+    }
+    RenderCore::Renderer::MeshPreview Preview;
+    Preview.Mesh     = InMesh.toStdString();
+    Preview.Material = InMaterial.toStdString();
+    for(const QString& Each : InSections) { Preview.Sections.push_back(Each.toStdString()); }
+    Preview.Width  = InWidth;
+    Preview.Height = InHeight;
+    Preview.Yaw    = InYaw;
+    Preview.Pitch  = InPitch;
+    Preview.Zoom   = InZoom;
+    Preview.Tint   = InTint;
+    return Renderer->RequestMeshPreview(Preview);
+}
+
 bool EditorContext::TakeMaterialPreview(const uint64_t InRequest, QImage& OutImage, QString& OutError)
 {
     if(!Renderer)

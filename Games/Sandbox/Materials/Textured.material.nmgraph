@@ -5,15 +5,17 @@
       <Prop Name="Domain" Value="Opaque" />
       <Prop Name="Shading" Value="Unlit" />
     </Node>
-    <Node Id="7c3e1a5b9d2f4c6e8a0b2d4f6e8a1c02" Type="Texture.Sample" Version="1" X="0" Y="0">
+    <Node Id="7c3e1a5b9d2f4c6e8a0b2d4f6e8a1c02" Type="Texture.Sample" Version="2" X="140" Y="0" />
+    <Node Id="7c3e1a5b9d2f4c6e8a0b2d4f6e8a1c03" Type="Texture.Object" Version="1" X="-160" Y="0">
       <Prop Name="Filter" Value="Nearest" />
       <Prop Name="Texture" Value="Content/Textures/Quadrants.nmtexture" />
     </Node>
   </Nodes>
   <Links>
+    <Link From="7c3e1a5b9d2f4c6e8a0b2d4f6e8a1c03.Texture" To="7c3e1a5b9d2f4c6e8a0b2d4f6e8a1c02.Texture" />
     <Link From="7c3e1a5b9d2f4c6e8a0b2d4f6e8a1c02.RGB" To="7c3e1a5b9d2f4c6e8a0b2d4f6e8a1c01.Emissive" />
   </Links>
   <Comments>
-    <Comment X="-40" Y="-80" Width="720" Height="300" Text="A texture as it is: Quadrants (red, green / blue, white), its Linear filter overridden to Nearest" />
+    <Comment X="-200" Y="-80" Width="880" Height="300" Text="A texture as it is: Quadrants (red, green / blue, white), its Linear filter overridden to Nearest" />
   </Comments>
 </NodeGraph>

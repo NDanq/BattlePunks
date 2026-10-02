@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Script">
+  <Nodes>
+    <Node Id="00425d8e00e14a4509895b67c5e894ba" Type="Event.OnTick" Version="1" X="-300" Y="60" />
+    <Node Id="0c777abd3e1054e952976a4ce611dd35" Type="Math.Multiply" Version="1" X="-54" Y="168" Wildcard="number">
+      <Const Pin="B" Value="60" />
+    </Node>
+    <Node Id="32b63ec981d297593d4edae22b8385c8" Type="Component.Transform.Get" Version="1" X="-52" Y="95" />
+    <Node Id="3f5c69119e69c394161355d495d0c1a7" Type="Math.Multiply" Version="1" X="159" Y="402" Wildcard="number">
+      <Const Pin="B" Value="5" />
+    </Node>
+    <Node Id="7544b79d240242842f7f62d92aa4f3a4" Type="Component.Transform.Translate" Version="1" X="486" Y="30" />
+    <Node Id="c69dbf632d022a2f61883e4098afa69b" Type="Event.OnStart" Version="1" X="-300" Y="-120" />
+    <Node Id="edb861ae9c82f66974d4535e613f15c5" Type="Vector.Make" Version="1" X="245" Y="195" />
+    <Node Id="efdd2fb78ac89e2f2b59c25e7f0555b1" Type="Math.Sin" Version="1" X="35" Y="314" />
+  </Nodes>
+  <Links>
+    <Link From="00425d8e00e14a4509895b67c5e894ba.DeltaSeconds" To="0c777abd3e1054e952976a4ce611dd35.A" />
+    <Link From="00425d8e00e14a4509895b67c5e894ba.Then" To="7544b79d240242842f7f62d92aa4f3a4.Exec" />
+    <Link From="0c777abd3e1054e952976a4ce611dd35.Out" To="edb861ae9c82f66974d4535e613f15c5.X" />
+    <Link From="0c777abd3e1054e952976a4ce611dd35.Out" To="efdd2fb78ac89e2f2b59c25e7f0555b1.X" />
+    <Link From="32b63ec981d297593d4edae22b8385c8.Transform" To="7544b79d240242842f7f62d92aa4f3a4.Target" />
+    <Link From="3f5c69119e69c394161355d495d0c1a7.Out" To="edb861ae9c82f66974d4535e613f15c5.Y" />
+    <Link From="edb861ae9c82f66974d4535e613f15c5.Vector" To="7544b79d240242842f7f62d92aa4f3a4.Delta" />
+    <Link From="efdd2fb78ac89e2f2b59c25e7f0555b1.Out" To="3f5c69119e69c394161355d495d0c1a7.A" />
+  </Links>
+</NodeGraph>

@@ -420,14 +420,10 @@ namespace EditorGraphs
         RunMaterialCook(InName, InContext, std::move(InDone));
     }
 
-    void RequestMaterialPreview(const QString& InName, const int InSize, const QColor& InTint, QObject* InContext,
-                                std::function<void(const QImage&, const QString&)> InDone)
+    /* Polls the Renderer for InRequest's answer, giving up after a few
+     * seconds (a minimised editor renders nothing). */
+    static void PollPreview(const uint64_t Request, QObject* InContext, std::function<void(const QImage&, const QString&)> InDone)
     {
-        EditorContext* Ctx = Context();
-        const uint64_t Request = Ctx ? Ctx->RequestMaterialPreview(InName, InSize,
-                                           EngineCore::Color(uint8_t(InTint.red()), uint8_t(InTint.green()),
-                                                             uint8_t(InTint.blue()), uint8_t(InTint.alpha())))
-                                     : 0;
         if(Request == 0)
         {
             InDone(QImage(), QStringLiteral("The viewport's renderer is not running"));
@@ -455,6 +451,28 @@ namespace EditorGraphs
             }
         });
         Poll->start(20);
+    }
+
+    static EngineCore::Color ToColor(const QColor& InColor)
+    {
+        return EngineCore::Color(uint8_t(InColor.red()), uint8_t(InColor.green()), uint8_t(InColor.blue()), uint8_t(InColor.alpha()));
+    }
+
+    void RequestMaterialPreview(const QString& InName, const int InSize, const QColor& InTint, QObject* InContext,
+                                std::function<void(const QImage&, const QString&)> InDone)
+    {
+        EditorContext* Ctx = Context();
+        PollPreview(Ctx ? Ctx->RequestMaterialPreview(InName, InSize, ToColor(InTint)) : 0, InContext, std::move(InDone));
+    }
+
+    void RequestMeshPreview(const MeshPreviewOptions& InOptions, QObject* InContext,
+                            std::function<void(const QImage&, const QString&)> InDone)
+    {
+        EditorContext* Ctx = Context();
+        PollPreview(Ctx ? Ctx->RequestMeshPreview(InOptions.Mesh, InOptions.Material, InOptions.Sections, InOptions.Width,
+                                                  InOptions.Height, InOptions.Yaw, InOptions.Pitch, InOptions.Zoom, ToColor(InOptions.Tint))
+                        : 0,
+                    InContext, std::move(InDone));
     }
 
     void RestoreMaterial(const QString& InGraphPath)

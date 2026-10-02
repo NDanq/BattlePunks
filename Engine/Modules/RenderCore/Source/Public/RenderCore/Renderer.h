@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 namespace GameCore { class World; struct AABB; }
 namespace EngineCore { class Image; }
@@ -116,8 +117,34 @@ namespace RenderCore
         uint64_t RequestMaterialPreview(const char* InName, int InSize, EngineCore::Color InTint);
 
         /* True once, when done: OutImage (RGBA8, top row first), or empty with
-         * OutError. False while pending. GAME THREAD ONLY. */
+         * OutError. False while pending. Answers RequestMeshPreview too.
+         * GAME THREAD ONLY. */
         bool TakeMaterialPreview(uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError);
+
+        /*
+         * Renders a mesh as a tool shows it, during the next EndFrame(), and
+         * reads it back: framed by a perspective camera orbiting its bounds
+         * (Yaw round it, Pitch above it, Zoom in), lit by a fixed studio light.
+         * Material, when set, goes on every section; otherwise each section i
+         * < 8 takes Sections[i], or (when that is "") the mesh's own material,
+         * as RenderComponent slots do. A PostProcess Material is drawn full
+         * screen instead. Width and Height are 16-1024. Returns an id for
+         * TakeMaterialPreview, 0 if not running or a name is too long.
+         * GAME THREAD ONLY.
+         */
+        struct MeshPreview
+        {
+            std::string              Mesh;        // runtime-relative .nmmesh
+            std::string              Material;
+            std::vector<std::string> Sections;
+            int                      Width  = 256;
+            int                      Height = 256;
+            float                    Yaw    = 30.0f;
+            float                    Pitch  = 20.0f;
+            float                    Zoom   = 1.0f;
+            EngineCore::Color        Tint{255, 255, 255, 255};
+        };
+        uint64_t RequestMeshPreview(const MeshPreview& InPreview);
 #endif // WITH_EDITOR
 
         /*

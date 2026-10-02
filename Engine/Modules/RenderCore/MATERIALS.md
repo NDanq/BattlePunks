@@ -142,7 +142,7 @@ about them generically. Enforced:
 | Math, Vector, Logic | yes | yes |
 | Pixel Coordinate, Pixel Depth, Clip Position | no | yes |
 | Scene Texture (PostProcess only) | no | yes |
-| Texture Sample (level 0 in the vertex stage) | yes | yes |
+| Texture Object, Texture Sample (level 0 in the vertex stage) | yes | yes |
 
 **Time** reads `Scene_Time`: seconds since the renderer started (real time,
 so editor previews animate), and the last frame's length.
@@ -201,8 +201,9 @@ lines it does not know.
 
 ## Textures
 
-A material graph's **Texture Sample** node (NodeGraph's README) names a
-`.nmtexture` and, optionally, its own Filter and Wrap. The renderer, per draw:
+A material graph's **Texture Object** node (NodeGraph's README) names a
+`.nmtexture` and, optionally, its own Filter and Wrap; any number of **Texture
+Sample** nodes read it, each at its own UV. The renderer, per draw:
 
 - binds slots 1-7 from the material's `Texture` lines, clearing the rest; slot
   0 stays the caller's (a PostProcess pass's scene);
@@ -220,6 +221,11 @@ colour data for later, for an sRGB format). The image's top row is v = 0 --
 glTF's convention, so imported meshes need no flip -- and a quad shows it
 upright. No mipmaps on Vulkan and D3D12 yet (OpenGL generates them): Linear
 filters between texels at the full-size level.
+
+The editor previews a material on the engine's meshes (Sphere, Box, Plane) or a
+quad, and any mesh with a material per section, through
+`Renderer::RequestMeshPreview`: an orbiting perspective camera framing the
+mesh's bounds, a fixed studio light, the same stages as the viewport.
 
 `Games/Sandbox/Materials/Textured` samples `Content/Textures/Quadrants.nmtexture`
 (red, green / blue, white) with its Linear filter overridden to Nearest; the GPU
@@ -329,8 +335,9 @@ offsets, stage errors, `CanLinkStages`, PostProcess and domain rules),
 providers, vertex colours, stage routing and material slots, the RenderComponent
 serializer's versions, `Texture` lines; the opt-in GPU check, which draws
 Textured upright and with its node's filter), Editor.Import (`COLOR_0`), and
-NodeGraph's Texture Sample codegen (slots, shared samples, the vertex stage,
-the errors; `Textured.mtl.glsl` through glslc).
+NodeGraph's texture codegen (Texture Objects and their slots, several samples
+of one, Size, the vertex stage, the errors, upgrading version 1 Texture
+Samples; `Textured.mtl.glsl` through glslc).
 
 ## Later
 

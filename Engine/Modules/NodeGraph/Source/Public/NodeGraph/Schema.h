@@ -192,6 +192,16 @@ namespace NodeGraph
         /* Schema-specific validation and codegen. Called by CompileGraph(). */
         virtual void Compile(const Graph& InGraph, CompileResult& OutResult) const = 0;
 
+        /* Brings a graph an older editor saved up to date as it is read (a
+         * file, or a pasted fragment): nodes whose Version is below their
+         * definition's are rewritten -- a material's version 1 Texture Sample
+         * gains a Texture Object, say. OutWarnings says what changed. */
+        virtual void UpgradeGraph(Graph& InOutGraph, std::vector<std::string>& OutWarnings) const
+        {
+            (void)InOutGraph;
+            (void)OutWarnings;
+        }
+
     protected:
         Schema(std::string InName, std::string InFileTag, std::string InOutputExtension);
 

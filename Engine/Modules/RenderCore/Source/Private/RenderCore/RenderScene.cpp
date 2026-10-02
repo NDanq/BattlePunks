@@ -176,7 +176,7 @@ namespace RenderCore
         {
             EngineCore::Image Pixels;
             std::string       Error;
-            InContext.RenderMaterialPreview(Each.Material, Each.Size, Each.Tint, Pixels, Error);
+            InContext.RenderMaterialPreview(Each, Pixels, Error);
             if(Each.Mailbox) { Each.Mailbox->Deliver(Each.Request, std::move(Pixels), std::move(Error)); }
         }
         P->Previews.clear();

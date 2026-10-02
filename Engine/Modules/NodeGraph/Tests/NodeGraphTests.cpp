@@ -1056,10 +1056,11 @@ namespace
     }
 
     /*
-     * Texture Samples: Brick twice with its own sampler (one slot, two
-     * samples; RGB and A of the first share one), Brick again Nearest and
-     * Clamp at UV * 4 (a second slot), and a height map with a space in its
-     * path moving each vertex along its normal (the vertex stage: textureLod).
+     * Textures: a Brick Texture Object (20) read by two Texture Samples (one
+     * slot, two samples; RGB and A of the first share one); Brick again,
+     * Nearest and Clamp (21), sampled at UV * 4 (a second slot); and a height
+     * map with a space in its path (22) moving each vertex along its normal
+     * (the vertex stage: textureLod).
      */
     Graph MakeTexturedGraph()
     {
@@ -1069,21 +1070,25 @@ namespace
 
         Node& Output = AddNode(G, 1, "Output.Material", 700, 0);
         Output.Properties["MaxOffset"] = "1";
-        Node& Albedo = AddNode(G, 2, "Texture.Sample", 300, -200);
-        Albedo.Properties["Texture"] = "Content/Textures/Brick.nmtexture";
-        Node& Rough = AddNode(G, 3, "Texture.Sample", 300, 0);
-        Rough.Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+        AddNode(G, 2, "Texture.Sample", 300, -200).Version = 2;
+        AddNode(G, 3, "Texture.Sample", 300, 0).Version = 2;
         AddNode(G, 4, "Input.TexCoord", -100, 200);
         AddNode(G, 5, "Math.Multiply", 100, 200).Constants["B"] = "4";
-        Node& Tiled = AddNode(G, 6, "Texture.Sample", 300, 200);
+        AddNode(G, 6, "Texture.Sample", 300, 200).Version = 2;
+        AddNode(G, 7, "Texture.Sample", 300, 400).Version = 2;
+        AddNode(G, 8, "Math.Multiply", 500, 400);
+        AddNode(G, 9, "Input.VertexNormal", 300, 550);
+        AddNode(G, 20, "Texture.Object", 0, -100).Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+        Node& Tiled = AddNode(G, 21, "Texture.Object", 0, 200);
         Tiled.Properties["Texture"] = "Content/Textures/Brick.nmtexture";
         Tiled.Properties["Filter"]  = "Nearest";
         Tiled.Properties["Wrap"]    = "Clamp";
-        Node& Height = AddNode(G, 7, "Texture.Sample", 300, 400);
-        Height.Properties["Texture"] = "Content/Textures/Height Map.nmtexture";
-        AddNode(G, 8, "Math.Multiply", 500, 400);
-        AddNode(G, 9, "Input.VertexNormal", 300, 550);
+        AddNode(G, 22, "Texture.Object", 0, 400).Properties["Texture"] = "Content/Textures/Height Map.nmtexture";
 
+        Connect(G, 20, "Texture", 2, "Texture");
+        Connect(G, 20, "Texture", 3, "Texture");
+        Connect(G, 21, "Texture", 6, "Texture");
+        Connect(G, 22, "Texture", 7, "Texture");
         Connect(G, 2, "RGB", 1, "BaseColor");
         Connect(G, 2, "A", 1, "AmbientOcclusion");
         Connect(G, 3, "R", 1, "Roughness");
@@ -1111,9 +1116,9 @@ namespace
 
         Expect(Count(R.Code, "MATERIAL_SAMPLER2D(") == 3 && R.Code.find("MATERIAL_SAMPLER2D(5, Material_Texture1)") != std::string::npos
                && R.Code.find("MATERIAL_SAMPLER2D(7, Material_Texture3)") != std::string::npos,
-               "each distinct texture and sampler is one slot, from slot 1 (binding 5)");
+               "each Texture Object with its own texture and sampler is one slot, from slot 1 (binding 5)");
         Expect(Count(R.Code, "texture(Material_Texture1, Inputs.TexCoord)") == 2,
-               "two nodes sample the shared slot once each; one node's RGB and A share its sample");
+               "two Texture Samples read one Texture Object, a sample each; one node's RGB and A share its sample");
         Expect(R.Code.find("texture(Material_Texture2, t") != std::string::npos, "a linked UV is sampled at");
         Expect(R.Code.find("textureLod(Material_Texture3, Inputs.TexCoord, 0.0)") != std::string::npos
                && R.Code.find("texture(Material_Texture3") == std::string::npos,
@@ -1121,16 +1126,50 @@ namespace
         Expect(Data.find("Texture 1 Default Default Content/Textures/Brick.nmtexture\n") != std::string::npos
                && Data.find("Texture 2 Nearest Clamp Content/Textures/Brick.nmtexture\n") != std::string::npos
                && Data.find("Texture 3 Default Default Content/Textures/Height Map.nmtexture\n") != std::string::npos,
-               "the .material names each slot's file and the sampler settings its node overrides");
+               "the .material names each slot's file and the sampler settings its Texture Object overrides");
 
         const Schema* Material = FindSchema("Material");
         const NodeDefinition* Def = Material ? Material->FindNode("Texture.Sample") : nullptr;
         Expect(Def && Def->FindPin("UV") && Def->FindPin("UV")->Implicit == "Texture Coordinate",
                "an unlinked UV is the texture coordinate, not a constant");
-        Expect(Material && Material->DescribeNode(Textured, *Textured.FindNode(Id(6))).find("Nearest") != std::string::npos
-               && Material->DescribeNode(Textured, *Textured.FindNode(Id(6))).find("Clamp") != std::string::npos,
-               "a node describes the sampler settings it overrides");
+        const PinTypeInfo* TextureType = Material ? Material->FindType("texture") : nullptr;
+        Expect(Def && Def->FindPin("Texture") && Def->FindPin("Texture")->Type == "texture" && TextureType && !TextureType->bHasLiteral
+               && !Material->CanConvert("texture", "vec4") && !Material->CanConvert("vec4", "texture"),
+               "a Texture Sample's Texture is a texture: linked from a Texture Object, never a value");
+        Expect(Material && Material->DescribeNode(Textured, *Textured.FindNode(Id(21))).find("Nearest") != std::string::npos
+               && Material->DescribeNode(Textured, *Textured.FindNode(Id(21))).find("Clamp") != std::string::npos,
+               "a Texture Object describes the sampler settings it overrides");
 
+        {
+            /* One Texture Object, sampled twice at different UVs and once at its size's texel offset. */
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Blur";
+            AddNode(G, 1, "Output.Material").Properties["Shading"] = "Unlit";
+            AddNode(G, 2, "Texture.Object").Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+            AddNode(G, 3, "Texture.Sample").Version = 2;
+            AddNode(G, 4, "Texture.Sample").Version = 2;
+            AddNode(G, 5, "Input.TexCoord");
+            AddNode(G, 6, "Math.Divide").Constants["A"] = "1";
+            AddNode(G, 7, "Math.Add");
+            AddNode(G, 8, "Math.Add");
+            Connect(G, 2, "Texture", 3, "Texture");
+            Connect(G, 2, "Texture", 4, "Texture");
+            Connect(G, 2, "Size", 6, "B");
+            Connect(G, 5, "UV", 7, "A");
+            Connect(G, 6, "Out", 7, "B");
+            Connect(G, 7, "Out", 4, "UV");
+            Connect(G, 3, "RGB", 8, "A");
+            Connect(G, 4, "RGB", 8, "B");
+            Connect(G, 8, "Out", 1, "Emissive");
+            CompileResult Blur;
+            CompileGraph(G, Blur);
+            Expect(!Blur.HasErrors() && Count(Blur.Code, "MATERIAL_SAMPLER2D(") == 1
+                   && Count(Blur.Code, "texture(Material_Texture1, ") == 2
+                   && Blur.Code.find("textureSize(Material_Texture1, 0)") != std::string::npos,
+                   "one Texture Object, many samples at their own UVs: one slot; Size is its size in texels");
+            if(Blur.HasErrors()) { std::printf("%s\n", FormatDiagnostics(G, Blur).c_str()); }
+        }
         {
             Graph G = MakeTexturedGraph();
             G.FindNode(Id(3))->Constants["UV"] = "0.5 0.25";
@@ -1141,14 +1180,31 @@ namespace
         }
         {
             Graph G = MakeTexturedGraph();
-            G.FindNode(Id(2))->Properties["Texture"] = "";
-            CompileResult Empty;
-            CompileGraph(G, Empty);
-            Expect(Empty.HasErrors(), "a Texture Sample without a texture is an error");
+            G.Links.erase(G.Links.begin());   // 20 -> 2's Texture
+            CompileResult Unlinked;
+            CompileGraph(G, Unlinked);
+            Expect(Unlinked.HasErrors(), "a Texture Sample with no Texture Object linked is an error");
+        }
+        {
+            /* Two Texture Objects naming the same texture and sampler share a slot. */
+            Graph G = MakeTexturedGraph();
+            G.FindNode(Id(22))->Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+            CompileResult Shared;
+            CompileGraph(G, Shared);
+            Expect(!Shared.HasErrors() && Count(Shared.Code, "MATERIAL_SAMPLER2D(") == 2
+                   && Shared.Code.find("textureLod(Material_Texture1, ") != std::string::npos,
+                   "two Texture Objects with the same texture and sampler are one slot");
         }
         {
             Graph G = MakeTexturedGraph();
-            G.FindNode(Id(2))->Properties["Texture"] = "Content/Textures/Brick.png";
+            G.FindNode(Id(20))->Properties["Texture"] = "";
+            CompileResult Empty;
+            CompileGraph(G, Empty);
+            Expect(Empty.HasErrors(), "a Texture Object without a texture is an error");
+        }
+        {
+            Graph G = MakeTexturedGraph();
+            G.FindNode(Id(20))->Properties["Texture"] = "Content/Textures/Brick.png";
             CompileResult Wrong;
             CompileGraph(G, Wrong);
             Expect(Wrong.HasErrors(), "a texture must be a .nmtexture");
@@ -1160,7 +1216,7 @@ namespace
             AddNode(G, 1, "Output.Material");
             for(uint64_t Index = 0; Index < 8; ++Index)
             {
-                AddNode(G, 10 + Index, "Texture.Sample").Properties["Texture"] = "Content/T" + std::to_string(Index) + ".nmtexture";
+                AddNode(G, 10 + Index, "Texture.Object").Properties["Texture"] = "Content/T" + std::to_string(Index) + ".nmtexture";
             }
             CompileResult Eight;
             CompileGraph(G, Eight);
@@ -1178,9 +1234,11 @@ namespace
             Node& Out = AddNode(G, 1, "Output.Material");
             Out.Properties["Domain"]  = "PostProcess";
             Out.Properties["Shading"] = "Unlit";
-            AddNode(G, 2, "Texture.Sample").Properties["Texture"] = "Content/Textures/Vignette.nmtexture";
+            AddNode(G, 2, "Texture.Sample").Version = 2;
+            AddNode(G, 5, "Texture.Object").Properties["Texture"] = "Content/Textures/Vignette.nmtexture";
             AddNode(G, 3, "Input.SceneTexture");
             AddNode(G, 4, "Math.Multiply");
+            Connect(G, 5, "Texture", 2, "Texture");
             Connect(G, 3, "Color", 4, "A");
             Connect(G, 2, "RGBA", 4, "B");
             Connect(G, 4, "Out", 1, "Emissive");
@@ -1188,6 +1246,66 @@ namespace
             CompileGraph(G, Post);
             Expect(!Post.HasErrors() && Post.Code.find("MATERIAL_SAMPLER2D(5, Material_Texture1)") != std::string::npos,
                    "a PostProcess material samples textures beside the scene");
+        }
+        {
+            /*
+             * A graph from before Texture Objects: version 1 Texture Samples
+             * named their texture themselves. Reading it gives each distinct
+             * texture and sampler a Texture Object, linked in, and compiles as
+             * before -- the same way every time it is read.
+             */
+            const std::string Old =
+                "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"Material\">\n<Nodes>\n"
+                "<Node Id=\"00000000000000000000000000000001\" Type=\"Output.Material\" Version=\"1\" X=\"400\" Y=\"0\" />\n"
+                "<Node Id=\"00000000000000000000000000000002\" Type=\"Texture.Sample\" Version=\"1\" X=\"0\" Y=\"0\">\n"
+                "  <Prop Name=\"Texture\" Value=\"Content/Textures/Brick.nmtexture\" /></Node>\n"
+                "<Node Id=\"00000000000000000000000000000003\" Type=\"Texture.Sample\" Version=\"1\" X=\"0\" Y=\"200\">\n"
+                "  <Prop Name=\"Texture\" Value=\"Content/Textures/Brick.nmtexture\" /></Node>\n"
+                "<Node Id=\"00000000000000000000000000000004\" Type=\"Texture.Sample\" Version=\"1\" X=\"0\" Y=\"400\">\n"
+                "  <Prop Name=\"Texture\" Value=\"Content/Textures/Brick.nmtexture\" /><Prop Name=\"Filter\" Value=\"Nearest\" /></Node>\n"
+                "</Nodes>\n<Links>\n"
+                "<Link From=\"00000000000000000000000000000002.RGB\" To=\"00000000000000000000000000000001.BaseColor\" />\n"
+                "<Link From=\"00000000000000000000000000000003.R\" To=\"00000000000000000000000000000001.Roughness\" />\n"
+                "<Link From=\"00000000000000000000000000000004.G\" To=\"00000000000000000000000000000001.Metallic\" />\n"
+                "</Links>\n</NodeGraph>\n";
+            Graph Upgraded, Again;
+            std::string Error;
+            std::vector<std::string> Warnings;
+            const bool bRead = ReadGraphText(Old, Upgraded, Error, &Warnings) && ReadGraphText(Old, Again, Error);
+
+            size_t Objects = 0, Samples = 0, Leftover = 0;
+            for(const Node& Each : Upgraded.Nodes)
+            {
+                Objects += Each.Type == "Texture.Object";
+                if(Each.Type == "Texture.Sample")
+                {
+                    ++Samples;
+                    Leftover += Each.Version != 2 || Each.Properties.count("Texture") || Each.Properties.count("Filter");
+                }
+            }
+            Expect(bRead && Objects == 2 && Samples == 3 && Leftover == 0,
+                   "an old graph's Texture Samples gain a Texture Object per distinct texture and sampler");
+            bool bSameIds = Upgraded.Nodes.size() == Again.Nodes.size();
+            for(size_t Index = 0; bSameIds && Index < Upgraded.Nodes.size(); ++Index)
+            {
+                bSameIds = Upgraded.Nodes[Index].Id == Again.Nodes[Index].Id;
+            }
+            Expect(bSameIds, "and the same ones each time it is read, so slots stay put");
+            Expect(!Warnings.empty() && Warnings.back().find("Texture Object") != std::string::npos, "the reader says it upgraded");
+
+            CompileResult Compiled;
+            CompileGraph(Upgraded, Compiled);
+            const std::string Material = Compiled.Companions.empty() ? std::string() : Compiled.Companions[0].second;
+            Expect(!Compiled.HasErrors() && Count(Compiled.Code, "MATERIAL_SAMPLER2D(") == 2
+                   && Material.find("Nearest Default Content/Textures/Brick.nmtexture") != std::string::npos,
+                   "and compiles as it did");
+            if(Compiled.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Upgraded, Compiled).c_str()); }
+
+            /* Written back, it is the new form. */
+            const std::string Written = WriteGraphText(Upgraded);
+            Expect(Written.find("Type=\"Texture.Object\"") != std::string::npos
+                   && Written.find("Type=\"Texture.Sample\" Version=\"2\"") != std::string::npos,
+                   "saving writes the Texture Objects");
         }
     }
 
