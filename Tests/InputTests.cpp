@@ -2,8 +2,9 @@
  * NimbleEngineInputTests -- the input path from InputState to scripts:
  * key names, frame edges, input maps (and their config overrides), the
  * InputComponent's resolve at the start of TP_PrePhysics, ahead of scripts,
- * and the "Input" script library. No window: events go straight into the
- * state, as the router's callbacks would put them.
+ * and the "Input" script library. Mostly without a window: events go straight
+ * into the state, as the router's callbacks would put them. Gamepads also run
+ * through real SDL, with a virtual pad.
  */
 
 #include <cmath>
@@ -17,6 +18,12 @@
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/InputRouter.h"
+
+#if NIMBLEENGINE_TESTS_HAVE_SDL
+#include <SDL3/SDL.h>
+#include "Public/GameWindow/GameWindow.h"
+#include "Public/GameWindow/GameWindowSystem.h"
+#endif
 
 using namespace NimbleEngine;
 
@@ -190,6 +197,81 @@ namespace
         Scripts.Shutdown();
         std::remove(Path.c_str());
     }
+
+#if NIMBLEENGINE_TESTS_HAVE_SDL
+    /* A virtual gamepad through real SDL: GameWindow's pump, its gamepad
+     * table, the router's dead zone, the latched state. */
+    void TestGamepadsThroughSDL()
+    {
+        std::printf("[gamepads through SDL]\n");
+
+        /* SDL drops a pad's button presses while none of the app's windows
+         * has focus -- right for a game, but this test's window is hidden. */
+        SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+        if(!GameWindowSystem::Initialize())
+        {
+            Expect(false, "SDL starts (no display?)");
+            return;
+        }
+
+        WindowDesc Desc;
+        Desc.Width = 64;
+        Desc.Height = 64;
+        Desc.Title = "NimbleEngineInputTests";
+        Desc.Flags = WF_Hidden;
+        GameWindow* Window = GameWindowSystem::CreateGameWindow(Desc);
+        InputRouter Router;
+        Router.Attach(Window);
+
+        SDL_VirtualJoystickDesc Pad;
+        SDL_INIT_INTERFACE(&Pad);
+        Pad.type     = SDL_JOYSTICK_TYPE_GAMEPAD;
+        Pad.naxes    = SDL_GAMEPAD_AXIS_COUNT;
+        Pad.nbuttons = SDL_GAMEPAD_BUTTON_COUNT;
+        Pad.name     = "NimbleEngine Test Pad";
+        /* Every button and axis present, in SDL's own order: the automatic
+         * mapping then puts virtual button i on gamepad button i. */
+        Pad.button_mask = (1u << SDL_GAMEPAD_BUTTON_COUNT) - 1u;
+        Pad.axis_mask   = (1u << SDL_GAMEPAD_AXIS_COUNT) - 1u;
+        const SDL_JoystickID Id = SDL_AttachVirtualJoystick(&Pad);
+        SDL_Joystick* Stick = Id ? SDL_OpenJoystick(Id) : nullptr;
+        Expect(Window && Stick, "a virtual gamepad attaches");
+
+        const auto Frame = [&](const uint64_t InFrame)
+        {
+            SDL_UpdateJoysticks();
+            GameWindowSystem::PumpEvents();
+            Router.Latch(InFrame);
+        };
+
+        Frame(1);
+        Expect(Router.GetState().IsPadConnected(0), "it connects as player 0");
+
+        SDL_SetJoystickVirtualButton(Stick, SDL_GAMEPAD_BUTTON_SOUTH, true);
+        SDL_SetJoystickVirtualAxis(Stick, SDL_GAMEPAD_AXIS_LEFTX, 16384);     // half right
+        SDL_SetJoystickVirtualAxis(Stick, SDL_GAMEPAD_AXIS_LEFTY, 3000);      // inside the dead zone
+        SDL_SetJoystickVirtualAxis(Stick, SDL_GAMEPAD_AXIS_RIGHT_TRIGGER, 32767);
+        Frame(2);
+        const InputState& S = Router.GetState();
+        const float Expected = (16384.0f / 32767.0f - 0.15f) / 0.85f;
+        Expect(S.WasPressed("Gamepad.South") && S.IsDown("Gamepad.South"), "a button press arrives as Gamepad.South");
+        Expect(std::fabs(S.GetValue("Gamepad.LeftX") - Expected) < 1e-3f, "a stick is rescaled past the dead zone (got "
+               + std::to_string(S.GetValue("Gamepad.LeftX")) + ")");
+        Expect(S.GetValue("Gamepad.LeftY") == 0.0f, "inside the dead zone a stick reads 0");
+        Expect(std::fabs(S.GetValue("Gamepad.RightTrigger") - 1.0f) < 1e-3f && S.IsDown("Gamepad.RightTrigger"),
+               "a trigger has no dead zone, and pulled reads as down");
+
+        SDL_CloseJoystick(Stick);
+        SDL_DetachVirtualJoystick(Id);
+        Frame(3);
+        Expect(!Router.GetState().IsPadConnected(0) && !Router.GetState().IsDown("Gamepad.South")
+               && Router.GetState().WasReleased("Gamepad.South"), "unplugged, it disconnects and lets go");
+
+        Router.Detach();
+        if(Window) { GameWindowSystem::DestroyGameWindow(Window); }
+        GameWindowSystem::Shutdown();
+    }
+#endif
 }
 
 int main()
@@ -199,6 +281,9 @@ int main()
     TestEdges();
     TestRouterLatch();
     TestComponents();
+#if NIMBLEENGINE_TESTS_HAVE_SDL
+    TestGamepadsThroughSDL();
+#endif
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

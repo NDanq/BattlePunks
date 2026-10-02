@@ -229,7 +229,9 @@ namespace NimbleEngine
         if(LevelWorld)
         {
             SetScriptInputState(&Host.GetInput());
+            SetScriptInputHost(&Host);
             LevelWorld->Tick(float(InFrame.DeltaSeconds));
+            SetScriptInputHost(nullptr);
             SetScriptInputState(nullptr);
         }
     }

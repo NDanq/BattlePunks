@@ -134,11 +134,13 @@ set(GAMEWINDOW_SOURCES
         Source/Private/GameWindow/GameWindowDispatch.cpp
         Source/Private/GameWindow/GameWindowInputSDL.cpp
         Source/Private/GameWindow/GameWindowKeyNames.cpp
+        Source/Private/GameWindow/GameWindowGamepad.cpp
         Source/Private/GameWindow/GameWindowInternal.h
         Source/Public/GameWindow/GameWindowAPI.h
         Source/Public/GameWindow/GameWindowLog.h
         Source/Public/GameWindow/GameWindowTypes.h
         Source/Public/GameWindow/GameWindowInput.h
+        Source/Public/GameWindow/GameWindowGamepad.h
         Source/Public/GameWindow/GameWindowDelegates.h
         Source/Public/GameWindow/GameWindow.h
         Source/Public/GameWindow/GameWindowSystem.h

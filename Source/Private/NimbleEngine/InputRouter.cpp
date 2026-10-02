@@ -3,6 +3,7 @@
 #include "Private/NimbleEngine/InputInternal.h"
 #include "Public/GameWindow/GameWindow.h"
 #include "Public/GameWindow/GameWindowDelegates.h"
+#include "Public/GameWindow/GameWindowGamepad.h"
 #include "Public/GameWindow/GameWindowInput.h"
 #include "Public/GameWindow/GameWindowSystem.h"
 
@@ -45,6 +46,35 @@ namespace
         State.SetFocus(bInHasFocus);
         if(!bInHasFocus) { State.ReleaseAll(); }   // the key-ups go to whoever has focus now
     }
+
+    void OnPadConnected(const uint8_t InPlayer, const bool bInConnected, const char* /*InName*/, void* InUserData)
+    {
+        if(InPlayer < INPUT_PLAYERS_MAX) { PendingOf(InUserData).SetPadConnected(InPlayer, bInConnected); }
+    }
+
+    void OnPadButton(const GamepadButtonEvent& InEvent, void* InUserData)
+    {
+        if(InEvent.Player >= INPUT_PLAYERS_MAX) { return; }
+        const InputKey Key = InputKeyFromPadButton(InEvent.Button);
+        InEvent.bPressed ? PendingOf(InUserData).Press(Key, InEvent.Player) : PendingOf(InUserData).Release(Key, InEvent.Player);
+    }
+
+    void OnPadAxis(const GamepadAxisEvent& InEvent, void* InUserData)
+    {
+        if(InEvent.Player >= INPUT_PLAYERS_MAX) { return; }
+        auto* Router = static_cast<InputRouter*>(InUserData);
+
+        /* Rescaled past the dead zone, so a full push still reads 1. */
+        float Value = InEvent.Value;
+        const bool  bStick = InEvent.Axis <= GA_RightY;
+        const float Zone   = Router->GetStickDeadZone();
+        if(bStick && Zone > 0.0f && Zone < 1.0f)
+        {
+            const float Magnitude = Value < 0.0f ? -Value : Value;
+            Value = Magnitude <= Zone ? 0.0f : (Value < 0.0f ? -1.0f : 1.0f) * (Magnitude - Zone) / (1.0f - Zone);
+        }
+        Router->GetPending().SetAnalog(InputKeyFromPadAxis(InEvent.Axis), Value, InEvent.Player);
+    }
 }
 
 InputRouter::~InputRouter()
@@ -71,12 +101,40 @@ void InputRouter::Attach(GameWindow* InWindow)
     Delegates.OnMouseWheel   = &OnMouseWheel;
     Delegates.OnFocusChanged = &OnFocusChanged;
     InWindow->SetDelegates(Delegates);
+
+    GamepadDelegates Pads;
+    Pads.UserData    = this;
+    Pads.OnConnected = &OnPadConnected;
+    Pads.OnButton    = &OnPadButton;
+    Pads.OnAxis      = &OnPadAxis;
+    GameWindowSystem::SetGamepadDelegates(Pads);   // reports the pads already connected
+    bOwnsGamepads = true;
 }
 
 void InputRouter::Detach()
 {
-    if(GameWindow* Window = GetWindow()) { Window->ClearDelegates(); }
-    WindowID = 0;
+    if(GameWindow* Window = GetWindow())
+    {
+        Window->SetRelativeMouseMode(false);
+        Window->ClearDelegates();
+    }
+    if(bOwnsGamepads && GameWindowSystem::IsInitialized())
+    {
+        GameWindowSystem::ClearGamepadDelegates();
+    }
+    bOwnsGamepads = false;
+    WindowID      = 0;
+}
+
+void InputRouter::SetMouseCaptured(const bool bInCaptured)
+{
+    if(GameWindow* Window = GetWindow()) { Window->SetRelativeMouseMode(bInCaptured); }
+}
+
+bool InputRouter::IsMouseCaptured() const
+{
+    const GameWindow* Window = GetWindow();
+    return Window && Window->IsRelativeMouseMode();
 }
 
 void InputRouter::Latch(const uint64_t InFrameNumber)

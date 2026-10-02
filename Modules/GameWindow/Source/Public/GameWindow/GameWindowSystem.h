@@ -7,6 +7,7 @@
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameWindow/GameWindowAPI.h"
+#include "Public/GameWindow/GameWindowGamepad.h"
 #include "Public/GameWindow/GameWindowTypes.h"
 
 class GameWindow;
@@ -71,6 +72,15 @@ namespace GameWindowSystem
      * input is active on InWindow, and for control characters.
      */
     GAMEWINDOW_API void InjectTextInput(GameWindow* InWindow, const char* InUtf8);
+
+    /*
+     * Gamepads (GameWindowGamepad.h). One process-level table -- a pad is a
+     * player's, not a window's. Setting it reports the pads already connected.
+     * Clear it before whatever UserData points at goes away.
+     */
+    GAMEWINDOW_API void SetGamepadDelegates(const GamepadDelegates& InDelegates);
+    GAMEWINDOW_API void ClearGamepadDelegates();
+    GAMEWINDOW_API bool IsGamepadConnected(uint8_t InPlayer);
 
     /*
      * Immediate destruction. Safe from host code between frames; NOT safe from

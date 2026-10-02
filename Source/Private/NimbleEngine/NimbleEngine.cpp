@@ -324,6 +324,16 @@ namespace NimbleEngine
         return Router ? Router->GetState() : IGameHost::GetInput();
     }
 
+    void Application::SetMouseCaptured(const bool bInCaptured)
+    {
+        if(Router) { Router->SetMouseCaptured(bInCaptured); }
+    }
+
+    bool Application::IsMouseCaptured() const
+    {
+        return Router && Router->IsMouseCaptured();
+    }
+
     bool Application::RunFrame(const uint64_t InMaxFrames)
     {
         /* steady_clock: a delta must not go backwards because the wall clock

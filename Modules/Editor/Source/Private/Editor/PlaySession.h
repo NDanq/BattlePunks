@@ -66,6 +66,8 @@ public:
 
     /* What Tick latched: the viewport's SDL input, as the launcher's. */
     const NimbleEngine::InputState& GetInput() const override { return Input.GetState(); }
+    void SetMouseCaptured(bool bInCaptured) override { Input.SetMouseCaptured(bInCaptured); }
+    bool IsMouseCaptured() const override           { return Input.IsMouseCaptured(); }
 
     // === Input ===============================================================
 

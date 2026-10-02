@@ -16,7 +16,7 @@ SDL events ──► GameWindow callbacks ──► InputRouter (pending) ──
 | Piece | Where | Role |
 |---|---|---|
 | `InputState` | `Input.h` | One frame's devices. Keys, mouse buttons and pad buttons have down / pressed-this-frame / released-this-frame. Edges are counts, so a tap that is pressed and released inside one frame is both. It also holds mouse position, delta and wheel, and pad sticks and triggers per player. |
-| `InputRouter` | `InputRouter.h` (host side) | Takes over a window's delegate table, accumulates events as `PumpEvents` delivers them, and publishes them with `Latch()`. Focus loss releases everything. The launcher's `Application` owns one; the editor's Play-in-Editor owns another. |
+| `InputRouter` | `InputRouter.h` (host side) | Takes over a window's delegate table and GameWindow's process-wide gamepad table, accumulates events as `PumpEvents` delivers them, and publishes them with `Latch()`. Focus loss releases everything. The launcher's `Application` owns one; the editor's Play-in-Editor owns another. |
 | Input maps | `NIMBLE_DEFINE_INPUT_MAP` | Named actions and axes, bound to key names. A game declares them in its module, and they unregister with it. |
 | `InputComponent` | `"Input"` | Which map an entity reads (`Map`), and as which player (`PlayerIndex`). Resolved each frame. |
 | Resolve | `GameSession` | `ResolveInputComponents`, registered on every level's World as the first `TP_PrePhysics` system, with `SO_BeforeScripts`. |
@@ -44,6 +44,28 @@ Keys, buttons and axes are named, and lookups ignore case:
 
 GameWindow's key enum never reaches game code. The full key list is
 `GameWindowKeyNames.cpp`.
+
+## Gamepads
+
+Up to four pads, one per player. A pad takes the lowest free player slot when
+it connects and keeps it until it disconnects.
+
+- **Reading by player.** `InputComponent::PlayerIndex` picks whose pad an
+  entity reads. Keyboard and mouse belong to player 0.
+- **Dead zone.** Sticks have a dead zone of 0.15 per axis
+  (`InputRouter::SetStickDeadZone`), rescaled so that a full push still reads 1.
+- **Triggers** have no dead zone. As buttons, a trigger or stick is down past
+  half way.
+- **Unplugging** releases everything the pad held.
+- **Focus.** SDL ignores button presses while the game's window does not have
+  focus.
+
+## Mouse capture
+
+`GameSession::SetMouseCaptured(true)` (Lua: `Input.SetMouseCaptured(true)`)
+hides the cursor and holds it in the window. `Mouse.DeltaX` and
+`Mouse.DeltaY` keep reporting motion past the screen's edge, for mouse-look.
+The host lets go when the run ends.
 
 ## Maps
 
@@ -117,4 +139,6 @@ It covers:
 - action edges with two bound keys;
 - axis sums and scales;
 - rebinding through config;
-- a disabled component.
+- a disabled component;
+- a **virtual SDL gamepad** through the real pump and GameWindow's gamepad
+  table: connection, a button, the stick dead zone, a trigger, and unplugging.

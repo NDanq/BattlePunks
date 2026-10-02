@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "Private/NimbleEngine/InputInternal.h"
+#include "Public/NimbleEngine/GameSession.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentPool.h"
@@ -548,6 +549,7 @@ void ResolveInputComponents(GameCore::World& InWorld, const InputState& InState)
 namespace
 {
     const InputState* GScriptInput = nullptr;
+    IGameHost*        GScriptHost  = nullptr;
 
     const InputState& ScriptInput()
     {
@@ -560,11 +562,18 @@ namespace
     bool  ScriptWasKeyReleased(const char* InKey)  { return ScriptInput().WasReleased(InKey); }
     float ScriptGetKeyValue(const char* InKey)     { return ScriptInput().GetValue(InKey); }
     bool  ScriptIsPadConnected(const int32_t InPlayer) { return ScriptInput().IsPadConnected(uint8_t(InPlayer)); }
+    void  ScriptSetMouseCaptured(const bool bInCaptured) { if(GScriptHost) { GScriptHost->SetMouseCaptured(bInCaptured); } }
+    bool  ScriptIsMouseCaptured()                        { return GScriptHost && GScriptHost->IsMouseCaptured(); }
 }
 
 void SetScriptInputState(const InputState* InState)
 {
     GScriptInput = InState;
+}
+
+void SetScriptInputHost(IGameHost* InHost)
+{
+    GScriptHost = InHost;
 }
 }
 
@@ -614,6 +623,9 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Input)
     Lib.NativePure<&NimbleEngine::ScriptGetKeyValue>("GetKeyValue", "Key -> Value")
        .Tooltip("0 or 1 for a button; the position of an axis (\"Gamepad.LeftX\", \"Mouse.DeltaX\")");
     Lib.NativePure<&NimbleEngine::ScriptIsPadConnected>("IsPadConnected", "Player -> Connected");
+    Lib.Native<&NimbleEngine::ScriptSetMouseCaptured>("SetMouseCaptured", "Captured")
+       .Tooltip("Hide and hold the cursor, for mouse-look; Mouse.DeltaX keeps coming");
+    Lib.NativePure<&NimbleEngine::ScriptIsMouseCaptured>("IsMouseCaptured", "-> Captured");
 
     Lib.Pure("GetMousePosition", [](GameCore::ScriptCall& Call)
     {
