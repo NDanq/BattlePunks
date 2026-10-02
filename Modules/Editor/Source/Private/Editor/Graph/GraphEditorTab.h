@@ -36,6 +36,7 @@ class GraphEditorTab : public QMainWindow
 
 public:
     GraphEditorTab(GraphDocument* InDocument, QWidget* InParent = nullptr);
+    ~GraphEditorTab() override;
 
     GraphDocument& GetDocument() const { return *Document; }
 

@@ -311,6 +311,22 @@ void GraphEditorTab::Recompile()
 
 // === Preview ====================================================================
 
+GraphEditorTab::~GraphEditorTab()
+{
+    /* Qt deletes children in the order they were made -- the document first,
+     * then the scene -- but the panels read both: deleting a selected item
+     * emits selectionChanged into Details. Views go first, the document last. */
+    CompileTimer.stop();
+    delete Details;
+    Details = nullptr;
+    delete View;
+    View = nullptr;
+    delete Scene;
+    Scene = nullptr;
+    delete Document;
+    Document = nullptr;
+}
+
 void GraphEditorTab::BuildPreviewDock()
 {
     auto* Dock = new QDockWidget(QStringLiteral("Preview"), this);
