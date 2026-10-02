@@ -458,7 +458,7 @@ namespace
                "a doubled extension (as the Windows save dialog makes) strips one at a time");
         Expect(StripGraphExtension(StripGraphExtension("Scripts/Foo.script.nmgraph.script.nmgraph")) == "Scripts/Foo",
                "and twice down to the base name");
-        Expect(Material && GetGraphOutputPath("Shaders/Glow.material.nmgraph", *Material) == "Shaders/Glow.fsh", "a material outputs .fsh");
+        Expect(Material && GetGraphOutputPath("Shaders/Glow.material.nmgraph", *Material) == "Shaders/Glow.mtl.glsl", "a material outputs .mtl.glsl");
         Expect(Script && GetGraphOutputPath("Scripts/Mover.Script.NMGRAPH", *Script) == "Scripts/Mover.lua", "a script outputs .lua");
         Expect(Script && MakeGraphPath("Scripts/Mover", *Script) == "Scripts/Mover.script.nmgraph", "MakeGraphPath adds the tag");
         Expect(GetGraphBaseName("a/b/Glow.material.nmgraph") == "Glow", "the base name");
@@ -487,6 +487,36 @@ namespace
         std::reverse(Shuffled.Nodes.begin(), Shuffled.Nodes.end());
         std::reverse(Shuffled.Links.begin(), Shuffled.Links.end());
         Expect(WriteGraphText(Shuffled) == Text, "output does not depend on creation order");
+
+        // --- Generated code is kept in the file, at its end ------------------------
+        {
+            Graph Generated = Mover;
+            CompileResult Result;
+            CompileGraph(Generated, Result);
+            Expect(StoreGeneratedCode(Generated, Result) && Generated.GenCode.size() == 1
+                   && Generated.GenCode[0].Extension == ".lua" && Generated.GenCode[0].Text == Result.Code,
+                   "a clean compile is stored as the graph's generated code: a script's .lua");
+
+            Generated.GenCode.push_back({ ".extra", "a ]]> inside, and <tags> & \"quotes\"\n" });
+            const std::string WithCode = WriteGraphText(Generated);
+            Expect(WithCode.find("<gen_code>") != std::string::npos
+                   && WithCode.find("<gen_code>") > WithCode.find("</Comments>")
+                   && WithCode.find("<![CDATA[") != std::string::npos,
+                   "it is written after everything else, as <gen_code> CDATA");
+            Graph Back;
+            Expect(ReadGraphText(WithCode, Back, Error) && Back.GenCode.size() == 2
+                   && Back.GenCode[0].Text == Result.Code && Back.GenCode[1].Text == Generated.GenCode[1].Text,
+                   "and reads back exactly, a ']]>' in the text included");
+            Expect(WriteGraphText(Back) == WithCode, "save -> load -> save keeps it byte-identical");
+            Expect(Back.FindGenCode(".lua") && !Back.FindGenCode(".mtl.glsl"), "FindGenCode finds by extension");
+
+            Graph Broken = Generated;
+            Broken.Nodes.front().Type = "No.Such.Node";
+            CompileResult BrokenResult;
+            CompileGraph(Broken, BrokenResult);
+            Expect(!StoreGeneratedCode(Broken, BrokenResult) && Broken.GenCode.size() == 2,
+                   "a graph with errors keeps the generated code it had");
+        }
 
         // --- An unknown node type is kept, links and all -------------------------
         std::string WithUnknown = Text;
@@ -647,6 +677,38 @@ namespace
         W.Tick(0.1f);
         Expect(Scripts.GetErrorCount() == 0, "the Flow script raised no Lua errors");
 
+        /* A script graph runs the Lua stored in it: Mover again, as a
+         * .script.nmgraph, its Lua carrying a "]]>" the file splits. */
+        {
+            Graph MoverGraph = MakeMoverGraph();
+            CompileResult Stored;
+            CompileGraph(MoverGraph, Stored);
+            Stored.Code += "\n-- a closing ]]> in a comment\n";
+            StoreGeneratedCode(MoverGraph, Stored);
+            const std::string GraphPath = TempDir() + "/Mover.script.nmgraph";
+            std::string Error;
+            Expect(SaveGraphFile(GraphPath, MoverGraph, Error), "the script graph saves: " + Error);
+
+            GameCore::Entity FromGraph = W.CreateEntity("FromGraph");
+            FromGraph.AddComponent<GameCore::TransformComponent>();
+            Expect(FromGraph.SetScript(GraphPath.c_str()), "an entity's script can be a .script.nmgraph");
+            for(int Frame = 0; Frame < 10; ++Frame) { W.Tick(0.1f); }
+            const GameCore::TransformComponent* Moved = FromGraph.GetComponent<GameCore::TransformComponent>();
+            Expect(Moved && std::fabs(double(Moved->Position.GetX()) - 60.0) < 0.01 && Scripts.GetErrorCount() == 0,
+                   "and runs the Lua in its <gen_code>, as the .lua did");
+
+            /* No <gen_code>: an error, not a crash. */
+            Graph Bare = MakeMoverGraph();
+            const std::string BarePath = TempDir() + "/Bare.script.nmgraph";
+            SaveGraphFile(BarePath, Bare, Error);
+            GameCore::Entity Unsaved = W.CreateEntity("Unsaved");
+            Unsaved.AddComponent<GameCore::TransformComponent>();
+            Unsaved.SetScript(BarePath.c_str());
+            const uint32_t Before = Scripts.GetErrorCount();
+            W.Tick(0.1f);
+            Expect(Scripts.GetErrorCount() > Before, "a script graph with no generated code is a script error");
+        }
+
         Scripts.UnbindWorld();
         Scripts.Shutdown();
     }
@@ -659,14 +721,16 @@ namespace
         CompileGraph(MakeGlowGraph(), Glow);
         Expect(!Glow.HasErrors(), "the Glow graph compiles");
         if(Glow.HasErrors()) { std::printf("%s\n", FormatDiagnostics(MakeGlowGraph(), Glow).c_str()); }
-        ExpectGolden("Glow.fsh", Glow.Code);
-        Expect(Glow.Code.find("SHADER_UNIFORM(mat4, MaterialParams)") != std::string::npos, "one mat4 carries every parameter");
-        Expect(Glow.Code.find("MaterialParams[0].xyz") != std::string::npos, "a vec3 parameter reads its column's xyz");
+        ExpectGolden("Glow.mtl.glsl", Glow.Code);
+        Expect(Glow.Code.find("UBO_BLOCK_BEGIN(2, Glow_Block)") != std::string::npos, "the parameters are one std140 block at binding 2");
+        Expect(Glow.Code.find("Param_Tint * ") != std::string::npos, "a parameter reads its member of the block");
+        Expect(Glow.Code.find("Surface.Emissive = t") != std::string::npos && Glow.Code.find("Surface.Opacity = t") != std::string::npos,
+               "Pixel Output's colour is an Unlit, Translucent surface");
         Expect(Glow.Companions.size() == 1 && Glow.Companions[0].first == ".material", "a material writes a .material companion");
         if(!Glow.Companions.empty()) { ExpectGolden("Glow.material", Glow.Companions[0].second); }
 
         {
-            /* Slots follow names, not graph order; a fourth parameter is refused. */
+            /* Offsets follow names, not graph order, and any number fit. */
             Graph G = MakeGlowGraph();
             const char* Names[] = { "Zeta", "Alpha", "Mid" };
             for(uint64_t Index = 0; Index < 3; ++Index)
@@ -676,16 +740,17 @@ namespace
             }
             CompileResult R;
             CompileGraph(G, R);
-            Expect(R.HasErrors(), "four parameters are one too many");
+            Expect(!R.HasErrors(), "four parameters fit in the block");
 
             G.RemoveNode(Id(42));   // "Mid" goes: Alpha, Tint, Zeta
             G.RemoveNode(Id(40));   // "Zeta" goes: Alpha, Tint
             CompileResult Two;
             CompileGraph(G, Two);
-            Expect(!Two.HasErrors() && Two.Code.find("MaterialParams[1].xyz") != std::string::npos,
-                   "Tint sorts after Alpha, into slot 1");
-            Expect(!Two.Companions.empty() && Two.Companions[0].second.find("Param Alpha 0 float") != std::string::npos,
-                   "and the companion lists Alpha in slot 0");
+            Expect(!Two.HasErrors() && Two.Code.find("float Param_Alpha;\n    vec3  Param_Tint;") != std::string::npos,
+                   "Tint is declared after Alpha");
+            Expect(!Two.Companions.empty() && Two.Companions[0].second.find("Param Alpha float 32") != std::string::npos
+                   && Two.Companions[0].second.find("Param Tint vec3 48") != std::string::npos,
+                   "and the companion gives Alpha the first offset, Tint the next 16-byte one");
         }
 
         /* float + vec3 resolves to vec3 regardless of link order, and a
@@ -711,7 +776,7 @@ namespace
             G.RemoveNode(Id(1));
             CompileResult R;
             CompileGraph(G, R);
-            Expect(R.HasErrors(), "a material without a Pixel Output fails");
+            Expect(R.HasErrors(), "a material without an output fails");
         }
         {
             Graph G = MakeGlowGraph();
@@ -797,8 +862,9 @@ namespace
         CompileGraph(Masks, R);
         Expect(!R.HasErrors(), "the mask graph compiles");
         if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Masks, R).c_str()); }
-        ExpectGolden("Masks.fsh", R.Code);
-        Expect(R.Code.find("Interpolants.Position.xz") != std::string::npos, "the mask is a swizzle of its input");
+        ExpectGolden("Masks.mtl.glsl", R.Code);
+        if(!R.Companions.empty()) { ExpectGolden("Masks.material", R.Companions[0].second); }
+        Expect(R.Code.find("Inputs.ClipPosition.xz") != std::string::npos, "the mask is a swizzle of its input");
         Expect(R.Code.find("t0.yxyx") != std::string::npos, "the swizzle reorders and repeats");
 
         Graph Loaded;
@@ -812,7 +878,7 @@ namespace
             CompileResult All;
             Compile(MakeSelectGraph("Input.FragCoord", "Coord", "Vector.ComponentMask",
                                     { { "R", "true" }, { "G", "true" }, { "B", "true" }, { "A", "true" } }), All);
-            Expect(!All.HasErrors() && All.Code.find("Output = gl_FragCoord;") != std::string::npos,
+            Expect(!All.HasErrors() && All.Code.find("Surface.Emissive = Inputs.FragCoord.rgb;") != std::string::npos,
                    "all four of a vec4 pass it through untouched");
         }
         {
@@ -827,7 +893,7 @@ namespace
         {
             CompileResult Rgba;
             Compile(MakeSelectGraph("Input.Position", "Position", "Vector.Swizzle", { { "Swizzle", "BGR" } }), Rgba);
-            Expect(!Rgba.HasErrors() && Rgba.Code.find("Interpolants.Position.zyx") != std::string::npos,
+            Expect(!Rgba.HasErrors() && Rgba.Code.find("Inputs.ClipPosition.zyx") != std::string::npos,
                    "rgba letters, in either case, mean xyzw");
 
             CompileResult Splat;
@@ -907,13 +973,14 @@ namespace
         CompileGraph(Logic, R);
         Expect(!R.HasErrors(), "the logic graph compiles");
         if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Logic, R).c_str()); }
-        ExpectGolden("Logic.fsh", R.Code);
+        ExpectGolden("Logic.mtl.glsl", R.Code);
+        if(!R.Companions.empty()) { ExpectGolden("Logic.material", R.Companions[0].second); }
 
         const auto At = [&](const char* InText) { return R.Code.find(InText); };
-        Expect(At("#include <MaterialPlatform.glsl>") < At("#include <Common.glsl>"), "hints include the platform header first");
-        Expect(At("HINT_BRANCH if(Interpolants.TexCoord.x > 0.5)") != std::string::npos, "a Branch is a hinted if");
+        Expect(At("#include") == std::string::npos, "a material function includes nothing: the templates bring MaterialPlatform.glsl");
+        Expect(At("HINT_BRANCH if(Inputs.TexCoord.x > 0.5)") != std::string::npos, "a Branch is a hinted if");
         Expect(At("HINT_UNROLL for(int i0 = 0; i0 < 4; ++i0)") != std::string::npos, "a For Loop is a hinted for");
-        Expect(At("sin(Interpolants.TexCoord)") < At("if("), "a value both sides use is computed before the if");
+        Expect(At("sin(Inputs.TexCoord)") < At("if("), "a value both sides use is computed before the if");
         Expect(At("* vec2(2.0)") > At("if(") && At("* vec2(2.0)") < At("else"), "a value only True uses is computed inside it");
         Expect(At("vec2(float(i0))") > At("for("), "the loop's Index is read inside the loop");
 
@@ -935,7 +1002,7 @@ namespace
             Ternary.FindNode(Id(5))->Properties["Ternary"] = "true";
             CompileResult T;
             CompileGraph(Ternary, T);
-            Expect(!T.HasErrors() && T.Code.find("vec2 t2 = Interpolants.TexCoord.x > 0.5 ? t1 : t0;") != std::string::npos
+            Expect(!T.HasErrors() && T.Code.find("vec2 t2 = Inputs.TexCoord.x > 0.5 ? t1 : t0;") != std::string::npos
                    && T.Code.find("if(") == std::string::npos, "a ternary Branch is one expression, both sides computed before it");
             Expect(S->DescribeNode(Ternary, *Ternary.FindNode(Id(5))) == "vec2 \xC2\xB7 A > B \xC2\xB7 ? :",
                    "a ternary Branch says so in its header");
@@ -981,7 +1048,7 @@ namespace
             Connect(Dynamic, 3, "Out", 7, "Count");
             CompileResult Good;
             CompileGraph(Dynamic, Good);
-            Expect(!Good.HasErrors() && Good.Code.find("< int(Interpolants.TexCoord.x);") != std::string::npos,
+            Expect(!Good.HasErrors() && Good.Code.find("< int(Inputs.TexCoord.x);") != std::string::npos,
                    "a linked Count is a run-time bound");
         }
         {
@@ -1048,7 +1115,8 @@ namespace
         CompileGraph(Cutout, R);
         Expect(!R.HasErrors(), "the cutout graph compiles");
         if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Cutout, R).c_str()); }
-        ExpectGolden("Cutout.fsh", R.Code);
+        ExpectGolden("Cutout.mtl.glsl", R.Code);
+        if(!R.Companions.empty()) { ExpectGolden("Cutout.material", R.Companions[0].second); }
 
         const size_t Discard = R.Code.find("if(t0 > 0.4) { discard; }");
         Expect(Discard != std::string::npos, "a Discard is an if around discard");
@@ -1360,6 +1428,437 @@ namespace
         }
     }
 
+    /*
+     * A Lit, Masked material whose surface and World Position Offset share a
+     * value: Height * sin(Time) moves each vertex along its normal and is the
+     * Roughness too. BaseColor is a Color parameter times the vertex colour;
+     * Opacity Mask is the UV's x.
+     */
+    Graph MakeWaveGraph()
+    {
+        Graph G;
+        G.SchemaName = "Material";
+        G.Name       = "Wave";
+
+        Node& Output = AddNode(G, 1, "Output.Material", 700, 0);
+        Output.Properties["Domain"]    = "Masked";
+        Output.Properties["MaxOffset"] = "2";
+        AddNode(G, 2, "Input.Time", -400, 0);
+        AddNode(G, 3, "Math.Sin", -250, 0);
+        Node& Height = AddNode(G, 4, "Parameter", -250, 120);
+        Height.Properties["Name"]    = "Height";
+        Height.Properties["Default"] = "0.5";
+        Height.WildcardType          = "float";
+        AddNode(G, 5, "Math.Multiply", -100, 60);
+        AddNode(G, 6, "Input.VertexNormal", -100, 200);
+        AddNode(G, 7, "Math.Multiply", 100, 200);
+        Node& Color = AddNode(G, 8, "Parameter", -100, -200);
+        Color.Properties["Name"]    = "Color";
+        Color.Properties["Default"] = "0.2 0.6 1";
+        Color.WildcardType          = "vec3";
+        AddNode(G, 9, "Input.VertexColor", -100, -100);
+        AddNode(G, 10, "Math.Multiply", 100, -150);
+        AddNode(G, 11, "Input.TexCoord", 100, 350);
+        AddNode(G, 12, "Vector.Split", 300, 350);
+
+        Connect(G, 2, "Time", 3, "X");
+        Connect(G, 4, "Value", 5, "A");
+        Connect(G, 3, "Out", 5, "B");
+        Connect(G, 6, "Normal", 7, "A");
+        Connect(G, 5, "Out", 7, "B");
+        Connect(G, 7, "Out", 1, "WorldPositionOffset");
+        Connect(G, 5, "Out", 1, "Roughness");
+        Connect(G, 8, "Value", 10, "A");
+        Connect(G, 9, "RGB", 10, "B");
+        Connect(G, 10, "Out", 1, "BaseColor");
+        Connect(G, 11, "UV", 12, "Vector");
+        Connect(G, 12, "X", 1, "OpacityMask");
+        return G;
+    }
+
+    size_t Count(const std::string& InText, const std::string& InWhat)
+    {
+        size_t Found = 0;
+        for(size_t At = InText.find(InWhat); At != std::string::npos; At = InText.find(InWhat, At + 1)) { ++Found; }
+        return Found;
+    }
+
+    void TestMaterialStages()
+    {
+        std::printf("[material stages]\n");
+
+        const Graph Wave = MakeWaveGraph();
+        CompileResult R;
+        CompileGraph(Wave, R);
+        Expect(!R.HasErrors(), "the Wave graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Wave, R).c_str()); }
+        ExpectGolden("Wave.mtl.glsl", R.Code);
+        const std::string Data = R.Companions.empty() ? std::string() : R.Companions[0].second;
+        if(!Data.empty()) { ExpectGolden("Wave.material", Data); }
+
+        Expect(R.Code.find("vec3 CalcMaterialOffset(in MaterialInputs Inputs)") != std::string::npos
+               && R.Code.find("#if VERTEX_SHADER") != std::string::npos, "World Position Offset makes a vertex function");
+        Expect(Count(R.Code, "sin(Scene_Time.x)") == 2, "a value both stages use is computed in each");
+        Expect(R.Code.find("Surface.BaseColor = ") != std::string::npos && R.Code.find("Surface.Roughness = ") != std::string::npos
+               && R.Code.find("Surface.OpacityMask = ") != std::string::npos, "each linked pin sets its surface field");
+        Expect(R.Code.find("Surface.Metallic") == std::string::npos, "an unset pin keeps the template's default");
+        Expect(R.Code.find("Inputs.Color.rgb") != std::string::npos && R.Code.find("Inputs.WorldNormal") != std::string::npos,
+               "Vertex Color and Vertex Normal read MaterialInputs");
+        Expect(Data.find("Domain Masked") != std::string::npos && Data.find("Shading Lit") != std::string::npos
+               && Data.find("HasOffset 1") != std::string::npos && Data.find("MaxOffset 2") != std::string::npos,
+               "the .material describes the domain, shading and offset");
+        Expect(Data.find("Param Color vec3 32") != std::string::npos && Data.find("Param Height float 44") != std::string::npos
+               && Data.find("BlockSize 48") != std::string::npos, "a float packs into a vec3's last four bytes (std140)");
+
+        {
+            /* std140 alignment: float 4, vec2 8, vec3 and vec4 16. */
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Layout";
+            AddNode(G, 1, "Output.Material");
+            const char* Names[] = { "A", "B", "C", "D" };
+            const char* Types[] = { "float", "vec3", "vec2", "vec4" };
+            for(uint64_t Index = 0; Index < 4; ++Index)
+            {
+                Node& Added = AddNode(G, 50 + Index, "Parameter");
+                Added.Properties["Name"] = Names[Index];
+                Added.WildcardType       = Types[Index];
+            }
+            CompileResult Layout;
+            CompileGraph(G, Layout);
+            const std::string Text = Layout.Companions.empty() ? std::string() : Layout.Companions[0].second;
+            Expect(!Layout.HasErrors() && Text.find("Param A float 32") != std::string::npos
+                   && Text.find("Param B vec3 48") != std::string::npos && Text.find("Param C vec2 64") != std::string::npos
+                   && Text.find("Param D vec4 80") != std::string::npos, "each parameter sits at its std140 offset");
+        }
+
+        // --- Stage restrictions ------------------------------------------------------
+        const Schema* S = FindSchema("Material");
+        {
+            Graph G = MakeWaveGraph();
+            AddNode(G, 20, "Input.PixelDepth");
+            const Node& Depth  = *G.FindNode(Id(20));
+            const Node& Offset = *G.FindNode(Id(7));
+            const Node& Base   = *G.FindNode(Id(10));
+            const Node& Shared = *G.FindNode(Id(5));
+
+            std::string Why;
+            Expect(!S->CanLinkStages(G, Depth, Offset, "B", &Why) && Why.find("vertex") != std::string::npos,
+                   "Pixel Depth cannot be linked toward World Position Offset");
+            Expect(!S->CanLinkStages(G, Depth, Shared, "A"), "nor into a node that reaches it further on");
+            Expect(S->CanLinkStages(G, Depth, Base, "A"), "but it can feed the surface");
+            Expect(S->GetRequiredStages(G, Shared, "A") == 3u, "a value both stages use needs both");
+
+            Connect(G, 20, "Linear", 5, "A");   // what the editor refuses, as a file could hold it
+            G.Links.erase(std::remove_if(G.Links.begin(), G.Links.end(),
+                                         [](const Link& L) { return L.From.Node == Id(4); }), G.Links.end());
+            CompileResult Bad;
+            CompileGraph(G, Bad);
+            Expect(HasErrorOn(Bad, Id(20)) && Bad.Code.empty(), "a pixel-only node feeding the vertex stage is an error on it");
+        }
+        {
+            Graph G = MakeWaveGraph();
+            G.FindNode(Id(1))->Properties["Shading"] = "Unlit";
+            CompileResult Unlit;
+            CompileGraph(G, Unlit);
+            bool bWarned = false;
+            for(const Diagnostic& Each : Unlit.Diagnostics)
+            {
+                bWarned |= Each.Severity == ESeverity::Warning && Each.Pin == "BaseColor";
+            }
+            Expect(!Unlit.HasErrors() && bWarned, "a pin the shading ignores is a warning");
+        }
+        {
+            Graph G = MakeWaveGraph();
+            G.FindNode(Id(1))->Properties["Domain"] = "PostProcess";
+            CompileResult Post;
+            CompileGraph(G, Post);
+            Expect(HasErrorOn(Post, Id(1)), "a PostProcess material is Unlit and has no offset");
+        }
+        {
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Invert";
+            Node& Output = AddNode(G, 1, "Output.Material");
+            Output.Properties["Domain"]  = "PostProcess";
+            Output.Properties["Shading"] = "Unlit";
+            AddNode(G, 2, "Input.SceneTexture");
+            AddNode(G, 3, "Math.OneMinus");
+            Connect(G, 2, "Color", 3, "X");
+            Connect(G, 3, "Out", 1, "Emissive");
+            CompileResult Post;
+            CompileGraph(G, Post);
+            Expect(!Post.HasErrors() && Post.Code.find("texture(Material_SceneColor, Inputs.TexCoord)") != std::string::npos,
+                   "Scene Texture reads the scene in a PostProcess material");
+
+            G.FindNode(Id(1))->Properties["Domain"] = "Opaque";
+            CompileResult Opaque;
+            CompileGraph(G, Opaque);
+            Expect(HasErrorOn(Opaque, Id(2)), "and is an error anywhere else");
+        }
+        {
+            Graph G = MakeWaveGraph();
+            AddNode(G, 30, "Output.Pixel");
+            CompileResult Two;
+            CompileGraph(G, Two);
+            Expect(Two.HasErrors(), "a material has one output node");
+        }
+    }
+
+    /*
+     * Textures: a Brick Texture Object (20) read by two Texture Samples (one
+     * slot, two samples; RGB and A of the first share one); Brick again,
+     * Nearest and Clamp (21), sampled at UV * 4 (a second slot); and a height
+     * map with a space in its path (22) moving each vertex along its normal
+     * (the vertex stage: textureLod).
+     */
+    Graph MakeTexturedGraph()
+    {
+        Graph G;
+        G.SchemaName = "Material";
+        G.Name       = "Textured";
+
+        Node& Output = AddNode(G, 1, "Output.Material", 700, 0);
+        Output.Properties["MaxOffset"] = "1";
+        AddNode(G, 2, "Texture.Sample", 300, -200).Version = 2;
+        AddNode(G, 3, "Texture.Sample", 300, 0).Version = 2;
+        AddNode(G, 4, "Input.TexCoord", -100, 200);
+        AddNode(G, 5, "Math.Multiply", 100, 200).Constants["B"] = "4";
+        AddNode(G, 6, "Texture.Sample", 300, 200).Version = 2;
+        AddNode(G, 7, "Texture.Sample", 300, 400).Version = 2;
+        AddNode(G, 8, "Math.Multiply", 500, 400);
+        AddNode(G, 9, "Input.VertexNormal", 300, 550);
+        AddNode(G, 20, "Texture.Object", 0, -100).Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+        Node& Tiled = AddNode(G, 21, "Texture.Object", 0, 200);
+        Tiled.Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+        Tiled.Properties["Filter"]  = "Nearest";
+        Tiled.Properties["Wrap"]    = "Clamp";
+        AddNode(G, 22, "Texture.Object", 0, 400).Properties["Texture"] = "Content/Textures/Height Map.nmtexture";
+
+        Connect(G, 20, "Texture", 2, "Texture");
+        Connect(G, 20, "Texture", 3, "Texture");
+        Connect(G, 21, "Texture", 6, "Texture");
+        Connect(G, 22, "Texture", 7, "Texture");
+        Connect(G, 2, "RGB", 1, "BaseColor");
+        Connect(G, 2, "A", 1, "AmbientOcclusion");
+        Connect(G, 3, "R", 1, "Roughness");
+        Connect(G, 4, "UV", 5, "A");
+        Connect(G, 5, "Out", 6, "UV");
+        Connect(G, 6, "G", 1, "Metallic");
+        Connect(G, 9, "Normal", 8, "A");
+        Connect(G, 7, "R", 8, "B");
+        Connect(G, 8, "Out", 1, "WorldPositionOffset");
+        return G;
+    }
+
+    void TestTextureSample()
+    {
+        std::printf("[texture sample]\n");
+
+        const Graph Textured = MakeTexturedGraph();
+        CompileResult R;
+        CompileGraph(Textured, R);
+        Expect(!R.HasErrors(), "the Textured graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Textured, R).c_str()); }
+        ExpectGolden("Textured.mtl.glsl", R.Code);
+        const std::string Data = R.Companions.empty() ? std::string() : R.Companions[0].second;
+        if(!Data.empty()) { ExpectGolden("Textured.material", Data); }
+
+        Expect(Count(R.Code, "MATERIAL_SAMPLER2D(") == 3 && R.Code.find("MATERIAL_SAMPLER2D(5, Material_Texture1)") != std::string::npos
+               && R.Code.find("MATERIAL_SAMPLER2D(7, Material_Texture3)") != std::string::npos,
+               "each Texture Object with its own texture and sampler is one slot, from slot 1 (binding 5)");
+        Expect(Count(R.Code, "texture(Material_Texture1, Inputs.TexCoord)") == 2,
+               "two Texture Samples read one Texture Object, a sample each; one node's RGB and A share its sample");
+        Expect(R.Code.find("texture(Material_Texture2, t") != std::string::npos, "a linked UV is sampled at");
+        Expect(R.Code.find("textureLod(Material_Texture3, Inputs.TexCoord, 0.0)") != std::string::npos
+               && R.Code.find("texture(Material_Texture3") == std::string::npos,
+               "World Position Offset reads level 0 (the vertex stage has no derivatives)");
+        Expect(Data.find("Texture 1 Default Default Content/Textures/Brick.nmtexture\n") != std::string::npos
+               && Data.find("Texture 2 Nearest Clamp Content/Textures/Brick.nmtexture\n") != std::string::npos
+               && Data.find("Texture 3 Default Default Content/Textures/Height Map.nmtexture\n") != std::string::npos,
+               "the .material names each slot's file and the sampler settings its Texture Object overrides");
+
+        const Schema* Material = FindSchema("Material");
+        const NodeDefinition* Def = Material ? Material->FindNode("Texture.Sample") : nullptr;
+        Expect(Def && Def->FindPin("UV") && Def->FindPin("UV")->Implicit == "Texture Coordinate",
+               "an unlinked UV is the texture coordinate, not a constant");
+        const PinTypeInfo* TextureType = Material ? Material->FindType("texture") : nullptr;
+        Expect(Def && Def->FindPin("Texture") && Def->FindPin("Texture")->Type == "texture" && TextureType && !TextureType->bHasLiteral
+               && !Material->CanConvert("texture", "vec4") && !Material->CanConvert("vec4", "texture"),
+               "a Texture Sample's Texture is a texture: linked from a Texture Object, never a value");
+        Expect(Material && Material->DescribeNode(Textured, *Textured.FindNode(Id(21))).find("Nearest") != std::string::npos
+               && Material->DescribeNode(Textured, *Textured.FindNode(Id(21))).find("Clamp") != std::string::npos,
+               "a Texture Object describes the sampler settings it overrides");
+
+        {
+            /* One Texture Object, sampled twice at different UVs and once at its size's texel offset. */
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Blur";
+            AddNode(G, 1, "Output.Material").Properties["Shading"] = "Unlit";
+            AddNode(G, 2, "Texture.Object").Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+            AddNode(G, 3, "Texture.Sample").Version = 2;
+            AddNode(G, 4, "Texture.Sample").Version = 2;
+            AddNode(G, 5, "Input.TexCoord");
+            AddNode(G, 6, "Math.Divide").Constants["A"] = "1";
+            AddNode(G, 7, "Math.Add");
+            AddNode(G, 8, "Math.Add");
+            Connect(G, 2, "Texture", 3, "Texture");
+            Connect(G, 2, "Texture", 4, "Texture");
+            Connect(G, 2, "Size", 6, "B");
+            Connect(G, 5, "UV", 7, "A");
+            Connect(G, 6, "Out", 7, "B");
+            Connect(G, 7, "Out", 4, "UV");
+            Connect(G, 3, "RGB", 8, "A");
+            Connect(G, 4, "RGB", 8, "B");
+            Connect(G, 8, "Out", 1, "Emissive");
+            CompileResult Blur;
+            CompileGraph(G, Blur);
+            Expect(!Blur.HasErrors() && Count(Blur.Code, "MATERIAL_SAMPLER2D(") == 1
+                   && Count(Blur.Code, "texture(Material_Texture1, ") == 2
+                   && Blur.Code.find("textureSize(Material_Texture1, 0)") != std::string::npos,
+                   "one Texture Object, many samples at their own UVs: one slot; Size is its size in texels");
+            if(Blur.HasErrors()) { std::printf("%s\n", FormatDiagnostics(G, Blur).c_str()); }
+        }
+        {
+            Graph G = MakeTexturedGraph();
+            G.FindNode(Id(3))->Constants["UV"] = "0.5 0.25";
+            CompileResult Given;
+            CompileGraph(G, Given);
+            Expect(!Given.HasErrors() && Given.Code.find("texture(Material_Texture1, vec2(0.5, 0.25))") != std::string::npos,
+                   "a UV given a constant samples there");
+        }
+        {
+            Graph G = MakeTexturedGraph();
+            G.Links.erase(G.Links.begin());   // 20 -> 2's Texture
+            CompileResult Unlinked;
+            CompileGraph(G, Unlinked);
+            Expect(Unlinked.HasErrors(), "a Texture Sample with no Texture Object linked is an error");
+        }
+        {
+            /* Two Texture Objects naming the same texture and sampler share a slot. */
+            Graph G = MakeTexturedGraph();
+            G.FindNode(Id(22))->Properties["Texture"] = "Content/Textures/Brick.nmtexture";
+            CompileResult Shared;
+            CompileGraph(G, Shared);
+            Expect(!Shared.HasErrors() && Count(Shared.Code, "MATERIAL_SAMPLER2D(") == 2
+                   && Shared.Code.find("textureLod(Material_Texture1, ") != std::string::npos,
+                   "two Texture Objects with the same texture and sampler are one slot");
+        }
+        {
+            Graph G = MakeTexturedGraph();
+            G.FindNode(Id(20))->Properties["Texture"] = "";
+            CompileResult Empty;
+            CompileGraph(G, Empty);
+            Expect(Empty.HasErrors(), "a Texture Object without a texture is an error");
+        }
+        {
+            Graph G = MakeTexturedGraph();
+            G.FindNode(Id(20))->Properties["Texture"] = "Content/Textures/Brick.png";
+            CompileResult Wrong;
+            CompileGraph(G, Wrong);
+            Expect(Wrong.HasErrors(), "a texture must be a .nmtexture");
+        }
+        {
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Many";
+            AddNode(G, 1, "Output.Material");
+            for(uint64_t Index = 0; Index < 8; ++Index)
+            {
+                AddNode(G, 10 + Index, "Texture.Object").Properties["Texture"] = "Content/T" + std::to_string(Index) + ".nmtexture";
+            }
+            CompileResult Eight;
+            CompileGraph(G, Eight);
+            Expect(Eight.HasErrors(), "eight distinct textures are one more than a material's seven slots");
+            G.Nodes.pop_back();
+            CompileResult Seven;
+            CompileGraph(G, Seven);
+            Expect(!Seven.HasErrors() && Count(Seven.Code, "MATERIAL_SAMPLER2D(") == 7, "seven fit");
+        }
+        {
+            /* A PostProcess material's scene is slot 0; its textures start at 1 all the same. */
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Overlay";
+            Node& Out = AddNode(G, 1, "Output.Material");
+            Out.Properties["Domain"]  = "PostProcess";
+            Out.Properties["Shading"] = "Unlit";
+            AddNode(G, 2, "Texture.Sample").Version = 2;
+            AddNode(G, 5, "Texture.Object").Properties["Texture"] = "Content/Textures/Vignette.nmtexture";
+            AddNode(G, 3, "Input.SceneTexture");
+            AddNode(G, 4, "Math.Multiply");
+            Connect(G, 5, "Texture", 2, "Texture");
+            Connect(G, 3, "Color", 4, "A");
+            Connect(G, 2, "RGBA", 4, "B");
+            Connect(G, 4, "Out", 1, "Emissive");
+            CompileResult Post;
+            CompileGraph(G, Post);
+            Expect(!Post.HasErrors() && Post.Code.find("MATERIAL_SAMPLER2D(5, Material_Texture1)") != std::string::npos,
+                   "a PostProcess material samples textures beside the scene");
+        }
+        {
+            /*
+             * A graph from before Texture Objects: version 1 Texture Samples
+             * named their texture themselves. Reading it gives each distinct
+             * texture and sampler a Texture Object, linked in, and compiles as
+             * before -- the same way every time it is read.
+             */
+            const std::string Old =
+                "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"Material\">\n<Nodes>\n"
+                "<Node Id=\"00000000000000000000000000000001\" Type=\"Output.Material\" Version=\"1\" X=\"400\" Y=\"0\" />\n"
+                "<Node Id=\"00000000000000000000000000000002\" Type=\"Texture.Sample\" Version=\"1\" X=\"0\" Y=\"0\">\n"
+                "  <Prop Name=\"Texture\" Value=\"Content/Textures/Brick.nmtexture\" /></Node>\n"
+                "<Node Id=\"00000000000000000000000000000003\" Type=\"Texture.Sample\" Version=\"1\" X=\"0\" Y=\"200\">\n"
+                "  <Prop Name=\"Texture\" Value=\"Content/Textures/Brick.nmtexture\" /></Node>\n"
+                "<Node Id=\"00000000000000000000000000000004\" Type=\"Texture.Sample\" Version=\"1\" X=\"0\" Y=\"400\">\n"
+                "  <Prop Name=\"Texture\" Value=\"Content/Textures/Brick.nmtexture\" /><Prop Name=\"Filter\" Value=\"Nearest\" /></Node>\n"
+                "</Nodes>\n<Links>\n"
+                "<Link From=\"00000000000000000000000000000002.RGB\" To=\"00000000000000000000000000000001.BaseColor\" />\n"
+                "<Link From=\"00000000000000000000000000000003.R\" To=\"00000000000000000000000000000001.Roughness\" />\n"
+                "<Link From=\"00000000000000000000000000000004.G\" To=\"00000000000000000000000000000001.Metallic\" />\n"
+                "</Links>\n</NodeGraph>\n";
+            Graph Upgraded, Again;
+            std::string Error;
+            std::vector<std::string> Warnings;
+            const bool bRead = ReadGraphText(Old, Upgraded, Error, &Warnings) && ReadGraphText(Old, Again, Error);
+
+            size_t Objects = 0, Samples = 0, Leftover = 0;
+            for(const Node& Each : Upgraded.Nodes)
+            {
+                Objects += Each.Type == "Texture.Object";
+                if(Each.Type == "Texture.Sample")
+                {
+                    ++Samples;
+                    Leftover += Each.Version != 2 || Each.Properties.count("Texture") || Each.Properties.count("Filter");
+                }
+            }
+            Expect(bRead && Objects == 2 && Samples == 3 && Leftover == 0,
+                   "an old graph's Texture Samples gain a Texture Object per distinct texture and sampler");
+            bool bSameIds = Upgraded.Nodes.size() == Again.Nodes.size();
+            for(size_t Index = 0; bSameIds && Index < Upgraded.Nodes.size(); ++Index)
+            {
+                bSameIds = Upgraded.Nodes[Index].Id == Again.Nodes[Index].Id;
+            }
+            Expect(bSameIds, "and the same ones each time it is read, so slots stay put");
+            Expect(!Warnings.empty() && Warnings.back().find("Texture Object") != std::string::npos, "the reader says it upgraded");
+
+            CompileResult Compiled;
+            CompileGraph(Upgraded, Compiled);
+            const std::string Material = Compiled.Companions.empty() ? std::string() : Compiled.Companions[0].second;
+            Expect(!Compiled.HasErrors() && Count(Compiled.Code, "MATERIAL_SAMPLER2D(") == 2
+                   && Material.find("Nearest Default Content/Textures/Brick.nmtexture") != std::string::npos,
+                   "and compiles as it did");
+            if(Compiled.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Upgraded, Compiled).c_str()); }
+
+            /* Written back, it is the new form. */
+            const std::string Written = WriteGraphText(Upgraded);
+            Expect(Written.find("Type=\"Texture.Object\"") != std::string::npos
+                   && Written.find("Type=\"Texture.Sample\" Version=\"2\"") != std::string::npos,
+                   "saving writes the Texture Objects");
+        }
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -1401,6 +1900,8 @@ int main()
     TestComponentSelection();
     TestLogic();
     TestDiscard();
+    TestMaterialStages();
+    TestTextureSample();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

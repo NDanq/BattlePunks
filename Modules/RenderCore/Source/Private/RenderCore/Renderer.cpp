@@ -1,6 +1,7 @@
 #include "Public/RenderCore/Renderer.h"
 
 #include <cstring>
+#include <iterator>
 #include <type_traits>
 #include <vector>
 
@@ -116,6 +117,9 @@ namespace RenderCore
         }
 
         P->Bridge = new WorldBridge(*P->Scene);
+
+        /* The engine's own materials (DefaultLit) and shared vertex shaders. */
+        MountShaderCache("Engine");
         return true;
     }
 
@@ -231,7 +235,7 @@ namespace RenderCore
         }
 
         /* By value: commands capture trivially copyable values only. */
-        struct NameBuffer { char Text[RENDER_MATERIAL_NAME_MAX]; };
+        struct NameBuffer { char Text[RENDER_MATERIAL_PATH_MAX]; };
         NameBuffer Name{};
         const size_t Length = InName ? std::strlen(InName) : 0;
         if(Length >= sizeof(Name.Text))
@@ -249,7 +253,7 @@ namespace RenderCore
     uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
     {
         const size_t Length = InName ? std::strlen(InName) : 0;
-        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_NAME_MAX)
+        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_PATH_MAX)
         {
             return 0;
         }
@@ -257,12 +261,49 @@ namespace RenderCore
         MaterialPreviewRequest Request;
         Request.Request = ++P->LastPreviewRequest;
         std::memcpy(Request.Material, InName, Length);
-        Request.Size    = InSize;
+        Request.Width   = InSize;
+        Request.Height  = InSize;
         Request.Tint    = InTint;
         Request.Mailbox = &P->Previews;
 
         RenderScene* Scene = P->Scene;
         ENQUEUE_RENDER_COMMAND(AddMaterialPreview)([Scene, Request](RenderContext&)
+        {
+            Scene->AddMaterialPreview(Request);
+        });
+        return Request.Request;
+    }
+
+    uint64_t Renderer::RequestMeshPreview(const MeshPreview& InPreview)
+    {
+        MaterialPreviewRequest Request;
+        const auto Copy = [](const std::string& InText, char* OutBuffer, const size_t InCapacity)
+        {
+            if(InText.size() >= InCapacity) { return false; }
+            std::memcpy(OutBuffer, InText.data(), InText.size());
+            return true;
+        };
+        if(!P->Scene || !P->Thread.IsRunning() || InPreview.Mesh.empty()
+           || !Copy(InPreview.Mesh, Request.Mesh, sizeof(Request.Mesh))
+           || !Copy(InPreview.Material, Request.Material, sizeof(Request.Material)))
+        {
+            return 0;
+        }
+        for(size_t Slot = 0; Slot < InPreview.Sections.size() && Slot < std::size(Request.Slots); ++Slot)
+        {
+            if(!Copy(InPreview.Sections[Slot], Request.Slots[Slot], sizeof(Request.Slots[Slot]))) { return 0; }
+        }
+        Request.Request = ++P->LastPreviewRequest;
+        Request.Width   = InPreview.Width;
+        Request.Height  = InPreview.Height;
+        Request.Yaw     = InPreview.Yaw;
+        Request.Pitch   = InPreview.Pitch;
+        Request.Zoom    = InPreview.Zoom;
+        Request.Tint    = InPreview.Tint;
+        Request.Mailbox = &P->Previews;
+
+        RenderScene* Scene = P->Scene;
+        ENQUEUE_RENDER_COMMAND(AddMeshPreview)([Scene, Request](RenderContext&)
         {
             Scene->AddMaterialPreview(Request);
         });
@@ -283,6 +324,49 @@ namespace RenderCore
         }
     }
 #endif // WITH_EDITOR
+
+    namespace
+    {
+        /* A module name, by value for a command's capture. */
+        struct ModuleName
+        {
+            char Text[64] = {};
+
+            bool Set(const char* InName)
+            {
+                const size_t Length = InName ? std::strlen(InName) : 0;
+                if(Length == 0 || Length >= sizeof(Text)) { return false; }
+                std::memcpy(Text, InName, Length);
+                return true;
+            }
+        };
+    }
+
+    void Renderer::MountShaderCache(const char* InModule)
+    {
+        ModuleName Name;
+        if(!P->Thread.IsRunning() || !Name.Set(InModule))
+        {
+            return;
+        }
+        ENQUEUE_RENDER_COMMAND(MountShaderCache)([Name](RenderContext& Ctx)
+        {
+            Ctx.MountShaderCache(Name.Text);
+        });
+    }
+
+    void Renderer::UnmountShaderCache(const char* InModule)
+    {
+        ModuleName Name;
+        if(!P->Thread.IsRunning() || !Name.Set(InModule))
+        {
+            return;
+        }
+        ENQUEUE_RENDER_COMMAND(UnmountShaderCache)([Name](RenderContext& Ctx)
+        {
+            Ctx.UnmountShaderCache(Name.Text);
+        });
+    }
 
     void Renderer::EndFrame(const FrameInfo& InFrame)
     {

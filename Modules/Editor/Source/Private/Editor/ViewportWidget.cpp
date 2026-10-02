@@ -946,7 +946,7 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
 
         const double HitX = LocalOrigin.GetX() + LocalDir.GetX() * T;
         const double HitY = LocalOrigin.GetY() + LocalDir.GetY() * T;
-        if(std::abs(HitX) <= 0.5 * double(InRender.Width) && std::abs(HitY) <= 0.5 * double(InRender.Height))
+        if(std::abs(HitX) <= 0.5 && std::abs(HitY) <= 0.5)   // the unit quad
         {
             BestT = T;
             Best  = InEntity.GetID();

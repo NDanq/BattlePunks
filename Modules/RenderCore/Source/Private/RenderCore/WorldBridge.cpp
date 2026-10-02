@@ -1,7 +1,9 @@
 #include "Private/RenderCore/WorldBridge.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstring>
+#include <vector>
 
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/Components.h"
@@ -253,6 +255,78 @@ namespace RenderCore
         return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, -1.0f, 1000.0f);
     }
 
+    RenderLighting WorldBridge::BuildLighting() const
+    {
+        RenderLighting Lighting;
+        if(!BoundWorld)
+        {
+            return Lighting;
+        }
+
+        if(ComponentPool* Pool = BoundWorld->FindPool(DirectionalLightComponent::StaticType().ID))
+        {
+            const auto* Lights = static_cast<const DirectionalLightComponent*>(Pool->GetDenseData());
+            for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+            {
+                if(!Lights[Index].bActive) { continue; }
+                Lighting.LightDirection = Lights[Index].Direction;
+                Lighting.LightColor     = Lights[Index].Color;
+                Lighting.LightIntensity = Lights[Index].Intensity;
+                break;
+            }
+        }
+
+        if(ComponentPool* Pool = BoundWorld->FindPool(SkyLightComponent::StaticType().ID))
+        {
+            const auto* Skies = static_cast<const SkyLightComponent*>(Pool->GetDenseData());
+            for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+            {
+                if(!Skies[Index].bActive) { continue; }
+                Lighting.SkyColor     = Skies[Index].SkyColor;
+                Lighting.GroundColor  = Skies[Index].GroundColor;
+                Lighting.SkyIntensity = Skies[Index].Intensity;
+                break;
+            }
+        }
+        return Lighting;
+    }
+
+    RenderPostProcess WorldBridge::BuildPostProcess() const
+    {
+        RenderPostProcess List;
+        ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(PostProcessComponent::StaticType().ID) : nullptr;
+        if(!Pool)
+        {
+            return List;
+        }
+
+        const auto* Passes = static_cast<const PostProcessComponent*>(Pool->GetDenseData());
+        std::vector<const PostProcessComponent*> Enabled;
+        for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+        {
+            if(Passes[Index].bEnabled && Passes[Index].Material[0] != '\0') { Enabled.push_back(&Passes[Index]); }
+        }
+        std::stable_sort(Enabled.begin(), Enabled.end(), [](const PostProcessComponent* InA, const PostProcessComponent* InB)
+        {
+            return InA->Priority < InB->Priority;
+        });
+
+        if(Enabled.size() > RENDER_POST_PROCESS_MAX)
+        {
+            RENDERCORE_LOG_WARN("WorldBridge: " + std::to_string(Enabled.size()) + " Post Process components are enabled; "
+                                "only the first " + std::to_string(RENDER_POST_PROCESS_MAX) + " by Priority run")
+        }
+        for(const PostProcessComponent* Each : Enabled)
+        {
+            if(List.Count == RENDER_POST_PROCESS_MAX) { break; }
+            static_assert(sizeof(List.Materials[0]) == sizeof(Each->Material), "a post-process name fits its slot");
+            std::memcpy(List.Materials[List.Count], Each->Material, sizeof(List.Materials[0]));
+            List.Materials[List.Count][sizeof(List.Materials[0]) - 1] = '\0';
+            ++List.Count;
+        }
+        return List;
+    }
+
     void WorldBridge::ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride)
     {
         if(!BoundWorld)
@@ -352,11 +426,15 @@ namespace RenderCore
 
         RenderView View = InViewOverride ? *InViewOverride : BuildView(InFrame);
         View.ViewportPixels = InFrame.ViewportPixels;   // the render targets are sized from this
+        const RenderLighting    Lighting    = BuildLighting();
+        const RenderPostProcess PostProcess = BuildPostProcess();
         RenderScene* SceneCapture = Scene;
 
-        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View](RenderContext& Ctx)
+        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View, Lighting, PostProcess](RenderContext& Ctx)
         {
             SceneCapture->SetView(View);
+            SceneCapture->SetLighting(Lighting);
+            SceneCapture->SetPostProcess(PostProcess);
             SceneCapture->Render(Ctx);
         });
     }

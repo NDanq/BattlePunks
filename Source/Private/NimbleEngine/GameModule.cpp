@@ -9,6 +9,7 @@
 #include "Public/Core/CoreMemory.h"
 #include "Public/Core/CoreModuleManager.h"
 #include "Public/GameWindow/GameWindowSystem.h"
+#include "Public/RenderCore/Renderer.h"
 
 /* Set in the game's Config/DefaultEngine.ini so launcher and editor agree. */
 NIMBLE_CONFIG_STRING(GGameModule,     "Game", "Module",     "", nullptr);
@@ -80,6 +81,12 @@ namespace NimbleEngine
         Game       = Loaded;
         ModuleName = Name;
         CORE_LOG("GameModuleHost: loaded game module '" + Name + "' " + Modules->GetModuleVersionString(Name))
+
+        /* Its cooked materials: a file layer the renderer owns, not the DLL. */
+        if(Rendering)
+        {
+            Rendering->MountShaderCache(Name.c_str());
+        }
         return true;
     }
 
@@ -90,6 +97,10 @@ namespace NimbleEngine
             return;
         }
         Game = nullptr;
+        if(Rendering)
+        {
+            Rendering->UnmountShaderCache(ModuleName.c_str());
+        }
         Modules->UnloadModule(ModuleName);     // OnShutdown unregisters the levels
         Modules->UnregisterModule(ModuleName);
         ModuleName.clear();

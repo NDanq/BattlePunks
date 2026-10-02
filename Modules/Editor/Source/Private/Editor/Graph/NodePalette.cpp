@@ -78,6 +78,19 @@ NodePalette::NodePalette(const GraphDocument& InDocument, const bool bInFromPin,
     std::vector<std::string> Present;
     for(const Node& Each : G.Nodes) { Present.push_back(Each.Type); }
 
+    /* Dragged from an input: the new node feeds it, so it must be computable
+     * in every stage that input leads to (a material's vertex stage). */
+    const Node* FromNode = bInFromPin ? G.FindNode(InFromPin.Node) : nullptr;
+    const uint32_t Required = FromNode && FromPin && FromPin->IsInput() ? S.GetRequiredStages(G, *FromNode, FromPin->Name) : 0u;
+    const auto StageProblem = [&](const NodeDefinition& InDef) -> QString
+    {
+        const uint32_t Missing = Required & ~InDef.StageMask;
+        if(Missing == 0) { return QString(); }
+        uint32_t Bit = 1;
+        while(!(Missing & Bit)) { Bit <<= 1; }
+        return QStringLiteral("Not available in the %1 stage, which this input leads to").arg(ToQ(S.GetStageName(Bit)));
+    };
+
     for(const NodeDefinition& Def : S.GetNodes())
     {
         if(Def.bUnique && std::find(Present.begin(), Present.end(), Def.Type) != Present.end()) { continue; }
@@ -109,10 +122,11 @@ NodePalette::NodePalette(const GraphDocument& InDocument, const bool bInFromPin,
         if(FromPin && !CanJoin(S, Def, std::string(), *FromPin, FromType)) { continue; }
 
         Entry Added;
-        Added.Type     = Def.Type;
-        Added.Label    = ToQ(Def.DisplayName);
-        Added.Category = ToQ(Def.Category);
-        Added.Tooltip  = ToQ(Def.Tooltip);
+        Added.Type        = Def.Type;
+        Added.Label       = ToQ(Def.DisplayName);
+        Added.Category    = ToQ(Def.Category);
+        Added.Tooltip     = ToQ(Def.Tooltip);
+        Added.Unavailable = StageProblem(Def);
         for(const PropertyDefinition& Property : Def.Properties)
         {
             if(!Property.Default.empty()) { Added.Properties[Property.Name] = Property.Default; }
@@ -180,8 +194,14 @@ void NodePalette::Refill(const QString& InFilter)
         QTreeWidgetItem* Folder = FolderFor(Each.Category);
         auto* Item = Folder ? new QTreeWidgetItem(Folder) : new QTreeWidgetItem(Tree);
         Item->setText(0, Each.Label);
-        Item->setToolTip(0, Each.Tooltip);
+        Item->setToolTip(0, Each.Unavailable.isEmpty() ? Each.Tooltip : Each.Unavailable);
         Item->setData(0, IndexRole, int(Index));
+        if(!Each.Unavailable.isEmpty())
+        {
+            /* Shown, so it is clear why it cannot be used here, but not choosable. */
+            Item->setFlags(Item->flags() & ~(Qt::ItemIsEnabled | Qt::ItemIsSelectable));
+            continue;
+        }
         if(!First) { First = Item; }
     }
 
@@ -201,6 +221,7 @@ void NodePalette::Choose(QTreeWidgetItem* InItem)
 {
     if(!InItem || !InItem->data(0, IndexRole).isValid()) { return; }
     const Entry& Picked = Entries[size_t(InItem->data(0, IndexRole).toInt())];
+    if(!Picked.Unavailable.isEmpty()) { return; }
     emit Chosen(Picked.Type, Picked.Properties);
     close();
 }

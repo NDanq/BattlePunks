@@ -50,6 +50,47 @@ void OpenGLDynamicGDI::SetBoundShader(GDIShader *In_VS, GDIShader *In_PS)
     }
 }
 
+void OpenGLDynamicGDI::DrawObject(GDIViewObject* InObject, GDIView* InView)
+{
+    if(IsMaterialDraw())
+    {
+        ApplyMaterialBindings();
+    }
+    GDIDynamicDriver::DrawObject(InObject, InView);
+}
+
+void OpenGLDynamicGDI::ApplyMaterialBindings()
+{
+    if(!MaterialUBOs[0])
+    {
+        glGenBuffers(2, MaterialUBOs);
+    }
+
+    for(uint Block = 0; Block < 2; ++Block)
+    {
+        const std::vector<uint8_t>& Bytes = MaterialBlocks[Block];
+        const GLsizeiptr Size = Bytes.empty() ? 16 : GLsizeiptr(Bytes.size());
+
+        /* Orphaned per draw, so the driver never stalls on the previous draw's copy. */
+        glBindBuffer(GL_UNIFORM_BUFFER, MaterialUBOs[Block]);
+        glBufferData(GL_UNIFORM_BUFFER, Size, nullptr, GL_STREAM_DRAW);
+        if(!Bytes.empty())
+        {
+            glBufferSubData(GL_UNIFORM_BUFFER, 0, Size, Bytes.data());
+        }
+        glBindBufferBase(GL_UNIFORM_BUFFER, GDI_MATERIAL_BLOCK_BINDING + Block, MaterialUBOs[Block]);
+    }
+    glBindBuffer(GL_UNIFORM_BUFFER, 0);
+
+    for(uint Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
+    {
+        const auto* Texture = dynamic_cast<const OpenGLTextureResource*>(MaterialTextures[Slot]);
+        glActiveTexture(GL_TEXTURE0 + GDI_MATERIAL_TEXTURE_BINDING + Slot);
+        glBindTexture(GL_TEXTURE_2D, Texture ? Texture->TextureHandle : 0);
+    }
+    glActiveTexture(GL_TEXTURE0);
+}
+
 OpenGLShaderResource::OpenGLShaderResource(EShaderType InShaderType, const std::string& SrcCodePath) :
     GDIShaderResource(InShaderType, SrcCodePath)
 {

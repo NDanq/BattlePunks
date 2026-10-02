@@ -25,8 +25,10 @@
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NodeGraph/GraphFile.h"
+#include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/Editor/EditorContext.h"
+#include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphDocument.h"
 #include "Private/Editor/Graph/GraphEditorTab.h"
 #include "Private/Editor/Graph/GraphEditorWindow.h"
@@ -85,11 +87,33 @@ namespace
         }
     }
 
-    /* Where a material's shader waits to be cooked: the cook names its
-     * output after the file, so the file is <Name>.fsh, in a folder of its own. */
-    QString CookSourcePath(const QString& InName)
+    /* A material's stem: its runtime path without the extension
+     * ("Materials/Glow"); where its cooked files go. Empty if not a graph path. */
+    QString MaterialStem(const QString& InMaterial)
     {
-        return QDir(QDir::temp().filePath(QStringLiteral("NimbleMaterialCook"))).filePath(InName + QStringLiteral(".fsh"));
+        const QString Extension = QString::fromLatin1(RenderCore::MATERIAL_GRAPH_EXTENSION);
+        return InMaterial.endsWith(Extension) ? InMaterial.left(InMaterial.size() - Extension.size()) : QString();
+    }
+
+    /* Where a material's function waits to be cooked: the cook names its
+     * permutations after the file, and reads <Name>.material beside it, so
+     * both go in a folder of their own, by stem. */
+    QString CookSourceDir()
+    {
+        return QDir::temp().filePath(QStringLiteral("NimbleMaterialCook"));
+    }
+
+    QString CookSourcePath(const QString& InMaterial)
+    {
+        return QDir(CookSourceDir()).filePath(MaterialStem(InMaterial) + QStringLiteral(".mtl.glsl"));
+    }
+
+    /* The folders the stem is in ("Materials"), which the cook puts its permutations below. */
+    QString CookSubdir(const QString& InMaterial)
+    {
+        const QString Stem = MaterialStem(InMaterial);
+        const qsizetype Slash = Stem.lastIndexOf(QLatin1Char('/'));
+        return Slash < 0 ? QString() : Stem.left(Slash);
     }
 
     void RunMaterialCook(const QString& InName, QObject* InContext, std::function<void(bool, const QString&)> InDone);
@@ -159,7 +183,7 @@ namespace
         Process->start(QString::fromUtf8(NIMBLEEDITOR_PYTHON),
                        { QString::fromUtf8(NIMBLEEDITOR_MATERIAL_CHECK_SCRIPT), QStringLiteral("-target"), Target,
                          QStringLiteral("-src"), CookSourcePath(InName), QStringLiteral("-out"), Out,
-                         QStringLiteral("-subdir"), QStringLiteral("Materials") });
+                         QStringLiteral("-subdir"), CookSubdir(InName) });
     }
 
     QString Canonical(const QString& InPath)
@@ -280,7 +304,14 @@ namespace EditorGraphs
         return Filters.join(QStringLiteral(";;"));
     }
 
-    bool WriteOutput(const QString& InGraphPath, const Graph& InGraph, CompileResult& OutResult, QString& OutMessage,
+    bool CompileAndSave(const QString& InGraphPath, Graph& InOutGraph, CompileResult& OutResult, std::string& OutError)
+    {
+        CompileGraph(InOutGraph, OutResult);
+        StoreGeneratedCode(InOutGraph, OutResult);   // unchanged if it has errors
+        return SaveGraphFile(ToStd(InGraphPath), InOutGraph, OutError);
+    }
+
+    bool StageOutput(const QString& InGraphPath, const Graph& InGraph, const CompileResult& InResult, QString& OutMessage,
                      QObject* InContext, std::function<void(bool, const QString&)> InStaged)
     {
         const QString Name = QFileInfo(InGraphPath).fileName();
@@ -290,60 +321,44 @@ namespace EditorGraphs
             OutMessage = QStringLiteral("%1: unknown schema").arg(Name);
             return false;
         }
-
-        CompileGraph(InGraph, OutResult);
-        if(OutResult.HasErrors())
+        if(InResult.HasErrors())
         {
-            OutMessage = QStringLiteral("Saved %1 -- it has errors, so its output was not updated").arg(Name);
-            CORE_LOG_WARN("[Graph] " + FormatDiagnostics(InGraph, OutResult))
+            OutMessage = QStringLiteral("Saved %1 -- it has errors, so its generated code was not updated").arg(Name);
+            CORE_LOG_WARN("[Graph] " + FormatDiagnostics(InGraph, InResult))
             return false;
         }
 
-        const QString Output = ToQ(GetGraphOutputPath(ToStd(InGraphPath), *S));
-        std::string Error;
-        if(!WriteTextFileIfChanged(ToStd(Output), OutResult.Code, Error))
-        {
-            OutMessage = QStringLiteral("Saved %1, but could not write its output: %2").arg(Name, ToQ(Error));
-            CORE_LOG_ERROR("[Graph] " + ToStd(OutMessage))
-            return false;
-        }
-
-        for(const auto& Companion : OutResult.Companions)
-        {
-            const std::string CompanionPath = StripGraphExtension(ToStd(InGraphPath)) + Companion.first;
-            if(!WriteTextFileIfChanged(CompanionPath, Companion.second, Error))
-            {
-                OutMessage = QStringLiteral("Saved %1, but could not write %2: %3").arg(Name, ToQ(CompanionPath), ToQ(Error));
-                CORE_LOG_ERROR("[Graph] " + ToStd(OutMessage))
-                return false;
-            }
-        }
-
-        OutMessage = QStringLiteral("Saved %1 -> %2").arg(Name, QFileInfo(Output).fileName());
+        OutMessage = QStringLiteral("Saved %1 with its generated code").arg(Name);
 
         if(S->GetName() == "Material")
         {
-            /* By name, cooked for the viewport; see the header. */
-            const QString Material = GetMaterialName(InGraphPath);
-            if(InStaged)
+            /* By path, cooked for the viewport; see the header. */
+            const QString Material = GetMaterialPath(InGraphPath);
+            if(Material.isEmpty())
             {
-                StageMaterial(Material, OutResult, InContext ? InContext : qApp, std::move(InStaged));
+                OutMessage += QStringLiteral(" (outside the project: not staged)");
+            }
+            else if(InStaged)
+            {
+                StageMaterial(Material, InResult, InContext ? InContext : qApp, std::move(InStaged));
             }
             else
             {
-                StageMaterial(Material, OutResult, qApp, [Material](const bool bInWorked, const QString& InWhat)
+                StageMaterial(Material, InResult, qApp, [Material](const bool bInWorked, const QString& InWhat)
                 {
                     if(bInWorked) { CORE_LOG("[Graph] material '" + ToStd(Material) + "': " + ToStd(InWhat)) }
                 });
             }
-            OutMessage += QStringLiteral(" (cooking for the viewport)");
+            if(!Material.isEmpty()) { OutMessage += QStringLiteral(" (cooking for the viewport)"); }
         }
         else
         {
-            const QString Staged = StagedPathFor(Output);
+            /* The graph itself: the runtime runs its <gen_code>. */
+            const QString Staged = StagedPathFor(InGraphPath);
+            std::string Error;
             if(!Staged.isEmpty())
             {
-                if(WriteTextFileIfChanged(ToStd(Staged), OutResult.Code, Error)) { OutMessage += QStringLiteral(" (staged for Play)"); }
+                if(WriteTextFileIfChanged(ToStd(Staged), WriteGraphText(InGraph), Error)) { OutMessage += QStringLiteral(" (staged for Play)"); }
                 else { CORE_LOG_WARN("[Graph] could not stage " + ToStd(Staged) + ": " + Error) }
             }
         }
@@ -358,9 +373,10 @@ namespace EditorGraphs
         Context() = InContext;
     }
 
-    QString GetMaterialName(const QString& InGraphPath)
+    QString GetMaterialPath(const QString& InGraphPath)
     {
-        return ToQ(GetGraphBaseName(ToStd(InGraphPath)));
+        const QString Runtime = EditorContent::ToRuntimePath(InGraphPath);
+        return MaterialStem(Runtime).isEmpty() ? QString() : Runtime;
     }
 
     void StageMaterial(const QString& InName, const CompileResult& InResult, QObject* InContext,
@@ -374,26 +390,35 @@ namespace EditorGraphs
             Fail(QStringLiteral("the graph has errors"));
             return;
         }
-        if(InName.toUtf8().size() >= int(RenderCore::RENDER_MATERIAL_NAME_MAX))
+        const QString Stem = MaterialStem(InName);
+        if(Stem.isEmpty())
         {
-            Fail(QStringLiteral("the name '%1' is too long for a primitive to refer to").arg(InName));
+            Fail(QStringLiteral("'%1' is not a material graph's path").arg(InName));
+            return;
+        }
+        if(InName.toUtf8().size() >= int(RenderCore::RENDER_MATERIAL_PATH_MAX))
+        {
+            Fail(QStringLiteral("the path '%1' is too long for a primitive to refer to").arg(InName));
             return;
         }
 
-        /* The parameters, where RenderCore reads them... */
+        /* The description, where RenderCore reads it and beside the function
+         * for the cook (which picks the permutations from it)... */
         std::string Error;
         for(const auto& Companion : InResult.Companions)
         {
-            const QString Staged = QDir(QCoreApplication::applicationDirPath())
-                                   .filePath(QStringLiteral("Materials/") + InName + ToQ(Companion.first));
-            if(!WriteTextFileIfChanged(ToStd(Staged), Companion.second, Error))
+            for(const QString& Folder : { QCoreApplication::applicationDirPath(), CookSourceDir() })
             {
-                Fail(QStringLiteral("could not write %1: %2").arg(Staged, ToQ(Error)));
-                return;
+                const QString Staged = QDir(Folder).filePath(Stem + ToQ(Companion.first));
+                if(!WriteTextFileIfChanged(ToStd(Staged), Companion.second, Error))
+                {
+                    Fail(QStringLiteral("could not write %1: %2").arg(Staged, ToQ(Error)));
+                    return;
+                }
             }
         }
 
-        /* ...and the shader, where the cook picks it up. */
+        /* ...and the function, where the cook picks it up. */
         const QString Source = CookSourcePath(InName);
         if(!WriteTextFileIfChanged(ToStd(Source), InResult.Code, Error))
         {
@@ -413,14 +438,10 @@ namespace EditorGraphs
         RunMaterialCook(InName, InContext, std::move(InDone));
     }
 
-    void RequestMaterialPreview(const QString& InName, const int InSize, const QColor& InTint, QObject* InContext,
-                                std::function<void(const QImage&, const QString&)> InDone)
+    /* Polls the Renderer for InRequest's answer, giving up after a few
+     * seconds (a minimised editor renders nothing). */
+    static void PollPreview(const uint64_t Request, QObject* InContext, std::function<void(const QImage&, const QString&)> InDone)
     {
-        EditorContext* Ctx = Context();
-        const uint64_t Request = Ctx ? Ctx->RequestMaterialPreview(InName, InSize,
-                                           EngineCore::Color(uint8_t(InTint.red()), uint8_t(InTint.green()),
-                                                             uint8_t(InTint.blue()), uint8_t(InTint.alpha())))
-                                     : 0;
         if(Request == 0)
         {
             InDone(QImage(), QStringLiteral("The viewport's renderer is not running"));
@@ -450,22 +471,63 @@ namespace EditorGraphs
         Poll->start(20);
     }
 
+    static EngineCore::Color ToColor(const QColor& InColor)
+    {
+        return EngineCore::Color(uint8_t(InColor.red()), uint8_t(InColor.green()), uint8_t(InColor.blue()), uint8_t(InColor.alpha()));
+    }
+
+    void RequestMaterialPreview(const QString& InName, const int InSize, const QColor& InTint, QObject* InContext,
+                                std::function<void(const QImage&, const QString&)> InDone)
+    {
+        EditorContext* Ctx = Context();
+        PollPreview(Ctx ? Ctx->RequestMaterialPreview(InName, InSize, ToColor(InTint)) : 0, InContext, std::move(InDone));
+    }
+
+    void RequestMeshPreview(const MeshPreviewOptions& InOptions, QObject* InContext,
+                            std::function<void(const QImage&, const QString&)> InDone)
+    {
+        EditorContext* Ctx = Context();
+        PollPreview(Ctx ? Ctx->RequestMeshPreview(InOptions.Mesh, InOptions.Material, InOptions.Sections, InOptions.Width,
+                                                  InOptions.Height, InOptions.Yaw, InOptions.Pitch, InOptions.Zoom, ToColor(InOptions.Tint))
+                        : 0,
+                    InContext, std::move(InDone));
+    }
+
     void RestoreMaterial(const QString& InGraphPath)
     {
         Graph Saved;
         std::string Error;
         if(!LoadGraphFile(ToStd(InGraphPath), Saved, Error)) { return; }
 
+        /* What the saved graph's <gen_code> holds; compiled if it has none. */
         CompileResult Result;
-        CompileGraph(Saved, Result);
-        if(!Result.HasErrors())
+        const GeneratedCode* Function = Saved.FindGenCode(".mtl.glsl");
+        if(Function)
         {
-            StageMaterial(GetMaterialName(InGraphPath), Result, qApp, nullptr);
+            Result.Code = Function->Text;
+            for(const GeneratedCode& Each : Saved.GenCode)
+            {
+                if(&Each != Function) { Result.Companions.emplace_back(Each.Extension, Each.Text); }
+            }
+        }
+        else
+        {
+            CompileGraph(Saved, Result);
+        }
+        const QString Material = GetMaterialPath(InGraphPath);
+        if(!Result.HasErrors() && !Material.isEmpty())
+        {
+            StageMaterial(Material, Result, qApp, nullptr);
         }
     }
 
     bool ApplyMaterialToSelection(const QString& InName, QString& OutMessage)
     {
+        if(MaterialStem(InName).isEmpty())
+        {
+            OutMessage = QStringLiteral("'%1' is not a material graph in the project").arg(InName);
+            return false;
+        }
         EditorContext* Ctx = Context();
         if(!Ctx)
         {
@@ -479,9 +541,9 @@ namespace EditorGraphs
             return false;
         }
         const QByteArray Name = InName.toUtf8();
-        if(Name.size() >= int(RenderCore::RENDER_MATERIAL_NAME_MAX))
+        if(Name.size() >= int(RenderCore::RENDER_MATERIAL_PATH_MAX))
         {
-            OutMessage = QStringLiteral("The material name '%1' is too long").arg(InName);
+            OutMessage = QStringLiteral("The material path '%1' is too long").arg(InName);
             return false;
         }
 
@@ -495,8 +557,9 @@ namespace EditorGraphs
 
         /* Written in place, then reported, like a Details edit. */
         RenderCore::RenderComponent* Render = Handle.GetComponent<RenderCore::RenderComponent>();
-        std::memset(Render->Material, 0, sizeof(Render->Material));
-        std::memcpy(Render->Material, Name.constData(), size_t(Name.size()));
+        /* Slot 0: the quad's, and a mesh's first section's. */
+        std::memset(Render->Materials[0], 0, sizeof(Render->Materials[0]));
+        std::memcpy(Render->Materials[0], Name.constData(), size_t(Name.size()));
         Ctx->NotifyPropertyEdited(Target, Type);
 
         OutMessage = QStringLiteral("%1 now draws with %2").arg(Ctx->GetDisplayName(Target), InName);
@@ -510,7 +573,7 @@ namespace EditorGraphs
         return !Python.isEmpty() && !Script.isEmpty() && QFileInfo::exists(Script);
     }
 
-    void CheckShader(const QString& InShaderPath, QObject* InContext, std::function<void(bool, const QString&)> InDone)
+    void CheckShader(const QString& InGraphPath, QObject* InContext, std::function<void(bool, const QString&)> InDone)
     {
         if(!CanCheckShaders()) { return; }
 
@@ -532,7 +595,7 @@ namespace EditorGraphs
         });
 
         Process->start(QString::fromUtf8(NIMBLEEDITOR_PYTHON),
-                       { QString::fromUtf8(NIMBLEEDITOR_MATERIAL_CHECK_SCRIPT), QStringLiteral("-check"), InShaderPath });
+                       { QString::fromUtf8(NIMBLEEDITOR_MATERIAL_CHECK_SCRIPT), QStringLiteral("-check"), InGraphPath });
     }
 
     int RegenerateAll(QStringList& OutLines)
@@ -555,7 +618,13 @@ namespace EditorGraphs
 
             CompileResult Result;
             QString Message;
-            if(!WriteOutput(Path, Loaded, Result, Message))
+            if(!CompileAndSave(Path, Loaded, Result, Error))
+            {
+                OutLines << QStringLiteral("FAILED  %1: %2").arg(Path, ToQ(Error));
+                ++Failures;
+                continue;
+            }
+            if(!StageOutput(Path, Loaded, Result, Message))
             {
                 OutLines << QStringLiteral("FAILED  %1").arg(ToQ(FormatDiagnostics(Loaded, Result)));
                 ++Failures;
@@ -658,15 +727,15 @@ namespace EditorGraphs
         Starter.Name = GetGraphBaseName(ToStd(Path));
 
         std::string Error;
-        if(!SaveGraphFile(ToStd(Path), Starter, Error))
+        CompileResult Result;
+        if(!CompileAndSave(Path, Starter, Result, Error))
         {
             QMessageBox::warning(InParent, QStringLiteral("New Graph"), QStringLiteral("Could not write\n%1\n\n%2").arg(Path, ToQ(Error)));
             return nullptr;
         }
 
-        CompileResult Result;
         QString Message;
-        WriteOutput(Path, Starter, Result, Message);
+        StageOutput(Path, Starter, Result, Message);
         return OpenGraph(Path, InParent);
     }
 

@@ -115,6 +115,8 @@ void VulkanDynamicGDI::BeginRendering()
 
     CurrentStateData->CurrentCmd          = Cmd;
     CurrentStateData->ActiveRenderTarget  = nullptr;
+    CurrentStateData->ActiveColorCount    = 0;
+    CurrentStateData->ActiveDepth         = nullptr;
     CurrentStateData->bRenderingActive    = false;
     CurrentStateData->DebugLabelDepth     = 0;
 }
@@ -201,20 +203,25 @@ void VulkanDynamicGDI::Clear(uint InClearMode, EngineCore::Color InClearColor, f
 
     VKRenderTarget* RT = CurrentStateData->ActiveRenderTarget;
     const bool bClearColor = (InClearMode & CM_Color) != 0;
-    const bool bClearDepth = (InClearMode & CM_Depth) != 0 && RT && RT->HasDepth();
+    const bool bClearDepth = (InClearMode & CM_Depth) != 0 && CurrentStateData->ActiveDepth != nullptr;
     if(!bClearColor && !bClearDepth) return;
 
-    VkClearAttachment ClearAtts[2]{};
+    // Every bound colour target, then the depth.
+    VkClearAttachment ClearAtts[GDI_MAX_COLOR_TARGETS + 1]{};
     uint32_t          NumClears = 0;
     if(bClearColor)
     {
-        VkClearAttachment& ClearAtt = ClearAtts[NumClears++];
-        ClearAtt.aspectMask                 = VK_IMAGE_ASPECT_COLOR_BIT;
-        ClearAtt.colorAttachment            = 0;
-        ClearAtt.clearValue.color.float32[0] = float(InClearColor.Rf());
-        ClearAtt.clearValue.color.float32[1] = float(InClearColor.Gf());
-        ClearAtt.clearValue.color.float32[2] = float(InClearColor.Bf());
-        ClearAtt.clearValue.color.float32[3] = float(InClearColor.Af());
+        const uint32_t ColorCount = CurrentStateData->ActiveColorCount > 0 ? CurrentStateData->ActiveColorCount : 1u;
+        for(uint32_t Index = 0; Index < ColorCount; ++Index)
+        {
+            VkClearAttachment& ClearAtt = ClearAtts[NumClears++];
+            ClearAtt.aspectMask                 = VK_IMAGE_ASPECT_COLOR_BIT;
+            ClearAtt.colorAttachment            = Index;
+            ClearAtt.clearValue.color.float32[0] = float(InClearColor.Rf());
+            ClearAtt.clearValue.color.float32[1] = float(InClearColor.Gf());
+            ClearAtt.clearValue.color.float32[2] = float(InClearColor.Bf());
+            ClearAtt.clearValue.color.float32[3] = float(InClearColor.Af());
+        }
     }
     if(bClearDepth)
     {

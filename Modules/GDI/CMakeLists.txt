@@ -19,6 +19,10 @@ project(GDI VERSION 0.1 LANGUAGES CXX)
 option(GDI_SHARED          "Build GDI as a shared library"           OFF)
 option(GDI_WITH_QT_BRIDGE  "Build the optional Qt interop bridge"     ON)
 option(GDI_BUILD_SMOKETEST "Build GDISmokeTest"                      OFF)
+# OFF when the host cooks and stages its own shader set from disk (NimbleEngine
+# does, from Engine/Content/Shaders): skips the cook targets below, their
+# Python requirement, and the .qrc bundles a Qt host compiles in.
+option(GDI_COOK_SHADERS    "Cook Shaders/ into Shaders/Cooked as part of the GDI build" ON)
 
 # (Both transitional options are gone. GDI no longer includes an application
 #  header -- logging goes through GDILog.h and the render platform is passed
@@ -419,6 +423,7 @@ set_target_properties(GDI PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 # is self-consistent and the script itself needs no edit.
 # Only the shader-cooking targets below need Python; a headless (Null-only)
 # configure should not have to have it installed.
+if(GDI_COOK_SHADERS)
 if(GDI_WITH_VULKAN OR (WIN32 AND GDI_WITH_OPENGL) OR GDI_WITH_METAL OR GDI_WITH_D3D12)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
 endif()
@@ -584,6 +589,7 @@ if(GDI_WITH_D3D12)
     list(APPEND GDI_SHADER_QRC_FILES "${CMAKE_CURRENT_SOURCE_DIR}/Shaders/Cooked/D3D12/D3D12Shaders_Cooked.qrc")
 endif()
 set(GDI_SHADER_QRC_FILES "${GDI_SHADER_QRC_FILES}" CACHE INTERNAL "Cooked shader .qrc bundles, compiled by the host application")
+endif() # GDI_COOK_SHADERS
 
 # ===========================================================================
 # GDIQtBridge -- the only target in this project allowed to include Qt

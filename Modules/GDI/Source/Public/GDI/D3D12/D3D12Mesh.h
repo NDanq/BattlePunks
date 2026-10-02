@@ -55,6 +55,7 @@ private:
 
     // Indexed meshes only (GDICreateMesh): normals in slot 2, uint32 indices.
     Microsoft::WRL::ComPtr<ID3D12Resource>  NormalBuffer;
+    Microsoft::WRL::ComPtr<ID3D12Resource>  ColorBuffer;     // float4 per vertex, slot 3
     Microsoft::WRL::ComPtr<ID3D12Resource>  IndexBuffer;
     UINT                                    IndexBytes    = 0;
 

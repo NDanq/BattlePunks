@@ -55,7 +55,7 @@ EditorContext::EditorContext(QObject* InParent)
 {
     /* Before anything asks for an asset -- the Renderer loads its cooked
      * shaders through this on the render thread. */
-    EngineCore::SetFileProvider(&AssetProvider);
+    EngineCore::SetFileProvider(&LayeredAssets);
 
     History = new QUndoStack(this);
     History->setUndoLimit(HistoryLimit);
@@ -120,6 +120,27 @@ uint64_t EditorContext::RequestMaterialPreview(const QString& InName, const int 
         return 0;
     }
     return Renderer->RequestMaterialPreview(InName.toUtf8().constData(), InSize, InTint);
+}
+
+uint64_t EditorContext::RequestMeshPreview(const QString& InMesh, const QString& InMaterial, const QStringList& InSections,
+                                           const int InWidth, const int InHeight, const float InYaw, const float InPitch,
+                                           const float InZoom, const EngineCore::Color InTint)
+{
+    if(!Renderer || !bRendererReady)
+    {
+        return 0;
+    }
+    RenderCore::Renderer::MeshPreview Preview;
+    Preview.Mesh     = InMesh.toStdString();
+    Preview.Material = InMaterial.toStdString();
+    for(const QString& Each : InSections) { Preview.Sections.push_back(Each.toStdString()); }
+    Preview.Width  = InWidth;
+    Preview.Height = InHeight;
+    Preview.Yaw    = InYaw;
+    Preview.Pitch  = InPitch;
+    Preview.Zoom   = InZoom;
+    Preview.Tint   = InTint;
+    return Renderer->RequestMeshPreview(Preview);
 }
 
 bool EditorContext::TakeMaterialPreview(const uint64_t InRequest, QImage& OutImage, QString& OutError)
@@ -267,18 +288,13 @@ void EditorContext::CreateSandboxScene()
     const EntityID MarkerID = CreateEntity(QStringLiteral("Marker"), EngineCore::Vector3(0.0, 360.0, 0.0));
     {
         const GameCore::Entity Marker = EditedWorld->GetEntity(MarkerID);
+        Marker.GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(32.0, 32.0, 1.0);
 
-        RenderCore::RenderComponent Render;
-        Render.Width  = 32.0f;
-        Render.Height = 32.0f;
-        Render.Tint   = EngineCore::Color(255, 200, 40);
-        Marker.AddComponent(Render);
+        Marker.AddComponent<RenderCore::RenderComponent>();
 
-        /* The quad's extent, derived from the RenderComponent as Sandbox does. */
+        /* The unit quad's extent, as Sandbox does. */
         GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(
-            EngineCore::Vector3(-0.5 * Render.Width, -0.5 * Render.Height, 0.0),
-            EngineCore::Vector3( 0.5 * Render.Width,  0.5 * Render.Height, 0.0));
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
         Marker.AddComponent(Bounds);
     }
 
@@ -559,8 +575,7 @@ GameCore::AABB EditorContext::GetEntityBounds(const EntityID InEntity) const
                                        EngineCore::Vector3(Mesh->BoundsMax[0], Mesh->BoundsMax[1], Mesh->BoundsMax[2]));
             return GameCore::AABB::Transformed(Local, Transform->GetLocalMatrix());
         }
-        const GameCore::AABB Quad(EngineCore::Vector3(-0.5 * Render->Width, -0.5 * Render->Height, 0.0),
-                                  EngineCore::Vector3( 0.5 * Render->Width,  0.5 * Render->Height, 0.0));
+        const GameCore::AABB Quad(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));   // the unit quad
         return GameCore::AABB::Transformed(Quad, Transform->GetLocalMatrix());
     }
 

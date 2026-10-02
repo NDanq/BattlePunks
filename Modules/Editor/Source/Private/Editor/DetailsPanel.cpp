@@ -2,10 +2,12 @@
 
 #include "Public/Editor/DetailsPanel.h"
 
+#include <algorithm>
 #include <cstring>
 
 #include <QCheckBox>
 #include <QDir>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
@@ -14,13 +16,18 @@
 #include <QLineEdit>
 #include <QMenu>
 #include <QScrollArea>
+#include <QScrollBar>
+#include <QTimer>
 #include <QToolButton>
+#include <QToolTip>
 #include <QVBoxLayout>
 
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/Editor/EditorContext.h"
 #include "Private/Editor/PropertyWidgets.h"
+#include "Private/Editor/Content/ContentPaths.h"
+#include "Private/Editor/Graph/GraphAssets.h"
 
 using GameCore::ComponentTypeID;
 using GameCore::EntityID;
@@ -44,6 +51,26 @@ namespace
         Button->setSizePolicy(Policy);
         Button->setVisible(false);
         return Button;
+    }
+
+    uint64_t ArrayKey(const ComponentTypeID InType, const GameCore::ComponentPropertyEntry& InEntry)
+    {
+        return (uint64_t(InType) << 32) | InEntry.Offset;
+    }
+
+    /* One past the last element that differs from the default: those in use. */
+    size_t CountUsedElements(const GameCore::ComponentPropertyEntry& InEntry, const uint8_t* InComponent, const uint8_t* InDefaults)
+    {
+        size_t Used = 0;
+        for(size_t Index = 0; Index < InEntry.ArrayCount; ++Index)
+        {
+            const GameCore::ComponentPropertyEntry Element = InEntry.GetElement(Index);
+            if(!IsPropertyAtDefault(Element, InComponent + Element.Offset, InDefaults + Element.Offset))
+            {
+                Used = Index + 1;
+            }
+        }
+        return Used;
     }
 }
 
@@ -140,10 +167,32 @@ void DetailsPanel::RebuildIfComponentsChanged()
     RefreshEntitySection();
 }
 
+void DetailsPanel::QueueRebuild()
+{
+    if(bRebuildQueued)
+    {
+        return;
+    }
+    bRebuildQueued = true;
+    QTimer::singleShot(0, this, [this]()
+    {
+        bRebuildQueued = false;
+        Rebuild();
+    });
+}
+
 void DetailsPanel::Rebuild()
 {
+    /* Another entity's lists start from what it uses. */
+    if(Context.GetSelection() != ShownEntity)
+    {
+        ArrayShown.clear();
+    }
+    const int Scrolled = Scroll->verticalScrollBar()->value();
+
     Rows.clear();
     Sections.clear();
+    Arrays.clear();
     NameEdit     = nullptr;
     ScriptEdit   = nullptr;
     ScriptStatus = nullptr;
@@ -171,6 +220,9 @@ void DetailsPanel::Rebuild()
 
     BodyLayout->addStretch(1);
     Scroll->setWidget(Body);
+
+    /* The same entity rebuilt (an entry added, say) stays where it was. */
+    QTimer::singleShot(0, this, [this, Scrolled]() { Scroll->verticalScrollBar()->setValue(Scrolled); });
 
     RefreshValues();
 }
@@ -213,34 +265,43 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
 
     ScriptEdit = new QLineEdit(ScriptField);
     ScriptEdit->setPlaceholderText(QStringLiteral("(none) -- e.g. Scripts/Mover.lua"));
-    ScriptEdit->setToolTip(QStringLiteral("A .lua file that returns its class table. Relative paths resolve "
-                                          "from the game's working directory."));
+    ScriptEdit->setToolTip(QStringLiteral("A .lua file that returns its class table, or a script graph "
+                                          "(.script.nmgraph), which runs the Lua saved in it. Relative paths "
+                                          "resolve from the game's working directory. Drop one here."));
     connect(ScriptEdit, &QLineEdit::editingFinished, this, [this, InEntity]()
     {
-        if(ScriptEdit)
+        if(!ScriptEdit)
         {
-            Context.SetEntityScript(InEntity, ScriptEdit->text());
+            return;
         }
+        const QString Text = ScriptEdit->text().trimmed();
+        if(!Text.isEmpty() && !Text.endsWith(QStringLiteral(".lua"), Qt::CaseInsensitive)
+           && !Text.endsWith(QStringLiteral(".script.nmgraph"), Qt::CaseInsensitive))
+        {
+            QToolTip::showText(ScriptEdit->mapToGlobal(QPoint(0, ScriptEdit->height())),
+                               QStringLiteral("A script is a .lua file or a .script.nmgraph"), ScriptEdit);
+            RefreshEntitySection();
+            return;
+        }
+        Context.SetEntityScript(InEntity, Text);
     });
+    ScriptEdit->installEventFilter(this);
     ScriptRow->addWidget(ScriptEdit, 1);
 
     auto* Browse = new QToolButton(ScriptField);
     Browse->setText(QStringLiteral("..."));
-    Browse->setToolTip(QStringLiteral("Choose a Lua script"));
+    Browse->setToolTip(QStringLiteral("Choose a .lua script or a script graph"));
     Browse->setAutoRaise(true);
     connect(Browse, &QToolButton::clicked, this, [this, InEntity]()
     {
-        const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a Lua script"),
-                                                            QDir::currentPath(),
-                                                            QStringLiteral("Lua scripts (*.lua);;All files (*)"));
-        if(Chosen.isEmpty())
+        const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a script"),
+                                                            EditorGraphs::GetProjectRoot(),
+                                                            QStringLiteral("Scripts (*.lua *.script.nmgraph);;Lua scripts (*.lua);;"
+                                                                           "Script graphs (*.script.nmgraph)"));
+        if(!Chosen.isEmpty())
         {
-            return;
+            UseScriptFile(InEntity, Chosen);
         }
-        /* Relative to the working directory, as the game resolves scripts. */
-        const QString Relative = QDir::current().relativeFilePath(Chosen);
-        Context.SetEntityScript(InEntity, Relative.startsWith(QStringLiteral("..")) ? Chosen : Relative);
-        RefreshEntitySection();
     });
     ScriptRow->addWidget(Browse);
 
@@ -430,10 +491,10 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
         return static_cast<uint8_t*>(World.GetEntity(InEntity).GetComponentByType(InType));
     };
 
-    for(size_t Index = 0; Index < Count; ++Index)
+    /* One editor row: the editor, its reset arrow, then InExtra (an array
+     * element's remove button). */
+    const auto AddRow = [&](const GameCore::ComponentPropertyEntry& Entry, const QString& InLabel, QToolButton* InExtra)
     {
-        const GameCore::ComponentPropertyEntry& Entry = Entries[Index];
-
         auto* Field  = new QWidget(Content);
         auto* FieldRow = new QHBoxLayout(Field);
         FieldRow->setContentsMargins(0, 0, 0, 0);
@@ -443,7 +504,8 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
         if(!Editor)
         {
             delete Field;
-            continue;
+            delete InExtra;
+            return;
         }
         FieldRow->addWidget(Editor, 1);
 
@@ -473,16 +535,120 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
             });
         }
 
-        Form->addRow(QString::fromLatin1(Entry.Name), Field);
+        if(InExtra)
+        {
+            InExtra->setParent(Field);
+            FieldRow->addWidget(InExtra);
+        }
+
+        Form->addRow(InLabel, Field);
         Rows.push_back(Row);
 
         connect(Editor, &PropertyEditor::Written, this, [Ctx, InEntity, InType]()
         {
             Ctx->NotifyPropertyEdited(InEntity, InType);
         });
+    };
+
+    for(size_t Index = 0; Index < Count; ++Index)
+    {
+        const GameCore::ComponentPropertyEntry& Entry = Entries[Index];
+        const QString Name = QString::fromLatin1(Entry.Name);
+        if(!Entry.IsArray())
+        {
+            AddRow(Entry, Name, nullptr);
+            continue;
+        }
+
+        /* An array: the entries in use and any added since, then "+ Add". */
+        const uint8_t* Live = Resolve();
+        const size_t   Used = Live && State.Defaults ? CountUsedElements(Entry, Live, State.Defaults->data()) : 0;
+        size_t& Shown = ArrayShown[ArrayKey(InType, Entry)];
+        Shown = std::min<size_t>(std::max(Shown, Used), Entry.ArrayCount);
+        Arrays.push_back(ArrayList{ InType, Entry, Shown });
+
+        auto* Heading    = new QWidget(Content);
+        auto* HeadingRow = new QHBoxLayout(Heading);
+        HeadingRow->setContentsMargins(0, 0, 0, 0);
+        auto* Summary = new QLabel(Shown == 0 ? QStringLiteral("Empty") : Shown == 1 ? QStringLiteral("1 entry")
+                                                                        : QStringLiteral("%1 entries").arg(Shown), Heading);
+        Summary->setStyleSheet(QStringLiteral("color: gray;"));
+        HeadingRow->addWidget(Summary, 1);
+        if(!Entry.IsReadOnly())
+        {
+            auto* Add = new QToolButton(Heading);
+            Add->setText(QStringLiteral("+ Add"));
+            Add->setAutoRaise(true);
+            Add->setEnabled(Shown < Entry.ArrayCount);
+            Add->setToolTip(Shown < Entry.ArrayCount ? QStringLiteral("Add an entry to %1").arg(Name)
+                                                     : QStringLiteral("%1 holds at most %2").arg(Name).arg(Entry.ArrayCount));
+            const uint64_t Key = ArrayKey(InType, Entry);
+            connect(Add, &QToolButton::clicked, this, [this, Key]()
+            {
+                ++ArrayShown[Key];
+                QueueRebuild();
+            });
+            HeadingRow->addWidget(Add);
+        }
+        Form->addRow(Name, Heading);
+
+        for(size_t Element = 0; Element < Shown; ++Element)
+        {
+            QToolButton* Remove = nullptr;
+            if(!Entry.IsReadOnly())
+            {
+                Remove = new QToolButton();
+                Remove->setText(QString(QChar(0x2715)));   // multiplication x
+                Remove->setAutoRaise(true);
+                Remove->setFixedSize(22, 22);
+                Remove->setToolTip(QStringLiteral("Remove entry %1 (the ones after it move up)").arg(Element));
+                connect(Remove, &QToolButton::clicked, this, [this, InType, Entry, Element]()
+                {
+                    RemoveArrayElement(InType, Entry, Element);
+                });
+            }
+            AddRow(Entry.GetElement(Element), QStringLiteral("    %1").arg(Element), Remove);
+        }
     }
 
     return Section;
+}
+
+void DetailsPanel::UseScriptFile(const EntityID InEntity, const QString& InFile)
+{
+    /* As the game names it -- relative to the project, staged beside the
+     * exe so Play finds it -- or, outside the project, as chosen. */
+    const QString Runtime = EditorContent::ScriptPathFor(InFile);
+    if(!Runtime.isEmpty())
+    {
+        EditorContent::StageAsset(InFile);
+    }
+    Context.SetEntityScript(InEntity, Runtime.isEmpty() ? InFile : Runtime);
+    RefreshEntitySection();
+}
+
+bool DetailsPanel::eventFilter(QObject* InWatched, QEvent* InEvent)
+{
+    /* The Script field takes a .lua or a .script.nmgraph dropped on it. */
+    if(InWatched == ScriptEdit && (InEvent->type() == QEvent::DragEnter || InEvent->type() == QEvent::DragMove
+                                   || InEvent->type() == QEvent::Drop))
+    {
+        auto* Drop = static_cast<QDropEvent*>(InEvent);
+        const QString File = EditorContent::SingleDroppedFile(Drop->mimeData());
+        if(EditorContent::ScriptPathFor(File).isEmpty())
+        {
+            Drop->ignore();
+            return true;
+        }
+        Drop->acceptProposedAction();
+        if(InEvent->type() == QEvent::Drop)
+        {
+            const EntityID Target = ShownEntity;
+            QTimer::singleShot(0, this, [this, Target, File]() { UseScriptFile(Target, File); });
+        }
+        return true;
+    }
+    return QWidget::eventFilter(InWatched, InEvent);
 }
 
 QWidget* DetailsPanel::BuildAddComponentButton()
@@ -552,6 +718,38 @@ void DetailsPanel::ResetProperty(const PropertyRow& InRow)
     RefreshValues();
 }
 
+void DetailsPanel::RemoveArrayElement(const ComponentTypeID InType, const GameCore::ComponentPropertyEntry& InEntry,
+                                      const size_t InIndex)
+{
+    const ComponentSection* Section = FindSection(InType);
+    uint8_t* Component = ResolveComponent(InType);
+    if(!Section || !Component || InEntry.IsReadOnly() || InIndex >= InEntry.ArrayCount)
+    {
+        return;
+    }
+
+    const size_t Stride = InEntry.Stride;
+    const size_t Last   = InEntry.ArrayCount - 1;
+    uint8_t* Base = Component + InEntry.Offset;
+    std::memmove(Base + InIndex * Stride, Base + (InIndex + 1) * Stride, (Last - InIndex) * Stride);
+    if(Section->Defaults)
+    {
+        std::memcpy(Base + Last * Stride, Section->Defaults->data() + InEntry.Offset + Last * Stride, InEntry.Size);
+    }
+    else
+    {
+        std::memset(Base + Last * Stride, 0, InEntry.Size);
+    }
+
+    size_t& Shown = ArrayShown[ArrayKey(InType, InEntry)];
+    if(Shown > 0)
+    {
+        --Shown;
+    }
+    Context.NotifyPropertyEdited(ShownEntity, InType);
+    QueueRebuild();
+}
+
 void DetailsPanel::ResetComponent(const ComponentTypeID InType)
 {
     /* Per property: the default bytes also hold per-run state to keep. */
@@ -582,6 +780,19 @@ void DetailsPanel::RefreshValues()
     }
 
     RefreshEntitySection();
+
+    /* A list now using more than it shows (an undo, a script): show them all. */
+    for(const ArrayList& List : Arrays)
+    {
+        const ComponentSection* Section = FindSection(List.Type);
+        const uint8_t* Component = ResolveComponent(List.Type);
+        if(Section && Section->Defaults && Component
+           && CountUsedElements(List.Entry, Component, Section->Defaults->data()) > List.Shown)
+        {
+            QueueRebuild();
+            return;
+        }
+    }
 
     for(ComponentSection& Section : Sections)
     {

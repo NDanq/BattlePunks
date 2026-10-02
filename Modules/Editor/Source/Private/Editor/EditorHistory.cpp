@@ -184,7 +184,7 @@ namespace EditorHistory
             const GameCore::ComponentPropertyEntry& Entry = Entries[Index];
             if(!Entry.IsReadOnly())
             {
-                Values.insert(Values.end(), Component + Entry.Offset, Component + Entry.Offset + Entry.Size);
+                Values.insert(Values.end(), Component + Entry.Offset, Component + Entry.Offset + Entry.GetSpan());
             }
         }
         return Values;
@@ -207,12 +207,12 @@ namespace EditorHistory
             {
                 continue;
             }
-            if(Cursor + Entry.Size > InValues.size())
+            if(Cursor + Entry.GetSpan() > InValues.size())
             {
                 return false;
             }
-            std::memcpy(Component + Entry.Offset, InValues.data() + Cursor, Entry.Size);
-            Cursor += Entry.Size;
+            std::memcpy(Component + Entry.Offset, InValues.data() + Cursor, Entry.GetSpan());
+            Cursor += Entry.GetSpan();
         }
         return true;
     }

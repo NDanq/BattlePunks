@@ -10,8 +10,12 @@
  * .nmgraph files: XML, one graph each, the schema named by both the compound
  * extension and the Schema attribute (a mismatch fails the load):
  *
- *     Scripts/Mover.script.nmgraph      -> Scripts/Mover.lua
- *     Shaders/Glow.material.nmgraph     -> Shaders/Glow.fsh
+ *     Scripts/Mover.script.nmgraph      <gen_code>: .lua
+ *     Materials/Glow.material.nmgraph   <gen_code>: .mtl.glsl, .material
+ *
+ * The generated code is stored in the graph file itself, at its end
+ * (<gen_code>, one <Output Extension="..."> CDATA each): nothing is written
+ * beside the graph. A game's cook and the runtime read it from there.
  *
  * Tools route on the extension; a bare *.nmgraph falls back to the attribute.
  * Written deterministically for clean diffs. Format: README.md.
@@ -39,7 +43,7 @@ namespace NodeGraph
     /* "a/Glow" -> "a/Glow.material.nmgraph". */
     std::string MakeGraphPath(const std::string& InBasePath, const Schema& InSchema);
 
-    /* Where the generated source goes: "a/Glow.material.nmgraph" -> "a/Glow.fsh". */
+    /* The generated source's name, were it a file: "a/Glow.material.nmgraph" -> "a/Glow.mtl.glsl". */
     std::string GetGraphOutputPath(const std::string& InGraphPath, const Schema& InSchema);
 
     /* The file name without directory or extension: "a/Glow.material.nmgraph" -> "Glow". */
@@ -69,9 +73,13 @@ namespace NodeGraph
     /* Writes InText to InPath the same way, if it differs from what is there. */
     bool WriteTextFileIfChanged(const std::string& InPath, const std::string& InText, std::string& OutError);
 
-    /* Compiles InGraphPath and writes changed outputs and companions beside
-     * it. False only on I/O errors; compile errors return true with OutResult
-     * set and the old output kept. */
+    /* InResult (clean) as InOutGraph's GenCode: the schema's output, then the
+     * companions. False, GenCode untouched, if InResult has errors. */
+    bool StoreGeneratedCode(Graph& InOutGraph, const CompileResult& InResult);
+
+    /* Compiles InGraphPath and rewrites its <gen_code> (the file is untouched
+     * when nothing changed). False only on I/O errors; compile errors return
+     * true with OutResult set and the old <gen_code> kept. */
     bool GenerateGraphOutput(const std::string& InGraphPath, CompileResult& OutResult, std::string& OutError);
 
     // === Clipboard ==============================================================

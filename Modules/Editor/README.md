@@ -77,20 +77,22 @@ uses it.
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity list with component summary, filter, create/destroy |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession` |
-| `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, reset-to-default, add/remove component |
+| `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
 | `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (File > New Material / Script Graph, Open Graph, or the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
-| `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph and its output (see `Modules/NodeGraph`) |
+| `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph with its generated code inside it, `<gen_code>` (see `Modules/NodeGraph`); nothing is written beside it |
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
 | `Graph/GraphScene`, `GraphView`, `GraphItems`, `NodePalette`, `GraphDetailsPanel` (private) | The canvas: nodes, links and comments. Drag between pins to link; Alt+click a pin breaks its links; drag a linked input's link off to move it. Right-click or Tab opens the node palette, and a link dropped on empty space opens it filtered. Wheel zooms, middle-drag pans |
-| `Graph/GraphAssets` (private) | Graphs as project files: where new ones go, the output written beside the graph and **staged beside the executable** so the next Play runs it without a build, the background glslc check, Build > Cook Content regenerating every graph. A material is staged by name and **cooked for the viewport's backend**, then reloaded into the renderer |
-| Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on a quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMaterialPreview`), so it is the backend and cooked shader the level uses. It has an Instance Tint picker. Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's RenderComponent Material (adding one if needed), undoably |
+| `Graph/GraphAssets` (private) | Graphs as project files: where new ones go, compiling into `<gen_code>` on save, a script graph **staged beside the executable** so the next Play runs it without a build, the background glslc check, Build > Cook Content regenerating every graph's `<gen_code>`. A material is named by its graph's path, **cooked for the viewport's backend** from the compiled code, then reloaded into the renderer |
+| Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on one of the engine's meshes -- **Shape**: Sphere (the default), Box or Plane, to orbit (drag, wheel, double-click resets) -- or a flat Quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMeshPreview`, `RequestMaterialPreview`), so it is the backend and cooked shader the level uses. A PostProcess material always fills it. It has an Instance Tint picker and **Animate** (keep drawing, for materials that use Time). Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's RenderComponent Material (adding one if needed), undoably |
 | `EditorLog` | EngineCore's log handler: a thread-safe, bounded history of every log line, still forwarded to Qt/the debugger |
 | `EditorConsole` | Command registry; unknown words fall through to Core's `ExecConfigCommand` |
 | `ConsolePanel` | The Console dock: filtered transcript over a command line with history and completion |
-| `ContentBrowserPanel` | The Content Browser dock: the project's files, organised, opened, and imported into (see Content Browser) |
+| `ContentBrowserPanel` | The Content Browser dock: the project's files, organised, opened, and imported into, and the engine's content beside them (see Content Browser) |
+| `Content/MeshViewerWindow` (private) | A `.nmmesh` opened from the Content Browser: the mesh, its statistics, and a material per section (see Content Browser) |
+| `Content/MeshPreviewView` (private) | The image both of those draw into: one renderer preview at a time at the widget's size, drag to orbit, wheel to zoom |
 | `Content/ImportWizard` (private) | File > Import and drops from outside: the wizard that turns glTF and images into `.nmmesh` / `.nmtexture` |
 | `Content/AssetImport`, `GltfImporter` (private) | The conversions themselves, no widgets (cgltf, `External/cgltf-1.15`, reads glTF); tested by `NimbleEditorImportTests` |
-| `Content/ContentPaths` (private) | Project files as the engine names them: runtime-relative paths, material names, staging beside the executable |
+| `Content/ContentPaths` (private) | Project files as the engine names them: runtime-relative paths (the engine's content as `Engine/Content/...`), material names, staging beside the executable |
 
 ## Content Browser
 
@@ -101,6 +103,15 @@ dot-folders are hidden. Images and `.nmtexture` files show thumbnails; hovering
 an asset shows what it is (vertices and triangles, or size and colour space)
 and where it was imported from.
 
+**Engine Content**, a second tree below the project's, is the engine's own
+`Engine/Content`: its meshes (`Meshes/Box`, `Sphere`, `Plane`), materials
+(DefaultLit) and shaders. It is read from the source tree the editor was built
+from, else from the copy staged beside the executable, and is read-only here --
+no rename, delete, move, new folder, reimport or drop into it. Drag its meshes
+into the level or onto a Mesh field like the project's own: they are named
+`Engine/Content/Meshes/Box.nmmesh`, staged beside every game by the engine's
+build. Dragging one into a project folder copies it there.
+
 | Do | How |
 |---|---|
 | Navigate | Click a folder in the tree, double-click one in the list, Back, Up (Backspace), or a segment of the path bar |
@@ -108,16 +119,17 @@ and where it was imported from.
 | Rename | F2, or the context menu |
 | Delete | Del: confirmed, then moved to the Recycle Bin -- never deleted outright |
 | Move | Drag items onto a folder (in the list) |
-| Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), anything else with the system's own application |
+| Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), a mesh in the mesh viewer, anything else with the system's own application |
 | Import | Drop files from Explorer, the toolbar's Import..., or File > Import (Ctrl+I) |
 | Reimport | The context menu on a `.nmmesh` / `.nmtexture`: the same source, the same options |
 
-**Companions travel together.** A graph's generated files (`Glow.material.nmgraph`
--> `Glow.fsh`, `Glow.material`; a script graph's `.lua`) and a world's entity
-folder are renamed, moved and deleted with it. A graph open in a window and the
+**Companions travel together.** A world's entity folder is renamed, moved and
+deleted with it. (A graph has no generated files beside it: its code is inside
+it.) A graph open in a window and the
 world open in the editor are refused, as are the project folder and `Config/`.
 Moving or renaming an asset does not update what names it -- a
-RenderComponent's `Mesh` still holds the old path.
+RenderComponent's `Mesh`, or a material slot naming a graph, still holds the
+old path.
 
 **Importing.** A drop of files from outside the project opens the **Import
 Wizard** for the meshes (`.gltf`, `.glb`) and images (whatever Qt reads) among
@@ -146,10 +158,25 @@ RenderComponent's **Mesh** field in Details (or pick one with **...**); a
 material graph (or its `.material`) dropped on **Material** sets that. Selection
 outlines fit the mesh's box, and a click picks the mesh by its triangles.
 
+**The mesh viewer.** Double-clicking a `.nmmesh` opens it in its own window
+(again: the same window, brought forward): the mesh as the renderer draws it,
+framed by a camera to orbit (drag), zoom (wheel) and reset (double-click, or
+Reset View) under a fixed studio light; its vertices, triangles, sections, size
+and source; and a **Material** per section -- typed with completion from the
+project's and the engine's materials, picked from the list, or a material
+graph dropped from the Content Browser. Empty is DefaultLit. A pick shows at
+once. **Save** (Ctrl+S) writes them into the mesh as its sections' own
+materials -- what a RenderComponent draws a section with when its slot is
+empty -- and restages it, so the level shows them; Revert drops the picks;
+closing with unsaved picks asks. Reimporting the mesh replaces them with the
+source's. The engine's meshes preview only. **Animate** keeps drawing, for
+materials that use Time. The preview shows the first eight sections' picks.
+
 **Shipping.** The editor stages what it imports; a clean build of the game
 stages `Content/**/*.nmmesh` and `*.nmtexture` itself (Sandbox's CMakeLists,
-`SandboxStageContent`). Textures are imported but not drawn yet: materials have
-no texture input.
+`SandboxStageContent`). A material samples a texture through a Texture Object
+and Texture Sample nodes (NodeGraph's README); drop a `.nmtexture` on a Texture
+Object's Texture field in Details.
 
 ## Editor-visible properties
 
@@ -161,9 +188,8 @@ next to its other registrations:
 
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
 {
-    Props.Field("Width",  &RenderComponent::Width);
-    Props.Field("Tint",   &RenderComponent::Tint);
     Props.Flag("Visible", &RenderComponent::bVisible);
+    Props.Field("Mesh",   &RenderComponent::Mesh, GameCore::PF_AssetMesh);
     Props.Field("World",  &BoundsComponent::World, GameCore::PF_ReadOnly);   // shown, never written
 }
 ```
@@ -262,11 +288,28 @@ forms mid-drag (`GameCore/TransformMath.h`).
 
 The top **Entity** section edits what an entity carries besides its
 components: its **Name** (what the Outliner shows) and its **Script** -- a
-`.lua` path, typed or picked with **...** (made relative to the working
-directory when it is under it), cleared with **x**. Below that, a read-only
+`.lua` file or a script graph (`.script.nmgraph`, which runs the Lua saved in
+it), typed, dropped from the Content Browser or picked with **...** (as its
+path in the project, and staged beside the executable), cleared with **x**.
+Any other file is refused. Below that, a read-only
 status says whether the script is running, which only happens in a playing
 World, and the **Cull outside active region** checkbox sets the script's cull
 flag. The script's class can override that flag when it loads.
+
+An array property (`Props.Array`, such as a RenderComponent's **Materials**)
+is a list: a heading with how many entries it holds and **+ Add**, then one row
+per entry, numbered, each with its own reset arrow and an **x** that removes it
+-- the entries after it move up, and the array's end goes back to the default.
+It shows the entries in use (up to the last one that is not the default) and
+any added since; an added entry left empty is gone when another entity is
+selected. Removing is undoable like any edit. A RenderComponent's entry *i* is
+section *i*'s material; an empty one uses the mesh's own.
+
+A material field -- a Materials entry, a Post Process's Material, a mesh
+viewer section -- holds a material graph by its path,
+`Materials/Glow.material.nmgraph` (the engine's: `Engine/Content/Materials/...`):
+dropped, picked with **...**, or typed with completion. Anything else typed is
+refused.
 
 Each property with a writable default shows an orange reset arrow to its right
 while its value differs from the type's default-constructed one; clicking it

@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <memory>
+#include <set>
 
 #include "Private/NodeGraph/GraphIndex.h"
 
@@ -65,6 +66,82 @@ namespace NodeGraph
     {
         if(InFrom == WILDCARD_TYPE || InTo == WILDCARD_TYPE) { return false; }
         return InFrom == InTo || Conversions.count({ InFrom, InTo }) != 0;
+    }
+
+    namespace
+    {
+        uint32_t RequiredStages(const Schema& InSchema, const Graph& InGraph, const Node& InNode, const std::string& InPin,
+                                std::set<NodeGuid>& InOutVisited)
+        {
+            const NodeDefinition* Def = InSchema.FindNode(InNode.Type);
+            if(!Def) { return 0; }
+            if(Def->Role == ENodeRole::Output)
+            {
+                const PinDefinition* Pin = Def->FindPin(InPin, EPinDirection::Input);
+                return Pin ? Pin->Stage : 0;
+            }
+            if(!InOutVisited.insert(InNode.Id).second) { return 0; }   // a cycle; reported elsewhere
+
+            uint32_t Stages = 0;
+            for(const Link& Each : InGraph.Links)
+            {
+                if(Each.From.Node != InNode.Id) { continue; }
+                if(const Node* Consumer = InGraph.FindNode(Each.To.Node))
+                {
+                    Stages |= RequiredStages(InSchema, InGraph, *Consumer, Each.To.Pin, InOutVisited);
+                }
+            }
+            return Stages;
+        }
+
+        uint32_t AvailableStages(const Schema& InSchema, const Graph& InGraph, const Node& InNode, std::set<NodeGuid>& InOutVisited)
+        {
+            const NodeDefinition* Def = InSchema.FindNode(InNode.Type);
+            uint32_t Stages = Def ? Def->StageMask : ~0u;
+            if(!InOutVisited.insert(InNode.Id).second) { return Stages; }
+
+            for(const Link& Each : InGraph.Links)
+            {
+                if(Each.To.Node != InNode.Id) { continue; }
+                if(const Node* Source = InGraph.FindNode(Each.From.Node))
+                {
+                    Stages &= AvailableStages(InSchema, InGraph, *Source, InOutVisited);
+                }
+            }
+            return Stages;
+        }
+    }
+
+    uint32_t Schema::GetRequiredStages(const Graph& InGraph, const Node& InNode, const std::string& InPin) const
+    {
+        std::set<NodeGuid> Visited;
+        return RequiredStages(*this, InGraph, InNode, InPin, Visited);
+    }
+
+    uint32_t Schema::GetAvailableStages(const Graph& InGraph, const Node& InNode) const
+    {
+        std::set<NodeGuid> Visited;
+        return AvailableStages(*this, InGraph, InNode, Visited);
+    }
+
+    bool Schema::CanLinkStages(const Graph& InGraph, const Node& InFromNode, const Node& InToNode, const std::string& InToPin,
+                               std::string* OutWhy) const
+    {
+        const uint32_t Required  = GetRequiredStages(InGraph, InToNode, InToPin);
+        const uint32_t Available = GetAvailableStages(InGraph, InFromNode);
+        const uint32_t Missing   = Required & ~Available;
+        if(Missing == 0) { return true; }
+
+        if(OutWhy)
+        {
+            uint32_t Bit = 1;
+            while(!(Missing & Bit)) { Bit <<= 1; }
+            const NodeDefinition* Def = FindNode(InFromNode.Type);
+            const std::string Stage = GetStageName(Bit);
+            *OutWhy = (Def ? Def->DisplayName : InFromNode.Type) + " (or something feeding it) can't be computed in the "
+                    + (Stage.empty() ? std::string("required") : Stage) + " stage, which this input leads to";
+        }
+        return false;
     }
 
     std::string Schema::GetPinType(const Graph& InGraph, const Node& InNode, const PinDefinition& InPin) const

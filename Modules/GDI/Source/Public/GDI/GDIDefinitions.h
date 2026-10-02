@@ -255,4 +255,25 @@ struct ITextureState
             MaxFilter(GDI_TF_Linear) {  }
 };
 
+/*
+ * The material binding layout (Engine/Modules/RenderCore/MATERIALS.md). A draw
+ * whose vertex or pixel shader resource has SetMaterialLayout(true) binds:
+ *
+ *   0, 1   View, Transform        as every shader
+ *   2      material block         GDISetUniformBlock, raw std140 bytes
+ *   3      scene block            GDISetUniformBlock, raw std140 bytes
+ *   4-11   material textures 0-7  GDISetMaterialTexture
+ *
+ * Both blocks are visible to both stages. Shaders declare them with
+ * UBO_BLOCK_BEGIN/END and the textures with MATERIAL_SAMPLER2D.
+ */
+constexpr unsigned GDI_MATERIAL_BLOCK_BINDING   = 2;
+constexpr unsigned GDI_SCENE_BLOCK_BINDING      = 3;
+constexpr unsigned GDI_MATERIAL_TEXTURE_BINDING = 4;
+constexpr unsigned GDI_MATERIAL_TEXTURE_SLOTS   = 8;
+constexpr unsigned GDI_MATERIAL_BLOCK_MAX_BYTES = 1024;
+
+/* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's. */
+constexpr unsigned GDI_MAX_COLOR_TARGETS        = 4;
+
 #endif //CORECLIENT_GDIDEFINITIONS_H

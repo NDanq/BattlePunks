@@ -83,13 +83,49 @@ def _expand_func_macros(line, func_macros):
     return line
 
 
+def _strip_outer_parens(expr):
+    """'(A || B)' -> 'A || B', as long as the outer pair encloses everything."""
+    while expr.startswith('(') and expr.endswith(')'):
+        depth = 0
+        for index, ch in enumerate(expr):
+            depth += 1 if ch == '(' else -1 if ch == ')' else 0
+            if depth == 0 and index != len(expr) - 1:
+                return expr          # '(A) || (B)': the first ')' closes early
+        expr = expr[1:-1].strip()
+    return expr
+
+
+def _split_top_level(expr, op):
+    """Splits on the first `op` outside parentheses, or returns None."""
+    depth = 0
+    for index in range(len(expr) - len(op) + 1):
+        ch = expr[index]
+        if ch == '(':
+            depth += 1
+        elif ch == ')':
+            depth -= 1
+        elif depth == 0 and expr.startswith(op, index):
+            return expr[:index], expr[index + len(op):]
+    return None
+
+
 def _eval_expr(expr, defines):
     """
     Evaluate a simple #if expression against the current defines dict.
-    Supports: NAME, defined(NAME), !, &&, ||, ==, !=, <, >, <=, >=
+    Supports: NAME, defined(NAME), parentheses, !, &&, ||, ==, !=, <, >, <=, >=,
+    with C's precedence (|| below &&, both below !).
     Unrecognised expressions produce a warning and evaluate to False.
     """
-    expr = expr.strip()
+    expr = _strip_outer_parens(expr.strip())
+
+    # Logical OR, then AND, outside parentheses: the lowest precedence first.
+    for op in ('||', '&&'):
+        parts = _split_top_level(expr, op)
+        if parts:
+            lhs, rhs = parts
+            if op == '||':
+                return _eval_expr(lhs, defines) or _eval_expr(rhs, defines)
+            return _eval_expr(lhs, defines) and _eval_expr(rhs, defines)
 
     # defined(NAME) / defined NAME
     m = re.match(r'^defined\s*\(\s*(\w+)\s*\)$', expr)
@@ -103,14 +139,6 @@ def _eval_expr(expr, defines):
     m = re.match(r'^!\s*(.+)$', expr)
     if m:
         return not _eval_expr(m.group(1), defines)
-
-    # Logical AND / OR (left-to-right, split on first occurrence)
-    if '&&' in expr:
-        lhs, rhs = expr.split('&&', 1)
-        return _eval_expr(lhs, defines) and _eval_expr(rhs, defines)
-    if '||' in expr:
-        lhs, rhs = expr.split('||', 1)
-        return _eval_expr(lhs, defines) or _eval_expr(rhs, defines)
 
     # Comparison operators (multi-char before single-char to avoid mis-splitting)
     for op in ('==', '!=', '<=', '>=', '<', '>'):
