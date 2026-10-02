@@ -11,7 +11,9 @@
 namespace GameCore
 {
     /* GetPosition/SetPosition, GetRotation/SetRotation, GetScale/SetScale, as
-     * three numbers each; plus Translate(dx, dy, dz). */
+     * three numbers each and local to the parent; plus Translate(dx, dy, dz)
+     * and the world-space Get/SetWorldPosition, Get/SetWorldRotation and
+     * GetWorldScale. */
     GAMECORE_DEFINE_COMPONENT_SCRIPT(TransformComponent)
     {
         Bind.Field("Position", &TransformComponent::Position);
@@ -24,6 +26,12 @@ namespace GameCore
             if(Call.HasError()) { return; }   // do not apply a half-read delta
             C.Position = C.Position + Delta;
         }, "Delta:Vector3");
+
+        Bind.NativePure<&TransformComponent::GetWorldPosition>("GetWorldPosition", "-> Position");
+        Bind.Native<&TransformComponent::SetWorldPosition>("SetWorldPosition", "Position");
+        Bind.NativePure<&TransformComponent::GetWorldRotation>("GetWorldRotation", "-> Rotation");
+        Bind.Native<&TransformComponent::SetWorldRotation>("SetWorldRotation", "Rotation");
+        Bind.NativePure<&TransformComponent::GetWorldScale>("GetWorldScale", "-> Scale");
     }
 
     /* GetEnabled/SetEnabled, GetLayer/SetLayer, GetMask/SetMask,

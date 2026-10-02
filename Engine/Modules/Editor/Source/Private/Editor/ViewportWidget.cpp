@@ -87,12 +87,15 @@ namespace
         return EngineCore::Vector3(InAxis == 0 ? 1.0 : 0.0, InAxis == 1 ? 1.0 : 0.0, InAxis == 2 ? 1.0 : 0.0);
     }
 
+    /* In the world: under a parent, the handles sit where the entity is,
+     * not at its local values. */
     TransformGizmo::Pose PoseOf(const GameCore::TransformComponent& InTransform)
     {
+        const GameCore::TransformPose World = InTransform.Owner.GetEntity().GetWorldPose();
         TransformGizmo::Pose Pose;
-        Pose.Position = InTransform.Position;
-        Pose.Rotation = InTransform.Rotation;
-        Pose.Scale    = InTransform.Scale;
+        Pose.Position = World.Position;
+        Pose.Rotation = World.Rotation;
+        Pose.Scale    = World.Scale;
         return Pose;
     }
 
@@ -376,8 +379,7 @@ void ViewportWidget::QueueOverlay()
         {
             return;
         }
-        const GameCore::TransformComponent* Transform = InEntity.GetComponent<GameCore::TransformComponent>();
-        const EngineCore::Vector3 Origin = Transform ? Transform->Position : EngineCore::Vector3(0.0, 0.0, 0.0);
+        const EngineCore::Vector3 Origin = InEntity.GetWorldPose().Position;
         const GameCore::AABB Screen(EngineCore::Vector3(Origin.GetX(), Origin.GetY(), 0.0),
                                     EngineCore::Vector3(Origin.GetX() + GameScreenWidth, Origin.GetY() + GameScreenHeight, 0.0));
         Context.DrawDebugBox(Screen, GameScreenColor, GameScreenThickness * Ratio);
@@ -881,17 +883,19 @@ void ViewportWidget::ApplyGizmoPose(const GameCore::EntityID InEntity, const Tra
     {
         return;
     }
-    GameCore::TransformComponent* Transform = World.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>();
-    if(!Transform)
+    /* The gizmo works in world space; the local values that land there. */
+    GameCore::TransformPose Pose;
+    Pose.Position = InPose.Position;
+    Pose.Rotation = InPose.Rotation;
+    Pose.Scale    = InPose.Scale;
+    if(!World.GetEntity(InEntity).SetWorldPose(Pose))
     {
         return;
     }
-    Transform->Position = InPose.Position;
-    Transform->Rotation = InPose.Rotation;
-    Transform->Scale    = InPose.Scale;
 
     /* The render proxy picks the Transform up on its own next frame; the
-     * bounds need a refit now, static or not, so the outline follows. */
+     * bounds need a refit now, static or not, so the outline follows --
+     * the children's too. */
     World.RefreshEntityBounds(InEntity);
     Context.NotifyPropertyEdited(InEntity, GameCore::TransformComponent::StaticType().ID);
 }
@@ -984,7 +988,7 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
     GameCore::EntityID Best;
     double BestT = std::numeric_limits<double>::max();
 
-    /* Ray vs each quad in its local space (inverse GetLocalMatrix, where it is
+    /* Ray vs each quad in its local space (inverse GetWorldMatrix, where it is
      * a Width x Height square at z = 0). t is preserved by the affine map. */
     Context.GetWorld().Each<RenderCore::RenderComponent>(
         [&](const GameCore::Entity& InEntity, RenderCore::RenderComponent& InRender)
@@ -999,7 +1003,7 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
             return;
         }
         Affine3x4 Inverse;
-        if(!InvertAffine(Transform->GetLocalMatrix(), Inverse))
+        if(!InvertAffine(InEntity.GetWorldMatrix(), Inverse))
         {
             return;   // degenerate -- drawn as a line at most, nothing to hit
         }

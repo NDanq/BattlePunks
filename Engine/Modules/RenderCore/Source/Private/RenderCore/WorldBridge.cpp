@@ -242,9 +242,9 @@ namespace RenderCore
                         continue;
                     }
 
-                    if(const TransformComponent* Transform = Camera.Owner.GetSibling<TransformComponent>())
+                    if(Camera.Owner.HasSibling<TransformComponent>() || Camera.Owner.GetEntity().HasParent())
                     {
-                        Origin = Transform->Position;
+                        Origin = Camera.Owner.GetEntity().GetWorldPose().Position;
                     }
 
                     return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, Camera.ZNear, Camera.ZFar);
@@ -386,7 +386,17 @@ namespace RenderCore
                 ExtractHeader Record;
                 Record.Handle = Handle;
 
-                if(const TransformComponent* Transform = Owner.GetSibling<TransformComponent>())
+                /* Where it is in the world: under a parent, the composed
+                 * pose (a parent without a Transform still carries it). */
+                const GameCore::Entity OwnerEntity = Owner.GetEntity();
+                if(OwnerEntity.HasParent())
+                {
+                    const GameCore::TransformPose Pose = OwnerEntity.GetWorldPose();
+                    Record.Transform.Position = Pose.Position;
+                    Record.Transform.Rotation = Pose.Rotation;
+                    Record.Transform.Scale    = Pose.Scale;
+                }
+                else if(const TransformComponent* Transform = Owner.GetSibling<TransformComponent>())
                 {
                     Record.Transform.Position = Transform->Position;
                     Record.Transform.Rotation = Transform->Rotation;

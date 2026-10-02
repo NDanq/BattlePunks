@@ -166,6 +166,14 @@ public:
     /* The script's bCullOutsideActiveRegion; nothing without a script. */
     void SetEntityScriptCull(GameCore::EntityID InEntity, bool bInCull);
 
+    /* Entity::SetParent, keeping the entity where it is in the world. An
+     * unset InParent detaches. False if refused (a cycle) or unchanged. */
+    bool SetEntityParent(GameCore::EntityID InEntity, GameCore::EntityID InParent);
+
+    /* InEntity's parent changed outside SetEntityParent (undo/redo): the
+     * Outliner's tree and the Transform's values are stale. */
+    void NotifyHierarchyEdited(GameCore::EntityID InEntity);
+
     /* Default-constructed. False if already present or not constructible. */
     bool AddComponent(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
     bool RemoveComponent(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
@@ -221,8 +229,9 @@ signals:
 
     void PlayViewEjectedChanged(bool bInEjected);
 
-    /* Entities or components added/removed. Coalesced to once per event-loop
-     * turn, never from inside a World delegate. */
+    /* Entities or components added/removed, or an entity reparented.
+     * Coalesced to once per event-loop turn, never from inside a World
+     * delegate. */
     void EntitiesChanged();
 
     void SelectionChanged(GameCore::EntityID InEntity);

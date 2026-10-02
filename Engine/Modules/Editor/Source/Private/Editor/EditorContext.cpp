@@ -458,6 +458,54 @@ void EditorContext::RecordMembersChange(const EntityID InEntity, const EditorHis
     }
 }
 
+bool EditorContext::SetEntityParent(const EntityID InEntity, const EntityID InParent)
+{
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || (InParent.IsSet() && !ActiveWorld->IsAlive(InParent)))
+    {
+        return false;
+    }
+    const GameCore::Entity E = ActiveWorld->GetEntity(InEntity);
+    const EntityID OldParent = E.GetParent();
+    if(OldParent == InParent)
+    {
+        return false;
+    }
+    const GameCore::ComponentTypeID TransformType = GameCore::TransformComponent::StaticType().ID;
+    const std::vector<uint8_t> BeforeTransform = EditorHistory::CaptureProperties(*ActiveWorld, InEntity, TransformType);
+
+    if(!E.SetParent(InParent, true))
+    {
+        return false;
+    }
+    ActiveWorld->RefreshEntityBounds(InEntity);
+
+    if(IsRecording())
+    {
+        const QString Text = InParent.IsSet()
+            ? QStringLiteral("Parent %1 to %2").arg(GetDisplayName(InEntity), GetDisplayName(InParent))
+            : QStringLiteral("Detach %1").arg(GetDisplayName(InEntity));
+        Record(new EditorHistory::ParentCommand(*this, Text, E.GetGuid(),
+                                                EditedWorld->GetEntity(OldParent).GetGuid(), BeforeTransform,
+                                                EditedWorld->GetEntity(InParent).GetGuid(),
+                                                EditorHistory::CaptureProperties(*EditedWorld, InEntity, TransformType)));
+    }
+    NotifyHierarchyEdited(InEntity);
+    return true;
+}
+
+void EditorContext::NotifyHierarchyEdited(const EntityID InEntity)
+{
+    QueueEntitiesChanged();
+    emit PropertyEdited(InEntity, GameCore::TransformComponent::StaticType().ID);
+
+    /* The local Transform was rewritten without a property edit: the next
+     * edit's "before" must be these values. */
+    if(InEntity == ShadowEntity)
+    {
+        RefreshShadow();
+    }
+}
+
 bool EditorContext::AddComponent(const EntityID InEntity, const GameCore::ComponentTypeID InType)
 {
     const GameCore::ComponentTypeInfo* Info = GameCore::GetComponentType(InType);
@@ -583,16 +631,17 @@ GameCore::AABB EditorContext::GetEntityBounds(const EntityID InEntity) const
         {
             const GameCore::AABB Local(EngineCore::Vector3(Mesh->BoundsMin[0], Mesh->BoundsMin[1], Mesh->BoundsMin[2]),
                                        EngineCore::Vector3(Mesh->BoundsMax[0], Mesh->BoundsMax[1], Mesh->BoundsMax[2]));
-            return GameCore::AABB::Transformed(Local, Transform->GetLocalMatrix());
+            return GameCore::AABB::Transformed(Local, E.GetWorldMatrix());
         }
         const GameCore::AABB Quad(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));   // the unit quad
-        return GameCore::AABB::Transformed(Quad, Transform->GetLocalMatrix());
+        return GameCore::AABB::Transformed(Quad, E.GetWorldMatrix());
     }
 
     /* A marker for anything with only a position (a camera, an empty). */
     const double Half = 25.0;
-    return GameCore::AABB(Transform->Position - EngineCore::Vector3(Half, Half, Half),
-                          Transform->Position + EngineCore::Vector3(Half, Half, Half));
+    const EngineCore::Vector3 Position = E.GetWorldPose().Position;
+    return GameCore::AABB(Position - EngineCore::Vector3(Half, Half, Half),
+                          Position + EngineCore::Vector3(Half, Half, Half));
 }
 
 GameCore::AABB EditorContext::GetSceneBounds() const

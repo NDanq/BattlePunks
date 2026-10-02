@@ -25,7 +25,8 @@ namespace
     constexpr uint32_t TAG_COMPONENT = EngineCore::MakeArchiveTag('C','M','P','T');
     constexpr uint32_t TAG_DATA      = EngineCore::MakeArchiveTag('D','A','T','A');
 
-    constexpr uint16_t WORLD_CHUNK_VERSION = 1;
+    /* 2: a parent index per entity, after the entity table. */
+    constexpr uint16_t WORLD_CHUNK_VERSION = 2;
 
     /* Save-local index <-> live EntityID. Saving fills LiveToIndex, loading
      * fills IndexToLive; one class because IEntityRemapper serves both. */
@@ -138,6 +139,14 @@ namespace
             const EntityScriptState* Script = Handle.GetScriptState();
             uint8_t bCull = Script ? Script->bCullOutsideActiveRegion : 0;
             Ar << Name << ScriptPath << bCull;
+        }
+
+        /* Each entity's parent as a save index, in table order -- after the
+         * whole table, so a parent later in it still resolves. */
+        for(const EntityID EntityId : OutTable.GetSavedOrder())
+        {
+            uint32_t ParentIndex = OutTable.IndexOf(InWorld.GetEntity(EntityId).GetParent());
+            Ar << ParentIndex;
         }
 
         /* Type id order, so saving the same World twice gives identical bytes. */
@@ -257,6 +266,16 @@ namespace
             OutTable.AddForLoading(Loaded);
         }
 
+        /* Read now, applied after the components: the saved Transforms are
+         * already local to these parents, so nothing should move. */
+        std::vector<uint32_t> ParentIndices;
+        if(Version >= 2)
+        {
+            ParentIndices.resize(EntityCount);
+            for(uint32_t& ParentIndex : ParentIndices) { Ar << ParentIndex; }
+            if(Ar.HasError()) { Ar.CloseChunk(); return false; }
+        }
+
         /* A non-CMPT tag ends the loop; CloseChunk below skips the rest. */
         uint16_t ChunkVersion = 0;
         while(!Ar.IsAtEnd() && Ar.OpenChunk(TAG_COMPONENT, ChunkVersion))
@@ -334,6 +353,15 @@ namespace
         }
 
         Ar.CloseChunk();
+
+        for(uint32_t Ordinal = 0; Ordinal < uint32_t(ParentIndices.size()); ++Ordinal)
+        {
+            const EntityID Parent = OutTable.LiveAt(ParentIndices[Ordinal]);
+            if(Parent.IsSet())
+            {
+                InWorld.GetEntity(OutTable.LiveAt(Ordinal)).SetParent(Parent, false);
+            }
+        }
 
         /* Gives every restored Bounds its World box and a leaf (ProxyID is not
          * saved). Covers bStatic too, which still needs its first insert. */

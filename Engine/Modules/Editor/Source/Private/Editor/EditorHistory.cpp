@@ -8,6 +8,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/ComponentSerializer.h"
+#include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/Editor/EditorContext.h"
@@ -293,14 +294,20 @@ namespace EditorHistory
         {
             return Snapshot;
         }
+        const GameCore::Entity E = InWorld.GetEntity(InEntity);
         const EntityMembers Members = CaptureMembers(InWorld, InEntity);
-        Snapshot.Guid                     = InWorld.GetEntity(InEntity).GetGuid();
+        Snapshot.Guid                     = E.GetGuid();
+        Snapshot.ParentGuid               = InWorld.GetEntity(E.GetParent()).GetGuid();
         Snapshot.Name                     = Members.Name;
         Snapshot.ScriptPath               = Members.ScriptPath;
         Snapshot.bCullOutsideActiveRegion = Members.bCullOutsideActiveRegion;
         for(const ComponentTypeID Type : ComponentTypesOf(InWorld, InEntity))
         {
             Snapshot.Components.push_back(CaptureComponent(InWorld, InEntity, Type));
+        }
+        for(EntityID Child = E.GetFirstChild(); Child.IsSet(); Child = InWorld.GetEntity(Child).GetNextSibling())
+        {
+            Snapshot.Children.push_back(CaptureEntity(InWorld, Child));
         }
         return Snapshot;
     }
@@ -319,6 +326,16 @@ namespace EditorHistory
             {
                 Script->bCullOutsideActiveRegion = InSnapshot.bCullOutsideActiveRegion;
             }
+        }
+        /* The Transform was captured local to this parent: keep it as is. */
+        if(InSnapshot.ParentGuid.IsSet())
+        {
+            const EntityID Parent = InWorld.FindEntityByGuid(InSnapshot.ParentGuid);
+            if(Parent.IsSet()) { E.SetParent(Parent, false); }
+        }
+        for(const EntitySnapshot& Child : InSnapshot.Children)
+        {
+            RestoreEntity(InWorld, Child);
         }
         InWorld.RefreshEntityBounds(E.GetID());
         return E.GetID();
@@ -452,6 +469,48 @@ namespace EditorHistory
             Snapshot = CaptureEntity(W, Entity);
             Context.DestroyEntity(Entity);
         }
+    }
+
+    // === ParentCommand =======================================================
+
+    ParentCommand::ParentCommand(EditorContext& InContext, const QString& InText, const EntityGuid& InGuid,
+                                 const EntityGuid& InBeforeParent, std::vector<uint8_t> InBeforeTransform,
+                                 const EntityGuid& InAfterParent, std::vector<uint8_t> InAfterTransform)
+        : Command(InContext, InText)
+        , Guid(InGuid)
+        , BeforeParent(InBeforeParent)
+        , AfterParent(InAfterParent)
+        , BeforeTransform(std::move(InBeforeTransform))
+        , AfterTransform(std::move(InAfterTransform))
+    {
+    }
+
+    void ParentCommand::Apply(const bool bInForward)
+    {
+        World& W = Context.GetEditedWorld();
+        const EntityID Entity = Resolve(W, Guid, text());
+        if(!Entity.IsSet())
+        {
+            return;
+        }
+        const EntityGuid& ParentGuid = bInForward ? AfterParent : BeforeParent;
+        const EntityID    Parent     = ParentGuid.IsSet() ? Resolve(W, ParentGuid, text()) : EntityID();
+        if(ParentGuid.IsSet() && !Parent.IsSet())
+        {
+            return;
+        }
+
+        /* The local values recorded for that parent, not recomputed: undo
+         * puts it back exactly. */
+        W.GetEntity(Entity).SetParent(Parent, false);
+        const std::vector<uint8_t>& Values = bInForward ? AfterTransform : BeforeTransform;
+        if(!Values.empty())
+        {
+            ApplyProperties(W, Entity, GameCore::TransformComponent::StaticType().ID, Values);
+        }
+        W.RefreshEntityBounds(Entity);
+        Context.SetSelection(Entity);
+        Context.NotifyHierarchyEdited(Entity);
     }
 
     // === ComponentLifetimeCommand ============================================

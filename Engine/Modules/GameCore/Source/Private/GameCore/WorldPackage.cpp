@@ -450,6 +450,11 @@ namespace
         pugi::xml_node Root = Doc.append_child("Entity");
         Root.append_attribute("Guid") = GuidString.c_str();
         Root.append_attribute("Name") = Handle.GetName();
+        /* Only when set, so a root entity's file reads as it always has. */
+        if(const EntityID Parent = Handle.GetParent(); Parent.IsSet())
+        {
+            Root.append_attribute("Parent") = GuidText(InWorld.GetEntity(Parent).GetGuid()).c_str();
+        }
 
         if(Handle.HasScript())
         {
@@ -644,6 +649,25 @@ namespace
                 XmlComponentArchive Ar(Element, Version, Loaded, Entry.GuidString + " " + TypeName);
                 Serializer->Fn(Ar, Component);
             }
+        }
+
+        /* Pass 3: parents, once every entity has its components -- the
+         * saved Transforms are already local, so nothing moves. Manifest
+         * order is the child order. */
+        for(const PendingEntity& Entry : Pending)
+        {
+            const char* ParentText = Entry.Doc->child("Entity").attribute("Parent").as_string();
+            if(ParentText[0] == '\0') { continue; }
+
+            EntityGuid ParentGuid;
+            const auto Found = EntityGuid::Parse(ParentText, ParentGuid) ? Loaded.find(ParentGuid) : Loaded.end();
+            if(Found == Loaded.end())
+            {
+                GAMECORE_LOG_WARN("WorldPackage: entity " + Entry.GuidString + " names parent '" + ParentText
+                                  + "', which is not in this world; leaving it unparented")
+                continue;
+            }
+            InOutWorld.GetEntity(Entry.Id).SetParent(Found->second, false);
         }
 
         /* Files the manifest doesn't list are ignored. */

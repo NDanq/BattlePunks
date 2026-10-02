@@ -35,6 +35,9 @@ namespace GameCore
             ComponentTypeID Type = COMPONENT_TYPE_INVALID;
         };
 
+        /* "No slot" in the hierarchy links. */
+        constexpr uint32_t NO_SLOT = 0xFFFFFFFFu;
+
         /* What an entity carries besides its components. */
         struct EntityMembers
         {
@@ -42,6 +45,16 @@ namespace GameCore
             std::string       Name;
             std::string       ScriptPath;   // empty = no script
             EntityScriptState Script;
+
+            /* The hierarchy, as slot indices: an intrusive, ordered child
+             * list. Slots, not EntityIDs -- a child is destroyed with its
+             * parent, so a link never outlives the slot it names. */
+            uint32_t Parent      = NO_SLOT;
+            uint32_t FirstChild  = NO_SLOT;
+            uint32_t LastChild   = NO_SLOT;
+            uint32_t NextSibling = NO_SLOT;
+            uint32_t PrevSibling = NO_SLOT;
+            uint32_t ChildCount  = 0;
         };
 
         struct PendingScriptChange
@@ -221,6 +234,63 @@ namespace GameCore
             ScriptedSlots.push_back(InEntity.Index);
         }
 
+        EntityID SlotID(const uint32_t InSlot) const
+        {
+            return InSlot == NO_SLOT ? EntityID() : EntityID(InSlot, Generations[InSlot]);
+        }
+
+        /* Takes InSlot out of its parent's child list; it becomes a root. */
+        void Unlink(const uint32_t InSlot)
+        {
+            EntityMembers& Child = Members[InSlot];
+            if(Child.Parent == NO_SLOT) { return; }
+
+            EntityMembers& Parent = Members[Child.Parent];
+            if(Child.PrevSibling != NO_SLOT) { Members[Child.PrevSibling].NextSibling = Child.NextSibling; }
+            else                             { Parent.FirstChild = Child.NextSibling; }
+            if(Child.NextSibling != NO_SLOT) { Members[Child.NextSibling].PrevSibling = Child.PrevSibling; }
+            else                             { Parent.LastChild = Child.PrevSibling; }
+            --Parent.ChildCount;
+
+            Child.Parent = Child.NextSibling = Child.PrevSibling = NO_SLOT;
+        }
+
+        /* InSlot (a root) becomes InParentSlot's last child. */
+        void LinkLast(const uint32_t InSlot, const uint32_t InParentSlot)
+        {
+            EntityMembers& Child  = Members[InSlot];
+            EntityMembers& Parent = Members[InParentSlot];
+            Child.Parent      = InParentSlot;
+            Child.PrevSibling = Parent.LastChild;
+            Child.NextSibling = NO_SLOT;
+            if(Parent.LastChild != NO_SLOT) { Members[Parent.LastChild].NextSibling = InSlot; }
+            else                            { Parent.FirstChild = InSlot; }
+            Parent.LastChild = InSlot;
+            ++Parent.ChildCount;
+        }
+
+        /* Destroys InSlot's children (and theirs) one at a time, re-reading
+         * the list after each: a child's OnDestroy may reparent or destroy
+         * a sibling, or even give this entity a new child. */
+        void DestroyChildren(World& InWorld, const uint32_t InSlot)
+        {
+            uint32_t Guard = 0;
+            while(Members[InSlot].FirstChild != NO_SLOT)
+            {
+                const uint32_t Child = Members[InSlot].FirstChild;
+                DestroyEntityImmediate(InWorld, SlotID(Child));
+
+                /* Still first: it could not be destroyed (it is mid-destroy
+                 * higher up the stack). Detach it so the loop ends, and the
+                 * outer destroy finishes it. Bounded by the guard in any case. */
+                if(Members[InSlot].FirstChild == Child || ++Guard > 1000000u)
+                {
+                    GAMECORE_LOG_WARN("DestroyEntity: a child could not be destroyed with its parent; detaching it")
+                    Unlink(Members[InSlot].FirstChild);
+                }
+            }
+        }
+
         /* Removes InEntity's every component IMMEDIATELY, bypassing
          * RemoveComponentRaw's own deferral -- see DESIGN.md for why calling
          * that here would be wrong, not merely redundant. Only ever runs
@@ -248,6 +318,15 @@ namespace GameCore
             {
                 return;
             }
+
+            /* Children before this entity's components go, so their
+             * OnDestroy can still read the parent. */
+            DestroyChildren(InWorld, InEntity.Index);
+            if(!IsAliveIndex(InEntity))
+            {
+                return;
+            }
+            Unlink(InEntity.Index);
 
             for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
             {
@@ -434,6 +513,108 @@ namespace GameCore
             return nullptr;
         }
         return &P->Members[InEntity.Index].Script;
+    }
+
+    // === Hierarchy ===============================================================
+
+    bool World::SetEntityParent(const EntityID InEntity, const EntityID InParent, const bool bInKeepWorldTransform)
+    {
+        if(!P->IsAliveIndex(InEntity)) { return false; }
+        if(InParent.IsSet() && !P->IsAliveIndex(InParent)) { return false; }
+
+        const uint32_t NewParent = InParent.IsSet() ? InParent.Index : NO_SLOT;
+        if(P->Members[InEntity.Index].Parent == NewParent) { return true; }
+
+        /* No cycles: InParent may not be InEntity or below it. */
+        for(uint32_t Slot = NewParent; Slot != NO_SLOT; Slot = P->Members[Slot].Parent)
+        {
+            if(Slot == InEntity.Index)
+            {
+                GAMECORE_LOG_WARN(std::string("SetParent: '") + GetEntityName(InParent) + "' is '"
+                                  + GetEntityName(InEntity) + "' or one of its descendants; ignoring")
+                return false;
+            }
+        }
+
+        const TransformPose WorldPose = GetEntityWorldPose(InEntity);
+        P->Unlink(InEntity.Index);
+        if(NewParent != NO_SLOT)
+        {
+            P->LinkLast(InEntity.Index, NewParent);
+        }
+
+        if(bInKeepWorldTransform)
+        {
+            SetEntityWorldPose(InEntity, WorldPose);
+        }
+        return true;
+    }
+
+    EntityID World::GetEntityParent(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->SlotID(P->Members[InEntity.Index].Parent) : EntityID();
+    }
+
+    EntityID World::GetEntityFirstChild(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->SlotID(P->Members[InEntity.Index].FirstChild) : EntityID();
+    }
+
+    EntityID World::GetEntityNextSibling(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->SlotID(P->Members[InEntity.Index].NextSibling) : EntityID();
+    }
+
+    size_t World::GetEntityChildCount(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].ChildCount : 0;
+    }
+
+    TransformPose World::GetEntityWorldPose(const EntityID InEntity) const
+    {
+        if(!P->IsAliveIndex(InEntity)) { return TransformPose(); }
+
+        const auto* Transform = static_cast<const TransformComponent*>(GetComponentRaw(InEntity, TransformComponent::StaticType().ID));
+        const TransformPose Local = Transform ? Transform->GetPose() : TransformPose();
+
+        const uint32_t Parent = P->Members[InEntity.Index].Parent;
+        if(Parent == NO_SLOT)
+        {
+            return Local;
+        }
+        /* The parent's world pose first, then this one under it: TRS
+         * composition is not associative once a scale is non-uniform, and
+         * root-down is the definition. Recursion depth is hierarchy depth. */
+        return TransformMath::Compose(GetEntityWorldPose(P->SlotID(Parent)), Local);
+    }
+
+    EngineCore::Matrix4x4 World::GetEntityWorldMatrix(const EntityID InEntity) const
+    {
+        if(!P->IsAliveIndex(InEntity)) { return EngineCore::Matrix4x4(); }
+
+        /* Unparented: exactly the local matrix, as before parenting existed. */
+        if(P->Members[InEntity.Index].Parent == NO_SLOT)
+        {
+            const auto* Transform = static_cast<const TransformComponent*>(GetComponentRaw(InEntity, TransformComponent::StaticType().ID));
+            return Transform ? Transform->GetLocalMatrix() : EngineCore::Matrix4x4();
+        }
+        return PoseToMatrix(GetEntityWorldPose(InEntity));
+    }
+
+    bool World::SetEntityWorldPose(const EntityID InEntity, const TransformPose& InPose)
+    {
+        auto* Transform = static_cast<TransformComponent*>(GetComponentRaw(InEntity, TransformComponent::StaticType().ID));
+        if(!Transform) { return false; }
+
+        const EntityID Parent = GetEntityParent(InEntity);
+        if(!Parent.IsSet())
+        {
+            Transform->SetPose(InPose);
+            return true;
+        }
+        /* Near the current local angles, so a round trip does not flip them. */
+        Transform->SetPose(TransformMath::Relative(GetEntityWorldPose(Parent), InPose, Transform->Rotation));
+        return true;
     }
 
     void World::SetScriptDriver(const ScriptDriver* InDriver)
@@ -769,10 +950,7 @@ namespace GameCore
                 continue;
             }
 
-            const TransformComponent* Transform = Bounds.Owner.GetSibling<TransformComponent>();
-            const EngineCore::Matrix4x4 LocalToWorld = Transform ? Transform->GetLocalMatrix() : EngineCore::Matrix4x4();
-
-            Bounds.World = AABB::Transformed(Bounds.Local, LocalToWorld);
+            Bounds.World = AABB::Transformed(Bounds.Local, GetEntityWorldMatrix(Bounds.Owner.Entity));
 
             if(Bounds.ProxyID < 0)
             {
@@ -787,24 +965,29 @@ namespace GameCore
 
     void World::RefreshEntityBounds(const EntityID InEntity)
     {
-        auto* Bounds = static_cast<BoundsComponent*>(GetComponentRaw(InEntity, BoundsComponent::StaticType().ID));
-        if(!Bounds)
+        if(!P->IsAliveIndex(InEntity))
         {
             return;
         }
 
-        const auto* Transform = static_cast<const TransformComponent*>(GetComponentRaw(InEntity, TransformComponent::StaticType().ID));
-        const EngineCore::Matrix4x4 LocalToWorld = Transform ? Transform->GetLocalMatrix() : EngineCore::Matrix4x4();
-
-        Bounds->World = AABB::Transformed(Bounds->Local, LocalToWorld);
-
-        if(Bounds->ProxyID < 0)
+        if(auto* Bounds = static_cast<BoundsComponent*>(GetComponentRaw(InEntity, BoundsComponent::StaticType().ID)))
         {
-            Bounds->ProxyID = P->Spatial.Insert(InEntity, Bounds->World);
+            Bounds->World = AABB::Transformed(Bounds->Local, GetEntityWorldMatrix(InEntity));
+
+            if(Bounds->ProxyID < 0)
+            {
+                Bounds->ProxyID = P->Spatial.Insert(InEntity, Bounds->World);
+            }
+            else
+            {
+                P->Spatial.Move(Bounds->ProxyID, Bounds->World);
+            }
         }
-        else
+
+        /* The children moved with it. */
+        for(uint32_t Child = P->Members[InEntity.Index].FirstChild; Child != NO_SLOT; Child = P->Members[Child].NextSibling)
         {
-            P->Spatial.Move(Bounds->ProxyID, Bounds->World);
+            RefreshEntityBounds(P->SlotID(Child));
         }
     }
 
