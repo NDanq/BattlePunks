@@ -14,6 +14,8 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/GameSession.h"
+#include "Public/RenderCore/RenderComponents.h"
 
 using namespace GameCore;
 
@@ -198,6 +200,55 @@ namespace
         Scripts.Shutdown();
         std::remove(Path.c_str());
     }
+
+    void TestMeshShapes()
+    {
+        std::printf("[mesh shapes]\n");
+        NimbleEngine::InstallCollisionMeshProvider();   // what a GameSession does
+        World W;
+
+        /* A box mesh, scaled 40x: no Bounds authored; Collision derives it. */
+        Entity Hazard = W.CreateEntity("Hazard");
+        TransformComponent T;
+        T.Position = EngineCore::Vector3(100.0, 0.0, 0.0);
+        T.Scale    = EngineCore::Vector3(40.0, 40.0, 40.0);
+        Hazard.AddComponent(T);
+        RenderCore::RenderComponent Render;
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "Engine/Content/Meshes/Box.nmmesh");
+        Hazard.AddComponent(Render);
+        CollisionComponent C;
+        C.Source = CS_Mesh;
+        Hazard.AddComponent(C);
+
+        Entity Player = MakeBox(W, "Player", 0.0);
+        W.Tick(0.016f);
+
+        const BoundsComponent* B = Hazard.GetComponent<BoundsComponent>();
+        Expect(B != nullptr, "a Mesh collider without Bounds gets one");
+        const double Width = B ? double(B->Local.Max.GetX() - B->Local.Min.GetX()) : 0.0;
+        Expect(B && Width > 0.0 && std::string(Hazard.GetComponent<CollisionComponent>()->ResolvedMesh) == Render.Mesh,
+               "shaped from the mesh's header (local width " + std::to_string(Width) + ")");
+        Expect(!W.AreOverlapping(Hazard, Player), "apart: no overlap");
+
+        /* Its world box is the mesh box through the 40x scale. */
+        const double Reach = B ? double(B->World.Min.GetX()) : 0.0;
+        MoveTo(Player, Reach - 0.4);   // the unit box's right edge just inside the hazard's left edge
+        W.Tick(0.016f);
+        Expect(W.AreOverlapping(Hazard, Player), "touching the scaled mesh box: overlap");
+
+        /* Change the mesh: the shape follows. No mesh draws the unit quad. */
+        std::snprintf(Hazard.GetComponent<RenderCore::RenderComponent>()->Mesh, RenderCore::RENDER_MESH_PATH_MAX, "%s", "");
+        W.Tick(0.016f);
+        B = Hazard.GetComponent<BoundsComponent>();
+        Expect(B && std::fabs(double(B->Local.Max.GetX()) - 0.5) < 1e-6 && B->Local.Max.GetZ() == 0.0,
+               "with no mesh the shape is the unit quad");
+
+        /* An unreadable mesh keeps the last shape (warned once). */
+        std::snprintf(Hazard.GetComponent<RenderCore::RenderComponent>()->Mesh, RenderCore::RENDER_MESH_PATH_MAX, "%s", "NoSuch.nmmesh");
+        W.Tick(0.016f);
+        B = Hazard.GetComponent<BoundsComponent>();
+        Expect(B && std::fabs(double(B->Local.Max.GetX()) - 0.5) < 1e-6, "an unreadable mesh keeps the last shape");
+    }
 }
 
 int main()
@@ -206,6 +257,7 @@ int main()
     TestPairs();
     TestFilters();
     TestScripts();
+    TestMeshShapes();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

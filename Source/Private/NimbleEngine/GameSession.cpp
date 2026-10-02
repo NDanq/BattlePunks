@@ -29,6 +29,8 @@ namespace NimbleEngine
         , Scripts(InScripts)
         , Rendering(InRenderer)
     {
+        InstallCollisionMeshProvider();   // CS_Mesh colliders (CollisionMeshes.cpp)
+
     }
 
     GameSession::~GameSession()

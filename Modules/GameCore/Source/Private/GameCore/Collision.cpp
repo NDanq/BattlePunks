@@ -9,6 +9,7 @@
 #include "Public/GameCore/ComponentPool.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/GameCoreLog.h"
 
 /*
  * Overlap detection for CollisionComponents (Components.h, DESIGN.md).
@@ -26,6 +27,61 @@ namespace GameCore
 namespace
 {
     using Pair = std::pair<uint64_t, uint64_t>;
+
+    CollisionMeshProvider GMeshProvider;
+    bool                  bHasMeshProvider = false;
+    bool                  bWarnedNoProvider = false;
+
+    /* CS_Mesh colliders: (re)shape any whose mesh path changed since its
+     * shape was read -- written into Bounds.Local, adding a Bounds if there
+     * is none, and refit at once so this pass already uses it. */
+    void ResolveMeshShapes(World& InWorld, ComponentPool& InPool)
+    {
+        const ComponentTypeID BoundsType = BoundsComponent::StaticType().ID;
+        for(size_t Index = 0; Index < InPool.GetCount(); ++Index)
+        {
+            /* Re-read each time round: adding a Bounds may grow that pool,
+             * never this one, but stay safe against a provider that adds. */
+            CollisionComponent& C = static_cast<CollisionComponent*>(InPool.GetDenseData())[Index];
+            if(!C.bEnabled || C.Source != CS_Mesh) { continue; }
+
+            if(!bHasMeshProvider)
+            {
+                if(!bWarnedNoProvider)
+                {
+                    GAMECORE_LOG_WARN("a Collision component's Source is Mesh, but no mesh provider is installed; "
+                                      "it uses its Bounds as authored")
+                    bWarnedNoProvider = true;
+                }
+                return;
+            }
+
+            const EntityID Self = InPool.GetEntityAt(Index);
+            const char* Path = GMeshProvider.GetMeshPath(InWorld, Self, GMeshProvider.UserData);
+            if(!Path) { continue; }
+
+            const bool bHasBounds = InWorld.GetEntity(Self).GetComponentByType(BoundsType) != nullptr;
+            if(bHasBounds && std::strncmp(Path, C.ResolvedMesh, sizeof(C.ResolvedMesh)) == 0) { continue; }
+
+            AABB Local;
+            if(!GMeshProvider.GetMeshBounds(Path, Local, GMeshProvider.UserData)) { continue; }
+
+            std::strncpy(C.ResolvedMesh, Path, sizeof(C.ResolvedMesh) - 1);
+            C.ResolvedMesh[sizeof(C.ResolvedMesh) - 1] = '\0';
+
+            if(!bHasBounds)
+            {
+                BoundsComponent Added;
+                Added.Local = Local;
+                InWorld.GetEntity(Self).AddComponent(Added);
+            }
+            else
+            {
+                static_cast<BoundsComponent*>(InWorld.GetEntity(Self).GetComponentByType(BoundsType))->Local = Local;
+            }
+            InWorld.RefreshEntityBounds(Self);
+        }
+    }
 
     Pair MakePair(const EntityID InA, const EntityID InB)
     {
@@ -58,6 +114,12 @@ namespace
     }
 }
 
+void SetCollisionMeshProvider(const CollisionMeshProvider* InProvider)
+{
+    bHasMeshProvider = InProvider && InProvider->GetMeshPath && InProvider->GetMeshBounds;
+    GMeshProvider    = bHasMeshProvider ? *InProvider : CollisionMeshProvider();
+}
+
 // === CollisionComponent ==========================================================
 
 bool CollisionComponent::IsOverlapping(const EntityID InOther) const
@@ -87,6 +149,8 @@ void World::UpdateOverlaps()
     const ComponentTypeID CollisionType = CollisionComponent::StaticType().ID;
     if(Pool)
     {
+        ResolveMeshShapes(*this, *Pool);
+
         std::vector<EntityID> Candidates;
         CollisionComponent* Colliders = static_cast<CollisionComponent*>(Pool->GetDenseData());
         for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
