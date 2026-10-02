@@ -339,6 +339,9 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
         Source/Private/NimbleEngine/SaveGameFormat.h
+        Source/Private/NimbleEngine/Input.cpp
+        Source/Private/NimbleEngine/InputInternal.h
+        Source/Private/NimbleEngine/InputRouter.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/GameSession.h
@@ -348,6 +351,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/GameState.h
         Source/Public/NimbleEngine/SaveGame.h
         Source/Public/NimbleEngine/NimbleEngineTypes.h
+        Source/Public/NimbleEngine/Input.h
+        Source/Public/NimbleEngine/InputRouter.h
 )
 
 nimble_add_module(NimbleEngine SHARED
@@ -411,6 +416,19 @@ endif()
 target_include_directories(NimbleEngine PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
 
 source_group("NimbleEngine" FILES ${NIMBLEENGINE_SOURCES})
+
+# === Input tests ===========================================================
+# The input path without a window: names, edges, maps and their config
+# overrides, and the InputComponent's resolve ahead of TP_PrePhysics scripts.
+option(NIMBLEENGINE_BUILD_TESTS "Build NimbleEngineInputTests" ON)
+if(NIMBLEENGINE_BUILD_TESTS)
+    add_executable(NimbleEngineInputTests Tests/InputTests.cpp)
+    target_link_libraries(NimbleEngineInputTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEngineInputTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    # From Binaries, so the engine DLLs resolve.
+    add_test(NAME NimbleEngine.InputTests COMMAND NimbleEngineInputTests)
+    set_tests_properties(NimbleEngine.InputTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+endif()
 
 # === Cooked shaders ========================================================
 # Content/Shaders cooked straight into the runtime directory, at the paths GDI

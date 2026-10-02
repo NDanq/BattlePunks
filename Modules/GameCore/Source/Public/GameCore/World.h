@@ -34,6 +34,13 @@ namespace GameCore
 {
     using SystemFn = void (*)(World& InWorld, float InDeltaSeconds, void* InUserData);
 
+    /* Where a system runs within its phase, relative to the phase's scripts. */
+    enum ESystemOrder : uint8_t
+    {
+        SO_AfterScripts = 0,   // the default: scripts first, then systems
+        SO_BeforeScripts,      // ahead of the phase's scripts -- what they must see this frame (input)
+    };
+
     /* Runtime state of an entity's script, owned by the ScriptDriver; World
      * only stores it. Reset when the path changes. */
     struct EntityScriptState
@@ -143,9 +150,10 @@ namespace GameCore
 
         // === Systems, by phase ===============================================
         // Function pointer + void*, not a virtual interface -- see DESIGN.md.
-        // Registration order WITHIN a phase is execution order.
+        // Registration order WITHIN a phase and order is execution order.
 
-        void RegisterSystem(const char* InName, ETickPhase InPhase, SystemFn InFn, void* InUserData = nullptr);
+        void RegisterSystem(const char* InName, ETickPhase InPhase, SystemFn InFn, void* InUserData = nullptr,
+                            ESystemOrder InOrder = SO_AfterScripts);
         void UnregisterSystem(SystemFn InFn, void* InUserData);
         size_t UnregisterAllSystems(void* InUserData);
 
@@ -153,7 +161,8 @@ namespace GameCore
          * spatial refit at the end of TP_Physics. */
         void Tick(float InDeltaSeconds);
 
-        /* Scripts, then InPhase's systems, then THIS PHASE's deferred queue.
+        /* SO_BeforeScripts systems, scripts, then InPhase's other systems,
+         * then THIS PHASE's deferred queue.
          * Public so a host can interleave work (DESIGN.md). */
         void TickPhase(ETickPhase InPhase, float InDeltaSeconds);
 

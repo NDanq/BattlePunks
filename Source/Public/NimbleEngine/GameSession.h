@@ -7,6 +7,7 @@
 
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/NimbleEngine/GameMode.h"
+#include "Public/NimbleEngine/Input.h"
 #include "Public/Core/CoreArchive.h"      // EngineCore::Archive, for RestoreSaveInto below
 
 namespace GameCore
@@ -44,6 +45,15 @@ namespace NimbleEngine
         /* Frame pacing target; 0 is unlimited. Takes effect from the next frame. */
         virtual void     SetFrameRateLimit(uint32_t InFramesPerSecond) = 0;
         virtual uint32_t GetFrameRateLimit() const = 0;
+
+        /* This frame's input, latched after the event pump (InputRouter). A
+         * host without input -- a test, a server -- keeps the default: nothing
+         * pressed. */
+        virtual const InputState& GetInput() const
+        {
+            static const InputState None;
+            return None;
+        }
     };
 
     /*
@@ -148,10 +158,17 @@ namespace NimbleEngine
 
         IGameHost& GetHost() { return Host; }
 
+        /* This frame's devices (Input.h). Gameplay usually reads an
+         * InputComponent, resolved from this at the start of TP_PrePhysics. */
+        const InputState& GetInput() const { return Host.GetInput(); }
+
     private:
         /* Friends, not a public setter: only SaveGame.cpp may arm a restore. */
         friend NE_API bool SaveGameToFile(GameSession& InSession, const std::string& InPath);
         friend NE_API bool LoadGameFromFile(GameSession& InSession, const std::string& InPath);
+
+        /* The before-scripts TP_PrePhysics system: InputComponents from GetInput(). */
+        static void ResolveInput(GameCore::World& InWorld, float InDeltaSeconds, void* InUserData);
 
         /* LoadLevel's restore step. False on a corrupt save; the level stays loaded. */
         bool RestoreSaveInto(EngineCore::Archive& Ar, ILevel& InLevel, GameState* InState);
