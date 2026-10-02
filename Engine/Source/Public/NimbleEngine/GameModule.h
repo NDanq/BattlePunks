@@ -26,6 +26,10 @@ namespace NimbleEngine
      *
      * The host unloads the level before the module.
      *
+     * The editor also loads the module briefly, without playing, to read the
+     * script declarations it registers (ScriptLibrary.h, ComponentScript.h).
+     * So OnStartup should register and nothing more.
+     *
      * Implement with NIMBLE_IMPLEMENT_GAME_MODULE, not NIMBLE_IMPLEMENT_MODULE.
      */
     class IGameModule : public EngineCore::IModule

@@ -12,8 +12,9 @@
 
 /*
  * One kind of graph (Material, Script): pin types and conversions, node
- * definitions, and the compiler. Built on first use (GetSchemas()); the
- * script schema generates component nodes from GameCore's script bindings.
+ * definitions, and the compiler. Built on first use (GetSchemas()) and again
+ * by RefreshSchemas(); the script schema generates component and library
+ * nodes from GameCore's script bindings.
  */
 namespace NodeGraph
 {
@@ -184,6 +185,19 @@ namespace NodeGraph
 
     /* Every schema, built on first call. Material first, then Script. */
     const std::vector<const Schema*>& GetSchemas();
+
+    /*
+     * Rebuilds every schema from GameCore's registries as they stand now --
+     * component bindings and script libraries (ScriptLibrary.h) -- so the
+     * declarations of a game module loaded since appear as nodes. Call it
+     * while that module is loaded: what it declared is copied, and stays after
+     * the module unloads. Main thread only.
+     *
+     * A Schema* or NodeDefinition* obtained earlier stays valid, but describes
+     * the old declarations: a graph opened before the refresh keeps its
+     * schema until it is reopened.
+     */
+    void RefreshSchemas();
 
     /* nullptr if no schema has that name. */
     const Schema* FindSchema(const std::string& InName);

@@ -24,6 +24,7 @@ NimbleEditor --> NodeGraph --> GameCore --> EngineCore
 **STATIC.** Unlike GameCore it owns no process-wide registry that two images
 could each get a copy of. The schemas are built on first use, from GameCore's
 registries, by whichever executable links this: the editor or the test.
+`RefreshSchemas()` builds them again (below, "Game declarations").
 
 ## Pieces
 
@@ -158,6 +159,44 @@ The types are `number`, `integer`, `bool`, `string`, `Vector3`, `Color` and
 `Entity`. A method without a signature still gets a node, called with no
 arguments, and a compile warning.
 
+**Script libraries come from theirs too** (`GameCore/ScriptLibrary.h`). Each
+library is a palette category, and its members become nodes typed
+`Library.<Library>.<Member>`:
+
+| Member | Nodes | Generated |
+|---|---|---|
+| `Function` | a statement | `Total1 = Sandbox.AddScore(t1)` |
+| `Pure` | a value node | `local t2 = Sandbox.RankForScore(t1)` |
+| `Variable` | Get, and Set unless `ReadOnly` | `Sandbox.GetScore()`, `Sandbox.SetScore(t1)` |
+| `Event` | On *Name* (an event node), Emit *Name* | `Events.On("ScoreChanged", ...)`, `Events.Emit("ScoreChanged", t1)` |
+
+A typed On *Name* is On Event with its name fixed and its outputs named and
+typed. An `integer` argument is floored, since the bus carries numbers. Emit
+*Name* passes every argument, linked or not. An event whose parameters do not
+fit the bus (more than four, or a Vector3) gets no nodes and a log warning.
+
+### Game declarations
+
+A game module declares components and libraries in its own image
+(`Games/Sandbox/SandboxScripting.cpp`), so they exist only while it is
+loaded. The editor loads it briefly to read them
+(`EditorGraphs::RefreshGameDeclarations`):
+
+- at startup, before any graph opens;
+- after Build > Compile Source succeeds, or when a Play that kept the old
+  module stops;
+- on Build > Refresh Script Nodes.
+
+`RefreshSchemas()` copies what is registered, so the nodes outlast the
+module. Schemas built earlier are retired, not freed: a graph already open
+keeps working with the nodes it had until it is reopened. A graph using a
+game's nodes that is opened without the game loads them as placeholders and
+keeps them.
+
+`Games/Sandbox/Scripts/Pickup.script.nmgraph` (the game's component, library
+functions and variables, a typed Emit) and `ScoreBoard.script.nmgraph` (typed
+On nodes) are the examples.
+
 ## Material graphs
 
 A material graph `Materials/Glow.material.nmgraph` generates two files beside
@@ -291,7 +330,11 @@ python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Materia
 - validation errors landing on the right node;
 - golden generated code in `Tests/Data/`;
 - a **run** of the generated Lua: an entity with the Mover script attached
-  moves 60 units in a second.
+  moves 60 units in a second;
+- a script library declared in the test (`TestLib`): its nodes, golden
+  `Scorer.lua`, a run through its functions, variable and typed event,
+  `RefreshSchemas` picking up a late library, and component bindings and
+  libraries unregistered and registered again, as a reloaded module's are.
 
 `NodeGraph.MaterialGLSL` compiles the golden shader with glslc when Python and
 the Vulkan SDK are present.

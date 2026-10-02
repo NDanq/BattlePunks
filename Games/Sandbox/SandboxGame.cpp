@@ -14,6 +14,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
+#include "SandboxScripting.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -28,7 +29,9 @@
  * Demonstrates: a C++ entity ("Marker") moved by the mode and wrapped by a
  * PostPhysics system; a Lua entity ("Scripted") read back from C++; an
  * OnEntityCreated bind/unbind; drawing via RenderComponent and a Camera
- * entity; and a timed save/load cycle.
+ * entity; and a timed save/load cycle. The game's own component and script
+ * library -- what scripts and script graphs can call -- are in
+ * SandboxScripting.cpp.
  *
  *   SandboxLevel      spawns Marker and Camera, registers the wrap system,
  *                     owns the mode and state.
@@ -102,15 +105,27 @@ public:
         ElapsedSeconds    = 0.0;
         LastReportSeconds = 0.0;
         TicksThisSecond   = 0;
+        SandboxScripting::SetScore(0);
     }
 
     /* Saves exactly the fields OnReset touches; keep the two in step. New
      * fields go at the end behind Ar.GetChunkVersion(). */
+    uint16_t GetSerialVersion() const override { return 2; }
+
     void Serialize(EngineCore::Archive& Ar) override
     {
         Ar << ElapsedSeconds;
         Ar << LastReportSeconds;
         Ar << TicksThisSecond;
+
+        /* 2: the script library's Score, so a restored pickup is not scored
+         * a second time. */
+        if(Ar.GetChunkVersion() >= 2)
+        {
+            int32_t Score = SandboxScripting::GetScore();
+            Ar << Score;
+            SandboxScripting::SetScore(Score);
+        }
     }
 
     double   ElapsedSeconds    = 0.0;
@@ -165,6 +180,7 @@ public:
                    "[Sandbox] OnTick ran on a thread other than the one OnStartup saw")
 
         State->ElapsedSeconds += InFrame.DeltaSeconds;
+        SandboxScripting::SetElapsedSeconds(State->ElapsedSeconds);   // Sandbox.GetElapsed() in scripts
         State->TicksThisSecond++;
 
         GameCore::World& World = Session->GetWorld();
@@ -242,6 +258,7 @@ public:
                      + "x" + Num(uint64_t(InFrame.ViewportPixels.Height))
                      + " marker_x=" + Fixed2(MarkerX)
                      + ScriptedPart
+                     + " score=" + std::to_string(SandboxScripting::GetScore())
                      + " frames_rendered=" + Num(RenderStats.FramesRendered)
                      + " draw_calls=" + Num(RenderStats.DrawCalls))
 

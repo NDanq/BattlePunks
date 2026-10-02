@@ -76,7 +76,7 @@ endif()
 # is a Core module, hence nimble_add_hot_module(); its .dll is a LIBRARY
 # artifact, so it lands via LIBRARY_OUTPUT_DIRECTORY.
 nimble_add_hot_module(SandboxGame
-        SOURCES      SandboxGame.cpp
+        SOURCES      SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(SandboxGame PROPERTIES FOLDER "Games")
 
@@ -236,6 +236,8 @@ endif()
 set(SANDBOX_SCRIPT_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Main.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Mover.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Pickup.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/ScoreBoard.lua"
 )
 
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
@@ -349,4 +351,4 @@ if(SANDBOX_STANDALONE)
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT Sandbox)
 endif()
 
-source_group("Sandbox" FILES SandboxMain.cpp SandboxGame.cpp)
+source_group("Sandbox" FILES SandboxMain.cpp SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h)

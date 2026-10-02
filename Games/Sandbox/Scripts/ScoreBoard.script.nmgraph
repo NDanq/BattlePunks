@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Script">
+  <Nodes>
+    <Node Id="53616e64626f78530000000000000001" Type="Library.Sandbox.OnScoreChanged" Version="1" X="-600" Y="0" />
+    <Node Id="53616e64626f78530000000000000002" Type="Library.Sandbox.RankForScore" Version="1" X="-360" Y="200" />
+    <Node Id="53616e64626f78530000000000000003" Type="String.Append" Version="1" X="-360" Y="100">
+      <Const Pin="A" Value="Score " />
+    </Node>
+    <Node Id="53616e64626f78530000000000000004" Type="String.Append" Version="1" X="-140" Y="100">
+      <Const Pin="B" Value=", rank " />
+    </Node>
+    <Node Id="53616e64626f78530000000000000005" Type="String.Append" Version="1" X="60" Y="140" />
+    <Node Id="53616e64626f78530000000000000006" Type="Debug.Print" Version="1" X="260" Y="0" />
+    <Node Id="53616e64626f78530000000000000010" Type="Library.Sandbox.OnPickupCollected" Version="1" X="-600" Y="320" />
+    <Node Id="53616e64626f78530000000000000011" Type="Entity.GetName" Version="1" X="-360" Y="420" />
+    <Node Id="53616e64626f78530000000000000012" Type="String.Append" Version="1" X="-140" Y="420">
+      <Const Pin="B" Value=" collected, worth " />
+    </Node>
+    <Node Id="53616e64626f78530000000000000013" Type="String.Append" Version="1" X="60" Y="440" />
+    <Node Id="53616e64626f78530000000000000014" Type="Debug.Print" Version="1" X="260" Y="320" />
+  </Nodes>
+  <Links>
+    <Link From="53616e64626f78530000000000000001.Score" To="53616e64626f78530000000000000002.Score" />
+    <Link From="53616e64626f78530000000000000001.Score" To="53616e64626f78530000000000000003.B" />
+    <Link From="53616e64626f78530000000000000001.Then" To="53616e64626f78530000000000000006.Exec" />
+    <Link From="53616e64626f78530000000000000002.Rank" To="53616e64626f78530000000000000005.B" />
+    <Link From="53616e64626f78530000000000000003.Out" To="53616e64626f78530000000000000004.A" />
+    <Link From="53616e64626f78530000000000000004.Out" To="53616e64626f78530000000000000005.A" />
+    <Link From="53616e64626f78530000000000000005.Out" To="53616e64626f78530000000000000006.Value" />
+    <Link From="53616e64626f78530000000000000010.Pickup" To="53616e64626f78530000000000000011.Entity" />
+    <Link From="53616e64626f78530000000000000010.Then" To="53616e64626f78530000000000000014.Exec" />
+    <Link From="53616e64626f78530000000000000010.Value" To="53616e64626f78530000000000000013.B" />
+    <Link From="53616e64626f78530000000000000011.Name" To="53616e64626f78530000000000000012.A" />
+    <Link From="53616e64626f78530000000000000012.Out" To="53616e64626f78530000000000000013.A" />
+    <Link From="53616e64626f78530000000000000013.Out" To="53616e64626f78530000000000000014.Value" />
+  </Links>
+  <Comments>
+    <Comment X="-620" Y="-40" Width="1060" Height="300" Text="Sandbox.ScoreChanged, emitted from C++ by Sandbox.AddScore" />
+    <Comment X="-620" Y="280" Width="1060" Height="240" Text="Sandbox.PickupCollected, emitted by Scripts/Pickup.lua" />
+  </Comments>
+</NodeGraph>

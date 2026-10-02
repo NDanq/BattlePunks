@@ -128,6 +128,10 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
         }
     });
 
+    /* Before anything builds the schemas, so the game's components and script
+     * libraries are nodes from the first graph opened. */
+    EditorGraphs::RefreshGameDeclarations(false);
+
     BuildMenus();
     BuildPlayControls();
     BuildBuildMenu();
@@ -202,7 +206,12 @@ void EditorMainWindow::BuildMenus()
         QAction* NewGraph = File->addAction(QStringLiteral("New %1 &Graph...").arg(QString::fromStdString(Schema->GetName())));
         NewGraph->setToolTip(QStringLiteral("A %1 graph: generates %2")
                              .arg(QString::fromStdString(Schema->GetName()), QString::fromStdString(Schema->GetOutputExtension())));
-        connect(NewGraph, &QAction::triggered, this, [this, Schema]() { EditorGraphs::CreateGraph(*Schema, this); });
+        /* By name: a refresh (RefreshGameDeclarations) replaces the schema. */
+        const std::string SchemaName = Schema->GetName();
+        connect(NewGraph, &QAction::triggered, this, [this, SchemaName]()
+        {
+            if(const NodeGraph::Schema* Current = NodeGraph::FindSchema(SchemaName)) { EditorGraphs::CreateGraph(*Current, this); }
+        });
     }
 
     QAction* Import = File->addAction(QStringLiteral("&Import..."));
@@ -384,6 +393,16 @@ void EditorMainWindow::BuildBuildMenu()
     QAction* Cook = BuildMenu->addAction(QStringLiteral("C&ook Content"));
     Cook->setToolTip(QStringLiteral("Regenerate every node graph's code; cooking the rest of the content is not implemented yet"));
     connect(Cook, &QAction::triggered, this, &EditorMainWindow::CookContent);
+
+    QAction* RefreshNodes = BuildMenu->addAction(QStringLiteral("&Refresh Script Nodes"));
+    RefreshNodes->setToolTip(QStringLiteral("Reread the game module's components and script libraries into the script graph nodes "
+                                            "(graphs already open keep theirs until reopened)"));
+    connect(RefreshNodes, &QAction::triggered, this, [this]()
+    {
+        const bool bRefreshed = EditorGraphs::RefreshGameDeclarations(Context.IsPlaying());
+        statusBar()->showMessage(bRefreshed ? QStringLiteral("Script nodes refreshed -- reopen open graphs to see changes")
+                                            : QStringLiteral("Script nodes not refreshed -- see the Console"), 5000);
+    });
 }
 
 void EditorMainWindow::CompileSource()
@@ -430,17 +449,20 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     }
 
     /* The next Play loads the new DLL anyway; restart a running one unless
-     * Editor.ReloadAfterCompile says otherwise. */
+     * Editor.ReloadAfterCompile says otherwise. Script nodes follow the new
+     * build: read now, or when a run still on the old one stops. */
     if(Context.IsPlaying() && !GEditorReloadAfterCompile.GetBool())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play; the run keeps the old one")
         statusBar()->showMessage(QStringLiteral("Compiled %1 -- Stop and Play to load it").arg(Module), 5000);
+        bDeclarationsStale = true;
         return;
     }
     if(!Context.IsPlaying())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play")
         statusBar()->showMessage(QStringLiteral("Compiled %1").arg(Module), 5000);
+        EditorGraphs::RefreshGameDeclarations(false);
         return;
     }
 
@@ -451,6 +473,7 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     {
         statusBar()->showMessage(QStringLiteral("Compiled and reloaded %1").arg(Module), 5000);
     }
+    EditorGraphs::RefreshGameDeclarations(Context.IsPlaying());
 }
 
 void EditorMainWindow::OpenSettings()
@@ -508,6 +531,13 @@ void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
 
     PlayLabel->setText(bInPlaying ? QStringLiteral("Playing %1").arg(Context.DescribePlay()) : QString());
     UpdateTitle();
+
+    /* A compile finished during a run that kept the old module. */
+    if(!bInPlaying && bDeclarationsStale)
+    {
+        bDeclarationsStale = false;
+        EditorGraphs::RefreshGameDeclarations(false);
+    }
 }
 
 void EditorMainWindow::RegisterConsoleCommands()
