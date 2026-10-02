@@ -2,8 +2,8 @@
 
 Design for prefabs: the placeable unit of a level, the owner of gameplay
 script, and the asset the Prefab Editor authors. Status: **phases 1 (entity
-hierarchy), 2 (prefab asset and instances) and 3 (instance scripts) are
-implemented**; the rest is the plan. The open decisions were settled as recommended (see the end).
+hierarchy), 2 (prefab asset and instances), 3 (instance scripts) and 4
+(instances in level files) are implemented**; the rest is the plan. The open decisions were settled as recommended (see the end).
 
 ---
 
@@ -128,6 +128,25 @@ overridden fields in bold with a "Revert to Prefab" action.
 v1 scope: field overrides on existing entities, including the root Transform.
 Not in v1: adding/removing entities or components per instance.
 
+**As built (phase 4)**, with GameCore's README **World files** for the
+format and DESIGN.md's WorldPackage notes for the reasoning:
+
+- Files are `<Name>/<guid>.nmprefabinst`, with overrides grouped per
+  template entity (`<Entity Id>`). The manifest is format 2 only when it
+  lists an instance.
+- Field overrides are found by diffing each component's XML against the
+  prefab's.
+- **Beyond v1:** added components (written whole), removed components
+  (`<RemovedComponent>`), removed template entities (`<Removed>`), renames
+  and member entity scripts are recorded. They fell out of the diff, and
+  without them a save would silently undo those edits. Adding a *member*
+  entity is still out: an entity added under an instance is a loose child
+  saved as an `.nmentity`.
+- Binary worlds (cooked levels, save games) store instances whole, with an
+  instance table (`WRLD` v3, `World::RestorePrefabInstance`), not as
+  overrides.
+- The Details panel's bold overrides and "Revert to Prefab" are phase 8.
+
 **Decided (not in v1):** nested prefabs (an entity in a prefab that is itself an instance of
 another prefab). Recommended **not** for v1 -- it multiplies the override and
 GUID-derivation rules -- but the format reserves `<Entity Prefab="...">` so it
@@ -178,8 +197,6 @@ section has the reasoning. Differences from the sketch above:
 
 Known gaps, owned by later phases:
 
-- A saved world (text or binary) stores an instance's entities as plain
-  entities and forgets the instance (phase 4).
 - The editor cannot place or show instances yet. Its undo restores a
   deleted instance member as a loose entity (phase 8).
 - Nothing cooks `.nmprefab` files automatically; `CookPrefabFile` exists
@@ -426,7 +443,7 @@ Each phase lands on its own and keeps Sandbox playable.
 | 1 | Entity hierarchy + world transforms -- **done** | `World.h/.cpp`, `Entity.h`, `WorldBridge.cpp`, `WorldPackage.cpp`, `WorldSerializer.cpp`, editor picking/gizmo/Outliner | -- |
 | 2 | Prefab asset, registry, `SpawnPrefab`, instance handles, text + cooked formats -- **done** | new `Prefab.h/.cpp`, `PrefabInternal.h`, `XmlComponentArchive.h` | 1 |
 | 3 | Instance scripts: per-phase functions, buckets, tick modes, overlap routing; graph nodes -- **done** | `ScriptSystem.cpp`, `Collision.cpp`, `ScriptBindings.cpp`, NodeGraph `ScriptSchema.cpp` | 2 |
-| 4 | Level format 2: instances, derived GUIDs, overrides | `WorldPackage.cpp`, `WorldSerializer.cpp` | 2 |
+| 4 | Level format 2: instances, derived GUIDs, overrides -- **done** | `WorldPackage.cpp`, `WorldSerializer.cpp` | 2 |
 | 5 | Native prefabs + `PrefabBuilder` | new `NativePrefab.h/.cpp`, `GameModule.h` | 2, 3 |
 | 6 | `EditorDocument` split; second-World viewport spike | `EditorContext`, panels, RenderCore | -- (can start in parallel) |
 | 7 | Prefab Editor window (hierarchy, details, viewport, script tab, simulate) | new `Editor/Prefab/*` | 3, 6 |
