@@ -35,6 +35,8 @@ namespace NimbleEngine
 {
     /* An input source: a key, a mouse button or axis, a gamepad button or axis.
      * Opaque; from FindInputKey. */
+    class IGameHost;
+
     using InputKey = uint16_t;
     constexpr InputKey INPUT_KEY_INVALID = 0xFFFF;
 
@@ -226,6 +228,9 @@ namespace NimbleEngine
 
     /* What the "Input" script library reads; null reads nothing pressed. */
     NE_API void SetScriptInputState(const InputState* InState);
+
+    /* Where the "Input" library's SetMouseCaptured goes; null ignores it. */
+    NE_API void SetScriptInputHost(IGameHost* InHost);
 }
 
 /*

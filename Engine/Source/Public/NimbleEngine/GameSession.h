@@ -54,6 +54,11 @@ namespace NimbleEngine
             static const InputState None;
             return None;
         }
+
+        /* Mouse capture for mouse-look (InputRouter::SetMouseCaptured). A host
+         * without a window ignores it. */
+        virtual void SetMouseCaptured(bool /*bInCaptured*/) {}
+        virtual bool IsMouseCaptured() const { return false; }
     };
 
     /*
@@ -161,6 +166,11 @@ namespace NimbleEngine
         /* This frame's devices (Input.h). Gameplay usually reads an
          * InputComponent, resolved from this at the start of TP_PrePhysics. */
         const InputState& GetInput() const { return Host.GetInput(); }
+
+        /* Hides and holds the cursor, for mouse-look; Mouse.DeltaX keeps
+         * coming past the screen's edge. The host lets go when the run ends. */
+        void SetMouseCaptured(bool bInCaptured) { Host.SetMouseCaptured(bInCaptured); }
+        bool IsMouseCaptured() const            { return Host.IsMouseCaptured(); }
 
     private:
         /* Friends, not a public setter: only SaveGame.cpp may arm a restore. */

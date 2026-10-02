@@ -123,6 +123,12 @@ namespace GameWindowSystem
 
     /* Owner-thread id, for the assert above. */
     EngineCore::ThreadID GetPumpThread();
+
+    /* GameWindowGamepad.cpp: the gamepad subsystem, started and stopped with
+     * SDL, and its events (true if InEvent was one). */
+    void StartGamepads();
+    void StopGamepads();
+    bool RouteGamepadEvent(const SDL_Event& InEvent);
 }
 
 #endif //GAMEWINDOW_GAMEWINDOWINTERNAL_H

@@ -84,6 +84,8 @@ namespace NimbleEngine
         void     SetFrameRateLimit(uint32_t InFramesPerSecond) override;
         uint32_t GetFrameRateLimit() const override;
         const InputState& GetInput() const override;
+        void SetMouseCaptured(bool bInCaptured) override;
+        bool IsMouseCaptured() const override;
 
     private:
         bool Initialize();

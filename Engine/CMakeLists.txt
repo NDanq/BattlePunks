@@ -424,6 +424,12 @@ option(NIMBLEENGINE_BUILD_TESTS "Build NimbleEngineInputTests" ON)
 if(NIMBLEENGINE_BUILD_TESTS)
     add_executable(NimbleEngineInputTests Tests/InputTests.cpp)
     target_link_libraries(NimbleEngineInputTests PRIVATE NimbleEngine::NimbleEngine)
+    # GameWindow and SDL for the gamepad test only: a virtual pad driven
+    # through the real pump. A game never links either.
+    if(TARGET GameWindow AND TARGET SDL3::SDL3)
+        target_link_libraries(NimbleEngineInputTests PRIVATE GameWindow::GameWindow SDL3::SDL3)
+        target_compile_definitions(NimbleEngineInputTests PRIVATE NIMBLEENGINE_TESTS_HAVE_SDL=1)
+    endif()
     set_target_properties(NimbleEngineInputTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
     # From Binaries, so the engine DLLs resolve.
     add_test(NAME NimbleEngine.InputTests COMMAND NimbleEngineInputTests)

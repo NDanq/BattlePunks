@@ -183,9 +183,10 @@ namespace
                 return;
 
             default:
-                /* Joystick, gamepad, touch, pen, audio-device, clipboard and
-                 * the rest. Deliberately not modelled here -- a gamepad belongs
-                 * to an input module, not a window module. */
+                /* Gamepads go to their own process-level table, not a window
+                 * (GameWindowGamepad.h). Touch, pen, audio-device, clipboard
+                 * and the rest are not modelled. */
+                GameWindowSystem::RouteGamepadEvent(InEvent);
                 return;
         }
     }
@@ -275,6 +276,8 @@ bool GameWindowSystem::Initialize()
     GEverCreatedWindow = false;
     GInitRefCount      = 1;
 
+    StartGamepads();   // optional: a failure is a warning, and windows still work
+
     GW_LOG(std::string("initialised on SDL video driver '")
          + (SDL_GetCurrentVideoDriver() ? SDL_GetCurrentVideoDriver() : "none") + "'");
 
@@ -316,6 +319,7 @@ void GameWindowSystem::Shutdown()
 
     GWindows.clear();
 
+    StopGamepads();
     SDL_Quit();
     GInjectedText.clear();   // any still-queued injected text went with the queue
 
