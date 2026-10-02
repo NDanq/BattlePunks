@@ -157,6 +157,7 @@ private:
     Qt::MouseButton     DragButton = Qt::NoButton;
     EngineCore::Vector3 DragPivot;
     QPoint              LastMousePos;
+    QPoint FallbackMousePos;   // Play-in-Editor without SDL: the last position, for deltas
     QPoint              PressPos;
     QSet<int>           HeldKeys;
 

@@ -69,6 +69,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     ViewportArea = new ViewportPanel(Context, this);
     Viewport     = ViewportArea->GetViewport();
+    Context.SetPlayInputWidget(Viewport);   // the game reads the viewport's input while playing
     setCentralWidget(ViewportArea);
 
     auto* OutlinerDock = new QDockWidget(QStringLiteral("Outliner"), this);
@@ -360,6 +361,13 @@ void EditorMainWindow::BuildPlayControls()
 
 void EditorMainWindow::StartPlay()
 {
+    /* SDL wraps the viewport once: the game's input needs it, so the probe yields. */
+    if(InputProbe && InputProbe->IsRunning())
+    {
+        InputProbeAction->setChecked(false);   // -> SetSDLInputProbe(false)
+        CORE_LOG("[Editor] the SDL input probe stops while playing: the game's input uses the viewport")
+    }
+
     if(!Context.StartPlay())
     {
         statusBar()->showMessage(QStringLiteral("Play failed -- see the Console"), 5000);
@@ -528,6 +536,7 @@ void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
     {
         Action->setEnabled(!bInPlaying);
     }
+    InputProbeAction->setEnabled(!bInPlaying);
 
     PlayLabel->setText(bInPlaying ? QStringLiteral("Playing %1").arg(Context.DescribePlay()) : QString());
     UpdateTitle();

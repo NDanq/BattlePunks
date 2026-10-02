@@ -42,6 +42,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/PropertyWidgets.cpp
         Source/Private/Editor/PropertyWidgets.h
         Source/Private/Editor/SDLInputProbe.cpp
+        Source/Private/Editor/ViewportSDLInput.cpp
+        Source/Private/Editor/ViewportSDLInput.h
         Source/Private/Editor/PlaySession.cpp
         Source/Private/Editor/PlaySession.h
         Source/Private/Editor/SDLInputProbe.h
