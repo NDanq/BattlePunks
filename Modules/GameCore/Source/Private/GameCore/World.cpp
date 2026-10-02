@@ -980,7 +980,7 @@ namespace GameCore
         return PrefabInstance(this, ID);
     }
 
-    PrefabInstance World::SpawnPrefab(const char* InPath, const TransformPose& InAt, const char* InName)
+    PrefabInstance World::SpawnPrefab(const char* InPath, const TransformPose& InAt, const char* InName, const EntityGuid& InGuid)
     {
         const PrefabAsset* Prefab = FindOrLoadPrefab(InPath);
         if(!Prefab)
@@ -988,12 +988,61 @@ namespace GameCore
             GAMECORE_LOG_WARN(std::string("SpawnPrefab: could not load '") + (InPath ? InPath : "") + "'")
             return PrefabInstance();
         }
-        const PrefabInstance Spawned = SpawnPrefab(*Prefab, InAt, InName);
+        const PrefabInstance Spawned = SpawnPrefab(*Prefab, InAt, InName, InGuid);
         if(P->IsInstanceAliveIndex(Spawned.GetID()))
         {
             P->Instances[Spawned.GetID().Index].PrefabPath = InPath;
         }
         return Spawned;
+    }
+
+    PrefabInstance World::RestorePrefabInstance(const PrefabInstanceRecord& InRecord)
+    {
+        if(InRecord.Count == 0 || !InRecord.Entities || !InRecord.LocalIds)
+        {
+            GAMECORE_LOG_WARN("RestorePrefabInstance: no entities; nothing restored")
+            return PrefabInstance();
+        }
+        const EntityID Root = InRecord.Entities[0];
+        for(size_t Index = 0; Index < InRecord.Count; ++Index)
+        {
+            const EntityID Member = InRecord.Entities[Index];
+            bool bUnderRoot = false;
+            if(P->IsAliveIndex(Member))
+            {
+                for(uint32_t Slot = Member.Index; Slot != NO_SLOT; Slot = P->Members[Slot].Parent)
+                {
+                    if(Slot == Root.Index) { bUnderRoot = true; break; }
+                }
+            }
+            if(!bUnderRoot || P->Members[Member.Index].InstanceSlot != NO_SLOT)
+            {
+                GAMECORE_LOG_WARN(std::string("RestorePrefabInstance: '") + InRecord.Name
+                                  + "' names an entity that is gone, outside its root, or already in an instance; "
+                                    "its entities stay loose")
+                return PrefabInstance();
+            }
+        }
+
+        const uint32_t Slot = P->AllocateInstanceSlot(InRecord.Guid);
+        const PrefabInstanceID ID = P->InstanceSlotID(Slot);
+        InstanceMembers& Instance = P->Instances[Slot];
+        Instance.Name         = InRecord.Name ? InRecord.Name : "";
+        Instance.PrefabPath   = InRecord.PrefabPath ? InRecord.PrefabPath : "";
+        Instance.ScriptPath   = InRecord.ScriptPath ? InRecord.ScriptPath : "";
+        Instance.TickMode     = InRecord.TickMode;
+        Instance.PhaseEnabled = uint8_t(InRecord.PhaseEnabled & ((1u << TP_MAX) - 1u));
+        Instance.RootSlot     = Root.Index;
+        if(InRecord.Prefab) { Instance.Prefab = *InRecord.Prefab; }
+        for(size_t Index = 0; Index < InRecord.Count; ++Index)
+        {
+            P->Members[InRecord.Entities[Index].Index].InstanceSlot = Slot;
+            P->Members[InRecord.Entities[Index].Index].LocalId      = InRecord.LocalIds[Index];
+        }
+
+        P->QueueInstanceScript(Slot);
+        P->InstanceSpawned.Broadcast(ID);
+        return PrefabInstance(this, ID);
     }
 
     void World::DestroyPrefabInstance(const PrefabInstanceID InInstance)

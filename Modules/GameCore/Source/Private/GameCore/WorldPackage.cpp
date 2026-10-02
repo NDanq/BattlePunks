@@ -25,6 +25,8 @@
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EntityGuid.h"
+#include "Public/GameCore/Prefab.h"
+#include "Private/GameCore/PrefabInternal.h"
 #include "Private/GameCore/XmlComponentArchive.h"
 #endif
 
@@ -50,8 +52,12 @@ namespace
     }
 
 #if WITH_EDITOR
-    constexpr int         TEXT_FORMAT      = 1;
-    constexpr const char* ENTITY_EXTENSION = ".nmentity";
+    /* 1: entities only. 2: also prefab instances; written only when a world
+     * has one, so a world without stays byte-identical. */
+    constexpr int         TEXT_FORMAT_ENTITIES  = 1;
+    constexpr int         TEXT_FORMAT_INSTANCES = 2;
+    constexpr const char* ENTITY_EXTENSION   = ".nmentity";
+    constexpr const char* INSTANCE_EXTENSION = ".nmprefabinst";
     constexpr const char* TEMP_SUFFIX      = ".tmp";
 
     using GuidMap = std::unordered_map<EntityGuid, EntityID, EntityGuidHash>;
@@ -120,6 +126,13 @@ namespace
         char Text[EntityGuid::STRING_BUFFER];
         InGuid.ToString(Text);
         return InFolder + "/" + Text + ENTITY_EXTENSION;
+    }
+
+    std::string InstanceFileFor(const std::string& InFolder, const EntityGuid& InGuid)
+    {
+        char Text[EntityGuid::STRING_BUFFER];
+        InGuid.ToString(Text);
+        return InFolder + "/" + Text + INSTANCE_EXTENSION;
     }
 
 
@@ -223,6 +236,191 @@ namespace
         return DocumentText(Doc);
     }
 
+    // === Prefab instances ===================================================
+    // <Name>/<instance-guid>.nmprefabinst: the prefab's path and only what this
+    // instance changed. See DESIGN.md's WorldPackage notes.
+
+    /* Same name, same attributes in the same order, same children. */
+    bool SameElement(const pugi::xml_node InA, const pugi::xml_node InB)
+    {
+        if(std::strcmp(InA.name(), InB.name()) != 0) { return false; }
+        pugi::xml_attribute A = InA.first_attribute(), B = InB.first_attribute();
+        for(; A && B; A = A.next_attribute(), B = B.next_attribute())
+        {
+            if(std::strcmp(A.name(), B.name()) != 0 || std::strcmp(A.value(), B.value()) != 0) { return false; }
+        }
+        if(A || B) { return false; }
+        pugi::xml_node ChildA = InA.first_child(), ChildB = InB.first_child();
+        for(; ChildA && ChildB; ChildA = ChildA.next_sibling(), ChildB = ChildB.next_sibling())
+        {
+            if(!SameElement(ChildA, ChildB)) { return false; }
+        }
+        return !ChildA && !ChildB;
+    }
+
+    /* An instance is saved as one if it came from a prefab file; its
+     * entities are those whose template that prefab still has. */
+    bool IsSavedAsInstance(World& InWorld, const PrefabInstanceID InInstance)
+    {
+        return InWorld.IsInstanceAlive(InInstance) && PrefabInstance(&InWorld, InInstance).GetPrefabPath()[0] != '\0';
+    }
+
+    bool IsSavedInInstance(World& InWorld, const EntityID InEntity)
+    {
+        const Entity Handle = InWorld.GetEntity(InEntity);
+        const PrefabInstanceID Instance = Handle.GetInstance();
+        if(!IsSavedAsInstance(InWorld, Instance)) { return false; }
+        const PrefabAsset* Prefab = PrefabInstance(&InWorld, Instance).GetPrefab();
+        return Prefab && Prefab->FindEntityIndex(Handle.GetPrefabLocalId()) != SIZE_MAX;
+    }
+
+    /*
+     * <Instance Guid Name Prefab [TickMode] [Parent]>
+     *   <Entity Id [Name]> [<Script>] <Component Type Version>changed fields</Component>
+     *                      <RemovedComponent Type/> </Entity>
+     *   <Removed Entity/>
+     * </Instance>
+     *
+     * Each component is written twice into a scratch document -- as the
+     * prefab has it (references mapped to this instance's entities) and as
+     * it is -- and only the field elements that differ are kept. The root's
+     * placement is just its Transform differing from the prefab's identity.
+     */
+    std::string BuildInstanceText(World& InWorld, const PrefabInstanceID InInstance, std::vector<ComponentTypeID>& InOutWarnedTypes)
+    {
+        const PrefabInstance Instance(&InWorld, InInstance);
+        const PrefabAsset* Prefab = Instance.GetPrefab();
+        const PrefabAsset::Data& Data = PrefabAccess::Read(*Prefab);
+        const std::string GuidString = GuidText(Instance.GetGuid());
+        const WorldSavingRefs Refs(InWorld);
+
+        pugi::xml_document Doc;
+        AppendDeclaration(Doc);
+        pugi::xml_node Root = Doc.append_child("Instance");
+        Root.append_attribute("Guid")   = GuidString.c_str();
+        Root.append_attribute("Name")   = Instance.GetName();
+        Root.append_attribute("Prefab") = Instance.GetPrefabPath();
+        if(Instance.GetTickMode() != Data.TickMode)
+        {
+            Root.append_attribute("TickMode") = PrefabTickModeName(Instance.GetTickMode());
+        }
+        if(const EntityID Parent = Instance.GetRoot().GetParent(); Parent.IsSet())
+        {
+            Root.append_attribute("Parent") = GuidText(InWorld.GetEntity(Parent).GetGuid()).c_str();
+        }
+
+        LocalIdMap ToLive;
+        for(const PrefabEntityData& Template : Data.Entities)
+        {
+            ToLive[Template.LocalId] = Instance.FindEntity(Template.LocalId).GetID();
+        }
+
+        pugi::xml_document Scratch;
+        for(const PrefabEntityData& Template : Data.Entities)
+        {
+            const Entity Member = InWorld.GetEntity(ToLive[Template.LocalId]);
+            if(!Member.IsAlive())
+            {
+                Root.append_child("Removed").append_attribute("Entity") = unsigned(Template.LocalId);
+                continue;
+            }
+
+            pugi::xml_node Element = Root.append_child("Entity");
+            Element.append_attribute("Id") = unsigned(Template.LocalId);
+            if(Template.Name != Member.GetName())
+            {
+                Element.append_attribute("Name") = Member.GetName();
+            }
+            if(Member.HasScript())
+            {
+                pugi::xml_node Script = Element.append_child("Script");
+                Script.append_attribute("Path") = Member.GetScriptPath();
+                const EntityScriptState* State = Member.GetScriptState();
+                Script.append_attribute("CullOutsideActiveRegion") = (State && State->bCullOutsideActiveRegion) ? "true" : "false";
+            }
+
+            /* Every type either side has, by name. */
+            std::vector<std::string> Names;
+            for(const PrefabComponentData& Component : Template.Components)
+            {
+                if(FindComponentType(Component.TypeName.c_str())) { Names.push_back(Component.TypeName); }
+            }
+            for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
+            {
+                const ComponentTypeInfo* Info = GetComponentType(Type);
+                if(!Info || !Member.HasComponentByType(Type)) { continue; }
+                if(!FindComponentSerializer(Type))
+                {
+                    if(std::find(InOutWarnedTypes.begin(), InOutWarnedTypes.end(), Type) == InOutWarnedTypes.end())
+                    {
+                        InOutWarnedTypes.push_back(Type);
+                        GAMECORE_LOG_WARN(std::string("WorldPackage: no serializer registered for '") + Info->Name
+                                          + "'; components of that type are not saved")
+                    }
+                    continue;
+                }
+                if(std::find(Names.begin(), Names.end(), Info->Name) == Names.end()) { Names.push_back(Info->Name); }
+            }
+            std::sort(Names.begin(), Names.end());
+
+            for(const std::string& Name : Names)
+            {
+                const ComponentTypeInfo*       Info       = FindComponentType(Name.c_str());
+                const ComponentSerializerInfo* Serializer = FindComponentSerializer(Info->ID);
+                void* Live = Member.GetComponentByType(Info->ID);
+                const auto TemplateComponent = std::find_if(Template.Components.begin(), Template.Components.end(),
+                    [&Name](const PrefabComponentData& C) { return C.TypeName == Name; });
+                const bool bInTemplate = TemplateComponent != Template.Components.end();
+
+                if(!Live)
+                {
+                    Element.append_child("RemovedComponent").append_attribute("Type") = Name.c_str();
+                    continue;
+                }
+                if(!Serializer) { continue; }
+
+                const std::string Context = GuidString + " entity " + std::to_string(Template.LocalId) + " " + Name;
+                pugi::xml_node Now = Scratch.append_child("Now");
+                XmlComponentArchive NowAr(Now, false, Serializer->Version, Refs, Context, "WorldPackage");
+                Serializer->Fn(NowAr, Live);
+
+                pugi::xml_node Was = Scratch.append_child("Was");
+                std::vector<uint8_t> Bytes;
+                const bool bHaveTemplate = bInTemplate && ComponentDefaults(Info->ID, Bytes)
+                                        && ReadComponentBlob(Info->ID, TemplateComponent->Blob, ToLive, Bytes.data());
+                if(bHaveTemplate)
+                {
+                    XmlComponentArchive WasAr(Was, false, Serializer->Version, Refs, Context, "WorldPackage");
+                    Serializer->Fn(WasAr, Bytes.data());
+                }
+
+                /* Added on this instance: all of it. Otherwise only what changed. */
+                pugi::xml_node Changed;
+                for(pugi::xml_node Field = Now.first_child(); Field; Field = Field.next_sibling())
+                {
+                    const pugi::xml_node Before = bHaveTemplate ? Was.child(Field.name()) : pugi::xml_node();
+                    if(Before && SameElement(Before, Field)) { continue; }
+                    if(!Changed)
+                    {
+                        Changed = Element.append_child("Component");
+                        Changed.append_attribute("Type")    = Name.c_str();
+                        Changed.append_attribute("Version") = unsigned(Serializer->Version);
+                    }
+                    Changed.append_copy(Field);
+                }
+                Scratch.remove_child(Now);
+                Scratch.remove_child(Was);
+            }
+
+            /* Nothing differs: no element at all. */
+            if(!Element.first_child() && !Element.attribute("Name"))
+            {
+                Root.remove_child(Element);
+            }
+        }
+        return DocumentText(Doc);
+    }
+
     // === Loading ============================================================
 
     struct PendingEntity
@@ -231,6 +429,132 @@ namespace
         std::string                          GuidString;
         std::unique_ptr<pugi::xml_document>  Doc;
     };
+
+    struct PendingInstance
+    {
+        PrefabInstanceID                     Id;
+        std::string                          File;
+        std::unique_ptr<pugi::xml_document>  Doc;
+    };
+
+    /* Spawns the instance a .nmprefabinst names, with its saved GUID, and
+     * adds its entities to InOutLoaded so every reference can find them.
+     * Its overrides come later (ApplyInstanceOverrides). */
+    bool SpawnSavedInstance(World& InWorld, const std::string& InFolder, const EntityGuid& InGuid,
+                            GuidMap& InOutLoaded, std::vector<PendingInstance>& OutPending)
+    {
+        PendingInstance Entry;
+        Entry.File = InstanceFileFor(InFolder, InGuid);
+        std::string Text;
+        Entry.Doc = std::make_unique<pugi::xml_document>();
+        if(!ReadWholeFile(Entry.File, Text))
+        {
+            GAMECORE_LOG_WARN("WorldPackage: instance file '" + Entry.File + "' is missing; skipping that instance")
+            return false;
+        }
+        if(!ParseDocument(Text, *Entry.Doc, Entry.File, "WorldPackage")) { return false; }
+        const pugi::xml_node Root = Entry.Doc->child("Instance");
+        if(!Root)
+        {
+            GAMECORE_LOG_WARN("WorldPackage: '" + Entry.File + "' has no <Instance> element; skipping it")
+            return false;
+        }
+
+        const char* PrefabPath = Root.attribute("Prefab").as_string();
+        const PrefabInstance Spawned = InWorld.SpawnPrefab(PrefabPath, TransformPose(), Root.attribute("Name").as_string(), InGuid);
+        if(!Spawned.IsValid())
+        {
+            GAMECORE_LOG_WARN("WorldPackage: '" + Entry.File + "': prefab '" + PrefabPath
+                              + "' could not be spawned; skipping that instance")
+            return false;
+        }
+        if(Spawned.GetGuid() != InGuid)
+        {
+            GAMECORE_LOG_WARN("WorldPackage: '" + Entry.File + "' has a GUID already in use; the instance got a fresh one")
+        }
+
+        const PrefabAsset* Prefab = Spawned.GetPrefab();
+        for(size_t Index = 0; Prefab && Index < Prefab->GetEntityCount(); ++Index)
+        {
+            const Entity Member = Spawned.FindEntity(Prefab->GetEntityLocalId(Index));
+            if(Member.IsAlive()) { InOutLoaded[Member.GetGuid()] = Member.GetID(); }
+        }
+        Entry.Id = Spawned.GetID();
+        OutPending.push_back(std::move(Entry));
+        return true;
+    }
+
+    /* Tick mode, then each <Entity>'s name, script and components: a
+     * component it lacks is added from its defaults, and either way the
+     * saved fields are loaded over it -- a field not written keeps the
+     * prefab's value. <RemovedComponent> removes one. */
+    void ApplyInstanceOverrides(World& InWorld, const PendingInstance& InEntry, const GuidMap& InLoaded)
+    {
+        const PrefabInstance Instance(&InWorld, InEntry.Id);
+        const pugi::xml_node Root = InEntry.Doc->child("Instance");
+
+        if(const pugi::xml_attribute Mode = Root.attribute("TickMode"))
+        {
+            EPrefabTickMode Parsed;
+            if(ParsePrefabTickMode(Mode.as_string(), Parsed)) { Instance.SetTickMode(Parsed); }
+            else { GAMECORE_LOG_WARN("WorldPackage: '" + InEntry.File + "' has an unknown tick mode '" + Mode.as_string() + "'") }
+        }
+
+        const WorldLoadingRefs Refs(InLoaded);
+        for(const pugi::xml_node Item : Root.children("Entity"))
+        {
+            const uint32_t LocalId = Item.attribute("Id").as_uint(PREFAB_NO_LOCAL_ID);
+            const Entity Member = Instance.FindEntity(LocalId);
+            if(!Member.IsAlive())
+            {
+                GAMECORE_LOG_WARN("WorldPackage: '" + InEntry.File + "' changes entity " + std::to_string(LocalId)
+                                  + ", which the prefab no longer has; ignoring that")
+                continue;
+            }
+            if(const pugi::xml_attribute Name = Item.attribute("Name")) { Member.SetName(Name.as_string()); }
+            if(const pugi::xml_node Script = Item.child("Script"))
+            {
+                if(Member.SetScript(Script.attribute("Path").as_string()))
+                {
+                    if(EntityScriptState* State = Member.GetScriptState())
+                    {
+                        State->bCullOutsideActiveRegion = Script.attribute("CullOutsideActiveRegion").as_bool() ? 1 : 0;
+                    }
+                }
+            }
+            for(const pugi::xml_node Removed : Item.children("RemovedComponent"))
+            {
+                if(const ComponentTypeInfo* Info = FindComponentType(Removed.attribute("Type").as_string()))
+                {
+                    Member.RemoveComponentByType(Info->ID);
+                }
+            }
+            for(const pugi::xml_node Element : Item.children("Component"))
+            {
+                const char* TypeName = Element.attribute("Type").as_string();
+                const ComponentTypeInfo*       Info       = FindComponentType(TypeName);
+                const ComponentSerializerInfo* Serializer = Info ? FindComponentSerializer(Info->ID) : nullptr;
+                if(!Info || !Serializer)
+                {
+                    GAMECORE_LOG_WARN("WorldPackage: '" + InEntry.File + "' entity " + std::to_string(LocalId) + ": skipping component '"
+                                      + TypeName + "' -- " + (Info ? "no serializer registered" : "type not registered in this build"))
+                    continue;
+                }
+                void* Component = Member.GetComponentByType(Info->ID);
+                if(!Component)
+                {
+                    std::vector<uint8_t> Defaults;
+                    ComponentDefaults(Info->ID, Defaults);
+                    Component = Member.AddComponentByType(Info->ID, Defaults.data());
+                    if(!Component) { continue; }
+                }
+                const uint16_t Version = uint16_t(Element.attribute("Version").as_uint(Serializer->Version));
+                XmlComponentArchive Ar(Element, true, Version, Refs,
+                                       InEntry.File + " entity " + std::to_string(LocalId) + " " + TypeName, "WorldPackage");
+                Serializer->Fn(Ar, Component);
+            }
+        }
+    }
 
     bool LoadTextWorld(const std::string& InPath, World& InOutWorld)
     {
@@ -253,21 +577,41 @@ namespace
             return false;
         }
         const int Format = Root.attribute("Format").as_int(0);
-        if(Format != TEXT_FORMAT)
+        if(Format < TEXT_FORMAT_ENTITIES || Format > TEXT_FORMAT_INSTANCES)
         {
             GAMECORE_LOG_ERROR("WorldPackage: '" + InPath + "' is text format " + std::to_string(Format)
-                               + "; this build reads format " + std::to_string(TEXT_FORMAT))
+                               + "; this build reads formats " + std::to_string(TEXT_FORMAT_ENTITIES) + " to "
+                               + std::to_string(TEXT_FORMAT_INSTANCES))
             return false;
         }
 
         const std::string Folder = EntityFolderFor(InPath);
 
-        /* Pass 1: all entities before any component, so forward references resolve. */
+        /* Pass 1: all entities -- loose ones, and each instance's, spawned
+         * whole -- before any loose component, so references resolve. In
+         * manifest order, which is slot order. */
         std::vector<PendingEntity> Pending;
+        std::vector<PendingInstance> PendingInstances;
         GuidMap Loaded;
         GuidSet Listed;
-        for(const pugi::xml_node Item : Root.children("Entity"))
+        GuidSet ListedInstances;
+        for(const pugi::xml_node Item : Root.children())
         {
+            if(std::strcmp(Item.name(), "Instance") == 0)
+            {
+                EntityGuid Guid;
+                if(!EntityGuid::Parse(Item.attribute("Guid").as_string(), Guid) || !Guid.IsSet()
+                   || !ListedInstances.insert(Guid).second)
+                {
+                    GAMECORE_LOG_WARN("WorldPackage: '" + InPath + "' lists an instance with an unreadable or repeated GUID '"
+                                      + Item.attribute("Guid").as_string() + "'; skipping it")
+                    continue;
+                }
+                SpawnSavedInstance(InOutWorld, Folder, Guid, Loaded, PendingInstances);
+                continue;
+            }
+            if(std::strcmp(Item.name(), "Entity") != 0) { continue; }
+
             const char* GuidAttr = Item.attribute("Guid").as_string();
             EntityGuid Guid;
             if(!EntityGuid::Parse(GuidAttr, Guid) || !Guid.IsSet())
@@ -366,9 +710,31 @@ namespace
             }
         }
 
+        /* Pass 2, instances: what each one changed over its prefab. */
+        for(const PendingInstance& Entry : PendingInstances)
+        {
+            if(InOutWorld.IsInstanceAlive(Entry.Id)) { ApplyInstanceOverrides(InOutWorld, Entry, Loaded); }
+        }
+
         /* Pass 3: parents, once every entity has its components -- the
          * saved Transforms are already local, so nothing moves. Manifest
-         * order is the child order. */
+         * order is the child order. An instance's own tree came with it;
+         * only its root can hang from something else. */
+        for(const PendingInstance& Entry : PendingInstances)
+        {
+            const PrefabInstance Instance(&InOutWorld, Entry.Id);
+            const char* ParentText = Entry.Doc->child("Instance").attribute("Parent").as_string();
+            if(!Instance.IsAlive() || ParentText[0] == '\0') { continue; }
+            EntityGuid ParentGuid;
+            const auto Found = EntityGuid::Parse(ParentText, ParentGuid) ? Loaded.find(ParentGuid) : Loaded.end();
+            if(Found == Loaded.end())
+            {
+                GAMECORE_LOG_WARN("WorldPackage: '" + Entry.File + "' names parent '" + ParentText
+                                  + "', which is not in this world; leaving it unparented")
+                continue;
+            }
+            Instance.GetRoot().SetParent(Found->second, false);
+        }
         for(const PendingEntity& Entry : Pending)
         {
             const char* ParentText = Entry.Doc->child("Entity").attribute("Parent").as_string();
@@ -385,6 +751,17 @@ namespace
             InOutWorld.GetEntity(Entry.Id).SetParent(Found->second, false);
         }
 
+        /* Last: the prefab's entities this instance had lost. Destroyed, not
+         * skipped at spawn, so a loose child under one goes with it as it did. */
+        for(const PendingInstance& Entry : PendingInstances)
+        {
+            const PrefabInstance Instance(&InOutWorld, Entry.Id);
+            for(const pugi::xml_node Removed : Entry.Doc->child("Instance").children("Removed"))
+            {
+                Instance.FindEntity(Removed.attribute("Entity").as_uint(PREFAB_NO_LOCAL_ID)).Destroy();
+            }
+        }
+
         /* Files the manifest doesn't list are ignored. */
         std::vector<std::string> Names;
         if(EngineCore::appDirectoryList(Folder, Names))
@@ -392,12 +769,16 @@ namespace
             size_t Unlisted = 0;
             for(const std::string& Name : Names)
             {
-                EntityGuid Guid;
-                if(EndsWith(Name, ENTITY_EXTENSION)
-                   && EntityGuid::Parse(Name.substr(0, Name.size() - std::strlen(ENTITY_EXTENSION)).c_str(), Guid)
-                   && Listed.count(Guid) == 0)
+                for(const auto& [Extension, Set] : { std::pair<const char*, const GuidSet*>{ ENTITY_EXTENSION, &Listed },
+                                                     std::pair<const char*, const GuidSet*>{ INSTANCE_EXTENSION, &ListedInstances } })
                 {
-                    ++Unlisted;
+                    EntityGuid Guid;
+                    if(EndsWith(Name, Extension)
+                       && EntityGuid::Parse(Name.substr(0, Name.size() - std::strlen(Extension)).c_str(), Guid)
+                       && Set->count(Guid) == 0)
+                    {
+                        ++Unlisted;
+                    }
                 }
             }
             if(Unlisted > 0)
@@ -491,15 +872,43 @@ bool SaveWorldPackage(const char* InPath, World& InWorld)
     pugi::xml_document Manifest;
     AppendDeclaration(Manifest);
     pugi::xml_node ManifestRoot = Manifest.append_child("World");
-    ManifestRoot.append_attribute("Format") = TEXT_FORMAT;
+    pugi::xml_attribute FormatAttribute = ManifestRoot.append_attribute("Format");
 
+    /* In slot order. An instance's entities are one <Instance>, listed where
+     * its root is; everything else -- loose entities, and members of an
+     * instance that cannot be saved as one -- is an <Entity>. */
+    bool bAnyInstance = false;
+    std::vector<PrefabInstanceID> Flattened;
     for(const EntityID Id : Entities)
     {
-        const EntityGuid Guid = InWorld.GetEntity(Id).GetGuid();
+        const Entity Handle = InWorld.GetEntity(Id);
+        const PrefabInstanceID Instance = Handle.GetInstance();
+        if(IsSavedInInstance(InWorld, Id))
+        {
+            if(PrefabInstance(&InWorld, Instance).GetRoot() == Handle)
+            {
+                const EntityGuid Guid = PrefabInstance(&InWorld, Instance).GetGuid();
+                Keep.insert(Guid);
+                ManifestRoot.append_child("Instance").append_attribute("Guid") = GuidText(Guid).c_str();
+                Files.push_back({ InstanceFileFor(Folder, Guid), BuildInstanceText(InWorld, Instance, WarnedTypes) });
+                bAnyInstance = true;
+            }
+            continue;
+        }
+        if(Instance.IsSet() && !IsSavedAsInstance(InWorld, Instance)
+           && std::find(Flattened.begin(), Flattened.end(), Instance) == Flattened.end())
+        {
+            Flattened.push_back(Instance);
+            GAMECORE_LOG_WARN(std::string("SaveWorldPackage: prefab instance '") + PrefabInstance(&InWorld, Instance).GetName()
+                              + "' was not spawned from a prefab file; its entities are saved as plain entities")
+        }
+
+        const EntityGuid Guid = Handle.GetGuid();
         Keep.insert(Guid);
         ManifestRoot.append_child("Entity").append_attribute("Guid") = GuidText(Guid).c_str();
         Files.push_back({ EntityFileFor(Folder, Guid), BuildEntityText(InWorld, Id, WarnedTypes) });
     }
+    FormatAttribute = bAnyInstance ? TEXT_FORMAT_INSTANCES : TEXT_FORMAT_ENTITIES;
     Files.push_back({ WorldPath, DocumentText(Manifest) });
 
     if(!EngineCore::appCreateDirectories(Folder))
@@ -557,18 +966,22 @@ bool SaveWorldPackage(const char* InPath, World& InWorld)
         for(const std::string& Name : Names)
         {
             const std::string Full = Folder + "/" + Name;
-            if(EndsWith(Name, (std::string(ENTITY_EXTENSION) + TEMP_SUFFIX).c_str()))
+            for(const char* Extension : { ENTITY_EXTENSION, INSTANCE_EXTENSION })
             {
-                EngineCore::appFileDelete(Full);
-                continue;
-            }
-            EntityGuid Guid;
-            if(EndsWith(Name, ENTITY_EXTENSION)
-               && EntityGuid::Parse(Name.substr(0, Name.size() - std::strlen(ENTITY_EXTENSION)).c_str(), Guid)
-               && Keep.count(Guid) == 0)
-            {
-                if(EngineCore::appFileDelete(Full)) { ++Removed; }
-                else { GAMECORE_LOG_WARN("SaveWorldPackage: could not remove deleted entity's file '" + Full + "'") }
+                if(EndsWith(Name, (std::string(Extension) + TEMP_SUFFIX).c_str()))
+                {
+                    EngineCore::appFileDelete(Full);
+                    break;
+                }
+                EntityGuid Guid;
+                if(EndsWith(Name, Extension)
+                   && EntityGuid::Parse(Name.substr(0, Name.size() - std::strlen(Extension)).c_str(), Guid)
+                   && Keep.count(Guid) == 0)
+                {
+                    if(EngineCore::appFileDelete(Full)) { ++Removed; }
+                    else { GAMECORE_LOG_WARN("SaveWorldPackage: could not remove deleted entity's file '" + Full + "'") }
+                    break;
+                }
             }
         }
         if(Removed > 0)

@@ -2784,6 +2784,243 @@ static void TestInstanceScriptDetails()
     Scripts.Shutdown();
 }
 
+// ============================================================================
+// Prefab instances in world files
+// ============================================================================
+
+namespace
+{
+    /* Root, Barrel (a Link to Root), Muzzle (Bounds) -- saved as InPath. */
+    PrefabAsset WriteTurretPrefab(const std::string& InPath)
+    {
+        World Source;
+        const Entity Root   = MakePlaced(Source, "Root", Vector3(0.0, 0.0, 0.0));
+        const Entity Barrel = MakePlaced(Source, "Barrel", Vector3(0.0, 5.0, 0.0));
+        const Entity Muzzle = MakePlaced(Source, "Muzzle", Vector3(0.0, 2.0, 0.0));
+        Barrel.SetParent(Root, false);
+        Muzzle.SetParent(Barrel, false);
+        LinkComponent Link;
+        Link.Target  = Root;
+        Link.Payload = 3;
+        Barrel.AddComponent(Link);
+        BoundsComponent Bounds;
+        Bounds.Local = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(1.0, 1.0, 1.0));
+        Muzzle.AddComponent(Bounds);
+
+        PrefabAsset Asset;
+        Asset.SetName("Turret");
+        CapturePrefab(Source, Root, Asset);
+#if WITH_EDITOR
+        SavePrefabFile(InPath.c_str(), Asset);
+#else
+        (void)InPath;
+#endif
+        return Asset;
+    }
+
+    struct TurretLevel
+    {
+        PrefabInstance Edited, Untouched, Lost, InMemory;
+        EntityID       Ground, Flag;
+    };
+
+    TurretLevel BuildTurretLevel(World& W, const std::string& InPrefabPath, const PrefabAsset& InAsset)
+    {
+        TurretLevel L;
+        const Entity Ground = MakePlaced(W, "Ground", Vector3(0.0, 0.0, 0.0));
+        L.Ground = Ground;
+
+        TransformPose At;
+        At.Position = Vector3(100.0, 0.0, 0.0);
+        L.Edited    = W.SpawnPrefab(InPrefabPath.c_str(), At, "TurretA");
+        L.Untouched = W.SpawnPrefab(InPrefabPath.c_str(), TransformPose(), "TurretB");
+        L.Lost      = W.SpawnPrefab(InPrefabPath.c_str(), TransformPose(), "TurretC");
+        L.InMemory  = W.SpawnPrefab(InAsset, TransformPose(), "Loose");
+
+        const Entity Barrel = L.Edited.FindEntity("Barrel");
+        const Entity Muzzle = L.Edited.FindEntity("Muzzle");
+        Barrel.SetName("Gun");
+        Barrel.GetComponent<TransformComponent>()->Position = Vector3(0.0, 7.0, 0.0);
+        Barrel.GetComponent<LinkComponent>()->Target = Ground;
+        Muzzle.RemoveComponent<BoundsComponent>();
+        Muzzle.AddComponent<CollisionComponent>();
+        L.Edited.SetTickMode(EPrefabTickMode::EventsOnly);
+        L.Edited.SetPhaseEnabled(TP_PostUpdate, false);
+        L.Edited.GetRoot().SetParent(Ground, false);
+
+        const Entity Flag = MakePlaced(W, "Flag", Vector3(0.0, 1.0, 0.0));
+        Flag.SetParent(Barrel, false);
+        L.Flag = Flag;
+
+        L.Lost.FindEntity("Muzzle").Destroy();
+        return L;
+    }
+}
+
+static void TestPrefabWorldBinary()
+{
+    std::printf("[prefab instances: binary worlds]\n");
+
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "PrefabWorlds";
+    std::error_code Ignored;
+    std::filesystem::create_directories(Dir, Ignored);
+    const std::string PrefabPath = (Dir / "Turret.nmprefab").generic_string();
+    const PrefabAsset Asset = WriteTurretPrefab(PrefabPath);
+    ClearPrefabCache();
+
+    std::vector<uint8_t> Saved;
+    EntityGuid EditedGuid, BarrelGuid;
+    size_t EntityCount = 0;
+    {
+        World W;
+#if WITH_EDITOR
+        const TurretLevel L = BuildTurretLevel(W, PrefabPath, Asset);
+#else
+        /* No text prefab to load in a game build: in-memory instances only. */
+        TurretLevel L;
+        L.Edited = W.SpawnPrefab(Asset, TransformPose(), "TurretA");
+        L.Edited.FindEntity("Barrel").SetName("Gun");
+        L.Edited.SetTickMode(EPrefabTickMode::EventsOnly);
+        L.Edited.SetPhaseEnabled(TP_PostUpdate, false);
+#endif
+        EditedGuid  = L.Edited.GetGuid();
+        BarrelGuid  = L.Edited.FindEntity("Barrel").GetGuid();
+        EntityCount = W.GetEntityCount();
+        Archive Out = Archive::ForWriting();
+        Expect(SerializeWorld(Out, W), "a world with instances saves (binary)");
+        Saved = Out.GetBytes();
+    }
+
+    World W;
+    Archive In = Archive::ForReading(Saved);
+    Expect(SerializeWorld(In, W), "and loads");
+    Expect(W.GetEntityCount() == EntityCount, "binary: every entity came back");
+    const PrefabInstance Edited = W.GetInstance(W.FindInstanceByGuid(EditedGuid));
+    Expect(Edited.IsAlive() && std::strcmp(Edited.GetName(), "TurretA") == 0, "binary: the instance came back with its GUID and name");
+    Expect(Edited.GetTickMode() == EPrefabTickMode::EventsOnly && !Edited.IsPhaseEnabled(TP_PostUpdate)
+           && Edited.IsPhaseEnabled(TP_PrePhysics), "binary: tick mode and phases came back");
+    const Entity Barrel = Edited.FindEntity(2u);
+    Expect(Barrel.IsAlive() && Barrel.GetGuid() == BarrelGuid && std::strcmp(Barrel.GetName(), "Gun") == 0
+           && Barrel.GetInstance() == Edited.GetID(), "binary: members keep their template ids");
+    Expect(Edited.FindEntity("Barrel") == Barrel, "binary: template names still resolve through the prefab");
+    Expect(W.GetInstanceScriptState(Edited) == nullptr, "binary: no script, none restored");
+#if WITH_EDITOR
+    Expect(W.GetInstanceCount() == 4, "binary: every instance, in-memory ones too");
+    Expect(std::strcmp(Edited.GetPrefabPath(), PrefabPath.c_str()) == 0, "binary: the prefab path came back");
+#endif
+    ClearPrefabCache();
+}
+
+#if WITH_EDITOR
+static void TestPrefabWorldText()
+{
+    std::printf("[prefab instances: text worlds]\n");
+
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "PrefabWorlds";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Dir, Ignored);
+    std::filesystem::create_directories(Dir, Ignored);
+    const std::string PrefabPath = (Dir / "Turret.nmprefab").generic_string();
+    const std::string WorldPath  = (Dir / "Level.nmworld").generic_string();
+    const std::filesystem::path Folder = Dir / "Level";
+    const PrefabAsset Asset = WriteTurretPrefab(PrefabPath);
+    ClearPrefabCache();
+
+    EntityGuid EditedGuid, UntouchedGuid, LostGuid, GroundGuid, FlagGuid, BarrelGuid;
+    size_t EntityCount = 0;
+    {
+        World W;
+        const TurretLevel L = BuildTurretLevel(W, PrefabPath, Asset);
+        EditedGuid    = L.Edited.GetGuid();
+        UntouchedGuid = L.Untouched.GetGuid();
+        LostGuid      = L.Lost.GetGuid();
+        GroundGuid    = W.GetEntity(L.Ground).GetGuid();
+        FlagGuid      = W.GetEntity(L.Flag).GetGuid();
+        BarrelGuid    = L.Edited.FindEntity("Barrel").GetGuid();
+        EntityCount   = W.GetEntityCount();
+
+        const int HandlerBefore = GHandlerCalls;
+        Expect(SaveWorldPackage(WorldPath.c_str(), W), "a world with instances saves (text)");
+        Expect(GHandlerCalls > HandlerBefore, "an instance with no prefab file is warned about, and saved flat");
+    }
+
+    const auto InstanceFile = [&](const EntityGuid& InGuid)
+    {
+        char Text[EntityGuid::STRING_BUFFER];
+        InGuid.ToString(Text);
+        return ReadFileText(Folder / (std::string(Text) + ".nmprefabinst"));
+    };
+    const std::string Manifest  = ReadFileText(WorldPath);
+    const std::string Edited    = InstanceFile(EditedGuid);
+    const std::string Untouched = InstanceFile(UntouchedGuid);
+    const std::string Lost      = InstanceFile(LostGuid);
+    Expect(Manifest.find("Format=\"2\"") != std::string::npos && Manifest.find("<Instance Guid=") != std::string::npos,
+           "the manifest is format 2 and lists instances");
+    Expect(CountEntityFiles(Folder) == 5, "loose entities get .nmentity files: Ground, Flag, and the flattened three");
+    Expect(Untouched.find("<Entity ") == std::string::npos && Untouched.find("Prefab=\"" + PrefabPath + "\"") != std::string::npos,
+           "an instance just as its prefab has only its header");
+    Expect(Edited.find("<Entity Id=\"2\" Name=\"Gun\">") != std::string::npos, "a renamed entity is an override");
+    Expect(Edited.find("<RemovedComponent Type=\"Bounds\"") != std::string::npos
+           && Edited.find("<Component Type=\"Collision\"") != std::string::npos, "removed and added components are recorded");
+    Expect(Edited.find("TickMode=\"EventsOnly\"") != std::string::npos && Edited.find(" Parent=\"") != std::string::npos,
+           "a changed tick mode and an attached root are recorded");
+    Expect(Edited.find("<Position X=\"100\"") != std::string::npos, "the placement is the root's Transform override");
+    Expect(Edited.find("<Rotation") == std::string::npos && Edited.find("<Payload") == std::string::npos,
+           "unchanged fields are not written");
+    Expect(Lost.find("<Removed Entity=\"3\"") != std::string::npos, "a destroyed member is recorded");
+
+    {
+        World W;
+        Expect(LoadWorldFile(WorldPath.c_str(), W), "a format 2 world loads");
+        Expect(W.GetEntityCount() == EntityCount, "every entity came back");
+        Expect(W.GetInstanceCount() == 3, "the three file-backed instances came back as instances");
+
+        const PrefabInstance A = W.GetInstance(W.FindInstanceByGuid(EditedGuid));
+        const Entity Ground = W.GetEntity(W.FindEntityByGuid(GroundGuid));
+        const Entity Barrel = A.FindEntity("Barrel");
+        const Entity Muzzle = A.FindEntity("Muzzle");
+        Expect(A.IsAlive() && std::strcmp(A.GetName(), "TurretA") == 0 && A.GetTickMode() == EPrefabTickMode::EventsOnly,
+               "text: the instance, its name and tick mode");
+        Expect(std::strcmp(A.GetPrefabPath(), PrefabPath.c_str()) == 0, "text: its prefab path");
+        Expect(A.GetRoot().GetParent() == Ground.GetID(), "text: its root is attached again");
+        Expect(NearVector(A.GetRoot().GetComponent<TransformComponent>()->Position, Vector3(100.0, 0.0, 0.0)), "text: placed again");
+        Expect(Barrel.GetGuid() == BarrelGuid && std::strcmp(Barrel.GetName(), "Gun") == 0, "text: members keep GUIDs and renames");
+        Expect(NearVector(Barrel.GetComponent<TransformComponent>()->Position, Vector3(0.0, 7.0, 0.0)), "text: a field override applies");
+        Expect(Barrel.GetComponent<LinkComponent>()->Target == Ground.GetID() && Barrel.GetComponent<LinkComponent>()->Payload == 3,
+               "text: an overridden reference resolves, the rest keeps the prefab's value");
+        Expect(!Muzzle.HasComponent<BoundsComponent>() && Muzzle.HasComponent<CollisionComponent>(), "text: component changes apply");
+        Expect(W.GetEntity(W.FindEntityByGuid(FlagGuid)).GetParent() == Barrel.GetID(), "text: a loose child under a member comes back");
+
+        const PrefabInstance C = W.GetInstance(W.FindInstanceByGuid(LostGuid));
+        Expect(C.IsAlive() && !C.FindEntity("Muzzle").IsAlive() && C.FindEntity("Barrel").IsAlive(), "text: a removed member stays removed");
+
+        /* Saved again, unchanged: the same bytes. */
+        const std::string ResaveDir = (Dir / "Resave.nmworld").generic_string();
+        Expect(SaveWorldPackage(ResaveDir.c_str(), W), "and saves again");
+        char Text[EntityGuid::STRING_BUFFER];
+        EditedGuid.ToString(Text);
+        Expect(ReadFileText(Dir / "Resave" / (std::string(Text) + ".nmprefabinst")) == Edited,
+               "a loaded instance saves to the same bytes");
+
+        /* Cooking keeps instances, whole. */
+        const std::string Cooked = (Dir / "Cooked" / "Level.nmworld").generic_string();
+        Expect(CookWorldFile(WorldPath.c_str(), Cooked.c_str()), "a world with instances cooks");
+        World FromCooked;
+        Expect(LoadWorldFile(Cooked.c_str(), FromCooked) && FromCooked.GetInstanceCount() == 3, "and the cooked world has them");
+    }
+
+    /* A world with no instances keeps format 1. */
+    {
+        World W;
+        MakePlaced(W, "Only", Vector3(0.0, 0.0, 0.0));
+        const std::string Plain = (Dir / "Plain.nmworld").generic_string();
+        SaveWorldPackage(Plain.c_str(), W);
+        Expect(ReadFileText(Plain).find("Format=\"1\"") != std::string::npos, "a world without instances stays format 1");
+    }
+    ClearPrefabCache();
+}
+#endif
+
 int main()
 {
     std::printf("GameCore smoke test\n");
@@ -2818,7 +3055,9 @@ int main()
     TestPrefabFiles();
     TestInstanceScripts();
     TestInstanceScriptDetails();
+    TestPrefabWorldBinary();
 #if WITH_EDITOR
+    TestPrefabWorldText();
     TestComponentProperties();
     TestWorldPackage();
 #endif

@@ -10,6 +10,7 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/GameCoreLog.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 
 /* The World walk (format: DESIGN.md). Saving builds a dense entity table
@@ -25,8 +26,43 @@ namespace
     constexpr uint32_t TAG_COMPONENT = EngineCore::MakeArchiveTag('C','M','P','T');
     constexpr uint32_t TAG_DATA      = EngineCore::MakeArchiveTag('D','A','T','A');
 
-    /* 2: a parent index per entity, after the entity table. */
-    constexpr uint16_t WORLD_CHUNK_VERSION = 2;
+    /* 2: a parent index per entity, after the entity table.
+     * 3: then the prefab instance table. */
+    constexpr uint16_t WORLD_CHUNK_VERSION = 3;
+
+    /* One prefab instance, as saved: its members by save index. */
+    struct SavedInstance
+    {
+        uint64_t              GuidHi = 0, GuidLo = 0;
+        std::string           Name;
+        std::string           PrefabPath;
+        std::string           ScriptPath;
+        uint8_t               TickMode     = 0;
+        uint8_t               PhaseEnabled = 0xFF;
+        std::vector<uint32_t> Members;    // save indices, the root first
+        std::vector<uint32_t> LocalIds;   // parallel
+    };
+
+    void SerializeSavedInstance(EngineCore::Archive& Ar, SavedInstance& InOut)
+    {
+        uint32_t Count = uint32_t(InOut.Members.size());
+        Ar << InOut.GuidHi << InOut.GuidLo << InOut.Name << InOut.PrefabPath << InOut.ScriptPath
+           << InOut.TickMode << InOut.PhaseEnabled << Count;
+        if(Ar.IsLoading())
+        {
+            if(Ar.HasError() || Count > (Ar.GetSize() - Ar.GetCursor()) / 8)
+            {
+                Ar.SetError("a prefab instance's member list runs past the end of the save");
+                return;
+            }
+            InOut.Members.resize(Count);
+            InOut.LocalIds.resize(Count);
+        }
+        for(uint32_t Index = 0; Index < Count; ++Index)
+        {
+            Ar << InOut.Members[Index] << InOut.LocalIds[Index];
+        }
+    }
 
     /* Save-local index <-> live EntityID. Saving fills LiveToIndex, loading
      * fills IndexToLive; one class because IEntityRemapper serves both. */
@@ -148,6 +184,51 @@ namespace
             uint32_t ParentIndex = OutTable.IndexOf(InWorld.GetEntity(EntityId).GetParent());
             Ar << ParentIndex;
         }
+
+        /* Prefab instances, whole: every entity above is already saved in
+         * full, so this only says which of them form which instance. A
+         * load does not need the prefab file to rebuild them. */
+        std::vector<SavedInstance> Instances;
+        {
+            std::vector<PrefabInstanceID> Live;
+            InWorld.ForEachInstance([](const PrefabInstanceID InInstance, void* InUserData)
+            {
+                static_cast<std::vector<PrefabInstanceID>*>(InUserData)->push_back(InInstance);
+            }, &Live);
+            for(const PrefabInstanceID Id : Live)
+            {
+                const PrefabInstance Instance(&InWorld, Id);
+                SavedInstance Saved;
+                const EntityGuid Guid = Instance.GetGuid();
+                Saved.GuidHi     = Guid.Hi;
+                Saved.GuidLo     = Guid.Lo;
+                Saved.Name       = Instance.GetName();
+                Saved.PrefabPath = Instance.GetPrefabPath();
+                Saved.ScriptPath = InWorld.GetInstanceScriptPath(Id);
+                Saved.TickMode   = uint8_t(Instance.GetTickMode());
+                Saved.PhaseEnabled = 0;
+                for(int Phase = 0; Phase < TP_MAX; ++Phase)
+                {
+                    if(Instance.IsPhaseEnabled(ETickPhase(Phase))) { Saved.PhaseEnabled |= uint8_t(1u << Phase); }
+                }
+                const EntityID Root = Instance.GetRoot().GetID();
+                Saved.Members.push_back(OutTable.IndexOf(Root));
+                Saved.LocalIds.push_back(InWorld.GetEntity(Root).GetPrefabLocalId());
+                for(const EntityID EntityId : OutTable.GetSavedOrder())
+                {
+                    const Entity Handle = InWorld.GetEntity(EntityId);
+                    if(EntityId != Root && Handle.GetInstance() == Id)
+                    {
+                        Saved.Members.push_back(OutTable.IndexOf(EntityId));
+                        Saved.LocalIds.push_back(Handle.GetPrefabLocalId());
+                    }
+                }
+                Instances.push_back(std::move(Saved));
+            }
+        }
+        uint32_t InstanceCount = uint32_t(Instances.size());
+        Ar << InstanceCount;
+        for(SavedInstance& Saved : Instances) { SerializeSavedInstance(Ar, Saved); }
 
         /* Type id order, so saving the same World twice gives identical bytes. */
         for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
@@ -276,6 +357,21 @@ namespace
             if(Ar.HasError()) { Ar.CloseChunk(); return false; }
         }
 
+        /* Applied last, once the tree is in place. */
+        std::vector<SavedInstance> Instances;
+        if(Version >= 3)
+        {
+            uint32_t InstanceCount = 0;
+            Ar << InstanceCount;
+            for(uint32_t Index = 0; Index < InstanceCount && !Ar.HasError(); ++Index)
+            {
+                SavedInstance Saved;
+                SerializeSavedInstance(Ar, Saved);
+                Instances.push_back(std::move(Saved));
+            }
+            if(Ar.HasError()) { Ar.CloseChunk(); return false; }
+        }
+
         /* A non-CMPT tag ends the loop; CloseChunk below skips the rest. */
         uint16_t ChunkVersion = 0;
         while(!Ar.IsAtEnd() && Ar.OpenChunk(TAG_COMPONENT, ChunkVersion))
@@ -361,6 +457,28 @@ namespace
             {
                 InWorld.GetEntity(OutTable.LiveAt(Ordinal)).SetParent(Parent, false);
             }
+        }
+
+        for(const SavedInstance& Saved : Instances)
+        {
+            std::vector<EntityID> Members;
+            for(const uint32_t Index : Saved.Members) { Members.push_back(OutTable.LiveAt(Index)); }
+
+            /* The prefab only for its template names; the save holds the rest. */
+            const PrefabAsset* Prefab = Saved.PrefabPath.empty() ? nullptr : FindOrLoadPrefab(Saved.PrefabPath.c_str());
+            PrefabInstanceRecord Record;
+            Record.Prefab       = Prefab;
+            Record.PrefabPath   = Saved.PrefabPath.c_str();
+            Record.Guid.Hi      = Saved.GuidHi;
+            Record.Guid.Lo      = Saved.GuidLo;
+            Record.Name         = Saved.Name.c_str();
+            Record.ScriptPath   = Saved.ScriptPath.c_str();
+            Record.TickMode     = Saved.TickMode <= uint8_t(EPrefabTickMode::Off) ? EPrefabTickMode(Saved.TickMode) : EPrefabTickMode::Tick;
+            Record.PhaseEnabled = Saved.PhaseEnabled;
+            Record.Entities     = Members.data();
+            Record.LocalIds     = Saved.LocalIds.data();
+            Record.Count        = Members.size();
+            InWorld.RestorePrefabInstance(Record);
         }
 
         /* Gives every restored Bounds its World box and a leaf (ProxyID is not

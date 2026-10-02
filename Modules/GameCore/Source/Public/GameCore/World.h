@@ -32,6 +32,7 @@ namespace GameCore
 {
     class PrefabAsset;
     class PrefabInstance;
+    struct PrefabInstanceRecord;
     enum class EPrefabTickMode : uint8_t;
 }
 
@@ -181,7 +182,14 @@ namespace GameCore
                                    const char* InName = nullptr, const EntityGuid& InGuid = EntityGuid());
         /* Through FindOrLoadPrefab. Invalid if it cannot be loaded. */
         PrefabInstance SpawnPrefab(const char* InPath, const TransformPose& InAt = TransformPose(),
-                                   const char* InName = nullptr);
+                                   const char* InName = nullptr, const EntityGuid& InGuid = EntityGuid());
+
+        /* For loaders: makes an instance of entities that already exist, as
+         * a binary world stores them (Prefab.h's PrefabInstanceRecord). Every
+         * entity must be alive, in no instance, and in the first one's (the
+         * root's) subtree. Invalid, warned, otherwise. The script is queued
+         * as for a spawn. */
+        PrefabInstance RestorePrefabInstance(const PrefabInstanceRecord& InRecord);
 
         /* Destroys the root -- and so the whole instance. DEFERRED in a tick. */
         void DestroyPrefabInstance(PrefabInstanceID InInstance);

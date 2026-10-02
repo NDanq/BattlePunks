@@ -157,6 +157,26 @@ namespace GameCore
      * time. Never unset. */
     GAMECORE_API EntityGuid DerivePrefabEntityGuid(const EntityGuid& InInstanceGuid, uint32_t InLocalId);
 
+    /* An instance as a binary world stores it: everything World needs to
+     * make one of entities a load already created (World::RestorePrefabInstance). */
+    struct PrefabInstanceRecord
+    {
+        /* What it was spawned from, if it can still be loaded; nullptr
+         * leaves the instance without templates (FindEntity by id still works). */
+        const PrefabAsset* Prefab     = nullptr;
+        const char*        PrefabPath = "";
+        EntityGuid         Guid;
+        const char*        Name       = "";
+        const char*        ScriptPath = "";
+        EPrefabTickMode    TickMode   = EPrefabTickMode::Tick;
+        uint8_t            PhaseEnabled = 0xFF;   // bit per ETickPhase
+
+        /* Entities[0] is the root. LocalIds[i] is Entities[i]'s template id. */
+        const EntityID* Entities = nullptr;
+        const uint32_t* LocalIds = nullptr;
+        size_t          Count    = 0;
+    };
+
     // === The instance handle =================================================
 
     /*

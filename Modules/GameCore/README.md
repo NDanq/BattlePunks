@@ -273,9 +273,9 @@ Instance.Destroy();                                       // the root and everyt
 - **Sharing.** `PrefabAsset` copies share their data until one is changed.
   An instance keeps the version it was spawned from, even across
   `ReloadPrefab`.
-- **Not saved with a world yet.** A saved world stores an instance's
-  entities as plain entities and forgets the instance. Instances in level
-  files come in phase 4.
+- **Saved with the world** as instances (see **World files**). An instance
+  spawned from an in-memory asset has no file to name, so a text world
+  saves its entities as plain entities, with a warning.
 
 **Files.** `.nmprefab`, text or cooked, told apart like worlds. `LoadPrefabFile` reads
 either; `SavePrefabFile` and `CookPrefabFile` are editor-only.
@@ -698,10 +698,51 @@ A `.nmworld` is text or binary, told apart by its first bytes
 (`DetectWorldFileFormat`); `LoadWorldFile` reads either.
 
 ```
-Levels/Sandbox.nmworld               text: <World Format="1"> listing entity GUIDs
-Levels/Sandbox/<guid>.nmentity       text: one entity -- name, script, components
+Levels/Sandbox.nmworld               text: <World Format="1|2"> listing entity and instance GUIDs
+Levels/Sandbox/<guid>.nmentity       text: one loose entity -- name, script, components
+Levels/Sandbox/<guid>.nmprefabinst   text: one prefab instance -- its prefab and what it changed
 Levels/Cooked/Sandbox.nmworld        binary: what a game ships (CookWorldFile)
 ```
+
+**Prefab instances.** A world with any is format 2; one without stays format
+1, byte for byte. An instance's file names its prefab and records only what
+this instance changed:
+
+```xml
+<Instance Guid="..." Name="TurretA" Prefab="Prefabs/Turret.nmprefab" TickMode="EventsOnly" Parent="<guid>">
+  <Entity Id="1">                                   <!-- the placement: the root's Transform -->
+    <Component Type="Transform" Version="1"><Position X="100" Y="0" Z="0" /></Component>
+  </Entity>
+  <Entity Id="2" Name="Gun">                        <!-- renamed; one field changed -->
+    <Component Type="Transform" Version="1"><Position X="0" Y="7" Z="0" /></Component>
+  </Entity>
+  <Entity Id="3">
+    <RemovedComponent Type="Bounds" />              <!-- and a component added: written whole -->
+    <Component Type="Collision" Version="1">...</Component>
+  </Entity>
+  <Removed Entity="4" />                            <!-- a template entity it lost -->
+</Instance>
+```
+
+- A load spawns the prefab with the instance's GUID, so its entities get the
+  same derived GUIDs and references to them resolve. It then loads each
+  written field over the spawned component; an unwritten field keeps the
+  prefab's current value, so a prefab edit reaches every instance that did
+  not change that field.
+- An instance exactly as its prefab is one line. A template entity added to
+  the prefab later appears in every instance on the next load. An override
+  for one the prefab dropped is ignored, with a warning.
+- A loose entity under an instance's entity is an ordinary `.nmentity` whose
+  `Parent` is that entity's GUID.
+- Not recorded in text: per-phase enables (`SetPhaseEnabled`), which are
+  runtime state. Binary keeps them.
+
+**Binary stores instances whole:** every entity in full, as before, plus an
+instance table: GUID, name, prefab path, script path, tick mode, phase
+enables, and its members with their template ids (`WRLD` version 3).
+`World::RestorePrefabInstance` rebuilds each instance from those entities, so
+a cooked level or save game needs the prefab file only for template names
+(`FindEntity("Barrel")`). A version 1 or 2 save loads with no instances.
 
 **Text is the editor's format** (`SaveWorldPackage`, editor builds only). One
 small XML file per entity, named by its `EntityGuid`, so an edit to one entity
@@ -711,7 +752,8 @@ rewrites files whose bytes changed, commits the manifest last (temporaries,
 then renames), and afterwards removes the files of deleted entities. A load
 creates every listed entity first, then their components, so references
 between entities resolve; files the manifest does not list are ignored.
-`.gitattributes` keeps both extensions LF.
+`.gitattributes` keeps every extension LF (`.nmworld`, `.nmentity`,
+`.nmprefab`, `.nmprefabinst`).
 
 **Binary is the shipped format** -- `SerializeWorld`'s archive, one file.
 `CookWorldFile(text, out)` produces it; the editor's `cook` console command
