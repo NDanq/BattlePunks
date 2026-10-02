@@ -1883,13 +1883,60 @@ namespace
         CompileResult R;
         CompileGraph(G, R);
         Expect(!R.HasErrors(), "an overlap graph compiles");
-        Expect(R.Code.find("OnOverlapBegin = function(self, other)") != std::string::npos
+        Expect(R.Code.find("OnOverlapBegin = function(self, other, mine)") != std::string::npos
                && R.Code.find("other:GetName()") != std::string::npos
-               && R.Code.find("OnOverlapEnd = function(self, other)") != std::string::npos,
-               "On Overlap Begin / End become the methods the overlap pass calls, Other is their argument");
+               && R.Code.find("OnOverlapEnd = function(self, other, mine)") != std::string::npos,
+               "On Overlap Begin / End become the methods the overlap pass calls, Other and Mine their arguments");
         const Schema* S = FindSchema("Script");
         Expect(S && S->FindNode("Library.Collision.OverlapBox") && S->FindNode("Library.Collision.AreOverlapping"),
                "the Collision library is in the palette");
+
+        /* Mine: which of the script's own entities overlapped. */
+        Graph M;
+        M.SchemaName = "Script";
+        M.Name       = "Mine";
+        AddNode(M, 1, "Event.OnOverlapBegin");
+        AddNode(M, 2, "Entity.GetName");
+        AddNode(M, 3, "Debug.Print");
+        Connect(M, 1, "Then", 3, "Exec");
+        Connect(M, 1, "Mine", 2, "Entity");
+        Connect(M, 2, "Name", 3, "Value");
+        CompileResult MR;
+        CompileGraph(M, MR);
+        Expect(!MR.HasErrors() && MR.Code.find("mine:GetName()") != std::string::npos, "the Mine output reads the third argument");
+    }
+
+    void TestPhaseEvents()
+    {
+        std::printf("[phase events]\n");
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Phases";
+        AddNode(G, 1, "Event.OnPostUpdate");
+        AddNode(G, 2, "Debug.Print").Constants["Value"] = "late";
+        AddNode(G, 3, "Event.OnPrePhysics");
+        AddNode(G, 4, "Prefab.SetPhaseEnabled").Constants["Phase"] = "PrePhysics";
+        AddNode(G, 5, "Prefab.Find").Constants["Name"] = "Barrel";
+        AddNode(G, 6, "Entity.GetName");
+        AddNode(G, 7, "Debug.Print");
+        Connect(G, 1, "Then", 2, "Exec");
+        Connect(G, 3, "Then", 4, "Exec");
+        Connect(G, 4, "Then", 7, "Exec");
+        Connect(G, 5, "Entity", 6, "Entity");
+        Connect(G, 6, "Name", 7, "Value");
+
+        CompileResult R;
+        CompileGraph(G, R);
+        Expect(!R.HasErrors(), "a phase graph compiles");
+        const size_t Pre  = R.Code.find("OnPrePhysics = function(self, dt)");
+        const size_t Post = R.Code.find("OnPostUpdate = function(self, dt)");
+        Expect(Pre != std::string::npos && Post != std::string::npos && Pre < Post,
+               "each On <Phase> node becomes that phase's function, in phase order");
+        Expect(R.Code.find("OnPhysics") == std::string::npos && R.Code.find("OnTick") == std::string::npos,
+               "phases without a node get no function");
+        Expect(R.Code.find("self.Instance:SetPhaseEnabled(TickPhase[\"PrePhysics\"], true)") != std::string::npos
+               && R.Code.find("self.Instance:Find(\"Barrel\")") != std::string::npos,
+               "the Prefab nodes call the instance");
     }
 
     /* Three graph functions -- two numbers in and one out, a recursive
@@ -2133,6 +2180,7 @@ int main()
     TestLibraries();
     TestScriptStructs();
     TestOverlapEvents();
+    TestPhaseEvents();
     TestGraphFunctions();
     TestMaterialCodegen();
     TestComponentSelection();

@@ -1042,8 +1042,54 @@ Instantiation likewise re-checks that the path is unchanged after the file's
 first load ran its top level.
 
 **Lua systems run after entity scripts, in the same pass.** So the order
-within a phase is fixed: entity scripts, then Lua systems, then C++ systems --
-"my object's own behaviour runs, then whatever else is watching the world."
+within a phase is fixed: entity scripts, then prefab instances, then Lua
+systems, then C++ systems -- "my object's own behaviour runs, then whatever
+else is watching the world."
+
+**Prefab instances are listed per phase, not filtered per phase.** An
+entity script names one phase and the driver walks every scripted entity in
+every phase, skipping mismatches. That costs a lookup and a compare per
+entity per phase, even when nothing runs. An instance's class is read once,
+when it is created: each `On<Phase>` function present (or `OnTick`, for its
+`TickPhase`) sets a bit in `PhaseMask`, and World keeps one list per phase
+of the instances with that bit, tick mode `Tick`, the phase enabled and a
+healthy script. A phase walks exactly the instances that do something
+there. An instance that only reacts to overlaps is in no list at all.
+
+**The lists change only between walks.** `SetTickMode` and
+`SetPhaseEnabled` are deferred to the phase flush inside a tick, for
+`SetScript`'s reason. Destroys are already deferred. New instances are
+created at the start of a phase, before its walk. So the walk takes a count
+up front and needs no re-validation of the list, only of each instance's
+state after each Lua call. An instance whose function raises is marked
+errored and skipped; it stays in the list (a skip per frame) rather than
+the walk changing the list it is walking.
+
+**Instances start at the next phase start, and `OnStart` runs there.** An
+entity script's `OnStart` waits for its own phase. An instance may tick in
+several phases or none (EventsOnly), so it starts at the first phase after
+it was spawned, wherever its functions run. That is still after every
+component is in place, which is the guarantee that matters. One spawned by
+an `OnStart` is popped in the same loop and starts in the same phase.
+
+**`self` is the instance, and the root is `self.Entity`.** `self.Root` is
+the clearer name; `self.Entity` is also set so an entity script, and every
+compiled graph (whose **Self** node reads `self.Entity`), works on a prefab
+unchanged.
+
+**Overlaps go to the instance as well as the entity.**
+`World::CallScriptMethod` calls the entity's own script, then its instance's
+with the entity as `mine`. A pair inside one instance is not reported to
+it: that is the prefab touching itself. The entity-script call passes
+`mine` too (the entity itself), so a handler reads the same on either.
+
+**Off releases, and leaving Off restarts.** `Off` means "no script
+instance", as the design asks, so switching to it at runtime runs
+`OnDestroy` and drops the Lua object. Switching back queues a fresh one.
+Persisting Lua state across that would need the same per-class save
+convention save games lack. A prefab spawned `Off` also marks its Bounds
+static. Switching away later does not undo that, since the authored value
+is gone by then.
 
 **Release clears the ref before running `OnDestroy`.** `OnDestroy` is Lua and
 may destroy or re-script the same entity; with the ref already `LUA_NOREF`, a

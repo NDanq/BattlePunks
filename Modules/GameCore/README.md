@@ -304,6 +304,56 @@ Lua: `World.SpawnPrefab(path[, x, y, z])` returns the root Entity;
 `IsValid()` is false if the prefab could not be loaded. Script graphs have
 **Spawn Prefab**.
 
+### A prefab's script
+
+A prefab names one script (`PrefabAsset::SetScriptPath`, a `.lua` or
+`.script.nmgraph`), and each instance gets its own object of that class.
+Instead of one `OnTick` in one phase, a class defines a function for each
+phase it needs:
+
+```lua
+return {
+    OnStart       = function(self) end,          -- once, at the first phase after spawning
+    OnPrePhysics  = function(self, dt) end,      -- define only the phases you need:
+    OnPhysics     = function(self, dt) end,      --   an instance is listed in those
+    OnPostPhysics = function(self, dt) end,      --   phases and nowhere else
+    OnPostUpdate  = function(self, dt) end,
+    OnDestroy     = function(self) end,          -- the instance is destroyed, or turned Off
+
+    OnOverlapBegin = function(self, other, mine) end,   -- mine: which of ITS entities
+    OnOverlapEnd   = function(self, other, mine) end,
+}
+```
+
+- `self.Root` (and `self.Entity`, the same) is the root. `self.Instance` is
+  the instance: `:Find(templateName)`, `:GetRoot()`, `:GetName()`,
+  `:Get/SetTickMode("Tick" | "EventsOnly" | "Off")`,
+  `:IsPhaseEnabled(TickPhase.X)` / `:SetPhaseEnabled(TickPhase.X, on)`,
+  `:Destroy()`. `e:GetInstance()` gives an entity's instance.
+- **`OnTick` still works.** With `TickPhase = TickPhase.X` it stands for
+  `OnX`, unless the class defines `OnX` too. An entity script moves to a
+  prefab unchanged.
+- **Tick modes.** `Tick` runs phase functions. `EventsOnly` keeps the script
+  for `OnStart`, `OnDestroy`, overlaps and events, but calls no phase
+  function. `Off` has no script at all: switching to it calls `OnDestroy`,
+  and switching back starts the script afresh. A prefab spawned `Off` is
+  static geometry: its Bounds are fitted once and never refit.
+- **`SetTickMode` and `SetPhaseEnabled` wait for the phase flush** when
+  called inside a tick, like `SetScript`, because the phase's list is being
+  walked.
+- **Overlaps.** Each of the instance's colliders reports to the instance's
+  script, with `mine` set to that collider's entity. Two of its own
+  colliders touching each other are not reported. An entity script gets
+  `mine` too: itself.
+- **Order within a phase:** entity scripts, then instances (in the order
+  they started), then Lua systems, then C++ systems. A failing instance
+  script is reported once and not called again.
+
+Script graphs: **On Pre-Physics**, **On Physics**, **On Post-Physics** and
+**On Post Update** events; **On Overlap Begin / End** gain a **Mine**
+output. The **Prefab** group has **Prefab Root**, **Find Prefab Entity**,
+**Set Tick Mode**, **Set Phase Enabled** and **Destroy Prefab**.
+
 ---
 
 ## Tick phases

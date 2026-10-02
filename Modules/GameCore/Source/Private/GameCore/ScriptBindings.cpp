@@ -262,7 +262,17 @@ namespace GameCore
             return 1;
         }
 
+        /* The prefab instance it belongs to; IsValid() false for a loose entity. */
+        int Entity_GetInstance(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            LuaPushInstance(InState, Entity(W, E).GetInstance());
+            return 1;
+        }
+
         const luaL_Reg GEntityMethods[] = {
+            { "GetInstance",     Entity_GetInstance },
             { "IsValid",         Entity_IsValid },
             { "GetID",           Entity_GetID },
             { "GetName",         Entity_GetName },
@@ -586,6 +596,118 @@ namespace GameCore
             { nullptr, nullptr }
         };
 
+        // === PrefabInstance userdata =========================================
+        // A script's self.Instance, and Entity:GetInstance().
+
+        constexpr const char* INSTANCE_METATABLE = "GameCore.PrefabInstance";
+
+        PrefabInstance CheckInstance(lua_State* InState, const int InIndex)
+        {
+            const PrefabInstanceID ID = LuaCheckInstance(InState, InIndex);
+            return PrefabInstance(GetBoundWorld(InState), ID);
+        }
+
+        /* "PrePhysics" .. "PostUpdate", or the TickPhase integer. Raises otherwise. */
+        ETickPhase CheckPhase(lua_State* InState, const int InIndex)
+        {
+            const lua_Integer Value = luaL_checkinteger(InState, InIndex);
+            if(Value < 0 || Value >= TP_MAX)
+            {
+                luaL_argerror(InState, InIndex, "not a TickPhase");
+            }
+            return ETickPhase(Value);
+        }
+
+        int Instance_IsValid(lua_State* InState)
+        {
+            lua_pushboolean(InState, CheckInstance(InState, 1).IsAlive());
+            return 1;
+        }
+
+        int Instance_GetRoot(lua_State* InState)
+        {
+            LuaPushEntity(InState, CheckInstance(InState, 1).GetRoot().GetID());
+            return 1;
+        }
+
+        /* inst:Find("Barrel") -- by TEMPLATE name; IsValid() false if none. */
+        int Instance_Find(lua_State* InState)
+        {
+            const PrefabInstance Instance = CheckInstance(InState, 1);
+            const char* Name = luaL_checkstring(InState, 2);
+            LuaPushEntity(InState, Instance.FindEntity(Name).GetID());
+            return 1;
+        }
+
+        int Instance_GetName(lua_State* InState)
+        {
+            lua_pushstring(InState, CheckInstance(InState, 1).GetName());
+            return 1;
+        }
+
+        int Instance_GetPrefabPath(lua_State* InState)
+        {
+            lua_pushstring(InState, CheckInstance(InState, 1).GetPrefabPath());
+            return 1;
+        }
+
+        /* "Tick", "EventsOnly" or "Off". */
+        int Instance_GetTickMode(lua_State* InState)
+        {
+            lua_pushstring(InState, PrefabTickModeName(CheckInstance(InState, 1).GetTickMode()));
+            return 1;
+        }
+
+        int Instance_SetTickMode(lua_State* InState)
+        {
+            const PrefabInstance Instance = CheckInstance(InState, 1);
+            const char* Name = luaL_checkstring(InState, 2);
+            EPrefabTickMode Mode;
+            if(!ParsePrefabTickMode(Name, Mode))
+            {
+                return luaL_argerror(InState, 2, "expected \"Tick\", \"EventsOnly\" or \"Off\"");
+            }
+            lua_pushboolean(InState, Instance.SetTickMode(Mode));
+            return 1;
+        }
+
+        int Instance_IsPhaseEnabled(lua_State* InState)
+        {
+            const PrefabInstance Instance = CheckInstance(InState, 1);
+            lua_pushboolean(InState, Instance.IsPhaseEnabled(CheckPhase(InState, 2)));
+            return 1;
+        }
+
+        /* inst:SetPhaseEnabled(TickPhase.PostUpdate, false) */
+        int Instance_SetPhaseEnabled(lua_State* InState)
+        {
+            const PrefabInstance Instance = CheckInstance(InState, 1);
+            const ETickPhase Phase = CheckPhase(InState, 2);
+            const bool bEnabled = lua_toboolean(InState, 3) != 0;
+            lua_pushboolean(InState, Instance.SetPhaseEnabled(Phase, bEnabled));
+            return 1;
+        }
+
+        int Instance_Destroy(lua_State* InState)
+        {
+            CheckInstance(InState, 1).Destroy();
+            return 0;
+        }
+
+        const luaL_Reg GInstanceMethods[] = {
+            { "IsValid",         Instance_IsValid },
+            { "GetRoot",         Instance_GetRoot },
+            { "Find",            Instance_Find },
+            { "GetName",         Instance_GetName },
+            { "GetPrefabPath",   Instance_GetPrefabPath },
+            { "GetTickMode",     Instance_GetTickMode },
+            { "SetTickMode",     Instance_SetTickMode },
+            { "IsPhaseEnabled",  Instance_IsPhaseEnabled },
+            { "SetPhaseEnabled", Instance_SetPhaseEnabled },
+            { "Destroy",         Instance_Destroy },
+            { nullptr, nullptr }
+        };
+
         // === installers ======================================================
 
         void RegisterMetatable(lua_State* InState, const char* InName, const luaL_Reg* InMethods)
@@ -611,6 +733,19 @@ namespace GameCore
         return *Slot;
     }
 
+    void LuaPushInstance(lua_State* InState, const PrefabInstanceID InInstance)
+    {
+        PrefabInstanceID* Slot = static_cast<PrefabInstanceID*>(lua_newuserdatauv(InState, sizeof(PrefabInstanceID), 0));
+        *Slot = InInstance;
+        luaL_setmetatable(InState, INSTANCE_METATABLE);
+    }
+
+    PrefabInstanceID LuaCheckInstance(lua_State* InState, const int InIndex)
+    {
+        const PrefabInstanceID* Slot = static_cast<const PrefabInstanceID*>(luaL_checkudata(InState, InIndex, INSTANCE_METATABLE));
+        return *Slot;
+    }
+
     World* LuaGetBoundWorld(lua_State* InState)
     {
         return GetBoundWorld(InState);
@@ -631,6 +766,7 @@ namespace GameCore
         /* Component metatables are not registered here: ComponentScript.cpp
          * builds each type's the first time one of its proxies is pushed. */
         RegisterMetatable(InState, ENTITY_METATABLE, GEntityMethods);
+        RegisterMetatable(InState, INSTANCE_METATABLE, GInstanceMethods);
 
         lua_newtable(InState);
         luaL_setfuncs(InState, GWorldFunctions, 0);

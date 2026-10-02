@@ -2577,6 +2577,213 @@ static void TestPrefabFiles()
 #endif
 }
 
+// ============================================================================
+// Prefab instance scripts -- per-phase functions, tick modes, overlaps
+// ============================================================================
+
+namespace
+{
+    /* A one-entity prefab (or more, through InSetup) driven by InScriptPath. */
+    PrefabAsset MakeScriptedPrefab(const std::string& InScriptPath, const EPrefabTickMode InMode,
+                                   void (*InSetup)(World&, const Entity&) = nullptr)
+    {
+        World Source;
+        const Entity Root = MakePlaced(Source, "Root", Vector3(0.0, 0.0, 0.0));
+        if(InSetup) { InSetup(Source, Root); }
+        PrefabAsset Asset;
+        Asset.SetName("Scripted");
+        CapturePrefab(Source, Root, Asset);
+        Asset.SetScriptPath(InScriptPath.c_str());
+        Asset.SetTickMode(InMode);
+        return Asset;
+    }
+
+    /* Runs InCheck (Lua asserts) and reports it as one check. */
+    void ExpectLua(ScriptEngine& InScripts, const char* InCheck, const char* What)
+    {
+        Expect(InScripts.RunString(InCheck, What), What);
+    }
+
+    void AddCollider(World& InWorld, const Entity& InParent, const char* InName)
+    {
+        const Entity Collider = MakePlaced(InWorld, InName, Vector3(0.0, 0.0, 0.0));
+        Collider.SetParent(InParent, false);
+        BoundsComponent Bounds;
+        Bounds.Local = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(1.0, 1.0, 1.0));
+        Collider.AddComponent(Bounds);
+        Collider.AddComponent<CollisionComponent>();
+    }
+}
+
+static void TestInstanceScripts()
+{
+    std::printf("[instance scripts]\n");
+
+    const std::string PhasesPath = WriteTestScript("InstancePhases.lua",
+        "P = P or { Start = 0, Pre = 0, Post = 0, Destroy = 0 }\n"
+        "return {\n"
+        "    OnStart = function(self)\n"
+        "        P.Start = P.Start + 1\n"
+        "        P.RootName = self.Root:GetName()\n"
+        "        P.SameRoot = self.Entity:GetID() == self.Root:GetID()\n"
+        "        P.InstanceName = self.Instance:GetName()\n"
+        "        P.Mode = self.Instance:GetTickMode()\n"
+        "    end,\n"
+        "    OnPrePhysics = function(self, dt) P.Pre = P.Pre + 1; P.Dt = dt end,\n"
+        "    OnPostUpdate = function(self, dt) P.Post = P.Post + 1 end,\n"
+        "    OnDestroy = function(self) P.Destroy = P.Destroy + 1 end,\n"
+        "}\n");
+
+    World W;
+    ScriptEngine Scripts;
+    Scripts.Initialize();
+    Scripts.BindWorld(&W);
+
+    const PrefabInstance Instance = W.SpawnPrefab(MakeScriptedPrefab(PhasesPath, EPrefabTickMode::Tick), TransformPose(), "Turret");
+    Expect(W.GetInstanceScriptState(Instance) && W.GetInstanceScriptState(Instance)->bPendingInstantiate,
+           "a spawned instance's script waits for the next phase");
+
+    W.Tick(0.25f);
+    W.Tick(0.25f);
+    ExpectLua(Scripts, "assert(P.Start == 1 and P.Pre == 2 and P.Post == 2 and P.Dt == 0.25)",
+              "Lua: OnStart once, each defined phase function every tick, with dt");
+    ExpectLua(Scripts, "assert(P.RootName == 'Root' and P.SameRoot and P.InstanceName == 'Turret' and P.Mode == 'Tick')",
+              "Lua: self.Root / self.Entity are the root, self.Instance the instance");
+    Expect(W.GetTickingInstanceCount(TP_PrePhysics) == 1 && W.GetTickingInstanceCount(TP_PostUpdate) == 1
+           && W.GetTickingInstanceCount(TP_Physics) == 0 && W.GetTickingInstanceCount(TP_PostPhysics) == 0,
+           "an instance is listed only in the phases it defines");
+
+    /* A phase switched off. */
+    Expect(Instance.SetPhaseEnabled(TP_PostUpdate, false) && !Instance.IsPhaseEnabled(TP_PostUpdate), "SetPhaseEnabled");
+    W.Tick(0.25f);
+    ExpectLua(Scripts, "assert(P.Pre == 3 and P.Post == 2)", "Lua: a disabled phase's function does not run");
+    Instance.SetPhaseEnabled(TP_PostUpdate, true);
+
+    /* EventsOnly: the script stays; no phase function runs. */
+    Instance.SetTickMode(EPrefabTickMode::EventsOnly);
+    Expect(W.GetTickingInstanceCount(TP_PrePhysics) == 0, "EventsOnly takes it off every phase list");
+    W.Tick(0.25f);
+    ExpectLua(Scripts, "assert(P.Pre == 3 and P.Start == 1 and P.Destroy == 0)", "Lua: EventsOnly keeps the script, runs no phase");
+
+    /* Off releases it; leaving Off starts it again. */
+    Instance.SetTickMode(EPrefabTickMode::Off);
+    ExpectLua(Scripts, "assert(P.Destroy == 1)", "Lua: Off releases the script (OnDestroy)");
+    Expect(W.GetInstanceScriptState(Instance) && !W.GetInstanceScriptState(Instance)->bStarted, "and its state is reset");
+    Instance.SetTickMode(EPrefabTickMode::Tick);
+    W.Tick(0.25f);
+    ExpectLua(Scripts, "assert(P.Start == 2 and P.Pre == 4)", "Lua: back to Tick starts it afresh");
+
+    /* Destroying the instance releases it. */
+    Instance.Destroy();
+    ExpectLua(Scripts, "assert(P.Destroy == 2)", "Lua: destroying the instance calls OnDestroy");
+    Expect(W.GetTickingInstanceCount(TP_PrePhysics) == 0, "and takes it off the lists");
+
+    /* Off at spawn: no script at all, and its Bounds become static. */
+    const PrefabInstance Static = W.SpawnPrefab(MakeScriptedPrefab(PhasesPath, EPrefabTickMode::Off,
+        [](World&, const Entity& InRoot)
+        {
+            BoundsComponent Bounds;
+            Bounds.Local = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(1.0, 1.0, 1.0));
+            InRoot.AddComponent(Bounds);
+        }));
+    W.Tick(0.25f);
+    ExpectLua(Scripts, "assert(P.Start == 2)", "Lua: an Off prefab never starts its script");
+    Expect(Static.GetRoot().GetComponent<BoundsComponent>()->bStatic == 1, "an Off prefab's Bounds are static");
+
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+}
+
+static void TestInstanceScriptDetails()
+{
+    std::printf("[instance script details]\n");
+
+    World W;
+    ScriptEngine Scripts;
+    Scripts.Initialize();
+    Scripts.BindWorld(&W);
+
+    /* OnTick + TickPhase still works, standing for that phase. */
+    const std::string LegacyPath = WriteTestScript("InstanceLegacy.lua",
+        "L = L or 0\n"
+        "return { TickPhase = TickPhase.PostPhysics, OnTick = function(self, dt) L = L + 1 end }\n");
+    W.SpawnPrefab(MakeScriptedPrefab(LegacyPath, EPrefabTickMode::Tick));
+    W.Tick(0.1f);
+    Expect(W.GetTickingInstanceCount(TP_PostPhysics) == 1 && W.GetTickingInstanceCount(TP_PrePhysics) == 0,
+           "OnTick files the instance under its class's TickPhase");
+    ExpectLua(Scripts, "assert(L == 1)", "Lua: OnTick runs once a tick");
+
+    /* A mode change from inside a tick waits for the flush. */
+    const std::string SelfPausePath = WriteTestScript("InstancePause.lua",
+        "S = S or 0\n"
+        "return {\n"
+        "    OnPrePhysics = function(self, dt)\n"
+        "        S = S + 1\n"
+        "        self.Instance:SetPhaseEnabled(TickPhase.PrePhysics, false)\n"
+        "    end,\n"
+        "    OnPhysics = function(self, dt) S = S + 10 end,\n"
+        "}\n");
+    const PrefabInstance Pausing = W.SpawnPrefab(MakeScriptedPrefab(SelfPausePath, EPrefabTickMode::Tick));
+    W.Tick(0.1f);
+    W.Tick(0.1f);
+    ExpectLua(Scripts, "assert(S == 21)", "Lua: SetPhaseEnabled from inside a tick applies at the flush");
+    Expect(!Pausing.IsPhaseEnabled(TP_PrePhysics) && Pausing.IsPhaseEnabled(TP_Physics), "and only to that phase");
+
+    /* A raising phase function is reported once and never called again. */
+    const std::string BrokenPath = WriteTestScript("InstanceBroken.lua",
+        "B = B or 0\n"
+        "return { OnPrePhysics = function(self, dt) B = B + 1; error('boom') end }\n");
+    const PrefabInstance Broken = W.SpawnPrefab(MakeScriptedPrefab(BrokenPath, EPrefabTickMode::Tick));
+    const int HandlerBefore = GHandlerCalls;
+    W.Tick(0.1f);
+    W.Tick(0.1f);
+    ExpectLua(Scripts, "assert(B == 1)", "Lua: a raising instance script is not called again");
+    Expect(GHandlerCalls > HandlerBefore && W.GetInstanceScriptState(Broken)->bErrored, "and is reported and marked errored");
+
+    /* Overlaps: the instance hears about each of its colliders, as "mine",
+     * but not about two of its own touching. */
+    const std::string SensorPath = WriteTestScript("InstanceSensor.lua",
+        "O = O or {}\n"
+        "return {\n"
+        "    OnOverlapBegin = function(self, other, mine) O[#O + 1] = mine:GetName() .. '>' .. other:GetName() end,\n"
+        "}\n");
+    const PrefabInstance Sensor = W.SpawnPrefab(MakeScriptedPrefab(SensorPath, EPrefabTickMode::EventsOnly,
+        [](World& InWorld, const Entity& InRoot)
+        {
+            AddCollider(InWorld, InRoot, "Sensor");
+            AddCollider(InWorld, InRoot, "Body");
+        }), TransformPose(), nullptr);
+    const Entity Intruder = MakePlaced(W, "Intruder", Vector3(0.0, 0.0, 0.0));
+    {
+        BoundsComponent Bounds;
+        Bounds.Local = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(1.0, 1.0, 1.0));
+        Intruder.AddComponent(Bounds);
+        Intruder.AddComponent<CollisionComponent>();
+    }
+    W.Tick(0.1f);
+    ExpectLua(Scripts,
+        "table.sort(O)\n"
+        "assert(#O == 2, 'two reports, got ' .. #O)\n"
+        "assert(O[1] == 'Body>Intruder' and O[2] == 'Sensor>Intruder', O[1] .. ' / ' .. tostring(O[2]))\n",
+        "Lua: OnOverlapBegin(self, other, mine) for each collider, not between the instance's own");
+    (void)Sensor;
+
+    /* Unbinding releases instance scripts; binding again starts them afresh. */
+    const std::string CountPath = WriteTestScript("InstanceRebind.lua",
+        "R = R or { Start = 0, Destroy = 0 }\n"
+        "return { OnStart = function(self) R.Start = R.Start + 1 end, OnDestroy = function(self) R.Destroy = R.Destroy + 1 end }\n");
+    W.SpawnPrefab(MakeScriptedPrefab(CountPath, EPrefabTickMode::EventsOnly));
+    W.Tick(0.1f);
+    Scripts.UnbindWorld();
+    Scripts.BindWorld(&W);   // the same lua_State: globals survive
+    ExpectLua(Scripts, "assert(R.Start == 1 and R.Destroy == 1)", "Lua: UnbindWorld releases instance scripts");
+    W.Tick(0.1f);
+    ExpectLua(Scripts, "assert(R.Start == 2)", "Lua: the next bind starts them afresh");
+
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+}
+
 int main()
 {
     std::printf("GameCore smoke test\n");
@@ -2609,6 +2816,8 @@ int main()
     TestPrefabCaptureAndSpawn();
     TestPrefabRecapture();
     TestPrefabFiles();
+    TestInstanceScripts();
+    TestInstanceScriptDetails();
 #if WITH_EDITOR
     TestComponentProperties();
     TestWorldPackage();

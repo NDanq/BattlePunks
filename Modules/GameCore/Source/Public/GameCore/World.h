@@ -75,6 +75,27 @@ namespace GameCore
         uint8_t bCullOutsideActiveRegion = 0;
     };
 
+    /* Runtime state of a prefab instance's script, owned by the ScriptDriver;
+     * World stores it and keeps the per-phase lists from PhaseMask. */
+    struct InstanceScriptState
+    {
+        /* luaL_ref of the instance table; -2 is LUA_NOREF. */
+        int32_t InstanceRef = -2;
+
+        /* Bit P: the class defines a function for phase P (On<Phase>, or
+         * OnTick for its TickPhase). Set by the driver at instantiation. */
+        uint8_t PhaseMask = 0;
+
+        /* The phase OnTick stands for, TP_MAX if the class has no OnTick. */
+        uint8_t OnTickPhase = TP_MAX;
+
+        uint8_t bStarted = 0;
+        uint8_t bErrored = 0;
+
+        /* Queued for instantiation; cleared when the driver takes it. */
+        uint8_t bPendingInstantiate = 0;
+    };
+
     /*
      * What runs entity scripts. One per World (ScriptEngine::BindWorld installs
      * it); World calls it but knows nothing of Lua. See DESIGN.md.
@@ -88,8 +109,16 @@ namespace GameCore
          * still set, and cleared afterwards. */
         void (*Release)(World& InWorld, EntityID InEntity, void* InUserData) = nullptr;
 
-        /* InMethod(self, InArg) on a started script: World::CallScriptMethod. */
+        /* InMethod(self, InArg, InSelf) on a started script: World::CallScriptMethod. */
         bool (*CallMethod)(World& InWorld, EntityID InEntity, const char* InMethod, EntityID InArg, void* InUserData) = nullptr;
+
+        /* An instance's script is going away (destroyed, or tick mode Off);
+         * its state is still set, and reset afterwards. */
+        void (*ReleaseInstance)(World& InWorld, PrefabInstanceID InInstance, void* InUserData) = nullptr;
+
+        /* InMethod(self, InArg, InMine) on a started instance script. */
+        bool (*CallInstanceMethod)(World& InWorld, PrefabInstanceID InInstance, const char* InMethod, EntityID InArg,
+                                   EntityID InMine, void* InUserData) = nullptr;
 
         void* UserData = nullptr;
     };
@@ -226,6 +255,33 @@ namespace GameCore
         size_t   GetScriptedEntityCount() const;
         EntityID GetScriptedEntityAt(size_t InIndex) const;
 
+        // === Instance scripts: the driver side ================================
+        // For ScriptEngine. An instance with a script and a tick mode other
+        // than Off is queued when spawned; the driver takes it, instantiates
+        // its class and reports the phases it defines, and World keeps one
+        // list per phase of the instances that tick there.
+
+        /* The next queued instance, oldest first; false when none is left.
+         * Skips what died or turned Off since it was queued. */
+        bool PopPendingInstanceScript(PrefabInstanceID& OutInstance);
+
+        /* nullptr if InInstance is not alive or has no script. Stable while it lives. */
+        InstanceScriptState* GetInstanceScriptState(PrefabInstanceID InInstance) const;
+        /* "" if none. */
+        const char*          GetInstanceScriptPath(PrefabInstanceID InInstance) const;
+
+        /* Records InMask and files the instance under each phase it ticks in.
+         * Not while ticking a phase's instances (the driver calls it before). */
+        void SetInstanceScriptPhaseMask(PrefabInstanceID InInstance, uint8_t InMask);
+
+        /* InPhase's ticking instances in the order they started. Stable
+         * during a tick: every change to the lists waits for the flush. */
+        size_t           GetTickingInstanceCount(ETickPhase InPhase) const;
+        PrefabInstanceID GetTickingInstanceAt(ETickPhase InPhase, size_t InIndex) const;
+
+        /* Resets InInstance's script to pending and queues it again (unbind). */
+        void RequeueInstanceScript(PrefabInstanceID InInstance);
+
         // === Spatial =========================================================
         // The tree is the World's; systems query it, they do not own it.
 
@@ -301,8 +357,11 @@ namespace GameCore
          * phase's scripts); public for a host or test that steps it. */
         void UpdateOverlaps();
 
-        /* Calls InMethod(self, InArg) on InEntity's script if it has started
-         * and defines it. False if there is no such method or it raised. */
+        /* Calls InMethod(self, InArg, InEntity) on InEntity's script, then on
+         * its prefab instance's script -- where InEntity is the third
+         * argument, "mine" -- for each that has started and defines it. An
+         * instance is not told about InArg when InArg is one of its own.
+         * False if neither ran it cleanly. */
         bool CallScriptMethod(EntityID InEntity, const char* InMethod, EntityID InArg);
 
         EventBus& GetEvents();
@@ -357,7 +416,11 @@ namespace GameCore
         const char*        GetInstanceName(PrefabInstanceID InInstance) const;
         bool               SetInstanceName(PrefabInstanceID InInstance, const char* InName);
         EPrefabTickMode    GetInstanceTickMode(PrefabInstanceID InInstance) const;
+        /* DEFERRED inside a tick. */
         bool               SetInstanceTickMode(PrefabInstanceID InInstance, EPrefabTickMode InMode);
+        bool               IsInstancePhaseEnabled(PrefabInstanceID InInstance, ETickPhase InPhase) const;
+        /* DEFERRED inside a tick. */
+        bool               SetInstancePhaseEnabled(PrefabInstanceID InInstance, ETickPhase InPhase, bool bInEnabled);
 
         struct Impl;
         Impl* P;

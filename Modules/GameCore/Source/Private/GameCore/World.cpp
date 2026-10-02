@@ -75,7 +75,26 @@ namespace GameCore
             PrefabAsset     Prefab;       // shares the spawned version's data
             uint32_t        RootSlot = NO_SLOT;
             EPrefabTickMode TickMode = EPrefabTickMode::Tick;
+
+            /* The prefab's script, and the driver's state for it. */
+            std::string         ScriptPath;
+            InstanceScriptState Script;
+
+            /* Bit P: phase P may run. All set at spawn. */
+            uint8_t PhaseEnabled = uint8_t((1u << TP_MAX) - 1u);
         };
+
+        /* SetTickMode / SetPhaseEnabled inside a tick, applied at the flush. */
+        struct PendingInstanceChange
+        {
+            PrefabInstanceID Instance;
+            bool             bMode    = true;   // else a phase
+            EPrefabTickMode  Mode     = EPrefabTickMode::Tick;
+            uint8_t          Phase    = 0;
+            bool             bEnabled = true;
+        };
+
+        bool IsLiveScriptRef(const int32_t InRef) { return InRef != -2 && InRef != -1; }   // LUA_NOREF, LUA_REFNIL
 
         struct PendingScriptChange
         {
@@ -116,6 +135,14 @@ namespace GameCore
         std::deque<InstanceMembers> Instances;
         size_t                      LiveInstanceCount = 0;
         std::unordered_map<EntityGuid, uint32_t, EntityGuidHash> InstanceGuidToSlot;
+
+        /* Per phase, the instance slots whose function runs there, in the
+         * order they started. Changed only outside a phase's walk. */
+        std::vector<uint32_t>                InstanceBuckets[TP_MAX];
+        /* Spawned (or re-queued) instances whose script the driver has not
+         * taken yet; stale entries are skipped when popped. */
+        std::deque<PrefabInstanceID>         PendingInstanceScripts;
+        std::vector<PendingInstanceChange>   PendingInstanceChanges;
 
         TMulticastDelegate<PrefabInstanceID> InstanceSpawned;
         TMulticastDelegate<PrefabInstanceID> InstanceDestroyed;
@@ -328,8 +355,96 @@ namespace GameCore
             return Index;
         }
 
+        // --- instance scripts ---------------------------------------------------
+
+        void RemoveFromBuckets(const uint32_t InSlot)
+        {
+            for(std::vector<uint32_t>& Bucket : InstanceBuckets)
+            {
+                const auto Found = std::find(Bucket.begin(), Bucket.end(), InSlot);
+                if(Found != Bucket.end()) { Bucket.erase(Found); }   // ordered: tick order is start order
+            }
+        }
+
+        /* Files InSlot under every phase it ticks in now: tick mode Tick, a
+         * live healthy script, the phase defined and enabled. */
+        void Rebucket(const uint32_t InSlot)
+        {
+            RemoveFromBuckets(InSlot);
+            const InstanceMembers& Instance = Instances[InSlot];
+            if(!InstanceAlive[InSlot] || Instance.TickMode != EPrefabTickMode::Tick
+               || !IsLiveScriptRef(Instance.Script.InstanceRef) || Instance.Script.bErrored)
+            {
+                return;
+            }
+            const uint8_t Runs = Instance.Script.PhaseMask & Instance.PhaseEnabled;
+            for(int Phase = 0; Phase < TP_MAX; ++Phase)
+            {
+                if(Runs & (1u << Phase)) { InstanceBuckets[Phase].push_back(InSlot); }
+            }
+        }
+
+        /* Fresh state, queued for the driver -- if there is a script to run. */
+        void QueueInstanceScript(const uint32_t InSlot)
+        {
+            InstanceMembers& Instance = Instances[InSlot];
+            Instance.Script = InstanceScriptState();
+            if(Instance.ScriptPath.empty() || Instance.TickMode == EPrefabTickMode::Off) { return; }
+            Instance.Script.bPendingInstantiate = 1;
+            PendingInstanceScripts.push_back(InstanceSlotID(InSlot));
+        }
+
+        /* The driver's ReleaseInstance (OnDestroy), then a clean state. Out
+         * of every list either way. */
+        void ReleaseInstanceScript(World& InWorld, const uint32_t InSlot)
+        {
+            const PrefabInstanceID ID = InstanceSlotID(InSlot);
+            RemoveFromBuckets(InSlot);
+            if(bHasDriver && Driver.ReleaseInstance && IsLiveScriptRef(Instances[InSlot].Script.InstanceRef))
+            {
+                Driver.ReleaseInstance(InWorld, ID, Driver.UserData);
+            }
+            /* OnDestroy may have ended the instance; then its slot is reset already. */
+            if(IsInstanceAliveIndex(ID))
+            {
+                Instances[InSlot].Script = InstanceScriptState();
+                RemoveFromBuckets(InSlot);
+            }
+        }
+
+        void ApplyInstanceMode(World& InWorld, const uint32_t InSlot, const EPrefabTickMode InMode)
+        {
+            InstanceMembers& Instance = Instances[InSlot];
+            const EPrefabTickMode Old = Instance.TickMode;
+            if(Old == InMode) { return; }
+            Instance.TickMode = InMode;
+            if(InMode == EPrefabTickMode::Off)
+            {
+                ReleaseInstanceScript(InWorld, InSlot);
+            }
+            else if(Old == EPrefabTickMode::Off)
+            {
+                QueueInstanceScript(InSlot);   // starts afresh, OnStart and all
+            }
+            else
+            {
+                Rebucket(InSlot);
+            }
+        }
+
+        void ApplyPhaseEnabled(const uint32_t InSlot, const uint8_t InPhase, const bool bInEnabled)
+        {
+            uint8_t& Bits = Instances[InSlot].PhaseEnabled;
+            const uint8_t Bit = uint8_t(1u << InPhase);
+            const uint8_t Next = bInEnabled ? uint8_t(Bits | Bit) : uint8_t(Bits & ~Bit);
+            if(Next == Bits) { return; }
+            Bits = Next;
+            Rebucket(InSlot);
+        }
+
         void FreeInstanceSlot(const uint32_t InSlot)
         {
+            RemoveFromBuckets(InSlot);
             InstanceGuidToSlot.erase(Instances[InSlot].Guid);
             Instances[InSlot] = InstanceMembers();
             InstanceAlive[InSlot] = false;
@@ -408,6 +523,10 @@ namespace GameCore
             {
                 InstanceDestroyed.Broadcast(InstanceSlotID(RootOfInstance));
                 if(!IsAliveIndex(InEntity)) { return; }   // a subscriber destroyed it
+
+                /* Its script next (OnDestroy), with every entity still whole. */
+                ReleaseInstanceScript(InWorld, RootOfInstance);
+                if(!IsAliveIndex(InEntity)) { return; }
             }
 
             /* BEFORE any component is removed -- a subscriber can still read
@@ -759,7 +878,8 @@ namespace GameCore
             InstanceMembers& Instance = P->Instances[Slot];
             Instance.Name     = InName ? InName : Data.Name;
             Instance.Prefab   = InPrefab;
-            Instance.TickMode = Data.TickMode;
+            Instance.TickMode   = Data.TickMode;
+            Instance.ScriptPath = Data.ScriptPath;
         }
         const EntityGuid InstanceGuid = P->Instances[Slot].Guid;
 
@@ -838,10 +958,23 @@ namespace GameCore
             Placed.SetPose(InAt);
             AddComponentRaw(Root, TransformComponent::StaticType().ID, &Placed);
         }
+        /* Static geometry: fitted once, below, and never again. */
+        if(Data.TickMode == EPrefabTickMode::Off)
+        {
+            for(const EntityID Member : Spawned)
+            {
+                if(auto* Bounds = static_cast<BoundsComponent*>(GetComponentRaw(Member, BoundsComponent::StaticType().ID)))
+                {
+                    Bounds->bStatic = 1;
+                }
+            }
+        }
         RefreshEntityBounds(Root);
 
         if(P->IsInstanceAliveIndex(ID))
         {
+            /* The driver starts it at the next phase, with every component in place. */
+            P->QueueInstanceScript(Slot);
             P->InstanceSpawned.Broadcast(ID);
         }
         return PrefabInstance(this, ID);
@@ -980,8 +1113,95 @@ namespace GameCore
     bool World::SetInstanceTickMode(const PrefabInstanceID InInstance, const EPrefabTickMode InMode)
     {
         if(!P->IsInstanceAliveIndex(InInstance)) { return false; }
-        P->Instances[InInstance.Index].TickMode = InMode;
+        if(P->bTicking)
+        {
+            /* Deferred like SetScript: the driver may be walking a phase's list. */
+            PendingInstanceChange Change;
+            Change.Instance = InInstance;
+            Change.bMode    = true;
+            Change.Mode     = InMode;
+            P->PendingInstanceChanges.push_back(Change);
+            return true;
+        }
+        P->ApplyInstanceMode(*this, InInstance.Index, InMode);
         return true;
+    }
+
+    bool World::IsInstancePhaseEnabled(const PrefabInstanceID InInstance, const ETickPhase InPhase) const
+    {
+        return P->IsInstanceAliveIndex(InInstance) && InPhase < TP_MAX
+            && (P->Instances[InInstance.Index].PhaseEnabled & (1u << InPhase)) != 0;
+    }
+
+    bool World::SetInstancePhaseEnabled(const PrefabInstanceID InInstance, const ETickPhase InPhase, const bool bInEnabled)
+    {
+        if(!P->IsInstanceAliveIndex(InInstance) || InPhase >= TP_MAX) { return false; }
+        if(P->bTicking)
+        {
+            PendingInstanceChange Change;
+            Change.Instance = InInstance;
+            Change.bMode    = false;
+            Change.Phase    = uint8_t(InPhase);
+            Change.bEnabled = bInEnabled;
+            P->PendingInstanceChanges.push_back(Change);
+            return true;
+        }
+        P->ApplyPhaseEnabled(InInstance.Index, uint8_t(InPhase), bInEnabled);
+        return true;
+    }
+
+    // === Instance scripts: the driver side ======================================
+
+    bool World::PopPendingInstanceScript(PrefabInstanceID& OutInstance)
+    {
+        while(!P->PendingInstanceScripts.empty())
+        {
+            const PrefabInstanceID Next = P->PendingInstanceScripts.front();
+            P->PendingInstanceScripts.pop_front();
+            if(!P->IsInstanceAliveIndex(Next)) { continue; }
+            InstanceScriptState& Script = P->Instances[Next.Index].Script;
+            if(!Script.bPendingInstantiate) { continue; }   // released or re-queued since
+            Script.bPendingInstantiate = 0;
+            OutInstance = Next;
+            return true;
+        }
+        return false;
+    }
+
+    InstanceScriptState* World::GetInstanceScriptState(const PrefabInstanceID InInstance) const
+    {
+        if(!P->IsInstanceAliveIndex(InInstance) || P->Instances[InInstance.Index].ScriptPath.empty()) { return nullptr; }
+        return &P->Instances[InInstance.Index].Script;
+    }
+
+    const char* World::GetInstanceScriptPath(const PrefabInstanceID InInstance) const
+    {
+        return P->IsInstanceAliveIndex(InInstance) ? P->Instances[InInstance.Index].ScriptPath.c_str() : "";
+    }
+
+    void World::SetInstanceScriptPhaseMask(const PrefabInstanceID InInstance, const uint8_t InMask)
+    {
+        if(!P->IsInstanceAliveIndex(InInstance)) { return; }
+        P->Instances[InInstance.Index].Script.PhaseMask = InMask;
+        P->Rebucket(InInstance.Index);
+    }
+
+    size_t World::GetTickingInstanceCount(const ETickPhase InPhase) const
+    {
+        return InPhase < TP_MAX ? P->InstanceBuckets[InPhase].size() : 0;
+    }
+
+    PrefabInstanceID World::GetTickingInstanceAt(const ETickPhase InPhase, const size_t InIndex) const
+    {
+        if(InPhase >= TP_MAX || InIndex >= P->InstanceBuckets[InPhase].size()) { return PrefabInstanceID(); }
+        return P->InstanceSlotID(P->InstanceBuckets[InPhase][InIndex]);
+    }
+
+    void World::RequeueInstanceScript(const PrefabInstanceID InInstance)
+    {
+        if(!P->IsInstanceAliveIndex(InInstance)) { return; }
+        P->RemoveFromBuckets(InInstance.Index);
+        P->QueueInstanceScript(InInstance.Index);
     }
 
     void World::SetScriptDriver(const ScriptDriver* InDriver)
@@ -1252,6 +1472,17 @@ namespace GameCore
         }
 
         /* Before destroys, so each releases through ReleaseScript once. */
+        /* Instance tick modes and phases, before destroys like scripts: an
+         * Off releases through ReleaseInstanceScript, once. */
+        std::vector<PendingInstanceChange> InstanceChangesThisFlush;
+        std::swap(InstanceChangesThisFlush, P->PendingInstanceChanges);
+        for(const PendingInstanceChange& Change : InstanceChangesThisFlush)
+        {
+            if(!P->IsInstanceAliveIndex(Change.Instance)) { continue; }
+            if(Change.bMode) { P->ApplyInstanceMode(*this, Change.Instance.Index, Change.Mode); }
+            else             { P->ApplyPhaseEnabled(Change.Instance.Index, Change.Phase, Change.bEnabled); }
+        }
+
         std::vector<PendingScriptChange> ScriptChangesThisFlush;
         std::swap(ScriptChangesThisFlush, P->PendingScriptChanges);
         for(const PendingScriptChange& Change : ScriptChangesThisFlush)
@@ -1382,9 +1613,26 @@ namespace GameCore
 
     bool World::CallScriptMethod(const EntityID InEntity, const char* InMethod, const EntityID InArg)
     {
-        if(!P->bHasDriver || !P->Driver.CallMethod || !IsAlive(InEntity)) { return false; }
+        if(!P->bHasDriver || !IsAlive(InEntity)) { return false; }
         const ScriptDriver Driver = P->Driver;
-        return Driver.CallMethod(*this, InEntity, InMethod, InArg, Driver.UserData);
+
+        /* The instance is read first: the entity's own script may end it. */
+        const PrefabInstanceID Instance = GetEntityInstance(InEntity);
+
+        bool bRan = false;
+        if(Driver.CallMethod && P->Members[InEntity.Index].ScriptPath.size() > 0)
+        {
+            bRan = Driver.CallMethod(*this, InEntity, InMethod, InArg, Driver.UserData);
+        }
+
+        /* The instance's script hears about its entities -- but not about
+         * one of its own entities touching another. */
+        if(Driver.CallInstanceMethod && P->IsInstanceAliveIndex(Instance) && IsAlive(InEntity)
+           && GetEntityInstance(InArg) != Instance)
+        {
+            bRan = Driver.CallInstanceMethod(*this, Instance, InMethod, InArg, InEntity, Driver.UserData) || bRan;
+        }
+        return bRan;
     }
 
     EventBus& World::GetEvents() { return P->Events; }
