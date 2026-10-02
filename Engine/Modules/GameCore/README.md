@@ -190,6 +190,11 @@ of each phase** -- not the end of the frame
 `TP_Physics` runs. `World::RefreshSpatialIndex()` (the BVH refit) runs at the
 end of `TP_Physics`, after every system registered there.
 
+A system registered with `SO_BeforeScripts` (the optional last argument) runs
+at the start of its phase, **ahead of** that phase's scripts. Use it for what
+the scripts must already see this frame. The engine's input resolve is the
+case it exists for: it is the first thing in `TP_PrePhysics` (`INPUT.md`).
+
 Calling `DestroyEntity` / `RemoveComponent<T>` / `SetScript` from inside a tick defers to
 the current phase's flush; calling them outside a tick is immediate. Never
 destroy or remove from inside a pool walk you are not the observer of.

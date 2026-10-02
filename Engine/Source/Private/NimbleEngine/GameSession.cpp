@@ -15,6 +15,7 @@
 #include "Public/RenderCore/Renderer.h"
 
 /* Chunk tags shared with SaveGame.cpp. */
+#include "Private/NimbleEngine/InputInternal.h"
 #include "Private/NimbleEngine/SaveGameFormat.h"
 
 /* Lua file run on every level load, after IGameMode::OnLoad (see LoadLevel).
@@ -49,6 +50,11 @@ namespace NimbleEngine
 
         Scripts.BindWorld(LevelWorld);
         Rendering.BindWorld(*LevelWorld);
+
+        /* First thing in TP_PrePhysics, ahead of the phase's scripts, so every
+         * script and system this frame reads this frame's input. */
+        LevelWorld->RegisterSystem("Engine.Input", GameCore::TP_PrePhysics, &GameSession::ResolveInput, this,
+                                   GameCore::SO_BeforeScripts);
 
         CORE_LOG("[Level] loading '" + std::string(InLevel.GetName()) + "'")
 
@@ -222,8 +228,15 @@ namespace NimbleEngine
         /* WorldBridge reads the World later, in the host's Renderer::EndFrame. */
         if(LevelWorld)
         {
+            SetScriptInputState(&Host.GetInput());
             LevelWorld->Tick(float(InFrame.DeltaSeconds));
+            SetScriptInputState(nullptr);
         }
+    }
+
+    void GameSession::ResolveInput(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)
+    {
+        ResolveInputComponents(InWorld, static_cast<GameSession*>(InUserData)->Host.GetInput());
     }
 
     void GameSession::RequestLevel(ILevel& InLevel)

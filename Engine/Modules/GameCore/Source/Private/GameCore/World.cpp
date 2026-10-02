@@ -80,6 +80,7 @@ namespace GameCore
         // --- systems, by phase ---------------------------------------------
 
         std::vector<SystemEntry> Systems[TP_MAX];
+        std::vector<SystemEntry> EarlySystems[TP_MAX];   // SO_BeforeScripts
 
         bool       bTicking      = false;
         ETickPhase CurrentPhase  = TP_PrePhysics;
@@ -564,7 +565,8 @@ namespace GameCore
 
     // === Systems, by phase =======================================================
 
-    void World::RegisterSystem(const char* InName, const ETickPhase InPhase, const SystemFn InFn, void* InUserData)
+    void World::RegisterSystem(const char* InName, const ETickPhase InPhase, const SystemFn InFn, void* InUserData,
+                               const ESystemOrder InOrder)
     {
         if(InPhase >= TP_MAX || !InFn)
         {
@@ -574,13 +576,14 @@ namespace GameCore
         SystemEntry Entry;
         Entry.Fn       = InFn;
         Entry.UserData = InUserData;
-        P->Systems[InPhase].push_back(Entry);
+        (InOrder == SO_BeforeScripts ? P->EarlySystems : P->Systems)[InPhase].push_back(Entry);
     }
 
     void World::UnregisterSystem(const SystemFn InFn, void* InUserData)
     {
-        for(auto& Bucket : P->Systems)
+        for(int BucketIndex = 0; BucketIndex < 2 * TP_MAX; ++BucketIndex)
         {
+            std::vector<SystemEntry>& Bucket = BucketIndex < TP_MAX ? P->Systems[BucketIndex] : P->EarlySystems[BucketIndex - TP_MAX];
             for(size_t Index = 0; Index < Bucket.size(); )
             {
                 if(Bucket[Index].Fn == InFn && Bucket[Index].UserData == InUserData)
@@ -598,8 +601,9 @@ namespace GameCore
     size_t World::UnregisterAllSystems(void* InUserData)
     {
         size_t RemovedCount = 0;
-        for(auto& Bucket : P->Systems)
+        for(int BucketIndex = 0; BucketIndex < 2 * TP_MAX; ++BucketIndex)
         {
+            std::vector<SystemEntry>& Bucket = BucketIndex < TP_MAX ? P->Systems[BucketIndex] : P->EarlySystems[BucketIndex - TP_MAX];
             for(size_t Index = 0; Index < Bucket.size(); )
             {
                 if(Bucket[Index].UserData == InUserData)
@@ -644,25 +648,33 @@ namespace GameCore
         P->bTicking     = true;
         P->CurrentPhase = InPhase;
 
-        /* Scripts before every system (DESIGN.md). */
+        /* Snapshot the count: a system registered mid-walk is picked up next
+         * tick, not this one -- see DESIGN.md. Copied: a bucket may reallocate
+         * if the system itself registers one. */
+        const auto RunSystems = [&](const std::vector<SystemEntry>& InBucket)
+        {
+            const size_t SystemCount = InBucket.size();
+            for(size_t Index = 0; Index < SystemCount; ++Index)
+            {
+                const SystemEntry Entry = InBucket[Index];
+                if(Entry.Fn)
+                {
+                    Entry.Fn(*this, InDeltaSeconds, Entry.UserData);
+                }
+            }
+        };
+
+        /* What this phase's scripts must already see -- input, at PrePhysics. */
+        RunSystems(P->EarlySystems[InPhase]);
+
+        /* Scripts before every other system (DESIGN.md). */
         if(P->bHasDriver && P->Driver.TickPhase)
         {
             const ScriptDriver Driver = P->Driver;
             Driver.TickPhase(*this, InPhase, InDeltaSeconds, Driver.UserData);
         }
 
-        /* Snapshot the count: a system registered mid-walk is picked up next
-         * tick, not this one -- see DESIGN.md. */
-        const std::vector<SystemEntry>& Bucket = P->Systems[InPhase];
-        const size_t SystemCount = Bucket.size();
-        for(size_t Index = 0; Index < SystemCount; ++Index)
-        {
-            const SystemEntry Entry = Bucket[Index];   // copied: Bucket may reallocate if the system itself registers one
-            if(Entry.Fn)
-            {
-                Entry.Fn(*this, InDeltaSeconds, Entry.UserData);
-            }
-        }
+        RunSystems(P->Systems[InPhase]);
 
         /* Swapped out, not iterated in place, so a re-entrant request during
          * the flush lands in a fresh queue -- see DESIGN.md. */
