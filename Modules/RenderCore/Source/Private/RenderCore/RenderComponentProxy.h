@@ -10,7 +10,7 @@
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderProxy.h"
 
-/* The render-thread mirror of a RenderComponent: its mesh, or else its quad. */
+/* The render-thread mirror of a RenderComponent: its mesh, or else a unit quad. */
 namespace RenderCore
 {
     struct RenderComponent;
@@ -26,9 +26,6 @@ namespace RenderCore
         float GetBoundsPadding(RenderContext& InContext) override;
 
     private:
-        float             Width  = 1.0f;
-        float             Height = 1.0f;
-        EngineCore::Color Tint{255, 255, 255};
         bool              bComponentVisible = true;
         char              Materials[8][48] = {};   // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_NAME_MAX; "" = none
 

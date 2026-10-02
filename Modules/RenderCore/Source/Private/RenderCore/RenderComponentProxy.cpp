@@ -8,6 +8,13 @@
 
 namespace RenderCore
 {
+    namespace
+    {
+        /* The quad is 1 x 1 (the Transform sizes it); Instance Tint reads white. */
+        constexpr float             QUAD_SIZE = 1.0f;
+        const EngineCore::Color     WHITE{255, 255, 255};
+    }
+
     RenderComponentProxy::RenderComponentProxy(const GameCore::EntityID InOwner, const RenderComponent& InInit)
         : RenderProxy(InOwner)
     {
@@ -18,9 +25,6 @@ namespace RenderCore
     {
         const auto& Component = *static_cast<const RenderComponent*>(InComponentBytes);
 
-        Width             = Component.Width;
-        Height            = Component.Height;
-        Tint              = Component.Tint;
         bComponentVisible = Component.bVisible != 0;
 
         /* Bounded copy: the component's buffers need not be NUL-terminated. */
@@ -53,10 +57,8 @@ namespace RenderCore
             return;
         }
 
-        /* The flat quad's local bounds: (Width/2, Height/2, 0) half-extents. */
-        SetLocalBounds(GameCore::AABB(
-            EngineCore::Vector3(-double(Width) * 0.5, -double(Height) * 0.5, 0.0),
-            EngineCore::Vector3(double(Width) * 0.5, double(Height) * 0.5, 0.0)));
+        /* The unit quad's local bounds. */
+        SetLocalBounds(GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0)));
         bBoundsAreMesh = false;
     }
 
@@ -92,15 +94,15 @@ namespace RenderCore
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot) { Slots[Slot] = Materials[Slot]; }
 
         /* A mesh this backend cannot draw falls back to the quad. */
-        if(MeshSource && InContext.DrawMesh(GetTransform(), MeshPath.c_str(), Tint, Slots, uint32_t(RENDER_MATERIAL_SLOTS)))
+        if(MeshSource && InContext.DrawMesh(GetTransform(), MeshPath.c_str(), WHITE, Slots, uint32_t(RENDER_MATERIAL_SLOTS)))
         {
             return;
         }
         if(Materials[0][0] != '\0')
         {
-            InContext.DrawQuadWithMaterial(GetTransform(), Width, Height, Tint, Materials[0]);
+            InContext.DrawQuadWithMaterial(GetTransform(), QUAD_SIZE, QUAD_SIZE, WHITE, Materials[0]);
             return;
         }
-        InContext.DrawQuad(GetTransform(), Width, Height, Tint);
+        InContext.DrawQuad(GetTransform(), QUAD_SIZE, QUAD_SIZE, WHITE);
     }
 }

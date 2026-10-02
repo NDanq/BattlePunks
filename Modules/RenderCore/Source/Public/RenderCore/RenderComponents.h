@@ -20,8 +20,8 @@
 namespace RenderCore
 {
     /* "Render". Draws Mesh (a runtime-relative .nmmesh path) if set and
-     * loadable, else a Width x Height tinted quad; both scaled by the
-     * Transform.
+     * loadable, else a unit quad (1 x 1, centred); both sized by the
+     * Transform's Scale.
      *
      * Materials are slots, one per mesh section: each names a material
      * graph's output ("Glow" = Materials/Glow.material and its cooked
@@ -38,9 +38,6 @@ namespace RenderCore
         GAMECORE_COMPONENT_BODY()
         RENDERCORE_PROXY_BODY()
 
-        float             Width  = 1.0f;
-        float             Height = 1.0f;
-        EngineCore::Color Tint{255, 255, 255};
         uint8_t           bVisible = 1;
         char              Materials[RENDER_MATERIAL_SLOTS][RENDER_MATERIAL_NAME_MAX] = {};
         char              Mesh[RENDER_MESH_PATH_MAX] = {};

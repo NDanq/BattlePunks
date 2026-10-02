@@ -46,12 +46,20 @@ namespace RenderCore
      * C.Proxy is not saved: it names a live render-thread object that
      * WorldBridge recreates on the first frame after a load.
      */
-    /* Version 2: a material per slot. Version 1's one Material is slot 0. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 2)
+    /* Version 2: a material per slot. Version 1's one Material is slot 0.
+     * Version 3: no Width, Height or Tint -- read and dropped (the Transform's
+     * Scale sizes the quad). */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 3)
     {
-        Ar.Field("Width",    C.Width);
-        Ar.Field("Height",   C.Height);
-        Ar.Field("Tint",     C.Tint);
+        if(Ar.GetVersion() < 3)
+        {
+            float             Width  = 1.0f;
+            float             Height = 1.0f;
+            EngineCore::Color Tint{255, 255, 255};
+            Ar.Field("Width",  Width);
+            Ar.Field("Height", Height);
+            Ar.Field("Tint",   Tint);
+        }
         Ar.Flag("Visible",   C.bVisible);
         if(Ar.GetVersion() < 2)
         {
@@ -109,9 +117,6 @@ namespace RenderCore
      */
     GAMECORE_DEFINE_COMPONENT_SCRIPT(RenderComponent)
     {
-        Bind.Field("Width",  &RenderComponent::Width);
-        Bind.Field("Height", &RenderComponent::Height);
-        Bind.Field("Tint",   &RenderComponent::Tint);     // r, g, b[, a]
         Bind.Flag("Visible", &RenderComponent::bVisible);
         Bind.Element("Material", &RenderComponent::Materials, 0);   // slot 0, as before slots
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
@@ -155,9 +160,6 @@ namespace RenderCore
      * (ComponentProperties.h). */
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
     {
-        Props.Field("Width",  &RenderComponent::Width);
-        Props.Field("Height", &RenderComponent::Height);
-        Props.Field("Tint",   &RenderComponent::Tint);
         Props.Flag("Visible", &RenderComponent::bVisible);
         Props.Field("Mesh",     &RenderComponent::Mesh, GameCore::PF_AssetMesh);
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
