@@ -126,6 +126,16 @@ if Input.WasKeyPressed("F3") then print(Input.GetMousePosition()) end
   Components/Input;
 - the `Input` library's nodes.
 
+## The Sandbox example
+
+| File | Shows |
+|---|---|
+| `SandboxInput.cpp` | The `Default` input map: Jump, Boost, MoveX and MoveY, for keys and pads |
+| `SandboxGame.cpp` | Marker with an Input component. The `Sandbox.DriveMarker` PrePhysics system steers it from MoveX/MoveY, faster with Boost. Marker drifts on its own until the player first steers it, so an unattended run still plays. |
+| `Scripts/JumpCounter.script.nmgraph` | A graph on Marker: `Input: Was Pressed (Jump)` into a Branch, counting jumps |
+| `Scripts/InputDemo.lua` | Hand-written Lua: the component's actions, plus the `Input` library's raw keys (F3 prints the mouse) and mouse capture (C) |
+| `Config/DefaultEngine.ini` | A commented `[Input_Default]` rebinding |
+
 ## Tests
 
 `NimbleEngineInputTests` (ctest `NimbleEngine.InputTests`) needs no window.
