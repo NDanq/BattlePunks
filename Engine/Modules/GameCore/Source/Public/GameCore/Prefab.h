@@ -198,8 +198,15 @@ namespace GameCore
         const char* GetName() const { return OwningWorld ? OwningWorld->GetInstanceName(ID) : ""; }
         bool        SetName(const char* InName) const { return OwningWorld && OwningWorld->SetInstanceName(ID, InName); }
 
+        /* Off releases the script (OnDestroy); leaving Off starts it afresh.
+         * EventsOnly keeps it but calls no phase function. DEFERRED in a tick. */
         EPrefabTickMode GetTickMode() const { return OwningWorld ? OwningWorld->GetInstanceTickMode(ID) : EPrefabTickMode::Tick; }
         bool            SetTickMode(EPrefabTickMode InMode) const { return OwningWorld && OwningWorld->SetInstanceTickMode(ID, InMode); }
+
+        /* Whether InPhase's function runs (when the tick mode is Tick and the
+         * script defines one). All enabled at spawn. DEFERRED in a tick. */
+        bool IsPhaseEnabled(ETickPhase InPhase) const { return OwningWorld && OwningWorld->IsInstancePhaseEnabled(ID, InPhase); }
+        bool SetPhaseEnabled(ETickPhase InPhase, bool bInEnabled) const { return OwningWorld && OwningWorld->SetInstancePhaseEnabled(ID, InPhase, bInEnabled); }
 
         /* Destroys the root, and with it every entity. DEFERRED in a tick. */
         void Destroy() const { if(OwningWorld) { OwningWorld->DestroyPrefabInstance(ID); } }

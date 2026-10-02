@@ -80,6 +80,7 @@ namespace
         SOP_FunctionEntry,
         SOP_FunctionReturn,
         SOP_FunctionCall,
+        SOP_EventPhase,   // On <Phase>: the phase's name in the definition's Template
     };
 
     const char* const EXEC_IN  = "Exec";
@@ -379,7 +380,8 @@ namespace
 
         /* Names the generated table uses itself; a variable may not take one. */
         static const std::set<std::string> Reserved = {
-            "Entity", "TickPhase", "CullOutsideActiveRegion", "OnStart", "OnTick", "OnDestroy",
+            "Entity", "Root", "Instance", "TickPhase", "CullOutsideActiveRegion", "OnStart", "OnTick", "OnDestroy",
+            "OnPrePhysics", "OnPhysics", "OnPostPhysics", "OnPostUpdate",
             "OnOverlapBegin", "OnOverlapEnd", HANDLES_FIELD
         };
         for(const Variable& Each : G.Variables)
@@ -395,6 +397,7 @@ namespace
         const Node* DestroyNode = nullptr;
         const Node* OverlapBeginNode = nullptr;
         const Node* OverlapEndNode = nullptr;
+        std::map<std::string, const Node*> PhaseNodes;   // phase name -> its On <Phase> node
         std::vector<const Node*> CustomEvents;
         for(const Node* Each : Index.SortedNodes())
         {
@@ -404,6 +407,7 @@ namespace
             {
                 case SOP_EventStart:   StartNode = Each;   break;
                 case SOP_EventTick:    TickNode = Each;    break;
+                case SOP_EventPhase:   PhaseNodes[Def->Template] = Each; break;
                 case SOP_EventDestroy: DestroyNode = Each; break;
                 case SOP_EventOverlapBegin: OverlapBeginNode = Each; break;
                 case SOP_EventOverlapEnd:   OverlapEndNode = Each;   break;
@@ -412,7 +416,8 @@ namespace
             }
         }
 
-        if(!StartNode && !TickNode && !DestroyNode && !OverlapBeginNode && !OverlapEndNode && CustomEvents.empty())
+        if(!StartNode && !TickNode && !DestroyNode && !OverlapBeginNode && !OverlapEndNode && CustomEvents.empty()
+           && PhaseNodes.empty())
         {
             Result.Warning(NodeGuid(), std::string(), "the graph has no event node, so the script never runs anything");
         }
@@ -492,16 +497,29 @@ namespace
             EmitFunction(Out, "OnTick = function(self, dt)", TickNode, {}, {}, { { "DeltaSeconds", { "dt" } } });
         }
 
-        /* Called by the engine's overlap pass (GameCore's CollisionComponent). */
+        /* A prefab's phase functions, in phase order. Each one present puts
+         * the instance in that phase's list; an absent one costs nothing. */
+        for(const std::string& Phase : GTickPhases)
+        {
+            const auto Found = PhaseNodes.find(Phase);
+            if(Found == PhaseNodes.end()) { continue; }
+            Out.Blank();
+            EmitFunction(Out, "On" + Phase + " = function(self, dt)", Found->second, {}, {}, { { "DeltaSeconds", { "dt" } } });
+        }
+
+        /* Called by the engine's overlap pass (GameCore's CollisionComponent):
+         * mine is the script's own entity that overlapped. */
         if(OverlapBeginNode)
         {
             Out.Blank();
-            EmitFunction(Out, "OnOverlapBegin = function(self, other)", OverlapBeginNode, {}, {}, { { "Other", { "other" } } });
+            EmitFunction(Out, "OnOverlapBegin = function(self, other, mine)", OverlapBeginNode, {}, {},
+                         { { "Other", { "other" } }, { "Mine", { "mine" } } });
         }
         if(OverlapEndNode)
         {
             Out.Blank();
-            EmitFunction(Out, "OnOverlapEnd = function(self, other)", OverlapEndNode, {}, {}, { { "Other", { "other" } } });
+            EmitFunction(Out, "OnOverlapEnd = function(self, other, mine)", OverlapEndNode, {}, {},
+                         { { "Other", { "other" } }, { "Mine", { "mine" } } });
         }
 
         if(DestroyNode || !Handlers.empty())
@@ -1255,11 +1273,24 @@ namespace
         Event("Event.OnStart",   "On Start",   SOP_EventStart,   {}, true).Tooltip = "Runs once, before this entity's first tick.";
         Event("Event.OnTick",    "On Tick",    SOP_EventTick,    { Out("DeltaSeconds", "number") }, true).Tooltip = "Runs every frame.";
         Event("Event.OnDestroy", "On Destroy", SOP_EventDestroy, {}, true).Tooltip = "Runs when the entity or its script goes away.";
+        /* A prefab's per-phase functions: define only the phases it needs. */
+        for(const std::string& Phase : GTickPhases)
         {
-            NodeDefinition& Begin = Event("Event.OnOverlapBegin", "On Overlap Begin", SOP_EventOverlapBegin, { Out("Other", "Entity") }, true);
-            Begin.Tooltip  = "Runs when this entity's Collision starts overlapping another's (start of PostPhysics).";
+            static const std::map<std::string, std::string> Labels = {
+                { "PrePhysics", "Pre-Physics" }, { "Physics", "Physics" }, { "PostPhysics", "Post-Physics" }, { "PostUpdate", "Post Update" } };
+            NodeDefinition& Def = Event("Event.On" + Phase, "On " + Labels.at(Phase), SOP_EventPhase, { Out("DeltaSeconds", "number") }, true);
+            Def.Template = Phase;
+            Def.Tooltip  = "Runs every frame in the " + Labels.at(Phase) + " phase, on a prefab's script.";
+            Def.Keywords = "tick update frame phase";
+        }
+        {
+            NodeDefinition& Begin = Event("Event.OnOverlapBegin", "On Overlap Begin", SOP_EventOverlapBegin,
+                                          { Out("Other", "Entity"), Out("Mine", "Entity") }, true);
+            Begin.Tooltip  = "Runs when one of this script's colliders starts overlapping another (start of PostPhysics). "
+                             "Mine is which of its own entities it was.";
             Begin.Keywords = "collision collide touch trigger enter hit";
-            NodeDefinition& End = Event("Event.OnOverlapEnd", "On Overlap End", SOP_EventOverlapEnd, { Out("Other", "Entity") }, true);
+            NodeDefinition& End = Event("Event.OnOverlapEnd", "On Overlap End", SOP_EventOverlapEnd,
+                                        { Out("Other", "Entity"), Out("Mine", "Entity") }, true);
             End.Tooltip  = "Runs when an overlap ends -- Other may no longer exist (Is Valid).";
             End.Keywords = "collision collide untouch trigger exit leave";
         }
@@ -1329,6 +1360,16 @@ namespace
         Statement("Entity.SetName", "Set Name", "Entity", SOP_Call, { In("Entity", "Entity"), In("Name", "string") }, "{Entity}:SetName({Name})");
         Statement("Entity.Destroy", "Destroy", "Entity", SOP_Call, { In("Entity", "Entity") }, "{Entity}:Destroy()", "delete remove kill");
         Statement("Entity.SetScript", "Set Script", "Entity", SOP_Call, { In("Entity", "Entity"), In("Path", "string") }, "{Entity}:SetScript({Path})");
+        /* A prefab's script: its root, its entities by template name, and how it ticks. */
+        Pure("Prefab.Root", "Prefab Root", "Prefab", SOP_Call, { Out("Root", "Entity") }, "self.Root", {}, "instance self owner");
+        Pure("Prefab.Find", "Find Prefab Entity", "Prefab", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") },
+             "self.Instance:Find({Name})", {}, "instance child template lookup");
+        Statement("Prefab.SetTickMode", "Set Tick Mode", "Prefab", SOP_Call, { In("Mode", "string", "EventsOnly") },
+                  "self.Instance:SetTickMode({Mode})", "instance tick pause sleep events off");
+        Statement("Prefab.SetPhaseEnabled", "Set Phase Enabled", "Prefab", SOP_Call,
+                  { In("Phase", "string", "PrePhysics"), In("Enabled", "bool", "true") },
+                  "self.Instance:SetPhaseEnabled(TickPhase[{Phase}], {Enabled})", "instance tick pause phase");
+        Statement("Prefab.Destroy", "Destroy Prefab", "Prefab", SOP_Call, {}, "self.Instance:Destroy()", "instance remove kill");
         Pure("Entity.GetParent", "Get Parent", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Parent", "Entity") }, "{Entity}:GetParent()", {}, "hierarchy attach owner");
         Pure("Entity.GetChildCount", "Get Child Count", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Count", "integer") }, "{Entity}:GetChildCount()", {}, "hierarchy children");
         Pure("Entity.GetChild", "Get Child", "Entity", SOP_Call, { In("Entity", "Entity"), In("Index", "integer", "1"), Out("Child", "Entity") }, "{Entity}:GetChild({Index})", {}, "hierarchy children");

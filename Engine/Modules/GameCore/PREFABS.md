@@ -2,8 +2,8 @@
 
 Design for prefabs: the placeable unit of a level, the owner of gameplay
 script, and the asset the Prefab Editor authors. Status: **phases 1 (entity
-hierarchy) and 2 (prefab asset and instances) are implemented**; the rest is
-the plan. The open decisions were settled as recommended (see the end).
+hierarchy), 2 (prefab asset and instances) and 3 (instance scripts) are
+implemented**; the rest is the plan. The open decisions were settled as recommended (see the end).
 
 ---
 
@@ -256,6 +256,27 @@ node present, so the phase mask falls out automatically. A **Self** node group:
 `Get Root`, `Find Entity (name)`, `Set Tick Mode`, `Set Phase Enabled`.
 `On Overlap Begin/End` gain a `Mine` output.
 
+### As built (phase 3)
+
+GameCore's README **A prefab's script** has the usage; DESIGN.md's
+`ScriptSystem.cpp` notes have the reasoning. Differences from the sketch
+above:
+
+- `OnStart` runs at the first phase start after spawning, not in the
+  instance's "own" phase: an instance may tick in several phases or none.
+- `self.Entity` is set as well as `self.Root` (the same entity), so entity
+  scripts and existing graphs, whose Self node reads `self.Entity`, run on
+  a prefab unchanged.
+- A raising instance stays in its phase lists and is skipped: lists only
+  change between walks.
+- `Off` at runtime calls `OnDestroy`; leaving `Off` starts the script
+  afresh. `Off` at spawn makes Bounds static; a later switch does not undo
+  that. The design's "excluded from hierarchy propagation" does not apply,
+  because world transforms are computed on demand (phase 1).
+- Entity scripts get `mine` too (the entity itself), so one overlap handler
+  reads the same on either.
+- The graph **Prefab** group also has **Destroy Prefab**.
+
 ### Entity scripts go away
 
 `Entity::SetScript`, the `Script` element in `.nmentity`, and the script path
@@ -404,7 +425,7 @@ Each phase lands on its own and keeps Sandbox playable.
 |---|---|---|---|
 | 1 | Entity hierarchy + world transforms -- **done** | `World.h/.cpp`, `Entity.h`, `WorldBridge.cpp`, `WorldPackage.cpp`, `WorldSerializer.cpp`, editor picking/gizmo/Outliner | -- |
 | 2 | Prefab asset, registry, `SpawnPrefab`, instance handles, text + cooked formats -- **done** | new `Prefab.h/.cpp`, `PrefabInternal.h`, `XmlComponentArchive.h` | 1 |
-| 3 | Instance scripts: per-phase functions, buckets, tick modes, overlap routing; graph nodes | `ScriptSystem.cpp`, `Collision.cpp`, `ScriptBindings.cpp`, NodeGraph `ScriptSchema.cpp` | 2 |
+| 3 | Instance scripts: per-phase functions, buckets, tick modes, overlap routing; graph nodes -- **done** | `ScriptSystem.cpp`, `Collision.cpp`, `ScriptBindings.cpp`, NodeGraph `ScriptSchema.cpp` | 2 |
 | 4 | Level format 2: instances, derived GUIDs, overrides | `WorldPackage.cpp`, `WorldSerializer.cpp` | 2 |
 | 5 | Native prefabs + `PrefabBuilder` | new `NativePrefab.h/.cpp`, `GameModule.h` | 2, 3 |
 | 6 | `EditorDocument` split; second-World viewport spike | `EditorContext`, panels, RenderCore | -- (can start in parallel) |

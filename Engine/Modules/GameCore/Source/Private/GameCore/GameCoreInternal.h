@@ -14,6 +14,7 @@ extern "C"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/GameCoreLog.h"
+#include "Public/GameCore/PrefabInstanceID.h"
 
 /*
  * The module's private half: everything that touches lua.h directly. THIS IS
@@ -79,6 +80,11 @@ namespace GameCore
      * re-fetches through World::GetComponentRaw, so a proxy held across a
      * swap-remove errors rather than aliasing another entity. */
     void LuaPushComponentProxy(lua_State* InState, EntityID InEntity, ComponentTypeID InType);
+
+    /* A PrefabInstanceID as a full userdata with the "PrefabInstance"
+     * metatable (ScriptBindings.cpp), and back -- raising, like LuaCheckEntity. */
+    void             LuaPushInstance(lua_State* InState, PrefabInstanceID InInstance);
+    PrefabInstanceID LuaCheckInstance(lua_State* InState, int InIndex);
 
     /* The World ScriptEngine::BindWorld bound to InState, or nullptr. */
     World* LuaGetBoundWorld(lua_State* InState);
