@@ -1964,6 +1964,285 @@ static void TestRefreshEntityBounds()
     Expect(Near(B->World.Center().GetX(), 100.0), "RefreshEntityBounds refits a static Bounds");
 }
 
+// ============================================================================
+// Hierarchy -- parents, children and world transforms
+// ============================================================================
+
+namespace
+{
+    bool NearVector(const Vector3& InA, const Vector3& InB, const double InTolerance = 1e-3)
+    {
+        return Near(InA.GetX(), InB.GetX(), InTolerance) && Near(InA.GetY(), InB.GetY(), InTolerance)
+            && Near(InA.GetZ(), InB.GetZ(), InTolerance);
+    }
+
+    Entity MakePlaced(World& InWorld, const char* InName, const Vector3& InPosition,
+                      const Vector3& InRotation = Vector3(0.0, 0.0, 0.0), const Vector3& InScale = Vector3(1.0, 1.0, 1.0))
+    {
+        const Entity E = InWorld.CreateEntity(InName);
+        TransformComponent T;
+        T.Position = InPosition;
+        T.Rotation = InRotation;
+        T.Scale    = InScale;
+        E.AddComponent(T);
+        return E;
+    }
+
+    std::vector<EntityID> ChildrenOf(World& InWorld, const Entity& InParent)
+    {
+        std::vector<EntityID> Out;
+        for(EntityID Child = InParent.GetFirstChild(); Child.IsSet(); Child = InWorld.GetEntity(Child).GetNextSibling())
+        {
+            Out.push_back(Child);
+        }
+        return Out;
+    }
+
+    int GDestroyedCount = 0;
+    void CountDestroyed(EntityID, void*) { ++GDestroyedCount; }
+}
+
+static void TestHierarchyLinks()
+{
+    std::printf("[hierarchy links]\n");
+
+    World W;
+    const Entity Root = W.CreateEntity("Root");
+    const Entity A    = W.CreateEntity("A");
+    const Entity B    = W.CreateEntity("B");
+    const Entity C    = W.CreateEntity("C");
+
+    Expect(!A.HasParent() && Root.GetChildCount() == 0, "a new entity is a root with no children");
+
+    Expect(A.SetParent(Root) && B.SetParent(Root) && C.SetParent(Root), "SetParent links children");
+    Expect(A.GetParent() == Root.GetID() && Root.GetChildCount() == 3, "parent and count are recorded");
+    Expect((ChildrenOf(W, Root) == std::vector<EntityID>{ A, B, C }), "children walk in the order they were parented");
+
+    Expect(B.ClearParent() && !B.HasParent(), "ClearParent detaches");
+    Expect((ChildrenOf(W, Root) == std::vector<EntityID>{ A, C }), "a middle child unlinks cleanly");
+    Expect(C.SetParent(A) && (ChildrenOf(W, Root) == std::vector<EntityID>{ A })
+           && (ChildrenOf(W, A) == std::vector<EntityID>{ C }), "reparenting moves the child between lists");
+
+    /* No cycles. */
+    const int HandlerBefore = GHandlerCalls;
+    Expect(!Root.SetParent(C), "an entity cannot be parented to its own descendant");
+    Expect(!A.SetParent(A), "nor to itself");
+    Expect(GHandlerCalls > HandlerBefore, "a refused cycle is warned about");
+    Expect(!Root.HasParent(), "and the refused link changes nothing");
+
+    const Entity Dead = W.CreateEntity("Dead");
+    W.DestroyEntity(Dead);
+    Expect(!A.SetParent(Dead), "a dead parent is refused");
+
+    /* Destroying a parent destroys its subtree, outside a tick at once. */
+    const DelegateHandle Counting = W.OnEntityDestroyed().Add(&CountDestroyed);
+    GDestroyedCount = 0;
+    W.DestroyEntity(Root);
+    Expect(!Root.IsAlive() && !A.IsAlive() && !C.IsAlive(), "destroying a parent destroys its descendants");
+    Expect(B.IsAlive(), "a detached former child survives");
+    Expect(GDestroyedCount == 3, "each destroyed entity is announced once");
+
+    /* Inside a tick, the subtree goes at the phase flush. */
+    const Entity P2 = W.CreateEntity("P2");
+    const Entity K2 = W.CreateEntity("K2");
+    K2.SetParent(P2);
+    struct Ctx { EntityID Target; bool bAliveDuringTick = false; } TickCtx{ P2 };
+    W.RegisterSystem("DestroyParent", TP_PrePhysics, [](World& InWorld, float, void* InUserData)
+    {
+        Ctx& C2 = *static_cast<Ctx*>(InUserData);
+        if(!InWorld.IsAlive(C2.Target)) { return; }
+        const EntityID Child = InWorld.GetEntity(C2.Target).GetFirstChild();
+        InWorld.DestroyEntity(C2.Target);
+        C2.bAliveDuringTick = InWorld.IsAlive(Child);
+    }, &TickCtx);
+    W.TickPhase(TP_PrePhysics, 0.016f);
+    Expect(TickCtx.bAliveDuringTick, "a child is still alive after its parent's deferred destroy is queued");
+    Expect(!P2.IsAlive() && !K2.IsAlive(), "the flush destroys parent and child together");
+    W.UnregisterAllSystems(&TickCtx);
+    W.OnEntityDestroyed().Remove(Counting);
+}
+
+static void TestHierarchyTransforms()
+{
+    std::printf("[hierarchy transforms]\n");
+
+    World W;
+    const Entity Parent = MakePlaced(W, "Parent", Vector3(10.0, 0.0, 0.0), Vector3(0.0, 0.0, 90.0), Vector3(2.0, 2.0, 2.0));
+    const Entity Child  = MakePlaced(W, "Child", Vector3(1.0, 0.0, 0.0));
+
+    Expect(NearVector(Child.GetWorldPose().Position, Vector3(1.0, 0.0, 0.0)), "an unparented entity's world pose is its Transform");
+
+    /* Without keeping the world transform the local values stay put. */
+    Child.SetParent(Parent, false);
+    const TransformPose World1 = Child.GetWorldPose();
+    Expect(NearVector(Child.GetComponent<TransformComponent>()->Position, Vector3(1.0, 0.0, 0.0)), "SetParent(..., false) keeps the local Transform");
+    Expect(NearVector(World1.Position, Vector3(10.0, 2.0, 0.0)), "the child is scaled, rotated and offset by its parent");
+    Expect(Near(World1.Rotation.GetZ(), 90.0) && NearVector(World1.Scale, Vector3(2.0, 2.0, 2.0)), "rotation and scale compose");
+
+    /* The matrix agrees with the pose. */
+    const Vector4 Origin = Child.GetWorldMatrix() * Vector4(0.0, 0.0, 0.0, 1.0);   // w = 1: a point
+    Expect(NearVector(Vector3(Origin.GetX(), Origin.GetY(), Origin.GetZ()), Vector3(10.0, 2.0, 0.0)),
+           "GetWorldMatrix maps the local origin to the world position");
+
+    /* Moving the parent carries the child. */
+    Parent.GetComponent<TransformComponent>()->Position = Vector3(0.0, 0.0, 5.0);
+    Expect(NearVector(Child.GetWorldPose().Position, Vector3(0.0, 2.0, 5.0)), "a moved parent carries its child");
+
+    /* Keeping the world transform: detaching leaves it where it was. */
+    const TransformPose Before = Child.GetWorldPose();
+    Child.ClearParent(true);
+    const TransformPose After = Child.GetWorldPose();
+    Expect(NearVector(Before.Position, After.Position) && NearVector(Before.Rotation, After.Rotation)
+           && NearVector(Before.Scale, After.Scale), "ClearParent(true) keeps the world pose");
+
+    /* And attaching does too. */
+    Child.SetParent(Parent, true);
+    const TransformPose Reattached = Child.GetWorldPose();
+    Expect(NearVector(Reattached.Position, After.Position) && NearVector(Reattached.Rotation, After.Rotation)
+           && NearVector(Reattached.Scale, After.Scale), "SetParent(true) keeps the world pose");
+    Expect(NearVector(Child.GetComponent<TransformComponent>()->Scale, Vector3(1.0, 1.0, 1.0)),
+           "the local Transform is rewritten relative to the parent");
+
+    /* SetWorldPose writes the local that lands there. */
+    TransformPose Target;
+    Target.Position = Vector3(-3.0, 4.0, 1.0);
+    Target.Rotation = Vector3(0.0, 0.0, 30.0);
+    Target.Scale    = Vector3(1.0, 1.0, 1.0);
+    Expect(Child.SetWorldPose(Target), "SetWorldPose succeeds with a Transform");
+    const TransformPose Landed = Child.GetWorldPose();
+    Expect(NearVector(Landed.Position, Target.Position) && NearVector(Landed.Rotation, Target.Rotation)
+           && NearVector(Landed.Scale, Target.Scale), "and the entity lands exactly there");
+
+    /* A Transform-less link passes its parent through. */
+    const Entity Group = W.CreateEntity("Group");
+    Group.SetParent(Parent, false);
+    const Entity Leaf = MakePlaced(W, "Leaf", Vector3(0.0, 0.0, 0.0));
+    Leaf.SetParent(Group, false);
+    Expect(NearVector(Leaf.GetWorldPose().Position, Parent.GetWorldPose().Position), "an entity without a Transform passes its parent's through");
+    Expect(!Group.SetWorldPose(Target), "SetWorldPose needs a Transform");
+
+    /* Bounds follow the world matrix, and RefreshEntityBounds the subtree. */
+    BoundsComponent Bounds;
+    Bounds.Local   = AABB(Vector3(-0.5, -0.5, -0.5), Vector3(0.5, 0.5, 0.5));
+    Bounds.bStatic = 1;
+    Leaf.AddComponent(Bounds);
+    W.RefreshSpatialIndex();
+    Expect(NearVector(Leaf.GetComponent<BoundsComponent>()->World.Center(), Parent.GetWorldPose().Position),
+           "a child's Bounds is fitted in world space");
+    Parent.GetComponent<TransformComponent>()->Position = Vector3(50.0, 0.0, 0.0);
+    W.RefreshEntityBounds(Parent);
+    Expect(NearVector(Leaf.GetComponent<BoundsComponent>()->World.Center(), Vector3(50.0, 0.0, 0.0)),
+           "RefreshEntityBounds on a parent refits its descendants, static ones included");
+}
+
+static void TestHierarchyScripting()
+{
+    std::printf("[hierarchy scripting]\n");
+
+    World W;
+    ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "ScriptEngine::Initialize succeeds");
+    Scripts.BindWorld(&W);
+
+    Expect(Scripts.RunString(
+        "local p = World.CreateEntity(\"LuaParent\")\n"
+        "p:AddComponent(\"Transform\"):SetPosition(10, 0, 0)\n"
+        "local a = World.CreateEntity(\"LuaA\")\n"
+        "local b = World.CreateEntity(\"LuaB\")\n"
+        "local ta = a:AddComponent(\"Transform\")\n"
+        "ta:SetPosition(1, 0, 0)\n"
+        "assert(not a:GetParent():IsValid(), 'no parent yet')\n"
+        "assert(a:SetParent(p, false), 'SetParent')\n"
+        "assert(b:SetParent(p), 'SetParent, keeping the world pose')\n"
+        "assert(a:GetParent():GetName() == 'LuaParent', 'GetParent')\n"
+        "assert(p:GetChildCount() == 2, 'GetChildCount')\n"
+        "assert(p:GetChild(2):GetName() == 'LuaB' and not p:GetChild(3):IsValid(), 'GetChild')\n"
+        "local kids = p:GetChildren()\n"
+        "assert(#kids == 2 and kids[1]:GetName() == 'LuaA', 'GetChildren')\n"
+        "local x = ta:GetWorldPosition()\n"
+        "assert(math.abs(x - 11) < 1e-4, 'GetWorldPosition composes the parent')\n"
+        "ta:SetWorldPosition(20, 0, 0)\n"
+        "local lx = ta:GetPosition()\n"
+        "assert(math.abs(lx - 10) < 1e-4, 'SetWorldPosition writes the local')\n"
+        "assert(not p:SetParent(a), 'a cycle is refused')\n"
+        "assert(a:SetParent(nil), 'nil detaches')\n"
+        "assert(p:GetChildCount() == 1, 'and the count drops')\n",
+        "test-hierarchy"), "Lua: SetParent, GetParent, children and world positions");
+
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+}
+
+static void TestHierarchySerialization()
+{
+    std::printf("[hierarchy serialization]\n");
+
+    std::vector<uint8_t> Saved;
+    EntityGuid ParentGuid, ChildGuid, GrandGuid;
+    {
+        World W;
+        /* The child is created FIRST, so its parent comes later in the save. */
+        const Entity Child  = MakePlaced(W, "Child", Vector3(1.0, 2.0, 3.0));
+        const Entity Parent = MakePlaced(W, "Parent", Vector3(10.0, 0.0, 0.0), Vector3(0.0, 0.0, 90.0));
+        const Entity Grand  = MakePlaced(W, "Grand", Vector3(0.0, 1.0, 0.0));
+        Child.SetParent(Parent, false);
+        Grand.SetParent(Child, false);
+        ParentGuid = Parent.GetGuid();
+        ChildGuid  = Child.GetGuid();
+        GrandGuid  = Grand.GetGuid();
+
+        Archive Out = Archive::ForWriting();
+        Expect(SerializeWorld(Out, W), "a parented world saves");
+        Saved = Out.GetBytes();
+    }
+    {
+        World W;
+        Archive In = Archive::ForReading(Saved);
+        Expect(SerializeWorld(In, W), "and loads");
+        const Entity Parent = W.GetEntity(W.FindEntityByGuid(ParentGuid));
+        const Entity Child  = W.GetEntity(W.FindEntityByGuid(ChildGuid));
+        const Entity Grand  = W.GetEntity(W.FindEntityByGuid(GrandGuid));
+        Expect(Child.GetParent() == Parent.GetID() && Grand.GetParent() == Child.GetID() && !Parent.HasParent(),
+               "binary: parents come back, including one saved after its child");
+        Expect(NearVector(Child.GetComponent<TransformComponent>()->Position, Vector3(1.0, 2.0, 3.0)),
+               "binary: local Transforms are not rewritten by the load");
+        Expect(NearVector(Grand.GetWorldPose().Position, Vector3(7.0, 1.0, 3.0)), "binary: the world pose is the saved one");
+    }
+
+#if WITH_EDITOR
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "Hierarchy";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Dir, Ignored);
+    std::filesystem::create_directories(Dir, Ignored);
+    const std::string WorldPath = (Dir / "Level.nmworld").generic_string();
+    {
+        World W;
+        const Entity Child  = MakePlaced(W, "Child", Vector3(1.0, 2.0, 3.0));
+        const Entity Parent = MakePlaced(W, "Parent", Vector3(10.0, 0.0, 0.0), Vector3(0.0, 0.0, 90.0));
+        Child.SetParent(Parent, false);
+        ParentGuid = Parent.GetGuid();
+        ChildGuid  = Child.GetGuid();
+        Expect(SaveWorldPackage(WorldPath.c_str(), W), "a parented world saves as text");
+
+        char ParentText[EntityGuid::STRING_BUFFER];
+        ParentGuid.ToString(ParentText);
+        const std::string ChildFile  = ReadFileText(Dir / "Level" / GuidFileName(ChildGuid));
+        const std::string ParentFile = ReadFileText(Dir / "Level" / GuidFileName(ParentGuid));
+        Expect(ChildFile.find(std::string("Parent=\"") + ParentText + "\"") != std::string::npos,
+               "text: the child's file names its parent by GUID");
+        Expect(ParentFile.find("Parent=") == std::string::npos, "text: a root's file has no Parent attribute");
+    }
+    {
+        World W;
+        Expect(LoadWorldFile(WorldPath.c_str(), W), "and loads as text");
+        const Entity Parent = W.GetEntity(W.FindEntityByGuid(ParentGuid));
+        const Entity Child  = W.GetEntity(W.FindEntityByGuid(ChildGuid));
+        Expect(Child.GetParent() == Parent.GetID(), "text: the parent comes back");
+        Expect(NearVector(Child.GetWorldPose().Position, Vector3(8.0, 1.0, 3.0)), "text: the world pose is the saved one");
+    }
+#endif
+}
+
 int main()
 {
     std::printf("GameCore smoke test\n");
@@ -1989,6 +2268,10 @@ int main()
     TestComponentScripting();
     TestTransformMath();
     TestRefreshEntityBounds();
+    TestHierarchyLinks();
+    TestHierarchyTransforms();
+    TestHierarchyScripting();
+    TestHierarchySerialization();
 #if WITH_EDITOR
     TestComponentProperties();
     TestWorldPackage();

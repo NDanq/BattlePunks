@@ -75,7 +75,7 @@ uses it.
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
-| `OutlinerPanel` | Entity list with component summary, filter, create/destroy |
+| `OutlinerPanel` | Entity hierarchy with component summary, filter, create/destroy, drag to reparent |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
 | `ViewportSDLInput` (private) | The viewport as an SDL window (focus hand-over, text forwarding, pumping), for the game's input and the input probe |
 | `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
@@ -259,8 +259,9 @@ entity's `BoundsComponent::World` when it has one, else its RenderComponent quad
 a small cube at its Transform. All Bounds adds every other entity's box in grey.
 The XYZ gizmo sits bottom-left.
 
-**Transform handles** sit on the selection's Transform position, a fixed size
-on screen, and highlight yellow under the cursor:
+**Transform handles** sit where the selection is in the world (through its
+parents; the drag writes back the local Transform that lands there), a fixed
+size on screen, and highlight yellow under the cursor:
 
 - **Move**: an arrow per axis, a square per plane (XY, YZ, XZ) and a centre
   square that moves in the screen plane. An arrow pointing straight at the
@@ -284,6 +285,21 @@ entity's bounds are refit as it moves, a static Bounds included
 (`World::RefreshEntityBounds`). Rotation stays in the Transform's Euler angles,
 chosen closest to the previous ones, so values do not jump between equivalent
 forms mid-drag (`GameCore/TransformMath.h`).
+
+## Outliner
+
+Every entity as a tree: roots in creation order, each with its children
+under it (GameCore's hierarchy, `GameCore/README.md`). The filter keeps a
+match's ancestors visible. Selecting in the viewport opens the tree down to
+the selection.
+
+- **Drag onto a row** to parent the dragged entity to it, **between rows** to
+  make it that row's sibling, **onto empty space** to detach it. It stays
+  where it is in the world; its local Transform is rewritten to match. A drop
+  that would make an entity its own ancestor is refused.
+- **Right-click**: Create Empty Entity, Create Child Entity (at the parent's
+  origin), Detach from Parent, and Destroy Entity -- "and Children" when it
+  has some, since destroying a parent destroys its subtree.
 
 ## Details panel
 
@@ -326,7 +342,8 @@ way.
 
 **Edit > Undo** (Ctrl+Z) and **Redo** (Ctrl+Y, Ctrl+Shift+Z) step through every
 change to the edited scene: creating and deleting entities, renaming them,
-setting or clearing a script and its cull flag, adding and removing
+parenting and detaching them, setting or clearing a script and its cull
+flag, adding and removing
 components, and every property write -- Details fields, the reset arrows,
 and transform handle drags. The menu names the step ("Undo Move Marker");
 the Console's `history` lists them all.
@@ -335,8 +352,12 @@ the Console's `history` lists them all.
   went; a cancelled drag leaves none. Quick edits to the same component (a
   spin box's arrows, a few fields in a row) less than a second apart merge.
 - **Deleted entities come back whole** -- the same GUID, name, script and
-  components -- so later steps still apply to them and a save afterwards
-  writes the same `.nmentity` file.
+  components, under the same parent, with every child they had -- so later
+  steps still apply to them and a save afterwards writes the same
+  `.nmentity` files.
+- **A reparent restores exactly.** It records the local Transform before and
+  after, so undo puts the entity back on its old parent with its old values
+  rather than recomputing them.
 - **Unsaved changes** show as `*` in the title: the history remembers where
   the last save (or load) was, and undoing back to it clears the mark.
 - New, Open and the Sandbox scene start an empty history.
@@ -349,6 +370,7 @@ it (`EditorHistory.h` has the details). Property writes are recorded from
 `NotifyPropertyEdited`, against a copy of the selection's values taken before
 the write -- so a new tool that writes components needs only to call that,
 and to bracket a continuous edit with `BeginEditGesture` / `EndEditGesture`.
+Reparenting goes through `SetEntityParent`, which records its own step.
 
 ## Console
 

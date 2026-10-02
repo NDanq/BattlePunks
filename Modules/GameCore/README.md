@@ -176,6 +176,56 @@ re-fetch the pointer after.
 
 ---
 
+## Hierarchy
+
+An entity may have a parent. Parent and children are entity members, like the
+name, so they survive component changes and cost no pool lookup.
+
+```cpp
+Wheel.SetParent(Car);                  // keeps the wheel where it is in the world
+Wheel.SetParent(Car, false);           // keeps its local Transform; it moves with the car
+Wheel.ClearParent();                   // a root again, still where it was
+for(EntityID C = Car.GetFirstChild(); C.IsSet(); C = World.GetEntity(C).GetNextSibling()) { ... }
+
+GameCore::TransformPose Where = Wheel.GetWorldPose();   // Position, Rotation, Scale in the world
+Wheel.SetWorldPose(Where);                               // writes the local Transform that lands there
+EngineCore::Matrix4x4 M = Wheel.GetWorldMatrix();
+```
+
+- **`TransformComponent` is local**, relative to the parent. Without a parent
+  local is world, so an unparented entity behaves exactly as before.
+- **World transforms compose position, rotation and scale**, not matrices: the
+  renderer takes position/rotation/scale, so a parent with non-uniform scale
+  stretches a rotated child along the child's axes and never shears it
+  (`TransformMath::Compose`).
+- **Nothing is cached.** `GetWorldPose()` walks up the parents on each call.
+  The spatial refit, `WorldBridge`'s render extraction and the editor all
+  use it, so they always agree. An unparented entity takes the old path, at
+  the old cost.
+- **An entity without a Transform passes its parent's through**, so an empty
+  entity can group others without carrying a position of its own.
+- **`SetParent` is immediate**, even inside a tick. It refuses a dead entity
+  and a cycle (parenting to yourself or a descendant). Children keep the
+  order they were parented in.
+- **Destroying a parent destroys its subtree.** Children go first, while the
+  parent's components still exist; each one's `OnEntityDestroyed` and
+  `OnDestroy` run as usual. Inside a tick the whole subtree goes at the
+  phase flush.
+- **`RefreshEntityBounds(e)` refits `e` and its descendants**, so a tool
+  moving a parent refits everything that moved with it.
+- **Saved** in both formats: a `Parent="<guid>"` attribute on a child's
+  `.nmentity`, and a parent index per entity in the binary `WRLD` chunk
+  (version 2; version 1 saves still load, with no parents).
+
+Lua: `e:SetParent(p[, keepWorld])` (`nil` detaches), `e:GetParent()` (an
+Entity, `IsValid()` false if none), `e:GetChildCount()`, `e:GetChild(i)`
+(1-based) and `e:GetChildren()`. A Transform adds `GetWorldPosition` /
+`SetWorldPosition`, `GetWorldRotation` / `SetWorldRotation` and
+`GetWorldScale`. Script graphs have **Get Parent**, **Set Parent**, **Get
+Child Count** and **Get Child**.
+
+---
+
 ## Tick phases
 
 ```cpp
@@ -360,6 +410,7 @@ local e = World.CreateEntity("Player")
 local t = e:AddComponent("Transform")
 t:SetPosition(1, 2, 3)
 e:SetScript("Scripts/Mover.lua")                -- also e:GetScript(), e:ClearScript(), e:SetName(n)
+e:SetParent(p)                                  -- also e:GetParent(), e:GetChildren(), e:GetChild(i), e:GetChildCount()
 
 Events.On("EntityCreated", function(entity) print(entity:GetName()) end)
 Events.Emit("PlayerScored", 10, "Player")       -- numbers, booleans, strings, entities; up to 4 args

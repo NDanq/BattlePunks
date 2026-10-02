@@ -199,6 +199,68 @@ namespace GameCore
             return 1;
         }
 
+        /* e:SetParent(parent[, keepWorld]) -- nil detaches; keepWorld
+         * defaults to true (stay put in the world). False if refused. */
+        int Entity_SetParent(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            EntityID Parent;
+            if(!lua_isnoneornil(InState, 2)) { Parent = LuaCheckEntity(InState, 2); }
+            const bool bKeepWorld = lua_isnoneornil(InState, 3) || lua_toboolean(InState, 3);
+            World* W = GetBoundWorld(InState);
+            lua_pushboolean(InState, Entity(W, E).SetParent(Parent, bKeepWorld));
+            return 1;
+        }
+
+        /* An Entity -- not nil -- without a parent, so p:IsValid() answers
+         * either way (and a graph's Entity pin always has a value). */
+        int Entity_GetParent(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            LuaPushEntity(InState, Entity(W, E).GetParent());
+            return 1;
+        }
+
+        int Entity_GetChildCount(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            lua_pushinteger(InState, lua_Integer(Entity(W, E).GetChildCount()));
+            return 1;
+        }
+
+        /* e:GetChild(i), 1-based like a Lua array; an unset Entity past the end. */
+        int Entity_GetChild(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            const lua_Integer Wanted = luaL_checkinteger(InState, 2);
+            World* W = GetBoundWorld(InState);
+            EntityID Child = Wanted >= 1 ? Entity(W, E).GetFirstChild() : EntityID();
+            for(lua_Integer Index = 1; Index < Wanted && Child.IsSet(); ++Index)
+            {
+                Child = Entity(W, Child).GetNextSibling();
+            }
+            LuaPushEntity(InState, Child);
+            return 1;
+        }
+
+        /* An array of the children, in order. */
+        int Entity_GetChildren(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            const Entity Handle(W, E);
+            lua_createtable(InState, int(Handle.GetChildCount()), 0);
+            lua_Integer Index = 0;
+            for(EntityID Child = Handle.GetFirstChild(); Child.IsSet(); Child = Entity(W, Child).GetNextSibling())
+            {
+                LuaPushEntity(InState, Child);
+                lua_rawseti(InState, -2, ++Index);
+            }
+            return 1;
+        }
+
         const luaL_Reg GEntityMethods[] = {
             { "IsValid",         Entity_IsValid },
             { "GetID",           Entity_GetID },
@@ -213,6 +275,11 @@ namespace GameCore
             { "SetScript",       Entity_SetScript },
             { "GetScript",       Entity_GetScript },
             { "ClearScript",     Entity_ClearScript },
+            { "SetParent",       Entity_SetParent },
+            { "GetParent",       Entity_GetParent },
+            { "GetChildCount",   Entity_GetChildCount },
+            { "GetChild",        Entity_GetChild },
+            { "GetChildren",     Entity_GetChildren },
             { nullptr, nullptr }
         };
 

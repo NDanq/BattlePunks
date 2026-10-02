@@ -1329,6 +1329,11 @@ namespace
         Statement("Entity.SetName", "Set Name", "Entity", SOP_Call, { In("Entity", "Entity"), In("Name", "string") }, "{Entity}:SetName({Name})");
         Statement("Entity.Destroy", "Destroy", "Entity", SOP_Call, { In("Entity", "Entity") }, "{Entity}:Destroy()", "delete remove kill");
         Statement("Entity.SetScript", "Set Script", "Entity", SOP_Call, { In("Entity", "Entity"), In("Path", "string") }, "{Entity}:SetScript({Path})");
+        Pure("Entity.GetParent", "Get Parent", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Parent", "Entity") }, "{Entity}:GetParent()", {}, "hierarchy attach owner");
+        Pure("Entity.GetChildCount", "Get Child Count", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Count", "integer") }, "{Entity}:GetChildCount()", {}, "hierarchy children");
+        Pure("Entity.GetChild", "Get Child", "Entity", SOP_Call, { In("Entity", "Entity"), In("Index", "integer", "1"), Out("Child", "Entity") }, "{Entity}:GetChild({Index})", {}, "hierarchy children");
+        Statement("Entity.SetParent", "Set Parent", "Entity", SOP_Call, { In("Entity", "Entity"), In("Parent", "Entity"), In("KeepWorld", "bool", "true") },
+                  "{Entity}:SetParent({Parent}, {KeepWorld})", "attach detach hierarchy");
 
         Pure("World.FindEntity", "Find Entity", "World", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") }, "World.FindEntity({Name})", {}, "lookup by name");
         Pure("World.GetEntityCount", "Entity Count", "World", SOP_Call, { Out("Count", "integer") }, "World.GetEntityCount()");

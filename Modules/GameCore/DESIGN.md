@@ -465,6 +465,50 @@ except here it is not avoidable by renaming (`Owner.Entity` is the name
 every other file in this module uses), so it is fixed by qualification
 instead. This was caught and fixed before the module first compiled.
 
+**The hierarchy is members, as slot indices.** Parent, first/last child and
+next/previous sibling are `uint32_t` slots in `EntityMembers`, an intrusive
+doubly linked child list, so linking, unlinking and appending are O(1) with no
+allocation per child. They are slots and not `EntityID`s because a link can
+never outlive its slot: destroying an entity destroys its children first and
+then unlinks it from its own parent, before the slot is recycled. The child
+order is the order of `SetParent` calls. Loaders apply parents in file order,
+which is slot order, so a level's child order can change across a save and
+load when its entities were parented out of creation order. Nothing depends
+on that order yet.
+
+**World transforms are computed, not cached.** `GetEntityWorldPose` recurses
+to the root and composes on the way back down, so the cost is the depth.
+The obvious alternative was a cached world matrix per entity plus a dirty
+flag. It was rejected for now because `TransformComponent` is POD that
+everything writes directly (`GetComponent<TransformComponent>()->Position
+= ...` from C++, Lua proxies and graphs alike), so World cannot see the
+write that should set the flag. The ways around that are a setter API, which
+breaks every caller, or a per-frame memcmp of each Transform against a
+shadow copy. Computing on demand is always correct. It also costs nothing
+for an unparented entity, which takes the original `GetLocalMatrix` path
+bit for bit. If deep hierarchies show up in a profile, the memcmp cache is
+the next step (PREFABS.md).
+
+**Composition is TRS, root-down.** `RenderTransform` is position, rotation
+and scale, so a world transform must be one too. A true matrix product would
+shear a rotated child under a non-uniformly scaled parent, and that cannot
+be expressed as TRS. `TransformMath::Compose` rotates and scales the child's
+position by the parent, multiplies the rotations, and multiplies the scales
+per axis, as Unreal's `FTransform` does. That composition is not
+associative once a scale is non-uniform, so the order is fixed: the parent's
+world pose first, then the child under it. `Relative` is its exact inverse,
+which is what keeps `SetParent(p, true)` and `SetWorldPose` from drifting.
+Euler angles come out nearest a reference (the current local rotation), so a
+gizmo drag under a parent does not flip between equivalent angle sets.
+
+**Destroying a subtree, re-entrantly.** `DestroyEntityImmediate` broadcasts,
+releases the script, then destroys children one at a time, re-reading
+`FirstChild` after each. A child's `OnDestroy` may reparent a sibling away,
+destroy one, or even give the dying parent a new child; re-reading handles
+all three. A child that cannot be destroyed is detached instead, so the loop
+always ends. That can only happen when it is already mid-destroy higher up
+the stack.
+
 ---
 
 ## Components.h / Components.cpp

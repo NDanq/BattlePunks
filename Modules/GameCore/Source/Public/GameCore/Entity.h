@@ -80,6 +80,38 @@ namespace GameCore
         /* nullptr without a script. Stable while the script is unchanged. */
         EntityScriptState* GetScriptState() const { return OwningWorld ? OwningWorld->GetEntityScriptState(ID) : nullptr; }
 
+        // === Hierarchy ======================================================
+        // Parent and children are members too. TransformComponent is LOCAL:
+        // relative to the parent, or the world for an entity without one.
+        // An entity with no Transform passes its parent's straight through.
+
+        /* InvalidEntityID() detaches. With bInKeepWorldTransform the local
+         * Transform is rewritten so the entity stays where it is; without
+         * it the local values are kept and the entity moves with its new
+         * parent. False if either is not alive, or InParent is this entity
+         * or one of its descendants. Immediate, even inside a tick.
+         * Destroying an entity destroys its children first. */
+        bool SetParent(EntityID InParent, bool bInKeepWorldTransform = true) const { return OwningWorld && OwningWorld->SetEntityParent(ID, InParent, bInKeepWorldTransform); }
+        bool ClearParent(bool bInKeepWorldTransform = true) const { return SetParent(InvalidEntityID(), bInKeepWorldTransform); }
+        EntityID GetParent() const { return OwningWorld ? OwningWorld->GetEntityParent(ID) : EntityID(); }
+        bool     HasParent() const { return GetParent().IsSet(); }
+
+        /* Children in the order they were parented:
+         *     for(EntityID C = E.GetFirstChild(); C.IsSet(); C = World.GetEntity(C).GetNextSibling())
+         * Reparenting or destroying the current child ends the walk. */
+        EntityID GetFirstChild() const { return OwningWorld ? OwningWorld->GetEntityFirstChild(ID) : EntityID(); }
+        EntityID GetNextSibling() const { return OwningWorld ? OwningWorld->GetEntityNextSibling(ID) : EntityID(); }
+        size_t   GetChildCount() const { return OwningWorld ? OwningWorld->GetEntityChildCount(ID) : 0; }
+
+        /* Where this entity is in the world: its Transform composed under
+         * every ancestor's (TransformMath.h's TransformPose). Exactly the
+         * local Transform without a parent. Computed on each call. */
+        TransformPose         GetWorldPose() const { return OwningWorld ? OwningWorld->GetEntityWorldPose(ID) : TransformPose(); }
+        EngineCore::Matrix4x4 GetWorldMatrix() const { return OwningWorld ? OwningWorld->GetEntityWorldMatrix(ID) : EngineCore::Matrix4x4(); }
+        /* Writes the local Transform that puts this entity at InPose. False
+         * without a Transform. */
+        bool SetWorldPose(const TransformPose& InPose) const { return OwningWorld && OwningWorld->SetEntityWorldPose(ID, InPose); }
+
         void Destroy() const { if(OwningWorld) { OwningWorld->DestroyEntity(ID); } }
 
         friend bool operator==(const Entity& L, const Entity& R) { return L.OwningWorld == R.OwningWorld && L.ID == R.ID; }

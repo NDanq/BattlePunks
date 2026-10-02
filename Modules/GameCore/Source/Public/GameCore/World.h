@@ -17,6 +17,8 @@
 #include "Public/GameCore/GameCoreAPI.h"
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/TickPhase.h"
+#include "Public/GameCore/TransformMath.h"
+#include "Public/Math/Matrix.h"
 
 /* Forward-declared; Entity.h includes World.h itself, so this header cannot
  * include Entity.h without a cycle. CreateEntity() and GetEntity() return one
@@ -217,8 +219,8 @@ namespace GameCore
          * again mid-frame. */
         void RefreshSpatialIndex();
 
-        /* Refits InEntity's Bounds now, even static ones (which
-         * RefreshSpatialIndex skips), for a tool that moved it. */
+        /* Refits InEntity's Bounds now, and its descendants', even static
+         * ones (which RefreshSpatialIndex skips), for a tool that moved it. */
         void RefreshEntityBounds(EntityID InEntity);
 
         /* The region gameplay cares about (DESIGN.md); used by
@@ -293,6 +295,16 @@ namespace GameCore
         /* DEFERRED inside a tick -- see DestroyEntity. */
         bool               SetEntityScript(EntityID InEntity, const char* InPath);
         EntityScriptState* GetEntityScriptState(EntityID InEntity) const;
+
+        /* The hierarchy -- see Entity.h's section for the contract. */
+        bool                  SetEntityParent(EntityID InEntity, EntityID InParent, bool bInKeepWorldTransform);
+        EntityID              GetEntityParent(EntityID InEntity) const;
+        EntityID              GetEntityFirstChild(EntityID InEntity) const;
+        EntityID              GetEntityNextSibling(EntityID InEntity) const;
+        size_t                GetEntityChildCount(EntityID InEntity) const;
+        TransformPose         GetEntityWorldPose(EntityID InEntity) const;
+        EngineCore::Matrix4x4 GetEntityWorldMatrix(EntityID InEntity) const;
+        bool                  SetEntityWorldPose(EntityID InEntity, const TransformPose& InPose);
 
         struct Impl;
         Impl* P;

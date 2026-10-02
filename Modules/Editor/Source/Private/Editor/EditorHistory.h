@@ -40,13 +40,17 @@ namespace EditorHistory
         bool                      bSerialized = false;   // else property values over defaults
     };
 
+    /* An entity and its whole subtree: deleting a parent deletes its
+     * children, so restoring it restores them. */
     struct EntitySnapshot
     {
         GameCore::EntityGuid           Guid;
+        GameCore::EntityGuid           ParentGuid;   // unset: a root
         std::string                    Name;
         std::string                    ScriptPath;
         uint8_t                        bCullOutsideActiveRegion = 0;
         std::vector<ComponentSnapshot> Components;
+        std::vector<EntitySnapshot>    Children;     // in child order
     };
 
     /* Every component type InEntity has, in type order. */
@@ -64,7 +68,8 @@ namespace EditorHistory
 
     EntitySnapshot CaptureEntity(GameCore::World& InWorld, GameCore::EntityID InEntity);
 
-    /* Recreates the entity with its GUID, name, script and components. */
+    /* Recreates the entity with its GUID, name, script and components, under
+     * its parent if that still exists, then its children. */
     GameCore::EntityID RestoreEntity(GameCore::World& InWorld, const EntitySnapshot& InSnapshot);
 
     // === Commands ============================================================
@@ -158,6 +163,26 @@ namespace EditorHistory
     private:
         bool           bCreated;
         EntitySnapshot Snapshot;
+    };
+
+    /* A new parent (unset: detached). Reparenting keeps the world pose by
+     * rewriting the local Transform, so its values travel too. */
+    class ParentCommand final : public Command
+    {
+    public:
+        ParentCommand(EditorContext& InContext, const QString& InText, const GameCore::EntityGuid& InGuid,
+                      const GameCore::EntityGuid& InBeforeParent, std::vector<uint8_t> InBeforeTransform,
+                      const GameCore::EntityGuid& InAfterParent, std::vector<uint8_t> InAfterTransform);
+
+    protected:
+        void Apply(bool bInForward) override;
+
+    private:
+        GameCore::EntityGuid Guid;
+        GameCore::EntityGuid BeforeParent;
+        GameCore::EntityGuid AfterParent;
+        std::vector<uint8_t> BeforeTransform;   // Transform property values; empty without one
+        std::vector<uint8_t> AfterTransform;
     };
 
     /* Adding (bInAdded) or removing one component, the same way. */
