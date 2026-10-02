@@ -35,8 +35,6 @@ namespace RenderCore
         /* RenderComponent's slots: in saved worlds and Lua, and in the editor. */
         const char* const MATERIAL_SLOT_FIELDS[RENDER_MATERIAL_SLOTS] = {
             "Material0", "Material1", "Material2", "Material3", "Material4", "Material5", "Material6", "Material7" };
-        const char* const MATERIAL_SLOT_LABELS[RENDER_MATERIAL_SLOTS] = {
-            "Material 0", "Material 1", "Material 2", "Material 3", "Material 4", "Material 5", "Material 6", "Material 7" };
     }
 
     /*
@@ -162,10 +160,8 @@ namespace RenderCore
     {
         Props.Flag("Visible", &RenderComponent::bVisible);
         Props.Field("Mesh",     &RenderComponent::Mesh, GameCore::PF_AssetMesh);
-        for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
-        {
-            Props.Element(MATERIAL_SLOT_LABELS[Slot], &RenderComponent::Materials, Slot, GameCore::PF_AssetMaterial);
-        }
+        /* A list: entry i is section i's material; empty ones use the mesh's own. */
+        Props.Array("Materials", &RenderComponent::Materials, GameCore::PF_AssetMaterial);
     }
 
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(CameraComponent)

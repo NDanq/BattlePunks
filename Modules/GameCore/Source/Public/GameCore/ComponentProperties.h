@@ -19,8 +19,8 @@
  *
  *     GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
  *     {
- *         Props.Field("Width", &RenderComponent::Width);
  *         Props.Flag("Visible", &RenderComponent::bVisible);
+ *         Props.Array("Materials", &RenderComponent::Materials, PF_AssetMaterial);
  *         Props.Field("World", &BoundsComponent::World, PF_ReadOnly);
  *     }
  *
@@ -58,7 +58,27 @@ namespace GameCore
         uint32_t      Offset = 0;   // from the start of the component, Owner header included
         uint32_t      Size   = 0;   // sizeof the member; a FixedString's buffer size including the NUL
 
+        /* An array member (Props.Array): ArrayCount elements of Size bytes,
+         * Stride apart, the first at Offset. 0: a single value. A tool shows
+         * it as a list; a trailing run of default elements is "not in use". */
+        uint16_t      ArrayCount = 0;
+        uint32_t      Stride     = 0;
+
         bool IsReadOnly() const { return (Flags & PF_ReadOnly) != 0; }
+        bool IsArray() const    { return ArrayCount != 0; }
+
+        /* Every byte the entry covers: the whole array, or the one value. */
+        uint32_t GetSpan() const { return IsArray() ? Stride * ArrayCount : Size; }
+
+        /* Element InIndex as a single value: the same name, type and flags. */
+        ComponentPropertyEntry GetElement(const size_t InIndex) const
+        {
+            ComponentPropertyEntry Element = *this;
+            Element.Offset     = Offset + uint32_t(InIndex) * Stride;
+            Element.ArrayCount = 0;
+            Element.Stride     = 0;
+            return Element;
+        }
     };
 
     /* Writes a default-constructed instance into OutBytes (SizeBytes long). */
@@ -121,6 +141,23 @@ namespace GameCore
             AddAt(InName, uint32_t(Member - Base), uint32_t(sizeof(TElement)), ScriptFieldTypeOf<TElement>::Value, InFlags);
         }
 
+        /* A whole array member as one property, which a tool shows as a list
+         * whose entries can be added and removed (ComponentPropertyEntry). */
+        template<typename TElement, size_t N>
+        void Array(const char* InName, TElement (T::* InArray)[N], const uint8_t InFlags = PF_None)
+        {
+            static_assert(N > 0 && N <= 0xFFFF, "an array property holds 1 to 65535 elements");
+            const T Probe{};
+            const char* Base   = reinterpret_cast<const char*>(&Probe);
+            const char* Member = reinterpret_cast<const char*>(&((Probe.*InArray)[0]));
+            if(ComponentPropertyEntry* Entry = AddAt(InName, uint32_t(Member - Base), uint32_t(sizeof(TElement)),
+                                                     ScriptFieldTypeOf<TElement>::Value, InFlags))
+            {
+                Entry->ArrayCount = uint16_t(N);
+                Entry->Stride     = uint32_t(sizeof(TElement));
+            }
+        }
+
         /* Keeps the type out of a tool's "Add Component" (CPF_NotAddable). */
         void NotAddable() { TypeFlags |= CPF_NotAddable; }
 
@@ -144,8 +181,8 @@ namespace GameCore
             AddAt(InName, uint32_t(Member - Base), uint32_t(sizeof(TField)), InType, InFlags);
         }
 
-        void AddAt(const char* InName, const uint32_t InOffset, const uint32_t InSize, const EPropertyType InType,
-                   const uint8_t InFlags)
+        ComponentPropertyEntry* AddAt(const char* InName, const uint32_t InOffset, const uint32_t InSize,
+                                      const EPropertyType InType, const uint8_t InFlags)
         {
             size_t Length = 0;
             while(InName != nullptr && InName[Length] != '\0') { ++Length; }
@@ -153,7 +190,7 @@ namespace GameCore
             if(Count >= COMPONENT_PROPERTIES_PER_TYPE_MAX || Length == 0 || Length >= COMPONENT_PROPERTY_NAME_MAX)
             {
                 ++Rejected;
-                return;
+                return nullptr;
             }
 
             ComponentPropertyEntry& Entry = Entries[Count++];
@@ -163,6 +200,7 @@ namespace GameCore
             Entry.Flags  = InFlags;
             Entry.Offset = InOffset;
             Entry.Size   = InSize;
+            return &Entry;
         }
 
         ComponentPropertyEntry Entries[COMPONENT_PROPERTIES_PER_TYPE_MAX];
