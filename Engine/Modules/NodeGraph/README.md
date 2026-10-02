@@ -149,8 +149,11 @@ Details > Type overrides it.
 
 ## Script graphs
 
-- Event nodes (On Start, On Tick, On Destroy, On Event) each become one
-  function of the class table.
+- Event nodes each become one function of the class table: On Start, On
+  Tick, On Destroy, On Event, and On Overlap Begin / On Overlap End. The
+  overlap events become `OnOverlapBegin(self, other)` /
+  `OnOverlapEnd(self, other)`, which GameCore's overlap pass calls; their
+  output is Other.
 - A statement's **Then** leads to the next statement.
 - Pure nodes are evaluated where a statement needs them, into `local tN`,
   once per statement. So a Get after a Set sees the new value.

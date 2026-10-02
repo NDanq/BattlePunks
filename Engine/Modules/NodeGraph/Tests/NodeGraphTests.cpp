@@ -1862,6 +1862,36 @@ namespace
         }
     }
 
+    void TestOverlapEvents()
+    {
+        std::printf("[overlap events]\n");
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Touch";
+        AddNode(G, 1, "Event.OnOverlapBegin");
+        AddNode(G, 2, "Entity.GetName");
+        AddNode(G, 3, "String.Append").Constants["A"] = "touched by ";
+        AddNode(G, 4, "Debug.Print");
+        AddNode(G, 5, "Event.OnOverlapEnd");
+        AddNode(G, 6, "Debug.Print").Constants["Value"] = "left";
+        Connect(G, 1, "Then", 4, "Exec");
+        Connect(G, 1, "Other", 2, "Entity");
+        Connect(G, 2, "Name", 3, "B");
+        Connect(G, 3, "Out", 4, "Value");
+        Connect(G, 5, "Then", 6, "Exec");
+
+        CompileResult R;
+        CompileGraph(G, R);
+        Expect(!R.HasErrors(), "an overlap graph compiles");
+        Expect(R.Code.find("OnOverlapBegin = function(self, other)") != std::string::npos
+               && R.Code.find("other:GetName()") != std::string::npos
+               && R.Code.find("OnOverlapEnd = function(self, other)") != std::string::npos,
+               "On Overlap Begin / End become the methods the overlap pass calls, Other is their argument");
+        const Schema* S = FindSchema("Script");
+        Expect(S && S->FindNode("Library.Collision.OverlapBox") && S->FindNode("Library.Collision.AreOverlapping"),
+               "the Collision library is in the palette");
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -1899,6 +1929,7 @@ int main()
     TestScriptRuntime();
     TestLibraries();
     TestScriptStructs();
+    TestOverlapEvents();
     TestMaterialCodegen();
     TestComponentSelection();
     TestLogic();
