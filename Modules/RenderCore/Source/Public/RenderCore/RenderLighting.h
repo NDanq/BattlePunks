@@ -34,7 +34,7 @@ namespace RenderCore
     /* Active PostProcessComponents, in the order they run (Priority, low first). */
     struct RenderPostProcess
     {
-        char     Materials[RENDER_POST_PROCESS_MAX][48] = {};   // RENDER_MATERIAL_NAME_MAX
+        char     Materials[RENDER_POST_PROCESS_MAX][128] = {};  // RENDER_MATERIAL_PATH_MAX
         uint32_t Count = 0;
     };
 }

@@ -27,7 +27,7 @@ namespace RenderCore
 
     private:
         bool              bComponentVisible = true;
-        char              Materials[8][48] = {};   // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_NAME_MAX; "" = none
+        char              Materials[8][128] = {};  // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_PATH_MAX; "" = none
 
         /* Bounds are redone only when these change. Null source: the quad. */
         std::string                            MeshPath;

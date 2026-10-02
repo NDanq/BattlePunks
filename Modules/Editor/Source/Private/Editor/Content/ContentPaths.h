@@ -30,13 +30,22 @@ namespace EditorContent
     /* Whether InPath is the engine content folder or inside it. */
     bool IsEngineContent(const QString& InPath);
 
-    /* Every material's name, sorted: the project's Materials folder's and the
-     * engine's, from their graphs and .material files. */
-    QStringList ListMaterialNames();
+    /* Every material graph's runtime path, sorted: the project's and the
+     * engine's ("Materials/Glow.material.nmgraph", "Engine/Content/Materials/..."). */
+    QStringList ListMaterialPaths();
 
-    /* The material a file names: "Glow" for Glow.material.nmgraph,
-     * Glow.material or Glow.mtl.glsl. Empty otherwise. */
-    QString MaterialNameFor(const QString& InPath);
+    /* What a material field stores for a file: the runtime path of a
+     * *.material.nmgraph in the project or the engine's content. Empty for
+     * anything else -- material fields take material graphs only. */
+    QString MaterialPathFor(const QString& InPath);
+
+    /* Whether InText is what a material field may hold: "" or a runtime path
+     * ending .material.nmgraph. */
+    bool IsMaterialFieldValue(const QString& InText);
+
+    /* What a Script field stores for a file: the runtime path of a .lua or a
+     * *.script.nmgraph in the project. Empty for anything else. */
+    QString ScriptPathFor(const QString& InPath);
 
     /* The single local file in a drag, else empty. */
     QString SingleDroppedFile(const QMimeData* InData);

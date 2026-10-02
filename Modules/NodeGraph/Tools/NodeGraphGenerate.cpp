@@ -9,7 +9,7 @@
  * NodeGraphGenerate <graph.nmgraph>...
  *
  * What the editor does on save, from the command line: compiles each graph
- * and writes its changed output and companions beside it (GenerateGraphOutput).
+ * and rewrites the generated code stored in it, <gen_code> (GenerateGraphOutput).
  * Prints each graph's diagnostics; exits 1 if any graph failed to compile or
  * write.
  */

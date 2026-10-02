@@ -4,10 +4,11 @@ cook_material_graphs.py -- check or cook the engine's shaders and the
 material functions material graphs generate (RenderCore/MATERIALS.md).
 
 A material graph (*.material.nmgraph) compiles to <Name>.mtl.glsl -- a
-material function -- and <Name>.material, next to the graph. The engine's
-templates (Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl) include the
-function as <Material.glsl>; this script compiles each template once per
-permutation the material needs. It reuses GDI's preprocessor and tool lookup
+material function -- and <Name>.material, both stored in the graph file's
+<gen_code> (NodeGraph's README). The engine's templates
+(Engine/Content/Shaders/MaterialTemplate_VS/PS.glsl) include the function as
+<Material.glsl>; this script compiles each template once per permutation the
+material's <gen_code> needs. It reuses GDI's preprocessor and tool lookup
 by importing GDI's cook_shaders.py read-only (Modules/GDI is a vendored
 subtree). Every #include resolves against Engine/Content/Shaders, and no .qrc
 is written: the output is plain files, or one shader cache.
@@ -19,10 +20,11 @@ Usage:
         failure's compiler output; exits 1 if any failed.
 
     python cook_material_graphs.py -target <OpenGL|Vulkan|D3D12> -src PATH [-src PATH ...]
-                                   (-out DIR | -cache FILE -module NAME) [-subdir NAME] [-defaults]
-        Cook every .vsh/.fsh and .mtl.glsl given, or under a directory PATH
-        (recursively), into DIR/<Platform>/[NAME/], named as GDI names its
-        shaders:
+                                   (-out DIR [-data-out DIR] | -cache FILE -module NAME)
+                                   [-root DIR] [-subdir NAME] [-defaults]
+        Cook every .vsh/.fsh, .mtl.glsl and .material.nmgraph given, or under
+        a directory PATH (recursively), into DIR/<Platform>/, named as GDI
+        names its shaders:
             OpenGL  <name>          preprocessed GLSL
             Vulkan  <name>.spv      SPIR-V
             D3D12   <name>.cso      DXBC (via spirv-cross and fxc)
@@ -30,19 +32,29 @@ Usage:
         8 hex digits (MaterialPermutation.h). -defaults adds the shared
         vertex shaders, MaterialDefault@<key>.vsh.
 
+        A material graph is named by its path relative to -root, as the
+        runtime names it: Materials/Glow.material.nmgraph cooks to
+        <Platform>/Materials/Glow@<key>.* and its description to
+        Materials/Glow.material -- under -data-out when loose. A graph with no
+        <gen_code> fails: open and save it in the editor. Loose .mtl.glsl
+        files (each with its <Name>.material beside it; the editor's live
+        cook) go below -subdir instead.
+
         -cache writes one shader cache instead (Shaders/Cache/<Module>.<Platform>.nmsc):
         every cooked file at its runtime path under Shaders/Cooked/, plus each
         material's .material at Materials/<Name>.material. RenderCore mounts
         it as a read-only file layer (ShaderCache.h).
 
-The renderer loads a material "Glow" from Materials/Glow.material and
-Shaders/Cooked/<Platform>/Materials/Glow@<key>.<stage>[.spv|.cso] -- so the
-editor, and a game's build (Engine/cmake/NimbleMaterials.cmake), cook with
--subdir Materials.
+The renderer loads the material "Materials/Glow.material.nmgraph" from
+Materials/Glow.material and
+Shaders/Cooked/<Platform>/Materials/Glow@<key>.<stage>[.spv|.cso]
+(Engine/cmake/NimbleMaterials.cmake cooks a game's graphs with -root at the
+game's folder).
 """
 
 import argparse
 import hashlib
+import xml.etree.ElementTree as ElementTree
 import os
 import re
 import shutil
@@ -241,15 +253,17 @@ def read_material(mtl_path):
     return meta
 
 
-def material_jobs(mtl_path):
+def material_jobs(mtl_path, prefix=""):
     """A material's permutations: its own Domain and Shading for the pixel
     stage; with World Position Offset, its own vertex stage per vertex input
-    it can be drawn with (MATERIALS.md, "Permutations")."""
+    it can be drawn with (MATERIALS.md, "Permutations"). prefix: the folders
+    its files go below ("Materials/")."""
     meta = read_material(mtl_path)
     if meta is None:
         return None, None
 
-    name, domain, shading = meta["Name"], meta["Domain"], meta["Shading"]
+    name, domain, shading = prefix + meta["Name"], meta["Domain"], meta["Shading"]
+    meta["Runtime"] = name + ".material"
     key = pixel_key(domain, shading)
     jobs = [Job(TEMPLATE_PS, "pixel", permutation_name(name, key, "pixel"), pixel_defines(domain, shading), mtl_path)]
     if meta["HasOffset"] == "1" and domain != "PostProcess":
@@ -265,9 +279,44 @@ def default_jobs():
                 vertex_defines(v, False), DEFAULT_MATERIAL) for v in VERTEX_INS]
 
 
+GRAPH_SUFFIX = ".material.nmgraph"
+
+
+def extract_graph(graph_path, root, work_dir):
+    """A material graph's <gen_code> as <Name>.mtl.glsl and <Name>.material in
+    work_dir/<folders>/; (mtl path, "<folders>/") or (None, None), reported."""
+    try:
+        relative = graph_path.resolve().relative_to(Path(root).resolve())
+    except ValueError:
+        print(f"ERROR: {graph_path} is not below -root {root}", file=sys.stderr)
+        return None, None
+    try:
+        tree = ElementTree.parse(graph_path)
+    except ElementTree.ParseError as exc:
+        print(f"ERROR: {graph_path}: not valid XML: {exc}", file=sys.stderr)
+        return None, None
+
+    outputs = {}
+    for output in tree.getroot().findall("gen_code/Output"):
+        outputs[output.get("Extension", "")] = output.text or ""
+    if ".mtl.glsl" not in outputs or ".material" not in outputs:
+        print(f"ERROR: {graph_path} has no generated code (<gen_code>) -- open it in the editor and save it",
+              file=sys.stderr)
+        return None, None
+
+    name   = relative.name[:-len(GRAPH_SUFFIX)]
+    folder = relative.parent.as_posix()
+    prefix = "" if folder == "." else folder + "/"
+    out    = Path(work_dir) / folder
+    out.mkdir(parents=True, exist_ok=True)
+    (out / (name + ".mtl.glsl")).write_text(outputs[".mtl.glsl"], encoding="utf-8", newline="\n")
+    (out / (name + ".material")).write_text(outputs[".material"], encoding="utf-8", newline="\n")
+    return out / (name + ".mtl.glsl"), prefix
+
+
 def collect(paths):
-    """(plain shaders, material functions) under each path."""
-    plain, materials = [], []
+    """(plain shaders, material functions, material graphs) under each path."""
+    plain, materials, graphs = [], [], []
     for given in paths:
         root = Path(given)
         files = [root] if root.is_file() else sorted(root.rglob("*")) if root.is_dir() else None
@@ -275,11 +324,13 @@ def collect(paths):
             print(f"ERROR: -src {given} is neither a file nor a directory", file=sys.stderr)
             sys.exit(2)
         for f in files:
-            if f.name.endswith(".mtl.glsl") and f.name != DEFAULT_MATERIAL.name:
+            if f.name.endswith(GRAPH_SUFFIX):
+                graphs.append(f.resolve())
+            elif f.name.endswith(".mtl.glsl") and f.name != DEFAULT_MATERIAL.name:
                 materials.append(f.resolve())
             elif f.suffix in (".vsh", ".fsh"):
                 plain.append(f.resolve())
-    return plain, materials
+    return plain, materials, graphs
 
 
 def plain_job(src):
@@ -328,19 +379,26 @@ def write_cache(cache_path, module, target, files):
 
 # --- Commands ------------------------------------------------------------------------
 
-def check(cs, files):
+def check(cs, files, root):
     glslc = cs._find_glslc()
     failures = 0
-    plain, materials = collect(files)
+    plain, materials, graphs = collect(files)
     jobs = [plain_job(p) for p in plain]
-    for mtl in materials:
-        mjobs, _ = material_jobs(mtl)
-        if mjobs is None:
-            failures += 1
-            continue
-        jobs += mjobs
 
     with tempfile.TemporaryDirectory() as tmp_dir:
+        for graph in graphs:
+            mtl, _ = extract_graph(graph, root or graph.parent, Path(tmp_dir) / "graphs")
+            if mtl is None:
+                failures += 1
+            else:
+                materials.append(mtl)
+        for mtl in materials:
+            mjobs, _ = material_jobs(mtl)
+            if mjobs is None:
+                failures += 1
+                continue
+            jobs += mjobs
+
         for job in jobs:
             if _spirv(cs, glslc, job, Path(tmp_dir) / "check.spv"):
                 print(f"  ok  {job.label()}")
@@ -349,30 +407,46 @@ def check(cs, files):
     return failures
 
 
-def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=None, module=""):
-    plain, materials = collect(src_paths)
-    jobs, metas = [plain_job(p) for p in plain], []
-    failures = 0
-    for mtl in materials:
-        mjobs, meta = material_jobs(mtl)
-        if mjobs is None:
-            failures += 1
-            continue
-        jobs += mjobs
-        metas.append(meta)
-    if defaults:
-        jobs += default_jobs()
+def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=None, module="", root=None, data_out=None):
+    plain, materials, graphs = collect(src_paths)
+    if graphs and not root:
+        print("ERROR: material graphs need -root (what their runtime paths are relative to)", file=sys.stderr)
+        return 1
 
-    tools = find_tools(cs, target)
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        if cache:
-            out_dir = Path(tmp_dir) / target / subdir if subdir else Path(tmp_dir) / target
-        else:
-            out_dir = Path(out_root) / target / subdir if subdir else Path(out_root) / target
+    with tempfile.TemporaryDirectory() as work_dir, tempfile.TemporaryDirectory() as tmp_dir:
+        # Loose functions go below -subdir; graphs below their own folders.
+        sub_prefix = subdir.strip("/") + "/" if subdir else ""
+        sources = [(mtl, sub_prefix) for mtl in materials]
+        failures = 0
+        for graph in graphs:
+            mtl, prefix = extract_graph(graph, root, work_dir)
+            if mtl is None:
+                failures += 1
+            else:
+                sources.append((mtl, prefix))
+
+        jobs, metas = [plain_job(p) for p in plain], []
+        for job in jobs:
+            job.out_name = sub_prefix + job.out_name
+        for mtl, prefix in sources:
+            mjobs, meta = material_jobs(mtl, prefix)
+            if mjobs is None:
+                failures += 1
+                continue
+            jobs += mjobs
+            metas.append(meta)
+        if defaults:
+            for job in default_jobs():
+                job.out_name = sub_prefix + job.out_name
+                jobs.append(job)
+
+        tools = find_tools(cs, target)
+        out_dir = Path(tmp_dir) / target if cache else Path(out_root) / target
         out_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"[{target}] {len(jobs)} shader(s) -> {cache or out_dir}")
         for job in jobs:
+            (out_dir / job.out_name).parent.mkdir(parents=True, exist_ok=True)
             if cook_job(cs, tools, target, job, out_dir):
                 print(f"  {job.label()}")
             else:
@@ -384,8 +458,15 @@ def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=
                 if f.is_file():
                     files["Shaders/Cooked/" + f.relative_to(tmp_dir).as_posix()] = f.read_bytes()
             for meta in metas:
-                files["Materials/" + meta["Path"].name] = meta["Path"].read_bytes()
+                files[meta["Runtime"]] = meta["Path"].read_bytes()
             write_cache(cache, module, target, files)
+        elif data_out and not failures:
+            for meta in metas:
+                destination = Path(data_out) / meta["Runtime"]
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                data = meta["Path"].read_bytes()
+                if not destination.is_file() or destination.read_bytes() != data:
+                    destination.write_bytes(data)
     return failures
 
 
@@ -395,7 +476,9 @@ def main():
     parser.add_argument("-target", choices=("OpenGL", "Vulkan", "D3D12"), help="cook for this platform")
     parser.add_argument("-src", action="append", metavar="PATH", help="a shader or material function, or a directory of them (repeatable)")
     parser.add_argument("-out", metavar="DIR", help="cooked output root; <Platform>/ is created below it")
-    parser.add_argument("-subdir", default="", metavar="NAME", help="a folder below <Platform>/ to cook into (the runtime uses Materials)")
+    parser.add_argument("-subdir", default="", metavar="NAME", help="a folder below <Platform>/ for loose .mtl.glsl files and -defaults (the runtime uses Materials)")
+    parser.add_argument("-root", metavar="DIR", help="what material graphs' runtime paths are relative to (a game's folder)")
+    parser.add_argument("-data-out", dest="data_out", metavar="DIR", help="with -out: where material descriptions go (the runtime folder)")
     parser.add_argument("-defaults", action="store_true", help="also cook the shared MaterialDefault vertex shaders")
     parser.add_argument("-cache", metavar="FILE", help="write one shader cache instead of loose files")
     parser.add_argument("-module", default="", metavar="NAME", help="the module the cache belongs to")
@@ -406,11 +489,12 @@ def main():
     cs = _import_cook_shaders(args.gdi_scripts)
 
     if args.check:
-        sys.exit(1 if check(cs, args.check) else 0)
+        sys.exit(1 if check(cs, args.check, args.root) else 0)
     if args.target and (args.src or args.defaults) and (args.out or args.cache):
         if args.cache and not args.module:
             parser.error("-cache needs -module")
-        sys.exit(1 if cook(cs, args.target, args.src or [], args.out, args.subdir, args.defaults, args.cache, args.module) else 0)
+        sys.exit(1 if cook(cs, args.target, args.src or [], args.out, args.subdir, args.defaults, args.cache,
+                           args.module, args.root, args.data_out) else 0)
 
     parser.error("give -check FILE..., or -target with -src (or -defaults) and -out or -cache")
 

@@ -106,7 +106,7 @@ namespace RenderCore
         void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels = 2.0f);
 
         /* Reloads material InName (nullptr or "": all) from disk on its next
-         * draw, e.g. after a recook. Names over RENDER_MATERIAL_NAME_MAX are
+         * draw, e.g. after a recook. Names over RENDER_MATERIAL_PATH_MAX are
          * ignored. GAME THREAD ONLY. */
         void ReloadMaterial(const char* InName);
 

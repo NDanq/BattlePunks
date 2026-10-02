@@ -278,6 +278,36 @@ namespace
         std::reverse(Shuffled.Links.begin(), Shuffled.Links.end());
         Expect(WriteGraphText(Shuffled) == Text, "output does not depend on creation order");
 
+        // --- Generated code is kept in the file, at its end ------------------------
+        {
+            Graph Generated = Mover;
+            CompileResult Result;
+            CompileGraph(Generated, Result);
+            Expect(StoreGeneratedCode(Generated, Result) && Generated.GenCode.size() == 1
+                   && Generated.GenCode[0].Extension == ".lua" && Generated.GenCode[0].Text == Result.Code,
+                   "a clean compile is stored as the graph's generated code: a script's .lua");
+
+            Generated.GenCode.push_back({ ".extra", "a ]]> inside, and <tags> & \"quotes\"\n" });
+            const std::string WithCode = WriteGraphText(Generated);
+            Expect(WithCode.find("<gen_code>") != std::string::npos
+                   && WithCode.find("<gen_code>") > WithCode.find("</Comments>")
+                   && WithCode.find("<![CDATA[") != std::string::npos,
+                   "it is written after everything else, as <gen_code> CDATA");
+            Graph Back;
+            Expect(ReadGraphText(WithCode, Back, Error) && Back.GenCode.size() == 2
+                   && Back.GenCode[0].Text == Result.Code && Back.GenCode[1].Text == Generated.GenCode[1].Text,
+                   "and reads back exactly, a ']]>' in the text included");
+            Expect(WriteGraphText(Back) == WithCode, "save -> load -> save keeps it byte-identical");
+            Expect(Back.FindGenCode(".lua") && !Back.FindGenCode(".mtl.glsl"), "FindGenCode finds by extension");
+
+            Graph Broken = Generated;
+            Broken.Nodes.front().Type = "No.Such.Node";
+            CompileResult BrokenResult;
+            CompileGraph(Broken, BrokenResult);
+            Expect(!StoreGeneratedCode(Broken, BrokenResult) && Broken.GenCode.size() == 2,
+                   "a graph with errors keeps the generated code it had");
+        }
+
         // --- An unknown node type is kept, links and all -------------------------
         std::string WithUnknown = Text;
         const std::string Marker = "Type=\"Debug.Print\"";
@@ -436,6 +466,38 @@ namespace
         W.DestroyEntity(Flowing.GetID());
         W.Tick(0.1f);
         Expect(Scripts.GetErrorCount() == 0, "the Flow script raised no Lua errors");
+
+        /* A script graph runs the Lua stored in it: Mover again, as a
+         * .script.nmgraph, its Lua carrying a "]]>" the file splits. */
+        {
+            Graph MoverGraph = MakeMoverGraph();
+            CompileResult Stored;
+            CompileGraph(MoverGraph, Stored);
+            Stored.Code += "\n-- a closing ]]> in a comment\n";
+            StoreGeneratedCode(MoverGraph, Stored);
+            const std::string GraphPath = TempDir() + "/Mover.script.nmgraph";
+            std::string Error;
+            Expect(SaveGraphFile(GraphPath, MoverGraph, Error), "the script graph saves: " + Error);
+
+            GameCore::Entity FromGraph = W.CreateEntity("FromGraph");
+            FromGraph.AddComponent<GameCore::TransformComponent>();
+            Expect(FromGraph.SetScript(GraphPath.c_str()), "an entity's script can be a .script.nmgraph");
+            for(int Frame = 0; Frame < 10; ++Frame) { W.Tick(0.1f); }
+            const GameCore::TransformComponent* Moved = FromGraph.GetComponent<GameCore::TransformComponent>();
+            Expect(Moved && std::fabs(double(Moved->Position.GetX()) - 60.0) < 0.01 && Scripts.GetErrorCount() == 0,
+                   "and runs the Lua in its <gen_code>, as the .lua did");
+
+            /* No <gen_code>: an error, not a crash. */
+            Graph Bare = MakeMoverGraph();
+            const std::string BarePath = TempDir() + "/Bare.script.nmgraph";
+            SaveGraphFile(BarePath, Bare, Error);
+            GameCore::Entity Unsaved = W.CreateEntity("Unsaved");
+            Unsaved.AddComponent<GameCore::TransformComponent>();
+            Unsaved.SetScript(BarePath.c_str());
+            const uint32_t Before = Scripts.GetErrorCount();
+            W.Tick(0.1f);
+            Expect(Scripts.GetErrorCount() > Before, "a script graph with no generated code is a script error");
+        }
 
         Scripts.UnbindWorld();
         Scripts.Shutdown();

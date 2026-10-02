@@ -57,8 +57,8 @@ namespace RenderCore
 
     namespace
     {
-        const char* const MATERIAL_FOLDER      = "Materials/";
-        const char* const DEFAULT_LIT_MATERIAL = "DefaultLit";            // Engine/Content/Materials: a mesh with none
+        const char* const MATERIAL_FOLDER      = "Materials/";            // the shared MaterialDefault vertex shaders
+        const char* const DEFAULT_LIT_MATERIAL = "Engine/Content/Materials/DefaultLit.material.nmgraph";   // a mesh with none
         const char* const LIGHTING_SHADER      = "DeferredLighting.fsh";  // Engine/Content/Shaders: the Lighting stage
         constexpr size_t  RENDER_PREVIEW_SLOTS = 8;                       // MaterialPreviewRequest::Slots
 
@@ -411,7 +411,8 @@ namespace RenderCore
             return LightingShader;
         }
 
-        /* Loaded on first use; failures are remembered and warned once.
+        /* Loaded on first use, by the graph path (or a bare name; see
+         * GetMaterialStem); failures are remembered and warned once.
          * bQuietIfMissing: no warning if it doesn't exist (mesh sections). */
         Material& FindMaterial(const std::string& InName, const bool bQuietIfMissing = false)
         {
@@ -423,15 +424,26 @@ namespace RenderCore
 
             Material& Loaded = Materials[InName];
             EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
-            const std::string DataPath = std::string(MATERIAL_FOLDER) + InName + ".material";
+            std::string Stem;
+            const bool bNamed = GetMaterialStem(InName, Stem);
+            const std::string DataPath = Stem + ".material";
             const std::string Who      = "material '" + InName + "'";
 
-            std::string Text, Error;
-            if(InName.empty() || !Provider || !Provider->ReadAllText(DataPath, Text))
+            if(!bNamed)
             {
                 if(!bQuietIfMissing && !InName.empty())
                 {
-                    RENDERCORE_LOG_WARN(Who + ": cannot read " + DataPath + "; drawing the plain tint")
+                    RENDERCORE_LOG_WARN(Who + ": not a material graph (*" + MATERIAL_GRAPH_EXTENSION + "); drawing the plain tint")
+                }
+                return Loaded;
+            }
+
+            std::string Text, Error;
+            if(!Provider || !Provider->ReadAllText(DataPath, Text))
+            {
+                if(!bQuietIfMissing)
+                {
+                    RENDERCORE_LOG_WARN(Who + ": cannot read " + DataPath + " (is it cooked?); drawing the plain tint")
                 }
                 return Loaded;
             }
@@ -443,7 +455,7 @@ namespace RenderCore
 
             const MaterialDescription& Desc = Loaded.Description;
             const uint32_t PixelKey = GetPixelPermutationKey(Desc.Domain, Desc.Shading);
-            GDIShader* Pixel = LoadShader(MATERIAL_FOLDER + GetPermutationFileName(InName, PixelKey, false), ST_Pixel, Who, false);
+            GDIShader* Pixel = LoadShader(GetPermutationFileName(Stem, PixelKey, false), ST_Pixel, Who, false);
             if(!Pixel)
             {
                 return Loaded;   // warned; drawn as the fallback
@@ -453,7 +465,7 @@ namespace RenderCore
             {
                 for(const EMaterialVertexInput Input : { EMaterialVertexInput::Quad, EMaterialVertexInput::Mesh })
                 {
-                    GDIShader* Vertex = LoadShader(MATERIAL_FOLDER + GetPermutationFileName(InName, GetVertexPermutationKey(Input), true), ST_Vertex, Who, false);
+                    GDIShader* Vertex = LoadShader(GetPermutationFileName(Stem, GetVertexPermutationKey(Input), true), ST_Vertex, Who, false);
                     if(!Vertex)
                     {
                         RetiredShaders.push_back(Pixel);
@@ -1215,9 +1227,21 @@ namespace RenderCore
             return;
         }
 
-        const auto Found = P->Materials.find(InName);
-        if(Found != P->Materials.end())
+        /* Every name for the same files: its path, and a bare name from an older world or a mesh. */
+        std::string Stem;
+        if(!GetMaterialStem(InName, Stem))
         {
+            return;
+        }
+        for(auto Found = P->Materials.begin(); Found != P->Materials.end();)
+        {
+            std::string Each;
+            if(!GetMaterialStem(Found->first, Each) || Each != Stem)
+            {
+                ++Found;
+                continue;
+            }
+
             Material& M = Found->second;
             for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1] })
             {
@@ -1226,14 +1250,14 @@ namespace RenderCore
                 if(P->BoundVertex == Shader) { P->BoundVertex = nullptr; }
                 P->RetiredShaders.push_back(Shader);
             }
-            P->Materials.erase(Found);
-        }
 
-        /* Forget the warnings about it, so a fixed material says so if it fails again. */
-        const std::string Prefix = std::string(InName) + "|";
-        for(auto It = P->Warned.begin(); It != P->Warned.end();)
-        {
-            It = It->compare(0, Prefix.size(), Prefix) == 0 ? P->Warned.erase(It) : std::next(It);
+            /* Forget the warnings about it, so a fixed material says so if it fails again. */
+            const std::string Prefix = "material '" + Found->first + "'|";
+            for(auto It = P->Warned.begin(); It != P->Warned.end();)
+            {
+                It = It->compare(0, Prefix.size(), Prefix) == 0 ? P->Warned.erase(It) : std::next(It);
+            }
+            Found = P->Materials.erase(Found);
         }
     }
 

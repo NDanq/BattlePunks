@@ -10,9 +10,10 @@
 #include "Public/RenderCore/TextureAsset.h"
 
 /*
- * What a material is to the renderer: <Name>.material (version 2), written by
- * NodeGraph's MaterialSchema beside <Name>.mtl.glsl, and the permutation keys
- * its cooked shaders are named by. See MATERIALS.md.
+ * What a material is to the renderer: <Name>.material (version 2), which
+ * NodeGraph's MaterialSchema generates with <Name>.mtl.glsl into the graph's
+ * <gen_code> and the cook writes out, and the permutation keys its cooked
+ * shaders are named by. See MATERIALS.md.
  *
  * The keys and names here must agree with cook_material_graphs.py, which
  * names the files, and with the templates' MATERIAL_* defines.
@@ -40,8 +41,20 @@ namespace RenderCore
     }
 
     /* "Glow@0000000a.fsh" -- the provider-relative name below
-     * Shaders/Cooked/<Platform>/Materials/, before the backend's extension. */
+     * Shaders/Cooked/<Platform>/, before the backend's extension. InMaterial
+     * may be a stem with folders ("Materials/Glow"). */
     RENDERCORE_API std::string GetPermutationFileName(const std::string& InMaterial, uint32_t InKey, bool bInVertex);
+
+    /* A material is named by its graph's runtime path. */
+    constexpr const char* MATERIAL_GRAPH_EXTENSION = ".material.nmgraph";
+
+    /* Where a material's cooked files are, as a stem: the graph path without
+     * its extension -- "Materials/Glow.material.nmgraph" is "Materials/Glow":
+     * the description "Materials/Glow.material", the permutations
+     * "Shaders/Cooked/<Platform>/Materials/Glow@<key>...". A bare name, as
+     * worlds and meshes named materials before ("Glow"), is "Materials/Glow".
+     * False for anything else (a path to another kind of file). */
+    RENDERCORE_API bool GetMaterialStem(const std::string& InMaterial, std::string& OutStem);
 
     /* The shared vertex shaders a material without World Position Offset draws with. */
     constexpr const char* MATERIAL_DEFAULT_VERTEX = "MaterialDefault";

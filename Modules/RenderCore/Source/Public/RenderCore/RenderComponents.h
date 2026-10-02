@@ -24,12 +24,13 @@ namespace RenderCore
      * Transform's Scale.
      *
      * Materials are slots, one per mesh section: each names a material
-     * graph's output ("Glow" = Materials/Glow.material and its cooked
-     * permutations). Section i draws with slot i, else its own material from
-     * the mesh, else DefaultLit; a quad uses slot 0. Each material's Domain
-     * and Shading pick the stage it draws in (RENDERPIPELINE.md), so one mesh
-     * can draw in several. An unloadable slot is warned once and falls back. */
-    enum : size_t { RENDER_MATERIAL_NAME_MAX = 48 };   // including the NUL
+     * graph by its runtime path ("Materials/Glow.material.nmgraph"; the cook
+     * makes its permutations from the graph's <gen_code>). Section i draws
+     * with slot i, else its own material from the mesh, else DefaultLit; a
+     * quad uses slot 0. Each material's Domain and Shading pick the stage it
+     * draws in (RENDERPIPELINE.md), so one mesh can draw in several. An
+     * unloadable slot is warned once and falls back. */
+    enum : size_t { RENDER_MATERIAL_PATH_MAX = 128 };  // including the NUL
     enum : size_t { RENDER_MESH_PATH_MAX     = 128 };  // including the NUL
     enum : size_t { RENDER_MATERIAL_SLOTS    = 8 };
 
@@ -39,7 +40,7 @@ namespace RenderCore
         RENDERCORE_PROXY_BODY()
 
         uint8_t           bVisible = 1;
-        char              Materials[RENDER_MATERIAL_SLOTS][RENDER_MATERIAL_NAME_MAX] = {};
+        char              Materials[RENDER_MATERIAL_SLOTS][RENDER_MATERIAL_PATH_MAX] = {};
         char              Mesh[RENDER_MESH_PATH_MAX] = {};
     };
 
@@ -84,14 +85,14 @@ namespace RenderCore
         uint8_t           bActive   = 1;
     };
 
-    /* "Post Process". A PostProcess-domain material drawn over the whole
-     * scene. Every enabled one runs, Priority low first (RENDER_POST_PROCESS_MAX
+    /* "Post Process". A PostProcess-domain material (a material graph's
+     * runtime path) drawn over the whole scene. Every enabled one runs, Priority low first (RENDER_POST_PROCESS_MAX
      * at most); a material of another domain is warned about and skipped. */
     struct RENDERCORE_API PostProcessComponent
     {
         GAMECORE_COMPONENT_BODY()
 
-        char    Material[RENDER_MATERIAL_NAME_MAX] = {};
+        char    Material[RENDER_MATERIAL_PATH_MAX] = {};
         int32_t Priority = 0;
         uint8_t bEnabled = 1;
     };

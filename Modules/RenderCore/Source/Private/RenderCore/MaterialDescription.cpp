@@ -30,6 +30,23 @@ namespace RenderCore
         return InMaterial + "@" + Key + (bInVertex ? ".vsh" : ".fsh");
     }
 
+    bool GetMaterialStem(const std::string& InMaterial, std::string& OutStem)
+    {
+        const size_t Extension = std::strlen(MATERIAL_GRAPH_EXTENSION);
+        if(InMaterial.size() > Extension
+           && InMaterial.compare(InMaterial.size() - Extension, Extension, MATERIAL_GRAPH_EXTENSION) == 0)
+        {
+            OutStem = InMaterial.substr(0, InMaterial.size() - Extension);
+            return true;
+        }
+        if(InMaterial.empty() || InMaterial.find_first_of("/\\.") != std::string::npos)
+        {
+            return false;
+        }
+        OutStem = "Materials/" + InMaterial;
+        return true;
+    }
+
     const MaterialParameter* MaterialDescription::FindParameter(const std::string& InName) const
     {
         for(const MaterialParameter& Each : Parameters)

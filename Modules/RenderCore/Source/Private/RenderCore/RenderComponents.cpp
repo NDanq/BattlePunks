@@ -6,6 +6,10 @@
 #endif
 #include "Public/GameCore/ComponentSerializer.h"
 
+#include <cstring>
+#include <string>
+
+#include "Public/RenderCore/MaterialDescription.h"
 #include "Private/RenderCore/RenderComponentProxy.h"
 
 /* Registration for the two built-in components. */
@@ -32,6 +36,23 @@ namespace RenderCore
 
     namespace
     {
+        /* Saved before materials were paths: a bare name ("Glow") is the
+         * graph Materials/Glow.material.nmgraph, which is what it meant. */
+        void UpgradeMaterialName(char* InOutMaterial, const size_t InCapacity)
+        {
+            const std::string Name(InOutMaterial, strnlen(InOutMaterial, InCapacity));
+            std::string Stem;
+            if(Name.empty() || Name.find('/') != std::string::npos || !GetMaterialStem(Name, Stem))
+            {
+                return;
+            }
+            const std::string Path = Stem + MATERIAL_GRAPH_EXTENSION;
+            if(Path.size() < InCapacity)
+            {
+                std::memcpy(InOutMaterial, Path.c_str(), Path.size() + 1);
+            }
+        }
+
         /* RenderComponent's slots: in saved worlds and Lua, and in the editor. */
         const char* const MATERIAL_SLOT_FIELDS[RENDER_MATERIAL_SLOTS] = {
             "Material0", "Material1", "Material2", "Material3", "Material4", "Material5", "Material6", "Material7" };
@@ -46,8 +67,9 @@ namespace RenderCore
      */
     /* Version 2: a material per slot. Version 1's one Material is slot 0.
      * Version 3: no Width, Height or Tint -- read and dropped (the Transform's
-     * Scale sizes the quad). */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 3)
+     * Scale sizes the quad).
+     * Version 4: materials are graph paths; an older bare name is upgraded. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 4)
     {
         if(Ar.GetVersion() < 3)
         {
@@ -71,6 +93,10 @@ namespace RenderCore
             }
         }
         Ar.Field("Mesh",     C.Mesh);
+        if(Ar.IsLoading() && Ar.GetVersion() < 4)
+        {
+            for(char (&Slot)[RENDER_MATERIAL_PATH_MAX] : C.Materials) { UpgradeMaterialName(Slot, sizeof(Slot)); }
+        }
     }
 
     /* Every field is real data -- a CameraComponent holds no per-run state at
@@ -99,9 +125,11 @@ namespace RenderCore
         Ar.Flag("Active",       C.bActive);
     }
 
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PostProcessComponent, 1)
+    /* Version 2: the material is a graph path; an older bare name is upgraded. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PostProcessComponent, 2)
     {
         Ar.Field("Material", C.Material);
+        if(Ar.IsLoading() && Ar.GetVersion() < 2) { UpgradeMaterialName(C.Material, sizeof(C.Material)); }
         Ar.Field("Priority", C.Priority);
         Ar.Flag("Enabled",   C.bEnabled);
     }

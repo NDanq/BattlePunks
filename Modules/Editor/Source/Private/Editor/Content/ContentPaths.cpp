@@ -63,36 +63,56 @@ namespace EditorContent
         return Path.compare(Root, Qt::CaseInsensitive) == 0 || Path.startsWith(Root + QLatin1Char('/'), Qt::CaseInsensitive);
     }
 
-    QStringList ListMaterialNames()
+    namespace
     {
-        QStringList Names;
-        const QString Engine = GetEngineContentRoot();
-        for(const QString& Folder : { QDir(EditorGraphs::GetProjectRoot()).filePath(QStringLiteral("Materials")),
-                                      Engine.isEmpty() ? QString() : QDir(Engine).filePath(QStringLiteral("Materials")) })
+        const QString MATERIAL_GRAPH = QStringLiteral(".material.nmgraph");
+        const QString SCRIPT_GRAPH   = QStringLiteral(".script.nmgraph");
+
+        void FindMaterialGraphs(const QDir& InDir, QStringList& OutPaths)
         {
-            if(Folder.isEmpty() || !QFileInfo(Folder).isDir()) { continue; }
-            QDirIterator It(Folder, { QStringLiteral("*.material.nmgraph"), QStringLiteral("*.material") }, QDir::Files,
-                            QDirIterator::Subdirectories);
-            while(It.hasNext())
+            for(const QFileInfo& Entry : InDir.entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot, QDir::Name))
             {
-                const QString Name = MaterialNameFor(It.next());
-                if(!Name.isEmpty()) { Names << Name; }
+                if(Entry.isDir())
+                {
+                    if(!EditorGraphs::IsIgnoredFolder(Entry.fileName())) { FindMaterialGraphs(QDir(Entry.absoluteFilePath()), OutPaths); }
+                    continue;
+                }
+                const QString Path = MaterialPathFor(Entry.absoluteFilePath());
+                if(!Path.isEmpty()) { OutPaths << Path; }
             }
         }
-        Names.removeDuplicates();
-        Names.sort(Qt::CaseInsensitive);
-        return Names;
     }
 
-    QString MaterialNameFor(const QString& InPath)
+    QStringList ListMaterialPaths()
     {
-        const QString Name = QFileInfo(InPath).fileName();
-        const QString Lower = Name.toLower();
-        for(const QString& Suffix : { QStringLiteral(".material.nmgraph"), QStringLiteral(".material"), QStringLiteral(".mtl.glsl") })
+        QStringList Paths;
+        const QString Engine = GetEngineContentRoot();
+        FindMaterialGraphs(QDir(EditorGraphs::GetProjectRoot()), Paths);
+        if(!Engine.isEmpty()) { FindMaterialGraphs(QDir(Engine), Paths); }
+        Paths.removeDuplicates();
+        Paths.sort(Qt::CaseInsensitive);
+        return Paths;
+    }
+
+    QString MaterialPathFor(const QString& InPath)
+    {
+        if(InPath.isEmpty() || !InPath.endsWith(MATERIAL_GRAPH, Qt::CaseInsensitive)) { return QString(); }
+        return ToRuntimePath(InPath);
+    }
+
+    bool IsMaterialFieldValue(const QString& InText)
+    {
+        return InText.isEmpty() || (InText.endsWith(MATERIAL_GRAPH) && InText.size() > MATERIAL_GRAPH.size());
+    }
+
+    QString ScriptPathFor(const QString& InPath)
+    {
+        if(InPath.isEmpty()) { return QString(); }
+        if(!InPath.endsWith(QStringLiteral(".lua"), Qt::CaseInsensitive) && !InPath.endsWith(SCRIPT_GRAPH, Qt::CaseInsensitive))
         {
-            if(Lower.endsWith(Suffix)) { return Name.left(Name.size() - Suffix.size()); }
+            return QString();
         }
-        return QString();
+        return ToRuntimePath(InPath);
     }
 
     QString SingleDroppedFile(const QMimeData* InData)

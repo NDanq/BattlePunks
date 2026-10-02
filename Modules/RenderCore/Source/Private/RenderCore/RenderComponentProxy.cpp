@@ -30,9 +30,9 @@ namespace RenderCore
         /* Bounded copy: the component's buffers need not be NUL-terminated. */
         static_assert(sizeof(Materials) == sizeof(Component.Materials), "RenderComponentProxy::Materials must match the component's");
         std::memcpy(Materials, Component.Materials, sizeof(Materials));
-        for(char (&Slot)[RENDER_MATERIAL_NAME_MAX] : Materials)
+        for(char (&Slot)[RENDER_MATERIAL_PATH_MAX] : Materials)
         {
-            Slot[RENDER_MATERIAL_NAME_MAX - 1] = '\0';
+            Slot[RENDER_MATERIAL_PATH_MAX - 1] = '\0';
         }
 
         SetVisible(bComponentVisible);

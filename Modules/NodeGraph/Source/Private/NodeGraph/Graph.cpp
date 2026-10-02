@@ -61,6 +61,15 @@ namespace NodeGraph
         return nullptr;
     }
 
+    const GeneratedCode* Graph::FindGenCode(const std::string& InExtension) const
+    {
+        for(const GeneratedCode& Each : GenCode)
+        {
+            if(Each.Extension == InExtension) { return &Each; }
+        }
+        return nullptr;
+    }
+
     std::string Graph::GetProperty(const std::string& InName, const std::string& InDefault) const
     {
         const auto Found = Properties.find(InName);

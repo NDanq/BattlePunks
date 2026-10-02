@@ -760,6 +760,21 @@ static void TestMaterialRuntime()
            == "Glow@0000000a.fsh", "Translucent Unlit is pixel key 0xa");
     Expect(GetPermutationFileName(MATERIAL_DEFAULT_VERTEX, GetVertexPermutationKey(EMaterialVertexInput::Mesh), true)
            == "MaterialDefault@00000100.vsh", "the shared mesh vertex shader is key 0x100");
+
+    // --- Material names: a graph's runtime path, or an older bare name ------------------
+    {
+        std::string Stem;
+        Expect(GetMaterialStem("Materials/Glow.material.nmgraph", Stem) && Stem == "Materials/Glow",
+               "a material graph's path names its cooked files by its stem");
+        Expect(GetMaterialStem("Engine/Content/Materials/DefaultLit.material.nmgraph", Stem)
+               && Stem == "Engine/Content/Materials/DefaultLit", "the engine's are below Engine/Content");
+        Expect(GetMaterialStem("Glow", Stem) && Stem == "Materials/Glow", "a bare name, as worlds saved them before, is Materials/<name>");
+        Expect(!GetMaterialStem("Materials/Glow.material", Stem) && !GetMaterialStem("Scripts/Mover.lua", Stem)
+               && !GetMaterialStem("Material.001", Stem) && !GetMaterialStem("", Stem),
+               "anything else names no material (an imported mesh's own material names, say)");
+        Expect(GetPermutationFileName("Materials/Glow", 0xa, false) == "Materials/Glow@0000000a.fsh",
+               "a permutation is named by the stem, folders and all");
+    }
     Expect(GetShaderCachePath("SandboxGame", ERenderBackend::Vulkan) == "Shaders/Cache/SandboxGame.Vulkan.nmsc",
            "a module's cache is named by module and platform");
 
@@ -818,9 +833,11 @@ static void TestMaterialRuntime()
     if(appFileReadAll(GetShaderCachePath("Engine", ERenderBackend::Vulkan), Cooked))
     {
         Expect(ReadShaderCache(Cooked, Contents, Error) && Contents.Module == "Engine"
-               && Contents.Files.count("Materials/DefaultLit.material") == 1
+               && Contents.Files.count("Engine/Content/Materials/DefaultLit.material") == 1
+               && Contents.Files.count("Shaders/Cooked/Vulkan/Engine/Content/Materials/DefaultLit@00000000.fsh.spv") == 1
                && Contents.Files.count("Shaders/Cooked/Vulkan/Materials/MaterialDefault@00000100.vsh.spv") == 1,
-               "the Engine cache cook_material_graphs.py wrote reads back, DefaultLit and the shared vertex shaders in it");
+               "the Engine cache cook_material_graphs.py wrote reads back: DefaultLit, cooked from its graph's <gen_code> "
+               "at its graph's path, and the shared vertex shaders");
     }
 
     // --- The layered provider ----------------------------------------------------------------
@@ -927,7 +944,8 @@ static void TestMaterialsOnGpu()
         /* The centre pixel of each preview, as R, G, B; and its quarter
          * points -- top-left, top-right, bottom-left, bottom-right. */
         struct Check { const char* Material; uint64_t Request; int Rgb[3]; bool bOk; int Quarter[4][3]; };
-        Check Checks[] = { { "DefaultLit", 0, {}, false, {} }, { "Glow", 0, {}, false, {} },
+        Check Checks[] = { { "Engine/Content/Materials/DefaultLit.material.nmgraph", 0, {}, false, {} },
+                           { "Materials/Glow.material.nmgraph", 0, {}, false, {} },
                            { "Wave", 0, {}, false, {} },       { "Negative", 0, {}, false, {} },
                            { "Textured", 0, {}, false, {} } };
         for(Check& Each : Checks)
@@ -1233,7 +1251,7 @@ static void TestRenderComponentSerializer()
     struct RecordingArchive final : GameCore::ComponentArchive
     {
         bool                     bLoading = false;
-        uint16_t                 Version  = 3;
+        uint16_t                 Version  = 4;
         std::map<std::string, std::string> Strings;   // what a load reads, and what a save wrote
         std::vector<std::string> Names;
 
@@ -1268,7 +1286,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 3, "RenderComponent saves as version 3");
+    Expect(Info && Info->Version == 4, "RenderComponent saves as version 4");
     if(!Info) { return; }
 
     RecordingArchive Old;
@@ -1278,18 +1296,19 @@ static void TestRenderComponentSerializer()
     Old.Strings["Material1"] = "Ignored";   // version 1 has no such field
     RenderComponent Loaded;
     Info->Fn(Old, &Loaded);
-    Expect(std::strcmp(Loaded.Materials[0], "Glow") == 0 && Loaded.Materials[1][0] == '\0',
-           "a version 1 Material loads into slot 0, and only there");
+    Expect(std::strcmp(Loaded.Materials[0], "Materials/Glow.material.nmgraph") == 0 && Loaded.Materials[1][0] == '\0',
+           "a version 1 Material loads into slot 0, and only there, its bare name upgraded to the graph's path");
     Expect(Old.Names.size() >= 3 && Old.Names[0] == "Width" && Old.Names[1] == "Height" && Old.Names[2] == "Tint",
            "a version 1 or 2 record's Width, Height and Tint are still read, first (binary keeps call order)");
 
     RenderComponent Saved;
-    std::strcpy(Saved.Materials[0], "Body");
-    std::strcpy(Saved.Materials[7], "Visor");
+    std::strcpy(Saved.Materials[0], "Materials/Body.material.nmgraph");
+    std::strcpy(Saved.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph");
     RecordingArchive Out;
     Info->Fn(Out, &Saved);
-    Expect(Out.Strings["Material0"] == "Body" && Out.Strings["Material7"] == "Visor" && Out.Strings.count("Material") == 0,
-           "version 3 writes each slot as Material0 to Material7");
+    Expect(Out.Strings["Material0"] == "Materials/Body.material.nmgraph"
+           && Out.Strings["Material7"] == "Engine/Content/Materials/DefaultLit.material.nmgraph" && Out.Strings.count("Material") == 0,
+           "version 4 writes each slot as Material0 to Material7, a graph path (longer than the old 48-byte names)");
     Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("Width")) == Out.Names.end()
            && std::find(Out.Names.begin(), Out.Names.end(), std::string("Tint")) == Out.Names.end(),
            "and no Width, Height or Tint");
@@ -1299,8 +1318,30 @@ static void TestRenderComponentSerializer()
     Back.Strings  = Out.Strings;
     RenderComponent Again;
     Info->Fn(Back, &Again);
-    Expect(std::strcmp(Again.Materials[0], "Body") == 0 && std::strcmp(Again.Materials[7], "Visor") == 0,
-           "and reads them back");
+    Expect(std::strcmp(Again.Materials[0], "Materials/Body.material.nmgraph") == 0
+           && std::strcmp(Again.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph") == 0,
+           "and reads them back unchanged");
+
+    RecordingArchive Three;
+    Three.bLoading = true;
+    Three.Version  = 3;
+    Three.Strings["Material0"] = "Body";
+    Three.Strings["Material1"] = "Materials/Already.material.nmgraph";
+    RenderComponent Upgraded;
+    Info->Fn(Three, &Upgraded);
+    Expect(std::strcmp(Upgraded.Materials[0], "Materials/Body.material.nmgraph") == 0
+           && std::strcmp(Upgraded.Materials[1], "Materials/Already.material.nmgraph") == 0 && Upgraded.Materials[2][0] == '\0',
+           "a version 3 world's bare names are upgraded; a path and an empty slot are left alone");
+
+    const GameCore::ComponentSerializerInfo* PostInfo = GameCore::FindComponentSerializer(PostProcessComponent::StaticType().ID);
+    RecordingArchive OldPost;
+    OldPost.bLoading = true;
+    OldPost.Version  = 1;
+    OldPost.Strings["Material"] = "Negative";
+    PostProcessComponent LoadedPost;
+    if(PostInfo) { PostInfo->Fn(OldPost, &LoadedPost); }
+    Expect(PostInfo && PostInfo->Version == 2 && std::strcmp(LoadedPost.Material, "Materials/Negative.material.nmgraph") == 0,
+           "a version 1 Post Process's bare name is upgraded too");
 }
 
 /*
@@ -1329,6 +1370,8 @@ static void TestRenderStages()
     WriteMaterial("Glow",        "Translucent", "Unlit", "");    // the smoke mesh's Front section names it
     WriteMaterial("Post",        "PostProcess", "Unlit", "");
     WriteMaterial("Reach",       "Opaque",      "Lit",   "MaxOffset 5\nHasOffset 1\n");
+    std::filesystem::create_directories(Root / "Props", Ignored);   // a graph in another folder: Props/Crate.material.nmgraph
+    std::ofstream(Root / "Props" / "Crate.material") << "NimbleMaterial 2\nDomain Opaque\nShading Lit\nBlockSize 32\n";
 
     FilesystemProvider Provider(Root.generic_string());
     IFileProvider* PreviousProvider = GetFileProvider();
@@ -1369,16 +1412,17 @@ static void TestRenderStages()
             return Each;
         };
         const EngineCore::Vector3 Inside(100.0, 100.0, 0.0);
-        AddPrimitive("Lit",        Inside, "", { "LitOpaque" });               // Base Pass
-        AddPrimitive("Masked",     Inside, "", { "UnlitMasked" });             // Unlit
-        AddPrimitive("Glass",      Inside, "", { "TransLit" });                // Translucent Lit
+        AddPrimitive("Lit",        Inside, "", { "Materials/LitOpaque.material.nmgraph" });   // Base Pass
+        AddPrimitive("Crate",      Inside, "", { "Props/Crate.material.nmgraph" });           // Base Pass, from another folder
+        AddPrimitive("Masked",     Inside, "", { "UnlitMasked" });             // Unlit (a bare name, as older worlds)
+        AddPrimitive("Glass",      Inside, "", { "Materials/TransLit.material.nmgraph" });    // Translucent Lit
         AddPrimitive("Smoke",      Inside, "", { "TransUnlit" });              // Translucent Unlit
         AddPrimitive("Plain",      Inside, "", {});                            // Unlit
         AddPrimitive("Slotted",    Inside, "Content/Square.nmmesh", { "TransLit", "" });   // Translucent Lit; Back: Unlit
         AddPrimitive("Sections",   Inside, "Content/Square.nmmesh", { "", "" });           // Glow: Translucent Unlit; Back: Unlit
         AddPrimitive("BadSlot",    Inside, "Content/Square.nmmesh", { "Nope", "" });       // falls back to Glow; Back: Unlit
         PostProcessComponent Post;
-        std::strcpy(Post.Material, "Post");
+        std::strcpy(Post.Material, "Materials/Post.material.nmgraph");
         World.CreateEntity("Post").AddComponent(Post);
         Rend.BindWorld(World);
 
@@ -1405,7 +1449,7 @@ static void TestRenderStages()
         uint32_t Counts[size_t(ERenderStage::Count)] = {};
         ReadStages(Counts);
         const auto At = [&Counts](const ERenderStage InStage) { return Counts[size_t(InStage)]; };
-        Expect(At(ERenderStage::BasePass) == 1, "an Opaque Lit material draws in the Base Pass");
+        Expect(At(ERenderStage::BasePass) == 2, "an Opaque Lit material draws in the Base Pass, by its graph's path from any folder");
         Expect(At(ERenderStage::Unlit) == 5, "Masked Unlit, a plain quad and three meshes' material-less sections draw in Unlit");
         Expect(At(ERenderStage::TranslucentLit) == 2, "Translucent Lit takes a quad and the section whose slot names one");
         Expect(At(ERenderStage::TranslucentUnlit) == 3,

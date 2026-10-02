@@ -85,6 +85,15 @@ namespace NodeGraph
         std::string Text;
     };
 
+    /* One file the graph compiles to, kept inside the graph file (<gen_code>):
+     * what a game's cook and the runtime use -- nothing is written beside the
+     * graph. Extension is the file's: ".lua"; ".mtl.glsl" and ".material". */
+    struct GeneratedCode
+    {
+        std::string Extension;
+        std::string Text;
+    };
+
     class Graph
     {
     public:
@@ -99,10 +108,17 @@ namespace NodeGraph
         std::vector<Link>     Links;
         std::vector<Comment>  Comments;
 
+        /* The last clean compile's output (the schema's, then its companions);
+         * empty until one is stored. Kept as is while the graph has errors. */
+        std::vector<GeneratedCode> GenCode;
+
         Node*       FindNode(const NodeGuid& InId);
         const Node* FindNode(const NodeGuid& InId) const;
 
         const Variable* FindVariable(const std::string& InName) const;
+
+        /* The generated file with InExtension, or nullptr. */
+        const GeneratedCode* FindGenCode(const std::string& InExtension) const;
 
         std::string GetProperty(const std::string& InName, const std::string& InDefault = std::string()) const;
 
