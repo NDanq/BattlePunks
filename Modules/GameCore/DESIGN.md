@@ -511,7 +511,7 @@ the stack.
 
 ---
 
-## Components.h / Components.cpp
+## Components.h / Components/
 
 **Every component here is `GAMECORE_API`, even the plain-looking ones.**
 Every component using `GAMECORE_COMPONENT_BODY()` gets an out-of-line
@@ -1101,7 +1101,7 @@ way but keeps the path and resets the state to pending, so the next
 
 ---
 
-## ComponentSerializer.h / ComponentSerializer.cpp / ComponentSerializers.cpp
+## ComponentSerializer.h / ComponentSerializer.cpp
 
 **Why serializers are opt-in per type.** `ComponentTypeInfo` has a name, a size
 and an alignment, and no fields, so a type has to say what it persists. Writing
@@ -1399,7 +1399,7 @@ fresh instance GUID, warned, exactly as `CreateEntity` does.
 
 ---
 
-## ComponentScript.h / ComponentScript.cpp / ComponentScripts.cpp
+## ComponentScript.h / ComponentScript.cpp
 
 **Selective by construction.** A component lists what Lua may touch with
 `GAMECORE_DEFINE_COMPONENT_SCRIPT`: `Field` (generates `Get<Name>`/`Set<Name>`),

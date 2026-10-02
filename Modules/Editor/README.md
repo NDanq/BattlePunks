@@ -16,7 +16,7 @@ code is gated the same way, so a Client or Server build compiles none of it:
 
 | Gated code | Where |
 |---|---|
-| Property registry and every `GAMECORE_DEFINE_COMPONENT_PROPERTIES` list | GameCore `ComponentProperties.h/.cpp`, RenderCore `RenderComponents.cpp` |
+| Property registry and every `GAMECORE_DEFINE_COMPONENT_PROPERTIES` list | GameCore `ComponentProperties.h/.cpp`, each component's own .cpp under GameCore and RenderCore `Components/` |
 | `Renderer::SetViewOverride`, `DrawDebugLine`, `DrawDebugBox` | RenderCore `Renderer.h/.cpp` |
 | The debug-line pass in `RenderScene::Render`, `RenderContext::DrawLine`, `DebugLine` | RenderCore |
 

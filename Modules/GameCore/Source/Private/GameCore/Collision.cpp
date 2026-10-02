@@ -13,7 +13,7 @@
 #include "Public/GameCore/ScriptLibrary.h"
 
 /*
- * Overlap detection for CollisionComponents (Components.h, DESIGN.md).
+ * Overlap detection for CollisionComponents (Components/CollisionComponent.h, DESIGN.md).
  *
  * BROAD PHASE is World's spatial index -- every collider is a BoundsComponent
  * box, refit at the end of TP_Physics. NARROW PHASE is the exact world box
@@ -119,25 +119,6 @@ void SetCollisionMeshProvider(const CollisionMeshProvider* InProvider)
 {
     bHasMeshProvider = InProvider && InProvider->GetMeshPath && InProvider->GetMeshBounds;
     GMeshProvider    = bHasMeshProvider ? *InProvider : CollisionMeshProvider();
-}
-
-// === CollisionComponent ==========================================================
-
-bool CollisionComponent::IsOverlapping(const EntityID InOther) const
-{
-    return Owner.OwningWorld && Owner.OwningWorld->AreOverlapping(Owner.Entity, InOther);
-}
-
-const char* CollisionComponent::GetSourceName() const
-{
-    return Source == CS_Mesh ? "Mesh" : "Bounds";
-}
-
-void CollisionComponent::SetSourceName(const char* InName)
-{
-    if(!InName) { return; }
-    if(std::strcmp(InName, "Mesh") == 0)   { Source = CS_Mesh; }
-    if(std::strcmp(InName, "Bounds") == 0) { Source = CS_Bounds; }
 }
 
 // === World =======================================================================

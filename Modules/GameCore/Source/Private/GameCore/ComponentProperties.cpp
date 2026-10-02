@@ -2,11 +2,10 @@
 
 #include <string>
 
-#include "Public/GameCore/Components.h"
 #include "Public/GameCore/GameCoreLog.h"
 
-/* The editor property registry and the built-in components' lists. Editor
- * targets only. See ComponentProperties.h. */
+/* The editor property registry. Each built-in component's list is in its own
+ * Components/ .cpp. Editor targets only. See ComponentProperties.h. */
 
 #if WITH_EDITOR
 
@@ -118,33 +117,6 @@ bool IsComponentAddable(const ComponentTypeID InType)
     }
     const PropertyTypeRange& Range = GPropertyTypes[InType];
     return Range.bRegistered && Range.DefaultsFn != nullptr && (Range.TypeFlags & CPF_NotAddable) == 0;
-}
-
-// === Built-in components ====================================================
-
-GAMECORE_DEFINE_COMPONENT_PROPERTIES(TransformComponent)
-{
-    Props.Field("Position", &TransformComponent::Position);
-    Props.Field("Rotation", &TransformComponent::Rotation);
-    Props.Field("Scale",    &TransformComponent::Scale);
-}
-
-/* World is the refit's output, so read-only. ProxyID stays hidden. */
-GAMECORE_DEFINE_COMPONENT_PROPERTIES(CollisionComponent)
-{
-    Props.Flag("Enabled", &CollisionComponent::bEnabled);
-    Props.Category("Shape");
-    Props.Choice("Source", &CollisionComponent::Source, "Bounds component|Render component mesh");   // ECollisionSource
-    Props.Category("Filtering");
-    Props.Field("Layer",  &CollisionComponent::Layer);
-    Props.Field("Mask",   &CollisionComponent::Mask);
-}
-
-GAMECORE_DEFINE_COMPONENT_PROPERTIES(BoundsComponent)
-{
-    Props.Field("Local", &BoundsComponent::Local);
-    Props.Field("World", &BoundsComponent::World, PF_ReadOnly);
-    Props.Flag("Static", &BoundsComponent::bStatic);
 }
 }
 #endif // WITH_EDITOR

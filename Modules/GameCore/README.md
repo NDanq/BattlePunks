@@ -57,7 +57,8 @@ Engine/Modules/GameCore/
 |   |   |-- World.h                 class World: entities (+ name/script members), pools, phased systems,
 |   |   |                           the script driver slot, spatial queries, delegates
 |   |   |-- Entity.h                header-only handle: World* + EntityID; components, name, script path
-|   |   |-- Components.h            TransformComponent, BoundsComponent
+|   |   |-- Components.h            includes every built-in component header below
+|   |   |-- Components/             TransformComponent.h, BoundsComponent.h, CollisionComponent.h
 |   |   |-- ComponentSerializer.h   ComponentArchive (named fields), the serializer macro and registry
 |   |   |-- WorldSerializer.h       SerializeWorld: the binary world (cooked data, save games)
 |   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
@@ -70,7 +71,8 @@ Engine/Modules/GameCore/
 |       |-- GameCoreInternal.h      the ONLY header that includes lua.h/lauxlib.h/lualib.h
 |       |-- ComponentType.cpp
 |       |-- ComponentPool.cpp
-|       |-- Components.cpp
+|       |-- Components/             one .cpp per built-in component: registration, serializer,
+|       |                           Lua binding and editor properties together
 |       |-- Delegate.cpp
 |       |-- EventBus.cpp
 |       |-- TickPhase.cpp
@@ -79,7 +81,6 @@ Engine/Modules/GameCore/
 |       |-- ScriptEngine.cpp
 |       |-- ScriptBindings.cpp      World/Entity/TickPhase/Events Lua libraries
 |       |-- ComponentScript.cpp     component proxies: the binding registry and the one dispatcher
-|       |-- ComponentScripts.cpp    what Transform/Bounds expose to Lua
 |       |-- ScriptLibrary.cpp       the library registry, one global table per library, its dispatcher
 |       |-- Collision.cpp           CollisionComponent overlaps: the pass, pairs, events, queries
 |       |-- ScriptStruct.cpp        the script struct registry: ids by name, fields while registered
