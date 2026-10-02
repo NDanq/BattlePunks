@@ -76,6 +76,7 @@ namespace NodeGraph
         Variable,     // the name of one of the graph's Variables
         Bool,         // "true" or "false" -- a checkbox
         Texture,      // a texture asset's runtime-relative path ("Content/Textures/Brick.nmtexture"), or ""
+        Function,     // the name of one of the graph's Functions
     };
 
     struct PropertyDefinition
@@ -141,6 +142,18 @@ namespace NodeGraph
 
         const std::vector<NodeDefinition>& GetNodes() const { return Nodes; }
         const NodeDefinition*              FindNode(const std::string& InType) const;
+
+        /*
+         * The definition InNode is drawn and compiled from: FindNode(Type),
+         * unless the node's pins come from the graph (a script graph's
+         * function nodes take theirs from the function they name). nullptr
+         * for a placeholder. Every lookup for a node in a graph goes here;
+         * FindNode is for a type alone (the palette, a new node).
+         *
+         * The pointer stays valid for the process: a per-graph definition is
+         * cached, never freed, as retired schemas are.
+         */
+        virtual const NodeDefinition* FindDefinition(const Graph& InGraph, const Node& InNode) const;
 
         const std::vector<PinTypeInfo>& GetTypes() const { return Types; }
         const PinTypeInfo*              FindType(const std::string& InName) const;

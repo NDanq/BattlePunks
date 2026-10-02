@@ -349,6 +349,29 @@ std::string WriteGraphText(const Graph& InGraph)
         }
     }
 
+    /* Functions too, and each one's inputs and outputs: they are its pins' order. */
+    if(!InGraph.Functions.empty())
+    {
+        pugi::xml_node Element = Root.append_child("Functions");
+        for(const GraphFunction& Each : InGraph.Functions)
+        {
+            pugi::xml_node Item = Element.append_child("Function");
+            Item.append_attribute("Name") = Each.Name.c_str();
+            for(const FunctionPin& Pin : Each.Inputs)
+            {
+                pugi::xml_node Input = Item.append_child("Input");
+                Input.append_attribute("Name") = Pin.Name.c_str();
+                Input.append_attribute("Type") = Pin.Type.c_str();
+            }
+            for(const FunctionPin& Pin : Each.Outputs)
+            {
+                pugi::xml_node Output = Item.append_child("Output");
+                Output.append_attribute("Name") = Pin.Name.c_str();
+                Output.append_attribute("Type") = Pin.Type.c_str();
+            }
+        }
+    }
+
     std::vector<const Node*> Nodes;
     for(const Node& Each : InGraph.Nodes) { Nodes.push_back(&Each); }
     WriteNodesAndLinks(Root, Nodes, InGraph.Links);
@@ -426,6 +449,20 @@ bool ReadGraphText(const std::string& InText, Graph& OutGraph, std::string& OutE
     {
         Result.Variables.push_back({ Item.attribute("Name").as_string(), Item.attribute("Type").as_string(),
                                      Item.attribute("Default").as_string() });
+    }
+    for(const pugi::xml_node Item : Root.child("Functions").children("Function"))
+    {
+        GraphFunction Loaded;
+        Loaded.Name = Item.attribute("Name").as_string();
+        for(const pugi::xml_node Pin : Item.children("Input"))
+        {
+            Loaded.Inputs.push_back({ Pin.attribute("Name").as_string(), Pin.attribute("Type").as_string() });
+        }
+        for(const pugi::xml_node Pin : Item.children("Output"))
+        {
+            Loaded.Outputs.push_back({ Pin.attribute("Name").as_string(), Pin.attribute("Type").as_string() });
+        }
+        Result.Functions.push_back(std::move(Loaded));
     }
 
     ReadNodesAndLinks(Root, *S, Result, Warnings);

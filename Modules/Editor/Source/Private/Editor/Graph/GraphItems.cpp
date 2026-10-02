@@ -109,7 +109,9 @@ NodeItem::NodeItem(GraphScene& InScene, const Node& InNode, const NodeDefinition
             {
                 Value = Value.section(QLatin1Char('/'), -1).section(QLatin1Char('.'), 0, 0);   // Content/Textures/Brick.nmtexture: Brick
             }
-            if(!Value.isEmpty())
+            /* A function node already says which function, once it has one. */
+            const bool bNamed = First.Kind == EPropertyKind::Function && Title.contains(Value);
+            if(!Value.isEmpty() && !bNamed)
             {
                 Title = First.Kind == EPropertyKind::Variable ? QString(Title).replace(QStringLiteral("Variable"), Value)
                                                               : Title + QStringLiteral(": ") + Value;
