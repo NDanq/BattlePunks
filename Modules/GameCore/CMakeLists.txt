@@ -169,6 +169,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/EventBus.cpp
         Source/Private/GameCore/TickPhase.cpp
         Source/Private/GameCore/SpatialIndex.cpp
+        Source/Private/GameCore/Collision.cpp
         Source/Private/GameCore/World.cpp
         Source/Private/GameCore/ScriptEngine.cpp
         Source/Private/GameCore/ScriptBindings.cpp

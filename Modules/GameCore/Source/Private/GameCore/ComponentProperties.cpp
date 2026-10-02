@@ -129,6 +129,14 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(TransformComponent)
 }
 
 /* World is the refit's output, so read-only. ProxyID stays hidden. */
+GAMECORE_DEFINE_COMPONENT_PROPERTIES(CollisionComponent)
+{
+    Props.Flag("Enabled", &CollisionComponent::bEnabled);
+    Props.Field("Source", &CollisionComponent::Source);   // 0 Bounds, 1 Mesh
+    Props.Field("Layer",  &CollisionComponent::Layer);
+    Props.Field("Mask",   &CollisionComponent::Mask);
+}
+
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(BoundsComponent)
 {
     Props.Field("Local", &BoundsComponent::Local);

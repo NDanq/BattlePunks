@@ -26,6 +26,22 @@ namespace GameCore
         }, "Delta:Vector3");
     }
 
+    /* GetEnabled/SetEnabled, GetLayer/SetLayer, GetMask/SetMask,
+     * GetOverlapCount (read-only), GetSource/SetSource ("Bounds", "Mesh"),
+     * IsOverlapping(other). Scripts react through OnOverlapBegin(self, other)
+     * and OnOverlapEnd(self, other) on their class table. */
+    GAMECORE_DEFINE_COMPONENT_SCRIPT(CollisionComponent)
+    {
+        Bind.Flag("Enabled", &CollisionComponent::bEnabled);
+        Bind.Field("Layer", &CollisionComponent::Layer);
+        Bind.Field("Mask",  &CollisionComponent::Mask);
+        Bind.ReadOnly("OverlapCount", &CollisionComponent::OverlapCount);
+
+        Bind.NativePure<&CollisionComponent::GetSourceName>("GetSource", "-> Source");
+        Bind.Native<&CollisionComponent::SetSourceName>("SetSource", "Source");
+        Bind.NativePure<&CollisionComponent::IsOverlapping>("IsOverlapping", "Other -> Overlapping");
+    }
+
     /* GetLocal/SetLocal (six numbers), GetWorld (read-only -- the refit owns
      * it), GetStatic/SetStatic (boolean). ProxyID stays hidden. */
     GAMECORE_DEFINE_COMPONENT_SCRIPT(BoundsComponent)

@@ -101,7 +101,13 @@ namespace GameCore
         TMulticastDelegate<EntityID>                  EntityDestroyed;
         TMulticastDelegate<EntityID, ComponentTypeID>  ComponentAdded;
         TMulticastDelegate<EntityID, ComponentTypeID>  ComponentRemoved;
+        TMulticastDelegate<EntityID, EntityID>         OverlapBegin;
+        TMulticastDelegate<EntityID, EntityID>         OverlapEnd;
         EventBus                                       Events;
+
+        /* Overlapping pairs as of the last UpdateOverlaps: packed ids, lower
+         * first, sorted (Collision.cpp). */
+        std::vector<std::pair<uint64_t, uint64_t>>     Overlaps;
 
         ~Impl()
         {
@@ -113,7 +119,8 @@ namespace GameCore
             /* Cannot enforce that every subscriber unbound itself, but can
              * detect and warn -- see DESIGN.md. */
             if(EntityCreated.GetCount() > 0 || EntityDestroyed.GetCount() > 0
-               || ComponentAdded.GetCount() > 0 || ComponentRemoved.GetCount() > 0)
+               || ComponentAdded.GetCount() > 0 || ComponentRemoved.GetCount() > 0
+               || OverlapBegin.GetCount() > 0 || OverlapEnd.GetCount() > 0)
             {
                 GAMECORE_LOG_WARN("World destroyed with bindings still on one of its built-in "
                                    "delegates. If any point into a hot-reloadable module, "
@@ -274,7 +281,13 @@ namespace GameCore
         return Result;
     }
 
-    World::World() : P(new Impl()) {}
+    World::World() : P(new Impl())
+    {
+        /* Overlaps, first in TP_PostPhysics: the boxes were refit at the end
+         * of TP_Physics, and that phase's scripts see the events' effects. */
+        RegisterSystem("GameCore.Overlaps", TP_PostPhysics,
+                       [](World& InWorld, float, void*) { InWorld.UpdateOverlaps(); }, P, SO_BeforeScripts);
+    }
 
     World::~World()
     {
@@ -811,6 +824,18 @@ namespace GameCore
     TMulticastDelegate<EntityID>&                  World::OnEntityDestroyed()   { return P->EntityDestroyed; }
     TMulticastDelegate<EntityID, ComponentTypeID>& World::OnComponentAdded()    { return P->ComponentAdded; }
     TMulticastDelegate<EntityID, ComponentTypeID>& World::OnComponentRemoved()  { return P->ComponentRemoved; }
+    TMulticastDelegate<EntityID, EntityID>&        World::OnOverlapBegin()      { return P->OverlapBegin; }
+    TMulticastDelegate<EntityID, EntityID>&        World::OnOverlapEnd()        { return P->OverlapEnd; }
+
+    std::vector<std::pair<uint64_t, uint64_t>>& World::GetOverlapPairs()             { return P->Overlaps; }
+    const std::vector<std::pair<uint64_t, uint64_t>>& World::GetOverlapPairs() const { return P->Overlaps; }
+
+    bool World::CallScriptMethod(const EntityID InEntity, const char* InMethod, const EntityID InArg)
+    {
+        if(!P->bHasDriver || !P->Driver.CallMethod || !IsAlive(InEntity)) { return false; }
+        const ScriptDriver Driver = P->Driver;
+        return Driver.CallMethod(*this, InEntity, InMethod, InArg, Driver.UserData);
+    }
 
     EventBus& World::GetEvents() { return P->Events; }
 }

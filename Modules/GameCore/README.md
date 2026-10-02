@@ -79,6 +79,7 @@ Engine/Modules/GameCore/
 |       |-- ComponentScript.cpp     component proxies: the binding registry and the one dispatcher
 |       |-- ComponentScripts.cpp    what Transform/Bounds expose to Lua
 |       |-- ScriptLibrary.cpp       the library registry, one global table per library, its dispatcher
+|       |-- Collision.cpp           CollisionComponent overlaps: the pass, pairs, events, queries
 |       |-- ScriptStruct.cpp        the script struct registry: ids by name, fields while registered
 |       |-- WorldPackage.cpp        the XML ComponentArchive, package save (atomic), two-pass load, cook
 |       `-- ScriptSystem.cpp        the World's script driver: file -> class cache, instantiation,
@@ -198,6 +199,51 @@ case it exists for: it is the first thing in `TP_PrePhysics` (`INPUT.md`).
 Calling `DestroyEntity` / `RemoveComponent<T>` / `SetScript` from inside a tick defers to
 the current phase's flush; calling them outside a tick is immediate. Never
 destroy or remove from inside a pool walk you are not the observer of.
+
+---
+
+## Collision
+
+A `CollisionComponent` ("Collision") makes an entity report overlaps. It is
+for overlap detection and intersection queries: nothing is pushed apart.
+
+- **Shape.** The entity's `BoundsComponent` box, so World's spatial index is
+  the broad phase.
+  - `Source = CS_Bounds` uses `Bounds.Local` as authored.
+  - `Source = CS_Mesh` uses the bounds of the sibling RenderComponent's mesh.
+- **When.** `World::UpdateOverlaps` runs first in `TP_PostPhysics`
+  (`SO_BeforeScripts`): the boxes were refit at the end of `TP_Physics`, and
+  that phase's scripts see the results.
+- **Filter.** A overlaps B only if `A.Layer & B.Mask` and `B.Layer & A.Mask`.
+  Two static boxes are never tested.
+- **Events.** For each pair that begins or ends, each side is told as Self:
+  - C++: `World::OnOverlapBegin()` / `OnOverlapEnd()`, with `(Self, Other)`;
+  - Lua: the script's `OnOverlapBegin(self, other)` / `OnOverlapEnd(self, other)`.
+- **When pairs end.** Disabling or removing a collider ends its pairs.
+  Destroying an entity tells only the survivor, whose `other` is then not
+  valid.
+- **Queries, without events:**
+  - `World::AreOverlapping(A, B)` and `GetOverlaps(E, ...)`, as of the last
+    pass;
+  - `World::OverlapBox(box, mask, ...)`, which tests now.
+
+```cpp
+GameCore::CollisionComponent Hit;
+Hit.Layer = Layers::Pickup;
+Hit.Mask  = Layers::Player;            // only the player sets it off
+Pickup.AddComponent(Hit);              // needs a Bounds (CS_Bounds), or a Mesh (CS_Mesh)
+
+World.OnOverlapBegin().Add([](GameCore::EntityID Self, GameCore::EntityID Other, void*) { ... }, nullptr);
+```
+
+```lua
+return {
+    OnOverlapBegin = function(self, other) print(other:GetName() .. " touched me") end,
+    OnOverlapEnd   = function(self, other) end,   -- other:IsValid() is false if it was destroyed
+}
+```
+
+Overlaps are not saved: after a load, pairs that still hold begin again.
 
 ---
 

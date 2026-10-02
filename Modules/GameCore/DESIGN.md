@@ -1260,6 +1260,47 @@ the same through `UnregisterComponentSerializer`.
 
 ---
 
+## Collision.cpp
+
+**One shape, the Bounds box.** A collider is its entity's `BoundsComponent`,
+so the BVH World already keeps is the broad phase, and the refit at the end
+of `TP_Physics` makes every box current before the pass. The narrow phase is
+the exact world-box test, since the BVH answers with fat boxes. Boxes are
+world-aligned: a rotated entity's box encloses its rotated local box, so it
+is loose. Other shapes would be further `ECollisionSource` values, with a
+narrow phase of their own.
+
+**Pairs, diffed.** A pass collects every overlapping enabled pair:
+
+- once each, from the side with the lower packed id;
+- as `(lower, higher)` packed ids, sorted.
+
+It then takes the set differences against the last pass. Only what changed
+becomes events: ends first, then begins. This makes the events deterministic
+and makes a destroyed entity's pairs end on their own, with no destroy hook,
+because its components are gone by the next pass. The new set is stored
+**before** anything is dispatched. A callback that asks `AreOverlapping`
+sees this pass's answer, and one that destroys or adds entities (deferred
+inside the tick) disturbs nothing in flight. The pass holds no component
+pointer across a dispatch.
+
+**Both sides, as Self.** Each change is reported twice, `(A, B)` and
+`(B, A)`, to C++ first, then to Self's script. A Self that no longer exists
+is skipped, since its script and components are gone. The script call goes
+through a new `ScriptDriver::CallMethod`, which calls a named method with one
+entity argument, only on a started, healthy instance. A raise marks the
+script errored, as a failing `OnTick` does.
+
+**Registered by World itself.** Every World registers `GameCore.Overlaps`
+in its constructor, first in `TP_PostPhysics`, with the World's own Impl as
+the system's user data, so a game's `UnregisterAllSystems` never removes it.
+A World with no collider pool pays one lookup a frame.
+
+**Not saved.** Only the authored fields are serialized. The next pass after a
+load begins every pair that still holds.
+
+---
+
 ## ScriptLibrary.h / ScriptLibrary.cpp
 
 **What is not a component.** A game's free functions, the C++ variables it

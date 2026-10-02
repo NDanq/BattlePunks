@@ -149,7 +149,7 @@ namespace GameCore
         /* Protected call of one method on instance InRef. True if clean or
          * absent. InDeltaSeconds is non-null only for OnTick (DESIGN.md). */
         bool CallMethod(lua_State* InState, const int InRef, const std::string& InPath,
-                        const char* InMethodName, const float* InDeltaSeconds)
+                        const char* InMethodName, const float* InDeltaSeconds, const EntityID* InEntityArg = nullptr)
         {
             lua_rawgeti(InState, LUA_REGISTRYINDEX, InRef);   // the instance table (self)
             lua_getfield(InState, -1, InMethodName);           // self[InMethodName]
@@ -167,6 +167,11 @@ namespace GameCore
             if(InDeltaSeconds)
             {
                 lua_pushnumber(InState, *InDeltaSeconds);
+                ++ArgCount;
+            }
+            if(InEntityArg)
+            {
+                LuaPushEntity(InState, *InEntityArg);
                 ++ArgCount;
             }
 
@@ -295,6 +300,26 @@ namespace GameCore
 
         /* ScriptDriver::Release: OnDestroy, then unref. The ref is cleared
          * first so re-entrant releases are no-ops. Errored scripts are skipped. */
+        /* World::CallScriptMethod: InMethod(self, InArg) on a started,
+         * healthy instance. A raise marks the script errored, as OnTick's does. */
+        bool ScriptDriver_CallMethod(World& InWorld, const EntityID InEntity, const char* InMethod, const EntityID InArg,
+                                     void* InUserData)
+        {
+            lua_State* InState = static_cast<lua_State*>(InUserData);
+            const Entity Handle(&InWorld, InEntity);
+            const EntityScriptState* Script = Handle.GetScriptState();
+            if(!Script || !Script->bStarted || Script->bErrored || !IsLiveRef(Script->InstanceRef)) { return false; }
+
+            const int Ref = Script->InstanceRef;
+            if(!CallMethod(InState, Ref, Handle.GetScriptPath(), InMethod, nullptr, &InArg))
+            {
+                EntityScriptState* After = Handle.GetScriptState();
+                if(After && After->InstanceRef == Ref) { After->bErrored = 1; }
+                return false;
+            }
+            return true;
+        }
+
         void ScriptDriver_Release(World& InWorld, const EntityID InEntity, void* InUserData)
         {
             lua_State* InState = static_cast<lua_State*>(InUserData);
@@ -360,6 +385,7 @@ namespace GameCore
         ScriptDriver Driver;
         Driver.TickPhase = &ScriptDriver_TickPhase;
         Driver.Release   = &ScriptDriver_Release;
+        Driver.CallMethod = &ScriptDriver_CallMethod;
         Driver.UserData  = InState;
         InWorld->SetScriptDriver(&Driver);
     }

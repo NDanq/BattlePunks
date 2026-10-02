@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
+#include <utility>
+#include <vector>
 
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ComponentPool.h"
@@ -74,6 +76,9 @@ namespace GameCore
         /* A script is going away (destroy or new path); path and state are
          * still set, and cleared afterwards. */
         void (*Release)(World& InWorld, EntityID InEntity, void* InUserData) = nullptr;
+
+        /* InMethod(self, InArg) on a started script: World::CallScriptMethod. */
+        bool (*CallMethod)(World& InWorld, EntityID InEntity, const char* InMethod, EntityID InArg, void* InUserData) = nullptr;
 
         void* UserData = nullptr;
     };
@@ -233,9 +238,39 @@ namespace GameCore
         TMulticastDelegate<EntityID, ComponentTypeID>& OnComponentAdded();
         TMulticastDelegate<EntityID, ComponentTypeID>& OnComponentRemoved();
 
+        // === Collision (Collision.cpp) =======================================
+        // CollisionComponent pairs, from the start of TP_PostPhysics.
+
+        /* (Self, Other), once for each side of a pair that began or ended.
+         * Self is alive; Other may not be (it ended because it went away). */
+        TMulticastDelegate<EntityID, EntityID>&        OnOverlapBegin();
+        TMulticastDelegate<EntityID, EntityID>&        OnOverlapEnd();
+
+        /* As of the last UpdateOverlaps. */
+        bool   AreOverlapping(EntityID InA, EntityID InB) const;
+        size_t GetOverlaps(EntityID InEntity, EntityID* OutOthers, size_t InMax) const;
+
+        /* Intersection now, without events: every enabled collider whose box
+         * overlaps InBox and whose Layer is in InMask. Up to InMax into
+         * OutHits; returns how many there are in all. */
+        size_t OverlapBox(const AABB& InBox, int32_t InMask, EntityID* OutHits, size_t InMax) const;
+
+        /* The overlap pass: shapes, pairs, then the begin and end events.
+         * Every World runs it at the start of TP_PostPhysics (before that
+         * phase's scripts); public for a host or test that steps it. */
+        void UpdateOverlaps();
+
+        /* Calls InMethod(self, InArg) on InEntity's script if it has started
+         * and defines it. False if there is no such method or it raised. */
+        bool CallScriptMethod(EntityID InEntity, const char* InMethod, EntityID InArg);
+
         EventBus& GetEvents();
 
     private:
+        /* Collision.cpp's state, kept in Impl. */
+        std::vector<std::pair<uint64_t, uint64_t>>&       GetOverlapPairs();
+        const std::vector<std::pair<uint64_t, uint64_t>>& GetOverlapPairs() const;
+
         /* The erased component path -- the by-name (Lua) and by-type (C++)
          * paths are THE SAME CODE from here. Private: Entity is the only
          * caller, so there is exactly one public way to touch a component. */
