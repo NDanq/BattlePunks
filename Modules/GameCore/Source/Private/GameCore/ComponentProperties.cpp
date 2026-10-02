@@ -50,10 +50,11 @@ bool RegisterComponentProperties(const ComponentTypeID InType, const ComponentPr
     if(InRejected > 0)
     {
         GAMECORE_LOG_ERROR(std::string("RegisterComponentProperties: '") + TypeNameOf(InType) + "' had "
-                           + std::to_string(InRejected) + " property(ies) rejected -- more than "
+                           + std::to_string(InRejected) + " property(ies) or categories rejected -- more than "
                            + std::to_string(size_t(COMPONENT_PROPERTIES_PER_TYPE_MAX))
-                           + " properties, or a name of " + std::to_string(size_t(COMPONENT_PROPERTY_NAME_MAX))
-                           + "+ characters. Those will not appear in the editor.")
+                           + " properties, a name of " + std::to_string(size_t(COMPONENT_PROPERTY_NAME_MAX))
+                           + "+ characters, or a category of " + std::to_string(size_t(COMPONENT_PROPERTY_CATEGORY_MAX))
+                           + "+. Those properties will not appear in the editor; a rejected category's are uncategorised.")
     }
 
     /* First wins, as RegisterComponentScript does. */
@@ -132,7 +133,9 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(TransformComponent)
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(CollisionComponent)
 {
     Props.Flag("Enabled", &CollisionComponent::bEnabled);
+    Props.Category("Shape");
     Props.Choice("Source", &CollisionComponent::Source, "Bounds component|Render component mesh");   // ECollisionSource
+    Props.Category("Filtering");
     Props.Field("Layer",  &CollisionComponent::Layer);
     Props.Field("Mask",   &CollisionComponent::Mask);
 }
