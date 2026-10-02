@@ -58,10 +58,13 @@ namespace
     /* Thumbnails and tooltips past this size are not read on hover. */
     constexpr qint64 PreviewByteLimit = 64 * 1024 * 1024;
 
+    /* InRoot may already end in a slash: QFileSystemModel's top row is "/" on
+     * Linux, and appending another would make nothing inside it. */
     bool IsInside(const QString& InPath, const QString& InRoot)
     {
+        const QString Prefix = InRoot.endsWith(QLatin1Char('/')) ? InRoot : InRoot + QLatin1Char('/');
         return InPath.compare(InRoot, Qt::CaseInsensitive) == 0
-            || InPath.startsWith(InRoot + QLatin1Char('/'), Qt::CaseInsensitive);
+            || InPath.startsWith(Prefix, Qt::CaseInsensitive);
     }
 
     QByteArray ReadAll(const QString& InPath)
