@@ -11,6 +11,7 @@
  */
 #include "Public/Core/CoreTypes.h"
 #include <string>
+#include <typeinfo>
 
 // Qt types used by this file. These were arriving implicitly through
 // Public/Odessa.h until GDI stopped including application headers;

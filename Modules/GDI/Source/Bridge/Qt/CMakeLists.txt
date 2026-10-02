@@ -18,11 +18,15 @@ set( GDI_QT_BRIDGE_SOURCES
         GDIQtWindow.h
         GDIQtTexture.cpp
         GDIQtTexture.h
-        GDIQtGLContext.cpp
-        GDIQtGLContext.h
         GDIQtVulkanInstance.cpp
         GDIQtVulkanInstance.h
 )
+
+# The GL context wrapper includes GDIOpenGL.h, which is WGL-only, so it exists
+# only alongside the GL backend.
+if(GDI_WITH_OPENGL)
+    list(APPEND GDI_QT_BRIDGE_SOURCES GDIQtGLContext.cpp GDIQtGLContext.h)
+endif()
 
 add_library(GDIQtBridge STATIC ${GDI_QT_BRIDGE_SOURCES})
 add_library(GDI::QtBridge ALIAS GDIQtBridge)
