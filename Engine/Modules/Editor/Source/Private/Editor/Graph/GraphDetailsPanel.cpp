@@ -8,6 +8,9 @@
 #include <QCheckBox>
 #include <QColorDialog>
 #include <QComboBox>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -17,6 +20,7 @@
 #include <QVBoxLayout>
 
 #include "Public/NodeGraph/GraphFile.h"
+#include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Graph/GraphDocument.h"
 #include "Private/Editor/Graph/GraphScene.h"
@@ -54,6 +58,63 @@ namespace
         });
         return Edit;
     }
+
+    /*
+     * A Texture setting: the texture's runtime path ("Content/Textures/Brick.nmtexture"),
+     * typed, or dropped from the Content Browser (or Explorer, if in the project).
+     * Commits once per change, like CommitEdit.
+     */
+    class TexturePathEdit final : public QLineEdit
+    {
+    public:
+        TexturePathEdit(const QString& InValue, std::function<void(const QString&)> InCommit)
+            : QLineEdit(InValue), Commit(std::move(InCommit)), Committed(InValue)
+        {
+            setAcceptDrops(true);
+            setPlaceholderText(QStringLiteral("Drop a .nmtexture here"));
+            connect(this, &QLineEdit::editingFinished, this, [this]() { Set(text().trimmed()); });
+        }
+
+        /* Commit last: the panel may rebuild, and delete this, in it. */
+        void Set(const QString& InValue)
+        {
+            if(InValue == Committed) { return; }
+            Committed = InValue;
+            setText(InValue);
+            Commit(InValue);
+        }
+
+        /* What the setting stores for a file: empty if not a texture in the project. */
+        static QString ValueFor(const QString& InFile)
+        {
+            return InFile.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive) ? EditorContent::ToRuntimePath(InFile) : QString();
+        }
+
+    protected:
+        void dragEnterEvent(QDragEnterEvent* InEvent) override { Accept(InEvent); }
+        void dragMoveEvent(QDragMoveEvent* InEvent) override   { Accept(InEvent); }
+        void dropEvent(QDropEvent* InEvent) override
+        {
+            const QString Value = ValueFor(EditorContent::SingleDroppedFile(InEvent->mimeData()));
+            if(Value.isEmpty())
+            {
+                InEvent->ignore();
+                return;
+            }
+            InEvent->acceptProposedAction();
+            Set(Value);
+        }
+
+    private:
+        void Accept(QDropEvent* InEvent)
+        {
+            if(!ValueFor(EditorContent::SingleDroppedFile(InEvent->mimeData())).isEmpty()) { InEvent->acceptProposedAction(); }
+            else { InEvent->ignore(); }
+        }
+
+        std::function<void(const QString&)> Commit;
+        QString                             Committed;
+    };
 
     /* The literal's numbers as a colour, and back, for the picker. Script
      * colours are 0-255 integers; material vectors 0-1 floats. */
@@ -212,6 +273,27 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
             });
             Editor = Combo;
         }
+        else if(Property.Kind == EPropertyKind::Texture)
+        {
+            auto* Row    = new QWidget();
+            auto* Layout = new QHBoxLayout(Row);
+            Layout->setContentsMargins(0, 0, 0, 0);
+            auto* Edit = new TexturePathEdit(ToQ(Value), [this, Id, Name](const QString& InText) { Document.SetProperty(Id, Name, ToStd(InText)); });
+            Layout->addWidget(Edit, 1);
+
+            auto* Pick = new QToolButton();
+            Pick->setText(QStringLiteral("..."));
+            Pick->setToolTip(QStringLiteral("Choose a texture in the project"));
+            Layout->addWidget(Pick);
+            connect(Pick, &QToolButton::clicked, this, [this, Edit]()
+            {
+                const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a Texture"), EditorGraphs::GetProjectRoot(),
+                                                                    QStringLiteral("Textures (*.nmtexture)"));
+                const QString Value  = Chosen.isEmpty() ? QString() : TexturePathEdit::ValueFor(Chosen);
+                if(!Value.isEmpty()) { Edit->Set(Value); }
+            });
+            Editor = Row;
+        }
         else
         {
             Editor = CommitEdit(ToQ(Value), [this, Id, Name](const QString& InText) { Document.SetProperty(Id, Name, ToStd(InText)); });
@@ -227,6 +309,7 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
         if(!Pin.IsInput() || Pin.IsExec()) { continue; }
         const PinRef Ref{ Id, Pin.Name };
         if(Document.IsLinked(Ref)) { continue; }
+        if(!Pin.Implicit.empty() && !InNode.FindConstant(Pin.Name)) { continue; }   // no literal: the schema supplies it
 
         const std::string Type = Document.GetPinType(Ref);
         const PinTypeInfo* Info = Document.GetSchema().FindType(Type);

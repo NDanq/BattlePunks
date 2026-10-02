@@ -6,8 +6,10 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPixmap>
@@ -29,6 +31,7 @@
 
 #include "Public/Core/CoreLog.h"
 #include "Public/NodeGraph/GraphFile.h"
+#include "Private/Editor/Content/MeshPreviewView.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Graph/GraphDetailsPanel.h"
 #include "Private/Editor/Graph/GraphDocument.h"
@@ -46,6 +49,16 @@ namespace
 {
     constexpr int CompileDelayMs = 250;
     constexpr int PreviewPixels  = 256;
+
+    /* The Preview dock's shapes: the engine's meshes (staged beside every
+     * executable), and the flat quad the preview drew before them. */
+    struct PreviewShapeChoice { const char* Label; const char* Mesh; };
+    const PreviewShapeChoice PreviewShapes[] = {
+        { "Sphere", "Engine/Content/Meshes/Sphere.nmmesh" },
+        { "Box",    "Engine/Content/Meshes/Box.nmmesh" },
+        { "Plane",  "Engine/Content/Meshes/Plane.nmmesh" },
+        { "Quad",   "" },
+    };
     constexpr int NodeRole = Qt::UserRole;
 
     /* A GUID in a QVariant, as its text. */
@@ -214,13 +227,13 @@ void GraphEditorTab::BuildActions()
         connect(Apply, &QAction::triggered, this, [this]()
         {
             QString Message;
-            EditorGraphs::ApplyMaterialToSelection(EditorGraphs::GetMaterialName(Document->GetPath()), Message);
+            EditorGraphs::ApplyMaterialToSelection(EditorGraphs::GetMaterialPath(Document->GetPath()), Message);
             statusBar()->showMessage(Message, 6000);
         });
 
         Material->addSeparator();
         QAction* Name = Material->addAction(QStringLiteral("RenderComponents refer to it as \"%1\"")
-                                            .arg(EditorGraphs::GetMaterialName(Document->GetPath())));
+                                            .arg(EditorGraphs::GetMaterialPath(Document->GetPath())));
         Name->setEnabled(false);
     }
 
@@ -281,7 +294,7 @@ void GraphEditorTab::Recompile()
     if(bIsMaterial && bLivePreview && !LastResult.HasErrors())
     {
         bPreviewedUnsaved = Document->IsDirty();
-        const QString Name = EditorGraphs::GetMaterialName(Document->GetPath());
+        const QString Name = EditorGraphs::GetMaterialPath(Document->GetPath());
         EditorGraphs::StageMaterial(Name, LastResult, this, [this, Name](const bool bInWorked, const QString& InWhat)
         {
             auto* Item = new QListWidgetItem(QStringLiteral("Preview: %1 %2").arg(Name, InWhat), Messages);
@@ -298,6 +311,22 @@ void GraphEditorTab::Recompile()
 
 // === Preview ====================================================================
 
+GraphEditorTab::~GraphEditorTab()
+{
+    /* Qt deletes children in the order they were made -- the document first,
+     * then the scene -- but the panels read both: deleting a selected item
+     * emits selectionChanged into Details. Views go first, the document last. */
+    CompileTimer.stop();
+    delete Details;
+    Details = nullptr;
+    delete View;
+    View = nullptr;
+    delete Scene;
+    Scene = nullptr;
+    delete Document;
+    Document = nullptr;
+}
+
 void GraphEditorTab::BuildPreviewDock()
 {
     auto* Dock = new QDockWidget(QStringLiteral("Preview"), this);
@@ -306,12 +335,33 @@ void GraphEditorTab::BuildPreviewDock()
     auto* Page   = new QWidget(Dock);
     auto* Layout = new QVBoxLayout(Page);
 
-    PreviewImage = new QLabel(Page);
-    PreviewImage->setObjectName(QStringLiteral("GraphPreviewImage"));
-    PreviewImage->setAlignment(Qt::AlignCenter);
-    PreviewImage->setMinimumSize(PreviewPixels, PreviewPixels);
-    PreviewImage->setToolTip(QStringLiteral("This material on a quad, drawn by the viewport's renderer"));
-    Layout->addWidget(PreviewImage, 1);
+    auto* ShapeRow = new QHBoxLayout();
+    PreviewShape = new QComboBox(Page);
+    for(const PreviewShapeChoice& Each : PreviewShapes)
+    {
+        PreviewShape->addItem(QString::fromLatin1(Each.Label), QString::fromLatin1(Each.Mesh));
+    }
+    PreviewShape->setToolTip(QStringLiteral("What the material is drawn on: one of the engine's meshes, or a flat quad. "
+                                            "A PostProcess material always fills the image"));
+    ShapeRow->addWidget(new QLabel(QStringLiteral("Shape"), Page));
+    ShapeRow->addWidget(PreviewShape);
+    auto* Animate = new QCheckBox(QStringLiteral("Animate"), Page);
+    Animate->setToolTip(QStringLiteral("Keep drawing, for materials that move with Time"));
+    ShapeRow->addWidget(Animate);
+    ShapeRow->addStretch(1);
+    Layout->addLayout(ShapeRow);
+
+    PreviewView = new MeshPreviewView(Page);
+    PreviewView->setObjectName(QStringLiteral("GraphPreviewView"));
+    PreviewView->setMinimumSize(PreviewPixels, PreviewPixels);
+    PreviewView->SetMesh(PreviewShape->currentData().toString());
+    PreviewView->SetTint(PreviewTint);
+    Layout->addWidget(PreviewView, 1);
+    connect(PreviewShape, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
+    {
+        PreviewView->SetMesh(PreviewShape->currentData().toString());
+    });
+    connect(Animate, &QCheckBox::toggled, PreviewView, &MeshPreviewView::SetAnimate);
 
     PreviewStatus = new QLabel(QStringLiteral("Waiting for the first cook..."), Page);
     PreviewStatus->setWordWrap(true);
@@ -320,8 +370,8 @@ void GraphEditorTab::BuildPreviewDock()
 
     auto* Row = new QHBoxLayout();
     auto* Tint = new QPushButton(QStringLiteral("Instance Tint..."), Page);
-    Tint->setToolTip(QStringLiteral("The tint the preview quad passes to the Instance Tint input -- "
-                                    "in the level, each RenderComponent's own Tint"));
+    Tint->setToolTip(QStringLiteral("The tint the preview passes to the Instance Tint input "
+                                    "(in the level, white)"));
     connect(Tint, &QPushButton::clicked, this, [this]()
     {
         const QColor Picked = QColorDialog::getColor(PreviewTint, this, QStringLiteral("Instance Tint"),
@@ -329,7 +379,7 @@ void GraphEditorTab::BuildPreviewDock()
         if(Picked.isValid())
         {
             PreviewTint = Picked;
-            RefreshPreview();
+            PreviewView->SetTint(PreviewTint);
         }
     });
     Row->addWidget(Tint);
@@ -341,32 +391,22 @@ void GraphEditorTab::BuildPreviewDock()
     Row->addStretch(1);
     Layout->addLayout(Row);
 
+    connect(PreviewView, &MeshPreviewView::Drawn, this, [this](const QString& InError)
+    {
+        PreviewStatus->setText(!InError.isEmpty() ? InError
+                               : bLivePreview || !Document->IsDirty() ? QStringLiteral("As the level draws it -- drag to orbit")
+                                                                      : QStringLiteral("The saved version (Live Preview is off)"));
+    });
+
     Dock->setWidget(Page);
     addDockWidget(Qt::RightDockWidgetArea, Dock);
 }
 
 void GraphEditorTab::RefreshPreview()
 {
-    if(!PreviewImage) { return; }
-
-    const uint64_t Generation = ++PreviewGeneration;
+    if(!PreviewView) { return; }
     PreviewStatus->setText(QStringLiteral("Drawing..."));
-    EditorGraphs::RequestMaterialPreview(EditorGraphs::GetMaterialName(Document->GetPath()), PreviewPixels, PreviewTint, this,
-                                         [this, Generation](const QImage& InImage, const QString& InError)
-    {
-        if(Generation != PreviewGeneration) { return; }   // a newer request is on its way
-        if(InImage.isNull())
-        {
-            PreviewImage->setPixmap(QPixmap());
-            PreviewImage->setText(QStringLiteral("No preview"));
-            PreviewStatus->setText(InError);
-            return;
-        }
-        PreviewImage->setPixmap(QPixmap::fromImage(InImage));
-        PreviewStatus->setText(bLivePreview || !Document->IsDirty()
-                               ? QStringLiteral("As the level draws it")
-                               : QStringLiteral("The saved version (Live Preview is off)"));
-    });
+    PreviewView->SetMaterial(EditorGraphs::GetMaterialPath(Document->GetPath()));   // draws again
 }
 
 bool GraphEditorTab::Save()
@@ -385,14 +425,14 @@ bool GraphEditorTab::Save()
     statusBar()->showMessage(Message, 6000);
     bPreviewedUnsaved = false;   // the save staged what is now on disk
 
-    /* A material's output through the real shader compiler, in the background. */
+    /* A material's generated code through the real shader compiler, in the background. */
     const Schema* S = FindSchema(Document->GetGraph().SchemaName);
     if(S && S->GetName() == "Material" && EditorGraphs::CanCheckShaders() && !LastResult.HasErrors())
     {
-        const QString Shader = ToQ(GetGraphOutputPath(ToStd(Document->GetPath()), *S));
+        const QString Shader = Document->GetPath();
         EditorGraphs::CheckShader(Shader, this, [this, Shader](const bool bInPassed, const QString& InOutput)
         {
-            auto* Item = new QListWidgetItem(bInPassed ? QStringLiteral("glslc: %1 compiles.").arg(QFileInfo(Shader).fileName())
+            auto* Item = new QListWidgetItem(bInPassed ? QStringLiteral("glslc: %1's code compiles.").arg(QFileInfo(Shader).fileName())
                                                        : QStringLiteral("glslc: %1").arg(InOutput.trimmed()), Messages);
             if(!bInPassed) { Item->setForeground(QColor(0xE0, 0x50, 0x50)); }
             statusBar()->showMessage(bInPassed ? QStringLiteral("Shader check passed") : QStringLiteral("Shader check FAILED -- see Messages"), 6000);

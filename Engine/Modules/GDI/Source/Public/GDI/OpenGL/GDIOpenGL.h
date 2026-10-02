@@ -63,6 +63,9 @@ typedef struct __GLsync* GLsync;
 
 #define GL_ARRAY_BUFFER                   0x8892
 #define GL_ELEMENT_ARRAY_BUFFER           0x8893
+#ifndef GL_UNIFORM_BUFFER
+#define GL_UNIFORM_BUFFER                 0x8A11
+#endif
 #define GL_STREAM_DRAW                    0x88E0
 #define GL_STATIC_DRAW                    0x88E4
 #define GL_DYNAMIC_DRAW                   0x88E8
@@ -88,6 +91,12 @@ typedef struct __GLsync* GLsync;
 #define GL_RENDERBUFFER                   0x8D41
 #define GL_DEPTH_ATTACHMENT               0x8D00
 #define GL_DEPTH_COMPONENT24              0x81A6
+#ifndef GL_DEPTH_COMPONENT
+#define GL_DEPTH_COMPONENT                0x1902
+#endif
+#ifndef GL_UNSIGNED_INT
+#define GL_UNSIGNED_INT                   0x1405
+#endif
 
 #define GL_FUNC_ADD                       0x8006
 #define GL_MIN                            0x8007
@@ -122,6 +131,7 @@ typedef struct __GLsync* GLsync;
     X(void,   glActiveTexture,           (GLenum texture), (texture)) \
     X(void,   glAttachShader,            (GLuint program, GLuint shader), (program, shader)) \
     X(void,   glBindBuffer,              (GLenum target, GLuint buffer), (target, buffer)) \
+    X(void,   glBindBufferBase,          (GLenum target, GLuint index, GLuint buffer), (target, index, buffer)) \
     X(void,   glBindFramebuffer,         (GLenum target, GLuint framebuffer), (target, framebuffer)) \
     X(void,   glBindRenderbuffer,        (GLenum target, GLuint renderbuffer), (target, renderbuffer)) \
     X(void,   glBindVertexArray,         (GLuint array), (array)) \
@@ -141,6 +151,7 @@ typedef struct __GLsync* GLsync;
     X(void,   glDeleteShader,            (GLuint shader), (shader)) \
     X(void,   glDeleteSync,              (GLsync sync), (sync)) \
     X(void,   glDeleteVertexArrays,      (GLsizei n, const GLuint* arrays), (n, arrays)) \
+    X(void,   glDrawBuffers,             (GLsizei n, const GLenum* bufs), (n, bufs)) \
     X(void,   glDrawArraysInstanced,     (GLenum mode, GLint first, GLsizei count, GLsizei instancecount), (mode, first, count, instancecount)) \
     X(void,   glEnableVertexAttribArray, (GLuint index), (index)) \
     X(GLsync, glFenceSync,               (GLenum condition, GLbitfield flags), (condition, flags)) \

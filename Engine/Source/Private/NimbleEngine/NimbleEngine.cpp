@@ -220,7 +220,7 @@ namespace NimbleEngine
          * VS_DEBUGGER_WORKING_DIRECTORY assume. A member because the render
          * thread's shader loads outlive this function; Shutdown() clears it.
          */
-        SetFileProvider(&AssetProvider);
+        SetFileProvider(&LayeredAssets);
 
         ConfigLoadStats Stats;
         if(!LoadConfigFile("Config/DefaultEngine.ini", &Stats))
@@ -407,6 +407,7 @@ namespace NimbleEngine
         {
             /* After Initialize, which read the config naming the module. */
             ILevel* Level = InLevel;
+            Game.SetRenderer(Rendering);
             if(!Level && Game.Load(InGameModule ? InGameModule : ""))
             {
                 Level = Game.ResolveStartLevel();

@@ -99,6 +99,8 @@ private:
     /** Indexed meshes only (GDICreateMesh): vec3 normals (binding 2, location 8) and uint32 indices. */
     VkBuffer             NormalBuffer    = VK_NULL_HANDLE;
     VkDeviceMemory       NormalMemory    = VK_NULL_HANDLE;
+    VkBuffer             VertexColorBuffer = VK_NULL_HANDLE;   // indexed only; binding 3, location 9
+    VkDeviceMemory       VertexColorMemory = VK_NULL_HANDLE;
     VkBuffer             IndexBuffer     = VK_NULL_HANDLE;
     VkDeviceMemory       IndexMemory     = VK_NULL_HANDLE;
 

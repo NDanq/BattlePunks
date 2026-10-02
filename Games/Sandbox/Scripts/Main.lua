@@ -19,16 +19,16 @@ scripted:SetScript("Scripts/Mover.lua")
 
 -- The game's own script library (SandboxScripting.cpp): pickups along
 -- Marker's path, each a game-defined "Pickup" component driven by a script
--- generated from Scripts/Pickup.script.nmgraph.
+-- stored in Scripts/Pickup.script.nmgraph.
 Sandbox.SetPickupRadius(24)
 for i = 1, 5 do
     local pickup = Sandbox.SpawnPickup(i * 220, 360, 0, i)
     pickup:GetComponent("Pickup"):SetBobHeight(4 + 2 * i)
-    pickup:SetScript("Scripts/Pickup.lua")
+    pickup:SetScript("Scripts/Pickup.script.nmgraph")
 end
 
 -- Prints the typed events the library declares (ScoreBoard.script.nmgraph).
-World.CreateEntity("ScoreBoard"):SetScript("Scripts/ScoreBoard.lua")
+World.CreateEntity("ScoreBoard"):SetScript("Scripts/ScoreBoard.script.nmgraph")
 
 -- The same events, from hand-written Lua: the library publishes their names.
 -- PickupStats, a script struct, is its fields' values in order: Value, ID.

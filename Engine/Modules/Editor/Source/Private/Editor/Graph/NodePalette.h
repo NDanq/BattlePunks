@@ -46,6 +46,7 @@ private:
         QString                            Category;
         QString                            SearchText;   // lower-case: label, category, keywords
         QString                            Tooltip;
+        QString                            Unavailable;  // why it is greyed out; "" if it can be placed
     };
 
     void Refill(const QString& InFilter);

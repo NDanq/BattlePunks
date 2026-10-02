@@ -1,6 +1,7 @@
 #include "Public/NodeGraph/GraphCompiler.h"
 
 #include <algorithm>
+#include <cctype>
 #include <map>
 #include <set>
 
@@ -71,6 +72,20 @@ namespace NodeGraph
                                             + Value + "'");
                         }
                         break;
+                    case EPropertyKind::Texture:
+                    {
+                        /* Empty is the schema's to judge; anything else must be a .nmtexture on one line. */
+                        const std::string Suffix = ".nmtexture";
+                        std::string Lower = Value;
+                        std::transform(Lower.begin(), Lower.end(), Lower.begin(), [](const unsigned char Ch) { return char(std::tolower(Ch)); });
+                        const bool bTexture = Lower.size() > Suffix.size() && Lower.compare(Lower.size() - Suffix.size(), Suffix.size(), Suffix) == 0;
+                        if(!Value.empty() && (!bTexture || Value.find_first_of("\r\n") != std::string::npos))
+                        {
+                            OutResult.Error(InNode.Id, std::string(), NodeLabel(InNode, &InDef) + ": " + Property.Name + " '" + Value
+                                            + "' is not a texture asset (a .nmtexture path)");
+                        }
+                        break;
+                    }
                 }
             }
         }

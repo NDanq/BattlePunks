@@ -109,7 +109,7 @@ namespace
     /* Plain C++ functions. Lib.Native reads their arguments from the script,
      * calls them and returns the result; a World& parameter is filled in. */
 
-    /* A quad tinted by value, a Pickup at the position, and bounds for
+    /* A 16 x 16 quad, a Pickup at the position, and bounds for
      * picking; the caller attaches a script. */
     GameCore::EntityID SpawnPickup(GameCore::World& InWorld, const EngineCore::Vector3& InPosition, const int32_t InValue)
     {
@@ -117,6 +117,7 @@ namespace
 
         GameCore::TransformComponent Transform;
         Transform.Position = InPosition;
+        Transform.Scale    = EngineCore::Vector3(16.0, 16.0, 1.0);   // the unit quad, 16 x 16
         Pickup.AddComponent(Transform);
 
         SandboxPickupComponent Data;
@@ -125,14 +126,11 @@ namespace
         Data.Stats.ID    = ++GNextPickupID;
         Pickup.AddComponent(Data);
 
-        RenderCore::RenderComponent Render;
-        Render.Width  = 16.0f;
-        Render.Height = 16.0f;
-        Render.Tint   = EngineCore::Color(uint8_t(80 + 30 * (InValue % 6)), 220, 120);
-        Pickup.AddComponent(Render);
+        /* The unit quad, sized by the Transform as Marker is. */
+        Pickup.AddComponent<RenderCore::RenderComponent>();
 
         GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-8.0, -8.0, 0.0), EngineCore::Vector3(8.0, 8.0, 0.0));
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
         Pickup.AddComponent(Bounds);
 
         return Pickup.GetID();

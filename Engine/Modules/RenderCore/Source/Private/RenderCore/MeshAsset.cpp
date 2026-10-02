@@ -17,6 +17,7 @@ namespace RenderCore
         constexpr uint32_t TAG_VERTICES = EngineCore::MakeArchiveTag('M','V','T','X');
         constexpr uint32_t TAG_INDICES  = EngineCore::MakeArchiveTag('M','I','D','X');
         constexpr uint32_t TAG_SECTIONS = EngineCore::MakeArchiveTag('M','S','E','C');
+        constexpr uint32_t TAG_COLORS   = EngineCore::MakeArchiveTag('M','C','O','L');   // optional
 
         void SerializeFloats(EngineCore::Archive& Ar, std::vector<float>& InOutValues)
         {
@@ -89,11 +90,13 @@ namespace RenderCore
             std::copy(std::begin(InOutMesh.BoundsMin), std::end(InOutMesh.BoundsMin), Header.BoundsMin);
             std::copy(std::begin(InOutMesh.BoundsMax), std::end(InOutMesh.BoundsMax), Header.BoundsMax);
 
-            /* Normals and UVs are per vertex, always -- the importer's job. */
+            /* Normals and UVs are per vertex, always -- the importer's job.
+             * Colours are all or none. */
             if(InOutMesh.Normals.size() != size_t(Header.VertexCount) * 3
-               || InOutMesh.UV0.size() != size_t(Header.VertexCount) * 2)
+               || InOutMesh.UV0.size() != size_t(Header.VertexCount) * 2
+               || (!InOutMesh.Colors.empty() && InOutMesh.Colors.size() != size_t(Header.VertexCount) * 4))
             {
-                Ar.SetError("mesh: every vertex needs a normal and a UV");
+                Ar.SetError("mesh: every vertex needs a normal and a UV (and a colour, if any has one)");
                 Ar.CloseChunk();
                 return false;
             }
@@ -146,6 +149,19 @@ namespace RenderCore
             {
                 Ar << Section.Name << Section.Material << Section.FirstIndex << Section.IndexCount;
             }
+            Ar.CloseChunk();
+        }
+
+        /* Vertex colours: written only when the mesh has them; a file without
+         * the chunk (every mesh before it existed) loads white. */
+        const bool bColors = Ar.IsSaving() ? !InOutMesh.Colors.empty() : Ar.PeekChunkTag() == TAG_COLORS;
+        if(!Ar.HasError() && bColors && OpenRequiredChunk(Ar, TAG_COLORS, 1, "mesh: bad MCOL chunk"))
+        {
+            if(Ar.IsLoading() && CanHoldElements(Ar, uint64_t(Header.VertexCount), 4 * sizeof(float), "mesh: colour count is past the end of the file"))
+            {
+                InOutMesh.Colors.assign(size_t(Header.VertexCount) * 4, 1.0f);
+            }
+            SerializeFloats(Ar, InOutMesh.Colors);
             Ar.CloseChunk();
         }
 

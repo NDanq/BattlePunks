@@ -229,6 +229,9 @@ endif()
 # both find it, and a POST_BUILD step would silently go stale exactly as the
 # comment on SANDBOX_CONFIG_DST explains).
 #
+# A script graph (*.script.nmgraph) is listed the same way: the runtime runs
+# the Lua stored in it (<gen_code>).
+#
 # LISTED, NOT GLOBBED: a new script is a CMakeLists.txt edit, so the build
 # graph is honest about what it stages rather than silently picking up
 # whatever a directory scan happens to find -- the same call ComponentPool.h's
@@ -236,8 +239,8 @@ endif()
 set(SANDBOX_SCRIPT_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Main.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Mover.lua"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Pickup.lua"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/ScoreBoard.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Pickup.script.nmgraph"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/ScoreBoard.script.nmgraph"
 )
 
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
@@ -328,12 +331,16 @@ if(SANDBOX_CONTENT_FILES)
 endif()
 
 # === Materials/ =============================================================
-# Material graphs and their generated .fsh / .material, cooked for every built
-# backend and staged by name (Engine/cmake/NimbleMaterials.cmake).
+# Material graphs, cooked from the code generated into each (<gen_code>) for
+# every built backend into SandboxGame's shader cache, which GameModuleHost
+# mounts with the module -- and, in Editor targets, staged loose as well
+# (Engine/cmake/NimbleMaterials.cmake). Named by path below this folder:
+# "Materials/Glow.material.nmgraph".
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
-    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" RUNTIME_DIR "${SANDBOX_RT_DIR}")
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" MODULE SandboxGame
+                           RUNTIME_DIR "${SANDBOX_RT_DIR}")
 else()
-    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials")
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" MODULE SandboxGame)
 endif()
 
 # === IDE ===================================================================

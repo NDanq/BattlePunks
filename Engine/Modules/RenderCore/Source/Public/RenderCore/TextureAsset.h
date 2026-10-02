@@ -2,6 +2,7 @@
 #define RENDERCORE_TEXTUREASSET_H
 
 #include <cstdint>
+#include <memory>
 #include <string>
 
 #include "Public/Core/CoreImage.h"
@@ -56,6 +57,22 @@ namespace RenderCore
 #if WITH_EDITOR
     RENDERCORE_API bool SaveTextureFile(const std::string& InPath, TextureData& InTexture);
 #endif
+
+    /*
+     * Loaded textures by path, as MeshAssetCache is for meshes: shared by
+     * the game and render threads, thread-safe. A failed load is warned once
+     * and remembered until Invalidate, which is how a reimport reaches the
+     * renderer (it rebuilds a GPU texture on a new pointer).
+     */
+    class RENDERCORE_API TextureAssetCache
+    {
+    public:
+        /* The texture, loaded on first use; null if it cannot be loaded. */
+        static std::shared_ptr<const TextureData> Find(const std::string& InPath);
+
+        /* Forget InPath (or everything, given an empty path). */
+        static void Invalidate(const std::string& InPath);
+    };
 }
 
 #endif //RENDERCORE_TEXTUREASSET_H

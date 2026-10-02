@@ -114,19 +114,103 @@ namespace GameCore
         IncrementErrorCount(InState);
     }
 
-    bool LuaReadScriptFile(const char* InPath, std::string& OutSource)
+    bool ExtractGraphGeneratedCode(const std::string& InGraphText, const char* InExtension, std::string& OutCode)
     {
-        if(EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider())
-        {
-            return Provider->ReadAllText(InPath, OutSource);
-        }
-
-        std::vector<uint8_t> Bytes;
-        if(!EngineCore::appFileReadAll(InPath, Bytes))
+        const size_t Section = InGraphText.find("<gen_code");
+        if(Section == std::string::npos)
         {
             return false;
         }
-        OutSource.assign(reinterpret_cast<const char*>(Bytes.data()), Bytes.size());
+        const std::string Opening = std::string("<Output Extension=\"") + InExtension + "\"";
+        const size_t Output = InGraphText.find(Opening, Section);
+        if(Output == std::string::npos)
+        {
+            return false;
+        }
+        size_t At = InGraphText.find('>', Output + Opening.size());
+        if(At == std::string::npos)
+        {
+            return false;
+        }
+        if(InGraphText[At - 1] == '/')
+        {
+            OutCode.clear();   // <Output .../>: empty
+            return true;
+        }
+
+        /* One CDATA section, or several where the text held "]]>". */
+        static const char CDATA_OPEN[]  = "<![CDATA[";
+        static const char CDATA_CLOSE[] = "]]>";
+        static const char OUTPUT_END[]  = "</Output>";
+        std::string Code;
+        ++At;
+        for(;;)
+        {
+            while(At < InGraphText.size() && (InGraphText[At] == ' ' || InGraphText[At] == '\t'
+                                               || InGraphText[At] == '\r' || InGraphText[At] == '\n'))
+            {
+                ++At;
+            }
+            if(InGraphText.compare(At, sizeof(OUTPUT_END) - 1, OUTPUT_END) == 0)
+            {
+                OutCode = std::move(Code);
+                return true;
+            }
+            if(InGraphText.compare(At, sizeof(CDATA_OPEN) - 1, CDATA_OPEN) != 0)
+            {
+                return false;   // not what NodeGraph writes
+            }
+            const size_t Start = At + sizeof(CDATA_OPEN) - 1;
+            const size_t End   = InGraphText.find(CDATA_CLOSE, Start);
+            if(End == std::string::npos)
+            {
+                return false;
+            }
+            Code.append(InGraphText, Start, End - Start);
+            At = End + sizeof(CDATA_CLOSE) - 1;
+        }
+    }
+
+    bool LuaReadScriptFile(const char* InPath, std::string& OutSource)
+    {
+        std::string Text;
+        if(EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider())
+        {
+            if(!Provider->ReadAllText(InPath, Text))
+            {
+                return false;
+            }
+        }
+        else
+        {
+            std::vector<uint8_t> Bytes;
+            if(!EngineCore::appFileReadAll(InPath, Bytes))
+            {
+                return false;
+            }
+            Text.assign(reinterpret_cast<const char*>(Bytes.data()), Bytes.size());
+        }
+
+        /* A script graph runs the Lua it was saved with. */
+        static const char GRAPH_EXTENSION[] = ".nmgraph";
+        const size_t Length    = std::strlen(InPath);
+        const size_t ExtLength = sizeof(GRAPH_EXTENSION) - 1;
+        bool bGraph = Length > ExtLength;
+        for(size_t Index = 0; bGraph && Index < ExtLength; ++Index)
+        {
+            const char Each = InPath[Length - ExtLength + Index];
+            bGraph = (Each >= 'A' && Each <= 'Z' ? char(Each - 'A' + 'a') : Each) == GRAPH_EXTENSION[Index];
+        }
+        if(bGraph)
+        {
+            if(!ExtractGraphGeneratedCode(Text, ".lua", OutSource))
+            {
+                GAMECORE_LOG_ERROR(std::string("\"") + InPath + "\" has no generated Lua -- open it in the editor and save it")
+                return false;
+            }
+            return true;
+        }
+        OutSource = std::move(Text);
         return true;
     }
 

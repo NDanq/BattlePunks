@@ -71,6 +71,11 @@ namespace RenderCore
          * view). */
         virtual void Draw(RenderContext& InContext) = 0;
 
+        /* RENDER THREAD, before culling: how far past WorldBounds this
+         * proxy's draw can reach -- a material's World Position Offset (Max
+         * Offset, RenderContext::GetMaterialMaxOffset). 0 by default. */
+        virtual float GetBoundsPadding(RenderContext& InContext) { (void)InContext; return 0.0f; }
+
         /* Recomputes LocalToWorld = InTransform.ToMatrix() and
          * WorldBounds = AABB::Transformed(LocalBounds, LocalToWorld) --
          * exactly World::RefreshSpatialIndex's own refit math (World.cpp),

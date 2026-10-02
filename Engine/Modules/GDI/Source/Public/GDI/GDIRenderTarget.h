@@ -61,6 +61,11 @@ public:
 
     virtual GDITexture2D* ToGDITexture2D() = 0;
 
+    /* The depth attachment, for sampling (point-filtered; its value is the
+     * window depth, 0 near to 1 far). Null if the backend cannot, or the
+     * target has no depth. Valid until the target is resized or released. */
+    virtual GDITexture2D* ToDepthTexture2D() { return nullptr; }
+
     virtual void ResolveRenderTarget(GDIRenderTarget* Dest) = 0;
 
      virtual void DrawTexture(GDITexture2D* InTexture2D);

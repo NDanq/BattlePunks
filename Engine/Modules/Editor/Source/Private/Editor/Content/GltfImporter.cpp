@@ -206,6 +206,7 @@ namespace EditorContent
             const cgltf_accessor* Positions = FindAttribute(InPrimitive, cgltf_attribute_type_position, 0);
             const cgltf_accessor* Normals   = FindAttribute(InPrimitive, cgltf_attribute_type_normal, 0);
             const cgltf_accessor* UVs       = FindAttribute(InPrimitive, cgltf_attribute_type_texcoord, 0);
+            const cgltf_accessor* Colors    = FindAttribute(InPrimitive, cgltf_attribute_type_color, 0);
             if(!Positions || Positions->count == 0)
             {
                 OutWarnings << QStringLiteral("%1: skipped -- it has no positions").arg(InSectionName);
@@ -243,6 +244,14 @@ namespace EditorContent
             /* glTF -> engine: x stays, y and z flip (a half turn about X). */
             const float Flip = InOptions.bConvertCoordinates ? -1.0f : 1.0f;
 
+            /* Vertex colours (COLOR_0) are all or none in a mesh: the first
+             * primitive with them backfills white for the vertices before it,
+             * and a primitive without them after that is white. */
+            if(Colors && InOutMesh.Colors.empty())
+            {
+                InOutMesh.Colors.assign(size_t(BaseVertex) * 4, 1.0f);
+            }
+
             for(cgltf_size Vertex = 0; Vertex < VertexCount; ++Vertex)
             {
                 float Source[3] = {0.0f, 0.0f, 0.0f};
@@ -269,6 +278,14 @@ namespace EditorContent
                 if(UVs) { cgltf_accessor_read_float(UVs, Vertex, UV, 2); }
                 InOutMesh.UV0.push_back(UV[0]);
                 InOutMesh.UV0.push_back(UV[1]);
+
+                if(!InOutMesh.Colors.empty())
+                {
+                    /* Float or normalised integers alike; a vec3 colour keeps alpha 1. */
+                    float Color[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+                    if(Colors) { cgltf_accessor_read_float(Colors, Vertex, Color, 4); }
+                    InOutMesh.Colors.insert(InOutMesh.Colors.end(), Color, Color + 4);
+                }
             }
 
             /* A mirroring transform flips winding; swap two corners to undo it. */

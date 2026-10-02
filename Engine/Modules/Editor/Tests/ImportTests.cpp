@@ -60,7 +60,8 @@ static bool ReadTexture(const QString& InPath, RenderCore::TextureData& OutTextu
  * Scene.gltf, beside Checker.png:
  *   node "Moved"  (translation 1,2,3)  -> mesh "Box", two primitives:
  *       0: a triangle at z=0, indexed, normals +Z, material "Red"
- *       1: a triangle at z=1, no indices, no normals
+ *       1: a triangle at z=1, no indices, no normals, COLOR_0 as
+ *          normalised bytes: red, green, half-transparent blue
  *   node "Mirror" (scale -1,1,1)       -> mesh "Tri": primitive 0's data again
  */
 static void WriteScene(const QDir& InFolder)
@@ -70,6 +71,7 @@ static void WriteScene(const QDir& InFolder)
     const float UVA[6]   = { 0, 0,      1, 0,      0, 1 };
     const uint16_t Idx[4] = { 0, 1, 2, 0 };   // the 4th is padding, to keep the next view aligned
     const float PosB[9]  = { 0, 0, 1,   1, 0, 1,   0, 1, 1 };
+    const uint8_t ColB[12] = { 255, 0, 0, 255,   0, 255, 0, 255,   0, 0, 255, 128 };
 
     QByteArray Buffer;
     Buffer.append(reinterpret_cast<const char*>(PosA), sizeof(PosA));   //   0..36
@@ -77,6 +79,7 @@ static void WriteScene(const QDir& InFolder)
     Buffer.append(reinterpret_cast<const char*>(UVA),  sizeof(UVA));    //  72..96
     Buffer.append(reinterpret_cast<const char*>(Idx),  sizeof(Idx));    //  96..104 (6 used)
     Buffer.append(reinterpret_cast<const char*>(PosB), sizeof(PosB));   // 104..140
+    Buffer.append(reinterpret_cast<const char*>(ColB), sizeof(ColB));   // 140..152
 
     const QString Json = QStringLiteral(R"({
   "asset": { "version": "2.0" },
@@ -89,7 +92,7 @@ static void WriteScene(const QDir& InFolder)
   "meshes": [
     { "name": "Box", "primitives": [
         { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3, "material": 0 },
-        { "attributes": { "POSITION": 4 } } ] },
+        { "attributes": { "POSITION": 4, "COLOR_0": 5 } } ] },
     { "name": "Tri", "primitives": [
         { "attributes": { "POSITION": 0, "NORMAL": 1, "TEXCOORD_0": 2 }, "indices": 3 } ] }
   ],
@@ -102,14 +105,16 @@ static void WriteScene(const QDir& InFolder)
     { "buffer": 0, "byteOffset": 36,  "byteLength": 36 },
     { "buffer": 0, "byteOffset": 72,  "byteLength": 24 },
     { "buffer": 0, "byteOffset": 96,  "byteLength": 6 },
-    { "buffer": 0, "byteOffset": 104, "byteLength": 36 }
+    { "buffer": 0, "byteOffset": 104, "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 140, "byteLength": 12 }
   ],
   "accessors": [
     { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [1,1,0] },
     { "bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3" },
     { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC2" },
     { "bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR" },
-    { "bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,1], "max": [1,1,1] }
+    { "bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,1], "max": [1,1,1] },
+    { "bufferView": 5, "componentType": 5121, "normalized": true, "count": 3, "type": "VEC4" }
   ]
 })").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64()));
 
@@ -182,6 +187,17 @@ static void TestMeshImport(const QDir& InRoot)
         Expect(Near(Mesh.Positions[0], 1.0f) && Near(Mesh.Positions[1], -2.0f) && Near(Mesh.Positions[2], -3.0f),
                "the node's translation is baked in, then y and z flip into engine space");
         Expect(Near(Mesh.Normals[2], -1.0f), "a +Z normal faces -Z in engine space");
+        Expect(Mesh.Colors.size() == 9 * 4, "one primitive's COLOR_0 gives the whole mesh colours");
+        if(Mesh.Colors.size() == 9 * 4)
+        {
+            Expect(Near(Mesh.Colors[0], 1.0f) && Near(Mesh.Colors[1], 1.0f) && Near(Mesh.Colors[3], 1.0f),
+                   "vertices before the coloured primitive are white");
+            Expect(Near(Mesh.Colors[3 * 4 + 0], 1.0f) && Near(Mesh.Colors[3 * 4 + 1], 0.0f) && Near(Mesh.Colors[3 * 4 + 3], 1.0f),
+                   "normalised byte colours read as 0-1 floats");
+            Expect(std::fabs(Mesh.Colors[5 * 4 + 3] - 128.0f / 255.0f) < 1e-3f, "alpha comes through");
+            Expect(Near(Mesh.Colors[6 * 4 + 0], 1.0f) && Near(Mesh.Colors[8 * 4 + 3], 1.0f),
+                   "a later primitive without colours is white");
+        }
         Expect(Near(Mesh.Normals[3 * 3 + 2], -1.0f) && Near(Mesh.Normals[3 * 3 + 0], 0.0f),
                "a primitive with no normals gets generated ones, facing the same way");
         Expect(Mesh.Indices[6] == 6 && Mesh.Indices[7] == 8 && Mesh.Indices[8] == 7,

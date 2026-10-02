@@ -111,9 +111,9 @@ void D3D12RenderTarget::AllocateDepth()
     Desc.Height           = Height;
     Desc.DepthOrArraySize = 1;
     Desc.MipLevels        = 1;
-    Desc.Format           = DepthFormat;
+    Desc.Format           = DXGI_FORMAT_R32_TYPELESS;   // D32 to the DSV, R32 to the SRV
     Desc.SampleDesc.Count = 1;
-    Desc.Flags            = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL | D3D12_RESOURCE_FLAG_DENY_SHADER_RESOURCE;
+    Desc.Flags            = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
 
     D3D12_CLEAR_VALUE Clear{};
     Clear.Format             = DepthFormat;
@@ -132,8 +132,31 @@ void D3D12RenderTarget::AllocateDepth()
         DSVHeap.Reset();
         return;
     }
-    Dev->CreateDepthStencilView(DepthResource.Get(), nullptr, DSVHeap->GetCPUDescriptorHandleForHeapStart());
+    D3D12_DEPTH_STENCIL_VIEW_DESC DSV{};
+    DSV.Format        = DepthFormat;
+    DSV.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    Dev->CreateDepthStencilView(DepthResource.Get(), &DSV, DSVHeap->GetCPUDescriptorHandleForHeapStart());
+    DepthState       = D3D12_RESOURCE_STATE_DEPTH_WRITE;
     bDepthNeedsClear = true;
+
+    // Sampled as R32_FLOAT (ToDepthTexture2D).
+    if(D3D12DynamicGDI* GDI = GetD3D12Driver())
+    {
+        DepthSRVSlot = GDI->GetDescAlloc()->AllocateSRV();
+        if(DepthSRVSlot != D3D12DescriptorAllocator::InvalidSlot)
+        {
+            D3D12_SHADER_RESOURCE_VIEW_DESC SRV{};
+            SRV.Format                  = DXGI_FORMAT_R32_FLOAT;
+            SRV.ViewDimension           = D3D12_SRV_DIMENSION_TEXTURE2D;
+            SRV.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            SRV.Texture2D.MipLevels     = 1;
+            Dev->CreateShaderResourceView(DepthResource.Get(), &SRV, GDI->GetDescAlloc()->GetSRVCPUHandle(DepthSRVSlot));
+        }
+        else
+        {
+            DepthSRVSlot = UINT32_MAX;
+        }
+    }
 }
 
 void D3D12RenderTarget::DestroyImage()
@@ -149,6 +172,17 @@ void D3D12RenderTarget::DestroyImage()
         delete TextureWrapper;
         TextureWrapper = nullptr;
     }
+    if(DepthWrapper)
+    {
+        if(DepthWrapper->Resource)
+        {
+            DepthWrapper->Resource->Release();
+            delete DepthWrapper->Resource;
+            DepthWrapper->Resource = nullptr;
+        }
+        delete DepthWrapper;
+        DepthWrapper = nullptr;
+    }
 
     // During driver teardown the cast fails; Destroy() has already waited idle.
     if(D3D12DynamicGDI* GDI = GetD3D12Driver())
@@ -156,6 +190,7 @@ void D3D12RenderTarget::DestroyImage()
         if(Resource) GDI->DeferRelease(Resource);
         if(DepthResource) GDI->DeferRelease(DepthResource);
         if(SRVSlot != UINT32_MAX) GDI->DeferFreeSRV(SRVSlot);
+        if(DepthSRVSlot != UINT32_MAX) GDI->DeferFreeSRV(DepthSRVSlot);
     }
 
     Resource.Reset();
@@ -163,6 +198,8 @@ void D3D12RenderTarget::DestroyImage()
     DepthResource.Reset();
     DSVHeap.Reset();
     bDepthNeedsClear = false;
+    DepthState       = D3D12_RESOURCE_STATE_DEPTH_WRITE;
+    DepthSRVSlot     = UINT32_MAX;
     SRVSlot      = UINT32_MAX;
     CurrentState = D3D12_RESOURCE_STATE_COMMON;
     SubmittedState.store(D3D12_RESOURCE_STATE_COMMON);
@@ -236,6 +273,21 @@ GDITexture2D* D3D12RenderTarget::ToGDITexture2D()
             new D3D12TextureResource(Device, Resource.Get(), SRVSlot, TextureWrapper, GDI_TB_Clamp_To_Edge, GDI_TF_Linear);
     }
     return TextureWrapper;
+}
+
+GDITexture2D* D3D12RenderTarget::ToDepthTexture2D()
+{
+    if(!DepthResource || DepthSRVSlot == UINT32_MAX) return nullptr;
+
+    if(!DepthWrapper)
+    {
+        DepthWrapper         = new GDITexture2D();
+        DepthWrapper->Width  = Width;
+        DepthWrapper->Height = Height;
+        DepthWrapper->Resource =
+            new D3D12TextureResource(Device, DepthResource.Get(), DepthSRVSlot, DepthWrapper, GDI_TB_Clamp_To_Edge, GDI_TF_Nearest);
+    }
+    return DepthWrapper;
 }
 
 void D3D12RenderTarget::ResolveRenderTarget(GDIRenderTarget* Dest)

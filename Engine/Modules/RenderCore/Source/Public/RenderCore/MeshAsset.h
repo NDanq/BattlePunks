@@ -42,6 +42,7 @@ namespace RenderCore
         std::vector<float>       Positions;   // 3 per vertex
         std::vector<float>       Normals;     // 3 per vertex
         std::vector<float>       UV0;         // 2 per vertex
+        std::vector<float>       Colors;      // RGBA, 4 per vertex; empty: white (the optional MCOL chunk)
         std::vector<uint32_t>    Indices;     // 3 per triangle
         std::vector<MeshSection> Sections;
         float                    BoundsMin[3] = {0.0f, 0.0f, 0.0f};

@@ -32,7 +32,7 @@ struct PickupStats
 };
 
 /* A collectible that bobs around Home until Marker comes within the library's
- * PickupRadius. Spawned by Sandbox.SpawnPickup; driven by Scripts/Pickup.lua. */
+ * PickupRadius. Spawned by Sandbox.SpawnPickup; driven by Scripts/Pickup.script.nmgraph. */
 struct SandboxPickupComponent
 {
     GAMECORE_COMPONENT_BODY()

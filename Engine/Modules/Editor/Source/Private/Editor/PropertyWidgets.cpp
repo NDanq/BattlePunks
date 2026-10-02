@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QColorDialog>
+#include <QCompleter>
 #include <QDoubleSpinBox>
 #include <QDropEvent>
 #include <QFileDialog>
@@ -22,6 +23,7 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QToolButton>
+#include <QToolTip>
 
 #include "CoreQtConversions.h"
 #include "Public/Core/CoreTypes.h"
@@ -408,29 +410,38 @@ namespace
             connect(Edit, &QLineEdit::editingFinished, this, [this]() { Commit(); });
 
             /* An asset field takes the asset dragged from the Content Browser
-             * (or Explorer, if it is in the project); a mesh also has a picker. */
+             * (or Explorer, if it is in the project), or one picked; a material
+             * field takes material graphs (*.material.nmgraph) only, and
+             * completes the project's and the engine's. */
             const bool bMesh     = (Entry.Flags & GameCore::PF_AssetMesh) != 0;
             const bool bMaterial = (Entry.Flags & GameCore::PF_AssetMaterial) != 0;
             if((bMesh || bMaterial) && !Entry.IsReadOnly())
             {
                 AssetKind = bMesh ? EAsset::Mesh : EAsset::Material;
-                Edit->setPlaceholderText(bMesh ? QStringLiteral("Drop a .nmmesh here") : QStringLiteral("Drop a material here"));
+                Edit->setPlaceholderText(bMesh ? QStringLiteral("Drop a .nmmesh here") : QStringLiteral("Drop a .material.nmgraph here"));
                 Edit->installEventFilter(this);
-                if(bMesh)
+                if(bMaterial)
                 {
-                    auto* Pick = new QToolButton(this);
-                    Pick->setText(QStringLiteral("..."));
-                    Pick->setToolTip(QStringLiteral("Choose a mesh in the project"));
-                    Layout->addWidget(Pick);
-                    connect(Pick, &QToolButton::clicked, this, [this]()
-                    {
-                        const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a Mesh"),
-                                                                            EditorGraphs::GetProjectRoot(),
-                                                                            QStringLiteral("Meshes (*.nmmesh)"));
-                        const QString Value = Chosen.isEmpty() ? QString() : ValueForFile(Chosen);
-                        if(!Value.isEmpty()) { SetAndCommit(Value); }
-                    });
+                    auto* Completer = new QCompleter(EditorContent::ListMaterialPaths(), Edit);
+                    Completer->setCaseSensitivity(Qt::CaseInsensitive);
+                    Completer->setFilterMode(Qt::MatchContains);
+                    Edit->setCompleter(Completer);
+                    Edit->setToolTip(QStringLiteral("A material graph, by its path: Materials/Glow.material.nmgraph"));
                 }
+
+                auto* Pick = new QToolButton(this);
+                Pick->setText(QStringLiteral("..."));
+                Pick->setToolTip(bMesh ? QStringLiteral("Choose a mesh in the project") : QStringLiteral("Choose a material graph"));
+                Layout->addWidget(Pick);
+                connect(Pick, &QToolButton::clicked, this, [this, bMesh]()
+                {
+                    const QString Chosen = QFileDialog::getOpenFileName(this, bMesh ? QStringLiteral("Choose a Mesh") : QStringLiteral("Choose a Material"),
+                                                                        EditorGraphs::GetProjectRoot(),
+                                                                        bMesh ? QStringLiteral("Meshes (*.nmmesh)")
+                                                                              : QStringLiteral("Material Graphs (*.material.nmgraph)"));
+                    const QString Value = Chosen.isEmpty() ? QString() : ValueForFile(Chosen);
+                    if(!Value.isEmpty()) { SetAndCommit(Value); }
+                });
             }
         }
 
@@ -485,6 +496,16 @@ namespace
             uint8_t* Field = FieldForWrite();
             if(!Field || Entry.Size == 0) { return; }
 
+            /* A material field holds a material graph or nothing: anything
+             * else typed is refused, and the field shows what it holds. */
+            if(AssetKind == EAsset::Material && !EditorContent::IsMaterialFieldValue(Edit->text().trimmed()))
+            {
+                QToolTip::showText(Edit->mapToGlobal(QPoint(0, Edit->height())),
+                                   QStringLiteral("Not a material graph: give a *.material.nmgraph path"), Edit);
+                Refresh(true);
+                return;
+            }
+
             /* Truncated to the buffer on a UTF-8 byte count, always
              * NUL-terminated -- the buffer is fixed, the string is not. */
             const QByteArray Utf8 = Edit->text().toUtf8();
@@ -514,7 +535,7 @@ namespace
             }
             if(AssetKind == EAsset::Material)
             {
-                return EditorContent::MaterialNameFor(InFile);
+                return EditorContent::MaterialPathFor(InFile);
             }
             return QString();
         }

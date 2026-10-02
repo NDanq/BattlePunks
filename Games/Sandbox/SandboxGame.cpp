@@ -324,21 +324,16 @@ public:
              * quad at y=0 would hang half off screen. */
             GameCore::TransformComponent MarkerTransform;
             MarkerTransform.Position = EngineCore::Vector3(0.0, 360.0, 0.0);
+            MarkerTransform.Scale    = EngineCore::Vector3(32.0, 32.0, 1.0);   // the unit quad, 32 x 32
             Marker.AddComponent(MarkerTransform);
         }
         /* WorldBridge draws it every frame; nothing else is needed. */
-        RenderCore::RenderComponent Render;
-        Render.Width  = 32.0f;
-        Render.Height = 32.0f;
-        Render.Tint   = EngineCore::Color(255, 200, 40);
-        Marker.AddComponent(Render);
+        Marker.AddComponent<RenderCore::RenderComponent>();
 
-        /* The quad's extent in entity space, derived from the RenderComponent
-         * so picking and spatial queries match what is drawn. */
+        /* The unit quad's extent in entity space, so picking and spatial
+         * queries match what is drawn. */
         GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(
-            EngineCore::Vector3(-0.5 * Render.Width, -0.5 * Render.Height, 0.0),
-            EngineCore::Vector3( 0.5 * Render.Width,  0.5 * Render.Height, 0.0));
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
         Marker.AddComponent(Bounds);
 
         /* Centres the view on Marker's path. WorldBridge uses the first active

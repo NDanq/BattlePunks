@@ -1,6 +1,7 @@
 // MaterialPlatform.glsl -- per-platform helpers for material shaders beyond
-// GDI's Common.glsl. Included first, only when used. Found by
-// cook_material_graphs.py after GDI's Shaders/ (GDI is vendored).
+// Common.glsl. Included first by both material templates (it may declare an
+// #extension). Lives beside it in Engine/Content/Shaders, the include root of
+// every cook.
 //
 // --- Control-flow hints -------------------------------------------------------
 // Branch / For Loop hints, via GL_EXT_control_flow_attributes on SPIR-V (and
