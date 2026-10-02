@@ -11,6 +11,7 @@
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -454,12 +455,43 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     SectionLayout->addLayout(HeaderRow);
 
     // --- Properties ----------------------------------------------------------
-    auto* Content = new QWidget(Section);
-    auto* Form    = new QFormLayout(Content);
-    Form->setContentsMargins(14, 0, 0, 0);
-    Form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    Form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    /* The uncategorised properties' form first, then a titled box per
+     * category (Props.Category), in order of first use. */
+    auto* Content       = new QWidget(Section);
+    auto* ContentLayout = new QVBoxLayout(Content);
+    ContentLayout->setContentsMargins(14, 0, 0, 0);
+    ContentLayout->setSpacing(4);
     SectionLayout->addWidget(Content);
+
+    const auto MakeForm = []()
+    {
+        auto* Made = new QFormLayout();
+        Made->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        Made->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+        return Made;
+    };
+    QFormLayout* Form = MakeForm();
+    Form->setContentsMargins(0, 0, 0, 0);
+    ContentLayout->addLayout(Form);
+
+    std::vector<std::pair<QString, QFormLayout*>> CategoryForms;
+    const auto FormFor = [&](const GameCore::ComponentPropertyEntry& InEntry) -> QFormLayout*
+    {
+        if(!InEntry.HasCategory()) { return Form; }
+
+        const QString Category = QString::fromLatin1(InEntry.Category);
+        for(const auto& Each : CategoryForms)
+        {
+            if(Each.first == Category) { return Each.second; }
+        }
+        auto* Box = new QGroupBox(Category, Content);
+        QFormLayout* BoxForm = MakeForm();
+        BoxForm->setContentsMargins(6, 4, 0, 4);
+        Box->setLayout(BoxForm);
+        ContentLayout->addWidget(Box);
+        CategoryForms.emplace_back(Category, BoxForm);
+        return BoxForm;
+    };
 
     connect(Toggle, &QToolButton::toggled, Content, [Toggle, Content](const bool bInOpen)
     {
@@ -541,7 +573,7 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
             FieldRow->addWidget(InExtra);
         }
 
-        Form->addRow(InLabel, Field);
+        FormFor(Entry)->addRow(InLabel, Field);
         Rows.push_back(Row);
 
         connect(Editor, &PropertyEditor::Written, this, [Ctx, InEntity, InType]()
@@ -590,7 +622,7 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
             });
             HeadingRow->addWidget(Add);
         }
-        Form->addRow(Name, Heading);
+        FormFor(Entry)->addRow(Name, Heading);
 
         for(size_t Element = 0; Element < Shown; ++Element)
         {

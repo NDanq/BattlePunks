@@ -187,6 +187,7 @@ namespace RenderCore
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
     {
         Props.Flag("Visible", &RenderComponent::bVisible);
+        Props.Category("Appearance");
         Props.Field("Mesh",     &RenderComponent::Mesh, GameCore::PF_AssetMesh);
         /* A list: entry i is section i's material; empty ones use the mesh's own. */
         Props.Array("Materials", &RenderComponent::Materials, GameCore::PF_AssetMaterial);

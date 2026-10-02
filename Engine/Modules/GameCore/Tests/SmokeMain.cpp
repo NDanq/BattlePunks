@@ -109,10 +109,17 @@ GAMECORE_DEFINE_COMPONENT(PropertyProbeComponent, "TestPropertyProbe")
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(PropertyProbeComponent)
 {
     Props.Field("Speed", &PropertyProbeComponent::Speed);
+    Props.Category("Motion");
     Props.Flag("Armed",  &PropertyProbeComponent::bArmed, PF_ReadOnly);
+    Props.Category("Text");
     Props.Field("Label", &PropertyProbeComponent::Label);
+    Props.Category(nullptr);
+    Props.Field("Rate",  &PropertyProbeComponent::Speed);
     Props.Field("ThisNameIsFarTooLongToBeStoredInThePropertyTable", &PropertyProbeComponent::Speed);
+    Props.Category("Lists");
     Props.Array("Slots", &PropertyProbeComponent::Slots);
+    Props.Category("ThisCategoryIsFarTooLongToBeStored");
+    Props.Field("Spare", &PropertyProbeComponent::Speed);
 }
 
 static void TestComponentProperties()
@@ -121,9 +128,18 @@ static void TestComponentProperties()
 
     size_t Count = 0;
     const ComponentPropertyEntry* Entries = FindComponentProperties(PropertyProbeComponent::StaticType().ID, Count);
-    Expect(Entries != nullptr && Count == 4, "four properties registered; the over-long name is rejected");
-    if(Entries && Count == 4)
+    Expect(Entries != nullptr && Count == 6, "six properties registered; the over-long name is rejected");
+    if(Entries && Count == 6)
     {
+        Expect(!Entries[0].HasCategory(), "a property before any Category has none");
+        Expect(std::strcmp(Entries[1].Category, "Motion") == 0 && std::strcmp(Entries[2].Category, "Text") == 0,
+               "Category files the properties after it, until the next");
+        Expect(!Entries[3].HasCategory(), "Category(nullptr) ends the category");
+        Expect(std::strcmp(Entries[4].Category, "Lists") == 0 && std::strcmp(Entries[4].GetElement(1).Category, "Lists") == 0,
+               "an array, and each of its elements, keep the category");
+        Expect(!Entries[5].HasCategory() && std::strcmp(Entries[5].Name, "Spare") == 0,
+               "an over-long category is rejected, and the properties after it have none");
+
         Expect(std::strcmp(Entries[0].Name, "Speed") == 0, "registration order is kept");
         Expect(Entries[0].Type == EPropertyType::Float, "a float field is typed Float");
         Expect(Entries[0].Offset == offsetof(PropertyProbeComponent, Speed), "Speed's offset matches offsetof");
@@ -135,7 +151,7 @@ static void TestComponentProperties()
         Expect(Entries[2].Type == EPropertyType::FixedString && Entries[2].Size == 16, "a char[16] is a 16-byte FixedString");
         Expect(!Entries[2].IsArray() && Entries[2].GetSpan() == 16, "a field is not an array; its span is its size");
 
-        const ComponentPropertyEntry& Slots = Entries[3];
+        const ComponentPropertyEntry& Slots = Entries[4];
         Expect(Slots.IsArray() && Slots.ArrayCount == 4 && Slots.Type == EPropertyType::Int32 && Slots.Size == sizeof(int32_t)
                && Slots.Stride == sizeof(int32_t) && Slots.Offset == offsetof(PropertyProbeComponent, Slots),
                "Array registers one entry: element type, size and stride, the count, the first element's offset");
