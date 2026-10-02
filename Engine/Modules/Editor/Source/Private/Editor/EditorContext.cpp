@@ -219,10 +219,13 @@ void EditorContext::RenderFrame(const RenderCore::RenderView& InView, const Engi
         SyncPlayWorld();
     }
 
-    /* No Tick, but edits must still reach the spatial index. */
+    /* No Tick, but edits must still reach the spatial index -- and a
+     * Collision whose Source was just set to the mesh takes its shape now
+     * (no scripts run here, so its events go nowhere). */
     else if(EditedWorld)
     {
         EditedWorld->RefreshSpatialIndex();
+        EditedWorld->UpdateOverlaps();
     }
 
     /* Application::RunFrame's order: fence, collect, present, kick. */

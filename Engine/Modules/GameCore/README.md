@@ -245,6 +245,12 @@ return {
 
 Overlaps are not saved: after a load, pairs that still hold begin again.
 
+In the editor's Details panel, **Source** is a dropdown: *Bounds component*
+or *Render component mesh*. It is a choice property,
+`Props.Choice(name, &T::Field, "A|B|C")`, which any component can use for
+an enum-like `uint8_t` or `int32_t` field. The editor runs the overlap pass
+on the edited scene too, so choosing the mesh shapes the entity right away.
+
 ---
 
 ## Delegates and events

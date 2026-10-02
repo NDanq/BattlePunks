@@ -132,7 +132,7 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(TransformComponent)
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(CollisionComponent)
 {
     Props.Flag("Enabled", &CollisionComponent::bEnabled);
-    Props.Field("Source", &CollisionComponent::Source);   // 0 Bounds, 1 Mesh
+    Props.Choice("Source", &CollisionComponent::Source, "Bounds component|Render component mesh");   // ECollisionSource
     Props.Field("Layer",  &CollisionComponent::Layer);
     Props.Field("Mask",   &CollisionComponent::Mask);
 }

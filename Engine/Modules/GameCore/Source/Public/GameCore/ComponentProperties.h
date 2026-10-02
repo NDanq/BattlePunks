@@ -48,6 +48,7 @@ namespace GameCore
     {
         COMPONENT_PROPERTY_NAME_MAX       = 40,   // including the NUL
         COMPONENT_PROPERTIES_PER_TYPE_MAX = 32,
+        COMPONENT_PROPERTY_CHOICES_MAX    = 96,   // including the NUL
     };
 
     struct ComponentPropertyEntry
@@ -63,6 +64,13 @@ namespace GameCore
          * it as a list; a trailing run of default elements is "not in use". */
         uint16_t      ArrayCount = 0;
         uint32_t      Stride     = 0;
+
+        /* A CHOICE (Props.Choice): an integer field whose values 0, 1, 2...
+         * are these labels, '|'-separated -- a tool shows a dropdown. Empty:
+         * not a choice. */
+        char          Choices[COMPONENT_PROPERTY_CHOICES_MAX] = {};
+
+        bool IsChoice() const   { return Choices[0] != '\0'; }
 
         bool IsReadOnly() const { return (Flags & PF_ReadOnly) != 0; }
         bool IsArray() const    { return ArrayCount != 0; }
@@ -117,6 +125,32 @@ namespace GameCore
         void Field(const char* InName, TField T::* InMember, const uint8_t InFlags = PF_None)
         {
             Add(InName, InMember, ScriptFieldTypeOf<TField>::Value, InFlags);
+        }
+
+        /*
+         * A uint8_t or int32_t field shown as a dropdown: InLabels names its
+         * values 0, 1, 2..., '|'-separated -- an enum to a tool.
+         *
+         *     Props.Choice("Source", &CollisionComponent::Source, "Bounds component|Render component mesh");
+         */
+        template<typename TField>
+        void Choice(const char* InName, TField T::* InMember, const char* InLabels, const uint8_t InFlags = PF_None)
+        {
+            static_assert(std::is_same<TField, uint8_t>::value || std::is_same<TField, int32_t>::value,
+                          "a choice is a uint8_t or int32_t field");
+            const T Probe{};
+            const char* Base   = reinterpret_cast<const char*>(&Probe);
+            const char* Member = reinterpret_cast<const char*>(&(Probe.*InMember));
+            if(ComponentPropertyEntry* Entry = AddAt(InName, uint32_t(Member - Base), uint32_t(sizeof(TField)),
+                                                     ScriptFieldTypeOf<TField>::Value, InFlags))
+            {
+                size_t Length = 0;
+                while(InLabels && InLabels[Length] != '\0' && Length + 1 < COMPONENT_PROPERTY_CHOICES_MAX)
+                {
+                    Entry->Choices[Length] = InLabels[Length];
+                    ++Length;
+                }
+            }
         }
 
         /* A uint8_t 0/1 flag, shown as a checkbox rather than a number. */
