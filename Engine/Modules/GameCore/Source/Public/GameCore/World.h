@@ -15,6 +15,7 @@
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/GameCoreAPI.h"
+#include "Public/GameCore/PrefabInstanceID.h"
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/TickPhase.h"
 #include "Public/GameCore/TransformMath.h"
@@ -25,6 +26,14 @@
  * and are defined out-of-line in World.cpp, where Entity.h is visible; a
  * caller needs Entity.h (or Components.h) to use the result. */
 namespace GameCore { class Entity; }
+
+/* Likewise Prefab.h's, which includes this header. */
+namespace GameCore
+{
+    class PrefabAsset;
+    class PrefabInstance;
+    enum class EPrefabTickMode : uint8_t;
+}
 
 /*
  * The scene: entities, their components, phased systems, the spatial index
@@ -130,6 +139,36 @@ namespace GameCore
          * sees entities with a T. InFn must not create or destroy an entity
          * (that mutates the slot tables being walked); components are fine. */
         void ForEachEntity(void (*InFn)(EntityID InEntity, void* InUserData), void* InUserData) const;
+
+        // === Prefab instances (Prefab.h) ====================================
+
+        /* InPrefab's entities, its root placed at InAt (composed over the
+         * template root's own Transform, which a captured prefab stores as
+         * identity). Parented and with every component in place before
+         * OnInstanceSpawned fires. An unset or used InGuid gets a fresh one.
+         * Invalid (and warned) if InPrefab is empty. Immediate, even in a
+         * tick, like CreateEntity. */
+        PrefabInstance SpawnPrefab(const PrefabAsset& InPrefab, const TransformPose& InAt = TransformPose(),
+                                   const char* InName = nullptr, const EntityGuid& InGuid = EntityGuid());
+        /* Through FindOrLoadPrefab. Invalid if it cannot be loaded. */
+        PrefabInstance SpawnPrefab(const char* InPath, const TransformPose& InAt = TransformPose(),
+                                   const char* InName = nullptr);
+
+        /* Destroys the root -- and so the whole instance. DEFERRED in a tick. */
+        void DestroyPrefabInstance(PrefabInstanceID InInstance);
+
+        bool             IsInstanceAlive(PrefabInstanceID InInstance) const;
+        size_t           GetInstanceCount() const;
+        PrefabInstance   GetInstance(PrefabInstanceID InInstance);
+        PrefabInstanceID FindInstanceByGuid(const EntityGuid& InGuid) const;
+
+        /* Every live instance in slot order. InFn must not spawn or destroy one. */
+        void ForEachInstance(void (*InFn)(PrefabInstanceID InInstance, void* InUserData), void* InUserData) const;
+
+        /* After every entity and component is in place. */
+        TMulticastDelegate<PrefabInstanceID>& OnInstanceSpawned();
+        /* When the root starts to go: every entity is still there. */
+        TMulticastDelegate<PrefabInstanceID>& OnInstanceDestroyed();
 
         // === Components ======================================================
         // Added, fetched and removed through Entity (Entity.h) only -- World
@@ -305,6 +344,20 @@ namespace GameCore
         TransformPose         GetEntityWorldPose(EntityID InEntity) const;
         EngineCore::Matrix4x4 GetEntityWorldMatrix(EntityID InEntity) const;
         bool                  SetEntityWorldPose(EntityID InEntity, const TransformPose& InPose);
+
+        /* Prefab membership -- see Entity.h and Prefab.h's PrefabInstance. */
+        friend class PrefabInstance;
+        PrefabInstanceID   GetEntityInstance(EntityID InEntity) const;
+        uint32_t           GetEntityPrefabLocalId(EntityID InEntity) const;
+        EntityID           GetInstanceRoot(PrefabInstanceID InInstance) const;
+        EntityID           FindInstanceEntity(PrefabInstanceID InInstance, uint32_t InLocalId) const;
+        const PrefabAsset* GetInstancePrefab(PrefabInstanceID InInstance) const;
+        const char*        GetInstancePrefabPath(PrefabInstanceID InInstance) const;
+        EntityGuid         GetInstanceGuid(PrefabInstanceID InInstance) const;
+        const char*        GetInstanceName(PrefabInstanceID InInstance) const;
+        bool               SetInstanceName(PrefabInstanceID InInstance, const char* InName);
+        EPrefabTickMode    GetInstanceTickMode(PrefabInstanceID InInstance) const;
+        bool               SetInstanceTickMode(PrefabInstanceID InInstance, EPrefabTickMode InMode);
 
         struct Impl;
         Impl* P;

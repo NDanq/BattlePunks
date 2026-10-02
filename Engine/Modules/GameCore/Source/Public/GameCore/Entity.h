@@ -112,6 +112,15 @@ namespace GameCore
          * without a Transform. */
         bool SetWorldPose(const TransformPose& InPose) const { return OwningWorld && OwningWorld->SetEntityWorldPose(ID, InPose); }
 
+        // === Prefab =========================================================
+
+        /* The prefab instance this entity was spawned as part of; unset for
+         * a loose entity. */
+        PrefabInstanceID GetInstance() const { return OwningWorld ? OwningWorld->GetEntityInstance(ID) : PrefabInstanceID(); }
+        bool             IsInInstance() const { return GetInstance().IsSet(); }
+        /* Its template's id in that prefab; PREFAB_NO_LOCAL_ID (0) if loose. */
+        uint32_t         GetPrefabLocalId() const { return OwningWorld ? OwningWorld->GetEntityPrefabLocalId(ID) : 0; }
+
         void Destroy() const { if(OwningWorld) { OwningWorld->DestroyEntity(ID); } }
 
         friend bool operator==(const Entity& L, const Entity& R) { return L.OwningWorld == R.OwningWorld && L.ID == R.ID; }

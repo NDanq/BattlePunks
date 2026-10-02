@@ -178,6 +178,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/ComponentSerializers.cpp
         Source/Private/GameCore/WorldSerializer.cpp
         Source/Private/GameCore/WorldPackage.cpp
+        Source/Private/GameCore/Prefab.cpp
         Source/Private/GameCore/ArchiveTextDump.cpp
         Source/Private/GameCore/ComponentScript.cpp
         Source/Private/GameCore/ComponentScripts.cpp

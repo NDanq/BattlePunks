@@ -1339,6 +1339,8 @@ namespace
         Pure("World.GetEntityCount", "Entity Count", "World", SOP_Call, { Out("Count", "integer") }, "World.GetEntityCount()");
         Statement("World.CreateEntity", "Create Entity", "World", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") },
                   "World.CreateEntity({Name})", "spawn new");
+        Statement("World.SpawnPrefab", "Spawn Prefab", "World", SOP_Call, { In("Prefab", "string"), In("Position", "Vector3"), Out("Root", "Entity") },
+                  "World.SpawnPrefab({Prefab}, {Position})", "spawn instantiate create prefab");
         Statement("World.Raycast", "Raycast", "World", SOP_Call,
                   { In("Origin", "Vector3"), In("Direction", "Vector3", "1 0 0"), In("MaxDistance", "number", "1000"),
                     Out("Hit", "Entity"), Out("Distance", "number") },
