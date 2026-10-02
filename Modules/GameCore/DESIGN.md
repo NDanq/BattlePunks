@@ -1243,6 +1243,75 @@ design -- a game loads the cooked binary -- so the parser is compiled only when
 opening a level. `PUGIXML_NO_XPATH` drops the half of it nothing here uses. Qt's
 XML classes were not an option: GameCore is Qt-free.
 
+**The XML archive is shared** (`XmlComponentArchive.h`, private,
+editor-only) between text worlds and text prefabs. The two formats differ
+in exactly one place: a world names an entity by its GUID
+(`<Target Guid="..."/>`), a prefab by its local id (`<Target Entity="3"/>`).
+That is the `XmlEntityRefs` the archive is given; everything else, from
+number formatting to field elements, is the same code.
+
+---
+
+## Prefab.h / Prefab.cpp
+
+**Components are held as blobs, not as bytes or XML.** Each template
+component is what its serializer writes through `BinaryComponentArchive`:
+a small archive with one `DATA` chunk, entity references as local ids.
+The alternatives were raw component bytes (wrong: `Vector3`'s layout depends
+on `WITH_SIMD`, and the bytes hold `Owner`) or a parsed XML tree (editor-only,
+and slow to spawn from). Blobs are the format the cooked file already
+needs. Spawning loads them with the same serializers and versioning rules
+as a save, through a remapper from local id to the new entity. A type
+this build lacks keeps its blob, so a cooked prefab round-trips. The text
+form converts at the edges: an `EntityID` field holds a stand-in,
+`EntityID(localId, 0)`, between XML and blob. That stand-in never meets a
+World.
+
+**Local ids, not names or indices.** A template's id is assigned once and
+never reused (`NextId` in the file), so a later instance override or a
+saved game can say "template 3" and still mean it after the prefab gains,
+loses or reorders entities. Capture keeps the ids of entities spawned from
+an instance of the same prefab. That is the editor's loop: spawn, edit,
+capture back.
+
+**Tree order is an invariant.** Root first, every parent before its
+children. Spawning can then create, link and place in single passes, and a
+saved file diffs in a stable order. Loaders restore the order rather than
+trust it (`NormalizeTree`), and refuse what cannot be a tree.
+
+**The root's Transform is placement.** Capture stores it as identity;
+`SpawnPrefab` composes the placement over whatever the template holds, so
+a hand-written prefab with an offset root still works. It skips the
+composition when the placement is identity, because Euler angles through
+a matrix and back are not bit-exact.
+
+**`PrefabAsset` shares its data** through an intrusive count, with the
+first change cloning (copy-on-write). An intrusive count rather than a
+`std::shared_ptr` member: an exported class with a standard-library
+member is the cross-image layout hazard `GameCoreAPI.h` describes. The
+data is defined only inside `GameCore.dll` (`PrefabInternal.h`), so it is
+never laid out anywhere else. Each instance holds a copy, which costs one
+count, so `ReloadPrefab` can replace the registry's entry while live
+instances keep what they were spawned from. Reload replaces the entry in
+place, so the registry's pointers stay valid. Game thread only, so the
+count is a plain `int`.
+
+**Membership lives on the entity, not in a list.** An entity records its
+instance slot and local id. An instance records only its root. "The
+instance's entities" are the root's subtree; `FindEntity` walks it, which
+for a prefab-sized tree is cheaper than keeping a list in sync with
+destroys. The rule that keeps this true: `SetParent` refuses to move a
+non-root member out of its instance. Destroying a member needs no
+bookkeeping; destroying the root frees the instance, after its subtree is
+gone and announced first, while it is whole.
+
+**Entity GUIDs are derived.** `DerivePrefabEntityGuid` mixes the
+instance's GUID with the local id (SplitMix64's finaliser on each half).
+The same instance GUID spawns the same entity GUIDs in any World, which is
+what phase 4's level format and saved games need. It also means two
+spawns with the same instance GUID collide; the World gives the second a
+fresh instance GUID, warned, exactly as `CreateEntity` does.
+
 ---
 
 ## ComponentScript.h / ComponentScript.cpp / ComponentScripts.cpp

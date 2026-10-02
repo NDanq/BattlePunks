@@ -1,9 +1,9 @@
 # Prefabs
 
 Design for prefabs: the placeable unit of a level, the owner of gameplay
-script, and the asset the Prefab Editor authors. Status: **phase 1 (entity
-hierarchy) is implemented**; the rest is the plan. The open decisions were
-settled as recommended (see the end).
+script, and the asset the Prefab Editor authors. Status: **phases 1 (entity
+hierarchy) and 2 (prefab asset and instances) are implemented**; the rest is
+the plan. The open decisions were settled as recommended (see the end).
 
 ---
 
@@ -156,6 +156,34 @@ class PrefabInstance                       // handle, like Entity: {World*, Pref
 gets an `Instance` member pointing back. Prefab assets are loaded once and
 cached by path in a `PrefabRegistry` (in `GameCore.dll`, per the
 "GameCore.dll allocates" rule).
+
+### As built (phase 2)
+
+GameCore's README **Prefabs** section has the usage; DESIGN.md's `Prefab.h`
+section has the reasoning. Differences from the sketch above:
+
+- `SpawnPrefab` returns the `PrefabInstance` handle, takes a
+  `TransformPose`, and has a by-path overload through the registry.
+- Tick mode is `EPrefabTickMode` (Tick, EventsOnly, Off). It is stored on
+  the asset and the instance; `SetPhaseEnabled` / `IsPhaseEnabled` come with
+  phase 3, which acts on them.
+- Components are stored as serializer blobs. The text form names
+  references as `<Field Entity="<local id>"/>`.
+- The root's Transform is captured as identity: placement is the
+  instance's.
+- Membership is on each entity (`GetInstance`, `GetPrefabLocalId`). A
+  non-root member cannot be reparented out of its instance (the phase 1
+  "Still to do").
+- Lua `World.SpawnPrefab(path[, x, y, z])` and a **Spawn Prefab** graph node.
+
+Known gaps, owned by later phases:
+
+- A saved world (text or binary) stores an instance's entities as plain
+  entities and forgets the instance (phase 4).
+- The editor cannot place or show instances yet. Its undo restores a
+  deleted instance member as a loose entity (phase 8).
+- Nothing cooks `.nmprefab` files automatically; `CookPrefabFile` exists
+  for the editor's cook step (phase 7/8).
 
 ---
 
@@ -375,7 +403,7 @@ Each phase lands on its own and keeps Sandbox playable.
 | # | Phase | Main files | Depends on |
 |---|---|---|---|
 | 1 | Entity hierarchy + world transforms -- **done** | `World.h/.cpp`, `Entity.h`, `WorldBridge.cpp`, `WorldPackage.cpp`, `WorldSerializer.cpp`, editor picking/gizmo/Outliner | -- |
-| 2 | Prefab asset, registry, `SpawnPrefab`, instance handles, text + cooked formats | new `Prefab.h/.cpp`, `PrefabPackage.cpp` | 1 |
+| 2 | Prefab asset, registry, `SpawnPrefab`, instance handles, text + cooked formats -- **done** | new `Prefab.h/.cpp`, `PrefabInternal.h`, `XmlComponentArchive.h` | 1 |
 | 3 | Instance scripts: per-phase functions, buckets, tick modes, overlap routing; graph nodes | `ScriptSystem.cpp`, `Collision.cpp`, `ScriptBindings.cpp`, NodeGraph `ScriptSchema.cpp` | 2 |
 | 4 | Level format 2: instances, derived GUIDs, overrides | `WorldPackage.cpp`, `WorldSerializer.cpp` | 2 |
 | 5 | Native prefabs + `PrefabBuilder` | new `NativePrefab.h/.cpp`, `GameModule.h` | 2, 3 |

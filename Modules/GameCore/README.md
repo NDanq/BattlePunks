@@ -61,6 +61,8 @@ Engine/Modules/GameCore/
 |   |   |-- ComponentSerializer.h   ComponentArchive (named fields), the serializer macro and registry
 |   |   |-- WorldSerializer.h       SerializeWorld: the binary world (cooked data, save games)
 |   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
+|   |   |-- PrefabInstanceID.h      PrefabInstanceID {Index, Generation}
+|   |   |-- Prefab.h                PrefabAsset, CapturePrefab, .nmprefab files, the registry, the PrefabInstance handle
 |   |   |-- ScriptLibrary.h         script libraries: a game's functions, variables and typed events
 |   |   |-- ScriptStruct.h          script field types and script structs: a game's own value types
 |   |   `-- ScriptEngine.h          lua_State lifetime, RunFile/RunString, BindWorld; NO lua.h
@@ -81,7 +83,10 @@ Engine/Modules/GameCore/
 |       |-- ScriptLibrary.cpp       the library registry, one global table per library, its dispatcher
 |       |-- Collision.cpp           CollisionComponent overlaps: the pass, pairs, events, queries
 |       |-- ScriptStruct.cpp        the script struct registry: ids by name, fields while registered
-|       |-- WorldPackage.cpp        the XML ComponentArchive, package save (atomic), two-pass load, cook
+|       |-- WorldPackage.cpp        package save (atomic), two-pass load, cook
+|       |-- XmlComponentArchive.h   the editor XML: files, exact numbers, the text ComponentArchive (worlds and prefabs)
+|       |-- PrefabInternal.h        PrefabAsset::Data and the component-blob helpers, for Prefab.cpp and World.cpp
+|       |-- Prefab.cpp              the asset, blobs, capture, both .nmprefab formats, the registry
 |       `-- ScriptSystem.cpp        the World's script driver: file -> class cache, instantiation,
 |                                   the per-phase tick (ahead of every system), release/OnDestroy
 `-- Tests/
@@ -223,6 +228,81 @@ Entity, `IsValid()` false if none), `e:GetChildCount()`, `e:GetChild(i)`
 `SetWorldPosition`, `GetWorldRotation` / `SetWorldRotation` and
 `GetWorldScale`. Script graphs have **Get Parent**, **Set Parent**, **Get
 Child Count** and **Get Child**.
+
+---
+
+## Prefabs
+
+A prefab (`Prefab.h`) is a tree of entity templates, each with a name, a
+parent and components. It also names the script and tick mode that will
+drive its instances (PREFABS.md; scripts arrive in phase 3). Spawning one
+makes a **prefab instance**: ordinary entities that remember which instance
+and which template they came from.
+
+```cpp
+const GameCore::PrefabAsset* Turret = GameCore::FindOrLoadPrefab("Prefabs/Turret.nmprefab");   // loaded once
+
+GameCore::TransformPose At;
+At.Position = EngineCore::Vector3(100.0, 0.0, 0.0);
+GameCore::PrefabInstance Instance = World.SpawnPrefab(*Turret, At);   // or World.SpawnPrefab("Prefabs/Turret.nmprefab", At)
+
+GameCore::Entity Root   = Instance.GetRoot();             // its Transform is the placement
+GameCore::Entity Barrel = Instance.FindEntity("Barrel");  // by TEMPLATE name, whatever it is called now
+Instance.Destroy();                                       // the root and everything under it
+```
+
+- **Making one.** `CapturePrefab(World, Root, Asset)` takes `Root`'s
+  subtree as it is in a World. The root's Transform is stored as identity,
+  because where an instance stands is its placement, not part of the
+  prefab. Capturing an instance of the same prefab keeps each entity's
+  template id. New entities get new ids, and ids are never reused.
+- **References between its entities survive.** A component's `EntityID`
+  field that points inside the prefab points at the matching entity of each
+  instance. One that points outside is stored unset, with a warning.
+- **Membership.** `Entity::GetInstance()` and `GetPrefabLocalId()`. An
+  instance's entities stay inside it: `SetParent` refuses to move one under
+  a loose entity or detach it. Only the root may be attached elsewhere,
+  for example a weapon on a hand.
+- **Lifetime.** Destroying the root destroys the instance, deferred inside
+  a tick like any destroy. `OnInstanceDestroyed` fires first, while every
+  entity is still there. `OnInstanceSpawned` fires once everything is in
+  place. Destroying a single member just removes it.
+- **GUIDs.** An instance has a GUID; each of its entities' GUIDs is derived
+  from it and the template id (`DerivePrefabEntityGuid`). The same instance
+  therefore spawns the same entity GUIDs every time.
+- **Sharing.** `PrefabAsset` copies share their data until one is changed.
+  An instance keeps the version it was spawned from, even across
+  `ReloadPrefab`.
+- **Not saved with a world yet.** A saved world stores an instance's
+  entities as plain entities and forgets the instance. Instances in level
+  files come in phase 4.
+
+**Files.** `.nmprefab`, text or cooked, told apart like worlds. `LoadPrefabFile` reads
+either; `SavePrefabFile` and `CookPrefabFile` are editor-only.
+
+```xml
+<Prefab Format="1" Name="Turret" NextId="4">
+  <Script Path="Scripts/Turret.lua" />
+  <Tick Mode="Tick" />
+  <Entity Id="1" Name="Root">
+    <Component Type="TestLink" Version="1">
+      <Target Entity="3" />            <!-- a reference: another entity's Id -->
+    </Component>
+  </Entity>
+  <Entity Id="2" Name="Barrel" Parent="1"> ... </Entity>
+  <Entity Id="3" Name="Muzzle" Parent="2"> ... </Entity>
+</Prefab>
+```
+
+Components use the same serializers and the same field elements as
+`.nmentity` files. Output is deterministic, and an unchanged file is not
+rewritten. A hand-edited file with a child listed before its parent is put
+back in tree order; one with two roots, a missing parent or a cycle is
+refused.
+
+Lua: `World.SpawnPrefab(path[, x, y, z])` returns the root Entity;
+`IsValid()` is false if the prefab could not be loaded. Script graphs have
+**Spawn Prefab**.
 
 ---
 

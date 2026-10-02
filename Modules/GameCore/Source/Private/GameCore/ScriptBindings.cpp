@@ -7,6 +7,7 @@
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EventBus.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/TickPhase.h"
 #include "Public/GameCore/World.h"
 
@@ -295,6 +296,21 @@ namespace GameCore
             return 1;
         }
 
+        /* World.SpawnPrefab(path[, x, y, z]) -- the instance's root Entity;
+         * IsValid() false if the prefab could not be loaded. */
+        int World_SpawnPrefab(lua_State* InState)
+        {
+            World* W = GetBoundWorld(InState);
+            if(!W) { return luaL_error(InState, "no World is bound"); }
+            const char* Path = luaL_checkstring(InState, 1);
+            TransformPose At;
+            At.Position = EngineCore::Vector3(luaL_optnumber(InState, 2, 0.0), luaL_optnumber(InState, 3, 0.0),
+                                              luaL_optnumber(InState, 4, 0.0));
+            const PrefabInstance Spawned = W->SpawnPrefab(Path, At);
+            LuaPushEntity(InState, Spawned.GetRoot().GetID());
+            return 1;
+        }
+
         int World_DestroyEntity(lua_State* InState)
         {
             World* W = GetBoundWorld(InState);
@@ -438,6 +454,7 @@ namespace GameCore
 
         const luaL_Reg GWorldFunctions[] = {
             { "CreateEntity",     World_CreateEntity },
+            { "SpawnPrefab",      World_SpawnPrefab },
             { "DestroyEntity",    World_DestroyEntity },
             { "FindEntity",       World_FindEntity },
             { "GetEntityCount",   World_GetEntityCount },

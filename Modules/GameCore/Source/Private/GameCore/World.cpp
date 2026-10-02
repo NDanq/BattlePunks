@@ -9,9 +9,12 @@
 #include <vector>
 
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/GameCoreLog.h"
+#include "Public/GameCore/Prefab.h"
+#include "Private/GameCore/PrefabInternal.h"
 
 /*
  * World's storage: entity free-list and generations, per-entity members,
@@ -55,6 +58,23 @@ namespace GameCore
             uint32_t NextSibling = NO_SLOT;
             uint32_t PrevSibling = NO_SLOT;
             uint32_t ChildCount  = 0;
+
+            /* The prefab instance it was spawned as part of, and its
+             * template's id there; NO_SLOT / 0 for a loose entity. */
+            uint32_t InstanceSlot = NO_SLOT;
+            uint32_t LocalId      = PREFAB_NO_LOCAL_ID;
+        };
+
+        /* A prefab instance. Its entities are the root's subtree; each
+         * member records the instance, so nothing here lists them. */
+        struct InstanceMembers
+        {
+            EntityGuid      Guid;
+            std::string     Name;
+            std::string     PrefabPath;   // "" for an in-memory asset
+            PrefabAsset     Prefab;       // shares the spawned version's data
+            uint32_t        RootSlot = NO_SLOT;
+            EPrefabTickMode TickMode = EPrefabTickMode::Tick;
         };
 
         struct PendingScriptChange
@@ -85,6 +105,20 @@ namespace GameCore
 
         ScriptDriver Driver;
         bool         bHasDriver = false;
+
+        // --- prefab instances -------------------------------------------------
+        // The entity tables' shape again: generations, a free list, and a
+        // deque so GetInstanceName() pointers survive growth.
+
+        std::vector<uint32_t>       InstanceGenerations;
+        std::vector<bool>           InstanceAlive;
+        std::vector<uint32_t>       FreeInstances;
+        std::deque<InstanceMembers> Instances;
+        size_t                      LiveInstanceCount = 0;
+        std::unordered_map<EntityGuid, uint32_t, EntityGuidHash> InstanceGuidToSlot;
+
+        TMulticastDelegate<PrefabInstanceID> InstanceSpawned;
+        TMulticastDelegate<PrefabInstanceID> InstanceDestroyed;
 
         // --- components --------------------------------------------------------
 
@@ -133,7 +167,8 @@ namespace GameCore
              * detect and warn -- see DESIGN.md. */
             if(EntityCreated.GetCount() > 0 || EntityDestroyed.GetCount() > 0
                || ComponentAdded.GetCount() > 0 || ComponentRemoved.GetCount() > 0
-               || OverlapBegin.GetCount() > 0 || OverlapEnd.GetCount() > 0)
+               || OverlapBegin.GetCount() > 0 || OverlapEnd.GetCount() > 0
+               || InstanceSpawned.GetCount() > 0 || InstanceDestroyed.GetCount() > 0)
             {
                 GAMECORE_LOG_WARN("World destroyed with bindings still on one of its built-in "
                                    "delegates. If any point into a hot-reloadable module, "
@@ -239,6 +274,70 @@ namespace GameCore
             return InSlot == NO_SLOT ? EntityID() : EntityID(InSlot, Generations[InSlot]);
         }
 
+        bool IsInstanceAliveIndex(const PrefabInstanceID InInstance) const
+        {
+            return InInstance.IsSet() && InInstance.Index < InstanceAlive.size()
+                && InstanceAlive[InInstance.Index] && InstanceGenerations[InInstance.Index] == InInstance.Generation;
+        }
+
+        PrefabInstanceID InstanceSlotID(const uint32_t InSlot) const
+        {
+            return InSlot == NO_SLOT ? PrefabInstanceID() : PrefabInstanceID(InSlot, InstanceGenerations[InSlot]);
+        }
+
+        /* InSlot is its instance's root. */
+        bool IsInstanceRoot(const uint32_t InSlot) const
+        {
+            const uint32_t Instance = Members[InSlot].InstanceSlot;
+            return Instance != NO_SLOT && Instances[Instance].RootSlot == InSlot;
+        }
+
+        /* An unset or used InGuid gets a fresh one (warned if used). */
+        uint32_t AllocateInstanceSlot(EntityGuid InGuid)
+        {
+            if(InGuid.IsSet() && InstanceGuidToSlot.count(InGuid) != 0)
+            {
+                char Text[EntityGuid::STRING_BUFFER];
+                InGuid.ToString(Text);
+                GAMECORE_LOG_WARN(std::string("SpawnPrefab: instance GUID ") + Text
+                                  + " is already in use in this World; giving the new instance a fresh one")
+                InGuid = EntityGuid();
+            }
+            while(!InGuid.IsSet() || InstanceGuidToSlot.count(InGuid) != 0)
+            {
+                InGuid = EntityGuid::Generate();
+            }
+
+            uint32_t Index;
+            if(!FreeInstances.empty())
+            {
+                Index = FreeInstances.back();
+                FreeInstances.pop_back();
+            }
+            else
+            {
+                Index = uint32_t(InstanceGenerations.size());
+                InstanceGenerations.push_back(0);
+                InstanceAlive.push_back(false);
+                Instances.emplace_back();
+            }
+            InstanceAlive[Index] = true;
+            ++LiveInstanceCount;
+            Instances[Index].Guid = InGuid;
+            InstanceGuidToSlot[InGuid] = Index;
+            return Index;
+        }
+
+        void FreeInstanceSlot(const uint32_t InSlot)
+        {
+            InstanceGuidToSlot.erase(Instances[InSlot].Guid);
+            Instances[InSlot] = InstanceMembers();
+            InstanceAlive[InSlot] = false;
+            ++InstanceGenerations[InSlot];
+            FreeInstances.push_back(InSlot);
+            --LiveInstanceCount;
+        }
+
         /* Takes InSlot out of its parent's child list; it becomes a root. */
         void Unlink(const uint32_t InSlot)
         {
@@ -302,6 +401,15 @@ namespace GameCore
                 return;
             }
 
+            /* An instance goes with its root, and is announced first, while
+             * every one of its entities is still whole. */
+            const uint32_t RootOfInstance = IsInstanceRoot(InEntity.Index) ? Members[InEntity.Index].InstanceSlot : NO_SLOT;
+            if(RootOfInstance != NO_SLOT)
+            {
+                InstanceDestroyed.Broadcast(InstanceSlotID(RootOfInstance));
+                if(!IsAliveIndex(InEntity)) { return; }   // a subscriber destroyed it
+            }
+
             /* BEFORE any component is removed -- a subscriber can still read
              * what the entity had. */
             EntityDestroyed.Broadcast(InEntity);
@@ -335,6 +443,11 @@ namespace GameCore
                     ComponentRemoved.Broadcast(InEntity, Type);
                     Pools[Type]->Remove(InEntity);
                 }
+            }
+
+            if(IsInstanceRoot(InEntity.Index))
+            {
+                FreeInstanceSlot(Members[InEntity.Index].InstanceSlot);
             }
 
             GuidToSlot.erase(Members[InEntity.Index].Guid);
@@ -525,6 +638,17 @@ namespace GameCore
         const uint32_t NewParent = InParent.IsSet() ? InParent.Index : NO_SLOT;
         if(P->Members[InEntity.Index].Parent == NewParent) { return true; }
 
+        /* An instance's entities stay inside it: only the root may move to
+         * another parent (an instance attached to something). */
+        const uint32_t Instance = P->Members[InEntity.Index].InstanceSlot;
+        if(Instance != NO_SLOT && !P->IsInstanceRoot(InEntity.Index)
+           && (NewParent == NO_SLOT || P->Members[NewParent].InstanceSlot != Instance))
+        {
+            GAMECORE_LOG_WARN(std::string("SetParent: '") + GetEntityName(InEntity) + "' is part of prefab instance '"
+                              + P->Instances[Instance].Name + "' and must stay under one of its entities; ignoring")
+            return false;
+        }
+
         /* No cycles: InParent may not be InEntity or below it. */
         for(uint32_t Slot = NewParent; Slot != NO_SLOT; Slot = P->Members[Slot].Parent)
         {
@@ -614,6 +738,249 @@ namespace GameCore
         }
         /* Near the current local angles, so a round trip does not flip them. */
         Transform->SetPose(TransformMath::Relative(GetEntityWorldPose(Parent), InPose, Transform->Rotation));
+        return true;
+    }
+
+    // === Prefab instances ========================================================
+
+    PrefabInstance World::SpawnPrefab(const PrefabAsset& InPrefab, const TransformPose& InAt, const char* InName,
+                                      const EntityGuid& InGuid)
+    {
+        const PrefabAsset::Data& Data = PrefabAccess::Read(InPrefab);
+        if(Data.Entities.empty())
+        {
+            GAMECORE_LOG_WARN(std::string("SpawnPrefab: '") + InPrefab.GetName() + "' has no entities; nothing spawned")
+            return PrefabInstance();
+        }
+
+        const uint32_t Slot = P->AllocateInstanceSlot(InGuid);
+        const PrefabInstanceID ID = P->InstanceSlotID(Slot);
+        {
+            InstanceMembers& Instance = P->Instances[Slot];
+            Instance.Name     = InName ? InName : Data.Name;
+            Instance.Prefab   = InPrefab;
+            Instance.TickMode = Data.TickMode;
+        }
+        const EntityGuid InstanceGuid = P->Instances[Slot].Guid;
+
+        /* Every entity first, so references between them resolve; each is a
+         * member before OnEntityCreated fires. */
+        LocalIdMap ToLive;
+        std::vector<EntityID> Spawned;
+        Spawned.reserve(Data.Entities.size());
+        for(const PrefabEntityData& Template : Data.Entities)
+        {
+            const EntityID New = P->AllocateEntitySlot(Template.Name.c_str(),
+                                                       DerivePrefabEntityGuid(InstanceGuid, Template.LocalId));
+            P->Members[New.Index].InstanceSlot = Slot;
+            P->Members[New.Index].LocalId      = Template.LocalId;
+            ToLive[Template.LocalId] = New;
+            Spawned.push_back(New);
+        }
+        P->Instances[Slot].RootSlot = Spawned.front().Index;
+        for(const EntityID New : Spawned)
+        {
+            P->EntityCreated.Broadcast(New);
+        }
+
+        /* Then components, from their defaults through the serializer. */
+        std::vector<std::string> Warned;
+        for(size_t Index = 0; Index < Data.Entities.size(); ++Index)
+        {
+            for(const PrefabComponentData& Component : Data.Entities[Index].Components)
+            {
+                const ComponentTypeInfo* Info = FindComponentType(Component.TypeName.c_str());
+                std::vector<uint8_t> Defaults;
+                if(!Info || !ComponentDefaults(Info->ID, Defaults))
+                {
+                    if(std::find(Warned.begin(), Warned.end(), Component.TypeName) == Warned.end())
+                    {
+                        Warned.push_back(Component.TypeName);
+                        GAMECORE_LOG_WARN("SpawnPrefab: '" + Data.Name + "' has '" + Component.TypeName + "' components, which "
+                                          + (Info ? "have no serializer" : "this build does not register") + "; skipping them")
+                    }
+                    continue;
+                }
+                void* Added = AddComponentRaw(Spawned[Index], Info->ID, Defaults.data());
+                if(Added && !ReadComponentBlob(Info->ID, Component.Blob, ToLive, Added))
+                {
+                    GAMECORE_LOG_WARN("SpawnPrefab: '" + Data.Name + "': a '" + Component.TypeName
+                                      + "' component could not be read; it keeps its defaults")
+                }
+            }
+        }
+
+        /* The tree; local Transforms are already relative to these parents. */
+        for(size_t Index = 1; Index < Data.Entities.size(); ++Index)
+        {
+            const auto Parent = ToLive.find(Data.Entities[Index].ParentId);
+            if(Parent != ToLive.end())
+            {
+                SetEntityParent(Spawned[Index], Parent->second, false);
+            }
+        }
+
+        /* Placement: InAt over the template root's own Transform. A root
+         * without one gets one, unless InAt would leave it where it is. */
+        const EntityID Root = Spawned.front();
+        const bool bMoves = InAt.Position.GetX() != 0.0 || InAt.Position.GetY() != 0.0 || InAt.Position.GetZ() != 0.0
+                         || InAt.Rotation.GetX() != 0.0 || InAt.Rotation.GetY() != 0.0 || InAt.Rotation.GetZ() != 0.0
+                         || InAt.Scale.GetX() != 1.0 || InAt.Scale.GetY() != 1.0 || InAt.Scale.GetZ() != 1.0;
+        if(auto* Transform = static_cast<TransformComponent*>(GetComponentRaw(Root, TransformComponent::StaticType().ID)))
+        {
+            /* Not composed when it changes nothing: Euler angles through a
+             * matrix and back are not bit-exact. */
+            if(bMoves) { Transform->SetPose(TransformMath::Compose(InAt, Transform->GetPose())); }
+        }
+        else if(bMoves && IsAlive(Root))
+        {
+            TransformComponent Placed;
+            Placed.SetPose(InAt);
+            AddComponentRaw(Root, TransformComponent::StaticType().ID, &Placed);
+        }
+        RefreshEntityBounds(Root);
+
+        if(P->IsInstanceAliveIndex(ID))
+        {
+            P->InstanceSpawned.Broadcast(ID);
+        }
+        return PrefabInstance(this, ID);
+    }
+
+    PrefabInstance World::SpawnPrefab(const char* InPath, const TransformPose& InAt, const char* InName)
+    {
+        const PrefabAsset* Prefab = FindOrLoadPrefab(InPath);
+        if(!Prefab)
+        {
+            GAMECORE_LOG_WARN(std::string("SpawnPrefab: could not load '") + (InPath ? InPath : "") + "'")
+            return PrefabInstance();
+        }
+        const PrefabInstance Spawned = SpawnPrefab(*Prefab, InAt, InName);
+        if(P->IsInstanceAliveIndex(Spawned.GetID()))
+        {
+            P->Instances[Spawned.GetID().Index].PrefabPath = InPath;
+        }
+        return Spawned;
+    }
+
+    void World::DestroyPrefabInstance(const PrefabInstanceID InInstance)
+    {
+        if(P->IsInstanceAliveIndex(InInstance))
+        {
+            DestroyEntity(P->SlotID(P->Instances[InInstance.Index].RootSlot));
+        }
+    }
+
+    bool World::IsInstanceAlive(const PrefabInstanceID InInstance) const
+    {
+        return P->IsInstanceAliveIndex(InInstance);
+    }
+
+    size_t World::GetInstanceCount() const
+    {
+        return P->LiveInstanceCount;
+    }
+
+    PrefabInstance World::GetInstance(const PrefabInstanceID InInstance)
+    {
+        return PrefabInstance(this, InInstance);
+    }
+
+    PrefabInstanceID World::FindInstanceByGuid(const EntityGuid& InGuid) const
+    {
+        const auto Found = P->InstanceGuidToSlot.find(InGuid);
+        return Found == P->InstanceGuidToSlot.end() ? PrefabInstanceID() : P->InstanceSlotID(Found->second);
+    }
+
+    void World::ForEachInstance(void (*InFn)(PrefabInstanceID InInstance, void* InUserData), void* InUserData) const
+    {
+        if(!InFn) { return; }
+        for(uint32_t Index = 0; Index < P->InstanceAlive.size(); ++Index)
+        {
+            if(P->InstanceAlive[Index])
+            {
+                InFn(P->InstanceSlotID(Index), InUserData);
+            }
+        }
+    }
+
+    TMulticastDelegate<PrefabInstanceID>& World::OnInstanceSpawned()   { return P->InstanceSpawned; }
+    TMulticastDelegate<PrefabInstanceID>& World::OnInstanceDestroyed() { return P->InstanceDestroyed; }
+
+    PrefabInstanceID World::GetEntityInstance(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->InstanceSlotID(P->Members[InEntity.Index].InstanceSlot) : PrefabInstanceID();
+    }
+
+    uint32_t World::GetEntityPrefabLocalId(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].LocalId : PREFAB_NO_LOCAL_ID;
+    }
+
+    EntityID World::GetInstanceRoot(const PrefabInstanceID InInstance) const
+    {
+        return P->IsInstanceAliveIndex(InInstance) ? P->SlotID(P->Instances[InInstance.Index].RootSlot) : EntityID();
+    }
+
+    EntityID World::FindInstanceEntity(const PrefabInstanceID InInstance, const uint32_t InLocalId) const
+    {
+        if(!P->IsInstanceAliveIndex(InInstance) || InLocalId == PREFAB_NO_LOCAL_ID) { return EntityID(); }
+
+        /* Its members are the root's subtree (loose children may sit among them). */
+        std::vector<uint32_t> Stack{ P->Instances[InInstance.Index].RootSlot };
+        while(!Stack.empty())
+        {
+            const uint32_t Slot = Stack.back();
+            Stack.pop_back();
+            const EntityMembers& Member = P->Members[Slot];
+            if(Member.InstanceSlot == InInstance.Index && Member.LocalId == InLocalId)
+            {
+                return P->SlotID(Slot);
+            }
+            for(uint32_t Child = Member.FirstChild; Child != NO_SLOT; Child = P->Members[Child].NextSibling)
+            {
+                Stack.push_back(Child);
+            }
+        }
+        return EntityID();
+    }
+
+    const PrefabAsset* World::GetInstancePrefab(const PrefabInstanceID InInstance) const
+    {
+        return P->IsInstanceAliveIndex(InInstance) ? &P->Instances[InInstance.Index].Prefab : nullptr;
+    }
+
+    const char* World::GetInstancePrefabPath(const PrefabInstanceID InInstance) const
+    {
+        return P->IsInstanceAliveIndex(InInstance) ? P->Instances[InInstance.Index].PrefabPath.c_str() : "";
+    }
+
+    EntityGuid World::GetInstanceGuid(const PrefabInstanceID InInstance) const
+    {
+        return P->IsInstanceAliveIndex(InInstance) ? P->Instances[InInstance.Index].Guid : EntityGuid();
+    }
+
+    const char* World::GetInstanceName(const PrefabInstanceID InInstance) const
+    {
+        return P->IsInstanceAliveIndex(InInstance) ? P->Instances[InInstance.Index].Name.c_str() : "";
+    }
+
+    bool World::SetInstanceName(const PrefabInstanceID InInstance, const char* InName)
+    {
+        if(!P->IsInstanceAliveIndex(InInstance)) { return false; }
+        P->Instances[InInstance.Index].Name = InName ? InName : "";
+        return true;
+    }
+
+    EPrefabTickMode World::GetInstanceTickMode(const PrefabInstanceID InInstance) const
+    {
+        return P->IsInstanceAliveIndex(InInstance) ? P->Instances[InInstance.Index].TickMode : EPrefabTickMode::Tick;
+    }
+
+    bool World::SetInstanceTickMode(const PrefabInstanceID InInstance, const EPrefabTickMode InMode)
+    {
+        if(!P->IsInstanceAliveIndex(InInstance)) { return false; }
+        P->Instances[InInstance.Index].TickMode = InMode;
         return true;
     }
 
