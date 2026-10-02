@@ -2,6 +2,7 @@
 #include "Public/Core/CorePlatform.h"
 
 #include <atomic>
+#include <cstring>
 
 #include "Public/GDI/GDILog.h"
 

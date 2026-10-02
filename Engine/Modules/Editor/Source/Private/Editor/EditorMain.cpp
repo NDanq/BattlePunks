@@ -35,6 +35,20 @@ NIMBLE_CONFIG_INT(GEditorRHI, "Editor", "RHI", int(RenderCore::ERenderBackend::V
 
 int main(int argc, char* argv[])
 {
+#if defined(__linux__)
+    /*
+     * GDI on Linux presents into X11 windows only: GDIQtWindow passes winId()
+     * straight through as an X11 Window id. Under Qt's wayland platform winId()
+     * is not one, and the Vulkan surface comes back with no present support.
+     * So pin Qt to xcb (XWayland on a Wayland desktop) before QApplication
+     * picks a platform -- unless the user chose one explicitly.
+     */
+    if(!qEnvironmentVariableIsSet("QT_QPA_PLATFORM"))
+    {
+        qputenv("QT_QPA_PLATFORM", "xcb");
+    }
+#endif
+
     QApplication App(argc, argv);
     QApplication::setApplicationName(QStringLiteral("Nimble Editor"));
     QApplication::setOrganizationName(QStringLiteral("NimbleEngine"));

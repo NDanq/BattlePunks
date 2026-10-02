@@ -42,7 +42,7 @@ class GDIRenderTarget;
     {                                                                                   \
         if(GDynamicGDI)                                                                 \
         {                                                                               \
-            ReturnStatement GDynamicGDI->##Name ArgsLit;                                \
+            ReturnStatement GDynamicGDI->Name ArgsLit;                                  \
         }                                                                               \
     }
 #endif
@@ -70,7 +70,7 @@ class GDIRenderTarget;
     {                                                                                   \
         if(GDynamicGDI)                                                                 \
         {                                                                               \
-            ReturnStatement GDynamicGDI->##Name ArgsLit;                                \
+            ReturnStatement GDynamicGDI->Name ArgsLit;                                  \
         }                                                                               \
         else                                                                            \
         {                                                                               \

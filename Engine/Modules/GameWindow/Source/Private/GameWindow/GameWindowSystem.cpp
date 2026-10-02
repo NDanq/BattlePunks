@@ -265,6 +265,8 @@ bool GameWindowSystem::Initialize()
         return true;
     }
 
+    GameWindowPlatformPreInit();
+
     if(!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS))
     {
         GW_LOG_ERROR(std::string("SDL_Init failed: ") + SDL_GetError());

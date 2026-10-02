@@ -273,6 +273,12 @@ endif()
 # port adds one file here and changes nothing else.
 if(WIN32)
     set( GDI_PLATFORM_SOURCES Source/Private/GDI/Platform/GDIPlatformWindows.cpp )
+elseif(UNIX AND NOT APPLE)
+    # X11 only -- WindowHandle::Native is an X11 Window id. GDIPlatformLinux.cpp
+    # opens its own Display connection, so X11 is linked here and not borrowed
+    # from SDL.
+    find_package(X11 REQUIRED)
+    set( GDI_PLATFORM_SOURCES Source/Private/GDI/Platform/GDIPlatformLinux.cpp )
 else()
     set( GDI_PLATFORM_SOURCES )
 endif()
@@ -298,6 +304,10 @@ add_library(GDI ${GDI_LIB_TYPE}
         ${GDI_D3D12_SOURCES}
 )
 add_library(GDI::GDI ALIAS GDI)
+
+# A static GDI still ends up inside shared libraries (RenderCore), which ELF
+# only allows for position-independent objects. A no-op on Windows.
+set_target_properties(GDI PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # PUBLIC Source  -- so every existing `#include "Public/GDI/GDI.h"` keeps
 #                   resolving verbatim through the physical move.
@@ -334,6 +344,10 @@ endif()
 # PUBLIC: GDI's public headers expose EngineCore types, and CoreClient must
 # inherit WITH_SIMD and the compatibility aliases from the same single source.
 target_link_libraries(GDI PUBLIC EngineCore::EngineCore)
+
+if(UNIX AND NOT APPLE)
+    target_link_libraries(GDI PRIVATE X11::X11)
+endif()
 
 if(GDI_SHARED)
     target_compile_definitions(GDI PUBLIC  GDI_SHARED_BUILD)
