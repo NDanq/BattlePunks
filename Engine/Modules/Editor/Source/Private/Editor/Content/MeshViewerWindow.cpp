@@ -22,6 +22,7 @@
 #include <QPushButton>
 #include <QSplitter>
 #include <QTableWidget>
+#include <QToolTip>
 #include <QVBoxLayout>
 
 #include "Public/Core/CoreArchive.h"
@@ -30,7 +31,7 @@
 
 namespace
 {
-    const char* const DEFAULT_MATERIAL = "DefaultLit";   // what an empty section draws with
+    const char* const DEFAULT_MATERIAL = "Engine/Content/Materials/DefaultLit.material.nmgraph";   // what an empty section draws with
     constexpr int     PREVIEW_SECTIONS = 8;              // Renderer::MeshPreview's slots
 
     QList<QPointer<MeshViewerWindow>>& OpenViewers()
@@ -40,9 +41,9 @@ namespace
     }
 
     /*
-     * A section's material: typed with completion from the project's and the
-     * engine's materials, picked from the list, or dropped from the Content
-     * Browser (a .material.nmgraph, .material or .mtl.glsl). Empty: DefaultLit.
+     * A section's material graph, by its runtime path: typed with completion
+     * from the project's and the engine's, picked from the list, or dropped
+     * from the Content Browser (a .material.nmgraph). Empty: DefaultLit.
      */
     class MaterialPicker final : public QComboBox
     {
@@ -61,13 +62,13 @@ namespace
     protected:
         void dragEnterEvent(QDragEnterEvent* InEvent) override
         {
-            if(!EditorContent::MaterialNameFor(EditorContent::SingleDroppedFile(InEvent->mimeData())).isEmpty()) { InEvent->acceptProposedAction(); }
+            if(!EditorContent::MaterialPathFor(EditorContent::SingleDroppedFile(InEvent->mimeData())).isEmpty()) { InEvent->acceptProposedAction(); }
             else { InEvent->ignore(); }
         }
 
         void dropEvent(QDropEvent* InEvent) override
         {
-            const QString Name = EditorContent::MaterialNameFor(EditorContent::SingleDroppedFile(InEvent->mimeData()));
+            const QString Name = EditorContent::MaterialPathFor(EditorContent::SingleDroppedFile(InEvent->mimeData()));
             if(Name.isEmpty()) { InEvent->ignore(); return; }
             InEvent->acceptProposedAction();
             setCurrentText(Name);
@@ -236,7 +237,7 @@ void MeshViewerWindow::BuildUi()
 
 void MeshViewerWindow::FillSections()
 {
-    const QStringList Names = EditorContent::ListMaterialNames();
+    const QStringList Names = EditorContent::ListMaterialPaths();
     Table->setRowCount(Edited.size());
     for(int Row = 0; Row < Edited.size(); ++Row)
     {
@@ -254,6 +255,14 @@ void MeshViewerWindow::FillSections()
         {
             const QString Text = Picker->currentText().trimmed();
             if(Text == Edited[Row]) { return; }
+            if(!EditorContent::IsMaterialFieldValue(Text))
+            {
+                /* Material graphs only: what was typed is refused. */
+                QToolTip::showText(Picker->mapToGlobal(QPoint(0, Picker->height())),
+                                   QStringLiteral("Not a material graph: give a *.material.nmgraph path"), Picker);
+                Picker->setCurrentText(Edited[Row]);
+                return;
+            }
             Edited[Row] = Text;
             UpdatePreview();
             UpdateState();

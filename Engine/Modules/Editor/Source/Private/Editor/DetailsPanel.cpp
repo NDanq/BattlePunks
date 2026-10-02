@@ -7,6 +7,7 @@
 
 #include <QCheckBox>
 #include <QDir>
+#include <QDropEvent>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
@@ -18,12 +19,15 @@
 #include <QScrollBar>
 #include <QTimer>
 #include <QToolButton>
+#include <QToolTip>
 #include <QVBoxLayout>
 
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/Editor/EditorContext.h"
 #include "Private/Editor/PropertyWidgets.h"
+#include "Private/Editor/Content/ContentPaths.h"
+#include "Private/Editor/Graph/GraphAssets.h"
 
 using GameCore::ComponentTypeID;
 using GameCore::EntityID;
@@ -261,34 +265,43 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
 
     ScriptEdit = new QLineEdit(ScriptField);
     ScriptEdit->setPlaceholderText(QStringLiteral("(none) -- e.g. Scripts/Mover.lua"));
-    ScriptEdit->setToolTip(QStringLiteral("A .lua file that returns its class table. Relative paths resolve "
-                                          "from the game's working directory."));
+    ScriptEdit->setToolTip(QStringLiteral("A .lua file that returns its class table, or a script graph "
+                                          "(.script.nmgraph), which runs the Lua saved in it. Relative paths "
+                                          "resolve from the game's working directory. Drop one here."));
     connect(ScriptEdit, &QLineEdit::editingFinished, this, [this, InEntity]()
     {
-        if(ScriptEdit)
+        if(!ScriptEdit)
         {
-            Context.SetEntityScript(InEntity, ScriptEdit->text());
+            return;
         }
+        const QString Text = ScriptEdit->text().trimmed();
+        if(!Text.isEmpty() && !Text.endsWith(QStringLiteral(".lua"), Qt::CaseInsensitive)
+           && !Text.endsWith(QStringLiteral(".script.nmgraph"), Qt::CaseInsensitive))
+        {
+            QToolTip::showText(ScriptEdit->mapToGlobal(QPoint(0, ScriptEdit->height())),
+                               QStringLiteral("A script is a .lua file or a .script.nmgraph"), ScriptEdit);
+            RefreshEntitySection();
+            return;
+        }
+        Context.SetEntityScript(InEntity, Text);
     });
+    ScriptEdit->installEventFilter(this);
     ScriptRow->addWidget(ScriptEdit, 1);
 
     auto* Browse = new QToolButton(ScriptField);
     Browse->setText(QStringLiteral("..."));
-    Browse->setToolTip(QStringLiteral("Choose a Lua script"));
+    Browse->setToolTip(QStringLiteral("Choose a .lua script or a script graph"));
     Browse->setAutoRaise(true);
     connect(Browse, &QToolButton::clicked, this, [this, InEntity]()
     {
-        const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a Lua script"),
-                                                            QDir::currentPath(),
-                                                            QStringLiteral("Lua scripts (*.lua);;All files (*)"));
-        if(Chosen.isEmpty())
+        const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a script"),
+                                                            EditorGraphs::GetProjectRoot(),
+                                                            QStringLiteral("Scripts (*.lua *.script.nmgraph);;Lua scripts (*.lua);;"
+                                                                           "Script graphs (*.script.nmgraph)"));
+        if(!Chosen.isEmpty())
         {
-            return;
+            UseScriptFile(InEntity, Chosen);
         }
-        /* Relative to the working directory, as the game resolves scripts. */
-        const QString Relative = QDir::current().relativeFilePath(Chosen);
-        Context.SetEntityScript(InEntity, Relative.startsWith(QStringLiteral("..")) ? Chosen : Relative);
-        RefreshEntitySection();
     });
     ScriptRow->addWidget(Browse);
 
@@ -599,6 +612,43 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     }
 
     return Section;
+}
+
+void DetailsPanel::UseScriptFile(const EntityID InEntity, const QString& InFile)
+{
+    /* As the game names it -- relative to the project, staged beside the
+     * exe so Play finds it -- or, outside the project, as chosen. */
+    const QString Runtime = EditorContent::ScriptPathFor(InFile);
+    if(!Runtime.isEmpty())
+    {
+        EditorContent::StageAsset(InFile);
+    }
+    Context.SetEntityScript(InEntity, Runtime.isEmpty() ? InFile : Runtime);
+    RefreshEntitySection();
+}
+
+bool DetailsPanel::eventFilter(QObject* InWatched, QEvent* InEvent)
+{
+    /* The Script field takes a .lua or a .script.nmgraph dropped on it. */
+    if(InWatched == ScriptEdit && (InEvent->type() == QEvent::DragEnter || InEvent->type() == QEvent::DragMove
+                                   || InEvent->type() == QEvent::Drop))
+    {
+        auto* Drop = static_cast<QDropEvent*>(InEvent);
+        const QString File = EditorContent::SingleDroppedFile(Drop->mimeData());
+        if(EditorContent::ScriptPathFor(File).isEmpty())
+        {
+            Drop->ignore();
+            return true;
+        }
+        Drop->acceptProposedAction();
+        if(InEvent->type() == QEvent::Drop)
+        {
+            const EntityID Target = ShownEntity;
+            QTimer::singleShot(0, this, [this, Target, File]() { UseScriptFile(Target, File); });
+        }
+        return true;
+    }
+    return QWidget::eventFilter(InWatched, InEvent);
 }
 
 QWidget* DetailsPanel::BuildAddComponentButton()

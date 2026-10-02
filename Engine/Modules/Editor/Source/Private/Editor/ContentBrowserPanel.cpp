@@ -75,8 +75,8 @@ namespace
         return EngineCore::Archive::ForReading(std::vector<uint8_t>(InBytes.begin(), InBytes.end()));
     }
 
-    /* Existing files that travel with InPath: a graph's generated output, a
-     * world's entity folder. */
+    /* Existing files that travel with InPath: a world's entity folder. (A
+     * graph's generated code is inside it.) */
     QStringList CompanionsOf(const QString& InPath)
     {
         const QFileInfo Info(InPath);
@@ -89,17 +89,7 @@ namespace
             if(QFileInfo::exists(Folder.filePath(InFile))) { Out << Folder.filePath(InFile); }
         };
 
-        if(Name.endsWith(QStringLiteral(".material.nmgraph"), Qt::CaseInsensitive))
-        {
-            const QString Base = Name.left(Name.size() - int(qstrlen(".material.nmgraph")));
-            AddIfExists(Base + QStringLiteral(".mtl.glsl"));
-            AddIfExists(Base + QStringLiteral(".material"));
-        }
-        else if(Name.endsWith(QStringLiteral(".script.nmgraph"), Qt::CaseInsensitive))
-        {
-            AddIfExists(Name.left(Name.size() - int(qstrlen(".script.nmgraph"))) + QStringLiteral(".lua"));
-        }
-        else if(Name.endsWith(QStringLiteral(".nmworld"), Qt::CaseInsensitive))
+        if(Name.endsWith(QStringLiteral(".nmworld"), Qt::CaseInsensitive))
         {
             const QString Entities = Folder.filePath(Info.completeBaseName());
             if(QFileInfo(Entities).isDir()) { Out << Entities; }
@@ -107,7 +97,7 @@ namespace
         return Out;
     }
 
-    /* InCompanion renamed as its owner was (Glow.mtl.glsl -> Shine.mtl.glsl). */
+    /* InCompanion renamed as its owner was (Level.nmworld's Level/ -> Arena/). */
     QString CompanionTarget(const QString& InCompanion, const QString& InOldOwner, const QString& InNewOwnerPath)
     {
         const auto BaseOf = [](const QString& InName)

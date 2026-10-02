@@ -22,6 +22,7 @@ namespace
     constexpr const char* TEMP_SUFFIX   = ".tmp";
     constexpr const char* ROOT_ELEMENT  = "NodeGraph";
     constexpr const char* FRAGMENT_ROOT = "NodeGraphFragment";
+    constexpr const char* GEN_CODE      = "gen_code";
 
     std::string Lower(std::string InText)
     {
@@ -366,6 +367,18 @@ std::string WriteGraphText(const Graph& InGraph)
         }
     }
 
+    /* Last, as CDATA (pugixml splits a "]]>" in the text across two). */
+    if(!InGraph.GenCode.empty())
+    {
+        pugi::xml_node Element = Root.append_child(GEN_CODE);
+        for(const GeneratedCode& Each : InGraph.GenCode)
+        {
+            pugi::xml_node Item = Element.append_child("Output");
+            Item.append_attribute("Extension") = Each.Extension.c_str();
+            Item.append_child(pugi::node_cdata).set_value(Each.Text.c_str());
+        }
+    }
+
     return DocumentText(Doc);
 }
 
@@ -427,6 +440,17 @@ bool ReadGraphText(const std::string& InText, Graph& OutGraph, std::string& OutE
         Loaded.Height = ReadFloat(Item, "Height");
         Loaded.Text   = Item.attribute("Text").as_string();
         Result.Comments.push_back(std::move(Loaded));
+    }
+
+    for(const pugi::xml_node Item : Root.child(GEN_CODE).children("Output"))
+    {
+        GeneratedCode Loaded;
+        Loaded.Extension = Item.attribute("Extension").as_string();
+        for(const pugi::xml_node Piece : Item.children())   // a split CDATA is several
+        {
+            if(Piece.type() == pugi::node_cdata || Piece.type() == pugi::node_pcdata) { Loaded.Text += Piece.value(); }
+        }
+        Result.GenCode.push_back(std::move(Loaded));
     }
 
     Result.Name = OutGraph.Name;
@@ -508,6 +532,18 @@ bool SaveGraphFile(const std::string& InPath, const Graph& InGraph, std::string&
     return WriteTextFileIfChanged(InPath, WriteGraphText(InGraph), OutError);
 }
 
+bool StoreGeneratedCode(Graph& InOutGraph, const CompileResult& InResult)
+{
+    const Schema* S = FindSchema(InOutGraph.SchemaName);
+    if(!S || InResult.HasErrors()) { return false; }
+
+    std::vector<GeneratedCode> Code;
+    Code.push_back({ S->GetOutputExtension(), InResult.Code });
+    for(const auto& Companion : InResult.Companions) { Code.push_back({ Companion.first, Companion.second }); }
+    InOutGraph.GenCode = std::move(Code);
+    return true;
+}
+
 bool GenerateGraphOutput(const std::string& InGraphPath, CompileResult& OutResult, std::string& OutError)
 {
     Graph Loaded;
@@ -516,15 +552,8 @@ bool GenerateGraphOutput(const std::string& InGraphPath, CompileResult& OutResul
     for(const std::string& Each : Warnings) { OutResult.Warning(NodeGuid(), std::string(), Each); }
 
     CompileGraph(Loaded, OutResult);
-    if(OutResult.HasErrors()) { return true; }
-
-    const Schema* S = FindSchema(Loaded.SchemaName);
-    if(!WriteTextFileIfChanged(GetGraphOutputPath(InGraphPath, *S), OutResult.Code, OutError)) { return false; }
-    for(const auto& Companion : OutResult.Companions)
-    {
-        if(!WriteTextFileIfChanged(StripGraphExtension(InGraphPath) + Companion.first, Companion.second, OutError)) { return false; }
-    }
-    return true;
+    if(!StoreGeneratedCode(Loaded, OutResult)) { return true; }
+    return SaveGraphFile(InGraphPath, Loaded, OutError);
 }
 
 // === Clipboard ==================================================================

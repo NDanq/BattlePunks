@@ -35,9 +35,9 @@ namespace RenderCore
     struct MaterialPreviewRequest
     {
         uint64_t                Request = 0;
-        char                    Material[48] = {};      // RENDER_MATERIAL_NAME_MAX; every section's, or "" for Slots
+        char                    Material[128] = {};     // RENDER_MATERIAL_PATH_MAX; every section's, or "" for Slots
         char                    Mesh[128] = {};         // RENDER_MESH_PATH_MAX; "" draws Material on a quad
-        char                    Slots[8][48] = {};      // RENDER_MATERIAL_SLOTS: per section, when Material is ""
+        char                    Slots[8][128] = {};     // RENDER_MATERIAL_SLOTS: per section, when Material is ""
         int32_t                 Width  = 256;
         int32_t                 Height = 256;
         float                   Yaw   = 30.0f;          // degrees round the mesh, 0 looking along +Z

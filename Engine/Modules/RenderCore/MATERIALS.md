@@ -7,14 +7,27 @@ Material templates, permutations, uniforms and the shader cache. DESIGN.md's
 ## Overview
 
 A material graph no longer generates a whole shader. It generates a
-**material function** (`<Name>.mtl.glsl`) and a description (`<Name>.material`).
+**material function** (`.mtl.glsl`) and a description (`.material`), both
+stored in the graph file's `<gen_code>` -- nothing is written beside the graph.
 Engine-owned **templates** in `Engine/Content/Shaders` supply `main()` for each
-stage and include the function. The cook compiles each template once per
-**permutation** the material needs, and packs the results into a per-module
-**shader cache** that RenderCore mounts with the module.
+stage and include the function. The cook reads the graph's `<gen_code>`,
+compiles each template once per **permutation** the description asks for, and
+packs the results into a per-module **shader cache** that RenderCore mounts
+with the module.
+
+**Names.** A material is named by its graph's runtime path,
+`"Materials/Glow.material.nmgraph"` (the engine's DefaultLit is
+`"Engine/Content/Materials/DefaultLit.material.nmgraph"`). Its cooked files
+are named by that path without the extension, the *stem*
+(`GetMaterialStem`): `Materials/Glow.material`, and
+`Shaders/Cooked/<Platform>/Materials/Glow@<key>...`. A bare name, as worlds
+saved before (`"Glow"`), means `Materials/Glow`; RenderComponent (version 4)
+and PostProcessComponent (version 2) upgrade one to the path on load, and an
+imported mesh's own section names resolve the same way (quietly, if there is
+no such material). Names hold up to `RENDER_MATERIAL_PATH_MAX` (128) bytes.
 
 ```
-Glow.material.nmgraph --(NodeGraph)--> Glow.mtl.glsl + Glow.material
+Glow.material.nmgraph --(NodeGraph, on save)--> <gen_code>: .mtl.glsl + .material
                                               |
        MaterialTemplate_VS/PS.glsl + defines per permutation key
                                               |
@@ -243,8 +256,9 @@ One file per module per backend: `Shaders/Cache/<Module>.<Platform>.nmsc`,
 | `FILE` | string path, u64 hash -- one per file |
 
 The files are exactly what a loose cook writes, at their runtime paths:
-`Shaders/Cooked/<Platform>/Materials/<Name>@<key>...` and
-`Materials/<Name>.material`. So a shipped game needs no loose material files,
+`Shaders/Cooked/<Platform>/<stem>@<key>...` and `<stem>.material` --
+`Materials/Glow` for a game's graph, `Engine/Content/Materials/DefaultLit` for
+the engine's. So a shipped game needs no loose material files,
 and nothing that loads a shader or a material knows which it read.
 
 Written by `cook_material_graphs.py -cache`, read by `ReadShaderCache`, which

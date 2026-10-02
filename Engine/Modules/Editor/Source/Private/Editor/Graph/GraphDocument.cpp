@@ -409,16 +409,17 @@ std::vector<NodeGuid> GraphDocument::Paste(const std::string& InFragment, const 
 bool GraphDocument::Save(QString& OutError, QString& OutMessage,
                          QObject* InContext, std::function<void(bool, const QString&)> InStaged)
 {
+    /* The generated code goes into the file with the graph (<gen_code>). */
     std::string Error;
-    if(!SaveGraphFile(ToStd(Path), Model, Error))
+    CompileResult Result;
+    if(!EditorGraphs::CompileAndSave(Path, Model, Result, Error))
     {
         OutError = ToQ(Error);
         return false;
     }
     History->setClean();
 
-    CompileResult Result;
-    EditorGraphs::WriteOutput(Path, Model, Result, OutMessage, InContext, std::move(InStaged));
+    EditorGraphs::StageOutput(Path, Model, Result, OutMessage, InContext, std::move(InStaged));
     emit Saved();
     return true;
 }

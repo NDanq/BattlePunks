@@ -156,9 +156,10 @@ Removing the component or destroying the entity removes the proxy the same
 way, through `OnComponentRemoved`.
 
 **A material** replaces the plain white: set slot 0 of the component's
-`Materials` to a material graph's name, e.g.
-`std::strcpy(Render.Materials[0], "Glow");`. The quad then draws with Glow's
-cooked permutations and its parameters from `Materials/Glow.material`, in the
+`Materials` to a material graph's runtime path, e.g.
+`std::strcpy(Render.Materials[0], "Materials/Glow.material.nmgraph");`. The
+quad then draws with Glow's cooked permutations and its parameters from
+`Materials/Glow.material` (both cooked from the graph's `<gen_code>`), in the
 stage Glow's domain and shading name; a component's Instance Tint is white
 (the editor's Preview dock sets its own). A material that is missing or not
 cooked for the running backend is warned about once and drawn plain. See MATERIALS.md, RENDERPIPELINE.md and NodeGraph's README.

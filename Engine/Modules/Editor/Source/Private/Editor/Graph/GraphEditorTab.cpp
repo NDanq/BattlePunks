@@ -227,13 +227,13 @@ void GraphEditorTab::BuildActions()
         connect(Apply, &QAction::triggered, this, [this]()
         {
             QString Message;
-            EditorGraphs::ApplyMaterialToSelection(EditorGraphs::GetMaterialName(Document->GetPath()), Message);
+            EditorGraphs::ApplyMaterialToSelection(EditorGraphs::GetMaterialPath(Document->GetPath()), Message);
             statusBar()->showMessage(Message, 6000);
         });
 
         Material->addSeparator();
         QAction* Name = Material->addAction(QStringLiteral("RenderComponents refer to it as \"%1\"")
-                                            .arg(EditorGraphs::GetMaterialName(Document->GetPath())));
+                                            .arg(EditorGraphs::GetMaterialPath(Document->GetPath())));
         Name->setEnabled(false);
     }
 
@@ -294,7 +294,7 @@ void GraphEditorTab::Recompile()
     if(bIsMaterial && bLivePreview && !LastResult.HasErrors())
     {
         bPreviewedUnsaved = Document->IsDirty();
-        const QString Name = EditorGraphs::GetMaterialName(Document->GetPath());
+        const QString Name = EditorGraphs::GetMaterialPath(Document->GetPath());
         EditorGraphs::StageMaterial(Name, LastResult, this, [this, Name](const bool bInWorked, const QString& InWhat)
         {
             auto* Item = new QListWidgetItem(QStringLiteral("Preview: %1 %2").arg(Name, InWhat), Messages);
@@ -406,7 +406,7 @@ void GraphEditorTab::RefreshPreview()
 {
     if(!PreviewView) { return; }
     PreviewStatus->setText(QStringLiteral("Drawing..."));
-    PreviewView->SetMaterial(EditorGraphs::GetMaterialName(Document->GetPath()));   // draws again
+    PreviewView->SetMaterial(EditorGraphs::GetMaterialPath(Document->GetPath()));   // draws again
 }
 
 bool GraphEditorTab::Save()
@@ -425,14 +425,14 @@ bool GraphEditorTab::Save()
     statusBar()->showMessage(Message, 6000);
     bPreviewedUnsaved = false;   // the save staged what is now on disk
 
-    /* A material's output through the real shader compiler, in the background. */
+    /* A material's generated code through the real shader compiler, in the background. */
     const Schema* S = FindSchema(Document->GetGraph().SchemaName);
     if(S && S->GetName() == "Material" && EditorGraphs::CanCheckShaders() && !LastResult.HasErrors())
     {
-        const QString Shader = ToQ(GetGraphOutputPath(ToStd(Document->GetPath()), *S));
+        const QString Shader = Document->GetPath();
         EditorGraphs::CheckShader(Shader, this, [this, Shader](const bool bInPassed, const QString& InOutput)
         {
-            auto* Item = new QListWidgetItem(bInPassed ? QStringLiteral("glslc: %1 compiles.").arg(QFileInfo(Shader).fileName())
+            auto* Item = new QListWidgetItem(bInPassed ? QStringLiteral("glslc: %1's code compiles.").arg(QFileInfo(Shader).fileName())
                                                        : QStringLiteral("glslc: %1").arg(InOutput.trimmed()), Messages);
             if(!bInPassed) { Item->setForeground(QColor(0xE0, 0x50, 0x50)); }
             statusBar()->showMessage(bInPassed ? QStringLiteral("Shader check passed") : QStringLiteral("Shader check FAILED -- see Messages"), 6000);

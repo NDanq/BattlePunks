@@ -101,6 +101,15 @@ private:
     /* Rebuild once the current event is done (a button may be deleting itself). */
     void QueueRebuild();
 
+    /* Sets InEntity's script to InFile (.lua or .script.nmgraph), as the game names it. */
+    void UseScriptFile(GameCore::EntityID InEntity, const QString& InFile);
+
+protected:
+    /* The Script field's drops. */
+    bool eventFilter(QObject* InWatched, QEvent* InEvent) override;
+
+private:
+
     EditorContext& Context;
 
     QLabel*      Header      = nullptr;

@@ -235,7 +235,7 @@ namespace RenderCore
         }
 
         /* By value: commands capture trivially copyable values only. */
-        struct NameBuffer { char Text[RENDER_MATERIAL_NAME_MAX]; };
+        struct NameBuffer { char Text[RENDER_MATERIAL_PATH_MAX]; };
         NameBuffer Name{};
         const size_t Length = InName ? std::strlen(InName) : 0;
         if(Length >= sizeof(Name.Text))
@@ -253,7 +253,7 @@ namespace RenderCore
     uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
     {
         const size_t Length = InName ? std::strlen(InName) : 0;
-        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_NAME_MAX)
+        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_PATH_MAX)
         {
             return 0;
         }
