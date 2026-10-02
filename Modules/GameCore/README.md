@@ -61,6 +61,7 @@ Engine/Modules/GameCore/
 |   |   |-- ComponentSerializer.h   ComponentArchive (named fields), the serializer macro and registry
 |   |   |-- WorldSerializer.h       SerializeWorld: the binary world (cooked data, save games)
 |   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
+|   |   |-- ScriptLibrary.h         script libraries: a game's functions, variables and typed events
 |   |   `-- ScriptEngine.h          lua_State lifetime, RunFile/RunString, BindWorld; NO lua.h
 |   `-- Private/GameCore/
 |       |-- GameCoreInternal.h      the ONLY header that includes lua.h/lauxlib.h/lualib.h
@@ -76,6 +77,7 @@ Engine/Modules/GameCore/
 |       |-- ScriptBindings.cpp      World/Entity/TickPhase/Events Lua libraries
 |       |-- ComponentScript.cpp     component proxies: the binding registry and the one dispatcher
 |       |-- ComponentScripts.cpp    what Transform/Bounds expose to Lua
+|       |-- ScriptLibrary.cpp       the library registry, one global table per library, its dispatcher
 |       |-- WorldPackage.cpp        the XML ComponentArchive, package save (atomic), two-pass load, cook
 |       `-- ScriptSystem.cpp        the World's script driver: file -> class cache, instantiation,
 |                                   the per-phase tick (ahead of every system), release/OnDestroy
@@ -337,6 +339,53 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(TransformComponent)
 
 `Bind.ReadOnly` gives a getter only. Field types: float, double, int32,
 uint8, bool, Vector3, AABB, Color and `char[N]`.
+
+**A C++ function that already exists needs no glue.** `Native` writes it from
+the function's types, and the string only names the graph's pins:
+
+```cpp
+Bind.Native<&PickupComponent::Collect>("Collect", "-> Value");               // int32_t Collect()
+Bind.Native<&PickupComponent::PositionAt>("PositionAt", "Time -> Position"); // Vector3 PositionAt(double) const
+Lib.Native<&SpawnPickup>("SpawnPickup", "Position, Value -> Pickup");        // EntityID SpawnPickup(World&, const Vector3&, int32_t)
+Lib.NativePure<&RankForScore>("RankForScore", "Score -> Rank");              // const char* RankForScore(int32_t)
+```
+
+- **Parameter and return types:** float, double, int32_t, bool, `const char*`,
+  `std::string`, Vector3, Color and EntityID, by value or const reference. A
+  Vector3 is three Lua values and a Color is four.
+- **Context parameters:** `World&` and `ScriptCall&` are filled in by the
+  engine. They are not script arguments, and `ScriptCall&` lets a function
+  call `Error()`.
+- **Pin names:** omit the names to get Arg1, Arg2, ... and Result.
+- **Unsupported types:** any other type is a compile error that lists these.
+  Bind it with `Method` and a `ScriptCall` instead, as you also would for
+  several results or optional arguments.
+
+**Anything else a game exposes is a script library** (`ScriptLibrary.h`): free
+functions, C++ variables and typed events, under one global table.
+
+```cpp
+GAMECORE_DEFINE_SCRIPT_LIBRARY(Sandbox)
+{
+    Lib.Function("SpawnPickup", &SpawnPickup, "Position:Vector3, Value:integer -> Pickup:Entity");
+    Lib.Pure("RankForScore", &RankForScore, "Score:integer -> Rank:string");   // no side effects
+    Lib.Variable("Score", &GScore);                         // Sandbox.GetScore / SetScore
+    Lib.ReadOnly("Elapsed", &GElapsed);                     // Sandbox.GetElapsed only
+    Lib.Event("ScoreChanged", "Score:integer");             // on the World's EventBus
+}
+```
+
+A function takes a `ScriptCall`, as a component method does, with arguments
+from 1. Signatures are for tools: the script graph editor turns each member
+into nodes (NodeGraph's README).
+
+**From a game module.** All three macros (component types, component
+bindings and serializers, and libraries) work in a game module DLL the same
+way as in the engine. Each registrar unregisters when its image unloads,
+so a module can be loaded, unloaded and loaded again: by the editor, to read
+its declarations, and by every Play. Calling a binding whose module has
+unloaded is a Lua error rather than a jump into unmapped code.
+`Games/Sandbox/SandboxScripting.cpp` is the example.
 
 **Lua is compiled as C and its errors are `longjmp`.** A `lua_CFunction` in
 this module's bindings may only have trivially destructible locals in scope

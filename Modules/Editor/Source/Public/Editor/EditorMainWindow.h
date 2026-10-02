@@ -106,6 +106,10 @@ private:
     QString InitialWorld;
     bool    bRendererStarted = false;
 
+    /* The game module was rebuilt while a run kept the old one: script nodes
+     * are reread when it stops. */
+    bool    bDeclarationsStale = false;
+
     SDLInputProbe* InputProbe = nullptr;
     QAction*       InputProbeAction = nullptr;
     bool           bStartSDLInputProbe = false;

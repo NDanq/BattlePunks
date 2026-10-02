@@ -36,6 +36,7 @@ namespace
     {
         uint16_t First       = 0;
         uint16_t Count       = 0;
+        uint16_t Capacity    = 0;   // entries reserved at First, kept across an unregister
         bool     bRegistered = false;
     };
 
@@ -73,11 +74,12 @@ namespace
     }
 
     // === Fields ==============================================================
-    // Both run in ComponentDispatch's frame, where raising is safe.
+    // Shared with ScriptLibrary.cpp (LuaPushScriptValue / LuaReadScriptValue).
+    // Both run in a dispatcher's frame, where raising is safe.
 
-    int PushField(lua_State* InState, const ScriptBindingEntry& InEntry, const uint8_t* InField)
+    int PushField(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const uint8_t* InField)
     {
-        switch(InEntry.FieldType)
+        switch(InType)
         {
         case EScriptFieldType::Float:  lua_pushnumber(InState, *reinterpret_cast<const float*>(InField));    return 1;
         case EScriptFieldType::Double: lua_pushnumber(InState, *reinterpret_cast<const double*>(InField));   return 1;
@@ -113,7 +115,7 @@ namespace
             /* Bounded by the buffer, so an unterminated one is not read past. */
             const char* Text = reinterpret_cast<const char*>(InField);
             size_t Length = 0;
-            while(Length < InEntry.Size && Text[Length] != '\0') { ++Length; }
+            while(Length < InSize && Text[Length] != '\0') { ++Length; }
             lua_pushlstring(InState, Text, Length);
             return 1;
         }
@@ -128,30 +130,30 @@ namespace
         return uint8_t(Value);
     }
 
-    /* Arguments start at 2; 1 is the proxy. */
-    void ReadField(lua_State* InState, const ScriptBindingEntry& InEntry, uint8_t* OutField)
+    /* The value starts at stack slot First: 2 after a proxy, 1 in a library setter. */
+    void ReadField(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const int First, uint8_t* OutField)
     {
-        switch(InEntry.FieldType)
+        switch(InType)
         {
-        case EScriptFieldType::Float:  *reinterpret_cast<float*>(OutField)   = float(luaL_checknumber(InState, 2)); return;
-        case EScriptFieldType::Double: *reinterpret_cast<double*>(OutField)  = luaL_checknumber(InState, 2);        return;
-        case EScriptFieldType::Int32:  *reinterpret_cast<int32_t*>(OutField) = int32_t(luaL_checkinteger(InState, 2)); return;
-        case EScriptFieldType::UInt8:  *OutField                              = CheckByte(InState, 2);               return;
-        case EScriptFieldType::Bool:   *reinterpret_cast<bool*>(OutField)    = lua_toboolean(InState, 2) != 0;      return;
-        case EScriptFieldType::Flag:   *OutField                              = lua_toboolean(InState, 2) ? 1 : 0;   return;
+        case EScriptFieldType::Float:  *reinterpret_cast<float*>(OutField)   = float(luaL_checknumber(InState, First)); return;
+        case EScriptFieldType::Double: *reinterpret_cast<double*>(OutField)  = luaL_checknumber(InState, First);        return;
+        case EScriptFieldType::Int32:  *reinterpret_cast<int32_t*>(OutField) = int32_t(luaL_checkinteger(InState, First)); return;
+        case EScriptFieldType::UInt8:  *OutField                              = CheckByte(InState, First);               return;
+        case EScriptFieldType::Bool:   *reinterpret_cast<bool*>(OutField)    = lua_toboolean(InState, First) != 0;      return;
+        case EScriptFieldType::Flag:   *OutField                              = lua_toboolean(InState, First) ? 1 : 0;   return;
 
         case EScriptFieldType::Vector3:
         {
-            const double X = luaL_checknumber(InState, 2);
-            const double Y = luaL_checknumber(InState, 3);
-            const double Z = luaL_checknumber(InState, 4);
+            const double X = luaL_checknumber(InState, First);
+            const double Y = luaL_checknumber(InState, First + 1);
+            const double Z = luaL_checknumber(InState, First + 2);
             *reinterpret_cast<EngineCore::Vector3*>(OutField) = EngineCore::Vector3(X, Y, Z);
             return;
         }
         case EScriptFieldType::AABB:
         {
-            const double MinX = luaL_checknumber(InState, 2), MinY = luaL_checknumber(InState, 3), MinZ = luaL_checknumber(InState, 4);
-            const double MaxX = luaL_checknumber(InState, 5), MaxY = luaL_checknumber(InState, 6), MaxZ = luaL_checknumber(InState, 7);
+            const double MinX = luaL_checknumber(InState, First), MinY = luaL_checknumber(InState, First + 1), MinZ = luaL_checknumber(InState, First + 2);
+            const double MaxX = luaL_checknumber(InState, First + 3), MaxY = luaL_checknumber(InState, First + 4), MaxZ = luaL_checknumber(InState, First + 5);
             *reinterpret_cast<AABB*>(OutField) = AABB(EngineCore::Vector3(MinX, MinY, MinZ), EngineCore::Vector3(MaxX, MaxY, MaxZ));
             return;
         }
@@ -159,21 +161,21 @@ namespace
         {
             /* Alpha optional, defaulting to opaque. */
             EngineCore::Color& C = *reinterpret_cast<EngineCore::Color*>(OutField);
-            const uint8_t R = CheckByte(InState, 2);
-            const uint8_t G = CheckByte(InState, 3);
-            const uint8_t B = CheckByte(InState, 4);
-            const uint8_t A = lua_isnoneornil(InState, 5) ? uint8_t(255) : CheckByte(InState, 5);
-            C.R = R; C.G = G; C.B = B; C.A = A;
+            const uint8_t R = CheckByte(InState, First);
+            const uint8_t G = CheckByte(InState, First + 1);
+            const uint8_t B = CheckByte(InState, First + 2);
+            const uint8_t Alpha = lua_isnoneornil(InState, First + 3) ? uint8_t(255) : CheckByte(InState, First + 3);
+            C.R = R; C.G = G; C.B = B; C.A = Alpha;
             return;
         }
         case EScriptFieldType::FixedString:
         {
             size_t Length = 0;
-            const char* Text = luaL_checklstring(InState, 2, &Length);
+            const char* Text = luaL_checklstring(InState, First, &Length);
             char* Buffer = reinterpret_cast<char*>(OutField);
-            const size_t Copy = (Length < InEntry.Size - 1) ? Length : InEntry.Size - 1;
+            const size_t Copy = (Length < InSize - 1) ? Length : InSize - 1;
             std::memcpy(Buffer, Text, Copy);
-            std::memset(Buffer + Copy, 0, InEntry.Size - Copy);
+            std::memset(Buffer + Copy, 0, InSize - Copy);
             return;
         }
         }
@@ -210,14 +212,19 @@ namespace
         switch(Mode)
         {
         case DM_GetField:
-            return PushField(InState, *Entry, Field);
+            return PushField(InState, Entry->FieldType, Entry->Size, Field);
 
         case DM_SetField:
-            ReadField(InState, *Entry, Field);
+            ReadField(InState, Entry->FieldType, Entry->Size, 2, Field);   // 1 is the proxy
             return 0;
 
         case DM_Method:
         {
+            /* Cleared by UnregisterComponentScript: its module has unloaded. */
+            if(!Entry->Invoker)
+            {
+                return luaL_error(InState, "%s.%s belongs to a module that has unloaded", TypeNameOf(Type), Entry->Name);
+            }
             ScriptCall Call(InState, Entry->Name, Proxy->Entity, W);
             Entry->Invoker(Entry->Method, Component, Call);
             if(Call.HasError())
@@ -302,6 +309,17 @@ namespace
     }
 }
 
+int LuaPushScriptValue(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const uint8_t* InValue)
+{
+    return PushField(InState, InType, InSize, InValue);
+}
+
+void LuaReadScriptValue(lua_State* InState, const EScriptFieldType InType, const uint32_t InSize, const int InFirstArg,
+                        uint8_t* OutValue)
+{
+    ReadField(InState, InType, InSize, InFirstArg, OutValue);
+}
+
 // === Registry ===============================================================
 
 bool RegisterComponentScript(const ComponentTypeID InType, const ScriptBindingEntry* InEntries,
@@ -331,21 +349,49 @@ bool RegisterComponentScript(const ComponentTypeID InType, const ScriptBindingEn
         return false;
     }
 
-    if(GScriptEntryCount + InCount > SCRIPT_ENTRY_MAX)
+    /* A type registering again after an unload (a game module reloaded) reuses
+     * its old range when the new set fits, so reloads do not fill the table.
+     * Entries stay where they are otherwise: a lua_State's metatable points at
+     * them. */
+    ScriptTypeRange& Range = GScriptTypes[InType];
+    const bool bReuse = Range.Capacity >= InCount;
+    if(!bReuse && GScriptEntryCount + InCount > SCRIPT_ENTRY_MAX)
     {
         GAMECORE_LOG_ERROR(std::string("RegisterComponentScript: the binding table is full; '")
                            + TypeNameOf(InType) + "' will have only GetEntity in Lua")
         return false;
     }
 
-    GScriptTypes[InType].First       = uint16_t(GScriptEntryCount);
-    GScriptTypes[InType].Count       = uint16_t(InCount);
-    GScriptTypes[InType].bRegistered = true;
+    if(!bReuse)
+    {
+        Range.First    = uint16_t(GScriptEntryCount);
+        Range.Capacity = uint16_t(InCount);
+        GScriptEntryCount += InCount;
+    }
+    Range.Count       = uint16_t(InCount);
+    Range.bRegistered = true;
     for(size_t Index = 0; Index < InCount; ++Index)
     {
-        GScriptEntries[GScriptEntryCount++] = InEntries[Index];
+        GScriptEntries[Range.First + Index] = InEntries[Index];
     }
     return true;
+}
+
+void UnregisterComponentScript(const ComponentTypeID InType)
+{
+    if(InType == COMPONENT_TYPE_INVALID || InType >= COMPONENT_TYPE_MAX || !GScriptTypes[InType].bRegistered)
+    {
+        return;
+    }
+
+    /* The range is kept for the next registration; the code pointers go now. */
+    ScriptTypeRange& Range = GScriptTypes[InType];
+    for(size_t Index = 0; Index < Range.Count; ++Index)
+    {
+        GScriptEntries[Range.First + Index].Invoker = nullptr;
+        GScriptEntries[Range.First + Index].Method  = nullptr;
+    }
+    Range.bRegistered = false;
 }
 
 const ScriptBindingEntry* FindComponentScript(const ComponentTypeID InType, size_t& OutCount)
@@ -381,14 +427,14 @@ void LuaPushComponentProxy(lua_State* InState, const EntityID InEntity, const Co
 static_assert(std::is_trivially_destructible<ScriptCall>::value,
               "ScriptCall must stay trivially destructible -- ComponentDispatch longjmps past it");
 
-ScriptCall::ScriptCall(lua_State* InState, const char* InMethodName, const EntityID InOwner, World* InWorld)
-    : State(InState), MethodName(InMethodName ? InMethodName : ""), Owner(InOwner), OwnerWorld(InWorld)
+ScriptCall::ScriptCall(lua_State* InState, const char* InMethodName, const EntityID InOwner, World* InWorld, const int InArgBase)
+    : State(InState), MethodName(InMethodName ? InMethodName : ""), Owner(InOwner), OwnerWorld(InWorld), ArgBase(InArgBase)
 {
 }
 
-int ScriptCall::GetArgCount() const { return lua_gettop(State) - 1; }
+int ScriptCall::GetArgCount() const { return lua_gettop(State) - ArgBase; }
 
-bool ScriptCall::HasArg(const int InArg) const { return !lua_isnoneornil(State, InArg + 1); }
+bool ScriptCall::HasArg(const int InArg) const { return !lua_isnoneornil(State, InArg + ArgBase); }
 
 void ScriptCall::Error(const char* InMessage)
 {
@@ -406,7 +452,7 @@ double ScriptCall::GetNumber(const int InArg)
 {
     if(HasError()) { return 0.0; }
     int bIsNumber = 0;
-    const lua_Number Value = lua_tonumberx(State, InArg + 1, &bIsNumber);
+    const lua_Number Value = lua_tonumberx(State, InArg + ArgBase, &bIsNumber);
     if(!bIsNumber) { ArgError(InArg, "number"); return 0.0; }
     return Value;
 }
@@ -417,19 +463,19 @@ int32_t ScriptCall::GetInt(const int InArg)
 {
     if(HasError()) { return 0; }
     int bIsInteger = 0;
-    const lua_Integer Value = lua_tointegerx(State, InArg + 1, &bIsInteger);
+    const lua_Integer Value = lua_tointegerx(State, InArg + ArgBase, &bIsInteger);
     if(!bIsInteger) { ArgError(InArg, "integer"); return 0; }
     return int32_t(Value);
 }
 
-bool ScriptCall::GetBool(const int InArg) { return lua_toboolean(State, InArg + 1) != 0; }
+bool ScriptCall::GetBool(const int InArg) { return lua_toboolean(State, InArg + ArgBase) != 0; }
 
 const char* ScriptCall::GetString(const int InArg)
 {
     if(HasError()) { return ""; }
-    const int Type = lua_type(State, InArg + 1);
+    const int Type = lua_type(State, InArg + ArgBase);
     if(Type != LUA_TSTRING && Type != LUA_TNUMBER) { ArgError(InArg, "string"); return ""; }
-    return lua_tostring(State, InArg + 1);
+    return lua_tostring(State, InArg + ArgBase);
 }
 
 EngineCore::Vector3 ScriptCall::GetVector3(const int InFirstArg)
@@ -440,6 +486,29 @@ EngineCore::Vector3 ScriptCall::GetVector3(const int InFirstArg)
     return EngineCore::Vector3(X, Y, Z);
 }
 
+EngineCore::Color ScriptCall::GetColor(const int InFirstArg)
+{
+    EngineCore::Color Result(255, 255, 255);
+    int32_t Lanes[4] = { 255, 255, 255, 255 };
+    for(int Lane = 0; Lane < 4; ++Lane)
+    {
+        if(Lane == 3 && !HasArg(InFirstArg + 3)) { break; }   // alpha is optional
+        Lanes[Lane] = GetInt(InFirstArg + Lane);
+        if(!HasError() && (Lanes[Lane] < 0 || Lanes[Lane] > 255)) { ArgError(InFirstArg + Lane, "integer 0..255"); }
+    }
+    if(HasError()) { return Result; }
+    Result.R = uint8_t(Lanes[0]); Result.G = uint8_t(Lanes[1]); Result.B = uint8_t(Lanes[2]); Result.A = uint8_t(Lanes[3]);
+    return Result;
+}
+
+EntityID ScriptCall::GetEntity(const int InArg)
+{
+    if(HasError() || !HasArg(InArg)) { return EntityID(); }
+    EntityID Result;
+    if(!LuaToEntity(State, InArg + ArgBase, Result)) { ArgError(InArg, "Entity"); return EntityID(); }
+    return Result;
+}
+
 /* lua_checkstack rather than assuming the 20-slot minimum a C function gets;
  * it reports failure instead of raising. */
 #define SCRIPTCALL_RESERVE(Count) \
@@ -447,6 +516,7 @@ EngineCore::Vector3 ScriptCall::GetVector3(const int InFirstArg)
     if(!lua_checkstack(State, (Count))) { Error("too many results"); return; }
 
 void ScriptCall::PushNumber(const double InValue)      { SCRIPTCALL_RESERVE(1) lua_pushnumber(State, InValue);  ++Results; }
+void ScriptCall::PushInteger(const int64_t InValue)    { SCRIPTCALL_RESERVE(1) lua_pushinteger(State, lua_Integer(InValue)); ++Results; }
 void ScriptCall::PushBool(const bool InValue)          { SCRIPTCALL_RESERVE(1) lua_pushboolean(State, InValue); ++Results; }
 void ScriptCall::PushString(const char* InValue)       { SCRIPTCALL_RESERVE(1) lua_pushstring(State, InValue ? InValue : ""); ++Results; }
 void ScriptCall::PushNil()                             { SCRIPTCALL_RESERVE(1) lua_pushnil(State); ++Results; }
@@ -459,6 +529,16 @@ void ScriptCall::PushVector3(const EngineCore::Vector3& InValue)
     lua_pushnumber(State, InValue.GetY());
     lua_pushnumber(State, InValue.GetZ());
     Results += 3;
+}
+
+void ScriptCall::PushColor(const EngineCore::Color& InValue)
+{
+    SCRIPTCALL_RESERVE(4)
+    lua_pushinteger(State, InValue.R);
+    lua_pushinteger(State, InValue.G);
+    lua_pushinteger(State, InValue.B);
+    lua_pushinteger(State, InValue.A);
+    Results += 4;
 }
 
 #undef SCRIPTCALL_RESERVE

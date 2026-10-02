@@ -6,9 +6,11 @@
 
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentType.h"
+#include "Public/GameCore/ScriptLibrary.h"
 #include "Public/NodeGraph/GraphCompiler.h"
 #include "Private/NodeGraph/CodeWriter.h"
 #include "Private/NodeGraph/GraphIndex.h"
+#include "Private/NodeGraph/NodeGraphLog.h"
 
 /*
  * Script graphs -> a Lua class table, the shape Games/Sandbox/Scripts/Mover.lua
@@ -199,6 +201,28 @@ namespace
         return true;
     }
 
+    /* "Params -> Results", either half optional; false if empty or malformed. */
+    bool ParseSignature(const std::string& InSignature, std::vector<PinDefinition>& OutParameters, std::vector<PinDefinition>& OutResults)
+    {
+        const size_t Arrow = InSignature.find("->");
+        return !InSignature.empty()
+            && ParseSignatureList(InSignature.substr(0, Arrow), EPinDirection::Input, OutParameters)
+            && (Arrow == std::string::npos || ParseSignatureList(InSignature.substr(Arrow + 2), EPinDirection::Output, OutResults));
+    }
+
+    /* "{A}, {B}" -- a call's argument list, for ExpandCall. */
+    std::string ArgumentList(const std::vector<PinDefinition>& InParameters)
+    {
+        std::string Arguments;
+        for(const PinDefinition& Each : InParameters)
+        {
+            Arguments += (Arguments.empty() ? "{" : ", {") + Each.Name + "}";
+        }
+        return Arguments;
+    }
+
+    const char* const NO_SIGNATURE_TOOLTIP = "has no signature in its binding, so it is called with no arguments";
+
     class ScriptSchema final : public Schema
     {
     public:
@@ -208,6 +232,7 @@ namespace
 
     private:
         void AddComponentNodes();
+        void AddLibraryNodes();
     };
 
     // === The compiler ===========================================================
@@ -321,11 +346,20 @@ namespace
         }
 
         // --- Custom event handler names -----------------------------------------
-        std::vector<std::pair<const Node*, std::string>> Handlers;
+        /* On Event names its event in a property; a library's typed On <Name>
+         * in its definition's Template. */
+        struct Handler
+        {
+            const Node* N = nullptr;
+            std::string Method;
+            std::string EventName;
+        };
+        std::vector<Handler> Handlers;
         std::map<std::string, int> HandlerUse;
         for(const Node* Each : CustomEvents)
         {
-            const std::string EventName = Each->GetProperty("EventName");
+            const NodeDefinition* Def = Index.FindDefinition(*Each);
+            const std::string EventName = Def->Template.empty() ? Each->GetProperty("EventName") : Def->Template;
             if(EventName.empty())
             {
                 Result.Error(Each->Id, std::string(), "'On Event' needs an event name");
@@ -334,7 +368,7 @@ namespace
             std::string Method = "Event_" + SanitizeIdentifier(EventName);
             const int Use = ++HandlerUse[Method];
             if(Use > 1) { Method += "_" + std::to_string(Use); }
-            Handlers.emplace_back(Each, Method);
+            Handlers.push_back({ Each, Method, EventName });
         }
 
         CodeWriter Out;
@@ -368,10 +402,10 @@ namespace
             if(!Handlers.empty())
             {
                 Prologue.push_back("self." + std::string(HANDLES_FIELD) + " = {");
-                for(const auto& Each : Handlers)
+                for(const Handler& Each : Handlers)
                 {
-                    Prologue.push_back("    Events.On(" + LuaString(Each.first->GetProperty("EventName"))
-                                       + ", function(...) self:" + Each.second + "(...) end),");
+                    Prologue.push_back("    Events.On(" + LuaString(Each.EventName)
+                                       + ", function(...) self:" + Each.Method + "(...) end),");
                 }
                 Prologue.push_back("}");
             }
@@ -398,18 +432,23 @@ namespace
             EmitFunction(Out, "OnDestroy = function(self)", DestroyNode, Prologue, {}, {});
         }
 
-        for(const auto& Each : Handlers)
+        for(const Handler& Each : Handlers)
         {
+            /* The node's data outputs are the event's arguments, in order. An
+             * integer arrives from the bus as a float, so it is floored. */
             std::map<std::string, Lanes> Parameters;
-            std::string Header = Each.second + " = function(self";
-            for(int Arg = 1; Arg <= CUSTOM_EVENT_ARGS; ++Arg)
+            std::string Header = Each.Method + " = function(self";
+            for(int Arg = 1; Arg <= CUSTOM_EVENT_ARGS; ++Arg) { Header += ", Arg" + std::to_string(Arg); }
+
+            int Arg = 0;
+            for(const PinDefinition& Pin : Index.FindDefinition(*Each.N)->Pins)
             {
+                if(Pin.IsExec() || !Pin.IsOutput() || ++Arg > CUSTOM_EVENT_ARGS) { continue; }
                 const std::string Name = "Arg" + std::to_string(Arg);
-                Header += ", " + Name;
-                Parameters["Arg " + std::to_string(Arg)] = { Name };
+                Parameters[Pin.Name] = { Pin.Type == "integer" ? "math.floor(" + Name + " or 0)" : Name };
             }
             Out.Blank();
-            EmitFunction(Out, Header + ")", Each.first, {}, {}, Parameters);
+            EmitFunction(Out, Header + ")", Each.N, {}, {}, Parameters);
         }
 
         Out.Outdent();
@@ -538,6 +577,23 @@ namespace
 
             case SOP_Emit:
             {
+                Lanes Arguments;
+                if(!InDef.Template.empty())
+                {
+                    /* A library's typed Emit <Name>: every parameter, linked or
+                     * not, since each has a typed default. */
+                    Arguments.push_back(LuaString(InDef.Template));
+                    for(const PinDefinition& Pin : InDef.Pins)
+                    {
+                        if(Pin.IsExec() || !Pin.IsInput()) { continue; }
+                        const Lanes Value = Input(S, Cache, InNode, InDef, Pin.Name);
+                        Arguments.insert(Arguments.end(), Value.begin(), Value.end());
+                    }
+                    W.Line("Events.Emit(" + Join(Arguments) + ")", InNode.Id);
+                    EmitChain(S, InNode, EXEC_OUT);
+                    break;
+                }
+
                 /* Up to the last linked argument: a trailing nil arrives as 0. */
                 const Lanes Name = Input(S, Cache, InNode, InDef, "Event");
                 int LastArg = 0;
@@ -545,7 +601,7 @@ namespace
                 {
                     if(Index.LinkInto(InNode.Id, "Arg " + std::to_string(Arg))) { LastArg = Arg; }
                 }
-                Lanes Arguments = Name;
+                Arguments = Name;
                 for(int Arg = 1; Arg <= LastArg; ++Arg)
                 {
                     const Lanes Value = Input(S, Cache, InNode, InDef, "Arg " + std::to_string(Arg));
@@ -1103,6 +1159,7 @@ namespace
              std::string(), {}, "aabb bounds");
 
         AddComponentNodes();
+        AddLibraryNodes();
     }
 
     /* Per component type: get/has/add/remove, a getter/setter per field and a
@@ -1173,18 +1230,12 @@ namespace
                 std::vector<PinDefinition> Pins = { In("Target", TypeName) };
                 std::vector<PinDefinition> Parameters, Results;
                 const std::string Signature = Entry.Signature;
-                const size_t Arrow = Signature.find("->");
-                const bool bParsed = !Signature.empty()
-                                  && ParseSignatureList(Signature.substr(0, Arrow), EPinDirection::Input, Parameters)
-                                  && (Arrow == std::string::npos || ParseSignatureList(Signature.substr(Arrow + 2), EPinDirection::Output, Results));
+                const bool bParsed = ParseSignature(Signature, Parameters, Results);
 
                 std::string Arguments;
                 if(bParsed)
                 {
-                    for(const PinDefinition& Each : Parameters)
-                    {
-                        Arguments += (Arguments.empty() ? "{" : ", {") + Each.Name + "}";
-                    }
+                    Arguments = ArgumentList(Parameters);
                     Pins.insert(Pins.end(), Parameters.begin(), Parameters.end());
                     Pins.insert(Pins.end(), Results.begin(), Results.end());
                 }
@@ -1194,8 +1245,117 @@ namespace
                 {
                     NodeDefinition& Def = const_cast<NodeDefinition&>(*FindNode(Prefix + Member));
                     Def.Tooltip = Signature.empty()
-                                ? "has no signature in its binding, so it is called with no arguments"
+                                ? NO_SIGNATURE_TOOLTIP
                                 : "has an unreadable signature ('" + Signature + "') in its binding -- no signature -- so it is called with no arguments";
+                }
+            }
+        }
+    }
+
+    /* Per script library (GameCore/ScriptLibrary.h), under the library's name
+     * in the palette: a call per function, Get/Set per variable, and On/Emit
+     * per event. Types are Library.<Lib>.<Member>, so a graph keeps its links
+     * when the library is reloaded, and loads placeholders while it is not. */
+    void ScriptSchema::AddLibraryNodes()
+    {
+        for(size_t LibraryIndex = 0; LibraryIndex < GameCore::GetScriptLibraryCount(); ++LibraryIndex)
+        {
+            GameCore::ScriptLibraryInfo Info;
+            if(!GameCore::GetScriptLibrary(LibraryIndex, Info)) { continue; }
+
+            const std::string Library = Info.Name;
+            const std::string Prefix  = "Library." + Library + ".";
+
+            const auto Make = [&](const std::string& InType, const std::string& InName, const ENodeRole InRole, const uint32_t InOp,
+                                  std::vector<PinDefinition> InPins, const std::string& InTemplate, const std::string& InTooltip)
+            {
+                NodeDefinition Def;
+                Def.Type        = Prefix + InType;
+                Def.DisplayName = InName;
+                Def.Category    = Library;
+                Def.Keywords    = Library;
+                Def.Tooltip     = InTooltip;
+                Def.Role        = InRole;
+                Def.Op          = InOp;
+                Def.Template    = InTemplate;
+                if(InRole == ENodeRole::Statement)
+                {
+                    InPins.insert(InPins.begin(), ExecIn());
+                    InPins.insert(InPins.begin() + 1, ExecOut());
+                }
+                else if(InRole == ENodeRole::Event)
+                {
+                    InPins.insert(InPins.begin(), ExecOut());
+                }
+                Def.Pins = std::move(InPins);
+                AddNode(std::move(Def));
+            };
+
+            for(size_t MemberIndex = 0; MemberIndex < Info.Count; ++MemberIndex)
+            {
+                const GameCore::ScriptLibraryMember& Entry = Info.Members[MemberIndex];
+                const std::string Member  = Entry.Name;
+                const std::string Tooltip = Entry.Tooltip;
+                const std::string Call    = Library + "." + Member;
+
+                switch(Entry.Kind)
+                {
+                case GameCore::EScriptLibraryMember::Function:
+                case GameCore::EScriptLibraryMember::Pure:
+                {
+                    std::vector<PinDefinition> Parameters, Results;
+                    const bool bParsed = ParseSignature(Entry.Signature, Parameters, Results);
+                    if(!bParsed && Entry.Signature[0] != '\0')
+                    {
+                        NODEGRAPH_LOG_WARN("'" + Call + "' has an unreadable signature ('" + Entry.Signature + "'); its node takes no arguments")
+                    }
+
+                    std::vector<PinDefinition> Pins = Parameters;
+                    Pins.insert(Pins.end(), Results.begin(), Results.end());
+                    const bool bPure = Entry.Kind == GameCore::EScriptLibraryMember::Pure;
+                    Make(Member, Member, bPure ? ENodeRole::Pure : ENodeRole::Statement, SOP_Call, std::move(Pins),
+                         Call + "(" + ArgumentList(Parameters) + ")", bParsed ? Tooltip : std::string(NO_SIGNATURE_TOOLTIP));
+                    break;
+                }
+
+                case GameCore::EScriptLibraryMember::Variable:
+                {
+                    const std::string Type = ScriptTypeOf(Entry.FieldType);
+                    Make("Get" + Member, "Get " + Member, ENodeRole::Pure, SOP_Call, { Out(Member, Type) },
+                         Library + ".Get" + Member + "()", Tooltip);
+                    if(!Entry.bReadOnly)
+                    {
+                        Make("Set" + Member, "Set " + Member, ENodeRole::Statement, SOP_Call, { In(Member, Type) },
+                             Library + ".Set" + Member + "({" + Member + "})", Tooltip);
+                    }
+                    break;
+                }
+
+                case GameCore::EScriptLibraryMember::Event:
+                {
+                    /* One Lua value per parameter, at most four: what an
+                     * EventBus event carries. */
+                    std::vector<PinDefinition> Parameters, Unused;
+                    bool bValid = Entry.Signature[0] == '\0'
+                               || (ParseSignature(Entry.Signature, Parameters, Unused) && Unused.empty());
+                    bValid = bValid && Parameters.size() <= size_t(CUSTOM_EVENT_ARGS);
+                    for(const PinDefinition& Each : Parameters) { bValid = bValid && LaneCount(Each.Type) == 1 && Each.Type != "Box"; }
+                    if(!bValid)
+                    {
+                        NODEGRAPH_LOG_WARN("event '" + Call + "' needs at most " + std::to_string(CUSTOM_EVENT_ARGS)
+                                           + " parameters of number, integer, bool, string or Entity ('" + Entry.Signature
+                                           + "'); it has no nodes")
+                        break;
+                    }
+
+                    std::vector<PinDefinition> Outputs;
+                    for(const PinDefinition& Each : Parameters) { Outputs.push_back(Out(Each.Name, Each.Type)); }
+                    Make("On" + Member, "On " + Member, ENodeRole::Event, SOP_EventCustom, std::move(Outputs), Member,
+                         Tooltip.empty() ? "Runs whenever " + Member + " is emitted." : Tooltip);
+                    Make("Emit" + Member, "Emit " + Member, ENodeRole::Statement, SOP_Emit, std::move(Parameters), Member,
+                         Tooltip.empty() ? "Emits " + Member + " on the World's event bus." : Tooltip);
+                    break;
+                }
                 }
             }
         }

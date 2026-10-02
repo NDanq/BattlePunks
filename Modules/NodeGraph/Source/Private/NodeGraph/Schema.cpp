@@ -182,25 +182,47 @@ namespace NodeGraph
 
     // === Registry ===============================================================
 
-    const std::vector<const Schema*>& GetSchemas()
+    namespace
     {
+        /* Retired schemas are kept to the end of the process: an open graph
+         * and its node items point into them (RefreshSchemas). A schema is a
+         * few hundred node definitions, and a refresh is a person's action. */
+        struct SchemaSet
+        {
+            std::vector<std::unique_ptr<Schema>> Live;
+            std::vector<std::unique_ptr<Schema>> Retired;
+            std::vector<const Schema*>           View;
+
+            void Build()
+            {
+                for(std::unique_ptr<Schema>& Each : Live) { Retired.push_back(std::move(Each)); }
+                Live.clear();
+                Live.push_back(CreateMaterialSchema());
+                Live.push_back(CreateScriptSchema());
+
+                View.clear();
+                for(const std::unique_ptr<Schema>& Each : Live) { View.push_back(Each.get()); }
+            }
+        };
+
         /* On first use: the script schema reads bindings other images register
          * during their static init. */
-        static const std::vector<std::unique_ptr<Schema>> Owned = []
+        SchemaSet& GetSchemaSet()
         {
-            std::vector<std::unique_ptr<Schema>> Result;
-            Result.push_back(CreateMaterialSchema());
-            Result.push_back(CreateScriptSchema());
-            return Result;
-        }();
+            static SchemaSet Set;
+            if(Set.Live.empty()) { Set.Build(); }
+            return Set;
+        }
+    }
 
-        static const std::vector<const Schema*> View = []
-        {
-            std::vector<const Schema*> Result;
-            for(const std::unique_ptr<Schema>& Each : Owned) { Result.push_back(Each.get()); }
-            return Result;
-        }();
-        return View;
+    const std::vector<const Schema*>& GetSchemas()
+    {
+        return GetSchemaSet().View;
+    }
+
+    void RefreshSchemas()
+    {
+        GetSchemaSet().Build();
     }
 
     const Schema* FindSchema(const std::string& InName)

@@ -180,6 +180,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/ArchiveTextDump.cpp
         Source/Private/GameCore/ComponentScript.cpp
         Source/Private/GameCore/ComponentScripts.cpp
+        Source/Private/GameCore/ScriptLibrary.cpp
         Source/Private/GameCore/ComponentProperties.cpp
         Source/Public/GameCore/GameCoreAPI.h
         Source/Public/GameCore/GameCoreLog.h
@@ -202,6 +203,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/WorldPackage.h
         Source/Public/GameCore/ArchiveTextDump.h
         Source/Public/GameCore/ComponentScript.h
+        Source/Public/GameCore/ScriptLibrary.h
         Source/Public/GameCore/ComponentProperties.h
 )
 

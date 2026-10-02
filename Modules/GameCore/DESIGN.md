@@ -1249,6 +1249,47 @@ duplicate registration are logged. A binding registered *after* a type's
 metatable was built in some `lua_State` (a hot module loading late) is not
 picked up by that state.
 
+**Unregistration, for game modules.** The registrar's destructor calls
+`UnregisterComponentScript` when its image unloads (the editor loads a game
+module to read its declarations, then each Play loads it again). The type's
+entries stay where they are. A built metatable holds pointers to them, so
+only `Invoker` and `Method` are cleared, and `ComponentDispatch` turns a call
+through a stale metatable into a Lua error. The next registration reuses the
+range when the new set fits (`Capacity`), so reloads do not fill the table.
+A refused duplicate does not unregister the first. The serializer macro does
+the same through `UnregisterComponentSerializer`.
+
+---
+
+## ScriptLibrary.h / ScriptLibrary.cpp
+
+**What is not a component.** A game's free functions, the C++ variables it
+lets scripts read and write, and the events it raises, under one global
+table per library. The same rules as component bindings apply: no `lua.h`
+outside GameCore, values only through `ScriptCall` (now with an argument
+base: 0 for a library function, 1 after a proxy), and signatures that
+only tools read.
+
+**By handle, not by pointer.** A library's closures carry its handle and the
+member's index, and `LibraryDispatch` looks both up on every call. Unlike
+component entries, which live in a constant-initialised table because
+registrars in GameCore itself run during static initialisation, the library
+registry is a function-local static of `std::vector`s. It may move, and an
+unregistered library leaves nothing behind for a stale closure to reach. Its
+fourth upvalue, the qualified name, exists only for the error message.
+
+**Installed at `BindWorld`, last.** A library is a global table, so it is set
+after `World`, `Events` and `TickPhase`, and its name may be none of those nor
+a standard library. A library registered after a `lua_State` was bound is not
+in that state until the next `BindWorld`, which is the same rule as late
+component bindings.
+
+**Events are names, not functions.** An `Event` member installs only its name
+(`Sandbox.ScoreChanged == "ScoreChanged"`). Raising and handling go through
+the World's EventBus as before, so C++, hand-written Lua and generated graph
+code all meet on it. The typed signature is for the graph editor's On/Emit
+nodes, and is limited to the four one-value arguments an `EventArgs` carries.
+
 **Not covered.** A component added from Lua with `e:AddComponent(name)` still
 starts from zeroed bytes, not its defaults (see `Entity_AddComponent` above) --
 so a Lua-added Transform has scale 0 and a Lua-added Bounds a `ProxyID` of 0.

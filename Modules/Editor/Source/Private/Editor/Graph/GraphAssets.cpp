@@ -18,9 +18,12 @@
 
 #include <QTimer>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/GameModule.h"
 #include "Public/NodeGraph/GraphFile.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/Editor/EditorContext.h"
@@ -562,6 +565,46 @@ namespace EditorGraphs
         }
         if(Paths.isEmpty()) { OutLines << QStringLiteral("No node graphs under %1").arg(GetProjectRoot()); }
         return Failures;
+    }
+
+    bool RefreshGameDeclarations(const bool bInGameIsLoaded)
+    {
+        const auto Describe = []()
+        {
+            std::string Names;
+            for(size_t Index = 0; Index < GameCore::GetScriptLibraryCount(); ++Index)
+            {
+                GameCore::ScriptLibraryInfo Info;
+                if(GameCore::GetScriptLibrary(Index, Info)) { Names += (Names.empty() ? "" : ", ") + std::string(Info.Name); }
+            }
+            return Names.empty() ? std::string("no script libraries") : "script libraries " + Names;
+        };
+
+        if(bInGameIsLoaded)
+        {
+            RefreshSchemas();
+            CORE_LOG("[Graphs] script nodes refreshed from the running game: " + Describe())
+            return true;
+        }
+
+        const EngineCore::ConfigVar* ModuleVar = EngineCore::ConfigFindVar("Game", "Module");
+        if(!ModuleVar || ModuleVar->GetString()[0] == '\0')
+        {
+            CORE_LOG("[Graphs] no [Game] Module; script graphs offer the engine's nodes only")
+            return false;
+        }
+
+        /* Its own host, as Play has: loaded for the copy, then gone. */
+        NimbleEngine::GameModuleHost Game;
+        if(!Game.Load(""))
+        {
+            CORE_LOG_WARN("[Graphs] could not load the game module for its script declarations; build it (F7), then Build > Refresh Script Nodes")
+            return false;
+        }
+        RefreshSchemas();
+        CORE_LOG("[Graphs] script nodes refreshed from " + Game.GetModuleName() + ": " + Describe())
+        Game.Unload();
+        return true;
     }
 
     GraphEditorTab* OpenGraph(const QString& InPath, QWidget* InParent)

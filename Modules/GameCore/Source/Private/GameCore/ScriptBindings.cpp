@@ -525,6 +525,14 @@ namespace GameCore
         return GetBoundWorld(InState);
     }
 
+    bool LuaToEntity(lua_State* InState, const int InIndex, EntityID& OutEntity)
+    {
+        const EntityID* Slot = static_cast<const EntityID*>(luaL_testudata(InState, InIndex, ENTITY_METATABLE));
+        if(!Slot) { return false; }
+        OutEntity = *Slot;
+        return true;
+    }
+
     void ScriptBindings_Install(lua_State* InState, World* InWorld)
     {
         SetBoundWorld(InState, InWorld);
@@ -547,5 +555,8 @@ namespace GameCore
         lua_pushinteger(InState, TP_PostPhysics); lua_setfield(InState, -2, "PostPhysics");
         lua_pushinteger(InState, TP_PostUpdate);  lua_setfield(InState, -2, "PostUpdate");
         lua_setglobal(InState, "TickPhase");
+
+        /* Last, so a library can never replace one of the tables above. */
+        ScriptLibrary_Install(InState);
     }
 }

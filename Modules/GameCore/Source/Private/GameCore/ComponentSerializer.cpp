@@ -64,6 +64,13 @@ bool RegisterComponentSerializer(const ComponentTypeID InType, const uint16_t In
     return true;
 }
 
+void UnregisterComponentSerializer(const ComponentTypeID InType)
+{
+    if(InType == COMPONENT_TYPE_INVALID || InType >= COMPONENT_TYPE_MAX || GSerializers[InType].Fn == nullptr) { return; }
+    GSerializers[InType] = ComponentSerializerInfo();
+    --GSerializerCount;
+}
+
 const ComponentSerializerInfo* FindComponentSerializer(const ComponentTypeID InType)
 {
     if(InType == COMPONENT_TYPE_INVALID || InType >= COMPONENT_TYPE_MAX) { return nullptr; }

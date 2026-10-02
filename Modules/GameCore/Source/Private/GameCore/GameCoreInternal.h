@@ -10,6 +10,7 @@ extern "C"
 
 #include <string>
 
+#include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/GameCoreLog.h"
@@ -75,6 +76,21 @@ namespace GameCore
 
     /* The World ScriptEngine::BindWorld bound to InState, or nullptr. */
     World* LuaGetBoundWorld(lua_State* InState);
+
+    /* LuaCheckEntity without the raise: false if InIndex is not an Entity, for
+     * ScriptCall, which must never raise. */
+    bool LuaToEntity(lua_State* InState, int InIndex, EntityID& OutEntity);
+
+    /* A typed field or variable as its Lua lanes (three numbers for a Vector3),
+     * and back from the lanes starting at InFirstArg. Shared by component
+     * fields (ComponentScript.cpp) and library variables (ScriptLibrary.cpp).
+     * The read raises on a bad argument. */
+    int  LuaPushScriptValue(lua_State* InState, EScriptFieldType InType, uint32_t InSize, const uint8_t* InValue);
+    void LuaReadScriptValue(lua_State* InState, EScriptFieldType InType, uint32_t InSize, int InFirstArg, uint8_t* OutValue);
+
+    /* One global table per registered script library (ScriptLibrary.cpp);
+     * called by ScriptBindings_Install. */
+    void ScriptLibrary_Install(lua_State* InState);
 }
 
 #endif //GAMECORE_GAMECOREINTERNAL_H
