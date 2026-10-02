@@ -434,6 +434,13 @@ if(NIMBLEENGINE_BUILD_TESTS)
     # From Binaries, so the engine DLLs resolve.
     add_test(NAME NimbleEngine.InputTests COMMAND NimbleEngineInputTests)
     set_tests_properties(NimbleEngine.InputTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+    # Collision: overlaps, events, layers, queries, and shapes from meshes.
+    add_executable(NimbleEngineCollisionTests Tests/CollisionTests.cpp)
+    target_link_libraries(NimbleEngineCollisionTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEngineCollisionTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    add_test(NAME NimbleEngine.CollisionTests COMMAND NimbleEngineCollisionTests)
+    set_tests_properties(NimbleEngine.CollisionTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 endif()
 
 # === Cooked shaders ========================================================

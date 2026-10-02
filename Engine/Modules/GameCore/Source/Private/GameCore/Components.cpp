@@ -23,4 +23,5 @@ namespace GameCore
 
     GAMECORE_DEFINE_COMPONENT(TransformComponent, "Transform")
     GAMECORE_DEFINE_COMPONENT(BoundsComponent,    "Bounds")
+    GAMECORE_DEFINE_COMPONENT(CollisionComponent, "Collision")
 }
