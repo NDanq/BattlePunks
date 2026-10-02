@@ -337,7 +337,10 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(TransformComponent)
 `Bind.ReadOnly` gives a getter only. Field types: float, double, int32,
 uint8, bool, Vector3, AABB, Color and `char[N]`. `Bind.Element("Material3",
 &RenderComponent::Materials, 3)` binds one element of an array member as its
-own field (`Props.Element` likewise, for the editor): there is no array type.
+own field (`Props.Element` likewise, for the editor). For the editor,
+`Props.Array("Materials", &RenderComponent::Materials, PF_AssetMaterial)` lists
+the whole array as one property (`ArrayCount` elements, `Stride` apart), which
+the Details panel shows as a list to add to and remove from.
 
 **Lua is compiled as C and its errors are `longjmp`.** A `lua_CFunction` in
 this module's bindings may only have trivially destructible locals in scope

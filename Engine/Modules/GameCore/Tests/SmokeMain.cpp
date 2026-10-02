@@ -102,6 +102,7 @@ struct PropertyProbeComponent
     float   Speed   = 1.5f;
     uint8_t bArmed  = 0;
     char    Label[16] = "probe";
+    int32_t Slots[4]  = {};
 };
 GAMECORE_DEFINE_COMPONENT(PropertyProbeComponent, "TestPropertyProbe")
 
@@ -111,6 +112,7 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(PropertyProbeComponent)
     Props.Flag("Armed",  &PropertyProbeComponent::bArmed, PF_ReadOnly);
     Props.Field("Label", &PropertyProbeComponent::Label);
     Props.Field("ThisNameIsFarTooLongToBeStoredInThePropertyTable", &PropertyProbeComponent::Speed);
+    Props.Array("Slots", &PropertyProbeComponent::Slots);
 }
 
 static void TestComponentProperties()
@@ -119,8 +121,8 @@ static void TestComponentProperties()
 
     size_t Count = 0;
     const ComponentPropertyEntry* Entries = FindComponentProperties(PropertyProbeComponent::StaticType().ID, Count);
-    Expect(Entries != nullptr && Count == 3, "three properties registered; the over-long name is rejected");
-    if(Entries && Count == 3)
+    Expect(Entries != nullptr && Count == 4, "four properties registered; the over-long name is rejected");
+    if(Entries && Count == 4)
     {
         Expect(std::strcmp(Entries[0].Name, "Speed") == 0, "registration order is kept");
         Expect(Entries[0].Type == EPropertyType::Float, "a float field is typed Float");
@@ -131,6 +133,17 @@ static void TestComponentProperties()
         Expect(Entries[1].Offset == offsetof(PropertyProbeComponent, bArmed), "bArmed's offset matches offsetof");
 
         Expect(Entries[2].Type == EPropertyType::FixedString && Entries[2].Size == 16, "a char[16] is a 16-byte FixedString");
+        Expect(!Entries[2].IsArray() && Entries[2].GetSpan() == 16, "a field is not an array; its span is its size");
+
+        const ComponentPropertyEntry& Slots = Entries[3];
+        Expect(Slots.IsArray() && Slots.ArrayCount == 4 && Slots.Type == EPropertyType::Int32 && Slots.Size == sizeof(int32_t)
+               && Slots.Stride == sizeof(int32_t) && Slots.Offset == offsetof(PropertyProbeComponent, Slots),
+               "Array registers one entry: element type, size and stride, the count, the first element's offset");
+        Expect(Slots.GetSpan() == sizeof(int32_t) * 4, "an array's span is the whole array");
+        const ComponentPropertyEntry Third = Slots.GetElement(2);
+        Expect(!Third.IsArray() && Third.Offset == offsetof(PropertyProbeComponent, Slots) + 2 * sizeof(int32_t)
+               && Third.Type == EPropertyType::Int32 && std::strcmp(Third.Name, "Slots") == 0,
+               "GetElement is that element as a single value");
     }
 
     /* A tool writes through the offset alone, with no knowledge of the type. */

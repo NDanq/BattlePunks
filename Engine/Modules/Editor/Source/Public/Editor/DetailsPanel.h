@@ -3,6 +3,8 @@
 
 #if WITH_EDITOR
 
+#include <cstdint>
+#include <map>
 #include <memory>
 #include <vector>
 
@@ -30,6 +32,8 @@ class QVBoxLayout;
  *
  *   Entity         Name, Script, the script's run status, cull flag.
  *   Per property   a reset arrow while the value differs from the default.
+ *   Per array      a list: the entries in use, each removable (later ones
+ *                  move up), and "+ Add" for the next.
  *   Per component  Reset and Remove in the header.
  *   At the bottom  Add Component (addable types the entity lacks).
  *
@@ -51,6 +55,14 @@ private:
         QToolButton*                      Reset  = nullptr;   // null for a read-only property
         GameCore::ComponentTypeID         Type   = GameCore::COMPONENT_TYPE_INVALID;
         GameCore::ComponentPropertyEntry  Entry;
+    };
+
+    /* An array property's list as built: rebuilt when it must show more. */
+    struct ArrayList
+    {
+        GameCore::ComponentTypeID        Type  = GameCore::COMPONENT_TYPE_INVALID;
+        GameCore::ComponentPropertyEntry Entry;
+        size_t                           Shown = 0;
     };
 
     /* One component section: its default bytes and its header Reset. */
@@ -83,6 +95,12 @@ private:
     void ResetProperty(const PropertyRow& InRow);
     void ResetComponent(GameCore::ComponentTypeID InType);
 
+    /* Erases element InIndex: the later ones move up, the last is the default. */
+    void RemoveArrayElement(GameCore::ComponentTypeID InType, const GameCore::ComponentPropertyEntry& InEntry, size_t InIndex);
+
+    /* Rebuild once the current event is done (a button may be deleting itself). */
+    void QueueRebuild();
+
     EditorContext& Context;
 
     QLabel*      Header      = nullptr;
@@ -100,6 +118,12 @@ private:
     std::vector<GameCore::ComponentTypeID> ShownTypes;
     std::vector<PropertyRow>               Rows;
     std::vector<ComponentSection>          Sections;
+    std::vector<ArrayList>                 Arrays;
+
+    /* How many entries each array shows for the shown entity, by
+     * (type << 32 | offset): at least those in use, plus any added. */
+    std::map<uint64_t, size_t> ArrayShown;
+    bool                       bRebuildQueued = false;
 
     QTimer RefreshTimer;
 };

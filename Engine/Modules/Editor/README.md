@@ -77,7 +77,7 @@ uses it.
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity list with component summary, filter, create/destroy |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession` |
-| `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, reset-to-default, add/remove component |
+| `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
 | `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (File > New Material / Script Graph, Open Graph, or the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
 | `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph and its output (see `Modules/NodeGraph`) |
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
@@ -292,6 +292,15 @@ directory when it is under it), cleared with **x**. Below that, a read-only
 status says whether the script is running, which only happens in a playing
 World, and the **Cull outside active region** checkbox sets the script's cull
 flag. The script's class can override that flag when it loads.
+
+An array property (`Props.Array`, such as a RenderComponent's **Materials**)
+is a list: a heading with how many entries it holds and **+ Add**, then one row
+per entry, numbered, each with its own reset arrow and an **x** that removes it
+-- the entries after it move up, and the array's end goes back to the default.
+It shows the entries in use (up to the last one that is not the default) and
+any added since; an added entry left empty is gone when another entity is
+selected. Removing is undoable like any edit. A RenderComponent's entry *i* is
+section *i*'s material; an empty one uses the mesh's own.
 
 Each property with a writable default shows an orange reset arrow to its right
 while its value differs from the type's default-constructed one; clicking it

@@ -87,9 +87,10 @@ Translucent Unlit.
 Culling bounds are padded by the largest Max Offset among the materials a
 proxy actually draws with.
 
-**Fields.** The slots are `Material0` to `Material7` in saved worlds and Lua,
-and "Material 0" to "Material 7" in the editor, each with the material picker.
-GameCore's binders gain `Element(name, &T::Array, index)` for this. Lua keeps
+**Fields.** The slots are `Material0` to `Material7` in saved worlds and Lua
+(GameCore's `Bind.Element(name, &T::Array, index)`), and one **Materials** list
+in the editor's Details (`Props.Array`): entries are added as needed, each with
+the material picker. Lua keeps
 `Material` as another name for slot 0. A component saved before slots
 (serializer version 1, one `Material` field) loads it into slot 0 -- which
 is a change for a multi-section mesh: that field used to override every
