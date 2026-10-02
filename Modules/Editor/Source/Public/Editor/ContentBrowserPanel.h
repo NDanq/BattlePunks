@@ -73,6 +73,10 @@ private:
     void NavigateUp();
 
     QString PathOf(const QModelIndex& InListIndex) const;
+
+    /* Root or EngineRoot -- whichever InPath is in -- else empty. */
+    QString RootOf(const QString& InPath) const;
+    bool    IsEngine(const QString& InPath) const;
     QStringList SelectedPaths() const;
 
     void OpenItem(const QString& InPath);
@@ -96,6 +100,7 @@ private:
     void SelectFiles(const QStringList& InPaths);
 
     QString Root;
+    QString EngineRoot;      // the engine's content (EditorContent::GetEngineContentRoot), read-only here; may be empty
     QString CurrentFolder;
     QString OpenWorld;
     QStringList History;
@@ -103,7 +108,8 @@ private:
     QFileSystemModel*  Model     = nullptr;
     ContentTreeProxy*  TreeProxy = nullptr;
     ContentListProxy*  ListProxy = nullptr;
-    QTreeView*         Tree      = nullptr;
+    QTreeView*         Tree       = nullptr;
+    QTreeView*         EngineTree = nullptr;
     ContentItemView*   List      = nullptr;
     QLineEdit*         Filter    = nullptr;
     QHBoxLayout*       PathBar   = nullptr;

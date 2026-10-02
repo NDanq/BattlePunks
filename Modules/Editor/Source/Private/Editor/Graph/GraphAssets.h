@@ -86,6 +86,23 @@ namespace EditorGraphs
     void RequestMaterialPreview(const QString& InName, int InSize, const QColor& InTint, QObject* InContext,
                                 std::function<void(const QImage&, const QString&)> InDone);
 
+    /* A mesh, as the mesh viewer and the material Preview dock draw it
+     * (Renderer::RequestMeshPreview); answered as RequestMaterialPreview is. */
+    struct MeshPreviewOptions
+    {
+        QString     Mesh;        // runtime path
+        QString     Material;    // every section's; "" uses Sections
+        QStringList Sections;    // per section; "" keeps the mesh's own
+        int         Width  = 256;
+        int         Height = 256;
+        float       Yaw    = 30.0f;
+        float       Pitch  = 20.0f;
+        float       Zoom   = 1.0f;
+        QColor      Tint   = QColor(255, 255, 255);
+    };
+    void RequestMeshPreview(const MeshPreviewOptions& InOptions, QObject* InContext,
+                            std::function<void(const QImage&, const QString&)> InDone);
+
     /* Restages the saved graph after unsaved preview changes are discarded. */
     void RestoreMaterial(const QString& InGraphPath);
 

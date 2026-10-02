@@ -26,7 +26,8 @@ namespace EngineCore { class Image; }
 
 namespace RenderCore
 {
-    struct SceneTargets;   // Private/RenderCore/SceneTargets.h
+    struct SceneTargets;             // Private/RenderCore/SceneTargets.h
+    struct MaterialPreviewRequest;   // RenderScene.h
 
     class RENDERCORE_API RenderContext
     {
@@ -171,14 +172,16 @@ namespace RenderCore
 
 #if WITH_EDITOR
         /*
-         * EDITOR ONLY -- draws InMaterial on an InSize x InSize quad through
-         * the same stages as the viewport, into private targets, and reads it
-         * back (RGBA8, top row first). Called by RenderScene::Render before
-         * the scene's own draws; restores the view. False, with OutError, if
-         * it cannot draw or read back.
+         * EDITOR ONLY -- draws InRequest through the same stages as the
+         * viewport, into private targets, and reads it back (RGBA8, top row
+         * first): its material on a quad filling the image, or its mesh,
+         * framed by an orbiting perspective camera and lit by a fixed studio
+         * light, with its material (or its slots) on its sections. A
+         * PostProcess material always runs full screen. Called by
+         * RenderScene::Render before the scene's own draws; restores the view
+         * and lighting. False, with OutError, if it cannot draw or read back.
          */
-        bool RenderMaterialPreview(const char* InMaterial, int InSize, EngineCore::Color InTint,
-                                   EngineCore::Image& OutImage, std::string& OutError);
+        bool RenderMaterialPreview(const MaterialPreviewRequest& InRequest, EngineCore::Image& OutImage, std::string& OutError);
 #endif
 
         struct Impl;

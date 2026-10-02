@@ -6,8 +6,10 @@
 
 #include <QAction>
 #include <QApplication>
+#include <QCheckBox>
 #include <QClipboard>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPixmap>
@@ -29,6 +31,7 @@
 
 #include "Public/Core/CoreLog.h"
 #include "Public/NodeGraph/GraphFile.h"
+#include "Private/Editor/Content/MeshPreviewView.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Graph/GraphDetailsPanel.h"
 #include "Private/Editor/Graph/GraphDocument.h"
@@ -46,6 +49,16 @@ namespace
 {
     constexpr int CompileDelayMs = 250;
     constexpr int PreviewPixels  = 256;
+
+    /* The Preview dock's shapes: the engine's meshes (staged beside every
+     * executable), and the flat quad the preview drew before them. */
+    struct PreviewShapeChoice { const char* Label; const char* Mesh; };
+    const PreviewShapeChoice PreviewShapes[] = {
+        { "Sphere", "Engine/Content/Meshes/Sphere.nmmesh" },
+        { "Box",    "Engine/Content/Meshes/Box.nmmesh" },
+        { "Plane",  "Engine/Content/Meshes/Plane.nmmesh" },
+        { "Quad",   "" },
+    };
     constexpr int NodeRole = Qt::UserRole;
 
     /* A GUID in a QVariant, as its text. */
@@ -306,12 +319,33 @@ void GraphEditorTab::BuildPreviewDock()
     auto* Page   = new QWidget(Dock);
     auto* Layout = new QVBoxLayout(Page);
 
-    PreviewImage = new QLabel(Page);
-    PreviewImage->setObjectName(QStringLiteral("GraphPreviewImage"));
-    PreviewImage->setAlignment(Qt::AlignCenter);
-    PreviewImage->setMinimumSize(PreviewPixels, PreviewPixels);
-    PreviewImage->setToolTip(QStringLiteral("This material on a quad, drawn by the viewport's renderer"));
-    Layout->addWidget(PreviewImage, 1);
+    auto* ShapeRow = new QHBoxLayout();
+    PreviewShape = new QComboBox(Page);
+    for(const PreviewShapeChoice& Each : PreviewShapes)
+    {
+        PreviewShape->addItem(QString::fromLatin1(Each.Label), QString::fromLatin1(Each.Mesh));
+    }
+    PreviewShape->setToolTip(QStringLiteral("What the material is drawn on: one of the engine's meshes, or a flat quad. "
+                                            "A PostProcess material always fills the image"));
+    ShapeRow->addWidget(new QLabel(QStringLiteral("Shape"), Page));
+    ShapeRow->addWidget(PreviewShape);
+    auto* Animate = new QCheckBox(QStringLiteral("Animate"), Page);
+    Animate->setToolTip(QStringLiteral("Keep drawing, for materials that move with Time"));
+    ShapeRow->addWidget(Animate);
+    ShapeRow->addStretch(1);
+    Layout->addLayout(ShapeRow);
+
+    PreviewView = new MeshPreviewView(Page);
+    PreviewView->setObjectName(QStringLiteral("GraphPreviewView"));
+    PreviewView->setMinimumSize(PreviewPixels, PreviewPixels);
+    PreviewView->SetMesh(PreviewShape->currentData().toString());
+    PreviewView->SetTint(PreviewTint);
+    Layout->addWidget(PreviewView, 1);
+    connect(PreviewShape, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int)
+    {
+        PreviewView->SetMesh(PreviewShape->currentData().toString());
+    });
+    connect(Animate, &QCheckBox::toggled, PreviewView, &MeshPreviewView::SetAnimate);
 
     PreviewStatus = new QLabel(QStringLiteral("Waiting for the first cook..."), Page);
     PreviewStatus->setWordWrap(true);
@@ -320,7 +354,7 @@ void GraphEditorTab::BuildPreviewDock()
 
     auto* Row = new QHBoxLayout();
     auto* Tint = new QPushButton(QStringLiteral("Instance Tint..."), Page);
-    Tint->setToolTip(QStringLiteral("The tint the preview quad passes to the Instance Tint input -- "
+    Tint->setToolTip(QStringLiteral("The tint the preview passes to the Instance Tint input -- "
                                     "in the level, each RenderComponent's own Tint"));
     connect(Tint, &QPushButton::clicked, this, [this]()
     {
@@ -329,7 +363,7 @@ void GraphEditorTab::BuildPreviewDock()
         if(Picked.isValid())
         {
             PreviewTint = Picked;
-            RefreshPreview();
+            PreviewView->SetTint(PreviewTint);
         }
     });
     Row->addWidget(Tint);
@@ -341,32 +375,22 @@ void GraphEditorTab::BuildPreviewDock()
     Row->addStretch(1);
     Layout->addLayout(Row);
 
+    connect(PreviewView, &MeshPreviewView::Drawn, this, [this](const QString& InError)
+    {
+        PreviewStatus->setText(!InError.isEmpty() ? InError
+                               : bLivePreview || !Document->IsDirty() ? QStringLiteral("As the level draws it -- drag to orbit")
+                                                                      : QStringLiteral("The saved version (Live Preview is off)"));
+    });
+
     Dock->setWidget(Page);
     addDockWidget(Qt::RightDockWidgetArea, Dock);
 }
 
 void GraphEditorTab::RefreshPreview()
 {
-    if(!PreviewImage) { return; }
-
-    const uint64_t Generation = ++PreviewGeneration;
+    if(!PreviewView) { return; }
     PreviewStatus->setText(QStringLiteral("Drawing..."));
-    EditorGraphs::RequestMaterialPreview(EditorGraphs::GetMaterialName(Document->GetPath()), PreviewPixels, PreviewTint, this,
-                                         [this, Generation](const QImage& InImage, const QString& InError)
-    {
-        if(Generation != PreviewGeneration) { return; }   // a newer request is on its way
-        if(InImage.isNull())
-        {
-            PreviewImage->setPixmap(QPixmap());
-            PreviewImage->setText(QStringLiteral("No preview"));
-            PreviewStatus->setText(InError);
-            return;
-        }
-        PreviewImage->setPixmap(QPixmap::fromImage(InImage));
-        PreviewStatus->setText(bLivePreview || !Document->IsDirty()
-                               ? QStringLiteral("As the level draws it")
-                               : QStringLiteral("The saved version (Live Preview is off)"));
-    });
+    PreviewView->SetMaterial(EditorGraphs::GetMaterialName(Document->GetPath()));   // draws again
 }
 
 bool GraphEditorTab::Save()

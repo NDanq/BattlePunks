@@ -1001,6 +1001,71 @@ static void TestMaterialsOnGpu()
                             || Is(Textured.Rgb, 255, 255, 255);
         Expect(Textured.bOk && bOneTexel, "its node's Nearest overrides the texture's Linear: the centre is one texel, not a blend");
 
+        /* Mesh previews: the engine's primitives, as the mesh viewer and the
+         * material editor draw them. */
+        const auto Preview = [&](Renderer::MeshPreview InPreview, EngineCore::Image& OutPixels, std::string& OutError)
+        {
+            InPreview.Width  = 96;
+            InPreview.Height = 64;
+            const uint64_t Request = Rend.RequestMeshPreview(InPreview);
+            DrawFrame();
+            DrawFrame();
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, OutError) && OutPixels.GetWidth() == 96;
+        };
+        const auto Pixel = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        {
+            Renderer::MeshPreview Sphere;
+            Sphere.Mesh = "Engine/Content/Meshes/Sphere.nmmesh";
+            EngineCore::Image Pixels;
+            std::string Error;
+            const bool bOk = Preview(Sphere, Pixels, Error);
+            int Centre[3] = {}, Corner[3] = {};
+            if(bOk) { Pixel(Pixels, 48, 32, Centre); Pixel(Pixels, 2, 2, Corner); }
+            std::printf("    Sphere centre = %d %d %d, corner = %d %d %d%s\n", Centre[0], Centre[1], Centre[2],
+                        Corner[0], Corner[1], Corner[2], bOk ? "" : (" -- " + Error).c_str());
+            Expect(bOk && Is(Corner, 38, 40, 46) && !Is(Centre, 38, 40, 46) && Centre[0] > 60 && std::abs(Centre[0] - Centre[2]) < 24,
+                   "a mesh preview frames the Sphere, its own material (DefaultLit) lit grey on the clear colour");
+        }
+        {
+            Renderer::MeshPreview Box;
+            Box.Mesh     = "Engine/Content/Meshes/Box.nmmesh";
+            Box.Material = "Textured";
+            Box.Yaw      = 0.0f;
+            Box.Pitch    = 0.0f;
+            EngineCore::Image Pixels;
+            std::string Error;
+            int Centre[3] = {};
+            const bool bOk = Preview(Box, Pixels, Error);
+            if(bOk) { Pixel(Pixels, 48, 32, Centre); }
+            Expect(bOk && (Is(Centre, 255, 0, 0) || Is(Centre, 0, 255, 0) || Is(Centre, 0, 0, 255) || Is(Centre, 255, 255, 255)),
+                   "a preview's Material goes on every section: the Box's face shows Quadrants");
+
+            Box.Material.clear();
+            Box.Sections = { "Textured" };
+            int Slotted[3] = {};
+            const bool bSlotted = Preview(Box, Pixels, Error);
+            if(bSlotted) { Pixel(Pixels, 48, 32, Slotted); }
+            Expect(bSlotted && Slotted[0] == Centre[0] && Slotted[1] == Centre[1] && Slotted[2] == Centre[2],
+                   "or a section's own slot does");
+        }
+        {
+            Renderer::MeshPreview Missing;
+            Missing.Mesh = "Engine/Content/Meshes/Nope.nmmesh";
+            EngineCore::Image Pixels;
+            std::string Error;
+            Expect(!Preview(Missing, Pixels, Error) && Error.find("could not be loaded") != std::string::npos,
+                   "a preview of a missing mesh says so");
+            Renderer::MeshPreview Nothing;
+            Expect(Rend.RequestMeshPreview(Nothing) == 0, "a mesh preview needs a mesh");
+        }
+
         Rend.UnbindWorld();
         Rend.SetViewOverride(nullptr);
     }
@@ -1384,6 +1449,72 @@ static void TestRenderStages()
     std::filesystem::remove_all(Root, Ignored);
 }
 
+/*
+ * The engine's primitive meshes (Engine/Scripts/generate_primitive_meshes.py),
+ * as staged beside this executable: they load, and each triangle faces the way
+ * its normals do -- counter-clockwise seen from outside, as imported meshes.
+ */
+static void TestEngineMeshes()
+{
+    std::printf("[engine meshes]\n");
+
+    struct Expected { const char* Path; uint32_t Vertices; uint32_t Triangles; float MinY; float MaxY; };
+    const Expected Meshes[] = {
+        { "Engine/Content/Meshes/Box.nmmesh",    24,  12,  -0.5f, 0.5f },
+        { "Engine/Content/Meshes/Sphere.nmmesh", 561, 960, -0.5f, 0.5f },
+        { "Engine/Content/Meshes/Plane.nmmesh",  289, 512,  0.0f, 0.0f },
+    };
+    for(const Expected& Each : Meshes)
+    {
+        MeshData Mesh;
+        const bool bLoaded = LoadMeshFile(Each.Path, Mesh);
+        Expect(bLoaded, (std::string(Each.Path) + " loads").c_str());
+        if(!bLoaded) { continue; }
+
+        Expect(Mesh.GetVertexCount() == Each.Vertices && Mesh.GetTriangleCount() == Each.Triangles,
+               (std::string(Each.Path) + " has its vertices and triangles").c_str());
+        Expect(Mesh.BoundsMin[0] == -0.5f && Mesh.BoundsMax[0] == 0.5f && Mesh.BoundsMin[2] == -0.5f && Mesh.BoundsMax[2] == 0.5f
+               && std::fabs(Mesh.BoundsMin[1] - Each.MinY) < 1e-5f && std::fabs(Mesh.BoundsMax[1] - Each.MaxY) < 1e-5f,
+               (std::string(Each.Path) + " is one unit across, centred on the origin").c_str());
+        Expect(Mesh.Sections.size() == 1 && Mesh.Sections[0].Material.empty() && Mesh.Sections[0].IndexCount == Mesh.Indices.size(),
+               (std::string(Each.Path) + " is one section with no material (DefaultLit)").c_str());
+
+        bool bUnitNormals = true, bUVsInRange = true, bFacing = true;
+        for(uint32_t Vertex = 0; Vertex < Mesh.GetVertexCount(); ++Vertex)
+        {
+            const float* N = &Mesh.Normals[Vertex * 3];
+            bUnitNormals &= std::fabs(N[0] * N[0] + N[1] * N[1] + N[2] * N[2] - 1.0f) < 1e-4f;
+            const float* UV = &Mesh.UV0[Vertex * 2];
+            bUVsInRange &= UV[0] >= 0.0f && UV[0] <= 1.0f && UV[1] >= 0.0f && UV[1] <= 1.0f;
+        }
+        for(size_t At = 0; At + 2 < Mesh.Indices.size(); At += 3)
+        {
+            const float* A = &Mesh.Positions[Mesh.Indices[At] * 3];
+            const float* B = &Mesh.Positions[Mesh.Indices[At + 1] * 3];
+            const float* C = &Mesh.Positions[Mesh.Indices[At + 2] * 3];
+            const float AB[3] = { B[0] - A[0], B[1] - A[1], B[2] - A[2] };
+            const float AC[3] = { C[0] - A[0], C[1] - A[1], C[2] - A[2] };
+            const float Face[3] = { AB[1] * AC[2] - AB[2] * AC[1], AB[2] * AC[0] - AB[0] * AC[2], AB[0] * AC[1] - AB[1] * AC[0] };
+            float Normal[3] = {};
+            for(int Corner = 0; Corner < 3; ++Corner)
+            {
+                const float* N = &Mesh.Normals[Mesh.Indices[At + size_t(Corner)] * 3];
+                for(int Axis = 0; Axis < 3; ++Axis) { Normal[Axis] += N[Axis]; }
+            }
+            const float Area = Face[0] * Face[0] + Face[1] * Face[1] + Face[2] * Face[2];
+            bFacing &= Area < 1e-12f || Face[0] * Normal[0] + Face[1] * Normal[1] + Face[2] * Normal[2] > 0.0f;
+        }
+        Expect(bUnitNormals && bUVsInRange, (std::string(Each.Path) + " has unit normals and 0-1 UVs").c_str());
+        Expect(bFacing, (std::string(Each.Path) + " winds every triangle counter-clockwise seen from outside").c_str());
+    }
+
+    MeshData Plane;
+    if(LoadMeshFile("Engine/Content/Meshes/Plane.nmmesh", Plane))
+    {
+        Expect(Plane.Normals[1] == -1.0f, "the Plane faces up (-Y)");
+    }
+}
+
 /* Null backend: one draw per section, mesh bounds, quad fallback. */
 static void TestMeshDrawing()
 {
@@ -1490,6 +1621,7 @@ int main()
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();
+    TestEngineMeshes();
     TestRenderStages();
 #endif
 

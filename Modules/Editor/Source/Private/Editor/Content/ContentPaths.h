@@ -14,8 +14,25 @@ class QMimeData;
  */
 namespace EditorContent
 {
-    /* Project-relative, forward slashes; empty if outside. */
+    /* Project-relative, forward slashes ("Content/Props/Crate.nmmesh"), or
+     * "Engine/Content/..." for the engine's own content; empty if outside both. */
     QString ToRuntimePath(const QString& InPath);
+
+    /*
+     * The engine's content folder (Engine/Content: its meshes, materials and
+     * shaders), absolute, forward slashes: the source tree this editor was
+     * built from when it is there, else the copy staged beside the executable.
+     * Empty if neither exists. Read-only to the editor; staged at
+     * "Engine/Content/..." beside every game.
+     */
+    QString GetEngineContentRoot();
+
+    /* Whether InPath is the engine content folder or inside it. */
+    bool IsEngineContent(const QString& InPath);
+
+    /* Every material's name, sorted: the project's Materials folder's and the
+     * engine's, from their graphs and .material files. */
+    QStringList ListMaterialNames();
 
     /* The material a file names: "Glow" for Glow.material.nmgraph,
      * Glow.material or Glow.mtl.glsl. Empty otherwise. */

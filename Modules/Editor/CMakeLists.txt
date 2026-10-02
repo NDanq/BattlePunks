@@ -88,6 +88,10 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Public/Editor/ContentBrowserPanel.h
         Source/Private/Editor/Content/ContentPaths.cpp
         Source/Private/Editor/Content/ContentPaths.h
+        Source/Private/Editor/Content/MeshPreviewView.cpp
+        Source/Private/Editor/Content/MeshPreviewView.h
+        Source/Private/Editor/Content/MeshViewerWindow.cpp
+        Source/Private/Editor/Content/MeshViewerWindow.h
         Source/Private/Editor/Content/ImportWizard.cpp
         Source/Private/Editor/Content/ImportWizard.h
 )
@@ -145,6 +149,14 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_test(NAME Editor.Import COMMAND NimbleEditorImportTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorImportTests>")
 endif()
+
+# === Engine content ===========================================================
+# The Content Browser shows the engine's own content (Engine/Content) beside
+# the project's, from the source tree this editor was built from; without it,
+# from the copy staged beside the executable (ContentPaths.cpp).
+get_filename_component(NM_EDITOR_ENGINE_CONTENT "${CMAKE_CURRENT_SOURCE_DIR}/../../Content" ABSOLUTE)
+set_source_files_properties(Source/Private/Editor/Content/ContentPaths.cpp PROPERTIES
+        COMPILE_DEFINITIONS "NIMBLEEDITOR_ENGINE_CONTENT_DIR=\"${NM_EDITOR_ENGINE_CONTENT}\"")
 
 # === Node graphs ================================================================
 # Shader check on save via NodeGraph's cook_material_graphs.py; skipped if
