@@ -23,6 +23,9 @@ namespace GameCore   { class World; }
 namespace RenderCore { class Renderer; struct RenderView; }
 
 class PlaySession;
+class QWidget;
+class ViewportSDLInput;
+namespace NimbleEngine { class InputState; }
 class QUndoCommand;
 class QUndoStack;
 namespace EditorHistory { struct EntityMembers; }
@@ -120,6 +123,16 @@ public:
 
     /* The editor camera's view and the overlays apply: editing, or ejected. */
     bool IsEditorViewActive() const { return !Play || bPlayViewEjected; }
+
+    /* The widget whose input the game reads while playing: the viewport. Set
+     * once, by its owner; StartPlay wraps it in SDL (ViewportSDLInput) so the
+     * game's input runs the launcher's path. Null plays without input. */
+    void SetPlayInputWidget(QWidget* InWidget) { PlayInputWidget = InWidget; }
+
+    /* While playing WITHOUT SDL input (it could not wrap the viewport): the
+     * state the viewport's Qt events feed instead. Null otherwise -- SDL has
+     * the input, or nothing is playing, or the view is ejected. */
+    NimbleEngine::InputState* GetPlayFallbackInput();
 
     // === Scene ==============================================================
     // On the EDITED World; refused while playing.
@@ -286,6 +299,8 @@ private:
     GameCore::World*         HookedWorld = nullptr;
 
     PlaySession*       Play = nullptr;
+    QWidget*           PlayInputWidget = nullptr;
+    ViewportSDLInput*  PlayInput = nullptr;   // the viewport as an SDL window, while playing
     GameCore::EntityID EditedSelection;     // restored by StopPlay
     uint32_t           PlayLoadCount = 0;   // PlaySession::GetLoadCount at the last sync
     bool               bPlayViewEjected = false;

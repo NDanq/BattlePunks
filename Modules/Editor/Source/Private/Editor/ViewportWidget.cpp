@@ -1,5 +1,6 @@
 #if WITH_EDITOR
 
+#include "Public/NimbleEngine/Input.h"
 #include "Public/Editor/ViewportWidget.h"
 
 #include <algorithm>
@@ -471,8 +472,65 @@ int ViewportWidget::HitGizmoAxis(const QPoint& InLogicalPos) const
 
 // === Input ===================================================================
 
+namespace
+{
+    /* Play-in-Editor's fallback when SDL could not take the viewport: Qt's key
+     * to the engine's key name. Qt keys are layout-dependent, unlike SDL's
+     * physical ones -- one reason SDL is the normal path. */
+    const char* QtKeyToInputName(const int InKey)
+    {
+        static const char* const Letters[] = { "A","B","C","D","E","F","G","H","I","J","K","L","M",
+                                               "N","O","P","Q","R","S","T","U","V","W","X","Y","Z" };
+        static const char* const Digits[]  = { "0","1","2","3","4","5","6","7","8","9" };
+        static const char* const FKeys[]   = { "F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12" };
+        if(InKey >= Qt::Key_A && InKey <= Qt::Key_Z)   { return Letters[InKey - Qt::Key_A]; }
+        if(InKey >= Qt::Key_0 && InKey <= Qt::Key_9)   { return Digits[InKey - Qt::Key_0]; }
+        if(InKey >= Qt::Key_F1 && InKey <= Qt::Key_F12) { return FKeys[InKey - Qt::Key_F1]; }
+        switch(InKey)
+        {
+            case Qt::Key_Space:     return "Space";
+            case Qt::Key_Return:    return "Return";
+            case Qt::Key_Enter:     return "KP_Enter";
+            case Qt::Key_Escape:    return "Escape";
+            case Qt::Key_Tab:       return "Tab";
+            case Qt::Key_Backspace: return "Backspace";
+            case Qt::Key_Left:      return "Left";
+            case Qt::Key_Right:     return "Right";
+            case Qt::Key_Up:        return "Up";
+            case Qt::Key_Down:      return "Down";
+            case Qt::Key_Shift:     return "LeftShift";
+            case Qt::Key_Control:   return "LeftCtrl";
+            case Qt::Key_Alt:       return "LeftAlt";
+            case Qt::Key_Insert:    return "Insert";
+            case Qt::Key_Delete:    return "Delete";
+            case Qt::Key_Home:      return "Home";
+            case Qt::Key_End:       return "End";
+            case Qt::Key_PageUp:    return "PageUp";
+            case Qt::Key_PageDown:  return "PageDown";
+            default:                return nullptr;
+        }
+    }
+
+    const char* QtButtonToInputName(const Qt::MouseButton InButton)
+    {
+        switch(InButton)
+        {
+            case Qt::LeftButton:   return "Mouse.Left";
+            case Qt::MiddleButton: return "Mouse.Middle";
+            case Qt::RightButton:  return "Mouse.Right";
+            case Qt::BackButton:   return "Mouse.X1";
+            case Qt::ForwardButton:return "Mouse.X2";
+            default:               return nullptr;
+        }
+    }
+}
+
 void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
 {
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        if(const char* Name = QtButtonToInputName(InEvent->button())) { Game->Press(NimbleEngine::FindInputKey(Name)); }
+    }
     /* The game's view while playing: the editor camera does not move. */
     if(!Context.IsEditorViewActive())
     {
@@ -535,6 +593,14 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
 {
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        /* Physical pixels, as SDL reports them. */
+        const double Ratio = devicePixelRatioF();
+        const QPoint At    = (InEvent->position() * Ratio).toPoint();
+        Game->MoveMouse(At.x(), At.y(), At.x() - FallbackMousePos.x(), At.y() - FallbackMousePos.y());
+        FallbackMousePos = At;
+    }
     /* The game's view while playing: the editor camera does not move. */
     if(!Context.IsEditorViewActive())
     {
@@ -598,6 +664,10 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
 {
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        if(const char* Name = QtButtonToInputName(InEvent->button())) { Game->Release(NimbleEngine::FindInputKey(Name)); }
+    }
     /* The game's view while playing: the editor camera does not move. */
     if(!Context.IsEditorViewActive())
     {
@@ -648,6 +718,10 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
 
 void ViewportWidget::wheelEvent(QWheelEvent* InEvent)
 {
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        Game->AddWheel(float(InEvent->angleDelta().x()) / 120.0f, float(InEvent->angleDelta().y()) / 120.0f);
+    }
     /* The game's view while playing: the editor camera does not move. */
     if(!Context.IsEditorViewActive())
     {
@@ -674,6 +748,10 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
     {
         Context.StopPlay();
         return;
+    }
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        if(const char* Name = QtKeyToInputName(InEvent->key())) { Game->Press(NimbleEngine::FindInputKey(Name)); }
     }
     if(!Context.IsEditorViewActive())
     {
@@ -713,6 +791,10 @@ void ViewportWidget::keyReleaseEvent(QKeyEvent* InEvent)
     if(!InEvent->isAutoRepeat())
     {
         HeldKeys.remove(InEvent->key());
+        if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+        {
+            if(const char* Name = QtKeyToInputName(InEvent->key())) { Game->Release(NimbleEngine::FindInputKey(Name)); }
+        }
     }
 }
 
@@ -722,6 +804,10 @@ void ViewportWidget::focusOutEvent(QFocusEvent* InEvent)
      * camera flying, or a drag stuck on. */
     FinishGizmoDrag(false);
     HeldKeys.clear();
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        Game->ReleaseAll();
+    }
     Drag       = EDrag::None;
     DragButton = Qt::NoButton;
     QWidget::focusOutEvent(InEvent);

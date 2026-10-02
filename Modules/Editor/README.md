@@ -76,7 +76,8 @@ uses it.
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity list with component summary, filter, create/destroy |
-| `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession` |
+| `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
+| `ViewportSDLInput` (private) | The viewport as an SDL window (focus hand-over, text forwarding, pumping), for the game's input and the input probe |
 | `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
 | `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (File > New Material / Script Graph, Open Graph, or the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
 | `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph with its generated code inside it, `<gen_code>` (see `Modules/NodeGraph`); nothing is written beside it |
@@ -416,10 +417,25 @@ stands in for `Application` as the host.
 - The game ends a run itself with `GameSession::RequestQuit` -- the editor stops
   rather than exiting.
 
-Not yet: game input. Games have no input API to feed, so a run receives no
-keyboard or mouse; the SDL path proven by the input probe (View > SDL Input
-Probe) is what will deliver it. The game's `[Display] FrameRateLimit` is
-reported to it but not enforced -- the viewport's timer paces the run.
+**Game input** takes the launcher's path (`Engine/Source/INPUT.md`):
+
+- **How it gets there.** `ViewportSDLInput` wraps the viewport as an SDL
+  window. Qt keeps the window and the message loop; Win32 focus moves to the
+  viewport when it is focused, and text is forwarded. The input feeds the
+  `PlaySession`'s `InputRouter`.
+- **When.** Each frame, SDL is pumped and the router latched right before the
+  game's frame. The game sees the same `InputState` it would in `Sandbox.exe`.
+- **Editor keys.** **Escape** still stops the run, and Qt still sees every
+  key after SDL.
+- **Ejected view.** While the view is ejected, the game sees nothing held.
+- **Fallback.** If SDL cannot wrap the viewport, the viewport's Qt key and
+  mouse events feed the router instead. Those keys are layout-dependent, and
+  the log says which path a run uses.
+- **The probe.** View > SDL Input Probe reports raw SDL events from the same
+  wrapper. It switches off while playing, since a window is wrapped once.
+
+The game's `[Display] FrameRateLimit` is reported to it but not enforced --
+the viewport's timer paces the run.
 
 ## Editor settings
 
@@ -531,7 +547,8 @@ decided. The Console's `cook` still cooks a single world.
   the delete is undone.
 - No prompt to save unsaved changes on close, New or Open yet.
 - Transform handles act on one entity; there is no multi-selection.
-- Play-in-Editor has no game input yet (see above).
+- Play-in-Editor input has no gamepad hot-plug outside the viewport's SDL pump
+  (see INPUT.md).
 - View presets stay in perspective; there are no orthographic views yet.
 - Moving or renaming an asset in the Content Browser leaves components that
   name it pointing at the old path.

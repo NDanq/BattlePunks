@@ -25,6 +25,7 @@
 #include "Public/RenderCore/Renderer.h"
 #include "Private/Editor/EditorHistory.h"
 #include "Private/Editor/PlaySession.h"
+#include "Private/Editor/ViewportSDLInput.h"
 
 using GameCore::EntityID;
 
@@ -208,6 +209,12 @@ void EditorContext::RenderFrame(const RenderCore::RenderView& InView, const Engi
         {
             UnhookActiveWorld();
         }
+        /* What SDL has queued reaches the router just before the game latches it. */
+        if(PlayInput)
+        {
+            PlayInput->Pump();
+        }
+        Play->SetInputBlocked(bPlayViewEjected);
         Play->Tick(DeltaSeconds, InViewportPixels);
         SyncPlayWorld();
     }
@@ -915,6 +922,25 @@ bool EditorContext::StartPlay()
         return false;
     }
 
+    /* The game's input takes the launcher's path: the viewport as an SDL
+     * window, into the session's router. Without it, the viewport's Qt events
+     * feed the router instead (GetPlayFallbackInput). */
+    if(PlayInputWidget)
+    {
+        PlayInput = new ViewportSDLInput(this);
+        if(PlayInput->Start(PlayInputWidget))
+        {
+            Play->GetInputRouter().Attach(PlayInput->GetWindow());
+            CORE_LOG("[PIE] input: SDL, through the viewport")
+        }
+        else
+        {
+            delete PlayInput;
+            PlayInput = nullptr;
+            CORE_LOG_WARN("[PIE] input: SDL could not take the viewport; using its Qt events")
+        }
+    }
+
     PlayLoadCount    = Play->GetLoadCount();
     bPlayViewEjected = false;
     ActivateWorld(Play->GetWorld(), GameCore::InvalidEntityID());
@@ -933,6 +959,16 @@ void EditorContext::StopPlay()
     /* The playing World is still alive here; Stop frees it. */
     UnhookActiveWorld();
     ActiveWorld = nullptr;
+
+    /* Before the run: the router detaches from the wrapped window, then SDL
+     * lets the viewport go. */
+    Play->GetInputRouter().Detach();
+    if(PlayInput)
+    {
+        PlayInput->Stop();
+        delete PlayInput;
+        PlayInput = nullptr;
+    }
 
     Play->Stop();   // unbinds the renderer from the game's World
     EngineCore::Memory::Dealloc(Play);
@@ -978,6 +1014,11 @@ void EditorContext::SyncPlayWorld()
 QString EditorContext::DescribePlay() const
 {
     return Play ? QString::fromStdString(Play->Describe()) : QString();
+}
+
+NimbleEngine::InputState* EditorContext::GetPlayFallbackInput()
+{
+    return Play && !PlayInput && !bPlayViewEjected ? &Play->GetInputRouter().GetPending() : nullptr;
 }
 
 void EditorContext::SetPlayViewEjected(const bool bInEjected)
