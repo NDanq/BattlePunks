@@ -53,7 +53,9 @@ Engine/Modules/RenderCore/
 |   |   |-- RenderContext.h         the render-thread draw interface a proxy uses; NO GDI types
 |   |   |-- RenderProxy.h           class RenderProxy, RenderProxyHandle, the PROXY_BODY/DEFINE_PROXY_COMPONENT macros
 |   |   |-- RenderScene.h           render-thread container of proxies: Add/Remove/SetView/Render
-|   |   |-- RenderComponents.h      RenderComponent, CameraComponent (GameCore components)
+|   |   |-- RenderComponents.h      includes every component header below
+|   |   |-- Components/             RenderComponent.h, CameraComponent.h, DirectionalLightComponent.h,
+|   |   |                           SkyLightComponent.h, PostProcessComponent.h (GameCore components)
 |   |   |-- MeshAsset.h             .nmmesh: MeshData, Save/Load, MeshAssetCache
 |   |   |-- TextureAsset.h          .nmtexture: TextureData, Save/Load
 |   |   |-- AssetImportInfo.h       where an imported asset came from (for Reimport)
@@ -68,7 +70,8 @@ Engine/Modules/RenderCore/
 |       |-- RenderScene.cpp         the proxy vector, culling, Render()
 |       |-- RenderComponentProxy.h/.cpp   a RenderComponent's mesh, or its quad
 |       |-- MeshAsset.cpp, TextureAsset.cpp, AssetFileCommon.h   the asset formats
-|       |-- RenderComponents.cpp    component registration
+|       |-- Components/             one .cpp per component: registration, serializer, Lua, editor;
+|       |                           MaterialPathUpgrade.h for the old bare material names
 |       |-- WorldBridge.h/.cpp      game-thread side: proxy lifecycle, extraction, view build
 |       `-- Renderer.cpp
 `-- Tests/
@@ -230,7 +233,7 @@ RENDERCORE_DEFINE_PROXY_COMPONENT(MyComponent, "My", MyProxy)
 // linkage -- exactly like GAMECORE_DEFINE_COMPONENT's StaticType(), it is
 // meant to be defined once, in this one .cpp. RegisterProxyType therefore
 // has to be called from HERE too (or through a small exported wrapper, the
-// way RenderComponents.h's GetRenderComponentFactory() does for
+// way Components/RenderComponent.h's GetRenderComponentFactory() does for
 // RenderComponent) -- not from an arbitrary caller elsewhere that only
 // has MyComponent.h.
 void RegisterMyComponentProxyType()
