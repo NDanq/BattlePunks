@@ -257,12 +257,12 @@ namespace EngineCore
         void        GetStats  (MemoryPoolStats& OutStats) const override;
 
     private:
-        static constexpr size_t NAME_MAX = 32;
+        static constexpr size_t NAME_CAPACITY = 32;
 
         /* A fixed char[] and not a std::string, for the reason CoreConfig.h:74
          * spells out: a std::string member would allocate in whichever image
          * constructed the pool and be freed by code in EngineCore.dll. */
-        char Name[NAME_MAX] = {};
+        char Name[NAME_CAPACITY] = {};
 
         mutable std::mutex Mutex;
         MemoryPoolStats    Stats;
@@ -309,9 +309,9 @@ namespace EngineCore
         bool Owns(const void* InPtr) const;
 
     private:
-        static constexpr size_t NAME_MAX = 32;
+        static constexpr size_t NAME_CAPACITY = 32;
 
-        char   Name[NAME_MAX] = {};
+        char   Name[NAME_CAPACITY] = {};
 
         size_t BlockBytes = 0;
         size_t BlockAlign = 0;
@@ -363,9 +363,9 @@ namespace EngineCore
         size_t GetBytesUsed() const;
 
     private:
-        static constexpr size_t NAME_MAX = 32;
+        static constexpr size_t NAME_CAPACITY = 32;
 
-        char Name[NAME_MAX] = {};
+        char Name[NAME_CAPACITY] = {};
 
         VirtualRegion      Region;
         mutable std::mutex Mutex;

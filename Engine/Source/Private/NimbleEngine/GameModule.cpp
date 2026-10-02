@@ -54,7 +54,8 @@ namespace NimbleEngine
         /* Beside the executable: the working directory may differ. */
         const std::filesystem::path Path =
             std::filesystem::u8path(GameWindowSystem::GetExecutableDir()) / std::filesystem::u8path(Name + ModuleSuffix);
-        const std::string PathText = Path.u8string();
+        const std::u8string PathU8 = Path.u8string();
+        const std::string PathText(PathU8.begin(), PathU8.end());
 
         if(!Modules->RegisterModule(Name, PathText, /*bInWatch=*/false))
         {
