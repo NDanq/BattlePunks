@@ -3,3 +3,7 @@
 # to CRLF on checkout would make every save rewrite every file.
 *.nmworld  text eol=lf
 *.nmentity text eol=lf
+
+# NodeGraph's golden files are compared byte for byte with generated code,
+# which is LF; CRLF on checkout would fail every one.
+Engine/Modules/NodeGraph/Tests/Data/** text eol=lf
