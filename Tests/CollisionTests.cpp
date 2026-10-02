@@ -196,6 +196,15 @@ namespace
                                  "assert(c:GetEnabled() and c:GetSource() == 'Bounds' and c:GetOverlapCount() == 0) "
                                  "c:SetSource('Mesh') assert(c:GetSource() == 'Mesh') c:SetSource('Bounds')", "bindings"),
                "the component's Lua surface");
+        /* The Collision library: intersection without events. */
+        Entity Left = MakeBox(W, "Left", -10.0, 2, -1);
+        Entity Right = MakeBox(W, "Right", -9.5, 2, -1);
+        W.Tick(0.016f);
+        Expect(Scripts.RunString("local hits = { Collision.OverlapBox(-12, -1, -1, -8, 1, 1) } assert(#hits == 2) "
+                                 "assert(Collision.CountInBox(-12, -1, -1, -8, 1, 1, 2) == 2 and Collision.CountInBox(-12, -1, -1, -8, 1, 1, 4) == 0) "
+                                 "assert(Collision.AreOverlapping(World.FindEntity('Left'), World.FindEntity('Right')))", "library"),
+               "the Collision library: OverlapBox, CountInBox with a mask, AreOverlapping");
+
         Expect(Scripts.GetErrorCount() == 0, "no Lua errors");
         Scripts.UnbindWorld();
         Scripts.Shutdown();

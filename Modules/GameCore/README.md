@@ -243,6 +243,14 @@ return {
 }
 ```
 
+Script graphs have **On Overlap Begin** and **On Overlap End** event nodes,
+with an `Other` output. The `Collision` script library queries without events:
+
+- `Collision.OverlapBox(minX, minY, minZ, maxX, maxY, maxZ[, mask])` returns
+  every hit;
+- `Collision.CountInBox(min, max, mask)`;
+- `Collision.AreOverlapping(a, b)`.
+
 Overlaps are not saved: after a load, pairs that still hold begin again.
 
 In the editor's Details panel, **Source** is a dropdown: *Bounds component*

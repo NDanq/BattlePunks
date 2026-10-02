@@ -10,6 +10,7 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/GameCoreLog.h"
+#include "Public/GameCore/ScriptLibrary.h"
 
 /*
  * Overlap detection for CollisionComponents (Components.h, DESIGN.md).
@@ -252,4 +253,46 @@ size_t World::OverlapBox(const AABB& InBox, const int32_t InMask, EntityID* OutH
     }, &Q);
     return Q.Count;
 }
+}
+
+// === The "Collision" script library ===============================================
+// Intersection without events, for Lua and script graphs. Overlap events are
+// the script's OnOverlapBegin / OnOverlapEnd methods, not functions here.
+
+namespace
+{
+    bool ScriptAreOverlapping(GameCore::World& InWorld, const GameCore::EntityID InA, const GameCore::EntityID InB)
+    {
+        return InWorld.AreOverlapping(InA, InB);
+    }
+
+    int32_t ScriptCountInBox(GameCore::World& InWorld, const EngineCore::Vector3& InMin, const EngineCore::Vector3& InMax,
+                             const int32_t InMask)
+    {
+        return int32_t(InWorld.OverlapBox(GameCore::AABB(InMin, InMax), InMask, nullptr, 0));
+    }
+
+    /* Collision.OverlapBox(minX, minY, minZ, maxX, maxY, maxZ[, mask]) -> every
+     * entity hit (up to 64). A graph sees the first. */
+    void ScriptOverlapBox(GameCore::ScriptCall& InCall)
+    {
+        const EngineCore::Vector3 Min = InCall.GetVector3(1);
+        const EngineCore::Vector3 Max = InCall.GetVector3(4);
+        const int32_t Mask = InCall.HasArg(7) ? InCall.GetInt(7) : -1;
+        if(InCall.HasError()) { return; }
+
+        GameCore::EntityID Hits[64];
+        const size_t Count = InCall.GetWorld().OverlapBox(GameCore::AABB(Min, Max), Mask, Hits, 64);
+        for(size_t Index = 0; Index < Count && Index < 64; ++Index) { InCall.PushEntity(Hits[Index]); }
+    }
+}
+
+GAMECORE_DEFINE_SCRIPT_LIBRARY(Collision)
+{
+    Lib.NativePure<&ScriptAreOverlapping>("AreOverlapping", "A, B -> Overlapping")
+       .Tooltip("Whether two colliders overlapped at the last overlap pass");
+    Lib.NativePure<&ScriptCountInBox>("CountInBox", "Min, Max, Mask -> Count")
+       .Tooltip("Enabled colliders in a box now, whose Layer is in Mask (-1: every layer)");
+    Lib.Pure("OverlapBox", &ScriptOverlapBox, "Min:Vector3, Max:Vector3, Mask:integer -> First:Entity")
+       .Tooltip("Colliders in a box now; Lua gets every one, a graph the first");
 }

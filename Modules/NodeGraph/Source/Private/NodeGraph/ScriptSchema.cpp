@@ -59,6 +59,8 @@ namespace
         SOP_EventStart,
         SOP_EventTick,
         SOP_EventDestroy,
+        SOP_EventOverlapBegin,
+        SOP_EventOverlapEnd,
         SOP_EventCustom,
     };
 
@@ -341,7 +343,8 @@ namespace
 
         /* Names the generated table uses itself; a variable may not take one. */
         static const std::set<std::string> Reserved = {
-            "Entity", "TickPhase", "CullOutsideActiveRegion", "OnStart", "OnTick", "OnDestroy", HANDLES_FIELD
+            "Entity", "TickPhase", "CullOutsideActiveRegion", "OnStart", "OnTick", "OnDestroy",
+            "OnOverlapBegin", "OnOverlapEnd", HANDLES_FIELD
         };
         for(const Variable& Each : G.Variables)
         {
@@ -354,6 +357,8 @@ namespace
         const Node* StartNode = nullptr;
         const Node* TickNode = nullptr;
         const Node* DestroyNode = nullptr;
+        const Node* OverlapBeginNode = nullptr;
+        const Node* OverlapEndNode = nullptr;
         std::vector<const Node*> CustomEvents;
         for(const Node* Each : Index.SortedNodes())
         {
@@ -364,12 +369,14 @@ namespace
                 case SOP_EventStart:   StartNode = Each;   break;
                 case SOP_EventTick:    TickNode = Each;    break;
                 case SOP_EventDestroy: DestroyNode = Each; break;
+                case SOP_EventOverlapBegin: OverlapBeginNode = Each; break;
+                case SOP_EventOverlapEnd:   OverlapEndNode = Each;   break;
                 case SOP_EventCustom:  CustomEvents.push_back(Each); break;
                 default: break;
             }
         }
 
-        if(!StartNode && !TickNode && !DestroyNode && CustomEvents.empty())
+        if(!StartNode && !TickNode && !DestroyNode && !OverlapBeginNode && !OverlapEndNode && CustomEvents.empty())
         {
             Result.Warning(NodeGuid(), std::string(), "the graph has no event node, so the script never runs anything");
         }
@@ -446,6 +453,18 @@ namespace
         {
             Out.Blank();
             EmitFunction(Out, "OnTick = function(self, dt)", TickNode, {}, {}, { { "DeltaSeconds", { "dt" } } });
+        }
+
+        /* Called by the engine's overlap pass (GameCore's CollisionComponent). */
+        if(OverlapBeginNode)
+        {
+            Out.Blank();
+            EmitFunction(Out, "OnOverlapBegin = function(self, other)", OverlapBeginNode, {}, {}, { { "Other", { "other" } } });
+        }
+        if(OverlapEndNode)
+        {
+            Out.Blank();
+            EmitFunction(Out, "OnOverlapEnd = function(self, other)", OverlapEndNode, {}, {}, { { "Other", { "other" } } });
         }
 
         if(DestroyNode || !Handlers.empty())
@@ -1059,6 +1078,14 @@ namespace
         Event("Event.OnStart",   "On Start",   SOP_EventStart,   {}, true).Tooltip = "Runs once, before this entity's first tick.";
         Event("Event.OnTick",    "On Tick",    SOP_EventTick,    { Out("DeltaSeconds", "number") }, true).Tooltip = "Runs every frame.";
         Event("Event.OnDestroy", "On Destroy", SOP_EventDestroy, {}, true).Tooltip = "Runs when the entity or its script goes away.";
+        {
+            NodeDefinition& Begin = Event("Event.OnOverlapBegin", "On Overlap Begin", SOP_EventOverlapBegin, { Out("Other", "Entity") }, true);
+            Begin.Tooltip  = "Runs when this entity's Collision starts overlapping another's (start of PostPhysics).";
+            Begin.Keywords = "collision collide touch trigger enter hit";
+            NodeDefinition& End = Event("Event.OnOverlapEnd", "On Overlap End", SOP_EventOverlapEnd, { Out("Other", "Entity") }, true);
+            End.Tooltip  = "Runs when an overlap ends -- Other may no longer exist (Is Valid).";
+            End.Keywords = "collision collide untouch trigger exit leave";
+        }
         {
             std::vector<PinDefinition> Args;
             for(int Arg = 1; Arg <= CUSTOM_EVENT_ARGS; ++Arg) { Args.push_back(Out("Arg " + std::to_string(Arg), "Any")); }
