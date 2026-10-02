@@ -175,6 +175,14 @@ typed. An `integer` argument is floored, since the bus carries numbers. Emit
 *Name* passes every argument, linked or not. An event whose parameters do not
 fit the bus (more than four, or a Vector3) gets no nodes and a log warning.
 
+**Script structs are pin types** (`GameCore/ScriptStruct.h`). Each registered
+struct becomes a type named after it. It also gets **Make *Struct*** and
+**Break *Struct*** nodes under Structs, and can be a graph variable's type.
+Its value travels as one lane per field, named after the fields (`Stats_Value`,
+`Stats_ID`, and `Where_X` for a Vector3 field). An unlinked struct input is all
+zeros, not the C++ defaults: build one with Make. The lane layouts are kept
+across `RefreshSchemas()`, so a graph that was already open still compiles.
+
 ### Game declarations
 
 A game module declares components and libraries in its own image
@@ -334,7 +342,10 @@ python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Materia
 - a script library declared in the test (`TestLib`): its nodes, golden
   `Scorer.lua`, a run through its functions, variable and typed event,
   `RefreshSchemas` picking up a late library, and component bindings and
-  libraries unregistered and registered again, as a reloaded module's are.
+  libraries unregistered and registered again, as a reloaded module's are;
+- a script struct (`TestStats`): its pin type and Make/Break nodes, golden
+  `Stats.lua`, a run through a component field, a variable and Native
+  functions, and an unregister and re-register.
 
 `NodeGraph.MaterialGLSL` compiles the golden shader with glslc when Python and
 the Vulkan SDK are present.

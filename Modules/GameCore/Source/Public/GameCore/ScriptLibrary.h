@@ -85,6 +85,7 @@ namespace GameCore
 
         ScriptFunction       Function  = nullptr;                  // Function, Pure
         EScriptFieldType     FieldType = EScriptFieldType::Float;  // Variable
+        ScriptStructID       FieldStruct = SCRIPT_STRUCT_INVALID;  // Variable of a script struct
         bool                 bReadOnly = false;                    // Variable
         void*                Storage   = nullptr;                  // Variable: the C++ object read and written
         uint32_t             Size      = 0;                        // Variable
@@ -190,20 +191,20 @@ namespace GameCore
         template<typename TValue>
         MemberRef Variable(const char* InName, TValue* InStorage)
         {
-            return AddVariable(InName, InStorage, sizeof(TValue), ScriptFieldTypeOf<TValue>::Value, false);
+            return AddVariable(InName, InStorage, sizeof(TValue), ScriptFieldDescOf<TValue>(), false);
         }
 
         /* Get<Name> only. */
         template<typename TValue>
         MemberRef ReadOnly(const char* InName, TValue* InStorage)
         {
-            return AddVariable(InName, InStorage, sizeof(TValue), ScriptFieldTypeOf<TValue>::Value, true);
+            return AddVariable(InName, InStorage, sizeof(TValue), ScriptFieldDescOf<TValue>(), true);
         }
 
         /* A uint8_t 0/1 flag exposed as a boolean. */
         MemberRef Flag(const char* InName, uint8_t* InStorage, const bool bInReadOnly = false)
         {
-            return AddVariable(InName, InStorage, sizeof(uint8_t), EScriptFieldType::Flag, bInReadOnly);
+            return AddVariable(InName, InStorage, sizeof(uint8_t), ScriptFieldDesc{ EScriptFieldType::Flag, SCRIPT_STRUCT_INVALID }, bInReadOnly);
         }
 
         /* A typed event, InSignature its parameters: "Pickup:Entity, Value:integer". */
@@ -251,7 +252,7 @@ namespace GameCore
             return MemberRef(Member);
         }
 
-        MemberRef AddVariable(const char* InName, void* InStorage, const size_t InSize, const EScriptFieldType InType,
+        MemberRef AddVariable(const char* InName, void* InStorage, const size_t InSize, const ScriptFieldDesc InType,
                               const bool bInReadOnly)
         {
             ScriptLibraryMember* Member = InStorage ? NewMember(InName, EScriptLibraryMember::Variable) : nullptr;
@@ -260,7 +261,8 @@ namespace GameCore
             {
                 Member->Storage   = InStorage;
                 Member->Size      = uint32_t(InSize);
-                Member->FieldType = InType;
+                Member->FieldType   = InType.Type;
+                Member->FieldStruct = InType.Struct;
                 Member->bReadOnly = bInReadOnly;
             }
             return MemberRef(Member);

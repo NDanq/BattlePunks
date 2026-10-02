@@ -1284,6 +1284,20 @@ a standard library. A library registered after a `lua_State` was bound is not
 in that state until the next `BindWorld`, which is the same rule as late
 component bindings.
 
+**Script structs (`ScriptStruct.h`).** A game's value type is described as
+data, the same way a component's fields are: a name, then each field's type,
+offset and size. GameCore reads and writes it field by field through the same
+`PushField` / `ReadField` it uses for component fields, so a struct is just
+another field type (`EScriptFieldType::Struct`) carrying an id.
+
+Identity and fields have different lifetimes. The id comes from
+`FindOrAddScriptStruct(name)`, in a constant-initialised table, and is never
+reused. A binding records an id, not a pointer, so it stays valid across an
+unload. The fields are present only while the declaring image is loaded, and
+reading an unregistered struct is a Lua error. Because a struct's width is
+known only once it is registered, `ScriptNative` counts argument positions
+at call time rather than at compile time.
+
 **Events are names, not functions.** An `Event` member installs only its name
 (`Sandbox.ScoreChanged == "ScoreChanged"`). Raising and handling go through
 the World's EventBus as before, so C++, hand-written Lua and generated graph

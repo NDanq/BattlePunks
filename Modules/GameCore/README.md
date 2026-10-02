@@ -62,6 +62,7 @@ Engine/Modules/GameCore/
 |   |   |-- WorldSerializer.h       SerializeWorld: the binary world (cooked data, save games)
 |   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
 |   |   |-- ScriptLibrary.h         script libraries: a game's functions, variables and typed events
+|   |   |-- ScriptStruct.h          script field types and script structs: a game's own value types
 |   |   `-- ScriptEngine.h          lua_State lifetime, RunFile/RunString, BindWorld; NO lua.h
 |   `-- Private/GameCore/
 |       |-- GameCoreInternal.h      the ONLY header that includes lua.h/lauxlib.h/lualib.h
@@ -78,6 +79,7 @@ Engine/Modules/GameCore/
 |       |-- ComponentScript.cpp     component proxies: the binding registry and the one dispatcher
 |       |-- ComponentScripts.cpp    what Transform/Bounds expose to Lua
 |       |-- ScriptLibrary.cpp       the library registry, one global table per library, its dispatcher
+|       |-- ScriptStruct.cpp        the script struct registry: ids by name, fields while registered
 |       |-- WorldPackage.cpp        the XML ComponentArchive, package save (atomic), two-pass load, cook
 |       `-- ScriptSystem.cpp        the World's script driver: file -> class cache, instantiation,
 |                                   the per-phase tick (ahead of every system), release/OnDestroy
@@ -360,6 +362,35 @@ Lib.NativePure<&RankForScore>("RankForScore", "Score -> Rank");              // 
 - **Unsupported types:** any other type is a compile error that lists these.
   Bind it with `Method` and a `ScriptCall` instead, as you also would for
   several results or optional arguments.
+
+**A game's own value types are script structs** (`ScriptStruct.h`):
+
+```cpp
+struct PickupStats                                   // a header
+{
+    GAMECORE_SCRIPT_STRUCT_BODY()
+    int32_t Value = 1;
+    int32_t ID    = 0;
+};
+
+GAMECORE_DEFINE_SCRIPT_STRUCT(PickupStats, "PickupStats")   // one .cpp
+{
+    Struct.Field("Value", &PickupStats::Value);
+    Struct.Field("ID",    &PickupStats::ID);
+}
+```
+
+Once declared, a struct can be used in these places:
+- **component fields:** `Bind.Field("Stats", &PickupComponent::Stats)`;
+- **library variables:** `Lib.Variable`;
+- **Native signatures:** a parameter or return of `Native` and `NativePure`;
+- **`Method` bodies:** `ScriptCall::GetStruct` and `ScriptCall::PushStruct`.
+
+In Lua it is its fields' values in order (`local value, id = pickup:GetStats()`).
+In a script graph it is a pin type with Make and Break nodes. Its fields may be
+any field type except another struct, and it unregisters with its module
+like everything else. A save stores a struct field's members individually:
+`Ar.Field("Value", C.Stats.Value)`.
 
 **Anything else a game exposes is a script library** (`ScriptLibrary.h`): free
 functions, C++ variables and typed events, under one global table.
