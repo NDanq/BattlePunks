@@ -342,6 +342,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/Input.cpp
         Source/Private/NimbleEngine/InputInternal.h
         Source/Private/NimbleEngine/InputRouter.cpp
+        Source/Private/NimbleEngine/CollisionMeshes.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/GameSession.h

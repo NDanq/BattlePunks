@@ -91,6 +91,29 @@ namespace GameCore
         const char* GetSourceName() const;
         void        SetSourceName(const char* InName);
     };
+
+    /*
+     * Where a CS_Mesh collider's shape comes from. GameCore knows no meshes, so
+     * the engine layer installs this (NimbleEngine: the RenderComponent's mesh,
+     * through RenderCore's mesh header). Without one, a CS_Mesh collider uses
+     * whatever Bounds it has.
+     */
+    struct CollisionMeshProvider
+    {
+        /* InEntity's mesh path -- "" for none, which a provider may still
+         * shape (a RenderComponent without a mesh draws a unit quad) -- or
+         * nullptr if it has nothing to draw at all. */
+        const char* (*GetMeshPath)(World& InWorld, EntityID InEntity, void* InUserData) = nullptr;
+
+        /* InPath's bounds in entity space. False if it cannot be read. */
+        bool (*GetMeshBounds)(const char* InPath, AABB& OutLocal, void* InUserData) = nullptr;
+
+        void* UserData = nullptr;
+    };
+
+    /* Process-wide; null removes it. The installer removes it before its
+     * image unloads. */
+    GAMECORE_API void SetCollisionMeshProvider(const CollisionMeshProvider* InProvider);
 }
 
 #endif //GAMECORE_COMPONENTS_H

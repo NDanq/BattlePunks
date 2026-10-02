@@ -27,6 +27,11 @@ namespace NimbleEngine
     class GameState;
     class ILevel;
 
+    /* Gives GameCore's CS_Mesh colliders their shapes from RenderCore's mesh
+     * headers (CollisionMeshes.cpp). Done when this image loads and again by
+     * every GameSession; idempotent. A host without a session calls it. */
+    NE_API void InstallCollisionMeshProvider();
+
     /* Declared ahead of the friend declarations below to avoid MSVC C4273
      * (inconsistent linkage). Documented in SaveGame.h. */
     NE_API bool SaveGameToFile  (GameSession& InSession, const std::string& InPath);
