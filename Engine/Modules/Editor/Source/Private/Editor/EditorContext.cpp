@@ -288,18 +288,13 @@ void EditorContext::CreateSandboxScene()
     const EntityID MarkerID = CreateEntity(QStringLiteral("Marker"), EngineCore::Vector3(0.0, 360.0, 0.0));
     {
         const GameCore::Entity Marker = EditedWorld->GetEntity(MarkerID);
+        Marker.GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(32.0, 32.0, 1.0);
 
-        RenderCore::RenderComponent Render;
-        Render.Width  = 32.0f;
-        Render.Height = 32.0f;
-        Render.Tint   = EngineCore::Color(255, 200, 40);
-        Marker.AddComponent(Render);
+        Marker.AddComponent<RenderCore::RenderComponent>();
 
-        /* The quad's extent, derived from the RenderComponent as Sandbox does. */
+        /* The unit quad's extent, as Sandbox does. */
         GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(
-            EngineCore::Vector3(-0.5 * Render.Width, -0.5 * Render.Height, 0.0),
-            EngineCore::Vector3( 0.5 * Render.Width,  0.5 * Render.Height, 0.0));
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
         Marker.AddComponent(Bounds);
     }
 
@@ -580,8 +575,7 @@ GameCore::AABB EditorContext::GetEntityBounds(const EntityID InEntity) const
                                        EngineCore::Vector3(Mesh->BoundsMax[0], Mesh->BoundsMax[1], Mesh->BoundsMax[2]));
             return GameCore::AABB::Transformed(Local, Transform->GetLocalMatrix());
         }
-        const GameCore::AABB Quad(EngineCore::Vector3(-0.5 * Render->Width, -0.5 * Render->Height, 0.0),
-                                  EngineCore::Vector3( 0.5 * Render->Width,  0.5 * Render->Height, 0.0));
+        const GameCore::AABB Quad(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));   // the unit quad
         return GameCore::AABB::Transformed(Quad, Transform->GetLocalMatrix());
     }
 

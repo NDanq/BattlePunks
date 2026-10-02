@@ -211,8 +211,8 @@ exactly the access pattern `ComponentPool` is built for.
 component's bytes are in the record, not just the transform, a proxy type's
 `ApplyComponent` override is the *entire* extraction contract a proxy author
 has to implement -- there is no separate "did the width change" path to
-wire up. `RenderComponentProxy::ApplyComponent` copies `Width`/`Height`/`Tint`/
-`bVisible` unconditionally, every frame; the cost of that unconditional copy
+wire up. `RenderComponentProxy::ApplyComponent` copies `bVisible` and the
+material slots unconditionally, every frame; the cost of that unconditional copy
 is a handful of bytes, not worth avoiding.
 
 **The upgrade path, if a profile ever shows the walk.** The same one

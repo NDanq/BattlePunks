@@ -187,9 +187,8 @@ next to its other registrations:
 
 GAMECORE_DEFINE_COMPONENT_PROPERTIES(RenderComponent)
 {
-    Props.Field("Width",  &RenderComponent::Width);
-    Props.Field("Tint",   &RenderComponent::Tint);
     Props.Flag("Visible", &RenderComponent::bVisible);
+    Props.Field("Mesh",   &RenderComponent::Mesh, GameCore::PF_AssetMesh);
     Props.Field("World",  &BoundsComponent::World, GameCore::PF_ReadOnly);   // shown, never written
 }
 ```

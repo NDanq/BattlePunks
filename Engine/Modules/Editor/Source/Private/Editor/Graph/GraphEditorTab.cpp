@@ -370,8 +370,8 @@ void GraphEditorTab::BuildPreviewDock()
 
     auto* Row = new QHBoxLayout();
     auto* Tint = new QPushButton(QStringLiteral("Instance Tint..."), Page);
-    Tint->setToolTip(QStringLiteral("The tint the preview passes to the Instance Tint input -- "
-                                    "in the level, each RenderComponent's own Tint"));
+    Tint->setToolTip(QStringLiteral("The tint the preview passes to the Instance Tint input "
+                                    "(in the level, white)"));
     connect(Tint, &QPushButton::clicked, this, [this]()
     {
         const QColor Picked = QColorDialog::getColor(PreviewTint, this, QStringLiteral("Instance Tint"),

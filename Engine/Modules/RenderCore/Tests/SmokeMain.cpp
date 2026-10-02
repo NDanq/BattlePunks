@@ -79,8 +79,8 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 14,
-           "Render exposes Width, Height, Tint, Visible, Material (slot 0), Material0-7 and Mesh");
+    Expect(Render != nullptr && RenderCount == 11,
+           "Render exposes Visible, Material (slot 0), Material0-7 and Mesh");
     bool bSlot7 = false, bSlot0Alias = false;
     for(size_t Index = 0; Render && Index < RenderCount; ++Index)
     {
@@ -241,9 +241,6 @@ static void TestHandBuiltScene(RenderThread& InThread)
      * AddProxy through a command, exactly WorldBridge's own lifecycle
      * (a later step) will drive it. */
     RenderComponent Init;
-    Init.Width  = 2.0f;
-    Init.Height = 4.0f;
-    Init.Tint   = EngineCore::Color(10, 20, 30);
 
     const GameCore::EntityID Owner(1, 0);
     CreateProxyFn Factory = FindProxyFactory(RenderComponent::StaticType().ID);
@@ -448,10 +445,7 @@ static void TestRendererWithWorld()
 
     const GameCore::Entity E1 = World.CreateEntity();
     E1.AddComponent<GameCore::TransformComponent>();
-    RenderComponent Prim;
-    Prim.Width  = 1.0f;
-    Prim.Height = 1.0f;
-    E1.AddComponent(Prim);
+    E1.AddComponent<RenderComponent>();
 
     const GameCore::Entity TestEntity = World.CreateEntity();
     TestEntity.AddComponent<GameCore::TransformComponent>();
@@ -635,10 +629,8 @@ static void TestMaterials()
 
         GameCore::World World;
         const GameCore::Entity Quad = World.CreateEntity("Glowing");
-        Quad.AddComponent<GameCore::TransformComponent>();
+        Quad.AddComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(100.0, 100.0, 1.0);
         RenderComponent Prim;
-        Prim.Width = 100.0f;
-        Prim.Height = 100.0f;
         std::strcpy(Prim.Materials[0], "SmokeGlow");
         Quad.AddComponent(Prim);
         Rend.BindWorld(World);
@@ -1231,7 +1223,7 @@ static void TestTextureAssets()
 
 /*
  * RenderComponent's serializer: version 1's one Material loads into slot 0;
- * version 2 writes every slot by name. Through a recording archive, so no
+ * version 2 writes every slot by name; version 3 drops Width, Height and Tint. Through a recording archive, so no
  * file format is involved.
  */
 static void TestRenderComponentSerializer()
@@ -1241,7 +1233,7 @@ static void TestRenderComponentSerializer()
     struct RecordingArchive final : GameCore::ComponentArchive
     {
         bool                     bLoading = false;
-        uint16_t                 Version  = 2;
+        uint16_t                 Version  = 3;
         std::map<std::string, std::string> Strings;   // what a load reads, and what a save wrote
         std::vector<std::string> Names;
 
@@ -1276,7 +1268,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 2, "RenderComponent saves as version 2");
+    Expect(Info && Info->Version == 3, "RenderComponent saves as version 3");
     if(!Info) { return; }
 
     RecordingArchive Old;
@@ -1288,6 +1280,8 @@ static void TestRenderComponentSerializer()
     Info->Fn(Old, &Loaded);
     Expect(std::strcmp(Loaded.Materials[0], "Glow") == 0 && Loaded.Materials[1][0] == '\0',
            "a version 1 Material loads into slot 0, and only there");
+    Expect(Old.Names.size() >= 3 && Old.Names[0] == "Width" && Old.Names[1] == "Height" && Old.Names[2] == "Tint",
+           "a version 1 or 2 record's Width, Height and Tint are still read, first (binary keeps call order)");
 
     RenderComponent Saved;
     std::strcpy(Saved.Materials[0], "Body");
@@ -1295,7 +1289,10 @@ static void TestRenderComponentSerializer()
     RecordingArchive Out;
     Info->Fn(Out, &Saved);
     Expect(Out.Strings["Material0"] == "Body" && Out.Strings["Material7"] == "Visor" && Out.Strings.count("Material") == 0,
-           "version 2 writes each slot as Material0 to Material7");
+           "version 3 writes each slot as Material0 to Material7");
+    Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("Width")) == Out.Names.end()
+           && std::find(Out.Names.begin(), Out.Names.end(), std::string("Tint")) == Out.Names.end(),
+           "and no Width, Height or Tint");
 
     RecordingArchive Back;
     Back.bLoading = true;
@@ -1361,10 +1358,10 @@ static void TestRenderStages()
                                       std::initializer_list<const char*> InSlots)
         {
             const GameCore::Entity Each = World.CreateEntity(InName);
-            Each.AddComponent<GameCore::TransformComponent>()->Position = InAt;
+            GameCore::TransformComponent* Transform = Each.AddComponent<GameCore::TransformComponent>();
+            Transform->Position = InAt;
+            if(InMesh[0] == '\0') { Transform->Scale = EngineCore::Vector3(10.0, 10.0, 1.0); }   // a quad is 1 x 1
             RenderComponent Render;
-            Render.Width  = 10.0f;
-            Render.Height = 10.0f;
             std::strcpy(Render.Mesh, InMesh);
             size_t Slot = 0;
             for(const char* Name : InSlots) { std::strcpy(Render.Materials[Slot++], Name); }

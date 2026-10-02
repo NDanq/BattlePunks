@@ -318,8 +318,7 @@ never includes `lua.h`:
 ```cpp
 GAMECORE_DEFINE_COMPONENT_SCRIPT(RenderComponent)
 {
-    Bind.Field("Width", &RenderComponent::Width);      // GetWidth / SetWidth
-    Bind.Field("Tint",  &RenderComponent::Tint);       // r, g, b[, a]
+    Bind.Field("Mesh",   &RenderComponent::Mesh);      // GetMesh / SetMesh
     Bind.Flag("Visible", &RenderComponent::bVisible);  // uint8_t as a boolean
 }
 
@@ -388,8 +387,7 @@ both formats:
 ```cpp
 GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 1)
 {
-    Ar.Field("Width",  C.Width);
-    Ar.Field("Tint",   C.Tint);
+    Ar.Field("Mesh",   C.Mesh);
     Ar.Flag("Visible", C.bVisible);
     Ar.Entity("Owner", C.OwnerEntity);            // an EntityID: a GUID in text, an index in binary
     if(Ar.GetVersion() >= 2) { Ar.Field("Depth", C.Depth); }   // added later: binary needs the guard
