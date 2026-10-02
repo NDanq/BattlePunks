@@ -191,6 +191,11 @@ namespace
         W.Tick(0.016f);
         Expect(C && !C->IsDown("Jump") && C->GetAxis("MoveX") == 0.0f, "a disabled component reads nothing");
 
+        Expect(Scripts.RunString("local e = World.CreateEntity('LuaAdded') "
+                                 "local i = e:AddComponent('Input') assert(i:GetEnabled() == true and i:GetMap() == 'Default') "
+                                 "local x, y, z = e:AddComponent('Transform'):GetScale() assert(x == 1 and y == 1 and z == 1)", "lua-add"),
+               "a component added from Lua starts from its defaults, not zeroed bytes");
+
         Expect(Scripts.GetErrorCount() == 0, "the probe script raised no Lua errors");
         SetScriptInputState(nullptr);
         Scripts.UnbindWorld();

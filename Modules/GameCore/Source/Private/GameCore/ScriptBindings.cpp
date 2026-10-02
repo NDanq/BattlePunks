@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/TickPhase.h"
@@ -115,10 +116,16 @@ namespace GameCore
                 return 1;
             }
 
-            /* Zero-initialised init bytes -- see DESIGN.md for why this
-             * generic by-name path cannot call a real constructor. */
-            std::vector<uint8_t> ZeroInit(Info->SizeBytes, 0);
-            if(!Entity(W, E).AddComponentByType(Info->ID, ZeroInit.data()))
+            /* The type's defaults, from its serializer's defaults function --
+             * the default-constructed instance a save loads into. This by-name
+             * path cannot call the constructor itself (DESIGN.md). A type
+             * without a serializer starts from zeroed bytes. */
+            std::vector<uint8_t> Init(Info->SizeBytes, 0);
+            if(const ComponentSerializerInfo* Serializer = FindComponentSerializer(Info->ID))
+            {
+                if(Serializer->DefaultsFn) { Serializer->DefaultsFn(Init.data()); }
+            }
+            if(!Entity(W, E).AddComponentByType(Info->ID, Init.data()))
             {
                 lua_pushnil(InState);
                 return 1;

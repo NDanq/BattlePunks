@@ -898,14 +898,13 @@ not the one across the file. This was an actual `LNK2019` hit during
 development, fixed by moving the three declarations out of the anonymous
 namespace.
 
-**`Entity_AddComponent`'s zero-initialized bytes.** The generic by-name Add
-path has no way to call a specific type's constructor -- it only has
-`SizeBytes` -- so it copies zeroed bytes as the init value. A component that
-needs non-zero defaults it cannot express this way should not rely on the
-Lua by-name Add-with-no-arguments path; this is the same limitation
-`World::AddComponentRaw`'s own contract already has (it copies whatever
-bytes it is given). A `std::vector<uint8_t>` local is used rather than a
-shared static buffer, since a static zeroed buffer would be wrong under any
+**`Entity_AddComponent`'s init bytes.** The generic by-name Add path has no
+way to call a specific type's constructor; it only has `SizeBytes`. So it
+asks the type's serializer for its defaults function, which writes a
+default-constructed instance, and copies that. A type without a serializer
+gets zeroed bytes, the same limitation `World::AddComponentRaw`'s contract
+has (it copies whatever bytes it is given). A `std::vector<uint8_t>` local is
+used rather than a shared static buffer, which would be wrong under any
 future multi-threaded script host.
 
 **`World_QueryBounds`'s closure workaround.** `World`'s own `SpatialQueryFn`
@@ -1304,6 +1303,8 @@ the World's EventBus as before, so C++, hand-written Lua and generated graph
 code all meet on it. The typed signature is for the graph editor's On/Emit
 nodes, and is limited to the four one-value arguments an `EventArgs` carries.
 
-**Not covered.** A component added from Lua with `e:AddComponent(name)` still
-starts from zeroed bytes, not its defaults (see `Entity_AddComponent` above) --
-so a Lua-added Transform has scale 0 and a Lua-added Bounds a `ProxyID` of 0.
+**Defaults from Lua.** A component added from Lua with `e:AddComponent(name)`
+starts from its type's defaults: the serializer's defaults function, which is
+the default-constructed instance a save loads into. A Lua-added Transform has
+scale 1, and an Input component is enabled and reads the "Default" map. Only
+a type without a serializer still starts from zeroed bytes.
