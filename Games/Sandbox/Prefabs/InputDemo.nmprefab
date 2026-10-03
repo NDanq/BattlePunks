@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Prefab Format="1" Name="InputDemo" NextId="2">
+  <Script Path="Scripts/InputDemo.lua" />
+  <Tick Mode="Tick" />
+  <Entity Id="1" Name="InputDemo">
+    <Component Type="Input" Version="1">
+      <Map Value="Default" />
+      <PlayerIndex Value="0" />
+      <Enabled Value="true" />
+    </Component>
+  </Entity>
+</Prefab>

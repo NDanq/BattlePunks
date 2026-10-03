@@ -340,6 +340,71 @@ if(SANDBOX_CONTENT_FILES)
     endif()
 endif()
 
+# === Prefabs/ ==============================================================
+# Prefabs and the scripts beside them, staged at the same relative path beside
+# the executable ("Prefabs/Door.nmprefab", as SpawnPrefab and a level name
+# them). Globbed, like Content/: the Prefab Editor makes these. An Editor
+# target stages the text prefabs it edits; a Client or Server target cannot
+# read text, so it stages the cooked ones from Cooked/Prefabs/ -- made in the
+# editor with the console command `cook prefabs`.
+file(GLOB_RECURSE SANDBOX_PREFAB_SCRIPTS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Prefabs/*.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Prefabs/*.script.nmgraph"
+)
+if(NIMBLE_TARGET STREQUAL "Editor")
+    set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+else()
+    set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
+endif()
+file(GLOB_RECURSE SANDBOX_PREFAB_ASSETS CONFIGURE_DEPENDS "${SANDBOX_PREFAB_ROOT}/Prefabs/*.nmprefab")
+file(GLOB_RECURSE SANDBOX_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Prefabs/*.nmprefab")
+if(NOT NIMBLE_TARGET STREQUAL "Editor" AND SANDBOX_PREFAB_SOURCES AND NOT SANDBOX_PREFAB_ASSETS)
+    message(WARNING "Sandbox: Prefabs/ has prefabs but Cooked/Prefabs/ has none; a ${NIMBLE_TARGET} build cannot read "
+                    "text prefabs. Cook them in the editor (console: cook prefabs).")
+endif()
+
+set(SANDBOX_PREFAB_OUTPUTS "")
+foreach(SANDBOX_PREFAB_SRC ${SANDBOX_PREFAB_SCRIPTS} ${SANDBOX_PREFAB_ASSETS})
+    if(SANDBOX_PREFAB_SRC IN_LIST SANDBOX_PREFAB_SCRIPTS)
+        file(RELATIVE_PATH SANDBOX_PREFAB_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_PREFAB_SRC}")
+    else()
+        file(RELATIVE_PATH SANDBOX_PREFAB_REL "${SANDBOX_PREFAB_ROOT}" "${SANDBOX_PREFAB_SRC}")
+    endif()
+    if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+        set(SANDBOX_PREFAB_DST "${SANDBOX_RT_DIR}/${SANDBOX_PREFAB_REL}")
+    else()
+        set(SANDBOX_PREFAB_DST "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_PREFAB_REL}")
+    endif()
+    get_filename_component(SANDBOX_PREFAB_REL_DIR "${SANDBOX_PREFAB_REL}" DIRECTORY)
+    list(APPEND SANDBOX_PREFAB_COPIES
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_PREFAB_REL_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_PREFAB_SRC}" "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_PREFAB_REL}")
+    if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+        get_filename_component(SANDBOX_PREFAB_DIR "${SANDBOX_PREFAB_DST}" DIRECTORY)
+        add_custom_command(
+                OUTPUT  "${SANDBOX_PREFAB_DST}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_PREFAB_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_PREFAB_SRC}" "${SANDBOX_PREFAB_DST}"
+                DEPENDS "${SANDBOX_PREFAB_SRC}"
+                COMMENT "Sandbox: staging ${SANDBOX_PREFAB_REL} beside the executable"
+                VERBATIM)
+        list(APPEND SANDBOX_PREFAB_OUTPUTS "${SANDBOX_PREFAB_DST}")
+    endif()
+endforeach()
+
+if(SANDBOX_PREFAB_OUTPUTS)
+    add_custom_target(SandboxStagePrefabs DEPENDS ${SANDBOX_PREFAB_OUTPUTS})
+    add_dependencies(Sandbox SandboxStagePrefabs)
+    set_target_properties(SandboxStagePrefabs PROPERTIES FOLDER "Games")
+elseif(SANDBOX_PREFAB_COPIES)
+    # Multi-config fallback, as SandboxStageScripts': every file, every build.
+    add_custom_target(SandboxStagePrefabs ALL ${SANDBOX_PREFAB_COPIES}
+            COMMENT "Sandbox: staging Prefabs/ beside the executable"
+            VERBATIM)
+    add_dependencies(SandboxStagePrefabs Sandbox)
+    set_target_properties(SandboxStagePrefabs PROPERTIES FOLDER "Games")
+endif()
+
 # === Materials/ =============================================================
 # Material graphs, cooked from the code generated into each (<gen_code>) for
 # every built backend into SandboxGame's shader cache, which GameModuleHost

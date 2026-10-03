@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Prefab Format="1" Name="ScoreBoard" NextId="2">
+  <Script Path="Scripts/ScoreBoard.script.nmgraph" />
+  <Tick Mode="Tick" />
+  <Entity Id="1" Name="ScoreBoard" />
+</Prefab>

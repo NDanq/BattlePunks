@@ -1,49 +1,35 @@
 -- Sandbox's startup script ([Scripting] StartupScript), run on every level
--- load. Demonstrates a script-driven entity with its own tick phase, Transform
--- and Bounds components, the Events bus reaching a C++ subscriber, and the
--- game's own script library and component (SandboxScripting.cpp).
+-- load. Places prefab instances -- the level is made of them (Prefabs/, and the
+-- native prefabs SandboxGame.cpp declares) -- and demonstrates the Events bus
+-- reaching a C++ subscriber, and the game's own script library and component
+-- (SandboxScripting.cpp).
 
 Events.On("EntityCreated", function(entity)
     print("EntityCreated: " .. entity:GetName())
 end)
 
-local scripted = World.CreateEntity("Scripted")
-local transform = scripted:AddComponent("Transform")
-transform:SetPosition(0, 0, 0)
-
-local bounds = scripted:AddComponent("Bounds")
-bounds:SetLocal(-0.5, -0.5, -0.5, 0.5, 0.5, 0.5)
-
--- Loaded and started on the World's next tick, ahead of every C++ system.
-scripted:SetScript("Scripts/Mover.lua")
+-- "Scripted": Transform and Bounds, driven by Scripts/Mover.lua -- the
+-- prefab's script, started on the World's next tick ahead of every C++ system.
+World.SpawnPrefab("Prefabs/Mover.nmprefab", 0, 0, 0)
 
 -- The game's own script library (SandboxScripting.cpp): pickups along
--- Marker's path, each a game-defined "Pickup" component driven by a script
--- stored in Scripts/Pickup.script.nmgraph.
+-- Marker's path, each an instance of the native prefab Sandbox.Pickup -- a
+-- game-defined "Pickup" component, driven by Scripts/Pickup.script.nmgraph.
 for i = 1, 5 do
     local pickup = Sandbox.SpawnPickup(i * 220, 360, 0, i)
     pickup:GetComponent("Pickup"):SetBobHeight(4 + 2 * i)
-    pickup:SetScript("Scripts/Pickup.script.nmgraph")
 end
 
 -- Prints the typed events the library declares (ScoreBoard.script.nmgraph).
-World.CreateEntity("ScoreBoard"):SetScript("Scripts/ScoreBoard.script.nmgraph")
+World.SpawnPrefab("Prefabs/ScoreBoard.nmprefab")
 
--- A trigger zone in Marker's path, from hand-written Lua: a Collision on its
--- Bounds, and OnOverlapBegin / OnOverlapEnd in Scripts/Zone.lua.
-local zone = World.CreateEntity("Zone")
-zone:AddComponent("Transform"):SetPosition(600, 360, 0)
-zone:AddComponent("Bounds"):SetLocal(-60, -40, -1, 60, 40, 1)
-local zoneCollision = zone:AddComponent("Collision")
-zoneCollision:SetLayer(8)   -- SandboxLayers::Zone
-zoneCollision:SetMask(1)    -- meets the player only
-zone:SetScript("Scripts/Zone.lua")
+-- A trigger zone in Marker's path: a Collision on its Bounds, and
+-- OnOverlapBegin / OnOverlapEnd in Scripts/Zone.lua.
+World.SpawnPrefab("Prefabs/Zone.nmprefab", 600, 360, 0)
 
--- Input, from hand-written Lua: an entity with an "Input" component reading
--- SandboxInput.cpp's "Default" map (Scripts/InputDemo.lua).
-local demo = World.CreateEntity("InputDemo")
-demo:AddComponent("Input")   -- its defaults: enabled, reading the "Default" map
-demo:SetScript("Scripts/InputDemo.lua")
+-- Input: an "Input" component reading SandboxInput.cpp's "Default" map
+-- (Scripts/InputDemo.lua).
+World.SpawnPrefab("Prefabs/InputDemo.nmprefab")
 
 -- The same events, from hand-written Lua: the library publishes their names.
 -- PickupStats, a script struct, is its fields' values in order: Value, ID.

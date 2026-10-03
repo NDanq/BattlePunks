@@ -8,6 +8,7 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
+#include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/RenderComponents.h"
@@ -43,6 +44,35 @@ GAMECORE_DEFINE_SCRIPT_STRUCT(PickupStats, "PickupStats")
 // === A game-defined component ===============================================
 
 GAMECORE_DEFINE_COMPONENT(SandboxPickupComponent, "Pickup")
+
+// === A native prefab ========================================================
+
+namespace
+{
+    /* A pickup: its data, the unit quad (sized by where it is placed), bounds
+     * for picking, and a collider only the player's layer sets off --
+     * collected by Scripts/Pickup.script.nmgraph's On Overlap Begin. */
+    void BuildPickup(GameCore::PrefabBuilder& InBuilder)
+    {
+        const GameCore::PrefabBuilder::Node Root = InBuilder.Root("Pickup");
+        Root.Add<GameCore::TransformComponent>();
+        Root.Add<SandboxPickupComponent>();
+        Root.Add<RenderCore::RenderComponent>();
+
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
+        Root.Add(Bounds);
+
+        GameCore::CollisionComponent Collision;
+        Collision.Layer = SandboxLayers::Pickup;
+        Collision.Mask  = SandboxLayers::Player;
+        Root.Add(Collision);
+
+        InBuilder.Script("Scripts/Pickup.script.nmgraph");
+    }
+}
+
+GAMECORE_DEFINE_NATIVE_PREFAB(Pickup, "Sandbox.Pickup", &BuildPickup)
 
 namespace
 {
@@ -107,37 +137,22 @@ namespace
     /* Plain C++ functions. Lib.Native reads their arguments from the script,
      * calls them and returns the result; a World& parameter is filled in. */
 
-    /* A 16 x 16 quad, a Pickup at the position, and bounds for
-     * picking; the caller attaches a script. */
+    /* An instance of Sandbox.Pickup (below) at the position -- a 16 x 16
+     * quad, by its placement's scale -- with this pickup's own value, ID
+     * and home. Returns its root. */
     GameCore::EntityID SpawnPickup(GameCore::World& InWorld, const EngineCore::Vector3& InPosition, const int32_t InValue)
     {
-        const GameCore::Entity Pickup = InWorld.CreateEntity("Pickup");
+        GameCore::TransformPose At;
+        At.Position = InPosition;
+        At.Scale    = EngineCore::Vector3(16.0, 16.0, 1.0);
+        const GameCore::Entity Pickup = InWorld.SpawnPrefab("native:Sandbox.Pickup", At).GetRoot();
 
-        GameCore::TransformComponent Transform;
-        Transform.Position = InPosition;
-        Transform.Scale    = EngineCore::Vector3(16.0, 16.0, 1.0);   // the unit quad, 16 x 16
-        Pickup.AddComponent(Transform);
-
-        SandboxPickupComponent Data;
-        Data.Home  = InPosition;
-        Data.Stats.Value = InValue;
-        Data.Stats.ID    = ++GNextPickupID;
-        Pickup.AddComponent(Data);
-
-        /* The unit quad, sized by the Transform as Marker is. */
-        Pickup.AddComponent<RenderCore::RenderComponent>();
-
-        GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
-        Pickup.AddComponent(Bounds);
-
-        /* Collected on overlap (Scripts/Pickup.script.nmgraph's On Overlap
-         * Begin): only the player's layer sets it off. */
-        GameCore::CollisionComponent Collision;
-        Collision.Layer = SandboxLayers::Pickup;
-        Collision.Mask  = SandboxLayers::Player;
-        Pickup.AddComponent(Collision);
-
+        if(SandboxPickupComponent* Data = Pickup.GetComponent<SandboxPickupComponent>())
+        {
+            Data->Home        = InPosition;
+            Data->Stats.Value = InValue;
+            Data->Stats.ID    = ++GNextPickupID;
+        }
         return Pickup.GetID();
     }
 

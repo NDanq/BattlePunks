@@ -12,6 +12,7 @@
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
@@ -51,6 +52,75 @@ NIMBLE_CONFIG_INT(GSandboxRunSeconds, "Sandbox", "RunSeconds", 0, nullptr);
 
 /* Beside the executable for the demo; a real game would use appGetAppDataDir. */
 static const char* const GSandboxSavePath = "Saves/Quick.nmsg";
+
+// === Native prefabs =========================================================
+// The level's C++ pieces, declared as prefabs ("native:Sandbox.Marker"):
+// SandboxLevel::OnLoad places them, and the editor lists them under World >
+// Native Prefabs. Where each stands, and how big, is its placement.
+
+namespace
+{
+    /* The player: the unit quad (bounds to match, for picking and spatial
+     * queries), steered through its Input component by Sandbox.DriveMarker
+     * (SandboxInput.cpp's "Default" map), its Bounds box its collider on the
+     * player's layer, and a script graph that counts its jumps. */
+    void BuildMarker(GameCore::PrefabBuilder& InBuilder)
+    {
+        const GameCore::PrefabBuilder::Node Root = InBuilder.Root("Marker");
+        Root.Add<GameCore::TransformComponent>();
+        Root.Add<RenderCore::RenderComponent>();
+
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
+        Root.Add(Bounds);
+
+        Root.Add<NimbleEngine::InputComponent>();
+
+        GameCore::CollisionComponent Collision;
+        Collision.Layer = SandboxLayers::Player;
+        Root.Add(Collision);
+
+        InBuilder.Script("Scripts/JumpCounter.script.nmgraph");
+    }
+
+    /* A hazard shaped by its MESH: no Bounds is authored -- the Collision
+     * reads the box mesh's bounds and adds one (Source = Mesh). */
+    void BuildHazard(GameCore::PrefabBuilder& InBuilder)
+    {
+        const GameCore::PrefabBuilder::Node Root = InBuilder.Root("Hazard");
+        Root.Add<GameCore::TransformComponent>();
+
+        RenderCore::RenderComponent Render;
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        Root.Add(Render);
+
+        GameCore::CollisionComponent Collision;
+        Collision.Source = GameCore::CS_Mesh;
+        Collision.Layer  = SandboxLayers::Hazard;
+        Collision.Mask   = SandboxLayers::Player;
+        Root.Add(Collision);
+    }
+
+    /* The view: WorldBridge uses the first active CameraComponent. */
+    void BuildCamera(GameCore::PrefabBuilder& InBuilder)
+    {
+        const GameCore::PrefabBuilder::Node Root = InBuilder.Root("Camera");
+        Root.Add<GameCore::TransformComponent>();
+        Root.Add<RenderCore::CameraComponent>();
+    }
+
+    GameCore::TransformPose Placed(const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InScale)
+    {
+        GameCore::TransformPose Pose;
+        Pose.Position = InPosition;
+        Pose.Scale    = InScale;
+        return Pose;
+    }
+}
+
+GAMECORE_DEFINE_NATIVE_PREFAB(Marker, "Sandbox.Marker", &BuildMarker)
+GAMECORE_DEFINE_NATIVE_PREFAB(Hazard, "Sandbox.Hazard", &BuildHazard)
+GAMECORE_DEFINE_NATIVE_PREFAB(Camera, "Sandbox.Camera", &BuildCamera)
 
 /* Save/load demo flags. File scope: a load rebuilds the mode and resets the
  * state, so flags there would loop the demo forever. */
@@ -371,63 +441,20 @@ public:
         /* Removed in OnUnload (Delegate.h's RELOAD note). */
         EntityCreatedHandle = World.OnEntityCreated().Add(&OnEntityCreatedLogger, &World);
 
-        /* MarkerEntity keeps only the id; the handle's World* is per-load. */
-        const GameCore::Entity Marker = World.CreateEntity("Marker");
+        /* The level is prefab instances (the native prefabs above). Off y=0:
+         * +Y runs down from the top edge in the ortho view, so a quad at y=0
+         * would hang half off screen. MarkerEntity keeps only the root's id;
+         * the handle's World* is per-load. */
+        const GameCore::Entity Marker = World.SpawnPrefab("native:Sandbox.Marker",
+            Placed(EngineCore::Vector3(0.0, 360.0, 0.0), EngineCore::Vector3(32.0, 32.0, 1.0))).GetRoot();   // the unit quad, 32 x 32
         MarkerEntity = Marker;
-        {
-            /* Off y=0: +Y runs down from the top edge in the ortho view, so a
-             * quad at y=0 would hang half off screen. */
-            GameCore::TransformComponent MarkerTransform;
-            MarkerTransform.Position = EngineCore::Vector3(0.0, 360.0, 0.0);
-            MarkerTransform.Scale    = EngineCore::Vector3(32.0, 32.0, 1.0);   // the unit quad, 32 x 32
-            Marker.AddComponent(MarkerTransform);
-        }
-        /* WorldBridge draws it every frame; nothing else is needed. */
-        Marker.AddComponent<RenderCore::RenderComponent>();
 
-        /* The unit quad's extent in entity space, so picking and spatial
-         * queries match what is drawn. */
-        GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
-        Marker.AddComponent(Bounds);
-
-        /* Steered by the player: Sandbox.DriveMarker reads it (SandboxInput.cpp's
-         * "Default" map), and a script graph counts its jumps. */
-        Marker.AddComponent<NimbleEngine::InputComponent>();
-
-        /* Its Bounds box is its collider: the player's layer, meeting all. */
-        GameCore::CollisionComponent MarkerCollision;
-        MarkerCollision.Layer = SandboxLayers::Player;
-        Marker.AddComponent(MarkerCollision);
-
-        /* A hazard shaped by its MESH: no Bounds is authored -- the Collision
-         * component reads the box mesh's bounds and adds one (Source = Mesh). */
-        const GameCore::Entity Hazard = World.CreateEntity("Hazard");
-        {
-            GameCore::TransformComponent HazardTransform;
-            HazardTransform.Position = EngineCore::Vector3(1200.0, 360.0, 0.0);
-            HazardTransform.Scale    = EngineCore::Vector3(40.0, 40.0, 40.0);
-            Hazard.AddComponent(HazardTransform);
-
-            RenderCore::RenderComponent HazardRender;
-            std::snprintf(HazardRender.Mesh, sizeof(HazardRender.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
-            Hazard.AddComponent(HazardRender);
-
-            GameCore::CollisionComponent HazardCollision;
-            HazardCollision.Source = GameCore::CS_Mesh;
-            HazardCollision.Layer  = SandboxLayers::Hazard;
-            HazardCollision.Mask   = SandboxLayers::Player;
-            Hazard.AddComponent(HazardCollision);
-        }
+        World.SpawnPrefab("native:Sandbox.Hazard",
+                          Placed(EngineCore::Vector3(1200.0, 360.0, 0.0), EngineCore::Vector3(40.0, 40.0, 40.0)));
         HazardHandle = World.OnOverlapBegin().Add(&OnHazardTouched, &World);
-        Marker.SetScript("Scripts/JumpCounter.script.nmgraph");
 
-        /* Centres the view on Marker's path. WorldBridge uses the first active
-         * CameraComponent. */
-        const GameCore::Entity CameraEntity = World.CreateEntity("Camera");
-        CameraEntity.AddComponent<GameCore::TransformComponent>();
-        RenderCore::CameraComponent Camera;
-        CameraEntity.AddComponent(Camera);
+        /* Centres the view on Marker's path. */
+        World.SpawnPrefab("native:Sandbox.Camera");
 
         /* ViewportWidth is read once; the wrap boundary need only be rough. */
         SystemContext.Entity        = MarkerEntity;
