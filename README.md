@@ -32,6 +32,12 @@ the module named by `[Game] Module` in `Config/DefaultEngine.ini` and runs
 levels on startup (`Engine/Source/Public/NimbleEngine/GameModule.h`). Nothing
 links the game, which is what lets the editor load it for Play-in-Editor.
 
+Sandbox's start level is **BrickBreaker** (`BrickBreaker.cpp`), the example
+for the game framework: phases in the `GameState`, rules in the `IGameMode`,
+players as `PlayerState` components, all reachable from Lua and script graphs
+(`Engine/Source/GAMEFRAMEWORK.md`). `[Game] StartLevel=Sandbox` runs the older
+demo level instead.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:
