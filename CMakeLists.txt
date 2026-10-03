@@ -347,6 +347,8 @@ endif()
 set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
         Source/Private/NimbleEngine/GameSession.cpp
+        Source/Private/NimbleEngine/GameFramework.cpp
+        Source/Private/NimbleEngine/PlayerState.cpp
         Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Level.cpp
         Source/Private/NimbleEngine/SaveGame.cpp
@@ -362,6 +364,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/NimbleEngineAPI.h
         Source/Public/NimbleEngine/Level.h
         Source/Public/NimbleEngine/GameState.h
+        Source/Public/NimbleEngine/PlayerState.h
         Source/Public/NimbleEngine/SaveGame.h
         Source/Public/NimbleEngine/NimbleEngineTypes.h
         Source/Public/NimbleEngine/Input.h
@@ -454,6 +457,13 @@ if(NIMBLEENGINE_BUILD_TESTS)
     set_target_properties(NimbleEngineCollisionTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
     add_test(NAME NimbleEngine.CollisionTests COMMAND NimbleEngineCollisionTests)
     set_tests_properties(NimbleEngine.CollisionTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+    # The game framework: phases, rules, PlayerState, the Game library, saves.
+    add_executable(NimbleEngineGameFrameworkTests Tests/GameFrameworkTests.cpp)
+    target_link_libraries(NimbleEngineGameFrameworkTests PRIVATE NimbleEngine::NimbleEngine)
+    set_target_properties(NimbleEngineGameFrameworkTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+    add_test(NAME NimbleEngine.GameFrameworkTests COMMAND NimbleEngineGameFrameworkTests)
+    set_tests_properties(NimbleEngine.GameFrameworkTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 endif()
 
 # === Cooked shaders ========================================================

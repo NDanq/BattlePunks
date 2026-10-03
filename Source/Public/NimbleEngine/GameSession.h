@@ -8,6 +8,9 @@
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/Input.h"
+#include "Public/GameCore/ComponentType.h"   // ComponentTypeID
+#include "Public/GameCore/Delegate.h"        // DelegateHandle
+#include "Public/GameCore/EntityID.h"
 #include "Public/Core/CoreArchive.h"      // EngineCore::Archive, for RestoreSaveInto below
 
 namespace GameCore
@@ -31,6 +34,11 @@ namespace NimbleEngine
      * headers (CollisionMeshes.cpp). Done when this image loads and again by
      * every GameSession; idempotent. A host without a session calls it. */
     NE_API void InstallCollisionMeshProvider();
+
+    /* The session whose level owns InWorld, or nullptr: how the "Game" script
+     * library and a native prefab's callbacks reach the rules. Set for the
+     * whole of LoadLevel to UnloadLevel. Game thread only. */
+    NE_API GameSession* FindGameSession(const GameCore::World& InWorld);
 
     /* Declared ahead of the friend declarations below to avoid MSVC C4273
      * (inconsistent linkage). Documented in SaveGame.h. */
@@ -168,6 +176,38 @@ namespace NimbleEngine
 
         IGameHost& GetHost() { return Host; }
 
+        // === The game framework (GAMEFRAMEWORK.md) ==============================
+        // Phases live in the GameState, players are PlayerStateComponents, and
+        // these route every change through the mode's rules. All false / no-op
+        // with no level, or a level without a GameState (phases) or mode.
+
+        /*
+         * Enter InPhase (at most GAME_PHASE_NAME_MAX - 1 characters). The mode
+         * may refuse (IGameMode::CanEnterPhase); otherwise the state takes the
+         * new phase and resets its timer, then IGameMode::OnPhaseChanged, then
+         * the World event PhaseChanged(Phase, Previous) for scripts.
+         *
+         * Asked for while a change is being announced (from OnPhaseChanged or
+         * a PhaseChanged listener), it is applied right after, so listeners
+         * never see phases out of order; true means accepted for later. The
+         * same phase as now is a no-op that returns true.
+         */
+        bool SetPhase(const char* InPhase);
+
+        /* GetGameState()->GetPhase(), or "" without one. */
+        const char* GetPhase();
+
+        /* InPlayer's PlayerStateComponent Score / Lives plus InAmount (which
+         * may be negative), then IGameMode::OnScoreChanged / OnLivesChanged and
+         * the World event ScoreChanged / LivesChanged(Player, Value). False if
+         * InPlayer has no PlayerState. */
+        bool AddScore(GameCore::EntityID InPlayer, int32_t InAmount);
+        bool AddLives(GameCore::EntityID InPlayer, int32_t InAmount);
+
+        /* The entity whose PlayerState has PlayerIndex InIndex; unset if none. */
+        GameCore::EntityID GetPlayer(uint8_t InIndex);
+        uint32_t           GetPlayerCount();
+
         /* This frame's devices (Input.h). Gameplay usually reads an
          * InputComponent, resolved from this at the start of TP_PrePhysics. */
         const InputState& GetInput() const { return Host.GetInput(); }
@@ -192,6 +232,13 @@ namespace NimbleEngine
         GameCore::ScriptEngine& Scripts;
         RenderCore::Renderer&   Rendering;
 
+        /* World::OnComponentAdded / Removed, for IGameMode::OnPlayerAdded / Removed. */
+        static void OnComponentAdded(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);
+        static void OnComponentRemoved(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);
+
+        /* SetPhase's change itself, with no queueing. */
+        void ApplyPhase(const char* InPhase);
+
         /* LevelWorld lives from LoadLevel to UnloadLevel; same as ILevel::OwnedWorld. */
         ILevel*           ActiveLevel = nullptr;
         GameCore::World*  LevelWorld  = nullptr;
@@ -202,6 +249,18 @@ namespace NimbleEngine
         /* Armed with PendingLevel by LoadGameFromFile, cleared by the LoadLevel
          * that consumes it. (C4251 on this private member is harmless.) */
         std::vector<uint8_t> PendingSaveBytes;
+
+        GameCore::DelegateHandle ComponentAddedHandle;
+        GameCore::DelegateHandle ComponentRemovedHandle;
+
+        /* SetPhase while a change is being announced: applied after it. Phase
+         * names, in order. (C4251 on this private member is harmless.) */
+        bool                     bChangingPhase = false;
+
+        /* IGameMode::OnLoad succeeded and OnUnload has not begun: the player
+         * hooks are live. */
+        bool                     bModeLoaded = false;
+        std::vector<std::string> QueuedPhases;
 
         bool bQuitRequested = false;
 

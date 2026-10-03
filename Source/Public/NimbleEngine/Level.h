@@ -68,6 +68,11 @@ namespace NimbleEngine
          * before IGameMode::OnStart. */
         virtual GameState* GetGameState() { return nullptr; }
 
+        /* The Lua file run after IGameMode::OnLoad. nullptr runs [Scripting]
+         * StartupScript, as every level did before; "" runs none, for a level
+         * whose scene is all its own. */
+        virtual const char* GetStartupScript() const { return nullptr; }
+
         /* This level's World, from the start of OnLoad to the end of OnUnload;
          * CORE_CHECKed outside that window. Not virtual -- engine-owned. */
         NE_API GameCore::World& GetWorld();
