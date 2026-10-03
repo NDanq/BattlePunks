@@ -444,7 +444,7 @@ public:
         EntityCreatedHandle = World.OnEntityCreated().Add(&OnEntityCreatedLogger, &World);
 
         /* The level is prefab instances (the native prefabs above). Off y=0:
-         * +Y runs down from the top edge in the ortho view, so a quad at y=0
+         * +Y runs up from the bottom edge in the ortho view, so a quad at y=0
          * would hang half off screen. MarkerEntity keeps only the root's id;
          * the handle's World* is per-load. */
         const GameCore::Entity Marker = World.SpawnPrefab("native:Sandbox.Marker",

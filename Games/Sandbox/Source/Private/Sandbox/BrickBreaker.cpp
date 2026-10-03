@@ -90,11 +90,12 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(SandboxBrickComponent)
 namespace
 {
     // === The field ==============================================================
-    // Pixels, +Y down: the Sandbox camera's orthographic view of 1280 x 720.
+    // Pixels, +Y up from the bottom edge: the Sandbox camera's orthographic
+    // view of 1280 x 720 (RenderView.h).
 
     constexpr double FieldWidth  = 1280.0;
 
-    constexpr double PaddleY      = 670.0;
+    constexpr double PaddleY      = 50.0;
     constexpr double PaddleWidth  = 128.0;
     constexpr double PaddleHeight = 16.0;
     constexpr double PaddleSpeed  = 900.0;   // pixels per second at full MoveX
@@ -106,7 +107,7 @@ namespace
     constexpr double BrickWidth   = 110.0;
     constexpr double BrickHeight  = 28.0;
     constexpr double BrickGap     = 8.0;
-    constexpr double BrickTop     = 80.0;    // the first row's centre
+    constexpr double BrickTop     = 640.0;   // the top row's centre; rows step down from it
 
     constexpr int    StartingLives = 3;
     constexpr double RoundClearedSeconds = 1.5;
@@ -264,7 +265,7 @@ namespace
             for(int Column = 0; Column < BrickColumns; ++Column)
             {
                 WallBrick Brick;
-                Brick.Pose = Placed(Left + Column * (BrickWidth + BrickGap), BrickTop + Row * (BrickHeight + BrickGap),
+                Brick.Pose = Placed(Left + Column * (BrickWidth + BrickGap), BrickTop - Row * (BrickHeight + BrickGap),
                                     BrickWidth, BrickHeight);
                 Brick.Hits = BrickRows - Row;   // row 0 is the top
                 Wall.push_back(Brick);
@@ -551,7 +552,7 @@ namespace
             World.SpawnPrefab("native:Sandbox.Camera");
             World.SpawnPrefab("native:BrickBreaker.Paddle", Placed(FieldWidth * 0.5, PaddleY, PaddleWidth, PaddleHeight));
 
-            if(!World.SpawnPrefab(BallPrefab, Placed(FieldWidth * 0.5, PaddleY - 20.0, BallSize, BallSize)).IsValid())
+            if(!World.SpawnPrefab(BallPrefab, Placed(FieldWidth * 0.5, PaddleY + 20.0, BallSize, BallSize)).IsValid())
             {
                 CORE_LOG_ERROR(std::string("[BrickBreaker] could not spawn ") + BallPrefab)
                 return false;

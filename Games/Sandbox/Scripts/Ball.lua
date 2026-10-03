@@ -6,7 +6,7 @@
 --   Game.AddLives                      a lost ball; the mode's rules pick the next phase
 --   Game.GetRound                      a little faster each round
 --
--- Walls are the edges of the 1280 x 720 view (+Y down); the paddle and bricks
+-- Walls are the edges of the 1280 x 720 view (+Y up); the paddle and bricks
 -- are colliders, met in OnOverlapBegin at the start of TP_PostPhysics.
 
 local FieldWidth     = 1280
@@ -34,7 +34,7 @@ return {
     OnPhase = function(self, phase)
         if phase == "Playing" then
             local angle = math.rad(math.random(-25, 25))
-            self.VX, self.VY = Speed() * math.sin(angle), -Speed() * math.cos(angle)
+            self.VX, self.VY = Speed() * math.sin(angle), Speed() * math.cos(angle)
         else
             self.VX, self.VY = 0, 0
         end
@@ -51,7 +51,7 @@ return {
                 local paddleTransform = paddle:GetComponent("Transform")
                 local px, py = paddleTransform:GetPosition()
                 local _, paddleHeight = paddleTransform:GetScale()
-                transform:SetPosition(px, py - paddleHeight * 0.5 - self.Half - 2, 0)
+                transform:SetPosition(px, py + paddleHeight * 0.5 + self.Half + 2, 0)
             end
             return
         end
@@ -69,13 +69,13 @@ return {
         elseif x > FieldWidth - self.Half then
             x, self.VX = FieldWidth - self.Half, -math.abs(self.VX)
         end
-        if y < self.Half then
-            y, self.VY = self.Half, math.abs(self.VY)
+        if y > FieldHeight - self.Half then
+            y, self.VY = FieldHeight - self.Half, -math.abs(self.VY)
         end
         transform:SetPosition(x, y, 0)
 
         -- Out of the bottom: a life, and the rules decide what happens next.
-        if y > FieldHeight + self.Half * 2 then
+        if y < -self.Half * 2 then
             self.VX, self.VY = 0, 0
             Game.AddLives(Game.GetPlayer(0), -1)
         end
@@ -95,14 +95,14 @@ return {
         local name = other:GetName()
 
         if name == "Paddle" then
-            if self.VY <= 0 then
+            if self.VY >= 0 then
                 return   -- already on the way up
             end
             -- Where it hit sets the angle: the centre straight up, the edges steep.
             local offset = math.max(-1, math.min(1, (x - ox) / (width * 0.5)))
             local angle = offset * MaxBounceAngle
-            self.VX, self.VY = Speed() * math.sin(angle), -Speed() * math.cos(angle)
-            transform:SetPosition(x, oy - height * 0.5 - self.Half, 0)
+            self.VX, self.VY = Speed() * math.sin(angle), Speed() * math.cos(angle)
+            transform:SetPosition(x, oy + height * 0.5 + self.Half, 0)
             self.Bounced = true
         elseif name == "Brick" then
             -- Out along the shallower overlap: a side hit turns X, a face hit Y.

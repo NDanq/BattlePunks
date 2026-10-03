@@ -5,7 +5,7 @@
       <Hits Value="3" />
     </Component>
     <Component Type="Transform" Version="1">
-      <Position X="817" Y="152" Z="0" />
+      <Position X="817" Y="568" Z="0" />
       <Scale X="110" Y="28" Z="1" />
     </Component>
   </Entity>

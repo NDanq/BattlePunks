@@ -368,14 +368,14 @@ Open) and save it.
 
 ### Positions
 
-All units are pixels, with +Y pointing down. Sandbox's camera
+All units are pixels, with +Y pointing up from the bottom edge. Sandbox's camera
 (`native:Sandbox.Camera`) at the origin gives a 1280 × 720 orthographic view.
 
 | Piece | Where | Size |
 |---|---|---|
-| Paddle | centred at (640, 670) | 128 × 16 |
-| Ball | (640, 650) at spawn; above the paddle while Serving | 14 × 14 |
-| Bricks | 10 columns × 5 rows, centred at x = 109 + 118·c, y = 80 + 36·r | 110 × 28, 8 px gaps |
+| Paddle | centred at (640, 50) | 128 × 16 |
+| Ball | (640, 70) at spawn; above the paddle while Serving | 14 × 14 |
+| Bricks | 10 columns × 5 rows, centred at x = 109 + 118·c, y = 640 − 36·r (row 0 at the top) | 110 × 28, 8 px gaps |
 
 The wall is centred: ten bricks plus nine gaps are 1172 px wide, which leaves
 54 px on each side.
