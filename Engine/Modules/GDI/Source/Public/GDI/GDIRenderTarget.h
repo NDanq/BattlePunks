@@ -37,10 +37,10 @@ public:
         TargetGDIType = RTGDI_None;
     }
 
-    ~GDIRenderTarget()
-    {
-
-    }
+    /* Virtual: render targets are deleted through this base, and a backend's
+     * destructor must run -- it unregisters the target from its driver's live
+     * list, which otherwise keeps a freed target the next bind walks over. */
+    virtual ~GDIRenderTarget() = default;
 
     virtual void Resize(const uint InWidth, const uint InHeight)
     {
