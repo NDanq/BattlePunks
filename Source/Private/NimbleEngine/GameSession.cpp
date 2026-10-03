@@ -14,6 +14,7 @@
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
+#include "Public/Core/CorePlatform.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/ScriptEngine.h"
@@ -85,7 +86,8 @@ namespace NimbleEngine
     }
 
     GameSession::GameSession(IGameHost& InHost, GameCore::ScriptEngine& InScripts, RenderCore::Renderer& InRenderer)
-        : Host(InHost)
+        : GameThread(EngineCore::appThreadID())
+        , Host(InHost)
         , Scripts(InScripts)
         , Rendering(InRenderer)
     {
@@ -98,8 +100,15 @@ namespace NimbleEngine
         UnloadLevel();
     }
 
+    void GameSession::CheckGameThread(const char* InWhat) const
+    {
+        CORE_CHECK(EngineCore::appThreadID() == GameThread,
+                   std::string("GameSession::") + InWhat + " called off the game thread (the one that made the session)")
+    }
+
     bool GameSession::LoadLevel(ILevel& InLevel)
     {
+        CheckGameThread("LoadLevel");
         CORE_CHECK(LevelWorld == nullptr, "GameSession::LoadLevel called with a level already loaded")
 
         /* Bound before OnLoad, or scripts and WorldBridge would miss the
@@ -271,6 +280,7 @@ namespace NimbleEngine
 
     void GameSession::UnloadLevel()
     {
+        CheckGameThread("UnloadLevel");
         if(!ActiveLevel)
         {
             return;
@@ -313,6 +323,7 @@ namespace NimbleEngine
 
     void GameSession::ApplyPendingLevel()
     {
+        CheckGameThread("ApplyPendingLevel");
         if(!PendingLevel)
         {
             return;
@@ -338,6 +349,8 @@ namespace NimbleEngine
 
     void GameSession::Tick(const FrameContext& InFrame)
     {
+        /* The mode's OnTick overlaps the render thread: game state only. */
+        CheckGameThread("Tick");
         /* Re-read: a level swap may have replaced the mode. */
         if(ActiveLevel)
         {
@@ -400,6 +413,7 @@ namespace NimbleEngine
 
     bool GameSession::SetPhase(const char* InPhase)
     {
+        CheckGameThread("SetPhase");
         GameState* State = GetGameState();
         if(!State || !InPhase || InPhase[0] == '\0')
         {
@@ -481,6 +495,7 @@ namespace NimbleEngine
 
     bool GameSession::AddScore(const GameCore::EntityID InPlayer, const int32_t InAmount)
     {
+        CheckGameThread("AddScore");
         if(!LevelWorld)
         {
             return false;
@@ -505,6 +520,7 @@ namespace NimbleEngine
 
     bool GameSession::AddLives(const GameCore::EntityID InPlayer, const int32_t InAmount)
     {
+        CheckGameThread("AddLives");
         if(!LevelWorld)
         {
             return false;

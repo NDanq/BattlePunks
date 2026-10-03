@@ -87,7 +87,10 @@ namespace NimbleEngine
      * the process. The session binds them to its World only while a level is
      * loaded. The World is the session's, one per loaded level.
      *
-     * Game thread only.
+     * GAME THREAD ONLY: the thread that constructs the session. Every entry
+     * that runs game code -- the load sequence, ApplyPendingLevel, Tick and
+     * the framework calls below -- CORE_CHECKs it, so a mode, a level or a
+     * script is never called from anywhere else and need not check for itself.
      */
     class NE_API GameSession
     {
@@ -228,6 +231,9 @@ namespace NimbleEngine
         /* LoadLevel's restore step. False on a corrupt save; the level stays loaded. */
         bool RestoreSaveInto(EngineCore::Archive& Ar, ILevel& InLevel, GameState* InState);
 
+        /* EngineCore::appThreadID() at construction (an EngineCore::ThreadID). */
+        uint64_t                GameThread = 0;
+
         IGameHost&              Host;
         GameCore::ScriptEngine& Scripts;
         RenderCore::Renderer&   Rendering;
@@ -238,6 +244,9 @@ namespace NimbleEngine
 
         /* SetPhase's change itself, with no queueing. */
         void ApplyPhase(const char* InPhase);
+
+        /* CORE_CHECKs that the caller is on GameThread; InWhat names the entry. */
+        void CheckGameThread(const char* InWhat) const;
 
         /* LevelWorld lives from LoadLevel to UnloadLevel; same as ILevel::OwnedWorld. */
         ILevel*           ActiveLevel = nullptr;
