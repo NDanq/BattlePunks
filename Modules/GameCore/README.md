@@ -674,7 +674,7 @@ way as in the engine. Each registrar unregisters when its image unloads,
 so a module can be loaded, unloaded and loaded again: by the editor, to read
 its declarations, and by every Play. Calling a binding whose module has
 unloaded is a Lua error rather than a jump into unmapped code.
-`Games/Sandbox/SandboxScripting.cpp` is the example.
+`Games/Sandbox/Source/Private/Sandbox/SandboxScripting.cpp` is the example.
 
 **Lua is compiled as C and its errors are `longjmp`.** A `lua_CFunction` in
 this module's bindings may only have trivially destructible locals in scope
