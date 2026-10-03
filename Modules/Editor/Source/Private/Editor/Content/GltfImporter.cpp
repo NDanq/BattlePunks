@@ -241,7 +241,7 @@ namespace EditorContent
                 Local[At] = uint32_t(Index);
             }
 
-            /* glTF -> engine: x stays, y and z flip (a half turn about X). */
+            /* glTF (right-handed) -> engine (left-handed): x and y stay, z flips. */
             const float Flip = InOptions.bConvertCoordinates ? -1.0f : 1.0f;
 
             /* Vertex colours (COLOR_0) are all or none in a mesh: the first
@@ -259,7 +259,7 @@ namespace EditorContent
                 cgltf_accessor_read_float(Positions, Vertex, Source, 3);
                 InTransform.Point(Source, Placed);
                 InOutMesh.Positions.push_back(Placed[0] * InOptions.Scale);
-                InOutMesh.Positions.push_back(Placed[1] * InOptions.Scale * Flip);
+                InOutMesh.Positions.push_back(Placed[1] * InOptions.Scale);
                 InOutMesh.Positions.push_back(Placed[2] * InOptions.Scale * Flip);
 
                 float Normal[3] = {0.0f, 0.0f, 0.0f};
@@ -271,7 +271,7 @@ namespace EditorContent
                     Normalize(Normal);
                 }
                 InOutMesh.Normals.push_back(Normal[0]);
-                InOutMesh.Normals.push_back(Normal[1] * Flip);
+                InOutMesh.Normals.push_back(Normal[1]);
                 InOutMesh.Normals.push_back(Normal[2] * Flip);
 
                 float UV[2] = {0.0f, 0.0f};
@@ -288,13 +288,15 @@ namespace EditorContent
                 }
             }
 
-            /* A mirroring transform flips winding; swap two corners to undo it. */
+            /* A mirror flips winding -- the node's transform, the axis
+             * conversion, or both (which cancel); swap two corners to undo it. */
+            const bool bSwap = InTransform.bMirrors != InOptions.bConvertCoordinates;
             const size_t FirstIndex = InOutMesh.Indices.size();
             for(cgltf_size At = 0; At < IndexCount; At += 3)
             {
                 InOutMesh.Indices.push_back(BaseVertex + Local[At]);
-                InOutMesh.Indices.push_back(BaseVertex + Local[InTransform.bMirrors ? At + 2 : At + 1]);
-                InOutMesh.Indices.push_back(BaseVertex + Local[InTransform.bMirrors ? At + 1 : At + 2]);
+                InOutMesh.Indices.push_back(BaseVertex + Local[bSwap ? At + 2 : At + 1]);
+                InOutMesh.Indices.push_back(BaseVertex + Local[bSwap ? At + 1 : At + 2]);
             }
 
             if(!Normals)

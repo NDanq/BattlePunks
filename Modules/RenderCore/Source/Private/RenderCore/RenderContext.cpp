@@ -240,7 +240,15 @@ namespace RenderCore
              * exactly the "one mesh, scaled per draw" shape DrawQuad wants;
              * GDITransform::Scale (set per call below) is what actually
              * varies a primitive's on-screen size. */
-            ViewObject = new GDIViewObject(View3D);
+            /* Not GDIViewObject's own quad: its UVs put v = 0 at local -Y,
+             * the bottom in this engine's Y-up view, so textures would draw
+             * upside down. Same half-unit square, v = 0 at the top. */
+            static const float QuadVerts[] = { -0.5f, -0.5f, 0.f,  -0.5f, 0.5f, 0.f,  0.5f, 0.5f, 0.f,
+                                                0.5f,  0.5f, 0.f,   0.5f, -0.5f, 0.f, -0.5f, -0.5f, 0.f };
+            static const float QuadUVs[]   = { 0.f, 1.f,  0.f, 0.f,  1.f, 0.f,  1.f, 0.f,  1.f, 1.f,  0.f, 1.f };
+            ViewObject = new GDIViewObject();
+            ViewObject->Init(View3D);
+            ViewObject->Mesh = GDICreateQuadMesh(QuadVerts, QuadUVs, 18, 12);
 
             MeshObject = new GDIViewObject();
             MeshObject->Init(View3D);
@@ -1463,8 +1471,8 @@ namespace RenderCore
             const double Yaw   = double(InRequest.Yaw) * Pi / 180.0;
             const double Pitch = double(std::clamp(InRequest.Pitch, -85.0f, 85.0f)) * Pi / 180.0;
             const double Zoom  = double(std::clamp(InRequest.Zoom, 0.1f, 20.0f));
-            /* +Y is down, so a camera above looks down along +Y. */
-            const EngineCore::Vector3 Forward(std::sin(Yaw) * std::cos(Pitch), std::sin(Pitch), std::cos(Yaw) * std::cos(Pitch));
+            /* +Y is up, so a camera above looks down along -Y. */
+            const EngineCore::Vector3 Forward(std::sin(Yaw) * std::cos(Pitch), -std::sin(Pitch), std::cos(Yaw) * std::cos(Pitch));
             const double Distance = Radius / std::sin(double(FovY) * 0.5 * Pi / 180.0) * 1.1 / Zoom;
             const EngineCore::Vector3 Eye = Centre - Forward * Distance;
             const float Near = float(std::max(Distance - Radius * 1.5, Distance * 0.01));
@@ -1473,7 +1481,7 @@ namespace RenderCore
 
             /* A studio light from over the camera's shoulder, the same
              * whatever the scene's; the default sky. */
-            const EngineCore::Vector3 Down(0.0, 1.0, 0.0);
+            const EngineCore::Vector3 Down(0.0, -1.0, 0.0);
             EngineCore::Vector3 Side = Forward ^ Down;
             const double SideLength = Side.GetLength();
             Side = SideLength > 1e-6 ? Side * (1.0 / SideLength) : EngineCore::Vector3(1.0, 0.0, 0.0);

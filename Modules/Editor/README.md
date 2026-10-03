@@ -140,8 +140,8 @@ dropped on, or the one shown -- `Content/` when the browser is at the root.
 1. **Files**: each file's kind and the asset name it gets (editable), and a
    warning beside one that will replace an existing asset.
 2. **Mesh options**: scale (glTF is in metres; 100 by default), convert axes
-   (glTF is +Y up; the model is turned a half-turn about X so up stays up and it
-   faces the default camera), generate missing normals, combine the scene into
+   (glTF is right-handed and the engine left-handed, both +Y up: z flips, with
+   the winding, so the model faces the default camera), generate missing normals, combine the scene into
    one mesh or one per glTF mesh, and import the textures it uses -- listed.
 3. **Texture options**: sRGB, filtering, wrapping, largest size (bigger images
    are scaled down), flip vertically.
@@ -249,8 +249,8 @@ Right -- each orbits about the pivot to that axis; picking the shown one again
 snaps back to it); a **Frame** button (the selection -- its arrow menu has
 Frame All); All Bounds; and camera speed (1/8x to 8x). The combo boxes never
 take keyboard focus, so the viewport's keys keep working after one is used.
-"Top" looks from screen-up, which is world -Y: the editor keeps the game's
-+Y-down convention.
+"Top" looks down from world +Y: the editor uses the engine's left-handed,
++Y-up axes (RenderCore's RenderView.h).
 
 **Overlays** are Renderer debug lines (`Renderer::DrawDebugLine` /
 `DrawDebugBox`), not Qt painting -- nothing Qt draws can sit over the native

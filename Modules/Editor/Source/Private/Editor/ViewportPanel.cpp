@@ -60,8 +60,8 @@ namespace
         { "Persp",  "Perspective -- above and to the side",    EditorCamera::EPreset::Perspective },
         { "Front",  "Front -- looking along +Z (the game view)", EditorCamera::EPreset::Front       },
         { "Back",   "Back -- looking along -Z",                 EditorCamera::EPreset::Back        },
-        { "Top",    "Top -- from screen-up (-Y), looking along +Y", EditorCamera::EPreset::Top     },
-        { "Bottom", "Bottom -- from +Y, looking along -Y",      EditorCamera::EPreset::Bottom      },
+        { "Top",    "Top -- from above (+Y), looking along -Y",    EditorCamera::EPreset::Top     },
+        { "Bottom", "Bottom -- from below (-Y), looking along +Y", EditorCamera::EPreset::Bottom   },
         { "Left",   "Left -- from -X, looking along +X",        EditorCamera::EPreset::Left        },
         { "Right",  "Right -- from +X, looking along -X",       EditorCamera::EPreset::Right       },
     };

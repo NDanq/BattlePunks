@@ -38,8 +38,10 @@ namespace EditorContent
         /* glTF is in metres: 100 makes 1 m = 100 units. */
         float Scale = 100.0f;
 
-        /* glTF is +Y up; the engine is +Y down. Rotates 180 degrees about X so
-         * up stays up and the front faces the default camera. */
+        /* glTF is right-handed with +Z toward the viewer; the engine is
+         * left-handed with +Z away (RenderView.h). Both are +Y up: z flips,
+         * a mirror, so the winding flips with it, and the front faces the
+         * default camera. */
         bool bConvertCoordinates = true;
 
         /* For primitives without normals (else they draw dark). */

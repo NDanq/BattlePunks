@@ -184,8 +184,8 @@ static void TestMeshImport(const QDir& InRoot)
     {
         Expect(Mesh.Sections[0].Name == "Box.0" && Mesh.Sections[0].Material == "Red" && Mesh.Sections[1].Material.empty(),
                "sections are named after their mesh, with the glTF material name");
-        Expect(Near(Mesh.Positions[0], 1.0f) && Near(Mesh.Positions[1], -2.0f) && Near(Mesh.Positions[2], -3.0f),
-               "the node's translation is baked in, then y and z flip into engine space");
+        Expect(Near(Mesh.Positions[0], 1.0f) && Near(Mesh.Positions[1], 2.0f) && Near(Mesh.Positions[2], -3.0f),
+               "the node's translation is baked in, then z flips into the engine's left-handed space");
         Expect(Near(Mesh.Normals[2], -1.0f), "a +Z normal faces -Z in engine space");
         Expect(Mesh.Colors.size() == 9 * 4, "one primitive's COLOR_0 gives the whole mesh colours");
         if(Mesh.Colors.size() == 9 * 4)
@@ -200,8 +200,10 @@ static void TestMeshImport(const QDir& InRoot)
         }
         Expect(Near(Mesh.Normals[3 * 3 + 2], -1.0f) && Near(Mesh.Normals[3 * 3 + 0], 0.0f),
                "a primitive with no normals gets generated ones, facing the same way");
-        Expect(Mesh.Indices[6] == 6 && Mesh.Indices[7] == 8 && Mesh.Indices[8] == 7,
-               "a mirroring node transform swaps its triangles' winding");
+        Expect(Mesh.Indices[0] == 0 && Mesh.Indices[1] == 2 && Mesh.Indices[2] == 1,
+               "the axis conversion is a mirror, so it swaps a triangle's winding");
+        Expect(Mesh.Indices[6] == 6 && Mesh.Indices[7] == 7 && Mesh.Indices[8] == 8,
+               "a mirroring node transform and the conversion cancel: its winding is kept");
         Expect(Near(Mesh.BoundsMin[0], -1.0f) && Near(Mesh.BoundsMax[0], 2.0f), "bounds span both nodes");
         Expect(Near(Mesh.UV0[2], 1.0f), "UVs carry over");
     }

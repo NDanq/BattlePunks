@@ -1666,7 +1666,8 @@ static void TestRenderStages()
 /*
  * The engine's primitive meshes (Engine/Scripts/generate_primitive_meshes.py),
  * as staged beside this executable: they load, and each triangle faces the way
- * its normals do -- counter-clockwise seen from outside, as imported meshes.
+ * its normals do (the cross product of its edges points along them), as
+ * imported meshes.
  */
 static void TestEngineMeshes()
 {
@@ -1719,13 +1720,13 @@ static void TestEngineMeshes()
             bFacing &= Area < 1e-12f || Face[0] * Normal[0] + Face[1] * Normal[1] + Face[2] * Normal[2] > 0.0f;
         }
         Expect(bUnitNormals && bUVsInRange, (std::string(Each.Path) + " has unit normals and 0-1 UVs").c_str());
-        Expect(bFacing, (std::string(Each.Path) + " winds every triangle counter-clockwise seen from outside").c_str());
+        Expect(bFacing, (std::string(Each.Path) + " winds every triangle to face its normals").c_str());
     }
 
     MeshData Plane;
     if(LoadMeshFile("Engine/Content/Meshes/Plane.nmmesh", Plane))
     {
-        Expect(Plane.Normals[1] == -1.0f, "the Plane faces up (-Y)");
+        Expect(Plane.Normals[1] == 1.0f, "the Plane faces up (+Y)");
     }
 }
 
