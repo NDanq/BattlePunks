@@ -202,19 +202,10 @@ namespace GameCore
         // owns the pools but exposes no per-entity component calls.
 
         /* Visits every live T, in dense (pool) order. InFn must not Add or
-         * Remove a T on ANY entity while this runs -- see DESIGN.md. */
+         * Remove a T on ANY entity while this runs -- see DESIGN.md.
+         * Defined in Entity.h, which has the complete Entity it passes. */
         template<typename T, typename F>
-        void Each(F&& InFn)
-        {
-            ComponentPool* Pool = FindPool(T::StaticType().ID);
-            if(!Pool) { return; }
-            T* Base = static_cast<T*>(Pool->GetDenseData());
-            const size_t Count = Pool->GetCount();
-            for(size_t Index = 0; Index < Count; ++Index)
-            {
-                InFn(GetEntity(Pool->GetEntityAt(Index)), Base[Index]);
-            }
-        }
+        void Each(F&& InFn);
 
         /* Creates the pool on first use; nullptr for an unregistered id. */
         ComponentPool* GetPool(ComponentTypeID InType);
