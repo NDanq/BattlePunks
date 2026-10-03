@@ -20,7 +20,9 @@
 
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/ScriptEngine.h"
+#include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/World.h"
 #include "Public/NodeGraph/GraphCompiler.h"
 #include "Public/NodeGraph/GraphFile.h"
@@ -41,8 +43,161 @@ static void Expect(const bool bCondition, const std::string& What)
     }
 }
 
+// === A script struct, as a game module declares one =============================
+
+struct TestStats
+{
+    GAMECORE_SCRIPT_STRUCT_BODY()
+    int32_t             Hits   = 0;
+    float               Scale  = 1.0f;
+    EngineCore::Vector3 Where;
+    uint8_t             bLucky = 0;
+};
+GAMECORE_DEFINE_SCRIPT_STRUCT(TestStats, "TestStats")
+{
+    Struct.Field("Hits",  &TestStats::Hits);
+    Struct.Field("Scale", &TestStats::Scale);
+    Struct.Field("Where", &TestStats::Where);
+    Struct.Flag("Lucky",  &TestStats::bLucky);
+}
+
+/* A component holding one, as a field, and returning one from a member. */
+struct StatsHolderComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    TestStats Stats;
+
+    TestStats Bumped(const int32_t InBy) const
+    {
+        TestStats Out = Stats;
+        Out.Hits += InBy;
+        return Out;
+    }
+};
+GAMECORE_DEFINE_COMPONENT(StatsHolderComponent, "TestStatsHolder")
+GAMECORE_DEFINE_COMPONENT_SCRIPT(StatsHolderComponent)
+{
+    Bind.Field("Stats", &StatsHolderComponent::Stats);
+    Bind.Native<&StatsHolderComponent::Bumped>("Bumped", "By -> Stats");
+}
+
+static TestStats GTestStats;
+
+static TestStats NativeMerge(const TestStats& InA, const TestStats& InB)
+{
+    TestStats Out;
+    Out.Hits   = InA.Hits + InB.Hits;
+    Out.Scale  = InA.Scale + InB.Scale;
+    Out.Where  = InA.Where + InB.Where;
+    Out.bLucky = uint8_t(InA.bLucky | InB.bLucky);
+    return Out;
+}
+
+// === A script library, as a game module declares one ===========================
+
+static int32_t GTestScore    = 0;
+static int32_t GTestVersion  = 3;
+static int32_t GTestRecorded = -1;
+
+/* Plain C++ functions, bound with Native: no ScriptCall in sight. */
+static double      NativeLerp(const double InA, const double InB, const double InT) { return InA + (InB - InA) * InT; }
+static std::string NativeGreet(const std::string& InName, const int32_t InTimes)
+{
+    std::string Out;
+    for(int32_t Index = 0; Index < InTimes; ++Index) { Out += "hi " + InName + (Index + 1 < InTimes ? ", " : ""); }
+    return Out;
+}
+static GameCore::EntityID NativeSpawnAt(GameCore::World& InWorld, const EngineCore::Vector3& InAt)
+{
+    GameCore::TransformComponent Transform;
+    Transform.Position = InAt;
+    const GameCore::Entity Spawned = InWorld.CreateEntity("Spawned");
+    Spawned.AddComponent(Transform);
+    return Spawned.GetID();
+}
+static void NativeFail(GameCore::ScriptCall& InCall) { InCall.Error("refused"); }
+
+GAMECORE_DEFINE_SCRIPT_LIBRARY(TestLib)
+{
+    Lib.Variable("Score", &GTestScore);
+    Lib.ReadOnly("Version", &GTestVersion);
+
+    Lib.Function("AddScore", [](GameCore::ScriptCall& Call)
+    {
+        const int32_t Amount = Call.GetInt(1);
+        if(Call.HasError()) { return; }
+        GTestScore += Amount;
+        Call.PushInteger(GTestScore);
+    }, "Amount:integer -> Total:integer").Tooltip("Adds Amount to Score");
+
+    Lib.Pure("Doubled", [](GameCore::ScriptCall& Call) { Call.PushNumber(Call.GetNumber(1) * 2.0); },
+             "Value:number -> Result:number");
+
+    Lib.Function("Nudge", [](GameCore::ScriptCall& Call)
+    {
+        const GameCore::EntityID Target = Call.GetEntity(1);
+        const EngineCore::Vector3 Delta = Call.GetVector3(2);
+        if(Call.HasError()) { return; }
+        if(GameCore::TransformComponent* T = Call.GetWorld().GetEntity(Target).GetComponent<GameCore::TransformComponent>())
+        {
+            T->Position = T->Position + Delta;
+        }
+    }, "Target:Entity, Delta:Vector3");
+
+    Lib.Function("Record", [](GameCore::ScriptCall& Call) { GTestRecorded = Call.GetInt(1); }, "Value:integer");
+
+    Lib.Event("Scored", "Who:Entity, Total:integer");
+    Lib.Event("TooWide", "Where:Vector3");   // not one value per parameter: no nodes
+
+    Lib.NativePure<&NativeLerp>("Lerp", "A, B, T -> Out");
+    Lib.NativePure<&NativeGreet>("Greet");                           // unnamed: Arg1, Arg2, Result
+    Lib.Native<&NativeSpawnAt>("SpawnAt", "At -> Spawned");          // World& is filled in
+    Lib.Native<&NativeFail>("Fail");
+
+    Lib.Variable("Stats", &GTestStats);                              // a script struct variable
+    Lib.NativePure<&NativeMerge>("Merge", "A, B -> Sum");            // script structs in and out
+}
+
+/* A component whose bindings are withdrawn and registered again, as a game
+ * module's are when it unloads and loads. */
+struct ReloadProbeComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    float Speed = 1.0f;
+
+    /* Native members: bound as they are, no glue written. */
+    double              Scaled(const double InFactor) const { return Speed * InFactor; }
+    void                SetSpeedTo(const float InSpeed)     { Speed = InSpeed; }
+    EngineCore::Vector3 Along(const EngineCore::Vector3& InDirection, const EngineCore::Color& InWeight) const
+    {
+        return InDirection * (double(Speed) * InWeight.A / 255.0);
+    }
+};
+GAMECORE_DEFINE_COMPONENT(ReloadProbeComponent, "TestReloadProbe")
+GAMECORE_DEFINE_COMPONENT_SCRIPT(ReloadProbeComponent)
+{
+    Bind.Method("Ping", [](ReloadProbeComponent&, GameCore::ScriptCall& Call) { Call.PushBool(true); }, "-> Ok:bool");
+    Bind.NativePure<&ReloadProbeComponent::Scaled>("Scaled", "Factor -> Value");
+    Bind.Native<&ReloadProbeComponent::SetSpeedTo>("SetSpeedTo", "Speed");
+    Bind.Native<&ReloadProbeComponent::Along>("Along", "Direction, Weight -> Offset");
+}
+
 namespace
 {
+    /* InEntity made an instance of a prefab of itself that runs InScript:
+     * how a script is attached now that entities do not have their own.
+     * Returns the instance's root, which replaces InEntity. */
+    GameCore::Entity AttachScript(GameCore::World& InWorld, const GameCore::Entity& InEntity, const char* InScript)
+    {
+        GameCore::PrefabAsset Asset;
+        GameCore::CapturePrefab(InWorld, InEntity.GetID(), Asset);
+        Asset.SetScriptPath(InScript);
+        const GameCore::TransformPose At = InEntity.GetWorldPose();
+        const std::string Name = InEntity.GetName();
+        InWorld.DestroyEntity(InEntity.GetID());
+        return InWorld.SpawnPrefab(Asset, At, Name.c_str()).GetRoot();
+    }
+
     // === Helpers ================================================================
 
     NodeGuid Id(const uint64_t InNumber)
@@ -197,6 +352,76 @@ namespace
         Connect(G, 21, "Completed", 23, "Exec");
         Connect(G, 25, "Value", 24, "V");
         Connect(G, 24, "Out", 23, "Value");
+        return G;
+    }
+
+    /* TestLib's nodes: a pure call into a statement, a variable read, an
+     * entity and a vector argument, and a typed event emitted and handled. */
+    Graph MakeLibraryGraph()
+    {
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Scorer";
+
+        AddNode(G, 1, "Event.OnTick");
+        AddNode(G, 2, "Library.TestLib.Doubled").Constants["Value"] = "2";
+        AddNode(G, 3, "Library.TestLib.AddScore");
+        AddNode(G, 4, "Library.TestLib.Nudge").Constants["Delta"] = "1 0 0";
+        AddNode(G, 5, "Library.TestLib.EmitScored");
+        AddNode(G, 6, "Entity.Self");
+        Connect(G, 1, "Then", 3, "Exec");
+        Connect(G, 2, "Result", 3, "Amount");   // number into integer
+        Connect(G, 3, "Then", 4, "Exec");
+        Connect(G, 4, "Then", 5, "Exec");
+        Connect(G, 6, "Entity", 5, "Who");
+        Connect(G, 3, "Total", 5, "Total");
+
+        AddNode(G, 10, "Library.TestLib.OnScored");
+        AddNode(G, 11, "Library.TestLib.Record");
+        AddNode(G, 12, "Library.TestLib.GetVersion");
+        AddNode(G, 13, "Math.Add");
+        Connect(G, 10, "Then", 11, "Exec");
+        Connect(G, 10, "Total", 13, "A");
+        Connect(G, 12, "Version", 13, "B");
+        Connect(G, 13, "Out", 11, "Value");
+        return G;
+    }
+
+    /* TestStats through a graph: a component field read, broken, changed,
+     * made again and written back; a struct variable merged into each tick. */
+    Graph MakeStatsGraph()
+    {
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Stats";
+        G.Variables.push_back({ "Best", "TestStats", "" });
+
+        AddNode(G, 1, "Event.OnTick");
+        AddNode(G, 2, "Component.TestStatsHolder.Get");
+        AddNode(G, 3, "Component.TestStatsHolder.GetStats");
+        AddNode(G, 4, "Struct.TestStats.Break");
+        AddNode(G, 5, "Math.Add").Constants["B"] = "1";
+        AddNode(G, 6, "Struct.TestStats.Make").Constants["Lucky"] = "true";
+        AddNode(G, 7, "Component.TestStatsHolder.SetStats");
+        AddNode(G, 8, "Variable.Set").Properties["Variable"] = "Best";
+        AddNode(G, 9, "Library.TestLib.Merge");
+        AddNode(G, 10, "Variable.Get").Properties["Variable"] = "Best";
+        AddNode(G, 11, "Library.TestLib.SetStats");
+        Connect(G, 1, "Then", 7, "Exec");
+        Connect(G, 2, "TestStatsHolder", 3, "Target");
+        Connect(G, 2, "TestStatsHolder", 7, "Target");
+        Connect(G, 3, "Stats", 4, "TestStats");
+        Connect(G, 4, "Hits", 5, "A");
+        Connect(G, 5, "Out", 6, "Hits");
+        Connect(G, 4, "Scale", 6, "Scale");
+        Connect(G, 4, "Where", 6, "Where");
+        Connect(G, 6, "TestStats", 7, "Stats");
+        Connect(G, 7, "Then", 8, "Exec");
+        Connect(G, 10, "Value", 9, "A");
+        Connect(G, 3, "Stats", 9, "B");
+        Connect(G, 9, "Sum", 8, "Value");
+        Connect(G, 8, "Then", 11, "Exec");
+        Connect(G, 10, "Value", 11, "Stats");
         return G;
     }
 
@@ -443,7 +668,8 @@ namespace
 
         GameCore::Entity Mover = W.CreateEntity("Mover");
         Mover.AddComponent<GameCore::TransformComponent>();
-        Expect(Mover.SetScript(Path.c_str()), "the generated script attaches");
+        Mover = AttachScript(W, Mover, Path.c_str());
+        Expect(Mover.IsAlive(), "the generated script attaches");
 
         for(int Frame = 0; Frame < 10; ++Frame) { W.Tick(0.1f); }
 
@@ -459,7 +685,7 @@ namespace
         WriteFile(FlowPath, Flow.Code);
         GameCore::Entity Flowing = W.CreateEntity("Flowing");
         Flowing.AddComponent<GameCore::TransformComponent>();
-        Flowing.SetScript(FlowPath.c_str());
+        Flowing = AttachScript(W, Flowing, FlowPath.c_str());
         W.Tick(0.1f);
         W.Tick(0.1f);
         Expect(Scripts.RunString("Events.Emit('Reset')", "emit-reset"), "emitting the handled event runs");
@@ -481,7 +707,8 @@ namespace
 
             GameCore::Entity FromGraph = W.CreateEntity("FromGraph");
             FromGraph.AddComponent<GameCore::TransformComponent>();
-            Expect(FromGraph.SetScript(GraphPath.c_str()), "an entity's script can be a .script.nmgraph");
+            FromGraph = AttachScript(W, FromGraph, GraphPath.c_str());
+            Expect(FromGraph.IsAlive(), "a prefab's script can be a .script.nmgraph");
             for(int Frame = 0; Frame < 10; ++Frame) { W.Tick(0.1f); }
             const GameCore::TransformComponent* Moved = FromGraph.GetComponent<GameCore::TransformComponent>();
             Expect(Moved && std::fabs(double(Moved->Position.GetX()) - 60.0) < 0.01 && Scripts.GetErrorCount() == 0,
@@ -493,7 +720,7 @@ namespace
             SaveGraphFile(BarePath, Bare, Error);
             GameCore::Entity Unsaved = W.CreateEntity("Unsaved");
             Unsaved.AddComponent<GameCore::TransformComponent>();
-            Unsaved.SetScript(BarePath.c_str());
+            Unsaved = AttachScript(W, Unsaved, BarePath.c_str());
             const uint32_t Before = Scripts.GetErrorCount();
             W.Tick(0.1f);
             Expect(Scripts.GetErrorCount() > Before, "a script graph with no generated code is a script error");
@@ -940,6 +1167,287 @@ namespace
         }
     }
 
+    void TestLibraries()
+    {
+        std::printf("[script libraries]\n");
+
+        // --- Nodes ----------------------------------------------------------------
+        const Schema* Script = FindSchema("Script");
+        const NodeDefinition* AddScore = Script ? Script->FindNode("Library.TestLib.AddScore") : nullptr;
+        Expect(AddScore && AddScore->Role == ENodeRole::Statement && AddScore->Category == "TestLib",
+               "a library function is a statement in the library's palette category");
+        Expect(AddScore && AddScore->FindPin("Amount", EPinDirection::Input) && AddScore->FindPin("Total", EPinDirection::Output)
+               && AddScore->Tooltip == "Adds Amount to Score", "its pins come from its signature, its tooltip from the binder");
+        const NodeDefinition* Doubled = Script ? Script->FindNode("Library.TestLib.Doubled") : nullptr;
+        Expect(Doubled && Doubled->Role == ENodeRole::Pure, "a Pure function is a value node");
+        Expect(Script && Script->FindNode("Library.TestLib.GetScore") && Script->FindNode("Library.TestLib.SetScore"),
+               "a variable gets a getter and a setter");
+        Expect(Script && Script->FindNode("Library.TestLib.GetVersion") && !Script->FindNode("Library.TestLib.SetVersion"),
+               "a read-only variable gets only a getter");
+        const NodeDefinition* OnScored = Script ? Script->FindNode("Library.TestLib.OnScored") : nullptr;
+        Expect(OnScored && OnScored->Role == ENodeRole::Event && OnScored->FindPin("Who", EPinDirection::Output)
+               && OnScored->FindPin("Who", EPinDirection::Output)->Type == "Entity",
+               "an event is an event node with typed outputs");
+        Expect(Script && Script->FindNode("Library.TestLib.EmitScored"), "and an Emit statement");
+        Expect(Script && !Script->FindNode("Library.TestLib.OnTooWide"), "an event with a multi-value parameter has no nodes");
+
+        // --- Code -------------------------------------------------------------------
+        CompileResult Scorer;
+        CompileGraph(MakeLibraryGraph(), Scorer);
+        Expect(!Scorer.HasErrors(), "the library graph compiles");
+        if(Scorer.HasErrors()) { std::printf("%s\n", FormatDiagnostics(MakeLibraryGraph(), Scorer).c_str()); }
+        ExpectGolden("Scorer.lua", Scorer.Code);
+
+        // --- Run --------------------------------------------------------------------
+        const std::string Path = TempDir() + "/Scorer.lua";
+        WriteFile(Path, Scorer.Code);
+        {
+            GameCore::World W;
+            GameCore::ScriptEngine Scripts;
+            Scripts.Initialize();
+            Scripts.BindWorld(&W);
+
+            GTestScore = 0;
+            GTestRecorded = -1;
+            GameCore::Entity Scoring = W.CreateEntity("Scoring");
+            Scoring.AddComponent<GameCore::TransformComponent>();
+            Scoring = AttachScript(W, Scoring, Path.c_str());
+            for(int Frame = 0; Frame < 3; ++Frame) { W.Tick(0.1f); }
+
+            const GameCore::TransformComponent* T = Scoring.GetComponent<GameCore::TransformComponent>();
+            Expect(GTestScore == 12, "three ticks of AddScore(Doubled(2)) score 12 (got " + std::to_string(GTestScore) + ")");
+            Expect(T && std::fabs(double(T->Position.GetX()) - 3.0) < 1e-6, "Nudge took an Entity and a Vector3");
+            Expect(GTestRecorded == 15, "On Scored received the typed Total and Record ran (got " + std::to_string(GTestRecorded) + ")");
+            Expect(Scripts.RunString("assert(TestLib.GetVersion() == 3 and TestLib.SetVersion == nil)", "readonly"),
+                   "a read-only variable has no setter in Lua");
+            Expect(Scripts.RunString("TestLib.SetScore(40) assert(TestLib.GetScore() == 40)", "variable") && GTestScore == 40,
+                   "a variable is the C++ object itself");
+            Expect(Scripts.RunString("assert(TestLib.Scored == 'Scored')", "event-name"), "an event's name is published");
+            Expect(Scripts.GetErrorCount() == 0, "the library script raised no Lua errors");
+            Expect(!Scripts.RunString("TestLib.AddScore('x')", "bad-arg"), "a bad argument is a Lua error, not a crash");
+
+            Scripts.UnbindWorld();
+            Scripts.Shutdown();
+        }
+
+        // --- Registration -------------------------------------------------------
+        GameCore::ScriptLibraryMember Ping;
+        std::snprintf(Ping.Name, sizeof(Ping.Name), "Ping");
+        Ping.Kind     = GameCore::EScriptLibraryMember::Pure;
+        Ping.Function = [](GameCore::ScriptCall& Call) { Call.PushBool(true); };
+        std::snprintf(Ping.Signature, sizeof(Ping.Signature), "-> Ok:bool");
+
+        Expect(GameCore::RegisterScriptLibrary("math", &Ping, 1, 0) == GameCore::SCRIPT_LIBRARY_INVALID,
+               "a library may not replace a Lua standard library");
+        Expect(GameCore::RegisterScriptLibrary("TestLib", &Ping, 1, 0) == GameCore::SCRIPT_LIBRARY_INVALID,
+               "nor take a registered library's name");
+
+        const GameCore::ScriptLibraryHandle Late = GameCore::RegisterScriptLibrary("LateLib", &Ping, 1, 0);
+        const Schema* Before = FindSchema("Script");
+        Expect(Late != GameCore::SCRIPT_LIBRARY_INVALID && Before && !Before->FindNode("Library.LateLib.Ping"),
+               "a library registered after the schemas were built is not in them yet");
+        RefreshSchemas();
+        const Schema* After = FindSchema("Script");
+        Expect(After && After != Before && After->FindNode("Library.LateLib.Ping"), "RefreshSchemas picks it up");
+        Expect(Before->FindNode("Component.Transform.Translate") != nullptr, "and the old schema stays usable");
+
+        {
+            GameCore::World W;
+            GameCore::ScriptEngine Scripts;
+            Scripts.Initialize();
+            Scripts.BindWorld(&W);
+            Expect(Scripts.RunString("assert(LateLib.Ping())", "late"), "a library registered before BindWorld is in Lua");
+            GameCore::UnregisterScriptLibrary(Late);
+            Expect(!Scripts.RunString("LateLib.Ping()", "unloaded"), "calling an unregistered library is a Lua error");
+            Scripts.UnbindWorld();
+            Scripts.Shutdown();
+        }
+        RefreshSchemas();
+        Expect(!FindSchema("Script")->FindNode("Library.LateLib.Ping"), "and after a refresh its nodes are gone");
+
+        // --- Native bindings ------------------------------------------------------
+        {
+            const auto LibrarySignature = [](const char* InMember) -> std::string
+            {
+                for(size_t Index = 0; Index < GameCore::GetScriptLibraryCount(); ++Index)
+                {
+                    GameCore::ScriptLibraryInfo Info;
+                    if(!GameCore::GetScriptLibrary(Index, Info) || std::string(Info.Name) != "TestLib") { continue; }
+                    for(size_t M = 0; M < Info.Count; ++M)
+                    {
+                        if(std::string(Info.Members[M].Name) == InMember) { return Info.Members[M].Signature; }
+                    }
+                }
+                return "<missing>";
+            };
+            const auto MethodSignature = [](const char* InMember) -> std::string
+            {
+                size_t Count = 0;
+                const GameCore::ScriptBindingEntry* Entries = GameCore::FindComponentScript(ReloadProbeComponent::StaticType().ID, Count);
+                for(size_t Index = 0; Index < Count; ++Index)
+                {
+                    if(std::string(Entries[Index].Name) == InMember) { return Entries[Index].Signature; }
+                }
+                return "<missing>";
+            };
+
+            Expect(LibrarySignature("Lerp") == "A:number, B:number, T:number -> Out:number", "Native: types from C++, names from the binder");
+            Expect(LibrarySignature("Greet") == "Arg1:string, Arg2:integer -> Result:string", "Native: unnamed parameters are Arg1.. and Result");
+            Expect(LibrarySignature("SpawnAt") == "At:Vector3 -> Spawned:Entity", "Native: a World& parameter is not a script argument");
+            Expect(LibrarySignature("Fail") == "", "Native: no parameters and no result is an empty signature");
+            Expect(MethodSignature("Scaled") == "Factor:number -> Value:number", "Bind.Native: a const member function");
+            Expect(MethodSignature("SetSpeedTo") == "Speed:number", "Bind.Native: a void member function");
+            Expect(MethodSignature("Along") == "Direction:Vector3, Weight:Color -> Offset:Vector3", "Bind.Native: multi-value types");
+
+            const Schema* Now = FindSchema("Script");
+            const NodeDefinition* Lerp = Now ? Now->FindNode("Library.TestLib.Lerp") : nullptr;
+            Expect(Lerp && Lerp->Role == ENodeRole::Pure && Lerp->FindPin("T", EPinDirection::Input), "a NativePure is a value node with named pins");
+            const NodeDefinition* Along = Now ? Now->FindNode("Component.TestReloadProbe.Along") : nullptr;
+            Expect(Along && Along->FindPin("Weight", EPinDirection::Input) && Along->FindPin("Weight", EPinDirection::Input)->Type == "Color",
+                   "a Bind.Native method is a node with typed pins");
+            const NodeDefinition* Scaled = Now ? Now->FindNode("Component.TestReloadProbe.Scaled") : nullptr;
+            Expect(Scaled && Scaled->Role == ENodeRole::Pure && Along->Role == ENodeRole::Statement,
+                   "Bind.NativePure is a value node; Bind.Native a statement");
+
+            GameCore::World W;
+            GameCore::ScriptEngine Scripts;
+            Scripts.Initialize();
+            Scripts.BindWorld(&W);
+            W.CreateEntity("NativeProbe").AddComponent<ReloadProbeComponent>();
+            Expect(Scripts.RunString("assert(TestLib.Lerp(10, 20, 0.25) == 12.5)", "native-lerp"), "a native pure function runs");
+            Expect(Scripts.RunString("assert(TestLib.Greet('bo', 2) == 'hi bo, hi bo')", "native-greet"), "std::string in and out");
+            Expect(Scripts.RunString("local e = TestLib.SpawnAt(1, 2, 3) local x, y, z = e:GetComponent('Transform'):GetPosition() "
+                                     "assert(e:GetName() == 'Spawned' and x == 1 and y == 2 and z == 3)", "native-spawn"),
+                   "World& filled in, a Vector3 read from three values, an EntityID returned");
+            Expect(Scripts.RunString("local p = World.FindEntity('NativeProbe'):GetComponent('TestReloadProbe') "
+                                     "p:SetSpeedTo(4) assert(p:Scaled(2) == 8) "
+                                     "local x, y, z = p:Along(1, 0, 0, 0, 0, 0, 255) assert(x == 4 and y == 0 and z == 0)", "native-member"),
+                   "native members run, with a Color's four values before the next argument");
+            const uint32_t ErrorsBefore = Scripts.GetErrorCount();
+            Expect(!Scripts.RunString("TestLib.Lerp(1, 'x', 0)", "native-bad"), "a bad argument to a native is a Lua error");
+            Expect(!Scripts.RunString("TestLib.Fail()", "native-fail"), "ScriptCall& parameter: Error() fails the call");
+            Expect(Scripts.GetErrorCount() == ErrorsBefore + 2, "both counted as script errors");
+            Scripts.UnbindWorld();
+            Scripts.Shutdown();
+        }
+
+        // --- Component bindings across an unload ----------------------------------
+        {
+            const GameCore::ComponentTypeID Type = ReloadProbeComponent::StaticType().ID;
+            size_t Count = 0;
+            const GameCore::ScriptBindingEntry* First = GameCore::FindComponentScript(Type, Count);
+
+            GameCore::World W;
+            GameCore::ScriptEngine Scripts;
+            Scripts.Initialize();
+            Scripts.BindWorld(&W);
+            W.CreateEntity("Probe").AddComponent<ReloadProbeComponent>();
+            const char* const Call = "assert(World.FindEntity('Probe'):GetComponent('TestReloadProbe'):Ping())";
+            Expect(Scripts.RunString(Call, "probe"), "a component method runs");
+
+            GameCore::UnregisterComponentScript(Type);
+            Expect(!Scripts.RunString(Call, "probe-unloaded"), "after an unregister it is a Lua error, not a jump into unloaded code");
+
+            GameCore::ComponentScriptBinder<ReloadProbeComponent> Again;
+            Again.Method("Ping", [](ReloadProbeComponent&, GameCore::ScriptCall& C) { C.PushBool(true); }, "-> Ok:bool");
+            Expect(Again.Commit(), "the type can register again, as a reloaded module does");
+            size_t AgainCount = 0;
+            Expect(GameCore::FindComponentScript(Type, AgainCount) == First && AgainCount == 1 && Count > 1,
+                   "into the same entries (a smaller set fits), so reloads do not fill the table");
+            Expect(Scripts.RunString(Call, "probe-reloaded"), "and the method runs again");
+
+            Scripts.UnbindWorld();
+            Scripts.Shutdown();
+        }
+    }
+
+    void TestScriptStructs()
+    {
+        std::printf("[script structs]\n");
+
+        // --- Registry ---------------------------------------------------------------
+        const GameCore::ScriptStructID Id = TestStats::StaticScriptStruct();
+        const GameCore::ScriptStructInfo* Info = GameCore::GetScriptStruct(Id);
+        Expect(Info && std::string(Info->Name) == "TestStats" && Info->FieldCount == 4 && Info->Lanes == 6,
+               "a struct registers its fields; a Vector3 field is three lanes");
+        Expect(GameCore::FindOrAddScriptStruct("TestStats") == Id, "an id is found by name, so a reload keeps it");
+
+        // --- Nodes ------------------------------------------------------------------
+        const Schema* S = FindSchema("Script");
+        const PinTypeInfo* Type = S ? S->FindType("TestStats") : nullptr;
+        Expect(Type && !Type->bHasLiteral, "a struct is a pin type, built rather than typed in");
+        const NodeDefinition* MakeDef = S ? S->FindNode("Struct.TestStats.Make") : nullptr;
+        Expect(MakeDef && MakeDef->FindPin("Where", EPinDirection::Input) && MakeDef->FindPin("Where", EPinDirection::Input)->Type == "Vector3"
+               && MakeDef->FindPin("Lucky", EPinDirection::Input)->Type == "bool"
+               && MakeDef->FindPin("TestStats", EPinDirection::Output), "Make has a typed input per field");
+        Expect(S && S->FindNode("Struct.TestStats.Break"), "and Break the outputs");
+        const NodeDefinition* GetStats = S ? S->FindNode("Component.TestStatsHolder.GetStats") : nullptr;
+        Expect(GetStats && GetStats->FindPin("Stats", EPinDirection::Output)->Type == "TestStats", "a component's struct field is a struct pin");
+        const NodeDefinition* Merge = S ? S->FindNode("Library.TestLib.Merge") : nullptr;
+        Expect(Merge && Merge->FindPin("Sum", EPinDirection::Output) && Merge->FindPin("Sum", EPinDirection::Output)->Type == "TestStats",
+               "a Native signature names the struct");
+        const std::vector<std::string>& VarTypes = S->GetVariableTypes();
+        Expect(std::find(VarTypes.begin(), VarTypes.end(), "TestStats") != VarTypes.end(), "a graph variable may be a struct");
+
+        // --- Code -------------------------------------------------------------------
+        CompileResult Stats;
+        CompileGraph(MakeStatsGraph(), Stats);
+        Expect(!Stats.HasErrors(), "the struct graph compiles");
+        if(Stats.HasErrors()) { std::printf("%s\n", FormatDiagnostics(MakeStatsGraph(), Stats).c_str()); }
+        ExpectGolden("Stats.lua", Stats.Code);
+
+        // --- Run --------------------------------------------------------------------
+        const std::string Path = TempDir() + "/Stats.lua";
+        WriteFile(Path, Stats.Code);
+        {
+            GameCore::World W;
+            GameCore::ScriptEngine Scripts;
+            Scripts.Initialize();
+            Scripts.BindWorld(&W);
+
+            GTestStats = TestStats();
+            /* The component after the script: it has no serializer, so a prefab cannot hold it. */
+            GameCore::Entity Holder = AttachScript(W, W.CreateEntity("Holder"), Path.c_str());
+            Holder.AddComponent<StatsHolderComponent>();
+            for(int Frame = 0; Frame < 3; ++Frame) { W.Tick(0.1f); }
+
+            const StatsHolderComponent* C = Holder.GetComponent<StatsHolderComponent>();
+            Expect(C && C->Stats.Hits == 3 && C->Stats.bLucky == 1 && std::fabs(C->Stats.Scale - 1.0f) < 1e-6f,
+                   "Break, change, Make and set: three ticks count three hits");
+            Expect(GTestStats.Hits == 6 && std::fabs(GTestStats.Scale - 3.0f) < 1e-6f && GTestStats.bLucky == 1,
+                   "a struct variable merged each tick, then written to the library (got Hits "
+                   + std::to_string(GTestStats.Hits) + ")");
+            Expect(Scripts.GetErrorCount() == 0, "the struct script raised no Lua errors");
+
+            Expect(Scripts.RunString(
+                "local h = World.FindEntity('Holder'):GetComponent('TestStatsHolder') "
+                "h:SetStats(5, 0.5, 1, 2, 3, false) "
+                "local hits, scale, x, y, z, lucky = h:GetStats() "
+                "assert(hits == 5 and scale == 0.5 and x == 1 and y == 2 and z == 3 and lucky == false) "
+                "local b = { h:Bumped(10) } assert(#b == 6 and b[1] == 15) "
+                "local m = { TestLib.Merge(1, 1, 0, 0, 0, false, 2, 1, 1, 1, 1, true) } "
+                "assert(m[1] == 3 and m[2] == 2 and m[3] == 1 and m[6] == true)", "struct-lua"),
+                   "in Lua a struct is its fields' values, in order, for fields, Native members and functions");
+            Expect(!Scripts.RunString("TestLib.Merge(1, 'x')", "struct-bad"), "a bad struct argument is a Lua error");
+
+            // --- Across an unload ---------------------------------------------------
+            GameCore::UnregisterScriptStruct(Id);
+            Expect(GameCore::GetScriptStruct(Id) == nullptr && std::string(GameCore::GetScriptStructName(Id)) == "TestStats",
+                   "unregistering drops the fields and keeps the name");
+            Expect(!Scripts.RunString("TestLib.GetStats()", "struct-unloaded"), "reading an unloaded struct is a Lua error");
+            GameCore::ScriptStructBinder<TestStats> Again;
+            Again.Field("Hits", &TestStats::Hits);
+            Again.Field("Scale", &TestStats::Scale);
+            Again.Field("Where", &TestStats::Where);
+            Again.Flag("Lucky", &TestStats::bLucky);
+            Expect(Again.Commit() && GameCore::GetScriptStruct(Id) != nullptr, "and it registers again under the same id");
+            Expect(Scripts.RunString("assert(select('#', TestLib.GetStats()) == 6)", "struct-reloaded"), "and works again");
+
+            Scripts.UnbindWorld();
+            Scripts.Shutdown();
+        }
+    }
+
     /*
      * A Lit, Masked material whose surface and World Position Offset share a
      * value: Height * sin(Time) moves each vertex along its normal and is the
@@ -1371,6 +1879,287 @@ namespace
         }
     }
 
+    void TestOverlapEvents()
+    {
+        std::printf("[overlap events]\n");
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Touch";
+        AddNode(G, 1, "Event.OnOverlapBegin");
+        AddNode(G, 2, "Entity.GetName");
+        AddNode(G, 3, "String.Append").Constants["A"] = "touched by ";
+        AddNode(G, 4, "Debug.Print");
+        AddNode(G, 5, "Event.OnOverlapEnd");
+        AddNode(G, 6, "Debug.Print").Constants["Value"] = "left";
+        Connect(G, 1, "Then", 4, "Exec");
+        Connect(G, 1, "Other", 2, "Entity");
+        Connect(G, 2, "Name", 3, "B");
+        Connect(G, 3, "Out", 4, "Value");
+        Connect(G, 5, "Then", 6, "Exec");
+
+        CompileResult R;
+        CompileGraph(G, R);
+        Expect(!R.HasErrors(), "an overlap graph compiles");
+        Expect(R.Code.find("OnOverlapBegin = function(self, other, mine)") != std::string::npos
+               && R.Code.find("other:GetName()") != std::string::npos
+               && R.Code.find("OnOverlapEnd = function(self, other, mine)") != std::string::npos,
+               "On Overlap Begin / End become the methods the overlap pass calls, Other and Mine their arguments");
+        const Schema* S = FindSchema("Script");
+        Expect(S && S->FindNode("Library.Collision.OverlapBox") && S->FindNode("Library.Collision.AreOverlapping"),
+               "the Collision library is in the palette");
+
+        /* Mine: which of the script's own entities overlapped. */
+        Graph M;
+        M.SchemaName = "Script";
+        M.Name       = "Mine";
+        AddNode(M, 1, "Event.OnOverlapBegin");
+        AddNode(M, 2, "Entity.GetName");
+        AddNode(M, 3, "Debug.Print");
+        Connect(M, 1, "Then", 3, "Exec");
+        Connect(M, 1, "Mine", 2, "Entity");
+        Connect(M, 2, "Name", 3, "Value");
+        CompileResult MR;
+        CompileGraph(M, MR);
+        Expect(!MR.HasErrors() && MR.Code.find("mine:GetName()") != std::string::npos, "the Mine output reads the third argument");
+    }
+
+    void TestPhaseEvents()
+    {
+        std::printf("[phase events]\n");
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Phases";
+        AddNode(G, 1, "Event.OnPostUpdate");
+        AddNode(G, 2, "Debug.Print").Constants["Value"] = "late";
+        AddNode(G, 3, "Event.OnPrePhysics");
+        AddNode(G, 4, "Prefab.SetPhaseEnabled").Constants["Phase"] = "PrePhysics";
+        AddNode(G, 5, "Prefab.Find").Constants["Name"] = "Barrel";
+        AddNode(G, 6, "Entity.GetName");
+        AddNode(G, 7, "Debug.Print");
+        Connect(G, 1, "Then", 2, "Exec");
+        Connect(G, 3, "Then", 4, "Exec");
+        Connect(G, 4, "Then", 7, "Exec");
+        Connect(G, 5, "Entity", 6, "Entity");
+        Connect(G, 6, "Name", 7, "Value");
+
+        CompileResult R;
+        CompileGraph(G, R);
+        Expect(!R.HasErrors(), "a phase graph compiles");
+        const size_t Pre  = R.Code.find("OnPrePhysics = function(self, dt)");
+        const size_t Post = R.Code.find("OnPostUpdate = function(self, dt)");
+        Expect(Pre != std::string::npos && Post != std::string::npos && Pre < Post,
+               "each On <Phase> node becomes that phase's function, in phase order");
+        Expect(R.Code.find("OnPhysics") == std::string::npos && R.Code.find("OnTick") == std::string::npos,
+               "phases without a node get no function");
+        Expect(R.Code.find("self.Instance:SetPhaseEnabled(TickPhase[\"PrePhysics\"], true)") != std::string::npos
+               && R.Code.find("self.Instance:Find(\"Barrel\")") != std::string::npos,
+               "the Prefab nodes call the instance");
+    }
+
+    /* Three graph functions -- two numbers in and one out, a recursive
+     * factorial, a Vector3 in and out -- called in a chain from On Start. */
+    Graph MakeFunctionsGraph()
+    {
+        Graph G;
+        G.SchemaName = "Script";
+        G.Name       = "Functions";
+        G.Functions.push_back({ "Add2", { { "A", "number" }, { "B", "number" } }, { { "Sum", "number" } } });
+        G.Functions.push_back({ "Fact", { { "N", "integer" } }, { { "R", "integer" } } });
+        G.Functions.push_back({ "Offset", { { "V", "Vector3" } }, { { "Out", "Vector3" } } });
+
+        const auto Named = [&](const uint64_t InId, const char* InType, const char* InFunction) -> Node&
+        {
+            Node& Added = AddNode(G, InId, InType);
+            Added.Properties["Function"] = InFunction;
+            return Added;
+        };
+
+        // On Start: Record(Fact(Add2(2, 3))), then Nudge self by Offset(1 2 3).
+        AddNode(G, 1, "Event.OnStart");
+        Node& Sum = Named(2, "Function.Call", "Add2");
+        Sum.Constants["A"] = "2";
+        Sum.Constants["B"] = "3";
+        Named(3, "Function.Call", "Fact");
+        AddNode(G, 4, "Library.TestLib.Record");
+        Named(5, "Function.Call", "Offset").Constants["V"] = "1 2 3";
+        AddNode(G, 6, "Library.TestLib.Nudge");
+        Connect(G, 1, "Then", 2, "Exec");
+        Connect(G, 2, "Then", 3, "Exec");
+        Connect(G, 3, "Then", 4, "Exec");
+        Connect(G, 4, "Then", 5, "Exec");
+        Connect(G, 5, "Then", 6, "Exec");
+        Connect(G, 2, "Sum", 3, "N");
+        Connect(G, 3, "R", 4, "Value");
+        Connect(G, 5, "Out", 6, "Delta");
+
+        // Add2: Sum = A + B.
+        Named(10, "Function.Entry", "Add2");
+        AddNode(G, 11, "Math.Add");
+        Named(12, "Function.Return", "Add2");
+        Connect(G, 10, "Then", 12, "Exec");
+        Connect(G, 10, "A", 11, "A");
+        Connect(G, 10, "B", 11, "B");
+        Connect(G, 11, "Out", 12, "Sum");
+
+        // Fact: N <= 1 ? 1 : N * Fact(N - 1).
+        Named(20, "Function.Entry", "Fact");
+        AddNode(G, 21, "Flow.Branch");
+        AddNode(G, 22, "Compare.LessEqual").Constants["B"] = "1";
+        Named(23, "Function.Return", "Fact").Constants["R"] = "1";
+        AddNode(G, 24, "Math.Subtract").Constants["B"] = "1";
+        Named(25, "Function.Call", "Fact");
+        AddNode(G, 26, "Math.Multiply");
+        Named(27, "Function.Return", "Fact");
+        Connect(G, 20, "Then", 21, "Exec");
+        Connect(G, 20, "N", 22, "A");
+        Connect(G, 22, "Out", 21, "Condition");
+        Connect(G, 21, "True", 23, "Exec");
+        Connect(G, 21, "False", 25, "Exec");
+        Connect(G, 20, "N", 24, "A");
+        Connect(G, 24, "Out", 25, "N");
+        Connect(G, 25, "Then", 27, "Exec");
+        Connect(G, 20, "N", 26, "A");
+        Connect(G, 25, "R", 26, "B");
+        Connect(G, 26, "Out", 27, "R");
+
+        // Offset: Out = V * 2.
+        Named(30, "Function.Entry", "Offset");
+        AddNode(G, 31, "Vector.Scale").Constants["Scale"] = "2";
+        Named(32, "Function.Return", "Offset");
+        Connect(G, 30, "Then", 32, "Exec");
+        Connect(G, 30, "V", 31, "Vector");
+        Connect(G, 31, "Out", 32, "Out");
+        return G;
+    }
+
+    void TestGraphFunctions()
+    {
+        std::printf("[graph functions]\n");
+        const Graph G = MakeFunctionsGraph();
+        const Schema* S = FindSchema("Script");
+
+        // --- Their nodes' pins are the function's -----------------------------------
+        {
+            const auto PinNames = [&](const uint64_t InNode)
+            {
+                std::string Names;
+                const NodeDefinition* Def = S ? S->FindDefinition(G, *G.FindNode(Id(InNode))) : nullptr;
+                for(const PinDefinition& Pin : Def ? Def->Pins : std::vector<PinDefinition>())
+                {
+                    Names += (Pin.IsInput() ? "<" : ">") + Pin.Name + (Pin.IsExec() ? "" : ":" + Pin.Type) + " ";
+                }
+                return Names;
+            };
+            Expect(PinNames(2) == "<Exec >Then <A:number <B:number >Sum:number ", "a Call has the function's inputs and outputs (" + PinNames(2) + ")");
+            Expect(PinNames(10) == ">Then >A:number >B:number ", "an Entry gives the inputs (" + PinNames(10) + ")");
+            Expect(PinNames(12) == "<Exec <Sum:number ", "a Return takes the outputs, and ends the chain (" + PinNames(12) + ")");
+            Expect(S && S->FindDefinition(G, *G.FindNode(Id(2))) == S->FindDefinition(G, *G.FindNode(Id(2))),
+                   "the same signature is the same definition");
+
+            Graph Renamed = G;
+            Renamed.Functions[0].Outputs[0].Name = "Total";
+            const NodeDefinition* After = S ? S->FindDefinition(Renamed, *Renamed.FindNode(Id(2))) : nullptr;
+            Expect(After && After->FindPin("Total", EPinDirection::Output) && !After->FindPin("Sum"), "a changed signature changes the pins");
+        }
+
+        // --- Codegen ------------------------------------------------------------------
+        CompileResult R;
+        CompileGraph(G, R);
+        Expect(!R.HasErrors(), "the Functions graph compiles");
+        if(R.HasErrors()) { std::printf("%s\n", FormatDiagnostics(G, R).c_str()); }
+        ExpectGolden("Functions.lua", R.Code);
+        Expect(R.Code.find("local Fn_Add2, Fn_Fact, Fn_Offset") != std::string::npos
+               && R.Code.find("Fn_Offset = function(self, In_V_X, In_V_Y, In_V_Z)") != std::string::npos
+               && R.Code.find("= Fn_Add2(self, 2, 3)") != std::string::npos,
+               "functions are locals declared up front, a Vector3 input is three parameters, a Call passes self");
+
+        // --- Round trip -----------------------------------------------------------------
+        {
+            const std::string Text = WriteGraphText(G);
+            Graph Loaded;
+            std::string Error;
+            Expect(ReadGraphText(Text, Loaded, Error) && WriteGraphText(Loaded) == Text, "functions save and load back: " + Error);
+            Expect(Loaded.Functions.size() == 3 && Loaded.Functions[2].Outputs.size() == 1
+                   && Loaded.Functions[2].Outputs[0].Type == "Vector3", "with their inputs and outputs");
+        }
+
+        // --- Mistakes ---------------------------------------------------------------------
+        {
+            Graph Bad = G;
+            Bad.RemoveNode(Id(30));
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(Out.HasErrors(), "a function with no Entry is an error");
+        }
+        {
+            Graph Bad = G;
+            AddNode(Bad, 40, "Function.Entry").Properties["Function"] = "Add2";
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(HasErrorOn(Out, Id(40)), "a second Entry for a function is an error on it");
+        }
+        {
+            Graph Bad = G;
+            AddNode(Bad, 41, "Function.Call").Properties["Function"] = "Nope";
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(HasErrorOn(Out, Id(41)), "calling a function the graph lacks is an error on the call");
+        }
+        {
+            Graph Bad = G;
+            AddNode(Bad, 42, "Function.Return").Properties["Function"] = "Add2";
+            Connect(Bad, 6, "Then", 42, "Exec");
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(HasErrorOn(Out, Id(42)), "a Return reached from outside its function is an error");
+        }
+        {
+            Graph Bad = G;
+            Bad.Links.erase(std::remove_if(Bad.Links.begin(), Bad.Links.end(), [](const Link& L) { return L.To.Node == Id(4); }),
+                            Bad.Links.end());
+            Connect(Bad, 3, "Then", 4, "Exec");
+            Connect(Bad, 20, "N", 4, "Value");   // Fact's input, read in On Start
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(HasErrorOn(Out, Id(20)), "a function's input read outside its body is an error");
+        }
+        {
+            Graph Bad = G;
+            Bad.Functions[0].Inputs[0].Type = "Any";
+            Bad.Functions[1].Name = "not valid";
+            CompileResult Out;
+            CompileGraph(Bad, Out);
+            Expect(Out.HasErrors(), "a function input of a type it cannot take, or a bad name, is an error");
+        }
+
+        // --- Runtime ----------------------------------------------------------------------
+        {
+            const std::string Path = TempDir() + "/Functions.lua";
+            WriteFile(Path, R.Code);
+
+            GameCore::World W;
+            GameCore::ScriptEngine Scripts;
+            Expect(Scripts.Initialize(), "ScriptEngine::Initialize");
+            Scripts.BindWorld(&W);
+
+            GTestRecorded = -1;
+            GameCore::Entity Caller = W.CreateEntity("Caller");
+            Caller.AddComponent<GameCore::TransformComponent>();
+            Caller = AttachScript(W, Caller, Path.c_str());
+            Expect(Caller.IsAlive(), "the generated script attaches");
+            W.Tick(0.1f);
+
+            Expect(GTestRecorded == 120, "Fact(Add2(2, 3)) is 120, recursion included (got " + std::to_string(GTestRecorded) + ")");
+            const GameCore::TransformComponent* T = Caller.GetComponent<GameCore::TransformComponent>();
+            Expect(T && std::fabs(double(T->Position.GetX()) - 2.0) < 0.001 && std::fabs(double(T->Position.GetY()) - 4.0) < 0.001
+                   && std::fabs(double(T->Position.GetZ()) - 6.0) < 0.001, "Offset(1 2 3) gives 2 4 6, a Vector3 in and out");
+            Expect(Scripts.GetErrorCount() == 0, "the generated script raised no Lua errors");
+
+            Scripts.UnbindWorld();
+            Scripts.Shutdown();
+        }
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -1406,6 +2195,11 @@ int main()
     TestFormat();
     TestScriptCodegen();
     TestScriptRuntime();
+    TestLibraries();
+    TestScriptStructs();
+    TestOverlapEvents();
+    TestPhaseEvents();
+    TestGraphFunctions();
     TestMaterialCodegen();
     TestComponentSelection();
     TestLogic();

@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "Public/Core/CoreTypes.h"
+#include "Public/GameWindow/GameWindowAPI.h"
 
 /*
  * Input types.
@@ -141,5 +142,15 @@ struct MouseWheelEvent
     EngineCore::Point Pos;                    // physical pixels, window-relative
     uint16_t          Modifiers  = MOD_None;
 };
+
+/*
+ * Key and button names, what bindings are written in: "W", "Space", "LeftShift",
+ * "KP_Enter", "F5", "Mouse.Left". Physical keys, as EKeyCode is. Lookups ignore
+ * case. GameWindowKeyNames.cpp.
+ */
+GAMEWINDOW_API const char* GetKeyName(EKeyCode InKey);                     // "Unknown" past the end
+GAMEWINDOW_API EKeyCode    FindKeyByName(const char* InName);              // KC_Unknown if none
+GAMEWINDOW_API const char* GetMouseButtonName(EMouseButton InButton);
+GAMEWINDOW_API bool        FindMouseButtonByName(const char* InName, EMouseButton& OutButton);
 
 #endif //GAMEWINDOW_GAMEWINDOWINPUT_H

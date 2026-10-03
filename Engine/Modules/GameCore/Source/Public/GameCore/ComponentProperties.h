@@ -24,6 +24,15 @@
  *         Props.Field("World", &BoundsComponent::World, PF_ReadOnly);
  *     }
  *
+ * CATEGORIES. Props.Category("Name") files every property declared after it
+ * under Name, until the next Category; Category(nullptr) or "" ends it. A
+ * tool groups a category's properties (the Details panel: a titled box,
+ * after the uncategorised ones, in order of first use).
+ *
+ *         Props.Flag("Enabled", &CollisionComponent::bEnabled);
+ *         Props.Category("Filtering");
+ *         Props.Field("Layer", &CollisionComponent::Layer);
+ *
  * Unlisted fields (per-run state above all) are invisible. Entries are plain
  * data (name, type, offset, size, flags), so a tool needs no C++ type.
  * Registered at static init; lookups are game thread only.
@@ -48,6 +57,8 @@ namespace GameCore
     {
         COMPONENT_PROPERTY_NAME_MAX       = 40,   // including the NUL
         COMPONENT_PROPERTIES_PER_TYPE_MAX = 32,
+        COMPONENT_PROPERTY_CHOICES_MAX    = 96,   // including the NUL
+        COMPONENT_PROPERTY_CATEGORY_MAX   = 32,   // including the NUL
     };
 
     struct ComponentPropertyEntry
@@ -63,6 +74,17 @@ namespace GameCore
          * it as a list; a trailing run of default elements is "not in use". */
         uint16_t      ArrayCount = 0;
         uint32_t      Stride     = 0;
+
+        /* A CHOICE (Props.Choice): an integer field whose values 0, 1, 2...
+         * are these labels, '|'-separated -- a tool shows a dropdown. Empty:
+         * not a choice. */
+        char          Choices[COMPONENT_PROPERTY_CHOICES_MAX] = {};
+
+        /* The group a tool shows it in (Props.Category). Empty: none. */
+        char          Category[COMPONENT_PROPERTY_CATEGORY_MAX] = {};
+
+        bool IsChoice() const    { return Choices[0] != '\0'; }
+        bool HasCategory() const { return Category[0] != '\0'; }
 
         bool IsReadOnly() const { return (Flags & PF_ReadOnly) != 0; }
         bool IsArray() const    { return ArrayCount != 0; }
@@ -119,6 +141,32 @@ namespace GameCore
             Add(InName, InMember, ScriptFieldTypeOf<TField>::Value, InFlags);
         }
 
+        /*
+         * A uint8_t or int32_t field shown as a dropdown: InLabels names its
+         * values 0, 1, 2..., '|'-separated -- an enum to a tool.
+         *
+         *     Props.Choice("Source", &CollisionComponent::Source, "Bounds component|Render component mesh");
+         */
+        template<typename TField>
+        void Choice(const char* InName, TField T::* InMember, const char* InLabels, const uint8_t InFlags = PF_None)
+        {
+            static_assert(std::is_same<TField, uint8_t>::value || std::is_same<TField, int32_t>::value,
+                          "a choice is a uint8_t or int32_t field");
+            const T Probe{};
+            const char* Base   = reinterpret_cast<const char*>(&Probe);
+            const char* Member = reinterpret_cast<const char*>(&(Probe.*InMember));
+            if(ComponentPropertyEntry* Entry = AddAt(InName, uint32_t(Member - Base), uint32_t(sizeof(TField)),
+                                                     ScriptFieldTypeOf<TField>::Value, InFlags))
+            {
+                size_t Length = 0;
+                while(InLabels && InLabels[Length] != '\0' && Length + 1 < COMPONENT_PROPERTY_CHOICES_MAX)
+                {
+                    Entry->Choices[Length] = InLabels[Length];
+                    ++Length;
+                }
+            }
+        }
+
         /* A uint8_t 0/1 flag, shown as a checkbox rather than a number. */
         void Flag(const char* InName, uint8_t T::* InMember, const uint8_t InFlags = PF_None)
         {
@@ -156,6 +204,23 @@ namespace GameCore
                 Entry->ArrayCount = uint16_t(N);
                 Entry->Stride     = uint32_t(sizeof(TElement));
             }
+        }
+
+        /* Files the properties declared after this under InName; nullptr or
+         * "" ends the category. An over-long name is rejected (logged at
+         * Commit), and the properties after it have none. */
+        void Category(const char* InName)
+        {
+            size_t Length = 0;
+            while(InName != nullptr && InName[Length] != '\0') { ++Length; }
+
+            for(char& Each : CurrentCategory) { Each = '\0'; }
+            if(Length >= COMPONENT_PROPERTY_CATEGORY_MAX)
+            {
+                ++Rejected;
+                return;
+            }
+            for(size_t Index = 0; Index < Length; ++Index) { CurrentCategory[Index] = InName[Index]; }
         }
 
         /* Keeps the type out of a tool's "Add Component" (CPF_NotAddable). */
@@ -200,10 +265,12 @@ namespace GameCore
             Entry.Flags  = InFlags;
             Entry.Offset = InOffset;
             Entry.Size   = InSize;
+            std::memcpy(Entry.Category, CurrentCategory, sizeof(CurrentCategory));
             return &Entry;
         }
 
         ComponentPropertyEntry Entries[COMPONENT_PROPERTIES_PER_TYPE_MAX];
+        char                   CurrentCategory[COMPONENT_PROPERTY_CATEGORY_MAX] = {};
         size_t                 Count     = 0;
         size_t                 Rejected  = 0;
         uint8_t                TypeFlags = CPF_None;

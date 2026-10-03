@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QDir>
+#include <QDirIterator>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -18,21 +19,31 @@
 #include <QStatusBar>
 #include <QToolBar>
 #include <QUndoStack>
+#include <QVBoxLayout>
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/Components.h"
+#include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/Editor/ConsolePanel.h"
 #include "Public/Editor/ContentBrowserPanel.h"
 #include "Public/Editor/DetailsPanel.h"
 #include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/NodeGraph/Schema.h"
+#include "Public/RenderCore/RenderComponents.h"
 #include "Private/Editor/AboutDialog.h"
+#include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/Prefab/PrefabAssets.h"
+#include "Private/Editor/Prefab/PrefabEditorTab.h"
+#include "Private/Editor/Prefab/PrefabEditorWindow.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 #include "Private/Editor/SDLInputProbe.h"
 #include "Private/Editor/SettingsDialog.h"
@@ -62,24 +73,26 @@ namespace
 EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::ERenderBackend InBackend, QWidget* InParent)
     : QMainWindow(InParent)
     , Context(InContext)
+    , Level(InContext.GetLevel())
     , Backend(InBackend)
 {
     resize(1600, 900);
     setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowTabbedDocks);
 
-    ViewportArea = new ViewportPanel(Context, this);
+    ViewportArea = new ViewportPanel(Context, Level, this);
     Viewport     = ViewportArea->GetViewport();
+    Context.SetPlayInputWidget(Viewport);   // the game reads the viewport's input while playing
     setCentralWidget(ViewportArea);
 
     auto* OutlinerDock = new QDockWidget(QStringLiteral("Outliner"), this);
     OutlinerDock->setObjectName(QStringLiteral("OutlinerDock"));
-    Outliner = new OutlinerPanel(Context, OutlinerDock);
+    Outliner = new OutlinerPanel(Level, OutlinerDock);
     OutlinerDock->setWidget(Outliner);
     addDockWidget(Qt::RightDockWidgetArea, OutlinerDock);
 
     auto* DetailsDock = new QDockWidget(QStringLiteral("Details"), this);
     DetailsDock->setObjectName(QStringLiteral("DetailsDock"));
-    Details = new DetailsPanel(Context, DetailsDock);
+    Details = new DetailsPanel(Level, DetailsDock);
     DetailsDock->setWidget(Details);
     addDockWidget(Qt::RightDockWidgetArea, DetailsDock);
 
@@ -128,6 +141,10 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
         }
     });
 
+    /* Before anything builds the schemas, so the game's components and script
+     * libraries are nodes from the first graph opened. */
+    EditorGraphs::RefreshGameDeclarations(false);
+
     BuildMenus();
     BuildPlayControls();
     BuildBuildMenu();
@@ -136,8 +153,10 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     connect(&StatsTimer, &QTimer::timeout, this, &EditorMainWindow::UpdateStats);
 
-    /* Material graphs cook for, and reload into, this context's renderer. */
+    /* Material graphs cook for, and reload into, this context's renderer;
+     * prefabs draw with it. */
     EditorGraphs::SetEditorContext(&Context);
+    EditorPrefabs::SetEditorContext(&Context);
 
     UpdateTitle();
 }
@@ -151,6 +170,7 @@ EditorMainWindow::~EditorMainWindow()
         InputProbe->Stop();
     }
     EditorGraphs::SetEditorContext(nullptr);
+    EditorPrefabs::SetEditorContext(nullptr);
     Context.Shutdown();
 }
 
@@ -162,7 +182,7 @@ void EditorMainWindow::BuildMenus()
     New->setShortcut(QKeySequence::New);
     connect(New, &QAction::triggered, this, [this]()
     {
-        Context.NewScene();
+        Level.NewScene();
         CurrentPath.clear();
         UpdateTitle();
     });
@@ -171,7 +191,7 @@ void EditorMainWindow::BuildMenus()
     SandboxScene->setToolTip(QStringLiteral("The Sandbox level as it stands once loaded: Marker, Camera and Scripted"));
     connect(SandboxScene, &QAction::triggered, this, [this]()
     {
-        Context.CreateSandboxScene();
+        Level.CreateSandboxScene();
         Viewport->ApplySandboxView();
         CurrentPath.clear();
         UpdateTitle();
@@ -202,13 +222,34 @@ void EditorMainWindow::BuildMenus()
         QAction* NewGraph = File->addAction(QStringLiteral("New %1 &Graph...").arg(QString::fromStdString(Schema->GetName())));
         NewGraph->setToolTip(QStringLiteral("A %1 graph: generates %2")
                              .arg(QString::fromStdString(Schema->GetName()), QString::fromStdString(Schema->GetOutputExtension())));
-        connect(NewGraph, &QAction::triggered, this, [this, Schema]() { EditorGraphs::CreateGraph(*Schema, this); });
+        /* By name: a refresh (RefreshGameDeclarations) replaces the schema. */
+        const std::string SchemaName = Schema->GetName();
+        connect(NewGraph, &QAction::triggered, this, [this, SchemaName]()
+        {
+            if(const NodeGraph::Schema* Current = NodeGraph::FindSchema(SchemaName)) { EditorGraphs::CreateGraph(*Current, this); }
+        });
     }
 
     QAction* Import = File->addAction(QStringLiteral("&Import..."));
     Import->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     Import->setToolTip(QStringLiteral("glTF meshes and images into engine assets, in the Content Browser's folder"));
     connect(Import, &QAction::triggered, this, [this]() { ContentArea->ImportWithDialog(); });
+
+    QAction* NewPrefab = File->addAction(QStringLiteral("New &Prefab..."));
+    NewPrefab->setToolTip(QStringLiteral("A one-entity prefab in the Content Browser's folder, opened in the Prefab Editor"));
+    connect(NewPrefab, &QAction::triggered, this, [this]()
+    {
+        const QString Folder = ContentArea->GetCurrentFolder();
+        EditorPrefabs::CreatePrefab(Folder.startsWith(EditorGraphs::GetProjectRoot()) ? Folder : QString(), this);
+    });
+
+    QAction* OpenPrefab = File->addAction(QStringLiteral("Open Pre&fab..."));
+    connect(OpenPrefab, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Prefab"), EditorPrefabs::GetDefaultFolder(),
+                                                          QStringLiteral("Prefabs (*.nmprefab)"));
+        if(!Path.isEmpty()) { EditorPrefabs::OpenPrefab(Path, this); }
+    });
 
     QAction* OpenGraph = File->addAction(QStringLiteral("Open Grap&h..."));
     OpenGraph->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
@@ -231,13 +272,13 @@ void EditorMainWindow::BuildMenus()
      * text fields still get Ctrl+Z first. */
     UndoAction = Edit->addAction(QStringLiteral("&Undo"));
     UndoAction->setShortcut(QKeySequence::Undo);
-    connect(UndoAction, &QAction::triggered, &Context, &EditorContext::Undo);
+    connect(UndoAction, &QAction::triggered, &Level, &EditorDocument::Undo);
 
     RedoAction = Edit->addAction(QStringLiteral("&Redo"));
     RedoAction->setShortcuts({ QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) });
-    connect(RedoAction, &QAction::triggered, &Context, &EditorContext::Redo);
+    connect(RedoAction, &QAction::triggered, &Level, &EditorDocument::Redo);
 
-    connect(&Context, &EditorContext::HistoryChanged, this, &EditorMainWindow::UpdateHistoryActions);
+    connect(&Level, &EditorDocument::HistoryChanged, this, &EditorMainWindow::UpdateHistoryActions);
     UpdateHistoryActions();
 
     Edit->addSeparator();
@@ -263,12 +304,50 @@ void EditorMainWindow::BuildMenus()
         /* In front of the camera, so the new entity is somewhere visible. */
         const EditorCamera& Camera = Viewport->GetCamera();
         const EngineCore::Vector3 Spot = Camera.Position + Camera.GetForward() * 600.0;
-        Context.SetSelection(Context.CreateEntity(QStringLiteral("Entity"), Spot));
+        Level.SetSelection(Level.CreateEntity(QStringLiteral("Entity"), Spot));
     });
 
     QAction* DeleteEntity = World->addAction(QStringLiteral("&Delete"));
     DeleteEntity->setShortcut(QKeySequence::Delete);
-    connect(DeleteEntity, &QAction::triggered, this, [this]() { Context.DestroyEntity(Context.GetSelection()); });
+    connect(DeleteEntity, &QAction::triggered, this, [this]() { Level.DestroyEntity(Level.GetSelection()); });
+
+    World->addSeparator();
+
+    /* Rebuilt on opening: the list follows the game module's last load. */
+    QMenu* Natives = World->addMenu(QStringLiteral("&Native Prefabs"));
+    connect(Natives, &QMenu::aboutToShow, this, [this, Natives]()
+    {
+        Natives->clear();
+        const QStringList Names = EditorPrefabs::GetNativePrefabs();
+        if(Names.isEmpty())
+        {
+            Natives->addAction(QStringLiteral("(none -- the game module declares none, or is not built)"))->setEnabled(false);
+            return;
+        }
+        for(const QString& Name : Names)
+        {
+            QMenu* Entry = Natives->addMenu(Name);
+            const QString Path = EditorPrefabs::NativePrefabPath(Name);
+            Entry->addAction(QStringLiteral("Place in Level"), this, [this, Path]()
+            {
+                const EditorCamera& Camera = Viewport->GetCamera();
+                Level.SetSelection(Level.PlacePrefab(Path, Camera.Position + Camera.GetForward() * 600.0));
+            });
+            Entry->addAction(QStringLiteral("Open"), this, [this, Path]() { EditorPrefabs::OpenPrefab(Path, this); });
+        }
+    });
+
+    QAction* ConvertLevel = World->addAction(QStringLiteral("Convert &Level to Prefabs..."));
+    ConvertLevel->setToolTip(QStringLiteral("Every entity tree not yet in a prefab instance becomes one: a prefab per distinct tree, "
+                                            "each keeping its own values"));
+    connect(ConvertLevel, &QAction::triggered, this, [this]() { EditorPrefabs::ConvertLevelToPrefabs(Level, this); });
+
+    QAction* ConvertToPrefab = World->addAction(QStringLiteral("Convert Selection to &Prefab..."));
+    ConvertToPrefab->setToolTip(QStringLiteral("Write the selected entity and its children as a prefab, and put an instance in their place"));
+    connect(ConvertToPrefab, &QAction::triggered, this, [this]()
+    {
+        EditorPrefabs::ConvertToPrefab(Level, Level.GetSelection(), this);
+    });
 
     QMenu* View = menuBar()->addMenu(QStringLiteral("&View"));
     for(QDockWidget* Dock : findChildren<QDockWidget*>())
@@ -351,6 +430,13 @@ void EditorMainWindow::BuildPlayControls()
 
 void EditorMainWindow::StartPlay()
 {
+    /* SDL wraps the viewport once: the game's input needs it, so the probe yields. */
+    if(InputProbe && InputProbe->IsRunning())
+    {
+        InputProbeAction->setChecked(false);   // -> SetSDLInputProbe(false)
+        CORE_LOG("[Editor] the SDL input probe stops while playing: the game's input uses the viewport")
+    }
+
     if(!Context.StartPlay())
     {
         statusBar()->showMessage(QStringLiteral("Play failed -- see the Console"), 5000);
@@ -384,6 +470,16 @@ void EditorMainWindow::BuildBuildMenu()
     QAction* Cook = BuildMenu->addAction(QStringLiteral("C&ook Content"));
     Cook->setToolTip(QStringLiteral("Regenerate every node graph's code; cooking the rest of the content is not implemented yet"));
     connect(Cook, &QAction::triggered, this, &EditorMainWindow::CookContent);
+
+    QAction* RefreshNodes = BuildMenu->addAction(QStringLiteral("&Refresh Script Nodes"));
+    RefreshNodes->setToolTip(QStringLiteral("Reread the game module's components and script libraries into the script graph nodes "
+                                            "(graphs already open keep theirs until reopened)"));
+    connect(RefreshNodes, &QAction::triggered, this, [this]()
+    {
+        const bool bRefreshed = EditorGraphs::RefreshGameDeclarations(Context.IsPlaying());
+        statusBar()->showMessage(bRefreshed ? QStringLiteral("Script nodes refreshed -- reopen open graphs to see changes")
+                                            : QStringLiteral("Script nodes not refreshed -- see the Console"), 5000);
+    });
 }
 
 void EditorMainWindow::CompileSource()
@@ -430,17 +526,20 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     }
 
     /* The next Play loads the new DLL anyway; restart a running one unless
-     * Editor.ReloadAfterCompile says otherwise. */
+     * Editor.ReloadAfterCompile says otherwise. Script nodes follow the new
+     * build: read now, or when a run still on the old one stops. */
     if(Context.IsPlaying() && !GEditorReloadAfterCompile.GetBool())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play; the run keeps the old one")
         statusBar()->showMessage(QStringLiteral("Compiled %1 -- Stop and Play to load it").arg(Module), 5000);
+        bDeclarationsStale = true;
         return;
     }
     if(!Context.IsPlaying())
     {
         CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play")
         statusBar()->showMessage(QStringLiteral("Compiled %1").arg(Module), 5000);
+        EditorGraphs::RefreshGameDeclarations(false);
         return;
     }
 
@@ -451,6 +550,7 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     {
         statusBar()->showMessage(QStringLiteral("Compiled and reloaded %1").arg(Module), 5000);
     }
+    EditorGraphs::RefreshGameDeclarations(Context.IsPlaying());
 }
 
 void EditorMainWindow::OpenSettings()
@@ -505,9 +605,17 @@ void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
     {
         Action->setEnabled(!bInPlaying);
     }
+    InputProbeAction->setEnabled(!bInPlaying);
 
     PlayLabel->setText(bInPlaying ? QStringLiteral("Playing %1").arg(Context.DescribePlay()) : QString());
     UpdateTitle();
+
+    /* A compile finished during a run that kept the old module. */
+    if(!bInPlaying && bDeclarationsStale)
+    {
+        bDeclarationsStale = false;
+        EditorGraphs::RefreshGameDeclarations(false);
+    }
 }
 
 void EditorMainWindow::RegisterConsoleCommands()
@@ -517,7 +625,7 @@ void EditorMainWindow::RegisterConsoleCommands()
     /* "#12" is entity index 12; anything else is a name. */
     const auto Resolve = [this](const QString& InWhich) -> EntityID
     {
-        GameCore::World& World = Context.GetWorld();
+        GameCore::World& World = Level.GetWorld();
         if(InWhich.startsWith(QLatin1Char('#')))
         {
             bool bOk = false;
@@ -545,7 +653,7 @@ void EditorMainWindow::RegisterConsoleCommands()
                      [this](const QStringList& InArgs)
     {
         std::vector<EntityID> Entities;
-        Context.GetWorld().ForEachEntity([](const EntityID InEntity, void* InUserData)
+        Level.GetWorld().ForEachEntity([](const EntityID InEntity, void* InUserData)
         {
             static_cast<std::vector<EntityID>*>(InUserData)->push_back(InEntity);
         }, &Entities);
@@ -554,13 +662,13 @@ void EditorMainWindow::RegisterConsoleCommands()
         QStringList Lines;
         for(const EntityID ID : Entities)
         {
-            const QString Name = Context.GetDisplayName(ID);
+            const QString Name = Level.GetDisplayName(ID);
             if(!Filter.isEmpty() && !Name.contains(Filter, Qt::CaseInsensitive))
             {
                 continue;
             }
             Lines << QStringLiteral("%1 #%2 %3")
-                     .arg(ID == Context.GetSelection() ? QLatin1Char('*') : QLatin1Char(' '))
+                     .arg(ID == Level.GetSelection() ? QLatin1Char('*') : QLatin1Char(' '))
                      .arg(QString::number(ID.Index), -4)
                      .arg(Name);
         }
@@ -579,17 +687,17 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
         if(InArgs.front().compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0)
         {
-            Context.SetSelection(GameCore::InvalidEntityID());
+            Level.SetSelection(GameCore::InvalidEntityID());
             return;
         }
         const EntityID Found = Resolve(InArgs.front());
-        if(!Found.IsSet() || !Context.GetWorld().IsAlive(Found))
+        if(!Found.IsSet() || !Level.GetWorld().IsAlive(Found))
         {
             Console.PrintError(QStringLiteral("No entity '%1'").arg(InArgs.front()));
             return;
         }
-        Context.SetSelection(Found);
-        Console.Print(QStringLiteral("Selected %1 #%2").arg(Context.GetDisplayName(Found)).arg(Found.Index));
+        Level.SetSelection(Found);
+        Console.Print(QStringLiteral("Selected %1 #%2").arg(Level.GetDisplayName(Found)).arg(Found.Index));
     });
 
     Console.Register(QStringLiteral("create"), QStringLiteral("[name]"),
@@ -598,24 +706,24 @@ void EditorMainWindow::RegisterConsoleCommands()
     {
         const EditorCamera& Camera = Viewport->GetCamera();
         const QString Name = InArgs.isEmpty() ? QStringLiteral("Entity") : InArgs.join(QLatin1Char(' '));
-        const EntityID Created = Context.CreateEntity(Name, Camera.Position + Camera.GetForward() * 600.0);
-        Context.SetSelection(Created);
-        Console.Print(QStringLiteral("Created %1 #%2").arg(Context.GetDisplayName(Created)).arg(Created.Index));
+        const EntityID Created = Level.CreateEntity(Name, Camera.Position + Camera.GetForward() * 600.0);
+        Level.SetSelection(Created);
+        Console.Print(QStringLiteral("Created %1 #%2").arg(Level.GetDisplayName(Created)).arg(Created.Index));
     });
 
     Console.Register(QStringLiteral("delete"), QStringLiteral("[name | #index]"),
                      QStringLiteral("Destroy an entity, or the selection"),
                      [this, Resolve](const QStringList& InArgs)
     {
-        const EntityID Target = InArgs.isEmpty() ? Context.GetSelection() : Resolve(InArgs.front());
-        if(!Target.IsSet() || !Context.GetWorld().IsAlive(Target))
+        const EntityID Target = InArgs.isEmpty() ? Level.GetSelection() : Resolve(InArgs.front());
+        if(!Target.IsSet() || !Level.GetWorld().IsAlive(Target))
         {
             Console.PrintError(InArgs.isEmpty() ? QStringLiteral("Nothing is selected")
                                                 : QStringLiteral("No entity '%1'").arg(InArgs.front()));
             return;
         }
-        const QString Name = Context.GetDisplayName(Target);
-        Context.DestroyEntity(Target);
+        const QString Name = Level.GetDisplayName(Target);
+        Level.DestroyEntity(Target);
         Console.Print(QStringLiteral("Destroyed %1").arg(Name));
     });
 
@@ -709,10 +817,61 @@ void EditorMainWindow::RegisterConsoleCommands()
         CompileSource();
     });
 
-    Console.Register(QStringLiteral("cook"), QStringLiteral("[world] [out]"),
-                     QStringLiteral("Cook a world file to binary (default: the open world, to Cooked/ beside it)"),
+    Console.Register(QStringLiteral("cook"), QStringLiteral("[world | prefab | prefabs] [out]"),
+                     QStringLiteral("Cook a world or prefab file to binary (default: the open world, to Cooked/ beside it); "
+                                    "'prefabs' cooks every prefab to <project>/Cooked/, which a Client build stages"),
                      [this](const QStringList& InArgs)
     {
+        /* Every prefab in the project, to <out>/<its runtime path>. */
+        if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("prefabs"))
+        {
+            const QString Root = EditorGraphs::GetProjectRoot();
+            const QString OutRoot = InArgs.size() >= 2 ? InArgs[1] : QDir(Root).filePath(QStringLiteral("Cooked"));
+            int Cooked = 0, Failed = 0;
+            QDirIterator It(Root, { QStringLiteral("*.nmprefab") }, QDir::Files, QDirIterator::Subdirectories);
+            while(It.hasNext())
+            {
+                const QString File = It.next();
+                const QString Runtime = EditorContent::ToRuntimePath(File);
+                const QString Relative = QDir(Root).relativeFilePath(File);
+                if(Runtime.isEmpty() || QFileInfo(File).absoluteFilePath().startsWith(QFileInfo(OutRoot).absoluteFilePath() + QLatin1Char('/')))
+                {
+                    continue;   // outside the project, or a cooked copy
+                }
+                bool bIgnored = false;
+                for(const QString& Part : Relative.split(QLatin1Char('/'))) { bIgnored |= EditorGraphs::IsIgnoredFolder(Part); }
+                if(bIgnored) { continue; }
+
+                const QString Out = QDir(OutRoot).filePath(Runtime);
+                QDir().mkpath(QFileInfo(Out).absolutePath());
+                if(GameCore::CookPrefabFile(File.toUtf8().constData(), Out.toUtf8().constData())) { ++Cooked; }
+                else { ++Failed; Console.PrintError(QStringLiteral("Could not cook %1").arg(Runtime)); }
+            }
+            Console.Print(QStringLiteral("Cooked %1 prefab(s) to %2%3").arg(Cooked).arg(QDir::toNativeSeparators(OutRoot))
+                          .arg(Failed ? QStringLiteral("; %1 failed").arg(Failed) : QString()));
+            return;
+        }
+        if(!InArgs.isEmpty() && InArgs[0].endsWith(QStringLiteral(".nmprefab"), Qt::CaseInsensitive))
+        {
+            const QFileInfo SourceInfo(InArgs[0]);
+            const QString Out = InArgs.size() >= 2 ? InArgs[1] : SourceInfo.dir().filePath(QStringLiteral("Cooked/") + SourceInfo.fileName());
+            if(QFileInfo(Out).absoluteFilePath() == SourceInfo.absoluteFilePath())
+            {
+                Console.PrintError(QStringLiteral("Refusing to cook a prefab over itself"));
+                return;
+            }
+            QDir().mkpath(QFileInfo(Out).absolutePath());
+            if(GameCore::CookPrefabFile(InArgs[0].toUtf8().constData(), Out.toUtf8().constData()))
+            {
+                Console.Print(QStringLiteral("Cooked %1 -> %2").arg(InArgs[0], Out));
+            }
+            else
+            {
+                Console.PrintError(QStringLiteral("Cook failed; see the log"));
+            }
+            return;
+        }
+
         /* The file on disk, not the scene in memory: save first to cook edits. */
         const QString Source = InArgs.size() >= 1 ? InArgs[0] : CurrentPath;
         if(Source.isEmpty())
@@ -764,6 +923,101 @@ void EditorMainWindow::RegisterConsoleCommands()
         else             { Console.Print(Lines.join(QLatin1Char('\n'))); }
     });
 
+    /* For scripted runs (--command): "after 3000 prefab close". */
+    Console.Register(QStringLiteral("after"), QStringLiteral("<ms> <command...>"),
+                     QStringLiteral("Run a console command after a delay"),
+                     [this](const QStringList& InArgs)
+    {
+        bool bOk = false;
+        const int Delay = InArgs.isEmpty() ? 0 : InArgs.front().toInt(&bOk);
+        if(!bOk || Delay < 0 || InArgs.size() < 2)
+        {
+            Console.PrintError(QStringLiteral("Usage: after <ms> <command...>"));
+            return;
+        }
+        const QString Line = InArgs.mid(1).join(QLatin1Char(' '));
+        QTimer::singleShot(Delay, this, [this, Line]()
+        {
+            Console.Print(QStringLiteral("> %1").arg(Line));
+            Console.Execute(Line);
+        });
+    });
+
+    Console.Register(QStringLiteral("prefab"), QStringLiteral("<path | new | simulate | stop | close>"),
+                     QStringLiteral("Open a .nmprefab in the Prefab Editor, make a new one, or simulate the one in front"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: prefab <path | new | simulate | stop | close>"));
+            return;
+        }
+        if(InArgs.front() == QStringLiteral("new"))
+        {
+            EditorPrefabs::CreatePrefab(QString(), this);
+            return;
+        }
+        if(InArgs.front() == QStringLiteral("close"))
+        {
+            EditorPrefabs::CloseAllPrefabs();
+            return;
+        }
+        if(InArgs.front() == QStringLiteral("simulate") || InArgs.front() == QStringLiteral("stop"))
+        {
+            PrefabEditorWindow* Window = PrefabEditorWindow::Find();
+            PrefabEditorTab*    Tab    = Window ? Window->CurrentTab() : nullptr;
+            if(!Tab)
+            {
+                Console.PrintError(QStringLiteral("No prefab is open"));
+                return;
+            }
+            if(InArgs.front() == QStringLiteral("simulate")) { Tab->StartSimulation(); }
+            else                                             { Tab->StopSimulation(); }
+            return;
+        }
+        const QString Path = QFileInfo(InArgs.join(QLatin1Char(' '))).isAbsolute()
+                           ? InArgs.join(QLatin1Char(' '))
+                           : QDir(EditorGraphs::GetProjectRoot()).filePath(InArgs.join(QLatin1Char(' ')));
+        if(EditorPrefabs::OpenPrefab(Path, this))
+        {
+            Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
+        }
+    });
+
+    /* A second window on a World of its own: the multi-window rendering path
+     * the Prefab Editor will use, until it exists. */
+    Console.Register(QStringLiteral("testwindow"), QString(),
+                     QStringLiteral("Open a second viewport on its own World (Sandbox's scene and a large quad)"),
+                     [this](const QStringList&)
+    {
+        if(!Context.IsRendererReady())
+        {
+            Console.PrintError(QStringLiteral("The renderer is not running"));
+            return;
+        }
+        auto* Window = new QWidget(nullptr, Qt::Window);
+        Window->setAttribute(Qt::WA_DeleteOnClose);
+        Window->setWindowTitle(QStringLiteral("Test Viewport - Nimble Editor"));
+        Window->resize(800, 600);
+
+        auto* Document = new EditorDocument(Window);
+        Document->CreateSandboxScene();
+        Document->CreateEntity(QStringLiteral("TestQuad"), EngineCore::Vector3(200.0, 200.0, 0.0), [](const GameCore::Entity& InEntity)
+        {
+            InEntity.GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(240.0, 240.0, 1.0);
+            InEntity.AddComponent<RenderCore::RenderComponent>();
+        });
+
+        auto* Layout = new QVBoxLayout(Window);
+        Layout->setContentsMargins(0, 0, 0, 0);
+        auto* Panel = new ViewportPanel(Context, *Document, Window);
+        Layout->addWidget(Panel);
+        Panel->GetViewport()->ApplySandboxView();
+        Window->show();
+
+        Console.Print(QStringLiteral("Opened a test viewport on %1 entities").arg(Document->GetWorld().GetEntityCount()));
+    });
+
     Console.Register(QStringLiteral("scene"), QStringLiteral("<new | sandbox>"),
                      QStringLiteral("Replace the scene with an empty one, or Sandbox's"),
                      [this](const QStringList& InArgs)
@@ -776,11 +1030,11 @@ void EditorMainWindow::RegisterConsoleCommands()
         const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
         if(Which == QStringLiteral("new"))
         {
-            Context.NewScene();
+            Level.NewScene();
         }
         else if(Which == QStringLiteral("sandbox"))
         {
-            Context.CreateSandboxScene();
+            Level.CreateSandboxScene();
             Viewport->ApplySandboxView();
         }
         else
@@ -790,7 +1044,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
         CurrentPath.clear();
         UpdateTitle();
-        Console.Print(QStringLiteral("%1 entities").arg(Context.GetWorld().GetEntityCount()));
+        Console.Print(QStringLiteral("%1 entities").arg(Level.GetWorld().GetEntityCount()));
     });
 
     Console.Register(QStringLiteral("stats"), QString(), QStringLiteral("Print the renderer's counters"),
@@ -812,10 +1066,10 @@ void EditorMainWindow::RegisterConsoleCommands()
                      [this](const QStringList& InArgs)
     {
         const int Count = InArgs.isEmpty() ? 1 : std::max(1, InArgs.front().toInt());
-        for(int Step = 0; Step < Count && Context.CanUndo(); ++Step)
+        for(int Step = 0; Step < Count && Level.CanUndo(); ++Step)
         {
-            Console.Print(QStringLiteral("Undo %1").arg(Context.GetHistory().undoText()));
-            Context.Undo();
+            Console.Print(QStringLiteral("Undo %1").arg(Level.GetHistory().undoText()));
+            Level.Undo();
         }
     });
 
@@ -823,10 +1077,10 @@ void EditorMainWindow::RegisterConsoleCommands()
                      [this](const QStringList& InArgs)
     {
         const int Count = InArgs.isEmpty() ? 1 : std::max(1, InArgs.front().toInt());
-        for(int Step = 0; Step < Count && Context.CanRedo(); ++Step)
+        for(int Step = 0; Step < Count && Level.CanRedo(); ++Step)
         {
-            Console.Print(QStringLiteral("Redo %1").arg(Context.GetHistory().redoText()));
-            Context.Redo();
+            Console.Print(QStringLiteral("Redo %1").arg(Level.GetHistory().redoText()));
+            Level.Redo();
         }
     });
 
@@ -834,7 +1088,7 @@ void EditorMainWindow::RegisterConsoleCommands()
                      QStringLiteral("List the undo history: > marks the current point, * the last save"),
                      [this](const QStringList&)
     {
-        const QUndoStack& History = Context.GetHistory();
+        const QUndoStack& History = Level.GetHistory();
         QStringList Lines;
         for(int Index = 0; Index < History.count(); ++Index)
         {
@@ -917,13 +1171,13 @@ void EditorMainWindow::showEvent(QShowEvent* InEvent)
 
 void EditorMainWindow::StartRenderer()
 {
-    if(!InitialWorld.isEmpty() && Context.LoadWorld(InitialWorld))
+    if(!InitialWorld.isEmpty() && Level.LoadWorld(InitialWorld))
     {
         CurrentPath = InitialWorld;
     }
     else
     {
-        Context.CreateSandboxScene();
+        Level.CreateSandboxScene();
         Viewport->ApplySandboxView();
     }
     UpdateTitle();
@@ -935,7 +1189,6 @@ void EditorMainWindow::StartRenderer()
         return;
     }
 
-    Viewport->StartRendering();
     StatsTimer.start(1000);
 
     if(bStartSDLInputProbe)
@@ -946,13 +1199,19 @@ void EditorMainWindow::StartRenderer()
     {
         StartPlay();
     }
+    for(const QString& Command : StartupCommands)
+    {
+        Console.Print(QStringLiteral("> %1").arg(Command));
+        Console.Execute(Command);
+    }
     UpdateStats();
 }
 
 void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
-    /* Open graphs first: an unsaved one may cancel the close. */
-    if(!EditorGraphs::CloseAllGraphs())
+    /* Open prefabs and graphs first: an unsaved one may cancel the close.
+     * Prefabs before the Renderer stops: their viewports' swapchains go now. */
+    if(!EditorPrefabs::CloseAllPrefabs() || !EditorGraphs::CloseAllGraphs())
     {
         InEvent->ignore();
         return;
@@ -1000,7 +1259,7 @@ void EditorMainWindow::SetSDLInputProbe(const bool bInOn)
 void EditorMainWindow::UpdateTitle()
 {
     const QString Scene = CurrentPath.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(CurrentPath).fileName();
-    const QString Dirty = Context.GetHistory().isClean() ? QString() : QStringLiteral("*");
+    const QString Dirty = Level.GetHistory().isClean() ? QString() : QStringLiteral("*");
     const QString Play  = Context.IsPlaying() ? QStringLiteral(" [Playing]") : QString();
     setWindowTitle(QStringLiteral("%1%2%3 - Nimble Editor").arg(Scene, Dirty, Play));
 
@@ -1010,9 +1269,9 @@ void EditorMainWindow::UpdateTitle()
 
 void EditorMainWindow::UpdateHistoryActions()
 {
-    const QUndoStack& History = Context.GetHistory();
-    UndoAction->setEnabled(Context.CanUndo());
-    RedoAction->setEnabled(Context.CanRedo());
+    const QUndoStack& History = Level.GetHistory();
+    UndoAction->setEnabled(Level.CanUndo());
+    RedoAction->setEnabled(Level.CanRedo());
     UndoAction->setText(History.canUndo() ? QStringLiteral("&Undo %1").arg(History.undoText()) : QStringLiteral("&Undo"));
     RedoAction->setText(History.canRedo() ? QStringLiteral("&Redo %1").arg(History.redoText()) : QStringLiteral("&Redo"));
     UpdateTitle();
@@ -1056,7 +1315,7 @@ void EditorMainWindow::OpenWorldFile(const QString& Path)
         return;
     }
     bool bCooked = false;
-    if(!Context.LoadWorld(Path, &bCooked))
+    if(!Level.LoadWorld(Path, &bCooked))
     {
         QMessageBox::warning(this, QStringLiteral("Open World"),
                              QStringLiteral("Could not read a world from\n%1").arg(Path));
@@ -1084,7 +1343,7 @@ bool EditorMainWindow::SaveWorld()
     {
         return SaveWorldAs();
     }
-    if(!Context.SaveWorld(CurrentPath))
+    if(!Level.SaveWorld(CurrentPath))
     {
         QMessageBox::warning(this, QStringLiteral("Save World"), QStringLiteral("Could not write\n%1").arg(CurrentPath));
         return false;

@@ -70,6 +70,7 @@ public:
     void SetWildcardType(const NodeGraph::NodeGuid& InNode, const std::string& InType);
     void SetGraphProperty(const std::string& InName, const std::string& InValue);
     void SetVariables(const std::vector<NodeGraph::Variable>& InVariables);
+    void SetFunctions(const std::vector<NodeGraph::GraphFunction>& InFunctions);
     void AddComment(const NodeGraph::Comment& InComment);
     void SetCommentText(int InIndex, const QString& InText);
 

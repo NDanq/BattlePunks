@@ -22,6 +22,16 @@ namespace RenderCore
 {
     struct RenderView;
 
+    /*
+     * A scene the Renderer draws: its own World, view and render targets.
+     * Scene 0 (RENDER_DEFAULT_SCENE) exists from Initialize() to Shutdown()
+     * and is what every call without a SceneID means -- a game only ever
+     * needs that one. A tool adds more with CreateScene, one per viewport,
+     * each presented to its own window.
+     */
+    using RenderSceneID = uint32_t;
+    enum : RenderSceneID { RENDER_DEFAULT_SCENE = 0, RENDER_INVALID_SCENE = ~RenderSceneID(0) };
+
     class RENDERCORE_API Renderer
     {
     public:
@@ -51,6 +61,39 @@ namespace RenderCore
         /* Reverses BindWorld(). Safe with no World bound. */
         void UnbindWorld();
 
+        // === Scenes ==========================================================
+        // GAME THREAD ONLY. Every frame renders every scene; each has its own
+        // World binding, view override, overlay lines and render targets.
+
+        /* A new, empty scene. RENDER_INVALID_SCENE before Initialize() or if
+         * the render thread could not build it. */
+        RenderSceneID CreateScene();
+
+        /* Unbinds its World, releases its proxies and targets (flushed: gone
+         * when this returns). Stop presenting it first. The default scene and
+         * unknown ids are ignored. */
+        void DestroyScene(RenderSceneID InScene);
+
+        /* BindWorld / UnbindWorld for InScene. A World is bound to one scene
+         * at a time. */
+        void BindWorld(RenderSceneID InScene, GameCore::World& InWorld);
+        void UnbindWorld(RenderSceneID InScene);
+
+        /* InScene's viewport, physical pixels, from the next EndFrame() on. A
+         * scene other than the default with an empty viewport is not rendered
+         * at all (a hidden window). The default scene takes
+         * FrameInfo::ViewportPixels instead. */
+        void SetViewportPixels(RenderSceneID InScene, EngineCore::Size InPixels);
+
+        /* Presents InScene's last finished frame to InWindow, through that
+         * window's own swapchain -- several windows can each show their own
+         * scene. Same thread and ordering rules as PresentToWindow(InWindow). */
+        void PresentToWindow(RenderSceneID InScene, EngineCore::WindowHandle InWindow);
+
+        /* Destroys InWindow's swapchain, if it has one. Call before the native
+         * window goes; presenting to it again makes a new one. */
+        void ReleaseWindow(EngineCore::WindowHandle InWindow);
+
         /* Blocks until the previous frame (if any) has finished rendering --
          * the "at most one frame in flight" fence, forwarded to
          * RenderThread::WaitForFrame(). Call once per host frame, before
@@ -66,7 +109,7 @@ namespace RenderCore
         void EndFrame(const FrameInfo& InFrame);
 
         /*
-         * Presents the most recently completed frame to InWindow. GAME THREAD
+         * Presents the default scene's most recently completed frame to InWindow. GAME THREAD
          * ONLY -- GDI's contract, not a choice made here: GDI.h documents it as
          * "Called from the UI thread after RendererFinished()", and Vulkan's
          * swapchain keeps its own command pool and per-image semaphores so this
@@ -88,6 +131,7 @@ namespace RenderCore
         void PresentToWindow(EngineCore::WindowHandle InWindow);
 
         void SetClearColor(EngineCore::Color InColor);
+        void SetClearColor(RenderSceneID InScene, EngineCore::Color InColor);
 
 #if WITH_EDITOR
         // === Editor only =====================================================
@@ -97,13 +141,16 @@ namespace RenderCore
          * SetViewOverride(nullptr). Copied. The frame's ViewportPixels still
          * wins. GAME THREAD ONLY. */
         void SetViewOverride(const RenderView* InView);
+        void SetViewOverride(RenderSceneID InScene, const RenderView* InView);
 
         /* Immediate-mode overlay line for the next EndFrame() only (see
          * DebugLine). GAME THREAD ONLY. */
         void DrawDebugLine(const DebugLine& InLine);
+        void DrawDebugLine(RenderSceneID InScene, const DebugLine& InLine);
 
         /* InBox's edges via DrawDebugLine. Empty draws nothing. */
         void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels = 2.0f);
+        void DrawDebugBox(RenderSceneID InScene, const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels = 2.0f);
 
         /* Reloads material InName (nullptr or "": all) from disk on its next
          * draw, e.g. after a recook. Names over RENDER_MATERIAL_PATH_MAX are

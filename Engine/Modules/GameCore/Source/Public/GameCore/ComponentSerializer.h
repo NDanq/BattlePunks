@@ -93,6 +93,11 @@ namespace GameCore
                                                   ComponentSerializeFn InFn,
                                                   ComponentDefaultsFn InDefaultsFn);
 
+    /* Withdraws InType's serializer; the macro's registrar calls it when its
+     * image unloads, so a game module's serializer never outlives its code and
+     * the next load registers again. A no-op without one. */
+    GAMECORE_API void UnregisterComponentSerializer(ComponentTypeID InType);
+
     /* nullptr if InType has no serializer -- a normal answer, not an error. */
     GAMECORE_API const ComponentSerializerInfo* FindComponentSerializer(ComponentTypeID InType);
 
@@ -173,10 +178,17 @@ namespace GameCore
         {                                                                                          \
             TypeName##_SerializerRegistrar()                                                       \
             {                                                                                      \
-                ::GameCore::RegisterComponentSerializer(TypeName::StaticType().ID, (Version),      \
-                                                        &TypeName##_Serialize,                     \
-                                                        &TypeName##_Defaults);                     \
+                bRegistered = ::GameCore::RegisterComponentSerializer(TypeName::StaticType().ID,   \
+                                                                      (Version),                   \
+                                                                      &TypeName##_Serialize,       \
+                                                                      &TypeName##_Defaults);       \
             }                                                                                      \
+            /* Only its own registration: a refused duplicate leaves the first. */                 \
+            ~TypeName##_SerializerRegistrar()                                                      \
+            {                                                                                      \
+                if(bRegistered) { ::GameCore::UnregisterComponentSerializer(TypeName::StaticType().ID); } \
+            }                                                                                      \
+            bool bRegistered = false;                                                              \
         };                                                                                         \
         TypeName##_SerializerRegistrar G##TypeName##_SerializerRegistrar;                           \
     }                                                                                              \

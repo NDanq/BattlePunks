@@ -78,6 +78,22 @@ namespace NodeGraph
         std::string Default;   // literal, as Node::Constants
     };
 
+    /* One of a graph function's parameters or results. */
+    struct FunctionPin
+    {
+        std::string Name;
+        std::string Type;      // a variable type, or "Entity"
+    };
+
+    /* A function the graph defines for itself: its body starts at a Function
+     * Entry node naming it, ends at Function Returns, and Call nodes run it. */
+    struct GraphFunction
+    {
+        std::string              Name;
+        std::vector<FunctionPin> Inputs;
+        std::vector<FunctionPin> Outputs;
+    };
+
     /* A labelled box behind a group of nodes. Editor-only; compiles to nothing. */
     struct Comment
     {
@@ -103,10 +119,11 @@ namespace NodeGraph
         /* Graph-wide settings declared by the schema (a script's TickPhase). */
         std::map<std::string, std::string> Properties;
 
-        std::vector<Variable> Variables;
-        std::vector<Node>     Nodes;
-        std::vector<Link>     Links;
-        std::vector<Comment>  Comments;
+        std::vector<Variable>      Variables;
+        std::vector<GraphFunction> Functions;
+        std::vector<Node>          Nodes;
+        std::vector<Link>          Links;
+        std::vector<Comment>       Comments;
 
         /* The last clean compile's output (the schema's, then its companions);
          * empty until one is stored. Kept as is while the graph has errors. */
@@ -115,7 +132,8 @@ namespace NodeGraph
         Node*       FindNode(const NodeGuid& InId);
         const Node* FindNode(const NodeGuid& InId) const;
 
-        const Variable* FindVariable(const std::string& InName) const;
+        const Variable*      FindVariable(const std::string& InName) const;
+        const GraphFunction* FindFunction(const std::string& InName) const;
 
         /* The generated file with InExtension, or nullptr. */
         const GeneratedCode* FindGenCode(const std::string& InExtension) const;

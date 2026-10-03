@@ -16,7 +16,7 @@ code is gated the same way, so a Client or Server build compiles none of it:
 
 | Gated code | Where |
 |---|---|
-| Property registry and every `GAMECORE_DEFINE_COMPONENT_PROPERTIES` list | GameCore `ComponentProperties.h/.cpp`, RenderCore `RenderComponents.cpp` |
+| Property registry and every `GAMECORE_DEFINE_COMPONENT_PROPERTIES` list | GameCore `ComponentProperties.h/.cpp`, each component's own .cpp under GameCore and RenderCore `Components/` |
 | `Renderer::SetViewOverride`, `DrawDebugLine`, `DrawDebugBox` | RenderCore `Renderer.h/.cpp` |
 | The debug-line pass in `RenderScene::Render`, `RenderContext::DrawLine`, `DebugLine` | RenderCore |
 
@@ -75,8 +75,9 @@ uses it.
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
-| `OutlinerPanel` | Entity list with component summary, filter, create/destroy |
-| `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession` |
+| `OutlinerPanel` | Entity hierarchy with component summary, filter, create/destroy, drag to reparent |
+| `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
+| `ViewportSDLInput` (private) | The viewport as an SDL window (focus hand-over, text forwarding, pumping), for the game's input and the input probe |
 | `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
 | `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (File > New Material / Script Graph, Open Graph, or the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
 | `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph with its generated code inside it, `<gen_code>` (see `Modules/NodeGraph`); nothing is written beside it |
@@ -258,8 +259,9 @@ entity's `BoundsComponent::World` when it has one, else its RenderComponent quad
 a small cube at its Transform. All Bounds adds every other entity's box in grey.
 The XYZ gizmo sits bottom-left.
 
-**Transform handles** sit on the selection's Transform position, a fixed size
-on screen, and highlight yellow under the cursor:
+**Transform handles** sit where the selection is in the world (through its
+parents; the drag writes back the local Transform that lands there), a fixed
+size on screen, and highlight yellow under the cursor:
 
 - **Move**: an arrow per axis, a square per plane (XY, YZ, XZ) and a centre
   square that moves in the screen plane. An arrow pointing straight at the
@@ -283,6 +285,21 @@ entity's bounds are refit as it moves, a static Bounds included
 (`World::RefreshEntityBounds`). Rotation stays in the Transform's Euler angles,
 chosen closest to the previous ones, so values do not jump between equivalent
 forms mid-drag (`GameCore/TransformMath.h`).
+
+## Outliner
+
+Every entity as a tree: roots in creation order, each with its children
+under it (GameCore's hierarchy, `GameCore/README.md`). The filter keeps a
+match's ancestors visible. Selecting in the viewport opens the tree down to
+the selection.
+
+- **Drag onto a row** to parent the dragged entity to it, **between rows** to
+  make it that row's sibling, **onto empty space** to detach it. It stays
+  where it is in the world; its local Transform is rewritten to match. A drop
+  that would make an entity its own ancestor is refused.
+- **Right-click**: Create Empty Entity, Create Child Entity (at the parent's
+  origin), Detach from Parent, and Destroy Entity -- "and Children" when it
+  has some, since destroying a parent destroys its subtree.
 
 ## Details panel
 
@@ -325,7 +342,8 @@ way.
 
 **Edit > Undo** (Ctrl+Z) and **Redo** (Ctrl+Y, Ctrl+Shift+Z) step through every
 change to the edited scene: creating and deleting entities, renaming them,
-setting or clearing a script and its cull flag, adding and removing
+parenting and detaching them, setting or clearing a script and its cull
+flag, adding and removing
 components, and every property write -- Details fields, the reset arrows,
 and transform handle drags. The menu names the step ("Undo Move Marker");
 the Console's `history` lists them all.
@@ -334,8 +352,12 @@ the Console's `history` lists them all.
   went; a cancelled drag leaves none. Quick edits to the same component (a
   spin box's arrows, a few fields in a row) less than a second apart merge.
 - **Deleted entities come back whole** -- the same GUID, name, script and
-  components -- so later steps still apply to them and a save afterwards
-  writes the same `.nmentity` file.
+  components, under the same parent, with every child they had -- so later
+  steps still apply to them and a save afterwards writes the same
+  `.nmentity` files.
+- **A reparent restores exactly.** It records the local Transform before and
+  after, so undo puts the entity back on its old parent with its old values
+  rather than recomputing them.
 - **Unsaved changes** show as `*` in the title: the history remembers where
   the last save (or load) was, and undoing back to it clears the mark.
 - New, Open and the Sandbox scene start an empty history.
@@ -348,6 +370,7 @@ it (`EditorHistory.h` has the details). Property writes are recorded from
 `NotifyPropertyEdited`, against a copy of the selection's values taken before
 the write -- so a new tool that writes components needs only to call that,
 and to bracket a continuous edit with `BeginEditGesture` / `EndEditGesture`.
+Reparenting goes through `SetEntityParent`, which records its own step.
 
 ## Console
 
@@ -416,10 +439,25 @@ stands in for `Application` as the host.
 - The game ends a run itself with `GameSession::RequestQuit` -- the editor stops
   rather than exiting.
 
-Not yet: game input. Games have no input API to feed, so a run receives no
-keyboard or mouse; the SDL path proven by the input probe (View > SDL Input
-Probe) is what will deliver it. The game's `[Display] FrameRateLimit` is
-reported to it but not enforced -- the viewport's timer paces the run.
+**Game input** takes the launcher's path (`Engine/Source/INPUT.md`):
+
+- **How it gets there.** `ViewportSDLInput` wraps the viewport as an SDL
+  window. Qt keeps the window and the message loop; Win32 focus moves to the
+  viewport when it is focused, and text is forwarded. The input feeds the
+  `PlaySession`'s `InputRouter`.
+- **When.** Each frame, SDL is pumped and the router latched right before the
+  game's frame. The game sees the same `InputState` it would in `Sandbox.exe`.
+- **Editor keys.** **Escape** still stops the run, and Qt still sees every
+  key after SDL.
+- **Ejected view.** While the view is ejected, the game sees nothing held.
+- **Fallback.** If SDL cannot wrap the viewport, the viewport's Qt key and
+  mouse events feed the router instead. Those keys are layout-dependent, and
+  the log says which path a run uses.
+- **The probe.** View > SDL Input Probe reports raw SDL events from the same
+  wrapper. It switches off while playing, since a window is wrapped once.
+
+The game's `[Display] FrameRateLimit` is reported to it but not enforced --
+the viewport's timer paces the run.
 
 ## Editor settings
 
@@ -531,7 +569,8 @@ decided. The Console's `cook` still cooks a single world.
   the delete is undone.
 - No prompt to save unsaved changes on close, New or Open yet.
 - Transform handles act on one entity; there is no multi-selection.
-- Play-in-Editor has no game input yet (see above).
+- Play-in-Editor input has no gamepad hot-plug outside the viewport's SDL pump
+  (see INPUT.md).
 - View presets stay in perspective; there are no orthographic views yet.
 - Moving or renaming an asset in the Content Browser leaves components that
   name it pointing at the old path.

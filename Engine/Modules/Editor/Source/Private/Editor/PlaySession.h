@@ -8,6 +8,7 @@
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/NimbleEngine/GameSession.h"
+#include "Public/NimbleEngine/InputRouter.h"
 
 namespace GameCore     { class ScriptEngine; class World; }
 namespace NimbleEngine { class GameModuleHost; }
@@ -63,12 +64,31 @@ public:
     void     SetFrameRateLimit(uint32_t InFramesPerSecond) override { FrameRateLimit = InFramesPerSecond; }
     uint32_t GetFrameRateLimit() const override                    { return FrameRateLimit; }
 
+    /* What Tick latched: the viewport's SDL input, as the launcher's. */
+    const NimbleEngine::InputState& GetInput() const override { return Input.GetState(); }
+    void SetMouseCaptured(bool bInCaptured) override { Input.SetMouseCaptured(bInCaptured); }
+    bool IsMouseCaptured() const override           { return Input.IsMouseCaptured(); }
+
+    // === Input ===============================================================
+
+    /* The router the viewport's SDL window feeds (EditorContext attaches it),
+     * or, without SDL, the viewport's Qt events through GetPending(). Tick
+     * latches it once a frame, before the game's frame. */
+    NimbleEngine::InputRouter& GetInputRouter() { return Input; }
+
+    /* While the editor holds the view (ejected), the game sees nothing held:
+     * what arrives is dropped instead of latched. */
+    void SetInputBlocked(bool bInBlocked) { bInputBlocked = bInBlocked; }
+
 private:
     RenderCore::Renderer& Rendering;
 
     NimbleEngine::GameModuleHost* Game    = nullptr;
     GameCore::ScriptEngine*       Scripts = nullptr;
     NimbleEngine::GameSession*    Session = nullptr;
+
+    NimbleEngine::InputRouter Input;
+    bool                      bInputBlocked = false;
 
     uint32_t FrameRateLimit = 0;
     uint64_t FrameNumber    = 0;

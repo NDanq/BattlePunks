@@ -358,6 +358,21 @@ public:
      */
     virtual void PresentToWindow(EngineCore::WindowHandle /*InWindow*/) {}
 
+    /**
+     * Present InSource -- one finished render target, not necessarily the last
+     * one bound -- to InWindow. UI thread, like PresentToWindow. Each window gets
+     * its own swapchain on first use, so several windows can each show their
+     * own target. Skipped while InSource is mid-render, as PresentToWindow is.
+     * Backends that present differently (OpenGL, Null) ignore it.
+     */
+    virtual void PresentRenderTargetToWindow(EngineCore::WindowHandle /*InWindow*/, GDIRenderTarget* /*InSource*/) {}
+
+    /**
+     * Destroys InWindow's swapchain, if it has one. UI thread. Call before the
+     * native window is destroyed; presenting to it again creates a new one.
+     */
+    virtual void ReleaseWindow(EngineCore::WindowHandle /*InWindow*/) {}
+
     template<typename GDIShaderRef = GDIShader()> void RegisterShader(std::string SrcPath, EShaderType InType)
     {
         const std::string ShaderKey = TYPEID_TO_QSTR(GDIShaderRef);

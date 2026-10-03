@@ -33,7 +33,7 @@ namespace NodeGraph
 
     const NodeDefinition* GraphIndex::FindDefinition(const Node& InNode) const
     {
-        return InNode.IsPlaceholder() ? nullptr : S.FindNode(InNode.Type);
+        return S.FindDefinition(G, InNode);
     }
 
     const Link* GraphIndex::LinkInto(const NodeGuid& InNode, const std::string& InPin) const

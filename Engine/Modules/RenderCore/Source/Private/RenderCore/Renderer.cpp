@@ -31,13 +31,14 @@ namespace RenderCore
                   "DebugLine crosses to the render thread by memcpy -- see Renderer::EndFrame");
 #endif
 
-    struct Renderer::Impl
+    /* One scene the Renderer draws: the render thread's RenderScene and the
+     * game thread's bridge and per-frame editor state for it. */
+    struct RendererScene
     {
-        RenderThread Thread;
-        RenderScene* Scene  = nullptr;   // constructed on the render thread by Initialize(); render-thread-owned from then on
-        WorldBridge* Bridge = nullptr;   // game-thread-owned; wraps Scene
-
-        bool bRenderRegistered = false;
+        RenderSceneID      ID     = RENDER_INVALID_SCENE;
+        RenderScene*       Scene  = nullptr;   // constructed on the render thread; render-thread-owned from then on
+        WorldBridge*       Bridge = nullptr;   // game-thread-owned; wraps Scene
+        EngineCore::Size   ViewportPixels;     // extra scenes only; the default takes FrameInfo's
 
 #if WITH_EDITOR
         /* Set by SetViewOverride; replaces the camera lookup every frame. */
@@ -46,10 +47,6 @@ namespace RenderCore
 
         /* Handed over and cleared by every EndFrame(). */
         std::vector<DebugLine> PendingDebugLines;
-
-        /* RequestMaterialPreview's results, delivered by the render thread. */
-        MaterialPreviewMailbox Previews;
-        uint64_t               LastPreviewRequest = 0;
 
         /* Enqueued ahead of EndFrame's render command, as one allocated copy
          * the command frees (commands capture values only). */
@@ -74,6 +71,92 @@ namespace RenderCore
             PendingDebugLines.clear();
         }
 #endif
+    };
+
+    struct Renderer::Impl
+    {
+        RenderThread Thread;
+
+        /* [0] is the default scene, from Initialize() to Shutdown(). */
+        std::vector<RendererScene*> Scenes;
+        RenderSceneID               NextSceneID = RENDER_DEFAULT_SCENE + 1;
+
+        bool bRenderRegistered = false;
+
+#if WITH_EDITOR
+        /* RequestMaterialPreview's results, delivered by the render thread. */
+        MaterialPreviewMailbox Previews;
+        uint64_t               LastPreviewRequest = 0;
+#endif
+
+        RendererScene* Find(const RenderSceneID InScene) const
+        {
+            for(RendererScene* Each : Scenes)
+            {
+                if(Each->ID == InScene) { return Each; }
+            }
+            return nullptr;
+        }
+
+        /* The default scene's RenderScene: previews and the clear colour's default. */
+        RenderScene* DefaultScene() const
+        {
+            return Scenes.empty() ? nullptr : Scenes.front()->Scene;
+        }
+
+        /* Builds InID's RenderScene on the render thread (flushed) and its
+         * bridge. Null if the render thread is not running or failed. */
+        RendererScene* MakeScene(const RenderSceneID InID)
+        {
+            if(!Thread.IsRunning())
+            {
+                return nullptr;
+            }
+            RenderScene* Built = nullptr;
+            RenderScene** ScenePtr = &Built;
+            ENQUEUE_RENDER_COMMAND(CreateScene)([ScenePtr](RenderContext&)
+            {
+                *ScenePtr = new RenderScene();
+            });
+            FlushRenderCommands();
+            if(!Built)
+            {
+                return nullptr;
+            }
+
+            auto* Made   = new RendererScene();
+            Made->ID     = InID;
+            Made->Scene  = Built;
+            Made->Bridge = new WorldBridge(*Built);
+            return Made;
+        }
+
+        /* Unbinds, releases on the render thread (flushed), frees. */
+        void FreeScene(RendererScene* InScene)
+        {
+            if(InScene->Bridge)
+            {
+                InScene->Bridge->UnbindWorld();
+                delete InScene->Bridge;
+                InScene->Bridge = nullptr;
+            }
+            if(InScene->Scene && Thread.IsRunning())
+            {
+                RenderScene* Scene = InScene->Scene;
+                ENQUEUE_RENDER_COMMAND(ReleaseScene)([Scene](RenderContext& Ctx)
+                {
+                    Scene->ReleaseAll(Ctx);
+                });
+                FlushRenderCommands();
+            }
+            /* The scene itself was allocated with plain new (RenderScene has
+             * no GAMECORE_-style pool contract to honour), on the render
+             * thread -- freed here, on the game thread, once nothing on the
+             * render thread is touching it: after the flush above, or after
+             * Stop() has joined the thread. */
+            delete InScene->Scene;
+            delete InScene;
+        }
     };
 
     Renderer::Renderer() : P(new Impl())
@@ -102,21 +185,14 @@ namespace RenderCore
             return false;
         }
 
-        RenderScene** ScenePtr = &P->Scene;
-        ENQUEUE_RENDER_COMMAND(CreateScene)([ScenePtr](RenderContext&)
-        {
-            *ScenePtr = new RenderScene();
-        });
-        FlushRenderCommands();
-
-        if(!P->Scene)
+        RendererScene* Default = P->MakeScene(RENDER_DEFAULT_SCENE);
+        if(!Default)
         {
             RENDERCORE_LOG_ERROR("Renderer::Initialize: the render thread failed to construct a RenderScene")
             P->Thread.Stop();
             return false;
         }
-
-        P->Bridge = new WorldBridge(*P->Scene);
+        P->Scenes.push_back(Default);
 
         /* The engine's own materials (DefaultLit) and shared vertex shaders. */
         MountShaderCache("Engine");
@@ -125,50 +201,94 @@ namespace RenderCore
 
     void Renderer::Shutdown()
     {
-        UnbindWorld();
-
-        delete P->Bridge;
-        P->Bridge = nullptr;
-
-        if(P->Scene && P->Thread.IsRunning())
+        /* Extra scenes first, then the default: each unbinds, then drains. */
+        while(!P->Scenes.empty())
         {
-            RenderScene* Scene = P->Scene;
-            ENQUEUE_RENDER_COMMAND(ReleaseScene)([Scene](RenderContext& Ctx)
-            {
-                Scene->ReleaseAll(Ctx);
-            });
-            FlushRenderCommands();
+            RendererScene* Last = P->Scenes.back();
+            P->Scenes.pop_back();
+            P->FreeScene(Last);
         }
 
         P->Thread.Stop();
-
-        if(P->Scene)
-        {
-            /* The scene itself was allocated with plain new (RenderScene has
-             * no GAMECORE_-style pool contract to honour), on the render
-             * thread inside Initialize() -- freed here, on the game thread,
-             * only after Stop() has joined that thread, so nothing is still
-             * touching it. */
-            delete P->Scene;
-            P->Scene = nullptr;
-        }
     }
 
     void Renderer::BindWorld(GameCore::World& InWorld)
     {
-        if(!P->Bridge)
-        {
-            RENDERCORE_LOG_ERROR("Renderer::BindWorld called before a successful Initialize()")
-            return;
-        }
-        P->Bridge->BindWorld(InWorld);
+        BindWorld(RENDER_DEFAULT_SCENE, InWorld);
     }
 
     void Renderer::UnbindWorld()
     {
-        if(P->Bridge)
+        UnbindWorld(RENDER_DEFAULT_SCENE);
+    }
+
+    void Renderer::BindWorld(const RenderSceneID InScene, GameCore::World& InWorld)
+    {
+        RendererScene* Scene = P->Find(InScene);
+        if(!Scene || !Scene->Bridge)
         {
-            P->Bridge->UnbindWorld();
+            RENDERCORE_LOG_ERROR("Renderer::BindWorld called before a successful Initialize(), or with an unknown scene")
+            return;
+        }
+        Scene->Bridge->BindWorld(InWorld);
+    }
+
+    void Renderer::UnbindWorld(const RenderSceneID InScene)
+    {
+        if(RendererScene* Scene = P->Find(InScene))
+        {
+            if(Scene->Bridge) { Scene->Bridge->UnbindWorld(); }
+        }
+    }
+
+    RenderSceneID Renderer::CreateScene()
+    {
+        if(P->Scenes.empty())
+        {
+            return RENDER_INVALID_SCENE;   // before Initialize(), or after Shutdown()
+        }
+        RendererScene* Made = P->MakeScene(P->NextSceneID);
+        if(!Made)
+        {
+            RENDERCORE_LOG_ERROR("Renderer::CreateScene: the render thread failed to construct a RenderScene")
+            return RENDER_INVALID_SCENE;
+        }
+        ++P->NextSceneID;
+
+        /* RenderStats stay the default scene's. */
+        RenderScene* Scene = Made->Scene;
+        ENQUEUE_RENDER_COMMAND(SceneStatsOff)([Scene](RenderContext&)
+        {
+            Scene->SetReportsStats(false);
+        });
+
+        P->Scenes.push_back(Made);
+        return Made->ID;
+    }
+
+    void Renderer::DestroyScene(const RenderSceneID InScene)
+    {
+        if(InScene == RENDER_DEFAULT_SCENE)
+        {
+            return;
+        }
+        for(auto It = P->Scenes.begin(); It != P->Scenes.end(); ++It)
+        {
+            if((*It)->ID == InScene)
+            {
+                RendererScene* Gone = *It;
+                P->Scenes.erase(It);
+                P->FreeScene(Gone);
+                return;
+            }
+        }
+    }
+
+    void Renderer::SetViewportPixels(const RenderSceneID InScene, const EngineCore::Size InPixels)
+    {
+        if(RendererScene* Scene = P->Find(InScene))
+        {
+            Scene->ViewportPixels = InPixels;
         }
     }
 
@@ -180,12 +300,27 @@ namespace RenderCore
 #if WITH_EDITOR
     void Renderer::DrawDebugLine(const DebugLine& InLine)
     {
-        P->PendingDebugLines.push_back(InLine);
+        DrawDebugLine(RENDER_DEFAULT_SCENE, InLine);
+    }
+
+    void Renderer::DrawDebugLine(const RenderSceneID InScene, const DebugLine& InLine)
+    {
+        if(RendererScene* Scene = P->Find(InScene))
+        {
+            Scene->PendingDebugLines.push_back(InLine);
+        }
     }
 
     void Renderer::DrawDebugBox(const GameCore::AABB& InBox, const EngineCore::Color InColor, const float InThicknessPixels)
     {
-        if(InBox.IsEmpty())
+        DrawDebugBox(RENDER_DEFAULT_SCENE, InBox, InColor, InThicknessPixels);
+    }
+
+    void Renderer::DrawDebugBox(const RenderSceneID InScene, const GameCore::AABB& InBox, const EngineCore::Color InColor,
+                                const float InThicknessPixels)
+    {
+        RendererScene* Scene = P->Find(InScene);
+        if(!Scene || InBox.IsEmpty())
         {
             return;
         }
@@ -222,7 +357,7 @@ namespace RenderCore
                 Line.End             = Corners[To];
                 Line.Color           = InColor;
                 Line.ThicknessPixels = InThicknessPixels;
-                P->PendingDebugLines.push_back(Line);
+                Scene->PendingDebugLines.push_back(Line);
             }
         }
     }
@@ -253,7 +388,7 @@ namespace RenderCore
     uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
     {
         const size_t Length = InName ? std::strlen(InName) : 0;
-        if(!P->Scene || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_PATH_MAX)
+        if(!P->DefaultScene() || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_PATH_MAX)
         {
             return 0;
         }
@@ -266,7 +401,7 @@ namespace RenderCore
         Request.Tint    = InTint;
         Request.Mailbox = &P->Previews;
 
-        RenderScene* Scene = P->Scene;
+        RenderScene* Scene = P->DefaultScene();
         ENQUEUE_RENDER_COMMAND(AddMaterialPreview)([Scene, Request](RenderContext&)
         {
             Scene->AddMaterialPreview(Request);
@@ -283,7 +418,7 @@ namespace RenderCore
             std::memcpy(OutBuffer, InText.data(), InText.size());
             return true;
         };
-        if(!P->Scene || !P->Thread.IsRunning() || InPreview.Mesh.empty()
+        if(!P->DefaultScene() || !P->Thread.IsRunning() || InPreview.Mesh.empty()
            || !Copy(InPreview.Mesh, Request.Mesh, sizeof(Request.Mesh))
            || !Copy(InPreview.Material, Request.Material, sizeof(Request.Material)))
         {
@@ -302,7 +437,7 @@ namespace RenderCore
         Request.Tint    = InPreview.Tint;
         Request.Mailbox = &P->Previews;
 
-        RenderScene* Scene = P->Scene;
+        RenderScene* Scene = P->DefaultScene();
         ENQUEUE_RENDER_COMMAND(AddMeshPreview)([Scene, Request](RenderContext&)
         {
             Scene->AddMaterialPreview(Request);
@@ -317,10 +452,20 @@ namespace RenderCore
 
     void Renderer::SetViewOverride(const RenderView* InView)
     {
-        P->bHasViewOverride = InView != nullptr;
+        SetViewOverride(RENDER_DEFAULT_SCENE, InView);
+    }
+
+    void Renderer::SetViewOverride(const RenderSceneID InScene, const RenderView* InView)
+    {
+        RendererScene* Scene = P->Find(InScene);
+        if(!Scene)
+        {
+            return;
+        }
+        Scene->bHasViewOverride = InView != nullptr;
         if(InView)
         {
-            P->ViewOverride = *InView;
+            Scene->ViewOverride = *InView;
         }
     }
 #endif // WITH_EDITOR
@@ -370,38 +515,61 @@ namespace RenderCore
 
     void Renderer::EndFrame(const FrameInfo& InFrame)
     {
-        /* The editor's overlay lines and camera override. */
-        const RenderView* ViewOverride = nullptr;
+        for(RendererScene* Scene : P->Scenes)
+        {
+            FrameInfo Frame = InFrame;
+            if(Scene->ID != RENDER_DEFAULT_SCENE)
+            {
+                /* An extra scene with no viewport is a hidden window: skip it,
+                 * extraction and all. Its overlay lines are dropped. */
+                Frame.ViewportPixels = Scene->ViewportPixels;
+                if(Frame.ViewportPixels.IsEmpty())
+                {
 #if WITH_EDITOR
-        P->SubmitDebugLines();
-        ViewOverride = P->bHasViewOverride ? &P->ViewOverride : nullptr;
+                    Scene->PendingDebugLines.clear();
+#endif
+                    continue;
+                }
+            }
+
+            /* The editor's overlay lines and camera override. */
+            const RenderView* ViewOverride = nullptr;
+#if WITH_EDITOR
+            Scene->SubmitDebugLines();
+            ViewOverride = Scene->bHasViewOverride ? &Scene->ViewOverride : nullptr;
 #endif
 
-        if(P->Bridge && P->Bridge->IsBound())
-        {
-            P->Bridge->ExtractAndRender(InFrame, ViewOverride);
-        }
-        else if(P->Scene)
-        {
-            /* No World bound yet -- still render (a clear, nothing to draw)
-             * so a host's stats and pacing stay meaningful, matching
-             * Renderer.h's own comment. */
-            RenderScene* Scene = P->Scene;
-            RenderView View = ViewOverride
-                            ? *ViewOverride
-                            : RenderView::MakeOrthographic(InFrame.ViewportPixels, EngineCore::Vector3(0, 1, -1), -1.0f, 1000.0f);
-            View.ViewportPixels = InFrame.ViewportPixels;
-            ENQUEUE_RENDER_COMMAND(SetViewAndRenderEmpty)([Scene, View](RenderContext& Ctx)
+            if(Scene->Bridge && Scene->Bridge->IsBound())
             {
-                Scene->SetView(View);
-                Scene->Render(Ctx);
-            });
+                Scene->Bridge->ExtractAndRender(Frame, ViewOverride);
+            }
+            else if(Scene->Scene)
+            {
+                /* No World bound yet -- still render (a clear, nothing to draw)
+                 * so a host's stats and pacing stay meaningful, matching
+                 * Renderer.h's own comment. */
+                RenderScene* RS = Scene->Scene;
+                RenderView View = ViewOverride
+                                ? *ViewOverride
+                                : RenderView::MakeOrthographic(Frame.ViewportPixels, EngineCore::Vector3(0, 1, -1), -1.0f, 1000.0f);
+                View.ViewportPixels = Frame.ViewportPixels;
+                ENQUEUE_RENDER_COMMAND(SetViewAndRenderEmpty)([RS, View](RenderContext& Ctx)
+                {
+                    RS->SetView(View);
+                    RS->Render(Ctx);
+                });
+            }
         }
 
         P->Thread.EndFrame(InFrame.FrameNumber);
     }
 
     void Renderer::PresentToWindow(const EngineCore::WindowHandle InWindow)
+    {
+        PresentToWindow(RENDER_DEFAULT_SCENE, InWindow);
+    }
+
+    void Renderer::PresentToWindow(const RenderSceneID InScene, const EngineCore::WindowHandle InWindow)
     {
         /*
          * Straight through to the driver -- no command, no queue. This is
@@ -414,28 +582,44 @@ namespace RenderCore
          * exactly the two things that machinery exists to overlap. See
          * Renderer.h for the full contract.
          *
-         * The render thread must be running: the driver, its swapchain and
+         * The render thread must be running: the driver, its swapchains and
          * the target being presented all belong to it, and after Stop() the
          * driver has already been destroyed and released.
+         *
+         * The scene's own final target, not GDI's last-bound one: with
+         * several scenes, the last bound is whichever rendered last.
          */
         if(!P->Thread.IsRunning())
         {
             return;
         }
-
-        if(GDynamicGDI)
+        if(const RendererScene* Scene = P->Find(InScene))
         {
-            GDynamicGDI->PresentToWindow(InWindow);
+            Scene->Scene->PresentToWindow(InWindow);
+        }
+    }
+
+    void Renderer::ReleaseWindow(const EngineCore::WindowHandle InWindow)
+    {
+        if(P->Thread.IsRunning() && GDynamicGDI)
+        {
+            GDynamicGDI->ReleaseWindow(InWindow);
         }
     }
 
     void Renderer::SetClearColor(const EngineCore::Color InColor)
     {
-        if(!P->Scene)
+        SetClearColor(RENDER_DEFAULT_SCENE, InColor);
+    }
+
+    void Renderer::SetClearColor(const RenderSceneID InScene, const EngineCore::Color InColor)
+    {
+        const RendererScene* Found = P->Find(InScene);
+        if(!Found || !Found->Scene)
         {
             return;
         }
-        RenderScene* Scene = P->Scene;
+        RenderScene* Scene = Found->Scene;
         ENQUEUE_RENDER_COMMAND(SetClearColor)([Scene, InColor](RenderContext&)
         {
             Scene->SetClearColor(InColor);

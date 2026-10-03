@@ -235,6 +235,20 @@ void GameWindow::SetTextInputActive(const bool bInActive)
     }
 }
 
+void GameWindow::SetRelativeMouseMode(const bool bInRelative)
+{
+    GameWindowSystem::CheckPumpThread("GameWindow::SetRelativeMouseMode");
+    if(P->Window && !SDL_SetWindowRelativeMouseMode(P->Window, bInRelative))
+    {
+        GW_LOG_WARN(std::string("relative mouse mode could not be ") + (bInRelative ? "entered: " : "left: ") + SDL_GetError());
+    }
+}
+
+bool GameWindow::IsRelativeMouseMode() const
+{
+    return P->Window && SDL_GetWindowRelativeMouseMode(P->Window);
+}
+
 bool GameWindow::IsTextInputActive() const
 {
     /* Asked of SDL rather than cached: unlike the window-state flags there is

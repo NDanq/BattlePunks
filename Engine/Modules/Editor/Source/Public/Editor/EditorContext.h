@@ -7,41 +7,43 @@
 #include <functional>
 #include <vector>
 
+#include <QElapsedTimer>
 #include <QImage>
 #include <QObject>
 #include <QString>
+#include <QTimer>
 
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
-#include "Public/GameCore/ComponentType.h"
-#include "Public/GameCore/Delegate.h"
-#include "Public/GameCore/EntityID.h"
+#include "Public/RenderCore/Renderer.h"
 #include "Public/RenderCore/RenderTypes.h"
+#include "Public/RenderCore/RenderView.h"
 
-namespace GameCore   { class World; }
-namespace RenderCore { class Renderer; struct RenderView; }
+namespace RenderCore { class Renderer; }
 
+class EditorDocument;
+class EditorViewportClient;
 class PlaySession;
-class QUndoCommand;
-class QUndoStack;
-namespace EditorHistory { struct EntityMembers; }
-
-Q_DECLARE_METATYPE(GameCore::EntityID)
+class QWidget;
+class ViewportSDLInput;
+namespace NimbleEngine { class InputState; }
 
 /*
- * The editor's model: the edited World, its Renderer, the selection and
- * Play-in-Editor. Panels read and write through this object and listen to its
- * signals; no panel talks to another directly.
+ * The editor's app-wide state: the Renderer, asset previews and
+ * Play-in-Editor, and the level document (GetLevel()). What belongs to one
+ * edited World -- its selection, history and entity operations -- is an
+ * EditorDocument's.
  *
  * THREADING. The Qt main thread is the game thread, so nothing needs a lock.
  *
  * THE FRAME. Application::RunFrame's sequence. While editing the World never
  * ticks (no scripts, no systems); while playing, the game's session ticks first.
  *
- * TWO WORLDS. GetWorld() is the ACTIVE World: the edited one, or the playing
- * level's between StartPlay and StopPlay. Playing never touches the edited
- * World; StopPlay restores it and its selection. Switching emits WorldReset.
+ * THE RENDERER draws one World: the level's edited World, or the playing
+ * level's between StartPlay and StopPlay. Playing lends that World to the
+ * level document (EditorDocument::BorrowWorld) and never touches the edited
+ * one; StopPlay hands the edited World and its selection back.
  */
 class EditorContext : public QObject
 {
@@ -55,7 +57,7 @@ public:
      * backend refused; the editor still runs with a blank viewport. */
     bool InitializeRenderer(RenderCore::ERenderBackend InBackend, EngineCore::WindowHandle InWindow);
 
-    /* Unbinds and stops the Renderer. Idempotent. The World lives until the
+    /* Unbinds and stops the Renderer. Idempotent. The level lives until the
      * context is destroyed; the viewport's native window must still exist. */
     void Shutdown();
 
@@ -82,19 +84,26 @@ public:
     /* False, leaving OutStats untouched, when the Renderer is not running. */
     bool GetRenderStats(RenderCore::RenderStats& OutStats) const;
 
-    /* The active World (see TWO WORLDS). Re-fetch after WorldReset. */
-    GameCore::World& GetWorld() { return *ActiveWorld; }
+    // === Viewports ==========================================================
+    // The context drives ONE frame for every viewport, on its own timer (from
+    // InitializeRenderer): the game's tick, each viewport's view and overlay,
+    // then render and present in Application::RunFrame's order.
 
-    /* The edited World, even while playing. */
-    GameCore::World& GetEditedWorld() { return *EditedWorld; }
+    /* InClient is drawn every frame until RemoveViewport; it shows its
+     * document's World. Its destructor must call RemoveViewport while its
+     * native window still exists. */
+    void AddViewport(EditorViewportClient* InClient);
+    void RemoveViewport(EditorViewportClient* InClient);
 
-    /* One editor frame: the game's tick (or a spatial refit while editing),
-     * then render in Application::RunFrame's order. InView is used unless
-     * playing with the view not ejected. */
-    void RenderFrame(const RenderCore::RenderView& InView, EngineCore::Size InViewportPixels,
-                     EngineCore::WindowHandle InWindow);
+    /* A document other than the level shows a World it does not own (a
+     * prefab simulation, EditorDocument::BorrowWorld): Unbind its scene before
+     * that World goes or is swapped, Bind afterwards to draw GetWorld(). The
+     * level's scene is Play-in-Editor's to manage; it is ignored here. */
+    void BindDocumentScene(EditorDocument& InDocument);
+    void UnbindDocumentScene(EditorDocument& InDocument);
 
-    /* Overlay lines for the next RenderFrame(); see Renderer::DrawDebugLine. */
+    /* Overlay lines for this frame, into the scene of the viewport whose
+     * PrepareFrame is running; nothing outside one. See Renderer::DrawDebugLine. */
     void DrawDebugLine(const RenderCore::DebugLine& InLine);
     void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels);
 
@@ -121,147 +130,57 @@ public:
     /* The editor camera's view and the overlays apply: editing, or ejected. */
     bool IsEditorViewActive() const { return !Play || bPlayViewEjected; }
 
-    // === Scene ==============================================================
-    // On the EDITED World; refused while playing.
+    /* The widget whose input the game reads while playing: the viewport. Set
+     * once, by its owner; StartPlay wraps it in SDL (ViewportSDLInput) so the
+     * game's input runs the launcher's path. Null plays without input. */
+    void SetPlayInputWidget(QWidget* InWidget) { PlayInputWidget = InWidget; }
 
-    /* Replaces the World with an empty one. */
-    void NewScene();
+    /* While playing WITHOUT SDL input (it could not wrap the viewport): the
+     * state the viewport's Qt events feed instead. Null otherwise -- SDL has
+     * the input, or nothing is playing, or the view is ejected. */
+    NimbleEngine::InputState* GetPlayFallbackInput();
 
-    /* NewScene plus the entities Sandbox's loaded level has. */
-    void CreateSandboxScene();
+    // === Documents ==========================================================
 
-    /* Via LoadWorldFile / SaveWorldPackage (WorldPackage.h). Saves the text
-     * form; loads either, with OutbCooked set for a cooked world. Scripts are
-     * not instantiated. False on error: an unreadable file leaves the World
-     * unchanged, a corrupt one leaves it empty. */
-    bool LoadWorld(const QString& InPath, bool* OutbCooked = nullptr);
-    bool SaveWorld(const QString& InPath);
-
-    // === Entities ===========================================================
-    // On the active World: while playing, these reach into the running game.
-
-    /* With a Transform at InPosition. InSetup runs before recording, so the
-     * entity and its components are one undo step. */
-    GameCore::EntityID CreateEntity(const QString& InName, const EngineCore::Vector3& InPosition,
-                                    const std::function<void(const GameCore::Entity&)>& InSetup = nullptr);
-    void               DestroyEntity(GameCore::EntityID InEntity);
-
-    /* Entity::SetName / SetScript. On the edited World a script is only stored. */
-    void RenameEntity(GameCore::EntityID InEntity, const QString& InName);
-    void SetEntityScript(GameCore::EntityID InEntity, const QString& InPath);
-
-    /* The script's bCullOutsideActiveRegion; nothing without a script. */
-    void SetEntityScriptCull(GameCore::EntityID InEntity, bool bInCull);
-
-    /* Default-constructed. False if already present or not constructible. */
-    bool AddComponent(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
-    bool RemoveComponent(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
-
-    /* Name if it has one, "Entity <index>" otherwise. */
-    QString GetDisplayName(GameCore::EntityID InEntity) const;
-
-    /* World-space box, first available of: BoundsComponent::World, the
-     * RenderComponent's mesh or quad through the Transform, or a small cube at
-     * the Transform. Empty if none apply. */
-    GameCore::AABB GetEntityBounds(GameCore::EntityID InEntity) const;
-
-    /* The union of every entity's GetEntityBounds. */
-    GameCore::AABB GetSceneBounds() const;
-
-    // === Selection ==========================================================
-
-    GameCore::EntityID GetSelection() const { return Selection; }
-
-    /* An unset or dead id clears it. Emits SelectionChanged on change only. */
-    void SetSelection(GameCore::EntityID InEntity);
-
-    /* A panel wrote InType on InEntity. Recorded only for the selection, the
-     * one entity whose previous values are known. */
-    void NotifyPropertyEdited(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
-
-    // === History ============================================================
-    // Undo/redo for the EDITED World (EditorHistory.h). Every change made
-    // through this object is recorded, except while playing, when nothing is
-    // recorded and undo/redo are refused. New/Open reset it; clean = saved.
-
-    QUndoStack& GetHistory() { return *History; }
-
-    bool CanUndo() const;
-    bool CanRedo() const;
-    void Undo();
-    void Redo();
-
-    /* Brackets a continuous edit (a handle drag) into one entry, "<InLabel>
-     * <entity>"; none if nothing changed. Undo/redo are refused meanwhile. */
-    void BeginEditGesture(const QString& InLabel);
-    void EndEditGesture();
-
-    /* InCommand is the latest entry with no undo/redo since: mergeable. */
-    bool IsLatestRecorded(const QUndoCommand* InCommand) const;
+    /* The level: the World the main window edits and Play-in-Editor runs in
+     * place of. Owned; lives as long as the context. */
+    EditorDocument& GetLevel() { return *Level; }
 
 signals:
-    /* The active World was replaced; every cached EntityID is stale. */
-    void WorldReset();
-
     /* After StartPlay succeeds, and after StopPlay. */
     void PlayStateChanged(bool bInPlaying);
 
     void PlayViewEjectedChanged(bool bInEjected);
 
-    /* Entities or components added/removed. Coalesced to once per event-loop
-     * turn, never from inside a World delegate. */
-    void EntitiesChanged();
-
-    void SelectionChanged(GameCore::EntityID InEntity);
-
-    void PropertyEdited(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
-
-    /* CanUndo / CanRedo / clean state may have changed. */
-    void HistoryChanged();
+    /* Every drawn frame, after the game's tick and before the render: where
+     * anything else that ticks a World (a prefab simulation) does so, so its
+     * render commands join this frame. */
+    void BeforeFrame(double InDeltaSeconds);
 
 private:
-    static void OnEntityCreated(GameCore::EntityID InEntity, void* InUserData);
-    static void OnEntityDestroyed(GameCore::EntityID InEntity, void* InUserData);
-    static void OnComponentChanged(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);
-
-    /* Defers EntitiesChanged to the next event-loop turn, once. */
-    void QueueEntitiesChanged();
-
-    /* The active World's entity delegates. Unhook only while it is alive;
-     * ForgetHooks once the game has freed it. */
-    void HookActiveWorld();
-    void UnhookActiveWorld();
-    void ForgetHooks();
-
-    /* Hooks InWorld, selects InSelection, emits WorldReset and SelectionChanged. */
-    void ActivateWorld(GameCore::World* InWorld, GameCore::EntityID InSelection);
-
     /* After a play Tick: follow a level swap; stop if the game quit. */
     void SyncPlayWorld();
 
-    /* Logs and returns true while playing. */
-    bool RefuseWhilePlaying(const char* InWhat) const;
+    /* The frame timer's tick: see Viewports. */
+    void RunFrame();
 
-    /* Not playing, not in undo/redo, not building or loading a scene. */
-    bool IsRecording() const;
+    /* InDocument's scene: the default for the level, otherwise one created and
+     * bound on first use and destroyed with the document. INVALID without a
+     * Renderer. */
+    RenderCore::RenderSceneID GetDocumentScene(EditorDocument* InDocument);
+    void                      ForgetDocumentScene(EditorDocument* InDocument);
 
-    /* Pushes an already-applied command. Takes ownership. */
-    void Record(QUndoCommand* InCommand);
+    struct DocumentScene
+    {
+        EditorDocument*           Document = nullptr;
+        RenderCore::RenderSceneID Scene    = RenderCore::RENDER_INVALID_SCENE;
+    };
+    std::vector<DocumentScene>         DocumentScenes;   // documents other than the level
+    std::vector<EditorViewportClient*> Viewports;
 
-    /* Records a name / script / cull change from InBefore, if recording. */
-    void RecordMembersChange(GameCore::EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText);
-
-    /* Empties the history and marks it clean. */
-    void ResetHistory();
-
-    /* Snapshots the selection's values: the "before" of the next
-     * NotifyPropertyEdited. Call after any unrecorded change. */
-    void RefreshShadow();
-
-    /* Destroys the World and binds a fresh empty one. Emits WorldReset. */
-    void ReplaceWorld();
-    void CreateWorld();
-    void DestroyWorld();
+    QTimer                    FrameTimer;
+    QElapsedTimer             FrameClock;
+    RenderCore::RenderSceneID OverlayScene = RenderCore::RENDER_INVALID_SCENE;   // see DrawDebugLine
 
     /* Resolves cooked shaders against the working directory (the exe's
      * folder). A member: render-thread loads outlive any call. */
@@ -270,46 +189,49 @@ private:
      * cooked beats the last build's cache. */
     EngineCore::LayeredFileProvider LayeredAssets{ &AssetProvider, true };
 
-    GameCore::World*      EditedWorld = nullptr;
-    GameCore::World*      ActiveWorld = nullptr;   // EditedWorld, or the playing level's
-    RenderCore::Renderer* Renderer    = nullptr;
+    EditorDocument*       Level    = nullptr;
+    RenderCore::Renderer* Renderer = nullptr;
     bool                  bRendererReady = false;
     RenderCore::ERenderBackend Backend   = RenderCore::ERenderBackend::Null;
 
-    GameCore::EntityID    Selection;
-
-    GameCore::DelegateHandle CreatedHandle;
-    GameCore::DelegateHandle DestroyedHandle;
-    GameCore::DelegateHandle ComponentAddedHandle;
-    GameCore::DelegateHandle ComponentRemovedHandle;
-    bool                     bEntitiesChangedQueued = false;
-    GameCore::World*         HookedWorld = nullptr;
-
     PlaySession*       Play = nullptr;
-    GameCore::EntityID EditedSelection;     // restored by StopPlay
+    QWidget*           PlayInputWidget = nullptr;
+    ViewportSDLInput*  PlayInput = nullptr;   // the viewport as an SDL window, while playing
     uint32_t           PlayLoadCount = 0;   // PlaySession::GetLoadCount at the last sync
     bool               bPlayViewEjected = false;
 
     uint64_t FrameNumber     = 0;
     int64_t  PreviousFrameNs = 0;
+};
 
-    // === History ============================================================
-    QUndoStack*         History = nullptr;
-    const QUndoCommand* LatestRecorded = nullptr;   // see IsLatestRecorded
-    bool                bApplyingHistory  = false;  // inside Undo / Redo
-    bool                bSuspendRecording = false;  // building or loading a scene
-    uint64_t            GestureSerial = 0;
-    uint64_t            OpenGesture   = 0;          // 0: none
-    QString             GestureLabel;
+/*
+ * A view the editor draws each frame: a viewport widget, or anything else
+ * with a native window, a camera and a document.
+ */
+class EditorViewportClient
+{
+public:
+    virtual ~EditorViewportClient() = default;
 
-    /* The selection's property values as of the last recorded change. */
-    struct ShadowComponent
+    /* The document whose World it shows. */
+    virtual EditorDocument& GetViewportDocument() = 0;
+
+    /* The native window it presents to. */
+    virtual EngineCore::WindowHandle GetViewportWindow() = 0;
+
+    struct Frame
     {
-        GameCore::ComponentTypeID Type;
-        std::vector<uint8_t>      Values;
+        RenderCore::RenderView   View;
+        EngineCore::Size         Pixels;   // physical
+        EngineCore::WindowHandle Window;
     };
-    GameCore::EntityID           ShadowEntity;
-    std::vector<ShadowComponent> Shadow;
+
+    /* Fills OutFrame and queues overlays (EditorContext::DrawDebugLine).
+     * InDeltaSeconds is since the last frame. False skips it this frame (a
+     * hidden or zero-sized window). bInEditorView is false while the game's
+     * camera has the level: OutFrame.View is then ignored and nothing should
+     * be queued. */
+    virtual bool PrepareFrame(float InDeltaSeconds, bool bInEditorView, Frame& OutFrame) = 0;
 };
 
 #endif // WITH_EDITOR

@@ -8,7 +8,7 @@ stored code is what a game's cook and the runtime use.
 | Graph | File | Generates (in `<gen_code>`) | Consumed by |
 |---|---|---|---|
 | Material | `Glow.material.nmgraph` | `.mtl.glsl` (a material function) and `.material` (its description) | `RenderComponent::Materials[0] = "Materials/Glow.material.nmgraph"`, cooked from the stored code (below) |
-| Script | `Mover.script.nmgraph` | `.lua`, a class table | `Entity:SetScript("Scripts/Mover.script.nmgraph")`: the runtime runs the stored Lua |
+| Script | `Mover.script.nmgraph` | `.lua`, a class table | a prefab's script (`PrefabAsset::SetScriptPath("Scripts/Mover.script.nmgraph")`, `<Script Path>` in the `.nmprefab`): each instance runs the stored Lua |
 
 Written for this repository. **Editor targets only**, and Qt-free: the editor
 draws graphs (`Modules/Editor/Source/Private/Editor/Graph/`), but loading,
@@ -25,6 +25,7 @@ NimbleEditor --> NodeGraph --> GameCore --> EngineCore
 **STATIC.** Unlike GameCore it owns no process-wide registry that two images
 could each get a copy of. The schemas are built on first use, from GameCore's
 registries, by whichever executable links this: the editor or the test.
+`RefreshSchemas()` builds them again (below, "Game declarations").
 
 ## Pieces
 
@@ -148,8 +149,11 @@ Details > Type overrides it.
 
 ## Script graphs
 
-- Event nodes (On Start, On Tick, On Destroy, On Event) each become one
-  function of the class table.
+- Event nodes each become one function of the class table: On Start, On
+  Tick, On Destroy, On Event, and On Overlap Begin / On Overlap End. The
+  overlap events become `OnOverlapBegin(self, other, mine)` /
+  `OnOverlapEnd(self, other, mine)`, which GameCore's overlap pass calls; their
+  outputs are Other and Mine (which of the instance's entities was touched).
 - A statement's **Then** leads to the next statement.
 - Pure nodes are evaluated where a statement needs them, into `local tN`,
   once per statement. So a Get after a Set sees the new value.
@@ -161,7 +165,7 @@ Details > Type overrides it.
 - Variables are fields of the class table (`Speed = 60,`), written per
   instance through `self`.
 - On Event subscribes in `OnStart` and unsubscribes in `OnDestroy`, so a
-  destroyed entity's handler never runs.
+  destroyed instance's handler never runs.
 
 **Components come from their bindings.** Every type registered with
 `GAMECORE_DEFINE_COMPONENT_SCRIPT` gets these nodes:
@@ -180,6 +184,52 @@ Bind.Method("Scaled",    ...,                                                  "
 The types are `number`, `integer`, `bool`, `string`, `Vector3`, `Color` and
 `Entity`. A method without a signature still gets a node, called with no
 arguments, and a compile warning.
+
+**Script libraries come from theirs too** (`GameCore/ScriptLibrary.h`). Each
+library is a palette category, and its members become nodes typed
+`Library.<Library>.<Member>`:
+
+| Member | Nodes | Generated |
+|---|---|---|
+| `Function` | a statement | `Total1 = Sandbox.AddScore(t1)` |
+| `Pure` | a value node | `local t2 = Sandbox.RankForScore(t1)` |
+| `Variable` | Get, and Set unless `ReadOnly` | `Sandbox.GetScore()`, `Sandbox.SetScore(t1)` |
+| `Event` | On *Name* (an event node), Emit *Name* | `Events.On("ScoreChanged", ...)`, `Events.Emit("ScoreChanged", t1)` |
+
+A typed On *Name* is On Event with its name fixed and its outputs named and
+typed. An `integer` argument is floored, since the bus carries numbers. Emit
+*Name* passes every argument, linked or not. An event whose parameters do not
+fit the bus (more than four, or a Vector3) gets no nodes and a log warning.
+
+**Script structs are pin types** (`GameCore/ScriptStruct.h`). Each registered
+struct becomes a type named after it. It also gets **Make *Struct*** and
+**Break *Struct*** nodes under Structs, and can be a graph variable's type.
+Its value travels as one lane per field, named after the fields (`Stats_Value`,
+`Stats_ID`, and `Where_X` for a Vector3 field). An unlinked struct input is all
+zeros, not the C++ defaults: build one with Make. The lane layouts are kept
+across `RefreshSchemas()`, so a graph that was already open still compiles.
+
+### Game declarations
+
+A game module declares components and libraries in its own image
+(`Games/Sandbox/SandboxScripting.cpp`), so they exist only while it is
+loaded. The editor loads it briefly to read them
+(`EditorGraphs::RefreshGameDeclarations`):
+
+- at startup, before any graph opens;
+- after Build > Compile Source succeeds, or when a Play that kept the old
+  module stops;
+- on Build > Refresh Script Nodes.
+
+`RefreshSchemas()` copies what is registered, so the nodes outlast the
+module. Schemas built earlier are retired, not freed: a graph already open
+keeps working with the nodes it had until it is reopened. A graph using a
+game's nodes that is opened without the game loads them as placeholders and
+keeps them.
+
+`Games/Sandbox/Scripts/Pickup.script.nmgraph` (the game's component, library
+functions and variables, a typed Emit) and `ScoreBoard.script.nmgraph` (typed
+On nodes) are the examples.
 
 ## Material graphs
 
@@ -363,8 +413,11 @@ relative to (the game's folder); `-data-out` is where loose descriptions go;
 `-defaults` adds the shared MaterialDefault vertex shaders (below
 `-subdir`). Loose `.mtl.glsl` files, each with its `.material` beside it,
 still cook below `-subdir` -- the editor's live cook of an unsaved graph.
-`NodeGraphGenerate <graph.nmgraph>...` regenerates graphs' `<gen_code>` from
-the command line, as the editor does on save.
+`NodeGraphGenerate [-module <game module>] <graph.nmgraph>...` regenerates
+graphs' `<gen_code>` from the command line, as the editor does on save.
+`-module SandboxGame.dll` loads a game module first, so that graphs using
+its components, libraries and structs compile. Run it from the game's
+binaries folder so the module's dependencies resolve.
 
 ## Tests
 
@@ -377,9 +430,16 @@ the command line, as the editor does on save.
 - paste remapping;
 - validation errors landing on the right node;
 - golden generated code in `Tests/Data/`;
-- a **run** of the generated Lua: an entity with the Mover script attached
-  moves 60 units in a second -- as a `.lua`, and as a `.script.nmgraph`
-  running its `<gen_code>`.
+- a **run** of the generated Lua: an instance of a prefab whose script is
+  Mover moves 60 units in a second -- as a `.lua`, and as a `.script.nmgraph`
+  running its `<gen_code>`;
+- a script library declared in the test (`TestLib`): its nodes, golden
+  `Scorer.lua`, a run through its functions, variable and typed event,
+  `RefreshSchemas` picking up a late library, and component bindings and
+  libraries unregistered and registered again, as a reloaded module's are;
+- a script struct (`TestStats`): its pin type and Make/Break nodes, golden
+  `Stats.lua`, a run through a component field, a variable and Native
+  functions, and an unregister and re-register.
 
 `NodeGraph.MaterialGLSL` compiles every permutation of the golden material
 functions with glslc when Python and the Vulkan SDK are present.

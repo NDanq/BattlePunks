@@ -180,10 +180,8 @@ void VulkanDynamicGDI::Allocate()
     SemInfo.pNext = &TimelineType;
     vkCreateSemaphore(DeviceObj->GetDevice(), &SemInfo, nullptr, &RenderTimeline);
 
-    // Swapchain creation must happen on the UI thread (it uses QWindow::vulkanSurface()).
-    // The CanvasWidget invokes this through PresentToWindow first time it runs;
-    // for now we lazily create on first PresentToWindow.
-    Swapchain = new VKSwapchain();
+    // Swapchains are created on the UI thread, one per window, by the first
+    // present to it (FindOrCreateSwapchain).
 
     PipelineCache = new VKPipelineCache();
     if(!PipelineCache->Initialize(DeviceObj))
@@ -239,7 +237,8 @@ void VulkanDynamicGDI::Destroy()
     if(ScreenMesh)   { ScreenMesh->Release();   delete ScreenMesh;   ScreenMesh   = nullptr; }
     if(NullTexture)  { NullTexture->Release();  delete NullTexture;  NullTexture  = nullptr; }
 
-    if(Swapchain)       { Swapchain->Shutdown();        delete Swapchain;       Swapchain = nullptr; }
+    for(auto& Entry : Swapchains) { Entry.second->Shutdown(); delete Entry.second; }
+    Swapchains.clear();
     if(CommandManager)  { CommandManager->Shutdown();   delete CommandManager;  CommandManager = nullptr; }
     if(DescAlloc)       { DescAlloc->Shutdown();        delete DescAlloc;       DescAlloc = nullptr; }
     if(PipelineCache)   { PipelineCache->Shutdown();    delete PipelineCache;   PipelineCache = nullptr; }
@@ -272,40 +271,72 @@ void VulkanDynamicGDI::Flush()
 
 void VulkanDynamicGDI::PresentToWindow(WindowHandle InWindow)
 {
-    if(!bInitialized || !Swapchain || !InWindow.IsValid()) return;
+    // Find the main RT — the renderer's RenderTargetManager owns it; we don't have a direct handle here,
+    // so the swapchain takes the most recently bound RT. In Phase 1 the renderer always rebinds Main right
+    // before EndRendering, so CurrentStateData->ActiveRenderTarget is the main RT.
+    PresentToSwapchain(InWindow, CurrentStateData ? CurrentStateData->ActiveRenderTarget : nullptr);
+}
+
+void VulkanDynamicGDI::PresentRenderTargetToWindow(WindowHandle InWindow, GDIRenderTarget* InSource)
+{
+    PresentToSwapchain(InWindow, static_cast<VKRenderTarget*>(InSource));
+}
+
+void VulkanDynamicGDI::PresentToSwapchain(WindowHandle InWindow, VKRenderTarget* InRT)
+{
+    if(!bInitialized || !InWindow.IsValid()) return;
 
     // Skip while render targets are being resized — they're mid-recreation on the
     // render thread (inconsistent layout/contents). EndRendering clears this once a
     // full frame has been rendered into the new targets.
     if(bResizing.load()) return;
 
-    auto* VKCtx = static_cast<VulkanGDIContext*>(Context);
-    if(!VKCtx) return;
+    // No frame was rendered yet — don't present.
+    if(!InRT) return;
 
-    if(!Swapchain->IsValid())
-    {
-        if(!Swapchain->Initialize(VKCtx->VKContext, DeviceObj, InWindow))
-        {
-            GDI_LOG("[VulkanDynamicGDI] Swapchain initialize failed.")
-            return;
-        }
-    }
-
-    // Find the main RT — the renderer's RenderTargetManager owns it; we don't have a direct handle here,
-    // so the swapchain takes the most recently bound RT. In Phase 1 the renderer always rebinds Main right
-    // before EndRendering, so CurrentStateData->ActiveRenderTarget is the main RT.
-    VKRenderTarget* MainRT = CurrentStateData ? CurrentStateData->ActiveRenderTarget : nullptr;
-    if(!MainRT)
-    {
-        // No frame was rendered yet — don't present.
-        return;
-    }
+    VKSwapchain* Swapchain = FindOrCreateSwapchain(InWindow);
+    if(!Swapchain) return;
 
     // Wait for the most recent render-thread submit (idempotent: if no new render
     // happened — e.g. an expose-triggered present — the value is already reached).
     // PresentFrame loads the published value itself, under the queue mutex, so the
     // wait value and the submit are atomic w.r.t. the render thread's publish+submit.
-    Swapchain->PresentFrame(MainRT, RenderTimeline, &RenderTimelinePublished);
+    Swapchain->PresentFrame(InRT, RenderTimeline, &RenderTimelinePublished);
+}
+
+VKSwapchain* VulkanDynamicGDI::FindOrCreateSwapchain(WindowHandle InWindow)
+{
+    for(const auto& Entry : Swapchains)
+    {
+        if(Entry.first == InWindow.Native) return Entry.second;
+    }
+
+    auto* VKCtx = static_cast<VulkanGDIContext*>(Context);
+    if(!VKCtx) return nullptr;
+
+    auto* Swapchain = new VKSwapchain();
+    if(!Swapchain->Initialize(VKCtx->VKContext, DeviceObj, InWindow))
+    {
+        GDI_LOG("[VulkanDynamicGDI] Swapchain initialize failed.")
+        delete Swapchain;
+        return nullptr;
+    }
+    Swapchains.emplace_back(InWindow.Native, Swapchain);
+    return Swapchain;
+}
+
+void VulkanDynamicGDI::ReleaseWindow(WindowHandle InWindow)
+{
+    for(auto It = Swapchains.begin(); It != Swapchains.end(); ++It)
+    {
+        if(It->first == InWindow.Native)
+        {
+            It->second->Shutdown();   // waits for the device to go idle first
+            delete It->second;
+            Swapchains.erase(It);
+            return;
+        }
+    }
 }
 
 GDIRenderTarget* VulkanDynamicGDI::CreateRenderTarget(std::string Name, uint InWidth, uint InHeight)

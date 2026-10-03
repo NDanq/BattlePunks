@@ -164,22 +164,27 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/GameCoreInternal.h
         Source/Private/GameCore/ComponentType.cpp
         Source/Private/GameCore/ComponentPool.cpp
-        Source/Private/GameCore/Components.cpp
+        Source/Private/GameCore/Components/TransformComponent.cpp
+        Source/Private/GameCore/Components/BoundsComponent.cpp
+        Source/Private/GameCore/Components/CollisionComponent.cpp
         Source/Private/GameCore/Delegate.cpp
         Source/Private/GameCore/EventBus.cpp
         Source/Private/GameCore/TickPhase.cpp
         Source/Private/GameCore/SpatialIndex.cpp
+        Source/Private/GameCore/Collision.cpp
         Source/Private/GameCore/World.cpp
         Source/Private/GameCore/ScriptEngine.cpp
         Source/Private/GameCore/ScriptBindings.cpp
         Source/Private/GameCore/ScriptSystem.cpp
         Source/Private/GameCore/ComponentSerializer.cpp
-        Source/Private/GameCore/ComponentSerializers.cpp
         Source/Private/GameCore/WorldSerializer.cpp
         Source/Private/GameCore/WorldPackage.cpp
+        Source/Private/GameCore/Prefab.cpp
+        Source/Private/GameCore/NativePrefab.cpp
         Source/Private/GameCore/ArchiveTextDump.cpp
         Source/Private/GameCore/ComponentScript.cpp
-        Source/Private/GameCore/ComponentScripts.cpp
+        Source/Private/GameCore/ScriptLibrary.cpp
+        Source/Private/GameCore/ScriptStruct.cpp
         Source/Private/GameCore/ComponentProperties.cpp
         Source/Public/GameCore/GameCoreAPI.h
         Source/Public/GameCore/GameCoreLog.h
@@ -195,6 +200,9 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/World.h
         Source/Public/GameCore/Entity.h
         Source/Public/GameCore/Components.h
+        Source/Public/GameCore/Components/TransformComponent.h
+        Source/Public/GameCore/Components/BoundsComponent.h
+        Source/Public/GameCore/Components/CollisionComponent.h
         Source/Public/GameCore/TransformMath.h
         Source/Public/GameCore/ScriptEngine.h
         Source/Public/GameCore/ComponentSerializer.h
@@ -202,6 +210,9 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/WorldPackage.h
         Source/Public/GameCore/ArchiveTextDump.h
         Source/Public/GameCore/ComponentScript.h
+        Source/Public/GameCore/ScriptLibrary.h
+        Source/Public/GameCore/NativePrefab.h
+        Source/Public/GameCore/ScriptStruct.h
         Source/Public/GameCore/ComponentProperties.h
 )
 

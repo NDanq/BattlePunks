@@ -61,6 +61,15 @@ namespace NodeGraph
         return nullptr;
     }
 
+    const GraphFunction* Graph::FindFunction(const std::string& InName) const
+    {
+        for(const GraphFunction& Each : Functions)
+        {
+            if(Each.Name == InName) { return &Each; }
+        }
+        return nullptr;
+    }
+
     const GeneratedCode* Graph::FindGenCode(const std::string& InExtension) const
     {
         for(const GeneratedCode& Each : GenCode)

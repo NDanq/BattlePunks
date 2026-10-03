@@ -53,6 +53,11 @@ namespace NodeGraph
         return Found == NodeIndex.end() ? nullptr : &Nodes[Found->second];
     }
 
+    const NodeDefinition* Schema::FindDefinition(const Graph& /*InGraph*/, const Node& InNode) const
+    {
+        return InNode.IsPlaceholder() ? nullptr : FindNode(InNode.Type);
+    }
+
     const PinTypeInfo* Schema::FindType(const std::string& InName) const
     {
         for(const PinTypeInfo& Type : Types)
@@ -73,7 +78,7 @@ namespace NodeGraph
         uint32_t RequiredStages(const Schema& InSchema, const Graph& InGraph, const Node& InNode, const std::string& InPin,
                                 std::set<NodeGuid>& InOutVisited)
         {
-            const NodeDefinition* Def = InSchema.FindNode(InNode.Type);
+            const NodeDefinition* Def = InSchema.FindDefinition(InGraph, InNode);
             if(!Def) { return 0; }
             if(Def->Role == ENodeRole::Output)
             {
@@ -96,7 +101,7 @@ namespace NodeGraph
 
         uint32_t AvailableStages(const Schema& InSchema, const Graph& InGraph, const Node& InNode, std::set<NodeGuid>& InOutVisited)
         {
-            const NodeDefinition* Def = InSchema.FindNode(InNode.Type);
+            const NodeDefinition* Def = InSchema.FindDefinition(InGraph, InNode);
             uint32_t Stages = Def ? Def->StageMask : ~0u;
             if(!InOutVisited.insert(InNode.Id).second) { return Stages; }
 
@@ -136,7 +141,7 @@ namespace NodeGraph
         {
             uint32_t Bit = 1;
             while(!(Missing & Bit)) { Bit <<= 1; }
-            const NodeDefinition* Def = FindNode(InFromNode.Type);
+            const NodeDefinition* Def = FindDefinition(InGraph, InFromNode);
             const std::string Stage = GetStageName(Bit);
             *OutWhy = (Def ? Def->DisplayName : InFromNode.Type) + " (or something feeding it) can't be computed in the "
                     + (Stage.empty() ? std::string("required") : Stage) + " stage, which this input leads to";
@@ -155,7 +160,7 @@ namespace NodeGraph
 
         /* A derived pin no override claimed has no better answer than the
          * node's own type. */
-        const NodeDefinition* Def = FindNode(InNode.Type);
+        const NodeDefinition* Def = FindDefinition(InGraph, InNode);
         return Def ? ResolveWildcard(InGraph, InNode, *Def) : std::string();
     }
 
@@ -166,7 +171,7 @@ namespace NodeGraph
 
     std::string Schema::GetWildcardType(const Graph& InGraph, const Node& InNode) const
     {
-        const NodeDefinition* Def = InNode.IsPlaceholder() ? nullptr : FindNode(InNode.Type);
+        const NodeDefinition* Def = FindDefinition(InGraph, InNode);
         return Def && Def->HasWildcard() ? ResolveWildcard(InGraph, InNode, *Def) : std::string();
     }
 
@@ -210,7 +215,7 @@ namespace NodeGraph
 
                 const PinRef& Far = bIn ? Each.From : Each.To;
                 const Node* FarNode = InGraph.FindNode(Far.Node);
-                const NodeDefinition* FarDef = FarNode ? FindNode(FarNode->Type) : nullptr;
+                const NodeDefinition* FarDef = FarNode ? FindDefinition(InGraph, *FarNode) : nullptr;
                 const PinDefinition* FarPin = FarDef ? FarDef->FindPin(Far.Pin, bIn ? EPinDirection::Output : EPinDirection::Input) : nullptr;
                 if(!FarPin || FarNode == &InNode) { continue; }
 
@@ -259,25 +264,47 @@ namespace NodeGraph
 
     // === Registry ===============================================================
 
-    const std::vector<const Schema*>& GetSchemas()
+    namespace
     {
+        /* Retired schemas are kept to the end of the process: an open graph
+         * and its node items point into them (RefreshSchemas). A schema is a
+         * few hundred node definitions, and a refresh is a person's action. */
+        struct SchemaSet
+        {
+            std::vector<std::unique_ptr<Schema>> Live;
+            std::vector<std::unique_ptr<Schema>> Retired;
+            std::vector<const Schema*>           View;
+
+            void Build()
+            {
+                for(std::unique_ptr<Schema>& Each : Live) { Retired.push_back(std::move(Each)); }
+                Live.clear();
+                Live.push_back(CreateMaterialSchema());
+                Live.push_back(CreateScriptSchema());
+
+                View.clear();
+                for(const std::unique_ptr<Schema>& Each : Live) { View.push_back(Each.get()); }
+            }
+        };
+
         /* On first use: the script schema reads bindings other images register
          * during their static init. */
-        static const std::vector<std::unique_ptr<Schema>> Owned = []
+        SchemaSet& GetSchemaSet()
         {
-            std::vector<std::unique_ptr<Schema>> Result;
-            Result.push_back(CreateMaterialSchema());
-            Result.push_back(CreateScriptSchema());
-            return Result;
-        }();
+            static SchemaSet Set;
+            if(Set.Live.empty()) { Set.Build(); }
+            return Set;
+        }
+    }
 
-        static const std::vector<const Schema*> View = []
-        {
-            std::vector<const Schema*> Result;
-            for(const std::unique_ptr<Schema>& Each : Owned) { Result.push_back(Each.get()); }
-            return Result;
-        }();
-        return View;
+    const std::vector<const Schema*>& GetSchemas()
+    {
+        return GetSchemaSet().View;
+    }
+
+    void RefreshSchemas()
+    {
+        GetSchemaSet().Build();
     }
 
     const Schema* FindSchema(const std::string& InName)

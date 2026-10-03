@@ -36,6 +36,7 @@ namespace RenderCore
 namespace NimbleEngine
 {
     class ILevel;
+    class InputRouter;
 
     /*
      * THE GAME EXECUTABLE'S HOST. Owns the working directory and config, the
@@ -82,6 +83,9 @@ namespace NimbleEngine
         /* 0 is unlimited. Defaults to [Display] FrameRateLimit. */
         void     SetFrameRateLimit(uint32_t InFramesPerSecond) override;
         uint32_t GetFrameRateLimit() const override;
+        const InputState& GetInput() const override;
+        void SetMouseCaptured(bool bInCaptured) override;
+        bool IsMouseCaptured() const override;
 
     private:
         bool Initialize();
@@ -119,6 +123,9 @@ namespace NimbleEngine
         /* Process lifetime; lent to the session. */
         GameCore::ScriptEngine*  Scripts   = nullptr;
         RenderCore::Renderer*    Rendering = nullptr;
+
+        /* The window's SDL input, latched once a frame after the pump. */
+        InputRouter*             Router    = nullptr;
 
         /* Created after Scripts and Rendering; destroyed before them. */
         GameSession*             Session   = nullptr;

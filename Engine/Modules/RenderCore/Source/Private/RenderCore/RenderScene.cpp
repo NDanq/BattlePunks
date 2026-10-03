@@ -1,5 +1,6 @@
 #include "Public/RenderCore/RenderScene.h"
 
+#include <atomic>
 #include <vector>
 
 #include "Public/RenderCore/RenderContext.h"
@@ -51,6 +52,14 @@ namespace RenderCore
          * zero-sized viewport (a minimised window) keeps what there was.
          */
         SceneTargets Targets{"RenderCore.Scene"};
+
+        /* Targets.Final as of the last Render(), for PresentToWindow on the UI
+         * thread. A target is resized in place, never replaced, while the
+         * scene lives, so the pointer stays good; GDI skips a present while a
+         * resize is in progress. */
+        std::atomic<GDIRenderTarget*> PresentTarget{nullptr};
+
+        bool bReportsStats = true;
     };
 
     RenderScene::RenderScene() : P(new Impl())
@@ -247,7 +256,10 @@ namespace RenderCore
          * leaves the final colour bound, for the present and the overlay. */
         InContext.RenderSceneStages(P->Targets, P->ClearColor);
 
-        SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
+        if(P->bReportsStats)
+        {
+            SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
+        }
 
 #if WITH_EDITOR
         /* Tool overlay over everything, unculled; consumed each frame. */
@@ -266,6 +278,23 @@ namespace RenderCore
 #endif
 
         GDIEndRendering();
+
+        /* After EndRendering: the final colour is now in its presentable state. */
+        P->PresentTarget.store(P->Targets.Final, std::memory_order_release);
+    }
+
+    void RenderScene::SetReportsStats(const bool bInReports)
+    {
+        P->bReportsStats = bInReports;
+    }
+
+    void RenderScene::PresentToWindow(const EngineCore::WindowHandle InWindow) const
+    {
+        GDIRenderTarget* Target = P->PresentTarget.load(std::memory_order_acquire);
+        if(Target && GDynamicGDI)
+        {
+            GDynamicGDI->PresentRenderTargetToWindow(InWindow, Target);
+        }
     }
 
     size_t RenderScene::GetProxyCount() const
@@ -289,6 +318,7 @@ namespace RenderCore
          * render thread, like the rest of this class, and before
          * Renderer::Shutdown stops that thread -- which is what keeps the
          * GPU image's destruction on the thread that owns the context. */
+        P->PresentTarget.store(nullptr, std::memory_order_release);
         P->Targets.Release();
     }
 }

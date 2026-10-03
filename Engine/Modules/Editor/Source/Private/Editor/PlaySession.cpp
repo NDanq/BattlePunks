@@ -84,6 +84,11 @@ void PlaySession::Stop()
 {
     const bool bWasRunning = Session != nullptr;
 
+    /* The viewport's window outlives the run; it must not call into this one. */
+    Input.Detach();
+    Input.GetPending() = NimbleEngine::InputState();
+    Input.Latch(0);
+
     if(Session)
     {
         /* The render thread may still be drawing the level's last frame from
@@ -130,6 +135,14 @@ void PlaySession::Tick(const double InDeltaSeconds, const EngineCore::Size InVie
     {
         return;
     }
+
+    /* What arrived since the last frame becomes this frame's -- as the
+     * launcher latches after its pump. Blocked, it is dropped unread. */
+    if(bInputBlocked)
+    {
+        Input.GetPending() = NimbleEngine::InputState();
+    }
+    Input.Latch(FrameNumber);
 
     NimbleEngine::FrameContext Frame;
     Frame.DeltaSeconds   = FrameNumber == 0 ? 0.0 : InDeltaSeconds;

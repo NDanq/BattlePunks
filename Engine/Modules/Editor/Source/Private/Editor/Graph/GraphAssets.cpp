@@ -18,13 +18,18 @@
 
 #include <QTimer>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/GameModule.h"
 #include "Public/NodeGraph/GraphFile.h"
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/Editor/EditorContext.h"
+#include "Private/Editor/Prefab/PrefabAssets.h"
+#include "Public/Editor/EditorDocument.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphDocument.h"
 #include "Private/Editor/Graph/GraphEditorTab.h"
@@ -525,14 +530,16 @@ namespace EditorGraphs
             OutMessage = QStringLiteral("'%1' is not a material graph in the project").arg(InName);
             return false;
         }
-        EditorContext* Ctx = Context();
-        if(!Ctx)
+        /* The level's selection: the one document there is until the Prefab
+         * Editor adds its own. */
+        EditorDocument* Doc = Context() ? &Context()->GetLevel() : nullptr;
+        if(!Doc)
         {
             OutMessage = QStringLiteral("No scene to apply it to");
             return false;
         }
-        const GameCore::EntityID Target = Ctx->GetSelection();
-        if(!Target.IsSet() || !Ctx->GetWorld().IsAlive(Target))
+        const GameCore::EntityID Target = Doc->GetSelection();
+        if(!Target.IsSet() || !Doc->GetWorld().IsAlive(Target))
         {
             OutMessage = QStringLiteral("Select an entity in the Outliner or the viewport first");
             return false;
@@ -545,10 +552,10 @@ namespace EditorGraphs
         }
 
         const GameCore::ComponentTypeID Type = RenderCore::RenderComponent::StaticType().ID;
-        const GameCore::Entity Handle = Ctx->GetWorld().GetEntity(Target);
-        if(!Handle.GetComponent<RenderCore::RenderComponent>() && !Ctx->AddComponent(Target, Type))
+        const GameCore::Entity Handle = Doc->GetWorld().GetEntity(Target);
+        if(!Handle.GetComponent<RenderCore::RenderComponent>() && !Doc->AddComponent(Target, Type))
         {
-            OutMessage = QStringLiteral("Could not add a RenderComponent to %1").arg(Ctx->GetDisplayName(Target));
+            OutMessage = QStringLiteral("Could not add a RenderComponent to %1").arg(Doc->GetDisplayName(Target));
             return false;
         }
 
@@ -557,9 +564,9 @@ namespace EditorGraphs
         /* Slot 0: the quad's, and a mesh's first section's. */
         std::memset(Render->Materials[0], 0, sizeof(Render->Materials[0]));
         std::memcpy(Render->Materials[0], Name.constData(), size_t(Name.size()));
-        Ctx->NotifyPropertyEdited(Target, Type);
+        Doc->NotifyPropertyEdited(Target, Type);
 
-        OutMessage = QStringLiteral("%1 now draws with %2").arg(Ctx->GetDisplayName(Target), InName);
+        OutMessage = QStringLiteral("%1 now draws with %2").arg(Doc->GetDisplayName(Target), InName);
         return true;
     }
 
@@ -633,6 +640,48 @@ namespace EditorGraphs
         return Failures;
     }
 
+    bool RefreshGameDeclarations(const bool bInGameIsLoaded)
+    {
+        const auto Describe = []()
+        {
+            std::string Names;
+            for(size_t Index = 0; Index < GameCore::GetScriptLibraryCount(); ++Index)
+            {
+                GameCore::ScriptLibraryInfo Info;
+                if(GameCore::GetScriptLibrary(Index, Info)) { Names += (Names.empty() ? "" : ", ") + std::string(Info.Name); }
+            }
+            return Names.empty() ? std::string("no script libraries") : "script libraries " + Names;
+        };
+
+        if(bInGameIsLoaded)
+        {
+            RefreshSchemas();
+            EditorPrefabs::CacheNativePrefabs();
+            CORE_LOG("[Graphs] script nodes refreshed from the running game: " + Describe())
+            return true;
+        }
+
+        const EngineCore::ConfigVar* ModuleVar = EngineCore::ConfigFindVar("Game", "Module");
+        if(!ModuleVar || ModuleVar->GetString()[0] == '\0')
+        {
+            CORE_LOG("[Graphs] no [Game] Module; script graphs offer the engine's nodes only")
+            return false;
+        }
+
+        /* Its own host, as Play has: loaded for the copy, then gone. */
+        NimbleEngine::GameModuleHost Game;
+        if(!Game.Load(""))
+        {
+            CORE_LOG_WARN("[Graphs] could not load the game module for its script declarations; build it (F7), then Build > Refresh Script Nodes")
+            return false;
+        }
+        RefreshSchemas();
+        EditorPrefabs::CacheNativePrefabs();
+        CORE_LOG("[Graphs] script nodes refreshed from " + Game.GetModuleName() + ": " + Describe())
+        Game.Unload();
+        return true;
+    }
+
     GraphEditorTab* OpenGraph(const QString& InPath, QWidget* InParent)
     {
         const QString Key = Canonical(InPath);
@@ -680,20 +729,30 @@ namespace EditorGraphs
         }
         Path = ToQ(MakeGraphPath(Base, InSchema));
 
+        QString Error;
+        if(!CreateGraphFile(InSchema, Path, Error))
+        {
+            QMessageBox::warning(InParent, QStringLiteral("New Graph"), QStringLiteral("Could not write\n%1\n\n%2").arg(Path, Error));
+            return nullptr;
+        }
+        return OpenGraph(Path, InParent);
+    }
+
+    bool CreateGraphFile(const Schema& InSchema, const QString& InPath, QString& OutError)
+    {
         Graph Starter = StarterGraph(InSchema);
-        Starter.Name = GetGraphBaseName(ToStd(Path));
+        Starter.Name = GetGraphBaseName(ToStd(InPath));
 
         std::string Error;
         CompileResult Result;
-        if(!CompileAndSave(Path, Starter, Result, Error))
+        if(!CompileAndSave(InPath, Starter, Result, Error))
         {
-            QMessageBox::warning(InParent, QStringLiteral("New Graph"), QStringLiteral("Could not write\n%1\n\n%2").arg(Path, ToQ(Error)));
-            return nullptr;
+            OutError = ToQ(Error);
+            return false;
         }
-
         QString Message;
-        StageOutput(Path, Starter, Result, Message);
-        return OpenGraph(Path, InParent);
+        StageOutput(InPath, Starter, Result, Message);
+        return true;
     }
 
     bool CloseAllGraphs()

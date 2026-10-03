@@ -3,18 +3,18 @@
 
 #if WITH_EDITOR
 
-#include <QElapsedTimer>
 #include <QPoint>
 #include <QSet>
-#include <QTimer>
 #include <QWidget>
 
 #include "Public/Core/CoreTypes.h"
+#include "Public/Editor/EditorContext.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/Editor/EditorCamera.h"
 #include "Public/Editor/TransformGizmo.h"
 
 class EditorContext;
+class EditorDocument;
 namespace GameCore { struct TransformComponent; }
 
 /*
@@ -37,21 +37,25 @@ namespace GameCore { struct TransformComponent; }
  *   X                   handles in world or local space
  *   F / Home            frame the selection / the whole scene
  */
-class ViewportWidget : public QWidget
+class ViewportWidget : public QWidget, public EditorViewportClient
 {
     Q_OBJECT
 
 public:
-    explicit ViewportWidget(EditorContext& InContext, QWidget* InParent = nullptr);
+    /* Draws through InContext's Renderer and edits InDocument. */
+    ViewportWidget(EditorContext& InContext, EditorDocument& InDocument, QWidget* InParent = nullptr);
+    ~ViewportWidget() override;
+
+    // === EditorViewportClient ================================================
+    EditorDocument&          GetViewportDocument() override { return Document; }
+    EngineCore::WindowHandle GetViewportWindow() override { return GetWindowHandle(); }
+    bool                     PrepareFrame(float InDeltaSeconds, bool bInEditorView, Frame& OutFrame) override;
 
     /* Forces the native window into existence if it is not yet. */
     EngineCore::WindowHandle GetWindowHandle();
 
     /* PHYSICAL pixels -- what the Renderer's targets are sized from. */
     EngineCore::Size GetPixelSize() const;
-
-    /* Starts the frame timer. Call once the Renderer is initialized. */
-    void StartRendering();
 
     EditorCamera& GetCamera() { return Camera; }
 
@@ -110,7 +114,6 @@ private:
     /* What a held mouse button is doing. One at a time. */
     enum class EDrag { None, Look, Orbit, Dolly, Pan, Gizmo };
 
-    void OnFrame();
 
     /* WASD/QE flying while looking. */
     void ApplyFlyInput(float InDeltaSeconds);
@@ -145,18 +148,22 @@ private:
     /* A dragged .nmmesh in the project, as its runtime path; else empty. */
     QString DroppedMesh(const class QMimeData* InData) const;
 
+    /* A dragged .nmprefab in the project, as its file path; else empty. Not
+     * into a prefab: prefabs do not nest. */
+    QString DroppedPrefab(const class QMimeData* InData) const;
+
     EngineCore::Size GetLogicalSize() const { return EngineCore::Size(width(), height()); }
 
-    EditorContext& Context;
+    EditorContext&  Context;
+    EditorDocument& Document;
     EditorCamera   Camera;
 
-    QTimer        FrameTimer;
-    QElapsedTimer FrameClock;
 
     EDrag               Drag = EDrag::None;
     Qt::MouseButton     DragButton = Qt::NoButton;
     EngineCore::Vector3 DragPivot;
     QPoint              LastMousePos;
+    QPoint FallbackMousePos;   // Play-in-Editor without SDL: the last position, for deltas
     QPoint              PressPos;
     QSet<int>           HeldKeys;
 

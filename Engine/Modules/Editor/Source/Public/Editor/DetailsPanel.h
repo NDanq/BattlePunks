@@ -15,7 +15,7 @@
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityID.h"
 
-class EditorContext;
+class EditorDocument;
 class PropertyEditor;
 class QCheckBox;
 class QLabel;
@@ -30,7 +30,7 @@ class QVBoxLayout;
  * section per component with its registered properties (a header even if it
  * has none).
  *
- *   Entity         Name, Script, the script's run status, cull flag.
+ *   Entity         Name, and the prefab an instance's entity came from.
  *   Per property   a reset arrow while the value differs from the default.
  *   Per array      a list: the entries in use, each removable (later ones
  *                  move up), and "+ Add" for the next.
@@ -45,13 +45,14 @@ class DetailsPanel : public QWidget
     Q_OBJECT
 
 public:
-    explicit DetailsPanel(EditorContext& InContext, QWidget* InParent = nullptr);
+    explicit DetailsPanel(EditorDocument& InDocument, QWidget* InParent = nullptr);
 
 private:
     /* One property's editor and its reset arrow. */
     struct PropertyRow
     {
         PropertyEditor*                   Editor = nullptr;
+        QLabel*                           Label  = nullptr;   // bold while it overrides the prefab
         QToolButton*                      Reset  = nullptr;   // null for a read-only property
         GameCore::ComponentTypeID         Type   = GameCore::COMPONENT_TYPE_INVALID;
         GameCore::ComponentPropertyEntry  Entry;
@@ -65,12 +66,15 @@ private:
         size_t                           Shown = 0;
     };
 
-    /* One component section: its default bytes and its header Reset. */
+    /* One component section: its default bytes and its header Reset; on a
+     * prefab instance's entity, what the prefab holds and Revert to Prefab. */
     struct ComponentSection
     {
         GameCore::ComponentTypeID                   Type = GameCore::COMPONENT_TYPE_INVALID;
-        std::shared_ptr<const std::vector<uint8_t>> Defaults;   // empty if the type has none
+        std::shared_ptr<const std::vector<uint8_t>> Defaults;       // empty if the type has none
         QToolButton*                                ResetAll = nullptr;
+        std::shared_ptr<const std::vector<uint8_t>> PrefabValues;   // empty unless the prefab has this component here
+        QToolButton*                                RevertAll = nullptr;
     };
 
     void Rebuild();
@@ -95,22 +99,21 @@ private:
     void ResetProperty(const PropertyRow& InRow);
     void ResetComponent(GameCore::ComponentTypeID InType);
 
+    /* OVERRIDES: on a prefab instance's entity, a property that differs from
+     * what the prefab holds. Reverting copies the prefab's value back, as an
+     * ordinary (undoable) property edit. The root's Transform is the
+     * instance's placement, not an override. */
+    bool IsOverridden(const PropertyRow& InRow) const;
+    void RevertPropertyToPrefab(const PropertyRow& InRow);
+    void RevertComponentToPrefab(GameCore::ComponentTypeID InType);
+
     /* Erases element InIndex: the later ones move up, the last is the default. */
     void RemoveArrayElement(GameCore::ComponentTypeID InType, const GameCore::ComponentPropertyEntry& InEntry, size_t InIndex);
 
     /* Rebuild once the current event is done (a button may be deleting itself). */
     void QueueRebuild();
 
-    /* Sets InEntity's script to InFile (.lua or .script.nmgraph), as the game names it. */
-    void UseScriptFile(GameCore::EntityID InEntity, const QString& InFile);
-
-protected:
-    /* The Script field's drops. */
-    bool eventFilter(QObject* InWatched, QEvent* InEvent) override;
-
-private:
-
-    EditorContext& Context;
+    EditorDocument& Document;
 
     QLabel*      Header      = nullptr;
     QScrollArea* Scroll      = nullptr;
@@ -119,9 +122,6 @@ private:
 
     /* The Entity section's editors; null when nothing is shown. */
     QLineEdit* NameEdit     = nullptr;
-    QLineEdit* ScriptEdit   = nullptr;
-    QLabel*    ScriptStatus = nullptr;
-    QCheckBox* CullCheck    = nullptr;
 
     GameCore::EntityID                     ShownEntity;
     std::vector<GameCore::ComponentTypeID> ShownTypes;

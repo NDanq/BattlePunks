@@ -3,6 +3,8 @@
 #include "Private/Editor/Graph/GraphDocument.h"
 
 #include <algorithm>
+#include <set>
+#include <utility>
 
 #include <QUndoCommand>
 #include <QUndoStack>
@@ -73,7 +75,7 @@ void GraphDocument::Edit(const QString& InLabel, const std::function<void(NodeGr
 const NodeDefinition* GraphDocument::FindDefinition(const NodeGuid& InNode) const
 {
     const Node* Found = Model.FindNode(InNode);
-    return Found && !Found->IsPlaceholder() ? SchemaPtr->FindNode(Found->Type) : nullptr;
+    return Found ? SchemaPtr->FindDefinition(Model, *Found) : nullptr;
 }
 
 const PinDefinition* GraphDocument::FindPin(const PinRef& InPin) const
@@ -128,8 +130,8 @@ bool GraphDocument::PlanLink(const NodeGraph::Graph& InGraph, const PinRef& InA,
 
     const Node* NodeA = InGraph.FindNode(InA.Node);
     const Node* NodeB = InGraph.FindNode(InB.Node);
-    const NodeDefinition* DefA = NodeA && !NodeA->IsPlaceholder() ? SchemaPtr->FindNode(NodeA->Type) : nullptr;
-    const NodeDefinition* DefB = NodeB && !NodeB->IsPlaceholder() ? SchemaPtr->FindNode(NodeB->Type) : nullptr;
+    const NodeDefinition* DefA = NodeA ? SchemaPtr->FindDefinition(InGraph, *NodeA) : nullptr;
+    const NodeDefinition* DefB = NodeB ? SchemaPtr->FindDefinition(InGraph, *NodeB) : nullptr;
     const PinDefinition* PinA = DefA ? DefA->FindPin(InA.Pin) : nullptr;
     const PinDefinition* PinB = DefB ? DefB->FindPin(InB.Pin) : nullptr;
     if(!PinA || !PinB) { return Fail(QStringLiteral("Unknown pin")); }
@@ -202,7 +204,7 @@ void GraphDocument::ApplyLink(NodeGraph::Graph& InOutGraph, const LinkPlan& InPl
     const PinDefinition* FromPin = nullptr;
     if(const Node* From = InOutGraph.FindNode(InPlan.Made.From.Node))
     {
-        if(const NodeDefinition* Def = SchemaPtr->FindNode(From->Type)) { FromPin = Def->FindPin(InPlan.Made.From.Pin); }
+        if(const NodeDefinition* Def = SchemaPtr->FindDefinition(InOutGraph, *From)) { FromPin = Def->FindPin(InPlan.Made.From.Pin); }
     }
     const bool bExec = FromPin && FromPin->IsExec();
 
@@ -239,7 +241,9 @@ NodeGuid GraphDocument::AddNode(const std::string& InType, const QPointF& InPos,
         G.Nodes.push_back(Added);
         if(!InConnectFrom) { return; }
 
-        for(const PinDefinition& Pin : Def->Pins)
+        /* Its pins in this graph: a function node's come from its function. */
+        const NodeDefinition* Placed = SchemaPtr->FindDefinition(G, Added);
+        for(const PinDefinition& Pin : Placed->Pins)
         {
             LinkPlan Plan;
             if(PlanLink(G, From, PinRef{ Added.Id, Pin.Name }, Plan, nullptr))
@@ -362,6 +366,77 @@ void GraphDocument::SetVariables(const std::vector<Variable>& InVariables)
             }
         }
         G.Variables = InVariables;
+    });
+}
+
+void GraphDocument::SetFunctions(const std::vector<GraphFunction>& InFunctions)
+{
+    Edit(QStringLiteral("Edit Functions"), [&](NodeGraph::Graph& G)
+    {
+        const auto NamesFunction = [](const Node& InNode, const std::string& InName)
+        {
+            const std::string* Named = InNode.FindProperty("Function");
+            return Named && *Named == InName;
+        };
+
+        /* Matched by position, as variables are: a renamed function carries
+         * the nodes that named it, a renamed input or output its links and
+         * values. */
+        for(size_t Index = 0; Index < G.Functions.size() && Index < InFunctions.size(); ++Index)
+        {
+            const GraphFunction& Old = G.Functions[Index];
+            const GraphFunction& New = InFunctions[Index];
+
+            std::map<std::string, std::string> PinRenames;
+            for(const auto Lists : { std::make_pair(&Old.Inputs, &New.Inputs), std::make_pair(&Old.Outputs, &New.Outputs) })
+            {
+                for(size_t Pin = 0; Pin < Lists.first->size() && Pin < Lists.second->size(); ++Pin)
+                {
+                    const std::string& From = (*Lists.first)[Pin].Name;
+                    const std::string& To   = (*Lists.second)[Pin].Name;
+                    if(From != To) { PinRenames[From] = To; }
+                }
+            }
+
+            std::set<NodeGuid> Users;
+            for(Node& Each : G.Nodes)
+            {
+                if(!NamesFunction(Each, Old.Name)) { continue; }
+                Users.insert(Each.Id);
+                Each.Properties["Function"] = New.Name;
+
+                std::map<std::string, std::string> Constants;
+                for(const auto& Constant : Each.Constants)
+                {
+                    const auto Renamed = PinRenames.find(Constant.first);
+                    Constants[Renamed == PinRenames.end() ? Constant.first : Renamed->second] = Constant.second;
+                }
+                Each.Constants = std::move(Constants);
+            }
+            for(Link& Each : G.Links)
+            {
+                for(PinRef* End : { &Each.From, &Each.To })
+                {
+                    const auto Renamed = PinRenames.find(End->Pin);
+                    if(Users.count(End->Node) && Renamed != PinRenames.end()) { End->Pin = Renamed->second; }
+                }
+            }
+        }
+        G.Functions = InFunctions;
+
+        /* What a removed input or output was linked to lets go; a retyped one
+         * keeps its links, and compiling says if they no longer fit. */
+        const auto HasPin = [&](const PinRef& InEnd, const EPinDirection InDirection)
+        {
+            const Node* Owner = G.FindNode(InEnd.Node);
+            if(!Owner || !Owner->FindProperty("Function")) { return true; }
+            const NodeDefinition* Def = SchemaPtr->FindDefinition(G, *Owner);
+            return !Def || Def->FindPin(InEnd.Pin, InDirection) != nullptr;
+        };
+        G.Links.erase(std::remove_if(G.Links.begin(), G.Links.end(), [&](const Link& Each)
+        {
+            return !HasPin(Each.From, EPinDirection::Output) || !HasPin(Each.To, EPinDirection::Input);
+        }), G.Links.end());
     });
 }
 

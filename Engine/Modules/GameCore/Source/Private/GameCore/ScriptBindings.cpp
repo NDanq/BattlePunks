@@ -4,8 +4,10 @@
 #include <string>
 #include <vector>
 
+#include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/EventBus.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/TickPhase.h"
 #include "Public/GameCore/World.h"
 
@@ -115,10 +117,16 @@ namespace GameCore
                 return 1;
             }
 
-            /* Zero-initialised init bytes -- see DESIGN.md for why this
-             * generic by-name path cannot call a real constructor. */
-            std::vector<uint8_t> ZeroInit(Info->SizeBytes, 0);
-            if(!Entity(W, E).AddComponentByType(Info->ID, ZeroInit.data()))
+            /* The type's defaults, from its serializer's defaults function --
+             * the default-constructed instance a save loads into. This by-name
+             * path cannot call the constructor itself (DESIGN.md). A type
+             * without a serializer starts from zeroed bytes. */
+            std::vector<uint8_t> Init(Info->SizeBytes, 0);
+            if(const ComponentSerializerInfo* Serializer = FindComponentSerializer(Info->ID))
+            {
+                if(Serializer->DefaultsFn) { Serializer->DefaultsFn(Init.data()); }
+            }
+            if(!Entity(W, E).AddComponentByType(Info->ID, Init.data()))
             {
                 lua_pushnil(InState);
                 return 1;
@@ -162,37 +170,79 @@ namespace GameCore
             return 1;
         }
 
-        /* e:SetScript("Scripts/Mover.lua") -- Entity::SetScript. nil or ""
-         * clears. Deferred (the World is ticking). */
-        int Entity_SetScript(lua_State* InState)
+        /* e:SetParent(parent[, keepWorld]) -- nil detaches; keepWorld
+         * defaults to true (stay put in the world). False if refused. */
+        int Entity_SetParent(lua_State* InState)
         {
             const EntityID E = LuaCheckEntity(InState, 1);
-            const char* Path = luaL_optstring(InState, 2, nullptr);
+            EntityID Parent;
+            if(!lua_isnoneornil(InState, 2)) { Parent = LuaCheckEntity(InState, 2); }
+            const bool bKeepWorld = lua_isnoneornil(InState, 3) || lua_toboolean(InState, 3);
             World* W = GetBoundWorld(InState);
-            lua_pushboolean(InState, Entity(W, E).SetScript(Path));
+            lua_pushboolean(InState, Entity(W, E).SetParent(Parent, bKeepWorld));
             return 1;
         }
 
-        int Entity_ClearScript(lua_State* InState)
+        /* An Entity -- not nil -- without a parent, so p:IsValid() answers
+         * either way (and a graph's Entity pin always has a value). */
+        int Entity_GetParent(lua_State* InState)
         {
             const EntityID E = LuaCheckEntity(InState, 1);
             World* W = GetBoundWorld(InState);
-            lua_pushboolean(InState, Entity(W, E).ClearScript());
+            LuaPushEntity(InState, Entity(W, E).GetParent());
             return 1;
         }
 
-        /* The path, or nil if there is none. */
-        int Entity_GetScript(lua_State* InState)
+        int Entity_GetChildCount(lua_State* InState)
         {
             const EntityID E = LuaCheckEntity(InState, 1);
             World* W = GetBoundWorld(InState);
-            const char* Path = Entity(W, E).GetScriptPath();
-            if(Path[0] == '\0') { lua_pushnil(InState); }
-            else                 { lua_pushstring(InState, Path); }
+            lua_pushinteger(InState, lua_Integer(Entity(W, E).GetChildCount()));
+            return 1;
+        }
+
+        /* e:GetChild(i), 1-based like a Lua array; an unset Entity past the end. */
+        int Entity_GetChild(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            const lua_Integer Wanted = luaL_checkinteger(InState, 2);
+            World* W = GetBoundWorld(InState);
+            EntityID Child = Wanted >= 1 ? Entity(W, E).GetFirstChild() : EntityID();
+            for(lua_Integer Index = 1; Index < Wanted && Child.IsSet(); ++Index)
+            {
+                Child = Entity(W, Child).GetNextSibling();
+            }
+            LuaPushEntity(InState, Child);
+            return 1;
+        }
+
+        /* An array of the children, in order. */
+        int Entity_GetChildren(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            const Entity Handle(W, E);
+            lua_createtable(InState, int(Handle.GetChildCount()), 0);
+            lua_Integer Index = 0;
+            for(EntityID Child = Handle.GetFirstChild(); Child.IsSet(); Child = Entity(W, Child).GetNextSibling())
+            {
+                LuaPushEntity(InState, Child);
+                lua_rawseti(InState, -2, ++Index);
+            }
+            return 1;
+        }
+
+        /* The prefab instance it belongs to; IsValid() false for a loose entity. */
+        int Entity_GetInstance(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            LuaPushInstance(InState, Entity(W, E).GetInstance());
             return 1;
         }
 
         const luaL_Reg GEntityMethods[] = {
+            { "GetInstance",     Entity_GetInstance },
             { "IsValid",         Entity_IsValid },
             { "GetID",           Entity_GetID },
             { "GetName",         Entity_GetName },
@@ -203,9 +253,11 @@ namespace GameCore
             { "GetComponent",    Entity_GetComponent },
             { "HasComponent",    Entity_HasComponent },
             { "RemoveComponent", Entity_RemoveComponent },
-            { "SetScript",       Entity_SetScript },
-            { "GetScript",       Entity_GetScript },
-            { "ClearScript",     Entity_ClearScript },
+            { "SetParent",       Entity_SetParent },
+            { "GetParent",       Entity_GetParent },
+            { "GetChildCount",   Entity_GetChildCount },
+            { "GetChild",        Entity_GetChild },
+            { "GetChildren",     Entity_GetChildren },
             { nullptr, nullptr }
         };
 
@@ -218,6 +270,21 @@ namespace GameCore
             const char* Name = lua_isstring(InState, 1) ? lua_tostring(InState, 1) : nullptr;
             const EntityID E = Name ? W->CreateEntity(Name) : W->CreateEntity();
             LuaPushEntity(InState, E);
+            return 1;
+        }
+
+        /* World.SpawnPrefab(path[, x, y, z]) -- the instance's root Entity;
+         * IsValid() false if the prefab could not be loaded. */
+        int World_SpawnPrefab(lua_State* InState)
+        {
+            World* W = GetBoundWorld(InState);
+            if(!W) { return luaL_error(InState, "no World is bound"); }
+            const char* Path = luaL_checkstring(InState, 1);
+            TransformPose At;
+            At.Position = EngineCore::Vector3(luaL_optnumber(InState, 2, 0.0), luaL_optnumber(InState, 3, 0.0),
+                                              luaL_optnumber(InState, 4, 0.0));
+            const PrefabInstance Spawned = W->SpawnPrefab(Path, At);
+            LuaPushEntity(InState, Spawned.GetRoot().GetID());
             return 1;
         }
 
@@ -347,23 +414,9 @@ namespace GameCore
             return 2;
         }
 
-        int World_SetActiveRegion(lua_State* InState)
-        {
-            World* W = GetBoundWorld(InState);
-            const double MinX = luaL_checknumber(InState, 1), MinY = luaL_checknumber(InState, 2), MinZ = luaL_checknumber(InState, 3);
-            const double MaxX = luaL_checknumber(InState, 4), MaxY = luaL_checknumber(InState, 5), MaxZ = luaL_checknumber(InState, 6);
-            if(W) { W->SetActiveRegion(AABB(EngineCore::Vector3(MinX, MinY, MinZ), EngineCore::Vector3(MaxX, MaxY, MaxZ))); }
-            return 0;
-        }
-
-        int World_ClearActiveRegion(lua_State* InState)
-        {
-            if(World* W = GetBoundWorld(InState)) { W->ClearActiveRegion(); }
-            return 0;
-        }
-
         const luaL_Reg GWorldFunctions[] = {
             { "CreateEntity",     World_CreateEntity },
+            { "SpawnPrefab",      World_SpawnPrefab },
             { "DestroyEntity",    World_DestroyEntity },
             { "FindEntity",       World_FindEntity },
             { "GetEntityCount",   World_GetEntityCount },
@@ -372,8 +425,6 @@ namespace GameCore
             { "RemoveSystem",     World_RemoveSystem },
             { "QueryBounds",      World_QueryBounds },
             { "Raycast",          World_Raycast },
-            { "SetActiveRegion",  World_SetActiveRegion },
-            { "ClearActiveRegion", World_ClearActiveRegion },
             { nullptr, nullptr }
         };
 
@@ -495,6 +546,118 @@ namespace GameCore
             { nullptr, nullptr }
         };
 
+        // === PrefabInstance userdata =========================================
+        // A script's self.Instance, and Entity:GetInstance().
+
+        constexpr const char* INSTANCE_METATABLE = "GameCore.PrefabInstance";
+
+        PrefabInstance CheckInstance(lua_State* InState, const int InIndex)
+        {
+            const PrefabInstanceID ID = LuaCheckInstance(InState, InIndex);
+            return PrefabInstance(GetBoundWorld(InState), ID);
+        }
+
+        /* "PrePhysics" .. "PostUpdate", or the TickPhase integer. Raises otherwise. */
+        ETickPhase CheckPhase(lua_State* InState, const int InIndex)
+        {
+            const lua_Integer Value = luaL_checkinteger(InState, InIndex);
+            if(Value < 0 || Value >= TP_MAX)
+            {
+                luaL_argerror(InState, InIndex, "not a TickPhase");
+            }
+            return ETickPhase(Value);
+        }
+
+        int Instance_IsValid(lua_State* InState)
+        {
+            lua_pushboolean(InState, CheckInstance(InState, 1).IsAlive());
+            return 1;
+        }
+
+        int Instance_GetRoot(lua_State* InState)
+        {
+            LuaPushEntity(InState, CheckInstance(InState, 1).GetRoot().GetID());
+            return 1;
+        }
+
+        /* inst:Find("Barrel") -- by TEMPLATE name; IsValid() false if none. */
+        int Instance_Find(lua_State* InState)
+        {
+            const PrefabInstance Instance = CheckInstance(InState, 1);
+            const char* Name = luaL_checkstring(InState, 2);
+            LuaPushEntity(InState, Instance.FindEntity(Name).GetID());
+            return 1;
+        }
+
+        int Instance_GetName(lua_State* InState)
+        {
+            lua_pushstring(InState, CheckInstance(InState, 1).GetName());
+            return 1;
+        }
+
+        int Instance_GetPrefabPath(lua_State* InState)
+        {
+            lua_pushstring(InState, CheckInstance(InState, 1).GetPrefabPath());
+            return 1;
+        }
+
+        /* "Tick", "EventsOnly" or "Off". */
+        int Instance_GetTickMode(lua_State* InState)
+        {
+            lua_pushstring(InState, PrefabTickModeName(CheckInstance(InState, 1).GetTickMode()));
+            return 1;
+        }
+
+        int Instance_SetTickMode(lua_State* InState)
+        {
+            const PrefabInstance Instance = CheckInstance(InState, 1);
+            const char* Name = luaL_checkstring(InState, 2);
+            EPrefabTickMode Mode;
+            if(!ParsePrefabTickMode(Name, Mode))
+            {
+                return luaL_argerror(InState, 2, "expected \"Tick\", \"EventsOnly\" or \"Off\"");
+            }
+            lua_pushboolean(InState, Instance.SetTickMode(Mode));
+            return 1;
+        }
+
+        int Instance_IsPhaseEnabled(lua_State* InState)
+        {
+            const PrefabInstance Instance = CheckInstance(InState, 1);
+            lua_pushboolean(InState, Instance.IsPhaseEnabled(CheckPhase(InState, 2)));
+            return 1;
+        }
+
+        /* inst:SetPhaseEnabled(TickPhase.PostUpdate, false) */
+        int Instance_SetPhaseEnabled(lua_State* InState)
+        {
+            const PrefabInstance Instance = CheckInstance(InState, 1);
+            const ETickPhase Phase = CheckPhase(InState, 2);
+            const bool bEnabled = lua_toboolean(InState, 3) != 0;
+            lua_pushboolean(InState, Instance.SetPhaseEnabled(Phase, bEnabled));
+            return 1;
+        }
+
+        int Instance_Destroy(lua_State* InState)
+        {
+            CheckInstance(InState, 1).Destroy();
+            return 0;
+        }
+
+        const luaL_Reg GInstanceMethods[] = {
+            { "IsValid",         Instance_IsValid },
+            { "GetRoot",         Instance_GetRoot },
+            { "Find",            Instance_Find },
+            { "GetName",         Instance_GetName },
+            { "GetPrefabPath",   Instance_GetPrefabPath },
+            { "GetTickMode",     Instance_GetTickMode },
+            { "SetTickMode",     Instance_SetTickMode },
+            { "IsPhaseEnabled",  Instance_IsPhaseEnabled },
+            { "SetPhaseEnabled", Instance_SetPhaseEnabled },
+            { "Destroy",         Instance_Destroy },
+            { nullptr, nullptr }
+        };
+
         // === installers ======================================================
 
         void RegisterMetatable(lua_State* InState, const char* InName, const luaL_Reg* InMethods)
@@ -520,9 +683,30 @@ namespace GameCore
         return *Slot;
     }
 
+    void LuaPushInstance(lua_State* InState, const PrefabInstanceID InInstance)
+    {
+        PrefabInstanceID* Slot = static_cast<PrefabInstanceID*>(lua_newuserdatauv(InState, sizeof(PrefabInstanceID), 0));
+        *Slot = InInstance;
+        luaL_setmetatable(InState, INSTANCE_METATABLE);
+    }
+
+    PrefabInstanceID LuaCheckInstance(lua_State* InState, const int InIndex)
+    {
+        const PrefabInstanceID* Slot = static_cast<const PrefabInstanceID*>(luaL_checkudata(InState, InIndex, INSTANCE_METATABLE));
+        return *Slot;
+    }
+
     World* LuaGetBoundWorld(lua_State* InState)
     {
         return GetBoundWorld(InState);
+    }
+
+    bool LuaToEntity(lua_State* InState, const int InIndex, EntityID& OutEntity)
+    {
+        const EntityID* Slot = static_cast<const EntityID*>(luaL_testudata(InState, InIndex, ENTITY_METATABLE));
+        if(!Slot) { return false; }
+        OutEntity = *Slot;
+        return true;
     }
 
     void ScriptBindings_Install(lua_State* InState, World* InWorld)
@@ -532,6 +716,7 @@ namespace GameCore
         /* Component metatables are not registered here: ComponentScript.cpp
          * builds each type's the first time one of its proxies is pushed. */
         RegisterMetatable(InState, ENTITY_METATABLE, GEntityMethods);
+        RegisterMetatable(InState, INSTANCE_METATABLE, GInstanceMethods);
 
         lua_newtable(InState);
         luaL_setfuncs(InState, GWorldFunctions, 0);
@@ -547,5 +732,8 @@ namespace GameCore
         lua_pushinteger(InState, TP_PostPhysics); lua_setfield(InState, -2, "PostPhysics");
         lua_pushinteger(InState, TP_PostUpdate);  lua_setfield(InState, -2, "PostUpdate");
         lua_setglobal(InState, "TickPhase");
+
+        /* Last, so a library can never replace one of the tables above. */
+        ScriptLibrary_Install(InState);
     }
 }

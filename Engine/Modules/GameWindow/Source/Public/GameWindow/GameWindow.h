@@ -126,6 +126,15 @@ public:
     void SetTextInputActive(bool bInActive);
     bool IsTextInputActive() const;
 
+    /*
+     * MOUSE CAPTURE (SDL's relative mouse mode): the cursor is hidden and held
+     * in the window, and motion keeps arriving as deltas past the screen's
+     * edge -- what mouse-look wants. The window's to ask for; SDL lets go on
+     * focus loss and takes it back on focus.
+     */
+    void SetRelativeMouseMode(bool bInRelative);
+    bool IsRelativeMouseMode() const;
+
     // === Exit ===============================================================
 
     /*

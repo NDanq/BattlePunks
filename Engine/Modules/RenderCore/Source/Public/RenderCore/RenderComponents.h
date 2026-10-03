@@ -1,104 +1,21 @@
 #ifndef RENDERCORE_RENDERCOMPONENTS_H
 #define RENDERCORE_RENDERCOMPONENTS_H
 
-#include <cstdint>
-
-#include "Public/Core/CoreTypes.h"
-#include "Public/Math/Vector.h"
-#include "Public/GameCore/ComponentType.h"
-#include "Public/RenderCore/RenderCoreAPI.h"
-#include "Public/RenderCore/RenderProxy.h"
-
 /*
- * RenderCore's own GameCore components, declared the same way a game
- * declares its own -- GAMECORE_COMPONENT_BODY() first, RENDERCORE_PROXY_BODY()
- * second, GAMECORE_DEFINE_COMPONENT()/RENDERCORE_DEFINE_PROXY_COMPONENT() once
- * in RenderComponents.cpp. Nothing in World or ComponentPool is special-cased
- * for either of these; a game's own render component follows the identical
- * two-macro shape.
+ * RenderCore's own GameCore components, one header and one .cpp each under
+ * Components/. They are declared the same way a game declares its own:
+ * GAMECORE_COMPONENT_BODY() first, RENDERCORE_PROXY_BODY() second if it has
+ * a proxy, then GAMECORE_DEFINE_COMPONENT()/RENDERCORE_DEFINE_PROXY_COMPONENT()
+ * once in the component's .cpp. World and ComponentPool special-case none of
+ * them; a game's own render component follows the same two-macro shape.
+ *
+ * This header includes them all. Include a single component's header when
+ * that is all a file needs.
  */
-namespace RenderCore
-{
-    /* "Render". Draws Mesh (a runtime-relative .nmmesh path) if set and
-     * loadable, else a unit quad (1 x 1, centred); both sized by the
-     * Transform's Scale.
-     *
-     * Materials are slots, one per mesh section: each names a material
-     * graph by its runtime path ("Materials/Glow.material.nmgraph"; the cook
-     * makes its permutations from the graph's <gen_code>). Section i draws
-     * with slot i, else its own material from the mesh, else DefaultLit; a
-     * quad uses slot 0. Each material's Domain and Shading pick the stage it
-     * draws in (RENDERPIPELINE.md), so one mesh can draw in several. An
-     * unloadable slot is warned once and falls back. */
-    enum : size_t { RENDER_MATERIAL_PATH_MAX = 128 };  // including the NUL
-    enum : size_t { RENDER_MESH_PATH_MAX     = 128 };  // including the NUL
-    enum : size_t { RENDER_MATERIAL_SLOTS    = 8 };
-
-    struct RENDERCORE_API RenderComponent
-    {
-        GAMECORE_COMPONENT_BODY()
-        RENDERCORE_PROXY_BODY()
-
-        uint8_t           bVisible = 1;
-        char              Materials[RENDER_MATERIAL_SLOTS][RENDER_MATERIAL_PATH_MAX] = {};
-        char              Mesh[RENDER_MESH_PATH_MAX] = {};
-    };
-
-    /* "Camera". Position comes from the sibling TransformComponent (identity
-     * origin if there is none) -- a CameraComponent carries no position of
-     * its own, the same "read the sibling, do not duplicate it" rule
-     * BoundsComponent's own refit pass follows for the same reason. The
-     * first entity with an active CameraComponent that WorldBridge's
-     * per-frame view build finds wins; see DESIGN.md's "View" section. */
-    struct RENDERCORE_API CameraComponent
-    {
-        GAMECORE_COMPONENT_BODY()
-
-        float   ZNear    = -1.0f;
-        float   ZFar     = 1000.0f;
-        uint8_t bActive  = 1;
-    };
-
-    /* "Directional Light". The scene's sun: the first active one WorldBridge
-     * finds lights every Lit material (RenderLighting.h). Direction is the
-     * way light travels, world space; +Y is down. Without one the scene keeps
-     * the default light -- from above, as Mesh.fsh always was. */
-    struct RENDERCORE_API DirectionalLightComponent
-    {
-        GAMECORE_COMPONENT_BODY()
-
-        EngineCore::Vector3 Direction{ 0.35, 1.0, 0.55 };
-        EngineCore::Color   Color{ 255, 255, 255 };
-        float               Intensity = 3.0f;
-        uint8_t             bActive   = 1;
-    };
-
-    /* "Sky Light". Ambient for Lit materials: SkyColor from above (-Y),
-     * GroundColor from below, blended by the normal. The first active one wins. */
-    struct RENDERCORE_API SkyLightComponent
-    {
-        GAMECORE_COMPONENT_BODY()
-
-        EngineCore::Color SkyColor{ 120, 130, 150 };
-        EngineCore::Color GroundColor{ 60, 55, 50 };
-        float             Intensity = 0.6f;
-        uint8_t           bActive   = 1;
-    };
-
-    /* "Post Process". A PostProcess-domain material (a material graph's
-     * runtime path) drawn over the whole scene. Every enabled one runs, Priority low first (RENDER_POST_PROCESS_MAX
-     * at most); a material of another domain is warned about and skipped. */
-    struct RENDERCORE_API PostProcessComponent
-    {
-        GAMECORE_COMPONENT_BODY()
-
-        char    Material[RENDER_MATERIAL_PATH_MAX] = {};
-        int32_t Priority = 0;
-        uint8_t bEnabled = 1;
-    };
-
-    /* RenderComponent's proxy factory, for Renderer::Initialize to register. */
-    RENDERCORE_API CreateProxyFn GetRenderComponentFactory();
-}
+#include "Public/RenderCore/Components/CameraComponent.h"
+#include "Public/RenderCore/Components/DirectionalLightComponent.h"
+#include "Public/RenderCore/Components/PostProcessComponent.h"
+#include "Public/RenderCore/Components/RenderComponent.h"
+#include "Public/RenderCore/Components/SkyLightComponent.h"
 
 #endif //RENDERCORE_RENDERCOMPONENTS_H

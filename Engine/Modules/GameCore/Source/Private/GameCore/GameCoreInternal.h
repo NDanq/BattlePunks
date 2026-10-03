@@ -10,9 +10,11 @@ extern "C"
 
 #include <string>
 
+#include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/GameCoreLog.h"
+#include "Public/GameCore/PrefabInstanceID.h"
 
 /*
  * The module's private half: everything that touches lua.h directly. THIS IS
@@ -79,8 +81,30 @@ namespace GameCore
      * swap-remove errors rather than aliasing another entity. */
     void LuaPushComponentProxy(lua_State* InState, EntityID InEntity, ComponentTypeID InType);
 
+    /* A PrefabInstanceID as a full userdata with the "PrefabInstance"
+     * metatable (ScriptBindings.cpp), and back -- raising, like LuaCheckEntity. */
+    void             LuaPushInstance(lua_State* InState, PrefabInstanceID InInstance);
+    PrefabInstanceID LuaCheckInstance(lua_State* InState, int InIndex);
+
     /* The World ScriptEngine::BindWorld bound to InState, or nullptr. */
     World* LuaGetBoundWorld(lua_State* InState);
+
+    /* LuaCheckEntity without the raise: false if InIndex is not an Entity, for
+     * ScriptCall, which must never raise. */
+    bool LuaToEntity(lua_State* InState, int InIndex, EntityID& OutEntity);
+
+    /* A typed field or variable as its Lua lanes (three numbers for a Vector3),
+     * and back from the lanes starting at InFirstArg. Shared by component
+     * fields (ComponentScript.cpp) and library variables (ScriptLibrary.cpp).
+     * The read raises on a bad argument. */
+    int  LuaPushScriptValue(lua_State* InState, EScriptFieldType InType, uint32_t InSize, ScriptStructID InStruct,
+                            const uint8_t* InValue);
+    void LuaReadScriptValue(lua_State* InState, EScriptFieldType InType, uint32_t InSize, ScriptStructID InStruct,
+                            int InFirstArg, uint8_t* OutValue);
+
+    /* One global table per registered script library (ScriptLibrary.cpp);
+     * called by ScriptBindings_Install. */
+    void ScriptLibrary_Install(lua_State* InState);
 }
 
 #endif //GAMECORE_GAMECOREINTERNAL_H

@@ -12,6 +12,7 @@
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
+#include "Public/NimbleEngine/InputRouter.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
@@ -242,6 +243,9 @@ namespace NimbleEngine
         }
         WindowID = Window->GetID();
 
+        Router = EngineCore::Memory::Alloc<InputRouter>();
+        Router->Attach(Window);
+
         /* ONCE, HERE, ON THIS THREAD. GetNativeHandle() is a live SDL query,
          * not a cached read like the geometry accessors. Everything else uses
          * this copy; the render thread never calls back into GameWindow. */
@@ -315,6 +319,21 @@ namespace NimbleEngine
         return FrameRateLimit;
     }
 
+    const InputState& Application::GetInput() const
+    {
+        return Router ? Router->GetState() : IGameHost::GetInput();
+    }
+
+    void Application::SetMouseCaptured(const bool bInCaptured)
+    {
+        if(Router) { Router->SetMouseCaptured(bInCaptured); }
+    }
+
+    bool Application::IsMouseCaptured() const
+    {
+        return Router && Router->IsMouseCaptured();
+    }
+
     bool Application::RunFrame(const uint64_t InMaxFrames)
     {
         /* steady_clock: a delta must not go backwards because the wall clock
@@ -334,6 +353,9 @@ namespace NimbleEngine
         {
             return false;
         }
+
+        /* What arrived in the pump becomes this frame's input. */
+        Router->Latch(FrameNumber);
 
         /* Assembled on the game thread before anything overlaps; see
          * FrameContext for why the viewport is read here. */
@@ -489,6 +511,13 @@ namespace NimbleEngine
             Rendering->Shutdown();
             EngineCore::Memory::Dealloc(Rendering);
             Rendering = nullptr;
+        }
+
+        if(Router)
+        {
+            Router->Detach();
+            EngineCore::Memory::Dealloc(Router);
+            Router = nullptr;
         }
 
         /* Through the id, never the pointer: PumpEvents reaps closed windows,

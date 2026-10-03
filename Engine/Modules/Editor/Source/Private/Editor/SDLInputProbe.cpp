@@ -24,8 +24,6 @@
 
 namespace
 {
-    constexpr int PumpIntervalMs = 8;   // twice per viewport frame; latency is what is being judged
-
     QString DescribeKey(const EKeyCode InKey)
     {
         if(InKey >= KC_A && InKey <= KC_Z) { return QString(QChar('A' + (InKey - KC_A))); }
@@ -53,10 +51,6 @@ namespace
 SDLInputProbe::SDLInputProbe(QObject* InParent)
     : QObject(InParent)
 {
-    PumpTimer.setTimerType(Qt::PreciseTimer);
-    PumpTimer.setInterval(PumpIntervalMs);
-    connect(&PumpTimer, &QTimer::timeout, this, &SDLInputProbe::Pump);
-
     MotionSummaryTimer.setInterval(1000);
     connect(&MotionSummaryTimer, &QTimer::timeout, this, [this]()
     {
@@ -86,29 +80,13 @@ bool SDLInputProbe::Start(QWidget* InViewport)
     {
         return true;
     }
-    if(!InViewport)
-    {
-        return false;
-    }
     Viewport = InViewport;
-
-    /* Before Initialize: Qt dispatches the Win32 messages; SDL must not run a
-     * second message loop inside its own pump. */
-    GameWindowSystem::SetHostOwnsMessageLoop(true);
-    if(!GameWindowSystem::Initialize())
+    if(!Input.Start(InViewport))
     {
-        Report(QStringLiteral("SDL failed to initialise -- see the log"));
+        Report(QStringLiteral("SDL could not take the viewport's input -- see the log"));
         return false;
     }
-    bSystemInitialized = true;
-
-    Window = GameWindowSystem::WrapNativeWindow(EngineCore::WindowHandle(reinterpret_cast<void*>(Viewport->winId())));
-    if(!Window)
-    {
-        Report(QStringLiteral("SDL could not wrap the viewport -- see the log"));
-        Stop();
-        return false;
-    }
+    Window = Input.GetWindow();
 
     GameWindowDelegates Delegates;
     Delegates.UserData            = this;
@@ -125,15 +103,7 @@ bool SDLInputProbe::Start(QWidget* InViewport)
      * chat box; the probe wants to see that they can. */
     Window->SetTextInputActive(true);
 
-    connect(qApp, &QApplication::focusChanged, this, &SDLInputProbe::OnQtFocusChanged);
-    Viewport->installEventFilter(this);
-    qApp->installNativeEventFilter(this);
-    if(Viewport->hasFocus())
-    {
-        GiveNativeFocusToViewport();
-    }
-
-    PumpTimer.start();
+    Input.SetAutoPump(true);
     MotionSummaryTimer.start();
     Report(QStringLiteral("SDL input probe running on the viewport (window id %1)").arg(Window->GetID()));
     return true;
@@ -141,90 +111,14 @@ bool SDLInputProbe::Start(QWidget* InViewport)
 
 void SDLInputProbe::Stop()
 {
-    PumpTimer.stop();
     MotionSummaryTimer.stop();
-    disconnect(qApp, &QApplication::focusChanged, this, &SDLInputProbe::OnQtFocusChanged);
-    if(Viewport)
+    const bool bWasRunning = Window != nullptr;
+    Window = nullptr;
+    Input.Stop();
+    if(bWasRunning)
     {
-        Viewport->removeEventFilter(this);
-    }
-
-    qApp->removeNativeEventFilter(this);
-    HighSurrogate = 0;
-
-    if(Window)
-    {
-        Window->ClearDelegates();
-        GameWindowSystem::DestroyGameWindow(Window);   // detaches SDL; the HWND stays Qt's
-        Window = nullptr;
         Report(QStringLiteral("SDL input probe stopped"));
     }
-    if(bSystemInitialized)
-    {
-        GameWindowSystem::Shutdown();
-        bSystemInitialized = false;
-    }
-}
-
-void SDLInputProbe::Pump()
-{
-    /* Only drains what SDL already queued; the return value is ignored. */
-    GameWindowSystem::PumpEvents();
-}
-
-bool SDLInputProbe::nativeEventFilter(const QByteArray& /*InEventType*/, void* InMessage, qintptr* /*OutResult*/)
-{
-#if defined(_WIN32)
-    const MSG* Msg = static_cast<const MSG*>(InMessage);
-    if(!Window || Msg->message != WM_CHAR || Msg->hwnd != reinterpret_cast<HWND>(Viewport->winId()))
-    {
-        return false;
-    }
-
-    /* UTF-16 code units, one per WM_CHAR; a character outside the BMP comes
-     * as a surrogate pair across two messages. */
-    const char16_t Unit = char16_t(Msg->wParam);
-    if(Unit >= 0xD800 && Unit <= 0xDBFF)
-    {
-        HighSurrogate = Unit;
-        return false;
-    }
-
-    QString Character;
-    if(Unit >= 0xDC00 && Unit <= 0xDFFF && HighSurrogate != 0)
-    {
-        const QChar Pair[2] = { QChar(HighSurrogate), QChar(Unit) };
-        Character = QString(Pair, 2);
-    }
-    else
-    {
-        Character = QString(QChar(Unit));
-    }
-    HighSurrogate = 0;
-
-    GameWindowSystem::InjectTextInput(Window, Character.toUtf8().constData());
-#else
-    (void)InMessage;
-#endif
-    return false;   // Qt still handles its own key event
-}
-
-void SDLInputProbe::OnQtFocusChanged(QWidget* /*InOld*/, QWidget* InNow)
-{
-    if(Window && InNow == Viewport)
-    {
-        GiveNativeFocusToViewport();
-    }
-}
-
-bool SDLInputProbe::eventFilter(QObject* InWatched, QEvent* InEvent)
-{
-    if(Window && InWatched == Viewport
-       && (InEvent->type() == QEvent::FocusIn || InEvent->type() == QEvent::MouseButtonPress))
-    {
-        GiveNativeFocusToViewport();
-    }
-    return QObject::eventFilter(InWatched, InEvent);
 }
 
 QString SDLInputProbe::DescribeNativeFocus() const
@@ -237,17 +131,6 @@ QString SDLInputProbe::DescribeNativeFocus() const
     return QStringLiteral("other");
 #else
     return QStringLiteral("n/a");
-#endif
-}
-
-void SDLInputProbe::GiveNativeFocusToViewport()
-{
-#if defined(_WIN32)
-    const HWND Hwnd = reinterpret_cast<HWND>(Viewport->winId());
-    if(GetFocus() != Hwnd)
-    {
-        SetFocus(Hwnd);
-    }
 #endif
 }
 

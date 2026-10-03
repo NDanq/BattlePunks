@@ -20,11 +20,10 @@ with the module.
 `"Engine/Content/Materials/DefaultLit.material.nmgraph"`). Its cooked files
 are named by that path without the extension, the *stem*
 (`GetMaterialStem`): `Materials/Glow.material`, and
-`Shaders/Cooked/<Platform>/Materials/Glow@<key>...`. A bare name, as worlds
-saved before (`"Glow"`), means `Materials/Glow`; RenderComponent (version 4)
-and PostProcessComponent (version 2) upgrade one to the path on load, and an
-imported mesh's own section names resolve the same way (quietly, if there is
-no such material). Names hold up to `RENDER_MATERIAL_PATH_MAX` (128) bytes.
+`Shaders/Cooked/<Platform>/Materials/Glow@<key>...`. RenderComponent and
+PostProcessComponent save the full path. A bare name (`"Glow"`) means
+`Materials/Glow`: an imported mesh's own section names resolve that way
+(quietly, if there is no such material). Names hold up to `RENDER_MATERIAL_PATH_MAX` (128) bytes.
 
 ```
 Glow.material.nmgraph --(NodeGraph, on save)--> <gen_code>: .mtl.glsl + .material

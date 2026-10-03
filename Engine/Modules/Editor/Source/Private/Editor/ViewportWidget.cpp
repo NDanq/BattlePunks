@@ -1,5 +1,6 @@
 #if WITH_EDITOR
 
+#include "Public/NimbleEngine/Input.h"
 #include "Public/Editor/ViewportWidget.h"
 
 #include <algorithm>
@@ -25,6 +26,8 @@
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
+#include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/Content/ContentPaths.h"
 
 /* Handle snap steps. Translate is a world grid in World space, a step along
@@ -86,12 +89,15 @@ namespace
         return EngineCore::Vector3(InAxis == 0 ? 1.0 : 0.0, InAxis == 1 ? 1.0 : 0.0, InAxis == 2 ? 1.0 : 0.0);
     }
 
+    /* In the world: under a parent, the handles sit where the entity is,
+     * not at its local values. */
     TransformGizmo::Pose PoseOf(const GameCore::TransformComponent& InTransform)
     {
+        const GameCore::TransformPose World = InTransform.Owner.GetEntity().GetWorldPose();
         TransformGizmo::Pose Pose;
-        Pose.Position = InTransform.Position;
-        Pose.Rotation = InTransform.Rotation;
-        Pose.Scale    = InTransform.Scale;
+        Pose.Position = World.Position;
+        Pose.Rotation = World.Rotation;
+        Pose.Scale    = World.Scale;
         return Pose;
     }
 
@@ -201,9 +207,10 @@ namespace
     }
 }
 
-ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
+ViewportWidget::ViewportWidget(EditorContext& InContext, EditorDocument& InDocument, QWidget* InParent)
     : QWidget(InParent)
     , Context(InContext)
+    , Document(InDocument)
 {
     /* A real child HWND the backend owns outright: no Qt backing store, no
      * background erase to flicker over the rendered frame. */
@@ -217,9 +224,8 @@ ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
     setMinimumSize(64, 64);
     setAcceptDrops(true);     // a mesh dragged from the Content Browser
 
-    FrameTimer.setTimerType(Qt::PreciseTimer);
-    FrameTimer.setInterval(16);
-    connect(&FrameTimer, &QTimer::timeout, this, &ViewportWidget::OnFrame);
+    /* The context draws it every frame from now on (EditorContext::RunFrame). */
+    Context.AddViewport(this);
 
     /* Handing the view to or from the game mid-drag would leave the camera
      * flying on keys whose release it never sees. */
@@ -239,8 +245,8 @@ ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
         FinishGizmoDrag(false);
         GizmoHover = TransformGizmo::EHandle::None;
     };
-    connect(&Context, &EditorContext::SelectionChanged, this, DropGizmoDrag);
-    connect(&Context, &EditorContext::WorldReset,       this, DropGizmoDrag);
+    connect(&Document, &EditorDocument::SelectionChanged, this, DropGizmoDrag);
+    connect(&Document, &EditorDocument::WorldReset,       this, DropGizmoDrag);
 }
 
 EngineCore::WindowHandle ViewportWidget::GetWindowHandle()
@@ -254,17 +260,17 @@ EngineCore::Size ViewportWidget::GetPixelSize() const
     return EngineCore::Size(int(std::lround(width() * Ratio)), int(std::lround(height() * Ratio)));
 }
 
-void ViewportWidget::StartRendering()
+ViewportWidget::~ViewportWidget()
 {
-    FrameClock.start();
-    FrameTimer.start();
+    /* While the native window still exists: its swapchain goes with it. */
+    Context.RemoveViewport(this);
 }
 
 // === Navigation commands =====================================================
 
 void ViewportWidget::FrameSelection()
 {
-    const GameCore::AABB Box = Context.GetEntityBounds(Context.GetSelection());
+    const GameCore::AABB Box = Document.GetEntityBounds(Document.GetSelection());
     if(!Box.IsEmpty())
     {
         Camera.Frame(Box);
@@ -273,7 +279,7 @@ void ViewportWidget::FrameSelection()
 
 void ViewportWidget::FrameAll()
 {
-    Camera.Frame(Context.GetSceneBounds());
+    Camera.Frame(Document.GetSceneBounds());
 }
 
 void ViewportWidget::ApplyPreset(const EditorCamera::EPreset InPreset)
@@ -293,7 +299,7 @@ void ViewportWidget::ApplySandboxView()
 
 EngineCore::Vector3 ViewportWidget::GetPivot() const
 {
-    const GameCore::AABB Box = Context.GetEntityBounds(Context.GetSelection());
+    const GameCore::AABB Box = Document.GetEntityBounds(Document.GetSelection());
     return Box.IsEmpty() ? Camera.GetFocusPoint() : Box.Center();
 }
 
@@ -305,21 +311,26 @@ void ViewportWidget::paintEvent(QPaintEvent* /*InEvent*/)
      * paint a surface it does not own. */
 }
 
-void ViewportWidget::OnFrame()
+bool ViewportWidget::PrepareFrame(const float InDeltaSeconds, const bool bInEditorView, Frame& OutFrame)
 {
-    const float DeltaSeconds = float(FrameClock.restart()) / 1000.0f;
+    if(!isVisible())
+    {
+        return false;
+    }
 
     /* Navigation and overlays belong to the editor's view; while playing
      * through the game's camera the viewport shows the game alone. */
-    if(Context.IsEditorViewActive())
+    if(bInEditorView)
     {
-        ApplyFlyInput(DeltaSeconds);
+        ApplyFlyInput(InDeltaSeconds);
         Gizmo.SetView(Camera, GetLogicalSize(), float(devicePixelRatioF()));
         QueueOverlay();
     }
 
-    const EngineCore::Size Pixels = GetPixelSize();
-    Context.RenderFrame(Camera.BuildView(Pixels), Pixels, GetWindowHandle());
+    OutFrame.Pixels = GetPixelSize();
+    OutFrame.View   = Camera.BuildView(OutFrame.Pixels);
+    OutFrame.Window = GetWindowHandle();
+    return true;
 }
 
 void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
@@ -350,40 +361,39 @@ void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
 
 void ViewportWidget::QueueOverlay()
 {
-    const GameCore::EntityID Selected = Context.GetSelection();
+    const GameCore::EntityID Selected = Document.GetSelection();
     const float Ratio = float(devicePixelRatioF());
 
     if(bShowAllBounds)
     {
-        struct Collect { EditorContext* Ctx; GameCore::EntityID Skip; float Thickness; } C{ &Context, Selected, AllBoundsThickness * Ratio };
-        Context.GetWorld().ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
+        struct Collect { EditorContext* Ctx; EditorDocument* Doc; GameCore::EntityID Skip; float Thickness; } C{ &Context, &Document, Selected, AllBoundsThickness * Ratio };
+        Document.GetWorld().ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
         {
             const auto& Data = *static_cast<const Collect*>(InUserData);
             if(InEntity != Data.Skip)
             {
-                Data.Ctx->DrawDebugBox(Data.Ctx->GetEntityBounds(InEntity), AllBoundsColor, Data.Thickness);
+                Data.Ctx->DrawDebugBox(Data.Doc->GetEntityBounds(InEntity), AllBoundsColor, Data.Thickness);
             }
         }, &C);
     }
 
     /* Where the game draws: each active camera's screen. The editor's own view
      * replaces the camera, so this is the only sign of what the game shows. */
-    Context.GetWorld().Each<RenderCore::CameraComponent>(
+    Document.GetWorld().Each<RenderCore::CameraComponent>(
         [this, Ratio](const GameCore::Entity& InEntity, RenderCore::CameraComponent& InCamera)
     {
         if(!InCamera.bActive)
         {
             return;
         }
-        const GameCore::TransformComponent* Transform = InEntity.GetComponent<GameCore::TransformComponent>();
-        const EngineCore::Vector3 Origin = Transform ? Transform->Position : EngineCore::Vector3(0.0, 0.0, 0.0);
+        const EngineCore::Vector3 Origin = InEntity.GetWorldPose().Position;
         const GameCore::AABB Screen(EngineCore::Vector3(Origin.GetX(), Origin.GetY(), 0.0),
                                     EngineCore::Vector3(Origin.GetX() + GameScreenWidth, Origin.GetY() + GameScreenHeight, 0.0));
         Context.DrawDebugBox(Screen, GameScreenColor, GameScreenThickness * Ratio);
     });
 
     /* Last, over the grey boxes; padded a few pixels so it frames the shape. */
-    const GameCore::AABB Box = Context.GetEntityBounds(Selected);
+    const GameCore::AABB Box = Document.GetEntityBounds(Selected);
     if(!Box.IsEmpty())
     {
         const double Depth = std::max(double((Box.Center() - Camera.Position).Dot(Camera.GetForward())), double(Camera.ZNear));
@@ -471,8 +481,65 @@ int ViewportWidget::HitGizmoAxis(const QPoint& InLogicalPos) const
 
 // === Input ===================================================================
 
+namespace
+{
+    /* Play-in-Editor's fallback when SDL could not take the viewport: Qt's key
+     * to the engine's key name. Qt keys are layout-dependent, unlike SDL's
+     * physical ones -- one reason SDL is the normal path. */
+    const char* QtKeyToInputName(const int InKey)
+    {
+        static const char* const Letters[] = { "A","B","C","D","E","F","G","H","I","J","K","L","M",
+                                               "N","O","P","Q","R","S","T","U","V","W","X","Y","Z" };
+        static const char* const Digits[]  = { "0","1","2","3","4","5","6","7","8","9" };
+        static const char* const FKeys[]   = { "F1","F2","F3","F4","F5","F6","F7","F8","F9","F10","F11","F12" };
+        if(InKey >= Qt::Key_A && InKey <= Qt::Key_Z)   { return Letters[InKey - Qt::Key_A]; }
+        if(InKey >= Qt::Key_0 && InKey <= Qt::Key_9)   { return Digits[InKey - Qt::Key_0]; }
+        if(InKey >= Qt::Key_F1 && InKey <= Qt::Key_F12) { return FKeys[InKey - Qt::Key_F1]; }
+        switch(InKey)
+        {
+            case Qt::Key_Space:     return "Space";
+            case Qt::Key_Return:    return "Return";
+            case Qt::Key_Enter:     return "KP_Enter";
+            case Qt::Key_Escape:    return "Escape";
+            case Qt::Key_Tab:       return "Tab";
+            case Qt::Key_Backspace: return "Backspace";
+            case Qt::Key_Left:      return "Left";
+            case Qt::Key_Right:     return "Right";
+            case Qt::Key_Up:        return "Up";
+            case Qt::Key_Down:      return "Down";
+            case Qt::Key_Shift:     return "LeftShift";
+            case Qt::Key_Control:   return "LeftCtrl";
+            case Qt::Key_Alt:       return "LeftAlt";
+            case Qt::Key_Insert:    return "Insert";
+            case Qt::Key_Delete:    return "Delete";
+            case Qt::Key_Home:      return "Home";
+            case Qt::Key_End:       return "End";
+            case Qt::Key_PageUp:    return "PageUp";
+            case Qt::Key_PageDown:  return "PageDown";
+            default:                return nullptr;
+        }
+    }
+
+    const char* QtButtonToInputName(const Qt::MouseButton InButton)
+    {
+        switch(InButton)
+        {
+            case Qt::LeftButton:   return "Mouse.Left";
+            case Qt::MiddleButton: return "Mouse.Middle";
+            case Qt::RightButton:  return "Mouse.Right";
+            case Qt::BackButton:   return "Mouse.X1";
+            case Qt::ForwardButton:return "Mouse.X2";
+            default:               return nullptr;
+        }
+    }
+}
+
 void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
 {
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        if(const char* Name = QtButtonToInputName(InEvent->button())) { Game->Press(NimbleEngine::FindInputKey(Name)); }
+    }
     /* The game's view while playing: the editor camera does not move. */
     if(!Context.IsEditorViewActive())
     {
@@ -511,11 +578,11 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
             {
                 /* The whole drag is one undo entry. */
                 static const char* const Labels[4] = { "Edit", "Move", "Rotate", "Scale" };
-                Context.BeginEditGesture(QString::fromLatin1(Labels[int(Gizmo.GetMode())]));
+                Document.BeginEditGesture(QString::fromLatin1(Labels[int(Gizmo.GetMode())]));
 
                 Drag        = EDrag::Gizmo;
                 DragButton  = Qt::LeftButton;
-                GizmoEntity = Context.GetSelection();
+                GizmoEntity = Document.GetSelection();
                 GizmoHover  = Handle;
                 emit GizmoDragStatus(Gizmo.DescribeDrag());
                 return;
@@ -535,6 +602,14 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
 {
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        /* Physical pixels, as SDL reports them. */
+        const double Ratio = devicePixelRatioF();
+        const QPoint At    = (InEvent->position() * Ratio).toPoint();
+        Game->MoveMouse(At.x(), At.y(), At.x() - FallbackMousePos.x(), At.y() - FallbackMousePos.y());
+        FallbackMousePos = At;
+    }
     /* The game's view while playing: the editor camera does not move. */
     if(!Context.IsEditorViewActive())
     {
@@ -598,6 +673,10 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
 
 void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
 {
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        if(const char* Name = QtButtonToInputName(InEvent->button())) { Game->Release(NimbleEngine::FindInputKey(Name)); }
+    }
     /* The game's view while playing: the editor camera does not move. */
     if(!Context.IsEditorViewActive())
     {
@@ -643,11 +722,15 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
         return;
     }
 
-    Context.SetSelection(Pick(Pos));
+    Document.SetSelection(Pick(Pos));
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* InEvent)
 {
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        Game->AddWheel(float(InEvent->angleDelta().x()) / 120.0f, float(InEvent->angleDelta().y()) / 120.0f);
+    }
     /* The game's view while playing: the editor camera does not move. */
     if(!Context.IsEditorViewActive())
     {
@@ -674,6 +757,10 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
     {
         Context.StopPlay();
         return;
+    }
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        if(const char* Name = QtKeyToInputName(InEvent->key())) { Game->Press(NimbleEngine::FindInputKey(Name)); }
     }
     if(!Context.IsEditorViewActive())
     {
@@ -713,6 +800,10 @@ void ViewportWidget::keyReleaseEvent(QKeyEvent* InEvent)
     if(!InEvent->isAutoRepeat())
     {
         HeldKeys.remove(InEvent->key());
+        if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+        {
+            if(const char* Name = QtKeyToInputName(InEvent->key())) { Game->Release(NimbleEngine::FindInputKey(Name)); }
+        }
     }
 }
 
@@ -722,6 +813,10 @@ void ViewportWidget::focusOutEvent(QFocusEvent* InEvent)
      * camera flying, or a drag stuck on. */
     FinishGizmoDrag(false);
     HeldKeys.clear();
+    if(NimbleEngine::InputState* Game = Context.GetPlayFallbackInput())
+    {
+        Game->ReleaseAll();
+    }
     Drag       = EDrag::None;
     DragButton = Qt::NoButton;
     QWidget::focusOutEvent(InEvent);
@@ -779,8 +874,8 @@ GameCore::TransformComponent* ViewportWidget::GetGizmoTarget() const
     {
         return nullptr;
     }
-    const GameCore::EntityID Target = Drag == EDrag::Gizmo ? GizmoEntity : Context.GetSelection();
-    GameCore::World& World = Context.GetWorld();
+    const GameCore::EntityID Target = Drag == EDrag::Gizmo ? GizmoEntity : Document.GetSelection();
+    GameCore::World& World = Document.GetWorld();
     if(!World.IsAlive(Target))
     {
         return nullptr;
@@ -790,24 +885,26 @@ GameCore::TransformComponent* ViewportWidget::GetGizmoTarget() const
 
 void ViewportWidget::ApplyGizmoPose(const GameCore::EntityID InEntity, const TransformGizmo::Pose& InPose)
 {
-    GameCore::World& World = Context.GetWorld();
+    GameCore::World& World = Document.GetWorld();
     if(!World.IsAlive(InEntity))
     {
         return;
     }
-    GameCore::TransformComponent* Transform = World.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>();
-    if(!Transform)
+    /* The gizmo works in world space; the local values that land there. */
+    GameCore::TransformPose Pose;
+    Pose.Position = InPose.Position;
+    Pose.Rotation = InPose.Rotation;
+    Pose.Scale    = InPose.Scale;
+    if(!World.GetEntity(InEntity).SetWorldPose(Pose))
     {
         return;
     }
-    Transform->Position = InPose.Position;
-    Transform->Rotation = InPose.Rotation;
-    Transform->Scale    = InPose.Scale;
 
     /* The render proxy picks the Transform up on its own next frame; the
-     * bounds need a refit now, static or not, so the outline follows. */
+     * bounds need a refit now, static or not, so the outline follows --
+     * the children's too. */
     World.RefreshEntityBounds(InEntity);
-    Context.NotifyPropertyEdited(InEntity, GameCore::TransformComponent::StaticType().ID);
+    Document.NotifyPropertyEdited(InEntity, GameCore::TransformComponent::StaticType().ID);
 }
 
 void ViewportWidget::FinishGizmoDrag(const bool bInCancel)
@@ -822,7 +919,7 @@ void ViewportWidget::FinishGizmoDrag(const bool bInCancel)
     {
         ApplyGizmoPose(GizmoEntity, Gizmo.GetDragStart());
     }
-    Context.EndEditGesture();
+    Document.EndEditGesture();
     Gizmo.EndDrag();
     Drag        = EDrag::None;
     DragButton  = Qt::NoButton;
@@ -840,25 +937,35 @@ QString ViewportWidget::DroppedMesh(const QMimeData* InData) const
     return EditorContent::ToRuntimePath(File);
 }
 
+QString ViewportWidget::DroppedPrefab(const QMimeData* InData) const
+{
+    const QString File = EditorContent::SingleDroppedFile(InData);
+    if(Document.IsSingleRoot() || !File.endsWith(QStringLiteral(".nmprefab"), Qt::CaseInsensitive)) { return QString(); }
+    return EditorContent::ToRuntimePath(File).isEmpty() ? QString() : File;
+}
+
 void ViewportWidget::dragEnterEvent(QDragEnterEvent* InEvent)
 {
-    if(!Context.IsPlaying() && !DroppedMesh(InEvent->mimeData()).isEmpty()) { InEvent->acceptProposedAction(); }
-    else { InEvent->ignore(); }
+    const bool bAccept = !Document.IsWorldBorrowed()
+                      && (!DroppedMesh(InEvent->mimeData()).isEmpty() || !DroppedPrefab(InEvent->mimeData()).isEmpty());
+    if(bAccept) { InEvent->acceptProposedAction(); }
+    else        { InEvent->ignore(); }
 }
 
 void ViewportWidget::dragMoveEvent(QDragMoveEvent* InEvent)
 {
-    if(!Context.IsPlaying() && !DroppedMesh(InEvent->mimeData()).isEmpty()) { InEvent->acceptProposedAction(); }
-    else { InEvent->ignore(); }
+    const bool bAccept = !Document.IsWorldBorrowed()
+                      && (!DroppedMesh(InEvent->mimeData()).isEmpty() || !DroppedPrefab(InEvent->mimeData()).isEmpty());
+    if(bAccept) { InEvent->acceptProposedAction(); }
+    else        { InEvent->ignore(); }
 }
 
-/* Creates (one undo step) and selects an entity drawing the mesh: where the
- * ray meets z = 0 if reasonably near, else 600 units along it. */
+/* Creates (one undo step) and selects an entity drawing the mesh, or an
+ * instance of the prefab: where the ray meets z = 0 if reasonably near, else
+ * 600 units along it. */
 void ViewportWidget::dropEvent(QDropEvent* InEvent)
 {
-    const QString Path = DroppedMesh(InEvent->mimeData());
-    const QByteArray Utf8 = Path.toUtf8();
-    if(Path.isEmpty() || Context.IsPlaying() || Utf8.size() >= int(RenderCore::RENDER_MESH_PATH_MAX))
+    if(Document.IsWorldBorrowed())
     {
         InEvent->ignore();
         return;
@@ -875,14 +982,39 @@ void ViewportWidget::dropEvent(QDropEvent* InEvent)
     }
     const EngineCore::Vector3 Spot = RayOrigin + RayDir * T;
 
-    const GameCore::EntityID Made = Context.CreateEntity(QFileInfo(Path).completeBaseName(), Spot,
+    const QString PrefabFile = DroppedPrefab(InEvent->mimeData());
+    if(!PrefabFile.isEmpty())
+    {
+        /* Through the registry, which reads the staged copy beside the exe. */
+        EditorPrefabs::Stage(PrefabFile);
+        const GameCore::EntityID Placed = Document.PlacePrefab(EditorContent::ToRuntimePath(PrefabFile), Spot);
+        if(!Placed.IsSet())
+        {
+            InEvent->ignore();
+            return;
+        }
+        Document.SetSelection(Placed);
+        InEvent->acceptProposedAction();
+        setFocus();
+        return;
+    }
+
+    const QString Path = DroppedMesh(InEvent->mimeData());
+    const QByteArray Utf8 = Path.toUtf8();
+    if(Path.isEmpty() || Utf8.size() >= int(RenderCore::RENDER_MESH_PATH_MAX))
+    {
+        InEvent->ignore();
+        return;
+    }
+
+    const GameCore::EntityID Made = Document.CreateEntity(QFileInfo(Path).completeBaseName(), Spot,
                                                          [&Utf8](const GameCore::Entity& InEntity)
     {
         RenderCore::RenderComponent Render;
         std::memcpy(Render.Mesh, Utf8.constData(), size_t(Utf8.size()));
         InEntity.AddComponent(Render);
     });
-    Context.SetSelection(Made);
+    Document.SetSelection(Made);
 
     InEvent->acceptProposedAction();
     setFocus();
@@ -898,9 +1030,9 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
     GameCore::EntityID Best;
     double BestT = std::numeric_limits<double>::max();
 
-    /* Ray vs each quad in its local space (inverse GetLocalMatrix, where it is
+    /* Ray vs each quad in its local space (inverse GetWorldMatrix, where it is
      * a Width x Height square at z = 0). t is preserved by the affine map. */
-    Context.GetWorld().Each<RenderCore::RenderComponent>(
+    Document.GetWorld().Each<RenderCore::RenderComponent>(
         [&](const GameCore::Entity& InEntity, RenderCore::RenderComponent& InRender)
     {
         if(!InRender.bVisible)
@@ -913,7 +1045,7 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
             return;
         }
         Affine3x4 Inverse;
-        if(!InvertAffine(Transform->GetLocalMatrix(), Inverse))
+        if(!InvertAffine(InEntity.GetWorldMatrix(), Inverse))
         {
             return;   // degenerate -- drawn as a line at most, nothing to hit
         }

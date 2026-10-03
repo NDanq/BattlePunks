@@ -68,7 +68,8 @@ endif()
 
 # === NodeGraphGenerate ========================================================
 # The editor's on-save generation from the command line: compiles graphs and
-# writes their outputs (a material's .mtl.glsl and .material) beside them.
+# writes their outputs into each graph's <gen_code>. -module <game dll> loads a
+# game module first, for graphs that use its script declarations.
 add_executable(NodeGraphGenerate Tools/NodeGraphGenerate.cpp)
 target_link_libraries(NodeGraphGenerate PRIVATE NodeGraph::NodeGraph)
 set_target_properties(NodeGraphGenerate PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Editor")

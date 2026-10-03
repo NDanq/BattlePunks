@@ -4,7 +4,9 @@
 #if WITH_EDITOR
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <QUndoCommand>
@@ -15,11 +17,11 @@
 
 namespace GameCore { class World; }
 
-class EditorContext;
+class EditorDocument;
 
 /*
  * Undo / redo commands and snapshots for the edited World, used only by
- * EditorContext.
+ * EditorDocument.
  *
  * ENTITIES ARE NAMED BY GUID: an undone delete recreates the entity with its
  * old GUID, so older commands still find it.
@@ -40,13 +42,24 @@ namespace EditorHistory
         bool                      bSerialized = false;   // else property values over defaults
     };
 
+    /* A prefab instance as its root's snapshot carries it (EditorHistory.cpp). */
+    struct InstanceSnapshot;
+
+    /* An entity and its whole subtree: deleting a parent deletes its
+     * children, so restoring it restores them. Instance membership travels
+     * too: a restored instance root brings its instance back, and a restored
+     * member rejoins its instance if that is still there. */
     struct EntitySnapshot
     {
         GameCore::EntityGuid           Guid;
+        GameCore::EntityGuid           ParentGuid;   // unset: a root
         std::string                    Name;
-        std::string                    ScriptPath;
-        uint8_t                        bCullOutsideActiveRegion = 0;
         std::vector<ComponentSnapshot> Components;
+        std::vector<EntitySnapshot>    Children;     // in child order
+
+        GameCore::EntityGuid              InstanceGuid;   // the instance it is a member of; unset if loose
+        uint32_t                          LocalId = 0;    // its template's id in that instance
+        std::shared_ptr<InstanceSnapshot> Instance;       // set on an instance's root
     };
 
     /* Every component type InEntity has, in type order. */
@@ -62,9 +75,20 @@ namespace EditorHistory
     /* Adds the component (from its defaults) and loads the snapshot into it. */
     bool RestoreComponent(GameCore::World& InWorld, GameCore::EntityID InEntity, const ComponentSnapshot& InSnapshot);
 
+    /* Entity GUID -> the entity a reference to it should now name. */
+    using GuidRemap = std::unordered_map<GameCore::EntityGuid, GameCore::EntityID, GameCore::EntityGuidHash>;
+
+    /* Loads the snapshot into InEntity's component of its type, added from
+     * its defaults if missing. A reference to a GUID in InRemap names that
+     * entity instead (a converted entity's replacement). */
+    bool LoadComponent(GameCore::World& InWorld, GameCore::EntityID InEntity, const ComponentSnapshot& InSnapshot,
+                       const GuidRemap* InRemap = nullptr);
+
     EntitySnapshot CaptureEntity(GameCore::World& InWorld, GameCore::EntityID InEntity);
 
-    /* Recreates the entity with its GUID, name, script and components. */
+    /* Recreates the entity with its GUID, name and components, under
+     * its parent if that still exists, then its children; then the instances
+     * they were in (see EntitySnapshot). */
     GameCore::EntityID RestoreEntity(GameCore::World& InWorld, const EntitySnapshot& InSnapshot);
 
     // === Commands ============================================================
@@ -73,7 +97,7 @@ namespace EditorHistory
     class Command : public QUndoCommand
     {
     public:
-        Command(EditorContext& InContext, const QString& InText);
+        Command(EditorDocument& InDocument, const QString& InText);
 
         void undo() final;
         void redo() final;
@@ -82,7 +106,7 @@ namespace EditorHistory
         /* bInForward: redo; otherwise undo. */
         virtual void Apply(bool bInForward) = 0;
 
-        EditorContext& Context;
+        EditorDocument& Document;
 
     private:
         bool bRecorded = true;   // the change is already in the World
@@ -95,7 +119,7 @@ namespace EditorHistory
     public:
         enum { ID = 1 };
 
-        PropertyEditCommand(EditorContext& InContext, const QString& InText, const GameCore::EntityGuid& InGuid,
+        PropertyEditCommand(EditorDocument& InDocument, const QString& InText, const GameCore::EntityGuid& InGuid,
                             GameCore::ComponentTypeID InType, std::vector<uint8_t> InBefore, std::vector<uint8_t> InAfter,
                             uint64_t InGesture);
 
@@ -114,18 +138,14 @@ namespace EditorHistory
         int64_t                   TimeMs;      // of the latest edit merged in
     };
 
-    /* What an entity carries besides components: name, script path and the
-     * script's cull flag. */
+    /* What an entity carries besides components: its name. */
     struct EntityMembers
     {
         std::string Name;
-        std::string ScriptPath;
-        uint8_t     bCullOutsideActiveRegion = 0;
 
         bool operator==(const EntityMembers& InOther) const
         {
-            return Name == InOther.Name && ScriptPath == InOther.ScriptPath
-                && bCullOutsideActiveRegion == InOther.bCullOutsideActiveRegion;
+            return Name == InOther.Name;
         }
     };
 
@@ -134,7 +154,7 @@ namespace EditorHistory
     class EntityMembersCommand final : public Command
     {
     public:
-        EntityMembersCommand(EditorContext& InContext, const QString& InText, const GameCore::EntityGuid& InGuid,
+        EntityMembersCommand(EditorDocument& InDocument, const QString& InText, const GameCore::EntityGuid& InGuid,
                              EntityMembers InBefore, EntityMembers InAfter);
 
     protected:
@@ -150,7 +170,7 @@ namespace EditorHistory
     class EntityLifetimeCommand final : public Command
     {
     public:
-        EntityLifetimeCommand(EditorContext& InContext, const QString& InText, bool bInCreated, EntitySnapshot InSnapshot);
+        EntityLifetimeCommand(EditorDocument& InDocument, const QString& InText, bool bInCreated, EntitySnapshot InSnapshot);
 
     protected:
         void Apply(bool bInForward) override;
@@ -160,11 +180,31 @@ namespace EditorHistory
         EntitySnapshot Snapshot;
     };
 
+    /* A new parent (unset: detached). Reparenting keeps the world pose by
+     * rewriting the local Transform, so its values travel too. */
+    class ParentCommand final : public Command
+    {
+    public:
+        ParentCommand(EditorDocument& InDocument, const QString& InText, const GameCore::EntityGuid& InGuid,
+                      const GameCore::EntityGuid& InBeforeParent, std::vector<uint8_t> InBeforeTransform,
+                      const GameCore::EntityGuid& InAfterParent, std::vector<uint8_t> InAfterTransform);
+
+    protected:
+        void Apply(bool bInForward) override;
+
+    private:
+        GameCore::EntityGuid Guid;
+        GameCore::EntityGuid BeforeParent;
+        GameCore::EntityGuid AfterParent;
+        std::vector<uint8_t> BeforeTransform;   // Transform property values; empty without one
+        std::vector<uint8_t> AfterTransform;
+    };
+
     /* Adding (bInAdded) or removing one component, the same way. */
     class ComponentLifetimeCommand final : public Command
     {
     public:
-        ComponentLifetimeCommand(EditorContext& InContext, const QString& InText, bool bInAdded,
+        ComponentLifetimeCommand(EditorDocument& InDocument, const QString& InText, bool bInAdded,
                                  const GameCore::EntityGuid& InGuid, ComponentSnapshot InSnapshot);
 
     protected:

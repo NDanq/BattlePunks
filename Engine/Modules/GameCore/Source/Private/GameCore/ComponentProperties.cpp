@@ -2,11 +2,10 @@
 
 #include <string>
 
-#include "Public/GameCore/Components.h"
 #include "Public/GameCore/GameCoreLog.h"
 
-/* The editor property registry and the built-in components' lists. Editor
- * targets only. See ComponentProperties.h. */
+/* The editor property registry. Each built-in component's list is in its own
+ * Components/ .cpp. Editor targets only. See ComponentProperties.h. */
 
 #if WITH_EDITOR
 
@@ -50,10 +49,11 @@ bool RegisterComponentProperties(const ComponentTypeID InType, const ComponentPr
     if(InRejected > 0)
     {
         GAMECORE_LOG_ERROR(std::string("RegisterComponentProperties: '") + TypeNameOf(InType) + "' had "
-                           + std::to_string(InRejected) + " property(ies) rejected -- more than "
+                           + std::to_string(InRejected) + " property(ies) or categories rejected -- more than "
                            + std::to_string(size_t(COMPONENT_PROPERTIES_PER_TYPE_MAX))
-                           + " properties, or a name of " + std::to_string(size_t(COMPONENT_PROPERTY_NAME_MAX))
-                           + "+ characters. Those will not appear in the editor.")
+                           + " properties, a name of " + std::to_string(size_t(COMPONENT_PROPERTY_NAME_MAX))
+                           + "+ characters, or a category of " + std::to_string(size_t(COMPONENT_PROPERTY_CATEGORY_MAX))
+                           + "+. Those properties will not appear in the editor; a rejected category's are uncategorised.")
     }
 
     /* First wins, as RegisterComponentScript does. */
@@ -117,23 +117,6 @@ bool IsComponentAddable(const ComponentTypeID InType)
     }
     const PropertyTypeRange& Range = GPropertyTypes[InType];
     return Range.bRegistered && Range.DefaultsFn != nullptr && (Range.TypeFlags & CPF_NotAddable) == 0;
-}
-
-// === Built-in components ====================================================
-
-GAMECORE_DEFINE_COMPONENT_PROPERTIES(TransformComponent)
-{
-    Props.Field("Position", &TransformComponent::Position);
-    Props.Field("Rotation", &TransformComponent::Rotation);
-    Props.Field("Scale",    &TransformComponent::Scale);
-}
-
-/* World is the refit's output, so read-only. ProxyID stays hidden. */
-GAMECORE_DEFINE_COMPONENT_PROPERTIES(BoundsComponent)
-{
-    Props.Field("Local", &BoundsComponent::Local);
-    Props.Field("World", &BoundsComponent::World, PF_ReadOnly);
-    Props.Flag("Static", &BoundsComponent::bStatic);
 }
 }
 #endif // WITH_EDITOR

@@ -2,13 +2,16 @@
 #include <cmath>
 #include <cstring>
 #include <map>
+#include <mutex>
 #include <set>
 
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ComponentType.h"
+#include "Public/GameCore/ScriptLibrary.h"
 #include "Public/NodeGraph/GraphCompiler.h"
 #include "Private/NodeGraph/CodeWriter.h"
 #include "Private/NodeGraph/GraphIndex.h"
+#include "Private/NodeGraph/NodeGraphLog.h"
 
 /*
  * Script graphs -> a Lua class table, the shape Games/Sandbox/Scripts/Mover.lua
@@ -30,6 +33,20 @@
  *
  * LANES. As in the Lua bindings, Vector3 / Color / AABB are 3 / 4 / 6
  * numbers, never tables; vector math is written per component.
+ *
+ * FUNCTIONS. A graph's own functions (Graph::Functions) are locals above the
+ * table, declared first so they may call each other and themselves:
+ *
+ *     local Fn_Clamp
+ *     Fn_Clamp = function(self, In_Value, In_Min, In_Max)
+ *         ...
+ *         do return r1 end
+ *         return 0                                 -- fell off the end: zeros
+ *     end
+ *
+ * The body is the chain from the function's Entry node; a Call node is
+ * `local Out1 = Fn_Clamp(self, ...)`. Their nodes' pins come from the
+ * function's signature (ScriptSchema::FindDefinition).
  */
 namespace NodeGraph
 {
@@ -57,13 +74,20 @@ namespace
         SOP_EventStart,
         SOP_EventTick,
         SOP_EventDestroy,
+        SOP_EventOverlapBegin,
+        SOP_EventOverlapEnd,
         SOP_EventCustom,
+        SOP_FunctionEntry,
+        SOP_FunctionReturn,
+        SOP_FunctionCall,
+        SOP_EventPhase,   // On <Phase>: the phase's name in the definition's Template
     };
 
     const char* const EXEC_IN  = "Exec";
     const char* const EXEC_OUT = "Then";
     const char* const COMPONENT_TYPE_PREFIX = "Component:";
     const char* const HANDLES_FIELD = "GraphEventHandles";
+    const char* const FUNCTION_PROPERTY = "Function";
 
     constexpr int CUSTOM_EVENT_ARGS = 4;   // EventArgs holds four (EventBus.h)
 
@@ -75,7 +99,32 @@ namespace
         return InType.compare(0, std::strlen(COMPONENT_TYPE_PREFIX), COMPONENT_TYPE_PREFIX) == 0;
     }
 
-    /* The lane suffixes of a multi-lane type; empty for a one-lane type. */
+    /* A script struct's lanes (GameCore/ScriptStruct.h): one per Lua value,
+     * named after its fields ("Value", "Where_X"), each of a one-value type. */
+    struct StructLayout
+    {
+        std::vector<std::string>                         LaneNames;
+        std::vector<std::string>                         LaneTypes;   // number, integer, bool or string
+        std::vector<std::pair<std::string, std::string>> Fields;      // name, pin type
+    };
+
+    /* By struct name. Filled when a schema is built and never cleared, so a
+     * graph still open on a retired schema compiles after a refresh, without
+     * its module loaded. */
+    std::map<std::string, StructLayout>& StructLayouts()
+    {
+        static std::map<std::string, StructLayout> Layouts;
+        return Layouts;
+    }
+
+    const StructLayout* FindStructLayout(const std::string& InType)
+    {
+        const auto Found = StructLayouts().find(InType);
+        return Found == StructLayouts().end() ? nullptr : &Found->second;
+    }
+
+    /* The lane suffixes of a multi-lane type; empty for a one-lane type. A
+     * struct's are its lanes' names, even when it has one. */
     const std::vector<std::string>& LaneNames(const std::string& InType)
     {
         static const std::vector<std::string> One;
@@ -85,6 +134,7 @@ namespace
         if(InType == "Vector3") { return Vector; }
         if(InType == "Color")   { return Color; }
         if(InType == "Box")     { return Box; }
+        if(const StructLayout* Layout = FindStructLayout(InType)) { return Layout->LaneNames; }
         return One;
     }
 
@@ -142,10 +192,11 @@ namespace
         return FormatNumber(InValue);
     }
 
-    std::string ScriptTypeOf(const GameCore::EScriptFieldType InType)
+    std::string ScriptTypeOf(const GameCore::EScriptFieldType InType, const GameCore::ScriptStructID InStruct)
     {
         switch(InType)
         {
+            case GameCore::EScriptFieldType::Struct:      return GameCore::GetScriptStructName(InStruct);
             case GameCore::EScriptFieldType::Float:
             case GameCore::EScriptFieldType::Double:      return "number";
             case GameCore::EScriptFieldType::Int32:
@@ -189,7 +240,8 @@ namespace
             Pin.Direction = InDirection;
             if(Pin.Name.empty()) { return false; }
             if(Pin.Type != "number" && Pin.Type != "integer" && Pin.Type != "bool" && Pin.Type != "string"
-               && Pin.Type != "Vector3" && Pin.Type != "Color" && Pin.Type != "Entity" && Pin.Type != "Box")
+               && Pin.Type != "Vector3" && Pin.Type != "Color" && Pin.Type != "Entity" && Pin.Type != "Box"
+               && !FindStructLayout(Pin.Type))
             {
                 return false;
             }
@@ -199,15 +251,46 @@ namespace
         return true;
     }
 
+    /* "Params -> Results", either half optional; false if empty or malformed. */
+    bool ParseSignature(const std::string& InSignature, std::vector<PinDefinition>& OutParameters, std::vector<PinDefinition>& OutResults)
+    {
+        const size_t Arrow = InSignature.find("->");
+        return !InSignature.empty()
+            && ParseSignatureList(InSignature.substr(0, Arrow), EPinDirection::Input, OutParameters)
+            && (Arrow == std::string::npos || ParseSignatureList(InSignature.substr(Arrow + 2), EPinDirection::Output, OutResults));
+    }
+
+    /* "{A}, {B}" -- a call's argument list, for ExpandCall. */
+    std::string ArgumentList(const std::vector<PinDefinition>& InParameters)
+    {
+        std::string Arguments;
+        for(const PinDefinition& Each : InParameters)
+        {
+            Arguments += (Arguments.empty() ? "{" : ", {") + Each.Name + "}";
+        }
+        return Arguments;
+    }
+
+    const char* const NO_SIGNATURE_TOOLTIP = "has no signature in its binding, so it is called with no arguments";
+
     class ScriptSchema final : public Schema
     {
     public:
         ScriptSchema();
+        const NodeDefinition* FindDefinition(const Graph& InGraph, const Node& InNode) const override;
         std::string ResolveWildcard(const Graph& InGraph, const Node& InNode, const NodeDefinition& InDef) const override;
         void Compile(const Graph& InGraph, CompileResult& OutResult) const override;
 
     private:
         void AddComponentNodes();
+        void AddLibraryNodes();
+        std::vector<std::string> AddStructTypes();
+
+        /* Function nodes' definitions, one per node type and signature: built
+         * on first use and kept, so a pointer handed out stays valid. Asked
+         * for from the editor and from compiles, hence the lock. */
+        mutable std::mutex                            FunctionDefinitionsLock;
+        mutable std::map<std::string, NodeDefinition> FunctionDefinitions;
     };
 
     // === The compiler ===========================================================
@@ -229,6 +312,7 @@ namespace
             std::map<PinRef, Lanes>  Available;   // statement outputs and event parameters readable here
             std::set<NodeGuid>       ExecPath;    // the statements on the current path, to catch a loop
             int                      NextTemp = 0;
+            const GraphFunction*     Function = nullptr;   // the graph function this is the body of, if any
         };
 
         using ValueCache = std::map<PinRef, Lanes>;
@@ -243,7 +327,9 @@ namespace
 
         void EmitFunction(CodeWriter& Out, const std::string& InHeader, const Node* InEvent,
                           const std::vector<std::string>& InPrologue, const std::vector<std::string>& InEpilogue,
-                          const std::map<std::string, Lanes>& InParameters);
+                          const std::map<std::string, Lanes>& InParameters,
+                          const GraphFunction* InFunction = nullptr, const char* InClose = "end,");
+        void EmitGraphFunctions(CodeWriter& Out);
         void EmitChain(Scope& S, const Node& InFrom, const std::string& InExecPin);
         void EmitStatement(Scope& S, const Node& InNode, const NodeDefinition& InDef);
 
@@ -257,6 +343,13 @@ namespace
         std::string StatementOutputBase(const Node& InNode, const PinDefinition& InPin);
 
         Lanes VariableLanes(const std::string& InName) const;
+
+        /* A graph function's local: Fn_<Name>. */
+        static std::string FunctionLocal(const std::string& InName) { return "Fn_" + SanitizeIdentifier(InName); }
+
+        /* What InFunction returns when it ends without a Return: each output's
+         * type default (nil for an Entity). Empty for a function without outputs. */
+        Lanes DefaultResults(const GraphFunction& InFunction);
 
         GraphIndex     Index;
         CompileResult& Result;
@@ -287,7 +380,9 @@ namespace
 
         /* Names the generated table uses itself; a variable may not take one. */
         static const std::set<std::string> Reserved = {
-            "Entity", "TickPhase", "CullOutsideActiveRegion", "OnStart", "OnTick", "OnDestroy", HANDLES_FIELD
+            "Entity", "Root", "Instance", "TickPhase", "OnStart", "OnTick", "OnDestroy",
+            "OnPrePhysics", "OnPhysics", "OnPostPhysics", "OnPostUpdate",
+            "OnOverlapBegin", "OnOverlapEnd", HANDLES_FIELD
         };
         for(const Variable& Each : G.Variables)
         {
@@ -300,6 +395,9 @@ namespace
         const Node* StartNode = nullptr;
         const Node* TickNode = nullptr;
         const Node* DestroyNode = nullptr;
+        const Node* OverlapBeginNode = nullptr;
+        const Node* OverlapEndNode = nullptr;
+        std::map<std::string, const Node*> PhaseNodes;   // phase name -> its On <Phase> node
         std::vector<const Node*> CustomEvents;
         for(const Node* Each : Index.SortedNodes())
         {
@@ -309,23 +407,36 @@ namespace
             {
                 case SOP_EventStart:   StartNode = Each;   break;
                 case SOP_EventTick:    TickNode = Each;    break;
+                case SOP_EventPhase:   PhaseNodes[Def->Template] = Each; break;
                 case SOP_EventDestroy: DestroyNode = Each; break;
+                case SOP_EventOverlapBegin: OverlapBeginNode = Each; break;
+                case SOP_EventOverlapEnd:   OverlapEndNode = Each;   break;
                 case SOP_EventCustom:  CustomEvents.push_back(Each); break;
                 default: break;
             }
         }
 
-        if(!StartNode && !TickNode && !DestroyNode && CustomEvents.empty())
+        if(!StartNode && !TickNode && !DestroyNode && !OverlapBeginNode && !OverlapEndNode && CustomEvents.empty()
+           && PhaseNodes.empty())
         {
             Result.Warning(NodeGuid(), std::string(), "the graph has no event node, so the script never runs anything");
         }
 
         // --- Custom event handler names -----------------------------------------
-        std::vector<std::pair<const Node*, std::string>> Handlers;
+        /* On Event names its event in a property; a library's typed On <Name>
+         * in its definition's Template. */
+        struct Handler
+        {
+            const Node* N = nullptr;
+            std::string Method;
+            std::string EventName;
+        };
+        std::vector<Handler> Handlers;
         std::map<std::string, int> HandlerUse;
         for(const Node* Each : CustomEvents)
         {
-            const std::string EventName = Each->GetProperty("EventName");
+            const NodeDefinition* Def = Index.FindDefinition(*Each);
+            const std::string EventName = Def->Template.empty() ? Each->GetProperty("EventName") : Def->Template;
             if(EventName.empty())
             {
                 Result.Error(Each->Id, std::string(), "'On Event' needs an event name");
@@ -334,11 +445,12 @@ namespace
             std::string Method = "Event_" + SanitizeIdentifier(EventName);
             const int Use = ++HandlerUse[Method];
             if(Use > 1) { Method += "_" + std::to_string(Use); }
-            Handlers.emplace_back(Each, Method);
+            Handlers.push_back({ Each, Method, EventName });
         }
 
         CodeWriter Out;
         Out.Line("-- Generated by NimbleEditor from the script graph \"" + G.Name + "\". Do not edit.");
+        EmitGraphFunctions(Out);
         Out.Line("return {");
         Out.Indent();
         Out.Line("TickPhase = TickPhase." + G.GetProperty("TickPhase", "PrePhysics") + ",");
@@ -368,10 +480,10 @@ namespace
             if(!Handlers.empty())
             {
                 Prologue.push_back("self." + std::string(HANDLES_FIELD) + " = {");
-                for(const auto& Each : Handlers)
+                for(const Handler& Each : Handlers)
                 {
-                    Prologue.push_back("    Events.On(" + LuaString(Each.first->GetProperty("EventName"))
-                                       + ", function(...) self:" + Each.second + "(...) end),");
+                    Prologue.push_back("    Events.On(" + LuaString(Each.EventName)
+                                       + ", function(...) self:" + Each.Method + "(...) end),");
                 }
                 Prologue.push_back("}");
             }
@@ -383,6 +495,31 @@ namespace
         {
             Out.Blank();
             EmitFunction(Out, "OnTick = function(self, dt)", TickNode, {}, {}, { { "DeltaSeconds", { "dt" } } });
+        }
+
+        /* A prefab's phase functions, in phase order. Each one present puts
+         * the instance in that phase's list; an absent one costs nothing. */
+        for(const std::string& Phase : GTickPhases)
+        {
+            const auto Found = PhaseNodes.find(Phase);
+            if(Found == PhaseNodes.end()) { continue; }
+            Out.Blank();
+            EmitFunction(Out, "On" + Phase + " = function(self, dt)", Found->second, {}, {}, { { "DeltaSeconds", { "dt" } } });
+        }
+
+        /* Called by the engine's overlap pass (GameCore's CollisionComponent):
+         * mine is the script's own entity that overlapped. */
+        if(OverlapBeginNode)
+        {
+            Out.Blank();
+            EmitFunction(Out, "OnOverlapBegin = function(self, other, mine)", OverlapBeginNode, {}, {},
+                         { { "Other", { "other" } }, { "Mine", { "mine" } } });
+        }
+        if(OverlapEndNode)
+        {
+            Out.Blank();
+            EmitFunction(Out, "OnOverlapEnd = function(self, other, mine)", OverlapEndNode, {}, {},
+                         { { "Other", { "other" } }, { "Mine", { "mine" } } });
         }
 
         if(DestroyNode || !Handlers.empty())
@@ -398,18 +535,23 @@ namespace
             EmitFunction(Out, "OnDestroy = function(self)", DestroyNode, Prologue, {}, {});
         }
 
-        for(const auto& Each : Handlers)
+        for(const Handler& Each : Handlers)
         {
+            /* The node's data outputs are the event's arguments, in order. An
+             * integer arrives from the bus as a float, so it is floored. */
             std::map<std::string, Lanes> Parameters;
-            std::string Header = Each.second + " = function(self";
-            for(int Arg = 1; Arg <= CUSTOM_EVENT_ARGS; ++Arg)
+            std::string Header = Each.Method + " = function(self";
+            for(int Arg = 1; Arg <= CUSTOM_EVENT_ARGS; ++Arg) { Header += ", Arg" + std::to_string(Arg); }
+
+            int Arg = 0;
+            for(const PinDefinition& Pin : Index.FindDefinition(*Each.N)->Pins)
             {
+                if(Pin.IsExec() || !Pin.IsOutput() || ++Arg > CUSTOM_EVENT_ARGS) { continue; }
                 const std::string Name = "Arg" + std::to_string(Arg);
-                Header += ", " + Name;
-                Parameters["Arg " + std::to_string(Arg)] = { Name };
+                Parameters[Pin.Name] = { Pin.Type == "integer" ? "math.floor(" + Name + " or 0)" : Name };
             }
             Out.Blank();
-            EmitFunction(Out, Header + ")", Each.first, {}, {}, Parameters);
+            EmitFunction(Out, Header + ")", Each.N, {}, {}, Parameters);
         }
 
         Out.Outdent();
@@ -421,9 +563,11 @@ namespace
 
     void ScriptCompiler::EmitFunction(CodeWriter& Out, const std::string& InHeader, const Node* InEvent,
                                       const std::vector<std::string>& InPrologue, const std::vector<std::string>& InEpilogue,
-                                      const std::map<std::string, Lanes>& InParameters)
+                                      const std::map<std::string, Lanes>& InParameters,
+                                      const GraphFunction* InFunction, const char* InClose)
     {
         Scope S;
+        S.Function = InFunction;
         if(InEvent)
         {
             for(const auto& Each : InParameters) { S.Available[PinRef{ InEvent->Id, Each.first }] = Each.second; }
@@ -438,7 +582,103 @@ namespace
         Out.Append(S.Body);
         for(const std::string& Line : InEpilogue) { Out.Line(Line, Owner); }
         Out.Outdent();
-        Out.Line("end,", Owner);
+        Out.Line(InClose, Owner);
+    }
+
+    void ScriptCompiler::EmitGraphFunctions(CodeWriter& Out)
+    {
+        const Graph& G = Index.GetGraph();
+        if(G.Functions.empty()) { return; }
+
+        /* Each function's Entry, and whether anything calls it. */
+        std::map<std::string, const Node*> Entries;
+        std::set<std::string> Called;
+        for(const Node* Each : Index.SortedNodes())
+        {
+            const NodeDefinition* Def = Index.FindDefinition(*Each);
+            if(!Def) { continue; }
+            const std::string Name = Each->GetProperty(FUNCTION_PROPERTY);
+            if(Def->Op == SOP_FunctionCall) { Called.insert(Name); }
+            if(Def->Op != SOP_FunctionEntry) { continue; }
+
+            if(!Entries.emplace(Name, Each).second)
+            {
+                Result.Error(Each->Id, std::string(), "function '" + Name + "' has more than one Entry node");
+            }
+        }
+
+        /* An Entity, a struct or any variable type; never a component or Any. */
+        const std::vector<std::string>& VariableTypes = Index.GetSchema().GetVariableTypes();
+        const auto IsAllowed = [&](const std::string& InType)
+        {
+            return InType == "Entity" || std::find(VariableTypes.begin(), VariableTypes.end(), InType) != VariableTypes.end();
+        };
+
+        std::vector<std::string> Locals;
+        for(const GraphFunction& Each : G.Functions) { Locals.push_back(FunctionLocal(Each.Name)); }
+        Out.Line("local " + Join(Locals));
+
+        for(const GraphFunction& Function : G.Functions)
+        {
+            const auto Entry = Entries.find(Function.Name);
+            if(Entry == Entries.end())
+            {
+                Result.Error(NodeGuid(), std::string(), "function '" + Function.Name + "' has no Entry node to start its body");
+                continue;
+            }
+            if(!Called.count(Function.Name))
+            {
+                Result.Warning(Entry->second->Id, std::string(), "function '" + Function.Name + "' is never called");
+            }
+
+            for(const std::vector<FunctionPin>* List : { &Function.Inputs, &Function.Outputs })
+            {
+                for(const FunctionPin& Pin : *List)
+                {
+                    if(Pin.Name == EXEC_IN || Pin.Name == EXEC_OUT)
+                    {
+                        Result.Error(Entry->second->Id, std::string(), "function '" + Function.Name + "': '" + Pin.Name
+                                     + "' is the name of an execution pin");
+                    }
+                    if(!IsAllowed(Pin.Type))
+                    {
+                        Result.Error(Entry->second->Id, std::string(), "function '" + Function.Name + "': '" + Pin.Name
+                                     + "' has the type '" + Pin.Type + "', which a function cannot take or give");
+                    }
+                }
+            }
+
+            /* Each input is its lanes, as parameters: In_Pos_X, In_Pos_Y, ... */
+            std::string Header = FunctionLocal(Function.Name) + " = function(self";
+            std::map<std::string, Lanes> Parameters;
+            for(const FunctionPin& Pin : Function.Inputs)
+            {
+                const Lanes Names = LaneVariables("In_" + SanitizeIdentifier(Pin.Name), Pin.Type);
+                for(const std::string& Lane : Names) { Header += ", " + Lane; }
+                Parameters[Pin.Name] = Names;
+            }
+
+            std::vector<std::string> Epilogue;
+            const Lanes Defaults = DefaultResults(Function);
+            if(!Defaults.empty()) { Epilogue.push_back("return " + Join(Defaults)); }
+
+            EmitFunction(Out, Header + ")", Entry->second, {}, Epilogue, Parameters, &Function, "end");
+        }
+        Out.Blank();
+    }
+
+    Lanes ScriptCompiler::DefaultResults(const GraphFunction& InFunction)
+    {
+        Lanes Out;
+        const Node NoValues;
+        for(const FunctionPin& Each : InFunction.Outputs)
+        {
+            PinDefinition Pin;
+            Pin.Name = Each.Name;
+            const Lanes Value = Each.Type == "Entity" ? Lanes{ "nil" } : Literal(NoValues, Pin, Each.Type);
+            Out.insert(Out.end(), Value.begin(), Value.end());
+        }
+        return Out;
     }
 
     void ScriptCompiler::EmitChain(Scope& S, const Node& InFrom, const std::string& InExecPin)
@@ -524,8 +764,33 @@ namespace
             }
 
             case SOP_Return:
-                W.Line("do return end", InNode.Id);
+            {
+                /* In a function body, a plain Return gives the defaults. */
+                const Lanes Defaults = S.Function ? DefaultResults(*S.Function) : Lanes();
+                W.Line(Defaults.empty() ? "do return end" : "do return " + Join(Defaults) + " end", InNode.Id);
                 break;
+            }
+
+            case SOP_FunctionReturn:
+            {
+                const std::string Name = InNode.GetProperty(FUNCTION_PROPERTY);
+                if(!S.Function || S.Function->Name != Name)
+                {
+                    Result.Error(InNode.Id, std::string(), "'" + InDef.DisplayName + "' is reached from outside function '" + Name
+                                 + "'; it can only end that function's own body");
+                    break;
+                }
+
+                Lanes Values;
+                for(const PinDefinition& Pin : InDef.Pins)
+                {
+                    if(Pin.IsExec() || !Pin.IsInput()) { continue; }
+                    const Lanes Value = Input(S, Cache, InNode, InDef, Pin.Name);
+                    Values.insert(Values.end(), Value.begin(), Value.end());
+                }
+                W.Line(Values.empty() ? "do return end" : "do return " + Join(Values) + " end", InNode.Id);
+                break;
+            }
 
             case SOP_VarSet:
             {
@@ -538,6 +803,23 @@ namespace
 
             case SOP_Emit:
             {
+                Lanes Arguments;
+                if(!InDef.Template.empty())
+                {
+                    /* A library's typed Emit <Name>: every parameter, linked or
+                     * not, since each has a typed default. */
+                    Arguments.push_back(LuaString(InDef.Template));
+                    for(const PinDefinition& Pin : InDef.Pins)
+                    {
+                        if(Pin.IsExec() || !Pin.IsInput()) { continue; }
+                        const Lanes Value = Input(S, Cache, InNode, InDef, Pin.Name);
+                        Arguments.insert(Arguments.end(), Value.begin(), Value.end());
+                    }
+                    W.Line("Events.Emit(" + Join(Arguments) + ")", InNode.Id);
+                    EmitChain(S, InNode, EXEC_OUT);
+                    break;
+                }
+
                 /* Up to the last linked argument: a trailing nil arrives as 0. */
                 const Lanes Name = Input(S, Cache, InNode, InDef, "Event");
                 int LastArg = 0;
@@ -545,7 +827,7 @@ namespace
                 {
                     if(Index.LinkInto(InNode.Id, "Arg " + std::to_string(Arg))) { LastArg = Arg; }
                 }
-                Lanes Arguments = Name;
+                Arguments = Name;
                 for(int Arg = 1; Arg <= LastArg; ++Arg)
                 {
                     const Lanes Value = Input(S, Cache, InNode, InDef, "Arg " + std::to_string(Arg));
@@ -556,9 +838,26 @@ namespace
                 break;
             }
 
+            case SOP_FunctionCall:
             default:   // SOP_Call
             {
-                const std::string Call = ExpandCall(S, Cache, InNode, InDef);
+                std::string Call;
+                if(InDef.Op == SOP_FunctionCall)
+                {
+                    /* Fn_<Name>(self, <each input's lanes>) */
+                    Call = FunctionLocal(InNode.GetProperty(FUNCTION_PROPERTY)) + "(self";
+                    for(const PinDefinition& Pin : InDef.Pins)
+                    {
+                        if(Pin.IsExec() || !Pin.IsInput()) { continue; }
+                        const Lanes Value = Input(S, Cache, InNode, InDef, Pin.Name);
+                        for(const std::string& Lane : Value) { Call += ", " + Lane; }
+                    }
+                    Call += ")";
+                }
+                else
+                {
+                    Call = ExpandCall(S, Cache, InNode, InDef);
+                }
 
                 Lanes Targets;
                 for(const PinDefinition& Pin : InDef.Pins)
@@ -796,6 +1095,18 @@ namespace
             return { "nil" };
         }
 
+        /* A struct has no literal of its own (Make <Struct> builds one): unlinked,
+         * each lane is its type's zero. */
+        if(const StructLayout* Layout = FindStructLayout(InType))
+        {
+            Lanes Out;
+            for(const std::string& LaneType : Layout->LaneTypes)
+            {
+                Out.push_back(LaneType == "bool" ? "false" : LaneType == "string" ? "\"\"" : "0");
+            }
+            return Out;
+        }
+
         const std::string* Given = InNode.FindConstant(InPin.Name);
         std::string Text = Given ? *Given : InPin.Default;
         if(Text.empty() && !Given)
@@ -909,7 +1220,9 @@ namespace
             AddConversion("Any", Each);
         }
 
+        /* Script structs first: variables and signatures may use them. */
         VariableTypes = GVariableTypes;
+        for(std::string& Each : AddStructTypes()) { VariableTypes.push_back(std::move(Each)); }
         GraphProperties.push_back({ "TickPhase", EPropertyKind::Choice, "PrePhysics", GTickPhases,
                                     "When this script's OnTick runs relative to the World's systems" });
 
@@ -960,6 +1273,27 @@ namespace
         Event("Event.OnStart",   "On Start",   SOP_EventStart,   {}, true).Tooltip = "Runs once, before this entity's first tick.";
         Event("Event.OnTick",    "On Tick",    SOP_EventTick,    { Out("DeltaSeconds", "number") }, true).Tooltip = "Runs every frame.";
         Event("Event.OnDestroy", "On Destroy", SOP_EventDestroy, {}, true).Tooltip = "Runs when the entity or its script goes away.";
+        /* A prefab's per-phase functions: define only the phases it needs. */
+        for(const std::string& Phase : GTickPhases)
+        {
+            static const std::map<std::string, std::string> Labels = {
+                { "PrePhysics", "Pre-Physics" }, { "Physics", "Physics" }, { "PostPhysics", "Post-Physics" }, { "PostUpdate", "Post Update" } };
+            NodeDefinition& Def = Event("Event.On" + Phase, "On " + Labels.at(Phase), SOP_EventPhase, { Out("DeltaSeconds", "number") }, true);
+            Def.Template = Phase;
+            Def.Tooltip  = "Runs every frame in the " + Labels.at(Phase) + " phase, on a prefab's script.";
+            Def.Keywords = "tick update frame phase";
+        }
+        {
+            NodeDefinition& Begin = Event("Event.OnOverlapBegin", "On Overlap Begin", SOP_EventOverlapBegin,
+                                          { Out("Other", "Entity"), Out("Mine", "Entity") }, true);
+            Begin.Tooltip  = "Runs when one of this script's colliders starts overlapping another (start of PostPhysics). "
+                             "Mine is which of its own entities it was.";
+            Begin.Keywords = "collision collide touch trigger enter hit";
+            NodeDefinition& End = Event("Event.OnOverlapEnd", "On Overlap End", SOP_EventOverlapEnd,
+                                        { Out("Other", "Entity"), Out("Mine", "Entity") }, true);
+            End.Tooltip  = "Runs when an overlap ends -- Other may no longer exist (Is Valid).";
+            End.Keywords = "collision collide untouch trigger exit leave";
+        }
         {
             std::vector<PinDefinition> Args;
             for(int Arg = 1; Arg <= CUSTOM_EVENT_ARGS; ++Arg) { Args.push_back(Out("Arg " + std::to_string(Arg), "Any")); }
@@ -979,15 +1313,42 @@ namespace
               ExecOut("Completed") }, std::string(), {}, "repeat loop");
         Add("Flow.Return", "Return", "Flow", ENodeRole::Statement, SOP_Return, { ExecIn() }, std::string(), {}, "stop exit");
 
+        // --- Functions -----------------------------------------------------------
+        /* Pins here are only the exec ones: FindDefinition adds the named
+         * function's inputs and outputs. */
+        {
+            const auto Function = [&](const std::string& InType, const std::string& InName, const ENodeRole InRole, const uint32_t InOp,
+                                      std::vector<PinDefinition> InPins, const std::string& InTooltip, const std::string& InKeywords)
+            {
+                NodeDefinition Def;
+                Def.Type        = InType;
+                Def.DisplayName = InName;
+                Def.Category    = "Functions";
+                Def.Role        = InRole;
+                Def.Op          = InOp;
+                Def.Pins        = std::move(InPins);
+                Def.Tooltip     = InTooltip;
+                Def.Keywords    = InKeywords;
+                Def.Properties  = { { FUNCTION_PROPERTY, EPropertyKind::Function, "", {}, "The graph function" } };
+                AddNode(std::move(Def));
+            };
+            Function("Function.Entry", "Function Entry", ENodeRole::Event, SOP_FunctionEntry, { ExecOut() },
+                     "Where a graph function's body starts; its outputs are the function's inputs.", "define body start");
+            Function("Function.Return", "Return from Function", ENodeRole::Statement, SOP_FunctionReturn, { ExecIn() },
+                     "Ends a graph function, giving its outputs.", "result exit");
+            Function("Function.Call", "Call Function", ENodeRole::Statement, SOP_FunctionCall, { ExecIn(), ExecOut() },
+                     "Runs a graph function and gives its outputs.", "run invoke");
+        }
+
         // --- Variables -----------------------------------------------------------
         {
             NodeDefinition& Get = Pure("Variable.Get", "Get Variable", "Variables", SOP_VarGet, { Out("Value", WILDCARD_TYPE) },
-                                       std::string(), GVariableTypes);
+                                       std::string(), VariableTypes);
             Get.Properties = { { "Variable", EPropertyKind::Variable, "", {}, "The graph variable to read" } };
             Get.bWildcardFromSchema = true;
 
             NodeDefinition& Set = Statement("Variable.Set", "Set Variable", "Variables", SOP_VarSet, { In("Value", WILDCARD_TYPE) });
-            Set.WildcardTypes = GVariableTypes;
+            Set.WildcardTypes = VariableTypes;
             Set.Properties = { { "Variable", EPropertyKind::Variable, "", {}, "The graph variable to write" } };
             Set.bWildcardFromSchema = true;
         }
@@ -998,12 +1359,28 @@ namespace
         Pure("Entity.IsValid", "Is Valid", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Valid", "bool") }, "{Entity}:IsValid()", {}, "alive");
         Statement("Entity.SetName", "Set Name", "Entity", SOP_Call, { In("Entity", "Entity"), In("Name", "string") }, "{Entity}:SetName({Name})");
         Statement("Entity.Destroy", "Destroy", "Entity", SOP_Call, { In("Entity", "Entity") }, "{Entity}:Destroy()", "delete remove kill");
-        Statement("Entity.SetScript", "Set Script", "Entity", SOP_Call, { In("Entity", "Entity"), In("Path", "string") }, "{Entity}:SetScript({Path})");
+        /* A prefab's script: its root, its entities by template name, and how it ticks. */
+        Pure("Prefab.Root", "Prefab Root", "Prefab", SOP_Call, { Out("Root", "Entity") }, "self.Root", {}, "instance self owner");
+        Pure("Prefab.Find", "Find Prefab Entity", "Prefab", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") },
+             "self.Instance:Find({Name})", {}, "instance child template lookup");
+        Statement("Prefab.SetTickMode", "Set Tick Mode", "Prefab", SOP_Call, { In("Mode", "string", "EventsOnly") },
+                  "self.Instance:SetTickMode({Mode})", "instance tick pause sleep events off");
+        Statement("Prefab.SetPhaseEnabled", "Set Phase Enabled", "Prefab", SOP_Call,
+                  { In("Phase", "string", "PrePhysics"), In("Enabled", "bool", "true") },
+                  "self.Instance:SetPhaseEnabled(TickPhase[{Phase}], {Enabled})", "instance tick pause phase");
+        Statement("Prefab.Destroy", "Destroy Prefab", "Prefab", SOP_Call, {}, "self.Instance:Destroy()", "instance remove kill");
+        Pure("Entity.GetParent", "Get Parent", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Parent", "Entity") }, "{Entity}:GetParent()", {}, "hierarchy attach owner");
+        Pure("Entity.GetChildCount", "Get Child Count", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Count", "integer") }, "{Entity}:GetChildCount()", {}, "hierarchy children");
+        Pure("Entity.GetChild", "Get Child", "Entity", SOP_Call, { In("Entity", "Entity"), In("Index", "integer", "1"), Out("Child", "Entity") }, "{Entity}:GetChild({Index})", {}, "hierarchy children");
+        Statement("Entity.SetParent", "Set Parent", "Entity", SOP_Call, { In("Entity", "Entity"), In("Parent", "Entity"), In("KeepWorld", "bool", "true") },
+                  "{Entity}:SetParent({Parent}, {KeepWorld})", "attach detach hierarchy");
 
         Pure("World.FindEntity", "Find Entity", "World", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") }, "World.FindEntity({Name})", {}, "lookup by name");
         Pure("World.GetEntityCount", "Entity Count", "World", SOP_Call, { Out("Count", "integer") }, "World.GetEntityCount()");
         Statement("World.CreateEntity", "Create Entity", "World", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") },
                   "World.CreateEntity({Name})", "spawn new");
+        Statement("World.SpawnPrefab", "Spawn Prefab", "World", SOP_Call, { In("Prefab", "string"), In("Position", "Vector3"), Out("Root", "Entity") },
+                  "World.SpawnPrefab({Prefab}, {Position})", "spawn instantiate create prefab");
         Statement("World.Raycast", "Raycast", "World", SOP_Call,
                   { In("Origin", "Vector3"), In("Direction", "Vector3", "1 0 0"), In("MaxDistance", "number", "1000"),
                     Out("Hit", "Entity"), Out("Distance", "number") },
@@ -1103,6 +1480,7 @@ namespace
              std::string(), {}, "aabb bounds");
 
         AddComponentNodes();
+        AddLibraryNodes();
     }
 
     /* Per component type: get/has/add/remove, a getter/setter per field and a
@@ -1158,7 +1536,7 @@ namespace
 
                 if(!Entry.bMethod)
                 {
-                    const std::string FieldType = ScriptTypeOf(Entry.FieldType);
+                    const std::string FieldType = ScriptTypeOf(Entry.FieldType, Entry.FieldStruct);
                     Make("Get" + Member, Name + ": Get " + Member, ENodeRole::Pure,
                          { In("Target", TypeName), Out(Member, FieldType) }, "{Target}:Get" + Member + "()");
                     if(!Entry.bReadOnly)
@@ -1173,32 +1551,241 @@ namespace
                 std::vector<PinDefinition> Pins = { In("Target", TypeName) };
                 std::vector<PinDefinition> Parameters, Results;
                 const std::string Signature = Entry.Signature;
-                const size_t Arrow = Signature.find("->");
-                const bool bParsed = !Signature.empty()
-                                  && ParseSignatureList(Signature.substr(0, Arrow), EPinDirection::Input, Parameters)
-                                  && (Arrow == std::string::npos || ParseSignatureList(Signature.substr(Arrow + 2), EPinDirection::Output, Results));
+                const bool bParsed = ParseSignature(Signature, Parameters, Results);
 
                 std::string Arguments;
                 if(bParsed)
                 {
-                    for(const PinDefinition& Each : Parameters)
-                    {
-                        Arguments += (Arguments.empty() ? "{" : ", {") + Each.Name + "}";
-                    }
+                    Arguments = ArgumentList(Parameters);
                     Pins.insert(Pins.end(), Parameters.begin(), Parameters.end());
                     Pins.insert(Pins.end(), Results.begin(), Results.end());
                 }
 
-                Make(Member, Name + ": " + Member, ENodeRole::Statement, std::move(Pins), "{Target}:" + Member + "(" + Arguments + ")");
+                Make(Member, Name + ": " + Member, Entry.bPure ? ENodeRole::Pure : ENodeRole::Statement, std::move(Pins),
+                     "{Target}:" + Member + "(" + Arguments + ")");
                 if(!bParsed)
                 {
                     NodeDefinition& Def = const_cast<NodeDefinition&>(*FindNode(Prefix + Member));
                     Def.Tooltip = Signature.empty()
-                                ? "has no signature in its binding, so it is called with no arguments"
+                                ? NO_SIGNATURE_TOOLTIP
                                 : "has an unreadable signature ('" + Signature + "') in its binding -- no signature -- so it is called with no arguments";
                 }
             }
         }
+    }
+
+    /* Per registered script struct (GameCore/ScriptStruct.h): a pin type,
+     * which must be linked or is all zeros, and Make / Break nodes. Records the
+     * lane layout the compiler writes it with. Returns the type names. */
+    std::vector<std::string> ScriptSchema::AddStructTypes()
+    {
+        std::vector<std::string> Names;
+        for(size_t Id = 0; Id < GameCore::GetScriptStructCount(); ++Id)
+        {
+            const GameCore::ScriptStructInfo* Info = GameCore::GetScriptStruct(GameCore::ScriptStructID(Id));
+            if(!Info || Info->FieldCount == 0) { continue; }
+
+            const std::string Name = Info->Name;
+            StructLayout Layout;
+            std::vector<PinDefinition> FieldInputs, FieldOutputs;
+            for(uint16_t Index = 0; Index < Info->FieldCount; ++Index)
+            {
+                const GameCore::ScriptStructField& Field = Info->Fields[Index];
+                const std::string FieldName = Field.Name;
+                const std::string PinType   = ScriptTypeOf(Field.Type, GameCore::SCRIPT_STRUCT_INVALID);
+                Layout.Fields.emplace_back(FieldName, PinType);
+
+                const std::vector<std::string>& Suffixes = LaneNames(PinType);
+                const std::string LaneType = PinType == "Color" ? "integer" : Suffixes.empty() ? PinType : "number";
+                if(Suffixes.empty())
+                {
+                    Layout.LaneNames.push_back(FieldName);
+                    Layout.LaneTypes.push_back(LaneType);
+                }
+                for(const std::string& Suffix : Suffixes)
+                {
+                    Layout.LaneNames.push_back(FieldName + "_" + Suffix);
+                    Layout.LaneTypes.push_back(LaneType);
+                }
+
+                FieldInputs.push_back(In(FieldName, PinType));
+                FieldOutputs.push_back(Out(FieldName, PinType));
+            }
+            StructLayouts()[Name] = std::move(Layout);
+
+            AddType({ Name, Name, 0xC77DFF, "", false });
+            Names.push_back(Name);
+
+            const auto Make = [&](const std::string& InType, const std::string& InDisplay, const uint32_t InOp,
+                                  std::vector<PinDefinition> InPins, const std::string& InTooltip)
+            {
+                NodeDefinition Def;
+                Def.Type        = "Struct." + Name + "." + InType;
+                Def.DisplayName = InDisplay;
+                Def.Category    = "Structs";
+                Def.Keywords    = Name + " struct";
+                Def.Tooltip     = InTooltip;
+                Def.Role        = ENodeRole::Pure;
+                Def.Op          = InOp;
+                Def.Pins        = std::move(InPins);
+                AddNode(std::move(Def));
+            };
+
+            FieldInputs.push_back(Out(Name, Name));
+            Make("Make", "Make " + Name, SOP_Compose, std::move(FieldInputs), "A " + Name + " from its fields");
+            FieldOutputs.insert(FieldOutputs.begin(), In(Name, Name));
+            Make("Break", "Break " + Name, SOP_Decompose, std::move(FieldOutputs), "A " + Name + "'s fields");
+        }
+        return Names;
+    }
+
+    /* Per script library (GameCore/ScriptLibrary.h), under the library's name
+     * in the palette: a call per function, Get/Set per variable, and On/Emit
+     * per event. Types are Library.<Lib>.<Member>, so a graph keeps its links
+     * when the library is reloaded, and loads placeholders while it is not. */
+    void ScriptSchema::AddLibraryNodes()
+    {
+        for(size_t LibraryIndex = 0; LibraryIndex < GameCore::GetScriptLibraryCount(); ++LibraryIndex)
+        {
+            GameCore::ScriptLibraryInfo Info;
+            if(!GameCore::GetScriptLibrary(LibraryIndex, Info)) { continue; }
+
+            const std::string Library = Info.Name;
+            const std::string Prefix  = "Library." + Library + ".";
+
+            const auto Make = [&](const std::string& InType, const std::string& InName, const ENodeRole InRole, const uint32_t InOp,
+                                  std::vector<PinDefinition> InPins, const std::string& InTemplate, const std::string& InTooltip)
+            {
+                NodeDefinition Def;
+                Def.Type        = Prefix + InType;
+                Def.DisplayName = InName;
+                Def.Category    = Library;
+                Def.Keywords    = Library;
+                Def.Tooltip     = InTooltip;
+                Def.Role        = InRole;
+                Def.Op          = InOp;
+                Def.Template    = InTemplate;
+                if(InRole == ENodeRole::Statement)
+                {
+                    InPins.insert(InPins.begin(), ExecIn());
+                    InPins.insert(InPins.begin() + 1, ExecOut());
+                }
+                else if(InRole == ENodeRole::Event)
+                {
+                    InPins.insert(InPins.begin(), ExecOut());
+                }
+                Def.Pins = std::move(InPins);
+                AddNode(std::move(Def));
+            };
+
+            for(size_t MemberIndex = 0; MemberIndex < Info.Count; ++MemberIndex)
+            {
+                const GameCore::ScriptLibraryMember& Entry = Info.Members[MemberIndex];
+                const std::string Member  = Entry.Name;
+                const std::string Tooltip = Entry.Tooltip;
+                const std::string Call    = Library + "." + Member;
+
+                switch(Entry.Kind)
+                {
+                case GameCore::EScriptLibraryMember::Function:
+                case GameCore::EScriptLibraryMember::Pure:
+                {
+                    std::vector<PinDefinition> Parameters, Results;
+                    const bool bParsed = ParseSignature(Entry.Signature, Parameters, Results);
+                    if(!bParsed && Entry.Signature[0] != '\0')
+                    {
+                        NODEGRAPH_LOG_WARN("'" + Call + "' has an unreadable signature ('" + Entry.Signature + "'); its node takes no arguments")
+                    }
+
+                    std::vector<PinDefinition> Pins = Parameters;
+                    Pins.insert(Pins.end(), Results.begin(), Results.end());
+                    const bool bPure = Entry.Kind == GameCore::EScriptLibraryMember::Pure;
+                    Make(Member, Member, bPure ? ENodeRole::Pure : ENodeRole::Statement, SOP_Call, std::move(Pins),
+                         Call + "(" + ArgumentList(Parameters) + ")", bParsed ? Tooltip : std::string(NO_SIGNATURE_TOOLTIP));
+                    break;
+                }
+
+                case GameCore::EScriptLibraryMember::Variable:
+                {
+                    const std::string Type = ScriptTypeOf(Entry.FieldType, Entry.FieldStruct);
+                    Make("Get" + Member, "Get " + Member, ENodeRole::Pure, SOP_Call, { Out(Member, Type) },
+                         Library + ".Get" + Member + "()", Tooltip);
+                    if(!Entry.bReadOnly)
+                    {
+                        Make("Set" + Member, "Set " + Member, ENodeRole::Statement, SOP_Call, { In(Member, Type) },
+                             Library + ".Set" + Member + "({" + Member + "})", Tooltip);
+                    }
+                    break;
+                }
+
+                case GameCore::EScriptLibraryMember::Event:
+                {
+                    /* One Lua value per parameter, at most four: what an
+                     * EventBus event carries. */
+                    std::vector<PinDefinition> Parameters, Unused;
+                    bool bValid = Entry.Signature[0] == '\0'
+                               || (ParseSignature(Entry.Signature, Parameters, Unused) && Unused.empty());
+                    bValid = bValid && Parameters.size() <= size_t(CUSTOM_EVENT_ARGS);
+                    for(const PinDefinition& Each : Parameters) { bValid = bValid && LaneCount(Each.Type) == 1 && Each.Type != "Box"; }
+                    if(!bValid)
+                    {
+                        NODEGRAPH_LOG_WARN("event '" + Call + "' needs at most " + std::to_string(CUSTOM_EVENT_ARGS)
+                                           + " parameters of number, integer, bool, string or Entity ('" + Entry.Signature
+                                           + "'); it has no nodes")
+                        break;
+                    }
+
+                    std::vector<PinDefinition> Outputs;
+                    for(const PinDefinition& Each : Parameters) { Outputs.push_back(Out(Each.Name, Each.Type)); }
+                    Make("On" + Member, "On " + Member, ENodeRole::Event, SOP_EventCustom, std::move(Outputs), Member,
+                         Tooltip.empty() ? "Runs whenever " + Member + " is emitted." : Tooltip);
+                    Make("Emit" + Member, "Emit " + Member, ENodeRole::Statement, SOP_Emit, std::move(Parameters), Member,
+                         Tooltip.empty() ? "Emits " + Member + " on the World's event bus." : Tooltip);
+                    break;
+                }
+                }
+            }
+        }
+    }
+
+    const NodeDefinition* ScriptSchema::FindDefinition(const Graph& InGraph, const Node& InNode) const
+    {
+        const NodeDefinition* Base = Schema::FindDefinition(InGraph, InNode);
+        if(!Base || (Base->Op != SOP_FunctionEntry && Base->Op != SOP_FunctionReturn && Base->Op != SOP_FunctionCall))
+        {
+            return Base;
+        }
+
+        /* A function the graph lacks leaves the exec pins alone; ValidateGraph says why. */
+        const GraphFunction* Function = InGraph.FindFunction(InNode.GetProperty(FUNCTION_PROPERTY));
+        if(!Function) { return Base; }
+
+        std::string Key = Base->Type + "\n" + Function->Name;
+        for(const FunctionPin& Each : Function->Inputs)  { Key += "\n<" + Each.Name + ":" + Each.Type; }
+        for(const FunctionPin& Each : Function->Outputs) { Key += "\n>" + Each.Name + ":" + Each.Type; }
+
+        const std::lock_guard<std::mutex> Lock(FunctionDefinitionsLock);
+        const auto Found = FunctionDefinitions.find(Key);
+        if(Found != FunctionDefinitions.end()) { return &Found->second; }
+
+        NodeDefinition Def = *Base;
+        switch(Base->Op)
+        {
+            case SOP_FunctionEntry:
+                Def.DisplayName = Function->Name;
+                for(const FunctionPin& Each : Function->Inputs) { Def.Pins.push_back(Out(Each.Name, Each.Type)); }
+                break;
+            case SOP_FunctionReturn:
+                Def.DisplayName = "Return from " + Function->Name;
+                for(const FunctionPin& Each : Function->Outputs) { Def.Pins.push_back(In(Each.Name, Each.Type)); }
+                break;
+            default:   // SOP_FunctionCall
+                Def.DisplayName = "Call " + Function->Name;
+                for(const FunctionPin& Each : Function->Inputs)  { Def.Pins.push_back(In(Each.Name, Each.Type)); }
+                for(const FunctionPin& Each : Function->Outputs) { Def.Pins.push_back(Out(Each.Name, Each.Type)); }
+                break;
+        }
+        return &FunctionDefinitions.emplace(Key, std::move(Def)).first->second;
     }
 
     std::string ScriptSchema::ResolveWildcard(const Graph& InGraph, const Node& InNode, const NodeDefinition& InDef) const

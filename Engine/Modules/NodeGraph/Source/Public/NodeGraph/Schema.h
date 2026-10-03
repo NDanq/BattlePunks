@@ -12,8 +12,9 @@
 
 /*
  * One kind of graph (Material, Script): pin types and conversions, node
- * definitions, and the compiler. Built on first use (GetSchemas()); the
- * script schema generates component nodes from GameCore's script bindings.
+ * definitions, and the compiler. Built on first use (GetSchemas()) and again
+ * by RefreshSchemas(); the script schema generates component and library
+ * nodes from GameCore's script bindings.
  */
 namespace NodeGraph
 {
@@ -75,6 +76,7 @@ namespace NodeGraph
         Variable,     // the name of one of the graph's Variables
         Bool,         // "true" or "false" -- a checkbox
         Texture,      // a texture asset's runtime-relative path ("Content/Textures/Brick.nmtexture"), or ""
+        Function,     // the name of one of the graph's Functions
     };
 
     struct PropertyDefinition
@@ -140,6 +142,18 @@ namespace NodeGraph
 
         const std::vector<NodeDefinition>& GetNodes() const { return Nodes; }
         const NodeDefinition*              FindNode(const std::string& InType) const;
+
+        /*
+         * The definition InNode is drawn and compiled from: FindNode(Type),
+         * unless the node's pins come from the graph (a script graph's
+         * function nodes take theirs from the function they name). nullptr
+         * for a placeholder. Every lookup for a node in a graph goes here;
+         * FindNode is for a type alone (the palette, a new node).
+         *
+         * The pointer stays valid for the process: a per-graph definition is
+         * cached, never freed, as retired schemas are.
+         */
+        virtual const NodeDefinition* FindDefinition(const Graph& InGraph, const Node& InNode) const;
 
         const std::vector<PinTypeInfo>& GetTypes() const { return Types; }
         const PinTypeInfo*              FindType(const std::string& InName) const;
@@ -227,6 +241,19 @@ namespace NodeGraph
 
     /* Every schema, built on first call. Material first, then Script. */
     const std::vector<const Schema*>& GetSchemas();
+
+    /*
+     * Rebuilds every schema from GameCore's registries as they stand now --
+     * component bindings and script libraries (ScriptLibrary.h) -- so the
+     * declarations of a game module loaded since appear as nodes. Call it
+     * while that module is loaded: what it declared is copied, and stays after
+     * the module unloads. Main thread only.
+     *
+     * A Schema* or NodeDefinition* obtained earlier stays valid, but describes
+     * the old declarations: a graph opened before the refresh keeps its
+     * schema until it is reopened.
+     */
+    void RefreshSchemas();
 
     /* nullptr if no schema has that name. */
     const Schema* FindSchema(const std::string& InName);

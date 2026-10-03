@@ -372,6 +372,26 @@ still handles the same input for the editor.
 
 ---
 
+## Gamepads and mouse capture
+
+**Gamepads** use SDL's gamepad API, which maps any supported controller onto
+the standard layout (`GameWindowGamepad.h`). A pad belongs to a player, not
+a window, so its events go to one process-level table,
+`GameWindowSystem::SetGamepadDelegates`, which the engine's `InputRouter`
+takes.
+
+- **Player slots.** A connecting pad gets the lowest free player slot (up to
+  four) and keeps it until it disconnects.
+- **Values.** Sticks report -1..1 and triggers 0..1.
+- **Startup.** The subsystem starts with SDL. A failure is a warning, and
+  windows still work.
+- **Focus.** SDL drops a pad's button presses while no window of the app has
+  focus (`SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS` changes that).
+
+**Mouse capture**, `GameWindow::SetRelativeMouseMode`, is SDL's relative
+mouse mode. The cursor is hidden and held in the window, and motion keeps
+arriving as deltas, for mouse-look.
+
 ## Threading contract
 
 SDL requires window creation and event pumping on the **same thread**, and on

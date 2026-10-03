@@ -76,6 +76,18 @@ namespace EditorGraphs
     /* Recompiles every graph in the project; returns the failure count. */
     int RegenerateAll(QStringList& OutLines);
 
+    /*
+     * Rebuilds the node graph schemas so script graphs offer what the game
+     * module declares: its components' bindings and its script libraries
+     * (GameCore/ScriptLibrary.h). Those register when the module's image loads,
+     * so unless bInGameIsLoaded (a Play is running on the current build) the
+     * module ([Game] Module) is loaded just long enough to copy them, and
+     * unloaded again. False, logged, if there is no module to load; the
+     * schemas then have the engine's nodes only. A graph already open keeps
+     * the nodes it had until it is reopened (NodeGraph::RefreshSchemas).
+     */
+    bool RefreshGameDeclarations(bool bInGameIsLoaded);
+
     // --- Materials in the viewport ----------------------------------------------
 
     /* Set by the main window; nullptr when there is none. */
@@ -128,6 +140,10 @@ namespace EditorGraphs
 
     /* Asks where, writes a starter graph of InSchema there, and opens it. */
     GraphEditorTab* CreateGraph(const NodeGraph::Schema& InSchema, QWidget* InParent);
+
+    /* Writes a starter graph of InSchema at InPath (compiled and staged) without
+     * opening it. False with OutError if it could not be written. */
+    bool CreateGraphFile(const NodeGraph::Schema& InSchema, const QString& InPath, QString& OutError);
 
     /* Offers to save each dirty graph. False if cancelled. */
     bool CloseAllGraphs();

@@ -522,6 +522,126 @@ static void TestRendererWithWorld()
 
 #if WITH_EDITOR
 // ============================================================================
+// Several scenes: one World each, rendered every frame, stats from the default
+// ============================================================================
+
+/* The view the last-rendered scene drew with: scenes render in creation order,
+ * the default first, so this is the last one that rendered this frame. */
+static double LastRenderedViewOriginX()
+{
+    std::atomic<double> Seen{-1.0};
+    ENQUEUE_RENDER_COMMAND(ReadLastViewOrigin)([&Seen](RenderContext& Ctx)
+    {
+        Seen.store(Ctx.GetView().Origin.GetX(), std::memory_order_release);
+    });
+    FlushRenderCommands();
+    return Seen.load(std::memory_order_acquire);
+}
+
+static void AddCameraAt(GameCore::World& InWorld, const double InX)
+{
+    const GameCore::Entity Camera = InWorld.CreateEntity();
+    Camera.AddComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(InX, 0.0, 0.0);
+    Camera.AddComponent<CameraComponent>();
+}
+
+static void TestMultipleScenes()
+{
+    std::printf("[multiple scenes]\n");
+
+    Renderer Rend;
+    Expect(Rend.CreateScene() == RENDER_INVALID_SCENE, "CreateScene before Initialize() is refused");
+
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the scene test");
+    if(!bInit)
+    {
+        return;
+    }
+
+    GameCore::World Level;
+    AddCameraAt(Level, 100.0);
+    for(int Index = 0; Index < 2; ++Index)
+    {
+        const GameCore::Entity E = Level.CreateEntity();
+        E.AddComponent<GameCore::TransformComponent>();
+        E.AddComponent<RenderComponent>();
+    }
+    Rend.BindWorld(Level);
+
+    GameCore::World Prefab;
+    AddCameraAt(Prefab, 7.0);
+    const GameCore::Entity Lone = Prefab.CreateEntity();
+    Lone.AddComponent<GameCore::TransformComponent>();
+    Lone.AddComponent<RenderComponent>();
+
+    const RenderSceneID Second = Rend.CreateScene();
+    Expect(Second != RENDER_INVALID_SCENE && Second != RENDER_DEFAULT_SCENE, "CreateScene makes a new scene");
+    Rend.BindWorld(Second, Prefab);
+
+    /* No viewport yet: the second scene is skipped, so the default rendered last. */
+    Rend.EndFrame(FrameInfo{0, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    Expect(LastRenderedViewOriginX() == 100.0, "a scene with no viewport is not rendered");
+
+    Rend.SetViewportPixels(Second, EngineCore::Size(320, 240));
+    Rend.EndFrame(FrameInfo{1, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    Expect(LastRenderedViewOriginX() == 7.0, "with one, it renders after the default, from its own World's camera");
+
+    RenderStats Stats;
+    Rend.GetStats(Stats);
+    Expect(Stats.ProxiesLive == 2, "RenderStats count the default scene's proxies only");
+
+    /* Presenting with no window is a no-op on every path. */
+    Rend.PresentToWindow(Second, WindowHandle());
+    Rend.PresentToWindow(WindowHandle());
+    Rend.ReleaseWindow(WindowHandle());
+
+    /* A view override and overlay lines go to their own scene. */
+    RenderView Override = RenderView::MakeOrthographic(EngineCore::Size(320, 240), EngineCore::Vector3(55.0, 0.0, -1.0), -1.0f, 1000.0f);
+    Rend.SetViewOverride(Second, &Override);
+    DebugLine Line;
+    Line.End = EngineCore::Vector3(1.0, 1.0, 0.0);
+    Rend.DrawDebugLine(Second, Line);
+    Rend.EndFrame(FrameInfo{2, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    Expect(LastRenderedViewOriginX() == 55.0, "SetViewOverride(scene) replaces that scene's camera only");
+
+    Rend.DestroyScene(Second);
+    Rend.EndFrame(FrameInfo{3, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    Expect(LastRenderedViewOriginX() == 100.0, "DestroyScene stops it rendering");
+
+    /* Its World was unbound: new render components there reach no scene. */
+    const GameCore::Entity After = Prefab.CreateEntity();
+    After.AddComponent<GameCore::TransformComponent>();
+    After.AddComponent<RenderComponent>();
+    Rend.EndFrame(FrameInfo{4, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    Rend.GetStats(Stats);
+    Expect(Stats.ProxiesLive == 2, "a destroyed scene's World is unbound");
+
+    Rend.DestroyScene(RENDER_DEFAULT_SCENE);   // ignored
+    Rend.DestroyScene(Second);                 // already gone: ignored
+    Rend.EndFrame(FrameInfo{5, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+    Expect(LastRenderedViewOriginX() == 100.0, "the default scene cannot be destroyed");
+
+    /* A scene left alive is torn down by Shutdown, with its World still bound. */
+    const RenderSceneID Third = Rend.CreateScene();
+    Rend.BindWorld(Third, Prefab);
+    Rend.SetViewportPixels(Third, EngineCore::Size(64, 64));
+    Rend.EndFrame(FrameInfo{6, 0.016, EngineCore::Size(640, 360)});
+    Rend.WaitForPreviousFrame();
+
+    Rend.Shutdown();
+    Expect(Rend.CreateScene() == RENDER_INVALID_SCENE, "CreateScene after Shutdown() is refused");
+}
+#endif // WITH_EDITOR
+
+#if WITH_EDITOR
+// ============================================================================
 // Debug lines: queued on the game thread, drawn once, then gone
 // ============================================================================
 
@@ -1240,9 +1360,8 @@ static void TestTextureAssets()
 }
 
 /*
- * RenderComponent's serializer: version 1's one Material loads into slot 0;
- * version 2 writes every slot by name; version 3 drops Width, Height and Tint. Through a recording archive, so no
- * file format is involved.
+ * RenderComponent's serializer writes every slot by name, as a graph path, and
+ * reads it back. Through a recording archive, so no file format is involved.
  */
 static void TestRenderComponentSerializer()
 {
@@ -1251,7 +1370,7 @@ static void TestRenderComponentSerializer()
     struct RecordingArchive final : GameCore::ComponentArchive
     {
         bool                     bLoading = false;
-        uint16_t                 Version  = 4;
+        uint16_t                 Version  = 1;
         std::map<std::string, std::string> Strings;   // what a load reads, and what a save wrote
         std::vector<std::string> Names;
 
@@ -1286,20 +1405,8 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 4, "RenderComponent saves as version 4");
+    Expect(Info && Info->Version == 1, "RenderComponent saves as version 1");
     if(!Info) { return; }
-
-    RecordingArchive Old;
-    Old.bLoading = true;
-    Old.Version  = 1;
-    Old.Strings["Material"]  = "Glow";
-    Old.Strings["Material1"] = "Ignored";   // version 1 has no such field
-    RenderComponent Loaded;
-    Info->Fn(Old, &Loaded);
-    Expect(std::strcmp(Loaded.Materials[0], "Materials/Glow.material.nmgraph") == 0 && Loaded.Materials[1][0] == '\0',
-           "a version 1 Material loads into slot 0, and only there, its bare name upgraded to the graph's path");
-    Expect(Old.Names.size() >= 3 && Old.Names[0] == "Width" && Old.Names[1] == "Height" && Old.Names[2] == "Tint",
-           "a version 1 or 2 record's Width, Height and Tint are still read, first (binary keeps call order)");
 
     RenderComponent Saved;
     std::strcpy(Saved.Materials[0], "Materials/Body.material.nmgraph");
@@ -1308,7 +1415,7 @@ static void TestRenderComponentSerializer()
     Info->Fn(Out, &Saved);
     Expect(Out.Strings["Material0"] == "Materials/Body.material.nmgraph"
            && Out.Strings["Material7"] == "Engine/Content/Materials/DefaultLit.material.nmgraph" && Out.Strings.count("Material") == 0,
-           "version 4 writes each slot as Material0 to Material7, a graph path (longer than the old 48-byte names)");
+           "each slot is written as Material0 to Material7, a full graph path");
     Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("Width")) == Out.Names.end()
            && std::find(Out.Names.begin(), Out.Names.end(), std::string("Tint")) == Out.Names.end(),
            "and no Width, Height or Tint");
@@ -1322,26 +1429,8 @@ static void TestRenderComponentSerializer()
            && std::strcmp(Again.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph") == 0,
            "and reads them back unchanged");
 
-    RecordingArchive Three;
-    Three.bLoading = true;
-    Three.Version  = 3;
-    Three.Strings["Material0"] = "Body";
-    Three.Strings["Material1"] = "Materials/Already.material.nmgraph";
-    RenderComponent Upgraded;
-    Info->Fn(Three, &Upgraded);
-    Expect(std::strcmp(Upgraded.Materials[0], "Materials/Body.material.nmgraph") == 0
-           && std::strcmp(Upgraded.Materials[1], "Materials/Already.material.nmgraph") == 0 && Upgraded.Materials[2][0] == '\0',
-           "a version 3 world's bare names are upgraded; a path and an empty slot are left alone");
-
     const GameCore::ComponentSerializerInfo* PostInfo = GameCore::FindComponentSerializer(PostProcessComponent::StaticType().ID);
-    RecordingArchive OldPost;
-    OldPost.bLoading = true;
-    OldPost.Version  = 1;
-    OldPost.Strings["Material"] = "Negative";
-    PostProcessComponent LoadedPost;
-    if(PostInfo) { PostInfo->Fn(OldPost, &LoadedPost); }
-    Expect(PostInfo && PostInfo->Version == 2 && std::strcmp(LoadedPost.Material, "Materials/Negative.material.nmgraph") == 0,
-           "a version 1 Post Process's bare name is upgraded too");
+    Expect(PostInfo && PostInfo->Version == 1, "PostProcessComponent saves as version 1");
 }
 
 /*
@@ -1656,6 +1745,7 @@ int main()
 
     TestRendererWithWorld();
 #if WITH_EDITOR
+    TestMultipleScenes();
     TestDebugLines();
     TestMaterials();
     TestMaterialsOnGpu();

@@ -2,6 +2,7 @@
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/GameState.h"
+#include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/Core/CoreConfig.h"
@@ -11,11 +12,15 @@
 #include "Public/Core/CoreThread.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
+#include "SandboxScripting.h"
 
+#include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <cstdio>
 #include <optional>
 #include <vector>
@@ -25,10 +30,14 @@
  * SandboxGame: the example game, built as a game module DLL loaded by name by
  * SandboxMain.cpp's launcher and the editor's Play-in-Editor.
  *
- * Demonstrates: a C++ entity ("Marker") moved by the mode and wrapped by a
- * PostPhysics system; a Lua entity ("Scripted") read back from C++; an
+ * Demonstrates: a C++ entity ("Marker") steered by the player through an
+ * Input component (SandboxInput.cpp's map) and wrapped by a PostPhysics
+ * system; colliders -- Marker, pickups, a mesh-shaped hazard answered by a
+ * C++ overlap delegate (OnHazardTouched); a Lua entity ("Scripted") read back from C++; an
  * OnEntityCreated bind/unbind; drawing via RenderComponent and a Camera
- * entity; and a timed save/load cycle.
+ * entity; and a timed save/load cycle. The game's own component and script
+ * library -- what scripts and script graphs can call -- are in
+ * SandboxScripting.cpp.
  *
  *   SandboxLevel      spawns Marker and Camera, registers the wrap system,
  *                     owns the mode and state.
@@ -44,16 +53,89 @@ NIMBLE_CONFIG_INT(GSandboxRunSeconds, "Sandbox", "RunSeconds", 0, nullptr);
 /* Beside the executable for the demo; a real game would use appGetAppDataDir. */
 static const char* const GSandboxSavePath = "Saves/Quick.nmsg";
 
+// === Native prefabs =========================================================
+// The level's C++ pieces, declared as prefabs ("native:Sandbox.Marker"):
+// SandboxLevel::OnLoad places them, and the editor lists them under World >
+// Native Prefabs. Where each stands, and how big, is its placement.
+
+namespace
+{
+    /* The player: the unit quad (bounds to match, for picking and spatial
+     * queries), steered through its Input component by Sandbox.DriveMarker
+     * (SandboxInput.cpp's "Default" map), its Bounds box its collider on the
+     * player's layer, and a script graph that counts its jumps. */
+    void BuildMarker(GameCore::PrefabBuilder& InBuilder)
+    {
+        const GameCore::PrefabBuilder::Node Root = InBuilder.Root("Marker");
+        Root.Add<GameCore::TransformComponent>();
+        Root.Add<RenderCore::RenderComponent>();
+
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
+        Root.Add(Bounds);
+
+        Root.Add<NimbleEngine::InputComponent>();
+
+        GameCore::CollisionComponent Collision;
+        Collision.Layer = SandboxLayers::Player;
+        Root.Add(Collision);
+
+        InBuilder.Script("Scripts/JumpCounter.script.nmgraph");
+    }
+
+    /* A hazard shaped by its MESH: no Bounds is authored -- the Collision
+     * reads the box mesh's bounds and adds one (Source = Mesh). */
+    void BuildHazard(GameCore::PrefabBuilder& InBuilder)
+    {
+        const GameCore::PrefabBuilder::Node Root = InBuilder.Root("Hazard");
+        Root.Add<GameCore::TransformComponent>();
+
+        RenderCore::RenderComponent Render;
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        Root.Add(Render);
+
+        GameCore::CollisionComponent Collision;
+        Collision.Source = GameCore::CS_Mesh;
+        Collision.Layer  = SandboxLayers::Hazard;
+        Collision.Mask   = SandboxLayers::Player;
+        Root.Add(Collision);
+    }
+
+    /* The view: WorldBridge uses the first active CameraComponent. */
+    void BuildCamera(GameCore::PrefabBuilder& InBuilder)
+    {
+        const GameCore::PrefabBuilder::Node Root = InBuilder.Root("Camera");
+        Root.Add<GameCore::TransformComponent>();
+        Root.Add<RenderCore::CameraComponent>();
+    }
+
+    GameCore::TransformPose Placed(const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InScale)
+    {
+        GameCore::TransformPose Pose;
+        Pose.Position = InPosition;
+        Pose.Scale    = InScale;
+        return Pose;
+    }
+}
+
+GAMECORE_DEFINE_NATIVE_PREFAB(Marker, "Sandbox.Marker", &BuildMarker)
+GAMECORE_DEFINE_NATIVE_PREFAB(Hazard, "Sandbox.Hazard", &BuildHazard)
+GAMECORE_DEFINE_NATIVE_PREFAB(Camera, "Sandbox.Camera", &BuildCamera)
+
 /* Save/load demo flags. File scope: a load rebuilds the mode and resets the
  * state, so flags there would loop the demo forever. */
 static bool GSandboxHasSaved  = false;
 static bool GSandboxHasLoaded = false;
 
-/* What Sandbox.WrapMarker's void* points at. */
+/* What Sandbox.DriveMarker's and Sandbox.WrapMarker's void* points at. */
 struct SandboxMarkerSystemContext
 {
     GameCore::EntityID Entity;
     int                ViewportWidth = 0;
+
+    /* Marker drifts right on its own until the player first steers it, so an
+     * unattended run (RunSeconds) still sweeps up the pickups. */
+    bool               bPlayerSteering = false;
 };
 
 namespace
@@ -66,6 +148,37 @@ namespace
         char Buffer[64];
         std::snprintf(Buffer, sizeof(Buffer), "%.2f", InValue);
         return std::string(Buffer);
+    }
+
+    /* PrePhysics system: moves Marker from its Input component -- MoveX and
+     * MoveY, faster with Boost. Registered after the scripts (the default
+     * order), which saw the same input: the engine resolved it first. */
+    void DriveMarkerSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    {
+        auto& Context = *static_cast<SandboxMarkerSystemContext*>(InUserData);
+        const GameCore::Entity Marker = InWorld.GetEntity(Context.Entity);
+        GameCore::TransformComponent* Transform = Marker.GetComponent<GameCore::TransformComponent>();
+        const NimbleEngine::InputComponent* Input = Marker.GetComponent<NimbleEngine::InputComponent>();
+        if(!Transform)
+        {
+            return;
+        }
+
+        const double X = Input ? double(Input->GetAxis("MoveX")) : 0.0;
+        const double Y = Input ? double(Input->GetAxis("MoveY")) : 0.0;
+        if(X != 0.0 || Y != 0.0)
+        {
+            Context.bPlayerSteering = true;
+        }
+
+        const double Speed = Input && Input->IsDown("Boost") ? 480.0 : 240.0;
+        const EngineCore::Vector3 Velocity = Context.bPlayerSteering ? EngineCore::Vector3(X * Speed, Y * Speed, 0.0)
+                                                                     : EngineCore::Vector3(120.0, 0.0, 0.0);
+        EngineCore::Vector3 Position = Transform->Position + Velocity * double(InDeltaSeconds);
+
+        /* Kept on screen vertically; Sandbox.WrapMarker handles x. */
+        Position.SetY(std::max(16.0, std::min(704.0, double(Position.GetY()))));
+        Transform->Position = Position;
     }
 
     /* PostPhysics system: wraps Marker's X at the viewport width. State comes
@@ -82,6 +195,22 @@ namespace
                 Transform->Position.SetX(X - double(Context.ViewportWidth));
             }
         }
+    }
+
+    /* OnOverlapBegin subscriber (World's collision delegate), bound in
+     * SandboxLevel::OnLoad and unbound in OnUnload: touching the hazard costs
+     * a point. Self is each side of the pair in turn, so this only answers
+     * when Self is the hazard. */
+    void OnHazardTouched(const GameCore::EntityID InSelf, const GameCore::EntityID InOther, void* InUserData)
+    {
+        auto* World = static_cast<GameCore::World*>(InUserData);
+        if(std::strcmp(World->GetEntity(InSelf).GetName(), "Hazard") != 0)
+        {
+            return;
+        }
+        SandboxScripting::SetScore(std::max(0, SandboxScripting::GetScore() - 1));
+        CORE_LOG("[Sandbox] " + std::string(World->GetEntity(InOther).GetName()) + " touched the hazard: score "
+                 + std::to_string(SandboxScripting::GetScore()))
     }
 
     /* OnEntityCreated subscriber, bound in SandboxLevel::OnLoad and unbound in
@@ -102,15 +231,27 @@ public:
         ElapsedSeconds    = 0.0;
         LastReportSeconds = 0.0;
         TicksThisSecond   = 0;
+        SandboxScripting::SetScore(0);
     }
 
     /* Saves exactly the fields OnReset touches; keep the two in step. New
      * fields go at the end behind Ar.GetChunkVersion(). */
+    uint16_t GetSerialVersion() const override { return 2; }
+
     void Serialize(EngineCore::Archive& Ar) override
     {
         Ar << ElapsedSeconds;
         Ar << LastReportSeconds;
         Ar << TicksThisSecond;
+
+        /* 2: the script library's Score, so a restored pickup is not scored
+         * a second time. */
+        if(Ar.GetChunkVersion() >= 2)
+        {
+            int32_t Score = SandboxScripting::GetScore();
+            Ar << Score;
+            SandboxScripting::SetScore(Score);
+        }
     }
 
     double   ElapsedSeconds    = 0.0;
@@ -165,15 +306,11 @@ public:
                    "[Sandbox] OnTick ran on a thread other than the one OnStartup saw")
 
         State->ElapsedSeconds += InFrame.DeltaSeconds;
+        SandboxScripting::SetElapsedSeconds(State->ElapsedSeconds);   // Sandbox.GetElapsed() in scripts
         State->TicksThisSecond++;
 
+        /* Marker moves in Sandbox.DriveMarker, from its Input component. */
         GameCore::World& World = Session->GetWorld();
-        if(GameCore::TransformComponent* Marker = World.GetEntity(MarkerEntity).GetComponent<GameCore::TransformComponent>())
-        {
-            const double SpeedPixelsPerSecond = 120.0;
-            Marker->Position.SetX(Marker->Position.GetX() + SpeedPixelsPerSecond * InFrame.DeltaSeconds);
-            /* Sandbox.WrapMarker wraps it later this frame, in World::Tick. */
-        }
 
         /* The engine finishes this frame, then exits the loop. */
         if(RunSeconds > 0.0 && State->ElapsedSeconds >= RunSeconds && Session)
@@ -241,7 +378,9 @@ public:
                      + " viewport=" + Num(uint64_t(InFrame.ViewportPixels.Width))
                      + "x" + Num(uint64_t(InFrame.ViewportPixels.Height))
                      + " marker_x=" + Fixed2(MarkerX)
+                     + DescribeSteering()
                      + ScriptedPart
+                     + " score=" + std::to_string(SandboxScripting::GetScore())
                      + " frames_rendered=" + Num(RenderStats.FramesRendered)
                      + " draw_calls=" + Num(RenderStats.DrawCalls))
 
@@ -252,6 +391,9 @@ public:
 
     /* Re-derives MarkerEntity by name: the restored Marker is a new entity. */
     void OnPostLoadSave() override;
+
+    /* " steering=player" once the player has moved Marker, else " steering=auto". */
+    std::string DescribeSteering() const;
 
     void OnUnload() override
     {
@@ -299,36 +441,26 @@ public:
         /* Removed in OnUnload (Delegate.h's RELOAD note). */
         EntityCreatedHandle = World.OnEntityCreated().Add(&OnEntityCreatedLogger, &World);
 
-        /* MarkerEntity keeps only the id; the handle's World* is per-load. */
-        const GameCore::Entity Marker = World.CreateEntity("Marker");
+        /* The level is prefab instances (the native prefabs above). Off y=0:
+         * +Y runs down from the top edge in the ortho view, so a quad at y=0
+         * would hang half off screen. MarkerEntity keeps only the root's id;
+         * the handle's World* is per-load. */
+        const GameCore::Entity Marker = World.SpawnPrefab("native:Sandbox.Marker",
+            Placed(EngineCore::Vector3(0.0, 360.0, 0.0), EngineCore::Vector3(32.0, 32.0, 1.0))).GetRoot();   // the unit quad, 32 x 32
         MarkerEntity = Marker;
-        {
-            /* Off y=0: +Y runs down from the top edge in the ortho view, so a
-             * quad at y=0 would hang half off screen. */
-            GameCore::TransformComponent MarkerTransform;
-            MarkerTransform.Position = EngineCore::Vector3(0.0, 360.0, 0.0);
-            MarkerTransform.Scale    = EngineCore::Vector3(32.0, 32.0, 1.0);   // the unit quad, 32 x 32
-            Marker.AddComponent(MarkerTransform);
-        }
-        /* WorldBridge draws it every frame; nothing else is needed. */
-        Marker.AddComponent<RenderCore::RenderComponent>();
 
-        /* The unit quad's extent in entity space, so picking and spatial
-         * queries match what is drawn. */
-        GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
-        Marker.AddComponent(Bounds);
+        World.SpawnPrefab("native:Sandbox.Hazard",
+                          Placed(EngineCore::Vector3(1200.0, 360.0, 0.0), EngineCore::Vector3(40.0, 40.0, 40.0)));
+        HazardHandle = World.OnOverlapBegin().Add(&OnHazardTouched, &World);
 
-        /* Centres the view on Marker's path. WorldBridge uses the first active
-         * CameraComponent. */
-        const GameCore::Entity CameraEntity = World.CreateEntity("Camera");
-        CameraEntity.AddComponent<GameCore::TransformComponent>();
-        RenderCore::CameraComponent Camera;
-        CameraEntity.AddComponent(Camera);
+        /* Centres the view on Marker's path. */
+        World.SpawnPrefab("native:Sandbox.Camera");
 
         /* ViewportWidth is read once; the wrap boundary need only be rough. */
         SystemContext.Entity        = MarkerEntity;
         SystemContext.ViewportWidth = 1280;
+        World.RegisterSystem("Sandbox.DriveMarker", GameCore::TP_PrePhysics,
+                             &DriveMarkerSystem, &SystemContext);
         World.RegisterSystem("Sandbox.WrapMarker", GameCore::TP_PostPhysics,
                              &WrapMarkerSystem, &SystemContext);
 
@@ -370,6 +502,7 @@ public:
         if(OwnedWorldIsLive())
         {
             GetWorld().OnEntityCreated().Remove(EntityCreatedHandle);
+            GetWorld().OnOverlapBegin().Remove(HazardHandle);
         }
     }
 
@@ -382,6 +515,8 @@ public:
 
     /* Re-points the wrap system at the restored Marker (from the mode's
      * OnPostLoadSave). Otherwise Marker silently stops wrapping. */
+    bool IsPlayerSteering() const { return SystemContext.bPlayerSteering; }
+
     void OnMarkerRestored(const GameCore::EntityID InMarker)
     {
         MarkerEntity         = InMarker;
@@ -395,11 +530,18 @@ private:
     bool                       bLoaded = false;
     GameCore::EntityID         MarkerEntity;
     GameCore::DelegateHandle   EntityCreatedHandle;
+    GameCore::DelegateHandle   HazardHandle;
     SandboxMarkerSystemContext SystemContext;
 
     SandboxGameState                 State;
     std::optional<SandboxGameMode>   Mode;
 };
+
+/* Out-of-line: needs SandboxLevel's definition. */
+std::string SandboxGameMode::DescribeSteering() const
+{
+    return OwningLevel->IsPlayerSteering() ? " steering=player" : " steering=auto";
+}
 
 /* Out-of-line: needs SandboxLevel's definition. */
 void SandboxGameMode::OnPostLoadSave()

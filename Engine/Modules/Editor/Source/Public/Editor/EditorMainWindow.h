@@ -6,6 +6,7 @@
 #include <QList>
 #include <QMainWindow>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 #include "Public/RenderCore/RenderTypes.h"
@@ -15,6 +16,7 @@ class ConsolePanel;
 class ContentBrowserPanel;
 class DetailsPanel;
 class EditorContext;
+class EditorDocument;
 class OutlinerPanel;
 class QAction;
 class QLabel;
@@ -47,6 +49,9 @@ public:
     /* --play. Call before show(). */
     void SetStartPlay(bool bInStart) { bStartPlay = bInStart; }
 
+    /* Console commands to run once the renderer is up (after --play). */
+    void SetStartupCommands(const QStringList& InCommands) { StartupCommands = InCommands; }
+
 protected:
     void showEvent(QShowEvent* InEvent) override;
     void closeEvent(QCloseEvent* InEvent) override;
@@ -76,6 +81,7 @@ private:
     bool SaveWorldAs();
 
     EditorContext&             Context;
+    EditorDocument&            Level;     // the context's level document
     RenderCore::ERenderBackend Backend;
 
     ViewportPanel*  ViewportArea = nullptr;
@@ -106,10 +112,15 @@ private:
     QString InitialWorld;
     bool    bRendererStarted = false;
 
+    /* The game module was rebuilt while a run kept the old one: script nodes
+     * are reread when it stops. */
+    bool    bDeclarationsStale = false;
+
     SDLInputProbe* InputProbe = nullptr;
     QAction*       InputProbeAction = nullptr;
     bool           bStartSDLInputProbe = false;
     bool           bStartPlay = false;
+    QStringList    StartupCommands;
 
     QTimer   StatsTimer;
     uint64_t LastFramesRendered = 0;
