@@ -22,7 +22,7 @@ namespace RenderCore
 {
     /* MaterialCommon.glsl's MATERIAL_TEMPLATE_VERSION: a shader cache cooked
      * against another is refused (ShaderCache.h). */
-    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 2;
+    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 3;   // 3: Y up (Two Sided facing)
 
     enum class EMaterialDomain : uint8_t { Opaque = 0, Masked = 1, Translucent = 2, PostProcess = 3 };
     enum class EMaterialShading : uint8_t { Lit = 0, Unlit = 1 };

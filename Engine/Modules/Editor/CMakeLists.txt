@@ -155,7 +155,7 @@ target_link_libraries(NimbleEditor PRIVATE
 
 # === Import tests =================================================================
 # Runs from Binaries, where NimbleEditor's windeployqt put Qt (hence the dependency).
-option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests and NimbleEditorDocumentTests" ON)
+option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests, NimbleEditorDocumentTests and NimbleEditorDetailsTests" ON)
 if(NIMBLEEDITOR_BUILD_TESTS)
     add_executable(NimbleEditorImportTests Tests/ImportTests.cpp ${NIMBLE_EDITOR_IMPORT_SOURCES})
     target_include_directories(NimbleEditorImportTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
@@ -201,6 +201,27 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_dependencies(NimbleEditorProjectTests NimbleEditor)
     add_test(NAME Editor.Project COMMAND NimbleEditorProjectTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorProjectTests>")
+
+    # The Details panel, offscreen: the editor's sources without its main().
+    set(NIMBLE_EDITOR_DETAILS_SOURCES ${NIMBLE_EDITOR_SOURCES})
+    list(REMOVE_ITEM NIMBLE_EDITOR_DETAILS_SOURCES Source/Private/Editor/EditorMain.cpp)
+    add_executable(NimbleEditorDetailsTests Tests/DetailsTests.cpp ${NIMBLE_EDITOR_DETAILS_SOURCES})
+    target_include_directories(NimbleEditorDetailsTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
+    target_link_libraries(NimbleEditorDetailsTests PRIVATE
+            GameCore::GameCore
+            RenderCore::RenderCore
+            GameWindow::GameWindow
+            NimbleEngine::NimbleEngine
+            EngineCore::QtBridge
+            NodeGraph::NodeGraph
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Widgets
+    )
+    set_target_properties(NimbleEditorDetailsTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorDetailsTests NimbleEditor)
+    add_test(NAME Editor.Details COMMAND NimbleEditorDetailsTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorDetailsTests>")
 endif()
 
 # === Engine content ===========================================================
@@ -313,3 +334,10 @@ if(WIN32)
 endif()
 
 source_group("Editor" FILES ${NIMBLE_EDITOR_SOURCES})
+
+# The Details tests compile the editor's sources, so they need its generated
+# headers too (build info, project config); made by NimbleEditor's build,
+# which they depend on.
+if(TARGET NimbleEditorDetailsTests)
+    target_include_directories(NimbleEditorDetailsTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()

@@ -175,7 +175,21 @@ else()
                            ROOT "${CMAKE_CURRENT_SOURCE_DIR}" MODULE ${GAME_MODULE})
 endif()
 
-# Content/Levels/ holds the editor's worlds (.nmworld); nothing stages them.
+# Content/Levels/: worlds saved from the editor, which a level loads by path
+# (GameCore::LoadWorldFile("Content/Levels/Arena.nmworld")). An Editor target
+# stages the text worlds -- the .nmworld and the folder of entity and instance
+# files beside it; a Client or Server target, the cooked ones from
+# Content/Levels/Cooked/ (the editor's console: cook <world>).
+if(NIMBLE_TARGET STREQUAL "Editor")
+    file(GLOB_RECURSE GAME_LEVEL_FILES CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmworld"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmentity"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmprefabinst")
+    list(FILTER GAME_LEVEL_FILES EXCLUDE REGEX "/Content/Levels/Cooked/")
+else()
+    file(GLOB_RECURSE GAME_LEVEL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/Cooked/*.nmworld")
+endif()
+game_stage(Levels "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_LEVEL_FILES})
 
 # === IDE ====================================================================
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ${GAME_NAME})

@@ -5,6 +5,7 @@
 
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/Core/CoreTypes.h"
+#include "Public/GameCore/EntityID.h"
 
 namespace NimbleEngine
 {
@@ -34,15 +35,25 @@ namespace NimbleEngine
      * logic at the points below. A mode sees only the GameSession; host
      * services are on GameSession::GetHost().
      *
-     * THREADING. Game thread only. OnTick overlaps the render thread, so never
-     * touch a RenderContext or RenderProxy directly.
+     * THREADING. Game thread only, which the GameSession enforces: every hook
+     * is called from a session entry that CORE_CHECKs it, so a mode need not
+     * track or check the thread itself. OnTick overlaps the render thread, so
+     * never touch a RenderContext or RenderProxy directly.
      *
      * LIFECYCLE (full sequence: GameSession::LoadLevel):
      *
      *   OnLoad    World populated. Cache handles, bind delegates.
-     *   OnStart   startup script run, GameState reset. Read Lua-made state here.
+     *   OnStart   startup script run, GameState reset (in its initial phase).
+     *             Read Lua-made state here; SetPhase to begin.
      *   OnTick    once per frame.
      *   OnUnload  undo OnLoad; above all, unbind delegates.
+     *
+     * RULES (GAMEFRAMEWORK.md): the session asks the mode before a phase
+     * change (CanEnterPhase) and tells it after (OnPhaseChanged), and tells it
+     * when a player (a PlayerStateComponent) comes or goes and when a score or
+     * life count changes through GameSession::AddScore / AddLives -- from C++,
+     * Lua or a script graph alike. Each may call back into the session; a
+     * phase change asked for inside one is applied once it returns.
      *
      * DRAWING: no OnRender. Add a RenderComponent, register a component +
      * RenderProxy pair with RegisterProxyType, or ENQUEUE_RENDER_COMMAND in
@@ -75,6 +86,24 @@ namespace NimbleEngine
         /* After the last tick; World and Renderer still valid. Runs whenever
          * OnLoad was called, even if it failed. Must unbind what OnLoad bound. */
         virtual void OnUnload() {}
+
+        // === Rules ==============================================================
+
+        /* May the game go from InFrom to InTo? False refuses the change, and
+         * GameSession::SetPhase (Game.RequestPhase) returns false. */
+        virtual bool CanEnterPhase(const char* InFrom, const char* InTo) { (void)InFrom; (void)InTo; return true; }
+
+        /* The phase changed; GameState::GetPhase() is already InCurrent. */
+        virtual void OnPhaseChanged(const char* InPrevious, const char* InCurrent) { (void)InPrevious; (void)InCurrent; }
+
+        /* A PlayerStateComponent was added to InPlayer, or removed (also when
+         * its entity is destroyed; the component is still readable). */
+        virtual void OnPlayerAdded(GameCore::EntityID InPlayer)   { (void)InPlayer; }
+        virtual void OnPlayerRemoved(GameCore::EntityID InPlayer) { (void)InPlayer; }
+
+        /* After GameSession::AddScore / AddLives wrote the new value. */
+        virtual void OnScoreChanged(GameCore::EntityID InPlayer, int32_t InScore) { (void)InPlayer; (void)InScore; }
+        virtual void OnLivesChanged(GameCore::EntityID InPlayer, int32_t InLives) { (void)InPlayer; (void)InLives; }
     };
 }
 

@@ -32,6 +32,12 @@ the module named by `[Game] Module` in `Config/DefaultEngine.ini` and runs
 levels on startup (`Engine/Source/Public/NimbleEngine/GameModule.h`). Nothing
 links the game, which is what lets the editor load it for Play-in-Editor.
 
+Sandbox's start level is **BrickBreaker** (`BrickBreaker.cpp`), the example
+for the game framework: phases in the `GameState`, rules in the `IGameMode`,
+players as `PlayerState` components, all reachable from Lua and script graphs
+(`Engine/Source/GAMEFRAMEWORK.md`). `[Game] StartLevel=Sandbox` runs the older
+demo level instead.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:
@@ -60,6 +66,23 @@ cmake --build --preset client-shipping
 Or configure the engine directly: `cmake -S Engine -B build -DNIMBLE_TARGET=Client -DCMAKE_BUILD_TYPE=Shipping`.
 
 ## Conventions
+
+### Coordinate system
+
+**Left-handed, +X right, +Y up, +Z into the screen** (away from the viewer).
+A camera at rest looks along +Z. The 2D view is one unit per pixel, with the
+camera's position at the bottom-left corner of the screen, so a 1280 × 720
+view spans x 0..1280 and y 0..720 (`RenderCore/RenderView.h`). Screen-space
+values are the exception, the way the platform gives them: mouse positions
+(`Input.GetMousePosition`) are window pixels with y down, and so is a stick's
+`Gamepad.LeftY` axis.
+
+- A positive rotation about +Z turns +X toward +Y: counter-clockwise on screen.
+- glTF meshes are converted on import by flipping z, with the winding
+  (`GltfImporter.cpp`). The engine's primitive meshes are made the same way
+  (`Engine/Scripts/generate_primitive_meshes.py`).
+- GDI's own `GDIView`, the Odessa 2D path, stays Y-down. RenderCore builds its
+  own views and does not use it.
 
 ### Namespaces
 

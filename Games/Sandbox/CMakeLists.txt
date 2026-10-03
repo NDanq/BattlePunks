@@ -77,13 +77,27 @@ if(NOT TARGET NimbleEngine)
         "nimble_add_module(NimbleEngine ...) call that creates it.")
 endif()
 
+# === Sources ===============================================================
+# Source/, laid out like an engine module: Public/Sandbox/ for the headers,
+# Private/Sandbox/ for the .cpp files, included Source-relative
+# ("Public/Sandbox/SandboxScripting.h"). nimble_add_hot_module adds Source/ to
+# the include path.
+set(SANDBOX_GAME_SOURCES
+        Source/Private/Sandbox/SandboxGame.cpp
+        Source/Private/Sandbox/SandboxScripting.cpp
+        Source/Private/Sandbox/SandboxInput.cpp
+        Source/Private/Sandbox/BrickBreaker.cpp
+        Source/Public/Sandbox/SandboxScripting.h
+        Source/Public/Sandbox/BrickBreaker.h
+)
+
 # === The game module =======================================================
 # SandboxGame.cpp as a module DLL, loaded by name (NimbleEngine/GameModule.h)
 # by the launcher and the editor's Play-in-Editor, never linked. A game module
 # is a Core module, hence nimble_add_hot_module(); its .dll is a LIBRARY
 # artifact, so it lands via LIBRARY_OUTPUT_DIRECTORY.
 nimble_add_hot_module(SandboxGame
-        SOURCES      SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp
+        SOURCES      ${SANDBOX_GAME_SOURCES}
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(SandboxGame PROPERTIES FOLDER "Games")
 
@@ -201,6 +215,8 @@ set(SANDBOX_SCRIPT_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/InputDemo.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/JumpCounter.script.nmgraph"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Zone.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Ball.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Brick.script.nmgraph"
 )
 
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
@@ -355,6 +371,57 @@ elseif(SANDBOX_PREFAB_COPIES)
     set_target_properties(SandboxStagePrefabs PROPERTIES FOLDER "Games")
 endif()
 
+# === Content/Levels/ =======================================================
+# Level files, staged at the same relative path beside the executable
+# ("Content/Levels/BrickBreaker.nmworld", as a level loads it). An Editor target
+# stages the text worlds -- the .nmworld manifest and the per-entity and
+# per-instance files in the folder beside it; a Client or Server target cannot
+# read text, so it stages the cooked ones from Content/Levels/Cooked/ (the
+# editor's `cook` console command).
+if(NIMBLE_TARGET STREQUAL "Editor")
+    file(GLOB_RECURSE SANDBOX_LEVEL_FILES CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmworld"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmentity"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmprefabinst")
+    list(FILTER SANDBOX_LEVEL_FILES EXCLUDE REGEX "/Content/Levels/Cooked/")
+else()
+    file(GLOB_RECURSE SANDBOX_LEVEL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/Cooked/*.nmworld")
+endif()
+
+set(SANDBOX_LEVEL_OUTPUTS "")
+set(SANDBOX_LEVEL_COPIES "")
+foreach(SANDBOX_LEVEL_SRC ${SANDBOX_LEVEL_FILES})
+    file(RELATIVE_PATH SANDBOX_LEVEL_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_LEVEL_SRC}")
+    get_filename_component(SANDBOX_LEVEL_REL_DIR "${SANDBOX_LEVEL_REL}" DIRECTORY)
+    list(APPEND SANDBOX_LEVEL_COPIES
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_LEVEL_REL_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_LEVEL_SRC}" "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_LEVEL_REL}")
+    if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+        set(SANDBOX_LEVEL_DST "${SANDBOX_RT_DIR}/${SANDBOX_LEVEL_REL}")
+        add_custom_command(
+                OUTPUT  "${SANDBOX_LEVEL_DST}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_RT_DIR}/${SANDBOX_LEVEL_REL_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_LEVEL_SRC}" "${SANDBOX_LEVEL_DST}"
+                DEPENDS "${SANDBOX_LEVEL_SRC}"
+                COMMENT "Sandbox: staging ${SANDBOX_LEVEL_REL} beside the executable"
+                VERBATIM)
+        list(APPEND SANDBOX_LEVEL_OUTPUTS "${SANDBOX_LEVEL_DST}")
+    endif()
+endforeach()
+
+if(SANDBOX_LEVEL_OUTPUTS)
+    add_custom_target(SandboxStageLevels DEPENDS ${SANDBOX_LEVEL_OUTPUTS})
+    add_dependencies(Sandbox SandboxStageLevels)
+    set_target_properties(SandboxStageLevels PROPERTIES FOLDER "Games")
+elseif(SANDBOX_LEVEL_COPIES)
+    # Multi-config fallback, as SandboxStagePrefabs': every file, every build.
+    add_custom_target(SandboxStageLevels ALL ${SANDBOX_LEVEL_COPIES}
+            COMMENT "Sandbox: staging Content/Levels/ beside the executable"
+            VERBATIM)
+    add_dependencies(SandboxStageLevels Sandbox)
+    set_target_properties(SandboxStageLevels PROPERTIES FOLDER "Games")
+endif()
+
 # === Content/Materials/ =====================================================
 # Material graphs, cooked from the code generated into each (<gen_code>) for
 # every built backend into SandboxGame's shader cache, which GameModuleHost
@@ -380,4 +447,4 @@ if(SANDBOX_STANDALONE)
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT Sandbox)
 endif()
 
-source_group("Sandbox" FILES SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp)
+source_group("Sandbox" FILES ${SANDBOX_GAME_SOURCES})

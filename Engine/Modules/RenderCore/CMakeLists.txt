@@ -132,7 +132,8 @@ if(RENDERCORE_BUILD_SMOKETEST)
     set_target_properties(RenderCoreSmokeTest PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
 
     enable_testing()
-    add_test(NAME RenderCore.Smoke COMMAND RenderCoreSmokeTest)
+    add_test(NAME RenderCore.Smoke COMMAND RenderCoreSmokeTest
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:RenderCoreSmokeTest>")   # staged meshes load by relative path
     set_tests_properties(RenderCore.Smoke PROPERTIES
         TIMEOUT 120
         LABELS  "smoke"

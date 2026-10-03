@@ -19,7 +19,7 @@ NIMBLE_DEFINE_INPUT_MAP(Default)
     Map.Action("Jump",  "Space, Gamepad.South");
     Map.Action("Boost", "LeftShift, RightShift, Gamepad.RightShoulder");
 
-    /* +X right and +Y down, as the 2D view draws them. */
+    /* +X right and +Y up, as the view draws them (a stick's LeftY is +down, hence its sign). */
     Map.Axis("MoveX", "D, Right, -A, -Left, Gamepad.LeftX, Gamepad.DPadRight, -Gamepad.DPadLeft");
-    Map.Axis("MoveY", "S, Down, -W, -Up, Gamepad.LeftY, Gamepad.DPadDown, -Gamepad.DPadUp");
+    Map.Axis("MoveY", "W, Up, -S, -Down, -Gamepad.LeftY, Gamepad.DPadUp, -Gamepad.DPadDown");
 }

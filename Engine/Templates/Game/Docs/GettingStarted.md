@@ -138,11 +138,17 @@ NIMBLE_CONFIG_INT(GLives, "@PROJECT_NAME@", "Lives", 3, nullptr);   // [@PROJECT
 
 ## 7. Shipping a client build
 
-A client build cannot read text prefabs. Before building a `client-*`
-preset, open the editor's Console and run `cook prefabs`: it writes binary
-copies to `Cooked/Content/Prefabs/`, which the client build stages instead.
-Commit `Cooked/` with the game. Material graphs cook themselves during the
-build.
+A client build cannot read text prefabs or text levels. Before building a
+`client-*` preset, in the editor's Console:
+
+- `cook prefabs` writes binary prefabs to `Cooked/Content/Prefabs/`;
+- `cook` (with the level open and saved) writes its binary twin to
+  `Content/Levels/Cooked/`.
+
+The client build stages those instead; commit them with the game. A level
+that loads a world file reads the cooked one in a game build, as
+`Games/Sandbox`'s BrickBreaker does. Material graphs cook themselves during
+the build.
 
 ## 8. Next
 
