@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="7a70293613d3e5f5a7d16504c71fb767" Name="Crate">
+  <Component Type="Render" Version="2">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="420" Y="-100" Z="-300" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="200" Y="200" Z="200" />
+  </Component>
+</Entity>

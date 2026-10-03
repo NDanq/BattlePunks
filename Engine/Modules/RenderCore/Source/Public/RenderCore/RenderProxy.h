@@ -71,6 +71,13 @@ namespace RenderCore
          * view). */
         virtual void Draw(RenderContext& InContext) = 0;
 
+        /* RENDER THREAD, once per shadow view a frame, for a visible proxy
+         * whose WorldBounds that view can see -- including proxies the
+         * camera culled, whose shadows may still reach the screen. Queue
+         * casters with RenderContext::DrawMeshShadow. Nothing by default: a
+         * proxy type casts no shadow unless it says so. */
+        virtual void DrawShadow(RenderContext& InContext) { (void)InContext; }
+
         /* RENDER THREAD, before culling: how far past WorldBounds this
          * proxy's draw can reach -- a material's World Position Offset (Max
          * Offset, RenderContext::GetMaterialMaxOffset). 0 by default. */

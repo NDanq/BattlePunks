@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="668971d1662194b19dcfd918204ca3b2" Name="Floor">
+  <Component Type="Render" Version="2">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Plane.nmmesh" />
+    <CastShadows Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="6000" Y="1" Z="6000" />
+  </Component>
+</Entity>

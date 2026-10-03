@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="565e52654821f0e8584b29b79b8ee5bf" Name="Glow">
+  <Component Type="Point Light" Version="1">
+    <Color R="220" G="80" B="255" A="255" />
+    <Intensity Value="4" />
+    <Radius Value="600" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-750" Y="-120" Z="650" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

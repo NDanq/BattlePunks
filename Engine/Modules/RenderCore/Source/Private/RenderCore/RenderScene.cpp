@@ -1,6 +1,7 @@
 #include "Public/RenderCore/RenderScene.h"
 
 #include <atomic>
+#include <utility>
 #include <vector>
 
 #include "Public/RenderCore/RenderContext.h"
@@ -28,6 +29,7 @@ namespace RenderCore
 #if WITH_EDITOR
         std::vector<DebugLine>    DebugLines;   // consumed by the next Render()
         std::vector<MaterialPreviewRequest> Previews;   // likewise
+        std::vector<std::pair<uint64_t, MaterialPreviewMailbox*>> Captures;   // likewise
 #endif
         RenderView                View;
         EngineCore::Color         ClearColor{24, 26, 32, 255};
@@ -155,6 +157,11 @@ namespace RenderCore
     {
         P->Previews.push_back(InRequest);
     }
+
+    void RenderScene::AddCapture(const uint64_t InRequest, MaterialPreviewMailbox* InMailbox)
+    {
+        P->Captures.emplace_back(InRequest, InMailbox);
+    }
 #endif
 
     void RenderScene::Render(RenderContext& InContext)
@@ -246,6 +253,38 @@ namespace RenderCore
             ++VisibleCount;
         }
 
+        /*
+         * Shadow casters: per shadow view, every visible proxy it can see,
+         * camera-culled or not -- a caster off screen can shade what is on
+         * it. Padded like the camera's cull, for World Position Offset.
+         */
+        const uint32_t ShadowViews = InContext.PrepareShadows();
+        for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews; ++ViewIndex)
+        {
+            const GameCore::AABB& ViewBounds = InContext.GetShadowViewBounds(ViewIndex);
+            InContext.SetShadowCasterView(int32_t(ViewIndex));
+            for(RenderProxy* Proxy : P->Proxies)
+            {
+                if(!Proxy->IsVisible())
+                {
+                    continue;
+                }
+                GameCore::AABB Bounds = Proxy->GetWorldBounds();
+                if(!Bounds.IsEmpty() && !ViewBounds.IsEmpty())
+                {
+                    const float Padding = Proxy->GetBoundsPadding(InContext);
+                    const EngineCore::Vector3 Pad(Padding, Padding, Padding);
+                    Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
+                    if(!Bounds.Overlaps(ViewBounds))
+                    {
+                        continue;
+                    }
+                }
+                Proxy->DrawShadow(InContext);
+            }
+        }
+        InContext.SetShadowCasterView(-1);
+
         /* The scene's Post Process components, Priority low first (WorldBridge sorted them). */
         for(uint32_t Index = 0; Index < P->PostProcess.Count && Index < RENDER_POST_PROCESS_MAX; ++Index)
         {
@@ -255,6 +294,21 @@ namespace RenderCore
         /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
          * leaves the final colour bound, for the present and the overlay. */
         InContext.RenderSceneStages(P->Targets, P->ClearColor);
+
+#if WITH_EDITOR
+        /* Read back before the overlay; the readback flushes and resumes the frame. */
+        for(const auto& Each : P->Captures)
+        {
+            EngineCore::Image Pixels;
+            if(P->Targets.Final) { Pixels = P->Targets.Final->ToImage(); }
+            if(Each.second)
+            {
+                Each.second->Deliver(Each.first, std::move(Pixels),
+                                     P->Targets.Final ? std::string() : std::string("the scene has no render target"));
+            }
+        }
+        P->Captures.clear();
+#endif
 
         if(P->bReportsStats)
         {

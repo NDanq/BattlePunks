@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="68db41d47621e5dcab751af9466ce3ee" Name="Sky">
+  <Component Type="Sky Light" Version="1">
+    <SkyColor R="120" G="140" B="175" A="255" />
+    <GroundColor R="70" G="60" B="50" A="255" />
+    <Intensity Value="0.5" />
+    <Active Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

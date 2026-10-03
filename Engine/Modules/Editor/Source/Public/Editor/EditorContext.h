@@ -140,6 +140,11 @@ public:
      * the input, or nothing is playing, or the view is ejected. */
     NimbleEngine::InputState* GetPlayFallbackInput();
 
+    /* While playing through that fallback, the game has captured the mouse:
+     * the viewport hides the cursor and holds it at its centre itself,
+     * reporting each move as a delta (SDL's relative mode, by hand). */
+    bool IsPlayMouseHeldByViewport() const;
+
     // === Documents ==========================================================
 
     /* The level: the World the main window edits and Play-in-Editor runs in

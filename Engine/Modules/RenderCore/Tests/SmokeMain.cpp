@@ -20,6 +20,7 @@
 #include <string>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreImage.h"
@@ -45,6 +46,7 @@
 #include "Public/RenderCore/RenderView.h"
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Private/RenderCore/ShadowSetup.h"
 
 using namespace RenderCore;
 using namespace EngineCore;
@@ -79,8 +81,8 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 11,
-           "Render exposes Visible, Material (slot 0), Material0-7 and Mesh");
+    Expect(Render != nullptr && RenderCount == 12,
+           "Render exposes Visible, Material (slot 0), Material0-7, Mesh and CastShadows");
     bool bSlot7 = false, bSlot0Alias = false;
     for(size_t Index = 0; Render && Index < RenderCount; ++Index)
     {
@@ -99,7 +101,7 @@ static void TestScriptBindings()
 
     size_t CameraCount = 0;
     GameCore::FindComponentScript(CameraComponent::StaticType().ID, CameraCount);
-    Expect(CameraCount == 3, "Camera exposes ZNear, ZFar and Active");
+    Expect(CameraCount == 5, "Camera exposes ZNear, ZFar, Active, Projection and FovY");
 }
 
 static void TestThreadLifecycle(RenderThread& InThread)
@@ -1405,13 +1407,14 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 1, "RenderComponent saves as version 1");
+    Expect(Info && Info->Version == 2, "RenderComponent saves as version 2");
     if(!Info) { return; }
 
     RenderComponent Saved;
     std::strcpy(Saved.Materials[0], "Materials/Body.material.nmgraph");
     std::strcpy(Saved.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph");
     RecordingArchive Out;
+    Out.Version = Info->Version;   // a save writes the current version
     Info->Fn(Out, &Saved);
     Expect(Out.Strings["Material0"] == "Materials/Body.material.nmgraph"
            && Out.Strings["Material7"] == "Engine/Content/Materials/DefaultLit.material.nmgraph" && Out.Strings.count("Material") == 0,
@@ -1429,8 +1432,422 @@ static void TestRenderComponentSerializer()
            && std::strcmp(Again.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph") == 0,
            "and reads them back unchanged");
 
+    Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("CastShadows")) != Out.Names.end(),
+           "version 2 writes CastShadows");
+    RecordingArchive Old;
+    Old.bLoading = true;
+    Old.Version  = 1;
+    RenderComponent FromOld;
+    FromOld.bCastShadows = 1;
+    Info->Fn(Old, &FromOld);
+    Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("CastShadows")) == Old.Names.end() && FromOld.bCastShadows == 1,
+           "a version 1 save reads no CastShadows and keeps casting");
+
+    /* The lights: version 2 dropped the sun's Direction (it is the
+     * Transform's forward now) and added shadows; point and spot are new. */
+    const GameCore::ComponentSerializerInfo* SunInfo = GameCore::FindComponentSerializer(DirectionalLightComponent::StaticType().ID);
+    Expect(SunInfo && SunInfo->Version == 2, "DirectionalLightComponent saves as version 2");
+    if(SunInfo)
+    {
+        RecordingArchive SunOut;
+        SunOut.Version = SunInfo->Version;
+        DirectionalLightComponent Sun;
+        SunInfo->Fn(SunOut, &Sun);
+        const auto Has = [](const RecordingArchive& InArchive, const char* InName)
+        {
+            return std::find(InArchive.Names.begin(), InArchive.Names.end(), std::string(InName)) != InArchive.Names.end();
+        };
+        Expect(!Has(SunOut, "Direction") && Has(SunOut, "ShadowTechnique") && Has(SunOut, "CascadeCount"),
+               "version 2 writes no Direction, and the shadow fields");
+        RecordingArchive SunOld;
+        SunOld.bLoading = true;
+        SunOld.Version  = 1;
+        SunInfo->Fn(SunOld, &Sun);
+        Expect(Has(SunOld, "Direction") && !Has(SunOld, "ShadowTechnique"), "a version 1 save's Direction is read (and dropped)");
+    }
+    const GameCore::ComponentSerializerInfo* PointInfo = GameCore::FindComponentSerializer(PointLightComponent::StaticType().ID);
+    const GameCore::ComponentSerializerInfo* SpotInfo  = GameCore::FindComponentSerializer(SpotLightComponent::StaticType().ID);
+    Expect(PointInfo && PointInfo->Version == 1 && SpotInfo && SpotInfo->Version == 1, "Point and Spot Light save as version 1");
+    const GameCore::ComponentSerializerInfo* CameraInfo = GameCore::FindComponentSerializer(CameraComponent::StaticType().ID);
+    Expect(CameraInfo && CameraInfo->Version == 2, "CameraComponent saves as version 2 (Projection, FovY)");
+
     const GameCore::ComponentSerializerInfo* PostInfo = GameCore::FindComponentSerializer(PostProcessComponent::StaticType().ID);
     Expect(PostInfo && PostInfo->Version == 1, "PostProcessComponent saves as version 1");
+}
+
+#if WITH_EDITOR
+/*
+ * Shadows on the GPU (NIMBLE_SMOKE_GPU=Vulkan): a box over a floor, drawn
+ * with shadows on and off, compared pixel by pixel. A shadow only takes light
+ * away; Cast Shadows off takes none away; a Modulated shadow tints.
+ */
+static void TestShadowsOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[shadows on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[shadows on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    ConfigVar* Enabled = ConfigFindVarByPath("Shadows.Enabled");
+    Expect(Enabled != nullptr, "[Shadows] Enabled is a config var");
+
+    Renderer Rend;
+    const bool bInit = Enabled && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, -700.0, -600.0), Vector3(0.0, 700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Mesh = [](const char* InPath)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InPath);
+            return Render;
+        };
+
+        Placed("Floor", Vector3(0.0, 0.0, 0.0), Vector3(), Vector3(3000.0, 1.0, 3000.0)).AddComponent(Mesh("Engine/Content/Meshes/Plane.nmmesh"));
+        const GameCore::Entity Box = Placed("Box", Vector3(0.0, -90.0, 0.0), Vector3(), Vector3(120.0, 120.0, 120.0));
+        Box.AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+
+        /* Down and toward +X: the shadow falls beside the box, where the camera sees it. */
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Standard;
+        SunInit.ShadowDistance  = 3000.0f;
+        const GameCore::Entity Sun = Placed("Sun", Vector3(), Vector3(-55.0, 90.0, 0.0), Vector3(1.0, 1.0, 1.0));
+        Sun.AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            const uint64_t Request = Rend.RequestSceneCapture();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Rgb = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        /* NIMBLE_SMOKE_DUMP=<dir>: each capture as a PPM there, to look at. */
+        const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP");
+        const auto Dump = [&](const EngineCore::Image& InPixels, const char* InName)
+        {
+            if(!DumpDir || !DumpDir[0] || InPixels.GetWidth() == 0) { return; }
+            std::ofstream File(std::string(DumpDir) + "/" + InName + ".ppm", std::ios::binary);
+            File << "P6\n" << InPixels.GetWidth() << " " << InPixels.GetHeight() << "\n255\n";
+            for(int Y = 0; Y < int(InPixels.GetHeight()); ++Y)
+            {
+                for(int X = 0; X < int(InPixels.GetWidth()); ++X)
+                {
+                    int Value[3];
+                    Rgb(InPixels, X, Y, Value);
+                    const char Bytes[3] = { char(Value[0]), char(Value[1]), char(Value[2]) };
+                    File.write(Bytes, 3);
+                }
+            }
+        };
+
+        /* Pixels InA has darker than InB, brighter, and how much bluer the darker ones lean. */
+        struct Difference { int Darker = 0; int Brighter = 0; double BlueLean = 0.0; };
+        const auto Compare = [&](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            Difference Out;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                for(int X = 0; X < 256; ++X)
+                {
+                    int A[3], B[3];
+                    Rgb(InA, X, Y, A);
+                    Rgb(InB, X, Y, B);
+                    const int Delta = (A[0] + A[1] + A[2]) - (B[0] + B[1] + B[2]);
+                    if(Delta < -45)
+                    {
+                        ++Out.Darker;
+                        Out.BlueLean += double(A[2] - A[0]) - double(B[2] - B[0]);
+                    }
+                    if(Delta > 45) { ++Out.Brighter; }
+                }
+            }
+            if(Out.Darker > 0) { Out.BlueLean /= Out.Darker; }
+            return Out;
+        };
+
+        EngineCore::Image Lit, Shadowed, NoCaster, Modulated, SpotLit, SpotShadowed;
+        Enabled->SetFromString("0");
+        const bool bLit = Capture(Lit);
+        Enabled->SetFromString("1");
+        const bool bShadowed = Capture(Shadowed);
+        Expect(bLit && bShadowed, "the scene is captured with shadows off and on");
+        if(bLit && bShadowed)
+        {
+            Dump(Lit, "sun-lit");
+            Dump(Shadowed, "sun-shadowed");
+            const Difference Sunlit = Compare(Shadowed, Lit);
+            std::printf("    sun: %d pixels darker, %d brighter\n", Sunlit.Darker, Sunlit.Brighter);
+            Expect(Sunlit.Darker > 300, "the box shadows the floor under a Standard sun");
+            Expect(Sunlit.Brighter < 20, "and a shadow only takes light away");
+
+            Box.GetComponent<RenderComponent>()->bCastShadows = 0;
+            const bool bNoCaster = Capture(NoCaster);
+            const Difference Off = bNoCaster ? Compare(NoCaster, Lit) : Difference();
+            std::printf("    cast shadows off: %d pixels darker\n", Off.Darker);
+            Expect(bNoCaster && Off.Darker < 40, "a mesh with Cast Shadows off casts none");
+            Box.GetComponent<RenderComponent>()->bCastShadows = 1;
+
+            DirectionalLightComponent* SunLight = Sun.GetComponent<DirectionalLightComponent>();
+            SunLight->ShadowTechnique = LST_Modulated;
+            SunLight->ShadowTint      = EngineCore::Color(20, 40, 220);
+            const bool bModulated = Capture(Modulated);
+            Dump(Modulated, "sun-modulated");
+            const Difference Tinted = bModulated ? Compare(Modulated, Lit) : Difference();
+            std::printf("    modulated: %d pixels darker, blue lean %.1f\n", Tinted.Darker, Tinted.BlueLean);
+            Expect(bModulated && Tinted.Darker > 300 && Tinted.BlueLean > 8.0, "a Modulated shadow darkens toward its tint");
+
+            SunLight->ShadowTechnique = LST_Cascaded;
+            EngineCore::Image Cascaded;
+            const bool bCascaded = Capture(Cascaded);
+            Dump(Cascaded, "sun-cascaded");
+            const Difference Cascades = bCascaded ? Compare(Cascaded, Lit) : Difference();
+            std::printf("    cascaded: %d pixels darker\n", Cascades.Darker);
+            Expect(bCascaded && Cascades.Darker > 300 && Cascades.Brighter < 20, "a Cascaded sun shadows the floor too");
+
+            /* The sun off; a spot light straight down over the box. */
+            SunLight->Intensity = 0.0f;
+            SpotLightComponent SpotInit;
+            SpotInit.Intensity      = 30.0f;
+            SpotInit.Range          = 1200.0f;
+            SpotInit.OuterConeAngle = 45.0f;
+            SpotInit.InnerConeAngle = 35.0f;
+            const GameCore::Entity Spot = Placed("Spot", Vector3(60.0, -500.0, -60.0), Vector3(-90.0, 0.0, 0.0), Vector3(1.0, 1.0, 1.0));
+            Spot.AddComponent(SpotInit);
+            Enabled->SetFromString("0");
+            const bool bSpotLit = Capture(SpotLit);
+            Enabled->SetFromString("1");
+            const bool bSpotShadowed = Capture(SpotShadowed);
+            Dump(SpotShadowed, "spot-shadowed");
+            const Difference SpotShadow = bSpotLit && bSpotShadowed ? Compare(SpotShadowed, SpotLit) : Difference();
+            std::printf("    spot: %d pixels darker, %d brighter\n", SpotShadow.Darker, SpotShadow.Brighter);
+            Expect(SpotShadow.Darker > 200 && SpotShadow.Brighter < 20, "a spot light's shadow falls under the box");
+
+            /* The spot swapped for a point light over the box. */
+            World.DestroyEntity(Spot);
+            PointLightComponent PointInit;
+            PointInit.Intensity    = 30.0f;
+            PointInit.Radius       = 1500.0f;
+            PointInit.bCastShadows = 1;
+            Placed("Point", Vector3(80.0, -450.0, -80.0), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(PointInit);
+            EngineCore::Image PointLit, PointShadowed;
+            Enabled->SetFromString("0");
+            const bool bPointLit = Capture(PointLit);
+            Enabled->SetFromString("1");
+            const bool bPointShadowed = Capture(PointShadowed);
+            Dump(PointShadowed, "point-shadowed");
+            const Difference PointShadow = bPointLit && bPointShadowed ? Compare(PointShadowed, PointLit) : Difference();
+            std::printf("    point: %d pixels darker, %d brighter\n", PointShadow.Darker, PointShadow.Brighter);
+            Expect(PointShadow.Darker > 200 && PointShadow.Brighter < 20, "a point light's shadow falls under the box");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    if(Enabled) { Enabled->SetFromString("1"); }
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
+/*
+ * ShadowSetup.h: where each shadow map looks from, and its atlas tile. Pure
+ * math -- no GPU.
+ */
+static void TestShadowSetup()
+{
+    std::printf("[shadow setup]\n");
+    using EngineCore::Vector3;
+    using EngineCore::Vector4;
+
+    float Splits[RENDER_CASCADE_MAX] = {};
+    ComputeCascadeSplits(10.0f, 4000.0f, 4, 0.75f, Splits);
+    Expect(Splits[0] > 10.0f && Splits[0] < Splits[1] && Splits[1] < Splits[2] && Splits[2] < Splits[3] && Splits[3] == 4000.0f,
+           "cascade splits rise and end at the far edge");
+    float Uniform[RENDER_CASCADE_MAX] = {};
+    ComputeCascadeSplits(0.0f, 400.0f, 4, 0.0f, Uniform);
+    Expect(std::abs(Uniform[0] - 100.75f) < 0.5f && std::abs(Uniform[1] - 200.5f) < 0.5f, "lambda 0 splits uniformly");
+
+    const RenderView Camera = RenderView::MakePerspective(EngineCore::Size(1280, 720), Vector3(0.0, -300.0, -800.0),
+                                                          Vector3(0.0, 0.3, 1.0), 60.0f, 1.0f, 20000.0f);
+    RenderLighting Lighting;
+    Lighting.LightDirection       = Vector3(0.3, 1.0, 0.2);
+    Lighting.bLightCastShadows    = 1;
+    Lighting.LightShadowTechnique = LST_Cascaded;
+    Lighting.LightCascadeCount    = 4;
+    Lighting.LightShadowDistance  = 3000.0f;
+
+    ShadowFrame Frame;
+    BuildShadowFrame(Lighting, Camera, Frame);
+    Expect(Frame.ViewCount == 0 && Frame.AtlasSize == 0, "no shadow views while [Shadows] is disabled (a hand-built RenderLighting's default)");
+
+    Lighting.Shadows.bEnabled   = 1;
+    Lighting.Shadows.Resolution = 2048;
+
+    /* A spot and a point light that cast, and one point light that does not. */
+    RenderLocalLight Spot;
+    Spot.Type = RLL_Spot; Spot.Position = Vector3(0.0, -400.0, 0.0); Spot.Direction = Vector3(0.0, 1.0, 0.0);
+    Spot.Range = 800.0f; Spot.OuterConeAngle = 30.0f; Spot.bCastShadows = 1;
+    RenderLocalLight Point;
+    Point.Type = RLL_Point; Point.Position = Vector3(300.0, -200.0, 100.0); Point.Range = 500.0f; Point.bCastShadows = 1;
+    RenderLocalLight Plain = Point;
+    Plain.bCastShadows = 0;
+    Lighting.Locals[0] = Spot; Lighting.Locals[1] = Point; Lighting.Locals[2] = Plain;
+    Lighting.LocalCount = 3;
+
+    BuildShadowFrame(Lighting, Camera, Frame);
+    Expect(Frame.AtlasSize == 2048 && Frame.DirectionalFirstView == 0 && Frame.CascadeCount == 4,
+           "a cascaded sun takes the first four views");
+    Expect(Frame.LocalFirstView[0] == 4 && Frame.LocalFirstView[1] == 5 && Frame.LocalFirstView[2] == -1 && Frame.ViewCount == 11,
+           "the spot takes one view, the point light six, the plain light none");
+
+    bool bCascadeTiles = true;
+    for(uint32_t Index = 0; Index < 4; ++Index)
+    {
+        const ShadowView& View = Frame.Views[Index];
+        bCascadeTiles &= View.Atlas == SA_Directional && View.TileSize == 1024 && View.TileX == (Index % 2) * 1024 && View.TileY == (Index / 2) * 1024;
+    }
+    Expect(bCascadeTiles, "the cascades fill the directional atlas's quarters");
+
+    /* Local tiles: inside the atlas, and no two overlapping. */
+    bool bInside = true, bApart = true;
+    for(uint32_t A = 4; A < Frame.ViewCount; ++A)
+    {
+        const ShadowView& View = Frame.Views[A];
+        bInside &= View.Atlas == SA_Local && View.TileX + View.TileSize <= 2048 && View.TileY + View.TileSize <= 2048;
+        for(uint32_t B = A + 1; B < Frame.ViewCount; ++B)
+        {
+            const ShadowView& Other = Frame.Views[B];
+            bApart &= View.TileX + View.TileSize <= Other.TileX || Other.TileX + Other.TileSize <= View.TileX
+                   || View.TileY + View.TileSize <= Other.TileY || Other.TileY + Other.TileSize <= View.TileY;
+        }
+    }
+    Expect(bInside && bApart, "local tiles fit the atlas and do not overlap");
+
+    /* A point in front of each cascade's slice lands inside its own tile, at a depth in [0, 1]. */
+    const auto ToAtlas = [](const ShadowView& InView, const Vector3& InWorld, double& OutU, double& OutV, double& OutDepth)
+    {
+        const Vector4 Clip = InView.WorldToAtlas * Vector4(InWorld.GetX(), InWorld.GetY(), InWorld.GetZ(), 1.0);
+        OutU = Clip.GetX() / Clip.GetW(); OutV = Clip.GetY() / Clip.GetW(); OutDepth = Clip.GetZ() / Clip.GetW();
+    };
+    bool bInTile = true;
+    double SliceNear = 1.0;
+    for(uint32_t Index = 0; Index < 4; ++Index)
+    {
+        const double Mid = (SliceNear + Frame.CascadeSplits[Index]) * 0.5;
+        SliceNear = Frame.CascadeSplits[Index];
+        const Vector3 Forward = Vector3(0.0, 0.3, 1.0).GetNormalize();
+        const Vector3 Point = Camera.Origin + Forward * Mid;
+        double U, V, Depth;
+        ToAtlas(Frame.Views[Index], Point, U, V, Depth);
+        const ShadowView& View = Frame.Views[Index];
+        bInTile &= U * 2048.0 >= View.TileX && U * 2048.0 <= View.TileX + View.TileSize
+                && V * 2048.0 >= View.TileY && V * 2048.0 <= View.TileY + View.TileSize && Depth > 0.0 && Depth < 1.0;
+    }
+    Expect(bInTile, "each cascade maps a point of its slice into its own tile, depth inside [0, 1]");
+
+    /* The spot's view: straight below the light is its tile's centre. */
+    double U, V, Depth;
+    ToAtlas(Frame.Views[4], Vector3(0.0, 0.0, 0.0), U, V, Depth);
+    const ShadowView& SpotView = Frame.Views[4];
+    Expect(std::abs(U * 2048.0 - (SpotView.TileX + SpotView.TileSize * 0.5)) < 1.0
+           && std::abs(V * 2048.0 - (SpotView.TileY + SpotView.TileSize * 0.5)) < 1.0 && Depth > 0.0 && Depth < 1.0,
+           "a spot light's axis lands at its tile's centre");
+
+    /* The point light's faces: each axis direction lands in its own face. */
+    bool bFaces = true;
+    const Vector3 Axes[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1) };
+    for(int Face = 0; Face < 6; ++Face)
+    {
+        const ShadowView& View = Frame.Views[5 + Face];
+        ToAtlas(View, Point.Position + Axes[Face] * 200.0, U, V, Depth);
+        bFaces &= std::abs(U * 2048.0 - (View.TileX + View.TileSize * 0.5)) < 1.0
+               && std::abs(V * 2048.0 - (View.TileY + View.TileSize * 0.5)) < 1.0;
+    }
+    Expect(bFaces, "a point light's six faces look along +X -X +Y -Y +Z -Z, in that order");
+
+    /* Caster bounds: the spot's reaches the floor below it. */
+    Expect(SpotView.WorldBounds.Contains(Vector3(0.0, 300.0, 0.0)) && !SpotView.WorldBounds.Contains(Vector3(0.0, -1000.0, 0.0)),
+           "a spot view's bounds hold what it lights, not what is behind it");
+
+    /* MaxShadowedLights 1: only the first casting light gets views. */
+    Lighting.Shadows.MaxShadowedLights = 1;
+    BuildShadowFrame(Lighting, Camera, Frame);
+    Expect(Frame.LocalFirstView[0] == 4 && Frame.LocalFirstView[1] == -1 && Frame.ViewCount == 5, "MaxShadowedLights caps the casting lights");
+
+    /* A plain (Standard) sun takes the whole atlas. */
+    Lighting.LightShadowTechnique = LST_Standard;
+    BuildShadowFrame(Lighting, Camera, Frame);
+    Expect(Frame.CascadeCount == 1 && Frame.Views[0].TileSize == 2048, "a Standard sun is one view over the whole atlas");
+
+    /* An orthographic camera (the 2D view) still gets a sun view. */
+    const RenderView Flat = RenderView::MakeOrthographic(EngineCore::Size(1280, 720), Vector3(0.0, 0.0, 0.0), -1.0f, 1000.0f);
+    BuildShadowFrame(Lighting, Flat, Frame);
+    Expect(Frame.DirectionalFirstView == 0 && Frame.Views[0].WorldBounds.Contains(Vector3(640.0, 360.0, 0.0)),
+           "an orthographic camera's view is covered too");
+}
+
+/*
+ * WorldBridge's light gathering and the perspective camera, through a
+ * Renderer on the Null backend: nothing to look at, but what reaches the
+ * render thread is checked by a proxy that records the scene's view.
+ */
+static void TestLightComponents()
+{
+    std::printf("[light components]\n");
+    using EngineCore::Vector3;
+
+    Expect(std::abs(LightForward(Vector3(0.0, 0.0, 0.0)).GetZ() - 1.0) < 1e-9, "a light with no rotation shines along +Z");
+    const Vector3 Down = LightForward(Vector3(-90.0, 0.0, 0.0));
+    Expect(std::abs(Down.GetY() - 1.0) < 1e-6, "pitch -90 shines down (+Y)");
+    const Vector3 Right = LightForward(Vector3(0.0, 90.0, 0.0));
+    Expect(std::abs(Right.GetX() - 1.0) < 1e-6, "yaw 90 shines along +X, as the editor camera turns");
+
+    size_t Count = 0;
+    Expect(GameCore::FindComponentScript(PointLightComponent::StaticType().ID, Count) && Count == 9,
+           "Point Light exposes its light and shadow fields to Lua");
+    Expect(GameCore::FindComponentScript(SpotLightComponent::StaticType().ID, Count) && Count == 11,
+           "Spot Light exposes its light and shadow fields to Lua");
 }
 
 /*
@@ -1744,11 +2161,14 @@ int main()
     }
 
     TestRendererWithWorld();
+    TestShadowSetup();
+    TestLightComponents();
 #if WITH_EDITOR
     TestMultipleScenes();
     TestDebugLines();
     TestMaterials();
     TestMaterialsOnGpu();
+    TestShadowsOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();

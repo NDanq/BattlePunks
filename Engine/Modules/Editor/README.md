@@ -73,7 +73,9 @@ uses it.
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
-| `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select, selection bounds, axis gizmo |
+| `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow; all lights or the selected one, View > Light Gizmos), a perspective game camera's frustum |
+| `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere or Plane mesh on a new entity, sized to see, in one undo step |
+| `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity hierarchy with component summary, filter, create/destroy, drag to reparent |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
@@ -216,7 +218,9 @@ NimbleEditor [--rhi N] [--play] [world.nmworld]
 
 The backend is `[Editor] RHI` in `Config/DefaultEngine.ini` (default 2, Vulkan),
 then the user's settings (see Editor settings), then `--rhi` -- a separate key from the game's `[Display] RHI`. With no
-file argument the editor opens the Sandbox scene -- the entities Sandbox's
+file argument the editor opens the project's `[Editor] StartupWorld` (a path
+relative to the project, e.g. LightLab's `Levels/LightLab.nmworld`), viewed
+from that world's game camera; with none set, or no such file, it opens the Sandbox scene -- the entities Sandbox's
 level has once loaded (Marker, Camera, and the startup script's Scripted),
 mirrored by hand from `SandboxGame.cpp` and `Scripts/Main.lua` until the editor
 can load the game's own level. File > Save writes a text
@@ -452,7 +456,17 @@ stands in for `Application` as the host.
 - **Ejected view.** While the view is ejected, the game sees nothing held.
 - **Fallback.** If SDL cannot wrap the viewport, the viewport's Qt key and
   mouse events feed the router instead. Those keys are layout-dependent, and
-  the log says which path a run uses.
+  the log says which path a run uses. Wrapping is implemented on Windows only,
+  so on Linux every run takes this path.
+- **Mouse capture.** A game's `SetMouseCaptured(true)` is SDL's relative mode
+  on the SDL path. On the fallback the viewport does it: while it has the
+  focus in the active window it hides and grabs the cursor and puts it back at
+  its centre after every move, reporting the move as the delta. Clicking
+  elsewhere (or switching windows) lets the cursor go; clicking the viewport
+  takes it back.
+- **Saving.** File > Save of a world inside the project also copies it (the
+  manifest and its `.nmentity` folder) beside the executable, so the next Play
+  of a level that loads it sees the change without a build.
 - **The probe.** View > SDL Input Probe reports raw SDL events from the same
   wrapper. It switches off while playing, since a window is wrapped once.
 
@@ -469,6 +483,7 @@ editor's own config vars as a form:
 | Appearance | Theme: System, Light, Dark (applies at once) | `Editor.Theme` |
 | Viewport | Move / Rotate / Scale snap | `Editor.SnapTranslate`, `SnapRotate`, `SnapScale` |
 | Rendering | Render backend (on restart) | `Editor.RHI` |
+| Shadows | Draw shadows, shadow map size, filter, shadowed point and spot lights, sun shadow distance scale | `Shadows.Enabled`, `Resolution`, `Filter`, `MaxShadowedLights`, `DistanceScale` (RenderCore's; every scene, applied the next frame) |
 | Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
 | Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, combine meshes, import a mesh's textures, sRGB, largest texture | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize` |
 

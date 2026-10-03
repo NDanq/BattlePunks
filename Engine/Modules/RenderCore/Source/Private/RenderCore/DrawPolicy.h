@@ -30,6 +30,7 @@ namespace RenderCore
         GDIMesh*          Mesh  = nullptr;
         uint32_t          First = 0;
         uint32_t          Count = 0;             // 0: the whole mesh
+        int32_t           ShadowView = -1;       // Shadows stage: the ShadowFrame view it draws into
     };
 
     enum class EDrawSort : uint8_t

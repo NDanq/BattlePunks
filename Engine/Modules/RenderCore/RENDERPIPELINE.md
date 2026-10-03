@@ -14,7 +14,7 @@ A frame runs these stages, in this order (`ERenderStage`, RenderPipeline.h):
 | **PrePass** | nothing yet | -- | culls proxies against the view (padded by World Position Offset); what survives submits its draws to the stages below. Occlusion queries and a depth prepass belong here later |
 | **Base Pass** | Opaque and Masked, **Lit** | the G-buffer, and depth | depth test and write; no blending. Writes no colour to the scene |
 | **Lighting** | one full-screen pass | scene colour | reads the G-buffer and depth; lit pixels only |
-| &nbsp;&nbsp;Shadows | nothing yet | -- | a sub-stage of Lighting, run first: shadow casters for the directional light, later |
+| &nbsp;&nbsp;Shadows | shadow casters: Opaque and Masked mesh sections whose component casts | the two shadow atlases' depth | a sub-stage of Lighting, run first; depth test and write, no colour. See [Shadows](#shadows) |
 | **Unlit** | Opaque and Masked, **Unlit**; plain quads; tinted meshes | scene colour, with the Base Pass depth | depth test and write; plain quads keep their alpha blend |
 | **Translucent Lit** | Translucent, **Lit** | scene colour | depth test, no write, alpha blend; back to front; forward-shaded |
 | **Translucent Unlit** | Translucent, **Unlit** | scene colour | as above |
@@ -131,7 +131,9 @@ vertex shader (`MaterialDefault`, Fullscreen input) and the material binding
 layout:
 
 - textures 4-8: GBuffer0-3 and the scene depth, read with `texelFetch`;
-- binding 3, the scene block, which gains `Scene_InvViewProjection`.
+- textures 9-10: the directional and local shadow atlases (see [Shadows](#shadows));
+- binding 3, the scene block, which gains `Scene_InvViewProjection`, the
+  point and spot lights and the shadow matrices.
 
 For each pixel whose GBuffer1 alpha is set it rebuilds the world position from
 depth -- every backend's depth is GL's window depth, `z_ndc = 2d - 1`, because
@@ -141,6 +143,68 @@ wrote. Other pixels are discarded, so the clear colour shows.
 
 The result matches the forward path for the same material: the GPU smoke check's
 DefaultLit, Glow and Wave pixels are unchanged.
+
+### Lights
+
+`Lighting.glsl`'s `ShadeSurface` lights a surface with:
+
+- **the sun**: the first active Directional Light, shining along its entity's
+  forward (+Z turned by the Transform's Rotation, `LightForward` in
+  `Components/LightShadow.h`). With none, the old fixed light.
+- **point and spot lights**: up to `RENDER_LOCAL_LIGHT_MAX` (16) a frame,
+  gathered by `WorldBridge::BuildLighting` -- shadow casters first, then nearest
+  the camera; more are warned once and dropped. Falloff is inverse-square-like,
+  windowed to reach zero at Radius (point) or Range (spot); a spot fades from
+  its inner to its outer cone half-angle.
+- **the sky**: the first active Sky Light's hemisphere ambient.
+
+Every light shares one BRDF (`EvaluateLight`). Translucent Lit surfaces get the
+same lights forward, but unshadowed: their texture slots are their material's.
+
+### Shadows
+
+Each light has a **Shadows** section: Cast Shadows, a Technique, a Modulated
+Tint and two biases. A Render component's **Cast Shadows** says whether its
+mesh casts. Every scene's quality is the `[Shadows]` config section (Editor
+Settings > Shadows, or a game's DefaultEngine.ini): Enabled, Resolution,
+Filter, MaxShadowedLights and DistanceScale.
+
+| Technique | Lights | What it draws |
+|---|---|---|
+| **Standard** | all | the shadow takes away that light's own contribution |
+| **Modulated** | all | that light is unshadowed; the shadow multiplies everything lit there toward its tint (no extra pass) |
+| **Cascaded** | directional | Standard, in 1-4 cascades along the view, split by Cascade Split Lambda (uniform to logarithmic) |
+
+`ShadowSetup.cpp` works out a frame's shadow views (pure math, tested on the
+Null backend) into two atlases, render targets of `Resolution` texels a side:
+
+- **directional**: one orthographic view fitted around the camera's frustum out
+  to Shadow Distance, or one per cascade in its 2x2 quarters. Each is fitted to
+  a bounding sphere and moved in whole texels, so it does not shimmer.
+- **local**: 6 x 4 tiles. A spot light takes one (a perspective view as wide as
+  its outer cone, out to Range), a point light six (its cube faces). At most
+  `MaxShadowedLights` (and 4) cast, in gather order.
+
+`RenderScene::Render` then asks every visible proxy whose bounds each view can
+see for its casters (`RenderProxy::DrawShadow`) -- including proxies the camera
+culled. The Shadows sub-stage clears both atlases and draws each caster into
+its view's tile with the material's own vertex shader (so World Position Offset
+matches) and `ShadowDepth.fsh`; the colour target is masked off.
+
+The Lighting pass samples the atlases' depth with `texelFetch` and compares by
+hand (`Shadows.glsl`), Filter's 1, 9 or 25 taps kept inside the tile. GDI has
+no comparison samplers, depth bias or cull mode yet, so the bias is the
+receiver's: Depth Bias in the shadow map's depth, Normal Bias in world units
+along the surface normal (more where the light grazes it).
+
+Limits: Masked casters cast their whole shape (their clip is not run in the
+Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces are
+unshadowed; Metal, which cannot sample a depth target, draws no shadows (warned
+once). A material preview never draws shadows.
+
+The scene block grew past the material block's 1024 bytes (3600 bytes:
+`GDI_SCENE_BLOCK_MAX_BYTES` is 4096). GDI now re-uploads a uniform block only
+when its bytes change, so the scene block is uploaded once a frame, not per draw.
 
 ### Previews
 
@@ -188,6 +252,18 @@ compiled, as the forward variant. It now has both.
   back unchanged.
 - Culling: a mesh past the view's edge is kept while a slot's World Position
   Offset reaches it, and culled without.
+- Shadow setup (Null backend): cascade splits rise and end at the far edge;
+  cascades fill the directional atlas's quarters; local tiles fit and never
+  overlap; each view maps what it should see into its own tile; a point light's
+  faces look along +X -X +Y -Y +Z -Z; MaxShadowedLights caps the casters.
+- Serialization: Render (version 2: CastShadows, on for a version 1 save),
+  Camera (version 2: Projection, FovY), Directional Light (version 2: no
+  Direction; shadows), Point and Spot Light (version 1).
+- GPU shadows (`NIMBLE_SMOKE_GPU`): a box over a floor, captured with shadows
+  on and off (`Renderer::RequestSceneCapture`) and compared pixel by pixel. A
+  Standard, Cascaded, spot and point shadow each darken the floor and brighten
+  nothing; Cast Shadows off darkens nothing; a Modulated shadow leans to its
+  tint. `NIMBLE_SMOKE_DUMP=<dir>` writes each capture as a PPM.
 - GPU (`NIMBLE_SMOKE_GPU=Vulkan|D3D12`): previews of DefaultLit and Wave go
   through the G-buffer and keep their forward-shaded pixels (186 188 192; 40
   103 172); Glow (Translucent Unlit) is unchanged; Negative (PostProcess) inverts
@@ -195,7 +271,8 @@ compiled, as the forward variant. It now has both.
 
 ## Later
 
-Shadows (a shadow map for the directional light, in the Shadows sub-stage);
-occlusion queries and a depth prepass in the PrePass; per-section bounds for
-culling; RGBA16F G-buffer and scene colour; more light types, as further passes
-over the G-buffer.
+Hardware shadow comparison, depth bias and front-face culling in GDI (then
+drop most of the receiver bias); Masked casters clipped in the Shadows
+sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
+lights; occlusion queries and a depth prepass in the PrePass; per-section
+bounds for culling; RGBA16F G-buffer and scene colour.

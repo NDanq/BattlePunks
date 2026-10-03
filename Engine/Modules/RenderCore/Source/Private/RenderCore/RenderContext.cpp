@@ -24,6 +24,7 @@
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/SceneTargets.h"
+#include "Private/RenderCore/ShadowSetup.h"
 
 /*
  * DrawQuad: a 1x1 quad mesh, Basic_VS/Basic_PS, and a GDIView whose camera
@@ -60,6 +61,7 @@ namespace RenderCore
         const char* const MATERIAL_FOLDER      = "Materials/";            // the shared MaterialDefault vertex shaders
         const char* const DEFAULT_LIT_MATERIAL = "Engine/Content/Materials/DefaultLit.material.nmgraph";   // a mesh with none
         const char* const LIGHTING_SHADER      = "DeferredLighting.fsh";  // Engine/Content/Shaders: the Lighting stage
+        const char* const SHADOW_DEPTH_SHADER  = "ShadowDepth.fsh";       // the Shadows stage's casters
         constexpr size_t  RENDER_PREVIEW_SLOTS = 8;                       // MaterialPreviewRequest::Slots
 
         /* A material's shader: no name-based uniforms, the material binding layout. */
@@ -72,8 +74,11 @@ namespace RenderCore
 
         using Material = RenderMaterial;
 
-        /* SceneUniforms.glsl's Scene_Block, byte for byte: vec4s, then a mat4
-         * (column-major, as GDI uploads matrices). */
+        /* Scene_Locals' vec4s per light. */
+        constexpr uint32_t SCENE_LOCAL_VEC4S = 6;
+
+        /* SceneUniforms.glsl's Scene_Block, byte for byte: vec4s and mat4s
+         * (column-major, as GDI uploads matrices) and arrays of them. */
         struct SceneUniforms
         {
             float CameraPosition[4]     = {};
@@ -83,11 +88,41 @@ namespace RenderCore
             float SkyColor[4]           = {};
             float GroundColor[4]        = {};
             float InvViewProjection[16] = {};
+
+            float ShadowParams[4]       = {};
+            float LightShadow[4]        = { -1.0f, 0.0f, 0.0f, 0.0f };
+            float LightShadowTint[4]    = {};
+            float CascadeSplits[4]      = {};
+            float CameraForward[4]      = {};
+            float CascadeMatrices[RENDER_CASCADE_MAX][16] = {};
+
+            float LocalCounts[4]        = {};
+            float Locals[RENDER_LOCAL_LIGHT_MAX * SCENE_LOCAL_VEC4S][4] = {};
+            float LocalShadowMatrices[SHADOW_LOCAL_ATLAS_COLUMNS * SHADOW_LOCAL_ATLAS_ROWS][16] = {};
+            float CascadeTexels[4]      = {};
         };
-        static_assert(sizeof(SceneUniforms) == 160, "SceneUniforms must match Scene_Block (SceneUniforms.glsl)");
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
                       "Scene_Block's members are in this order");
+        static_assert(offsetof(SceneUniforms, ShadowParams) == 160 && offsetof(SceneUniforms, CameraForward) == 224
+                      && offsetof(SceneUniforms, CascadeMatrices) == 240 && offsetof(SceneUniforms, LocalCounts) == 496
+                      && offsetof(SceneUniforms, Locals) == 512 && offsetof(SceneUniforms, LocalShadowMatrices) == 2048,
+                      "Scene_Block's shadow and local-light members are in this order");
+        static_assert(offsetof(SceneUniforms, CascadeTexels) == 3584, "Scene_CascadeTexels comes last");
+        static_assert(sizeof(SceneUniforms) == 3600 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+                      "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
+
+        /* Row-major InMatrix into a GLSL mat4's column-major floats. */
+        void PutMatrix(float (&OutValue)[16], const EngineCore::Matrix4x4& InMatrix)
+        {
+            for(int Row = 0; Row < 4; ++Row)
+            {
+                for(int Col = 0; Col < 4; ++Col)
+                {
+                    OutValue[Col * 4 + Row] = float(InMatrix.Data[Row][Col]);
+                }
+            }
+        }
 
         void PutColor(float (&OutValue)[4], const EngineCore::Color InColor, const float InAlpha)
         {
@@ -188,6 +223,21 @@ namespace RenderCore
         GDIShader* LightingShader = nullptr;
         bool       bLightingTried = false;
 
+        /* SHADOWS (RENDERPIPELINE.md). The frame's views, built by
+         * PrepareShadows for a scene (never for a preview); the two atlases,
+         * shared by every scene this context draws, sized by [Shadows]
+         * Resolution; ShadowDepth.fsh. While a proxy queues its casters,
+         * CasterView is the view they draw into; while the Shadows stage
+         * issues them, PlaceProjection and PlaceView replace the camera. */
+        ShadowFrame      Shadows;
+        GDIRenderTarget* ShadowAtlas[SA_Count] = {};
+        uint32_t         ShadowAtlasSize       = 0;
+        GDIShader*       ShadowDepthShader     = nullptr;
+        bool             bShadowDepthTried     = false;
+        int32_t          CasterView            = -1;
+        const EngineCore::Matrix4x4* PlaceProjection = nullptr;
+        const EngineCore::Matrix4x4* PlaceView       = nullptr;
+
         /* RenderMaterialPreview's targets, square, resized as asked; and the
          * target the last RenderSceneStages finished in. */
         SceneTargets     PreviewTargets{"RenderCore.MaterialPreview"};
@@ -267,8 +317,8 @@ namespace RenderCore
         {
             /* Here rather than in SetView(), so a RenderContext without a
              * RenderScene (tests) still draws. */
-            View3D->Camera->Projection = View.Projection;
-            View3D->Camera->ViewMat    = View.View;
+            View3D->Camera->Projection = PlaceProjection ? *PlaceProjection : View.Projection;
+            View3D->Camera->ViewMat    = PlaceView ? *PlaceView : View.View;
 
             GDITransform* Transform = InObject->Transform;
             Transform->Translate = InTransform.Position;
@@ -409,6 +459,16 @@ namespace RenderCore
                 LightingShader = LoadShader(LIGHTING_SHADER, ST_Pixel, "the Lighting stage", false);
             }
             return LightingShader;
+        }
+
+        GDIShader* GetShadowDepthShader()
+        {
+            if(!bShadowDepthTried)
+            {
+                bShadowDepthTried = true;
+                ShadowDepthShader = LoadShader(SHADOW_DEPTH_SHADER, ST_Pixel, "the Shadows stage", false);
+            }
+            return ShadowDepthShader;
         }
 
         /* Loaded on first use, by the graph path (or a bare name; see
@@ -596,14 +656,265 @@ namespace RenderCore
 
             /* Clip back to world, for the Lighting stage: the inverse of
              * Projection * View, column-major as GDI uploads a mat4. */
-            const EngineCore::Matrix4x4 InvViewProjection = EngineCore::Matrix4x4::Inverse(View.Projection * View.View);
-            for(int Row = 0; Row < 4; ++Row)
+            PutMatrix(Scene.InvViewProjection, EngineCore::Matrix4x4::Inverse(View.Projection * View.View));
+
+            /* View depth, for picking a cascade: from the view's own origin. */
+            const EngineCore::Vector3 Forward = ViewForward(View);
+            Scene.CameraForward[0] = float(Forward.GetX());
+            Scene.CameraForward[1] = float(Forward.GetY());
+            Scene.CameraForward[2] = float(Forward.GetZ());
+            Scene.CameraForward[3] = float(View.Origin.Dot(Forward));
+
+            /* Point and spot lights. */
+            const uint32_t LocalCount = std::min<uint32_t>(Lighting.LocalCount, RENDER_LOCAL_LIGHT_MAX);
+            Scene.LocalCounts[0] = float(LocalCount);
+            for(uint32_t Index = 0; Index < LocalCount; ++Index)
             {
-                for(int Col = 0; Col < 4; ++Col)
+                const RenderLocalLight& Light = Lighting.Locals[Index];
+                float (*Out)[4] = &Scene.Locals[Index * SCENE_LOCAL_VEC4S];
+                const double Length = Light.Direction.GetLength();
+                const EngineCore::Vector3 Direction = Length > 1e-9 ? Light.Direction * (1.0 / Length) : EngineCore::Vector3(0.0, 0.0, 1.0);
+                const double Degrees = 3.14159265358979 / 180.0;
+
+                Out[0][0] = float(Light.Position.GetX()); Out[0][1] = float(Light.Position.GetY());
+                Out[0][2] = float(Light.Position.GetZ()); Out[0][3] = Light.Range;
+                PutColor(Out[1], Light.Color, Light.Intensity);
+                Out[2][0] = float(Direction.GetX()); Out[2][1] = float(Direction.GetY());
+                Out[2][2] = float(Direction.GetZ()); Out[2][3] = Light.Type == RLL_Spot ? 1.0f : 0.0f;
+                Out[3][0] = float(std::cos(double(Light.OuterConeAngle) * Degrees));
+                Out[3][1] = float(std::cos(double(std::min(Light.InnerConeAngle, Light.OuterConeAngle - 0.01f)) * Degrees));
+                Out[3][2] = -1.0f;                                  // PrepareShadows sets a shadowed one's
+                Out[3][3] = float(Light.ShadowTechnique);
+                PutColor(Out[4], Light.ShadowTint, 1.0f);
+                Out[5][0] = Light.ShadowBias; Out[5][1] = Light.ShadowNormalBias; Out[5][2] = 0.0f; Out[5][3] = 0.0f;
+            }
+
+            /* No shadow until PrepareShadows draws some. */
+            Scene.ShadowParams[0] = 0.0f;
+            Scene.LightShadow[0]  = -1.0f;
+            Scene.LightShadow[1]  = 0.0f;
+        }
+
+        // === Shadows ============================================================
+
+        /* Both atlases at InSize, created or resized; false if this backend
+         * cannot draw into or sample one. */
+        bool EnsureShadowAtlases(const uint32_t InSize)
+        {
+            for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+            {
+                if(!ShadowAtlas[Atlas])
                 {
-                    Scene.InvViewProjection[Col * 4 + Row] = float(InvViewProjection.Data[Row][Col]);
+                    ShadowAtlas[Atlas] = GDICreateRenderTarget(Atlas == SA_Directional ? "RenderCore.ShadowDirectional" : "RenderCore.ShadowLocal",
+                                                               InSize, InSize);
+                }
+                else if(ShadowAtlasSize != InSize)
+                {
+                    ShadowAtlas[Atlas]->Resize(InSize, InSize);
+                }
+                if(!ShadowAtlas[Atlas] || !ShadowAtlas[Atlas]->IsValid() || !ShadowAtlas[Atlas]->ToDepthTexture2D())
+                {
+                    return false;
                 }
             }
+            ShadowAtlasSize = InSize;
+            return true;
+        }
+
+        void ReleaseShadowAtlases()
+        {
+            for(GDIRenderTarget*& Atlas : ShadowAtlas)
+            {
+                if(Atlas)
+                {
+                    GDIReleaseRenderTarget(Atlas);
+                    delete Atlas;
+                    Atlas = nullptr;
+                }
+            }
+            ShadowAtlasSize = 0;
+        }
+
+        /* The frame's shadow views from View and Lighting, into the scene block. */
+        void PrepareShadows()
+        {
+            BuildShadowFrame(Lighting, View, Shadows);
+            if(Shadows.ViewCount == 0)
+            {
+                return;
+            }
+            if(Backend == ERenderBackend::Null || !EnsureShadowAtlases(Shadows.AtlasSize))
+            {
+                if(Backend != ERenderBackend::Null)
+                {
+                    WarnOnce("|shadow-atlas", "Shadows: this backend cannot draw or sample a shadow map; lights draw unshadowed");
+                }
+                Shadows.ViewCount = 0;
+                return;
+            }
+
+            const float Size = float(Shadows.AtlasSize);
+            Scene.ShadowParams[0] = 1.0f;
+            Scene.ShadowParams[1] = float(std::clamp(Lighting.Shadows.Filter, 0, 2));
+            Scene.ShadowParams[2] = 1.0f / Size;
+            Scene.ShadowParams[3] = Size;
+
+            uint32_t DirectionalViews = 0;
+            if(Shadows.DirectionalFirstView >= 0)
+            {
+                DirectionalViews = Shadows.CascadeCount;
+                Scene.LightShadow[0] = float(Lighting.LightShadowTechnique);
+                Scene.LightShadow[1] = float(Shadows.CascadeCount);
+                Scene.LightShadow[2] = Lighting.LightShadowBias;
+                Scene.LightShadow[3] = Lighting.LightShadowNormalBias;
+                PutColor(Scene.LightShadowTint, Lighting.LightShadowTint, 1.0f);
+                for(uint32_t Index = 0; Index < RENDER_CASCADE_MAX; ++Index)
+                {
+                    Scene.CascadeSplits[Index] = Index < Shadows.CascadeCount ? Shadows.CascadeSplits[Index] : 0.0f;
+                    if(Index < Shadows.CascadeCount)
+                    {
+                        const ShadowView& Cascade = Shadows.Views[uint32_t(Shadows.DirectionalFirstView) + Index];
+                        PutMatrix(Scene.CascadeMatrices[Index], Cascade.WorldToAtlas);
+                        /* An orthographic view: 2 / Projection[0][0] wide, over TileSize texels. */
+                        Scene.CascadeTexels[Index] = float(2.0 / std::abs(double(Cascade.Projection.Data[0][0])) / double(std::max(Cascade.TileSize, 1u)));
+                    }
+                }
+            }
+
+            /* Local views follow the sun's, in Locals order. */
+            for(uint32_t View = DirectionalViews; View < Shadows.ViewCount; ++View)
+            {
+                PutMatrix(Scene.LocalShadowMatrices[View - DirectionalViews], Shadows.Views[View].WorldToAtlas);
+            }
+            for(uint32_t Index = 0; Index < std::min<uint32_t>(Lighting.LocalCount, RENDER_LOCAL_LIGHT_MAX); ++Index)
+            {
+                const int32_t First = Shadows.LocalFirstView[Index];
+                Scene.Locals[Index * SCENE_LOCAL_VEC4S + 3][2] = First >= 0 ? float(uint32_t(First) - DirectionalViews) : -1.0f;
+            }
+        }
+
+        /* A loaded material's own, else the section's, else DefaultLit: the
+         * one a mesh section draws with (null: the plain fallback). */
+        Material* SectionMaterial(const char* InSlot, const std::string& InSectionMaterial)
+        {
+            const auto Usable = [](Material& InFound) -> Material*
+            {
+                return InFound.Pixel && InFound.Description.Domain != EMaterialDomain::PostProcess ? &InFound : nullptr;
+            };
+            Material* Chosen = nullptr;
+            if(InSlot)
+            {
+                Chosen = Usable(FindMaterial(InSlot));
+            }
+            if(!Chosen && !InSectionMaterial.empty())
+            {
+                Chosen = Usable(FindMaterial(InSectionMaterial, /*bQuietIfMissing*/ true));
+            }
+            if(!Chosen)
+            {
+                Chosen = Usable(FindMaterial(DEFAULT_LIT_MATERIAL, /*bQuietIfMissing*/ true));
+            }
+            return Chosen;
+        }
+
+        /* One caster section into the bound atlas tile, with its material's
+         * vertex shader (World Position Offset) and ShadowDepth.fsh. */
+        void IssueShadowCaster(const DrawCommand& InItem)
+        {
+            EnsureInitialised();
+            GDIShader* Pixel  = GetShadowDepthShader();
+            GDIShader* Vertex = InItem.Mat ? VertexFor(*InItem.Mat, EMaterialVertexInput::Mesh) : GetDefaultVertex(EMaterialVertexInput::Mesh);
+            if(!Pixel || !Vertex)
+            {
+                return;   // warned by LoadShader
+            }
+
+            Place(MeshObject, InItem.Transform, 1.0f, 1.0f);
+            MeshObject->Mesh = InItem.Mesh;
+            Bind(Vertex, Pixel);
+
+            static const uint8_t NoMaterial[MATERIAL_ENGINE_BLOCK_BYTES] = {};
+            if(InItem.Mat && !InItem.Mat->Block.empty())
+            {
+                GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, InItem.Mat->Block.data(), uint(InItem.Mat->Block.size()));
+            }
+            else
+            {
+                GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, NoMaterial, uint(sizeof(NoMaterial)));
+            }
+            GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+
+            IDepthStateDesc Depth;
+            Depth.bDepthTest = true;
+            Depth.bDepthMask = true;
+            Depth.DepthMode  = CTM_LEQUAL;
+            GDISetDepthState(Depth);
+            GDISetBlendState(IBlendStateDesc());
+
+            InItem.Mesh->SetDrawRange(InItem.First, InItem.Count);
+            GDIDrawObject(MeshObject);
+            InItem.Mesh->SetDrawRange(0, 0);
+            MeshObject->Mesh = nullptr;
+            DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        /* The Shadows stage: clears each atlas in use, then each caster into
+         * its view's tile, seen from the light. */
+        void IssueShadows()
+        {
+            const DrawPolicy& Policy = PolicyFor(ERenderStage::Shadows);
+            StageDrawCounts[size_t(ERenderStage::Shadows)] = uint32_t(Policy.Num());
+            if(Shadows.ViewCount == 0)
+            {
+                return;
+            }
+
+            GDIBeginDrawEvent(GetRenderStageName(ERenderStage::Shadows));
+            const uint Size = uint(Shadows.AtlasSize);
+            for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+            {
+                if(!Shadows.UsesAtlas(EShadowAtlas(Atlas)))
+                {
+                    continue;
+                }
+                GDIRenderTarget* Target = ShadowAtlas[Atlas];
+                GDISetRenderTargets(&Target, 1, Target);
+                GDISetViewport(0, 0, Size, Size);
+                GDISetColorMask(EColM_RGBA);
+                GDIClear(CM_Color | CM_Depth, EngineCore::Color(0, 0, 0, 0), 1.0f);
+            }
+
+            /* Queued view by view, the sun's first: each atlas binds once. */
+            int32_t BoundAtlas = -1;
+            int32_t BoundView  = -1;
+            for(const uint32_t Index : Policy.GetIssueOrder())
+            {
+                const DrawCommand& Item = Policy[Index];
+                if(Item.ShadowView < 0 || uint32_t(Item.ShadowView) >= Shadows.ViewCount || !Item.Mesh)
+                {
+                    continue;
+                }
+                const ShadowView& View = Shadows.Views[Item.ShadowView];
+                if(int32_t(View.Atlas) != BoundAtlas)
+                {
+                    BoundAtlas = int32_t(View.Atlas);
+                    GDIRenderTarget* Target = ShadowAtlas[View.Atlas];
+                    GDISetRenderTargets(&Target, 1, Target);
+                    GDISetColorMask(EColM_None);
+                    BoundView = -1;
+                }
+                if(Item.ShadowView != BoundView)
+                {
+                    BoundView = Item.ShadowView;
+                    GDISetViewport(View.TileX, View.TileY, View.TileSize, View.TileSize);
+                    PlaceProjection = &View.Projection;
+                    PlaceView       = &View.View;
+                }
+                IssueShadowCaster(Item);
+            }
+            PlaceProjection = nullptr;
+            PlaceView       = nullptr;
+            GDIEndDrawEvent();
         }
 
         // === Issuing ============================================================
@@ -760,6 +1071,13 @@ namespace RenderCore
             }
             GDISetMaterialTexture(RENDER_GBUFFER_TARGETS, Depth->Resource);
 
+            /* The shadow atlases this frame drew, after the scene depth. */
+            for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
+            {
+                GDITexture2D* Map = Shadows.ViewCount > 0 && ShadowAtlas[Atlas] ? ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
+                GDISetMaterialTexture(RENDER_GBUFFER_TARGETS + 1 + Atlas, Map ? Map->Resource : nullptr);
+            }
+
             EnsureInitialised();
             Bind(Vertex, Pixel);
             static const uint8_t NoMaterial[MATERIAL_ENGINE_BLOCK_BYTES] = {};
@@ -771,7 +1089,7 @@ namespace RenderCore
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
 
             /* Unbound again: the depth is about to be an attachment. */
-            for(uint32_t Index = 0; Index <= RENDER_GBUFFER_TARGETS; ++Index)
+            for(uint32_t Index = 0; Index <= RENDER_GBUFFER_TARGETS + SA_Count; ++Index)
             {
                 GDISetMaterialTexture(Index, nullptr);
             }
@@ -799,6 +1117,9 @@ namespace RenderCore
             if(LightingShader) { RetiredShaders.push_back(LightingShader); }
             LightingShader = nullptr;
             bLightingTried = false;
+            if(ShadowDepthShader) { RetiredShaders.push_back(ShadowDepthShader); }
+            ShadowDepthShader = nullptr;
+            bShadowDepthTried = false;
             Warned.clear();
             BoundVertex = nullptr;
             BoundPixel  = nullptr;
@@ -901,12 +1222,6 @@ namespace RenderCore
         const std::vector<MeshSection>& Sections = Source->Sections;
         const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
 
-        /* Usable, and drawable on a mesh. */
-        const auto Usable = [](Material& InFound) -> Material*
-        {
-            return InFound.Pixel && InFound.Description.Domain != EMaterialDomain::PostProcess ? &InFound : nullptr;
-        };
-
         for(size_t Index = 0; Index < SectionCount; ++Index)
         {
             const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
@@ -915,19 +1230,7 @@ namespace RenderCore
             const size_t SlotIndex = bInEvery ? 0 : Index;
             const char*  Slot      = InSlots && SlotIndex < InSlotCount && InSlots[SlotIndex] && InSlots[SlotIndex][0] != '\0'
                                    ? InSlots[SlotIndex] : nullptr;
-            Material* Chosen = nullptr;
-            if(Slot)
-            {
-                Chosen = Usable(P->FindMaterial(Slot));
-            }
-            if(!Chosen && !Section.Material.empty())
-            {
-                Chosen = Usable(P->FindMaterial(Section.Material, /*bQuietIfMissing*/ true));
-            }
-            if(!Chosen)
-            {
-                Chosen = Usable(P->FindMaterial(DEFAULT_LIT_MATERIAL, /*bQuietIfMissing*/ true));
-            }
+            Material* Chosen = P->SectionMaterial(Slot, Section.Material);
 
             DrawCommand Item;
             Item.Kind      = DrawCommand::EKind::MeshSection;
@@ -1088,7 +1391,70 @@ namespace RenderCore
     void RenderContext::BeginSceneDraws()
     {
         for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
-        P->bDeferring = true;
+        P->bDeferring        = true;
+        P->Shadows.ViewCount = 0;   // a preview has none; a scene's PrepareShadows adds them
+        P->CasterView        = -1;
+    }
+
+    uint32_t RenderContext::PrepareShadows()
+    {
+        P->PrepareShadows();
+        return P->Shadows.ViewCount;
+    }
+
+    const GameCore::AABB& RenderContext::GetShadowViewBounds(const uint32_t InView) const
+    {
+        static const GameCore::AABB None;
+        return InView < P->Shadows.ViewCount ? P->Shadows.Views[InView].WorldBounds : None;
+    }
+
+    void RenderContext::SetShadowCasterView(const int32_t InView)
+    {
+        P->CasterView = InView >= 0 && uint32_t(InView) < P->Shadows.ViewCount ? InView : -1;
+    }
+
+    bool RenderContext::DrawMeshShadow(const RenderTransform& InTransform, const char* InMeshPath,
+                                       const char* const* InSlots, const uint32_t InSlotCount)
+    {
+        if(P->CasterView < 0 || !P->bDeferring || !InMeshPath || InMeshPath[0] == '\0')
+        {
+            return false;
+        }
+
+        std::shared_ptr<const MeshData> Source;
+        GDIMesh* Mesh = P->FindMesh(InMeshPath, Source);
+        if(!Mesh || !Source)
+        {
+            return false;
+        }
+
+        static const MeshSection Everything;
+        const std::vector<MeshSection>& Sections = Source->Sections;
+        const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
+        for(size_t Index = 0; Index < SectionCount; ++Index)
+        {
+            const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
+            const char* Slot = InSlots && Index < InSlotCount && InSlots[Index] && InSlots[Index][0] != '\0' ? InSlots[Index] : nullptr;
+            Material* Chosen = P->SectionMaterial(Slot, Section.Material);
+
+            /* Only what writes depth casts: Opaque and Masked (Masked whole,
+             * for now -- its clip is not run here). The plain fallback is opaque. */
+            if(Chosen && Chosen->Description.Domain != EMaterialDomain::Opaque && Chosen->Description.Domain != EMaterialDomain::Masked)
+            {
+                continue;
+            }
+
+            DrawCommand Item;
+            Item.Kind       = DrawCommand::EKind::MeshSection;
+            Item.Transform  = InTransform;
+            Item.Mat        = Chosen;
+            Item.Mesh       = Mesh;
+            Item.First      = Section.FirstIndex;
+            Item.Count      = Sections.empty() ? 0u : Section.IndexCount;
+            Item.ShadowView = P->CasterView;
+            P->PolicyFor(ERenderStage::Shadows).Add(Item);
+        }
+        return true;
     }
 
     void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor)
@@ -1149,8 +1515,16 @@ namespace RenderCore
                                     "Opaque and Masked Lit materials draw nothing");
         }
 
-        /* Lighting: Shadows (none yet), then the resolve into the scene colour. */
-        P->IssueStage(ERenderStage::Shadows);
+        /* Lighting: Shadows (only when something will sample them), then
+         * the resolve into the scene colour. */
+        if(bDeferred)
+        {
+            P->IssueShadows();
+        }
+        else
+        {
+            P->StageDrawCounts[size_t(ERenderStage::Shadows)] = uint32_t(P->PolicyFor(ERenderStage::Shadows).Num());
+        }
         if(bDeferred)
         {
             BindTargets(&SceneColor, 1, nullptr);
@@ -1469,6 +1843,8 @@ namespace RenderCore
     void RenderContext::ReleaseGPUResources()
     {
         P->PreviewTargets.Release();
+        P->ReleaseShadowAtlases();
+        P->Shadows.ViewCount = 0;
         P->FinalTarget = nullptr;
 
         for(auto& Each : P->Meshes) { delete Each.second.Gpu; }

@@ -183,6 +183,12 @@ private:
     D3D12DescriptorAllocator* DescAlloc        = nullptr;
     D3D12CurrentStateData*    CurrentStateData = nullptr;
 
+    /* The scene block's last upload, reused while its serial and the ring's
+     * epoch are unchanged: it is set once per scene, not per draw. */
+    uint64_t                  SceneBlockUploadAddress = 0;   // D3D12_GPU_VIRTUAL_ADDRESS
+    uint64_t                  SceneBlockUploadSerial = ~0ull;
+    uint64_t                  SceneBlockUploadEpoch  = ~0ull;
+
     GDIMesh*                  ScreenMesh       = nullptr;
     D3D12TextureResource*     NullTexture      = nullptr;
 

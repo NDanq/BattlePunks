@@ -76,6 +76,7 @@ void VKDescriptorAllocator::Reset()
 
     // Rewind UBO ring so the same memory is reused each frame.
     RingOffset = 0;
+    ++Epoch;
 }
 
 // ---------------------------------------------------------------------------

@@ -290,6 +290,13 @@ private:
     VKDescriptorAllocator*  DescAlloc           = nullptr;
     VKCurrentStateData*     CurrentStateData    = nullptr;
 
+    /** The scene block's last upload, reused while its serial and the ring's
+     *  epoch are unchanged: it is set once per scene, not per draw. */
+    VkBuffer                SceneBlockUploadBuffer = VK_NULL_HANDLE;
+    VkDeviceSize            SceneBlockUploadOffset = 0;
+    uint64_t                SceneBlockUploadSerial = ~0ull;
+    uint64_t                SceneBlockUploadEpoch  = ~0ull;
+
     /** Lazily-created full-screen NDC quad for DrawScreenQuadPrimitive. */
     GDIMesh*                ScreenMesh          = nullptr;
     /** 1×1 transparent texture used as a fallback for unbound descriptor slots. */

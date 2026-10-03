@@ -23,6 +23,8 @@
 #include "Public/Editor/EditorDocument.h"
 #include "Public/GameCore/Prefab.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
+#include "Private/Editor/EditorLights.h"
+#include "Private/Editor/EditorPrimitives.h"
 
 using GameCore::EntityID;
 
@@ -316,6 +318,10 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
     QAction* Create      = Menu.addAction(QStringLiteral("Create Empty Entity"));
     QAction* CreateChild = Menu.addAction(QStringLiteral("Create Child Entity"));
     CreateChild->setEnabled(Target.IsSet());
+    /* At the origin, as Create Empty Entity. */
+    const auto AtOrigin = []() { return EngineCore::Vector3(0.0, 0.0, 0.0); };
+    EditorPrimitives::AddPrimitiveActions(Menu.addMenu(QStringLiteral("Add Primitive")), Document, AtOrigin);
+    EditorLights::AddLightActions(Menu.addMenu(QStringLiteral("Add Light")), Document, AtOrigin);
     Menu.addSeparator();
     QAction* Detach = Menu.addAction(QStringLiteral("Detach from Parent"));
     Detach->setEnabled(bHasParent);

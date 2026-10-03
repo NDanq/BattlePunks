@@ -1,6 +1,7 @@
 #include "Private/RenderCore/WorldBridge.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
 #include <cstring>
 #include <vector>
@@ -12,6 +13,7 @@
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
 #include "Public/RenderCore/RenderScene.h"
+#include "Private/RenderCore/ShadowSetup.h"
 
 // GameCore is this file's whole subject -- it reads World's pools and
 // components on every line.
@@ -220,6 +222,43 @@ namespace RenderCore
         });
     }
 
+    namespace
+    {
+        /* The world pose of a component's entity: its Transform's, through
+         * its parents; the identity with neither. */
+        GameCore::TransformPose PoseOf(const GameCore::ComponentOwner& InOwner)
+        {
+            if(InOwner.HasSibling<TransformComponent>() || InOwner.GetEntity().HasParent())
+            {
+                return InOwner.GetEntity().GetWorldPose();
+            }
+            return GameCore::TransformPose();
+        }
+
+        /* The world box a perspective view sees, out to its far plane. */
+        GameCore::AABB PerspectiveBounds(const RenderView& InView)
+        {
+            const EngineCore::Matrix4x4& P = InView.Projection;
+            const EngineCore::Matrix4x4& V = InView.View;
+            const EngineCore::Vector3 Right(V.Data[0][0], V.Data[0][1], V.Data[0][2]);
+            const EngineCore::Vector3 Up(V.Data[1][0], V.Data[1][1], V.Data[1][2]);
+            const EngineCore::Vector3 Forward(V.Data[2][0], V.Data[2][1], V.Data[2][2]);
+            const double HalfX = 1.0 / std::abs(double(P.Data[0][0]));
+            const double HalfY = 1.0 / std::abs(double(P.Data[1][1]));
+
+            GameCore::AABB Bounds(InView.Origin, InView.Origin);
+            for(int Corner = 0; Corner < 4; ++Corner)
+            {
+                const double SignX = (Corner & 1) ? 1.0 : -1.0;
+                const double SignY = (Corner & 2) ? 1.0 : -1.0;
+                const EngineCore::Vector3 Point = InView.Origin
+                    + (Forward + Right * (SignX * HalfX) + Up * (SignY * HalfY)) * double(InView.ZFar);
+                Bounds = GameCore::AABB::Union(Bounds, GameCore::AABB(Point, Point));
+            }
+            return Bounds;
+        }
+    }
+
     RenderView WorldBridge::BuildView(const FrameInfo& InFrame) const
     {
         /* The first active CameraComponent wins -- see DESIGN.md's "View".
@@ -242,9 +281,27 @@ namespace RenderCore
                         continue;
                     }
 
+                    const GameCore::TransformPose Pose = PoseOf(Camera.Owner);
                     if(Camera.Owner.HasSibling<TransformComponent>() || Camera.Owner.GetEntity().HasParent())
                     {
-                        Origin = Camera.Owner.GetEntity().GetWorldPose().Position;
+                        Origin = Pose.Position;
+                    }
+
+                    if(Camera.Projection == CP_Perspective)
+                    {
+                        /* Looks along its forward, as a light does; never straight
+                         * up or down, which MakePerspective cannot aim along. */
+                        EngineCore::Vector3 Forward = LightForward(Pose.Rotation);
+                        if(std::abs(Forward.GetY()) > 0.9999)
+                        {
+                            Forward = EngineCore::Vector3(0.0, Forward.GetY() > 0.0 ? 0.9999 : -0.9999, 0.01).GetNormalize();
+                        }
+                        const float ZNear = std::max(Camera.ZNear, 1.0f);
+                        const float ZFar  = std::max(Camera.ZFar, ZNear + 1.0f);
+                        const float FovY  = std::clamp(Camera.FovY, 1.0f, 170.0f);
+                        RenderView View = RenderView::MakePerspective(InFrame.ViewportPixels, Origin, Forward, FovY, ZNear, ZFar);
+                        View.Bounds = PerspectiveBounds(View);
+                        return View;
                     }
 
                     return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, Camera.ZNear, Camera.ZFar);
@@ -255,9 +312,10 @@ namespace RenderCore
         return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, -1.0f, 1000.0f);
     }
 
-    RenderLighting WorldBridge::BuildLighting() const
+    RenderLighting WorldBridge::BuildLighting(const EngineCore::Vector3& InEye) const
     {
         RenderLighting Lighting;
+        Lighting.Shadows = ReadShadowSettings();
         if(!BoundWorld)
         {
             return Lighting;
@@ -268,10 +326,19 @@ namespace RenderCore
             const auto* Lights = static_cast<const DirectionalLightComponent*>(Pool->GetDenseData());
             for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
             {
-                if(!Lights[Index].bActive) { continue; }
-                Lighting.LightDirection = Lights[Index].Direction;
-                Lighting.LightColor     = Lights[Index].Color;
-                Lighting.LightIntensity = Lights[Index].Intensity;
+                const DirectionalLightComponent& Light = Lights[Index];
+                if(!Light.bActive) { continue; }
+                Lighting.LightDirection          = LightForward(PoseOf(Light.Owner).Rotation);
+                Lighting.LightColor              = Light.Color;
+                Lighting.LightIntensity          = Light.Intensity;
+                Lighting.bLightCastShadows       = Light.bCastShadows;
+                Lighting.LightShadowTechnique    = Light.ShadowTechnique;
+                Lighting.LightShadowTint         = Light.ShadowTint;
+                Lighting.LightShadowBias         = Light.ShadowBias;
+                Lighting.LightShadowNormalBias   = Light.ShadowNormalBias;
+                Lighting.LightShadowDistance     = Light.ShadowDistance;
+                Lighting.LightCascadeCount       = Light.CascadeCount;
+                Lighting.LightCascadeSplitLambda = Light.CascadeSplitLambda;
                 break;
             }
         }
@@ -287,6 +354,77 @@ namespace RenderCore
                 Lighting.SkyIntensity = Skies[Index].Intensity;
                 break;
             }
+        }
+
+        /* Every active point and spot light; then shadow casters first, each
+         * group nearest the eye first, and the first RENDER_LOCAL_LIGHT_MAX. */
+        std::vector<RenderLocalLight> Found;
+        if(ComponentPool* Pool = BoundWorld->FindPool(PointLightComponent::StaticType().ID))
+        {
+            const auto* Lights = static_cast<const PointLightComponent*>(Pool->GetDenseData());
+            for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+            {
+                const PointLightComponent& Light = Lights[Index];
+                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Radius <= 0.0f) { continue; }
+                RenderLocalLight Local;
+                Local.Type             = RLL_Point;
+                Local.Position         = PoseOf(Light.Owner).Position;
+                Local.Color            = Light.Color;
+                Local.Intensity        = Light.Intensity;
+                Local.Range            = Light.Radius;
+                Local.bCastShadows     = Light.bCastShadows;
+                Local.ShadowTechnique  = Light.ShadowTechnique == LST_Modulated ? LST_Modulated : LST_Standard;
+                Local.ShadowTint       = Light.ShadowTint;
+                Local.ShadowBias       = Light.ShadowBias;
+                Local.ShadowNormalBias = Light.ShadowNormalBias;
+                Found.push_back(Local);
+            }
+        }
+        if(ComponentPool* Pool = BoundWorld->FindPool(SpotLightComponent::StaticType().ID))
+        {
+            const auto* Lights = static_cast<const SpotLightComponent*>(Pool->GetDenseData());
+            for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+            {
+                const SpotLightComponent& Light = Lights[Index];
+                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Range <= 0.0f) { continue; }
+                const GameCore::TransformPose Pose = PoseOf(Light.Owner);
+                RenderLocalLight Local;
+                Local.Type             = RLL_Spot;
+                Local.Position         = Pose.Position;
+                Local.Direction        = LightForward(Pose.Rotation);
+                Local.Color            = Light.Color;
+                Local.Intensity        = Light.Intensity;
+                Local.Range            = Light.Range;
+                Local.OuterConeAngle   = std::clamp(Light.OuterConeAngle, 0.5f, 89.0f);
+                Local.InnerConeAngle   = std::clamp(Light.InnerConeAngle, 0.0f, Local.OuterConeAngle);
+                Local.bCastShadows     = Light.bCastShadows;
+                Local.ShadowTechnique  = Light.ShadowTechnique == LST_Modulated ? LST_Modulated : LST_Standard;
+                Local.ShadowTint       = Light.ShadowTint;
+                Local.ShadowBias       = Light.ShadowBias;
+                Local.ShadowNormalBias = Light.ShadowNormalBias;
+                Found.push_back(Local);
+            }
+        }
+
+        const bool bShadows = Lighting.Shadows.bEnabled != 0;
+        std::stable_sort(Found.begin(), Found.end(), [&InEye, bShadows](const RenderLocalLight& InA, const RenderLocalLight& InB)
+        {
+            const bool bCastA = bShadows && InA.bCastShadows;
+            const bool bCastB = bShadows && InB.bCastShadows;
+            if(bCastA != bCastB) { return bCastA; }
+            return (InA.Position - InEye).GetLength() < (InB.Position - InEye).GetLength();
+        });
+
+        if(Found.size() > RENDER_LOCAL_LIGHT_MAX && !bWarnedLocalLights)
+        {
+            bWarnedLocalLights = true;
+            RENDERCORE_LOG_WARN("WorldBridge: " + std::to_string(Found.size()) + " point and spot lights are active; "
+                                "only " + std::to_string(RENDER_LOCAL_LIGHT_MAX) + " light a frame (shadow casters, then the nearest)")
+        }
+        Lighting.LocalCount = uint32_t(std::min<size_t>(Found.size(), RENDER_LOCAL_LIGHT_MAX));
+        for(uint32_t Index = 0; Index < Lighting.LocalCount; ++Index)
+        {
+            Lighting.Locals[Index] = Found[Index];
         }
         return Lighting;
     }
@@ -436,7 +574,7 @@ namespace RenderCore
 
         RenderView View = InViewOverride ? *InViewOverride : BuildView(InFrame);
         View.ViewportPixels = InFrame.ViewportPixels;   // the render targets are sized from this
-        const RenderLighting    Lighting    = BuildLighting();
+        const RenderLighting    Lighting    = BuildLighting(View.Origin);
         const RenderPostProcess PostProcess = BuildPostProcess();
         RenderScene* SceneCapture = Scene;
 

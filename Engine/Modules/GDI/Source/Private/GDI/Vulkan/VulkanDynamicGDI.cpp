@@ -1114,10 +1114,32 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             const std::vector<uint8_t>& Bytes = MaterialBlocks[b];
             // Never an empty range: a shader that declares the block still reads it.
             const uint32_t Size = Bytes.empty() ? 16u : uint32_t(Bytes.size());
-            const VKUBOAllocation Block = DescAlloc->AllocateUBO(Size);
+            const bool bReuse = b == 1 && SceneBlockUploadSerial == MaterialBlockSerials[1]
+                                && SceneBlockUploadEpoch == DescAlloc->GetEpoch()
+                                && SceneBlockUploadBuffer != VK_NULL_HANDLE;
+            VKUBOAllocation Block;
+            if(bReuse)
+            {
+                Block.Buffer = SceneBlockUploadBuffer;
+                Block.Offset = SceneBlockUploadOffset;
+            }
+            else
+            {
+                Block = DescAlloc->AllocateUBO(Size);
+            }
             if(Block.Buffer == VK_NULL_HANDLE) return false;
-            memset(Block.MappedPtr, 0, Size);
-            if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
+            if(!bReuse)
+            {
+                memset(Block.MappedPtr, 0, Size);
+                if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
+                if(b == 1)
+                {
+                    SceneBlockUploadBuffer = Block.Buffer;
+                    SceneBlockUploadOffset = Block.Offset;
+                    SceneBlockUploadSerial = MaterialBlockSerials[1];
+                    SceneBlockUploadEpoch  = DescAlloc->GetEpoch();
+                }
+            }
 
             BlockBufs[b].buffer = Block.Buffer;
             BlockBufs[b].offset = Block.Offset;

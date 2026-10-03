@@ -20,11 +20,17 @@ namespace RenderCore
     /* Every field is real data -- a CameraComponent holds no per-run state at
      * all (its position comes from the sibling Transform, which has its own
      * serializer). */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(CameraComponent, 1)
+    /* Version 2: Projection and FovY (a version 1 save stays orthographic). */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(CameraComponent, 2)
     {
         Ar.Field("ZNear", C.ZNear);
         Ar.Field("ZFar",  C.ZFar);
         Ar.Flag("Active", C.bActive);
+        if(Ar.GetVersion() >= 2)
+        {
+            Ar.Field("Projection", C.Projection);
+            Ar.Field("FovY",       C.FovY);
+        }
     }
 
     GAMECORE_DEFINE_COMPONENT_SCRIPT(CameraComponent)
@@ -32,6 +38,8 @@ namespace RenderCore
         Bind.Field("ZNear", &CameraComponent::ZNear);
         Bind.Field("ZFar",  &CameraComponent::ZFar);
         Bind.Flag("Active", &CameraComponent::bActive);
+        Bind.Field("Projection", &CameraComponent::Projection);
+        Bind.Field("FovY",       &CameraComponent::FovY);
     }
 
 #if WITH_EDITOR
@@ -40,6 +48,8 @@ namespace RenderCore
         Props.Field("ZNear", &CameraComponent::ZNear);
         Props.Field("ZFar",  &CameraComponent::ZFar);
         Props.Flag("Active", &CameraComponent::bActive);
+        Props.Choice("Projection", &CameraComponent::Projection, "Orthographic|Perspective");
+        Props.Field("FovY",        &CameraComponent::FovY);
     }
 #endif // WITH_EDITOR
 }

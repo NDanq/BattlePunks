@@ -32,6 +32,22 @@ the module named by `[Game] Module` in `Config/DefaultEngine.ini` and runs
 levels on startup (`Engine/Source/Public/NimbleEngine/GameModule.h`). Nothing
 links the game, which is what lets the editor load it for Play-in-Editor.
 
+### LightLab
+
+`Games/LightLab` is a second game laid out like Sandbox: a fly-around scene
+showing the lights and shadows (RenderCore's `RENDERPIPELINE.md`, "Lights" and
+"Shadows"). Open it in CLion or configure it standalone the same way; it has
+its own `CMakePresets.json` and stages into `Games/LightLab/Binaries`. The
+level is `Games/LightLab/Levels/LightLab.nmworld`: the editor opens it
+(`[Editor] StartupWorld`), and the game loads it and finds its Player, Sun,
+SweepSpot and OrbitLight by name, so edits saved in the editor show in the
+next Play. Without it (a Client build has no cooked copy unless one is put in
+`Levels/Cooked/`) the game builds the same scene in code; `[LightLab]
+ExportLevel=<path>` in an editor build writes that code-built scene out. Mouse
+looks, WASD moves, E/Q (or Space/Ctrl) rise and sink, Shift is faster, T cycles
+the sun's shadow technique and F toggles shadows. Escape frees the mouse; a
+left click takes it back.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:

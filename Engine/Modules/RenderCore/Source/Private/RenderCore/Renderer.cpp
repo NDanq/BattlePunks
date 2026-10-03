@@ -445,6 +445,22 @@ namespace RenderCore
         return Request.Request;
     }
 
+    uint64_t Renderer::RequestSceneCapture()
+    {
+        RenderScene* Scene = P->DefaultScene();
+        if(!Scene || !P->Thread.IsRunning())
+        {
+            return 0;
+        }
+        const uint64_t Request = ++P->LastPreviewRequest;
+        MaterialPreviewMailbox* Mailbox = &P->Previews;
+        ENQUEUE_RENDER_COMMAND(AddSceneCapture)([Scene, Request, Mailbox](RenderContext&)
+        {
+            Scene->AddCapture(Request, Mailbox);
+        });
+        return Request;
+    }
+
     bool Renderer::TakeMaterialPreview(const uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError)
     {
         return P->Previews.Take(InRequest, OutImage, OutError);

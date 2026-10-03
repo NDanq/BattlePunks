@@ -266,10 +266,16 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
 void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData, const uint InSize)
 {
     if(InBinding < GDI_MATERIAL_BLOCK_BINDING || InBinding > GDI_SCENE_BLOCK_BINDING) return;
-    std::vector<uint8_t>& Block = MaterialBlocks[InBinding - GDI_MATERIAL_BLOCK_BINDING];
-    const uint Size = InSize < GDI_MATERIAL_BLOCK_MAX_BYTES ? InSize : GDI_MATERIAL_BLOCK_MAX_BYTES;
+    const uint Index = InBinding - GDI_MATERIAL_BLOCK_BINDING;
+    std::vector<uint8_t>& Block = MaterialBlocks[Index];
+    const uint MaxBytes = InBinding == GDI_SCENE_BLOCK_BINDING ? GDI_SCENE_BLOCK_MAX_BYTES : GDI_MATERIAL_BLOCK_MAX_BYTES;
+    const uint Size = InData ? (InSize < MaxBytes ? InSize : MaxBytes) : 0;
     const auto* Bytes = static_cast<const uint8_t*>(InData);
-    Block.assign(Bytes, Bytes + (InData ? Size : 0));
+
+    /* Unchanged bytes keep the serial, so a backend reuses its upload. */
+    if(Block.size() == Size && (Size == 0 || memcmp(Block.data(), Bytes, Size) == 0)) return;
+    Block.assign(Bytes, Bytes + Size);
+    ++MaterialBlockSerials[Index];
 }
 
 void GDIDynamicDriver::SetRenderTargets(GDIRenderTarget* const* InColors, const uint InCount, GDIRenderTarget* InDepthFrom)

@@ -59,15 +59,19 @@ namespace RenderCore
         RenderView BuildView(const FrameInfo& InFrame) const;
 
         /* The first active DirectionalLightComponent and SkyLightComponent,
-         * over RenderLighting's defaults; every enabled PostProcessComponent,
-         * Priority low first. Game thread, like BuildView. */
-        RenderLighting    BuildLighting() const;
+         * over RenderLighting's defaults; the point and spot lights nearest
+         * InEye (casters first); the [Shadows] settings. Every enabled
+         * PostProcessComponent, Priority low first. Game thread, like BuildView. */
+        RenderLighting    BuildLighting(const EngineCore::Vector3& InEye) const;
         RenderPostProcess BuildPostProcess() const;
 
         RenderScene*    Scene = nullptr;
         GameCore::World* BoundWorld = nullptr;
 
         GameCore::DelegateHandle AddedHandle;
+
+        /* "Too many point and spot lights", once per bridge. */
+        mutable bool bWarnedLocalLights = false;
         GameCore::DelegateHandle RemovedHandle;
     };
 }

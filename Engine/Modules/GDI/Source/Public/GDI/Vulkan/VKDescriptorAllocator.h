@@ -69,6 +69,9 @@ public:
 
     inline bool IsValid() const { return !Pools.empty(); }
 
+    /** Bumped by Reset(): an allocation from an older epoch is stale. */
+    inline uint64_t GetEpoch() const { return Epoch; }
+
 private:
     /** Append one new VkDescriptorPool to the ring. Returns false on failure. */
     bool GrowPool();
@@ -87,6 +90,7 @@ private:
     VkDeviceMemory          RingMemory  = VK_NULL_HANDLE;
     void*                   RingMapped  = nullptr;
     VkDeviceSize            RingOffset  = 0;
+    uint64_t                Epoch       = 0;
 
     static constexpr uint32_t     kSetsPerPool  = 64;
     static constexpr VkDeviceSize kRingCapacity = 256 * 1024; // 256 KB

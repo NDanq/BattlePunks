@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QDir>
+#include <QFile>
 #include <QDirIterator>
 #include <QDockWidget>
 #include <QFileDialog>
@@ -38,6 +39,8 @@
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/NodeGraph/Schema.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Private/Editor/EditorLights.h"
+#include "Private/Editor/EditorPrimitives.h"
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -52,9 +55,43 @@
 /* Edit > Editor Settings > Build. */
 NIMBLE_CONFIG_BOOL(GEditorReloadAfterCompile, "Editor", "ReloadAfterCompile", true, nullptr);
 
+/* The world the editor opens when none is named on its command line: a
+ * project path ("Levels/LightLab.nmworld"). Empty, or missing: the Sandbox
+ * scene. Set in the project's DefaultEngine.ini. */
+NIMBLE_CONFIG_STRING(GEditorStartupWorld, "Editor", "StartupWorld", "", nullptr);
+
 namespace
 {
     const char* const WorldFileFilter = "Nimble World (*.nmworld);;All Files (*)";
+
+    /* A world saved inside the project, copied beside the executable too --
+     * its manifest and its folder of .nmentity files, stale ones removed --
+     * so the next Play loads what was saved without a build. */
+    void StageWorldPackage(const QString& InPath)
+    {
+        const QString Staged = EditorGraphs::GetStagedPath(InPath);
+        if(Staged.isEmpty())
+        {
+            return;
+        }
+        const QFileInfo Source(InPath);
+        const QFileInfo Target(Staged);
+        QDir().mkpath(Target.absolutePath());
+        QFile::remove(Staged);
+        QFile::copy(InPath, Staged);
+
+        const QDir SourceEntities(Source.dir().filePath(Source.completeBaseName()));
+        QDir TargetEntities(Target.dir().filePath(Target.completeBaseName()));
+        TargetEntities.removeRecursively();
+        if(SourceEntities.exists())
+        {
+            QDir().mkpath(TargetEntities.absolutePath());
+            for(const QString& Each : SourceEntities.entryList(QDir::Files))
+            {
+                QFile::copy(SourceEntities.filePath(Each), TargetEntities.filePath(Each));
+            }
+        }
+    }
 
     const char* BackendName(const RenderCore::ERenderBackend InBackend)
     {
@@ -307,6 +344,16 @@ void EditorMainWindow::BuildMenus()
         Level.SetSelection(Level.CreateEntity(QStringLiteral("Entity"), Spot));
     });
 
+    /* Primitives and lights, in front of the camera like a new entity
+     * (EditorPrimitives.h, EditorLights.h). */
+    const auto InFrontOfCamera = [this]()
+    {
+        const EditorCamera& Camera = Viewport->GetCamera();
+        return Camera.Position + Camera.GetForward() * 500.0;
+    };
+    EditorPrimitives::AddPrimitiveActions(World->addMenu(QStringLiteral("Add &Primitive")), Level, InFrontOfCamera);
+    EditorLights::AddLightActions(World->addMenu(QStringLiteral("Add &Light")), Level, InFrontOfCamera);
+
     QAction* DeleteEntity = World->addAction(QStringLiteral("&Delete"));
     DeleteEntity->setShortcut(QKeySequence::Delete);
     connect(DeleteEntity, &QAction::triggered, this, [this]() { Level.DestroyEntity(Level.GetSelection()); });
@@ -366,6 +413,7 @@ void EditorMainWindow::BuildMenus()
 
     View->addSeparator();
     View->addAction(ViewportArea->GetShowAllBoundsAction());
+    View->addAction(ViewportArea->GetShowLightGizmosAction());
     QAction* ResetCamera = View->addAction(QStringLiteral("&Reset Camera"));
     connect(ResetCamera, &QAction::triggered, this, [this]() { Viewport->GetCamera() = EditorCamera(); });
 
@@ -1171,9 +1219,22 @@ void EditorMainWindow::showEvent(QShowEvent* InEvent)
 
 void EditorMainWindow::StartRenderer()
 {
-    if(!InitialWorld.isEmpty() && Level.LoadWorld(InitialWorld))
+    /* The command line's world, else the project's StartupWorld, else Sandbox's scene. */
+    QString StartWorld = InitialWorld;
+    const QString Startup = QString::fromUtf8(GEditorStartupWorld.GetString());
+    if(StartWorld.isEmpty() && !Startup.isEmpty())
     {
-        CurrentPath = InitialWorld;
+        StartWorld = QDir::isAbsolutePath(Startup) ? Startup : QDir(EditorGraphs::GetProjectRoot()).filePath(Startup);
+        if(!QFileInfo::exists(StartWorld))
+        {
+            CORE_LOG_WARN("[Editor] [Editor] StartupWorld = '" + StartWorld.toStdString() + "' does not exist; opening the Sandbox scene")
+            StartWorld.clear();
+        }
+    }
+    if(!StartWorld.isEmpty() && Level.LoadWorld(StartWorld))
+    {
+        CurrentPath = StartWorld;
+        Viewport->ApplyGameCameraView();
     }
     else
     {
@@ -1348,6 +1409,7 @@ bool EditorMainWindow::SaveWorld()
         QMessageBox::warning(this, QStringLiteral("Save World"), QStringLiteral("Could not write\n%1").arg(CurrentPath));
         return false;
     }
+    StageWorldPackage(CurrentPath);
     statusBar()->showMessage(QStringLiteral("Saved %1").arg(CurrentPath), 3000);
     return true;
 }

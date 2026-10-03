@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="166b73b275b483e1d10e73812ef2e5e3" Name="Ball">
+  <Component Type="Render" Version="2">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="280" Y="-320" Z="120" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="140" Y="140" Z="140" />
+  </Component>
+</Entity>

@@ -30,6 +30,7 @@ public:
     QAction* GetFrameSelectionAction() const { return FrameSelectionAction; }
     QAction* GetFrameAllAction()       const { return FrameAllAction; }
     QAction* GetShowAllBoundsAction()  const { return ShowAllBoundsAction; }
+    QAction* GetShowLightGizmosAction() const { return ShowLightGizmosAction; }
 
     /* For the main window to put Play/Stop/Eject in front of the navigation. */
     QToolBar* GetToolbar() const { return Toolbar; }
@@ -49,6 +50,7 @@ private:
     QAction* FrameSelectionAction = nullptr;
     QAction* FrameAllAction       = nullptr;
     QAction* ShowAllBoundsAction  = nullptr;
+    QAction* ShowLightGizmosAction = nullptr;
 };
 
 #endif // WITH_EDITOR

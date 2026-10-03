@@ -10,14 +10,19 @@
 #include <Common.glsl>
 #include <SceneUniforms.glsl>
 #include <MaterialCommon.glsl>
-#include <Lighting.glsl>
 
-// Material texture slots 0-4 (GDI bindings 4-8).
-MATERIAL_SAMPLER2D(4, GBuffer0)      // rgb: Base Color; a: Ambient Occlusion
-MATERIAL_SAMPLER2D(5, GBuffer1)      // rgb: normal * 0.5 + 0.5; a: lit
-MATERIAL_SAMPLER2D(6, GBuffer2)      // Metallic, Roughness, Specular
-MATERIAL_SAMPLER2D(7, GBuffer3)      // rgb: Emissive
-MATERIAL_SAMPLER2D(8, SceneDepth)    // r: window depth, 0 near to 1 far
+// Material texture slots 0-6 (GDI bindings 4-10).
+MATERIAL_SAMPLER2D(4, GBuffer0)           // rgb: Base Color; a: Ambient Occlusion
+MATERIAL_SAMPLER2D(5, GBuffer1)           // rgb: normal * 0.5 + 0.5; a: lit
+MATERIAL_SAMPLER2D(6, GBuffer2)           // Metallic, Roughness, Specular
+MATERIAL_SAMPLER2D(7, GBuffer3)           // rgb: Emissive
+MATERIAL_SAMPLER2D(8, SceneDepth)         // r: window depth, 0 near to 1 far
+MATERIAL_SAMPLER2D(9, ShadowDirectional)  // the sun's shadow atlas (Shadows.glsl)
+MATERIAL_SAMPLER2D(10, ShadowLocal)       // point and spot lights' shadow atlas
+
+// Only here are lights shadowed: the atlases above are this pass's.
+#define LIGHTING_SHADOWS 1
+#include <Lighting.glsl>
 
 OUTPUT(0, vec4, Output)
 

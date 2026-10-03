@@ -7,6 +7,7 @@
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameWindow/GameWindow.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
@@ -80,11 +81,32 @@ bool PlaySession::Start()
     return true;
 }
 
+void PlaySession::SetMouseCaptured(const bool bInCaptured)
+{
+    if(bInCaptured == IsMouseCaptured())
+    {
+        return;
+    }
+    bHostMouseCaptured = bInCaptured;
+    Input.SetMouseCaptured(bInCaptured);
+    if(!bInCaptured)
+    {
+        CORE_LOG("[PIE] the game released the mouse")
+        return;
+    }
+    const GameWindow* Window = Input.GetWindow();
+    CORE_LOG(std::string("[PIE] the game captured the mouse: ")
+             + (!Window             ? "the viewport holds the cursor while it has the focus"
+                : Window->HasFocus() ? "held in the viewport"
+                                     : "held once the viewport has the input focus -- click it"))
+}
+
 void PlaySession::Stop()
 {
     const bool bWasRunning = Session != nullptr;
 
     /* The viewport's window outlives the run; it must not call into this one. */
+    bHostMouseCaptured = false;
     Input.Detach();
     Input.GetPending() = NimbleEngine::InputState();
     Input.Latch(0);

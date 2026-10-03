@@ -168,6 +168,12 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     ShowAllBoundsAction->setToolTip(QStringLiteral("Draw every entity's bounds, not only the selection's"));
     connect(ShowAllBoundsAction, &QAction::toggled, this, [this](const bool bInOn) { Viewport->SetShowAllBounds(bInOn); });
 
+    ShowLightGizmosAction = Toolbar->addAction(QStringLiteral("Light Gizmos"));
+    ShowLightGizmosAction->setCheckable(true);
+    ShowLightGizmosAction->setChecked(Viewport->IsShowingLightGizmos());
+    ShowLightGizmosAction->setToolTip(QStringLiteral("Draw every light's reach, not only the selected light's"));
+    connect(ShowLightGizmosAction, &QAction::toggled, this, [this](const bool bInOn) { Viewport->SetShowLightGizmos(bInOn); });
+
     Toolbar->addSeparator();
 
     // --- Camera speed --------------------------------------------------------
