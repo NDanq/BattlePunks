@@ -38,6 +38,18 @@ include(NimbleMaterials)
 
 enable_testing()
 
+# === C++ standard ===========================================================
+# C++17, exactly. Every target already asks for cxx_std_17, but that is a
+# minimum: a compiler whose default is newer (GCC 16 defaults to gnu++20)
+# satisfies it with no -std flag at all, and C++20 code then compiles on that
+# machine and fails on MSVC, which defaults to C++14 and is given /std:c++17.
+# Setting the standard makes CMake pass the flag on every compiler. Extensions
+# off, so it is -std=c++17 rather than -std=gnu++17. Directory-scoped, so it
+# reaches the vendored subtrees without editing them.
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 # === Compiler cache =========================================================
 # sccache, when it is installed. Objects are cached by content hash, so the
 # expensive thing this repository builds -- the vendored SDL, ~260 translation
