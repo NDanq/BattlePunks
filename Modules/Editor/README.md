@@ -485,14 +485,16 @@ the viewport's timer paces the run.
 ## Editor settings
 
 **Edit > Editor Settings...** (Ctrl+,, or `settings` in the Console) shows the
-editor's own config vars as a form:
+editor's own config vars, a page per group listed on the left (as Project
+Settings lists its sections). Settings that belong to the project rather than
+the user -- the game's, and RenderCore's `[Shadows]` -- are under Project
+Settings instead.
 
-| Group | Setting | Var |
+| Page | Setting | Var |
 |---|---|---|
 | Appearance | Theme: System, Light, Dark (applies at once) | `Editor.Theme` |
 | Viewport | Move / Rotate / Scale snap | `Editor.SnapTranslate`, `SnapRotate`, `SnapScale` |
 | Rendering | Render backend (on restart) | `Editor.RHI` |
-| Shadows | Draw shadows, shadow map size, filter, shadowed point and spot lights, sun shadow distance scale | `Shadows.Enabled`, `Resolution`, `Filter`, `MaxShadowedLights`, `DistanceScale` (RenderCore's; every scene, applied the next frame) |
 | Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
 | Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, combine meshes, import a mesh's textures, sRGB, largest texture | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize` |
 
@@ -531,7 +533,11 @@ shared by everyone on the project, where Editor Settings are one person's.
   it (outside `[Editor]`), with an editor for its type -- checkbox, spin box,
   text, or a list for known choices such as `Display.RHI` -- and a reset to
   its compiled default. **Bold** means the file sets it; the rest run on their
-  default.
+  default. A key whose name says too little has a label and a tooltip from
+  `ProjectSettingsDialog.cpp`'s `KeyLabels` table.
+- **Shadows** page: RenderCore's `[Shadows]` -- draw shadows, shadow map size,
+  filter, how many point and spot lights may cast, the sun's shadow distance
+  scale. Read every frame, so Apply shows in the viewport at once.
 - **A game module's own settings** (`[Sandbox] RunSeconds`) are registered only
   while the module is loaded, which is during Play. Otherwise they are read
   from the file and edited as text, in italics.

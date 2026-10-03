@@ -12,7 +12,10 @@
 class QDialogButtonBox;
 
 /*
- * Edit > Editor Settings: the [Editor] config vars as a paged form, per user.
+ * Edit > Editor Settings: the [Editor] config vars as a paged form, per user:
+ * a page per group (Appearance, Viewport, Rendering, Build, Import), listed
+ * on the left as Project Settings lists its sections. Project-wide settings
+ * (the game's, [Shadows]) are Project Settings', not these.
  *
  * Rows read and write their var via ToString / SetFromString, like the .ini
  * and Console; the dialog stores nothing itself.

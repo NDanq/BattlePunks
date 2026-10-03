@@ -165,8 +165,9 @@ same lights forward, but unshadowed: their texture slots are their material's.
 
 Each light has a **Shadows** section: Cast Shadows, a Technique, a Modulated
 Tint and two biases. A Render component's **Cast Shadows** says whether its
-mesh casts. Every scene's quality is the `[Shadows]` config section (Editor
-Settings > Shadows, or a game's DefaultEngine.ini): Enabled, Resolution,
+mesh casts. Every scene's quality is the `[Shadows]` config section, a
+project setting (the game's DefaultEngine.ini; Edit > Project Settings >
+Shadows edits it and applies it at once): Enabled, Resolution,
 Filter, MaxShadowedLights and DistanceScale.
 
 | Technique | Lights | What it draws |
