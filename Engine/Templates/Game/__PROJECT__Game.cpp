@@ -18,7 +18,7 @@
 
 /*
  * @PROJECT_NAME@Game: the game, built as a module library loaded by name by
- * @PROJECT_NAME@Main.cpp's launcher and the editor's Play-in-Editor.
+ * the @PROJECT_NAME@ launcher (the engine's) and the editor's Play-in-Editor.
  *
  *   @PROJECT_NAME@Level       builds the scene from native prefabs; owns the
  *                             mode and the state.

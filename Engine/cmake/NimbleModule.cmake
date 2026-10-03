@@ -154,3 +154,74 @@ function(nimble_add_hot_module NM_TARGET)
         set_target_properties(${NM_TARGET} PROPERTIES BUILD_RPATH "$ORIGIN/..")
     endif()
 endfunction()
+
+# ---------------------------------------------------------------------------
+# nimble_add_game_launcher(<target>
+#     MODULE    <game module target>
+#     [SOURCES  <files...>])
+#
+# A game's executable, named <target> ("Sandbox", "Asteroids"). By default it
+# is the engine's own launcher, Engine/Source/Launcher/GameLauncherMain.cpp,
+# which runs the game module named by [Game] Module, MODULE if unset -- so a
+# game has no main() of its own. SOURCES replaces it, for a game that needs
+# one (command line, crash reporting); NIMBLE_GAME_MODULE and NIMBLE_GAME_NAME
+# are defined either way.
+#
+# Also: the module built first (it is loaded, never linked), the executable
+# and the module in the engine's runtime directory beside the engine
+# libraries -- what hot reload and the Windows loader both need -- and a
+# debugger working directory there, where Config/ is staged.
+# ---------------------------------------------------------------------------
+set(NIMBLE_GAME_LAUNCHER_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../Source/Launcher/GameLauncherMain.cpp"
+    CACHE INTERNAL "The engine's game launcher, built by nimble_add_game_launcher")
+
+function(nimble_add_game_launcher NM_TARGET)
+    cmake_parse_arguments(NM "" "MODULE" "SOURCES" ${ARGN})
+
+    if(NOT NM_MODULE OR NOT TARGET ${NM_MODULE})
+        message(FATAL_ERROR "nimble_add_game_launcher(${NM_TARGET}) requires MODULE <game module target>, declared first")
+    endif()
+    if(NOT TARGET NimbleEngine)
+        message(FATAL_ERROR "nimble_add_game_launcher(${NM_TARGET}): the NimbleEngine target does not exist yet")
+    endif()
+    if(NOT NM_SOURCES)
+        get_filename_component(NM_SOURCES "${NIMBLE_GAME_LAUNCHER_SOURCE}" ABSOLUTE)
+    endif()
+
+    add_executable(${NM_TARGET} ${NM_SOURCES})
+    target_compile_definitions(${NM_TARGET} PRIVATE
+            "NIMBLE_GAME_MODULE=\"${NM_MODULE}\""
+            "NIMBLE_GAME_NAME=\"${NM_TARGET}\"")
+    add_dependencies(${NM_TARGET} ${NM_MODULE})
+
+    # One link: NimbleEngine brings its include directory, cxx_std_17 and
+    # EngineCore. GameWindow and GDI stay private to the engine layer.
+    target_link_libraries(${NM_TARGET} PRIVATE NimbleEngine::NimbleEngine)
+
+    # add_executable does not go through nimble_add_module, so the Qt opt-out
+    # is restated: a parent scope with AUTOMOC on would hand it down.
+    set_target_properties(${NM_TARGET} PROPERTIES
+            AUTOMOC OFF AUTOUIC OFF AUTORCC OFF
+            VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:${NM_TARGET}>"
+            FOLDER "Games")
+
+    # Beside the engine libraries. Inherited when the game is added below the
+    # engine's scope; not when the game is the top-level project and the
+    # engine its subdirectory -- so asked of the engine's target either way.
+    get_target_property(NM_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
+    if(NM_RT_DIR)
+        set_target_properties(${NM_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${NM_RT_DIR}")
+        set_target_properties(${NM_MODULE} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${NM_RT_DIR}")
+    endif()
+    get_property(NM_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(NM_MULTI_CONFIG)
+        foreach(NM_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
+            string(TOUPPER "${NM_CFG}" NM_CFG_U)
+            get_target_property(NM_RT_CFG NimbleEngine RUNTIME_OUTPUT_DIRECTORY_${NM_CFG_U})
+            if(NM_RT_CFG)
+                set_target_properties(${NM_TARGET} PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_RT_CFG}")
+                set_target_properties(${NM_MODULE} PROPERTIES LIBRARY_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_RT_CFG}")
+            endif()
+        endforeach()
+    endif()
+endfunction()

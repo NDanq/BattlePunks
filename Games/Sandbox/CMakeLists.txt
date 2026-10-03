@@ -88,10 +88,11 @@ nimble_add_hot_module(SandboxGame
 set_target_properties(SandboxGame PROPERTIES FOLDER "Games")
 
 # === The launcher ==========================================================
-# Thin executable (Application::ExecGame). add_dependencies only ensures the
-# game module is built; it is not linked.
-add_executable(Sandbox SandboxMain.cpp)
-add_dependencies(Sandbox SandboxGame)
+# The engine's own launcher (Engine/Source/Launcher/GameLauncherMain.cpp),
+# built as Sandbox: it runs [Game] Module, SandboxGame if unset. Also puts the
+# executable and the module beside the engine libraries, however this
+# directory was configured (Engine/cmake/NimbleModule.cmake).
+nimble_add_game_launcher(Sandbox MODULE SandboxGame)
 
 # The editor loads this game at Play, so building the editor builds it too.
 if(TARGET NimbleEditor)
@@ -103,17 +104,6 @@ if(TARGET NimbleEditor)
             NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
 endif()
 
-# Same Qt-freedom the modules get from nimble_add_module(). Stated explicitly
-# because add_executable() does not go through that function, and a parent scope
-# that enabled AUTOMOC as a directory property would hand it down.
-set_target_properties(Sandbox PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
-
-# One link is enough: nimble_add_module() gives NimbleEngine a PUBLIC include
-# directory, PUBLIC cxx_std_17 and a PUBLIC EngineCore, so all three arrive
-# transitively. GameWindow and GDI stay PRIVATE to the engine layer and are
-# deliberately NOT visible here -- a game links the engine, not the renderer.
-target_link_libraries(Sandbox PRIVATE NimbleEngine::NimbleEngine)
-
 # === Runtime layout ========================================================
 # Everything lands in Binaries/<Platform>_<Config> BELOW THIS DIRECTORY: the
 # engine DLLs, the module DLLs and this executable all together, because hot
@@ -121,52 +111,12 @@ target_link_libraries(Sandbox PRIVATE NimbleEngine::NimbleEngine)
 # them belongs to the host being run. Engine/CMakeLists.txt's NIMBLE_BINARIES_DIR
 # defaults here for that reason; a second game overrides it to claim its own.
 #
-# Engine/CMakeLists.txt sets CMAKE_RUNTIME_OUTPUT_DIRECTORY from that root at ITS
-# scope, and that is only inherited by targets created at or below it. Added from
-# Engine (path 1) we are below it and inherit for free.
-#
-# Standalone (path 2) we are ABOVE it -- the engine is our subdirectory -- so we
-# inherit nothing and would land in the build tree, away from NimbleEngine.dll,
-# EngineCore.dll and SDL3.dll. On Windows the loader resolves those from the
-# directory of the EXE, so that build would configure, compile, link, and then
-# fail to start.
-#
-# The engine's own target already knows the answer, so ask it rather than
-# recomputing the <Platform>_<Config> string here -- a second copy of that logic
-# is a second thing to keep in step.
-
-# Needed on both paths below, so it is read once here rather than inside either.
+# nimble_add_game_launcher above already put the executable and the module
+# there, on either configure path. The staging below needs the same directory
+# as a plain path: asked of the engine's target, which knows it either way
+# (inherited from Engine/CMakeLists.txt's scope, or not, when standalone).
 get_property(SANDBOX_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-
-if(SANDBOX_STANDALONE)
-    get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
-    if(SANDBOX_RT_DIR)
-        set_target_properties(Sandbox PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SANDBOX_RT_DIR}")
-        # The launcher looks for the module beside itself.
-        set_target_properties(SandboxGame PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SANDBOX_RT_DIR}")
-    endif()
-
-    # Multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) ignore
-    # the plain property and read the per-config one, which the engine also has.
-    if(SANDBOX_MULTI_CONFIG)
-        foreach(SANDBOX_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
-            string(TOUPPER "${SANDBOX_CFG}" SANDBOX_CFG_U)
-            get_target_property(SANDBOX_RT_CFG NimbleEngine
-                                RUNTIME_OUTPUT_DIRECTORY_${SANDBOX_CFG_U})
-            if(SANDBOX_RT_CFG)
-                set_target_properties(Sandbox PROPERTIES
-                        RUNTIME_OUTPUT_DIRECTORY_${SANDBOX_CFG_U} "${SANDBOX_RT_CFG}")
-                set_target_properties(SandboxGame PROPERTIES
-                        LIBRARY_OUTPUT_DIRECTORY_${SANDBOX_CFG_U} "${SANDBOX_RT_CFG}")
-            endif()
-        endforeach()
-    endif()
-else()
-    # Added from Engine, we inherited the variable itself. Captured under the
-    # same name so the config staging below has one plain path to work with
-    # whichever way we were configured.
-    set(SANDBOX_RT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
-endif()
+get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
 
 # === Config staging ========================================================
 # Application::Initialize() reads "Config/DefaultEngine.ini" relative to the
@@ -420,13 +370,9 @@ else()
 endif()
 
 # === IDE ===================================================================
-# Without this, a Visual Studio or CLion run starts in the build directory and
-# the config lookup above silently misses -- the app still runs, on defaults,
-# which is the kind of difference between "ran from the IDE" and "ran from the
-# shell" that costs an afternoon.
-set_target_properties(Sandbox PROPERTIES
-        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:Sandbox>"
-        FOLDER "Games")
+# The debugger's working directory is the executable's, where Config/ is
+# staged (nimble_add_game_launcher): without it a Visual Studio or CLion run
+# starts in the build directory and silently runs on defaults.
 
 # Only standalone: in a full Engine configure the startup project belongs to
 # whoever configured it, and quietly repointing it at a game would be rude.
@@ -434,4 +380,4 @@ if(SANDBOX_STANDALONE)
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT Sandbox)
 endif()
 
-source_group("Sandbox" FILES SandboxMain.cpp SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp)
+source_group("Sandbox" FILES SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp)

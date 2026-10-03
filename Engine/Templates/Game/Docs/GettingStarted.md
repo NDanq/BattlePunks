@@ -42,7 +42,6 @@ up to start there.
 | Path | What | Made with |
 |------|------|-----------|
 | `@PROJECT_NAME@Game.cpp` | Game module: level, game mode, game state, native prefabs | Your IDE |
-| `@PROJECT_NAME@Main.cpp` | Launcher; rarely edited | |
 | `Config/DefaultEngine.ini` | Settings: window, renderer, start level, startup script | Edit > Project Settings |
 | `Scripts/` | Lua (`.lua`) and script graphs (`.script.nmgraph`) | File > New Script Graph |
 | `Content/Materials/` | Material graphs (`.material.nmgraph`) | File > New Material Graph |
@@ -82,6 +81,11 @@ Open `@PROJECT_NAME@Game.cpp`. Four classes, top to bottom:
 Per-entity logic that runs every frame belongs in a system rather than the
 mode: `World.RegisterSystem("@PROJECT_NAME@.Move", GameCore::TP_PrePhysics, &MoveSystem, &Context)`
 in the level's `OnLoad` (see `DriveMarkerSystem` in `Games/Sandbox/SandboxGame.cpp`).
+
+There is no `main()` to write: the `@PROJECT_NAME@` executable is the
+engine's launcher (`nimble_add_game_launcher` in `CMakeLists.txt`), which
+loads the game module and runs the start level. A game that needs its own
+passes `SOURCES MyMain.cpp` to it.
 
 A new `.cpp` goes in `CMakeLists.txt`, in the `nimble_add_hot_module(...)`
 `SOURCES` list. Inside the editor, **Build > Compile Source** (F7) rebuilds the

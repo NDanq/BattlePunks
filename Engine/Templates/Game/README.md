@@ -21,7 +21,6 @@ the game alone, without the editor.
 | Path | What |
 |------|------|
 | `@PROJECT_NAME@Game.cpp` | The game module: level, game mode, game state, native prefabs |
-| `@PROJECT_NAME@Main.cpp` | The launcher |
 | `Config/DefaultEngine.ini` | Settings; `[Game]` names the module and start level |
 | `Scripts/` | Lua and script graphs; `Main.lua` runs on every level load |
 | `Content/Materials/` | Material graphs (`File > New Material Graph`) |
@@ -33,4 +32,5 @@ the game alone, without the editor.
 Everything in `Config/`, `Scripts/` and `Content/` is staged into `Binaries/`
 by the build at the same relative path, which is how the runtime names it
 (`Content/Prefabs/Door.nmprefab`). A new C++ file goes in `CMakeLists.txt`'s
-`nimble_add_hot_module` list.
+`nimble_add_hot_module` list. The `@PROJECT_NAME@` executable is the engine's
+launcher (`nimble_add_game_launcher`); there is no `main()` to maintain.
