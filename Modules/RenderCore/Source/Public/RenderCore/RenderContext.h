@@ -28,6 +28,16 @@ namespace RenderCore
 {
     struct SceneTargets;             // Private/RenderCore/SceneTargets.h
     struct MaterialPreviewRequest;   // RenderScene.h
+    struct RenderMaterialParameter;  // Components/RenderComponent.h
+
+    /* An entity's material parameter overrides for one draw call: each entry
+     * applies to the material in its Slot. Must stay valid until the scene
+     * has drawn -- a proxy's own storage, as RenderComponentProxy passes. */
+    struct MaterialParameterOverrides
+    {
+        const RenderMaterialParameter* Items = nullptr;
+        uint32_t                       Count = 0;
+    };
 
     class RENDERCORE_API RenderContext
     {
@@ -68,7 +78,8 @@ namespace RenderCore
          * drawn as DrawQuad.
          */
         void DrawQuadWithMaterial(const RenderTransform& InTransform, float InWidth, float InHeight,
-                                  EngineCore::Color InTint, const char* InMaterial);
+                                  EngineCore::Color InTint, const char* InMaterial,
+                                  const MaterialParameterOverrides& InOverrides = MaterialParameterOverrides());
 
         /*
          * Draws the .nmmesh at InMeshPath, one draw per section, each in its
@@ -82,7 +93,8 @@ namespace RenderCore
          * lacks indexed meshes.
          */
         bool DrawMesh(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
-                      const char* const* InSlots, uint32_t InSlotCount);
+                      const char* const* InSlots, uint32_t InSlotCount,
+                      const MaterialParameterOverrides& InOverrides = MaterialParameterOverrides());
 
         /* The same with InMaterial in every section's slot ("" or null: none). */
         bool DrawMesh(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
@@ -147,7 +159,8 @@ namespace RenderCore
 
         /* Both DrawMesh overloads: bInEvery puts InSlots[0] in every slot. */
         bool DrawMeshSections(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
-                              const char* const* InSlots, uint32_t InSlotCount, bool bInEvery);
+                              const char* const* InSlots, uint32_t InSlotCount, bool bInEvery,
+                              const MaterialParameterOverrides& InOverrides);
 
         /* Queues a full-screen pass of a PostProcess material, after those
          * already queued (outside a scene: draws it into the bound target,
