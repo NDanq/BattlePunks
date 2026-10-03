@@ -447,22 +447,26 @@ if(NIMBLEENGINE_BUILD_TESTS)
         target_compile_definitions(NimbleEngineInputTests PRIVATE NIMBLEENGINE_TESTS_HAVE_SDL=1)
     endif()
     set_target_properties(NimbleEngineInputTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
-    # From Binaries, so the engine DLLs resolve.
-    add_test(NAME NimbleEngine.InputTests COMMAND NimbleEngineInputTests)
+    # From Binaries, so the engine DLLs resolve and staged content
+    # (Engine/Content/Meshes) is found by its relative path.
+    add_test(NAME NimbleEngine.InputTests COMMAND NimbleEngineInputTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineInputTests>")
     set_tests_properties(NimbleEngine.InputTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 
     # Collision: overlaps, events, layers, queries, and shapes from meshes.
     add_executable(NimbleEngineCollisionTests Tests/CollisionTests.cpp)
     target_link_libraries(NimbleEngineCollisionTests PRIVATE NimbleEngine::NimbleEngine)
     set_target_properties(NimbleEngineCollisionTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
-    add_test(NAME NimbleEngine.CollisionTests COMMAND NimbleEngineCollisionTests)
+    add_test(NAME NimbleEngine.CollisionTests COMMAND NimbleEngineCollisionTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineCollisionTests>")
     set_tests_properties(NimbleEngine.CollisionTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 
     # The game framework: phases, rules, PlayerState, the Game library, saves.
     add_executable(NimbleEngineGameFrameworkTests Tests/GameFrameworkTests.cpp)
     target_link_libraries(NimbleEngineGameFrameworkTests PRIVATE NimbleEngine::NimbleEngine)
     set_target_properties(NimbleEngineGameFrameworkTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
-    add_test(NAME NimbleEngine.GameFrameworkTests COMMAND NimbleEngineGameFrameworkTests)
+    add_test(NAME NimbleEngine.GameFrameworkTests COMMAND NimbleEngineGameFrameworkTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineGameFrameworkTests>")
     set_tests_properties(NimbleEngine.GameFrameworkTests PROPERTIES TIMEOUT 120 LABELS "smoke")
 endif()
 
