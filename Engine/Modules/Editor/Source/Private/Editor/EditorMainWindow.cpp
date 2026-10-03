@@ -56,6 +56,14 @@ namespace
 {
     const char* const WorldFileFilter = "Nimble World (*.nmworld);;All Files (*)";
 
+    /* Where Open and Save As start: the open world, else <project>/Content/Levels. */
+    QString WorldDialogPath(const QString& InCurrentPath)
+    {
+        if(!InCurrentPath.isEmpty()) { return InCurrentPath; }
+        const QString Levels = QDir(EditorGraphs::GetProjectRoot()).filePath(QStringLiteral("Content/Levels"));
+        return QFileInfo(Levels).isDir() ? Levels : QDir(EditorGraphs::GetProjectRoot()).filePath(QStringLiteral("Content"));
+    }
+
     const char* BackendName(const RenderCore::ERenderBackend InBackend)
     {
         switch(InBackend)
@@ -1298,7 +1306,7 @@ void EditorMainWindow::UpdateStats()
 
 void EditorMainWindow::OpenWorld()
 {
-    const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open World"), CurrentPath,
+    const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open World"), WorldDialogPath(CurrentPath),
                                                       QString::fromLatin1(WorldFileFilter));
     if(!Path.isEmpty())
     {
@@ -1354,7 +1362,7 @@ bool EditorMainWindow::SaveWorld()
 
 bool EditorMainWindow::SaveWorldAs()
 {
-    const QString Path = QFileDialog::getSaveFileName(this, QStringLiteral("Save World As"), CurrentPath,
+    const QString Path = QFileDialog::getSaveFileName(this, QStringLiteral("Save World As"), WorldDialogPath(CurrentPath),
                                                       QString::fromLatin1(WorldFileFilter));
     if(Path.isEmpty())
     {

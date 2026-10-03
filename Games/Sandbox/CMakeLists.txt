@@ -340,26 +340,26 @@ if(SANDBOX_CONTENT_FILES)
     endif()
 endif()
 
-# === Prefabs/ ==============================================================
+# === Content/Prefabs/ ======================================================
 # Prefabs and the scripts beside them, staged at the same relative path beside
-# the executable ("Prefabs/Door.nmprefab", as SpawnPrefab and a level name
-# them). Globbed, like Content/: the Prefab Editor makes these. An Editor
+# the executable ("Content/Prefabs/Door.nmprefab", as SpawnPrefab and a level
+# name them). Globbed, like Content/: the Prefab Editor makes these. An Editor
 # target stages the text prefabs it edits; a Client or Server target cannot
-# read text, so it stages the cooked ones from Cooked/Prefabs/ -- made in the
-# editor with the console command `cook prefabs`.
+# read text, so it stages the cooked ones from Cooked/Content/Prefabs/ -- made
+# in the editor with the console command `cook prefabs`.
 file(GLOB_RECURSE SANDBOX_PREFAB_SCRIPTS CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/Prefabs/*.lua"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Prefabs/*.script.nmgraph"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.script.nmgraph"
 )
 if(NIMBLE_TARGET STREQUAL "Editor")
     set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
     set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
 endif()
-file(GLOB_RECURSE SANDBOX_PREFAB_ASSETS CONFIGURE_DEPENDS "${SANDBOX_PREFAB_ROOT}/Prefabs/*.nmprefab")
-file(GLOB_RECURSE SANDBOX_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Prefabs/*.nmprefab")
+file(GLOB_RECURSE SANDBOX_PREFAB_ASSETS CONFIGURE_DEPENDS "${SANDBOX_PREFAB_ROOT}/Content/Prefabs/*.nmprefab")
+file(GLOB_RECURSE SANDBOX_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.nmprefab")
 if(NOT NIMBLE_TARGET STREQUAL "Editor" AND SANDBOX_PREFAB_SOURCES AND NOT SANDBOX_PREFAB_ASSETS)
-    message(WARNING "Sandbox: Prefabs/ has prefabs but Cooked/Prefabs/ has none; a ${NIMBLE_TARGET} build cannot read "
+    message(WARNING "Sandbox: Content/Prefabs/ has prefabs but Cooked/Content/Prefabs/ has none; a ${NIMBLE_TARGET} build cannot read "
                     "text prefabs. Cook them in the editor (console: cook prefabs).")
 endif()
 
@@ -399,23 +399,24 @@ if(SANDBOX_PREFAB_OUTPUTS)
 elseif(SANDBOX_PREFAB_COPIES)
     # Multi-config fallback, as SandboxStageScripts': every file, every build.
     add_custom_target(SandboxStagePrefabs ALL ${SANDBOX_PREFAB_COPIES}
-            COMMENT "Sandbox: staging Prefabs/ beside the executable"
+            COMMENT "Sandbox: staging Content/Prefabs/ beside the executable"
             VERBATIM)
     add_dependencies(SandboxStagePrefabs Sandbox)
     set_target_properties(SandboxStagePrefabs PROPERTIES FOLDER "Games")
 endif()
 
-# === Materials/ =============================================================
+# === Content/Materials/ =====================================================
 # Material graphs, cooked from the code generated into each (<gen_code>) for
 # every built backend into SandboxGame's shader cache, which GameModuleHost
 # mounts with the module -- and, in Editor targets, staged loose as well
 # (Engine/cmake/NimbleMaterials.cmake). Named by path below this folder:
-# "Materials/Glow.material.nmgraph".
+# "Content/Materials/Glow.material.nmgraph".
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
-    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" MODULE SandboxGame
-                           RUNTIME_DIR "${SANDBOX_RT_DIR}")
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Content/Materials"
+                           ROOT "${CMAKE_CURRENT_SOURCE_DIR}" MODULE SandboxGame RUNTIME_DIR "${SANDBOX_RT_DIR}")
 else()
-    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" MODULE SandboxGame)
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Content/Materials"
+                           ROOT "${CMAKE_CURRENT_SOURCE_DIR}" MODULE SandboxGame)
 endif()
 
 # === IDE ===================================================================
