@@ -7,7 +7,6 @@
 #include "Public/GameCore/ComponentSerializer.h"
 
 #include "Public/Core/CoreTypes.h"
-#include "Private/RenderCore/Components/MaterialPathUpgrade.h"
 #include "Private/RenderCore/RenderComponentProxy.h"
 
 /* RenderComponent: registration, its proxy factory, and what it exposes to
@@ -36,38 +35,15 @@ namespace RenderCore
      * C.Proxy is not saved: it names a live render-thread object that
      * WorldBridge recreates on the first frame after a load.
      */
-    /* Version 2: a material per slot. Version 1's one Material is slot 0.
-     * Version 3: no Width, Height or Tint -- read and dropped (the Transform's
-     * Scale sizes the quad).
-     * Version 4: materials are graph paths; an older bare name is upgraded. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 4)
+    /* Each slot's material is a graph path. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 1)
     {
-        if(Ar.GetVersion() < 3)
-        {
-            float             Width  = 1.0f;
-            float             Height = 1.0f;
-            EngineCore::Color Tint{255, 255, 255};
-            Ar.Field("Width",  Width);
-            Ar.Field("Height", Height);
-            Ar.Field("Tint",   Tint);
-        }
         Ar.Flag("Visible",   C.bVisible);
-        if(Ar.GetVersion() < 2)
+        for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
         {
-            Ar.Field("Material", C.Materials[0]);
-        }
-        else
-        {
-            for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
-            {
-                Ar.Field(MATERIAL_SLOT_FIELDS[Slot], C.Materials[Slot]);
-            }
+            Ar.Field(MATERIAL_SLOT_FIELDS[Slot], C.Materials[Slot]);
         }
         Ar.Field("Mesh",     C.Mesh);
-        if(Ar.IsLoading() && Ar.GetVersion() < 4)
-        {
-            for(char (&Slot)[RENDER_MATERIAL_PATH_MAX] : C.Materials) { UpgradeMaterialName(Slot, sizeof(Slot)); }
-        }
     }
 
     /*

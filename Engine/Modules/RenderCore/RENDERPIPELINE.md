@@ -184,8 +184,8 @@ compiled, as the forward variant. It now has both.
   in its stage; a two-section mesh with two slots draws in two stages; an empty
   slot falls back to the section's material; a quad uses slot 0; the bounds
   padding takes the largest offset of the slots in use.
-- Serialization: version 1's `Material` loads into slot 0, and only there;
-  version 2 writes `Material0`-`Material7` and reads them back.
+- Serialization: `Material0`-`Material7` are written as graph paths and read
+  back unchanged.
 - Culling: a mesh past the view's edge is kept while a slot's World Position
   Offset reaches it, and culled without.
 - GPU (`NIMBLE_SMOKE_GPU=Vulkan|D3D12`): previews of DefaultLit and Wave go
