@@ -323,7 +323,7 @@ the caches.
 `DirectionalLightComponent` (direction, colour, intensity) and
 `SkyLightComponent` (sky and ground ambient), the first active of each, built
 by WorldBridge into `RenderLighting`. Without them the scene uses a default
-light matching the old `Mesh.fsh` (from above, -Y). `Lighting.glsl`: GGX
+light matching `Mesh.fsh` (from above, +Y). `Lighting.glsl`: GGX
 distribution, Smith-Schlick geometry, Schlick Fresnel; BaseColor, Emissive
 and light colours are authored in display space, lit linear, and encoded back
 (no HDR target yet). Meshes without a material draw with the engine's

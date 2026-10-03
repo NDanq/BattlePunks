@@ -12,20 +12,21 @@
  * The viewport's camera (position, yaw, pitch), not an entity, so looking
  * around never edits the World.
  *
- * AXES as RenderView: +X right, +Y DOWN, +Z into the screen. Yaw/pitch 0
- * matches the game's ortho view; positive pitch looks toward world -Y.
+ * AXES as RenderView: left-handed, +X right, +Y UP, +Z into the screen.
+ * Yaw/pitch 0 matches the game's ortho view; positive pitch looks toward
+ * world +Y (up).
  *
  * FOCUS. FocusDistance places the default pivot for orbits and presets.
  */
 class EditorCamera
 {
 public:
-    /* Named for where the camera looks FROM: Top looks from -Y toward +Y. */
+    /* Named for where the camera looks FROM: Top looks from +Y toward -Y. */
     enum class EPreset
     {
         Perspective,
         Front, Back,     // from -Z / from +Z
-        Top, Bottom,     // from -Y / from +Y
+        Top, Bottom,     // from +Y / from -Y
         Right, Left,     // from +X / from -X
     };
 
@@ -42,7 +43,7 @@ public:
 
     EngineCore::Vector3 GetForward() const;
     EngineCore::Vector3 GetRight() const;
-    /* Screen-up, in world space (world -Y at zero pitch). */
+    /* Screen-up, in world space (world +Y at zero pitch). */
     EngineCore::Vector3 GetUp() const;
 
     /* Position + Forward * FocusDistance. */

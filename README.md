@@ -67,6 +67,23 @@ Or configure the engine directly: `cmake -S Engine -B build -DNIMBLE_TARGET=Clie
 
 ## Conventions
 
+### Coordinate system
+
+**Left-handed, +X right, +Y up, +Z into the screen** (away from the viewer).
+A camera at rest looks along +Z. The 2D view is one unit per pixel, with the
+camera's position at the bottom-left corner of the screen, so a 1280 × 720
+view spans x 0..1280 and y 0..720 (`RenderCore/RenderView.h`). Screen-space
+values are the exception, the way the platform gives them: mouse positions
+(`Input.GetMousePosition`) are window pixels with y down, and so is a stick's
+`Gamepad.LeftY` axis.
+
+- A positive rotation about +Z turns +X toward +Y: counter-clockwise on screen.
+- glTF meshes are converted on import by flipping z, with the winding
+  (`GltfImporter.cpp`). The engine's primitive meshes are made the same way
+  (`Engine/Scripts/generate_primitive_meshes.py`).
+- GDI's own `GDIView`, the Odessa 2D path, stays Y-down. RenderCore builds its
+  own views and does not use it.
+
 ### Namespaces
 
 Each module owns one namespace: `EngineCore` (Core), `GameCore`, `RenderCore`,

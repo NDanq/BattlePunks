@@ -43,8 +43,8 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
     vec3 Diffuse  = (vec3(1.0) - F) * (1.0 - Metallic) * Albedo / LIGHTING_PI;
     vec3 Direct   = (Diffuse + Specular) * ToLinear(Scene_LightColor.rgb) * Scene_LightDirection.w * NdotL;
 
-    // +Y is down, so the sky is toward -Y.
-    float Up      = clamp(-N.y * 0.5 + 0.5, 0.0, 1.0);
+    // +Y is up, so the sky is toward +Y.
+    float Up      = clamp(N.y * 0.5 + 0.5, 0.0, 1.0);
     vec3  Ambient = mix(ToLinear(Scene_GroundColor.rgb), ToLinear(Scene_SkyColor.rgb), Up) * Scene_SkyColor.a;
     vec3  Indirect = Ambient * (Albedo * (1.0 - Metallic) + F0 * (1.0 - Roughness) * 0.5) * Surface.AmbientOcclusion;
 

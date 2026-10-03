@@ -545,7 +545,8 @@ own component rather than this one silently meaning something else than what
 its member name suggests.
 
 Rotations are right-handed for column vectors: a positive angle about +Z turns
-+X toward +Y -- which, with the game's +Y down the screen, reads clockwise.
++X toward +Y -- which, with the engine's +Y up the screen (left-handed, +Z
+into it), reads counter-clockwise.
 `InitRotation` once got this wrong (the same `+W*sin` in both `[0][1]` and
 `[1][0]`, and the row-2 products swapped), making a Z rotation a shear that
 collapsed a quad to a line at 45 degrees; Core's smoke test now checks that
