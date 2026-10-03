@@ -38,6 +38,9 @@
 #include "Public/RenderCore/RenderComponents.h"
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/Prefab/PrefabAssets.h"
+#include "Private/Editor/Prefab/PrefabEditorTab.h"
+#include "Private/Editor/Prefab/PrefabEditorWindow.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 #include "Private/Editor/SDLInputProbe.h"
 #include "Private/Editor/SettingsDialog.h"
@@ -147,8 +150,10 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     connect(&StatsTimer, &QTimer::timeout, this, &EditorMainWindow::UpdateStats);
 
-    /* Material graphs cook for, and reload into, this context's renderer. */
+    /* Material graphs cook for, and reload into, this context's renderer;
+     * prefabs draw with it. */
     EditorGraphs::SetEditorContext(&Context);
+    EditorPrefabs::SetEditorContext(&Context);
 
     UpdateTitle();
 }
@@ -162,6 +167,7 @@ EditorMainWindow::~EditorMainWindow()
         InputProbe->Stop();
     }
     EditorGraphs::SetEditorContext(nullptr);
+    EditorPrefabs::SetEditorContext(nullptr);
     Context.Shutdown();
 }
 
@@ -225,6 +231,22 @@ void EditorMainWindow::BuildMenus()
     Import->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     Import->setToolTip(QStringLiteral("glTF meshes and images into engine assets, in the Content Browser's folder"));
     connect(Import, &QAction::triggered, this, [this]() { ContentArea->ImportWithDialog(); });
+
+    QAction* NewPrefab = File->addAction(QStringLiteral("New &Prefab..."));
+    NewPrefab->setToolTip(QStringLiteral("A one-entity prefab in the Content Browser's folder, opened in the Prefab Editor"));
+    connect(NewPrefab, &QAction::triggered, this, [this]()
+    {
+        const QString Folder = ContentArea->GetCurrentFolder();
+        EditorPrefabs::CreatePrefab(Folder.startsWith(EditorGraphs::GetProjectRoot()) ? Folder : QString(), this);
+    });
+
+    QAction* OpenPrefab = File->addAction(QStringLiteral("Open Pre&fab..."));
+    connect(OpenPrefab, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Prefab"), EditorPrefabs::GetDefaultFolder(),
+                                                          QStringLiteral("Prefabs (*.nmprefab)"));
+        if(!Path.isEmpty()) { EditorPrefabs::OpenPrefab(Path, this); }
+    });
 
     QAction* OpenGraph = File->addAction(QStringLiteral("Open Grap&h..."));
     OpenGraph->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_O));
@@ -809,6 +831,42 @@ void EditorMainWindow::RegisterConsoleCommands()
         else             { Console.Print(Lines.join(QLatin1Char('\n'))); }
     });
 
+    Console.Register(QStringLiteral("prefab"), QStringLiteral("<path | new | simulate | stop>"),
+                     QStringLiteral("Open a .nmprefab in the Prefab Editor, make a new one, or simulate the one in front"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: prefab <path | new | simulate | stop>"));
+            return;
+        }
+        if(InArgs.front() == QStringLiteral("new"))
+        {
+            EditorPrefabs::CreatePrefab(QString(), this);
+            return;
+        }
+        if(InArgs.front() == QStringLiteral("simulate") || InArgs.front() == QStringLiteral("stop"))
+        {
+            PrefabEditorWindow* Window = PrefabEditorWindow::Find();
+            PrefabEditorTab*    Tab    = Window ? Window->CurrentTab() : nullptr;
+            if(!Tab)
+            {
+                Console.PrintError(QStringLiteral("No prefab is open"));
+                return;
+            }
+            if(InArgs.front() == QStringLiteral("simulate")) { Tab->StartSimulation(); }
+            else                                             { Tab->StopSimulation(); }
+            return;
+        }
+        const QString Path = QFileInfo(InArgs.join(QLatin1Char(' '))).isAbsolute()
+                           ? InArgs.join(QLatin1Char(' '))
+                           : QDir(EditorGraphs::GetProjectRoot()).filePath(InArgs.join(QLatin1Char(' ')));
+        if(EditorPrefabs::OpenPrefab(Path, this))
+        {
+            Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
+        }
+    });
+
     /* A second window on a World of its own: the multi-window rendering path
      * the Prefab Editor will use, until it exists. */
     Console.Register(QStringLiteral("testwindow"), QString(),
@@ -1034,8 +1092,9 @@ void EditorMainWindow::StartRenderer()
 
 void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
-    /* Open graphs first: an unsaved one may cancel the close. */
-    if(!EditorGraphs::CloseAllGraphs())
+    /* Open prefabs and graphs first: an unsaved one may cancel the close.
+     * Prefabs before the Renderer stops: their viewports' swapchains go now. */
+    if(!EditorPrefabs::CloseAllPrefabs() || !EditorGraphs::CloseAllGraphs())
     {
         InEvent->ignore();
         return;

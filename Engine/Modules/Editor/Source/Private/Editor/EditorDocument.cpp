@@ -13,6 +13,7 @@
 #include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/MeshAsset.h"
@@ -200,6 +201,20 @@ EntityID EditorDocument::CreateEntity(const QString& InName, const EngineCore::V
     if(InSetup)
     {
         InSetup(E);
+    }
+
+    /* A prefab keeps one root: anything new goes under it, where it stood. */
+    if(bSingleRoot && !E.GetParent().IsSet())
+    {
+        for(const EntityID Root : GetRootEntities())
+        {
+            if(Root != E.GetID())
+            {
+                E.SetParent(Root, true);
+                ActiveWorld->RefreshEntityBounds(E.GetID());
+                break;
+            }
+        }
     }
 
     if(IsRecording())
@@ -734,6 +749,98 @@ void EditorDocument::ActivateWorld(GameCore::World* InWorld, const EntityID InSe
     Selection = ActiveWorld && ActiveWorld->IsAlive(InSelection) ? InSelection : GameCore::InvalidEntityID();
     emit WorldReset();
     emit SelectionChanged(Selection);
+}
+
+// === Prefab ==================================================================
+
+bool EditorDocument::LoadPrefab(const QString& InPath, GameCore::PrefabAsset& OutAsset)
+{
+    if(RefuseWhileBorrowed("Open Prefab"))
+    {
+        return false;
+    }
+
+    /* Read before the current World is replaced, so a bad file leaves it alone. */
+    const QByteArray Path = InPath.toUtf8();
+    GameCore::PrefabAsset Loaded;
+    if(!GameCore::LoadPrefabFile(Path.constData(), Loaded))
+    {
+        CORE_LOG_ERROR("[Editor] '" + std::string(Path.constData()) + "' is not a readable prefab")
+        return false;
+    }
+
+    ReplaceWorld();
+    ResetHistory();
+    {
+        const FlagScope Building(bSuspendRecording);   // the prefab as saved is the starting point
+        if(!EditedWorld->SpawnPrefab(Loaded).IsValid())
+        {
+            CORE_LOG_ERROR("[Editor] '" + std::string(Path.constData()) + "' has no entities")
+        }
+        EditedWorld->RefreshSpatialIndex();
+    }
+    OutAsset = Loaded;
+    QueueEntitiesChanged();
+    return true;
+}
+
+bool EditorDocument::SavePrefab(const QString& InPath, GameCore::PrefabAsset& InOutAsset, QString& OutError)
+{
+    if(IsWorldBorrowed())
+    {
+        OutError = QStringLiteral("Stop simulating before saving");
+        return false;
+    }
+    const std::vector<EntityID> Roots = GetRootEntities();
+    if(Roots.empty())
+    {
+        OutError = QStringLiteral("The prefab is empty: it needs a root entity");
+        return false;
+    }
+    if(Roots.size() > 1)
+    {
+        QStringList Names;
+        for(const EntityID Root : Roots) { Names << GetDisplayName(Root); }
+        OutError = QStringLiteral("A prefab has exactly one root entity. Parent the others under one of: %1")
+                       .arg(Names.join(QStringLiteral(", ")));
+        return false;
+    }
+
+    /* Adopting: entities added here join the instance with the ids they get,
+     * so the next save keeps them -- placed instances key overrides on them. */
+    GameCore::PrefabAsset Captured = InOutAsset;
+    if(!GameCore::CapturePrefab(*EditedWorld, Roots.front(), Captured, true))
+    {
+        OutError = QStringLiteral("Could not capture the prefab");
+        return false;
+    }
+    if(!GameCore::SavePrefabFile(InPath.toUtf8().constData(), Captured))
+    {
+        OutError = QStringLiteral("Could not write %1").arg(InPath);
+        return false;
+    }
+    InOutAsset = Captured;
+    History->setClean();
+    return true;
+}
+
+std::vector<EntityID> EditorDocument::GetRootEntities() const
+{
+    std::vector<EntityID> Roots;
+    if(!EditedWorld)
+    {
+        return Roots;
+    }
+    struct Collect { GameCore::World* W; std::vector<EntityID>* Out; } Ctx{ EditedWorld, &Roots };
+    EditedWorld->ForEachEntity([](const EntityID InEntity, void* InUserData)
+    {
+        auto& C = *static_cast<Collect*>(InUserData);
+        if(!C.W->GetEntity(InEntity).GetParent().IsSet())
+        {
+            C.Out->push_back(InEntity);
+        }
+    }, &Ctx);
+    return Roots;
 }
 
 // === Borrowed World ==========================================================

@@ -68,6 +68,14 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Graph/GraphEditorTab.h
         Source/Private/Editor/Graph/GraphEditorWindow.cpp
         Source/Private/Editor/Graph/GraphEditorWindow.h
+        Source/Private/Editor/Prefab/PrefabAssets.cpp
+        Source/Private/Editor/Prefab/PrefabAssets.h
+        Source/Private/Editor/Prefab/PrefabEditorTab.cpp
+        Source/Private/Editor/Prefab/PrefabEditorTab.h
+        Source/Private/Editor/Prefab/PrefabEditorWindow.cpp
+        Source/Private/Editor/Prefab/PrefabEditorWindow.h
+        Source/Private/Editor/Prefab/PrefabScriptPanel.cpp
+        Source/Private/Editor/Prefab/PrefabScriptPanel.h
         Source/Private/Editor/Graph/GraphItems.cpp
         Source/Private/Editor/Graph/GraphItems.h
         Source/Private/Editor/Graph/GraphScene.cpp

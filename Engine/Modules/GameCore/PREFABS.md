@@ -391,6 +391,40 @@ Graph Editor.
   mechanism Play-in-Editor uses).
 - **Native**: a native prefab opens read-only with a "Save As Asset" button.
 
+### As built (phase 7)
+
+- `Editor/Prefab/`: `PrefabEditorWindow` (one window, a tab per prefab, as
+  the Graph Editor), `PrefabEditorTab` (one prefab), `PrefabScriptPanel` (the
+  Script dock), `PrefabAssets` (open / create / close, paths, staging).
+- Opened by double-clicking a `.nmprefab` in the Content Browser, File > Open
+  Prefab, or the `prefab <path>` console command. Made by Content Browser
+  right-click > New Prefab..., File > New Prefab..., or `prefab new`: a name,
+  then a one-entity prefab ("Root", a Transform) in that folder.
+- A tab is an `EditorDocument` holding one instance of the prefab
+  (`LoadPrefab`); the Hierarchy is the Outliner on it, so drag to reparent and
+  its menus work as in the level. The document is SINGLE ROOT: anything
+  created goes under the root. Save (`SavePrefab`) refuses zero or several
+  roots, captures with `CapturePrefab(..., bInAdoptNew)` -- a new
+  `World::AdoptIntoInstance` makes an entity added in the editor a member with
+  the id it got, so ids stay stable across saves -- writes the text form,
+  stages it beside the exe and reloads it in the registry.
+- Toolbar: Save, Simulate / Stop, Tick Mode, Script (None / Lua / Graph) and
+  Choose... (an existing script). Lua or Graph makes `<Prefab>.lua` or
+  `<Prefab>.script.nmgraph` beside the prefab if missing.
+- **Changed from the plan:** a script graph is not embedded; the Script dock
+  links it to the Graph Editor ("Open in Graph Editor"), which already owns
+  graph saving, staging and close prompts. Lua is edited in the dock
+  (highlighted; no line numbers or error line yet) and saved with the prefab.
+- Simulate captures the prefab as on screen into a World of its own with its
+  own ScriptEngine, lent to the document (`BorrowWorld`) and ticked from
+  `EditorContext::BeforeFrame`; Stop drops it. Edits during a simulation reach
+  the simulation and are not recorded. Game-module script libraries are not
+  loaded, so a script calling one fails there (Play has them).
+- Native prefabs (read-only, "Save As Asset") wait for phase 5. `.nmprefab`
+  files are still not cooked for a Client build.
+- Known gap: undoing the delete of an entity that was saved brings it back as
+  a new member, so it gets a new id on the next save.
+
 ### Refactor this needs
 
 `ViewportWidget`, `DetailsPanel` and `OutlinerPanel` each take the one
@@ -473,7 +507,7 @@ Each phase lands on its own and keeps Sandbox playable.
 | 4 | Level format 2: instances, derived GUIDs, overrides -- **done** | `WorldPackage.cpp`, `WorldSerializer.cpp` | 2 |
 | 5 | Native prefabs + `PrefabBuilder` | new `NativePrefab.h/.cpp`, `GameModule.h` | 2, 3 |
 | 6 | `EditorDocument` split; second-World viewport spike -- **done** | `EditorContext`, panels, RenderCore, GDI | -- (can start in parallel) |
-| 7 | Prefab Editor window (hierarchy, details, viewport, script tab, simulate) | new `Editor/Prefab/*` | 3, 6 |
+| 7 | Prefab Editor window (hierarchy, details, viewport, script tab, simulate) -- **done** | new `Editor/Prefab/*` | 3, 6 |
 | 8 | Level editor: instances in Outliner, overrides in Details, place from Content Browser, convert | Outliner, Details, Viewport | 4, 7 |
 | 9 | Migrate Sandbox; remove entity scripts and Format 1 | Sandbox, `ScriptSystem.cpp`, `Entity.h` | 8 |
 
