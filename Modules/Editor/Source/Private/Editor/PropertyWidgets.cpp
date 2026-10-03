@@ -484,7 +484,7 @@ namespace
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
                     Edit->setCompleter(Completer);
-                    Edit->setToolTip(QStringLiteral("A material graph, by its path: Materials/Glow.material.nmgraph"));
+                    Edit->setToolTip(QStringLiteral("A material graph, by its path: Content/Materials/Glow.material.nmgraph"));
                 }
 
                 auto* Pick = new QToolButton(this);

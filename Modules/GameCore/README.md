@@ -699,10 +699,10 @@ A `.nmworld` is text or binary, told apart by its first bytes
 (`DetectWorldFileFormat`); `LoadWorldFile` reads either.
 
 ```
-Levels/Sandbox.nmworld               text: <World Format="1"> listing entity and instance GUIDs
-Levels/Sandbox/<guid>.nmentity       text: one loose entity -- name, parent, components
-Levels/Sandbox/<guid>.nmprefabinst   text: one prefab instance -- its prefab and what it changed
-Levels/Cooked/Sandbox.nmworld        binary: what a game ships (CookWorldFile)
+Content/Levels/Sandbox.nmworld               text: <World Format="1"> listing entity and instance GUIDs
+Content/Levels/Sandbox/<guid>.nmentity       text: one loose entity -- name, parent, components
+Content/Levels/Sandbox/<guid>.nmprefabinst   text: one prefab instance -- its prefab and what it changed
+Content/Levels/Cooked/Sandbox.nmworld        binary: what a game ships (CookWorldFile)
 ```
 
 **Prefab instances.** The manifest lists them beside the loose entities, as

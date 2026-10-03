@@ -527,8 +527,8 @@ undo. The Prefab Editor needs a second World with its own selection and undo:
   (`RefreshPrefabInstance` in WorldPackage.h): respawned from the new version
   keeping GUIDs, name, placement, overrides, parent and loose children.
 - Cooking: `cook <file.nmprefab>` and `cook prefabs` (every project prefab to
-  `Cooked/`). Sandbox stages `Prefabs/` beside the exe -- text for an Editor
-  target, `Cooked/Prefabs/` for Client and Server.
+  `Cooked/`). Sandbox stages `Content/Prefabs/` beside the exe -- text for an
+  Editor target, `Cooked/Content/Prefabs/` for Client and Server.
 
 ### As built (phase 9)
 
@@ -539,7 +539,7 @@ undo. The Prefab Editor needs a second World with its own selection and undo:
   entities moved to their replacements; one undo step.
 - Sandbox: `SandboxLevel::OnLoad` places the native prefabs Sandbox.Marker,
   Sandbox.Hazard and Sandbox.Camera; `Sandbox.SpawnPickup` places
-  Sandbox.Pickup; `Main.lua` places `Prefabs/Mover`, `ScoreBoard`, `Zone`
+  Sandbox.Pickup; `Main.lua` places `Content/Prefabs/Mover`, `ScoreBoard`, `Zone`
   and `InputDemo`. Nothing in Sandbox uses an entity script any more. The
   editor's New Sandbox Scene mirrors it with the same instances.
 - Entity scripts are removed (section 3's "Entity scripts go away"), with

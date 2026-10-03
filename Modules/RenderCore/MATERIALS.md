@@ -239,7 +239,7 @@ quad, and any mesh with a material per section, through
 `Renderer::RequestMeshPreview`: an orbiting perspective camera framing the
 mesh's bounds, a fixed studio light, the same stages as the viewport.
 
-`Games/Sandbox/Materials/Textured` samples `Content/Textures/Quadrants.nmtexture`
+`Games/Sandbox/Content/Materials/Textured` samples `Content/Textures/Quadrants.nmtexture`
 (red, green / blue, white) with its Linear filter overridden to Nearest; the GPU
 smoke check reads its four quarters and its centre.
 
