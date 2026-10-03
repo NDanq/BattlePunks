@@ -75,7 +75,7 @@ private:
     uint64_t                                        Epoch      = 0;
 
     static constexpr uint32_t kSRVCapacity  = 4096;
-    static constexpr uint32_t kRingCapacity = 1024 * 1024;
+    static constexpr uint32_t kRingCapacity = 4 * 1024 * 1024;   // shadow passes draw each caster once per view
     static constexpr uint32_t kCBAlignment  = 256;
 };
 

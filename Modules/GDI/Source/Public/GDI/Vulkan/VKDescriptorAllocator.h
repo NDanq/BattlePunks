@@ -27,9 +27,12 @@ struct VKUBOAllocation
  *      COMBINED_IMAGE_SAMPLER (up to 2 per set).
  *
  *   2. Per-frame UBO ring buffer
- *      A single host-coherent VkBuffer (kRingCapacity bytes) that is
- *      sub-allocated linearly with 256-byte alignment (conservative
- *      minUniformBufferOffsetAlignment).  Reset() rewinds the offset to 0.
+ *      Host-coherent VkBuffer chunks (kRingCapacity bytes each), sub-allocated
+ *      linearly with 256-byte alignment (conservative
+ *      minUniformBufferOffsetAlignment). A frame that fills a chunk moves on
+ *      to the next, made on first need and kept (up to kRingChunkMax), so a
+ *      busy frame -- shadow passes draw every caster once per view -- grows
+ *      the ring rather than dropping draws. Reset() rewinds to the first.
  *      Callers write UBO data into VKUBOAllocation::MappedPtr and then
  *      reference the buffer + offset in VkDescriptorBufferInfo.
  */
@@ -76,8 +79,15 @@ private:
     /** Append one new VkDescriptorPool to the ring. Returns false on failure. */
     bool GrowPool();
 
-    /** Allocate and persistently map the per-frame UBO ring buffer. */
-    bool CreateRingBuffer();
+    /** Allocate and persistently map one more UBO ring chunk. */
+    bool CreateRingChunk();
+
+    struct RingChunk
+    {
+        VkBuffer       Buffer = VK_NULL_HANDLE;
+        VkDeviceMemory Memory = VK_NULL_HANDLE;
+        void*          Mapped = nullptr;
+    };
 
     VKDevice*               Device      = nullptr;
 
@@ -86,14 +96,15 @@ private:
     int                     ActivePool  = 0;
 
     // --- Per-frame UBO ring buffer (host-coherent, persistently mapped) ---
-    VkBuffer                RingBuffer  = VK_NULL_HANDLE;
-    VkDeviceMemory          RingMemory  = VK_NULL_HANDLE;
-    void*                   RingMapped  = nullptr;
-    VkDeviceSize            RingOffset  = 0;
+    std::vector<RingChunk>  RingChunks;
+    size_t                  ActiveChunk = 0;
+    VkDeviceSize            RingOffset  = 0;   // within RingChunks[ActiveChunk]
     uint64_t                Epoch       = 0;
+    bool                    bWarnedFull = false;
 
     static constexpr uint32_t     kSetsPerPool  = 64;
-    static constexpr VkDeviceSize kRingCapacity = 256 * 1024; // 256 KB
+    static constexpr VkDeviceSize kRingCapacity = 1024 * 1024; // 1 MB a chunk
+    static constexpr size_t       kRingChunkMax = 64;          // 64 MB a frame, at most
     static constexpr VkDeviceSize kUBOAlignment = 256;        // conservative minUniformBufferOffsetAlignment
 };
 
