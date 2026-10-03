@@ -69,15 +69,17 @@ namespace RenderCore
         {
             PP_DofPrepare, PP_DofBlur, PP_DofComposite, PP_MotionBlur,
             PP_BloomDownsample, PP_BloomUpsample, PP_BloomComposite, PP_Fxaa,
+            PP_AmbientOcclusion, PP_AmbientBlur,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
             "PPBloomDownsample.fsh", "PPBloomUpsample.fsh", "PPBloomComposite.fsh", "PPFxaa.fsh",
+            "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
-         * ahead of them for motion blur. */
+         * ahead of them for motion blur and ambient occlusion. */
         struct PostBlock
         {
             float Matrix[16] = {};
@@ -540,8 +542,8 @@ namespace RenderCore
             }
             EnsureInitialised();
             Bind(Vertex, Pixel);
-            /* The motion blur block carries its matrix first; the others start at A. */
-            if(InPass == PP_MotionBlur)
+            /* These blocks carry their matrix first; the others start at A. */
+            if(InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion)
             {
                 GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, &InBlock, uint(sizeof(InBlock)));
             }
@@ -565,6 +567,13 @@ namespace RenderCore
          * process") into InTargets' post targets; returns where the result is
          * -- the scene colour if nothing ran. */
         GDIRenderTarget* RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, bool bInHasPrevious);
+
+        /* The post process stack's Ambient Occlusion, between the Base Pass
+         * and the Lighting stage (RENDERPIPELINE.md, "Ambient occlusion"):
+         * into a half-size target AmbientOcclusion names for IssueLighting,
+         * which stays null if InPost has none or this backend cannot. */
+        void IssueAmbientOcclusion(SceneTargets& InTargets, const PostProcessSettings& InPost);
+        GDITextureResource* AmbientOcclusion = nullptr;
 
         GDIShader* GetShadowDepthShader()
         {
@@ -1229,17 +1238,22 @@ namespace RenderCore
             }
             GDISetMaterialTexture(RENDER_GBUFFER_TARGETS, Depth->Resource);
 
-            /* The shadow atlases this frame drew, after the scene depth. */
+            /* The shadow atlases this frame drew, after the scene depth; then
+             * this frame's ambient occlusion, if it has any. */
             for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
             {
                 GDITexture2D* Map = Shadows.ViewCount > 0 && ShadowAtlas[Atlas] ? ShadowAtlas[Atlas]->ToDepthTexture2D() : nullptr;
                 GDISetMaterialTexture(RENDER_GBUFFER_TARGETS + 1 + Atlas, Map ? Map->Resource : nullptr);
             }
+            const uint32_t OcclusionSlot = RENDER_GBUFFER_TARGETS + 1 + SA_Count;
+            GDISetMaterialTexture(OcclusionSlot, AmbientOcclusion);
 
+            /* Lighting_Block: x, whether the occlusion texture is this frame's. */
+            float LightingBlock[MATERIAL_ENGINE_BLOCK_BYTES / sizeof(float)] = {};
+            LightingBlock[0] = AmbientOcclusion ? 1.0f : 0.0f;
             EnsureInitialised();
             Bind(Vertex, Pixel);
-            static const uint8_t NoMaterial[MATERIAL_ENGINE_BLOCK_BYTES] = {};
-            GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, NoMaterial, uint(sizeof(NoMaterial)));
+            GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, LightingBlock, uint(sizeof(LightingBlock)));
             GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
             GDISetDepthState(IDepthStateDesc());   // no depth test: there is no depth bound
             GDISetBlendState(IBlendStateDesc());
@@ -1247,7 +1261,7 @@ namespace RenderCore
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
 
             /* Unbound again: the depth is about to be an attachment. */
-            for(uint32_t Index = 0; Index <= RENDER_GBUFFER_TARGETS + SA_Count; ++Index)
+            for(uint32_t Index = 0; Index <= OcclusionSlot; ++Index)
             {
                 GDISetMaterialTexture(Index, nullptr);
             }
@@ -1289,6 +1303,60 @@ namespace RenderCore
             BoundPixel  = nullptr;
         }
     };
+
+    void RenderContext::Impl::IssueAmbientOcclusion(SceneTargets& InTargets, const PostProcessSettings& InPost)
+    {
+        AmbientOcclusion = nullptr;
+        if(!InPost.bAmbientOcclusion || InPost.AoIntensity <= 0.001f || InPost.AoRadius <= 0.0f)
+        {
+            return;
+        }
+        GDITexture2D* DepthTexture = InTargets.SceneColor ? InTargets.SceneColor->ToDepthTexture2D() : nullptr;
+        GDITexture2D* Normals      = InTargets.GBuffer[1] ? InTargets.GBuffer[1]->ToGDITexture2D() : nullptr;
+        if(!DepthTexture || !Normals)
+        {
+            if(Backend != ERenderBackend::Null)
+            {
+                WarnOnce("|ao-depth", "ambient occlusion: this backend cannot sample the scene depth; it is skipped");
+            }
+            return;
+        }
+        if(!InTargets.EnsureHalf())
+        {
+            return;
+        }
+        const uint Width  = InTargets.Width;
+        const uint Height = InTargets.Height;
+        const uint HalfW  = SceneTargets::HalfSize(Width, 1);
+        const uint HalfH  = SceneTargets::HalfSize(Height, 1);
+        const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
+        {
+            GDITexture2D* Each = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+            return Each ? Each->Resource : nullptr;
+        };
+
+        GDIBeginDrawEvent("AmbientOcclusion");
+        PostBlock Block;
+        PutMatrix(Block.Matrix, View.Projection * View.View);
+        Block.A[0] = InPost.AoIntensity;
+        Block.A[1] = InPost.AoRadius;
+        Block.A[2] = InPost.AoSamples;
+        Block.A[3] = InPost.AoPower;
+        Block.Sizes[0] = 1.0f / float(HalfW);
+        Block.Sizes[1] = 1.0f / float(HalfH);
+        Block.Sizes[2] = float(Width);
+        Block.Sizes[3] = float(Height);
+        if(DrawPost(PP_AmbientOcclusion, InTargets.Half[0], HalfW, HalfH, { DepthTexture->Resource, Normals->Resource }, Block))
+        {
+            AmbientOcclusion = Texture(InTargets.Half[0]);
+            if(InPost.bAoBlur
+               && DrawPost(PP_AmbientBlur, InTargets.Half[1], HalfW, HalfH, { AmbientOcclusion, DepthTexture->Resource }, Block))
+            {
+                AmbientOcclusion = Texture(InTargets.Half[1]);
+            }
+        }
+        GDIEndDrawEvent();
+    }
 
     GDIRenderTarget* RenderContext::Impl::RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, const bool bInHasPrevious)
     {
@@ -1881,6 +1949,7 @@ namespace RenderCore
          * the resolve into the scene colour. */
         if(bDeferred)
         {
+            P->IssueAmbientOcclusion(InTargets, P->PostSettings);
             P->IssueShadows();
         }
         else
@@ -1895,6 +1964,7 @@ namespace RenderCore
             {
                 P->StageDrawCounts[size_t(ERenderStage::Lighting)] = 1;
             }
+            P->AmbientOcclusion = nullptr;
             EndDrawEvent();
         }
 

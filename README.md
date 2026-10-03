@@ -56,7 +56,7 @@ left click takes it back.
 
 Two post process volumes (`Content/PostProcess`, RENDERPIPELINE.md's "Post
 process") cover the yard. `Global.pp.nmgraph` has no Bounds, so it applies
-everywhere: a soft bloom and FXAA. `Arch.pp.nmgraph` sits in a Bounds box round
+everywhere: ambient occlusion in the corners, a soft bloom and FXAA. `Arch.pp.nmgraph` sits in a Bounds box round
 the arch and blends in over 300 units as the camera nears it: depth of field
 past the arch, motion blur, and a warmer, stronger glow.
 

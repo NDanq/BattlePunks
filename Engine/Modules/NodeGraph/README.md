@@ -427,12 +427,14 @@ binaries folder so the module's dependencies resolve.
 A `*.pp.nmgraph` is a **post process stack**: the effects a Post Process volume
 applies, and their settings (RenderCore's `RENDERPIPELINE.md`, "Post process").
 
-- **Nodes:** each node is one effect, with properties and no pins. Depth of
-  Field, Motion Blur, Bloom and Antialiasing appear at most once each;
+- **Nodes:** each node is one effect, with properties and no pins. Ambient
+  Occlusion, Depth of Field, Motion Blur, Bloom and Antialiasing appear at most
+  once each;
   Material (a PostProcess material graph, run Before or After Effects, by Order)
   may appear any number of times.
 - **Order:** where a node sits on the canvas means nothing, because the
-  renderer runs the effects in a fixed order. A stack without a node leaves
+  renderer runs the effects in a fixed order. Ambient Occlusion runs before the
+  lighting, not in the post chain, so it darkens only ambient light. A stack without a node leaves
   that effect alone, so a smaller volume can add Depth of Field without
   touching the glow a wider one sets.
 - **Checks:** numbers are typed as text and checked against each setting's
