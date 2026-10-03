@@ -1,4 +1,4 @@
-#include "BrickBreaker.h"
+#include "Public/Sandbox/BrickBreaker.h"
 
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
@@ -14,7 +14,7 @@
 #include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/RenderComponents.h"
-#include "SandboxScripting.h"
+#include "Public/Sandbox/SandboxScripting.h"
 
 #include <algorithm>
 #include <cstdio>

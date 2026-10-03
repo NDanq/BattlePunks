@@ -77,21 +77,37 @@ if(NOT TARGET NimbleEngine)
         "nimble_add_module(NimbleEngine ...) call that creates it.")
 endif()
 
+# === Sources ===============================================================
+# Source/, laid out like an engine module: Public/Sandbox/ for the headers,
+# Private/Sandbox/ for the .cpp files, included Source-relative
+# ("Public/Sandbox/SandboxScripting.h"). nimble_add_hot_module adds Source/ to
+# the include path.
+set(SANDBOX_GAME_SOURCES
+        Source/Private/Sandbox/SandboxGame.cpp
+        Source/Private/Sandbox/SandboxScripting.cpp
+        Source/Private/Sandbox/SandboxInput.cpp
+        Source/Private/Sandbox/BrickBreaker.cpp
+        Source/Public/Sandbox/SandboxScripting.h
+        Source/Public/Sandbox/BrickBreaker.h
+)
+set(SANDBOX_LAUNCHER_SOURCES
+        Source/Private/Sandbox/SandboxMain.cpp
+)
+
 # === The game module =======================================================
 # SandboxGame.cpp as a module DLL, loaded by name (NimbleEngine/GameModule.h)
 # by the launcher and the editor's Play-in-Editor, never linked. A game module
 # is a Core module, hence nimble_add_hot_module(); its .dll is a LIBRARY
 # artifact, so it lands via LIBRARY_OUTPUT_DIRECTORY.
 nimble_add_hot_module(SandboxGame
-        SOURCES      SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp
-                     BrickBreaker.cpp BrickBreaker.h
+        SOURCES      ${SANDBOX_GAME_SOURCES}
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(SandboxGame PROPERTIES FOLDER "Games")
 
 # === The launcher ==========================================================
 # Thin executable (Application::ExecGame). add_dependencies only ensures the
 # game module is built; it is not linked.
-add_executable(Sandbox SandboxMain.cpp)
+add_executable(Sandbox ${SANDBOX_LAUNCHER_SOURCES})
 add_dependencies(Sandbox SandboxGame)
 
 # The editor loads this game at Play, so building the editor builds it too.
@@ -436,5 +452,4 @@ if(SANDBOX_STANDALONE)
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT Sandbox)
 endif()
 
-source_group("Sandbox" FILES SandboxMain.cpp SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp
-                             BrickBreaker.cpp BrickBreaker.h)
+source_group("Sandbox" FILES ${SANDBOX_GAME_SOURCES} ${SANDBOX_LAUNCHER_SOURCES})
