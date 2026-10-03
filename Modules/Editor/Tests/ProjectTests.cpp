@@ -71,7 +71,7 @@ static void TestCreate(const QDir& InRoot)
     Expect(Project.dirName() == QStringLiteral("Asteroids"), "in <parent>/<Name>");
 
     for(const char* Expected : { "CMakeLists.txt", "CMakePresets.json", ".gitignore", "README.md",
-                                 "AsteroidsGame.cpp", "AsteroidsMain.cpp", "Config/DefaultEngine.ini", "Scripts/Main.lua", "Docs/GettingStarted.md",
+                                 "AsteroidsGame.cpp", "Config/DefaultEngine.ini", "Scripts/Main.lua", "Docs/GettingStarted.md",
                                  "Content/Materials/.gitkeep", "Content/Prefabs/.gitkeep", "Content/Levels/.gitkeep" })
     {
         const bool bThere = QFileInfo(Project.filePath(QString::fromLatin1(Expected))).isFile();

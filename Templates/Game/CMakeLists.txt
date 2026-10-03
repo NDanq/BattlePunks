@@ -16,7 +16,7 @@ project(@PROJECT_NAME@ VERSION 0.1 LANGUAGES CXX)
 # the engine is never edited to add one.
 #
 #   @PROJECT_NAME@Game   the game module (@PROJECT_NAME@Game.cpp): level, mode, state
-#   @PROJECT_NAME@       the launcher (@PROJECT_NAME@Main.cpp)
+#   @PROJECT_NAME@       the launcher: the engine's, built under this name
 #   NimbleEditor         the editor, editing this project (Editor targets)
 #
 # Everything runs from Binaries/<Platform>_<Config>[_<Target>] below this
@@ -63,10 +63,12 @@ nimble_add_hot_module(${GAME_MODULE}
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 
 # === The launcher ===========================================================
-add_executable(${GAME_NAME} @PROJECT_NAME@Main.cpp)
-add_dependencies(${GAME_NAME} ${GAME_MODULE})
-set_target_properties(${GAME_NAME} PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
-target_link_libraries(${GAME_NAME} PRIVATE NimbleEngine::NimbleEngine)
+# The engine's own (Engine/Source/Launcher/GameLauncherMain.cpp), built as
+# ${GAME_NAME}: it runs [Game] Module, ${GAME_MODULE} if unset. It also puts the
+# executable and the module beside the engine libraries, with the debugger
+# starting there. A game that needs its own main() passes SOURCES <file>
+# (Engine/cmake/NimbleModule.cmake).
+nimble_add_game_launcher(${GAME_NAME} MODULE ${GAME_MODULE})
 
 # The editor loads this game at Play, and edits this project's master config.
 if(TARGET NimbleEditor)
@@ -76,25 +78,10 @@ if(TARGET NimbleEditor)
 endif()
 
 # === Runtime layout =========================================================
-# The launcher and the module beside the engine libraries, which is where the
-# engine target already puts its own (see Games/Sandbox/CMakeLists.txt).
+# Where the launcher put the executable, beside the engine libraries; the
+# staging below copies Config/, Scripts/ and Content/ there.
 get_property(GAME_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-
 get_target_property(GAME_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
-if(GAME_RT_DIR)
-    set_target_properties(${GAME_NAME}   PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${GAME_RT_DIR}")
-    set_target_properties(${GAME_MODULE} PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${GAME_RT_DIR}")
-endif()
-if(GAME_MULTI_CONFIG)
-    foreach(GAME_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
-        string(TOUPPER "${GAME_CFG}" GAME_CFG_U)
-        get_target_property(GAME_RT_CFG NimbleEngine RUNTIME_OUTPUT_DIRECTORY_${GAME_CFG_U})
-        if(GAME_RT_CFG)
-            set_target_properties(${GAME_NAME}   PROPERTIES RUNTIME_OUTPUT_DIRECTORY_${GAME_CFG_U} "${GAME_RT_CFG}")
-            set_target_properties(${GAME_MODULE} PROPERTIES LIBRARY_OUTPUT_DIRECTORY_${GAME_CFG_U} "${GAME_RT_CFG}")
-        endif()
-    endforeach()
-endif()
 
 # === Staging ================================================================
 # game_stage(<Name> <root> <files...>): each file copied beside the executable
@@ -191,8 +178,4 @@ endif()
 # Content/Levels/ holds the editor's worlds (.nmworld); nothing stages them.
 
 # === IDE ====================================================================
-# Run from Binaries, so an IDE run finds Config/ like a shell run does.
-set_target_properties(${GAME_NAME} PROPERTIES
-        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:${GAME_NAME}>"
-        FOLDER "Games")
 set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ${GAME_NAME})
