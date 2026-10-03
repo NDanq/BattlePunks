@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Prefab Format="1" Name="Brick" NextId="2">
+  <Script Path="Scripts/Brick.script.nmgraph" />
+  <Tick Mode="Tick" />
+  <Entity Id="1" Name="Brick">
+    <Component Type="Bounds" Version="1">
+      <Local MinX="-0.5" MinY="-0.5" MinZ="-1" MaxX="0.5" MaxY="0.5" MaxZ="1" />
+      <Static Value="false" />
+    </Component>
+    <Component Type="Collision" Version="1">
+      <Enabled Value="true" />
+      <Source Value="0" />
+      <Layer Value="64" />
+      <Mask Value="32" />
+    </Component>
+    <Component Type="Render" Version="1">
+      <Visible Value="true" />
+      <Material0 Value="" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+</Prefab>

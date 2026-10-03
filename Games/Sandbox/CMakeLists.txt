@@ -84,6 +84,7 @@ endif()
 # artifact, so it lands via LIBRARY_OUTPUT_DIRECTORY.
 nimble_add_hot_module(SandboxGame
         SOURCES      SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp
+                     BrickBreaker.cpp BrickBreaker.h
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(SandboxGame PROPERTIES FOLDER "Games")
 
@@ -251,6 +252,8 @@ set(SANDBOX_SCRIPT_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/InputDemo.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/JumpCounter.script.nmgraph"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Zone.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Ball.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Brick.script.nmgraph"
 )
 
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
@@ -433,4 +436,5 @@ if(SANDBOX_STANDALONE)
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT Sandbox)
 endif()
 
-source_group("Sandbox" FILES SandboxMain.cpp SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp)
+source_group("Sandbox" FILES SandboxMain.cpp SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp
+                             BrickBreaker.cpp BrickBreaker.h)

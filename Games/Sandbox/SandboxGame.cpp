@@ -16,6 +16,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
+#include "BrickBreaker.h"
 #include "SandboxScripting.h"
 
 #include <algorithm>
@@ -43,7 +44,8 @@
  *                     owns the mode and state.
  *   SandboxGameMode   moves Marker, reports, decides when to quit.
  *   SandboxGameState  elapsed time and tick counts.
- *   SandboxGameModule owns and registers the level.
+ *   SandboxGameModule owns and registers the level, and BrickBreaker's
+ *                     (BrickBreaker.cpp), the start level.
  */
 
 /* A game-owned config var, in the same registry and .ini as the engine's.
@@ -569,16 +571,19 @@ public:
     {
         /* Saves and [Game] StartLevel resolve levels by name. */
         NimbleEngine::RegisterLevel(Level);
+        NimbleEngine::RegisterLevel(BrickBreaker::GetLevel());
         return true;
     }
 
     void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override
     {
         /* The registry holds a bare pointer, and this image is about to go. */
+        NimbleEngine::UnregisterLevel(BrickBreaker::GetLevel());
         NimbleEngine::UnregisterLevel(Level);
     }
 
-    NimbleEngine::ILevel* GetStartLevel() override { return &Level; }
+    /* BrickBreaker (BrickBreaker.cpp); [Game] StartLevel=Sandbox for the demo below. */
+    NimbleEngine::ILevel* GetStartLevel() override { return &BrickBreaker::GetLevel(); }
 
 private:
     SandboxLevel Level;
