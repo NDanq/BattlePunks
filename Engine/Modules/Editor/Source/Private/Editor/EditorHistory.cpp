@@ -10,6 +10,7 @@
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/Editor/EditorDocument.h"
 
@@ -35,8 +36,9 @@ namespace
     {
     public:
         /* Saving appends to InOutBytes; loading reads it from the start. */
-        SnapshotArchive(World& InWorld, std::vector<uint8_t>& InOutBytes, const bool bInLoading, const uint16_t InVersion)
-            : W(InWorld), Bytes(InOutBytes), bLoading(bInLoading), Version(InVersion) {}
+        SnapshotArchive(World& InWorld, std::vector<uint8_t>& InOutBytes, const bool bInLoading, const uint16_t InVersion,
+                        const EditorHistory::GuidRemap* InRemap = nullptr)
+            : W(InWorld), Bytes(InOutBytes), bLoading(bInLoading), Version(InVersion), Remap(InRemap) {}
 
         bool     IsLoading() const override  { return bLoading; }
         uint16_t GetVersion() const override { return Version; }
@@ -79,7 +81,10 @@ namespace
             Raw(&Guid.Lo, sizeof(Guid.Lo));
             if(bLoading)
             {
-                InOut = Guid.IsSet() ? W.FindEntityByGuid(Guid) : GameCore::InvalidEntityID();
+                const auto Mapped = Remap ? Remap->find(Guid) : EditorHistory::GuidRemap::const_iterator();
+                InOut = !Guid.IsSet()                       ? GameCore::InvalidEntityID()
+                      : (Remap && Mapped != Remap->end())   ? Mapped->second
+                                                            : W.FindEntityByGuid(Guid);
             }
         }
 
@@ -108,6 +113,7 @@ namespace
         size_t                Cursor = 0;
         bool                  bLoading;
         uint16_t              Version;
+        const EditorHistory::GuidRemap* Remap = nullptr;
     };
 
     /* A default-constructed instance of InType -- never zeroes. */
@@ -274,17 +280,44 @@ namespace EditorHistory
         return true;
     }
 
+    bool LoadComponent(World& InWorld, const EntityID InEntity, const ComponentSnapshot& InSnapshot, const GuidRemap* InRemap)
+    {
+        if(!InWorld.IsAlive(InEntity))
+        {
+            return false;
+        }
+        const GameCore::Entity E = InWorld.GetEntity(InEntity);
+        void* Component = E.GetComponentByType(InSnapshot.Type);
+        if(!Component)
+        {
+            std::vector<uint8_t> Defaults;
+            if(!DefaultsFor(InSnapshot.Type, Defaults)) { return false; }
+            Component = E.AddComponentByType(InSnapshot.Type, Defaults.data());
+            if(!Component) { return false; }
+        }
+        if(InSnapshot.bSerialized)
+        {
+            const GameCore::ComponentSerializerInfo* Serializer = GameCore::FindComponentSerializer(InSnapshot.Type);
+            if(!Serializer) { return false; }
+            std::vector<uint8_t> Data = InSnapshot.Data;
+            SnapshotArchive Ar(InWorld, Data, true, Serializer->Version, InRemap);
+            Serializer->Fn(Ar, Component);
+            return true;
+        }
+        return ApplyProperties(InWorld, InEntity, InSnapshot.Type, InSnapshot.Data);
+    }
+
     EntityMembers CaptureMembers(World& InWorld, const EntityID InEntity)
     {
         EntityMembers Members;
         const GameCore::Entity E = InWorld.GetEntity(InEntity);
-        Members.Name       = E.GetName();
-        Members.ScriptPath = E.GetScriptPath();
-        if(const GameCore::EntityScriptState* Script = E.GetScriptState())
-        {
-            Members.bCullOutsideActiveRegion = Script->bCullOutsideActiveRegion;
-        }
+        Members.Name = E.GetName();
         return Members;
+    }
+
+    namespace
+    {
+        void CaptureInstance(World& InWorld, const EntityID InEntity, EntitySnapshot& OutSnapshot);
     }
 
     EntitySnapshot CaptureEntity(World& InWorld, const EntityID InEntity)
@@ -299,12 +332,11 @@ namespace EditorHistory
         Snapshot.Guid                     = E.GetGuid();
         Snapshot.ParentGuid               = InWorld.GetEntity(E.GetParent()).GetGuid();
         Snapshot.Name                     = Members.Name;
-        Snapshot.ScriptPath               = Members.ScriptPath;
-        Snapshot.bCullOutsideActiveRegion = Members.bCullOutsideActiveRegion;
         for(const ComponentTypeID Type : ComponentTypesOf(InWorld, InEntity))
         {
             Snapshot.Components.push_back(CaptureComponent(InWorld, InEntity, Type));
         }
+        CaptureInstance(InWorld, InEntity, Snapshot);
         for(EntityID Child = E.GetFirstChild(); Child.IsSet(); Child = InWorld.GetEntity(Child).GetNextSibling())
         {
             Snapshot.Children.push_back(CaptureEntity(InWorld, Child));
@@ -312,20 +344,131 @@ namespace EditorHistory
         return Snapshot;
     }
 
+    /* What RestorePrefabInstance needs to make an instance again. */
+    struct InstanceSnapshot
+    {
+        GameCore::PrefabAsset     Prefab;          // what it was spawned from; a shared copy
+        bool                      bHasPrefab = false;
+        std::string               PrefabPath;
+        std::string               Name;
+        std::string               ScriptPath;
+        GameCore::EPrefabTickMode TickMode     = GameCore::EPrefabTickMode::Tick;
+        uint8_t                   PhaseEnabled = 0xFF;
+    };
+
+    namespace
+    {
+        void CaptureInstance(World& InWorld, const EntityID InEntity, EntitySnapshot& OutSnapshot)
+        {
+            const GameCore::Entity E = InWorld.GetEntity(InEntity);
+            if(!E.IsInInstance())
+            {
+                return;
+            }
+            const GameCore::PrefabInstance Instance = InWorld.GetInstance(E.GetInstance());
+            OutSnapshot.InstanceGuid = Instance.GetGuid();
+            OutSnapshot.LocalId      = E.GetPrefabLocalId();
+            if(Instance.GetRoot().GetID() != InEntity)
+            {
+                return;
+            }
+
+            auto Record = std::make_shared<InstanceSnapshot>();
+            if(const GameCore::PrefabAsset* Prefab = Instance.GetPrefab())
+            {
+                Record->Prefab     = *Prefab;
+                Record->bHasPrefab = true;
+            }
+            Record->PrefabPath = Instance.GetPrefabPath();
+            Record->Name       = Instance.GetName();
+            Record->ScriptPath = InWorld.GetInstanceScriptPath(Instance.GetID()) ? InWorld.GetInstanceScriptPath(Instance.GetID()) : "";
+            Record->TickMode   = Instance.GetTickMode();
+            Record->PhaseEnabled = 0;
+            for(int Phase = 0; Phase < GameCore::TP_MAX; ++Phase)
+            {
+                if(Instance.IsPhaseEnabled(GameCore::ETickPhase(Phase))) { Record->PhaseEnabled |= uint8_t(1u << Phase); }
+            }
+            OutSnapshot.Instance = std::move(Record);
+        }
+
+        /* InSnapshot's subtree's members of InInstanceGuid, in tree order. */
+        void CollectMembers(World& InWorld, const EntitySnapshot& InSnapshot, const EntityGuid& InInstanceGuid,
+                            std::vector<EntityID>& OutEntities, std::vector<uint32_t>& OutLocalIds)
+        {
+            if(InSnapshot.InstanceGuid == InInstanceGuid && InSnapshot.LocalId != GameCore::PREFAB_NO_LOCAL_ID)
+            {
+                const EntityID Entity = InWorld.FindEntityByGuid(InSnapshot.Guid);
+                if(Entity.IsSet())
+                {
+                    OutEntities.push_back(Entity);
+                    OutLocalIds.push_back(InSnapshot.LocalId);
+                }
+            }
+            for(const EntitySnapshot& Child : InSnapshot.Children)
+            {
+                CollectMembers(InWorld, Child, InInstanceGuid, OutEntities, OutLocalIds);
+            }
+        }
+
+        /* After the entities are back: their instances, then members of
+         * instances that outlived them. */
+        void RestoreInstances(World& InWorld, const EntitySnapshot& InSnapshot)
+        {
+            const EntityID Entity = InWorld.FindEntityByGuid(InSnapshot.Guid);
+            if(Entity.IsSet() && !InWorld.GetEntity(Entity).IsInInstance())
+            {
+                if(const InstanceSnapshot* Record = InSnapshot.Instance.get())
+                {
+                    std::vector<EntityID> Entities;
+                    std::vector<uint32_t> LocalIds;
+                    CollectMembers(InWorld, InSnapshot, InSnapshot.InstanceGuid, Entities, LocalIds);
+
+                    GameCore::PrefabInstanceRecord Restore;
+                    Restore.Prefab       = Record->bHasPrefab ? &Record->Prefab : nullptr;
+                    Restore.PrefabPath   = Record->PrefabPath.c_str();
+                    Restore.Guid         = InSnapshot.InstanceGuid;
+                    Restore.Name         = Record->Name.c_str();
+                    Restore.ScriptPath   = Record->ScriptPath.c_str();
+                    Restore.TickMode     = Record->TickMode;
+                    Restore.PhaseEnabled = Record->PhaseEnabled;
+                    Restore.Entities     = Entities.data();
+                    Restore.LocalIds     = LocalIds.data();
+                    Restore.Count        = Entities.size();
+                    InWorld.RestorePrefabInstance(Restore);
+                }
+                else if(InSnapshot.InstanceGuid.IsSet())
+                {
+                    const GameCore::PrefabInstanceID Instance = InWorld.FindInstanceByGuid(InSnapshot.InstanceGuid);
+                    if(Instance.IsSet())
+                    {
+                        InWorld.AdoptIntoInstance(Instance, Entity, InSnapshot.LocalId);
+                    }
+                }
+            }
+            for(const EntitySnapshot& Child : InSnapshot.Children)
+            {
+                RestoreInstances(InWorld, Child);
+            }
+        }
+
+        EntityID RestoreEntityTree(World& InWorld, const EntitySnapshot& InSnapshot);
+    }
+
     EntityID RestoreEntity(World& InWorld, const EntitySnapshot& InSnapshot)
+    {
+        const EntityID Restored = RestoreEntityTree(InWorld, InSnapshot);
+        RestoreInstances(InWorld, InSnapshot);
+        return Restored;
+    }
+
+    namespace
+    {
+    EntityID RestoreEntityTree(World& InWorld, const EntitySnapshot& InSnapshot)
     {
         const GameCore::Entity E = InWorld.CreateEntity(InSnapshot.Name.c_str(), InSnapshot.Guid);
         for(const ComponentSnapshot& Component : InSnapshot.Components)
         {
             RestoreComponent(InWorld, E.GetID(), Component);
-        }
-        if(!InSnapshot.ScriptPath.empty())
-        {
-            E.SetScript(InSnapshot.ScriptPath.c_str());
-            if(GameCore::EntityScriptState* Script = E.GetScriptState())
-            {
-                Script->bCullOutsideActiveRegion = InSnapshot.bCullOutsideActiveRegion;
-            }
         }
         /* The Transform was captured local to this parent: keep it as is. */
         if(InSnapshot.ParentGuid.IsSet())
@@ -335,10 +478,11 @@ namespace EditorHistory
         }
         for(const EntitySnapshot& Child : InSnapshot.Children)
         {
-            RestoreEntity(InWorld, Child);
+            RestoreEntityTree(InWorld, Child);
         }
         InWorld.RefreshEntityBounds(E.GetID());
         return E.GetID();
+    }
     }
 
     // === Command =============================================================
@@ -438,8 +582,6 @@ namespace EditorHistory
         }
         const EntityMembers& Target = bInForward ? After : Before;
         Document.RenameEntity(Entity, QString::fromStdString(Target.Name));
-        Document.SetEntityScript(Entity, QString::fromStdString(Target.ScriptPath));
-        Document.SetEntityScriptCull(Entity, Target.bCullOutsideActiveRegion != 0);
         Document.SetSelection(Entity);
     }
 

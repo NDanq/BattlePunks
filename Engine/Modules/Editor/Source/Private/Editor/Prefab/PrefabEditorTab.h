@@ -45,16 +45,25 @@ public:
     /* False, with the reason logged, if InPath is not a readable prefab. */
     bool Load(const QString& InPath);
 
-    /* Absolute. */
+    /* Absolute; "native:<Name>" for a native prefab. */
     const QString& GetPath() const { return Path; }
+
+    /* A native prefab (NativePrefab.h): its layout is code's. It can be
+     * looked at and simulated; Save forks it into an asset (SaveAsAsset). */
+    bool IsNative() const { return bNative; }
 
     /* "Door.nmprefab*". */
     QString GetTabTitle() const;
 
     bool IsDirty() const;
 
-    /* The prefab, then its Lua script; both staged. A message box on failure. */
+    /* The prefab, then its Lua script; both staged. A message box on failure.
+     * A native prefab saves as an asset instead. */
     bool Save();
+
+    /* Asks where, writes the layout on screen as an ordinary .nmprefab that
+     * keeps the native callbacks by name, and opens it. */
+    bool SaveAsAsset();
 
     /* Stops a simulation and offers to save. False if the user cancelled. */
     bool ConfirmClose();
@@ -95,6 +104,7 @@ private:
     /* Name, script and tick mode, and the entities as last loaded or saved. */
     GameCore::PrefabAsset Asset;
     bool bSettingsDirty = false;   // name, script or tick mode changed since saving
+    bool bNative        = false;
     bool bSyncing       = false;   // inside SyncSettingsControls
 
     ViewportPanel*     ViewportArea = nullptr;

@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <utility>
 #include <vector>
 
 #include <QObject>
@@ -15,6 +16,7 @@
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/EntityID.h"
+#include "Public/GameCore/TransformMath.h"
 
 namespace GameCore { class World; class Entity; class PrefabAsset; }
 
@@ -102,7 +104,8 @@ public:
     // A prefab document's World holds one instance of the prefab; saving
     // captures it back (CapturePrefab), keeping every template's local id.
 
-    /* The prefab at InPath (either format), spawned into a fresh World; its
+    /* The prefab at InPath (either format, or "native:<Name>" through the
+     * registry), spawned into a fresh World; its
      * name, script and tick mode in OutAsset. False, with the reason logged,
      * if it cannot be read -- the World is then left as it was. */
     bool LoadPrefab(const QString& InPath, GameCore::PrefabAsset& OutAsset);
@@ -130,12 +133,41 @@ public:
                                     const std::function<void(const GameCore::Entity&)>& InSetup = nullptr);
     void               DestroyEntity(GameCore::EntityID InEntity);
 
-    /* Entity::SetName / SetScript. On the edited World a script is only stored. */
-    void RenameEntity(GameCore::EntityID InEntity, const QString& InName);
-    void SetEntityScript(GameCore::EntityID InEntity, const QString& InPath);
+    /* An instance of the prefab at InRuntimePath ("Prefabs/Door.nmprefab",
+     * loaded through the registry, so staged beside the exe), its root at
+     * InPosition; one undo step. Returns the root; unset if it cannot be
+     * loaded. Refused in a single-root document: prefabs do not nest. */
+    GameCore::EntityID PlacePrefab(const QString& InRuntimePath, const EngineCore::Vector3& InPosition);
 
-    /* The script's bCullOutsideActiveRegion; nothing without a script. */
-    void SetEntityScriptCull(GameCore::EntityID InEntity, bool bInCull);
+    /* InEntity and its subtree replaced by an instance of the prefab at
+     * InRuntimePath, its root where InEntity stood (Convert to Prefab, once
+     * the prefab is written): one undo step. Returns the new root; unset,
+     * leaving InEntity alone, if the prefab cannot be loaded. */
+    GameCore::EntityID ReplaceWithPrefab(GameCore::EntityID InEntity, const QString& InRuntimePath);
+
+    /* After the prefab at InRuntimePath was saved (and reloaded): every
+     * instance of it in the edited World spawned again from the new version,
+     * overrides kept (GameCore::RefreshPrefabInstance). Not recorded -- the
+     * prefab changed, not this scene -- and nothing while a World is
+     * borrowed. Returns how many were refreshed. */
+    int RefreshPrefabInstances(const QString& InRuntimePath);
+
+    /*
+     * Migration (PREFABS.md section 6): each tree -- a top-level entity and
+     * its subtree -- replaced by an instance of the prefab beside it (already
+     * written; its layout must have the tree's shape), keeping the tree's own
+     * values as overrides: components and names. References between converted
+     * entities are moved to their replacements. One undo step. Returns how
+     * many were converted.
+     */
+    int ConvertTreesToPrefabs(const std::vector<std::pair<GameCore::EntityID, QString>>& InTrees);
+
+    /* Top-level entities with no prefab instance in or above them: what a
+     * migration converts. */
+    std::vector<GameCore::EntityID> GetLooseRoots() const;
+
+    /* Entity::SetName. */
+    void RenameEntity(GameCore::EntityID InEntity, const QString& InName);
 
     /* Entity::SetParent, keeping the entity where it is in the world. An
      * unset InParent detaches. False if refused (a cycle) or unchanged. */
@@ -239,6 +271,9 @@ private:
 
     /* Pushes an already-applied command. Takes ownership. */
     void Record(QUndoCommand* InCommand);
+
+    /* PlacePrefab's spawn and record, at a full pose. */
+    GameCore::EntityID SpawnPrefabRecorded(const QString& InRuntimePath, const GameCore::TransformPose& InAt);
 
     /* Records a name / script / cull change from InBefore, if recording. */
     void RecordMembersChange(GameCore::EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText);

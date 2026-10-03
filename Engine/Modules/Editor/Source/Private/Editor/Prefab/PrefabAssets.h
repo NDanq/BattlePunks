@@ -4,8 +4,12 @@
 #if WITH_EDITOR
 
 #include <QString>
+#include <QStringList>
+
+#include "Public/GameCore/EntityID.h"
 
 class EditorContext;
+class EditorDocument;
 class PrefabEditorTab;
 class QWidget;
 
@@ -46,6 +50,39 @@ namespace EditorPrefabs
     /* Offers to save each unsaved prefab, stopping any simulation. False if
      * cancelled. */
     bool CloseAllPrefabs();
+
+    /* Asks where, writes InEntity's subtree there as a prefab, and replaces
+     * it in InDocument with an
+     * instance (EditorDocument::ReplaceWithPrefab). Refuses an entity in, or
+     * holding, an instance: prefabs do not nest. A message box says why. */
+    bool ConvertToPrefab(EditorDocument& InDocument, GameCore::EntityID InEntity, QWidget* InParent);
+
+    /* Migration (PREFABS.md section 6): every loose entity tree in
+     * InDocument -- one with no prefab instance in it -- into a prefab
+     * instance. One prefab per distinct tree (each entity's component types,
+     * in tree order) is written to GetDefaultFolder(), named for
+     * the first such tree; each tree keeps its own values as overrides. Asks
+     * first. Returns how many trees were converted. */
+    int ConvertLevelToPrefabs(EditorDocument& InDocument, QWidget* InParent);
+
+    /* Why InEntity cannot be converted; empty if it can. */
+    QString WhyNotConvertible(EditorDocument& InDocument, GameCore::EntityID InEntity);
+
+    // --- Native prefabs (GameCore/NativePrefab.h) --------------------------------
+    // They exist only while the game module is loaded, which in the editor is
+    // briefly (EditorGraphs::RefreshGameDeclarations). Their layouts are built
+    // into the prefab registry then, so a level holding "native:" instances
+    // loads, and they can be placed and opened, after the module unloads.
+
+    /* While the game module is loaded: every native prefab, built and cached. */
+    void CacheNativePrefabs();
+
+    /* Their names ("Sandbox.Marker") as last cached. */
+    QStringList GetNativePrefabs();
+
+    /* "native:<Name>" for InName. */
+    QString NativePrefabPath(const QString& InName);
+    bool    IsNativePrefabPath(const QString& InPath);
 }
 
 #endif // WITH_EDITOR

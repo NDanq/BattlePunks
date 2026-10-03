@@ -3,6 +3,7 @@
 #include "Public/Editor/EditorDocument.h"
 
 #include <cstring>
+#include <functional>
 #include <string>
 
 #include <QTimer>
@@ -95,46 +96,30 @@ void EditorDocument::CreateSandboxScene()
     const FlagScope Building(bSuspendRecording);   // the scene is the starting point, not an edit
 
     /*
-     * Sandbox's level as loaded, before its first tick. A hand-kept MIRROR of:
+     * Sandbox's level as loaded, before its first tick: prefab instances. A
+     * hand-kept MIRROR of:
      *
      *   Games/Sandbox/SandboxGame.cpp   SandboxLevel::OnLoad -- Marker, Camera
      *   Games/Sandbox/Scripts/Main.lua  the startup script   -- Scripted
      *
-     * Keep it in step. Behaviour (systems, the mode, scripts, the logger) is
-     * not mirrored.
+     * Keep it in step. The native prefabs come from the game module, cached
+     * when the editor last loaded it; Prefabs/Mover.nmprefab is staged beside
+     * the exe. Behaviour (systems, the mode, scripts) is not mirrored.
      */
-
-    // --- Marker (SandboxLevel::OnLoad) ---------------------------------------
-    const EntityID MarkerID = CreateEntity(QStringLiteral("Marker"), EngineCore::Vector3(0.0, 360.0, 0.0));
+    const auto Place = [this](const char* InPath, const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InScale)
     {
-        const GameCore::Entity Marker = EditedWorld->GetEntity(MarkerID);
-        Marker.GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(32.0, 32.0, 1.0);
-
-        Marker.AddComponent<RenderCore::RenderComponent>();
-
-        /* The unit quad's extent, as Sandbox does. */
-        GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));
-        Marker.AddComponent(Bounds);
-    }
-
-    // --- Camera (SandboxLevel::OnLoad) ---------------------------------------
-    /* The camera the game renders through (the editor uses its own). */
-    const EntityID CameraID = CreateEntity(QStringLiteral("Camera"), EngineCore::Vector3(0.0, 0.0, 0.0));
-    EditedWorld->GetEntity(CameraID).AddComponent<RenderCore::CameraComponent>();
-
-    // --- Scripted (Scripts/Main.lua) ------------------------------------------
-    /* Only the script path: the editor runs no Lua. */
-    const EntityID ScriptedID = CreateEntity(QStringLiteral("Scripted"), EngineCore::Vector3(0.0, 0.0, 0.0));
-    {
-        const GameCore::Entity Scripted = EditedWorld->GetEntity(ScriptedID);
-
-        GameCore::BoundsComponent Bounds;
-        Bounds.Local = GameCore::AABB(EngineCore::Vector3(-0.5, -0.5, -0.5), EngineCore::Vector3(0.5, 0.5, 0.5));
-        Scripted.AddComponent(Bounds);
-
-        Scripted.SetScript("Scripts/Mover.lua");   // Main.lua's scripted:SetScript(...)
-    }
+        GameCore::TransformPose At;
+        At.Position = InPosition;
+        At.Scale    = InScale;
+        if(!EditedWorld->SpawnPrefab(InPath, At).IsValid())
+        {
+            CORE_LOG_WARN(std::string("[Editor] New Sandbox Scene: '") + InPath + "' is not available -- build the game module")
+        }
+    };
+    const EngineCore::Vector3 One(1.0, 1.0, 1.0);
+    Place("native:Sandbox.Marker", EngineCore::Vector3(0.0, 360.0, 0.0), EngineCore::Vector3(32.0, 32.0, 1.0));
+    Place("native:Sandbox.Camera", EngineCore::Vector3(0.0, 0.0, 0.0), One);
+    Place("Prefabs/Mover.nmprefab", EngineCore::Vector3(0.0, 0.0, 0.0), One);
 
     EditedWorld->RefreshSpatialIndex();
     QueueEntitiesChanged();
@@ -225,6 +210,230 @@ EntityID EditorDocument::CreateEntity(const QString& InName, const EngineCore::V
     return E.GetID();
 }
 
+EntityID EditorDocument::PlacePrefab(const QString& InRuntimePath, const EngineCore::Vector3& InPosition)
+{
+    if(bSingleRoot)
+    {
+        CORE_LOG_WARN("[Editor] a prefab cannot hold an instance of another prefab")
+        return EntityID();
+    }
+    GameCore::TransformPose At;
+    At.Position = InPosition;
+    return SpawnPrefabRecorded(InRuntimePath, At);
+}
+
+EntityID EditorDocument::ReplaceWithPrefab(const EntityID InEntity, const QString& InRuntimePath)
+{
+    if(bSingleRoot || !ActiveWorld || !ActiveWorld->IsAlive(InEntity))
+    {
+        return EntityID();
+    }
+    /* Loaded before anything goes, so a bad prefab leaves the scene alone. */
+    if(!GameCore::FindOrLoadPrefab(InRuntimePath.toUtf8().constData()))
+    {
+        return EntityID();
+    }
+    const GameCore::TransformPose At = ActiveWorld->GetEntity(InEntity).GetWorldPose();
+    const QString Name = GetDisplayName(InEntity);
+
+    const bool bMacro = IsRecording();
+    if(bMacro) { History->beginMacro(QStringLiteral("Convert %1 to Prefab").arg(Name)); }
+    DestroyEntity(InEntity);
+    const EntityID Root = SpawnPrefabRecorded(InRuntimePath, At);
+    if(bMacro)
+    {
+        History->endMacro();
+        LatestRecorded = nullptr;   // nothing merges across the macro
+        emit HistoryChanged();
+    }
+    return Root;
+}
+
+int EditorDocument::RefreshPrefabInstances(const QString& InRuntimePath)
+{
+    if(IsWorldBorrowed() || !EditedWorld)
+    {
+        return 0;
+    }
+    struct Collect { GameCore::World* W; std::string Path; std::vector<GameCore::PrefabInstanceID> Found; };
+    Collect Ctx{ EditedWorld, InRuntimePath.toUtf8().constData(), {} };
+    EditedWorld->ForEachInstance([](const GameCore::PrefabInstanceID InInstance, void* InUserData)
+    {
+        auto& C = *static_cast<Collect*>(InUserData);
+        if(C.Path == C.W->GetInstance(InInstance).GetPrefabPath()) { C.Found.push_back(InInstance); }
+    }, &Ctx);
+    if(Ctx.Found.empty())
+    {
+        return 0;
+    }
+
+    /* Entity ids change, GUIDs do not: the selection follows its GUID. */
+    const GameCore::EntityGuid Selected = EditedWorld->GetEntity(Selection).GetGuid();
+    {
+        const FlagScope Refreshing(bSuspendRecording);
+        for(const GameCore::PrefabInstanceID Instance : Ctx.Found)
+        {
+            GameCore::RefreshPrefabInstance(*EditedWorld, Instance);
+        }
+        EditedWorld->RefreshSpatialIndex();
+    }
+    const EntityID Reselect = Selected.IsSet() ? EditedWorld->FindEntityByGuid(Selected) : EntityID();
+    Selection = EntityID();
+    SetSelection(Reselect);
+    if(!Reselect.IsSet()) { emit SelectionChanged(Selection); }
+    RefreshShadow();
+    QueueEntitiesChanged();
+    return int(Ctx.Found.size());
+}
+
+std::vector<EntityID> EditorDocument::GetLooseRoots() const
+{
+    std::vector<EntityID> Loose;
+    for(const EntityID Root : GetRootEntities())
+    {
+        bool bAnyInstance = false;
+        std::vector<EntityID> Stack{ Root };
+        while(!Stack.empty() && !bAnyInstance)
+        {
+            const GameCore::Entity E = EditedWorld->GetEntity(Stack.back());
+            Stack.pop_back();
+            bAnyInstance = E.IsInInstance();
+            for(EntityID Child = E.GetFirstChild(); Child.IsSet(); Child = EditedWorld->GetEntity(Child).GetNextSibling())
+            {
+                Stack.push_back(Child);
+            }
+        }
+        if(!bAnyInstance) { Loose.push_back(Root); }
+    }
+    return Loose;
+}
+
+int EditorDocument::ConvertTreesToPrefabs(const std::vector<std::pair<EntityID, QString>>& InTrees)
+{
+    if(bSingleRoot || IsWorldBorrowed())
+    {
+        return 0;
+    }
+    struct Job
+    {
+        EditorHistory::EntitySnapshot Old;
+        EntityID                      OldRoot;
+        EntityID                      NewRoot;
+    };
+    std::vector<Job> Jobs;
+    std::vector<QString> Paths;
+    for(const auto& [Root, Path] : InTrees)
+    {
+        if(EditedWorld->IsAlive(Root) && GameCore::FindOrLoadPrefab(Path.toUtf8().constData()))
+        {
+            Jobs.push_back({ EditorHistory::CaptureEntity(*EditedWorld, Root), Root, EntityID() });
+            Paths.push_back(Path);
+        }
+    }
+    if(Jobs.empty())
+    {
+        return 0;
+    }
+
+    const bool bMacro = IsRecording();
+    if(bMacro) { History->beginMacro(QStringLiteral("Convert %1 Entities to Prefabs").arg(Jobs.size())); }
+
+    /* Every instance first, the originals still there for their references. */
+    {
+        const FlagScope Converting(bSuspendRecording);
+        for(size_t Index = 0; Index < Jobs.size(); ++Index)
+        {
+            const GameCore::TransformPose At = EditedWorld->GetEntity(Jobs[Index].OldRoot).GetWorldPose();
+            Jobs[Index].NewRoot = EditedWorld->SpawnPrefab(Paths[Index].toUtf8().constData(), At).GetRoot().GetID();
+        }
+
+        /* Old GUID -> its replacement, the trees walked side by side. */
+        EditorHistory::GuidRemap Remap;
+        const std::function<void(const EditorHistory::EntitySnapshot&, EntityID)> MapTree =
+            [&](const EditorHistory::EntitySnapshot& InOld, const EntityID InNew)
+        {
+            Remap[InOld.Guid] = InNew;
+            EntityID Child = EditedWorld->GetEntity(InNew).GetFirstChild();
+            for(const EditorHistory::EntitySnapshot& OldChild : InOld.Children)
+            {
+                if(!Child.IsSet()) { break; }
+                MapTree(OldChild, Child);
+                Child = EditedWorld->GetEntity(Child).GetNextSibling();
+            }
+        };
+        for(const Job& Each : Jobs)
+        {
+            if(Each.NewRoot.IsSet()) { MapTree(Each.Old, Each.NewRoot); }
+        }
+
+        /* Each tree's own values onto its replacement: they are its overrides. */
+        const std::function<void(const EditorHistory::EntitySnapshot&, EntityID)> Apply =
+            [&](const EditorHistory::EntitySnapshot& InOld, const EntityID InNew)
+        {
+            const GameCore::Entity New = EditedWorld->GetEntity(InNew);
+            for(const EditorHistory::ComponentSnapshot& Component : InOld.Components)
+            {
+                EditorHistory::LoadComponent(*EditedWorld, InNew, Component, &Remap);
+            }
+            if(InOld.Name != New.GetName()) { New.SetName(InOld.Name.c_str()); }
+            EntityID Child = New.GetFirstChild();
+            for(const EditorHistory::EntitySnapshot& OldChild : InOld.Children)
+            {
+                if(!Child.IsSet()) { break; }
+                Apply(OldChild, Child);
+                Child = EditedWorld->GetEntity(Child).GetNextSibling();
+            }
+        };
+        for(const Job& Each : Jobs)
+        {
+            if(!Each.NewRoot.IsSet()) { continue; }
+            Apply(Each.Old, Each.NewRoot);
+            EditedWorld->RefreshEntityBounds(Each.NewRoot);
+        }
+    }
+
+    /* Recorded finished, so a redo brings them back with their values; then
+     * the originals go, recorded as deletes. */
+    int Converted = 0;
+    for(const Job& Each : Jobs)
+    {
+        if(!Each.NewRoot.IsSet()) { continue; }
+        ++Converted;
+        if(bMacro)
+        {
+            Record(new EditorHistory::EntityLifetimeCommand(*this, QStringLiteral("Place %1").arg(GetDisplayName(Each.NewRoot)),
+                                                            true, EditorHistory::CaptureEntity(*EditedWorld, Each.NewRoot)));
+        }
+        DestroyEntity(Each.OldRoot);
+    }
+
+    if(bMacro)
+    {
+        History->endMacro();
+        LatestRecorded = nullptr;
+        emit HistoryChanged();
+    }
+    return Converted;
+}
+
+EntityID EditorDocument::SpawnPrefabRecorded(const QString& InRuntimePath, const GameCore::TransformPose& InAt)
+{
+    const GameCore::PrefabInstance Instance = ActiveWorld->SpawnPrefab(InRuntimePath.toUtf8().constData(), InAt);
+    if(!Instance.IsValid())
+    {
+        return EntityID();
+    }
+    const EntityID Root = Instance.GetRoot().GetID();
+    ActiveWorld->RefreshEntityBounds(Root);
+
+    if(IsRecording())
+    {
+        Record(new EditorHistory::EntityLifetimeCommand(*this, QStringLiteral("Place %1").arg(GetDisplayName(Root)),
+                                                        true, EditorHistory::CaptureEntity(*EditedWorld, Root)));
+    }
+    return Root;
+}
+
 void EditorDocument::RenameEntity(const EntityID InEntity, const QString& InName)
 {
     if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
@@ -238,39 +447,6 @@ void EditorDocument::RenameEntity(const EntityID InEntity, const QString& InName
         QueueEntitiesChanged();
         RecordMembersChange(InEntity, Before, QStringLiteral("Rename %1 to %2").arg(OldName, GetDisplayName(InEntity)));
     }
-}
-
-void EditorDocument::SetEntityScript(const EntityID InEntity, const QString& InPath)
-{
-    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
-    {
-        return;
-    }
-    const EditorHistory::EntityMembers Before = EditorHistory::CaptureMembers(*ActiveWorld, InEntity);
-    const QString Path = InPath.trimmed();
-    if(ActiveWorld->GetEntity(InEntity).SetScript(Path.toUtf8().constData()))
-    {
-        QueueEntitiesChanged();
-        RecordMembersChange(InEntity, Before, (Path.isEmpty() ? QStringLiteral("Clear Script on %1")
-                                                              : QStringLiteral("Set Script on %1")).arg(GetDisplayName(InEntity)));
-    }
-}
-
-void EditorDocument::SetEntityScriptCull(const EntityID InEntity, const bool bInCull)
-{
-    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
-    {
-        return;
-    }
-    GameCore::EntityScriptState* Script = ActiveWorld->GetEntity(InEntity).GetScriptState();
-    if(!Script || (Script->bCullOutsideActiveRegion != 0) == bInCull)
-    {
-        return;
-    }
-    const EditorHistory::EntityMembers Before = EditorHistory::CaptureMembers(*ActiveWorld, InEntity);
-    Script->bCullOutsideActiveRegion = bInCull ? 1 : 0;
-    RecordMembersChange(InEntity, Before, (bInCull ? QStringLiteral("Cull Script on %1")
-                                                   : QStringLiteral("Stop Culling Script on %1")).arg(GetDisplayName(InEntity)));
 }
 
 void EditorDocument::RecordMembersChange(const EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText)
@@ -763,7 +939,10 @@ bool EditorDocument::LoadPrefab(const QString& InPath, GameCore::PrefabAsset& Ou
     /* Read before the current World is replaced, so a bad file leaves it alone. */
     const QByteArray Path = InPath.toUtf8();
     GameCore::PrefabAsset Loaded;
-    if(!GameCore::LoadPrefabFile(Path.constData(), Loaded))
+    const bool bNative = InPath.startsWith(QString::fromLatin1(GameCore::NATIVE_PREFAB_PREFIX));
+    const GameCore::PrefabAsset* Registered = bNative ? GameCore::FindOrLoadPrefab(Path.constData()) : nullptr;
+    if(Registered) { Loaded = *Registered; }
+    if(bNative ? !Registered : !GameCore::LoadPrefabFile(Path.constData(), Loaded))
     {
         CORE_LOG_ERROR("[Editor] '" + std::string(Path.constData()) + "' is not a readable prefab")
         return false;

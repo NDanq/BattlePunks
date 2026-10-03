@@ -28,6 +28,7 @@
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/Editor/EditorContext.h"
+#include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Public/Editor/EditorDocument.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphDocument.h"
@@ -655,6 +656,7 @@ namespace EditorGraphs
         if(bInGameIsLoaded)
         {
             RefreshSchemas();
+            EditorPrefabs::CacheNativePrefabs();
             CORE_LOG("[Graphs] script nodes refreshed from the running game: " + Describe())
             return true;
         }
@@ -674,6 +676,7 @@ namespace EditorGraphs
             return false;
         }
         RefreshSchemas();
+        EditorPrefabs::CacheNativePrefabs();
         CORE_LOG("[Graphs] script nodes refreshed from " + Game.GetModuleName() + ": " + Describe())
         Game.Unload();
         return true;

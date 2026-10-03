@@ -148,6 +148,10 @@ private:
     /* A dragged .nmmesh in the project, as its runtime path; else empty. */
     QString DroppedMesh(const class QMimeData* InData) const;
 
+    /* A dragged .nmprefab in the project, as its file path; else empty. Not
+     * into a prefab: prefabs do not nest. */
+    QString DroppedPrefab(const class QMimeData* InData) const;
+
     EngineCore::Size GetLogicalSize() const { return EngineCore::Size(width(), height()); }
 
     EditorContext&  Context;

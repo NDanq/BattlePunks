@@ -197,8 +197,16 @@ bool PrefabEditorTab::Load(const QString& InPath)
     {
         return false;
     }
-    Path = QFileInfo(InPath).absoluteFilePath();
+    bNative = EditorPrefabs::IsNativePrefabPath(InPath);
+    Path    = bNative ? InPath : QFileInfo(InPath).absoluteFilePath();
     bSettingsDirty = false;
+    if(bNative)
+    {
+        SaveAction->setText(QStringLiteral("Save As Asset..."));
+        SaveAction->setToolTip(QStringLiteral("This prefab is defined in code. Save its layout as an editable .nmprefab "
+                                              "that keeps the code's callbacks"));
+        UpdateSimulationControls();
+    }
     SyncSettingsControls();
 
     const std::vector<GameCore::EntityID> Roots = Document->GetRootEntities();
@@ -226,6 +234,10 @@ bool PrefabEditorTab::Save()
     {
         StopSimulation();
     }
+    if(bNative)
+    {
+        return SaveAsAsset();
+    }
 
     QString Error;
     if(!Document->SavePrefab(Path, Asset, Error) || !ScriptPanel->Save(Error))
@@ -241,10 +253,53 @@ bool PrefabEditorTab::Save()
     if(!Runtime.isEmpty())
     {
         GameCore::ReloadPrefab(Runtime.toUtf8().constData());
+
+        /* Instances placed in the level pick the change up, overrides kept. */
+        const int Refreshed = Context.GetLevel().RefreshPrefabInstances(Runtime);
+        if(Refreshed > 0)
+        {
+            CORE_LOG("[Prefab] refreshed " + std::to_string(Refreshed) + " instance(s) in the level")
+        }
     }
 
     CORE_LOG("[Prefab] saved " + std::string(Path.toUtf8().constData()))
     emit TitleChanged();
+    return true;
+}
+
+bool PrefabEditorTab::SaveAsAsset()
+{
+    if(IsSimulating())
+    {
+        StopSimulation();
+    }
+    const QString Name = Path.section(QLatin1Char('.'), -1);   // "Sandbox.Marker" -> "Marker"
+    QDir().mkpath(EditorPrefabs::GetDefaultFolder());
+    const QString File = QFileDialog::getSaveFileName(this, QStringLiteral("Save As Asset"),
+                                                      QDir(EditorPrefabs::GetDefaultFolder()).filePath(Name + QStringLiteral(".nmprefab")),
+                                                      QStringLiteral("Prefabs (*.nmprefab)"));
+    if(File.isEmpty())
+    {
+        return false;
+    }
+    if(EditorPrefabs::ToRuntimePath(File).isEmpty())
+    {
+        QMessageBox::warning(this, QStringLiteral("Save As Asset"), QStringLiteral("Save the prefab inside the project."));
+        return false;
+    }
+
+    /* A copy: this tab stays the native prefab. Its callbacks come along by name. */
+    GameCore::PrefabAsset Fork = Asset;
+    Fork.SetName(QFileInfo(File).completeBaseName().toUtf8().constData());
+    QString Error;
+    if(!Document->SavePrefab(File, Fork, Error))
+    {
+        QMessageBox::warning(this, QStringLiteral("Save As Asset"), Error);
+        return false;
+    }
+    EditorPrefabs::Stage(File);
+    emit TitleChanged();
+    EditorPrefabs::OpenPrefab(File, window());
     return true;
 }
 
@@ -474,9 +529,10 @@ void PrefabEditorTab::UpdateSimulationControls()
     const bool bSimulating = IsSimulating();
     SimulateAction->setEnabled(!bSimulating);
     StopAction->setEnabled(bSimulating);
-    TickModeBox->setEnabled(!bSimulating);
-    ScriptBox->setEnabled(!bSimulating);
-    ChooseAction->setEnabled(!bSimulating);
+    /* A native prefab's script and tick mode are its code's. */
+    TickModeBox->setEnabled(!bSimulating && !bNative);
+    ScriptBox->setEnabled(!bSimulating && !bNative);
+    ChooseAction->setEnabled(!bSimulating && !bNative);
     SimulateLabel->setText(bSimulating ? QStringLiteral("Simulating") : QString());
 }
 

@@ -7,6 +7,9 @@
 #include <vector>
 
 #include <QDropEvent>
+#include <QSet>
+#include <QStyle>
+#include <QFileInfo>
 #include <QHeaderView>
 #include <QLabel>
 #include <QLineEdit>
@@ -18,6 +21,8 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/Editor/EditorDocument.h"
+#include "Public/GameCore/Prefab.h"
+#include "Private/Editor/Prefab/PrefabAssets.h"
 
 using GameCore::EntityID;
 
@@ -156,6 +161,13 @@ void OutlinerPanel::Rebuild()
     Tree->clear();
     Items.clear();
 
+    /* Loose trees, badged in a level (a prefab's own entities are not). */
+    QSet<qulonglong> LooseRoots;
+    if(!Document.IsSingleRoot() && !Document.IsWorldBorrowed())
+    {
+        for(const EntityID Root : Document.GetLooseRoots()) { LooseRoots.insert(Root.Pack()); }
+    }
+
     const size_t TypeCount = GameCore::GetComponentTypeCount();
     const auto MakeItem = [&](const EntityID InID, QTreeWidgetItem* InParentItem)
     {
@@ -176,6 +188,32 @@ void OutlinerPanel::Rebuild()
         Item->setText(COL_Components, Components.join(QStringLiteral(", ")));
         Item->setToolTip(COL_Name, QStringLiteral("#%1 gen %2").arg(InID.Index).arg(InID.Generation));
         Item->setData(COL_Name, EntityRole, QVariant::fromValue<qulonglong>(InID.Pack()));
+
+        /* A prefab instance's root in the prefab colour, bold, its members
+         * tinted; the Components column names the prefab. */
+        if(E.IsInInstance())
+        {
+            const GameCore::PrefabInstance Instance = World.GetInstance(E.GetInstance());
+            const QString Prefab = QString::fromUtf8(Instance.GetPrefabPath());
+            const bool bRoot = Instance.GetRoot().GetID() == InID;
+            Item->setForeground(COL_Name, bRoot ? QColor(110, 170, 255) : QColor(160, 195, 240));
+            if(bRoot)
+            {
+                QFont Font = Item->font(COL_Name);
+                Font.setBold(true);
+                Item->setFont(COL_Name, Font);
+                Item->setText(COL_Components, QStringLiteral("Prefab: %1").arg(QFileInfo(Prefab).completeBaseName()));
+            }
+            Item->setToolTip(COL_Name, QStringLiteral("%1 -- %2 of %3")
+                                           .arg(Item->toolTip(COL_Name), bRoot ? QStringLiteral("instance") : QStringLiteral("member"), Prefab));
+        }
+        else if(!InParentItem && LooseRoots.contains(InID.Pack()))
+        {
+            /* MIGRATION: a level is made of prefab instances; this is not one. */
+            Item->setIcon(COL_Name, style()->standardIcon(QStyle::SP_MessageBoxWarning));
+            Item->setToolTip(COL_Name, QStringLiteral("%1 -- not a prefab instance: World > Convert Level to Prefabs, "
+                                                      "or right-click > Convert to Prefab").arg(Item->toolTip(COL_Name)));
+        }
         Items.insert(InID.Pack(), Item);
         return Item;
     };
@@ -286,6 +324,24 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
                                                    : QStringLiteral("Destroy Entity"));
     Destroy->setEnabled(Target.IsSet());
 
+    /* Prefabs: open an instance's, or make one of this subtree. */
+    Menu.addSeparator();
+    QString PrefabPath;
+    if(Target.IsSet() && World.GetEntity(Target).IsInInstance())
+    {
+        PrefabPath = QString::fromUtf8(World.GetInstance(World.GetEntity(Target).GetInstance()).GetPrefabPath());
+    }
+    QAction* OpenPrefab = Menu.addAction(QStringLiteral("Open Prefab"));
+    OpenPrefab->setEnabled(!PrefabPath.isEmpty());
+    QAction* Convert = nullptr;
+    if(!Document.IsSingleRoot())
+    {
+        Convert = Menu.addAction(QStringLiteral("Convert to Prefab..."));
+        const QString Why = Target.IsSet() ? EditorPrefabs::WhyNotConvertible(Document, Target) : QStringLiteral("No entity");
+        Convert->setEnabled(Why.isEmpty());
+        Convert->setToolTip(Why);
+    }
+
     QAction* Chosen = Menu.exec(Tree->viewport()->mapToGlobal(InPos));
     if(Chosen == Create)
     {
@@ -310,6 +366,14 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
     else if(Chosen == Destroy)
     {
         Document.DestroyEntity(Target);
+    }
+    else if(Chosen == OpenPrefab)
+    {
+        EditorPrefabs::OpenPrefab(EditorPrefabs::ToProjectPath(PrefabPath), window());
+    }
+    else if(Chosen && Chosen == Convert)
+    {
+        EditorPrefabs::ConvertToPrefab(Document, Target, window());
     }
 }
 

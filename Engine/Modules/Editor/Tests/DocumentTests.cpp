@@ -5,6 +5,7 @@
  */
 
 #include <cstdio>
+#include <string>
 
 #include <QCoreApplication>
 #include <QTemporaryDir>
@@ -16,6 +17,7 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/WorldPackage.h"
 
 using GameCore::EntityID;
 
@@ -273,6 +275,196 @@ static void TestPrefab()
     Expect(Doc.SavePrefab(Path, Asset, Error), "and works again after");
 }
 
+
+static void TestInstances()
+{
+    std::printf("Prefab instances\n");
+    QTemporaryDir Temp;
+    const QString Path = Temp.filePath(QStringLiteral("Lamp.nmprefab"));
+    {
+        GameCore::World Scratch;
+        const GameCore::Entity Root = Scratch.CreateEntity("Root");
+        Root.AddComponent<GameCore::TransformComponent>();
+        const GameCore::Entity Bulb = Scratch.CreateEntity("Bulb");
+        Bulb.AddComponent<GameCore::TransformComponent>();
+        Bulb.SetParent(Root, false);
+        GameCore::PrefabAsset Asset;
+        GameCore::CapturePrefab(Scratch, Root.GetID(), Asset);
+        GameCore::SavePrefabFile(Path.toUtf8().constData(), Asset);
+    }
+
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetEditedWorld();
+    const EntityID Root = Doc.PlacePrefab(Path, EngineCore::Vector3(10.0, 0.0, 0.0));
+    Expect(Root.IsSet() && W.GetInstanceCount() == 1, "PlacePrefab spawns an instance");
+    Expect(W.GetEntity(Root).GetWorldPose().Position.GetX() == 10.0, "where asked");
+    Expect(Doc.CanUndo(), "as one undo step");
+
+    const GameCore::PrefabInstance Instance = W.GetInstance(W.GetEntity(Root).GetInstance());
+    const GameCore::EntityGuid InstanceGuid = Instance.GetGuid();
+    const GameCore::EntityGuid BulbGuid = Instance.FindEntity("Bulb").GetGuid();
+
+    Doc.Undo();
+    Expect(W.GetInstanceCount() == 0 && W.GetEntityCount() == 0, "undo removes the instance");
+    Doc.Redo();
+    const GameCore::PrefabInstanceID Back = W.FindInstanceByGuid(InstanceGuid);
+    Expect(Back.IsSet(), "redo brings it back as an instance, with its GUID");
+    Expect(W.GetInstance(Back).FindEntity("Bulb").GetGuid() == BulbGuid, "and its members' GUIDs");
+
+    /* A member deleted and undone rejoins its instance. */
+    const EntityID Bulb = W.GetInstance(Back).FindEntity("Bulb").GetID();
+    const uint32_t BulbId = W.GetEntity(Bulb).GetPrefabLocalId();
+    Doc.DestroyEntity(Bulb);
+    Expect(!W.GetInstance(Back).FindEntity("Bulb").IsAlive(), "a member can be deleted");
+    Doc.Undo();
+    const GameCore::Entity Rejoined = W.GetInstance(Back).FindEntity(BulbId);
+    Expect(Rejoined.IsAlive() && Rejoined.GetGuid() == BulbGuid, "undo puts it back in its instance, with its id");
+
+    /* The whole instance deleted and undone. */
+    Doc.DestroyEntity(W.GetInstance(Back).GetRoot().GetID());
+    Expect(W.GetInstanceCount() == 0, "deleting the root deletes the instance");
+    Doc.Undo();
+    const GameCore::PrefabInstanceID Again = W.FindInstanceByGuid(InstanceGuid);
+    Expect(Again.IsSet() && W.GetInstance(Again).FindEntity(BulbId).IsAlive(), "undo restores it whole");
+    Expect(std::string(W.GetInstance(Again).GetPrefabPath()) == std::string(Path.toUtf8().constData()), "with its prefab path");
+
+    /* Prefabs do not nest. */
+    EditorDocument PrefabDoc;
+    PrefabDoc.SetSingleRoot(true);
+    Expect(!PrefabDoc.PlacePrefab(Path, EngineCore::Vector3()).IsSet(), "a prefab document refuses an instance");
+}
+
+
+static void TestReplaceWithPrefab()
+{
+    std::printf("Replace with prefab\n");
+    QTemporaryDir Temp;
+    const QString Path = Temp.filePath(QStringLiteral("Crate.nmprefab"));
+
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetEditedWorld();
+    const EntityID Crate = Doc.CreateEntity(QStringLiteral("Crate"), EngineCore::Vector3(30.0, 5.0, 0.0));
+    const EntityID Lid   = Doc.CreateEntity(QStringLiteral("Lid"), EngineCore::Vector3(30.0, 6.0, 0.0),
+                                            [Crate](const GameCore::Entity& InEntity) { InEntity.SetParent(Crate, true); });
+    const GameCore::EntityGuid CrateGuid = W.GetEntity(Crate).GetGuid();
+    const int StepsBefore = Doc.GetHistory().count();
+
+    GameCore::PrefabAsset Asset;
+    GameCore::CapturePrefab(W, Crate, Asset);
+    GameCore::SavePrefabFile(Path.toUtf8().constData(), Asset);
+
+    Expect(!Doc.ReplaceWithPrefab(Crate, Temp.filePath(QStringLiteral("Missing.nmprefab"))).IsSet() && W.IsAlive(Crate),
+           "a prefab that cannot load leaves the entity alone");
+
+    const EntityID Root = Doc.ReplaceWithPrefab(Crate, Path);
+    Expect(Root.IsSet() && W.GetEntity(Root).IsInInstance(), "the subtree becomes an instance");
+    Expect(!W.IsAlive(Crate) && !W.IsAlive(Lid) && W.GetEntityCount() == 2, "in place of the entities");
+    Expect(W.GetEntity(Root).GetWorldPose().Position.GetX() == 30.0, "where they stood");
+    Expect(Doc.GetHistory().count() == StepsBefore + 1, "as one undo step");
+
+    Doc.Undo();
+    Expect(W.GetInstanceCount() == 0 && W.IsAlive(W.FindEntityByGuid(CrateGuid)) && W.GetEntityCount() == 2,
+           "undo brings the entities back");
+    Doc.Redo();
+    Expect(W.GetInstanceCount() == 1 && !W.IsAlive(W.FindEntityByGuid(CrateGuid)), "redo replaces them again");
+}
+
+
+static void TestRefreshInstances()
+{
+    std::printf("Refresh instances\n");
+    QTemporaryDir Temp;
+    const QString Path = Temp.filePath(QStringLiteral("Sign.nmprefab"));
+    const QByteArray Utf8 = Path.toUtf8();
+    {
+        GameCore::World Scratch;
+        const GameCore::Entity Root = Scratch.CreateEntity("Root");
+        Root.AddComponent<GameCore::TransformComponent>();
+        GameCore::PrefabAsset Asset;
+        GameCore::CapturePrefab(Scratch, Root.GetID(), Asset);
+        GameCore::SavePrefabFile(Utf8.constData(), Asset);
+    }
+
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetEditedWorld();
+    const EntityID Root = Doc.PlacePrefab(Path, EngineCore::Vector3(7.0, 0.0, 0.0));
+    Doc.SetSelection(Root);
+    const GameCore::EntityGuid RootGuid = W.GetEntity(Root).GetGuid();
+    const int Steps = Doc.GetHistory().count();
+
+    /* The prefab gains a child. */
+    {
+        GameCore::World Scratch;
+        GameCore::PrefabAsset Asset = *W.GetInstance(W.GetEntity(Root).GetInstance()).GetPrefab();
+        const GameCore::PrefabInstance Copy = Scratch.SpawnPrefab(Asset);
+        const GameCore::Entity Post = Scratch.CreateEntity("Post");
+        Post.AddComponent<GameCore::TransformComponent>();
+        Post.SetParent(Copy.GetRoot(), false);
+        GameCore::CapturePrefab(Scratch, Copy.GetRoot().GetID(), Asset);
+        GameCore::SavePrefabFile(Utf8.constData(), Asset);
+    }
+    GameCore::ReloadPrefab(Utf8.constData());
+
+    Expect(Doc.RefreshPrefabInstances(QStringLiteral("Other.nmprefab")) == 0, "other prefabs' instances are left alone");
+    Expect(Doc.RefreshPrefabInstances(Path) == 1, "RefreshPrefabInstances refreshes the instance");
+    const EntityID NewRoot = W.FindEntityByGuid(RootGuid);
+    Expect(W.GetInstance(W.GetEntity(NewRoot).GetInstance()).FindEntity("Post").IsAlive(), "which gains the new entity");
+    Expect(W.GetEntity(NewRoot).GetWorldPose().Position.GetX() == 7.0, "where it was placed");
+    Expect(Doc.GetSelection() == NewRoot, "the selection follows its GUID");
+    Expect(Doc.GetHistory().count() == Steps, "and nothing is recorded");
+    GameCore::ClearPrefabCache();
+}
+
+
+static void TestConvertTrees()
+{
+    std::printf("Convert trees to prefabs\n");
+    QTemporaryDir Temp;
+    const QString Path = Temp.filePath(QStringLiteral("Barrel.nmprefab"));
+
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetEditedWorld();
+    const auto MakeBarrel = [&](const char* InName, const double InX, const double InLidY)
+    {
+        const EntityID Root = Doc.CreateEntity(QString::fromLatin1(InName), EngineCore::Vector3(InX, 0.0, 0.0));
+        Doc.CreateEntity(QStringLiteral("Lid"), EngineCore::Vector3(InX, InLidY, 0.0),
+                         [Root](const GameCore::Entity& InEntity) { InEntity.SetParent(Root, true); });
+        return Root;
+    };
+    const EntityID A = MakeBarrel("BarrelA", 0.0, 2.0);
+    const EntityID B = MakeBarrel("BarrelB", 50.0, 5.0);
+    Expect(Doc.GetLooseRoots().size() == 2, "both trees are loose");
+
+    GameCore::PrefabAsset Asset;
+    GameCore::CapturePrefab(W, A, Asset);
+    GameCore::SavePrefabFile(Path.toUtf8().constData(), Asset);
+    const int Steps = Doc.GetHistory().count();
+
+    Expect(Doc.ConvertTreesToPrefabs({ { A, Path }, { B, Path } }) == 2, "both trees convert");
+    Expect(W.GetInstanceCount() == 2 && Doc.GetLooseRoots().empty(), "into instances; nothing loose is left");
+    Expect(Doc.GetHistory().count() == Steps + 1, "as one undo step");
+
+    /* B's own values, not the prefab's (A's). */
+    struct Find { GameCore::World* W; EntityID Found; } Ctx{ &W, EntityID() };
+    W.ForEachInstance([](const GameCore::PrefabInstanceID InInstance, void* InUserData)
+    {
+        auto& C = *static_cast<Find*>(InUserData);
+        const GameCore::Entity Root = C.W->GetInstance(InInstance).GetRoot();
+        if(std::string(Root.GetName()) == "BarrelB") { C.Found = Root.GetID(); }
+    }, &Ctx);
+    const EntityID BRoot = Ctx.Found;
+    Expect(BRoot.IsSet(), "the second keeps its own name");
+    const GameCore::Entity BLid = W.GetEntity(W.GetEntity(BRoot).GetFirstChild());
+    Expect(W.GetEntity(BRoot).GetWorldPose().Position.GetX() == 50.0, "and its placement");
+    Expect(BLid.GetWorldPose().Position.GetY() == 5.0, "and its child's values, as overrides");
+
+    Doc.Undo();
+    Expect(W.GetInstanceCount() == 0 && Doc.GetLooseRoots().size() == 2 && W.GetEntityCount() == 4,
+           "undo brings the loose trees back");
+    Doc.Redo();
+    Expect(W.GetInstanceCount() == 2 && W.GetEntityCount() == 4, "redo converts them again");
+}
+
 int main(int argc, char* argv[])
 {
     QCoreApplication App(argc, argv);
@@ -284,6 +476,10 @@ int main(int argc, char* argv[])
     TestBorrowedWorld();
     TestDestroyWhileBorrowed();
     TestPrefab();
+    TestInstances();
+    TestReplaceWithPrefab();
+    TestRefreshInstances();
+    TestConvertTrees();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
