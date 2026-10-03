@@ -8,6 +8,7 @@
 #include <cstdint>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "Public/GDI/GDI.h"
@@ -123,6 +124,8 @@ public:
 
     /** UI thread: draws the last finished frame into the swapchain and presents it. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
+    void PresentRenderTargetToWindow(EngineCore::WindowHandle InWindow, GDIRenderTarget* InSource) override;
+    void ReleaseWindow(EngineCore::WindowHandle InWindow) override;
 
     /**
      * Submits what has been recorded this frame, waits for it, and resumes
@@ -158,6 +161,13 @@ public:
     inline D3D12DescriptorAllocator* GetDescAlloc()      const { return DescAlloc; }
 
 private:
+    /** InWindow's swapchain, created and initialized on first use; null if that
+     *  failed (retried on the next present). UI thread. */
+    D3D12Swapchain* FindOrCreateSwapchain(EngineCore::WindowHandle InWindow);
+
+    /** Presents InRT through InWindow's swapchain. UI thread. */
+    void PresentToSwapchain(EngineCore::WindowHandle InWindow, D3D12RenderTarget* InRT);
+
     /** Root signature, heaps and topology a freshly opened list needs before any draw. */
     void PrepareCommandList(ID3D12GraphicsCommandList* InList);
 
@@ -166,7 +176,9 @@ private:
 
     D3D12Device*              DeviceObj        = nullptr;
     D3D12CommandManager*      CommandManager   = nullptr;
-    D3D12Swapchain*           Swapchain        = nullptr;
+    /** One per presented window, keyed by its native handle. UI thread only
+     *  (and Destroy, once the UI thread no longer presents). */
+    std::vector<std::pair<void*, D3D12Swapchain*>> Swapchains;
     D3D12PipelineCache*       PipelineCache    = nullptr;
     D3D12DescriptorAllocator* DescAlloc        = nullptr;
     D3D12CurrentStateData*    CurrentStateData = nullptr;

@@ -77,8 +77,8 @@ void D3D12DynamicGDI::Allocate()
         Sync->Bind(DeviceObj);
     }
 
-    // Created lazily by the first PresentToWindow, on the UI thread.
-    Swapchain = new D3D12Swapchain();
+    // Swapchains are created on the UI thread, one per window, by the first
+    // present to it (FindOrCreateSwapchain).
 
     PipelineCache = new D3D12PipelineCache();
     if(!PipelineCache->Initialize(DeviceObj))
@@ -130,7 +130,8 @@ void D3D12DynamicGDI::Destroy()
 
     DrainDeferredDestruction();
 
-    if(Swapchain)      { Swapchain->Shutdown();      delete Swapchain;      Swapchain      = nullptr; }
+    for(auto& Entry : Swapchains) { Entry.second->Shutdown(); delete Entry.second; }
+    Swapchains.clear();
     if(CommandManager) { CommandManager->Shutdown(); delete CommandManager; CommandManager = nullptr; }
     if(DescAlloc)      { DescAlloc->Shutdown();      delete DescAlloc;      DescAlloc      = nullptr; }
     if(PipelineCache)  { PipelineCache->Shutdown();  delete PipelineCache;  PipelineCache  = nullptr; }
@@ -156,20 +157,58 @@ void D3D12DynamicGDI::Flush()
 
 void D3D12DynamicGDI::PresentToWindow(WindowHandle InWindow)
 {
-    if(!bInitialized || !Swapchain || !InWindow.IsValid()) return;
+    // The renderer rebinds Main right before EndRendering, so the last active RT is the frame.
+    PresentToSwapchain(InWindow, CurrentStateData ? CurrentStateData->ActiveRenderTarget : nullptr);
+}
+
+void D3D12DynamicGDI::PresentRenderTargetToWindow(WindowHandle InWindow, GDIRenderTarget* InSource)
+{
+    PresentToSwapchain(InWindow, static_cast<D3D12RenderTarget*>(InSource));
+}
+
+void D3D12DynamicGDI::PresentToSwapchain(WindowHandle InWindow, D3D12RenderTarget* InRT)
+{
+    if(!bInitialized || !InWindow.IsValid() || !InRT) return;
     if(bResizing.load()) return;
 
-    if(!Swapchain->IsValid() && !Swapchain->Initialize(DeviceObj, InWindow))
+    if(D3D12Swapchain* Swapchain = FindOrCreateSwapchain(InWindow))
     {
-        GDI_LOG("[D3D12DynamicGDI] Swapchain initialize failed.")
-        return;
+        Swapchain->PresentFrame(InRT);
+    }
+}
+
+D3D12Swapchain* D3D12DynamicGDI::FindOrCreateSwapchain(WindowHandle InWindow)
+{
+    for(const auto& Entry : Swapchains)
+    {
+        if(Entry.first == InWindow.Native) return Entry.second;
     }
 
-    // The renderer rebinds Main right before EndRendering, so the last active RT is the frame.
-    D3D12RenderTarget* MainRT = CurrentStateData ? CurrentStateData->ActiveRenderTarget : nullptr;
-    if(!MainRT) return;
+    auto* Swapchain = new D3D12Swapchain();
+    if(!Swapchain->Initialize(DeviceObj, InWindow))
+    {
+        GDI_LOG("[D3D12DynamicGDI] Swapchain initialize failed.")
+        delete Swapchain;
+        return nullptr;
+    }
+    Swapchains.emplace_back(InWindow.Native, Swapchain);
+    return Swapchain;
+}
 
-    Swapchain->PresentFrame(MainRT);
+void D3D12DynamicGDI::ReleaseWindow(WindowHandle InWindow)
+{
+    for(auto It = Swapchains.begin(); It != Swapchains.end(); ++It)
+    {
+        if(It->first == InWindow.Native)
+        {
+            // Its last present may still be in flight.
+            if(DeviceObj && DeviceObj->IsValid()) { DeviceObj->WaitIdle(); }
+            It->second->Shutdown();
+            delete It->second;
+            Swapchains.erase(It);
+            return;
+        }
+    }
 }
 
 void D3D12DynamicGDI::PrepareCommandList(ID3D12GraphicsCommandList* InList)

@@ -4,6 +4,7 @@
 #include <vulkan/vulkan.h>
 #include "Public/GDI/Vulkan/GDIVulkanPlatform.h"
 #include <unordered_set>
+#include <utility>
 
 
 #include <atomic>
@@ -200,6 +201,8 @@ public:
 
     /** Vulkan present path: UI thread acquires + blits the offscreen RT and presents. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
+    void PresentRenderTargetToWindow(EngineCore::WindowHandle InWindow, GDIRenderTarget* InSource) override;
+    void ReleaseWindow(EngineCore::WindowHandle InWindow) override;
 
     /**
      * Submit all commands recorded so far this frame and block until the GPU
@@ -265,16 +268,24 @@ public:
 
     inline VKDevice*                GetDeviceObj()       const { return DeviceObj; }
     inline VKCommandManager*        GetCommandManager()  const { return CommandManager; }
-    inline VKSwapchain*             GetSwapchain()       const { return Swapchain; }
     inline VKPipelineCache*         GetPipelineCache()   const { return PipelineCache; }
     inline VKDescriptorAllocator*   GetDescAlloc()       const { return DescAlloc; }
 
 private:
     void EndActiveRenderingRegion();
 
+    /** InWindow's swapchain, created and initialized on first use; null if that
+     *  failed (retried on the next present). UI thread. */
+    VKSwapchain* FindOrCreateSwapchain(EngineCore::WindowHandle InWindow);
+
+    /** Presents InRT through InWindow's swapchain. UI thread. */
+    void PresentToSwapchain(EngineCore::WindowHandle InWindow, VKRenderTarget* InRT);
+
     VKDevice*               DeviceObj           = nullptr;
     VKCommandManager*       CommandManager      = nullptr;
-    VKSwapchain*            Swapchain           = nullptr;
+    /** One per presented window, keyed by its native handle. UI thread only
+     *  (and Destroy, once the UI thread no longer presents). */
+    std::vector<std::pair<void*, VKSwapchain*>> Swapchains;
     VKPipelineCache*        PipelineCache       = nullptr;
     VKDescriptorAllocator*  DescAlloc           = nullptr;
     VKCurrentStateData*     CurrentStateData    = nullptr;
