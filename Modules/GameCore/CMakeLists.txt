@@ -180,6 +180,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/WorldSerializer.cpp
         Source/Private/GameCore/WorldPackage.cpp
         Source/Private/GameCore/Prefab.cpp
+        Source/Private/GameCore/NativePrefab.cpp
         Source/Private/GameCore/ArchiveTextDump.cpp
         Source/Private/GameCore/ComponentScript.cpp
         Source/Private/GameCore/ScriptLibrary.cpp
@@ -210,6 +211,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/ArchiveTextDump.h
         Source/Public/GameCore/ComponentScript.h
         Source/Public/GameCore/ScriptLibrary.h
+        Source/Public/GameCore/NativePrefab.h
         Source/Public/GameCore/ScriptStruct.h
         Source/Public/GameCore/ComponentProperties.h
 )

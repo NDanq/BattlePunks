@@ -1,4 +1,5 @@
 #include "Public/GameCore/Prefab.h"
+#include "Public/GameCore/NativePrefab.h"
 
 #include <algorithm>
 #include <climits>
@@ -257,6 +258,8 @@ const char* PrefabAsset::GetName() const        { return D->Name.c_str(); }
 void        PrefabAsset::SetName(const char* InName)       { PrefabAccess::Write(*this).Name = InName ? InName : ""; }
 const char* PrefabAsset::GetScriptPath() const  { return D->ScriptPath.c_str(); }
 void        PrefabAsset::SetScriptPath(const char* InPath) { PrefabAccess::Write(*this).ScriptPath = InPath ? InPath : ""; }
+const char* PrefabAsset::GetNativeBehavior() const { return D->NativeBehavior.c_str(); }
+void        PrefabAsset::SetNativeBehavior(const char* InName) { PrefabAccess::Write(*this).NativeBehavior = InName ? InName : ""; }
 EPrefabTickMode PrefabAsset::GetTickMode() const { return D->TickMode; }
 void        PrefabAsset::SetTickMode(const EPrefabTickMode InMode) { PrefabAccess::Write(*this).TickMode = InMode; }
 
@@ -512,6 +515,46 @@ bool CapturePrefab(World& InWorld, const EntityID InRoot, PrefabAsset& InOutAsse
     return true;
 }
 
+bool ReadPrefabTemplateComponent(World& InWorld, const PrefabInstanceID InInstance, const uint32_t InLocalId,
+                                 const ComponentTypeID InType, void* OutComponent)
+{
+    const PrefabInstance Instance = InWorld.GetInstance(InInstance);
+    const PrefabAsset*   Prefab   = Instance.IsAlive() ? Instance.GetPrefab() : nullptr;
+    const ComponentTypeInfo* Info = GetComponentType(InType);
+    if(!Prefab || !Info || !OutComponent)
+    {
+        return false;
+    }
+    const PrefabAsset::Data& D = PrefabAccess::Read(*Prefab);
+
+    const PrefabEntityData* Template = nullptr;
+    LocalIdMap ToLive;
+    for(const PrefabEntityData& Each : D.Entities)
+    {
+        ToLive[Each.LocalId] = Instance.FindEntity(Each.LocalId).GetID();
+        if(Each.LocalId == InLocalId) { Template = &Each; }
+    }
+    if(!Template)
+    {
+        return false;
+    }
+    for(const PrefabComponentData& Component : Template->Components)
+    {
+        if(Component.TypeName != Info->Name)
+        {
+            continue;
+        }
+        std::vector<uint8_t> Defaults;
+        if(!ComponentDefaults(InType, Defaults) || Defaults.size() != Info->SizeBytes)
+        {
+            return false;
+        }
+        std::memcpy(OutComponent, Defaults.data(), Defaults.size());
+        return ReadComponentBlob(InType, Component.Blob, ToLive, OutComponent);
+    }
+    return false;
+}
+
 // === The cooked form =========================================================
 
 bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset)
@@ -527,7 +570,8 @@ bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset)
         uint8_t     Mode   = uint8_t(D.TickMode);
         uint32_t    NextId = D.NextLocalId;
         uint32_t    Count  = uint32_t(D.Entities.size());
-        Ar << Name << Script << Mode << NextId << Count;
+        std::string Native = D.NativeBehavior;
+        Ar << Name << Script << Native << Mode << NextId << Count;
 
         for(const PrefabEntityData& E : D.Entities)
         {
@@ -555,11 +599,11 @@ bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset)
         Ar.SetError("expected a PRFB chunk");
         return false;
     }
-    if(Version > PREFAB_CHUNK_VERSION)
+    if(Version != PREFAB_CHUNK_VERSION)
     {
         GAMECORE_LOG_WARN("SerializePrefab: the prefab chunk is version " + std::to_string(Version)
-                          + "; this build understands " + std::to_string(PREFAB_CHUNK_VERSION))
-        Ar.SetError("prefab chunk is newer than this build can read");
+                          + "; this build reads " + std::to_string(PREFAB_CHUNK_VERSION))
+        Ar.SetError("prefab chunk is a version this build cannot read");
         Ar.CloseChunk();
         return false;
     }
@@ -567,7 +611,7 @@ bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset)
     PrefabAsset::Data Loaded;
     uint8_t  Mode  = 0;
     uint32_t Count = 0;
-    Ar << Loaded.Name << Loaded.ScriptPath << Mode << Loaded.NextLocalId << Count;
+    Ar << Loaded.Name << Loaded.ScriptPath << Loaded.NativeBehavior << Mode << Loaded.NextLocalId << Count;
     if(Ar.HasError() || Mode > uint8_t(EPrefabTickMode::Off))
     {
         Ar.SetError("unreadable prefab header");
@@ -717,6 +761,10 @@ namespace
         {
             Root.append_child("Script").append_attribute("Path") = InData.ScriptPath.c_str();
         }
+        if(!InData.NativeBehavior.empty())
+        {
+            Root.append_child("Native").append_attribute("Behavior") = InData.NativeBehavior.c_str();
+        }
         Root.append_child("Tick").append_attribute("Mode") = PrefabTickModeName(InData.TickMode);
 
         for(const PrefabEntityData& E : InData.Entities)
@@ -782,6 +830,7 @@ namespace
         OutData.Name        = Root.attribute("Name").as_string();
         OutData.NextLocalId = Root.attribute("NextId").as_uint(1);
         OutData.ScriptPath  = Root.child("Script").attribute("Path").as_string();
+        OutData.NativeBehavior = Root.child("Native").attribute("Behavior").as_string();
         if(const pugi::xml_node Tick = Root.child("Tick"))
         {
             if(!ParsePrefabTickMode(Tick.attribute("Mode").as_string(), OutData.TickMode))
@@ -958,6 +1007,20 @@ namespace
     }
 }
 
+namespace
+{
+    /* A file, or a native prefab's builder for "native:<Name>". */
+    bool LoadForRegistry(const char* InPath, PrefabAsset& OutAsset)
+    {
+        const size_t PrefixLength = std::strlen(NATIVE_PREFAB_PREFIX);
+        if(std::strncmp(InPath, NATIVE_PREFAB_PREFIX, PrefixLength) == 0)
+        {
+            return BuildNativePrefab(InPath + PrefixLength, OutAsset);
+        }
+        return LoadPrefabFile(InPath, OutAsset);
+    }
+}
+
 const PrefabAsset* FindOrLoadPrefab(const char* InPath)
 {
     if(!InPath || InPath[0] == '\0') { return nullptr; }
@@ -966,18 +1029,23 @@ const PrefabAsset* FindOrLoadPrefab(const char* InPath)
     if(Found != Cache.end()) { return &Found->second; }
 
     PrefabAsset Loaded;
-    if(!LoadPrefabFile(InPath, Loaded))
+    if(!LoadForRegistry(InPath, Loaded))
     {
         return nullptr;
     }
     return &Cache.emplace(InPath, Loaded).first->second;
 }
 
+bool IsPrefabLoaded(const char* InPath)
+{
+    return InPath && Registry().count(InPath) != 0;
+}
+
 bool ReloadPrefab(const char* InPath)
 {
     if(!InPath || InPath[0] == '\0') { return false; }
     PrefabAsset Loaded;
-    if(!LoadPrefabFile(InPath, Loaded))
+    if(!LoadForRegistry(InPath, Loaded))
     {
         return false;
     }

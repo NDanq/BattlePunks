@@ -52,10 +52,8 @@ namespace
     }
 
 #if WITH_EDITOR
-    /* 1: entities only. 2: also prefab instances; written only when a world
-     * has one, so a world without stays byte-identical. */
-    constexpr int         TEXT_FORMAT_ENTITIES  = 1;
-    constexpr int         TEXT_FORMAT_INSTANCES = 2;
+    /* The one text format: loose entities and prefab instances. */
+    constexpr int         TEXT_FORMAT        = 1;
     constexpr const char* ENTITY_EXTENSION   = ".nmentity";
     constexpr const char* INSTANCE_EXTENSION = ".nmprefabinst";
     constexpr const char* TEMP_SUFFIX      = ".tmp";
@@ -164,7 +162,7 @@ namespace
         std::vector<EntityID>* Entities;
     };
 
-    /* <Entity Guid Name> [<Script>] <Component>*, components sorted by type
+    /* <Entity Guid Name> <Component>*, components sorted by type
      * NAME (ids are assignment order and differ run to run). */
     std::string BuildEntityText(World& InWorld, const EntityID InEntity, std::vector<ComponentTypeID>& InOutWarnedTypes)
     {
@@ -180,14 +178,6 @@ namespace
         if(const EntityID Parent = Handle.GetParent(); Parent.IsSet())
         {
             Root.append_attribute("Parent") = GuidText(InWorld.GetEntity(Parent).GetGuid()).c_str();
-        }
-
-        if(Handle.HasScript())
-        {
-            pugi::xml_node Script = Root.append_child("Script");
-            Script.append_attribute("Path") = Handle.GetScriptPath();
-            const EntityScriptState* State = Handle.GetScriptState();
-            Script.append_attribute("CullOutsideActiveRegion") = (State && State->bCullOutsideActiveRegion) ? "true" : "false";
         }
 
         struct Present
@@ -276,7 +266,7 @@ namespace
 
     /*
      * <Instance Guid Name Prefab [TickMode] [Parent]>
-     *   <Entity Id [Name]> [<Script>] <Component Type Version>changed fields</Component>
+     *   <Entity Id [Name]> <Component Type Version>changed fields</Component>
      *                      <RemovedComponent Type/> </Entity>
      *   <Removed Entity/>
      * </Instance>
@@ -330,13 +320,6 @@ namespace
             if(Template.Name != Member.GetName())
             {
                 Element.append_attribute("Name") = Member.GetName();
-            }
-            if(Member.HasScript())
-            {
-                pugi::xml_node Script = Element.append_child("Script");
-                Script.append_attribute("Path") = Member.GetScriptPath();
-                const EntityScriptState* State = Member.GetScriptState();
-                Script.append_attribute("CullOutsideActiveRegion") = (State && State->bCullOutsideActiveRegion) ? "true" : "false";
             }
 
             /* Every type either side has, by name. */
@@ -512,16 +495,6 @@ namespace
                 continue;
             }
             if(const pugi::xml_attribute Name = Item.attribute("Name")) { Member.SetName(Name.as_string()); }
-            if(const pugi::xml_node Script = Item.child("Script"))
-            {
-                if(Member.SetScript(Script.attribute("Path").as_string()))
-                {
-                    if(EntityScriptState* State = Member.GetScriptState())
-                    {
-                        State->bCullOutsideActiveRegion = Script.attribute("CullOutsideActiveRegion").as_bool() ? 1 : 0;
-                    }
-                }
-            }
             for(const pugi::xml_node Removed : Item.children("RemovedComponent"))
             {
                 if(const ComponentTypeInfo* Info = FindComponentType(Removed.attribute("Type").as_string()))
@@ -577,11 +550,10 @@ namespace
             return false;
         }
         const int Format = Root.attribute("Format").as_int(0);
-        if(Format < TEXT_FORMAT_ENTITIES || Format > TEXT_FORMAT_INSTANCES)
+        if(Format != TEXT_FORMAT)
         {
             GAMECORE_LOG_ERROR("WorldPackage: '" + InPath + "' is text format " + std::to_string(Format)
-                               + "; this build reads formats " + std::to_string(TEXT_FORMAT_ENTITIES) + " to "
-                               + std::to_string(TEXT_FORMAT_INSTANCES))
+                               + "; this build reads format " + std::to_string(TEXT_FORMAT))
             return false;
         }
 
@@ -661,23 +633,11 @@ namespace
             Pending.push_back(std::move(Entry));
         }
 
-        /* Pass 2: scripts and components. */
+        /* Pass 2: components. */
         for(const PendingEntity& Entry : Pending)
         {
             const ::GameCore::Entity Handle(&InOutWorld, Entry.Id);
             const pugi::xml_node EntityRoot = Entry.Doc->child("Entity");
-
-            if(const pugi::xml_node Script = EntityRoot.child("Script"))
-            {
-                const char* ScriptPath = Script.attribute("Path").as_string();
-                if(ScriptPath[0] != '\0' && Handle.SetScript(ScriptPath))
-                {
-                    if(EntityScriptState* State = Handle.GetScriptState())
-                    {
-                        State->bCullOutsideActiveRegion = Script.attribute("CullOutsideActiveRegion").as_bool() ? 1 : 0;
-                    }
-                }
-            }
 
             for(const pugi::xml_node Element : EntityRoot.children("Component"))
             {
@@ -794,6 +754,80 @@ namespace
 #endif // WITH_EDITOR
 }
 
+#if WITH_EDITOR
+PrefabInstanceID RefreshPrefabInstance(World& InWorld, const PrefabInstanceID InInstance)
+{
+    if(InWorld.IsTicking() || !IsSavedAsInstance(InWorld, InInstance))
+    {
+        return InInstance;
+    }
+    const PrefabInstance Old(&InWorld, InInstance);
+    const std::string Path = Old.GetPrefabPath();
+    const std::string Name = Old.GetName();
+    const EntityGuid  Guid = Old.GetGuid();
+
+    /* What a level file would keep, as one: the overrides against the
+     * version it was spawned from. */
+    std::vector<ComponentTypeID> Warned;
+    PendingInstance Entry;
+    Entry.File = "refreshing an instance of '" + Path + "'";
+    Entry.Doc  = std::make_unique<pugi::xml_document>();
+    if(!ParseDocument(BuildInstanceText(InWorld, InInstance, Warned), *Entry.Doc, Entry.File, "WorldPackage"))
+    {
+        return InInstance;
+    }
+
+    /* Loose entities hanging from members, and the root's own parent, are
+     * let go -- local Transforms as they are -- and hung back afterwards. */
+    struct Hung { EntityID Child; EntityGuid Parent; };
+    std::vector<Hung> Loose;
+    std::vector<EntityID> Stack{ Old.GetRoot().GetID() };
+    while(!Stack.empty())
+    {
+        const Entity Member = InWorld.GetEntity(Stack.back());
+        Stack.pop_back();
+        for(EntityID Child = Member.GetFirstChild(); Child.IsSet(); Child = InWorld.GetEntity(Child).GetNextSibling())
+        {
+            if(InWorld.GetEntity(Child).GetInstance() == InInstance) { Stack.push_back(Child); }
+            else                                                    { Loose.push_back({ Child, Member.GetGuid() }); }
+        }
+    }
+    for(const Hung& Each : Loose) { InWorld.GetEntity(Each.Child).SetParent(EntityID(), false); }
+    const EntityID RootParent = Old.GetRoot().GetParent();
+    if(RootParent.IsSet()) { Old.GetRoot().SetParent(EntityID(), false); }
+
+    InWorld.DestroyPrefabInstance(InInstance);   // immediate: not ticking
+    const PrefabInstance New = InWorld.SpawnPrefab(Path.c_str(), TransformPose(), Name.c_str(), Guid);
+    if(!New.IsValid())
+    {
+        GAMECORE_LOG_WARN("RefreshPrefabInstance: '" + Path + "' could not be spawned again; the instance is gone")
+        return PrefabInstanceID();
+    }
+
+    Entry.Id = New.GetID();
+    GuidMap Loaded;
+    struct Collect { World* W; GuidMap* Map; } Ctx{ &InWorld, &Loaded };
+    InWorld.ForEachEntity([](const EntityID InEntity, void* InUserData)
+    {
+        const auto& C = *static_cast<Collect*>(InUserData);
+        (*C.Map)[C.W->GetEntity(InEntity).GetGuid()] = InEntity;
+    }, &Ctx);
+    ApplyInstanceOverrides(InWorld, Entry, Loaded);
+
+    if(InWorld.IsAlive(RootParent)) { New.GetRoot().SetParent(RootParent, false); }
+    for(const Hung& Each : Loose)
+    {
+        const EntityID Parent = InWorld.FindEntityByGuid(Each.Parent);
+        if(Parent.IsSet() && InWorld.IsAlive(Each.Child)) { InWorld.GetEntity(Each.Child).SetParent(Parent, false); }
+    }
+    for(const pugi::xml_node Removed : Entry.Doc->child("Instance").children("Removed"))
+    {
+        New.FindEntity(Removed.attribute("Entity").as_uint(PREFAB_NO_LOCAL_ID)).Destroy();
+    }
+    return New.GetID();
+}
+#endif // WITH_EDITOR
+
 EWorldFileFormat DetectWorldFileFormat(const char* InPath)
 {
     if(!InPath) { return EWorldFileFormat::Unknown; }
@@ -877,7 +911,6 @@ bool SaveWorldPackage(const char* InPath, World& InWorld)
     /* In slot order. An instance's entities are one <Instance>, listed where
      * its root is; everything else -- loose entities, and members of an
      * instance that cannot be saved as one -- is an <Entity>. */
-    bool bAnyInstance = false;
     std::vector<PrefabInstanceID> Flattened;
     for(const EntityID Id : Entities)
     {
@@ -891,7 +924,6 @@ bool SaveWorldPackage(const char* InPath, World& InWorld)
                 Keep.insert(Guid);
                 ManifestRoot.append_child("Instance").append_attribute("Guid") = GuidText(Guid).c_str();
                 Files.push_back({ InstanceFileFor(Folder, Guid), BuildInstanceText(InWorld, Instance, WarnedTypes) });
-                bAnyInstance = true;
             }
             continue;
         }
@@ -908,7 +940,7 @@ bool SaveWorldPackage(const char* InPath, World& InWorld)
         ManifestRoot.append_child("Entity").append_attribute("Guid") = GuidText(Guid).c_str();
         Files.push_back({ EntityFileFor(Folder, Guid), BuildEntityText(InWorld, Id, WarnedTypes) });
     }
-    FormatAttribute = bAnyInstance ? TEXT_FORMAT_INSTANCES : TEXT_FORMAT_ENTITIES;
+    FormatAttribute = TEXT_FORMAT;
     Files.push_back({ WorldPath, DocumentText(Manifest) });
 
     if(!EngineCore::appCreateDirectories(Folder))

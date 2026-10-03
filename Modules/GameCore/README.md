@@ -54,9 +54,9 @@ Engine/Modules/GameCore/
 |   |   |-- ComponentType.h         ComponentTypeID, ComponentTypeInfo, ComponentOwner, the BODY/DEFINE macros
 |   |   |-- ComponentPool.h         the erased sparse-set pool
 |   |   |-- SpatialIndex.h          the dynamic AABB tree (BVH)
-|   |   |-- World.h                 class World: entities (+ name/script members), pools, phased systems,
-|   |   |                           the script driver slot, spatial queries, delegates
-|   |   |-- Entity.h                header-only handle: World* + EntityID; components, name, script path
+|   |   |-- World.h                 class World: entities (+ name/parent members), pools, phased systems,
+|   |   |                           prefab instances, the script driver slot, spatial queries, delegates
+|   |   |-- Entity.h                header-only handle: World* + EntityID; components, name, parent
 |   |   |-- Components.h            includes every built-in component header below
 |   |   |-- Components/             TransformComponent.h, BoundsComponent.h, CollisionComponent.h
 |   |   |-- ComponentSerializer.h   ComponentArchive (named fields), the serializer macro and registry
@@ -64,6 +64,7 @@ Engine/Modules/GameCore/
 |   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
 |   |   |-- PrefabInstanceID.h      PrefabInstanceID {Index, Generation}
 |   |   |-- Prefab.h                PrefabAsset, CapturePrefab, .nmprefab files, the registry, the PrefabInstance handle
+|   |   |-- NativePrefab.h          native prefabs: PrefabBuilder, NativePrefabBehavior, the DEFINE macros
 |   |   |-- ScriptLibrary.h         script libraries: a game's functions, variables and typed events
 |   |   |-- ScriptStruct.h          script field types and script structs: a game's own value types
 |   |   `-- ScriptEngine.h          lua_State lifetime, RunFile/RunString, BindWorld; NO lua.h
@@ -154,21 +155,21 @@ TransformComponent* T = Bounds.Owner.GetSibling<TransformComponent>();
 const char* Name = Bounds.Owner.GetName();
 ```
 
-**Name and script are entity members, not components.** Every entity has
-exactly one of each, stored in `World`'s slot tables alongside the
-generation, and reached through the handle:
+**The name is an entity member, not a component.** Every entity has
+exactly one, stored in `World`'s slot tables alongside the generation, and
+reached through the handle:
 
 ```cpp
 GameCore::Entity Player = World.CreateEntity("Player");   // named before OnEntityCreated fires
 GameCore::EntityGuid Id = Player.GetGuid();               // persistent; World.FindEntityByGuid(Id)
 Player.SetName("Hero");
-Player.SetScript("Scripts/Player.lua");                   // a path; "" or nullptr clears
-const char* Path = Player.GetScriptPath();                // "" if none, never null
+const char* Name = Player.GetName();                      // "" if none, never null
 ```
 
 `World::FindEntityByName` is a linear scan over the live names. A
-`GetName()`/`GetScriptPath()` pointer stays valid while other entities come
-and go; only a `SetName`/`SetScript` on that entity, or destroying it, moves it.
+`GetName()` pointer stays valid while other entities come and go; only a
+`SetName` on that entity, or destroying it, moves it. Behaviour belongs to a
+prefab: an entity has no script of its own (see **A prefab's script**).
 
 Components are **trivially copyable** (`GAMECORE_DEFINE_COMPONENT`
 `static_assert`s it) -- a `ComponentPool` is one contiguous, aligned byte
@@ -220,8 +221,7 @@ EngineCore::Matrix4x4 M = Wheel.GetWorldMatrix();
 - **`RefreshEntityBounds(e)` refits `e` and its descendants**, so a tool
   moving a parent refits everything that moved with it.
 - **Saved** in both formats: a `Parent="<guid>"` attribute on a child's
-  `.nmentity`, and a parent index per entity in the binary `WRLD` chunk
-  (version 2; version 1 saves still load, with no parents).
+  `.nmentity`, and a parent index per entity in the binary `WRLD` chunk.
 
 Lua: `e:SetParent(p[, keepWorld])` (`nil` detaches), `e:GetParent()` (an
 Entity, `IsValid()` false if none), `e:GetChildCount()`, `e:GetChild(i)`
@@ -236,7 +236,7 @@ Child Count** and **Get Child**.
 
 A prefab (`Prefab.h`) is a tree of entity templates, each with a name, a
 parent and components. It also names the script and tick mode that will
-drive its instances (PREFABS.md; scripts arrive in phase 3). Spawning one
+drive its instances (PREFABS.md). Spawning one
 makes a **prefab instance**: ordinary entities that remember which instance
 and which template they came from.
 
@@ -256,7 +256,9 @@ Instance.Destroy();                                       // the root and everyt
   subtree as it is in a World. The root's Transform is stored as identity,
   because where an instance stands is its placement, not part of the
   prefab. Capturing an instance of the same prefab keeps each entity's
-  template id. New entities get new ids, and ids are never reused.
+  template id. New entities get new ids, and ids are never reused; with
+  `bInAdoptNew` they also join the root's instance under those ids
+  (`World::AdoptIntoInstance`), so the next capture keeps them.
 - **References between its entities survive.** A component's `EntityID`
   field that points inside the prefab points at the matching entity of each
   instance. One that points outside is stored unset, with a warning.
@@ -273,7 +275,15 @@ Instance.Destroy();                                       // the root and everyt
   therefore spawns the same entity GUIDs every time.
 - **Sharing.** `PrefabAsset` copies share their data until one is changed.
   An instance keeps the version it was spawned from, even across
-  `ReloadPrefab`.
+  `ReloadPrefab`; an editor respawns it from the reloaded file with
+  `RefreshPrefabInstance` (`WorldPackage.h`), keeping its GUID, placement
+  and overrides. `ReadPrefabTemplateComponent` reads one template
+  component as an instance would get it.
+- **Native prefabs** (`NativePrefab.h`) are declared in C++ by a game module:
+  a `PrefabBuilder` function for the layout and, optionally, a
+  `NativePrefabBehavior` table of callbacks that run before the script
+  (`GAMECORE_DEFINE_NATIVE_PREFAB` / `GAMECORE_DEFINE_NATIVE_PREFAB_BEHAVIOR`).
+  Its path is `"native:<Name>"` wherever a prefab path goes.
 - **Saved with the world** as instances (see **World files**). An instance
   spawned from an in-memory asset has no file to name, so a text world
   saves its entities as plain entities, with a warning.
@@ -332,22 +342,20 @@ return {
   `:IsPhaseEnabled(TickPhase.X)` / `:SetPhaseEnabled(TickPhase.X, on)`,
   `:Destroy()`. `e:GetInstance()` gives an entity's instance.
 - **`OnTick` still works.** With `TickPhase = TickPhase.X` it stands for
-  `OnX`, unless the class defines `OnX` too. An entity script moves to a
-  prefab unchanged.
+  `OnX`, unless the class defines `OnX` too.
 - **Tick modes.** `Tick` runs phase functions. `EventsOnly` keeps the script
   for `OnStart`, `OnDestroy`, overlaps and events, but calls no phase
   function. `Off` has no script at all: switching to it calls `OnDestroy`,
   and switching back starts the script afresh. A prefab spawned `Off` is
   static geometry: its Bounds are fitted once and never refit.
 - **`SetTickMode` and `SetPhaseEnabled` wait for the phase flush** when
-  called inside a tick, like `SetScript`, because the phase's list is being
-  walked.
+  called inside a tick, like `DestroyEntity`, because the phase's list is
+  being walked.
 - **Overlaps.** Each of the instance's colliders reports to the instance's
   script, with `mine` set to that collider's entity. Two of its own
-  colliders touching each other are not reported. An entity script gets
-  `mine` too: itself.
-- **Order within a phase:** entity scripts, then instances (in the order
-  they started), then Lua systems, then C++ systems. A failing instance
+  colliders touching each other are not reported.
+- **Order within a phase:** instances (in the order they started), then Lua
+  systems, then C++ systems. A failing instance
   script is reported once and not called again.
 
 Script graphs: **On Pre-Physics**, **On Physics**, **On Post-Physics** and
@@ -365,8 +373,8 @@ enum ETickPhase { TP_PrePhysics, TP_Physics, TP_PostPhysics, TP_PostUpdate, TP_M
 
 `World::RegisterSystem(name, phase, fn, userData)` puts a system into one of
 four buckets; `World::Tick()` runs them in order -- each phase opening with
-the script driver's pass, so entity scripts always update before that phase's
-systems -- and flushes the deferred destroy/remove/script queue **at the end
+the script driver's pass, so prefab scripts always update before that phase's
+systems -- and flushes the deferred destroy/remove/tick-mode queue **at the end
 of each phase** -- not the end of the frame
 -- so a `TP_PrePhysics` system that destroys an entity has it gone before
 `TP_Physics` runs. `World::RefreshSpatialIndex()` (the BVH refit) runs at the
@@ -377,7 +385,7 @@ at the start of its phase, **ahead of** that phase's scripts. Use it for what
 the scripts must already see this frame. The engine's input resolve is the
 case it exists for: it is the first thing in `TP_PrePhysics` (`INPUT.md`).
 
-Calling `DestroyEntity` / `RemoveComponent<T>` / `SetScript` from inside a tick defers to
+Calling `DestroyEntity` / `RemoveComponent<T>` / `SetTickMode` from inside a tick defers to
 the current phase's flush; calling them outside a tick is immediate. Never
 destroy or remove from inside a pool walk you are not the observer of.
 
@@ -399,7 +407,7 @@ for overlap detection and intersection queries: nothing is pushed apart.
   Two static boxes are never tested.
 - **Events.** For each pair that begins or ends, each side is told as Self:
   - C++: `World::OnOverlapBegin()` / `OnOverlapEnd()`, with `(Self, Other)`;
-  - Lua: the script's `OnOverlapBegin(self, other)` / `OnOverlapEnd(self, other)`.
+  - Lua: the prefab script's `OnOverlapBegin(self, other, mine)` / `OnOverlapEnd(self, other, mine)`.
 - **When pairs end.** Disabling or removing a collider ends its pairs.
   Destroying an entity tells only the survivor, whose `other` is then not
   valid.
@@ -508,10 +516,6 @@ the tree (`QueryBounds` / `EachInBounds`) when it wants only what is *nearby*
 -- the per-hit fetch behind `EachInBounds` is a sparse-set lookup, the price
 of asking by region instead of walking a pool in order.
 
-`World::SetActiveRegion(box)` is a shared "what gameplay currently cares
-about" hint; an entity script's `CullOutsideActiveRegion` flag is the one
-built-in consumer, skipping a scripted entity's `OnTick` when it is outside.
-
 ---
 
 ## Scripting
@@ -521,27 +525,25 @@ built-in consumer, skipping a scripted entity's `OnTick` when it is outside.
 lent to its `GameSession` -- `GameSession::GetScriptEngine()` -- which binds it
 to each level's World as the level loads and unbinds it as it unloads.
 
-**An entity's script is a file.** The file returns its class table; every
-entity that names the path gets its own instance (`self`), with
-`self.Entity` set:
+**A script is a file, named by a prefab.** The file returns its class
+table; every instance of a prefab that names the path gets its own object
+(`self`), with `self.Entity` / `self.Root` (the root) and `self.Instance`
+set (see **A prefab's script** for the phase functions):
 
 ```lua
--- Scripts/Mover.lua
+-- Scripts/Mover.lua, named by Prefabs/Mover.nmprefab's <Script Path>
 return {
-    TickPhase = TickPhase.PostPhysics,          -- optional, defaults to PrePhysics
-    CullOutsideActiveRegion = true,             -- optional; overrides the entity's own flag
-    OnStart   = function(self) end,
-    OnTick    = function(self, dt) self.Entity:GetComponent("Transform"):Translate(dt, 0, 0) end,
-    OnDestroy = function(self) end,
+    OnStart       = function(self) end,
+    OnPostPhysics = function(self, dt) self.Entity:GetComponent("Transform"):Translate(dt, 0, 0) end,
+    OnDestroy     = function(self) end,
 }
 ```
 
 ```lua
-local e = World.CreateEntity("Player")
-local t = e:AddComponent("Transform")
-t:SetPosition(1, 2, 3)
-e:SetScript("Scripts/Mover.lua")                -- also e:GetScript(), e:ClearScript(), e:SetName(n)
-e:SetParent(p)                                  -- also e:GetParent(), e:GetChildren(), e:GetChild(i), e:GetChildCount()
+local m = World.SpawnPrefab("Prefabs/Mover.nmprefab", 1, 2, 3)   -- the root; its instance runs Mover.lua
+local e = World.CreateEntity("Marker")          -- a loose entity: components, no script
+e:AddComponent("Transform"):SetPosition(1, 2, 3)
+e:SetParent(m)                                  -- also e:GetParent(), e:GetChildren(), e:GetChild(i), e:GetChildCount()
 
 Events.On("EntityCreated", function(entity) print(entity:GetName()) end)
 Events.Emit("PlayerScored", 10, "Player")       -- numbers, booleans, strings, entities; up to 4 args
@@ -552,17 +554,15 @@ How it runs:
 - **Scripts update first.** `BindWorld` installs a `ScriptDriver` on the
   World, and `World::TickPhase` runs it at the start of every phase, before
   any registered system, whatever order anything was registered in. Within
-  that pass, entity scripts run in the order their paths were set, then the
+  that pass, prefab instances run in the order they started, then the
   Lua-defined systems (`World.AddSystem`).
-- **Lazy.** `SetScript` only stores the path. The driver loads the file (once
-  per path per bind, cached) and builds the instance at the start of the next
-  phase it runs; `OnStart` follows in the script's own phase. A World with no
-  driver -- the editor's -- just keeps the path, and so does a save.
-- **Deferred inside a tick,** like `Destroy`: a script that replaces or clears
-  a script sees the change at the end of the phase.
+- **Lazy.** Spawning only queues the instance. The driver loads the file
+  (once per path per bind, cached) and builds the object at the start of the
+  next phase it runs, then calls `OnStart`. A World with no driver -- the
+  editor's -- leaves its instances queued and runs nothing.
 - **Errors are reported once.** A missing file, a syntax error or a file that
-  does not return a table logs one error per path; an `OnStart`/`OnTick` error
-  logs once and stops that instance.
+  does not return a table logs one error per path; an error in `OnStart` or a
+  phase function logs once and stops that instance.
 
 A component proxy (what `e:GetComponent("Transform")` returns) holds an
 `EntityID` and a `ComponentTypeID`, never a pointer -- every method re-fetches
@@ -683,9 +683,9 @@ comment. `CoreCallProtected` (used by every lifecycle call and by
 `RunFile`/`RunString`) installs a traceback handler and logs through
 `GAMECORE_LOG_ERROR`; a script error is never fatal to the engine.
 
-The driver's release runs `OnDestroy` and releases the instance's Lua
-registry ref when the entity is destroyed (before any of its components go)
-or its script is replaced or cleared. `ScriptEngine::UnbindWorld()` walks
+The driver's release runs `OnDestroy` and releases the object's Lua
+registry ref when the instance is destroyed (before any of its components go)
+or turned `Off`. `ScriptEngine::UnbindWorld()` walks
 every still-live instance, every Lua-defined system, and every `Events.On()`
 binding a script made, and releases all of them -- a Lua function cannot be
 trusted to clean up before `lua_close`. Script paths survive an unbind; the
@@ -699,15 +699,15 @@ A `.nmworld` is text or binary, told apart by its first bytes
 (`DetectWorldFileFormat`); `LoadWorldFile` reads either.
 
 ```
-Levels/Sandbox.nmworld               text: <World Format="1|2"> listing entity and instance GUIDs
-Levels/Sandbox/<guid>.nmentity       text: one loose entity -- name, script, components
+Levels/Sandbox.nmworld               text: <World Format="1"> listing entity and instance GUIDs
+Levels/Sandbox/<guid>.nmentity       text: one loose entity -- name, parent, components
 Levels/Sandbox/<guid>.nmprefabinst   text: one prefab instance -- its prefab and what it changed
 Levels/Cooked/Sandbox.nmworld        binary: what a game ships (CookWorldFile)
 ```
 
-**Prefab instances.** A world with any is format 2; one without stays format
-1, byte for byte. An instance's file names its prefab and records only what
-this instance changed:
+**Prefab instances.** The manifest lists them beside the loose entities, as
+`<Instance>` entries. An instance's file names its prefab and records only
+what this instance changed:
 
 ```xml
 <Instance Guid="..." Name="TurretA" Prefab="Prefabs/Turret.nmprefab" TickMode="EventsOnly" Parent="<guid>">
@@ -738,12 +738,12 @@ this instance changed:
 - Not recorded in text: per-phase enables (`SetPhaseEnabled`), which are
   runtime state. Binary keeps them.
 
-**Binary stores instances whole:** every entity in full, as before, plus an
-instance table: GUID, name, prefab path, script path, tick mode, phase
-enables, and its members with their template ids (`WRLD` version 3).
+**Binary stores instances whole:** every entity in full, like a loose one,
+plus an instance table: GUID, name, prefab path, script path, tick mode,
+phase enables, and its members with their template ids.
 `World::RestorePrefabInstance` rebuilds each instance from those entities, so
 a cooked level or save game needs the prefab file only for template names
-(`FindEntity("Barrel")`). A version 1 or 2 save loads with no instances.
+(`FindEntity("Barrel")`).
 
 **Text is the editor's format** (`SaveWorldPackage`, editor builds only). One
 small XML file per entity, named by its `EntityGuid`, so an edit to one entity

@@ -77,6 +77,14 @@ namespace GameCore
         EPrefabTickMode GetTickMode() const;
         void            SetTickMode(EPrefabTickMode InMode);
 
+        /* The native prefab (NativePrefab.h) whose C++ callbacks drive each
+         * instance, run before the script in each phase; "" for none. A
+         * native prefab's own asset names itself; one saved from it as an
+         * asset keeps the name, so code keeps the logic while the layout is
+         * edited. Callbacks run only while that native prefab is registered. */
+        const char* GetNativeBehavior() const;
+        void        SetNativeBehavior(const char* InName);
+
         // === Entities, in tree order =======================================
 
         size_t      GetEntityCount() const;
@@ -122,6 +130,18 @@ namespace GameCore
      */
     GAMECORE_API bool CapturePrefab(World& InWorld, EntityID InRoot, PrefabAsset& InOutAsset, bool bInAdoptNew = false);
 
+    /*
+     * Authoring (an editor's overrides): what template InLocalId of
+     * InInstance's prefab holds for component InType, written over InType's
+     * defaults into OutComponent (InType's size), entity references resolved
+     * to that instance's entities. False if the instance, the template or that
+     * component in it is missing -- a component the instance added -- or the
+     * type has no serializer. The root's Transform comes out as identity: the
+     * instance's placement is not the prefab's.
+     */
+    GAMECORE_API bool ReadPrefabTemplateComponent(World& InWorld, PrefabInstanceID InInstance, uint32_t InLocalId,
+                                                  ComponentTypeID InType, void* OutComponent);
+
     // === Files ===============================================================
 
     /* The cooked form, both directions. */
@@ -142,7 +162,11 @@ namespace GameCore
 #endif
 
     // === The registry ========================================================
-    // Each path is loaded once and shared by everything that spawns it.
+    // Each path is loaded once and shared by everything that spawns it. A path
+    // "native:<Name>" is a native prefab (NativePrefab.h), built by its
+    // registered builder instead of read from a file.
+
+    constexpr const char* NATIVE_PREFAB_PREFIX = "native:";
 
     /* nullptr if it cannot be loaded (logged once per call). The pointer
      * stays valid until ClearPrefabCache; ReloadPrefab changes what it
@@ -155,6 +179,9 @@ namespace GameCore
     GAMECORE_API bool ReloadPrefab(const char* InPath);
 
     GAMECORE_API void ClearPrefabCache();
+
+    /* InPath is in the registry (loaded, and not cleared since). */
+    GAMECORE_API bool IsPrefabLoaded(const char* InPath);
 
     /* An instance's entity's GUID: a hash of the instance's GUID and the
      * template's local id, so the same instance spawns the same GUIDs every
