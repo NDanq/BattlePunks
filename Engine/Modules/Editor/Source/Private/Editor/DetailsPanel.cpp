@@ -62,14 +62,55 @@ namespace
         return (uint64_t(InType) << 32) | InEntry.Offset;
     }
 
-    /* One past the last element that differs from the default: those in use. */
-    size_t CountUsedElements(const GameCore::ComponentPropertyEntry& InEntry, const uint8_t* InComponent, const uint8_t* InDefaults)
+    /* A struct array's members, in declaration order (ComponentProperties.h). */
+    std::vector<GameCore::ComponentPropertyEntry> CollectMembers(const ComponentTypeID InType,
+                                                                 const GameCore::ComponentPropertyEntry& InHead)
     {
+        std::vector<GameCore::ComponentPropertyEntry> Members;
+        size_t Count = 0;
+        const GameCore::ComponentPropertyEntry* Entries = GameCore::FindComponentProperties(InType, Count);
+        size_t Head = Count;
+        for(size_t Index = 0; Index < Count; ++Index)
+        {
+            if(Entries[Index].IsStructArray() && Entries[Index].Offset == InHead.Offset && !Entries[Index].IsMember())
+            {
+                Head = Index;
+                break;
+            }
+        }
+        for(size_t Index = Head + 1; Index < Count; ++Index)
+        {
+            if(Entries[Index].Parent == Head) { Members.push_back(Entries[Index]); }
+        }
+        return Members;
+    }
+
+    /* One past the last element that differs from the default: those in use.
+     * A struct element differs when any of its members does (its padding
+     * does not count). */
+    size_t CountUsedElements(const ComponentTypeID InType, const GameCore::ComponentPropertyEntry& InEntry,
+                             const uint8_t* InComponent, const uint8_t* InDefaults)
+    {
+        const std::vector<GameCore::ComponentPropertyEntry> Members =
+            InEntry.IsStructArray() ? CollectMembers(InType, InEntry) : std::vector<GameCore::ComponentPropertyEntry>();
         size_t Used = 0;
         for(size_t Index = 0; Index < InEntry.ArrayCount; ++Index)
         {
-            const GameCore::ComponentPropertyEntry Element = InEntry.GetElement(Index);
-            if(!IsPropertyAtDefault(Element, InComponent + Element.Offset, InDefaults + Element.Offset))
+            bool bDiffers = false;
+            if(InEntry.IsStructArray())
+            {
+                for(const GameCore::ComponentPropertyEntry& Each : Members)
+                {
+                    const GameCore::ComponentPropertyEntry Member = InEntry.GetMember(Index, Each);
+                    bDiffers = bDiffers || !IsPropertyAtDefault(Member, InComponent + Member.Offset, InDefaults + Member.Offset);
+                }
+            }
+            else
+            {
+                const GameCore::ComponentPropertyEntry Element = InEntry.GetElement(Index);
+                bDiffers = !IsPropertyAtDefault(Element, InComponent + Element.Offset, InDefaults + Element.Offset);
+            }
+            if(bDiffers)
             {
                 Used = Index + 1;
             }
@@ -560,6 +601,10 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     {
         const GameCore::ComponentPropertyEntry& Entry = Entries[Index];
         const QString Name = QString::fromLatin1(Entry.Name);
+        if(Entry.IsMember())
+        {
+            continue;   // shown inside its struct array's elements, below
+        }
         if(!Entry.IsArray())
         {
             AddRow(Entry, Name, nullptr);
@@ -568,7 +613,7 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
 
         /* An array: the entries in use and any added since, then "+ Add". */
         const uint8_t* Live = Resolve();
-        const size_t   Used = Live && State.Defaults ? CountUsedElements(Entry, Live, State.Defaults->data()) : 0;
+        const size_t   Used = Live && State.Defaults ? CountUsedElements(InType, Entry, Live, State.Defaults->data()) : 0;
         size_t& Shown = ArrayShown[ArrayKey(InType, Entry)];
         Shown = std::min<size_t>(std::max(Shown, Used), Entry.ArrayCount);
         Arrays.push_back(ArrayList{ InType, Entry, Shown });
@@ -613,7 +658,31 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
                     RemoveArrayElement(InType, Entry, Element);
                 });
             }
-            AddRow(Entry.GetElement(Element), QStringLiteral("    %1").arg(Element), Remove);
+            if(!Entry.IsStructArray())
+            {
+                AddRow(Entry.GetElement(Element), QStringLiteral("    %1").arg(Element), Remove);
+                continue;
+            }
+
+            /* A struct element: a heading with its remove button, then one
+             * row per member. */
+            auto* ElementHeading    = new QWidget(Content);
+            auto* ElementHeadingRow = new QHBoxLayout(ElementHeading);
+            ElementHeadingRow->setContentsMargins(0, 0, 0, 0);
+            ElementHeadingRow->addStretch(1);
+            if(Remove)
+            {
+                Remove->setParent(ElementHeading);
+                ElementHeadingRow->addWidget(Remove);
+            }
+            auto* ElementLabel = new QLabel(QStringLiteral("    %1").arg(Element), Content);
+            ElementLabel->setStyleSheet(QStringLiteral("font-weight: bold;"));
+            FormFor(Entry)->addRow(ElementLabel, ElementHeading);
+
+            for(const GameCore::ComponentPropertyEntry& Member : CollectMembers(InType, Entry))
+            {
+                AddRow(Entry.GetMember(Element, Member), QStringLiteral("        %1").arg(QString::fromLatin1(Member.Name)), nullptr);
+            }
         }
     }
 
@@ -798,7 +867,7 @@ void DetailsPanel::RefreshValues()
         const ComponentSection* Section = FindSection(List.Type);
         const uint8_t* Component = ResolveComponent(List.Type);
         if(Section && Section->Defaults && Component
-           && CountUsedElements(List.Entry, Component, Section->Defaults->data()) > List.Shown)
+           && CountUsedElements(List.Type, List.Entry, Component, Section->Defaults->data()) > List.Shown)
         {
             QueueRebuild();
             return;

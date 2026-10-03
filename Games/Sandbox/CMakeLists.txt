@@ -77,21 +77,36 @@ if(NOT TARGET NimbleEngine)
         "nimble_add_module(NimbleEngine ...) call that creates it.")
 endif()
 
+# === Sources ===============================================================
+# Source/, laid out like an engine module: Public/Sandbox/ for the headers,
+# Private/Sandbox/ for the .cpp files, included Source-relative
+# ("Public/Sandbox/SandboxScripting.h"). nimble_add_hot_module adds Source/ to
+# the include path.
+set(SANDBOX_GAME_SOURCES
+        Source/Private/Sandbox/SandboxGame.cpp
+        Source/Private/Sandbox/SandboxScripting.cpp
+        Source/Private/Sandbox/SandboxInput.cpp
+        Source/Private/Sandbox/BrickBreaker.cpp
+        Source/Public/Sandbox/SandboxScripting.h
+        Source/Public/Sandbox/BrickBreaker.h
+)
+
 # === The game module =======================================================
 # SandboxGame.cpp as a module DLL, loaded by name (NimbleEngine/GameModule.h)
 # by the launcher and the editor's Play-in-Editor, never linked. A game module
 # is a Core module, hence nimble_add_hot_module(); its .dll is a LIBRARY
 # artifact, so it lands via LIBRARY_OUTPUT_DIRECTORY.
 nimble_add_hot_module(SandboxGame
-        SOURCES      SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp
+        SOURCES      ${SANDBOX_GAME_SOURCES}
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(SandboxGame PROPERTIES FOLDER "Games")
 
 # === The launcher ==========================================================
-# Thin executable (Application::ExecGame). add_dependencies only ensures the
-# game module is built; it is not linked.
-add_executable(Sandbox SandboxMain.cpp)
-add_dependencies(Sandbox SandboxGame)
+# The engine's own launcher (Engine/Source/Launcher/GameLauncherMain.cpp),
+# built as Sandbox: it runs [Game] Module, SandboxGame if unset. Also puts the
+# executable and the module beside the engine libraries, however this
+# directory was configured (Engine/cmake/NimbleModule.cmake).
+nimble_add_game_launcher(Sandbox MODULE SandboxGame)
 
 # The editor loads this game at Play, so building the editor builds it too.
 if(TARGET NimbleEditor)
@@ -103,17 +118,6 @@ if(TARGET NimbleEditor)
             NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
 endif()
 
-# Same Qt-freedom the modules get from nimble_add_module(). Stated explicitly
-# because add_executable() does not go through that function, and a parent scope
-# that enabled AUTOMOC as a directory property would hand it down.
-set_target_properties(Sandbox PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
-
-# One link is enough: nimble_add_module() gives NimbleEngine a PUBLIC include
-# directory, PUBLIC cxx_std_17 and a PUBLIC EngineCore, so all three arrive
-# transitively. GameWindow and GDI stay PRIVATE to the engine layer and are
-# deliberately NOT visible here -- a game links the engine, not the renderer.
-target_link_libraries(Sandbox PRIVATE NimbleEngine::NimbleEngine)
-
 # === Runtime layout ========================================================
 # Everything lands in Binaries/<Platform>_<Config> BELOW THIS DIRECTORY: the
 # engine DLLs, the module DLLs and this executable all together, because hot
@@ -121,52 +125,12 @@ target_link_libraries(Sandbox PRIVATE NimbleEngine::NimbleEngine)
 # them belongs to the host being run. Engine/CMakeLists.txt's NIMBLE_BINARIES_DIR
 # defaults here for that reason; a second game overrides it to claim its own.
 #
-# Engine/CMakeLists.txt sets CMAKE_RUNTIME_OUTPUT_DIRECTORY from that root at ITS
-# scope, and that is only inherited by targets created at or below it. Added from
-# Engine (path 1) we are below it and inherit for free.
-#
-# Standalone (path 2) we are ABOVE it -- the engine is our subdirectory -- so we
-# inherit nothing and would land in the build tree, away from NimbleEngine.dll,
-# EngineCore.dll and SDL3.dll. On Windows the loader resolves those from the
-# directory of the EXE, so that build would configure, compile, link, and then
-# fail to start.
-#
-# The engine's own target already knows the answer, so ask it rather than
-# recomputing the <Platform>_<Config> string here -- a second copy of that logic
-# is a second thing to keep in step.
-
-# Needed on both paths below, so it is read once here rather than inside either.
+# nimble_add_game_launcher above already put the executable and the module
+# there, on either configure path. The staging below needs the same directory
+# as a plain path: asked of the engine's target, which knows it either way
+# (inherited from Engine/CMakeLists.txt's scope, or not, when standalone).
 get_property(SANDBOX_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-
-if(SANDBOX_STANDALONE)
-    get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
-    if(SANDBOX_RT_DIR)
-        set_target_properties(Sandbox PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${SANDBOX_RT_DIR}")
-        # The launcher looks for the module beside itself.
-        set_target_properties(SandboxGame PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${SANDBOX_RT_DIR}")
-    endif()
-
-    # Multi-config generators (Visual Studio, Xcode, Ninja Multi-Config) ignore
-    # the plain property and read the per-config one, which the engine also has.
-    if(SANDBOX_MULTI_CONFIG)
-        foreach(SANDBOX_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
-            string(TOUPPER "${SANDBOX_CFG}" SANDBOX_CFG_U)
-            get_target_property(SANDBOX_RT_CFG NimbleEngine
-                                RUNTIME_OUTPUT_DIRECTORY_${SANDBOX_CFG_U})
-            if(SANDBOX_RT_CFG)
-                set_target_properties(Sandbox PROPERTIES
-                        RUNTIME_OUTPUT_DIRECTORY_${SANDBOX_CFG_U} "${SANDBOX_RT_CFG}")
-                set_target_properties(SandboxGame PROPERTIES
-                        LIBRARY_OUTPUT_DIRECTORY_${SANDBOX_CFG_U} "${SANDBOX_RT_CFG}")
-            endif()
-        endforeach()
-    endif()
-else()
-    # Added from Engine, we inherited the variable itself. Captured under the
-    # same name so the config staging below has one plain path to work with
-    # whichever way we were configured.
-    set(SANDBOX_RT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
-endif()
+get_target_property(SANDBOX_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
 
 # === Config staging ========================================================
 # Application::Initialize() reads "Config/DefaultEngine.ini" relative to the
@@ -251,6 +215,8 @@ set(SANDBOX_SCRIPT_FILES
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/InputDemo.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/JumpCounter.script.nmgraph"
         "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Zone.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Ball.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/Brick.script.nmgraph"
 )
 
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
@@ -340,26 +306,26 @@ if(SANDBOX_CONTENT_FILES)
     endif()
 endif()
 
-# === Prefabs/ ==============================================================
+# === Content/Prefabs/ ======================================================
 # Prefabs and the scripts beside them, staged at the same relative path beside
-# the executable ("Prefabs/Door.nmprefab", as SpawnPrefab and a level name
-# them). Globbed, like Content/: the Prefab Editor makes these. An Editor
+# the executable ("Content/Prefabs/Door.nmprefab", as SpawnPrefab and a level
+# name them). Globbed, like Content/: the Prefab Editor makes these. An Editor
 # target stages the text prefabs it edits; a Client or Server target cannot
-# read text, so it stages the cooked ones from Cooked/Prefabs/ -- made in the
-# editor with the console command `cook prefabs`.
+# read text, so it stages the cooked ones from Cooked/Content/Prefabs/ -- made
+# in the editor with the console command `cook prefabs`.
 file(GLOB_RECURSE SANDBOX_PREFAB_SCRIPTS CONFIGURE_DEPENDS
-        "${CMAKE_CURRENT_SOURCE_DIR}/Prefabs/*.lua"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Prefabs/*.script.nmgraph"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.script.nmgraph"
 )
 if(NIMBLE_TARGET STREQUAL "Editor")
     set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
     set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
 endif()
-file(GLOB_RECURSE SANDBOX_PREFAB_ASSETS CONFIGURE_DEPENDS "${SANDBOX_PREFAB_ROOT}/Prefabs/*.nmprefab")
-file(GLOB_RECURSE SANDBOX_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Prefabs/*.nmprefab")
+file(GLOB_RECURSE SANDBOX_PREFAB_ASSETS CONFIGURE_DEPENDS "${SANDBOX_PREFAB_ROOT}/Content/Prefabs/*.nmprefab")
+file(GLOB_RECURSE SANDBOX_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.nmprefab")
 if(NOT NIMBLE_TARGET STREQUAL "Editor" AND SANDBOX_PREFAB_SOURCES AND NOT SANDBOX_PREFAB_ASSETS)
-    message(WARNING "Sandbox: Prefabs/ has prefabs but Cooked/Prefabs/ has none; a ${NIMBLE_TARGET} build cannot read "
+    message(WARNING "Sandbox: Content/Prefabs/ has prefabs but Cooked/Content/Prefabs/ has none; a ${NIMBLE_TARGET} build cannot read "
                     "text prefabs. Cook them in the editor (console: cook prefabs).")
 endif()
 
@@ -399,33 +365,81 @@ if(SANDBOX_PREFAB_OUTPUTS)
 elseif(SANDBOX_PREFAB_COPIES)
     # Multi-config fallback, as SandboxStageScripts': every file, every build.
     add_custom_target(SandboxStagePrefabs ALL ${SANDBOX_PREFAB_COPIES}
-            COMMENT "Sandbox: staging Prefabs/ beside the executable"
+            COMMENT "Sandbox: staging Content/Prefabs/ beside the executable"
             VERBATIM)
     add_dependencies(SandboxStagePrefabs Sandbox)
     set_target_properties(SandboxStagePrefabs PROPERTIES FOLDER "Games")
 endif()
 
-# === Materials/ =============================================================
+# === Content/Levels/ =======================================================
+# Level files, staged at the same relative path beside the executable
+# ("Content/Levels/BrickBreaker.nmworld", as a level loads it). An Editor target
+# stages the text worlds -- the .nmworld manifest and the per-entity and
+# per-instance files in the folder beside it; a Client or Server target cannot
+# read text, so it stages the cooked ones from Content/Levels/Cooked/ (the
+# editor's `cook` console command).
+if(NIMBLE_TARGET STREQUAL "Editor")
+    file(GLOB_RECURSE SANDBOX_LEVEL_FILES CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmworld"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmentity"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmprefabinst")
+    list(FILTER SANDBOX_LEVEL_FILES EXCLUDE REGEX "/Content/Levels/Cooked/")
+else()
+    file(GLOB_RECURSE SANDBOX_LEVEL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/Cooked/*.nmworld")
+endif()
+
+set(SANDBOX_LEVEL_OUTPUTS "")
+set(SANDBOX_LEVEL_COPIES "")
+foreach(SANDBOX_LEVEL_SRC ${SANDBOX_LEVEL_FILES})
+    file(RELATIVE_PATH SANDBOX_LEVEL_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_LEVEL_SRC}")
+    get_filename_component(SANDBOX_LEVEL_REL_DIR "${SANDBOX_LEVEL_REL}" DIRECTORY)
+    list(APPEND SANDBOX_LEVEL_COPIES
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_LEVEL_REL_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_LEVEL_SRC}" "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_LEVEL_REL}")
+    if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+        set(SANDBOX_LEVEL_DST "${SANDBOX_RT_DIR}/${SANDBOX_LEVEL_REL}")
+        add_custom_command(
+                OUTPUT  "${SANDBOX_LEVEL_DST}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_RT_DIR}/${SANDBOX_LEVEL_REL_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_LEVEL_SRC}" "${SANDBOX_LEVEL_DST}"
+                DEPENDS "${SANDBOX_LEVEL_SRC}"
+                COMMENT "Sandbox: staging ${SANDBOX_LEVEL_REL} beside the executable"
+                VERBATIM)
+        list(APPEND SANDBOX_LEVEL_OUTPUTS "${SANDBOX_LEVEL_DST}")
+    endif()
+endforeach()
+
+if(SANDBOX_LEVEL_OUTPUTS)
+    add_custom_target(SandboxStageLevels DEPENDS ${SANDBOX_LEVEL_OUTPUTS})
+    add_dependencies(Sandbox SandboxStageLevels)
+    set_target_properties(SandboxStageLevels PROPERTIES FOLDER "Games")
+elseif(SANDBOX_LEVEL_COPIES)
+    # Multi-config fallback, as SandboxStagePrefabs': every file, every build.
+    add_custom_target(SandboxStageLevels ALL ${SANDBOX_LEVEL_COPIES}
+            COMMENT "Sandbox: staging Content/Levels/ beside the executable"
+            VERBATIM)
+    add_dependencies(SandboxStageLevels Sandbox)
+    set_target_properties(SandboxStageLevels PROPERTIES FOLDER "Games")
+endif()
+
+# === Content/Materials/ =====================================================
 # Material graphs, cooked from the code generated into each (<gen_code>) for
 # every built backend into SandboxGame's shader cache, which GameModuleHost
 # mounts with the module -- and, in Editor targets, staged loose as well
 # (Engine/cmake/NimbleMaterials.cmake). Named by path below this folder:
-# "Materials/Glow.material.nmgraph".
+# "Content/Materials/Glow.material.nmgraph".
 if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
-    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" MODULE SandboxGame
-                           RUNTIME_DIR "${SANDBOX_RT_DIR}")
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Content/Materials"
+                           ROOT "${CMAKE_CURRENT_SOURCE_DIR}" MODULE SandboxGame RUNTIME_DIR "${SANDBOX_RT_DIR}")
 else()
-    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Materials" MODULE SandboxGame)
+    nimble_stage_materials(TARGET Sandbox DIR "${CMAKE_CURRENT_SOURCE_DIR}/Content/Materials"
+                           ROOT "${CMAKE_CURRENT_SOURCE_DIR}" MODULE SandboxGame)
 endif()
 
 # === IDE ===================================================================
-# Without this, a Visual Studio or CLion run starts in the build directory and
-# the config lookup above silently misses -- the app still runs, on defaults,
-# which is the kind of difference between "ran from the IDE" and "ran from the
-# shell" that costs an afternoon.
-set_target_properties(Sandbox PROPERTIES
-        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:Sandbox>"
-        FOLDER "Games")
+# The debugger's working directory is the executable's, where Config/ is
+# staged (nimble_add_game_launcher): without it a Visual Studio or CLion run
+# starts in the build directory and silently runs on defaults.
 
 # Only standalone: in a full Engine configure the startup project belongs to
 # whoever configured it, and quietly repointing it at a game would be rude.
@@ -433,4 +447,4 @@ if(SANDBOX_STANDALONE)
     set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT Sandbox)
 endif()
 
-source_group("Sandbox" FILES SandboxMain.cpp SandboxGame.cpp SandboxScripting.cpp SandboxScripting.h SandboxInput.cpp)
+source_group("Sandbox" FILES ${SANDBOX_GAME_SOURCES})

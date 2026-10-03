@@ -25,7 +25,7 @@ namespace EngineCore
  *     ISRC v1 (optional)   AssetImportInfo, for Reimport
  *
  * Every vertex has a normal and UV. Loading bounds-checks indices and
- * sections. Positions are engine convention (+Y down), world units.
+ * sections. Positions are engine convention (left-handed, +Y up), world units.
  */
 namespace RenderCore
 {

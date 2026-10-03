@@ -3,252 +3,195 @@ cmake_minimum_required(VERSION 3.16)
 project(LightLab VERSION 0.1 LANGUAGES CXX)
 
 # ===========================================================================
-# LightLab -- the lights and shadows demo.
+# LightLab -- the lights and shadows demo: a fly-around yard lit by every
+# light RenderCore has, each with the shadow technique it suits. Laid out as
+# File > New Project lays a game out (Engine/Templates/Game); Games/Sandbox is
+# the full example of everything a game can do.
 #
-# A walled yard of boxes and spheres lit by every light the engine has -- a
-# cascaded sun, a sky light, two shadowed spots, a modulated point light and an
-# unshadowed coloured one -- and a free-flying camera to look at them with.
-# Like Sandbox it consumes the engine through the public API only.
+# CONFIGURES STANDALONE: open this directory in an IDE, or
 #
-# CONFIGURES TWO WAYS, exactly as Games/Sandbox does (see the top of its
-# CMakeLists.txt for the full reasoning):
+#     cmake --preset editor-debug
+#     cmake --build --preset editor-debug
 #
-#   1. FROM ENGINE. Engine/CMakeLists.txt add_subdirectory()s this when
-#      NIMBLE_BUILD_LIGHTLAB is on.
+# It adds the Engine tree itself, so nothing under Engine/ names this game and
+# the engine is never edited to add one.
 #
-#   2. STANDALONE. Open Games/LightLab directly in an IDE, or point cmake at it
-#      (CMakePresets.json). This directory is then the top-level project and
-#      pulls the Engine tree in itself.
+#   LightLabGame   the game module (Source/Private/LightLab): level, mode, input
+#   LightLab       the launcher: the engine's, built under this name
+#   NimbleEditor         the editor, editing this project (Editor targets)
+#
+# Everything runs from Binaries/<Platform>_<Config>[_<Target>] below this
+# directory: the engine and game libraries, and staged copies of Config/,
+# Scripts/ and Content/ at the same relative paths.
 # ===========================================================================
 
-# C++17, exactly -- see Engine/CMakeLists.txt. Repeated here because a
-# standalone configure creates this directory's targets in a scope the Engine
-# tree's setting does not reach.
+# C++17, exactly -- see Engine/CMakeLists.txt.
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(GAME_NAME   "LightLab")
+set(GAME_MODULE "LightLabGame")
+
+# === The engine =============================================================
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-    set(LIGHTLAB_STANDALONE ON)
-else()
-    set(LIGHTLAB_STANDALONE OFF)
-endif()
-
-# === Standalone: bring the engine in ourselves =============================
-if(LIGHTLAB_STANDALONE)
-    message(STATUS "LightLab: standalone configure -- adding the Engine tree")
-
-    # A cache entry rather than a hardcoded path, so a checkout with a different
-    # layout can be pointed at its engine without editing this file.
-    set(LIGHTLAB_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../Engine"
-        CACHE PATH "Path to the Engine tree LightLab links against")
-
-    if(NOT EXISTS "${LIGHTLAB_ENGINE_DIR}/CMakeLists.txt")
-        message(FATAL_ERROR
-            "LightLab: no Engine/CMakeLists.txt at '${LIGHTLAB_ENGINE_DIR}'. "
-            "Set LIGHTLAB_ENGINE_DIR to the Engine tree, or configure the Engine "
-            "directory instead and let it add this one.")
+    set(GAME_ENGINE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../Engine" CACHE PATH "The Engine tree ${GAME_NAME} builds against")
+    if(NOT EXISTS "${GAME_ENGINE_DIR}/CMakeLists.txt")
+        message(FATAL_ERROR "${GAME_NAME}: no Engine/CMakeLists.txt at '${GAME_ENGINE_DIR}'. Set GAME_ENGINE_DIR to the Engine tree.")
     endif()
 
-    # MUST come before add_subdirectory. Engine/CMakeLists.txt adds the Games/
-    # hosts itself when their options are on: Sandbox would be a second game in
-    # this build, and LightLab would add THIS directory a second time -- a
-    # duplicate target. option() leaves an existing cache entry alone, which is
-    # what makes setting these here effective.
-    set(NIMBLE_BUILD_SANDBOX OFF CACHE BOOL
-        "Build the Games/Sandbox host (off here: LightLab is the top-level project)" FORCE)
-    set(NIMBLE_BUILD_LIGHTLAB OFF CACHE BOOL
-        "Build the Games/LightLab host (off here: LightLab IS the top-level project)" FORCE)
-
-    # Claims the runtime layout for this host. Engine/CMakeLists.txt defaults
-    # NIMBLE_BINARIES_DIR to Sandbox's Binaries; its set(... CACHE) leaves an
-    # existing entry alone, so this one wins. Not FORCE, so -D still overrides.
+    # This game's own runtime directory. The engine's default is Sandbox's
+    # Binaries; one directory belongs to one host (Engine/CMakeLists.txt).
     set(NIMBLE_BINARIES_DIR "${CMAKE_CURRENT_SOURCE_DIR}/Binaries"
         CACHE PATH "Root of the flat runtime layout; <Platform>_<Config> is created below it")
 
-    # Explicit binary dir because the source dir is outside this one.
-    add_subdirectory("${LIGHTLAB_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/Engine")
+    # Off before the engine is added: it would add Games/Sandbox to this build.
+    set(NIMBLE_BUILD_SANDBOX OFF CACHE BOOL "Build the Games/Sandbox host (off: ${GAME_NAME} is the top-level project)" FORCE)
+
+    add_subdirectory("${GAME_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/Engine")
 endif()
 
 if(NOT TARGET NimbleEngine)
-    message(FATAL_ERROR
-        "LightLab: the NimbleEngine target does not exist. When added from "
-        "Engine/CMakeLists.txt this directory must come AFTER the "
-        "nimble_add_module(NimbleEngine ...) call that creates it.")
+    message(FATAL_ERROR "${GAME_NAME}: the NimbleEngine target does not exist; configure this directory as the top-level project.")
 endif()
 
-# === The game module =======================================================
-# LightLabGame.cpp as a module DLL, loaded by name (NimbleEngine/GameModule.h)
-# by the launcher and the editor's Play-in-Editor, never linked.
-nimble_add_hot_module(LightLabGame
-        SOURCES      LightLabGame.cpp LightLabInput.cpp
+# === The game module ========================================================
+# Loaded by name (NimbleEngine/GameModule.h) by the launcher and the editor's
+# Play-in-Editor, never linked. Add new sources here.
+nimble_add_hot_module(${GAME_MODULE}
+        SOURCES      Source/Private/LightLab/LightLabGame.cpp
+                     Source/Private/LightLab/LightLabInput.cpp
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
-set_target_properties(LightLabGame PROPERTIES FOLDER "Games")
+set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 
-# === The launcher ==========================================================
-# Thin executable (Application::ExecGame). add_dependencies only ensures the
-# game module is built; it is not linked.
-add_executable(LightLab LightLabMain.cpp)
-add_dependencies(LightLab LightLabGame)
+# === The launcher ===========================================================
+# The engine's own (Engine/Source/Launcher/GameLauncherMain.cpp), built as
+# ${GAME_NAME}: it runs [Game] Module, ${GAME_MODULE} if unset. It also puts the
+# executable and the module beside the engine libraries, with the debugger
+# starting there. A game that needs its own main() passes SOURCES <file>
+# (Engine/cmake/NimbleModule.cmake).
+nimble_add_game_launcher(${GAME_NAME} MODULE ${GAME_MODULE})
 
-# The editor loads this game at Play, so building the editor builds it too.
+# The editor loads this game at Play, and edits this project's master config.
 if(TARGET NimbleEditor)
-    add_dependencies(NimbleEditor LightLabGame)
-
-    # Edit > Project Settings edits this game's master config, not the staged
-    # copy (see the Editor's CMakeLists.txt).
+    add_dependencies(NimbleEditor ${GAME_MODULE})
     set_property(TARGET NimbleEditor PROPERTY
             NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
 endif()
 
-# Same Qt-freedom the modules get from nimble_add_module().
-set_target_properties(LightLab PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+# === Runtime layout =========================================================
+# Where the launcher put the executable, beside the engine libraries; the
+# staging below copies Config/, Scripts/ and Content/ there.
+get_property(GAME_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+get_target_property(GAME_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
 
-target_link_libraries(LightLab PRIVATE NimbleEngine::NimbleEngine)
+# === Staging ================================================================
+# game_stage(<Name> <root> <files...>): each file copied beside the executable
+# at its path below <root> ("Scripts/Main.lua"), which is how the runtime names
+# it. A real output per file, so an edit restages without a relink; staged
+# before the game module, so building the editor alone stages too. Multi-config
+# generators have no single destination, so they copy after the launcher.
+function(game_stage STAGE_NAME STAGE_ROOT)
+    set(STAGE_OUTPUTS)
+    set(STAGE_COPIES)
+    foreach(STAGE_SRC ${ARGN})
+        file(RELATIVE_PATH STAGE_REL "${STAGE_ROOT}" "${STAGE_SRC}")
+        get_filename_component(STAGE_REL_DIR "${STAGE_REL}" DIRECTORY)
+        if(GAME_RT_DIR AND NOT GAME_MULTI_CONFIG)
+            add_custom_command(
+                    OUTPUT  "${GAME_RT_DIR}/${STAGE_REL}"
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "${GAME_RT_DIR}/${STAGE_REL_DIR}"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${STAGE_SRC}" "${GAME_RT_DIR}/${STAGE_REL}"
+                    DEPENDS "${STAGE_SRC}"
+                    COMMENT "${GAME_NAME}: staging ${STAGE_REL} beside the executable"
+                    VERBATIM)
+            list(APPEND STAGE_OUTPUTS "${GAME_RT_DIR}/${STAGE_REL}")
+        else()
+            list(APPEND STAGE_COPIES
+                    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:${GAME_NAME}>/${STAGE_REL_DIR}"
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${STAGE_SRC}" "$<TARGET_FILE_DIR:${GAME_NAME}>/${STAGE_REL}")
+        endif()
+    endforeach()
 
-# === Runtime layout ========================================================
-# Everything lands in Binaries/<Platform>_<Config> beside the engine's own
-# DLLs; see Games/Sandbox/CMakeLists.txt for why. Standalone we are ABOVE the
-# engine's scope and inherit nothing, so ask its target where it went.
-get_property(LIGHTLAB_MULTI_CONFIG GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-
-if(LIGHTLAB_STANDALONE)
-    get_target_property(LIGHTLAB_RT_DIR NimbleEngine RUNTIME_OUTPUT_DIRECTORY)
-    if(LIGHTLAB_RT_DIR)
-        set_target_properties(LightLab PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${LIGHTLAB_RT_DIR}")
-        # The launcher looks for the module beside itself.
-        set_target_properties(LightLabGame PROPERTIES LIBRARY_OUTPUT_DIRECTORY "${LIGHTLAB_RT_DIR}")
-    endif()
-
-    # Multi-config generators ignore the plain property and read the per-config one.
-    if(LIGHTLAB_MULTI_CONFIG)
-        foreach(LIGHTLAB_CFG IN LISTS CMAKE_CONFIGURATION_TYPES)
-            string(TOUPPER "${LIGHTLAB_CFG}" LIGHTLAB_CFG_U)
-            get_target_property(LIGHTLAB_RT_CFG NimbleEngine
-                                RUNTIME_OUTPUT_DIRECTORY_${LIGHTLAB_CFG_U})
-            if(LIGHTLAB_RT_CFG)
-                set_target_properties(LightLab PROPERTIES
-                        RUNTIME_OUTPUT_DIRECTORY_${LIGHTLAB_CFG_U} "${LIGHTLAB_RT_CFG}")
-                set_target_properties(LightLabGame PROPERTIES
-                        LIBRARY_OUTPUT_DIRECTORY_${LIGHTLAB_CFG_U} "${LIGHTLAB_RT_CFG}")
-            endif()
-        endforeach()
-    endif()
-else()
-    # Added from Engine, we inherited the variable itself.
-    set(LIGHTLAB_RT_DIR "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
-endif()
-
-# === Config staging ========================================================
-# Application::Initialize() reads "Config/DefaultEngine.ini" relative to the
-# working directory, so it is staged beside the executable. A real OUTPUT with
-# a real DEPENDS rather than POST_BUILD, which goes stale when only the .ini
-# changes -- Games/Sandbox/CMakeLists.txt has the history.
-set(LIGHTLAB_CONFIG_SRC "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
-
-if(EXISTS "${LIGHTLAB_CONFIG_SRC}" AND LIGHTLAB_RT_DIR AND NOT LIGHTLAB_MULTI_CONFIG)
-    set(LIGHTLAB_CONFIG_DST "${LIGHTLAB_RT_DIR}/Config/DefaultEngine.ini")
-
-    add_custom_command(
-            OUTPUT  "${LIGHTLAB_CONFIG_DST}"
-            COMMAND ${CMAKE_COMMAND} -E make_directory "${LIGHTLAB_RT_DIR}/Config"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${LIGHTLAB_CONFIG_SRC}" "${LIGHTLAB_CONFIG_DST}"
-            DEPENDS "${LIGHTLAB_CONFIG_SRC}"
-            COMMENT "LightLab: staging Config/DefaultEngine.ini beside the executable"
-            VERBATIM)
-
-    add_custom_target(LightLabStageConfig DEPENDS "${LIGHTLAB_CONFIG_DST}")
-    add_dependencies(LightLab LightLabStageConfig)
-    set_target_properties(LightLabStageConfig PROPERTIES FOLDER "Games")
-
-elseif(EXISTS "${LIGHTLAB_CONFIG_SRC}")
-    # Multi-config fallback: one OUTPUT cannot name a per-config destination.
-    add_custom_target(LightLabStageConfig ALL
-            COMMAND ${CMAKE_COMMAND} -E make_directory
-                    "$<TARGET_FILE_DIR:LightLab>/Config"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${LIGHTLAB_CONFIG_SRC}"
-                    "$<TARGET_FILE_DIR:LightLab>/Config/DefaultEngine.ini"
-            DEPENDS "${LIGHTLAB_CONFIG_SRC}"
-            COMMENT "LightLab: staging Config/DefaultEngine.ini beside the executable"
-            VERBATIM)
-    add_dependencies(LightLabStageConfig LightLab)
-    set_target_properties(LightLabStageConfig PROPERTIES FOLDER "Games")
-endif()
-
-# === Levels/ ===============================================================
-# Levels/LightLab.nmworld, as the editor saves it: the manifest and its folder
-# of .nmentity files, staged at the same path beside the executable, where
-# LightLabLevel::OnLoad loads it (the editor also re-stages it on every Save).
-# A Client/Server build reads only cooked worlds, so it stages
-# Levels/Cooked/<Name>.nmworld (the editor's 'cook' console command) as
-# Levels/<Name>.nmworld when there is one; without one the level is built in
-# code, the same scene.
-if(NIMBLE_TARGET STREQUAL "Editor")
-    file(GLOB_RECURSE LIGHTLAB_LEVEL_FILES CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/Levels/*.nmworld"
-            "${CMAKE_CURRENT_SOURCE_DIR}/Levels/*.nmentity")
-    list(FILTER LIGHTLAB_LEVEL_FILES EXCLUDE REGEX "/Levels/Cooked/")
-    set(LIGHTLAB_LEVEL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
-else()
-    file(GLOB LIGHTLAB_LEVEL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Levels/Cooked/*.nmworld")
-    set(LIGHTLAB_LEVEL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Levels/Cooked")
-endif()
-
-set(LIGHTLAB_LEVEL_OUTPUTS "")
-set(LIGHTLAB_LEVEL_COPIES "")
-foreach(LIGHTLAB_LEVEL_SRC ${LIGHTLAB_LEVEL_FILES})
-    file(RELATIVE_PATH LIGHTLAB_LEVEL_REL "${LIGHTLAB_LEVEL_ROOT}" "${LIGHTLAB_LEVEL_SRC}")
-    if(NOT NIMBLE_TARGET STREQUAL "Editor")
-        set(LIGHTLAB_LEVEL_REL "Levels/${LIGHTLAB_LEVEL_REL}")
-    endif()
-    get_filename_component(LIGHTLAB_LEVEL_REL_DIR "${LIGHTLAB_LEVEL_REL}" DIRECTORY)
-    if(LIGHTLAB_RT_DIR AND NOT LIGHTLAB_MULTI_CONFIG)
-        set(LIGHTLAB_LEVEL_DST "${LIGHTLAB_RT_DIR}/${LIGHTLAB_LEVEL_REL}")
-        add_custom_command(
-                OUTPUT  "${LIGHTLAB_LEVEL_DST}"
-                COMMAND ${CMAKE_COMMAND} -E make_directory "${LIGHTLAB_RT_DIR}/${LIGHTLAB_LEVEL_REL_DIR}"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${LIGHTLAB_LEVEL_SRC}" "${LIGHTLAB_LEVEL_DST}"
-                DEPENDS "${LIGHTLAB_LEVEL_SRC}"
-                COMMENT "LightLab: staging ${LIGHTLAB_LEVEL_REL} beside the executable"
-                VERBATIM)
-        list(APPEND LIGHTLAB_LEVEL_OUTPUTS "${LIGHTLAB_LEVEL_DST}")
+    set(STAGE_TARGET ${GAME_NAME}Stage${STAGE_NAME})
+    if(STAGE_OUTPUTS)
+        add_custom_target(${STAGE_TARGET} DEPENDS ${STAGE_OUTPUTS})
+        add_dependencies(${GAME_MODULE} ${STAGE_TARGET})
+    elseif(STAGE_COPIES)
+        add_custom_target(${STAGE_TARGET} ALL ${STAGE_COPIES} COMMENT "${GAME_NAME}: staging ${STAGE_NAME}" VERBATIM)
+        add_dependencies(${STAGE_TARGET} ${GAME_NAME})
     else()
-        list(APPEND LIGHTLAB_LEVEL_COPIES
-                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:LightLab>/${LIGHTLAB_LEVEL_REL_DIR}"
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${LIGHTLAB_LEVEL_SRC}" "$<TARGET_FILE_DIR:LightLab>/${LIGHTLAB_LEVEL_REL}")
+        return()
     endif()
-endforeach()
-if(LIGHTLAB_LEVEL_OUTPUTS)
-    add_custom_target(LightLabStageLevels DEPENDS ${LIGHTLAB_LEVEL_OUTPUTS})
-    add_dependencies(LightLab LightLabStageLevels)
-    if(TARGET NimbleEditor)
-        add_dependencies(NimbleEditor LightLabStageLevels)   # Play-in-Editor loads the staged copy
+    set_target_properties(${STAGE_TARGET} PROPERTIES FOLDER "Games")
+endfunction()
+
+# Config/: Application::Initialize() reads Config/DefaultEngine.ini. The copy
+# here is the master; the staged one is overwritten by the next build.
+file(GLOB GAME_CONFIG_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Config/*.ini")
+game_stage(Config "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_CONFIG_FILES})
+
+# Scripts/: Lua and script graphs (the runtime runs a graph's stored Lua).
+file(GLOB_RECURSE GAME_SCRIPT_FILES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/*.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Scripts/*.script.nmgraph")
+game_stage(Scripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_SCRIPT_FILES})
+
+# Content/: imported meshes and textures ("Content/Meshes/Crate.nmmesh").
+file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmtexture")
+game_stage(Content "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_CONTENT_FILES})
+
+# Content/Prefabs/: an Editor target stages the text prefabs it edits; a
+# Client or Server target cannot read text, so it stages the cooked ones from
+# Cooked/Content/Prefabs/ -- made in the editor with the console's `cook prefabs`.
+file(GLOB_RECURSE GAME_PREFAB_SCRIPTS CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.script.nmgraph")
+game_stage(PrefabScripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_PREFAB_SCRIPTS})
+
+if(NIMBLE_TARGET STREQUAL "Editor")
+    set(GAME_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+else()
+    set(GAME_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
+endif()
+file(GLOB_RECURSE GAME_PREFAB_FILES CONFIGURE_DEPENDS "${GAME_PREFAB_ROOT}/Content/Prefabs/*.nmprefab")
+file(GLOB_RECURSE GAME_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.nmprefab")
+if(NOT NIMBLE_TARGET STREQUAL "Editor" AND GAME_PREFAB_SOURCES AND NOT GAME_PREFAB_FILES)
+    message(WARNING "${GAME_NAME}: Content/Prefabs/ has prefabs but Cooked/Content/Prefabs/ has none; a ${NIMBLE_TARGET} "
+                    "build cannot read text prefabs. Cook them in the editor (console: cook prefabs).")
+endif()
+game_stage(Prefabs "${GAME_PREFAB_ROOT}" ${GAME_PREFAB_FILES})
+
+# Content/Materials/: material graphs, cooked into the module's shader cache
+# (Engine/cmake/NimbleMaterials.cmake), named "Content/Materials/<Name>.material.nmgraph".
+if(GAME_RT_DIR AND NOT GAME_MULTI_CONFIG)
+    nimble_stage_materials(TARGET ${GAME_NAME} DIR "${CMAKE_CURRENT_SOURCE_DIR}/Content/Materials"
+                           ROOT "${CMAKE_CURRENT_SOURCE_DIR}" MODULE ${GAME_MODULE} RUNTIME_DIR "${GAME_RT_DIR}")
+    if(TARGET ${GAME_NAME}StageMaterials)
+        add_dependencies(${GAME_MODULE} ${GAME_NAME}StageMaterials)   # the editor's build cooks them too
     endif()
-    set_target_properties(LightLabStageLevels PROPERTIES FOLDER "Games")
-elseif(LIGHTLAB_LEVEL_COPIES)
-    add_custom_target(LightLabStageLevels ALL ${LIGHTLAB_LEVEL_COPIES}
-            COMMENT "LightLab: staging Levels/ beside the executable"
-            VERBATIM)
-    add_dependencies(LightLabStageLevels LightLab)
-    set_target_properties(LightLabStageLevels PROPERTIES FOLDER "Games")
+else()
+    nimble_stage_materials(TARGET ${GAME_NAME} DIR "${CMAKE_CURRENT_SOURCE_DIR}/Content/Materials"
+                           ROOT "${CMAKE_CURRENT_SOURCE_DIR}" MODULE ${GAME_MODULE})
 endif()
 
-# No Scripts/, Prefabs/, Content/ or Materials/ to stage: its prefabs are
-# native, and it draws the engine's own meshes with DefaultLit -- all staged
-# by Engine/CMakeLists.txt.
-
-# === IDE ===================================================================
-# Without this an IDE run starts in the build directory and misses the config.
-set_target_properties(LightLab PROPERTIES
-        VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:LightLab>"
-        FOLDER "Games")
-
-# Only standalone: in a full Engine configure the startup project belongs to
-# whoever configured it.
-if(LIGHTLAB_STANDALONE)
-    set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT LightLab)
+# Content/Levels/: worlds saved from the editor, which a level loads by path
+# (GameCore::LoadWorldFile("Content/Levels/LightLab.nmworld")). An Editor target
+# stages the text worlds -- the .nmworld and the folder of entity and instance
+# files beside it; a Client or Server target, the cooked ones from
+# Content/Levels/Cooked/ (the editor's console: cook <world>).
+if(NIMBLE_TARGET STREQUAL "Editor")
+    file(GLOB_RECURSE GAME_LEVEL_FILES CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmworld"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmentity"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmprefabinst")
+    list(FILTER GAME_LEVEL_FILES EXCLUDE REGEX "/Content/Levels/Cooked/")
+else()
+    file(GLOB_RECURSE GAME_LEVEL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/Cooked/*.nmworld")
 endif()
+game_stage(Levels "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_LEVEL_FILES})
 
-source_group("LightLab" FILES LightLabMain.cpp LightLabGame.cpp LightLabInput.cpp)
+# === IDE ====================================================================
+set_property(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" PROPERTY VS_STARTUP_PROJECT ${GAME_NAME})

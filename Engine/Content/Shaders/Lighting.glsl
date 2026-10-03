@@ -147,8 +147,8 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
         Direct += EvaluateLight(S, L, ToLinear(ColorIntensity.rgb) * ColorIntensity.a * Attenuation) * Shadow;
     }
 
-    // +Y is down, so the sky is toward -Y.
-    float Up       = clamp(-S.N.y * 0.5 + 0.5, 0.0, 1.0);
+    // +Y is up, so the sky is toward +Y.
+    float Up       = clamp(S.N.y * 0.5 + 0.5, 0.0, 1.0);
     vec3  Ambient  = mix(ToLinear(Scene_GroundColor.rgb), ToLinear(Scene_SkyColor.rgb), Up) * Scene_SkyColor.a;
     vec3  Indirect = Ambient * (S.Albedo * (1.0 - S.Metallic) + S.F0 * (1.0 - S.Roughness) * 0.5) * Surface.AmbientOcclusion;
 

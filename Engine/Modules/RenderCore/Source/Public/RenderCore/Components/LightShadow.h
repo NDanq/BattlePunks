@@ -26,7 +26,8 @@ namespace RenderCore
     };
 
     /* The way a light at InRotation (Euler degrees, as TransformComponent)
-     * points: unit +Z through Rz * Ry * Rx. Pitch (X) -90 points down (+Y). */
+     * points: unit +Z through Rz * Ry * Rx. +Y is up, and pitch (X) +90 points
+     * down (-Y): a positive pitch tips the nose down. */
     inline EngineCore::Vector3 LightForward(const EngineCore::Vector3& InRotation)
     {
         return GameCore::TransformMath::EulerToRotation(InRotation).GetAxis(2);

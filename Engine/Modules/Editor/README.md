@@ -96,6 +96,8 @@ uses it.
 | `Content/ImportWizard` (private) | File > Import and drops from outside: the wizard that turns glTF and images into `.nmmesh` / `.nmtexture` |
 | `Content/AssetImport`, `GltfImporter` (private) | The conversions themselves, no widgets (cgltf, `External/cgltf-1.15`, reads glTF); tested by `NimbleEditorImportTests` |
 | `Content/ContentPaths` (private) | Project files as the engine names them: runtime-relative paths (the engine's content as `Engine/Content/...`), material names, staging beside the executable |
+| `Project/NewProjectWizard` (private) | File > New Project: a new game in `Games/<Name>` from `Engine/Templates/Game` -- module, level, game mode, game state, launcher, `Config/`, `Scripts/`, `Content/` -- configured standalone, so the engine is never edited |
+| `Project/ProjectTemplate` (private) | The copy itself, no widgets: name checks, `@PROJECT_NAME@` / `@ENGINE_DIR@` / `__PROJECT__` replaced; tested by `NimbleEditorProjectTests`, which also checks `Engine/Binaries/NewProject.cmake` (the same, without the editor) writes an identical project |
 
 ## Content Browser
 
@@ -142,8 +144,8 @@ dropped on, or the one shown -- `Content/` when the browser is at the root.
 1. **Files**: each file's kind and the asset name it gets (editable), and a
    warning beside one that will replace an existing asset.
 2. **Mesh options**: scale (glTF is in metres; 100 by default), convert axes
-   (glTF is +Y up; the model is turned a half-turn about X so up stays up and it
-   faces the default camera), generate missing normals, combine the scene into
+   (glTF is right-handed and the engine left-handed, both +Y up: z flips, with
+   the winding, so the model faces the default camera), generate missing normals, combine the scene into
    one mesh or one per glTF mesh, and import the textures it uses -- listed.
 3. **Texture options**: sRGB, filtering, wrapping, largest size (bigger images
    are scaled down), flip vertically.
@@ -219,7 +221,7 @@ NimbleEditor [--rhi N] [--play] [world.nmworld]
 The backend is `[Editor] RHI` in `Config/DefaultEngine.ini` (default 2, Vulkan),
 then the user's settings (see Editor settings), then `--rhi` -- a separate key from the game's `[Display] RHI`. With no
 file argument the editor opens the project's `[Editor] StartupWorld` (a path
-relative to the project, e.g. LightLab's `Levels/LightLab.nmworld`), viewed
+relative to the project, e.g. LightLab's `Content/Levels/LightLab.nmworld`), viewed
 from that world's game camera; with none set, or no such file, it opens the Sandbox scene -- the entities Sandbox's
 level has once loaded (Marker, Camera, and the startup script's Scripted),
 mirrored by hand from `SandboxGame.cpp` and `Scripts/Main.lua` until the editor
@@ -253,8 +255,8 @@ Right -- each orbits about the pivot to that axis; picking the shown one again
 snaps back to it); a **Frame** button (the selection -- its arrow menu has
 Frame All); All Bounds; and camera speed (1/8x to 8x). The combo boxes never
 take keyboard focus, so the viewport's keys keep working after one is used.
-"Top" looks from screen-up, which is world -Y: the editor keeps the game's
-+Y-down convention.
+"Top" looks down from world +Y: the editor uses the engine's left-handed,
++Y-up axes (RenderCore's RenderView.h).
 
 **Overlays** are Renderer debug lines (`Renderer::DrawDebugLine` /
 `DrawDebugBox`), not Qt painting -- nothing Qt draws can sit over the native
@@ -317,14 +319,21 @@ status says whether the script is running, which only happens in a playing
 World, and the **Cull outside active region** checkbox sets the script's cull
 flag. The script's class can override that flag when it loads.
 
-An array property (`Props.Array`, such as a RenderComponent's **Materials**)
-is a list: a heading with how many entries it holds and **+ Add**, then one row
+An array property (`Props.Array`, such as a RenderComponent's **Materials**,
+or `Props.StructArray`, such as its **Material Parameters**) is a list: a heading with how many entries it holds and **+ Add**, then one row
 per entry, numbered, each with its own reset arrow and an **x** that removes it
 -- the entries after it move up, and the array's end goes back to the default.
 It shows the entries in use (up to the last one that is not the default) and
 any added since; an added entry left empty is gone when another entity is
 selected. Removing is undoable like any edit. A RenderComponent's entry *i* is
 section *i*'s material; an empty one uses the mesh's own.
+
+A struct array's entry is a numbered heading with its **x**, then one row per
+member. A RenderComponent's **Material Parameters** entries are a Slot, a
+Name (the material's Parameter node) and X to W. An entry is in use while any
+member differs from the default, and one with an empty Name is ignored when
+drawing. `Editor.Details` (`Tests/DetailsTests.cpp`) builds the panel
+offscreen; `NIMBLE_DETAILS_SNAPSHOT=<file.png>` saves what it drew.
 
 A material field -- a Materials entry, a Post Process's Material, a mesh
 viewer section -- holds a material graph by its path,

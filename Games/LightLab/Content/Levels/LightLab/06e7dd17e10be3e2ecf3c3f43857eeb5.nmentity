@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="06e7dd17e10be3e2ecf3c3f43857eeb5" Name="WarmSpot">
+  <Component Type="Spot Light" Version="1">
+    <Color R="255" G="200" B="140" A="255" />
+    <Intensity Value="14" />
+    <Range Value="1600" />
+    <InnerConeAngle Value="18" />
+    <OuterConeAngle Value="28" />
+    <Active Value="true" />
+    <CastShadows Value="true" />
+    <ShadowTechnique Value="0" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.002" />
+    <ShadowNormalBias Value="1.5" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-900" Y="800" Z="-300" />
+    <Rotation X="50" Y="45" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

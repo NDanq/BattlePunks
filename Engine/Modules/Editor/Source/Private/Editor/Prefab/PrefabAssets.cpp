@@ -84,7 +84,7 @@ namespace EditorPrefabs
 
     QString GetDefaultFolder()
     {
-        return QDir(EditorGraphs::GetProjectRoot()).filePath(QStringLiteral("Prefabs"));
+        return QDir(EditorGraphs::GetProjectRoot()).filePath(QStringLiteral("Content/Prefabs"));
     }
 
     QString ToProjectPath(const QString& InRuntimePath)

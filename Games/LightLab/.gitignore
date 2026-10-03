@@ -1,25 +1,6 @@
-# ===========================================================================
-# LightLab .gitignore
-#
-# UNLIKE the modules under Engine/Modules, this directory CONFIGURES
-# STANDALONE -- see the LIGHTLAB_STANDALONE block at the top of CMakeLists.txt
-# -- so a build tree written here is expected rather than stray clutter, and
-# the entries below are load-bearing rather than belt-and-braces.
-#
-# /Binaries/ IS THE RUNTIME LAYOUT, not just link output. A standalone
-# configure points NIMBLE_BINARIES_DIR at it, so every module's .dll/.pdb
-# lands there along with a STAGED COPY of this directory's own Config/ and
-# GDI's cooked shaders. The original under Config/ is the tracked source;
-# everything inside Binaries/ is generated, including the copy that looks
-# identical to it. The repo-root .gitignore already lists /Games/*/Binaries/
-# -- repeated here so a standalone checkout of this directory alone is still
-# covered.
-#
-# The Qt moc/qrc/ui entries Modules/Core and Modules/GDI carry are
-# deliberately absent: CMakeLists.txt sets AUTOMOC/AUTOUIC/AUTORCC OFF on this
-# target. The .qrc files that appear under Binaries/ are GDI's cooked-shader
-# manifests, covered by the Binaries/ entry itself.
-# ---------------------------------------------------------------------------
+# Binaries/ is the runtime layout: every engine and game library, and staged
+# copies of Config/, Scripts/ and Content/. All generated; the originals here
+# are the tracked source. Cooked/ is NOT ignored: a Client build stages it.
 
 # Runtime layout and build trees
 /Binaries/
@@ -50,14 +31,10 @@ Testing/
 *.idb
 *.pch
 *.gch
-
-# Cooked shader output, if one is ever produced in-tree here rather than
-# staged into Binaries/
 *.spv
 *.cso
 
-# Smoke-test scratch and logs
-/SmokeScratch/
+# Logs
 /Logs/
 *.log
 

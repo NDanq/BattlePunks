@@ -269,7 +269,7 @@ namespace EditorGraphs
 
     QString GetDefaultFolder(const Schema& InSchema)
     {
-        return QDir(GetProjectRoot()).filePath(InSchema.GetName() == "Script" ? QStringLiteral("Scripts") : QStringLiteral("Materials"));
+        return QDir(GetProjectRoot()).filePath(InSchema.GetName() == "Script" ? QStringLiteral("Scripts") : QStringLiteral("Content/Materials"));
     }
 
     bool IsIgnoredFolder(const QString& InName)

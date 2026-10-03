@@ -27,7 +27,7 @@ EngineCore::Vector3 EditorCamera::GetForward() const
 {
     const float Y = Yaw * DegToRad;
     const float P = Pitch * DegToRad;
-    return EngineCore::Vector3(std::sin(Y) * std::cos(P), -std::sin(P), std::cos(Y) * std::cos(P));
+    return EngineCore::Vector3(std::sin(Y) * std::cos(P), std::sin(P), std::cos(Y) * std::cos(P));
 }
 
 EngineCore::Vector3 EditorCamera::GetRight() const
@@ -37,10 +37,9 @@ EngineCore::Vector3 EditorCamera::GetRight() const
 
 EngineCore::Vector3 EditorCamera::GetUp() const
 {
-    /* The view's U axis is flipped by the projection (world +Y runs down the
-     * screen), so screen-up is -U. */
+    /* The view's U axis: the projection keeps it (world +Y runs up the screen). */
     const EngineCore::Vector3 Forward = GetForward();
-    return (Forward ^ ViewRight(Forward)) * -1.0;
+    return Forward ^ ViewRight(Forward);
 }
 
 EngineCore::Vector3 EditorCamera::GetFocusPoint() const
@@ -91,14 +90,14 @@ void EditorCamera::Frame(const GameCore::AABB& InBox)
 
 void EditorCamera::ApplyPreset(const EPreset InPreset, const EngineCore::Vector3& InPivot)
 {
-    /* Forward = (sin yaw cos pitch, -sin pitch, cos yaw cos pitch). */
+    /* Forward = (sin yaw cos pitch, sin pitch, cos yaw cos pitch). */
     float NewYaw = 0.0f, NewPitch = 0.0f;
     switch(InPreset)
     {
-        case EPreset::Perspective: NewYaw =  35.0f; NewPitch = -25.0f;    break;   // above and to the left, looking down (+Y)
+        case EPreset::Perspective: NewYaw =  35.0f; NewPitch = -25.0f;    break;   // above and to the left, looking down (-Y)
         case EPreset::Front:       NewYaw =   0.0f; NewPitch =   0.0f;    break;   // along +Z -- the game's own view
         case EPreset::Back:        NewYaw = 180.0f; NewPitch =   0.0f;    break;
-        case EPreset::Top:         NewYaw =   0.0f; NewPitch = -MaxPitch; break;   // along +Y, from screen-up
+        case EPreset::Top:         NewYaw =   0.0f; NewPitch = -MaxPitch; break;   // along -Y, from above
         case EPreset::Bottom:      NewYaw =   0.0f; NewPitch =  MaxPitch; break;
         case EPreset::Right:       NewYaw = -90.0f; NewPitch =   0.0f;    break;   // along -X, from +X
         case EPreset::Left:        NewYaw =  90.0f; NewPitch =   0.0f;    break;
@@ -133,12 +132,11 @@ void EditorCamera::ScreenRay(const double InX, const double InY, const EngineCor
     const double NdcX = 2.0 * InX / Width - 1.0;
     const double NdcY = 1.0 - 2.0 * InY / Height;
 
-    /* Inverting MakePerspective's projection at view depth 1: its Y row is
-     * negated, hence the sign on ViewY. */
+    /* Inverting MakePerspective's projection at view depth 1. */
     const double FocalY = 1.0 / std::tan(double(FovY) * 0.5 * double(DegToRad));
     const double FocalX = FocalY / (Width / Height);
     const double ViewX  = NdcX / FocalX;
-    const double ViewY  = -NdcY / FocalY;
+    const double ViewY  = NdcY / FocalY;
 
     const EngineCore::Vector3 Forward = GetForward();
     const EngineCore::Vector3 Right   = ViewRight(Forward);
@@ -169,7 +167,7 @@ bool EditorCamera::WorldToScreen(const EngineCore::Vector3& InPoint, const Engin
     const double FocalX = FocalY / (Width / Height);
 
     const double NdcX = FocalX * Offset.Dot(Right) / Depth;
-    const double NdcY = -FocalY * Offset.Dot(ViewUp) / Depth;
+    const double NdcY = FocalY * Offset.Dot(ViewUp) / Depth;
 
     OutX = (NdcX + 1.0) * 0.5 * Width;
     OutY = (1.0 - NdcY) * 0.5 * Height;

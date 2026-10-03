@@ -80,7 +80,7 @@ return { ... }
 </NodeGraph>
 ```
 
-`Tests/Data/Mover.script.nmgraph` is a complete example; `Games/Sandbox/Materials/Ripples.material.nmgraph` is a material with a For Loop.
+`Tests/Data/Mover.script.nmgraph` is a complete example; `Games/Sandbox/Content/Materials/Ripples.material.nmgraph` is a material with a For Loop.
 
 - **Deterministic.** Nodes are sorted by GUID and links by their ends, and
   attributes come in a fixed order. Numbers use the shortest round-trip form
@@ -212,7 +212,7 @@ across `RefreshSchemas()`, so a graph that was already open still compiles.
 ### Game declarations
 
 A game module declares components and libraries in its own image
-(`Games/Sandbox/SandboxScripting.cpp`), so they exist only while it is
+(`Games/Sandbox/Source/Private/Sandbox/SandboxScripting.cpp`), so they exist only while it is
 loaded. The editor loads it briefly to read them
 (`EditorGraphs::RefreshGameDeclarations`):
 
@@ -403,9 +403,9 @@ the runtime directory the same way; GDI's own cook (and its `.qrc` bundles,
 which only a Qt host needs) is switched off with `GDI_COOK_SHADERS`.
 
 ```
-python Scripts/cook_material_graphs.py -check Games/Sandbox/Materials/Glow.material.nmgraph
-python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Materials -root Games/Sandbox -out <runtime>/Shaders/Cooked -data-out <runtime>
-python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Materials -root Games/Sandbox -cache <runtime>/Shaders/Cache/SandboxGame.Vulkan.nmsc -module SandboxGame
+python Scripts/cook_material_graphs.py -check Games/Sandbox/Content/Materials/Glow.material.nmgraph
+python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Content/Materials -root Games/Sandbox -out <runtime>/Shaders/Cooked -data-out <runtime>
+python Scripts/cook_material_graphs.py -target Vulkan -src Games/Sandbox/Content/Materials -root Games/Sandbox -cache <runtime>/Shaders/Cache/SandboxGame.Vulkan.nmsc -module SandboxGame
 ```
 
 `-src` takes a file or a folder; `-root` is what graphs' runtime paths are

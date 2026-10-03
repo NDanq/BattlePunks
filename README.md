@@ -32,17 +32,23 @@ the module named by `[Game] Module` in `Config/DefaultEngine.ini` and runs
 levels on startup (`Engine/Source/Public/NimbleEngine/GameModule.h`). Nothing
 links the game, which is what lets the editor load it for Play-in-Editor.
 
+Sandbox's start level is **BrickBreaker** (`BrickBreaker.cpp`), the example
+for the game framework: phases in the `GameState`, rules in the `IGameMode`,
+players as `PlayerState` components, all reachable from Lua and script graphs
+(`Engine/Source/GAMEFRAMEWORK.md`). `[Game] StartLevel=Sandbox` runs the older
+demo level instead.
+
 ### LightLab
 
-`Games/LightLab` is a second game laid out like Sandbox: a fly-around scene
+`Games/LightLab` is a second game, laid out as File > New Project lays one out: a fly-around scene
 showing the lights and shadows (RenderCore's `RENDERPIPELINE.md`, "Lights" and
 "Shadows"). Open it in CLion or configure it standalone the same way; it has
 its own `CMakePresets.json` and stages into `Games/LightLab/Binaries`. The
-level is `Games/LightLab/Levels/LightLab.nmworld`: the editor opens it
+level is `Games/LightLab/Content/Levels/LightLab.nmworld`: the editor opens it
 (`[Editor] StartupWorld`), and the game loads it and finds its Player, Sun,
 SweepSpot and OrbitLight by name, so edits saved in the editor show in the
 next Play. Without it (a Client build has no cooked copy unless one is put in
-`Levels/Cooked/`) the game builds the same scene in code; `[LightLab]
+`Content/Levels/Cooked/`) the game builds the same scene in code; `[LightLab]
 ExportLevel=<path>` in an editor build writes that code-built scene out. Mouse
 looks, WASD moves, E/Q (or Space/Ctrl) rise and sink, Shift is faster, T cycles
 the sun's shadow technique and F toggles shadows. Escape frees the mouse; a
@@ -76,6 +82,23 @@ cmake --build --preset client-shipping
 Or configure the engine directly: `cmake -S Engine -B build -DNIMBLE_TARGET=Client -DCMAKE_BUILD_TYPE=Shipping`.
 
 ## Conventions
+
+### Coordinate system
+
+**Left-handed, +X right, +Y up, +Z into the screen** (away from the viewer).
+A camera at rest looks along +Z. The 2D view is one unit per pixel, with the
+camera's position at the bottom-left corner of the screen, so a 1280 × 720
+view spans x 0..1280 and y 0..720 (`RenderCore/RenderView.h`). Screen-space
+values are the exception, the way the platform gives them: mouse positions
+(`Input.GetMousePosition`) are window pixels with y down, and so is a stick's
+`Gamepad.LeftY` axis.
+
+- A positive rotation about +Z turns +X toward +Y: counter-clockwise on screen.
+- glTF meshes are converted on import by flipping z, with the winding
+  (`GltfImporter.cpp`). The engine's primitive meshes are made the same way
+  (`Engine/Scripts/generate_primitive_meshes.py`).
+- GDI's own `GDIView`, the Odessa 2D path, stays Y-down. RenderCore builds its
+  own views and does not use it.
 
 ### Namespaces
 
