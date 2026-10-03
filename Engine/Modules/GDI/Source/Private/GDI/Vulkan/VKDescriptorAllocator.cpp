@@ -15,8 +15,8 @@ bool VKDescriptorAllocator::Initialize(VKDevice* InDevice)
     if(!InDevice || !InDevice->IsValid()) return false;
     Device = InDevice;
 
-    if(!GrowPool())       return false;
-    if(!CreateRingBuffer()) return false;
+    if(!GrowPool())        return false;
+    if(!CreateRingChunk()) return false;
 
     GDI_LOG("[VKDescriptorAllocator] Initialized.")
     return true;
@@ -37,23 +37,16 @@ void VKDescriptorAllocator::Shutdown()
     Pools.clear();
     ActivePool = 0;
 
-    // Destroy UBO ring buffer.
-    if(RingMapped && RingMemory != VK_NULL_HANDLE)
+    // Destroy the UBO ring's chunks.
+    for(RingChunk& Chunk : RingChunks)
     {
-        vkUnmapMemory(Dev, RingMemory);
-        RingMapped = nullptr;
+        if(Chunk.Mapped && Chunk.Memory != VK_NULL_HANDLE) vkUnmapMemory(Dev, Chunk.Memory);
+        if(Chunk.Buffer != VK_NULL_HANDLE)                 vkDestroyBuffer(Dev, Chunk.Buffer, nullptr);
+        if(Chunk.Memory != VK_NULL_HANDLE)                 vkFreeMemory(Dev, Chunk.Memory, nullptr);
     }
-    if(RingBuffer != VK_NULL_HANDLE)
-    {
-        vkDestroyBuffer(Dev, RingBuffer, nullptr);
-        RingBuffer = VK_NULL_HANDLE;
-    }
-    if(RingMemory != VK_NULL_HANDLE)
-    {
-        vkFreeMemory(Dev, RingMemory, nullptr);
-        RingMemory = VK_NULL_HANDLE;
-    }
-    RingOffset = 0;
+    RingChunks.clear();
+    ActiveChunk = 0;
+    RingOffset  = 0;
 
     Device = nullptr;
 }
@@ -75,7 +68,8 @@ void VKDescriptorAllocator::Reset()
     ActivePool = 0;
 
     // Rewind UBO ring so the same memory is reused each frame.
-    RingOffset = 0;
+    ActiveChunk = 0;
+    RingOffset  = 0;
     ++Epoch;
 }
 
@@ -127,21 +121,36 @@ VkDescriptorSet VKDescriptorAllocator::Allocate(VkDescriptorSetLayout Layout)
 
 VKUBOAllocation VKDescriptorAllocator::AllocateUBO(VkDeviceSize Size)
 {
-    if(RingBuffer == VK_NULL_HANDLE || RingMapped == nullptr)
+    if(RingChunks.empty() || Size > kRingCapacity)
         return VKUBOAllocation{};
 
-    // Align offset to kUBOAlignment.
-    const VkDeviceSize Aligned = (RingOffset + kUBOAlignment - 1) & ~(kUBOAlignment - 1);
+    // Align offset to kUBOAlignment; past the chunk's end, the next chunk.
+    VkDeviceSize Aligned = (RingOffset + kUBOAlignment - 1) & ~(kUBOAlignment - 1);
     if(Aligned + Size > kRingCapacity)
     {
-        GDI_LOG("[VKDescriptorAllocator] UBO ring buffer full; increase kRingCapacity.")
-        return VKUBOAllocation{};
+        if(ActiveChunk + 1 >= RingChunks.size())
+        {
+            if(RingChunks.size() >= kRingChunkMax || !CreateRingChunk())
+            {
+                if(!bWarnedFull)
+                {
+                    bWarnedFull = true;
+                    GDI_LOG("[VKDescriptorAllocator] UBO ring full at "
+                         + ::GDILogDetail::GDINum(RingChunks.size() * (kRingCapacity / 1024))
+                         + " KB this frame; draws past it are dropped.")
+                }
+                return VKUBOAllocation{};
+            }
+        }
+        ++ActiveChunk;
+        Aligned = 0;
     }
 
+    const RingChunk& Chunk = RingChunks[ActiveChunk];
     VKUBOAllocation Alloc;
-    Alloc.Buffer    = RingBuffer;
+    Alloc.Buffer    = Chunk.Buffer;
     Alloc.Offset    = Aligned;
-    Alloc.MappedPtr = static_cast<uint8_t*>(RingMapped) + Aligned;
+    Alloc.MappedPtr = static_cast<uint8_t*>(Chunk.Mapped) + Aligned;
     RingOffset = Aligned + Size;
     return Alloc;
 }
@@ -186,9 +195,10 @@ bool VKDescriptorAllocator::GrowPool()
 // UBO ring buffer creation
 // ---------------------------------------------------------------------------
 
-bool VKDescriptorAllocator::CreateRingBuffer()
+bool VKDescriptorAllocator::CreateRingChunk()
 {
     VkDevice Dev = Device->GetDevice();
+    RingChunk Chunk;
 
     VkBufferCreateInfo BufCI{};
     BufCI.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -196,14 +206,22 @@ bool VKDescriptorAllocator::CreateRingBuffer()
     BufCI.usage       = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
     BufCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if(vkCreateBuffer(Dev, &BufCI, nullptr, &RingBuffer) != VK_SUCCESS)
+    if(vkCreateBuffer(Dev, &BufCI, nullptr, &Chunk.Buffer) != VK_SUCCESS)
     {
         GDI_LOG("[VKDescriptorAllocator] vkCreateBuffer (ring) failed.")
         return false;
     }
 
+    /* A chunk that fails part-way leaves nothing behind. */
+    const auto Discard = [Dev, &Chunk]()
+    {
+        if(Chunk.Buffer != VK_NULL_HANDLE) vkDestroyBuffer(Dev, Chunk.Buffer, nullptr);
+        if(Chunk.Memory != VK_NULL_HANDLE) vkFreeMemory(Dev, Chunk.Memory, nullptr);
+        return false;
+    };
+
     VkMemoryRequirements MemReqs;
-    vkGetBufferMemoryRequirements(Dev, RingBuffer, &MemReqs);
+    vkGetBufferMemoryRequirements(Dev, Chunk.Buffer, &MemReqs);
 
     VkMemoryAllocateInfo AllocInfo{};
     AllocInfo.sType           = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -215,24 +233,25 @@ bool VKDescriptorAllocator::CreateRingBuffer()
     if(AllocInfo.memoryTypeIndex == UINT32_MAX)
     {
         GDI_LOG("[VKDescriptorAllocator] No host-coherent memory type for UBO ring.")
-        return false;
+        return Discard();
     }
 
-    if(vkAllocateMemory(Dev, &AllocInfo, nullptr, &RingMemory) != VK_SUCCESS)
+    if(vkAllocateMemory(Dev, &AllocInfo, nullptr, &Chunk.Memory) != VK_SUCCESS)
     {
         GDI_LOG("[VKDescriptorAllocator] vkAllocateMemory (ring) failed.")
-        return false;
+        return Discard();
     }
 
-    vkBindBufferMemory(Dev, RingBuffer, RingMemory, 0);
+    vkBindBufferMemory(Dev, Chunk.Buffer, Chunk.Memory, 0);
 
-    if(vkMapMemory(Dev, RingMemory, 0, kRingCapacity, 0, &RingMapped) != VK_SUCCESS)
+    if(vkMapMemory(Dev, Chunk.Memory, 0, kRingCapacity, 0, &Chunk.Mapped) != VK_SUCCESS)
     {
         GDI_LOG("[VKDescriptorAllocator] vkMapMemory (ring) failed.")
-        return false;
+        return Discard();
     }
 
-    GDI_LOG("[VKDescriptorAllocator] UBO ring buffer allocated ("
+    RingChunks.push_back(Chunk);
+    GDI_LOG("[VKDescriptorAllocator] UBO ring chunk " + ::GDILogDetail::GDINum(RingChunks.size() - 1) + " allocated ("
          + ::GDILogDetail::GDINum(kRingCapacity / 1024) + " KB).")
     return true;
 }
