@@ -5,6 +5,7 @@
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/Math/Vector.h"
+#include "Public/RenderCore/PostProcessStack.h"
 
 /*
  * The scene's lights and its post-process passes, built on the game thread by
@@ -89,13 +90,11 @@ namespace RenderCore
         RenderShadowSettings Shadows;
     };
 
-    enum : uint32_t { RENDER_POST_PROCESS_MAX = 8 };
-
-    /* Active PostProcessComponents, in the order they run (Priority, low first). */
+    /* The frame's post processing: every Post Process volume the camera is
+     * in, blended (WorldBridge::BuildPostProcess, BlendPostProcess). */
     struct RenderPostProcess
     {
-        char     Materials[RENDER_POST_PROCESS_MAX][128] = {};  // RENDER_MATERIAL_PATH_MAX
-        uint32_t Count = 0;
+        PostProcessSettings Settings;
     };
 }
 

@@ -65,33 +65,59 @@ namespace EditorContent
 
     namespace
     {
-        const QString MATERIAL_GRAPH = QStringLiteral(".material.nmgraph");
-        const QString SCRIPT_GRAPH   = QStringLiteral(".script.nmgraph");
+        const QString MATERIAL_GRAPH     = QStringLiteral(".material.nmgraph");
+        const QString SCRIPT_GRAPH       = QStringLiteral(".script.nmgraph");
+        const QString POST_PROCESS_GRAPH = QStringLiteral(".pp.nmgraph");
 
-        void FindMaterialGraphs(const QDir& InDir, QStringList& OutPaths)
+        /* Every file under InDir that InPathFor gives a value for. */
+        void FindGraphs(const QDir& InDir, QString (*InPathFor)(const QString&), QStringList& OutPaths)
         {
             for(const QFileInfo& Entry : InDir.entryInfoList(QDir::Dirs | QDir::Files | QDir::NoDotAndDotDot, QDir::Name))
             {
                 if(Entry.isDir())
                 {
-                    if(!EditorGraphs::IsIgnoredFolder(Entry.fileName())) { FindMaterialGraphs(QDir(Entry.absoluteFilePath()), OutPaths); }
+                    if(!EditorGraphs::IsIgnoredFolder(Entry.fileName())) { FindGraphs(QDir(Entry.absoluteFilePath()), InPathFor, OutPaths); }
                     continue;
                 }
-                const QString Path = MaterialPathFor(Entry.absoluteFilePath());
+                const QString Path = InPathFor(Entry.absoluteFilePath());
                 if(!Path.isEmpty()) { OutPaths << Path; }
             }
+        }
+
+        QStringList ListGraphs(QString (*InPathFor)(const QString&))
+        {
+            QStringList Paths;
+            const QString Engine = GetEngineContentRoot();
+            FindGraphs(QDir(EditorGraphs::GetProjectRoot()), InPathFor, Paths);
+            if(!Engine.isEmpty()) { FindGraphs(QDir(Engine), InPathFor, Paths); }
+            Paths.removeDuplicates();
+            Paths.sort(Qt::CaseInsensitive);
+            return Paths;
         }
     }
 
     QStringList ListMaterialPaths()
     {
-        QStringList Paths;
-        const QString Engine = GetEngineContentRoot();
-        FindMaterialGraphs(QDir(EditorGraphs::GetProjectRoot()), Paths);
-        if(!Engine.isEmpty()) { FindMaterialGraphs(QDir(Engine), Paths); }
-        Paths.removeDuplicates();
-        Paths.sort(Qt::CaseInsensitive);
-        return Paths;
+        return ListGraphs(&MaterialPathFor);
+    }
+
+    QStringList ListPostProcessPaths()
+    {
+        return ListGraphs([](const QString& InPath)
+        {
+            return InPath.endsWith(POST_PROCESS_GRAPH, Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+        });
+    }
+
+    QString PostProcessPathFor(const QString& InPath)
+    {
+        if(InPath.endsWith(POST_PROCESS_GRAPH, Qt::CaseInsensitive)) { return ToRuntimePath(InPath); }
+        return MaterialPathFor(InPath);
+    }
+
+    bool IsPostProcessFieldValue(const QString& InText)
+    {
+        return IsMaterialFieldValue(InText) || (InText.endsWith(POST_PROCESS_GRAPH) && InText.size() > POST_PROCESS_GRAPH.size());
     }
 
     QString MaterialPathFor(const QString& InPath)

@@ -43,6 +43,14 @@ namespace EditorContent
      * ending .material.nmgraph. */
     bool IsMaterialFieldValue(const QString& InText);
 
+    /* A post process field (PF_AssetPostProcess): a stack, *.pp.nmgraph -- or
+     * a PostProcess material graph, a stack of one. Every stack's runtime path,
+     * sorted; what the field stores for a file ("" for anything else); and
+     * whether text is a value it may hold. */
+    QStringList ListPostProcessPaths();
+    QString     PostProcessPathFor(const QString& InPath);
+    bool        IsPostProcessFieldValue(const QString& InText);
+
     /* What a Script field stores for a file: the runtime path of a .lua or a
      * *.script.nmgraph in the project. Empty for anything else. */
     QString ScriptPathFor(const QString& InPath);

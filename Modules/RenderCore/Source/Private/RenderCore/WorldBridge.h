@@ -60,10 +60,13 @@ namespace RenderCore
 
         /* The first active DirectionalLightComponent and SkyLightComponent,
          * over RenderLighting's defaults; the point and spot lights nearest
-         * InEye (casters first); the [Shadows] settings. Every enabled
-         * PostProcessComponent, Priority low first. Game thread, like BuildView. */
+         * InEye (casters first); the [Shadows] settings. Game thread, like
+         * BuildView. */
         RenderLighting    BuildLighting(const EngineCore::Vector3& InEye) const;
-        RenderPostProcess BuildPostProcess() const;
+
+        /* Every enabled Post Process volume InView's camera is in or near,
+         * blended Priority low first, weighted by how far inside it is. */
+        RenderPostProcess BuildPostProcess(const RenderView& InView) const;
 
         RenderScene*    Scene = nullptr;
         GameCore::World* BoundWorld = nullptr;

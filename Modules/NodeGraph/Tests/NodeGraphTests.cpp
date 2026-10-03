@@ -730,6 +730,73 @@ namespace
         Scripts.Shutdown();
     }
 
+    /* A post process stack: nodes are settings, written in the renderer's
+     * order whatever the canvas order; materials by stage then order. */
+    void TestPostProcessStack()
+    {
+        std::printf("[post process stack]\n");
+
+        const Schema* Stack = FindSchemaForPath("Content/PostProcess/Arch.pp.nmgraph");
+        Expect(Stack && Stack->GetName() == "PostProcess", "*.pp.nmgraph is a PostProcess graph");
+
+        Graph G;
+        G.SchemaName = "PostProcess";
+        G.Name       = "Arch";
+        AddNode(G, 1, "Effect.Antialiasing").Properties["Quality"] = "High";
+        Node& Bloom = AddNode(G, 2, "Effect.Bloom");
+        Bloom.Properties["Intensity"] = "1.5";
+        Bloom.Properties["Tint"]      = "1 0.5 0.25";
+        AddNode(G, 3, "Effect.DepthOfField").Properties["Near Blur"] = "false";
+        Node& After  = AddNode(G, 4, "Effect.Material");
+        After.Properties["Material"] = "Content/Materials/Negative.material.nmgraph";
+        Node& Before = AddNode(G, 5, "Effect.Material");
+        Before.Properties["Material"] = "Content/Materials/Wave.material.nmgraph";
+        Before.Properties["Stage"]    = "Before Effects";
+
+        CompileResult Result;
+        CompileGraph(G, Result);
+        Expect(!Result.HasErrors(), "the stack compiles");
+        if(Result.HasErrors()) { std::printf("%s\n", FormatDiagnostics(G, Result).c_str()); }
+        const std::string& Text = Result.Code;
+        const size_t Dof = Text.find("Effect DepthOfField "), Glow = Text.find("Effect Bloom "), Aa = Text.find("Effect Antialiasing ");
+        Expect(Dof != std::string::npos && Glow != std::string::npos && Aa != std::string::npos && Dof < Glow && Glow < Aa,
+               "effects are written in the renderer's order, not the graph's");
+        Expect(Text.find("Effect MotionBlur") == std::string::npos, "an effect with no node is not written");
+        Expect(Text.find("Intensity=1.5") != std::string::npos && Text.find("Tint=1,0.5,0.25") != std::string::npos
+               && Text.find("Threshold=0.8") != std::string::npos, "values as set, defaults where not, lists with commas");
+        Expect(Text.find("NearBlur=false") != std::string::npos && Text.find("Quality=High") != std::string::npos,
+               "switches and choices are written by key");
+        const size_t First = Text.find("Material Stage=Before Order=0 Path=Content/Materials/Wave.material.nmgraph");
+        const size_t Last  = Text.find("Material Stage=After Order=0 Path=Content/Materials/Negative.material.nmgraph");
+        Expect(First != std::string::npos && Last != std::string::npos && First < Last, "materials by stage, path last");
+
+        Graph Bad = G;
+        Bad.FindNode(Id(2))->Properties["Threshold"] = "bright";
+        Bad.FindNode(Id(3))->Properties["Max Blur"]  = "64";
+        CompileResult BadResult;
+        CompileGraph(Bad, BadResult);
+        Expect(BadResult.HasErrors() && BadResult.Code.empty() && BadResult.Diagnostics.size() >= 2,
+               "a non-number and an out-of-range value are errors");
+
+        Graph Twice = G;
+        AddNode(Twice, 6, "Effect.Bloom");
+        CompileResult TwiceResult;
+        CompileGraph(Twice, TwiceResult);
+        Expect(TwiceResult.HasErrors(), "each effect appears once");
+
+        Graph Wrong = G;
+        Wrong.FindNode(Id(4))->Properties["Material"] = "Content/Textures/Brick.nmtexture";
+        CompileResult WrongResult;
+        CompileGraph(Wrong, WrongResult);
+        Expect(WrongResult.HasErrors(), "a Material node takes a material graph only");
+
+        Graph Empty;
+        Empty.SchemaName = "PostProcess";
+        CompileResult EmptyResult;
+        CompileGraph(Empty, EmptyResult);
+        Expect(!EmptyResult.HasErrors() && !EmptyResult.Code.empty(), "an empty stack compiles to a header, not nothing");
+    }
+
     void TestMaterialCodegen()
     {
         std::printf("[material codegen]\n");
@@ -2206,6 +2273,7 @@ int main()
     TestDiscard();
     TestMaterialStages();
     TestTextureSample();
+    TestPostProcessStack();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

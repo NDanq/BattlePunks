@@ -58,7 +58,7 @@ templates, beside the engine's other shaders.
 | Opaque | Base Pass / Unlit | off | on | |
 | Masked | Base Pass / Unlit | off | on | `discard` when OpacityMask < Clip Value |
 | Translucent | Translucent Lit / Translucent Unlit | alpha | off | sorted back to front |
-| PostProcess | PostProcess | off | off | full-screen, Unlit only, samples Scene Color; no WPO |
+| PostProcess | PostProcess | off | off | full-screen, Unlit only, samples Scene Color and Scene Depth; no WPO; run by a post process stack (RENDERPIPELINE.md) |
 
 The domain and shading are the key to where a material draws:
 [RENDERPIPELINE.md](RENDERPIPELINE.md) has the stages, their draw policies and
@@ -114,7 +114,7 @@ uploads verbatim.
 | 0, 1 | View, Transform | GDI, per draw | Common.glsl (unchanged) |
 | 2 | `<Name>_Block`: `Material_Tint`, `Material_ClipValue`, `Material_TwoSided`, two reserved floats, then `Param_<Name>` for each parameter | RenderContext, per draw | MaterialSchema (offsets in `.material`) |
 | 3 | `Scene_Block`: camera, time, light, ambient, and the inverse view-projection (the Lighting stage's) | RenderContext, per frame | SceneUniforms.glsl, mirrored by `SceneUniforms` in RenderContext.cpp with static_asserts |
-| 4-11 | Material textures (slot 0-7); slot 0 is Scene Color for PostProcess | RenderContext | fixed |
+| 4-11 | Material textures (slot 0-7); for PostProcess, slot 0 is Scene Color and slot 7 the scene depth | RenderContext | fixed |
 
 Both blocks are visible to both stages, so World Position Offset can read
 parameters and time. Parameters are float, vec2, vec3 or vec4, in name order;
@@ -184,6 +184,7 @@ about them generically. Enforced:
 | Math, Vector, Logic | yes | yes |
 | Pixel Coordinate, Pixel Depth, Clip Position | no | yes |
 | Scene Texture (PostProcess only) | no | yes |
+| Scene Depth (PostProcess only) | no | yes |
 | Texture Object, Texture Sample (level 0 in the vertex stage) | yes | yes |
 
 **Time** reads `Scene_Time`: seconds since the renderer started (real time,

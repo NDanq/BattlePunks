@@ -35,6 +35,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderContext.h"
@@ -1551,7 +1552,29 @@ static void TestRenderComponentSerializer()
     Expect(CameraInfo && CameraInfo->Version == 2, "CameraComponent saves as version 2 (Projection, FovY)");
 
     const GameCore::ComponentSerializerInfo* PostInfo = GameCore::FindComponentSerializer(PostProcessComponent::StaticType().ID);
-    Expect(PostInfo && PostInfo->Version == 1, "PostProcessComponent saves as version 1");
+    Expect(PostInfo && PostInfo->Version == 2, "PostProcessComponent saves as version 2 (Stack, BlendDistance)");
+    if(PostInfo)
+    {
+        const auto HasName = [](const RecordingArchive& InArchive, const char* InName)
+        {
+            return std::find(InArchive.Names.begin(), InArchive.Names.end(), std::string(InName)) != InArchive.Names.end();
+        };
+        RecordingArchive PostOut;
+        PostOut.Version = PostInfo->Version;
+        PostProcessComponent Volume;
+        std::strcpy(Volume.Stack, "Content/PostProcess/Arch.pp.nmgraph");
+        PostInfo->Fn(PostOut, &Volume);
+        Expect(HasName(PostOut, "Stack") && HasName(PostOut, "BlendDistance") && !HasName(PostOut, "Material"),
+               "version 2 writes Stack and BlendDistance");
+        RecordingArchive PostOld;
+        PostOld.bLoading = true;
+        PostOld.Version  = 1;
+        PostOld.Strings["Material"] = "Materials/Negative.material.nmgraph";
+        PostProcessComponent FromOld;
+        PostInfo->Fn(PostOld, &FromOld);
+        Expect(std::strcmp(FromOld.Stack, "Materials/Negative.material.nmgraph") == 0 && !HasName(PostOld, "BlendDistance"),
+               "a version 1 save's Material reads into Stack");
+    }
 }
 
 #if WITH_EDITOR
@@ -1768,6 +1791,343 @@ static void TestShadowsOnGpu()
     SetFileProvider(PreviousProvider);
 }
 #endif // WITH_EDITOR
+
+#if WITH_EDITOR
+/*
+ * The post process stack on the GPU (NIMBLE_SMOKE_GPU=Vulkan): a lit yard of
+ * boxes captured plain and through each effect, compared pixel by pixel.
+ * Bloom only adds light; FXAA touches edges and nothing else; Depth of Field
+ * flattens edges; a volume the camera is far outside does nothing; Motion
+ * Blur smears only when the camera moved since the last frame.
+ */
+static void TestPostProcessOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[post process on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[post process on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    /* Stacks as the editor saves them, beside the executable. */
+    std::error_code Ignored;
+    std::filesystem::create_directories("SmokeScratch/PostStacks", Ignored);
+    const auto WriteStack = [](const char* InName, const char* InStack)
+    {
+        const std::string Path = std::string("SmokeScratch/PostStacks/") + InName + ".pp.nmgraph";
+        std::ofstream Out(Path);
+        Out << "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"PostProcess\">\n  <gen_code>\n"
+               "    <Output Extension=\".ppstack\"><![CDATA[" << InStack << "]]></Output>\n  </gen_code>\n</NodeGraph>\n";
+        PostProcessStackCache::Invalidate(Path);
+        return Path;
+    };
+    const std::string BloomStack  = WriteStack("Bloom", "Effect Bloom Threshold=0.85 Intensity=0.8 Radius=0.75 Levels=5 Tint=1,1,1\n");
+    const std::string FxaaStack   = WriteStack("Fxaa", "Effect Antialiasing EdgeThreshold=0.1 Method=FXAA Quality=High\n");
+    const std::string DofStack    = WriteStack("Dof", "Effect DepthOfField FocusDistance=50 FocusRange=10 MaxBlur=16 NearBlur=false\n");
+    const std::string MotionStack = WriteStack("Motion", "Effect MotionBlur Intensity=1 MaxLength=48 Samples=12\n");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Still = RenderView::MakePerspective(Viewport, Vector3(0.0, 500.0, -700.0), Vector3(0.0, -500.0, 700.0),
+                                                             50.0f, 10.0f, 5000.0f);
+        const RenderView Turned = RenderView::MakePerspective(Viewport, Vector3(0.0, 500.0, -700.0), Vector3(150.0, -500.0, 700.0),
+                                                              50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&Still);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Mesh = [](const char* InPath)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InPath);
+            return Render;
+        };
+        Placed("Floor", Vector3(), Vector3(), Vector3(3000.0, 1.0, 3000.0)).AddComponent(Mesh("Engine/Content/Meshes/Plane.nmmesh"));
+        for(int Index = 0; Index < 5; ++Index)
+        {
+            Placed("Box", Vector3(-400.0 + 200.0 * Index, 60.0, 100.0 * (Index % 3)), Vector3(0.0, 25.0 * Index, 0.0),
+                   Vector3(90.0, 120.0, 90.0)).AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+        }
+        DirectionalLightComponent SunInit;
+        SunInit.bCastShadows = 0;
+        Placed("Sun", Vector3(), Vector3(50.0, 30.0, 0.0), Vector3(1.0, 1.0, 1.0)).AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        /* The volume: everywhere until it is given Bounds. */
+        PostProcessComponent VolumeInit;
+        VolumeInit.bEnabled = 0;
+        const GameCore::Entity Volume = Placed("Volume", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0));
+        Volume.AddComponent(VolumeInit);
+        const auto UseStack = [&Volume](const std::string& InStack)
+        {
+            PostProcessComponent* Each = Volume.GetComponent<PostProcessComponent>();
+            std::snprintf(Each->Stack, sizeof(Each->Stack), "%s", InStack.c_str());
+            Each->bEnabled = InStack.empty() ? 0 : 1;
+        };
+
+        uint64_t Frame = 1;
+        const auto Draw = [&](const RenderView& InView)
+        {
+            Rend.SetViewOverride(&InView);
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        };
+        /* Two frames at InFirst, then the capture's frame at InView. */
+        const auto Capture = [&](EngineCore::Image& OutPixels, const RenderView& InFirst, const RenderView& InView)
+        {
+            Draw(InFirst);
+            Draw(InFirst);
+            const uint64_t Request = Rend.RequestSceneCapture();
+            Draw(InView);
+            Draw(InView);
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Luma = [](const EngineCore::Image& InPixels, const int InX, const int InY)
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            return int(Px[0]) + int(Px[1]) + int(Px[2]);
+        };
+        struct Difference { int Brighter = 0; int Darker = 0; int Changed = 0; };
+        const auto Compare = [&](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            Difference Out;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                for(int X = 0; X < 256; ++X)
+                {
+                    const int Delta = Luma(InA, X, Y) - Luma(InB, X, Y);
+                    Out.Brighter += Delta > 24 ? 1 : 0;
+                    Out.Darker   += Delta < -24 ? 1 : 0;
+                    Out.Changed  += Delta != 0 ? 1 : 0;
+                }
+            }
+            return Out;
+        };
+        /* How much neighbouring pixels differ: what blur takes away. */
+        const auto EdgeEnergy = [&](const EngineCore::Image& InPixels)
+        {
+            double Sum = 0.0;
+            for(int Y = 0; Y < 255; ++Y)
+            {
+                for(int X = 0; X < 255; ++X)
+                {
+                    Sum += std::abs(Luma(InPixels, X + 1, Y) - Luma(InPixels, X, Y)) + std::abs(Luma(InPixels, X, Y + 1) - Luma(InPixels, X, Y));
+                }
+            }
+            return Sum;
+        };
+        const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP");
+        const auto Dump = [&](const EngineCore::Image& InPixels, const char* InName)
+        {
+            if(!DumpDir || !DumpDir[0] || InPixels.GetWidth() == 0) { return; }
+            std::ofstream File(std::string(DumpDir) + "/" + InName + ".ppm", std::ios::binary);
+            File << "P6\n" << InPixels.GetWidth() << " " << InPixels.GetHeight() << "\n255\n";
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            for(int Y = 0; Y < int(InPixels.GetHeight()); ++Y)
+            {
+                for(int X = 0; X < int(InPixels.GetWidth()); ++X)
+                {
+                    const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * Y + X * BytesPerPixel(InPixels.GetFormat());
+                    const char Bytes[3] = { char(bBgra ? Px[2] : Px[0]), char(Px[1]), char(bBgra ? Px[0] : Px[2]) };
+                    File.write(Bytes, 3);
+                }
+            }
+        };
+
+        EngineCore::Image Plain, Bloomed, Smoothed, Focused, Outside, PlainTurned, Moving, Steady;
+        UseStack(std::string());
+        const bool bPlain = Capture(Plain, Still, Still);
+        Expect(bPlain, "the plain scene is captured");
+        Dump(Plain, "post-plain");
+
+        UseStack(BloomStack);
+        if(bPlain && Capture(Bloomed, Still, Still))
+        {
+            Dump(Bloomed, "post-bloom");
+            const Difference Glow = Compare(Bloomed, Plain);
+            std::printf("    bloom: %d brighter, %d darker\n", Glow.Brighter, Glow.Darker);
+            Expect(Glow.Brighter > 300 && Glow.Darker < 20, "Bloom only adds light, around what is bright");
+        }
+
+        UseStack(FxaaStack);
+        if(bPlain && Capture(Smoothed, Still, Still))
+        {
+            Dump(Smoothed, "post-fxaa");
+            const Difference Edges = Compare(Smoothed, Plain);
+            std::printf("    fxaa: %d pixels changed, edge energy %.0f -> %.0f\n", Edges.Changed, EdgeEnergy(Plain), EdgeEnergy(Smoothed));
+            Expect(Edges.Changed > 30 && Edges.Changed < 256 * 256 / 6, "FXAA changes the pixels on edges, not the flat areas");
+            Expect(EdgeEnergy(Smoothed) < EdgeEnergy(Plain), "and softens them");
+        }
+
+        UseStack(DofStack);
+        if(bPlain && Capture(Focused, Still, Still))
+        {
+            Dump(Focused, "post-dof");
+            std::printf("    depth of field: edge energy %.0f -> %.0f\n", EdgeEnergy(Plain), EdgeEnergy(Focused));
+            Expect(EdgeEnergy(Focused) < EdgeEnergy(Plain) * 0.75, "Depth of Field blurs a scene far past its focus");
+        }
+
+        /* The Bloom stack in a volume far from the camera, with a hard edge. */
+        UseStack(BloomStack);
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(Vector3(-50.0, -50.0, -50.0), Vector3(50.0, 50.0, 50.0));
+        Volume.GetComponent<GameCore::TransformComponent>()->Position = Vector3(0.0, 0.0, 3000.0);
+        Volume.AddComponent(Bounds);
+        World.RefreshSpatialIndex();
+        if(bPlain && Capture(Outside, Still, Still))
+        {
+            const Difference Far = Compare(Outside, Plain);
+            std::printf("    volume far away: %d pixels changed\n", Far.Changed);
+            Expect(Far.Changed < 20, "a volume the camera is outside of does nothing");
+        }
+        Volume.GetComponent<PostProcessComponent>()->BlendDistance = 1.0e6f;
+        EngineCore::Image Near;
+        if(bPlain && Capture(Near, Still, Still))
+        {
+            const Difference Faded = Compare(Near, Plain);
+            std::printf("    volume with a wide blend: %d brighter\n", Faded.Brighter);
+            Expect(Faded.Brighter > 100, "a wide enough Blend Distance reaches the camera");
+        }
+
+        /* Motion Blur: everywhere again; a frame at Still then one at Turned. */
+        World.DestroyEntity(Volume);
+        const GameCore::Entity Blur = Placed("Blur", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0));
+        PostProcessComponent BlurInit;
+        std::snprintf(BlurInit.Stack, sizeof(BlurInit.Stack), "%s", MotionStack.c_str());
+        Blur.AddComponent(BlurInit);
+        Blur.GetComponent<PostProcessComponent>()->bEnabled = 0;
+        const bool bPlainTurned = Capture(PlainTurned, Turned, Turned);
+        Blur.GetComponent<PostProcessComponent>()->bEnabled = 1;
+        if(bPlainTurned && Capture(Steady, Turned, Turned))
+        {
+            const Difference Still_ = Compare(Steady, PlainTurned);
+            std::printf("    motion blur, camera still: %d pixels changed\n", Still_.Brighter + Still_.Darker);
+            Expect(Still_.Brighter + Still_.Darker < 20, "Motion Blur leaves a still camera's frame alone");
+        }
+        /* One frame at Still, then the captured one at Turned: it moved. */
+        Draw(Still);
+        Draw(Still);
+        const uint64_t Request = Rend.RequestSceneCapture();
+        Draw(Turned);
+        Draw(Turned);
+        std::string Error;
+        if(bPlainTurned && Request && Rend.TakeMaterialPreview(Request, Moving, Error))
+        {
+            Dump(Moving, "post-motion");
+            const Difference Smear = Compare(Moving, PlainTurned);
+            std::printf("    motion blur, camera turned: %d pixels changed, edge energy %.0f -> %.0f\n", Smear.Brighter + Smear.Darker,
+                        EdgeEnergy(PlainTurned), EdgeEnergy(Moving));
+            Expect(Smear.Brighter + Smear.Darker > 200, "Motion Blur smears the frame the camera turned in");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    PostProcessStackCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
+/*
+ * PostProcessStack.h: a stack's text, volume weights, blending, and the cache
+ * reading a graph's <gen_code>. Null backend.
+ */
+static void TestPostProcessStack()
+{
+    std::printf("[post process stack]\n");
+
+    const char* Text =
+        "# Post process stack Arch\n"
+        "Effect DepthOfField FocusDistance=300 FocusRange=100 MaxBlur=12 NearBlur=false\n"
+        "Effect Bloom Threshold=0.7 Intensity=2 Radius=0.5 Levels=4 Tint=1,0.5,0.25\n"
+        "Effect Antialiasing EdgeThreshold=0.2 Method=FXAA Quality=High\n"
+        "Material Stage=Before Order=1 Path=Content/Materials/Wave.material.nmgraph\n"
+        "Effect Future Unknown=1\n";
+    PostProcessSettings Stack;
+    std::string Error;
+    Expect(ParsePostProcessStack(Text, Stack, Error), "a stack's text parses (an unknown effect is ignored)");
+    Expect(Stack.bDepthOfField && Stack.DofFocusDistance == 300.0f && Stack.DofMaxBlur == 12.0f && !Stack.bDofNearBlur,
+           "Depth of Field's settings");
+    Expect(Stack.bBloom && Stack.BloomIntensity == 2.0f && Stack.BloomLevels == 4.0f && Stack.BloomTint[1] == 0.5f && Stack.BloomTint[2] == 0.25f,
+           "Bloom's settings, the tint a list");
+    Expect(Stack.bAntialiasing && Stack.AaQuality == 2 && !Stack.bMotionBlur, "Antialiasing's; no Motion Blur node, no motion blur");
+    Expect(Stack.MaterialCount == 1 && Stack.Materials[0].Stage == PPS_BeforeEffects && Stack.Materials[0].Order == 1.0f
+           && std::strcmp(Stack.Materials[0].Path, "Content/Materials/Wave.material.nmgraph") == 0, "a material pass, its path the rest of the line");
+    PostProcessSettings Broken;
+    Expect(!ParsePostProcessStack("Effect Bloom Intensity=lots\n", Broken, Error) && Error.find("line 1") != std::string::npos,
+           "a bad number names its line");
+
+    Expect(GetPostProcessVolumeWeight(0.0f, 0.0f) == 1.0f && GetPostProcessVolumeWeight(0.0f, 100.0f) == 1.0f, "inside a volume: full weight");
+    Expect(GetPostProcessVolumeWeight(50.0f, 100.0f) == 0.5f && GetPostProcessVolumeWeight(150.0f, 100.0f) == 0.0f,
+           "outside: fading over the blend distance");
+    Expect(GetPostProcessVolumeWeight(1.0f, 0.0f) == 0.0f, "no blend distance: a hard edge");
+
+    /* Half way in from nothing: strengths half, settings the stack's, switches off. */
+    PostProcessSettings Half;
+    BlendPostProcess(Half, Stack, 0.4f);
+    Expect(Half.bBloom && std::abs(Half.BloomIntensity - 0.8f) < 1e-5f && Half.BloomThreshold == 0.7f,
+           "from off, Bloom's intensity scales with the weight; its threshold is the stack's");
+    Expect(Half.bDepthOfField && std::abs(Half.DofMaxBlur - 4.8f) < 1e-5f, "and Depth of Field's blur");
+    Expect(!Half.bAntialiasing && Half.MaterialCount == 0, "under half weight, no antialiasing and no material passes");
+
+    /* A second, higher-priority volume over a full first: numbers blend toward it. */
+    PostProcessSettings Base;
+    BlendPostProcess(Base, Stack, 1.0f);
+    PostProcessSettings Over;
+    ParsePostProcessStack("Effect Bloom Threshold=0.9 Intensity=0 Radius=0.5 Levels=4 Tint=1,1,1\nEffect Antialiasing Quality=Low\n", Over, Error);
+    BlendPostProcess(Base, Over, 0.75f);
+    Expect(std::abs(Base.BloomIntensity - 0.5f) < 1e-5f && std::abs(Base.BloomThreshold - 0.85f) < 1e-5f,
+           "an overlapping volume blends each number by its weight");
+    Expect(Base.AaQuality == 0 && Base.bDepthOfField && Base.DofMaxBlur == 12.0f && Base.MaterialCount == 1,
+           "switches go to it past half weight; what it leaves out stays");
+
+    /* The cache: a graph file's <gen_code>, and a bare material path. */
+    FilesystemProvider  Disk;
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Disk);
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimblePostStack";
+    std::error_code Ignored;
+    std::filesystem::create_directories(Root, Ignored);
+    const std::string File = (Root / "Test.pp.nmgraph").string();
+    {
+        std::ofstream Out(File);
+        Out << "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"PostProcess\">\n  <gen_code>\n"
+               "    <Output Extension=\".ppstack\"><![CDATA[Effect Bloom Intensity=3\n]]></Output>\n  </gen_code>\n</NodeGraph>\n";
+    }
+    PostProcessStackCache::Invalidate(File);
+    const std::shared_ptr<const PostProcessSettings> Cached = PostProcessStackCache::Find(File);
+    Expect(Cached && Cached->bBloom && Cached->BloomIntensity == 3.0f, "a stack graph's compiled stack is read from its <gen_code>");
+    const std::shared_ptr<const PostProcessSettings> Single = PostProcessStackCache::Find("Content/Materials/Negative.material.nmgraph");
+    Expect(Single && Single->MaterialCount == 1 && Single->Materials[0].Stage == PPS_AfterEffects && !Single->bBloom,
+           "a material graph path is a stack of that one material, after the effects");
+    Expect(PostProcessStackCache::Find("Nope/Missing.pp.nmgraph") == nullptr, "a missing stack is null");
+    PostProcessStackCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
 
 /*
  * ShadowSetup.h: where each shadow map looks from, and its atlas tile. Pure
@@ -2007,7 +2367,7 @@ static void TestRenderStages()
         AddPrimitive("Sections",   Inside, "Content/Square.nmmesh", { "", "" });           // Glow: Translucent Unlit; Back: Unlit
         AddPrimitive("BadSlot",    Inside, "Content/Square.nmmesh", { "Nope", "" });       // falls back to Glow; Back: Unlit
         PostProcessComponent Post;
-        std::strcpy(Post.Material, "Materials/Post.material.nmgraph");
+        std::strcpy(Post.Stack, "Materials/Post.material.nmgraph");   // a material path: a one-material stack
         World.CreateEntity("Post").AddComponent(Post);
         Rend.BindWorld(World);
 
@@ -2244,12 +2604,14 @@ int main()
     TestRendererWithWorld();
     TestShadowSetup();
     TestLightComponents();
+    TestPostProcessStack();
 #if WITH_EDITOR
     TestMultipleScenes();
     TestDebugLines();
     TestMaterials();
     TestMaterialsOnGpu();
     TestShadowsOnGpu();
+    TestPostProcessOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();
