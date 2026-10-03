@@ -23,8 +23,7 @@ described in `GAMEFRAMEWORK.md`; this covers only what the game does with it.
 4. **It can run unattended.** It can play itself, lose on purpose and quit on a
    timer, so a smoke run checks the whole loop without anyone at the keyboard.
 
-Not goals: rendering polish (everything draws as a white quad; see
-**Limitations**), physics (collision only reports overlaps; the ball's
+Not goals: rendering polish (the pieces are quads; see **Limitations**), physics (collision only reports overlaps; the ball's
 script does its own bouncing), and an on-screen display (score, lives and
 phases go to the log).
 
@@ -39,7 +38,8 @@ phases go to the log).
 | `Levels/BrickBreaker.nmworld` | The layout: camera, paddle, ball and the first wall (`Levels/BrickBreaker/`, one file per instance) |
 | `Source/Private/Sandbox/SandboxGame.cpp` | `SandboxGameModule` registers the level and returns it as the start level |
 | `Source/Public/Sandbox/SandboxScripting.h` | The collision layers `SandboxLayers::Paddle`, `Ball` and `Brick` |
-| `Prefabs/Brick.nmprefab` | The brick prefab, which names its script graph |
+| `Prefabs/Brick.nmprefab` | The brick prefab, which names its script graph and its material |
+| `Materials/Brick.material.nmgraph` | The bricks' material: Unlit, Translucent, with a `vec4` parameter `Color` (default white) |
 | `Scripts/Brick.script.nmgraph` | The brick's behaviour; its Lua is generated into `<gen_code>` |
 | `Prefabs/Ball.nmprefab` | The ball prefab, which names `Scripts/Ball.lua` |
 | `Scripts/Ball.lua` | The ball's behaviour |
@@ -167,7 +167,7 @@ It finds the rules with `FindGameSession(*InSelf.GetWorld())`.
 
 **Components:**
 - Transform
-- Render (a quad, 110 × 28)
+- Render (a quad, 110 × 28), slot 0 `Materials/Brick.material.nmgraph`
 - Bounds
 - Collision (layer `Brick`, mask `Ball`)
 - **Brick** (`SandboxBrickComponent`): `Hits`, how many more hits it takes
@@ -451,9 +451,12 @@ from spawning its demo entities here.
 
 ## Limitations
 
-- **Everything draws white.** `RenderComponent` has no per-entity tint, so the
-  rows cannot be coloured without a material per colour or a tint field on
-  the component (a RenderCore change).
+- **The bricks are not coloured yet.** They draw with the Brick material's
+  default `Color`, white. A script can colour each brick on its own with
+  `render:SetMaterialParameter(0, "Color", r, g, b, a)` (a per-entity
+  override; RenderCore's MATERIALS.md), for example by `Hits`. The game does
+  not do this yet. The paddle and ball have no material and draw as white
+  quads.
 - **There is no on-screen display.** Score, lives and phase changes go to the
   log (`[BrickBreaker] ...`, `[Game] phase ...`).
 - **Client and Server targets need cooked content.** `Brick` and `Ball` are
@@ -498,8 +501,9 @@ from spawning its demo entities here.
 
 ## Possible next steps
 
-- A `Tint` colour on `RenderComponent`, to colour bricks by row and the ball
-  by speed.
+- Colour each brick by its `Hits` with `SetMaterialParameter`, and change
+  the colour as hits are taken. The Brick material's `Color` parameter is
+  already there.
 - Walls that change by round: several walls in the level file, or a
   per-round `Hits` bonus applied in `SpawnBricks`.
 - A text display bound to the `Game` events (`ScoreChanged`, `LivesChanged`,

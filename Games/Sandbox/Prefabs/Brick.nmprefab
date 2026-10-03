@@ -18,7 +18,7 @@
     </Component>
     <Component Type="Render" Version="1">
       <Visible Value="true" />
-      <Material0 Value="" />
+      <Material0 Value="Materials/Brick.material.nmgraph" />
       <Material1 Value="" />
       <Material2 Value="" />
       <Material3 Value="" />

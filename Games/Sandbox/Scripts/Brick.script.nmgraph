@@ -27,6 +27,11 @@
       <Const Pin="Event" Value="BrickBroken" />
     </Node>
     <Node Id="427269636b000000000000000000000d" Type="Prefab.Destroy" Version="1" X="760" Y="0" />
+    <Node Id="7590ed52387a0faf1e4bcaa4afc15e0c" Type="Component.Render.SetMaterialParameter" Version="1" X="346" Y="331">
+      <Const Pin="Name" Value="Color" />
+      <Const Pin="X" Value="1" />
+    </Node>
+    <Node Id="8b8f3b9808c3861e778fb3dff955d154" Type="Component.Render.Get" Version="1" X="-325" Y="339" />
   </Nodes>
   <Links>
     <Link From="427269636b0000000000000000000001.Then" To="427269636b0000000000000000000005.Exec" />
@@ -38,11 +43,13 @@
     <Link From="427269636b0000000000000000000005.Then" To="427269636b0000000000000000000008.Exec" />
     <Link From="427269636b0000000000000000000006.Hits" To="427269636b0000000000000000000007.A" />
     <Link From="427269636b0000000000000000000007.Out" To="427269636b0000000000000000000008.Condition" />
+    <Link From="427269636b0000000000000000000008.False" To="7590ed52387a0faf1e4bcaa4afc15e0c.Exec" />
     <Link From="427269636b0000000000000000000008.True" To="427269636b000000000000000000000b.Exec" />
     <Link From="427269636b0000000000000000000009.Player" To="427269636b000000000000000000000b.Player" />
     <Link From="427269636b000000000000000000000a.Value" To="427269636b000000000000000000000b.Amount" />
     <Link From="427269636b000000000000000000000b.Then" To="427269636b000000000000000000000c.Exec" />
     <Link From="427269636b000000000000000000000c.Then" To="427269636b000000000000000000000d.Exec" />
+    <Link From="8b8f3b9808c3861e778fb3dff955d154.Render" To="7590ed52387a0faf1e4bcaa4afc15e0c.Target" />
   </Links>
   <Comments>
     <Comment X="-1140" Y="-60" Width="2040" Height="420" Text="A BrickBreaker brick: each hit by the ball takes one off its Brick component's Hits (set by row: more near the top); at none it scores Points for player 0 through the game framework (Game.AddScore), tells the mode (BrickBroken) and destroys its prefab instance." />
@@ -55,7 +62,7 @@ return {
     Points = 10,
 
     OnOverlapBegin = function(self, other, mine)
-        local Score1
+        local Score1, Set2
         local t1 = self.Entity:GetComponent("Brick")
         local t2 = t1:GetHits()
         local t3 = t2 - 1
@@ -68,6 +75,9 @@ return {
             Score1 = Game.AddScore(t7, self.Points)
             Events.Emit("BrickBroken")
             self.Instance:Destroy()
+        else
+            local t8 = self.Entity:GetComponent("Render")
+            Set2 = t8:SetMaterialParameter(0, "Color", 1, 0, 0, 0)
         end
     end,
 }
