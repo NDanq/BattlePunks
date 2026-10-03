@@ -24,6 +24,7 @@ namespace RenderCore
         GDIRenderTarget* SceneColor  = nullptr;
         GDIRenderTarget* GBuffer[RENDER_GBUFFER_TARGETS] = {};
         GDIRenderTarget* PostProcess = nullptr;
+        GDIRenderTarget* Final       = nullptr;                 // SceneColor or PostProcess: where the last RenderSceneStages finished
         uint             Width  = 0;
         uint             Height = 0;
 
@@ -102,6 +103,7 @@ namespace RenderCore
                     *Each = nullptr;
                 }
             }
+            Final  = nullptr;
             Width  = 0;
             Height = 0;
         }
