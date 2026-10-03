@@ -26,6 +26,9 @@
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/Editor/EditorDocument.h"
+#include "Public/GameCore/Components.h"
+#include "Public/GameCore/Prefab.h"
+#include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/PropertyWidgets.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -195,9 +198,6 @@ void DetailsPanel::Rebuild()
     Sections.clear();
     Arrays.clear();
     NameEdit     = nullptr;
-    ScriptEdit   = nullptr;
-    ScriptStatus = nullptr;
-    CullCheck    = nullptr;
     ShownEntity = Document.GetSelection();
     ShownTypes  = CollectComponentTypes(ShownEntity);
 
@@ -258,86 +258,44 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
     });
     Form->addRow(QStringLiteral("Name"), NameEdit);
 
-    // --- Script: a path, typed or browsed -------------------------------------
-    auto* ScriptField = new QWidget(Content);
-    auto* ScriptRow   = new QHBoxLayout(ScriptField);
-    ScriptRow->setContentsMargins(0, 0, 0, 0);
-    ScriptRow->setSpacing(2);
-
-    ScriptEdit = new QLineEdit(ScriptField);
-    ScriptEdit->setPlaceholderText(QStringLiteral("(none) -- e.g. Scripts/Mover.lua"));
-    ScriptEdit->setToolTip(QStringLiteral("A .lua file that returns its class table, or a script graph "
-                                          "(.script.nmgraph), which runs the Lua saved in it. Relative paths "
-                                          "resolve from the game's working directory. Drop one here."));
-    connect(ScriptEdit, &QLineEdit::editingFinished, this, [this, InEntity]()
+    // --- Prefab: what the entity's instance was placed from -------------------
+    const GameCore::Entity Shown = Document.GetWorld().GetEntity(InEntity);
+    if(Shown.IsInInstance())
     {
-        if(!ScriptEdit)
+        const GameCore::PrefabInstance Instance = Document.GetWorld().GetInstance(Shown.GetInstance());
+        const QString PrefabPath = QString::fromUtf8(Instance.GetPrefabPath());
+
+        auto* PrefabField = new QWidget(Content);
+        auto* PrefabRow   = new QHBoxLayout(PrefabField);
+        PrefabRow->setContentsMargins(0, 0, 0, 0);
+        PrefabRow->setSpacing(4);
+        auto* PrefabLabel = new QLabel(Instance.GetRoot().GetID() == InEntity
+                                           ? PrefabPath
+                                           : QStringLiteral("%1 (in %2)").arg(PrefabPath, QString::fromUtf8(Instance.GetRoot().GetName())),
+                                       PrefabField);
+        PrefabLabel->setToolTip(QStringLiteral("Placed from this prefab. Bold properties override it here; right-click one to revert it."));
+        PrefabRow->addWidget(PrefabLabel, 1);
+        if(!PrefabPath.isEmpty())
         {
-            return;
+            auto* Open = new QToolButton(PrefabField);
+            Open->setText(QStringLiteral("Open"));
+            Open->setToolTip(QStringLiteral("Edit the prefab in the Prefab Editor"));
+            Open->setAutoRaise(true);
+            connect(Open, &QToolButton::clicked, this, [this, PrefabPath]()
+            {
+                EditorPrefabs::OpenPrefab(EditorPrefabs::ToProjectPath(PrefabPath), window());
+            });
+            PrefabRow->addWidget(Open);
         }
-        const QString Text = ScriptEdit->text().trimmed();
-        if(!Text.isEmpty() && !Text.endsWith(QStringLiteral(".lua"), Qt::CaseInsensitive)
-           && !Text.endsWith(QStringLiteral(".script.nmgraph"), Qt::CaseInsensitive))
-        {
-            QToolTip::showText(ScriptEdit->mapToGlobal(QPoint(0, ScriptEdit->height())),
-                               QStringLiteral("A script is a .lua file or a .script.nmgraph"), ScriptEdit);
-            RefreshEntitySection();
-            return;
-        }
-        Document.SetEntityScript(InEntity, Text);
-    });
-    ScriptEdit->installEventFilter(this);
-    ScriptRow->addWidget(ScriptEdit, 1);
-
-    auto* Browse = new QToolButton(ScriptField);
-    Browse->setText(QStringLiteral("..."));
-    Browse->setToolTip(QStringLiteral("Choose a .lua script or a script graph"));
-    Browse->setAutoRaise(true);
-    connect(Browse, &QToolButton::clicked, this, [this, InEntity]()
-    {
-        const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a script"),
-                                                            EditorGraphs::GetProjectRoot(),
-                                                            QStringLiteral("Scripts (*.lua *.script.nmgraph);;Lua scripts (*.lua);;"
-                                                                           "Script graphs (*.script.nmgraph)"));
-        if(!Chosen.isEmpty())
-        {
-            UseScriptFile(InEntity, Chosen);
-        }
-    });
-    ScriptRow->addWidget(Browse);
-
-    auto* Clear = new QToolButton(ScriptField);
-    Clear->setText(QString(QChar(0x2715)));   // multiplication x; code points keep the source ASCII
-    Clear->setToolTip(QStringLiteral("Clear the script"));
-    Clear->setAutoRaise(true);
-    connect(Clear, &QToolButton::clicked, this, [this, InEntity]()
-    {
-        Document.SetEntityScript(InEntity, QString());
-        RefreshEntitySection();
-    });
-    ScriptRow->addWidget(Clear);
-
-    Form->addRow(QStringLiteral("Script"), ScriptField);
-
-    ScriptStatus = new QLabel(Content);
-    ScriptStatus->setStyleSheet(QStringLiteral("color: gray;"));
-    Form->addRow(QStringLiteral("Status"), ScriptStatus);
-
-    CullCheck = new QCheckBox(QStringLiteral("Cull outside active region"), Content);
-    CullCheck->setToolTip(QStringLiteral("Skip this script's tick while its Bounds are outside the World's "
-                                         "active region. The script's class can override this."));
-    connect(CullCheck, &QCheckBox::toggled, this, [this, InEntity](const bool bInChecked)
-    {
-        Document.SetEntityScriptCull(InEntity, bInChecked);
-    });
-    Form->addRow(QString(), CullCheck);
+        Form->addRow(QStringLiteral("Prefab"), PrefabField);
+    }
 
     return Section;
 }
 
 void DetailsPanel::RefreshEntitySection()
 {
-    if(!NameEdit || !ScriptEdit || !ScriptStatus || !CullCheck)
+    if(!NameEdit)
     {
         return;
     }
@@ -349,44 +307,6 @@ void DetailsPanel::RefreshEntitySection()
     if(!NameEdit->hasFocus() && NameEdit->text() != Name)
     {
         NameEdit->setText(Name);
-    }
-    const QString Path = QString::fromUtf8(E.GetScriptPath());
-    if(!ScriptEdit->hasFocus() && ScriptEdit->text() != Path)
-    {
-        ScriptEdit->setText(Path);
-    }
-
-    const GameCore::EntityScriptState* Script = E.GetScriptState();
-    QString Status;
-    if(!Script)
-    {
-        Status = QStringLiteral("No script");
-    }
-    else if(!World.HasScriptDriver())
-    {
-        Status = QStringLiteral("Not running (scripts run in Play)");
-    }
-    else if(Script->bErrored)
-    {
-        Status = QStringLiteral("Errored -- see the Console");
-    }
-    else if(Script->bPendingInstantiate)
-    {
-        Status = QStringLiteral("Loading on the next tick");
-    }
-    else
-    {
-        Status = QStringLiteral("Running in %1").arg(QString::fromLatin1(
-            GameCore::TickPhaseName(GameCore::ETickPhase(Script->Phase))));
-    }
-    ScriptStatus->setText(Status);
-
-    CullCheck->setEnabled(Script != nullptr);
-    const bool bCull = Script && Script->bCullOutsideActiveRegion;
-    if(CullCheck->isChecked() != bCull)
-    {
-        const QSignalBlocker Block(CullCheck);
-        CullCheck->setChecked(bCull);
     }
 }
 
@@ -418,8 +338,33 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     auto* HeaderRow = new QHBoxLayout();
     HeaderRow->setContentsMargins(0, 0, 0, 0);
 
+    /* On a prefab instance's entity: what the prefab holds, for overrides. */
+    bool bAddedToInstance = false;
+    const GameCore::Entity Owner = Document.GetWorld().GetEntity(InEntity);
+    if(Info && Owner.IsInInstance())
+    {
+        const GameCore::PrefabInstance Instance = Document.GetWorld().GetInstance(Owner.GetInstance());
+        const bool bPlacement = InType == GameCore::TransformComponent::StaticType().ID && Instance.GetRoot().GetID() == InEntity;
+        if(!bPlacement)
+        {
+            auto Values = std::make_shared<std::vector<uint8_t>>(Info->SizeBytes);
+            if(GameCore::ReadPrefabTemplateComponent(Document.GetWorld(), Instance.GetID(), Owner.GetPrefabLocalId(), InType, Values->data()))
+            {
+                State.PrefabValues = Values;
+            }
+            else
+            {
+                bAddedToInstance = true;
+            }
+        }
+    }
+
     auto* Toggle = new QToolButton(Section);
-    Toggle->setText(TypeName);
+    Toggle->setText(bAddedToInstance ? QStringLiteral("%1 (added here)").arg(TypeName) : TypeName);
+    if(bAddedToInstance)
+    {
+        Toggle->setToolTip(QStringLiteral("This instance has %1; the prefab does not").arg(TypeName));
+    }
     Toggle->setCheckable(true);
     Toggle->setChecked(true);
     Toggle->setArrowType(Qt::DownArrow);
@@ -438,6 +383,17 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
         State.ResetAll->setEnabled(false);
         connect(State.ResetAll, &QToolButton::clicked, this, [this, InType]() { ResetComponent(InType); });
         HeaderRow->addWidget(State.ResetAll);
+    }
+
+    if(State.PrefabValues)
+    {
+        State.RevertAll = new QToolButton(Section);
+        State.RevertAll->setText(QStringLiteral("Revert to Prefab"));
+        State.RevertAll->setToolTip(QStringLiteral("Set every overridden property of %1 back to the prefab's").arg(TypeName));
+        State.RevertAll->setAutoRaise(true);
+        State.RevertAll->setEnabled(false);
+        connect(State.RevertAll, &QToolButton::clicked, this, [this, InType]() { RevertComponentToPrefab(InType); });
+        HeaderRow->addWidget(State.RevertAll);
     }
 
     auto* Remove = new QToolButton(Section);
@@ -573,7 +529,25 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
             FieldRow->addWidget(InExtra);
         }
 
-        FormFor(Entry)->addRow(InLabel, Field);
+        auto* Label = new QLabel(InLabel, Content);
+        Row.Label = Label;
+        if(State.PrefabValues && !Entry.IsReadOnly())
+        {
+            Label->setContextMenuPolicy(Qt::CustomContextMenu);
+            const size_t RowIndex = Rows.size();
+            connect(Label, &QLabel::customContextMenuRequested, this, [this, RowIndex, Label](const QPoint& InAt)
+            {
+                if(RowIndex >= Rows.size()) { return; }
+                QMenu Menu(this);
+                QAction* Revert = Menu.addAction(QStringLiteral("Revert to Prefab"));
+                Revert->setEnabled(IsOverridden(Rows[RowIndex]));
+                if(Menu.exec(Label->mapToGlobal(InAt)) == Revert)
+                {
+                    RevertPropertyToPrefab(Rows[RowIndex]);
+                }
+            });
+        }
+        FormFor(Entry)->addRow(Label, Field);
         Rows.push_back(Row);
 
         connect(Editor, &PropertyEditor::Written, this, [Doc, InEntity, InType]()
@@ -644,43 +618,6 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     }
 
     return Section;
-}
-
-void DetailsPanel::UseScriptFile(const EntityID InEntity, const QString& InFile)
-{
-    /* As the game names it -- relative to the project, staged beside the
-     * exe so Play finds it -- or, outside the project, as chosen. */
-    const QString Runtime = EditorContent::ScriptPathFor(InFile);
-    if(!Runtime.isEmpty())
-    {
-        EditorContent::StageAsset(InFile);
-    }
-    Document.SetEntityScript(InEntity, Runtime.isEmpty() ? InFile : Runtime);
-    RefreshEntitySection();
-}
-
-bool DetailsPanel::eventFilter(QObject* InWatched, QEvent* InEvent)
-{
-    /* The Script field takes a .lua or a .script.nmgraph dropped on it. */
-    if(InWatched == ScriptEdit && (InEvent->type() == QEvent::DragEnter || InEvent->type() == QEvent::DragMove
-                                   || InEvent->type() == QEvent::Drop))
-    {
-        auto* Drop = static_cast<QDropEvent*>(InEvent);
-        const QString File = EditorContent::SingleDroppedFile(Drop->mimeData());
-        if(EditorContent::ScriptPathFor(File).isEmpty())
-        {
-            Drop->ignore();
-            return true;
-        }
-        Drop->acceptProposedAction();
-        if(InEvent->type() == QEvent::Drop)
-        {
-            const EntityID Target = ShownEntity;
-            QTimer::singleShot(0, this, [this, Target, File]() { UseScriptFile(Target, File); });
-        }
-        return true;
-    }
-    return QWidget::eventFilter(InWatched, InEvent);
 }
 
 QWidget* DetailsPanel::BuildAddComponentButton()
@@ -804,6 +741,48 @@ void DetailsPanel::ResetComponent(const ComponentTypeID InType)
     RefreshValues();
 }
 
+bool DetailsPanel::IsOverridden(const PropertyRow& InRow) const
+{
+    const ComponentSection* Section = FindSection(InRow.Type);
+    const uint8_t* Component = ResolveComponent(InRow.Type);
+    return Section && Section->PrefabValues && Component && !InRow.Entry.IsReadOnly()
+        && !IsPropertyAtDefault(InRow.Entry, Component + InRow.Entry.Offset, Section->PrefabValues->data() + InRow.Entry.Offset);
+}
+
+void DetailsPanel::RevertPropertyToPrefab(const PropertyRow& InRow)
+{
+    const ComponentSection* Section = FindSection(InRow.Type);
+    uint8_t* Component = ResolveComponent(InRow.Type);
+    if(!Section || !Section->PrefabValues || !Component || InRow.Entry.IsReadOnly())
+    {
+        return;
+    }
+    std::memcpy(Component + InRow.Entry.Offset, Section->PrefabValues->data() + InRow.Entry.Offset, InRow.Entry.Size);
+    InRow.Editor->Refresh(true);
+    Document.NotifyPropertyEdited(ShownEntity, InRow.Type);
+    RefreshValues();
+}
+
+void DetailsPanel::RevertComponentToPrefab(const ComponentTypeID InType)
+{
+    const ComponentSection* Section = FindSection(InType);
+    uint8_t* Component = ResolveComponent(InType);
+    if(!Section || !Section->PrefabValues || !Component)
+    {
+        return;
+    }
+    for(const PropertyRow& Row : Rows)
+    {
+        if(Row.Type == InType && !Row.Entry.IsReadOnly())
+        {
+            std::memcpy(Component + Row.Entry.Offset, Section->PrefabValues->data() + Row.Entry.Offset, Row.Entry.Size);
+            Row.Editor->Refresh(true);
+        }
+    }
+    Document.NotifyPropertyEdited(ShownEntity, InType);
+    RefreshValues();
+}
+
 void DetailsPanel::RefreshValues()
 {
     if(!isVisible())
@@ -832,11 +811,31 @@ void DetailsPanel::RefreshValues()
         {
             Section.ResetAll->setEnabled(false);
         }
+        if(Section.RevertAll)
+        {
+            Section.RevertAll->setEnabled(false);
+        }
     }
 
     for(const PropertyRow& Row : Rows)
     {
         Row.Editor->Refresh();
+
+        const bool bOverridden = IsOverridden(Row);
+        if(Row.Label && Row.Label->font().bold() != bOverridden)
+        {
+            QFont Font = Row.Label->font();
+            Font.setBold(bOverridden);
+            Row.Label->setFont(Font);
+            Row.Label->setToolTip(bOverridden ? QStringLiteral("Overrides the prefab -- right-click to revert") : QString());
+        }
+        if(bOverridden)
+        {
+            if(const ComponentSection* Section = FindSection(Row.Type); Section && Section->RevertAll)
+            {
+                Section->RevertAll->setEnabled(true);
+            }
+        }
 
         if(!Row.Reset)
         {

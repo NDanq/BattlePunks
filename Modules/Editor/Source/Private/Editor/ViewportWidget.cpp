@@ -27,6 +27,7 @@
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/EditorDocument.h"
+#include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/Content/ContentPaths.h"
 
 /* Handle snap steps. Translate is a world grid in World space, a step along
@@ -936,25 +937,35 @@ QString ViewportWidget::DroppedMesh(const QMimeData* InData) const
     return EditorContent::ToRuntimePath(File);
 }
 
+QString ViewportWidget::DroppedPrefab(const QMimeData* InData) const
+{
+    const QString File = EditorContent::SingleDroppedFile(InData);
+    if(Document.IsSingleRoot() || !File.endsWith(QStringLiteral(".nmprefab"), Qt::CaseInsensitive)) { return QString(); }
+    return EditorContent::ToRuntimePath(File).isEmpty() ? QString() : File;
+}
+
 void ViewportWidget::dragEnterEvent(QDragEnterEvent* InEvent)
 {
-    if(!Context.IsPlaying() && !DroppedMesh(InEvent->mimeData()).isEmpty()) { InEvent->acceptProposedAction(); }
-    else { InEvent->ignore(); }
+    const bool bAccept = !Document.IsWorldBorrowed()
+                      && (!DroppedMesh(InEvent->mimeData()).isEmpty() || !DroppedPrefab(InEvent->mimeData()).isEmpty());
+    if(bAccept) { InEvent->acceptProposedAction(); }
+    else        { InEvent->ignore(); }
 }
 
 void ViewportWidget::dragMoveEvent(QDragMoveEvent* InEvent)
 {
-    if(!Context.IsPlaying() && !DroppedMesh(InEvent->mimeData()).isEmpty()) { InEvent->acceptProposedAction(); }
-    else { InEvent->ignore(); }
+    const bool bAccept = !Document.IsWorldBorrowed()
+                      && (!DroppedMesh(InEvent->mimeData()).isEmpty() || !DroppedPrefab(InEvent->mimeData()).isEmpty());
+    if(bAccept) { InEvent->acceptProposedAction(); }
+    else        { InEvent->ignore(); }
 }
 
-/* Creates (one undo step) and selects an entity drawing the mesh: where the
- * ray meets z = 0 if reasonably near, else 600 units along it. */
+/* Creates (one undo step) and selects an entity drawing the mesh, or an
+ * instance of the prefab: where the ray meets z = 0 if reasonably near, else
+ * 600 units along it. */
 void ViewportWidget::dropEvent(QDropEvent* InEvent)
 {
-    const QString Path = DroppedMesh(InEvent->mimeData());
-    const QByteArray Utf8 = Path.toUtf8();
-    if(Path.isEmpty() || Context.IsPlaying() || Utf8.size() >= int(RenderCore::RENDER_MESH_PATH_MAX))
+    if(Document.IsWorldBorrowed())
     {
         InEvent->ignore();
         return;
@@ -970,6 +981,31 @@ void ViewportWidget::dropEvent(QDropEvent* InEvent)
         if(OnPlane > 0.0 && OnPlane < 20000.0) { T = OnPlane; }
     }
     const EngineCore::Vector3 Spot = RayOrigin + RayDir * T;
+
+    const QString PrefabFile = DroppedPrefab(InEvent->mimeData());
+    if(!PrefabFile.isEmpty())
+    {
+        /* Through the registry, which reads the staged copy beside the exe. */
+        EditorPrefabs::Stage(PrefabFile);
+        const GameCore::EntityID Placed = Document.PlacePrefab(EditorContent::ToRuntimePath(PrefabFile), Spot);
+        if(!Placed.IsSet())
+        {
+            InEvent->ignore();
+            return;
+        }
+        Document.SetSelection(Placed);
+        InEvent->acceptProposedAction();
+        setFocus();
+        return;
+    }
+
+    const QString Path = DroppedMesh(InEvent->mimeData());
+    const QByteArray Utf8 = Path.toUtf8();
+    if(Path.isEmpty() || Utf8.size() >= int(RenderCore::RENDER_MESH_PATH_MAX))
+    {
+        InEvent->ignore();
+        return;
+    }
 
     const GameCore::EntityID Made = Document.CreateEntity(QFileInfo(Path).completeBaseName(), Spot,
                                                          [&Utf8](const GameCore::Entity& InEntity)

@@ -4,7 +4,9 @@
 #if WITH_EDITOR
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <QUndoCommand>
@@ -40,17 +42,24 @@ namespace EditorHistory
         bool                      bSerialized = false;   // else property values over defaults
     };
 
+    /* A prefab instance as its root's snapshot carries it (EditorHistory.cpp). */
+    struct InstanceSnapshot;
+
     /* An entity and its whole subtree: deleting a parent deletes its
-     * children, so restoring it restores them. */
+     * children, so restoring it restores them. Instance membership travels
+     * too: a restored instance root brings its instance back, and a restored
+     * member rejoins its instance if that is still there. */
     struct EntitySnapshot
     {
         GameCore::EntityGuid           Guid;
         GameCore::EntityGuid           ParentGuid;   // unset: a root
         std::string                    Name;
-        std::string                    ScriptPath;
-        uint8_t                        bCullOutsideActiveRegion = 0;
         std::vector<ComponentSnapshot> Components;
         std::vector<EntitySnapshot>    Children;     // in child order
+
+        GameCore::EntityGuid              InstanceGuid;   // the instance it is a member of; unset if loose
+        uint32_t                          LocalId = 0;    // its template's id in that instance
+        std::shared_ptr<InstanceSnapshot> Instance;       // set on an instance's root
     };
 
     /* Every component type InEntity has, in type order. */
@@ -66,10 +75,20 @@ namespace EditorHistory
     /* Adds the component (from its defaults) and loads the snapshot into it. */
     bool RestoreComponent(GameCore::World& InWorld, GameCore::EntityID InEntity, const ComponentSnapshot& InSnapshot);
 
+    /* Entity GUID -> the entity a reference to it should now name. */
+    using GuidRemap = std::unordered_map<GameCore::EntityGuid, GameCore::EntityID, GameCore::EntityGuidHash>;
+
+    /* Loads the snapshot into InEntity's component of its type, added from
+     * its defaults if missing. A reference to a GUID in InRemap names that
+     * entity instead (a converted entity's replacement). */
+    bool LoadComponent(GameCore::World& InWorld, GameCore::EntityID InEntity, const ComponentSnapshot& InSnapshot,
+                       const GuidRemap* InRemap = nullptr);
+
     EntitySnapshot CaptureEntity(GameCore::World& InWorld, GameCore::EntityID InEntity);
 
-    /* Recreates the entity with its GUID, name, script and components, under
-     * its parent if that still exists, then its children. */
+    /* Recreates the entity with its GUID, name and components, under
+     * its parent if that still exists, then its children; then the instances
+     * they were in (see EntitySnapshot). */
     GameCore::EntityID RestoreEntity(GameCore::World& InWorld, const EntitySnapshot& InSnapshot);
 
     // === Commands ============================================================
@@ -119,18 +138,14 @@ namespace EditorHistory
         int64_t                   TimeMs;      // of the latest edit merged in
     };
 
-    /* What an entity carries besides components: name, script path and the
-     * script's cull flag. */
+    /* What an entity carries besides components: its name. */
     struct EntityMembers
     {
         std::string Name;
-        std::string ScriptPath;
-        uint8_t     bCullOutsideActiveRegion = 0;
 
         bool operator==(const EntityMembers& InOther) const
         {
-            return Name == InOther.Name && ScriptPath == InOther.ScriptPath
-                && bCullOutsideActiveRegion == InOther.bCullOutsideActiveRegion;
+            return Name == InOther.Name;
         }
     };
 

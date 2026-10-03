@@ -7,6 +7,7 @@
 #include <QAction>
 #include <QCloseEvent>
 #include <QDir>
+#include <QDirIterator>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -25,6 +26,7 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/Editor/ConsolePanel.h"
 #include "Public/Editor/ContentBrowserPanel.h"
@@ -37,6 +39,7 @@
 #include "Public/NodeGraph/Schema.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Private/Editor/AboutDialog.h"
+#include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/Prefab/PrefabEditorTab.h"
@@ -307,6 +310,44 @@ void EditorMainWindow::BuildMenus()
     QAction* DeleteEntity = World->addAction(QStringLiteral("&Delete"));
     DeleteEntity->setShortcut(QKeySequence::Delete);
     connect(DeleteEntity, &QAction::triggered, this, [this]() { Level.DestroyEntity(Level.GetSelection()); });
+
+    World->addSeparator();
+
+    /* Rebuilt on opening: the list follows the game module's last load. */
+    QMenu* Natives = World->addMenu(QStringLiteral("&Native Prefabs"));
+    connect(Natives, &QMenu::aboutToShow, this, [this, Natives]()
+    {
+        Natives->clear();
+        const QStringList Names = EditorPrefabs::GetNativePrefabs();
+        if(Names.isEmpty())
+        {
+            Natives->addAction(QStringLiteral("(none -- the game module declares none, or is not built)"))->setEnabled(false);
+            return;
+        }
+        for(const QString& Name : Names)
+        {
+            QMenu* Entry = Natives->addMenu(Name);
+            const QString Path = EditorPrefabs::NativePrefabPath(Name);
+            Entry->addAction(QStringLiteral("Place in Level"), this, [this, Path]()
+            {
+                const EditorCamera& Camera = Viewport->GetCamera();
+                Level.SetSelection(Level.PlacePrefab(Path, Camera.Position + Camera.GetForward() * 600.0));
+            });
+            Entry->addAction(QStringLiteral("Open"), this, [this, Path]() { EditorPrefabs::OpenPrefab(Path, this); });
+        }
+    });
+
+    QAction* ConvertLevel = World->addAction(QStringLiteral("Convert &Level to Prefabs..."));
+    ConvertLevel->setToolTip(QStringLiteral("Every entity tree not yet in a prefab instance becomes one: a prefab per distinct tree, "
+                                            "each keeping its own values"));
+    connect(ConvertLevel, &QAction::triggered, this, [this]() { EditorPrefabs::ConvertLevelToPrefabs(Level, this); });
+
+    QAction* ConvertToPrefab = World->addAction(QStringLiteral("Convert Selection to &Prefab..."));
+    ConvertToPrefab->setToolTip(QStringLiteral("Write the selected entity and its children as a prefab, and put an instance in their place"));
+    connect(ConvertToPrefab, &QAction::triggered, this, [this]()
+    {
+        EditorPrefabs::ConvertToPrefab(Level, Level.GetSelection(), this);
+    });
 
     QMenu* View = menuBar()->addMenu(QStringLiteral("&View"));
     for(QDockWidget* Dock : findChildren<QDockWidget*>())
@@ -776,10 +817,61 @@ void EditorMainWindow::RegisterConsoleCommands()
         CompileSource();
     });
 
-    Console.Register(QStringLiteral("cook"), QStringLiteral("[world] [out]"),
-                     QStringLiteral("Cook a world file to binary (default: the open world, to Cooked/ beside it)"),
+    Console.Register(QStringLiteral("cook"), QStringLiteral("[world | prefab | prefabs] [out]"),
+                     QStringLiteral("Cook a world or prefab file to binary (default: the open world, to Cooked/ beside it); "
+                                    "'prefabs' cooks every prefab to <project>/Cooked/, which a Client build stages"),
                      [this](const QStringList& InArgs)
     {
+        /* Every prefab in the project, to <out>/<its runtime path>. */
+        if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("prefabs"))
+        {
+            const QString Root = EditorGraphs::GetProjectRoot();
+            const QString OutRoot = InArgs.size() >= 2 ? InArgs[1] : QDir(Root).filePath(QStringLiteral("Cooked"));
+            int Cooked = 0, Failed = 0;
+            QDirIterator It(Root, { QStringLiteral("*.nmprefab") }, QDir::Files, QDirIterator::Subdirectories);
+            while(It.hasNext())
+            {
+                const QString File = It.next();
+                const QString Runtime = EditorContent::ToRuntimePath(File);
+                const QString Relative = QDir(Root).relativeFilePath(File);
+                if(Runtime.isEmpty() || QFileInfo(File).absoluteFilePath().startsWith(QFileInfo(OutRoot).absoluteFilePath() + QLatin1Char('/')))
+                {
+                    continue;   // outside the project, or a cooked copy
+                }
+                bool bIgnored = false;
+                for(const QString& Part : Relative.split(QLatin1Char('/'))) { bIgnored |= EditorGraphs::IsIgnoredFolder(Part); }
+                if(bIgnored) { continue; }
+
+                const QString Out = QDir(OutRoot).filePath(Runtime);
+                QDir().mkpath(QFileInfo(Out).absolutePath());
+                if(GameCore::CookPrefabFile(File.toUtf8().constData(), Out.toUtf8().constData())) { ++Cooked; }
+                else { ++Failed; Console.PrintError(QStringLiteral("Could not cook %1").arg(Runtime)); }
+            }
+            Console.Print(QStringLiteral("Cooked %1 prefab(s) to %2%3").arg(Cooked).arg(QDir::toNativeSeparators(OutRoot))
+                          .arg(Failed ? QStringLiteral("; %1 failed").arg(Failed) : QString()));
+            return;
+        }
+        if(!InArgs.isEmpty() && InArgs[0].endsWith(QStringLiteral(".nmprefab"), Qt::CaseInsensitive))
+        {
+            const QFileInfo SourceInfo(InArgs[0]);
+            const QString Out = InArgs.size() >= 2 ? InArgs[1] : SourceInfo.dir().filePath(QStringLiteral("Cooked/") + SourceInfo.fileName());
+            if(QFileInfo(Out).absoluteFilePath() == SourceInfo.absoluteFilePath())
+            {
+                Console.PrintError(QStringLiteral("Refusing to cook a prefab over itself"));
+                return;
+            }
+            QDir().mkpath(QFileInfo(Out).absolutePath());
+            if(GameCore::CookPrefabFile(InArgs[0].toUtf8().constData(), Out.toUtf8().constData()))
+            {
+                Console.Print(QStringLiteral("Cooked %1 -> %2").arg(InArgs[0], Out));
+            }
+            else
+            {
+                Console.PrintError(QStringLiteral("Cook failed; see the log"));
+            }
+            return;
+        }
+
         /* The file on disk, not the scene in memory: save first to cook edits. */
         const QString Source = InArgs.size() >= 1 ? InArgs[0] : CurrentPath;
         if(Source.isEmpty())
