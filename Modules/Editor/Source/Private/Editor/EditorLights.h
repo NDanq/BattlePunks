@@ -14,7 +14,7 @@ class EditorDocument;
  * Making lights: World > Add Light and the Outliner's context menu. Each
  * light is a new entity named for it, with a Transform at the given spot and
  * the light component -- one undo step, then selected. A spot light and the
- * sun come aimed down at the ground (+Y is down).
+ * sun come aimed down at the ground (-Y; a positive pitch tips down).
  */
 namespace EditorLights
 {

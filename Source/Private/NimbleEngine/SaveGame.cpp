@@ -169,6 +169,18 @@ bool SaveGameToFile(GameSession& InSession, const std::string& InPath)
         Ar.OpenChunk(TAG_GAMESTATE, StateVersion);
         State->Serialize(Ar);
         Ar.CloseChunk();
+
+        /* The engine's half, its own chunk so a game's Serialize never has to
+         * remember it. */
+        uint16_t PhaseVersion = GAMEPHASE_CHUNK_VERSION;
+        std::string Phase(State->GetPhase());
+        double      PhaseSeconds = State->GetPhaseSeconds();
+        int32_t     Round        = State->GetRound();
+        Ar.OpenChunk(TAG_GAMEPHASE, PhaseVersion);
+        Ar << Phase;
+        Ar << PhaseSeconds;
+        Ar << Round;
+        Ar.CloseChunk();
     }
 
     Ar.CloseChunk();

@@ -7,13 +7,13 @@
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/EntityID.h"
+#include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderProxy.h"
 
 /* The render-thread mirror of a RenderComponent: its mesh, or else a unit quad. */
 namespace RenderCore
 {
-    struct RenderComponent;
     struct MeshData;
 
     class RenderComponentProxy final : public RenderProxy
@@ -30,6 +30,10 @@ namespace RenderCore
         bool              bComponentVisible = true;
         bool              bCastShadows      = true;
         char              Materials[8][128] = {};  // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_PATH_MAX; "" = none
+
+        /* The component's parameter overrides; ParameterCount: up to the last in use. */
+        RenderMaterialParameter Parameters[8] = {};   // RENDER_MATERIAL_PARAMETERS_MAX
+        uint32_t                ParameterCount = 0;
 
         /* Bounds are redone only when these change. Null source: the quad. */
         std::string                            MeshPath;

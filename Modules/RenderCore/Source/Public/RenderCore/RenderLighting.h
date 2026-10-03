@@ -61,10 +61,9 @@ namespace RenderCore
     struct RenderLighting
     {
         /* The direction light travels, world space; need not be unit length.
-         * +Y is down, so (0.35, 1, 0.55) shines down and away -- the light
-         * Mesh.fsh always had, and what a scene with no Directional Light
-         * gets. */
-        EngineCore::Vector3 LightDirection{ 0.35, 1.0, 0.55 };
+         * +Y is up, so (0.35, -1, 0.55) shines down and away -- the light
+         * Mesh.fsh has, and what a scene with no Directional Light gets. */
+        EngineCore::Vector3 LightDirection{ 0.35, -1.0, 0.55 };
         EngineCore::Color   LightColor{ 255, 255, 255 };
         float               LightIntensity = 3.0f;
 
@@ -78,7 +77,7 @@ namespace RenderCore
         int32_t             LightCascadeCount     = 4;
         float               LightCascadeSplitLambda = 0.75f;
 
-        /* Ambient: SkyColor from above (-Y), GroundColor from below. */
+        /* Ambient: SkyColor from above (+Y), GroundColor from below. */
         EngineCore::Color   SkyColor{ 120, 130, 150 };
         EngineCore::Color   GroundColor{ 60, 55, 50 };
         float               SkyIntensity = 0.6f;

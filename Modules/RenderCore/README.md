@@ -273,7 +273,30 @@ the same thread that runs `IGameMode::OnTick`, matching `GameCoreSmokeTest` and
 
 ## Lua
 
-`RenderCore`'s components have no Lua bindings yet -- `ScriptEngine`'s proxy
-metatables are private to `GameCore`, and extending them is future work, not
-in scope for this module's first cut. A game that wants `RenderComponent`
-from a script currently has to bind it itself.
+Each component binds itself with `GAMECORE_DEFINE_COMPONENT_SCRIPT`, beside
+its registration in `Private/RenderCore/Components/`, so Lua and script
+graphs see the same members. A change made from a script reaches the screen
+the way a C++ one does: WorldBridge copies the component into its proxy every
+frame.
+
+**Render** (`RenderComponent`):
+
+| Member | What it does |
+|---|---|
+| `GetVisible` / `SetVisible`, `GetMesh` / `SetMesh` | fields |
+| `GetMaterial(Index)`, `SetMaterial(Index, Path)` | material slots 0-7 by index; `SetMaterial` returns false outside them |
+| `GetNumRegisteredMaterials()` | how many slots name a material |
+| `SetMaterialParameter(Slot, Name, X[, Y, Z, W])` | overrides a parameter of slot `Slot`'s material for this entity only; missing components are 0 |
+| `SetMaterialColor(Slot, Name, Color)` | the same from a Color (0-255 per channel), for script graphs' Color pins |
+| `GetMaterialParameter(Slot, Name)` | returns `x, y, z, w, set`: the override, or zeros and `false` if none |
+| `ClearMaterialParameter(Slot, Name)` | goes back to the material's default |
+
+```lua
+local render = brick:GetComponent("Render")
+for slot = 0, render:GetNumRegisteredMaterials() - 1 do print(render:GetMaterial(slot)) end
+render:SetMaterialParameter(0, "Color", 1, 0.3, 0.3, 1)   -- this brick red; the others keep the default
+```
+
+Material parameters are per entity, and MATERIALS.md's **Per-entity
+parameters** section explains how they reach a draw. **Camera** binds
+`ZNear`, `ZFar` and `Active`.

@@ -16,7 +16,7 @@ class EditorDocument;
  * it, with a Transform at the given spot and a Render component drawing the
  * mesh with DefaultLit -- one undo step, then selected. The meshes are one
  * unit across, so each is scaled to a size worth seeing: a 100-unit box or
- * sphere, a 1000 x 1000 plane facing up (-Y).
+ * sphere, a 1000 x 1000 plane facing up (+Y).
  */
 namespace EditorPrimitives
 {

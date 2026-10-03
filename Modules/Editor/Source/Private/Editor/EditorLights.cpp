@@ -16,8 +16,8 @@ namespace EditorLights
         switch(InKind)
         {
             case EKind::Point:       Name = QStringLiteral("Point Light"); break;
-            case EKind::Spot:        Name = QStringLiteral("Spot Light");        Rotation = EngineCore::Vector3(-45.0, 0.0, 0.0);  break;
-            case EKind::Directional: Name = QStringLiteral("Directional Light"); Rotation = EngineCore::Vector3(-50.0, 30.0, 0.0); break;
+            case EKind::Spot:        Name = QStringLiteral("Spot Light");        Rotation = EngineCore::Vector3(45.0, 0.0, 0.0);  break;
+            case EKind::Directional: Name = QStringLiteral("Directional Light"); Rotation = EngineCore::Vector3(50.0, 30.0, 0.0); break;
             case EKind::Sky:         Name = QStringLiteral("Sky Light"); break;
         }
 

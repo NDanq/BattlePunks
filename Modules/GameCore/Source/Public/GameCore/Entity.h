@@ -144,6 +144,22 @@ namespace GameCore
     {
         return GetEntity().GetName();
     }
+
+    /* Out of line for the same reason: GetEntity() returns an Entity
+     * whatever T is, so the call is checked where the template is defined,
+     * and World.h only has the forward declaration. */
+    template<typename T, typename F>
+    void World::Each(F&& InFn)
+    {
+        ComponentPool* Pool = FindPool(T::StaticType().ID);
+        if(!Pool) { return; }
+        T* Base = static_cast<T*>(Pool->GetDenseData());
+        const size_t Count = Pool->GetCount();
+        for(size_t Index = 0; Index < Count; ++Index)
+        {
+            InFn(GetEntity(Pool->GetEntityAt(Index)), Base[Index]);
+        }
+    }
 }
 
 #endif //GAMECORE_ENTITY_H

@@ -208,7 +208,7 @@ QWizardPage* ImportWizard::BuildMeshPage()
     MeshScale->setValue(double(GEditorImportMeshScale.GetFloat()));
     MeshScale->setToolTip(QStringLiteral("Multiplies every position. glTF is in metres: 100 makes a metre 100 units"));
 
-    ConvertAxes = new QCheckBox(QStringLiteral("Convert glTF axes to the engine's (+Y down, facing the camera)"), Page);
+    ConvertAxes = new QCheckBox(QStringLiteral("Convert glTF axes to the engine's (left-handed, +Y up, facing the camera)"), Page);
     ConvertAxes->setChecked(GEditorImportConvertCoordinates.GetBool());
 
     GenNormals = new QCheckBox(QStringLiteral("Generate smooth normals where the file has none"), Page);

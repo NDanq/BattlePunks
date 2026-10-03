@@ -81,16 +81,22 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 12,
-           "Render exposes Visible, Material (slot 0), Material0-7, Mesh and CastShadows");
-    bool bSlot7 = false, bSlot0Alias = false;
-    for(size_t Index = 0; Render && Index < RenderCount; ++Index)
+    Expect(Render != nullptr && RenderCount == 10,
+           "Render exposes Visible, Mesh, slots by index, material parameters and CastShadows");
+    const auto HasBinding = [&](const char* InName)
     {
-        bSlot7      |= std::strcmp(Render[Index].Name, "Material7") == 0;
-        bSlot0Alias |= std::strcmp(Render[Index].Name, "Material") == 0
-                       && Render[Index].Offset == uint32_t(offsetof(RenderComponent, Materials));
-    }
-    Expect(bSlot7 && bSlot0Alias, "each material slot is its own field, and Material is still slot 0");
+        for(size_t Index = 0; Render && Index < RenderCount; ++Index)
+        {
+            if(std::strcmp(Render[Index].Name, InName) == 0) { return true; }
+        }
+        return false;
+    };
+    Expect(HasBinding("GetMaterial") && HasBinding("SetMaterial") && HasBinding("GetNumRegisteredMaterials")
+           && !HasBinding("Material0") && !HasBinding("Material"),
+           "material slots are reached by index, not one field per slot");
+    Expect(HasBinding("SetMaterialParameter") && HasBinding("SetMaterialColor") && HasBinding("GetMaterialParameter")
+           && HasBinding("ClearMaterialParameter"), "material parameters can be set, read and cleared");
+    Expect(HasBinding("CastShadows"), "and whether it casts shadows");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < RenderCount; ++Index)
@@ -1365,6 +1371,46 @@ static void TestTextureAssets()
  * RenderComponent's serializer writes every slot by name, as a graph path, and
  * reads it back. Through a recording archive, so no file format is involved.
  */
+/* RenderComponent's slot and parameter API, as Lua and graphs reach it. */
+static void TestRenderComponentMaterials()
+{
+    std::printf("[render component materials]\n");
+
+    RenderComponent C;
+    Expect(C.GetNumRegisteredMaterials() == 0 && std::strcmp(C.GetMaterial(0), "") == 0, "no material to start with");
+    Expect(C.SetMaterial(0, "Materials/A.material.nmgraph") && C.SetMaterial(3, "Materials/B.material.nmgraph"),
+           "SetMaterial by slot index");
+    Expect(C.GetNumRegisteredMaterials() == 2 && std::strcmp(C.GetMaterial(3), "Materials/B.material.nmgraph") == 0,
+           "GetMaterial by index; GetNumRegisteredMaterials counts the slots set");
+    Expect(!C.SetMaterial(8, "x") && !C.SetMaterial(-1, "x") && std::strcmp(C.GetMaterial(9), "") == 0,
+           "an index outside the slots is refused, and reads as none");
+
+    float Value[4] = {};
+    Expect(C.SetMaterialParameter(0, "Color", 1, 0, 0, 1) && C.GetMaterialParameter(0, "Color", Value) && Value[0] == 1.0f,
+           "a parameter override is set and read");
+    Expect(C.SetMaterialParameter(0, "Color", 0, 1, 0, 1) && C.GetMaterialParameterCount() == 1
+           && C.GetMaterialParameter(0, "Color", Value) && Value[1] == 1.0f, "setting it again replaces it");
+    Expect(!C.GetMaterialParameter(1, "Color", Value), "an override belongs to one slot");
+    Expect(C.SetMaterialParameter(1, "Color", 0, 0, 1, 1) && C.SetMaterialParameter(0, "Speed", 2, 0, 0, 0)
+           && C.GetMaterialParameterCount() == 3, "several overrides, across slots");
+    Expect(C.ClearMaterialParameter(0, "Color") && !C.GetMaterialParameter(0, "Color", Value)
+           && C.GetMaterialParameterCount() == 2 && C.GetMaterialParameter(0, "Speed", Value) && Value[0] == 2.0f,
+           "clearing one keeps the rest, packed");
+    Expect(!C.ClearMaterialParameter(0, "Missing") && !C.SetMaterialParameter(0, "", 0, 0, 0, 0)
+           && !C.SetMaterialParameter(8, "Color", 0, 0, 0, 0), "bad names and slots are refused");
+
+    RenderComponent Full;
+    char Name[16];
+    bool bAll = true;
+    for(size_t Index = 0; Index < RENDER_MATERIAL_PARAMETERS_MAX; ++Index)
+    {
+        std::snprintf(Name, sizeof(Name), "P%zu", Index);
+        bAll = bAll && Full.SetMaterialParameter(0, Name, 0, 0, 0, 0);
+    }
+    Expect(bAll && !Full.SetMaterialParameter(0, "OneMore", 0, 0, 0, 0) && Full.SetMaterialParameter(0, "P3", 1, 0, 0, 0),
+           "a full table refuses a new name but still updates one it has");
+}
+
 static void TestRenderComponentSerializer()
 {
     std::printf("[render component serializer]\n");
@@ -1372,17 +1418,27 @@ static void TestRenderComponentSerializer()
     struct RecordingArchive final : GameCore::ComponentArchive
     {
         bool                     bLoading = false;
-        uint16_t                 Version  = 1;
+        uint16_t                 Version  = 2;
         std::map<std::string, std::string> Strings;   // what a load reads, and what a save wrote
+        std::map<std::string, double>      Numbers;   // the same, for float, int32 and uint8 fields
         std::vector<std::string> Names;
+
+        /* A save records InOut; a load returns the recorded value, or InOut. */
+        double Number(const char* InName, const double InOut)
+        {
+            Names.push_back(InName);
+            if(!bLoading) { Numbers[InName] = InOut; return InOut; }
+            const auto Found = Numbers.find(InName);
+            return Found != Numbers.end() ? Found->second : InOut;
+        }
 
         bool     IsLoading()  const override { return bLoading; }
         uint16_t GetVersion() const override { return Version; }
-        void Field(const char* InName, float&) override               { Names.push_back(InName); }
+        void Field(const char* InName, float& InOut) override         { InOut = float(Number(InName, InOut)); }
         void Field(const char* InName, double&) override              { Names.push_back(InName); }
-        void Field(const char* InName, int32_t&) override             { Names.push_back(InName); }
+        void Field(const char* InName, int32_t& InOut) override       { InOut = int32_t(Number(InName, InOut)); }
         void Field(const char* InName, uint32_t&) override            { Names.push_back(InName); }
-        void Field(const char* InName, uint8_t&) override             { Names.push_back(InName); }
+        void Field(const char* InName, uint8_t& InOut) override       { InOut = uint8_t(Number(InName, InOut)); }
         void Field(const char* InName, bool&) override                { Names.push_back(InName); }
         void Field(const char* InName, EngineCore::Vector3&) override { Names.push_back(InName); }
         void Field(const char* InName, GameCore::AABB&) override      { Names.push_back(InName); }
@@ -1407,7 +1463,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 2, "RenderComponent saves as version 2");
+    Expect(Info && Info->Version == 3, "RenderComponent saves as version 3 (material parameters, CastShadows)");
     if(!Info) { return; }
 
     RenderComponent Saved;
@@ -1433,15 +1489,38 @@ static void TestRenderComponentSerializer()
            "and reads them back unchanged");
 
     Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("CastShadows")) != Out.Names.end(),
-           "version 2 writes CastShadows");
+           "version 3 writes CastShadows");
+    /* Material parameters: a count, then that many. */
+    RenderComponent Tinted;
+    Expect(Tinted.SetMaterialParameter(0, "Color", 1.0f, 0.5f, 0.25f, 1.0f) && Tinted.SetMaterialParameter(1, "Speed", 3.0f, 0, 0, 0),
+           "a component takes parameter overrides");
+    RecordingArchive TintOut;
+    Info->Fn(TintOut, &Tinted);
+    Expect(TintOut.Numbers["ParameterCount"] == 2 && TintOut.Strings["Parameter0Name"] == "Color"
+           && TintOut.Numbers["Parameter1Slot"] == 1 && TintOut.Numbers["Parameter0Y"] == 0.5
+           && TintOut.Numbers.count("Parameter2X") == 0,
+           "only the overrides in use are written");
+    RecordingArchive TintBack;
+    TintBack.bLoading = true;
+    TintBack.Strings  = TintOut.Strings;
+    TintBack.Numbers  = TintOut.Numbers;
+    RenderComponent TintAgain;
+    Info->Fn(TintBack, &TintAgain);
+    float Value[4] = {};
+    Expect(TintAgain.GetMaterialParameterCount() == 2 && TintAgain.GetMaterialParameter(0, "Color", Value)
+           && Value[0] == 1.0f && Value[2] == 0.25f && TintAgain.GetMaterialParameter(1, "Speed", Value) && Value[0] == 3.0f,
+           "and read back");
+
     RecordingArchive Old;
     Old.bLoading = true;
     Old.Version  = 1;
     RenderComponent FromOld;
     FromOld.bCastShadows = 1;
     Info->Fn(Old, &FromOld);
+    Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("ParameterCount")) == Old.Names.end()
+           && FromOld.GetMaterialParameterCount() == 0, "a version 1 component reads no parameters");
     Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("CastShadows")) == Old.Names.end() && FromOld.bCastShadows == 1,
-           "a version 1 save reads no CastShadows and keeps casting");
+           "and no CastShadows, and keeps casting");
 
     /* The lights: version 2 dropped the sun's Direction (it is the
      * Transform's forward now) and added shadows; point and spot are new. */
@@ -1507,7 +1586,7 @@ static void TestShadowsOnGpu()
     if(bInit)
     {
         const EngineCore::Size Viewport(256, 256);
-        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, -700.0, -600.0), Vector3(0.0, 700.0, 600.0),
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
                                                             50.0f, 10.0f, 5000.0f);
         Rend.SetViewOverride(&View);
         GameCore::World World;
@@ -1531,14 +1610,14 @@ static void TestShadowsOnGpu()
         };
 
         Placed("Floor", Vector3(0.0, 0.0, 0.0), Vector3(), Vector3(3000.0, 1.0, 3000.0)).AddComponent(Mesh("Engine/Content/Meshes/Plane.nmmesh"));
-        const GameCore::Entity Box = Placed("Box", Vector3(0.0, -90.0, 0.0), Vector3(), Vector3(120.0, 120.0, 120.0));
+        const GameCore::Entity Box = Placed("Box", Vector3(0.0, 90.0, 0.0), Vector3(), Vector3(120.0, 120.0, 120.0));
         Box.AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
 
         /* Down and toward +X: the shadow falls beside the box, where the camera sees it. */
         DirectionalLightComponent SunInit;
         SunInit.ShadowTechnique = LST_Standard;
         SunInit.ShadowDistance  = 3000.0f;
-        const GameCore::Entity Sun = Placed("Sun", Vector3(), Vector3(-55.0, 90.0, 0.0), Vector3(1.0, 1.0, 1.0));
+        const GameCore::Entity Sun = Placed("Sun", Vector3(), Vector3(55.0, 90.0, 0.0), Vector3(1.0, 1.0, 1.0));
         Sun.AddComponent(SunInit);
         Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
 
@@ -1653,7 +1732,7 @@ static void TestShadowsOnGpu()
             SpotInit.Range          = 1200.0f;
             SpotInit.OuterConeAngle = 45.0f;
             SpotInit.InnerConeAngle = 35.0f;
-            const GameCore::Entity Spot = Placed("Spot", Vector3(60.0, -500.0, -60.0), Vector3(-90.0, 0.0, 0.0), Vector3(1.0, 1.0, 1.0));
+            const GameCore::Entity Spot = Placed("Spot", Vector3(60.0, 500.0, -60.0), Vector3(90.0, 0.0, 0.0), Vector3(1.0, 1.0, 1.0));
             Spot.AddComponent(SpotInit);
             Enabled->SetFromString("0");
             const bool bSpotLit = Capture(SpotLit);
@@ -1670,7 +1749,7 @@ static void TestShadowsOnGpu()
             PointInit.Intensity    = 30.0f;
             PointInit.Radius       = 1500.0f;
             PointInit.bCastShadows = 1;
-            Placed("Point", Vector3(80.0, -450.0, -80.0), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(PointInit);
+            Placed("Point", Vector3(80.0, 450.0, -80.0), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(PointInit);
             EngineCore::Image PointLit, PointShadowed;
             Enabled->SetFromString("0");
             const bool bPointLit = Capture(PointLit);
@@ -1838,8 +1917,8 @@ static void TestLightComponents()
     using EngineCore::Vector3;
 
     Expect(std::abs(LightForward(Vector3(0.0, 0.0, 0.0)).GetZ() - 1.0) < 1e-9, "a light with no rotation shines along +Z");
-    const Vector3 Down = LightForward(Vector3(-90.0, 0.0, 0.0));
-    Expect(std::abs(Down.GetY() - 1.0) < 1e-6, "pitch -90 shines down (+Y)");
+    const Vector3 Down = LightForward(Vector3(90.0, 0.0, 0.0));
+    Expect(std::abs(Down.GetY() + 1.0) < 1e-6, "pitch 90 shines down (-Y; +Y is up)");
     const Vector3 Right = LightForward(Vector3(0.0, 90.0, 0.0));
     Expect(std::abs(Right.GetX() - 1.0) < 1e-6, "yaw 90 shines along +X, as the editor camera turns");
 
@@ -1999,7 +2078,8 @@ static void TestRenderStages()
 /*
  * The engine's primitive meshes (Engine/Scripts/generate_primitive_meshes.py),
  * as staged beside this executable: they load, and each triangle faces the way
- * its normals do -- counter-clockwise seen from outside, as imported meshes.
+ * its normals do (the cross product of its edges points along them), as
+ * imported meshes.
  */
 static void TestEngineMeshes()
 {
@@ -2052,13 +2132,13 @@ static void TestEngineMeshes()
             bFacing &= Area < 1e-12f || Face[0] * Normal[0] + Face[1] * Normal[1] + Face[2] * Normal[2] > 0.0f;
         }
         Expect(bUnitNormals && bUVsInRange, (std::string(Each.Path) + " has unit normals and 0-1 UVs").c_str());
-        Expect(bFacing, (std::string(Each.Path) + " winds every triangle counter-clockwise seen from outside").c_str());
+        Expect(bFacing, (std::string(Each.Path) + " winds every triangle to face its normals").c_str());
     }
 
     MeshData Plane;
     if(LoadMeshFile("Engine/Content/Meshes/Plane.nmmesh", Plane))
     {
-        Expect(Plane.Normals[1] == -1.0f, "the Plane faces up (-Y)");
+        Expect(Plane.Normals[1] == 1.0f, "the Plane faces up (+Y)");
     }
 }
 
@@ -2141,6 +2221,7 @@ int main()
     TestMaterialRuntime();
 #if WITH_EDITOR
     TestRenderComponentSerializer();
+    TestRenderComponentMaterials();
 #endif
 
     RenderThread Thread;

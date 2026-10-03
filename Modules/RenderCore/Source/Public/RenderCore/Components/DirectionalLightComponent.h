@@ -11,10 +11,11 @@
 namespace RenderCore
 {
     /* "Directional Light". The scene's sun: the first active one WorldBridge
-     * finds lights the scene. It travels along its entity's forward (+Z
-     * turned by the Transform's Rotation; LightForward), so a light with no
-     * Transform shines along +Z. Its position only places the editor's
-     * gizmo. */
+     * finds lights every Lit material (RenderLighting.h). It travels along
+     * its entity's forward (+Z turned by the Transform's Rotation;
+     * LightForward), so a light with no Transform shines along +Z; -Y is
+     * down. Without one the scene keeps the default light -- from above, as
+     * Mesh.fsh always was. Its position only places the editor's gizmo. */
     struct RENDERCORE_API DirectionalLightComponent
     {
         GAMECORE_COMPONENT_BODY()

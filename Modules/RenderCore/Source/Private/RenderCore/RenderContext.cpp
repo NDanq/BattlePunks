@@ -14,6 +14,7 @@
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/GDI/Shaders/Classes/TestbedShaders.h"
+#include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCoreLog.h"
@@ -204,6 +205,7 @@ namespace RenderCore
         GDIShader*              DefaultVertex[3] = {};          // MaterialDefault, by EMaterialVertexInput
         bool                    bDefaultVertexTried[3] = {};
         std::vector<GDIShader*> RetiredShaders;                 // see RenderContext::ReloadMaterial
+        std::vector<uint8_t>    OverrideBlock;                  // BindMaterial's: a block with an entity's overrides
         std::set<std::string>   Warned;                         // one warning per material and reason
 
         /* The scene block, refreshed by SetView and SetLighting. */
@@ -288,7 +290,15 @@ namespace RenderCore
              * exactly the "one mesh, scaled per draw" shape DrawQuad wants;
              * GDITransform::Scale (set per call below) is what actually
              * varies a primitive's on-screen size. */
-            ViewObject = new GDIViewObject(View3D);
+            /* Not GDIViewObject's own quad: its UVs put v = 0 at local -Y,
+             * the bottom in this engine's Y-up view, so textures would draw
+             * upside down. Same half-unit square, v = 0 at the top. */
+            static const float QuadVerts[] = { -0.5f, -0.5f, 0.f,  -0.5f, 0.5f, 0.f,  0.5f, 0.5f, 0.f,
+                                                0.5f,  0.5f, 0.f,   0.5f, -0.5f, 0.f, -0.5f, -0.5f, 0.f };
+            static const float QuadUVs[]   = { 0.f, 1.f,  0.f, 0.f,  1.f, 0.f,  1.f, 0.f,  1.f, 1.f,  0.f, 1.f };
+            ViewObject = new GDIViewObject();
+            ViewObject->Init(View3D);
+            ViewObject->Mesh = GDICreateQuadMesh(QuadVerts, QuadUVs, 18, 12);
 
             MeshObject = new GDIViewObject();
             MeshObject->Init(View3D);
@@ -584,9 +594,56 @@ namespace RenderCore
             GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
         }
 
-        /* Binds InMaterial's shaders for InInput and its blocks with InTint.
-         * False (nothing bound) if a shader is missing. */
-        bool BindMaterial(Material& InMaterial, const EMaterialVertexInput InInput, const EngineCore::Color InTint)
+        /* How many floats a parameter of InType holds; 0 for an unknown type. */
+        static uint32_t ParameterFloats(const std::string& InType)
+        {
+            if(InType == "float") { return 1; }
+            if(InType == "vec2")  { return 2; }
+            if(InType == "vec3")  { return 3; }
+            if(InType == "vec4")  { return 4; }
+            return 0;
+        }
+
+        /* InMaterial's block with InItem's parameter overrides for its slot
+         * applied: a copy, so the material's own block keeps its defaults for
+         * every other entity drawing with it. The block itself without any. */
+        const std::vector<uint8_t>& BlockWithOverrides(Material& InMaterial, const DrawCommand* InItem)
+        {
+            const std::vector<uint8_t>& Block = InMaterial.Block;
+            if(!InItem || InItem->OverrideCount == 0)
+            {
+                return Block;
+            }
+            bool bAny = false;
+            for(uint32_t Index = 0; Index < InItem->OverrideCount; ++Index)
+            {
+                const RenderMaterialParameter& Each = InItem->Overrides[Index];
+                if(Each.Slot != InItem->MaterialSlot || Each.Name[0] == '\0')
+                {
+                    continue;
+                }
+                const MaterialParameter* Param = InMaterial.Description.FindParameter(
+                    std::string(Each.Name, strnlen(Each.Name, RENDER_MATERIAL_PARAMETER_NAME_MAX)));
+                const uint32_t Floats = Param ? ParameterFloats(Param->Type) : 0;
+                if(Floats == 0 || Param->Offset + Floats * sizeof(float) > Block.size())
+                {
+                    continue;   // not one of this material's parameters
+                }
+                if(!bAny)
+                {
+                    OverrideBlock = Block;
+                    bAny = true;
+                }
+                std::memcpy(OverrideBlock.data() + Param->Offset, Each.Value, Floats * sizeof(float));
+            }
+            return bAny ? OverrideBlock : Block;
+        }
+
+        /* Binds InMaterial's shaders for InInput and its blocks with InTint,
+         * and InItem's parameter overrides for its slot. False (nothing
+         * bound) if a shader is missing. */
+        bool BindMaterial(Material& InMaterial, const EMaterialVertexInput InInput, const EngineCore::Color InTint,
+                          const DrawCommand* InItem = nullptr)
         {
             GDIShader* Vertex = VertexFor(InMaterial, InInput);
             if(!Vertex || !InMaterial.Pixel)
@@ -599,7 +656,9 @@ namespace RenderCore
             std::vector<uint8_t>& Block = InMaterial.Block;
             const float Tint[4] = { InTint.Rf(), InTint.Gf(), InTint.Bf(), InTint.Af() };
             std::memcpy(Block.data(), Tint, sizeof(Tint));
-            GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Block.data(), uint(Block.size()));
+
+            const std::vector<uint8_t>& Upload = BlockWithOverrides(InMaterial, InItem);
+            GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Upload.data(), uint(Upload.size()));
             GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
 
             /* Its textures, every other slot cleared; slot 0 (a PostProcess
@@ -836,7 +895,9 @@ namespace RenderCore
             static const uint8_t NoMaterial[MATERIAL_ENGINE_BLOCK_BYTES] = {};
             if(InItem.Mat && !InItem.Mat->Block.empty())
             {
-                GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, InItem.Mat->Block.data(), uint(InItem.Mat->Block.size()));
+                /* The entity's overrides too: a parameter may drive its World Position Offset. */
+                const std::vector<uint8_t>& Block = BlockWithOverrides(*InItem.Mat, &InItem);
+                GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Block.data(), uint(Block.size()));
             }
             else
             {
@@ -941,7 +1002,7 @@ namespace RenderCore
         void IssueMaterialQuad(const DrawCommand& InItem)
         {
             EnsureInitialised();
-            if(!BindMaterial(*InItem.Mat, EMaterialVertexInput::Quad, InItem.Tint))
+            if(!BindMaterial(*InItem.Mat, EMaterialVertexInput::Quad, InItem.Tint, &InItem))
             {
                 DrawCommand Plain = InItem;
                 IssueQuad(Plain);
@@ -958,7 +1019,7 @@ namespace RenderCore
             Place(MeshObject, InItem.Transform, 1.0f, 1.0f);
             MeshObject->Mesh = InItem.Mesh;
 
-            if(!InItem.Mat || !BindMaterial(*InItem.Mat, EMaterialVertexInput::Mesh, InItem.Tint))
+            if(!InItem.Mat || !BindMaterial(*InItem.Mat, EMaterialVertexInput::Mesh, InItem.Tint, &InItem))
             {
                 GDIShader* Pixel = GDIGetShader<Mesh_PS>();
                 Bind(GDIGetShader<Mesh_VS>(), Pixel);
@@ -1163,7 +1224,8 @@ namespace RenderCore
     }
 
     void RenderContext::DrawQuadWithMaterial(const RenderTransform& InTransform, const float InWidth, const float InHeight,
-                                             const EngineCore::Color InTint, const char* InMaterial)
+                                             const EngineCore::Color InTint, const char* InMaterial,
+                                             const MaterialParameterOverrides& InOverrides)
     {
         const std::string Name = InMaterial ? std::string(InMaterial) : std::string();
         Material& Found = P->FindMaterial(Name);
@@ -1185,6 +1247,9 @@ namespace RenderCore
         Item.Height    = InHeight;
         Item.Tint      = InTint;
         Item.Mat       = &Found;
+        Item.Overrides     = InOverrides.Items;
+        Item.OverrideCount = InOverrides.Count;
+        Item.MaterialSlot  = 0;   // a quad draws slot 0
         P->Submit(Item, Impl::StageOf(&Found));
     }
 
@@ -1192,18 +1257,20 @@ namespace RenderCore
                                  const EngineCore::Color InTint, const char* InMaterial)
     {
         const char* Every[1] = { InMaterial };
-        return DrawMeshSections(InTransform, InMeshPath, InTint, Every, 1, /*bInEvery*/ true);
+        return DrawMeshSections(InTransform, InMeshPath, InTint, Every, 1, /*bInEvery*/ true, MaterialParameterOverrides());
     }
 
     bool RenderContext::DrawMesh(const RenderTransform& InTransform, const char* InMeshPath,
-                                 const EngineCore::Color InTint, const char* const* InSlots, const uint32_t InSlotCount)
+                                 const EngineCore::Color InTint, const char* const* InSlots, const uint32_t InSlotCount,
+                                 const MaterialParameterOverrides& InOverrides)
     {
-        return DrawMeshSections(InTransform, InMeshPath, InTint, InSlots, InSlotCount, /*bInEvery*/ false);
+        return DrawMeshSections(InTransform, InMeshPath, InTint, InSlots, InSlotCount, /*bInEvery*/ false, InOverrides);
     }
 
     bool RenderContext::DrawMeshSections(const RenderTransform& InTransform, const char* InMeshPath,
                                          const EngineCore::Color InTint, const char* const* InSlots,
-                                         const uint32_t InSlotCount, const bool bInEvery)
+                                         const uint32_t InSlotCount, const bool bInEvery,
+                                         const MaterialParameterOverrides& InOverrides)
     {
         if(!InMeshPath || InMeshPath[0] == '\0')
         {
@@ -1240,6 +1307,9 @@ namespace RenderCore
             Item.Mesh      = Mesh;
             Item.First     = Section.FirstIndex;
             Item.Count     = Sections.empty() ? 0u : Section.IndexCount;
+            Item.Overrides     = InOverrides.Items;
+            Item.OverrideCount = InOverrides.Count;
+            Item.MaterialSlot  = uint8_t(SlotIndex);   // the section's slot, whichever material it fell back to
             P->Submit(Item, Impl::StageOf(Chosen));
         }
         return true;
@@ -1414,7 +1484,8 @@ namespace RenderCore
     }
 
     bool RenderContext::DrawMeshShadow(const RenderTransform& InTransform, const char* InMeshPath,
-                                       const char* const* InSlots, const uint32_t InSlotCount)
+                                       const char* const* InSlots, const uint32_t InSlotCount,
+                                       const MaterialParameterOverrides& InOverrides)
     {
         if(P->CasterView < 0 || !P->bDeferring || !InMeshPath || InMeshPath[0] == '\0')
         {
@@ -1451,7 +1522,10 @@ namespace RenderCore
             Item.Mesh       = Mesh;
             Item.First      = Section.FirstIndex;
             Item.Count      = Sections.empty() ? 0u : Section.IndexCount;
-            Item.ShadowView = P->CasterView;
+            Item.ShadowView    = P->CasterView;
+            Item.Overrides     = InOverrides.Items;
+            Item.OverrideCount = InOverrides.Count;
+            Item.MaterialSlot  = uint8_t(Index);
             P->PolicyFor(ERenderStage::Shadows).Add(Item);
         }
         return true;
@@ -1781,8 +1855,8 @@ namespace RenderCore
             const double Yaw   = double(InRequest.Yaw) * Pi / 180.0;
             const double Pitch = double(std::clamp(InRequest.Pitch, -85.0f, 85.0f)) * Pi / 180.0;
             const double Zoom  = double(std::clamp(InRequest.Zoom, 0.1f, 20.0f));
-            /* +Y is down, so a camera above looks down along +Y. */
-            const EngineCore::Vector3 Forward(std::sin(Yaw) * std::cos(Pitch), std::sin(Pitch), std::cos(Yaw) * std::cos(Pitch));
+            /* +Y is up, so a camera above looks down along -Y. */
+            const EngineCore::Vector3 Forward(std::sin(Yaw) * std::cos(Pitch), -std::sin(Pitch), std::cos(Yaw) * std::cos(Pitch));
             const double Distance = Radius / std::sin(double(FovY) * 0.5 * Pi / 180.0) * 1.1 / Zoom;
             const EngineCore::Vector3 Eye = Centre - Forward * Distance;
             const float Near = float(std::max(Distance - Radius * 1.5, Distance * 0.01));
@@ -1791,7 +1865,7 @@ namespace RenderCore
 
             /* A studio light from over the camera's shoulder, the same
              * whatever the scene's; the default sky. */
-            const EngineCore::Vector3 Down(0.0, 1.0, 0.0);
+            const EngineCore::Vector3 Down(0.0, -1.0, 0.0);
             EngineCore::Vector3 Side = Forward ^ Down;
             const double SideLength = Side.GetLength();
             Side = SideLength > 1e-6 ? Side * (1.0 / SideLength) : EngineCore::Vector3(1.0, 0.0, 0.0);

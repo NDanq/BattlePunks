@@ -599,6 +599,11 @@ own field (`Props.Element` likewise, for the editor). For the editor,
 `Props.Array("Materials", &RenderComponent::Materials, PF_AssetMaterial)` lists
 the whole array as one property (`ArrayCount` elements, `Stride` apart), which
 the Details panel shows as a list to add to and remove from.
+`Props.StructArray("Parameters", &RenderComponent::Parameters, [](auto& Member) { ... })`
+does the same for an array of small structs. The body declares the element's
+members (`Member.Field`, `Flag`, `Element`), each an entry of its own after the
+array with `Parent` naming it, and the panel shows each element as a group of
+them (`ComponentProperties.h`).
 
 **A C++ function that already exists needs no glue.** `Native` writes it from
 the function's types, and the string only names the graph's pins:
@@ -674,7 +679,7 @@ way as in the engine. Each registrar unregisters when its image unloads,
 so a module can be loaded, unloaded and loaded again: by the editor, to read
 its declarations, and by every Play. Calling a binding whose module has
 unloaded is a Lua error rather than a jump into unmapped code.
-`Games/Sandbox/SandboxScripting.cpp` is the example.
+`Games/Sandbox/Source/Private/Sandbox/SandboxScripting.cpp` is the example.
 
 **Lua is compiled as C and its errors are `longjmp`.** A `lua_CFunction` in
 this module's bindings may only have trivially destructible locals in scope
@@ -699,10 +704,10 @@ A `.nmworld` is text or binary, told apart by its first bytes
 (`DetectWorldFileFormat`); `LoadWorldFile` reads either.
 
 ```
-Levels/Sandbox.nmworld               text: <World Format="1"> listing entity and instance GUIDs
-Levels/Sandbox/<guid>.nmentity       text: one loose entity -- name, parent, components
-Levels/Sandbox/<guid>.nmprefabinst   text: one prefab instance -- its prefab and what it changed
-Levels/Cooked/Sandbox.nmworld        binary: what a game ships (CookWorldFile)
+Content/Levels/Sandbox.nmworld               text: <World Format="1"> listing entity and instance GUIDs
+Content/Levels/Sandbox/<guid>.nmentity       text: one loose entity -- name, parent, components
+Content/Levels/Sandbox/<guid>.nmprefabinst   text: one prefab instance -- its prefab and what it changed
+Content/Levels/Cooked/Sandbox.nmworld        binary: what a game ships (CookWorldFile)
 ```
 
 **Prefab instances.** The manifest lists them beside the loose entities, as

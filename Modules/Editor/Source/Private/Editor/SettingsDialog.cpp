@@ -195,7 +195,7 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
              QStringLiteral("Multiplies an imported mesh's positions. glTF is in metres: 100 makes a metre 100 units"),
              0.0001, 100000.0, 4, QString());
     AddCheck(Import, "Editor.ImportConvertCoordinates", QStringLiteral("Convert glTF axes"),
-             QStringLiteral("Turn a glTF's +Y-up model the engine's way up (+Y down), facing the default camera"));
+             QStringLiteral("Convert a glTF's right-handed axes to the engine's left-handed ones (z flips), facing the default camera"));
     AddCheck(Import, "Editor.ImportGenerateNormals", QStringLiteral("Generate missing normals"),
              QStringLiteral("Smooth normals for a primitive that has none"));
     AddCheck(Import, "Editor.ImportCombineMeshes", QStringLiteral("Combine meshes"),

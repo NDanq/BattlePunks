@@ -340,11 +340,12 @@ void ViewportWidget::ApplyGameCameraView()
             ApplySandboxView();
             return;
         }
-        /* The editor camera's yaw and pitch are the Transform's Y and X:
-         * both aim (sin Y cos P, -sin P, cos Y cos P). */
+        /* The editor camera's yaw is the Transform's Y; its pitch is the
+         * Transform's X negated -- a positive pitch looks up for the editor
+         * camera, down for a rotation (LightForward). */
         const GameCore::TransformPose Pose = InEntity.GetWorldPose();
         Camera.Position = Pose.Position;
-        Camera.Pitch    = std::clamp(float(Pose.Rotation.GetX()), -89.0f, 89.0f);
+        Camera.Pitch    = std::clamp(-float(Pose.Rotation.GetX()), -89.0f, 89.0f);
         Camera.Yaw      = float(Pose.Rotation.GetY());
     });
     if(!bFound)
@@ -480,7 +481,7 @@ void ViewportWidget::QueueOverlay()
             /* A perspective camera: its frustum, a short way out, at the game's aspect. */
             const EngineCore::Vector3 Forward = RenderCore::LightForward(Pose.Rotation);
             const EngineCore::Vector3 Right   = (EngineCore::Vector3(0.0, 1.0, 0.0) ^ Forward).GetNormalize();
-            const EngineCore::Vector3 Up      = (Forward ^ Right) * -1.0;
+            const EngineCore::Vector3 Up      = Forward ^ Right;
             const double Depth = std::min(double(InCamera.ZFar), GameFrustumDepth);
             const double HalfY = Depth * std::tan(double(std::clamp(InCamera.FovY, 1.0f, 170.0f)) * 0.5 * 3.14159265358979 / 180.0);
             const double HalfX = HalfY * GameScreenWidth / GameScreenHeight;
