@@ -57,7 +57,7 @@ How it works is in README.md's **Hierarchy** section and DESIGN.md's
 - Destroying a parent destroys its subtree (deferred inside a tick).
   `RefreshEntityBounds` refits the subtree.
 - Saved as `Parent="<guid>"` in `.nmentity` and a parent index per entity in
-  the binary `WRLD` chunk (version 2; version 1 still loads).
+  the binary `WRLD` chunk.
 - Lua: `SetParent`, `GetParent`, `GetChild(ren)`, `GetChildCount`, and the
   Transform's `Get/SetWorldPosition`, `Get/SetWorldRotation`,
   `GetWorldScale`. Graph nodes: Get Parent, Set Parent, Get Child Count, Get
@@ -144,7 +144,7 @@ format and DESIGN.md's WorldPackage notes for the reasoning:
   entity is still out: an entity added under an instance is a loose child
   saved as an `.nmentity`.
 - Binary worlds (cooked levels, save games) store instances whole, with an
-  instance table (`WRLD` v3, `World::RestorePrefabInstance`), not as
+  instance table (`World::RestorePrefabInstance`), not as
   overrides.
 - The Details panel's bold overrides and "Revert to Prefab" are phase 8.
 
@@ -494,7 +494,7 @@ undo. The Prefab Editor needs a second World with its own selection and undo:
   nothing else. Registering again (a recompile) rebuilds a loaded one.
 - `PrefabAsset::GetNativeBehavior` names whose callbacks drive an instance:
   a native prefab names itself, and an asset saved from one keeps the name
-  (`<Native Behavior=.../>`; cooked chunk version 2). An instance with a
+  (`<Native Behavior=.../>`, and in the cooked chunk). An instance with a
   native behaviour is scripted even without a script path.
 - The script driver runs the callbacks before the script in each phase, on
   start, overlap and destroy. They are looked up by name and cached against a
