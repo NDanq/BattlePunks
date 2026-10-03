@@ -380,7 +380,7 @@ namespace
 
         /* Names the generated table uses itself; a variable may not take one. */
         static const std::set<std::string> Reserved = {
-            "Entity", "Root", "Instance", "TickPhase", "CullOutsideActiveRegion", "OnStart", "OnTick", "OnDestroy",
+            "Entity", "Root", "Instance", "TickPhase", "OnStart", "OnTick", "OnDestroy",
             "OnPrePhysics", "OnPhysics", "OnPostPhysics", "OnPostUpdate",
             "OnOverlapBegin", "OnOverlapEnd", HANDLES_FIELD
         };
@@ -1359,7 +1359,6 @@ namespace
         Pure("Entity.IsValid", "Is Valid", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Valid", "bool") }, "{Entity}:IsValid()", {}, "alive");
         Statement("Entity.SetName", "Set Name", "Entity", SOP_Call, { In("Entity", "Entity"), In("Name", "string") }, "{Entity}:SetName({Name})");
         Statement("Entity.Destroy", "Destroy", "Entity", SOP_Call, { In("Entity", "Entity") }, "{Entity}:Destroy()", "delete remove kill");
-        Statement("Entity.SetScript", "Set Script", "Entity", SOP_Call, { In("Entity", "Entity"), In("Path", "string") }, "{Entity}:SetScript({Path})");
         /* A prefab's script: its root, its entities by template name, and how it ticks. */
         Pure("Prefab.Root", "Prefab Root", "Prefab", SOP_Call, { Out("Root", "Entity") }, "self.Root", {}, "instance self owner");
         Pure("Prefab.Find", "Find Prefab Entity", "Prefab", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") },

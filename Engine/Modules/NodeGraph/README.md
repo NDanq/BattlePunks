@@ -8,7 +8,7 @@ stored code is what a game's cook and the runtime use.
 | Graph | File | Generates (in `<gen_code>`) | Consumed by |
 |---|---|---|---|
 | Material | `Glow.material.nmgraph` | `.mtl.glsl` (a material function) and `.material` (its description) | `RenderComponent::Materials[0] = "Materials/Glow.material.nmgraph"`, cooked from the stored code (below) |
-| Script | `Mover.script.nmgraph` | `.lua`, a class table | `Entity:SetScript("Scripts/Mover.script.nmgraph")`: the runtime runs the stored Lua |
+| Script | `Mover.script.nmgraph` | `.lua`, a class table | a prefab's script (`PrefabAsset::SetScriptPath("Scripts/Mover.script.nmgraph")`, `<Script Path>` in the `.nmprefab`): each instance runs the stored Lua |
 
 Written for this repository. **Editor targets only**, and Qt-free: the editor
 draws graphs (`Modules/Editor/Source/Private/Editor/Graph/`), but loading,
@@ -151,9 +151,9 @@ Details > Type overrides it.
 
 - Event nodes each become one function of the class table: On Start, On
   Tick, On Destroy, On Event, and On Overlap Begin / On Overlap End. The
-  overlap events become `OnOverlapBegin(self, other)` /
-  `OnOverlapEnd(self, other)`, which GameCore's overlap pass calls; their
-  output is Other.
+  overlap events become `OnOverlapBegin(self, other, mine)` /
+  `OnOverlapEnd(self, other, mine)`, which GameCore's overlap pass calls; their
+  outputs are Other and Mine (which of the instance's entities was touched).
 - A statement's **Then** leads to the next statement.
 - Pure nodes are evaluated where a statement needs them, into `local tN`,
   once per statement. So a Get after a Set sees the new value.
@@ -165,7 +165,7 @@ Details > Type overrides it.
 - Variables are fields of the class table (`Speed = 60,`), written per
   instance through `self`.
 - On Event subscribes in `OnStart` and unsubscribes in `OnDestroy`, so a
-  destroyed entity's handler never runs.
+  destroyed instance's handler never runs.
 
 **Components come from their bindings.** Every type registered with
 `GAMECORE_DEFINE_COMPONENT_SCRIPT` gets these nodes:
@@ -430,8 +430,8 @@ binaries folder so the module's dependencies resolve.
 - paste remapping;
 - validation errors landing on the right node;
 - golden generated code in `Tests/Data/`;
-- a **run** of the generated Lua: an entity with the Mover script attached
-  moves 60 units in a second -- as a `.lua`, and as a `.script.nmgraph`
+- a **run** of the generated Lua: an instance of a prefab whose script is
+  Mover moves 60 units in a second -- as a `.lua`, and as a `.script.nmgraph`
   running its `<gen_code>`;
 - a script library declared in the test (`TestLib`): its nodes, golden
   `Scorer.lua`, a run through its functions, variable and typed event,

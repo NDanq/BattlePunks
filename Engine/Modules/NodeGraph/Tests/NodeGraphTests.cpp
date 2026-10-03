@@ -20,6 +20,7 @@
 
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/ScriptLibrary.h"
 #include "Public/GameCore/World.h"
@@ -183,6 +184,20 @@ GAMECORE_DEFINE_COMPONENT_SCRIPT(ReloadProbeComponent)
 
 namespace
 {
+    /* InEntity made an instance of a prefab of itself that runs InScript:
+     * how a script is attached now that entities do not have their own.
+     * Returns the instance's root, which replaces InEntity. */
+    GameCore::Entity AttachScript(GameCore::World& InWorld, const GameCore::Entity& InEntity, const char* InScript)
+    {
+        GameCore::PrefabAsset Asset;
+        GameCore::CapturePrefab(InWorld, InEntity.GetID(), Asset);
+        Asset.SetScriptPath(InScript);
+        const GameCore::TransformPose At = InEntity.GetWorldPose();
+        const std::string Name = InEntity.GetName();
+        InWorld.DestroyEntity(InEntity.GetID());
+        return InWorld.SpawnPrefab(Asset, At, Name.c_str()).GetRoot();
+    }
+
     // === Helpers ================================================================
 
     NodeGuid Id(const uint64_t InNumber)
@@ -653,7 +668,8 @@ namespace
 
         GameCore::Entity Mover = W.CreateEntity("Mover");
         Mover.AddComponent<GameCore::TransformComponent>();
-        Expect(Mover.SetScript(Path.c_str()), "the generated script attaches");
+        Mover = AttachScript(W, Mover, Path.c_str());
+        Expect(Mover.IsAlive(), "the generated script attaches");
 
         for(int Frame = 0; Frame < 10; ++Frame) { W.Tick(0.1f); }
 
@@ -669,7 +685,7 @@ namespace
         WriteFile(FlowPath, Flow.Code);
         GameCore::Entity Flowing = W.CreateEntity("Flowing");
         Flowing.AddComponent<GameCore::TransformComponent>();
-        Flowing.SetScript(FlowPath.c_str());
+        Flowing = AttachScript(W, Flowing, FlowPath.c_str());
         W.Tick(0.1f);
         W.Tick(0.1f);
         Expect(Scripts.RunString("Events.Emit('Reset')", "emit-reset"), "emitting the handled event runs");
@@ -691,7 +707,8 @@ namespace
 
             GameCore::Entity FromGraph = W.CreateEntity("FromGraph");
             FromGraph.AddComponent<GameCore::TransformComponent>();
-            Expect(FromGraph.SetScript(GraphPath.c_str()), "an entity's script can be a .script.nmgraph");
+            FromGraph = AttachScript(W, FromGraph, GraphPath.c_str());
+            Expect(FromGraph.IsAlive(), "a prefab's script can be a .script.nmgraph");
             for(int Frame = 0; Frame < 10; ++Frame) { W.Tick(0.1f); }
             const GameCore::TransformComponent* Moved = FromGraph.GetComponent<GameCore::TransformComponent>();
             Expect(Moved && std::fabs(double(Moved->Position.GetX()) - 60.0) < 0.01 && Scripts.GetErrorCount() == 0,
@@ -703,7 +720,7 @@ namespace
             SaveGraphFile(BarePath, Bare, Error);
             GameCore::Entity Unsaved = W.CreateEntity("Unsaved");
             Unsaved.AddComponent<GameCore::TransformComponent>();
-            Unsaved.SetScript(BarePath.c_str());
+            Unsaved = AttachScript(W, Unsaved, BarePath.c_str());
             const uint32_t Before = Scripts.GetErrorCount();
             W.Tick(0.1f);
             Expect(Scripts.GetErrorCount() > Before, "a script graph with no generated code is a script error");
@@ -1194,7 +1211,7 @@ namespace
             GTestRecorded = -1;
             GameCore::Entity Scoring = W.CreateEntity("Scoring");
             Scoring.AddComponent<GameCore::TransformComponent>();
-            Scoring.SetScript(Path.c_str());
+            Scoring = AttachScript(W, Scoring, Path.c_str());
             for(int Frame = 0; Frame < 3; ++Frame) { W.Tick(0.1f); }
 
             const GameCore::TransformComponent* T = Scoring.GetComponent<GameCore::TransformComponent>();
@@ -1389,9 +1406,9 @@ namespace
             Scripts.BindWorld(&W);
 
             GTestStats = TestStats();
-            GameCore::Entity Holder = W.CreateEntity("Holder");
+            /* The component after the script: it has no serializer, so a prefab cannot hold it. */
+            GameCore::Entity Holder = AttachScript(W, W.CreateEntity("Holder"), Path.c_str());
             Holder.AddComponent<StatsHolderComponent>();
-            Holder.SetScript(Path.c_str());
             for(int Frame = 0; Frame < 3; ++Frame) { W.Tick(0.1f); }
 
             const StatsHolderComponent* C = Holder.GetComponent<StatsHolderComponent>();
@@ -2128,7 +2145,8 @@ namespace
             GTestRecorded = -1;
             GameCore::Entity Caller = W.CreateEntity("Caller");
             Caller.AddComponent<GameCore::TransformComponent>();
-            Expect(Caller.SetScript(Path.c_str()), "the generated script attaches");
+            Caller = AttachScript(W, Caller, Path.c_str());
+            Expect(Caller.IsAlive(), "the generated script attaches");
             W.Tick(0.1f);
 
             Expect(GTestRecorded == 120, "Fact(Add2(2, 3)) is 120, recursion included (got " + std::to_string(GTestRecorded) + ")");

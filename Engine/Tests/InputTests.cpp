@@ -14,6 +14,7 @@
 #include "Public/Core/CoreConfig.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/Input.h"
@@ -50,6 +51,20 @@ NIMBLE_DEFINE_INPUT_MAP(TestMap)
 
 namespace
 {
+    /* InEntity made an instance of a prefab of itself that runs InScript:
+     * how a script is attached now that entities do not have their own.
+     * Returns the instance's root, which replaces InEntity. */
+    GameCore::Entity AttachScript(GameCore::World& InWorld, const GameCore::Entity& InEntity, const char* InScript)
+    {
+        GameCore::PrefabAsset Asset;
+        GameCore::CapturePrefab(InWorld, InEntity.GetID(), Asset);
+        Asset.SetScriptPath(InScript);
+        const GameCore::TransformPose At = InEntity.GetWorldPose();
+        const std::string Name = InEntity.GetName();
+        InWorld.DestroyEntity(InEntity.GetID());
+        return InWorld.SpawnPrefab(Asset, At, Name.c_str()).GetRoot();
+    }
+
     InputKey Key(const char* InName) { return FindInputKey(InName); }
 
     void TestNames()
@@ -141,7 +156,7 @@ namespace
         InputComponent Input;
         std::snprintf(Input.Map, sizeof(Input.Map), "TestMap");
         Player.AddComponent(Input);
-        Player.SetScript(Path.c_str());
+        Player = AttachScript(W, Player, Path.c_str());
         W.Tick(0.016f);   // starts the script
 
         S.BeginFrame(1);
