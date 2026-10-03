@@ -40,6 +40,7 @@ namespace GameCore
         int                           RefCount = 1;   // game thread only
         std::string                   Name;
         std::string                   ScriptPath;
+        std::string                   NativeBehavior;   // a native prefab's name whose callbacks drive it; "" for none
         EPrefabTickMode               TickMode    = EPrefabTickMode::Tick;
         uint32_t                      NextLocalId = 1;
         std::vector<PrefabEntityData> Entities;       // tree order, root first

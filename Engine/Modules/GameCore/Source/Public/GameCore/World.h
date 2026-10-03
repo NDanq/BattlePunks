@@ -31,6 +31,7 @@ namespace GameCore { class Entity; }
 namespace GameCore
 {
     class PrefabAsset;
+    struct NativePrefabBehavior;
     class PrefabInstance;
     struct PrefabInstanceRecord;
     enum class EPrefabTickMode : uint8_t;
@@ -55,27 +56,6 @@ namespace GameCore
         SO_BeforeScripts,      // ahead of the phase's scripts -- what they must see this frame (input)
     };
 
-    /* Runtime state of an entity's script, owned by the ScriptDriver; World
-     * only stores it. Reset when the path changes. */
-    struct EntityScriptState
-    {
-        /* luaL_ref of the instance table; -2 is LUA_NOREF (no lua.h here). */
-        int32_t InstanceRef = -2;
-
-        /* From the class table; TP_PrePhysics if unspecified. */
-        uint8_t Phase = TP_PrePhysics;
-
-        uint8_t bStarted = 0;
-        uint8_t bErrored = 0;
-
-        /* Set by SetScript, cleared when the driver loads it. */
-        uint8_t bPendingInstantiate = 0;
-
-        /* Needs a BoundsComponent (DESIGN.md). Persisted; the class table's
-         * CullOutsideActiveRegion overrides it. */
-        uint8_t bCullOutsideActiveRegion = 0;
-    };
-
     /* Runtime state of a prefab instance's script, owned by the ScriptDriver;
      * World stores it and keeps the per-phase lists from PhaseMask. */
     struct InstanceScriptState
@@ -83,9 +63,18 @@ namespace GameCore
         /* luaL_ref of the instance table; -2 is LUA_NOREF. */
         int32_t InstanceRef = -2;
 
-        /* Bit P: the class defines a function for phase P (On<Phase>, or
-         * OnTick for its TickPhase). Set by the driver at instantiation. */
+        /* Bit P: the instance ticks in phase P -- its script defines a function
+         * for it (On<Phase>, or OnTick for its TickPhase) or its native
+         * behaviour a callback. Set by the driver at instantiation. */
         uint8_t PhaseMask = 0;
+
+        /* The script's share of PhaseMask: where the Lua class is called. */
+        uint8_t LuaPhaseMask = 0;
+
+        /* The driver's cache of the native behaviour (NativePrefab.h): good
+         * while GetNativePrefabGeneration() still equals NativeGeneration. */
+        const NativePrefabBehavior* Native = nullptr;
+        uint32_t                    NativeGeneration = 0;
 
         /* The phase OnTick stands for, TP_MAX if the class has no OnTick. */
         uint8_t OnTickPhase = TP_MAX;
@@ -98,20 +87,14 @@ namespace GameCore
     };
 
     /*
-     * What runs entity scripts. One per World (ScriptEngine::BindWorld installs
-     * it); World calls it but knows nothing of Lua. See DESIGN.md.
+     * What runs prefab instances' scripts. One per World
+     * (ScriptEngine::BindWorld installs it); World calls it but knows nothing
+     * of Lua. See DESIGN.md.
      */
     struct ScriptDriver
     {
         /* At the start of every phase, before any system. */
         void (*TickPhase)(World& InWorld, ETickPhase InPhase, float InDeltaSeconds, void* InUserData) = nullptr;
-
-        /* A script is going away (destroy or new path); path and state are
-         * still set, and cleared afterwards. */
-        void (*Release)(World& InWorld, EntityID InEntity, void* InUserData) = nullptr;
-
-        /* InMethod(self, InArg, InSelf) on a started script: World::CallScriptMethod. */
-        bool (*CallMethod)(World& InWorld, EntityID InEntity, const char* InMethod, EntityID InArg, void* InUserData) = nullptr;
 
         /* An instance's script is going away (destroyed, or tick mode Off);
          * its state is still set, and reset afterwards. */
@@ -259,16 +242,12 @@ namespace GameCore
         bool       IsTicking() const;
         ETickPhase GetCurrentPhase() const;
 
-        // === Entity scripts: the driver side ==================================
-        // For ScriptEngine, not gameplay code (use Entity::SetScript).
+        // === The script driver ================================================
+        // For ScriptEngine, not gameplay code (give a prefab a script).
 
         /* Copies InDriver; nullptr clears. Replacing releases nothing. */
         void SetScriptDriver(const ScriptDriver* InDriver);
         bool HasScriptDriver() const;
-
-        /* Scripted entities in tick order. Stable during a tick. */
-        size_t   GetScriptedEntityCount() const;
-        EntityID GetScriptedEntityAt(size_t InIndex) const;
 
         // === Instance scripts: the driver side ================================
         // For ScriptEngine. An instance with a script and a tick mode other
@@ -280,10 +259,13 @@ namespace GameCore
          * Skips what died or turned Off since it was queued. */
         bool PopPendingInstanceScript(PrefabInstanceID& OutInstance);
 
-        /* nullptr if InInstance is not alive or has no script. Stable while it lives. */
+        /* nullptr if InInstance is not alive or has neither a script nor a
+         * native behaviour. Stable while it lives. */
         InstanceScriptState* GetInstanceScriptState(PrefabInstanceID InInstance) const;
         /* "" if none. */
         const char*          GetInstanceScriptPath(PrefabInstanceID InInstance) const;
+        /* The native prefab whose callbacks drive it (PrefabAsset::GetNativeBehavior); "" if none. */
+        const char*          GetInstanceNativeBehavior(PrefabInstanceID InInstance) const;
 
         /* Records InMask and files the instance under each phase it ticks in.
          * Not while ticking a phase's instances (the driver calls it before). */
@@ -333,13 +315,6 @@ namespace GameCore
          * ones (which RefreshSpatialIndex skips), for a tool that moved it. */
         void RefreshEntityBounds(EntityID InEntity);
 
-        /* The region gameplay cares about (DESIGN.md); used by
-         * bCullOutsideActiveRegion. */
-        void        SetActiveRegion(const AABB& InBox);
-        bool        HasActiveRegion() const;
-        const AABB& GetActiveRegion() const;
-        void        ClearActiveRegion();
-
         // === Built-in delegates ==============================================
         // Typed, no name lookup -- ScriptEngine::BindWorld mirrors each onto
         // GetEvents() under a fixed name so Lua sees them through Events.On/Emit.
@@ -372,11 +347,10 @@ namespace GameCore
          * phase's scripts); public for a host or test that steps it. */
         void UpdateOverlaps();
 
-        /* Calls InMethod(self, InArg, InEntity) on InEntity's script, then on
-         * its prefab instance's script -- where InEntity is the third
-         * argument, "mine" -- for each that has started and defines it. An
-         * instance is not told about InArg when InArg is one of its own.
-         * False if neither ran it cleanly. */
+        /* Calls InMethod(self, InArg, InEntity) on InEntity's prefab
+         * instance's script -- InEntity is the third argument, "mine" -- if
+         * it has started and defines it. An instance is not told about InArg
+         * when InArg is one of its own. False if it did not run cleanly. */
         bool CallScriptMethod(EntityID InEntity, const char* InMethod, EntityID InArg);
 
         EventBus& GetEvents();
@@ -404,10 +378,6 @@ namespace GameCore
         EntityGuid         GetEntityGuid(EntityID InEntity) const;
         const char*        GetEntityName(EntityID InEntity) const;
         bool               SetEntityName(EntityID InEntity, const char* InName);
-        const char*        GetEntityScriptPath(EntityID InEntity) const;
-        /* DEFERRED inside a tick -- see DestroyEntity. */
-        bool               SetEntityScript(EntityID InEntity, const char* InPath);
-        EntityScriptState* GetEntityScriptState(EntityID InEntity) const;
 
         /* The hierarchy -- see Entity.h's section for the contract. */
         bool                  SetEntityParent(EntityID InEntity, EntityID InParent, bool bInKeepWorldTransform);

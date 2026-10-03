@@ -46,8 +46,6 @@ namespace GameCore
         {
             EntityGuid        Guid;
             std::string       Name;
-            std::string       ScriptPath;   // empty = no script
-            EntityScriptState Script;
 
             /* The hierarchy, as slot indices: an intrusive, ordered child
              * list. Slots, not EntityIDs -- a child is destroyed with its
@@ -76,9 +74,12 @@ namespace GameCore
             uint32_t        RootSlot = NO_SLOT;
             EPrefabTickMode TickMode = EPrefabTickMode::Tick;
 
-            /* The prefab's script, and the driver's state for it. */
+            /* The prefab's script and native behaviour, and the driver's state for them. */
             std::string         ScriptPath;
+            std::string         NativeBehavior;
             InstanceScriptState Script;
+
+            bool HasScript() const { return !ScriptPath.empty() || !NativeBehavior.empty(); }
 
             /* Bit P: phase P may run. All set at spawn. */
             uint8_t PhaseEnabled = uint8_t((1u << TP_MAX) - 1u);
@@ -96,11 +97,6 @@ namespace GameCore
 
         bool IsLiveScriptRef(const int32_t InRef) { return InRef != -2 && InRef != -1; }   // LUA_NOREF, LUA_REFNIL
 
-        struct PendingScriptChange
-        {
-            EntityID    Entity;
-            std::string Path;   // empty = clear
-        };
     }
 
     struct World::Impl
@@ -112,7 +108,7 @@ namespace GameCore
         std::vector<uint32_t> FreeIndices;
         size_t                LiveEntityCount = 0;
 
-        /* Parallel to Generations. A deque so GetName()/GetScriptState()
+        /* Parallel to Generations. A deque so GetName()
          * pointers survive growth. */
         std::deque<EntityMembers> Members;
 
@@ -120,7 +116,6 @@ namespace GameCore
         std::unordered_map<EntityGuid, uint32_t, EntityGuidHash> GuidToSlot;
 
         /* Scripted slots in the order paths were set (tick order). */
-        std::vector<uint32_t> ScriptedSlots;
 
         ScriptDriver Driver;
         bool         bHasDriver = false;
@@ -161,13 +156,10 @@ namespace GameCore
 
         std::vector<EntityID>               PendingDestroys;
         std::vector<PendingComponentRemoval> PendingComponentRemovals;
-        std::vector<PendingScriptChange>     PendingScriptChanges;
 
         // --- spatial -----------------------------------------------------------
 
         SpatialIndex Spatial;
-        AABB         ActiveRegion;
-        bool         bHasActiveRegion = false;
 
         // --- delegates / events ----------------------------------------------
 
@@ -251,51 +243,6 @@ namespace GameCore
             return EntityID(Index, Generations[Index]);
         }
 
-        /* Driver Release, then forget. Nothing is held across the Lua call. */
-        void ReleaseScript(World& InWorld, const EntityID InEntity)
-        {
-            if(bHasDriver && Driver.Release)
-            {
-                Driver.Release(InWorld, InEntity, Driver.UserData);
-            }
-
-            EntityMembers& Slot = Members[InEntity.Index];
-            Slot.ScriptPath.clear();
-            Slot.Script = EntityScriptState();
-
-            const auto Found = std::find(ScriptedSlots.begin(), ScriptedSlots.end(), InEntity.Index);
-            if(Found != ScriptedSlots.end())
-            {
-                ScriptedSlots.erase(Found);   // ordered: tick order is set order
-            }
-        }
-
-        /* SetScript's immediate half, also run by the phase flush. */
-        void ApplyScriptChange(World& InWorld, const EntityID InEntity, const std::string& InPath)
-        {
-            if(!IsAliveIndex(InEntity) || Members[InEntity.Index].ScriptPath == InPath)
-            {
-                return;
-            }
-
-            if(!Members[InEntity.Index].ScriptPath.empty())
-            {
-                ReleaseScript(InWorld, InEntity);
-                if(!IsAliveIndex(InEntity)) { return; }   // its OnDestroy destroyed it
-            }
-
-            if(InPath.empty())
-            {
-                return;
-            }
-
-            EntityMembers& Slot = Members[InEntity.Index];
-            Slot.ScriptPath                 = InPath;
-            Slot.Script                     = EntityScriptState();
-            Slot.Script.bPendingInstantiate = 1;
-            ScriptedSlots.push_back(InEntity.Index);
-        }
-
         EntityID SlotID(const uint32_t InSlot) const
         {
             return InSlot == NO_SLOT ? EntityID() : EntityID(InSlot, Generations[InSlot]);
@@ -367,13 +314,14 @@ namespace GameCore
         }
 
         /* Files InSlot under every phase it ticks in now: tick mode Tick, a
-         * live healthy script, the phase defined and enabled. */
+         * started healthy script (or native behaviour), the phase defined and
+         * enabled. */
         void Rebucket(const uint32_t InSlot)
         {
             RemoveFromBuckets(InSlot);
             const InstanceMembers& Instance = Instances[InSlot];
-            if(!InstanceAlive[InSlot] || Instance.TickMode != EPrefabTickMode::Tick
-               || !IsLiveScriptRef(Instance.Script.InstanceRef) || Instance.Script.bErrored)
+            const bool bRunning = IsLiveScriptRef(Instance.Script.InstanceRef) || Instance.Script.bStarted;
+            if(!InstanceAlive[InSlot] || Instance.TickMode != EPrefabTickMode::Tick || !bRunning || Instance.Script.bErrored)
             {
                 return;
             }
@@ -389,7 +337,7 @@ namespace GameCore
         {
             InstanceMembers& Instance = Instances[InSlot];
             Instance.Script = InstanceScriptState();
-            if(Instance.ScriptPath.empty() || Instance.TickMode == EPrefabTickMode::Off) { return; }
+            if(!Instance.HasScript() || Instance.TickMode == EPrefabTickMode::Off) { return; }
             Instance.Script.bPendingInstantiate = 1;
             PendingInstanceScripts.push_back(InstanceSlotID(InSlot));
         }
@@ -400,7 +348,8 @@ namespace GameCore
         {
             const PrefabInstanceID ID = InstanceSlotID(InSlot);
             RemoveFromBuckets(InSlot);
-            if(bHasDriver && Driver.ReleaseInstance && IsLiveScriptRef(Instances[InSlot].Script.InstanceRef))
+            const InstanceScriptState& Script = Instances[InSlot].Script;
+            if(bHasDriver && Driver.ReleaseInstance && (IsLiveScriptRef(Script.InstanceRef) || Script.bStarted))
             {
                 Driver.ReleaseInstance(InWorld, ID, Driver.UserData);
             }
@@ -532,13 +481,6 @@ namespace GameCore
             /* BEFORE any component is removed -- a subscriber can still read
              * what the entity had. */
             EntityDestroyed.Broadcast(InEntity);
-
-            /* The script next, still before any component goes, so its
-             * OnDestroy can read its siblings. */
-            if(IsAliveIndex(InEntity) && !Members[InEntity.Index].ScriptPath.empty())
-            {
-                ReleaseScript(InWorld, InEntity);
-            }
 
             /* Destroyed re-entrantly already; don't free the slot twice. */
             if(!IsAliveIndex(InEntity))
@@ -714,39 +656,6 @@ namespace GameCore
         return true;
     }
 
-    const char* World::GetEntityScriptPath(const EntityID InEntity) const
-    {
-        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].ScriptPath.c_str() : "";
-    }
-
-    bool World::SetEntityScript(const EntityID InEntity, const char* InPath)
-    {
-        if(!P->IsAliveIndex(InEntity)) { return false; }
-
-        std::string Path(InPath ? InPath : "");
-        if(P->bTicking)
-        {
-            /* Deferred like DestroyEntity: the driver may be mid-walk. */
-            PendingScriptChange Change;
-            Change.Entity = InEntity;
-            Change.Path   = std::move(Path);
-            P->PendingScriptChanges.push_back(std::move(Change));
-            return true;
-        }
-
-        P->ApplyScriptChange(*this, InEntity, Path);
-        return true;
-    }
-
-    EntityScriptState* World::GetEntityScriptState(const EntityID InEntity) const
-    {
-        if(!P->IsAliveIndex(InEntity) || P->Members[InEntity.Index].ScriptPath.empty())
-        {
-            return nullptr;
-        }
-        return &P->Members[InEntity.Index].Script;
-    }
-
     // === Hierarchy ===============================================================
 
     bool World::SetEntityParent(const EntityID InEntity, const EntityID InParent, const bool bInKeepWorldTransform)
@@ -880,6 +789,7 @@ namespace GameCore
             Instance.Prefab   = InPrefab;
             Instance.TickMode   = Data.TickMode;
             Instance.ScriptPath = Data.ScriptPath;
+            Instance.NativeBehavior = Data.NativeBehavior;
         }
         const EntityGuid InstanceGuid = P->Instances[Slot].Guid;
 
@@ -1033,7 +943,11 @@ namespace GameCore
         Instance.TickMode     = InRecord.TickMode;
         Instance.PhaseEnabled = uint8_t(InRecord.PhaseEnabled & ((1u << TP_MAX) - 1u));
         Instance.RootSlot     = Root.Index;
-        if(InRecord.Prefab) { Instance.Prefab = *InRecord.Prefab; }
+        if(InRecord.Prefab)
+        {
+            Instance.Prefab         = *InRecord.Prefab;
+            Instance.NativeBehavior = InRecord.Prefab->GetNativeBehavior();
+        }
         for(size_t Index = 0; Index < InRecord.Count; ++Index)
         {
             P->Members[InRecord.Entities[Index].Index].InstanceSlot = Slot;
@@ -1189,7 +1103,7 @@ namespace GameCore
         if(!P->IsInstanceAliveIndex(InInstance)) { return false; }
         if(P->bTicking)
         {
-            /* Deferred like SetScript: the driver may be walking a phase's list. */
+            /* Deferred: the driver may be walking a phase's list. */
             PendingInstanceChange Change;
             Change.Instance = InInstance;
             Change.bMode    = true;
@@ -1244,8 +1158,13 @@ namespace GameCore
 
     InstanceScriptState* World::GetInstanceScriptState(const PrefabInstanceID InInstance) const
     {
-        if(!P->IsInstanceAliveIndex(InInstance) || P->Instances[InInstance.Index].ScriptPath.empty()) { return nullptr; }
+        if(!P->IsInstanceAliveIndex(InInstance) || !P->Instances[InInstance.Index].HasScript()) { return nullptr; }
         return &P->Instances[InInstance.Index].Script;
+    }
+
+    const char* World::GetInstanceNativeBehavior(const PrefabInstanceID InInstance) const
+    {
+        return P->IsInstanceAliveIndex(InInstance) ? P->Instances[InInstance.Index].NativeBehavior.c_str() : "";
     }
 
     const char* World::GetInstanceScriptPath(const PrefabInstanceID InInstance) const
@@ -1287,18 +1206,6 @@ namespace GameCore
     bool World::HasScriptDriver() const
     {
         return P->bHasDriver;
-    }
-
-    size_t World::GetScriptedEntityCount() const
-    {
-        return P->ScriptedSlots.size();
-    }
-
-    EntityID World::GetScriptedEntityAt(const size_t InIndex) const
-    {
-        if(InIndex >= P->ScriptedSlots.size()) { return EntityID(); }
-        const uint32_t Slot = P->ScriptedSlots[InIndex];
-        return EntityID(Slot, P->Generations[Slot]);
     }
 
     // === Components: erased =====================================================
@@ -1545,9 +1452,8 @@ namespace GameCore
             }
         }
 
-        /* Before destroys, so each releases through ReleaseScript once. */
-        /* Instance tick modes and phases, before destroys like scripts: an
-         * Off releases through ReleaseInstanceScript, once. */
+        /* Instance tick modes and phases, before destroys: an Off releases
+         * through ReleaseInstanceScript, once. */
         std::vector<PendingInstanceChange> InstanceChangesThisFlush;
         std::swap(InstanceChangesThisFlush, P->PendingInstanceChanges);
         for(const PendingInstanceChange& Change : InstanceChangesThisFlush)
@@ -1555,13 +1461,6 @@ namespace GameCore
             if(!P->IsInstanceAliveIndex(Change.Instance)) { continue; }
             if(Change.bMode) { P->ApplyInstanceMode(*this, Change.Instance.Index, Change.Mode); }
             else             { P->ApplyPhaseEnabled(Change.Instance.Index, Change.Phase, Change.bEnabled); }
-        }
-
-        std::vector<PendingScriptChange> ScriptChangesThisFlush;
-        std::swap(ScriptChangesThisFlush, P->PendingScriptChanges);
-        for(const PendingScriptChange& Change : ScriptChangesThisFlush)
-        {
-            P->ApplyScriptChange(*this, Change.Entity, Change.Path);
         }
 
         std::vector<EntityID> DestroysThisFlush;
@@ -1663,16 +1562,6 @@ namespace GameCore
         }
     }
 
-    void World::SetActiveRegion(const AABB& InBox)
-    {
-        P->ActiveRegion     = InBox;
-        P->bHasActiveRegion = true;
-    }
-
-    bool World::HasActiveRegion() const { return P->bHasActiveRegion; }
-    const AABB& World::GetActiveRegion() const { return P->ActiveRegion; }
-    void World::ClearActiveRegion() { P->bHasActiveRegion = false; }
-
     // === Built-in delegates ======================================================
 
     TMulticastDelegate<EntityID>&                  World::OnEntityCreated()     { return P->EntityCreated; }
@@ -1690,23 +1579,14 @@ namespace GameCore
         if(!P->bHasDriver || !IsAlive(InEntity)) { return false; }
         const ScriptDriver Driver = P->Driver;
 
-        /* The instance is read first: the entity's own script may end it. */
-        const PrefabInstanceID Instance = GetEntityInstance(InEntity);
-
-        bool bRan = false;
-        if(Driver.CallMethod && P->Members[InEntity.Index].ScriptPath.size() > 0)
-        {
-            bRan = Driver.CallMethod(*this, InEntity, InMethod, InArg, Driver.UserData);
-        }
-
         /* The instance's script hears about its entities -- but not about
          * one of its own entities touching another. */
-        if(Driver.CallInstanceMethod && P->IsInstanceAliveIndex(Instance) && IsAlive(InEntity)
-           && GetEntityInstance(InArg) != Instance)
+        const PrefabInstanceID Instance = GetEntityInstance(InEntity);
+        if(Driver.CallInstanceMethod && P->IsInstanceAliveIndex(Instance) && GetEntityInstance(InArg) != Instance)
         {
-            bRan = Driver.CallInstanceMethod(*this, Instance, InMethod, InArg, InEntity, Driver.UserData) || bRan;
+            return Driver.CallInstanceMethod(*this, Instance, InMethod, InArg, InEntity, Driver.UserData);
         }
-        return bRan;
+        return false;
     }
 
     EventBus& World::GetEvents() { return P->Events; }

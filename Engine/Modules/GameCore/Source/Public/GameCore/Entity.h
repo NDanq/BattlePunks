@@ -67,18 +67,6 @@ namespace GameCore
         /* nullptr clears. False if not alive. Names need not be unique. */
         bool SetName(const char* InName) const { return OwningWorld && OwningWorld->SetEntityName(ID, InName); }
 
-        /* The Lua file (returning its class table) that drives this entity.
-         * The driver instantiates it at the start of the next phase and ticks
-         * it before that phase's systems; without a driver only the path is
-         * kept. nullptr or "" clears; a new path releases the old script.
-         * DEFERRED inside a tick. False if not alive. */
-        bool SetScript(const char* InPath) const { return OwningWorld && OwningWorld->SetEntityScript(ID, InPath); }
-        bool ClearScript() const { return SetScript(nullptr); }
-        bool HasScript() const { return GetScriptPath()[0] != '\0'; }
-        /* Never null. Valid until the next SetScript applies or destruction. */
-        const char* GetScriptPath() const { return OwningWorld ? OwningWorld->GetEntityScriptPath(ID) : ""; }
-        /* nullptr without a script. Stable while the script is unchanged. */
-        EntityScriptState* GetScriptState() const { return OwningWorld ? OwningWorld->GetEntityScriptState(ID) : nullptr; }
 
         // === Hierarchy ======================================================
         // Parent and children are members too. TransformComponent is LOCAL:

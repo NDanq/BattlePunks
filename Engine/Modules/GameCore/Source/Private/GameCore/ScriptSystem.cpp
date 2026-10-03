@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "Public/GameCore/Components.h"
+#include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/TickPhase.h"
 #include "Public/GameCore/World.h"
@@ -131,20 +132,13 @@ namespace GameCore
             return bLoaded;
         }
 
-        /* Reads TickPhase and CullOutsideActiveRegion (if present) from the
-         * class table at the stack top. Stack-neutral. */
-        void ReadClassFlags(lua_State* InState, uint8_t& OutPhase, uint8_t& InOutCull)
+        /* Reads TickPhase (if present) from the class table at the stack
+         * top: the phase OnTick stands for. Stack-neutral. */
+        void ReadClassTickPhase(lua_State* InState, uint8_t& OutPhase)
         {
             lua_getfield(InState, -1, "TickPhase");
             const lua_Integer PhaseValue = lua_isinteger(InState, -1) ? lua_tointeger(InState, -1) : TP_PrePhysics;
             OutPhase = uint8_t((PhaseValue >= 0 && PhaseValue < TP_MAX) ? PhaseValue : TP_PrePhysics);
-            lua_pop(InState, 1);
-
-            lua_getfield(InState, -1, "CullOutsideActiveRegion");
-            if(!lua_isnil(InState, -1))
-            {
-                InOutCull = lua_toboolean(InState, -1) ? 1 : 0;
-            }
             lua_pop(InState, 1);
         }
 
@@ -188,70 +182,6 @@ namespace GameCore
             return LuaCallProtected(InState, ArgCount, 0, Context.c_str());
         }
 
-        /* Sets bErrored on failure so a broken OnTick isn't retried. The state
-         * is re-fetched after the call. */
-        void CallLifecycleMethod(lua_State* InState, World& InWorld, const EntityID InEntity,
-                                 const char* InMethodName, const float* InDeltaSeconds)
-        {
-            const Entity Handle(&InWorld, InEntity);
-            const EntityScriptState* Script = Handle.GetScriptState();
-            if(!Script || Script->bErrored || !IsLiveRef(Script->InstanceRef)) { return; }
-
-            const int Ref = Script->InstanceRef;
-            if(!CallMethod(InState, Ref, Handle.GetScriptPath(), InMethodName, InDeltaSeconds))
-            {
-                EntityScriptState* After = Handle.GetScriptState();
-                if(After && After->InstanceRef == Ref)
-                {
-                    After->bErrored = 1;
-                }
-            }
-        }
-
-        /* Builds the entity's instance. A failure marks it errored (reported
-         * once, never ticked). */
-        void InstantiateScript(lua_State* InState, World& InWorld, const EntityID InEntity)
-        {
-            const Entity Handle(&InWorld, InEntity);
-            EntityScriptState* Script = Handle.GetScriptState();
-            if(!Script) { return; }
-            Script->bPendingInstantiate = 0;
-
-            const std::string Path = Handle.GetScriptPath();
-
-            LuaStackGuard Guard(InState);
-            const bool bHaveClass = PushScriptClass(InState, Path.c_str());
-
-            /* A first load ran the file's top level, which may have destroyed
-             * this entity or queued a new path for it. */
-            Script = Handle.GetScriptState();
-            if(!Script || Path != Handle.GetScriptPath()) { return; }
-
-            if(!bHaveClass)
-            {
-                Script->bErrored = 1;
-                return;
-            }
-            const int ClassIndex = lua_gettop(InState);
-
-            ReadClassFlags(InState, Script->Phase, Script->bCullOutsideActiveRegion);
-
-            /* A fresh table with the class as its __index. */
-            lua_newtable(InState);
-            const int InstanceIndex = lua_gettop(InState);
-
-            lua_newtable(InState);                       // the instance's own metatable
-            lua_pushvalue(InState, ClassIndex);
-            lua_setfield(InState, -2, "__index");
-            lua_setmetatable(InState, InstanceIndex);
-
-            LuaPushEntity(InState, InEntity);
-            lua_setfield(InState, InstanceIndex, "Entity");
-
-            lua_pushvalue(InState, InstanceIndex);
-            Script->InstanceRef = luaL_ref(InState, LUA_REGISTRYINDEX);
-        }
-
         // === Prefab instance scripts ==========================================
 
         /* "OnPrePhysics" .. "OnPostUpdate". */
@@ -271,92 +201,124 @@ namespace GameCore
 
         /*
          * Builds InInstance's script object and starts it: the class (cached by
-         * path, as for entities), the phases it defines, then OnStart.
+         * path), the phases it defines, then OnStart.
          *
-         * self.Entity and self.Root are the root entity -- so a script written
-         * for an entity reads the same on a prefab -- and self.Instance is the
-         * PrefabInstance. Runs at the start of a phase, never during a phase's
+         * self.Entity and self.Root are the root entity, and self.Instance is
+         * the PrefabInstance. Runs at the start of a phase, never during a phase's
          * walk, so World may re-file the instance freely.
          */
+        /* InInstance's native behaviour, cached in its state until the
+         * registry changes (a module loading or unloading). */
+        const NativePrefabBehavior* NativeFor(World& InWorld, const PrefabInstanceID InInstance, InstanceScriptState& InOutScript)
+        {
+            const char* Name = InWorld.GetInstanceNativeBehavior(InInstance);
+            if(Name[0] == '\0') { return nullptr; }
+            const uint32_t Generation = GetNativePrefabGeneration();
+            if(InOutScript.NativeGeneration != Generation)
+            {
+                InOutScript.Native           = FindNativePrefabBehavior(Name);
+                InOutScript.NativeGeneration = Generation;
+            }
+            return InOutScript.Native;
+        }
+
         void InstantiateInstanceScript(lua_State* InState, World& InWorld, const PrefabInstanceID InInstance)
         {
             const PrefabInstance Instance(&InWorld, InInstance);
             const std::string Path = InWorld.GetInstanceScriptPath(InInstance);
 
             LuaStackGuard Guard(InState);
-            const bool bHaveClass = PushScriptClass(InState, Path.c_str());
+            const bool bHaveClass = !Path.empty() && PushScriptClass(InState, Path.c_str());
 
             /* A first load ran the file's top level, which may have ended it. */
             InstanceScriptState* Script = InWorld.GetInstanceScriptState(InInstance);
-            if(!Script || Script->bPendingInstantiate || IsLiveRef(Script->InstanceRef)) { return; }
-            if(!bHaveClass)
+            if(!Script || Script->bPendingInstantiate || Script->bStarted || IsLiveRef(Script->InstanceRef)) { return; }
+            if(!Path.empty() && !bHaveClass)
             {
                 Script->bErrored = 1;
                 return;
             }
-            const int ClassIndex = lua_gettop(InState);
 
             /* The phases: an On<Phase> function each, and OnTick for its
              * TickPhase unless that phase has its own function. */
-            uint8_t Mask = 0;
-            for(int Phase = 0; Phase < TP_MAX; ++Phase)
-            {
-                lua_getfield(InState, ClassIndex, PhaseFunctionName(ETickPhase(Phase)).c_str());
-                if(lua_isfunction(InState, -1)) { Mask |= uint8_t(1u << Phase); }
-                lua_pop(InState, 1);
-            }
+            uint8_t LuaMask = 0;
+            int     Ref     = LUA_NOREF;
             Script->OnTickPhase = TP_MAX;
-            lua_getfield(InState, ClassIndex, "OnTick");
-            const bool bHasOnTick = lua_isfunction(InState, -1) != 0;
-            lua_pop(InState, 1);
-            if(bHasOnTick)
+            if(bHaveClass)
             {
-                uint8_t TickPhase = TP_PrePhysics;
-                uint8_t UnusedCull = 0;
-                ReadClassFlags(InState, TickPhase, UnusedCull);
-                if(!(Mask & (1u << TickPhase)))
+                const int ClassIndex = lua_gettop(InState);
+                for(int Phase = 0; Phase < TP_MAX; ++Phase)
                 {
-                    Script->OnTickPhase = TickPhase;
-                    Mask |= uint8_t(1u << TickPhase);
+                    lua_getfield(InState, ClassIndex, PhaseFunctionName(ETickPhase(Phase)).c_str());
+                    if(lua_isfunction(InState, -1)) { LuaMask |= uint8_t(1u << Phase); }
+                    lua_pop(InState, 1);
                 }
+                lua_getfield(InState, ClassIndex, "OnTick");
+                const bool bHasOnTick = lua_isfunction(InState, -1) != 0;
+                lua_pop(InState, 1);
+                if(bHasOnTick)
+                {
+                    uint8_t TickPhase = TP_PrePhysics;
+                    ReadClassTickPhase(InState, TickPhase);
+                    if(!(LuaMask & (1u << TickPhase)))
+                    {
+                        Script->OnTickPhase = TickPhase;
+                        LuaMask |= uint8_t(1u << TickPhase);
+                    }
+                }
+
+                /* A fresh table with the class as its __index. */
+                lua_newtable(InState);
+                const int InstanceIndex = lua_gettop(InState);
+                lua_newtable(InState);
+                lua_pushvalue(InState, ClassIndex);
+                lua_setfield(InState, -2, "__index");
+                lua_setmetatable(InState, InstanceIndex);
+
+                const EntityID Root = Instance.GetRoot().GetID();
+                LuaPushEntity(InState, Root);
+                lua_setfield(InState, InstanceIndex, "Entity");
+                LuaPushEntity(InState, Root);
+                lua_setfield(InState, InstanceIndex, "Root");
+                LuaPushInstance(InState, InInstance);
+                lua_setfield(InState, InstanceIndex, "Instance");
+
+                lua_pushvalue(InState, InstanceIndex);
+                Ref = luaL_ref(InState, LUA_REGISTRYINDEX);
+                Script->InstanceRef = Ref;
             }
 
-            /* A fresh table with the class as its __index. */
-            lua_newtable(InState);
-            const int InstanceIndex = lua_gettop(InState);
-            lua_newtable(InState);
-            lua_pushvalue(InState, ClassIndex);
-            lua_setfield(InState, -2, "__index");
-            lua_setmetatable(InState, InstanceIndex);
+            /* Native callbacks: their phases join the script's. */
+            const NativePrefabBehavior* Native = NativeFor(InWorld, InInstance, *Script);
+            uint8_t NativeMask = 0;
+            for(int Phase = 0; Native && Phase < TP_MAX; ++Phase)
+            {
+                if(Native->OnPhase[Phase]) { NativeMask |= uint8_t(1u << Phase); }
+            }
 
-            const EntityID Root = Instance.GetRoot().GetID();
-            LuaPushEntity(InState, Root);
-            lua_setfield(InState, InstanceIndex, "Entity");
-            LuaPushEntity(InState, Root);
-            lua_setfield(InState, InstanceIndex, "Root");
-            LuaPushInstance(InState, InInstance);
-            lua_setfield(InState, InstanceIndex, "Instance");
+            Script->LuaPhaseMask = LuaMask;
+            Script->bStarted     = 1;
+            InWorld.SetInstanceScriptPhaseMask(InInstance, uint8_t(LuaMask | NativeMask));
 
-            lua_pushvalue(InState, InstanceIndex);
-            const int Ref = luaL_ref(InState, LUA_REGISTRYINDEX);
-            Script->InstanceRef = Ref;
-            Script->bStarted    = 1;
-            InWorld.SetInstanceScriptPhaseMask(InInstance, Mask);
-
-            if(!CallMethod(InState, Ref, Path, "OnStart", nullptr))
+            /* OnStart: the callbacks first, then the script. */
+            if(Native && Native->OnStart)
+            {
+                Native->OnStart(Instance, Native->UserData);
+            }
+            if(bHaveClass && IsLiveRef(Ref) && !CallMethod(InState, Ref, Path, "OnStart", nullptr))
             {
                 MarkInstanceErrored(InWorld, InInstance, Ref);
-                InWorld.SetInstanceScriptPhaseMask(InInstance, Mask);   // re-filed: errored ticks nowhere
+                InWorld.SetInstanceScriptPhaseMask(InInstance, uint8_t(LuaMask | NativeMask));   // re-filed: errored ticks nowhere
             }
         }
 
-        /* ScriptDriver::ReleaseInstance: OnDestroy, then unref -- the ref
-         * cleared first, as for entities. */
+        /* ScriptDriver::ReleaseInstance: OnDestroy -- the callbacks, then the
+         * script -- then unref, the ref cleared first. */
         void ScriptDriver_ReleaseInstance(World& InWorld, const PrefabInstanceID InInstance, void* InUserData)
         {
             lua_State* InState = static_cast<lua_State*>(InUserData);
             InstanceScriptState* Script = InWorld.GetInstanceScriptState(InInstance);
-            if(!Script || !IsLiveRef(Script->InstanceRef)) { return; }
+            if(!Script || (!Script->bStarted && !IsLiveRef(Script->InstanceRef))) { return; }
 
             const int  Ref      = Script->InstanceRef;
             const bool bErrored = Script->bErrored != 0;
@@ -364,25 +326,51 @@ namespace GameCore
 
             if(!bErrored)
             {
-                CallMethod(InState, Ref, InWorld.GetInstanceScriptPath(InInstance), "OnDestroy", nullptr);
+                if(const NativePrefabBehavior* Native = NativeFor(InWorld, InInstance, *Script); Native && Native->OnDestroy)
+                {
+                    Native->OnDestroy(PrefabInstance(&InWorld, InInstance), Native->UserData);
+                }
+                if(IsLiveRef(Ref))
+                {
+                    CallMethod(InState, Ref, InWorld.GetInstanceScriptPath(InInstance), "OnDestroy", nullptr);
+                }
             }
-            luaL_unref(InState, LUA_REGISTRYINDEX, Ref);
+            if(IsLiveRef(Ref))
+            {
+                luaL_unref(InState, LUA_REGISTRYINDEX, Ref);
+            }
         }
 
-        /* ScriptDriver::CallInstanceMethod: InMethod(self, InArg, InMine). */
+        /* ScriptDriver::CallInstanceMethod: InMethod(self, InArg, InMine) --
+         * the native overlap callback for an overlap, then the script. */
         bool ScriptDriver_CallInstanceMethod(World& InWorld, const PrefabInstanceID InInstance, const char* InMethod,
                                              const EntityID InArg, const EntityID InMine, void* InUserData)
         {
             lua_State* InState = static_cast<lua_State*>(InUserData);
-            const InstanceScriptState* Script = InWorld.GetInstanceScriptState(InInstance);
-            if(!Script || !Script->bStarted || Script->bErrored || !IsLiveRef(Script->InstanceRef)) { return false; }
-            if(PrefabInstance(&InWorld, InInstance).GetTickMode() == EPrefabTickMode::Off) { return false; }
+            InstanceScriptState* Script = InWorld.GetInstanceScriptState(InInstance);
+            if(!Script || !Script->bStarted || Script->bErrored) { return false; }
+            const PrefabInstance Instance(&InWorld, InInstance);
+            if(Instance.GetTickMode() == EPrefabTickMode::Off) { return false; }
+
+            bool bRan = false;
+            if(const NativePrefabBehavior* Native = NativeFor(InWorld, InInstance, *Script))
+            {
+                const auto Callback = std::strcmp(InMethod, "OnOverlapBegin") == 0 ? Native->OnOverlapBegin
+                                    : std::strcmp(InMethod, "OnOverlapEnd") == 0   ? Native->OnOverlapEnd
+                                                                                   : nullptr;
+                if(Callback)
+                {
+                    Callback(Instance, Entity(&InWorld, InArg), Entity(&InWorld, InMine), Native->UserData);
+                    bRan = true;
+                }
+            }
 
             const int Ref = Script->InstanceRef;
+            if(!IsLiveRef(Ref)) { return bRan; }
             if(!CallMethod(InState, Ref, InWorld.GetInstanceScriptPath(InInstance), InMethod, nullptr, &InArg, &InMine))
             {
                 MarkInstanceErrored(InWorld, InInstance, Ref);
-                return false;
+                return bRan;
             }
             return true;
         }
@@ -398,10 +386,19 @@ namespace GameCore
             for(size_t Index = 0; Index < Count; ++Index)
             {
                 const PrefabInstanceID Instance = InWorld.GetTickingInstanceAt(InPhase, Index);
-                const InstanceScriptState* Script = InWorld.GetInstanceScriptState(Instance);
-                if(!Script || Script->bErrored || !IsLiveRef(Script->InstanceRef)) { continue; }
+                InstanceScriptState* Script = InWorld.GetInstanceScriptState(Instance);
+                if(!Script || Script->bErrored || !Script->bStarted) { continue; }
+
+                /* The callback first, then the script. */
+                if(const NativePrefabBehavior* Native = NativeFor(InWorld, Instance, *Script); Native && Native->OnPhase[InPhase])
+                {
+                    Native->OnPhase[InPhase](PrefabInstance(&InWorld, Instance), InDeltaSeconds, Native->UserData);
+                    Script = InWorld.GetInstanceScriptState(Instance);
+                    if(!Script || Script->bErrored) { continue; }
+                }
 
                 const int Ref = Script->InstanceRef;
+                if(!(Script->LuaPhaseMask & (1u << InPhase)) || !IsLiveRef(Ref)) { continue; }
                 const char* Method = Script->OnTickPhase == InPhase ? "OnTick" : PhaseFunction.c_str();
                 if(!CallMethod(InState, Ref, InWorld.GetInstanceScriptPath(Instance), Method, &InDeltaSeconds))
                 {
@@ -410,10 +407,9 @@ namespace GameCore
             }
         }
 
-        /* ScriptDriver::TickPhase: per scripted entity, instantiate if
-         * pending, skip if another phase or culled, then OnStart once and
-         * OnTick. The list is stable while ticking. Then prefab instances:
-         * any spawned since the last phase start now, then this phase's. */
+        /* ScriptDriver::TickPhase: start any instance spawned since the last
+         * phase start, then run this phase's list -- the native callback,
+         * then the Lua method. The list is stable while ticking. */
         void ScriptDriver_TickPhase(World& InWorld, const ETickPhase InPhase, const float InDeltaSeconds, void* InUserData)
         {
             lua_State* InState = static_cast<lua_State*>(InUserData);
@@ -426,43 +422,6 @@ namespace GameCore
                 InstantiateInstanceScript(InState, InWorld, Pending);
             }
 
-            const size_t Count = InWorld.GetScriptedEntityCount();
-            for(size_t Index = 0; Index < Count; ++Index)
-            {
-                const EntityID EntityId = InWorld.GetScriptedEntityAt(Index);
-                const Entity Handle(&InWorld, EntityId);
-
-                EntityScriptState* Script = Handle.GetScriptState();
-                if(!Script) { continue; }
-
-                if(Script->bPendingInstantiate)
-                {
-                    InstantiateScript(InState, InWorld, EntityId);
-                    Script = Handle.GetScriptState();
-                    if(!Script) { continue; }
-                }
-
-                if(Script->bErrored || Script->Phase != InPhase || !IsLiveRef(Script->InstanceRef)) { continue; }
-
-                if(Script->bCullOutsideActiveRegion && InWorld.HasActiveRegion())
-                {
-                    const BoundsComponent* Bounds = Handle.GetComponent<BoundsComponent>();
-                    if(Bounds && !Bounds->World.Overlaps(InWorld.GetActiveRegion()))
-                    {
-                        continue;
-                    }
-                }
-
-                if(!Script->bStarted)
-                {
-                    Script->bStarted = 1;
-                    CallLifecycleMethod(InState, InWorld, EntityId, "OnStart", nullptr);
-                }
-
-                CallLifecycleMethod(InState, InWorld, EntityId, "OnTick", &InDeltaSeconds);
-            }
-
-            /* Prefab instances: after entity scripts. */
             TickInstances(InState, InWorld, InPhase, InDeltaSeconds);
 
             /* Lua systems: after every script, before C++ systems. */
@@ -475,49 +434,6 @@ namespace GameCore
                     LuaCallProtected(InState, 1, 0, Entry.Name.c_str());
                 }
             }
-        }
-
-        /* ScriptDriver::Release: OnDestroy, then unref. The ref is cleared
-         * first so re-entrant releases are no-ops. Errored scripts are skipped. */
-        /* World::CallScriptMethod: InMethod(self, InArg) on a started,
-         * healthy instance. A raise marks the script errored, as OnTick's does. */
-        bool ScriptDriver_CallMethod(World& InWorld, const EntityID InEntity, const char* InMethod, const EntityID InArg,
-                                     void* InUserData)
-        {
-            lua_State* InState = static_cast<lua_State*>(InUserData);
-            const Entity Handle(&InWorld, InEntity);
-            const EntityScriptState* Script = Handle.GetScriptState();
-            if(!Script || !Script->bStarted || Script->bErrored || !IsLiveRef(Script->InstanceRef)) { return false; }
-
-            /* The entity itself third ("mine"), so a handler written for a
-             * prefab instance's script reads the same on an entity's. */
-            const int Ref = Script->InstanceRef;
-            if(!CallMethod(InState, Ref, Handle.GetScriptPath(), InMethod, nullptr, &InArg, &InEntity))
-            {
-                EntityScriptState* After = Handle.GetScriptState();
-                if(After && After->InstanceRef == Ref) { After->bErrored = 1; }
-                return false;
-            }
-            return true;
-        }
-
-        void ScriptDriver_Release(World& InWorld, const EntityID InEntity, void* InUserData)
-        {
-            lua_State* InState = static_cast<lua_State*>(InUserData);
-            const Entity Handle(&InWorld, InEntity);
-
-            EntityScriptState* Script = Handle.GetScriptState();
-            if(!Script || !IsLiveRef(Script->InstanceRef)) { return; }
-
-            const int  Ref       = Script->InstanceRef;
-            const bool bErrored  = Script->bErrored != 0;
-            Script->InstanceRef  = LUA_NOREF;
-
-            if(!bErrored)
-            {
-                CallMethod(InState, Ref, Handle.GetScriptPath(), "OnDestroy", nullptr);
-            }
-            luaL_unref(InState, LUA_REGISTRYINDEX, Ref);
         }
     }
 
@@ -565,8 +481,6 @@ namespace GameCore
 
         ScriptDriver Driver;
         Driver.TickPhase = &ScriptDriver_TickPhase;
-        Driver.Release   = &ScriptDriver_Release;
-        Driver.CallMethod = &ScriptDriver_CallMethod;
         Driver.ReleaseInstance    = &ScriptDriver_ReleaseInstance;
         Driver.CallInstanceMethod = &ScriptDriver_CallInstanceMethod;
         Driver.UserData  = InState;
@@ -575,31 +489,8 @@ namespace GameCore
 
     void ScriptSystem_Uninstall(lua_State* InState, World* InWorld)
     {
-        /* OnDestroy + unref each instance, keeping its path as pending.
-         * Collected first: OnDestroy may reorder the list. */
-        std::vector<EntityID> Scripted;
-        const size_t Count = InWorld->GetScriptedEntityCount();
-        Scripted.reserve(Count);
-        for(size_t Index = 0; Index < Count; ++Index)
-        {
-            Scripted.push_back(InWorld->GetScriptedEntityAt(Index));
-        }
-
-        for(const EntityID EntityId : Scripted)
-        {
-            ScriptDriver_Release(*InWorld, EntityId, InState);
-
-            if(EntityScriptState* Script = Entity(InWorld, EntityId).GetScriptState())
-            {
-                const uint8_t Cull = Script->bCullOutsideActiveRegion;
-                *Script = EntityScriptState();
-                Script->bCullOutsideActiveRegion = Cull;
-                Script->bPendingInstantiate      = 1;
-            }
-        }
-
-        /* Instances the same way: released, then queued to start afresh at
-         * the next bind. Collected first, for the same reason. */
+        /* OnDestroy + unref each instance's script, then queued to start
+         * afresh at the next bind. Collected first: OnDestroy may end some. */
         std::vector<PrefabInstanceID> Instances;
         InWorld->ForEachInstance([](const PrefabInstanceID InInstance, void* InUserData)
         {

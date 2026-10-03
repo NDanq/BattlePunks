@@ -170,36 +170,6 @@ namespace GameCore
             return 1;
         }
 
-        /* e:SetScript("Scripts/Mover.lua") -- Entity::SetScript. nil or ""
-         * clears. Deferred (the World is ticking). */
-        int Entity_SetScript(lua_State* InState)
-        {
-            const EntityID E = LuaCheckEntity(InState, 1);
-            const char* Path = luaL_optstring(InState, 2, nullptr);
-            World* W = GetBoundWorld(InState);
-            lua_pushboolean(InState, Entity(W, E).SetScript(Path));
-            return 1;
-        }
-
-        int Entity_ClearScript(lua_State* InState)
-        {
-            const EntityID E = LuaCheckEntity(InState, 1);
-            World* W = GetBoundWorld(InState);
-            lua_pushboolean(InState, Entity(W, E).ClearScript());
-            return 1;
-        }
-
-        /* The path, or nil if there is none. */
-        int Entity_GetScript(lua_State* InState)
-        {
-            const EntityID E = LuaCheckEntity(InState, 1);
-            World* W = GetBoundWorld(InState);
-            const char* Path = Entity(W, E).GetScriptPath();
-            if(Path[0] == '\0') { lua_pushnil(InState); }
-            else                 { lua_pushstring(InState, Path); }
-            return 1;
-        }
-
         /* e:SetParent(parent[, keepWorld]) -- nil detaches; keepWorld
          * defaults to true (stay put in the world). False if refused. */
         int Entity_SetParent(lua_State* InState)
@@ -283,9 +253,6 @@ namespace GameCore
             { "GetComponent",    Entity_GetComponent },
             { "HasComponent",    Entity_HasComponent },
             { "RemoveComponent", Entity_RemoveComponent },
-            { "SetScript",       Entity_SetScript },
-            { "GetScript",       Entity_GetScript },
-            { "ClearScript",     Entity_ClearScript },
             { "SetParent",       Entity_SetParent },
             { "GetParent",       Entity_GetParent },
             { "GetChildCount",   Entity_GetChildCount },
@@ -447,21 +414,6 @@ namespace GameCore
             return 2;
         }
 
-        int World_SetActiveRegion(lua_State* InState)
-        {
-            World* W = GetBoundWorld(InState);
-            const double MinX = luaL_checknumber(InState, 1), MinY = luaL_checknumber(InState, 2), MinZ = luaL_checknumber(InState, 3);
-            const double MaxX = luaL_checknumber(InState, 4), MaxY = luaL_checknumber(InState, 5), MaxZ = luaL_checknumber(InState, 6);
-            if(W) { W->SetActiveRegion(AABB(EngineCore::Vector3(MinX, MinY, MinZ), EngineCore::Vector3(MaxX, MaxY, MaxZ))); }
-            return 0;
-        }
-
-        int World_ClearActiveRegion(lua_State* InState)
-        {
-            if(World* W = GetBoundWorld(InState)) { W->ClearActiveRegion(); }
-            return 0;
-        }
-
         const luaL_Reg GWorldFunctions[] = {
             { "CreateEntity",     World_CreateEntity },
             { "SpawnPrefab",      World_SpawnPrefab },
@@ -473,8 +425,6 @@ namespace GameCore
             { "RemoveSystem",     World_RemoveSystem },
             { "QueryBounds",      World_QueryBounds },
             { "Raycast",          World_Raycast },
-            { "SetActiveRegion",  World_SetActiveRegion },
-            { "ClearActiveRegion", World_ClearActiveRegion },
             { nullptr, nullptr }
         };
 

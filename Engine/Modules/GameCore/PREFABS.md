@@ -1,9 +1,10 @@
 # Prefabs
 
 Design for prefabs: the placeable unit of a level, the owner of gameplay
-script, and the asset the Prefab Editor authors. Status: **phases 1 (entity
-hierarchy), 2 (prefab asset and instances), 3 (instance scripts) and 4
-(instances in level files) are implemented**; the rest is the plan. The open decisions were settled as recommended (see the end).
+script, and the asset the Prefab Editor authors. Status: **all nine phases
+are implemented** (see Phases); each section's "As built" notes say where
+the result differs from the plan. The open decisions were settled as
+recommended (see the end).
 
 ---
 
@@ -102,7 +103,7 @@ Reuses `WorldPackage.cpp`'s XML `ComponentArchive` and deterministic writer.
 The `.nmworld` manifest lists instances instead of entities:
 
 ```xml
-<World Format="2">
+<World Format="1">
   <Instance Guid="..." Prefab="Prefabs/Pickup.nmprefab" />
 </World>
 ```
@@ -132,13 +133,13 @@ Not in v1: adding/removing entities or components per instance.
 format and DESIGN.md's WorldPackage notes for the reasoning:
 
 - Files are `<Name>/<guid>.nmprefabinst`, with overrides grouped per
-  template entity (`<Entity Id>`). The manifest is format 2 only when it
-  lists an instance.
+  template entity (`<Entity Id>`). (Then a format 2 manifest; since phase
+  9 there is one text format, 1, listing entities and instances alike.)
 - Field overrides are found by diffing each component's XML against the
   prefab's.
 - **Beyond v1:** added components (written whole), removed components
-  (`<RemovedComponent>`), removed template entities (`<Removed>`), renames
-  and member entity scripts are recorded. They fell out of the diff, and
+  (`<RemovedComponent>`) and removed template entities (`<Removed>`) and
+  renames are recorded. They fell out of the diff, and
   without them a save would silently undo those edits. Adding a *member*
   entity is still out: an entity added under an instance is a loose child
   saved as an `.nmentity`.
@@ -298,8 +299,10 @@ above:
 
 `Entity::SetScript`, the `Script` element in `.nmentity`, and the script path
 in the binary entity table are removed at the end of migration (section 6).
-Until then both drivers run: entity scripts as today, instance scripts in the
-new buckets, entity scripts first.
+**As built (phase 9):** removed, with the scripted-entity list, the entity
+half of the script driver, the active region (it only culled entity scripts)
+and the Lua `SetScript` / `GetScript` / `ClearScript` / `World.SetActiveRegion`.
+A script belongs to a prefab.
 
 ---
 
@@ -478,20 +481,89 @@ undo. The Prefab Editor needs a second World with its own selection and undo:
 
 ---
 
+### As built (phase 5)
+
+- `NativePrefab.h`: `PrefabBuilder` (`Root(name)`, `Node::Child`, `Node::Add<T>`,
+  `Script`, `TickMode`) and `NativePrefabBehavior`, a table of
+  `OnStart`, `OnPhase[TP_MAX]`, `OnDestroy`, `OnOverlapBegin/End` plus
+  `UserData`. Declared with `GAMECORE_DEFINE_NATIVE_PREFAB(Ident, "Name",
+  Build)` or `..._BEHAVIOR(Ident, "Name", Build, BehaviorExpr)` -- not the
+  sketch's designated initialisers, which C++17 does not have.
+- The path is `native:<Name>`: `FindOrLoadPrefab` builds it with the
+  registered builder, so `SpawnPrefab`, level files and the editor need
+  nothing else. Registering again (a recompile) rebuilds a loaded one.
+- `PrefabAsset::GetNativeBehavior` names whose callbacks drive an instance:
+  a native prefab names itself, and an asset saved from one keeps the name
+  (`<Native Behavior=.../>`; cooked chunk version 2). An instance with a
+  native behaviour is scripted even without a script path.
+- The script driver runs the callbacks before the script in each phase, on
+  start, overlap and destroy. They are looked up by name and cached against a
+  registry generation, so an unregistered (unloaded) prefab's callbacks are
+  simply not called -- no instance has to be destroyed on unload.
+- The editor caches every native layout while it loads the game module for
+  its declarations, so a level with `native:` instances loads and they can be
+  placed (World > Native Prefabs) after the module unloads. Opened in the
+  Prefab Editor a native prefab's script and tick mode are code's; Save is
+  "Save As Asset...", which forks an editable `.nmprefab` keeping the
+  callbacks.
+
+### As built (phase 8)
+
+- Placing: drag a `.nmprefab` from the Content Browser into the viewport
+  (`EditorDocument::PlacePrefab`), or World > Native Prefabs. One undo step.
+- Undo snapshots carry instances: deleting an instance restores it whole
+  (`RestorePrefabInstance`), and a deleted member rejoins its instance with
+  its local id (`AdoptIntoInstance`) -- the phase 2 gap.
+- Outliner: an instance's root bold in the prefab colour with the prefab in
+  its Components column, members tinted; right-click > Open Prefab, Convert
+  to Prefab.
+- Details: an instance entity's Prefab row (Open), overridden properties
+  bold (against `ReadPrefabTemplateComponent`), right-click a label > Revert
+  to Prefab, and Revert to Prefab per component; a component the prefab lacks
+  is "(added here)". The root's Transform is placement, never an override.
+- Convert Selection to Prefab (World menu, Outliner): writes the subtree as a
+  prefab and replaces it with an instance where it stood, one undo step.
+- Saving a prefab refreshes its instances in the open level
+  (`RefreshPrefabInstance` in WorldPackage.h): respawned from the new version
+  keeping GUIDs, name, placement, overrides, parent and loose children.
+- Cooking: `cook <file.nmprefab>` and `cook prefabs` (every project prefab to
+  `Cooked/`). Sandbox stages `Prefabs/` beside the exe -- text for an Editor
+  target, `Cooked/Prefabs/` for Client and Server.
+
+### As built (phase 9)
+
+- Outliner: a loose entity tree (no instance in or above it) gets a warning
+  icon. World > Convert Level to Prefabs makes one prefab per distinct tree
+  (component types, in tree order) and replaces every tree with an
+  instance keeping its own values as overrides, references between converted
+  entities moved to their replacements; one undo step.
+- Sandbox: `SandboxLevel::OnLoad` places the native prefabs Sandbox.Marker,
+  Sandbox.Hazard and Sandbox.Camera; `Sandbox.SpawnPickup` places
+  Sandbox.Pickup; `Main.lua` places `Prefabs/Mover`, `ScoreBoard`, `Zone`
+  and `InputDemo`. Nothing in Sandbox uses an entity script any more. The
+  editor's New Sandbox Scene mirrors it with the same instances.
+- Entity scripts are removed (section 3's "Entity scripts go away"), with
+  the active region. The engine was never released, so instead of new format
+  versions every format is reset to version 1 with no older reader: one text
+  world format (Format="1", entities and instances), the binary `WRLD` chunk
+  1 (entity table without scripts, parents, instances), and the cooked prefab
+  chunk 1 (with the native behaviour). Assets in the repository were saved
+  again in them.
+
 ## 6. Migration
 
 Existing levels contain raw entities with per-entity scripts.
 
-1. **Load:** a raw `<Entity>` in a Format-1 manifest still loads, as a
-   **loose entity** (no instance). Its script runs through the legacy entity
-   driver.
+1. **Load:** a raw `<Entity>` in a manifest still loads, as a **loose
+   entity** (no instance). (As built: a loose entity has no script; only the
+   text format of phase 9's reset loads.)
 2. **Editor:** loose entities show in the Outliner with a warning badge.
    "Convert to Prefab" (per entity or a whole level) writes one `.nmprefab` per
    distinct (component set + script) and replaces each entity with an
-   instance + overrides. Saving writes Format 2.
+   instance + overrides.
 3. **C++ levels** (`SandboxLevel::OnLoad`) move to native prefabs + `SpawnPrefab`.
 4. **Removal:** once Sandbox is converted, delete `Entity::SetScript`, the
-   entity driver path and Format-1 load support.
+   entity driver path and Format-1 load support. (Done; see phase 9.)
 
 ---
 
@@ -505,11 +577,11 @@ Each phase lands on its own and keeps Sandbox playable.
 | 2 | Prefab asset, registry, `SpawnPrefab`, instance handles, text + cooked formats -- **done** | new `Prefab.h/.cpp`, `PrefabInternal.h`, `XmlComponentArchive.h` | 1 |
 | 3 | Instance scripts: per-phase functions, buckets, tick modes, overlap routing; graph nodes -- **done** | `ScriptSystem.cpp`, `Collision.cpp`, `ScriptBindings.cpp`, NodeGraph `ScriptSchema.cpp` | 2 |
 | 4 | Level format 2: instances, derived GUIDs, overrides -- **done** | `WorldPackage.cpp`, `WorldSerializer.cpp` | 2 |
-| 5 | Native prefabs + `PrefabBuilder` | new `NativePrefab.h/.cpp`, `GameModule.h` | 2, 3 |
+| 5 | Native prefabs + `PrefabBuilder` -- **done** | new `NativePrefab.h/.cpp`, `ScriptSystem.cpp` | 2, 3 |
 | 6 | `EditorDocument` split; second-World viewport spike -- **done** | `EditorContext`, panels, RenderCore, GDI | -- (can start in parallel) |
 | 7 | Prefab Editor window (hierarchy, details, viewport, script tab, simulate) -- **done** | new `Editor/Prefab/*` | 3, 6 |
-| 8 | Level editor: instances in Outliner, overrides in Details, place from Content Browser, convert | Outliner, Details, Viewport | 4, 7 |
-| 9 | Migrate Sandbox; remove entity scripts and Format 1 | Sandbox, `ScriptSystem.cpp`, `Entity.h` | 8 |
+| 8 | Level editor: instances in Outliner, overrides in Details, place from Content Browser, convert -- **done** | Outliner, Details, Viewport | 4, 7 |
+| 9 | Migrate Sandbox; remove entity scripts and Format 1 -- **done** | Sandbox, `ScriptSystem.cpp`, `Entity.h` | 8 |
 
 ---
 

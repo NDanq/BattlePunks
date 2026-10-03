@@ -32,6 +32,7 @@
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
+#include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/SpatialIndex.h"
@@ -239,28 +240,8 @@ static void TestEntities()
 }
 
 // ============================================================================
-// Entity members -- name and script path, stored on the entity, not in a pool
+// Entity members -- the name, stored on the entity, not in a pool
 // ============================================================================
-
-namespace
-{
-    struct DeferProbe
-    {
-        Entity Target;
-        bool   bRan               = false;
-        bool   bVisibleImmediately = true;
-    };
-
-    /* Sets a script mid-tick and records whether it applied before phase end. */
-    void DeferScriptSystem(World& /*InWorld*/, float /*InDeltaSeconds*/, void* InUserData)
-    {
-        DeferProbe& Probe = *static_cast<DeferProbe*>(InUserData);
-        if(Probe.bRan) { return; }
-        Probe.bRan = true;
-        Probe.Target.SetScript("Scripts/Later.lua");
-        Probe.bVisibleImmediately = Probe.Target.HasScript();
-    }
-}
 
 static void TestEntityMembers()
 {
@@ -283,35 +264,13 @@ static void TestEntityMembers()
     Expect(!W.FindEntityByName("").IsSet(), "FindEntityByName(\"\") matches nothing, not every unnamed entity");
     Expect(B.SetName(nullptr) && B.GetName()[0] == '\0', "SetName(nullptr) clears");
 
-    /* With no script driver (the editor's case) a path is only data. */
-    Expect(A.SetScript("Scripts/Nothing.lua"), "SetScript on a live entity");
-    Expect(A.HasScript() && std::strcmp(A.GetScriptPath(), "Scripts/Nothing.lua") == 0, "the path is stored");
-    Expect(W.GetScriptedEntityCount() == 1 && W.GetScriptedEntityAt(0) == A.GetID(), "the entity is listed as scripted");
-    Expect(A.SetScript("Scripts/Nothing.lua") && W.GetScriptedEntityCount() == 1, "setting the same path again is a no-op");
-    W.Tick(0.016f);
-    Expect(A.GetScriptState() && A.GetScriptState()->bPendingInstantiate, "with no driver the script just stays pending");
-    Expect(!B.HasScript() && B.GetScriptState() == nullptr && B.GetScriptPath()[0] == '\0', "no script: empty path, null state");
-
-    /* Inside a tick, SetScript is deferred to the end of the phase. */
-    DeferProbe Probe;
-    Probe.Target = B;
-    W.RegisterSystem("Test.DeferScript", TP_PrePhysics, &DeferScriptSystem, &Probe);
-    W.Tick(0.016f);
-    W.UnregisterSystem(&DeferScriptSystem, &Probe);
-    Expect(Probe.bRan && !Probe.bVisibleImmediately, "SetScript inside a tick is not visible until the phase ends");
-    Expect(B.HasScript(), "and has applied once the tick is over");
-    Expect(W.GetScriptedEntityAt(1) == B.GetID(), "scripted entities keep the order their paths were set in");
-
-    Expect(B.ClearScript() && !B.HasScript() && W.GetScriptedEntityCount() == 1, "ClearScript removes it from the list");
-
     /* Destroying clears everything; the recycled slot starts clean. */
     W.DestroyEntity(A);
-    Expect(W.GetScriptedEntityCount() == 0, "a destroyed entity leaves the scripted list");
     Expect(!W.FindEntityByName("Alpha").IsSet(), "a destroyed entity is not found by name");
-    Expect(A.GetName()[0] == '\0' && !A.SetName("Ghost") && !A.SetScript("x.lua"), "a dead handle has no members and takes none");
+    Expect(A.GetName()[0] == '\0' && !A.SetName("Ghost"), "a dead handle has no members and takes none");
     const Entity Recycled = W.CreateEntity();
     Expect(Recycled.GetID().Index == A.GetID().Index, "(the slot is recycled)");
-    Expect(Recycled.GetName()[0] == '\0' && !Recycled.HasScript(), "the recycled slot has no name and no script");
+    Expect(Recycled.GetName()[0] == '\0', "the recycled slot has no name");
 
     /* GUIDs: set, unique, findable, kept only while the entity lives. */
     const EntityGuid RecycledGuid = Recycled.GetGuid();
@@ -972,6 +931,22 @@ namespace
     }
 }
 
+namespace
+{
+    /* An instance of a one-entity prefab named InName running InScript, with
+     * a Transform if bInTransform. */
+    PrefabInstance SpawnScripted(World& InWorld, const char* InName, const char* InScript, const bool bInTransform = false)
+    {
+        World Scratch;
+        const Entity Root = Scratch.CreateEntity(InName);
+        if(bInTransform) { Root.AddComponent<TransformComponent>(); }
+        PrefabAsset Asset;
+        CapturePrefab(Scratch, Root.GetID(), Asset);
+        Asset.SetScriptPath(InScript);
+        return InWorld.SpawnPrefab(Asset);
+    }
+}
+
 static void TestScripting()
 {
     std::printf("[scripting]\n");
@@ -995,7 +970,7 @@ static void TestScripting()
     TransformComponent* T = W.GetEntity(Found).GetComponent<TransformComponent>();
     Expect(T != nullptr && T->Position.GetX() == 1.0, "a component set from Lua is readable from C++");
 
-    // A script file drives an entity through the World's script driver.
+    // A script file drives a prefab instance through the World's script driver.
     const std::string CounterPath = WriteTestScript("Counter.lua",
         "CounterLoads = (CounterLoads or 0) + 1\n"
         "TickStarts = TickStarts or 0\n"
@@ -1005,10 +980,9 @@ static void TestScripting()
         "    OnTick  = function(self, dt) TickCalls = TickCalls + 1 end,\n"
         "}\n");
 
-    const Entity Counted = W.CreateEntity("Counted");
-    Expect(Counted.SetScript(CounterPath.c_str()), "SetScript accepts a file path");
-    Expect(Counted.GetScriptState() && Counted.GetScriptState()->bPendingInstantiate,
-           "the script is pending until the next tick");
+    const PrefabInstance Counted = SpawnScripted(W, "Counted", CounterPath.c_str());
+    const InstanceScriptState* CountedState = W.GetInstanceScriptState(Counted.GetID());
+    Expect(CountedState && CountedState->bPendingInstantiate, "the script is pending until the next tick");
 
     W.Tick(0.016f);
     W.Tick(0.016f);
@@ -1018,17 +992,17 @@ static void TestScripting()
            "OnStart runs once");
     Expect(Scripts.RunString("assert(TickCalls == 3, 'expected OnTick 3 times, got ' .. TickCalls)", "assert-ticks"),
            "OnTick runs every tick");
-    Expect(Counted.GetScriptState() && !Counted.GetScriptState()->bPendingInstantiate
-           && Counted.GetScriptState()->InstanceRef != -2, "the instance is live after the first tick");
+    CountedState = W.GetInstanceScriptState(Counted.GetID());
+    Expect(CountedState && !CountedState->bPendingInstantiate && CountedState->InstanceRef != -2,
+           "the instance is live after the first tick");
 
-    // A second entity on the same path shares the loaded class, not the instance.
-    const Entity CountedToo = W.CreateEntity("CountedToo");
-    CountedToo.SetScript(CounterPath.c_str());
+    // A second instance on the same path shares the loaded class, not the instance.
+    SpawnScripted(W, "CountedToo", CounterPath.c_str());
     W.Tick(0.016f);
     Expect(Scripts.RunString("assert(CounterLoads == 1, 'the file ran ' .. CounterLoads .. ' times')", "assert-cache"),
            "a script file is loaded once per bind, whatever uses it");
     Expect(Scripts.RunString("assert(TickStarts == 2, 'expected a second OnStart, got ' .. TickStarts)", "assert-second"),
-           "each entity gets its own instance");
+           "each instance gets its own script instance");
 
     // Scripts tick before every registered system in their phase.
     const std::string OrderedPath = WriteTestScript("Ordered.lua",
@@ -1037,9 +1011,7 @@ static void TestScripting()
         "    local x = t:GetPosition()\n"
         "    t:SetPosition(x + 1, 0, 0)\n"
         "end }\n");
-    const Entity Ordered = W.CreateEntity("Ordered");
-    Ordered.AddComponent<TransformComponent>();
-    Ordered.SetScript(OrderedPath.c_str());
+    SpawnScripted(W, "Ordered", OrderedPath.c_str(), true);
     W.Tick(0.016f);
     Expect(GOrderProbeSawX == 1.0, "a script ticks before a system registered earlier in the same phase");
 
@@ -1047,61 +1019,33 @@ static void TestScripting()
     const std::string BrokenPath = WriteTestScript("Broken.lua",
         "return { OnTick = function(self, dt) error('boom') end }\n");
     uint32_t ErrorsBefore = Scripts.GetErrorCount();
-    const Entity BrokenEntity = W.CreateEntity();
-    BrokenEntity.SetScript(BrokenPath.c_str());
+    const PrefabInstance Broken = SpawnScripted(W, "Broken", BrokenPath.c_str());
     W.Tick(0.016f);
     W.Tick(0.016f);   // second tick must not re-raise -- bErrored gates it
     Expect(Scripts.GetErrorCount() == ErrorsBefore + 1, "exactly one error is logged, not one per tick");
-    Expect(BrokenEntity.GetScriptState() && BrokenEntity.GetScriptState()->bErrored, "the script is marked errored");
+    Expect(W.GetInstanceScriptState(Broken.GetID()) && W.GetInstanceScriptState(Broken.GetID())->bErrored,
+           "the script is marked errored");
 
-    // A missing file and a file that returns no class: one error per path, not per entity.
+    // A missing file and a file that returns no class: one error per path, not per instance.
     const std::string NotAClassPath = WriteTestScript("NotAClass.lua", "return 42\n");
     const std::string MissingPath   = (std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "DoesNotExist.lua").generic_string();
     ErrorsBefore = Scripts.GetErrorCount();
-    const Entity MissingA = W.CreateEntity();
-    const Entity MissingB = W.CreateEntity();
-    const Entity NotAClass = W.CreateEntity();
-    MissingA.SetScript(MissingPath.c_str());
-    MissingB.SetScript(MissingPath.c_str());
-    NotAClass.SetScript(NotAClassPath.c_str());
+    const PrefabInstance MissingA  = SpawnScripted(W, "MissingA", MissingPath.c_str());
+    const PrefabInstance MissingB  = SpawnScripted(W, "MissingB", MissingPath.c_str());
+    const PrefabInstance NotAClass = SpawnScripted(W, "NotAClass", NotAClassPath.c_str());
     W.Tick(0.016f);
     Expect(Scripts.GetErrorCount() == ErrorsBefore + 2, "a missing file and a non-table return log one error each");
-    Expect(MissingA.GetScriptState()->bErrored && MissingB.GetScriptState()->bErrored
-           && NotAClass.GetScriptState()->bErrored, "and every entity using them is marked errored");
+    Expect(W.GetInstanceScriptState(MissingA.GetID())->bErrored && W.GetInstanceScriptState(MissingB.GetID())->bErrored
+           && W.GetInstanceScriptState(NotAClass.GetID())->bErrored, "and every instance using them is marked errored");
 
     // OnDestroy runs and the instance ref is released.
     const std::string NotifyPath = WriteTestScript("Notify.lua",
         "return { OnDestroy = function(self) Destroyed = (Destroyed or 0) + 1 end }\n");
-    const Entity NotifyEntity = W.CreateEntity();
-    NotifyEntity.SetScript(NotifyPath.c_str());
+    const PrefabInstance Notify = SpawnScripted(W, "Notify", NotifyPath.c_str());
     W.Tick(0.016f);
-    W.DestroyEntity(NotifyEntity);
+    Notify.Destroy();
     Expect(Scripts.RunString("assert(Destroyed == 1, 'OnDestroy ran ' .. tostring(Destroyed) .. ' times')", "assert-destroyed"),
-           "destroying the entity runs OnDestroy once");
-
-    // A script replacing itself from its own OnTick: deferred to the phase end.
-    const std::string OtherPath = WriteTestScript("Other.lua",
-        "return { OnStart = function(self) OtherStarted = true end }\n");
-    const std::string SwapperPath = WriteTestScript("Swapper.lua",
-        "return {\n"
-        "    OnTick = function(self, dt)\n"
-        "        self.Entity:SetScript(OtherPath)\n"
-        "        SwapDeferred = (self.Entity:GetScript() ~= OtherPath)\n"
-        "    end,\n"
-        "    OnDestroy = function(self) SwapperDestroyed = true end,\n"
-        "}\n");
-    Scripts.RunString(("OtherPath = '" + OtherPath + "'").c_str(), "set-other-path");
-    const Entity Swapper = W.CreateEntity();
-    Swapper.SetScript(SwapperPath.c_str());
-    W.Tick(0.016f);
-    Expect(Scripts.RunString("assert(SwapDeferred == true, 'SetScript applied mid-tick')", "assert-swap-deferred"),
-           "SetScript from inside a script is deferred");
-    Expect(Scripts.RunString("assert(SwapperDestroyed == true, 'no OnDestroy for the replaced script')", "assert-swapped"),
-           "the replaced script gets OnDestroy at the phase end");
-    Expect(std::strcmp(Swapper.GetScriptPath(), OtherPath.c_str()) == 0, "the new path is in place after the tick");
-    W.Tick(0.016f);
-    Expect(Scripts.RunString("assert(OtherStarted == true, 'the new script never started')", "assert-other-started"),
-           "the new script starts on a following tick");
+           "destroying the instance runs OnDestroy once");
 
     // A proxy held across a component removal errors cleanly rather than aliasing.
     Expect(Scripts.RunString(
@@ -1112,31 +1056,18 @@ static void TestScripting()
         "assert(ok == false, 'expected the stale proxy to error')\n",
         "test-stale-proxy"), "a proxy held across RemoveComponent errors instead of aliasing");
 
-    // The Lua spelling of the members.
-    Expect(Scripts.RunString(
-        ("local e = World.CreateEntity('LuaMembers')\n"
-         "assert(e:GetScript() == nil, 'no script yet')\n"
-         "assert(e:SetScript('" + OtherPath + "') == true, 'SetScript')\n"
-         "assert(e:GetScript() == '" + OtherPath + "', 'outside a tick, SetScript applies at once')\n").c_str(),
-        "test-lua-members"), "e:SetScript / e:GetScript are bound");
-    const Entity LuaMembers = W.GetEntity(W.FindEntityByName("LuaMembers"));
-    Expect(std::strcmp(LuaMembers.GetScriptPath(), OtherPath.c_str()) == 0, "e:SetScript outside a tick applies at once");
-    Expect(Scripts.RunString("local e = World.FindEntity('LuaMembers')\n"
-                             "assert(e:ClearScript() == true and e:GetScript() == nil, 'ClearScript')\n",
-                             "test-lua-clear"), "e:ClearScript clears");
-
     // Unbind releases every instance but keeps the paths; a rebind restarts them.
     const std::string RebindPath = WriteTestScript("Rebind.lua",
         "return {\n"
         "    OnStart   = function(self) RebindStarts = (RebindStarts or 0) + 1 end,\n"
         "    OnDestroy = function(self) RebindDestroys = (RebindDestroys or 0) + 1 end,\n"
         "}\n");
-    const Entity Rebound = W.CreateEntity();
-    Rebound.SetScript(RebindPath.c_str());
+    const PrefabInstance Rebound = SpawnScripted(W, "Rebound", RebindPath.c_str());
     W.Tick(0.016f);
     Scripts.UnbindWorld();
     Expect(!W.HasScriptDriver(), "UnbindWorld removes the driver");
-    Expect(Rebound.HasScript() && Rebound.GetScriptState()->bPendingInstantiate, "the path survives an unbind, pending again");
+    Expect(W.GetInstanceScriptState(Rebound.GetID()) && W.GetInstanceScriptState(Rebound.GetID())->bPendingInstantiate,
+           "the script survives an unbind, pending again");
     Scripts.BindWorld(&W);
     W.Tick(0.016f);
     Expect(Scripts.RunString("assert(RebindStarts == 2 and RebindDestroys == 1, "
@@ -1361,10 +1292,6 @@ static void TestWorldSerialization()
 
         Bob.AddComponent<OpaqueComponent>();
 
-        /* The members travel in the entity table, not as components. */
-        Alice.SetScript("Scripts/Alice.lua");
-        Alice.GetScriptState()->bCullOutsideActiveRegion = 1;
-
         /* A destroyed entity must not appear in the save, and its hole in the
          * slot table must not break the dense index mapping. */
         const EntityID Doomed = W.CreateEntity("Doomed");
@@ -1394,12 +1321,6 @@ static void TestWorldSerialization()
         Expect(!W.FindEntityByName("Doomed").IsSet(), "the destroyed entity did NOT come back");
 
         const Entity AliceHandle = W.GetEntity(Alice);
-        Expect(std::strcmp(AliceHandle.GetScriptPath(), "Scripts/Alice.lua") == 0, "Alice's script path came back");
-        Expect(AliceHandle.GetScriptState() && AliceHandle.GetScriptState()->bCullOutsideActiveRegion,
-               "and its cull flag");
-        Expect(AliceHandle.GetScriptState() && AliceHandle.GetScriptState()->bPendingInstantiate,
-               "a restored script is pending: it starts on the next tick of a bound World");
-        Expect(!W.GetEntity(Bob).HasScript(), "Bob, who had none, has no script");
         Expect(AliceHandle.GetGuid() == SavedAliceGuid, "Alice kept her GUID through the binary round trip");
 
         TransformComponent* Transform = W.GetEntity(Alice).GetComponent<TransformComponent>();
@@ -1515,8 +1436,6 @@ static void TestWorldPackage()
     AliceBounds.Local   = AABB(Vector3(-1.0, -2.0, -3.0), Vector3(1.0, 2.0, 3.0));
     AliceBounds.bStatic = 1;
     Alice.AddComponent(AliceBounds);
-    Alice.SetScript("Scripts/Alice.lua");
-    Alice.GetScriptState()->bCullOutsideActiveRegion = 1;
 
     LinkComponent Link;
     Link.Target  = Alice;
@@ -1537,7 +1456,6 @@ static void TestWorldPackage()
     Expect(AliceText.find("Name=\"Alice\"") != std::string::npos
            && AliceText.find("<Component Type=\"Bounds\"") < AliceText.find("<Component Type=\"Transform\""),
            "an entity file is readable XML, components sorted by type name");
-    Expect(AliceText.find("Path=\"Scripts/Alice.lua\"") != std::string::npos, "the script path is in the entity file");
 
     // --- Load into a fresh World ------------------------------------------------
     {
@@ -1558,8 +1476,6 @@ static void TestWorldPackage()
         const BoundsComponent* Bounds = A.GetComponent<BoundsComponent>();
         Expect(Bounds && Bounds->bStatic == 1 && Bounds->Local.Max.GetZ() == 3.0f && Bounds->ProxyID >= 0,
                "Bounds came back, and the load gave it a spatial leaf");
-        Expect(std::strcmp(A.GetScriptPath(), "Scripts/Alice.lua") == 0 && A.GetScriptState()->bCullOutsideActiveRegion,
-               "the script path and cull flag came back");
 
         const LinkComponent* L = B.GetComponent<LinkComponent>();
         Expect(L && L->Payload == -7 && L->Target == A.GetID(), "an entity reference resolves by GUID to the loaded entity");
@@ -1648,9 +1564,8 @@ static void TestWorldPackage()
         Expect(Cooked.GetEntityCount() == Original.GetEntityCount(), "the cooked world has every entity");
         const Entity A = Cooked.GetEntity(Cooked.FindEntityByGuid(Alice.GetGuid()));
         const TransformComponent* T = A.GetComponent<TransformComponent>();
-        Expect(std::strcmp(A.GetName(), "Renamed") == 0 && T && T->Position.GetZ() == 0.1f
-               && std::strcmp(A.GetScriptPath(), "Scripts/Alice.lua") == 0,
-               "cooked values, names, scripts and GUIDs match the source");
+        Expect(std::strcmp(A.GetName(), "Renamed") == 0 && T && T->Position.GetZ() == 0.1f,
+               "cooked values, names and GUIDs match the source");
     }
 
     Expect(DetectWorldFileFormat((Dir / "Missing.nmworld").generic_string().c_str()) == EWorldFileFormat::Unknown,
@@ -1755,10 +1670,15 @@ static std::vector<uint8_t> BuildVersionedSave(const uint16_t InDataVersion, con
         uint64_t    GuidHi = 0;
         uint64_t    GuidLo = Index + 1;   // any distinct, set GUID
         std::string Name;
-        std::string ScriptPath;
-        uint8_t     bCull = 0;
-        Ar << GuidHi << GuidLo << Name << ScriptPath << bCull;
+        Ar << GuidHi << GuidLo << Name;
     }
+    for(uint32_t Index = 0; Index < EntityCount; ++Index)
+    {
+        uint32_t NoParent = 0xFFFFFFFFu;
+        Ar << NoParent;
+    }
+    uint32_t NoInstances = 0;
+    Ar << NoInstances;
 
     uint16_t ComponentVersion = InDataVersion;
     Ar.OpenChunk(MakeArchiveTag('C','M','P','T'), ComponentVersion);
@@ -2937,6 +2857,167 @@ static void TestPrefabWorldBinary()
 }
 
 #if WITH_EDITOR
+#if WITH_EDITOR
+static void TestPrefabRefresh()
+{
+    std::printf("[prefab refresh]\n");
+
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "PrefabRefresh";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Dir, Ignored);
+    std::filesystem::create_directories(Dir, Ignored);
+    const std::string PrefabPath = (Dir / "Turret.nmprefab").generic_string();
+    WriteTurretPrefab(PrefabPath);
+    ClearPrefabCache();
+
+    World W;
+    const Entity Ground = MakePlaced(W, "Ground", Vector3(0.0, 0.0, 0.0));
+    TransformPose At;
+    At.Position = Vector3(100.0, 0.0, 0.0);
+    const PrefabInstance Instance = W.SpawnPrefab(PrefabPath.c_str(), At, "Gun");
+    const EntityGuid InstanceGuid = Instance.GetGuid();
+    const Entity Barrel = Instance.FindEntity("Barrel");
+    const EntityGuid BarrelGuid = Barrel.GetGuid();
+    const uint32_t MuzzleId = Instance.FindEntity("Muzzle").GetPrefabLocalId();
+
+    /* Overrides, a loose child on a member, and a parent for the root. */
+    Barrel.SetName("Cannon");
+    Barrel.GetComponent<TransformComponent>()->Position = Vector3(0.0, 9.0, 0.0);
+    const Entity Flag = MakePlaced(W, "Flag", Vector3(0.0, 1.0, 0.0));
+    Flag.SetParent(Barrel, false);
+    Instance.GetRoot().SetParent(Ground, true);
+    Instance.FindEntity(MuzzleId).Destroy();
+
+    /* The prefab changes on disk: a new entity under the root. */
+    {
+        World Source;
+        PrefabAsset Asset = *Instance.GetPrefab();
+        const PrefabInstance Copy = Source.SpawnPrefab(Asset);
+        const Entity Light = MakePlaced(Source, "Light", Vector3(0.0, 0.0, 3.0));
+        Light.SetParent(Copy.GetRoot(), false);
+        CapturePrefab(Source, Copy.GetRoot().GetID(), Asset);
+        SavePrefabFile(PrefabPath.c_str(), Asset);
+    }
+    Expect(ReloadPrefab(PrefabPath.c_str()), "the edited prefab reloads");
+    Expect(!Instance.FindEntity("Light").IsAlive(), "a live instance keeps the version it was spawned from");
+
+    const PrefabInstanceID Refreshed = RefreshPrefabInstance(W, Instance.GetID());
+    const PrefabInstance Now(&W, Refreshed);
+    Expect(Now.IsAlive() && Now.GetGuid() == InstanceGuid, "RefreshPrefabInstance keeps the instance's GUID");
+    Expect(std::string(Now.GetName()) == "Gun", "and its name");
+    Expect(Now.FindEntity("Light").IsAlive(), "and brings in what the prefab gained");
+    const Entity Cannon = Now.FindEntity("Barrel");
+    Expect(Cannon.GetGuid() == BarrelGuid && std::string(Cannon.GetName()) == "Cannon", "a member keeps its GUID and renamed name");
+    Expect(Cannon.GetComponent<TransformComponent>()->Position.GetY() == 9.0, "and its overridden field");
+    Expect(!Now.FindEntity(MuzzleId).IsAlive(), "a member it had removed stays removed");
+    Expect(Now.GetRoot().GetParent() == Ground.GetID(), "the root keeps its parent");
+    Expect(Now.GetRoot().GetWorldPose().Position.GetX() == 100.0, "and its placement");
+    Expect(W.IsAlive(Flag.GetID()) && W.GetEntity(Flag.GetID()).GetParent() == Cannon.GetID(), "a loose child is hung back on its member");
+
+    PrefabInstance Flat = W.SpawnPrefab(*Now.GetPrefab());
+    Expect(RefreshPrefabInstance(W, Flat.GetID()) == Flat.GetID(), "an instance with no prefab path is left as it is");
+    ClearPrefabCache();
+}
+#endif
+
+namespace
+{
+    struct NativeCounts { int Starts = 0; int PrePhysics = 0; int Destroys = 0; float LastDelta = 0.0f; };
+    NativeCounts GNative;
+
+    void BuildNativeBox(PrefabBuilder& InBuilder)
+    {
+        const PrefabBuilder::Node Root = InBuilder.Root("Box");
+        Root.Add<TransformComponent>();
+        const PrefabBuilder::Node Lid = Root.Child("Lid");
+        TransformComponent LidTransform;
+        LidTransform.Position = Vector3(0.0, 2.0, 0.0);
+        Lid.Add(LidTransform);
+        BoundsComponent Bounds;
+        Bounds.Local = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(1.0, 1.0, 1.0));
+        Root.Add(Bounds);
+        InBuilder.TickMode(EPrefabTickMode::Tick);
+    }
+
+    NativePrefabBehavior NativeBoxBehavior()
+    {
+        NativePrefabBehavior B;
+        B.OnStart = [](PrefabInstance, void*) { ++GNative.Starts; };
+        B.OnPhase[TP_PrePhysics] = [](PrefabInstance, const float InDelta, void*) { ++GNative.PrePhysics; GNative.LastDelta = InDelta; };
+        B.OnDestroy = [](PrefabInstance, void*) { ++GNative.Destroys; };
+        return B;
+    }
+}
+
+static void TestNativePrefabs()
+{
+    std::printf("[native prefabs]\n");
+    ClearPrefabCache();
+    GNative = NativeCounts();
+
+    Expect(!RegisterNativePrefab("", &BuildNativeBox, NativePrefabBehavior()), "an empty name is refused");
+    Expect(RegisterNativePrefab("Test.Box", &BuildNativeBox, NativeBoxBehavior()), "a native prefab registers");
+    Expect(!RegisterNativePrefab("Test.Box", &BuildNativeBox, NativePrefabBehavior()), "a duplicate is refused");
+    Expect(GetNativePrefabCount() >= 1 && std::string(GetNativePrefabName(GetNativePrefabCount() - 1)) == "Test.Box",
+           "it is listed");
+
+    PrefabAsset Built;
+    Expect(BuildNativePrefab("Test.Box", Built) && Built.GetEntityCount() == 2, "its builder makes the layout");
+    Expect(std::string(Built.GetNativeBehavior()) == "Test.Box", "naming itself as the behaviour");
+
+    World W;
+    ScriptEngine Scripts;
+    Scripts.Initialize();
+    Scripts.BindWorld(&W);
+
+    const PrefabInstance Box = W.SpawnPrefab("native:Test.Box");
+    Expect(Box.IsValid() && Box.FindEntity("Lid").IsAlive(), "native:<Name> spawns through the registry");
+    Expect(std::string(Box.GetPrefabPath()) == "native:Test.Box", "and keeps that path, as a level stores it");
+
+    W.Tick(0.25f);
+    W.Tick(0.25f);
+    Expect(GNative.Starts == 1, "OnStart runs once, without a script");
+    Expect(GNative.PrePhysics == 2 && GNative.LastDelta == 0.25f, "its phase callback runs every tick");
+
+    /* Unregistered (its module unloading): the callbacks stop, the layout stays. */
+    UnregisterNativePrefab("Test.Box");
+    W.Tick(0.25f);
+    Expect(GNative.PrePhysics == 2, "an unregistered prefab's callbacks are not called");
+    Expect(W.SpawnPrefab("native:Test.Box").IsValid(), "its built layout can still be spawned");
+
+    RegisterNativePrefab("Test.Box", &BuildNativeBox, NativeBoxBehavior());
+    W.Tick(0.25f);
+    Expect(GNative.PrePhysics >= 3, "registered again, they resume");
+
+    Box.Destroy();
+    W.Tick(0.25f);
+    Expect(GNative.Destroys >= 1, "OnDestroy runs when the instance goes");
+
+    /* A forked asset keeps the behaviour by name, in both formats. */
+#if WITH_EDITOR
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "Native";
+    std::error_code Ignored;
+    std::filesystem::create_directories(Dir, Ignored);
+    const std::string Text   = (Dir / "Box.nmprefab").generic_string();
+    const std::string Cooked = (Dir / "Box.cooked.nmprefab").generic_string();
+    Expect(SavePrefabFile(Text.c_str(), Built) && CookPrefabFile(Text.c_str(), Cooked.c_str()), "a native layout saves as an asset");
+    PrefabAsset FromText, FromCooked;
+    Expect(LoadPrefabFile(Text.c_str(), FromText) && std::string(FromText.GetNativeBehavior()) == "Test.Box",
+           "the text form keeps the behaviour's name");
+    Expect(LoadPrefabFile(Cooked.c_str(), FromCooked) && std::string(FromCooked.GetNativeBehavior()) == "Test.Box",
+           "and the cooked form");
+    const int StartsBefore = GNative.Starts;
+    W.SpawnPrefab(FromText);
+    W.Tick(0.25f);
+    Expect(GNative.Starts == StartsBefore + 1, "an instance of the forked asset runs the native callbacks");
+#endif
+
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+    UnregisterNativePrefab("Test.Box");
+    ClearPrefabCache();
+}
+
 static void TestPrefabWorldText()
 {
     std::printf("[prefab instances: text worlds]\n");
@@ -2979,8 +3060,8 @@ static void TestPrefabWorldText()
     const std::string Edited    = InstanceFile(EditedGuid);
     const std::string Untouched = InstanceFile(UntouchedGuid);
     const std::string Lost      = InstanceFile(LostGuid);
-    Expect(Manifest.find("Format=\"2\"") != std::string::npos && Manifest.find("<Instance Guid=") != std::string::npos,
-           "the manifest is format 2 and lists instances");
+    Expect(Manifest.find("Format=\"1\"") != std::string::npos && Manifest.find("<Instance Guid=") != std::string::npos,
+           "the manifest is format 1 and lists instances");
     Expect(CountEntityFiles(Folder) == 5, "loose entities get .nmentity files: Ground, Flag, and the flattened three");
     Expect(Untouched.find("<Entity ") == std::string::npos && Untouched.find("Prefab=\"" + PrefabPath + "\"") != std::string::npos,
            "an instance just as its prefab has only its header");
@@ -3083,6 +3164,10 @@ int main()
     TestPrefabWorldBinary();
 #if WITH_EDITOR
     TestPrefabWorldText();
+    TestNativePrefabs();
+#if WITH_EDITOR
+    TestPrefabRefresh();
+#endif
     TestComponentProperties();
     TestWorldPackage();
 #endif

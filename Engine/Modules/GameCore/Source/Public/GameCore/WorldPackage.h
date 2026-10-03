@@ -4,6 +4,7 @@
 #include <cstdint>
 
 #include "Public/GameCore/GameCoreAPI.h"
+#include "Public/GameCore/PrefabInstanceID.h"
 
 namespace GameCore
 {
@@ -50,6 +51,17 @@ namespace GameCore
 
     /* Writes InSourcePath (either format) to InCookedPath as a binary world. */
     GAMECORE_API bool CookWorldFile(const char* InSourcePath, const char* InCookedPath);
+
+    /*
+     * For an editor, after ReloadPrefab: InInstance spawned again from what
+     * its prefab path loads now, keeping all a level file keeps -- its GUID
+     * (and so its entities'), name, placement, overrides and parent -- and
+     * the loose entities hanging from it. A template the prefab no longer has
+     * loses its overrides (warned). Returns the new instance; InInstance
+     * itself if it has no prefab path; unset, warned, if that no longer loads
+     * (its loose entities are then left unparented). Not while ticking.
+     */
+    GAMECORE_API PrefabInstanceID RefreshPrefabInstance(World& InWorld, PrefabInstanceID InInstance);
 #endif
 }
 

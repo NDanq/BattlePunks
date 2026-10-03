@@ -26,9 +26,9 @@ namespace
     constexpr uint32_t TAG_COMPONENT = EngineCore::MakeArchiveTag('C','M','P','T');
     constexpr uint32_t TAG_DATA      = EngineCore::MakeArchiveTag('D','A','T','A');
 
-    /* 2: a parent index per entity, after the entity table.
-     * 3: then the prefab instance table. */
-    constexpr uint16_t WORLD_CHUNK_VERSION = 3;
+    /* The entity table (index, GUID, name), a parent index per entity, the
+     * prefab instance table, then the component chunks. */
+    constexpr uint16_t WORLD_CHUNK_VERSION = 1;
 
     /* One prefab instance, as saved: its members by save index. */
     struct SavedInstance
@@ -171,10 +171,7 @@ namespace
             Ar << GuidHi << GuidLo;
 
             std::string Name(Handle.GetName());
-            std::string ScriptPath(Handle.GetScriptPath());
-            const EntityScriptState* Script = Handle.GetScriptState();
-            uint8_t bCull = Script ? Script->bCullOutsideActiveRegion : 0;
-            Ar << Name << ScriptPath << bCull;
+            Ar << Name;
         }
 
         /* Each entity's parent as a save index, in table order -- after the
@@ -296,14 +293,14 @@ namespace
             return false;
         }
 
-        if(Version > WORLD_CHUNK_VERSION)
+        if(Version != WORLD_CHUNK_VERSION)
         {
             /* Refused, unlike an unknown component type: every index refers to
-             * the entity table, so a changed table invalidates everything. */
+             * the entity table, so a different table invalidates everything. */
             GAMECORE_LOG_WARN("WorldSerializer: save's world chunk is version "
-                              + std::to_string(Version) + "; this build understands "
+                              + std::to_string(Version) + "; this build reads "
                               + std::to_string(WORLD_CHUNK_VERSION))
-            Ar.SetError("world chunk is newer than this build can read");
+            Ar.SetError("world chunk is a version this build cannot read");
             Ar.CloseChunk();
             return false;
         }
@@ -328,49 +325,31 @@ namespace
 
             EntityGuid  Guid;
             std::string Name;
-            std::string ScriptPath;
-            uint8_t     bCull = 0;
-            Ar << Guid.Hi << Guid.Lo << Name << ScriptPath << bCull;
+            Ar << Guid.Hi << Guid.Lo << Name;
             if(Ar.HasError()) { Ar.CloseChunk(); return false; }
 
-            /* Name and GUID at creation, so OnEntityCreated sees both. The
-             * script instantiates next tick, after every component is in. */
+            /* Name and GUID at creation, so OnEntityCreated sees both. */
             const Entity Loaded = InWorld.CreateEntity(Name.c_str(), Guid);
-            if(!ScriptPath.empty())
-            {
-                Loaded.SetScript(ScriptPath.c_str());
-                if(EntityScriptState* Script = Loaded.GetScriptState())
-                {
-                    Script->bCullOutsideActiveRegion = bCull ? 1 : 0;
-                }
-            }
             OutTable.AddForLoading(Loaded);
         }
 
         /* Read now, applied after the components: the saved Transforms are
          * already local to these parents, so nothing should move. */
-        std::vector<uint32_t> ParentIndices;
-        if(Version >= 2)
-        {
-            ParentIndices.resize(EntityCount);
-            for(uint32_t& ParentIndex : ParentIndices) { Ar << ParentIndex; }
-            if(Ar.HasError()) { Ar.CloseChunk(); return false; }
-        }
+        std::vector<uint32_t> ParentIndices(EntityCount);
+        for(uint32_t& ParentIndex : ParentIndices) { Ar << ParentIndex; }
+        if(Ar.HasError()) { Ar.CloseChunk(); return false; }
 
         /* Applied last, once the tree is in place. */
         std::vector<SavedInstance> Instances;
-        if(Version >= 3)
+        uint32_t InstanceCount = 0;
+        Ar << InstanceCount;
+        for(uint32_t Index = 0; Index < InstanceCount && !Ar.HasError(); ++Index)
         {
-            uint32_t InstanceCount = 0;
-            Ar << InstanceCount;
-            for(uint32_t Index = 0; Index < InstanceCount && !Ar.HasError(); ++Index)
-            {
-                SavedInstance Saved;
-                SerializeSavedInstance(Ar, Saved);
-                Instances.push_back(std::move(Saved));
-            }
-            if(Ar.HasError()) { Ar.CloseChunk(); return false; }
+            SavedInstance Saved;
+            SerializeSavedInstance(Ar, Saved);
+            Instances.push_back(std::move(Saved));
         }
+        if(Ar.HasError()) { Ar.CloseChunk(); return false; }
 
         /* A non-CMPT tag ends the loop; CloseChunk below skips the rest. */
         uint16_t ChunkVersion = 0;
