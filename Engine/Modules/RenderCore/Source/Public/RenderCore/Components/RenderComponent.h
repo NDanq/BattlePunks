@@ -13,6 +13,18 @@ namespace RenderCore
     enum : size_t { RENDER_MATERIAL_PATH_MAX = 128 };  // including the NUL
     enum : size_t { RENDER_MESH_PATH_MAX     = 128 };  // including the NUL
     enum : size_t { RENDER_MATERIAL_SLOTS    = 8 };
+    enum : size_t { RENDER_MATERIAL_PARAMETERS_MAX     = 8 };    // overrides per component
+    enum : size_t { RENDER_MATERIAL_PARAMETER_NAME_MAX = 32 };   // including the NUL
+
+    /* One material parameter set on one entity: the Parameter node named Name
+     * in slot Slot's material draws with Value instead of its default. A
+     * float uses Value[0], a vec2 the first two, and so on. */
+    struct RenderMaterialParameter
+    {
+        char    Name[RENDER_MATERIAL_PARAMETER_NAME_MAX] = {};   // "" = unused
+        uint8_t Slot = 0;
+        float   Value[4] = {};
+    };
 
     /* "Render". Draws Mesh (a runtime-relative .nmmesh path) if set and
      * loadable, else a unit quad (1 x 1, centred); both sized by the
@@ -24,7 +36,14 @@ namespace RenderCore
      * with slot i, else its own material from the mesh, else DefaultLit; a
      * quad uses slot 0. Each material's Domain and Shading pick the stage it
      * draws in (RENDERPIPELINE.md), so one mesh can draw in several. An
-     * unloadable slot is warned once and falls back. */
+     * unloadable slot is warned once and falls back.
+     *
+     * Parameters are per entity: SetMaterialParameter overrides a slot's
+     * material parameter for this entity's draws only, leaving every other
+     * user of the material at its defaults. Up to RENDER_MATERIAL_PARAMETERS_MAX;
+     * an entry with an empty Name is unused, wherever it is. A name the
+     * material does not have is ignored when drawing. The editor lists them
+     * under Material Parameters. */
     struct RENDERCORE_API RenderComponent
     {
         GAMECORE_COMPONENT_BODY()
@@ -33,6 +52,27 @@ namespace RenderCore
         uint8_t           bVisible = 1;
         char              Materials[RENDER_MATERIAL_SLOTS][RENDER_MATERIAL_PATH_MAX] = {};
         char              Mesh[RENDER_MESH_PATH_MAX] = {};
+        RenderMaterialParameter Parameters[RENDER_MATERIAL_PARAMETERS_MAX] = {};
+
+        /* Slot InSlot's material path; "" if unset or out of range. */
+        const char* GetMaterial(int32_t InSlot) const;
+        /* False if InSlot is out of range. */
+        bool        SetMaterial(int32_t InSlot, const char* InMaterial);
+        /* How many slots name a material. */
+        int32_t     GetNumRegisteredMaterials() const;
+
+        /* Overrides InName in slot InSlot's material for this entity. False
+         * if InSlot is out of range, InName is empty or too long, or every
+         * override is in use. */
+        bool SetMaterialParameter(int32_t InSlot, const char* InName, float InX, float InY, float InZ, float InW);
+        /* The override, if set; false (OutValue untouched) if not. */
+        bool GetMaterialParameter(int32_t InSlot, const char* InName, float OutValue[4]) const;
+        /* Back to the material's default. False if it was not set. */
+        bool ClearMaterialParameter(int32_t InSlot, const char* InName);
+        /* Overrides in use. */
+        int32_t GetMaterialParameterCount() const;
+        /* One past the last in use: an editor can leave an empty one between. */
+        int32_t GetMaterialParameterSpan() const;
     };
 
     /* RenderComponent's proxy factory, for Renderer::Initialize to register. */

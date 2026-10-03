@@ -99,8 +99,8 @@ void EditorDocument::CreateSandboxScene()
      * Sandbox's level as loaded, before its first tick: prefab instances. A
      * hand-kept MIRROR of:
      *
-     *   Games/Sandbox/SandboxGame.cpp   SandboxLevel::OnLoad -- Marker, Camera
-     *   Games/Sandbox/Scripts/Main.lua  the startup script   -- Scripted
+     *   Games/Sandbox/Source/Private/Sandbox/SandboxGame.cpp   SandboxLevel::OnLoad -- Marker, Camera
+     *   Games/Sandbox/Scripts/Main.lua                         the startup script   -- Scripted
      *
      * Keep it in step. The native prefabs come from the game module, cached
      * when the editor last loaded it; Prefabs/Mover.nmprefab is staged beside

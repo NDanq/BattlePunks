@@ -1,4 +1,4 @@
-#include "SandboxScripting.h"
+#include "Public/Sandbox/SandboxScripting.h"
 
 #include <cmath>
 #include <string>

@@ -35,6 +35,16 @@ namespace RenderCore
             Slot[RENDER_MATERIAL_PATH_MAX - 1] = '\0';
         }
 
+        static_assert(sizeof(Parameters) == sizeof(Component.Parameters), "RenderComponentProxy::Parameters must match the component's");
+        std::memcpy(Parameters, Component.Parameters, sizeof(Parameters));
+        /* Up to the last in use; BindMaterial skips empty ones between. */
+        ParameterCount = 0;
+        for(size_t Index = 0; Index < RENDER_MATERIAL_PARAMETERS_MAX; ++Index)
+        {
+            Parameters[Index].Name[RENDER_MATERIAL_PARAMETER_NAME_MAX - 1] = '\0';
+            if(Parameters[Index].Name[0] != '\0') { ParameterCount = uint32_t(Index + 1); }
+        }
+
         SetVisible(bComponentVisible);
 
         /* Every frame, so a reimport's new mesh is noticed. */
@@ -90,17 +100,21 @@ namespace RenderCore
 
     void RenderComponentProxy::Draw(RenderContext& InContext)
     {
+        MaterialParameterOverrides Overrides;
+        Overrides.Items = Parameters;
+        Overrides.Count = ParameterCount;
+
         const char* Slots[RENDER_MATERIAL_SLOTS];
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot) { Slots[Slot] = Materials[Slot]; }
 
         /* A mesh this backend cannot draw falls back to the quad. */
-        if(MeshSource && InContext.DrawMesh(GetTransform(), MeshPath.c_str(), WHITE, Slots, uint32_t(RENDER_MATERIAL_SLOTS)))
+        if(MeshSource && InContext.DrawMesh(GetTransform(), MeshPath.c_str(), WHITE, Slots, uint32_t(RENDER_MATERIAL_SLOTS), Overrides))
         {
             return;
         }
         if(Materials[0][0] != '\0')
         {
-            InContext.DrawQuadWithMaterial(GetTransform(), QUAD_SIZE, QUAD_SIZE, WHITE, Materials[0]);
+            InContext.DrawQuadWithMaterial(GetTransform(), QUAD_SIZE, QUAD_SIZE, WHITE, Materials[0], Overrides);
             return;
         }
         InContext.DrawQuad(GetTransform(), QUAD_SIZE, QUAD_SIZE, WHITE);

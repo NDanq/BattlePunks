@@ -56,9 +56,11 @@ void main(void)
 #endif
 
 #if MATERIAL_SHADING_LIT
-    // Two Sided lights a back face as its own front: the normal flips.
+    // Two Sided lights a back face as its own front: the normal flips. The
+    // engine is left-handed (RenderView.h), so a face toward the camera
+    // winds clockwise on screen: GL's back face.
     vec3 Normal = normalize(Surface.Normal);
-    if(Material_TwoSided > 0.5 && !gl_FrontFacing) { Normal = -Normal; }
+    if(Material_TwoSided > 0.5 && gl_FrontFacing) { Normal = -Normal; }
 #endif
 
 #if MATERIAL_GBUFFER

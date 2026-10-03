@@ -8,15 +8,14 @@
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreLog.h"
-#include "Public/Core/CorePlatform.h"
-#include "Public/Core/CoreThread.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
-#include "SandboxScripting.h"
+#include "Public/Sandbox/BrickBreaker.h"
+#include "Public/Sandbox/SandboxScripting.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -43,7 +42,8 @@
  *                     owns the mode and state.
  *   SandboxGameMode   moves Marker, reports, decides when to quit.
  *   SandboxGameState  elapsed time and tick counts.
- *   SandboxGameModule owns and registers the level.
+ *   SandboxGameModule owns and registers the level, and BrickBreaker's
+ *                     (BrickBreaker.cpp), the start level.
  */
 
 /* A game-owned config var, in the same registry and .ini as the engine's.
@@ -272,9 +272,6 @@ public:
     {
         Session = &InSession;
 
-        /* So OnTick can assert it runs on the game thread. */
-        GameThread = EngineCore::appThreadID();
-
         RunSeconds = double(GSandboxRunSeconds.GetInt());
 
         /* Nothing spawned here: the level builds the scene, the mode is rules. */
@@ -288,8 +285,7 @@ public:
 
         const GameCore::EntityID Scripted = Session->GetWorld().FindEntityByName("Scripted");
 
-        CORE_LOG("[Sandbox] game starting on thread " + Num(uint64_t(GameThread))
-                 + "; frame limit "
+        CORE_LOG("[Sandbox] game starting; frame limit "
                  + (Limit > 0 ? Num(Limit) + " fps" : std::string("unlimited"))
                  + (RunSeconds > 0.0
                     ? "; will quit after " + Fixed2(RunSeconds) + "s"
@@ -301,10 +297,8 @@ public:
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
-        /* Concurrent with the render thread: no renderer or window access. */
-        CORE_CHECK(EngineCore::appThreadID() == GameThread,
-                   "[Sandbox] OnTick ran on a thread other than the one OnStartup saw")
-
+        /* Concurrent with the render thread: no renderer or window access.
+         * The session has already checked this is the game thread. */
         State->ElapsedSeconds += InFrame.DeltaSeconds;
         SandboxScripting::SetElapsedSeconds(State->ElapsedSeconds);   // Sandbox.GetElapsed() in scripts
         State->TicksThisSecond++;
@@ -406,8 +400,6 @@ private:
     /* Stashed in OnLoad for RequestQuit() and GetWorld(). */
     NimbleEngine::GameSession* Session = nullptr;
 
-    EngineCore::ThreadID GameThread = 0;
-
     double RunSeconds = 0.0;
 
     /* For OnMarkerRestored: the level also holds a Marker handle. */
@@ -442,7 +434,7 @@ public:
         EntityCreatedHandle = World.OnEntityCreated().Add(&OnEntityCreatedLogger, &World);
 
         /* The level is prefab instances (the native prefabs above). Off y=0:
-         * +Y runs down from the top edge in the ortho view, so a quad at y=0
+         * +Y runs up from the bottom edge in the ortho view, so a quad at y=0
          * would hang half off screen. MarkerEntity keeps only the root's id;
          * the handle's World* is per-load. */
         const GameCore::Entity Marker = World.SpawnPrefab("native:Sandbox.Marker",
@@ -569,16 +561,19 @@ public:
     {
         /* Saves and [Game] StartLevel resolve levels by name. */
         NimbleEngine::RegisterLevel(Level);
+        NimbleEngine::RegisterLevel(BrickBreaker::GetLevel());
         return true;
     }
 
     void OnShutdown(EngineCore::ModuleReloadState& /*OutState*/) override
     {
         /* The registry holds a bare pointer, and this image is about to go. */
+        NimbleEngine::UnregisterLevel(BrickBreaker::GetLevel());
         NimbleEngine::UnregisterLevel(Level);
     }
 
-    NimbleEngine::ILevel* GetStartLevel() override { return &Level; }
+    /* BrickBreaker (BrickBreaker.cpp); [Game] StartLevel=Sandbox for the demo below. */
+    NimbleEngine::ILevel* GetStartLevel() override { return &BrickBreaker::GetLevel(); }
 
 private:
     SandboxLevel Level;

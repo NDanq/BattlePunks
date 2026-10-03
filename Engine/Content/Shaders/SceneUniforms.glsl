@@ -8,7 +8,7 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     vec4 Scene_Time;             // x: seconds since the renderer started; y: the last frame's length
     vec4 Scene_LightDirection;   // xyz: unit vector toward the light; w: intensity
     vec4 Scene_LightColor;       // rgb, display space
-    vec4 Scene_SkyColor;         // rgb: ambient from above (-Y); a: ambient intensity
-    vec4 Scene_GroundColor;      // rgb: ambient from below (+Y)
+    vec4 Scene_SkyColor;         // rgb: ambient from above (+Y); a: ambient intensity
+    vec4 Scene_GroundColor;      // rgb: ambient from below (-Y)
     mat4 Scene_InvViewProjection; // clip space (GL's: z_ndc = 2 * depth - 1) back to world space
 UBO_BLOCK_END(Scene_Block)
