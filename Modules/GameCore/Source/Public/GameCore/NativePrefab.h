@@ -71,6 +71,10 @@ namespace GameCore
         void* UserData = nullptr;
     };
 
+    /* Declared (documented below) ahead of PrefabBuilder's friend declaration,
+     * so the friend does not introduce it without GAMECORE_API: MSVC's C2375. */
+    GAMECORE_API bool BuildNativePrefab(const char* InName, PrefabAsset& OutAsset);
+
     /*
      * What a builder function fills in: the entity tree, the script and the
      * tick mode. Entities are made in a scratch World and captured
@@ -80,7 +84,7 @@ namespace GameCore
     class GAMECORE_API PrefabBuilder
     {
     public:
-        class Node
+        class GAMECORE_API Node   // MSVC does not export a nested class with its outer one
         {
         public:
             /* Adds InInit (a component); the existing one if it is already there. */
