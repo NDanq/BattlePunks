@@ -42,6 +42,7 @@
 #include "Public/NodeGraph/GraphFile.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/ImportWizard.h"
@@ -723,6 +724,11 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         emit OpenWorldRequested(InPath);
         return;
     }
+    if(InPath.endsWith(QStringLiteral(".nmprefab"), Qt::CaseInsensitive))
+    {
+        EditorPrefabs::OpenPrefab(InPath, window());
+        return;
+    }
     if(InPath.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive))
     {
         MeshViewerWindow::Open(InPath, window());
@@ -781,7 +787,11 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
         Menu.addAction(DeleteAction);
         Menu.addSeparator();
     }
-    if(!bEngine) { Menu.addAction(QStringLiteral("New Folder"), this, &ContentBrowserPanel::NewFolder); }
+    if(!bEngine)
+    {
+        Menu.addAction(QStringLiteral("New Folder"), this, &ContentBrowserPanel::NewFolder);
+        Menu.addAction(QStringLiteral("New Prefab..."), this, [this]() { EditorPrefabs::CreatePrefab(CurrentFolder, window()); });
+    }
     Menu.addAction(QStringLiteral("Import..."), this, &ContentBrowserPanel::ImportWithDialog);
     Menu.addAction(QStringLiteral("Show Folder in Explorer"), this, [this]()
     {

@@ -16,7 +16,7 @@
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/EntityID.h"
 
-namespace GameCore { class World; class Entity; }
+namespace GameCore { class World; class Entity; class PrefabAsset; }
 
 class QUndoCommand;
 class QUndoStack;
@@ -97,6 +97,29 @@ public:
     /* No edit-time ticking, but edits must still reach the spatial index and
      * overlaps. Once per editor frame while the edited World is shown. */
     void RefreshEditedWorld();
+
+    // === Prefab =============================================================
+    // A prefab document's World holds one instance of the prefab; saving
+    // captures it back (CapturePrefab), keeping every template's local id.
+
+    /* The prefab at InPath (either format), spawned into a fresh World; its
+     * name, script and tick mode in OutAsset. False, with the reason logged,
+     * if it cannot be read -- the World is then left as it was. */
+    bool LoadPrefab(const QString& InPath, GameCore::PrefabAsset& OutAsset);
+
+    /* Captures the one root entity's subtree into InOutAsset (its name, script
+     * and tick mode kept) and writes it to InPath as text. Marks the history
+     * clean. False with OutError: nothing or more than one root, a borrowed
+     * World, or the file could not be written. */
+    bool SavePrefab(const QString& InPath, GameCore::PrefabAsset& InOutAsset, QString& OutError);
+
+    /* The edited World's top-level entities. A prefab saves with exactly one. */
+    std::vector<GameCore::EntityID> GetRootEntities() const;
+
+    /* SINGLE ROOT (a prefab): CreateEntity parents a new entity under the
+     * first root, so everything made stays in the prefab. */
+    void SetSingleRoot(bool bInSingleRoot) { bSingleRoot = bInSingleRoot; }
+    bool IsSingleRoot() const { return bSingleRoot; }
 
     // === Entities ===========================================================
     // On the active World: while borrowed, these reach into the running game.
@@ -234,6 +257,7 @@ private:
 
     GameCore::World*      EditedWorld = nullptr;
     GameCore::World*      ActiveWorld = nullptr;   // EditedWorld, or a borrowed one
+    bool                  bSingleRoot = false;
 
     GameCore::EntityID    Selection;
     GameCore::EntityID    EditedSelection;         // kept while a World is borrowed

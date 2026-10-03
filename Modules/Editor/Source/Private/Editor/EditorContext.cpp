@@ -284,6 +284,7 @@ void EditorContext::RunFrame()
     {
         Level->RefreshEditedWorld();
     }
+    emit BeforeFrame(DeltaSeconds);
     for(const DocumentScene& Each : DocumentScenes)
     {
         Each.Document->RefreshEditedWorld();
@@ -355,7 +356,7 @@ RenderCore::RenderSceneID EditorContext::GetDocumentScene(EditorDocument* InDocu
         return Scene;
     }
     Renderer->SetClearColor(Scene, EngineCore::Color(38, 40, 46));
-    Renderer->BindWorld(Scene, InDocument->GetEditedWorld());
+    Renderer->BindWorld(Scene, InDocument->GetWorld());
     DocumentScenes.push_back({ InDocument, Scene });
 
     /* The scene follows the document's edited World as New/Open replace it,
@@ -374,6 +375,39 @@ RenderCore::RenderSceneID EditorContext::GetDocumentScene(EditorDocument* InDocu
         ForgetDocumentScene(InDocument);
     });
     return Scene;
+}
+
+void EditorContext::BindDocumentScene(EditorDocument& InDocument)
+{
+    if(&InDocument == Level || !bRendererReady)
+    {
+        return;
+    }
+    for(const DocumentScene& Each : DocumentScenes)
+    {
+        if(Each.Document == &InDocument)
+        {
+            Renderer->UnbindWorld(Each.Scene);
+            Renderer->BindWorld(Each.Scene, InDocument.GetWorld());
+            return;
+        }
+    }
+}
+
+void EditorContext::UnbindDocumentScene(EditorDocument& InDocument)
+{
+    if(&InDocument == Level || !bRendererReady)
+    {
+        return;
+    }
+    for(const DocumentScene& Each : DocumentScenes)
+    {
+        if(Each.Document == &InDocument)
+        {
+            Renderer->UnbindWorld(Each.Scene);
+            return;
+        }
+    }
 }
 
 void EditorContext::ForgetDocumentScene(EditorDocument* InDocument)

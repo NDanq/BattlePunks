@@ -95,6 +95,13 @@ public:
     void AddViewport(EditorViewportClient* InClient);
     void RemoveViewport(EditorViewportClient* InClient);
 
+    /* A document other than the level shows a World it does not own (a
+     * prefab simulation, EditorDocument::BorrowWorld): Unbind its scene before
+     * that World goes or is swapped, Bind afterwards to draw GetWorld(). The
+     * level's scene is Play-in-Editor's to manage; it is ignored here. */
+    void BindDocumentScene(EditorDocument& InDocument);
+    void UnbindDocumentScene(EditorDocument& InDocument);
+
     /* Overlay lines for this frame, into the scene of the viewport whose
      * PrepareFrame is running; nothing outside one. See Renderer::DrawDebugLine. */
     void DrawDebugLine(const RenderCore::DebugLine& InLine);
@@ -144,6 +151,11 @@ signals:
     void PlayStateChanged(bool bInPlaying);
 
     void PlayViewEjectedChanged(bool bInEjected);
+
+    /* Every drawn frame, after the game's tick and before the render: where
+     * anything else that ticks a World (a prefab simulation) does so, so its
+     * render commands join this frame. */
+    void BeforeFrame(double InDeltaSeconds);
 
 private:
     /* After a play Tick: follow a level swap; stop if the game quit. */

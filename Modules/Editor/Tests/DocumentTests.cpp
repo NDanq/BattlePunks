@@ -7,12 +7,14 @@
 #include <cstdio>
 
 #include <QCoreApplication>
+#include <QTemporaryDir>
 #include <QUndoStack>
 
 #include "Public/Core/CoreMemory.h"
 #include "Public/Editor/EditorDocument.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 
 using GameCore::EntityID;
@@ -199,6 +201,78 @@ static void TestDestroyWhileBorrowed()
     Expect(true, "and fires no stale delegate");
 }
 
+
+static void TestPrefab()
+{
+    std::printf("Prefab\n");
+    QTemporaryDir Temp;
+    const QString Path = Temp.filePath(QStringLiteral("Door.nmprefab"));
+
+    /* Root with one child, written as the editor's text form. */
+    {
+        GameCore::World Scratch;
+        const GameCore::Entity Root = Scratch.CreateEntity("Root");
+        Root.AddComponent<GameCore::TransformComponent>();
+        const GameCore::Entity Panel = Scratch.CreateEntity("Panel");
+        Panel.AddComponent<GameCore::TransformComponent>();
+        Panel.SetParent(Root, false);
+        GameCore::PrefabAsset Asset;
+        GameCore::CapturePrefab(Scratch, Root.GetID(), Asset);
+        Asset.SetScriptPath("Prefabs/Door.lua");
+        Expect(GameCore::SavePrefabFile(Path.toUtf8().constData(), Asset), "a prefab file to open");
+    }
+
+    EditorDocument Doc;
+    Doc.SetSingleRoot(true);
+    GameCore::PrefabAsset Asset;
+    Expect(!Doc.LoadPrefab(Temp.filePath(QStringLiteral("Missing.nmprefab")), Asset), "a missing prefab does not load");
+    Expect(Doc.LoadPrefab(Path, Asset), "LoadPrefab reads it");
+    Expect(Doc.GetWorld().GetEntityCount() == 2, "and spawns its entities");
+    Expect(Doc.GetRootEntities().size() == 1, "under one root");
+    Expect(std::string(Asset.GetScriptPath()) == "Prefabs/Door.lua", "with its settings in the asset");
+    Expect(!Doc.CanUndo() && Doc.GetHistory().isClean(), "as the clean starting point");
+
+    /* Single root: a new entity goes under the root. */
+    const EntityID Root   = Doc.GetRootEntities().front();
+    const EntityID Handle = Doc.CreateEntity(QStringLiteral("Handle"), EngineCore::Vector3(5.0, 0.0, 0.0));
+    Expect(Doc.GetWorld().GetEntity(Handle).GetParent() == Root, "a created entity is parented under the root");
+    Expect(Doc.GetRootEntities().size() == 1, "so there is still one root");
+    Doc.Undo();
+    Expect(Doc.GetWorld().GetEntityCount() == 2, "and undoing it removes it");
+    Doc.Redo();
+
+    QString Error;
+    Expect(Doc.SavePrefab(Path, Asset, Error), "SavePrefab writes it");
+    Expect(Doc.GetHistory().isClean(), "and marks the history clean");
+    const uint32_t HandleId = Asset.FindLocalId("Handle");
+    Expect(HandleId != GameCore::PREFAB_NO_LOCAL_ID, "with the new entity in it");
+
+    /* Saved again, the new entity keeps its id: placed instances key on it. */
+    Doc.RenameEntity(Doc.GetWorld().FindEntityByGuid(Doc.GetWorld().GetEntity(Root).GetGuid()), QStringLiteral("Door"));
+    Expect(Doc.SavePrefab(Path, Asset, Error), "saving again");
+    Expect(Asset.FindLocalId("Handle") == HandleId, "keeps every entity's id");
+
+    GameCore::PrefabAsset Reread;
+    Expect(GameCore::LoadPrefabFile(Path.toUtf8().constData(), Reread) && Reread.GetEntityCount() == 3
+           && Reread.FindLocalId("Handle") == HandleId && std::string(Reread.GetEntityName(0)) == "Door",
+           "the file has what was saved");
+
+    /* Refusals: two roots, and a borrowed World. */
+    Doc.SetSingleRoot(false);
+    const EntityID Stray = Doc.CreateEntity(QStringLiteral("Stray"), EngineCore::Vector3());
+    Expect(!Doc.SavePrefab(Path, Asset, Error) && Error.contains(QStringLiteral("exactly one root")), "two roots are refused");
+    Doc.DestroyEntity(Stray);
+
+    GameCore::World* Sim = EngineCore::Memory::Alloc<GameCore::World>();
+    Doc.BorrowWorld(Sim);
+    Expect(!Doc.SavePrefab(Path, Asset, Error), "saving while simulating is refused");
+    Doc.UnhookBorrowedWorld();
+    Doc.DropBorrowedWorld();
+    EngineCore::Memory::Dealloc(Sim);
+    Doc.ReturnToEditedWorld();
+    Expect(Doc.SavePrefab(Path, Asset, Error), "and works again after");
+}
+
 int main(int argc, char* argv[])
 {
     QCoreApplication App(argc, argv);
@@ -209,6 +283,7 @@ int main(int argc, char* argv[])
     TestNewScene();
     TestBorrowedWorld();
     TestDestroyWhileBorrowed();
+    TestPrefab();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
