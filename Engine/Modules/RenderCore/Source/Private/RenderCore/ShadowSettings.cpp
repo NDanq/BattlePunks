@@ -6,9 +6,10 @@
 
 /*
  * The [Shadows] config section: every scene's shadow quality, over what each
- * light asks for. Editor Settings has a Shadows group for these; a game sets
- * them in its DefaultEngine.ini. Read on the game thread by WorldBridge into
- * RenderLighting::Shadows, so a change shows on the next frame.
+ * light asks for. A project setting: the game's DefaultEngine.ini, which Edit >
+ * Project Settings > Shadows edits and applies at once. Read on the game
+ * thread by WorldBridge into RenderLighting::Shadows, so a change shows on the
+ * next frame.
  */
 NIMBLE_CONFIG_BOOL(GShadowsEnabled,          "Shadows", "Enabled",           true, nullptr);
 NIMBLE_CONFIG_INT(GShadowsResolution,        "Shadows", "Resolution",        2048, nullptr);   // 1024, 2048 or 4096: each atlas's side
