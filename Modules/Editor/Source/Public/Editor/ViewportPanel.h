@@ -6,6 +6,7 @@
 #include <QWidget>
 
 class EditorContext;
+class EditorDocument;
 class QAction;
 class QComboBox;
 class QToolBar;
@@ -22,7 +23,7 @@ class ViewportPanel : public QWidget
     Q_OBJECT
 
 public:
-    explicit ViewportPanel(EditorContext& InContext, QWidget* InParent = nullptr);
+    ViewportPanel(EditorContext& InContext, EditorDocument& InDocument, QWidget* InParent = nullptr);
 
     ViewportWidget* GetViewport() const { return Viewport; }
 

@@ -405,6 +405,33 @@ undo. The Prefab Editor needs a second World with its own selection and undo:
    offscreen previews; a second full `RenderScene` per document may be needed.
    **This is the biggest unknown in the editor work** -- spike it first.
 
+### As built (phase 6)
+
+- `EditorDocument` owns a World, its selection, undo history and entity
+  operations. `EditorContext` keeps the Renderer, previews and Play-in-Editor,
+  and owns the level document (`GetLevel()`). Play lends the game's World to the
+  level document (`BorrowWorld` ... `ReturnToEditedWorld`). The Outliner and
+  Details take a document; the viewport takes the context and a document.
+- The answer to the unknown: GDI had ONE swapchain, made for whichever window
+  presented first, and presented the last-bound render target. Each backend
+  (Vulkan, D3D12, Metal) now keeps a swapchain per window, with
+  `PresentRenderTargetToWindow` and `ReleaseWindow`.
+- `Renderer` draws several scenes: scene 0 is the default (every existing call),
+  `CreateScene`/`DestroyScene` add more, each with its own World, view,
+  overlay lines, viewport size and targets, presented to its own window.
+  `EndFrame` renders all of them; RenderStats stay the default scene's.
+- A World can be bound to one scene (the component holds its proxy handle), so
+  scenes are per document: the level's is scene 0, any other document's is
+  created when a viewport first shows it and destroyed with the document.
+- The context drives one frame for every viewport (`EditorViewportClient`);
+  overlay lines queued in a viewport's `PrepareFrame` go to its scene.
+- The `testwindow` console command opens a second viewport on its own World,
+  the path the Prefab Editor window will take.
+- Each scene is its own BeginRendering/EndRendering, so a second scene waits
+  for the GPU to finish the first. Fine for a few editor viewports.
+- D3D12 and Metal were changed alongside Vulkan but only Vulkan was built and
+  run (Linux).
+
 ### Level editor changes
 
 - Outliner lists **instances** at top level, expandable to their entities.
@@ -445,7 +472,7 @@ Each phase lands on its own and keeps Sandbox playable.
 | 3 | Instance scripts: per-phase functions, buckets, tick modes, overlap routing; graph nodes -- **done** | `ScriptSystem.cpp`, `Collision.cpp`, `ScriptBindings.cpp`, NodeGraph `ScriptSchema.cpp` | 2 |
 | 4 | Level format 2: instances, derived GUIDs, overrides -- **done** | `WorldPackage.cpp`, `WorldSerializer.cpp` | 2 |
 | 5 | Native prefabs + `PrefabBuilder` | new `NativePrefab.h/.cpp`, `GameModule.h` | 2, 3 |
-| 6 | `EditorDocument` split; second-World viewport spike | `EditorContext`, panels, RenderCore | -- (can start in parallel) |
+| 6 | `EditorDocument` split; second-World viewport spike -- **done** | `EditorContext`, panels, RenderCore, GDI | -- (can start in parallel) |
 | 7 | Prefab Editor window (hierarchy, details, viewport, script tab, simulate) | new `Editor/Prefab/*` | 3, 6 |
 | 8 | Level editor: instances in Outliner, overrides in Details, place from Content Browser, convert | Outliner, Details, Viewport | 4, 7 |
 | 9 | Migrate Sandbox; remove entity scripts and Format 1 | Sandbox, `ScriptSystem.cpp`, `Entity.h` | 8 |

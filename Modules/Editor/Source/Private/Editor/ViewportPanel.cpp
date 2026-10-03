@@ -67,7 +67,7 @@ namespace
     };
 }
 
-ViewportPanel::ViewportPanel(EditorContext& InContext, QWidget* InParent)
+ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocument, QWidget* InParent)
     : QWidget(InParent)
 {
     auto* Layout = new QVBoxLayout(this);
@@ -79,7 +79,7 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, QWidget* InParent)
     Toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
     Layout->addWidget(Toolbar);
 
-    Viewport = new ViewportWidget(InContext, this);
+    Viewport = new ViewportWidget(InContext, InDocument, this);
     Layout->addWidget(Viewport, 1);
 
     // --- Transform handles ---------------------------------------------------

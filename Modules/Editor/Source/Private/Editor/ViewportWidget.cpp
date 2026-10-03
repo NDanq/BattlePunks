@@ -26,6 +26,7 @@
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
 #include "Private/Editor/Content/ContentPaths.h"
 
 /* Handle snap steps. Translate is a world grid in World space, a step along
@@ -205,9 +206,10 @@ namespace
     }
 }
 
-ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
+ViewportWidget::ViewportWidget(EditorContext& InContext, EditorDocument& InDocument, QWidget* InParent)
     : QWidget(InParent)
     , Context(InContext)
+    , Document(InDocument)
 {
     /* A real child HWND the backend owns outright: no Qt backing store, no
      * background erase to flicker over the rendered frame. */
@@ -221,9 +223,8 @@ ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
     setMinimumSize(64, 64);
     setAcceptDrops(true);     // a mesh dragged from the Content Browser
 
-    FrameTimer.setTimerType(Qt::PreciseTimer);
-    FrameTimer.setInterval(16);
-    connect(&FrameTimer, &QTimer::timeout, this, &ViewportWidget::OnFrame);
+    /* The context draws it every frame from now on (EditorContext::RunFrame). */
+    Context.AddViewport(this);
 
     /* Handing the view to or from the game mid-drag would leave the camera
      * flying on keys whose release it never sees. */
@@ -243,8 +244,8 @@ ViewportWidget::ViewportWidget(EditorContext& InContext, QWidget* InParent)
         FinishGizmoDrag(false);
         GizmoHover = TransformGizmo::EHandle::None;
     };
-    connect(&Context, &EditorContext::SelectionChanged, this, DropGizmoDrag);
-    connect(&Context, &EditorContext::WorldReset,       this, DropGizmoDrag);
+    connect(&Document, &EditorDocument::SelectionChanged, this, DropGizmoDrag);
+    connect(&Document, &EditorDocument::WorldReset,       this, DropGizmoDrag);
 }
 
 EngineCore::WindowHandle ViewportWidget::GetWindowHandle()
@@ -258,17 +259,17 @@ EngineCore::Size ViewportWidget::GetPixelSize() const
     return EngineCore::Size(int(std::lround(width() * Ratio)), int(std::lround(height() * Ratio)));
 }
 
-void ViewportWidget::StartRendering()
+ViewportWidget::~ViewportWidget()
 {
-    FrameClock.start();
-    FrameTimer.start();
+    /* While the native window still exists: its swapchain goes with it. */
+    Context.RemoveViewport(this);
 }
 
 // === Navigation commands =====================================================
 
 void ViewportWidget::FrameSelection()
 {
-    const GameCore::AABB Box = Context.GetEntityBounds(Context.GetSelection());
+    const GameCore::AABB Box = Document.GetEntityBounds(Document.GetSelection());
     if(!Box.IsEmpty())
     {
         Camera.Frame(Box);
@@ -277,7 +278,7 @@ void ViewportWidget::FrameSelection()
 
 void ViewportWidget::FrameAll()
 {
-    Camera.Frame(Context.GetSceneBounds());
+    Camera.Frame(Document.GetSceneBounds());
 }
 
 void ViewportWidget::ApplyPreset(const EditorCamera::EPreset InPreset)
@@ -297,7 +298,7 @@ void ViewportWidget::ApplySandboxView()
 
 EngineCore::Vector3 ViewportWidget::GetPivot() const
 {
-    const GameCore::AABB Box = Context.GetEntityBounds(Context.GetSelection());
+    const GameCore::AABB Box = Document.GetEntityBounds(Document.GetSelection());
     return Box.IsEmpty() ? Camera.GetFocusPoint() : Box.Center();
 }
 
@@ -309,21 +310,26 @@ void ViewportWidget::paintEvent(QPaintEvent* /*InEvent*/)
      * paint a surface it does not own. */
 }
 
-void ViewportWidget::OnFrame()
+bool ViewportWidget::PrepareFrame(const float InDeltaSeconds, const bool bInEditorView, Frame& OutFrame)
 {
-    const float DeltaSeconds = float(FrameClock.restart()) / 1000.0f;
+    if(!isVisible())
+    {
+        return false;
+    }
 
     /* Navigation and overlays belong to the editor's view; while playing
      * through the game's camera the viewport shows the game alone. */
-    if(Context.IsEditorViewActive())
+    if(bInEditorView)
     {
-        ApplyFlyInput(DeltaSeconds);
+        ApplyFlyInput(InDeltaSeconds);
         Gizmo.SetView(Camera, GetLogicalSize(), float(devicePixelRatioF()));
         QueueOverlay();
     }
 
-    const EngineCore::Size Pixels = GetPixelSize();
-    Context.RenderFrame(Camera.BuildView(Pixels), Pixels, GetWindowHandle());
+    OutFrame.Pixels = GetPixelSize();
+    OutFrame.View   = Camera.BuildView(OutFrame.Pixels);
+    OutFrame.Window = GetWindowHandle();
+    return true;
 }
 
 void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
@@ -354,25 +360,25 @@ void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
 
 void ViewportWidget::QueueOverlay()
 {
-    const GameCore::EntityID Selected = Context.GetSelection();
+    const GameCore::EntityID Selected = Document.GetSelection();
     const float Ratio = float(devicePixelRatioF());
 
     if(bShowAllBounds)
     {
-        struct Collect { EditorContext* Ctx; GameCore::EntityID Skip; float Thickness; } C{ &Context, Selected, AllBoundsThickness * Ratio };
-        Context.GetWorld().ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
+        struct Collect { EditorContext* Ctx; EditorDocument* Doc; GameCore::EntityID Skip; float Thickness; } C{ &Context, &Document, Selected, AllBoundsThickness * Ratio };
+        Document.GetWorld().ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
         {
             const auto& Data = *static_cast<const Collect*>(InUserData);
             if(InEntity != Data.Skip)
             {
-                Data.Ctx->DrawDebugBox(Data.Ctx->GetEntityBounds(InEntity), AllBoundsColor, Data.Thickness);
+                Data.Ctx->DrawDebugBox(Data.Doc->GetEntityBounds(InEntity), AllBoundsColor, Data.Thickness);
             }
         }, &C);
     }
 
     /* Where the game draws: each active camera's screen. The editor's own view
      * replaces the camera, so this is the only sign of what the game shows. */
-    Context.GetWorld().Each<RenderCore::CameraComponent>(
+    Document.GetWorld().Each<RenderCore::CameraComponent>(
         [this, Ratio](const GameCore::Entity& InEntity, RenderCore::CameraComponent& InCamera)
     {
         if(!InCamera.bActive)
@@ -386,7 +392,7 @@ void ViewportWidget::QueueOverlay()
     });
 
     /* Last, over the grey boxes; padded a few pixels so it frames the shape. */
-    const GameCore::AABB Box = Context.GetEntityBounds(Selected);
+    const GameCore::AABB Box = Document.GetEntityBounds(Selected);
     if(!Box.IsEmpty())
     {
         const double Depth = std::max(double((Box.Center() - Camera.Position).Dot(Camera.GetForward())), double(Camera.ZNear));
@@ -571,11 +577,11 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
             {
                 /* The whole drag is one undo entry. */
                 static const char* const Labels[4] = { "Edit", "Move", "Rotate", "Scale" };
-                Context.BeginEditGesture(QString::fromLatin1(Labels[int(Gizmo.GetMode())]));
+                Document.BeginEditGesture(QString::fromLatin1(Labels[int(Gizmo.GetMode())]));
 
                 Drag        = EDrag::Gizmo;
                 DragButton  = Qt::LeftButton;
-                GizmoEntity = Context.GetSelection();
+                GizmoEntity = Document.GetSelection();
                 GizmoHover  = Handle;
                 emit GizmoDragStatus(Gizmo.DescribeDrag());
                 return;
@@ -715,7 +721,7 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
         return;
     }
 
-    Context.SetSelection(Pick(Pos));
+    Document.SetSelection(Pick(Pos));
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* InEvent)
@@ -867,8 +873,8 @@ GameCore::TransformComponent* ViewportWidget::GetGizmoTarget() const
     {
         return nullptr;
     }
-    const GameCore::EntityID Target = Drag == EDrag::Gizmo ? GizmoEntity : Context.GetSelection();
-    GameCore::World& World = Context.GetWorld();
+    const GameCore::EntityID Target = Drag == EDrag::Gizmo ? GizmoEntity : Document.GetSelection();
+    GameCore::World& World = Document.GetWorld();
     if(!World.IsAlive(Target))
     {
         return nullptr;
@@ -878,7 +884,7 @@ GameCore::TransformComponent* ViewportWidget::GetGizmoTarget() const
 
 void ViewportWidget::ApplyGizmoPose(const GameCore::EntityID InEntity, const TransformGizmo::Pose& InPose)
 {
-    GameCore::World& World = Context.GetWorld();
+    GameCore::World& World = Document.GetWorld();
     if(!World.IsAlive(InEntity))
     {
         return;
@@ -897,7 +903,7 @@ void ViewportWidget::ApplyGizmoPose(const GameCore::EntityID InEntity, const Tra
      * bounds need a refit now, static or not, so the outline follows --
      * the children's too. */
     World.RefreshEntityBounds(InEntity);
-    Context.NotifyPropertyEdited(InEntity, GameCore::TransformComponent::StaticType().ID);
+    Document.NotifyPropertyEdited(InEntity, GameCore::TransformComponent::StaticType().ID);
 }
 
 void ViewportWidget::FinishGizmoDrag(const bool bInCancel)
@@ -912,7 +918,7 @@ void ViewportWidget::FinishGizmoDrag(const bool bInCancel)
     {
         ApplyGizmoPose(GizmoEntity, Gizmo.GetDragStart());
     }
-    Context.EndEditGesture();
+    Document.EndEditGesture();
     Gizmo.EndDrag();
     Drag        = EDrag::None;
     DragButton  = Qt::NoButton;
@@ -965,14 +971,14 @@ void ViewportWidget::dropEvent(QDropEvent* InEvent)
     }
     const EngineCore::Vector3 Spot = RayOrigin + RayDir * T;
 
-    const GameCore::EntityID Made = Context.CreateEntity(QFileInfo(Path).completeBaseName(), Spot,
+    const GameCore::EntityID Made = Document.CreateEntity(QFileInfo(Path).completeBaseName(), Spot,
                                                          [&Utf8](const GameCore::Entity& InEntity)
     {
         RenderCore::RenderComponent Render;
         std::memcpy(Render.Mesh, Utf8.constData(), size_t(Utf8.size()));
         InEntity.AddComponent(Render);
     });
-    Context.SetSelection(Made);
+    Document.SetSelection(Made);
 
     InEvent->acceptProposedAction();
     setFocus();
@@ -990,7 +996,7 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
 
     /* Ray vs each quad in its local space (inverse GetWorldMatrix, where it is
      * a Width x Height square at z = 0). t is preserved by the affine map. */
-    Context.GetWorld().Each<RenderCore::RenderComponent>(
+    Document.GetWorld().Each<RenderCore::RenderComponent>(
         [&](const GameCore::Entity& InEntity, RenderCore::RenderComponent& InRender)
     {
         if(!InRender.bVisible)

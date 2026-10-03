@@ -9,7 +9,7 @@
 
 #include "Public/GameCore/EntityID.h"
 
-class EditorContext;
+class EditorDocument;
 class QLabel;
 class QLineEdit;
 class QTreeWidget;
@@ -17,7 +17,7 @@ class QTreeWidgetItem;
 
 /*
  * The live entities as their hierarchy, with their components, selection
- * synced with EditorContext, rebuilt on EntitiesChanged. Dragging an entity
+ * synced with EditorDocument, rebuilt on EntitiesChanged. Dragging an entity
  * onto another parents it (keeping it where it is in the world); dropping it
  * between rows parents it to that row's parent, and onto empty space
  * detaches it. Right-click creates, parents or destroys.
@@ -27,12 +27,12 @@ class OutlinerPanel : public QWidget
     Q_OBJECT
 
 public:
-    explicit OutlinerPanel(EditorContext& InContext, QWidget* InParent = nullptr);
+    explicit OutlinerPanel(EditorDocument& InDocument, QWidget* InParent = nullptr);
 
 private:
     void Rebuild();
     void ApplyFilter();
-    void SyncSelectionFromContext(GameCore::EntityID InEntity);
+    void SyncSelectionFromDocument(GameCore::EntityID InEntity);
     void ShowContextMenu(const QPoint& InPos);
 
     /* A drop: InDragged under InParent (unset: detach). */
@@ -40,7 +40,7 @@ private:
 
     static GameCore::EntityID EntityOf(const QTreeWidgetItem* InItem);
 
-    EditorContext& Context;
+    EditorDocument& Document;
 
     QLineEdit*   Filter = nullptr;
     QTreeWidget* Tree   = nullptr;

@@ -25,7 +25,7 @@
 
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
-#include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
 #include "Private/Editor/PropertyWidgets.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -75,9 +75,9 @@ namespace
     }
 }
 
-DetailsPanel::DetailsPanel(EditorContext& InContext, QWidget* InParent)
+DetailsPanel::DetailsPanel(EditorDocument& InDocument, QWidget* InParent)
     : QWidget(InParent)
-    , Context(InContext)
+    , Document(InDocument)
 {
     auto* Layout = new QVBoxLayout(this);
     Layout->setContentsMargins(4, 4, 4, 4);
@@ -91,9 +91,9 @@ DetailsPanel::DetailsPanel(EditorContext& InContext, QWidget* InParent)
     Scroll->setFrameShape(QFrame::NoFrame);
     Layout->addWidget(Scroll, 1);
 
-    connect(&Context, &EditorContext::SelectionChanged, this, [this](EntityID) { Rebuild(); });
-    connect(&Context, &EditorContext::WorldReset,       this, [this]() { Rebuild(); });
-    connect(&Context, &EditorContext::EntitiesChanged,  this, [this]() { RebuildIfComponentsChanged(); });
+    connect(&Document, &EditorDocument::SelectionChanged, this, [this](EntityID) { Rebuild(); });
+    connect(&Document, &EditorDocument::WorldReset,       this, [this]() { Rebuild(); });
+    connect(&Document, &EditorDocument::EntitiesChanged,  this, [this]() { RebuildIfComponentsChanged(); });
 
     connect(&RefreshTimer, &QTimer::timeout, this, &DetailsPanel::RefreshValues);
     RefreshTimer.start(RefreshIntervalMs);
@@ -104,7 +104,7 @@ DetailsPanel::DetailsPanel(EditorContext& InContext, QWidget* InParent)
 std::vector<ComponentTypeID> DetailsPanel::CollectComponentTypes(const EntityID InEntity) const
 {
     std::vector<ComponentTypeID> Types;
-    GameCore::World& World = Context.GetWorld();
+    GameCore::World& World = Document.GetWorld();
     if(!World.IsAlive(InEntity))
     {
         return Types;
@@ -124,7 +124,7 @@ std::vector<ComponentTypeID> DetailsPanel::CollectComponentTypes(const EntityID 
 
 uint8_t* DetailsPanel::ResolveComponent(const ComponentTypeID InType) const
 {
-    GameCore::World& World = Context.GetWorld();
+    GameCore::World& World = Document.GetWorld();
     if(!World.IsAlive(ShownEntity))
     {
         return nullptr;
@@ -152,13 +152,13 @@ void DetailsPanel::UpdateHeader()
         return;
     }
     Header->setText(QStringLiteral("<b>%1</b> &nbsp;<span style='color:gray'>#%2 gen %3</span>")
-                    .arg(Context.GetDisplayName(ShownEntity).toHtmlEscaped())
+                    .arg(Document.GetDisplayName(ShownEntity).toHtmlEscaped())
                     .arg(ShownEntity.Index).arg(ShownEntity.Generation));
 }
 
 void DetailsPanel::RebuildIfComponentsChanged()
 {
-    if(ShownEntity != Context.GetSelection() || CollectComponentTypes(ShownEntity) != ShownTypes)
+    if(ShownEntity != Document.GetSelection() || CollectComponentTypes(ShownEntity) != ShownTypes)
     {
         Rebuild();
         return;
@@ -185,7 +185,7 @@ void DetailsPanel::QueueRebuild()
 void DetailsPanel::Rebuild()
 {
     /* Another entity's lists start from what it uses. */
-    if(Context.GetSelection() != ShownEntity)
+    if(Document.GetSelection() != ShownEntity)
     {
         ArrayShown.clear();
     }
@@ -198,7 +198,7 @@ void DetailsPanel::Rebuild()
     ScriptEdit   = nullptr;
     ScriptStatus = nullptr;
     CullCheck    = nullptr;
-    ShownEntity = Context.GetSelection();
+    ShownEntity = Document.GetSelection();
     ShownTypes  = CollectComponentTypes(ShownEntity);
 
     /* A fresh body each time: takeWidget/delete drops every old editor at once. */
@@ -253,7 +253,7 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
     {
         if(NameEdit)
         {
-            Context.RenameEntity(InEntity, NameEdit->text());
+            Document.RenameEntity(InEntity, NameEdit->text());
         }
     });
     Form->addRow(QStringLiteral("Name"), NameEdit);
@@ -284,7 +284,7 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
             RefreshEntitySection();
             return;
         }
-        Context.SetEntityScript(InEntity, Text);
+        Document.SetEntityScript(InEntity, Text);
     });
     ScriptEdit->installEventFilter(this);
     ScriptRow->addWidget(ScriptEdit, 1);
@@ -312,7 +312,7 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
     Clear->setAutoRaise(true);
     connect(Clear, &QToolButton::clicked, this, [this, InEntity]()
     {
-        Context.SetEntityScript(InEntity, QString());
+        Document.SetEntityScript(InEntity, QString());
         RefreshEntitySection();
     });
     ScriptRow->addWidget(Clear);
@@ -328,7 +328,7 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
                                          "active region. The script's class can override this."));
     connect(CullCheck, &QCheckBox::toggled, this, [this, InEntity](const bool bInChecked)
     {
-        Context.SetEntityScriptCull(InEntity, bInChecked);
+        Document.SetEntityScriptCull(InEntity, bInChecked);
     });
     Form->addRow(QString(), CullCheck);
 
@@ -341,7 +341,7 @@ void DetailsPanel::RefreshEntitySection()
     {
         return;
     }
-    GameCore::World& World = Context.GetWorld();
+    GameCore::World& World = Document.GetWorld();
     const GameCore::Entity E = World.GetEntity(ShownEntity);
 
     /* Not while the user is typing into it. */
@@ -448,7 +448,7 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     {
         /* The World's OnComponentRemoved then rebuilds this panel on the
          * next turn, not inside this click. */
-        Context.RemoveComponent(InEntity, InType);
+        Document.RemoveComponent(InEntity, InType);
     });
     HeaderRow->addWidget(Remove);
 
@@ -512,10 +512,10 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
     }
 
     /* Looked up fresh on every read and write -- see PropertyWidgets.h. */
-    EditorContext* Ctx = &Context;
-    auto Resolve = [Ctx, InEntity, InType]() -> uint8_t*
+    EditorDocument* Doc = &Document;
+    auto Resolve = [Doc, InEntity, InType]() -> uint8_t*
     {
-        GameCore::World& World = Ctx->GetWorld();
+        GameCore::World& World = Doc->GetWorld();
         if(!World.IsAlive(InEntity))
         {
             return nullptr;
@@ -576,9 +576,9 @@ QWidget* DetailsPanel::BuildComponentSection(const EntityID InEntity, const Comp
         FormFor(Entry)->addRow(InLabel, Field);
         Rows.push_back(Row);
 
-        connect(Editor, &PropertyEditor::Written, this, [Ctx, InEntity, InType]()
+        connect(Editor, &PropertyEditor::Written, this, [Doc, InEntity, InType]()
         {
-            Ctx->NotifyPropertyEdited(InEntity, InType);
+            Doc->NotifyPropertyEdited(InEntity, InType);
         });
     };
 
@@ -655,7 +655,7 @@ void DetailsPanel::UseScriptFile(const EntityID InEntity, const QString& InFile)
     {
         EditorContent::StageAsset(InFile);
     }
-    Context.SetEntityScript(InEntity, Runtime.isEmpty() ? InFile : Runtime);
+    Document.SetEntityScript(InEntity, Runtime.isEmpty() ? InFile : Runtime);
     RefreshEntitySection();
 }
 
@@ -704,7 +704,7 @@ void DetailsPanel::PopulateAddMenu(QMenu* InMenu)
 {
     InMenu->clear();
 
-    GameCore::World& World = Context.GetWorld();
+    GameCore::World& World = Document.GetWorld();
     if(!World.IsAlive(ShownEntity))
     {
         return;
@@ -725,7 +725,7 @@ void DetailsPanel::PopulateAddMenu(QMenu* InMenu)
         const EntityID Target = ShownEntity;
         connect(Action, &QAction::triggered, this, [this, Target, Type]()
         {
-            Context.AddComponent(Target, Type);
+            Document.AddComponent(Target, Type);
         });
     }
 
@@ -746,7 +746,7 @@ void DetailsPanel::ResetProperty(const PropertyRow& InRow)
 
     std::memcpy(Component + InRow.Entry.Offset, Section->Defaults->data() + InRow.Entry.Offset, InRow.Entry.Size);
     InRow.Editor->Refresh(true);
-    Context.NotifyPropertyEdited(ShownEntity, InRow.Type);
+    Document.NotifyPropertyEdited(ShownEntity, InRow.Type);
     RefreshValues();
 }
 
@@ -778,7 +778,7 @@ void DetailsPanel::RemoveArrayElement(const ComponentTypeID InType, const GameCo
     {
         --Shown;
     }
-    Context.NotifyPropertyEdited(ShownEntity, InType);
+    Document.NotifyPropertyEdited(ShownEntity, InType);
     QueueRebuild();
 }
 
@@ -800,7 +800,7 @@ void DetailsPanel::ResetComponent(const ComponentTypeID InType)
             Row.Editor->Refresh(true);
         }
     }
-    Context.NotifyPropertyEdited(ShownEntity, InType);
+    Document.NotifyPropertyEdited(ShownEntity, InType);
     RefreshValues();
 }
 
