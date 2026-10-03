@@ -89,9 +89,8 @@ void MetalDynamicGDI::Allocate()
         return;
     }
 
-    // The layer is adopted lazily on the first PresentToWindow (UI thread) -- the
-    // same deferral the Vulkan backend applies to surface creation.
-    Swapchain = new MTLSwapchain();
+    // Each window's layer is adopted lazily on its first present (UI thread) --
+    // the same deferral the Vulkan backend applies to surface creation.
 
     // Bind the global GDISync to the device so the renderer can fence on it.
     if(auto* Sync = dynamic_cast<MTLSync*>(GSync))
@@ -139,7 +138,8 @@ void MetalDynamicGDI::Destroy()
     if(ScreenMesh)  { ScreenMesh->Release();  delete ScreenMesh;  ScreenMesh  = nullptr; }
     if(NullTexture) { NullTexture->Release(); delete NullTexture; NullTexture = nullptr; }
 
-    if(Swapchain)      { Swapchain->Shutdown();      delete Swapchain;      Swapchain      = nullptr; }
+    for(auto& Entry : Swapchains) { Entry.second->Shutdown(); delete Entry.second; }
+    Swapchains.clear();
     if(PipelineCache)  { PipelineCache->Shutdown();  delete PipelineCache;  PipelineCache  = nullptr; }
     if(CommandManager) { CommandManager->Shutdown(); delete CommandManager; CommandManager = nullptr; }
 
@@ -175,7 +175,22 @@ void MetalDynamicGDI::WaitIdle()
 
 void MetalDynamicGDI::PresentToWindow(EngineCore::WindowHandle InWindow)
 {
-    if(!bInitialized || !Swapchain || !InWindow) return;
+    // The renderer always rebinds Main right before EndRendering, so the last
+    // bound RT is the main RT. Reading it from the UI thread is a benign stale
+    // read at worst -- and unlike Vulkan there is no layout to corrupt, because
+    // ordering against the render thread comes from both submitting to the same
+    // MTLCommandQueue (see the class comment).
+    PresentToSwapchain(InWindow, CurrentStateData ? CurrentStateData->ActiveRenderTarget : nullptr);
+}
+
+void MetalDynamicGDI::PresentRenderTargetToWindow(EngineCore::WindowHandle InWindow, GDIRenderTarget* InSource)
+{
+    PresentToSwapchain(InWindow, static_cast<MTLRenderTarget*>(InSource));
+}
+
+void MetalDynamicGDI::PresentToSwapchain(EngineCore::WindowHandle InWindow, MTLRenderTarget* InRT)
+{
+    if(!bInitialized || !InWindow.IsValid() || !InRT) return;
 
     // Skip while render targets are being resized -- they're mid-recreation on the
     // render thread. EndRendering clears this once a full frame has been rendered
@@ -185,6 +200,25 @@ void MetalDynamicGDI::PresentToWindow(EngineCore::WindowHandle InWindow)
     // Nothing committed yet: there is no frame to show.
     if(FramesCommitted.load() == 0) return;
 
+    if(MTLSwapchain* Swapchain = FindOrCreateSwapchain(InWindow))
+    {
+        Swapchain->PresentFrame(InRT);
+    }
+}
+
+MTLSwapchain* MetalDynamicGDI::FindOrCreateSwapchain(EngineCore::WindowHandle InWindow)
+{
+    MTLSwapchain* Swapchain = nullptr;
+    for(const auto& Entry : Swapchains)
+    {
+        if(Entry.first == InWindow.Native) { Swapchain = Entry.second; break; }
+    }
+    if(!Swapchain)
+    {
+        Swapchain = new MTLSwapchain();
+        Swapchains.emplace_back(InWindow.Native, Swapchain);
+    }
+
     if(!Swapchain->IsValid())
     {
         // Initialize() logs and latches unrecoverable failures itself, so this can
@@ -192,19 +226,24 @@ void MetalDynamicGDI::PresentToWindow(EngineCore::WindowHandle InWindow)
         // misconfigured one gives up after the first attempt.
         if(Swapchain->HasFailed() || !Swapchain->Initialize(DeviceObj, InWindow))
         {
+            return nullptr;
+        }
+    }
+    return Swapchain;
+}
+
+void MetalDynamicGDI::ReleaseWindow(EngineCore::WindowHandle InWindow)
+{
+    for(auto It = Swapchains.begin(); It != Swapchains.end(); ++It)
+    {
+        if(It->first == InWindow.Native)
+        {
+            It->second->Shutdown();
+            delete It->second;
+            Swapchains.erase(It);
             return;
         }
     }
-
-    // The renderer always rebinds Main right before EndRendering, so the last
-    // bound RT is the main RT. Reading it from the UI thread is a benign stale
-    // read at worst -- and unlike Vulkan there is no layout to corrupt, because
-    // ordering against the render thread comes from both submitting to the same
-    // MTLCommandQueue (see the class comment).
-    MTLRenderTarget* MainRT = CurrentStateData ? CurrentStateData->ActiveRenderTarget : nullptr;
-    if(!MainRT) return;
-
-    Swapchain->PresentFrame(MainRT);
 }
 
 // ===========================================================================

@@ -3,6 +3,8 @@
 
 #include <atomic>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 
 #include "Public/GDI/GDI.h"
@@ -160,6 +162,8 @@ public:
     /** Metal present path: the UI thread blits the offscreen Main RT into the
      *  window's CAMetalLayer drawable. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
+    void PresentRenderTargetToWindow(EngineCore::WindowHandle InWindow, GDIRenderTarget* InSource) override;
+    void ReleaseWindow(EngineCore::WindowHandle InWindow) override;
 
     /**
      * Commit all commands recorded so far this frame and block until the GPU
@@ -211,10 +215,16 @@ public:
 
     MTLDevice*          GetDeviceObj()      const { return DeviceObj; }
     MTLCommandManager* GetCommandManager() const { return CommandManager; }
-    MTLSwapchain*       GetSwapchain()      const { return Swapchain; }
     MTLPipelineCache*   GetPipelineCache()  const { return PipelineCache; }
 
 private:
+    /** InWindow's swapchain, created on first use and initialized until that
+     *  works or fails for good (MTLSwapchain::HasFailed); null meanwhile. UI thread. */
+    MTLSwapchain* FindOrCreateSwapchain(EngineCore::WindowHandle InWindow);
+
+    /** Presents InRT through InWindow's swapchain. UI thread. */
+    void PresentToSwapchain(EngineCore::WindowHandle InWindow, MTLRenderTarget* InRT);
+
     /** Close the open render command encoder, if any. */
     void EndActiveEncoder();
 
@@ -233,7 +243,9 @@ private:
     // nothing else reads.
     MTLDevice*            DeviceObj        = nullptr;
     MTLCommandManager*    CommandManager   = nullptr;
-    MTLSwapchain*         Swapchain        = nullptr;
+    /** One per presented window, keyed by its native handle. UI thread only
+     *  (and Destroy, once the UI thread no longer presents). */
+    std::vector<std::pair<void*, MTLSwapchain*>> Swapchains;
     MTLPipelineCache*     PipelineCache    = nullptr;
     MTLCurrentStateData* CurrentStateData = nullptr;
 
