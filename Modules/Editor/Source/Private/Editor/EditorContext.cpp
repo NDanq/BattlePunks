@@ -568,6 +568,11 @@ NimbleEngine::InputState* EditorContext::GetPlayFallbackInput()
     return Play && !PlayInput && !bPlayViewEjected ? &Play->GetInputRouter().GetPending() : nullptr;
 }
 
+bool EditorContext::IsPlayMouseHeldByViewport() const
+{
+    return Play && !PlayInput && !bPlayViewEjected && Play->WantsViewportMouseHold();
+}
+
 void EditorContext::SetPlayViewEjected(const bool bInEjected)
 {
     const bool bEjected = Play && bInEjected;

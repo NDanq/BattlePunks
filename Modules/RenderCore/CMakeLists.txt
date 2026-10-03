@@ -59,6 +59,11 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/CameraComponent.cpp
         Source/Private/RenderCore/Components/DirectionalLightComponent.cpp
         Source/Private/RenderCore/Components/SkyLightComponent.cpp
+        Source/Private/RenderCore/Components/PointLightComponent.cpp
+        Source/Private/RenderCore/Components/SpotLightComponent.cpp
+        Source/Private/RenderCore/ShadowSetup.h
+        Source/Private/RenderCore/ShadowSetup.cpp
+        Source/Private/RenderCore/ShadowSettings.cpp
         Source/Private/RenderCore/Components/PostProcessComponent.cpp
         Source/Private/RenderCore/AssetFileCommon.h
         Source/Private/RenderCore/MeshAsset.cpp
@@ -86,6 +91,9 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/Components/CameraComponent.h
         Source/Public/RenderCore/Components/DirectionalLightComponent.h
         Source/Public/RenderCore/Components/SkyLightComponent.h
+        Source/Public/RenderCore/Components/PointLightComponent.h
+        Source/Public/RenderCore/Components/SpotLightComponent.h
+        Source/Public/RenderCore/Components/LightShadow.h
         Source/Public/RenderCore/Components/PostProcessComponent.h
         Source/Public/RenderCore/Renderer.h
         Source/Public/RenderCore/MaterialDescription.h

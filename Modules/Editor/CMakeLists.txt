@@ -39,6 +39,10 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/ViewportWidget.cpp
         Source/Private/Editor/TransformGizmo.cpp
         Source/Private/Editor/OutlinerPanel.cpp
+        Source/Private/Editor/EditorLights.cpp
+        Source/Private/Editor/EditorLights.h
+        Source/Private/Editor/EditorPrimitives.cpp
+        Source/Private/Editor/EditorPrimitives.h
         Source/Private/Editor/DetailsPanel.cpp
         Source/Private/Editor/PropertyWidgets.cpp
         Source/Private/Editor/PropertyWidgets.h

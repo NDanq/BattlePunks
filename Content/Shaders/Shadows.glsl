@@ -1,0 +1,103 @@
+// Shadows.glsl -- the shadow maps' lookups (RenderCore/RENDERPIPELINE.md's
+// "Shadows"), included by Lighting.glsl where LIGHTING_SHADOWS is defined.
+// The includer declares the two atlases first:
+//
+//   ShadowDirectional   the sun's: one view, or 1-4 cascades in 2x2 quarters
+//   ShadowLocal         point and spot lights' views, 6 x 4 tiles
+//
+// Each holds window depth (0 near, 1 far) and is point-sampled; the
+// comparison and its filter (Scene_ShadowParams.y texels each way) are here.
+// Each matrix takes a world position to (u, v, depth) * w in its atlas, its
+// tile included; a filter tap never leaves the tile it started in.
+
+// Receiver bias. Depth: InBias, more the more the light grazes (slope-scaled).
+// Normal: along the surface normal, at least a texel and a half of the shadow
+// map where InWorld is (InTexelWorld), so a grazing face does not shadow itself.
+float SlopeBias(float InBias, float InNdotL)
+{
+    float Tangent = sqrt(max(1.0 - InNdotL * InNdotL, 0.0)) / max(InNdotL, 0.05);
+    return InBias * (1.0 + min(Tangent, 10.0));
+}
+
+vec3 NormalOffset(vec3 InNormal, float InNdotL, float InNormalBias, float InTexelWorld)
+{
+    return InNormal * max(InNormalBias, 1.5 * InTexelWorld) * (1.0 + (1.0 - InNdotL));
+}
+
+// How lit InWorld is in the tile InTileTexels wide that InMatrix projects it
+// into: 1 lit, 0 in shadow. Outside the view, lit.
+float SampleShadowAtlas(sampler2D InAtlas, mat4 InMatrix, vec3 InWorld, float InBias, int InTileTexels)
+{
+    vec4 Clip = InMatrix * vec4(InWorld, 1.0);
+    if(Clip.w <= 0.0) { return 1.0; }
+    vec3 Atlas = Clip.xyz / Clip.w;
+    if(Atlas.z >= 1.0 || Atlas.z <= 0.0) { return 1.0; }
+
+    float Size    = Scene_ShadowParams.w;
+    ivec2 Texel   = ivec2(floor(Atlas.xy * Size));
+    ivec2 TileMin = (Texel / InTileTexels) * InTileTexels;
+    ivec2 TileMax = TileMin + ivec2(InTileTexels - 1);
+    float Depth   = Atlas.z - InBias;
+
+    int   Radius = int(Scene_ShadowParams.y);
+    float Lit    = 0.0;
+    float Taps   = 0.0;
+    for(int Y = -Radius; Y <= Radius; ++Y)
+    {
+        for(int X = -Radius; X <= Radius; ++X)
+        {
+            ivec2 Tap = clamp(Texel + ivec2(X, Y), TileMin, TileMax);
+            Lit  += Depth <= texelFetch(InAtlas, Tap, 0).r ? 1.0 : 0.0;
+            Taps += 1.0;
+        }
+    }
+    return Lit / Taps;
+}
+
+// The sun's shadow at InWorld: its cascade by view depth, faded out over the
+// last tenth of its reach.
+float DirectionalShadow(vec3 InWorld, vec3 InNormal, vec3 InToLight)
+{
+    int Count = int(Scene_LightShadow.y);
+    if(Count <= 0) { return 1.0; }
+    float ViewDepth = dot(InWorld, Scene_CameraForward.xyz) - Scene_CameraForward.w;
+    float Last      = Scene_CascadeSplits[Count - 1];
+    if(ViewDepth >= Last) { return 1.0; }
+
+    int Cascade = 0;
+    for(int Index = 0; Index < Count - 1; ++Index)
+    {
+        if(ViewDepth >= Scene_CascadeSplits[Index]) { Cascade = Index + 1; }
+    }
+
+    float NdotL  = clamp(dot(InNormal, InToLight), 0.0, 1.0);
+    vec3  Offset = NormalOffset(InNormal, NdotL, Scene_LightShadow.w, Scene_CascadeTexels[Cascade]);
+    int   Tile   = Count == 1 ? int(Scene_ShadowParams.w) : int(Scene_ShadowParams.w) / 2;
+    float Lit    = SampleShadowAtlas(ShadowDirectional, Scene_CascadeMatrices[Cascade], InWorld + Offset,
+                                     SlopeBias(Scene_LightShadow.z, NdotL), Tile);
+    return mix(Lit, 1.0, smoothstep(Last * 0.9, Last, ViewDepth));
+}
+
+// A point or spot light's shadow at InWorld. InFirst is its first matrix in
+// Scene_LocalShadowMatrices; a point light's face is the major axis away from it.
+float LocalShadow(int InFirst, bool bInSpot, float InCosOuter, vec3 InLightPosition, vec3 InWorld, vec3 InNormal,
+                  vec3 InToLight, float InBias, float InNormalBias)
+{
+    int Matrix = InFirst;
+    if(!bInSpot)
+    {
+        vec3 Away = InWorld - InLightPosition;
+        vec3 Size = abs(Away);
+        if(Size.x >= Size.y && Size.x >= Size.z) { Matrix += Away.x > 0.0 ? 0 : 1; }
+        else if(Size.y >= Size.z)                { Matrix += Away.y > 0.0 ? 2 : 3; }
+        else                                     { Matrix += Away.z > 0.0 ? 4 : 5; }
+    }
+
+    // A texel at this distance: the view is 2 * tan(half its angle) wide there.
+    int   Tile      = int(Scene_ShadowParams.w) / 6;
+    float TanHalf   = bInSpot ? sqrt(max(1.0 - InCosOuter * InCosOuter, 0.0)) / max(InCosOuter, 0.05) : 1.0;
+    float Texel     = 2.0 * length(InWorld - InLightPosition) * TanHalf / float(Tile);
+    float NdotL     = clamp(dot(InNormal, InToLight), 0.0, 1.0);
+    vec3  Offset    = NormalOffset(InNormal, NdotL, InNormalBias, Texel);
+    return SampleShadowAtlas(ShadowLocal, Scene_LocalShadowMatrices[Matrix], InWorld + Offset, SlopeBias(InBias, NdotL), Tile);
+}

@@ -9,6 +9,7 @@
 
 #include <cstring>
 
+#include <QCursor>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileInfo>
@@ -62,6 +63,7 @@ namespace
     constexpr double            GameScreenHeight = 720.0;
     const EngineCore::Color     GameScreenColor(90, 150, 230);
     constexpr float             GameScreenThickness = 1.5f;
+    constexpr double            GameFrustumDepth    = 200.0;   // how far a perspective camera's frustum is drawn
 
     /* The axis gizmo: bottom-left, a fixed size on screen. */
     constexpr double GizmoMarginPixels = 60.0;    // from the left and bottom edges to its origin
@@ -72,6 +74,31 @@ namespace
                                                    EngineCore::Color(90, 200, 80),
                                                    EngineCore::Color(70, 130, 240) };
     const EngineCore::Color GizmoNegativeColor(100, 104, 116);
+
+    /* Light gizmos: rings of LightRingSegments; the sun's arrow a fixed size
+     * on screen; an unselected light's drawn at LightDimFactor of its colour. */
+    constexpr int    LightRingSegments    = 48;
+    constexpr float  LightThickness       = 1.5f;
+    constexpr float  LightSelectedThickness = 2.0f;
+    constexpr double LightDimFactor       = 0.45;
+    constexpr double SunArrowPixels       = 70.0;
+    constexpr double LightPickPixels      = 12.0;
+
+    /* InColor scaled toward black, never so dark it vanishes on the clear. */
+    EngineCore::Color GizmoColor(const EngineCore::Color InColor, const bool bInSelected)
+    {
+        const double Scale = bInSelected ? 1.0 : LightDimFactor;
+        const auto Channel = [Scale](const uint8_t InValue) { return uint8_t(std::clamp(40.0 + double(InValue) * Scale * 0.85, 0.0, 255.0)); };
+        return EngineCore::Color(Channel(InColor.R), Channel(InColor.G), Channel(InColor.B));
+    }
+
+    /* Two unit vectors perpendicular to InAxis and each other. */
+    void Perpendiculars(const EngineCore::Vector3& InAxis, EngineCore::Vector3& OutU, EngineCore::Vector3& OutV)
+    {
+        const EngineCore::Vector3 Helper = std::abs(InAxis.GetY()) < 0.9 ? EngineCore::Vector3(0.0, 1.0, 0.0) : EngineCore::Vector3(1.0, 0.0, 0.0);
+        OutU = (InAxis ^ Helper).GetNormalize();
+        OutV = (InAxis ^ OutU).GetNormalize();
+    }
 
     /* AABB::Fattened, except an axis with no extent stays flat -- padding a
      * quad's box in depth would outline it twice, front and back. */
@@ -297,6 +324,35 @@ void ViewportWidget::ApplySandboxView()
     Camera.Frame(GameScreen);
 }
 
+void ViewportWidget::ApplyGameCameraView()
+{
+    bool bFound = false;
+    Document.GetWorld().Each<RenderCore::CameraComponent>(
+        [this, &bFound](const GameCore::Entity& InEntity, RenderCore::CameraComponent& InCamera)
+    {
+        if(bFound || !InCamera.bActive)
+        {
+            return;
+        }
+        bFound = true;
+        if(InCamera.Projection != RenderCore::CP_Perspective)
+        {
+            ApplySandboxView();
+            return;
+        }
+        /* The editor camera's yaw and pitch are the Transform's Y and X:
+         * both aim (sin Y cos P, -sin P, cos Y cos P). */
+        const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+        Camera.Position = Pose.Position;
+        Camera.Pitch    = std::clamp(float(Pose.Rotation.GetX()), -89.0f, 89.0f);
+        Camera.Yaw      = float(Pose.Rotation.GetY());
+    });
+    if(!bFound)
+    {
+        FrameAll();
+    }
+}
+
 EngineCore::Vector3 ViewportWidget::GetPivot() const
 {
     const GameCore::AABB Box = Document.GetEntityBounds(Document.GetSelection());
@@ -313,6 +369,7 @@ void ViewportWidget::paintEvent(QPaintEvent* /*InEvent*/)
 
 bool ViewportWidget::PrepareFrame(const float InDeltaSeconds, const bool bInEditorView, Frame& OutFrame)
 {
+    UpdateMouseHold();
     if(!isVisible())
     {
         return false;
@@ -331,6 +388,35 @@ bool ViewportWidget::PrepareFrame(const float InDeltaSeconds, const bool bInEdit
     OutFrame.View   = Camera.BuildView(OutFrame.Pixels);
     OutFrame.Window = GetWindowHandle();
     return true;
+}
+
+void ViewportWidget::UpdateMouseHold()
+{
+    const bool bWant = isVisible() && hasFocus() && window()->isActiveWindow() && Context.IsPlayMouseHeldByViewport();
+    if(bWant == bHoldingMouse)
+    {
+        return;
+    }
+    if(!bWant)
+    {
+        ReleaseMouseHold();
+        return;
+    }
+    bHoldingMouse = true;
+    setCursor(Qt::BlankCursor);
+    grabMouse();
+    QCursor::setPos(mapToGlobal(rect().center()));
+}
+
+void ViewportWidget::ReleaseMouseHold()
+{
+    if(!bHoldingMouse)
+    {
+        return;
+    }
+    bHoldingMouse = false;
+    releaseMouse();
+    unsetCursor();
 }
 
 void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
@@ -377,8 +463,9 @@ void ViewportWidget::QueueOverlay()
         }, &C);
     }
 
-    /* Where the game draws: each active camera's screen. The editor's own view
-     * replaces the camera, so this is the only sign of what the game shows. */
+    /* Where the game draws: each active camera's screen (orthographic) or
+     * frustum (perspective). The editor's own view replaces the camera, so this
+     * is the only sign of what the game shows. */
     Document.GetWorld().Each<RenderCore::CameraComponent>(
         [this, Ratio](const GameCore::Entity& InEntity, RenderCore::CameraComponent& InCamera)
     {
@@ -386,7 +473,38 @@ void ViewportWidget::QueueOverlay()
         {
             return;
         }
-        const EngineCore::Vector3 Origin = InEntity.GetWorldPose().Position;
+        const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+        const EngineCore::Vector3 Origin = Pose.Position;
+        if(InCamera.Projection == RenderCore::CP_Perspective)
+        {
+            /* A perspective camera: its frustum, a short way out, at the game's aspect. */
+            const EngineCore::Vector3 Forward = RenderCore::LightForward(Pose.Rotation);
+            const EngineCore::Vector3 Right   = (EngineCore::Vector3(0.0, 1.0, 0.0) ^ Forward).GetNormalize();
+            const EngineCore::Vector3 Up      = (Forward ^ Right) * -1.0;
+            const double Depth = std::min(double(InCamera.ZFar), GameFrustumDepth);
+            const double HalfY = Depth * std::tan(double(std::clamp(InCamera.FovY, 1.0f, 170.0f)) * 0.5 * 3.14159265358979 / 180.0);
+            const double HalfX = HalfY * GameScreenWidth / GameScreenHeight;
+            EngineCore::Vector3 Corners[4];
+            for(int Corner = 0; Corner < 4; ++Corner)
+            {
+                Corners[Corner] = Origin + Forward * Depth + Right * ((Corner & 1) ? HalfX : -HalfX)
+                                + Up * ((Corner & 2) ? HalfY : -HalfY);
+            }
+            const int Rim[4] = { 0, 1, 3, 2 };
+            for(int Edge = 0; Edge < 4; ++Edge)
+            {
+                RenderCore::DebugLine Line;
+                Line.Color           = GameScreenColor;
+                Line.ThicknessPixels = GameScreenThickness * Ratio;
+                Line.Start = Origin;
+                Line.End   = Corners[Edge];
+                Context.DrawDebugLine(Line);
+                Line.Start = Corners[Rim[Edge]];
+                Line.End   = Corners[Rim[(Edge + 1) % 4]];
+                Context.DrawDebugLine(Line);
+            }
+            return;
+        }
         const GameCore::AABB Screen(EngineCore::Vector3(Origin.GetX(), Origin.GetY(), 0.0),
                                     EngineCore::Vector3(Origin.GetX() + GameScreenWidth, Origin.GetY() + GameScreenHeight, 0.0));
         Context.DrawDebugBox(Screen, GameScreenColor, GameScreenThickness * Ratio);
@@ -401,12 +519,134 @@ void ViewportWidget::QueueOverlay()
         Context.DrawDebugBox(PadNonFlat(Box, Pad), SelectionColor, SelectionThickness * Ratio);
     }
 
+    QueueLightGizmos();
+
     if(const GameCore::TransformComponent* Target = GetGizmoTarget())
     {
         Gizmo.Queue(Context, PoseOf(*Target), GizmoHover);
     }
 
     QueueAxisGizmo();
+}
+
+void ViewportWidget::QueueLightGizmos()
+{
+    const GameCore::EntityID Selected = Document.GetSelection();
+    const float Ratio = float(devicePixelRatioF());
+
+    const auto Segment = [this](const EngineCore::Vector3& InA, const EngineCore::Vector3& InB,
+                                const EngineCore::Color InColor, const float InThickness)
+    {
+        RenderCore::DebugLine Line;
+        Line.Start           = InA;
+        Line.End             = InB;
+        Line.Color           = InColor;
+        Line.ThicknessPixels = InThickness;
+        Context.DrawDebugLine(Line);
+    };
+    /* A circle about InCentre in the plane of InU and InV. */
+    const auto Ring = [&Segment](const EngineCore::Vector3& InCentre, const EngineCore::Vector3& InU, const EngineCore::Vector3& InV,
+                                 const double InRadius, const EngineCore::Color InColor, const float InThickness)
+    {
+        EngineCore::Vector3 Previous = InCentre + InU * InRadius;
+        for(int Step = 1; Step <= LightRingSegments; ++Step)
+        {
+            const double Angle = 2.0 * 3.14159265358979 * double(Step) / double(LightRingSegments);
+            const EngineCore::Vector3 Point = InCentre + (InU * std::cos(Angle) + InV * std::sin(Angle)) * InRadius;
+            Segment(Previous, Point, InColor, InThickness);
+            Previous = Point;
+        }
+    };
+    /* Which lights draw, and how. */
+    const auto Style = [&](const GameCore::Entity& InEntity, const EngineCore::Color InLight, EngineCore::Color& OutColor, float& OutThickness)
+    {
+        const bool bSelected = InEntity.GetID() == Selected;
+        if(!bSelected && !bShowLightGizmos)
+        {
+            return false;
+        }
+        OutColor     = GizmoColor(InLight, bSelected);
+        OutThickness = (bSelected ? LightSelectedThickness : LightThickness) * Ratio;
+        return true;
+    };
+
+    GameCore::World& World = Document.GetWorld();
+
+    /* Point: three great circles at Radius. */
+    World.Each<RenderCore::PointLightComponent>(
+        [&](const GameCore::Entity& InEntity, RenderCore::PointLightComponent& InLight)
+    {
+        EngineCore::Color Color;
+        float Thickness = 0.0f;
+        if(!Style(InEntity, InLight.Color, Color, Thickness)) { return; }
+        const EngineCore::Vector3 Centre = InEntity.GetWorldPose().Position;
+        const double Radius = std::max(double(InLight.Radius), 0.0);
+        const EngineCore::Vector3 X(1.0, 0.0, 0.0), Y(0.0, 1.0, 0.0), Z(0.0, 0.0, 1.0);
+        Ring(Centre, X, Y, Radius, Color, Thickness);
+        Ring(Centre, X, Z, Radius, Color, Thickness);
+        Ring(Centre, Y, Z, Radius, Color, Thickness);
+    });
+
+    /* Spot: the outer cone to Range (its rim and four edges), the inner rim dimmer. */
+    World.Each<RenderCore::SpotLightComponent>(
+        [&](const GameCore::Entity& InEntity, RenderCore::SpotLightComponent& InLight)
+    {
+        EngineCore::Color Color;
+        float Thickness = 0.0f;
+        if(!Style(InEntity, InLight.Color, Color, Thickness)) { return; }
+        const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+        const EngineCore::Vector3 Apex    = Pose.Position;
+        const EngineCore::Vector3 Forward = RenderCore::LightForward(Pose.Rotation);
+        EngineCore::Vector3 U, V;
+        Perpendiculars(Forward, U, V);
+
+        const double Degrees = 3.14159265358979 / 180.0;
+        const double Range   = std::max(double(InLight.Range), 0.0);
+        const double Outer   = std::clamp(double(InLight.OuterConeAngle), 0.5, 89.0) * Degrees;
+        const double Inner   = std::clamp(double(InLight.InnerConeAngle), 0.0, std::clamp(double(InLight.OuterConeAngle), 0.5, 89.0)) * Degrees;
+
+        /* The rim where the cone meets the sphere of Range. */
+        const EngineCore::Vector3 OuterCentre = Apex + Forward * (Range * std::cos(Outer));
+        const double              OuterRadius = Range * std::sin(Outer);
+        Ring(OuterCentre, U, V, OuterRadius, Color, Thickness);
+        for(const EngineCore::Vector3& Side : { U, V, U * -1.0, V * -1.0 })
+        {
+            Segment(Apex, OuterCentre + Side * OuterRadius, Color, Thickness);
+        }
+        if(Inner > 0.0)
+        {
+            Ring(Apex + Forward * (Range * std::cos(Inner)), U, V, Range * std::sin(Inner), GizmoColor(InLight.Color, false), Thickness * 0.75f);
+        }
+    });
+
+    /* Directional: an arrow from the entity along the way it shines, a fixed size on screen. */
+    World.Each<RenderCore::DirectionalLightComponent>(
+        [&](const GameCore::Entity& InEntity, RenderCore::DirectionalLightComponent& InLight)
+    {
+        EngineCore::Color Color;
+        float Thickness = 0.0f;
+        if(!Style(InEntity, InLight.Color, Color, Thickness)) { return; }
+        const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+        const EngineCore::Vector3 Origin  = Pose.Position;
+        const EngineCore::Vector3 Forward = RenderCore::LightForward(Pose.Rotation);
+        const double Depth  = std::max(double((Origin - Camera.Position).Dot(Camera.GetForward())), double(Camera.ZNear));
+        const double Length = SunArrowPixels * Camera.GetWorldPerPixel(Depth, height());
+        EngineCore::Vector3 U, V;
+        Perpendiculars(Forward, U, V);
+
+        /* Three parallel shafts, as rays, then a head on the middle one. */
+        const EngineCore::Vector3 Tip = Origin + Forward * Length;
+        Segment(Origin, Tip, Color, Thickness * 1.5f);
+        for(const EngineCore::Vector3& Side : { U, U * -1.0 })
+        {
+            const EngineCore::Vector3 Start = Origin + Side * (Length * 0.25);
+            Segment(Start, Start + Forward * (Length * 0.7), Color, Thickness);
+        }
+        for(const EngineCore::Vector3& Side : { U, V, U * -1.0, V * -1.0 })
+        {
+            Segment(Tip, Tip - Forward * (Length * 0.22) + Side * (Length * 0.1), Color, Thickness * 1.5f);
+        }
+    });
 }
 
 void ViewportWidget::GetGizmoFrame(EngineCore::Vector3& OutOrigin, double& OutAxisLength) const
@@ -606,7 +846,22 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
     {
         /* Physical pixels, as SDL reports them. */
         const double Ratio = devicePixelRatioF();
-        const QPoint At    = (InEvent->position() * Ratio).toPoint();
+        if(bHoldingMouse)
+        {
+            /* Held: each move is its distance from the centre, and the cursor
+             * goes back there -- whose own move event reads as no distance. */
+            const QPoint Centre = rect().center();
+            const QPoint Moved  = InEvent->position().toPoint() - Centre;
+            if(!Moved.isNull())
+            {
+                const QPoint At = (QPointF(Centre) * Ratio).toPoint();
+                Game->MoveMouse(At.x(), At.y(), int(std::lround(Moved.x() * Ratio)), int(std::lround(Moved.y() * Ratio)));
+                FallbackMousePos = At;
+                QCursor::setPos(mapToGlobal(Centre));
+            }
+            return;
+        }
+        const QPoint At = (InEvent->position() * Ratio).toPoint();
         Game->MoveMouse(At.x(), At.y(), At.x() - FallbackMousePos.x(), At.y() - FallbackMousePos.y());
         FallbackMousePos = At;
     }
@@ -819,6 +1074,7 @@ void ViewportWidget::focusOutEvent(QFocusEvent* InEvent)
     }
     Drag       = EDrag::None;
     DragButton = Qt::NoButton;
+    ReleaseMouseHold();   // the cursor is the user's again; a click takes it back
     QWidget::focusOutEvent(InEvent);
 }
 
@@ -1085,7 +1341,33 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
         }
     });
 
-    return Best;
+    /* A light has no shape to hit: its position, within a few pixels, unless
+     * a mesh is nearer the camera. */
+    const double PickX = InLogicalPos.x(), PickY = InLogicalPos.y();
+    double BestPixels = LightPickPixels;
+    GameCore::EntityID BestLight;
+    const auto TryLight = [&](const GameCore::Entity& InEntity)
+    {
+        const EngineCore::Vector3 Position = InEntity.GetWorldPose().Position;
+        double X = 0.0, Y = 0.0;
+        if(!Camera.WorldToScreen(Position, GetLogicalSize(), X, Y))
+        {
+            return;
+        }
+        const double Pixels = std::hypot(X - PickX, Y - PickY);
+        const double T      = (Position - RayOrigin).Dot(RayDir);
+        if(Pixels <= BestPixels && T > 0.0 && T < BestT)
+        {
+            BestPixels = Pixels;
+            BestLight  = InEntity.GetID();
+        }
+    };
+    GameCore::World& World = Document.GetWorld();
+    World.Each<RenderCore::PointLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::PointLightComponent&) { TryLight(InEntity); });
+    World.Each<RenderCore::SpotLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::SpotLightComponent&) { TryLight(InEntity); });
+    World.Each<RenderCore::DirectionalLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::DirectionalLightComponent&) { TryLight(InEntity); });
+    World.Each<RenderCore::SkyLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::SkyLightComponent&) { TryLight(InEntity); });
+    return BestLight.IsSet() ? BestLight : Best;
 }
 
 #endif // WITH_EDITOR

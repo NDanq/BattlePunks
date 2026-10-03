@@ -4,24 +4,37 @@
 #include <cstdint>
 
 #include "Public/Core/CoreTypes.h"
-#include "Public/Math/Vector.h"
 #include "Public/GameCore/ComponentType.h"
+#include "Public/RenderCore/Components/LightShadow.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 
 namespace RenderCore
 {
     /* "Directional Light". The scene's sun: the first active one WorldBridge
-     * finds lights every Lit material (RenderLighting.h). Direction is the
-     * way light travels, world space; +Y is down. Without one the scene keeps
-     * the default light -- from above, as Mesh.fsh always was. */
+     * finds lights the scene. It travels along its entity's forward (+Z
+     * turned by the Transform's Rotation; LightForward), so a light with no
+     * Transform shines along +Z. Its position only places the editor's
+     * gizmo. */
     struct RENDERCORE_API DirectionalLightComponent
     {
         GAMECORE_COMPONENT_BODY()
 
-        EngineCore::Vector3 Direction{ 0.35, 1.0, 0.55 };
         EngineCore::Color   Color{ 255, 255, 255 };
         float               Intensity = 3.0f;
         uint8_t             bActive   = 1;
+
+        /* Shadows (LightShadow.h). */
+        uint8_t             bCastShadows       = 1;
+        uint8_t             ShadowTechnique    = LST_Cascaded;
+        EngineCore::Color   ShadowTint{ 40, 50, 80 };
+        float               ShadowBias         = 0.0015f;   // depth, 0..1 of the shadow's range
+        float               ShadowNormalBias   = 2.0f;      // world units, along the receiver's normal
+
+        /* How far from the eye the shadow reaches, and Cascaded's split:
+         * CascadeCount (1-4) slices blended uniform (0) to logarithmic (1). */
+        float               ShadowDistance     = 4000.0f;
+        int32_t             CascadeCount       = 4;
+        float               CascadeSplitLambda = 0.75f;
     };
 }
 

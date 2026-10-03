@@ -5,6 +5,7 @@
 #include <string>
 
 #include "Public/Core/CoreTypes.h"
+#include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderPipeline.h"
@@ -88,6 +89,15 @@ namespace RenderCore
         bool DrawMesh(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
                       const char* InMaterial);
 
+        /*
+         * A shadow caster: InMeshPath's Opaque and Masked sections (by the
+         * same slot rules as DrawMesh) into the shadow view RenderScene is
+         * gathering casters for (RenderProxy::DrawShadow). Draws nothing,
+         * returning false, outside that, or if the mesh cannot be loaded.
+         */
+        bool DrawMeshShadow(const RenderTransform& InTransform, const char* InMeshPath,
+                            const char* const* InSlots, uint32_t InSlotCount);
+
         /* How far InMaterial's World Position Offset reaches (its Max Offset),
          * for a proxy to pad its culling bounds; 0 without one, or if it
          * cannot load. Loads it if need be -- warning as a draw of it would,
@@ -143,6 +153,14 @@ namespace RenderCore
          * clearing to InClearColor. Leaves the final colour target bound --
          * what the present shows. */
         void BeginSceneDraws();
+
+        /* RenderScene::Render's, after BeginSceneDraws: the frame's shadow
+         * views from the view and lighting (none if [Shadows] is off or no
+         * light casts). For each, RenderScene sets it as the caster view and
+         * calls DrawShadow on every proxy within its bounds; -1 ends that. */
+        uint32_t              PrepareShadows();
+        const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
+        void                  SetShadowCasterView(int32_t InView);
         void RenderSceneStages(SceneTargets& InTargets, EngineCore::Color InClearColor);
 
         /* Both DrawMesh overloads: bInEvery puts InSlots[0] in every slot. */

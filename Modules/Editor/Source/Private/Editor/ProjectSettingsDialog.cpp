@@ -68,8 +68,12 @@ namespace
         { "Null (draws nothing)", 0 }, { "OpenGL (does not start yet)", 1 }, { "Vulkan", 2 },
         { "Metal (Apple only)", 3 },   { "D3D12", 4 },
     };
+    const IntChoice ShadowResolutionChoices[] = { { "1024", 1024 }, { "2048", 2048 }, { "4096", 4096 } };
+    const IntChoice ShadowFilterChoices[]     = { { "Hard", 0 }, { "PCF 3x3", 1 }, { "PCF 5x5", 2 } };
     const ChoiceList ChoiceLists[] = {
-        { "Display", "RHI", RhiChoices, int(std::size(RhiChoices)) },
+        { "Display", "RHI",        RhiChoices,              int(std::size(RhiChoices)) },
+        { "Shadows", "Resolution", ShadowResolutionChoices, int(std::size(ShadowResolutionChoices)) },
+        { "Shadows", "Filter",     ShadowFilterChoices,     int(std::size(ShadowFilterChoices)) },
     };
 
     bool Same(const QString& InA, const char* InB)

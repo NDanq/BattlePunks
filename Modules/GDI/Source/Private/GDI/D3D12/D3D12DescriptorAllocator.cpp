@@ -111,6 +111,7 @@ void D3D12DescriptorAllocator::Shutdown()
 void D3D12DescriptorAllocator::Reset()
 {
     RingOffset = 0;
+    ++Epoch;
 }
 
 D3D12CBAllocation D3D12DescriptorAllocator::AllocateCB(uint32_t Size)

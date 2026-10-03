@@ -14,8 +14,11 @@
  */
 #include "Public/RenderCore/Components/CameraComponent.h"
 #include "Public/RenderCore/Components/DirectionalLightComponent.h"
+#include "Public/RenderCore/Components/LightShadow.h"
+#include "Public/RenderCore/Components/PointLightComponent.h"
 #include "Public/RenderCore/Components/PostProcessComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/Components/SkyLightComponent.h"
+#include "Public/RenderCore/Components/SpotLightComponent.h"
 
 #endif //RENDERCORE_RENDERCOMPONENTS_H

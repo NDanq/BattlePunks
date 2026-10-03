@@ -580,3 +580,19 @@ if(NIMBLE_BUILD_SANDBOX AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Games/Sandbox
     add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Games/Sandbox"
                      "${CMAKE_CURRENT_BINARY_DIR}/Games/Sandbox")
 endif()
+
+# The lights and shadows demo. Off by default, and exclusive with Sandbox: a
+# build has ONE runtime directory (NIMBLE_BINARIES_DIR), and two games would
+# both stage their Config/DefaultEngine.ini into it. Configure Games/LightLab
+# standalone (its CMakePresets.json) to give it its own Binaries/.
+option(NIMBLE_BUILD_LIGHTLAB "Build the Games/LightLab host (needs NIMBLE_BUILD_SANDBOX=OFF)" OFF)
+if(NIMBLE_BUILD_LIGHTLAB AND NIMBLE_BUILD_SANDBOX)
+    message(FATAL_ERROR
+        "NIMBLE_BUILD_LIGHTLAB and NIMBLE_BUILD_SANDBOX are both on, but one build has one "
+        "runtime directory and both games stage Config/DefaultEngine.ini into it. Turn one "
+        "off, or configure Games/LightLab standalone.")
+endif()
+if(NIMBLE_BUILD_LIGHTLAB AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Games/LightLab/CMakeLists.txt")
+    add_subdirectory("${CMAKE_CURRENT_SOURCE_DIR}/../Games/LightLab"
+                     "${CMAKE_CURRENT_BINARY_DIR}/Games/LightLab")
+endif()

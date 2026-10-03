@@ -36,7 +36,8 @@ namespace RenderCore
      * WorldBridge recreates on the first frame after a load.
      */
     /* Each slot's material is a graph path. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 1)
+    /* Version 2: CastShadows (a version 1 save keeps the default, on). */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 2)
     {
         Ar.Flag("Visible",   C.bVisible);
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
@@ -44,6 +45,10 @@ namespace RenderCore
             Ar.Field(MATERIAL_SLOT_FIELDS[Slot], C.Materials[Slot]);
         }
         Ar.Field("Mesh",     C.Mesh);
+        if(Ar.GetVersion() >= 2)
+        {
+            Ar.Flag("CastShadows", C.bCastShadows);
+        }
     }
 
     /*
@@ -62,6 +67,7 @@ namespace RenderCore
             Bind.Element(MATERIAL_SLOT_FIELDS[Slot], &RenderComponent::Materials, Slot);
         }
         Bind.Field("Mesh",     &RenderComponent::Mesh);
+        Bind.Flag("CastShadows", &RenderComponent::bCastShadows);
     }
 
 #if WITH_EDITOR
@@ -74,6 +80,8 @@ namespace RenderCore
         Props.Field("Mesh",     &RenderComponent::Mesh, GameCore::PF_AssetMesh);
         /* A list: entry i is section i's material; empty ones use the mesh's own. */
         Props.Array("Materials", &RenderComponent::Materials, GameCore::PF_AssetMaterial);
+        Props.Category("Shadows");
+        Props.Flag("Cast Shadows", &RenderComponent::bCastShadows);
     }
 #endif // WITH_EDITOR
 }

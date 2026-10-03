@@ -490,6 +490,9 @@ protected:
 
     /* SetUniformBlock's bytes for bindings 2 and 3, and SetMaterialTexture's. */
     std::vector<uint8_t>  MaterialBlocks[2];
+    /* Bumped by each SetUniformBlock, so a backend can reuse an upload of a
+     * block that has not changed since (the scene block: once per frame). */
+    uint64_t              MaterialBlockSerials[2] = {};
     GDITextureResource*   MaterialTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
 };
 

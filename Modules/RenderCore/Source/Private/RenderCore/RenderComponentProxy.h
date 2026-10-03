@@ -23,10 +23,12 @@ namespace RenderCore
 
         void ApplyComponent(const void* InComponentBytes) override;
         void Draw(RenderContext& InContext) override;
+        void DrawShadow(RenderContext& InContext) override;
         float GetBoundsPadding(RenderContext& InContext) override;
 
     private:
         bool              bComponentVisible = true;
+        bool              bCastShadows      = true;
         char              Materials[8][128] = {};  // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_PATH_MAX; "" = none
 
         /* Bounds are redone only when these change. Null source: the quad. */

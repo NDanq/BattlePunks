@@ -192,6 +192,11 @@ namespace RenderCore
             EngineCore::Color        Tint{255, 255, 255, 255};
         };
         uint64_t RequestMeshPreview(const MeshPreview& InPreview);
+
+        /* The default scene's final colour after the next EndFrame(), without
+         * debug lines, read back for TakeMaterialPreview (a screenshot, a
+         * test). Stalls briefly. 0 if not running. GAME THREAD ONLY. */
+        uint64_t RequestSceneCapture();
 #endif // WITH_EDITOR
 
         /*

@@ -162,6 +162,28 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
               { { "Vulkan", 2 }, { "D3D12", 4 }, { "Null (draws nothing)", 0 } },
               true);
 
+    /* RenderCore's [Shadows] section: every scene's shadow quality, over
+     * what each light's own Shadows fields ask for. Applies on the next frame. */
+    QFormLayout* Shadows = AddGroup(QStringLiteral("Shadows"));
+    AddCheck(Shadows, "Shadows.Enabled", QStringLiteral("Draw shadows"),
+             QStringLiteral("Off: every light draws unshadowed, whatever its Cast Shadows says"));
+    AddChoice(Shadows, "Shadows.Resolution", QStringLiteral("Shadow map size"),
+              QStringLiteral("Each shadow atlas's side. The sun's cascades share one atlas; point and spot lights "
+                             "share the other (a spot takes a sixth of its width, a point light six of those)"),
+              { { "1024", 1024 }, { "2048", 2048 }, { "4096", 4096 } },
+              false);
+    AddChoice(Shadows, "Shadows.Filter", QStringLiteral("Filter"),
+              QStringLiteral("How soft a shadow's edge is: one depth test per pixel, or the average of 9 or 25"),
+              { { "Hard", 0 }, { "PCF 3x3", 1 }, { "PCF 5x5", 2 } },
+              false);
+    AddChoice(Shadows, "Shadows.MaxShadowedLights", QStringLiteral("Shadowed point and spot lights"),
+              QStringLiteral("How many point and spot lights may cast at once, nearest the camera first"),
+              { { "None", 0 }, { "1", 1 }, { "2", 2 }, { "3", 3 }, { "4", 4 } },
+              false);
+    AddFloat(Shadows, "Shadows.DistanceScale", QStringLiteral("Sun shadow distance scale"),
+             QStringLiteral("Multiplies every Directional Light's Shadow Distance: lower is sharper and shorter"),
+             0.05, 10.0, 2, QStringLiteral("x"));
+
     QFormLayout* Build = AddGroup(QStringLiteral("Build"));
     AddCheck(Build, "Editor.ReloadAfterCompile", QStringLiteral("Restart a running game after Compile"),
              QStringLiteral("When Compile Source succeeds during Play, stop the run and start it again on the new "

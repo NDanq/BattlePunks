@@ -86,6 +86,10 @@ namespace RenderCore
         /* EDITOR ONLY. Drawn off-screen by the next Render(), before the back
          * buffer bind (RenderContext::RenderMaterialPreview). */
         void AddMaterialPreview(const MaterialPreviewRequest& InRequest);
+
+        /* EDITOR ONLY. The next Render()'s final colour, without the debug
+         * lines, read back into InMailbox under InRequest. */
+        void AddCapture(uint64_t InRequest, MaterialPreviewMailbox* InMailbox);
 #endif
 
         /* BeginRendering, SetViewport, Clear, draw every visible proxy whose

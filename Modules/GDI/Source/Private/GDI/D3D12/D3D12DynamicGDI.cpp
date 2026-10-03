@@ -673,13 +673,30 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     D3D12CBAllocation Scene{};
     if(bMaterial)
     {
-        Scene = DescAlloc->AllocateCB(BlockBytes(MaterialBlocks[1]));
-        if(!Scene.MappedPtr) return false;
+        const bool bReuseScene = SceneBlockUploadSerial == MaterialBlockSerials[1]
+                                 && SceneBlockUploadEpoch == DescAlloc->GetEpoch()
+                                 && SceneBlockUploadAddress != 0;
+        if(bReuseScene)
+        {
+            Scene.GPUAddress = SceneBlockUploadAddress;
+        }
+        else
+        {
+            Scene = DescAlloc->AllocateCB(BlockBytes(MaterialBlocks[1]));
+            if(!Scene.MappedPtr) return false;
+        }
         for(int b = 0; b < 2; ++b)
         {
+            if(b == 1 && bReuseScene) continue;
             void* Dst = b == 0 ? Custom.MappedPtr : Scene.MappedPtr;
             memset(Dst, 0, BlockBytes(MaterialBlocks[b]));
             if(!MaterialBlocks[b].empty()) memcpy(Dst, MaterialBlocks[b].data(), MaterialBlocks[b].size());
+        }
+        if(!bReuseScene)
+        {
+            SceneBlockUploadAddress = Scene.GPUAddress;
+            SceneBlockUploadSerial = MaterialBlockSerials[1];
+            SceneBlockUploadEpoch  = DescAlloc->GetEpoch();
         }
     }
     else

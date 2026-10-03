@@ -41,6 +41,9 @@ public:
     /** Rewinds the constant-buffer ring. Only once the frame that used it has executed. */
     void Reset();
 
+    /** Bumped by Reset(): an allocation from an older epoch is stale. */
+    uint64_t GetEpoch() const { return Epoch; }
+
     D3D12CBAllocation AllocateCB(uint32_t Size);
 
     uint32_t AllocateSRV();
@@ -69,6 +72,7 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource>          RingBuffer;
     uint8_t*                                        RingMapped = nullptr;
     uint32_t                                        RingOffset = 0;
+    uint64_t                                        Epoch      = 0;
 
     static constexpr uint32_t kSRVCapacity  = 4096;
     static constexpr uint32_t kRingCapacity = 1024 * 1024;

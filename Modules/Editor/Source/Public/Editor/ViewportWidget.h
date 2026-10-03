@@ -69,9 +69,18 @@ public:
     /* Front view of (0,0)-(1280,720), what Sandbox's camera shows. */
     void ApplySandboxView();
 
+    /* Where the scene's game camera (its first active CameraComponent) looks
+     * from: a perspective one's position and aim; an orthographic one's
+     * screen, as ApplySandboxView. Frame All if there is none. */
+    void ApplyGameCameraView();
+
     /* Draw every entity's bounds, not just the selection's. */
     void SetShowAllBounds(bool bInShow) { bShowAllBounds = bInShow; }
     bool IsShowingAllBounds() const     { return bShowAllBounds; }
+
+    /* Draw every light's reach, not just the selected light's. */
+    void SetShowLightGizmos(bool bInShow) { bShowLightGizmos = bInShow; }
+    bool IsShowingLightGizmos() const     { return bShowLightGizmos; }
 
     // === Transform handles ==================================================
 
@@ -115,12 +124,22 @@ private:
     enum class EDrag { None, Look, Orbit, Dolly, Pan, Gizmo };
 
 
+    /* A game's mouse capture through the Qt fallback: while it wants it and
+     * the viewport has the focus in the active window, the cursor is hidden,
+     * grabbed and put back at the centre after every move. Once a frame. */
+    void UpdateMouseHold();
+    void ReleaseMouseHold();
+
     /* WASD/QE flying while looking. */
     void ApplyFlyInput(float InDeltaSeconds);
 
     /* Selection bounds, all-bounds and the axis gizmo, as debug lines. */
     void QueueOverlay();
     void QueueAxisGizmo();
+
+    /* Each light's reach: a point light's sphere, a spot's cone, the sun's
+     * arrow. The selected light bright; the rest dim, when shown at all. */
+    void QueueLightGizmos();
 
     /* The selection's centre if it has bounds, else the focus point. */
     EngineCore::Vector3 GetPivot() const;
@@ -142,7 +161,8 @@ private:
 
     TransformGizmo::Snap GetGizmoSnap(Qt::KeyboardModifiers InModifiers) const;
 
-    /* The nearest primitive quad under the pixel, or an unset id. */
+    /* The nearest primitive quad under the pixel, else a light within a few
+     * pixels of it (lights have no shape to hit), or an unset id. */
     GameCore::EntityID Pick(const QPoint& InLogicalPos) const;
 
     /* A dragged .nmmesh in the project, as its runtime path; else empty. */
@@ -167,7 +187,9 @@ private:
     QPoint              PressPos;
     QSet<int>           HeldKeys;
 
-    bool bShowAllBounds = false;
+    bool bHoldingMouse    = false;   // UpdateMouseHold
+    bool bShowAllBounds   = false;
+    bool bShowLightGizmos = true;
 
     TransformGizmo          Gizmo;
     TransformGizmo::EHandle GizmoHover = TransformGizmo::EHandle::None;

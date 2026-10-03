@@ -33,6 +33,9 @@ namespace RenderCore
         uint8_t           bVisible = 1;
         char              Materials[RENDER_MATERIAL_SLOTS][RENDER_MATERIAL_PATH_MAX] = {};
         char              Mesh[RENDER_MESH_PATH_MAX] = {};
+
+        /* Whether its Opaque and Masked sections draw into shadow maps. */
+        uint8_t           bCastShadows = 1;
     };
 
     /* RenderComponent's proxy factory, for Renderer::Initialize to register. */

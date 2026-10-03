@@ -66,8 +66,14 @@ public:
 
     /* What Tick latched: the viewport's SDL input, as the launcher's. */
     const NimbleEngine::InputState& GetInput() const override { return Input.GetState(); }
-    void SetMouseCaptured(bool bInCaptured) override { Input.SetMouseCaptured(bInCaptured); }
-    bool IsMouseCaptured() const override           { return Input.IsMouseCaptured(); }
+    /* The viewport's SDL relative mode; logged, since it only engages while
+     * the viewport holds the native input focus (ViewportSDLInput). */
+    void SetMouseCaptured(bool bInCaptured) override;
+    bool IsMouseCaptured() const override           { return Input.GetWindow() ? Input.IsMouseCaptured() : bHostMouseCaptured; }
+
+    /* The game wants the mouse captured but there is no SDL window to do it
+     * (the Qt fallback): the viewport holds the cursor itself. */
+    bool WantsViewportMouseHold() const { return !Input.GetWindow() && bHostMouseCaptured; }
 
     // === Input ===============================================================
 
@@ -89,6 +95,7 @@ private:
 
     NimbleEngine::InputRouter Input;
     bool                      bInputBlocked = false;
+    bool                      bHostMouseCaptured = false;   // SetMouseCaptured without an SDL window
 
     uint32_t FrameRateLimit = 0;
     uint64_t FrameNumber    = 0;
