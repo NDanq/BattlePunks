@@ -62,11 +62,6 @@ namespace GameCore
      * (*.script.nmgraph) gives the Lua stored in it (ExtractGraphGeneratedCode). */
     bool LuaReadScriptFile(const char* InPath, std::string& OutSource);
 
-    /* A node graph file's generated code for InExtension (".lua"): its
-     * <gen_code><Output Extension="..."> CDATA, as NodeGraph writes it. No XML
-     * library -- a game build has none. False if there is none. */
-    bool ExtractGraphGeneratedCode(const std::string& InGraphText, const char* InExtension, std::string& OutCode);
-
     /* Packs an EntityID as a full userdata with the "Entity" metatable.
      * Every binding that hands Lua an entity goes through this. */
     void LuaPushEntity(lua_State* InState, EntityID InEntity);

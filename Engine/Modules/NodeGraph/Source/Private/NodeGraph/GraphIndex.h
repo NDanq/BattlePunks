@@ -17,6 +17,7 @@ namespace NodeGraph
     /* The schema factories, called once by GetSchemas(). */
     std::unique_ptr<Schema> CreateMaterialSchema();
     std::unique_ptr<Schema> CreateScriptSchema();
+    std::unique_ptr<Schema> CreatePostProcessSchema();
 
     class GraphIndex
     {

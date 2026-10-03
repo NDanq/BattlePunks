@@ -4,7 +4,7 @@
 
 // Bumped when a change here or in the templates breaks shader caches cooked
 // before it; RenderCore refuses a cache that disagrees (MaterialPermutation.h).
-#define MATERIAL_TEMPLATE_VERSION 4
+#define MATERIAL_TEMPLATE_VERSION 5
 
 // What input nodes read. Each stage's template fills it; the pixel-only
 // fields exist only in the pixel stage, so a pixel-only node in the vertex
@@ -54,7 +54,22 @@ MaterialSurface DefaultMaterialSurface(in MaterialInputs Inputs)
 }
 
 // The scene drawn so far, for a PostProcess material's Scene Texture node:
-// material texture slot 0.
+// material texture slot 0; and its depth, for Scene Depth: slot 7.
 #if PIXEL_SHADER && MATERIAL_DOMAIN_POSTPROCESS
 MATERIAL_SAMPLER2D(4, Material_SceneColor)
+MATERIAL_SAMPLER2D(11, Material_SceneDepth)
+
+// Window depth, 0 near to 1 far.
+float Material_SceneDepthAt(vec2 InFragCoord)
+{
+    return texelFetch(Material_SceneDepth, ivec2(InFragCoord), 0).r;
+}
+
+// World units from the eye to the scene at this pixel. InClip is the
+// full-screen quad's position: this pixel's NDC.
+float Material_SceneDistanceAt(vec2 InClip, vec2 InFragCoord)
+{
+    vec4 World = Scene_InvViewProjection * vec4(InClip, Material_SceneDepthAt(InFragCoord) * 2.0 - 1.0, 1.0);
+    return length(World.xyz / World.w - Scene_CameraPosition.xyz);
+}
 #endif

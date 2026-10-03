@@ -37,6 +37,7 @@ registries, by whichever executable links this: the editor or the test.
 | `GraphCompiler.h` | `ValidateGraph` (what every schema shares), then `CompileGraph` into the schema's compiler; diagnostics name their node |
 | `MaterialSchema.cpp` | Material to GLSL: data flow from Pixel Output (and each Discard) back, one `tN` temporary per computed value, Branch and For Loop as real `if` and `for` blocks, parameters in one `mat4` at binding 2 |
 | `ScriptSchema.cpp` | Script to Lua: exec flow from event nodes, pure values re-evaluated per statement; component nodes generated from the script bindings |
+| `PostProcessSchema.cpp` | A post process stack (`*.pp.nmgraph`) to `.ppstack` text: one line per effect node, in the renderer's order |
 | `Scripts/cook_material_graphs.py` | Cooks material graphs from their `<gen_code>` (or loose material functions) -- `-check` with glslc, loose or into a shader cache -- through GDI's own `cook_shaders.py`. Also cooks the engine's `Content/Shaders` |
 | `Tools/NodeGraphGenerate.cpp` | Regenerates graphs' `<gen_code>` from the command line, as the editor does on save |
 
@@ -304,7 +305,7 @@ reader warns that the graph was upgraded. Saving writes the new form.
 **Two stages.** World Position Offset is the vertex stage's root; everything
 else is the pixel stage's. Each stage is compiled from its own roots, so a
 node both reach is written in both functions. A node's `StageMask` says where
-it can run: Pixel Coordinate, Pixel Depth, Clip Position and Scene Texture are
+it can run: Pixel Coordinate, Pixel Depth, Clip Position, Scene Texture and Scene Depth are
 pixel-only. A pixel-only node feeding World Position Offset, however
 indirectly, is a compile error on that node; the editor refuses the link
 (`Schema::CanLinkStages`), greys such nodes in the palette when dragging from
@@ -377,7 +378,9 @@ The inputs read `MaterialInputs`, which each stage's template fills:
   stages; World Position is before the offset in the vertex stage);
 - Clip Position, Pixel Coordinate and Pixel Depth (linear and device; pixel only);
 - Viewport Size, Mouse, Instance Tint and Time (both);
-- Scene Texture (PostProcess materials only);
+- Scene Texture and Scene Depth (PostProcess materials only; Scene Depth gives the
+  stored depth and the distance from the camera, from the scene depth in slot 7,
+  so a PostProcess material samples at most 6 textures of its own);
 - Texture Object and Texture Sample (both; Textures in the palette).
 
 **Drawing one.** A primitive names the material by its graph's runtime path:
@@ -418,6 +421,36 @@ graphs' `<gen_code>` from the command line, as the editor does on save.
 `-module SandboxGame.dll` loads a game module first, so that graphs using
 its components, libraries and structs compile. Run it from the game's
 binaries folder so the module's dependencies resolve.
+
+## Post process stacks
+
+A `*.pp.nmgraph` is a **post process stack**: the effects a Post Process volume
+applies, and their settings (RenderCore's `RENDERPIPELINE.md`, "Post process").
+
+- **Nodes:** each node is one effect, with properties and no pins. Depth of
+  Field, Motion Blur, Bloom and Antialiasing appear at most once each;
+  Material (a PostProcess material graph, run Before or After Effects, by Order)
+  may appear any number of times.
+- **Order:** where a node sits on the canvas means nothing, because the
+  renderer runs the effects in a fixed order. A stack without a node leaves
+  that effect alone, so a smaller volume can add Depth of Field without
+  touching the glow a wider one sets.
+- **Checks:** numbers are typed as text and checked against each setting's
+  range when compiled.
+- **Output:** the compiled output, `.ppstack`, is one line per effect, then one
+  per material, with the path last:
+
+```
+# Post process stack Arch
+Effect DepthOfField FocusDistance=350 FocusRange=250 MaxBlur=10 NearBlur=false
+Effect Bloom Threshold=0.8 Intensity=0.9 Radius=0.75 Levels=5 Tint=1,0.85,0.7
+Material Stage=After Order=0 Path=Content/Materials/Negative.material.nmgraph
+```
+
+- **Staging:** the graph file itself is staged beside the executable, where the
+  runtime reads its `<gen_code>` (GameCore's `GraphText.h`) -- as a script graph
+  is read, so a game build needs no NodeGraph. File > New PostProcess Graph
+  starts one in `Content/PostProcess` with Bloom and Antialiasing.
 
 ## Tests
 

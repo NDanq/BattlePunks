@@ -239,7 +239,7 @@ namespace NodeGraph
         std::set<std::pair<std::string, std::string>> Conversions;
     };
 
-    /* Every schema, built on first call. Material first, then Script. */
+    /* Every schema, built on first call. Material, Script, then PostProcess. */
     const std::vector<const Schema*>& GetSchemas();
 
     /*

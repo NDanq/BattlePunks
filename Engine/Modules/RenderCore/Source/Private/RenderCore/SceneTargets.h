@@ -24,6 +24,13 @@ namespace RenderCore
         GDIRenderTarget* SceneColor  = nullptr;
         GDIRenderTarget* GBuffer[RENDER_GBUFFER_TARGETS] = {};
         GDIRenderTarget* PostProcess = nullptr;
+        GDIRenderTarget* PostProcessB = nullptr;                // the post process stack ping-pongs PostProcess and this
+
+        /* The post process stack's smaller targets (RENDERPIPELINE.md, "Post
+         * process"), made on first use: Depth of Field's two at half size, and
+         * Bloom's chain, each half the size of the one before (1/2 to 1/64). */
+        GDIRenderTarget* Half[2] = {};
+        GDIRenderTarget* Bloom[6] = {};                         // RENDER_BLOOM_LEVELS_MAX
         GDIRenderTarget* Final       = nullptr;                 // SceneColor or PostProcess: where the last RenderSceneStages finished
         uint             Width  = 0;
         uint             Height = 0;
@@ -60,6 +67,18 @@ namespace RenderCore
                 {
                     PostProcess->Resize(InWidth, InHeight);
                 }
+                if(PostProcessB)
+                {
+                    PostProcessB->Resize(InWidth, InHeight);
+                }
+                for(GDIRenderTarget* Each : Half)
+                {
+                    if(Each) { Each->Resize(HalfSize(InWidth, 1), HalfSize(InHeight, 1)); }
+                }
+                for(uint32_t Level = 0; Level < 6; ++Level)
+                {
+                    if(Bloom[Level]) { Bloom[Level]->Resize(HalfSize(InWidth, Level + 1), HalfSize(InHeight, Level + 1)); }
+                }
                 Width  = InWidth;
                 Height = InHeight;
             }
@@ -83,6 +102,51 @@ namespace RenderCore
             return true;
         }
 
+        /* InSize halved InTimes times, never below 1. */
+        static uint HalfSize(const uint InSize, const uint32_t InTimes)
+        {
+            const uint Size = InSize >> InTimes;
+            return Size > 0 ? Size : 1;
+        }
+
+        GDIRenderTarget* EnsurePostProcessB()
+        {
+            if(!PostProcessB && Width > 0 && Height > 0)
+            {
+                PostProcessB = GDICreateRenderTarget(Name + ".PostProcessB", Width, Height);
+            }
+            return PostProcessB;
+        }
+
+        /* Depth of Field's half-size pair; false if a target cannot be made. */
+        bool EnsureHalf()
+        {
+            for(uint32_t Index = 0; Index < 2; ++Index)
+            {
+                if(!Half[Index] && Width > 0 && Height > 0)
+                {
+                    Half[Index] = GDICreateRenderTarget(Name + ".Half" + std::to_string(Index), HalfSize(Width, 1), HalfSize(Height, 1));
+                }
+                if(!Half[Index] || !Half[Index]->IsValid()) { return false; }
+            }
+            return true;
+        }
+
+        /* Bloom's chain to InLevels (1-6); false if a target cannot be made. */
+        bool EnsureBloom(const uint32_t InLevels)
+        {
+            for(uint32_t Level = 0; Level < InLevels && Level < 6; ++Level)
+            {
+                if(!Bloom[Level] && Width > 0 && Height > 0)
+                {
+                    Bloom[Level] = GDICreateRenderTarget(Name + ".Bloom" + std::to_string(Level),
+                                                         HalfSize(Width, Level + 1), HalfSize(Height, Level + 1));
+                }
+                if(!Bloom[Level] || !Bloom[Level]->IsValid()) { return false; }
+            }
+            return true;
+        }
+
         GDIRenderTarget* EnsurePostProcess()
         {
             if(!PostProcess && Width > 0 && Height > 0)
@@ -94,7 +158,8 @@ namespace RenderCore
 
         void Release()
         {
-            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &PostProcess })
+            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &PostProcess, &PostProcessB,
+                                           &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5] })
             {
                 if(*Each)
                 {

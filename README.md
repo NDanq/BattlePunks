@@ -54,6 +54,12 @@ looks, WASD moves, E/Q (or Space/Ctrl) rise and sink, Shift is faster, T cycles
 the sun's shadow technique and F toggles shadows. Escape frees the mouse; a
 left click takes it back.
 
+Two post process volumes (`Content/PostProcess`, RENDERPIPELINE.md's "Post
+process") cover the yard. `Global.pp.nmgraph` has no Bounds, so it applies
+everywhere: a soft bloom and FXAA. `Arch.pp.nmgraph` sits in a Bounds box round
+the arch and blends in over 300 units as the camera nears it: depth of field
+past the arch, motion blur, and a warmer, stronger glow.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:

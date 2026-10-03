@@ -26,6 +26,7 @@
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NodeGraph/GraphFile.h"
 #include "Public/RenderCore/MaterialDescription.h"
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/Editor/EditorContext.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
@@ -248,6 +249,12 @@ namespace
             Add("Event.OnStart", -300.0f, -120.0f);
             Add("Event.OnTick", -300.0f, 60.0f);
         }
+        else if(InSchema.GetName() == "PostProcess")
+        {
+            /* A soft glow and smooth edges: the effects most scenes want. */
+            Add("Effect.Bloom", -150.0f, 0.0f);
+            Add("Effect.Antialiasing", 150.0f, 0.0f);
+        }
         else
         {
             Add("Output.Pixel", 200.0f, 0.0f);
@@ -269,7 +276,10 @@ namespace EditorGraphs
 
     QString GetDefaultFolder(const Schema& InSchema)
     {
-        return QDir(GetProjectRoot()).filePath(InSchema.GetName() == "Script" ? QStringLiteral("Scripts") : QStringLiteral("Content/Materials"));
+        const QString Folder = InSchema.GetName() == "Script"      ? QStringLiteral("Scripts")
+                             : InSchema.GetName() == "PostProcess" ? QStringLiteral("Content/PostProcess")
+                                                                   : QStringLiteral("Content/Materials");
+        return QDir(GetProjectRoot()).filePath(Folder);
     }
 
     bool IsIgnoredFolder(const QString& InName)
@@ -362,6 +372,13 @@ namespace EditorGraphs
             {
                 if(WriteTextFileIfChanged(ToStd(Staged), WriteGraphText(InGraph), Error)) { OutMessage += QStringLiteral(" (staged for Play)"); }
                 else { CORE_LOG_WARN("[Graph] could not stage " + ToStd(Staged) + ": " + Error) }
+            }
+            /* A post process stack is read as it is used: the viewport's next
+             * frame reads the new one. */
+            if(S->GetName() == "PostProcess")
+            {
+                const QString Runtime = EditorContent::ToRuntimePath(InGraphPath);
+                if(!Runtime.isEmpty()) { RenderCore::PostProcessStackCache::Invalidate(ToStd(Runtime)); }
             }
         }
         CORE_LOG("[Graph] " + ToStd(OutMessage))

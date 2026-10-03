@@ -473,30 +473,43 @@ namespace
              * completes the project's and the engine's. */
             const bool bMesh     = (Entry.Flags & GameCore::PF_AssetMesh) != 0;
             const bool bMaterial = (Entry.Flags & GameCore::PF_AssetMaterial) != 0;
-            if((bMesh || bMaterial) && !Entry.IsReadOnly())
+            const bool bPost     = (Entry.Flags & GameCore::PF_AssetPostProcess) != 0;
+            if((bMesh || bMaterial || bPost) && !Entry.IsReadOnly())
             {
-                AssetKind = bMesh ? EAsset::Mesh : EAsset::Material;
-                Edit->setPlaceholderText(bMesh ? QStringLiteral("Drop a .nmmesh here") : QStringLiteral("Drop a .material.nmgraph here"));
+                /* What each kind of asset field offers. */
+                struct AssetUi { EAsset Kind; const char* Placeholder; const char* Tip; const char* PickTip; const char* Title; const char* Filter; };
+                static const AssetUi Kinds[] = {
+                    { EAsset::Mesh, "Drop a .nmmesh here", nullptr, "Choose a mesh in the project", "Choose a Mesh", "Meshes (*.nmmesh)" },
+                    { EAsset::Material, "Drop a .material.nmgraph here",
+                      "A material graph, by its path: Content/Materials/Glow.material.nmgraph",
+                      "Choose a material graph", "Choose a Material", "Material Graphs (*.material.nmgraph)" },
+                    { EAsset::PostProcess, "Drop a .pp.nmgraph here",
+                      "A post process stack, by its path: Content/PostProcess/Arch.pp.nmgraph -- or a PostProcess material graph",
+                      "Choose a post process stack", "Choose a Post Process Stack",
+                      "Post Process Stacks (*.pp.nmgraph);;PostProcess Materials (*.material.nmgraph)" },
+                };
+                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : 2];
+                AssetKind = Ui.Kind;
+                Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
-                if(bMaterial)
+                if(!bMesh)
                 {
-                    auto* Completer = new QCompleter(EditorContent::ListMaterialPaths(), Edit);
+                    auto* Completer = new QCompleter(bMaterial ? EditorContent::ListMaterialPaths() : EditorContent::ListPostProcessPaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
                     Edit->setCompleter(Completer);
-                    Edit->setToolTip(QStringLiteral("A material graph, by its path: Content/Materials/Glow.material.nmgraph"));
+                    Edit->setToolTip(QString::fromLatin1(Ui.Tip));
                 }
 
                 auto* Pick = new QToolButton(this);
                 Pick->setText(QStringLiteral("..."));
-                Pick->setToolTip(bMesh ? QStringLiteral("Choose a mesh in the project") : QStringLiteral("Choose a material graph"));
+                Pick->setToolTip(QString::fromLatin1(Ui.PickTip));
                 Layout->addWidget(Pick);
-                connect(Pick, &QToolButton::clicked, this, [this, bMesh]()
+                const QString Title  = QString::fromLatin1(Ui.Title);
+                const QString Filter = QString::fromLatin1(Ui.Filter);
+                connect(Pick, &QToolButton::clicked, this, [this, Title, Filter]()
                 {
-                    const QString Chosen = QFileDialog::getOpenFileName(this, bMesh ? QStringLiteral("Choose a Mesh") : QStringLiteral("Choose a Material"),
-                                                                        EditorGraphs::GetProjectRoot(),
-                                                                        bMesh ? QStringLiteral("Meshes (*.nmmesh)")
-                                                                              : QStringLiteral("Material Graphs (*.material.nmgraph)"));
+                    const QString Chosen = QFileDialog::getOpenFileName(this, Title, EditorGraphs::GetProjectRoot(), Filter);
                     const QString Value = Chosen.isEmpty() ? QString() : ValueForFile(Chosen);
                     if(!Value.isEmpty()) { SetAndCommit(Value); }
                 });
@@ -547,7 +560,7 @@ namespace
         }
 
     private:
-        enum class EAsset { None, Mesh, Material };
+        enum class EAsset { None, Mesh, Material, PostProcess };
 
         void Commit()
         {
@@ -560,6 +573,13 @@ namespace
             {
                 QToolTip::showText(Edit->mapToGlobal(QPoint(0, Edit->height())),
                                    QStringLiteral("Not a material graph: give a *.material.nmgraph path"), Edit);
+                Refresh(true);
+                return;
+            }
+            if(AssetKind == EAsset::PostProcess && !EditorContent::IsPostProcessFieldValue(Edit->text().trimmed()))
+            {
+                QToolTip::showText(Edit->mapToGlobal(QPoint(0, Edit->height())),
+                                   QStringLiteral("Not a post process stack: give a *.pp.nmgraph (or a *.material.nmgraph) path"), Edit);
                 Refresh(true);
                 return;
             }
@@ -594,6 +614,10 @@ namespace
             if(AssetKind == EAsset::Material)
             {
                 return EditorContent::MaterialPathFor(InFile);
+            }
+            if(AssetKind == EAsset::PostProcess)
+            {
+                return EditorContent::PostProcessPathFor(InFile);
             }
             return QString();
         }

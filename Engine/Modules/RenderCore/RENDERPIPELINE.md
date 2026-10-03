@@ -18,7 +18,7 @@ A frame runs these stages, in this order (`ERenderStage`, RenderPipeline.h):
 | **Unlit** | Opaque and Masked, **Unlit**; plain quads; tinted meshes | scene colour, with the Base Pass depth | depth test and write; plain quads keep their alpha blend |
 | **Translucent Lit** | Translucent, **Lit** | scene colour | depth test, no write, alpha blend; back to front; forward-shaded |
 | **Translucent Unlit** | Translucent, **Unlit** | scene colour | as above |
-| **PostProcess** | PostProcess materials (Post Process components) | ping-pong scene colour targets | full screen; Priority order |
+| **PostProcess** | the post process stack: its PostProcess materials and effects (Post Process volumes) | two full-size targets in turn, and smaller ones | full screen; a fixed order. See [Post process](#post-process) |
 
 Translucent Lit runs after Lighting, not before it: a deferred resolve writes
 every lit pixel, so anything drawn earlier would be overwritten, and a
@@ -207,6 +207,70 @@ The scene block grew past the material block's 1024 bytes (3600 bytes:
 `GDI_SCENE_BLOCK_MAX_BYTES` is 4096). GDI now re-uploads a uniform block only
 when its bytes change, so the scene block is uploaded once a frame, not per draw.
 
+### Post process
+
+The PostProcess stage runs a **post process stack**: which effects run and
+their settings, and PostProcess materials to run before or after them.
+
+**The asset** is a `*.pp.nmgraph` (NodeGraph's PostProcess schema). Its nodes
+are effects, each with its own settings and no pins. The editor compiles it to
+`.ppstack` text in its `<gen_code>`, and RenderCore reads that text
+(`PostProcessStack.h`: `ParsePostProcessStack`, `PostProcessStackCache`). A
+game build therefore needs neither NodeGraph nor XML. Saving a stack in the
+editor invalidates the cache, so the viewport updates on the next frame. A path
+to a PostProcess material graph also works: it is read as a stack of that one
+material.
+
+**Volumes.** A **Post Process component** names a stack (Stack), with Priority,
+Blend Distance and Enabled.
+- **The volume:** its sibling **Bounds** World box. With no Bounds the stack
+  applies everywhere.
+- **Weight:** 1 inside the box, fading to 0 over Blend Distance outside it.
+  With a Blend Distance of 0 the edge is hard.
+- **Where the camera is:** the eye for a perspective view; the view's centre
+  for the 2D view.
+- **Blending:** `WorldBridge::BuildPostProcess` blends every volume with weight
+  above 0, Priority low first (`BlendPostProcess`):
+  - **numbers** lerp toward each stack by its weight, starting from the effect
+    off, so Intensity and Max Blur fade in;
+  - **switches** (Near Blur, Quality, Antialiasing itself) take the stack's value
+    at weight 0.5 or more;
+  - **an effect a stack has no node for** is left alone;
+  - **material passes** join at weight 0.5 or more.
+
+**The passes**, always in this order:
+
+| # | Pass | Shaders | Targets |
+|---|---|---|---|
+| 1 | Materials, Before Effects | the material's | full size |
+| 2 | Depth of Field | `PPDofPrepare` (circle of confusion from depth: far past the focus range, or nearer with Near Blur; a half-size copy, CoC in alpha), `PPDofBlur` (a 16-tap disc, each tap counted as far as its own CoC reaches), `PPDofComposite` (sharp to blurred by CoC) | `Half[0..1]`, then full |
+| 3 | Motion Blur | `PPMotionBlur`: each pixel's world position, from depth, reprojected with **last frame's** view-projection gives its screen motion; taps along it, jittered, limited to Max Length | full |
+| 4 | Bloom | `PPBloomDownsample` (13 taps; the first step keeps what passes the threshold, with a soft knee) down `Bloom[0..Levels-1]` (1/2 to 1/64); `PPBloomUpsample` (9-tap tent, blended One + One, times Radius) back up; `PPBloomComposite` adds `Bloom[0]` times Intensity and Tint | chain, then full |
+| 5 | Materials, After Effects | the material's | full |
+| 6 | Antialiasing | `PPFxaa` (FXAA 3.11 quality: luma edges, an end search of 4, 8 or 12 steps by Quality, plus sub-pixel smoothing) | full |
+
+**How the passes run:**
+- **Targets:** they alternate between `SceneTargets::PostProcess` and
+  `PostProcessB`. The scene colour is only ever read, so its depth can be
+  sampled throughout: post targets bind with no depth.
+- **Small targets:** the half-size and bloom targets are made on first use and
+  resize with the viewport.
+- **Materials:** a PostProcess material samples the scene so far in material
+  slot 0 and, through the **Scene Depth** node, the scene depth in slot 7. Its
+  own textures are slots 1-6.
+- **The previous view-projection** is kept per scene (`RenderScene`). There is
+  none on the first frame or after a resize, and then Motion Blur skips.
+- **Debug lines** (gizmos) draw after the stack, so they stay sharp.
+- **Previews:** a material preview never runs the stack.
+
+**Limits:**
+- **Bloom:** the scene is RGBA8 display colour with no HDR, so bloom thresholds
+  LDR brightness. A white surface past the threshold glows all over.
+- **Motion Blur:** the camera's motion only; there is no per-object velocity.
+- **Antialiasing:** FXAA only; there is no temporal AA.
+- **Memory:** each small target also allocates a depth it never uses (GDI makes
+  every target with one).
+
 ### Previews
 
 A material preview runs the same stages into its own small set of targets, so an
@@ -271,6 +335,10 @@ compiled, as the forward variant. It now has both.
   the preview's clear colour. Clean under the Vulkan validation layer.
 
 ## Later
+
+Post process: an HDR scene colour (RGBA16F) so bloom thresholds real
+brightness; a velocity target for per-object motion blur; temporal AA; colour
+grading and exposure as stack effects.
 
 Hardware shadow comparison, depth bias and front-face culling in GDI (then
 drop most of the receiver bias); Masked casters clipped in the Shadows

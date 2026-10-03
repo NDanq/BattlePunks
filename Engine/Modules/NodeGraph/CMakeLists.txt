@@ -33,6 +33,7 @@ set(NODEGRAPH_SOURCES
         Source/Private/NodeGraph/CodeWriter.h
         Source/Private/NodeGraph/MaterialSchema.cpp
         Source/Private/NodeGraph/ScriptSchema.cpp
+        Source/Private/NodeGraph/PostProcessSchema.cpp
         Source/Private/NodeGraph/NodeGraphLog.h
         Source/Public/NodeGraph/Graph.h
         Source/Public/NodeGraph/Schema.h

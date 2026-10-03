@@ -910,10 +910,12 @@ namespace
                 continue;
             }
 
+            /* A PostProcess material's last slot is the scene depth (Scene Depth). */
+            const int SlotCount = Domain == "PostProcess" ? TEXTURE_SLOT_COUNT - 1 : TEXTURE_SLOT_COUNT;
             Wanted.Slot = TEXTURE_SLOT_FIRST + int(Textures.size());
-            if(Wanted.Slot >= TEXTURE_SLOT_COUNT)
+            if(Wanted.Slot >= SlotCount)
             {
-                Result.Error(Each->Id, std::string(), "a material samples at most " + std::to_string(TEXTURE_SLOT_COUNT - TEXTURE_SLOT_FIRST)
+                Result.Error(Each->Id, std::string(), "a " + Domain + " material samples at most " + std::to_string(SlotCount - TEXTURE_SLOT_FIRST)
                              + " textures (each distinct texture and sampler setting is one); this would be one more");
                 continue;
             }
@@ -1677,6 +1679,15 @@ namespace
                                        "scene color screen post process");
             Def.Op = MOP_SceneTexture;
             PixelOnly(Def, "PostProcess only: the scene drawn so far, at this pixel.");
+        }
+        {
+            NodeDefinition& Def = Pure("Input.SceneDepth", "Scene Depth", "Inputs",
+                                       { Out("Depth", "float", "Material_SceneDepthAt(Inputs.FragCoord.xy)"),
+                                         Out("Distance", "float", "Material_SceneDistanceAt(Inputs.ClipPosition.xy, Inputs.FragCoord.xy)") },
+                                       {}, "scene depth distance z buffer post process fog");
+            Def.Op = MOP_SceneTexture;
+            PixelOnly(Def, "PostProcess only: the scene's depth at this pixel -- Depth as stored (0 near, 1 far), "
+                           "Distance in world units from the camera.");
         }
 
         // --- Textures ------------------------------------------------------------

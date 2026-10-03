@@ -262,13 +262,15 @@ else()
 endif()
 
 # === Content/ ===============================================================
-# Imported .nmmesh / .nmtexture files, staged at the same relative path beside
+# Imported .nmmesh / .nmtexture files and post process stacks (.pp.nmgraph),
+# staged at the same relative path beside
 # the executable (how a RenderComponent names them). Globbed, unlike Scripts/:
 # the editor creates these, so listing them would mean editing this file on
 # every import.
 file(GLOB_RECURSE SANDBOX_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmtexture"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.pp.nmgraph"
 )
 
 if(SANDBOX_CONTENT_FILES)

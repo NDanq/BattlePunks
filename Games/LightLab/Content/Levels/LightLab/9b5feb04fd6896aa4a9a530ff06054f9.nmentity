@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="9b5feb04fd6896aa4a9a530ff06054f9" Name="OrbitLight">
+  <Component Type="Point Light" Version="1">
+    <Color R="255" G="170" B="90" A="255" />
+    <Intensity Value="10" />
+    <Radius Value="900" />
+    <Active Value="true" />
+    <CastShadows Value="true" />
+    <ShadowTechnique Value="1" />
+    <ShadowTint R="110" G="135" B="200" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="350" Y="250" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

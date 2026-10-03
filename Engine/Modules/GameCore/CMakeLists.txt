@@ -174,6 +174,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/Collision.cpp
         Source/Private/GameCore/World.cpp
         Source/Private/GameCore/ScriptEngine.cpp
+        Source/Private/GameCore/GraphText.cpp
         Source/Private/GameCore/ScriptBindings.cpp
         Source/Private/GameCore/ScriptSystem.cpp
         Source/Private/GameCore/ComponentSerializer.cpp
@@ -208,6 +209,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/ComponentSerializer.h
         Source/Public/GameCore/WorldSerializer.h
         Source/Public/GameCore/WorldPackage.h
+        Source/Public/GameCore/GraphText.h
         Source/Public/GameCore/ArchiveTextDump.h
         Source/Public/GameCore/ComponentScript.h
         Source/Public/GameCore/ScriptLibrary.h

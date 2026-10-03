@@ -63,6 +63,27 @@ namespace RenderCore
         const char* const DEFAULT_LIT_MATERIAL = "Engine/Content/Materials/DefaultLit.material.nmgraph";   // a mesh with none
         const char* const LIGHTING_SHADER      = "DeferredLighting.fsh";  // Engine/Content/Shaders: the Lighting stage
         const char* const SHADOW_DEPTH_SHADER  = "ShadowDepth.fsh";       // the Shadows stage's casters
+
+        /* The post process stack's passes (Engine/Content/Shaders/PP*.fsh). */
+        enum EPostPass : uint32_t
+        {
+            PP_DofPrepare, PP_DofBlur, PP_DofComposite, PP_MotionBlur,
+            PP_BloomDownsample, PP_BloomUpsample, PP_BloomComposite, PP_Fxaa,
+            PP_PassCount
+        };
+        const char* const POST_PASS_SHADERS[PP_PassCount] = {
+            "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
+            "PPBloomDownsample.fsh", "PPBloomUpsample.fsh", "PPBloomComposite.fsh", "PPFxaa.fsh",
+        };
+
+        /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
+         * ahead of them for motion blur. */
+        struct PostBlock
+        {
+            float Matrix[16] = {};
+            float A[4] = {};
+            float Sizes[4] = {};
+        };
         constexpr size_t  RENDER_PREVIEW_SLOTS = 8;                       // MaterialPreviewRequest::Slots
 
         /* A material's shader: no name-based uniforms, the material binding layout. */
@@ -237,6 +258,18 @@ namespace RenderCore
         GDIShader*       ShadowDepthShader     = nullptr;
         bool             bShadowDepthTried     = false;
         int32_t          CasterView            = -1;
+
+        /* POST PROCESS (RENDERPIPELINE.md, "Post process"). The settings and
+         * last frame's view-projection the next RenderSceneStages runs the
+         * stack with -- set by RenderScene, consumed (reset) by that call, so
+         * a preview's never sees a scene's. PostSceneDepth: the scene depth a
+         * PostProcess material samples (material slot 7) while the stack runs. */
+        PostProcessSettings   PostSettings;
+        EngineCore::Matrix4x4 PrevViewProjection;
+        bool                  bHasPrevViewProjection = false;
+        GDITextureResource*   PostSceneDepth = nullptr;
+        GDIShader*            PostShaders[PP_PassCount] = {};
+        bool                  bPostShaderTried[PP_PassCount] = {};
         const EngineCore::Matrix4x4* PlaceProjection = nullptr;
         const EngineCore::Matrix4x4* PlaceView       = nullptr;
 
@@ -470,6 +503,68 @@ namespace RenderCore
             }
             return LightingShader;
         }
+
+        GDIShader* GetPostShader(const EPostPass InPass)
+        {
+            if(!bPostShaderTried[InPass])
+            {
+                bPostShaderTried[InPass] = true;
+                PostShaders[InPass] = LoadShader(POST_PASS_SHADERS[InPass], ST_Pixel, "the post process stack", false);
+            }
+            return PostShaders[InPass];
+        }
+
+        /*
+         * One full-screen pass of the stack: InPass's shader into InTarget
+         * (InWidth x InHeight, no depth), InTextures as material slots 0..,
+         * InBlock as PP_Block. Additive blends into what InTarget holds. False
+         * (warned by LoadShader) if a shader is missing.
+         */
+        bool DrawPost(const EPostPass InPass, GDIRenderTarget* InTarget, const uint InWidth, const uint InHeight,
+                      std::initializer_list<GDITextureResource*> InTextures, const PostBlock& InBlock, const bool bInAdditive = false)
+        {
+            GDIShader* Pixel  = GetPostShader(InPass);
+            GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
+            if(!Pixel || !Vertex || !InTarget)
+            {
+                return false;
+            }
+            GDISetRenderTargets(&InTarget, 1, nullptr);
+            GDISetViewport(0, 0, InWidth, InHeight);
+            GDISetColorMask(EColM_RGBA);
+
+            uint32_t Slot = 0;
+            for(GDITextureResource* Each : InTextures)
+            {
+                GDISetMaterialTexture(Slot++, Each);
+            }
+            EnsureInitialised();
+            Bind(Vertex, Pixel);
+            /* The motion blur block carries its matrix first; the others start at A. */
+            if(InPass == PP_MotionBlur)
+            {
+                GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, &InBlock, uint(sizeof(InBlock)));
+            }
+            else
+            {
+                GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, InBlock.A, uint(sizeof(InBlock) - sizeof(InBlock.Matrix)));
+            }
+            GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
+            GDISetDepthState(IDepthStateDesc());
+            GDISetBlendState(bInAdditive ? IBlendStateDesc(true, BM_One, BM_One) : IBlendStateDesc());
+            GDIDrawObject(ScreenObject);
+            DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+            for(uint32_t Each = 0; Each < Slot; ++Each)
+            {
+                GDISetMaterialTexture(Each, nullptr);
+            }
+            return true;
+        }
+
+        /* RenderSceneStages' post process stack (RENDERPIPELINE.md, "Post
+         * process") into InTargets' post targets; returns where the result is
+         * -- the scene colour if nothing ran. */
+        GDIRenderTarget* RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, bool bInHasPrevious);
 
         GDIShader* GetShadowDepthShader()
         {
@@ -1046,6 +1141,8 @@ namespace RenderCore
             {
                 return false;
             }
+            /* After BindMaterial, which clears every slot but 0: Scene Depth's. */
+            GDISetMaterialTexture(GDI_MATERIAL_TEXTURE_SLOTS - 1, PostSceneDepth);
             GDIDrawObject(ScreenObject);
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
             return true;
@@ -1181,11 +1278,202 @@ namespace RenderCore
             if(ShadowDepthShader) { RetiredShaders.push_back(ShadowDepthShader); }
             ShadowDepthShader = nullptr;
             bShadowDepthTried = false;
+            for(uint32_t Pass = 0; Pass < PP_PassCount; ++Pass)
+            {
+                if(PostShaders[Pass]) { RetiredShaders.push_back(PostShaders[Pass]); }
+                PostShaders[Pass]      = nullptr;
+                bPostShaderTried[Pass] = false;
+            }
             Warned.clear();
             BoundVertex = nullptr;
             BoundPixel  = nullptr;
         }
     };
+
+    GDIRenderTarget* RenderContext::Impl::RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, const bool bInHasPrevious)
+    {
+        /* Ping-pongs two full-size targets; the scene colour (and its depth)
+         * is only ever read, so every pass can sample the depth. */
+        GDIRenderTarget* Source = InTargets.SceneColor;
+        const DrawPolicy& Materials = PolicyFor(ERenderStage::PostProcess);
+        const uint Width  = InTargets.Width;
+        const uint Height = InTargets.Height;
+        const uint HalfW  = SceneTargets::HalfSize(Width, 1);
+        const uint HalfH  = SceneTargets::HalfSize(Height, 1);
+
+        GDITexture2D*       DepthTexture = Source->ToDepthTexture2D();
+        GDITextureResource* Depth        = DepthTexture ? DepthTexture->Resource : nullptr;
+        const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
+        {
+            GDITexture2D* Each = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+            return Each ? Each->Resource : nullptr;
+        };
+        const auto Next = [&]() -> GDIRenderTarget*
+        {
+            GDIRenderTarget* First = InTargets.EnsurePostProcess();
+            return Source == First ? InTargets.EnsurePostProcessB() : First;
+        };
+        const auto Sizes = [](PostBlock& OutBlock, const uint InW, const uint InH)
+        {
+            OutBlock.Sizes[0] = 1.0f / float(InW);
+            OutBlock.Sizes[1] = 1.0f / float(InH);
+            OutBlock.Sizes[2] = float(InW);
+            OutBlock.Sizes[3] = float(InH);
+        };
+
+        const bool bDof    = InPost.bDepthOfField && InPost.DofMaxBlur > 0.05f && Depth;
+        const bool bMotion = InPost.bMotionBlur && InPost.MotionIntensity > 0.001f && bInHasPrevious && Depth;
+        const bool bBloom  = InPost.bBloom && InPost.BloomIntensity > 0.001f;
+        const bool bAa     = InPost.bAntialiasing != 0;
+        uint32_t   Passes  = 0;
+        StageDrawCounts[size_t(ERenderStage::PostProcess)] = uint32_t(Materials.Num());
+        if(Materials.IsEmpty() && !bDof && !bMotion && !bBloom && !bAa)
+        {
+            return Source;
+        }
+        if(InPost.bDepthOfField && !Depth)
+        {
+            WarnOnce("|post-depth", "post process: this backend cannot sample the scene depth; Depth of Field and Motion Blur are skipped");
+        }
+
+        GDIBeginDrawEvent(GetRenderStageName(ERenderStage::PostProcess));
+
+        /* Materials at InStage, in their order: slot 0 the scene so far, slot 7 its depth. */
+        const auto RunMaterials = [&](const uint8_t InStage)
+        {
+            PostSceneDepth = Depth;
+            for(const uint32_t Index : Materials.GetIssueOrder())
+            {
+                if(Materials[Index].PostStage != InStage) { continue; }
+                GDIRenderTarget* Dest = Next();
+                if(!Dest) { break; }
+                GDISetRenderTargets(&Dest, 1, nullptr);
+                GDISetViewport(0, 0, Width, Height);
+                GDISetColorMask(EColM_RGBA);
+                GDISetMaterialTexture(0, Texture(Source));
+                if(IssueFullscreen(Materials[Index]))
+                {
+                    Source = Dest;
+                    ++Passes;
+                }
+            }
+            GDISetMaterialTexture(0, nullptr);
+            GDISetMaterialTexture(GDI_MATERIAL_TEXTURE_SLOTS - 1, nullptr);
+            PostSceneDepth = nullptr;
+        };
+        RunMaterials(PPS_BeforeEffects);
+
+        /* Depth of Field: circle of confusion and a half-size copy; a disc blur
+         * of that; the two mixed back at full size. */
+        if(bDof && InTargets.EnsureHalf())
+        {
+            PostBlock Block;
+            Block.A[0] = InPost.DofFocusDistance;
+            Block.A[1] = std::max(InPost.DofFocusRange, 1.0f);
+            Block.A[2] = InPost.DofMaxBlur;
+            Block.A[3] = InPost.bDofNearBlur ? 1.0f : 0.0f;
+            Sizes(Block, Width, Height);
+            GDIRenderTarget* Dest = Next();
+            if(DrawPost(PP_DofPrepare, InTargets.Half[0], HalfW, HalfH, { Texture(Source), Depth }, Block))
+            {
+                Sizes(Block, HalfW, HalfH);
+                DrawPost(PP_DofBlur, InTargets.Half[1], HalfW, HalfH, { Texture(InTargets.Half[0]) }, Block);
+                if(DrawPost(PP_DofComposite, Dest, Width, Height, { Texture(Source), Texture(InTargets.Half[1]) }, Block))
+                {
+                    Source = Dest;
+                    Passes += 3;
+                }
+            }
+        }
+
+        /* Motion Blur: along each pixel's motion since last frame's camera. */
+        if(bMotion)
+        {
+            PostBlock Block;
+            PutMatrix(Block.Matrix, PrevViewProjection);
+            Block.A[0] = InPost.MotionIntensity;
+            Block.A[1] = InPost.MotionMaxLength;
+            Block.A[2] = InPost.MotionSamples;
+            Sizes(Block, Width, Height);
+            GDIRenderTarget* Dest = Next();
+            if(DrawPost(PP_MotionBlur, Dest, Width, Height, { Texture(Source), Depth }, Block))
+            {
+                Source = Dest;
+                ++Passes;
+            }
+        }
+
+        /* Bloom: down a chain of half-size targets (the first keeping only
+         * what passes the threshold), back up adding each into the next, then
+         * the top level added to the scene. */
+        const uint32_t Levels = uint32_t(std::clamp(int(InPost.BloomLevels + 0.5f), 1, int(RENDER_BLOOM_LEVELS_MAX)));
+        if(bBloom && InTargets.EnsureBloom(Levels))
+        {
+            PostBlock Block;
+            Block.A[0] = InPost.BloomThreshold;
+            Block.A[1] = 0.2f;   // knee: the threshold's softness, a fraction of it
+            Block.A[2] = 1.0f;
+            bool bChain = true;
+            GDIRenderTarget* From = Source;
+            uint FromW = Width, FromH = Height;
+            for(uint32_t Level = 0; Level < Levels && bChain; ++Level)
+            {
+                Sizes(Block, FromW, FromH);
+                const uint W = SceneTargets::HalfSize(Width, Level + 1), H = SceneTargets::HalfSize(Height, Level + 1);
+                bChain = DrawPost(PP_BloomDownsample, InTargets.Bloom[Level], W, H, { Texture(From) }, Block);
+                Block.A[2] = 0.0f;   // the threshold, once
+                From = InTargets.Bloom[Level];
+                FromW = W;
+                FromH = H;
+            }
+            Block.A[0] = std::clamp(InPost.BloomRadius, 0.0f, 1.0f);
+            for(uint32_t Level = Levels - 1; Level > 0 && bChain; --Level)
+            {
+                Sizes(Block, SceneTargets::HalfSize(Width, Level + 1), SceneTargets::HalfSize(Height, Level + 1));
+                bChain = DrawPost(PP_BloomUpsample, InTargets.Bloom[Level - 1], SceneTargets::HalfSize(Width, Level),
+                                     SceneTargets::HalfSize(Height, Level), { Texture(InTargets.Bloom[Level]) }, Block, /*bInAdditive*/ true);
+            }
+            PostBlock Composite;
+            Composite.A[0] = InPost.BloomTint[0];
+            Composite.A[1] = InPost.BloomTint[1];
+            Composite.A[2] = InPost.BloomTint[2];
+            Composite.A[3] = InPost.BloomIntensity;
+            Sizes(Composite, Width, Height);
+            GDIRenderTarget* Dest = Next();
+            if(bChain && DrawPost(PP_BloomComposite, Dest, Width, Height, { Texture(Source), Texture(InTargets.Bloom[0]) }, Composite))
+            {
+                Source = Dest;
+                Passes += Levels * 2;
+            }
+        }
+
+        RunMaterials(PPS_AfterEffects);
+
+        /* Antialiasing, last: FXAA over everything before it. */
+        if(bAa)
+        {
+            static const float SEARCH_STEPS[3] = { 4.0f, 8.0f, 12.0f };
+            PostBlock Block;
+            Block.A[0] = std::max(InPost.AaEdgeThreshold, 0.01f);
+            Block.A[1] = SEARCH_STEPS[std::min<uint32_t>(InPost.AaQuality, 2)];
+            Block.A[2] = 0.75f;   // sub-pixel smoothing
+            Sizes(Block, Width, Height);
+            GDIRenderTarget* Dest = Next();
+            if(DrawPost(PP_Fxaa, Dest, Width, Height, { Texture(Source) }, Block))
+            {
+                Source = Dest;
+                ++Passes;
+            }
+        }
+
+        GDIEndDrawEvent();
+        StageDrawCounts[size_t(ERenderStage::PostProcess)] = Passes;
+
+        /* Left bound, as every stage leaves its target: what the present shows. */
+        GDISetRenderTargets(&Source, 1, Source == InTargets.SceneColor ? Source : nullptr);
+        GDISetViewport(0, 0, Width, Height);
+        return Source;
+    }
 
     RenderContext::RenderContext() : P(new Impl())
     {
@@ -1616,38 +1904,29 @@ namespace RenderCore
         P->IssueStage(ERenderStage::TranslucentLit);
         P->IssueStage(ERenderStage::TranslucentUnlit);
 
-        /* PostProcess: ping-pong between the scene colour and a second target. */
-        GDIRenderTarget*  Source = SceneColor;
-        const DrawPolicy& Post   = P->PolicyFor(ERenderStage::PostProcess);
-        P->StageDrawCounts[size_t(ERenderStage::PostProcess)] = uint32_t(Post.Num());
-        GDIRenderTarget* Dest = Post.IsEmpty() ? nullptr : InTargets.EnsurePostProcess();
-        if(Dest)
-        {
-            BeginDrawEvent(GetRenderStageName(ERenderStage::PostProcess));
-            for(const uint32_t Index : Post.GetIssueOrder())
-            {
-                GDITexture2D* Scene = Source->ToGDITexture2D();
-                BindTargets(&Dest, 1, Dest);
-                GDISetMaterialTexture(0, Scene ? Scene->Resource : nullptr);
-                if(P->IssueFullscreen(Post[Index]))
-                {
-                    std::swap(Source, Dest);
-                }
-                else
-                {
-                    BindTargets(&Source, 1, Source);   // a skipped pass leaves the result where it was
-                }
-            }
-            GDISetMaterialTexture(0, nullptr);
-            EndDrawEvent();
-        }
-
+        /* PostProcess: the stack (RENDERPIPELINE.md, "Post process"), once a
+         * scene's; consumed here, so the next call (a preview) runs none. */
+        const PostProcessSettings Post = P->PostSettings;
+        const bool bHasPrev = P->bHasPrevViewProjection;
+        P->PostSettings           = PostProcessSettings();
+        P->bHasPrevViewProjection = false;
+        GDIRenderTarget* const Source = P->RunPostProcessStack(InTargets, Post, bHasPrev);
         P->FinalTarget  = Source;
         InTargets.Final = Source;
         Finish();
     }
 
-    bool RenderContext::SubmitPostProcess(const char* InMaterial)
+    void RenderContext::SetPostProcess(const PostProcessSettings& InSettings, const EngineCore::Matrix4x4* InPreviousViewProjection)
+    {
+        P->PostSettings           = InSettings;
+        P->bHasPrevViewProjection = InPreviousViewProjection != nullptr;
+        if(InPreviousViewProjection)
+        {
+            P->PrevViewProjection = *InPreviousViewProjection;
+        }
+    }
+
+    bool RenderContext::SubmitPostProcess(const char* InMaterial, const uint8_t InStage)
     {
         const std::string Name = InMaterial ? std::string(InMaterial) : std::string();
         Material& Found = P->FindMaterial(Name);
@@ -1663,8 +1942,9 @@ namespace RenderCore
         }
 
         DrawCommand Item;
-        Item.Kind = DrawCommand::EKind::Fullscreen;
-        Item.Mat  = &Found;
+        Item.Kind      = DrawCommand::EKind::Fullscreen;
+        Item.Mat       = &Found;
+        Item.PostStage = InStage;
         P->Submit(Item, ERenderStage::PostProcess);
         return true;
     }

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="PostProcess">
+  <Nodes>
+    <Node Id="a4c43e00000000000000000000000001" Type="Effect.DepthOfField" Version="1" X="-300" Y="0">
+      <Prop Name="Focus Distance" Value="350" />
+      <Prop Name="Focus Range" Value="250" />
+      <Prop Name="Max Blur" Value="10" />
+      <Prop Name="Near Blur" Value="false" />
+    </Node>
+    <Node Id="a4c43e00000000000000000000000002" Type="Effect.MotionBlur" Version="1" X="0" Y="0">
+      <Prop Name="Intensity" Value="0.6" />
+      <Prop Name="Max Length" Value="40" />
+      <Prop Name="Samples" Value="10" />
+    </Node>
+    <Node Id="a4c43e00000000000000000000000003" Type="Effect.Bloom" Version="1" X="300" Y="0">
+      <Prop Name="Intensity" Value="0.9" />
+      <Prop Name="Threshold" Value="0.8" />
+      <Prop Name="Tint" Value="1 0.85 0.7" />
+    </Node>
+  </Nodes>
+  <Comments>
+    <Comment X="-350" Y="-80" Width="900" Height="200" Text="Under the arch: the far yard drops out of focus, turning smears, and the warm spot glows. Its volume is a Bounds box round the arch, blending in over 300 units." />
+  </Comments>
+  <gen_code>
+    <Output Extension=".ppstack"><![CDATA[# Post process stack Arch
+Effect DepthOfField FocusDistance=350 FocusRange=250 MaxBlur=10 NearBlur=false
+Effect MotionBlur Intensity=0.6 MaxLength=40 Samples=10
+Effect Bloom Threshold=0.8 Intensity=0.9 Radius=0.75 Levels=5 Tint=1,0.85,0.7
+]]></Output>
+  </gen_code>
+</NodeGraph>

@@ -12,6 +12,7 @@
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/RenderScene.h"
 #include "Private/RenderCore/ShadowSetup.h"
 
@@ -429,40 +430,79 @@ namespace RenderCore
         return Lighting;
     }
 
-    RenderPostProcess WorldBridge::BuildPostProcess() const
+    RenderPostProcess WorldBridge::BuildPostProcess(const RenderView& InView) const
     {
-        RenderPostProcess List;
+        RenderPostProcess Result;
         ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(PostProcessComponent::StaticType().ID) : nullptr;
         if(!Pool)
         {
-            return List;
+            return Result;
         }
 
-        const auto* Passes = static_cast<const PostProcessComponent*>(Pool->GetDenseData());
-        std::vector<const PostProcessComponent*> Enabled;
+        /* Where the camera is: the eye, or an orthographic view's centre (its
+         * Origin is the bottom-left corner). */
+        EngineCore::Vector3 Eye = InView.Origin;
+        if(InView.Projection.Data[3][2] == 0.0f)
+        {
+            Eye = Eye + EngineCore::Vector3(InView.ViewportPixels.Width * 0.5, InView.ViewportPixels.Height * 0.5, 0.0);
+        }
+
+        /* Every enabled volume the camera is near enough to, by weight. */
+        struct Volume { const PostProcessComponent* Component; float Weight; };
+        std::vector<Volume> Volumes;
+        const auto* Components = static_cast<const PostProcessComponent*>(Pool->GetDenseData());
         for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
         {
-            if(Passes[Index].bEnabled && Passes[Index].Material[0] != '\0') { Enabled.push_back(&Passes[Index]); }
+            const PostProcessComponent& Each = Components[Index];
+            if(!Each.bEnabled || Each.Stack[0] == '\0')
+            {
+                continue;
+            }
+            float Weight = 1.0f;
+            if(const BoundsComponent* Bounds = Each.Owner.GetSibling<BoundsComponent>())
+            {
+                if(Bounds->World.IsEmpty())
+                {
+                    continue;   // not refit yet: nowhere
+                }
+                /* How far outside the box the camera is; 0 inside. */
+                double Outside = 0.0;
+                for(int Axis = 0; Axis < 3; ++Axis)
+                {
+                    const double P   = Axis == 0 ? Eye.GetX() : Axis == 1 ? Eye.GetY() : Eye.GetZ();
+                    const double Min = Axis == 0 ? Bounds->World.Min.GetX() : Axis == 1 ? Bounds->World.Min.GetY() : Bounds->World.Min.GetZ();
+                    const double Max = Axis == 0 ? Bounds->World.Max.GetX() : Axis == 1 ? Bounds->World.Max.GetY() : Bounds->World.Max.GetZ();
+                    const double Gap = P < Min ? Min - P : P > Max ? P - Max : 0.0;
+                    Outside += Gap * Gap;
+                }
+                Weight = GetPostProcessVolumeWeight(float(std::sqrt(Outside)), Each.BlendDistance);
+            }
+            if(Weight > 0.0f)
+            {
+                Volumes.push_back({ &Each, Weight });
+            }
         }
-        std::stable_sort(Enabled.begin(), Enabled.end(), [](const PostProcessComponent* InA, const PostProcessComponent* InB)
+        std::stable_sort(Volumes.begin(), Volumes.end(), [](const Volume& InA, const Volume& InB)
         {
-            return InA->Priority < InB->Priority;
+            return InA.Component->Priority < InB.Component->Priority;
         });
 
-        if(Enabled.size() > RENDER_POST_PROCESS_MAX)
+        for(const Volume& Each : Volumes)
         {
-            RENDERCORE_LOG_WARN("WorldBridge: " + std::to_string(Enabled.size()) + " Post Process components are enabled; "
-                                "only the first " + std::to_string(RENDER_POST_PROCESS_MAX) + " by Priority run")
+            const std::string Path(Each.Component->Stack, strnlen(Each.Component->Stack, sizeof(Each.Component->Stack)));
+            if(const std::shared_ptr<const PostProcessSettings> Stack = PostProcessStackCache::Find(Path))
+            {
+                BlendPostProcess(Result.Settings, *Stack, Each.Weight);
+            }
         }
-        for(const PostProcessComponent* Each : Enabled)
+
+        /* Materials run by stage, then order; volumes' order breaks ties. */
+        PostProcessSettings& S = Result.Settings;
+        std::stable_sort(S.Materials, S.Materials + S.MaterialCount, [](const PostProcessMaterial& InA, const PostProcessMaterial& InB)
         {
-            if(List.Count == RENDER_POST_PROCESS_MAX) { break; }
-            static_assert(sizeof(List.Materials[0]) == sizeof(Each->Material), "a post-process name fits its slot");
-            std::memcpy(List.Materials[List.Count], Each->Material, sizeof(List.Materials[0]));
-            List.Materials[List.Count][sizeof(List.Materials[0]) - 1] = '\0';
-            ++List.Count;
-        }
-        return List;
+            return InA.Stage != InB.Stage ? InA.Stage < InB.Stage : InA.Order < InB.Order;
+        });
+        return Result;
     }
 
     void WorldBridge::ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride)
@@ -575,7 +615,7 @@ namespace RenderCore
         RenderView View = InViewOverride ? *InViewOverride : BuildView(InFrame);
         View.ViewportPixels = InFrame.ViewportPixels;   // the render targets are sized from this
         const RenderLighting    Lighting    = BuildLighting(View.Origin);
-        const RenderPostProcess PostProcess = BuildPostProcess();
+        const RenderPostProcess PostProcess = BuildPostProcess(View);
         RenderScene* SceneCapture = Scene;
 
         ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View, Lighting, PostProcess](RenderContext& Ctx)

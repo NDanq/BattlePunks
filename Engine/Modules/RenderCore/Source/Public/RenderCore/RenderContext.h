@@ -181,11 +181,18 @@ namespace RenderCore
                               const char* const* InSlots, uint32_t InSlotCount, bool bInEvery,
                               const MaterialParameterOverrides& InOverrides);
 
-        /* Queues a full-screen pass of a PostProcess material, after those
-         * already queued (outside a scene: draws it into the bound target,
-         * the caller having bound the scene so far to material texture 0).
-         * False (warned) if it is not a usable PostProcess material. */
-        bool SubmitPostProcess(const char* InMaterial);
+        /* Queues a full-screen pass of a PostProcess material at InStage of
+         * the post process stack (EPostProcessStage), after those already
+         * queued there (outside a scene: draws it into the bound target, the
+         * caller having bound the scene so far to material texture 0). False
+         * (warned) if it is not a usable PostProcess material. */
+        bool SubmitPostProcess(const char* InMaterial, uint8_t InStage = PPS_AfterEffects);
+
+        /* RenderScene::Render's, before RenderSceneStages: the stack's settings
+         * (its materials are submitted separately) and last frame's
+         * Projection * View, for motion blur -- null on a first frame. The
+         * next RenderSceneStages uses and forgets them. */
+        void SetPostProcess(const PostProcessSettings& InSettings, const EngineCore::Matrix4x4* InPreviousViewProjection);
 
         /* Renderer::MountShaderCache's command: reads
          * Shaders/Cache/<Module>.<Platform>.nmsc and mounts it as a file layer

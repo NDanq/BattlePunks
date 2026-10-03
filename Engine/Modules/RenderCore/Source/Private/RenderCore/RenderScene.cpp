@@ -36,6 +36,12 @@ namespace RenderCore
         RenderLighting            Lighting;
         RenderPostProcess         PostProcess;
 
+        /* Last frame's Projection * View and viewport, for motion blur; none
+         * on the first frame or after a resize (a jump, not motion). */
+        EngineCore::Matrix4x4     PrevViewProjection;
+        EngineCore::Size          PrevViewport;
+        bool                      bHasPrevView = false;
+
         /*
          * THE SCENE'S RENDER TARGETS, and the whole reason anything reaches
          * the screen. GDIDynamicDriver::PresentToWindow presents
@@ -285,11 +291,19 @@ namespace RenderCore
         }
         InContext.SetShadowCasterView(-1);
 
-        /* The scene's Post Process components, Priority low first (WorldBridge sorted them). */
-        for(uint32_t Index = 0; Index < P->PostProcess.Count && Index < RENDER_POST_PROCESS_MAX; ++Index)
+        /* The post process stack: the volumes' blend (WorldBridge), its
+         * materials by stage and order, then the effects' settings. */
+        const PostProcessSettings& Post = P->PostProcess.Settings;
+        for(uint32_t Index = 0; Index < Post.MaterialCount && Index < RENDER_POST_MATERIAL_MAX; ++Index)
         {
-            InContext.SubmitPostProcess(P->PostProcess.Materials[Index]);
+            InContext.SubmitPostProcess(Post.Materials[Index].Path, Post.Materials[Index].Stage);
         }
+        const bool bSameViewport = P->bHasPrevView && P->PrevViewport.Width == P->View.ViewportPixels.Width
+                                && P->PrevViewport.Height == P->View.ViewportPixels.Height;
+        InContext.SetPostProcess(Post, bSameViewport ? &P->PrevViewProjection : nullptr);
+        P->PrevViewProjection = P->View.Projection * P->View.View;
+        P->PrevViewport       = P->View.ViewportPixels;
+        P->bHasPrevView       = true;
 
         /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
          * leaves the final colour bound, for the present and the overlay. */

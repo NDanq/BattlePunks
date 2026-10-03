@@ -30,8 +30,10 @@
  * Demonstrates every light RenderCore has, each with the shadow technique it
  * suits: a cascaded directional sun, a sky light, two Standard-shadowed spot
  * lights (one sweeping), a Modulated point light orbiting the centre pillar,
- * and an unshadowed coloured point light. T cycles the sun's technique, F
- * toggles [Shadows] Enabled through its config var.
+ * and an unshadowed coloured point light. Post process volumes give a soft
+ * glow and FXAA everywhere, and depth of field and motion blur round the
+ * arch. T cycles the sun's technique, F toggles [Shadows] Enabled through its
+ * config var.
  *
  *   LightLabLevel      loads Content/Levels/LightLab.nmworld -- the yard, the lights and
  *                      the Player, as the editor saved them -- or, without one,
@@ -438,6 +440,7 @@ public:
         {
             SpawnGeometry(World);
             SpawnLights(World);
+            SpawnPostProcess(World);
             SpawnPlayer(World);
             if(!Export.empty())
             {
@@ -580,6 +583,32 @@ private:
         Player.AddComponent(Camera);
 
         Player.AddComponent<NimbleEngine::InputComponent>();
+    }
+
+    /* Post process volumes (Content/PostProcess): a soft glow and FXAA
+     * everywhere, and round the arch, depth of field and motion blur that
+     * blend in as the camera nears it. */
+    static void SpawnPostProcess(GameCore::World& InWorld)
+    {
+        const GameCore::Entity Global = InWorld.CreateEntity("PostProcessGlobal");
+        GameCore::TransformComponent Anywhere;
+        Global.AddComponent(Anywhere);
+        RenderCore::PostProcessComponent Everywhere;
+        std::snprintf(Everywhere.Stack, sizeof(Everywhere.Stack), "%s", "Content/PostProcess/Global.pp.nmgraph");
+        Global.AddComponent(Everywhere);
+
+        const GameCore::Entity Arch = InWorld.CreateEntity("PostProcessArch");
+        GameCore::TransformComponent AtArch;
+        AtArch.Position = EngineCore::Vector3(-350.0, 200.0, 400.0);
+        Arch.AddComponent(AtArch);
+        GameCore::BoundsComponent Volume;
+        Volume.Local = GameCore::AABB(EngineCore::Vector3(-300.0, -200.0, -250.0), EngineCore::Vector3(300.0, 250.0, 250.0));
+        Arch.AddComponent(Volume);
+        RenderCore::PostProcessComponent UnderArch;
+        std::snprintf(UnderArch.Stack, sizeof(UnderArch.Stack), "%s", "Content/PostProcess/Arch.pp.nmgraph");
+        UnderArch.Priority      = 1;
+        UnderArch.BlendDistance = 300.0f;
+        Arch.AddComponent(UnderArch);
     }
 
     /* Sizes are world units; a block of height H stands on the floor at

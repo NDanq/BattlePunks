@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="PostProcess">
+  <Nodes>
+    <Node Id="96b6ff8be39b6ced9e2355d959ef221c" Type="Effect.DepthOfField" Version="1" X="-16" Y="-5">
+      <Prop Name="Focus Distance" Value="1000" />
+      <Prop Name="Focus Range" Value="600" />
+      <Prop Name="Max Blur" Value="8" />
+      <Prop Name="Near Blur" Value="true" />
+    </Node>
+    <Node Id="b1003e00000000000000000000000001" Type="Effect.Bloom" Version="1" X="-150" Y="0">
+      <Prop Name="Intensity" Value="0.35" />
+      <Prop Name="Radius" Value="0.7" />
+      <Prop Name="Threshold" Value="0.9" />
+    </Node>
+    <Node Id="b1003e00000000000000000000000002" Type="Effect.Antialiasing" Version="1" X="150" Y="0" />
+  </Nodes>
+  <Comments>
+    <Comment X="-200" Y="-80" Width="520" Height="200" Text="LightLab everywhere: a soft glow on the brightest light and smooth edges. Its volume has no Bounds, so it applies wherever the camera is." />
+  </Comments>
+  <gen_code>
+    <Output Extension=".ppstack"><![CDATA[# Post process stack Global
+Effect DepthOfField FocusDistance=1000 FocusRange=600 MaxBlur=8 NearBlur=true
+Effect Bloom Threshold=0.9 Intensity=0.35 Radius=0.7 Levels=5 Tint=1,1,1
+Effect Antialiasing EdgeThreshold=0.125 Method=FXAA Quality=Medium
+]]></Output>
+  </gen_code>
+</NodeGraph>

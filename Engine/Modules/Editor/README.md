@@ -335,11 +335,13 @@ member differs from the default, and one with an empty Name is ignored when
 drawing. `Editor.Details` (`Tests/DetailsTests.cpp`) builds the panel
 offscreen; `NIMBLE_DETAILS_SNAPSHOT=<file.png>` saves what it drew.
 
-A material field -- a Materials entry, a Post Process's Material, a mesh
-viewer section -- holds a material graph by its path,
-`Materials/Glow.material.nmgraph` (the engine's: `Engine/Content/Materials/...`):
-dropped, picked with **...**, or typed with completion. Anything else typed is
-refused.
+A material field -- a Materials entry, a mesh viewer section -- holds a
+material graph by its path, `Materials/Glow.material.nmgraph` (the engine's:
+`Engine/Content/Materials/...`): dropped, picked with **...**, or typed with
+completion. Anything else typed is refused. A Post Process component's **Stack**
+is a post process field (`PF_AssetPostProcess`): a stack,
+`Content/PostProcess/Arch.pp.nmgraph`, or a PostProcess material graph, the
+same ways. Saving a stack in its graph window updates the viewport at once.
 
 Each property with a writable default shows an orange reset arrow to its right
 while its value differs from the type's default-constructed one; clicking it
