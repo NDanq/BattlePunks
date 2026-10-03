@@ -13,6 +13,9 @@
  * process"), so a node's place on the canvas means nothing; a stack without a
  * node leaves that effect alone.
  *
+ * Ambient Occlusion is a stack effect but runs mid-frame, between the G-buffer
+ * and the lighting, so it darkens only the ambient light.
+ *
  * The output is ".ppstack": a line per effect, read by RenderCore's
  * ParsePostProcessStack from the graph's <gen_code> at runtime --
  *
@@ -51,6 +54,14 @@ namespace
     const std::vector<EffectSpec>& GetEffects()
     {
         static const std::vector<EffectSpec> Effects = {
+            { "Effect.AmbientOcclusion", "AmbientOcclusion", "Ambient Occlusion",
+              "Darkens the ambient light in creases and corners (screen space, from depth and normals). Runs before "
+              "the lighting, so direct light is untouched; Opaque and Masked Lit surfaces only.",
+              { { "Intensity", "1",   0.0, 4.0,    1, "How strongly occluded ambient light is taken away" },
+                { "Radius",    "60",  1.0, 1.0e4,  1, "How far, in world units, nearby surfaces occlude" },
+                { "Samples",   "12",  4.0, 32.0,   1, "Directions tested per pixel: more is smoother and slower" },
+                { "Power",     "1.5", 0.5, 4.0,    1, "Contrast: above 1 darkens creases more than open areas" } },
+              { { "Blur", EPropertyKind::Bool, "true", {}, "Smooth the result, keeping edges; off shows the raw samples" } } },
             { "Effect.DepthOfField", "DepthOfField", "Depth of Field",
               "Blurs what is nearer or farther than the focus. Uses the scene depth.",
               { { "Focus Distance", "800", 0.0, 1.0e7, 1, "World units from the camera to the sharpest plane" },

@@ -132,6 +132,10 @@ layout:
 
 - textures 4-8: GBuffer0-3 and the scene depth, read with `texelFetch`;
 - textures 9-10: the directional and local shadow atlases (see [Shadows](#shadows));
+- texture 11: this frame's screen-space ambient occlusion, half size (see
+  [Ambient occlusion](#ambient-occlusion));
+- binding 2, `Lighting_Block`: x is 1 when texture 11 holds this frame's
+  occlusion, 0 otherwise;
 - binding 3, the scene block, which gains `Scene_InvViewProjection`, the
   point and spot lights and the shadow matrices.
 
@@ -238,7 +242,8 @@ Blend Distance and Enabled.
   - **an effect a stack has no node for** is left alone;
   - **material passes** join at weight 0.5 or more.
 
-**The passes**, always in this order:
+**The passes**, always in this order (Ambient Occlusion, the one effect that
+is not in this chain, runs earlier: see [below](#ambient-occlusion)):
 
 | # | Pass | Shaders | Targets |
 |---|---|---|---|
@@ -270,6 +275,33 @@ Blend Distance and Enabled.
 - **Antialiasing:** FXAA only; there is no temporal AA.
 - **Memory:** each small target also allocates a depth it never uses (GDI makes
   every target with one).
+
+### Ambient occlusion
+
+A stack's **Ambient Occlusion** node is blended with the other effects, but its
+passes run mid-frame, between the Base Pass and Shadows, so that only the
+**ambient** light is darkened: direct light and shadows are untouched.
+- **`PPAmbientOcclusion`** runs at half size into `Half[0]`. For each lit pixel
+  it rebuilds the world position from the scene depth and reads the normal from
+  GBuffer1. It then tests Samples points spread over the hemisphere round that
+  normal, out to Radius world units, turned per pixel by interleaved gradient
+  noise. Each point is projected with this frame's view-projection, which the
+  pass block carries ahead of its settings, as Motion Blur's does. A point
+  counts as occluded when the scene's surface at that pixel is nearer the eye
+  than the point is, fading out once that surface is more than Radius away, so
+  a distant wall does not darken a silhouette. The result is
+  `pow(1 - occluded fraction, Power)`. Intensity fades it in up to 1 and
+  deepens it past 1.
+- **`PPAmbientBlur`** (when Blur is on) averages 4 x 4 half-size texels into
+  `Half[1]`, weighting each tap by how close its distance is to the centre's,
+  so occlusion does not bleed across edges.
+- **The Lighting stage** samples the result bilinearly and multiplies it into
+  `Surface.AmbientOcclusion`, the material's own AO. `ShadeSurface` applies
+  that to the indirect term only.
+- **Scope:** Opaque and Masked Lit surfaces, the G-buffer's. Forward
+  (Translucent, Unlit) surfaces get none. With no G-buffer, or on a backend
+  that cannot sample depth, it is skipped. `Half[0..1]` are free again by the
+  time Depth of Field uses them.
 
 ### Previews
 

@@ -1833,6 +1833,7 @@ static void TestPostProcessOnGpu()
     const std::string FxaaStack   = WriteStack("Fxaa", "Effect Antialiasing EdgeThreshold=0.1 Method=FXAA Quality=High\n");
     const std::string DofStack    = WriteStack("Dof", "Effect DepthOfField FocusDistance=50 FocusRange=10 MaxBlur=16 NearBlur=false\n");
     const std::string MotionStack = WriteStack("Motion", "Effect MotionBlur Intensity=1 MaxLength=48 Samples=12\n");
+    const std::string AoStack     = WriteStack("Ao", "Effect AmbientOcclusion Intensity=1.5 Radius=80 Samples=16 Power=1.5 Blur=true\n");
 
     Renderer Rend;
     const bool bInit = Rend.Initialize(Backend, WindowHandle());
@@ -1990,6 +1991,18 @@ static void TestPostProcessOnGpu()
             Expect(EdgeEnergy(Focused) < EdgeEnergy(Plain) * 0.75, "Depth of Field blurs a scene far past its focus");
         }
 
+        /* Ambient Occlusion: the floor round each box darkens; open floor stays. */
+        EngineCore::Image Occluded;
+        UseStack(AoStack);
+        if(bPlain && Capture(Occluded, Still, Still))
+        {
+            Dump(Occluded, "post-ao");
+            const Difference Creases = Compare(Occluded, Plain);
+            std::printf("    ambient occlusion: %d darker, %d brighter, %d changed\n", Creases.Darker, Creases.Brighter, Creases.Changed);
+            Expect(Creases.Darker > 150 && Creases.Brighter < 20, "Ambient Occlusion darkens creases and never brightens");
+            Expect(Creases.Darker < 256 * 256 / 4, "but not the open floor");
+        }
+
         /* The Bloom stack in a volume far from the camera, with a hard edge. */
         UseStack(BloomStack);
         GameCore::BoundsComponent Bounds;
@@ -2076,6 +2089,14 @@ static void TestPostProcessStack()
     Expect(Stack.bAntialiasing && Stack.AaQuality == 2 && !Stack.bMotionBlur, "Antialiasing's; no Motion Blur node, no motion blur");
     Expect(Stack.MaterialCount == 1 && Stack.Materials[0].Stage == PPS_BeforeEffects && Stack.Materials[0].Order == 1.0f
            && std::strcmp(Stack.Materials[0].Path, "Content/Materials/Wave.material.nmgraph") == 0, "a material pass, its path the rest of the line");
+    PostProcessSettings Occlusion;
+    Expect(ParsePostProcessStack("Effect AmbientOcclusion Intensity=2 Radius=40 Samples=8 Power=1 Blur=false\n", Occlusion, Error)
+           && Occlusion.bAmbientOcclusion && Occlusion.AoIntensity == 2.0f && Occlusion.AoRadius == 40.0f && Occlusion.AoSamples == 8.0f
+           && Occlusion.AoPower == 1.0f && !Occlusion.bAoBlur && !Occlusion.IsEmpty(), "Ambient Occlusion's settings");
+    PostProcessSettings OcclusionHalf;
+    BlendPostProcess(OcclusionHalf, Occlusion, 0.25f);
+    Expect(OcclusionHalf.bAmbientOcclusion && std::abs(OcclusionHalf.AoIntensity - 0.5f) < 1e-5f && OcclusionHalf.AoRadius == 40.0f
+           && !OcclusionHalf.bAoBlur, "from off, its intensity scales with the weight; its other settings are the stack's");
     PostProcessSettings Broken;
     Expect(!ParsePostProcessStack("Effect Bloom Intensity=lots\n", Broken, Error) && Error.find("line 1") != std::string::npos,
            "a bad number names its line");

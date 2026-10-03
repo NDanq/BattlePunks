@@ -149,7 +149,15 @@ namespace RenderCore
                 const std::string Key   = Pair.substr(0, Equals);
                 const std::string Value = Pair.substr(Equals + 1);
                 float* Target = nullptr;
-                if(Effect == "DepthOfField")
+                if(Effect == "AmbientOcclusion")
+                {
+                    if(Key == "Intensity")    { Target = &S.AoIntensity; }
+                    else if(Key == "Radius")  { Target = &S.AoRadius; }
+                    else if(Key == "Samples") { Target = &S.AoSamples; }
+                    else if(Key == "Power")   { Target = &S.AoPower; }
+                    else if(Key == "Blur")    { S.bAoBlur = Value == "true" ? 1 : 0; }
+                }
+                else if(Effect == "DepthOfField")
                 {
                     if(Key == "FocusDistance")  { Target = &S.DofFocusDistance; }
                     else if(Key == "FocusRange") { Target = &S.DofFocusRange; }
@@ -180,7 +188,8 @@ namespace RenderCore
                     return Fail("bad number '" + Pair + "'");
                 }
             }
-            if(Effect == "DepthOfField")      { S.bDepthOfField = 1; }
+            if(Effect == "AmbientOcclusion")  { S.bAmbientOcclusion = 1; }
+            else if(Effect == "DepthOfField") { S.bDepthOfField = 1; }
             else if(Effect == "MotionBlur")   { S.bMotionBlur   = 1; }
             else if(Effect == "Bloom")        { S.bBloom        = 1; }
             else if(Effect == "Antialiasing") { S.bAntialiasing = 1; }
@@ -211,6 +220,23 @@ namespace RenderCore
         const bool bSwitch = W >= 0.5f;
         PostProcessSettings& B = InOutBlend;
 
+        if(InStack.bAmbientOcclusion)
+        {
+            if(!B.bAmbientOcclusion)
+            {
+                B.AoIntensity = 0.0f;
+                B.AoRadius    = InStack.AoRadius;
+                B.AoSamples   = InStack.AoSamples;
+                B.AoPower     = InStack.AoPower;
+                B.bAoBlur     = InStack.bAoBlur;
+            }
+            B.bAmbientOcclusion = 1;
+            B.AoIntensity = Lerp(B.AoIntensity, InStack.AoIntensity, W);
+            B.AoRadius    = Lerp(B.AoRadius, InStack.AoRadius, W);
+            B.AoSamples   = Lerp(B.AoSamples, InStack.AoSamples, W);
+            B.AoPower     = Lerp(B.AoPower, InStack.AoPower, W);
+            if(bSwitch) { B.bAoBlur = InStack.bAoBlur; }
+        }
         if(InStack.bDepthOfField)
         {
             if(!B.bDepthOfField)

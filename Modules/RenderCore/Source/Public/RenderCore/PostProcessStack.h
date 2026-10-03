@@ -42,6 +42,13 @@ namespace RenderCore
     struct PostProcessSettings
     {
         /* Each effect's switch: in a stack, "it has the node"; blended, "it runs". */
+        uint8_t bAmbientOcclusion = 0;   // runs before the lighting, not in the post chain
+        float   AoIntensity = 1.0f;
+        float   AoRadius    = 60.0f;     // world units
+        float   AoSamples   = 12.0f;
+        float   AoPower     = 1.5f;
+        uint8_t bAoBlur     = 1;
+
         uint8_t bDepthOfField = 0;
         float   DofFocusDistance = 800.0f;
         float   DofFocusRange    = 400.0f;
@@ -69,7 +76,7 @@ namespace RenderCore
 
         bool IsEmpty() const
         {
-            return !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && MaterialCount == 0;
+            return !bAmbientOcclusion && !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && MaterialCount == 0;
         }
     };
 

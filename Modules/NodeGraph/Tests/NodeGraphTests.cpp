@@ -752,12 +752,15 @@ namespace
         Node& Before = AddNode(G, 5, "Effect.Material");
         Before.Properties["Material"] = "Content/Materials/Wave.material.nmgraph";
         Before.Properties["Stage"]    = "Before Effects";
+        AddNode(G, 7, "Effect.AmbientOcclusion").Properties["Blur"] = "false";
 
         CompileResult Result;
         CompileGraph(G, Result);
         Expect(!Result.HasErrors(), "the stack compiles");
         if(Result.HasErrors()) { std::printf("%s\n", FormatDiagnostics(G, Result).c_str()); }
         const std::string& Text = Result.Code;
+        const size_t Ao = Text.find("Effect AmbientOcclusion Intensity=1 Radius=60 Samples=12 Power=1.5 Blur=false");
+        Expect(Ao != std::string::npos && Ao < Text.find("Effect DepthOfField "), "Ambient Occlusion first, with its settings");
         const size_t Dof = Text.find("Effect DepthOfField "), Glow = Text.find("Effect Bloom "), Aa = Text.find("Effect Antialiasing ");
         Expect(Dof != std::string::npos && Glow != std::string::npos && Aa != std::string::npos && Dof < Glow && Glow < Aa,
                "effects are written in the renderer's order, not the graph's");
