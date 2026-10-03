@@ -44,6 +44,7 @@
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/Prefab/PrefabEditorTab.h"
 #include "Private/Editor/Prefab/PrefabEditorWindow.h"
+#include "Private/Editor/Project/NewProjectWizard.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 #include "Private/Editor/SDLInputProbe.h"
 #include "Private/Editor/SettingsDialog.h"
@@ -185,6 +186,16 @@ EditorMainWindow::~EditorMainWindow()
 void EditorMainWindow::BuildMenus()
 {
     QMenu* File = menuBar()->addMenu(QStringLiteral("&File"));
+
+    QAction* NewProject = File->addAction(QStringLiteral("New Pro&ject..."));
+    NewProject->setToolTip(QStringLiteral("A new game in Games/, from Engine/Templates/Game"));
+    connect(NewProject, &QAction::triggered, this, [this]()
+    {
+        NewProjectWizard Wizard(this);
+        Wizard.exec();
+    });
+
+    File->addSeparator();
 
     QAction* New = File->addAction(QStringLiteral("&New Scene"));
     New->setShortcut(QKeySequence::New);
