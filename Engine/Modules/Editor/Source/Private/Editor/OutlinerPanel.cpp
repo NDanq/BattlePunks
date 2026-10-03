@@ -17,7 +17,7 @@
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
-#include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
 
 using GameCore::EntityID;
 
@@ -68,9 +68,9 @@ namespace
     };
 }
 
-OutlinerPanel::OutlinerPanel(EditorContext& InContext, QWidget* InParent)
+OutlinerPanel::OutlinerPanel(EditorDocument& InDocument, QWidget* InParent)
     : QWidget(InParent)
-    , Context(InContext)
+    , Document(InDocument)
 {
     auto* Layout = new QVBoxLayout(this);
     Layout->setContentsMargins(4, 4, 4, 4);
@@ -113,7 +113,7 @@ OutlinerPanel::OutlinerPanel(EditorContext& InContext, QWidget* InParent)
             return;
         }
         const QList<QTreeWidgetItem*> Selected = Tree->selectedItems();
-        Context.SetSelection(Selected.isEmpty() ? GameCore::InvalidEntityID() : EntityOf(Selected.front()));
+        Document.SetSelection(Selected.isEmpty() ? GameCore::InvalidEntityID() : EntityOf(Selected.front()));
     });
 
     connect(Tree, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* InItem)
@@ -127,9 +127,9 @@ OutlinerPanel::OutlinerPanel(EditorContext& InContext, QWidget* InParent)
 
     connect(Tree, &QTreeWidget::customContextMenuRequested, this, &OutlinerPanel::ShowContextMenu);
 
-    connect(&Context, &EditorContext::EntitiesChanged,  this, &OutlinerPanel::Rebuild);
-    connect(&Context, &EditorContext::WorldReset,       this, [this]() { Collapsed.clear(); Rebuild(); });
-    connect(&Context, &EditorContext::SelectionChanged, this, &OutlinerPanel::SyncSelectionFromContext);
+    connect(&Document, &EditorDocument::EntitiesChanged,  this, &OutlinerPanel::Rebuild);
+    connect(&Document, &EditorDocument::WorldReset,       this, [this]() { Collapsed.clear(); Rebuild(); });
+    connect(&Document, &EditorDocument::SelectionChanged, this, &OutlinerPanel::SyncSelectionFromDocument);
 
     Rebuild();
 }
@@ -141,7 +141,7 @@ EntityID OutlinerPanel::EntityOf(const QTreeWidgetItem* InItem)
 
 void OutlinerPanel::Rebuild()
 {
-    GameCore::World& World = Context.GetWorld();
+    GameCore::World& World = Document.GetWorld();
 
     /* Collected first, then turned into items: ForEachEntity's callback must
      * not do anything that could reach back into the World. */
@@ -172,7 +172,7 @@ void OutlinerPanel::Rebuild()
         }
 
         auto* Item = InParentItem ? new QTreeWidgetItem(InParentItem) : new QTreeWidgetItem(Tree);
-        Item->setText(COL_Name, Context.GetDisplayName(InID));
+        Item->setText(COL_Name, Document.GetDisplayName(InID));
         Item->setText(COL_Components, Components.join(QStringLiteral(", ")));
         Item->setToolTip(COL_Name, QStringLiteral("#%1 gen %2").arg(InID.Index).arg(InID.Generation));
         Item->setData(COL_Name, EntityRole, QVariant::fromValue<qulonglong>(InID.Pack()));
@@ -210,7 +210,7 @@ void OutlinerPanel::Rebuild()
 
     Footer->setText(QStringLiteral("%1 entities").arg(Entities.size()));
     ApplyFilter();
-    SyncSelectionFromContext(Context.GetSelection());
+    SyncSelectionFromDocument(Document.GetSelection());
 }
 
 void OutlinerPanel::ApplyFilter()
@@ -235,7 +235,7 @@ void OutlinerPanel::ApplyFilter()
     }
 }
 
-void OutlinerPanel::SyncSelectionFromContext(const EntityID InEntity)
+void OutlinerPanel::SyncSelectionFromDocument(const EntityID InEntity)
 {
     bSyncing = true;
     Tree->clearSelection();
@@ -259,9 +259,9 @@ void OutlinerPanel::Reparent(const EntityID InDragged, const EntityID InParent)
     {
         return;
     }
-    if(Context.SetEntityParent(InDragged, InParent))
+    if(Document.SetEntityParent(InDragged, InParent))
     {
-        Context.SetSelection(InDragged);
+        Document.SetSelection(InDragged);
     }
 }
 
@@ -269,7 +269,7 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
 {
     QTreeWidgetItem* Item = Tree->itemAt(InPos);
     const EntityID Target = EntityOf(Item);
-    GameCore::World& World = Context.GetWorld();
+    GameCore::World& World = Document.GetWorld();
     const bool bHasChildren = Target.IsSet() && World.GetEntity(Target).GetChildCount() > 0;
     const bool bHasParent   = Target.IsSet() && World.GetEntity(Target).HasParent();
 
@@ -289,19 +289,19 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
     QAction* Chosen = Menu.exec(Tree->viewport()->mapToGlobal(InPos));
     if(Chosen == Create)
     {
-        const EntityID NewEntity = Context.CreateEntity(QStringLiteral("Entity"), EngineCore::Vector3(0.0, 0.0, 0.0));
-        Context.SetSelection(NewEntity);
+        const EntityID NewEntity = Document.CreateEntity(QStringLiteral("Entity"), EngineCore::Vector3(0.0, 0.0, 0.0));
+        Document.SetSelection(NewEntity);
     }
     else if(Chosen == CreateChild)
     {
         /* At the parent's origin; one undo step, since the setup runs before
          * the creation is recorded. */
-        const EntityID NewEntity = Context.CreateEntity(QStringLiteral("Entity"), EngineCore::Vector3(0.0, 0.0, 0.0),
+        const EntityID NewEntity = Document.CreateEntity(QStringLiteral("Entity"), EngineCore::Vector3(0.0, 0.0, 0.0),
                                                         [Target](const GameCore::Entity& InEntity)
         {
             InEntity.SetParent(Target, false);
         });
-        Context.SetSelection(NewEntity);
+        Document.SetSelection(NewEntity);
     }
     else if(Chosen == Detach)
     {
@@ -309,7 +309,7 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
     }
     else if(Chosen == Destroy)
     {
-        Context.DestroyEntity(Target);
+        Document.DestroyEntity(Target);
     }
 }
 

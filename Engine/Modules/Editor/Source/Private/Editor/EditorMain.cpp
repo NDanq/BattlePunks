@@ -70,6 +70,10 @@ int main(int argc, char* argv[])
     const QCommandLineOption PlayOption(QStringLiteral("play"),
                                         QStringLiteral("Start Play-in-Editor once the viewport is up."));
     Parser.addOption(PlayOption);
+    const QCommandLineOption CommandOption(QStringLiteral("command"),
+                                           QStringLiteral("Run a console command once the viewport is up. Repeatable."),
+                                           QStringLiteral("line"));
+    Parser.addOption(CommandOption);
     Parser.addPositionalArgument(QStringLiteral("world"), QStringLiteral("A .nmworld file to open."), QStringLiteral("[world]"));
     Parser.process(App);
 
@@ -114,6 +118,7 @@ int main(int argc, char* argv[])
         Window.SetInitialWorld(InitialWorld);
         Window.SetStartSDLInputProbe(Parser.isSet(ProbeOption));
         Window.SetStartPlay(Parser.isSet(PlayOption));
+        Window.SetStartupCommands(Parser.values(CommandOption));
         Window.show();
 
         Result = App.exec();

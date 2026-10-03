@@ -11,7 +11,7 @@
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
-#include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
 
 using GameCore::ComponentTypeID;
 using GameCore::EntityGuid;
@@ -343,8 +343,8 @@ namespace EditorHistory
 
     // === Command =============================================================
 
-    Command::Command(EditorContext& InContext, const QString& InText)
-        : Context(InContext)
+    Command::Command(EditorDocument& InDocument, const QString& InText)
+        : Document(InDocument)
     {
         setText(InText);
     }
@@ -366,10 +366,10 @@ namespace EditorHistory
 
     // === PropertyEditCommand =================================================
 
-    PropertyEditCommand::PropertyEditCommand(EditorContext& InContext, const QString& InText, const EntityGuid& InGuid,
+    PropertyEditCommand::PropertyEditCommand(EditorDocument& InDocument, const QString& InText, const EntityGuid& InGuid,
                                              const ComponentTypeID InType, std::vector<uint8_t> InBefore,
                                              std::vector<uint8_t> InAfter, const uint64_t InGesture)
-        : Command(InContext, InText)
+        : Command(InDocument, InText)
         , Guid(InGuid)
         , Type(InType)
         , Before(std::move(InBefore))
@@ -386,7 +386,7 @@ namespace EditorHistory
 
         /* Only into the entry just recorded -- never one an undo or redo has
          * since moved past -- and only the same component. */
-        if(!Context.IsLatestRecorded(this) || !(Other->Guid == Guid) || Other->Type != Type)
+        if(!Document.IsLatestRecorded(this) || !(Other->Guid == Guid) || Other->Type != Type)
         {
             return false;
         }
@@ -404,7 +404,7 @@ namespace EditorHistory
 
     void PropertyEditCommand::Apply(const bool bInForward)
     {
-        World& W = Context.GetEditedWorld();
+        World& W = Document.GetEditedWorld();
         const EntityID Entity = Resolve(W, Guid, text());
         if(!Entity.IsSet())
         {
@@ -412,15 +412,15 @@ namespace EditorHistory
         }
         ApplyProperties(W, Entity, Type, bInForward ? After : Before);
         W.RefreshEntityBounds(Entity);
-        Context.SetSelection(Entity);
-        Context.NotifyPropertyEdited(Entity, Type);
+        Document.SetSelection(Entity);
+        Document.NotifyPropertyEdited(Entity, Type);
     }
 
     // === EntityMembersCommand ================================================
 
-    EntityMembersCommand::EntityMembersCommand(EditorContext& InContext, const QString& InText, const EntityGuid& InGuid,
+    EntityMembersCommand::EntityMembersCommand(EditorDocument& InDocument, const QString& InText, const EntityGuid& InGuid,
                                                EntityMembers InBefore, EntityMembers InAfter)
-        : Command(InContext, InText)
+        : Command(InDocument, InText)
         , Guid(InGuid)
         , Before(std::move(InBefore))
         , After(std::move(InAfter))
@@ -430,24 +430,24 @@ namespace EditorHistory
 
     void EntityMembersCommand::Apply(const bool bInForward)
     {
-        World& W = Context.GetEditedWorld();
+        World& W = Document.GetEditedWorld();
         const EntityID Entity = Resolve(W, Guid, text());
         if(!Entity.IsSet())
         {
             return;
         }
         const EntityMembers& Target = bInForward ? After : Before;
-        Context.RenameEntity(Entity, QString::fromStdString(Target.Name));
-        Context.SetEntityScript(Entity, QString::fromStdString(Target.ScriptPath));
-        Context.SetEntityScriptCull(Entity, Target.bCullOutsideActiveRegion != 0);
-        Context.SetSelection(Entity);
+        Document.RenameEntity(Entity, QString::fromStdString(Target.Name));
+        Document.SetEntityScript(Entity, QString::fromStdString(Target.ScriptPath));
+        Document.SetEntityScriptCull(Entity, Target.bCullOutsideActiveRegion != 0);
+        Document.SetSelection(Entity);
     }
 
     // === EntityLifetimeCommand ===============================================
 
-    EntityLifetimeCommand::EntityLifetimeCommand(EditorContext& InContext, const QString& InText, const bool bInCreated,
+    EntityLifetimeCommand::EntityLifetimeCommand(EditorDocument& InDocument, const QString& InText, const bool bInCreated,
                                                  EntitySnapshot InSnapshot)
-        : Command(InContext, InText)
+        : Command(InDocument, InText)
         , bCreated(bInCreated)
         , Snapshot(std::move(InSnapshot))
     {
@@ -455,28 +455,28 @@ namespace EditorHistory
 
     void EntityLifetimeCommand::Apply(const bool bInForward)
     {
-        World& W = Context.GetEditedWorld();
+        World& W = Document.GetEditedWorld();
         const bool bShouldExist = bInForward == bCreated;
 
         if(bShouldExist)
         {
-            Context.SetSelection(RestoreEntity(W, Snapshot));
+            Document.SetSelection(RestoreEntity(W, Snapshot));
             return;
         }
         const EntityID Entity = Resolve(W, Snapshot.Guid, text());
         if(Entity.IsSet())
         {
             Snapshot = CaptureEntity(W, Entity);
-            Context.DestroyEntity(Entity);
+            Document.DestroyEntity(Entity);
         }
     }
 
     // === ParentCommand =======================================================
 
-    ParentCommand::ParentCommand(EditorContext& InContext, const QString& InText, const EntityGuid& InGuid,
+    ParentCommand::ParentCommand(EditorDocument& InDocument, const QString& InText, const EntityGuid& InGuid,
                                  const EntityGuid& InBeforeParent, std::vector<uint8_t> InBeforeTransform,
                                  const EntityGuid& InAfterParent, std::vector<uint8_t> InAfterTransform)
-        : Command(InContext, InText)
+        : Command(InDocument, InText)
         , Guid(InGuid)
         , BeforeParent(InBeforeParent)
         , AfterParent(InAfterParent)
@@ -487,7 +487,7 @@ namespace EditorHistory
 
     void ParentCommand::Apply(const bool bInForward)
     {
-        World& W = Context.GetEditedWorld();
+        World& W = Document.GetEditedWorld();
         const EntityID Entity = Resolve(W, Guid, text());
         if(!Entity.IsSet())
         {
@@ -509,15 +509,15 @@ namespace EditorHistory
             ApplyProperties(W, Entity, GameCore::TransformComponent::StaticType().ID, Values);
         }
         W.RefreshEntityBounds(Entity);
-        Context.SetSelection(Entity);
-        Context.NotifyHierarchyEdited(Entity);
+        Document.SetSelection(Entity);
+        Document.NotifyHierarchyEdited(Entity);
     }
 
     // === ComponentLifetimeCommand ============================================
 
-    ComponentLifetimeCommand::ComponentLifetimeCommand(EditorContext& InContext, const QString& InText, const bool bInAdded,
+    ComponentLifetimeCommand::ComponentLifetimeCommand(EditorDocument& InDocument, const QString& InText, const bool bInAdded,
                                                        const EntityGuid& InGuid, ComponentSnapshot InSnapshot)
-        : Command(InContext, InText)
+        : Command(InDocument, InText)
         , bAdded(bInAdded)
         , Guid(InGuid)
         , Snapshot(std::move(InSnapshot))
@@ -526,7 +526,7 @@ namespace EditorHistory
 
     void ComponentLifetimeCommand::Apply(const bool bInForward)
     {
-        World& W = Context.GetEditedWorld();
+        World& W = Document.GetEditedWorld();
         const EntityID Entity = Resolve(W, Guid, text());
         if(!Entity.IsSet())
         {
@@ -542,7 +542,7 @@ namespace EditorHistory
             W.GetEntity(Entity).RemoveComponentByType(Snapshot.Type);
         }
         W.RefreshEntityBounds(Entity);
-        Context.SetSelection(Entity);
+        Document.SetSelection(Entity);
     }
 }
 

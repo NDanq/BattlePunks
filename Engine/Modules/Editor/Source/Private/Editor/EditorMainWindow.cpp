@@ -18,19 +18,24 @@
 #include <QStatusBar>
 #include <QToolBar>
 #include <QUndoStack>
+#include <QVBoxLayout>
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/Components.h"
+#include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/Editor/ConsolePanel.h"
 #include "Public/Editor/ContentBrowserPanel.h"
 #include "Public/Editor/DetailsPanel.h"
 #include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/NodeGraph/Schema.h"
+#include "Public/RenderCore/RenderComponents.h"
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
@@ -62,25 +67,26 @@ namespace
 EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::ERenderBackend InBackend, QWidget* InParent)
     : QMainWindow(InParent)
     , Context(InContext)
+    , Level(InContext.GetLevel())
     , Backend(InBackend)
 {
     resize(1600, 900);
     setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowTabbedDocks);
 
-    ViewportArea = new ViewportPanel(Context, this);
+    ViewportArea = new ViewportPanel(Context, Level, this);
     Viewport     = ViewportArea->GetViewport();
     Context.SetPlayInputWidget(Viewport);   // the game reads the viewport's input while playing
     setCentralWidget(ViewportArea);
 
     auto* OutlinerDock = new QDockWidget(QStringLiteral("Outliner"), this);
     OutlinerDock->setObjectName(QStringLiteral("OutlinerDock"));
-    Outliner = new OutlinerPanel(Context, OutlinerDock);
+    Outliner = new OutlinerPanel(Level, OutlinerDock);
     OutlinerDock->setWidget(Outliner);
     addDockWidget(Qt::RightDockWidgetArea, OutlinerDock);
 
     auto* DetailsDock = new QDockWidget(QStringLiteral("Details"), this);
     DetailsDock->setObjectName(QStringLiteral("DetailsDock"));
-    Details = new DetailsPanel(Context, DetailsDock);
+    Details = new DetailsPanel(Level, DetailsDock);
     DetailsDock->setWidget(Details);
     addDockWidget(Qt::RightDockWidgetArea, DetailsDock);
 
@@ -167,7 +173,7 @@ void EditorMainWindow::BuildMenus()
     New->setShortcut(QKeySequence::New);
     connect(New, &QAction::triggered, this, [this]()
     {
-        Context.NewScene();
+        Level.NewScene();
         CurrentPath.clear();
         UpdateTitle();
     });
@@ -176,7 +182,7 @@ void EditorMainWindow::BuildMenus()
     SandboxScene->setToolTip(QStringLiteral("The Sandbox level as it stands once loaded: Marker, Camera and Scripted"));
     connect(SandboxScene, &QAction::triggered, this, [this]()
     {
-        Context.CreateSandboxScene();
+        Level.CreateSandboxScene();
         Viewport->ApplySandboxView();
         CurrentPath.clear();
         UpdateTitle();
@@ -241,13 +247,13 @@ void EditorMainWindow::BuildMenus()
      * text fields still get Ctrl+Z first. */
     UndoAction = Edit->addAction(QStringLiteral("&Undo"));
     UndoAction->setShortcut(QKeySequence::Undo);
-    connect(UndoAction, &QAction::triggered, &Context, &EditorContext::Undo);
+    connect(UndoAction, &QAction::triggered, &Level, &EditorDocument::Undo);
 
     RedoAction = Edit->addAction(QStringLiteral("&Redo"));
     RedoAction->setShortcuts({ QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) });
-    connect(RedoAction, &QAction::triggered, &Context, &EditorContext::Redo);
+    connect(RedoAction, &QAction::triggered, &Level, &EditorDocument::Redo);
 
-    connect(&Context, &EditorContext::HistoryChanged, this, &EditorMainWindow::UpdateHistoryActions);
+    connect(&Level, &EditorDocument::HistoryChanged, this, &EditorMainWindow::UpdateHistoryActions);
     UpdateHistoryActions();
 
     Edit->addSeparator();
@@ -273,12 +279,12 @@ void EditorMainWindow::BuildMenus()
         /* In front of the camera, so the new entity is somewhere visible. */
         const EditorCamera& Camera = Viewport->GetCamera();
         const EngineCore::Vector3 Spot = Camera.Position + Camera.GetForward() * 600.0;
-        Context.SetSelection(Context.CreateEntity(QStringLiteral("Entity"), Spot));
+        Level.SetSelection(Level.CreateEntity(QStringLiteral("Entity"), Spot));
     });
 
     QAction* DeleteEntity = World->addAction(QStringLiteral("&Delete"));
     DeleteEntity->setShortcut(QKeySequence::Delete);
-    connect(DeleteEntity, &QAction::triggered, this, [this]() { Context.DestroyEntity(Context.GetSelection()); });
+    connect(DeleteEntity, &QAction::triggered, this, [this]() { Level.DestroyEntity(Level.GetSelection()); });
 
     QMenu* View = menuBar()->addMenu(QStringLiteral("&View"));
     for(QDockWidget* Dock : findChildren<QDockWidget*>())
@@ -556,7 +562,7 @@ void EditorMainWindow::RegisterConsoleCommands()
     /* "#12" is entity index 12; anything else is a name. */
     const auto Resolve = [this](const QString& InWhich) -> EntityID
     {
-        GameCore::World& World = Context.GetWorld();
+        GameCore::World& World = Level.GetWorld();
         if(InWhich.startsWith(QLatin1Char('#')))
         {
             bool bOk = false;
@@ -584,7 +590,7 @@ void EditorMainWindow::RegisterConsoleCommands()
                      [this](const QStringList& InArgs)
     {
         std::vector<EntityID> Entities;
-        Context.GetWorld().ForEachEntity([](const EntityID InEntity, void* InUserData)
+        Level.GetWorld().ForEachEntity([](const EntityID InEntity, void* InUserData)
         {
             static_cast<std::vector<EntityID>*>(InUserData)->push_back(InEntity);
         }, &Entities);
@@ -593,13 +599,13 @@ void EditorMainWindow::RegisterConsoleCommands()
         QStringList Lines;
         for(const EntityID ID : Entities)
         {
-            const QString Name = Context.GetDisplayName(ID);
+            const QString Name = Level.GetDisplayName(ID);
             if(!Filter.isEmpty() && !Name.contains(Filter, Qt::CaseInsensitive))
             {
                 continue;
             }
             Lines << QStringLiteral("%1 #%2 %3")
-                     .arg(ID == Context.GetSelection() ? QLatin1Char('*') : QLatin1Char(' '))
+                     .arg(ID == Level.GetSelection() ? QLatin1Char('*') : QLatin1Char(' '))
                      .arg(QString::number(ID.Index), -4)
                      .arg(Name);
         }
@@ -618,17 +624,17 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
         if(InArgs.front().compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0)
         {
-            Context.SetSelection(GameCore::InvalidEntityID());
+            Level.SetSelection(GameCore::InvalidEntityID());
             return;
         }
         const EntityID Found = Resolve(InArgs.front());
-        if(!Found.IsSet() || !Context.GetWorld().IsAlive(Found))
+        if(!Found.IsSet() || !Level.GetWorld().IsAlive(Found))
         {
             Console.PrintError(QStringLiteral("No entity '%1'").arg(InArgs.front()));
             return;
         }
-        Context.SetSelection(Found);
-        Console.Print(QStringLiteral("Selected %1 #%2").arg(Context.GetDisplayName(Found)).arg(Found.Index));
+        Level.SetSelection(Found);
+        Console.Print(QStringLiteral("Selected %1 #%2").arg(Level.GetDisplayName(Found)).arg(Found.Index));
     });
 
     Console.Register(QStringLiteral("create"), QStringLiteral("[name]"),
@@ -637,24 +643,24 @@ void EditorMainWindow::RegisterConsoleCommands()
     {
         const EditorCamera& Camera = Viewport->GetCamera();
         const QString Name = InArgs.isEmpty() ? QStringLiteral("Entity") : InArgs.join(QLatin1Char(' '));
-        const EntityID Created = Context.CreateEntity(Name, Camera.Position + Camera.GetForward() * 600.0);
-        Context.SetSelection(Created);
-        Console.Print(QStringLiteral("Created %1 #%2").arg(Context.GetDisplayName(Created)).arg(Created.Index));
+        const EntityID Created = Level.CreateEntity(Name, Camera.Position + Camera.GetForward() * 600.0);
+        Level.SetSelection(Created);
+        Console.Print(QStringLiteral("Created %1 #%2").arg(Level.GetDisplayName(Created)).arg(Created.Index));
     });
 
     Console.Register(QStringLiteral("delete"), QStringLiteral("[name | #index]"),
                      QStringLiteral("Destroy an entity, or the selection"),
                      [this, Resolve](const QStringList& InArgs)
     {
-        const EntityID Target = InArgs.isEmpty() ? Context.GetSelection() : Resolve(InArgs.front());
-        if(!Target.IsSet() || !Context.GetWorld().IsAlive(Target))
+        const EntityID Target = InArgs.isEmpty() ? Level.GetSelection() : Resolve(InArgs.front());
+        if(!Target.IsSet() || !Level.GetWorld().IsAlive(Target))
         {
             Console.PrintError(InArgs.isEmpty() ? QStringLiteral("Nothing is selected")
                                                 : QStringLiteral("No entity '%1'").arg(InArgs.front()));
             return;
         }
-        const QString Name = Context.GetDisplayName(Target);
-        Context.DestroyEntity(Target);
+        const QString Name = Level.GetDisplayName(Target);
+        Level.DestroyEntity(Target);
         Console.Print(QStringLiteral("Destroyed %1").arg(Name));
     });
 
@@ -803,6 +809,40 @@ void EditorMainWindow::RegisterConsoleCommands()
         else             { Console.Print(Lines.join(QLatin1Char('\n'))); }
     });
 
+    /* A second window on a World of its own: the multi-window rendering path
+     * the Prefab Editor will use, until it exists. */
+    Console.Register(QStringLiteral("testwindow"), QString(),
+                     QStringLiteral("Open a second viewport on its own World (Sandbox's scene and a large quad)"),
+                     [this](const QStringList&)
+    {
+        if(!Context.IsRendererReady())
+        {
+            Console.PrintError(QStringLiteral("The renderer is not running"));
+            return;
+        }
+        auto* Window = new QWidget(nullptr, Qt::Window);
+        Window->setAttribute(Qt::WA_DeleteOnClose);
+        Window->setWindowTitle(QStringLiteral("Test Viewport - Nimble Editor"));
+        Window->resize(800, 600);
+
+        auto* Document = new EditorDocument(Window);
+        Document->CreateSandboxScene();
+        Document->CreateEntity(QStringLiteral("TestQuad"), EngineCore::Vector3(200.0, 200.0, 0.0), [](const GameCore::Entity& InEntity)
+        {
+            InEntity.GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(240.0, 240.0, 1.0);
+            InEntity.AddComponent<RenderCore::RenderComponent>();
+        });
+
+        auto* Layout = new QVBoxLayout(Window);
+        Layout->setContentsMargins(0, 0, 0, 0);
+        auto* Panel = new ViewportPanel(Context, *Document, Window);
+        Layout->addWidget(Panel);
+        Panel->GetViewport()->ApplySandboxView();
+        Window->show();
+
+        Console.Print(QStringLiteral("Opened a test viewport on %1 entities").arg(Document->GetWorld().GetEntityCount()));
+    });
+
     Console.Register(QStringLiteral("scene"), QStringLiteral("<new | sandbox>"),
                      QStringLiteral("Replace the scene with an empty one, or Sandbox's"),
                      [this](const QStringList& InArgs)
@@ -815,11 +855,11 @@ void EditorMainWindow::RegisterConsoleCommands()
         const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
         if(Which == QStringLiteral("new"))
         {
-            Context.NewScene();
+            Level.NewScene();
         }
         else if(Which == QStringLiteral("sandbox"))
         {
-            Context.CreateSandboxScene();
+            Level.CreateSandboxScene();
             Viewport->ApplySandboxView();
         }
         else
@@ -829,7 +869,7 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
         CurrentPath.clear();
         UpdateTitle();
-        Console.Print(QStringLiteral("%1 entities").arg(Context.GetWorld().GetEntityCount()));
+        Console.Print(QStringLiteral("%1 entities").arg(Level.GetWorld().GetEntityCount()));
     });
 
     Console.Register(QStringLiteral("stats"), QString(), QStringLiteral("Print the renderer's counters"),
@@ -851,10 +891,10 @@ void EditorMainWindow::RegisterConsoleCommands()
                      [this](const QStringList& InArgs)
     {
         const int Count = InArgs.isEmpty() ? 1 : std::max(1, InArgs.front().toInt());
-        for(int Step = 0; Step < Count && Context.CanUndo(); ++Step)
+        for(int Step = 0; Step < Count && Level.CanUndo(); ++Step)
         {
-            Console.Print(QStringLiteral("Undo %1").arg(Context.GetHistory().undoText()));
-            Context.Undo();
+            Console.Print(QStringLiteral("Undo %1").arg(Level.GetHistory().undoText()));
+            Level.Undo();
         }
     });
 
@@ -862,10 +902,10 @@ void EditorMainWindow::RegisterConsoleCommands()
                      [this](const QStringList& InArgs)
     {
         const int Count = InArgs.isEmpty() ? 1 : std::max(1, InArgs.front().toInt());
-        for(int Step = 0; Step < Count && Context.CanRedo(); ++Step)
+        for(int Step = 0; Step < Count && Level.CanRedo(); ++Step)
         {
-            Console.Print(QStringLiteral("Redo %1").arg(Context.GetHistory().redoText()));
-            Context.Redo();
+            Console.Print(QStringLiteral("Redo %1").arg(Level.GetHistory().redoText()));
+            Level.Redo();
         }
     });
 
@@ -873,7 +913,7 @@ void EditorMainWindow::RegisterConsoleCommands()
                      QStringLiteral("List the undo history: > marks the current point, * the last save"),
                      [this](const QStringList&)
     {
-        const QUndoStack& History = Context.GetHistory();
+        const QUndoStack& History = Level.GetHistory();
         QStringList Lines;
         for(int Index = 0; Index < History.count(); ++Index)
         {
@@ -956,13 +996,13 @@ void EditorMainWindow::showEvent(QShowEvent* InEvent)
 
 void EditorMainWindow::StartRenderer()
 {
-    if(!InitialWorld.isEmpty() && Context.LoadWorld(InitialWorld))
+    if(!InitialWorld.isEmpty() && Level.LoadWorld(InitialWorld))
     {
         CurrentPath = InitialWorld;
     }
     else
     {
-        Context.CreateSandboxScene();
+        Level.CreateSandboxScene();
         Viewport->ApplySandboxView();
     }
     UpdateTitle();
@@ -974,7 +1014,6 @@ void EditorMainWindow::StartRenderer()
         return;
     }
 
-    Viewport->StartRendering();
     StatsTimer.start(1000);
 
     if(bStartSDLInputProbe)
@@ -984,6 +1023,11 @@ void EditorMainWindow::StartRenderer()
     if(bStartPlay)
     {
         StartPlay();
+    }
+    for(const QString& Command : StartupCommands)
+    {
+        Console.Print(QStringLiteral("> %1").arg(Command));
+        Console.Execute(Command);
     }
     UpdateStats();
 }
@@ -1039,7 +1083,7 @@ void EditorMainWindow::SetSDLInputProbe(const bool bInOn)
 void EditorMainWindow::UpdateTitle()
 {
     const QString Scene = CurrentPath.isEmpty() ? QStringLiteral("Untitled") : QFileInfo(CurrentPath).fileName();
-    const QString Dirty = Context.GetHistory().isClean() ? QString() : QStringLiteral("*");
+    const QString Dirty = Level.GetHistory().isClean() ? QString() : QStringLiteral("*");
     const QString Play  = Context.IsPlaying() ? QStringLiteral(" [Playing]") : QString();
     setWindowTitle(QStringLiteral("%1%2%3 - Nimble Editor").arg(Scene, Dirty, Play));
 
@@ -1049,9 +1093,9 @@ void EditorMainWindow::UpdateTitle()
 
 void EditorMainWindow::UpdateHistoryActions()
 {
-    const QUndoStack& History = Context.GetHistory();
-    UndoAction->setEnabled(Context.CanUndo());
-    RedoAction->setEnabled(Context.CanRedo());
+    const QUndoStack& History = Level.GetHistory();
+    UndoAction->setEnabled(Level.CanUndo());
+    RedoAction->setEnabled(Level.CanRedo());
     UndoAction->setText(History.canUndo() ? QStringLiteral("&Undo %1").arg(History.undoText()) : QStringLiteral("&Undo"));
     RedoAction->setText(History.canRedo() ? QStringLiteral("&Redo %1").arg(History.redoText()) : QStringLiteral("&Redo"));
     UpdateTitle();
@@ -1095,7 +1139,7 @@ void EditorMainWindow::OpenWorldFile(const QString& Path)
         return;
     }
     bool bCooked = false;
-    if(!Context.LoadWorld(Path, &bCooked))
+    if(!Level.LoadWorld(Path, &bCooked))
     {
         QMessageBox::warning(this, QStringLiteral("Open World"),
                              QStringLiteral("Could not read a world from\n%1").arg(Path));
@@ -1123,7 +1167,7 @@ bool EditorMainWindow::SaveWorld()
     {
         return SaveWorldAs();
     }
-    if(!Context.SaveWorld(CurrentPath))
+    if(!Level.SaveWorld(CurrentPath))
     {
         QMessageBox::warning(this, QStringLiteral("Save World"), QStringLiteral("Could not write\n%1").arg(CurrentPath));
         return false;

@@ -15,11 +15,11 @@
 
 namespace GameCore { class World; }
 
-class EditorContext;
+class EditorDocument;
 
 /*
  * Undo / redo commands and snapshots for the edited World, used only by
- * EditorContext.
+ * EditorDocument.
  *
  * ENTITIES ARE NAMED BY GUID: an undone delete recreates the entity with its
  * old GUID, so older commands still find it.
@@ -78,7 +78,7 @@ namespace EditorHistory
     class Command : public QUndoCommand
     {
     public:
-        Command(EditorContext& InContext, const QString& InText);
+        Command(EditorDocument& InDocument, const QString& InText);
 
         void undo() final;
         void redo() final;
@@ -87,7 +87,7 @@ namespace EditorHistory
         /* bInForward: redo; otherwise undo. */
         virtual void Apply(bool bInForward) = 0;
 
-        EditorContext& Context;
+        EditorDocument& Document;
 
     private:
         bool bRecorded = true;   // the change is already in the World
@@ -100,7 +100,7 @@ namespace EditorHistory
     public:
         enum { ID = 1 };
 
-        PropertyEditCommand(EditorContext& InContext, const QString& InText, const GameCore::EntityGuid& InGuid,
+        PropertyEditCommand(EditorDocument& InDocument, const QString& InText, const GameCore::EntityGuid& InGuid,
                             GameCore::ComponentTypeID InType, std::vector<uint8_t> InBefore, std::vector<uint8_t> InAfter,
                             uint64_t InGesture);
 
@@ -139,7 +139,7 @@ namespace EditorHistory
     class EntityMembersCommand final : public Command
     {
     public:
-        EntityMembersCommand(EditorContext& InContext, const QString& InText, const GameCore::EntityGuid& InGuid,
+        EntityMembersCommand(EditorDocument& InDocument, const QString& InText, const GameCore::EntityGuid& InGuid,
                              EntityMembers InBefore, EntityMembers InAfter);
 
     protected:
@@ -155,7 +155,7 @@ namespace EditorHistory
     class EntityLifetimeCommand final : public Command
     {
     public:
-        EntityLifetimeCommand(EditorContext& InContext, const QString& InText, bool bInCreated, EntitySnapshot InSnapshot);
+        EntityLifetimeCommand(EditorDocument& InDocument, const QString& InText, bool bInCreated, EntitySnapshot InSnapshot);
 
     protected:
         void Apply(bool bInForward) override;
@@ -170,7 +170,7 @@ namespace EditorHistory
     class ParentCommand final : public Command
     {
     public:
-        ParentCommand(EditorContext& InContext, const QString& InText, const GameCore::EntityGuid& InGuid,
+        ParentCommand(EditorDocument& InDocument, const QString& InText, const GameCore::EntityGuid& InGuid,
                       const GameCore::EntityGuid& InBeforeParent, std::vector<uint8_t> InBeforeTransform,
                       const GameCore::EntityGuid& InAfterParent, std::vector<uint8_t> InAfterTransform);
 
@@ -189,7 +189,7 @@ namespace EditorHistory
     class ComponentLifetimeCommand final : public Command
     {
     public:
-        ComponentLifetimeCommand(EditorContext& InContext, const QString& InText, bool bInAdded,
+        ComponentLifetimeCommand(EditorDocument& InDocument, const QString& InText, bool bInAdded,
                                  const GameCore::EntityGuid& InGuid, ComponentSnapshot InSnapshot);
 
     protected:

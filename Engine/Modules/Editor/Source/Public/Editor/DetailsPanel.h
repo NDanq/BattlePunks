@@ -15,7 +15,7 @@
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityID.h"
 
-class EditorContext;
+class EditorDocument;
 class PropertyEditor;
 class QCheckBox;
 class QLabel;
@@ -45,7 +45,7 @@ class DetailsPanel : public QWidget
     Q_OBJECT
 
 public:
-    explicit DetailsPanel(EditorContext& InContext, QWidget* InParent = nullptr);
+    explicit DetailsPanel(EditorDocument& InDocument, QWidget* InParent = nullptr);
 
 private:
     /* One property's editor and its reset arrow. */
@@ -110,7 +110,7 @@ protected:
 
 private:
 
-    EditorContext& Context;
+    EditorDocument& Document;
 
     QLabel*      Header      = nullptr;
     QScrollArea* Scroll      = nullptr;

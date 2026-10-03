@@ -27,6 +27,7 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/AboutDialog.cpp
         Source/Private/Editor/AboutDialog.h
         Source/Private/Editor/EditorContext.cpp
+        Source/Private/Editor/EditorDocument.cpp
         Source/Private/Editor/EditorHistory.cpp
         Source/Private/Editor/EditorHistory.h
         Source/Private/Editor/EditorCamera.cpp
@@ -76,6 +77,7 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Graph/NodePalette.cpp
         Source/Private/Editor/Graph/NodePalette.h
         Source/Public/Editor/EditorContext.h
+        Source/Public/Editor/EditorDocument.h
         Source/Public/Editor/EditorCamera.h
         Source/Public/Editor/EditorLog.h
         Source/Public/Editor/EditorConsole.h
@@ -136,7 +138,7 @@ target_link_libraries(NimbleEditor PRIVATE
 
 # === Import tests =================================================================
 # Runs from Binaries, where NimbleEditor's windeployqt put Qt (hence the dependency).
-option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests" ON)
+option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests and NimbleEditorDocumentTests" ON)
 if(NIMBLEEDITOR_BUILD_TESTS)
     add_executable(NimbleEditorImportTests Tests/ImportTests.cpp ${NIMBLE_EDITOR_IMPORT_SOURCES})
     target_include_directories(NimbleEditorImportTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
@@ -150,6 +152,23 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_dependencies(NimbleEditorImportTests NimbleEditor)
     add_test(NAME Editor.Import COMMAND NimbleEditorImportTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorImportTests>")
+
+    # EditorDocument and its history, headless: no Renderer, no window.
+    add_executable(NimbleEditorDocumentTests Tests/DocumentTests.cpp
+            Source/Public/Editor/EditorDocument.h
+            Source/Private/Editor/EditorDocument.cpp
+            Source/Private/Editor/EditorHistory.h
+            Source/Private/Editor/EditorHistory.cpp)
+    target_include_directories(NimbleEditorDocumentTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+    target_link_libraries(NimbleEditorDocumentTests PRIVATE
+            RenderCore::RenderCore
+            Qt6::Core
+            Qt6::Gui
+    )
+    set_target_properties(NimbleEditorDocumentTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorDocumentTests NimbleEditor)
+    add_test(NAME Editor.Document COMMAND NimbleEditorDocumentTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorDocumentTests>")
 endif()
 
 # === Engine content ===========================================================
