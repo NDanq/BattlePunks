@@ -389,7 +389,7 @@ EntityGuid DerivePrefabEntityGuid(const EntityGuid& InInstanceGuid, const uint32
 
 // === Capture =================================================================
 
-bool CapturePrefab(World& InWorld, const EntityID InRoot, PrefabAsset& InOutAsset)
+bool CapturePrefab(World& InWorld, const EntityID InRoot, PrefabAsset& InOutAsset, const bool bInAdoptNew)
 {
     if(!InWorld.IsAlive(InRoot))
     {
@@ -498,6 +498,17 @@ bool CapturePrefab(World& InWorld, const EntityID InRoot, PrefabAsset& InOutAsse
 
     D.Entities    = std::move(Entities);
     D.NextLocalId = std::max(Next, HighestId(D.Entities) + 1);
+
+    if(bInAdoptNew && Instance.IsSet())
+    {
+        for(size_t Index = 1; Index < Order.size(); ++Index)
+        {
+            if(InWorld.GetEntity(Order[Index]).GetInstance() != Instance)
+            {
+                InWorld.AdoptIntoInstance(Instance, Order[Index], Ids[Index]);
+            }
+        }
+    }
     return true;
 }
 

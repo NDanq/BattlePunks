@@ -191,6 +191,13 @@ namespace GameCore
          * as for a spawn. */
         PrefabInstance RestorePrefabInstance(const PrefabInstanceRecord& InRecord);
 
+        /* Authoring: InEntity, in no instance and inside InInstance's root
+         * subtree, joins it as template InLocalId -- an entity an editor added
+         * to the prefab it is editing (CapturePrefab's bInAdoptNew). False if
+         * either is dead, InEntity is in an instance or outside the subtree,
+         * or InLocalId is unset or taken. */
+        bool AdoptIntoInstance(PrefabInstanceID InInstance, EntityID InEntity, uint32_t InLocalId);
+
         /* Destroys the root -- and so the whole instance. DEFERRED in a tick. */
         void DestroyPrefabInstance(PrefabInstanceID InInstance);
 
