@@ -29,6 +29,7 @@
     <Node Id="427269636b000000000000000000000d" Type="Prefab.Destroy" Version="1" X="760" Y="0" />
     <Node Id="7590ed52387a0faf1e4bcaa4afc15e0c" Type="Component.Render.SetMaterialParameter" Version="1" X="346" Y="331">
       <Const Pin="Name" Value="Color" />
+      <Const Pin="W" Value="1" />
       <Const Pin="X" Value="1" />
     </Node>
     <Node Id="8b8f3b9808c3861e778fb3dff955d154" Type="Component.Render.Get" Version="1" X="-325" Y="339" />
@@ -77,7 +78,7 @@ return {
             self.Instance:Destroy()
         else
             local t8 = self.Entity:GetComponent("Render")
-            Set2 = t8:SetMaterialParameter(0, "Color", 1, 0, 0, 0)
+            Set2 = t8:SetMaterialParameter(0, "Color", 1, 0, 0, 1)
         end
     end,
 }

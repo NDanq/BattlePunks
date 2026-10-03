@@ -195,7 +195,11 @@ On Overlap Begin
       True → Game.AddScore(Game.GetPlayer(0), Points)
            → Events.Emit("BrickBroken")
            → Destroy Prefab
+      False → Render.SetMaterialParameter(0, "Color", 1, 0, 0, 1)
 ```
+
+A hit that does not break the brick turns it red: a per-entity override of
+the Brick material's `Color` (alpha 1, since the material is Translucent).
 
 The generated Lua, as stored in the graph's `<gen_code>`:
 
