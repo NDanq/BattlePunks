@@ -55,7 +55,6 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/RenderComponentProxy.h
         Source/Private/RenderCore/MaterialPreview.h
         Source/Private/RenderCore/RenderComponentProxy.cpp
-        Source/Private/RenderCore/Components/MaterialPathUpgrade.h
         Source/Private/RenderCore/Components/RenderComponent.cpp
         Source/Private/RenderCore/Components/CameraComponent.cpp
         Source/Private/RenderCore/Components/DirectionalLightComponent.cpp

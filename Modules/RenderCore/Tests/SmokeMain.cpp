@@ -1360,9 +1360,8 @@ static void TestTextureAssets()
 }
 
 /*
- * RenderComponent's serializer: version 1's one Material loads into slot 0;
- * version 2 writes every slot by name; version 3 drops Width, Height and Tint. Through a recording archive, so no
- * file format is involved.
+ * RenderComponent's serializer writes every slot by name, as a graph path, and
+ * reads it back. Through a recording archive, so no file format is involved.
  */
 static void TestRenderComponentSerializer()
 {
@@ -1371,7 +1370,7 @@ static void TestRenderComponentSerializer()
     struct RecordingArchive final : GameCore::ComponentArchive
     {
         bool                     bLoading = false;
-        uint16_t                 Version  = 4;
+        uint16_t                 Version  = 1;
         std::map<std::string, std::string> Strings;   // what a load reads, and what a save wrote
         std::vector<std::string> Names;
 
@@ -1406,20 +1405,8 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 4, "RenderComponent saves as version 4");
+    Expect(Info && Info->Version == 1, "RenderComponent saves as version 1");
     if(!Info) { return; }
-
-    RecordingArchive Old;
-    Old.bLoading = true;
-    Old.Version  = 1;
-    Old.Strings["Material"]  = "Glow";
-    Old.Strings["Material1"] = "Ignored";   // version 1 has no such field
-    RenderComponent Loaded;
-    Info->Fn(Old, &Loaded);
-    Expect(std::strcmp(Loaded.Materials[0], "Materials/Glow.material.nmgraph") == 0 && Loaded.Materials[1][0] == '\0',
-           "a version 1 Material loads into slot 0, and only there, its bare name upgraded to the graph's path");
-    Expect(Old.Names.size() >= 3 && Old.Names[0] == "Width" && Old.Names[1] == "Height" && Old.Names[2] == "Tint",
-           "a version 1 or 2 record's Width, Height and Tint are still read, first (binary keeps call order)");
 
     RenderComponent Saved;
     std::strcpy(Saved.Materials[0], "Materials/Body.material.nmgraph");
@@ -1428,7 +1415,7 @@ static void TestRenderComponentSerializer()
     Info->Fn(Out, &Saved);
     Expect(Out.Strings["Material0"] == "Materials/Body.material.nmgraph"
            && Out.Strings["Material7"] == "Engine/Content/Materials/DefaultLit.material.nmgraph" && Out.Strings.count("Material") == 0,
-           "version 4 writes each slot as Material0 to Material7, a graph path (longer than the old 48-byte names)");
+           "each slot is written as Material0 to Material7, a full graph path");
     Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("Width")) == Out.Names.end()
            && std::find(Out.Names.begin(), Out.Names.end(), std::string("Tint")) == Out.Names.end(),
            "and no Width, Height or Tint");
@@ -1442,26 +1429,8 @@ static void TestRenderComponentSerializer()
            && std::strcmp(Again.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph") == 0,
            "and reads them back unchanged");
 
-    RecordingArchive Three;
-    Three.bLoading = true;
-    Three.Version  = 3;
-    Three.Strings["Material0"] = "Body";
-    Three.Strings["Material1"] = "Materials/Already.material.nmgraph";
-    RenderComponent Upgraded;
-    Info->Fn(Three, &Upgraded);
-    Expect(std::strcmp(Upgraded.Materials[0], "Materials/Body.material.nmgraph") == 0
-           && std::strcmp(Upgraded.Materials[1], "Materials/Already.material.nmgraph") == 0 && Upgraded.Materials[2][0] == '\0',
-           "a version 3 world's bare names are upgraded; a path and an empty slot are left alone");
-
     const GameCore::ComponentSerializerInfo* PostInfo = GameCore::FindComponentSerializer(PostProcessComponent::StaticType().ID);
-    RecordingArchive OldPost;
-    OldPost.bLoading = true;
-    OldPost.Version  = 1;
-    OldPost.Strings["Material"] = "Negative";
-    PostProcessComponent LoadedPost;
-    if(PostInfo) { PostInfo->Fn(OldPost, &LoadedPost); }
-    Expect(PostInfo && PostInfo->Version == 2 && std::strcmp(LoadedPost.Material, "Materials/Negative.material.nmgraph") == 0,
-           "a version 1 Post Process's bare name is upgraded too");
+    Expect(PostInfo && PostInfo->Version == 1, "PostProcessComponent saves as version 1");
 }
 
 /*
