@@ -329,7 +329,8 @@ default light matching the old `Mesh.fsh` (from above, +Y). Shadows, and how
 the lights are gathered and capped: RENDERPIPELINE.md's "Lights" and "Shadows". `Lighting.glsl`: GGX
 distribution, Smith-Schlick geometry, Schlick Fresnel; BaseColor, Emissive
 and light colours are authored in display space, lit linear, and encoded back
-(no HDR target yet). Meshes without a material draw with the engine's
+(no HDR target yet; Opaque and Masked Lit emissive past 1 survives in the
+G-buffer for Bloom, RENDERPIPELINE.md's "Post process"). Meshes without a material draw with the engine's
 `DefaultLit` (Tint times vertex colour, Lit). Opaque and Masked Lit surfaces
 are shaded once per pixel by `DeferredLighting.fsh` from the G-buffer;
 Translucent Lit ones by their own pixel shader. Both call `ShadeSurface`, so

@@ -1,6 +1,6 @@
 #version 440 core
 // PPBloomComposite.fsh -- Bloom, the end: the scene plus the half-resolution
-// glow (the top of the chain), times intensity and tint.
+// glow (the top of the chain, EncodeBloom'd), times intensity and tint.
 
 #include <PostProcessCommon.glsl>
 
@@ -15,6 +15,6 @@ UBO_BLOCK_END(PP_Block)
 void main(void)
 {
     vec2 UV = Interpolants.TexCoord;
-    vec3 Color = texture(SceneColor, UV).rgb + texture(Glow, UV).rgb * PP_Bloom.rgb * PP_Bloom.a;
+    vec3 Color = texture(SceneColor, UV).rgb + DecodeBloom(texture(Glow, UV).rgb) * PP_Bloom.rgb * PP_Bloom.a;
     Output = vec4(Color, 1.0);
 }

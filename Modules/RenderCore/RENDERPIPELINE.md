@@ -110,10 +110,13 @@ the scene colour target's depth:
 | GBuffer0 | Base Color | | | Ambient Occlusion |
 | GBuffer1 | Normal (world, ×0.5+0.5) | | | 1 = lit pixel |
 | GBuffer2 | Metallic | Roughness | Specular | -- |
-| GBuffer3 | Emissive | | | -- |
+| GBuffer3 | Emissive ÷ scale | | | log2(scale) / 12 |
 
 Colours are stored display space, as authored, exactly what `ShadeSurface`
-already takes. Eight-bit normals band a little on smooth, glossy surfaces;
+already takes. Emissive may be far past 1, so GBuffer3 stores it divided by its
+brightest channel, when that is over 1, with that scale in alpha as log2 over
+12 octaves, up to 4096 (`EncodeGBufferEmissive` / `DecodeGBufferEmissive` in
+`Common.glsl`). The Lighting stage reads it back whole, and Bloom uses it too. Eight-bit normals band a little on smooth, glossy surfaces;
 RGBA16F targets need a render-target format in GDI (MATERIALS.md, "Later").
 
 ### Base Pass
@@ -250,7 +253,7 @@ is not in this chain, runs earlier: see [below](#ambient-occlusion)):
 | 1 | Materials, Before Effects | the material's | full size |
 | 2 | Depth of Field | `PPDofPrepare` (circle of confusion from depth: far past the focus range, or nearer with Near Blur; a half-size copy, CoC in alpha), `PPDofBlur` (a 16-tap disc, each tap counted as far as its own CoC reaches), `PPDofComposite` (sharp to blurred by CoC) | `Half[0..1]`, then full |
 | 3 | Motion Blur | `PPMotionBlur`: each pixel's world position, from depth, reprojected with **last frame's** view-projection gives its screen motion; taps along it, jittered, limited to Max Length | full |
-| 4 | Bloom | `PPBloomDownsample` (13 taps; the first step keeps what passes the threshold, with a soft knee) down `Bloom[0..Levels-1]` (1/2 to 1/64); `PPBloomUpsample` (9-tap tent, blended One + One, times Radius) back up; `PPBloomComposite` adds `Bloom[0]` times Intensity and Tint | chain, then full |
+| 4 | Bloom | `PPBloomDownsample` (13 taps; the first step adds back the emissive the scene clipped, from GBuffer3, and keeps what passes the threshold, with a soft knee) down `Bloom[0..Levels-1]` (1/2 to 1/64); `PPBloomUpsample` (each level's own plus a 9-tap tent of the one below, times Radius) back up `BloomUp`; `PPBloomComposite` adds the top level times Intensity and Tint | chain, then full |
 | 5 | Materials, After Effects | the material's | full |
 | 6 | Antialiasing | `PPFxaa` (FXAA 3.11 quality: luma edges, an end search of 4, 8 or 12 steps by Quality, plus sub-pixel smoothing) | full |
 
@@ -269,8 +272,16 @@ is not in this chain, runs earlier: see [below](#ambient-occlusion)):
 - **Previews:** a material preview never runs the stack.
 
 **Limits:**
-- **Bloom:** the scene is RGBA8 display colour with no HDR, so bloom thresholds
-  LDR brightness. A white surface past the threshold glows all over.
+- **Bloom:** the scene is RGBA8 display colour with no HDR, so its brightness
+  stops at 1. Bloom recovers what an **Opaque or Masked Lit** surface's emissive
+  lost to that clip from GBuffer3, so emissive 50 glows far wider than
+  emissive 1. Its chain stores brightness up to 64 as `sqrt(v / 64)`
+  (`EncodeBloom`), so the faint tail keeps its precision; that encoding does
+  not add, so upsampling writes a second chain (`BloomUp`) instead of blending.
+  Unlit and Translucent emissive is drawn forward, straight into the scene
+  colour, so it still stops at 1. A white lit surface past the threshold glows
+  all over, but only by its clipped 0-1. What reaches the G-buffer is bloomed
+  even if a translucent surface later covers it.
 - **Motion Blur:** the camera's motion only; there is no per-object velocity.
 - **Antialiasing:** FXAA only; there is no temporal AA.
 - **Memory:** each small target also allocates a depth it never uses (GDI makes
