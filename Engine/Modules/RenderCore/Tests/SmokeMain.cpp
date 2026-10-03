@@ -2062,6 +2062,148 @@ static void TestPostProcessOnGpu()
     PostProcessStackCache::Invalidate(std::string());
     SetFileProvider(PreviousProvider);
 }
+
+/*
+ * Bloom past the 8-bit scene colour: an Opaque Lit quad with emissive 50
+ * (Sandbox's HotGlow) clips to white in the scene, but its G-buffer keeps the
+ * rest (EncodeGBufferEmissive), and Bloom spreads it -- far wider than the
+ * 0-1 a clipped white could give.
+ */
+static void TestBloomHdrOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[bloom past 1 on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[bloom past 1 on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    std::error_code Ignored;
+    std::filesystem::create_directories("SmokeScratch/PostStacks", Ignored);
+    const std::string Stack = "SmokeScratch/PostStacks/HdrBloom.pp.nmgraph";
+    {
+        std::ofstream Out(Stack);
+        Out << "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"PostProcess\">\n  <gen_code>\n"
+               "    <Output Extension=\".ppstack\"><![CDATA[Effect Bloom Threshold=0.9 Intensity=0.5 Radius=0.75 Levels=5 Tint=1,1,1\n"
+               "]]></Output>\n  </gen_code>\n</NodeGraph>\n";
+    }
+    PostProcessStackCache::Invalidate(Stack);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Above = RenderView::MakePerspective(Viewport, Vector3(0.0, 800.0, 0.0), Vector3(0.0, -1.0, 0.001),
+                                                             50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&Above);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        /* A quad 60 units across, about 28 pixels, in the middle of the view. */
+        const GameCore::Entity Quad = World.CreateEntity("HotGlow");
+        GameCore::TransformComponent Transform;
+        Transform.Scale = Vector3(60.0, 1.0, 60.0);
+        Quad.AddComponent(Transform);
+        RenderComponent Render;
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", "Engine/Content/Meshes/Plane.nmmesh");
+        std::snprintf(Render.Materials[0], sizeof(Render.Materials[0]), "%s", "Content/Materials/HotGlow.material.nmgraph");
+        Quad.AddComponent(Render);
+
+        const GameCore::Entity Volume = World.CreateEntity("Volume");
+        Volume.AddComponent(GameCore::TransformComponent());
+        PostProcessComponent Post;
+        std::snprintf(Post.Stack, sizeof(Post.Stack), "%s", Stack.c_str());
+        Post.bEnabled = 0;
+        Volume.AddComponent(Post);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 2; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Luma = [](const EngineCore::Image& InPixels, const int InX, const int InY)
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            return int(Px[0]) + int(Px[1]) + int(Px[2]);
+        };
+        /* The mean brightening, as R + G + B, from InFrom to InTo pixels out from the centre. */
+        const auto Ring = [&](const EngineCore::Image& InOn, const EngineCore::Image& InOff, const int InFrom, const int InTo)
+        {
+            double Sum = 0.0;
+            int    Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                for(int X = 0; X < 256; ++X)
+                {
+                    const int Distance = std::max(std::abs(X - 128), std::abs(Y - 128));
+                    if(Distance < InFrom || Distance >= InTo) { continue; }
+                    Sum += Luma(InOn, X, Y) - Luma(InOff, X, Y);
+                    ++Count;
+                }
+            }
+            return Count ? Sum / Count : 0.0;
+        };
+
+        EngineCore::Image Off, On;
+        const bool bOff = Capture(Off);
+        Volume.GetComponent<PostProcessComponent>()->bEnabled = 1;
+        const bool bOn = bOff && Capture(On);
+        Expect(bOff && bOn, "the glowing quad is captured with and without Bloom");
+        if(bOff && bOn)
+        {
+            if(const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP"); DumpDir && DumpDir[0])
+            {
+                for(const auto& [Pixels, Name] : { std::make_pair(&Off, "bloom-hdr-off"), std::make_pair(&On, "bloom-hdr-on") })
+                {
+                    std::ofstream File(std::string(DumpDir) + "/" + Name + ".ppm", std::ios::binary);
+                    File << "P6\n256 256\n255\n";
+                    const bool bBgra = Pixels->GetFormat() == EImageFormat::BGRA8;
+                    for(int Y = 0; Y < 256; ++Y)
+                    {
+                        for(int X = 0; X < 256; ++X)
+                        {
+                            const uint8_t* Px = Pixels->GetData() + Pixels->GetStride() * Y + X * BytesPerPixel(Pixels->GetFormat());
+                            const char Bytes[3] = { char(bBgra ? Px[2] : Px[0]), char(Px[1]), char(bBgra ? Px[0] : Px[2]) };
+                            File.write(Bytes, 3);
+                        }
+                    }
+                }
+            }
+            const double Near = Ring(On, Off, 20, 30);
+            const double Far  = Ring(On, Off, 40, 60);
+            std::printf("    centre %d; glow 20-30 px out +%.1f, 40-60 px out +%.1f\n", Luma(Off, 128, 128), Near, Far);
+            Expect(Luma(Off, 128, 128) >= 760, "emissive 50 clips to white in the scene colour");
+            Expect(Near > 120.0 && Far > 20.0, "Bloom spreads the emissive the scene clipped, well past the quad");
+        }
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    PostProcessStackCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+}
 #endif // WITH_EDITOR
 
 /*
@@ -2633,6 +2775,7 @@ int main()
     TestMaterialsOnGpu();
     TestShadowsOnGpu();
     TestPostProcessOnGpu();
+    TestBloomHdrOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();

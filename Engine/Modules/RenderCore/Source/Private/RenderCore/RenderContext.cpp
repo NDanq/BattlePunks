@@ -574,6 +574,7 @@ namespace RenderCore
          * which stays null if InPost has none or this backend cannot. */
         void IssueAmbientOcclusion(SceneTargets& InTargets, const PostProcessSettings& InPost);
         GDITextureResource* AmbientOcclusion = nullptr;
+        bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
 
         GDIShader* GetShadowDepthShader()
         {
@@ -1472,8 +1473,9 @@ namespace RenderCore
         }
 
         /* Bloom: down a chain of half-size targets (the first keeping only
-         * what passes the threshold), back up adding each into the next, then
-         * the top level added to the scene. */
+         * what passes the threshold, with the emissive the scene clipped added
+         * back from GBuffer3), back up summing each with the one below into
+         * BloomUp, then the top level added to the scene. */
         const uint32_t Levels = uint32_t(std::clamp(int(InPost.BloomLevels + 0.5f), 1, int(RENDER_BLOOM_LEVELS_MAX)));
         if(bBloom && InTargets.EnsureBloom(Levels))
         {
@@ -1481,6 +1483,8 @@ namespace RenderCore
             Block.A[0] = InPost.BloomThreshold;
             Block.A[1] = 0.2f;   // knee: the threshold's softness, a fraction of it
             Block.A[2] = 1.0f;
+            GDITexture2D* Emissive = bGBufferThisFrame && InTargets.GBuffer[3] ? InTargets.GBuffer[3]->ToGDITexture2D() : nullptr;
+            Block.A[3] = Emissive ? 1.0f : 0.0f;
             bool bChain = true;
             GDIRenderTarget* From = Source;
             uint FromW = Width, FromH = Height;
@@ -1488,18 +1492,23 @@ namespace RenderCore
             {
                 Sizes(Block, FromW, FromH);
                 const uint W = SceneTargets::HalfSize(Width, Level + 1), H = SceneTargets::HalfSize(Height, Level + 1);
-                bChain = DrawPost(PP_BloomDownsample, InTargets.Bloom[Level], W, H, { Texture(From) }, Block);
-                Block.A[2] = 0.0f;   // the threshold, once
+                bChain = DrawPost(PP_BloomDownsample, InTargets.Bloom[Level], W, H,
+                                  { Texture(From), Level == 0 && Emissive ? Emissive->Resource : nullptr }, Block);
+                Block.A[2] = 0.0f;   // the threshold and the emissive, once
+                Block.A[3] = 0.0f;
                 From = InTargets.Bloom[Level];
                 FromW = W;
                 FromH = H;
             }
             Block.A[0] = std::clamp(InPost.BloomRadius, 0.0f, 1.0f);
+            Block.A[3] = 0.0f;
+            GDIRenderTarget* Summed = InTargets.Bloom[Levels - 1];
             for(uint32_t Level = Levels - 1; Level > 0 && bChain; --Level)
             {
                 Sizes(Block, SceneTargets::HalfSize(Width, Level + 1), SceneTargets::HalfSize(Height, Level + 1));
-                bChain = DrawPost(PP_BloomUpsample, InTargets.Bloom[Level - 1], SceneTargets::HalfSize(Width, Level),
-                                     SceneTargets::HalfSize(Height, Level), { Texture(InTargets.Bloom[Level]) }, Block, /*bInAdditive*/ true);
+                bChain = DrawPost(PP_BloomUpsample, InTargets.BloomUp[Level - 1], SceneTargets::HalfSize(Width, Level),
+                                  SceneTargets::HalfSize(Height, Level), { Texture(Summed), Texture(InTargets.Bloom[Level - 1]) }, Block);
+                Summed = InTargets.BloomUp[Level - 1];
             }
             PostBlock Composite;
             Composite.A[0] = InPost.BloomTint[0];
@@ -1508,7 +1517,7 @@ namespace RenderCore
             Composite.A[3] = InPost.BloomIntensity;
             Sizes(Composite, Width, Height);
             GDIRenderTarget* Dest = Next();
-            if(bChain && DrawPost(PP_BloomComposite, Dest, Width, Height, { Texture(Source), Texture(InTargets.Bloom[0]) }, Composite))
+            if(bChain && DrawPost(PP_BloomComposite, Dest, Width, Height, { Texture(Source), Texture(Summed) }, Composite))
             {
                 Source = Dest;
                 Passes += Levels * 2;
@@ -1932,6 +1941,7 @@ namespace RenderCore
         /* Base Pass: the G-buffer, created the first time something needs it. */
         const DrawPolicy& Base = P->PolicyFor(ERenderStage::BasePass);
         const bool bDeferred = !Base.IsEmpty() && InTargets.EnsureGBuffer();
+        P->bGBufferThisFrame = bDeferred;
         if(bDeferred)
         {
             BindTargets(InTargets.GBuffer, RENDER_GBUFFER_TARGETS, SceneColor);

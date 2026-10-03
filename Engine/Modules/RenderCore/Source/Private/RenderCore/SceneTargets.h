@@ -28,9 +28,11 @@ namespace RenderCore
 
         /* The post process stack's smaller targets (RENDERPIPELINE.md, "Post
          * process"), made on first use: Depth of Field's two at half size, and
-         * Bloom's chain, each half the size of the one before (1/2 to 1/64). */
+         * Bloom's chain, each half the size of the one before (1/2 to 1/64),
+         * and its way back up, BloomUp[i] the size of Bloom[i]. */
         GDIRenderTarget* Half[2] = {};
         GDIRenderTarget* Bloom[6] = {};                         // RENDER_BLOOM_LEVELS_MAX
+        GDIRenderTarget* BloomUp[5] = {};                       // levels 0 to RENDER_BLOOM_LEVELS_MAX - 2
         GDIRenderTarget* Final       = nullptr;                 // SceneColor or PostProcess: where the last RenderSceneStages finished
         uint             Width  = 0;
         uint             Height = 0;
@@ -78,6 +80,10 @@ namespace RenderCore
                 for(uint32_t Level = 0; Level < 6; ++Level)
                 {
                     if(Bloom[Level]) { Bloom[Level]->Resize(HalfSize(InWidth, Level + 1), HalfSize(InHeight, Level + 1)); }
+                    if(Level < 5 && BloomUp[Level])
+                    {
+                        BloomUp[Level]->Resize(HalfSize(InWidth, Level + 1), HalfSize(InHeight, Level + 1));
+                    }
                 }
                 Width  = InWidth;
                 Height = InHeight;
@@ -132,7 +138,8 @@ namespace RenderCore
             return true;
         }
 
-        /* Bloom's chain to InLevels (1-6); false if a target cannot be made. */
+        /* Bloom's chain to InLevels (1-6), and BloomUp below the last; false if
+         * a target cannot be made. */
         bool EnsureBloom(const uint32_t InLevels)
         {
             for(uint32_t Level = 0; Level < InLevels && Level < 6; ++Level)
@@ -143,6 +150,15 @@ namespace RenderCore
                                                          HalfSize(Width, Level + 1), HalfSize(Height, Level + 1));
                 }
                 if(!Bloom[Level] || !Bloom[Level]->IsValid()) { return false; }
+                if(Level + 1 < InLevels)
+                {
+                    if(!BloomUp[Level] && Width > 0 && Height > 0)
+                    {
+                        BloomUp[Level] = GDICreateRenderTarget(Name + ".BloomUp" + std::to_string(Level),
+                                                               HalfSize(Width, Level + 1), HalfSize(Height, Level + 1));
+                    }
+                    if(!BloomUp[Level] || !BloomUp[Level]->IsValid()) { return false; }
+                }
             }
             return true;
         }
@@ -159,7 +175,8 @@ namespace RenderCore
         void Release()
         {
             for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &PostProcess, &PostProcessB,
-                                           &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5] })
+                                           &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
+                                           &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4] })
             {
                 if(*Each)
                 {

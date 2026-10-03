@@ -1,19 +1,35 @@
 #version 440 core
 // PPBloomDownsample.fsh -- Bloom, down the chain: a 13-tap filter into a
 // target half the size of its source (Jimenez, "Next Generation Post
-// Processing in Call of Duty"). The first step also keeps only what passes
-// the threshold, with a soft knee so the glow does not switch on hard.
+// Processing in Call of Duty"). The first step reads the scene, adds back
+// the emissive the 8-bit scene colour clipped (GBuffer3, EncodeGBufferEmissive),
+// and keeps only what passes the threshold, with a soft knee so the glow does
+// not switch on hard. Every level is stored EncodeBloom'd, so it can hold
+// brightness past 1.
 
 #include <PostProcessCommon.glsl>
 
-MATERIAL_SAMPLER2D(4, Source)
+MATERIAL_SAMPLER2D(4, Source)     // the scene, or the level above (EncodeBloom)
+MATERIAL_SAMPLER2D(5, Emissive)   // GBuffer3, for the first step
 
 UBO_BLOCK_BEGIN(2, PP_Block)
-    vec4 PP_Bloom;   // x threshold, y knee, z 1: apply the threshold
+    vec4 PP_Bloom;   // x threshold, y knee, z 1: the first step, w 1: Emissive is this frame's
     vec4 PP_Sizes;   // xy one SOURCE texel
 UBO_BLOCK_END(PP_Block)
 
-vec3 Tap(vec2 InUV) { return texture(Source, InUV).rgb; }
+vec3 Tap(vec2 InUV)
+{
+    vec3 Color = texture(Source, InUV).rgb;
+    if(PP_Bloom.z < 0.5)
+    {
+        return DecodeBloom(Color);
+    }
+    if(PP_Bloom.w > 0.5)
+    {
+        Color += max(DecodeGBufferEmissive(texture(Emissive, InUV)) - 1.0, vec3(0.0));
+    }
+    return Color;
+}
 
 void main(void)
 {
@@ -36,5 +52,5 @@ void main(void)
         float Keep   = max(Soft, Bright - PP_Bloom.x) / max(Bright, 1e-4);
         Color       *= Keep;
     }
-    Output = vec4(Color, 1.0);
+    Output = vec4(EncodeBloom(Color), 1.0);
 }

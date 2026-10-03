@@ -31,7 +31,7 @@
 OUTPUT(0, vec4, GBuffer0)   // rgb: Base Color; a: Ambient Occlusion
 OUTPUT(1, vec4, GBuffer1)   // rgb: world normal * 0.5 + 0.5; a: 1, a lit pixel
 OUTPUT(2, vec4, GBuffer2)   // Metallic, Roughness, Specular
-OUTPUT(3, vec4, GBuffer3)   // rgb: Emissive
+OUTPUT(3, vec4, GBuffer3)   // Emissive, past 1 too (EncodeGBufferEmissive)
 #else
 OUTPUT(0, vec4, Output)
 #endif
@@ -68,7 +68,7 @@ void main(void)
     GBuffer1 = vec4(Normal * 0.5 + 0.5, 1.0);
     GBuffer2 = vec4(clamp(Surface.Metallic, 0.0, 1.0), clamp(Surface.Roughness, 0.0, 1.0),
                     clamp(Surface.Specular, 0.0, 1.0), 0.0);
-    GBuffer3 = vec4(clamp(Surface.Emissive, 0.0, 1.0), 0.0);
+    GBuffer3 = EncodeGBufferEmissive(Surface.Emissive);
 #else
 
 #if MATERIAL_SHADING_LIT

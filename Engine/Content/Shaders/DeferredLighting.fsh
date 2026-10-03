@@ -15,7 +15,7 @@
 MATERIAL_SAMPLER2D(4, GBuffer0)           // rgb: Base Color; a: Ambient Occlusion
 MATERIAL_SAMPLER2D(5, GBuffer1)           // rgb: normal * 0.5 + 0.5; a: lit
 MATERIAL_SAMPLER2D(6, GBuffer2)           // Metallic, Roughness, Specular
-MATERIAL_SAMPLER2D(7, GBuffer3)           // rgb: Emissive
+MATERIAL_SAMPLER2D(7, GBuffer3)           // Emissive, past 1 too (EncodeGBufferEmissive)
 MATERIAL_SAMPLER2D(8, SceneDepth)         // r: window depth, 0 near to 1 far
 MATERIAL_SAMPLER2D(9, ShadowDirectional)  // the sun's shadow atlas (Shadows.glsl)
 MATERIAL_SAMPLER2D(10, ShadowLocal)       // point and spot lights' shadow atlas
@@ -58,7 +58,7 @@ void main(void)
     Surface.Metallic         = Gb2.r;
     Surface.Roughness        = Gb2.g;
     Surface.Specular         = Gb2.b;
-    Surface.Emissive         = Gb3.rgb;
+    Surface.Emissive         = DecodeGBufferEmissive(Gb3);
     // Screen-space occlusion takes away ambient light only: ShadeSurface
     // applies AmbientOcclusion to its indirect term.
     if(Lighting_Params.x > 0.5)
