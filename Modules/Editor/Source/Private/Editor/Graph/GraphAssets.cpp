@@ -726,20 +726,30 @@ namespace EditorGraphs
         }
         Path = ToQ(MakeGraphPath(Base, InSchema));
 
+        QString Error;
+        if(!CreateGraphFile(InSchema, Path, Error))
+        {
+            QMessageBox::warning(InParent, QStringLiteral("New Graph"), QStringLiteral("Could not write\n%1\n\n%2").arg(Path, Error));
+            return nullptr;
+        }
+        return OpenGraph(Path, InParent);
+    }
+
+    bool CreateGraphFile(const Schema& InSchema, const QString& InPath, QString& OutError)
+    {
         Graph Starter = StarterGraph(InSchema);
-        Starter.Name = GetGraphBaseName(ToStd(Path));
+        Starter.Name = GetGraphBaseName(ToStd(InPath));
 
         std::string Error;
         CompileResult Result;
-        if(!CompileAndSave(Path, Starter, Result, Error))
+        if(!CompileAndSave(InPath, Starter, Result, Error))
         {
-            QMessageBox::warning(InParent, QStringLiteral("New Graph"), QStringLiteral("Could not write\n%1\n\n%2").arg(Path, ToQ(Error)));
-            return nullptr;
+            OutError = ToQ(Error);
+            return false;
         }
-
         QString Message;
-        StageOutput(Path, Starter, Result, Message);
-        return OpenGraph(Path, InParent);
+        StageOutput(InPath, Starter, Result, Message);
+        return true;
     }
 
     bool CloseAllGraphs()

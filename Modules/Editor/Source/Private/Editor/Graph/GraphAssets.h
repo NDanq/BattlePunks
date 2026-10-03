@@ -141,6 +141,10 @@ namespace EditorGraphs
     /* Asks where, writes a starter graph of InSchema there, and opens it. */
     GraphEditorTab* CreateGraph(const NodeGraph::Schema& InSchema, QWidget* InParent);
 
+    /* Writes a starter graph of InSchema at InPath (compiled and staged) without
+     * opening it. False with OutError if it could not be written. */
+    bool CreateGraphFile(const NodeGraph::Schema& InSchema, const QString& InPath, QString& OutError);
+
     /* Offers to save each dirty graph. False if cancelled. */
     bool CloseAllGraphs();
 }
