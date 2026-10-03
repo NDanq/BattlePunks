@@ -99,25 +99,31 @@ namespace RenderCore
         {
             return false;
         }
+        /* The existing override, else the first free entry. An editor may
+         * leave a gap, so neither is assumed to be at the end. */
+        RenderMaterialParameter* Target = nullptr;
         for(RenderMaterialParameter& Each : Parameters)
         {
-            /* Packed: the first empty entry ends the used ones. */
-            const bool bFree = Each.Name[0] == '\0';
-            if(bFree || (Each.Slot == uint8_t(InSlot) && NameIs(Each, InName)))
+            if(Each.Slot == uint8_t(InSlot) && NameIs(Each, InName)) { Target = &Each; break; }
+        }
+        for(size_t Index = 0; !Target && Index < RENDER_MATERIAL_PARAMETERS_MAX; ++Index)
+        {
+            if(Parameters[Index].Name[0] == '\0')
             {
-                if(bFree)
-                {
-                    std::snprintf(Each.Name, sizeof(Each.Name), "%s", InName);
-                    Each.Slot = uint8_t(InSlot);
-                }
-                Each.Value[0] = InX;
-                Each.Value[1] = InY;
-                Each.Value[2] = InZ;
-                Each.Value[3] = InW;
-                return true;
+                Target = &Parameters[Index];
+                std::snprintf(Target->Name, sizeof(Target->Name), "%s", InName);
+                Target->Slot = uint8_t(InSlot);
             }
         }
-        return false;
+        if(!Target)
+        {
+            return false;
+        }
+        Target->Value[0] = InX;
+        Target->Value[1] = InY;
+        Target->Value[2] = InZ;
+        Target->Value[3] = InW;
+        return true;
     }
 
     bool RenderComponent::GetMaterialParameter(const int32_t InSlot, const char* InName, float OutValue[4]) const
@@ -158,10 +164,19 @@ namespace RenderCore
         int32_t Count = 0;
         for(const RenderMaterialParameter& Each : Parameters)
         {
-            if(Each.Name[0] == '\0') { break; }
-            ++Count;
+            if(Each.Name[0] != '\0') { ++Count; }
         }
         return Count;
+    }
+
+    int32_t RenderComponent::GetMaterialParameterSpan() const
+    {
+        int32_t Span = 0;
+        for(size_t Index = 0; Index < RENDER_MATERIAL_PARAMETERS_MAX; ++Index)
+        {
+            if(Parameters[Index].Name[0] != '\0') { Span = int32_t(Index + 1); }
+        }
+        return Span;
     }
 
     /*
@@ -172,7 +187,8 @@ namespace RenderCore
      * WorldBridge recreates on the first frame after a load.
      */
     /* Each slot's material is a graph path. 2: the parameter overrides, a
-     * count then that many, so a component with none writes one field. */
+     * count then that many (up to the last in use, so an empty one between
+     * keeps its place), so a component with none writes one field. */
     GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 2)
     {
         Ar.Flag("Visible",   C.bVisible);
@@ -184,7 +200,7 @@ namespace RenderCore
 
         if(Ar.GetVersion() >= 2)
         {
-            int32_t Count = C.GetMaterialParameterCount();
+            int32_t Count = C.GetMaterialParameterSpan();
             Ar.Field("ParameterCount", Count);
             if(Count < 0) { Count = 0; }
             if(size_t(Count) > RENDER_MATERIAL_PARAMETERS_MAX) { Count = int32_t(RENDER_MATERIAL_PARAMETERS_MAX); }
@@ -280,6 +296,19 @@ namespace RenderCore
         Props.Field("Mesh",     &RenderComponent::Mesh, GameCore::PF_AssetMesh);
         /* A list: entry i is section i's material; empty ones use the mesh's own. */
         Props.Array("Materials", &RenderComponent::Materials, GameCore::PF_AssetMaterial);
+
+        /* This entity's overrides: a material slot, a parameter of its
+         * material (the Parameter node's Name), and up to four values. */
+        Props.Category("Material Parameters");
+        Props.StructArray("Parameters", &RenderComponent::Parameters, [](auto& Member)
+        {
+            Member.Field("Slot", &RenderMaterialParameter::Slot);
+            Member.Field("Name", &RenderMaterialParameter::Name);
+            Member.Element("X", &RenderMaterialParameter::Value, 0);
+            Member.Element("Y", &RenderMaterialParameter::Value, 1);
+            Member.Element("Z", &RenderMaterialParameter::Value, 2);
+            Member.Element("W", &RenderMaterialParameter::Value, 3);
+        });
     }
 #endif // WITH_EDITOR
 }

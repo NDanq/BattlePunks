@@ -599,6 +599,11 @@ own field (`Props.Element` likewise, for the editor). For the editor,
 `Props.Array("Materials", &RenderComponent::Materials, PF_AssetMaterial)` lists
 the whole array as one property (`ArrayCount` elements, `Stride` apart), which
 the Details panel shows as a list to add to and remove from.
+`Props.StructArray("Parameters", &RenderComponent::Parameters, [](auto& Member) { ... })`
+does the same for an array of small structs. The body declares the element's
+members (`Member.Field`, `Flag`, `Element`), each an entry of its own after the
+array with `Parent` naming it, and the panel shows each element as a group of
+them (`ComponentProperties.h`).
 
 **A C++ function that already exists needs no glue.** `Native` writes it from
 the function's types, and the string only names the graph's pins:

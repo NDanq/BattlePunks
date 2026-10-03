@@ -40,9 +40,10 @@ namespace RenderCore
      *
      * Parameters are per entity: SetMaterialParameter overrides a slot's
      * material parameter for this entity's draws only, leaving every other
-     * user of the material at its defaults. Up to RENDER_MATERIAL_PARAMETERS_MAX,
-     * kept packed from index 0. A name the material does not have is ignored
-     * when drawing. */
+     * user of the material at its defaults. Up to RENDER_MATERIAL_PARAMETERS_MAX;
+     * an entry with an empty Name is unused, wherever it is. A name the
+     * material does not have is ignored when drawing. The editor lists them
+     * under Material Parameters. */
     struct RENDERCORE_API RenderComponent
     {
         GAMECORE_COMPONENT_BODY()
@@ -68,7 +69,10 @@ namespace RenderCore
         bool GetMaterialParameter(int32_t InSlot, const char* InName, float OutValue[4]) const;
         /* Back to the material's default. False if it was not set. */
         bool ClearMaterialParameter(int32_t InSlot, const char* InName);
+        /* Overrides in use. */
         int32_t GetMaterialParameterCount() const;
+        /* One past the last in use: an editor can leave an empty one between. */
+        int32_t GetMaterialParameterSpan() const;
     };
 
     /* RenderComponent's proxy factory, for Renderer::Initialize to register. */

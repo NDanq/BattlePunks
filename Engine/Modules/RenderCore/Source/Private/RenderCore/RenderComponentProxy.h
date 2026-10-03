@@ -29,7 +29,7 @@ namespace RenderCore
         bool              bComponentVisible = true;
         char              Materials[8][128] = {};  // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_PATH_MAX; "" = none
 
-        /* The component's parameter overrides, packed; ParameterCount used. */
+        /* The component's parameter overrides; ParameterCount: up to the last in use. */
         RenderMaterialParameter Parameters[8] = {};   // RENDER_MATERIAL_PARAMETERS_MAX
         uint32_t                ParameterCount = 0;
 

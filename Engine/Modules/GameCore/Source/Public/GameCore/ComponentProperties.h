@@ -33,6 +33,17 @@
  *         Props.Category("Filtering");
  *         Props.Field("Layer", &CollisionComponent::Layer);
  *
+ * STRUCT ARRAYS. Props.StructArray lists an array of small structs, each
+ * element shown as a group of its members; the members are entries of their
+ * own, after the array's, with Parent naming it:
+ *
+ *         Props.StructArray("Parameters", &RenderComponent::Parameters, [](auto& Member)
+ *         {
+ *             Member.Field("Slot", &RenderMaterialParameter::Slot);
+ *             Member.Field("Name", &RenderMaterialParameter::Name);
+ *             Member.Element("X", &RenderMaterialParameter::Value, 0);
+ *         });
+ *
  * Unlisted fields (per-run state above all) are invisible. Entries are plain
  * data (name, type, offset, size, flags), so a tool needs no C++ type.
  * Registered at static init; lookups are game thread only.
@@ -61,6 +72,9 @@ namespace GameCore
         COMPONENT_PROPERTY_CATEGORY_MAX   = 32,   // including the NUL
     };
 
+    /* ComponentPropertyEntry::Parent of an entry that is not a struct member. */
+    constexpr uint8_t PROPERTY_NO_PARENT = 0xFF;
+
     struct ComponentPropertyEntry
     {
         char          Name[COMPONENT_PROPERTY_NAME_MAX] = {};
@@ -83,11 +97,20 @@ namespace GameCore
         /* The group a tool shows it in (Props.Category). Empty: none. */
         char          Category[COMPONENT_PROPERTY_CATEGORY_MAX] = {};
 
+        /* A STRUCT ARRAY (Props.StructArray) is an array entry of Type
+         * Struct, Size the element's size; its members follow it, each with
+         * Parent its index in the type's list and Offset from the start of
+         * an element. A tool reaches a member of element i with
+         * GetMember(i, Member). PROPERTY_NO_PARENT: not a member. */
+        uint8_t       Parent = PROPERTY_NO_PARENT;
+
         bool IsChoice() const    { return Choices[0] != '\0'; }
         bool HasCategory() const { return Category[0] != '\0'; }
 
         bool IsReadOnly() const { return (Flags & PF_ReadOnly) != 0; }
         bool IsArray() const    { return ArrayCount != 0; }
+        bool IsMember() const   { return Parent != PROPERTY_NO_PARENT; }
+        bool IsStructArray() const { return IsArray() && Type == EPropertyType::Struct; }
 
         /* Every byte the entry covers: the whole array, or the one value. */
         uint32_t GetSpan() const { return IsArray() ? Stride * ArrayCount : Size; }
@@ -100,6 +123,17 @@ namespace GameCore
             Element.ArrayCount = 0;
             Element.Stride     = 0;
             return Element;
+        }
+
+        /* On a struct array: InMember (one of its members) in element
+         * InIndex, as a single value at its place in the component. */
+        ComponentPropertyEntry GetMember(const size_t InIndex, const ComponentPropertyEntry& InMember) const
+        {
+            ComponentPropertyEntry Member = InMember;
+            Member.Offset = Offset + uint32_t(InIndex) * Stride + InMember.Offset;
+            Member.Parent = PROPERTY_NO_PARENT;
+            if(IsReadOnly()) { Member.Flags |= PF_ReadOnly; }
+            return Member;
         }
     };
 
@@ -129,6 +163,58 @@ namespace GameCore
 
     /* True if InType registered a property list without CPF_NotAddable. */
     GAMECORE_API bool IsComponentAddable(ComponentTypeID InType);
+
+    template<typename T> class ComponentPropertyBinder;
+
+    /* `Member` inside Props.StructArray's body: TElement's members, with
+     * offsets from the start of an element. */
+    template<typename TOwner, typename TElement>
+    class ComponentStructBinder
+    {
+    public:
+        ComponentStructBinder(ComponentPropertyBinder<TOwner>& InOwner, const uint8_t InParent)
+            : Owner(InOwner), Parent(InParent) {}
+
+        template<typename TField>
+        void Field(const char* InName, TField TElement::* InMember, const uint8_t InFlags = PF_None)
+        {
+            const TElement Probe{};
+            AddMember(InName, Probe, &(Probe.*InMember), uint32_t(sizeof(TField)), ScriptFieldTypeOf<TField>::Value, InFlags);
+        }
+
+        void Flag(const char* InName, uint8_t TElement::* InMember, const uint8_t InFlags = PF_None)
+        {
+            const TElement Probe{};
+            AddMember(InName, Probe, &(Probe.*InMember), uint32_t(sizeof(uint8_t)), EPropertyType::Flag, InFlags);
+        }
+
+        /* One element of an array member of the struct, as its own field. */
+        template<typename TPart, size_t N>
+        void Element(const char* InName, TPart (TElement::* InArray)[N], const size_t InIndex, const uint8_t InFlags = PF_None)
+        {
+            if(InIndex >= N)
+            {
+                Owner.Reject();
+                return;
+            }
+            const TElement Probe{};
+            AddMember(InName, Probe, &((Probe.*InArray)[InIndex]), uint32_t(sizeof(TPart)), ScriptFieldTypeOf<TPart>::Value, InFlags);
+        }
+
+    private:
+        void AddMember(const char* InName, const TElement& InProbe, const void* InField, const uint32_t InSize,
+                       const EPropertyType InType, const uint8_t InFlags)
+        {
+            const uint32_t Offset = uint32_t(reinterpret_cast<const char*>(InField) - reinterpret_cast<const char*>(&InProbe));
+            if(ComponentPropertyEntry* Entry = Owner.AddAt(InName, Offset, InSize, InType, InFlags))
+            {
+                Entry->Parent = Parent;
+            }
+        }
+
+        ComponentPropertyBinder<TOwner>& Owner;
+        uint8_t                          Parent;
+    };
 
     /* `Props` inside GAMECORE_DEFINE_COMPONENT_PROPERTIES; registers at Commit(). */
     template<typename T>
@@ -206,6 +292,33 @@ namespace GameCore
             }
         }
 
+        /*
+         * An array of structs as one property, each element a group of the
+         * members InBody declares (ComponentStructBinder). A tool shows it as
+         * a list, like Array; an element is in use while any member differs
+         * from the default.
+         */
+        template<typename TElement, size_t N, typename FBody>
+        void StructArray(const char* InName, TElement (T::* InArray)[N], FBody&& InBody, const uint8_t InFlags = PF_None)
+        {
+            static_assert(N > 0 && N <= 0xFFFF, "an array property holds 1 to 65535 elements");
+            const T Probe{};
+            const char* Base   = reinterpret_cast<const char*>(&Probe);
+            const char* Member = reinterpret_cast<const char*>(&((Probe.*InArray)[0]));
+            const size_t Head  = Count;
+            ComponentPropertyEntry* Entry = AddAt(InName, uint32_t(Member - Base), uint32_t(sizeof(TElement)),
+                                                  EPropertyType::Struct, InFlags);
+            if(!Entry)
+            {
+                return;
+            }
+            Entry->ArrayCount = uint16_t(N);
+            Entry->Stride     = uint32_t(sizeof(TElement));
+
+            ComponentStructBinder<T, TElement> Members(*this, uint8_t(Head));
+            InBody(Members);
+        }
+
         /* Files the properties declared after this under InName; nullptr or
          * "" ends the category. An over-long name is rejected (logged at
          * Commit), and the properties after it have none. */
@@ -229,6 +342,10 @@ namespace GameCore
         void Commit() { RegisterComponentProperties(T::StaticType().ID, Entries, Count, Rejected, &Defaults, TypeFlags); }
 
     private:
+        template<typename, typename> friend class ComponentStructBinder;
+
+        void Reject() { ++Rejected; }
+
         /* memcpy is sound: GAMECORE_DEFINE_COMPONENT asserts trivial copyability. */
         static void Defaults(void* OutBytes)
         {

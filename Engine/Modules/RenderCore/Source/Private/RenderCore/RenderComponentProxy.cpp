@@ -37,12 +37,12 @@ namespace RenderCore
 
         static_assert(sizeof(Parameters) == sizeof(Component.Parameters), "RenderComponentProxy::Parameters must match the component's");
         std::memcpy(Parameters, Component.Parameters, sizeof(Parameters));
+        /* Up to the last in use; BindMaterial skips empty ones between. */
         ParameterCount = 0;
-        for(RenderMaterialParameter& Each : Parameters)
+        for(size_t Index = 0; Index < RENDER_MATERIAL_PARAMETERS_MAX; ++Index)
         {
-            Each.Name[RENDER_MATERIAL_PARAMETER_NAME_MAX - 1] = '\0';
-            if(Each.Name[0] == '\0') { break; }   // packed
-            ++ParameterCount;
+            Parameters[Index].Name[RENDER_MATERIAL_PARAMETER_NAME_MAX - 1] = '\0';
+            if(Parameters[Index].Name[0] != '\0') { ParameterCount = uint32_t(Index + 1); }
         }
 
         SetVisible(bComponentVisible);
