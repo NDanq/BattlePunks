@@ -831,18 +831,43 @@ void EditorMainWindow::RegisterConsoleCommands()
         else             { Console.Print(Lines.join(QLatin1Char('\n'))); }
     });
 
-    Console.Register(QStringLiteral("prefab"), QStringLiteral("<path | new | simulate | stop>"),
+    /* For scripted runs (--command): "after 3000 prefab close". */
+    Console.Register(QStringLiteral("after"), QStringLiteral("<ms> <command...>"),
+                     QStringLiteral("Run a console command after a delay"),
+                     [this](const QStringList& InArgs)
+    {
+        bool bOk = false;
+        const int Delay = InArgs.isEmpty() ? 0 : InArgs.front().toInt(&bOk);
+        if(!bOk || Delay < 0 || InArgs.size() < 2)
+        {
+            Console.PrintError(QStringLiteral("Usage: after <ms> <command...>"));
+            return;
+        }
+        const QString Line = InArgs.mid(1).join(QLatin1Char(' '));
+        QTimer::singleShot(Delay, this, [this, Line]()
+        {
+            Console.Print(QStringLiteral("> %1").arg(Line));
+            Console.Execute(Line);
+        });
+    });
+
+    Console.Register(QStringLiteral("prefab"), QStringLiteral("<path | new | simulate | stop | close>"),
                      QStringLiteral("Open a .nmprefab in the Prefab Editor, make a new one, or simulate the one in front"),
                      [this](const QStringList& InArgs)
     {
         if(InArgs.isEmpty())
         {
-            Console.PrintError(QStringLiteral("Usage: prefab <path | new | simulate | stop>"));
+            Console.PrintError(QStringLiteral("Usage: prefab <path | new | simulate | stop | close>"));
             return;
         }
         if(InArgs.front() == QStringLiteral("new"))
         {
             EditorPrefabs::CreatePrefab(QString(), this);
+            return;
+        }
+        if(InArgs.front() == QStringLiteral("close"))
+        {
+            EditorPrefabs::CloseAllPrefabs();
             return;
         }
         if(InArgs.front() == QStringLiteral("simulate") || InArgs.front() == QStringLiteral("stop"))
