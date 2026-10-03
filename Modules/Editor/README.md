@@ -313,14 +313,21 @@ status says whether the script is running, which only happens in a playing
 World, and the **Cull outside active region** checkbox sets the script's cull
 flag. The script's class can override that flag when it loads.
 
-An array property (`Props.Array`, such as a RenderComponent's **Materials**)
-is a list: a heading with how many entries it holds and **+ Add**, then one row
+An array property (`Props.Array`, such as a RenderComponent's **Materials**,
+or `Props.StructArray`, such as its **Material Parameters**) is a list: a heading with how many entries it holds and **+ Add**, then one row
 per entry, numbered, each with its own reset arrow and an **x** that removes it
 -- the entries after it move up, and the array's end goes back to the default.
 It shows the entries in use (up to the last one that is not the default) and
 any added since; an added entry left empty is gone when another entity is
 selected. Removing is undoable like any edit. A RenderComponent's entry *i* is
 section *i*'s material; an empty one uses the mesh's own.
+
+A struct array's entry is a numbered heading with its **x**, then one row per
+member. A RenderComponent's **Material Parameters** entries are a Slot, a
+Name (the material's Parameter node) and X to W. An entry is in use while any
+member differs from the default, and one with an empty Name is ignored when
+drawing. `Editor.Details` (`Tests/DetailsTests.cpp`) builds the panel
+offscreen; `NIMBLE_DETAILS_SNAPSHOT=<file.png>` saves what it drew.
 
 A material field -- a Materials entry, a Post Process's Material, a mesh
 viewer section -- holds a material graph by its path,

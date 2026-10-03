@@ -133,11 +133,13 @@ draws (`RenderComponent::SetMaterialParameter`; Lua and script graphs have the
 same API, as README.md's **Lua** section shows).
 
 - **Storage.** The component holds up to `RENDER_MATERIAL_PARAMETERS_MAX` (8)
-  `RenderMaterialParameter`s: a slot, a parameter name and four floats. They
-  are kept packed from index 0. It is a fixed array, so the component stays
-  trivially copyable.
-- **Saving.** The serializer (version 2) writes a count and then only the
-  overrides in use (`Parameter<i>Name`, `Slot`, `X` to `W`). A component with
+  `RenderMaterialParameter`s: a slot, a parameter name and four floats. An
+  entry with an empty name is unused, wherever it is, since the editor can
+  leave a gap. It is a fixed array, so the component stays trivially copyable.
+  The editor's Details panel lists the entries under **Material Parameters**
+  (`Props.StructArray`).
+- **Saving.** The serializer (version 2) writes a count and then the entries
+  up to the last in use (`Parameter<i>Name`, `Slot`, `X` to `W`). A component with
   no overrides writes just `ParameterCount`, and a version 1 component reads
   none.
 - **Drawing.** The proxy copies the overrides with the rest of the component
