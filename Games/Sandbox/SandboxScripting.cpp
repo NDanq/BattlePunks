@@ -99,13 +99,13 @@ EngineCore::Vector3 SandboxPickupComponent::BobbedPosition(const double InSecond
 
 /* Without a serializer the save/load demo would drop Pickup components and
  * leave their scripts erroring on a nil component. */
-GAMECORE_DEFINE_COMPONENT_SERIALIZER(SandboxPickupComponent, 2)
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(SandboxPickupComponent, 1)
 {
     Ar.Field("Home",      C.Home);
     Ar.Field("Value",     C.Stats.Value);
     Ar.Field("BobHeight", C.BobHeight);
     Ar.Flag("Collected",  C.bCollected);
-    if(Ar.GetVersion() >= 2) { Ar.Field("ID", C.Stats.ID); }   // 2: PickupStats
+    Ar.Field("ID",        C.Stats.ID);
 }
 
 /* Lua: GetHome/SetHome, GetStats/SetStats (Value, ID), GetBobHeight/SetBobHeight,
