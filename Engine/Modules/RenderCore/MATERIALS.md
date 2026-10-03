@@ -126,6 +126,34 @@ OpenGL never links two different blocks under one name.
 Shaders written against the old name-based uniforms (Basic, Mesh, Screen,
 Odessa's) are unaffected.
 
+### Per-entity parameters
+
+A RenderComponent can override any of its materials' parameters for its own
+draws (`RenderComponent::SetMaterialParameter`; Lua and script graphs have the
+same API, as README.md's **Lua** section shows).
+
+- **Storage.** The component holds up to `RENDER_MATERIAL_PARAMETERS_MAX` (8)
+  `RenderMaterialParameter`s: a slot, a parameter name and four floats. They
+  are kept packed from index 0. It is a fixed array, so the component stays
+  trivially copyable.
+- **Saving.** The serializer (version 2) writes a count and then only the
+  overrides in use (`Parameter<i>Name`, `Slot`, `X` to `W`). A component with
+  no overrides writes just `ParameterCount`, and a version 1 component reads
+  none.
+- **Drawing.** The proxy copies the overrides with the rest of the component
+  each frame and passes them to `DrawMesh` or `DrawQuadWithMaterial`
+  (`MaterialParameterOverrides`). Each queued draw (`DrawCommand`) records
+  them and its material slot: a mesh section's index, or 0 for a quad. The
+  slot stays the same even when the section falls back to its own material
+  or DefaultLit.
+- **Binding.** `BindMaterial` fills the block as usual, then, when an override
+  for the draw's slot names one of the material's parameters, writes its
+  floats into a copy of the block at that parameter's offset. A float takes
+  X, a vec2 X and Y, and so on. The copy is what gets uploaded, so the
+  material's own block, and every other entity using it, keeps the defaults.
+- **Unknown names** are ignored when drawing: an override for a parameter
+  the slot's material does not have draws nothing different.
+
 ## Stages and node restrictions
 
 World Position Offset is the only vertex-stage root; every other Material
@@ -354,7 +382,7 @@ Samples; `Textured.mtl.glsl` through glslc).
 
 ## Later
 
-Texture parameters (a texture an instance or a component can swap); mipmaps
+Texture parameters (a texture an instance or a component can swap; numeric parameters already can, per entity); mipmaps
 (and a Mip Level input); separate U and V wrap; tangents for normal maps; an RGBA16F scene target and tonemapping (needs a render-target
 format in GDI); material instances; a cull mode; more light types; Scene
 Depth for PostProcess (depth targets can be textures now; a node and a slot
