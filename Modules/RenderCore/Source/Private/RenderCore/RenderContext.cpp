@@ -1095,6 +1095,7 @@ namespace RenderCore
     {
         P->bDeferring  = false;
         P->FinalTarget = nullptr;
+        InTargets.Final = nullptr;
         for(uint32_t& Count : P->StageDrawCounts) { Count = 0; }
 
         const auto Finish = [this]()
@@ -1193,7 +1194,8 @@ namespace RenderCore
             EndDrawEvent();
         }
 
-        P->FinalTarget = Source;
+        P->FinalTarget  = Source;
+        InTargets.Final = Source;
         Finish();
     }
 

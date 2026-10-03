@@ -97,6 +97,17 @@ namespace RenderCore
 
         size_t GetProxyCount() const;
 
+        /* Whether Render() reports its proxy counts to RenderStats. On by
+         * default; a Renderer's extra scenes turn it off, so the stats stay
+         * the default scene's. */
+        void SetReportsStats(bool bInReports);
+
+        /* GAME (UI) THREAD -- the one exception to this class's render-thread
+         * rule. Presents the colour the last Render() finished in to InWindow,
+         * through that window's own swapchain (GDI PresentRenderTargetToWindow).
+         * Nothing before the first Render(). The scene must outlive the call. */
+        void PresentToWindow(EngineCore::WindowHandle InWindow) const;
+
         /* Shutdown: ReleaseRenderResources + free every proxy still present,
          * logging a warning per one -- somebody skipped their RemoveProxy,
          * the same "cannot enforce it, but can detect and warn" posture
