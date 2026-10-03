@@ -117,7 +117,7 @@ BrickBreaker returns `""`, so Sandbox's `Scripts/Main.lua` does not run there.
 
 ## Example: BrickBreaker
 
-`Games/Sandbox/Source/Private/Sandbox/BrickBreaker.cpp` is Sandbox's start level. It drives three
+`Games/Sandbox/Source/Private/Sandbox/BrickBreaker.cpp` is Sandbox's start level (design: `Games/Sandbox/Docs/BRICKBREAKER.md`). It drives three
 prefabs in three different ways:
 
 | Prefab | Driven by | What it does with the framework |
