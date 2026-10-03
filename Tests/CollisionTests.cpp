@@ -13,6 +13,7 @@
 #include "Public/GameCore/ComponentProperties.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
 #include "Public/NimbleEngine/GameSession.h"
@@ -35,6 +36,20 @@ static void Expect(const bool bCondition, const std::string& What)
 
 namespace
 {
+    /* InEntity made an instance of a prefab of itself that runs InScript:
+     * how a script is attached now that entities do not have their own.
+     * Returns the instance's root, which replaces InEntity. */
+    GameCore::Entity AttachScript(GameCore::World& InWorld, const GameCore::Entity& InEntity, const char* InScript)
+    {
+        GameCore::PrefabAsset Asset;
+        GameCore::CapturePrefab(InWorld, InEntity.GetID(), Asset);
+        Asset.SetScriptPath(InScript);
+        const GameCore::TransformPose At = InEntity.GetWorldPose();
+        const std::string Name = InEntity.GetName();
+        InWorld.DestroyEntity(InEntity.GetID());
+        return InWorld.SpawnPrefab(Asset, At, Name.c_str()).GetRoot();
+    }
+
     struct Recorded
     {
         bool     bBegin;
@@ -182,7 +197,7 @@ namespace
 
         Entity Zone = MakeBox(W, "Zone", 0.0);
         Entity Visitor = MakeBox(W, "Visitor", 5.0);
-        Zone.SetScript(Path.c_str());
+        Zone = AttachScript(W, Zone, Path.c_str());
         W.Tick(0.016f);   // starts the script
 
         MoveTo(Visitor, 0.0);
