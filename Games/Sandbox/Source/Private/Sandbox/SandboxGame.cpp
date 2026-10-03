@@ -8,8 +8,6 @@
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreLog.h"
-#include "Public/Core/CorePlatform.h"
-#include "Public/Core/CoreThread.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/NativePrefab.h"
@@ -274,9 +272,6 @@ public:
     {
         Session = &InSession;
 
-        /* So OnTick can assert it runs on the game thread. */
-        GameThread = EngineCore::appThreadID();
-
         RunSeconds = double(GSandboxRunSeconds.GetInt());
 
         /* Nothing spawned here: the level builds the scene, the mode is rules. */
@@ -290,8 +285,7 @@ public:
 
         const GameCore::EntityID Scripted = Session->GetWorld().FindEntityByName("Scripted");
 
-        CORE_LOG("[Sandbox] game starting on thread " + Num(uint64_t(GameThread))
-                 + "; frame limit "
+        CORE_LOG("[Sandbox] game starting; frame limit "
                  + (Limit > 0 ? Num(Limit) + " fps" : std::string("unlimited"))
                  + (RunSeconds > 0.0
                     ? "; will quit after " + Fixed2(RunSeconds) + "s"
@@ -303,10 +297,8 @@ public:
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
-        /* Concurrent with the render thread: no renderer or window access. */
-        CORE_CHECK(EngineCore::appThreadID() == GameThread,
-                   "[Sandbox] OnTick ran on a thread other than the one OnStartup saw")
-
+        /* Concurrent with the render thread: no renderer or window access.
+         * The session has already checked this is the game thread. */
         State->ElapsedSeconds += InFrame.DeltaSeconds;
         SandboxScripting::SetElapsedSeconds(State->ElapsedSeconds);   // Sandbox.GetElapsed() in scripts
         State->TicksThisSecond++;
@@ -407,8 +399,6 @@ public:
 private:
     /* Stashed in OnLoad for RequestQuit() and GetWorld(). */
     NimbleEngine::GameSession* Session = nullptr;
-
-    EngineCore::ThreadID GameThread = 0;
 
     double RunSeconds = 0.0;
 

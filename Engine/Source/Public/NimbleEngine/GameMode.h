@@ -35,8 +35,10 @@ namespace NimbleEngine
      * logic at the points below. A mode sees only the GameSession; host
      * services are on GameSession::GetHost().
      *
-     * THREADING. Game thread only. OnTick overlaps the render thread, so never
-     * touch a RenderContext or RenderProxy directly.
+     * THREADING. Game thread only, which the GameSession enforces: every hook
+     * is called from a session entry that CORE_CHECKs it, so a mode need not
+     * track or check the thread itself. OnTick overlaps the render thread, so
+     * never touch a RenderContext or RenderProxy directly.
      *
      * LIFECYCLE (full sequence: GameSession::LoadLevel):
      *
