@@ -8,11 +8,15 @@
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/ComponentProperties.h"
+#include "Public/GameCore/ComponentScript.h"
+#include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/Sandbox/SandboxScripting.h"
 
@@ -30,7 +34,9 @@
  *            player. Its PlayerState holds the score and lives; its callbacks
  *            move it from its Input and launch the ball.
  *   Brick    Prefabs/Brick.nmprefab, driven by Scripts/Brick.script.nmgraph:
- *            scores through Game.AddScore, says "BrickBroken", goes.
+ *            counts its Brick component's Hits down; at 0 it scores through
+ *            Game.AddScore, says "BrickBroken", and goes. Higher rows take
+ *            more hits.
  *   Ball     Prefabs/Ball.nmprefab, driven by Scripts/Ball.lua: moves only
  *            while the phase is Playing, bounces, and costs a life through
  *            Game.AddLives when it falls out.
@@ -44,6 +50,12 @@
  * last (Jump restarts), or RoundCleared once every brick is gone (then the
  * next round, a little faster).
  *
+ * THE LAYOUT is Levels/BrickBreaker.nmworld ([BrickBreaker] LevelFile): the
+ * camera, the paddle, the ball and the first wall, editable in the editor.
+ * Every later wall repeats the first one's bricks, hits included. Without the
+ * file (or with LevelFile empty) the level builds the same layout in code
+ * (SpawnDefaultLayout, DefaultWall), which is also what wrote the file.
+ *
  * Controls are Sandbox's "Default" map (SandboxInput.cpp): MoveX steers, Jump
  * launches. [BrickBreaker] AutoPlay=1 plays by itself, for unattended runs;
  * AutoPlay=2 launches and restarts but never steers, so it loses every ball.
@@ -51,6 +63,29 @@
 
 NIMBLE_CONFIG_INT(GBrickBreakerAutoPlay, "BrickBreaker", "AutoPlay", 0, nullptr);
 NIMBLE_CONFIG_INT(GBrickBreakerRunSeconds, "BrickBreaker", "RunSeconds", 0, nullptr);
+NIMBLE_CONFIG_STRING(GBrickBreakerLevelFile, "BrickBreaker", "LevelFile", "Levels/BrickBreaker.nmworld", nullptr);
+
+// === The Brick component ====================================================
+
+GAMECORE_DEFINE_COMPONENT(SandboxBrickComponent, "Brick")
+
+GAMECORE_DEFINE_COMPONENT_SERIALIZER(SandboxBrickComponent, 1)
+{
+    Ar.Field("Hits", C.Hits);
+}
+
+/* brick:GetHits() / SetHits(n); Components/Brick in a script graph. */
+GAMECORE_DEFINE_COMPONENT_SCRIPT(SandboxBrickComponent)
+{
+    Bind.Field("Hits", &SandboxBrickComponent::Hits);
+}
+
+#if WITH_EDITOR
+GAMECORE_DEFINE_COMPONENT_PROPERTIES(SandboxBrickComponent)
+{
+    Props.Field("Hits", &SandboxBrickComponent::Hits);
+}
+#endif
 
 namespace
 {
@@ -209,6 +244,35 @@ namespace
         int32_t BricksRemaining = 0;
     };
 
+    /* One brick of a wall: where it stands (its size is its scale) and how
+     * many hits it takes. */
+    struct WallBrick
+    {
+        GameCore::TransformPose Pose;
+        int32_t                 Hits = 1;
+    };
+
+    /* The wall the level builds without a level file: BrickRows x
+     * BrickColumns, centred, 1 hit on the bottom row and one more per row up. */
+    std::vector<WallBrick> DefaultWall()
+    {
+        std::vector<WallBrick> Wall;
+        const double Left = (FieldWidth - (BrickColumns * BrickWidth + (BrickColumns - 1) * BrickGap)) * 0.5
+                            + BrickWidth * 0.5;
+        for(int Row = 0; Row < BrickRows; ++Row)
+        {
+            for(int Column = 0; Column < BrickColumns; ++Column)
+            {
+                WallBrick Brick;
+                Brick.Pose = Placed(Left + Column * (BrickWidth + BrickGap), BrickTop + Row * (BrickHeight + BrickGap),
+                                    BrickWidth, BrickHeight);
+                Brick.Hits = BrickRows - Row;   // row 0 is the top
+                Wall.push_back(Brick);
+            }
+        }
+        return Wall;
+    }
+
     class BrickBreakerGameMode : public NimbleEngine::IGameMode
     {
     public:
@@ -223,6 +287,15 @@ namespace
 
             /* From the brick's script graph (Events.Emit("BrickBroken")). */
             BrickBrokenHandle = InSession.GetWorld().GetEvents().Subscribe("BrickBroken", &OnBrickBroken, this);
+
+            /* The World is as the level made it (before any restore): its
+             * bricks are the wall every round rebuilds. */
+            Wall = CaptureWall();
+            bLevelHasWall = !Wall.empty();
+            if(!bLevelHasWall)
+            {
+                Wall = DefaultWall();
+            }
             return true;
         }
 
@@ -231,7 +304,8 @@ namespace
 
         void OnStart() override
         {
-            if(bRestored)
+            /* A save or the level file brought this round's bricks already. */
+            if(bRestored || bLevelHasWall)
             {
                 State->BricksRemaining = CountBricks();
             }
@@ -338,29 +412,43 @@ namespace
             return P ? P->Score : 0;
         }
 
+        /* The wall, as the level laid it out. */
         void SpawnBricks()
         {
             GameCore::World& World = Session->GetWorld();
-            const double Left = (FieldWidth - (BrickColumns * BrickWidth + (BrickColumns - 1) * BrickGap)) * 0.5
-                                + BrickWidth * 0.5;
-
             int32_t Spawned = 0;
-            for(int Row = 0; Row < BrickRows; ++Row)
+            for(const WallBrick& Brick : Wall)
             {
-                for(int Column = 0; Column < BrickColumns; ++Column)
+                const GameCore::Entity Root = World.SpawnPrefab(BrickPrefab, Brick.Pose).GetRoot();
+                SandboxBrickComponent* Hits = Root.GetComponent<SandboxBrickComponent>();
+                if(!Hits)
                 {
-                    const double X = Left + Column * (BrickWidth + BrickGap);
-                    const double Y = BrickTop + Row * (BrickHeight + BrickGap);
-                    if(!World.SpawnPrefab(BrickPrefab, Placed(X, Y, BrickWidth, BrickHeight)).IsValid())
-                    {
-                        CORE_LOG_ERROR(std::string("[BrickBreaker] could not spawn ") + BrickPrefab)
-                        State->BricksRemaining = Spawned;
-                        return;
-                    }
-                    ++Spawned;
+                    CORE_LOG_ERROR(std::string("[BrickBreaker] could not spawn ") + BrickPrefab + " (or it has no Brick component)")
+                    break;
                 }
+                Hits->Hits = Brick.Hits;
+                ++Spawned;
             }
             State->BricksRemaining = Spawned;
+        }
+
+        /* The bricks in the World now: placement and hits. */
+        std::vector<WallBrick> CaptureWall() const
+        {
+            std::vector<WallBrick> Captured;
+            GameCore::World& World = Session->GetWorld();
+            for(const GameCore::PrefabInstanceID Instance : FindBricks())
+            {
+                const GameCore::Entity Root = World.GetInstance(Instance).GetRoot();
+                WallBrick Brick;
+                Brick.Pose = Root.GetWorldPose();
+                if(const SandboxBrickComponent* Hits = Root.GetComponent<SandboxBrickComponent>())
+                {
+                    Brick.Hits = Hits->Hits;
+                }
+                Captured.push_back(Brick);
+            }
+            return Captured;
         }
 
         /* Live instances of the brick prefab. */
@@ -411,6 +499,8 @@ namespace
         BrickBreakerGameState*     State   = nullptr;
         GameCore::EntityID         Player;
         GameCore::DelegateHandle   BrickBrokenHandle;
+        std::vector<WallBrick>     Wall;                    // every round's bricks
+        bool                       bLevelHasWall = false;   // the level file placed the first
         bool                       bRestored  = false;
         double                     Elapsed    = 0.0;
         double                     RunSeconds = 0.0;
@@ -430,6 +520,33 @@ namespace
 
         bool OnLoad(NimbleEngine::GameSession& /*InSession*/) override
         {
+            /* An editor build reads the text level; a game, its cooked twin
+             * in Levels/Cooked/. */
+            std::string Path = GBrickBreakerLevelFile.GetString();
+#if !WITH_EDITOR
+            const size_t Slash = Path.find_last_of('/');
+            Path = Path.substr(0, Slash == std::string::npos ? 0 : Slash + 1) + "Cooked/"
+                   + Path.substr(Slash == std::string::npos ? 0 : Slash + 1);
+#endif
+            if(!Path.empty() && GameCore::DetectWorldFileFormat(Path.c_str()) != GameCore::EWorldFileFormat::Unknown)
+            {
+                if(GameCore::LoadWorldFile(Path.c_str(), GetWorld()))
+                {
+                    CORE_LOG("[BrickBreaker] layout from " + Path)
+                    return true;
+                }
+                CORE_LOG_ERROR("[BrickBreaker] could not load " + Path)
+                return false;
+            }
+            CORE_LOG("[BrickBreaker] no level file" + (Path.empty() ? std::string() : " at " + Path)
+                     + "; building the default layout")
+            return SpawnDefaultLayout();
+        }
+
+        /* What Levels/BrickBreaker.nmworld holds, in code: camera, paddle,
+         * ball. The mode adds the default wall. */
+        bool SpawnDefaultLayout()
+        {
             GameCore::World& World = GetWorld();
             World.SpawnPrefab("native:Sandbox.Camera");
             World.SpawnPrefab("native:BrickBreaker.Paddle", Placed(FieldWidth * 0.5, PaddleY, PaddleWidth, PaddleHeight));
@@ -439,7 +556,6 @@ namespace
                 CORE_LOG_ERROR(std::string("[BrickBreaker] could not spawn ") + BallPrefab)
                 return false;
             }
-            /* Bricks are the mode's: it rebuilds the wall every round. */
             return true;
         }
 

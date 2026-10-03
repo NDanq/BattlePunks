@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Instance Guid="34a8d7cfcb9a00331225833158846ce0" Name="BrickBreaker.Paddle" Prefab="native:BrickBreaker.Paddle">
+  <Entity Id="1">
+    <Component Type="Transform" Version="1">
+      <Position X="640" Y="670" Z="0" />
+      <Scale X="128" Y="16" Z="1" />
+    </Component>
+  </Entity>
+</Instance>

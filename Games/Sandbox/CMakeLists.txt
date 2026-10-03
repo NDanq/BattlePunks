@@ -424,6 +424,57 @@ elseif(SANDBOX_PREFAB_COPIES)
     set_target_properties(SandboxStagePrefabs PROPERTIES FOLDER "Games")
 endif()
 
+# === Levels/ ===============================================================
+# Level files, staged at the same relative path beside the executable
+# ("Levels/BrickBreaker.nmworld", as a level loads it). An Editor target
+# stages the text worlds -- the .nmworld manifest and the per-entity and
+# per-instance files in the folder beside it; a Client or Server target cannot
+# read text, so it stages the cooked ones from Levels/Cooked/ (the editor's
+# `cook` console command).
+if(NIMBLE_TARGET STREQUAL "Editor")
+    file(GLOB_RECURSE SANDBOX_LEVEL_FILES CONFIGURE_DEPENDS
+            "${CMAKE_CURRENT_SOURCE_DIR}/Levels/*.nmworld"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Levels/*.nmentity"
+            "${CMAKE_CURRENT_SOURCE_DIR}/Levels/*.nmprefabinst")
+    list(FILTER SANDBOX_LEVEL_FILES EXCLUDE REGEX "/Levels/Cooked/")
+else()
+    file(GLOB_RECURSE SANDBOX_LEVEL_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Levels/Cooked/*.nmworld")
+endif()
+
+set(SANDBOX_LEVEL_OUTPUTS "")
+set(SANDBOX_LEVEL_COPIES "")
+foreach(SANDBOX_LEVEL_SRC ${SANDBOX_LEVEL_FILES})
+    file(RELATIVE_PATH SANDBOX_LEVEL_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_LEVEL_SRC}")
+    get_filename_component(SANDBOX_LEVEL_REL_DIR "${SANDBOX_LEVEL_REL}" DIRECTORY)
+    list(APPEND SANDBOX_LEVEL_COPIES
+            COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_LEVEL_REL_DIR}"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_LEVEL_SRC}" "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_LEVEL_REL}")
+    if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+        set(SANDBOX_LEVEL_DST "${SANDBOX_RT_DIR}/${SANDBOX_LEVEL_REL}")
+        add_custom_command(
+                OUTPUT  "${SANDBOX_LEVEL_DST}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_RT_DIR}/${SANDBOX_LEVEL_REL_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_LEVEL_SRC}" "${SANDBOX_LEVEL_DST}"
+                DEPENDS "${SANDBOX_LEVEL_SRC}"
+                COMMENT "Sandbox: staging ${SANDBOX_LEVEL_REL} beside the executable"
+                VERBATIM)
+        list(APPEND SANDBOX_LEVEL_OUTPUTS "${SANDBOX_LEVEL_DST}")
+    endif()
+endforeach()
+
+if(SANDBOX_LEVEL_OUTPUTS)
+    add_custom_target(SandboxStageLevels DEPENDS ${SANDBOX_LEVEL_OUTPUTS})
+    add_dependencies(Sandbox SandboxStageLevels)
+    set_target_properties(SandboxStageLevels PROPERTIES FOLDER "Games")
+elseif(SANDBOX_LEVEL_COPIES)
+    # Multi-config fallback, as SandboxStagePrefabs': every file, every build.
+    add_custom_target(SandboxStageLevels ALL ${SANDBOX_LEVEL_COPIES}
+            COMMENT "Sandbox: staging Levels/ beside the executable"
+            VERBATIM)
+    add_dependencies(SandboxStageLevels Sandbox)
+    set_target_properties(SandboxStageLevels PROPERTIES FOLDER "Games")
+endif()
+
 # === Materials/ =============================================================
 # Material graphs, cooked from the code generated into each (<gen_code>) for
 # every built backend into SandboxGame's shader cache, which GameModuleHost

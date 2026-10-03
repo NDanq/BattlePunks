@@ -7,6 +7,9 @@
       <Local MinX="-0.5" MinY="-0.5" MinZ="-1" MaxX="0.5" MaxY="0.5" MaxZ="1" />
       <Static Value="false" />
     </Component>
+    <Component Type="Brick" Version="1">
+      <Hits Value="1" />
+    </Component>
     <Component Type="Collision" Version="1">
       <Enabled Value="true" />
       <Source Value="0" />

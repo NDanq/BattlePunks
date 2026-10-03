@@ -17,8 +17,9 @@ described in `GAMEFRAMEWORK.md`; this covers only what the game does with it.
 2. **The rules live in the mode.** No prefab decides what a lost ball or the
    last brick means; it reports the event, and `BrickBreakerGameMode` chooses
    the next phase.
-3. **Everything is a prefab.** The level spawns prefab instances and nothing
-   else, the way Sandbox's other level does.
+3. **Everything is a prefab, laid out in a level file.** The level is
+   `Levels/BrickBreaker.nmworld`: prefab instances and nothing else, placed
+   where the editor can move them.
 4. **It can run unattended.** It can play itself, lose on purpose and quit on a
    timer, so a smoke run checks the whole loop without anyone at the keyboard.
 
@@ -34,14 +35,15 @@ phases go to the log).
 | File | Role |
 |---|---|
 | `Source/Private/Sandbox/BrickBreaker.cpp` | The level, the mode, the state, and the paddle's native prefab |
-| `Source/Public/Sandbox/BrickBreaker.h` | `BrickBreaker::GetLevel()`, for the module to register |
+| `Source/Public/Sandbox/BrickBreaker.h` | `BrickBreaker::GetLevel()`, for the module to register, and the `Brick` component (`SandboxBrickComponent`) |
+| `Levels/BrickBreaker.nmworld` | The layout: camera, paddle, ball and the first wall (`Levels/BrickBreaker/`, one file per instance) |
 | `Source/Private/Sandbox/SandboxGame.cpp` | `SandboxGameModule` registers the level and returns it as the start level |
 | `Source/Public/Sandbox/SandboxScripting.h` | The collision layers `SandboxLayers::Paddle`, `Ball` and `Brick` |
 | `Prefabs/Brick.nmprefab` | The brick prefab, which names its script graph |
 | `Scripts/Brick.script.nmgraph` | The brick's behaviour; its Lua is generated into `<gen_code>` |
 | `Prefabs/Ball.nmprefab` | The ball prefab, which names `Scripts/Ball.lua` |
 | `Scripts/Ball.lua` | The ball's behaviour |
-| `Config/DefaultEngine.ini` | `[Game] StartLevel=BrickBreaker`; `[BrickBreaker] AutoPlay` and `RunSeconds` |
+| `Config/DefaultEngine.ini` | `[Game] StartLevel=BrickBreaker`; `[BrickBreaker] LevelFile`, `AutoPlay` and `RunSeconds` |
 | `Source/Private/Sandbox/SandboxInput.cpp` | The `Default` input map the paddle reads (`MoveX`, `Jump`) |
 
 ---
@@ -168,14 +170,28 @@ It finds the rules with `FindGameSession(*InSelf.GetWorld())`.
 - Render (a quad, 110 × 28)
 - Bounds
 - Collision (layer `Brick`, mask `Ball`)
+- **Brick** (`SandboxBrickComponent`): `Hits`, how many more hits it takes
+  (default 1)
 
-**Script:** `Scripts/Brick.script.nmgraph`. It has two variables, `Hits`
-(default 1) and `Points` (default 10), and runs one event:
+**Hits by row.** The bottom row takes 1 hit and each row up one more, so the
+top row of five takes 5. The default wall (`DefaultWall`) sets
+`Hits = BrickRows − Row`, with row 0 at the top. The level file stores each
+brick's `Hits` as an override (the bottom row matches the prefab, so its
+files leave it out), and every later wall repeats them.
+
+`Hits` is a component field, not a graph variable, for two reasons:
+- C++ sets it per brick when it builds a wall, and a graph variable lives in
+  the brick's Lua instance, which does not exist yet at spawn.
+- It is saved with the level and with save games, and the editor's Details
+  panel can edit it.
+
+**Script:** `Scripts/Brick.script.nmgraph`. It has one variable, `Points`
+(default 10), and runs one event:
 
 ```
 On Overlap Begin
-  → Set Hits = Hits − 1
-  → Branch (Hits <= 0)
+  → Brick.SetHits(Brick.GetHits − 1)
+  → Branch (Brick.GetHits <= 0)
       True → Game.AddScore(Game.GetPlayer(0), Points)
            → Events.Emit("BrickBroken")
            → Destroy Prefab
@@ -186,12 +202,16 @@ The generated Lua, as stored in the graph's `<gen_code>`:
 ```lua
 OnOverlapBegin = function(self, other, mine)
     local Score1
-    local t1 = self.Hits - 1
-    self.Hits = math.floor(t1)
-    local t2 = self.Hits <= 0
-    if t2 then
-        local t3 = Game.GetPlayer(0)
-        Score1 = Game.AddScore(t3, self.Points)
+    local t1 = self.Entity:GetComponent("Brick")
+    local t2 = t1:GetHits()
+    local t3 = t2 - 1
+    t1:SetHits(math.floor(t3))
+    local t4 = self.Entity:GetComponent("Brick")
+    local t5 = t4:GetHits()
+    local t6 = t5 <= 0
+    if t6 then
+        local t7 = Game.GetPlayer(0)
+        Score1 = Game.AddScore(t7, self.Points)
         Events.Emit("BrickBroken")
         self.Instance:Destroy()
     end
@@ -201,8 +221,11 @@ end,
 **Why a graph:**
 - The brick's logic is short, contains no maths beyond a counter, and is the
   kind of thing a designer would change: hit points, points per brick.
-- It uses each kind of `Game` node: a value node (**Get Player**) and a
+- It uses each kind of node a game needs: a component's fields (**Brick Get
+  Hits / Set Hits**), a `Game` value node (**Get Player**) and a `Game`
   statement (**Add Score**).
+- A ball bounces off a brick on every hit, not only the last, because the
+  ball's own script handles the bounce.
 
 **Why `BrickBroken` is a plain event and not a `Game` library event.** It is
 BrickBreaker's own message, not part of the framework. Any script can emit it
@@ -300,6 +323,47 @@ Changes caused inside these steps run within the same frame:
 
 ## Layout
 
+### The level file
+
+The layout lives in `Levels/BrickBreaker.nmworld`, a text world
+(`GameCore::SaveWorldPackage`):
+
+- the manifest lists 53 prefab instances: the camera, the paddle, the ball
+  and 50 bricks;
+- `Levels/BrickBreaker/<guid>.nmprefabinst` has one file per instance, holding
+  only what that instance changes from its prefab: the Transform placement,
+  and each brick's `Hits`.
+
+How it is used:
+- **`BrickBreakerLevel::OnLoad`** loads it with `GameCore::LoadWorldFile`.
+  The path is `[BrickBreaker] LevelFile`. A game (non-editor) build reads the
+  cooked twin, `Levels/Cooked/BrickBreaker.nmworld`, instead.
+- **No file**, or an empty `LevelFile`, means the level builds the same
+  layout in code: `SpawnDefaultLayout` places the camera, paddle and ball, and
+  the mode spawns `DefaultWall()`. A file that exists but fails to load fails
+  the level, rather than silently playing something else.
+- **The first wall is the template for every later one.** `IGameMode::OnLoad`
+  runs before any restore, while the World is exactly as the level made it,
+  and records each brick's placement and `Hits` (`CaptureWall`). Each new
+  round and new game rebuilds that wall (`SpawnBricks`), so editing the level
+  file changes every round.
+- **The build copies it.** The `SandboxStageLevels` target copies `Levels/`
+  beside the executable at the same path: the text files for an Editor
+  target, `Levels/Cooked/` for a Client or Server target.
+
+**How the file was made.** The code layout is the source the file was
+generated from. A one-off program (not kept in the repository) did the
+following from the binaries directory:
+1. loaded `SandboxGame` with `GameModuleHost`;
+2. set `LevelFile` empty, so the level built its default layout;
+3. loaded the level in a `GameSession`;
+4. called `SaveWorldPackage` on its World.
+
+From now on the file is the thing to edit: open it in the editor (File >
+Open) and save it.
+
+### Positions
+
 All units are pixels, with +Y pointing down. Sandbox's camera
 (`native:Sandbox.Camera`) at the origin gives a 1280 × 720 orthographic view.
 
@@ -321,7 +385,8 @@ The wall is centred: ten bricks plus nine gaps are 1172 px wide, which leaves
 | Phase, time in phase, round | `GameState` (the engine's half) | the `GPHS` chunk |
 | Bricks remaining | `BrickBreakerGameState::BricksRemaining` | `GMST`, version 1 |
 | Score, lives, name, index | the paddle's `PlayerStateComponent` | with the World (`WRLD`) |
-| Brick `Hits`, ball velocity | Lua instance tables | not saved |
+| Brick `Hits` | each brick's `Brick` component | with the World (`WRLD`) |
+| Ball velocity | the ball's Lua instance table | not saved |
 
 **Restoring a save:**
 1. `OnPrepareForLoadedGame` clears the World, because the save brings its own
@@ -349,6 +414,7 @@ the number.
 StartLevel=BrickBreaker     ; Sandbox for the older demo level
 
 [BrickBreaker]
+LevelFile=Levels/BrickBreaker.nmworld   ; empty builds the layout in code
 AutoPlay=0                  ; 1 plays itself, 2 never steers (loses every ball)
 RunSeconds=0                ; quit after this many seconds; 0 runs until closed
 ```
@@ -376,7 +442,8 @@ from spawning its demo entities here.
 | `Score` and `Lives` are read-only to scripts | Every change reaches `OnScoreChanged` / `OnLivesChanged` | Scripts must call `Game.AddScore` rather than set a field |
 | The ball does its own bouncing, with collision for overlaps only | GameCore's collision does not push objects apart; a script-side bounce stays readable | Fast balls at low frame rates could tunnel (see Limitations) |
 | No wall colliders | Exact, cheap, and no layer to manage | The field size is a constant in the ball's script |
-| Bricks are spawned by the mode, not the level | Every round builds a fresh wall, and a new game rebuilds it | The level alone does not show the whole scene in the editor |
+| The layout is a level file; later walls copy the first | The editor can move pieces and change hits, and every round follows | A new wall can only repeat the first one; the round number does not change it |
+| `Hits` is a component, not a graph variable | C++ sets it per row at spawn; it is saved and editable | One more component type for the game |
 | `BrickBroken` is a plain event | It is the game's message, not the framework's | A brick destroyed some other way would not be counted |
 | `RestartGame` writes `PlayerState` fields directly | Resetting is set-up, not scoring, so no hook should fire | No `ScoreChanged` for the reset to 0 |
 
@@ -389,10 +456,12 @@ from spawning its demo entities here.
   the component (a RenderCore change).
 - **There is no on-screen display.** Score, lives and phase changes go to the
   log (`[BrickBreaker] ...`, `[Game] phase ...`).
-- **Client and Server targets need cooked prefabs.** `Brick` and `Ball` are
-  text `.nmprefab` files, and only Editor targets read those. Run `cook
-  prefabs` in the editor to write `Cooked/Prefabs/`, as for Sandbox's other
-  prefabs.
+- **Client and Server targets need cooked content.** `Brick` and `Ball` are
+  text `.nmprefab` files and the level is a text world, and only Editor
+  targets read text. Run `cook prefabs` in the editor to write
+  `Cooked/Prefabs/`, and `cook` on the level to write
+  `Levels/Cooked/BrickBreaker.nmworld`. Until then, a Client build without the
+  cooked level builds the code layout instead.
 - **Tunnelling.** The ball moves in fixed steps of `Speed × dt`. At 60 fps in
   round 10 (820 px/s) a step is about 14 px, still less than a brick's height
   plus the ball's. A much lower frame rate or a very late round could step
@@ -412,10 +481,13 @@ from spawning its demo entities here.
   during an announcement, players, the `Game` library from Lua, and the save
   round trip.
 - **`NodeGraphGenerate`** compiles `Brick.script.nmgraph` without errors.
+- **The level file** holds rows of 5, 4, 3 and 2 hits; the bottom row is the
+  prefab's 1. Generating it went through the code-layout path.
 - **Unattended runs** on the Editor-Debug build, with `[BrickBreaker]`
   `RunSeconds` set:
-  - `AutoPlay=1`: 50 bricks spawn, `Serving → Playing`, each brick scores 10,
-    and it quits cleanly with no leaks reported.
+  - `AutoPlay=1`: the layout loads from `Levels/BrickBreaker.nmworld`,
+    `Serving → Playing`, each brick scores 10 once its hits run out, and it
+    quits cleanly with no leaks reported.
   - `AutoPlay=2`: lives go 3 → 2 → 1 → 0, then `Playing → GameOver`, the
     final score is logged, `GameOver → Serving` starts a new game, and the
     score starts again from 10.
@@ -428,8 +500,8 @@ from spawning its demo entities here.
 
 - A `Tint` colour on `RenderComponent`, to colour bricks by row and the ball
   by speed.
-- Tougher bricks: set `Hits` per row as a prefab-instance override. The graph
-  already counts hits.
+- Walls that change by round: several walls in the level file, or a
+  per-round `Hits` bonus applied in `SpawnBricks`.
 - A text display bound to the `Game` events (`ScoreChanged`, `LivesChanged`,
   `PhaseChanged`), which every source already emits.
 - A `Paused` phase. `Game.RequestPhase("Paused")` and one `CanEnterPhase`

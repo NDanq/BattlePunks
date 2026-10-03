@@ -123,7 +123,7 @@ prefabs in three different ways:
 | Prefab | Driven by | What it does with the framework |
 |---|---|---|
 | Paddle, `native:BrickBreaker.Paddle` | C++ (`NativePrefabBehavior`) | Holds the player's `PlayerState`. `Jump` asks `SetPhase("Playing")` while Serving, or `"Serving"` after GameOver. |
-| Brick, `Prefabs/Brick.nmprefab` | script graph (`Scripts/Brick.script.nmgraph`) | On overlap: `Game.AddScore(Game.GetPlayer(0), Points)`, `Events.Emit("BrickBroken")`, then destroys its prefab. |
+| Brick, `Prefabs/Brick.nmprefab` | script graph (`Scripts/Brick.script.nmgraph`) | On overlap, counts its `Brick` component's `Hits` down (more on higher rows). At 0: `Game.AddScore(Game.GetPlayer(0), Points)`, `Events.Emit("BrickBroken")`, then destroys its prefab. |
 | Ball, `Prefabs/Ball.nmprefab` | Lua (`Scripts/Ball.lua`) | Moves only while `Game.IsPhase("Playing")` and launches on `PhaseChanged`. Out of the bottom: `Game.AddLives(Game.GetPlayer(0), -1)`. |
 
 The phases run `WaitingToStart → Serving → Playing`, and from Playing:
