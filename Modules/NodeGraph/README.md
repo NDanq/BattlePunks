@@ -212,7 +212,7 @@ across `RefreshSchemas()`, so a graph that was already open still compiles.
 ### Game declarations
 
 A game module declares components and libraries in its own image
-(`Games/Sandbox/SandboxScripting.cpp`), so they exist only while it is
+(`Games/Sandbox/Source/Private/Sandbox/SandboxScripting.cpp`), so they exist only while it is
 loaded. The editor loads it briefly to read them
 (`EditorGraphs::RefreshGameDeclarations`):
 

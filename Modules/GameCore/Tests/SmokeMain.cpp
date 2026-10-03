@@ -124,6 +124,71 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(PropertyProbeComponent)
     Props.Field("Spare", &PropertyProbeComponent::Speed);
 }
 
+/* A struct array: its element's members as entries after it. */
+struct PropertyProbePair
+{
+    char    Key[8] = {};
+    uint8_t Kind = 0;
+    float   Values[2] = {};
+};
+
+struct StructArrayProbeComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    float             Before = 0.0f;
+    PropertyProbePair Pairs[3] = {};
+};
+GAMECORE_DEFINE_COMPONENT(StructArrayProbeComponent, "TestStructArrayProbe")
+
+GAMECORE_DEFINE_COMPONENT_PROPERTIES(StructArrayProbeComponent)
+{
+    Props.Field("Before", &StructArrayProbeComponent::Before);
+    Props.Category("Pairs");
+    Props.StructArray("Pairs", &StructArrayProbeComponent::Pairs, [](auto& Member)
+    {
+        Member.Field("Key",  &PropertyProbePair::Key);
+        Member.Field("Kind", &PropertyProbePair::Kind);
+        Member.Element("Second", &PropertyProbePair::Values, 1);
+        Member.Element("Missing", &PropertyProbePair::Values, 2);   // out of range: rejected
+    });
+}
+
+static void TestStructArrayProperties()
+{
+    std::printf("[struct array properties]\n");
+
+    size_t Count = 0;
+    const ComponentPropertyEntry* Entries = FindComponentProperties(StructArrayProbeComponent::StaticType().ID, Count);
+    Expect(Entries != nullptr && Count == 5, "a field, the array, and three members; the out-of-range element is rejected");
+    if(!Entries || Count != 5) { return; }
+
+    const ComponentPropertyEntry& Pairs = Entries[1];
+    Expect(Pairs.IsStructArray() && !Pairs.IsMember() && Pairs.ArrayCount == 3 && Pairs.Size == sizeof(PropertyProbePair)
+           && Pairs.Stride == sizeof(PropertyProbePair) && Pairs.Offset == offsetof(StructArrayProbeComponent, Pairs),
+           "StructArray registers a Struct array of the element's size and stride");
+    Expect(!Entries[0].IsMember() && Entries[2].Parent == 1 && Entries[3].Parent == 1 && Entries[4].Parent == 1,
+           "each member names its array as Parent");
+    Expect(Entries[2].Type == EPropertyType::FixedString && Entries[2].Offset == offsetof(PropertyProbePair, Key)
+           && Entries[3].Type == EPropertyType::UInt8 && Entries[4].Type == EPropertyType::Float
+           && Entries[4].Offset == offsetof(PropertyProbePair, Values) + sizeof(float),
+           "a member's offset is from the start of an element");
+    Expect(std::strcmp(Entries[3].Category, "Pairs") == 0, "members keep the category");
+
+    const ComponentPropertyEntry Second = Pairs.GetMember(2, Entries[4]);
+    Expect(!Second.IsMember() && Second.Offset == offsetof(StructArrayProbeComponent, Pairs) + 2 * sizeof(PropertyProbePair)
+                                                  + offsetof(PropertyProbePair, Values) + sizeof(float),
+           "GetMember places a member of one element in the component");
+
+    /* A tool writes through it. */
+    World W;
+    const Entity E = W.CreateEntity("StructArrayProbe");
+    E.AddComponent<StructArrayProbeComponent>();
+    auto* Bytes = static_cast<uint8_t*>(E.GetComponentByType(StructArrayProbeComponent::StaticType().ID));
+    const float Written = 4.5f;
+    std::memcpy(Bytes + Second.Offset, &Written, sizeof(Written));
+    Expect(E.GetComponent<StructArrayProbeComponent>()->Pairs[2].Values[1] == 4.5f, "written by offset, read by the type");
+}
+
 static void TestComponentProperties()
 {
     std::printf("[properties]\n");
@@ -3169,6 +3234,7 @@ int main()
     TestPrefabRefresh();
 #endif
     TestComponentProperties();
+    TestStructArrayProperties();
     TestWorldPackage();
 #endif
 

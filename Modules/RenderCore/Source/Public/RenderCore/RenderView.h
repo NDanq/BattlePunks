@@ -40,10 +40,13 @@ namespace RenderCore
         float ZFar  = 1000.0f;
 
         /*
-         * Reproduces GDICamera::UpdateDimensions exactly (GDIView.h):
-         * InitOrthographicView(0, Height, 0, Width, ZNear, ZFar) and
-         * LookAt(Origin, (0,0,1), (0,1,0)) -- the same view every GDIView in
-         * this engine has always used, so the Basic shaders see nothing new.
+         * THE ENGINE'S AXES: left-handed, +X right, +Y UP, +Z into the screen
+         * (away from the viewer).
+         *
+         * One pixel per unit, Origin at the BOTTOM-LEFT of the viewport:
+         * InitOrthographicView(Height, 0, 0, Width, ZNear, ZFar) and
+         * LookAt(Origin, (0,0,1), (0,1,0)). GDI's own GDICamera keeps its
+         * Y-down 2D view; RenderCore does not use it.
          *
          * Bounds spans (Origin.x, Origin.y, Origin.z+ZNear) to
          * (Origin.x+Width, Origin.y+Height, Origin.z+ZFar) -- the same box
@@ -61,7 +64,7 @@ namespace RenderCore
             const float Width  = float(InViewport.Width);
             const float Height = float(InViewport.Height);
 
-            Result.Projection.InitOrthographicView(0.0f, Height, 0.0f, Width, InZNear, InZFar);
+            Result.Projection.InitOrthographicView(Height, 0.0f, 0.0f, Width, InZNear, InZFar);
             Result.View.InitTranslation(InOrigin * -1.0);
             Result.View = EngineCore::Matrix4x4().LookAt(InOrigin, EngineCore::Vector3(0, 0, 1), EngineCore::Vector3(0, 1, 0));
 
@@ -76,7 +79,7 @@ namespace RenderCore
          * A perspective view for tools. Same conventions as MakeOrthographic:
          *
          *   View       LookAt(InEye, InForward, (0,1,0)); view +Z is InForward.
-         *   Projection negates Y, so world +Y runs DOWN the screen.
+         *   Projection keeps Y, so world +Y runs UP the screen.
          *   Depth      near -> 0, far -> w: valid for [-w,w] and [0,w] clip.
          *
          * Built by hand (row-major, translation in [i][3]) so the vendored
@@ -100,7 +103,7 @@ namespace RenderCore
 
             EngineCore::Matrix4x4& P = Result.Projection;
             P.Data[0][0] = FocalX; P.Data[0][1] = 0.0f;    P.Data[0][2] = 0.0f;            P.Data[0][3] = 0.0f;
-            P.Data[1][0] = 0.0f;   P.Data[1][1] = -FocalY; P.Data[1][2] = 0.0f;            P.Data[1][3] = 0.0f;
+            P.Data[1][0] = 0.0f;   P.Data[1][1] = FocalY;  P.Data[1][2] = 0.0f;            P.Data[1][3] = 0.0f;
             P.Data[2][0] = 0.0f;   P.Data[2][1] = 0.0f;    P.Data[2][2] = InZFar / Range;  P.Data[2][3] = -InZFar * InZNear / Range;
             P.Data[3][0] = 0.0f;   P.Data[3][1] = 0.0f;    P.Data[3][2] = 1.0f;            P.Data[3][3] = 0.0f;
 

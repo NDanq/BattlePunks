@@ -6,16 +6,21 @@ RenderComponent names one as "Engine/Content/Meshes/Box.nmmesh").
 
     Box.nmmesh      a 1-unit cube: 6 faces of 2 triangles, each face its own 4 vertices
     Sphere.nmmesh   a UV sphere, diameter 1: 32 segments around, 16 rings
-    Plane.nmmesh    a 1 x 1 square in X and Z, facing up (-Y), in 16 x 16 cells
+    Plane.nmmesh    a 1 x 1 square in X and Z, facing up (+Y), in 16 x 16 cells
 
-All three are centred on the origin and follow what the importer gives a glTF
-mesh, so a material treats them alike:
+All three are centred on the origin and are made the way the importer makes a
+glTF mesh, so a material treats them alike: each shape is built in glTF's
+frame -- right-handed, +Y up, +Z toward the viewer -- then converted to the
+engine's exactly as GltfImporter.cpp converts one (z flips, and the winding
+with it):
 
-  - engine axes: +X right, +Y down, +Z forward (right-handed); "up" is -Y;
-  - front faces wound counter-clockwise seen from outside (the cross product of
-    a triangle's edges points along its normal);
+  - engine axes: left-handed, +X right, +Y up, +Z away from the viewer
+    (RenderCore's RenderView.h);
+  - the cross product of a triangle's edges points along its normal (true in
+    both frames: the mirror and the winding swap cancel);
   - UV0 with v = 0 at the image's top row; a box face and the plane show an
-    image upright seen from outside, up being -Y (or +Z for the top and bottom);
+    image upright seen from outside, up being +Y (or away from the viewer, +Z,
+    for the top, and toward it for the bottom);
   - one section, named for the mesh, with no material: drawn with DefaultLit
     unless a RenderComponent slot names one; no vertex colours (white).
 
@@ -79,10 +84,10 @@ class Mesh:
         return lo, hi
 
 
-# --- The shapes --------------------------------------------------------------------------
+# --- The shapes, in glTF's frame (right-handed, +Y up, +Z toward the viewer) --------------
 
-UP   = (0.0, -1.0, 0.0)
-DOWN = (0.0, 1.0, 0.0)
+UP   = (0.0, 1.0, 0.0)
+DOWN = (0.0, -1.0, 0.0)
 
 
 def quad(mesh, centre, right, down, normal, cells=1):
@@ -110,8 +115,8 @@ def make_box():
     faces = [
         ((1.0, 0.0, 0.0), UP), ((-1.0, 0.0, 0.0), UP),
         ((0.0, 0.0, 1.0), UP), ((0.0, 0.0, -1.0), UP),
-        ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),   # top: +Z (forward) up the image
-        ((0.0, 1.0, 0.0), (0.0, 0.0, -1.0)),   # bottom
+        ((0.0, 1.0, 0.0), (0.0, 0.0, -1.0)),   # top: away from the viewer up the image
+        ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),   # bottom
     ]
     for normal, image_up in faces:
         right = cross(image_up, normal)        # right x up = normal, right-handed
@@ -122,7 +127,7 @@ def make_box():
 def make_plane(cells=16):
     mesh = Mesh("Plane")
     normal = UP
-    image_up = (0.0, 0.0, 1.0)                 # forward is the image's top
+    image_up = (0.0, 0.0, -1.0)                # away from the viewer is the image's top
     quad(mesh, (0.0, 0.0, 0.0), cross(image_up, normal), scale(image_up, -1.0), normal, cells)
     return mesh
 
@@ -137,8 +142,8 @@ def make_sphere(segments=32, rings=16, radius=0.5):
         for segment in range(segments + 1):
             azimuth = 2.0 * math.pi * segment / segments
             # Seen from outside, u grows to the right: right = up x normal, so
-            # the azimuth turns from +Z towards -X.
-            normal = (-math.sin(polar) * math.sin(azimuth), -math.cos(polar), math.sin(polar) * math.cos(azimuth))
+            # the azimuth turns from -Z towards -X.
+            normal = (-math.sin(polar) * math.sin(azimuth), math.cos(polar), -math.sin(polar) * math.cos(azimuth))
             mesh.vertex(scale(normal, radius), normal, (segment / segments, ring / rings))
 
     stride = segments + 1
@@ -150,6 +155,16 @@ def make_sphere(segments=32, rings=16, radius=0.5):
                 mesh.triangle(top_left, bottom_left, bottom_right)
             if ring != rings - 1:
                 mesh.triangle(top_left, bottom_right, top_right)
+    return mesh
+
+
+def to_engine(mesh):
+    """glTF's frame -> the engine's, as GltfImporter.cpp does: z flips (a
+    mirror), so each triangle's winding swaps to keep it facing its normal."""
+    mesh.positions = [(p[0], p[1], -p[2]) for p in mesh.positions]
+    mesh.normals = [(n[0], n[1], -n[2]) for n in mesh.normals]
+    for at in range(0, len(mesh.indices), 3):
+        mesh.indices[at + 1], mesh.indices[at + 2] = mesh.indices[at + 2], mesh.indices[at + 1]
     return mesh
 
 
@@ -185,6 +200,8 @@ def main():
 
     args.out.mkdir(parents=True, exist_ok=True)
     for mesh in (make_box(), make_sphere(), make_plane()):
+        mesh.check()
+        to_engine(mesh)
         mesh.check()
         path = args.out / f"{mesh.name}.nmmesh"
         path.write_bytes(serialize(mesh))

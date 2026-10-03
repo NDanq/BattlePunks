@@ -9,7 +9,7 @@
 
 namespace RenderCore
 {
-    /* "Sky Light". Ambient for Lit materials: SkyColor from above (-Y),
+    /* "Sky Light". Ambient for Lit materials: SkyColor from above (+Y),
      * GroundColor from below, blended by the normal. The first active one wins. */
     struct RENDERCORE_API SkyLightComponent
     {

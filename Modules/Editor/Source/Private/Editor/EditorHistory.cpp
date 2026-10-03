@@ -189,7 +189,8 @@ namespace EditorHistory
         for(size_t Index = 0; Index < Count; ++Index)
         {
             const GameCore::ComponentPropertyEntry& Entry = Entries[Index];
-            if(!Entry.IsReadOnly())
+            /* A struct member is inside its array's span, already taken. */
+            if(!Entry.IsReadOnly() && !Entry.IsMember())
             {
                 Values.insert(Values.end(), Component + Entry.Offset, Component + Entry.Offset + Entry.GetSpan());
             }
@@ -210,7 +211,7 @@ namespace EditorHistory
         for(size_t Index = 0; Index < Count; ++Index)
         {
             const GameCore::ComponentPropertyEntry& Entry = Entries[Index];
-            if(Entry.IsReadOnly())
+            if(Entry.IsReadOnly() || Entry.IsMember())
             {
                 continue;
             }
