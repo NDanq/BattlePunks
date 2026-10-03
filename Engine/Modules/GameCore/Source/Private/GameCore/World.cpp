@@ -1045,6 +1045,31 @@ namespace GameCore
         return PrefabInstance(this, ID);
     }
 
+    bool World::AdoptIntoInstance(const PrefabInstanceID InInstance, const EntityID InEntity, const uint32_t InLocalId)
+    {
+        if(!P->IsInstanceAliveIndex(InInstance) || !P->IsAliveIndex(InEntity) || InLocalId == PREFAB_NO_LOCAL_ID
+           || GetEntityInstance(InEntity).IsSet() || FindInstanceEntity(InInstance, InLocalId).IsSet())
+        {
+            return false;
+        }
+
+        /* Members are the root's subtree: InEntity must be under the root. */
+        const EntityID Root = GetInstanceRoot(InInstance);
+        EntityID Ancestor = GetEntity(InEntity).GetParent();
+        while(Ancestor.IsSet() && Ancestor != Root)
+        {
+            Ancestor = GetEntity(Ancestor).GetParent();
+        }
+        if(Ancestor != Root)
+        {
+            return false;
+        }
+
+        P->Members[InEntity.Index].InstanceSlot = InInstance.Index;
+        P->Members[InEntity.Index].LocalId      = InLocalId;
+        return true;
+    }
+
     void World::DestroyPrefabInstance(const PrefabInstanceID InInstance)
     {
         if(P->IsInstanceAliveIndex(InInstance))

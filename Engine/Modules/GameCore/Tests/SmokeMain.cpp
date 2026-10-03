@@ -2435,6 +2435,31 @@ static void TestPrefabRecapture()
     Expect(Edited.FindLocalId("Barrel") == Asset.FindLocalId("Mesh"), "a renamed entity keeps its id");
     Expect(Edited.FindLocalId("Muzzle") == 4 && Edited.GetNextLocalId() == 5, "a new entity gets the next id");
     Expect(Asset.GetEntityCount() == 3, "the asset it was copied from is unchanged");
+
+    /* Without adopting, a second capture gives the new entity yet another id. */
+    PrefabAsset Again = Edited;
+    CapturePrefab(W, Instance.GetRoot(), Again);
+    Expect(Again.FindLocalId("Muzzle") == 5, "unadopted, a new entity is renumbered by each capture");
+
+    /* Adopting: it joins the instance with the id it got, and keeps it. */
+    PrefabAsset Adopted = Edited;
+    Expect(CapturePrefab(W, Instance.GetRoot(), Adopted, true), "capturing with adoption");
+    const uint32_t MuzzleId = Adopted.FindLocalId("Muzzle");
+    Expect(Added.GetInstance() == Instance.GetID() && Added.GetPrefabLocalId() == MuzzleId, "the new entity joined the instance with its id");
+    PrefabAsset Stable = Adopted;
+    CapturePrefab(W, Instance.GetRoot(), Stable, true);
+    Expect(Stable.FindLocalId("Muzzle") == MuzzleId && Stable.GetNextLocalId() == Adopted.GetNextLocalId(),
+           "after adoption, recapturing keeps every id");
+    Expect(Instance.FindEntity(MuzzleId).GetID() == Added.GetID(), "the instance finds it by its id");
+
+    /* AdoptIntoInstance's refusals. */
+    const Entity Loose = MakePlaced(W, "Loose", Vector3());
+    Expect(!W.AdoptIntoInstance(Instance.GetID(), Loose.GetID(), 99), "an entity outside the root's subtree is refused");
+    Loose.SetParent(Instance.GetRoot(), false);
+    Expect(!W.AdoptIntoInstance(Instance.GetID(), Loose.GetID(), MuzzleId), "a taken id is refused");
+    Expect(!W.AdoptIntoInstance(Instance.GetID(), Loose.GetID(), PREFAB_NO_LOCAL_ID), "an unset id is refused");
+    Expect(!W.AdoptIntoInstance(Instance.GetID(), Added.GetID(), 99), "a member is refused");
+    Expect(W.AdoptIntoInstance(Instance.GetID(), Loose.GetID(), 99), "a loose child of the root joins");
 }
 
 static void TestPrefabFiles()

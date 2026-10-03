@@ -115,8 +115,12 @@ namespace GameCore
      * is its placement, not part of the prefab. Components without a
      * serializer are left out, warned. A reference to an entity outside the
      * subtree is stored unset, warned. False if InRoot is not alive.
+     *
+     * bInAdoptNew is for an editor capturing what it edits: an entity that got
+     * a new id joins the root's instance with it (World::AdoptIntoInstance),
+     * so the next capture keeps that id. Needs the root to be in an instance.
      */
-    GAMECORE_API bool CapturePrefab(World& InWorld, EntityID InRoot, PrefabAsset& InOutAsset);
+    GAMECORE_API bool CapturePrefab(World& InWorld, EntityID InRoot, PrefabAsset& InOutAsset, bool bInAdoptNew = false);
 
     // === Files ===============================================================
 
