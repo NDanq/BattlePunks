@@ -33,11 +33,11 @@
  *   Paddle   native C++ prefab "native:BrickBreaker.Paddle" (below): the
  *            player. Its PlayerState holds the score and lives; its callbacks
  *            move it from its Input and launch the ball.
- *   Brick    Prefabs/Brick.nmprefab, driven by Scripts/Brick.script.nmgraph:
+ *   Brick    Content/Prefabs/Brick.nmprefab, driven by Scripts/Brick.script.nmgraph:
  *            counts its Brick component's Hits down; at 0 it scores through
  *            Game.AddScore, says "BrickBroken", and goes. Higher rows take
  *            more hits.
- *   Ball     Prefabs/Ball.nmprefab, driven by Scripts/Ball.lua: moves only
+ *   Ball     Content/Prefabs/Ball.nmprefab, driven by Scripts/Ball.lua: moves only
  *            while the phase is Playing, bounces, and costs a life through
  *            Game.AddLives when it falls out.
  *
@@ -50,7 +50,7 @@
  * last (Jump restarts), or RoundCleared once every brick is gone (then the
  * next round, a little faster).
  *
- * THE LAYOUT is Levels/BrickBreaker.nmworld ([BrickBreaker] LevelFile): the
+ * THE LAYOUT is Content/Levels/BrickBreaker.nmworld ([BrickBreaker] LevelFile): the
  * camera, the paddle, the ball and the first wall, editable in the editor.
  * Every later wall repeats the first one's bricks, hits included. Without the
  * file (or with LevelFile empty) the level builds the same layout in code
@@ -63,7 +63,7 @@
 
 NIMBLE_CONFIG_INT(GBrickBreakerAutoPlay, "BrickBreaker", "AutoPlay", 0, nullptr);
 NIMBLE_CONFIG_INT(GBrickBreakerRunSeconds, "BrickBreaker", "RunSeconds", 0, nullptr);
-NIMBLE_CONFIG_STRING(GBrickBreakerLevelFile, "BrickBreaker", "LevelFile", "Levels/BrickBreaker.nmworld", nullptr);
+NIMBLE_CONFIG_STRING(GBrickBreakerLevelFile, "BrickBreaker", "LevelFile", "Content/Levels/BrickBreaker.nmworld", nullptr);
 
 // === The Brick component ====================================================
 
@@ -112,8 +112,8 @@ namespace
     constexpr int    StartingLives = 3;
     constexpr double RoundClearedSeconds = 1.5;
 
-    const char* const BrickPrefab = "Prefabs/Brick.nmprefab";
-    const char* const BallPrefab  = "Prefabs/Ball.nmprefab";
+    const char* const BrickPrefab = "Content/Prefabs/Brick.nmprefab";
+    const char* const BallPrefab  = "Content/Prefabs/Ball.nmprefab";
 
     /* Phases this game adds to the engine's WaitingToStart and GameOver. */
     namespace Phases
@@ -522,7 +522,7 @@ namespace
         bool OnLoad(NimbleEngine::GameSession& /*InSession*/) override
         {
             /* An editor build reads the text level; a game, its cooked twin
-             * in Levels/Cooked/. */
+             * in Content/Levels/Cooked/. */
             std::string Path = GBrickBreakerLevelFile.GetString();
 #if !WITH_EDITOR
             const size_t Slash = Path.find_last_of('/');
@@ -544,7 +544,7 @@ namespace
             return SpawnDefaultLayout();
         }
 
-        /* What Levels/BrickBreaker.nmworld holds, in code: camera, paddle,
+        /* What Content/Levels/BrickBreaker.nmworld holds, in code: camera, paddle,
          * ball. The mode adds the default wall. */
         bool SpawnDefaultLayout()
         {

@@ -1,4 +1,4 @@
--- BrickBreaker's ball, in plain Lua (Prefabs/Ball.nmprefab names it). It asks
+-- BrickBreaker's ball, in plain Lua (Content/Prefabs/Ball.nmprefab names it). It asks
 -- the game framework what to do rather than deciding for itself:
 --
 --   Game.IsPhase / Game.PhaseChanged   moving only while the phase is Playing

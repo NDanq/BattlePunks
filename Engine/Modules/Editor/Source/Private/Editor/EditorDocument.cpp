@@ -103,8 +103,8 @@ void EditorDocument::CreateSandboxScene()
      *   Games/Sandbox/Scripts/Main.lua                         the startup script   -- Scripted
      *
      * Keep it in step. The native prefabs come from the game module, cached
-     * when the editor last loaded it; Prefabs/Mover.nmprefab is staged beside
-     * the exe. Behaviour (systems, the mode, scripts) is not mirrored.
+     * when the editor last loaded it; Content/Prefabs/Mover.nmprefab is staged
+     * beside the exe. Behaviour (systems, the mode, scripts) is not mirrored.
      */
     const auto Place = [this](const char* InPath, const EngineCore::Vector3& InPosition, const EngineCore::Vector3& InScale)
     {
@@ -119,7 +119,7 @@ void EditorDocument::CreateSandboxScene()
     const EngineCore::Vector3 One(1.0, 1.0, 1.0);
     Place("native:Sandbox.Marker", EngineCore::Vector3(0.0, 360.0, 0.0), EngineCore::Vector3(32.0, 32.0, 1.0));
     Place("native:Sandbox.Camera", EngineCore::Vector3(0.0, 0.0, 0.0), One);
-    Place("Prefabs/Mover.nmprefab", EngineCore::Vector3(0.0, 0.0, 0.0), One);
+    Place("Content/Prefabs/Mover.nmprefab", EngineCore::Vector3(0.0, 0.0, 0.0), One);
 
     EditedWorld->RefreshSpatialIndex();
     QueueEntitiesChanged();

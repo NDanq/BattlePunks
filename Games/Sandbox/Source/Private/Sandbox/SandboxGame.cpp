@@ -27,7 +27,7 @@
 
 /*
  * SandboxGame: the example game, built as a game module DLL loaded by name by
- * SandboxMain.cpp's launcher and the editor's Play-in-Editor.
+ * the engine's launcher (nimble_add_game_launcher) and the editor's Play-in-Editor.
  *
  * Demonstrates: a C++ entity ("Marker") steered by the player through an
  * Input component (SandboxInput.cpp's map) and wrapped by a PostPhysics

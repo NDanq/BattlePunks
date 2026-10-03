@@ -62,7 +62,7 @@ namespace SandboxLayers
         Hazard = 1 << 2,
         Zone   = 1 << 3,
 
-        /* BrickBreaker (BrickBreaker.cpp, Prefabs/Ball.nmprefab, Prefabs/Brick.nmprefab). */
+        /* BrickBreaker (BrickBreaker.cpp, Content/Prefabs/Ball.nmprefab, Content/Prefabs/Brick.nmprefab). */
         Paddle = 1 << 4,
         Ball   = 1 << 5,
         Brick  = 1 << 6,

@@ -44,6 +44,7 @@
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/Prefab/PrefabEditorTab.h"
 #include "Private/Editor/Prefab/PrefabEditorWindow.h"
+#include "Private/Editor/Project/NewProjectWizard.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 #include "Private/Editor/SDLInputProbe.h"
 #include "Private/Editor/SettingsDialog.h"
@@ -55,6 +56,14 @@ NIMBLE_CONFIG_BOOL(GEditorReloadAfterCompile, "Editor", "ReloadAfterCompile", tr
 namespace
 {
     const char* const WorldFileFilter = "Nimble World (*.nmworld);;All Files (*)";
+
+    /* Where Open and Save As start: the open world, else <project>/Content/Levels. */
+    QString WorldDialogPath(const QString& InCurrentPath)
+    {
+        if(!InCurrentPath.isEmpty()) { return InCurrentPath; }
+        const QString Levels = QDir(EditorGraphs::GetProjectRoot()).filePath(QStringLiteral("Content/Levels"));
+        return QFileInfo(Levels).isDir() ? Levels : QDir(EditorGraphs::GetProjectRoot()).filePath(QStringLiteral("Content"));
+    }
 
     const char* BackendName(const RenderCore::ERenderBackend InBackend)
     {
@@ -177,6 +186,16 @@ EditorMainWindow::~EditorMainWindow()
 void EditorMainWindow::BuildMenus()
 {
     QMenu* File = menuBar()->addMenu(QStringLiteral("&File"));
+
+    QAction* NewProject = File->addAction(QStringLiteral("New Pro&ject..."));
+    NewProject->setToolTip(QStringLiteral("A new game in Games/, from Engine/Templates/Game"));
+    connect(NewProject, &QAction::triggered, this, [this]()
+    {
+        NewProjectWizard Wizard(this);
+        Wizard.exec();
+    });
+
+    File->addSeparator();
 
     QAction* New = File->addAction(QStringLiteral("&New Scene"));
     New->setShortcut(QKeySequence::New);
@@ -1298,7 +1317,7 @@ void EditorMainWindow::UpdateStats()
 
 void EditorMainWindow::OpenWorld()
 {
-    const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open World"), CurrentPath,
+    const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open World"), WorldDialogPath(CurrentPath),
                                                       QString::fromLatin1(WorldFileFilter));
     if(!Path.isEmpty())
     {
@@ -1354,7 +1373,7 @@ bool EditorMainWindow::SaveWorld()
 
 bool EditorMainWindow::SaveWorldAs()
 {
-    const QString Path = QFileDialog::getSaveFileName(this, QStringLiteral("Save World As"), CurrentPath,
+    const QString Path = QFileDialog::getSaveFileName(this, QStringLiteral("Save World As"), WorldDialogPath(CurrentPath),
                                                       QString::fromLatin1(WorldFileFilter));
     if(Path.isEmpty())
     {

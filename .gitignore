@@ -13,9 +13,13 @@
 # exactly one such directory per build and the exe has to be in it --
 # NIMBLE_BINARIES_DIR defaults to the Sandbox host's. Engine/Binaries stays
 # listed so that older build trees, and anyone pointing NIMBLE_BINARIES_DIR back
-# at it, do not start showing up as untracked output.
+# at it, do not start showing up as untracked output -- all but the tracked
+# NewProject scripts, which make a game without the editor.
 /Games/*/Binaries/
-/Engine/Binaries/
+/Engine/Binaries/*
+!/Engine/Binaries/NewProject.cmake
+!/Engine/Binaries/NewProject.sh
+!/Engine/Binaries/NewProject.bat
 
 # Smoke-test scratch output. The test writes it relative to its working
 # directory, and the executable can be run from anywhere -- including here.

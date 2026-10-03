@@ -18,7 +18,7 @@ described in `GAMEFRAMEWORK.md`; this covers only what the game does with it.
    last brick means; it reports the event, and `BrickBreakerGameMode` chooses
    the next phase.
 3. **Everything is a prefab, laid out in a level file.** The level is
-   `Levels/BrickBreaker.nmworld`: prefab instances and nothing else, placed
+   `Content/Levels/BrickBreaker.nmworld`: prefab instances and nothing else, placed
    where the editor can move them.
 4. **It can run unattended.** It can play itself, lose on purpose and quit on a
    timer, so a smoke run checks the whole loop without anyone at the keyboard.
@@ -35,13 +35,13 @@ phases go to the log).
 |---|---|
 | `Source/Private/Sandbox/BrickBreaker.cpp` | The level, the mode, the state, and the paddle's native prefab |
 | `Source/Public/Sandbox/BrickBreaker.h` | `BrickBreaker::GetLevel()`, for the module to register, and the `Brick` component (`SandboxBrickComponent`) |
-| `Levels/BrickBreaker.nmworld` | The layout: camera, paddle, ball and the first wall (`Levels/BrickBreaker/`, one file per instance) |
+| `Content/Levels/BrickBreaker.nmworld` | The layout: camera, paddle, ball and the first wall (`Content/Levels/BrickBreaker/`, one file per instance) |
 | `Source/Private/Sandbox/SandboxGame.cpp` | `SandboxGameModule` registers the level and returns it as the start level |
 | `Source/Public/Sandbox/SandboxScripting.h` | The collision layers `SandboxLayers::Paddle`, `Ball` and `Brick` |
-| `Prefabs/Brick.nmprefab` | The brick prefab, which names its script graph and its material |
-| `Materials/Brick.material.nmgraph` | The bricks' material: Unlit, Translucent, with a `vec4` parameter `Color` (default white) |
+| `Content/Prefabs/Brick.nmprefab` | The brick prefab, which names its script graph and its material |
+| `Content/Materials/Brick.material.nmgraph` | The bricks' material: Unlit, Translucent, with a `vec4` parameter `Color` (default white) |
 | `Scripts/Brick.script.nmgraph` | The brick's behaviour; its Lua is generated into `<gen_code>` |
-| `Prefabs/Ball.nmprefab` | The ball prefab, which names `Scripts/Ball.lua` |
+| `Content/Prefabs/Ball.nmprefab` | The ball prefab, which names `Scripts/Ball.lua` |
 | `Scripts/Ball.lua` | The ball's behaviour |
 | `Config/DefaultEngine.ini` | `[Game] StartLevel=BrickBreaker`; `[BrickBreaker] LevelFile`, `AutoPlay` and `RunSeconds` |
 | `Source/Private/Sandbox/SandboxInput.cpp` | The `Default` input map the paddle reads (`MoveX`, `Jump`) |
@@ -163,11 +163,11 @@ It finds the rules with `FindGameSession(*InSelf.GetWorld())`.
 
 ### Brick: script graph
 
-`Prefabs/Brick.nmprefab`.
+`Content/Prefabs/Brick.nmprefab`.
 
 **Components:**
 - Transform
-- Render (a quad, 110 × 28), slot 0 `Materials/Brick.material.nmgraph`
+- Render (a quad, 110 × 28), slot 0 `Content/Materials/Brick.material.nmgraph`
 - Bounds
 - Collision (layer `Brick`, mask `Ball`)
 - **Brick** (`SandboxBrickComponent`): `Hits`, how many more hits it takes
@@ -246,7 +246,7 @@ Opening and saving the graph in the editor regenerates the Lua the same way.
 
 ### Ball: pure Lua
 
-`Prefabs/Ball.nmprefab`.
+`Content/Prefabs/Ball.nmprefab`.
 
 **Components:**
 - Transform
@@ -329,19 +329,19 @@ Changes caused inside these steps run within the same frame:
 
 ### The level file
 
-The layout lives in `Levels/BrickBreaker.nmworld`, a text world
+The layout lives in `Content/Levels/BrickBreaker.nmworld`, a text world
 (`GameCore::SaveWorldPackage`):
 
 - the manifest lists 53 prefab instances: the camera, the paddle, the ball
   and 50 bricks;
-- `Levels/BrickBreaker/<guid>.nmprefabinst` has one file per instance, holding
+- `Content/Levels/BrickBreaker/<guid>.nmprefabinst` has one file per instance, holding
   only what that instance changes from its prefab: the Transform placement,
   and each brick's `Hits`.
 
 How it is used:
 - **`BrickBreakerLevel::OnLoad`** loads it with `GameCore::LoadWorldFile`.
   The path is `[BrickBreaker] LevelFile`. A game (non-editor) build reads the
-  cooked twin, `Levels/Cooked/BrickBreaker.nmworld`, instead.
+  cooked twin, `Content/Levels/Cooked/BrickBreaker.nmworld`, instead.
 - **No file**, or an empty `LevelFile`, means the level builds the same
   layout in code: `SpawnDefaultLayout` places the camera, paddle and ball, and
   the mode spawns `DefaultWall()`. A file that exists but fails to load fails
@@ -353,7 +353,7 @@ How it is used:
   file changes every round.
 - **The build copies it.** The `SandboxStageLevels` target copies `Levels/`
   beside the executable at the same path: the text files for an Editor
-  target, `Levels/Cooked/` for a Client or Server target.
+  target, `Content/Levels/Cooked/` for a Client or Server target.
 
 **How the file was made.** The code layout is the source the file was
 generated from. A one-off program (not kept in the repository) did the
@@ -397,7 +397,7 @@ The wall is centred: ten bricks plus nine gaps are 1172 px wide, which leaves
    copy of every entity.
 2. `OnPostLoadSave` sets `bRestored`.
 3. `OnStart` then counts the bricks the save brought back (instances whose
-   prefab path is `Prefabs/Brick.nmprefab`) instead of spawning a new wall.
+   prefab path is `Content/Prefabs/Brick.nmprefab`) instead of spawning a new wall.
 4. `OnStart` re-enters `Serving`. The ball's velocity was not saved, so a
    game saved mid-rally resumes with a serve.
 
@@ -418,7 +418,7 @@ the number.
 StartLevel=BrickBreaker     ; Sandbox for the older demo level
 
 [BrickBreaker]
-LevelFile=Levels/BrickBreaker.nmworld   ; empty builds the layout in code
+LevelFile=Content/Levels/BrickBreaker.nmworld   ; empty builds the layout in code
 AutoPlay=0                  ; 1 plays itself, 2 never steers (loses every ball)
 RunSeconds=0                ; quit after this many seconds; 0 runs until closed
 ```
@@ -467,7 +467,7 @@ from spawning its demo entities here.
   text `.nmprefab` files and the level is a text world, and only Editor
   targets read text. Run `cook prefabs` in the editor to write
   `Cooked/Prefabs/`, and `cook` on the level to write
-  `Levels/Cooked/BrickBreaker.nmworld`. Until then, a Client build without the
+  `Content/Levels/Cooked/BrickBreaker.nmworld`. Until then, a Client build without the
   cooked level builds the code layout instead.
 - **Tunnelling.** The ball moves in fixed steps of `Speed × dt`. At 60 fps in
   round 10 (820 px/s) a step is about 14 px, still less than a brick's height
@@ -492,7 +492,7 @@ from spawning its demo entities here.
   prefab's 1. Generating it went through the code-layout path.
 - **Unattended runs** on the Editor-Debug build, with `[BrickBreaker]`
   `RunSeconds` set:
-  - `AutoPlay=1`: the layout loads from `Levels/BrickBreaker.nmworld`,
+  - `AutoPlay=1`: the layout loads from `Content/Levels/BrickBreaker.nmworld`,
     `Serving → Playing`, each brick scores 10 once its hits run out, and it
     quits cleanly with no leaks reported.
   - `AutoPlay=2`: lives go 3 → 2 → 1 → 0, then `Playing → GameOver`, the

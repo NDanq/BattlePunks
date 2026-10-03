@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Instance Guid="fc643b445f09b5dd6c48b8fc0f3c51de" Name="Brick" Prefab="Content/Prefabs/Brick.nmprefab">
+  <Entity Id="1">
+    <Component Type="Brick" Version="1">
+      <Hits Value="5" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="581" Y="640" Z="0" />
+      <Scale X="110" Y="28" Z="1" />
+    </Component>
+  </Entity>
+</Instance>

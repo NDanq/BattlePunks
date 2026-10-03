@@ -106,7 +106,16 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Content/MeshViewerWindow.h
         Source/Private/Editor/Content/ImportWizard.cpp
         Source/Private/Editor/Content/ImportWizard.h
+        Source/Private/Editor/Project/NewProjectWizard.cpp
+        Source/Private/Editor/Project/NewProjectWizard.h
 )
+
+# File > New Project's generator. Widget-free, so the project tests build it alone.
+set(NIMBLE_EDITOR_PROJECT_SOURCES
+        Source/Private/Editor/Project/ProjectTemplate.cpp
+        Source/Private/Editor/Project/ProjectTemplate.h
+)
+list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_PROJECT_SOURCES})
 
 # glTF / image importers. Widget-free, so the import tests build them alone.
 set(NIMBLE_EDITOR_IMPORT_SOURCES
@@ -178,6 +187,21 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_test(NAME Editor.Document COMMAND NimbleEditorDocumentTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorDocumentTests>")
 
+    # File > New Project from the real template, into a temporary folder.
+    add_executable(NimbleEditorProjectTests Tests/ProjectTests.cpp ${NIMBLE_EDITOR_PROJECT_SOURCES})
+    target_include_directories(NimbleEditorProjectTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+    target_link_libraries(NimbleEditorProjectTests PRIVATE EngineCore::EngineCore Qt6::Core)
+    set_target_properties(NimbleEditorProjectTests PROPERTIES FOLDER "Editor")
+    # And Engine/Binaries/NewProject.cmake, the same without the editor: its
+    # output must match file for file.
+    get_filename_component(NM_EDITOR_NEW_PROJECT_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/../../Binaries/NewProject.cmake" ABSOLUTE)
+    target_compile_definitions(NimbleEditorProjectTests PRIVATE
+            "NIMBLEEDITOR_CMAKE_COMMAND=\"${CMAKE_COMMAND}\""
+            "NIMBLEEDITOR_NEW_PROJECT_SCRIPT=\"${NM_EDITOR_NEW_PROJECT_SCRIPT}\"")
+    add_dependencies(NimbleEditorProjectTests NimbleEditor)
+    add_test(NAME Editor.Project COMMAND NimbleEditorProjectTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorProjectTests>")
+
     # The Details panel, offscreen: the editor's sources without its main().
     set(NIMBLE_EDITOR_DETAILS_SOURCES ${NIMBLE_EDITOR_SOURCES})
     list(REMOVE_ITEM NIMBLE_EDITOR_DETAILS_SOURCES Source/Private/Editor/EditorMain.cpp)
@@ -207,6 +231,13 @@ endif()
 get_filename_component(NM_EDITOR_ENGINE_CONTENT "${CMAKE_CURRENT_SOURCE_DIR}/../../Content" ABSOLUTE)
 set_source_files_properties(Source/Private/Editor/Content/ContentPaths.cpp PROPERTIES
         COMPILE_DEFINITIONS "NIMBLEEDITOR_ENGINE_CONTENT_DIR=\"${NM_EDITOR_ENGINE_CONTENT}\"")
+
+# === Project templates ========================================================
+# File > New Project copies Engine/Templates/Game from the source tree this
+# editor was built from; without it, from a copy beside the executable.
+get_filename_component(NM_EDITOR_TEMPLATES "${CMAKE_CURRENT_SOURCE_DIR}/../../Templates" ABSOLUTE)
+set_property(SOURCE Source/Private/Editor/Project/ProjectTemplate.cpp APPEND PROPERTY
+        COMPILE_DEFINITIONS "NIMBLEEDITOR_TEMPLATES_DIR=\"${NM_EDITOR_TEMPLATES}\"")
 
 # === Node graphs ================================================================
 # Shader check on save via NodeGraph's cook_material_graphs.py; skipped if
