@@ -121,7 +121,7 @@ inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RE
     void* Mapped = nullptr;
     const D3D12_RANGE NoRead{ 0, 0 };
     if(FAILED(Staging->Map(0, &NoRead, &Mapped))) return false;
-    const size_t RowBytes = size_t(Width) * InBytesPerTexel;
+    const size_t RowBytes = size_t(Width) * 4u;
     for(uint32_t Row = 0; Row < Height; ++Row)
     {
         std::memcpy(static_cast<uint8_t*>(Mapped) + Footprint.Offset + Row * Footprint.Footprint.RowPitch,
@@ -195,7 +195,7 @@ inline bool ReadbackTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_
     void* Mapped = nullptr;
     if(FAILED(Readback->Map(0, nullptr, &Mapped))) return false;
 
-    const size_t RowBytes = size_t(Width) * 4u;
+    const size_t RowBytes = size_t(Width) * InBytesPerTexel;
     OutPixels.resize(RowBytes * Height);
     for(uint32_t Row = 0; Row < Height; ++Row)
     {
