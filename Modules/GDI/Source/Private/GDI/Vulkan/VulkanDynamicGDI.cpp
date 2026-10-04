@@ -807,6 +807,16 @@ GDITextureResource* VulkanDynamicGDI::CreateTextureResource(
     return new VKTextureResource(DeviceObj, InParent, InImage, InBorder, InFilter);
 }
 
+GDITextureResource* VulkanDynamicGDI::CreateTextureResourceMips(
+        const Image* InLevels,
+        const uint32_t InCount,
+        const EGDITextureBorder InBorder,
+        const EGDITextureFilter InFilter)
+{
+    if(!DeviceObj || !InLevels || InCount == 0) return nullptr;
+    return new VKTextureResource(DeviceObj, InLevels, InCount, InBorder, InFilter);
+}
+
 GDITextureResource* VulkanDynamicGDI::CreateTextureResource(
         GDITexture2D* InParent,
         const EGDITextureBorder InBorder,

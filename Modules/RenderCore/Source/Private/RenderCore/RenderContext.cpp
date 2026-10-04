@@ -524,7 +524,20 @@ namespace RenderCore
 
             const EGDITextureBorder Border = Wrap == ETextureWrap::Clamp  ? GDI_TB_Clamp_To_Edge
                                            : Wrap == ETextureWrap::Mirror ? GDI_TB_Mirrored_Repeat : GDI_TB_Repeat;
-            Entry.Gpu = GDICreateTextureResource(Source->Pixels, Border, Filter == ETextureFilter::Nearest ? GDI_TF_Nearest : GDI_TF_Linear);
+            const EGDITextureFilter GpuFilter = Filter == ETextureFilter::Nearest ? GDI_TF_Nearest : GDI_TF_Linear;
+            if(Source->Mips.empty())
+            {
+                Entry.Gpu = GDICreateTextureResource(Source->Pixels, Border, GpuFilter);
+            }
+            else
+            {
+                /* The baked chain (TextureAsset.h): trilinear with a Linear filter. */
+                std::vector<EngineCore::Image> Levels;
+                Levels.reserve(Source->Mips.size() + 1);
+                Levels.push_back(Source->Pixels);
+                Levels.insert(Levels.end(), Source->Mips.begin(), Source->Mips.end());
+                Entry.Gpu = GDICreateTextureResourceMips(Levels.data(), uint32_t(Levels.size()), Border, GpuFilter);
+            }
             if(!Entry.Gpu)
             {
                 WarnOnce(InTexture.Path + "|texture", "texture '" + InTexture.Path + "': this backend could not create it");

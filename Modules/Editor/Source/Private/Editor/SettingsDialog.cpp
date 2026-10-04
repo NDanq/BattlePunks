@@ -243,6 +243,10 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
               { { "256", 256 }, { "512", 512 }, { "1024", 1024 }, { "2048", 2048 }, { "4096", 4096 },
                 { "8192", 8192 }, { "16384", 16384 } },
               false);
+    AddChoice(Import, "Editor.ImportTextureMipGen", QStringLiteral("Texture mipmaps"),
+              QStringLiteral("The mip chain baked into an imported texture; the Texture Viewer changes it later"),
+              { { "None", 0 }, { "Box", 1 }, { "Kaiser", 2 } },
+              false);
 
     Pages->setCurrentRow(0);
 

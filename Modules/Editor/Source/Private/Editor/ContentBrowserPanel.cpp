@@ -48,6 +48,7 @@
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/ImportWizard.h"
 #include "Private/Editor/Content/MeshViewerWindow.h"
+#include "Private/Editor/Content/TextureViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 
 namespace
@@ -283,12 +284,23 @@ private:
             EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
             if(RenderCore::SerializeTexture(Ar, Texture))
             {
-                const QImage Image = EngineCore::QtBridge::ToQImage(Texture.Pixels);
+                /* The smallest mip still as big as the thumbnail: less to scale. */
+                const EngineCore::Image* Source = &Texture.Pixels;
+                for(int Level = 1; Level < Texture.GetMipCount(); ++Level)
+                {
+                    const EngineCore::Image* Mip = Texture.GetMip(Level);
+                    if(Mip->GetWidth() < ThumbnailSize && Mip->GetHeight() < ThumbnailSize) { break; }
+                    Source = Mip;
+                }
+                const QImage Image = EngineCore::QtBridge::ToQImage(*Source);
                 Entry.Thumbnail = QIcon(QPixmap::fromImage(Image.scaled(ThumbnailSize, ThumbnailSize, Qt::KeepAspectRatio,
                                                                         Qt::SmoothTransformation)));
-                Entry.Summary = QStringLiteral("Texture, %1 x %2, %3%4")
+                Entry.Summary = QStringLiteral("Texture, %1 x %2, %3, %4%5%6")
                                 .arg(Texture.Pixels.GetWidth()).arg(Texture.Pixels.GetHeight())
                                 .arg(Texture.bSRGB ? QStringLiteral("sRGB") : QStringLiteral("linear"))
+                                .arg(Texture.GetMipCount() > 1 ? QStringLiteral("%1 mips").arg(Texture.GetMipCount()) : QStringLiteral("no mips"))
+                                .arg(Texture.Compression == RenderCore::ETextureCompression::None ? QString()
+                                     : QStringLiteral(", %1 (pending)").arg(QString::fromLatin1(RenderCore::GetTextureCompressionName(Texture.Compression))))
                                 .arg(Texture.ImportInfo.IsEmpty() ? QString()
                                      : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Texture.ImportInfo.SourcePath)));
             }
@@ -749,6 +761,11 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
     if(InPath.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive))
     {
         MeshViewerWindow::Open(InPath, window());
+        return;
+    }
+    if(InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive))
+    {
+        TextureViewerWindow::Open(InPath, window());
         return;
     }
     if(!EditorContent::RenderTargetPathFor(InPath).isEmpty())

@@ -157,6 +157,14 @@ static void TestClassify()
     const TextureImportOptions TextureBack = TextureImportOptions::FromSettings(Texture.ToSettings());
     Expect(!TextureBack.bSRGB && TextureBack.Wrap == RenderCore::ETextureWrap::Clamp && TextureBack.MaxDimension == 512,
            "texture options survive their settings text");
+    Texture.MipGen      = RenderCore::ETextureMipGen::Kaiser;
+    Texture.Compression = RenderCore::ETextureCompression::BC5;
+    const TextureImportOptions MipsBack = TextureImportOptions::FromSettings(Texture.ToSettings());
+    Expect(MipsBack.MipGen == RenderCore::ETextureMipGen::Kaiser && MipsBack.Compression == RenderCore::ETextureCompression::BC5,
+           "mip generation and compression too");
+    const TextureImportOptions Older = TextureImportOptions::FromSettings(QStringLiteral("SRGB=1\nFilter=1\nWrap=0\n"));
+    Expect(Older.MipGen == RenderCore::ETextureMipGen::None && Older.Compression == RenderCore::ETextureCompression::None,
+           "settings from before mips read as none: a reimport makes what it made");
 }
 
 static void TestMeshImport(const QDir& InRoot)
@@ -254,6 +262,8 @@ static void TestTextureImport(const QDir& InRoot)
     Expect(ReadTexture(QDir(Content).filePath(QStringLiteral("Small.nmtexture")), Texture), "the .nmtexture loads");
     Expect(Texture.Pixels.GetWidth() == 4 && Texture.Pixels.GetHeight() == 2, "scaled to fit 4, keeping its shape");
     Expect(!Texture.bSRGB && Texture.Filter == RenderCore::ETextureFilter::Nearest, "with its sampling options");
+    Expect(Texture.MipGen == RenderCore::ETextureMipGen::Box && Texture.GetMipCount() == 3,
+           "and Box mips by default: 4 x 2, 2 x 1, 1 x 1");
     if(Texture.Pixels.GetWidth() == 4)
     {
         /* Flipped: the top-right green pixel is now in the bottom row. */

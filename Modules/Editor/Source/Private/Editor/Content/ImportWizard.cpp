@@ -41,6 +41,7 @@ NIMBLE_CONFIG_BOOL (GEditorImportCombineMeshes,      "Editor", "ImportCombineMes
 NIMBLE_CONFIG_BOOL (GEditorImportMeshTextures,       "Editor", "ImportMeshTextures",       true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportTextureSRGB,        "Editor", "ImportTextureSRGB",        true,   nullptr);
 NIMBLE_CONFIG_INT  (GEditorImportTextureMaxSize,     "Editor", "ImportTextureMaxSize",     4096,   nullptr);
+NIMBLE_CONFIG_INT  (GEditorImportTextureMipGen,      "Editor", "ImportTextureMipGen",      1,      nullptr);   // ETextureMipGen: Box
 
 using namespace EditorContent;
 
@@ -261,12 +262,22 @@ QWizardPage* ImportWizard::BuildTexturePage()
 
     FlipVertical = new QCheckBox(QStringLiteral("Flip vertically"), Page);
 
+    MipGen = new QComboBox(Page);
+    MipGen->addItem(QStringLiteral("Box (2x2 average)"), int(RenderCore::ETextureMipGen::Box));
+    MipGen->addItem(QStringLiteral("Kaiser (sharper)"), int(RenderCore::ETextureMipGen::Kaiser));
+    MipGen->addItem(QStringLiteral("None"), int(RenderCore::ETextureMipGen::None));
+    const int SavedMips = MipGen->findData(GEditorImportTextureMipGen.GetInt());
+    MipGen->setCurrentIndex(SavedMips >= 0 ? SavedMips : 0);
+    MipGen->setToolTip(QStringLiteral("The mip chain baked into the texture, down to 1x1: what a distant or "
+                                      "angled surface samples, without shimmering"));
+
     auto* Form = new QFormLayout(Page);
     Form->addRow(QString(), SRGB);
     Form->addRow(QStringLiteral("Filtering"), Filter);
     Form->addRow(QStringLiteral("Wrapping"), Wrap);
     Form->addRow(QStringLiteral("Largest size"), MaxSize);
     Form->addRow(QString(), FlipVertical);
+    Form->addRow(QStringLiteral("Mipmaps"), MipGen);
     return Page;
 }
 
@@ -373,6 +384,7 @@ void ImportWizard::SaveOptions()
     GEditorImportMeshTextures.SetBool(MeshTextures->isChecked());
     GEditorImportTextureSRGB.SetBool(SRGB->isChecked());
     GEditorImportTextureMaxSize.SetInt(MaxSize->currentData().toInt());
+    GEditorImportTextureMipGen.SetInt(MipGen->currentData().toInt());
     SettingsDialog::SaveUserSettings();
 }
 
@@ -393,6 +405,7 @@ void ImportWizard::StartImport()
     Texture.Wrap            = RenderCore::ETextureWrap(Wrap->currentData().toInt());
     Texture.MaxDimension    = MaxSize->currentData().toInt();
     Texture.bFlipVertically = FlipVertical->isChecked();
+    Texture.MipGen          = RenderCore::ETextureMipGen(MipGen->currentData().toInt());
 
     auto Jobs = std::make_shared<QList<Job>>();
     const QString Dest = QDir::fromNativeSeparators(DestFolder->text().trimmed());

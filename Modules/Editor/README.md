@@ -93,6 +93,7 @@ uses it.
 | `ConsolePanel` | The Console dock: filtered transcript over a command line with history and completion |
 | `ContentBrowserPanel` | The Content Browser dock: the project's files, organised, opened, and imported into, and the engine's content beside them (see Content Browser) |
 | `Content/MeshViewerWindow` (private) | A `.nmmesh` opened from the Content Browser: the mesh, its statistics, and a material per section (see Content Browser) |
+| `Content/TextureViewerWindow` (private) | A `.nmtexture` opened from the Content Browser: the image by mip level and channel, its statistics, and its settings -- sRGB, filter, wrap, mip generation, compression (see Content Browser) |
 | `Content/MeshPreviewView` (private) | The image both of those draw into: one renderer preview at a time at the widget's size, drag to orbit, wheel to zoom |
 | `Content/ImportWizard` (private) | File > Import and drops from outside: the wizard that turns glTF and images into `.nmmesh` / `.nmtexture` |
 | `Content/AssetImport`, `GltfImporter` (private) | The conversions themselves, no widgets (cgltf, `External/cgltf-1.15`, reads glTF); tested by `NimbleEditorImportTests` |
@@ -125,7 +126,7 @@ build. Dragging one into a project folder copies it there.
 | Rename | F2, or the context menu |
 | Delete | Del: confirmed, then moved to the Recycle Bin -- never deleted outright |
 | Move | Drag items onto a folder (in the list) |
-| Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), a mesh in the mesh viewer, anything else with the system's own application |
+| Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), a mesh in the mesh viewer, a texture in the texture viewer, anything else with the system's own application |
 | Import | Drop files from Explorer, the toolbar's Import..., or File > Import (Ctrl+I) |
 | Reimport | The context menu on a `.nmmesh` / `.nmtexture`: the same source, the same options |
 
@@ -149,7 +150,8 @@ dropped on, or the one shown -- `Content/` when the browser is at the root.
    the winding, so the model faces the default camera), generate missing normals, combine the scene into
    one mesh or one per glTF mesh, and import the textures it uses -- listed.
 3. **Texture options**: sRGB, filtering, wrapping, largest size (bigger images
-   are scaled down), flip vertically.
+   are scaled down), flip vertically, and mipmaps (Box by default, Kaiser, or
+   None).
 4. **Import**: on a worker thread, with a log. Each asset is written whole or
    not at all, staged beside the executable at once, and logged to the Console.
 
@@ -177,6 +179,36 @@ empty -- and restages it, so the level shows them; Revert drops the picks;
 closing with unsaved picks asks. Reimporting the mesh replaces them with the
 source's. The engine's meshes preview only. **Animate** keeps drawing, for
 materials that use Time. The preview shows the first eight sections' picks.
+
+**The texture viewer.** Double-clicking a `.nmtexture` opens it in its own
+window (again: the same window, brought forward).
+
+- **The image:** fitted to the view, zoomed with the wheel about the cursor,
+  panned by dragging, and fitted again by a double-click. A Mip level picks the
+  level shown and Channels picks RGBA, RGB, R, G, B or A (one channel shows as
+  grey). Transparency shows over a checkerboard.
+- **Statistics:** size (flagging one that is not a power of two), sRGB or
+  linear, mip levels and how they were made, size on disk, GPU memory (every
+  level), and what that would be compressed. Also whether its alpha is opaque,
+  cut-out or blended, and the source it was imported from.
+- **Settings:**
+  - sRGB, Filter and Wrap.
+  - **Mip generation:** None, Box (a 2x2 average) or Kaiser (a sharper
+    windowed sinc). Mips are built from level 0 down to 1x1, in linear light
+    for an sRGB texture, with edges that follow Wrap.
+  - **Compression:** None, BC1, BC3, BC4, BC5 or BC7.
+
+A change shows at once: the chain is rebuilt in memory. **Save** (Ctrl+S)
+writes the file and restages it, so the level draws the new chain. It also
+records the settings in the texture's import options, so Reimport keeps them.
+Revert drops the edits; closing with unsaved edits asks. The engine's textures
+view only.
+
+The renderer samples a texture's chain trilinearly with a Linear filter (on
+Vulkan and OpenGL; D3D12 and Metal still upload level 0 alone). Compression is
+stored only. No block encoder is integrated yet (NVIDIA Texture Tools is to
+come, through RenderCore's `TextureCompression.h`), so the texture is still
+stored and drawn as RGBA8, and the viewer says so.
 
 **Shipping.** The editor stages what it imports; a clean build of the game
 stages `Content/**/*.nmmesh` and `*.nmtexture` itself (Sandbox's CMakeLists,
@@ -536,7 +568,7 @@ Settings instead.
 | Viewport | Background gradient, top and bottom colours (a swatch opens a colour picker; applies at once to every editor viewport) | `Editor.ViewportGradient` (on), `ViewportTopColor` (`#4b515d`), `ViewportBottomColor` (`#1b1d22`) |
 | Rendering | Render backend (on restart) | `Editor.RHI` |
 | Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
-| Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, combine meshes, import a mesh's textures, sRGB, largest texture | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize` |
+| Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, combine meshes, import a mesh's textures, sRGB, largest texture, texture mipmaps | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize`, `ImportTextureMipGen` |
 
 The settings are those config vars themselves; the dialog keeps no copy.
 **Apply** and **OK** set them the way the Console would and save them;
@@ -644,4 +676,5 @@ decided. The Console's `cook` still cooks a single world.
 - View presets stay in perspective; there are no orthographic views yet.
 - Moving or renaming an asset in the Content Browser leaves components that
   name it pointing at the old path.
-- Imported textures are not sampled by anything yet.
+- Texture compression is a stored setting only, until a block encoder is
+  integrated.

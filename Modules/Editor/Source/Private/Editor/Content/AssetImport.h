@@ -64,6 +64,8 @@ namespace EditorContent
         RenderCore::ETextureWrap   Wrap          = RenderCore::ETextureWrap::Repeat;
         int                        MaxDimension  = 4096;   // larger images are scaled down to fit
         bool                       bFlipVertically = false;
+        RenderCore::ETextureMipGen      MipGen      = RenderCore::ETextureMipGen::Box;   // a settings string without it: None
+        RenderCore::ETextureCompression Compression = RenderCore::ETextureCompression::None;
 
         QString ToSettings() const;
         static TextureImportOptions FromSettings(const QString& InSettings);

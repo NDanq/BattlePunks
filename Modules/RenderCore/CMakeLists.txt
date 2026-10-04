@@ -91,6 +91,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/AssetImportInfo.h
         Source/Public/RenderCore/MeshAsset.h
         Source/Public/RenderCore/TextureAsset.h
+        Source/Public/RenderCore/TextureCompression.h
         Source/Public/RenderCore/RenderTargetAsset.h
         Source/Public/RenderCore/RenderComponents.h
         Source/Public/RenderCore/Components/RenderComponent.h

@@ -468,6 +468,16 @@ public:
 
     virtual GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) = 0;
 
+    /* A texture with its mip chain: InLevels[0] full size, each next half
+     * the last (at least 1), InCount in all; a Linear filter samples them
+     * trilinear. This default makes level 0 alone, for a backend without
+     * mips (D3D12, Metal and Null so far): it samples the full size. */
+    virtual GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,
+                                                          EGDITextureBorder InBorder, EGDITextureFilter InFilter)
+    {
+        return InLevels && InCount > 0 ? CreateTextureResource(InLevels[0], InBorder, InFilter) : nullptr;
+    }
+
     virtual bool CheckError(const std::string& FailStr) = 0;
 
     virtual ERenderPlatform GetRenderPlatform() const = 0;
@@ -587,6 +597,10 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(EngineCore::Color, GetColorFromSamplePoint, (
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, BeginDrawEvent, (const std::string& InEventName))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, EndDrawEvent, ())
+
+/* GDIDynamicDriver::CreateTextureResourceMips; null without a driver. */
+GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,
+                                                 EGDITextureBorder InBorder, EGDITextureFilter InFilter);
 
 /* GPU timestamps: GDIDynamicDriver::WriteGPUTimestamp's contract. */
 bool     GDISupportsGPUTimestamps();

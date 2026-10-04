@@ -49,6 +49,7 @@
 #include "Public/RenderCore/RenderView.h"
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Public/RenderCore/TextureCompression.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/ShadowSetup.h"
 
@@ -1240,7 +1241,7 @@ static void TestMaterialsOnGpu()
         Check Checks[] = { { "Engine/Content/Materials/DefaultLit.material.nmgraph", 0, {}, false, {} },
                            { "Materials/Glow.material.nmgraph", 0, {}, false, {} },
                            { "Wave", 0, {}, false, {} },       { "Negative", 0, {}, false, {} },
-                           { "Textured", 0, {}, false, {} } };
+                           { "Textured", 0, {}, false, {} },   { "Content/Materials/MipProbe.material.nmgraph", 0, {}, false, {} } };
         for(Check& Each : Checks)
         {
             Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
@@ -1303,6 +1304,11 @@ static void TestMaterialsOnGpu()
         const bool bOneTexel = Is(Textured.Rgb, 255, 0, 0) || Is(Textured.Rgb, 0, 255, 0) || Is(Textured.Rgb, 0, 0, 255)
                             || Is(Textured.Rgb, 255, 255, 255);
         Expect(Textured.bOk && bOneTexel, "its node's Nearest overrides the texture's Linear: the centre is one texel, not a blend");
+
+        /* MipProbe: level 0 red, the rest green, tiled 16 times over 64 pixels: 16 texels a pixel. */
+        const Check& Mips = Checks[5];
+        Expect(Mips.bOk && Mips.Rgb[1] > 200 && Mips.Rgb[0] < 40,
+               "a minified texture samples its baked mip chain (green), not level 0 (red)");
 
         /* Mesh previews: the engine's primitives, as the mesh viewer and the
          * material editor draw them. */
@@ -1530,6 +1536,137 @@ static void TestTextureAssets()
     Archive WrongTag = Archive::ForReading(MeshWriter.GetBytes());
     TextureData WrongTagLoaded;
     Expect(!SerializeTexture(WrongTag, WrongTagLoaded), "a mesh is not a texture");
+}
+
+/* Mip chains (TextureAsset.h): built, saved, read, and what a v1 file reads as. */
+static void TestTextureMips()
+{
+    std::printf("[texture mips]\n");
+
+    Expect(FullMipCount(1024, 1024) == 11 && FullMipCount(8, 2) == 4 && FullMipCount(1, 1) == 1 && FullMipCount(5, 3) == 3,
+           "FullMipCount: down to 1x1, each axis halved (at least 1)");
+
+    /* A 4x4 checker of black and white: every 2x2 averages to grey. */
+    TextureData Checker;
+    Checker.Pixels = Image(4, 4, EImageFormat::RGBA8);
+    for(int Y = 0; Y < 4; ++Y)
+    {
+        for(int X = 0; X < 4; ++X)
+        {
+            uint8_t* Px = Checker.Pixels.GetScanline(Y) + X * 4;
+            Px[0] = Px[1] = Px[2] = ((X + Y) & 1) ? 255 : 0;
+            Px[3] = 255;
+        }
+    }
+    Checker.bSRGB  = false;
+    Checker.MipGen = ETextureMipGen::Box;
+    BuildTextureMips(Checker);
+    Expect(Checker.GetMipCount() == 3 && Checker.Mips[0].GetWidth() == 2 && Checker.Mips[1].GetWidth() == 1,
+           "a 4x4 texture gets 2x2 and 1x1 levels");
+    Expect(std::abs(int(Checker.Mips[0].GetData()[0]) - 128) <= 1 && std::abs(int(Checker.Mips[1].GetData()[0]) - 128) <= 1,
+           "Box averages a linear texture's 2x2 blocks: grey");
+    Checker.bSRGB = true;
+    BuildTextureMips(Checker);
+    Expect(std::abs(int(Checker.Mips[0].GetData()[0]) - 188) <= 1, "and an sRGB texture's in linear light: half the light is 188, not 128");
+    Expect(Checker.Mips[0].GetData()[3] == 255, "alpha is averaged linearly either way");
+
+    Checker.MipGen = ETextureMipGen::Kaiser;
+    BuildTextureMips(Checker);
+    Expect(Checker.GetMipCount() == 3 && std::abs(int(Checker.Mips[0].GetData()[0]) - 188) <= 3,
+           "Kaiser keeps a checker's mean (its lobes cancel on a repeating pattern)");
+
+    /* A flat colour stays itself through every filter and wrap. */
+    TextureData Flat;
+    Flat.Pixels = Image(8, 2, EImageFormat::RGBA8);
+    for(size_t At = 0; At < Flat.Pixels.GetSizeBytes(); At += 4)
+    {
+        uint8_t* Px = Flat.Pixels.GetData() + At;
+        Px[0] = 200; Px[1] = 90; Px[2] = 30; Px[3] = 140;
+    }
+    bool bFlatKept = true;
+    for(const ETextureMipGen Gen : { ETextureMipGen::Box, ETextureMipGen::Kaiser })
+    {
+        for(const ETextureWrap Wrap : { ETextureWrap::Repeat, ETextureWrap::Clamp, ETextureWrap::Mirror })
+        {
+            Flat.MipGen = Gen;
+            Flat.Wrap   = Wrap;
+            BuildTextureMips(Flat);
+            bFlatKept = bFlatKept && Flat.GetMipCount() == 4 && Flat.Mips.back().GetWidth() == 1 && Flat.Mips.back().GetHeight() == 1;
+            for(const Image& Level : Flat.Mips)
+            {
+                const uint8_t* Px = Level.GetData();
+                bFlatKept = bFlatKept && std::abs(Px[0] - 200) <= 1 && std::abs(Px[1] - 90) <= 1 && std::abs(Px[2] - 30) <= 1
+                            && std::abs(Px[3] - 140) <= 1;
+            }
+        }
+    }
+    Expect(bFlatKept, "a flat colour is unchanged at every level, by Box and Kaiser, with every wrap; 8x2 goes 4x1, 2x1, 1x1");
+    Flat.MipGen = ETextureMipGen::None;
+    BuildTextureMips(Flat);
+    Expect(Flat.Mips.empty() && Flat.GetMipCount() == 1, "None clears the chain");
+
+    /* Saved and read back: the chain, the settings, the header. */
+    Checker.MipGen      = ETextureMipGen::Box;
+    Checker.Compression = ETextureCompression::BC7;
+    BuildTextureMips(Checker);
+    Archive Writer = Archive::ForWriting();
+    Expect(SerializeTexture(Writer, Checker), "a texture with mips saves");
+    TextureData Loaded;
+    Archive Reader = Archive::ForReading(Writer.GetBytes());
+    Expect(SerializeTexture(Reader, Loaded) && Loaded.GetMipCount() == 3 && Loaded.MipGen == ETextureMipGen::Box
+           && Loaded.Compression == ETextureCompression::BC7, "and loads with its chain, mip generation and compression");
+    Expect(Loaded.Mips.size() == 2 && std::memcmp(Loaded.Mips[0].GetData(), Checker.Mips[0].GetData(), Checker.Mips[0].GetSizeBytes()) == 0
+           && std::memcmp(Loaded.Mips[1].GetData(), Checker.Mips[1].GetData(), 4) == 0, "each level's texels as saved");
+
+    TextureData Wrong = Checker;
+    Wrong.Mips[0] = Image(3, 2, EImageFormat::RGBA8);
+    Archive WrongWriter = Archive::ForWriting();
+    Expect(!SerializeTexture(WrongWriter, Wrong), "a level that is not half the last does not save");
+
+    std::vector<uint8_t> Truncated = Writer.GetBytes();
+    Truncated.resize(Truncated.size() - 3);
+    Archive TruncatedReader = Archive::ForReading(Truncated);
+    TextureData TruncatedLoaded;
+    Expect(!SerializeTexture(TruncatedReader, TruncatedLoaded), "a truncated chain fails to load");
+
+    /* A v1 file (before mips): THDR v1, no TMIP. Written by hand. */
+    {
+        Archive Old = Archive::ForWriting();
+        uint16_t Version = 1;
+        Old.OpenChunk(MakeArchiveTag('N','T','E','X'), Version);
+        Version = 1;
+        Old.OpenChunk(MakeArchiveTag('T','H','D','R'), Version);
+        int32_t Width = 2, Height = 1;
+        uint8_t Format = 0, Filter = 1, Wrap = 1;
+        bool    bSRGB  = false;
+        Old << Width << Height << Format << bSRGB << Filter << Wrap;
+        Old.CloseChunk();
+        Version = 1;
+        Old.OpenChunk(MakeArchiveTag('T','P','I','X'), Version);
+        uint8_t Texels[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        Old.SerializeBytes(Texels, 8);
+        Old.CloseChunk();
+        Old.CloseChunk();
+        TextureData FromV1;
+        Archive OldReader = Archive::ForReading(Old.GetBytes());
+        Expect(SerializeTexture(OldReader, FromV1) && FromV1.GetMipCount() == 1 && FromV1.MipGen == ETextureMipGen::None
+               && FromV1.Compression == ETextureCompression::None && FromV1.Wrap == ETextureWrap::Clamp
+               && FromV1.Pixels.GetData()[7] == 8, "a v1 texture reads as before: no mips, no compression");
+    }
+
+    /* Sizes: as stored (RGBA8), and what a block format would take. */
+    Expect(TextureGpuBytes(Checker) == uint64_t(16 + 4 + 1) * 4, "TextureGpuBytes counts every level");
+    Expect(TextureCompressedBytes(256, 256, 1, ETextureCompression::BC1) == 256 * 256 / 2
+           && TextureCompressedBytes(256, 256, 1, ETextureCompression::BC7) == 256 * 256
+           && TextureCompressedBytes(4, 4, 3, ETextureCompression::BC3) == 3 * 16
+           && TextureCompressedBytes(4, 4, 3, ETextureCompression::None) == (16 + 4 + 1) * 4,
+           "TextureCompressedBytes: BC1 and BC4 half a byte a texel, the rest one, a 4x4 block at least per level");
+
+    /* Compression: a stored setting until an encoder is registered. */
+    Expect(GetTextureCompressor() == nullptr && IsTextureCompressionAvailable(ETextureCompression::None)
+           && !IsTextureCompressionAvailable(ETextureCompression::BC7), "no block encoder is integrated yet: only None is honoured");
+    Expect(std::string(GetTextureCompressionName(ETextureCompression::BC5)) == "BC5"
+           && std::string(GetTextureMipGenName(ETextureMipGen::Kaiser)) == "Kaiser", "the settings' names");
 }
 
 /*
@@ -3457,6 +3594,7 @@ int main()
     TestSceneCaptureOnGpu();
     TestMeshAssets();
     TestTextureAssets();
+    TestTextureMips();
     TestMeshDrawing();
     TestEngineMeshes();
     TestRenderStages();
