@@ -247,15 +247,15 @@ design):
 - **`.material`**, what the renderer needs to draw it:
 
   ```
-  NimbleMaterial 2
+  NimbleMaterial 3
   Domain Opaque
   Shading Lit
   TwoSided 0
   ClipValue 0.5
   MaxOffset 0
   HasOffset 0
-  BlockSize 48
-  Param Color vec3 32 0.2 0.8 1 0
+  BlockSize 176
+  Param Color vec3 160 0.2 0.8 1 0
   Texture 1 Nearest Default Content/Textures/Brick.nmtexture
   ```
 
@@ -270,7 +270,8 @@ warning. The first output, **Pixel Output** (one colour), still compiles: as
 Unlit and Translucent, how every material drew before.
 
 **Parameters** are members of one std140 block at binding 2, in name order,
-after the engine's 32 bytes (the tint, Clip Value, Two Sided). The offsets are
+after the engine's 160 bytes (the tint, Clip Value, Two Sided, and the draw's
+baked lighting: RenderCore's MaterialDescription.h). The offsets are
 computed here and written to the `.material`, and the renderer fills the block
 byte for byte (GDI's `GDISetUniformBlock`). Any number fit, up to the block's
 1024 bytes.

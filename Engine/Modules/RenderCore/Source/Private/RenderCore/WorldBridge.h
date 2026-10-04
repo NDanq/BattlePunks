@@ -2,12 +2,16 @@
 #define RENDERCORE_WORLDBRIDGE_H
 
 #include <cstdint>
+#include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/EntityID.h"
+#include "Public/GameCore/EntityGuid.h"
 #include "Public/GameCore/World.h"
+#include "Public/RenderCore/BakedLightingAsset.h"
 #include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/RenderView.h"
@@ -69,6 +73,17 @@ namespace RenderCore
          * BuildView. */
         RenderLighting    BuildLighting(const EngineCore::Vector3& InEye) const;
 
+        /* The bound world's bake, as its WorldLightingSettings name it, loaded
+         * (again when BakedLightingCache moves on); whether this frame draws
+         * with it: baked lighting on in the world and [Rendering]
+         * BakedLighting on. RENDERPIPELINE.md, "Baked lighting". */
+        void UpdateBake();
+
+        /* InEntity's baked lighting this frame: a static entity's lightmap
+         * square if the bake has one for it, else the probes' blend at
+         * InPosition; nothing while no bake is drawn with. */
+        RenderBakedDraw BakedDrawFor(const GameCore::Entity& InEntity, const EngineCore::Vector3& InPosition) const;
+
         /* Every enabled Post Process volume InView's camera is in or near,
          * blended Priority low first, weighted by how far inside it is. */
         RenderPostProcess BuildPostProcess(const RenderView& InView) const;
@@ -96,6 +111,12 @@ namespace RenderCore
          * reimported (MeshAssetCache's generation), so each proxy looks again. */
         std::unordered_map<const void*, std::vector<uint8_t>> StaticRecords;
         uint64_t                                             StaticMeshGeneration = 0;
+
+        std::shared_ptr<const BakedLightingData> Bake;
+        std::string                              BakePath;
+        uint64_t                                 BakeGeneration = ~0ull;
+        bool                                     bBakeActive    = false;
+        std::unordered_map<GameCore::EntityGuid, const BakedLightmapEntry*, GameCore::EntityGuidHash> BakeEntries;
 
         GameCore::DelegateHandle AddedHandle;
 

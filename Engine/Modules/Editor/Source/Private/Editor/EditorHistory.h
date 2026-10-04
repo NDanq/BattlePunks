@@ -15,6 +15,7 @@
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityGuid.h"
 #include "Public/GameCore/Mobility.h"
+#include "Public/GameCore/WorldSettings.h"
 #include "Public/GameCore/TransformMath.h"
 #include "Public/GameCore/EntityID.h"
 
@@ -185,6 +186,21 @@ namespace EditorHistory
         GameCore::EntityGuid Guid;
         EntityMembers        Before;
         EntityMembers        After;
+    };
+
+    /* The edited World's settings, before and after. */
+    class WorldSettingsCommand final : public Command
+    {
+    public:
+        WorldSettingsCommand(EditorDocument& InDocument, const QString& InText, const GameCore::WorldSettings& InBefore,
+                             const GameCore::WorldSettings& InAfter);
+
+    protected:
+        void Apply(bool bInForward) override;
+
+    private:
+        GameCore::WorldSettings Before;
+        GameCore::WorldSettings After;
     };
 
     /* Create (bInCreated) or delete. Snapshotted when the entity goes away. */

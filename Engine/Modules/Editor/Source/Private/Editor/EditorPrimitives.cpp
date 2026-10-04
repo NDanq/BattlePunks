@@ -21,6 +21,7 @@ namespace EditorPrimitives
             case EKind::Box:    Name = QStringLiteral("Box");    Mesh = "Engine/Content/Meshes/Box.nmmesh";    break;
             case EKind::Sphere: Name = QStringLiteral("Sphere"); Mesh = "Engine/Content/Meshes/Sphere.nmmesh"; break;
             case EKind::Cylinder: Name = QStringLiteral("Cylinder"); Mesh = "Engine/Content/Meshes/Cylinder.nmmesh"; break;
+            case EKind::Capsule: Name = QStringLiteral("Capsule"); Mesh = "Engine/Content/Meshes/Capsule.nmmesh"; break;
             case EKind::Plane:  Name = QStringLiteral("Plane");  Mesh = "Engine/Content/Meshes/Plane.nmmesh";
                                 Scale = EngineCore::Vector3(1000.0, 1.0, 1000.0); break;
         }

@@ -82,6 +82,11 @@ public:
     uint64_t RequestRenderTargetReadback(const QString& InRuntimePath);
     bool     TakeRenderTargetReadback(uint64_t InRequest, EngineCore::Image& OutPixels, QString& OutError);
 
+    /* The viewport's next frame, without debug lines (Renderer::RequestSceneCapture):
+     * the "screenshot" command. 0 when the Renderer is not running; poll
+     * TakeMaterialPreview. */
+    uint64_t RequestSceneCapture();
+
     /* See Renderer::RequestMeshPreview: InMesh (a runtime path) framed by an
      * orbiting camera, with InMaterial on every section, else InSections.
      * Answered through TakeMaterialPreview. 0 when the Renderer is not running. */

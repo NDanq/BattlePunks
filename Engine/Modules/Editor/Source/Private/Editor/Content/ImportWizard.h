@@ -66,6 +66,7 @@ private:
     QDoubleSpinBox* MeshScale     = nullptr;
     QCheckBox*      ConvertAxes   = nullptr;
     QCheckBox*      GenNormals    = nullptr;
+    QCheckBox*      LightmapUVs   = nullptr;
     QCheckBox*      Combine       = nullptr;
     QCheckBox*      MeshTextures  = nullptr;
     QListWidget*    ImageList     = nullptr;

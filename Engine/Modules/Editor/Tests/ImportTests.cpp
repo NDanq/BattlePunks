@@ -3,9 +3,11 @@
  * The glTF is built inline so expected numbers sit beside their source.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include <QCoreApplication>
 #include <QDir>
@@ -225,6 +227,40 @@ static void TestMeshImport(const QDir& InRoot)
                "a mirroring node transform and the conversion cancel: its winding is kept");
         Expect(Near(Mesh.BoundsMin[0], -1.0f) && Near(Mesh.BoundsMax[0], 2.0f), "bounds span both nodes");
         Expect(Near(Mesh.UV0[2], 1.0f), "UVs carry over");
+    }
+
+    /* No TEXCOORD_1 in the file, so lightmap UVs are generated: one per
+     * vertex, in 0-1, and no texel centre (at the smallest lightmap
+     * resolution, 32) inside two triangles. */
+    Expect(Mesh.UV1.size() == size_t(Mesh.GetVertexCount()) * 2, "lightmap UVs are generated for every vertex");
+    if(Mesh.UV1.size() == size_t(Mesh.GetVertexCount()) * 2)
+    {
+        bool bInRange = true;
+        for(const float Each : Mesh.UV1) { bInRange &= Each >= 0.0f && Each <= 1.0f; }
+        Expect(bInRange, "lightmap UVs are in 0-1");
+
+        constexpr int Size = 32;
+        std::vector<int> Covered(Size * Size, 0);
+        for(size_t At = 0; At + 2 < Mesh.Indices.size(); At += 3)
+        {
+            const float* A = &Mesh.UV1[size_t(Mesh.Indices[At]) * 2];
+            const float* B = &Mesh.UV1[size_t(Mesh.Indices[At + 1]) * 2];
+            const float* C = &Mesh.UV1[size_t(Mesh.Indices[At + 2]) * 2];
+            const auto Edge = [](const float* P, const float* Q, const float X, const float Y)
+            {
+                return (Q[0] - P[0]) * (Y - P[1]) - (Q[1] - P[1]) * (X - P[0]);
+            };
+            for(int Y = 0; Y < Size; ++Y)
+            {
+                for(int X = 0; X < Size; ++X)
+                {
+                    const float U = (float(X) + 0.5f) / Size, V = (float(Y) + 0.5f) / Size;
+                    const float E0 = Edge(A, B, U, V), E1 = Edge(B, C, U, V), E2 = Edge(C, A, U, V);
+                    if((E0 >= 0.0f && E1 >= 0.0f && E2 >= 0.0f) || (E0 <= 0.0f && E1 <= 0.0f && E2 <= 0.0f)) { ++Covered[size_t(Y * Size + X)]; }
+                }
+            }
+        }
+        Expect(*std::max_element(Covered.begin(), Covered.end()) <= 1, "lightmap UV charts do not overlap");
     }
     Expect(Mesh.ImportInfo.SourcePath == "Source/Scene.gltf", "the source is recorded relative to the project");
 

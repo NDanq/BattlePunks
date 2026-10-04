@@ -835,8 +835,8 @@ namespace
             CompileGraph(G, Two);
             Expect(!Two.HasErrors() && Two.Code.find("float Param_Alpha;\n    vec3  Param_Tint;") != std::string::npos,
                    "Tint is declared after Alpha");
-            Expect(!Two.Companions.empty() && Two.Companions[0].second.find("Param Alpha float 32") != std::string::npos
-                   && Two.Companions[0].second.find("Param Tint vec3 48") != std::string::npos,
+            Expect(!Two.Companions.empty() && Two.Companions[0].second.find("Param Alpha float 160") != std::string::npos
+                   && Two.Companions[0].second.find("Param Tint vec3 176") != std::string::npos,
                    "and the companion gives Alpha the first offset, Tint the next 16-byte one");
         }
 
@@ -1597,8 +1597,8 @@ namespace
         Expect(Data.find("Domain Masked") != std::string::npos && Data.find("Shading Lit") != std::string::npos
                && Data.find("HasOffset 1") != std::string::npos && Data.find("MaxOffset 2") != std::string::npos,
                "the .material describes the domain, shading and offset");
-        Expect(Data.find("Param Color vec3 32") != std::string::npos && Data.find("Param Height float 44") != std::string::npos
-               && Data.find("BlockSize 48") != std::string::npos, "a float packs into a vec3's last four bytes (std140)");
+        Expect(Data.find("Param Color vec3 160") != std::string::npos && Data.find("Param Height float 172") != std::string::npos
+               && Data.find("BlockSize 176") != std::string::npos, "a float packs into a vec3's last four bytes (std140)");
 
         {
             /* std140 alignment: float 4, vec2 8, vec3 and vec4 16. */
@@ -1617,9 +1617,9 @@ namespace
             CompileResult Layout;
             CompileGraph(G, Layout);
             const std::string Text = Layout.Companions.empty() ? std::string() : Layout.Companions[0].second;
-            Expect(!Layout.HasErrors() && Text.find("Param A float 32") != std::string::npos
-                   && Text.find("Param B vec3 48") != std::string::npos && Text.find("Param C vec2 64") != std::string::npos
-                   && Text.find("Param D vec4 80") != std::string::npos, "each parameter sits at its std140 offset");
+            Expect(!Layout.HasErrors() && Text.find("Param A float 160") != std::string::npos
+                   && Text.find("Param B vec3 176") != std::string::npos && Text.find("Param C vec2 192") != std::string::npos
+                   && Text.find("Param D vec4 208") != std::string::npos, "each parameter sits at its std140 offset");
         }
 
         // --- Stage restrictions ------------------------------------------------------

@@ -35,12 +35,20 @@
  * arch. T cycles the sun's technique, F toggles [Shadows] Enabled through its
  * config var.
  *
+ * A second level, BakedLighting ([Game] StartLevel=BakedLighting), is baked
+ * lighting's demo: a Cornell-style room whose static walls, boxes and lights
+ * are baked (Build > Bake Lightmaps), with a dynamic ball swinging through it
+ * lit by the light probes. L switches between the bake and live lighting,
+ * through [Rendering] BakedLighting, in either level.
+ *
  *   LightLabLevel      loads Content/Levels/LightLab.nmworld -- the yard, the lights and
  *                      the Player, as the editor saved them -- or, without one,
  *                      builds the same scene in code; registers the fly and
  *                      light-animation systems, owns the mode.
- *   LightLabGameMode   mouse capture, the T/F toggles, a periodic report.
- *   LightLabGameModule owns and registers the level.
+ *   LightLabBakedLevel loads Content/Levels/BakedLighting.nmworld; flies the
+ *                      Player and swings the dynamic ball (Swinger).
+ *   LightLabGameMode   mouse capture, the T/F/L toggles, a periodic report.
+ *   LightLabGameModule owns and registers both levels.
  *
  * Coordinates are the engine's: left-handed, +X right, +Y UP, +Z forward. The
  * floor is at y=0. A rotation's positive pitch (X) tips the nose down.
@@ -64,6 +72,10 @@ namespace
     /* The level as the editor saves it. Its entities are found by name:
      * Player, Sun, SweepSpot and OrbitLight drive the systems below. */
     const char* const LevelFile = "Content/Levels/LightLab.nmworld";
+
+    /* Baked lighting's demo, made by Tools/make_baked_lighting_level.py and
+     * baked in the editor. Player, Sun and Swinger are found by name. */
+    const char* const BakedLevelFile = "Content/Levels/BakedLighting.nmworld";
 
     const char* const BoxMesh    = "Engine/Content/Meshes/Box.nmmesh";
     const char* const SphereMesh = "Engine/Content/Meshes/Sphere.nmmesh";
@@ -164,6 +176,16 @@ struct LightLabFlyContext
     GameCore::EntityID Player;
     double             Yaw   = 0.0;
     double             Pitch = 0.0;
+};
+
+/* What LightLab.Swing's void* points at: the dynamic ball, circling where it
+ * was placed, in and out of the baked shadows. */
+struct LightLabSwingContext
+{
+    GameCore::EntityID  Swinger;
+    EngineCore::Vector3 Center;
+    double              Radius         = 170.0;
+    double              ElapsedSeconds = 0.0;
 };
 
 /* What LightLab.AnimateLights' void* points at. */
@@ -274,6 +296,46 @@ namespace
         }
     }
 
+    /* PrePhysics system: carries the Swinger round its starting point, one lap
+     * every ~12 seconds, bobbing as it goes. */
+    void SwingSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    {
+        auto& Context = *static_cast<LightLabSwingContext*>(InUserData);
+        Context.ElapsedSeconds += double(InDeltaSeconds);
+        GameCore::TransformComponent* Transform = InWorld.GetEntity(Context.Swinger).GetComponent<GameCore::TransformComponent>();
+        if(!Transform)
+        {
+            return;
+        }
+        const double Angle = Context.ElapsedSeconds * 0.52;
+        Transform->Position = EngineCore::Vector3(Context.Center.GetX() + Context.Radius * std::cos(Angle),
+                                                  Context.Center.GetY() + 40.0 * std::sin(Angle * 2.0),
+                                                  Context.Center.GetZ() + Context.Radius * std::sin(Angle));
+    }
+
+    /* InPath into InWorld -- in a game build, its cooked twin in
+     * Content/Levels/Cooked/. False, logged, if there is none or it cannot be read. */
+    bool LoadWorld(const char* InPath, GameCore::World& InWorld)
+    {
+        std::string Path = InPath;
+#if !WITH_EDITOR
+        const size_t Slash = Path.find_last_of('/');
+        Path = Path.substr(0, Slash + 1) + "Cooked/" + Path.substr(Slash + 1);
+#endif
+        if(GameCore::DetectWorldFileFormat(Path.c_str()) == GameCore::EWorldFileFormat::Unknown)
+        {
+            CORE_LOG("[LightLab] no " + Path)
+            return false;
+        }
+        if(!GameCore::LoadWorldFile(Path.c_str(), InWorld))
+        {
+            CORE_LOG_WARN("[LightLab] could not read " + Path)
+            return false;
+        }
+        CORE_LOG("[LightLab] loaded " + Path)
+        return true;
+    }
+
     /* An entity with a Transform at InPosition/InRotation and one light
      * component. Lights are made here rather than as native prefabs: each is
      * configured differently, which a placement cannot express. */
@@ -311,7 +373,8 @@ public:
         bMouseCaptured = true;
 
         CORE_LOG("[LightLab] fly with WASD + mouse, E/Q up and down, Shift to boost; "
-                 "T cycles the sun's shadow technique, F toggles shadows, Escape releases the mouse")
+                 "T cycles the sun's shadow technique, F toggles shadows, L switches baked and live lighting, "
+                 "Escape releases the mouse")
     }
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
@@ -333,6 +396,11 @@ public:
             if(Input->WasPressed("ToggleShadows"))
             {
                 ToggleShadows();
+            }
+
+            if(Input->WasPressed("ToggleBakedLighting"))
+            {
+                ToggleBakedLighting();
             }
 
             if(bMouseCaptured && Input->WasPressed("ReleaseMouse"))
@@ -405,6 +473,22 @@ private:
         const bool bNowEnabled = !Enabled->GetBool();
         Enabled->SetFromString(bNowEnabled ? "1" : "0");
         CORE_LOG(std::string("[LightLab] shadows ") + (bNowEnabled ? "enabled" : "disabled"))
+    }
+
+    /* [Rendering] BakedLighting, as ToggleShadows does [Shadows] Enabled:
+     * draw with the world's bake (Build > Bake Lightmaps), or every light live. */
+    void ToggleBakedLighting()
+    {
+        EngineCore::ConfigVar* Baked = EngineCore::ConfigFindVarByPath("Rendering.BakedLighting");
+        if(!Baked)
+        {
+            CORE_LOG_ERROR("[LightLab] no Rendering.BakedLighting config var to toggle")
+            return;
+        }
+
+        const bool bNowBaked = !Baked->GetBool();
+        Baked->SetFromString(bNowBaked ? "1" : "0");
+        CORE_LOG(std::string("[LightLab] lighting: ") + (bNowBaked ? "baked" : "lit live"))
     }
 
     /* Stashed in OnLoad. */
@@ -762,6 +846,58 @@ private:
 };
 
 /* Owns the level, so it lives exactly as long as its code. */
+/* Baked lighting's demo room (Content/Levels/BakedLighting.nmworld): no
+ * scene in code -- without the file there is nothing to show. */
+class LightLabBakedLevel : public NimbleEngine::ILevel
+{
+public:
+    const char* GetName() const override { return "BakedLighting"; }
+
+    bool OnLoad(NimbleEngine::GameSession& InSession) override
+    {
+        (void)InSession;
+        GameCore::World& World = GetWorld();
+        FlyContext   = LightLabFlyContext();
+        SwingContext = LightLabSwingContext();
+
+        if(!LoadWorld(BakedLevelFile, World))
+        {
+            CORE_LOG_ERROR("[LightLab] the BakedLighting level needs Content/Levels/BakedLighting.nmworld "
+                           "(Tools/make_baked_lighting_level.py, then Build > Bake Lightmaps)")
+            return false;
+        }
+
+        const GameCore::EntityID Player = World.FindEntityByName("Player");
+        if(const GameCore::TransformComponent* View = World.GetEntity(Player).GetComponent<GameCore::TransformComponent>())
+        {
+            FlyContext.Pitch = std::clamp(double(View->Rotation.GetX()), -MaxPitch, MaxPitch);
+            FlyContext.Yaw   = double(View->Rotation.GetY());
+        }
+        FlyContext.Player = Player;
+
+        SwingContext.Swinger = World.FindEntityByName("Swinger");
+        if(const GameCore::TransformComponent* Ball = World.GetEntity(SwingContext.Swinger).GetComponent<GameCore::TransformComponent>())
+        {
+            SwingContext.Center = Ball->Position;
+        }
+
+        World.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &FlyContext);
+        World.RegisterSystem("LightLab.Swing", GameCore::TP_PrePhysics, &SwingSystem, &SwingContext);
+        Mode.emplace(Player, World.FindEntityByName("Sun"));
+        return true;
+    }
+
+    NimbleEngine::IGameMode* GetGameMode() override
+    {
+        return Mode ? &*Mode : nullptr;
+    }
+
+private:
+    LightLabFlyContext              FlyContext;
+    LightLabSwingContext            SwingContext;
+    std::optional<LightLabGameMode> Mode;
+};
+
 class LightLabGameModule : public NimbleEngine::IGameModule
 {
 public:
@@ -772,6 +908,7 @@ public:
     {
         /* [Game] StartLevel resolves levels by name. */
         NimbleEngine::RegisterLevel(Level);
+        NimbleEngine::RegisterLevel(BakedLevel);
         return true;
     }
 
@@ -779,12 +916,14 @@ public:
     {
         /* The registry holds a bare pointer, and this image is about to go. */
         NimbleEngine::UnregisterLevel(Level);
+        NimbleEngine::UnregisterLevel(BakedLevel);
     }
 
     NimbleEngine::ILevel* GetStartLevel() override { return &Level; }
 
 private:
-    LightLabLevel Level;
+    LightLabLevel      Level;
+    LightLabBakedLevel BakedLevel;
 };
 
 NIMBLE_IMPLEMENT_GAME_MODULE(LightLabGameModule, "LightLabGame")

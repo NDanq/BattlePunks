@@ -51,8 +51,8 @@ next Play. Without it (a Client build has no cooked copy unless one is put in
 `Content/Levels/Cooked/`) the game builds the same scene in code; `[LightLab]
 ExportLevel=<path>` in an editor build writes that code-built scene out. Mouse
 looks, WASD moves, E/Q (or Space/Ctrl) rise and sink, Shift is faster, T cycles
-the sun's shadow technique and F toggles shadows. Escape frees the mouse; a
-left click takes it back.
+the sun's shadow technique, F toggles shadows and L switches between baked and
+live lighting. Escape frees the mouse; a left click takes it back.
 
 Two post process volumes (`Content/PostProcess`, RENDERPIPELINE.md's "Post
 process") cover the yard. `Global.pp.nmgraph` has no Bounds, so it applies
@@ -98,6 +98,23 @@ For the full effect, set the level's Sky Light **Environment** to
 `Content/Textures/Sky/ProceduralSky.nmtexture`. That is a generated HDRI: a
 blue sky with a sun, glowing toward it, over warm ground. The sky then lights
 everything and is drawn behind the scene.
+
+A second level, **BakedLighting** (`Content/Levels/BakedLighting.nmworld`;
+play it with `[Game] StartLevel=BakedLighting`), shows baked lighting
+(RENDERPIPELINE.md, "Baked lighting"). It is a Cornell-style room:
+
+- **Static, baked:** red and green walls, a white floor, ceiling and back wall
+  with a window, two boxes and a capsule, lit by a sun through the window, a
+  warm lamp and the sky. Its bake is checked in beside it (`Lighting/`):
+  soft shadows, the lamp's light bounced round the room, the walls' colour
+  on the floor.
+- **Dynamic, lit by the light probes:** a ball circling the room
+  (LightLab.Swing) and a capsule.
+
+**L** (or View > Lighting in the editor) switches between the bake and live
+lighting, in either level. `Games/LightLab/Tools/make_baked_lighting_level.py`
+writes the world; Build > Bake Lightmaps (or the headless line in the editor's
+README, "Build menu") bakes it again.
 
 ### CLion
 

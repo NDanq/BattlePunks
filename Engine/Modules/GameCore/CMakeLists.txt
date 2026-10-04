@@ -173,6 +173,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/SpatialIndex.cpp
         Source/Private/GameCore/Collision.cpp
         Source/Private/GameCore/World.cpp
+        Source/Private/GameCore/WorldSettings.cpp
         Source/Private/GameCore/ScriptEngine.cpp
         Source/Private/GameCore/GraphText.cpp
         Source/Private/GameCore/ScriptBindings.cpp
@@ -200,6 +201,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/ComponentType.h
         Source/Public/GameCore/ComponentPool.h
         Source/Public/GameCore/World.h
+        Source/Public/GameCore/WorldSettings.h
         Source/Public/GameCore/Entity.h
         Source/Public/GameCore/Components.h
         Source/Public/GameCore/Components/TransformComponent.h

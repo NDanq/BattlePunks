@@ -47,6 +47,10 @@ namespace EditorContent
         /* For primitives without normals (else they draw dark). */
         bool bGenerateNormals = true;
 
+        /* Lightmap UVs (UV1, LightmapUVs.h) for a mesh whose file has no
+         * TEXCOORD_1; without them it is not lightmapped. */
+        bool bGenerateLightmapUVs = true;
+
         /* One .nmmesh for the scene (primitives as sections), or one per mesh. */
         bool bCombineMeshes = true;
 

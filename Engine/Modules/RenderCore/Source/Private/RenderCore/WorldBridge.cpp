@@ -1,12 +1,15 @@
 #include "Private/RenderCore/WorldBridge.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/MaterialDescription.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/Components.h"
 #include "Public/RenderCore/RenderCommand.h"
@@ -22,6 +25,10 @@
 // GameCore is this file's whole subject -- it reads World's pools and
 // components on every line.
 using namespace GameCore;
+
+/* Off: every light lit live, the bake left loaded but unused -- the Lit view
+ * the editor's View > Lighting and LightLab's L key switch to. */
+NIMBLE_CONFIG_BOOL(GBakedLighting, "Rendering", "BakedLighting", true, nullptr);
 
 /*
  * See WorldBridge.h for the contract; this is the "how". Three pieces:
@@ -44,6 +51,7 @@ namespace RenderCore
             RenderProxyHandle Handle;
             RenderTransform   Transform;
             uint8_t           bStatic = 0;   // the owner's mobility
+            RenderBakedDraw   Baked;         // a Render component's; empty for the rest
             // component bytes follow immediately after this header
         };
 
@@ -327,13 +335,30 @@ namespace RenderCore
             return Lighting;
         }
 
+        /* Drawing with a bake: its static lights are in it, so they are left
+         * out here -- the sun's default too, if a static one was the only one. */
+        const auto Baked = [this](const ComponentOwner& InOwner) { return bBakeActive && InOwner.GetEntity().IsStatic(); };
+        if(bBakeActive)
+        {
+            Lighting.bBaked    = 1;
+            Lighting.bBakedSky = Bake->bSkyBaked ? 1 : 0;
+            Lighting.BakedAtlasCount = uint32_t(std::min<size_t>(Bake->Atlases.size(), RENDER_BAKED_ATLASES_MAX));
+            for(uint32_t Atlas = 0; Atlas < Lighting.BakedAtlasCount; ++Atlas)
+            {
+                std::snprintf(Lighting.BakedAtlases[Atlas], sizeof(Lighting.BakedAtlases[Atlas]), "%s", Bake->Atlases[Atlas].c_str());
+            }
+        }
+
         if(ComponentPool* Pool = BoundWorld->FindPool(DirectionalLightComponent::StaticType().ID))
         {
             const auto* Lights = static_cast<const DirectionalLightComponent*>(Pool->GetDenseData());
+            bool bBakedSun = false, bLiveSun = false;
             for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
             {
                 const DirectionalLightComponent& Light = Lights[Index];
                 if(!Light.bActive) { continue; }
+                if(Baked(Light.Owner)) { bBakedSun = true; continue; }
+                bLiveSun = true;
                 Lighting.LightDirection          = LightForward(PoseOf(Light.Owner).Rotation);
                 Lighting.LightColor              = Light.Color;
                 Lighting.LightIntensity          = Light.Intensity;
@@ -346,6 +371,11 @@ namespace RenderCore
                 Lighting.LightCascadeCount       = Light.CascadeCount;
                 Lighting.LightCascadeSplitLambda = Light.CascadeSplitLambda;
                 break;
+            }
+            if(bBakedSun && !bLiveSun)
+            {
+                Lighting.LightIntensity    = 0.0f;
+                Lighting.bLightCastShadows = 0;
             }
         }
 
@@ -376,7 +406,7 @@ namespace RenderCore
             for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
             {
                 const PointLightComponent& Light = Lights[Index];
-                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Radius <= 0.0f) { continue; }
+                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Radius <= 0.0f || Baked(Light.Owner)) { continue; }
                 RenderLocalLight Local;
                 Local.Type             = RLL_Point;
                 Local.Position         = PoseOf(Light.Owner).Position;
@@ -397,7 +427,7 @@ namespace RenderCore
             for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
             {
                 const SpotLightComponent& Light = Lights[Index];
-                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Range <= 0.0f) { continue; }
+                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Range <= 0.0f || Baked(Light.Owner)) { continue; }
                 const GameCore::TransformPose Pose = PoseOf(Light.Owner);
                 RenderLocalLight Local;
                 Local.Type             = RLL_Spot;
@@ -444,6 +474,64 @@ namespace RenderCore
             Lighting.Locals[Index] = Found[Order[Index]];
         }
         return Lighting;
+    }
+
+    void WorldBridge::UpdateBake()
+    {
+        const WorldLightingSettings& Settings = BoundWorld->GetSettings().Lighting;
+        const std::string Path = Settings.bBakedLighting ? Settings.BakedData : std::string();
+        const uint64_t Generation = BakedLightingCache::GetGeneration();
+        if(Path != BakePath || Generation != BakeGeneration)
+        {
+            BakePath       = Path;
+            BakeGeneration = Generation;
+            Bake           = Path.empty() ? nullptr : BakedLightingCache::Find(Path);
+            BakeEntries.clear();
+            if(Bake)
+            {
+                for(const BakedLightmapEntry& Each : Bake->Entries)
+                {
+                    EntityGuid Guid;
+                    Guid.Hi = Each.GuidHi;
+                    Guid.Lo = Each.GuidLo;
+                    if(Each.Atlas < RENDER_BAKED_ATLASES_MAX) { BakeEntries[Guid] = &Each; }
+                }
+                if(Bake->Atlases.size() > RENDER_BAKED_ATLASES_MAX)
+                {
+                    RENDERCORE_LOG_WARN("baked lighting '" + Path + "' has " + std::to_string(Bake->Atlases.size())
+                                        + " lightmaps; only " + std::to_string(RENDER_BAKED_ATLASES_MAX) + " are drawn")
+                }
+            }
+        }
+        bBakeActive = Bake != nullptr && GBakedLighting.GetBool();
+    }
+
+    RenderBakedDraw WorldBridge::BakedDrawFor(const Entity& InEntity, const EngineCore::Vector3& InPosition) const
+    {
+        RenderBakedDraw Out;
+        std::memset(static_cast<void*>(&Out), 0, sizeof(Out));   // compared bytewise in static records
+        if(!bBakeActive) { return Out; }
+
+        if(InEntity.IsStatic())
+        {
+            const auto Found = BakeEntries.find(InEntity.GetGuid());
+            if(Found != BakeEntries.end())
+            {
+                Out.Mode  = uint8_t(EMaterialBakedLighting::Lightmap);
+                Out.Atlas = Found->second->Atlas;
+                std::memcpy(Out.ScaleOffset, Found->second->ScaleOffset, sizeof(Out.ScaleOffset));
+                return Out;
+            }
+        }
+
+        BakedAmbientCube Cube;
+        const float Point[3] = { float(InPosition.GetX()), float(InPosition.GetY()), float(InPosition.GetZ()) };
+        if(Bake->Probes.Sample(Point, Cube))
+        {
+            Out.Mode = uint8_t(EMaterialBakedLighting::AmbientCube);
+            std::memcpy(Out.Cube, Cube.Faces, sizeof(Out.Cube));
+        }
+        return Out;
     }
 
     RenderPostProcess WorldBridge::BuildPostProcess(const RenderView& InView) const
@@ -536,6 +624,10 @@ namespace RenderCore
             StaticRecords.clear();
         }
 
+        /* Before the records, which carry what it says of each entity. */
+        UpdateBake();
+        const ComponentTypeID RenderType = RenderComponent::StaticType().ID;
+
         for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
         {
             if(!FindProxyFactory(Type))
@@ -611,6 +703,10 @@ namespace RenderCore
                     Record.Transform = RenderTransform();
                 }
                 Record.bStatic = OwnerEntity.IsStatic() ? 1 : 0;
+                if(Type == RenderType)
+                {
+                    Record.Baked = BakedDrawFor(OwnerEntity, Record.Transform.Position);
+                }
 
                 std::memcpy(Write, &Record, sizeof(ExtractHeader));
                 std::memcpy(Write + sizeof(ExtractHeader), Component, TypeInfo.SizeBytes);
@@ -655,6 +751,7 @@ namespace RenderCore
                     {
                         Proxy->SetStatic(Record->bStatic != 0);
                         Proxy->SetTransform(Record->Transform);
+                        Proxy->SetBakedDraw(Record->Baked);
                         Proxy->ApplyComponent(Read + sizeof(ExtractHeader));
                         Proxy->MarkChanged();
                     }

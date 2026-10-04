@@ -15,12 +15,14 @@
 #include <Material.glsl>
 
 // Quads and the full-screen pass: position and UV. Meshes (GDICreateMesh)
-// add the normal at 8 and the colour at 9 -- 2-7 belong to instanced quads.
+// add the normal at 8, the colour at 9 and the lightmap UVs (UV1) at 10 --
+// 2-7 belong to instanced quads.
 ATTRIB(0, in, vec3, InPosition)
 ATTRIB(1, in, vec2, InTexCoord)
 #if MATERIAL_VERTEX_MESH
 ATTRIB(8, in, vec3, InNormal)
 ATTRIB(9, in, vec4, InColor)
+ATTRIB(10, in, vec2, InUV1)
 #endif
 
 void main(void)
@@ -51,7 +53,14 @@ void main(void)
     // View row 2 is forward (LookAt), so view-space z is the depth in front of the eye.
     vec4 ViewPosition = ViewParameters.View * vec4(World, 1.0);
     vec4 Clip         = ViewParameters.Projection * ViewPosition;
-    CalculateInterpolants(Clip.xyz, InTexCoord, Inputs.WorldNormal, Inputs.Color, World, ViewPosition.z);
+    // As is: the shared vertex shaders have no material block, so the pixel
+    // stage takes it into the draw's atlas square (BakedLighting.glsl).
+#if MATERIAL_VERTEX_MESH
+    vec2 LightmapUV = InUV1;
+#else
+    vec2 LightmapUV = vec2(0.0);
+#endif
+    CalculateInterpolants(Clip.xyz, InTexCoord, Inputs.WorldNormal, Inputs.Color, World, ViewPosition.z, LightmapUV);
     gl_Position = Clip;
 #endif
 }

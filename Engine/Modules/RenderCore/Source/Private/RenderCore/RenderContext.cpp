@@ -131,6 +131,7 @@ namespace RenderCore
             float Output[4]             = { 0.0f, 1.0f, 0.0f, 0.0f };   // HDR, exposure multiplier, tone map operator
             float IBL[4]                = {};                           // on, probes, sky block weight (IBLCommon.glsl)
             float Probes[12][4]         = {};                           // 3 vec4s a probe
+            float Baked[4]              = {};                           // drawing with a bake, it has the sky (BakedLighting.glsl)
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -142,7 +143,8 @@ namespace RenderCore
         static_assert(offsetof(SceneUniforms, CascadeTexels) == 3584 && offsetof(SceneUniforms, Output) == 3600
                       && offsetof(SceneUniforms, IBL) == 3616 && offsetof(SceneUniforms, Probes) == 3632,
                       "Scene_CascadeTexels, Scene_Output, Scene_IBL and Scene_Probes come last");
-        static_assert(sizeof(SceneUniforms) == 3824 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, Baked) == 3824, "Scene_Baked comes after Scene_Probes");
+        static_assert(sizeof(SceneUniforms) == 3840 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -490,6 +492,7 @@ namespace RenderCore
             Desc.Normals     = OutSource->Normals.data();
             Desc.UV0         = OutSource->UV0.data();
             Desc.Colors      = OutSource->Colors.empty() ? nullptr : OutSource->Colors.data();
+            Desc.UV1         = OutSource->UV1.empty() ? nullptr : OutSource->UV1.data();
             Desc.NumVertices = OutSource->GetVertexCount();
             Desc.Indices     = OutSource->Indices.data();
             Desc.NumIndices  = uint32_t(OutSource->Indices.size());
@@ -702,6 +705,21 @@ namespace RenderCore
         uint32_t            IBLProbeCount = 0;
         bool                bIBLSky = false;
         bool                bForceSkyBackground = false;
+
+        /* Lighting's lightmap InAtlas (RenderLighting::BakedAtlases), point
+         * sampled and clamped: RGBE, which BakedLighting.glsl filters itself. */
+        GDITextureResource* LightmapTexture(const uint32_t InAtlas)
+        {
+            if(InAtlas >= Lighting.BakedAtlasCount || InAtlas >= RENDER_BAKED_ATLASES_MAX) { return nullptr; }
+            MaterialTexture Lightmap;
+            Lightmap.Slot    = 0;
+            Lightmap.Path    = std::string(Lighting.BakedAtlases[InAtlas], strnlen(Lighting.BakedAtlases[InAtlas], sizeof(Lighting.BakedAtlases[InAtlas])));
+            Lightmap.bFilter = true;
+            Lightmap.Filter  = ETextureFilter::Nearest;
+            Lightmap.bWrap   = true;
+            Lightmap.Wrap    = ETextureWrap::Clamp;
+            return Lightmap.Path.empty() ? nullptr : FindTexture(Lightmap);
+        }
 
         GDITextureResource* IBLAtlasTexture() const
         {
@@ -927,6 +945,25 @@ namespace RenderCore
             const float Tint[4] = { InTint.Rf(), InTint.Gf(), InTint.Bf(), InTint.Af() };
             std::memcpy(Block.data(), Tint, sizeof(Tint));
 
+            /* The draw's baked lighting, in the engine's bytes (MaterialDescription.h):
+             * written every draw, as the tint is, so the last draw's never lingers. */
+            const RenderBakedDraw* Baked = InItem && InItem->Baked && Lighting.bBaked ? InItem->Baked : nullptr;
+            const bool bLightmap = Baked && Baked->Mode == uint8_t(EMaterialBakedLighting::Lightmap)
+                                && Baked->Atlas < Lighting.BakedAtlasCount;
+            const bool bCube     = Baked && Baked->Mode == uint8_t(EMaterialBakedLighting::AmbientCube);
+            if(Block.size() >= MATERIAL_ENGINE_BLOCK_BYTES)
+            {
+                float Engine[(MATERIAL_ENGINE_BLOCK_BYTES - MATERIAL_BLOCK_LIGHTMAP_OFFSET) / sizeof(float)] = {};
+                if(bLightmap) { std::memcpy(Engine, Baked->ScaleOffset, sizeof(Baked->ScaleOffset)); }
+                Engine[4] = bLightmap ? float(EMaterialBakedLighting::Lightmap)
+                          : (bCube ? float(EMaterialBakedLighting::AmbientCube) : 0.0f);
+                if(bCube)
+                {
+                    for(int Face = 0; Face < 6; ++Face) { std::memcpy(&Engine[8 + Face * 4], Baked->Cube[Face], sizeof(Baked->Cube[Face])); }
+                }
+                std::memcpy(Block.data() + MATERIAL_BLOCK_LIGHTMAP_OFFSET, Engine, sizeof(Engine));
+            }
+
             const std::vector<uint8_t>& Upload = BlockWithOverrides(InMaterial, InItem);
             GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, Upload.data(), uint(Upload.size()));
             GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
@@ -941,10 +978,20 @@ namespace RenderCore
             {
                 GDISetMaterialTexture(Each.Slot, FindTexture(Each));
             }
-            /* A forward Lit material's probe atlas: slot 0, its own outside PostProcess (MaterialTemplate_PS.glsl). */
+            /* Slot 0, its own outside PostProcess (MaterialTemplate_PS.glsl): a Base
+             * Pass material's lightmap, a forward Lit material's probe atlas. */
             if(InMaterial.Description.Domain != EMaterialDomain::PostProcess && InMaterial.Description.Shading == EMaterialShading::Lit)
             {
-                GDISetMaterialTexture(0, Scene.IBL[0] > 0.5f ? IBLAtlasTexture() : nullptr);
+                const bool bBasePass = InMaterial.Description.Domain == EMaterialDomain::Opaque
+                                    || InMaterial.Description.Domain == EMaterialDomain::Masked;
+                if(bBasePass)
+                {
+                    GDISetMaterialTexture(0, bLightmap ? LightmapTexture(Baked->Atlas) : nullptr);
+                }
+                else
+                {
+                    GDISetMaterialTexture(0, Scene.IBL[0] > 0.5f ? IBLAtlasTexture() : nullptr);
+                }
             }
 
             ApplyDomainState(InMaterial.Description.Domain);
@@ -987,6 +1034,8 @@ namespace RenderCore
             PutColor(Scene.LightColor,  Lighting.LightColor, 1.0f);
             PutColor(Scene.SkyColor,    Lighting.SkyColor, Lighting.SkyIntensity);
             PutColor(Scene.GroundColor, Lighting.GroundColor, 1.0f);
+            Scene.Baked[0] = Lighting.bBaked ? 1.0f : 0.0f;
+            Scene.Baked[1] = Lighting.bBaked && Lighting.bBakedSky ? 1.0f : 0.0f;
 
             /* Clip back to world, for the Lighting stage: the inverse of
              * Projection * View, column-major as GDI uploads a mat4. */
@@ -1792,6 +1841,7 @@ namespace RenderCore
         Item.Mat       = &Found;
         Item.Overrides     = InOverrides.Items;
         Item.OverrideCount = InOverrides.Count;
+        Item.Baked         = InOverrides.Baked;
         Item.MaterialSlot  = 0;   // a quad draws slot 0
         P->Submit(Item, Impl::StageOf(&Found));
     }
@@ -1852,6 +1902,7 @@ namespace RenderCore
             Item.Count     = Sections.empty() ? 0u : Section.IndexCount;
             Item.Overrides     = InOverrides.Items;
             Item.OverrideCount = InOverrides.Count;
+            Item.Baked         = InOverrides.Baked;
             Item.MaterialSlot  = uint8_t(SlotIndex);   // the section's slot, whichever material it fell back to
             P->Submit(Item, Impl::StageOf(Chosen));
         }

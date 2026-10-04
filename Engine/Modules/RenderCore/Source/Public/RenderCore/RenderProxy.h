@@ -13,6 +13,7 @@
 #include "Public/Math/Matrix.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
+#include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderTypes.h"
 
 /*
@@ -102,6 +103,11 @@ namespace RenderCore
 
         void SetVisible(const bool bInVisible) { bVisible = bInVisible; }
 
+        /* Its entity's baked lighting this frame (RenderLighting.h), set by
+         * extraction; what a proxy that draws lit meshes passes on. */
+        void SetBakedDraw(const RenderBakedDraw& InBaked) { Baked = InBaked; }
+        const RenderBakedDraw& GetBakedDraw() const { return Baked; }
+
         /* The owner's mobility (GameCore's Mobility.h), set by extraction: a
          * static proxy's draws are captured once and replayed (RenderScene's
          * static draw lists) until its change serial moves. */
@@ -135,6 +141,7 @@ namespace RenderCore
         bool     bVisible     = true;
         bool     bStatic      = false;
         uint64_t ChangeSerial = 0;
+        RenderBakedDraw Baked;
     };
 
     /*

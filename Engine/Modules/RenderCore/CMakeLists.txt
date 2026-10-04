@@ -70,6 +70,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/ReflectionProbeComponent.cpp
         Source/Private/RenderCore/AssetFileCommon.h
         Source/Private/RenderCore/MeshAsset.cpp
+        Source/Private/RenderCore/BakedLightingAsset.cpp
         Source/Private/RenderCore/TextureAsset.cpp
         Source/Private/RenderCore/RenderTargetAsset.cpp
         Source/Private/RenderCore/SceneCapture.cpp
@@ -91,6 +92,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RenderScene.h
         Source/Public/RenderCore/AssetImportInfo.h
         Source/Public/RenderCore/MeshAsset.h
+        Source/Public/RenderCore/BakedLightingAsset.h
         Source/Public/RenderCore/TextureAsset.h
         Source/Public/RenderCore/TextureCompression.h
         Source/Public/RenderCore/RenderTargetAsset.h

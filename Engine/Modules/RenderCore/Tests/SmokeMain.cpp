@@ -953,8 +953,8 @@ static void TestMaterials()
         Expect(GMaterialFallbacks == 1, "and warned about once, not every frame");
 
         std::ofstream(Root / "Materials" / "SmokeGlow.material")
-            << "# a test material\nNimbleMaterial 2\nDomain Translucent\nShading Unlit\nBlockSize 48\n"
-               "Param Tint vec3 32 1 0.5 0.25 0\n";
+            << "# a test material\nNimbleMaterial 3\nDomain Translucent\nShading Unlit\nBlockSize 176\n"
+               "Param Tint vec3 160 1 0.5 0.25 0\n";
         Rend.ReloadMaterial("SmokeGlow");
         const uint64_t LoadedDraws = DrawFrame();
         Expect(GMaterialLoads == 1, "ReloadMaterial makes the next draw read the material afresh");
@@ -993,42 +993,47 @@ static void TestMaterials()
     std::filesystem::remove_all(Root, Ignored);
 }
 
-/* .material v2, the material block, permutation names, the shader cache and
+/* .material v3, the material block, permutation names, the shader cache and
  * the layered provider it mounts on -- no renderer needed. */
 static void TestMaterialRuntime()
 {
     std::printf("[material runtime]\n");
 
-    // --- .material v2 -------------------------------------------------------------
+    // --- .material v3 -------------------------------------------------------------
     MaterialDescription Desc;
     std::string Error;
-    const char* Wave = "# generated\nNimbleMaterial 2\nDomain Masked\nShading Lit\nTwoSided 1\nClipValue 0.25\n"
-                       "MaxOffset 2\nHasOffset 1\nBlockSize 48\nParam Color vec3 32 0.2 0.6 1 0\n"
-                       "Param Height float 44 0.5 0 0 0\nSomeFutureLine 1 2 3\n";
-    Expect(ParseMaterialDescription(Wave, Desc, Error), "a version 2 .material parses");
+    const char* Wave = "# generated\nNimbleMaterial 3\nDomain Masked\nShading Lit\nTwoSided 1\nClipValue 0.25\n"
+                       "MaxOffset 2\nHasOffset 1\nBlockSize 176\nParam Color vec3 160 0.2 0.6 1 0\n"
+                       "Param Height float 172 0.5 0 0 0\nSomeFutureLine 1 2 3\n";
+    Expect(ParseMaterialDescription(Wave, Desc, Error), "a version 3 .material parses");
     Expect(Desc.Domain == EMaterialDomain::Masked && Desc.Shading == EMaterialShading::Lit && Desc.bTwoSided
-           && Desc.bHasOffset && Desc.MaxOffset == 2.0f && Desc.ClipValue == 0.25f && Desc.BlockSize == 48,
+           && Desc.bHasOffset && Desc.MaxOffset == 2.0f && Desc.ClipValue == 0.25f && Desc.BlockSize == 176,
            "its header lines are read");
     const MaterialParameter* Height = Desc.FindParameter("Height");
-    Expect(Desc.Parameters.size() == 2 && Height && Height->Offset == 44 && Height->Type == "float" && Height->Default[0] == 0.5f,
+    Expect(Desc.Parameters.size() == 2 && Height && Height->Offset == 172 && Height->Type == "float" && Height->Default[0] == 0.5f,
            "its parameters keep their offsets and defaults");
 
     std::vector<uint8_t> Block;
     BuildMaterialBlock(Desc, EngineCore::Color(255, 0, 0, 255), Block);
-    float Read[12] = {};
-    if(Block.size() == 48) { std::memcpy(Read, Block.data(), sizeof(Read)); }
-    Expect(Block.size() == 48 && Read[0] == 1.0f && Read[1] == 0.0f && Read[3] == 1.0f && Read[4] == 0.25f && Read[5] == 1.0f
-           && Read[8] == 0.2f && Read[10] == 1.0f && Read[11] == 0.5f,
+    float Read[44] = {};
+    if(Block.size() == 176) { std::memcpy(Read, Block.data(), sizeof(Read)); }
+    bool bNoBake = true;
+    for(int Index = 8; Index < 40; ++Index) { bNoBake &= Read[Index] == 0.0f; }
+    Expect(Block.size() == 176 && Read[0] == 1.0f && Read[1] == 0.0f && Read[3] == 1.0f && Read[4] == 0.25f && Read[5] == 1.0f
+           && Read[40] == 0.2f && Read[42] == 1.0f && Read[43] == 0.5f,
            "the block is the tint, clip value and two-sided flag, then each default at its offset");
+    Expect(bNoBake, "the engine's baked lighting bytes start empty: no bake (MaterialDescription.h)");
 
-    Expect(!ParseMaterialDescription("NimbleMaterial 1\nParam Tint 0 vec3 1 1 1 0\n", Desc, Error)
-           && Error.find("recompile") != std::string::npos, "a version 1 .material is refused, asking for a recompile");
-    Expect(!ParseMaterialDescription("NimbleMaterial 2\nBlockSize 32\nParam X vec4 32 0 0 0 0\n", Desc, Error),
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nParam Tint vec3 32 1 1 1 0\n", Desc, Error)
+           && Error.find("recompile") != std::string::npos, "a version 2 .material is refused, asking for a recompile");
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nBlockSize 160\nParam X vec4 160 0 0 0 0\n", Desc, Error),
            "a parameter outside the block is refused");
-    Expect(!ParseMaterialDescription("NimbleMaterial 2\nDomain Sideways\n", Desc, Error), "an unknown domain is refused");
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nBlockSize 176\nParam X vec4 32 0 0 0 0\n", Desc, Error),
+           "a parameter over the engine's bytes is refused");
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nDomain Sideways\n", Desc, Error), "an unknown domain is refused");
 
     // --- Texture lines: what a Texture Sample writes -----------------------------------
-    const char* Textured = "NimbleMaterial 2\nBlockSize 32\n"
+    const char* Textured = "NimbleMaterial 3\nBlockSize 160\n"
                            "Texture 1 Default Default Content/Textures/Brick.nmtexture\n"
                            "Texture 2 Nearest Clamp Content/Textures/Height Map.nmtexture\r\n"
                            "Texture 3 Linear Mirror Content/Water.nmtexture\n";
@@ -1046,11 +1051,11 @@ static void TestMaterialRuntime()
         Expect(Water.bFilter && Water.Filter == ETextureFilter::Linear && Water.bWrap && Water.Wrap == ETextureWrap::Mirror,
                "Linear and Mirror are read too");
     }
-    Expect(!ParseMaterialDescription("NimbleMaterial 2\nTexture 0 Default Default Content/A.nmtexture\n", Desc, Error)
-           && !ParseMaterialDescription("NimbleMaterial 2\nTexture 8 Default Default Content/A.nmtexture\n", Desc, Error),
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nTexture 0 Default Default Content/A.nmtexture\n", Desc, Error)
+           && !ParseMaterialDescription("NimbleMaterial 3\nTexture 8 Default Default Content/A.nmtexture\n", Desc, Error),
            "slot 0 (a PostProcess scene's) and slots past 7 are refused");
-    Expect(!ParseMaterialDescription("NimbleMaterial 2\nTexture 1 Blurry Default Content/A.nmtexture\n", Desc, Error)
-           && !ParseMaterialDescription("NimbleMaterial 2\nTexture 1 Default Default\n", Desc, Error),
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nTexture 1 Blurry Default Content/A.nmtexture\n", Desc, Error)
+           && !ParseMaterialDescription("NimbleMaterial 3\nTexture 1 Default Default\n", Desc, Error),
            "an unknown sampler setting, or no path, is refused");
 
     // --- Permutation names: what cook_material_graphs.py writes ---------------------
@@ -3740,7 +3745,7 @@ static void TestRenderStages()
     const auto WriteMaterial = [&](const char* InName, const char* InDomain, const char* InShading, const char* InExtra)
     {
         std::ofstream(Root / "Materials" / (std::string(InName) + ".material"))
-            << "NimbleMaterial 2\nDomain " << InDomain << "\nShading " << InShading << "\nBlockSize 32\n" << InExtra;
+            << "NimbleMaterial 3\nDomain " << InDomain << "\nShading " << InShading << "\nBlockSize 160\n" << InExtra;
     };
     WriteMaterial("LitOpaque",   "Opaque",      "Lit",   "");
     WriteMaterial("UnlitMasked", "Masked",      "Unlit", "");
@@ -3750,7 +3755,7 @@ static void TestRenderStages()
     WriteMaterial("Post",        "PostProcess", "Unlit", "");
     WriteMaterial("Reach",       "Opaque",      "Lit",   "MaxOffset 5\nHasOffset 1\n");
     std::filesystem::create_directories(Root / "Props", Ignored);   // a graph in another folder: Props/Crate.material.nmgraph
-    std::ofstream(Root / "Props" / "Crate.material") << "NimbleMaterial 2\nDomain Opaque\nShading Lit\nBlockSize 32\n";
+    std::ofstream(Root / "Props" / "Crate.material") << "NimbleMaterial 3\nDomain Opaque\nShading Lit\nBlockSize 160\n";
 
     FilesystemProvider Provider(Root.generic_string());
     IFileProvider* PreviousProvider = GetFileProvider();
@@ -3885,6 +3890,7 @@ static void TestEngineMeshes()
         { "Engine/Content/Meshes/Sphere.nmmesh", 561, 960, -0.5f, 0.5f },
         { "Engine/Content/Meshes/Plane.nmmesh",  289, 512,  0.0f, 0.0f },
         { "Engine/Content/Meshes/Cylinder.nmmesh", 132, 128, -0.5f, 0.5f },
+        { "Engine/Content/Meshes/Capsule.nmmesh",  594, 1024, -1.0f, 1.0f },
     };
     for(const Expected& Each : Meshes)
     {
@@ -3927,6 +3933,10 @@ static void TestEngineMeshes()
             bFacing &= Area < 1e-12f || Face[0] * Normal[0] + Face[1] * Normal[1] + Face[2] * Normal[2] > 0.0f;
         }
         Expect(bUnitNormals && bUVsInRange, (std::string(Each.Path) + " has unit normals and 0-1 UVs").c_str());
+
+        bool bUV1InRange = Mesh.UV1.size() == size_t(Mesh.GetVertexCount()) * 2;
+        for(size_t At = 0; bUV1InRange && At < Mesh.UV1.size(); ++At) { bUV1InRange &= Mesh.UV1[At] >= 0.0f && Mesh.UV1[At] <= 1.0f; }
+        Expect(bUV1InRange, (std::string(Each.Path) + " has lightmap UVs (UV1) in 0-1").c_str());
         Expect(bFacing, (std::string(Each.Path) + " winds every triangle to face its normals").c_str());
     }
 

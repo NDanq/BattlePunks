@@ -25,6 +25,7 @@ namespace
     constexpr uint32_t TAG_WORLD     = EngineCore::MakeArchiveTag('W','R','L','D');
     constexpr uint32_t TAG_COMPONENT = EngineCore::MakeArchiveTag('C','M','P','T');
     constexpr uint32_t TAG_DATA      = EngineCore::MakeArchiveTag('D','A','T','A');
+    constexpr uint32_t TAG_SETTINGS  = EngineCore::MakeArchiveTag('W','S','E','T');   // optional, after the components
 
     /* The entity table (index, GUID, name), a parent index per entity, the
      * prefab instance table, then the component chunks. */
@@ -279,6 +280,12 @@ namespace
             Ar.CloseChunk();
         }
 
+        /* Last, so a build from before it stops at it as at any non-CMPT tag. */
+        uint16_t SettingsVersion = 1;
+        Ar.OpenChunk(TAG_SETTINGS, SettingsVersion);
+        SerializeWorldSettings(Ar, InWorld.GetSettings());
+        Ar.CloseChunk();
+
         Ar.CloseChunk();
         return !Ar.HasError();
     }
@@ -429,6 +436,14 @@ namespace
 
             Ar.CloseChunk();
             if(Ar.HasError()) { break; }
+        }
+
+        /* A world saved before WSET keeps the defaults. */
+        uint16_t SettingsVersion = 0;
+        if(!Ar.HasError() && Ar.PeekChunkTag() == TAG_SETTINGS && Ar.OpenChunk(TAG_SETTINGS, SettingsVersion))
+        {
+            SerializeWorldSettings(Ar, InWorld.GetSettings());
+            Ar.CloseChunk();
         }
 
         Ar.CloseChunk();

@@ -59,6 +59,24 @@ namespace RenderCore
         float    DistanceScale     = 1.0f;    // multiplies the sun's ShadowDistance
     };
 
+    /* What a world's bake holds of its lightmaps, at most (the baker refuses more). */
+    constexpr uint32_t RENDER_BAKED_ATLASES_MAX = 8;
+
+    /*
+     * One entity's baked lighting, as WorldBridge works it out each frame
+     * from the world's bake (BakedLightingAsset.h) and carries to its proxy:
+     * its lightmap's square, or the light probes' blend where it stands.
+     * What MaterialDescription.h's engine bytes and BakedLighting.glsl take.
+     */
+    struct RenderBakedDraw
+    {
+        uint8_t  Mode  = 0;               // EMaterialBakedLighting: 0 none, 1 lightmap, 2 ambient cube
+        uint8_t  Pad[3] = {};
+        uint32_t Atlas = 0;               // Lightmap: RenderLighting::BakedAtlases' index
+        float    ScaleOffset[4] = {};     // Lightmap: UV1 * xy + zw
+        float    Cube[6][3] = {};         // AmbientCube: +X -X +Y -Y +Z -Z, linear
+    };
+
     struct RenderLighting
     {
         /* The direction light travels, world space; need not be unit length.
@@ -97,6 +115,15 @@ namespace RenderCore
         uint32_t             LocalCount = 0;
 
         RenderShadowSettings Shadows;
+
+        /* Baked lighting (RENDERPIPELINE.md, "Baked lighting"): whether this
+         * view draws with the world's bake -- its static lights then left
+         * out above -- whether that bake holds the sky, and its lightmaps by
+         * RenderBakedDraw::Atlas (runtime-relative .nmtexture). */
+        uint8_t              bBaked    = 0;
+        uint8_t              bBakedSky = 0;
+        uint32_t             BakedAtlasCount = 0;
+        char                 BakedAtlases[RENDER_BAKED_ATLASES_MAX][128] = {};   // RENDER_MATERIAL_PATH_MAX
     };
 
     /* The frame's post processing: every Post Process volume the camera is

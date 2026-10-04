@@ -161,8 +161,18 @@ void VKPipelineCache::GetVertexInputState(
         OutAttribs[3].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
         OutAttribs[3].offset   = 0;
 
-        OutBindingCount = 4;
-        OutAttribCount  = 4;
+        // Binding 4 / location 10: vec2 UV1 (lightmap UVs), per vertex.
+        OutBindings[4].binding   = 4;
+        OutBindings[4].stride    = sizeof(float) * 2;
+        OutBindings[4].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+        OutAttribs[4].location = 10;
+        OutAttribs[4].binding  = 4;
+        OutAttribs[4].format   = VK_FORMAT_R32G32_SFLOAT;
+        OutAttribs[4].offset   = 0;
+
+        OutBindingCount = 5;
+        OutAttribCount  = 5;
         return;
     }
 

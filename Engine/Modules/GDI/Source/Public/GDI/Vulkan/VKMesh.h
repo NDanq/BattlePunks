@@ -101,6 +101,8 @@ private:
     VkDeviceMemory       NormalMemory    = VK_NULL_HANDLE;
     VkBuffer             VertexColorBuffer = VK_NULL_HANDLE;   // indexed only; binding 3, location 9
     VkDeviceMemory       VertexColorMemory = VK_NULL_HANDLE;
+    VkBuffer             UV1Buffer       = VK_NULL_HANDLE;     // indexed only; binding 4, location 10
+    VkDeviceMemory       UV1Memory       = VK_NULL_HANDLE;
     VkBuffer             IndexBuffer     = VK_NULL_HANDLE;
     VkDeviceMemory       IndexMemory     = VK_NULL_HANDLE;
 

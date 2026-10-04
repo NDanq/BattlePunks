@@ -429,9 +429,10 @@ namespace EditorContent
 
     QString MeshImportOptions::ToSettings() const
     {
-        return QStringLiteral("Scale=%1\nConvertCoordinates=%2\nGenerateNormals=%3\nCombineMeshes=%4\nImportTextures=%5\n")
+        return QStringLiteral("Scale=%1\nConvertCoordinates=%2\nGenerateNormals=%3\nCombineMeshes=%4\nImportTextures=%5\n"
+                              "GenerateLightmapUVs=%6\n")
                .arg(double(Scale)).arg(int(bConvertCoordinates)).arg(int(bGenerateNormals))
-               .arg(int(bCombineMeshes)).arg(int(bImportTextures));
+               .arg(int(bCombineMeshes)).arg(int(bImportTextures)).arg(int(bGenerateLightmapUVs));
     }
 
     MeshImportOptions MeshImportOptions::FromSettings(const QString& InSettings)
@@ -445,6 +446,7 @@ namespace EditorContent
         Out.bGenerateNormals    = ReadBool(Map, QStringLiteral("GenerateNormals"), Out.bGenerateNormals);
         Out.bCombineMeshes      = ReadBool(Map, QStringLiteral("CombineMeshes"), Out.bCombineMeshes);
         Out.bImportTextures     = ReadBool(Map, QStringLiteral("ImportTextures"), Out.bImportTextures);
+        Out.bGenerateLightmapUVs = ReadBool(Map, QStringLiteral("GenerateLightmapUVs"), Out.bGenerateLightmapUVs);
         return Out;
     }
 

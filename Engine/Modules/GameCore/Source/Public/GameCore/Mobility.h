@@ -18,6 +18,9 @@ namespace GameCore
      *            arrive, as EventsOnly), and the renderer keeps its draws in
      *            a cached static list instead of rebuilding them each frame
      *            (RenderCore's RENDERPIPELINE.md, "Static draw lists").
+     *            With baked lighting on (WorldSettings.h), a static light or
+     *            Render component is what Build > Bake Lightmaps bakes, and
+     *            the renderer then draws it from the bake ("Baked lighting").
      *
      * Tools may still move a static entity (the editor does): the renderer
      * notices a changed transform or component and rebuilds that entity's

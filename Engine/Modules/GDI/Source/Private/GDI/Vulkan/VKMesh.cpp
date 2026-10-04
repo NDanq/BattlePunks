@@ -212,6 +212,19 @@ void VKMesh::InitResource()
             return;
         }
     }
+    if(RenderData.UV1 && IsIndexed())
+    {
+        const VkDeviceSize UV1Size = static_cast<VkDeviceSize>(NumActualVerts * 2) * sizeof(float);
+        if(!CreateBuffer(UV1Size,
+                         VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+                         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                         UV1Buffer, UV1Memory)
+           || !UploadBufferData(UV1Buffer, RenderData.UV1, UV1Size))
+        {
+            Release();
+            return;
+        }
+    }
     if(IsIndexed())
     {
         const VkDeviceSize IndexSize = static_cast<VkDeviceSize>(RenderData.NumIndices) * sizeof(uint32_t);
@@ -329,6 +342,7 @@ void VKMesh::Release()
     DestroyOrDefer(IndexBuffer,    IndexMemory);
     DestroyOrDefer(NormalBuffer,   NormalMemory);
     DestroyOrDefer(VertexColorBuffer, VertexColorMemory);
+    DestroyOrDefer(UV1Buffer,      UV1Memory);
     DestroyOrDefer(TexCoordBuffer, TexCoordMemory);
     DestroyOrDefer(PositionBuffer, PositionMemory);
 
@@ -366,14 +380,14 @@ void VKMesh::Draw()
 
     if(IndexBuffer != VK_NULL_HANDLE)
     {
-        // Vertex layout 2 (VKPipelineCache): normals at binding 2, colours at 3.
+        // Vertex layout 2 (VKPipelineCache): normals at binding 2, colours at 3, UV1 at 4.
         uint32_t First = 0, Count = 0;
         GetClampedDrawRange(First, Count);
-        if(Count == 0 || NormalBuffer == VK_NULL_HANDLE || VertexColorBuffer == VK_NULL_HANDLE) return;
+        if(Count == 0 || NormalBuffer == VK_NULL_HANDLE || VertexColorBuffer == VK_NULL_HANDLE || UV1Buffer == VK_NULL_HANDLE) return;
 
-        const VkBuffer     MeshBuffers[2] = { NormalBuffer, VertexColorBuffer };
-        const VkDeviceSize MeshOffsets[2] = { 0, 0 };
-        vkCmdBindVertexBuffers(Cmd, 2, 2, MeshBuffers, MeshOffsets);
+        const VkBuffer     MeshBuffers[3] = { NormalBuffer, VertexColorBuffer, UV1Buffer };
+        const VkDeviceSize MeshOffsets[3] = { 0, 0, 0 };
+        vkCmdBindVertexBuffers(Cmd, 2, 3, MeshBuffers, MeshOffsets);
         vkCmdBindIndexBuffer(Cmd, IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
         vkCmdDrawIndexed(Cmd, Count, 1, First, 0, 0);
     }

@@ -27,7 +27,7 @@ class QPlainTextEdit;
  * the graph and output; material shaders are then checked in the background.
  *
  * Materials get a Preview dock rendered by the viewport's renderer -- on one
- * of the engine's meshes (Sphere, Box, Cylinder, Plane) to orbit, or a flat quad. Live
+ * of the engine's meshes (Sphere, Box, Cylinder, Capsule, Plane) to orbit, or a flat quad. Live
  * Preview (default on) cooks each clean recompile into the level too.
  */
 class GraphEditorTab : public QMainWindow

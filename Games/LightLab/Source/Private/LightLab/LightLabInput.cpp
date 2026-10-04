@@ -10,13 +10,15 @@
  *
  * Who reads it:
  *   Player   LightLabGame.cpp's LightLab.Fly system (Move*, Look*, Boost)
- *            and LightLabGameMode (CycleTechnique, ToggleShadows, ReleaseMouse)
+ *            and LightLabGameMode (CycleTechnique, ToggleShadows, ToggleBakedLighting,
+ *            ReleaseMouse)
  */
 NIMBLE_DEFINE_INPUT_MAP(Default)
 {
     Map.Action("Boost",          "LeftShift, RightShift, Gamepad.LeftStick");
     Map.Action("CycleTechnique", "T, Gamepad.North");
     Map.Action("ToggleShadows",  "F, Gamepad.West");
+    Map.Action("ToggleBakedLighting", "L, Gamepad.East");
     Map.Action("ReleaseMouse",   "Escape");
     Map.Action("CaptureMouse",   "Mouse.Left");
 

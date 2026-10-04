@@ -37,6 +37,7 @@
 NIMBLE_CONFIG_FLOAT(GEditorImportMeshScale,          "Editor", "ImportMeshScale",          100.0f, nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportConvertCoordinates, "Editor", "ImportConvertCoordinates", true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportGenerateNormals,    "Editor", "ImportGenerateNormals",    true,   nullptr);
+NIMBLE_CONFIG_BOOL (GEditorImportLightmapUVs,        "Editor", "ImportLightmapUVs",        true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportCombineMeshes,      "Editor", "ImportCombineMeshes",      true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportMeshTextures,       "Editor", "ImportMeshTextures",       true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportTextureSRGB,        "Editor", "ImportTextureSRGB",        true,   nullptr);
@@ -215,6 +216,10 @@ QWizardPage* ImportWizard::BuildMeshPage()
     GenNormals = new QCheckBox(QStringLiteral("Generate smooth normals where the file has none"), Page);
     GenNormals->setChecked(GEditorImportGenerateNormals.GetBool());
 
+    LightmapUVs = new QCheckBox(QStringLiteral("Generate lightmap UVs where the file has none (TEXCOORD_1)"), Page);
+    LightmapUVs->setToolTip(QStringLiteral("A static entity drawing this mesh is lit by Build > Bake Lightmaps only if it has them"));
+    LightmapUVs->setChecked(GEditorImportLightmapUVs.GetBool());
+
     Combine = new QCheckBox(QStringLiteral("Combine the scene into one mesh (off: one .nmmesh per glTF mesh)"), Page);
     Combine->setChecked(GEditorImportCombineMeshes.GetBool());
 
@@ -230,6 +235,7 @@ QWizardPage* ImportWizard::BuildMeshPage()
     Form->addRow(QStringLiteral("Scale"), MeshScale);
     Form->addRow(QString(), ConvertAxes);
     Form->addRow(QString(), GenNormals);
+    Form->addRow(QString(), LightmapUVs);
     Form->addRow(QString(), Combine);
     Form->addRow(QString(), MeshTextures);
     Form->addRow(QStringLiteral("Textures used"), ImageList);
@@ -384,6 +390,7 @@ void ImportWizard::SaveOptions()
     GEditorImportMeshScale.SetFloat(float(MeshScale->value()));
     GEditorImportConvertCoordinates.SetBool(ConvertAxes->isChecked());
     GEditorImportGenerateNormals.SetBool(GenNormals->isChecked());
+    GEditorImportLightmapUVs.SetBool(LightmapUVs->isChecked());
     GEditorImportCombineMeshes.SetBool(Combine->isChecked());
     GEditorImportMeshTextures.SetBool(MeshTextures->isChecked());
     GEditorImportTextureSRGB.SetBool(SRGB->isChecked());
@@ -400,6 +407,7 @@ void ImportWizard::StartImport()
     Mesh.Scale               = float(MeshScale->value());
     Mesh.bConvertCoordinates = ConvertAxes->isChecked();
     Mesh.bGenerateNormals    = GenNormals->isChecked();
+    Mesh.bGenerateLightmapUVs = LightmapUVs->isChecked();
     Mesh.bCombineMeshes      = Combine->isChecked();
     Mesh.bImportTextures     = MeshTextures->isChecked();
 

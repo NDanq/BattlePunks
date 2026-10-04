@@ -38,5 +38,7 @@ void main(void)
     float Roughness = clamp(Gb2.g, 0.04, 1.0);
     vec3  F0        = mix(vec3(0.08 * Gb2.b), Albedo, Metallic);
 
-    Output = vec4(IBL_Light(Atlas, Position, N, V, Albedo, Metallic, Roughness, F0, Occlusion), 1.0);
+    // A baked surface (alpha 0.75, BakedLighting.glsl) has its diffuse ambient already.
+    float Diffuse = Gb1.a < 0.875 ? 0.0 : 1.0;
+    Output = vec4(IBL_Light(Atlas, Position, N, V, Albedo, Metallic, Roughness, F0, Occlusion, Diffuse), 1.0);
 }

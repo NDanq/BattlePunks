@@ -20,6 +20,7 @@
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/TickPhase.h"
 #include "Public/GameCore/TransformMath.h"
+#include "Public/GameCore/WorldSettings.h"
 #include "Public/Math/Matrix.h"
 
 /* Forward-declared; Entity.h includes World.h itself, so this header cannot
@@ -346,6 +347,13 @@ namespace GameCore
         bool CallScriptMethod(EntityID InEntity, const char* InMethod, EntityID InArg);
 
         EventBus& GetEvents();
+
+        // === Settings ========================================================
+
+        /* What the world holds besides its entities (WorldSettings.h); saved
+         * and loaded with it. */
+        WorldSettings&       GetSettings();
+        const WorldSettings& GetSettings() const;
 
     private:
         /* Collision.cpp's state, kept in Impl. */

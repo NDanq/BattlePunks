@@ -18,6 +18,7 @@
 #include "Public/GameCore/EntityGuid.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/Mobility.h"
+#include "Public/GameCore/WorldSettings.h"
 #include "Public/GameCore/TransformMath.h"
 
 namespace GameCore { class World; class Entity; class PrefabAsset; }
@@ -171,6 +172,11 @@ public:
     /* Entity::SetName. */
     void RenameEntity(GameCore::EntityID InEntity, const QString& InName);
 
+    /* The edited World's settings (WorldSettings.h). Setting them is one undo
+     * step, refused while a World is borrowed (they are the edited one's). */
+    const GameCore::WorldSettings& GetWorldSettings() const;
+    bool SetWorldSettings(const GameCore::WorldSettings& InSettings);
+
     /* Entity::SetMobility (Static / Dynamic), one undo step. */
     void SetEntityMobility(GameCore::EntityID InEntity, GameCore::EMobility InMobility);
 
@@ -317,6 +323,10 @@ signals:
     void SelectionChanged(GameCore::EntityID InEntity);
 
     void PropertyEdited(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType);
+
+    /* SetWorldSettings changed them (also on undo/redo). A new or opened
+     * World brings its own: WorldReset. */
+    void WorldSettingsChanged();
 
     /* CanUndo / CanRedo / clean state may have changed. */
     void HistoryChanged();
