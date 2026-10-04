@@ -174,6 +174,11 @@ namespace
         pugi::xml_node Root = Doc.append_child("Entity");
         Root.append_attribute("Guid") = GuidString.c_str();
         Root.append_attribute("Name") = Handle.GetName();
+        /* Only when static, so a dynamic entity's file reads as it always has. */
+        if(Handle.IsStatic())
+        {
+            Root.append_attribute("Mobility") = MobilityName(EMobility::Static);
+        }
         /* Only when set, so a root entity's file reads as it always has. */
         if(const EntityID Parent = Handle.GetParent(); Parent.IsSet())
         {
@@ -321,6 +326,10 @@ namespace
             {
                 Element.append_attribute("Name") = Member.GetName();
             }
+            if(Template.Mobility != Member.GetMobility())
+            {
+                Element.append_attribute("Mobility") = MobilityName(Member.GetMobility());
+            }
 
             /* Every type either side has, by name. */
             std::vector<std::string> Names;
@@ -396,7 +405,7 @@ namespace
             }
 
             /* Nothing differs: no element at all. */
-            if(!Element.first_child() && !Element.attribute("Name"))
+            if(!Element.first_child() && !Element.attribute("Name") && !Element.attribute("Mobility"))
             {
                 Root.remove_child(Element);
             }
@@ -495,6 +504,12 @@ namespace
                 continue;
             }
             if(const pugi::xml_attribute Name = Item.attribute("Name")) { Member.SetName(Name.as_string()); }
+            if(const pugi::xml_attribute Mobility = Item.attribute("Mobility"))
+            {
+                EMobility Parsed;
+                if(ParseMobility(Mobility.as_string(), Parsed)) { Member.SetMobility(Parsed); }
+                else { GAMECORE_LOG_WARN("WorldPackage: '" + InEntry.File + "' has an unknown mobility '" + Mobility.as_string() + "'") }
+            }
             for(const pugi::xml_node Removed : Item.children("RemovedComponent"))
             {
                 if(const ComponentTypeInfo* Info = FindComponentType(Removed.attribute("Type").as_string()))
@@ -625,6 +640,12 @@ namespace
 
             const ::GameCore::Entity Created = InOutWorld.CreateEntity(EntityRoot.attribute("Name").as_string(), Guid);
             Loaded[Guid] = Created.GetID();
+            if(const pugi::xml_attribute Mobility = EntityRoot.attribute("Mobility"))
+            {
+                EMobility Parsed;
+                if(ParseMobility(Mobility.as_string(), Parsed)) { Created.SetMobility(Parsed); }
+                else { GAMECORE_LOG_WARN("WorldPackage: '" + File + "' has an unknown mobility '" + Mobility.as_string() + "'") }
+            }
 
             PendingEntity Entry;
             Entry.Id         = Created.GetID();

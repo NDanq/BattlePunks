@@ -94,6 +94,10 @@ namespace RenderCore
 
         /* Forget InPath (or everything, given an empty path). */
         static void Invalidate(const std::string& InPath);
+
+        /* Bumped by every Invalidate: anything that kept a mesh past a frame
+         * (the static draw lists) compares it to know to look again. */
+        static uint64_t GetGeneration();
     };
 }
 

@@ -194,6 +194,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/AABB.h
         Source/Public/GameCore/SpatialIndex.h
         Source/Public/GameCore/TickPhase.h
+        Source/Public/GameCore/Mobility.h
         Source/Public/GameCore/Delegate.h
         Source/Public/GameCore/EventBus.h
         Source/Public/GameCore/ComponentType.h

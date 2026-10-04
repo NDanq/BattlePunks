@@ -15,6 +15,7 @@
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/GameCoreAPI.h"
+#include "Public/GameCore/Mobility.h"
 #include "Public/GameCore/PrefabInstanceID.h"
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/TickPhase.h"
@@ -369,6 +370,8 @@ namespace GameCore
         EntityGuid         GetEntityGuid(EntityID InEntity) const;
         const char*        GetEntityName(EntityID InEntity) const;
         bool               SetEntityName(EntityID InEntity, const char* InName);
+        EMobility          GetEntityMobility(EntityID InEntity) const;
+        bool               SetEntityMobility(EntityID InEntity, EMobility InMobility);
 
         /* The hierarchy -- see Entity.h's section for the contract. */
         bool                  SetEntityParent(EntityID InEntity, EntityID InParent, bool bInKeepWorldTransform);

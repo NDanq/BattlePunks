@@ -2704,6 +2704,150 @@ static void TestInstanceScripts()
     Scripts.Shutdown();
 }
 
+/*
+ * Mobility (Mobility.h): an entity member, saved by every format, carried
+ * by prefabs (and overridden per instance), and what the World does with it.
+ */
+static void TestMobility()
+{
+    std::printf("[mobility]\n");
+
+    EMobility Parsed = EMobility::Dynamic;
+    Expect(ParseMobility("static", Parsed) && Parsed == EMobility::Static && ParseMobility("Dynamic", Parsed)
+           && Parsed == EMobility::Dynamic && !ParseMobility("Moving", Parsed), "ParseMobility reads both names, any case, nothing else");
+    Expect(std::string(MobilityName(EMobility::Static)) == "Static", "MobilityName");
+
+    World W;
+    const Entity Wall = W.CreateEntity("Wall");
+    Expect(Wall.GetMobility() == EMobility::Dynamic && !Wall.IsStatic(), "an entity starts dynamic");
+    Expect(Wall.SetMobility(EMobility::Static) && Wall.IsStatic(), "and can be made static");
+    W.DestroyEntity(Wall.GetID());
+    const Entity Reused = W.CreateEntity("Reused");
+    Expect(Reused.GetID().Index == Wall.GetID().Index && !Reused.IsStatic(), "a recycled slot starts dynamic again");
+
+    /* A static entity's bounds are fitted once, then left. */
+    {
+        const Entity Rock = W.CreateEntity("Rock");
+        Rock.AddComponent<TransformComponent>();
+        BoundsComponent Box;
+        Box.Local = AABB(Vector3(-1.0, -1.0, -1.0), Vector3(1.0, 1.0, 1.0));
+        Rock.AddComponent(Box);
+        Rock.SetMobility(EMobility::Static);
+        W.RefreshSpatialIndex();
+        Expect(Rock.GetComponent<BoundsComponent>()->World.Max.GetX() == 1.0, "a static entity is fitted on its first insert");
+        Rock.GetComponent<TransformComponent>()->Position = Vector3(100.0, 0.0, 0.0);
+        W.RefreshSpatialIndex();
+        Expect(Rock.GetComponent<BoundsComponent>()->World.Max.GetX() == 1.0, "and not refitted when it moves");
+        W.RefreshEntityBounds(Rock.GetID());
+        Expect(Rock.GetComponent<BoundsComponent>()->World.Max.GetX() == 101.0, "unless a tool refits it");
+    }
+
+    /* Binary worlds. */
+    std::vector<uint8_t> Saved;
+    {
+        World Out;
+        Out.CreateEntity("Floor").SetMobility(EMobility::Static);
+        Out.CreateEntity("Door");
+        Archive Writer = Archive::ForWriting();
+        Expect(SerializeWorld(Writer, Out) && !Writer.HasError(), "a world with a static entity saves");
+        Saved = Writer.GetBytes();
+    }
+    {
+        World In;
+        Archive Reader = Archive::ForReading(Saved);
+        Expect(SerializeWorld(Reader, In) && !Reader.HasError(), "and loads");
+        Expect(In.GetEntity(In.FindEntityByName("Floor")).IsStatic() && !In.GetEntity(In.FindEntityByName("Door")).IsStatic(),
+               "mobility survives the binary round trip");
+    }
+
+    /* Text worlds. */
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "Mobility";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Dir, Ignored);
+    std::filesystem::create_directories(Dir, Ignored);
+    {
+        World Out;
+        const Entity Floor = Out.CreateEntity("Floor");
+        Floor.SetMobility(EMobility::Static);
+        Out.CreateEntity("Door");
+        const std::string Path = (Dir / "Level.nmworld").generic_string();
+        Expect(SaveWorldPackage(Path.c_str(), Out), "a text world with a static entity saves");
+        char Guid[EntityGuid::STRING_BUFFER];
+        Floor.GetGuid().ToString(Guid);
+        std::ifstream File(Dir / "Level" / (std::string(Guid) + ".nmentity"));
+        const std::string Text((std::istreambuf_iterator<char>(File)), std::istreambuf_iterator<char>());
+        Expect(Text.find("Mobility=\"Static\"") != std::string::npos, "its file says Mobility=\"Static\"");
+        World In;
+        Expect(LoadWorldFile(Path.c_str(), In), "and loads");
+        Expect(In.GetEntity(In.FindEntityByName("Floor")).IsStatic() && !In.GetEntity(In.FindEntityByName("Door")).IsStatic(),
+               "mobility survives the text round trip");
+    }
+
+    /* Prefabs: captured, written both ways, spawned, overridden per instance. */
+    {
+        World Source;
+        const Entity Root = Source.CreateEntity("Root");
+        Root.AddComponent<TransformComponent>();
+        const Entity Slab = Source.CreateEntity("Slab");
+        Slab.AddComponent<TransformComponent>();
+        Slab.SetParent(Root.GetID(), false);
+        Slab.SetMobility(EMobility::Static);
+        PrefabAsset Asset;
+        Expect(CapturePrefab(Source, Root.GetID(), Asset), "a prefab with a static member captures");
+
+        const std::string TextPath = (Dir / "Slab.nmprefab").generic_string();
+        Expect(SavePrefabFile(TextPath.c_str(), Asset), "and saves as text");
+        PrefabAsset FromText;
+        Expect(LoadPrefabFile(TextPath.c_str(), FromText), "and loads");
+
+        Archive Writer = Archive::ForWriting();
+        SerializePrefab(Writer, Asset);
+        PrefabAsset FromBinary;
+        Archive Reader = Archive::ForReading(Writer.GetBytes());
+        Expect(SerializePrefab(Reader, FromBinary) && !Reader.HasError(), "and round-trips as binary");
+
+        for(const PrefabAsset* Each : { &Asset, &FromText, &FromBinary })
+        {
+            World Spawned;
+            const PrefabInstance Instance = Spawned.SpawnPrefab(*Each, TransformPose(), "Slab");
+            Expect(Instance.FindEntity("Slab").IsStatic() && !Instance.GetRoot().IsStatic(), "a spawned member keeps its mobility");
+        }
+
+        /* An instance whose member's mobility differs: an override in its file. */
+        World Level;
+        const PrefabInstance Placed = Level.SpawnPrefab(TextPath.c_str(), TransformPose(), "Slab");
+        Placed.FindEntity("Slab").SetMobility(EMobility::Dynamic);
+        const std::string LevelPath = (Dir / "WithSlab.nmworld").generic_string();
+        Expect(SaveWorldPackage(LevelPath.c_str(), Level), "a level with an overridden instance saves");
+        World Reloaded;
+        Expect(LoadWorldFile(LevelPath.c_str(), Reloaded), "and loads");
+        PrefabInstanceID Back;
+        Reloaded.ForEachInstance([](const PrefabInstanceID InInstance, void* InUserData)
+        {
+            *static_cast<PrefabInstanceID*>(InUserData) = InInstance;
+        }, &Back);
+        Expect(Back.IsSet() && !Reloaded.GetInstance(Back).FindEntity("Slab").IsStatic(), "a mobility override survives the load");
+    }
+
+    /* A static root's instance gets no phase ticks. */
+    {
+        const std::string Script = WriteTestScript("MobilityTick.lua",
+            "return { OnPrePhysics = function(self, dt) end }\n");
+        World Ticking;
+        ScriptEngine Scripts;
+        Scripts.Initialize();
+        Scripts.BindWorld(&Ticking);
+        const PrefabInstance Instance = Ticking.SpawnPrefab(MakeScriptedPrefab(Script, EPrefabTickMode::Tick), TransformPose(), "Mill");
+        Ticking.Tick(0.1f);
+        Expect(Ticking.GetTickingInstanceCount(TP_PrePhysics) == 1, "a dynamic instance ticks");
+        Instance.GetRoot().SetMobility(EMobility::Static);
+        Expect(Ticking.GetTickingInstanceCount(TP_PrePhysics) == 0, "making its root static takes it off the phase lists");
+        Instance.GetRoot().SetMobility(EMobility::Dynamic);
+        Expect(Ticking.GetTickingInstanceCount(TP_PrePhysics) == 1, "and dynamic again puts it back");
+        Scripts.Shutdown();
+    }
+}
+
 static void TestInstanceScriptDetails()
 {
     std::printf("[instance script details]\n");
@@ -3225,6 +3369,7 @@ int main()
     TestPrefabRecapture();
     TestPrefabFiles();
     TestInstanceScripts();
+    TestMobility();
     TestInstanceScriptDetails();
     TestPrefabWorldBinary();
 #if WITH_EDITOR

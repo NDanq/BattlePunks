@@ -314,6 +314,38 @@ passes run mid-frame, between the Base Pass and Shadows, so that only the
   that cannot sample depth, it is skipped. `Half[0..1]` are free again by the
   time Depth of Field uses them.
 
+### Static draw lists
+
+An entity with **Static** mobility (GameCore's `Mobility.h`) keeps its draws
+from frame to frame instead of rebuilding them:
+
+- **Extraction (game thread):** `WorldBridge::ExtractAndRender` builds a
+  static component's record (transform, mobility and component bytes) as
+  usual, but sends it only if it differs from the last one it sent for that
+  proxy. An editor edit, a tool's move or a mobility change goes through; an
+  unchanged static entity costs no copy, no command and no `ApplyComponent`.
+  A reimported mesh (`MeshAssetCache::GetGeneration`) sends every static
+  record once more, so bounds follow the new mesh.
+- **Proxies:** each applied record bumps the proxy's change serial
+  (`RenderProxy::MarkChanged`) and sets its mobility (`SetStatic`).
+- **Drawing (render thread):** for a static proxy, `RenderScene::Render`
+  captures what its `Draw` queues (`RenderContext::BeginCapture` /
+  `EndCapture`), and separately what its `DrawShadow` queues, the first frame
+  each is needed. Its cull padding is cached too. Every later frame the
+  captured commands are replayed (`SubmitCaptured`): depths recomputed for the
+  view, shadow commands aimed at the current shadow view. Culling still runs
+  per frame on the proxy's bounds.
+- **Invalidation:** a list is rebuilt when the proxy's change serial moves,
+  or when the context's content generation moves -- a material reloaded or
+  retired, a GPU mesh rebuilt, or a mesh reimported -- since the commands
+  hold `Material` and `GDIMesh` pointers.
+- **Stats:** `RenderStats::StaticProxiesDrawn` (last frame) and
+  `StaticListBuilds` (lifetime; flat while nothing static changes).
+
+Verified: the GPU smoke check draws a lit, shadowed scene static and dynamic
+pixel for pixel alike, and a static box moved by a tool lands exactly where a
+dynamic one does.
+
 ### Stat unit
 
 **Stats.Unit** (config var, off by default) draws frame, game thread and

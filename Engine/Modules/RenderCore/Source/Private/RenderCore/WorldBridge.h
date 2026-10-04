@@ -1,6 +1,10 @@
 #ifndef RENDERCORE_WORLDBRIDGE_H
 #define RENDERCORE_WORLDBRIDGE_H
 
+#include <cstdint>
+#include <unordered_map>
+#include <vector>
+
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/World.h"
@@ -70,6 +74,12 @@ namespace RenderCore
 
         RenderScene*    Scene = nullptr;
         GameCore::World* BoundWorld = nullptr;
+
+        /* A static component's last extraction record (header and bytes), by
+         * its proxy: unchanged, it is not sent again. Cleared when a mesh is
+         * reimported (MeshAssetCache's generation), so each proxy looks again. */
+        std::unordered_map<const void*, std::vector<uint8_t>> StaticRecords;
+        uint64_t                                             StaticMeshGeneration = 0;
 
         GameCore::DelegateHandle AddedHandle;
 

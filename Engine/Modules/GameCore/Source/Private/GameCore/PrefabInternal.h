@@ -32,6 +32,7 @@ namespace GameCore
         uint32_t                         LocalId  = PREFAB_NO_LOCAL_ID;
         uint32_t                         ParentId = PREFAB_NO_LOCAL_ID;
         std::string                      Name;
+        EMobility                        Mobility = EMobility::Dynamic;
         std::vector<PrefabComponentData> Components;   // sorted by type name
     };
 

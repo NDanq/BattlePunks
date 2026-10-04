@@ -156,7 +156,9 @@ void World::UpdateOverlaps()
                 const auto* B = static_cast<const CollisionComponent*>(GetComponentRaw(BId, CollisionType));
                 const auto* BBox = static_cast<const BoundsComponent*>(GetComponentRaw(BId, BoundsComponent::StaticType().ID));
                 if(!B || !B->bEnabled || !BBox || !LayersMeet(A, *B)) { continue; }
-                if(ABox->bStatic && BBox->bStatic) { continue; }
+                const bool bAStatic = ABox->bStatic || GetEntityMobility(AId) == EMobility::Static;
+                const bool bBStatic = BBox->bStatic || GetEntityMobility(BId) == EMobility::Static;
+                if(bAStatic && bBStatic) { continue; }
                 if(ABox->World.Overlaps(BBox->World)) { Now.push_back(MakePair(AId, BId)); }
             }
         }

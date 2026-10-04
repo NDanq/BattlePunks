@@ -490,6 +490,92 @@ static void TestStatUnit()
     Expect(FormatStatFrame(Times, false) == "GPU: not timed on this backend", "and a line saying so where the GPU is not timed");
 }
 
+/*
+ * Static draw lists: a static entity's proxy is extracted only when it
+ * changes, and drawn from a list captured once (RENDERPIPELINE.md). Null.
+ */
+static void TestStaticDrawLists()
+{
+    std::printf("[static draw lists]\n");
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null) for static draw lists");
+    if(!bInit)
+    {
+        return;
+    }
+    RegisterProxyType(TestComponent::StaticType().ID, &TestComponent_CreateProxy);
+
+    GameCore::World World;
+    const GameCore::Entity Wall = World.CreateEntity("Wall");
+    Wall.AddComponent<GameCore::TransformComponent>();
+    TestComponent Init;
+    Init.Value = 7;
+    Wall.AddComponent(Init);
+    Wall.AddComponent<RenderComponent>();
+    Rend.BindWorld(World);
+
+    uint64_t Frame = 1;
+    const auto Draw = [&]()
+    {
+        Rend.EndFrame(FrameInfo{Frame++, 0.016, EngineCore::Size(640, 360)});
+        Rend.WaitForPreviousFrame();
+    };
+    Draw();
+    Draw();
+
+    /* Dynamic: drawn and extracted every frame. */
+    GTestProxyStats = TestProxyStats();
+    Draw();
+    Draw();
+    Expect(GTestProxyStats.DrawCalls == 2 && GTestProxyStats.ApplyCalls == 2, "a dynamic proxy is extracted and drawn every frame");
+
+    /* Static: one record for the change, then nothing; one capture, replayed. */
+    Wall.SetMobility(GameCore::EMobility::Static);
+    Draw();
+    RenderStats After;
+    Rend.GetStats(After);
+    Expect(After.StaticProxiesDrawn == 1 && After.ProxiesCulledLastFrame == 1,
+           "the visible proxy is drawn from its static list (the empty quad is culled, static or not)");
+    GTestProxyStats = TestProxyStats();
+    const uint64_t Builds = After.StaticListBuilds;
+    RenderStats Before;
+    Rend.GetStats(Before);
+    for(int Each = 0; Each < 5; ++Each) { Draw(); }
+    RenderStats Steady;
+    Rend.GetStats(Steady);
+    Expect(GTestProxyStats.ApplyCalls == 0, "an unchanged static proxy is not extracted again");
+    Expect(GTestProxyStats.DrawCalls == 0, "nor asked to draw: its list is replayed");
+    Expect(Steady.StaticListBuilds == Builds, "and no list is rebuilt");
+    Expect(Steady.CommandsExecuted - Before.CommandsExecuted < 5 * 4, "frames with nothing static changed enqueue no extraction");
+
+    /* Moving it: one record, one rebuild. */
+    Wall.GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(10.0, 0.0, 0.0);
+    Draw();
+    Draw();
+    RenderStats Moved;
+    Rend.GetStats(Moved);
+    Expect(GTestProxyStats.ApplyCalls == 1 && GTestProxyStats.DrawCalls == 1, "a moved static proxy is extracted and captured once");
+    Expect(Moved.StaticListBuilds == Builds + 1, "its list rebuilt once");
+
+    /* An edited component, the same. */
+    Wall.GetComponent<TestComponent>()->Value = 8;
+    Draw();
+    Expect(GTestProxyStats.ApplyCalls == 2, "an edited static component is extracted again");
+
+    /* Dynamic again: every frame again. */
+    Wall.SetMobility(GameCore::EMobility::Dynamic);
+    GTestProxyStats = TestProxyStats();
+    Draw();
+    Draw();
+    RenderStats Back;
+    Rend.GetStats(Back);
+    Expect(GTestProxyStats.DrawCalls == 2 && Back.StaticProxiesDrawn == 0, "made dynamic, it is drawn every frame again");
+
+    Rend.UnbindWorld();
+    Rend.Shutdown();
+}
+
 static void TestRendererWithWorld()
 {
     std::printf("[renderer + world]\n");
@@ -2248,6 +2334,114 @@ static void TestStatFrameOnGpu()
 }
 
 /*
+ * Static draw lists on the GPU: a lit, shadowed scene made static draws the
+ * same pixels as dynamic, and a static box moved by a tool still moves.
+ */
+static void TestStaticDrawListsOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[static draw lists on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[static draw lists on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        RenderComponent FloorMesh;
+        std::snprintf(FloorMesh.Mesh, sizeof(FloorMesh.Mesh), "%s", "Engine/Content/Meshes/Plane.nmmesh");
+        const GameCore::Entity Floor = Placed("Floor", Vector3(), Vector3(3000.0, 1.0, 3000.0));
+        Floor.AddComponent(FloorMesh);
+        RenderComponent BoxMesh;
+        std::snprintf(BoxMesh.Mesh, sizeof(BoxMesh.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        const GameCore::Entity Box = Placed("Box", Vector3(0.0, 90.0, 0.0), Vector3(120.0, 120.0, 120.0));
+        Box.AddComponent(BoxMesh);
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Standard;
+        SunInit.ShadowDistance  = 3000.0f;
+        GameCore::Entity Sun = World.CreateEntity("Sun");
+        GameCore::TransformComponent SunAt;
+        SunAt.Rotation = Vector3(55.0, 90.0, 0.0);
+        Sun.AddComponent(SunAt);
+        Sun.AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                const uint8_t* A = InA.GetData() + InA.GetStride() * Y;
+                const uint8_t* B = InB.GetData() + InB.GetStride() * Y;
+                for(int X = 0; X < 256 * 4; X += 4)
+                {
+                    Count += (A[X] != B[X] || A[X + 1] != B[X + 1] || A[X + 2] != B[X + 2]) ? 1 : 0;
+                }
+            }
+            return Count;
+        };
+
+        EngineCore::Image Dynamic, Static, Moved, MovedDynamic;
+        const bool bDynamic = Capture(Dynamic);
+        Floor.SetMobility(GameCore::EMobility::Static);
+        Box.SetMobility(GameCore::EMobility::Static);
+        const bool bStatic = Capture(Static);
+        RenderStats Stats;
+        Rend.GetStats(Stats);
+        Expect(bDynamic && bStatic && Stats.StaticProxiesDrawn == 2, "the floor and box draw from static lists");
+        Expect(bDynamic && bStatic && Differing(Dynamic, Static) == 0, "and the frame is pixel for pixel the dynamic one, shadows and all");
+
+        Box.GetComponent<GameCore::TransformComponent>()->Position = Vector3(200.0, 90.0, 0.0);
+        const bool bMoved = Capture(Moved);
+        Box.SetMobility(GameCore::EMobility::Dynamic);
+        Floor.SetMobility(GameCore::EMobility::Dynamic);
+        const bool bMovedDynamic = Capture(MovedDynamic);
+        std::printf("    moved static box: %d pixels changed; vs dynamic %d\n", Differing(Static, Moved), Differing(Moved, MovedDynamic));
+        Expect(bMoved && Differing(Static, Moved) > 200, "a static box moved by a tool moves on screen");
+        Expect(bMoved && bMovedDynamic && Differing(Moved, MovedDynamic) == 0, "exactly where a dynamic one would be");
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
  * Bloom past the 8-bit scene colour: an Opaque Lit quad with emissive 50
  * (Sandbox's HotGlow) clips to white in the scene, but its G-buffer keeps the
  * rest (EncodeGBufferEmissive), and Bloom spreads it -- far wider than the
@@ -2951,6 +3145,7 @@ int main()
 
     TestRendererWithWorld();
     TestStatUnit();
+    TestStaticDrawLists();
     TestShadowSetup();
     TestLightComponents();
     TestPostProcessStack();
@@ -2963,6 +3158,7 @@ int main()
     TestPostProcessOnGpu();
     TestBloomHdrOnGpu();
     TestStatFrameOnGpu();
+    TestStaticDrawListsOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();

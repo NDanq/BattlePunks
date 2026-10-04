@@ -243,6 +243,13 @@ namespace RenderCore
          * their stage's policy; outside one they are issued at once. */
         bool       bDeferring = false;
         DrawPolicy Policies[size_t(ERenderStage::Count)];
+
+        /* BeginCapture's list: draws land here instead of the policies. */
+        std::vector<StagedDraw>* Capture = nullptr;
+
+        /* GetContentGeneration's own half: bumped when a material or GPU mesh
+         * a kept draw could point at is replaced or retired. */
+        uint64_t ContentGeneration = 0;
         uint32_t   StageDrawCounts[size_t(ERenderStage::Count)] = {};   // the last RenderSceneStages'
 
         /* DeferredLighting.fsh, loaded on first use; null if it cannot be (warned). */
@@ -392,6 +399,7 @@ namespace RenderCore
 
             delete Entry.Gpu;   // each backend defers the buffers past any frame still using them
             Entry.Gpu    = nullptr;
+            ++ContentGeneration;
             Entry.Source = OutSource;
             if(!OutSource)
             {
@@ -1184,6 +1192,11 @@ namespace RenderCore
         /* Into InStage's policy inside a scene; at once outside one. */
         void Submit(DrawCommand InItem, const ERenderStage InStage)
         {
+            if(Capture)
+            {
+                Capture->push_back({ InItem, InStage });
+                return;
+            }
             if(!bDeferring)
             {
                 Issue(InItem);
@@ -1284,6 +1297,7 @@ namespace RenderCore
         /* Retires every material and the shared vertex shaders. */
         void RetireMaterials()
         {
+            ++ContentGeneration;
             for(auto& Each : Materials)
             {
                 Material& M = Each.second;
@@ -1903,9 +1917,41 @@ namespace RenderCore
             Item.Overrides     = InOverrides.Items;
             Item.OverrideCount = InOverrides.Count;
             Item.MaterialSlot  = uint8_t(Index);
-            P->PolicyFor(ERenderStage::Shadows).Add(Item);
+            if(P->Capture) { P->Capture->push_back({ Item, ERenderStage::Shadows }); }
+            else           { P->PolicyFor(ERenderStage::Shadows).Add(Item); }
         }
         return true;
+    }
+
+    void RenderContext::BeginCapture(std::vector<StagedDraw>* InOut)
+    {
+        P->Capture = InOut;
+    }
+
+    void RenderContext::EndCapture()
+    {
+        P->Capture = nullptr;
+    }
+
+    void RenderContext::SubmitCaptured(const std::vector<StagedDraw>& InDraws, const int32_t InShadowView)
+    {
+        for(const StagedDraw& Each : InDraws)
+        {
+            if(Each.Stage == ERenderStage::Shadows)
+            {
+                if(InShadowView < 0) { continue; }
+                DrawCommand Item = Each.Item;
+                Item.ShadowView  = InShadowView;
+                P->PolicyFor(ERenderStage::Shadows).Add(Item);
+                continue;
+            }
+            P->Submit(Each.Item, Each.Stage);   // its depth, for this view
+        }
+    }
+
+    uint64_t RenderContext::GetContentGeneration() const
+    {
+        return P->ContentGeneration + MeshAssetCache::GetGeneration();
     }
 
     bool RenderContext::CanTimeGpu() const
@@ -2229,6 +2275,7 @@ namespace RenderCore
                 It = It->compare(0, Prefix.size(), Prefix) == 0 ? P->Warned.erase(It) : std::next(It);
             }
             Found = P->Materials.erase(Found);
+            ++P->ContentGeneration;
         }
     }
 

@@ -40,6 +40,14 @@ namespace RenderCore
         uint8_t                        MaterialSlot  = 0;
     };
 
+    /* A draw as a proxy queued it, kept with its stage: what a static draw
+     * list replays (RenderContext::BeginCapture). */
+    struct StagedDraw
+    {
+        DrawCommand  Item;
+        ERenderStage Stage = ERenderStage::BasePass;
+    };
+
     enum class EDrawSort : uint8_t
     {
         Submission,     // as queued

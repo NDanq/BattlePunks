@@ -312,7 +312,8 @@ namespace EditorHistory
     {
         EntityMembers Members;
         const GameCore::Entity E = InWorld.GetEntity(InEntity);
-        Members.Name = E.GetName();
+        Members.Name     = E.GetName();
+        Members.Mobility = E.GetMobility();
         return Members;
     }
 
@@ -333,6 +334,7 @@ namespace EditorHistory
         Snapshot.Guid                     = E.GetGuid();
         Snapshot.ParentGuid               = InWorld.GetEntity(E.GetParent()).GetGuid();
         Snapshot.Name                     = Members.Name;
+        Snapshot.Mobility                 = Members.Mobility;
         for(const ComponentTypeID Type : ComponentTypesOf(InWorld, InEntity))
         {
             Snapshot.Components.push_back(CaptureComponent(InWorld, InEntity, Type));
@@ -467,6 +469,7 @@ namespace EditorHistory
     EntityID RestoreEntityTree(World& InWorld, const EntitySnapshot& InSnapshot)
     {
         const GameCore::Entity E = InWorld.CreateEntity(InSnapshot.Name.c_str(), InSnapshot.Guid);
+        E.SetMobility(InSnapshot.Mobility);
         for(const ComponentSnapshot& Component : InSnapshot.Components)
         {
             RestoreComponent(InWorld, E.GetID(), Component);
@@ -531,6 +534,7 @@ namespace EditorHistory
                             const EntitySnapshot& InOriginal, GuidRemap& OutRemap)
         {
             const GameCore::Entity E = InWorld.CreateEntity(InSnapshot.Name.c_str(), InSnapshot.Guid);
+            E.SetMobility(InSnapshot.Mobility);
             OutRemap[InOldGuid] = E.GetID();
             for(size_t Index = 0; Index < InSnapshot.Children.size(); ++Index)
             {
@@ -687,6 +691,7 @@ namespace EditorHistory
         }
         const EntityMembers& Target = bInForward ? After : Before;
         Document.RenameEntity(Entity, QString::fromStdString(Target.Name));
+        Document.SetEntityMobility(Entity, Target.Mobility);
         Document.SetSelection(Entity);
     }
 

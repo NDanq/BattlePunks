@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDir>
 #include <QDropEvent>
 #include <QFileDialog>
@@ -238,7 +239,8 @@ void DetailsPanel::Rebuild()
     Rows.clear();
     Sections.clear();
     Arrays.clear();
-    NameEdit     = nullptr;
+    NameEdit      = nullptr;
+    MobilityCombo = nullptr;
     ShownEntity = Document.GetSelection();
     ShownTypes  = CollectComponentTypes(ShownEntity);
 
@@ -299,6 +301,24 @@ QWidget* DetailsPanel::BuildEntitySection(const EntityID InEntity)
     });
     Form->addRow(QStringLiteral("Name"), NameEdit);
 
+    // --- Mobility: Static entities are cached by the renderer, never ticked ---
+    MobilityCombo = new QComboBox(Content);
+    MobilityCombo->addItem(QStringLiteral("Dynamic"), int(GameCore::EMobility::Dynamic));
+    MobilityCombo->addItem(QStringLiteral("Static"),  int(GameCore::EMobility::Static));
+    MobilityCombo->setToolTip(QStringLiteral("Static: level geometry that never moves in play. Its draws are kept in the "
+                                             "renderer's static lists, its bounds are not refitted, and a prefab instance "
+                                             "rooted on it gets no phase ticks. Applies to every selected entity."));
+    MobilityCombo->setFocusPolicy(Qt::StrongFocus);
+    connect(MobilityCombo, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(MobilityCombo)
+        {
+            Document.SetEntitiesMobility(Document.GetSelectedEntities(),
+                                         GameCore::EMobility(MobilityCombo->itemData(InIndex).toInt()));
+        }
+    });
+    Form->addRow(QStringLiteral("Mobility"), MobilityCombo);
+
     // --- Prefab: what the entity's instance was placed from -------------------
     const GameCore::Entity Shown = Document.GetWorld().GetEntity(InEntity);
     if(Shown.IsInInstance())
@@ -348,6 +368,14 @@ void DetailsPanel::RefreshEntitySection()
     if(!NameEdit->hasFocus() && NameEdit->text() != Name)
     {
         NameEdit->setText(Name);
+    }
+    if(MobilityCombo)
+    {
+        const int Index = MobilityCombo->findData(int(E.GetMobility()));
+        if(Index >= 0 && MobilityCombo->currentIndex() != Index)
+        {
+            MobilityCombo->setCurrentIndex(Index);
+        }
     }
 }
 

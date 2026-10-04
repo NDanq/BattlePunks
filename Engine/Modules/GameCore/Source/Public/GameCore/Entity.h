@@ -67,6 +67,12 @@ namespace GameCore
         /* nullptr clears. False if not alive. Names need not be unique. */
         bool SetName(const char* InName) const { return OwningWorld && OwningWorld->SetEntityName(ID, InName); }
 
+        /* Static or Dynamic (Mobility.h); Dynamic if not alive. */
+        EMobility GetMobility() const { return OwningWorld ? OwningWorld->GetEntityMobility(ID) : EMobility::Dynamic; }
+        bool      IsStatic() const { return GetMobility() == EMobility::Static; }
+        /* False if not alive. */
+        bool SetMobility(EMobility InMobility) const { return OwningWorld && OwningWorld->SetEntityMobility(ID, InMobility); }
+
 
         // === Hierarchy ======================================================
         // Parent and children are members too. TransformComponent is LOCAL:

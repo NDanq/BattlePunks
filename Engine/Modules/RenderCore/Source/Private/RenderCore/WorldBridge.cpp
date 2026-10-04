@@ -1,4 +1,5 @@
 #include "Private/RenderCore/WorldBridge.h"
+#include "Public/RenderCore/MeshAsset.h"
 
 #include <algorithm>
 #include <cmath>
@@ -40,6 +41,7 @@ namespace RenderCore
         {
             RenderProxyHandle Handle;
             RenderTransform   Transform;
+            uint8_t           bStatic = 0;   // the owner's mobility
             // component bytes follow immediately after this header
         };
 
@@ -215,6 +217,7 @@ namespace RenderCore
         {
             return;
         }
+        Bridge->StaticRecords.erase(Proxy);   // a later proxy at this address starts fresh
 
         RenderScene* Scene = Bridge->Scene;
         ENQUEUE_RENDER_COMMAND(RemoveProxy)([Scene, Proxy](RenderContext& Ctx)
@@ -512,6 +515,14 @@ namespace RenderCore
             return;
         }
 
+        /* A reimported mesh may change a static proxy's bounds: send every
+         * static record once more. */
+        if(MeshAssetCache::GetGeneration() != StaticMeshGeneration)
+        {
+            StaticMeshGeneration = MeshAssetCache::GetGeneration();
+            StaticRecords.clear();
+        }
+
         for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
         {
             if(!FindProxyFactory(Type))
@@ -549,6 +560,7 @@ namespace RenderCore
             }
 
             uint8_t* Write = static_cast<uint8_t*>(Blob);
+            size_t   Written = 0;
             for(size_t Index = 0; Index < Count; ++Index)
             {
                 const uint8_t* Component = Dense + Index * TypeInfo.SizeBytes;
@@ -562,6 +574,7 @@ namespace RenderCore
                  * whole thing" shape ComponentPool::Add uses for the
                  * component bytes themselves (ComponentPool.cpp). */
                 ExtractHeader Record;
+                std::memset(static_cast<void*>(&Record), 0, sizeof(Record));   // padding too: static records are compared bytewise
                 Record.Handle = Handle;
 
                 /* Where it is in the world: under a parent, the composed
@@ -584,15 +597,39 @@ namespace RenderCore
                 {
                     Record.Transform = RenderTransform();
                 }
+                Record.bStatic = OwnerEntity.IsStatic() ? 1 : 0;
 
                 std::memcpy(Write, &Record, sizeof(ExtractHeader));
                 std::memcpy(Write + sizeof(ExtractHeader), Component, TypeInfo.SizeBytes);
 
+                /* STATIC: sent only when something differs from the last
+                 * record -- an edit, a move, the mobility itself. */
+                if(Record.bStatic && Handle.Ptr)
+                {
+                    std::vector<uint8_t>& Last = StaticRecords[Handle.Ptr];
+                    const size_t Bytes = sizeof(ExtractHeader) + TypeInfo.SizeBytes;
+                    if(Last.size() == Bytes && std::memcmp(Last.data(), Write, Bytes) == 0)
+                    {
+                        continue;
+                    }
+                    Last.assign(Write, Write + Bytes);
+                }
+                else if(Handle.Ptr)
+                {
+                    StaticRecords.erase(Handle.Ptr);
+                }
+
                 Write += Stride;
+                ++Written;
+            }
+            if(Written == 0)
+            {
+                EngineCore::Memory::Free(Blob);
+                continue;
             }
 
             const size_t   BlobStride = Stride;
-            const size_t   BlobCount  = Count;
+            const size_t   BlobCount  = Written;
             void* const    BlobPtr    = Blob;
 
             ENQUEUE_RENDER_COMMAND(ApplyExtraction)([BlobPtr, BlobStride, BlobCount](RenderContext&)
@@ -603,8 +640,10 @@ namespace RenderCore
                     const auto* Record = reinterpret_cast<const ExtractHeader*>(Read);
                     if(RenderProxy* Proxy = Record->Handle.Ptr)
                     {
+                        Proxy->SetStatic(Record->bStatic != 0);
                         Proxy->SetTransform(Record->Transform);
                         Proxy->ApplyComponent(Read + sizeof(ExtractHeader));
+                        Proxy->MarkChanged();
                     }
                     Read += BlobStride;
                 }

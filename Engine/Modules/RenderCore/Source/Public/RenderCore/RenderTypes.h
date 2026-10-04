@@ -128,6 +128,12 @@ namespace RenderCore
         uint64_t ProxiesCulledLastFrame = 0;
         uint32_t PeakQueueDepth         = 0;
 
+        /* Static draw lists (RENDERPIPELINE.md): static proxies drawn from
+         * their kept lists last frame, and how many lists were (re)built
+         * over the scene's lifetime -- steady when nothing static changes. */
+        uint64_t StaticProxiesDrawn     = 0;
+        uint64_t StaticListBuilds       = 0;
+
         /* "stat unit": each averaged over the last half second (0 until the
          * first half second has passed). Frame is the game thread's time
          * from one EndFrame to the next; Game Thread is that less the time it
