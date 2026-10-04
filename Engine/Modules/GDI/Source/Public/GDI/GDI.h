@@ -322,6 +322,14 @@ public:
 
     virtual GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) = 0;
 
+    /* A render target of InFormat. This default makes RGBA8 whatever is
+     * asked: a backend that can do more overrides both of these. */
+    virtual GDIRenderTarget* CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat /*InFormat*/)
+    {
+        return CreateRenderTarget(std::move(Name), InWidth, InHeight);
+    }
+    virtual bool SupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat) const { return InFormat == GDI_RTF_RGBA8; }
+
     virtual void SetRenderTarget( GDIRenderTarget* InRenderTarget ) = 0;
 
     /*
@@ -349,6 +357,20 @@ public:
     virtual void BeginDrawEvent(const std::string& EventName) = 0;
 
     virtual void EndDrawEvent() = 0;
+
+    /**
+     * GPU timestamps, for timing GPU work ("stat frame"). Within one
+     * BeginRendering/EndRendering block, WriteGPUTimestamp(i) records the time
+     * the GPU reaches that point, for i below GDI_GPU_TIMESTAMP_MAX. The block
+     * is complete by the next BeginRendering (one frame in flight), so from
+     * then until the next one GetPreviousGPUTimestamps gives the previous
+     * block's: OutMilliseconds[i] for each bit i of the returned mask, on one
+     * GPU clock (only differences mean anything). A backend that cannot
+     * time -- the default -- writes nothing and returns 0.
+     */
+    virtual bool     SupportsGPUTimestamps() const { return false; }
+    virtual void     WriteGPUTimestamp(uint32_t /*InIndex*/) {}
+    virtual uint64_t GetPreviousGPUTimestamps(double* /*OutMilliseconds*/) { return 0; }
 
     /**
      * Present the most recent rendered frame to the supplied window.
@@ -454,6 +476,16 @@ public:
 
     virtual GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) = 0;
 
+    /* A texture with its mip chain: InLevels[0] full size, each next half
+     * the last (at least 1), InCount in all; a Linear filter samples them
+     * trilinear. This default makes level 0 alone, for a backend without
+     * mips (D3D12, Metal and Null so far): it samples the full size. */
+    virtual GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,
+                                                          EGDITextureBorder InBorder, EGDITextureFilter InFilter)
+    {
+        return InLevels && InCount > 0 ? CreateTextureResource(InLevels[0], InBorder, InFilter) : nullptr;
+    }
+
     virtual bool CheckError(const std::string& FailStr) = 0;
 
     virtual ERenderPlatform GetRenderPlatform() const = 0;
@@ -490,6 +522,9 @@ protected:
 
     /* SetUniformBlock's bytes for bindings 2 and 3, and SetMaterialTexture's. */
     std::vector<uint8_t>  MaterialBlocks[2];
+    /* Bumped by each SetUniformBlock, so a backend can reuse an upload of a
+     * block that has not changed since (the scene block: once per frame). */
+    uint64_t              MaterialBlockSerials[2] = {};
     GDITextureResource*   MaterialTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
 };
 
@@ -571,6 +606,19 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, BeginDrawEvent, (const std::string& InE
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, EndDrawEvent, ())
 
+/* GDIDynamicDriver::CreateRenderTargetFormat / SupportsRenderTargetFormat. */
+GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat);
+bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
+
+/* GDIDynamicDriver::CreateTextureResourceMips; null without a driver. */
+GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,
+                                                 EGDITextureBorder InBorder, EGDITextureFilter InFilter);
+
+/* GPU timestamps: GDIDynamicDriver::WriteGPUTimestamp's contract. */
+bool     GDISupportsGPUTimestamps();
+void     GDIWriteGPUTimestamp(uint32_t InIndex);
+uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds);   // GDI_GPU_TIMESTAMP_MAX of them
+
 IMPLEMENT_GDI_FUNCTION_BODY(
         template<typename ShaderRef> void,
         RegisterShader,
@@ -588,10 +636,13 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(
         )
 
 extern int GDebugGroupID;
+
+/* A named region of GPU work for capture tools (RenderDoc, PIX, Xcode): begun
+ * here, ended when it goes out of scope; regions nest. Render thread only. */
 class GDIDrawEvent
 {
 public:
-    GDIDrawEvent(std::string InString)
+    explicit GDIDrawEvent(const std::string& InString)
     {
         GDebugGroupID++;
         GDIBeginDrawEvent(InString);
@@ -601,20 +652,26 @@ public:
         GDebugGroupID--;
         GDIEndDrawEvent();
     }
-    static int DebugGroupID;
+    GDIDrawEvent(const GDIDrawEvent&)            = delete;
+    GDIDrawEvent& operator=(const GDIDrawEvent&) = delete;
 };
+
+/* SCOPED_DRAW_EVENT("BasePass"): a GDIDrawEvent to the end of the enclosing
+ * scope. Compiled out of shipping builds. */
+#define GDI_DRAW_EVENT_CONCAT_INNER(A, B) A##B
+#define GDI_DRAW_EVENT_CONCAT(A, B)       GDI_DRAW_EVENT_CONCAT_INNER(A, B)
+#if defined(NIMBLE_SHIPPING) && NIMBLE_SHIPPING
+    #define SCOPED_DRAW_EVENT(Name) do {} while(0)
+#else
+    #define SCOPED_DRAW_EVENT(Name) const GDIDrawEvent GDI_DRAW_EVENT_CONCAT(ScopedDrawEvent_, __LINE__)(Name)
+#endif
 
 #ifndef DECLARE_SCOPED_DRAWEVENT
 #define DECLARE_SCOPED_DRAWEVENT(Name, StringLiteral) \
 class Name##DrawEvent : public GDIDrawEvent           \
 {                                                     \
     public:                                           \
-        explicit Name##DrawEvent(std::string InStr)   : GDIDrawEvent(std::move(InStr)) {}\
-        ~Name##DrawEvent()                            \
-        {                                             \
-            GDIDrawEvent::~GDIDrawEvent();            \
-        }                                             \
-                                                        \
+        explicit Name##DrawEvent(const std::string& InStr) : GDIDrawEvent(InStr) {}\
 } Name##_DrawEvent(StringLiteral);
 #endif
 

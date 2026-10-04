@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="83605fc6f313129130bbbb9e45eb37f9" Name="Swinger">
+  <Component Type="Render" Version="3">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/Chrome.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+    <ParameterCount Value="3" />
+    <Parameter0Name Value="BaseColor" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="0.85" />
+    <Parameter0Y Value="0.85" />
+    <Parameter0Z Value="0.85" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="Metallic" />
+    <Parameter1Slot Value="0" />
+    <Parameter1X Value="0" />
+    <Parameter1Y Value="0" />
+    <Parameter1Z Value="0" />
+    <Parameter1W Value="0" />
+    <Parameter2Name Value="Roughness" />
+    <Parameter2Slot Value="0" />
+    <Parameter2X Value="0.3" />
+    <Parameter2Y Value="0" />
+    <Parameter2Z Value="0" />
+    <Parameter2W Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Scene Capture Probe" Version="2">
+    <Target Value="Content/RenderTargets/ChromeBall.nmrt3d" />
+    <Mode Value="1" />
+    <Resolution Value="256" />
+    <Frequency Value="0" />
+    <Interval Value="1" />
+    <NearClip Value="13" />
+    <FarClip Value="5000" />
+    <ExtentX Value="200" />
+    <ExtentZ Value="200" />
+    <HideOwner Value="true" />
+    <Enabled Value="true" />
+    <CaptureShadows Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-40" Y="110" Z="-120" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="80" Y="80" Z="80" />
+  </Component>
+</Entity>

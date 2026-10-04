@@ -730,6 +730,76 @@ namespace
         Scripts.Shutdown();
     }
 
+    /* A post process stack: nodes are settings, written in the renderer's
+     * order whatever the canvas order; materials by stage then order. */
+    void TestPostProcessStack()
+    {
+        std::printf("[post process stack]\n");
+
+        const Schema* Stack = FindSchemaForPath("Content/PostProcess/Arch.pp.nmgraph");
+        Expect(Stack && Stack->GetName() == "PostProcess", "*.pp.nmgraph is a PostProcess graph");
+
+        Graph G;
+        G.SchemaName = "PostProcess";
+        G.Name       = "Arch";
+        AddNode(G, 1, "Effect.Antialiasing").Properties["Quality"] = "High";
+        Node& Bloom = AddNode(G, 2, "Effect.Bloom");
+        Bloom.Properties["Intensity"] = "1.5";
+        Bloom.Properties["Tint"]      = "1 0.5 0.25";
+        AddNode(G, 3, "Effect.DepthOfField").Properties["Near Blur"] = "false";
+        Node& After  = AddNode(G, 4, "Effect.Material");
+        After.Properties["Material"] = "Content/Materials/Negative.material.nmgraph";
+        Node& Before = AddNode(G, 5, "Effect.Material");
+        Before.Properties["Material"] = "Content/Materials/Wave.material.nmgraph";
+        Before.Properties["Stage"]    = "Before Effects";
+        AddNode(G, 7, "Effect.AmbientOcclusion").Properties["Blur"] = "false";
+
+        CompileResult Result;
+        CompileGraph(G, Result);
+        Expect(!Result.HasErrors(), "the stack compiles");
+        if(Result.HasErrors()) { std::printf("%s\n", FormatDiagnostics(G, Result).c_str()); }
+        const std::string& Text = Result.Code;
+        const size_t Ao = Text.find("Effect AmbientOcclusion Intensity=1 Radius=60 Samples=12 Power=1.5 Blur=false");
+        Expect(Ao != std::string::npos && Ao < Text.find("Effect DepthOfField "), "Ambient Occlusion first, with its settings");
+        const size_t Dof = Text.find("Effect DepthOfField "), Glow = Text.find("Effect Bloom "), Aa = Text.find("Effect Antialiasing ");
+        Expect(Dof != std::string::npos && Glow != std::string::npos && Aa != std::string::npos && Dof < Glow && Glow < Aa,
+               "effects are written in the renderer's order, not the graph's");
+        Expect(Text.find("Effect MotionBlur") == std::string::npos, "an effect with no node is not written");
+        Expect(Text.find("Intensity=1.5") != std::string::npos && Text.find("Tint=1,0.5,0.25") != std::string::npos
+               && Text.find("Threshold=0.8") != std::string::npos, "values as set, defaults where not, lists with commas");
+        Expect(Text.find("NearBlur=false") != std::string::npos && Text.find("Quality=High") != std::string::npos,
+               "switches and choices are written by key");
+        const size_t First = Text.find("Material Stage=Before Order=0 Path=Content/Materials/Wave.material.nmgraph");
+        const size_t Last  = Text.find("Material Stage=After Order=0 Path=Content/Materials/Negative.material.nmgraph");
+        Expect(First != std::string::npos && Last != std::string::npos && First < Last, "materials by stage, path last");
+
+        Graph Bad = G;
+        Bad.FindNode(Id(2))->Properties["Threshold"] = "bright";
+        Bad.FindNode(Id(3))->Properties["Max Blur"]  = "64";
+        CompileResult BadResult;
+        CompileGraph(Bad, BadResult);
+        Expect(BadResult.HasErrors() && BadResult.Code.empty() && BadResult.Diagnostics.size() >= 2,
+               "a non-number and an out-of-range value are errors");
+
+        Graph Twice = G;
+        AddNode(Twice, 6, "Effect.Bloom");
+        CompileResult TwiceResult;
+        CompileGraph(Twice, TwiceResult);
+        Expect(TwiceResult.HasErrors(), "each effect appears once");
+
+        Graph Wrong = G;
+        Wrong.FindNode(Id(4))->Properties["Material"] = "Content/Textures/Brick.nmtexture";
+        CompileResult WrongResult;
+        CompileGraph(Wrong, WrongResult);
+        Expect(WrongResult.HasErrors(), "a Material node takes a material graph only");
+
+        Graph Empty;
+        Empty.SchemaName = "PostProcess";
+        CompileResult EmptyResult;
+        CompileGraph(Empty, EmptyResult);
+        Expect(!EmptyResult.HasErrors() && !EmptyResult.Code.empty(), "an empty stack compiles to a header, not nothing");
+    }
+
     void TestMaterialCodegen()
     {
         std::printf("[material codegen]\n");
@@ -765,8 +835,8 @@ namespace
             CompileGraph(G, Two);
             Expect(!Two.HasErrors() && Two.Code.find("float Param_Alpha;\n    vec3  Param_Tint;") != std::string::npos,
                    "Tint is declared after Alpha");
-            Expect(!Two.Companions.empty() && Two.Companions[0].second.find("Param Alpha float 32") != std::string::npos
-                   && Two.Companions[0].second.find("Param Tint vec3 48") != std::string::npos,
+            Expect(!Two.Companions.empty() && Two.Companions[0].second.find("Param Alpha float 160") != std::string::npos
+                   && Two.Companions[0].second.find("Param Tint vec3 176") != std::string::npos,
                    "and the companion gives Alpha the first offset, Tint the next 16-byte one");
         }
 
@@ -1527,8 +1597,8 @@ namespace
         Expect(Data.find("Domain Masked") != std::string::npos && Data.find("Shading Lit") != std::string::npos
                && Data.find("HasOffset 1") != std::string::npos && Data.find("MaxOffset 2") != std::string::npos,
                "the .material describes the domain, shading and offset");
-        Expect(Data.find("Param Color vec3 32") != std::string::npos && Data.find("Param Height float 44") != std::string::npos
-               && Data.find("BlockSize 48") != std::string::npos, "a float packs into a vec3's last four bytes (std140)");
+        Expect(Data.find("Param Color vec3 160") != std::string::npos && Data.find("Param Height float 172") != std::string::npos
+               && Data.find("BlockSize 176") != std::string::npos, "a float packs into a vec3's last four bytes (std140)");
 
         {
             /* std140 alignment: float 4, vec2 8, vec3 and vec4 16. */
@@ -1547,9 +1617,9 @@ namespace
             CompileResult Layout;
             CompileGraph(G, Layout);
             const std::string Text = Layout.Companions.empty() ? std::string() : Layout.Companions[0].second;
-            Expect(!Layout.HasErrors() && Text.find("Param A float 32") != std::string::npos
-                   && Text.find("Param B vec3 48") != std::string::npos && Text.find("Param C vec2 64") != std::string::npos
-                   && Text.find("Param D vec4 80") != std::string::npos, "each parameter sits at its std140 offset");
+            Expect(!Layout.HasErrors() && Text.find("Param A float 160") != std::string::npos
+                   && Text.find("Param B vec3 176") != std::string::npos && Text.find("Param C vec2 192") != std::string::npos
+                   && Text.find("Param D vec4 208") != std::string::npos, "each parameter sits at its std140 offset");
         }
 
         // --- Stage restrictions ------------------------------------------------------
@@ -1669,6 +1739,110 @@ namespace
         Connect(G, 7, "R", 8, "B");
         Connect(G, 8, "Out", 1, "WorldPositionOffset");
         return G;
+    }
+
+    /* Reflect: a scene capture's render target, sampled as a reflection. */
+    void TestNormalMap()
+    {
+        std::printf("[normal map]\n");
+        const auto Build = [](const char* InFormat, const bool bInSampled)
+        {
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Bumpy";
+            AddNode(G, 1, "Output.Material");
+            Node& Map = AddNode(G, 2, "Texture.NormalMap");
+            if(InFormat) { Map.Properties["Format"] = InFormat; }
+            Connect(G, 2, "Normal", 1, "Normal");
+            if(bInSampled)
+            {
+                AddNode(G, 3, "Texture.Object").Properties["Texture"] = "Content/Textures/Wall_N.nmtexture";
+                AddNode(G, 4, "Texture.Sample").Version = 2;
+                AddNode(G, 5, "Input.TexCoord");
+                AddNode(G, 6, "Math.Multiply").Constants["B"] = "4";
+                Connect(G, 5, "UV", 6, "A");
+                Connect(G, 3, "Texture", 4, "Texture");
+                Connect(G, 6, "Out", 4, "UV");
+                Connect(G, 4, "RGB", 2, "Color");
+                Connect(G, 6, "Out", 2, "UV");
+            }
+            return G;
+        };
+
+        CompileResult Flat;
+        const Graph FlatGraph = Build(nullptr, false);
+        CompileGraph(FlatGraph, Flat);
+        Expect(!Flat.HasErrors(), "a Normal Map with nothing linked compiles");
+        if(Flat.HasErrors()) { std::printf("%s\n", FormatDiagnostics(FlatGraph, Flat).c_str()); }
+        Expect(Flat.Code.find("Material_NormalMap(Inputs, vec3(0.5, 0.5, 1.0), 1.0, Inputs.TexCoord, -1.0)") != std::string::npos,
+               "unlinked: a flat colour, strength 1, the texture coordinate, OpenGL's green");
+        Expect(Flat.Code.find("Surface.Normal = t") != std::string::npos, "into Material Output's Normal");
+
+        CompileResult Sampled;
+        CompileGraph(Build("DirectX", true), Sampled);
+        Expect(!Sampled.HasErrors() && Sampled.Code.find(", 1.0);") != std::string::npos,
+               "DirectX's green is +1");
+        Expect(Sampled.Code.find("Material_NormalMap(Inputs, t") != std::string::npos
+               && Sampled.Code.find("Inputs.TexCoord, -1.0") == std::string::npos,
+               "a sampled map, about the UV it was sampled at");
+    }
+
+    void TestReflect()
+    {
+        std::printf("[reflect]\n");
+        const auto Build = [](const char* InTarget, const bool bInNormal)
+        {
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Mirror";
+            AddNode(G, 1, "Output.Material");
+            AddNode(G, 2, "Texture.Reflect").Properties["Target"] = InTarget;
+            Connect(G, 2, "RGB", 1, "Emissive");
+            if(bInNormal)
+            {
+                AddNode(G, 3, "Input.VertexNormal");
+                Connect(G, 3, "Normal", 2, "Normal");
+            }
+            return G;
+        };
+
+        CompileResult Planar;
+        const Graph Mirror = Build("Content/RenderTargets/Pool.nmrt2d", false);
+        CompileGraph(Mirror, Planar);
+        Expect(!Planar.HasErrors(), "a Reflect of a RenderTargetTex2D compiles");
+        if(Planar.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Mirror, Planar).c_str()); }
+        Expect(Planar.Code.find("MATERIAL_SAMPLER2D(5, Material_Texture1)") != std::string::npos
+               && Planar.Code.find("texture(Material_Texture1, Material_MirrorUV(Inputs))") != std::string::npos,
+               "it takes a texture slot and reads the mirrored screen point");
+        const std::string PlanarData = Planar.Companions.empty() ? std::string() : Planar.Companions[0].second;
+        Expect(PlanarData.find("Texture 1 Default Default Content/RenderTargets/Pool.nmrt2d\n") != std::string::npos,
+               "the .material names the render target as the slot's texture");
+
+        CompileResult Omni;
+        const Graph Ball = Build("Content/RenderTargets/Ball.nmrt3d", true);
+        CompileGraph(Ball, Omni);
+        Expect(!Omni.HasErrors() && Omni.Code.find("Material_SampleCubeStrip(Material_Texture1, Material_ReflectionVector(Inputs, Inputs.WorldNormal))")
+               != std::string::npos, "a RenderTargetTex3D is read along the view reflected about the linked normal");
+
+        CompileResult Wrong;
+        CompileGraph(Build("Content/Textures/Brick.nmtexture", false), Wrong);
+        Expect(Wrong.HasErrors(), "a Reflect of a plain texture is an error");
+        CompileResult None;
+        CompileGraph(Build("", false), None);
+        Expect(None.HasErrors(), "and one with no Target");
+
+        /* A render target is a texture too: a Texture Object may sample it. */
+        Graph Screen;
+        Screen.SchemaName = "Material";
+        Screen.Name       = "Screen";
+        AddNode(Screen, 1, "Output.Material");
+        AddNode(Screen, 2, "Texture.Object").Properties["Texture"] = "Content/RenderTargets/Camera.nmrt2d";
+        AddNode(Screen, 3, "Texture.Sample").Version = 2;
+        Connect(Screen, 2, "Texture", 3, "Texture");
+        Connect(Screen, 3, "RGB", 1, "Emissive");
+        CompileResult ScreenResult;
+        CompileGraph(Screen, ScreenResult);
+        Expect(!ScreenResult.HasErrors(), "a Texture Object may name a render target (a security camera's screen)");
     }
 
     void TestTextureSample()
@@ -2206,6 +2380,9 @@ int main()
     TestDiscard();
     TestMaterialStages();
     TestTextureSample();
+    TestReflect();
+    TestNormalMap();
+    TestPostProcessStack();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

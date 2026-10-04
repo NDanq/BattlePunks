@@ -1,5 +1,6 @@
 #include "Public/NimbleEngine/SaveGame.h"
 
+#include <cctype>
 #include <cstring>
 #include <ctime>
 #include <vector>
@@ -89,6 +90,29 @@ void UnregisterLevel(ILevel& InLevel)
         GRegisteredLevels[--GRegisteredLevelCount] = nullptr;
         return;
     }
+}
+
+ILevel* FindLevelByWorldFile(const char* InPath)
+{
+    if(InPath == nullptr || InPath[0] == '\0') { return nullptr; }
+
+    const auto Same = [](const char* A, const char* B)
+    {
+        for(; *A && *B; ++A, ++B)
+        {
+            const char CA = *A == '\\' ? '/' : char(std::tolower(static_cast<unsigned char>(*A)));
+            const char CB = *B == '\\' ? '/' : char(std::tolower(static_cast<unsigned char>(*B)));
+            if(CA != CB) { return false; }
+        }
+        return *A == *B;
+    };
+    for(size_t Index = 0; Index < GRegisteredLevelCount; ++Index)
+    {
+        ILevel* Level = GRegisteredLevels[Index];
+        const char* File = Level ? Level->GetWorldFile() : nullptr;
+        if(File && Same(File, InPath)) { return Level; }
+    }
+    return nullptr;
 }
 
 ILevel* FindLevelByName(const char* InName)

@@ -2,6 +2,10 @@
 
 #include "Private/Editor/Content/AssetImport.h"
 
+#include <algorithm>
+#include <cstring>
+#include <vector>
+
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
@@ -39,8 +43,163 @@ namespace EditorContent
                 if(Suffix == QStringLiteral("svg") || Suffix == QStringLiteral("svgz") || Suffix == QStringLiteral("pdf")) { continue; }
                 Out << Suffix;
             }
+            Out << QStringLiteral("hdr");   // Radiance, read here (ReadRadiance): an HDRI, imported as RGBE8
             Out.removeDuplicates();
             return Out;
+        }
+
+        bool WriteArchive(const QString& InPath, const EngineCore::Archive& InArchive, QString& OutError);
+
+        /*
+         * A Radiance .hdr (RGBE, "-Y height +X width", flat or run-length
+         * scanlines) as RGBE8 texels, row 0 the top. False, with OutError,
+         * on anything else.
+         */
+        bool ReadRadiance(const QString& InPath, int& OutWidth, int& OutHeight, std::vector<uint8_t>& OutTexels, QString& OutError)
+        {
+            QFile File(InPath);
+            if(!File.open(QIODevice::ReadOnly)) { OutError = File.errorString(); return false; }
+            const QByteArray Bytes = File.readAll();
+            const auto* Data = reinterpret_cast<const uint8_t*>(Bytes.constData());
+            const qsizetype Size = Bytes.size();
+            qsizetype At = 0;
+            const auto Line = [&]()
+            {
+                QByteArray Out;
+                while(At < Size && Data[At] != '\n') { Out += char(Data[At++]); }
+                ++At;
+                return Out;
+            };
+            const QByteArray Magic = Line();
+            if(!Magic.startsWith("#?")) { OutError = QStringLiteral("not a Radiance file"); return false; }
+            for(QByteArray Each = Line(); !Each.isEmpty(); Each = Line())
+            {
+                if(Each.startsWith("FORMAT=") && Each != "FORMAT=32-bit_rle_rgbe")
+                {
+                    OutError = QStringLiteral("only RGBE Radiance files are read (this is %1)").arg(QString::fromLatin1(Each));
+                    return false;
+                }
+                if(At >= Size) { OutError = QStringLiteral("no image after the header"); return false; }
+            }
+            const QList<QByteArray> Resolution = Line().simplified().split(' ');
+            if(Resolution.size() != 4 || Resolution[0] != "-Y" || Resolution[2] != "+X")
+            {
+                OutError = QStringLiteral("only the standard -Y H +X W orientation is read");
+                return false;
+            }
+            OutHeight = Resolution[1].toInt();
+            OutWidth  = Resolution[3].toInt();
+            if(OutWidth <= 0 || OutHeight <= 0 || OutWidth > 32768 || OutHeight > 32768)
+            {
+                OutError = QStringLiteral("an implausible size");
+                return false;
+            }
+            OutTexels.assign(size_t(OutWidth) * size_t(OutHeight) * 4, 0);
+            std::vector<uint8_t> Planes(size_t(OutWidth) * 4);
+            for(int Row = 0; Row < OutHeight; ++Row)
+            {
+                uint8_t* Out = &OutTexels[size_t(Row) * size_t(OutWidth) * 4];
+                const bool bRle = OutWidth >= 8 && OutWidth < 32768 && At + 4 <= Size && Data[At] == 2 && Data[At + 1] == 2
+                                  && (Data[At + 2] & 0x80) == 0 && ((int(Data[At + 2]) << 8) | Data[At + 3]) == OutWidth;
+                if(!bRle)
+                {
+                    /* Flat (old run-length scanlines are rare and not read). */
+                    if(At + qsizetype(OutWidth) * 4 > Size) { OutError = QStringLiteral("the image ends early"); return false; }
+                    std::memcpy(Out, Data + At, size_t(OutWidth) * 4);
+                    At += qsizetype(OutWidth) * 4;
+                    continue;
+                }
+                At += 4;
+                for(int Channel = 0; Channel < 4; ++Channel)
+                {
+                    uint8_t* Plane = &Planes[size_t(Channel) * size_t(OutWidth)];
+                    int X = 0;
+                    while(X < OutWidth)
+                    {
+                        if(At >= Size) { OutError = QStringLiteral("the image ends early"); return false; }
+                        int Count = Data[At++];
+                        if(Count > 128)
+                        {
+                            Count -= 128;
+                            if(At >= Size || X + Count > OutWidth) { OutError = QStringLiteral("a bad run"); return false; }
+                            std::memset(Plane + X, Data[At++], size_t(Count));
+                        }
+                        else
+                        {
+                            if(Count == 0 || X + Count > OutWidth || At + Count > Size) { OutError = QStringLiteral("a bad run"); return false; }
+                            std::memcpy(Plane + X, Data + At, size_t(Count));
+                            At += Count;
+                        }
+                        X += Count;
+                    }
+                }
+                for(int X = 0; X < OutWidth; ++X)
+                {
+                    for(int Channel = 0; Channel < 4; ++Channel) { Out[X * 4 + Channel] = Planes[size_t(Channel) * size_t(OutWidth) + size_t(X)]; }
+                }
+            }
+            return true;
+        }
+
+        /* An HDRI into InPath: RGBE8, linear, point sampled, no mips; halved (in float) until it fits MaxDimension. */
+        bool WriteRadianceTexture(const QString& InSource, const QString& InPath, const TextureImportOptions& InOptions,
+                                  const RenderCore::AssetImportInfo& InInfo, QStringList& OutWarnings, QString& OutError)
+        {
+            int Width = 0, Height = 0;
+            std::vector<uint8_t> Texels;
+            QString Why;
+            if(!ReadRadiance(InSource, Width, Height, Texels, Why))
+            {
+                OutError = QStringLiteral("%1: %2").arg(QFileInfo(InSource).fileName(), Why);
+                return false;
+            }
+            const int Limit = qBound(1, InOptions.MaxDimension, int(RenderCore::TEXTURE_MAX_DIMENSION));
+            if(Width > Limit || Height > Limit)
+            {
+                const int FromW = Width, FromH = Height;
+                while(Width > Limit || Height > Limit)
+                {
+                    const int HalfW = std::max(Width / 2, 1), HalfH = std::max(Height / 2, 1);
+                    std::vector<uint8_t> Half(size_t(HalfW) * size_t(HalfH) * 4);
+                    for(int Y = 0; Y < HalfH; ++Y)
+                    {
+                        for(int X = 0; X < HalfW; ++X)
+                        {
+                            float Sum[3] = { 0.0f, 0.0f, 0.0f };
+                            for(int Dy = 0; Dy < 2; ++Dy)
+                            {
+                                for(int Dx = 0; Dx < 2; ++Dx)
+                                {
+                                    const int Sx = std::min(X * 2 + Dx, Width - 1), Sy = std::min(Y * 2 + Dy, Height - 1);
+                                    float Rgb[3];
+                                    RenderCore::DecodeRgbe(&Texels[(size_t(Sy) * size_t(Width) + size_t(Sx)) * 4], Rgb);
+                                    for(int C = 0; C < 3; ++C) { Sum[C] += Rgb[C] * 0.25f; }
+                                }
+                            }
+                            RenderCore::EncodeRgbe(Sum, &Half[(size_t(Y) * size_t(HalfW) + size_t(X)) * 4]);
+                        }
+                    }
+                    Texels = std::move(Half);
+                    Width  = HalfW;
+                    Height = HalfH;
+                }
+                OutWarnings << QStringLiteral("%1: scaled from %2x%3 to %4x%5").arg(QFileInfo(InSource).fileName())
+                               .arg(FromW).arg(FromH).arg(Width).arg(Height);
+            }
+
+            RenderCore::TextureData Texture;
+            Texture.Pixels = EngineCore::Image(Width, Height, EngineCore::EImageFormat::RGBA8);
+            std::memcpy(Texture.Pixels.GetData(), Texels.data(), Texels.size());
+            if(InOptions.bFlipVertically) { Texture.Pixels.FlipVertical(); }
+            Texture.Format     = RenderCore::ETexturePixelFormat::RGBE8;
+            Texture.bSRGB      = false;
+            Texture.Filter     = RenderCore::ETextureFilter::Nearest;
+            Texture.Wrap       = RenderCore::ETextureWrap::Repeat;
+            Texture.MipGen     = RenderCore::ETextureMipGen::None;
+            Texture.ImportInfo = InInfo;
+            EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+            RenderCore::SerializeTexture(Ar, Texture);
+            return WriteArchive(InPath, Ar, OutError);
         }
 
         /* Settings as "Key=Value" lines, read back into a map. */
@@ -157,12 +316,16 @@ namespace EditorContent
             Texture.bSRGB      = InOptions.bSRGB;
             Texture.Filter     = InOptions.Filter;
             Texture.Wrap       = InOptions.Wrap;
+            Texture.MipGen      = InOptions.MipGen;
+            Texture.Compression = InOptions.Compression;
             Texture.ImportInfo = InInfo;
             if(Texture.Pixels.IsNull())
             {
                 OutError = QStringLiteral("%1: the image could not be converted").arg(QFileInfo(InPath).fileName());
                 return false;
             }
+
+            RenderCore::BuildTextureMips(Texture);
 
             EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
             RenderCore::SerializeTexture(Ar, Texture);
@@ -266,9 +429,10 @@ namespace EditorContent
 
     QString MeshImportOptions::ToSettings() const
     {
-        return QStringLiteral("Scale=%1\nConvertCoordinates=%2\nGenerateNormals=%3\nCombineMeshes=%4\nImportTextures=%5\n")
+        return QStringLiteral("Scale=%1\nConvertCoordinates=%2\nGenerateNormals=%3\nCombineMeshes=%4\nImportTextures=%5\n"
+                              "GenerateLightmapUVs=%6\n")
                .arg(double(Scale)).arg(int(bConvertCoordinates)).arg(int(bGenerateNormals))
-               .arg(int(bCombineMeshes)).arg(int(bImportTextures));
+               .arg(int(bCombineMeshes)).arg(int(bImportTextures)).arg(int(bGenerateLightmapUVs));
     }
 
     MeshImportOptions MeshImportOptions::FromSettings(const QString& InSettings)
@@ -282,13 +446,15 @@ namespace EditorContent
         Out.bGenerateNormals    = ReadBool(Map, QStringLiteral("GenerateNormals"), Out.bGenerateNormals);
         Out.bCombineMeshes      = ReadBool(Map, QStringLiteral("CombineMeshes"), Out.bCombineMeshes);
         Out.bImportTextures     = ReadBool(Map, QStringLiteral("ImportTextures"), Out.bImportTextures);
+        Out.bGenerateLightmapUVs = ReadBool(Map, QStringLiteral("GenerateLightmapUVs"), Out.bGenerateLightmapUVs);
         return Out;
     }
 
     QString TextureImportOptions::ToSettings() const
     {
-        return QStringLiteral("SRGB=%1\nFilter=%2\nWrap=%3\nMaxDimension=%4\nFlipVertically=%5\n")
-               .arg(int(bSRGB)).arg(int(Filter)).arg(int(Wrap)).arg(MaxDimension).arg(int(bFlipVertically));
+        return QStringLiteral("SRGB=%1\nFilter=%2\nWrap=%3\nMaxDimension=%4\nFlipVertically=%5\nMipGen=%6\nCompression=%7\nDetectDataMaps=%8\n")
+               .arg(int(bSRGB)).arg(int(Filter)).arg(int(Wrap)).arg(MaxDimension).arg(int(bFlipVertically))
+               .arg(int(MipGen)).arg(int(Compression)).arg(int(bDetectDataMaps));
     }
 
     TextureImportOptions TextureImportOptions::FromSettings(const QString& InSettings)
@@ -297,12 +463,20 @@ namespace EditorContent
         TextureImportOptions Out;
         Out.bSRGB           = ReadBool(Map, QStringLiteral("SRGB"), Out.bSRGB);
         Out.bFlipVertically = ReadBool(Map, QStringLiteral("FlipVertically"), Out.bFlipVertically);
+        Out.bDetectDataMaps = ReadBool(Map, QStringLiteral("DetectDataMaps"), false);   // absent: settings from before, as recorded
         const int Filter = Map.value(QStringLiteral("Filter"), QString::number(int(Out.Filter))).toInt();
         const int Wrap   = Map.value(QStringLiteral("Wrap"),   QString::number(int(Out.Wrap))).toInt();
         if(Filter >= 0 && Filter <= int(RenderCore::ETextureFilter::Linear)) { Out.Filter = RenderCore::ETextureFilter(Filter); }
         if(Wrap   >= 0 && Wrap   <= int(RenderCore::ETextureWrap::Mirror))   { Out.Wrap   = RenderCore::ETextureWrap(Wrap); }
         const int MaxDimension = Map.value(QStringLiteral("MaxDimension")).toInt();
         if(MaxDimension > 0) { Out.MaxDimension = MaxDimension; }
+        /* Absent from a texture imported before mips: none, as it was. */
+        const int MipGen      = Map.value(QStringLiteral("MipGen"), QStringLiteral("0")).toInt();
+        const int Compression = Map.value(QStringLiteral("Compression"), QStringLiteral("0")).toInt();
+        Out.MipGen      = MipGen >= 0 && MipGen <= int(RenderCore::ETextureMipGen::Kaiser) ? RenderCore::ETextureMipGen(MipGen)
+                                                                                        : RenderCore::ETextureMipGen::None;
+        Out.Compression = Compression >= 0 && Compression <= int(RenderCore::ETextureCompression::BC7)
+                          ? RenderCore::ETextureCompression(Compression) : RenderCore::ETextureCompression::None;
         return Out;
     }
 
@@ -364,10 +538,58 @@ namespace EditorContent
         return Result;
     }
 
-    ImportResult ImportTexture(const QString& InSource, const QString& InDestFolder, const QString& InBaseName,
-                               const TextureImportOptions& InOptions, const QString& InProjectRoot)
+    bool TextureImportOptions::IsDataMapName(const QString& InName)
     {
+        /* Whole words of the name (split at _, -, ., space and case changes), so "Bricks" is not "ks". */
+        static const QStringList Words = {
+            QStringLiteral("normal"), QStringLiteral("normals"), QStringLiteral("nrm"), QStringLiteral("nor"), QStringLiteral("n"),
+            QStringLiteral("rough"), QStringLiteral("roughness"), QStringLiteral("metal"), QStringLiteral("metallic"),
+            QStringLiteral("metalness"), QStringLiteral("ao"), QStringLiteral("occlusion"), QStringLiteral("ambientocclusion"),
+            QStringLiteral("height"), QStringLiteral("displacement"), QStringLiteral("disp"), QStringLiteral("bump"),
+            QStringLiteral("mask"), QStringLiteral("orm"), QStringLiteral("arm"), QStringLiteral("gloss"), QStringLiteral("specular") };
+        QString Spaced;
+        const QString Base = QFileInfo(InName).completeBaseName();
+        for(int Index = 0; Index < Base.size(); ++Index)
+        {
+            const QChar Ch = Base[Index];
+            if(Index > 0 && Ch.isUpper() && Base[Index - 1].isLower()) { Spaced += QLatin1Char(' '); }
+            Spaced += Ch.isLetterOrNumber() ? Ch.toLower() : QLatin1Char(' ');
+        }
+        for(const QString& Word : Spaced.split(QLatin1Char(' '), Qt::SkipEmptyParts))
+        {
+            if(Words.contains(Word)) { return true; }
+        }
+        return false;
+    }
+
+    TextureImportOptions TextureImportOptions::ResolvedFor(const QString& InName) const
+    {
+        TextureImportOptions Out = *this;
+        if(bDetectDataMaps && IsDataMapName(InName)) { Out.bSRGB = false; }
+        Out.bDetectDataMaps = false;   // decided: a reimport keeps it
+        return Out;
+    }
+
+    ImportResult ImportTexture(const QString& InSource, const QString& InDestFolder, const QString& InBaseName,
+                               const TextureImportOptions& InRequested, const QString& InProjectRoot)
+    {
+        const TextureImportOptions InOptions = InRequested.ResolvedFor(InBaseName + QLatin1Char('_') + QFileInfo(InSource).fileName());
         ImportResult Result;
+        if(QFileInfo(InSource).suffix().compare(QStringLiteral("hdr"), Qt::CaseInsensitive) == 0)
+        {
+            const QString HdrPath = QDir(InDestFolder).absoluteFilePath(SanitizeName(InBaseName) + QString::fromLatin1(TEXTURE_EXTENSION));
+            QString HdrError;
+            if(!WriteRadianceTexture(InSource, HdrPath, InOptions, MakeImportInfo(InSource, InProjectRoot, InOptions.ToSettings()),
+                                     Result.Warnings, HdrError))
+            {
+                Result.Message = HdrError;
+                return Result;
+            }
+            Result.bOK = true;
+            Result.Written << HdrPath;
+            Result.Message = QStringLiteral("%1: HDR environment (RGBE)").arg(QFileInfo(InSource).fileName());
+            return Result;
+        }
         QString Error;
         const QImage Image = ReadImage(InSource, Error);
         const QString OutPath = QDir(InDestFolder).absoluteFilePath(SanitizeName(InBaseName) + QString::fromLatin1(TEXTURE_EXTENSION));
@@ -386,12 +608,13 @@ namespace EditorContent
 
     ImportResult ImportReferencedImage(const ReferencedImage& InImage, const QString& InGltfPath,
                                        const QString& InDestFolder, const QString& InBaseName,
-                                       const TextureImportOptions& InOptions, const QString& InProjectRoot)
+                                       const TextureImportOptions& InRequested, const QString& InProjectRoot)
     {
         if(!InImage.SourcePath.isEmpty())
         {
-            return ImportTexture(InImage.SourcePath, InDestFolder, InBaseName, InOptions, InProjectRoot);
+            return ImportTexture(InImage.SourcePath, InDestFolder, InBaseName, InRequested, InProjectRoot);
         }
+        const TextureImportOptions InOptions = InRequested.ResolvedFor(InBaseName + QLatin1Char('_') + InImage.Name);
 
         ImportResult Result;
         QImage Image;

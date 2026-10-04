@@ -1,12 +1,22 @@
 #include "Public/RenderCore/RenderScene.h"
 
+#include <algorithm>
+#include <unordered_map>
 #include <atomic>
+#include <chrono>
+#include <cstring>
+#include <mutex>
+#include <utility>
 #include <vector>
 
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
+#include "Public/RenderCore/TextureAsset.h"
+#include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/MaterialPreview.h"
+#include "Private/RenderCore/SceneCapture.h"
+#include "Public/RenderCore/Components/SceneCaptureProbeComponent.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/SceneTargets.h"
@@ -22,17 +32,271 @@
 
 namespace RenderCore
 {
+    namespace
+    {
+        /* Every live scene, so a GDI block's GPU times reach the scene that
+         * wrote them a block later ("stat frame"). Render thread only. */
+        std::vector<RenderScene*> GLiveScenes;
+    }
+
     struct RenderScene::Impl
     {
         std::vector<RenderProxy*> Proxies;
+
+        /* The view mode, and the targets a frame could show: names under
+         * TargetsLock, for the game thread. */
+        ERenderViewMode           ViewMode = ERenderViewMode::Lit;
+        std::string               ViewTarget;
+        mutable std::mutex        TargetsLock;
+        std::vector<std::string>  TargetNames;
+
+        /*
+         * STATIC DRAW LISTS (RENDERPIPELINE.md): a static proxy's draws, shadow
+         * casters and cull padding, captured the first frame each is needed
+         * and replayed after -- until the proxy changes (its change serial) or
+         * something they point at goes (the context's content generation).
+         */
+        struct StaticDrawList
+        {
+            uint64_t                Serial     = ~0ull;
+            uint64_t                Generation = ~0ull;
+            bool                    bDraws     = false;
+            bool                    bShadows   = false;
+            bool                    bPadding   = false;
+            float                   Padding    = 0.0f;
+            std::vector<StagedDraw> Draws;
+            std::vector<StagedDraw> Shadows;
+        };
+        std::unordered_map<const RenderProxy*, StaticDrawList> StaticLists;
+        uint64_t                                               StaticBuilds = 0;   // lifetime captures
+
+        StaticDrawList& ListFor(const RenderProxy* InProxy, const uint64_t InGeneration)
+        {
+            StaticDrawList& List = StaticLists[InProxy];
+            if(List.Serial != InProxy->GetChangeSerial() || List.Generation != InGeneration)
+            {
+                List = StaticDrawList();
+                List.Serial     = InProxy->GetChangeSerial();
+                List.Generation = InGeneration;
+            }
+            return List;
+        }
+
+        /*
+         * PrePass for one view: every visible proxy's draws queued in their
+         * stages (a static one's from its kept list), then each shadow view's
+         * casters. The main view, or a scene capture's (InCapture: its owner's
+         * subtree left out). Counts what it drew and culled.
+         */
+        void QueueDraws(RenderContext& InContext, const RenderView& InView, const SceneCaptureRequest* InCapture,
+                        uint64_t& OutVisible, uint64_t& OutCulled, uint64_t& OutStatic)
+        {
+            InContext.BeginSceneDraws();
+
+            uint64_t VisibleCount = 0;
+            uint64_t CulledCount  = 0;
+            const auto Excluded = [InCapture](const RenderProxy* InProxy)
+            {
+                for(uint32_t Index = 0; InCapture && Index < InCapture->ExcludedCount; ++Index)
+                {
+                    if(InCapture->Excluded[Index] == InProxy->GetOwner()) { return true; }
+                }
+                return false;
+            };
+
+            /* A static proxy's padding comes from its list; a dynamic one's is asked. */
+            const uint64_t Generation = InContext.GetContentGeneration();
+            const auto PaddingOf = [&](RenderProxy* InProxy)
+            {
+                if(!InProxy->IsStatic())
+                {
+                    return InProxy->GetBoundsPadding(InContext);
+                }
+                StaticDrawList& List = ListFor(InProxy, Generation);
+                if(!List.bPadding)
+                {
+                    List.Padding  = InProxy->GetBoundsPadding(InContext);
+                    List.bPadding = true;
+                }
+                return List.Padding;
+            };
+            uint64_t StaticCount = 0;
+
+            for(RenderProxy* Proxy : Proxies)
+            {
+                if(!Proxy->IsVisible() || Excluded(Proxy))
+                {
+                    continue;
+                }
+                if(!Proxy->IsStatic() && !StaticLists.empty())
+                {
+                    StaticLists.erase(Proxy);   // it was static: its list is stale for good
+                }
+
+                /*
+                 * EMPTY MEANS "NO BASIS TO CULL", on EITHER side -- not "never
+                 * overlaps", which is what GameCore::AABB::Overlaps gives (it
+                 * returns false the instant either box IsEmpty()) and is exactly
+                 * backwards here. A caller with no real view still wants
+                 * everything drawn, and a proxy that never called SetLocalBounds
+                 * has given RenderScene nothing to cull it BY: undeclared, not
+                 * "everywhere and nowhere". Undeclared must default to visible or
+                 * a proxy type that never opts into bounds could never be drawn --
+                 * this file's smoke test has one, deliberately, to prove the path.
+                 * Explicitly overrides AABB::Overlaps' own empty-handling.
+                 */
+                const bool bViewHasBounds  = !InView.Bounds.IsEmpty();
+                const bool bProxyHasBounds = !Proxy->GetWorldBounds().IsEmpty();
+
+                /* World Position Offset can move geometry past its bounds: pad
+                 * them by the largest Max Offset among its materials. */
+                GameCore::AABB Bounds = Proxy->GetWorldBounds();
+                const float Padding = bViewHasBounds && bProxyHasBounds ? PaddingOf(Proxy) : 0.0f;
+                if(Padding > 0.0f)
+                {
+                    const EngineCore::Vector3 Pad(Padding, Padding, Padding);
+                    Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
+                }
+                const bool bVisible = !bViewHasBounds || !bProxyHasBounds || Bounds.Overlaps(InView.Bounds);
+
+                if(!bVisible)
+                {
+                    ++CulledCount;
+                    continue;
+                }
+
+                if(Proxy->IsStatic())
+                {
+                    StaticDrawList& List = ListFor(Proxy, Generation);
+                    if(!List.bDraws)
+                    {
+                        InContext.BeginCapture(&List.Draws);
+                        Proxy->Draw(InContext);
+                        InContext.EndCapture();
+                        List.bDraws = true;
+                        ++StaticBuilds;
+                    }
+                    InContext.SubmitCaptured(List.Draws);
+                    ++StaticCount;
+                }
+                else
+                {
+                    Proxy->Draw(InContext);
+                }
+                ++VisibleCount;
+            }
+
+            /*
+             * Shadow casters: per shadow view, every visible proxy it can see,
+             * camera-culled or not -- a caster off screen can shade what is on
+             * it. Padded like the camera's cull, for World Position Offset.
+             * A capture without CaptureShadows prepares none: SetView left the
+             * scene's shadows off, so it lights unshadowed.
+             */
+            const bool     bShadows    = !InCapture || InCapture->bShadows;
+            const uint32_t ShadowViews = bShadows ? InContext.PrepareShadows() : 0;
+            for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews; ++ViewIndex)
+            {
+                const GameCore::AABB& ViewBounds = InContext.GetShadowViewBounds(ViewIndex);
+                InContext.SetShadowCasterView(int32_t(ViewIndex));
+                for(RenderProxy* Proxy : Proxies)
+                {
+                    if(!Proxy->IsVisible() || Excluded(Proxy))
+                    {
+                        continue;
+                    }
+                    GameCore::AABB Bounds = Proxy->GetWorldBounds();
+                    if(!Bounds.IsEmpty() && !ViewBounds.IsEmpty())
+                    {
+                        const float Padding = PaddingOf(Proxy);
+                        const EngineCore::Vector3 Pad(Padding, Padding, Padding);
+                        Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
+                        if(!Bounds.Overlaps(ViewBounds))
+                        {
+                            continue;
+                        }
+                    }
+                    if(Proxy->IsStatic())
+                    {
+                        StaticDrawList& List = ListFor(Proxy, Generation);
+                        if(!List.bShadows)
+                        {
+                            InContext.BeginCapture(&List.Shadows);
+                            Proxy->DrawShadow(InContext);
+                            InContext.EndCapture();
+                            List.bShadows = true;
+                            ++StaticBuilds;
+                        }
+                        InContext.SubmitCaptured(List.Shadows, int32_t(ViewIndex));
+                    }
+                    else
+                    {
+                        Proxy->DrawShadow(InContext);
+                    }
+                }
+            }
+            InContext.SetShadowCasterView(-1);
+            OutVisible = VisibleCount;
+            OutCulled  = CulledCount;
+            OutStatic  = StaticCount;
+        }
+
 #if WITH_EDITOR
         std::vector<DebugLine>    DebugLines;   // consumed by the next Render()
         std::vector<MaterialPreviewRequest> Previews;   // likewise
+        std::vector<std::pair<uint64_t, MaterialPreviewMailbox*>> Captures;   // likewise
+        struct TargetReadback { uint64_t Request; std::string Path; MaterialPreviewMailbox* Mailbox; };
+        std::vector<TargetReadback> TargetReadbacks;                           // likewise
 #endif
         RenderView                View;
-        EngineCore::Color         ClearColor{24, 26, 32, 255};
+        SceneCaptureList          CaptureList;                         // SetCaptures; consumed by Render
+        EngineCore::Color         ClearColor{24, 26, 32, 255};        // the top, with a gradient
+        EngineCore::Color         ClearBottom{24, 26, 32, 255};
+        bool                      bClearGradient = false;
+
+        /* "stat frame": GPU times per ERenderGpuTimer, summed over the current
+         * half second, and the last half second's averages (-1: not timed). */
+        double  GpuSums[RGT_Count]   = {};
+        int     GpuSamples[RGT_Count] = {};
+        int64_t GpuWindowStartNs     = 0;
+        float   GpuMs[RGT_Count]     = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+
+        void AddGpuTimes(const float (&InGpuMs)[RGT_Count])
+        {
+            const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            if(GpuWindowStartNs == 0) { GpuWindowStartNs = Now; }
+            for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+            {
+                if(InGpuMs[Timer] >= 0.0f) { GpuSums[Timer] += InGpuMs[Timer]; ++GpuSamples[Timer]; }
+            }
+            if(Now - GpuWindowStartNs >= 500'000'000)
+            {
+                for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+                {
+                    GpuMs[Timer] = GpuSamples[Timer] > 0 ? float(GpuSums[Timer] / GpuSamples[Timer]) : -1.0f;
+                    GpuSums[Timer]    = 0.0;
+                    GpuSamples[Timer] = 0;
+                }
+                GpuWindowStartNs = Now;
+                if(bReportsStats) { SetReportedGpuTimes(GpuMs); }
+            }
+        }
+
+        void ClearGpuTimes()
+        {
+            for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer) { GpuSums[Timer] = 0.0; GpuSamples[Timer] = 0; GpuMs[Timer] = -1.0f; }
+            GpuWindowStartNs = 0;
+            if(bReportsStats) { SetReportedGpuTimes(GpuMs); }
+        }
         RenderLighting            Lighting;
         RenderPostProcess         PostProcess;
+
+        /* Last frame's Projection * View and viewport, for motion blur; none
+         * on the first frame or after a resize (a jump, not motion). */
+        EngineCore::Matrix4x4     PrevViewProjection;
+        EngineCore::Size          PrevViewport;
+        bool                      bHasPrevView = false;
 
         /*
          * THE SCENE'S RENDER TARGETS, and the whole reason anything reaches
@@ -53,6 +317,166 @@ namespace RenderCore
          */
         SceneTargets Targets{"RenderCore.Scene"};
 
+        /*
+         * IMAGE-BASED LIGHTING (RENDERPIPELINE.md, "Image-based lighting"): the
+         * probe atlas and cube strip; the stage targets a reflection probe's
+         * faces render through; which probe each of the atlas's four probe
+         * blocks holds (by entity key) and whether its capture is in it; and
+         * whether the sky block is, for which sky. UpdateImageBasedLighting
+         * keeps them; ApplyImageBasedLighting hands the context what the next
+         * stages light with.
+         */
+        IBLResources IBL;
+        SceneTargets ProbeStages{"RenderCore.ProbeStages"};
+        struct ProbeSlot { uint64_t Key = 0; bool bValid = false; bool bPending = false; };
+        ProbeSlot    Slots[RENDER_REFLECTION_PROBES_MAX];
+        bool         bSkyValid = false;
+        uint64_t     SkyHash   = 0;
+        float        ProbeData[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};
+        uint32_t     ProbeDataCount = 0;
+
+        void ApplyImageBasedLighting(RenderContext& InContext) const
+        {
+            InContext.SetImageBasedLighting(IBL.Atlas ? &IBL : nullptr, ProbeData, ProbeDataCount, bSkyValid);
+        }
+
+        /* What the sky block depends on: the colours, the HDRI (and the loaded file, so a reimport counts). */
+        uint64_t SkyHashOf() const
+        {
+            uint64_t Hash = 1469598103934665603ull;
+            const auto Mix = [&Hash](const void* InData, const size_t InSize)
+            {
+                const auto* Bytes = static_cast<const uint8_t*>(InData);
+                for(size_t Index = 0; Index < InSize; ++Index) { Hash = (Hash ^ Bytes[Index]) * 1099511628211ull; }
+            };
+            const EngineCore::Color Colors[2] = { Lighting.SkyColor, Lighting.GroundColor };
+            for(const EngineCore::Color& Each : Colors) { const uint8_t Rgb[3] = { Each.R, Each.G, Each.B }; Mix(Rgb, 3); }
+            Mix(&Lighting.SkyIntensity, sizeof(float));
+            Mix(Lighting.SkyEnvironment, std::strlen(Lighting.SkyEnvironment));
+            Mix(&Lighting.SkyEnvironmentIntensity, sizeof(float));
+            Mix(&Lighting.SkyEnvironmentRotation, sizeof(float));
+            if(Lighting.SkyEnvironment[0] != '\0')
+            {
+                const void* Loaded = TextureAssetCache::Find(Lighting.SkyEnvironment).get();
+                Mix(&Loaded, sizeof(Loaded));
+            }
+            return Hash;
+        }
+
+        /* A reflection probe's six faces, HDR, into the strip, prefiltered into atlas block InBlock. */
+        bool CaptureReflectionProbe(RenderContext& InContext, const ReflectionProbeRequest& InProbe, const uint32_t InBlock)
+        {
+            const uint32_t Face = InProbe.Resolution;
+            if(!InContext.EnsureIBLResources(IBL, Face) || !ProbeStages.Allocate(Face, Face))
+            {
+                return false;
+            }
+            SceneCaptureRequest Cube;
+            Cube.Mode     = SCM_Omnidirectional;
+            Cube.Position = InProbe.Position;
+            Cube.NearClip = InProbe.NearClip;
+            Cube.FarClip  = InProbe.FarClip;
+            Cube.bShadows = InProbe.bShadows;
+            RenderView Views[6];
+            const uint32_t ViewCount = BuildCaptureViews(Cube, View, Face, Face, Views);
+
+            /* Lit by the sky alone (no probe sees another, or itself), the sky behind. */
+            InContext.SetImageBasedLighting(&IBL, nullptr, 0, bSkyValid);
+            InContext.SetSkyBackground(true);
+            bool bCopied = ViewCount == 6;
+            for(uint32_t Index = 0; Index < ViewCount; ++Index)
+            {
+                SCOPED_DRAW_EVENT(GetCubeFaceName(Index));
+                InContext.SetView(Views[Index]);
+                uint64_t Visible = 0, Culled = 0, Static = 0;
+                QueueDraws(InContext, Views[Index], &Cube, Visible, Culled, Static);
+                InContext.RenderSceneStages(ProbeStages, ClearColor);
+                bCopied = InContext.CopyCaptureToStrip(ProbeStages, IBL, Index) && bCopied;
+            }
+            InContext.SetSkyBackground(false);
+            return bCopied && InContext.PrefilterIBLBlock(IBL, InBlock);
+        }
+
+        /* The sky block when the sky changed, then the probes in view: a block each, captured when due
+         * or new to it -- two a frame at most, the rest next frame. Leaves the context on View. */
+        void UpdateImageBasedLighting(RenderContext& InContext)
+        {
+            ProbeDataCount = 0;
+            if(!InContext.CanImageBasedLight())
+            {
+                bSkyValid = false;
+                ApplyImageBasedLighting(InContext);
+                return;
+            }
+            const uint64_t Hash = SkyHashOf();
+            if(!bSkyValid || Hash != SkyHash)
+            {
+                SCOPED_DRAW_EVENT("SkyLight");
+                bSkyValid = InContext.EnsureIBLResources(IBL, 128) && InContext.RenderSkyToStrip(IBL)
+                         && InContext.PrefilterIBLBlock(IBL, 4);
+                SkyHash = Hash;
+            }
+
+            const uint32_t Count = std::min<uint32_t>(CaptureList.ProbeCount, RENDER_REFLECTION_PROBES_MAX);
+            const auto Listed = [&](const uint64_t InKey)
+            {
+                for(uint32_t Index = 0; Index < Count; ++Index) { if(CaptureList.Probes[Index].Key == InKey) { return true; } }
+                return false;
+            };
+            int32_t BlockOf[RENDER_REFLECTION_PROBES_MAX];
+            for(uint32_t Index = 0; Index < Count; ++Index)
+            {
+                const ReflectionProbeRequest& Probe = CaptureList.Probes[Index];
+                BlockOf[Index] = -1;
+                for(uint32_t Block = 0; Block < RENDER_REFLECTION_PROBES_MAX; ++Block)
+                {
+                    if(Slots[Block].Key == Probe.Key && Slots[Block].Key != 0) { BlockOf[Index] = int32_t(Block); break; }
+                }
+                if(BlockOf[Index] < 0)
+                {
+                    for(uint32_t Block = 0; Block < RENDER_REFLECTION_PROBES_MAX; ++Block)
+                    {
+                        if(Slots[Block].Key == 0 || !Listed(Slots[Block].Key))
+                        {
+                            Slots[Block] = ProbeSlot{ Probe.Key, false, true };
+                            BlockOf[Index] = int32_t(Block);
+                            break;
+                        }
+                    }
+                }
+                if(BlockOf[Index] >= 0 && Probe.bDue) { Slots[BlockOf[Index]].bPending = true; }
+            }
+
+            uint32_t Captures = 0;
+            for(uint32_t Index = 0; Index < Count && Captures < 2; ++Index)
+            {
+                if(BlockOf[Index] < 0) { continue; }
+                ProbeSlot& Slot = Slots[BlockOf[Index]];
+                if(!Slot.bPending && Slot.bValid) { continue; }
+                SCOPED_DRAW_EVENT("ReflectionProbe " + std::to_string(BlockOf[Index]));
+                Slot.bValid   = CaptureReflectionProbe(InContext, CaptureList.Probes[Index], uint32_t(BlockOf[Index]));
+                Slot.bPending = false;
+                ++Captures;
+            }
+            if(Captures > 0)
+            {
+                InContext.SetView(View);
+            }
+
+            for(uint32_t Index = 0; Index < Count; ++Index)
+            {
+                if(BlockOf[Index] < 0 || !Slots[BlockOf[Index]].bValid) { continue; }
+                const ReflectionProbeRequest& Probe = CaptureList.Probes[Index];
+                float (*Out)[4] = &ProbeData[ProbeDataCount * 3];
+                Out[0][0] = float(Probe.Position.GetX()); Out[0][1] = float(Probe.Position.GetY());
+                Out[0][2] = float(Probe.Position.GetZ()); Out[0][3] = Probe.Radius;
+                Out[1][0] = Probe.Extent[0]; Out[1][1] = Probe.Extent[1]; Out[1][2] = Probe.Extent[2]; Out[1][3] = Probe.Intensity;
+                Out[2][0] = float(BlockOf[Index]); Out[2][1] = 0.0f; Out[2][2] = 0.0f; Out[2][3] = 0.0f;
+                ++ProbeDataCount;
+            }
+            ApplyImageBasedLighting(InContext);
+        }
+
         /* Targets.Final as of the last Render(), for PresentToWindow on the UI
          * thread. A target is resized in place, never replaced, while the
          * scene lives, so the pointer stays good; GDI skips a present while a
@@ -64,10 +488,12 @@ namespace RenderCore
 
     RenderScene::RenderScene() : P(new Impl())
     {
+        GLiveScenes.push_back(this);
     }
 
     RenderScene::~RenderScene()
     {
+        GLiveScenes.erase(std::remove(GLiveScenes.begin(), GLiveScenes.end(), this), GLiveScenes.end());
         if(!P->Proxies.empty())
         {
             RENDERCORE_LOG_WARN("RenderScene destroyed with proxies still present; "
@@ -78,6 +504,11 @@ namespace RenderCore
          * did this, but a scene destroyed without it (a test, an early
          * failure) must still not leak a GPU image. Idempotent. */
         P->Targets.Release();
+        P->ProbeStages.Release();
+        for(GDIRenderTarget** Each : { &P->IBL.Atlas, &P->IBL.Strip })
+        {
+            if(*Each) { GDIReleaseRenderTarget(*Each); delete *Each; *Each = nullptr; }
+        }
 
         delete P;
     }
@@ -103,6 +534,7 @@ namespace RenderCore
         }
 
         InProxy->ReleaseRenderResources(InContext);
+        P->StaticLists.erase(InProxy);
 
         const size_t Index    = size_t(InProxy->SceneIndex);
         const size_t LastSlot = P->Proxies.size() - 1;
@@ -132,12 +564,38 @@ namespace RenderCore
 
     void RenderScene::SetClearColor(const EngineCore::Color InColor)
     {
-        P->ClearColor = InColor;
+        P->ClearColor     = InColor;
+        P->ClearBottom    = InColor;
+        P->bClearGradient = false;
+    }
+
+    void RenderScene::SetCaptures(const SceneCaptureList& InCaptures)
+    {
+        P->CaptureList = InCaptures;
+    }
+
+    void RenderScene::SetClearGradient(const EngineCore::Color InTop, const EngineCore::Color InBottom)
+    {
+        P->ClearColor     = InTop;
+        P->ClearBottom    = InBottom;
+        P->bClearGradient = true;
     }
 
     void RenderScene::SetLighting(const RenderLighting& InLighting)
     {
         P->Lighting = InLighting;
+    }
+
+    void RenderScene::SetViewMode(const ERenderViewMode InMode, const std::string& InTarget)
+    {
+        P->ViewMode   = InMode;
+        P->ViewTarget = InTarget;
+    }
+
+    std::vector<std::string> RenderScene::GetViewableTargets() const
+    {
+        std::lock_guard<std::mutex> Guard(P->TargetsLock);
+        return P->TargetNames;
     }
 
     void RenderScene::SetPostProcess(const RenderPostProcess& InPostProcess)
@@ -155,6 +613,16 @@ namespace RenderCore
     {
         P->Previews.push_back(InRequest);
     }
+
+    void RenderScene::AddCapture(const uint64_t InRequest, MaterialPreviewMailbox* InMailbox)
+    {
+        P->Captures.emplace_back(InRequest, InMailbox);
+    }
+
+    void RenderScene::AddTargetReadback(const uint64_t InRequest, const std::string& InPath, MaterialPreviewMailbox* InMailbox)
+    {
+        P->TargetReadbacks.push_back({ InRequest, InPath, InMailbox });
+    }
 #endif
 
     void RenderScene::Render(RenderContext& InContext)
@@ -166,6 +634,7 @@ namespace RenderCore
          * leaves GetView() reporting a view nothing has drawn against yet. */
         InContext.SetView(P->View);
         InContext.SetLighting(P->Lighting);
+        P->ApplyImageBasedLighting(InContext);   // last frame's, for the captures below; brought up to date before the scene
 
         /* Created on first use and resized with the viewport -- see Impl's
          * own comment on why a scene owns these at all. Early-outs on every
@@ -177,12 +646,33 @@ namespace RenderCore
 
         GDIBeginRendering();
 
+        /* The frame's root draw event, ended just before EndRendering submits:
+         * everything below nests under it (RENDERPIPELINE.md, "Draw events"). */
+        InContext.BeginDrawEvent("Scene");
+
+        /* "stat frame": the last GDI block's GPU times, to the scene that wrote
+         * them (they are complete only now), and this block's own, if shown. */
+        const StatUnitSnapshot Stats = GetStatUnit();
+        {
+            float GpuMs[RGT_Count];
+            const void* Owner = InContext.BeginTimedBlock(this, Stats.bShowFrame, GpuMs);
+            for(RenderScene* Each : GLiveScenes)
+            {
+                if(Each == Owner) { Each->P->AddGpuTimes(GpuMs); }
+            }
+            if(!Stats.bShowFrame && P->GpuWindowStartNs != 0)
+            {
+                P->ClearGpuTimes();
+            }
+        }
+
 #if WITH_EDITOR
         /* Previews FIRST, before the scene's own stages, so the scene's final
          * target is the active one at EndRendering and the present never
          * shows a preview. */
         for(const MaterialPreviewRequest& Each : P->Previews)
         {
+            SCOPED_DRAW_EVENT("MaterialPreview");
             EngineCore::Image Pixels;
             std::string       Error;
             InContext.RenderMaterialPreview(Each, Pixels, Error);
@@ -198,67 +688,122 @@ namespace RenderCore
          * out entirely when CurrentCmd is null (outside a BeginRendering/
          * EndRendering pair), so a bind placed above it would be a silent no-op.
          */
-        InContext.BeginSceneDraws();
+        uint64_t VisibleCount = 0, CulledCount = 0, StaticCount = 0;
 
-        uint64_t VisibleCount = 0;
-        uint64_t CulledCount  = 0;
-
-        for(RenderProxy* Proxy : P->Proxies)
+        /*
+         * SCENE CAPTURES (RENDERPIPELINE.md), before the scene's own pass so it
+         * samples this frame's: each probe's views -- six cube faces, or the
+         * camera reflected in a mirror -- through its own stage targets, each
+         * copied into its render target. Shadows are drawn for each view; the
+         * post process stack is the main view's alone.
+         */
+        bool bCaptured = false;
+        InContext.WriteGpuTimestamp(RGT_SceneCapture, false);   // "stat frame": 0 with no captures, not "-"
+        for(uint32_t Index = 0; Index < P->CaptureList.Count && Index < RENDER_CAPTURES_MAX; ++Index)
         {
-            if(!Proxy->IsVisible())
+            const SceneCaptureRequest& Request = P->CaptureList.Requests[Index];
+            const bool bCube = Request.Mode == SCM_Omnidirectional;
+            EngineCore::Color Clear;
+            SceneTargets* Stages = InContext.BeginTargetCapture(Request.Target, Request.Resolution,
+                                                                bCube ? ERenderTargetKind::Cube : ERenderTargetKind::Tex2D, Clear);
+            if(!Stages)
             {
                 continue;
             }
-
-            /*
-             * EMPTY MEANS "NO BASIS TO CULL", on EITHER side -- not "never
-             * overlaps", which is what GameCore::AABB::Overlaps gives (it
-             * returns false the instant either box IsEmpty()) and is exactly
-             * backwards here. A caller with no real view still wants
-             * everything drawn, and a proxy that never called SetLocalBounds
-             * has given RenderScene nothing to cull it BY: undeclared, not
-             * "everywhere and nowhere". Undeclared must default to visible or
-             * a proxy type that never opts into bounds could never be drawn --
-             * this file's smoke test has one, deliberately, to prove the path.
-             * Explicitly overrides AABB::Overlaps' own empty-handling.
-             */
-            const bool bViewHasBounds  = !P->View.Bounds.IsEmpty();
-            const bool bProxyHasBounds = !Proxy->GetWorldBounds().IsEmpty();
-
-            /* World Position Offset can move geometry past its bounds: pad
-             * them by the largest Max Offset among its materials. */
-            GameCore::AABB Bounds = Proxy->GetWorldBounds();
-            const float Padding = bViewHasBounds && bProxyHasBounds ? Proxy->GetBoundsPadding(InContext) : 0.0f;
-            if(Padding > 0.0f)
+            SCOPED_DRAW_EVENT("SceneCapture " + std::string(Request.Target));
+            RenderView Views[6];
+            const uint32_t ViewCount = BuildCaptureViews(Request, P->View, Stages->Width, Stages->Height, Views);
+            for(uint32_t Face = 0; Face < ViewCount; ++Face)
             {
-                const EngineCore::Vector3 Pad(Padding, Padding, Padding);
-                Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
+                SCOPED_DRAW_EVENT(bCube ? GetCubeFaceName(Face) : "Mirror");
+                InContext.SetView(Views[Face]);
+                uint64_t Visible = 0, Culled = 0, Static = 0;
+                P->QueueDraws(InContext, Views[Face], &Request, Visible, Culled, Static);
+                InContext.RenderSceneStages(*Stages, Clear);
+                InContext.FinishTargetFace(Request.Target, Face);
+                bCaptured = true;
             }
-            const bool bVisible = !bViewHasBounds || !bProxyHasBounds || Bounds.Overlaps(P->View.Bounds);
-
-            if(!bVisible)
-            {
-                ++CulledCount;
-                continue;
-            }
-
-            Proxy->Draw(InContext);
-            ++VisibleCount;
         }
-
-        /* The scene's Post Process components, Priority low first (WorldBridge sorted them). */
-        for(uint32_t Index = 0; Index < P->PostProcess.Count && Index < RENDER_POST_PROCESS_MAX; ++Index)
+        InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
+        P->CaptureList.Count = 0;
+        if(bCaptured)
         {
-            InContext.SubmitPostProcess(P->PostProcess.Materials[Index]);
+            InContext.SetView(P->View);
         }
+#if WITH_EDITOR
+        for(const Impl::TargetReadback& Each : P->TargetReadbacks)
+        {
+            EngineCore::Image Pixels;
+            const bool bRead = InContext.ReadRenderTarget(Each.Path.c_str(), Pixels);
+            if(Each.Mailbox)
+            {
+                Each.Mailbox->Deliver(Each.Request, std::move(Pixels),
+                                      bRead ? std::string() : "render target '" + Each.Path + "' has nothing captured or baked");
+            }
+        }
+        P->TargetReadbacks.clear();
+#endif
+
+        /* IMAGE-BASED LIGHTING: the sky block and the reflection probes, before the scene lights by them. */
+        {
+            SCOPED_DRAW_EVENT("ImageBasedLighting");
+            P->UpdateImageBasedLighting(InContext);
+        }
+
+        P->QueueDraws(InContext, P->View, nullptr, VisibleCount, CulledCount, StaticCount);
+
+        /* The post process stack: the volumes' blend (WorldBridge), its
+         * materials by stage and order, then the effects' settings. */
+        const PostProcessSettings& Post = P->PostProcess.Settings;
+        for(uint32_t Index = 0; Index < Post.MaterialCount && Index < RENDER_POST_MATERIAL_MAX; ++Index)
+        {
+            InContext.SubmitPostProcess(Post.Materials[Index].Path, Post.Materials[Index].Stage);
+        }
+        const bool bSameViewport = P->bHasPrevView && P->PrevViewport.Width == P->View.ViewportPixels.Width
+                                && P->PrevViewport.Height == P->View.ViewportPixels.Height;
+        InContext.SetPostProcess(Post, bSameViewport ? &P->PrevViewProjection : nullptr);
+        P->PrevViewProjection = P->View.Projection * P->View.View;
+        P->PrevViewport       = P->View.ViewportPixels;
+        P->bHasPrevView       = true;
 
         /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
          * leaves the final colour bound, for the present and the overlay. */
-        InContext.RenderSceneStages(P->Targets, P->ClearColor);
+        InContext.SetUnlit(P->ViewMode == ERenderViewMode::Unlit);
+        InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true, P->bClearGradient ? &P->ClearBottom : nullptr);
+        InContext.SetUnlit(false);
+
+        /* The targets this frame drew, for the view mode's list; one of them
+         * over the picture in the Render Target view mode. */
+        {
+            if(P->ViewMode == ERenderViewMode::RenderTarget)
+            {
+                InContext.ShowTarget(P->Targets, P->ViewTarget);
+            }
+            std::vector<std::string> Names;
+            InContext.ListViewableTargets(P->Targets, Names);
+            std::lock_guard<std::mutex> Guard(P->TargetsLock);
+            if(Names != P->TargetNames) { P->TargetNames = std::move(Names); }
+        }
+
+#if WITH_EDITOR
+        /* Read back before the overlay; the readback flushes and resumes the frame. */
+        for(const auto& Each : P->Captures)
+        {
+            EngineCore::Image Pixels;
+            if(P->Targets.Final) { Pixels = P->Targets.Final->ToImage(); }
+            if(Each.second)
+            {
+                Each.second->Deliver(Each.first, std::move(Pixels),
+                                     P->Targets.Final ? std::string() : std::string("the scene has no render target"));
+            }
+        }
+        P->Captures.clear();
+#endif
 
         if(P->bReportsStats)
         {
             SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
+            SetStaticDrawStats(StaticCount, P->StaticBuilds);
         }
 
 #if WITH_EDITOR
@@ -267,16 +812,29 @@ namespace RenderCore
         {
             /* No depth test: an outline or a gizmo shows through what it marks. */
             GDISetDepthState(IDepthStateDesc());
-            InContext.BeginDrawEvent("DebugLines");
+            SCOPED_DRAW_EVENT("DebugLines");
             for(const DebugLine& Line : P->DebugLines)
             {
                 InContext.DrawLine(Line.Start, Line.End, Line.Color, Line.ThicknessPixels);
             }
-            InContext.EndDrawEvent();
             P->DebugLines.clear();
         }
 #endif
 
+        /* "stat unit" (Stats.Unit) and "stat frame" (Stats.Frame) over
+         * everything, in one panel, after the readback above so a capture
+         * never shows them. */
+        if(Stats.bShow || Stats.bShowFrame)
+        {
+            std::string Text = Stats.bShow ? FormatStatUnit(Stats) : std::string();
+            if(Stats.bShowFrame)
+            {
+                Text += (Text.empty() ? "" : "\n\n") + FormatStatFrame(P->GpuMs, InContext.CanTimeGpu());
+            }
+            InContext.DrawStatUnit(P->Targets.Width, P->Targets.Height, Text);
+        }
+
+        InContext.EndDrawEvent();   // "Scene"
         GDIEndRendering();
 
         /* After EndRendering: the final colour is now in its presentable state. */
@@ -320,5 +878,9 @@ namespace RenderCore
          * GPU image's destruction on the thread that owns the context. */
         P->PresentTarget.store(nullptr, std::memory_order_release);
         P->Targets.Release();
+        P->ProbeStages.Release();
+        InContext.ReleaseIBLResources(P->IBL);
+        P->bSkyValid = false;
+        for(Impl::ProbeSlot& Each : P->Slots) { Each = Impl::ProbeSlot(); }
     }
 }

@@ -59,10 +59,22 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Components/CameraComponent.cpp
         Source/Private/RenderCore/Components/DirectionalLightComponent.cpp
         Source/Private/RenderCore/Components/SkyLightComponent.cpp
+        Source/Private/RenderCore/Components/PointLightComponent.cpp
+        Source/Private/RenderCore/Components/SpotLightComponent.cpp
+        Source/Private/RenderCore/ShadowSetup.h
+        Source/Private/RenderCore/ShadowSetup.cpp
+        Source/Private/RenderCore/ShadowSettings.cpp
+        Source/Private/RenderCore/PostProcessStack.cpp
         Source/Private/RenderCore/Components/PostProcessComponent.cpp
+        Source/Private/RenderCore/Components/SceneCaptureProbeComponent.cpp
+        Source/Private/RenderCore/Components/ReflectionProbeComponent.cpp
         Source/Private/RenderCore/AssetFileCommon.h
         Source/Private/RenderCore/MeshAsset.cpp
+        Source/Private/RenderCore/BakedLightingAsset.cpp
         Source/Private/RenderCore/TextureAsset.cpp
+        Source/Private/RenderCore/RenderTargetAsset.cpp
+        Source/Private/RenderCore/SceneCapture.cpp
+        Source/Private/RenderCore/SceneCapture.h
         Source/Private/RenderCore/WorldBridge.h
         Source/Private/RenderCore/WorldBridge.cpp
         Source/Private/RenderCore/Renderer.cpp
@@ -80,13 +92,22 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RenderScene.h
         Source/Public/RenderCore/AssetImportInfo.h
         Source/Public/RenderCore/MeshAsset.h
+        Source/Public/RenderCore/BakedLightingAsset.h
         Source/Public/RenderCore/TextureAsset.h
+        Source/Public/RenderCore/TextureCompression.h
+        Source/Public/RenderCore/RenderTargetAsset.h
         Source/Public/RenderCore/RenderComponents.h
         Source/Public/RenderCore/Components/RenderComponent.h
         Source/Public/RenderCore/Components/CameraComponent.h
         Source/Public/RenderCore/Components/DirectionalLightComponent.h
         Source/Public/RenderCore/Components/SkyLightComponent.h
+        Source/Public/RenderCore/Components/PointLightComponent.h
+        Source/Public/RenderCore/Components/SpotLightComponent.h
+        Source/Public/RenderCore/Components/LightShadow.h
+        Source/Public/RenderCore/PostProcessStack.h
         Source/Public/RenderCore/Components/PostProcessComponent.h
+        Source/Public/RenderCore/Components/SceneCaptureProbeComponent.h
+        Source/Public/RenderCore/Components/ReflectionProbeComponent.h
         Source/Public/RenderCore/Renderer.h
         Source/Public/RenderCore/MaterialDescription.h
         Source/Public/RenderCore/RenderLighting.h

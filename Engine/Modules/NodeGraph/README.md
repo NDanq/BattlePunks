@@ -37,6 +37,7 @@ registries, by whichever executable links this: the editor or the test.
 | `GraphCompiler.h` | `ValidateGraph` (what every schema shares), then `CompileGraph` into the schema's compiler; diagnostics name their node |
 | `MaterialSchema.cpp` | Material to GLSL: data flow from Pixel Output (and each Discard) back, one `tN` temporary per computed value, Branch and For Loop as real `if` and `for` blocks, parameters in one `mat4` at binding 2 |
 | `ScriptSchema.cpp` | Script to Lua: exec flow from event nodes, pure values re-evaluated per statement; component nodes generated from the script bindings |
+| `PostProcessSchema.cpp` | A post process stack (`*.pp.nmgraph`) to `.ppstack` text: one line per effect node, in the renderer's order |
 | `Scripts/cook_material_graphs.py` | Cooks material graphs from their `<gen_code>` (or loose material functions) -- `-check` with glslc, loose or into a shader cache -- through GDI's own `cook_shaders.py`. Also cooks the engine's `Content/Shaders` |
 | `Tools/NodeGraphGenerate.cpp` | Regenerates graphs' `<gen_code>` from the command line, as the editor does on save |
 
@@ -124,8 +125,9 @@ Node settings are properties of kind String, Identifier, Choice, Variable,
 **Bool** or **Texture**. A Bool is a checkbox in the editor, stored as
 `true`/`false`, and anything else is a validation error. A Texture is a texture
 asset's runtime-relative path (`Content/Textures/Brick.nmtexture`), typed,
-browsed for or dropped from the Content Browser; anything but a `.nmtexture`
-is a validation error.
+browsed for or dropped from the Content Browser. A render target
+(`.nmrt2d`, `.nmrt3d`, or a runtime `transient://` name) is accepted too, and
+samples as a texture. Anything else is a validation error.
 
 An input pin with `Implicit` set has no constant: unlinked, the schema
 supplies what it names -- a Texture Sample's UV is "Texture Coordinate". The
@@ -245,15 +247,15 @@ design):
 - **`.material`**, what the renderer needs to draw it:
 
   ```
-  NimbleMaterial 2
+  NimbleMaterial 3
   Domain Opaque
   Shading Lit
   TwoSided 0
   ClipValue 0.5
   MaxOffset 0
   HasOffset 0
-  BlockSize 48
-  Param Color vec3 32 0.2 0.8 1 0
+  BlockSize 176
+  Param Color vec3 160 0.2 0.8 1 0
   Texture 1 Nearest Default Content/Textures/Brick.nmtexture
   ```
 
@@ -268,7 +270,8 @@ warning. The first output, **Pixel Output** (one colour), still compiles: as
 Unlit and Translucent, how every material drew before.
 
 **Parameters** are members of one std140 block at binding 2, in name order,
-after the engine's 32 bytes (the tint, Clip Value, Two Sided). The offsets are
+after the engine's 160 bytes (the tint, Clip Value, Two Sided, and the draw's
+baked lighting: RenderCore's MaterialDescription.h). The offsets are
 computed here and written to the `.material`, and the renderer fills the block
 byte for byte (GDI's `GDISetUniformBlock`). Any number fit, up to the block's
 1024 bytes.
@@ -289,10 +292,45 @@ from 1 (slot 0 is a PostProcess material's scene), declared
 `Material_Texture<slot>` at binding 4 + slot; seven fit. Texture Objects take
 slots in GUID order, used or not, and two naming the same texture and sampler
 share one. The `.material`'s `Texture` lines say which file and settings fill
-each slot. One sample node's outputs share one sample. Both stages sample; in
-World Position Offset a sample reads the full-size level (`textureLod`), as the
-vertex stage has no derivatives. A Texture Object with no texture, or a Texture
+each slot. One sample node's outputs share one sample. Both stages sample. In
+the pixel stage, a texture with a baked mip chain is read trilinearly with a
+Linear filter. In World Position Offset a sample reads the full-size level
+(`textureLod`), as the vertex stage has no derivatives. A Texture Object with no texture, or a Texture
 Sample with no Texture Object linked, is an error.
+
+**Normal Map** (category Textures, pixel stage only) turns a tangent-space
+normal map's colour into a world-space normal, for Material Output's Normal.
+
+- **Inputs:** Color is the map's colour, usually a Texture Sample's RGB;
+  unlinked it is flat. Strength scales the tilt. UV must be the UV the map was
+  sampled at; unlinked it is the texture coordinate.
+- **Format:** OpenGL means green points up the image (Blender, Substance's
+  OpenGL export); DirectX means it points down (Unreal, 3ds Max).
+- **The tangent frame:** no mesh carries tangents, so it is built per pixel
+  from how the world position and UV change across it (`Material_NormalMap`,
+  MaterialCommon.glsl, a cotangent frame). It is signed by the screen's
+  handedness, so every backend and back faces agree.
+- **Import the map linear:** the importer does so for a name that says normal
+  (see the Editor's README).
+- **Verified on Vulkan:** a map tilted right and up the image tilts the normal
+  right and up on screen.
+
+**Reflect** (category Textures, pixel stage only) samples a render target that
+a Scene Capture Probe fills, for environment reflections. Its **Target**
+setting names the target, which takes a texture slot like a Texture Object
+does. What it samples depends on the target's kind:
+
+- **`.nmrt2d`, a planar mirror:** the target is read at the pixel's screen
+  position flipped in X (`Material_MirrorUV`). **Distortion** (vec2), if
+  linked, is added to that UV, for ripples.
+- **`.nmrt3d`, a cube:** the target is read along the view vector reflected
+  in **Normal** (vec3; unlinked, the vertex normal), through
+  `Material_SampleCubeStrip`.
+
+The node gives **RGBA** and **RGB**. A Target that is empty, or is not a
+render target, is an error. For a mirror or chrome look, the usual graph sends
+Reflect.RGB times a tint into Emissive, over a dark Base Color with low
+Roughness. LightLab's `Mirror` and `Chrome` materials are built this way.
 
 **Upgrading.** A schema can rewrite a graph an older editor saved as it is read
 (`Schema::UpgradeGraph`, for files and pasted fragments). Texture Sample
@@ -304,7 +342,7 @@ reader warns that the graph was upgraded. Saving writes the new form.
 **Two stages.** World Position Offset is the vertex stage's root; everything
 else is the pixel stage's. Each stage is compiled from its own roots, so a
 node both reach is written in both functions. A node's `StageMask` says where
-it can run: Pixel Coordinate, Pixel Depth, Clip Position and Scene Texture are
+it can run: Pixel Coordinate, Pixel Depth, Clip Position, Scene Texture and Scene Depth are
 pixel-only. A pixel-only node feeding World Position Offset, however
 indirectly, is a compile error on that node; the editor refuses the link
 (`Schema::CanLinkStages`), greys such nodes in the palette when dragging from
@@ -377,7 +415,9 @@ The inputs read `MaterialInputs`, which each stage's template fills:
   stages; World Position is before the offset in the vertex stage);
 - Clip Position, Pixel Coordinate and Pixel Depth (linear and device; pixel only);
 - Viewport Size, Mouse, Instance Tint and Time (both);
-- Scene Texture (PostProcess materials only);
+- Scene Texture and Scene Depth (PostProcess materials only; Scene Depth gives the
+  stored depth and the distance from the camera, from the scene depth in slot 7,
+  so a PostProcess material samples at most 6 textures of its own);
 - Texture Object and Texture Sample (both; Textures in the palette).
 
 **Drawing one.** A primitive names the material by its graph's runtime path:
@@ -418,6 +458,39 @@ graphs' `<gen_code>` from the command line, as the editor does on save.
 `-module SandboxGame.dll` loads a game module first, so that graphs using
 its components, libraries and structs compile. Run it from the game's
 binaries folder so the module's dependencies resolve.
+
+## Post process stacks
+
+A `*.pp.nmgraph` is a **post process stack**: the effects a Post Process volume
+applies, and their settings (RenderCore's `RENDERPIPELINE.md`, "Post process").
+
+- **Nodes:** each node is one effect, with properties and no pins. Ambient
+  Occlusion, Depth of Field, Motion Blur, Bloom and Antialiasing appear at most
+  once each;
+  Material (a PostProcess material graph, run Before or After Effects, by Order)
+  may appear any number of times.
+- **Order:** where a node sits on the canvas means nothing, because the
+  renderer runs the effects in a fixed order. Ambient Occlusion runs before the
+  lighting, not in the post chain, so it darkens only ambient light. A stack without a node leaves
+  that effect alone, so a smaller volume can add Depth of Field without
+  touching the glow a wider one sets.
+- **Checks:** numbers are typed as text and checked against each setting's
+  range when compiled.
+- **Output:** the compiled output, `.ppstack`, is one line per effect, then one
+  per material, with the path last:
+
+```
+# Post process stack Arch
+Effect DepthOfField FocusDistance=350 FocusRange=250 MaxBlur=10 NearBlur=false
+Effect Bloom Threshold=0.8 Intensity=0.9 Radius=0.75 Levels=5 Tint=1,0.85,0.7
+Material Stage=After Order=0 Path=Content/Materials/Negative.material.nmgraph
+```
+
+- **Staging:** the graph file itself is staged beside the executable, where the
+  runtime reads its `<gen_code>` (GameCore's `GraphText.h`) -- as a script graph
+  is read, so a game build needs no NodeGraph. Content Browser right-click >
+  New PostProcess Graph... starts one, with Bloom and Antialiasing, in the
+  browser's folder.
 
 ## Tests
 

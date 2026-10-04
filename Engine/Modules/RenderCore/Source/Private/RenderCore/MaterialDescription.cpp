@@ -87,9 +87,9 @@ namespace RenderCore
             {
                 int Version = 0;
                 Words >> Version;
-                if(Version != 2)
+                if(Version != 3)
                 {
-                    OutError = "version " + std::to_string(Version) + " material; recompile its graph (version 2 is current)";
+                    OutError = "version " + std::to_string(Version) + " material; recompile its graph (version 3 is current)";
                     return false;
                 }
                 bHeader = true;
@@ -179,7 +179,8 @@ namespace RenderCore
         }
         if(Result.BlockSize < MATERIAL_ENGINE_BLOCK_BYTES || Result.BlockSize > MATERIAL_BLOCK_MAX_BYTES)
         {
-            OutError = "BlockSize " + std::to_string(Result.BlockSize) + " is outside 32-1024 bytes";
+            OutError = "BlockSize " + std::to_string(Result.BlockSize) + " is outside " + std::to_string(MATERIAL_ENGINE_BLOCK_BYTES)
+                     + "-" + std::to_string(MATERIAL_BLOCK_MAX_BYTES) + " bytes";
             return false;
         }
         for(const MaterialParameter& Each : Result.Parameters)

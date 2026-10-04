@@ -13,26 +13,34 @@ namespace RenderCore
 {
     GAMECORE_DEFINE_COMPONENT(PostProcessComponent, "Post Process")
 
-    /* The material is a graph path. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PostProcessComponent, 1)
+    /* Version 2: the stack (a version 1 save's Material, a material graph
+     * path, reads into it -- a stack of that one material) and BlendDistance. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(PostProcessComponent, 2)
     {
-        Ar.Field("Material", C.Material);
+        Ar.Field(Ar.GetVersion() >= 2 ? "Stack" : "Material", C.Stack);
         Ar.Field("Priority", C.Priority);
         Ar.Flag("Enabled",   C.bEnabled);
+        if(Ar.GetVersion() >= 2)
+        {
+            Ar.Field("BlendDistance", C.BlendDistance);
+        }
     }
 
     GAMECORE_DEFINE_COMPONENT_SCRIPT(PostProcessComponent)
     {
-        Bind.Field("Material", &PostProcessComponent::Material);
-        Bind.Flag("Enabled",   &PostProcessComponent::bEnabled);
+        Bind.Field("Stack",         &PostProcessComponent::Stack);
+        Bind.Field("Priority",      &PostProcessComponent::Priority);
+        Bind.Field("BlendDistance", &PostProcessComponent::BlendDistance);
+        Bind.Flag("Enabled",        &PostProcessComponent::bEnabled);
     }
 
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(PostProcessComponent)
     {
-        Props.Field("Material", &PostProcessComponent::Material, GameCore::PF_AssetMaterial);
-        Props.Field("Priority", &PostProcessComponent::Priority);
-        Props.Flag("Enabled",   &PostProcessComponent::bEnabled);
+        Props.Field("Stack",          &PostProcessComponent::Stack, GameCore::PF_AssetPostProcess);
+        Props.Field("Priority",       &PostProcessComponent::Priority);
+        Props.Field("Blend Distance", &PostProcessComponent::BlendDistance);
+        Props.Flag("Enabled",         &PostProcessComponent::bEnabled);
     }
 #endif // WITH_EDITOR
 }

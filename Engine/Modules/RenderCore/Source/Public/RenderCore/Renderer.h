@@ -100,6 +100,12 @@ namespace RenderCore
          * EndFrame(). */
         void WaitForPreviousFrame();
 
+        /* Marks the start of the host's frame -- before input and the game's
+         * tick -- for "stat unit"'s Game Thread time (RenderStats). Without
+         * it, a frame's game time starts at the previous EndFrame, so it
+         * also counts whatever the host waited between frames. */
+        void BeginGameFrame();
+
         /* Extracts this frame's bound components (if a World is bound),
          * builds the view, enqueues the render, and kicks the frame --
          * forwards to WorldBridge::ExtractAndRender then
@@ -133,6 +139,20 @@ namespace RenderCore
         void SetClearColor(EngineCore::Color InColor);
         void SetClearColor(RenderSceneID InScene, EngineCore::Color InColor);
 
+        /* The background as a vertical gradient, InTop at the top of the view
+         * to InBottom at the bottom, under everything drawn (RENDERPIPELINE.md,
+         * "Background"). SetClearColor goes back to one colour. */
+        void SetClearGradient(RenderSceneID InScene, EngineCore::Color InTop, EngineCore::Color InBottom);
+
+        /* What InScene's view shows (RenderTypes.h's ERenderViewMode): Lit,
+         * Unlit, or the render target named InTarget -- one of
+         * GetViewableTargets() -- stretched over it. GAME THREAD ONLY. */
+        void SetViewMode(RenderSceneID InScene, ERenderViewMode InMode, const std::string& InTarget = std::string());
+
+        /* The render targets InScene's last frame drew, by name, for
+         * SetViewMode. Empty before its first frame. Any thread. */
+        std::vector<std::string> GetViewableTargets(RenderSceneID InScene) const;
+
 #if WITH_EDITOR
         // === Editor only =====================================================
         // Compiled out of Client and Server targets.
@@ -161,7 +181,8 @@ namespace RenderCore
          * the next EndFrame() and reads it back; the readback stalls briefly,
          * so don't call every frame. Returns an id for TakeMaterialPreview, 0
          * if not running. GAME THREAD ONLY. */
-        uint64_t RequestMaterialPreview(const char* InName, int InSize, EngineCore::Color InTint);
+        uint64_t RequestMaterialPreview(const char* InName, int InSize, EngineCore::Color InTint,
+                                        EMaterialPreviewChannel InChannel = EMaterialPreviewChannel::Lit);
 
         /* True once, when done: OutImage (RGBA8, top row first), or empty with
          * OutError. False while pending. Answers RequestMeshPreview too.
@@ -192,6 +213,16 @@ namespace RenderCore
             EngineCore::Color        Tint{255, 255, 255, 255};
         };
         uint64_t RequestMeshPreview(const MeshPreview& InPreview);
+
+        /* The default scene's final colour after the next EndFrame(), without
+         * debug lines, read back for TakeMaterialPreview (a screenshot, a
+         * test). Stalls briefly. 0 if not running. GAME THREAD ONLY. */
+        uint64_t RequestSceneCapture();
+
+        /* The render target at InPath (RenderTargetAsset.h) as a material
+         * samples it after the default scene's next captures, through
+         * TakeMaterialPreview -- what the editor bakes into the target's file. */
+        uint64_t RequestRenderTargetReadback(const std::string& InPath);
 #endif // WITH_EDITOR
 
         /*

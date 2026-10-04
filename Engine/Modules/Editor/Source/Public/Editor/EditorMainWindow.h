@@ -73,6 +73,11 @@ private:
     void UpdateTitle();
     void UpdateHistoryActions();
     void UpdateStats();
+
+    /* Whether the world's bake still matches its static entities and lights
+     * (LightBake::Scene::Hash): the status bar says when it needs rebaking.
+     * Run a moment after edits settle (BakeCheckTimer). */
+    void CheckBake();
     void SetSDLInputProbe(bool bInOn);
 
     void OpenWorld();
@@ -93,6 +98,7 @@ private:
     EditorConsole   Console;
     QLabel*         StatsLabel = nullptr;
     QLabel*         PlayLabel  = nullptr;
+    QLabel*         BakeLabel  = nullptr;   // "Lighting needs to be rebuilt"
 
     QAction*        UndoAction  = nullptr;
     QAction*        RedoAction  = nullptr;
@@ -123,6 +129,7 @@ private:
     QStringList    StartupCommands;
 
     QTimer   StatsTimer;
+    QTimer   BakeCheckTimer;
     uint64_t LastFramesRendered = 0;
 };
 

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="dfbd0784caeb8b428ab6e7f6150c356a" Name="SceneCaptureProbe" Mobility="Static">
+  <Component Type="Scene Capture Probe" Version="2">
+    <Target Value="Content/RenderTargets/ChromeBall.nmrt3d" />
+    <Mode Value="1" />
+    <Resolution Value="128" />
+    <Frequency Value="0" />
+    <Interval Value="1" />
+    <NearClip Value="5" />
+    <FarClip Value="5000" />
+    <ExtentX Value="200" />
+    <ExtentZ Value="200" />
+    <HideOwner Value="true" />
+    <Enabled Value="true" />
+    <CaptureShadows Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="200.10841" Z="-321.62732" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

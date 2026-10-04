@@ -113,6 +113,14 @@ enum EGDITextureBorder : char
     GDI_TB_MAX
 };
 
+/* A render target's colour format. RGBA8 is every backend's; RGBA16F (half
+ * float, HDR) only where GDISupportsRenderTargetFormat says so. */
+enum EGDIRenderTargetFormat : char
+{
+    GDI_RTF_RGBA8   = 0,
+    GDI_RTF_RGBA16F = 1,
+};
+
 enum EGDITextureFilter : char
 {
     GDI_TF_Nearest = 0,
@@ -272,7 +280,10 @@ constexpr unsigned GDI_MATERIAL_BLOCK_BINDING   = 2;
 constexpr unsigned GDI_SCENE_BLOCK_BINDING      = 3;
 constexpr unsigned GDI_MATERIAL_TEXTURE_BINDING = 4;
 constexpr unsigned GDI_MATERIAL_TEXTURE_SLOTS   = 8;
+constexpr unsigned GDI_GPU_TIMESTAMP_MAX        = 64;   // GPU timestamps one BeginRendering/EndRendering block may write
 constexpr unsigned GDI_MATERIAL_BLOCK_MAX_BYTES = 1024;
+/* The scene block carries the frame's lights and shadow matrices: larger. */
+constexpr unsigned GDI_SCENE_BLOCK_MAX_BYTES    = 4096;
 
 /* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's. */
 constexpr unsigned GDI_MAX_COLOR_TARGETS        = 4;

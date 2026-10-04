@@ -18,6 +18,7 @@
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
+#include "Public/RenderCore/Components/RenderComponent.h"
 
 using GameCore::EntityID;
 
@@ -76,6 +77,269 @@ static void TestCreateUndoRedo()
     Expect(Doc.GetDisplayName(Again) == QStringLiteral("Crate"), "rename applies");
     Doc.Undo();
     Expect(Doc.GetDisplayName(Doc.GetWorld().FindEntityByGuid(Guid)) == QStringLiteral("Box"), "undo restores the name");
+}
+
+/* Several entities selected: the primary, toggling and adding, the roots. */
+static void TestMultiSelection()
+{
+    std::printf("Multiple selection\n");
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetWorld();
+    const EntityID A = Doc.CreateEntity(QStringLiteral("A"), EngineCore::Vector3());
+    const EntityID B = Doc.CreateEntity(QStringLiteral("B"), EngineCore::Vector3());
+    const EntityID C = Doc.CreateEntity(QStringLiteral("C"), EngineCore::Vector3());
+    W.GetEntity(C).SetParent(A);
+
+    int Signals = 0;
+    QObject::connect(&Doc, &EditorDocument::SelectionChanged, [&Signals](EntityID) { ++Signals; });
+
+    Doc.SetSelection(A);
+    Doc.AddToSelection(B);
+    Expect(Doc.GetSelectedEntities().size() == 2 && Doc.GetSelection() == B, "Shift adds, the added entity the primary");
+    Expect(Doc.IsSelected(A) && Doc.IsSelected(B) && !Doc.IsSelected(C), "IsSelected says which");
+    Doc.ToggleSelected(B);
+    Expect(Doc.GetSelectedEntities().size() == 1 && Doc.GetSelection() == A, "Ctrl on a selected entity drops it; the last left is primary");
+    Doc.ToggleSelected(C);
+    Expect(Doc.GetSelection() == C && Doc.GetSelectedEntities().size() == 2, "Ctrl on another adds it");
+    const std::vector<EntityID> Roots = Doc.GetSelectedRoots();
+    Expect(Roots.size() == 1 && Roots.front() == A, "a child goes with its selected parent: not a root of the selection");
+
+    const int Before = Signals;
+    Doc.SetSelection({ A, C }, C);
+    Expect(Signals == Before, "the same set and primary signals nothing");
+    Doc.SetSelection({ A, B }, EntityID());
+    Expect(Doc.GetSelection() == B, "no primary given: the last");
+
+    Doc.DestroyEntity(B);
+    Expect(Doc.GetSelectedEntities().size() == 1 && Doc.GetSelection() == A, "deleting a selected entity leaves the rest selected");
+    Doc.SetSelection(EntityID());
+    Expect(Doc.GetSelectedEntities().empty() && !Doc.GetSelection().IsSet(), "an unset id clears it all");
+}
+
+/* Cut, copy, paste and duplicate: new entities, one undo step each. */
+static void TestClipboard()
+{
+    std::printf("Cut, copy, paste, duplicate\n");
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetWorld();
+    const EntityID Crate = Doc.CreateEntity(QStringLiteral("Crate"), EngineCore::Vector3(100.0, 0.0, 0.0));
+    const EntityID Lid   = Doc.CreateEntity(QStringLiteral("Lid"),   EngineCore::Vector3(100.0, 50.0, 0.0));
+    const EntityID Post  = Doc.CreateEntity(QStringLiteral("Post"),  EngineCore::Vector3(-200.0, 0.0, 0.0));
+    W.GetEntity(Lid).SetParent(Crate);
+    const GameCore::EntityGuid CrateGuid = W.GetEntity(Crate).GetGuid();
+
+    Doc.SetSelection({ Crate, Post }, Post);
+    Expect(Doc.CopySelection() == 2 && Doc.CanPaste(), "Copy takes the selection's two subtrees");
+    const size_t Count = W.GetEntityCount();
+    const int UndoBefore = Doc.GetHistory().count();
+
+    const std::vector<EntityID> Pasted = Doc.Paste();
+    Expect(Pasted.size() == 2 && W.GetEntityCount() == Count + 3, "Paste makes the two subtrees again, the child too");
+    Expect(Doc.GetHistory().count() == UndoBefore + 1, "as one undo step");
+    const GameCore::Entity Copy = W.GetEntity(Pasted.front());
+    Expect(Copy.GetGuid() != CrateGuid && std::string(Copy.GetName()) == "Crate", "a new entity, with the name");
+    Expect(Copy.GetWorldPose().Position.GetX() == 100.0, "where the original stood");
+    Expect(Copy.GetFirstChild().IsSet() && std::string(W.GetEntity(Copy.GetFirstChild()).GetName()) == "Lid"
+           && Copy.GetFirstChild() != Lid, "with a copy of its child, not the original");
+    Expect(Doc.GetSelectedEntities().size() == 2 && Doc.IsSelected(Pasted.front()), "the copies are selected");
+
+    Doc.Undo();
+    Expect(W.GetEntityCount() == Count, "undo removes every copy");
+    Doc.Redo();
+    Expect(W.GetEntityCount() == Count + 3, "redo brings them back");
+
+    const std::vector<EntityID> Again = Doc.Paste();
+    Expect(Again.size() == 2 && W.GetEntity(Again.front()).GetGuid() != W.GetEntity(Pasted.front()).GetGuid(),
+           "pasting again makes more, with GUIDs of their own");
+
+    /* Cut: copied, then gone; it pastes back. */
+    const size_t BeforeCut = W.GetEntityCount();
+    Doc.SetSelection(Post);
+    Expect(Doc.CutSelection() == 1 && !W.IsAlive(Post) && W.GetEntityCount() == BeforeCut - 1, "Cut removes the selection");
+    Expect(Doc.GetSelectedEntities().empty(), "and leaves nothing selected");
+    const std::vector<EntityID> Back = Doc.Paste();
+    Expect(Back.size() == 1 && std::string(W.GetEntity(Back.front()).GetName()) == "Post", "and pastes back");
+    Doc.Undo();
+    Doc.Undo();
+    Expect(W.GetEntityCount() == BeforeCut && W.FindEntityByName("Post").IsSet(), "undoing the paste and the cut puts it back");
+
+    /* Duplicate: copies the selection, leaves the clipboard. */
+    Doc.SetSelection(Crate);
+    const size_t BeforeDuplicate = W.GetEntityCount();
+    const std::vector<EntityID> Twins = Doc.DuplicateSelection();
+    Expect(Twins.size() == 1 && W.GetEntityCount() == BeforeDuplicate + 2 && Doc.GetSelection() == Twins.front(),
+           "Duplicate copies the selection's subtree and selects it");
+    const std::vector<EntityID> Still = Doc.Paste();
+    Expect(Still.size() == 1 && std::string(W.GetEntity(Still.front()).GetName()) == "Post", "the clipboard still holds the cut");
+
+    /* Delete: the selection's subtrees, one step. */
+    Doc.SetSelection({ Twins.front(), Still.front() }, Still.front());
+    const size_t BeforeDelete = W.GetEntityCount();
+    Expect(Doc.DeleteSelection() == 2 && W.GetEntityCount() == BeforeDelete - 3, "Delete removes every selected subtree");
+    Doc.Undo();
+    Expect(W.GetEntityCount() == BeforeDelete, "and one undo brings them all back");
+}
+
+/* A copied prefab instance comes back as a new instance. */
+static void TestCopyInstance()
+{
+    std::printf("Copy a prefab instance\n");
+    QTemporaryDir Temp;
+    const QString Path = Temp.filePath(QStringLiteral("Lamp.nmprefab"));
+    {
+        GameCore::World Scratch;
+        const GameCore::Entity Root = Scratch.CreateEntity("Root");
+        Root.AddComponent<GameCore::TransformComponent>();
+        const GameCore::Entity Bulb = Scratch.CreateEntity("Bulb");
+        Bulb.AddComponent<GameCore::TransformComponent>();
+        Bulb.SetParent(Root, false);
+        GameCore::PrefabAsset Asset;
+        GameCore::CapturePrefab(Scratch, Root.GetID(), Asset);
+        GameCore::SavePrefabFile(Path.toUtf8().constData(), Asset);
+    }
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetEditedWorld();
+    const EntityID Root = Doc.PlacePrefab(Path, EngineCore::Vector3(10.0, 0.0, 0.0));
+    Doc.SetSelection(Root);
+    const std::vector<EntityID> Twins = Doc.DuplicateSelection();
+    Expect(Twins.size() == 1 && W.GetInstanceCount() == 2, "duplicating an instance root makes a second instance");
+    const GameCore::PrefabInstance Twin = W.GetInstance(W.GetEntity(Twins.front()).GetInstance());
+    Expect(Twin.IsValid() && Twin.GetRoot().GetID() == Twins.front(), "rooted at the copy");
+    const GameCore::Entity Bulb = Twin.FindEntity("Bulb");
+    Expect(Bulb.IsAlive() && Bulb.GetGuid() == GameCore::DerivePrefabEntityGuid(Twin.GetGuid(), Bulb.GetPrefabLocalId()),
+           "its members' GUIDs derived from the new instance's, as a load makes them");
+    Doc.Undo();
+    Expect(W.GetInstanceCount() == 1, "undo removes the copy's instance");
+
+    /* A member copied alone is loose. */
+    Doc.SetSelection(W.GetInstance(W.GetEntity(Root).GetInstance()).FindEntity("Bulb").GetID());
+    const std::vector<EntityID> Loose = Doc.DuplicateSelection();
+    Expect(Loose.size() == 1 && !W.GetEntity(Loose.front()).IsInInstance() && !W.GetEntity(Loose.front()).GetParent().IsSet(),
+           "a member duplicated alone comes out loose, at the top");
+}
+
+/* Dragging several entities with the gizmo: one step for all of them. */
+static void TestGroupEdit()
+{
+    std::printf("Group edit\n");
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetWorld();
+    const EntityID A = Doc.CreateEntity(QStringLiteral("A"), EngineCore::Vector3(0.0, 0.0, 0.0));
+    const EntityID B = Doc.CreateEntity(QStringLiteral("B"), EngineCore::Vector3(50.0, 0.0, 0.0));
+    Doc.SetSelection({ A, B }, B);
+    const int Steps = Doc.GetHistory().count();
+    const GameCore::ComponentTypeID Transform = GameCore::TransformComponent::StaticType().ID;
+    Doc.BeginGroupEdit({ A, B }, Transform, QStringLiteral("Move"));
+    for(int Frame = 1; Frame <= 3; ++Frame)
+    {
+        for(const EntityID Each : { A, B })
+        {
+            GameCore::TransformComponent* Moved = W.GetEntity(Each).GetComponent<GameCore::TransformComponent>();
+            Moved->Position = Moved->Position + EngineCore::Vector3(0.0, 10.0, 0.0);
+            Doc.NotifyPropertyEdited(Each, Transform);
+        }
+    }
+    Doc.EndGroupEdit(false);
+    Expect(Doc.GetHistory().count() == Steps + 1, "a group drag is one undo step");
+    Doc.Undo();
+    Expect(W.GetEntity(A).GetComponent<GameCore::TransformComponent>()->Position.GetY() == 0.0
+           && W.GetEntity(B).GetComponent<GameCore::TransformComponent>()->Position.GetY() == 0.0, "undo moves every one back");
+
+    Doc.BeginGroupEdit({ A, B }, Transform, QStringLiteral("Move"));
+    W.GetEntity(A).GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(999.0, 0.0, 0.0);
+    Doc.EndGroupEdit(true);
+    Expect(W.GetEntity(A).GetComponent<GameCore::TransformComponent>()->Position.GetX() == 0.0, "a cancelled group edit puts it back");
+}
+
+/* Mobility on the Details panel: one undo step, for one entity or several. */
+static void TestMobility()
+{
+    std::printf("Mobility\n");
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetWorld();
+    const EntityID A = Doc.CreateEntity(QStringLiteral("A"), EngineCore::Vector3());
+    const EntityID B = Doc.CreateEntity(QStringLiteral("B"), EngineCore::Vector3());
+    const int Steps = Doc.GetHistory().count();
+
+    Doc.SetEntityMobility(A, GameCore::EMobility::Static);
+    Expect(W.GetEntity(A).IsStatic() && Doc.GetHistory().count() == Steps + 1, "making an entity static is one undo step");
+    Doc.Undo();
+    Expect(!W.GetEntity(A).IsStatic(), "undo makes it dynamic again");
+    Doc.Redo();
+    Expect(W.GetEntity(A).IsStatic(), "redo static");
+
+    Doc.SetEntitiesMobility({ A, B }, GameCore::EMobility::Static);
+    Expect(W.GetEntity(B).IsStatic() && Doc.GetHistory().count() == Steps + 2, "several at once: only the changed one, one step");
+    Doc.SetEntitiesMobility({ A, B }, GameCore::EMobility::Dynamic);
+    Expect(!W.GetEntity(A).IsStatic() && !W.GetEntity(B).IsStatic() && Doc.GetHistory().count() == Steps + 3, "both back, one step");
+    Doc.Undo();
+    Expect(W.GetEntity(A).IsStatic() && W.GetEntity(B).IsStatic(), "and one undo restores both");
+
+    /* Deleting and restoring, and copying, keep it. */
+    Doc.DestroyEntity(A);
+    Doc.Undo();
+    Expect(W.GetEntity(W.FindEntityByName("A")).IsStatic(), "a deleted static entity comes back static");
+    Doc.SetSelection(W.FindEntityByName("A"));
+    const std::vector<EntityID> Copy = Doc.DuplicateSelection();
+    Expect(Copy.size() == 1 && W.GetEntity(Copy.front()).IsStatic(), "and its duplicate is static too");
+}
+
+/* GetEntityBounds: a parent -- a prefab instance's root -- encloses its children. */
+static void TestWorldSettings()
+{
+    std::printf("World settings\n");
+    EditorDocument Doc;
+
+    int Changed = 0;
+    QObject::connect(&Doc, &EditorDocument::WorldSettingsChanged, [&Changed]() { ++Changed; });
+
+    GameCore::WorldSettings Settings = Doc.GetWorldSettings();
+    Settings.Lighting.bBakedLighting = true;
+    Settings.Lighting.Bounces        = 99;   // clamped to 8
+    Expect(Doc.SetWorldSettings(Settings), "settings change");
+    Expect(Doc.GetWorldSettings().Lighting.bBakedLighting && Doc.GetWorldSettings().Lighting.Bounces == 8,
+           "on the edited world, clamped");
+    Expect(Changed == 1 && Doc.CanUndo() && !Doc.GetHistory().isClean(), "one undo step, signalled, dirtying the document");
+    Expect(!Doc.SetWorldSettings(Doc.GetWorldSettings()), "setting the same settings records nothing");
+
+    Doc.Undo();
+    Expect(Doc.GetWorldSettings() == GameCore::WorldSettings() && Changed == 2, "undo puts the defaults back");
+    Doc.Redo();
+    Expect(Doc.GetWorldSettings().Lighting.bBakedLighting && Changed == 3, "redo applies them again");
+
+    Doc.NewScene();
+    Expect(Doc.GetWorldSettings() == GameCore::WorldSettings(), "a new scene starts with the defaults");
+}
+
+static void TestHierarchyBounds()
+{
+    std::printf("Hierarchy bounds\n");
+    EditorDocument Doc;
+    GameCore::World& World = Doc.GetWorld();
+
+    /* A root with only a Transform, and two children drawing the unit quad
+     * (no mesh): 100 across at x = 500 and, one level deeper, at x = -300. */
+    const EntityID Root  = Doc.CreateEntity(QStringLiteral("Root"), EngineCore::Vector3(0.0, 0.0, 0.0));
+    const EntityID Near  = Doc.CreateEntity(QStringLiteral("Near"), EngineCore::Vector3(500.0, 0.0, 0.0));
+    const EntityID Far   = Doc.CreateEntity(QStringLiteral("Far"),  EngineCore::Vector3(-300.0, 200.0, 0.0));
+    const EntityID Alone = Doc.CreateEntity(QStringLiteral("Alone"), EngineCore::Vector3(0.0, 1000.0, 0.0));
+    for(const EntityID Each : { Near, Far })
+    {
+        World.GetEntity(Each).GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(100.0, 100.0, 1.0);
+        World.GetEntity(Each).AddComponent(RenderCore::RenderComponent());
+    }
+    World.GetEntity(Near).SetParent(Root);
+    World.GetEntity(Far).SetParent(Near);
+
+    const GameCore::AABB Box = Doc.GetEntityBounds(Root);
+    Expect(!Box.IsEmpty() && Box.Min.GetX() <= -350.0 + 1e-6 && Box.Max.GetX() >= 550.0 - 1e-6
+           && Box.Max.GetY() >= 250.0 - 1e-6, "a root's bounds enclose every descendant's");
+    Expect(Box.Max.GetX() <= 550.0 + 1e-6 && Box.Min.GetY() >= -50.0 - 1e-6,
+           "and no more: no marker cube for a root whose children have shapes");
+    const GameCore::AABB Middle = Doc.GetEntityBounds(Near);
+    Expect(Middle.Min.GetX() <= -350.0 + 1e-6 && Middle.Max.GetX() >= 550.0 - 1e-6, "a child's include its own children");
+    const GameCore::AABB Marker = Doc.GetEntityBounds(Alone);
+    Expect(!Marker.IsEmpty() && Marker.Max.GetX() - Marker.Min.GetX() == 50.0, "an empty without children is still a small cube");
 }
 
 static void TestSelection()
@@ -311,6 +575,19 @@ static void TestInstances()
     Expect(Back.IsSet(), "redo brings it back as an instance, with its GUID");
     Expect(W.GetInstance(Back).FindEntity("Bulb").GetGuid() == BulbGuid, "and its members' GUIDs");
 
+    /* Clicking a member in a viewport picks the whole instance, by its root;
+     * an entity in no instance picks itself, even parented under one. */
+    const EntityID BackRoot = W.GetInstance(Back).GetRoot().GetID();
+    Expect(Doc.GetPickTarget(W.GetInstance(Back).FindEntity("Bulb").GetID()) == BackRoot, "a member picks its instance's root");
+    Expect(Doc.GetPickTarget(BackRoot) == BackRoot, "and the root itself");
+    const EntityID Loose = Doc.CreateEntity(QStringLiteral("Loose"), EngineCore::Vector3());
+    Expect(Doc.GetPickTarget(Loose) == Loose, "an entity in no instance picks itself");
+    W.GetEntity(BackRoot).SetParent(Loose);
+    Expect(Doc.GetPickTarget(W.GetInstance(Back).FindEntity("Bulb").GetID()) == BackRoot,
+           "an instance under a plain parent still picks its own root");
+    W.GetEntity(BackRoot).SetParent(GameCore::EntityID());
+    Doc.DestroyEntity(Loose);
+
     /* A member deleted and undone rejoins its instance. */
     const EntityID Bulb = W.GetInstance(Back).FindEntity("Bulb").GetID();
     const uint32_t BulbId = W.GetEntity(Bulb).GetPrefabLocalId();
@@ -472,9 +749,16 @@ int main(int argc, char* argv[])
 
     TestCreateUndoRedo();
     TestSelection();
+    TestHierarchyBounds();
+    TestMultiSelection();
+    TestClipboard();
+    TestCopyInstance();
+    TestGroupEdit();
+    TestMobility();
     TestNewScene();
     TestBorrowedWorld();
     TestDestroyWhileBorrowed();
+    TestWorldSettings();
     TestPrefab();
     TestInstances();
     TestReplaceWithPrefab();

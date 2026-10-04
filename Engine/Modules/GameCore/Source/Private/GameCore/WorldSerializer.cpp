@@ -25,10 +25,11 @@ namespace
     constexpr uint32_t TAG_WORLD     = EngineCore::MakeArchiveTag('W','R','L','D');
     constexpr uint32_t TAG_COMPONENT = EngineCore::MakeArchiveTag('C','M','P','T');
     constexpr uint32_t TAG_DATA      = EngineCore::MakeArchiveTag('D','A','T','A');
+    constexpr uint32_t TAG_SETTINGS  = EngineCore::MakeArchiveTag('W','S','E','T');   // optional, after the components
 
     /* The entity table (index, GUID, name), a parent index per entity, the
      * prefab instance table, then the component chunks. */
-    constexpr uint16_t WORLD_CHUNK_VERSION = 1;
+    constexpr uint16_t WORLD_CHUNK_VERSION = 2;   // 2: each entity's mobility; 1 is still read
 
     /* One prefab instance, as saved: its members by save index. */
     struct SavedInstance
@@ -171,7 +172,8 @@ namespace
             Ar << GuidHi << GuidLo;
 
             std::string Name(Handle.GetName());
-            Ar << Name;
+            uint8_t     Mobility = uint8_t(Handle.GetMobility());
+            Ar << Name << Mobility;
         }
 
         /* Each entity's parent as a save index, in table order -- after the
@@ -278,6 +280,12 @@ namespace
             Ar.CloseChunk();
         }
 
+        /* Last, so a build from before it stops at it as at any non-CMPT tag. */
+        uint16_t SettingsVersion = 1;
+        Ar.OpenChunk(TAG_SETTINGS, SettingsVersion);
+        SerializeWorldSettings(Ar, InWorld.GetSettings());
+        Ar.CloseChunk();
+
         Ar.CloseChunk();
         return !Ar.HasError();
     }
@@ -293,7 +301,7 @@ namespace
             return false;
         }
 
-        if(Version != WORLD_CHUNK_VERSION)
+        if(Version != WORLD_CHUNK_VERSION && Version != 1)
         {
             /* Refused, unlike an unknown component type: every index refers to
              * the entity table, so a different table invalidates everything. */
@@ -325,11 +333,14 @@ namespace
 
             EntityGuid  Guid;
             std::string Name;
+            uint8_t     Mobility = 0;
             Ar << Guid.Hi << Guid.Lo << Name;
+            if(Version >= 2) { Ar << Mobility; }
             if(Ar.HasError()) { Ar.CloseChunk(); return false; }
 
             /* Name and GUID at creation, so OnEntityCreated sees both. */
             const Entity Loaded = InWorld.CreateEntity(Name.c_str(), Guid);
+            if(Mobility == uint8_t(EMobility::Static) || Mobility == uint8_t(EMobility::Stationary)) { Loaded.SetMobility(EMobility(Mobility)); }
             OutTable.AddForLoading(Loaded);
         }
 
@@ -425,6 +436,14 @@ namespace
 
             Ar.CloseChunk();
             if(Ar.HasError()) { break; }
+        }
+
+        /* A world saved before WSET keeps the defaults. */
+        uint16_t SettingsVersion = 0;
+        if(!Ar.HasError() && Ar.PeekChunkTag() == TAG_SETTINGS && Ar.OpenChunk(TAG_SETTINGS, SettingsVersion))
+        {
+            SerializeWorldSettings(Ar, InWorld.GetSettings());
+            Ar.CloseChunk();
         }
 
         Ar.CloseChunk();

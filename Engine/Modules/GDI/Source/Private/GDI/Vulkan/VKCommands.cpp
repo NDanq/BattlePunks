@@ -12,6 +12,7 @@
 // Public/Odessa.h until GDI stopped including application headers;
 // they are explicit now, and each one disappears as its type converts.
 #include <string>
+#include <vector>
 
 extern GDISync* GSync;
 
@@ -112,6 +113,14 @@ void VulkanDynamicGDI::BeginRendering()
     VkCommandBuffer Cmd = CommandManager->BeginFrame();
     if(DescAlloc) DescAlloc->Reset();
     DrainDeferredDestruction();
+
+    // The previous block's timestamps are complete (its fence was just waited):
+    // read them, then reset the pool for this block's, outside any rendering.
+    CollectTimestamps();
+    if(TimestampPool != VK_NULL_HANDLE)
+    {
+        vkCmdResetQueryPool(Cmd, TimestampPool, 0, GDI_GPU_TIMESTAMP_MAX);
+    }
 
     CurrentStateData->CurrentCmd          = Cmd;
     CurrentStateData->ActiveRenderTarget  = nullptr;
@@ -295,8 +304,8 @@ void VulkanDynamicGDI::SetColorMask(EColorMask InMask)
 
 void VulkanDynamicGDI::BeginDrawEvent(const std::string& EventName)
 {
-#ifdef QT_DEBUG
-    // VK_EXT_debug_utils is only enabled in debug builds (see VulkanGDIContext::GetSharedInstance).
+    // Labels need VK_EXT_debug_utils on the instance (VulkanGDIContext::HasDebugUtils).
+    if(!VulkanGDIContext::HasDebugUtils()) return;
     if(!DeviceObj || !CurrentStateData || CurrentStateData->CurrentCmd == VK_NULL_HANDLE) return;
 
     static auto BeginLabel = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
@@ -310,14 +319,11 @@ void VulkanDynamicGDI::BeginDrawEvent(const std::string& EventName)
     Label.color[0] = Label.color[1] = Label.color[2] = Label.color[3] = 1.0f;
     BeginLabel(CurrentStateData->CurrentCmd, &Label);
     ++CurrentStateData->DebugLabelDepth;
-#else
-    (void)EventName;
-#endif
 }
 
 void VulkanDynamicGDI::EndDrawEvent()
 {
-#ifdef QT_DEBUG
+    if(!VulkanGDIContext::HasDebugUtils()) return;
     if(!DeviceObj || !CurrentStateData || CurrentStateData->CurrentCmd == VK_NULL_HANDLE) return;
 
     // Only close a label that was opened in the current command buffer. A mid-frame
@@ -331,7 +337,94 @@ void VulkanDynamicGDI::EndDrawEvent()
 
     EndLabel(CurrentStateData->CurrentCmd);
     --CurrentStateData->DebugLabelDepth;
-#endif
+}
+
+#pragma endregion
+
+#pragma region GPU timestamps
+
+void VulkanDynamicGDI::CreateTimestampPool()
+{
+    if(!DeviceObj || !DeviceObj->IsValid())
+    {
+        return;
+    }
+    VkPhysicalDeviceProperties Properties{};
+    vkGetPhysicalDeviceProperties(DeviceObj->GetPhysicalDevice(), &Properties);
+    uint32_t FamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(DeviceObj->GetPhysicalDevice(), &FamilyCount, nullptr);
+    std::vector<VkQueueFamilyProperties> Families(FamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(DeviceObj->GetPhysicalDevice(), &FamilyCount, Families.data());
+    const uint32_t Family    = DeviceObj->GetGraphicsQueueFamily();
+    const uint32_t ValidBits = Family < FamilyCount ? Families[Family].timestampValidBits : 0;
+    if(ValidBits == 0 || Properties.limits.timestampPeriod <= 0.0f)
+    {
+        GDI_LOG("[VulkanDynamicGDI] The graphics queue cannot write timestamps; GPU timing is off.")
+        return;
+    }
+
+    VkQueryPoolCreateInfo Info{};
+    Info.sType      = VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO;
+    Info.queryType  = VK_QUERY_TYPE_TIMESTAMP;
+    Info.queryCount = GDI_GPU_TIMESTAMP_MAX;
+    if(vkCreateQueryPool(DeviceObj->GetDevice(), &Info, nullptr, &TimestampPool) != VK_SUCCESS)
+    {
+        TimestampPool = VK_NULL_HANDLE;
+        return;
+    }
+    TimestampPeriodNs  = double(Properties.limits.timestampPeriod);
+    TimestampValidMask = ValidBits >= 64 ? ~uint64_t(0) : (uint64_t(1) << ValidBits) - 1;
+}
+
+void VulkanDynamicGDI::WriteGPUTimestamp(const uint32_t InIndex)
+{
+    // Once per index per block: a written query must be reset before it is written again.
+    const uint64_t Bit = uint64_t(1) << InIndex;
+    if(TimestampPool == VK_NULL_HANDLE || !CurrentStateData || CurrentStateData->CurrentCmd == VK_NULL_HANDLE
+       || InIndex >= GDI_GPU_TIMESTAMP_MAX || (TimestampsWritten & Bit))
+    {
+        return;
+    }
+    vkCmdWriteTimestamp2(CurrentStateData->CurrentCmd, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, TimestampPool, InIndex);
+    TimestampsWritten |= Bit;
+}
+
+void VulkanDynamicGDI::CollectTimestamps()
+{
+    PreviousTimestamps = 0;
+    if(TimestampPool == VK_NULL_HANDLE || TimestampsWritten == 0)
+    {
+        return;
+    }
+    for(uint32_t Index = 0; Index < GDI_GPU_TIMESTAMP_MAX; ++Index)
+    {
+        if(!(TimestampsWritten & (uint64_t(1) << Index)))
+        {
+            continue;
+        }
+        // No WAIT bit: the block's fence has been waited, and a query that is
+        // somehow unavailable must not stall the frame -- it is just skipped.
+        uint64_t Ticks = 0;
+        if(vkGetQueryPoolResults(DeviceObj->GetDevice(), TimestampPool, Index, 1, sizeof(Ticks), &Ticks, sizeof(Ticks),
+                                 VK_QUERY_RESULT_64_BIT) == VK_SUCCESS)
+        {
+            PreviousTimestampMs[Index] = double(Ticks & TimestampValidMask) * TimestampPeriodNs / 1.0e6;
+            PreviousTimestamps |= uint64_t(1) << Index;
+        }
+    }
+    TimestampsWritten = 0;
+}
+
+uint64_t VulkanDynamicGDI::GetPreviousGPUTimestamps(double* OutMilliseconds)
+{
+    for(uint32_t Index = 0; Index < GDI_GPU_TIMESTAMP_MAX; ++Index)
+    {
+        if(PreviousTimestamps & (uint64_t(1) << Index))
+        {
+            OutMilliseconds[Index] = PreviousTimestampMs[Index];
+        }
+    }
+    return PreviousTimestamps;
 }
 
 #pragma endregion

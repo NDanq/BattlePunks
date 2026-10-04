@@ -85,7 +85,9 @@ bool D3D12DescriptorAllocator::CreateSamplers()
             Sampler.MaxAnisotropy  = 1;
             Sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
             Sampler.MinLOD         = 0.0f;
-            Sampler.MaxLOD         = 0.0f;
+            // Unclamped: a texture with a mip chain samples it, and LOD clamps to
+            // the levels a resource has, so single-level textures and RTs are unchanged.
+            Sampler.MaxLOD         = D3D12_FLOAT32_MAX;
             Dev->CreateSampler(&Sampler, Handle);
             Handle.ptr += SamplerIncrement;
         }
@@ -111,6 +113,7 @@ void D3D12DescriptorAllocator::Shutdown()
 void D3D12DescriptorAllocator::Reset()
 {
     RingOffset = 0;
+    ++Epoch;
 }
 
 D3D12CBAllocation D3D12DescriptorAllocator::AllocateCB(uint32_t Size)

@@ -15,7 +15,8 @@ class D3D12Device;
 class D3D12RenderTarget : public GDIRenderTarget
 {
 public:
-    D3D12RenderTarget(D3D12Device* InDevice, const std::string& InName, uint InWidth, uint InHeight);
+    D3D12RenderTarget(D3D12Device* InDevice, const std::string& InName, uint InWidth, uint InHeight,
+                      DXGI_FORMAT InFormat = DXGI_FORMAT_R8G8B8A8_UNORM);
     ~D3D12RenderTarget();
 
     void Bind() override;

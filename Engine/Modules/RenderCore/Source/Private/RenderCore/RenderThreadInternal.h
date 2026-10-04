@@ -2,7 +2,9 @@
 #define RENDERCORE_RENDERTHREADINTERNAL_H
 
 #include <cstdint>
+#include <string>
 
+#include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderThread.h"
 
 /*
@@ -41,6 +43,42 @@ namespace RenderCore
      */
     void SetSceneStats(uint64_t InProxiesLive, uint64_t InProxiesCulled);
     void GetSceneStats(uint64_t& OutProxiesLive, uint64_t& OutProxiesCulled);
+
+    /* The reporting scene's static draw lists (RenderStats::StaticProxiesDrawn
+     * and StaticListBuilds). */
+    void SetStaticDrawStats(uint64_t InDrawn, uint64_t InBuilds);
+    void GetStaticDrawStats(uint64_t& OutDrawn, uint64_t& OutBuilds);
+
+    /* "stat unit": Renderer::EndFrame publishes the averaged times and
+     * whether to show them (Stats.Unit); RenderScene::Render draws them and
+     * RenderThread::GetStats copies them into RenderStats. */
+    struct StatUnitSnapshot
+    {
+        float FrameMs        = 0.0f;
+        float GameThreadMs   = 0.0f;
+        float RenderThreadMs = 0.0f;
+        float WaitMs         = 0.0f;   // the game thread waiting on the render thread's frame
+        float PresentMs      = 0.0f;   // ... presenting to its windows (the swapchain's vsync)
+        float IdleMs         = 0.0f;   // ... between frames: the host's loop, a frame timer
+        bool  bShow          = false;   // Stats.Unit
+        bool  bShowFrame     = false;   // Stats.Frame
+    };
+    void             SetStatUnit(const StatUnitSnapshot& InSnapshot);
+    RENDERCORE_API StatUnitSnapshot GetStatUnit();
+
+    /* The overlay's text, a line each: Frame, Game, Render, Wait, Present,
+     * Idle (ms), and FPS. Frame = Game + Wait + Present + Idle. */
+    RENDERCORE_API std::string FormatStatUnit(const StatUnitSnapshot& InSnapshot);
+
+    /* "stat frame"'s text: a heading, then a line per ERenderGpuTimer with its
+     * milliseconds ("-" where InGpuMs is negative: not timed); one line saying
+     * so if this backend cannot time the GPU. */
+    RENDERCORE_API std::string FormatStatFrame(const float* InGpuMs, bool bInSupported);
+
+    /* The stats-reporting scene's GPU times, for RenderThread::GetStats
+     * (RenderStats::GpuMs): RGT_Count of them. */
+    void SetReportedGpuTimes(const float* InGpuMs);
+    void GetReportedGpuTimes(float* OutGpuMs);
 }
 
 #endif //RENDERCORE_RENDERTHREADINTERNAL_H

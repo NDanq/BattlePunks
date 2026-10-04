@@ -60,6 +60,11 @@ VulkanGDIContext::~VulkanGDIContext()
  * Configuration is unchanged from the QVulkanInstance version: API 1.3, the
  * platform surface extensions, and validation + debug-utils in debug builds.
  */
+namespace
+{
+    bool bDebugUtils = false;   // GetSharedVkInstance enabled VK_EXT_debug_utils
+}
+
 VkInstance VulkanGDIContext::GetSharedVkInstance()
 {
     static VkInstance SharedInstance = VK_NULL_HANDLE;
@@ -77,7 +82,28 @@ VkInstance VulkanGDIContext::GetSharedVkInstance()
 
 #ifdef QT_DEBUG
     Layers.push_back("VK_LAYER_KHRONOS_validation");
-    Extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+#endif
+
+    /* Debug utils on their own, without validation: draw-event labels and
+     * object names for RenderDoc and the like. Only if offered -- asking for
+     * an extension the loader lacks fails vkCreateInstance outright. */
+    bDebugUtils = false;
+#if !(defined(NIMBLE_SHIPPING) && NIMBLE_SHIPPING)
+    {
+        uint32_t Count = 0;
+        vkEnumerateInstanceExtensionProperties(nullptr, &Count, nullptr);
+        std::vector<VkExtensionProperties> Available(Count);
+        vkEnumerateInstanceExtensionProperties(nullptr, &Count, Available.data());
+        for(const VkExtensionProperties& Each : Available)
+        {
+            if(std::strcmp(Each.extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0)
+            {
+                Extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+                bDebugUtils = true;
+                break;
+            }
+        }
+    }
 #endif
 
     VkInstanceCreateInfo Info{};
@@ -93,9 +119,15 @@ VkInstance VulkanGDIContext::GetSharedVkInstance()
     {
         GDI_LOG_ERROR("[VulkanGDIContext] vkCreateInstance failed (" + ::GDILogDetail::GDINum(Result) + ").")
         SharedInstance = VK_NULL_HANDLE;
+        bDebugUtils    = false;
     }
 
     return SharedInstance;
+}
+
+bool VulkanGDIContext::HasDebugUtils()
+{
+    return bDebugUtils;
 }
 
 
@@ -180,6 +212,8 @@ void VulkanDynamicGDI::Allocate()
     SemInfo.pNext = &TimelineType;
     vkCreateSemaphore(DeviceObj->GetDevice(), &SemInfo, nullptr, &RenderTimeline);
 
+    CreateTimestampPool();
+
     // Swapchains are created on the UI thread, one per window, by the first
     // present to it (FindOrCreateSwapchain).
 
@@ -247,6 +281,11 @@ void VulkanDynamicGDI::Destroy()
     {
         vkDestroySemaphore(DeviceObj->GetDevice(), RenderTimeline, nullptr);
         RenderTimeline = VK_NULL_HANDLE;
+    }
+    if(DeviceObj && DeviceObj->IsValid() && TimestampPool != VK_NULL_HANDLE)
+    {
+        vkDestroyQueryPool(DeviceObj->GetDevice(), TimestampPool, nullptr);
+        TimestampPool = VK_NULL_HANDLE;
     }
 
     if(DeviceObj)
@@ -345,6 +384,21 @@ GDIRenderTarget* VulkanDynamicGDI::CreateRenderTarget(std::string Name, uint InW
     auto* RT = new VKRenderTarget(DeviceObj, Name, InWidth, InHeight);
     RegisterRenderTarget(RT);
     return RT;
+}
+
+GDIRenderTarget* VulkanDynamicGDI::CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat)
+{
+    if(!DeviceObj) return nullptr;
+    const VkFormat Format = InFormat == GDI_RTF_RGBA16F ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+    auto* RT = new VKRenderTarget(DeviceObj, Name, InWidth, InHeight, Format);
+    RegisterRenderTarget(RT);
+    return RT;
+}
+
+bool VulkanDynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
+{
+    /* Half float colour attachments with blending are required of every Vulkan device. */
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
 }
 
 void VulkanDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
@@ -800,6 +854,16 @@ GDITextureResource* VulkanDynamicGDI::CreateTextureResource(
     return new VKTextureResource(DeviceObj, InParent, InImage, InBorder, InFilter);
 }
 
+GDITextureResource* VulkanDynamicGDI::CreateTextureResourceMips(
+        const Image* InLevels,
+        const uint32_t InCount,
+        const EGDITextureBorder InBorder,
+        const EGDITextureFilter InFilter)
+{
+    if(!DeviceObj || !InLevels || InCount == 0) return nullptr;
+    return new VKTextureResource(DeviceObj, InLevels, InCount, InBorder, InFilter);
+}
+
 GDITextureResource* VulkanDynamicGDI::CreateTextureResource(
         GDITexture2D* InParent,
         const EGDITextureBorder InBorder,
@@ -1114,10 +1178,32 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             const std::vector<uint8_t>& Bytes = MaterialBlocks[b];
             // Never an empty range: a shader that declares the block still reads it.
             const uint32_t Size = Bytes.empty() ? 16u : uint32_t(Bytes.size());
-            const VKUBOAllocation Block = DescAlloc->AllocateUBO(Size);
+            const bool bReuse = b == 1 && SceneBlockUploadSerial == MaterialBlockSerials[1]
+                                && SceneBlockUploadEpoch == DescAlloc->GetEpoch()
+                                && SceneBlockUploadBuffer != VK_NULL_HANDLE;
+            VKUBOAllocation Block;
+            if(bReuse)
+            {
+                Block.Buffer = SceneBlockUploadBuffer;
+                Block.Offset = SceneBlockUploadOffset;
+            }
+            else
+            {
+                Block = DescAlloc->AllocateUBO(Size);
+            }
             if(Block.Buffer == VK_NULL_HANDLE) return false;
-            memset(Block.MappedPtr, 0, Size);
-            if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
+            if(!bReuse)
+            {
+                memset(Block.MappedPtr, 0, Size);
+                if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
+                if(b == 1)
+                {
+                    SceneBlockUploadBuffer = Block.Buffer;
+                    SceneBlockUploadOffset = Block.Offset;
+                    SceneBlockUploadSerial = MaterialBlockSerials[1];
+                    SceneBlockUploadEpoch  = DescAlloc->GetEpoch();
+                }
+            }
 
             BlockBufs[b].buffer = Block.Buffer;
             BlockBufs[b].offset = Block.Offset;

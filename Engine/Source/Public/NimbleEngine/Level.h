@@ -36,6 +36,11 @@ namespace NimbleEngine
          */
         virtual const char* GetName() const = 0;
 
+        /* The world file OnLoad loads ("Content/Levels/X.nmworld", runtime
+         * relative), if it loads one: how the editor's Play starts the level
+         * of the world that is open (FindLevelByWorldFile). nullptr: none. */
+        virtual const char* GetWorldFile() const { return nullptr; }
+
         /* Populate the World. False aborts the load (OnUnload still runs).
          * Prefer GetWorld() to GameSession::GetWorld(). */
         virtual bool OnLoad(GameSession& InSession) { (void)InSession; return true; }

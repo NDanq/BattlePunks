@@ -47,6 +47,10 @@ namespace EditorContent
         /* For primitives without normals (else they draw dark). */
         bool bGenerateNormals = true;
 
+        /* Lightmap UVs (UV1, LightmapUVs.h) for a mesh whose file has no
+         * TEXCOORD_1; without them it is not lightmapped. */
+        bool bGenerateLightmapUVs = true;
+
         /* One .nmmesh for the scene (primitives as sections), or one per mesh. */
         bool bCombineMeshes = true;
 
@@ -64,6 +68,15 @@ namespace EditorContent
         RenderCore::ETextureWrap   Wrap          = RenderCore::ETextureWrap::Repeat;
         int                        MaxDimension  = 4096;   // larger images are scaled down to fit
         bool                       bFlipVertically = false;
+        RenderCore::ETextureMipGen      MipGen      = RenderCore::ETextureMipGen::Box;   // a settings string without it: None
+        RenderCore::ETextureCompression Compression = RenderCore::ETextureCompression::None;
+        /* A name that says data -- normal, rough, metal, AO, height, mask... -- imports as linear,
+         * whatever bSRGB says. Recorded settings hold the result, so a reimport does not re-guess. */
+        bool                       bDetectDataMaps = true;
+
+        /* These options for InName: bSRGB off when bDetectDataMaps and the name says data. */
+        TextureImportOptions ResolvedFor(const QString& InName) const;
+        static bool IsDataMapName(const QString& InName);
 
         QString ToSettings() const;
         static TextureImportOptions FromSettings(const QString& InSettings);

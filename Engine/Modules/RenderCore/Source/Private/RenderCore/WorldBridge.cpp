@@ -1,21 +1,34 @@
 #include "Private/RenderCore/WorldBridge.h"
+#include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/MaterialDescription.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/Components.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/RenderScene.h"
+#include "Private/RenderCore/ShadowSetup.h"
+#include "Public/RenderCore/RenderTargetAsset.h"
+#include "Public/GameCore/TransformMath.h"
 
 // GameCore is this file's whole subject -- it reads World's pools and
 // components on every line.
 using namespace GameCore;
+
+/* Off: every light lit live, the bake left loaded but unused -- the Lit view
+ * the editor's Show > Lighting > Live and LightLab's L key switch to. */
+NIMBLE_CONFIG_BOOL(GBakedLighting, "Rendering", "BakedLighting", true, nullptr);
 
 /*
  * See WorldBridge.h for the contract; this is the "how". Three pieces:
@@ -37,6 +50,8 @@ namespace RenderCore
         {
             RenderProxyHandle Handle;
             RenderTransform   Transform;
+            uint8_t           bStatic = 0;   // the owner's mobility
+            RenderBakedDraw   Baked;         // a Render component's; empty for the rest
             // component bytes follow immediately after this header
         };
 
@@ -212,12 +227,50 @@ namespace RenderCore
         {
             return;
         }
+        Bridge->StaticRecords.erase(Proxy);   // a later proxy at this address starts fresh
 
         RenderScene* Scene = Bridge->Scene;
         ENQUEUE_RENDER_COMMAND(RemoveProxy)([Scene, Proxy](RenderContext& Ctx)
         {
             Scene->RemoveProxy(Proxy, Ctx);
         });
+    }
+
+    namespace
+    {
+        /* The world pose of a component's entity: its Transform's, through
+         * its parents; the identity with neither. */
+        GameCore::TransformPose PoseOf(const GameCore::ComponentOwner& InOwner)
+        {
+            if(InOwner.HasSibling<TransformComponent>() || InOwner.GetEntity().HasParent())
+            {
+                return InOwner.GetEntity().GetWorldPose();
+            }
+            return GameCore::TransformPose();
+        }
+
+        /* The world box a perspective view sees, out to its far plane. */
+        GameCore::AABB PerspectiveBounds(const RenderView& InView)
+        {
+            const EngineCore::Matrix4x4& P = InView.Projection;
+            const EngineCore::Matrix4x4& V = InView.View;
+            const EngineCore::Vector3 Right(V.Data[0][0], V.Data[0][1], V.Data[0][2]);
+            const EngineCore::Vector3 Up(V.Data[1][0], V.Data[1][1], V.Data[1][2]);
+            const EngineCore::Vector3 Forward(V.Data[2][0], V.Data[2][1], V.Data[2][2]);
+            const double HalfX = 1.0 / std::abs(double(P.Data[0][0]));
+            const double HalfY = 1.0 / std::abs(double(P.Data[1][1]));
+
+            GameCore::AABB Bounds(InView.Origin, InView.Origin);
+            for(int Corner = 0; Corner < 4; ++Corner)
+            {
+                const double SignX = (Corner & 1) ? 1.0 : -1.0;
+                const double SignY = (Corner & 2) ? 1.0 : -1.0;
+                const EngineCore::Vector3 Point = InView.Origin
+                    + (Forward + Right * (SignX * HalfX) + Up * (SignY * HalfY)) * double(InView.ZFar);
+                Bounds = GameCore::AABB::Union(Bounds, GameCore::AABB(Point, Point));
+            }
+            return Bounds;
+        }
     }
 
     RenderView WorldBridge::BuildView(const FrameInfo& InFrame) const
@@ -242,9 +295,27 @@ namespace RenderCore
                         continue;
                     }
 
+                    const GameCore::TransformPose Pose = PoseOf(Camera.Owner);
                     if(Camera.Owner.HasSibling<TransformComponent>() || Camera.Owner.GetEntity().HasParent())
                     {
-                        Origin = Camera.Owner.GetEntity().GetWorldPose().Position;
+                        Origin = Pose.Position;
+                    }
+
+                    if(Camera.Projection == CP_Perspective)
+                    {
+                        /* Looks along its forward, as a light does; never straight
+                         * up or down, which MakePerspective cannot aim along. */
+                        EngineCore::Vector3 Forward = LightForward(Pose.Rotation);
+                        if(std::abs(Forward.GetY()) > 0.9999)
+                        {
+                            Forward = EngineCore::Vector3(0.0, Forward.GetY() > 0.0 ? 0.9999 : -0.9999, 0.01).GetNormalize();
+                        }
+                        const float ZNear = std::max(Camera.ZNear, 1.0f);
+                        const float ZFar  = std::max(Camera.ZFar, ZNear + 1.0f);
+                        const float FovY  = std::clamp(Camera.FovY, 1.0f, 170.0f);
+                        RenderView View = RenderView::MakePerspective(InFrame.ViewportPixels, Origin, Forward, FovY, ZNear, ZFar);
+                        View.Bounds = PerspectiveBounds(View);
+                        return View;
                     }
 
                     return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, Camera.ZNear, Camera.ZFar);
@@ -255,24 +326,57 @@ namespace RenderCore
         return RenderView::MakeOrthographic(InFrame.ViewportPixels, Origin, -1.0f, 1000.0f);
     }
 
-    RenderLighting WorldBridge::BuildLighting() const
+    RenderLighting WorldBridge::BuildLighting(const EngineCore::Vector3& InEye) const
     {
         RenderLighting Lighting;
+        Lighting.Shadows = ReadShadowSettings();
         if(!BoundWorld)
         {
             return Lighting;
         }
 
+        /* Drawing with a bake: its static lights are in it, so they are left
+         * out here -- the sun's default too, if a static one was the only one. */
+        const auto Baked = [this](const ComponentOwner& InOwner) { return bBakeActive && InOwner.GetEntity().IsStatic(); };
+        if(bBakeActive)
+        {
+            Lighting.bBaked    = 1;
+            Lighting.bBakedSky = Bake->bSkyBaked ? 1 : 0;
+            Lighting.bBakedDirectional = Bake->bDirectional ? 1 : 0;
+            Lighting.BakedAtlasCount = uint32_t(std::min<size_t>(Bake->Atlases.size(), RENDER_BAKED_ATLASES_MAX));
+            for(uint32_t Atlas = 0; Atlas < Lighting.BakedAtlasCount; ++Atlas)
+            {
+                std::snprintf(Lighting.BakedAtlases[Atlas], sizeof(Lighting.BakedAtlases[Atlas]), "%s", Bake->Atlases[Atlas].c_str());
+            }
+        }
+
         if(ComponentPool* Pool = BoundWorld->FindPool(DirectionalLightComponent::StaticType().ID))
         {
             const auto* Lights = static_cast<const DirectionalLightComponent*>(Pool->GetDenseData());
+            bool bBakedSun = false, bLiveSun = false;
             for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
             {
-                if(!Lights[Index].bActive) { continue; }
-                Lighting.LightDirection = Lights[Index].Direction;
-                Lighting.LightColor     = Lights[Index].Color;
-                Lighting.LightIntensity = Lights[Index].Intensity;
+                const DirectionalLightComponent& Light = Lights[Index];
+                if(!Light.bActive) { continue; }
+                if(Baked(Light.Owner)) { bBakedSun = true; continue; }
+                bLiveSun = true;
+                Lighting.LightDirection          = LightForward(PoseOf(Light.Owner).Rotation);
+                Lighting.LightColor              = Light.Color;
+                Lighting.LightIntensity          = Light.Intensity;
+                Lighting.bLightCastShadows       = Light.bCastShadows;
+                Lighting.LightShadowTechnique    = Light.ShadowTechnique;
+                Lighting.LightShadowTint         = Light.ShadowTint;
+                Lighting.LightShadowBias         = Light.ShadowBias;
+                Lighting.LightShadowNormalBias   = Light.ShadowNormalBias;
+                Lighting.LightShadowDistance     = Light.ShadowDistance;
+                Lighting.LightCascadeCount       = Light.CascadeCount;
+                Lighting.LightCascadeSplitLambda = Light.CascadeSplitLambda;
                 break;
+            }
+            if(bBakedSun && !bLiveSun)
+            {
+                Lighting.LightIntensity    = 0.0f;
+                Lighting.bLightCastShadows = 0;
             }
         }
 
@@ -285,46 +389,225 @@ namespace RenderCore
                 Lighting.SkyColor     = Skies[Index].SkyColor;
                 Lighting.GroundColor  = Skies[Index].GroundColor;
                 Lighting.SkyIntensity = Skies[Index].Intensity;
+                std::memcpy(Lighting.SkyEnvironment, Skies[Index].Environment, sizeof(Lighting.SkyEnvironment));
+                Lighting.SkyEnvironment[sizeof(Lighting.SkyEnvironment) - 1] = '\0';
+                Lighting.SkyEnvironmentIntensity = std::max(Skies[Index].EnvironmentIntensity, 0.0f);
+                Lighting.SkyEnvironmentRotation  = Skies[Index].EnvironmentRotation;
+                Lighting.bSkyBackground          = Skies[Index].bDrawBackground;
                 break;
             }
+        }
+
+        /* Every active point and spot light; then shadow casters first, each
+         * group nearest the eye first, and the first RENDER_LOCAL_LIGHT_MAX. */
+        std::vector<RenderLocalLight> Found;
+        if(ComponentPool* Pool = BoundWorld->FindPool(PointLightComponent::StaticType().ID))
+        {
+            const auto* Lights = static_cast<const PointLightComponent*>(Pool->GetDenseData());
+            for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+            {
+                const PointLightComponent& Light = Lights[Index];
+                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Radius <= 0.0f || Baked(Light.Owner)) { continue; }
+                RenderLocalLight Local;
+                Local.Type             = RLL_Point;
+                Local.Position         = PoseOf(Light.Owner).Position;
+                Local.Color            = Light.Color;
+                Local.Intensity        = Light.Intensity;
+                Local.Range            = Light.Radius;
+                Local.bCastShadows     = Light.bCastShadows;
+                Local.ShadowTechnique  = Light.ShadowTechnique == LST_Modulated ? LST_Modulated : LST_Standard;
+                Local.ShadowTint       = Light.ShadowTint;
+                Local.ShadowBias       = Light.ShadowBias;
+                Local.ShadowNormalBias = Light.ShadowNormalBias;
+                Found.push_back(Local);
+            }
+        }
+        if(ComponentPool* Pool = BoundWorld->FindPool(SpotLightComponent::StaticType().ID))
+        {
+            const auto* Lights = static_cast<const SpotLightComponent*>(Pool->GetDenseData());
+            for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+            {
+                const SpotLightComponent& Light = Lights[Index];
+                if(!Light.bActive || Light.Intensity <= 0.0f || Light.Range <= 0.0f || Baked(Light.Owner)) { continue; }
+                const GameCore::TransformPose Pose = PoseOf(Light.Owner);
+                RenderLocalLight Local;
+                Local.Type             = RLL_Spot;
+                Local.Position         = Pose.Position;
+                Local.Direction        = LightForward(Pose.Rotation);
+                Local.Color            = Light.Color;
+                Local.Intensity        = Light.Intensity;
+                Local.Range            = Light.Range;
+                Local.OuterConeAngle   = std::clamp(Light.OuterConeAngle, 0.5f, 89.0f);
+                Local.InnerConeAngle   = std::clamp(Light.InnerConeAngle, 0.0f, Local.OuterConeAngle);
+                Local.bCastShadows     = Light.bCastShadows;
+                Local.ShadowTechnique  = Light.ShadowTechnique == LST_Modulated ? LST_Modulated : LST_Standard;
+                Local.ShadowTint       = Light.ShadowTint;
+                Local.ShadowBias       = Light.ShadowBias;
+                Local.ShadowNormalBias = Light.ShadowNormalBias;
+                Found.push_back(Local);
+            }
+        }
+
+        /* Indices are sorted, not the lights: RenderLocalLight's SIMD math is
+         * over-aligned, which std::stable_sort's buffer refuses on MSVC. */
+        const bool bShadows = Lighting.Shadows.bEnabled != 0;
+        std::vector<uint32_t> Order(Found.size());
+        for(uint32_t Index = 0; Index < uint32_t(Order.size()); ++Index) { Order[Index] = Index; }
+        std::stable_sort(Order.begin(), Order.end(), [&Found, &InEye, bShadows](const uint32_t InIndexA, const uint32_t InIndexB)
+        {
+            const RenderLocalLight& InA = Found[InIndexA];
+            const RenderLocalLight& InB = Found[InIndexB];
+            const bool bCastA = bShadows && InA.bCastShadows;
+            const bool bCastB = bShadows && InB.bCastShadows;
+            if(bCastA != bCastB) { return bCastA; }
+            return (InA.Position - InEye).GetLength() < (InB.Position - InEye).GetLength();
+        });
+
+        if(Found.size() > RENDER_LOCAL_LIGHT_MAX && !bWarnedLocalLights)
+        {
+            bWarnedLocalLights = true;
+            RENDERCORE_LOG_WARN("WorldBridge: " + std::to_string(Found.size()) + " point and spot lights are active; "
+                                "only " + std::to_string(RENDER_LOCAL_LIGHT_MAX) + " light a frame (shadow casters, then the nearest)")
+        }
+        Lighting.LocalCount = uint32_t(std::min<size_t>(Found.size(), RENDER_LOCAL_LIGHT_MAX));
+        for(uint32_t Index = 0; Index < Lighting.LocalCount; ++Index)
+        {
+            Lighting.Locals[Index] = Found[Order[Index]];
         }
         return Lighting;
     }
 
-    RenderPostProcess WorldBridge::BuildPostProcess() const
+    void WorldBridge::UpdateBake()
     {
-        RenderPostProcess List;
+        const WorldLightingSettings& Settings = BoundWorld->GetSettings().Lighting;
+        const std::string Path = Settings.bBakedLighting ? Settings.BakedData : std::string();
+        const uint64_t Generation = BakedLightingCache::GetGeneration();
+        if(Path != BakePath || Generation != BakeGeneration)
+        {
+            BakePath       = Path;
+            BakeGeneration = Generation;
+            Bake           = Path.empty() ? nullptr : BakedLightingCache::Find(Path);
+            BakeEntries.clear();
+            if(Bake)
+            {
+                for(const BakedLightmapEntry& Each : Bake->Entries)
+                {
+                    EntityGuid Guid;
+                    Guid.Hi = Each.GuidHi;
+                    Guid.Lo = Each.GuidLo;
+                    if(Each.Atlas < RENDER_BAKED_ATLASES_MAX) { BakeEntries[Guid] = &Each; }
+                }
+                if(Bake->Atlases.size() > RENDER_BAKED_ATLASES_MAX)
+                {
+                    RENDERCORE_LOG_WARN("baked lighting '" + Path + "' has " + std::to_string(Bake->Atlases.size())
+                                        + " lightmaps; only " + std::to_string(RENDER_BAKED_ATLASES_MAX) + " are drawn")
+                }
+            }
+        }
+        bBakeActive = Bake != nullptr && GBakedLighting.GetBool();
+    }
+
+    RenderBakedDraw WorldBridge::BakedDrawFor(const Entity& InEntity, const EngineCore::Vector3& InPosition) const
+    {
+        RenderBakedDraw Out;
+        std::memset(static_cast<void*>(&Out), 0, sizeof(Out));   // compared bytewise in static records
+        if(!bBakeActive) { return Out; }
+
+        if(InEntity.IsStatic())
+        {
+            const auto Found = BakeEntries.find(InEntity.GetGuid());
+            if(Found != BakeEntries.end())
+            {
+                Out.Mode  = uint8_t(EMaterialBakedLighting::Lightmap);
+                Out.Atlas = Found->second->Atlas;
+                std::memcpy(Out.ScaleOffset, Found->second->ScaleOffset, sizeof(Out.ScaleOffset));
+                return Out;
+            }
+        }
+
+        BakedAmbientCube Cube;
+        const float Point[3] = { float(InPosition.GetX()), float(InPosition.GetY()), float(InPosition.GetZ()) };
+        if(Bake->Probes.Sample(Point, Cube))
+        {
+            Out.Mode = uint8_t(EMaterialBakedLighting::AmbientCube);
+            std::memcpy(Out.Cube, Cube.Faces, sizeof(Out.Cube));
+        }
+        return Out;
+    }
+
+    RenderPostProcess WorldBridge::BuildPostProcess(const RenderView& InView) const
+    {
+        RenderPostProcess Result;
         ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(PostProcessComponent::StaticType().ID) : nullptr;
         if(!Pool)
         {
-            return List;
+            return Result;
         }
 
-        const auto* Passes = static_cast<const PostProcessComponent*>(Pool->GetDenseData());
-        std::vector<const PostProcessComponent*> Enabled;
+        /* Where the camera is: the eye, or an orthographic view's centre (its
+         * Origin is the bottom-left corner). */
+        EngineCore::Vector3 Eye = InView.Origin;
+        if(InView.Projection.Data[3][2] == 0.0f)
+        {
+            Eye = Eye + EngineCore::Vector3(InView.ViewportPixels.Width * 0.5, InView.ViewportPixels.Height * 0.5, 0.0);
+        }
+
+        /* Every enabled volume the camera is near enough to, by weight. */
+        struct Volume { const PostProcessComponent* Component; float Weight; };
+        std::vector<Volume> Volumes;
+        const auto* Components = static_cast<const PostProcessComponent*>(Pool->GetDenseData());
         for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
         {
-            if(Passes[Index].bEnabled && Passes[Index].Material[0] != '\0') { Enabled.push_back(&Passes[Index]); }
+            const PostProcessComponent& Each = Components[Index];
+            if(!Each.bEnabled || Each.Stack[0] == '\0')
+            {
+                continue;
+            }
+            float Weight = 1.0f;
+            if(const BoundsComponent* Bounds = Each.Owner.GetSibling<BoundsComponent>())
+            {
+                if(Bounds->World.IsEmpty())
+                {
+                    continue;   // not refit yet: nowhere
+                }
+                /* How far outside the box the camera is; 0 inside. */
+                double Outside = 0.0;
+                for(int Axis = 0; Axis < 3; ++Axis)
+                {
+                    const double P   = Axis == 0 ? Eye.GetX() : Axis == 1 ? Eye.GetY() : Eye.GetZ();
+                    const double Min = Axis == 0 ? Bounds->World.Min.GetX() : Axis == 1 ? Bounds->World.Min.GetY() : Bounds->World.Min.GetZ();
+                    const double Max = Axis == 0 ? Bounds->World.Max.GetX() : Axis == 1 ? Bounds->World.Max.GetY() : Bounds->World.Max.GetZ();
+                    const double Gap = P < Min ? Min - P : P > Max ? P - Max : 0.0;
+                    Outside += Gap * Gap;
+                }
+                Weight = GetPostProcessVolumeWeight(float(std::sqrt(Outside)), Each.BlendDistance);
+            }
+            if(Weight > 0.0f)
+            {
+                Volumes.push_back({ &Each, Weight });
+            }
         }
-        std::stable_sort(Enabled.begin(), Enabled.end(), [](const PostProcessComponent* InA, const PostProcessComponent* InB)
+        std::stable_sort(Volumes.begin(), Volumes.end(), [](const Volume& InA, const Volume& InB)
         {
-            return InA->Priority < InB->Priority;
+            return InA.Component->Priority < InB.Component->Priority;
         });
 
-        if(Enabled.size() > RENDER_POST_PROCESS_MAX)
+        for(const Volume& Each : Volumes)
         {
-            RENDERCORE_LOG_WARN("WorldBridge: " + std::to_string(Enabled.size()) + " Post Process components are enabled; "
-                                "only the first " + std::to_string(RENDER_POST_PROCESS_MAX) + " by Priority run")
+            const std::string Path(Each.Component->Stack, strnlen(Each.Component->Stack, sizeof(Each.Component->Stack)));
+            if(const std::shared_ptr<const PostProcessSettings> Stack = PostProcessStackCache::Find(Path))
+            {
+                BlendPostProcess(Result.Settings, *Stack, Each.Weight);
+            }
         }
-        for(const PostProcessComponent* Each : Enabled)
+
+        /* Materials run by stage, then order; volumes' order breaks ties. */
+        PostProcessSettings& S = Result.Settings;
+        std::stable_sort(S.Materials, S.Materials + S.MaterialCount, [](const PostProcessMaterial& InA, const PostProcessMaterial& InB)
         {
-            if(List.Count == RENDER_POST_PROCESS_MAX) { break; }
-            static_assert(sizeof(List.Materials[0]) == sizeof(Each->Material), "a post-process name fits its slot");
-            std::memcpy(List.Materials[List.Count], Each->Material, sizeof(List.Materials[0]));
-            List.Materials[List.Count][sizeof(List.Materials[0]) - 1] = '\0';
-            ++List.Count;
-        }
-        return List;
+            return InA.Stage != InB.Stage ? InA.Stage < InB.Stage : InA.Order < InB.Order;
+        });
+        return Result;
     }
 
     void WorldBridge::ExtractAndRender(const FrameInfo& InFrame, const RenderView* InViewOverride)
@@ -333,6 +616,18 @@ namespace RenderCore
         {
             return;
         }
+
+        /* A reimported mesh may change a static proxy's bounds: send every
+         * static record once more. */
+        if(MeshAssetCache::GetGeneration() != StaticMeshGeneration)
+        {
+            StaticMeshGeneration = MeshAssetCache::GetGeneration();
+            StaticRecords.clear();
+        }
+
+        /* Before the records, which carry what it says of each entity. */
+        UpdateBake();
+        const ComponentTypeID RenderType = RenderComponent::StaticType().ID;
 
         for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
         {
@@ -371,6 +666,7 @@ namespace RenderCore
             }
 
             uint8_t* Write = static_cast<uint8_t*>(Blob);
+            size_t   Written = 0;
             for(size_t Index = 0; Index < Count; ++Index)
             {
                 const uint8_t* Component = Dense + Index * TypeInfo.SizeBytes;
@@ -384,6 +680,7 @@ namespace RenderCore
                  * whole thing" shape ComponentPool::Add uses for the
                  * component bytes themselves (ComponentPool.cpp). */
                 ExtractHeader Record;
+                std::memset(static_cast<void*>(&Record), 0, sizeof(Record));   // padding too: static records are compared bytewise
                 Record.Handle = Handle;
 
                 /* Where it is in the world: under a parent, the composed
@@ -406,15 +703,43 @@ namespace RenderCore
                 {
                     Record.Transform = RenderTransform();
                 }
+                Record.bStatic = OwnerEntity.IsStatic() ? 1 : 0;
+                if(Type == RenderType)
+                {
+                    Record.Baked = BakedDrawFor(OwnerEntity, Record.Transform.Position);
+                }
 
                 std::memcpy(Write, &Record, sizeof(ExtractHeader));
                 std::memcpy(Write + sizeof(ExtractHeader), Component, TypeInfo.SizeBytes);
 
+                /* STATIC: sent only when something differs from the last
+                 * record -- an edit, a move, the mobility itself. */
+                if(Record.bStatic && Handle.Ptr)
+                {
+                    std::vector<uint8_t>& Last = StaticRecords[Handle.Ptr];
+                    const size_t Bytes = sizeof(ExtractHeader) + TypeInfo.SizeBytes;
+                    if(Last.size() == Bytes && std::memcmp(Last.data(), Write, Bytes) == 0)
+                    {
+                        continue;
+                    }
+                    Last.assign(Write, Write + Bytes);
+                }
+                else if(Handle.Ptr)
+                {
+                    StaticRecords.erase(Handle.Ptr);
+                }
+
                 Write += Stride;
+                ++Written;
+            }
+            if(Written == 0)
+            {
+                EngineCore::Memory::Free(Blob);
+                continue;
             }
 
             const size_t   BlobStride = Stride;
-            const size_t   BlobCount  = Count;
+            const size_t   BlobCount  = Written;
             void* const    BlobPtr    = Blob;
 
             ENQUEUE_RENDER_COMMAND(ApplyExtraction)([BlobPtr, BlobStride, BlobCount](RenderContext&)
@@ -425,8 +750,11 @@ namespace RenderCore
                     const auto* Record = reinterpret_cast<const ExtractHeader*>(Read);
                     if(RenderProxy* Proxy = Record->Handle.Ptr)
                     {
+                        Proxy->SetStatic(Record->bStatic != 0);
                         Proxy->SetTransform(Record->Transform);
+                        Proxy->SetBakedDraw(Record->Baked);
                         Proxy->ApplyComponent(Read + sizeof(ExtractHeader));
+                        Proxy->MarkChanged();
                     }
                     Read += BlobStride;
                 }
@@ -436,16 +764,183 @@ namespace RenderCore
 
         RenderView View = InViewOverride ? *InViewOverride : BuildView(InFrame);
         View.ViewportPixels = InFrame.ViewportPixels;   // the render targets are sized from this
-        const RenderLighting    Lighting    = BuildLighting();
-        const RenderPostProcess PostProcess = BuildPostProcess();
+        const RenderLighting    Lighting    = BuildLighting(View.Origin);
+        const RenderPostProcess PostProcess = BuildPostProcess(View);
+        const SceneCaptureList  Captures    = BuildCaptures(View, InFrame.DeltaSeconds);
         RenderScene* SceneCapture = Scene;
 
-        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View, Lighting, PostProcess](RenderContext& Ctx)
+        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View, Lighting, PostProcess, Captures](RenderContext& Ctx)
         {
             SceneCapture->SetView(View);
             SceneCapture->SetLighting(Lighting);
             SceneCapture->SetPostProcess(PostProcess);
+            SceneCapture->SetCaptures(Captures);
             SceneCapture->Render(Ctx);
         });
+    }
+
+    SceneCaptureList WorldBridge::BuildCaptures(const RenderView& InView, const double InDeltaSeconds)
+    {
+        SceneCaptureList List;
+        CaptureClock += std::max(InDeltaSeconds, 0.0);
+        ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(SceneCaptureProbeComponent::StaticType().ID) : nullptr;
+        auto* Probes = Pool ? static_cast<SceneCaptureProbeComponent*>(Pool->GetDenseData()) : nullptr;
+        for(size_t Index = 0; Pool && Index < Pool->GetCount() && List.Count < RENDER_CAPTURES_MAX; ++Index)
+        {
+            SceneCaptureProbeComponent& Probe = Probes[Index];
+            if(!Probe.bEnabled || Probe.Target[0] == '\0')
+            {
+                continue;
+            }
+            const GameCore::Entity Owner = Probe.Owner.GetEntity();
+            ProbeState& State = ProbeStates[Owner.GetID().Pack()];
+            bool bDue = Probe.bCaptureNow != 0;
+            switch(Probe.Frequency)
+            {
+                case SCF_EveryFrame: bDue = true; break;
+                case SCF_Interval:   bDue = bDue || CaptureClock - State.LastCapture >= double(std::max(Probe.Interval, 0.0f)); break;
+                case SCF_Once:       bDue = bDue || !State.bCaptured; break;
+                default:             break;
+            }
+            if(!bDue)
+            {
+                continue;
+            }
+
+            const GameCore::TransformPose Pose = PoseOf(Probe.Owner);
+            const GameCore::Rotation3     Axes = GameCore::TransformMath::EulerToRotation(Pose.Rotation);
+            SceneCaptureRequest& Request = List.Requests[List.Count];
+            Request = SceneCaptureRequest();
+            std::memcpy(Request.Target, Probe.Target, sizeof(Request.Target));
+            Request.Target[sizeof(Request.Target) - 1] = '\0';
+            Request.Mode       = Probe.Mode;
+            Request.Resolution = uint32_t(std::clamp(Probe.Resolution, 0, int32_t(RENDER_TARGET_MAX_SIZE)));
+            Request.Position   = Pose.Position;
+            Request.Normal     = Axes.GetAxis(1);
+            Request.NearClip   = Probe.NearClip;
+            Request.FarClip    = Probe.FarClip;
+            Request.bShadows   = Probe.bCaptureShadows;
+
+            /* A mirror the camera cannot see is not worth a capture (unless asked for). */
+            if(Probe.Mode == SCM_PlanarMirror && !Probe.bCaptureNow && !InView.Bounds.IsEmpty())
+            {
+                const EngineCore::Vector3 Half = Axes.GetAxis(0) * double(Probe.ExtentX) + Axes.GetAxis(2) * double(Probe.ExtentZ);
+                const EngineCore::Vector3 Other = Axes.GetAxis(0) * double(Probe.ExtentX) - Axes.GetAxis(2) * double(Probe.ExtentZ);
+                GameCore::AABB Mirror;
+                for(const EngineCore::Vector3& Corner : { Pose.Position + Half, Pose.Position - Half, Pose.Position + Other, Pose.Position - Other })
+                {
+                    Mirror = GameCore::AABB::Union(Mirror, GameCore::AABB(Corner, Corner));
+                }
+                if(!Mirror.Overlaps(InView.Bounds))
+                {
+                    continue;
+                }
+            }
+
+            /* Its own subtree, left out (a mirror, a chrome ball). */
+            if(Probe.bHideOwner)
+            {
+                std::vector<GameCore::EntityID> Pending{ Owner.GetID() };
+                while(!Pending.empty() && Request.ExcludedCount < RENDER_CAPTURE_EXCLUDED_MAX)
+                {
+                    const GameCore::EntityID Each = Pending.back();
+                    Pending.pop_back();
+                    Request.Excluded[Request.ExcludedCount++] = Each;
+                    for(GameCore::EntityID Child = BoundWorld->GetEntity(Each).GetFirstChild(); Child.IsSet();
+                        Child = BoundWorld->GetEntity(Child).GetNextSibling())
+                    {
+                        Pending.push_back(Child);
+                    }
+                }
+            }
+
+            ++List.Count;
+            State.LastCapture = CaptureClock;
+            State.bCaptured   = true;
+            Probe.bCaptureNow = 0;
+        }
+        BuildReflectionProbes(InView, List);
+        return List;
+    }
+
+    void WorldBridge::BuildReflectionProbes(const RenderView& InView, SceneCaptureList& OutList)
+    {
+        OutList.ProbeCount = 0;
+        ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(ReflectionProbeComponent::StaticType().ID) : nullptr;
+        if(!Pool)
+        {
+            return;
+        }
+        /* Every enabled probe whose influence the view reaches, nearest the camera first. */
+        struct Candidate { ReflectionProbeComponent* Probe; ReflectionProbeRequest Request; double Distance; };
+        std::vector<Candidate> Found;
+        auto* Probes = static_cast<ReflectionProbeComponent*>(Pool->GetDenseData());
+        for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+        {
+            ReflectionProbeComponent& Probe = Probes[Index];
+            if(!Probe.bEnabled)
+            {
+                continue;
+            }
+            const GameCore::Entity Owner = Probe.Owner.GetEntity();
+            const GameCore::TransformPose Pose = PoseOf(Probe.Owner);
+            ReflectionProbeRequest Request;
+            Request.Key        = Owner.GetID().Pack();
+            Request.Position   = Pose.Position;
+            Request.Radius     = std::max(Probe.Radius, 1.0f);
+            Request.Extent[0]  = float(std::max(double(Probe.BoxExtent.GetX()), 0.0));
+            Request.Extent[1]  = float(std::max(double(Probe.BoxExtent.GetY()), 0.0));
+            Request.Extent[2]  = float(std::max(double(Probe.BoxExtent.GetZ()), 0.0));
+            Request.Intensity  = std::max(Probe.Intensity, 0.0f);
+            Request.NearClip   = std::max(Probe.NearClip, 0.01f);
+            Request.FarClip    = std::max(Probe.FarClip, Request.NearClip + 1.0f);
+            Request.Resolution = uint32_t(std::clamp(Probe.Resolution, 16, 512));
+            Request.bShadows   = Probe.bCaptureShadows;
+
+            const bool bBox = Request.Extent[0] > 0.0f && Request.Extent[1] > 0.0f && Request.Extent[2] > 0.0f;
+            const EngineCore::Vector3 Reach = bBox ? EngineCore::Vector3(Request.Extent[0], Request.Extent[1], Request.Extent[2])
+                                                   : EngineCore::Vector3(Request.Radius, Request.Radius, Request.Radius);
+            const GameCore::AABB Influence(Pose.Position - Reach, Pose.Position + Reach);
+            if(!InView.Bounds.IsEmpty() && !Influence.Overlaps(InView.Bounds))
+            {
+                continue;
+            }
+
+            ProbeState& State = ProbeStates[Request.Key ^ 0x5265666cull];   // apart from a SceneCaptureProbe on the same entity
+            bool bDue = Probe.bCaptureNow != 0;
+            switch(Probe.Frequency)
+            {
+                case SCF_EveryFrame: bDue = true; break;
+                case SCF_Interval:   bDue = bDue || CaptureClock - State.LastCapture >= double(std::max(Probe.Interval, 0.0f)); break;
+                case SCF_Once:       bDue = bDue || !State.bCaptured; break;
+                default:             break;
+            }
+            Request.bDue = bDue ? 1 : 0;
+            Found.push_back({ &Probe, Request, (Pose.Position - InView.Origin).GetLength() });
+        }
+        /* Indices are sorted, not the candidates: a ReflectionProbeRequest's
+         * SIMD math is over-aligned, which std::stable_sort's buffer refuses on MSVC. */
+        std::vector<uint32_t> Order(Found.size());
+        for(uint32_t Index = 0; Index < uint32_t(Order.size()); ++Index) { Order[Index] = Index; }
+        std::stable_sort(Order.begin(), Order.end(), [&Found](const uint32_t InA, const uint32_t InB)
+        {
+            return Found[InA].Distance < Found[InB].Distance;
+        });
+        for(const uint32_t Sorted : Order)
+        {
+            Candidate& Each = Found[Sorted];
+            if(OutList.ProbeCount >= RENDER_REFLECTION_PROBES_MAX)
+            {
+                break;
+            }
+            OutList.Probes[OutList.ProbeCount++] = Each.Request;
+            if(Each.Request.bDue)
+            {
+                ProbeState& State = ProbeStates[Each.Request.Key ^ 0x5265666cull];
+                State.LastCapture = CaptureClock;
+                State.bCaptured   = true;
+                Each.Probe->bCaptureNow = 0;
+            }
+        }
     }
 }

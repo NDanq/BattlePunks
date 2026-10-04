@@ -3,13 +3,18 @@
 
 #if WITH_EDITOR
 
+#include <utility>
+#include <vector>
+
 #include <QPoint>
 #include <QSet>
 #include <QWidget>
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/Editor/EditorContext.h"
+#include "Public/GameCore/AABB.h"
 #include "Public/GameCore/EntityID.h"
+#include "Public/GameCore/TransformMath.h"
 #include "Public/Editor/EditorCamera.h"
 #include "Public/Editor/TransformGizmo.h"
 
@@ -69,9 +74,18 @@ public:
     /* Front view of (0,0)-(1280,720), what Sandbox's camera shows. */
     void ApplySandboxView();
 
+    /* Where the scene's game camera (its first active CameraComponent) looks
+     * from: a perspective one's position and aim; an orthographic one's
+     * screen, as ApplySandboxView. Frame All if there is none. */
+    void ApplyGameCameraView();
+
     /* Draw every entity's bounds, not just the selection's. */
     void SetShowAllBounds(bool bInShow) { bShowAllBounds = bInShow; }
     bool IsShowingAllBounds() const     { return bShowAllBounds; }
+
+    /* Draw every light's reach, not just the selected light's. */
+    void SetShowLightGizmos(bool bInShow) { bShowLightGizmos = bInShow; }
+    bool IsShowingLightGizmos() const     { return bShowLightGizmos; }
 
     // === Transform handles ==================================================
 
@@ -106,6 +120,10 @@ protected:
     void keyPressEvent(QKeyEvent* InEvent) override;
     void keyReleaseEvent(QKeyEvent* InEvent) override;
     void focusOutEvent(QFocusEvent* InEvent) override;
+
+    /* While the camera flies, keys are its (Ctrl+D lowers and strafes, not
+     * Duplicate): the edit shortcuts wait until it lands. */
+    bool event(QEvent* InEvent) override;
     void dragEnterEvent(QDragEnterEvent* InEvent) override;
     void dragMoveEvent(QDragMoveEvent* InEvent) override;
     void dropEvent(QDropEvent* InEvent) override;
@@ -115,6 +133,12 @@ private:
     enum class EDrag { None, Look, Orbit, Dolly, Pan, Gizmo };
 
 
+    /* A game's mouse capture through the Qt fallback: while it wants it and
+     * the viewport has the focus in the active window, the cursor is hidden,
+     * grabbed and put back at the centre after every move. Once a frame. */
+    void UpdateMouseHold();
+    void ReleaseMouseHold();
+
     /* WASD/QE flying while looking. */
     void ApplyFlyInput(float InDeltaSeconds);
 
@@ -122,8 +146,20 @@ private:
     void QueueOverlay();
     void QueueAxisGizmo();
 
+    /* Each light's reach: a point light's sphere, a spot's cone, the sun's
+     * arrow. The selected light bright; the rest dim, when shown at all. */
+    void QueueLightGizmos();
+
     /* The selection's centre if it has bounds, else the focus point. */
     EngineCore::Vector3 GetPivot() const;
+
+    /* Every selected entity's bounds, joined. */
+    GameCore::AABB GetSelectionBounds() const;
+
+    /* A right click that did not turn the camera: Cut/Copy/Paste/Duplicate/
+     * Rename/Delete for what is under InLogicalPos (selected first, if it
+     * was not) or the selection. */
+    void ShowContextMenu(const QPoint& InLogicalPos);
 
     /* Re-derived each frame: the axis gizmo has a fixed screen spot and size. */
     void GetGizmoFrame(EngineCore::Vector3& OutOrigin, double& OutAxisLength) const;
@@ -142,7 +178,8 @@ private:
 
     TransformGizmo::Snap GetGizmoSnap(Qt::KeyboardModifiers InModifiers) const;
 
-    /* The nearest primitive quad under the pixel, or an unset id. */
+    /* The nearest primitive quad under the pixel, else a light within a few
+     * pixels of it (lights have no shape to hit), or an unset id. */
     GameCore::EntityID Pick(const QPoint& InLogicalPos) const;
 
     /* A dragged .nmmesh in the project, as its runtime path; else empty. */
@@ -167,12 +204,21 @@ private:
     QPoint              PressPos;
     QSet<int>           HeldKeys;
 
-    bool bShowAllBounds = false;
+    bool bHoldingMouse    = false;   // UpdateMouseHold
+    bool bShowAllBounds   = false;
+    bool bShowLightGizmos = true;
 
     TransformGizmo          Gizmo;
     TransformGizmo::EHandle GizmoHover = TransformGizmo::EHandle::None;
     GameCore::EntityID      GizmoEntity;   // the one being dragged
     bool                    bGizmoSnap = false;
+
+    /* The rest of the selection, dragged with GizmoEntity: each one's pose
+     * relative to it when the drag began. */
+    std::vector<std::pair<GameCore::EntityID, GameCore::TransformPose>> GizmoGroup;
+
+    /* A right press that may yet be a click (no turn, no fly): a context menu. */
+    bool bContextClick = false;
 };
 
 #endif // WITH_EDITOR

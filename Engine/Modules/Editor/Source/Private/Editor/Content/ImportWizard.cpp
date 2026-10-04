@@ -37,10 +37,12 @@
 NIMBLE_CONFIG_FLOAT(GEditorImportMeshScale,          "Editor", "ImportMeshScale",          100.0f, nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportConvertCoordinates, "Editor", "ImportConvertCoordinates", true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportGenerateNormals,    "Editor", "ImportGenerateNormals",    true,   nullptr);
+NIMBLE_CONFIG_BOOL (GEditorImportLightmapUVs,        "Editor", "ImportLightmapUVs",        true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportCombineMeshes,      "Editor", "ImportCombineMeshes",      true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportMeshTextures,       "Editor", "ImportMeshTextures",       true,   nullptr);
 NIMBLE_CONFIG_BOOL (GEditorImportTextureSRGB,        "Editor", "ImportTextureSRGB",        true,   nullptr);
 NIMBLE_CONFIG_INT  (GEditorImportTextureMaxSize,     "Editor", "ImportTextureMaxSize",     4096,   nullptr);
+NIMBLE_CONFIG_INT  (GEditorImportTextureMipGen,      "Editor", "ImportTextureMipGen",      1,      nullptr);   // ETextureMipGen: Box
 
 using namespace EditorContent;
 
@@ -214,6 +216,10 @@ QWizardPage* ImportWizard::BuildMeshPage()
     GenNormals = new QCheckBox(QStringLiteral("Generate smooth normals where the file has none"), Page);
     GenNormals->setChecked(GEditorImportGenerateNormals.GetBool());
 
+    LightmapUVs = new QCheckBox(QStringLiteral("Generate lightmap UVs where the file has none (TEXCOORD_1)"), Page);
+    LightmapUVs->setToolTip(QStringLiteral("A static entity drawing this mesh is lit by Build > Bake Lightmaps only if it has them"));
+    LightmapUVs->setChecked(GEditorImportLightmapUVs.GetBool());
+
     Combine = new QCheckBox(QStringLiteral("Combine the scene into one mesh (off: one .nmmesh per glTF mesh)"), Page);
     Combine->setChecked(GEditorImportCombineMeshes.GetBool());
 
@@ -229,6 +235,7 @@ QWizardPage* ImportWizard::BuildMeshPage()
     Form->addRow(QStringLiteral("Scale"), MeshScale);
     Form->addRow(QString(), ConvertAxes);
     Form->addRow(QString(), GenNormals);
+    Form->addRow(QString(), LightmapUVs);
     Form->addRow(QString(), Combine);
     Form->addRow(QString(), MeshTextures);
     Form->addRow(QStringLiteral("Textures used"), ImageList);
@@ -243,6 +250,9 @@ QWizardPage* ImportWizard::BuildTexturePage()
 
     SRGB = new QCheckBox(QStringLiteral("Colour data (sRGB) -- off for masks, normal maps and other data"), Page);
     SRGB->setChecked(GEditorImportTextureSRGB.GetBool());
+    DetectData = new QCheckBox(QStringLiteral("Data maps by name are linear (normal, roughness, metallic, AO, height, mask...)"), Page);
+    DetectData->setChecked(true);
+    DetectData->setToolTip(QStringLiteral("An image whose name says it holds data, not colour, imports with sRGB off whatever the box above says"));
 
     Filter = new QComboBox(Page);
     Filter->addItem(QStringLiteral("Linear (smooth)"), int(RenderCore::ETextureFilter::Linear));
@@ -261,12 +271,23 @@ QWizardPage* ImportWizard::BuildTexturePage()
 
     FlipVertical = new QCheckBox(QStringLiteral("Flip vertically"), Page);
 
+    MipGen = new QComboBox(Page);
+    MipGen->addItem(QStringLiteral("Box (2x2 average)"), int(RenderCore::ETextureMipGen::Box));
+    MipGen->addItem(QStringLiteral("Kaiser (sharper)"), int(RenderCore::ETextureMipGen::Kaiser));
+    MipGen->addItem(QStringLiteral("None"), int(RenderCore::ETextureMipGen::None));
+    const int SavedMips = MipGen->findData(GEditorImportTextureMipGen.GetInt());
+    MipGen->setCurrentIndex(SavedMips >= 0 ? SavedMips : 0);
+    MipGen->setToolTip(QStringLiteral("The mip chain baked into the texture, down to 1x1: what a distant or "
+                                      "angled surface samples, without shimmering"));
+
     auto* Form = new QFormLayout(Page);
     Form->addRow(QString(), SRGB);
+    Form->addRow(QString(), DetectData);
     Form->addRow(QStringLiteral("Filtering"), Filter);
     Form->addRow(QStringLiteral("Wrapping"), Wrap);
     Form->addRow(QStringLiteral("Largest size"), MaxSize);
     Form->addRow(QString(), FlipVertical);
+    Form->addRow(QStringLiteral("Mipmaps"), MipGen);
     return Page;
 }
 
@@ -369,10 +390,12 @@ void ImportWizard::SaveOptions()
     GEditorImportMeshScale.SetFloat(float(MeshScale->value()));
     GEditorImportConvertCoordinates.SetBool(ConvertAxes->isChecked());
     GEditorImportGenerateNormals.SetBool(GenNormals->isChecked());
+    GEditorImportLightmapUVs.SetBool(LightmapUVs->isChecked());
     GEditorImportCombineMeshes.SetBool(Combine->isChecked());
     GEditorImportMeshTextures.SetBool(MeshTextures->isChecked());
     GEditorImportTextureSRGB.SetBool(SRGB->isChecked());
     GEditorImportTextureMaxSize.SetInt(MaxSize->currentData().toInt());
+    GEditorImportTextureMipGen.SetInt(MipGen->currentData().toInt());
     SettingsDialog::SaveUserSettings();
 }
 
@@ -384,6 +407,7 @@ void ImportWizard::StartImport()
     Mesh.Scale               = float(MeshScale->value());
     Mesh.bConvertCoordinates = ConvertAxes->isChecked();
     Mesh.bGenerateNormals    = GenNormals->isChecked();
+    Mesh.bGenerateLightmapUVs = LightmapUVs->isChecked();
     Mesh.bCombineMeshes      = Combine->isChecked();
     Mesh.bImportTextures     = MeshTextures->isChecked();
 
@@ -393,6 +417,8 @@ void ImportWizard::StartImport()
     Texture.Wrap            = RenderCore::ETextureWrap(Wrap->currentData().toInt());
     Texture.MaxDimension    = MaxSize->currentData().toInt();
     Texture.bFlipVertically = FlipVertical->isChecked();
+    Texture.MipGen          = RenderCore::ETextureMipGen(MipGen->currentData().toInt());
+    Texture.bDetectDataMaps = DetectData->isChecked();
 
     auto Jobs = std::make_shared<QList<Job>>();
     const QString Dest = QDir::fromNativeSeparators(DestFolder->text().trimmed());

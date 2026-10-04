@@ -1,5 +1,6 @@
 #include "Public/RenderCore/MeshAsset.h"
 
+#include <atomic>
 #include <algorithm>
 #include <mutex>
 #include <unordered_map>
@@ -18,6 +19,7 @@ namespace RenderCore
         constexpr uint32_t TAG_INDICES  = EngineCore::MakeArchiveTag('M','I','D','X');
         constexpr uint32_t TAG_SECTIONS = EngineCore::MakeArchiveTag('M','S','E','C');
         constexpr uint32_t TAG_COLORS   = EngineCore::MakeArchiveTag('M','C','O','L');   // optional
+        constexpr uint32_t TAG_UV1      = EngineCore::MakeArchiveTag('M','U','V','1');   // optional
 
         void SerializeFloats(EngineCore::Archive& Ar, std::vector<float>& InOutValues)
         {
@@ -94,9 +96,10 @@ namespace RenderCore
              * Colours are all or none. */
             if(InOutMesh.Normals.size() != size_t(Header.VertexCount) * 3
                || InOutMesh.UV0.size() != size_t(Header.VertexCount) * 2
-               || (!InOutMesh.Colors.empty() && InOutMesh.Colors.size() != size_t(Header.VertexCount) * 4))
+               || (!InOutMesh.Colors.empty() && InOutMesh.Colors.size() != size_t(Header.VertexCount) * 4)
+               || (!InOutMesh.UV1.empty() && InOutMesh.UV1.size() != size_t(Header.VertexCount) * 2))
             {
-                Ar.SetError("mesh: every vertex needs a normal and a UV (and a colour, if any has one)");
+                Ar.SetError("mesh: every vertex needs a normal and a UV (and a colour and a UV1, if any has one)");
                 Ar.CloseChunk();
                 return false;
             }
@@ -162,6 +165,18 @@ namespace RenderCore
                 InOutMesh.Colors.assign(size_t(Header.VertexCount) * 4, 1.0f);
             }
             SerializeFloats(Ar, InOutMesh.Colors);
+            Ar.CloseChunk();
+        }
+
+        /* Lightmap UVs, the same way: a file without them is not lightmapped. */
+        const bool bUV1 = Ar.IsSaving() ? !InOutMesh.UV1.empty() : Ar.PeekChunkTag() == TAG_UV1;
+        if(!Ar.HasError() && bUV1 && OpenRequiredChunk(Ar, TAG_UV1, 1, "mesh: bad MUV1 chunk"))
+        {
+            if(Ar.IsLoading() && CanHoldElements(Ar, uint64_t(Header.VertexCount), 2 * sizeof(float), "mesh: UV1 count is past the end of the file"))
+            {
+                InOutMesh.UV1.assign(size_t(Header.VertexCount) * 2, 0.0f);
+            }
+            SerializeFloats(Ar, InOutMesh.UV1);
             Ar.CloseChunk();
         }
 
@@ -236,6 +251,7 @@ namespace RenderCore
         {
             std::mutex                                                       Lock;
             std::unordered_map<std::string, std::shared_ptr<const MeshData>> Meshes;   // null: failed
+            std::atomic<uint64_t>                                            Generation{0};
         };
 
         /* Function-local, so it exists before any static initialiser asks. */
@@ -279,10 +295,16 @@ namespace RenderCore
         return Cache.Meshes.emplace(InPath, Result).first->second;
     }
 
+    uint64_t MeshAssetCache::GetGeneration()
+    {
+        return GetCache().Generation.load(std::memory_order_relaxed);
+    }
+
     void MeshAssetCache::Invalidate(const std::string& InPath)
     {
         CacheState& Cache = GetCache();
         std::lock_guard<std::mutex> Guard(Cache.Lock);
+        Cache.Generation.fetch_add(1, std::memory_order_relaxed);
         if(InPath.empty())
         {
             Cache.Meshes.clear();

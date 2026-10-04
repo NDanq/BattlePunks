@@ -244,17 +244,21 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
         /* White, so every backend's mesh layout always has a colour stream. */
         for(uint32_t At = 0; At < InDesc.NumVertices * 4; ++At) { Data.Color[At] = 1.0f; }
     }
+    /* Zero without lightmap UVs, so the stream is always there too. */
+    Data.UV1 = InDesc.UV1 ? static_cast<float*>(Copy(InDesc.UV1, sizeof(float) * 2 * InDesc.NumVertices))
+                          : static_cast<float*>(calloc(size_t(InDesc.NumVertices) * 2, sizeof(float)));
     Data.Indices    = static_cast<uint32_t*>(Copy(InDesc.Indices, sizeof(uint32_t) * InDesc.NumIndices));
     Data.NumIndices = InDesc.NumIndices;
 
     /* As CreateQuadMesh: the POSITION FLOAT count, not the vertex count. */
     Data.NumVertices = InDesc.NumVertices * 3;
 
-    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.Indices)
+    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.UV1 || !Data.Indices)
     {
         free(Data.Position);
         free(Data.Normal);
         free(Data.Color);
+        free(Data.UV1);
         free(Data.TexCoord);
         free(Data.Indices);
         return false;
@@ -266,10 +270,16 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
 void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData, const uint InSize)
 {
     if(InBinding < GDI_MATERIAL_BLOCK_BINDING || InBinding > GDI_SCENE_BLOCK_BINDING) return;
-    std::vector<uint8_t>& Block = MaterialBlocks[InBinding - GDI_MATERIAL_BLOCK_BINDING];
-    const uint Size = InSize < GDI_MATERIAL_BLOCK_MAX_BYTES ? InSize : GDI_MATERIAL_BLOCK_MAX_BYTES;
+    const uint Index = InBinding - GDI_MATERIAL_BLOCK_BINDING;
+    std::vector<uint8_t>& Block = MaterialBlocks[Index];
+    const uint MaxBytes = InBinding == GDI_SCENE_BLOCK_BINDING ? GDI_SCENE_BLOCK_MAX_BYTES : GDI_MATERIAL_BLOCK_MAX_BYTES;
+    const uint Size = InData ? (InSize < MaxBytes ? InSize : MaxBytes) : 0;
     const auto* Bytes = static_cast<const uint8_t*>(InData);
-    Block.assign(Bytes, Bytes + (InData ? Size : 0));
+
+    /* Unchanged bytes keep the serial, so a backend reuses its upload. */
+    if(Block.size() == Size && (Size == 0 || memcmp(Block.data(), Bytes, Size) == 0)) return;
+    Block.assign(Bytes, Bytes + Size);
+    ++MaterialBlockSerials[Index];
 }
 
 void GDIDynamicDriver::SetRenderTargets(GDIRenderTarget* const* InColors, const uint InCount, GDIRenderTarget* InDepthFrom)
@@ -529,3 +539,37 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
 IMPLEMENT_GDI_FUNCTION_BODY(void,
                             EndDrawEvent,
                             (),,())
+
+GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, const uint InWidth, const uint InHeight, const EGDIRenderTargetFormat InFormat)
+{
+    return GDynamicGDI ? GDynamicGDI->CreateRenderTargetFormat(std::move(InName), InWidth, InHeight, InFormat) : nullptr;
+}
+
+bool GDISupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat)
+{
+    return GDynamicGDI && GDynamicGDI->SupportsRenderTargetFormat(InFormat);
+}
+
+GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLevels, const uint32_t InCount,
+                                                 const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
+{
+    return GDynamicGDI ? GDynamicGDI->CreateTextureResourceMips(InLevels, InCount, InBorder, InFilter) : nullptr;
+}
+
+bool GDISupportsGPUTimestamps()
+{
+    return GDynamicGDI && GDynamicGDI->SupportsGPUTimestamps();
+}
+
+void GDIWriteGPUTimestamp(const uint32_t InIndex)
+{
+    if(GDynamicGDI && InIndex < GDI_GPU_TIMESTAMP_MAX)
+    {
+        GDynamicGDI->WriteGPUTimestamp(InIndex);
+    }
+}
+
+uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds)
+{
+    return GDynamicGDI && OutMilliseconds ? GDynamicGDI->GetPreviousGPUTimestamps(OutMilliseconds) : 0;
+}

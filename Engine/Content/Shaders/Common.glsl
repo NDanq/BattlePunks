@@ -43,9 +43,11 @@ layout(location=0) out Interp_Block
     vec4  Color;
     vec3  WorldPosition;
     float ViewDepth;
+    vec2  LightmapUV;     // a mesh's UV1, its lightmap UVs (BakedLighting.glsl); 0 elsewhere
 } Interpolants;
 
-void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal, vec4 InColor, vec3 InWorldPosition, float InViewDepth )
+void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal, vec4 InColor, vec3 InWorldPosition, float InViewDepth,
+                            vec2 InLightmapUV )
 {
     Interpolants.Position      = InPosition;
     Interpolants.TexCoord      = InTexCoord;
@@ -53,6 +55,12 @@ void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal, vec
     Interpolants.Color         = InColor;
     Interpolants.WorldPosition = InWorldPosition;
     Interpolants.ViewDepth     = InViewDepth;
+    Interpolants.LightmapUV    = InLightmapUV;
+}
+
+void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal, vec4 InColor, vec3 InWorldPosition, float InViewDepth )
+{
+    CalculateInterpolants(InPosition, InTexCoord, InNormal, InColor, InWorldPosition, InViewDepth, vec2(0.0));
 }
 
 void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal )
@@ -75,6 +83,7 @@ layout(location=0) in Interp_Block
     vec4  Color;
     vec3  WorldPosition;
     float ViewDepth;
+    vec2  LightmapUV;     // a mesh's UV1, its lightmap UVs (BakedLighting.glsl); 0 elsewhere
 } Interpolants;
 
 GDIVSToPSInterpolants GetInterpolants()
@@ -111,3 +120,25 @@ GDIViewParameters ViewParameters = GDIViewParameters(Projection, View, MouseCoor
 layout(std140, set=0, binding=1) uniform TR_Block { vec3 PositionWorldSpace; mat4 Model; };
 GDITransform Transform = GDITransform(PositionWorldSpace, Model);
 #endif
+
+// Emissive past 1 in an 8-bit G-buffer target (GBuffer3): rgb the colour
+// divided by its brightest channel (when that is over 1), a that divisor as
+// log2 over GBUFFER_EMISSIVE_LOG_RANGE octaves -- up to 4096. The Lighting
+// stage reads it back whole; Bloom adds what the 8-bit scene colour clipped.
+#define GBUFFER_EMISSIVE_LOG_RANGE 12.0
+vec4 EncodeGBufferEmissive(vec3 InEmissive)
+{
+    vec3  Emissive = max(InEmissive, vec3(0.0));
+    float Scale    = clamp(max(Emissive.r, max(Emissive.g, Emissive.b)), 1.0, exp2(GBUFFER_EMISSIVE_LOG_RANGE));
+    return vec4(clamp(Emissive / Scale, 0.0, 1.0), log2(Scale) / GBUFFER_EMISSIVE_LOG_RANGE);
+}
+vec3 DecodeGBufferEmissive(vec4 InEncoded)
+{
+    return InEncoded.rgb * exp2(InEncoded.a * GBUFFER_EMISSIVE_LOG_RANGE);
+}
+
+// Bloom's chain in 8-bit targets: brightness 0-BLOOM_CHAIN_RANGE stored as
+// sqrt(v / range), so the faint tail of a glow keeps its precision.
+#define BLOOM_CHAIN_RANGE 64.0
+vec3 EncodeBloom(vec3 InColor) { return sqrt(clamp(InColor / BLOOM_CHAIN_RANGE, 0.0, 1.0)); }
+vec3 DecodeBloom(vec3 InStored) { return InStored * InStored * BLOOM_CHAIN_RANGE; }

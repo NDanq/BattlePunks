@@ -33,7 +33,9 @@ public:
     PlaySession& operator=(const PlaySession&) = delete;
 
     /* False, logged, on failure; partial startup is undone. */
-    bool Start();
+    /* InOpenWorld: the editor's open world (runtime path); the level that
+     * loads it plays if the game has one, else [Game] StartLevel. */
+    bool Start(const std::string& InOpenWorld = std::string());
 
     /* Null-safe and idempotent. */
     void Stop();
@@ -66,8 +68,14 @@ public:
 
     /* What Tick latched: the viewport's SDL input, as the launcher's. */
     const NimbleEngine::InputState& GetInput() const override { return Input.GetState(); }
-    void SetMouseCaptured(bool bInCaptured) override { Input.SetMouseCaptured(bInCaptured); }
-    bool IsMouseCaptured() const override           { return Input.IsMouseCaptured(); }
+    /* The viewport's SDL relative mode; logged, since it only engages while
+     * the viewport holds the native input focus (ViewportSDLInput). */
+    void SetMouseCaptured(bool bInCaptured) override;
+    bool IsMouseCaptured() const override           { return Input.GetWindow() ? Input.IsMouseCaptured() : bHostMouseCaptured; }
+
+    /* The game wants the mouse captured but there is no SDL window to do it
+     * (the Qt fallback): the viewport holds the cursor itself. */
+    bool WantsViewportMouseHold() const { return !Input.GetWindow() && bHostMouseCaptured; }
 
     // === Input ===============================================================
 
@@ -75,6 +83,11 @@ public:
      * or, without SDL, the viewport's Qt events through GetPending(). Tick
      * latches it once a frame, before the game's frame. */
     NimbleEngine::InputRouter& GetInputRouter() { return Input; }
+
+    /* Attaches the router to the viewport's SDL window. A capture the game
+     * asked for before there was one (IGameMode::OnStart runs inside Start)
+     * is applied to it now. */
+    void AttachInputWindow(GameWindow* InWindow);
 
     /* While the editor holds the view (ejected), the game sees nothing held:
      * what arrives is dropped instead of latched. */
@@ -89,6 +102,7 @@ private:
 
     NimbleEngine::InputRouter Input;
     bool                      bInputBlocked = false;
+    bool                      bHostMouseCaptured = false;   // SetMouseCaptured without an SDL window
 
     uint32_t FrameRateLimit = 0;
     uint64_t FrameNumber    = 0;

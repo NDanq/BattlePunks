@@ -6,6 +6,7 @@
 #include <string>
 
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -13,11 +14,14 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QFormLayout>
-#include <QGroupBox>
+#include <QHBoxLayout>
 #include <QLabel>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSaveFile>
+#include <QScrollArea>
+#include <QStackedWidget>
 #include <QStandardPaths>
 #include <QVBoxLayout>
 
@@ -54,14 +58,36 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
     setWindowTitle(QStringLiteral("Editor Settings"));
     setAttribute(Qt::WA_DeleteOnClose);
 
+    resize(640, 420);
     auto* Layout = new QVBoxLayout(this);
+    auto* Body   = new QHBoxLayout();
+    Layout->addLayout(Body, 1);
 
-    const auto AddGroup = [this, Layout](const QString& InTitle)
+    /* Pages, as Project Settings has: a list of sections, one form each. */
+    auto* Pages = new QListWidget(this);
+    Pages->setFixedWidth(150);
+    Body->addWidget(Pages);
+    auto* Stack = new QStackedWidget(this);
+    Body->addWidget(Stack, 1);
+    connect(Pages, &QListWidget::currentRowChanged, Stack, &QStackedWidget::setCurrentIndex);
+
+    const auto AddGroup = [this, Pages, Stack](const QString& InTitle)
     {
-        auto* Group = new QGroupBox(InTitle, this);
-        auto* Form  = new QFormLayout(Group);
+        auto* Scroll = new QScrollArea(Stack);
+        Scroll->setWidgetResizable(true);
+        Scroll->setFrameShape(QFrame::NoFrame);
+
+        auto* Page   = new QWidget(Scroll);
+        auto* Column = new QVBoxLayout(Page);
+        Column->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(InTitle.toHtmlEscaped()), Page));
+        auto* Form = new QFormLayout();
         Form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
-        Layout->addWidget(Group);
+        Column->addLayout(Form);
+        Column->addStretch(1);
+
+        Scroll->setWidget(Page);
+        Stack->addWidget(Scroll);
+        Pages->addItem(InTitle);
         return Form;
     };
 
@@ -135,6 +161,30 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
         AddRow(InForm, InPath, InLabel, InTip, Combo, std::move(R));
     };
 
+    /* A colour as "#rrggbb": a swatch button that opens a colour picker. */
+    const auto AddColor = [this, AddRow](QFormLayout* InForm, const char* InPath, const QString& InLabel,
+                                         const QString& InTip)
+    {
+        auto* Swatch = new QPushButton(this);
+        Swatch->setFixedWidth(96);
+        const auto Paint = [Swatch](const QColor& InColor)
+        {
+            Swatch->setProperty("Color", InColor.name());
+            Swatch->setText(InColor.name());
+            Swatch->setStyleSheet(QStringLiteral("QPushButton { background-color: %1; color: %2; }")
+                                      .arg(InColor.name(), InColor.lightness() > 128 ? QStringLiteral("black") : QStringLiteral("white")));
+        };
+        connect(Swatch, &QPushButton::clicked, this, [this, Swatch, Paint, InLabel]()
+        {
+            const QColor Picked = QColorDialog::getColor(QColor(Swatch->property("Color").toString()), this, InLabel);
+            if(Picked.isValid()) { Paint(Picked); }
+        });
+        Row R;
+        R.Show = [Paint](const QString& InText) { const QColor Color(InText); Paint(Color.isValid() ? Color : QColor(Qt::black)); };
+        R.Read = [Swatch]() { return Swatch->property("Color").toString(); };
+        AddRow(InForm, InPath, InLabel, InTip, Swatch, std::move(R));
+    };
+
     // === The settings ========================================================
 
     QFormLayout* Appearance = AddGroup(QStringLiteral("Appearance"));
@@ -153,6 +203,12 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
     AddFloat(Viewport, "Editor.SnapScale", QStringLiteral("Scale snap"),
              QStringLiteral("Step for snapped Scale drags"),
              0.001, 100.0, 3, QString());
+    AddCheck(Viewport, "Editor.ViewportGradient", QStringLiteral("Background gradient"),
+             QStringLiteral("The viewport background as a vertical gradient, top colour to bottom; off, the top colour alone"));
+    AddColor(Viewport, "Editor.ViewportTopColor", QStringLiteral("Background top"),
+             QStringLiteral("The background at the top of the viewport (all of it, with the gradient off)"));
+    AddColor(Viewport, "Editor.ViewportBottomColor", QStringLiteral("Background bottom"),
+             QStringLiteral("The background at the bottom of the viewport"));
 
     QFormLayout* Rendering = AddGroup(QStringLiteral("Rendering"));
     /* OpenGL does not start yet and Metal is Apple-only (DefaultEngine.ini);
@@ -187,8 +243,12 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
               { { "256", 256 }, { "512", 512 }, { "1024", 1024 }, { "2048", 2048 }, { "4096", 4096 },
                 { "8192", 8192 }, { "16384", 16384 } },
               false);
+    AddChoice(Import, "Editor.ImportTextureMipGen", QStringLiteral("Texture mipmaps"),
+              QStringLiteral("The mip chain baked into an imported texture; the Texture Viewer changes it later"),
+              { { "None", 0 }, { "Box", 1 }, { "Kaiser", 2 } },
+              false);
 
-    Layout->addStretch(1);
+    Pages->setCurrentRow(0);
 
     auto* Note = new QLabel(QStringLiteral("* Takes effect when the editor restarts.\nSaved to %1")
                             .arg(QDir::toNativeSeparators(GetUserSettingsPath())), this);

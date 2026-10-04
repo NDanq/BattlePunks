@@ -13,6 +13,7 @@
 #include "Public/Math/Matrix.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
+#include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderTypes.h"
 
 /*
@@ -71,6 +72,13 @@ namespace RenderCore
          * view). */
         virtual void Draw(RenderContext& InContext) = 0;
 
+        /* RENDER THREAD, once per shadow view a frame, for a visible proxy
+         * whose WorldBounds that view can see -- including proxies the
+         * camera culled, whose shadows may still reach the screen. Queue
+         * casters with RenderContext::DrawMeshShadow. Nothing by default: a
+         * proxy type casts no shadow unless it says so. */
+        virtual void DrawShadow(RenderContext& InContext) { (void)InContext; }
+
         /* RENDER THREAD, before culling: how far past WorldBounds this
          * proxy's draw can reach -- a material's World Position Offset (Max
          * Offset, RenderContext::GetMaterialMaxOffset). 0 by default. */
@@ -95,6 +103,22 @@ namespace RenderCore
 
         void SetVisible(const bool bInVisible) { bVisible = bInVisible; }
 
+        /* Its entity's baked lighting this frame (RenderLighting.h), set by
+         * extraction; what a proxy that draws lit meshes passes on. */
+        void SetBakedDraw(const RenderBakedDraw& InBaked) { Baked = InBaked; }
+        const RenderBakedDraw& GetBakedDraw() const { return Baked; }
+
+        /* The owner's mobility (GameCore's Mobility.h), set by extraction: a
+         * static proxy's draws are captured once and replayed (RenderScene's
+         * static draw lists) until its change serial moves. */
+        void SetStatic(const bool bInStatic) { if(bStatic != bInStatic) { bStatic = bInStatic; ++ChangeSerial; } }
+        bool IsStatic() const { return bStatic; }
+
+        /* Bumped by every extraction record applied to it: whatever was
+         * cached from its draws is stale once this moves. */
+        void     MarkChanged() { ++ChangeSerial; }
+        uint64_t GetChangeSerial() const { return ChangeSerial; }
+
         const RenderTransform&        GetTransform()    const { return Transform; }
         const EngineCore::Matrix4x4&  GetLocalToWorld() const { return LocalToWorld; }
         const GameCore::AABB&         GetWorldBounds()  const { return WorldBounds; }
@@ -114,7 +138,10 @@ namespace RenderCore
          * currently occupies, for O(1) swap-remove. -1 until AddProxy. */
         int32_t SceneIndex = -1;
 
-        bool bVisible = true;
+        bool     bVisible     = true;
+        bool     bStatic      = false;
+        uint64_t ChangeSerial = 0;
+        RenderBakedDraw Baked;
     };
 
     /*

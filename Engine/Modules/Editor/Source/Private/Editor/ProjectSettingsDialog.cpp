@@ -68,9 +68,52 @@ namespace
         { "Null (draws nothing)", 0 }, { "OpenGL (does not start yet)", 1 }, { "Vulkan", 2 },
         { "Metal (Apple only)", 3 },   { "D3D12", 4 },
     };
+    const IntChoice ShadowResolutionChoices[] = { { "1024", 1024 }, { "2048", 2048 }, { "4096", 4096 } };
+    const IntChoice ShadowFilterChoices[]     = { { "Hard", 0 }, { "PCF 3x3", 1 }, { "PCF 5x5", 2 } };
+    const IntChoice ShadowLightChoices[]      = { { "None", 0 }, { "1", 1 }, { "2", 2 }, { "3", 3 }, { "4", 4 } };
     const ChoiceList ChoiceLists[] = {
-        { "Display", "RHI", RhiChoices, int(std::size(RhiChoices)) },
+        { "Display", "RHI",               RhiChoices,              int(std::size(RhiChoices)) },
+        { "Shadows", "Resolution",        ShadowResolutionChoices, int(std::size(ShadowResolutionChoices)) },
+        { "Shadows", "Filter",            ShadowFilterChoices,     int(std::size(ShadowFilterChoices)) },
+        { "Shadows", "MaxShadowedLights", ShadowLightChoices,      int(std::size(ShadowLightChoices)) },
     };
+
+    /* A readable label and what a key does, where its name alone says too
+     * little. Keys without one show as named. */
+    struct KeyLabel
+    {
+        const char* Section;
+        const char* Key;
+        const char* Label;
+        const char* Tip;
+    };
+    const KeyLabel KeyLabels[] = {
+        { "Shadows", "Enabled",           "Draw shadows",
+          "Off: every light draws unshadowed, whatever its Cast Shadows says" },
+        { "Shadows", "Resolution",        "Shadow map size",
+          "Each shadow atlas's side. The sun's cascades share one; point and spot lights share the other "
+          "(a spot takes a sixth of its width, a point light six of those)" },
+        { "Shadows", "Filter",            "Filter",
+          "How soft a shadow's edge is: one depth test per pixel, or the average of 9 or 25" },
+        { "Shadows", "MaxShadowedLights", "Shadowed point and spot lights",
+          "How many point and spot lights may cast at once, nearest the camera first" },
+        { "Shadows", "DistanceScale",     "Sun shadow distance scale",
+          "Multiplies every Directional Light's Shadow Distance: lower is sharper and shorter" },
+    };
+
+    bool Same(const QString& InA, const char* InB);
+
+    const KeyLabel* FindKeyLabel(const QString& InSection, const QString& InKey)
+    {
+        for(const KeyLabel& Each : KeyLabels)
+        {
+            if(Same(InSection, Each.Section) && Same(InKey, Each.Key))
+            {
+                return &Each;
+            }
+        }
+        return nullptr;
+    }
 
     bool Same(const QString& InA, const char* InB)
     {
@@ -255,17 +298,26 @@ void ProjectSettingsDialog::BuildSectionPages()
 
     for(auto& [Lower, Entry] : Sections)
     {
+        /* Labelled keys first, in KeyLabels' order; the rest by name. */
         QStringList Keys = Entry.second;
-        std::sort(Keys.begin(), Keys.end(), [](const QString& InA, const QString& InB)
+        const QString Section = Entry.first;
+        const auto Rank = [&Section](const QString& InKey)
         {
-            return InA.compare(InB, Qt::CaseInsensitive) < 0;
+            const KeyLabel* Label = FindKeyLabel(Section, InKey);
+            return Label ? int(Label - KeyLabels) : int(std::size(KeyLabels));
+        };
+        std::sort(Keys.begin(), Keys.end(), [&Rank](const QString& InA, const QString& InB)
+        {
+            const int RankA = Rank(InA), RankB = Rank(InB);
+            return RankA != RankB ? RankA < RankB : InA.compare(InB, Qt::CaseInsensitive) < 0;
         });
 
         QFormLayout* Form = nullptr;
         AddPage(Entry.first, Form);
         for(const QString& Key : Keys)
         {
-            AddRow(Form, Entry.first, Key, Key);
+            const KeyLabel* Label = FindKeyLabel(Entry.first, Key);
+            AddRow(Form, Entry.first, Key, Label ? QString::fromLatin1(Label->Label) : Key);
         }
     }
 }
@@ -371,6 +423,10 @@ void ProjectSettingsDialog::AddRow(QFormLayout* InForm, const QString& InSection
     }
 
     QString Tip = InSection + QLatin1Char('.') + InKey;
+    if(const KeyLabel* Label = FindKeyLabel(InSection, InKey))
+    {
+        Tip = QString::fromLatin1(Label->Tip) + QStringLiteral("\n\n") + Tip;
+    }
     if(Var)
     {
         Tip += QStringLiteral("\nDefault: %1").arg(Default.isEmpty() ? QStringLiteral("(empty)") : Default);

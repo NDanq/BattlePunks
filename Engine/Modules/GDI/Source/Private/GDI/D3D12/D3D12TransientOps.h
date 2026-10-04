@@ -4,6 +4,7 @@
 #include <d3d12.h>
 #include <wrl/client.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <vector>
@@ -105,14 +106,29 @@ inline bool UploadBuffer(D3D12Device* Device, ID3D12Resource* Dest, const void* 
     return true;
 }
 
-/** Uploads tightly-packed RGBA8 rows into subresource 0. Leaves the texture in PIXEL_SHADER_RESOURCE. */
-inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RESOURCE_STATES& InOutState,
-                          const uint8_t* Pixels, uint32_t Width, uint32_t Height)
+/** One mip level's tightly-packed RGBA8 rows. */
+struct TextureLevel
+{
+    const uint8_t* Pixels = nullptr;
+    uint32_t       Width  = 0;
+    uint32_t       Height = 0;
+};
+
+/**
+ * Uploads InLevels into subresources 0..InCount-1 (mip 0 first), through one
+ * staging buffer laid out by GetCopyableFootprints. Leaves the texture in
+ * PIXEL_SHADER_RESOURCE.
+ */
+inline bool UploadTextureLevels(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RESOURCE_STATES& InOutState,
+                                const TextureLevel* InLevels, uint32_t InCount)
 {
     const D3D12_RESOURCE_DESC Desc = Texture->GetDesc();
-    D3D12_PLACED_SUBRESOURCE_FOOTPRINT Footprint{};
+    if(InCount == 0 || InCount > Desc.MipLevels) return false;
+
+    std::vector<D3D12_PLACED_SUBRESOURCE_FOOTPRINT> Footprints(InCount);
+    std::vector<UINT>                               RowCounts(InCount);
     UINT64 TotalBytes = 0;
-    Device->GetDevice()->GetCopyableFootprints(&Desc, 0, 1, 0, &Footprint, nullptr, nullptr, &TotalBytes);
+    Device->GetDevice()->GetCopyableFootprints(&Desc, 0, InCount, 0, Footprints.data(), RowCounts.data(), nullptr, &TotalBytes);
 
     Microsoft::WRL::ComPtr<ID3D12Resource> Staging =
         CreateBuffer(Device, TotalBytes, D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
@@ -121,11 +137,17 @@ inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RE
     void* Mapped = nullptr;
     const D3D12_RANGE NoRead{ 0, 0 };
     if(FAILED(Staging->Map(0, &NoRead, &Mapped))) return false;
-    const size_t RowBytes = size_t(Width) * 4u;
-    for(uint32_t Row = 0; Row < Height; ++Row)
+    for(uint32_t Level = 0; Level < InCount; ++Level)
     {
-        std::memcpy(static_cast<uint8_t*>(Mapped) + Footprint.Offset + Row * Footprint.Footprint.RowPitch,
-                    Pixels + Row * RowBytes, RowBytes);
+        const D3D12_PLACED_SUBRESOURCE_FOOTPRINT& Footprint = Footprints[Level];
+        const TextureLevel& Source = InLevels[Level];
+        const uint32_t Rows     = std::min<uint32_t>(Source.Height, RowCounts[Level]);
+        const size_t   RowBytes = size_t(std::min<uint32_t>(Source.Width, Footprint.Footprint.Width)) * 4u;
+        for(uint32_t Row = 0; Row < Rows; ++Row)
+        {
+            std::memcpy(static_cast<uint8_t*>(Mapped) + Footprint.Offset + Row * Footprint.Footprint.RowPitch,
+                        Source.Pixels + Row * size_t(Source.Width) * 4u, RowBytes);
+        }
     }
     Staging->Unmap(0, nullptr);
 
@@ -134,17 +156,20 @@ inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RE
 
     RecordTransition(Cmd.List.Get(), Texture, InOutState, D3D12_RESOURCE_STATE_COPY_DEST);
 
-    D3D12_TEXTURE_COPY_LOCATION Dst{};
-    Dst.pResource        = Texture;
-    Dst.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    Dst.SubresourceIndex = 0;
+    for(uint32_t Level = 0; Level < InCount; ++Level)
+    {
+        D3D12_TEXTURE_COPY_LOCATION Dst{};
+        Dst.pResource        = Texture;
+        Dst.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        Dst.SubresourceIndex = Level;
 
-    D3D12_TEXTURE_COPY_LOCATION Src{};
-    Src.pResource       = Staging.Get();
-    Src.Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-    Src.PlacedFootprint = Footprint;
+        D3D12_TEXTURE_COPY_LOCATION Src{};
+        Src.pResource       = Staging.Get();
+        Src.Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        Src.PlacedFootprint = Footprints[Level];
 
-    Cmd.List->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
+        Cmd.List->CopyTextureRegion(&Dst, 0, 0, 0, &Src, nullptr);
+    }
 
     RecordTransition(Cmd.List.Get(), Texture, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
     EndAndSubmitTransientCmd(Device, Cmd);
@@ -153,10 +178,19 @@ inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RE
     return true;
 }
 
-/** Reads a Width x Height RGBA8 region at (X, Y) into OutPixels. The texture is returned to InState. */
+/** Uploads tightly-packed RGBA8 rows into subresource 0. Leaves the texture in PIXEL_SHADER_RESOURCE. */
+inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RESOURCE_STATES& InOutState,
+                          const uint8_t* Pixels, uint32_t Width, uint32_t Height)
+{
+    const TextureLevel Level{ Pixels, Width, Height };
+    return UploadTextureLevels(Device, Texture, InOutState, &Level, 1);
+}
+
+/** Reads a Width x Height region at (X, Y) into OutPixels, InBytesPerTexel each (4: RGBA8; 8: RGBA16F),
+ *  tightly packed. The texture is returned to InState. */
 inline bool ReadbackTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RESOURCE_STATES InState,
                             uint32_t X, uint32_t Y, uint32_t Width, uint32_t Height,
-                            std::vector<uint8_t>& OutPixels)
+                            std::vector<uint8_t>& OutPixels, uint32_t InBytesPerTexel = 4)
 {
     D3D12_RESOURCE_DESC RegionDesc = Texture->GetDesc();
     RegionDesc.Width  = Width;
@@ -194,7 +228,7 @@ inline bool ReadbackTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_
     void* Mapped = nullptr;
     if(FAILED(Readback->Map(0, nullptr, &Mapped))) return false;
 
-    const size_t RowBytes = size_t(Width) * 4u;
+    const size_t RowBytes = size_t(Width) * InBytesPerTexel;
     OutPixels.resize(RowBytes * Height);
     for(uint32_t Row = 0; Row < Height; ++Row)
     {

@@ -173,7 +173,9 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/SpatialIndex.cpp
         Source/Private/GameCore/Collision.cpp
         Source/Private/GameCore/World.cpp
+        Source/Private/GameCore/WorldSettings.cpp
         Source/Private/GameCore/ScriptEngine.cpp
+        Source/Private/GameCore/GraphText.cpp
         Source/Private/GameCore/ScriptBindings.cpp
         Source/Private/GameCore/ScriptSystem.cpp
         Source/Private/GameCore/ComponentSerializer.cpp
@@ -193,11 +195,13 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/AABB.h
         Source/Public/GameCore/SpatialIndex.h
         Source/Public/GameCore/TickPhase.h
+        Source/Public/GameCore/Mobility.h
         Source/Public/GameCore/Delegate.h
         Source/Public/GameCore/EventBus.h
         Source/Public/GameCore/ComponentType.h
         Source/Public/GameCore/ComponentPool.h
         Source/Public/GameCore/World.h
+        Source/Public/GameCore/WorldSettings.h
         Source/Public/GameCore/Entity.h
         Source/Public/GameCore/Components.h
         Source/Public/GameCore/Components/TransformComponent.h
@@ -208,6 +212,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/ComponentSerializer.h
         Source/Public/GameCore/WorldSerializer.h
         Source/Public/GameCore/WorldPackage.h
+        Source/Public/GameCore/GraphText.h
         Source/Public/GameCore/ArchiveTextDump.h
         Source/Public/GameCore/ComponentScript.h
         Source/Public/GameCore/ScriptLibrary.h

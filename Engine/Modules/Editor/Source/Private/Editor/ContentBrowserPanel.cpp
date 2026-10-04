@@ -40,13 +40,16 @@
 #include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/NodeGraph/GraphFile.h"
+#include "Public/NodeGraph/Schema.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/ImportWizard.h"
 #include "Private/Editor/Content/MeshViewerWindow.h"
+#include "Private/Editor/Content/TextureViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 
 namespace
@@ -127,7 +130,9 @@ namespace
     bool IsAsset(const QString& InPath)
     {
         return InPath.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive)
-            || InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive);
+            || InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmrt2d"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmrt3d"), Qt::CaseInsensitive);
     }
 }
 
@@ -259,7 +264,71 @@ private:
         qint64  Stamp = -1;
         QIcon   Thumbnail;
         QString Summary;
+        bool    bRendered     = false;   // a mesh: its thumbnail is rendered
+        bool    bRenderQueued = false;   // waiting for or in RenderNext
+        qint64  RetryAt       = 0;       // after a failed render, not before this
     };
+
+    /* A mesh's thumbnail is rendered (Renderer::RequestMeshPreview), so it
+     * comes later: queued on first view, one request at a time since each
+     * readback stalls the renderer, and only while its folder is shown. */
+    void QueueRender(const QString& InPath, Preview& InEntry) const
+    {
+        if(InEntry.bRenderQueued || QDateTime::currentMSecsSinceEpoch() < InEntry.RetryAt) { return; }
+        InEntry.bRenderQueued = true;
+        RenderQueue.append(InPath);
+        RenderNext();
+    }
+
+    void RenderNext() const
+    {
+        while(!bRenderInFlight && !RenderQueue.isEmpty())
+        {
+            const QString Path = RenderQueue.takeFirst();
+            auto Found = Previews.find(Path);
+            if(Found == Previews.end()) { continue; }
+            const QString Runtime = EditorContent::ToRuntimePath(Path);
+            if(Runtime.isEmpty() || QFileInfo(Path).absolutePath().compare(Panel->GetCurrentFolder(), Qt::CaseInsensitive) != 0)
+            {
+                Found->bRenderQueued = false;   // again when its folder is shown
+                continue;
+            }
+
+            bRenderInFlight = true;
+            const qreal Ratio = Panel->devicePixelRatioF();
+            EditorGraphs::MeshPreviewOptions Options;
+            Options.Mesh   = Runtime;
+            Options.Width  = int(ThumbnailSize * Ratio);
+            Options.Height = Options.Width;
+            const qint64 Stamp = Found->Stamp;
+            auto* Self = const_cast<ContentListProxy*>(this);
+            EditorGraphs::RequestMeshPreview(Options, Self, [Self, Path, Stamp, Ratio](const QImage& InImage, const QString&)
+            {
+                Self->bRenderInFlight = false;
+                auto Entry = Self->Previews.find(Path);
+                if(Entry != Self->Previews.end()) { Entry->bRenderQueued = false; }
+                if(Entry != Self->Previews.end() && !InImage.isNull())
+                {
+                    /* Of an older version: dropped, but the repaint asks for the new one. */
+                    if(Entry->Stamp == Stamp)
+                    {
+                        QPixmap Pixmap = QPixmap::fromImage(InImage);
+                        Pixmap.setDevicePixelRatio(Ratio);
+                        Entry->Thumbnail = QIcon(Pixmap);
+                    }
+                    const auto* Source = static_cast<const QFileSystemModel*>(Self->sourceModel());
+                    const QModelIndex Shown = Self->mapFromSource(Source->index(Path));
+                    if(Shown.isValid()) { emit Self->dataChanged(Shown, Shown, { Qt::DecorationRole }); }
+                }
+                else if(Entry != Self->Previews.end() && Entry->Stamp == Stamp)
+                {
+                    /* The renderer may not be up yet; the next view asks again. */
+                    Entry->RetryAt = QDateTime::currentMSecsSinceEpoch() + 2000;
+                }
+                Self->RenderNext();
+            });
+        }
+    }
 
     /* Made on first view, and again when the file changes. */
     const Preview& FindPreview(const QFileInfo& InInfo) const
@@ -267,10 +336,16 @@ private:
         const QString Key = InInfo.absoluteFilePath();
         const qint64 Stamp = InInfo.lastModified().toMSecsSinceEpoch() ^ InInfo.size();
         Preview& Entry = Previews[Key];
-        if(Entry.Stamp == Stamp) { return Entry; }
+        if(Entry.Stamp == Stamp)
+        {
+            if(Entry.bRendered && Entry.Thumbnail.isNull()) { QueueRender(Key, Entry); }
+            return Entry;
+        }
 
+        const bool bWasQueued = Entry.bRenderQueued;   // still in RenderQueue
         Entry = Preview();
         Entry.Stamp = Stamp;
+        Entry.bRenderQueued = bWasQueued;
         if(InInfo.size() > PreviewByteLimit) { return Entry; }
 
         const QString Path = InInfo.absoluteFilePath();
@@ -280,12 +355,23 @@ private:
             EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
             if(RenderCore::SerializeTexture(Ar, Texture))
             {
-                const QImage Image = EngineCore::QtBridge::ToQImage(Texture.Pixels);
+                /* The smallest mip still as big as the thumbnail: less to scale. */
+                const EngineCore::Image* Source = &Texture.Pixels;
+                for(int Level = 1; Level < Texture.GetMipCount(); ++Level)
+                {
+                    const EngineCore::Image* Mip = Texture.GetMip(Level);
+                    if(Mip->GetWidth() < ThumbnailSize && Mip->GetHeight() < ThumbnailSize) { break; }
+                    Source = Mip;
+                }
+                const QImage Image = EngineCore::QtBridge::ToQImage(*Source);
                 Entry.Thumbnail = QIcon(QPixmap::fromImage(Image.scaled(ThumbnailSize, ThumbnailSize, Qt::KeepAspectRatio,
                                                                         Qt::SmoothTransformation)));
-                Entry.Summary = QStringLiteral("Texture, %1 x %2, %3%4")
+                Entry.Summary = QStringLiteral("Texture, %1 x %2, %3, %4%5%6")
                                 .arg(Texture.Pixels.GetWidth()).arg(Texture.Pixels.GetHeight())
                                 .arg(Texture.bSRGB ? QStringLiteral("sRGB") : QStringLiteral("linear"))
+                                .arg(Texture.GetMipCount() > 1 ? QStringLiteral("%1 mips").arg(Texture.GetMipCount()) : QStringLiteral("no mips"))
+                                .arg(Texture.Compression == RenderCore::ETextureCompression::None ? QString()
+                                     : QStringLiteral(", %1 (pending)").arg(QString::fromLatin1(RenderCore::GetTextureCompressionName(Texture.Compression))))
                                 .arg(Texture.ImportInfo.IsEmpty() ? QString()
                                      : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Texture.ImportInfo.SourcePath)));
             }
@@ -293,6 +379,20 @@ private:
             {
                 Entry.Summary = QStringLiteral("Not a texture this editor can read");
             }
+        }
+        else if(!EditorContent::RenderTargetPathFor(Path).isEmpty())
+        {
+            /* Its bake, if it has one, as the thumbnail. */
+            RenderCore::RenderTargetData Target;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            if(RenderCore::SerializeRenderTarget(Ar, Target) && !Target.Baked.IsNull())
+            {
+                const QImage Image = EngineCore::QtBridge::ToQImage(Target.Baked);
+                Entry.Thumbnail = QIcon(QPixmap::fromImage(Image.scaled(ThumbnailSize, ThumbnailSize, Qt::KeepAspectRatio,
+                                                                        Qt::SmoothTransformation)));
+            }
+            Entry.Summary = QStringLiteral("Render target: %1\nA Scene Capture Probe renders into it; double-click for its settings")
+                            .arg(EditorRenderTargets::DescribeRenderTarget(Path));
         }
         else if(Path.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive))
         {
@@ -307,6 +407,8 @@ private:
                                 .arg(double(Mesh.BoundsMax[2] - Mesh.BoundsMin[2]), 0, 'g', 4)
                                 .arg(Mesh.ImportInfo.IsEmpty() ? QString()
                                      : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Mesh.ImportInfo.SourcePath)));
+                Entry.bRendered = true;
+                QueueRender(Key, Entry);
             }
             else
             {
@@ -333,6 +435,8 @@ private:
     QString                           Root;
     QString                           NameFilter;
     mutable QHash<QString, Preview>   Previews;
+    mutable QStringList               RenderQueue;
+    mutable bool                      bRenderInFlight = false;
 };
 
 // === The item view ===================================================================
@@ -734,6 +838,16 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         MeshViewerWindow::Open(InPath, window());
         return;
     }
+    if(InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive))
+    {
+        TextureViewerWindow::Open(InPath, window());
+        return;
+    }
+    if(!EditorContent::RenderTargetPathFor(InPath).isEmpty())
+    {
+        EditorRenderTargets::EditRenderTarget(InPath, window());
+        return;
+    }
     if(IsAsset(InPath))
     {
         emit StatusMessage(QStringLiteral("Drag %1 onto a Texture Sample's Texture, in a material graph").arg(Info.fileName()));
@@ -791,6 +905,25 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
     {
         Menu.addAction(QStringLiteral("New Folder"), this, &ContentBrowserPanel::NewFolder);
         Menu.addAction(QStringLiteral("New Prefab..."), this, [this]() { EditorPrefabs::CreatePrefab(CurrentFolder, window()); });
+        for(const NodeGraph::Schema* Schema : NodeGraph::GetSchemas())
+        {
+            /* By name: a refresh (RefreshGameDeclarations) replaces the schema. */
+            const std::string SchemaName = Schema->GetName();
+            QAction* NewGraph = Menu.addAction(QStringLiteral("New %1 Graph...").arg(QString::fromStdString(SchemaName)), this, [this, SchemaName]()
+            {
+                if(const NodeGraph::Schema* Current = NodeGraph::FindSchema(SchemaName)) { EditorGraphs::CreateGraph(*Current, window(), CurrentFolder); }
+            });
+            NewGraph->setToolTip(QStringLiteral("A %1 graph: generates %2")
+                                 .arg(QString::fromStdString(SchemaName), QString::fromStdString(Schema->GetOutputExtension())));
+        }
+        Menu.addAction(QStringLiteral("New Render Target 2D..."), this, [this]()
+        {
+            EditorRenderTargets::CreateRenderTarget(CurrentFolder, RenderCore::ERenderTargetKind::Tex2D, window());
+        });
+        Menu.addAction(QStringLiteral("New Render Target 3D (Cube)..."), this, [this]()
+        {
+            EditorRenderTargets::CreateRenderTarget(CurrentFolder, RenderCore::ERenderTargetKind::Cube, window());
+        });
     }
     Menu.addAction(QStringLiteral("Import..."), this, &ContentBrowserPanel::ImportWithDialog);
     Menu.addAction(QStringLiteral("Show Folder in Explorer"), this, [this]()

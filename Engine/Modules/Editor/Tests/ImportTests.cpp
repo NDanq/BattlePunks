@@ -3,9 +3,11 @@
  * The glTF is built inline so expected numbers sit beside their source.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <vector>
 
 #include <QCoreApplication>
 #include <QDir>
@@ -157,6 +159,25 @@ static void TestClassify()
     const TextureImportOptions TextureBack = TextureImportOptions::FromSettings(Texture.ToSettings());
     Expect(!TextureBack.bSRGB && TextureBack.Wrap == RenderCore::ETextureWrap::Clamp && TextureBack.MaxDimension == 512,
            "texture options survive their settings text");
+    Texture.MipGen      = RenderCore::ETextureMipGen::Kaiser;
+    Texture.Compression = RenderCore::ETextureCompression::BC5;
+    const TextureImportOptions MipsBack = TextureImportOptions::FromSettings(Texture.ToSettings());
+    Expect(MipsBack.MipGen == RenderCore::ETextureMipGen::Kaiser && MipsBack.Compression == RenderCore::ETextureCompression::BC5,
+           "mip generation and compression too");
+    const TextureImportOptions Older = TextureImportOptions::FromSettings(QStringLiteral("SRGB=1\nFilter=1\nWrap=0\n"));
+    Expect(Older.MipGen == RenderCore::ETextureMipGen::None && Older.Compression == RenderCore::ETextureCompression::None,
+           "settings from before mips read as none: a reimport makes what it made");
+    Expect(TextureImportOptions::IsDataMapName(QStringLiteral("brick-wall_normal-ogl.png"))
+           && TextureImportOptions::IsDataMapName(QStringLiteral("Metal_Roughness.jpg"))
+           && TextureImportOptions::IsDataMapName(QStringLiteral("rockAO.png"))
+           && TextureImportOptions::IsDataMapName(QStringLiteral("T_Crate_ORM.tga"))
+           && !TextureImportOptions::IsDataMapName(QStringLiteral("brick-wall_albedo.png"))
+           && !TextureImportOptions::IsDataMapName(QStringLiteral("Bricks.png"))
+           && !TextureImportOptions::IsDataMapName(QStringLiteral("Normandy.png")), "data maps are told by whole words of the name");
+    TextureImportOptions Detect;
+    Expect(!Detect.ResolvedFor(QStringLiteral("wall_normal.png")).bSRGB && Detect.ResolvedFor(QStringLiteral("wall_albedo.png")).bSRGB,
+           "a data map imports linear, a colour map sRGB");
+    Expect(!Detect.ResolvedFor(QStringLiteral("wall_normal.png")).bDetectDataMaps, "and the recorded settings keep the decision");
 }
 
 static void TestMeshImport(const QDir& InRoot)
@@ -207,6 +228,40 @@ static void TestMeshImport(const QDir& InRoot)
         Expect(Near(Mesh.BoundsMin[0], -1.0f) && Near(Mesh.BoundsMax[0], 2.0f), "bounds span both nodes");
         Expect(Near(Mesh.UV0[2], 1.0f), "UVs carry over");
     }
+
+    /* No TEXCOORD_1 in the file, so lightmap UVs are generated: one per
+     * vertex, in 0-1, and no texel centre (at the smallest lightmap
+     * resolution, 32) inside two triangles. */
+    Expect(Mesh.UV1.size() == size_t(Mesh.GetVertexCount()) * 2, "lightmap UVs are generated for every vertex");
+    if(Mesh.UV1.size() == size_t(Mesh.GetVertexCount()) * 2)
+    {
+        bool bInRange = true;
+        for(const float Each : Mesh.UV1) { bInRange &= Each >= 0.0f && Each <= 1.0f; }
+        Expect(bInRange, "lightmap UVs are in 0-1");
+
+        constexpr int Size = 32;
+        std::vector<int> Covered(Size * Size, 0);
+        for(size_t At = 0; At + 2 < Mesh.Indices.size(); At += 3)
+        {
+            const float* A = &Mesh.UV1[size_t(Mesh.Indices[At]) * 2];
+            const float* B = &Mesh.UV1[size_t(Mesh.Indices[At + 1]) * 2];
+            const float* C = &Mesh.UV1[size_t(Mesh.Indices[At + 2]) * 2];
+            const auto Edge = [](const float* P, const float* Q, const float X, const float Y)
+            {
+                return (Q[0] - P[0]) * (Y - P[1]) - (Q[1] - P[1]) * (X - P[0]);
+            };
+            for(int Y = 0; Y < Size; ++Y)
+            {
+                for(int X = 0; X < Size; ++X)
+                {
+                    const float U = (float(X) + 0.5f) / Size, V = (float(Y) + 0.5f) / Size;
+                    const float E0 = Edge(A, B, U, V), E1 = Edge(B, C, U, V), E2 = Edge(C, A, U, V);
+                    if((E0 >= 0.0f && E1 >= 0.0f && E2 >= 0.0f) || (E0 <= 0.0f && E1 <= 0.0f && E2 <= 0.0f)) { ++Covered[size_t(Y * Size + X)]; }
+                }
+            }
+        }
+        Expect(*std::max_element(Covered.begin(), Covered.end()) <= 1, "lightmap UV charts do not overlap");
+    }
     Expect(Mesh.ImportInfo.SourcePath == "Source/Scene.gltf", "the source is recorded relative to the project");
 
     RenderCore::TextureData Texture;
@@ -254,6 +309,8 @@ static void TestTextureImport(const QDir& InRoot)
     Expect(ReadTexture(QDir(Content).filePath(QStringLiteral("Small.nmtexture")), Texture), "the .nmtexture loads");
     Expect(Texture.Pixels.GetWidth() == 4 && Texture.Pixels.GetHeight() == 2, "scaled to fit 4, keeping its shape");
     Expect(!Texture.bSRGB && Texture.Filter == RenderCore::ETextureFilter::Nearest, "with its sampling options");
+    Expect(Texture.MipGen == RenderCore::ETextureMipGen::Box && Texture.GetMipCount() == 3,
+           "and Box mips by default: 4 x 2, 2 x 1, 1 x 1");
     if(Texture.Pixels.GetWidth() == 4)
     {
         /* Flipped: the top-right green pixel is now in the bottom row. */

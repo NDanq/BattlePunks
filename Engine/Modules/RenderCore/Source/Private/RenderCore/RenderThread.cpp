@@ -1,6 +1,9 @@
 #include "Public/RenderCore/RenderThread.h"
 
 #include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <mutex>
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreQueue.h"
@@ -57,6 +60,17 @@ namespace RenderCore
         std::atomic<uint64_t> FramesRendered{0};
         std::atomic<uint64_t> CommandsExecuted{0};
         std::atomic<uint32_t> PeakQueueDepth{0};
+
+        /* "stat unit": the render thread's time running a frame's commands,
+         * summed over however many wakeups the frame took, the swap left out. */
+        int64_t               FrameBusyNs = 0;   // render thread only
+        std::atomic<int64_t>  LastFrameBusyNs{0};
+
+        static int64_t NowNs()
+        {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
 
         /*
          * Runs one command and frees it. Returns true if InCommand was a
@@ -137,13 +151,23 @@ namespace RenderCore
                          * whatever sits behind the marker just reached.
                          */
                         RenderCommandHeader* Cmd = nullptr;
+                        int64_t Start = NowNs();
                         while(Queue.TryDequeue(Cmd))
                         {
+                            if(Cmd->Kind == RCK_FrameMarker)
+                            {
+                                const int64_t Now = NowNs();
+                                LastFrameBusyNs.store(FrameBusyNs + (Now - Start), std::memory_order_relaxed);
+                                FrameBusyNs = 0;
+                                Start = Now;
+                            }
                             if(RunDrainStep(Cmd))
                             {
+                                Start = NowNs();   // after the swap
                                 break;
                             }
                         }
+                        FrameBusyNs += NowNs() - Start;
                     }
                 }
             }
@@ -344,6 +368,11 @@ namespace RenderCore
         P->bFrameInFlight = false;
     }
 
+    double RenderThread::GetLastFrameRenderSeconds() const
+    {
+        return double(P->LastFrameBusyNs.load(std::memory_order_relaxed)) / 1.0e9;
+    }
+
     bool RenderThread::IsFrameInFlight() const
     {
         return P->bFrameInFlight;
@@ -379,6 +408,15 @@ namespace RenderCore
         OutStats.DrawCalls              = P->Context.GetDrawCallCount();
         GetSceneStats(OutStats.ProxiesLive, OutStats.ProxiesCulledLastFrame);
         OutStats.PeakQueueDepth         = P->PeakQueueDepth.load(std::memory_order_relaxed);
+        const StatUnitSnapshot Unit     = GetStatUnit();
+        OutStats.FrameMs                = Unit.FrameMs;
+        OutStats.GameThreadMs           = Unit.GameThreadMs;
+        OutStats.RenderThreadMs         = Unit.RenderThreadMs;
+        OutStats.WaitMs                 = Unit.WaitMs;
+        OutStats.PresentMs              = Unit.PresentMs;
+        OutStats.IdleMs                 = Unit.IdleMs;
+        GetReportedGpuTimes(OutStats.GpuMs);
+        GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
     }
 
     // === The locator (RenderThreadInternal.h) ==================================
@@ -417,5 +455,95 @@ namespace RenderCore
     {
         OutProxiesLive   = GProxiesLive.load(std::memory_order_relaxed);
         OutProxiesCulled = GProxiesCulled.load(std::memory_order_relaxed);
+    }
+
+    namespace
+    {
+        std::atomic<uint64_t> GStaticDrawn{0};
+        std::atomic<uint64_t> GStaticBuilds{0};
+    }
+
+    void SetStaticDrawStats(const uint64_t InDrawn, const uint64_t InBuilds)
+    {
+        GStaticDrawn.store(InDrawn, std::memory_order_relaxed);
+        GStaticBuilds.store(InBuilds, std::memory_order_relaxed);
+    }
+
+    void GetStaticDrawStats(uint64_t& OutDrawn, uint64_t& OutBuilds)
+    {
+        OutDrawn  = GStaticDrawn.load(std::memory_order_relaxed);
+        OutBuilds = GStaticBuilds.load(std::memory_order_relaxed);
+    }
+
+    namespace
+    {
+        std::mutex       GStatUnitLock;   // written twice a second, read once a frame per scene
+        StatUnitSnapshot GStatUnit;
+    }
+
+    void SetStatUnit(const StatUnitSnapshot& InSnapshot)
+    {
+        std::lock_guard<std::mutex> Lock(GStatUnitLock);
+        GStatUnit = InSnapshot;
+    }
+
+    StatUnitSnapshot GetStatUnit()
+    {
+        std::lock_guard<std::mutex> Lock(GStatUnitLock);
+        return GStatUnit;
+    }
+
+    std::string FormatStatUnit(const StatUnitSnapshot& InSnapshot)
+    {
+        char Text[256];
+        const float Fps = InSnapshot.FrameMs > 0.0f ? 1000.0f / InSnapshot.FrameMs : 0.0f;
+        std::snprintf(Text, sizeof(Text),
+                      "Frame:   %7.2f ms\nGame:    %7.2f ms\nRender:  %7.2f ms\nWait:    %7.2f ms\nPresent: %7.2f ms\n"
+                      "Idle:    %7.2f ms\nFPS:     %7.1f",
+                      double(InSnapshot.FrameMs), double(InSnapshot.GameThreadMs), double(InSnapshot.RenderThreadMs),
+                      double(InSnapshot.WaitMs), double(InSnapshot.PresentMs), double(InSnapshot.IdleMs), double(Fps));
+        return Text;
+    }
+
+    std::string FormatStatFrame(const float* InGpuMs, const bool bInSupported)
+    {
+        if(!bInSupported)
+        {
+            return "GPU: not timed on this backend";
+        }
+        std::string Text = "GPU            ms";
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+        {
+            char Line[48];
+            const char* Name = GetRenderGpuTimerName(ERenderGpuTimer(Timer));
+            if(InGpuMs && InGpuMs[Timer] >= 0.0f)
+            {
+                std::snprintf(Line, sizeof(Line), "\n%-11s %5.2f", Name, double(InGpuMs[Timer]));
+            }
+            else
+            {
+                std::snprintf(Line, sizeof(Line), "\n%-11s     -", Name);
+            }
+            Text += Line;
+        }
+        return Text;
+    }
+
+    namespace
+    {
+        std::mutex GReportedGpuLock;
+        float      GReportedGpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+    }
+
+    void SetReportedGpuTimes(const float* InGpuMs)
+    {
+        std::lock_guard<std::mutex> Lock(GReportedGpuLock);
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer) { GReportedGpuMs[Timer] = InGpuMs[Timer]; }
+    }
+
+    void GetReportedGpuTimes(float* OutGpuMs)
+    {
+        std::lock_guard<std::mutex> Lock(GReportedGpuLock);
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer) { OutGpuMs[Timer] = GReportedGpuMs[Timer]; }
     }
 }

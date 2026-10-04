@@ -18,6 +18,16 @@
 #include "Private/Editor/PlaySession.h"
 #include "Private/Editor/ViewportSDLInput.h"
 
+#include <QColor>
+
+#include "Public/Core/CoreConfig.h"
+
+/* The editor viewports' background (Edit > Editor Settings > Viewport): a
+ * vertical gradient, top to bottom, or the top colour alone. "#rrggbb". */
+NIMBLE_CONFIG_BOOL(GEditorViewportGradient,     "Editor", "ViewportGradient",    true,      nullptr);
+NIMBLE_CONFIG_STRING(GEditorViewportTopColor,   "Editor", "ViewportTopColor",    "#4b515d", nullptr);
+NIMBLE_CONFIG_STRING(GEditorViewportBottomColor, "Editor", "ViewportBottomColor", "#1b1d22", nullptr);
+
 EditorContext::EditorContext(QObject* InParent)
     : QObject(InParent)
 {
@@ -79,8 +89,9 @@ bool EditorContext::InitializeRenderer(const RenderCore::ERenderBackend InBacken
         return false;
     }
 
-    Renderer->SetClearColor(EngineCore::Color(38, 40, 46));
     Renderer->BindWorld(Level->GetEditedWorld());
+    Renderer->SetViewMode(RenderCore::RENDER_DEFAULT_SCENE, ViewMode, ViewTarget.toStdString());
+    AppliedBackground.clear();   // ApplyBackground sets every scene's on the first frame
 
     FrameClock.start();
     FrameTimer.start();
@@ -95,13 +106,14 @@ void EditorContext::ReloadMaterial(const QString& InName)
     }
 }
 
-uint64_t EditorContext::RequestMaterialPreview(const QString& InName, const int InSize, const EngineCore::Color InTint)
+uint64_t EditorContext::RequestMaterialPreview(const QString& InName, const int InSize, const EngineCore::Color InTint,
+                                              const RenderCore::EMaterialPreviewChannel InChannel)
 {
     if(!Renderer || !bRendererReady)
     {
         return 0;
     }
-    return Renderer->RequestMaterialPreview(InName.toUtf8().constData(), InSize, InTint);
+    return Renderer->RequestMaterialPreview(InName.toUtf8().constData(), InSize, InTint, InChannel);
 }
 
 uint64_t EditorContext::RequestMeshPreview(const QString& InMesh, const QString& InMaterial, const QStringList& InSections,
@@ -140,6 +152,58 @@ bool EditorContext::TakeMaterialPreview(const uint64_t InRequest, QImage& OutIma
     }
     OutImage = Pixels.GetWidth() > 0 ? EngineCore::QtBridge::ToQImage(Pixels) : QImage();
     OutError = QString::fromUtf8(Error.c_str());
+    return true;
+}
+
+void EditorContext::SetViewMode(const RenderCore::ERenderViewMode InMode, const QString& InTarget)
+{
+    ViewMode   = InMode;
+    ViewTarget = InMode == RenderCore::ERenderViewMode::RenderTarget ? InTarget : QString();
+    if(Renderer && bRendererReady)
+    {
+        Renderer->SetViewMode(RenderCore::RENDER_DEFAULT_SCENE, ViewMode, ViewTarget.toStdString());
+    }
+}
+
+QStringList EditorContext::GetViewableTargets() const
+{
+    QStringList Names;
+    if(Renderer && bRendererReady)
+    {
+        for(const std::string& Each : Renderer->GetViewableTargets(RenderCore::RENDER_DEFAULT_SCENE))
+        {
+            Names << QString::fromStdString(Each);
+        }
+    }
+    return Names;
+}
+
+uint64_t EditorContext::RequestSceneCapture()
+{
+    if(!Renderer || !bRendererReady)
+    {
+        return 0;
+    }
+    return Renderer->RequestSceneCapture();
+}
+
+uint64_t EditorContext::RequestRenderTargetReadback(const QString& InRuntimePath)
+{
+    if(!Renderer || !bRendererReady)
+    {
+        return 0;
+    }
+    return Renderer->RequestRenderTargetReadback(InRuntimePath.toStdString());
+}
+
+bool EditorContext::TakeRenderTargetReadback(const uint64_t InRequest, EngineCore::Image& OutPixels, QString& OutError)
+{
+    std::string Error;
+    if(!Renderer || !Renderer->TakeMaterialPreview(InRequest, OutPixels, Error))
+    {
+        return false;
+    }
+    OutError = QString::fromStdString(Error);
     return true;
 }
 
@@ -203,12 +267,45 @@ void EditorContext::RemoveViewport(EditorViewportClient* InClient)
     }
 }
 
+void EditorContext::ApplyBackground()
+{
+    /* Read once a frame; sent only when something changed (or a scene is new). */
+    const std::string Key = std::string(GEditorViewportGradient.GetBool() ? "1" : "0") + GEditorViewportTopColor.GetString()
+                          + "|" + GEditorViewportBottomColor.GetString();
+    if(Key == AppliedBackground)
+    {
+        return;
+    }
+    AppliedBackground = Key;
+
+    const auto ColorOf = [](const std::string& InText, const EngineCore::Color InFallback)
+    {
+        const QColor Parsed(QString::fromStdString(InText));
+        return Parsed.isValid() ? EngineCore::Color(uint8_t(Parsed.red()), uint8_t(Parsed.green()), uint8_t(Parsed.blue()))
+                                : InFallback;
+    };
+    const EngineCore::Color Top    = ColorOf(GEditorViewportTopColor.GetString(), EngineCore::Color(75, 81, 93));
+    const EngineCore::Color Bottom = ColorOf(GEditorViewportBottomColor.GetString(), EngineCore::Color(27, 29, 34));
+    const auto Apply = [&](const RenderCore::RenderSceneID InScene)
+    {
+        if(GEditorViewportGradient.GetBool()) { Renderer->SetClearGradient(InScene, Top, Bottom); }
+        else                                  { Renderer->SetClearColor(InScene, Top); }
+    };
+    Apply(RenderCore::RENDER_DEFAULT_SCENE);
+    for(const DocumentScene& Each : DocumentScenes)
+    {
+        Apply(Each.Scene);
+    }
+}
+
 void EditorContext::RunFrame()
 {
     if(!bRendererReady)
     {
         return;
     }
+    ApplyBackground();
+    Renderer->BeginGameFrame();   // "stat unit": the editor's and the game's work from here
     const float ViewDeltaSeconds = float(FrameClock.restart()) / 1000.0f;
 
     /* Each viewport's view and overlays, into its document's scene. The level's
@@ -355,9 +452,9 @@ RenderCore::RenderSceneID EditorContext::GetDocumentScene(EditorDocument* InDocu
     {
         return Scene;
     }
-    Renderer->SetClearColor(Scene, EngineCore::Color(38, 40, 46));
     Renderer->BindWorld(Scene, InDocument->GetWorld());
     DocumentScenes.push_back({ InDocument, Scene });
+    AppliedBackground.clear();   // the new scene gets it next frame
 
     /* The scene follows the document's edited World as New/Open replace it,
      * and goes with the document. A World is bound to one scene at a time,
@@ -445,7 +542,7 @@ void EditorContext::DrawDebugBox(const GameCore::AABB& InBox, const EngineCore::
 
 // === Play-in-Editor ==========================================================
 
-bool EditorContext::StartPlay()
+bool EditorContext::StartPlay(const QString& InOpenWorld)
 {
     if(Play)
     {
@@ -461,7 +558,7 @@ bool EditorContext::StartPlay()
     Renderer->UnbindWorld();
 
     Play = EngineCore::Memory::Alloc<PlaySession>(*Renderer);
-    if(!Play->Start())
+    if(!Play->Start(InOpenWorld.toStdString()))
     {
         EngineCore::Memory::Dealloc(Play);
         Play = nullptr;
@@ -478,7 +575,7 @@ bool EditorContext::StartPlay()
         PlayInput = new ViewportSDLInput(this);
         if(PlayInput->Start(PlayInputWidget))
         {
-            Play->GetInputRouter().Attach(PlayInput->GetWindow());
+            Play->AttachInputWindow(PlayInput->GetWindow());
             CORE_LOG("[PIE] input: SDL, through the viewport")
         }
         else
@@ -566,6 +663,11 @@ QString EditorContext::DescribePlay() const
 NimbleEngine::InputState* EditorContext::GetPlayFallbackInput()
 {
     return Play && !PlayInput && !bPlayViewEjected ? &Play->GetInputRouter().GetPending() : nullptr;
+}
+
+bool EditorContext::IsPlayMouseHeldByViewport() const
+{
+    return Play && !PlayInput && !bPlayViewEjected && Play->WantsViewportMouseHold();
 }
 
 void EditorContext::SetPlayViewEjected(const bool bInEjected)

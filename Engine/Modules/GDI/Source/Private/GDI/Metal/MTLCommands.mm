@@ -36,9 +36,6 @@ void MetalDynamicGDI::EndActiveEncoder()
         CurrentStateData->CurrentEncoder = nullptr;
     }
     CurrentStateData->bRenderingActive = false;
-    // Debug groups belong to the encoder that opened them; a pop after this point
-    // would be unbalanced.
-    CurrentStateData->DebugLabelDepth = 0;
 }
 
 void MetalDynamicGDI::BeginEncoderForRT(MTLRenderTarget* InRT, bool bClear, const EngineCore::Color& ClearColor)
@@ -70,7 +67,6 @@ void MetalDynamicGDI::BeginEncoderForRT(MTLRenderTarget* InRT, bool bClear, cons
     CurrentStateData->CurrentEncoder     = Encoder;
     CurrentStateData->ActiveRenderTarget = InRT;
     CurrentStateData->bRenderingActive   = true;
-    CurrentStateData->DebugLabelDepth    = 0;
 
     // The pass has now written (or cleared) the target, so subsequent binds can
     // safely use MTLLoadActionLoad.
@@ -163,6 +159,7 @@ void MetalDynamicGDI::EndRendering()
     if(!CommandManager || !CurrentStateData || CurrentStateData->CurrentCmd == nullptr) return;
 
     EndActiveEncoder();
+    CloseDebugGroups();
 
     CommandManager->EndFrame();
     CommandManager->Commit();
@@ -246,27 +243,42 @@ void MetalDynamicGDI::SetColorMask(EColorMask InMask)
 //  Debug events (Xcode / Instruments GPU capture)
 // ===========================================================================
 
+// On the command buffer, not the encoder: an event spans encoder changes
+// (SetRenderTarget, Clear, a blit), as RenderCore's stage events do.
+
 void MetalDynamicGDI::BeginDrawEvent(const std::string& EventName)
 {
-    if(!CurrentStateData || CurrentStateData->CurrentEncoder == nullptr) return;
+    if(!CurrentStateData || CurrentStateData->CurrentCmd == nullptr) return;
 
     NSString* Label = [NSString stringWithUTF8String:EventName.c_str()];
     if(Label == nil) return;
 
-    [(id<MTLRenderCommandEncoder>)CurrentStateData->CurrentEncoder pushDebugGroup:Label];
+    [(id<MTLCommandBuffer>)CurrentStateData->CurrentCmd pushDebugGroup:Label];
     ++CurrentStateData->DebugLabelDepth;
 }
 
 void MetalDynamicGDI::EndDrawEvent()
 {
-    if(!CurrentStateData || CurrentStateData->CurrentEncoder == nullptr) return;
+    if(!CurrentStateData || CurrentStateData->CurrentCmd == nullptr) return;
 
-    // Only pop a group opened on the CURRENT encoder. Encoders restart mid-frame
-    // (SetRenderTarget, Clear, FlushForReadback), and EndActiveEncoder resets the
-    // depth to 0, so groups whose push landed on a closed encoder are not popped
-    // here -- the same guard the Vulkan backend needs for debug-util labels.
+    // Only pop a group opened on the CURRENT command buffer: a mid-frame
+    // FlushForReadback commits the old one (closing its groups) and starts the
+    // depth again at 0 -- the same guard the Vulkan backend needs for labels.
     if(CurrentStateData->DebugLabelDepth <= 0) return;
 
-    [(id<MTLRenderCommandEncoder>)CurrentStateData->CurrentEncoder popDebugGroup];
+    [(id<MTLCommandBuffer>)CurrentStateData->CurrentCmd popDebugGroup];
     --CurrentStateData->DebugLabelDepth;
+}
+
+void MetalDynamicGDI::CloseDebugGroups()
+{
+    if(!CurrentStateData) return;
+    if(CurrentStateData->CurrentCmd != nullptr)
+    {
+        for(; CurrentStateData->DebugLabelDepth > 0; --CurrentStateData->DebugLabelDepth)
+        {
+            [(id<MTLCommandBuffer>)CurrentStateData->CurrentCmd popDebugGroup];
+        }
+    }
+    CurrentStateData->DebugLabelDepth = 0;
 }

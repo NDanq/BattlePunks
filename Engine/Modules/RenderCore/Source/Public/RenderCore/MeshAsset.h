@@ -22,6 +22,9 @@ namespace EngineCore
  *     MVTX v1              positions, normals, UV0 (float arrays)
  *     MIDX v1              a triangle list, uint32 indices
  *     MSEC v1              sections: name, material, first index, index count
+ *     MCOL v1 (optional)   vertex colours, RGBA floats
+ *     MUV1 v1 (optional)   UV1, the lightmap UVs: charts in 0-1 that do not
+ *                          overlap (baked lighting; RENDERPIPELINE.md)
  *     ISRC v1 (optional)   AssetImportInfo, for Reimport
  *
  * Every vertex has a normal and UV. Loading bounds-checks indices and
@@ -43,6 +46,7 @@ namespace RenderCore
         std::vector<float>       Normals;     // 3 per vertex
         std::vector<float>       UV0;         // 2 per vertex
         std::vector<float>       Colors;      // RGBA, 4 per vertex; empty: white (the optional MCOL chunk)
+        std::vector<float>       UV1;         // 2 per vertex; empty: no lightmap UVs (the optional MUV1 chunk)
         std::vector<uint32_t>    Indices;     // 3 per triangle
         std::vector<MeshSection> Sections;
         float                    BoundsMin[3] = {0.0f, 0.0f, 0.0f};
@@ -94,6 +98,10 @@ namespace RenderCore
 
         /* Forget InPath (or everything, given an empty path). */
         static void Invalidate(const std::string& InPath);
+
+        /* Bumped by every Invalidate: anything that kept a mesh past a frame
+         * (the static draw lists) compares it to know to look again. */
+        static uint64_t GetGeneration();
     };
 }
 

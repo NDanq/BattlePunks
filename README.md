@@ -38,6 +38,85 @@ players as `PlayerState` components, all reachable from Lua and script graphs
 (`Engine/Source/GAMEFRAMEWORK.md`). `[Game] StartLevel=Sandbox` runs the older
 demo level instead.
 
+### LightLab
+
+`Games/LightLab` is a second game, laid out as File > New Project lays one out: a fly-around scene
+showing the lights and shadows (RenderCore's `RENDERPIPELINE.md`, "Lights" and
+"Shadows"). Open it in CLion or configure it standalone the same way; it has
+its own `CMakePresets.json` and stages into `Games/LightLab/Binaries`. The
+level is `Games/LightLab/Content/Levels/LightLab.nmworld`: the editor opens it
+(`[Editor] StartupWorld`), and the game loads it and finds its Player, Sun,
+SweepSpot and OrbitLight by name, so edits saved in the editor show in the
+next Play. Without it (a Client build has no cooked copy unless one is put in
+`Content/Levels/Cooked/`) the game builds the same scene in code; `[LightLab]
+ExportLevel=<path>` in an editor build writes that code-built scene out. Mouse
+looks, WASD moves, E/Q (or Space/Ctrl) rise and sink, Shift is faster, T cycles
+the sun's shadow technique, F toggles shadows and L switches between baked and
+live lighting. Escape frees the mouse; a left click takes it back.
+
+Two post process volumes (`Content/PostProcess`, RENDERPIPELINE.md's "Post
+process") cover the yard. `Global.pp.nmgraph` has no Bounds, so it applies
+everywhere: ambient occlusion in the corners, a soft bloom and FXAA. `Arch.pp.nmgraph` sits in a Bounds box round
+the arch and blends in over 300 units as the camera nears it: depth of field
+past the arch, motion blur, and a warmer, stronger glow.
+
+A colonnade down the right of the yard is four instances of a prefab file,
+`Content/Prefabs/Column.nmprefab`: a Cylinder shaft (the engine's
+`Cylinder.nmmesh`) on a Box base under a Box capital. The level stores them as
+instances (`.nmprefabinst`). A Client build reads the cooked copy in
+`Cooked/Content/Prefabs/`, which the editor console's `cook prefabs`
+regenerates after the prefab changes.
+
+`Content/Prefabs/ReflectionDemo.nmprefab` shows scene capture
+(RENDERPIPELINE.md, "Scene capture"). It is a mirror pool with a chrome ball
+over it:
+
+- **MirrorPool:** a Plane with a Planar Mirror probe into
+  `Content/RenderTargets/MirrorPool.nmrt2d`, captured every frame.
+- **ChromeBall:** a Sphere with an Omnidirectional probe into `ChromeBall.nmrt3d`,
+  captured every 0.25 s.
+- **Materials:** `Mirror` and `Chrome` both sample their target through a Reflect
+  node.
+
+Drag the prefab into the level from the Content Browser, or bake its captures
+with World > Bake Scene Captures. A cooked copy sits beside Column's.
+
+`Content/Prefabs/PBRShowcase.nmprefab` shows the physically based shading
+(RENDERPIPELINE.md, "HDR and tone mapping" and "Image-based lighting"):
+
+- **The spheres:** three rows (white dielectric, gold, silver) by five
+  roughnesses, 0 to 1. All use one `PBR` material, its Base Color, Metallic
+  and Roughness set per sphere.
+- **The rest:** a dark backdrop, and a Reflection Probe lighting them from
+  among them.
+
+The level's `Global.pp.nmgraph` tone maps the HDR scene with ACES at -1 EV. The
+bricks on the Column prefab take their normal map through a Normal Map node,
+with their data maps imported linear.
+
+For the full effect, set the level's Sky Light **Environment** to
+`Content/Textures/Sky/ProceduralSky.nmtexture`. That is a generated HDRI: a
+blue sky with a sun, glowing toward it, over warm ground. The sky then lights
+everything and is drawn behind the scene.
+
+A second level, **BakedLighting** (`Content/Levels/BakedLighting.nmworld`;
+open it in the editor and Play, or set `[Game] StartLevel=BakedLighting` for the
+game), shows baked lighting
+(RENDERPIPELINE.md, "Baked lighting"). It is a Cornell-style room:
+
+- **Static, baked:** red and green walls, a white floor, ceiling and back wall
+  with a window, two boxes and a capsule, lit by a sun through the window, a
+  warm lamp and the sky. Its bake is checked in beside it (`Lighting/`):
+  soft shadows, the lamp's light bounced round the room, the walls' colour
+  on the floor.
+- **Dynamic, lit by the light probes:** a ball circling the room
+  (LightLab.Swing) and a capsule.
+
+**L** (or Show > Lighting in the editor's viewport) switches between the bake and live
+lighting, in either level. `Games/LightLab/Tools/make_baked_lighting_level.py`
+writes the world; Build > Bake Lightmaps (or the headless line in the editor's
+README, "Build menu") bakes it again.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:

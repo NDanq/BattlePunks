@@ -72,7 +72,7 @@ namespace
             : QLineEdit(InValue), Commit(std::move(InCommit)), Committed(InValue)
         {
             setAcceptDrops(true);
-            setPlaceholderText(QStringLiteral("Drop a .nmtexture here"));
+            setPlaceholderText(QStringLiteral("Drop a .nmtexture (or an .nmrt2d / .nmrt3d) here"));
             connect(this, &QLineEdit::editingFinished, this, [this]() { Set(text().trimmed()); });
         }
 
@@ -85,10 +85,12 @@ namespace
             Commit(InValue);
         }
 
-        /* What the setting stores for a file: empty if not a texture in the project. */
+        /* What the setting stores for a file: empty if not a texture in the
+         * project -- a .nmtexture, or a render target (.nmrt2d, .nmrt3d). */
         static QString ValueFor(const QString& InFile)
         {
-            return InFile.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive) ? EditorContent::ToRuntimePath(InFile) : QString();
+            if(InFile.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive)) { return EditorContent::ToRuntimePath(InFile); }
+            return EditorContent::RenderTargetPathFor(InFile);
         }
 
     protected:
@@ -304,7 +306,7 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
             connect(Pick, &QToolButton::clicked, this, [this, Edit]()
             {
                 const QString Chosen = QFileDialog::getOpenFileName(this, QStringLiteral("Choose a Texture"), EditorGraphs::GetProjectRoot(),
-                                                                    QStringLiteral("Textures (*.nmtexture)"));
+                                                                    QStringLiteral("Textures (*.nmtexture);;Render Targets (*.nmrt2d *.nmrt3d)"));
                 const QString Value  = Chosen.isEmpty() ? QString() : TexturePathEdit::ValueFor(Chosen);
                 if(!Value.isEmpty()) { Edit->Set(Value); }
             });

@@ -26,6 +26,7 @@ namespace RenderCore
         const auto& Component = *static_cast<const RenderComponent*>(InComponentBytes);
 
         bComponentVisible = Component.bVisible != 0;
+        bCastShadows      = Component.bCastShadows != 0;
 
         /* Bounded copy: the component's buffers need not be NUL-terminated. */
         static_assert(sizeof(Materials) == sizeof(Component.Materials), "RenderComponentProxy::Materials must match the component's");
@@ -103,6 +104,7 @@ namespace RenderCore
         MaterialParameterOverrides Overrides;
         Overrides.Items = Parameters;
         Overrides.Count = ParameterCount;
+        Overrides.Baked = &GetBakedDraw();
 
         const char* Slots[RENDER_MATERIAL_SLOTS];
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot) { Slots[Slot] = Materials[Slot]; }
@@ -118,5 +120,21 @@ namespace RenderCore
             return;
         }
         InContext.DrawQuad(GetTransform(), QUAD_SIZE, QUAD_SIZE, WHITE);
+    }
+
+    void RenderComponentProxy::DrawShadow(RenderContext& InContext)
+    {
+        /* A mesh only: a quad is a 2D sprite, and casts nothing. */
+        if(!bCastShadows || !MeshSource)
+        {
+            return;
+        }
+        MaterialParameterOverrides Overrides;
+        Overrides.Items = Parameters;
+        Overrides.Count = ParameterCount;
+
+        const char* Slots[RENDER_MATERIAL_SLOTS];
+        for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot) { Slots[Slot] = Materials[Slot]; }
+        InContext.DrawMeshShadow(GetTransform(), MeshPath.c_str(), Slots, uint32_t(RENDER_MATERIAL_SLOTS), Overrides);
     }
 }

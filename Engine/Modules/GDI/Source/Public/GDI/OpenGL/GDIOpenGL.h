@@ -91,6 +91,11 @@ typedef struct __GLsync* GLsync;
 #define GL_RENDERBUFFER                   0x8D41
 #define GL_DEPTH_ATTACHMENT               0x8D00
 #define GL_DEPTH_COMPONENT24              0x81A6
+
+#define GL_TEXTURE_BASE_LEVEL             0x813C   // GL 1.2: a texture's mip range (CreateTextureResourceMips)
+#define GL_TEXTURE_MAX_LEVEL              0x813D
+#define GL_RGBA16F                        0x881A   // GL 3.0: an HDR render target (CreateRenderTargetFormat)
+#define GL_HALF_FLOAT                     0x140B
 #ifndef GL_DEPTH_COMPONENT
 #define GL_DEPTH_COMPONENT                0x1902
 #endif
@@ -116,6 +121,9 @@ typedef struct __GLsync* GLsync;
 #define GL_SYNC_FLUSH_COMMANDS_BIT        0x00000001
 
 #define GL_DEBUG_SOURCE_APPLICATION       0x824A
+
+#define GL_QUERY_RESULT                   0x8866
+#define GL_TIMESTAMP                      0x8E28
 
 // ---------------------------------------------------------------------------
 // Entry points.
@@ -146,6 +154,7 @@ typedef struct __GLsync* GLsync;
     X(GLuint, glCreateShader,            (GLenum type), (type)) \
     X(void,   glDeleteBuffers,           (GLsizei n, const GLuint* buffers), (n, buffers)) \
     X(void,   glDeleteFramebuffers,      (GLsizei n, const GLuint* framebuffers), (n, framebuffers)) \
+    X(void,   glDeleteQueries,           (GLsizei n, const GLuint* ids), (n, ids)) \
     X(void,   glDeleteProgram,           (GLuint program), (program)) \
     X(void,   glDeleteRenderbuffers,     (GLsizei n, const GLuint* renderbuffers), (n, renderbuffers)) \
     X(void,   glDeleteShader,            (GLuint shader), (shader)) \
@@ -159,17 +168,20 @@ typedef struct __GLsync* GLsync;
     X(void,   glFramebufferTexture2D,    (GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level), (target, attachment, textarget, texture, level)) \
     X(void,   glGenBuffers,              (GLsizei n, GLuint* buffers), (n, buffers)) \
     X(void,   glGenFramebuffers,         (GLsizei n, GLuint* framebuffers), (n, framebuffers)) \
+    X(void,   glGenQueries,              (GLsizei n, GLuint* ids), (n, ids)) \
     X(void,   glGenRenderbuffers,        (GLsizei n, GLuint* renderbuffers), (n, renderbuffers)) \
     X(void,   glGenVertexArrays,         (GLsizei n, GLuint* arrays), (n, arrays)) \
     X(void,   glGenerateMipmap,          (GLenum target), (target)) \
     X(void,   glGetProgramInfoLog,       (GLuint program, GLsizei bufSize, GLsizei* length, GLchar* infoLog), (program, bufSize, length, infoLog)) \
     X(void,   glGetProgramiv,            (GLuint program, GLenum pname, GLint* params), (program, pname, params)) \
+    X(void,   glGetQueryObjectui64v,     (GLuint id, GLenum pname, GLuint64* params), (id, pname, params)) \
     X(void,   glGetShaderInfoLog,        (GLuint shader, GLsizei bufSize, GLsizei* length, GLchar* infoLog), (shader, bufSize, length, infoLog)) \
     X(void,   glGetShaderiv,             (GLuint shader, GLenum pname, GLint* params), (shader, pname, params)) \
     X(GLint,  glGetUniformLocation,      (GLuint program, const GLchar* name), (program, name)) \
     X(void,   glLinkProgram,             (GLuint program), (program)) \
     X(void,   glPopDebugGroup,           (void), ()) \
     X(void,   glPushDebugGroup,          (GLenum source, GLuint id, GLsizei length, const GLchar* message), (source, id, length, message)) \
+    X(void,   glQueryCounter,            (GLuint id, GLenum target), (id, target)) \
     X(void,   glRenderbufferStorage,     (GLenum target, GLenum internalformat, GLsizei width, GLsizei height), (target, internalformat, width, height)) \
     X(void,   glShaderSource,            (GLuint shader, GLsizei count, const GLchar* const* string, const GLint* length), (shader, count, string, length)) \
     X(void,   glUniform1f,               (GLint location, GLfloat v0), (location, v0)) \

@@ -15,10 +15,12 @@
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/GameCoreAPI.h"
+#include "Public/GameCore/Mobility.h"
 #include "Public/GameCore/PrefabInstanceID.h"
 #include "Public/GameCore/SpatialIndex.h"
 #include "Public/GameCore/TickPhase.h"
 #include "Public/GameCore/TransformMath.h"
+#include "Public/GameCore/WorldSettings.h"
 #include "Public/Math/Matrix.h"
 
 /* Forward-declared; Entity.h includes World.h itself, so this header cannot
@@ -346,6 +348,13 @@ namespace GameCore
 
         EventBus& GetEvents();
 
+        // === Settings ========================================================
+
+        /* What the world holds besides its entities (WorldSettings.h); saved
+         * and loaded with it. */
+        WorldSettings&       GetSettings();
+        const WorldSettings& GetSettings() const;
+
     private:
         /* Collision.cpp's state, kept in Impl. */
         std::vector<std::pair<uint64_t, uint64_t>>&       GetOverlapPairs();
@@ -369,6 +378,8 @@ namespace GameCore
         EntityGuid         GetEntityGuid(EntityID InEntity) const;
         const char*        GetEntityName(EntityID InEntity) const;
         bool               SetEntityName(EntityID InEntity, const char* InName);
+        EMobility          GetEntityMobility(EntityID InEntity) const;
+        bool               SetEntityMobility(EntityID InEntity, EMobility InMobility);
 
         /* The hierarchy -- see Entity.h's section for the contract. */
         bool                  SetEntityParent(EntityID InEntity, EntityID InParent, bool bInKeepWorldTransform);

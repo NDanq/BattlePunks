@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<World Format="1">
+  <Settings>
+    <Lighting BakedLighting="true" TexelsPerUnit="0.3" Bounces="2" ProbeSpacing="100" BakedData="Content/Levels/BakedLighting/Lighting/Lighting.nmlighting" />
+  </Settings>
+  <Entity Guid="e4632efa48e65e5e270aa33de5991201" />
+  <Entity Guid="e5545fd42fdcdf6e4c6e301f1c8b093b" />
+  <Entity Guid="f0f52e82e685198f49de196923cf911e" />
+  <Entity Guid="354776481c2882e942d7158697995cce" />
+  <Entity Guid="c69335cf67a1fb9be3fb45b5fabfe9e6" />
+  <Entity Guid="ad8c36467a1b6aacd596d616f5c2f509" />
+  <Entity Guid="452c1d0d935ecf98cd7c8005bfe0ec5d" />
+  <Entity Guid="c48a9776f274d8b5779584fdbd202bbf" />
+  <Entity Guid="63515858ce8fcff56c8b1e7fc5f5ac42" />
+  <Entity Guid="75a297389fa6a2235248e021ef70ee43" />
+  <Entity Guid="8ef326c63d04d5a51770792fa3fb1b98" />
+  <Entity Guid="83605fc6f313129130bbbb9e45eb37f9" />
+  <Entity Guid="2806b042fff0acb136a10384b16326b7" />
+  <Entity Guid="b605c563329e1294d13d5d982803d30a" />
+  <Entity Guid="1c03d3a4e47cf8587e255e88be3b970c" />
+  <Entity Guid="122afa17ee762068575e5599ba3cbda2" />
+  <Entity Guid="c5acef80c4dcce3d23648d76519a9a74" />
+  <Entity Guid="fbe38e75f8b59cb9e8c25a807f8ecb4a" />
+  <Entity Guid="60a43a2b9396b3e944c47c1976063aff" />
+  <Entity Guid="16dee2cc930f8ef8ea951709034251b2" />
+  <Entity Guid="41f5f53c1e18bbb51a0924b989aa1cef" />
+  <Entity Guid="9fa7ad72ca66b50e95fcde92f34473bd" />
+  <Entity Guid="deb7bf81099b0c06c14cb5422ad38429" />
+</World>

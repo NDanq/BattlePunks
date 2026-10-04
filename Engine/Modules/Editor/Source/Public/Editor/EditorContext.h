@@ -5,12 +5,14 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 #include <QElapsedTimer>
 #include <QImage>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 #include "Public/Core/CoreFileProvider.h"
@@ -72,8 +74,20 @@ public:
 
     /* See Renderer::RequestMaterialPreview. 0 when the Renderer is not
      * running; otherwise poll TakeMaterialPreview until it returns true. */
-    uint64_t RequestMaterialPreview(const QString& InName, int InSize, EngineCore::Color InTint);
+    uint64_t RequestMaterialPreview(const QString& InName, int InSize, EngineCore::Color InTint,
+                                    RenderCore::EMaterialPreviewChannel InChannel = RenderCore::EMaterialPreviewChannel::Lit);
     bool     TakeMaterialPreview(uint64_t InRequest, QImage& OutImage, QString& OutError);
+
+    /* A render target's pixels as materials sample them after the next frame's
+     * captures (Renderer::RequestRenderTargetReadback): what a bake stores.
+     * 0 when the Renderer is not running; poll TakeRenderTargetReadback. */
+    uint64_t RequestRenderTargetReadback(const QString& InRuntimePath);
+    bool     TakeRenderTargetReadback(uint64_t InRequest, EngineCore::Image& OutPixels, QString& OutError);
+
+    /* The viewport's next frame, without debug lines (Renderer::RequestSceneCapture):
+     * the "screenshot" command. 0 when the Renderer is not running; poll
+     * TakeMaterialPreview. */
+    uint64_t RequestSceneCapture();
 
     /* See Renderer::RequestMeshPreview: InMesh (a runtime path) framed by an
      * orbiting camera, with InMaterial on every section, else InSections.
@@ -83,6 +97,16 @@ public:
 
     /* False, leaving OutStats untouched, when the Renderer is not running. */
     bool GetRenderStats(RenderCore::RenderStats& OutStats) const;
+
+    /* What the viewport shows (Renderer::SetViewMode; Show > View Mode): kept
+     * here, so a renderer started later takes it too. */
+    void SetViewMode(RenderCore::ERenderViewMode InMode, const QString& InTarget = QString());
+    RenderCore::ERenderViewMode GetViewMode() const { return ViewMode; }
+    const QString&              GetViewTarget() const { return ViewTarget; }
+
+    /* The render targets the viewport's last frame drew, by name: what the
+     * Render Target view mode can show. Empty without a renderer. */
+    QStringList GetViewableTargets() const;
 
     // === Viewports ==========================================================
     // The context drives ONE frame for every viewport, on its own timer (from
@@ -109,9 +133,10 @@ public:
 
     // === Play-in-Editor =====================================================
 
-    /* Runs the [Game] Module game from its start level in the viewport (see
-     * PlaySession). False, with the reason logged, if it would not start. */
-    bool StartPlay();
+    /* Runs the [Game] Module game in the viewport (see PlaySession): from the
+     * level that loads InOpenWorld (a runtime path) if it has one, else from
+     * its start level. False, with the reason logged, if it would not start. */
+    bool StartPlay(const QString& InOpenWorld = QString());
 
     /* Restores the edited World and selection. Also runs when the game quits.
      * Idempotent. */
@@ -139,6 +164,11 @@ public:
      * state the viewport's Qt events feed instead. Null otherwise -- SDL has
      * the input, or nothing is playing, or the view is ejected. */
     NimbleEngine::InputState* GetPlayFallbackInput();
+
+    /* While playing through that fallback, the game has captured the mouse:
+     * the viewport hides the cursor and holds it at its centre itself,
+     * reporting each move as a delta (SDL's relative mode, by hand). */
+    bool IsPlayMouseHeldByViewport() const;
 
     // === Documents ==========================================================
 
@@ -176,6 +206,11 @@ private:
         RenderCore::RenderSceneID Scene    = RenderCore::RENDER_INVALID_SCENE;
     };
     std::vector<DocumentScene>         DocumentScenes;   // documents other than the level
+
+    /* Editor.Viewport* (the background gradient) onto every scene, when they
+     * change; AppliedBackground is what was last sent ("" sends again). */
+    void        ApplyBackground();
+    std::string AppliedBackground;
     std::vector<EditorViewportClient*> Viewports;
 
     QTimer                    FrameTimer;
@@ -192,6 +227,8 @@ private:
     EditorDocument*       Level    = nullptr;
     RenderCore::Renderer* Renderer = nullptr;
     bool                  bRendererReady = false;
+    RenderCore::ERenderViewMode ViewMode = RenderCore::ERenderViewMode::Lit;
+    QString                     ViewTarget;
     RenderCore::ERenderBackend Backend   = RenderCore::ERenderBackend::Null;
 
     PlaySession*       Play = nullptr;

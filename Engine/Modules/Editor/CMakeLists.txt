@@ -39,6 +39,12 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/ViewportWidget.cpp
         Source/Private/Editor/TransformGizmo.cpp
         Source/Private/Editor/OutlinerPanel.cpp
+        Source/Private/Editor/EditorLights.cpp
+        Source/Private/Editor/EditorLights.h
+        Source/Private/Editor/EditorEditActions.cpp
+        Source/Private/Editor/EditorEditActions.h
+        Source/Private/Editor/EditorPrimitives.cpp
+        Source/Private/Editor/EditorPrimitives.h
         Source/Private/Editor/DetailsPanel.cpp
         Source/Private/Editor/PropertyWidgets.cpp
         Source/Private/Editor/PropertyWidgets.h
@@ -54,6 +60,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/ConfigIniFile.h
         Source/Private/Editor/ProjectSettingsDialog.cpp
         Source/Private/Editor/ProjectSettingsDialog.h
+        Source/Private/Editor/WorldSettingsDialog.cpp
+        Source/Private/Editor/WorldSettingsDialog.h
         Source/Private/Editor/SettingsDialog.cpp
         Source/Private/Editor/SettingsDialog.h
         Source/Private/Editor/SourceBuild.cpp
@@ -99,11 +107,15 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/ContentBrowserPanel.cpp
         Source/Public/Editor/ContentBrowserPanel.h
         Source/Private/Editor/Content/ContentPaths.cpp
+        Source/Private/Editor/Content/RenderTargetAssets.cpp
+        Source/Private/Editor/Content/RenderTargetAssets.h
         Source/Private/Editor/Content/ContentPaths.h
         Source/Private/Editor/Content/MeshPreviewView.cpp
         Source/Private/Editor/Content/MeshPreviewView.h
         Source/Private/Editor/Content/MeshViewerWindow.cpp
         Source/Private/Editor/Content/MeshViewerWindow.h
+        Source/Private/Editor/Content/TextureViewerWindow.cpp
+        Source/Private/Editor/Content/TextureViewerWindow.h
         Source/Private/Editor/Content/ImportWizard.cpp
         Source/Private/Editor/Content/ImportWizard.h
         Source/Private/Editor/Project/NewProjectWizard.cpp
@@ -123,11 +135,52 @@ set(NIMBLE_EDITOR_IMPORT_SOURCES
         Source/Private/Editor/Content/AssetImport.h
         Source/Private/Editor/Content/GltfImporter.cpp
         Source/Private/Editor/Content/GltfImporter.h
+        Source/Private/Editor/Content/LightmapUVs.cpp
+        Source/Private/Editor/Content/LightmapUVs.h
 )
 list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_IMPORT_SOURCES})
 
+# The light baker (Build > Bake Lightmaps). Widget-free but BakeLightmaps.cpp,
+# so the lighting tests build them alone. Optimised even in Debug: a bake
+# traces hundreds of millions of rays.
+set(NIMBLE_EDITOR_LIGHTING_SOURCES
+        Source/Private/Editor/Lighting/LightBakeBVH.cpp
+        Source/Private/Editor/Lighting/LightBakeBVH.h
+        Source/Private/Editor/Lighting/LightBaker.cpp
+        Source/Private/Editor/Lighting/LightBaker.h
+        Source/Private/Editor/Lighting/LightBakeScene.cpp
+        Source/Private/Editor/Lighting/LightBakeScene.h
+)
+list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_LIGHTING_SOURCES}
+        Source/Private/Editor/Lighting/LightBakeWorld.cpp
+        Source/Private/Editor/Lighting/LightBakeWorld.h
+        Source/Private/Editor/Lighting/BakeLightmaps.cpp
+        Source/Private/Editor/Lighting/BakeLightmaps.h
+)
+if(NOT MSVC)
+    set_source_files_properties(
+            Source/Private/Editor/Lighting/LightBakeBVH.cpp
+            Source/Private/Editor/Lighting/LightBaker.cpp
+            Source/Private/Editor/Lighting/LightBakeScene.cpp
+            PROPERTIES COMPILE_OPTIONS "-O2")
+endif()
+
 # cgltf (MIT), vendored; implemented in GltfImporter.cpp.
 set(NIMBLE_EDITOR_CGLTF_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/cgltf-1.15")
+
+# xatlas (MIT), vendored at jpcy/xatlas f700c77: lightmap UV charts (LightmapUVs.cpp).
+# Its own library, built without the engine's warnings.
+set(NIMBLE_EDITOR_XATLAS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/xatlas-f700c77")
+add_library(NimbleXatlas STATIC "${NIMBLE_EDITOR_XATLAS_DIR}/xatlas.cpp")
+target_include_directories(NimbleXatlas PUBLIC "${NIMBLE_EDITOR_XATLAS_DIR}")
+find_package(Threads REQUIRED)
+target_link_libraries(NimbleXatlas PRIVATE Threads::Threads)
+if(MSVC)
+    target_compile_options(NimbleXatlas PRIVATE /w)
+else()
+    target_compile_options(NimbleXatlas PRIVATE -w)
+endif()
+set_target_properties(NimbleXatlas PROPERTIES FOLDER "Editor/External" POSITION_INDEPENDENT_CODE ON)
 
 add_executable(NimbleEditor WIN32 ${NIMBLE_EDITOR_SOURCES})
 
@@ -148,6 +201,7 @@ target_link_libraries(NimbleEditor PRIVATE
         NimbleEngine::NimbleEngine
         EngineCore::QtBridge
         NodeGraph::NodeGraph
+        NimbleXatlas
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
@@ -162,6 +216,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     target_link_libraries(NimbleEditorImportTests PRIVATE
             RenderCore::RenderCore
             EngineCore::QtBridge
+            NimbleXatlas
             Qt6::Core
             Qt6::Gui
     )
@@ -169,6 +224,18 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_dependencies(NimbleEditorImportTests NimbleEditor)
     add_test(NAME Editor.Import COMMAND NimbleEditorImportTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorImportTests>")
+
+    # The light baker, headless: no World, no Qt.
+    add_executable(NimbleEditorLightingTests Tests/LightingTests.cpp ${NIMBLE_EDITOR_LIGHTING_SOURCES})
+    target_include_directories(NimbleEditorLightingTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
+    target_link_libraries(NimbleEditorLightingTests PRIVATE RenderCore::RenderCore)
+    if(NOT MSVC)
+        set_source_files_properties(Tests/LightingTests.cpp PROPERTIES COMPILE_OPTIONS "-O2")
+    endif()
+    set_target_properties(NimbleEditorLightingTests PROPERTIES FOLDER "Editor")
+    add_dependencies(NimbleEditorLightingTests NimbleEditor)
+    add_test(NAME Editor.Lighting COMMAND NimbleEditorLightingTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorLightingTests>")
 
     # EditorDocument and its history, headless: no Renderer, no window.
     add_executable(NimbleEditorDocumentTests Tests/DocumentTests.cpp
@@ -214,6 +281,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             NimbleEngine::NimbleEngine
             EngineCore::QtBridge
             NodeGraph::NodeGraph
+            NimbleXatlas
             Qt6::Core
             Qt6::Gui
             Qt6::Widgets

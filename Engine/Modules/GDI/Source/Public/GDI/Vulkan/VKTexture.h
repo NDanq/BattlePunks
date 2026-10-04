@@ -46,6 +46,14 @@ public:
                        EGDITextureBorder   InBorder,
                        EGDITextureFilter   InFilter);
 
+    /** Standalone texture with its mip chain: InLevels[0] full size, each
+     *  next half the last; sampled trilinear with a Linear filter. */
+    VKTextureResource(VKDevice*                InDevice,
+                       const EngineCore::Image* InLevels,
+                       uint32_t                 InCount,
+                       EGDITextureBorder        InBorder,
+                       EGDITextureFilter        InFilter);
+
     /** Parented texture with no initial data (caller must call Update later). */
     VKTextureResource(VKDevice*           InDevice,
                        GDITexture2D*       InParent,
@@ -107,6 +115,9 @@ private:
      */
     void UploadImageData(const EngineCore::Image& InImage);
 
+    /** Every level of a mip chain in one staging copy (MipLevels of them). */
+    void UploadMipChain(const EngineCore::Image* InLevels, uint32_t InCount);
+
     // -----------------------------------------------------------------------
     // Decode helpers
     // -----------------------------------------------------------------------
@@ -129,6 +140,7 @@ private:
 
     static constexpr VkFormat kFormat   = VK_FORMAT_R8G8B8A8_UNORM;
     VkImageLayout       CurrentLayout   = VK_IMAGE_LAYOUT_UNDEFINED;
+    uint32_t            MipLevels       = 1;   // the image's levels; Update() goes back to one
 
     // Saved for sampler / image recreation on Update() with changed dimensions.
     EGDITextureBorder   StoredBorder    = GDI_TB_Repeat;

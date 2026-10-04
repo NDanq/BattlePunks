@@ -361,6 +361,35 @@ namespace
     }
 }
 
+/* The editor's Play starts the level of the open world: FindLevelByWorldFile. */
+static void TestLevelByWorldFile()
+{
+    std::printf("[level by world file]\n");
+
+    class FileLevel : public ILevel
+    {
+    public:
+        FileLevel(const char* InName, const char* InFile) : Name(InName), File(InFile) {}
+        const char* GetName() const override      { return Name; }
+        const char* GetWorldFile() const override { return File; }
+        const char* Name;
+        const char* File;
+    };
+    FileLevel Yard("WorldFileYard", "Content/Levels/Yard.nmworld");
+    FileLevel Code("WorldFileCode", nullptr);
+    RegisterLevel(Yard);
+    RegisterLevel(Code);
+
+    Expect(FindLevelByWorldFile("Content/Levels/Yard.nmworld") == &Yard, "a level is found by the world it loads");
+    Expect(FindLevelByWorldFile("content\\levels\\YARD.nmworld") == &Yard, "case and slashes do not matter");
+    Expect(FindLevelByWorldFile("Content/Levels/Other.nmworld") == nullptr, "another world finds no level");
+    Expect(FindLevelByWorldFile("") == nullptr && FindLevelByWorldFile(nullptr) == nullptr,
+           "no world finds no level, not one that loads none");
+
+    UnregisterLevel(Yard);
+    UnregisterLevel(Code);
+}
+
 int main()
 {
     std::printf("NimbleEngineGameFrameworkTests\n");
@@ -370,6 +399,7 @@ int main()
     TestScripts();
     TestStartupScript();
     TestSave();
+    TestLevelByWorldFile();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

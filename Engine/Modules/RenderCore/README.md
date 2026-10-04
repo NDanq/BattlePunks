@@ -55,7 +55,8 @@ Engine/Modules/RenderCore/
 |   |   |-- RenderScene.h           render-thread container of proxies: Add/Remove/SetView/Render
 |   |   |-- RenderComponents.h      includes every component header below
 |   |   |-- Components/             RenderComponent.h, CameraComponent.h, DirectionalLightComponent.h,
-|   |   |                           SkyLightComponent.h, PostProcessComponent.h (GameCore components)
+|   |   |                           PointLightComponent.h, SpotLightComponent.h, SkyLightComponent.h,
+|   |   |                           LightShadow.h, PostProcessComponent.h (GameCore components)
 |   |   |-- MeshAsset.h             .nmmesh: MeshData, Save/Load, MeshAssetCache
 |   |   |-- TextureAsset.h          .nmtexture: TextureData, Save/Load
 |   |   |-- AssetImportInfo.h       where an imported asset came from (for Reimport)
@@ -72,7 +73,10 @@ Engine/Modules/RenderCore/
 |       |-- MeshAsset.cpp, TextureAsset.cpp, AssetFileCommon.h   the asset formats
 |       |-- Components/             one .cpp per component: registration, serializer, Lua, editor;
 |       |                           MaterialPathUpgrade.h for the old bare material names
-|       |-- WorldBridge.h/.cpp      game-thread side: proxy lifecycle, extraction, view build
+|       |-- WorldBridge.h/.cpp      game-thread side: proxy lifecycle, extraction, view build, light gathering
+|       |-- ShadowSetup.h/.cpp      a frame's shadow views and atlas tiles (pure math)
+|       |-- ShadowSettings.cpp      the [Shadows] config vars
+|       |-- OverlayFont.h           the stat overlay's 5 x 7 font
 |       `-- Renderer.cpp
 `-- Tests/
     `-- SmokeMain.cpp

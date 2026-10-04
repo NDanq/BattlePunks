@@ -357,7 +357,7 @@ code keeps the logic.
 ## 5. Prefab Editor (Editor module)
 
 A new window, opened from the Content Browser (double-click a `.nmprefab`,
-right-click > New Prefab) and File > New Prefab. One prefab per tab, like the
+right-click > New Prefab). One prefab per tab, like the
 Graph Editor.
 
 ```
@@ -401,7 +401,7 @@ Graph Editor.
   Script dock), `PrefabAssets` (open / create / close, paths, staging).
 - Opened by double-clicking a `.nmprefab` in the Content Browser, File > Open
   Prefab, or the `prefab <path>` console command. Made by Content Browser
-  right-click > New Prefab..., File > New Prefab..., or `prefab new`: a name,
+  right-click > New Prefab... or `prefab new`: a name,
   then a one-entity prefab ("Root", a Transform) in that folder.
 - A tab is an `EditorDocument` holding one instance of the prefab
   (`LoadPrefab`); the Hierarchy is the Outliner on it, so drag to reparent and

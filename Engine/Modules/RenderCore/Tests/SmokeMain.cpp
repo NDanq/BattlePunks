@@ -11,7 +11,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <thread>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -20,6 +22,7 @@
 #include <string>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/Core/CoreImage.h"
@@ -34,6 +37,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/RenderCommand.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/RenderContext.h"
@@ -45,6 +49,9 @@
 #include "Public/RenderCore/RenderView.h"
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Public/RenderCore/TextureCompression.h"
+#include "Private/RenderCore/RenderThreadInternal.h"
+#include "Private/RenderCore/ShadowSetup.h"
 
 using namespace RenderCore;
 using namespace EngineCore;
@@ -79,8 +86,8 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 9,
-           "Render exposes Visible, Mesh, slots by index, and material parameters");
+    Expect(Render != nullptr && RenderCount == 10,
+           "Render exposes Visible, Mesh, slots by index, material parameters and CastShadows");
     const auto HasBinding = [&](const char* InName)
     {
         for(size_t Index = 0; Render && Index < RenderCount; ++Index)
@@ -94,6 +101,7 @@ static void TestScriptBindings()
            "material slots are reached by index, not one field per slot");
     Expect(HasBinding("SetMaterialParameter") && HasBinding("SetMaterialColor") && HasBinding("GetMaterialParameter")
            && HasBinding("ClearMaterialParameter"), "material parameters can be set, read and cleared");
+    Expect(HasBinding("CastShadows"), "and whether it casts shadows");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < RenderCount; ++Index)
@@ -104,7 +112,7 @@ static void TestScriptBindings()
 
     size_t CameraCount = 0;
     GameCore::FindComponentScript(CameraComponent::StaticType().ID, CameraCount);
-    Expect(CameraCount == 3, "Camera exposes ZNear, ZFar and Active");
+    Expect(CameraCount == 5, "Camera exposes ZNear, ZFar, Active, Projection and FovY");
 }
 
 static void TestThreadLifecycle(RenderThread& InThread)
@@ -408,6 +416,171 @@ namespace
 // ============================================================================
 // The World-driven suite: a real GameCore::World bound to a Renderer.
 // ============================================================================
+
+/*
+ * "stat unit": Renderer times the frame and the game thread, the render
+ * thread its own busy time; averaged over half a second into RenderStats and
+ * the overlay's snapshot, shown when Stats.Unit is set. Null backend.
+ */
+static void TestStatUnit()
+{
+    std::printf("[stat unit]\n");
+    StatUnitSnapshot Sample;
+    Sample.FrameMs        = 16.666f;
+    Sample.GameThreadMs   = 2.5f;
+    Sample.RenderThreadMs = 4.25f;
+    Sample.WaitMs         = 1.0f;
+    Sample.PresentMs      = 12.5f;
+    Sample.IdleMs         = 0.67f;
+    const std::string Text = FormatStatUnit(Sample);
+    Expect(Text == "Frame:     16.67 ms\nGame:       2.50 ms\nRender:     4.25 ms\nWait:       1.00 ms\nPresent:   12.50 ms\n"
+                   "Idle:       0.67 ms\nFPS:        60.0", "the overlay's text, a line each");
+
+    ConfigVar* Unit = ConfigFindVarByPath("Stats.Unit");
+    Expect(Unit != nullptr && !Unit->GetBool(), "Stats.Unit exists, off by default");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null) for stat unit");
+    if(bInit && Unit)
+    {
+        Unit->SetBool(true);
+        const EngineCore::Size Viewport(320, 200);
+        const auto Start = std::chrono::steady_clock::now();
+        uint64_t Frame = 1;
+        while(std::chrono::steady_clock::now() - Start < std::chrono::milliseconds(700))
+        {
+            Rend.BeginGameFrame();
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));   // the game's tick
+            Rend.WaitForPreviousFrame();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+        }
+        Rend.WaitForPreviousFrame();
+        RenderStats Stats;
+        Rend.GetStats(Stats);
+        std::printf("    frame %.2f ms, game %.2f ms, render %.3f ms\n", double(Stats.FrameMs), double(Stats.GameThreadMs),
+                    double(Stats.RenderThreadMs));
+        Expect(Stats.FrameMs >= 4.0f && Stats.GameThreadMs >= 3.5f && Stats.GameThreadMs <= Stats.FrameMs,
+               "after half a second, frame and game thread times are averaged in");
+        Expect(Stats.RenderThreadMs >= 0.0f && Stats.RenderThreadMs < Stats.FrameMs, "and the render thread's, less than the frame");
+        Expect(GetStatUnit().bShow, "Stats.Unit reaches the overlay");
+        Unit->SetBool(false);
+        Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+        Rend.WaitForPreviousFrame();
+        Expect(!GetStatUnit().bShow, "and turning it off hides it");
+
+        /* "stat frame" on Null: nothing to time, so nothing is reported. */
+        ConfigVar* FrameVar = ConfigFindVarByPath("Stats.Frame");
+        Expect(FrameVar != nullptr && !FrameVar->GetBool(), "Stats.Frame exists, off by default");
+        if(FrameVar)
+        {
+            FrameVar->SetBool(true);
+            for(int Each = 0; Each < 3; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            RenderStats Null;
+            Rend.GetStats(Null);
+            Expect(Null.GpuMs[RGT_Total] < 0.0f && Null.GpuMs[RGT_BasePass] < 0.0f, "the Null backend times no GPU work");
+            FrameVar->SetBool(false);
+        }
+        Rend.Shutdown();
+    }
+
+    float Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f, 0.6f };
+    const std::string FrameText = FormatStatFrame(Times, true);
+    Expect(FrameText == "GPU            ms\nPrePass      0.01\nBasePass     0.50\nAO              -\nShadows      1.25\n"
+                        "Lighting     0.20\nForward      0.05\nPostProcess  0.75\nTotal        2.80\nCaptures     0.60",
+           "stat frame's text, a line per stage, the scene captures after the total");
+    Expect(FormatStatFrame(Times, false) == "GPU: not timed on this backend", "and a line saying so where the GPU is not timed");
+}
+
+/*
+ * Static draw lists: a static entity's proxy is extracted only when it
+ * changes, and drawn from a list captured once (RENDERPIPELINE.md). Null.
+ */
+static void TestStaticDrawLists()
+{
+    std::printf("[static draw lists]\n");
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null) for static draw lists");
+    if(!bInit)
+    {
+        return;
+    }
+    RegisterProxyType(TestComponent::StaticType().ID, &TestComponent_CreateProxy);
+
+    GameCore::World World;
+    const GameCore::Entity Wall = World.CreateEntity("Wall");
+    Wall.AddComponent<GameCore::TransformComponent>();
+    TestComponent Init;
+    Init.Value = 7;
+    Wall.AddComponent(Init);
+    Wall.AddComponent<RenderComponent>();
+    Rend.BindWorld(World);
+
+    uint64_t Frame = 1;
+    const auto Draw = [&]()
+    {
+        Rend.EndFrame(FrameInfo{Frame++, 0.016, EngineCore::Size(640, 360)});
+        Rend.WaitForPreviousFrame();
+    };
+    Draw();
+    Draw();
+
+    /* Dynamic: drawn and extracted every frame. */
+    GTestProxyStats = TestProxyStats();
+    Draw();
+    Draw();
+    Expect(GTestProxyStats.DrawCalls == 2 && GTestProxyStats.ApplyCalls == 2, "a dynamic proxy is extracted and drawn every frame");
+
+    /* Static: one record for the change, then nothing; one capture, replayed. */
+    Wall.SetMobility(GameCore::EMobility::Static);
+    Draw();
+    RenderStats After;
+    Rend.GetStats(After);
+    Expect(After.StaticProxiesDrawn == 1 && After.ProxiesCulledLastFrame == 1,
+           "the visible proxy is drawn from its static list (the empty quad is culled, static or not)");
+    GTestProxyStats = TestProxyStats();
+    const uint64_t Builds = After.StaticListBuilds;
+    RenderStats Before;
+    Rend.GetStats(Before);
+    for(int Each = 0; Each < 5; ++Each) { Draw(); }
+    RenderStats Steady;
+    Rend.GetStats(Steady);
+    Expect(GTestProxyStats.ApplyCalls == 0, "an unchanged static proxy is not extracted again");
+    Expect(GTestProxyStats.DrawCalls == 0, "nor asked to draw: its list is replayed");
+    Expect(Steady.StaticListBuilds == Builds, "and no list is rebuilt");
+    Expect(Steady.CommandsExecuted - Before.CommandsExecuted < 5 * 4, "frames with nothing static changed enqueue no extraction");
+
+    /* Moving it: one record, one rebuild. */
+    Wall.GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(10.0, 0.0, 0.0);
+    Draw();
+    Draw();
+    RenderStats Moved;
+    Rend.GetStats(Moved);
+    Expect(GTestProxyStats.ApplyCalls == 1 && GTestProxyStats.DrawCalls == 1, "a moved static proxy is extracted and captured once");
+    Expect(Moved.StaticListBuilds == Builds + 1, "its list rebuilt once");
+
+    /* An edited component, the same. */
+    Wall.GetComponent<TestComponent>()->Value = 8;
+    Draw();
+    Expect(GTestProxyStats.ApplyCalls == 2, "an edited static component is extracted again");
+
+    /* Dynamic again: every frame again. */
+    Wall.SetMobility(GameCore::EMobility::Dynamic);
+    GTestProxyStats = TestProxyStats();
+    Draw();
+    Draw();
+    RenderStats Back;
+    Rend.GetStats(Back);
+    Expect(GTestProxyStats.DrawCalls == 2 && Back.StaticProxiesDrawn == 0, "made dynamic, it is drawn every frame again");
+
+    Rend.UnbindWorld();
+    Rend.Shutdown();
+}
 
 static void TestRendererWithWorld()
 {
@@ -780,8 +953,8 @@ static void TestMaterials()
         Expect(GMaterialFallbacks == 1, "and warned about once, not every frame");
 
         std::ofstream(Root / "Materials" / "SmokeGlow.material")
-            << "# a test material\nNimbleMaterial 2\nDomain Translucent\nShading Unlit\nBlockSize 48\n"
-               "Param Tint vec3 32 1 0.5 0.25 0\n";
+            << "# a test material\nNimbleMaterial 3\nDomain Translucent\nShading Unlit\nBlockSize 176\n"
+               "Param Tint vec3 160 1 0.5 0.25 0\n";
         Rend.ReloadMaterial("SmokeGlow");
         const uint64_t LoadedDraws = DrawFrame();
         Expect(GMaterialLoads == 1, "ReloadMaterial makes the next draw read the material afresh");
@@ -820,42 +993,47 @@ static void TestMaterials()
     std::filesystem::remove_all(Root, Ignored);
 }
 
-/* .material v2, the material block, permutation names, the shader cache and
+/* .material v3, the material block, permutation names, the shader cache and
  * the layered provider it mounts on -- no renderer needed. */
 static void TestMaterialRuntime()
 {
     std::printf("[material runtime]\n");
 
-    // --- .material v2 -------------------------------------------------------------
+    // --- .material v3 -------------------------------------------------------------
     MaterialDescription Desc;
     std::string Error;
-    const char* Wave = "# generated\nNimbleMaterial 2\nDomain Masked\nShading Lit\nTwoSided 1\nClipValue 0.25\n"
-                       "MaxOffset 2\nHasOffset 1\nBlockSize 48\nParam Color vec3 32 0.2 0.6 1 0\n"
-                       "Param Height float 44 0.5 0 0 0\nSomeFutureLine 1 2 3\n";
-    Expect(ParseMaterialDescription(Wave, Desc, Error), "a version 2 .material parses");
+    const char* Wave = "# generated\nNimbleMaterial 3\nDomain Masked\nShading Lit\nTwoSided 1\nClipValue 0.25\n"
+                       "MaxOffset 2\nHasOffset 1\nBlockSize 176\nParam Color vec3 160 0.2 0.6 1 0\n"
+                       "Param Height float 172 0.5 0 0 0\nSomeFutureLine 1 2 3\n";
+    Expect(ParseMaterialDescription(Wave, Desc, Error), "a version 3 .material parses");
     Expect(Desc.Domain == EMaterialDomain::Masked && Desc.Shading == EMaterialShading::Lit && Desc.bTwoSided
-           && Desc.bHasOffset && Desc.MaxOffset == 2.0f && Desc.ClipValue == 0.25f && Desc.BlockSize == 48,
+           && Desc.bHasOffset && Desc.MaxOffset == 2.0f && Desc.ClipValue == 0.25f && Desc.BlockSize == 176,
            "its header lines are read");
     const MaterialParameter* Height = Desc.FindParameter("Height");
-    Expect(Desc.Parameters.size() == 2 && Height && Height->Offset == 44 && Height->Type == "float" && Height->Default[0] == 0.5f,
+    Expect(Desc.Parameters.size() == 2 && Height && Height->Offset == 172 && Height->Type == "float" && Height->Default[0] == 0.5f,
            "its parameters keep their offsets and defaults");
 
     std::vector<uint8_t> Block;
     BuildMaterialBlock(Desc, EngineCore::Color(255, 0, 0, 255), Block);
-    float Read[12] = {};
-    if(Block.size() == 48) { std::memcpy(Read, Block.data(), sizeof(Read)); }
-    Expect(Block.size() == 48 && Read[0] == 1.0f && Read[1] == 0.0f && Read[3] == 1.0f && Read[4] == 0.25f && Read[5] == 1.0f
-           && Read[8] == 0.2f && Read[10] == 1.0f && Read[11] == 0.5f,
+    float Read[44] = {};
+    if(Block.size() == 176) { std::memcpy(Read, Block.data(), sizeof(Read)); }
+    bool bNoBake = true;
+    for(int Index = 8; Index < 40; ++Index) { bNoBake &= Read[Index] == 0.0f; }
+    Expect(Block.size() == 176 && Read[0] == 1.0f && Read[1] == 0.0f && Read[3] == 1.0f && Read[4] == 0.25f && Read[5] == 1.0f
+           && Read[40] == 0.2f && Read[42] == 1.0f && Read[43] == 0.5f,
            "the block is the tint, clip value and two-sided flag, then each default at its offset");
+    Expect(bNoBake, "the engine's baked lighting bytes start empty: no bake (MaterialDescription.h)");
 
-    Expect(!ParseMaterialDescription("NimbleMaterial 1\nParam Tint 0 vec3 1 1 1 0\n", Desc, Error)
-           && Error.find("recompile") != std::string::npos, "a version 1 .material is refused, asking for a recompile");
-    Expect(!ParseMaterialDescription("NimbleMaterial 2\nBlockSize 32\nParam X vec4 32 0 0 0 0\n", Desc, Error),
+    Expect(!ParseMaterialDescription("NimbleMaterial 2\nParam Tint vec3 32 1 1 1 0\n", Desc, Error)
+           && Error.find("recompile") != std::string::npos, "a version 2 .material is refused, asking for a recompile");
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nBlockSize 160\nParam X vec4 160 0 0 0 0\n", Desc, Error),
            "a parameter outside the block is refused");
-    Expect(!ParseMaterialDescription("NimbleMaterial 2\nDomain Sideways\n", Desc, Error), "an unknown domain is refused");
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nBlockSize 176\nParam X vec4 32 0 0 0 0\n", Desc, Error),
+           "a parameter over the engine's bytes is refused");
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nDomain Sideways\n", Desc, Error), "an unknown domain is refused");
 
     // --- Texture lines: what a Texture Sample writes -----------------------------------
-    const char* Textured = "NimbleMaterial 2\nBlockSize 32\n"
+    const char* Textured = "NimbleMaterial 3\nBlockSize 160\n"
                            "Texture 1 Default Default Content/Textures/Brick.nmtexture\n"
                            "Texture 2 Nearest Clamp Content/Textures/Height Map.nmtexture\r\n"
                            "Texture 3 Linear Mirror Content/Water.nmtexture\n";
@@ -873,11 +1051,11 @@ static void TestMaterialRuntime()
         Expect(Water.bFilter && Water.Filter == ETextureFilter::Linear && Water.bWrap && Water.Wrap == ETextureWrap::Mirror,
                "Linear and Mirror are read too");
     }
-    Expect(!ParseMaterialDescription("NimbleMaterial 2\nTexture 0 Default Default Content/A.nmtexture\n", Desc, Error)
-           && !ParseMaterialDescription("NimbleMaterial 2\nTexture 8 Default Default Content/A.nmtexture\n", Desc, Error),
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nTexture 0 Default Default Content/A.nmtexture\n", Desc, Error)
+           && !ParseMaterialDescription("NimbleMaterial 3\nTexture 8 Default Default Content/A.nmtexture\n", Desc, Error),
            "slot 0 (a PostProcess scene's) and slots past 7 are refused");
-    Expect(!ParseMaterialDescription("NimbleMaterial 2\nTexture 1 Blurry Default Content/A.nmtexture\n", Desc, Error)
-           && !ParseMaterialDescription("NimbleMaterial 2\nTexture 1 Default Default\n", Desc, Error),
+    Expect(!ParseMaterialDescription("NimbleMaterial 3\nTexture 1 Blurry Default Content/A.nmtexture\n", Desc, Error)
+           && !ParseMaterialDescription("NimbleMaterial 3\nTexture 1 Default Default\n", Desc, Error),
            "an unknown sampler setting, or no path, is refused");
 
     // --- Permutation names: what cook_material_graphs.py writes ---------------------
@@ -1069,10 +1247,14 @@ static void TestMaterialsOnGpu()
         /* The centre pixel of each preview, as R, G, B; and its quarter
          * points -- top-left, top-right, bottom-left, bottom-right. */
         struct Check { const char* Material; uint64_t Request; int Rgb[3]; bool bOk; int Quarter[4][3]; };
+        /* By their graph paths: a bare name ("Wave") finds a loose Materials/<name> file first, which an
+         * old build may have left behind, cooked against another template. */
         Check Checks[] = { { "Engine/Content/Materials/DefaultLit.material.nmgraph", 0, {}, false, {} },
-                           { "Materials/Glow.material.nmgraph", 0, {}, false, {} },
-                           { "Wave", 0, {}, false, {} },       { "Negative", 0, {}, false, {} },
-                           { "Textured", 0, {}, false, {} } };
+                           { "Content/Materials/Glow.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/Wave.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/Negative.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/Textured.material.nmgraph", 0, {}, false, {} },   { "Content/Materials/MipProbe.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/NormalProbe.material.nmgraph", 0, {}, false, {} } };
         for(Check& Each : Checks)
         {
             Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
@@ -1136,6 +1318,17 @@ static void TestMaterialsOnGpu()
                             || Is(Textured.Rgb, 255, 255, 255);
         Expect(Textured.bOk && bOneTexel, "its node's Nearest overrides the texture's Linear: the centre is one texel, not a blend");
 
+        /* MipProbe: level 0 red, the rest green, tiled 16 times over 64 pixels: 16 texels a pixel. */
+        const Check& Mips = Checks[5];
+        Expect(Mips.bOk && Mips.Rgb[1] > 200 && Mips.Rgb[0] < 40,
+               "a minified texture samples its baked mip chain (green), not level 0 (red)");
+
+        /* NormalProbe: an OpenGL normal tilted right and up the image, as 0.5 + 0.5 N. The quad faces the
+         * camera (-Z), its image upright: right is +X, up +Y. A flipped green reads 64 in G. */
+        const Check& Normals = Checks[6];
+        Expect(Normals.bOk && Near(Normals.Rgb[0], 191) && Near(Normals.Rgb[1], 191) && Near(Normals.Rgb[2], 37),
+               "the Normal Map node tilts the normal the way its map points: right and up the image, out of the surface");
+
         /* Mesh previews: the engine's primitives, as the mesh viewer and the
          * material editor draw them. */
         const auto Preview = [&](Renderer::MeshPreview InPreview, EngineCore::Image& OutPixels, std::string& OutError)
@@ -1171,7 +1364,7 @@ static void TestMaterialsOnGpu()
         {
             Renderer::MeshPreview Box;
             Box.Mesh     = "Engine/Content/Meshes/Box.nmmesh";
-            Box.Material = "Textured";
+            Box.Material = "Content/Materials/Textured.material.nmgraph";
             Box.Yaw      = 0.0f;
             Box.Pitch    = 0.0f;
             EngineCore::Image Pixels;
@@ -1183,7 +1376,7 @@ static void TestMaterialsOnGpu()
                    "a preview's Material goes on every section: the Box's face shows Quadrants");
 
             Box.Material.clear();
-            Box.Sections = { "Textured" };
+            Box.Sections = { "Content/Materials/Textured.material.nmgraph" };
             int Slotted[3] = {};
             const bool bSlotted = Preview(Box, Pixels, Error);
             if(bSlotted) { Pixel(Pixels, 48, 32, Slotted); }
@@ -1364,6 +1557,137 @@ static void TestTextureAssets()
     Expect(!SerializeTexture(WrongTag, WrongTagLoaded), "a mesh is not a texture");
 }
 
+/* Mip chains (TextureAsset.h): built, saved, read, and what a v1 file reads as. */
+static void TestTextureMips()
+{
+    std::printf("[texture mips]\n");
+
+    Expect(FullMipCount(1024, 1024) == 11 && FullMipCount(8, 2) == 4 && FullMipCount(1, 1) == 1 && FullMipCount(5, 3) == 3,
+           "FullMipCount: down to 1x1, each axis halved (at least 1)");
+
+    /* A 4x4 checker of black and white: every 2x2 averages to grey. */
+    TextureData Checker;
+    Checker.Pixels = Image(4, 4, EImageFormat::RGBA8);
+    for(int Y = 0; Y < 4; ++Y)
+    {
+        for(int X = 0; X < 4; ++X)
+        {
+            uint8_t* Px = Checker.Pixels.GetScanline(Y) + X * 4;
+            Px[0] = Px[1] = Px[2] = ((X + Y) & 1) ? 255 : 0;
+            Px[3] = 255;
+        }
+    }
+    Checker.bSRGB  = false;
+    Checker.MipGen = ETextureMipGen::Box;
+    BuildTextureMips(Checker);
+    Expect(Checker.GetMipCount() == 3 && Checker.Mips[0].GetWidth() == 2 && Checker.Mips[1].GetWidth() == 1,
+           "a 4x4 texture gets 2x2 and 1x1 levels");
+    Expect(std::abs(int(Checker.Mips[0].GetData()[0]) - 128) <= 1 && std::abs(int(Checker.Mips[1].GetData()[0]) - 128) <= 1,
+           "Box averages a linear texture's 2x2 blocks: grey");
+    Checker.bSRGB = true;
+    BuildTextureMips(Checker);
+    Expect(std::abs(int(Checker.Mips[0].GetData()[0]) - 188) <= 1, "and an sRGB texture's in linear light: half the light is 188, not 128");
+    Expect(Checker.Mips[0].GetData()[3] == 255, "alpha is averaged linearly either way");
+
+    Checker.MipGen = ETextureMipGen::Kaiser;
+    BuildTextureMips(Checker);
+    Expect(Checker.GetMipCount() == 3 && std::abs(int(Checker.Mips[0].GetData()[0]) - 188) <= 3,
+           "Kaiser keeps a checker's mean (its lobes cancel on a repeating pattern)");
+
+    /* A flat colour stays itself through every filter and wrap. */
+    TextureData Flat;
+    Flat.Pixels = Image(8, 2, EImageFormat::RGBA8);
+    for(size_t At = 0; At < Flat.Pixels.GetSizeBytes(); At += 4)
+    {
+        uint8_t* Px = Flat.Pixels.GetData() + At;
+        Px[0] = 200; Px[1] = 90; Px[2] = 30; Px[3] = 140;
+    }
+    bool bFlatKept = true;
+    for(const ETextureMipGen Gen : { ETextureMipGen::Box, ETextureMipGen::Kaiser })
+    {
+        for(const ETextureWrap Wrap : { ETextureWrap::Repeat, ETextureWrap::Clamp, ETextureWrap::Mirror })
+        {
+            Flat.MipGen = Gen;
+            Flat.Wrap   = Wrap;
+            BuildTextureMips(Flat);
+            bFlatKept = bFlatKept && Flat.GetMipCount() == 4 && Flat.Mips.back().GetWidth() == 1 && Flat.Mips.back().GetHeight() == 1;
+            for(const Image& Level : Flat.Mips)
+            {
+                const uint8_t* Px = Level.GetData();
+                bFlatKept = bFlatKept && std::abs(Px[0] - 200) <= 1 && std::abs(Px[1] - 90) <= 1 && std::abs(Px[2] - 30) <= 1
+                            && std::abs(Px[3] - 140) <= 1;
+            }
+        }
+    }
+    Expect(bFlatKept, "a flat colour is unchanged at every level, by Box and Kaiser, with every wrap; 8x2 goes 4x1, 2x1, 1x1");
+    Flat.MipGen = ETextureMipGen::None;
+    BuildTextureMips(Flat);
+    Expect(Flat.Mips.empty() && Flat.GetMipCount() == 1, "None clears the chain");
+
+    /* Saved and read back: the chain, the settings, the header. */
+    Checker.MipGen      = ETextureMipGen::Box;
+    Checker.Compression = ETextureCompression::BC7;
+    BuildTextureMips(Checker);
+    Archive Writer = Archive::ForWriting();
+    Expect(SerializeTexture(Writer, Checker), "a texture with mips saves");
+    TextureData Loaded;
+    Archive Reader = Archive::ForReading(Writer.GetBytes());
+    Expect(SerializeTexture(Reader, Loaded) && Loaded.GetMipCount() == 3 && Loaded.MipGen == ETextureMipGen::Box
+           && Loaded.Compression == ETextureCompression::BC7, "and loads with its chain, mip generation and compression");
+    Expect(Loaded.Mips.size() == 2 && std::memcmp(Loaded.Mips[0].GetData(), Checker.Mips[0].GetData(), Checker.Mips[0].GetSizeBytes()) == 0
+           && std::memcmp(Loaded.Mips[1].GetData(), Checker.Mips[1].GetData(), 4) == 0, "each level's texels as saved");
+
+    TextureData Wrong = Checker;
+    Wrong.Mips[0] = Image(3, 2, EImageFormat::RGBA8);
+    Archive WrongWriter = Archive::ForWriting();
+    Expect(!SerializeTexture(WrongWriter, Wrong), "a level that is not half the last does not save");
+
+    std::vector<uint8_t> Truncated = Writer.GetBytes();
+    Truncated.resize(Truncated.size() - 3);
+    Archive TruncatedReader = Archive::ForReading(Truncated);
+    TextureData TruncatedLoaded;
+    Expect(!SerializeTexture(TruncatedReader, TruncatedLoaded), "a truncated chain fails to load");
+
+    /* A v1 file (before mips): THDR v1, no TMIP. Written by hand. */
+    {
+        Archive Old = Archive::ForWriting();
+        uint16_t Version = 1;
+        Old.OpenChunk(MakeArchiveTag('N','T','E','X'), Version);
+        Version = 1;
+        Old.OpenChunk(MakeArchiveTag('T','H','D','R'), Version);
+        int32_t Width = 2, Height = 1;
+        uint8_t Format = 0, Filter = 1, Wrap = 1;
+        bool    bSRGB  = false;
+        Old << Width << Height << Format << bSRGB << Filter << Wrap;
+        Old.CloseChunk();
+        Version = 1;
+        Old.OpenChunk(MakeArchiveTag('T','P','I','X'), Version);
+        uint8_t Texels[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        Old.SerializeBytes(Texels, 8);
+        Old.CloseChunk();
+        Old.CloseChunk();
+        TextureData FromV1;
+        Archive OldReader = Archive::ForReading(Old.GetBytes());
+        Expect(SerializeTexture(OldReader, FromV1) && FromV1.GetMipCount() == 1 && FromV1.MipGen == ETextureMipGen::None
+               && FromV1.Compression == ETextureCompression::None && FromV1.Wrap == ETextureWrap::Clamp
+               && FromV1.Pixels.GetData()[7] == 8, "a v1 texture reads as before: no mips, no compression");
+    }
+
+    /* Sizes: as stored (RGBA8), and what a block format would take. */
+    Expect(TextureGpuBytes(Checker) == uint64_t(16 + 4 + 1) * 4, "TextureGpuBytes counts every level");
+    Expect(TextureCompressedBytes(256, 256, 1, ETextureCompression::BC1) == 256 * 256 / 2
+           && TextureCompressedBytes(256, 256, 1, ETextureCompression::BC7) == 256 * 256
+           && TextureCompressedBytes(4, 4, 3, ETextureCompression::BC3) == 3 * 16
+           && TextureCompressedBytes(4, 4, 3, ETextureCompression::None) == (16 + 4 + 1) * 4,
+           "TextureCompressedBytes: BC1 and BC4 half a byte a texel, the rest one, a 4x4 block at least per level");
+
+    /* Compression: a stored setting until an encoder is registered. */
+    Expect(GetTextureCompressor() == nullptr && IsTextureCompressionAvailable(ETextureCompression::None)
+           && !IsTextureCompressionAvailable(ETextureCompression::BC7), "no block encoder is integrated yet: only None is honoured");
+    Expect(std::string(GetTextureCompressionName(ETextureCompression::BC5)) == "BC5"
+           && std::string(GetTextureMipGenName(ETextureMipGen::Kaiser)) == "Kaiser", "the settings' names");
+}
+
 /*
  * RenderComponent's serializer writes every slot by name, as a graph path, and
  * reads it back. Through a recording archive, so no file format is involved.
@@ -1460,13 +1784,14 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 2, "RenderComponent saves as version 2 (material parameters)");
+    Expect(Info && Info->Version == 3, "RenderComponent saves as version 3 (material parameters, CastShadows)");
     if(!Info) { return; }
 
     RenderComponent Saved;
     std::strcpy(Saved.Materials[0], "Materials/Body.material.nmgraph");
     std::strcpy(Saved.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph");
     RecordingArchive Out;
+    Out.Version = Info->Version;   // a save writes the current version
     Info->Fn(Out, &Saved);
     Expect(Out.Strings["Material0"] == "Materials/Body.material.nmgraph"
            && Out.Strings["Material7"] == "Engine/Content/Materials/DefaultLit.material.nmgraph" && Out.Strings.count("Material") == 0,
@@ -1484,6 +1809,8 @@ static void TestRenderComponentSerializer()
            && std::strcmp(Again.Materials[7], "Engine/Content/Materials/DefaultLit.material.nmgraph") == 0,
            "and reads them back unchanged");
 
+    Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("CastShadows")) != Out.Names.end(),
+           "version 3 writes CastShadows");
     /* Material parameters: a count, then that many. */
     RenderComponent Tinted;
     Expect(Tinted.SetMaterialParameter(0, "Color", 1.0f, 0.5f, 0.25f, 1.0f) && Tinted.SetMaterialParameter(1, "Speed", 3.0f, 0, 0, 0),
@@ -1509,12 +1836,1903 @@ static void TestRenderComponentSerializer()
     Old.bLoading = true;
     Old.Version  = 1;
     RenderComponent FromOld;
+    FromOld.bCastShadows = 1;
     Info->Fn(Old, &FromOld);
     Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("ParameterCount")) == Old.Names.end()
            && FromOld.GetMaterialParameterCount() == 0, "a version 1 component reads no parameters");
+    Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("CastShadows")) == Old.Names.end() && FromOld.bCastShadows == 1,
+           "and no CastShadows, and keeps casting");
+
+    /* The lights: version 2 dropped the sun's Direction (it is the
+     * Transform's forward now) and added shadows; version 3 its baked
+     * Source Angle, as point and spot lights' version 2 their Source Radius. */
+    const GameCore::ComponentSerializerInfo* SunInfo = GameCore::FindComponentSerializer(DirectionalLightComponent::StaticType().ID);
+    Expect(SunInfo && SunInfo->Version == 3, "DirectionalLightComponent saves as version 3");
+    if(SunInfo)
+    {
+        RecordingArchive SunOut;
+        SunOut.Version = SunInfo->Version;
+        DirectionalLightComponent Sun;
+        SunInfo->Fn(SunOut, &Sun);
+        const auto Has = [](const RecordingArchive& InArchive, const char* InName)
+        {
+            return std::find(InArchive.Names.begin(), InArchive.Names.end(), std::string(InName)) != InArchive.Names.end();
+        };
+        Expect(!Has(SunOut, "Direction") && Has(SunOut, "ShadowTechnique") && Has(SunOut, "CascadeCount") && Has(SunOut, "SourceAngle"),
+               "version 3 writes no Direction, and the shadow fields and Source Angle");
+        RecordingArchive SunOld;
+        SunOld.bLoading = true;
+        SunOld.Version  = 1;
+        SunInfo->Fn(SunOld, &Sun);
+        Expect(Has(SunOld, "Direction") && !Has(SunOld, "ShadowTechnique"), "a version 1 save's Direction is read (and dropped)");
+        RecordingArchive SunTwo;
+        SunTwo.bLoading = true;
+        SunTwo.Version  = 2;
+        DirectionalLightComponent FromTwo;
+        SunInfo->Fn(SunTwo, &FromTwo);
+        Expect(!Has(SunTwo, "SourceAngle") && FromTwo.SourceAngle == 0.75f, "a version 2 sun keeps the default Source Angle");
+    }
+    const GameCore::ComponentSerializerInfo* PointInfo = GameCore::FindComponentSerializer(PointLightComponent::StaticType().ID);
+    const GameCore::ComponentSerializerInfo* SpotInfo  = GameCore::FindComponentSerializer(SpotLightComponent::StaticType().ID);
+    Expect(PointInfo && PointInfo->Version == 2 && SpotInfo && SpotInfo->Version == 2, "Point and Spot Light save as version 2 (Source Radius)");
+    const GameCore::ComponentSerializerInfo* CameraInfo = GameCore::FindComponentSerializer(CameraComponent::StaticType().ID);
+    Expect(CameraInfo && CameraInfo->Version == 2, "CameraComponent saves as version 2 (Projection, FovY)");
 
     const GameCore::ComponentSerializerInfo* PostInfo = GameCore::FindComponentSerializer(PostProcessComponent::StaticType().ID);
-    Expect(PostInfo && PostInfo->Version == 1, "PostProcessComponent saves as version 1");
+    Expect(PostInfo && PostInfo->Version == 2, "PostProcessComponent saves as version 2 (Stack, BlendDistance)");
+    if(PostInfo)
+    {
+        const auto HasName = [](const RecordingArchive& InArchive, const char* InName)
+        {
+            return std::find(InArchive.Names.begin(), InArchive.Names.end(), std::string(InName)) != InArchive.Names.end();
+        };
+        RecordingArchive PostOut;
+        PostOut.Version = PostInfo->Version;
+        PostProcessComponent Volume;
+        std::strcpy(Volume.Stack, "Content/PostProcess/Arch.pp.nmgraph");
+        PostInfo->Fn(PostOut, &Volume);
+        Expect(HasName(PostOut, "Stack") && HasName(PostOut, "BlendDistance") && !HasName(PostOut, "Material"),
+               "version 2 writes Stack and BlendDistance");
+        RecordingArchive PostOld;
+        PostOld.bLoading = true;
+        PostOld.Version  = 1;
+        PostOld.Strings["Material"] = "Materials/Negative.material.nmgraph";
+        PostProcessComponent FromOld;
+        PostInfo->Fn(PostOld, &FromOld);
+        Expect(std::strcmp(FromOld.Stack, "Materials/Negative.material.nmgraph") == 0 && !HasName(PostOld, "BlendDistance"),
+               "a version 1 save's Material reads into Stack");
+    }
+}
+
+#if WITH_EDITOR
+/*
+ * Shadows on the GPU (NIMBLE_SMOKE_GPU=Vulkan): a box over a floor, drawn
+ * with shadows on and off, compared pixel by pixel. A shadow only takes light
+ * away; Cast Shadows off takes none away; a Modulated shadow tints.
+ */
+static void TestShadowsOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[shadows on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[shadows on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    ConfigVar* Enabled = ConfigFindVarByPath("Shadows.Enabled");
+    Expect(Enabled != nullptr, "[Shadows] Enabled is a config var");
+
+    Renderer Rend;
+    const bool bInit = Enabled && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Mesh = [](const char* InPath)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InPath);
+            return Render;
+        };
+
+        Placed("Floor", Vector3(0.0, 0.0, 0.0), Vector3(), Vector3(3000.0, 1.0, 3000.0)).AddComponent(Mesh("Engine/Content/Meshes/Plane.nmmesh"));
+        const GameCore::Entity Box = Placed("Box", Vector3(0.0, 90.0, 0.0), Vector3(), Vector3(120.0, 120.0, 120.0));
+        Box.AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+
+        /* Down and toward +X: the shadow falls beside the box, where the camera sees it. */
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Standard;
+        SunInit.ShadowDistance  = 3000.0f;
+        const GameCore::Entity Sun = Placed("Sun", Vector3(), Vector3(55.0, 90.0, 0.0), Vector3(1.0, 1.0, 1.0));
+        Sun.AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            const uint64_t Request = Rend.RequestSceneCapture();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Rgb = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        /* NIMBLE_SMOKE_DUMP=<dir>: each capture as a PPM there, to look at. */
+        const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP");
+        const auto Dump = [&](const EngineCore::Image& InPixels, const char* InName)
+        {
+            if(!DumpDir || !DumpDir[0] || InPixels.GetWidth() == 0) { return; }
+            std::ofstream File(std::string(DumpDir) + "/" + InName + ".ppm", std::ios::binary);
+            File << "P6\n" << InPixels.GetWidth() << " " << InPixels.GetHeight() << "\n255\n";
+            for(int Y = 0; Y < int(InPixels.GetHeight()); ++Y)
+            {
+                for(int X = 0; X < int(InPixels.GetWidth()); ++X)
+                {
+                    int Value[3];
+                    Rgb(InPixels, X, Y, Value);
+                    const char Bytes[3] = { char(Value[0]), char(Value[1]), char(Value[2]) };
+                    File.write(Bytes, 3);
+                }
+            }
+        };
+
+        /* Pixels InA has darker than InB, brighter, and how much bluer the darker ones lean. */
+        struct Difference { int Darker = 0; int Brighter = 0; double BlueLean = 0.0; };
+        const auto Compare = [&](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            Difference Out;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                for(int X = 0; X < 256; ++X)
+                {
+                    int A[3], B[3];
+                    Rgb(InA, X, Y, A);
+                    Rgb(InB, X, Y, B);
+                    const int Delta = (A[0] + A[1] + A[2]) - (B[0] + B[1] + B[2]);
+                    if(Delta < -45)
+                    {
+                        ++Out.Darker;
+                        Out.BlueLean += double(A[2] - A[0]) - double(B[2] - B[0]);
+                    }
+                    if(Delta > 45) { ++Out.Brighter; }
+                }
+            }
+            if(Out.Darker > 0) { Out.BlueLean /= Out.Darker; }
+            return Out;
+        };
+
+        EngineCore::Image Lit, Shadowed, NoCaster, Modulated, SpotLit, SpotShadowed;
+        Enabled->SetFromString("0");
+        const bool bLit = Capture(Lit);
+        Enabled->SetFromString("1");
+        const bool bShadowed = Capture(Shadowed);
+        Expect(bLit && bShadowed, "the scene is captured with shadows off and on");
+        if(bLit && bShadowed)
+        {
+            Dump(Lit, "sun-lit");
+            Dump(Shadowed, "sun-shadowed");
+            const Difference Sunlit = Compare(Shadowed, Lit);
+            std::printf("    sun: %d pixels darker, %d brighter\n", Sunlit.Darker, Sunlit.Brighter);
+            Expect(Sunlit.Darker > 300, "the box shadows the floor under a Standard sun");
+            Expect(Sunlit.Brighter < 20, "and a shadow only takes light away");
+
+            Box.GetComponent<RenderComponent>()->bCastShadows = 0;
+            const bool bNoCaster = Capture(NoCaster);
+            const Difference Off = bNoCaster ? Compare(NoCaster, Lit) : Difference();
+            std::printf("    cast shadows off: %d pixels darker\n", Off.Darker);
+            Expect(bNoCaster && Off.Darker < 40, "a mesh with Cast Shadows off casts none");
+            Box.GetComponent<RenderComponent>()->bCastShadows = 1;
+
+            DirectionalLightComponent* SunLight = Sun.GetComponent<DirectionalLightComponent>();
+            SunLight->ShadowTechnique = LST_Modulated;
+            SunLight->ShadowTint      = EngineCore::Color(20, 40, 220);
+            const bool bModulated = Capture(Modulated);
+            Dump(Modulated, "sun-modulated");
+            const Difference Tinted = bModulated ? Compare(Modulated, Lit) : Difference();
+            std::printf("    modulated: %d pixels darker, blue lean %.1f\n", Tinted.Darker, Tinted.BlueLean);
+            Expect(bModulated && Tinted.Darker > 300 && Tinted.BlueLean > 8.0, "a Modulated shadow darkens toward its tint");
+
+            SunLight->ShadowTechnique = LST_Cascaded;
+            EngineCore::Image Cascaded;
+            const bool bCascaded = Capture(Cascaded);
+            Dump(Cascaded, "sun-cascaded");
+            const Difference Cascades = bCascaded ? Compare(Cascaded, Lit) : Difference();
+            std::printf("    cascaded: %d pixels darker\n", Cascades.Darker);
+            Expect(bCascaded && Cascades.Darker > 300 && Cascades.Brighter < 20, "a Cascaded sun shadows the floor too");
+
+            /* The sun off; a spot light straight down over the box. */
+            SunLight->Intensity = 0.0f;
+            SpotLightComponent SpotInit;
+            SpotInit.Intensity      = 30.0f;
+            SpotInit.Range          = 1200.0f;
+            SpotInit.OuterConeAngle = 45.0f;
+            SpotInit.InnerConeAngle = 35.0f;
+            const GameCore::Entity Spot = Placed("Spot", Vector3(60.0, 500.0, -60.0), Vector3(90.0, 0.0, 0.0), Vector3(1.0, 1.0, 1.0));
+            Spot.AddComponent(SpotInit);
+            Enabled->SetFromString("0");
+            const bool bSpotLit = Capture(SpotLit);
+            Enabled->SetFromString("1");
+            const bool bSpotShadowed = Capture(SpotShadowed);
+            Dump(SpotShadowed, "spot-shadowed");
+            const Difference SpotShadow = bSpotLit && bSpotShadowed ? Compare(SpotShadowed, SpotLit) : Difference();
+            std::printf("    spot: %d pixels darker, %d brighter\n", SpotShadow.Darker, SpotShadow.Brighter);
+            Expect(SpotShadow.Darker > 200 && SpotShadow.Brighter < 20, "a spot light's shadow falls under the box");
+
+            /* The spot swapped for a point light over the box. */
+            World.DestroyEntity(Spot);
+            PointLightComponent PointInit;
+            PointInit.Intensity    = 30.0f;
+            PointInit.Radius       = 1500.0f;
+            PointInit.bCastShadows = 1;
+            Placed("Point", Vector3(80.0, 450.0, -80.0), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(PointInit);
+            EngineCore::Image PointLit, PointShadowed;
+            Enabled->SetFromString("0");
+            const bool bPointLit = Capture(PointLit);
+            Enabled->SetFromString("1");
+            const bool bPointShadowed = Capture(PointShadowed);
+            Dump(PointShadowed, "point-shadowed");
+            const Difference PointShadow = bPointLit && bPointShadowed ? Compare(PointShadowed, PointLit) : Difference();
+            std::printf("    point: %d pixels darker, %d brighter\n", PointShadow.Darker, PointShadow.Brighter);
+            Expect(PointShadow.Darker > 200 && PointShadow.Brighter < 20, "a point light's shadow falls under the box");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    if(Enabled) { Enabled->SetFromString("1"); }
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
+#if WITH_EDITOR
+/*
+ * The post process stack on the GPU (NIMBLE_SMOKE_GPU=Vulkan): a lit yard of
+ * boxes captured plain and through each effect, compared pixel by pixel.
+ * Bloom only adds light; FXAA touches edges and nothing else; Depth of Field
+ * flattens edges; a volume the camera is far outside does nothing; Motion
+ * Blur smears only when the camera moved since the last frame.
+ */
+static void TestPostProcessOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[post process on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[post process on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    /* Stacks as the editor saves them, beside the executable. */
+    std::error_code Ignored;
+    std::filesystem::create_directories("SmokeScratch/PostStacks", Ignored);
+    const auto WriteStack = [](const char* InName, const char* InStack)
+    {
+        const std::string Path = std::string("SmokeScratch/PostStacks/") + InName + ".pp.nmgraph";
+        std::ofstream Out(Path);
+        Out << "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"PostProcess\">\n  <gen_code>\n"
+               "    <Output Extension=\".ppstack\"><![CDATA[" << InStack << "]]></Output>\n  </gen_code>\n</NodeGraph>\n";
+        PostProcessStackCache::Invalidate(Path);
+        return Path;
+    };
+    const std::string BloomStack  = WriteStack("Bloom", "Effect Bloom Threshold=0.85 Intensity=0.8 Radius=0.75 Levels=5 Tint=1,1,1\n");
+    const std::string FxaaStack   = WriteStack("Fxaa", "Effect Antialiasing EdgeThreshold=0.1 Method=FXAA Quality=High\n");
+    const std::string DofStack    = WriteStack("Dof", "Effect DepthOfField FocusDistance=50 FocusRange=10 MaxBlur=16 NearBlur=false\n");
+    const std::string MotionStack = WriteStack("Motion", "Effect MotionBlur Intensity=1 MaxLength=48 Samples=12\n");
+    const std::string AoStack     = WriteStack("Ao", "Effect AmbientOcclusion Intensity=1.5 Radius=80 Samples=16 Power=1.5 Blur=true\n");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Still = RenderView::MakePerspective(Viewport, Vector3(0.0, 500.0, -700.0), Vector3(0.0, -500.0, 700.0),
+                                                             50.0f, 10.0f, 5000.0f);
+        const RenderView Turned = RenderView::MakePerspective(Viewport, Vector3(0.0, 500.0, -700.0), Vector3(150.0, -500.0, 700.0),
+                                                              50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&Still);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        const auto Mesh = [](const char* InPath)
+        {
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InPath);
+            return Render;
+        };
+        Placed("Floor", Vector3(), Vector3(), Vector3(3000.0, 1.0, 3000.0)).AddComponent(Mesh("Engine/Content/Meshes/Plane.nmmesh"));
+        for(int Index = 0; Index < 5; ++Index)
+        {
+            Placed("Box", Vector3(-400.0 + 200.0 * Index, 60.0, 100.0 * (Index % 3)), Vector3(0.0, 25.0 * Index, 0.0),
+                   Vector3(90.0, 120.0, 90.0)).AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+        }
+        DirectionalLightComponent SunInit;
+        SunInit.bCastShadows = 0;
+        Placed("Sun", Vector3(), Vector3(50.0, 30.0, 0.0), Vector3(1.0, 1.0, 1.0)).AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        /* The volume: everywhere until it is given Bounds. */
+        PostProcessComponent VolumeInit;
+        VolumeInit.bEnabled = 0;
+        const GameCore::Entity Volume = Placed("Volume", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0));
+        Volume.AddComponent(VolumeInit);
+        const auto UseStack = [&Volume](const std::string& InStack)
+        {
+            PostProcessComponent* Each = Volume.GetComponent<PostProcessComponent>();
+            std::snprintf(Each->Stack, sizeof(Each->Stack), "%s", InStack.c_str());
+            Each->bEnabled = InStack.empty() ? 0 : 1;
+        };
+
+        uint64_t Frame = 1;
+        const auto Draw = [&](const RenderView& InView)
+        {
+            Rend.SetViewOverride(&InView);
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        };
+        /* Two frames at InFirst, then the capture's frame at InView. */
+        const auto Capture = [&](EngineCore::Image& OutPixels, const RenderView& InFirst, const RenderView& InView)
+        {
+            Draw(InFirst);
+            Draw(InFirst);
+            const uint64_t Request = Rend.RequestSceneCapture();
+            Draw(InView);
+            Draw(InView);
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Luma = [](const EngineCore::Image& InPixels, const int InX, const int InY)
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            return int(Px[0]) + int(Px[1]) + int(Px[2]);
+        };
+        struct Difference { int Brighter = 0; int Darker = 0; int Changed = 0; };
+        const auto Compare = [&](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            Difference Out;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                for(int X = 0; X < 256; ++X)
+                {
+                    const int Delta = Luma(InA, X, Y) - Luma(InB, X, Y);
+                    Out.Brighter += Delta > 24 ? 1 : 0;
+                    Out.Darker   += Delta < -24 ? 1 : 0;
+                    Out.Changed  += Delta != 0 ? 1 : 0;
+                }
+            }
+            return Out;
+        };
+        /* How much neighbouring pixels differ: what blur takes away. */
+        const auto EdgeEnergy = [&](const EngineCore::Image& InPixels)
+        {
+            double Sum = 0.0;
+            for(int Y = 0; Y < 255; ++Y)
+            {
+                for(int X = 0; X < 255; ++X)
+                {
+                    Sum += std::abs(Luma(InPixels, X + 1, Y) - Luma(InPixels, X, Y)) + std::abs(Luma(InPixels, X, Y + 1) - Luma(InPixels, X, Y));
+                }
+            }
+            return Sum;
+        };
+        const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP");
+        const auto Dump = [&](const EngineCore::Image& InPixels, const char* InName)
+        {
+            if(!DumpDir || !DumpDir[0] || InPixels.GetWidth() == 0) { return; }
+            std::ofstream File(std::string(DumpDir) + "/" + InName + ".ppm", std::ios::binary);
+            File << "P6\n" << InPixels.GetWidth() << " " << InPixels.GetHeight() << "\n255\n";
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            for(int Y = 0; Y < int(InPixels.GetHeight()); ++Y)
+            {
+                for(int X = 0; X < int(InPixels.GetWidth()); ++X)
+                {
+                    const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * Y + X * BytesPerPixel(InPixels.GetFormat());
+                    const char Bytes[3] = { char(bBgra ? Px[2] : Px[0]), char(Px[1]), char(bBgra ? Px[0] : Px[2]) };
+                    File.write(Bytes, 3);
+                }
+            }
+        };
+
+        EngineCore::Image Plain, Bloomed, Smoothed, Focused, Outside, PlainTurned, Moving, Steady;
+        UseStack(std::string());
+        const bool bPlain = Capture(Plain, Still, Still);
+        Expect(bPlain, "the plain scene is captured");
+        Dump(Plain, "post-plain");
+
+        UseStack(BloomStack);
+        if(bPlain && Capture(Bloomed, Still, Still))
+        {
+            Dump(Bloomed, "post-bloom");
+            const Difference Glow = Compare(Bloomed, Plain);
+            std::printf("    bloom: %d brighter, %d darker\n", Glow.Brighter, Glow.Darker);
+            Expect(Glow.Brighter > 300 && Glow.Darker < 20, "Bloom only adds light, around what is bright");
+        }
+
+        UseStack(FxaaStack);
+        if(bPlain && Capture(Smoothed, Still, Still))
+        {
+            Dump(Smoothed, "post-fxaa");
+            const Difference Edges = Compare(Smoothed, Plain);
+            std::printf("    fxaa: %d pixels changed, edge energy %.0f -> %.0f\n", Edges.Changed, EdgeEnergy(Plain), EdgeEnergy(Smoothed));
+            Expect(Edges.Changed > 30 && Edges.Changed < 256 * 256 / 6, "FXAA changes the pixels on edges, not the flat areas");
+            Expect(EdgeEnergy(Smoothed) < EdgeEnergy(Plain), "and softens them");
+        }
+
+        UseStack(DofStack);
+        if(bPlain && Capture(Focused, Still, Still))
+        {
+            Dump(Focused, "post-dof");
+            std::printf("    depth of field: edge energy %.0f -> %.0f\n", EdgeEnergy(Plain), EdgeEnergy(Focused));
+            Expect(EdgeEnergy(Focused) < EdgeEnergy(Plain) * 0.75, "Depth of Field blurs a scene far past its focus");
+        }
+
+        /* Ambient Occlusion: the floor round each box darkens; open floor stays. */
+        EngineCore::Image Occluded;
+        UseStack(AoStack);
+        if(bPlain && Capture(Occluded, Still, Still))
+        {
+            Dump(Occluded, "post-ao");
+            const Difference Creases = Compare(Occluded, Plain);
+            std::printf("    ambient occlusion: %d darker, %d brighter, %d changed\n", Creases.Darker, Creases.Brighter, Creases.Changed);
+            Expect(Creases.Darker > 150 && Creases.Brighter < 20, "Ambient Occlusion darkens creases and never brightens");
+            Expect(Creases.Darker < 256 * 256 / 4, "but not the open floor");
+        }
+
+        /* The Bloom stack in a volume far from the camera, with a hard edge. */
+        UseStack(BloomStack);
+        GameCore::BoundsComponent Bounds;
+        Bounds.Local = GameCore::AABB(Vector3(-50.0, -50.0, -50.0), Vector3(50.0, 50.0, 50.0));
+        Volume.GetComponent<GameCore::TransformComponent>()->Position = Vector3(0.0, 0.0, 3000.0);
+        Volume.AddComponent(Bounds);
+        World.RefreshSpatialIndex();
+        if(bPlain && Capture(Outside, Still, Still))
+        {
+            const Difference Far = Compare(Outside, Plain);
+            std::printf("    volume far away: %d pixels changed\n", Far.Changed);
+            Expect(Far.Changed < 20, "a volume the camera is outside of does nothing");
+        }
+        Volume.GetComponent<PostProcessComponent>()->BlendDistance = 1.0e6f;
+        EngineCore::Image Near;
+        if(bPlain && Capture(Near, Still, Still))
+        {
+            const Difference Faded = Compare(Near, Plain);
+            std::printf("    volume with a wide blend: %d brighter\n", Faded.Brighter);
+            Expect(Faded.Brighter > 100, "a wide enough Blend Distance reaches the camera");
+        }
+
+        /* Motion Blur: everywhere again; a frame at Still then one at Turned. */
+        World.DestroyEntity(Volume);
+        const GameCore::Entity Blur = Placed("Blur", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0));
+        PostProcessComponent BlurInit;
+        std::snprintf(BlurInit.Stack, sizeof(BlurInit.Stack), "%s", MotionStack.c_str());
+        Blur.AddComponent(BlurInit);
+        Blur.GetComponent<PostProcessComponent>()->bEnabled = 0;
+        const bool bPlainTurned = Capture(PlainTurned, Turned, Turned);
+        Blur.GetComponent<PostProcessComponent>()->bEnabled = 1;
+        if(bPlainTurned && Capture(Steady, Turned, Turned))
+        {
+            const Difference Still_ = Compare(Steady, PlainTurned);
+            std::printf("    motion blur, camera still: %d pixels changed\n", Still_.Brighter + Still_.Darker);
+            Expect(Still_.Brighter + Still_.Darker < 20, "Motion Blur leaves a still camera's frame alone");
+        }
+        /* One frame at Still, then the captured one at Turned: it moved. */
+        Draw(Still);
+        Draw(Still);
+        const uint64_t Request = Rend.RequestSceneCapture();
+        Draw(Turned);
+        Draw(Turned);
+        std::string Error;
+        if(bPlainTurned && Request && Rend.TakeMaterialPreview(Request, Moving, Error))
+        {
+            Dump(Moving, "post-motion");
+            const Difference Smear = Compare(Moving, PlainTurned);
+            std::printf("    motion blur, camera turned: %d pixels changed, edge energy %.0f -> %.0f\n", Smear.Brighter + Smear.Darker,
+                        EdgeEnergy(PlainTurned), EdgeEnergy(Moving));
+            Expect(Smear.Brighter + Smear.Darker > 200, "Motion Blur smears the frame the camera turned in");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    PostProcessStackCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+}
+
+/*
+ * "stat frame" on the GPU: with Stats.Frame on, each stage of the default
+ * scene's frame is timed with GPU timestamps (GDIWriteGPUTimestamp) and
+ * averaged into RenderStats::GpuMs.
+ */
+static void TestStatFrameOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[stat frame on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[stat frame on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+    ConfigVar* FrameVar = ConfigFindVarByPath("Stats.Frame");
+
+    Renderer Rend;
+    const bool bInit = FrameVar && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        RenderComponent Floor;
+        std::snprintf(Floor.Mesh, sizeof(Floor.Mesh), "%s", "Engine/Content/Meshes/Plane.nmmesh");
+        Placed("Floor", Vector3(), Vector3(), Vector3(3000.0, 1.0, 3000.0)).AddComponent(Floor);
+        RenderComponent Box;
+        std::snprintf(Box.Mesh, sizeof(Box.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        Placed("Box", Vector3(0.0, 90.0, 0.0), Vector3(), Vector3(120.0, 120.0, 120.0)).AddComponent(Box);
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Standard;
+        SunInit.ShadowDistance  = 3000.0f;
+        Placed("Sun", Vector3(), Vector3(55.0, 90.0, 0.0), Vector3(1.0, 1.0, 1.0)).AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t   Frame = 1;
+        const auto Run = [&](const int InMilliseconds)
+        {
+            const auto Start = std::chrono::steady_clock::now();
+            while(std::chrono::steady_clock::now() - Start < std::chrono::milliseconds(InMilliseconds))
+            {
+                Rend.BeginGameFrame();
+                Rend.WaitForPreviousFrame();
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            }
+            Rend.WaitForPreviousFrame();
+        };
+
+        Run(100);
+        RenderStats Off;
+        Rend.GetStats(Off);
+        Expect(Off.GpuMs[RGT_Total] < 0.0f, "with Stats.Frame off, nothing is timed");
+
+        FrameVar->SetBool(true);
+        Run(800);
+        RenderStats On;
+        Rend.GetStats(On);
+        std::printf("   ");
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+        {
+            std::printf(" %s %.3f", GetRenderGpuTimerName(ERenderGpuTimer(Timer)), double(On.GpuMs[Timer]));
+        }
+        std::printf("\n");
+        bool  bAllTimed = true;
+        float Stages    = 0.0f;
+        for(uint32_t Timer = 0; Timer < RGT_Total; ++Timer)
+        {
+            bAllTimed = bAllTimed && On.GpuMs[Timer] >= 0.0f;
+            Stages   += std::max(On.GpuMs[Timer], 0.0f);
+        }
+        Expect(bAllTimed && On.GpuMs[RGT_Total] > 0.0f, "every stage of a lit, shadowed scene is timed on the GPU");
+        Expect(On.GpuMs[RGT_Total] + 0.05f >= Stages, "and the stages fit inside the total");
+        Expect(On.GpuMs[RGT_Shadows] > 0.0f && On.GpuMs[RGT_BasePass] > 0.0f, "the shadow and base passes take time");
+        Expect(On.GpuMs[RGT_SceneCapture] >= 0.0f, "the scene captures are timed, if only as nothing");
+
+        FrameVar->SetBool(false);
+        Run(100);
+        RenderStats Hidden;
+        Rend.GetStats(Hidden);
+        Expect(Hidden.GpuMs[RGT_Total] < 0.0f, "turning it off clears the times");
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
+ * Static draw lists on the GPU: a lit, shadowed scene made static draws the
+ * same pixels as dynamic, and a static box moved by a tool still moves.
+ */
+static void TestStaticDrawListsOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[static draw lists on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[static draw lists on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        RenderComponent FloorMesh;
+        std::snprintf(FloorMesh.Mesh, sizeof(FloorMesh.Mesh), "%s", "Engine/Content/Meshes/Plane.nmmesh");
+        const GameCore::Entity Floor = Placed("Floor", Vector3(), Vector3(3000.0, 1.0, 3000.0));
+        Floor.AddComponent(FloorMesh);
+        RenderComponent BoxMesh;
+        std::snprintf(BoxMesh.Mesh, sizeof(BoxMesh.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        const GameCore::Entity Box = Placed("Box", Vector3(0.0, 90.0, 0.0), Vector3(120.0, 120.0, 120.0));
+        Box.AddComponent(BoxMesh);
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Standard;
+        SunInit.ShadowDistance  = 3000.0f;
+        GameCore::Entity Sun = World.CreateEntity("Sun");
+        GameCore::TransformComponent SunAt;
+        SunAt.Rotation = Vector3(55.0, 90.0, 0.0);
+        Sun.AddComponent(SunAt);
+        Sun.AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                const uint8_t* A = InA.GetData() + InA.GetStride() * Y;
+                const uint8_t* B = InB.GetData() + InB.GetStride() * Y;
+                for(int X = 0; X < 256 * 4; X += 4)
+                {
+                    Count += (A[X] != B[X] || A[X + 1] != B[X + 1] || A[X + 2] != B[X + 2]) ? 1 : 0;
+                }
+            }
+            return Count;
+        };
+
+        EngineCore::Image Dynamic, Static, Moved, MovedDynamic;
+        const bool bDynamic = Capture(Dynamic);
+        Floor.SetMobility(GameCore::EMobility::Static);
+        Box.SetMobility(GameCore::EMobility::Static);
+        const bool bStatic = Capture(Static);
+        RenderStats Stats;
+        Rend.GetStats(Stats);
+        Expect(bDynamic && bStatic && Stats.StaticProxiesDrawn == 2, "the floor and box draw from static lists");
+        Expect(bDynamic && bStatic && Differing(Dynamic, Static) == 0, "and the frame is pixel for pixel the dynamic one, shadows and all");
+
+        Box.GetComponent<GameCore::TransformComponent>()->Position = Vector3(200.0, 90.0, 0.0);
+        const bool bMoved = Capture(Moved);
+        Box.SetMobility(GameCore::EMobility::Dynamic);
+        Floor.SetMobility(GameCore::EMobility::Dynamic);
+        const bool bMovedDynamic = Capture(MovedDynamic);
+        std::printf("    moved static box: %d pixels changed; vs dynamic %d\n", Differing(Static, Moved), Differing(Moved, MovedDynamic));
+        Expect(bMoved && Differing(Static, Moved) > 200, "a static box moved by a tool moves on screen");
+        Expect(bMoved && bMovedDynamic && Differing(Moved, MovedDynamic) == 0, "exactly where a dynamic one would be");
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
+ * The background gradient (Renderer::SetClearGradient): top colour at the top
+ * of the view, bottom at the bottom, under what is drawn; SetClearColor back
+ * to one colour.
+ */
+static void TestClearGradientOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[background gradient on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[background gradient on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 300.0, -800.0), Vector3(0.0, -300.0, 800.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        /* A lit box in the middle, to show the gradient stays under it. */
+        const GameCore::Entity Box = World.CreateEntity("Box");
+        GameCore::TransformComponent At;
+        At.Scale = Vector3(120.0, 120.0, 120.0);
+        Box.AddComponent(At);
+        RenderComponent Mesh;
+        std::snprintf(Mesh.Mesh, sizeof(Mesh.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        Box.AddComponent(Mesh);
+        World.CreateEntity("Sky").AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto At_ = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        const auto Near = [](const int (&InRgb)[3], const int InR, const int InG, const int InB, const int InSlack)
+        {
+            return std::abs(InRgb[0] - InR) <= InSlack && std::abs(InRgb[1] - InG) <= InSlack && std::abs(InRgb[2] - InB) <= InSlack;
+        };
+
+        Rend.SetClearGradient(RENDER_DEFAULT_SCENE, EngineCore::Color(200, 60, 40), EngineCore::Color(20, 40, 160));
+        EngineCore::Image Gradient, Solid;
+        if(Capture(Gradient))
+        {
+            int Top[3], Bottom[3], Middle[3], Centre[3];
+            At_(Gradient, 4, 0, Top);
+            At_(Gradient, 4, 255, Bottom);
+            At_(Gradient, 4, 128, Middle);
+            At_(Gradient, 128, 128, Centre);
+            std::printf("    top %d %d %d, middle %d %d %d, bottom %d %d %d, box %d %d %d\n", Top[0], Top[1], Top[2], Middle[0], Middle[1],
+                        Middle[2], Bottom[0], Bottom[1], Bottom[2], Centre[0], Centre[1], Centre[2]);
+            Expect(Near(Top, 200, 60, 40, 3) && Near(Bottom, 20, 40, 160, 3), "the top row is the top colour, the bottom row the bottom");
+            Expect(Near(Middle, 110, 50, 100, 4), "half way down, half way between");
+            Expect(!Near(Centre, 110, 50, 100, 30), "and a lit box draws over it");
+        }
+        Rend.SetClearColor(RENDER_DEFAULT_SCENE, EngineCore::Color(10, 120, 30));
+        if(Capture(Solid))
+        {
+            int Top[3], Bottom[3];
+            At_(Solid, 4, 0, Top);
+            At_(Solid, 4, 255, Bottom);
+            Expect(Near(Top, 10, 120, 30, 0) && Near(Bottom, 10, 120, 30, 0), "SetClearColor goes back to one colour");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/* RGBE8 textures, the Sky Light's environment and the Reflection Probe component (Null: no GPU). */
+static void TestImageBasedLightingData()
+{
+    std::printf("[image-based lighting data]\n");
+    for(const float Value : { 0.0f, 0.001f, 0.5f, 1.0f, 37.5f, 2500.0f })
+    {
+        const float In[3] = { Value, Value * 0.5f, Value * 0.25f };
+        uint8_t Texel[4];
+        EncodeRgbe(In, Texel);
+        float Out[3];
+        DecodeRgbe(Texel, Out);
+        bool bClose = true;
+        for(int Channel = 0; Channel < 3; ++Channel) { bClose = bClose && std::abs(Out[Channel] - In[Channel]) <= std::max(In[0] * 0.01f, 1e-6f); }
+        Expect(bClose, "RGBE8 holds a colour to within 1% of its brightest channel, 0 to 2500");
+    }
+
+    TextureData Hdri;
+    Hdri.Format = ETexturePixelFormat::RGBE8;
+    Hdri.MipGen = ETextureMipGen::Box;
+    Hdri.Pixels = Image(4, 2, EImageFormat::RGBA8);
+    BuildTextureMips(Hdri);
+    Expect(Hdri.Mips.empty(), "an RGBE8 texture gets no mips: its shader decodes it point sampled");
+    Archive Writer = Archive::ForWriting();
+    SerializeTexture(Writer, Hdri);
+    TextureData Back;
+    Archive Reader = Archive::ForReading(Writer.GetBytes());
+    Expect(SerializeTexture(Reader, Back) && Back.Format == ETexturePixelFormat::RGBE8, "and saves and loads as RGBE8");
+
+    const GameCore::ComponentSerializerInfo* SkyInfo = GameCore::FindComponentSerializer(SkyLightComponent::StaticType().ID);
+    Expect(SkyInfo && SkyInfo->Version == 2, "SkyLightComponent saves as version 2 (Environment, its intensity and rotation, DrawBackground)");
+    const GameCore::ComponentSerializerInfo* ProbeInfo = GameCore::FindComponentSerializer(ReflectionProbeComponent::StaticType().ID);
+    Expect(ProbeInfo && ProbeInfo->Version == 1 && std::string(ReflectionProbeComponent::StaticType().Name) == "Reflection Probe",
+           "Reflection Probe is a registered component");
+    const ReflectionProbeComponent Defaults;
+    Expect(Defaults.Frequency == SCF_Once && Defaults.bCaptureShadows && Defaults.Radius > 0.0f,
+           "a probe captures once by default, with shadows, a sphere of influence");
+
+    Renderer Rend;
+    if(Rend.Initialize(ERenderBackend::Null, WindowHandle()))
+    {
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const GameCore::Entity Probe = World.CreateEntity("Probe");
+        Probe.AddComponent(GameCore::TransformComponent());
+        Probe.AddComponent(ReflectionProbeComponent());
+        for(uint64_t Frame = 1; Frame < 4; ++Frame) { Rend.EndFrame(FrameInfo{Frame, 0.016, EngineCore::Size(64, 64)}); Rend.WaitForPreviousFrame(); }
+        Expect(true, "a Reflection Probe on the Null backend (no HDR target, so no IBL) renders without trouble");
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+}
+
+/* The ToneMapping effect's .ppstack line, parsed and blended (Null: no GPU). */
+static void TestToneMappingSettings()
+{
+    std::printf("[tone mapping settings]\n");
+    PostProcessSettings Parsed;
+    std::string Error;
+    Expect(ParsePostProcessStack("Effect ToneMapping Exposure=-1.5 ToneMapper=Reinhard\n", Parsed, Error) && Parsed.bToneMapping
+           && Parsed.Exposure == -1.5f && Parsed.ToneMapper == 1, "ToneMapping reads its exposure and operator");
+    PostProcessSettings Aces;
+    ParsePostProcessStack("Effect ToneMapping\n", Aces, Error);
+    Expect(Aces.bToneMapping && Aces.Exposure == 0.0f && Aces.ToneMapper == 2, "and defaults to exposure 0 and ACES");
+    Expect(!PostProcessSettings().bToneMapping && !Aces.IsEmpty(), "off unless a stack has the node; a stack with only it is not empty");
+
+    PostProcessSettings Blend;
+    Parsed.Exposure = 2.0f;
+    BlendPostProcess(Blend, Parsed, 0.25f);
+    Expect(Blend.bToneMapping && std::abs(Blend.Exposure - 0.5f) < 1e-5f && Blend.ToneMapper == 0,
+           "a quarter in: a quarter of the exposure, the operator not yet (None)");
+    BlendPostProcess(Blend, Parsed, 1.0f);
+    Expect(Blend.Exposure == 2.0f && Blend.ToneMapper == 1, "all the way in: the stack's");
+}
+
+/*
+ * HDR and tone mapping on the GPU: an Unlit quad of display 0.9 under each
+ * operator and an exposure, and the editor's gradient background, which must
+ * come out of any tone map as authored.
+ */
+static void TestToneMappingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[tone mapping on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[tone mapping on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+    std::error_code Ignored;
+    std::filesystem::create_directories("SmokeScratch/PostStacks", Ignored);
+    const std::string Stack = "SmokeScratch/PostStacks/Tone.pp.nmgraph";
+    const auto WriteStack = [&Stack](const char* InLine)
+    {
+        std::ofstream Out(Stack);
+        Out << "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"PostProcess\">\n  <gen_code>\n"
+               "    <Output Extension=\".ppstack\"><![CDATA[" << InLine << "\n]]></Output>\n  </gen_code>\n</NodeGraph>\n";
+        PostProcessStackCache::Invalidate(Stack);
+    };
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Facing = RenderView::MakePerspective(Viewport, Vector3(0, 0, -400), Vector3(0, 0, 1), 50.0f, 5.0f, 5000.0f);
+        Rend.SetViewOverride(&Facing);
+        Rend.SetClearGradient(RENDER_DEFAULT_SCENE, EngineCore::Color(70, 90, 140, 255), EngineCore::Color(20, 22, 30, 255));
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const GameCore::Entity Quad = World.CreateEntity("Flat");
+        GameCore::TransformComponent Transform;
+        Transform.Scale = Vector3(100, 100, 100);
+        Quad.AddComponent(Transform);
+        RenderComponent Render;
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        Render.SetMaterial(0, "Content/Materials/SolidColor.material.nmgraph");
+        Render.SetMaterialParameter(0, "Color", 0.9f, 0.9f, 0.9f, 1.0f);
+        Render.bCastShadows = 0;
+        Quad.AddComponent(Render);
+
+        const GameCore::Entity Volume = World.CreateEntity("Volume");
+        Volume.AddComponent(GameCore::TransformComponent());
+        PostProcessComponent Post;
+        std::snprintf(Post.Stack, sizeof(Post.Stack), "%s", Stack.c_str());
+        Post.bEnabled = 0;
+        Volume.AddComponent(Post);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](int (&OutCentre)[3], int (&OutCorner)[3])
+        {
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            EngineCore::Image Pixels;
+            std::string Error;
+            if(!(Request != 0 && Rend.TakeMaterialPreview(Request, Pixels, Error) && Pixels.GetWidth() == 256)) { return false; }
+            const bool bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
+            const auto At = [&](const int InX, const int InY, int (&OutRgb)[3])
+            {
+                const uint8_t* Px = Pixels.GetData() + Pixels.GetStride() * InY + InX * BytesPerPixel(Pixels.GetFormat());
+                OutRgb[0] = bBgra ? Px[2] : Px[0]; OutRgb[1] = Px[1]; OutRgb[2] = bBgra ? Px[0] : Px[2];
+            };
+            At(128, 128, OutCentre);
+            At(10, 30, OutCorner);
+            return true;
+        };
+        const auto Near = [](const int InValue, const int InWant, const int InSlack) { return std::abs(InValue - InWant) <= InSlack; };
+
+        int Centre[3], Corner[3], BaseCorner[3];
+        Expect(Capture(Centre, BaseCorner), "the quad is captured with no tone map");
+        std::printf("    none: centre %d, corner %d %d %d\n", Centre[0], BaseCorner[0], BaseCorner[1], BaseCorner[2]);
+        Expect(Near(Centre[0], 230, 3), "no ToneMapping: an HDR scene comes out clamped, as an 8-bit one did (0.9 is 230)");
+
+        Volume.GetComponent<PostProcessComponent>()->bEnabled = 1;
+        struct Case { const char* Line; int Want; const char* What; };
+        const Case Cases[] = {
+            { "Effect ToneMapping ToneMapper=ACES", 202, "ACES compresses: 0.9 comes out near 202" },
+            { "Effect ToneMapping Exposure=1 ToneMapper=ACES", 229, "an exposure of +1 doubles the light first: near 229" },
+            { "Effect ToneMapping ToneMapper=Reinhard", 176, "Reinhard, x / (1 + x): near 176" },
+        };
+        for(const Case& Each : Cases)
+        {
+            WriteStack(Each.Line);
+            const bool bCaptured = Capture(Centre, Corner);
+            std::printf("    %s: centre %d, corner %d %d %d\n", Each.Line, Centre[0], Corner[0], Corner[1], Corner[2]);
+            Expect(bCaptured && Near(Centre[0], Each.Want, 6), Each.What);
+            Expect(bCaptured && Near(Corner[0], BaseCorner[0], 3) && Near(Corner[1], BaseCorner[1], 3) && Near(Corner[2], BaseCorner[2], 3),
+                   "and the gradient background comes out of the tone map as authored");
+        }
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    PostProcessStackCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+}
+
+/*
+ * Image-based lighting on the GPU: in a room of six coloured walls, a mirror
+ * metal sphere with a Reflection Probe beside it shows the wall behind the
+ * camera at its centre; with the probe off it shows the sky instead; and a
+ * rough white sphere's top takes the green ceiling's light (its irradiance).
+ */
+static void TestImageBasedLightingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[image-based lighting on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[image-based lighting on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Facing = RenderView::MakePerspective(Viewport, Vector3(0, 0, -400), Vector3(0, 0, 1), 50.0f, 5.0f, 5000.0f);
+        Rend.SetViewOverride(&Facing);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Shape = [&World](const char* InName, const char* InMesh, const char* InMaterial, const Vector3& InAt, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InAt;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InMesh);
+            Render.SetMaterial(0, InMaterial);
+            Render.bCastShadows = 0;
+            Each.AddComponent(Render);
+            return Each;
+        };
+        struct Wall { const char* Name; Vector3 At; Vector3 Scale; int R, G, B; };
+        const Wall Walls[6] = {
+            { "WallPX", Vector3( 600, 0, 0), Vector3(10, 2000, 2000), 230, 30, 30 },
+            { "WallNX", Vector3(-600, 0, 0), Vector3(10, 2000, 2000), 30, 220, 220 },
+            { "WallPY", Vector3(0,  600, 0), Vector3(2000, 10, 2000), 30, 230, 30 },
+            { "WallNY", Vector3(0, -600, 0), Vector3(2000, 10, 2000), 220, 30, 220 },
+            { "WallPZ", Vector3(0, 0,  600), Vector3(2000, 2000, 10), 30, 30, 230 },
+            { "WallNZ", Vector3(0, 0, -600), Vector3(2000, 2000, 10), 230, 220, 30 },
+        };
+        for(const Wall& Each : Walls)
+        {
+            Shape(Each.Name, "Engine/Content/Meshes/Box.nmmesh", "Content/Materials/SolidColor.material.nmgraph", Each.At, Each.Scale)
+                .GetComponent<RenderComponent>()->SetMaterialParameter(0, "Color", float(Each.R) / 255.0f, float(Each.G) / 255.0f,
+                                                                       float(Each.B) / 255.0f, 1.0f);
+        }
+        const GameCore::Entity Ball = Shape("Ball", "Engine/Content/Meshes/Sphere.nmmesh", "Content/Materials/PBRParams.material.nmgraph",
+                                            Vector3(), Vector3(200, 200, 200));
+        const auto SetBall = [&Ball](const float InMetallic, const float InRoughness)
+        {
+            RenderComponent* Render = Ball.GetComponent<RenderComponent>();
+            Render->SetMaterialParameter(0, "Metallic", InMetallic, 0.0f, 0.0f, 0.0f);
+            Render->SetMaterialParameter(0, "Roughness", InRoughness, 0.0f, 0.0f, 0.0f);
+        };
+        SetBall(1.0f, 0.0f);
+
+        /* No sun: the ball is lit by images alone. */
+        const GameCore::Entity Sun = World.CreateEntity("Dark");
+        Sun.AddComponent(GameCore::TransformComponent());
+        DirectionalLightComponent Dark;
+        Dark.Intensity    = 0.0f;
+        Dark.bCastShadows = 0;
+        Sun.AddComponent(Dark);
+
+        const GameCore::Entity ProbeEntity = World.CreateEntity("Probe");
+        GameCore::TransformComponent ProbeAt;
+        ProbeAt.Position = Vector3(0, 0, -200);
+        ProbeEntity.AddComponent(ProbeAt);
+        ReflectionProbeComponent Probe;
+        Probe.Radius     = 3000.0f;
+        Probe.Resolution = 64;
+        ProbeEntity.AddComponent(Probe);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto At = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        /* The ball's screen centre and its top: 100 units up at depth 400, in a 50-degree view. */
+        const int TopY = 128 - int(100.0 / (400.0 * std::tan(25.0 * 3.14159265 / 180.0)) * 128.0) + 6;
+
+        EngineCore::Image Mirror;
+        int Centre[3] = {};
+        const bool bMirror = Capture(Mirror);
+        if(bMirror) { At(Mirror, 128, 128, Centre); }
+        std::printf("    probe on, mirror ball centre %d %d %d\n", Centre[0], Centre[1], Centre[2]);
+        Expect(bMirror && Centre[0] > 150 && Centre[1] > 140 && Centre[2] < 90,
+               "a mirror metal ball reflects, from its Reflection Probe, the yellow wall behind the camera");
+
+        ProbeEntity.GetComponent<ReflectionProbeComponent>()->bEnabled = 0;
+        EngineCore::Image SkyOnly;
+        int SkyCentre[3] = {};
+        const bool bSky = Capture(SkyOnly);
+        if(bSky) { At(SkyOnly, 128, 128, SkyCentre); }
+        std::printf("    probe off, mirror ball centre %d %d %d\n", SkyCentre[0], SkyCentre[1], SkyCentre[2]);
+        Expect(bSky && SkyCentre[2] >= SkyCentre[0] && SkyCentre[2] > SkyCentre[1] - 10 && SkyCentre[0] + SkyCentre[1] + SkyCentre[2] > 60,
+               "with the probe off it reflects the sky (the Sky Light's colours) instead");
+
+        ProbeEntity.GetComponent<ReflectionProbeComponent>()->bEnabled = 1;
+        SetBall(0.0f, 1.0f);
+        EngineCore::Image Matte;
+        int Top[3] = {};
+        const bool bMatte = Capture(Matte);
+        if(bMatte) { At(Matte, 128, TopY, Top); }
+        std::printf("    rough white ball, top (y %d) %d %d %d\n", TopY, Top[0], Top[1], Top[2]);
+        Expect(bMatte && Top[1] > Top[0] + 30 && Top[1] > Top[2] + 30,
+               "a rough white ball's top is lit green by the ceiling: the probe's diffuse irradiance, the right way up");
+
+        /* An HDRI: the room gone, a Sky Light's equirectangular RGBE8 environment, blue above the horizon
+         * and red below, as the background and in the mirror ball (the probe off). */
+        for(const char* Name : { "WallPX", "WallNX", "WallPY", "WallNY", "WallPZ", "WallNZ" })
+        {
+            World.DestroyEntity(World.FindEntityByName(Name));
+        }
+        ProbeEntity.GetComponent<ReflectionProbeComponent>()->bEnabled = 0;
+        SetBall(1.0f, 0.0f);
+        std::error_code Ignored;
+        std::filesystem::create_directories("SmokeScratch/Sky", Ignored);
+        {
+            TextureData Hdri;
+            Hdri.Format = ETexturePixelFormat::RGBE8;
+            Hdri.bSRGB  = false;
+            Hdri.Filter = ETextureFilter::Nearest;
+            Hdri.Pixels = Image(64, 32, EImageFormat::RGBA8);
+            for(int Y = 0; Y < 32; ++Y)
+            {
+                for(int X = 0; X < 64; ++X)
+                {
+                    const float Blue[3] = { 0.05f, 0.1f, 2.0f };
+                    const float Red[3]  = { 2.0f, 0.1f, 0.05f };
+                    EncodeRgbe(Y < 16 ? Blue : Red, Hdri.Pixels.GetScanline(Y) + X * 4);
+                }
+            }
+            Archive Writer = Archive::ForWriting();
+            SerializeTexture(Writer, Hdri);
+            SaveArchiveToFile("SmokeScratch/Sky/TwoTone.nmtexture", Writer);
+            TextureAssetCache::Invalidate("SmokeScratch/Sky/TwoTone.nmtexture");
+        }
+        const GameCore::Entity SkyEntity = World.CreateEntity("Sky");
+        SkyEntity.AddComponent(GameCore::TransformComponent());
+        SkyLightComponent SkyLight;
+        std::snprintf(SkyLight.Environment, sizeof(SkyLight.Environment), "%s", "SmokeScratch/Sky/TwoTone.nmtexture");
+        SkyEntity.AddComponent(SkyLight);
+
+        EngineCore::Image Hdr;
+        int Above[3] = {}, Below[3] = {}, BallTop[3] = {}, BallBottom[3] = {};
+        const bool bHdr = Capture(Hdr);
+        if(bHdr)
+        {
+            At(Hdr, 128, 8, Above);
+            At(Hdr, 128, 247, Below);
+            At(Hdr, 128, TopY, BallTop);
+            At(Hdr, 128, 255 - TopY, BallBottom);
+        }
+        std::printf("    HDRI: sky %d %d %d, ground %d %d %d; ball top %d %d %d, bottom %d %d %d\n", Above[0], Above[1], Above[2],
+                    Below[0], Below[1], Below[2], BallTop[0], BallTop[1], BallTop[2], BallBottom[0], BallBottom[1], BallBottom[2]);
+        Expect(bHdr && Above[2] > 200 && Above[0] < 120 && Below[0] > 200 && Below[2] < 120,
+               "a Sky Light's HDRI is drawn behind the scene: its upper half above the horizon, its lower below");
+        Expect(bHdr && BallTop[2] > BallTop[0] + 60 && BallBottom[0] > BallBottom[2] + 60,
+               "and the mirror ball reflects it: the sky in its top, the ground in its bottom");
+
+        if(const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP"); DumpDir && DumpDir[0])
+        {
+            for(const auto& [Pixels, Name] : { std::make_pair(&Mirror, "ibl-mirror"), std::make_pair(&SkyOnly, "ibl-sky"), std::make_pair(&Matte, "ibl-matte"),
+                                               std::make_pair(&Hdr, "ibl-hdri") })
+            {
+                std::ofstream File(std::string(DumpDir) + "/" + Name + ".ppm", std::ios::binary);
+                File << "P6\n256 256\n255\n";
+                for(int Y = 0; Y < 256; ++Y)
+                {
+                    for(int X = 0; X < 256; ++X)
+                    {
+                        int Rgb[3];
+                        At(*Pixels, X, Y, Rgb);
+                        const char Bytes[3] = { char(Rgb[0]), char(Rgb[1]), char(Rgb[2]) };
+                        File.write(Bytes, 3);
+                    }
+                }
+            }
+        }
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
+ * Scene capture on the GPU: an omnidirectional probe in a room of six
+ * coloured walls -- each face of its RenderTargetTex3D is its wall, and a
+ * Reflect sphere shows the wall each part of it faces -- and a planar mirror
+ * floor showing the box above it, upside down, where it should be.
+ */
+static void TestSceneCaptureOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[scene capture on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[scene capture on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+        const EngineCore::Size Viewport(256, 256);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Shape = [&World](const char* InName, const char* InMesh, const char* InMaterial, const Vector3& InAt, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InAt;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InMesh);
+            Render.SetMaterial(0, InMaterial);
+            Render.bCastShadows = 0;
+            Each.AddComponent(Render);
+            return Each;
+        };
+        const auto Paint = [](const GameCore::Entity& InEntity, const int InR, const int InG, const int InB)
+        {
+            InEntity.GetComponent<RenderComponent>()->SetMaterialParameter(0, "Color", float(InR) / 255.0f, float(InG) / 255.0f,
+                                                                            float(InB) / 255.0f, 1.0f);
+        };
+        uint64_t Frame = 1;
+        const auto Draw = [&](const RenderView& InView, const int InFrames)
+        {
+            Rend.SetViewOverride(&InView);
+            for(int Each = 0; Each < InFrames; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+        };
+        const auto Capture = [&](const RenderView& InView, EngineCore::Image& OutPixels)
+        {
+            Draw(InView, 2);
+            const uint64_t Request = Rend.RequestSceneCapture();
+            Draw(InView, 2);
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto At = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        const auto Is = [](const int (&InRgb)[3], const int InR, const int InG, const int InB)
+        {
+            return std::abs(InRgb[0] - InR) <= 12 && std::abs(InRgb[1] - InG) <= 12 && std::abs(InRgb[2] - InB) <= 12;
+        };
+
+        /* The room: +X red, -X cyan, +Y green, -Y magenta, +Z blue, -Z yellow. */
+        struct Wall { const char* Name; Vector3 At; Vector3 Scale; int R, G, B; };
+        const Wall Walls[6] = {
+            { "WallPX", Vector3( 600, 0, 0), Vector3(10, 2000, 2000), 230, 30, 30 },
+            { "WallNX", Vector3(-600, 0, 0), Vector3(10, 2000, 2000), 30, 220, 220 },
+            { "WallPY", Vector3(0,  600, 0), Vector3(2000, 10, 2000), 30, 230, 30 },
+            { "WallNY", Vector3(0, -600, 0), Vector3(2000, 10, 2000), 220, 30, 220 },
+            { "WallPZ", Vector3(0, 0,  600), Vector3(2000, 2000, 10), 30, 30, 230 },
+            { "WallNZ", Vector3(0, 0, -600), Vector3(2000, 2000, 10), 230, 220, 30 },
+        };
+        std::vector<GameCore::Entity> Room;
+        for(const Wall& Each : Walls)
+        {
+            Room.push_back(Shape(Each.Name, "Engine/Content/Meshes/Box.nmmesh", "Content/Materials/SolidColor.material.nmgraph", Each.At, Each.Scale));
+            Paint(Room.back(), Each.R, Each.G, Each.B);
+        }
+        const GameCore::Entity Ball = Shape("Ball", "Engine/Content/Meshes/Sphere.nmmesh", "Content/Materials/ReflectCube.material.nmgraph",
+                                            Vector3(), Vector3(200, 200, 200));
+        SceneCaptureProbeComponent Probe;
+        std::snprintf(Probe.Target, sizeof(Probe.Target), "%s", "Content/RenderTargets/TestCube.nmrt3d");
+        Probe.Mode       = SCM_Omnidirectional;
+        Probe.Resolution = 64;
+        Probe.NearClip   = 1.0f;
+        Probe.FarClip    = 3000.0f;
+        Ball.AddComponent(Probe);
+
+        const RenderView Facing = RenderView::MakePerspective(Viewport, Vector3(0, 0, -400), Vector3(0, 0, 1), 50.0f, 5.0f, 5000.0f);
+        Draw(Facing, 3);
+
+        /* The capture itself: each face's centre is its wall. */
+        const uint64_t Readback = Rend.RequestRenderTargetReadback("Content/RenderTargets/TestCube.nmrt3d");
+        Draw(Facing, 2);
+        EngineCore::Image Strip;
+        std::string Error;
+        const bool bStrip = Readback != 0 && Rend.TakeMaterialPreview(Readback, Strip, Error);
+        Expect(bStrip && Strip.GetWidth() == 64 * 6 && Strip.GetHeight() == 64, "the RenderTargetTex3D reads back as six 64-texel faces side by side");
+        if(bStrip)
+        {
+            bool bFaces = true;
+            for(int Face = 0; Face < 6; ++Face)
+            {
+                int Rgb[3];
+                At(Strip, Face * 64 + 32, 32, Rgb);
+                std::printf("    face %d centre %d %d %d\n", Face, Rgb[0], Rgb[1], Rgb[2]);
+                bFaces = bFaces && Is(Rgb, Walls[Face].R, Walls[Face].G, Walls[Face].B);
+            }
+            Expect(bFaces, "each face, +X -X +Y -Y +Z -Z, looks at its wall");
+        }
+
+        /* The sphere: centre reflects -Z (behind the camera); its sides their walls. */
+        EngineCore::Image Shot;
+        if(Capture(Facing, Shot))
+        {
+            int Centre[3], Right[3], Left[3], Top[3], Bottom[3];
+            At(Shot, 128, 128, Centre);
+            At(Shot, 186, 128, Right);
+            At(Shot, 70, 128, Left);
+            At(Shot, 128, 70, Top);
+            At(Shot, 128, 186, Bottom);
+            std::printf("    sphere centre %d %d %d, right %d %d %d, left %d %d %d, top %d %d %d, bottom %d %d %d\n", Centre[0], Centre[1],
+                        Centre[2], Right[0], Right[1], Right[2], Left[0], Left[1], Left[2], Top[0], Top[1], Top[2], Bottom[0], Bottom[1], Bottom[2]);
+            Expect(Is(Centre, 230, 220, 30), "the sphere's centre reflects the wall behind the camera");
+            Expect(Is(Right, 230, 30, 30) && Is(Left, 30, 220, 220), "its right side the +X wall, its left the -X");
+            Expect(Is(Top, 30, 230, 30) && Is(Bottom, 220, 30, 220), "its top the ceiling, its bottom the floor");
+        }
+
+        /* Capture Shadows: off (the default), a capture prepares no shadow
+         * maps, so a lit, shadowed room costs its faces nothing more. */
+        {
+            GameCore::Entity Sun = World.CreateEntity("CaptureSun");
+            GameCore::TransformComponent SunAt;
+            SunAt.Rotation = Vector3(50, 35, 0);
+            Sun.AddComponent(SunAt);
+            DirectionalLightComponent SunLight;
+            SunLight.ShadowTechnique = LST_Standard;
+            Sun.AddComponent(SunLight);
+            /* A lit caster (the Unlit walls cast nothing), off every face's axis. */
+            const GameCore::Entity Caster = Shape("CaptureCaster", "Engine/Content/Meshes/Box.nmmesh",
+                                                  "Engine/Content/Materials/DefaultLit.material.nmgraph", Vector3(300, -450, 300), Vector3(60, 60, 60));
+            Caster.GetComponent<RenderComponent>()->bCastShadows = 1;
+
+            const auto DrawsPerFrame = [&]()
+            {
+                Draw(Facing, 2);
+                RenderStats Before;
+                Rend.GetStats(Before);
+                Draw(Facing, 4);
+                RenderStats After;
+                Rend.GetStats(After);
+                return double(After.DrawCalls - Before.DrawCalls) / double(std::max<uint64_t>(After.FramesRendered - Before.FramesRendered, 1));
+            };
+            Expect(Ball.GetComponent<SceneCaptureProbeComponent>()->bCaptureShadows == 0, "a probe captures without shadows by default");
+            const double Without = DrawsPerFrame();
+            Ball.GetComponent<SceneCaptureProbeComponent>()->bCaptureShadows = 1;
+            const double With = DrawsPerFrame();
+            Ball.GetComponent<SceneCaptureProbeComponent>()->bCaptureShadows = 0;
+            std::printf("    capture shadows: %.0f draws a frame off, %.0f on\n", Without, With);
+            Expect(With >= Without + 6.0, "Capture Shadows on redraws the caster into each face's shadow map; off skips it");
+
+            const uint64_t Again = Rend.RequestRenderTargetReadback("Content/RenderTargets/TestCube.nmrt3d");
+            Draw(Facing, 2);
+            EngineCore::Image Unshadowed;
+            std::string AgainError;
+            int Centre[3] = {};
+            const bool bRead = Again != 0 && Rend.TakeMaterialPreview(Again, Unshadowed, AgainError);
+            if(bRead) { At(Unshadowed, 32, 32, Centre); }
+            Expect(bRead && Is(Centre, 230, 30, 30), "and the faces still capture their walls (+X red) without shadow maps");
+
+            World.DestroyEntity(Caster.GetID());
+            World.DestroyEntity(Sun.GetID());
+        }
+
+        /* A planar mirror: the room gone, a red box above a mirror floor. */
+        for(const GameCore::Entity& Each : Room) { World.DestroyEntity(Each); }
+        World.DestroyEntity(Ball);
+        const GameCore::Entity Floor = Shape("Mirror", "Engine/Content/Meshes/Plane.nmmesh", "Content/Materials/ReflectMirror.material.nmgraph",
+                                             Vector3(), Vector3(800, 1, 800));
+        SceneCaptureProbeComponent Mirror;
+        std::snprintf(Mirror.Target, sizeof(Mirror.Target), "%s", "Content/RenderTargets/TestMirror.nmrt2d");
+        Mirror.Mode    = SCM_PlanarMirror;
+        Mirror.ExtentX = 400.0f;
+        Mirror.ExtentZ = 400.0f;
+        Floor.AddComponent(Mirror);
+        const GameCore::Entity Box = Shape("Box", "Engine/Content/Meshes/Box.nmmesh", "Content/Materials/SolidColor.material.nmgraph",
+                                           Vector3(160, 120, 150), Vector3(80, 80, 80));
+        Paint(Box, 230, 30, 30);   // off centre: a left-right mix-up would put its reflection on the other side
+        /* A slab under the mirror: between the reflected camera and the box, kept out by the oblique near plane. */
+        const GameCore::Entity Under = Shape("Under", "Engine/Content/Meshes/Box.nmmesh", "Content/Materials/SolidColor.material.nmgraph",
+                                             Vector3(0, -40, 0), Vector3(900, 20, 900));
+        Paint(Under, 30, 230, 30);
+
+        const Vector3 Eye(0, 350, -450);
+        const RenderView Above = RenderView::MakePerspective(Viewport, Eye, Vector3(0, -350, 600), 60.0f, 5.0f, 5000.0f);
+        const auto PixelOf = [&Above](const Vector3& InWorld, int& OutX, int& OutY)
+        {
+            const EngineCore::Vector4 Clip = (Above.Projection * Above.View) * EngineCore::Vector4(float(InWorld.GetX()), float(InWorld.GetY()),
+                                                                                                  float(InWorld.GetZ()), 1.0f);
+            OutX = int((Clip.GetX() / Clip.GetW() * 0.5f + 0.5f) * 256.0f);
+            OutY = int((1.0f - (Clip.GetY() / Clip.GetW() * 0.5f + 0.5f)) * 256.0f);
+        };
+        EngineCore::Image Pool;
+        if(Capture(Above, Pool))
+        {
+            int RX, RY, EX, EY, BX, BY;
+            PixelOf(Vector3(160, -120, 150), RX, RY);  // the box's reflection, under the floor
+            PixelOf(Vector3(-160, -120, 150), EX, EY); // its mirror image across the screen: nothing there
+            PixelOf(Vector3(160, 120, 150), BX, BY);   // the box itself
+            int Reflection[3], Empty[3], Itself[3];
+            At(Pool, std::clamp(RX, 0, 255), std::clamp(RY, 0, 255), Reflection);
+            At(Pool, std::clamp(EX, 0, 255), std::clamp(EY, 0, 255), Empty);
+            At(Pool, std::clamp(BX, 0, 255), std::clamp(BY, 0, 255), Itself);
+            std::printf("    mirror: box %d %d %d at %d,%d; reflection %d %d %d at %d,%d; empty %d %d %d\n", Itself[0], Itself[1], Itself[2],
+                        BX, BY, Reflection[0], Reflection[1], Reflection[2], RX, RY, Empty[0], Empty[1], Empty[2]);
+            Expect(Is(Itself, 230, 30, 30), "the box draws");
+            Expect(Is(Reflection, 230, 30, 30), "and the mirror floor shows it below itself, where its reflection belongs, past the slab under it");
+            Expect(!Is(Empty, 230, 30, 30), "on its own side, not the other");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
+ * Bloom past the 8-bit scene colour: an Opaque Lit quad with emissive 50
+ * (Sandbox's HotGlow) clips to white in the scene, but its G-buffer keeps the
+ * rest (EncodeGBufferEmissive), and Bloom spreads it -- far wider than the
+ * 0-1 a clipped white could give.
+ */
+static void TestBloomHdrOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[bloom past 1 on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[bloom past 1 on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    std::error_code Ignored;
+    std::filesystem::create_directories("SmokeScratch/PostStacks", Ignored);
+    const std::string Stack = "SmokeScratch/PostStacks/HdrBloom.pp.nmgraph";
+    {
+        std::ofstream Out(Stack);
+        Out << "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"PostProcess\">\n  <gen_code>\n"
+               "    <Output Extension=\".ppstack\"><![CDATA[Effect Bloom Threshold=0.9 Intensity=0.5 Radius=0.75 Levels=5 Tint=1,1,1\n"
+               "]]></Output>\n  </gen_code>\n</NodeGraph>\n";
+    }
+    PostProcessStackCache::Invalidate(Stack);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Above = RenderView::MakePerspective(Viewport, Vector3(0.0, 800.0, 0.0), Vector3(0.0, -1.0, 0.001),
+                                                             50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&Above);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        /* A quad 60 units across, about 28 pixels, in the middle of the view. */
+        const GameCore::Entity Quad = World.CreateEntity("HotGlow");
+        GameCore::TransformComponent Transform;
+        Transform.Scale = Vector3(60.0, 1.0, 60.0);
+        Quad.AddComponent(Transform);
+        RenderComponent Render;
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", "Engine/Content/Meshes/Plane.nmmesh");
+        std::snprintf(Render.Materials[0], sizeof(Render.Materials[0]), "%s", "Content/Materials/HotGlow.material.nmgraph");
+        Quad.AddComponent(Render);
+
+        const GameCore::Entity Volume = World.CreateEntity("Volume");
+        Volume.AddComponent(GameCore::TransformComponent());
+        PostProcessComponent Post;
+        std::snprintf(Post.Stack, sizeof(Post.Stack), "%s", Stack.c_str());
+        Post.bEnabled = 0;
+        Volume.AddComponent(Post);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 2; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Luma = [](const EngineCore::Image& InPixels, const int InX, const int InY)
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            return int(Px[0]) + int(Px[1]) + int(Px[2]);
+        };
+        /* The mean brightening, as R + G + B, from InFrom to InTo pixels out from the centre. */
+        const auto Ring = [&](const EngineCore::Image& InOn, const EngineCore::Image& InOff, const int InFrom, const int InTo)
+        {
+            double Sum = 0.0;
+            int    Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                for(int X = 0; X < 256; ++X)
+                {
+                    const int Distance = std::max(std::abs(X - 128), std::abs(Y - 128));
+                    if(Distance < InFrom || Distance >= InTo) { continue; }
+                    Sum += Luma(InOn, X, Y) - Luma(InOff, X, Y);
+                    ++Count;
+                }
+            }
+            return Count ? Sum / Count : 0.0;
+        };
+
+        EngineCore::Image Off, On;
+        const bool bOff = Capture(Off);
+        Volume.GetComponent<PostProcessComponent>()->bEnabled = 1;
+        const bool bOn = bOff && Capture(On);
+        Expect(bOff && bOn, "the glowing quad is captured with and without Bloom");
+        if(bOff && bOn)
+        {
+            if(const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP"); DumpDir && DumpDir[0])
+            {
+                for(const auto& [Pixels, Name] : { std::make_pair(&Off, "bloom-hdr-off"), std::make_pair(&On, "bloom-hdr-on") })
+                {
+                    std::ofstream File(std::string(DumpDir) + "/" + Name + ".ppm", std::ios::binary);
+                    File << "P6\n256 256\n255\n";
+                    const bool bBgra = Pixels->GetFormat() == EImageFormat::BGRA8;
+                    for(int Y = 0; Y < 256; ++Y)
+                    {
+                        for(int X = 0; X < 256; ++X)
+                        {
+                            const uint8_t* Px = Pixels->GetData() + Pixels->GetStride() * Y + X * BytesPerPixel(Pixels->GetFormat());
+                            const char Bytes[3] = { char(bBgra ? Px[2] : Px[0]), char(Px[1]), char(bBgra ? Px[0] : Px[2]) };
+                            File.write(Bytes, 3);
+                        }
+                    }
+                }
+            }
+            const double Near = Ring(On, Off, 20, 30);
+            const double Far  = Ring(On, Off, 40, 60);
+            std::printf("    centre %d; glow 20-30 px out +%.1f, 40-60 px out +%.1f\n", Luma(Off, 128, 128), Near, Far);
+            Expect(Luma(Off, 128, 128) >= 760, "emissive 50 clips to white in the scene colour");
+            Expect(Near > 120.0 && Far > 20.0, "Bloom spreads the emissive the scene clipped, well past the quad");
+        }
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    PostProcessStackCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
+/*
+ * PostProcessStack.h: a stack's text, volume weights, blending, and the cache
+ * reading a graph's <gen_code>. Null backend.
+ */
+static void TestPostProcessStack()
+{
+    std::printf("[post process stack]\n");
+
+    const char* Text =
+        "# Post process stack Arch\n"
+        "Effect DepthOfField FocusDistance=300 FocusRange=100 MaxBlur=12 NearBlur=false\n"
+        "Effect Bloom Threshold=0.7 Intensity=2 Radius=0.5 Levels=4 Tint=1,0.5,0.25\n"
+        "Effect Antialiasing EdgeThreshold=0.2 Method=FXAA Quality=High\n"
+        "Material Stage=Before Order=1 Path=Content/Materials/Wave.material.nmgraph\n"
+        "Effect Future Unknown=1\n";
+    PostProcessSettings Stack;
+    std::string Error;
+    Expect(ParsePostProcessStack(Text, Stack, Error), "a stack's text parses (an unknown effect is ignored)");
+    Expect(Stack.bDepthOfField && Stack.DofFocusDistance == 300.0f && Stack.DofMaxBlur == 12.0f && !Stack.bDofNearBlur,
+           "Depth of Field's settings");
+    Expect(Stack.bBloom && Stack.BloomIntensity == 2.0f && Stack.BloomLevels == 4.0f && Stack.BloomTint[1] == 0.5f && Stack.BloomTint[2] == 0.25f,
+           "Bloom's settings, the tint a list");
+    Expect(Stack.bAntialiasing && Stack.AaQuality == 2 && !Stack.bMotionBlur, "Antialiasing's; no Motion Blur node, no motion blur");
+    Expect(Stack.MaterialCount == 1 && Stack.Materials[0].Stage == PPS_BeforeEffects && Stack.Materials[0].Order == 1.0f
+           && std::strcmp(Stack.Materials[0].Path, "Content/Materials/Wave.material.nmgraph") == 0, "a material pass, its path the rest of the line");
+    PostProcessSettings Occlusion;
+    Expect(ParsePostProcessStack("Effect AmbientOcclusion Intensity=2 Radius=40 Samples=8 Power=1 Blur=false\n", Occlusion, Error)
+           && Occlusion.bAmbientOcclusion && Occlusion.AoIntensity == 2.0f && Occlusion.AoRadius == 40.0f && Occlusion.AoSamples == 8.0f
+           && Occlusion.AoPower == 1.0f && !Occlusion.bAoBlur && !Occlusion.IsEmpty(), "Ambient Occlusion's settings");
+    PostProcessSettings OcclusionHalf;
+    BlendPostProcess(OcclusionHalf, Occlusion, 0.25f);
+    Expect(OcclusionHalf.bAmbientOcclusion && std::abs(OcclusionHalf.AoIntensity - 0.5f) < 1e-5f && OcclusionHalf.AoRadius == 40.0f
+           && !OcclusionHalf.bAoBlur, "from off, its intensity scales with the weight; its other settings are the stack's");
+    PostProcessSettings Broken;
+    Expect(!ParsePostProcessStack("Effect Bloom Intensity=lots\n", Broken, Error) && Error.find("line 1") != std::string::npos,
+           "a bad number names its line");
+
+    Expect(GetPostProcessVolumeWeight(0.0f, 0.0f) == 1.0f && GetPostProcessVolumeWeight(0.0f, 100.0f) == 1.0f, "inside a volume: full weight");
+    Expect(GetPostProcessVolumeWeight(50.0f, 100.0f) == 0.5f && GetPostProcessVolumeWeight(150.0f, 100.0f) == 0.0f,
+           "outside: fading over the blend distance");
+    Expect(GetPostProcessVolumeWeight(1.0f, 0.0f) == 0.0f, "no blend distance: a hard edge");
+
+    /* Half way in from nothing: strengths half, settings the stack's, switches off. */
+    PostProcessSettings Half;
+    BlendPostProcess(Half, Stack, 0.4f);
+    Expect(Half.bBloom && std::abs(Half.BloomIntensity - 0.8f) < 1e-5f && Half.BloomThreshold == 0.7f,
+           "from off, Bloom's intensity scales with the weight; its threshold is the stack's");
+    Expect(Half.bDepthOfField && std::abs(Half.DofMaxBlur - 4.8f) < 1e-5f, "and Depth of Field's blur");
+    Expect(!Half.bAntialiasing && Half.MaterialCount == 0, "under half weight, no antialiasing and no material passes");
+
+    /* A second, higher-priority volume over a full first: numbers blend toward it. */
+    PostProcessSettings Base;
+    BlendPostProcess(Base, Stack, 1.0f);
+    PostProcessSettings Over;
+    ParsePostProcessStack("Effect Bloom Threshold=0.9 Intensity=0 Radius=0.5 Levels=4 Tint=1,1,1\nEffect Antialiasing Quality=Low\n", Over, Error);
+    BlendPostProcess(Base, Over, 0.75f);
+    Expect(std::abs(Base.BloomIntensity - 0.5f) < 1e-5f && std::abs(Base.BloomThreshold - 0.85f) < 1e-5f,
+           "an overlapping volume blends each number by its weight");
+    Expect(Base.AaQuality == 0 && Base.bDepthOfField && Base.DofMaxBlur == 12.0f && Base.MaterialCount == 1,
+           "switches go to it past half weight; what it leaves out stays");
+
+    /* The cache: a graph file's <gen_code>, and a bare material path. */
+    FilesystemProvider  Disk;
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Disk);
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimblePostStack";
+    std::error_code Ignored;
+    std::filesystem::create_directories(Root, Ignored);
+    const std::string File = (Root / "Test.pp.nmgraph").string();
+    {
+        std::ofstream Out(File);
+        Out << "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"PostProcess\">\n  <gen_code>\n"
+               "    <Output Extension=\".ppstack\"><![CDATA[Effect Bloom Intensity=3\n]]></Output>\n  </gen_code>\n</NodeGraph>\n";
+    }
+    PostProcessStackCache::Invalidate(File);
+    const std::shared_ptr<const PostProcessSettings> Cached = PostProcessStackCache::Find(File);
+    Expect(Cached && Cached->bBloom && Cached->BloomIntensity == 3.0f, "a stack graph's compiled stack is read from its <gen_code>");
+    const std::shared_ptr<const PostProcessSettings> Single = PostProcessStackCache::Find("Content/Materials/Negative.material.nmgraph");
+    Expect(Single && Single->MaterialCount == 1 && Single->Materials[0].Stage == PPS_AfterEffects && !Single->bBloom,
+           "a material graph path is a stack of that one material, after the effects");
+    Expect(PostProcessStackCache::Find("Nope/Missing.pp.nmgraph") == nullptr, "a missing stack is null");
+    PostProcessStackCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+    std::filesystem::remove_all(Root, Ignored);
+}
+
+/*
+ * ShadowSetup.h: where each shadow map looks from, and its atlas tile. Pure
+ * math -- no GPU.
+ */
+static void TestShadowSetup()
+{
+    std::printf("[shadow setup]\n");
+    using EngineCore::Vector3;
+    using EngineCore::Vector4;
+
+    float Splits[RENDER_CASCADE_MAX] = {};
+    ComputeCascadeSplits(10.0f, 4000.0f, 4, 0.75f, Splits);
+    Expect(Splits[0] > 10.0f && Splits[0] < Splits[1] && Splits[1] < Splits[2] && Splits[2] < Splits[3] && Splits[3] == 4000.0f,
+           "cascade splits rise and end at the far edge");
+    float Uniform[RENDER_CASCADE_MAX] = {};
+    ComputeCascadeSplits(0.0f, 400.0f, 4, 0.0f, Uniform);
+    Expect(std::abs(Uniform[0] - 100.75f) < 0.5f && std::abs(Uniform[1] - 200.5f) < 0.5f, "lambda 0 splits uniformly");
+
+    const RenderView Camera = RenderView::MakePerspective(EngineCore::Size(1280, 720), Vector3(0.0, -300.0, -800.0),
+                                                          Vector3(0.0, 0.3, 1.0), 60.0f, 1.0f, 20000.0f);
+    RenderLighting Lighting;
+    Lighting.LightDirection       = Vector3(0.3, 1.0, 0.2);
+    Lighting.bLightCastShadows    = 1;
+    Lighting.LightShadowTechnique = LST_Cascaded;
+    Lighting.LightCascadeCount    = 4;
+    Lighting.LightShadowDistance  = 3000.0f;
+
+    ShadowFrame Frame;
+    BuildShadowFrame(Lighting, Camera, Frame);
+    Expect(Frame.ViewCount == 0 && Frame.AtlasSize == 0, "no shadow views while [Shadows] is disabled (a hand-built RenderLighting's default)");
+
+    Lighting.Shadows.bEnabled   = 1;
+    Lighting.Shadows.Resolution = 2048;
+
+    /* A spot and a point light that cast, and one point light that does not. */
+    RenderLocalLight Spot;
+    Spot.Type = RLL_Spot; Spot.Position = Vector3(0.0, -400.0, 0.0); Spot.Direction = Vector3(0.0, 1.0, 0.0);
+    Spot.Range = 800.0f; Spot.OuterConeAngle = 30.0f; Spot.bCastShadows = 1;
+    RenderLocalLight Point;
+    Point.Type = RLL_Point; Point.Position = Vector3(300.0, -200.0, 100.0); Point.Range = 500.0f; Point.bCastShadows = 1;
+    RenderLocalLight Plain = Point;
+    Plain.bCastShadows = 0;
+    Lighting.Locals[0] = Spot; Lighting.Locals[1] = Point; Lighting.Locals[2] = Plain;
+    Lighting.LocalCount = 3;
+
+    BuildShadowFrame(Lighting, Camera, Frame);
+    Expect(Frame.AtlasSize == 2048 && Frame.DirectionalFirstView == 0 && Frame.CascadeCount == 4,
+           "a cascaded sun takes the first four views");
+    Expect(Frame.LocalFirstView[0] == 4 && Frame.LocalFirstView[1] == 5 && Frame.LocalFirstView[2] == -1 && Frame.ViewCount == 11,
+           "the spot takes one view, the point light six, the plain light none");
+
+    bool bCascadeTiles = true;
+    for(uint32_t Index = 0; Index < 4; ++Index)
+    {
+        const ShadowView& View = Frame.Views[Index];
+        bCascadeTiles &= View.Atlas == SA_Directional && View.TileSize == 1024 && View.TileX == (Index % 2) * 1024 && View.TileY == (Index / 2) * 1024;
+    }
+    Expect(bCascadeTiles, "the cascades fill the directional atlas's quarters");
+
+    /* Local tiles: inside the atlas, and no two overlapping. */
+    bool bInside = true, bApart = true;
+    for(uint32_t A = 4; A < Frame.ViewCount; ++A)
+    {
+        const ShadowView& View = Frame.Views[A];
+        bInside &= View.Atlas == SA_Local && View.TileX + View.TileSize <= 2048 && View.TileY + View.TileSize <= 2048;
+        for(uint32_t B = A + 1; B < Frame.ViewCount; ++B)
+        {
+            const ShadowView& Other = Frame.Views[B];
+            bApart &= View.TileX + View.TileSize <= Other.TileX || Other.TileX + Other.TileSize <= View.TileX
+                   || View.TileY + View.TileSize <= Other.TileY || Other.TileY + Other.TileSize <= View.TileY;
+        }
+    }
+    Expect(bInside && bApart, "local tiles fit the atlas and do not overlap");
+
+    /* A point in front of each cascade's slice lands inside its own tile, at a depth in [0, 1]. */
+    const auto ToAtlas = [](const ShadowView& InView, const Vector3& InWorld, double& OutU, double& OutV, double& OutDepth)
+    {
+        const Vector4 Clip = InView.WorldToAtlas * Vector4(InWorld.GetX(), InWorld.GetY(), InWorld.GetZ(), 1.0);
+        OutU = Clip.GetX() / Clip.GetW(); OutV = Clip.GetY() / Clip.GetW(); OutDepth = Clip.GetZ() / Clip.GetW();
+    };
+    bool bInTile = true;
+    double SliceNear = 1.0;
+    for(uint32_t Index = 0; Index < 4; ++Index)
+    {
+        const double Mid = (SliceNear + Frame.CascadeSplits[Index]) * 0.5;
+        SliceNear = Frame.CascadeSplits[Index];
+        const Vector3 Forward = Vector3(0.0, 0.3, 1.0).GetNormalize();
+        const Vector3 Point = Camera.Origin + Forward * Mid;
+        double U, V, Depth;
+        ToAtlas(Frame.Views[Index], Point, U, V, Depth);
+        const ShadowView& View = Frame.Views[Index];
+        bInTile &= U * 2048.0 >= View.TileX && U * 2048.0 <= View.TileX + View.TileSize
+                && V * 2048.0 >= View.TileY && V * 2048.0 <= View.TileY + View.TileSize && Depth > 0.0 && Depth < 1.0;
+    }
+    Expect(bInTile, "each cascade maps a point of its slice into its own tile, depth inside [0, 1]");
+
+    /* The spot's view: straight below the light is its tile's centre. */
+    double U, V, Depth;
+    ToAtlas(Frame.Views[4], Vector3(0.0, 0.0, 0.0), U, V, Depth);
+    const ShadowView& SpotView = Frame.Views[4];
+    Expect(std::abs(U * 2048.0 - (SpotView.TileX + SpotView.TileSize * 0.5)) < 1.0
+           && std::abs(V * 2048.0 - (SpotView.TileY + SpotView.TileSize * 0.5)) < 1.0 && Depth > 0.0 && Depth < 1.0,
+           "a spot light's axis lands at its tile's centre");
+
+    /* The point light's faces: each axis direction lands in its own face. */
+    bool bFaces = true;
+    const Vector3 Axes[6] = { Vector3(1, 0, 0), Vector3(-1, 0, 0), Vector3(0, 1, 0), Vector3(0, -1, 0), Vector3(0, 0, 1), Vector3(0, 0, -1) };
+    for(int Face = 0; Face < 6; ++Face)
+    {
+        const ShadowView& View = Frame.Views[5 + Face];
+        ToAtlas(View, Point.Position + Axes[Face] * 200.0, U, V, Depth);
+        bFaces &= std::abs(U * 2048.0 - (View.TileX + View.TileSize * 0.5)) < 1.0
+               && std::abs(V * 2048.0 - (View.TileY + View.TileSize * 0.5)) < 1.0;
+    }
+    Expect(bFaces, "a point light's six faces look along +X -X +Y -Y +Z -Z, in that order");
+
+    /* Caster bounds: the spot's reaches the floor below it. */
+    Expect(SpotView.WorldBounds.Contains(Vector3(0.0, 300.0, 0.0)) && !SpotView.WorldBounds.Contains(Vector3(0.0, -1000.0, 0.0)),
+           "a spot view's bounds hold what it lights, not what is behind it");
+
+    /* MaxShadowedLights 1: only the first casting light gets views. */
+    Lighting.Shadows.MaxShadowedLights = 1;
+    BuildShadowFrame(Lighting, Camera, Frame);
+    Expect(Frame.LocalFirstView[0] == 4 && Frame.LocalFirstView[1] == -1 && Frame.ViewCount == 5, "MaxShadowedLights caps the casting lights");
+
+    /* A plain (Standard) sun takes the whole atlas. */
+    Lighting.LightShadowTechnique = LST_Standard;
+    BuildShadowFrame(Lighting, Camera, Frame);
+    Expect(Frame.CascadeCount == 1 && Frame.Views[0].TileSize == 2048, "a Standard sun is one view over the whole atlas");
+
+    /* An orthographic camera (the 2D view) still gets a sun view. */
+    const RenderView Flat = RenderView::MakeOrthographic(EngineCore::Size(1280, 720), Vector3(0.0, 0.0, 0.0), -1.0f, 1000.0f);
+    BuildShadowFrame(Lighting, Flat, Frame);
+    Expect(Frame.DirectionalFirstView == 0 && Frame.Views[0].WorldBounds.Contains(Vector3(640.0, 360.0, 0.0)),
+           "an orthographic camera's view is covered too");
+}
+
+/*
+ * WorldBridge's light gathering and the perspective camera, through a
+ * Renderer on the Null backend: nothing to look at, but what reaches the
+ * render thread is checked by a proxy that records the scene's view.
+ */
+static void TestLightComponents()
+{
+    std::printf("[light components]\n");
+    using EngineCore::Vector3;
+
+    Expect(std::abs(LightForward(Vector3(0.0, 0.0, 0.0)).GetZ() - 1.0) < 1e-9, "a light with no rotation shines along +Z");
+    const Vector3 Down = LightForward(Vector3(90.0, 0.0, 0.0));
+    Expect(std::abs(Down.GetY() + 1.0) < 1e-6, "pitch 90 shines down (-Y; +Y is up)");
+    const Vector3 Right = LightForward(Vector3(0.0, 90.0, 0.0));
+    Expect(std::abs(Right.GetX() - 1.0) < 1e-6, "yaw 90 shines along +X, as the editor camera turns");
+
+    size_t Count = 0;
+    Expect(GameCore::FindComponentScript(PointLightComponent::StaticType().ID, Count) && Count == 10,
+           "Point Light exposes its light and shadow fields to Lua");
+    Expect(GameCore::FindComponentScript(SpotLightComponent::StaticType().ID, Count) && Count == 12,
+           "Spot Light exposes its light and shadow fields to Lua");
 }
 
 /*
@@ -1534,7 +3752,7 @@ static void TestRenderStages()
     const auto WriteMaterial = [&](const char* InName, const char* InDomain, const char* InShading, const char* InExtra)
     {
         std::ofstream(Root / "Materials" / (std::string(InName) + ".material"))
-            << "NimbleMaterial 2\nDomain " << InDomain << "\nShading " << InShading << "\nBlockSize 32\n" << InExtra;
+            << "NimbleMaterial 3\nDomain " << InDomain << "\nShading " << InShading << "\nBlockSize 160\n" << InExtra;
     };
     WriteMaterial("LitOpaque",   "Opaque",      "Lit",   "");
     WriteMaterial("UnlitMasked", "Masked",      "Unlit", "");
@@ -1544,7 +3762,7 @@ static void TestRenderStages()
     WriteMaterial("Post",        "PostProcess", "Unlit", "");
     WriteMaterial("Reach",       "Opaque",      "Lit",   "MaxOffset 5\nHasOffset 1\n");
     std::filesystem::create_directories(Root / "Props", Ignored);   // a graph in another folder: Props/Crate.material.nmgraph
-    std::ofstream(Root / "Props" / "Crate.material") << "NimbleMaterial 2\nDomain Opaque\nShading Lit\nBlockSize 32\n";
+    std::ofstream(Root / "Props" / "Crate.material") << "NimbleMaterial 3\nDomain Opaque\nShading Lit\nBlockSize 160\n";
 
     FilesystemProvider Provider(Root.generic_string());
     IFileProvider* PreviousProvider = GetFileProvider();
@@ -1595,7 +3813,7 @@ static void TestRenderStages()
         AddPrimitive("Sections",   Inside, "Content/Square.nmmesh", { "", "" });           // Glow: Translucent Unlit; Back: Unlit
         AddPrimitive("BadSlot",    Inside, "Content/Square.nmmesh", { "Nope", "" });       // falls back to Glow; Back: Unlit
         PostProcessComponent Post;
-        std::strcpy(Post.Material, "Materials/Post.material.nmgraph");
+        std::strcpy(Post.Stack, "Materials/Post.material.nmgraph");   // a material path: a one-material stack
         World.CreateEntity("Post").AddComponent(Post);
         Rend.BindWorld(World);
 
@@ -1678,6 +3896,8 @@ static void TestEngineMeshes()
         { "Engine/Content/Meshes/Box.nmmesh",    24,  12,  -0.5f, 0.5f },
         { "Engine/Content/Meshes/Sphere.nmmesh", 561, 960, -0.5f, 0.5f },
         { "Engine/Content/Meshes/Plane.nmmesh",  289, 512,  0.0f, 0.0f },
+        { "Engine/Content/Meshes/Cylinder.nmmesh", 132, 128, -0.5f, 0.5f },
+        { "Engine/Content/Meshes/Capsule.nmmesh",  594, 1024, -1.0f, 1.0f },
     };
     for(const Expected& Each : Meshes)
     {
@@ -1720,6 +3940,10 @@ static void TestEngineMeshes()
             bFacing &= Area < 1e-12f || Face[0] * Normal[0] + Face[1] * Normal[1] + Face[2] * Normal[2] > 0.0f;
         }
         Expect(bUnitNormals && bUVsInRange, (std::string(Each.Path) + " has unit normals and 0-1 UVs").c_str());
+
+        bool bUV1InRange = Mesh.UV1.size() == size_t(Mesh.GetVertexCount()) * 2;
+        for(size_t At = 0; bUV1InRange && At < Mesh.UV1.size(); ++At) { bUV1InRange &= Mesh.UV1[At] >= 0.0f && Mesh.UV1[At] <= 1.0f; }
+        Expect(bUV1InRange, (std::string(Each.Path) + " has lightmap UVs (UV1) in 0-1").c_str());
         Expect(bFacing, (std::string(Each.Path) + " winds every triangle to face its normals").c_str());
     }
 
@@ -1830,13 +4054,30 @@ int main()
     }
 
     TestRendererWithWorld();
+    TestStatUnit();
+    TestStaticDrawLists();
+    TestShadowSetup();
+    TestLightComponents();
+    TestPostProcessStack();
 #if WITH_EDITOR
     TestMultipleScenes();
     TestDebugLines();
     TestMaterials();
     TestMaterialsOnGpu();
+    TestShadowsOnGpu();
+    TestPostProcessOnGpu();
+    TestBloomHdrOnGpu();
+    TestStatFrameOnGpu();
+    TestStaticDrawListsOnGpu();
+    TestClearGradientOnGpu();
+    TestSceneCaptureOnGpu();
+    TestToneMappingOnGpu();
+    TestImageBasedLightingOnGpu();
     TestMeshAssets();
     TestTextureAssets();
+    TestTextureMips();
+    TestToneMappingSettings();
+    TestImageBasedLightingData();
     TestMeshDrawing();
     TestEngineMeshes();
     TestRenderStages();

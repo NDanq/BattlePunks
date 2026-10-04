@@ -174,6 +174,11 @@ namespace
         pugi::xml_node Root = Doc.append_child("Entity");
         Root.append_attribute("Guid") = GuidString.c_str();
         Root.append_attribute("Name") = Handle.GetName();
+        /* Only when not dynamic, so a dynamic entity's file reads as it always has. */
+        if(Handle.GetMobility() != EMobility::Dynamic)
+        {
+            Root.append_attribute("Mobility") = MobilityName(Handle.GetMobility());
+        }
         /* Only when set, so a root entity's file reads as it always has. */
         if(const EntityID Parent = Handle.GetParent(); Parent.IsSet())
         {
@@ -321,6 +326,10 @@ namespace
             {
                 Element.append_attribute("Name") = Member.GetName();
             }
+            if(Template.Mobility != Member.GetMobility())
+            {
+                Element.append_attribute("Mobility") = MobilityName(Member.GetMobility());
+            }
 
             /* Every type either side has, by name. */
             std::vector<std::string> Names;
@@ -396,7 +405,7 @@ namespace
             }
 
             /* Nothing differs: no element at all. */
-            if(!Element.first_child() && !Element.attribute("Name"))
+            if(!Element.first_child() && !Element.attribute("Name") && !Element.attribute("Mobility"))
             {
                 Root.remove_child(Element);
             }
@@ -495,6 +504,12 @@ namespace
                 continue;
             }
             if(const pugi::xml_attribute Name = Item.attribute("Name")) { Member.SetName(Name.as_string()); }
+            if(const pugi::xml_attribute Mobility = Item.attribute("Mobility"))
+            {
+                EMobility Parsed;
+                if(ParseMobility(Mobility.as_string(), Parsed)) { Member.SetMobility(Parsed); }
+                else { GAMECORE_LOG_WARN("WorldPackage: '" + InEntry.File + "' has an unknown mobility '" + Mobility.as_string() + "'") }
+            }
             for(const pugi::xml_node Removed : Item.children("RemovedComponent"))
             {
                 if(const ComponentTypeInfo* Info = FindComponentType(Removed.attribute("Type").as_string()))
@@ -529,6 +544,41 @@ namespace
         }
     }
 
+    /* The manifest's <Settings>: only what differs from the defaults, and
+     * nothing at all for a world with none, so its manifest stays as it was. */
+    void AppendSettings(pugi::xml_node InRoot, const WorldSettings& InSettings)
+    {
+        const WorldLightingSettings Defaults;
+        const WorldLightingSettings& Lighting = InSettings.Lighting;
+        if(Lighting == Defaults) { return; }
+
+        /* Numbers as entity files write them: shortest round-trip, any locale. */
+        pugi::xml_node Element = InRoot.append_child("Settings").append_child("Lighting");
+        const auto Put = [&Element](const char* InName, const std::string& InText) { Element.append_attribute(InName) = InText.c_str(); };
+        if(Lighting.bBakedLighting != Defaults.bBakedLighting)   { Put("BakedLighting",   Lighting.bBakedLighting ? "true" : "false"); }
+        if(Lighting.TexelsPerUnit != Defaults.TexelsPerUnit)     { Put("TexelsPerUnit",   FormatNumber(Lighting.TexelsPerUnit)); }
+        if(Lighting.Bounces != Defaults.Bounces)                 { Put("Bounces",         FormatNumber(Lighting.Bounces)); }
+        if(Lighting.SamplesPerTexel != Defaults.SamplesPerTexel) { Put("SamplesPerTexel", FormatNumber(Lighting.SamplesPerTexel)); }
+        if(Lighting.ProbeSpacing != Defaults.ProbeSpacing)       { Put("ProbeSpacing",    FormatNumber(Lighting.ProbeSpacing)); }
+        if(Lighting.MaxAtlasSize != Defaults.MaxAtlasSize)       { Put("MaxAtlasSize",    FormatNumber(Lighting.MaxAtlasSize)); }
+        if(Lighting.BakedData != Defaults.BakedData)             { Put("BakedData",       Lighting.BakedData); }
+    }
+
+    void ReadSettings(const pugi::xml_node InRoot, WorldSettings& OutSettings)
+    {
+        const pugi::xml_node Element = InRoot.child("Settings").child("Lighting");
+        WorldLightingSettings& Lighting = OutSettings.Lighting;
+        Lighting = WorldLightingSettings();
+        Lighting.bBakedLighting  = Element.attribute("BakedLighting").as_bool(Lighting.bBakedLighting);
+        ParseNumber(Element.attribute("TexelsPerUnit").as_string(), Lighting.TexelsPerUnit);
+        ParseNumber(Element.attribute("Bounces").as_string(), Lighting.Bounces);
+        ParseNumber(Element.attribute("SamplesPerTexel").as_string(), Lighting.SamplesPerTexel);
+        ParseNumber(Element.attribute("ProbeSpacing").as_string(), Lighting.ProbeSpacing);
+        ParseNumber(Element.attribute("MaxAtlasSize").as_string(), Lighting.MaxAtlasSize);
+        Lighting.BakedData       = Element.attribute("BakedData").as_string("");
+        Lighting.Clamp();
+    }
+
     bool LoadTextWorld(const std::string& InPath, World& InOutWorld)
     {
         std::string Text;
@@ -556,6 +606,8 @@ namespace
                                + "; this build reads format " + std::to_string(TEXT_FORMAT))
             return false;
         }
+
+        ReadSettings(Root, InOutWorld.GetSettings());
 
         const std::string Folder = EntityFolderFor(InPath);
 
@@ -625,6 +677,12 @@ namespace
 
             const ::GameCore::Entity Created = InOutWorld.CreateEntity(EntityRoot.attribute("Name").as_string(), Guid);
             Loaded[Guid] = Created.GetID();
+            if(const pugi::xml_attribute Mobility = EntityRoot.attribute("Mobility"))
+            {
+                EMobility Parsed;
+                if(ParseMobility(Mobility.as_string(), Parsed)) { Created.SetMobility(Parsed); }
+                else { GAMECORE_LOG_WARN("WorldPackage: '" + File + "' has an unknown mobility '" + Mobility.as_string() + "'") }
+            }
 
             PendingEntity Entry;
             Entry.Id         = Created.GetID();
@@ -907,6 +965,7 @@ bool SaveWorldPackage(const char* InPath, World& InWorld)
     AppendDeclaration(Manifest);
     pugi::xml_node ManifestRoot = Manifest.append_child("World");
     pugi::xml_attribute FormatAttribute = ManifestRoot.append_attribute("Format");
+    AppendSettings(ManifestRoot, InWorld.GetSettings());
 
     /* In slot order. An instance's entities are one <Instance>, listed where
      * its root is; everything else -- loose entities, and members of an

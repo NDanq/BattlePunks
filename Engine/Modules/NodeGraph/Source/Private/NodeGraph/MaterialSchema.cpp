@@ -22,8 +22,9 @@
  * reached from is an error (CheckStages). Anything more than a name or
  * literal becomes a `<type> tN` temporary.
  *
- * UNIFORMS: one std140 block at binding 2 -- the engine's 32 bytes (tint,
- * clip value, two-sided), then every Parameter by name, at offsets computed
+ * UNIFORMS: one std140 block at binding 2 -- the engine's 160 bytes (tint,
+ * clip value, two-sided, and a draw's baked lighting: RenderCore's
+ * MaterialDescription.h), then every Parameter by name, at offsets computed
  * here and written to the .material. The renderer fills it byte for byte.
  *
  * TEXTURES: a Texture Object names a texture and its sampler settings; each
@@ -57,6 +58,8 @@ namespace
         MOP_SceneTexture,    // PostProcess only
         MOP_TextureSample,   // its Texture Object, at UV (the texture coordinate unlinked)
         MOP_TextureObject,   // a texture asset and its sampler: a material texture slot
+        MOP_Reflect,         // a scene capture's render target, sampled as a reflection (a slot, as a Texture Object)
+        MOP_NormalMap,       // a tangent-space normal map's colour, to a world-space normal (Material_NormalMap)
     };
 
     /* NodeDefinition::StageMask / PinDefinition::Stage bits. */
@@ -64,7 +67,7 @@ namespace
     constexpr uint32_t STAGE_PIXEL  = 2;
 
     constexpr int UNIFORM_BLOCK_BINDING = 2;       // GDI_MATERIAL_BLOCK_BINDING
-    constexpr int ENGINE_BLOCK_BYTES    = 32;      // Material_Tint .. Material_Reserved1
+    constexpr int ENGINE_BLOCK_BYTES    = 160;     // Material_Tint .. Material_AmbientCube[5]
     constexpr int MAX_BLOCK_BYTES       = 1024;    // GDI_MATERIAL_BLOCK_MAX_BYTES
     const char* const PARAM_PREFIX      = "Param_";
     const char* const TINT_UNIFORM      = "Material_Tint";
@@ -79,6 +82,22 @@ namespace
     const char* const TEXTURE_TYPE      = "texture";   // a Texture Object's output: a sampler, not a value
     const char* const TEXTURE_OBJECT    = "Texture.Object";
     const char* const TEXTURE_SAMPLE    = "Texture.Sample";
+    const char* const TEXTURE_REFLECT   = "Texture.Reflect";
+    const char* const NORMAL_MAP        = "Texture.NormalMap";
+
+    /* A render target path's kind, as RenderCore's RenderTargetAsset.h tells
+     * it: true and bOutCube for an .nmrt2d (false) or .nmrt3d (true). */
+    bool RenderTargetKind(const std::string& InPath, bool& bOutCube)
+    {
+        const auto EndsWith = [&InPath](const char* InSuffix)
+        {
+            const std::string Suffix(InSuffix);
+            return InPath.size() > Suffix.size() && InPath.compare(InPath.size() - Suffix.size(), Suffix.size(), Suffix) == 0;
+        };
+        if(EndsWith(".nmrt2d")) { bOutCube = false; return true; }
+        if(EndsWith(".nmrt3d")) { bOutCube = true;  return true; }
+        return false;
+    }
 
     /* A Texture Sample's sampler settings; Default keeps the texture asset's own. */
     const std::vector<std::string> GFilterChoices = { "Default", "Nearest", "Linear" };
@@ -447,6 +466,7 @@ namespace
         void CollectParameters();
         void CollectTextures();
         std::string EmitTextureSample(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
+        std::string EmitReflect(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
         void CheckStages(const Node& InRoot, const NodeDefinition& InRootDef);
         void BeginStage(const std::vector<const Node*>& InRoots, const std::set<std::string>& InRootPins);
         void AnalyseScopes(const std::vector<const Node*>& InRoots);
@@ -654,7 +674,7 @@ namespace
         Out.Blank();
 
         /* Declared in both stages that include it, so both see the same block. */
-        Out.Line("// Bytes 0-31 are the engine's; the parameters' offsets are in " + Name + ".material.");
+        Out.Line("// Bytes 0-159 are the engine's; the parameters' offsets are in " + Name + ".material.");
         Out.Line("UBO_BLOCK_BEGIN(" + std::to_string(UNIFORM_BLOCK_BINDING) + ", " + BlockName + ")");
         Out.Indent();
         Out.Line("vec4  Material_Tint;");
@@ -662,6 +682,9 @@ namespace
         Out.Line("float Material_TwoSided;");
         Out.Line("float Material_Reserved0;");
         Out.Line("float Material_Reserved1;");
+        Out.Line("vec4  Material_LightmapScaleOffset;");
+        Out.Line("vec4  Material_BakedLighting;");
+        Out.Line("vec4  Material_AmbientCube[6];");
         for(const auto& Each : Parameters)
         {
             Out.Line(Each.second.Type + std::string(Each.second.Type == "float" ? " " : "  ") + PARAM_PREFIX + Each.first + ";",
@@ -710,7 +733,7 @@ namespace
         /*
          * The companion: what the renderer loads beside the shader.
          *
-         *     NimbleMaterial 2
+         *     NimbleMaterial 3
          *     Domain <Opaque|Masked|Translucent|PostProcess>
          *     Shading <Lit|Unlit>
          *     TwoSided <0|1>
@@ -726,7 +749,7 @@ namespace
          * texture asset's own filter or wrap.
          */
         std::string Material = "# Generated by NimbleEditor from the material graph \"" + G.Name + "\". Do not edit.\n"
-                               "NimbleMaterial 2\n";
+                               "NimbleMaterial 3\n";
         Material += "Domain " + Domain + "\n";
         Material += "Shading " + Shading + "\n";
         Material += std::string("TwoSided ") + (bTwoSided ? "1" : "0") + "\n";
@@ -859,7 +882,7 @@ namespace
             Parameters.emplace(Name, Added);
         }
 
-        /* std140, in name order: each at its base alignment after the engine's 32 bytes. */
+        /* std140, in name order: each at its base alignment after the engine's bytes. */
         int Offset = ENGINE_BLOCK_BYTES;
         for(auto& Each : Parameters)
         {
@@ -887,16 +910,25 @@ namespace
         for(const Node* Each : Index.SortedNodes())
         {
             const NodeDefinition* Def = Index.FindDefinition(*Each);
-            if(!Def || Def->Op != MOP_TextureObject) { continue; }
+            if(!Def || (Def->Op != MOP_TextureObject && Def->Op != MOP_Reflect)) { continue; }
 
             TextureSlot Wanted;
-            Wanted.Path   = Each->GetProperty("Texture", "");
+            Wanted.Path   = Each->GetProperty(Def->Op == MOP_Reflect ? "Target" : "Texture", "");
+            bool bCube = false;
+            if(Def->Op == MOP_Reflect && !Wanted.Path.empty() && !RenderTargetKind(Wanted.Path, bCube))
+            {
+                Result.Error(Each->Id, std::string(), "'" + Def->DisplayName + "' reflects a scene capture: its Target must be a "
+                             "RenderTargetTex2D (.nmrt2d, a planar mirror) or RenderTargetTex3D (.nmrt3d, omnidirectional)");
+                continue;
+            }
             Wanted.Filter = Each->GetProperty("Filter", "Default");
             Wanted.Wrap   = Each->GetProperty("Wrap", "Default");
             Wanted.Node   = Each->Id;
             if(Wanted.Path.empty())
             {
-                Result.Error(Each->Id, std::string(), "'" + Def->DisplayName + "' has no texture: choose a .nmtexture in its Details");
+                Result.Error(Each->Id, std::string(), Def->Op == MOP_Reflect
+                             ? "'" + Def->DisplayName + "' has no Target: choose an .nmrt2d or .nmrt3d in its Details"
+                             : "'" + Def->DisplayName + "' has no texture: choose a .nmtexture in its Details");
                 continue;
             }
 
@@ -910,10 +942,12 @@ namespace
                 continue;
             }
 
+            /* A PostProcess material's last slot is the scene depth (Scene Depth). */
+            const int SlotCount = Domain == "PostProcess" ? TEXTURE_SLOT_COUNT - 1 : TEXTURE_SLOT_COUNT;
             Wanted.Slot = TEXTURE_SLOT_FIRST + int(Textures.size());
-            if(Wanted.Slot >= TEXTURE_SLOT_COUNT)
+            if(Wanted.Slot >= SlotCount)
             {
-                Result.Error(Each->Id, std::string(), "a material samples at most " + std::to_string(TEXTURE_SLOT_COUNT - TEXTURE_SLOT_FIRST)
+                Result.Error(Each->Id, std::string(), "a " + Domain + " material samples at most " + std::to_string(SlotCount - TEXTURE_SLOT_FIRST)
                              + " textures (each distinct texture and sampler setting is one); this would be one more");
                 continue;
             }
@@ -970,6 +1004,59 @@ namespace
         if(InPin.Name == "RGB")  { return Swizzle(Sample, "rgb"); }
         const std::string Channel(1, char(std::tolower(static_cast<unsigned char>(InPin.Name[0]))));
         return Swizzle(Sample, Channel.c_str());
+    }
+
+    /*
+     * Reflect: one sample per node per block, as Texture Sample's. A planar
+     * mirror's target (.nmrt2d) at the mirrored screen point, nudged by
+     * Distortion; an omnidirectional one (.nmrt3d) along the view reflected
+     * about Normal (the pixel's normal unlinked). MaterialCommon.glsl.
+     */
+    std::string MaterialCompiler::EmitReflect(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin)
+    {
+        const PinRef Whole{ InNode.Id, "RGBA" };
+        std::string Sample;
+        const auto Cached = Values.find(Whole);
+        if(Cached != Values.end())
+        {
+            Sample = Cached->second;
+        }
+        else
+        {
+            const auto Slot = TextureSlotOf.find(InNode.Id);
+            bool bCube = false;
+            RenderTargetKind(InNode.GetProperty("Target", ""), bCube);
+            if(Slot == TextureSlotOf.end())
+            {
+                Sample = "vec4(0.0)";   // CollectTextures reported why
+            }
+            else
+            {
+                const std::string Sampler = TEXTURE_PREFIX + std::to_string(Slot->second);
+                Sample = "t" + std::to_string(NextTemp++);
+                if(bCube)
+                {
+                    const PinDefinition* NormalPin = InDef.FindPin("Normal", EPinDirection::Input);
+                    const bool bGiven = NormalPin && (Index.LinkInto(InNode.Id, "Normal") || InNode.FindConstant("Normal"));
+                    const std::string Normal = bGiven ? Input(InNode, InDef, *NormalPin) : std::string("Inputs.WorldNormal");
+                    Body.Line("vec4 " + Sample + " = Material_SampleCubeStrip(" + Sampler + ", Material_ReflectionVector(Inputs, "
+                              + Normal + "));", InNode.Id);
+                }
+                else
+                {
+                    const PinDefinition* DistortionPin = InDef.FindPin("Distortion", EPinDirection::Input);
+                    const bool bGiven = DistortionPin && (Index.LinkInto(InNode.Id, "Distortion") || InNode.FindConstant("Distortion"));
+                    const std::string Offset = bGiven ? " + " + Input(InNode, InDef, *DistortionPin) : std::string();
+                    Body.Line("vec4 " + Sample + " = texture(" + Sampler + ", Material_MirrorUV(Inputs)" + Offset + ");", InNode.Id);
+                }
+            }
+            if(InPin.Name != Whole.Pin)
+            {
+                Values.emplace(Whole, Sample);
+                if(!Blocks.empty()) { Blocks.back().push_back(Whole); }
+            }
+        }
+        return InPin.Name == "RGB" ? Swizzle(Sample, "rgb") : Sample;
     }
 
     /*
@@ -1118,6 +1205,29 @@ namespace
             case MOP_TextureSample:
                 Value = EmitTextureSample(InNode, InDef, InPin);
                 break;
+
+            case MOP_Reflect:
+                Value = EmitReflect(InNode, InDef, InPin);
+                break;
+
+            case MOP_NormalMap:
+            {
+                /* The map's colour about a tangent frame from derivatives of the position and UV
+                 * (MaterialCommon.glsl): UV must be what the map was sampled at. */
+                const PinDefinition* ColorPin    = InDef.FindPin("Color", EPinDirection::Input);
+                const PinDefinition* StrengthPin = InDef.FindPin("Strength", EPinDirection::Input);
+                const PinDefinition* UVPin       = InDef.FindPin("UV", EPinDirection::Input);
+                const bool bUV = UVPin && (Index.LinkInto(InNode.Id, "UV") || InNode.FindConstant("UV"));
+                const std::string Color    = Input(InNode, InDef, *ColorPin);
+                const std::string Strength = Input(InNode, InDef, *StrengthPin);
+                const std::string UV       = bUV ? Input(InNode, InDef, *UVPin) : std::string("Inputs.TexCoord");
+                const bool bDirectX = InNode.GetProperty("Format", "OpenGL") == "DirectX";
+                const std::string Temp = "t" + std::to_string(NextTemp++);
+                Body.Line("vec3 " + Temp + " = Material_NormalMap(Inputs, " + Color + ", " + Strength + ", " + UV + ", "
+                          + (bDirectX ? "1.0" : "-1.0") + ");", InNode.Id);
+                Value = Temp;
+                break;
+            }
 
             case MOP_TextureObject:
             {
@@ -1678,6 +1788,15 @@ namespace
             Def.Op = MOP_SceneTexture;
             PixelOnly(Def, "PostProcess only: the scene drawn so far, at this pixel.");
         }
+        {
+            NodeDefinition& Def = Pure("Input.SceneDepth", "Scene Depth", "Inputs",
+                                       { Out("Depth", "float", "Material_SceneDepthAt(Inputs.FragCoord.xy)"),
+                                         Out("Distance", "float", "Material_SceneDistanceAt(Inputs.ClipPosition.xy, Inputs.FragCoord.xy)") },
+                                       {}, "scene depth distance z buffer post process fog");
+            Def.Op = MOP_SceneTexture;
+            PixelOnly(Def, "PostProcess only: the scene's depth at this pixel -- Depth as stored (0 near, 1 far), "
+                           "Distance in world units from the camera.");
+        }
 
         // --- Textures ------------------------------------------------------------
         {
@@ -1710,6 +1829,47 @@ namespace
             Def.Version = 2;   // 1 named its texture itself (UpgradeGraph)
             Def.Tooltip = "A Texture Object's colour at UV. Colour textures read as authored (display space), like "
                           "every colour a material uses. In World Position Offset it reads the full-size level.";
+        }
+
+        {
+            PinDefinition Normal = In("Normal", "vec3");
+            Normal.Tooltip = "Omnidirectional: the surface normal the view reflects about (world space). Unlinked: the pixel's";
+            PinDefinition Distortion = In("Distortion", "vec2");
+            Distortion.Tooltip = "Planar mirror: an offset in screen UV (ripples). Unlinked: none";
+            NodeDefinition& Def = Pure(TEXTURE_REFLECT, "Reflect", "Textures",
+                                       { Normal, Distortion, Out("RGBA", "vec4", ""), Out("RGB", "vec3", "") }, {},
+                                       "reflection mirror chrome environment cubemap scene capture probe");
+            Def.Op = MOP_Reflect;
+            PixelOnly(Def, "The scene as a Scene Capture Probe sees it, reflected at this pixel. A RenderTargetTex2D target is a "
+                           "planar mirror's capture, read at the mirrored screen point; a RenderTargetTex3D target is an "
+                           "omnidirectional capture, read along the view reflected about Normal. Feed RGB to Emissive (or Base "
+                           "Color) for a mirror or chrome.");
+            Def.Properties = {
+                { "Target", EPropertyKind::Texture, "", {}, "The render target its probe captures into: Content/RenderTargets/Pool.nmrt2d "
+                  "(a planar mirror) or Content/RenderTargets/Ball.nmrt3d (omnidirectional)" },
+            };
+        }
+
+        {
+            PinDefinition Color = In("Color", "vec3", "0.5 0.5 1");
+            Color.Tooltip = "The normal map's colour: a Texture Sample's RGB. Unlinked: flat";
+            PinDefinition Strength = In("Strength", "float", "1");
+            Strength.Tooltip = "How far the map tilts the normal: 0 flat, 1 as authored, more exaggerates";
+            PinDefinition UV = In("UV", "vec2");
+            UV.Implicit = "Texture Coordinate";
+            UV.Tooltip  = "The UV the map was sampled at, for its tangent frame. Unlinked: the vertex's Texture Coordinate";
+            NodeDefinition& Def = Pure(NORMAL_MAP, "Normal Map", "Textures",
+                                       { Color, Strength, UV, Out("Normal", "vec3", "") }, {},
+                                       "normal map bump tangent space detail");
+            Def.Op = MOP_NormalMap;
+            PixelOnly(Def, "A tangent-space normal map's colour as a world-space normal, for Material Output's Normal. The "
+                           "tangent frame comes from how the position and UV change across the pixel, so any mesh works "
+                           "without tangents. Import the map as linear (not sRGB).");
+            Def.Properties = {
+                { "Format", EPropertyKind::Choice, "OpenGL", { "OpenGL", "DirectX" },
+                  "Which way the map's green points: OpenGL (Y+, up the image; Blender, Substance's OpenGL export) or "
+                  "DirectX (Y-, down it; Unreal, 3ds Max)" },
+            };
         }
 
         // --- Values --------------------------------------------------------------

@@ -198,6 +198,8 @@ public:
     void SetColorMask(EColorMask) override;
 
     GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) override;
+    GDIRenderTarget* CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat) override;
+    bool             SupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat) const override;
 
     void SetRenderTarget(GDIRenderTarget* InRenderTarget) override;
     void SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom) override;
@@ -228,6 +230,8 @@ public:
 
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
 
+    GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
+
     bool CheckError(const std::string& InFailStr) override;
 
     ERenderPlatform GetRenderPlatform() const override { return ERP_OpenGL; }
@@ -243,6 +247,10 @@ public:
     void BeginDrawEvent(const std::string& InStr) override;
 
     void EndDrawEvent() override;
+
+    bool     SupportsGPUTimestamps() const override { return true; }
+    void     WriteGPUTimestamp(uint32_t InIndex) override;
+    uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
 
 private:
     inline void MakeCurrentSafe()
@@ -270,6 +278,14 @@ private:
     uint                ScratchFramebuffer = 0;   // SetRenderTargets' attachments
     class OpenGLMesh*   ScreenMesh = nullptr;
     GLsync              ThreadSync;
+
+    /* GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread only:
+     * GL_TIMESTAMP queries made on first use, read at the next BeginRendering
+     * -- waiting for them, as Vulkan and D3D12 wait the previous frame there. */
+    GLuint   TimestampQueries[GDI_GPU_TIMESTAMP_MAX] = {};
+    uint64_t TimestampsWritten  = 0;
+    uint64_t PreviousTimestamps = 0;
+    double   PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
 };
 
 #endif //CORECLIENT_OPENGLDYNAMICGDI_H

@@ -8,11 +8,15 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <vector>
 
 #include <QUndoCommand>
 
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityGuid.h"
+#include "Public/GameCore/Mobility.h"
+#include "Public/GameCore/WorldSettings.h"
+#include "Public/GameCore/TransformMath.h"
 #include "Public/GameCore/EntityID.h"
 
 namespace GameCore { class World; }
@@ -54,6 +58,7 @@ namespace EditorHistory
         GameCore::EntityGuid           Guid;
         GameCore::EntityGuid           ParentGuid;   // unset: a root
         std::string                    Name;
+        GameCore::EMobility            Mobility = GameCore::EMobility::Dynamic;
         std::vector<ComponentSnapshot> Components;
         std::vector<EntitySnapshot>    Children;     // in child order
 
@@ -90,6 +95,22 @@ namespace EditorHistory
      * its parent if that still exists, then its children; then the instances
      * they were in (see EntitySnapshot). */
     GameCore::EntityID RestoreEntity(GameCore::World& InWorld, const EntitySnapshot& InSnapshot);
+
+    /*
+     * Copy and paste: InSnapshots' subtrees made again as NEW entities, with
+     * fresh GUIDs -- an instance member's derived from its instance's new GUID,
+     * as a load derives them -- and references between them moved to the
+     * copies (references to anything else are kept). A copied instance root
+     * brings a new instance; a member copied without its root becomes loose,
+     * as does everything if !bInKeepInstances.
+     *
+     * Each root goes under its snapshot's parent if that is in InWorld and in
+     * no instance, its local Transform kept; otherwise it is made a root, at
+     * InWorldPoses[i] (its world pose when captured). Returns the new roots.
+     */
+    std::vector<GameCore::EntityID> RestoreCopies(GameCore::World& InWorld, const std::vector<EntitySnapshot>& InSnapshots,
+                                                  const std::vector<GameCore::TransformPose>& InWorldPoses,
+                                                  bool bInKeepInstances = true);
 
     // === Commands ============================================================
 
@@ -138,14 +159,15 @@ namespace EditorHistory
         int64_t                   TimeMs;      // of the latest edit merged in
     };
 
-    /* What an entity carries besides components: its name. */
+    /* What an entity carries besides components: its name and mobility. */
     struct EntityMembers
     {
-        std::string Name;
+        std::string         Name;
+        GameCore::EMobility Mobility = GameCore::EMobility::Dynamic;
 
         bool operator==(const EntityMembers& InOther) const
         {
-            return Name == InOther.Name;
+            return Name == InOther.Name && Mobility == InOther.Mobility;
         }
     };
 
@@ -164,6 +186,21 @@ namespace EditorHistory
         GameCore::EntityGuid Guid;
         EntityMembers        Before;
         EntityMembers        After;
+    };
+
+    /* The edited World's settings, before and after. */
+    class WorldSettingsCommand final : public Command
+    {
+    public:
+        WorldSettingsCommand(EditorDocument& InDocument, const QString& InText, const GameCore::WorldSettings& InBefore,
+                             const GameCore::WorldSettings& InAfter);
+
+    protected:
+        void Apply(bool bInForward) override;
+
+    private:
+        GameCore::WorldSettings Before;
+        GameCore::WorldSettings After;
     };
 
     /* Create (bInCreated) or delete. Snapshotted when the entity goes away. */

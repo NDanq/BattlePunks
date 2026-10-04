@@ -13,7 +13,7 @@
 class VKDevice;
 
 /**
- * A color image (R8G8B8A8_UNORM) and a depth attachment (D32_SFLOAT, starts
+ * A color image (R8G8B8A8_UNORM, or R16G16B16A16_SFLOAT for HDR) and a depth attachment (D32_SFLOAT, starts
  * UNDEFINED so its first pass clears it; sampleable through ToDepthTexture2D,
  * in SHADER_READ_ONLY_OPTIMAL whenever it is not the bound depth). Raw
  * vkAllocateMemory; Phase 2 will migrate to VMA.
@@ -21,7 +21,8 @@ class VKDevice;
 class VKRenderTarget : public GDIRenderTarget
 {
 public:
-    VKRenderTarget(VKDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight);
+    VKRenderTarget(VKDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight,
+                   VkFormat InFormat = VK_FORMAT_R8G8B8A8_UNORM);
     ~VKRenderTarget();
 
     void Bind() override;

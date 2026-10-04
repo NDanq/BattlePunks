@@ -28,6 +28,32 @@ namespace RenderCore
      * GDIDefinitions.h carries the matching reorder, and DESIGN.md records
      * why this is the one deliberate edit inside the vendored GDI subtree.
      */
+    /*
+     * What a scene's view shows (Renderer::SetViewMode; the editor's Show >
+     * View Mode): its picture as lit; Unlit -- base colour and emissive as
+     * they are, no light at all; or one of the render targets the frame drew
+     * (Renderer::GetViewableTargets), stretched over the view.
+     */
+    enum class ERenderViewMode : uint8_t
+    {
+        Lit          = 0,
+        Unlit        = 1,
+        RenderTarget = 2,
+    };
+
+    /* What a material preview shows (Renderer::RequestMaterialPreview): the
+     * material lit by its studio light, or one of its surface's channels as
+     * drawn -- base colour, or emissive divided by EMISSIVE_PREVIEW_SCALE (so
+     * past 1 survives 8 bits) -- display space, what the bake measures
+     * materials by. Scene_View's values. */
+    enum class EMaterialPreviewChannel : uint8_t
+    {
+        Lit       = 0,
+        BaseColor = 2,
+        Emissive  = 3,
+    };
+    constexpr float EMISSIVE_PREVIEW_SCALE = 16.0f;
+
     enum class ERenderBackend : uint8_t
     {
         Null   = 0,
@@ -97,6 +123,28 @@ namespace RenderCore
      * a caller sees a consistent snapshot of no single instant, which is
      * fine for a per-second log line and wrong for anything stricter.
      */
+    /* "stat frame": the GPU spans a scene's frame is timed in, in order. */
+    enum ERenderGpuTimer : uint32_t
+    {
+        RGT_PrePass = 0,
+        RGT_BasePass,            // the G-buffer
+        RGT_AmbientOcclusion,
+        RGT_Shadows,
+        RGT_Lighting,
+        RGT_Forward,             // Unlit and the translucent stages
+        RGT_PostProcess,
+        RGT_Total,               // the whole scene, start to end of its stages
+        RGT_SceneCapture,        // every Scene Capture Probe's views, before the scene's stages (not in Total)
+        RGT_Count
+    };
+
+    /* "BasePass", "Total", ... */
+    inline const char* GetRenderGpuTimerName(const ERenderGpuTimer InTimer)
+    {
+        static const char* const Names[RGT_Count] = { "PrePass", "BasePass", "AO", "Shadows", "Lighting", "Forward", "PostProcess", "Total", "Captures" };
+        return InTimer < RGT_Count ? Names[InTimer] : "";
+    }
+
     struct RenderStats
     {
         uint64_t FramesRendered         = 0;
@@ -106,6 +154,32 @@ namespace RenderCore
         uint64_t ProxiesLive            = 0;
         uint64_t ProxiesCulledLastFrame = 0;
         uint32_t PeakQueueDepth         = 0;
+
+        /* Static draw lists (RENDERPIPELINE.md): static proxies drawn from
+         * their kept lists last frame, and how many lists were (re)built
+         * over the scene's lifetime -- steady when nothing static changes. */
+        uint64_t StaticProxiesDrawn     = 0;
+        uint64_t StaticListBuilds       = 0;
+
+        /* "stat unit": each averaged over the last half second (0 until the
+         * first half second has passed). Frame is the game thread's time
+         * from one EndFrame to the next; Game Thread is that less the time it
+         * waited on the render thread or presented; Render Thread is its time
+         * running a frame's commands, less the swap. Wait, Present and Idle
+         * are the rest of Frame: the game thread waiting on the render thread,
+         * presenting (blocked on the swapchain), and between frames (the
+         * host's loop or frame timer). */
+        float FrameMs        = 0.0f;
+        float GameThreadMs   = 0.0f;
+        float RenderThreadMs = 0.0f;
+        float WaitMs         = 0.0f;
+        float PresentMs      = 0.0f;
+        float IdleMs         = 0.0f;
+
+        /* "stat frame" (Stats.Frame on, and a backend that can time the GPU):
+         * the default scene's GPU time per span, averaged over half a second;
+         * -1 where it was not timed (off, or the span did not run). */
+        float GpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
     };
 }
 

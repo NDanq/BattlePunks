@@ -2,16 +2,23 @@
 
 #include "Public/Editor/ViewportPanel.h"
 
+#include <algorithm>
 #include <cmath>
 
 #include <QAction>
+#include <QActionGroup>
 #include <QComboBox>
+#include <QInputDialog>
 #include <QMenu>
+#include <QMessageBox>
 #include <QToolBar>
 #include <QToolButton>
 #include <QVBoxLayout>
 
 #include "Public/Editor/EditorCamera.h"
+#include "Public/Core/CoreConfig.h"
+#include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
 #include "Public/Editor/ViewportWidget.h"
 
 namespace
@@ -38,10 +45,10 @@ namespace
     /* In EMode order: the mode combo's index is the mode. */
     const GizmoModeButton GizmoModes[] =
     {
-        { "Select", "No transform handles -- click to select (Q)",       TransformGizmo::EMode::None      },
-        { "Move",   "Move handles: axes, planes, screen centre (W)",     TransformGizmo::EMode::Translate },
-        { "Rotate", "Rotate rings: one per axis, the outer about the view (E)", TransformGizmo::EMode::Rotate },
-        { "Scale",  "Scale handles: per axis, the centre for all three (R)",    TransformGizmo::EMode::Scale  },
+        { "Select", "No transform handles -- click to select (1)",       TransformGizmo::EMode::None      },
+        { "Move",   "Move handles: axes, planes, screen centre (2)",     TransformGizmo::EMode::Translate },
+        { "Rotate", "Rotate rings: one per axis, the outer about the view (3)", TransformGizmo::EMode::Rotate },
+        { "Scale",  "Scale handles: per axis, the centre for all three (4)",    TransformGizmo::EMode::Scale  },
     };
 
     /* A toolbar combo box that leaves keyboard focus where it was. */
@@ -69,6 +76,8 @@ namespace
 
 ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocument, QWidget* InParent)
     : QWidget(InParent)
+    , Context(InContext)
+    , Document(InDocument)
 {
     auto* Layout = new QVBoxLayout(this);
     Layout->setContentsMargins(0, 0, 0, 0);
@@ -85,7 +94,7 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     // --- Transform handles ---------------------------------------------------
     /* No shortcuts here: the keys are the viewport's own (see ViewportWidget),
      * so typing Q W E R in a text field never switches modes. */
-    ModeCombo = MakeCombo(Toolbar, QStringLiteral("Transform handles (Q / W / E / R)"));
+    ModeCombo = MakeCombo(Toolbar, QStringLiteral("Transform handles (1 / 2 / 3 / 4)"));
     for(const GizmoModeButton& Button : GizmoModes)
     {
         ModeCombo->addItem(QString::fromLatin1(Button.Label));
@@ -162,11 +171,74 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
 
     Toolbar->addSeparator();
 
-    // --- Bounds --------------------------------------------------------------
-    ShowAllBoundsAction = Toolbar->addAction(QStringLiteral("All Bounds"));
+    // --- Show: the view mode and the editor's gizmos ---------------------------
+    auto* ShowMenu = new QMenu(this);
+
+    QMenu* ModeMenu = ShowMenu->addMenu(QStringLiteral("View Mode"));
+    auto* Modes = new QActionGroup(ModeMenu);
+    LitModeAction = ModeMenu->addAction(QStringLiteral("Lit"));
+    LitModeAction->setToolTip(QStringLiteral("The scene as it is lit"));
+    UnlitModeAction = ModeMenu->addAction(QStringLiteral("Unlit"));
+    UnlitModeAction->setToolTip(QStringLiteral("Base colour and emissive as they are: no light, baked or live"));
+    TargetModeAction = ModeMenu->addAction(QStringLiteral("Render Target..."));
+    TargetModeAction->setToolTip(QStringLiteral("One of the render targets the frame drew, over the view: G-buffer, shadow atlases, ..."));
+    for(QAction* Each : { LitModeAction, UnlitModeAction, TargetModeAction })
+    {
+        Each->setCheckable(true);
+        Modes->addAction(Each);
+    }
+    connect(LitModeAction, &QAction::triggered, this, [this]()
+    {
+        Context.SetViewMode(RenderCore::ERenderViewMode::Lit);
+        UpdateViewModeUI();
+    });
+    connect(UnlitModeAction, &QAction::triggered, this, [this]()
+    {
+        Context.SetViewMode(RenderCore::ERenderViewMode::Unlit);
+        UpdateViewModeUI();
+    });
+    connect(TargetModeAction, &QAction::triggered, this, [this]()
+    {
+        PickRenderTarget();
+        UpdateViewModeUI();   // a cancel puts the check back where it was
+    });
+
+    QMenu* LightingMenu = ShowMenu->addMenu(QStringLiteral("Lighting"));
+    auto* Lighting = new QActionGroup(LightingMenu);
+    BakedAction = LightingMenu->addAction(QStringLiteral("Baked"));
+    BakedAction->setToolTip(QStringLiteral("Static entities and lights as Build > Bake Lightmaps baked them; dynamic ones lit by the probes"));
+    LiveAction = LightingMenu->addAction(QStringLiteral("Live"));
+    LiveAction->setToolTip(QStringLiteral("Every light lit live, as if there were no bake"));
+    for(QAction* Each : { BakedAction, LiveAction })
+    {
+        Each->setCheckable(true);
+        Lighting->addAction(Each);
+    }
+    {
+        const EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting");
+        (Var && !Var->GetBool() ? LiveAction : BakedAction)->setChecked(true);
+    }
+    connect(BakedAction, &QAction::triggered, this, [this]() { SetBakedLighting(true); });
+    connect(LiveAction, &QAction::triggered, this, [this]() { SetBakedLighting(false); });
+
+    QMenu* GizmoMenu = ShowMenu->addMenu(QStringLiteral("Editor Gizmos"));
+    ShowAllBoundsAction = GizmoMenu->addAction(QStringLiteral("All Bounds"));
     ShowAllBoundsAction->setCheckable(true);
     ShowAllBoundsAction->setToolTip(QStringLiteral("Draw every entity's bounds, not only the selection's"));
     connect(ShowAllBoundsAction, &QAction::toggled, this, [this](const bool bInOn) { Viewport->SetShowAllBounds(bInOn); });
+
+    ShowLightGizmosAction = GizmoMenu->addAction(QStringLiteral("Light Gizmos"));
+    ShowLightGizmosAction->setCheckable(true);
+    ShowLightGizmosAction->setChecked(Viewport->IsShowingLightGizmos());
+    ShowLightGizmosAction->setToolTip(QStringLiteral("Draw every light's reach, not only the selected light's"));
+    connect(ShowLightGizmosAction, &QAction::toggled, this, [this](const bool bInOn) { Viewport->SetShowLightGizmos(bInOn); });
+
+    ShowButton = new QToolButton(Toolbar);
+    ShowButton->setFocusPolicy(Qt::NoFocus);
+    ShowButton->setPopupMode(QToolButton::InstantPopup);
+    ShowButton->setMenu(ShowMenu);
+    Toolbar->addWidget(ShowButton);
+    UpdateViewModeUI();
 
     Toolbar->addSeparator();
 
@@ -186,6 +258,53 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
 void ViewportPanel::SetSpeedStep(const int InStep)
 {
     Viewport->SetSpeedScale(std::pow(2.0f, float(InStep - SpeedStepOne)));
+}
+
+bool ViewportPanel::PickRenderTarget()
+{
+    const QStringList Targets = Context.GetViewableTargets();
+    if(Targets.isEmpty())
+    {
+        QMessageBox::information(this, QStringLiteral("Render Target"),
+                                 QStringLiteral("No render targets yet: the viewport has not drawn a frame."));
+        return false;
+    }
+    const int Current = std::max(0, int(Targets.indexOf(Context.GetViewTarget())));
+    bool bOk = false;
+    const QString Chosen = QInputDialog::getItem(this, QStringLiteral("Render Target"),
+                                                 QStringLiteral("Show which render target in the viewport:"),
+                                                 Targets, Current, /*bEditable*/ false, &bOk);
+    if(!bOk || Chosen.isEmpty())
+    {
+        return false;
+    }
+    Context.SetViewMode(RenderCore::ERenderViewMode::RenderTarget, Chosen);
+    return true;
+}
+
+void ViewportPanel::UpdateViewModeUI()
+{
+    const RenderCore::ERenderViewMode Mode = Context.GetViewMode();
+    LitModeAction->setChecked(Mode == RenderCore::ERenderViewMode::Lit);
+    UnlitModeAction->setChecked(Mode == RenderCore::ERenderViewMode::Unlit);
+    TargetModeAction->setChecked(Mode == RenderCore::ERenderViewMode::RenderTarget);
+
+    QString Text = QStringLiteral("Show");
+    if(Mode == RenderCore::ERenderViewMode::Unlit)        { Text = QStringLiteral("Show: Unlit"); }
+    if(Mode == RenderCore::ERenderViewMode::RenderTarget) { Text = QStringLiteral("Show: %1").arg(Context.GetViewTarget()); }
+    ShowButton->setText(Text);
+    ShowButton->setToolTip(QStringLiteral("View mode (Lit, Unlit, a render target) and the editor's gizmos"));
+}
+
+void ViewportPanel::SetBakedLighting(const bool bInBaked)
+{
+    if(EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting")) { Var->SetBool(bInBaked); }
+    (bInBaked ? BakedAction : LiveAction)->setChecked(true);
+    const GameCore::WorldLightingSettings& Lighting = Document.GetWorldSettings().Lighting;
+    emit StatusMessage(!bInBaked ? QStringLiteral("Lighting: Live -- every light lit live")
+                       : Lighting.bBakedLighting && !Lighting.BakedData.empty()
+                         ? QStringLiteral("Lighting: Baked")
+                         : QStringLiteral("Lighting: Baked -- but this world has no bake yet (Build > Bake Lightmaps)"));
 }
 
 #endif // WITH_EDITOR

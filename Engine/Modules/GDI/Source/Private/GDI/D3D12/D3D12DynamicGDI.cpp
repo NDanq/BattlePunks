@@ -100,6 +100,8 @@ void D3D12DynamicGDI::Allocate()
 
     CurrentStateData = new D3D12CurrentStateData();
 
+    CreateTimestampHeap();
+
     bInitialized = true;
     GDI_LOG("[D3D12DynamicGDI] Allocate complete.")
 }
@@ -124,6 +126,9 @@ void D3D12DynamicGDI::Destroy()
     }
 
     delete CurrentStateData; CurrentStateData = nullptr;
+
+    TimestampHeap.Reset();
+    TimestampReadback.Reset();
 
     if(ScreenMesh)  { ScreenMesh->Release();  delete ScreenMesh;  ScreenMesh  = nullptr; }
     if(NullTexture) { NullTexture->Release(); delete NullTexture; NullTexture = nullptr; }
@@ -221,6 +226,7 @@ void D3D12DynamicGDI::PrepareCommandList(ID3D12GraphicsCommandList* InList)
 
 void D3D12DynamicGDI::SubmitFrame()
 {
+    ResolveTimestamps(CommandManager->GetCommandList());
     CommandManager->EndFrame();
 
     std::lock_guard<std::mutex> QueueLock(DeviceObj->GetQueueMutex());
@@ -237,6 +243,21 @@ GDIRenderTarget* D3D12DynamicGDI::CreateRenderTarget(std::string Name, uint InWi
     auto* RT = new D3D12RenderTarget(DeviceObj, Name, InWidth, InHeight);
     RegisterRenderTarget(RT);
     return RT;
+}
+
+GDIRenderTarget* D3D12DynamicGDI::CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat)
+{
+    if(!DeviceObj) return nullptr;
+    const DXGI_FORMAT Format = InFormat == GDI_RTF_RGBA16F ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    auto* RT = new D3D12RenderTarget(DeviceObj, Name, InWidth, InHeight, Format);
+    RegisterRenderTarget(RT);
+    return RT;
+}
+
+bool D3D12DynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
+{
+    /* R16G16B16A16_FLOAT render targets, blending and sampling are required at feature level 11_0. */
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
 }
 
 void D3D12DynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
@@ -530,6 +551,15 @@ GDITextureResource* D3D12DynamicGDI::CreateTextureResource(GDITexture2D* InParen
     return new D3D12TextureResource(DeviceObj, InParent, InImage, InBorder, InFilter);
 }
 
+GDITextureResource* D3D12DynamicGDI::CreateTextureResourceMips(const Image* InLevels,
+                                                               const uint32_t InCount,
+                                                               const EGDITextureBorder InBorder,
+                                                               const EGDITextureFilter InFilter)
+{
+    if(!DeviceObj || !InLevels || InCount == 0) return nullptr;
+    return new D3D12TextureResource(DeviceObj, InLevels, InCount, InBorder, InFilter);
+}
+
 GDITextureResource* D3D12DynamicGDI::CreateTextureResource(GDITexture2D* InParent,
                                                            const EGDITextureBorder InBorder,
                                                            const EGDITextureFilter InFilter)
@@ -673,13 +703,30 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     D3D12CBAllocation Scene{};
     if(bMaterial)
     {
-        Scene = DescAlloc->AllocateCB(BlockBytes(MaterialBlocks[1]));
-        if(!Scene.MappedPtr) return false;
+        const bool bReuseScene = SceneBlockUploadSerial == MaterialBlockSerials[1]
+                                 && SceneBlockUploadEpoch == DescAlloc->GetEpoch()
+                                 && SceneBlockUploadAddress != 0;
+        if(bReuseScene)
+        {
+            Scene.GPUAddress = SceneBlockUploadAddress;
+        }
+        else
+        {
+            Scene = DescAlloc->AllocateCB(BlockBytes(MaterialBlocks[1]));
+            if(!Scene.MappedPtr) return false;
+        }
         for(int b = 0; b < 2; ++b)
         {
+            if(b == 1 && bReuseScene) continue;
             void* Dst = b == 0 ? Custom.MappedPtr : Scene.MappedPtr;
             memset(Dst, 0, BlockBytes(MaterialBlocks[b]));
             if(!MaterialBlocks[b].empty()) memcpy(Dst, MaterialBlocks[b].data(), MaterialBlocks[b].size());
+        }
+        if(!bReuseScene)
+        {
+            SceneBlockUploadAddress = Scene.GPUAddress;
+            SceneBlockUploadSerial = MaterialBlockSerials[1];
+            SceneBlockUploadEpoch  = DescAlloc->GetEpoch();
         }
     }
     else

@@ -21,6 +21,19 @@ namespace RenderCore
         float   ZNear    = -1.0f;
         float   ZFar     = 1000.0f;
         uint8_t bActive  = 1;
+
+        /* ECameraProjection. Orthographic is the 2D pixel view (position
+         * only); Perspective looks along the Transform's forward (+Z turned
+         * by its Rotation, as a light), FovY degrees tall, ZNear clamped to
+         * at least 1. */
+        uint8_t Projection = 0;
+        float   FovY       = 60.0f;
+    };
+
+    enum ECameraProjection : uint8_t
+    {
+        CP_Orthographic = 0,
+        CP_Perspective  = 1,
     };
 }
 

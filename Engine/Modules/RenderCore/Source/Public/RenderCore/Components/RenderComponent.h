@@ -54,6 +54,9 @@ namespace RenderCore
         char              Mesh[RENDER_MESH_PATH_MAX] = {};
         RenderMaterialParameter Parameters[RENDER_MATERIAL_PARAMETERS_MAX] = {};
 
+        /* Whether its Opaque and Masked sections draw into shadow maps. */
+        uint8_t           bCastShadows = 1;
+
         /* Slot InSlot's material path; "" if unset or out of range. */
         const char* GetMaterial(int32_t InSlot) const;
         /* False if InSlot is out of range. */

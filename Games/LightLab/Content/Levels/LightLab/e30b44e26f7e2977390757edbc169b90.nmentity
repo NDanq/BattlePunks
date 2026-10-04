@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e30b44e26f7e2977390757edbc169b90" Name="Pillar" Mobility="Static">
+  <Component Type="Render" Version="3">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-800" Y="200" Z="-1000" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="50" Y="400" Z="50" />
+  </Component>
+</Entity>

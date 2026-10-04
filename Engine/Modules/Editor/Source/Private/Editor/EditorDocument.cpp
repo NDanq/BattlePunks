@@ -2,10 +2,15 @@
 
 #include "Public/Editor/EditorDocument.h"
 
+#include <algorithm>
 #include <cstring>
+#include <memory>
 #include <functional>
 #include <string>
 
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QMimeData>
 #include <QTimer>
 #include <QUndoStack>
 
@@ -267,8 +272,10 @@ int EditorDocument::RefreshPrefabInstances(const QString& InRuntimePath)
         return 0;
     }
 
-    /* Entity ids change, GUIDs do not: the selection follows its GUID. */
-    const GameCore::EntityGuid Selected = EditedWorld->GetEntity(Selection).GetGuid();
+    /* Entity ids change, GUIDs do not: the selection follows its GUIDs. */
+    const GameCore::EntityGuid PrimaryGuid = EditedWorld->GetEntity(Selection).GetGuid();
+    std::vector<GameCore::EntityGuid> SelectedGuids;
+    for(const EntityID Each : Selected) { SelectedGuids.push_back(EditedWorld->GetEntity(Each).GetGuid()); }
     {
         const FlagScope Refreshing(bSuspendRecording);
         for(const GameCore::PrefabInstanceID Instance : Ctx.Found)
@@ -277,10 +284,12 @@ int EditorDocument::RefreshPrefabInstances(const QString& InRuntimePath)
         }
         EditedWorld->RefreshSpatialIndex();
     }
-    const EntityID Reselect = Selected.IsSet() ? EditedWorld->FindEntityByGuid(Selected) : EntityID();
-    Selection = EntityID();
-    SetSelection(Reselect);
-    if(!Reselect.IsSet()) { emit SelectionChanged(Selection); }
+    std::vector<EntityID> Reselect;
+    for(const GameCore::EntityGuid& Guid : SelectedGuids)
+    {
+        if(Guid.IsSet()) { Reselect.push_back(EditedWorld->FindEntityByGuid(Guid)); }
+    }
+    ApplySelection(Reselect, PrimaryGuid.IsSet() ? EditedWorld->FindEntityByGuid(PrimaryGuid) : EntityID(), /*bInForceSignal*/ true);
     RefreshShadow();
     QueueEntitiesChanged();
     return int(Ctx.Found.size());
@@ -449,6 +458,72 @@ void EditorDocument::RenameEntity(const EntityID InEntity, const QString& InName
     }
 }
 
+const GameCore::WorldSettings& EditorDocument::GetWorldSettings() const
+{
+    return EditedWorld->GetSettings();
+}
+
+bool EditorDocument::SetWorldSettings(const GameCore::WorldSettings& InSettings)
+{
+    if(RefuseWhileBorrowed("Edit World Settings"))
+    {
+        return false;
+    }
+    GameCore::WorldSettings Clamped = InSettings;
+    Clamped.Lighting.Clamp();
+    const GameCore::WorldSettings Before = EditedWorld->GetSettings();
+    if(Clamped == Before)
+    {
+        return false;
+    }
+    EditedWorld->GetSettings() = Clamped;
+    if(IsRecording())
+    {
+        Record(new EditorHistory::WorldSettingsCommand(*this, QStringLiteral("Edit World Settings"), Before, Clamped));
+    }
+    emit WorldSettingsChanged();
+    return true;
+}
+
+void EditorDocument::SetEntityMobility(const EntityID InEntity, const GameCore::EMobility InMobility)
+{
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || ActiveWorld->GetEntity(InEntity).GetMobility() == InMobility)
+    {
+        return;
+    }
+    const EditorHistory::EntityMembers Before = EditorHistory::CaptureMembers(*ActiveWorld, InEntity);
+    ActiveWorld->GetEntity(InEntity).SetMobility(InMobility);
+    QueueEntitiesChanged();
+    RecordMembersChange(InEntity, Before, QStringLiteral("Make %1 %2").arg(GetDisplayName(InEntity),
+                                                                         QString::fromLatin1(GameCore::MobilityName(InMobility))));
+}
+
+void EditorDocument::SetEntitiesMobility(const std::vector<EntityID>& InEntities, const GameCore::EMobility InMobility)
+{
+    std::vector<EntityID> Changing;
+    for(const EntityID Each : InEntities)
+    {
+        if(ActiveWorld->IsAlive(Each) && ActiveWorld->GetEntity(Each).GetMobility() != InMobility) { Changing.push_back(Each); }
+    }
+    if(Changing.size() <= 1)
+    {
+        if(!Changing.empty()) { SetEntityMobility(Changing.front(), InMobility); }
+        return;
+    }
+    const bool bMacro = IsRecording();
+    if(bMacro) { History->beginMacro(QStringLiteral("Make %1 entities %2").arg(Changing.size()).arg(GameCore::MobilityName(InMobility))); }
+    for(const EntityID Each : Changing)
+    {
+        SetEntityMobility(Each, InMobility);
+    }
+    if(bMacro)
+    {
+        History->endMacro();
+        LatestRecorded = nullptr;
+        emit HistoryChanged();
+    }
+}
+
 void EditorDocument::RecordMembersChange(const EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText)
 {
     if(IsRecording())
@@ -579,9 +654,11 @@ void EditorDocument::DestroyEntity(const EntityID InEntity)
         Snapshot = EditorHistory::CaptureEntity(*EditedWorld, InEntity);
     }
 
-    if(InEntity == Selection)
+    if(IsSelected(InEntity))
     {
-        SetSelection(GameCore::InvalidEntityID());
+        std::vector<EntityID> Rest = Selected;
+        Rest.erase(std::remove(Rest.begin(), Rest.end(), InEntity), Rest.end());
+        SetSelection(Rest);
     }
     ActiveWorld->DestroyEntity(InEntity);
 
@@ -607,6 +684,29 @@ GameCore::AABB EditorDocument::GetEntityBounds(const EntityID InEntity) const
     {
         return GameCore::AABB();
     }
+    const GameCore::Entity E = ActiveWorld->GetEntity(InEntity);
+
+    /* Its own shape and its children's, so a prefab's root (or any parent)
+     * frames the whole of it. */
+    GameCore::AABB Box = GetOwnBounds(InEntity);
+    for(EntityID Child = E.GetFirstChild(); Child.IsSet(); Child = ActiveWorld->GetEntity(Child).GetNextSibling())
+    {
+        Box = GameCore::AABB::Union(Box, GetEntityBounds(Child));
+    }
+    if(!Box.IsEmpty() || !E.GetComponent<GameCore::TransformComponent>())
+    {
+        return Box;
+    }
+
+    /* A marker for anything with only a position (a camera, an empty). */
+    const double Half = 25.0;
+    const EngineCore::Vector3 Position = E.GetWorldPose().Position;
+    return GameCore::AABB(Position - EngineCore::Vector3(Half, Half, Half),
+                          Position + EngineCore::Vector3(Half, Half, Half));
+}
+
+GameCore::AABB EditorDocument::GetOwnBounds(const EntityID InEntity) const
+{
     const GameCore::Entity E = ActiveWorld->GetEntity(InEntity);
 
     if(const GameCore::BoundsComponent* Bounds = E.GetComponent<GameCore::BoundsComponent>())
@@ -636,12 +736,7 @@ GameCore::AABB EditorDocument::GetEntityBounds(const EntityID InEntity) const
         const GameCore::AABB Quad(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));   // the unit quad
         return GameCore::AABB::Transformed(Quad, E.GetWorldMatrix());
     }
-
-    /* A marker for anything with only a position (a camera, an empty). */
-    const double Half = 25.0;
-    const EngineCore::Vector3 Position = E.GetWorldPose().Position;
-    return GameCore::AABB(Position - EngineCore::Vector3(Half, Half, Half),
-                          Position + EngineCore::Vector3(Half, Half, Half));
+    return GameCore::AABB();
 }
 
 GameCore::AABB EditorDocument::GetSceneBounds() const
@@ -660,19 +755,279 @@ GameCore::AABB EditorDocument::GetSceneBounds() const
     return Ctx.Box;
 }
 
+// === Clipboard ===============================================================
+
+namespace
+{
+    /* What CopySelection took, shared by every document. Serial matches the
+     * marker on the system clipboard. */
+    struct EntityClipboard
+    {
+        std::vector<EditorHistory::EntitySnapshot> Roots;
+        std::vector<GameCore::TransformPose>       Poses;   // each root's world pose
+        uint64_t                                   Serial = 0;
+    };
+    EntityClipboard GClipboard;
+    uint64_t        GClipboardSerial = 0;
+
+    const char* const ClipboardFormat = "application/x-nimbleengine-entities";
+
+    /* The system clipboard -- none without a GUI application (the tests). */
+    QClipboard* SystemClipboard()
+    {
+        return qobject_cast<QGuiApplication*>(QCoreApplication::instance()) ? QGuiApplication::clipboard() : nullptr;
+    }
+}
+
+int EditorDocument::CopySelection()
+{
+    const std::vector<EntityID> Roots = GetSelectedRoots();
+    if(Roots.empty())
+    {
+        return 0;
+    }
+    EntityClipboard Copied;
+    for(const EntityID Root : Roots)
+    {
+        Copied.Roots.push_back(EditorHistory::CaptureEntity(*ActiveWorld, Root));
+        Copied.Poses.push_back(ActiveWorld->GetEntity(Root).GetWorldPose());
+    }
+    Copied.Serial = ++GClipboardSerial;
+    GClipboard    = std::move(Copied);
+    if(QClipboard* System = SystemClipboard())
+    {
+        auto* Data = new QMimeData();
+        Data->setData(QString::fromLatin1(ClipboardFormat), QByteArray::number(qulonglong(GClipboard.Serial)));
+        Data->setText(QStringLiteral("%1 entities").arg(GClipboard.Roots.size()));
+        System->setMimeData(Data);
+    }
+    return int(Roots.size());
+}
+
+int EditorDocument::CutSelection()
+{
+    const int Copied = CopySelection();
+    if(Copied > 0)
+    {
+        DeleteSelection();
+    }
+    return Copied;
+}
+
+int EditorDocument::DeleteSelection()
+{
+    const std::vector<EntityID> Roots = GetSelectedRoots();
+    if(Roots.empty())
+    {
+        return 0;
+    }
+    if(Roots.size() == 1)
+    {
+        DestroyEntity(Roots.front());
+        return 1;
+    }
+    const bool bMacro = IsRecording();
+    if(bMacro) { History->beginMacro(QStringLiteral("Delete %1 entities").arg(Roots.size())); }
+    for(const EntityID Root : Roots)
+    {
+        DestroyEntity(Root);
+    }
+    if(bMacro)
+    {
+        History->endMacro();
+        LatestRecorded = nullptr;
+        emit HistoryChanged();
+    }
+    return int(Roots.size());
+}
+
+bool EditorDocument::CanPaste() const
+{
+    if(GClipboard.Roots.empty())
+    {
+        return false;
+    }
+    if(const QClipboard* System = SystemClipboard())
+    {
+        const QMimeData* Data = System->mimeData();
+        return Data && Data->data(QString::fromLatin1(ClipboardFormat)) == QByteArray::number(qulonglong(GClipboard.Serial));
+    }
+    return true;
+}
+
+std::vector<EntityID> EditorDocument::Paste()
+{
+    if(!CanPaste())
+    {
+        return {};
+    }
+    const size_t Count = GClipboard.Roots.size();
+    return PasteSnapshots(GClipboard.Roots, GClipboard.Poses,
+                          Count == 1 ? QStringLiteral("Paste %1").arg(QString::fromStdString(GClipboard.Roots.front().Name))
+                                     : QStringLiteral("Paste %1 entities").arg(Count));
+}
+
+std::vector<EntityID> EditorDocument::DuplicateSelection()
+{
+    std::vector<EditorHistory::EntitySnapshot> Roots;
+    std::vector<GameCore::TransformPose>       Poses;
+    for(const EntityID Root : GetSelectedRoots())
+    {
+        Roots.push_back(EditorHistory::CaptureEntity(*ActiveWorld, Root));
+        Poses.push_back(ActiveWorld->GetEntity(Root).GetWorldPose());
+    }
+    if(Roots.empty())
+    {
+        return {};
+    }
+    return PasteSnapshots(Roots, Poses, Roots.size() == 1 ? QStringLiteral("Duplicate %1").arg(QString::fromStdString(Roots.front().Name))
+                                                          : QStringLiteral("Duplicate %1 entities").arg(Roots.size()));
+}
+
+std::vector<EntityID> EditorDocument::PasteSnapshots(const std::vector<EditorHistory::EntitySnapshot>& InRoots,
+                                                     const std::vector<GameCore::TransformPose>& InPoses, const QString& InLabel)
+{
+    /* Prefabs do not nest: in a prefab, copies of instances come in loose. */
+    std::vector<EntityID> Made = EditorHistory::RestoreCopies(*ActiveWorld, InRoots, InPoses, !bSingleRoot);
+
+    /* A prefab keeps one root: a copy left at the top goes under it. */
+    if(bSingleRoot)
+    {
+        const std::vector<EntityID> Tops = GetRootEntities();
+        const auto Keep = std::find_if(Tops.begin(), Tops.end(), [&Made](const EntityID InTop)
+        {
+            return std::find(Made.begin(), Made.end(), InTop) == Made.end();
+        });
+        for(const EntityID Each : Made)
+        {
+            if(Keep != Tops.end() && !ActiveWorld->GetEntity(Each).GetParent().IsSet())
+            {
+                ActiveWorld->GetEntity(Each).SetParent(*Keep, true);
+                ActiveWorld->RefreshEntityBounds(Each);
+            }
+        }
+    }
+
+    if(IsRecording())
+    {
+        History->beginMacro(InLabel);
+        for(const EntityID Each : Made)
+        {
+            Record(new EditorHistory::EntityLifetimeCommand(*this, QStringLiteral("Create %1").arg(GetDisplayName(Each)), true,
+                                                            EditorHistory::CaptureEntity(*EditedWorld, Each)));
+        }
+        History->endMacro();
+        LatestRecorded = nullptr;
+        emit HistoryChanged();
+    }
+    ActiveWorld->RefreshSpatialIndex();
+    QueueEntitiesChanged();
+    SetSelection(Made, Made.empty() ? EntityID() : Made.back());
+    return Made;
+}
+
 // === Selection ===============================================================
 
-void EditorDocument::SetSelection(EntityID InEntity)
+GameCore::EntityID EditorDocument::GetPickTarget(EntityID InEntity) const
 {
     if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity))
     {
-        InEntity = GameCore::InvalidEntityID();
+        return InEntity;
     }
-    if(InEntity == Selection)
+    /* Up from instance to instance: a nested prefab's root sits inside its
+     * outer instance's hierarchy, so the climb goes on from its parent. */
+    GameCore::World& World = *ActiveWorld;
+    for(EntityID At = InEntity; At.IsSet(); )
+    {
+        const GameCore::PrefabInstanceID Instance = World.GetEntity(At).GetInstance();
+        if(Instance.IsSet())
+        {
+            InEntity = World.GetInstance(Instance).GetRoot().GetID();
+            At       = InEntity;
+        }
+        At = World.GetEntity(At).GetParent();
+    }
+    return InEntity;
+}
+
+bool EditorDocument::IsSelected(const EntityID InEntity) const
+{
+    return InEntity.IsSet() && std::find(Selected.begin(), Selected.end(), InEntity) != Selected.end();
+}
+
+std::vector<EntityID> EditorDocument::GetSelectedRoots() const
+{
+    std::vector<EntityID> Roots;
+    for(const EntityID Each : Selected)
+    {
+        bool bUnderSelected = false;
+        for(EntityID Up = ActiveWorld->GetEntity(Each).GetParent(); Up.IsSet() && !bUnderSelected;
+            Up = ActiveWorld->GetEntity(Up).GetParent())
+        {
+            bUnderSelected = IsSelected(Up);
+        }
+        if(!bUnderSelected) { Roots.push_back(Each); }
+    }
+    return Roots;
+}
+
+void EditorDocument::SetSelection(const EntityID InEntity)
+{
+    ApplySelection({ InEntity }, InEntity);
+}
+
+void EditorDocument::SetSelection(const std::vector<EntityID>& InEntities, const EntityID InPrimary)
+{
+    ApplySelection(InEntities, InPrimary);
+}
+
+void EditorDocument::ToggleSelected(const EntityID InEntity)
+{
+    std::vector<EntityID> Next = Selected;
+    if(IsSelected(InEntity))
+    {
+        Next.erase(std::remove(Next.begin(), Next.end(), InEntity), Next.end());
+        ApplySelection(Next, InEntity == Selection ? EntityID() : Selection);
+        return;
+    }
+    Next.push_back(InEntity);
+    ApplySelection(Next, InEntity);
+}
+
+void EditorDocument::AddToSelection(const EntityID InEntity)
+{
+    std::vector<EntityID> Next = Selected;
+    Next.push_back(InEntity);
+    ApplySelection(Next, InEntity);
+}
+
+void EditorDocument::ApplySelection(const std::vector<EntityID>& InEntities, EntityID InPrimary, const bool bInForceSignal)
+{
+    /* Alive, once each, in order; the primary moved to the end. */
+    std::vector<EntityID> Next;
+    for(const EntityID Each : InEntities)
+    {
+        if(ActiveWorld && ActiveWorld->IsAlive(Each) && std::find(Next.begin(), Next.end(), Each) == Next.end())
+        {
+            Next.push_back(Each);
+        }
+    }
+    const auto Primary = std::find(Next.begin(), Next.end(), InPrimary);
+    if(Primary == Next.end())
+    {
+        InPrimary = Next.empty() ? GameCore::InvalidEntityID() : Next.back();
+    }
+    else
+    {
+        Next.erase(Primary);
+        Next.push_back(InPrimary);
+    }
+    if(!bInForceSignal && Next == Selected && InPrimary == Selection)
     {
         return;
     }
-    Selection = InEntity;
+    Selected  = std::move(Next);
+    Selection = InPrimary;
     emit SelectionChanged(Selection);
 }
 
@@ -681,8 +1036,9 @@ void EditorDocument::NotifyPropertyEdited(const EntityID InEntity, const GameCor
     emit PropertyEdited(InEntity, InType);
 
     /* Only the selection's values from before the write are known (the
-     * shadow); every panel that writes properties edits the selection. */
-    if(!IsRecording() || InEntity != ShadowEntity)
+     * shadow); every panel that writes properties edits the selection. A
+     * group edit records once, at its end. */
+    if(!IsRecording() || bGroupEditing || InEntity != ShadowEntity)
     {
         return;
     }
@@ -782,6 +1138,66 @@ void EditorDocument::EndEditGesture()
     emit HistoryChanged();
 }
 
+void EditorDocument::BeginGroupEdit(const std::vector<EntityID>& InEntities, const GameCore::ComponentTypeID InType,
+                                    const QString& InLabel)
+{
+    BeginEditGesture(InLabel);
+    bGroupEditing  = true;
+    GroupEditType  = InType;
+    GroupEditLabel = InLabel;
+    GroupEdit.clear();
+    for(const EntityID Each : InEntities)
+    {
+        if(ActiveWorld->IsAlive(Each))
+        {
+            GroupEdit.push_back({ ActiveWorld->GetEntity(Each).GetGuid(), EditorHistory::CaptureProperties(*ActiveWorld, Each, InType) });
+        }
+    }
+}
+
+void EditorDocument::EndGroupEdit(const bool bInCancel)
+{
+    if(!bGroupEditing)
+    {
+        return;
+    }
+    bGroupEditing = false;
+    struct Changed { const GroupEditEntry* Entry; std::vector<uint8_t> After; };
+    std::vector<Changed> Changes;
+    for(const GroupEditEntry& Entry : GroupEdit)
+    {
+        const EntityID Entity = ActiveWorld->FindEntityByGuid(Entry.Guid);
+        if(!Entity.IsSet())
+        {
+            continue;
+        }
+        if(bInCancel)
+        {
+            EditorHistory::ApplyProperties(*ActiveWorld, Entity, GroupEditType, Entry.Before);
+            ActiveWorld->RefreshEntityBounds(Entity);
+            emit PropertyEdited(Entity, GroupEditType);
+            continue;
+        }
+        std::vector<uint8_t> After = EditorHistory::CaptureProperties(*ActiveWorld, Entity, GroupEditType);
+        if(After != Entry.Before) { Changes.push_back({ &Entry, std::move(After) }); }
+    }
+    if(!bInCancel && !Changes.empty() && IsRecording())
+    {
+        History->beginMacro(QStringLiteral("%1 %2 entities").arg(GroupEditLabel).arg(Changes.size()));
+        for(Changed& Each : Changes)
+        {
+            const EntityID Entity = EditedWorld->FindEntityByGuid(Each.Entry->Guid);
+            Record(new EditorHistory::PropertyEditCommand(*this, QStringLiteral("%1 %2").arg(GroupEditLabel, GetDisplayName(Entity)),
+                                                          Each.Entry->Guid, GroupEditType, Each.Entry->Before, std::move(Each.After), 0));
+        }
+        History->endMacro();
+        LatestRecorded = nullptr;
+    }
+    GroupEdit.clear();
+    RefreshShadow();
+    EndEditGesture();
+}
+
 bool EditorDocument::IsLatestRecorded(const QUndoCommand* InCommand) const
 {
     return InCommand && InCommand == LatestRecorded;
@@ -815,9 +1231,14 @@ void EditorDocument::OnEntityDestroyed(const EntityID InEntity, void* InUserData
 
     /* Inside the World's broadcast: record, never re-enter the World. The
      * signal itself waits for the queued turn. */
-    if(InEntity == Self->Selection)
+    const auto Found = std::find(Self->Selected.begin(), Self->Selected.end(), InEntity);
+    if(Found != Self->Selected.end())
     {
-        Self->Selection = GameCore::InvalidEntityID();
+        Self->Selected.erase(Found);
+        if(InEntity == Self->Selection)
+        {
+            Self->Selection = Self->Selected.empty() ? GameCore::InvalidEntityID() : Self->Selected.back();
+        }
         QTimer::singleShot(0, Self, [Self]() { emit Self->SelectionChanged(Self->Selection); });
     }
     Self->QueueEntitiesChanged();
@@ -845,6 +1266,7 @@ void EditorDocument::QueueEntitiesChanged()
 void EditorDocument::ReplaceWorld()
 {
     Selection = GameCore::InvalidEntityID();
+    Selected.clear();
 
     DestroyWorld();
     CreateWorld();
@@ -917,12 +1339,18 @@ void EditorDocument::ForgetHooks()
     ComponentRemovedHandle = GameCore::DelegateHandle();
 }
 
-void EditorDocument::ActivateWorld(GameCore::World* InWorld, const EntityID InSelection)
+void EditorDocument::ActivateWorld(GameCore::World* InWorld, const EntityID InSelection, const std::vector<EntityID>& InSelected)
 {
     ActiveWorld = InWorld;
     HookActiveWorld();
 
-    Selection = ActiveWorld && ActiveWorld->IsAlive(InSelection) ? InSelection : GameCore::InvalidEntityID();
+    Selected.clear();
+    for(const EntityID Each : InSelected.empty() ? std::vector<EntityID>{ InSelection } : InSelected)
+    {
+        if(ActiveWorld && ActiveWorld->IsAlive(Each)) { Selected.push_back(Each); }
+    }
+    Selection = ActiveWorld && ActiveWorld->IsAlive(InSelection) ? InSelection
+              : Selected.empty() ? GameCore::InvalidEntityID() : Selected.back();
     emit WorldReset();
     emit SelectionChanged(Selection);
 }
@@ -1029,6 +1457,7 @@ void EditorDocument::BorrowWorld(GameCore::World* InWorld)
     if(!IsWorldBorrowed())
     {
         EditedSelection = Selection;
+        EditedSelected  = Selected;
     }
     UnhookActiveWorld();
     ActivateWorld(InWorld, GameCore::InvalidEntityID());
@@ -1070,8 +1499,9 @@ void EditorDocument::ReturnToEditedWorld()
     {
         ForgetHooks();
     }
-    ActivateWorld(EditedWorld, EditedSelection);
+    ActivateWorld(EditedWorld, EditedSelection, EditedSelected);
     EditedSelection = GameCore::InvalidEntityID();
+    EditedSelected.clear();
     emit HistoryChanged();
 }
 

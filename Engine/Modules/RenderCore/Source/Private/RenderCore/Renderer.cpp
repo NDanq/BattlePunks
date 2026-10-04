@@ -1,10 +1,14 @@
 #include "Public/RenderCore/Renderer.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <iterator>
 #include <type_traits>
+#include <cstdio>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCommand.h"
@@ -16,6 +20,7 @@
 #include "Public/RenderCore/RenderThread.h"
 #include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
+#include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/WorldBridge.h"
 
 /*
@@ -24,8 +29,25 @@
  * Initialize/Shutdown/BindWorld/UnbindWorld/EndFrame need them touched.
  */
 
+/* "stat unit": frame, game thread and render thread times over each viewport
+ * (RenderScene::Render). The editor's console toggles it with "stat unit". */
+NIMBLE_CONFIG_BOOL(GStatsUnit, "Stats", "Unit", false, nullptr);
+
+/* "stat frame": each viewport's GPU time per stage of its frame
+ * (ERenderGpuTimer), where the backend can time the GPU. */
+NIMBLE_CONFIG_BOOL(GStatsFrame, "Stats", "Frame", false, nullptr);
+
 namespace RenderCore
 {
+    namespace
+    {
+        int64_t StatNowNs()
+        {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
+    }
+
 #if WITH_EDITOR
     static_assert(std::is_trivially_copyable<DebugLine>::value,
                   "DebugLine crosses to the render thread by memcpy -- see Renderer::EndFrame");
@@ -82,6 +104,60 @@ namespace RenderCore
         RenderSceneID               NextSceneID = RENDER_DEFAULT_SCENE + 1;
 
         bool bRenderRegistered = false;
+
+        /* "stat unit", game thread only: this frame's start and the time it
+         * spent blocked (the fence, presenting); sums over the current half
+         * second, published by EndFrame when it is up. */
+        int64_t GameStartNs   = 0;
+        int64_t BlockedNs     = 0;   // WaitNs + PresentNs
+        int64_t WaitNs        = 0;
+        int64_t PresentNs     = 0;
+        int64_t LastEndNs     = 0;
+        int64_t WindowStartNs = 0;
+        double  SumFrame = 0.0, SumGame = 0.0, SumRender = 0.0, SumWait = 0.0, SumPresent = 0.0, SumIdle = 0.0;
+        int     Samples  = 0;
+
+        /* Adds this frame to the window; publishes the averages every half second. */
+        void NoteFrameTimes(const int64_t InEndNs)
+        {
+            if(LastEndNs != 0)
+            {
+                const int64_t Start = std::max(GameStartNs, LastEndNs);
+                SumFrame   += double(InEndNs - LastEndNs);
+                SumGame    += double(std::max<int64_t>(InEndNs - Start - BlockedNs, 0));
+                SumRender  += Thread.GetLastFrameRenderSeconds() * 1.0e9;
+                SumWait    += double(WaitNs);
+                SumPresent += double(PresentNs);
+                SumIdle    += double(Start - LastEndNs);
+                ++Samples;
+            }
+            else
+            {
+                WindowStartNs = InEndNs;
+            }
+            LastEndNs   = InEndNs;
+            GameStartNs = 0;
+            BlockedNs   = 0;
+            WaitNs      = 0;
+            PresentNs   = 0;
+
+            StatUnitSnapshot Unit = GetStatUnit();
+            Unit.bShow      = GStatsUnit.GetBool();
+            Unit.bShowFrame = GStatsFrame.GetBool();
+            if(Samples > 0 && InEndNs - WindowStartNs >= 500'000'000)
+            {
+                Unit.FrameMs        = float(SumFrame / Samples / 1.0e6);
+                Unit.GameThreadMs   = float(SumGame / Samples / 1.0e6);
+                Unit.RenderThreadMs = float(SumRender / Samples / 1.0e6);
+                Unit.WaitMs         = float(SumWait / Samples / 1.0e6);
+                Unit.PresentMs      = float(SumPresent / Samples / 1.0e6);
+                Unit.IdleMs         = float(SumIdle / Samples / 1.0e6);
+                SumFrame = SumGame = SumRender = SumWait = SumPresent = SumIdle = 0.0;
+                Samples       = 0;
+                WindowStartNs = InEndNs;
+            }
+            SetStatUnit(Unit);
+        }
 
 #if WITH_EDITOR
         /* RequestMaterialPreview's results, delivered by the render thread. */
@@ -294,7 +370,19 @@ namespace RenderCore
 
     void Renderer::WaitForPreviousFrame()
     {
+        const int64_t Start = StatNowNs();
         P->Thread.WaitForFrame();
+        const int64_t Waited = StatNowNs() - Start;
+        P->BlockedNs += Waited;
+        P->WaitNs    += Waited;
+    }
+
+    void Renderer::BeginGameFrame()
+    {
+        P->GameStartNs = StatNowNs();
+        P->BlockedNs   = 0;
+        P->WaitNs      = 0;
+        P->PresentNs   = 0;
     }
 
 #if WITH_EDITOR
@@ -385,7 +473,8 @@ namespace RenderCore
         });
     }
 
-    uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
+    uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint,
+                                              const EMaterialPreviewChannel InChannel)
     {
         const size_t Length = InName ? std::strlen(InName) : 0;
         if(!P->DefaultScene() || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_PATH_MAX)
@@ -399,6 +488,7 @@ namespace RenderCore
         Request.Width   = InSize;
         Request.Height  = InSize;
         Request.Tint    = InTint;
+        Request.Channel = uint8_t(InChannel);
         Request.Mailbox = &P->Previews;
 
         RenderScene* Scene = P->DefaultScene();
@@ -443,6 +533,40 @@ namespace RenderCore
             Scene->AddMaterialPreview(Request);
         });
         return Request.Request;
+    }
+
+    uint64_t Renderer::RequestSceneCapture()
+    {
+        RenderScene* Scene = P->DefaultScene();
+        if(!Scene || !P->Thread.IsRunning())
+        {
+            return 0;
+        }
+        const uint64_t Request = ++P->LastPreviewRequest;
+        MaterialPreviewMailbox* Mailbox = &P->Previews;
+        ENQUEUE_RENDER_COMMAND(AddSceneCapture)([Scene, Request, Mailbox](RenderContext&)
+        {
+            Scene->AddCapture(Request, Mailbox);
+        });
+        return Request;
+    }
+
+    uint64_t Renderer::RequestRenderTargetReadback(const std::string& InPath)
+    {
+        RenderScene* Scene = P->DefaultScene();
+        if(!Scene || !P->Thread.IsRunning() || InPath.size() >= RENDER_MATERIAL_PATH_MAX)
+        {
+            return 0;
+        }
+        struct PathText { char Text[RENDER_MATERIAL_PATH_MAX]; } Path = {};
+        std::memcpy(Path.Text, InPath.c_str(), InPath.size());
+        const uint64_t Request = ++P->LastPreviewRequest;
+        MaterialPreviewMailbox* Mailbox = &P->Previews;
+        ENQUEUE_RENDER_COMMAND(AddTargetReadback)([Scene, Request, Path, Mailbox](RenderContext&)
+        {
+            Scene->AddTargetReadback(Request, Path.Text, Mailbox);
+        });
+        return Request;
     }
 
     bool Renderer::TakeMaterialPreview(const uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError)
@@ -561,6 +685,7 @@ namespace RenderCore
             }
         }
 
+        P->NoteFrameTimes(StatNowNs());
         P->Thread.EndFrame(InFrame.FrameNumber);
     }
 
@@ -595,7 +720,11 @@ namespace RenderCore
         }
         if(const RendererScene* Scene = P->Find(InScene))
         {
+            const int64_t Start = StatNowNs();
             Scene->Scene->PresentToWindow(InWindow);
+            const int64_t Presented = StatNowNs() - Start;
+            P->BlockedNs += Presented;
+            P->PresentNs += Presented;
         }
     }
 
@@ -624,6 +753,42 @@ namespace RenderCore
         {
             Scene->SetClearColor(InColor);
         });
+    }
+
+    void Renderer::SetClearGradient(const RenderSceneID InScene, const EngineCore::Color InTop, const EngineCore::Color InBottom)
+    {
+        const RendererScene* Found = P->Find(InScene);
+        if(!Found || !Found->Scene)
+        {
+            return;
+        }
+        RenderScene* Scene = Found->Scene;
+        ENQUEUE_RENDER_COMMAND(SetClearGradient)([Scene, InTop, InBottom](RenderContext&)
+        {
+            Scene->SetClearGradient(InTop, InBottom);
+        });
+    }
+
+    void Renderer::SetViewMode(const RenderSceneID InScene, const ERenderViewMode InMode, const std::string& InTarget)
+    {
+        const RendererScene* Found = P->Find(InScene);
+        if(!Found || !Found->Scene)
+        {
+            return;
+        }
+        struct TargetName { char Text[160]; } Name = {};
+        std::snprintf(Name.Text, sizeof(Name.Text), "%s", InTarget.c_str());
+        RenderScene* Scene = Found->Scene;
+        ENQUEUE_RENDER_COMMAND(SetViewMode)([Scene, InMode, Name](RenderContext&)
+        {
+            Scene->SetViewMode(InMode, Name.Text);
+        });
+    }
+
+    std::vector<std::string> Renderer::GetViewableTargets(const RenderSceneID InScene) const
+    {
+        const RendererScene* Found = P->Find(InScene);
+        return Found && Found->Scene ? Found->Scene->GetViewableTargets() : std::vector<std::string>();
     }
 
     void Renderer::GetStats(RenderStats& OutStats) const

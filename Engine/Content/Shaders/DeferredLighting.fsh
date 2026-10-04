@@ -10,14 +10,25 @@
 #include <Common.glsl>
 #include <SceneUniforms.glsl>
 #include <MaterialCommon.glsl>
-#include <Lighting.glsl>
 
-// Material texture slots 0-4 (GDI bindings 4-8).
-MATERIAL_SAMPLER2D(4, GBuffer0)      // rgb: Base Color; a: Ambient Occlusion
-MATERIAL_SAMPLER2D(5, GBuffer1)      // rgb: normal * 0.5 + 0.5; a: lit
-MATERIAL_SAMPLER2D(6, GBuffer2)      // Metallic, Roughness, Specular
-MATERIAL_SAMPLER2D(7, GBuffer3)      // rgb: Emissive
-MATERIAL_SAMPLER2D(8, SceneDepth)    // r: window depth, 0 near to 1 far
+// Material texture slots 0-7 (GDI bindings 4-11).
+MATERIAL_SAMPLER2D(4, GBuffer0)           // rgb: Base Color; a: Ambient Occlusion
+MATERIAL_SAMPLER2D(5, GBuffer1)           // rgb: normal * 0.5 + 0.5; a: lit (1), or lit with its ambient baked (0.75)
+MATERIAL_SAMPLER2D(6, GBuffer2)           // Metallic, Roughness, Specular
+MATERIAL_SAMPLER2D(7, GBuffer3)           // Emissive, past 1 too (EncodeGBufferEmissive)
+MATERIAL_SAMPLER2D(8, SceneDepth)         // r: window depth, 0 near to 1 far
+MATERIAL_SAMPLER2D(9, ShadowDirectional)  // the sun's shadow atlas (Shadows.glsl)
+MATERIAL_SAMPLER2D(10, ShadowLocal)       // point and spot lights' shadow atlas
+MATERIAL_SAMPLER2D(11, AmbientOcclusion)  // r: screen-space ambient occlusion, half size (PPAmbientOcclusion.fsh)
+
+// The pass's own settings, at the material block's binding.
+UBO_BLOCK_BEGIN(2, Lighting_Block)
+    vec4 Lighting_Params;   // x: 1 if AmbientOcclusion holds this frame's occlusion
+UBO_BLOCK_END(Lighting_Block)
+
+// Only here are lights shadowed: the atlases above are this pass's.
+#define LIGHTING_SHADOWS 1
+#include <Lighting.glsl>
 
 OUTPUT(0, vec4, Output)
 
@@ -47,10 +58,25 @@ void main(void)
     Surface.Metallic         = Gb2.r;
     Surface.Roughness        = Gb2.g;
     Surface.Specular         = Gb2.b;
-    Surface.Emissive         = Gb3.rgb;
+    Surface.Emissive         = DecodeGBufferEmissive(Gb3);
+    // Screen-space occlusion takes away ambient light only: ShadeSurface
+    // applies AmbientOcclusion to its indirect term.
+    if(Lighting_Params.x > 0.5)
+    {
+        Surface.AmbientOcclusion *= texture(AmbientOcclusion, Interpolants.TexCoord).r;
+    }
     Surface.Opacity          = 1.0;
     Surface.OpacityMask      = 1.0;
 
-    vec3 Color = ToDisplay(ToLinear(Surface.Emissive) + ShadeSurface(Surface, WorldPosition, Surface.Normal));
+    // Unlit view mode, or a preview's channel: no light at all.
+    if(Scene_View.x > 0.5)
+    {
+        Output = vec4(ToSceneColor(ViewChannelColor(Surface.BaseColor, Surface.Emissive)), 1.0);
+        return;
+    }
+
+    // A baked surface carries its diffuse ambient in its emissive (BakedLighting.glsl).
+    float AmbientDiffuse = Gb1.a < 0.875 ? 0.0 : 1.0;
+    vec3 Color = ToSceneColor(ToLinear(Surface.Emissive) + ShadeSurface(Surface, WorldPosition, Surface.Normal, AmbientDiffuse));
     Output = vec4(Color, 1.0);
 }

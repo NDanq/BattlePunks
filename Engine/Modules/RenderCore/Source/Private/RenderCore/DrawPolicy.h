@@ -31,11 +31,25 @@ namespace RenderCore
         GDIMesh*          Mesh  = nullptr;
         uint32_t          First = 0;
         uint32_t          Count = 0;             // 0: the whole mesh
+        int32_t           ShadowView = -1;       // Shadows stage: the ShadowFrame view it draws into
+        uint8_t           PostStage  = 1;        // PostProcess stage: EPostProcessStage, before or after the effects
+        bool              bStatic    = false;    // replayed from a static draw list (SubmitCaptured): its own draw event
 
         /* The entity's parameter overrides; those for MaterialSlot apply. */
         const RenderMaterialParameter* Overrides     = nullptr;
         uint32_t                       OverrideCount = 0;
         uint8_t                        MaterialSlot  = 0;
+
+        /* The entity's baked lighting; null: none (BakedLighting.glsl). */
+        const RenderBakedDraw*         Baked = nullptr;
+    };
+
+    /* A draw as a proxy queued it, kept with its stage: what a static draw
+     * list replays (RenderContext::BeginCapture). */
+    struct StagedDraw
+    {
+        DrawCommand  Item;
+        ERenderStage Stage = ERenderStage::BasePass;
     };
 
     enum class EDrawSort : uint8_t

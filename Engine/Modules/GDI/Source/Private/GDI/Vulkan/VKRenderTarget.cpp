@@ -1,4 +1,5 @@
 #include "Public/GDI/Vulkan/VKRenderTarget.h"
+#include "Public/GDI/GDIHalf.h"
 #include "Public/GDI/Vulkan/VKDevice.h"
 #include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
 #include "Public/GDI/Vulkan/VKTexture.h"
@@ -18,10 +19,11 @@
 extern GDIDynamicDriver* GDynamicGDI;
 using namespace VKOps;
 
-VKRenderTarget::VKRenderTarget(VKDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight)
+VKRenderTarget::VKRenderTarget(VKDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight, VkFormat InFormat)
     : GDIRenderTarget(InWidth, InHeight),
       Device(InDevice),
-      Name(InName)
+      Name(InName),
+      Format(InFormat)
 {
     Allocate();
 }
@@ -110,8 +112,8 @@ void VKRenderTarget::Allocate()
         return;
     }
 
-#ifdef QT_DEBUG
-    // Name the image so validation-layer messages identify which RT they refer to.
+    // Name the image so captures and validation-layer messages identify which RT it is.
+    if(VulkanGDIContext::HasDebugUtils())
     {
         static auto SetObjectName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
             vkGetInstanceProcAddr(Device->GetInstance(), "vkSetDebugUtilsObjectNameEXT"));
@@ -126,7 +128,6 @@ void VKRenderTarget::Allocate()
             SetObjectName(Device->GetDevice(), &NameInfo);
         }
     }
-#endif
 
     CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -293,7 +294,8 @@ EngineCore::Image VKRenderTarget::ToImage()
         GDI->FlushForReadback();
 
     VkDevice Dev = Device->GetDevice();
-    const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * 4u;
+    const bool bHalf = Format == VK_FORMAT_R16G16B16A16_SFLOAT;
+    const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * (bHalf ? 8u : 4u);
 
     VkBuffer       Buf = VK_NULL_HANDLE;
     VkDeviceMemory Mem = VK_NULL_HANDLE;
@@ -335,7 +337,14 @@ EngineCore::Image VKRenderTarget::ToImage()
     // bottom). Mirror vertically exactly like OpenGLRenderTarget::ToImage so
     // both backends return an identically-oriented EngineCore::Image.
     EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
-    std::memcpy(Result.GetData(), Mapped, size_t(DataSize));
+    if(bHalf)
+    {
+        GDIHalvesToBytes(static_cast<const uint16_t*>(Mapped), Result.GetData(), size_t(Width) * size_t(Height) * 4u);
+    }
+    else
+    {
+        std::memcpy(Result.GetData(), Mapped, size_t(DataSize));
+    }
     vkUnmapMemory(Dev, Mem);
     Result.FlipVertical();
 

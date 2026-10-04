@@ -3,11 +3,14 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "Public/Core/CoreTypes.h"
+#include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderPipeline.h"
+#include "Public/RenderCore/RenderTargetAsset.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/RenderView.h"
 
@@ -27,6 +30,8 @@ namespace EngineCore { class Image; }
 namespace RenderCore
 {
     struct SceneTargets;             // Private/RenderCore/SceneTargets.h
+    struct IBLResources;             // likewise: a scene's probe atlas and cube strip
+    struct StagedDraw;               // Private/RenderCore/DrawPolicy.h
     struct MaterialPreviewRequest;   // RenderScene.h
     struct RenderMaterialParameter;  // Components/RenderComponent.h
 
@@ -37,6 +42,10 @@ namespace RenderCore
     {
         const RenderMaterialParameter* Items = nullptr;
         uint32_t                       Count = 0;
+
+        /* The entity's baked lighting (RenderLighting.h); null: none. Kept,
+         * like Items, by pointer: it must outlive the frame's draws. */
+        const RenderBakedDraw*         Baked = nullptr;
     };
 
     class RENDERCORE_API RenderContext
@@ -100,6 +109,16 @@ namespace RenderCore
         bool DrawMesh(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
                       const char* InMaterial);
 
+        /*
+         * A shadow caster: InMeshPath's Opaque and Masked sections (by the
+         * same slot rules as DrawMesh) into the shadow view RenderScene is
+         * gathering casters for (RenderProxy::DrawShadow). Draws nothing,
+         * returning false, outside that, or if the mesh cannot be loaded.
+         */
+        bool DrawMeshShadow(const RenderTransform& InTransform, const char* InMeshPath,
+                            const char* const* InSlots, uint32_t InSlotCount,
+                            const MaterialParameterOverrides& InOverrides = MaterialParameterOverrides());
+
         /* How far InMaterial's World Position Offset reaches (its Max Offset),
          * for a proxy to pad its culling bounds; 0 without one, or if it
          * cannot load. Loads it if need be -- warning as a draw of it would,
@@ -150,23 +169,128 @@ namespace RenderCore
         /* The scene block's light and ambient (RenderScene, once a frame). */
         void SetLighting(const RenderLighting& InLighting);
 
+        /* ERenderViewMode::Unlit for the stages that follow: base colour and
+         * emissive, no light (DeferredLighting.fsh). RenderScene sets it for
+         * its own view only, and clears it after. */
+        void SetUnlit(bool bInUnlit);
+
+        /* Every colour target a view can show in its place (ERenderViewMode::
+         * RenderTarget): InTargets' stages, the shadow atlases, the image-based
+         * lighting atlas and strip, and every render target asset captured,
+         * by readable name. Render thread. */
+        void ListViewableTargets(const SceneTargets& InTargets, std::vector<std::string>& OutNames) const;
+
+        /* The one ListViewableTargets names InName, stretched over
+         * InTargets.Final, which stays bound for the present; nothing if it
+         * names none, or Final itself. */
+        void ShowTarget(const SceneTargets& InTargets, const std::string& InName);
+
         /* RenderScene::Render's: queue the proxies' draws in their stages'
          * policies, then run the stages into InTargets (RENDERPIPELINE.md),
          * clearing to InClearColor. Leaves the final colour target bound --
          * what the present shows. */
         void BeginSceneDraws();
-        void RenderSceneStages(SceneTargets& InTargets, EngineCore::Color InClearColor);
+
+        /* STATIC DRAW LISTS (RenderScene): between BeginCapture and
+         * EndCapture, whatever a proxy's Draw or DrawShadow queues lands in
+         * *InOut instead of this frame's stages. SubmitCaptured queues a kept
+         * list for this frame -- its depths recomputed for this view, and a
+         * shadow list (InShadowView >= 0) aimed at that shadow view. */
+        void BeginCapture(std::vector<StagedDraw>* InOut);
+        void EndCapture();
+        void SubmitCaptured(const std::vector<StagedDraw>& InDraws, int32_t InShadowView = -1);
+
+        /*
+         * SCENE CAPTURE (RenderScene::Render; RENDERPIPELINE.md). For a probe
+         * capturing into the render target at InPath (RenderTargetAsset.h):
+         * BeginTargetCapture readies its texture at InResolution (0: the
+         * target's own size) and returns the stage targets each face renders
+         * through, with the colour to clear them to -- null, warned once, if
+         * the path names no target or one of the other kind. After each
+         * face's RenderSceneStages, FinishTargetFace copies it into the
+         * target (a cube's face InFace into its place in the strip).
+         * ReadRenderTarget reads back what a material would sample now (the
+         * editor's bake).
+         */
+        SceneTargets* BeginTargetCapture(const char* InPath, uint32_t InResolution, ERenderTargetKind InKind, EngineCore::Color& OutClear);
+
+        /*
+         * IMAGE-BASED LIGHTING (RenderScene::Render; RENDERPIPELINE.md). Only
+         * with an HDR scene colour (CanImageBasedLight); the Lighting stage's
+         * hemisphere ambient otherwise.
+         *
+         *   EnsureIBLResources   the atlas, and the strip at InFace a side
+         *   RenderSkyToStrip     the current lighting's sky (its HDRI, else its colours)
+         *   CopyCaptureToStrip   a cube face InStages rendered (its linear scene colour)
+         *   PrefilterIBLBlock    the strip into atlas block InBlock (0-3 probes, 4 the sky)
+         *   SetImageBasedLighting  what lights the next RenderSceneStages: InResources'
+         *                        atlas (null: none), InCount probes as Scene_Probes' vec4s
+         *                        (3 each), and whether the sky block is valid
+         *   SetSkyBackground     draw the sky (HDRI or colours) behind every view
+         *                        while set: a reflection probe's captures
+         */
+        bool CanImageBasedLight() const;
+        bool EnsureIBLResources(IBLResources& InOut, uint32_t InFace);
+        void ReleaseIBLResources(IBLResources& InOut);
+        bool RenderSkyToStrip(IBLResources& InResources);
+        bool CopyCaptureToStrip(SceneTargets& InStages, IBLResources& InResources, uint32_t InFace);
+        bool PrefilterIBLBlock(IBLResources& InResources, uint32_t InBlock);
+        void SetImageBasedLighting(const IBLResources* InResources, const float (*InProbes)[4], uint32_t InCount, bool bInSky);
+        void SetSkyBackground(bool bInForce);
+        void          FinishTargetFace(const char* InPath, uint32_t InFace);
+        bool          ReadRenderTarget(const char* InPath, EngineCore::Image& OutPixels);
+
+        /* Moves when anything a kept draw points at may have gone: a material
+         * reloaded or retired, a mesh rebuilt or reimported. */
+        uint64_t GetContentGeneration() const;
+
+        /* RenderScene::Render's, after BeginSceneDraws: the frame's shadow
+         * views from the view and lighting (none if [Shadows] is off or no
+         * light casts). For each, RenderScene sets it as the caster view and
+         * calls DrawShadow on every proxy within its bounds; -1 ends that. */
+        uint32_t              PrepareShadows();
+        const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
+        void                  SetShadowCasterView(int32_t InView);
+        /* InClearBottom: the background is a gradient, InClearColor at the
+         * top to it at the bottom (ClearGradient.fsh), under everything.
+         * bInTimed: write "stat frame"'s GPU timestamps around each stage --
+         * a scene's own frame only, once per GDI block (BeginTimedBlock). */
+        void RenderSceneStages(SceneTargets& InTargets, EngineCore::Color InClearColor, bool bInTimed = false,
+                               const EngineCore::Color* InClearBottom = nullptr);
+
+        /* RenderScene::Render's, right after GDIBeginRendering: hands back the
+         * previous GDI block's stage times (ms per ERenderGpuTimer, -1 where
+         * not timed) and the scene that wrote them -- null if none did -- and
+         * notes InOwner as this block's, if bInTime and the backend can time. */
+        const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
+
+        /* InTimer's start (or end) timestamp, outside RenderSceneStages (the
+         * scene captures' span); nothing unless this block is timed. */
+        void WriteGpuTimestamp(ERenderGpuTimer InTimer, bool bInEnd);
 
         /* Both DrawMesh overloads: bInEvery puts InSlots[0] in every slot. */
         bool DrawMeshSections(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
                               const char* const* InSlots, uint32_t InSlotCount, bool bInEvery,
                               const MaterialParameterOverrides& InOverrides);
 
-        /* Queues a full-screen pass of a PostProcess material, after those
-         * already queued (outside a scene: draws it into the bound target,
-         * the caller having bound the scene so far to material texture 0).
-         * False (warned) if it is not a usable PostProcess material. */
-        bool SubmitPostProcess(const char* InMaterial);
+        /* Queues a full-screen pass of a PostProcess material at InStage of
+         * the post process stack (EPostProcessStage), after those already
+         * queued there (outside a scene: draws it into the bound target, the
+         * caller having bound the scene so far to material texture 0). False
+         * (warned) if it is not a usable PostProcess material. */
+        bool SubmitPostProcess(const char* InMaterial, uint8_t InStage = PPS_AfterEffects);
+
+        /* RenderScene::Render's, before RenderSceneStages: the stack's settings
+         * (its materials are submitted separately) and last frame's
+         * Projection * View, for motion blur -- null on a first frame. The
+         * next RenderSceneStages uses and forgets them. */
+        void SetPostProcess(const PostProcessSettings& InSettings, const EngineCore::Matrix4x4* InPreviousViewProjection);
+
+        /* RenderScene::Render's text overlay ("stat unit"): InText, lines split
+         * by '\n', in a panel at the top right of the bound InWidth x
+         * InHeight target, blended over it (StatsOverlay.fsh). */
+        void DrawStatUnit(uint32_t InWidth, uint32_t InHeight, const std::string& InText);
+        bool CanTimeGpu() const;
 
         /* Renderer::MountShaderCache's command: reads
          * Shaders/Cache/<Module>.<Platform>.nmsc and mounts it as a file layer

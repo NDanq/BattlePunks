@@ -39,6 +39,11 @@ public:
      */
     static VkInstance GetSharedVkInstance();
 
+    /* VK_EXT_debug_utils is enabled on the shared instance: draw events become
+     * command buffer labels and render targets are named. Non-shipping builds,
+     * whenever the loader (or a capture tool's layer) offers the extension. */
+    static bool HasDebugUtils();
+
     VkInstance VKContext = VK_NULL_HANDLE;
 };
 
@@ -170,6 +175,8 @@ public:
     void EndRendering() override;
 
     GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) override;
+    GDIRenderTarget* CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat) override;
+    bool             SupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat) const override;
     void SetRenderTarget(GDIRenderTarget* InRenderTarget) override;
     void SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom) override;
     void ReleaseRenderTarget(GDIRenderTarget* InRenderTarget) override;
@@ -190,6 +197,7 @@ public:
     GDITextureResource* CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
+    GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
 
     bool CheckError(const std::string& FailStr) override;
 
@@ -198,6 +206,10 @@ public:
 
     void BeginDrawEvent(const std::string& EventName) override;
     void EndDrawEvent() override;
+
+    bool     SupportsGPUTimestamps() const override { return TimestampPool != VK_NULL_HANDLE; }
+    void     WriteGPUTimestamp(uint32_t InIndex) override;
+    uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
 
     /** Vulkan present path: UI thread acquires + blits the offscreen RT and presents. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
@@ -290,6 +302,13 @@ private:
     VKDescriptorAllocator*  DescAlloc           = nullptr;
     VKCurrentStateData*     CurrentStateData    = nullptr;
 
+    /** The scene block's last upload, reused while its serial and the ring's
+     *  epoch are unchanged: it is set once per scene, not per draw. */
+    VkBuffer                SceneBlockUploadBuffer = VK_NULL_HANDLE;
+    VkDeviceSize            SceneBlockUploadOffset = 0;
+    uint64_t                SceneBlockUploadSerial = ~0ull;
+    uint64_t                SceneBlockUploadEpoch  = ~0ull;
+
     /** Lazily-created full-screen NDC quad for DrawScreenQuadPrimitive. */
     GDIMesh*                ScreenMesh          = nullptr;
     /** 1×1 transparent texture used as a fallback for unbound descriptor slots. */
@@ -305,6 +324,21 @@ private:
     VkSemaphore             RenderTimeline        = VK_NULL_HANDLE;
     uint64_t                RenderTimelineCounter = 0;            // render thread only
     std::atomic<uint64_t>   RenderTimelinePublished{0};          // render → UI handoff
+
+    /*
+     * GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread
+     * only. One pool of GDI_GPU_TIMESTAMP_MAX, reset at each BeginRendering
+     * after the previous block's are read back -- its fence has just been
+     * waited, so they are complete. Null if the graphics queue cannot time.
+     */
+    VkQueryPool TimestampPool      = VK_NULL_HANDLE;
+    double      TimestampPeriodNs  = 0.0;                         // nanoseconds per tick
+    uint64_t    TimestampValidMask = 0;                           // the queue's timestampValidBits
+    uint64_t    TimestampsWritten  = 0;                           // this block's, by index
+    uint64_t    PreviousTimestamps = 0;                           // the previous block's, read back
+    double      PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
+    void CreateTimestampPool();
+    void CollectTimestamps();
 
     // Set by RT resize (render thread), cleared by EndRendering; read by the
     // UI-thread present to skip frames while targets are being recreated.

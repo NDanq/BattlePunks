@@ -340,6 +340,9 @@ namespace NimbleEngine
          * was corrected mid-session. */
         using Clock = std::chrono::steady_clock;
 
+        /* "stat unit": the game thread's frame starts here, before the pump. */
+        Rendering->BeginGameFrame();
+
         /* First, where no World is ticking. A failed load ends the session. */
         Session->ApplyPendingLevel();
         if(bQuitRequested || Session->IsQuitRequested())

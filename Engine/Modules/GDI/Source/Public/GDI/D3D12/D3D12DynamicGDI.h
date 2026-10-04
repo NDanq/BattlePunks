@@ -96,6 +96,8 @@ public:
     void EndRendering() override;
 
     GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) override;
+    GDIRenderTarget* CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat) override;
+    bool             SupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat) const override;
     void SetRenderTarget(GDIRenderTarget* InRenderTarget) override;
     void SetRenderTargets(GDIRenderTarget* const* InColors, uint InCount, GDIRenderTarget* InDepthFrom) override;
     void ReleaseRenderTarget(GDIRenderTarget* InRenderTarget) override;
@@ -113,6 +115,7 @@ public:
     GDITextureResource* CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
+    GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
 
     bool CheckError(const std::string& FailStr) override;
 
@@ -121,6 +124,10 @@ public:
 
     void BeginDrawEvent(const std::string& EventName) override;
     void EndDrawEvent() override;
+
+    bool     SupportsGPUTimestamps() const override { return TimestampHeap != nullptr; }
+    void     WriteGPUTimestamp(uint32_t InIndex) override;
+    uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
 
     /** UI thread: draws the last finished frame into the swapchain and presents it. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
@@ -183,6 +190,12 @@ private:
     D3D12DescriptorAllocator* DescAlloc        = nullptr;
     D3D12CurrentStateData*    CurrentStateData = nullptr;
 
+    /* The scene block's last upload, reused while its serial and the ring's
+     * epoch are unchanged: it is set once per scene, not per draw. */
+    uint64_t                  SceneBlockUploadAddress = 0;   // D3D12_GPU_VIRTUAL_ADDRESS
+    uint64_t                  SceneBlockUploadSerial = ~0ull;
+    uint64_t                  SceneBlockUploadEpoch  = ~0ull;
+
     GDIMesh*                  ScreenMesh       = nullptr;
     D3D12TextureResource*     NullTexture      = nullptr;
 
@@ -191,6 +204,22 @@ private:
     std::unordered_set<D3D12RenderTarget*>             LiveRenderTargets;
 
     std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> DeferredResources;
+
+    /*
+     * GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread only:
+     * a heap of GDI_GPU_TIMESTAMP_MAX, resolved into TimestampReadback by each
+     * submit and read at the next BeginRendering, after its fence is waited.
+     */
+    Microsoft::WRL::ComPtr<ID3D12QueryHeap> TimestampHeap;
+    Microsoft::WRL::ComPtr<ID3D12Resource>  TimestampReadback;
+    double   TimestampTicksPerMs = 0.0;
+    uint64_t TimestampsWritten   = 0;   // this block's, by index
+    uint64_t TimestampsResolved  = 0;   // resolved by a submit, not yet read
+    uint64_t PreviousTimestamps  = 0;   // the previous block's, read back
+    double   PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
+    void CreateTimestampHeap();
+    void ResolveTimestamps(ID3D12GraphicsCommandList* InList);
+    void CollectTimestamps();
     std::vector<uint32_t>                               DeferredSRVs;
 };
 

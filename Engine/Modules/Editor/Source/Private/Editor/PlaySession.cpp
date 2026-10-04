@@ -2,11 +2,14 @@
 
 #include "Private/Editor/PlaySession.h"
 
+#include "Public/NimbleEngine/SaveGame.h"
+
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
+#include "Public/GameWindow/GameWindow.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
@@ -33,7 +36,7 @@ PlaySession::~PlaySession()
     Stop();
 }
 
-bool PlaySession::Start()
+bool PlaySession::Start(const std::string& InOpenWorld)
 {
     if(Session)
     {
@@ -53,7 +56,16 @@ bool PlaySession::Start()
         return false;
     }
 
-    NimbleEngine::ILevel* Level = Game->ResolveStartLevel();
+    /* The level of the world that is open, if one loads it; else [Game] StartLevel. */
+    NimbleEngine::ILevel* Level = NimbleEngine::FindLevelByWorldFile(InOpenWorld.c_str());
+    if(!Level)
+    {
+        Level = Game->ResolveStartLevel();
+        if(Level && !InOpenWorld.empty())
+        {
+            CORE_LOG("[PIE] no level loads " + InOpenWorld + "; playing the start level")
+        }
+    }
     if(!Level)
     {
         CORE_LOG_ERROR("[PIE] game module '" + Game->GetModuleName() + "' has no start level")
@@ -80,11 +92,43 @@ bool PlaySession::Start()
     return true;
 }
 
+void PlaySession::SetMouseCaptured(const bool bInCaptured)
+{
+    if(bInCaptured == IsMouseCaptured())
+    {
+        return;
+    }
+    bHostMouseCaptured = bInCaptured;
+    Input.SetMouseCaptured(bInCaptured);
+    if(!bInCaptured)
+    {
+        CORE_LOG("[PIE] the game released the mouse")
+        return;
+    }
+    const GameWindow* Window = Input.GetWindow();
+    CORE_LOG(std::string("[PIE] the game captured the mouse: ")
+             + (!Window             ? "the viewport holds the cursor while it has the focus"
+                : Window->HasFocus() ? "held in the viewport"
+                                     : "held once the viewport has the input focus -- click it"))
+}
+
+void PlaySession::AttachInputWindow(GameWindow* InWindow)
+{
+    Input.Attach(InWindow);
+    if(bHostMouseCaptured && InWindow)
+    {
+        Input.SetMouseCaptured(true);
+        CORE_LOG(std::string("[PIE] the game's mouse capture moves to the viewport: ")
+                 + (InWindow->HasFocus() ? "held in the viewport" : "held once the viewport has the input focus -- click it"))
+    }
+}
+
 void PlaySession::Stop()
 {
     const bool bWasRunning = Session != nullptr;
 
     /* The viewport's window outlives the run; it must not call into this one. */
+    bHostMouseCaptured = false;
     Input.Detach();
     Input.GetPending() = NimbleEngine::InputState();
     Input.Latch(0);

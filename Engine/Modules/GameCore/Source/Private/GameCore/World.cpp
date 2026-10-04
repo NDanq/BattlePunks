@@ -1,5 +1,6 @@
 #include "Public/GameCore/World.h"
 
+#include <cctype>
 #include <algorithm>
 #include <cstring>
 #include <deque>
@@ -46,6 +47,7 @@ namespace GameCore
         {
             EntityGuid        Guid;
             std::string       Name;
+            EMobility         Mobility = EMobility::Dynamic;
 
             /* The hierarchy, as slot indices: an intrusive, ordered child
              * list. Slots, not EntityIDs -- a child is destroyed with its
@@ -101,6 +103,8 @@ namespace GameCore
 
     struct World::Impl
     {
+        WorldSettings Settings;
+
         // --- entities --------------------------------------------------------
 
         std::vector<uint32_t> Generations;     // indexed by EntityID::Index; bumped on every destroy
@@ -236,8 +240,9 @@ namespace GameCore
             Alive[Index] = true;
             ++LiveEntityCount;
 
-            Members[Index].Guid = InGuid;
-            Members[Index].Name = InName ? InName : "";
+            Members[Index].Guid     = InGuid;
+            Members[Index].Name     = InName ? InName : "";
+            Members[Index].Mobility = EMobility::Dynamic;
             GuidToSlot[InGuid]  = Index;
 
             return EntityID(Index, Generations[Index]);
@@ -322,6 +327,11 @@ namespace GameCore
             const InstanceMembers& Instance = Instances[InSlot];
             const bool bRunning = IsLiveScriptRef(Instance.Script.InstanceRef) || Instance.Script.bStarted;
             if(!InstanceAlive[InSlot] || Instance.TickMode != EPrefabTickMode::Tick || !bRunning || Instance.Script.bErrored)
+            {
+                return;
+            }
+            /* A static root ticks no phase: its events still arrive (EMobility). */
+            if(Instance.RootSlot != NO_SLOT && Members[Instance.RootSlot].Mobility == EMobility::Static)
             {
                 return;
             }
@@ -637,6 +647,37 @@ namespace GameCore
         }
     }
 
+    // === Mobility ================================================================
+
+    const char* MobilityName(const EMobility InMobility)
+    {
+        switch(InMobility)
+        {
+            case EMobility::Static:     return "Static";
+            case EMobility::Stationary: return "Stationary";
+            default:                    return "Dynamic";
+        }
+    }
+
+    bool ParseMobility(const char* InText, EMobility& OutMobility)
+    {
+        const auto Equals = [InText](const char* InName)
+        {
+            const char* A = InText;
+            const char* B = InName;
+            for(; *A && *B; ++A, ++B)
+            {
+                if(std::tolower(static_cast<unsigned char>(*A)) != std::tolower(static_cast<unsigned char>(*B))) { return false; }
+            }
+            return *A == *B;
+        };
+        if(!InText) { return false; }
+        if(Equals("Static"))  { OutMobility = EMobility::Static;  return true; }
+        if(Equals("Stationary")) { OutMobility = EMobility::Stationary; return true; }
+        if(Equals("Dynamic")) { OutMobility = EMobility::Dynamic; return true; }
+        return false;
+    }
+
     // === Entity members ==========================================================
 
     EntityGuid World::GetEntityGuid(const EntityID InEntity) const
@@ -653,6 +694,26 @@ namespace GameCore
     {
         if(!P->IsAliveIndex(InEntity)) { return false; }
         P->Members[InEntity.Index].Name = InName ? InName : "";
+        return true;
+    }
+
+    EMobility World::GetEntityMobility(const EntityID InEntity) const
+    {
+        return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].Mobility : EMobility::Dynamic;
+    }
+
+    bool World::SetEntityMobility(const EntityID InEntity, const EMobility InMobility)
+    {
+        if(!P->IsAliveIndex(InEntity)) { return false; }
+        EntityMembers& Member = P->Members[InEntity.Index];
+        if(Member.Mobility == InMobility) { return true; }
+        Member.Mobility = InMobility;
+
+        /* An instance's root decides whether it ticks. */
+        if(Member.InstanceSlot != NO_SLOT && P->Instances[Member.InstanceSlot].RootSlot == InEntity.Index)
+        {
+            P->Rebucket(Member.InstanceSlot);
+        }
         return true;
     }
 
@@ -804,6 +865,7 @@ namespace GameCore
                                                        DerivePrefabEntityGuid(InstanceGuid, Template.LocalId));
             P->Members[New.Index].InstanceSlot = Slot;
             P->Members[New.Index].LocalId      = Template.LocalId;
+            P->Members[New.Index].Mobility     = Template.Mobility;
             ToLive[Template.LocalId] = New;
             Spawned.push_back(New);
         }
@@ -1514,9 +1576,9 @@ namespace GameCore
         {
             BoundsComponent& Bounds = Base[Index];
 
-            /* bStatic skips RE-FITTING, never the FIRST insert -- see
-             * DESIGN.md for the bug this fixes. */
-            if(Bounds.bStatic && Bounds.ProxyID >= 0)
+            /* bStatic (or a static entity) skips RE-FITTING, never the FIRST
+             * insert -- see DESIGN.md for the bug this fixes. */
+            if((Bounds.bStatic || GetEntityMobility(Bounds.Owner.Entity) == EMobility::Static) && Bounds.ProxyID >= 0)
             {
                 continue;
             }
@@ -1590,4 +1652,7 @@ namespace GameCore
     }
 
     EventBus& World::GetEvents() { return P->Events; }
+
+    WorldSettings&       World::GetSettings()       { return P->Settings; }
+    const WorldSettings& World::GetSettings() const { return P->Settings; }
 }

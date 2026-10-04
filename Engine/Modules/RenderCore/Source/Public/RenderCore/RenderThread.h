@@ -100,6 +100,10 @@ namespace RenderCore
 
         bool IsFrameInFlight() const;
 
+        /* The render thread's busy time for the last frame it finished: its
+         * commands, not the swap or the wait for work ("stat unit"). */
+        double GetLastFrameRenderSeconds() const;
+
         /*
          * Enqueues a FLUSH MARKER and blocks until the render thread reaches
          * it -- everything queued so far, from every caller, has executed.

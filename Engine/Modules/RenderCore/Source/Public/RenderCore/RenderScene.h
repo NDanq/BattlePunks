@@ -2,6 +2,8 @@
 #define RENDERCORE_RENDERSCENE_H
 
 #include <cstddef>
+#include <string>
+#include <vector>
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
@@ -27,6 +29,7 @@ namespace RenderCore
     class RenderContext;
     class RenderProxy;
     class MaterialPreviewMailbox;
+    struct SceneCaptureList;   // Private/RenderCore/SceneCapture.h
 
 #if WITH_EDITOR
     /* EDITOR ONLY -- a RequestMaterialPreview as a (trivially copyable) command. */
@@ -44,6 +47,7 @@ namespace RenderCore
         float                   Pitch = 20.0f;          // degrees above it
         float                   Zoom  = 1.0f;           // 1 frames the mesh's bounds
         EngineCore::Color       Tint{255, 255, 255, 255};
+        uint8_t                 Channel = 0;            // EMaterialPreviewChannel
         MaterialPreviewMailbox* Mailbox = nullptr;
     };
 #endif
@@ -73,11 +77,28 @@ namespace RenderCore
         void SetView(const RenderView& InView);
         void SetClearColor(EngineCore::Color InColor);
 
+        /* A vertical gradient instead (Renderer::SetClearGradient). */
+        void SetClearGradient(EngineCore::Color InTop, EngineCore::Color InBottom);
+
         /* The light the next Render() shades Lit materials with, and the
          * PostProcess materials it draws over the scene afterwards. Both are
          * re-sent every frame by WorldBridge. */
         void SetLighting(const RenderLighting& InLighting);
         void SetPostProcess(const RenderPostProcess& InPostProcess);
+
+        /* What the view shows (Renderer::SetViewMode): its picture, Unlit, or
+         * the render target named InTarget -- one of GetViewableTargets(); the
+         * picture while it names none. Render thread. */
+        void SetViewMode(ERenderViewMode InMode, const std::string& InTarget);
+
+        /* The render targets the last Render() could have shown, by name
+         * (RenderContext::ListViewableTargets). Any thread. */
+        std::vector<std::string> GetViewableTargets() const;
+
+        /* This frame's scene captures (WorldBridge): rendered into their
+         * render targets at the start of the next Render(), before the
+         * scene's own pass, so it samples them. */
+        void SetCaptures(const SceneCaptureList& InCaptures);
 
 #if WITH_EDITOR
         /* EDITOR ONLY. Lines for the next Render() only. */
@@ -86,6 +107,14 @@ namespace RenderCore
         /* EDITOR ONLY. Drawn off-screen by the next Render(), before the back
          * buffer bind (RenderContext::RenderMaterialPreview). */
         void AddMaterialPreview(const MaterialPreviewRequest& InRequest);
+
+        /* EDITOR ONLY. The next Render()'s final colour, without the debug
+         * lines, read back into InMailbox under InRequest. */
+        void AddCapture(uint64_t InRequest, MaterialPreviewMailbox* InMailbox);
+
+        /* The render target at InPath read back after the next Render()'s
+         * captures (Renderer::RequestRenderTargetReadback). */
+        void AddTargetReadback(uint64_t InRequest, const std::string& InPath, MaterialPreviewMailbox* InMailbox);
 #endif
 
         /* BeginRendering, SetViewport, Clear, draw every visible proxy whose

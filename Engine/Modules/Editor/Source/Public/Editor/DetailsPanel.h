@@ -122,6 +122,7 @@ private:
 
     /* The Entity section's editors; null when nothing is shown. */
     QLineEdit* NameEdit     = nullptr;
+    class QComboBox* MobilityCombo = nullptr;
 
     GameCore::EntityID                     ShownEntity;
     std::vector<GameCore::ComponentTypeID> ShownTypes;
