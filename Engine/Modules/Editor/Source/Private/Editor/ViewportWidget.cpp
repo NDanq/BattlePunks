@@ -14,6 +14,7 @@
 #include <QDropEvent>
 #include <QFileInfo>
 #include <QKeyEvent>
+#include <QMenu>
 #include <QMimeData>
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -28,6 +29,7 @@
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/EditorDocument.h"
+#include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/Content/ContentPaths.h"
 
@@ -54,6 +56,7 @@ namespace
     const EngineCore::Color SelectionColor(255, 165, 30);
     constexpr float         SelectionThickness  = 2.5f;
     constexpr double        SelectionPadPixels  = 4.0;   // outline sits just outside the shape
+    const EngineCore::Color SecondarySelectionColor(200, 120, 40);   // the rest of a multiple selection
     const EngineCore::Color AllBoundsColor(120, 126, 140);
     constexpr float         AllBoundsThickness  = 1.0f;
 
@@ -274,6 +277,8 @@ ViewportWidget::ViewportWidget(EditorContext& InContext, EditorDocument& InDocum
     };
     connect(&Document, &EditorDocument::SelectionChanged, this, DropGizmoDrag);
     connect(&Document, &EditorDocument::WorldReset,       this, DropGizmoDrag);
+
+    EditorEditActions::Install(this, Document, [this]() { EditorEditActions::PromptRename(this, Document); });
 }
 
 EngineCore::WindowHandle ViewportWidget::GetWindowHandle()
@@ -297,7 +302,7 @@ ViewportWidget::~ViewportWidget()
 
 void ViewportWidget::FrameSelection()
 {
-    const GameCore::AABB Box = Document.GetEntityBounds(Document.GetSelection());
+    const GameCore::AABB Box = GetSelectionBounds();
     if(!Box.IsEmpty())
     {
         Camera.Frame(Box);
@@ -356,8 +361,41 @@ void ViewportWidget::ApplyGameCameraView()
 
 EngineCore::Vector3 ViewportWidget::GetPivot() const
 {
-    const GameCore::AABB Box = Document.GetEntityBounds(Document.GetSelection());
+    const GameCore::AABB Box = GetSelectionBounds();
     return Box.IsEmpty() ? Camera.GetFocusPoint() : Box.Center();
+}
+
+GameCore::AABB ViewportWidget::GetSelectionBounds() const
+{
+    GameCore::AABB Box;
+    for(const GameCore::EntityID Each : Document.GetSelectedEntities())
+    {
+        Box = GameCore::AABB::Union(Box, Document.GetEntityBounds(Each));
+    }
+    return Box;
+}
+
+void ViewportWidget::ShowContextMenu(const QPoint& InLogicalPos)
+{
+    const GameCore::EntityID Under = Document.GetPickTarget(Pick(InLogicalPos));
+    if(Under.IsSet() && !Document.IsSelected(Under))
+    {
+        Document.SetSelection(Under);
+    }
+    HeldKeys.clear();   // the menu takes the keyboard; releases would be missed
+    QMenu Menu(this);
+    EditorEditActions::AddToMenu(&Menu, Document, [this]() { EditorEditActions::PromptRename(this, Document); });
+    Menu.exec(mapToGlobal(InLogicalPos));
+}
+
+bool ViewportWidget::event(QEvent* InEvent)
+{
+    if(InEvent->type() == QEvent::ShortcutOverride && Drag != EDrag::None)
+    {
+        InEvent->accept();   // delivered as a key press, not a shortcut
+        return true;
+    }
+    return QWidget::event(InEvent);
 }
 
 // === Frame ===================================================================
@@ -435,6 +473,10 @@ void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
     if(HeldKeys.contains(Qt::Key_E)) { Up      += 1.0; }
     if(HeldKeys.contains(Qt::Key_Q)) { Up      -= 1.0; }
 
+    if(Forward != 0.0 || Right != 0.0 || Up != 0.0)
+    {
+        bContextClick = false;   // it flew: not a click
+    }
     double Speed = double(FlyUnitsPerSecond) * double(Camera.SpeedScale) * double(InDeltaSeconds);
     if(HeldKeys.contains(Qt::Key_Shift)) { Speed *= double(FastMultiplier); }
 
@@ -457,7 +499,7 @@ void ViewportWidget::QueueOverlay()
         Document.GetWorld().ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
         {
             const auto& Data = *static_cast<const Collect*>(InUserData);
-            if(InEntity != Data.Skip)
+            if(!Data.Doc->IsSelected(InEntity))
             {
                 Data.Ctx->DrawDebugBox(Data.Doc->GetEntityBounds(InEntity), AllBoundsColor, Data.Thickness);
             }
@@ -511,13 +553,19 @@ void ViewportWidget::QueueOverlay()
         Context.DrawDebugBox(Screen, GameScreenColor, GameScreenThickness * Ratio);
     });
 
-    /* Last, over the grey boxes; padded a few pixels so it frames the shape. */
-    const GameCore::AABB Box = Document.GetEntityBounds(Selected);
-    if(!Box.IsEmpty())
+    /* Last, over the grey boxes; padded a few pixels so it frames the shape.
+     * Every selected entity; the primary (the gizmo's) the brightest. */
+    for(const GameCore::EntityID Each : Document.GetSelectedEntities())
     {
+        const GameCore::AABB Box = Document.GetEntityBounds(Each);
+        if(Box.IsEmpty())
+        {
+            continue;
+        }
         const double Depth = std::max(double((Box.Center() - Camera.Position).Dot(Camera.GetForward())), double(Camera.ZNear));
         const double Pad   = SelectionPadPixels * Camera.GetWorldPerPixel(Depth, height());
-        Context.DrawDebugBox(PadNonFlat(Box, Pad), SelectionColor, SelectionThickness * Ratio);
+        Context.DrawDebugBox(PadNonFlat(Box, Pad), Each == Selected ? SelectionColor : SecondarySelectionColor,
+                             SelectionThickness * Ratio);
     }
 
     QueueLightGizmos();
@@ -561,7 +609,7 @@ void ViewportWidget::QueueLightGizmos()
     /* Which lights draw, and how. */
     const auto Style = [&](const GameCore::Entity& InEntity, const EngineCore::Color InLight, EngineCore::Color& OutColor, float& OutThickness)
     {
-        const bool bSelected = InEntity.GetID() == Selected;
+        const bool bSelected = Document.IsSelected(InEntity.GetID());
         if(!bSelected && !bShowLightGizmos)
         {
             return false;
@@ -817,13 +865,33 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
             const TransformGizmo::EHandle Handle = Gizmo.Hit(PoseOf(*Target), At.x(), At.y());
             if(Handle != TransformGizmo::EHandle::None && Gizmo.BeginDrag(Handle, PoseOf(*Target), At.x(), At.y()))
             {
-                /* The whole drag is one undo entry. */
+                /* The whole drag is one undo entry -- for every entity it moves. */
                 static const char* const Labels[4] = { "Edit", "Move", "Rotate", "Scale" };
-                Document.BeginEditGesture(QString::fromLatin1(Labels[int(Gizmo.GetMode())]));
+                const QString Label = QString::fromLatin1(Labels[int(Gizmo.GetMode())]);
+                GizmoEntity = Document.GetSelection();
+                GizmoGroup.clear();
+                const std::vector<GameCore::EntityID> Roots = Document.GetSelectedRoots();
+                if(Roots.size() > 1 && std::find(Roots.begin(), Roots.end(), GizmoEntity) != Roots.end())
+                {
+                    GameCore::World& World = Document.GetWorld();
+                    const GameCore::TransformPose Start = World.GetEntity(GizmoEntity).GetWorldPose();
+                    for(const GameCore::EntityID Each : Roots)
+                    {
+                        if(Each != GizmoEntity && World.GetEntity(Each).GetComponent<GameCore::TransformComponent>())
+                        {
+                            const GameCore::TransformPose Pose = World.GetEntity(Each).GetWorldPose();
+                            GizmoGroup.push_back({ Each, GameCore::TransformMath::Relative(Start, Pose, Pose.Rotation) });
+                        }
+                    }
+                    Document.BeginGroupEdit(Roots, GameCore::TransformComponent::StaticType().ID, Label);
+                }
+                else
+                {
+                    Document.BeginEditGesture(Label);
+                }
 
                 Drag        = EDrag::Gizmo;
                 DragButton  = Qt::LeftButton;
-                GizmoEntity = Document.GetSelection();
                 GizmoHover  = Handle;
                 emit GizmoDragStatus(Gizmo.DescribeDrag());
                 return;
@@ -837,8 +905,9 @@ void ViewportWidget::mousePressEvent(QMouseEvent* InEvent)
         case Qt::MiddleButton: Drag = EDrag::Pan;                        break;
         default:               return;
     }
-    DragButton = InEvent->button();
-    DragPivot  = GetPivot();
+    DragButton    = InEvent->button();
+    DragPivot     = GetPivot();
+    bContextClick = InEvent->button() == Qt::RightButton && !bAlt;
 }
 
 void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
@@ -874,6 +943,11 @@ void ViewportWidget::mouseMoveEvent(QMouseEvent* InEvent)
     const QPoint Pos   = InEvent->position().toPoint();
     const QPoint Delta = Pos - LastMousePos;
     LastMousePos = Pos;
+
+    if(bContextClick && (Pos - PressPos).manhattanLength() > ClickSlopPixels)
+    {
+        bContextClick = false;   // it turned the camera
+    }
 
     const QPointF At = InEvent->position();
     if(Drag == EDrag::Gizmo)
@@ -954,6 +1028,14 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
         DragButton = Qt::NoButton;
     }
 
+    /* A right click that stayed put: the context menu. */
+    if(InEvent->button() == Qt::RightButton && bContextClick)
+    {
+        bContextClick = false;
+        ShowContextMenu(InEvent->position().toPoint());
+        return;
+    }
+
     /* Only a plain left click (no drag, no Alt-orbit) selects. */
     if(InEvent->button() != Qt::LeftButton || bWasDragging)
     {
@@ -978,7 +1060,22 @@ void ViewportWidget::mouseReleaseEvent(QMouseEvent* InEvent)
         return;
     }
 
-    Document.SetSelection(Pick(Pos));
+    /* A prefab instance is selected whole, by its root. Ctrl toggles it in
+     * or out of the selection, Shift adds it; a click on nothing with either
+     * leaves the selection alone. */
+    const GameCore::EntityID Target = Document.GetPickTarget(Pick(Pos));
+    if(InEvent->modifiers() & Qt::ControlModifier)
+    {
+        if(Target.IsSet()) { Document.ToggleSelected(Target); }
+    }
+    else if(InEvent->modifiers() & Qt::ShiftModifier)
+    {
+        if(Target.IsSet()) { Document.AddToSelection(Target); }
+    }
+    else
+    {
+        Document.SetSelection(Target);
+    }
 }
 
 void ViewportWidget::wheelEvent(QWheelEvent* InEvent)
@@ -1162,6 +1259,19 @@ void ViewportWidget::ApplyGizmoPose(const GameCore::EntityID InEntity, const Tra
      * the children's too. */
     World.RefreshEntityBounds(InEntity);
     Document.NotifyPropertyEdited(InEntity, GameCore::TransformComponent::StaticType().ID);
+
+    /* The rest of the group keeps where it stood relative to the dragged one. */
+    if(InEntity == GizmoEntity)
+    {
+        for(const auto& [Each, Relative] : GizmoGroup)
+        {
+            if(World.IsAlive(Each) && World.GetEntity(Each).SetWorldPose(GameCore::TransformMath::Compose(Pose, Relative)))
+            {
+                World.RefreshEntityBounds(Each);
+                Document.NotifyPropertyEdited(Each, GameCore::TransformComponent::StaticType().ID);
+            }
+        }
+    }
 }
 
 void ViewportWidget::FinishGizmoDrag(const bool bInCancel)
@@ -1172,11 +1282,19 @@ void ViewportWidget::FinishGizmoDrag(const bool bInCancel)
     }
     /* A cancel writes the start pose back inside the gesture, so the entry
      * merges back to nothing and is dropped. */
-    if(bInCancel)
+    if(!GizmoGroup.empty())
     {
-        ApplyGizmoPose(GizmoEntity, Gizmo.GetDragStart());
+        Document.EndGroupEdit(bInCancel);   // a cancel puts every one back
     }
-    Document.EndEditGesture();
+    else
+    {
+        if(bInCancel)
+        {
+            ApplyGizmoPose(GizmoEntity, Gizmo.GetDragStart());
+        }
+        Document.EndEditGesture();
+    }
+    GizmoGroup.clear();
     Gizmo.EndDrag();
     Drag        = EDrag::None;
     DragButton  = Qt::NoButton;

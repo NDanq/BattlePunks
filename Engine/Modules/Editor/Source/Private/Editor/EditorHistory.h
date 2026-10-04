@@ -8,11 +8,13 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <vector>
 
 #include <QUndoCommand>
 
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityGuid.h"
+#include "Public/GameCore/TransformMath.h"
 #include "Public/GameCore/EntityID.h"
 
 namespace GameCore { class World; }
@@ -90,6 +92,22 @@ namespace EditorHistory
      * its parent if that still exists, then its children; then the instances
      * they were in (see EntitySnapshot). */
     GameCore::EntityID RestoreEntity(GameCore::World& InWorld, const EntitySnapshot& InSnapshot);
+
+    /*
+     * Copy and paste: InSnapshots' subtrees made again as NEW entities, with
+     * fresh GUIDs -- an instance member's derived from its instance's new GUID,
+     * as a load derives them -- and references between them moved to the
+     * copies (references to anything else are kept). A copied instance root
+     * brings a new instance; a member copied without its root becomes loose,
+     * as does everything if !bInKeepInstances.
+     *
+     * Each root goes under its snapshot's parent if that is in InWorld and in
+     * no instance, its local Transform kept; otherwise it is made a root, at
+     * InWorldPoses[i] (its world pose when captured). Returns the new roots.
+     */
+    std::vector<GameCore::EntityID> RestoreCopies(GameCore::World& InWorld, const std::vector<EntitySnapshot>& InSnapshots,
+                                                  const std::vector<GameCore::TransformPose>& InWorldPoses,
+                                                  bool bInKeepInstances = true);
 
     // === Commands ============================================================
 

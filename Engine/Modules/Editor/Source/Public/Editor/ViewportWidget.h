@@ -3,13 +3,18 @@
 
 #if WITH_EDITOR
 
+#include <utility>
+#include <vector>
+
 #include <QPoint>
 #include <QSet>
 #include <QWidget>
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/Editor/EditorContext.h"
+#include "Public/GameCore/AABB.h"
 #include "Public/GameCore/EntityID.h"
+#include "Public/GameCore/TransformMath.h"
 #include "Public/Editor/EditorCamera.h"
 #include "Public/Editor/TransformGizmo.h"
 
@@ -115,6 +120,10 @@ protected:
     void keyPressEvent(QKeyEvent* InEvent) override;
     void keyReleaseEvent(QKeyEvent* InEvent) override;
     void focusOutEvent(QFocusEvent* InEvent) override;
+
+    /* While the camera flies, keys are its (Ctrl+D lowers and strafes, not
+     * Duplicate): the edit shortcuts wait until it lands. */
+    bool event(QEvent* InEvent) override;
     void dragEnterEvent(QDragEnterEvent* InEvent) override;
     void dragMoveEvent(QDragMoveEvent* InEvent) override;
     void dropEvent(QDropEvent* InEvent) override;
@@ -143,6 +152,14 @@ private:
 
     /* The selection's centre if it has bounds, else the focus point. */
     EngineCore::Vector3 GetPivot() const;
+
+    /* Every selected entity's bounds, joined. */
+    GameCore::AABB GetSelectionBounds() const;
+
+    /* A right click that did not turn the camera: Cut/Copy/Paste/Duplicate/
+     * Rename/Delete for what is under InLogicalPos (selected first, if it
+     * was not) or the selection. */
+    void ShowContextMenu(const QPoint& InLogicalPos);
 
     /* Re-derived each frame: the axis gizmo has a fixed screen spot and size. */
     void GetGizmoFrame(EngineCore::Vector3& OutOrigin, double& OutAxisLength) const;
@@ -195,6 +212,13 @@ private:
     TransformGizmo::EHandle GizmoHover = TransformGizmo::EHandle::None;
     GameCore::EntityID      GizmoEntity;   // the one being dragged
     bool                    bGizmoSnap = false;
+
+    /* The rest of the selection, dragged with GizmoEntity: each one's pose
+     * relative to it when the drag began. */
+    std::vector<std::pair<GameCore::EntityID, GameCore::TransformPose>> GizmoGroup;
+
+    /* A right press that may yet be a click (no turn, no fly): a context menu. */
+    bool bContextClick = false;
 };
 
 #endif // WITH_EDITOR

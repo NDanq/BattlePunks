@@ -1,5 +1,6 @@
 #if WITH_EDITOR
 
+#include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/Prefab/PrefabEditorTab.h"
 
 #include <QAction>
@@ -172,11 +173,12 @@ void PrefabEditorTab::BuildActions()
     QAction* Undo = Add(Edit, QStringLiteral("&Undo"), { QKeySequence::Undo }, [this]() { Document->Undo(); });
     QAction* Redo = Add(Edit, QStringLiteral("&Redo"), { QKeySequence::Redo, QKeySequence(Qt::CTRL | Qt::Key_Y) },
                         [this]() { Document->Redo(); });
+    /* Cut/Copy/Paste/Duplicate/Rename/Delete: keys owned by this tab's
+     * viewport and Outliner (EditorEditActions.h), shown here. */
     Edit->addSeparator();
-    Add(Edit, QStringLiteral("&Delete Entity"), { QKeySequence::Delete }, [this]()
-    {
-        Document->DestroyEntity(Document->GetSelection());
-    });
+    const std::vector<QAction*> EntityItems =
+        EditorEditActions::AddToMenu(Edit, *Document, [this]() { EditorEditActions::PromptRename(this, *Document); });
+    connect(Edit, &QMenu::aboutToShow, this, [this, EntityItems]() { EditorEditActions::Refresh(EntityItems, *Document); });
 
     const auto UpdateHistory = [this, Undo, Redo]()
     {
