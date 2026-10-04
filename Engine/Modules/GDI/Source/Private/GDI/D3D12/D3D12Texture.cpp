@@ -55,6 +55,25 @@ D3D12TextureResource::D3D12TextureResource(D3D12Device*             InDevice,
     }
 }
 
+D3D12TextureResource::D3D12TextureResource(D3D12Device*             InDevice,
+                                           const EngineCore::Image* InLevels,
+                                           const uint32_t           InCount,
+                                           EGDITextureBorder        InBorder,
+                                           EGDITextureFilter        InFilter)
+    : GDITextureResource(InLevels[0], 0, InBorder, InFilter)
+    , Device(InDevice)
+    , MipLevels(InCount > 0 ? InCount : 1)
+    , StoredBorder(InBorder)
+    , StoredFilter(InFilter)
+{
+    AllocateImage();
+    if(!InLevels[0].IsNull())
+    {
+        UploadMipChain(InLevels, MipLevels);
+        bInitialized = true;
+    }
+}
+
 D3D12TextureResource::D3D12TextureResource(D3D12Device*      InDevice,
                                            GDITexture2D*     InParent,
                                            EGDITextureBorder InBorder,
@@ -104,10 +123,12 @@ void D3D12TextureResource::Update(const EngineCore::Image& InImage)
 {
     if(!Device || !Device->IsValid() || InImage.IsNull() || !bOwnsImage) return;
 
-    if(InImage.GetWidth() != Width || InImage.GetHeight() != Height)
+    // If dimensions changed (or it had mips, which one image cannot refill), recreate the resource.
+    if(InImage.GetWidth() != Width || InImage.GetHeight() != Height || MipLevels != 1)
     {
-        Width  = InImage.GetWidth();
-        Height = InImage.GetHeight();
+        Width     = InImage.GetWidth();
+        Height    = InImage.GetHeight();
+        MipLevels = 1;
         DestroyImage();
         AllocateImage();
     }
@@ -159,7 +180,7 @@ void D3D12TextureResource::AllocateImage()
     Desc.Width            = UINT64(Width);
     Desc.Height           = UINT(Height);
     Desc.DepthOrArraySize = 1;
-    Desc.MipLevels        = 1;
+    Desc.MipLevels        = UINT16(MipLevels);   // the SRV (null desc) sees every level
     Desc.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
     Desc.SampleDesc.Count = 1;
 
@@ -199,4 +220,21 @@ void D3D12TextureResource::UploadImageData(const EngineCore::Image& InImage)
     const EngineCore::Image Formatted = InImage.ConvertedTo(EngineCore::EImageFormat::RGBA8);
     D3D12Ops::UploadTexture(Device, Resource.Get(), CurrentState, Formatted.GetData(),
                             uint32_t(Formatted.GetWidth()), uint32_t(Formatted.GetHeight()));
+}
+
+void D3D12TextureResource::UploadMipChain(const EngineCore::Image* InLevels, const uint32_t InCount)
+{
+    if(!Device || !Device->IsValid() || !Resource || InCount == 0) return;
+
+    std::vector<EngineCore::Image>     Formatted;
+    std::vector<D3D12Ops::TextureLevel> Levels;
+    Formatted.reserve(InCount);
+    Levels.reserve(InCount);
+    for(uint32_t Level = 0; Level < InCount; ++Level)
+    {
+        Formatted.push_back(InLevels[Level].ConvertedTo(EngineCore::EImageFormat::RGBA8));
+        const EngineCore::Image& Each = Formatted.back();
+        Levels.push_back({ Each.GetData(), uint32_t(Each.GetWidth()), uint32_t(Each.GetHeight()) });
+    }
+    D3D12Ops::UploadTextureLevels(Device, Resource.Get(), CurrentState, Levels.data(), InCount);
 }

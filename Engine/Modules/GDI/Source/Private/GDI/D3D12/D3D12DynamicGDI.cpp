@@ -551,6 +551,15 @@ GDITextureResource* D3D12DynamicGDI::CreateTextureResource(GDITexture2D* InParen
     return new D3D12TextureResource(DeviceObj, InParent, InImage, InBorder, InFilter);
 }
 
+GDITextureResource* D3D12DynamicGDI::CreateTextureResourceMips(const Image* InLevels,
+                                                               const uint32_t InCount,
+                                                               const EGDITextureBorder InBorder,
+                                                               const EGDITextureFilter InFilter)
+{
+    if(!DeviceObj || !InLevels || InCount == 0) return nullptr;
+    return new D3D12TextureResource(DeviceObj, InLevels, InCount, InBorder, InFilter);
+}
+
 GDITextureResource* D3D12DynamicGDI::CreateTextureResource(GDITexture2D* InParent,
                                                            const EGDITextureBorder InBorder,
                                                            const EGDITextureFilter InFilter)
