@@ -251,6 +251,39 @@ static void TestGroupEdit()
     Expect(W.GetEntity(A).GetComponent<GameCore::TransformComponent>()->Position.GetX() == 0.0, "a cancelled group edit puts it back");
 }
 
+/* Mobility on the Details panel: one undo step, for one entity or several. */
+static void TestMobility()
+{
+    std::printf("Mobility\n");
+    EditorDocument Doc;
+    GameCore::World& W = Doc.GetWorld();
+    const EntityID A = Doc.CreateEntity(QStringLiteral("A"), EngineCore::Vector3());
+    const EntityID B = Doc.CreateEntity(QStringLiteral("B"), EngineCore::Vector3());
+    const int Steps = Doc.GetHistory().count();
+
+    Doc.SetEntityMobility(A, GameCore::EMobility::Static);
+    Expect(W.GetEntity(A).IsStatic() && Doc.GetHistory().count() == Steps + 1, "making an entity static is one undo step");
+    Doc.Undo();
+    Expect(!W.GetEntity(A).IsStatic(), "undo makes it dynamic again");
+    Doc.Redo();
+    Expect(W.GetEntity(A).IsStatic(), "redo static");
+
+    Doc.SetEntitiesMobility({ A, B }, GameCore::EMobility::Static);
+    Expect(W.GetEntity(B).IsStatic() && Doc.GetHistory().count() == Steps + 2, "several at once: only the changed one, one step");
+    Doc.SetEntitiesMobility({ A, B }, GameCore::EMobility::Dynamic);
+    Expect(!W.GetEntity(A).IsStatic() && !W.GetEntity(B).IsStatic() && Doc.GetHistory().count() == Steps + 3, "both back, one step");
+    Doc.Undo();
+    Expect(W.GetEntity(A).IsStatic() && W.GetEntity(B).IsStatic(), "and one undo restores both");
+
+    /* Deleting and restoring, and copying, keep it. */
+    Doc.DestroyEntity(A);
+    Doc.Undo();
+    Expect(W.GetEntity(W.FindEntityByName("A")).IsStatic(), "a deleted static entity comes back static");
+    Doc.SetSelection(W.FindEntityByName("A"));
+    const std::vector<EntityID> Copy = Doc.DuplicateSelection();
+    Expect(Copy.size() == 1 && W.GetEntity(Copy.front()).IsStatic(), "and its duplicate is static too");
+}
+
 /* GetEntityBounds: a parent -- a prefab instance's root -- encloses its children. */
 static void TestHierarchyBounds()
 {
@@ -695,6 +728,7 @@ int main(int argc, char* argv[])
     TestClipboard();
     TestCopyInstance();
     TestGroupEdit();
+    TestMobility();
     TestNewScene();
     TestBorrowedWorld();
     TestDestroyWhileBorrowed();

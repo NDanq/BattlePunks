@@ -44,6 +44,11 @@ namespace RenderCore
     void SetSceneStats(uint64_t InProxiesLive, uint64_t InProxiesCulled);
     void GetSceneStats(uint64_t& OutProxiesLive, uint64_t& OutProxiesCulled);
 
+    /* The reporting scene's static draw lists (RenderStats::StaticProxiesDrawn
+     * and StaticListBuilds). */
+    void SetStaticDrawStats(uint64_t InDrawn, uint64_t InBuilds);
+    void GetStaticDrawStats(uint64_t& OutDrawn, uint64_t& OutBuilds);
+
     /* "stat unit": Renderer::EndFrame publishes the averaged times and
      * whether to show them (Stats.Unit); RenderScene::Render draws them and
      * RenderThread::GetStats copies them into RenderStats. */

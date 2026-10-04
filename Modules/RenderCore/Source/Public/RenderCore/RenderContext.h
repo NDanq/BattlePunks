@@ -28,6 +28,7 @@ namespace EngineCore { class Image; }
 namespace RenderCore
 {
     struct SceneTargets;             // Private/RenderCore/SceneTargets.h
+    struct StagedDraw;               // Private/RenderCore/DrawPolicy.h
     struct MaterialPreviewRequest;   // RenderScene.h
     struct RenderMaterialParameter;  // Components/RenderComponent.h
 
@@ -166,6 +167,19 @@ namespace RenderCore
          * clearing to InClearColor. Leaves the final colour target bound --
          * what the present shows. */
         void BeginSceneDraws();
+
+        /* STATIC DRAW LISTS (RenderScene): between BeginCapture and
+         * EndCapture, whatever a proxy's Draw or DrawShadow queues lands in
+         * *InOut instead of this frame's stages. SubmitCaptured queues a kept
+         * list for this frame -- its depths recomputed for this view, and a
+         * shadow list (InShadowView >= 0) aimed at that shadow view. */
+        void BeginCapture(std::vector<StagedDraw>* InOut);
+        void EndCapture();
+        void SubmitCaptured(const std::vector<StagedDraw>& InDraws, int32_t InShadowView = -1);
+
+        /* Moves when anything a kept draw points at may have gone: a material
+         * reloaded or retired, a mesh rebuilt or reimported. */
+        uint64_t GetContentGeneration() const;
 
         /* RenderScene::Render's, after BeginSceneDraws: the frame's shadow
          * views from the view and lighting (none if [Shadows] is off or no

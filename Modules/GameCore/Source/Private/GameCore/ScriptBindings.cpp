@@ -88,6 +88,30 @@ namespace GameCore
             return 1;
         }
 
+        /* e:GetMobility() -- "Static" or "Dynamic" (Mobility.h). */
+        int Entity_GetMobility(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            World* W = GetBoundWorld(InState);
+            lua_pushstring(InState, MobilityName(Entity(W, E).GetMobility()));
+            return 1;
+        }
+
+        /* e:SetMobility("Static" | "Dynamic") -- false for anything else. */
+        int Entity_SetMobility(lua_State* InState)
+        {
+            const EntityID E = LuaCheckEntity(InState, 1);
+            EMobility Mobility;
+            if(!ParseMobility(luaL_checkstring(InState, 2), Mobility))
+            {
+                lua_pushboolean(InState, 0);
+                return 1;
+            }
+            World* W = GetBoundWorld(InState);
+            lua_pushboolean(InState, Entity(W, E).SetMobility(Mobility));
+            return 1;
+        }
+
         /* e:SetName(name) -- nil clears. */
         int Entity_SetName(lua_State* InState)
         {
@@ -248,6 +272,8 @@ namespace GameCore
             { "GetName",         Entity_GetName },
             { "GetGuid",         Entity_GetGuid },
             { "SetName",         Entity_SetName },
+            { "GetMobility",     Entity_GetMobility },
+            { "SetMobility",     Entity_SetMobility },
             { "Destroy",         Entity_Destroy },
             { "AddComponent",    Entity_AddComponent },
             { "GetComponent",    Entity_GetComponent },

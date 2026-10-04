@@ -166,6 +166,26 @@ Player.SetName("Hero");
 const char* Name = Player.GetName();                      // "" if none, never null
 ```
 
+**Mobility is an entity member too** (`Mobility.h`): `Dynamic`, the
+default, or `Static` -- level geometry that never moves in play:
+
+```cpp
+Wall.SetMobility(GameCore::EMobility::Static);
+if(Wall.IsStatic()) { ... }                               // Lua: e:GetMobility() / e:SetMobility("Static")
+```
+
+A static entity's Bounds are fitted on their first insert and not refitted
+(as `BoundsComponent::bStatic`; a tool's `RefreshEntityBounds` still refits
+them), two static entities are never tested for overlap, and a prefab
+instance whose root is static gets no phase ticks -- its events still arrive,
+as `EventsOnly`. A system iterating with `Each<T>` can skip statics with
+`IsStatic()`. The renderer keeps a static entity's draws in cached lists
+(RenderCore's RENDERPIPELINE.md, "Static draw lists"). Every format keeps it:
+`Mobility="Static"` on a `.nmentity`'s or a `.nmprefab`'s `<Entity>` (only
+when static), a `.nmprefabinst` override when an instance's member differs
+from its template, and a byte per entity in a cooked world (chunk version 2)
+and a cooked prefab (version 2); version 1 of either still loads, as dynamic.
+
 `World::FindEntityByName` is a linear scan over the live names. A
 `GetName()` pointer stays valid while other entities come and go; only a
 `SetName` on that entity, or destroying it, moves it. Behaviour belongs to a
@@ -719,7 +739,7 @@ what this instance changed:
   <Entity Id="1">                                   <!-- the placement: the root's Transform -->
     <Component Type="Transform" Version="1"><Position X="100" Y="0" Z="0" /></Component>
   </Entity>
-  <Entity Id="2" Name="Gun">                        <!-- renamed; one field changed -->
+  <Entity Id="2" Name="Gun" Mobility="Static">      <!-- renamed, made static; one field changed -->
     <Component Type="Transform" Version="1"><Position X="0" Y="7" Z="0" /></Component>
   </Entity>
   <Entity Id="3">

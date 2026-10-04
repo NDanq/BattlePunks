@@ -17,6 +17,7 @@
 #include "Public/GameCore/Delegate.h"
 #include "Public/GameCore/EntityGuid.h"
 #include "Public/GameCore/EntityID.h"
+#include "Public/GameCore/Mobility.h"
 #include "Public/GameCore/TransformMath.h"
 
 namespace GameCore { class World; class Entity; class PrefabAsset; }
@@ -169,6 +170,12 @@ public:
 
     /* Entity::SetName. */
     void RenameEntity(GameCore::EntityID InEntity, const QString& InName);
+
+    /* Entity::SetMobility (Static / Dynamic), one undo step. */
+    void SetEntityMobility(GameCore::EntityID InEntity, GameCore::EMobility InMobility);
+
+    /* The same for each of InEntities, all one undo step. */
+    void SetEntitiesMobility(const std::vector<GameCore::EntityID>& InEntities, GameCore::EMobility InMobility);
 
     // === Clipboard ==========================================================
     // Copies hold the selected subtrees (GetSelectedRoots) as snapshots, shared
@@ -359,7 +366,7 @@ private:
     /* PlacePrefab's spawn and record, at a full pose. */
     GameCore::EntityID SpawnPrefabRecorded(const QString& InRuntimePath, const GameCore::TransformPose& InAt);
 
-    /* Records a name / script / cull change from InBefore, if recording. */
+    /* Records a name / mobility change from InBefore, if recording. */
     void RecordMembersChange(GameCore::EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText);
 
     /* Empties the history and marks it clean. */

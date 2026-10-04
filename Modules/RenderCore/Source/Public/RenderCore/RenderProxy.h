@@ -102,6 +102,17 @@ namespace RenderCore
 
         void SetVisible(const bool bInVisible) { bVisible = bInVisible; }
 
+        /* The owner's mobility (GameCore's Mobility.h), set by extraction: a
+         * static proxy's draws are captured once and replayed (RenderScene's
+         * static draw lists) until its change serial moves. */
+        void SetStatic(const bool bInStatic) { if(bStatic != bInStatic) { bStatic = bInStatic; ++ChangeSerial; } }
+        bool IsStatic() const { return bStatic; }
+
+        /* Bumped by every extraction record applied to it: whatever was
+         * cached from its draws is stale once this moves. */
+        void     MarkChanged() { ++ChangeSerial; }
+        uint64_t GetChangeSerial() const { return ChangeSerial; }
+
         const RenderTransform&        GetTransform()    const { return Transform; }
         const EngineCore::Matrix4x4&  GetLocalToWorld() const { return LocalToWorld; }
         const GameCore::AABB&         GetWorldBounds()  const { return WorldBounds; }
@@ -121,7 +132,9 @@ namespace RenderCore
          * currently occupies, for O(1) swap-remove. -1 until AddProxy. */
         int32_t SceneIndex = -1;
 
-        bool bVisible = true;
+        bool     bVisible     = true;
+        bool     bStatic      = false;
+        uint64_t ChangeSerial = 0;
     };
 
     /*

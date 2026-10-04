@@ -80,7 +80,7 @@ uses it.
 | `OutlinerPanel` | Entity hierarchy with component summary, filter, create, drag to reparent; Ctrl/Shift multiple selection, F2 renames in the row, and the edit actions (below) in its context menu |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
 | `ViewportSDLInput` (private) | The viewport as an SDL window (focus hand-over, text forwarding, pumping), for the game's input and the input probe |
-| `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
+| `DetailsPanel` + `PropertyWidgets` | The entity's name and **Mobility** (Dynamic / Static -- applies to every selected entity, one undo step), then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
 | `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (File > New Material / Script Graph, Open Graph, or the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
 | `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph with its generated code inside it, `<gen_code>` (see `Modules/NodeGraph`); nothing is written beside it |
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |

@@ -413,6 +413,7 @@ namespace RenderCore
         OutStats.GameThreadMs           = Unit.GameThreadMs;
         OutStats.RenderThreadMs         = Unit.RenderThreadMs;
         GetReportedGpuTimes(OutStats.GpuMs);
+        GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
     }
 
     // === The locator (RenderThreadInternal.h) ==================================
@@ -451,6 +452,24 @@ namespace RenderCore
     {
         OutProxiesLive   = GProxiesLive.load(std::memory_order_relaxed);
         OutProxiesCulled = GProxiesCulled.load(std::memory_order_relaxed);
+    }
+
+    namespace
+    {
+        std::atomic<uint64_t> GStaticDrawn{0};
+        std::atomic<uint64_t> GStaticBuilds{0};
+    }
+
+    void SetStaticDrawStats(const uint64_t InDrawn, const uint64_t InBuilds)
+    {
+        GStaticDrawn.store(InDrawn, std::memory_order_relaxed);
+        GStaticBuilds.store(InBuilds, std::memory_order_relaxed);
+    }
+
+    void GetStaticDrawStats(uint64_t& OutDrawn, uint64_t& OutBuilds)
+    {
+        OutDrawn  = GStaticDrawn.load(std::memory_order_relaxed);
+        OutBuilds = GStaticBuilds.load(std::memory_order_relaxed);
     }
 
     namespace

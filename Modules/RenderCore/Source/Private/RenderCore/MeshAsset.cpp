@@ -1,5 +1,6 @@
 #include "Public/RenderCore/MeshAsset.h"
 
+#include <atomic>
 #include <algorithm>
 #include <mutex>
 #include <unordered_map>
@@ -236,6 +237,7 @@ namespace RenderCore
         {
             std::mutex                                                       Lock;
             std::unordered_map<std::string, std::shared_ptr<const MeshData>> Meshes;   // null: failed
+            std::atomic<uint64_t>                                            Generation{0};
         };
 
         /* Function-local, so it exists before any static initialiser asks. */
@@ -279,10 +281,16 @@ namespace RenderCore
         return Cache.Meshes.emplace(InPath, Result).first->second;
     }
 
+    uint64_t MeshAssetCache::GetGeneration()
+    {
+        return GetCache().Generation.load(std::memory_order_relaxed);
+    }
+
     void MeshAssetCache::Invalidate(const std::string& InPath)
     {
         CacheState& Cache = GetCache();
         std::lock_guard<std::mutex> Guard(Cache.Lock);
+        Cache.Generation.fetch_add(1, std::memory_order_relaxed);
         if(InPath.empty())
         {
             Cache.Meshes.clear();

@@ -28,7 +28,7 @@ namespace
 
     /* The entity table (index, GUID, name), a parent index per entity, the
      * prefab instance table, then the component chunks. */
-    constexpr uint16_t WORLD_CHUNK_VERSION = 1;
+    constexpr uint16_t WORLD_CHUNK_VERSION = 2;   // 2: each entity's mobility; 1 is still read
 
     /* One prefab instance, as saved: its members by save index. */
     struct SavedInstance
@@ -171,7 +171,8 @@ namespace
             Ar << GuidHi << GuidLo;
 
             std::string Name(Handle.GetName());
-            Ar << Name;
+            uint8_t     Mobility = uint8_t(Handle.GetMobility());
+            Ar << Name << Mobility;
         }
 
         /* Each entity's parent as a save index, in table order -- after the
@@ -293,7 +294,7 @@ namespace
             return false;
         }
 
-        if(Version != WORLD_CHUNK_VERSION)
+        if(Version != WORLD_CHUNK_VERSION && Version != 1)
         {
             /* Refused, unlike an unknown component type: every index refers to
              * the entity table, so a different table invalidates everything. */
@@ -325,11 +326,14 @@ namespace
 
             EntityGuid  Guid;
             std::string Name;
+            uint8_t     Mobility = 0;
             Ar << Guid.Hi << Guid.Lo << Name;
+            if(Version >= 2) { Ar << Mobility; }
             if(Ar.HasError()) { Ar.CloseChunk(); return false; }
 
             /* Name and GUID at creation, so OnEntityCreated sees both. */
             const Entity Loaded = InWorld.CreateEntity(Name.c_str(), Guid);
+            if(Mobility == uint8_t(EMobility::Static)) { Loaded.SetMobility(EMobility::Static); }
             OutTable.AddForLoading(Loaded);
         }
 

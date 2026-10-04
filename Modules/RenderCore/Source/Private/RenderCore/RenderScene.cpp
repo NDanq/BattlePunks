@@ -1,6 +1,7 @@
 #include "Public/RenderCore/RenderScene.h"
 
 #include <algorithm>
+#include <unordered_map>
 #include <atomic>
 #include <chrono>
 #include <utility>
@@ -9,6 +10,7 @@
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
+#include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
@@ -35,6 +37,38 @@ namespace RenderCore
     struct RenderScene::Impl
     {
         std::vector<RenderProxy*> Proxies;
+
+        /*
+         * STATIC DRAW LISTS (RENDERPIPELINE.md): a static proxy's draws, shadow
+         * casters and cull padding, captured the first frame each is needed
+         * and replayed after -- until the proxy changes (its change serial) or
+         * something they point at goes (the context's content generation).
+         */
+        struct StaticDrawList
+        {
+            uint64_t                Serial     = ~0ull;
+            uint64_t                Generation = ~0ull;
+            bool                    bDraws     = false;
+            bool                    bShadows   = false;
+            bool                    bPadding   = false;
+            float                   Padding    = 0.0f;
+            std::vector<StagedDraw> Draws;
+            std::vector<StagedDraw> Shadows;
+        };
+        std::unordered_map<const RenderProxy*, StaticDrawList> StaticLists;
+        uint64_t                                               StaticBuilds = 0;   // lifetime captures
+
+        StaticDrawList& ListFor(const RenderProxy* InProxy, const uint64_t InGeneration)
+        {
+            StaticDrawList& List = StaticLists[InProxy];
+            if(List.Serial != InProxy->GetChangeSerial() || List.Generation != InGeneration)
+            {
+                List = StaticDrawList();
+                List.Serial     = InProxy->GetChangeSerial();
+                List.Generation = InGeneration;
+            }
+            return List;
+        }
 #if WITH_EDITOR
         std::vector<DebugLine>    DebugLines;   // consumed by the next Render()
         std::vector<MaterialPreviewRequest> Previews;   // likewise
@@ -158,6 +192,7 @@ namespace RenderCore
         }
 
         InProxy->ReleaseRenderResources(InContext);
+        P->StaticLists.erase(InProxy);
 
         const size_t Index    = size_t(InProxy->SceneIndex);
         const size_t LastSlot = P->Proxies.size() - 1;
@@ -279,11 +314,33 @@ namespace RenderCore
         uint64_t VisibleCount = 0;
         uint64_t CulledCount  = 0;
 
+        /* A static proxy's padding comes from its list; a dynamic one's is asked. */
+        const uint64_t Generation = InContext.GetContentGeneration();
+        const auto PaddingOf = [&](RenderProxy* InProxy)
+        {
+            if(!InProxy->IsStatic())
+            {
+                return InProxy->GetBoundsPadding(InContext);
+            }
+            Impl::StaticDrawList& List = P->ListFor(InProxy, Generation);
+            if(!List.bPadding)
+            {
+                List.Padding  = InProxy->GetBoundsPadding(InContext);
+                List.bPadding = true;
+            }
+            return List.Padding;
+        };
+        uint64_t StaticCount = 0;
+
         for(RenderProxy* Proxy : P->Proxies)
         {
             if(!Proxy->IsVisible())
             {
                 continue;
+            }
+            if(!Proxy->IsStatic() && !P->StaticLists.empty())
+            {
+                P->StaticLists.erase(Proxy);   // it was static: its list is stale for good
             }
 
             /*
@@ -304,7 +361,7 @@ namespace RenderCore
             /* World Position Offset can move geometry past its bounds: pad
              * them by the largest Max Offset among its materials. */
             GameCore::AABB Bounds = Proxy->GetWorldBounds();
-            const float Padding = bViewHasBounds && bProxyHasBounds ? Proxy->GetBoundsPadding(InContext) : 0.0f;
+            const float Padding = bViewHasBounds && bProxyHasBounds ? PaddingOf(Proxy) : 0.0f;
             if(Padding > 0.0f)
             {
                 const EngineCore::Vector3 Pad(Padding, Padding, Padding);
@@ -318,7 +375,24 @@ namespace RenderCore
                 continue;
             }
 
-            Proxy->Draw(InContext);
+            if(Proxy->IsStatic())
+            {
+                Impl::StaticDrawList& List = P->ListFor(Proxy, Generation);
+                if(!List.bDraws)
+                {
+                    InContext.BeginCapture(&List.Draws);
+                    Proxy->Draw(InContext);
+                    InContext.EndCapture();
+                    List.bDraws = true;
+                    ++P->StaticBuilds;
+                }
+                InContext.SubmitCaptured(List.Draws);
+                ++StaticCount;
+            }
+            else
+            {
+                Proxy->Draw(InContext);
+            }
             ++VisibleCount;
         }
 
@@ -341,7 +415,7 @@ namespace RenderCore
                 GameCore::AABB Bounds = Proxy->GetWorldBounds();
                 if(!Bounds.IsEmpty() && !ViewBounds.IsEmpty())
                 {
-                    const float Padding = Proxy->GetBoundsPadding(InContext);
+                    const float Padding = PaddingOf(Proxy);
                     const EngineCore::Vector3 Pad(Padding, Padding, Padding);
                     Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
                     if(!Bounds.Overlaps(ViewBounds))
@@ -349,7 +423,23 @@ namespace RenderCore
                         continue;
                     }
                 }
-                Proxy->DrawShadow(InContext);
+                if(Proxy->IsStatic())
+                {
+                    Impl::StaticDrawList& List = P->ListFor(Proxy, Generation);
+                    if(!List.bShadows)
+                    {
+                        InContext.BeginCapture(&List.Shadows);
+                        Proxy->DrawShadow(InContext);
+                        InContext.EndCapture();
+                        List.bShadows = true;
+                        ++P->StaticBuilds;
+                    }
+                    InContext.SubmitCaptured(List.Shadows, int32_t(ViewIndex));
+                }
+                else
+                {
+                    Proxy->DrawShadow(InContext);
+                }
             }
         }
         InContext.SetShadowCasterView(-1);
@@ -390,6 +480,7 @@ namespace RenderCore
         if(P->bReportsStats)
         {
             SetSceneStats(uint64_t(P->Proxies.size()), CulledCount);
+            SetStaticDrawStats(StaticCount, P->StaticBuilds);
         }
 
 #if WITH_EDITOR

@@ -458,6 +458,45 @@ void EditorDocument::RenameEntity(const EntityID InEntity, const QString& InName
     }
 }
 
+void EditorDocument::SetEntityMobility(const EntityID InEntity, const GameCore::EMobility InMobility)
+{
+    if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || ActiveWorld->GetEntity(InEntity).GetMobility() == InMobility)
+    {
+        return;
+    }
+    const EditorHistory::EntityMembers Before = EditorHistory::CaptureMembers(*ActiveWorld, InEntity);
+    ActiveWorld->GetEntity(InEntity).SetMobility(InMobility);
+    QueueEntitiesChanged();
+    RecordMembersChange(InEntity, Before, QStringLiteral("Make %1 %2").arg(GetDisplayName(InEntity),
+                                                                         QString::fromLatin1(GameCore::MobilityName(InMobility))));
+}
+
+void EditorDocument::SetEntitiesMobility(const std::vector<EntityID>& InEntities, const GameCore::EMobility InMobility)
+{
+    std::vector<EntityID> Changing;
+    for(const EntityID Each : InEntities)
+    {
+        if(ActiveWorld->IsAlive(Each) && ActiveWorld->GetEntity(Each).GetMobility() != InMobility) { Changing.push_back(Each); }
+    }
+    if(Changing.size() <= 1)
+    {
+        if(!Changing.empty()) { SetEntityMobility(Changing.front(), InMobility); }
+        return;
+    }
+    const bool bMacro = IsRecording();
+    if(bMacro) { History->beginMacro(QStringLiteral("Make %1 entities %2").arg(Changing.size()).arg(GameCore::MobilityName(InMobility))); }
+    for(const EntityID Each : Changing)
+    {
+        SetEntityMobility(Each, InMobility);
+    }
+    if(bMacro)
+    {
+        History->endMacro();
+        LatestRecorded = nullptr;
+        emit HistoryChanged();
+    }
+}
+
 void EditorDocument::RecordMembersChange(const EntityID InEntity, const EditorHistory::EntityMembers& InBefore, const QString& InText)
 {
     if(IsRecording())

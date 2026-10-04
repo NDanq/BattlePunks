@@ -14,6 +14,7 @@
 
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/EntityGuid.h"
+#include "Public/GameCore/Mobility.h"
 #include "Public/GameCore/TransformMath.h"
 #include "Public/GameCore/EntityID.h"
 
@@ -56,6 +57,7 @@ namespace EditorHistory
         GameCore::EntityGuid           Guid;
         GameCore::EntityGuid           ParentGuid;   // unset: a root
         std::string                    Name;
+        GameCore::EMobility            Mobility = GameCore::EMobility::Dynamic;
         std::vector<ComponentSnapshot> Components;
         std::vector<EntitySnapshot>    Children;     // in child order
 
@@ -156,14 +158,15 @@ namespace EditorHistory
         int64_t                   TimeMs;      // of the latest edit merged in
     };
 
-    /* What an entity carries besides components: its name. */
+    /* What an entity carries besides components: its name and mobility. */
     struct EntityMembers
     {
-        std::string Name;
+        std::string         Name;
+        GameCore::EMobility Mobility = GameCore::EMobility::Dynamic;
 
         bool operator==(const EntityMembers& InOther) const
         {
-            return Name == InOther.Name;
+            return Name == InOther.Name && Mobility == InOther.Mobility;
         }
     };
 
