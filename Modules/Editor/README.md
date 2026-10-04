@@ -417,7 +417,8 @@ registered:
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
 | `settings` | Open Edit > Editor Settings, and print where they are saved |
 | `projectsettings` | Open Edit > Project Settings, and print the file it saves to |
-| `stats` | The renderer's counters |
+| `stats` | The renderer's counters, with the frame, game thread and render thread times |
+| `stat <unit \| none>` | `unit` toggles the frame, game thread and render thread times over the viewport (`Stats.Unit`); `none` hides them |
 | `gizmo [none \| move \| rotate \| scale] [world \| local]` | Set the transform handles, or print them |
 | `snap [on \| off]` | Snap handle drags, or print whether they do |
 | `undo [count]`, `redo [count]` | Step back or forward through the history |

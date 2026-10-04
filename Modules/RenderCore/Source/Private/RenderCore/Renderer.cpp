@@ -1,10 +1,13 @@
 #include "Public/RenderCore/Renderer.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <iterator>
 #include <type_traits>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCommand.h"
@@ -16,6 +19,7 @@
 #include "Public/RenderCore/RenderThread.h"
 #include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
+#include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/WorldBridge.h"
 
 /*
@@ -24,8 +28,21 @@
  * Initialize/Shutdown/BindWorld/UnbindWorld/EndFrame need them touched.
  */
 
+/* "stat unit": frame, game thread and render thread times over each viewport
+ * (RenderScene::Render). The editor's console toggles it with "stat unit". */
+NIMBLE_CONFIG_BOOL(GStatsUnit, "Stats", "Unit", false, nullptr);
+
 namespace RenderCore
 {
+    namespace
+    {
+        int64_t StatNowNs()
+        {
+            return std::chrono::duration_cast<std::chrono::nanoseconds>(
+                       std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
+    }
+
 #if WITH_EDITOR
     static_assert(std::is_trivially_copyable<DebugLine>::value,
                   "DebugLine crosses to the render thread by memcpy -- see Renderer::EndFrame");
@@ -82,6 +99,48 @@ namespace RenderCore
         RenderSceneID               NextSceneID = RENDER_DEFAULT_SCENE + 1;
 
         bool bRenderRegistered = false;
+
+        /* "stat unit", game thread only: this frame's start and the time it
+         * spent blocked (the fence, presenting); sums over the current half
+         * second, published by EndFrame when it is up. */
+        int64_t GameStartNs   = 0;
+        int64_t BlockedNs     = 0;
+        int64_t LastEndNs     = 0;
+        int64_t WindowStartNs = 0;
+        double  SumFrame = 0.0, SumGame = 0.0, SumRender = 0.0;
+        int     Samples  = 0;
+
+        /* Adds this frame to the window; publishes the averages every half second. */
+        void NoteFrameTimes(const int64_t InEndNs)
+        {
+            if(LastEndNs != 0)
+            {
+                SumFrame  += double(InEndNs - LastEndNs);
+                SumGame   += double(std::max<int64_t>(InEndNs - std::max(GameStartNs, LastEndNs) - BlockedNs, 0));
+                SumRender += Thread.GetLastFrameRenderSeconds() * 1.0e9;
+                ++Samples;
+            }
+            else
+            {
+                WindowStartNs = InEndNs;
+            }
+            LastEndNs   = InEndNs;
+            GameStartNs = 0;
+            BlockedNs   = 0;
+
+            StatUnitSnapshot Unit = GetStatUnit();
+            Unit.bShow = GStatsUnit.GetBool();
+            if(Samples > 0 && InEndNs - WindowStartNs >= 500'000'000)
+            {
+                Unit.FrameMs        = float(SumFrame / Samples / 1.0e6);
+                Unit.GameThreadMs   = float(SumGame / Samples / 1.0e6);
+                Unit.RenderThreadMs = float(SumRender / Samples / 1.0e6);
+                SumFrame = SumGame = SumRender = 0.0;
+                Samples       = 0;
+                WindowStartNs = InEndNs;
+            }
+            SetStatUnit(Unit);
+        }
 
 #if WITH_EDITOR
         /* RequestMaterialPreview's results, delivered by the render thread. */
@@ -294,7 +353,15 @@ namespace RenderCore
 
     void Renderer::WaitForPreviousFrame()
     {
+        const int64_t Start = StatNowNs();
         P->Thread.WaitForFrame();
+        P->BlockedNs += StatNowNs() - Start;
+    }
+
+    void Renderer::BeginGameFrame()
+    {
+        P->GameStartNs = StatNowNs();
+        P->BlockedNs   = 0;
     }
 
 #if WITH_EDITOR
@@ -577,6 +644,7 @@ namespace RenderCore
             }
         }
 
+        P->NoteFrameTimes(StatNowNs());
         P->Thread.EndFrame(InFrame.FrameNumber);
     }
 
@@ -611,7 +679,9 @@ namespace RenderCore
         }
         if(const RendererScene* Scene = P->Find(InScene))
         {
+            const int64_t Start = StatNowNs();
             Scene->Scene->PresentToWindow(InWindow);
+            P->BlockedNs += StatNowNs() - Start;
         }
     }
 

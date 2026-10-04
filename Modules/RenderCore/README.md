@@ -76,6 +76,7 @@ Engine/Modules/RenderCore/
 |       |-- WorldBridge.h/.cpp      game-thread side: proxy lifecycle, extraction, view build, light gathering
 |       |-- ShadowSetup.h/.cpp      a frame's shadow views and atlas tiles (pure math)
 |       |-- ShadowSettings.cpp      the [Shadows] config vars
+|       |-- OverlayFont.h           the stat overlay's 5 x 7 font
 |       `-- Renderer.cpp
 `-- Tests/
     `-- SmokeMain.cpp

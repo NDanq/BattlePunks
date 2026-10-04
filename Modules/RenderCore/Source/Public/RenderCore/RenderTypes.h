@@ -106,6 +106,15 @@ namespace RenderCore
         uint64_t ProxiesLive            = 0;
         uint64_t ProxiesCulledLastFrame = 0;
         uint32_t PeakQueueDepth         = 0;
+
+        /* "stat unit": each averaged over the last half second (0 until the
+         * first half second has passed). Frame is the game thread's time
+         * from one EndFrame to the next; Game Thread is that less the time it
+         * waited on the render thread or presented; Render Thread is its time
+         * running a frame's commands, less the swap. */
+        float FrameMs        = 0.0f;
+        float GameThreadMs   = 0.0f;
+        float RenderThreadMs = 0.0f;
     };
 }
 

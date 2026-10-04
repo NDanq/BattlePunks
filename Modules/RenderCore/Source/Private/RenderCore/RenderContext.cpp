@@ -23,6 +23,7 @@
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
+#include "Private/RenderCore/OverlayFont.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/SceneTargets.h"
 #include "Private/RenderCore/ShadowSetup.h"
@@ -69,13 +70,13 @@ namespace RenderCore
         {
             PP_DofPrepare, PP_DofBlur, PP_DofComposite, PP_MotionBlur,
             PP_BloomDownsample, PP_BloomUpsample, PP_BloomComposite, PP_Fxaa,
-            PP_AmbientOcclusion, PP_AmbientBlur,
+            PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
             "PPBloomDownsample.fsh", "PPBloomUpsample.fsh", "PPBloomComposite.fsh", "PPFxaa.fsh",
-            "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh",
+            "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -574,6 +575,7 @@ namespace RenderCore
          * which stays null if InPost has none or this backend cannot. */
         void IssueAmbientOcclusion(SceneTargets& InTargets, const PostProcessSettings& InPost);
         GDITextureResource* AmbientOcclusion = nullptr;
+        GDITextureResource* OverlayFont      = nullptr;   // OverlayFont.h's glyphs side by side, made on first use
         bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
 
         GDIShader* GetShadowDepthShader()
@@ -1996,6 +1998,103 @@ namespace RenderCore
         Finish();
     }
 
+    void RenderContext::DrawStatUnit(const uint32_t InWidth, const uint32_t InHeight, const std::string& InText)
+    {
+        GDIShader* Pixel  = P->GetPostShader(PP_StatsOverlay);
+        GDIShader* Vertex = P->GetDefaultVertex(EMaterialVertexInput::Fullscreen);
+        if(!Pixel || !Vertex || InWidth == 0 || InHeight == 0 || P->Backend == ERenderBackend::Null)
+        {
+            return;
+        }
+        if(!P->OverlayFont)
+        {
+            const EngineCore::EImageFormat Format = P->Backend == ERenderBackend::OpenGL ? EngineCore::EImageFormat::BGRA8
+                                                                                         : EngineCore::EImageFormat::RGBA8;
+            EngineCore::Image Font(int(OVERLAY_GLYPH_COUNT * OVERLAY_GLYPH_WIDTH), int(OVERLAY_GLYPH_HEIGHT), Format);
+            for(uint32_t Glyph = 0; Glyph < OVERLAY_GLYPH_COUNT; ++Glyph)
+            {
+                for(uint32_t Row = 0; Row < OVERLAY_GLYPH_HEIGHT; ++Row)
+                {
+                    for(uint32_t Column = 0; Column < OVERLAY_GLYPH_WIDTH; ++Column)
+                    {
+                        const bool bSet = (OVERLAY_FONT[Glyph][Row] >> (OVERLAY_GLYPH_WIDTH - 1 - Column)) & 1u;
+                        uint8_t* Px = Font.GetData() + Font.GetStride() * Row + (Glyph * OVERLAY_GLYPH_WIDTH + Column) * 4;
+                        Px[0] = Px[1] = Px[2] = 255;
+                        Px[3] = bSet ? 255 : 0;
+                    }
+                }
+            }
+            P->OverlayFont = GDICreateTextureResource(Font, GDI_TB_Clamp_To_Edge, GDI_TF_Nearest);
+            if(!P->OverlayFont)
+            {
+                return;
+            }
+        }
+
+        /* Overlay_Block: 4 vec4s, then 60 uvec4s of characters (1024 bytes). */
+        struct OverlayBlock
+        {
+            float    Layout[4];
+            float    Grid[4];
+            float    TextColor[4];
+            float    PanelColor[4];
+            uint32_t Text[240];
+        } Block = {};
+        static_assert(sizeof(OverlayBlock) == 1024, "Overlay_Block is the whole material block");
+
+        uint32_t Columns = 0, Rows = 0, Column = 0;
+        for(const char Each : InText)
+        {
+            if(Each == '\n') { ++Rows; Column = 0; continue; }
+            Columns = std::max(Columns, ++Column);
+        }
+        Rows += InText.empty() || InText.back() == '\n' ? 0 : 1;
+        if(Columns == 0 || Rows == 0 || Columns * Rows > 960)
+        {
+            return;
+        }
+        uint32_t Row = 0;
+        Column = 0;
+        for(const char Each : InText)
+        {
+            if(Each == '\n') { ++Row; Column = 0; continue; }
+            const uint32_t Index = Row * Columns + Column++;
+            Block.Text[Index / 4] |= uint32_t(uint8_t(Each)) << ((Index % 4) * 8);
+        }
+
+        const float Scale   = InHeight >= 900 ? 3.0f : InHeight >= 480 ? 2.0f : 1.0f;
+        const float Padding = 3.0f * Scale;
+        const float Width   = float(Columns) * 6.0f * Scale + 2.0f * Padding;
+        const float Margin  = 8.0f;
+        Block.Layout[0] = std::max(float(InWidth) - Width - Margin, 0.0f);
+        Block.Layout[1] = Margin;
+        Block.Layout[2] = Scale;
+        Block.Layout[3] = float(InWidth);
+        Block.Grid[0] = float(Columns);
+        Block.Grid[1] = float(Rows);
+        Block.Grid[2] = float(InHeight);
+        Block.Grid[3] = Padding;
+        const float TextColor[4]  = { 0.85f, 1.0f, 0.85f, 1.0f };
+        const float PanelColor[4] = { 0.0f, 0.0f, 0.0f, 0.55f };
+        std::memcpy(Block.TextColor, TextColor, sizeof(TextColor));
+        std::memcpy(Block.PanelColor, PanelColor, sizeof(PanelColor));
+
+        BeginDrawEvent("StatUnit");
+        GDISetViewport(0, 0, InWidth, InHeight);
+        GDISetColorMask(EColM_RGBA);
+        GDISetMaterialTexture(0, P->OverlayFont);
+        P->EnsureInitialised();
+        P->Bind(Vertex, Pixel);
+        GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, &Block, uint(sizeof(Block)));
+        GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &P->Scene, uint(sizeof(P->Scene)));
+        GDISetDepthState(IDepthStateDesc());
+        GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
+        GDIDrawObject(P->ScreenObject);
+        P->DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+        GDISetMaterialTexture(0, nullptr);
+        EndDrawEvent();
+    }
+
     void RenderContext::SetPostProcess(const PostProcessSettings& InSettings, const EngineCore::Matrix4x4* InPreviousViewProjection)
     {
         P->PostSettings           = InSettings;
@@ -2290,6 +2389,8 @@ namespace RenderCore
             if(Each.second.Gpu) { P->RetiredTextures.push_back(Each.second.Gpu); }
         }
         P->Textures.clear();
+        if(P->OverlayFont) { P->RetiredTextures.push_back(P->OverlayFont); }
+        P->OverlayFont = nullptr;
         for(GDITextureResource* Each : P->RetiredTextures)
         {
             Each->Release();

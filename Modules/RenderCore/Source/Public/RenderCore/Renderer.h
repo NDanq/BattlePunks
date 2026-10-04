@@ -100,6 +100,12 @@ namespace RenderCore
          * EndFrame(). */
         void WaitForPreviousFrame();
 
+        /* Marks the start of the host's frame -- before input and the game's
+         * tick -- for "stat unit"'s Game Thread time (RenderStats). Without
+         * it, a frame's game time starts at the previous EndFrame, so it
+         * also counts whatever the host waited between frames. */
+        void BeginGameFrame();
+
         /* Extracts this frame's bound components (if a World is bound),
          * builds the view, enqueues the render, and kicks the frame --
          * forwards to WorldBridge::ExtractAndRender then

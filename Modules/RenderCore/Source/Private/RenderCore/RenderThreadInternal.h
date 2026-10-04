@@ -2,7 +2,9 @@
 #define RENDERCORE_RENDERTHREADINTERNAL_H
 
 #include <cstdint>
+#include <string>
 
+#include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderThread.h"
 
 /*
@@ -41,6 +43,22 @@ namespace RenderCore
      */
     void SetSceneStats(uint64_t InProxiesLive, uint64_t InProxiesCulled);
     void GetSceneStats(uint64_t& OutProxiesLive, uint64_t& OutProxiesCulled);
+
+    /* "stat unit": Renderer::EndFrame publishes the averaged times and
+     * whether to show them (Stats.Unit); RenderScene::Render draws them and
+     * RenderThread::GetStats copies them into RenderStats. */
+    struct StatUnitSnapshot
+    {
+        float FrameMs        = 0.0f;
+        float GameThreadMs   = 0.0f;
+        float RenderThreadMs = 0.0f;
+        bool  bShow          = false;
+    };
+    void             SetStatUnit(const StatUnitSnapshot& InSnapshot);
+    StatUnitSnapshot GetStatUnit();
+
+    /* The overlay's text, a line each: Frame, Game, Render (ms), and FPS. */
+    RENDERCORE_API std::string FormatStatUnit(const StatUnitSnapshot& InSnapshot);
 }
 
 #endif //RENDERCORE_RENDERTHREADINTERNAL_H
