@@ -75,7 +75,8 @@ namespace NodeGraph
         Choice,       // one of Choices
         Variable,     // the name of one of the graph's Variables
         Bool,         // "true" or "false" -- a checkbox
-        Texture,      // a texture asset's runtime-relative path ("Content/Textures/Brick.nmtexture"), or ""
+        Texture,      // a texture's runtime-relative path: an asset ("Content/Textures/Brick.nmtexture"), a render
+                      // target (.nmrt2d, .nmrt3d, "transient://Name"), or ""
         Function,     // the name of one of the graph's Functions
     };
 

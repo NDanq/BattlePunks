@@ -67,6 +67,20 @@ instances (`.nmprefabinst`). A Client build reads the cooked copy in
 `Cooked/Content/Prefabs/`, which the editor console's `cook prefabs`
 regenerates after the prefab changes.
 
+`Content/Prefabs/ReflectionDemo.nmprefab` shows scene capture
+(RENDERPIPELINE.md, "Scene capture"). It is a mirror pool with a chrome ball
+over it:
+
+- **MirrorPool:** a Plane with a Planar Mirror probe into
+  `Content/RenderTargets/MirrorPool.nmrt2d`, captured every frame.
+- **ChromeBall:** a Sphere with an Omnidirectional probe into `ChromeBall.nmrt3d`,
+  captured every 0.25 s.
+- **Materials:** `Mirror` and `Chrome` both sample their target through a Reflect
+  node.
+
+Drag the prefab into the level from the Content Browser, or bake its captures
+with World > Bake Scene Captures. A cooked copy sits beside Column's.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:

@@ -22,6 +22,7 @@
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Public/RenderCore/RenderTargetAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/OverlayFont.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
@@ -70,13 +71,13 @@ namespace RenderCore
         {
             PP_DofPrepare, PP_DofBlur, PP_DofComposite, PP_MotionBlur,
             PP_BloomDownsample, PP_BloomUpsample, PP_BloomComposite, PP_Fxaa,
-            PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient,
+            PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
             "PPBloomDownsample.fsh", "PPBloomUpsample.fsh", "PPBloomComposite.fsh", "PPFxaa.fsh",
-            "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh",
+            "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -220,6 +221,77 @@ namespace RenderCore
         };
         std::unordered_map<std::string, GpuTexture> Textures;
         std::vector<GDITextureResource*>            RetiredTextures;
+
+        /*
+         * SCENE CAPTURE (RENDERPIPELINE.md): each render target by path -- its
+         * texture (a cube's 6S x S strip), the stage targets a face renders
+         * through, and its bake uploaded for until the first capture.
+         */
+        struct GpuRenderTarget
+        {
+            std::shared_ptr<const RenderTargetData> Source;
+            RenderTargetDesc                        Desc;              // as captured: Resolution applied
+            GDIRenderTarget*                        Target  = nullptr;
+            SceneTargets*                           Capture = nullptr;
+            GDITextureResource*                     Baked   = nullptr;
+            bool                                    bCaptured = false;
+        };
+        std::unordered_map<std::string, GpuRenderTarget> RenderTargets;
+
+        /* InPath's entry with its source current; null if it names nothing. */
+        GpuRenderTarget* FindRenderTarget(const std::string& InPath)
+        {
+            std::shared_ptr<const RenderTargetData> Source = RenderTargetAssetCache::Find(InPath);
+            if(!Source)
+            {
+                return nullptr;
+            }
+            GpuRenderTarget& Entry = RenderTargets[InPath];
+            if(Entry.Source != Source)
+            {
+                /* Edited or re-baked: its bake again, its settings for the next capture. */
+                if(Entry.Baked) { RetiredTextures.push_back(Entry.Baked); }
+                Entry.Baked  = nullptr;
+                Entry.Source = Source;
+                if(!Entry.Target) { Entry.Desc = Source->Desc; }
+            }
+            return &Entry;
+        }
+
+        /* What a material samples for InPath: the last capture, else the bake,
+         * else nothing (the backend's fallback: transparent black). */
+        GDITextureResource* RenderTargetTexture(const std::string& InPath)
+        {
+            GpuRenderTarget* Entry = FindRenderTarget(InPath);
+            if(!Entry)
+            {
+                return nullptr;
+            }
+            if(Entry->bCaptured && Entry->Target)
+            {
+                GDITexture2D* Texture = Entry->Target->ToGDITexture2D();
+                return Texture ? Texture->Resource : nullptr;
+            }
+            if(!Entry->Baked && !Entry->Source->Baked.IsNull())
+            {
+                const EGDITextureBorder Border = Entry->Source->Desc.Wrap == ETextureWrap::Repeat ? GDI_TB_Repeat
+                                               : Entry->Source->Desc.Wrap == ETextureWrap::Mirror ? GDI_TB_Mirrored_Repeat : GDI_TB_Clamp_To_Edge;
+                Entry->Baked = GDICreateTextureResource(Entry->Source->Baked, Border,
+                                                        Entry->Source->Desc.Filter == ETextureFilter::Nearest ? GDI_TF_Nearest : GDI_TF_Linear);
+            }
+            return Entry->Baked;
+        }
+
+        void ReleaseRenderTargets()
+        {
+            for(auto& Each : RenderTargets)
+            {
+                if(Each.second.Target)  { GDIReleaseRenderTarget(Each.second.Target); delete Each.second.Target; }
+                if(Each.second.Capture) { Each.second.Capture->Release(); delete Each.second.Capture; }
+                if(Each.second.Baked)   { RetiredTextures.push_back(Each.second.Baked); }
+            }
+            RenderTargets.clear();
+        }
 
         /* Skips redundant rebinds. Reset each frame. */
         GDIShader*     BoundVertex = nullptr;
@@ -427,6 +499,11 @@ namespace RenderCore
          * cache) if the file cannot be loaded: the slot reads transparent. */
         GDITextureResource* FindTexture(const MaterialTexture& InTexture)
         {
+            /* A render target (a scene capture), not a file. */
+            if(IsRenderTargetPath(InTexture.Path))
+            {
+                return RenderTargetTexture(InTexture.Path);
+            }
             std::shared_ptr<const TextureData> Source = TextureAssetCache::Find(InTexture.Path);
             if(!Source)
             {
@@ -532,7 +609,8 @@ namespace RenderCore
          * (warned by LoadShader) if a shader is missing.
          */
         bool DrawPost(const EPostPass InPass, GDIRenderTarget* InTarget, const uint InWidth, const uint InHeight,
-                      std::initializer_list<GDITextureResource*> InTextures, const PostBlock& InBlock, const bool bInAdditive = false)
+                      std::initializer_list<GDITextureResource*> InTextures, const PostBlock& InBlock, const bool bInAdditive = false,
+                      const uint InX = 0)
         {
             GDIShader* Pixel  = GetPostShader(InPass);
             GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
@@ -541,7 +619,7 @@ namespace RenderCore
                 return false;
             }
             GDISetRenderTargets(&InTarget, 1, nullptr);
-            GDISetViewport(0, 0, InWidth, InHeight);
+            GDISetViewport(InX, 0, InWidth, InHeight);   // InX: a cube face's place in its strip
             GDISetColorMask(EColM_RGBA);
 
             uint32_t Slot = 0;
@@ -1923,6 +2001,102 @@ namespace RenderCore
         return true;
     }
 
+    SceneTargets* RenderContext::BeginTargetCapture(const char* InPath, const uint32_t InResolution, const ERenderTargetKind InKind,
+                                                    EngineCore::Color& OutClear)
+    {
+        const std::string Path = InPath ? InPath : "";
+        Impl::GpuRenderTarget* Entry = Path.empty() ? nullptr : P->FindRenderTarget(Path);
+        if(!Entry)
+        {
+            P->WarnOnce("|capture-target|" + Path, "scene capture: '" + Path + "' is not a render target (an .nmrt2d or .nmrt3d); "
+                                                   "the probe captures nothing");
+            return nullptr;
+        }
+        if(Entry->Source->Desc.Kind != InKind)
+        {
+            P->WarnOnce("|capture-kind|" + Path, "scene capture: '" + Path + (InKind == ERenderTargetKind::Cube
+                        ? "' is a RenderTargetTex2D; an omnidirectional probe needs a RenderTargetTex3D (.nmrt3d)"
+                        : "' is a RenderTargetTex3D; a planar mirror needs a RenderTargetTex2D (.nmrt2d)"));
+            return nullptr;
+        }
+
+        /* The capture's size: Resolution, keeping a 2D target's aspect. */
+        RenderTargetDesc Desc = Entry->Source->Desc;
+        if(InResolution > 0)
+        {
+            const uint32_t Width = std::min<uint32_t>(InResolution, RENDER_TARGET_MAX_SIZE);
+            Desc.Height = Desc.Kind == ERenderTargetKind::Cube
+                        ? Width : std::max<uint32_t>(1u, uint32_t(double(Width) * double(Desc.Height) / double(Desc.Width) + 0.5));
+            Desc.Width  = Width;
+        }
+        const uint32_t TextureWidth  = RenderTargetTextureWidth(Desc);
+        const uint32_t TextureHeight = RenderTargetTextureHeight(Desc);
+        if(!Entry->Target)
+        {
+            Entry->Target = GDICreateRenderTarget("RenderCore.Capture." + Path, TextureWidth, TextureHeight);
+            Entry->bCaptured = false;
+        }
+        else if(Entry->Desc.Width != Desc.Width || Entry->Desc.Height != Desc.Height)
+        {
+            Entry->Target->Resize(TextureWidth, TextureHeight);
+            Entry->bCaptured = false;
+        }
+        Entry->Desc = Desc;
+        if(!Entry->Target || !Entry->Target->IsValid())
+        {
+            P->WarnOnce("|capture-gpu|" + Path, "scene capture: this backend cannot make the render target '" + Path + "'");
+            return nullptr;
+        }
+        if(!Entry->Capture)
+        {
+            Entry->Capture = new SceneTargets("RenderCore.CaptureStages." + Path);
+        }
+        if(!Entry->Capture->Allocate(Desc.Width, Desc.Height))
+        {
+            return nullptr;
+        }
+        OutClear = Desc.Clear;
+        return Entry->Capture;
+    }
+
+    void RenderContext::FinishTargetFace(const char* InPath, const uint32_t InFace)
+    {
+        const auto Found = P->RenderTargets.find(InPath ? InPath : "");
+        if(Found == P->RenderTargets.end() || !Found->second.Target || !Found->second.Capture)
+        {
+            return;
+        }
+        Impl::GpuRenderTarget& Entry = Found->second;
+        GDIRenderTarget* Rendered = Entry.Capture->Final ? Entry.Capture->Final : Entry.Capture->SceneColor;
+        GDITexture2D*    Texture  = Rendered ? Rendered->ToGDITexture2D() : nullptr;
+        if(!Texture)
+        {
+            return;
+        }
+        PostBlock Block;
+        const uint32_t X = Entry.Desc.Kind == ERenderTargetKind::Cube ? InFace * Entry.Desc.Width : 0;
+        if(P->DrawPost(PP_CaptureCopy, Entry.Target, Entry.Desc.Width, Entry.Desc.Height, { Texture->Resource }, Block, false, X))
+        {
+            Entry.bCaptured = true;
+        }
+    }
+
+    bool RenderContext::ReadRenderTarget(const char* InPath, EngineCore::Image& OutPixels)
+    {
+        Impl::GpuRenderTarget* Entry = P->FindRenderTarget(InPath ? InPath : "");
+        if(!Entry)
+        {
+            return false;
+        }
+        if(Entry->bCaptured && Entry->Target)
+        {
+            OutPixels = Entry->Target->ToImage();
+            return OutPixels.GetWidth() > 0;
+        }
+        OutPixels = Entry->Source->Baked;
+        return !OutPixels.IsNull();
+    }
+
     void RenderContext::BeginCapture(std::vector<StagedDraw>* InOut)
     {
         P->Capture = InOut;
@@ -2507,6 +2681,7 @@ namespace RenderCore
     void RenderContext::ReleaseGPUResources()
     {
         P->PreviewTargets.Release();
+        P->ReleaseRenderTargets();
         P->ReleaseShadowAtlases();
         P->Shadows.ViewCount = 0;
         P->FinalTarget = nullptr;

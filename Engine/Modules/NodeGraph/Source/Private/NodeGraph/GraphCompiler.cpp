@@ -80,15 +80,20 @@ namespace NodeGraph
                         break;
                     case EPropertyKind::Texture:
                     {
-                        /* Empty is the schema's to judge; anything else must be a .nmtexture on one line. */
-                        const std::string Suffix = ".nmtexture";
+                        /* Empty is the schema's to judge; anything else must be a texture on one line: a
+                         * .nmtexture, or a render target (.nmrt2d, .nmrt3d, or a transient one). */
                         std::string Lower = Value;
                         std::transform(Lower.begin(), Lower.end(), Lower.begin(), [](const unsigned char Ch) { return char(std::tolower(Ch)); });
-                        const bool bTexture = Lower.size() > Suffix.size() && Lower.compare(Lower.size() - Suffix.size(), Suffix.size(), Suffix) == 0;
+                        const auto EndsWith = [&Lower](const std::string& InSuffix)
+                        {
+                            return Lower.size() > InSuffix.size() && Lower.compare(Lower.size() - InSuffix.size(), InSuffix.size(), InSuffix) == 0;
+                        };
+                        const bool bTexture = EndsWith(".nmtexture") || EndsWith(".nmrt2d") || EndsWith(".nmrt3d")
+                                           || Lower.rfind("transient://", 0) == 0;
                         if(!Value.empty() && (!bTexture || Value.find_first_of("\r\n") != std::string::npos))
                         {
                             OutResult.Error(InNode.Id, std::string(), NodeLabel(InNode, &InDef) + ": " + Property.Name + " '" + Value
-                                            + "' is not a texture asset (a .nmtexture path)");
+                                            + "' is not a texture (a .nmtexture, or a render target: .nmrt2d, .nmrt3d)");
                         }
                         break;
                     }

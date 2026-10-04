@@ -57,6 +57,7 @@ namespace
         MOP_SceneTexture,    // PostProcess only
         MOP_TextureSample,   // its Texture Object, at UV (the texture coordinate unlinked)
         MOP_TextureObject,   // a texture asset and its sampler: a material texture slot
+        MOP_Reflect,         // a scene capture's render target, sampled as a reflection (a slot, as a Texture Object)
     };
 
     /* NodeDefinition::StageMask / PinDefinition::Stage bits. */
@@ -79,6 +80,21 @@ namespace
     const char* const TEXTURE_TYPE      = "texture";   // a Texture Object's output: a sampler, not a value
     const char* const TEXTURE_OBJECT    = "Texture.Object";
     const char* const TEXTURE_SAMPLE    = "Texture.Sample";
+    const char* const TEXTURE_REFLECT   = "Texture.Reflect";
+
+    /* A render target path's kind, as RenderCore's RenderTargetAsset.h tells
+     * it: true and bOutCube for an .nmrt2d (false) or .nmrt3d (true). */
+    bool RenderTargetKind(const std::string& InPath, bool& bOutCube)
+    {
+        const auto EndsWith = [&InPath](const char* InSuffix)
+        {
+            const std::string Suffix(InSuffix);
+            return InPath.size() > Suffix.size() && InPath.compare(InPath.size() - Suffix.size(), Suffix.size(), Suffix) == 0;
+        };
+        if(EndsWith(".nmrt2d")) { bOutCube = false; return true; }
+        if(EndsWith(".nmrt3d")) { bOutCube = true;  return true; }
+        return false;
+    }
 
     /* A Texture Sample's sampler settings; Default keeps the texture asset's own. */
     const std::vector<std::string> GFilterChoices = { "Default", "Nearest", "Linear" };
@@ -447,6 +463,7 @@ namespace
         void CollectParameters();
         void CollectTextures();
         std::string EmitTextureSample(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
+        std::string EmitReflect(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin);
         void CheckStages(const Node& InRoot, const NodeDefinition& InRootDef);
         void BeginStage(const std::vector<const Node*>& InRoots, const std::set<std::string>& InRootPins);
         void AnalyseScopes(const std::vector<const Node*>& InRoots);
@@ -887,16 +904,25 @@ namespace
         for(const Node* Each : Index.SortedNodes())
         {
             const NodeDefinition* Def = Index.FindDefinition(*Each);
-            if(!Def || Def->Op != MOP_TextureObject) { continue; }
+            if(!Def || (Def->Op != MOP_TextureObject && Def->Op != MOP_Reflect)) { continue; }
 
             TextureSlot Wanted;
-            Wanted.Path   = Each->GetProperty("Texture", "");
+            Wanted.Path   = Each->GetProperty(Def->Op == MOP_Reflect ? "Target" : "Texture", "");
+            bool bCube = false;
+            if(Def->Op == MOP_Reflect && !Wanted.Path.empty() && !RenderTargetKind(Wanted.Path, bCube))
+            {
+                Result.Error(Each->Id, std::string(), "'" + Def->DisplayName + "' reflects a scene capture: its Target must be a "
+                             "RenderTargetTex2D (.nmrt2d, a planar mirror) or RenderTargetTex3D (.nmrt3d, omnidirectional)");
+                continue;
+            }
             Wanted.Filter = Each->GetProperty("Filter", "Default");
             Wanted.Wrap   = Each->GetProperty("Wrap", "Default");
             Wanted.Node   = Each->Id;
             if(Wanted.Path.empty())
             {
-                Result.Error(Each->Id, std::string(), "'" + Def->DisplayName + "' has no texture: choose a .nmtexture in its Details");
+                Result.Error(Each->Id, std::string(), Def->Op == MOP_Reflect
+                             ? "'" + Def->DisplayName + "' has no Target: choose an .nmrt2d or .nmrt3d in its Details"
+                             : "'" + Def->DisplayName + "' has no texture: choose a .nmtexture in its Details");
                 continue;
             }
 
@@ -972,6 +998,59 @@ namespace
         if(InPin.Name == "RGB")  { return Swizzle(Sample, "rgb"); }
         const std::string Channel(1, char(std::tolower(static_cast<unsigned char>(InPin.Name[0]))));
         return Swizzle(Sample, Channel.c_str());
+    }
+
+    /*
+     * Reflect: one sample per node per block, as Texture Sample's. A planar
+     * mirror's target (.nmrt2d) at the mirrored screen point, nudged by
+     * Distortion; an omnidirectional one (.nmrt3d) along the view reflected
+     * about Normal (the pixel's normal unlinked). MaterialCommon.glsl.
+     */
+    std::string MaterialCompiler::EmitReflect(const Node& InNode, const NodeDefinition& InDef, const PinDefinition& InPin)
+    {
+        const PinRef Whole{ InNode.Id, "RGBA" };
+        std::string Sample;
+        const auto Cached = Values.find(Whole);
+        if(Cached != Values.end())
+        {
+            Sample = Cached->second;
+        }
+        else
+        {
+            const auto Slot = TextureSlotOf.find(InNode.Id);
+            bool bCube = false;
+            RenderTargetKind(InNode.GetProperty("Target", ""), bCube);
+            if(Slot == TextureSlotOf.end())
+            {
+                Sample = "vec4(0.0)";   // CollectTextures reported why
+            }
+            else
+            {
+                const std::string Sampler = TEXTURE_PREFIX + std::to_string(Slot->second);
+                Sample = "t" + std::to_string(NextTemp++);
+                if(bCube)
+                {
+                    const PinDefinition* NormalPin = InDef.FindPin("Normal", EPinDirection::Input);
+                    const bool bGiven = NormalPin && (Index.LinkInto(InNode.Id, "Normal") || InNode.FindConstant("Normal"));
+                    const std::string Normal = bGiven ? Input(InNode, InDef, *NormalPin) : std::string("Inputs.WorldNormal");
+                    Body.Line("vec4 " + Sample + " = Material_SampleCubeStrip(" + Sampler + ", Material_ReflectionVector(Inputs, "
+                              + Normal + "));", InNode.Id);
+                }
+                else
+                {
+                    const PinDefinition* DistortionPin = InDef.FindPin("Distortion", EPinDirection::Input);
+                    const bool bGiven = DistortionPin && (Index.LinkInto(InNode.Id, "Distortion") || InNode.FindConstant("Distortion"));
+                    const std::string Offset = bGiven ? " + " + Input(InNode, InDef, *DistortionPin) : std::string();
+                    Body.Line("vec4 " + Sample + " = texture(" + Sampler + ", Material_MirrorUV(Inputs)" + Offset + ");", InNode.Id);
+                }
+            }
+            if(InPin.Name != Whole.Pin)
+            {
+                Values.emplace(Whole, Sample);
+                if(!Blocks.empty()) { Blocks.back().push_back(Whole); }
+            }
+        }
+        return InPin.Name == "RGB" ? Swizzle(Sample, "rgb") : Sample;
     }
 
     /*
@@ -1119,6 +1198,10 @@ namespace
 
             case MOP_TextureSample:
                 Value = EmitTextureSample(InNode, InDef, InPin);
+                break;
+
+            case MOP_Reflect:
+                Value = EmitReflect(InNode, InDef, InPin);
                 break;
 
             case MOP_TextureObject:
@@ -1721,6 +1804,25 @@ namespace
             Def.Version = 2;   // 1 named its texture itself (UpgradeGraph)
             Def.Tooltip = "A Texture Object's colour at UV. Colour textures read as authored (display space), like "
                           "every colour a material uses. In World Position Offset it reads the full-size level.";
+        }
+
+        {
+            PinDefinition Normal = In("Normal", "vec3");
+            Normal.Tooltip = "Omnidirectional: the surface normal the view reflects about (world space). Unlinked: the pixel's";
+            PinDefinition Distortion = In("Distortion", "vec2");
+            Distortion.Tooltip = "Planar mirror: an offset in screen UV (ripples). Unlinked: none";
+            NodeDefinition& Def = Pure(TEXTURE_REFLECT, "Reflect", "Textures",
+                                       { Normal, Distortion, Out("RGBA", "vec4", ""), Out("RGB", "vec3", "") }, {},
+                                       "reflection mirror chrome environment cubemap scene capture probe");
+            Def.Op = MOP_Reflect;
+            PixelOnly(Def, "The scene as a Scene Capture Probe sees it, reflected at this pixel. A RenderTargetTex2D target is a "
+                           "planar mirror's capture, read at the mirrored screen point; a RenderTargetTex3D target is an "
+                           "omnidirectional capture, read along the view reflected about Normal. Feed RGB to Emissive (or Base "
+                           "Color) for a mirror or chrome.");
+            Def.Properties = {
+                { "Target", EPropertyKind::Texture, "", {}, "The render target its probe captures into: Content/RenderTargets/Pool.nmrt2d "
+                  "(a planar mirror) or Content/RenderTargets/Ball.nmrt3d (omnidirectional)" },
+            };
         }
 
         // --- Values --------------------------------------------------------------

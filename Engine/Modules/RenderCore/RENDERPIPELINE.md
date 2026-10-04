@@ -327,6 +327,88 @@ over it, so the gradient shows wherever the clear colour would. The editor
 sets it on every viewport from Editor Settings (`Editor.ViewportGradient`,
 `ViewportTopColor`, `ViewportBottomColor`); a game keeps its clear colour.
 
+### Scene capture
+
+A **Scene Capture Probe** component (`Components/SceneCaptureProbeComponent.h`)
+renders the scene from its entity into a render target asset, which any
+material then samples like a texture.
+
+**Render targets** (`RenderTargetAsset.h`) are two asset kinds:
+
+| File | Kind | Texture it samples as |
+|---|---|---|
+| `*.nmrt2d` | Tex2D | Width x Height |
+| `*.nmrt3d` | Cube | a 6S x S strip of faces +X -X +Y -Y +Z -Z |
+
+- **What the file holds:** size, filter, wrap and clear colour, plus an
+  optional baked image (chunks `NRTA` / `RTHD` / `RTPX`).
+- **Transient targets:** made at runtime by
+  `RenderTargetAssetCache::CreateTransient`, named `transient://<name>` and
+  never written to disk.
+- **Strip format:** GDI has no cube textures, so a cube is a strip. Each face
+  is drawn with a horizontal viewport offset only, which keeps the backends'
+  Y origins out of it. Targets are RGBA8.
+- **What a material samples:** `RenderContext::FindTexture` sends a
+  render-target path to the GPU target if it has been captured, else to the
+  bake, else to the null texture.
+
+**Probe settings:**
+- Target: a `.nmrt2d` or `.nmrt3d`.
+- Mode: **Planar Mirror** (2D) or **Omnidirectional** (cube).
+- Resolution: a 2D target keeps its aspect.
+- Frequency: **Every Frame**, **Interval** (seconds), **Once** (on start) or
+  **Manual** (`CaptureNow`, from a script or the editor).
+- Near and far clip.
+- Extent X / Z: the mirror's rectangle in local X/Z.
+- Hide Owner: the probe's entity subtree stays out of its own capture.
+- Enabled.
+
+**Game thread:** `WorldBridge::BuildCaptures` applies the frequencies and
+skips a mirror whose rectangle is out of view. It sends at most
+`RENDER_CAPTURES_MAX` (8) requests with the frame (`SceneCaptureList`, POD).
+
+**Render thread:** `RenderScene::Render` runs the captures before the main
+view. For each request, and each of its views (`BuildCaptureViews`), it:
+1. sets the view;
+2. queues draws, culled to the view and without the excluded entities;
+3. runs every stage, shadows included, into the target's own stage targets;
+4. copies the result into the target face (`CaptureCopy.fsh`).
+
+The post process stack is the main view's alone.
+
+**Omnidirectional** captures six 90-degree views from the probe. A material
+samples them with `Material_SampleCubeStrip(tex, dir)`, which picks the face
+and insets half a texel.
+
+**Planar mirror:**
+- **The camera:** the main camera reflected in the probe's plane (local +Y,
+  through its position), built as a proper LookAt with the main view's
+  projection. Nothing is captured while the camera is behind the plane.
+- **Clipping:** the projection's near plane is replaced by the mirror plane
+  (an oblique near plane, after Lengyel). Whatever lies behind the mirror,
+  such as the floor it rests on, is clipped by the rasteriser rather than
+  drawn between the reflected camera and the scene.
+  - Every backend clips GL-style, with z in [-w, w]; GDI remaps the range for
+    Vulkan, D3D12 and Metal. So the plane maps to z = -w.
+  - Shaders rebuild positions through `Scene_InvViewProjection`, so lighting,
+    AO and DoF follow the oblique matrix.
+- **Sampling:** a material samples the mirror at the screen position flipped
+  in X (`Material_MirrorUV`).
+- **Limit:** perspective views only.
+
+**Editor:**
+- **World > Bake Scene Captures:** fires every probe, reads the targets back
+  (`Renderer::RequestRenderTargetReadback`) and saves each image into its
+  file as the bake.
+- **Fallback:** a game shows the bake until its first live capture, or for
+  good with Frequency Manual.
+
+Verified (`NIMBLE_SMOKE_GPU=Vulkan`):
+- a cube in a room of six coloured walls reads back each face's wall;
+- a Reflect sphere shows the wall each part of it faces;
+- a mirror floor shows an off-centre box on the correct side;
+- the mirror sees past a slab lying under it.
+
 ### Static draw lists
 
 An entity with **Static** mobility (GameCore's `Mobility.h`) keeps its draws
@@ -485,6 +567,7 @@ compiled, as the forward variant. It now has both.
   Standard, Cascaded, spot and point shadow each darken the floor and brighten
   nothing; Cast Shadows off darkens nothing; a Modulated shadow leans to its
   tint. `NIMBLE_SMOKE_DUMP=<dir>` writes each capture as a PPM.
+- Scene capture (`NIMBLE_SMOKE_GPU`): see Scene capture above.
 - GPU (`NIMBLE_SMOKE_GPU=Vulkan|D3D12`): previews of DefaultLit and Wave go
   through the G-buffer and keep their forward-shaded pixels (186 188 192; 40
   103 172); Glow (Translucent Unlit) is unchanged; Negative (PostProcess) inverts

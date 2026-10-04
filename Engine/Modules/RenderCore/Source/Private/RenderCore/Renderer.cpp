@@ -533,6 +533,24 @@ namespace RenderCore
         return Request;
     }
 
+    uint64_t Renderer::RequestRenderTargetReadback(const std::string& InPath)
+    {
+        RenderScene* Scene = P->DefaultScene();
+        if(!Scene || !P->Thread.IsRunning() || InPath.size() >= RENDER_MATERIAL_PATH_MAX)
+        {
+            return 0;
+        }
+        struct PathText { char Text[RENDER_MATERIAL_PATH_MAX]; } Path = {};
+        std::memcpy(Path.Text, InPath.c_str(), InPath.size());
+        const uint64_t Request = ++P->LastPreviewRequest;
+        MaterialPreviewMailbox* Mailbox = &P->Previews;
+        ENQUEUE_RENDER_COMMAND(AddTargetReadback)([Scene, Request, Path, Mailbox](RenderContext&)
+        {
+            Scene->AddTargetReadback(Request, Path.Text, Mailbox);
+        });
+        return Request;
+    }
+
     bool Renderer::TakeMaterialPreview(const uint64_t InRequest, EngineCore::Image& OutImage, std::string& OutError)
     {
         return P->Previews.Take(InRequest, OutImage, OutError);

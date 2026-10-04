@@ -73,3 +73,54 @@ float Material_SceneDistanceAt(vec2 InClip, vec2 InFragCoord)
     return length(World.xyz / World.w - Scene_CameraPosition.xyz);
 }
 #endif
+
+// The Reflect node (RenderCore/RENDERPIPELINE.md, "Scene capture"): sampling
+// a scene capture probe's render target.
+#if PIXEL_SHADER
+// A planar mirror's capture (RenderTargetTex2D) at this pixel: the probe
+// renders the camera reflected in its plane, so a point on the mirror reads
+// the capture at the horizontally mirrored screen position. Perspective
+// views only (ViewDepth is clip w there).
+vec2 Material_MirrorUV(in MaterialInputs Inputs)
+{
+    vec2 Ndc = Inputs.ClipPosition.xy / max(Inputs.ViewDepth, 1e-4);
+    vec2 Uv  = Ndc * 0.5 + 0.5;
+    return vec2(1.0 - Uv.x, Uv.y);
+}
+
+// The view direction reflected about InNormal: where an omnidirectional
+// capture is sampled.
+vec3 Material_ReflectionVector(in MaterialInputs Inputs, vec3 InNormal)
+{
+    vec3 ToEye = normalize(Scene_CameraPosition.xyz - Inputs.WorldPosition);
+    return reflect(-ToEye, normalize(InNormal));
+}
+
+// An omnidirectional capture (RenderTargetTex3D) by direction: its six faces
+// side by side, +X -X +Y -Y +Z -Z, each a 90-degree view looking along its
+// axis with up +Y (+Z for the Y faces) -- SceneCapture.cpp's CubeFaceBasis.
+// Each face's lookup stays half a texel inside it, so filtering never reads
+// the next face.
+vec4 Material_SampleCubeStrip(sampler2D InStrip, vec3 InDirection)
+{
+    vec3 A = abs(InDirection);
+    int  Face;
+    if(A.x >= A.y && A.x >= A.z) { Face = InDirection.x > 0.0 ? 0 : 1; }
+    else if(A.y >= A.z)          { Face = InDirection.y > 0.0 ? 2 : 3; }
+    else                         { Face = InDirection.z > 0.0 ? 4 : 5; }
+
+    vec3 Forward = Face == 0 ? vec3(1.0, 0.0, 0.0) : Face == 1 ? vec3(-1.0, 0.0, 0.0)
+                 : Face == 2 ? vec3(0.0, 1.0, 0.0) : Face == 3 ? vec3(0.0, -1.0, 0.0)
+                 : Face == 4 ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 0.0, -1.0);
+    vec3 Up      = (Face == 2 || Face == 3) ? vec3(0.0, 0.0, 1.0) : vec3(0.0, 1.0, 0.0);
+    vec3 Right   = normalize(cross(Up, Forward));   // the engine's LookAt: R = Up x D, U = D x R
+    Up           = cross(Forward, Right);
+
+    float Depth = max(dot(InDirection, Forward), 1e-6);
+    vec2  Ndc   = vec2(dot(InDirection, Right), dot(InDirection, Up)) / Depth;
+    float Size  = float(textureSize(InStrip, 0).y);
+    float Inset = 0.5 / Size;
+    vec2  Uv    = clamp(Ndc * 0.5 + 0.5, vec2(Inset), vec2(1.0 - Inset));
+    return texture(InStrip, vec2((float(Face) + Uv.x) / 6.0, Uv.y));
+}
+#endif

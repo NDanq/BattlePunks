@@ -18,7 +18,8 @@ class EditorDocument;
  */
 namespace EditorLights
 {
-    enum class EKind { Point, Spot, Directional, Sky };
+    /* The lights, and the scene capture probes that light reflections. */
+    enum class EKind { Point, Spot, Directional, Sky, CaptureOmni, CaptureMirror };
 
     GameCore::EntityID CreateLight(EditorDocument& InDocument, EKind InKind, const EngineCore::Vector3& InPosition);
 
@@ -30,9 +31,12 @@ namespace EditorLights
         const struct { const char* Text; EKind Kind; } Entries[] = {
             { "&Point Light", EKind::Point }, { "&Spot Light", EKind::Spot },
             { "&Directional Light", EKind::Directional }, { "S&ky Light", EKind::Sky },
+            { "Scene Capture Probe (&Omnidirectional)", EKind::CaptureOmni },
+            { "Scene Capture Probe (Planar &Mirror)", EKind::CaptureMirror },
         };
         for(const auto& Entry : Entries)
         {
+            if(Entry.Kind == EKind::CaptureOmni) { InMenu->addSeparator(); }
             const EKind Kind = Entry.Kind;
             InMenu->addAction(QString::fromLatin1(Entry.Text), InMenu, [&InDocument, InWhere, Kind]()
             {

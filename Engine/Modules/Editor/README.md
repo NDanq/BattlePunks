@@ -73,9 +73,10 @@ uses it.
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
-| `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow; all lights or the selected one, View > Light Gizmos), a perspective game camera's frustum |
+| `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow, a scene capture probe's mirror rectangle and normal or its box and reach; all lights or the selected one, View > Light Gizmos), a perspective game camera's frustum |
 | `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere, Cylinder or Plane mesh on a new entity, sized to see, in one undo step |
-| `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction |
+| `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction; also a Scene Capture (Omni) or (Mirror) probe |
+| `Content/RenderTargetAssets` (private) | Render target assets: New Render Target 2D / 3D (Cube), the settings dialog, World > Bake Scene Captures |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity hierarchy with component summary, filter, create, drag to reparent; Ctrl/Shift multiple selection, F2 renames in the row, and the edit actions (below) in its context menu |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
@@ -182,6 +183,23 @@ stages `Content/**/*.nmmesh` and `*.nmtexture` itself (Sandbox's CMakeLists,
 `SandboxStageContent`). A material samples a texture through a Texture Object
 and Texture Sample nodes (NodeGraph's README); drop a `.nmtexture` on a Texture
 Object's Texture field in Details.
+
+**Render targets.** The context menu's **New Render Target 2D...** and **New
+Render Target 3D (Cube)...** make a `.nmrt2d` (512 square) or a `.nmrt3d`
+(128 per face). Double-click one to set its size, filter, wrap and clear colour,
+or to clear its bake. The thumbnail shows the bake, if there is one.
+
+- **Filling one:** a Scene Capture Probe component renders into it (RenderCore's
+  RENDERPIPELINE.md, Scene capture). Add one from World > Add Light > Scene
+  Capture (Omni) or (Mirror), then set its **Target** with the render-target
+  picker, completion or a drop.
+- **Sampling one:** set a material graph's Texture Object, or a **Reflect**
+  node's Target, to the render target.
+- **Baking:** **World > Bake Scene Captures** fires every probe in the level
+  once, reads each target back and saves the image into its file as the bake.
+  A game shows the bake until its own first capture, and keeps it when the
+  probe's Frequency is Manual.
+- **Staging:** a clean game build stages `Content/**/*.nmrt2d` and `*.nmrt3d`.
 
 ## Editor-visible properties
 

@@ -136,12 +136,14 @@ file(GLOB_RECURSE GAME_SCRIPT_FILES CONFIGURE_DEPENDS
 game_stage(Scripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_SCRIPT_FILES})
 
 # Content/: imported meshes and textures ("Content/Meshes/Crate.nmmesh"), and
-# post process stacks (a Post Process component's "Content/PostProcess/X.pp.nmgraph",
+# post process stacks (a Post Process component's "Content/PostProcess/X.pp.nmgraph", render targets (.nmrt2d / .nmrt3d),
 # read as they are, text in every build).
 file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmmesh"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmtexture"
-        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.pp.nmgraph")
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.pp.nmgraph"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmrt2d"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmrt3d")
 game_stage(Content "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_CONTENT_FILES})
 
 # Content/Prefabs/: an Editor target stages the text prefabs it edits; a

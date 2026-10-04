@@ -27,6 +27,7 @@ namespace RenderCore
     class RenderContext;
     class RenderProxy;
     class MaterialPreviewMailbox;
+    struct SceneCaptureList;   // Private/RenderCore/SceneCapture.h
 
 #if WITH_EDITOR
     /* EDITOR ONLY -- a RequestMaterialPreview as a (trivially copyable) command. */
@@ -82,6 +83,11 @@ namespace RenderCore
         void SetLighting(const RenderLighting& InLighting);
         void SetPostProcess(const RenderPostProcess& InPostProcess);
 
+        /* This frame's scene captures (WorldBridge): rendered into their
+         * render targets at the start of the next Render(), before the
+         * scene's own pass, so it samples them. */
+        void SetCaptures(const SceneCaptureList& InCaptures);
+
 #if WITH_EDITOR
         /* EDITOR ONLY. Lines for the next Render() only. */
         void SetDebugLines(const DebugLine* InLines, size_t InCount);
@@ -93,6 +99,10 @@ namespace RenderCore
         /* EDITOR ONLY. The next Render()'s final colour, without the debug
          * lines, read back into InMailbox under InRequest. */
         void AddCapture(uint64_t InRequest, MaterialPreviewMailbox* InMailbox);
+
+        /* The render target at InPath read back after the next Render()'s
+         * captures (Renderer::RequestRenderTargetReadback). */
+        void AddTargetReadback(uint64_t InRequest, const std::string& InPath, MaterialPreviewMailbox* InMailbox);
 #endif
 
         /* BeginRendering, SetViewport, Clear, draw every visible proxy whose

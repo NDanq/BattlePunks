@@ -704,6 +704,38 @@ void ViewportWidget::QueueLightGizmos()
             Segment(Tip, Tip - Forward * (Length * 0.22) + Side * (Length * 0.1), Color, Thickness * 1.5f);
         }
     });
+
+    /* Scene capture probes: a mirror's rectangle on its plane and the way it
+     * faces; an omnidirectional probe's small cube, and (selected) its reach. */
+    World.Each<RenderCore::SceneCaptureProbeComponent>(
+        [&](const GameCore::Entity& InEntity, RenderCore::SceneCaptureProbeComponent& InProbe)
+    {
+        EngineCore::Color Color;
+        float Thickness = 0.0f;
+        if(!Style(InEntity, EngineCore::Color(120, 200, 255), Color, Thickness)) { return; }
+        const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+        const GameCore::Rotation3 Axes = GameCore::TransformMath::EulerToRotation(Pose.Rotation);
+        const EngineCore::Vector3 Centre = Pose.Position;
+        if(InProbe.Mode == RenderCore::SCM_PlanarMirror)
+        {
+            const EngineCore::Vector3 X = Axes.GetAxis(0) * double(InProbe.ExtentX);
+            const EngineCore::Vector3 Z = Axes.GetAxis(2) * double(InProbe.ExtentZ);
+            const EngineCore::Vector3 Corners[4] = { Centre + X + Z, Centre - X + Z, Centre - X - Z, Centre + X - Z };
+            for(int Edge = 0; Edge < 4; ++Edge) { Segment(Corners[Edge], Corners[(Edge + 1) % 4], Color, Thickness); }
+            const double Arrow = std::max(std::min(double(InProbe.ExtentX), double(InProbe.ExtentZ)) * 0.5, 20.0);
+            Segment(Centre, Centre + Axes.GetAxis(1) * Arrow, Color, Thickness);
+            return;
+        }
+        const double Half = 20.0;
+        const EngineCore::Vector3 H(Half, Half, Half);
+        Context.DrawDebugBox(GameCore::AABB(Centre - H, Centre + H), Color, Thickness);
+        if(Document.IsSelected(InEntity.GetID()))
+        {
+            const double Reach = std::max(double(InProbe.FarClip), 0.0);
+            const EngineCore::Vector3 X(1.0, 0.0, 0.0), Y(0.0, 1.0, 0.0), Z(0.0, 0.0, 1.0);
+            Ring(Centre, X, Z, Reach, GizmoColor(EngineCore::Color(120, 200, 255), false), Thickness * 0.5f);
+        }
+    });
 }
 
 void ViewportWidget::GetGizmoFrame(EngineCore::Vector3& OutOrigin, double& OutAxisLength) const
@@ -1495,6 +1527,10 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
     World.Each<RenderCore::SpotLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::SpotLightComponent&) { TryLight(InEntity); });
     World.Each<RenderCore::DirectionalLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::DirectionalLightComponent&) { TryLight(InEntity); });
     World.Each<RenderCore::SkyLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::SkyLightComponent&) { TryLight(InEntity); });
+    World.Each<RenderCore::SceneCaptureProbeComponent>([&](const GameCore::Entity& InEntity, RenderCore::SceneCaptureProbeComponent&)
+    {
+        TryLight(InEntity);
+    });
     return BestLight.IsSet() ? BestLight : Best;
 }
 

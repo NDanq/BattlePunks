@@ -1741,6 +1741,65 @@ namespace
         return G;
     }
 
+    /* Reflect: a scene capture's render target, sampled as a reflection. */
+    void TestReflect()
+    {
+        std::printf("[reflect]\n");
+        const auto Build = [](const char* InTarget, const bool bInNormal)
+        {
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Mirror";
+            AddNode(G, 1, "Output.Material");
+            AddNode(G, 2, "Texture.Reflect").Properties["Target"] = InTarget;
+            Connect(G, 2, "RGB", 1, "Emissive");
+            if(bInNormal)
+            {
+                AddNode(G, 3, "Input.VertexNormal");
+                Connect(G, 3, "Normal", 2, "Normal");
+            }
+            return G;
+        };
+
+        CompileResult Planar;
+        const Graph Mirror = Build("Content/RenderTargets/Pool.nmrt2d", false);
+        CompileGraph(Mirror, Planar);
+        Expect(!Planar.HasErrors(), "a Reflect of a RenderTargetTex2D compiles");
+        if(Planar.HasErrors()) { std::printf("%s\n", FormatDiagnostics(Mirror, Planar).c_str()); }
+        Expect(Planar.Code.find("MATERIAL_SAMPLER2D(5, Material_Texture1)") != std::string::npos
+               && Planar.Code.find("texture(Material_Texture1, Material_MirrorUV(Inputs))") != std::string::npos,
+               "it takes a texture slot and reads the mirrored screen point");
+        const std::string PlanarData = Planar.Companions.empty() ? std::string() : Planar.Companions[0].second;
+        Expect(PlanarData.find("Texture 1 Default Default Content/RenderTargets/Pool.nmrt2d\n") != std::string::npos,
+               "the .material names the render target as the slot's texture");
+
+        CompileResult Omni;
+        const Graph Ball = Build("Content/RenderTargets/Ball.nmrt3d", true);
+        CompileGraph(Ball, Omni);
+        Expect(!Omni.HasErrors() && Omni.Code.find("Material_SampleCubeStrip(Material_Texture1, Material_ReflectionVector(Inputs, Inputs.WorldNormal))")
+               != std::string::npos, "a RenderTargetTex3D is read along the view reflected about the linked normal");
+
+        CompileResult Wrong;
+        CompileGraph(Build("Content/Textures/Brick.nmtexture", false), Wrong);
+        Expect(Wrong.HasErrors(), "a Reflect of a plain texture is an error");
+        CompileResult None;
+        CompileGraph(Build("", false), None);
+        Expect(None.HasErrors(), "and one with no Target");
+
+        /* A render target is a texture too: a Texture Object may sample it. */
+        Graph Screen;
+        Screen.SchemaName = "Material";
+        Screen.Name       = "Screen";
+        AddNode(Screen, 1, "Output.Material");
+        AddNode(Screen, 2, "Texture.Object").Properties["Texture"] = "Content/RenderTargets/Camera.nmrt2d";
+        AddNode(Screen, 3, "Texture.Sample").Version = 2;
+        Connect(Screen, 2, "Texture", 3, "Texture");
+        Connect(Screen, 3, "RGB", 1, "Emissive");
+        CompileResult ScreenResult;
+        CompileGraph(Screen, ScreenResult);
+        Expect(!ScreenResult.HasErrors(), "a Texture Object may name a render target (a security camera's screen)");
+    }
+
     void TestTextureSample()
     {
         std::printf("[texture sample]\n");
@@ -2276,6 +2335,7 @@ int main()
     TestDiscard();
     TestMaterialStages();
     TestTextureSample();
+    TestReflect();
     TestPostProcessStack();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

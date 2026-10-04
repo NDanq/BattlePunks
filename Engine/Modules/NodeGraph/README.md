@@ -125,8 +125,9 @@ Node settings are properties of kind String, Identifier, Choice, Variable,
 **Bool** or **Texture**. A Bool is a checkbox in the editor, stored as
 `true`/`false`, and anything else is a validation error. A Texture is a texture
 asset's runtime-relative path (`Content/Textures/Brick.nmtexture`), typed,
-browsed for or dropped from the Content Browser; anything but a `.nmtexture`
-is a validation error.
+browsed for or dropped from the Content Browser. A render target
+(`.nmrt2d`, `.nmrt3d`, or a runtime `transient://` name) is accepted too, and
+samples as a texture. Anything else is a validation error.
 
 An input pin with `Implicit` set has no constant: unlinked, the schema
 supplies what it names -- a Texture Sample's UV is "Texture Coordinate". The
@@ -294,6 +295,23 @@ each slot. One sample node's outputs share one sample. Both stages sample; in
 World Position Offset a sample reads the full-size level (`textureLod`), as the
 vertex stage has no derivatives. A Texture Object with no texture, or a Texture
 Sample with no Texture Object linked, is an error.
+
+**Reflect** (category Textures, pixel stage only) samples a render target that
+a Scene Capture Probe fills, for environment reflections. Its **Target**
+setting names the target, which takes a texture slot like a Texture Object
+does. What it samples depends on the target's kind:
+
+- **`.nmrt2d`, a planar mirror:** the target is read at the pixel's screen
+  position flipped in X (`Material_MirrorUV`). **Distortion** (vec2), if
+  linked, is added to that UV, for ripples.
+- **`.nmrt3d`, a cube:** the target is read along the view vector reflected
+  in **Normal** (vec3; unlinked, the vertex normal), through
+  `Material_SampleCubeStrip`.
+
+The node gives **RGBA** and **RGB**. A Target that is empty, or is not a
+render target, is an error. For a mirror or chrome look, the usual graph sends
+Reflect.RGB times a tint into Emissive, over a dark Base Color with low
+Roughness. LightLab's `Mirror` and `Chrome` materials are built this way.
 
 **Upgrading.** A schema can rewrite a graph an older editor saved as it is read
 (`Schema::UpgradeGraph`, for files and pasted fragments). Texture Sample
