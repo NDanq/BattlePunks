@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Prefab Format="1" Name="Column" NextId="5">
-  <Entity Id="1" Name="Column">
+  <Tick Mode="Tick" />
+  <Entity Id="1" Name="Column" Mobility="Static">
     <Component Type="Transform" Version="1">
       <Position X="0" Y="0" Z="0" />
       <Rotation X="0" Y="0" Z="0" />
@@ -31,7 +32,7 @@
   <Entity Id="3" Name="Shaft" Parent="1">
     <Component Type="Render" Version="3">
       <Visible Value="true" />
-      <Material0 Value="" />
+      <Material0 Value="Content/Materials/Bricks.material.nmgraph" />
       <Material1 Value="" />
       <Material2 Value="" />
       <Material3 Value="" />

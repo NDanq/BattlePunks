@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Instance Guid="83527c14c0e5daa69d0a62761a266a69" Name="Column" Prefab="Content/Prefabs/Column.nmprefab">
+  <Entity Id="1">
+    <Component Type="Transform" Version="1">
+      <Position X="1411.2711" Y="0" Z="250" />
+    </Component>
+  </Entity>
+</Instance>
