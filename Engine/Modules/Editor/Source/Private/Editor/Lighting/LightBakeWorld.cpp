@@ -27,8 +27,6 @@ namespace LightBake
     namespace
     {
         constexpr const char* DEFAULT_LIT     = "Engine/Content/Materials/DefaultLit.material.nmgraph";
-        constexpr float       SUN_ANGLE       = 0.75f * 3.14159265f / 180.0f;   // radians: a soft sun
-        constexpr float       LOCAL_SOURCE    = 4.0f;                           // world units: a bulb
         constexpr float       FALLBACK_ALBEDO = 0.5f;                           // linear, without a BaseColor
         constexpr float       MAX_ALBEDO      = 0.9f;                           // so bounces lose energy
         constexpr int         MAX_SKY_WIDTH   = 256;
@@ -268,7 +266,7 @@ namespace LightBake
                     const EngineCore::Vector3 Forward = RenderCore::LightForward(Pose.Rotation);
                     L.Direction  = Normalize(Vec3(float(Forward.GetX()), float(Forward.GetY()), float(Forward.GetZ())));
                     L.Radiance   = ToLinear(Sun->Color) * Sun->Intensity;
-                    L.SourceSize = SUN_ANGLE;
+                    L.SourceSize = std::clamp(Sun->SourceAngle, 0.0f, 30.0f) * 3.14159265f / 180.0f;
                     OutScene.Lights.push_back(L);
                     ++OutReport.Lights;
                 }
@@ -282,7 +280,7 @@ namespace LightBake
                     L.Position   = Vec3(float(Pose.Position.GetX()), float(Pose.Position.GetY()), float(Pose.Position.GetZ()));
                     L.Radiance   = ToLinear(Point->Color) * Point->Intensity;
                     L.Range      = Point->Radius;
-                    L.SourceSize = LOCAL_SOURCE;
+                    L.SourceSize = std::max(Point->SourceRadius, 0.0f);
                     OutScene.Lights.push_back(L);
                     ++OutReport.Lights;
                 }
@@ -304,7 +302,7 @@ namespace LightBake
                     L.Range      = Spot->Range;
                     L.CosOuter   = std::cos(Outer * Degrees);
                     L.CosInner   = std::cos(std::min(Inner, Outer - 0.01f) * Degrees);
-                    L.SourceSize = LOCAL_SOURCE;
+                    L.SourceSize = std::max(Spot->SourceRadius, 0.0f);
                     OutScene.Lights.push_back(L);
                     ++OutReport.Lights;
                 }

@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="PostProcess">
+  <Nodes>
+    <Node Id="09f8025684a03859a3e7032d50a80e8f" Type="Effect.Antialiasing" Version="1" X="150" Y="0" />
+    <Node Id="9c0a350a7f0b24e2437d6ca2155bfd26" Type="Effect.Bloom" Version="1" X="-150" Y="0" />
+    <Node Id="eadc3414aefb1b26386dcfe40162150a" Type="Effect.ToneMapping" Version="1" X="-11" Y="-57">
+      <Prop Name="Exposure" Value="0.5" />
+      <Prop Name="Tone Mapper" Value="Reinhard" />
+    </Node>
+  </Nodes>
+  <gen_code>
+    <Output Extension=".ppstack"><![CDATA[# Post process stack SimplePostProcess
+Effect Bloom Threshold=0.8 Intensity=0.6 Radius=0.75 Levels=5 Tint=1,1,1
+Effect ToneMapping Exposure=0.5 ToneMapper=Reinhard
+Effect Antialiasing EdgeThreshold=0.125 Method=FXAA Quality=Medium
+]]></Output>
+  </gen_code>
+</NodeGraph>

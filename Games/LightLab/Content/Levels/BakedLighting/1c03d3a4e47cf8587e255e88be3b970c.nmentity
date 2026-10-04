@@ -6,7 +6,7 @@
     <Radius Value="750" />
     <Active Value="true" />
     <CastShadows Value="true" />
-    <ShadowTechnique Value="0" />
+    <ShadowTechnique Value="1" />
     <ShadowTint R="110" G="135" B="200" A="255" />
     <ShadowBias Value="0.004" />
     <ShadowNormalBias Value="2" />

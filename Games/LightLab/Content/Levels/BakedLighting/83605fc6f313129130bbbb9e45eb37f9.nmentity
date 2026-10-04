@@ -32,6 +32,20 @@
     <Parameter2W Value="0" />
     <CastShadows Value="true" />
   </Component>
+  <Component Type="Scene Capture Probe" Version="2">
+    <Target Value="Content/RenderTargets/ChromeBall.nmrt3d" />
+    <Mode Value="1" />
+    <Resolution Value="256" />
+    <Frequency Value="0" />
+    <Interval Value="1" />
+    <NearClip Value="13" />
+    <FarClip Value="5000" />
+    <ExtentX Value="200" />
+    <ExtentZ Value="200" />
+    <HideOwner Value="true" />
+    <Enabled Value="true" />
+    <CaptureShadows Value="false" />
+  </Component>
   <Component Type="Transform" Version="1">
     <Position X="-40" Y="110" Z="-120" />
     <Rotation X="0" Y="0" Z="0" />

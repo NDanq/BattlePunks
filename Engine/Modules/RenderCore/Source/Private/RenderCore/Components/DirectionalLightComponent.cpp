@@ -15,8 +15,9 @@ namespace RenderCore
     GAMECORE_DEFINE_COMPONENT(DirectionalLightComponent, "Directional Light")
 
     /* Version 2: Direction became the Transform's forward, and the shadow
-     * fields arrived. A version 1 save's Direction is read and dropped. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(DirectionalLightComponent, 2)
+     * fields arrived. A version 1 save's Direction is read and dropped.
+     * Version 3: SourceAngle (baked lighting). */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(DirectionalLightComponent, 3)
     {
         if(Ar.GetVersion() < 2)
         {
@@ -37,6 +38,10 @@ namespace RenderCore
             Ar.Field("CascadeCount",       C.CascadeCount);
             Ar.Field("CascadeSplitLambda", C.CascadeSplitLambda);
         }
+        if(Ar.GetVersion() >= 3)
+        {
+            Ar.Field("SourceAngle", C.SourceAngle);
+        }
     }
 
     GAMECORE_DEFINE_COMPONENT_SCRIPT(DirectionalLightComponent)
@@ -52,6 +57,7 @@ namespace RenderCore
         Bind.Field("ShadowDistance",     &DirectionalLightComponent::ShadowDistance);
         Bind.Field("CascadeCount",       &DirectionalLightComponent::CascadeCount);
         Bind.Field("CascadeSplitLambda", &DirectionalLightComponent::CascadeSplitLambda);
+        Bind.Field("SourceAngle",        &DirectionalLightComponent::SourceAngle);
     }
 
 #if WITH_EDITOR
@@ -71,6 +77,9 @@ namespace RenderCore
         Props.Field("Shadow Distance",      &DirectionalLightComponent::ShadowDistance);
         Props.Field("Cascade Count",        &DirectionalLightComponent::CascadeCount);
         Props.Field("Cascade Split Lambda", &DirectionalLightComponent::CascadeSplitLambda);
+
+        Props.Category("Baked Lighting");
+        Props.Field("Source Angle", &DirectionalLightComponent::SourceAngle);
     }
 #endif
 }
