@@ -12,6 +12,8 @@
 #include <vector>
 
 #include "Public/Core/CoreConfig.h"
+#include "Public/GameCore/ComponentReplication.h"
+#include "Public/GameCore/ComponentRpc.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
@@ -21,6 +23,8 @@
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/NetFacade.h"
+#include "Public/NimbleEngine/NimbleEngine.h"
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/RenderCore/Renderer.h"
@@ -390,6 +394,81 @@ static void TestLevelByWorldFile()
     UnregisterLevel(Code);
 }
 
+// === Networking, without a session ============================================
+// What every build has, NetCore compiled in or out: RPCs that run locally,
+// the facade's Standalone answers, the launchers' command line, and a
+// headless Application -- the dedicated server's host, minus the network.
+
+struct TestBeaconComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    int32_t Flashes = 0;
+    int32_t LastPower = 0;
+
+    void ServerFlash(const GameCore::RpcContext& InContext, int32_t InPower)
+    {
+        ++Flashes;
+        LastPower = InPower;
+        bLastRemote = InContext.bRemote;
+    }
+    bool bLastRemote = true;
+};
+
+GAMECORE_DEFINE_COMPONENT(TestBeaconComponent, "TestBeacon")
+
+GAMECORE_DEFINE_COMPONENT_RPCS(TestBeaconComponent)
+{
+    Rpc.Server<&TestBeaconComponent::ServerFlash>("ServerFlash");
+}
+
+static void TestNetworkingStandalone()
+{
+    std::printf("[networking, standalone]\n");
+
+    GameCore::World World;
+    GameCore::Entity Beacon = World.CreateEntity("Beacon");
+    Beacon.AddComponent<TestBeaconComponent>();
+
+    Expect(GetNetMode() == ENetMode::Standalone && HasAuthority() && !IsClient(), "with no session, the process is standalone");
+    Expect(GetLocalClientId() == GameCore::NET_CLIENT_NONE, "and has no client id");
+    GameCore::NetComponent Net;
+    Expect(IsLocallyOwned(Net), "and owns what no client does");
+    Expect(IsNetworkingAvailable() == (WITH_NETCORE != 0), "the facade knows whether NetCore is built");
+
+    Expect(GAMECORE_RPC(TestBeaconComponent, ServerFlash)(Beacon, 7), "an RPC is accepted");
+    const TestBeaconComponent* State = Beacon.GetComponent<TestBeaconComponent>();
+    Expect(State->Flashes == 1 && State->LastPower == 7 && !State->bLastRemote, "and runs here, at once");
+
+    size_t Count = 0;
+    GameCore::FindComponentReplication(GameCore::TransformComponent::StaticType().ID, Count);
+    Expect(WITH_NETCORE ? Count == 3 : Count == 0, "Transform replicates exactly when NetCore is built");
+
+    const char* const Args[] = { "Game", "-connect=10.0.0.5:9000", "-Display.RHI=0", "-listen", "stray", "-port=7000" };
+    const std::vector<std::string> Overrides = ParseLaunchArgs(int(sizeof(Args) / sizeof(Args[0])), Args);
+    const std::vector<std::string> Expected = { "Net.ServerAddress 10.0.0.5", "Net.Port 9000", "Display.RHI 0", "Net.Listen 1", "Net.Port 7000" };
+    Expect(Overrides == Expected, "the command line becomes config overrides, in order, strays dropped");
+}
+
+static void TestHeadlessApplication()
+{
+    std::printf("[headless application]\n");
+
+    class CountingMode : public IGameMode
+    {
+    public:
+        void OnTick(const FrameContext&) override { ++Ticks; }
+        int Ticks = 0;
+    };
+
+    CountingMode Mode;
+    ApplicationDesc Desc;
+    Desc.bHeadless = true;
+    Application App(Desc);
+    App.SetConfigOverrides({ "Application.MaxFrames 3", "Display.FrameRateLimit 0" });
+    App.Exec(Mode);
+    Expect(Mode.Ticks == 3, "a headless Application runs with no window, for MaxFrames frames");
+}
+
 int main()
 {
     std::printf("NimbleEngineGameFrameworkTests\n");
@@ -400,6 +479,8 @@ int main()
     TestStartupScript();
     TestSave();
     TestLevelByWorldFile();
+    TestNetworkingStandalone();
+    TestHeadlessApplication();   // last: the Application claims the main thread
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

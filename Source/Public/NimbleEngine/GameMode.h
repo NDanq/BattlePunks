@@ -104,6 +104,19 @@ namespace NimbleEngine
         /* After GameSession::AddScore / AddLives wrote the new value. */
         virtual void OnScoreChanged(GameCore::EntityID InPlayer, int32_t InScore) { (void)InPlayer; (void)InScore; }
         virtual void OnLivesChanged(GameCore::EntityID InPlayer, int32_t InLives) { (void)InPlayer; (void)InLives; }
+
+        // === Networking (NetFacade.h) ===========================================
+        // A server's only. InClient is the client's id (GameCore::NetClientID).
+
+        /* A client joined. With [Net] SpawnPlayerPerClient (the default) the
+         * host has made InPlayer for it -- a PlayerStateComponent and a
+         * NetComponent it owns -- and OnPlayerAdded has run; give it its pawn
+         * here. Without, InPlayer is unset and the mode makes what it wants. */
+        virtual void OnClientConnected(int32_t InClient, GameCore::EntityID InPlayer) { (void)InClient; (void)InPlayer; }
+
+        /* A client left. Its entities -- every NetComponent it owned -- are
+         * still alive, and are destroyed when this returns. */
+        virtual void OnClientDisconnected(int32_t InClient, GameCore::EntityID InPlayer) { (void)InClient; (void)InPlayer; }
     };
 }
 

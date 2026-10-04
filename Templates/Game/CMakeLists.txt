@@ -70,6 +70,15 @@ set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 # (Engine/cmake/NimbleModule.cmake).
 nimble_add_game_launcher(${GAME_NAME} MODULE ${GAME_MODULE})
 
+# === The dedicated server ===================================================
+# ${GAME_NAME}Server: the same module, headless, as a network session's
+# authority (Engine/Source/Launcher/ServerLauncherMain.cpp). Skipped when the
+# engine is configured without networking. A game that never networks can
+# drop this line and, before the engine is added above, turn NetCore off:
+#
+#     set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
+nimble_add_server_launcher(${GAME_NAME}Server MODULE ${GAME_MODULE})
+
 # The editor loads this game at Play, and edits this project's master config.
 if(TARGET NimbleEditor)
     add_dependencies(NimbleEditor ${GAME_MODULE})

@@ -167,6 +167,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/Components/TransformComponent.cpp
         Source/Private/GameCore/Components/BoundsComponent.cpp
         Source/Private/GameCore/Components/CollisionComponent.cpp
+        Source/Private/GameCore/Components/NetComponent.cpp
         Source/Private/GameCore/Delegate.cpp
         Source/Private/GameCore/EventBus.cpp
         Source/Private/GameCore/TickPhase.cpp
@@ -188,6 +189,8 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/ScriptLibrary.cpp
         Source/Private/GameCore/ScriptStruct.cpp
         Source/Private/GameCore/ComponentProperties.cpp
+        Source/Private/GameCore/ComponentReplication.cpp
+        Source/Private/GameCore/ComponentRpc.cpp
         Source/Public/GameCore/GameCoreAPI.h
         Source/Public/GameCore/GameCoreLog.h
         Source/Public/GameCore/EntityID.h
@@ -207,6 +210,7 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/Components/TransformComponent.h
         Source/Public/GameCore/Components/BoundsComponent.h
         Source/Public/GameCore/Components/CollisionComponent.h
+        Source/Public/GameCore/Components/NetComponent.h
         Source/Public/GameCore/TransformMath.h
         Source/Public/GameCore/ScriptEngine.h
         Source/Public/GameCore/ComponentSerializer.h
@@ -219,6 +223,8 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/NativePrefab.h
         Source/Public/GameCore/ScriptStruct.h
         Source/Public/GameCore/ComponentProperties.h
+        Source/Public/GameCore/ComponentReplication.h
+        Source/Public/GameCore/ComponentRpc.h
 )
 
 # ===========================================================================
