@@ -178,6 +178,11 @@ namespace RenderCore
                     else if(Key == "Levels")    { Target = &S.BloomLevels; }
                     else if(Key == "Tint" && !ToFloats(Value, S.BloomTint, 3)) { return Fail("bad Tint '" + Value + "'"); }
                 }
+                else if(Effect == "ToneMapping")
+                {
+                    if(Key == "Exposure")        { Target = &S.Exposure; }
+                    else if(Key == "ToneMapper") { S.ToneMapper = Value == "None" ? 0 : Value == "Reinhard" ? 1 : 2; }
+                }
                 else if(Effect == "Antialiasing")
                 {
                     if(Key == "EdgeThreshold") { Target = &S.AaEdgeThreshold; }
@@ -193,6 +198,7 @@ namespace RenderCore
             else if(Effect == "MotionBlur")   { S.bMotionBlur   = 1; }
             else if(Effect == "Bloom")        { S.bBloom        = 1; }
             else if(Effect == "Antialiasing") { S.bAntialiasing = 1; }
+            else if(Effect == "ToneMapping")  { S.bToneMapping  = 1; }
         }
         return true;
     }
@@ -236,6 +242,18 @@ namespace RenderCore
             B.AoSamples   = Lerp(B.AoSamples, InStack.AoSamples, W);
             B.AoPower     = Lerp(B.AoPower, InStack.AoPower, W);
             if(bSwitch) { B.bAoBlur = InStack.bAoBlur; }
+        }
+        if(InStack.bToneMapping)
+        {
+            if(!B.bToneMapping)
+            {
+                /* From off: no exposure, and the operator once the volume is half in. */
+                B.Exposure   = 0.0f;
+                B.ToneMapper = 0;
+            }
+            B.bToneMapping = 1;
+            B.Exposure     = Lerp(B.Exposure, InStack.Exposure, W);
+            if(bSwitch) { B.ToneMapper = InStack.ToneMapper; }
         }
         if(InStack.bDepthOfField)
         {

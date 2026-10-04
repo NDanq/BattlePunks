@@ -78,6 +78,11 @@ namespace RenderCore
          * InView's sight is not due. Game thread. */
         SceneCaptureList BuildCaptures(const RenderView& InView, double InDeltaSeconds);
 
+        /* The Reflection Probes lighting InView into OutList (Probes): up to
+         * RENDER_REFLECTION_PROBES_MAX, nearest the camera first, each marked
+         * due by its Frequency. Called by BuildCaptures. */
+        void BuildReflectionProbes(const RenderView& InView, SceneCaptureList& OutList);
+
         /* BuildCaptures' clock and each probe's last capture, by entity. */
         struct ProbeState { double LastCapture = -1.0e30; bool bCaptured = false; };
         std::unordered_map<uint64_t, ProbeState> ProbeStates;

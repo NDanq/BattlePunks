@@ -113,6 +113,14 @@ enum EGDITextureBorder : char
     GDI_TB_MAX
 };
 
+/* A render target's colour format. RGBA8 is every backend's; RGBA16F (half
+ * float, HDR) only where GDISupportsRenderTargetFormat says so. */
+enum EGDIRenderTargetFormat : char
+{
+    GDI_RTF_RGBA8   = 0,
+    GDI_RTF_RGBA16F = 1,
+};
+
 enum EGDITextureFilter : char
 {
     GDI_TF_Nearest = 0,

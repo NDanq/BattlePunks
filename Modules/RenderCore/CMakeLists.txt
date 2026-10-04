@@ -67,6 +67,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/PostProcessStack.cpp
         Source/Private/RenderCore/Components/PostProcessComponent.cpp
         Source/Private/RenderCore/Components/SceneCaptureProbeComponent.cpp
+        Source/Private/RenderCore/Components/ReflectionProbeComponent.cpp
         Source/Private/RenderCore/AssetFileCommon.h
         Source/Private/RenderCore/MeshAsset.cpp
         Source/Private/RenderCore/TextureAsset.cpp
@@ -104,6 +105,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/PostProcessStack.h
         Source/Public/RenderCore/Components/PostProcessComponent.h
         Source/Public/RenderCore/Components/SceneCaptureProbeComponent.h
+        Source/Public/RenderCore/Components/ReflectionProbeComponent.h
         Source/Public/RenderCore/Renderer.h
         Source/Public/RenderCore/MaterialDescription.h
         Source/Public/RenderCore/RenderLighting.h

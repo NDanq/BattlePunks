@@ -18,10 +18,22 @@ namespace RenderCore
 {
     enum : uint32_t { RENDER_GBUFFER_TARGETS = 4 };
 
+    /* A scene's image-based lighting targets (RENDERPIPELINE.md, "Image-based
+     * lighting"), made by RenderContext::EnsureIBLResources: the probe atlas
+     * (RGBA16F, IBLCommon.glsl's layout) and the cube strip a capture or the
+     * sky is prefiltered from. The scene owns them; ReleaseIBLResources frees them. */
+    struct IBLResources
+    {
+        GDIRenderTarget* Atlas     = nullptr;
+        GDIRenderTarget* Strip     = nullptr;
+        uint32_t         StripFace = 0;
+    };
+
     struct SceneTargets
     {
         std::string      Name;                                  // a prefix for the targets' debug names
         GDIRenderTarget* SceneColor  = nullptr;
+        bool             bHDR        = false;                   // SceneColor is RGBA16F, linear light (RENDERPIPELINE.md, "HDR and tone mapping")
         GDIRenderTarget* GBuffer[RENDER_GBUFFER_TARGETS] = {};
         GDIRenderTarget* PostProcess = nullptr;
         GDIRenderTarget* PostProcessB = nullptr;                // the post process stack ping-pongs PostProcess and this
@@ -55,7 +67,11 @@ namespace RenderCore
             {
                 if(!SceneColor)
                 {
-                    SceneColor = GDICreateRenderTarget(Name + ".SceneColor", InWidth, InHeight);
+                    /* Half float where the backend can: lit light past 1 survives to the tone map. */
+                    bHDR = GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F);
+                    SceneColor = bHDR ? GDICreateRenderTargetFormat(Name + ".SceneColor", InWidth, InHeight, GDI_RTF_RGBA16F)
+                                      : GDICreateRenderTarget(Name + ".SceneColor", InWidth, InHeight);
+                    bHDR = bHDR && SceneColor;
                 }
                 else
                 {

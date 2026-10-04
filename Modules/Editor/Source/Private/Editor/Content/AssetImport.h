@@ -66,6 +66,13 @@ namespace EditorContent
         bool                       bFlipVertically = false;
         RenderCore::ETextureMipGen      MipGen      = RenderCore::ETextureMipGen::Box;   // a settings string without it: None
         RenderCore::ETextureCompression Compression = RenderCore::ETextureCompression::None;
+        /* A name that says data -- normal, rough, metal, AO, height, mask... -- imports as linear,
+         * whatever bSRGB says. Recorded settings hold the result, so a reimport does not re-guess. */
+        bool                       bDetectDataMaps = true;
+
+        /* These options for InName: bSRGB off when bDetectDataMaps and the name says data. */
+        TextureImportOptions ResolvedFor(const QString& InName) const;
+        static bool IsDataMapName(const QString& InName);
 
         QString ToSettings() const;
         static TextureImportOptions FromSettings(const QString& InSettings);

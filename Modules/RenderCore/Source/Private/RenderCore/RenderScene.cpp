@@ -4,12 +4,14 @@
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <utility>
 #include <vector>
 
 #include "Public/RenderCore/RenderContext.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderProxy.h"
+#include "Public/RenderCore/TextureAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/SceneCapture.h"
@@ -307,6 +309,163 @@ namespace RenderCore
          */
         SceneTargets Targets{"RenderCore.Scene"};
 
+        /*
+         * IMAGE-BASED LIGHTING (RENDERPIPELINE.md, "Image-based lighting"): the
+         * probe atlas and cube strip; the stage targets a reflection probe's
+         * faces render through; which probe each of the atlas's four probe
+         * blocks holds (by entity key) and whether its capture is in it; and
+         * whether the sky block is, for which sky. UpdateImageBasedLighting
+         * keeps them; ApplyImageBasedLighting hands the context what the next
+         * stages light with.
+         */
+        IBLResources IBL;
+        SceneTargets ProbeStages{"RenderCore.ProbeStages"};
+        struct ProbeSlot { uint64_t Key = 0; bool bValid = false; bool bPending = false; };
+        ProbeSlot    Slots[RENDER_REFLECTION_PROBES_MAX];
+        bool         bSkyValid = false;
+        uint64_t     SkyHash   = 0;
+        float        ProbeData[RENDER_REFLECTION_PROBES_MAX * 3][4] = {};
+        uint32_t     ProbeDataCount = 0;
+
+        void ApplyImageBasedLighting(RenderContext& InContext) const
+        {
+            InContext.SetImageBasedLighting(IBL.Atlas ? &IBL : nullptr, ProbeData, ProbeDataCount, bSkyValid);
+        }
+
+        /* What the sky block depends on: the colours, the HDRI (and the loaded file, so a reimport counts). */
+        uint64_t SkyHashOf() const
+        {
+            uint64_t Hash = 1469598103934665603ull;
+            const auto Mix = [&Hash](const void* InData, const size_t InSize)
+            {
+                const auto* Bytes = static_cast<const uint8_t*>(InData);
+                for(size_t Index = 0; Index < InSize; ++Index) { Hash = (Hash ^ Bytes[Index]) * 1099511628211ull; }
+            };
+            const EngineCore::Color Colors[2] = { Lighting.SkyColor, Lighting.GroundColor };
+            for(const EngineCore::Color& Each : Colors) { const uint8_t Rgb[3] = { Each.R, Each.G, Each.B }; Mix(Rgb, 3); }
+            Mix(&Lighting.SkyIntensity, sizeof(float));
+            Mix(Lighting.SkyEnvironment, std::strlen(Lighting.SkyEnvironment));
+            Mix(&Lighting.SkyEnvironmentIntensity, sizeof(float));
+            Mix(&Lighting.SkyEnvironmentRotation, sizeof(float));
+            if(Lighting.SkyEnvironment[0] != '\0')
+            {
+                const void* Loaded = TextureAssetCache::Find(Lighting.SkyEnvironment).get();
+                Mix(&Loaded, sizeof(Loaded));
+            }
+            return Hash;
+        }
+
+        /* A reflection probe's six faces, HDR, into the strip, prefiltered into atlas block InBlock. */
+        bool CaptureReflectionProbe(RenderContext& InContext, const ReflectionProbeRequest& InProbe, const uint32_t InBlock)
+        {
+            const uint32_t Face = InProbe.Resolution;
+            if(!InContext.EnsureIBLResources(IBL, Face) || !ProbeStages.Allocate(Face, Face))
+            {
+                return false;
+            }
+            SceneCaptureRequest Cube;
+            Cube.Mode     = SCM_Omnidirectional;
+            Cube.Position = InProbe.Position;
+            Cube.NearClip = InProbe.NearClip;
+            Cube.FarClip  = InProbe.FarClip;
+            Cube.bShadows = InProbe.bShadows;
+            RenderView Views[6];
+            const uint32_t ViewCount = BuildCaptureViews(Cube, View, Face, Face, Views);
+
+            /* Lit by the sky alone (no probe sees another, or itself), the sky behind. */
+            InContext.SetImageBasedLighting(&IBL, nullptr, 0, bSkyValid);
+            InContext.SetSkyBackground(true);
+            bool bCopied = ViewCount == 6;
+            for(uint32_t Index = 0; Index < ViewCount; ++Index)
+            {
+                InContext.SetView(Views[Index]);
+                uint64_t Visible = 0, Culled = 0, Static = 0;
+                QueueDraws(InContext, Views[Index], &Cube, Visible, Culled, Static);
+                InContext.RenderSceneStages(ProbeStages, ClearColor);
+                bCopied = InContext.CopyCaptureToStrip(ProbeStages, IBL, Index) && bCopied;
+            }
+            InContext.SetSkyBackground(false);
+            return bCopied && InContext.PrefilterIBLBlock(IBL, InBlock);
+        }
+
+        /* The sky block when the sky changed, then the probes in view: a block each, captured when due
+         * or new to it -- two a frame at most, the rest next frame. Leaves the context on View. */
+        void UpdateImageBasedLighting(RenderContext& InContext)
+        {
+            ProbeDataCount = 0;
+            if(!InContext.CanImageBasedLight())
+            {
+                bSkyValid = false;
+                ApplyImageBasedLighting(InContext);
+                return;
+            }
+            const uint64_t Hash = SkyHashOf();
+            if(!bSkyValid || Hash != SkyHash)
+            {
+                bSkyValid = InContext.EnsureIBLResources(IBL, 128) && InContext.RenderSkyToStrip(IBL)
+                         && InContext.PrefilterIBLBlock(IBL, 4);
+                SkyHash = Hash;
+            }
+
+            const uint32_t Count = std::min<uint32_t>(CaptureList.ProbeCount, RENDER_REFLECTION_PROBES_MAX);
+            const auto Listed = [&](const uint64_t InKey)
+            {
+                for(uint32_t Index = 0; Index < Count; ++Index) { if(CaptureList.Probes[Index].Key == InKey) { return true; } }
+                return false;
+            };
+            int32_t BlockOf[RENDER_REFLECTION_PROBES_MAX];
+            for(uint32_t Index = 0; Index < Count; ++Index)
+            {
+                const ReflectionProbeRequest& Probe = CaptureList.Probes[Index];
+                BlockOf[Index] = -1;
+                for(uint32_t Block = 0; Block < RENDER_REFLECTION_PROBES_MAX; ++Block)
+                {
+                    if(Slots[Block].Key == Probe.Key && Slots[Block].Key != 0) { BlockOf[Index] = int32_t(Block); break; }
+                }
+                if(BlockOf[Index] < 0)
+                {
+                    for(uint32_t Block = 0; Block < RENDER_REFLECTION_PROBES_MAX; ++Block)
+                    {
+                        if(Slots[Block].Key == 0 || !Listed(Slots[Block].Key))
+                        {
+                            Slots[Block] = ProbeSlot{ Probe.Key, false, true };
+                            BlockOf[Index] = int32_t(Block);
+                            break;
+                        }
+                    }
+                }
+                if(BlockOf[Index] >= 0 && Probe.bDue) { Slots[BlockOf[Index]].bPending = true; }
+            }
+
+            uint32_t Captures = 0;
+            for(uint32_t Index = 0; Index < Count && Captures < 2; ++Index)
+            {
+                if(BlockOf[Index] < 0) { continue; }
+                ProbeSlot& Slot = Slots[BlockOf[Index]];
+                if(!Slot.bPending && Slot.bValid) { continue; }
+                Slot.bValid   = CaptureReflectionProbe(InContext, CaptureList.Probes[Index], uint32_t(BlockOf[Index]));
+                Slot.bPending = false;
+                ++Captures;
+            }
+            if(Captures > 0)
+            {
+                InContext.SetView(View);
+            }
+
+            for(uint32_t Index = 0; Index < Count; ++Index)
+            {
+                if(BlockOf[Index] < 0 || !Slots[BlockOf[Index]].bValid) { continue; }
+                const ReflectionProbeRequest& Probe = CaptureList.Probes[Index];
+                float (*Out)[4] = &ProbeData[ProbeDataCount * 3];
+                Out[0][0] = float(Probe.Position.GetX()); Out[0][1] = float(Probe.Position.GetY());
+                Out[0][2] = float(Probe.Position.GetZ()); Out[0][3] = Probe.Radius;
+                Out[1][0] = Probe.Extent[0]; Out[1][1] = Probe.Extent[1]; Out[1][2] = Probe.Extent[2]; Out[1][3] = Probe.Intensity;
+                Out[2][0] = float(BlockOf[Index]); Out[2][1] = 0.0f; Out[2][2] = 0.0f; Out[2][3] = 0.0f;
+                ++ProbeDataCount;
+            }
+            ApplyImageBasedLighting(InContext);
+        }
+
         /* Targets.Final as of the last Render(), for PresentToWindow on the UI
          * thread. A target is resized in place, never replaced, while the
          * scene lives, so the pointer stays good; GDI skips a present while a
@@ -334,6 +493,11 @@ namespace RenderCore
          * did this, but a scene destroyed without it (a test, an early
          * failure) must still not leak a GPU image. Idempotent. */
         P->Targets.Release();
+        P->ProbeStages.Release();
+        for(GDIRenderTarget** Each : { &P->IBL.Atlas, &P->IBL.Strip })
+        {
+            if(*Each) { GDIReleaseRenderTarget(*Each); delete *Each; *Each = nullptr; }
+        }
 
         delete P;
     }
@@ -447,6 +611,7 @@ namespace RenderCore
          * leaves GetView() reporting a view nothing has drawn against yet. */
         InContext.SetView(P->View);
         InContext.SetLighting(P->Lighting);
+        P->ApplyImageBasedLighting(InContext);   // last frame's, for the captures below; brought up to date before the scene
 
         /* Created on first use and resized with the viewport -- see Impl's
          * own comment on why a scene owns these at all. Early-outs on every
@@ -548,6 +713,9 @@ namespace RenderCore
         }
         P->TargetReadbacks.clear();
 #endif
+
+        /* IMAGE-BASED LIGHTING: the sky block and the reflection probes, before the scene lights by them. */
+        P->UpdateImageBasedLighting(InContext);
 
         P->QueueDraws(InContext, P->View, nullptr, VisibleCount, CulledCount, StaticCount);
 
@@ -662,5 +830,9 @@ namespace RenderCore
          * GPU image's destruction on the thread that owns the context. */
         P->PresentTarget.store(nullptr, std::memory_order_release);
         P->Targets.Release();
+        P->ProbeStages.Release();
+        InContext.ReleaseIBLResources(P->IBL);
+        P->bSkyValid = false;
+        for(Impl::ProbeSlot& Each : P->Slots) { Each = Impl::ProbeSlot(); }
     }
 }

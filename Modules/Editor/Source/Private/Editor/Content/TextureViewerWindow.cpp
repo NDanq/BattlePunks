@@ -48,10 +48,28 @@ namespace
         return QLocale().formattedDataSize(qint64(InBytes), 1, QLocale::DataSizeTraditionalFormat);
     }
 
-    /* InLevel as a QImage, showing InChannels: a single channel as grey. */
-    QImage ToQImage(const EngineCore::Image& InLevel, const EChannels InChannels)
+    /* An RGBE8 (HDR) level as displayable RGBA8: decoded, Reinhard-mapped, 2.2 gamma. */
+    EngineCore::Image DisplayRgbe(const EngineCore::Image& InLevel)
     {
-        const EngineCore::Image Rgba = InLevel.ConvertedTo(EngineCore::EImageFormat::RGBA8);
+        EngineCore::Image Out(InLevel.GetWidth(), InLevel.GetHeight(), EngineCore::EImageFormat::RGBA8);
+        for(size_t At = 0; At + 3 < InLevel.GetSizeBytes(); At += 4)
+        {
+            float Rgb[3];
+            RenderCore::DecodeRgbe(InLevel.GetData() + At, Rgb);
+            for(int Channel = 0; Channel < 3; ++Channel)
+            {
+                const float Mapped = Rgb[Channel] / (1.0f + Rgb[Channel]);
+                Out.GetData()[At + Channel] = uint8_t(std::lround(std::pow(Mapped, 1.0f / 2.2f) * 255.0f));
+            }
+            Out.GetData()[At + 3] = 255;
+        }
+        return Out;
+    }
+
+    /* InLevel as a QImage, showing InChannels: a single channel as grey. */
+    QImage ToQImage(const EngineCore::Image& InLevel, const EChannels InChannels, const bool bInRgbe)
+    {
+        const EngineCore::Image Rgba = bInRgbe ? DisplayRgbe(InLevel) : InLevel.ConvertedTo(EngineCore::EImageFormat::RGBA8);
         QImage Out(Rgba.GetWidth(), Rgba.GetHeight(),
                    InChannels == EChannels::RGBA ? QImage::Format_RGBA8888 : QImage::Format_RGBX8888);
         for(int Y = 0; Y < Rgba.GetHeight(); ++Y)
@@ -421,6 +439,9 @@ void TextureViewerWindow::FillControls()
     Wrap->setCurrentIndex(Wrap->findData(int(Edited.Wrap)));
     MipGen->setCurrentIndex(MipGen->findData(int(Edited.MipGen)));
     Compression->setCurrentIndex(Compression->findData(int(Edited.Compression)));
+    /* An HDRI is decoded by its shader, point sampled: no sRGB, mips or block compression. */
+    const bool bRgbe = Edited.Format == RenderCore::ETexturePixelFormat::RGBE8;
+    for(QWidget* Each : std::initializer_list<QWidget*>{ SRGB, MipGen, Compression }) { Each->setEnabled(!bRgbe); }
     bFilling = false;
 }
 
@@ -445,11 +466,13 @@ void TextureViewerWindow::UpdateInfo()
     const int  Mips   = Edited.GetMipCount();
     const bool bPow2  = (Width & (Width - 1)) == 0 && (Height & (Height - 1)) == 0;
 
-    QString Text = QStringLiteral("<b>%1</b><br>%2 x %3%4, RGBA8, %5<br>")
+    const bool bRgbe = Edited.Format == RenderCore::ETexturePixelFormat::RGBE8;
+    QString Text = QStringLiteral("<b>%1</b><br>%2 x %3%4, %6, %5<br>")
                    .arg(RuntimePath.isEmpty() ? QFileInfo(Path).fileName().toHtmlEscaped() : RuntimePath.toHtmlEscaped())
                    .arg(Width).arg(Height)
                    .arg(bPow2 ? QString() : QStringLiteral(" (not a power of two)"))
-                   .arg(Edited.bSRGB ? QStringLiteral("sRGB") : QStringLiteral("linear"));
+                   .arg(Edited.bSRGB ? QStringLiteral("sRGB") : QStringLiteral("linear"))
+                   .arg(bRgbe ? QStringLiteral("RGBE8 (HDR, shown tone mapped)") : QStringLiteral("RGBA8"));
     Text += Mips > 1 ? QStringLiteral("%1 mip levels (%2), down to 1 x 1<br>").arg(Mips)
                        .arg(QString::fromLatin1(RenderCore::GetTextureMipGenName(Edited.MipGen)))
                      : QStringLiteral("No mips%1<br>").arg(RenderCore::FullMipCount(Width, Height) > 1
@@ -464,7 +487,7 @@ void TextureViewerWindow::UpdateInfo()
         Text += QStringLiteral(", %1 once %2").arg(Bytes(RenderCore::TextureCompressedBytes(Width, Height, Mips, Edited.Compression)))
                 .arg(QString::fromLatin1(RenderCore::GetTextureCompressionName(Edited.Compression)));
     }
-    Text += QStringLiteral("<br>Alpha: %1").arg(DescribeAlpha(Edited.Pixels));
+    if(!bRgbe) { Text += QStringLiteral("<br>Alpha: %1").arg(DescribeAlpha(Edited.Pixels)); }
     if(!Edited.ImportInfo.IsEmpty())
     {
         Text += QStringLiteral("<br>From %1").arg(QString::fromStdString(Edited.ImportInfo.SourcePath).toHtmlEscaped());
@@ -497,7 +520,8 @@ void TextureViewerWindow::UpdatePreview()
     const EngineCore::Image* Mip = Edited.GetMip(Index);
     if(!Mip) { return; }
     Preview->SetBaseSize(QSize(Edited.Pixels.GetWidth(), Edited.Pixels.GetHeight()));
-    Preview->SetImage(ToQImage(*Mip, EChannels(Channels->currentData().toInt())), Index);
+    Preview->SetImage(ToQImage(*Mip, EChannels(Channels->currentData().toInt()),
+                               Edited.Format == RenderCore::ETexturePixelFormat::RGBE8), Index);
 }
 
 bool TextureViewerWindow::IsDirty() const

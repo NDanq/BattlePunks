@@ -1742,6 +1742,51 @@ namespace
     }
 
     /* Reflect: a scene capture's render target, sampled as a reflection. */
+    void TestNormalMap()
+    {
+        std::printf("[normal map]\n");
+        const auto Build = [](const char* InFormat, const bool bInSampled)
+        {
+            Graph G;
+            G.SchemaName = "Material";
+            G.Name       = "Bumpy";
+            AddNode(G, 1, "Output.Material");
+            Node& Map = AddNode(G, 2, "Texture.NormalMap");
+            if(InFormat) { Map.Properties["Format"] = InFormat; }
+            Connect(G, 2, "Normal", 1, "Normal");
+            if(bInSampled)
+            {
+                AddNode(G, 3, "Texture.Object").Properties["Texture"] = "Content/Textures/Wall_N.nmtexture";
+                AddNode(G, 4, "Texture.Sample").Version = 2;
+                AddNode(G, 5, "Input.TexCoord");
+                AddNode(G, 6, "Math.Multiply").Constants["B"] = "4";
+                Connect(G, 5, "UV", 6, "A");
+                Connect(G, 3, "Texture", 4, "Texture");
+                Connect(G, 6, "Out", 4, "UV");
+                Connect(G, 4, "RGB", 2, "Color");
+                Connect(G, 6, "Out", 2, "UV");
+            }
+            return G;
+        };
+
+        CompileResult Flat;
+        const Graph FlatGraph = Build(nullptr, false);
+        CompileGraph(FlatGraph, Flat);
+        Expect(!Flat.HasErrors(), "a Normal Map with nothing linked compiles");
+        if(Flat.HasErrors()) { std::printf("%s\n", FormatDiagnostics(FlatGraph, Flat).c_str()); }
+        Expect(Flat.Code.find("Material_NormalMap(Inputs, vec3(0.5, 0.5, 1.0), 1.0, Inputs.TexCoord, -1.0)") != std::string::npos,
+               "unlinked: a flat colour, strength 1, the texture coordinate, OpenGL's green");
+        Expect(Flat.Code.find("Surface.Normal = t") != std::string::npos, "into Material Output's Normal");
+
+        CompileResult Sampled;
+        CompileGraph(Build("DirectX", true), Sampled);
+        Expect(!Sampled.HasErrors() && Sampled.Code.find(", 1.0);") != std::string::npos,
+               "DirectX's green is +1");
+        Expect(Sampled.Code.find("Material_NormalMap(Inputs, t") != std::string::npos
+               && Sampled.Code.find("Inputs.TexCoord, -1.0") == std::string::npos,
+               "a sampled map, about the UV it was sampled at");
+    }
+
     void TestReflect()
     {
         std::printf("[reflect]\n");
@@ -2336,6 +2381,7 @@ int main()
     TestMaterialStages();
     TestTextureSample();
     TestReflect();
+    TestNormalMap();
     TestPostProcessStack();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

@@ -736,6 +736,43 @@ void ViewportWidget::QueueLightGizmos()
             Ring(Centre, X, Z, Reach, GizmoColor(EngineCore::Color(120, 200, 255), false), Thickness * 0.5f);
         }
     });
+
+    /* Reflection probes: a small diamond, and (selected, or always with gizmos on) its influence --
+     * its box, or three rings of its radius. */
+    World.Each<RenderCore::ReflectionProbeComponent>(
+        [&](const GameCore::Entity& InEntity, RenderCore::ReflectionProbeComponent& InProbe)
+    {
+        EngineCore::Color Color;
+        float Thickness = 0.0f;
+        if(!Style(InEntity, EngineCore::Color(255, 210, 120), Color, Thickness)) { return; }
+        const EngineCore::Vector3 Centre = InEntity.GetWorldPose().Position;
+        const double D = 25.0;
+        const EngineCore::Vector3 Tips[6] = { Centre + EngineCore::Vector3(D, 0, 0), Centre + EngineCore::Vector3(-D, 0, 0),
+                                              Centre + EngineCore::Vector3(0, D, 0), Centre + EngineCore::Vector3(0, -D, 0),
+                                              Centre + EngineCore::Vector3(0, 0, D), Centre + EngineCore::Vector3(0, 0, -D) };
+        for(int Around = 0; Around < 4; ++Around)
+        {
+            const int Side[4] = { 0, 4, 1, 5 };
+            const EngineCore::Vector3& A = Tips[Side[Around]];
+            const EngineCore::Vector3& B = Tips[Side[(Around + 1) % 4]];
+            Segment(A, B, Color, Thickness);
+            Segment(A, Tips[2], Color, Thickness);
+            Segment(A, Tips[3], Color, Thickness);
+        }
+        if(!Document.IsSelected(InEntity.GetID())) { return; }
+        const EngineCore::Color Reach = GizmoColor(EngineCore::Color(255, 210, 120), false);
+        const EngineCore::Vector3& Box = InProbe.BoxExtent;
+        if(Box.GetX() > 0.0 && Box.GetY() > 0.0 && Box.GetZ() > 0.0)
+        {
+            Context.DrawDebugBox(GameCore::AABB(Centre - Box, Centre + Box), Reach, Thickness * 0.5f);
+            return;
+        }
+        const EngineCore::Vector3 X(1.0, 0.0, 0.0), Y(0.0, 1.0, 0.0), Z(0.0, 0.0, 1.0);
+        const double Radius = std::max(double(InProbe.Radius), 1.0);
+        Ring(Centre, X, Z, Radius, Reach, Thickness * 0.5f);
+        Ring(Centre, X, Y, Radius, Reach, Thickness * 0.5f);
+        Ring(Centre, Y, Z, Radius, Reach, Thickness * 0.5f);
+    });
 }
 
 void ViewportWidget::GetGizmoFrame(EngineCore::Vector3& OutOrigin, double& OutAxisLength) const
@@ -1528,6 +1565,10 @@ GameCore::EntityID ViewportWidget::Pick(const QPoint& InLogicalPos) const
     World.Each<RenderCore::DirectionalLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::DirectionalLightComponent&) { TryLight(InEntity); });
     World.Each<RenderCore::SkyLightComponent>([&](const GameCore::Entity& InEntity, RenderCore::SkyLightComponent&) { TryLight(InEntity); });
     World.Each<RenderCore::SceneCaptureProbeComponent>([&](const GameCore::Entity& InEntity, RenderCore::SceneCaptureProbeComponent&)
+    {
+        TryLight(InEntity);
+    });
+    World.Each<RenderCore::ReflectionProbeComponent>([&](const GameCore::Entity& InEntity, RenderCore::ReflectionProbeComponent&)
     {
         TryLight(InEntity);
     });

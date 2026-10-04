@@ -354,6 +354,21 @@ GDIRenderTarget* VulkanDynamicGDI::CreateRenderTarget(std::string Name, uint InW
     return RT;
 }
 
+GDIRenderTarget* VulkanDynamicGDI::CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat)
+{
+    if(!DeviceObj) return nullptr;
+    const VkFormat Format = InFormat == GDI_RTF_RGBA16F ? VK_FORMAT_R16G16B16A16_SFLOAT : VK_FORMAT_R8G8B8A8_UNORM;
+    auto* RT = new VKRenderTarget(DeviceObj, Name, InWidth, InHeight, Format);
+    RegisterRenderTarget(RT);
+    return RT;
+}
+
+bool VulkanDynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
+{
+    /* Half float colour attachments with blending are required of every Vulkan device. */
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
+}
+
 void VulkanDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
 {
     SetRenderTargets(&InRenderTarget, 1, InRenderTarget);

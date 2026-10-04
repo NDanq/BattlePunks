@@ -475,7 +475,8 @@ namespace
             const bool bMaterial = (Entry.Flags & GameCore::PF_AssetMaterial) != 0;
             const bool bPost     = (Entry.Flags & GameCore::PF_AssetPostProcess) != 0;
             const bool bTarget   = (Entry.Flags & GameCore::PF_AssetRenderTarget) != 0;
-            if((bMesh || bMaterial || bPost || bTarget) && !Entry.IsReadOnly())
+            const bool bTexture  = (Entry.Flags & GameCore::PF_AssetTexture) != 0;
+            if((bMesh || bMaterial || bPost || bTarget || bTexture) && !Entry.IsReadOnly())
             {
                 /* What each kind of asset field offers. */
                 struct AssetUi { EAsset Kind; const char* Placeholder; const char* Tip; const char* PickTip; const char* Title; const char* Filter; };
@@ -492,8 +493,11 @@ namespace
                       "A render target, by its path: Content/RenderTargets/Pool.nmrt2d (RenderTargetTex2D, a planar mirror) or "
                       "Content/RenderTargets/Ball.nmrt3d (RenderTargetTex3D, omnidirectional)",
                       "Choose a render target", "Choose a Render Target", "Render Targets (*.nmrt2d *.nmrt3d)" },
+                    { EAsset::Texture, "Drop an .nmtexture here",
+                      "A texture, by its path: Content/Textures/Sky.nmtexture (an HDRI imported from a Radiance .hdr, for a Sky Light)",
+                      "Choose a texture", "Choose a Texture", "Textures (*.nmtexture)" },
                 };
-                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : 3];
+                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : 4];
                 AssetKind = Ui.Kind;
                 Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
@@ -501,7 +505,8 @@ namespace
                 {
                     auto* Completer = new QCompleter(bMaterial ? EditorContent::ListMaterialPaths()
                                                      : bPost   ? EditorContent::ListPostProcessPaths()
-                                                               : EditorContent::ListRenderTargetPaths(), Edit);
+                                                     : bTarget ? EditorContent::ListRenderTargetPaths()
+                                                               : EditorContent::ListTexturePaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
                     Edit->setCompleter(Completer);
@@ -567,7 +572,7 @@ namespace
         }
 
     private:
-        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget };
+        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture };
 
         void Commit()
         {
@@ -636,6 +641,10 @@ namespace
             if(AssetKind == EAsset::RenderTarget)
             {
                 return EditorContent::RenderTargetPathFor(InFile);
+            }
+            if(AssetKind == EAsset::Texture)
+            {
+                return EditorContent::TexturePathFor(InFile);
             }
             return QString();
         }

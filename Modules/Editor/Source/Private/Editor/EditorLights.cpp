@@ -19,6 +19,7 @@ namespace EditorLights
             case EKind::Spot:        Name = QStringLiteral("Spot Light");        Rotation = EngineCore::Vector3(45.0, 0.0, 0.0);  break;
             case EKind::Directional: Name = QStringLiteral("Directional Light"); Rotation = EngineCore::Vector3(50.0, 30.0, 0.0); break;
             case EKind::Sky:         Name = QStringLiteral("Sky Light"); break;
+            case EKind::ReflectionProbe: Name = QStringLiteral("Reflection Probe"); break;
             case EKind::CaptureOmni:   Name = QStringLiteral("Scene Capture Probe"); break;
             case EKind::CaptureMirror: Name = QStringLiteral("Mirror Probe"); break;
         }
@@ -35,6 +36,7 @@ namespace EditorLights
                 case EKind::Spot:        InEntity.AddComponent<RenderCore::SpotLightComponent>();        break;
                 case EKind::Directional: InEntity.AddComponent<RenderCore::DirectionalLightComponent>(); break;
                 case EKind::Sky:         InEntity.AddComponent<RenderCore::SkyLightComponent>();         break;
+                case EKind::ReflectionProbe: InEntity.AddComponent<RenderCore::ReflectionProbeComponent>(); break;
                 case EKind::CaptureOmni:
                 {
                     /* Six views a capture: every half second, not every frame, to start with. */

@@ -71,12 +71,17 @@ namespace RenderCore
         uint8_t AaQuality     = 1;           // 0 Low, 1 Medium, 2 High
         float   AaEdgeThreshold = 0.125f;
 
+        /* An HDR scene's exposure and tone map (the first post pass). Off: exposure 0, None (clamp). */
+        uint8_t bToneMapping = 0;
+        float   Exposure     = 0.0f;         // stops (EV): the scene times 2^Exposure
+        uint8_t ToneMapper   = 2;            // 0 None, 1 Reinhard, 2 ACES
+
         PostProcessMaterial Materials[RENDER_POST_MATERIAL_MAX];
         uint32_t            MaterialCount = 0;
 
         bool IsEmpty() const
         {
-            return !bAmbientOcclusion && !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && MaterialCount == 0;
+            return !bAmbientOcclusion && !bDepthOfField && !bMotionBlur && !bBloom && !bAntialiasing && !bToneMapping && MaterialCount == 0;
         }
     };
 

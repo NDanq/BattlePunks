@@ -18,10 +18,11 @@
 extern GDIDynamicDriver* GDynamicGDI;
 using namespace VKOps;
 
-VKRenderTarget::VKRenderTarget(VKDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight)
+VKRenderTarget::VKRenderTarget(VKDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight, VkFormat InFormat)
     : GDIRenderTarget(InWidth, InHeight),
       Device(InDevice),
-      Name(InName)
+      Name(InName),
+      Format(InFormat)
 {
     Allocate();
 }
@@ -293,7 +294,8 @@ EngineCore::Image VKRenderTarget::ToImage()
         GDI->FlushForReadback();
 
     VkDevice Dev = Device->GetDevice();
-    const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * 4u;
+    const bool bHalf = Format == VK_FORMAT_R16G16B16A16_SFLOAT;
+    const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * (bHalf ? 8u : 4u);
 
     VkBuffer       Buf = VK_NULL_HANDLE;
     VkDeviceMemory Mem = VK_NULL_HANDLE;
@@ -335,7 +337,34 @@ EngineCore::Image VKRenderTarget::ToImage()
     // bottom). Mirror vertically exactly like OpenGLRenderTarget::ToImage so
     // both backends return an identically-oriented EngineCore::Image.
     EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
-    std::memcpy(Result.GetData(), Mapped, size_t(DataSize));
+    if(bHalf)
+    {
+        /* Half floats to RGBA8, clamped: what the texels hold, not tone mapped. */
+        const auto HalfToFloat = [](const uint16_t InHalf)
+        {
+            const uint32_t Sign = uint32_t(InHalf & 0x8000u) << 16;
+            const uint32_t Exp  = (InHalf >> 10) & 0x1Fu;
+            const uint32_t Man  = InHalf & 0x3FFu;
+            uint32_t Bits;
+            if(Exp == 0)       { const float Value = float(Man) / 1024.0f / 16384.0f; return Sign ? -Value : Value; }
+            else if(Exp == 31) { Bits = Sign | 0x7F800000u | (Man << 13); }
+            else               { Bits = Sign | ((Exp + 112u) << 23) | (Man << 13); }
+            float Value;
+            std::memcpy(&Value, &Bits, sizeof(Value));
+            return Value;
+        };
+        const uint16_t* Src = static_cast<const uint16_t*>(Mapped);
+        uint8_t*        Dst = Result.GetData();
+        for(size_t Each = 0; Each < size_t(Width) * size_t(Height) * 4u; ++Each)
+        {
+            const float Value = HalfToFloat(Src[Each]);
+            Dst[Each] = uint8_t(Value <= 0.0f ? 0 : Value >= 1.0f ? 255 : int(Value * 255.0f + 0.5f));
+        }
+    }
+    else
+    {
+        std::memcpy(Result.GetData(), Mapped, size_t(DataSize));
+    }
     vkUnmapMemory(Dev, Mem);
     Result.FlipVertical();
 

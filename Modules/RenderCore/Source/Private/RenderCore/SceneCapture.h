@@ -21,6 +21,24 @@ namespace RenderCore
     {
         RENDER_CAPTURES_MAX         = 8,    // probes captured in one frame; the rest wait
         RENDER_CAPTURE_EXCLUDED_MAX = 32,   // entities a probe leaves out (its owner's subtree)
+        RENDER_REFLECTION_PROBES_MAX = 4,   // reflection probes lighting a view at once (IBLCommon.glsl's IBL_PROBES_MAX)
+    };
+
+    /* A Reflection Probe lighting this view: where, its influence, and whether
+     * its capture is due (its Frequency, or Capture Now). RenderScene captures
+     * it then -- or whenever it holds no capture of it (IBL.h). */
+    struct ReflectionProbeRequest
+    {
+        uint64_t            Key = 0;                 // its entity, packed: the same probe from frame to frame
+        EngineCore::Vector3 Position;
+        float               Radius    = 1000.0f;
+        float               Extent[3] = {};          // box half sizes; all 0: a sphere
+        float               Intensity = 1.0f;
+        float               NearClip  = 5.0f;
+        float               FarClip   = 20000.0f;
+        uint32_t            Resolution = 128;        // a face's side
+        uint8_t             bDue      = 0;
+        uint8_t             bShadows  = 1;
     };
 
     struct SceneCaptureRequest
@@ -41,6 +59,10 @@ namespace RenderCore
     {
         uint32_t            Count = 0;
         SceneCaptureRequest Requests[RENDER_CAPTURES_MAX];
+
+        /* The Reflection Probes lighting the view, nearest the camera first. */
+        uint32_t               ProbeCount = 0;
+        ReflectionProbeRequest Probes[RENDER_REFLECTION_PROBES_MAX];
     };
 
     /* A cube face's forward and up, +X -X +Y -Y +Z -Z -- the order of a

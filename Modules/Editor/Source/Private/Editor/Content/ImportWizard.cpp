@@ -244,6 +244,9 @@ QWizardPage* ImportWizard::BuildTexturePage()
 
     SRGB = new QCheckBox(QStringLiteral("Colour data (sRGB) -- off for masks, normal maps and other data"), Page);
     SRGB->setChecked(GEditorImportTextureSRGB.GetBool());
+    DetectData = new QCheckBox(QStringLiteral("Data maps by name are linear (normal, roughness, metallic, AO, height, mask...)"), Page);
+    DetectData->setChecked(true);
+    DetectData->setToolTip(QStringLiteral("An image whose name says it holds data, not colour, imports with sRGB off whatever the box above says"));
 
     Filter = new QComboBox(Page);
     Filter->addItem(QStringLiteral("Linear (smooth)"), int(RenderCore::ETextureFilter::Linear));
@@ -273,6 +276,7 @@ QWizardPage* ImportWizard::BuildTexturePage()
 
     auto* Form = new QFormLayout(Page);
     Form->addRow(QString(), SRGB);
+    Form->addRow(QString(), DetectData);
     Form->addRow(QStringLiteral("Filtering"), Filter);
     Form->addRow(QStringLiteral("Wrapping"), Wrap);
     Form->addRow(QStringLiteral("Largest size"), MaxSize);
@@ -406,6 +410,7 @@ void ImportWizard::StartImport()
     Texture.MaxDimension    = MaxSize->currentData().toInt();
     Texture.bFlipVertically = FlipVertical->isChecked();
     Texture.MipGen          = RenderCore::ETextureMipGen(MipGen->currentData().toInt());
+    Texture.bDetectDataMaps = DetectData->isChecked();
 
     auto Jobs = std::make_shared<QList<Job>>();
     const QString Dest = QDir::fromNativeSeparators(DestFolder->text().trimmed());

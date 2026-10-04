@@ -163,7 +163,8 @@ DefaultLit, Glow and Wave pixels are unchanged.
   the camera; more are warned once and dropped. Falloff is inverse-square-like,
   windowed to reach zero at Radius (point) or Range (spot); a spot fades from
   its inner to its outer cone half-angle.
-- **the sky**: the first active Sky Light's hemisphere ambient.
+- **the sky**: the first active Sky Light's hemisphere ambient -- or, in an
+  HDR scene, its image-based lighting (see [Image-based lighting](#image-based-lighting)).
 
 Every light shares one BRDF (`EvaluateLight`). Translucent Lit surfaces get the
 same lights forward, but unshadowed: their texture slots are their material's.
@@ -326,6 +327,103 @@ stages. The Lighting stage writes lit pixels only, and everything else draws
 over it, so the gradient shows wherever the clear colour would. The editor
 sets it on every viewport from Editor Settings (`Editor.ViewportGradient`,
 `ViewportTopColor`, `ViewportBottomColor`); a game keeps its clear colour.
+
+### HDR and tone mapping
+
+Where the backend can make a half-float render target (`GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F)`:
+Vulkan today), a scene's colour is **RGBA16F holding linear light** (`SceneTargets::bHDR`).
+
+- **Writing it:** `Scene_Output.x` tells the shaders. Lit output skips its
+  `ToDisplay` (`ToSceneColor` in `Lighting.glsl`). An Unlit material's emissive,
+  authored in display space, is linearised. Translucent blending happens in
+  linear light.
+- **Tone mapping:** a `Tonemap.fsh` pass runs first in the post chain. It turns
+  the scene colour into display space in `PostProcess` (8-bit): exposure, the
+  operator, then 2.2 gamma. Every effect and PostProcess material after it sees
+  display colours as before. PostProcess-domain materials stay display space in,
+  display space out.
+- **The stack's Tone Mapping node:** Exposure in stops (each +1 doubles the
+  light) and Tone Mapper (**ACES**, Narkowicz's fit; **Reinhard**; or
+  **None**). Volumes blend the exposure, and switch the operator once half in.
+  Without the node: exposure 0 and None, a clamp. That is exactly what an
+  8-bit scene showed, so a stack without it looks unchanged.
+- **The background:** a clear colour or the editor's gradient is drawn by
+  `ClearGradient.fsh` even when plain. It is un-tone-mapped and un-exposed
+  (`SceneEncodeDisplay`, `ToneMapping.glsl`), so it comes out of any tone map as
+  authored.
+- **Captures and previews:** these run with no stack, so they are clamped.
+  A reflection is therefore tone mapped once, by the view that shows it.
+- **Elsewhere:** an 8-bit backend (D3D12, Metal and OpenGL for now) keeps the
+  old display-space path; the node does nothing there.
+
+Verified (`NIMBLE_SMOKE_GPU=Vulkan`): an Unlit quad of display 0.9 reads 229 with
+no tone map, 202 with ACES, 229 with ACES at +1 EV and 176 with Reinhard, and
+the gradient background stays within 1 of authored under each.
+
+### Image-based lighting
+
+In an HDR scene, Lit surfaces take their ambient light and reflections from
+images instead of the Sky Light's hemisphere. The images are the sky and up to
+four **Reflection Probes**.
+
+**The atlas** (`IBLCommon.glsl`) is one RGBA16F 768 x 768 target per scene
+(`IBLResources`, owned by `RenderScene`). It holds five blocks of 384 x 256:
+four probes and the sky. Each block is an octahedral map:
+- six roughness levels, from 256 texels (roughness 0, a copy) down to 8
+  (roughness 1), each a GGX-weighted average, importance sampled;
+- a 32-texel diffuse irradiance, cosine weighted.
+
+`IBLPrefilter.fsh` writes a block in one pass over the atlas from a **cube
+strip** (6S x S, the scene-capture face order). It places texels by
+`gl_FragCoord`, never a viewport offset, so the layout is the same on every
+backend.
+
+**The sky block** is rebuilt whenever the sky changes (`SkyHashOf`):
+- the Sky Light's **Environment** HDRI if it has one: an equirectangular RGBE8
+  texture, times Environment Intensity, turned Environment Rotation;
+- otherwise its sky and ground colours (`IBLSky.fsh`).
+
+With Draw Background on, an HDRI is also drawn behind the scene along each view
+ray (`Sky.fsh`).
+
+**Reflection Probes:**
+- **Selection:** `WorldBridge::BuildReflectionProbes` sends the four enabled
+  probes nearest the camera whose influence the view reaches, each marked due
+  by its Frequency (Once by default, Interval, Every Frame, Manual).
+- **Capture:** `RenderScene` keeps which block holds which probe. It captures a
+  probe that is due, or new to a block, at most two a frame. A capture is six
+  90-degree HDR views, shadows included unless Capture Shadows is off, lit by
+  the sky alone so no probe sees another. The sky is drawn behind. The linear
+  scene colour of each view is copied into the strip, then prefiltered into the
+  probe's block.
+
+**Lighting** (`IBL_Light`):
+- **`IBLLighting.fsh` pass:** added (one, one) over the Lighting stage, from
+  the G-buffer, depth, AO and the atlas. The Lighting stage then drops its
+  hemisphere term (`Scene_IBL.x`).
+- **Forward Lit materials:** these do the same from the atlas bound at texture
+  slot 0.
+- **Probe weights:** each probe weighs a surface fully inside 80% of its
+  Radius, or of its Box Extent, fading to nothing at the edge. The nearest
+  first, then the sky fills the rest.
+- **Box projection:** a box probe's reflections are box-projected (parallax
+  corrected).
+- **The terms:**
+  - specular = prefiltered radiance at the roughness x Karis's fitted split-sum
+    BRDF x Lagarde's specular occlusion;
+  - diffuse = irradiance x albedo x (1 - metallic) x AO.
+
+An 8-bit backend keeps the hemisphere ambient. A material preview is lit by its
+studio light alone.
+
+Verified (`NIMBLE_SMOKE_GPU=Vulkan`, in a room of six coloured walls):
+- **Mirror ball with a probe:** a mirror metal ball reflects, from the probe,
+  the wall behind the camera at its centre and the ceiling, floor and sides
+  where they belong.
+- **Probe off:** the ball reflects the sky instead.
+- **Rough white ball:** its top takes the green ceiling's irradiance.
+- **HDRI:** a two-tone HDRI is drawn behind the scene and reflected the right
+  way up.
 
 ### Scene capture
 
@@ -593,9 +691,11 @@ compiled, as the forward variant. It now has both.
 
 ## Later
 
-Post process: an HDR scene colour (RGBA16F) so bloom thresholds real
-brightness; a velocity target for per-object motion blur; temporal AA; colour
-grading and exposure as stack effects.
+Post process: bloom from the HDR scene colour (it still thresholds display
+colours after the tone map); auto exposure; a velocity target for per-object
+motion blur; temporal AA; colour grading. HDR and image-based lighting on
+D3D12, Metal and OpenGL (half-float targets there). Reflection probe blending
+across more than four; cube-face capture time-slicing; SH irradiance.
 
 Hardware shadow comparison, depth bias and front-face culling in GDI (then
 drop most of the receiver bias); Masked casters clipped in the Shadows

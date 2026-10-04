@@ -29,4 +29,15 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
                                  // [6i+4] rgb Modulated tint; [6i+5] x depth bias, y normal bias
     mat4 Scene_LocalShadowMatrices[24]; // world to (u, v, depth) * w in the local atlas; a point light's six faces +X -X +Y -Y +Z -Z
     vec4 Scene_CascadeTexels;    // each cascade's texel, world units: the normal offset is at least a texel and a half
+
+    // HDR (ToneMapping.glsl): x 1 if the scene colour holds linear light (else display space, 8-bit);
+    // y the exposure multiplier, z the tone map operator (0 None, 1 Reinhard, 2 ACES) -- for the
+    // tone map pass and the background, which must come out of it as authored.
+    vec4 Scene_Output;
+
+    // Image-based lighting (IBLCommon.glsl): x 1 if the probe atlas lights this view -- the
+    // Lighting stage's hemisphere ambient then gives way to it; y the probes; z the sky block's weight.
+    vec4 Scene_IBL;
+    vec4 Scene_Probes[12];       // [3i] xyz centre, w radius; [3i+1] xyz box half sizes (0: a sphere), w intensity;
+                                 // [3i+2] x its block in the atlas
 UBO_BLOCK_END(Scene_Block)

@@ -75,7 +75,7 @@ uses it.
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow, a scene capture probe's mirror rectangle and normal or its box and reach; all lights or the selected one, View > Light Gizmos), a perspective game camera's frustum |
 | `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere, Cylinder or Plane mesh on a new entity, sized to see, in one undo step |
-| `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction; also a Scene Capture (Omni) or (Mirror) probe |
+| `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction; also a Reflection Probe, and a Scene Capture (Omni) or (Mirror) probe |
 | `Content/RenderTargetAssets` (private) | Render target assets: New Render Target 2D / 3D (Cube), the settings dialog, World > Bake Scene Captures |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity hierarchy with component summary, filter, create, drag to reparent; Ctrl/Shift multiple selection, F2 renames in the row, and the edit actions (below) in its context menu |
@@ -149,9 +149,16 @@ dropped on, or the one shown -- `Content/` when the browser is at the root.
    (glTF is right-handed and the engine left-handed, both +Y up: z flips, with
    the winding, so the model faces the default camera), generate missing normals, combine the scene into
    one mesh or one per glTF mesh, and import the textures it uses -- listed.
-3. **Texture options**: sRGB, filtering, wrapping, largest size (bigger images
-   are scaled down), flip vertically, and mipmaps (Box by default, Kaiser, or
-   None).
+3. **Texture options**:
+   - sRGB, plus data maps by name: an image whose name has a word like normal,
+     rough, metal, AO, height, mask or ORM imports linear whatever sRGB says.
+     The decision is recorded, so a reimport keeps it.
+   - filtering, wrapping, and largest size (bigger images are scaled down);
+   - flip vertically;
+   - mipmaps: Box by default, Kaiser, or None.
+
+   A Radiance **.hdr** (an HDRI) imports as an RGBE8 texture: linear, point
+   sampled, no mips. It is for a Sky Light's Environment.
 4. **Import**: on a worker thread, with a log. Each asset is written whole or
    not at all, staged beside the executable at once, and logged to the Console.
 
@@ -215,6 +222,18 @@ stages `Content/**/*.nmmesh` and `*.nmtexture` itself (Sandbox's CMakeLists,
 `SandboxStageContent`). A material samples a texture through a Texture Object
 and Texture Sample nodes (NodeGraph's README); drop a `.nmtexture` on a Texture
 Object's Texture field in Details.
+
+**Image-based lighting.** World > Add Light > **Reflection Probe** adds a probe:
+- **Gizmo:** a small diamond. When selected, it also shows its influence: three
+  rings of its Radius, or its Box Extent.
+- **What it does:** Lit surfaces within reach take their reflections and
+  ambient light from it (RenderCore's RENDERPIPELINE.md, "Image-based
+  lighting").
+- **The sky:** a Sky Light's **Environment** takes a texture (picked,
+  completed or dropped): an HDRI imported from a .hdr. It lights the scene and,
+  with Draw Background, is drawn behind it.
+- **Scope:** both need an HDR scene colour (Vulkan); the Texture Viewer shows
+  an HDRI tone mapped.
 
 **Render targets.** The context menu's **New Render Target 2D...** and **New
 Render Target 3D (Cube)...** make a `.nmrt2d` (512 square) or a `.nmrt3d`

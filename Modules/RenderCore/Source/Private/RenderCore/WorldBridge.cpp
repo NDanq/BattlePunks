@@ -358,6 +358,11 @@ namespace RenderCore
                 Lighting.SkyColor     = Skies[Index].SkyColor;
                 Lighting.GroundColor  = Skies[Index].GroundColor;
                 Lighting.SkyIntensity = Skies[Index].Intensity;
+                std::memcpy(Lighting.SkyEnvironment, Skies[Index].Environment, sizeof(Lighting.SkyEnvironment));
+                Lighting.SkyEnvironment[sizeof(Lighting.SkyEnvironment) - 1] = '\0';
+                Lighting.SkyEnvironmentIntensity = std::max(Skies[Index].EnvironmentIntensity, 0.0f);
+                Lighting.SkyEnvironmentRotation  = Skies[Index].EnvironmentRotation;
+                Lighting.bSkyBackground          = Skies[Index].bDrawBackground;
                 break;
             }
         }
@@ -675,12 +680,8 @@ namespace RenderCore
         SceneCaptureList List;
         CaptureClock += std::max(InDeltaSeconds, 0.0);
         ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(SceneCaptureProbeComponent::StaticType().ID) : nullptr;
-        if(!Pool)
-        {
-            return List;
-        }
-        auto* Probes = static_cast<SceneCaptureProbeComponent*>(Pool->GetDenseData());
-        for(size_t Index = 0; Index < Pool->GetCount() && List.Count < RENDER_CAPTURES_MAX; ++Index)
+        auto* Probes = Pool ? static_cast<SceneCaptureProbeComponent*>(Pool->GetDenseData()) : nullptr;
+        for(size_t Index = 0; Pool && Index < Pool->GetCount() && List.Count < RENDER_CAPTURES_MAX; ++Index)
         {
             SceneCaptureProbeComponent& Probe = Probes[Index];
             if(!Probe.bEnabled || Probe.Target[0] == '\0')
@@ -754,6 +755,80 @@ namespace RenderCore
             State.bCaptured   = true;
             Probe.bCaptureNow = 0;
         }
+        BuildReflectionProbes(InView, List);
         return List;
+    }
+
+    void WorldBridge::BuildReflectionProbes(const RenderView& InView, SceneCaptureList& OutList)
+    {
+        OutList.ProbeCount = 0;
+        ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(ReflectionProbeComponent::StaticType().ID) : nullptr;
+        if(!Pool)
+        {
+            return;
+        }
+        /* Every enabled probe whose influence the view reaches, nearest the camera first. */
+        struct Candidate { ReflectionProbeComponent* Probe; ReflectionProbeRequest Request; double Distance; };
+        std::vector<Candidate> Found;
+        auto* Probes = static_cast<ReflectionProbeComponent*>(Pool->GetDenseData());
+        for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
+        {
+            ReflectionProbeComponent& Probe = Probes[Index];
+            if(!Probe.bEnabled)
+            {
+                continue;
+            }
+            const GameCore::Entity Owner = Probe.Owner.GetEntity();
+            const GameCore::TransformPose Pose = PoseOf(Probe.Owner);
+            ReflectionProbeRequest Request;
+            Request.Key        = Owner.GetID().Pack();
+            Request.Position   = Pose.Position;
+            Request.Radius     = std::max(Probe.Radius, 1.0f);
+            Request.Extent[0]  = float(std::max(double(Probe.BoxExtent.GetX()), 0.0));
+            Request.Extent[1]  = float(std::max(double(Probe.BoxExtent.GetY()), 0.0));
+            Request.Extent[2]  = float(std::max(double(Probe.BoxExtent.GetZ()), 0.0));
+            Request.Intensity  = std::max(Probe.Intensity, 0.0f);
+            Request.NearClip   = std::max(Probe.NearClip, 0.01f);
+            Request.FarClip    = std::max(Probe.FarClip, Request.NearClip + 1.0f);
+            Request.Resolution = uint32_t(std::clamp(Probe.Resolution, 16, 512));
+            Request.bShadows   = Probe.bCaptureShadows;
+
+            const bool bBox = Request.Extent[0] > 0.0f && Request.Extent[1] > 0.0f && Request.Extent[2] > 0.0f;
+            const EngineCore::Vector3 Reach = bBox ? EngineCore::Vector3(Request.Extent[0], Request.Extent[1], Request.Extent[2])
+                                                   : EngineCore::Vector3(Request.Radius, Request.Radius, Request.Radius);
+            const GameCore::AABB Influence(Pose.Position - Reach, Pose.Position + Reach);
+            if(!InView.Bounds.IsEmpty() && !Influence.Overlaps(InView.Bounds))
+            {
+                continue;
+            }
+
+            ProbeState& State = ProbeStates[Request.Key ^ 0x5265666cull];   // apart from a SceneCaptureProbe on the same entity
+            bool bDue = Probe.bCaptureNow != 0;
+            switch(Probe.Frequency)
+            {
+                case SCF_EveryFrame: bDue = true; break;
+                case SCF_Interval:   bDue = bDue || CaptureClock - State.LastCapture >= double(std::max(Probe.Interval, 0.0f)); break;
+                case SCF_Once:       bDue = bDue || !State.bCaptured; break;
+                default:             break;
+            }
+            Request.bDue = bDue ? 1 : 0;
+            Found.push_back({ &Probe, Request, (Pose.Position - InView.Origin).GetLength() });
+        }
+        std::stable_sort(Found.begin(), Found.end(), [](const Candidate& InA, const Candidate& InB) { return InA.Distance < InB.Distance; });
+        for(Candidate& Each : Found)
+        {
+            if(OutList.ProbeCount >= RENDER_REFLECTION_PROBES_MAX)
+            {
+                break;
+            }
+            OutList.Probes[OutList.ProbeCount++] = Each.Request;
+            if(Each.Request.bDue)
+            {
+                ProbeState& State = ProbeStates[Each.Request.Key ^ 0x5265666cull];
+                State.LastCapture = CaptureClock;
+                State.bCaptured   = true;
+                Each.Probe->bCaptureNow = 0;
+            }
+        }
     }
 }

@@ -1242,10 +1242,14 @@ static void TestMaterialsOnGpu()
         /* The centre pixel of each preview, as R, G, B; and its quarter
          * points -- top-left, top-right, bottom-left, bottom-right. */
         struct Check { const char* Material; uint64_t Request; int Rgb[3]; bool bOk; int Quarter[4][3]; };
+        /* By their graph paths: a bare name ("Wave") finds a loose Materials/<name> file first, which an
+         * old build may have left behind, cooked against another template. */
         Check Checks[] = { { "Engine/Content/Materials/DefaultLit.material.nmgraph", 0, {}, false, {} },
-                           { "Materials/Glow.material.nmgraph", 0, {}, false, {} },
-                           { "Wave", 0, {}, false, {} },       { "Negative", 0, {}, false, {} },
-                           { "Textured", 0, {}, false, {} },   { "Content/Materials/MipProbe.material.nmgraph", 0, {}, false, {} } };
+                           { "Content/Materials/Glow.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/Wave.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/Negative.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/Textured.material.nmgraph", 0, {}, false, {} },   { "Content/Materials/MipProbe.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/NormalProbe.material.nmgraph", 0, {}, false, {} } };
         for(Check& Each : Checks)
         {
             Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
@@ -1314,6 +1318,12 @@ static void TestMaterialsOnGpu()
         Expect(Mips.bOk && Mips.Rgb[1] > 200 && Mips.Rgb[0] < 40,
                "a minified texture samples its baked mip chain (green), not level 0 (red)");
 
+        /* NormalProbe: an OpenGL normal tilted right and up the image, as 0.5 + 0.5 N. The quad faces the
+         * camera (-Z), its image upright: right is +X, up +Y. A flipped green reads 64 in G. */
+        const Check& Normals = Checks[6];
+        Expect(Normals.bOk && Near(Normals.Rgb[0], 191) && Near(Normals.Rgb[1], 191) && Near(Normals.Rgb[2], 37),
+               "the Normal Map node tilts the normal the way its map points: right and up the image, out of the surface");
+
         /* Mesh previews: the engine's primitives, as the mesh viewer and the
          * material editor draw them. */
         const auto Preview = [&](Renderer::MeshPreview InPreview, EngineCore::Image& OutPixels, std::string& OutError)
@@ -1349,7 +1359,7 @@ static void TestMaterialsOnGpu()
         {
             Renderer::MeshPreview Box;
             Box.Mesh     = "Engine/Content/Meshes/Box.nmmesh";
-            Box.Material = "Textured";
+            Box.Material = "Content/Materials/Textured.material.nmgraph";
             Box.Yaw      = 0.0f;
             Box.Pitch    = 0.0f;
             EngineCore::Image Pixels;
@@ -1361,7 +1371,7 @@ static void TestMaterialsOnGpu()
                    "a preview's Material goes on every section: the Box's face shows Quadrants");
 
             Box.Material.clear();
-            Box.Sections = { "Textured" };
+            Box.Sections = { "Content/Materials/Textured.material.nmgraph" };
             int Slotted[3] = {};
             const bool bSlotted = Preview(Box, Pixels, Error);
             if(bSlotted) { Pixel(Pixels, 48, 32, Slotted); }
@@ -2679,6 +2689,408 @@ static void TestClearGradientOnGpu()
     SetFileProvider(PreviousProvider);
 }
 
+/* RGBE8 textures, the Sky Light's environment and the Reflection Probe component (Null: no GPU). */
+static void TestImageBasedLightingData()
+{
+    std::printf("[image-based lighting data]\n");
+    for(const float Value : { 0.0f, 0.001f, 0.5f, 1.0f, 37.5f, 2500.0f })
+    {
+        const float In[3] = { Value, Value * 0.5f, Value * 0.25f };
+        uint8_t Texel[4];
+        EncodeRgbe(In, Texel);
+        float Out[3];
+        DecodeRgbe(Texel, Out);
+        bool bClose = true;
+        for(int Channel = 0; Channel < 3; ++Channel) { bClose = bClose && std::abs(Out[Channel] - In[Channel]) <= std::max(In[0] * 0.01f, 1e-6f); }
+        Expect(bClose, "RGBE8 holds a colour to within 1% of its brightest channel, 0 to 2500");
+    }
+
+    TextureData Hdri;
+    Hdri.Format = ETexturePixelFormat::RGBE8;
+    Hdri.MipGen = ETextureMipGen::Box;
+    Hdri.Pixels = Image(4, 2, EImageFormat::RGBA8);
+    BuildTextureMips(Hdri);
+    Expect(Hdri.Mips.empty(), "an RGBE8 texture gets no mips: its shader decodes it point sampled");
+    Archive Writer = Archive::ForWriting();
+    SerializeTexture(Writer, Hdri);
+    TextureData Back;
+    Archive Reader = Archive::ForReading(Writer.GetBytes());
+    Expect(SerializeTexture(Reader, Back) && Back.Format == ETexturePixelFormat::RGBE8, "and saves and loads as RGBE8");
+
+    const GameCore::ComponentSerializerInfo* SkyInfo = GameCore::FindComponentSerializer(SkyLightComponent::StaticType().ID);
+    Expect(SkyInfo && SkyInfo->Version == 2, "SkyLightComponent saves as version 2 (Environment, its intensity and rotation, DrawBackground)");
+    const GameCore::ComponentSerializerInfo* ProbeInfo = GameCore::FindComponentSerializer(ReflectionProbeComponent::StaticType().ID);
+    Expect(ProbeInfo && ProbeInfo->Version == 1 && std::string(ReflectionProbeComponent::StaticType().Name) == "Reflection Probe",
+           "Reflection Probe is a registered component");
+    const ReflectionProbeComponent Defaults;
+    Expect(Defaults.Frequency == SCF_Once && Defaults.bCaptureShadows && Defaults.Radius > 0.0f,
+           "a probe captures once by default, with shadows, a sphere of influence");
+
+    Renderer Rend;
+    if(Rend.Initialize(ERenderBackend::Null, WindowHandle()))
+    {
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const GameCore::Entity Probe = World.CreateEntity("Probe");
+        Probe.AddComponent(GameCore::TransformComponent());
+        Probe.AddComponent(ReflectionProbeComponent());
+        for(uint64_t Frame = 1; Frame < 4; ++Frame) { Rend.EndFrame(FrameInfo{Frame, 0.016, EngineCore::Size(64, 64)}); Rend.WaitForPreviousFrame(); }
+        Expect(true, "a Reflection Probe on the Null backend (no HDR target, so no IBL) renders without trouble");
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+}
+
+/* The ToneMapping effect's .ppstack line, parsed and blended (Null: no GPU). */
+static void TestToneMappingSettings()
+{
+    std::printf("[tone mapping settings]\n");
+    PostProcessSettings Parsed;
+    std::string Error;
+    Expect(ParsePostProcessStack("Effect ToneMapping Exposure=-1.5 ToneMapper=Reinhard\n", Parsed, Error) && Parsed.bToneMapping
+           && Parsed.Exposure == -1.5f && Parsed.ToneMapper == 1, "ToneMapping reads its exposure and operator");
+    PostProcessSettings Aces;
+    ParsePostProcessStack("Effect ToneMapping\n", Aces, Error);
+    Expect(Aces.bToneMapping && Aces.Exposure == 0.0f && Aces.ToneMapper == 2, "and defaults to exposure 0 and ACES");
+    Expect(!PostProcessSettings().bToneMapping && !Aces.IsEmpty(), "off unless a stack has the node; a stack with only it is not empty");
+
+    PostProcessSettings Blend;
+    Parsed.Exposure = 2.0f;
+    BlendPostProcess(Blend, Parsed, 0.25f);
+    Expect(Blend.bToneMapping && std::abs(Blend.Exposure - 0.5f) < 1e-5f && Blend.ToneMapper == 0,
+           "a quarter in: a quarter of the exposure, the operator not yet (None)");
+    BlendPostProcess(Blend, Parsed, 1.0f);
+    Expect(Blend.Exposure == 2.0f && Blend.ToneMapper == 1, "all the way in: the stack's");
+}
+
+/*
+ * HDR and tone mapping on the GPU: an Unlit quad of display 0.9 under each
+ * operator and an exposure, and the editor's gradient background, which must
+ * come out of any tone map as authored.
+ */
+static void TestToneMappingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[tone mapping on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[tone mapping on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+    std::error_code Ignored;
+    std::filesystem::create_directories("SmokeScratch/PostStacks", Ignored);
+    const std::string Stack = "SmokeScratch/PostStacks/Tone.pp.nmgraph";
+    const auto WriteStack = [&Stack](const char* InLine)
+    {
+        std::ofstream Out(Stack);
+        Out << "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"PostProcess\">\n  <gen_code>\n"
+               "    <Output Extension=\".ppstack\"><![CDATA[" << InLine << "\n]]></Output>\n  </gen_code>\n</NodeGraph>\n";
+        PostProcessStackCache::Invalidate(Stack);
+    };
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Facing = RenderView::MakePerspective(Viewport, Vector3(0, 0, -400), Vector3(0, 0, 1), 50.0f, 5.0f, 5000.0f);
+        Rend.SetViewOverride(&Facing);
+        Rend.SetClearGradient(RENDER_DEFAULT_SCENE, EngineCore::Color(70, 90, 140, 255), EngineCore::Color(20, 22, 30, 255));
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const GameCore::Entity Quad = World.CreateEntity("Flat");
+        GameCore::TransformComponent Transform;
+        Transform.Scale = Vector3(100, 100, 100);
+        Quad.AddComponent(Transform);
+        RenderComponent Render;
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        Render.SetMaterial(0, "Content/Materials/SolidColor.material.nmgraph");
+        Render.SetMaterialParameter(0, "Color", 0.9f, 0.9f, 0.9f, 1.0f);
+        Render.bCastShadows = 0;
+        Quad.AddComponent(Render);
+
+        const GameCore::Entity Volume = World.CreateEntity("Volume");
+        Volume.AddComponent(GameCore::TransformComponent());
+        PostProcessComponent Post;
+        std::snprintf(Post.Stack, sizeof(Post.Stack), "%s", Stack.c_str());
+        Post.bEnabled = 0;
+        Volume.AddComponent(Post);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](int (&OutCentre)[3], int (&OutCorner)[3])
+        {
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            EngineCore::Image Pixels;
+            std::string Error;
+            if(!(Request != 0 && Rend.TakeMaterialPreview(Request, Pixels, Error) && Pixels.GetWidth() == 256)) { return false; }
+            const bool bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
+            const auto At = [&](const int InX, const int InY, int (&OutRgb)[3])
+            {
+                const uint8_t* Px = Pixels.GetData() + Pixels.GetStride() * InY + InX * BytesPerPixel(Pixels.GetFormat());
+                OutRgb[0] = bBgra ? Px[2] : Px[0]; OutRgb[1] = Px[1]; OutRgb[2] = bBgra ? Px[0] : Px[2];
+            };
+            At(128, 128, OutCentre);
+            At(10, 30, OutCorner);
+            return true;
+        };
+        const auto Near = [](const int InValue, const int InWant, const int InSlack) { return std::abs(InValue - InWant) <= InSlack; };
+
+        int Centre[3], Corner[3], BaseCorner[3];
+        Expect(Capture(Centre, BaseCorner), "the quad is captured with no tone map");
+        std::printf("    none: centre %d, corner %d %d %d\n", Centre[0], BaseCorner[0], BaseCorner[1], BaseCorner[2]);
+        Expect(Near(Centre[0], 230, 3), "no ToneMapping: an HDR scene comes out clamped, as an 8-bit one did (0.9 is 230)");
+
+        Volume.GetComponent<PostProcessComponent>()->bEnabled = 1;
+        struct Case { const char* Line; int Want; const char* What; };
+        const Case Cases[] = {
+            { "Effect ToneMapping ToneMapper=ACES", 202, "ACES compresses: 0.9 comes out near 202" },
+            { "Effect ToneMapping Exposure=1 ToneMapper=ACES", 229, "an exposure of +1 doubles the light first: near 229" },
+            { "Effect ToneMapping ToneMapper=Reinhard", 176, "Reinhard, x / (1 + x): near 176" },
+        };
+        for(const Case& Each : Cases)
+        {
+            WriteStack(Each.Line);
+            const bool bCaptured = Capture(Centre, Corner);
+            std::printf("    %s: centre %d, corner %d %d %d\n", Each.Line, Centre[0], Corner[0], Corner[1], Corner[2]);
+            Expect(bCaptured && Near(Centre[0], Each.Want, 6), Each.What);
+            Expect(bCaptured && Near(Corner[0], BaseCorner[0], 3) && Near(Corner[1], BaseCorner[1], 3) && Near(Corner[2], BaseCorner[2], 3),
+                   "and the gradient background comes out of the tone map as authored");
+        }
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    PostProcessStackCache::Invalidate(std::string());
+    SetFileProvider(PreviousProvider);
+}
+
+/*
+ * Image-based lighting on the GPU: in a room of six coloured walls, a mirror
+ * metal sphere with a Reflection Probe beside it shows the wall behind the
+ * camera at its centre; with the probe off it shows the sky instead; and a
+ * rough white sphere's top takes the green ceiling's light (its irradiance).
+ */
+static void TestImageBasedLightingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[image-based lighting on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[image-based lighting on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Facing = RenderView::MakePerspective(Viewport, Vector3(0, 0, -400), Vector3(0, 0, 1), 50.0f, 5.0f, 5000.0f);
+        Rend.SetViewOverride(&Facing);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Shape = [&World](const char* InName, const char* InMesh, const char* InMaterial, const Vector3& InAt, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InAt;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InMesh);
+            Render.SetMaterial(0, InMaterial);
+            Render.bCastShadows = 0;
+            Each.AddComponent(Render);
+            return Each;
+        };
+        struct Wall { const char* Name; Vector3 At; Vector3 Scale; int R, G, B; };
+        const Wall Walls[6] = {
+            { "WallPX", Vector3( 600, 0, 0), Vector3(10, 2000, 2000), 230, 30, 30 },
+            { "WallNX", Vector3(-600, 0, 0), Vector3(10, 2000, 2000), 30, 220, 220 },
+            { "WallPY", Vector3(0,  600, 0), Vector3(2000, 10, 2000), 30, 230, 30 },
+            { "WallNY", Vector3(0, -600, 0), Vector3(2000, 10, 2000), 220, 30, 220 },
+            { "WallPZ", Vector3(0, 0,  600), Vector3(2000, 2000, 10), 30, 30, 230 },
+            { "WallNZ", Vector3(0, 0, -600), Vector3(2000, 2000, 10), 230, 220, 30 },
+        };
+        for(const Wall& Each : Walls)
+        {
+            Shape(Each.Name, "Engine/Content/Meshes/Box.nmmesh", "Content/Materials/SolidColor.material.nmgraph", Each.At, Each.Scale)
+                .GetComponent<RenderComponent>()->SetMaterialParameter(0, "Color", float(Each.R) / 255.0f, float(Each.G) / 255.0f,
+                                                                       float(Each.B) / 255.0f, 1.0f);
+        }
+        const GameCore::Entity Ball = Shape("Ball", "Engine/Content/Meshes/Sphere.nmmesh", "Content/Materials/PBRParams.material.nmgraph",
+                                            Vector3(), Vector3(200, 200, 200));
+        const auto SetBall = [&Ball](const float InMetallic, const float InRoughness)
+        {
+            RenderComponent* Render = Ball.GetComponent<RenderComponent>();
+            Render->SetMaterialParameter(0, "Metallic", InMetallic, 0.0f, 0.0f, 0.0f);
+            Render->SetMaterialParameter(0, "Roughness", InRoughness, 0.0f, 0.0f, 0.0f);
+        };
+        SetBall(1.0f, 0.0f);
+
+        /* No sun: the ball is lit by images alone. */
+        const GameCore::Entity Sun = World.CreateEntity("Dark");
+        Sun.AddComponent(GameCore::TransformComponent());
+        DirectionalLightComponent Dark;
+        Dark.Intensity    = 0.0f;
+        Dark.bCastShadows = 0;
+        Sun.AddComponent(Dark);
+
+        const GameCore::Entity ProbeEntity = World.CreateEntity("Probe");
+        GameCore::TransformComponent ProbeAt;
+        ProbeAt.Position = Vector3(0, 0, -200);
+        ProbeEntity.AddComponent(ProbeAt);
+        ReflectionProbeComponent Probe;
+        Probe.Radius     = 3000.0f;
+        Probe.Resolution = 64;
+        ProbeEntity.AddComponent(Probe);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto At = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        /* The ball's screen centre and its top: 100 units up at depth 400, in a 50-degree view. */
+        const int TopY = 128 - int(100.0 / (400.0 * std::tan(25.0 * 3.14159265 / 180.0)) * 128.0) + 6;
+
+        EngineCore::Image Mirror;
+        int Centre[3] = {};
+        const bool bMirror = Capture(Mirror);
+        if(bMirror) { At(Mirror, 128, 128, Centre); }
+        std::printf("    probe on, mirror ball centre %d %d %d\n", Centre[0], Centre[1], Centre[2]);
+        Expect(bMirror && Centre[0] > 150 && Centre[1] > 140 && Centre[2] < 90,
+               "a mirror metal ball reflects, from its Reflection Probe, the yellow wall behind the camera");
+
+        ProbeEntity.GetComponent<ReflectionProbeComponent>()->bEnabled = 0;
+        EngineCore::Image SkyOnly;
+        int SkyCentre[3] = {};
+        const bool bSky = Capture(SkyOnly);
+        if(bSky) { At(SkyOnly, 128, 128, SkyCentre); }
+        std::printf("    probe off, mirror ball centre %d %d %d\n", SkyCentre[0], SkyCentre[1], SkyCentre[2]);
+        Expect(bSky && SkyCentre[2] >= SkyCentre[0] && SkyCentre[2] > SkyCentre[1] - 10 && SkyCentre[0] + SkyCentre[1] + SkyCentre[2] > 60,
+               "with the probe off it reflects the sky (the Sky Light's colours) instead");
+
+        ProbeEntity.GetComponent<ReflectionProbeComponent>()->bEnabled = 1;
+        SetBall(0.0f, 1.0f);
+        EngineCore::Image Matte;
+        int Top[3] = {};
+        const bool bMatte = Capture(Matte);
+        if(bMatte) { At(Matte, 128, TopY, Top); }
+        std::printf("    rough white ball, top (y %d) %d %d %d\n", TopY, Top[0], Top[1], Top[2]);
+        Expect(bMatte && Top[1] > Top[0] + 30 && Top[1] > Top[2] + 30,
+               "a rough white ball's top is lit green by the ceiling: the probe's diffuse irradiance, the right way up");
+
+        /* An HDRI: the room gone, a Sky Light's equirectangular RGBE8 environment, blue above the horizon
+         * and red below, as the background and in the mirror ball (the probe off). */
+        for(const char* Name : { "WallPX", "WallNX", "WallPY", "WallNY", "WallPZ", "WallNZ" })
+        {
+            World.DestroyEntity(World.FindEntityByName(Name));
+        }
+        ProbeEntity.GetComponent<ReflectionProbeComponent>()->bEnabled = 0;
+        SetBall(1.0f, 0.0f);
+        std::error_code Ignored;
+        std::filesystem::create_directories("SmokeScratch/Sky", Ignored);
+        {
+            TextureData Hdri;
+            Hdri.Format = ETexturePixelFormat::RGBE8;
+            Hdri.bSRGB  = false;
+            Hdri.Filter = ETextureFilter::Nearest;
+            Hdri.Pixels = Image(64, 32, EImageFormat::RGBA8);
+            for(int Y = 0; Y < 32; ++Y)
+            {
+                for(int X = 0; X < 64; ++X)
+                {
+                    const float Blue[3] = { 0.05f, 0.1f, 2.0f };
+                    const float Red[3]  = { 2.0f, 0.1f, 0.05f };
+                    EncodeRgbe(Y < 16 ? Blue : Red, Hdri.Pixels.GetScanline(Y) + X * 4);
+                }
+            }
+            Archive Writer = Archive::ForWriting();
+            SerializeTexture(Writer, Hdri);
+            SaveArchiveToFile("SmokeScratch/Sky/TwoTone.nmtexture", Writer);
+            TextureAssetCache::Invalidate("SmokeScratch/Sky/TwoTone.nmtexture");
+        }
+        const GameCore::Entity SkyEntity = World.CreateEntity("Sky");
+        SkyEntity.AddComponent(GameCore::TransformComponent());
+        SkyLightComponent SkyLight;
+        std::snprintf(SkyLight.Environment, sizeof(SkyLight.Environment), "%s", "SmokeScratch/Sky/TwoTone.nmtexture");
+        SkyEntity.AddComponent(SkyLight);
+
+        EngineCore::Image Hdr;
+        int Above[3] = {}, Below[3] = {}, BallTop[3] = {}, BallBottom[3] = {};
+        const bool bHdr = Capture(Hdr);
+        if(bHdr)
+        {
+            At(Hdr, 128, 8, Above);
+            At(Hdr, 128, 247, Below);
+            At(Hdr, 128, TopY, BallTop);
+            At(Hdr, 128, 255 - TopY, BallBottom);
+        }
+        std::printf("    HDRI: sky %d %d %d, ground %d %d %d; ball top %d %d %d, bottom %d %d %d\n", Above[0], Above[1], Above[2],
+                    Below[0], Below[1], Below[2], BallTop[0], BallTop[1], BallTop[2], BallBottom[0], BallBottom[1], BallBottom[2]);
+        Expect(bHdr && Above[2] > 200 && Above[0] < 120 && Below[0] > 200 && Below[2] < 120,
+               "a Sky Light's HDRI is drawn behind the scene: its upper half above the horizon, its lower below");
+        Expect(bHdr && BallTop[2] > BallTop[0] + 60 && BallBottom[0] > BallBottom[2] + 60,
+               "and the mirror ball reflects it: the sky in its top, the ground in its bottom");
+
+        if(const char* DumpDir = std::getenv("NIMBLE_SMOKE_DUMP"); DumpDir && DumpDir[0])
+        {
+            for(const auto& [Pixels, Name] : { std::make_pair(&Mirror, "ibl-mirror"), std::make_pair(&SkyOnly, "ibl-sky"), std::make_pair(&Matte, "ibl-matte"),
+                                               std::make_pair(&Hdr, "ibl-hdri") })
+            {
+                std::ofstream File(std::string(DumpDir) + "/" + Name + ".ppm", std::ios::binary);
+                File << "P6\n256 256\n255\n";
+                for(int Y = 0; Y < 256; ++Y)
+                {
+                    for(int X = 0; X < 256; ++X)
+                    {
+                        int Rgb[3];
+                        At(*Pixels, X, Y, Rgb);
+                        const char Bytes[3] = { char(Rgb[0]), char(Rgb[1]), char(Rgb[2]) };
+                        File.write(Bytes, 3);
+                    }
+                }
+            }
+        }
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
 /*
  * Scene capture on the GPU: an omnidirectional probe in a room of six
  * coloured walls -- each face of its RenderTargetTex3D is its wall, and a
@@ -3642,9 +4054,13 @@ int main()
     TestStaticDrawListsOnGpu();
     TestClearGradientOnGpu();
     TestSceneCaptureOnGpu();
+    TestToneMappingOnGpu();
+    TestImageBasedLightingOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestTextureMips();
+    TestToneMappingSettings();
+    TestImageBasedLightingData();
     TestMeshDrawing();
     TestEngineMeshes();
     TestRenderStages();

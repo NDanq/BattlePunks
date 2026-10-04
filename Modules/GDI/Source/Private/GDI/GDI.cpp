@@ -536,6 +536,16 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
                             EndDrawEvent,
                             (),,())
 
+GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, const uint InWidth, const uint InHeight, const EGDIRenderTargetFormat InFormat)
+{
+    return GDynamicGDI ? GDynamicGDI->CreateRenderTargetFormat(std::move(InName), InWidth, InHeight, InFormat) : nullptr;
+}
+
+bool GDISupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat)
+{
+    return GDynamicGDI && GDynamicGDI->SupportsRenderTargetFormat(InFormat);
+}
+
 GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLevels, const uint32_t InCount,
                                                  const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
 {
