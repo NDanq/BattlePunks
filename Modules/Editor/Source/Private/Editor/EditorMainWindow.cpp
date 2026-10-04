@@ -58,6 +58,9 @@
 #include "Private/Editor/SDLInputProbe.h"
 #include "Private/Editor/SettingsDialog.h"
 #include "Private/Editor/SourceBuild.h"
+#if WITH_NETCORE
+#include "Private/Editor/EditorNetSession.h"
+#endif
 
 /* Edit > Editor Settings > Build. */
 NIMBLE_CONFIG_BOOL(GEditorReloadAfterCompile, "Editor", "ReloadAfterCompile", true, nullptr);
@@ -249,6 +252,10 @@ EditorMainWindow::~EditorMainWindow()
     {
         InputProbe->Stop();
     }
+#if WITH_NETCORE
+    delete NetLink;
+    NetLink = nullptr;
+#endif
     EditorGraphs::SetEditorContext(nullptr);
     EditorPrefabs::SetEditorContext(nullptr);
     Context.Shutdown();
@@ -1414,6 +1421,11 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
         Console.Print(QStringLiteral("snap %1").arg(Viewport->IsGizmoSnapEnabled() ? QStringLiteral("on") : QStringLiteral("off")));
     });
+
+#if WITH_NETCORE
+    /* net.host / net.join / net.leave / net.status. */
+    if(!NetLink) { NetLink = new EditorNetSession(Level, Console); }
+#endif
 }
 
 void EditorMainWindow::showEvent(QShowEvent* InEvent)

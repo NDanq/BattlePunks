@@ -157,6 +157,13 @@ list(APPEND NIMBLE_EDITOR_SOURCES ${NIMBLE_EDITOR_LIGHTING_SOURCES}
         Source/Private/Editor/Lighting/BakeLightmaps.cpp
         Source/Private/Editor/Lighting/BakeLightmaps.h
 )
+# STUB(NetCore-Editor): the editor link (EditorNetSession.h), when NetCore is built.
+if(TARGET NetCore)
+    list(APPEND NIMBLE_EDITOR_SOURCES
+            Source/Private/Editor/EditorNetSession.cpp
+            Source/Private/Editor/EditorNetSession.h)
+endif()
+
 if(NOT MSVC)
     set_source_files_properties(
             Source/Private/Editor/Lighting/LightBakeBVH.cpp
@@ -206,6 +213,9 @@ target_link_libraries(NimbleEditor PRIVATE
         Qt6::Gui
         Qt6::Widgets
 )
+if(TARGET NetCore)
+    target_link_libraries(NimbleEditor PRIVATE NetCore::NetCore)
+endif()
 
 # === Import tests =================================================================
 # Runs from Binaries, where NimbleEditor's windeployqt put Qt (hence the dependency).
@@ -286,6 +296,9 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             Qt6::Gui
             Qt6::Widgets
     )
+    if(TARGET NetCore)
+        target_link_libraries(NimbleEditorDetailsTests PRIVATE NetCore::NetCore)
+    endif()
     set_target_properties(NimbleEditorDetailsTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
     add_dependencies(NimbleEditorDetailsTests NimbleEditor)
     add_test(NAME Editor.Details COMMAND NimbleEditorDetailsTests
