@@ -20,7 +20,7 @@ namespace GameCore
      * draws them with that bake instead of lighting them itself. World units
      * are centimetres (a glTF metre imports as 100).
      */
-    struct WorldLightingSettings
+    struct GAMECORE_API WorldLightingSettings
     {
         bool     bBakedLighting  = false;
         float    TexelsPerUnit   = 0.1f;    // lightmap texels per world unit: 10 per metre
