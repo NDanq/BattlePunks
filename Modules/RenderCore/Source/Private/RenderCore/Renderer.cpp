@@ -108,10 +108,12 @@ namespace RenderCore
          * spent blocked (the fence, presenting); sums over the current half
          * second, published by EndFrame when it is up. */
         int64_t GameStartNs   = 0;
-        int64_t BlockedNs     = 0;
+        int64_t BlockedNs     = 0;   // WaitNs + PresentNs
+        int64_t WaitNs        = 0;
+        int64_t PresentNs     = 0;
         int64_t LastEndNs     = 0;
         int64_t WindowStartNs = 0;
-        double  SumFrame = 0.0, SumGame = 0.0, SumRender = 0.0;
+        double  SumFrame = 0.0, SumGame = 0.0, SumRender = 0.0, SumWait = 0.0, SumPresent = 0.0, SumIdle = 0.0;
         int     Samples  = 0;
 
         /* Adds this frame to the window; publishes the averages every half second. */
@@ -119,9 +121,13 @@ namespace RenderCore
         {
             if(LastEndNs != 0)
             {
-                SumFrame  += double(InEndNs - LastEndNs);
-                SumGame   += double(std::max<int64_t>(InEndNs - std::max(GameStartNs, LastEndNs) - BlockedNs, 0));
-                SumRender += Thread.GetLastFrameRenderSeconds() * 1.0e9;
+                const int64_t Start = std::max(GameStartNs, LastEndNs);
+                SumFrame   += double(InEndNs - LastEndNs);
+                SumGame    += double(std::max<int64_t>(InEndNs - Start - BlockedNs, 0));
+                SumRender  += Thread.GetLastFrameRenderSeconds() * 1.0e9;
+                SumWait    += double(WaitNs);
+                SumPresent += double(PresentNs);
+                SumIdle    += double(Start - LastEndNs);
                 ++Samples;
             }
             else
@@ -131,6 +137,8 @@ namespace RenderCore
             LastEndNs   = InEndNs;
             GameStartNs = 0;
             BlockedNs   = 0;
+            WaitNs      = 0;
+            PresentNs   = 0;
 
             StatUnitSnapshot Unit = GetStatUnit();
             Unit.bShow      = GStatsUnit.GetBool();
@@ -140,7 +148,10 @@ namespace RenderCore
                 Unit.FrameMs        = float(SumFrame / Samples / 1.0e6);
                 Unit.GameThreadMs   = float(SumGame / Samples / 1.0e6);
                 Unit.RenderThreadMs = float(SumRender / Samples / 1.0e6);
-                SumFrame = SumGame = SumRender = 0.0;
+                Unit.WaitMs         = float(SumWait / Samples / 1.0e6);
+                Unit.PresentMs      = float(SumPresent / Samples / 1.0e6);
+                Unit.IdleMs         = float(SumIdle / Samples / 1.0e6);
+                SumFrame = SumGame = SumRender = SumWait = SumPresent = SumIdle = 0.0;
                 Samples       = 0;
                 WindowStartNs = InEndNs;
             }
@@ -360,13 +371,17 @@ namespace RenderCore
     {
         const int64_t Start = StatNowNs();
         P->Thread.WaitForFrame();
-        P->BlockedNs += StatNowNs() - Start;
+        const int64_t Waited = StatNowNs() - Start;
+        P->BlockedNs += Waited;
+        P->WaitNs    += Waited;
     }
 
     void Renderer::BeginGameFrame()
     {
         P->GameStartNs = StatNowNs();
         P->BlockedNs   = 0;
+        P->WaitNs      = 0;
+        P->PresentNs   = 0;
     }
 
 #if WITH_EDITOR
@@ -704,7 +719,9 @@ namespace RenderCore
         {
             const int64_t Start = StatNowNs();
             Scene->Scene->PresentToWindow(InWindow);
-            P->BlockedNs += StatNowNs() - Start;
+            const int64_t Presented = StatNowNs() - Start;
+            P->BlockedNs += Presented;
+            P->PresentNs += Presented;
         }
     }
 

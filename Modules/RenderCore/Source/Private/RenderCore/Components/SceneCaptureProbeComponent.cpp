@@ -13,7 +13,7 @@ namespace RenderCore
 {
     GAMECORE_DEFINE_COMPONENT(SceneCaptureProbeComponent, "Scene Capture Probe")
 
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(SceneCaptureProbeComponent, 1)
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(SceneCaptureProbeComponent, 2)
     {
         Ar.Field("Target",     C.Target);
         Ar.Field("Mode",       C.Mode);
@@ -26,6 +26,10 @@ namespace RenderCore
         Ar.Field("ExtentZ",    C.ExtentZ);
         Ar.Flag("HideOwner",   C.bHideOwner);
         Ar.Flag("Enabled",     C.bEnabled);
+        if(Ar.GetVersion() >= 2)
+        {
+            Ar.Flag("CaptureShadows", C.bCaptureShadows);
+        }
     }
 
     GAMECORE_DEFINE_COMPONENT_SCRIPT(SceneCaptureProbeComponent)
@@ -42,6 +46,7 @@ namespace RenderCore
         Bind.Flag("HideOwner",   &SceneCaptureProbeComponent::bHideOwner);
         Bind.Flag("Enabled",     &SceneCaptureProbeComponent::bEnabled);
         Bind.Flag("CaptureNow",  &SceneCaptureProbeComponent::bCaptureNow);
+        Bind.Flag("CaptureShadows", &SceneCaptureProbeComponent::bCaptureShadows);
     }
 
 #if WITH_EDITOR
@@ -54,6 +59,7 @@ namespace RenderCore
         Props.Choice("Frequency",  &SceneCaptureProbeComponent::Frequency, "Every Frame|Interval|Once|Manual");
         Props.Field("Interval",    &SceneCaptureProbeComponent::Interval);
         Props.Flag("Capture Now",  &SceneCaptureProbeComponent::bCaptureNow);
+        Props.Flag("Capture Shadows", &SceneCaptureProbeComponent::bCaptureShadows);
         Props.Category("Extent");
         Props.Field("Near Clip",   &SceneCaptureProbeComponent::NearClip);
         Props.Field("Far Clip",    &SceneCaptureProbeComponent::FarClip);

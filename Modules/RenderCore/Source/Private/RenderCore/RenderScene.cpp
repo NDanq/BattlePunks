@@ -180,8 +180,11 @@ namespace RenderCore
              * Shadow casters: per shadow view, every visible proxy it can see,
              * camera-culled or not -- a caster off screen can shade what is on
              * it. Padded like the camera's cull, for World Position Offset.
+             * A capture without CaptureShadows prepares none: SetView left the
+             * scene's shadows off, so it lights unshadowed.
              */
-            const uint32_t ShadowViews = InContext.PrepareShadows();
+            const bool     bShadows    = !InCapture || InCapture->bShadows;
+            const uint32_t ShadowViews = bShadows ? InContext.PrepareShadows() : 0;
             for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews; ++ViewIndex)
             {
                 const GameCore::AABB& ViewBounds = InContext.GetShadowViewBounds(ViewIndex);

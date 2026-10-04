@@ -412,6 +412,9 @@ namespace RenderCore
         OutStats.FrameMs                = Unit.FrameMs;
         OutStats.GameThreadMs           = Unit.GameThreadMs;
         OutStats.RenderThreadMs         = Unit.RenderThreadMs;
+        OutStats.WaitMs                 = Unit.WaitMs;
+        OutStats.PresentMs              = Unit.PresentMs;
+        OutStats.IdleMs                 = Unit.IdleMs;
         GetReportedGpuTimes(OutStats.GpuMs);
         GetStaticDrawStats(OutStats.StaticProxiesDrawn, OutStats.StaticListBuilds);
     }
@@ -492,10 +495,13 @@ namespace RenderCore
 
     std::string FormatStatUnit(const StatUnitSnapshot& InSnapshot)
     {
-        char Text[160];
+        char Text[256];
         const float Fps = InSnapshot.FrameMs > 0.0f ? 1000.0f / InSnapshot.FrameMs : 0.0f;
-        std::snprintf(Text, sizeof(Text), "Frame:  %7.2f ms\nGame:   %7.2f ms\nRender: %7.2f ms\nFPS:    %7.1f",
-                      double(InSnapshot.FrameMs), double(InSnapshot.GameThreadMs), double(InSnapshot.RenderThreadMs), double(Fps));
+        std::snprintf(Text, sizeof(Text),
+                      "Frame:   %7.2f ms\nGame:    %7.2f ms\nRender:  %7.2f ms\nWait:    %7.2f ms\nPresent: %7.2f ms\n"
+                      "Idle:    %7.2f ms\nFPS:     %7.1f",
+                      double(InSnapshot.FrameMs), double(InSnapshot.GameThreadMs), double(InSnapshot.RenderThreadMs),
+                      double(InSnapshot.WaitMs), double(InSnapshot.PresentMs), double(InSnapshot.IdleMs), double(Fps));
         return Text;
     }
 

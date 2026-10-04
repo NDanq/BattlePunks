@@ -139,10 +139,16 @@ namespace RenderCore
          * first half second has passed). Frame is the game thread's time
          * from one EndFrame to the next; Game Thread is that less the time it
          * waited on the render thread or presented; Render Thread is its time
-         * running a frame's commands, less the swap. */
+         * running a frame's commands, less the swap. Wait, Present and Idle
+         * are the rest of Frame: the game thread waiting on the render thread,
+         * presenting (blocked on the swapchain), and between frames (the
+         * host's loop or frame timer). */
         float FrameMs        = 0.0f;
         float GameThreadMs   = 0.0f;
         float RenderThreadMs = 0.0f;
+        float WaitMs         = 0.0f;
+        float PresentMs      = 0.0f;
+        float IdleMs         = 0.0f;
 
         /* "stat frame" (Stats.Frame on, and a backend that can time the GPU):
          * the default scene's GPU time per span, averaged over half a second;

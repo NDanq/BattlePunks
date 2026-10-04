@@ -361,6 +361,12 @@ material then samples like a texture.
 - Near and far clip.
 - Extent X / Z: the mirror's rectangle in local X/Z.
 - Hide Owner: the probe's entity subtree stays out of its own capture.
+- Capture Shadows: off by default. Off, a capture prepares no shadow maps
+  and lights its views unshadowed (`SetView` leaves the scene's shadows off,
+  and `QueueDraws` skips `PrepareShadows`). On, every view redraws every
+  shadow map; a cube does that six times. On LightLab's level in a Debug
+  build, an every-frame cube probe costs the render thread 5 ms off and
+  30 ms on.
 - Enabled.
 
 **Game thread:** `WorldBridge::BuildCaptures` applies the frequencies and
@@ -371,7 +377,7 @@ skips a mirror whose rectangle is out of view. It sends at most
 view. For each request, and each of its views (`BuildCaptureViews`), it:
 1. sets the view;
 2. queues draws, culled to the view and without the excluded entities;
-3. runs every stage, shadows included, into the target's own stage targets;
+3. runs every stage (shadows only with Capture Shadows) into the target's own stage targets;
 4. copies the result into the target face (`CaptureCopy.fsh`).
 
 The post process stack is the main view's alone.
@@ -443,8 +449,8 @@ dynamic one does.
 
 ### Stat unit
 
-**Stats.Unit** (config var, off by default) draws frame, game thread and
-render thread times, and FPS, in a panel at the top right of every viewport.
+**Stats.Unit** (config var, off by default) draws frame, game thread,
+render thread, wait, present and idle times, and FPS, in a panel at the top right of every viewport.
 - **Toggling it:** in the editor console, `stat unit` toggles it and
   `stat none` hides it. In a game, set `[Stats] Unit=true` in
   `Config/DefaultEngine.ini`.
@@ -454,7 +460,15 @@ render thread times, and FPS, in a panel at the top right of every viewport.
   `WaitForPreviousFrame` and `PresentToWindow` is taken out.
 - **Render Thread** is the render thread's time running a frame's commands,
   summed over every wakeup the frame took. The swap and the wait for work are
-  left out.
+  left out. A wait on the GPU inside GDI, such as a fence at
+  `BeginRendering`, is counted.
+- **Wait**, **Present** and **Idle** are the rest of Frame. Wait is the game
+  thread in `WaitForPreviousFrame`, Present is the game thread in
+  `PresentToWindow` (the swapchain's vsync), and Idle is the time from
+  `EndFrame` to the next `BeginGameFrame` (the host's loop, the editor's frame
+  timer). So Frame = Game + Wait + Present + Idle. A large Wait means the
+  render thread is the bottleneck, a large Present means vsync, and a large
+  Idle means the host's pacing.
 - **Averaging:** each figure is averaged over half a second. `Renderer` then
   publishes the averages to the render thread (`StatUnitSnapshot`,
   `RenderThreadInternal.h`) and into `RenderStats`.
