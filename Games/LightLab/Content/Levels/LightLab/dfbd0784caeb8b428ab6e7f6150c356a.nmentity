@@ -1,10 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="dfbd0784caeb8b428ab6e7f6150c356a" Name="SceneCaptureProbe">
+<Entity Guid="dfbd0784caeb8b428ab6e7f6150c356a" Name="SceneCaptureProbe" Mobility="Static">
   <Component Type="Scene Capture Probe" Version="2">
     <Target Value="Content/RenderTargets/ChromeBall.nmrt3d" />
     <Mode Value="1" />
-    <Resolution Value="256" />
-    <Frequency Value="2" />
+    <Resolution Value="128" />
+    <Frequency Value="0" />
     <Interval Value="1" />
     <NearClip Value="5" />
     <FarClip Value="5000" />

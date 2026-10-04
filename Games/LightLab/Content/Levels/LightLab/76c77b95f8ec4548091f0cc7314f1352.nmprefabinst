@@ -6,4 +6,9 @@
       <Rotation X="0" Y="-77.44931" Z="0" />
     </Component>
   </Entity>
+  <Entity Id="18">
+    <Component Type="Reflection Probe" Version="1">
+      <CaptureShadows Value="false" />
+    </Component>
+  </Entity>
 </Instance>
