@@ -8,6 +8,9 @@
       <Prop Name="Texture" Value="Content/Textures/brick-wall_metallic.nmtexture" />
       <Prop Name="Wrap" Value="Default" />
     </Node>
+    <Node Id="5b8d2e7f1a3c4b6d8e0f2a4c6e8b0d11" Type="Texture.NormalMap" Version="1" X="360" Y="181">
+      <Prop Name="Format" Value="OpenGL" />
+    </Node>
     <Node Id="6b0e3141f23bc7853a5e0e5aad4fb6c2" Type="Texture.Sample" Version="2" X="200" Y="9" />
     <Node Id="9baca6094191d6771bdd0caad7d006fe" Type="Texture.Object" Version="1" X="-200" Y="-206">
       <Prop Name="Filter" Value="Default" />
@@ -34,9 +37,10 @@
     </Node>
   </Nodes>
   <Links>
-    <Link From="1323571b63fd2b29ae84302c91ac6215.RGB" To="caf3c58a84521f92675e5abede759f92.Normal" />
+    <Link From="1323571b63fd2b29ae84302c91ac6215.RGB" To="5b8d2e7f1a3c4b6d8e0f2a4c6e8b0d11.Color" />
     <Link From="3df0f61afbea500a2ded83e91b3066fa.RGB" To="caf3c58a84521f92675e5abede759f92.BaseColor" />
     <Link From="3ecaf1acf14d8d9490e555ba3ad59c6c.Texture" To="ea0f009cc661f7a5ad38d5ee56da88b1.Texture" />
+    <Link From="5b8d2e7f1a3c4b6d8e0f2a4c6e8b0d11.Normal" To="caf3c58a84521f92675e5abede759f92.Normal" />
     <Link From="6b0e3141f23bc7853a5e0e5aad4fb6c2.R" To="caf3c58a84521f92675e5abede759f92.Roughness" />
     <Link From="9baca6094191d6771bdd0caad7d006fe.Texture" To="6b0e3141f23bc7853a5e0e5aad4fb6c2.Texture" />
     <Link From="e498657ba924e086f7da6c1d29ecf64b.Texture" To="3df0f61afbea500a2ded83e91b3066fa.Texture" />
@@ -72,7 +76,8 @@ void CalcMaterial(in MaterialInputs Inputs, inout MaterialSurface Surface)
     vec4 t2 = texture(Material_Texture2, Inputs.TexCoord);
     Surface.Roughness = t2.r;
     vec4 t3 = texture(Material_Texture4, Inputs.TexCoord);
-    Surface.Normal = t3.rgb;
+    vec3 t4 = Material_NormalMap(Inputs, t3.rgb, 1.0, Inputs.TexCoord, -1.0);
+    Surface.Normal = t4;
 }
 #endif
 ]]></Output>

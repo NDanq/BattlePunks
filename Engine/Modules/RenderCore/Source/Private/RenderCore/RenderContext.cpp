@@ -71,13 +71,15 @@ namespace RenderCore
         {
             PP_DofPrepare, PP_DofBlur, PP_DofComposite, PP_MotionBlur,
             PP_BloomDownsample, PP_BloomUpsample, PP_BloomComposite, PP_Fxaa,
-            PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy,
+            PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy, PP_Tonemap,
+            PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
             "PPBloomDownsample.fsh", "PPBloomUpsample.fsh", "PPBloomComposite.fsh", "PPFxaa.fsh",
-            "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh",
+            "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
+            "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -126,6 +128,9 @@ namespace RenderCore
             float Locals[RENDER_LOCAL_LIGHT_MAX * SCENE_LOCAL_VEC4S][4] = {};
             float LocalShadowMatrices[SHADOW_LOCAL_ATLAS_COLUMNS * SHADOW_LOCAL_ATLAS_ROWS][16] = {};
             float CascadeTexels[4]      = {};
+            float Output[4]             = { 0.0f, 1.0f, 0.0f, 0.0f };   // HDR, exposure multiplier, tone map operator
+            float IBL[4]                = {};                           // on, probes, sky block weight (IBLCommon.glsl)
+            float Probes[12][4]         = {};                           // 3 vec4s a probe
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -134,8 +139,10 @@ namespace RenderCore
                       && offsetof(SceneUniforms, CascadeMatrices) == 240 && offsetof(SceneUniforms, LocalCounts) == 496
                       && offsetof(SceneUniforms, Locals) == 512 && offsetof(SceneUniforms, LocalShadowMatrices) == 2048,
                       "Scene_Block's shadow and local-light members are in this order");
-        static_assert(offsetof(SceneUniforms, CascadeTexels) == 3584, "Scene_CascadeTexels comes last");
-        static_assert(sizeof(SceneUniforms) == 3600 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, CascadeTexels) == 3584 && offsetof(SceneUniforms, Output) == 3600
+                      && offsetof(SceneUniforms, IBL) == 3616 && offsetof(SceneUniforms, Probes) == 3632,
+                      "Scene_CascadeTexels, Scene_Output, Scene_IBL and Scene_Probes come last");
+        static_assert(sizeof(SceneUniforms) == 3824 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -643,7 +650,7 @@ namespace RenderCore
             EnsureInitialised();
             Bind(Vertex, Pixel);
             /* These blocks carry their matrix first; the others start at A. */
-            if(InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion)
+            if(InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion || InPass == PP_IBLSky || InPass == PP_Sky)
             {
                 GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, &InBlock, uint(sizeof(InBlock)));
             }
@@ -666,7 +673,8 @@ namespace RenderCore
         /* RenderSceneStages' post process stack (RENDERPIPELINE.md, "Post
          * process") into InTargets' post targets; returns where the result is
          * -- the scene colour if nothing ran. */
-        GDIRenderTarget* RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, bool bInHasPrevious);
+        GDIRenderTarget* RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, bool bInHasPrevious,
+                                             GDIRenderTarget* InSource);
 
         /* The post process stack's Ambient Occlusion, between the Base Pass
          * and the Lighting stage (RENDERPIPELINE.md, "Ambient occlusion"):
@@ -686,6 +694,52 @@ namespace RenderCore
             if(bTimeStages) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
         }
         bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
+
+        /* Image-based lighting (SetImageBasedLighting): the scene's atlas and its probes, for the next
+         * RenderSceneStages; and whether every view draws the sky behind it (a reflection probe's captures). */
+        const IBLResources* IBL = nullptr;
+        float               IBLProbes[12][4] = {};
+        uint32_t            IBLProbeCount = 0;
+        bool                bIBLSky = false;
+        bool                bForceSkyBackground = false;
+
+        GDITextureResource* IBLAtlasTexture() const
+        {
+            GDITexture2D* Each = IBL && IBL->Atlas ? IBL->Atlas->ToGDITexture2D() : nullptr;
+            return Each ? Each->Resource : nullptr;
+        }
+
+        /* The current lighting's sky, as the sky passes' block wants it: colours linear, and its HDRI (null: none). */
+        GDITextureResource* SkyBlock(PostBlock& OutBlock)
+        {
+            const auto Linear = [](float (&OutColor)[4], const EngineCore::Color InColor, const float InScale)
+            {
+                OutColor[0] = std::pow(InColor.Rf(), 2.2f) * InScale;
+                OutColor[1] = std::pow(InColor.Gf(), 2.2f) * InScale;
+                OutColor[2] = std::pow(InColor.Bf(), 2.2f) * InScale;
+                OutColor[3] = 1.0f;
+            };
+            float Sky[4], Ground[4];
+            Linear(Sky, Lighting.SkyColor, Lighting.SkyIntensity);
+            Linear(Ground, Lighting.GroundColor, Lighting.SkyIntensity);
+            std::memcpy(&OutBlock.Matrix[0], Sky, sizeof(Sky));
+            std::memcpy(&OutBlock.Matrix[4], Ground, sizeof(Ground));
+            GDITextureResource* Environment = nullptr;
+            if(Lighting.SkyEnvironment[0] != '\0')
+            {
+                MaterialTexture Hdri;
+                Hdri.Path    = Lighting.SkyEnvironment;
+                Hdri.bFilter = true;
+                Hdri.Filter  = ETextureFilter::Nearest;
+                Hdri.bWrap   = true;
+                Hdri.Wrap    = ETextureWrap::Repeat;
+                Environment = FindTexture(Hdri);
+            }
+            OutBlock.A[0] = Environment ? 1.0f : 0.0f;
+            OutBlock.A[1] = Lighting.SkyEnvironmentIntensity;
+            OutBlock.A[2] = Lighting.SkyEnvironmentRotation * 3.14159265f / 180.0f;
+            return Environment;
+        }
 
         GDIShader* GetShadowDepthShader()
         {
@@ -886,6 +940,11 @@ namespace RenderCore
             for(const MaterialTexture& Each : InMaterial.Description.Textures)
             {
                 GDISetMaterialTexture(Each.Slot, FindTexture(Each));
+            }
+            /* A forward Lit material's probe atlas: slot 0, its own outside PostProcess (MaterialTemplate_PS.glsl). */
+            if(InMaterial.Description.Domain != EMaterialDomain::PostProcess && InMaterial.Description.Shading == EMaterialShading::Lit)
+            {
+                GDISetMaterialTexture(0, Scene.IBL[0] > 0.5f ? IBLAtlasTexture() : nullptr);
             }
 
             ApplyDomainState(InMaterial.Description.Domain);
@@ -1476,18 +1535,20 @@ namespace RenderCore
         GDIEndDrawEvent();
     }
 
-    GDIRenderTarget* RenderContext::Impl::RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, const bool bInHasPrevious)
+    GDIRenderTarget* RenderContext::Impl::RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, const bool bInHasPrevious,
+                                                              GDIRenderTarget* InSource)
     {
         /* Ping-pongs two full-size targets; the scene colour (and its depth)
-         * is only ever read, so every pass can sample the depth. */
-        GDIRenderTarget* Source = InTargets.SceneColor;
+         * is only ever read, so every pass can sample the depth. InSource: the
+         * scene colour, or its tone-mapped copy (PostProcess) in an HDR scene. */
+        GDIRenderTarget* Source = InSource ? InSource : InTargets.SceneColor;
         const DrawPolicy& Materials = PolicyFor(ERenderStage::PostProcess);
         const uint Width  = InTargets.Width;
         const uint Height = InTargets.Height;
         const uint HalfW  = SceneTargets::HalfSize(Width, 1);
         const uint HalfH  = SceneTargets::HalfSize(Height, 1);
 
-        GDITexture2D*       DepthTexture = Source->ToDepthTexture2D();
+        GDITexture2D*       DepthTexture = InTargets.SceneColor->ToDepthTexture2D();
         GDITextureResource* Depth        = DepthTexture ? DepthTexture->Resource : nullptr;
         const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
         {
@@ -2219,14 +2280,42 @@ namespace RenderCore
             GDISetColorMask(EColM_RGBA);
         };
 
+        /* HDR: what the shaders write into the scene colour, and the tone map
+         * this scene's stack asks for (a capture or a preview has none: clamped). */
+        const PostProcessSettings& Tone = P->PostSettings;
+        P->Scene.Output[0] = InTargets.bHDR ? 1.0f : 0.0f;
+        P->Scene.Output[1] = Tone.bToneMapping ? std::exp2(Tone.Exposure) : 1.0f;
+        P->Scene.Output[2] = Tone.bToneMapping ? float(Tone.ToneMapper) : 0.0f;
+
+        /* Image-based lighting, with the atlas this scene set (HDR only). */
+        const bool bIBL = InTargets.bHDR && P->IBL && P->IBL->Atlas && P->IBLAtlasTexture();
+        P->Scene.IBL[0] = bIBL ? 1.0f : 0.0f;
+        P->Scene.IBL[1] = bIBL ? float(P->IBLProbeCount) : 0.0f;
+        P->Scene.IBL[2] = bIBL && P->bIBLSky ? 1.0f : 0.0f;
+        std::memcpy(P->Scene.Probes, P->IBLProbes, sizeof(P->Scene.Probes));
+
         P->StageTimestamp(RGT_Total, false);
         BindTargets(&SceneColor, 1, SceneColor);
         GDIClear(CM_Color | CM_Depth, InClearColor);
 
         /* The background gradient, over the clear and under everything: the
          * Lighting stage writes lit pixels only, so it shows wherever the
-         * clear colour would. */
-        if(InClearBottom)
+         * clear colour would. An HDR scene draws even a plain clear this way,
+         * un-tone-mapped so it comes out as authored (ToneMapping.glsl). */
+        const bool bSky = InTargets.bHDR
+                       && (P->bForceSkyBackground || (P->Lighting.SkyEnvironment[0] != '\0' && P->Lighting.bSkyBackground));
+        if(bSky)
+        {
+            /* The sky behind the scene: the HDRI along each view ray (or the sky colours), linear. */
+            PostBlock Block;
+            GDITextureResource* Environment = P->SkyBlock(Block);
+            if(P->DrawPost(PP_Sky, SceneColor, InTargets.Width, InTargets.Height, { Environment }, Block))
+            {
+                BindTargets(&SceneColor, 1, SceneColor);
+            }
+            GDISetMaterialTexture(0, nullptr);
+        }
+        else if(InClearBottom || InTargets.bHDR)
         {
             PostBlock Block;
             const auto Put = [](float (&OutColor)[4], const EngineCore::Color InColor)
@@ -2237,7 +2326,7 @@ namespace RenderCore
                 OutColor[3] = 1.0f;
             };
             Put(Block.A, InClearColor);
-            Put(Block.Sizes, *InClearBottom);
+            Put(Block.Sizes, InClearBottom ? *InClearBottom : InClearColor);
             if(P->DrawPost(PP_ClearGradient, SceneColor, InTargets.Width, InTargets.Height, {}, Block))
             {
                 BindTargets(&SceneColor, 1, SceneColor);   // the depth back for the stages
@@ -2292,6 +2381,23 @@ namespace RenderCore
             {
                 P->StageDrawCounts[size_t(ERenderStage::Lighting)] = 1;
             }
+            /* Image-based lighting, added over what the Lighting stage lit (IBLLighting.fsh). */
+            if(bIBL)
+            {
+                const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
+                {
+                    GDITexture2D* Each = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+                    return Each ? Each->Resource : nullptr;
+                };
+                GDITexture2D* Depth = SceneColor->ToDepthTexture2D();
+                PostBlock Block;
+                Block.A[0] = P->AmbientOcclusion ? 1.0f : 0.0f;
+                P->DrawPost(PP_IBLLighting, SceneColor, Width, Height,
+                            { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
+                              Depth ? Depth->Resource : nullptr, P->AmbientOcclusion, P->IBLAtlasTexture() },
+                            Block, /*bInAdditive*/ true);
+                for(uint32_t Slot = 0; Slot < 6; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+            }
             P->AmbientOcclusion = nullptr;
             EndDrawEvent();
             P->StageTimestamp(RGT_Lighting, true);
@@ -2312,12 +2418,130 @@ namespace RenderCore
         P->PostSettings           = PostProcessSettings();
         P->bHasPrevViewProjection = false;
         P->StageTimestamp(RGT_PostProcess, false);
-        GDIRenderTarget* const Source = P->RunPostProcessStack(InTargets, Post, bHasPrev);
+        /* An HDR scene's tone map first: everything after works in display space. */
+        GDIRenderTarget* Display = SceneColor;
+        if(InTargets.bHDR)
+        {
+            GDIRenderTarget* Mapped = InTargets.EnsurePostProcess();
+            GDITexture2D*    Linear = SceneColor->ToGDITexture2D();
+            PostBlock Block;
+            if(Mapped && Linear && P->DrawPost(PP_Tonemap, Mapped, Width, Height, { Linear->Resource }, Block))
+            {
+                Display = Mapped;
+            }
+            GDISetMaterialTexture(0, nullptr);
+        }
+        GDIRenderTarget* const Source = P->RunPostProcessStack(InTargets, Post, bHasPrev, Display);
         P->StageTimestamp(RGT_PostProcess, true);
         P->StageTimestamp(RGT_Total, true);
         P->FinalTarget  = Source;
         InTargets.Final = Source;
         Finish();
+    }
+
+    // === Image-based lighting ==================================================
+
+    bool RenderContext::CanImageBasedLight() const
+    {
+        return P->Backend != ERenderBackend::Null && GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F);
+    }
+
+    bool RenderContext::EnsureIBLResources(IBLResources& InOut, const uint32_t InFace)
+    {
+        if(!CanImageBasedLight() || InFace == 0)
+        {
+            return false;
+        }
+        if(!InOut.Atlas)
+        {
+            InOut.Atlas = GDICreateRenderTargetFormat("RenderCore.IBLAtlas", 768, 768, GDI_RTF_RGBA16F);
+        }
+        if(!InOut.Strip)
+        {
+            InOut.Strip = GDICreateRenderTargetFormat("RenderCore.IBLStrip", InFace * 6, InFace, GDI_RTF_RGBA16F);
+        }
+        else if(InOut.StripFace != InFace)
+        {
+            InOut.Strip->Resize(InFace * 6, InFace);
+        }
+        InOut.StripFace = InFace;
+        return InOut.Atlas && InOut.Strip;
+    }
+
+    void RenderContext::ReleaseIBLResources(IBLResources& InOut)
+    {
+        if(P->IBL == &InOut) { P->IBL = nullptr; }
+        for(GDIRenderTarget** Each : { &InOut.Atlas, &InOut.Strip })
+        {
+            if(*Each)
+            {
+                GDIReleaseRenderTarget(*Each);
+                delete *Each;
+                *Each = nullptr;
+            }
+        }
+        InOut.StripFace = 0;
+    }
+
+    bool RenderContext::RenderSkyToStrip(IBLResources& InResources)
+    {
+        if(!InResources.Strip || InResources.StripFace == 0)
+        {
+            return false;
+        }
+        PostBlock Block;
+        GDITextureResource* Environment = P->SkyBlock(Block);
+        Block.A[3] = float(InResources.StripFace);
+        const bool bDrawn = P->DrawPost(PP_IBLSky, InResources.Strip, InResources.StripFace * 6, InResources.StripFace, { Environment }, Block);
+        GDISetMaterialTexture(0, nullptr);
+        return bDrawn;
+    }
+
+    bool RenderContext::CopyCaptureToStrip(SceneTargets& InStages, IBLResources& InResources, const uint32_t InFace)
+    {
+        GDITexture2D* Source = InStages.SceneColor ? InStages.SceneColor->ToGDITexture2D() : nullptr;
+        if(!Source || !InResources.Strip || InFace >= 6)
+        {
+            return false;
+        }
+        const uint32_t Size = InResources.StripFace;
+        PostBlock Block;
+        const bool bDrawn = P->DrawPost(PP_CaptureCopy, InResources.Strip, Size, Size, { Source->Resource }, Block, false, InFace * Size);
+        GDISetMaterialTexture(0, nullptr);
+        return bDrawn;
+    }
+
+    bool RenderContext::PrefilterIBLBlock(IBLResources& InResources, const uint32_t InBlock)
+    {
+        GDITexture2D* Strip = InResources.Strip ? InResources.Strip->ToGDITexture2D() : nullptr;
+        if(!Strip || !InResources.Atlas || InBlock > 4)
+        {
+            return false;
+        }
+        PostBlock Block;
+        Block.A[0] = float(InBlock);
+        Block.A[1] = 0.0f;   // the strip holds linear light
+        const bool bDrawn = P->DrawPost(PP_IBLPrefilter, InResources.Atlas, 768, 768, { Strip->Resource }, Block);
+        GDISetMaterialTexture(0, nullptr);
+        return bDrawn;
+    }
+
+    void RenderContext::SetImageBasedLighting(const IBLResources* InResources, const float (*InProbes)[4], const uint32_t InCount,
+                                              const bool bInSky)
+    {
+        P->IBL           = InResources;
+        P->IBLProbeCount = InResources ? std::min<uint32_t>(InCount, 4) : 0;
+        P->bIBLSky       = InResources && bInSky;
+        std::memset(P->IBLProbes, 0, sizeof(P->IBLProbes));
+        if(InProbes)
+        {
+            std::memcpy(P->IBLProbes, InProbes, sizeof(float) * 4 * 3 * P->IBLProbeCount);
+        }
+    }
+
+    void RenderContext::SetSkyBackground(const bool bInForce)
+    {
+        P->bForceSkyBackground = bInForce;
     }
 
     void RenderContext::DrawStatUnit(const uint32_t InWidth, const uint32_t InHeight, const std::string& InText)
@@ -2596,6 +2820,17 @@ namespace RenderCore
         }
 
         /* The view and lighting, restored afterwards. */
+        /* A preview is lit by its studio light alone: no scene's probes or sky. */
+        struct WithoutSceneIBL
+        {
+            Impl* Owner; const IBLResources* Saved; bool bSavedSky;
+            explicit WithoutSceneIBL(Impl* InOwner) : Owner(InOwner), Saved(InOwner->IBL), bSavedSky(InOwner->bForceSkyBackground)
+            {
+                Owner->IBL = nullptr;
+                Owner->bForceSkyBackground = false;
+            }
+            ~WithoutSceneIBL() { Owner->IBL = Saved; Owner->bForceSkyBackground = bSavedSky; }
+        } NoIBL(P);
         const RenderView     SavedView     = P->View;
         const RenderLighting SavedLighting = P->Lighting;
         BeginSceneDraws();

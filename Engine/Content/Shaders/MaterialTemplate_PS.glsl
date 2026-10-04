@@ -23,6 +23,12 @@
 #endif
 
 #if MATERIAL_SHADING_LIT
+#if !MATERIAL_GBUFFER
+// A forward Lit material lights itself from the probe atlas too: slot 0, free outside PostProcess.
+#include <IBLCommon.glsl>
+MATERIAL_SAMPLER2D(4, Material_IBLAtlas)
+#define LIGHTING_IBL_ATLAS Material_IBLAtlas
+#endif
 #include <Lighting.glsl>
 #endif
 
@@ -72,9 +78,15 @@ void main(void)
 #else
 
 #if MATERIAL_SHADING_LIT
-    vec3 Color = ToDisplay(ToLinear(Surface.Emissive) + ShadeSurface(Surface, Inputs.WorldPosition, Normal));
+    vec3 Color = ToSceneColor(ToLinear(Surface.Emissive) + ShadeSurface(Surface, Inputs.WorldPosition, Normal));
 #else
+#if MATERIAL_DOMAIN_POSTPROCESS
+    // After the tone map: display space in, display space out.
     vec3 Color = Surface.Emissive;
+#else
+    // Display space as authored; an HDR scene holds it linear (ToneMapping.glsl).
+    vec3 Color = Scene_Output.x > 0.5 ? pow(max(Surface.Emissive, vec3(0.0)), vec3(2.2)) : Surface.Emissive;
+#endif
 #endif
 
     float Alpha = 1.0;

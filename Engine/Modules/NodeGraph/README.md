@@ -297,6 +297,23 @@ Linear filter. In World Position Offset a sample reads the full-size level
 (`textureLod`), as the vertex stage has no derivatives. A Texture Object with no texture, or a Texture
 Sample with no Texture Object linked, is an error.
 
+**Normal Map** (category Textures, pixel stage only) turns a tangent-space
+normal map's colour into a world-space normal, for Material Output's Normal.
+
+- **Inputs:** Color is the map's colour, usually a Texture Sample's RGB;
+  unlinked it is flat. Strength scales the tilt. UV must be the UV the map was
+  sampled at; unlinked it is the texture coordinate.
+- **Format:** OpenGL means green points up the image (Blender, Substance's
+  OpenGL export); DirectX means it points down (Unreal, 3ds Max).
+- **The tangent frame:** no mesh carries tangents, so it is built per pixel
+  from how the world position and UV change across it (`Material_NormalMap`,
+  MaterialCommon.glsl, a cotangent frame). It is signed by the screen's
+  handedness, so every backend and back faces agree.
+- **Import the map linear:** the importer does so for a name that says normal
+  (see the Editor's README).
+- **Verified on Vulkan:** a map tilted right and up the image tilts the normal
+  right and up on screen.
+
 **Reflect** (category Textures, pixel stage only) samples a render target that
 a Scene Capture Probe fills, for environment reflections. Its **Target**
 setting names the target, which takes a texture slot like a Texture Object

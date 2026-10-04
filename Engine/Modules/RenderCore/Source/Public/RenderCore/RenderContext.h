@@ -29,6 +29,7 @@ namespace EngineCore { class Image; }
 namespace RenderCore
 {
     struct SceneTargets;             // Private/RenderCore/SceneTargets.h
+    struct IBLResources;             // likewise: a scene's probe atlas and cube strip
     struct StagedDraw;               // Private/RenderCore/DrawPolicy.h
     struct MaterialPreviewRequest;   // RenderScene.h
     struct RenderMaterialParameter;  // Components/RenderComponent.h
@@ -191,6 +192,30 @@ namespace RenderCore
          * editor's bake).
          */
         SceneTargets* BeginTargetCapture(const char* InPath, uint32_t InResolution, ERenderTargetKind InKind, EngineCore::Color& OutClear);
+
+        /*
+         * IMAGE-BASED LIGHTING (RenderScene::Render; RENDERPIPELINE.md). Only
+         * with an HDR scene colour (CanImageBasedLight); the Lighting stage's
+         * hemisphere ambient otherwise.
+         *
+         *   EnsureIBLResources   the atlas, and the strip at InFace a side
+         *   RenderSkyToStrip     the current lighting's sky (its HDRI, else its colours)
+         *   CopyCaptureToStrip   a cube face InStages rendered (its linear scene colour)
+         *   PrefilterIBLBlock    the strip into atlas block InBlock (0-3 probes, 4 the sky)
+         *   SetImageBasedLighting  what lights the next RenderSceneStages: InResources'
+         *                        atlas (null: none), InCount probes as Scene_Probes' vec4s
+         *                        (3 each), and whether the sky block is valid
+         *   SetSkyBackground     draw the sky (HDRI or colours) behind every view
+         *                        while set: a reflection probe's captures
+         */
+        bool CanImageBasedLight() const;
+        bool EnsureIBLResources(IBLResources& InOut, uint32_t InFace);
+        void ReleaseIBLResources(IBLResources& InOut);
+        bool RenderSkyToStrip(IBLResources& InResources);
+        bool CopyCaptureToStrip(SceneTargets& InStages, IBLResources& InResources, uint32_t InFace);
+        bool PrefilterIBLBlock(IBLResources& InResources, uint32_t InBlock);
+        void SetImageBasedLighting(const IBLResources* InResources, const float (*InProbes)[4], uint32_t InCount, bool bInSky);
+        void SetSkyBackground(bool bInForce);
         void          FinishTargetFace(const char* InPath, uint32_t InFace);
         bool          ReadRenderTarget(const char* InPath, EngineCore::Image& OutPixels);
 

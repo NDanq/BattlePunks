@@ -19,6 +19,7 @@
 #include "Public/RenderCore/Components/PostProcessComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/Components/SceneCaptureProbeComponent.h"
+#include "Public/RenderCore/Components/ReflectionProbeComponent.h"
 #include "Public/RenderCore/Components/SkyLightComponent.h"
 #include "Public/RenderCore/Components/SpotLightComponent.h"
 

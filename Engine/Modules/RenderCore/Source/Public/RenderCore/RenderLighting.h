@@ -83,6 +83,15 @@ namespace RenderCore
         EngineCore::Color   GroundColor{ 60, 55, 50 };
         float               SkyIntensity = 0.6f;
 
+        /* The Sky Light's HDRI (an RGBE8 equirectangular .nmtexture), empty for
+         * none: what image-based lighting takes its sky from, and (with
+         * bSkyBackground) what is drawn behind the scene. RENDERPIPELINE.md,
+         * "Image-based lighting". */
+        char                SkyEnvironment[128] = {};   // RENDER_MATERIAL_PATH_MAX
+        float               SkyEnvironmentIntensity = 1.0f;
+        float               SkyEnvironmentRotation  = 0.0f;   // degrees about +Y
+        uint8_t             bSkyBackground          = 1;
+
         /* Point and spot lights, shadow casters first, then nearest the eye. */
         RenderLocalLight     Locals[RENDER_LOCAL_LIGHT_MAX];
         uint32_t             LocalCount = 0;

@@ -58,6 +58,7 @@ namespace
         MOP_TextureSample,   // its Texture Object, at UV (the texture coordinate unlinked)
         MOP_TextureObject,   // a texture asset and its sampler: a material texture slot
         MOP_Reflect,         // a scene capture's render target, sampled as a reflection (a slot, as a Texture Object)
+        MOP_NormalMap,       // a tangent-space normal map's colour, to a world-space normal (Material_NormalMap)
     };
 
     /* NodeDefinition::StageMask / PinDefinition::Stage bits. */
@@ -81,6 +82,7 @@ namespace
     const char* const TEXTURE_OBJECT    = "Texture.Object";
     const char* const TEXTURE_SAMPLE    = "Texture.Sample";
     const char* const TEXTURE_REFLECT   = "Texture.Reflect";
+    const char* const NORMAL_MAP        = "Texture.NormalMap";
 
     /* A render target path's kind, as RenderCore's RenderTargetAsset.h tells
      * it: true and bOutCube for an .nmrt2d (false) or .nmrt3d (true). */
@@ -1204,6 +1206,25 @@ namespace
                 Value = EmitReflect(InNode, InDef, InPin);
                 break;
 
+            case MOP_NormalMap:
+            {
+                /* The map's colour about a tangent frame from derivatives of the position and UV
+                 * (MaterialCommon.glsl): UV must be what the map was sampled at. */
+                const PinDefinition* ColorPin    = InDef.FindPin("Color", EPinDirection::Input);
+                const PinDefinition* StrengthPin = InDef.FindPin("Strength", EPinDirection::Input);
+                const PinDefinition* UVPin       = InDef.FindPin("UV", EPinDirection::Input);
+                const bool bUV = UVPin && (Index.LinkInto(InNode.Id, "UV") || InNode.FindConstant("UV"));
+                const std::string Color    = Input(InNode, InDef, *ColorPin);
+                const std::string Strength = Input(InNode, InDef, *StrengthPin);
+                const std::string UV       = bUV ? Input(InNode, InDef, *UVPin) : std::string("Inputs.TexCoord");
+                const bool bDirectX = InNode.GetProperty("Format", "OpenGL") == "DirectX";
+                const std::string Temp = "t" + std::to_string(NextTemp++);
+                Body.Line("vec3 " + Temp + " = Material_NormalMap(Inputs, " + Color + ", " + Strength + ", " + UV + ", "
+                          + (bDirectX ? "1.0" : "-1.0") + ");", InNode.Id);
+                Value = Temp;
+                break;
+            }
+
             case MOP_TextureObject:
             {
                 /* Its slot's sampler, which a Texture Sample reads; and its size in texels. */
@@ -1822,6 +1843,28 @@ namespace
             Def.Properties = {
                 { "Target", EPropertyKind::Texture, "", {}, "The render target its probe captures into: Content/RenderTargets/Pool.nmrt2d "
                   "(a planar mirror) or Content/RenderTargets/Ball.nmrt3d (omnidirectional)" },
+            };
+        }
+
+        {
+            PinDefinition Color = In("Color", "vec3", "0.5 0.5 1");
+            Color.Tooltip = "The normal map's colour: a Texture Sample's RGB. Unlinked: flat";
+            PinDefinition Strength = In("Strength", "float", "1");
+            Strength.Tooltip = "How far the map tilts the normal: 0 flat, 1 as authored, more exaggerates";
+            PinDefinition UV = In("UV", "vec2");
+            UV.Implicit = "Texture Coordinate";
+            UV.Tooltip  = "The UV the map was sampled at, for its tangent frame. Unlinked: the vertex's Texture Coordinate";
+            NodeDefinition& Def = Pure(NORMAL_MAP, "Normal Map", "Textures",
+                                       { Color, Strength, UV, Out("Normal", "vec3", "") }, {},
+                                       "normal map bump tangent space detail");
+            Def.Op = MOP_NormalMap;
+            PixelOnly(Def, "A tangent-space normal map's colour as a world-space normal, for Material Output's Normal. The "
+                           "tangent frame comes from how the position and UV change across the pixel, so any mesh works "
+                           "without tangents. Import the map as linear (not sRGB).");
+            Def.Properties = {
+                { "Format", EPropertyKind::Choice, "OpenGL", { "OpenGL", "DirectX" },
+                  "Which way the map's green points: OpenGL (Y+, up the image; Blender, Substance's OpenGL export) or "
+                  "DirectX (Y-, down it; Unreal, 3ds Max)" },
             };
         }
 

@@ -82,6 +82,12 @@ namespace
                 { "Levels",    "5",     1.0, 6.0,  1, "Downsample steps, each half the size: more is wider" },
                 { "Tint",      "1 1 1", 0.0, 8.0,  3, "The glow's colour, multiplied in" } },
               {} },
+            { "Effect.ToneMapping", "ToneMapping", "Tone Mapping",
+              "An HDR scene's exposure and tone map: linear light, any brightness, to the display's 0-1. The first post "
+              "pass, so everything after it sees display colours. Without it (or on an 8-bit backend) the scene is clamped.",
+              { { "Exposure", "0", -16.0, 16.0, 1, "Stops (EV): each +1 doubles the scene's brightness before the tone map" } },
+              { { "Tone Mapper", EPropertyKind::Choice, "ACES", { "ACES", "Reinhard", "None" },
+                  "ACES: a filmic curve, soft highlights and deeper blacks. Reinhard: x / (1 + x), flatter. None: clamped" } } },
             { "Effect.Antialiasing", "Antialiasing", "Antialiasing",
               "Smooths jagged edges after every other effect.",
               { { "Edge Threshold", "0.125", 0.0, 1.0, 1, "The contrast an edge needs before it is smoothed: lower catches more" } },

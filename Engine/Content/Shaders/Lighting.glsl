@@ -13,6 +13,10 @@ const float LIGHTING_PI = 3.14159265;
 vec3 ToLinear(vec3 InColor)  { return pow(max(InColor, vec3(0.0)), vec3(2.2)); }
 vec3 ToDisplay(vec3 InColor) { return pow(max(InColor, vec3(0.0)), vec3(1.0 / 2.2)); }
 
+// Lit light into the scene colour: linear in an HDR scene (the tone map pass
+// makes it display space), display space in an 8-bit one.
+vec3 ToSceneColor(vec3 InLinear) { return Scene_Output.x > 0.5 ? max(InLinear, vec3(0.0)) : ToDisplay(InLinear); }
+
 #ifdef LIGHTING_SHADOWS
 #include <Shadows.glsl>
 #endif
@@ -151,6 +155,17 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
     float Up       = clamp(S.N.y * 0.5 + 0.5, 0.0, 1.0);
     vec3  Ambient  = mix(ToLinear(Scene_GroundColor.rgb), ToLinear(Scene_SkyColor.rgb), Up) * Scene_SkyColor.a;
     vec3  Indirect = Ambient * (S.Albedo * (1.0 - S.Metallic) + S.F0 * (1.0 - S.Roughness) * 0.5) * Surface.AmbientOcclusion;
+    // Image-based lighting replaces it: in its own pass over the G-buffer (IBLLighting.fsh), or
+    // here for a forward Lit material, which has the atlas (LIGHTING_IBL_ATLAS).
+    if(Scene_IBL.x > 0.5)
+    {
+#ifdef LIGHTING_IBL_ATLAS
+        Indirect = IBL_Light(LIGHTING_IBL_ATLAS, InWorldPosition, S.N, S.V, S.Albedo, S.Metallic, S.Roughness, S.F0,
+                             Surface.AmbientOcclusion);
+#else
+        Indirect = vec3(0.0);
+#endif
+    }
 
     return (Direct + Indirect) * Modulate;
 }

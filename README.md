@@ -81,6 +81,24 @@ over it:
 Drag the prefab into the level from the Content Browser, or bake its captures
 with World > Bake Scene Captures. A cooked copy sits beside Column's.
 
+`Content/Prefabs/PBRShowcase.nmprefab` shows the physically based shading
+(RENDERPIPELINE.md, "HDR and tone mapping" and "Image-based lighting"):
+
+- **The spheres:** three rows (white dielectric, gold, silver) by five
+  roughnesses, 0 to 1. All use one `PBR` material, its Base Color, Metallic
+  and Roughness set per sphere.
+- **The rest:** a dark backdrop, and a Reflection Probe lighting them from
+  among them.
+
+The level's `Global.pp.nmgraph` tone maps the HDR scene with ACES at -1 EV. The
+bricks on the Column prefab take their normal map through a Normal Map node,
+with their data maps imported linear.
+
+For the full effect, set the level's Sky Light **Environment** to
+`Content/Textures/Sky/ProceduralSky.nmtexture`. That is a generated HDRI: a
+blue sky with a sun, glowing toward it, over warm ground. The sky then lights
+everything and is drawn behind the scene.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:

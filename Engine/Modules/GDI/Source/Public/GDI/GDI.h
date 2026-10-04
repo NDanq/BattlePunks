@@ -322,6 +322,14 @@ public:
 
     virtual GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) = 0;
 
+    /* A render target of InFormat. This default makes RGBA8 whatever is
+     * asked: a backend that can do more overrides both of these. */
+    virtual GDIRenderTarget* CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat /*InFormat*/)
+    {
+        return CreateRenderTarget(std::move(Name), InWidth, InHeight);
+    }
+    virtual bool SupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat) const { return InFormat == GDI_RTF_RGBA8; }
+
     virtual void SetRenderTarget( GDIRenderTarget* InRenderTarget ) = 0;
 
     /*
@@ -597,6 +605,10 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(EngineCore::Color, GetColorFromSamplePoint, (
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, BeginDrawEvent, (const std::string& InEventName))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, EndDrawEvent, ())
+
+/* GDIDynamicDriver::CreateRenderTargetFormat / SupportsRenderTargetFormat. */
+GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat);
+bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
 
 /* GDIDynamicDriver::CreateTextureResourceMips; null without a driver. */
 GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,

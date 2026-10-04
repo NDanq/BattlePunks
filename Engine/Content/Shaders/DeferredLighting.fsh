@@ -68,6 +68,6 @@ void main(void)
     Surface.Opacity          = 1.0;
     Surface.OpacityMask      = 1.0;
 
-    vec3 Color = ToDisplay(ToLinear(Surface.Emissive) + ShadeSurface(Surface, WorldPosition, Surface.Normal));
+    vec3 Color = ToSceneColor(ToLinear(Surface.Emissive) + ShadeSurface(Surface, WorldPosition, Surface.Normal));
     Output = vec4(Color, 1.0);
 }

@@ -19,7 +19,7 @@ namespace EngineCore
  * .nmtexture -- a pre-decoded 2D texture:
  *
  *   NTEX v1                the file
- *     THDR v2              width, height, pixel format, sRGB, filter, wrap;
+ *     THDR v2              width, height, pixel format (RGBA8, or RGBE8 for HDR), sRGB, filter, wrap;
  *                          v2: mip generation, compression, mip count
  *     TPIX v1              level 0: tightly packed rows (CoreImage.h)
  *     TMIP v1 (optional)   levels 1..n-1, each half the last (at least 1),
@@ -44,11 +44,21 @@ namespace RenderCore
      * TextureCompression.h. */
     enum class ETextureCompression : uint8_t { None = 0, BC1 = 1, BC3 = 2, BC4 = 3, BC5 = 4, BC7 = 5 };
 
+    /* How a texel's four bytes read. RGBE8: Radiance's shared exponent, HDR
+     * colour = rgb / 256 * 2^(e - 128) (DecodeRgbe) -- what a sky's HDRI is
+     * stored as; shaders decode it (IBLCommon.glsl), so it is sampled point. */
+    enum class ETexturePixelFormat : uint8_t { RGBA8 = 0, RGBE8 = 1 };
+
+    /* One RGBE8 texel to linear RGB, and back (the nearest). */
+    RENDERCORE_API void DecodeRgbe(const uint8_t* InTexel, float (&OutRgb)[3]);
+    RENDERCORE_API void EncodeRgbe(const float (&InRgb)[3], uint8_t* OutTexel);
+
     enum : int { TEXTURE_MAX_DIMENSION = 16384 };
 
     struct TextureData
     {
-        EngineCore::Image Pixels;            // RGBA8
+        EngineCore::Image Pixels;            // RGBA8 bytes (RGBE8's too)
+        ETexturePixelFormat Format = ETexturePixelFormat::RGBA8;
         bool              bSRGB  = true;     // colour data; false for masks, normals
         ETextureFilter    Filter = ETextureFilter::Linear;
         ETextureWrap      Wrap   = ETextureWrap::Repeat;
@@ -67,6 +77,7 @@ namespace RenderCore
     {
         int            Width  = 0;
         int            Height = 0;
+        ETexturePixelFormat Format = ETexturePixelFormat::RGBA8;
         bool           bSRGB  = true;
         ETextureFilter Filter = ETextureFilter::Linear;
         ETextureWrap   Wrap   = ETextureWrap::Repeat;

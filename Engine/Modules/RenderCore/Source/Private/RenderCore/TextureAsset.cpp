@@ -20,15 +20,15 @@ namespace RenderCore
         constexpr uint32_t TAG_MIPS    = EngineCore::MakeArchiveTag('T','M','I','P');
         constexpr uint16_t HEADER_VERSION = 2;
 
-        /* THDR's pixel format byte. Only RGBA8 so far. */
-        constexpr uint8_t FORMAT_RGBA8 = 0;
+        /* THDR's pixel format byte: ETexturePixelFormat. */
+        constexpr uint8_t FORMAT_MAX = uint8_t(ETexturePixelFormat::RGBE8);
 
         /* THDR. False (archive failed) for unknown values. */
         bool SerializeHeader(EngineCore::Archive& Ar, TextureHeader& InOutHeader)
         {
             int32_t Width  = InOutHeader.Width;
             int32_t Height = InOutHeader.Height;
-            uint8_t Format = FORMAT_RGBA8;
+            uint8_t Format = uint8_t(InOutHeader.Format);
             uint8_t Filter = uint8_t(InOutHeader.Filter);
             uint8_t Wrap   = uint8_t(InOutHeader.Wrap);
             uint8_t MipGen      = uint8_t(InOutHeader.MipGen);
@@ -51,7 +51,7 @@ namespace RenderCore
                     Ar.SetError("texture: implausible size");
                     return false;
                 }
-                if(Format != FORMAT_RGBA8 || Filter > uint8_t(ETextureFilter::Linear) || Wrap > uint8_t(ETextureWrap::Mirror))
+                if(Format > FORMAT_MAX || Filter > uint8_t(ETextureFilter::Linear) || Wrap > uint8_t(ETextureWrap::Mirror))
                 {
                     Ar.SetError("texture: unknown format, filter or wrap");
                     return false;
@@ -62,6 +62,7 @@ namespace RenderCore
                     Ar.SetError("texture: unknown mip generation or compression, or too many mips");
                     return false;
                 }
+                InOutHeader.Format      = ETexturePixelFormat(Format);
                 InOutHeader.Width       = Width;
                 InOutHeader.Height      = Height;
                 InOutHeader.Filter      = ETextureFilter(Filter);
@@ -89,6 +90,7 @@ namespace RenderCore
             }
             Header.Width  = InOutTexture.Pixels.GetWidth();
             Header.Height = InOutTexture.Pixels.GetHeight();
+            Header.Format = InOutTexture.Format;
             Header.bSRGB  = InOutTexture.bSRGB;
             Header.Filter = InOutTexture.Filter;
             Header.Wrap   = InOutTexture.Wrap;
@@ -116,6 +118,7 @@ namespace RenderCore
 
         if(Ar.IsLoading() && !Ar.HasError())
         {
+            InOutTexture.Format = Header.Format;
             InOutTexture.bSRGB  = Header.bSRGB;
             InOutTexture.Filter = Header.Filter;
             InOutTexture.Wrap   = Header.Wrap;
@@ -434,10 +437,32 @@ namespace RenderCore
         }
     }
 
+    void DecodeRgbe(const uint8_t* InTexel, float (&OutRgb)[3])
+    {
+        if(InTexel[3] == 0) { OutRgb[0] = OutRgb[1] = OutRgb[2] = 0.0f; return; }
+        const float Scale = std::ldexp(1.0f, int(InTexel[3]) - 136);   // 2^(e - 128) / 256
+        for(int Channel = 0; Channel < 3; ++Channel) { OutRgb[Channel] = (float(InTexel[Channel]) + 0.5f) * Scale; }
+    }
+
+    void EncodeRgbe(const float (&InRgb)[3], uint8_t* OutTexel)
+    {
+        const float Largest = std::max({ InRgb[0], InRgb[1], InRgb[2] });
+        if(Largest < 1e-32f) { OutTexel[0] = OutTexel[1] = OutTexel[2] = OutTexel[3] = 0; return; }
+        int Exponent = 0;
+        const float Mantissa = std::frexp(Largest, &Exponent) * 256.0f / Largest;   // Largest = m * 2^e, m in [0.5, 1)
+        for(int Channel = 0; Channel < 3; ++Channel)
+        {
+            OutTexel[Channel] = uint8_t(std::clamp(int(std::max(InRgb[Channel], 0.0f) * Mantissa), 0, 255));
+        }
+        OutTexel[3] = uint8_t(std::clamp(Exponent + 128, 0, 255));
+    }
+
     void BuildTextureMips(TextureData& InOutTexture)
     {
         InOutTexture.Mips.clear();
-        if(InOutTexture.MipGen == ETextureMipGen::None || InOutTexture.Pixels.IsNull()) { return; }
+        /* RGBE8 is decoded by its shader, point sampled: no chain. */
+        if(InOutTexture.MipGen == ETextureMipGen::None || InOutTexture.Pixels.IsNull()
+           || InOutTexture.Format != ETexturePixelFormat::RGBA8) { return; }
         const EngineCore::Image Source = InOutTexture.Pixels.ConvertedTo(EngineCore::EImageFormat::RGBA8);
         FloatLevel Level = ToFloat(Source, InOutTexture.bSRGB);
         while(Level.Width > 1 || Level.Height > 1)

@@ -1,0 +1,654 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Prefab Format="1" Name="" NextId="19">
+  <Tick Mode="Tick" />
+  <Entity Id="1" Name="PBRShowcase">
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="0" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+  <Entity Id="2" Name="White_R00" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.85" />
+      <Parameter0Y Value="0.85" />
+      <Parameter0Z Value="0.85" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="0" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="-240" Y="310" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="3" Name="White_R25" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.85" />
+      <Parameter0Y Value="0.85" />
+      <Parameter0Z Value="0.85" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="0" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.25" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="-120" Y="310" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="4" Name="White_R50" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.85" />
+      <Parameter0Y Value="0.85" />
+      <Parameter0Z Value="0.85" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="0" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.5" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="310" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="5" Name="White_R75" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.85" />
+      <Parameter0Y Value="0.85" />
+      <Parameter0Z Value="0.85" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="0" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.75" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="120" Y="310" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="6" Name="White_R100" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.85" />
+      <Parameter0Y Value="0.85" />
+      <Parameter0Z Value="0.85" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="0" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="1" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="240" Y="310" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="7" Name="Gold_R00" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="1" />
+      <Parameter0Y Value="0.78" />
+      <Parameter0Z Value="0.34" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="-240" Y="190" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="8" Name="Gold_R25" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="1" />
+      <Parameter0Y Value="0.78" />
+      <Parameter0Z Value="0.34" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.25" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="-120" Y="190" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="9" Name="Gold_R50" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="1" />
+      <Parameter0Y Value="0.78" />
+      <Parameter0Z Value="0.34" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.5" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="190" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="10" Name="Gold_R75" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="1" />
+      <Parameter0Y Value="0.78" />
+      <Parameter0Z Value="0.34" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.75" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="120" Y="190" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="11" Name="Gold_R100" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="1" />
+      <Parameter0Y Value="0.78" />
+      <Parameter0Z Value="0.34" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="1" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="240" Y="190" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="12" Name="Silver_R00" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.95" />
+      <Parameter0Y Value="0.95" />
+      <Parameter0Z Value="0.95" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="-240" Y="70" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="13" Name="Silver_R25" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.95" />
+      <Parameter0Y Value="0.95" />
+      <Parameter0Z Value="0.95" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.25" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="-120" Y="70" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="14" Name="Silver_R50" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.95" />
+      <Parameter0Y Value="0.95" />
+      <Parameter0Z Value="0.95" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.5" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="70" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="15" Name="Silver_R75" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.95" />
+      <Parameter0Y Value="0.95" />
+      <Parameter0Z Value="0.95" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.75" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="120" Y="70" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="16" Name="Silver_R100" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.95" />
+      <Parameter0Y Value="0.95" />
+      <Parameter0Z Value="0.95" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="1" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="1" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="240" Y="70" Z="0" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="90" Y="90" Z="90" />
+    </Component>
+  </Entity>
+  <Entity Id="17" Name="Backdrop" Mobility="Static" Parent="1">
+    <Component Type="Render" Version="3">
+      <Visible Value="true" />
+      <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+      <Material1 Value="" />
+      <Material2 Value="" />
+      <Material3 Value="" />
+      <Material4 Value="" />
+      <Material5 Value="" />
+      <Material6 Value="" />
+      <Material7 Value="" />
+      <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+      <ParameterCount Value="3" />
+      <Parameter0Name Value="BaseColor" />
+      <Parameter0Slot Value="0" />
+      <Parameter0X Value="0.08" />
+      <Parameter0Y Value="0.09" />
+      <Parameter0Z Value="0.12" />
+      <Parameter0W Value="0" />
+      <Parameter1Name Value="Metallic" />
+      <Parameter1Slot Value="0" />
+      <Parameter1X Value="0" />
+      <Parameter1Y Value="0" />
+      <Parameter1Z Value="0" />
+      <Parameter1W Value="0" />
+      <Parameter2Name Value="Roughness" />
+      <Parameter2Slot Value="0" />
+      <Parameter2X Value="0.6" />
+      <Parameter2Y Value="0" />
+      <Parameter2Z Value="0" />
+      <Parameter2W Value="0" />
+      <CastShadows Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="200" Z="160" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="760" Y="400" Z="20" />
+    </Component>
+  </Entity>
+  <Entity Id="18" Name="ReflectionProbe" Parent="1">
+    <Component Type="Reflection Probe" Version="1">
+      <Radius Value="900" />
+      <BoxExtent X="0" Y="0" Z="0" />
+      <Intensity Value="1" />
+      <Resolution Value="128" />
+      <Frequency Value="2" />
+      <Interval Value="1" />
+      <NearClip Value="5" />
+      <FarClip Value="20000" />
+      <CaptureShadows Value="true" />
+      <Enabled Value="true" />
+    </Component>
+    <Component Type="Transform" Version="1">
+      <Position X="0" Y="190" Z="-160" />
+      <Rotation X="0" Y="0" Z="0" />
+      <Scale X="1" Y="1" Z="1" />
+    </Component>
+  </Entity>
+</Prefab>

@@ -4,7 +4,7 @@
 
 // Bumped when a change here or in the templates breaks shader caches cooked
 // before it; RenderCore refuses a cache that disagrees (MaterialPermutation.h).
-#define MATERIAL_TEMPLATE_VERSION 6
+#define MATERIAL_TEMPLATE_VERSION 7
 
 // What input nodes read. Each stage's template fills it; the pixel-only
 // fields exist only in the pixel stage, so a pixel-only node in the vertex
@@ -71,6 +71,42 @@ float Material_SceneDistanceAt(vec2 InClip, vec2 InFragCoord)
 {
     vec4 World = Scene_InvViewProjection * vec4(InClip, Material_SceneDepthAt(InFragCoord) * 2.0 - 1.0, 1.0);
     return length(World.xyz / World.w - Scene_CameraPosition.xyz);
+}
+#endif
+
+// The Normal Map node: a tangent-space normal map's colour (0-1 per channel)
+// as a world-space normal. No mesh carries tangents, so the frame comes from
+// how the world position and InUV change across the pixel (Schueler's
+// cotangent frame): T along +U, B along +V, N the interpolated normal.
+// Verified on Vulkan by the RenderCore GPU smoke test (NormalProbe). Row 0
+// of an image is V = 0, so the image's "up" is -V: an OpenGL map's green (Y+,
+// up the image) takes InGreen -1, a DirectX map's (Y-, down it) +1.
+#if PIXEL_SHADER
+vec3 Material_NormalMap(in MaterialInputs Inputs, vec3 InColor, float InStrength, vec2 InUV, float InGreen)
+{
+    vec3 N = normalize(Inputs.WorldNormal);
+    vec3 Tangent = InColor * 2.0 - 1.0;
+    Tangent.y *= InGreen;
+    Tangent.xy *= InStrength;
+
+    vec3 Dp1  = dFdx(Inputs.WorldPosition);
+    vec3 Dp2  = dFdy(Inputs.WorldPosition);
+    vec2 Duv1 = dFdx(InUV);
+    vec2 Duv2 = dFdy(InUV);
+    vec3 Dp2Perp = cross(Dp2, N);
+    vec3 Dp1Perp = cross(N, Dp1);
+    vec3 T = Dp2Perp * Duv1.x + Dp1Perp * Duv2.x;
+    vec3 B = Dp2Perp * Duv1.y + Dp1Perp * Duv2.y;
+    float Scale = max(dot(T, T), dot(B, B));
+    if(Scale < 1e-20)
+    {
+        return N;   // no UV change across the pixel: nothing to orient the map by
+    }
+    /* The solve is scaled by det(dPdx, dPdy, N), whose sign is the screen's
+     * handedness against the normal: it differs between a left-handed world,
+     * the backends' dFdy direction and a back face. Its sign puts T along +U. */
+    Scale = inversesqrt(Scale) * (dot(cross(Dp1, Dp2), N) < 0.0 ? -1.0 : 1.0);
+    return normalize(mat3(T * Scale, B * Scale, N) * Tangent);
 }
 #endif
 

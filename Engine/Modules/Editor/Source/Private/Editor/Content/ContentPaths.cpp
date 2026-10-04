@@ -121,6 +121,16 @@ namespace EditorContent
         return IsMaterialFieldValue(InText) || (InText.endsWith(POST_PROCESS_GRAPH) && InText.size() > POST_PROCESS_GRAPH.size());
     }
 
+    QStringList ListTexturePaths()
+    {
+        return ListGraphs(&TexturePathFor);
+    }
+
+    QString TexturePathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
+    }
+
     QStringList ListRenderTargetPaths()
     {
         return ListGraphs(&RenderTargetPathFor);

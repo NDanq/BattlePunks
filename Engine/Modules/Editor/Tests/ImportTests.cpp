@@ -165,6 +165,17 @@ static void TestClassify()
     const TextureImportOptions Older = TextureImportOptions::FromSettings(QStringLiteral("SRGB=1\nFilter=1\nWrap=0\n"));
     Expect(Older.MipGen == RenderCore::ETextureMipGen::None && Older.Compression == RenderCore::ETextureCompression::None,
            "settings from before mips read as none: a reimport makes what it made");
+    Expect(TextureImportOptions::IsDataMapName(QStringLiteral("brick-wall_normal-ogl.png"))
+           && TextureImportOptions::IsDataMapName(QStringLiteral("Metal_Roughness.jpg"))
+           && TextureImportOptions::IsDataMapName(QStringLiteral("rockAO.png"))
+           && TextureImportOptions::IsDataMapName(QStringLiteral("T_Crate_ORM.tga"))
+           && !TextureImportOptions::IsDataMapName(QStringLiteral("brick-wall_albedo.png"))
+           && !TextureImportOptions::IsDataMapName(QStringLiteral("Bricks.png"))
+           && !TextureImportOptions::IsDataMapName(QStringLiteral("Normandy.png")), "data maps are told by whole words of the name");
+    TextureImportOptions Detect;
+    Expect(!Detect.ResolvedFor(QStringLiteral("wall_normal.png")).bSRGB && Detect.ResolvedFor(QStringLiteral("wall_albedo.png")).bSRGB,
+           "a data map imports linear, a colour map sRGB");
+    Expect(!Detect.ResolvedFor(QStringLiteral("wall_normal.png")).bDetectDataMaps, "and the recorded settings keep the decision");
 }
 
 static void TestMeshImport(const QDir& InRoot)

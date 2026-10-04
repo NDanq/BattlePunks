@@ -56,6 +56,10 @@ namespace EditorContent
      * runtime path in the project, sorted; what the field stores for a file
      * ("" for anything else); and whether text is a value it may hold. */
     QStringList ListRenderTargetPaths();
+
+    /* Every .nmtexture in the project and the engine, by runtime path; and one file's (empty if not a texture). */
+    QStringList ListTexturePaths();
+    QString     TexturePathFor(const QString& InPath);
     QString     RenderTargetPathFor(const QString& InPath);
     bool        IsRenderTargetFieldValue(const QString& InText);
 
