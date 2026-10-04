@@ -51,6 +51,14 @@ namespace EditorContent
     QString     PostProcessPathFor(const QString& InPath);
     bool        IsPostProcessFieldValue(const QString& InText);
 
+    /* A render target field (PF_AssetRenderTarget): an .nmrt2d or .nmrt3d
+     * (RenderTargetAsset.h), or a transient "transient://Name". Every one's
+     * runtime path in the project, sorted; what the field stores for a file
+     * ("" for anything else); and whether text is a value it may hold. */
+    QStringList ListRenderTargetPaths();
+    QString     RenderTargetPathFor(const QString& InPath);
+    bool        IsRenderTargetFieldValue(const QString& InText);
+
     /* What a Script field stores for a file: the runtime path of a .lua or a
      * *.script.nmgraph in the project. Empty for anything else. */
     QString ScriptPathFor(const QString& InPath);

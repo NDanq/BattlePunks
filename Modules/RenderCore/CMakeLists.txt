@@ -66,9 +66,13 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/ShadowSettings.cpp
         Source/Private/RenderCore/PostProcessStack.cpp
         Source/Private/RenderCore/Components/PostProcessComponent.cpp
+        Source/Private/RenderCore/Components/SceneCaptureProbeComponent.cpp
         Source/Private/RenderCore/AssetFileCommon.h
         Source/Private/RenderCore/MeshAsset.cpp
         Source/Private/RenderCore/TextureAsset.cpp
+        Source/Private/RenderCore/RenderTargetAsset.cpp
+        Source/Private/RenderCore/SceneCapture.cpp
+        Source/Private/RenderCore/SceneCapture.h
         Source/Private/RenderCore/WorldBridge.h
         Source/Private/RenderCore/WorldBridge.cpp
         Source/Private/RenderCore/Renderer.cpp
@@ -87,6 +91,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/AssetImportInfo.h
         Source/Public/RenderCore/MeshAsset.h
         Source/Public/RenderCore/TextureAsset.h
+        Source/Public/RenderCore/RenderTargetAsset.h
         Source/Public/RenderCore/RenderComponents.h
         Source/Public/RenderCore/Components/RenderComponent.h
         Source/Public/RenderCore/Components/CameraComponent.h
@@ -97,6 +102,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/Components/LightShadow.h
         Source/Public/RenderCore/PostProcessStack.h
         Source/Public/RenderCore/Components/PostProcessComponent.h
+        Source/Public/RenderCore/Components/SceneCaptureProbeComponent.h
         Source/Public/RenderCore/Renderer.h
         Source/Public/RenderCore/MaterialDescription.h
         Source/Public/RenderCore/RenderLighting.h

@@ -19,6 +19,8 @@ namespace EditorLights
             case EKind::Spot:        Name = QStringLiteral("Spot Light");        Rotation = EngineCore::Vector3(45.0, 0.0, 0.0);  break;
             case EKind::Directional: Name = QStringLiteral("Directional Light"); Rotation = EngineCore::Vector3(50.0, 30.0, 0.0); break;
             case EKind::Sky:         Name = QStringLiteral("Sky Light"); break;
+            case EKind::CaptureOmni:   Name = QStringLiteral("Scene Capture Probe"); break;
+            case EKind::CaptureMirror: Name = QStringLiteral("Mirror Probe"); break;
         }
 
         const GameCore::EntityID Light = InDocument.CreateEntity(Name, InPosition, [InKind, Rotation](const GameCore::Entity& InEntity)
@@ -33,6 +35,23 @@ namespace EditorLights
                 case EKind::Spot:        InEntity.AddComponent<RenderCore::SpotLightComponent>();        break;
                 case EKind::Directional: InEntity.AddComponent<RenderCore::DirectionalLightComponent>(); break;
                 case EKind::Sky:         InEntity.AddComponent<RenderCore::SkyLightComponent>();         break;
+                case EKind::CaptureOmni:
+                {
+                    /* Six views a capture: every half second, not every frame, to start with. */
+                    RenderCore::SceneCaptureProbeComponent Probe;
+                    Probe.Mode      = RenderCore::SCM_Omnidirectional;
+                    Probe.Frequency = RenderCore::SCF_Interval;
+                    Probe.Interval  = 0.5f;
+                    InEntity.AddComponent(Probe);
+                    break;
+                }
+                case EKind::CaptureMirror:
+                {
+                    RenderCore::SceneCaptureProbeComponent Probe;
+                    Probe.Mode = RenderCore::SCM_PlanarMirror;
+                    InEntity.AddComponent(Probe);
+                    break;
+                }
             }
         });
         InDocument.SetSelection(Light);

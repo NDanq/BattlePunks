@@ -16,6 +16,8 @@
 #include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/RenderScene.h"
 #include "Private/RenderCore/ShadowSetup.h"
+#include "Public/RenderCore/RenderTargetAsset.h"
+#include "Public/GameCore/TransformMath.h"
 
 // GameCore is this file's whole subject -- it reads World's pools and
 // components on every line.
@@ -655,14 +657,102 @@ namespace RenderCore
         View.ViewportPixels = InFrame.ViewportPixels;   // the render targets are sized from this
         const RenderLighting    Lighting    = BuildLighting(View.Origin);
         const RenderPostProcess PostProcess = BuildPostProcess(View);
+        const SceneCaptureList  Captures    = BuildCaptures(View, InFrame.DeltaSeconds);
         RenderScene* SceneCapture = Scene;
 
-        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View, Lighting, PostProcess](RenderContext& Ctx)
+        ENQUEUE_RENDER_COMMAND(SetViewAndRender)([SceneCapture, View, Lighting, PostProcess, Captures](RenderContext& Ctx)
         {
             SceneCapture->SetView(View);
             SceneCapture->SetLighting(Lighting);
             SceneCapture->SetPostProcess(PostProcess);
+            SceneCapture->SetCaptures(Captures);
             SceneCapture->Render(Ctx);
         });
+    }
+
+    SceneCaptureList WorldBridge::BuildCaptures(const RenderView& InView, const double InDeltaSeconds)
+    {
+        SceneCaptureList List;
+        CaptureClock += std::max(InDeltaSeconds, 0.0);
+        ComponentPool* Pool = BoundWorld ? BoundWorld->FindPool(SceneCaptureProbeComponent::StaticType().ID) : nullptr;
+        if(!Pool)
+        {
+            return List;
+        }
+        auto* Probes = static_cast<SceneCaptureProbeComponent*>(Pool->GetDenseData());
+        for(size_t Index = 0; Index < Pool->GetCount() && List.Count < RENDER_CAPTURES_MAX; ++Index)
+        {
+            SceneCaptureProbeComponent& Probe = Probes[Index];
+            if(!Probe.bEnabled || Probe.Target[0] == '\0')
+            {
+                continue;
+            }
+            const GameCore::Entity Owner = Probe.Owner.GetEntity();
+            ProbeState& State = ProbeStates[Owner.GetID().Pack()];
+            bool bDue = Probe.bCaptureNow != 0;
+            switch(Probe.Frequency)
+            {
+                case SCF_EveryFrame: bDue = true; break;
+                case SCF_Interval:   bDue = bDue || CaptureClock - State.LastCapture >= double(std::max(Probe.Interval, 0.0f)); break;
+                case SCF_Once:       bDue = bDue || !State.bCaptured; break;
+                default:             break;
+            }
+            if(!bDue)
+            {
+                continue;
+            }
+
+            const GameCore::TransformPose Pose = PoseOf(Probe.Owner);
+            const GameCore::Rotation3     Axes = GameCore::TransformMath::EulerToRotation(Pose.Rotation);
+            SceneCaptureRequest& Request = List.Requests[List.Count];
+            Request = SceneCaptureRequest();
+            std::memcpy(Request.Target, Probe.Target, sizeof(Request.Target));
+            Request.Target[sizeof(Request.Target) - 1] = '\0';
+            Request.Mode       = Probe.Mode;
+            Request.Resolution = uint32_t(std::clamp(Probe.Resolution, 0, int32_t(RENDER_TARGET_MAX_SIZE)));
+            Request.Position   = Pose.Position;
+            Request.Normal     = Axes.GetAxis(1);
+            Request.NearClip   = Probe.NearClip;
+            Request.FarClip    = Probe.FarClip;
+
+            /* A mirror the camera cannot see is not worth a capture (unless asked for). */
+            if(Probe.Mode == SCM_PlanarMirror && !Probe.bCaptureNow && !InView.Bounds.IsEmpty())
+            {
+                const EngineCore::Vector3 Half = Axes.GetAxis(0) * double(Probe.ExtentX) + Axes.GetAxis(2) * double(Probe.ExtentZ);
+                const EngineCore::Vector3 Other = Axes.GetAxis(0) * double(Probe.ExtentX) - Axes.GetAxis(2) * double(Probe.ExtentZ);
+                GameCore::AABB Mirror;
+                for(const EngineCore::Vector3& Corner : { Pose.Position + Half, Pose.Position - Half, Pose.Position + Other, Pose.Position - Other })
+                {
+                    Mirror = GameCore::AABB::Union(Mirror, GameCore::AABB(Corner, Corner));
+                }
+                if(!Mirror.Overlaps(InView.Bounds))
+                {
+                    continue;
+                }
+            }
+
+            /* Its own subtree, left out (a mirror, a chrome ball). */
+            if(Probe.bHideOwner)
+            {
+                std::vector<GameCore::EntityID> Pending{ Owner.GetID() };
+                while(!Pending.empty() && Request.ExcludedCount < RENDER_CAPTURE_EXCLUDED_MAX)
+                {
+                    const GameCore::EntityID Each = Pending.back();
+                    Pending.pop_back();
+                    Request.Excluded[Request.ExcludedCount++] = Each;
+                    for(GameCore::EntityID Child = BoundWorld->GetEntity(Each).GetFirstChild(); Child.IsSet();
+                        Child = BoundWorld->GetEntity(Child).GetNextSibling())
+                    {
+                        Pending.push_back(Child);
+                    }
+                }
+            }
+
+            ++List.Count;
+            State.LastCapture = CaptureClock;
+            State.bCaptured   = true;
+            Probe.bCaptureNow = 0;
+        }
+        return List;
     }
 }

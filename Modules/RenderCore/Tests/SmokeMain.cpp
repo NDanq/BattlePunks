@@ -2537,6 +2537,203 @@ static void TestClearGradientOnGpu()
 }
 
 /*
+ * Scene capture on the GPU: an omnidirectional probe in a room of six
+ * coloured walls -- each face of its RenderTargetTex3D is its wall, and a
+ * Reflect sphere shows the wall each part of it faces -- and a planar mirror
+ * floor showing the box above it, upside down, where it should be.
+ */
+static void TestSceneCaptureOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[scene capture on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[scene capture on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+        const EngineCore::Size Viewport(256, 256);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const auto Shape = [&World](const char* InName, const char* InMesh, const char* InMaterial, const Vector3& InAt, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InAt;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InMesh);
+            Render.SetMaterial(0, InMaterial);
+            Render.bCastShadows = 0;
+            Each.AddComponent(Render);
+            return Each;
+        };
+        const auto Paint = [](const GameCore::Entity& InEntity, const int InR, const int InG, const int InB)
+        {
+            InEntity.GetComponent<RenderComponent>()->SetMaterialParameter(0, "Color", float(InR) / 255.0f, float(InG) / 255.0f,
+                                                                            float(InB) / 255.0f, 1.0f);
+        };
+        uint64_t Frame = 1;
+        const auto Draw = [&](const RenderView& InView, const int InFrames)
+        {
+            Rend.SetViewOverride(&InView);
+            for(int Each = 0; Each < InFrames; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+        };
+        const auto Capture = [&](const RenderView& InView, EngineCore::Image& OutPixels)
+        {
+            Draw(InView, 2);
+            const uint64_t Request = Rend.RequestSceneCapture();
+            Draw(InView, 2);
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto At = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        const auto Is = [](const int (&InRgb)[3], const int InR, const int InG, const int InB)
+        {
+            return std::abs(InRgb[0] - InR) <= 12 && std::abs(InRgb[1] - InG) <= 12 && std::abs(InRgb[2] - InB) <= 12;
+        };
+
+        /* The room: +X red, -X cyan, +Y green, -Y magenta, +Z blue, -Z yellow. */
+        struct Wall { const char* Name; Vector3 At; Vector3 Scale; int R, G, B; };
+        const Wall Walls[6] = {
+            { "WallPX", Vector3( 600, 0, 0), Vector3(10, 2000, 2000), 230, 30, 30 },
+            { "WallNX", Vector3(-600, 0, 0), Vector3(10, 2000, 2000), 30, 220, 220 },
+            { "WallPY", Vector3(0,  600, 0), Vector3(2000, 10, 2000), 30, 230, 30 },
+            { "WallNY", Vector3(0, -600, 0), Vector3(2000, 10, 2000), 220, 30, 220 },
+            { "WallPZ", Vector3(0, 0,  600), Vector3(2000, 2000, 10), 30, 30, 230 },
+            { "WallNZ", Vector3(0, 0, -600), Vector3(2000, 2000, 10), 230, 220, 30 },
+        };
+        std::vector<GameCore::Entity> Room;
+        for(const Wall& Each : Walls)
+        {
+            Room.push_back(Shape(Each.Name, "Engine/Content/Meshes/Box.nmmesh", "Content/Materials/SolidColor.material.nmgraph", Each.At, Each.Scale));
+            Paint(Room.back(), Each.R, Each.G, Each.B);
+        }
+        const GameCore::Entity Ball = Shape("Ball", "Engine/Content/Meshes/Sphere.nmmesh", "Content/Materials/ReflectCube.material.nmgraph",
+                                            Vector3(), Vector3(200, 200, 200));
+        SceneCaptureProbeComponent Probe;
+        std::snprintf(Probe.Target, sizeof(Probe.Target), "%s", "Content/RenderTargets/TestCube.nmrt3d");
+        Probe.Mode       = SCM_Omnidirectional;
+        Probe.Resolution = 64;
+        Probe.NearClip   = 1.0f;
+        Probe.FarClip    = 3000.0f;
+        Ball.AddComponent(Probe);
+
+        const RenderView Facing = RenderView::MakePerspective(Viewport, Vector3(0, 0, -400), Vector3(0, 0, 1), 50.0f, 5.0f, 5000.0f);
+        Draw(Facing, 3);
+
+        /* The capture itself: each face's centre is its wall. */
+        const uint64_t Readback = Rend.RequestRenderTargetReadback("Content/RenderTargets/TestCube.nmrt3d");
+        Draw(Facing, 2);
+        EngineCore::Image Strip;
+        std::string Error;
+        const bool bStrip = Readback != 0 && Rend.TakeMaterialPreview(Readback, Strip, Error);
+        Expect(bStrip && Strip.GetWidth() == 64 * 6 && Strip.GetHeight() == 64, "the RenderTargetTex3D reads back as six 64-texel faces side by side");
+        if(bStrip)
+        {
+            bool bFaces = true;
+            for(int Face = 0; Face < 6; ++Face)
+            {
+                int Rgb[3];
+                At(Strip, Face * 64 + 32, 32, Rgb);
+                std::printf("    face %d centre %d %d %d\n", Face, Rgb[0], Rgb[1], Rgb[2]);
+                bFaces = bFaces && Is(Rgb, Walls[Face].R, Walls[Face].G, Walls[Face].B);
+            }
+            Expect(bFaces, "each face, +X -X +Y -Y +Z -Z, looks at its wall");
+        }
+
+        /* The sphere: centre reflects -Z (behind the camera); its sides their walls. */
+        EngineCore::Image Shot;
+        if(Capture(Facing, Shot))
+        {
+            int Centre[3], Right[3], Left[3], Top[3], Bottom[3];
+            At(Shot, 128, 128, Centre);
+            At(Shot, 186, 128, Right);
+            At(Shot, 70, 128, Left);
+            At(Shot, 128, 70, Top);
+            At(Shot, 128, 186, Bottom);
+            std::printf("    sphere centre %d %d %d, right %d %d %d, left %d %d %d, top %d %d %d, bottom %d %d %d\n", Centre[0], Centre[1],
+                        Centre[2], Right[0], Right[1], Right[2], Left[0], Left[1], Left[2], Top[0], Top[1], Top[2], Bottom[0], Bottom[1], Bottom[2]);
+            Expect(Is(Centre, 230, 220, 30), "the sphere's centre reflects the wall behind the camera");
+            Expect(Is(Right, 230, 30, 30) && Is(Left, 30, 220, 220), "its right side the +X wall, its left the -X");
+            Expect(Is(Top, 30, 230, 30) && Is(Bottom, 220, 30, 220), "its top the ceiling, its bottom the floor");
+        }
+
+        /* A planar mirror: the room gone, a red box above a mirror floor. */
+        for(const GameCore::Entity& Each : Room) { World.DestroyEntity(Each); }
+        World.DestroyEntity(Ball);
+        const GameCore::Entity Floor = Shape("Mirror", "Engine/Content/Meshes/Plane.nmmesh", "Content/Materials/ReflectMirror.material.nmgraph",
+                                             Vector3(), Vector3(800, 1, 800));
+        SceneCaptureProbeComponent Mirror;
+        std::snprintf(Mirror.Target, sizeof(Mirror.Target), "%s", "Content/RenderTargets/TestMirror.nmrt2d");
+        Mirror.Mode    = SCM_PlanarMirror;
+        Mirror.ExtentX = 400.0f;
+        Mirror.ExtentZ = 400.0f;
+        Floor.AddComponent(Mirror);
+        const GameCore::Entity Box = Shape("Box", "Engine/Content/Meshes/Box.nmmesh", "Content/Materials/SolidColor.material.nmgraph",
+                                           Vector3(160, 120, 150), Vector3(80, 80, 80));
+        Paint(Box, 230, 30, 30);   // off centre: a left-right mix-up would put its reflection on the other side
+        /* A slab under the mirror: between the reflected camera and the box, kept out by the oblique near plane. */
+        const GameCore::Entity Under = Shape("Under", "Engine/Content/Meshes/Box.nmmesh", "Content/Materials/SolidColor.material.nmgraph",
+                                             Vector3(0, -40, 0), Vector3(900, 20, 900));
+        Paint(Under, 30, 230, 30);
+
+        const Vector3 Eye(0, 350, -450);
+        const RenderView Above = RenderView::MakePerspective(Viewport, Eye, Vector3(0, -350, 600), 60.0f, 5.0f, 5000.0f);
+        const auto PixelOf = [&Above](const Vector3& InWorld, int& OutX, int& OutY)
+        {
+            const EngineCore::Vector4 Clip = (Above.Projection * Above.View) * EngineCore::Vector4(float(InWorld.GetX()), float(InWorld.GetY()),
+                                                                                                  float(InWorld.GetZ()), 1.0f);
+            OutX = int((Clip.GetX() / Clip.GetW() * 0.5f + 0.5f) * 256.0f);
+            OutY = int((1.0f - (Clip.GetY() / Clip.GetW() * 0.5f + 0.5f)) * 256.0f);
+        };
+        EngineCore::Image Pool;
+        if(Capture(Above, Pool))
+        {
+            int RX, RY, EX, EY, BX, BY;
+            PixelOf(Vector3(160, -120, 150), RX, RY);  // the box's reflection, under the floor
+            PixelOf(Vector3(-160, -120, 150), EX, EY); // its mirror image across the screen: nothing there
+            PixelOf(Vector3(160, 120, 150), BX, BY);   // the box itself
+            int Reflection[3], Empty[3], Itself[3];
+            At(Pool, std::clamp(RX, 0, 255), std::clamp(RY, 0, 255), Reflection);
+            At(Pool, std::clamp(EX, 0, 255), std::clamp(EY, 0, 255), Empty);
+            At(Pool, std::clamp(BX, 0, 255), std::clamp(BY, 0, 255), Itself);
+            std::printf("    mirror: box %d %d %d at %d,%d; reflection %d %d %d at %d,%d; empty %d %d %d\n", Itself[0], Itself[1], Itself[2],
+                        BX, BY, Reflection[0], Reflection[1], Reflection[2], RX, RY, Empty[0], Empty[1], Empty[2]);
+            Expect(Is(Itself, 230, 30, 30), "the box draws");
+            Expect(Is(Reflection, 230, 30, 30), "and the mirror floor shows it below itself, where its reflection belongs, past the slab under it");
+            Expect(!Is(Empty, 230, 30, 30), "on its own side, not the other");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
  * Bloom past the 8-bit scene colour: an Opaque Lit quad with emissive 50
  * (Sandbox's HotGlow) clips to white in the scene, but its G-buffer keeps the
  * rest (EncodeGBufferEmissive), and Bloom spreads it -- far wider than the
@@ -3255,6 +3452,7 @@ int main()
     TestStatFrameOnGpu();
     TestStaticDrawListsOnGpu();
     TestClearGradientOnGpu();
+    TestSceneCaptureOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();

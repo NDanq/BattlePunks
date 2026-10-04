@@ -9,6 +9,7 @@
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderPipeline.h"
+#include "Public/RenderCore/RenderTargetAsset.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/RenderView.h"
 
@@ -176,6 +177,22 @@ namespace RenderCore
         void BeginCapture(std::vector<StagedDraw>* InOut);
         void EndCapture();
         void SubmitCaptured(const std::vector<StagedDraw>& InDraws, int32_t InShadowView = -1);
+
+        /*
+         * SCENE CAPTURE (RenderScene::Render; RENDERPIPELINE.md). For a probe
+         * capturing into the render target at InPath (RenderTargetAsset.h):
+         * BeginTargetCapture readies its texture at InResolution (0: the
+         * target's own size) and returns the stage targets each face renders
+         * through, with the colour to clear them to -- null, warned once, if
+         * the path names no target or one of the other kind. After each
+         * face's RenderSceneStages, FinishTargetFace copies it into the
+         * target (a cube's face InFace into its place in the strip).
+         * ReadRenderTarget reads back what a material would sample now (the
+         * editor's bake).
+         */
+        SceneTargets* BeginTargetCapture(const char* InPath, uint32_t InResolution, ERenderTargetKind InKind, EngineCore::Color& OutClear);
+        void          FinishTargetFace(const char* InPath, uint32_t InFace);
+        bool          ReadRenderTarget(const char* InPath, EngineCore::Image& OutPixels);
 
         /* Moves when anything a kept draw points at may have gone: a material
          * reloaded or retired, a mesh rebuilt or reimported. */

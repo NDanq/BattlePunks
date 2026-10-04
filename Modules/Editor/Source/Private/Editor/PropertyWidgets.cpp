@@ -474,7 +474,8 @@ namespace
             const bool bMesh     = (Entry.Flags & GameCore::PF_AssetMesh) != 0;
             const bool bMaterial = (Entry.Flags & GameCore::PF_AssetMaterial) != 0;
             const bool bPost     = (Entry.Flags & GameCore::PF_AssetPostProcess) != 0;
-            if((bMesh || bMaterial || bPost) && !Entry.IsReadOnly())
+            const bool bTarget   = (Entry.Flags & GameCore::PF_AssetRenderTarget) != 0;
+            if((bMesh || bMaterial || bPost || bTarget) && !Entry.IsReadOnly())
             {
                 /* What each kind of asset field offers. */
                 struct AssetUi { EAsset Kind; const char* Placeholder; const char* Tip; const char* PickTip; const char* Title; const char* Filter; };
@@ -487,14 +488,20 @@ namespace
                       "A post process stack, by its path: Content/PostProcess/Arch.pp.nmgraph -- or a PostProcess material graph",
                       "Choose a post process stack", "Choose a Post Process Stack",
                       "Post Process Stacks (*.pp.nmgraph);;PostProcess Materials (*.material.nmgraph)" },
+                    { EAsset::RenderTarget, "Drop an .nmrt2d or .nmrt3d here",
+                      "A render target, by its path: Content/RenderTargets/Pool.nmrt2d (RenderTargetTex2D, a planar mirror) or "
+                      "Content/RenderTargets/Ball.nmrt3d (RenderTargetTex3D, omnidirectional)",
+                      "Choose a render target", "Choose a Render Target", "Render Targets (*.nmrt2d *.nmrt3d)" },
                 };
-                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : 2];
+                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : 3];
                 AssetKind = Ui.Kind;
                 Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
                 if(!bMesh)
                 {
-                    auto* Completer = new QCompleter(bMaterial ? EditorContent::ListMaterialPaths() : EditorContent::ListPostProcessPaths(), Edit);
+                    auto* Completer = new QCompleter(bMaterial ? EditorContent::ListMaterialPaths()
+                                                     : bPost   ? EditorContent::ListPostProcessPaths()
+                                                               : EditorContent::ListRenderTargetPaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
                     Edit->setCompleter(Completer);
@@ -560,7 +567,7 @@ namespace
         }
 
     private:
-        enum class EAsset { None, Mesh, Material, PostProcess };
+        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget };
 
         void Commit()
         {
@@ -573,6 +580,13 @@ namespace
             {
                 QToolTip::showText(Edit->mapToGlobal(QPoint(0, Edit->height())),
                                    QStringLiteral("Not a material graph: give a *.material.nmgraph path"), Edit);
+                Refresh(true);
+                return;
+            }
+            if(AssetKind == EAsset::RenderTarget && !EditorContent::IsRenderTargetFieldValue(Edit->text().trimmed()))
+            {
+                QToolTip::showText(Edit->mapToGlobal(QPoint(0, Edit->height())),
+                                   QStringLiteral("Not a render target: give an .nmrt2d or .nmrt3d path (or transient://Name)"), Edit);
                 Refresh(true);
                 return;
             }
@@ -618,6 +632,10 @@ namespace
             if(AssetKind == EAsset::PostProcess)
             {
                 return EditorContent::PostProcessPathFor(InFile);
+            }
+            if(AssetKind == EAsset::RenderTarget)
+            {
+                return EditorContent::RenderTargetPathFor(InFile);
             }
             return QString();
         }

@@ -105,6 +105,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/ContentBrowserPanel.cpp
         Source/Public/Editor/ContentBrowserPanel.h
         Source/Private/Editor/Content/ContentPaths.cpp
+        Source/Private/Editor/Content/RenderTargetAssets.cpp
+        Source/Private/Editor/Content/RenderTargetAssets.h
         Source/Private/Editor/Content/ContentPaths.h
         Source/Private/Editor/Content/MeshPreviewView.cpp
         Source/Private/Editor/Content/MeshPreviewView.h

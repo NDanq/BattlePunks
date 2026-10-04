@@ -208,6 +208,11 @@ namespace RenderCore
          * debug lines, read back for TakeMaterialPreview (a screenshot, a
          * test). Stalls briefly. 0 if not running. GAME THREAD ONLY. */
         uint64_t RequestSceneCapture();
+
+        /* The render target at InPath (RenderTargetAsset.h) as a material
+         * samples it after the default scene's next captures, through
+         * TakeMaterialPreview -- what the editor bakes into the target's file. */
+        uint64_t RequestRenderTargetReadback(const std::string& InPath);
 #endif // WITH_EDITOR
 
         /*

@@ -39,6 +39,7 @@
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/NodeGraph/Schema.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/EditorLights.h"
 #include "Private/Editor/EditorPrimitives.h"
@@ -424,6 +425,15 @@ void EditorMainWindow::BuildMenus()
     connect(ConvertToPrefab, &QAction::triggered, this, [this]()
     {
         EditorPrefabs::ConvertToPrefab(Level, Level.GetSelection(), this);
+    });
+
+    World->addSeparator();
+    QAction* BakeCaptures = World->addAction(QStringLiteral("&Bake Scene Captures"));
+    BakeCaptures->setToolTip(QStringLiteral("Every Scene Capture Probe captures now, and its render target file keeps it as its bake: "
+                                            "what materials sample before (or without) a live capture"));
+    connect(BakeCaptures, &QAction::triggered, this, [this]()
+    {
+        EditorRenderTargets::BakeSceneCaptures(Level, Context, this, [this](const QString& InText) { statusBar()->showMessage(InText, 8000); });
     });
 
     QMenu* View = menuBar()->addMenu(QStringLiteral("&View"));

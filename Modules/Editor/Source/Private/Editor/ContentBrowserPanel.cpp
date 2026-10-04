@@ -42,6 +42,7 @@
 #include "Public/NodeGraph/GraphFile.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
@@ -127,7 +128,9 @@ namespace
     bool IsAsset(const QString& InPath)
     {
         return InPath.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive)
-            || InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive);
+            || InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmrt2d"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmrt3d"), Qt::CaseInsensitive);
     }
 }
 
@@ -293,6 +296,20 @@ private:
             {
                 Entry.Summary = QStringLiteral("Not a texture this editor can read");
             }
+        }
+        else if(!EditorContent::RenderTargetPathFor(Path).isEmpty())
+        {
+            /* Its bake, if it has one, as the thumbnail. */
+            RenderCore::RenderTargetData Target;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            if(RenderCore::SerializeRenderTarget(Ar, Target) && !Target.Baked.IsNull())
+            {
+                const QImage Image = EngineCore::QtBridge::ToQImage(Target.Baked);
+                Entry.Thumbnail = QIcon(QPixmap::fromImage(Image.scaled(ThumbnailSize, ThumbnailSize, Qt::KeepAspectRatio,
+                                                                        Qt::SmoothTransformation)));
+            }
+            Entry.Summary = QStringLiteral("Render target: %1\nA Scene Capture Probe renders into it; double-click for its settings")
+                            .arg(EditorRenderTargets::DescribeRenderTarget(Path));
         }
         else if(Path.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive))
         {
@@ -734,6 +751,11 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         MeshViewerWindow::Open(InPath, window());
         return;
     }
+    if(!EditorContent::RenderTargetPathFor(InPath).isEmpty())
+    {
+        EditorRenderTargets::EditRenderTarget(InPath, window());
+        return;
+    }
     if(IsAsset(InPath))
     {
         emit StatusMessage(QStringLiteral("Drag %1 onto a Texture Sample's Texture, in a material graph").arg(Info.fileName()));
@@ -791,6 +813,14 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
     {
         Menu.addAction(QStringLiteral("New Folder"), this, &ContentBrowserPanel::NewFolder);
         Menu.addAction(QStringLiteral("New Prefab..."), this, [this]() { EditorPrefabs::CreatePrefab(CurrentFolder, window()); });
+        Menu.addAction(QStringLiteral("New Render Target 2D..."), this, [this]()
+        {
+            EditorRenderTargets::CreateRenderTarget(CurrentFolder, RenderCore::ERenderTargetKind::Tex2D, window());
+        });
+        Menu.addAction(QStringLiteral("New Render Target 3D (Cube)..."), this, [this]()
+        {
+            EditorRenderTargets::CreateRenderTarget(CurrentFolder, RenderCore::ERenderTargetKind::Cube, window());
+        });
     }
     Menu.addAction(QStringLiteral("Import..."), this, &ContentBrowserPanel::ImportWithDialog);
     Menu.addAction(QStringLiteral("Show Folder in Explorer"), this, [this]()

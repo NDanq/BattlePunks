@@ -12,6 +12,8 @@
 #include "Public/RenderCore/RenderProxy.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/MaterialPreview.h"
+#include "Private/RenderCore/SceneCapture.h"
+#include "Public/RenderCore/Components/SceneCaptureProbeComponent.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/SceneTargets.h"
@@ -69,12 +71,172 @@ namespace RenderCore
             }
             return List;
         }
+
+        /*
+         * PrePass for one view: every visible proxy's draws queued in their
+         * stages (a static one's from its kept list), then each shadow view's
+         * casters. The main view, or a scene capture's (InCapture: its owner's
+         * subtree left out). Counts what it drew and culled.
+         */
+        void QueueDraws(RenderContext& InContext, const RenderView& InView, const SceneCaptureRequest* InCapture,
+                        uint64_t& OutVisible, uint64_t& OutCulled, uint64_t& OutStatic)
+        {
+            InContext.BeginSceneDraws();
+
+            uint64_t VisibleCount = 0;
+            uint64_t CulledCount  = 0;
+            const auto Excluded = [InCapture](const RenderProxy* InProxy)
+            {
+                for(uint32_t Index = 0; InCapture && Index < InCapture->ExcludedCount; ++Index)
+                {
+                    if(InCapture->Excluded[Index] == InProxy->GetOwner()) { return true; }
+                }
+                return false;
+            };
+
+            /* A static proxy's padding comes from its list; a dynamic one's is asked. */
+            const uint64_t Generation = InContext.GetContentGeneration();
+            const auto PaddingOf = [&](RenderProxy* InProxy)
+            {
+                if(!InProxy->IsStatic())
+                {
+                    return InProxy->GetBoundsPadding(InContext);
+                }
+                StaticDrawList& List = ListFor(InProxy, Generation);
+                if(!List.bPadding)
+                {
+                    List.Padding  = InProxy->GetBoundsPadding(InContext);
+                    List.bPadding = true;
+                }
+                return List.Padding;
+            };
+            uint64_t StaticCount = 0;
+
+            for(RenderProxy* Proxy : Proxies)
+            {
+                if(!Proxy->IsVisible() || Excluded(Proxy))
+                {
+                    continue;
+                }
+                if(!Proxy->IsStatic() && !StaticLists.empty())
+                {
+                    StaticLists.erase(Proxy);   // it was static: its list is stale for good
+                }
+
+                /*
+                 * EMPTY MEANS "NO BASIS TO CULL", on EITHER side -- not "never
+                 * overlaps", which is what GameCore::AABB::Overlaps gives (it
+                 * returns false the instant either box IsEmpty()) and is exactly
+                 * backwards here. A caller with no real view still wants
+                 * everything drawn, and a proxy that never called SetLocalBounds
+                 * has given RenderScene nothing to cull it BY: undeclared, not
+                 * "everywhere and nowhere". Undeclared must default to visible or
+                 * a proxy type that never opts into bounds could never be drawn --
+                 * this file's smoke test has one, deliberately, to prove the path.
+                 * Explicitly overrides AABB::Overlaps' own empty-handling.
+                 */
+                const bool bViewHasBounds  = !InView.Bounds.IsEmpty();
+                const bool bProxyHasBounds = !Proxy->GetWorldBounds().IsEmpty();
+
+                /* World Position Offset can move geometry past its bounds: pad
+                 * them by the largest Max Offset among its materials. */
+                GameCore::AABB Bounds = Proxy->GetWorldBounds();
+                const float Padding = bViewHasBounds && bProxyHasBounds ? PaddingOf(Proxy) : 0.0f;
+                if(Padding > 0.0f)
+                {
+                    const EngineCore::Vector3 Pad(Padding, Padding, Padding);
+                    Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
+                }
+                const bool bVisible = !bViewHasBounds || !bProxyHasBounds || Bounds.Overlaps(InView.Bounds);
+
+                if(!bVisible)
+                {
+                    ++CulledCount;
+                    continue;
+                }
+
+                if(Proxy->IsStatic())
+                {
+                    StaticDrawList& List = ListFor(Proxy, Generation);
+                    if(!List.bDraws)
+                    {
+                        InContext.BeginCapture(&List.Draws);
+                        Proxy->Draw(InContext);
+                        InContext.EndCapture();
+                        List.bDraws = true;
+                        ++StaticBuilds;
+                    }
+                    InContext.SubmitCaptured(List.Draws);
+                    ++StaticCount;
+                }
+                else
+                {
+                    Proxy->Draw(InContext);
+                }
+                ++VisibleCount;
+            }
+
+            /*
+             * Shadow casters: per shadow view, every visible proxy it can see,
+             * camera-culled or not -- a caster off screen can shade what is on
+             * it. Padded like the camera's cull, for World Position Offset.
+             */
+            const uint32_t ShadowViews = InContext.PrepareShadows();
+            for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews; ++ViewIndex)
+            {
+                const GameCore::AABB& ViewBounds = InContext.GetShadowViewBounds(ViewIndex);
+                InContext.SetShadowCasterView(int32_t(ViewIndex));
+                for(RenderProxy* Proxy : Proxies)
+                {
+                    if(!Proxy->IsVisible() || Excluded(Proxy))
+                    {
+                        continue;
+                    }
+                    GameCore::AABB Bounds = Proxy->GetWorldBounds();
+                    if(!Bounds.IsEmpty() && !ViewBounds.IsEmpty())
+                    {
+                        const float Padding = PaddingOf(Proxy);
+                        const EngineCore::Vector3 Pad(Padding, Padding, Padding);
+                        Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
+                        if(!Bounds.Overlaps(ViewBounds))
+                        {
+                            continue;
+                        }
+                    }
+                    if(Proxy->IsStatic())
+                    {
+                        StaticDrawList& List = ListFor(Proxy, Generation);
+                        if(!List.bShadows)
+                        {
+                            InContext.BeginCapture(&List.Shadows);
+                            Proxy->DrawShadow(InContext);
+                            InContext.EndCapture();
+                            List.bShadows = true;
+                            ++StaticBuilds;
+                        }
+                        InContext.SubmitCaptured(List.Shadows, int32_t(ViewIndex));
+                    }
+                    else
+                    {
+                        Proxy->DrawShadow(InContext);
+                    }
+                }
+            }
+            InContext.SetShadowCasterView(-1);
+            OutVisible = VisibleCount;
+            OutCulled  = CulledCount;
+            OutStatic  = StaticCount;
+        }
+
 #if WITH_EDITOR
         std::vector<DebugLine>    DebugLines;   // consumed by the next Render()
         std::vector<MaterialPreviewRequest> Previews;   // likewise
         std::vector<std::pair<uint64_t, MaterialPreviewMailbox*>> Captures;   // likewise
+        struct TargetReadback { uint64_t Request; std::string Path; MaterialPreviewMailbox* Mailbox; };
+        std::vector<TargetReadback> TargetReadbacks;                           // likewise
 #endif
         RenderView                View;
+        SceneCaptureList          CaptureList;                         // SetCaptures; consumed by Render
         EngineCore::Color         ClearColor{24, 26, 32, 255};        // the top, with a gradient
         EngineCore::Color         ClearBottom{24, 26, 32, 255};
         bool                      bClearGradient = false;
@@ -229,6 +391,11 @@ namespace RenderCore
         P->bClearGradient = false;
     }
 
+    void RenderScene::SetCaptures(const SceneCaptureList& InCaptures)
+    {
+        P->CaptureList = InCaptures;
+    }
+
     void RenderScene::SetClearGradient(const EngineCore::Color InTop, const EngineCore::Color InBottom)
     {
         P->ClearColor     = InTop;
@@ -260,6 +427,11 @@ namespace RenderCore
     void RenderScene::AddCapture(const uint64_t InRequest, MaterialPreviewMailbox* InMailbox)
     {
         P->Captures.emplace_back(InRequest, InMailbox);
+    }
+
+    void RenderScene::AddTargetReadback(const uint64_t InRequest, const std::string& InPath, MaterialPreviewMailbox* InMailbox)
+    {
+        P->TargetReadbacks.push_back({ InRequest, InPath, InMailbox });
     }
 #endif
 
@@ -320,140 +492,59 @@ namespace RenderCore
          * out entirely when CurrentCmd is null (outside a BeginRendering/
          * EndRendering pair), so a bind placed above it would be a silent no-op.
          */
-        InContext.BeginSceneDraws();
-
-        uint64_t VisibleCount = 0;
-        uint64_t CulledCount  = 0;
-
-        /* A static proxy's padding comes from its list; a dynamic one's is asked. */
-        const uint64_t Generation = InContext.GetContentGeneration();
-        const auto PaddingOf = [&](RenderProxy* InProxy)
-        {
-            if(!InProxy->IsStatic())
-            {
-                return InProxy->GetBoundsPadding(InContext);
-            }
-            Impl::StaticDrawList& List = P->ListFor(InProxy, Generation);
-            if(!List.bPadding)
-            {
-                List.Padding  = InProxy->GetBoundsPadding(InContext);
-                List.bPadding = true;
-            }
-            return List.Padding;
-        };
-        uint64_t StaticCount = 0;
-
-        for(RenderProxy* Proxy : P->Proxies)
-        {
-            if(!Proxy->IsVisible())
-            {
-                continue;
-            }
-            if(!Proxy->IsStatic() && !P->StaticLists.empty())
-            {
-                P->StaticLists.erase(Proxy);   // it was static: its list is stale for good
-            }
-
-            /*
-             * EMPTY MEANS "NO BASIS TO CULL", on EITHER side -- not "never
-             * overlaps", which is what GameCore::AABB::Overlaps gives (it
-             * returns false the instant either box IsEmpty()) and is exactly
-             * backwards here. A caller with no real view still wants
-             * everything drawn, and a proxy that never called SetLocalBounds
-             * has given RenderScene nothing to cull it BY: undeclared, not
-             * "everywhere and nowhere". Undeclared must default to visible or
-             * a proxy type that never opts into bounds could never be drawn --
-             * this file's smoke test has one, deliberately, to prove the path.
-             * Explicitly overrides AABB::Overlaps' own empty-handling.
-             */
-            const bool bViewHasBounds  = !P->View.Bounds.IsEmpty();
-            const bool bProxyHasBounds = !Proxy->GetWorldBounds().IsEmpty();
-
-            /* World Position Offset can move geometry past its bounds: pad
-             * them by the largest Max Offset among its materials. */
-            GameCore::AABB Bounds = Proxy->GetWorldBounds();
-            const float Padding = bViewHasBounds && bProxyHasBounds ? PaddingOf(Proxy) : 0.0f;
-            if(Padding > 0.0f)
-            {
-                const EngineCore::Vector3 Pad(Padding, Padding, Padding);
-                Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
-            }
-            const bool bVisible = !bViewHasBounds || !bProxyHasBounds || Bounds.Overlaps(P->View.Bounds);
-
-            if(!bVisible)
-            {
-                ++CulledCount;
-                continue;
-            }
-
-            if(Proxy->IsStatic())
-            {
-                Impl::StaticDrawList& List = P->ListFor(Proxy, Generation);
-                if(!List.bDraws)
-                {
-                    InContext.BeginCapture(&List.Draws);
-                    Proxy->Draw(InContext);
-                    InContext.EndCapture();
-                    List.bDraws = true;
-                    ++P->StaticBuilds;
-                }
-                InContext.SubmitCaptured(List.Draws);
-                ++StaticCount;
-            }
-            else
-            {
-                Proxy->Draw(InContext);
-            }
-            ++VisibleCount;
-        }
+        uint64_t VisibleCount = 0, CulledCount = 0, StaticCount = 0;
 
         /*
-         * Shadow casters: per shadow view, every visible proxy it can see,
-         * camera-culled or not -- a caster off screen can shade what is on
-         * it. Padded like the camera's cull, for World Position Offset.
+         * SCENE CAPTURES (RENDERPIPELINE.md), before the scene's own pass so it
+         * samples this frame's: each probe's views -- six cube faces, or the
+         * camera reflected in a mirror -- through its own stage targets, each
+         * copied into its render target. Shadows are drawn for each view; the
+         * post process stack is the main view's alone.
          */
-        const uint32_t ShadowViews = InContext.PrepareShadows();
-        for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews; ++ViewIndex)
+        bool bCaptured = false;
+        for(uint32_t Index = 0; Index < P->CaptureList.Count && Index < RENDER_CAPTURES_MAX; ++Index)
         {
-            const GameCore::AABB& ViewBounds = InContext.GetShadowViewBounds(ViewIndex);
-            InContext.SetShadowCasterView(int32_t(ViewIndex));
-            for(RenderProxy* Proxy : P->Proxies)
+            const SceneCaptureRequest& Request = P->CaptureList.Requests[Index];
+            const bool bCube = Request.Mode == SCM_Omnidirectional;
+            EngineCore::Color Clear;
+            SceneTargets* Stages = InContext.BeginTargetCapture(Request.Target, Request.Resolution,
+                                                                bCube ? ERenderTargetKind::Cube : ERenderTargetKind::Tex2D, Clear);
+            if(!Stages)
             {
-                if(!Proxy->IsVisible())
-                {
-                    continue;
-                }
-                GameCore::AABB Bounds = Proxy->GetWorldBounds();
-                if(!Bounds.IsEmpty() && !ViewBounds.IsEmpty())
-                {
-                    const float Padding = PaddingOf(Proxy);
-                    const EngineCore::Vector3 Pad(Padding, Padding, Padding);
-                    Bounds = GameCore::AABB(Bounds.Min - Pad, Bounds.Max + Pad);
-                    if(!Bounds.Overlaps(ViewBounds))
-                    {
-                        continue;
-                    }
-                }
-                if(Proxy->IsStatic())
-                {
-                    Impl::StaticDrawList& List = P->ListFor(Proxy, Generation);
-                    if(!List.bShadows)
-                    {
-                        InContext.BeginCapture(&List.Shadows);
-                        Proxy->DrawShadow(InContext);
-                        InContext.EndCapture();
-                        List.bShadows = true;
-                        ++P->StaticBuilds;
-                    }
-                    InContext.SubmitCaptured(List.Shadows, int32_t(ViewIndex));
-                }
-                else
-                {
-                    Proxy->DrawShadow(InContext);
-                }
+                continue;
+            }
+            RenderView Views[6];
+            const uint32_t ViewCount = BuildCaptureViews(Request, P->View, Stages->Width, Stages->Height, Views);
+            for(uint32_t Face = 0; Face < ViewCount; ++Face)
+            {
+                InContext.SetView(Views[Face]);
+                uint64_t Visible = 0, Culled = 0, Static = 0;
+                P->QueueDraws(InContext, Views[Face], &Request, Visible, Culled, Static);
+                InContext.RenderSceneStages(*Stages, Clear);
+                InContext.FinishTargetFace(Request.Target, Face);
+                bCaptured = true;
             }
         }
-        InContext.SetShadowCasterView(-1);
+        P->CaptureList.Count = 0;
+        if(bCaptured)
+        {
+            InContext.SetView(P->View);
+        }
+#if WITH_EDITOR
+        for(const Impl::TargetReadback& Each : P->TargetReadbacks)
+        {
+            EngineCore::Image Pixels;
+            const bool bRead = InContext.ReadRenderTarget(Each.Path.c_str(), Pixels);
+            if(Each.Mailbox)
+            {
+                Each.Mailbox->Deliver(Each.Request, std::move(Pixels),
+                                      bRead ? std::string() : "render target '" + Each.Path + "' has nothing captured or baked");
+            }
+        }
+        P->TargetReadbacks.clear();
+#endif
+
+        P->QueueDraws(InContext, P->View, nullptr, VisibleCount, CulledCount, StaticCount);
 
         /* The post process stack: the volumes' blend (WorldBridge), its
          * materials by stage and order, then the effects' settings. */

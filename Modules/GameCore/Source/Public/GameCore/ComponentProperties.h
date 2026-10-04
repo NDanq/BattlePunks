@@ -63,6 +63,7 @@ namespace GameCore
         PF_AssetMesh     = 1 << 1,   // a runtime-relative path to a mesh asset
         PF_AssetMaterial = 1 << 2,   // a material's name
         PF_AssetPostProcess = 1 << 3,   // a post process stack (*.pp.nmgraph), or a PostProcess material graph
+        PF_AssetRenderTarget = 1 << 4,  // a render target texture (*.nmrt2d, *.nmrt3d; RenderTargetAsset.h)
     };
 
     enum : size_t

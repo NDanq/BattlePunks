@@ -76,6 +76,12 @@ public:
     uint64_t RequestMaterialPreview(const QString& InName, int InSize, EngineCore::Color InTint);
     bool     TakeMaterialPreview(uint64_t InRequest, QImage& OutImage, QString& OutError);
 
+    /* A render target's pixels as materials sample them after the next frame's
+     * captures (Renderer::RequestRenderTargetReadback): what a bake stores.
+     * 0 when the Renderer is not running; poll TakeRenderTargetReadback. */
+    uint64_t RequestRenderTargetReadback(const QString& InRuntimePath);
+    bool     TakeRenderTargetReadback(uint64_t InRequest, EngineCore::Image& OutPixels, QString& OutError);
+
     /* See Renderer::RequestMeshPreview: InMesh (a runtime path) framed by an
      * orbiting camera, with InMaterial on every section, else InSections.
      * Answered through TakeMaterialPreview. 0 when the Renderer is not running. */

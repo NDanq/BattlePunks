@@ -153,6 +153,26 @@ bool EditorContext::TakeMaterialPreview(const uint64_t InRequest, QImage& OutIma
     return true;
 }
 
+uint64_t EditorContext::RequestRenderTargetReadback(const QString& InRuntimePath)
+{
+    if(!Renderer || !bRendererReady)
+    {
+        return 0;
+    }
+    return Renderer->RequestRenderTargetReadback(InRuntimePath.toStdString());
+}
+
+bool EditorContext::TakeRenderTargetReadback(const uint64_t InRequest, EngineCore::Image& OutPixels, QString& OutError)
+{
+    std::string Error;
+    if(!Renderer || !Renderer->TakeMaterialPreview(InRequest, OutPixels, Error))
+    {
+        return false;
+    }
+    OutError = QString::fromStdString(Error);
+    return true;
+}
+
 void EditorContext::Shutdown()
 {
     /* First: the game's level and module go while the Renderer still runs. */

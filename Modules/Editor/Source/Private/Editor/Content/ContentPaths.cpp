@@ -12,6 +12,7 @@
 
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Public/RenderCore/RenderTargetAsset.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 
 namespace EditorContent
@@ -120,6 +121,23 @@ namespace EditorContent
         return IsMaterialFieldValue(InText) || (InText.endsWith(POST_PROCESS_GRAPH) && InText.size() > POST_PROCESS_GRAPH.size());
     }
 
+    QStringList ListRenderTargetPaths()
+    {
+        return ListGraphs(&RenderTargetPathFor);
+    }
+
+    QString RenderTargetPathFor(const QString& InPath)
+    {
+        const bool bTarget = InPath.endsWith(QStringLiteral(".nmrt2d"), Qt::CaseInsensitive)
+                          || InPath.endsWith(QStringLiteral(".nmrt3d"), Qt::CaseInsensitive);
+        return bTarget ? ToRuntimePath(InPath) : QString();
+    }
+
+    bool IsRenderTargetFieldValue(const QString& InText)
+    {
+        return InText.isEmpty() || RenderCore::IsRenderTargetPath(InText.toStdString());
+    }
+
     QString MaterialPathFor(const QString& InPath)
     {
         if(InPath.isEmpty() || !InPath.endsWith(MATERIAL_GRAPH, Qt::CaseInsensitive)) { return QString(); }
@@ -165,6 +183,7 @@ namespace EditorContent
         {
             RenderCore::MeshAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::TextureAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RenderTargetAssetCache::Invalidate(Runtime.toStdString());
         }
     }
 
@@ -180,6 +199,7 @@ namespace EditorContent
         {
             RenderCore::MeshAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::TextureAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::RenderTargetAssetCache::Invalidate(Runtime.toStdString());
         }
     }
 }

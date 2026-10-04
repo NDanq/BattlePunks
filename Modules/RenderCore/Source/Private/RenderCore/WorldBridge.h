@@ -11,6 +11,7 @@
 #include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/RenderView.h"
+#include "Private/RenderCore/SceneCapture.h"
 
 /*
  * The game-thread half of the bridge between a GameCore::World and the
@@ -71,6 +72,16 @@ namespace RenderCore
         /* Every enabled Post Process volume InView's camera is in or near,
          * blended Priority low first, weighted by how far inside it is. */
         RenderPostProcess BuildPostProcess(const RenderView& InView) const;
+
+        /* The SceneCaptureProbes due this frame (Frequency, CaptureNow --
+         * cleared once taken), as capture requests for InView; a mirror out of
+         * InView's sight is not due. Game thread. */
+        SceneCaptureList BuildCaptures(const RenderView& InView, double InDeltaSeconds);
+
+        /* BuildCaptures' clock and each probe's last capture, by entity. */
+        struct ProbeState { double LastCapture = -1.0e30; bool bCaptured = false; };
+        std::unordered_map<uint64_t, ProbeState> ProbeStates;
+        double                                   CaptureClock = 0.0;
 
         RenderScene*    Scene = nullptr;
         GameCore::World* BoundWorld = nullptr;
