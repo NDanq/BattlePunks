@@ -246,7 +246,7 @@ namespace RenderCore
         double  GpuSums[RGT_Count]   = {};
         int     GpuSamples[RGT_Count] = {};
         int64_t GpuWindowStartNs     = 0;
-        float   GpuMs[RGT_Count]     = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        float   GpuMs[RGT_Count]     = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
 
         void AddGpuTimes(const float (&InGpuMs)[RGT_Count])
         {
@@ -502,6 +502,7 @@ namespace RenderCore
          * post process stack is the main view's alone.
          */
         bool bCaptured = false;
+        InContext.WriteGpuTimestamp(RGT_SceneCapture, false);   // "stat frame": 0 with no captures, not "-"
         for(uint32_t Index = 0; Index < P->CaptureList.Count && Index < RENDER_CAPTURES_MAX; ++Index)
         {
             const SceneCaptureRequest& Request = P->CaptureList.Requests[Index];
@@ -525,6 +526,7 @@ namespace RenderCore
                 bCaptured = true;
             }
         }
+        InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
         P->CaptureList.Count = 0;
         if(bCaptured)
         {

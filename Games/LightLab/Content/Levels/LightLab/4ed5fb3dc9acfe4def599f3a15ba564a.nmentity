@@ -2,7 +2,7 @@
 <Entity Guid="4ed5fb3dc9acfe4def599f3a15ba564a" Name="Ball" Mobility="Static">
   <Component Type="Render" Version="3">
     <Visible Value="true" />
-    <Material0 Value="" />
+    <Material0 Value="Content/Materials/Chrome.material.nmgraph" />
     <Material1 Value="" />
     <Material2 Value="" />
     <Material3 Value="" />

@@ -526,7 +526,7 @@ namespace RenderCore
     namespace
     {
         std::mutex GReportedGpuLock;
-        float      GReportedGpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        float      GReportedGpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
     }
 
     void SetReportedGpuTimes(const float* InGpuMs)
