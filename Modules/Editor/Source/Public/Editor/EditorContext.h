@@ -121,9 +121,10 @@ public:
 
     // === Play-in-Editor =====================================================
 
-    /* Runs the [Game] Module game from its start level in the viewport (see
-     * PlaySession). False, with the reason logged, if it would not start. */
-    bool StartPlay();
+    /* Runs the [Game] Module game in the viewport (see PlaySession): from the
+     * level that loads InOpenWorld (a runtime path) if it has one, else from
+     * its start level. False, with the reason logged, if it would not start. */
+    bool StartPlay(const QString& InOpenWorld = QString());
 
     /* Restores the edited World and selection. Also runs when the game quits.
      * Idempotent. */

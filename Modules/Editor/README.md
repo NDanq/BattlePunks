@@ -529,8 +529,9 @@ registered:
 
 **Play** (F5, the viewport toolbar, or `play` in the Console) runs the game in
 the viewport: the module named by `[Game] Module` in `Config/DefaultEngine.ini`
-(Sandbox's is `SandboxGame`), from `[Game] StartLevel` or the module's own start
-level. It is the game's real code -- its level, mode, systems and startup script
+(Sandbox's is `SandboxGame`), from the level that loads the open world -- the
+one whose `ILevel::GetWorldFile` names it -- else from `[Game] StartLevel` or
+the module's own start level. It is the game's real code -- its level, mode, systems and startup script
 -- in a `GameSession`, exactly as the game's launcher runs it; the editor only
 stands in for `Application` as the host.
 

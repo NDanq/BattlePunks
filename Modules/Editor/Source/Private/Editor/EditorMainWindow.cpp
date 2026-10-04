@@ -575,7 +575,8 @@ void EditorMainWindow::StartPlay()
         CORE_LOG("[Editor] the SDL input probe stops while playing: the game's input uses the viewport")
     }
 
-    if(!Context.StartPlay())
+    /* The open world's level, if the game has one for it (ILevel::GetWorldFile). */
+    if(!Context.StartPlay(CurrentPath.isEmpty() ? QString() : EditorContent::ToRuntimePath(CurrentPath)))
     {
         statusBar()->showMessage(QStringLiteral("Play failed -- see the Console"), 5000);
         return;
