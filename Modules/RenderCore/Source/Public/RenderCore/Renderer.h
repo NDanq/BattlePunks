@@ -181,7 +181,8 @@ namespace RenderCore
          * the next EndFrame() and reads it back; the readback stalls briefly,
          * so don't call every frame. Returns an id for TakeMaterialPreview, 0
          * if not running. GAME THREAD ONLY. */
-        uint64_t RequestMaterialPreview(const char* InName, int InSize, EngineCore::Color InTint);
+        uint64_t RequestMaterialPreview(const char* InName, int InSize, EngineCore::Color InTint,
+                                        EMaterialPreviewChannel InChannel = EMaterialPreviewChannel::Lit);
 
         /* True once, when done: OutImage (RGBA8, top row first), or empty with
          * OutError. False while pending. Answers RequestMeshPreview too.

@@ -85,7 +85,7 @@ uses it.
 | `OutlinerPanel` | Entity hierarchy with component summary, filter, create, drag to reparent; Ctrl/Shift multiple selection, F2 renames in the row, and the edit actions (below) in its context menu |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
 | `ViewportSDLInput` (private) | The viewport as an SDL window (focus hand-over, text forwarding, pumping), for the game's input and the input probe |
-| `DetailsPanel` + `PropertyWidgets` | The entity's name and **Mobility** (Dynamic / Static -- applies to every selected entity, one undo step), then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
+| `DetailsPanel` + `PropertyWidgets` | The entity's name and **Mobility** (Dynamic / Static / Stationary -- applies to every selected entity, one undo step), then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
 | `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (Content Browser right-click > New Material / Script Graph, File > Open Graph, or double-click in the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
 | `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph with its generated code inside it, `<gen_code>` (see `Modules/NodeGraph`); nothing is written beside it |
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
@@ -361,6 +361,9 @@ take keyboard focus, so the viewport's keys keep working after one is used.
     targets, post process, ambient occlusion and bloom, the shadow atlases, the
     image-based lighting atlas and strip, and every render target asset
     captured. The button then names it.
+- **Lighting**: **Baked** draws with the world's bake, **Live** lights every
+  light live as if there were none (`[Rendering] BakedLighting`; see the Build
+  menu's Bake Lightmaps).
 - **Editor Gizmos**: **All Bounds** (every entity's box, not only the
   selection's) and **Light Gizmos** (every light's reach, not only the
   selected light's).
@@ -525,7 +528,7 @@ registered:
 | `viewmode <lit \| unlit \| target [name]>` | Show > View Mode; `target` alone lists the render targets it can show |
 | `save` | File > Save World (the world must have a file) |
 | `quit` | File > Exit, which still asks about unsaved changes |
-| `lighting <bake \| baked \| lit>` | Build > Bake Lightmaps, or View > Lighting > Baked / Lit |
+| `lighting <bake \| baked \| live>` | Build > Bake Lightmaps, or Show > Lighting > Baked / Live |
 | `screenshot <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`) |
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `Cooked/` beside it |
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
@@ -715,10 +718,14 @@ and have baked lighting on in World > World Settings (offered if not). It runs
 on every core behind a progress dialog with Cancel, then points the world's
 settings at the bake -- one undo step; save the world to keep it. Meshes
 without lightmap UVs, missing materials and the like are warned about in the
-Console as `[Bake]`. When a static entity or light changes afterwards, the
-status bar says **Lighting needs to be rebuilt**.
+Console as `[Bake]`. Before it lights anything, the viewport's renderer draws
+each static material once for its base colour and once for its emissive, so
+the bake reflects and glows as the materials draw (on the Null renderer, by
+their BaseColor parameters). When a static entity or light changes afterwards,
+the status bar says **Lighting needs to be rebuilt** (a hash of the world's
+static and Stationary entities, checked a second after edits settle).
 
-**View > Lighting > Baked / Lit** (`lighting baked | lit`, `[Rendering]
+**Show > Lighting > Baked / Live** in the viewport (`lighting baked | live`, `[Rendering]
 BakedLighting`) draws with the bake, or lights every light live as if there
 were none -- to compare them.
 

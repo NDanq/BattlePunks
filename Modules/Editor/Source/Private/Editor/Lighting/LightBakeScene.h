@@ -45,6 +45,7 @@ namespace LightBake
         float    UV1[3][2] = {};
         uint32_t Instance = 0;
         Vec3     Albedo   = Vec3(0.5f, 0.5f, 0.5f);   // diffuse: base colour times (1 - metallic)
+        Vec3     Emissive;                            // linear radiance it gives off: it lights the bake
     };
 
     /* One static RenderComponent: its triangles are Scene::Triangles[First, First + Count). */
@@ -70,6 +71,7 @@ namespace LightBake
         float CosOuter  = 0.0f;                      // spot
         float CosInner  = 1.0f;                      // spot
         float SourceSize = 0.0f;                     // soft shadows: a sphere's radius, or the sun's angular radius (radians)
+        bool  bBakeDirect = true;                    // false: Stationary -- its direct light stays live; only its bounce is baked
     };
 
     /* Radiance arriving from a direction no geometry blocks: the HDRI if it
@@ -78,6 +80,7 @@ namespace LightBake
     struct Sky
     {
         bool  bPresent = false;
+        bool  bBakeDirect = true;   // false: a Stationary sky -- its live ambient lights surfaces; only its bounce is baked
         Vec3  SkyColor;      // linear, times intensity
         Vec3  GroundColor;   // linear, times intensity
         int   Width = 0, Height = 0;
@@ -94,7 +97,7 @@ namespace LightBake
         std::vector<Light>    Lights;
         Sky                   SkyLight;
         Vec3                  BoundsMin, BoundsMax;   // of the triangles
-        uint64_t              Hash = 0;               // of everything above, set by Finish
+        uint64_t              Hash = 0;               // what the bake is of: Finish's of the above, or a World's (LightBakeWorld.h)
 
         /* Computes BoundsMin/Max, each instance's Area, and Hash. */
         void Finish();

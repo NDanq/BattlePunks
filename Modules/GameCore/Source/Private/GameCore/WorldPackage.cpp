@@ -174,10 +174,10 @@ namespace
         pugi::xml_node Root = Doc.append_child("Entity");
         Root.append_attribute("Guid") = GuidString.c_str();
         Root.append_attribute("Name") = Handle.GetName();
-        /* Only when static, so a dynamic entity's file reads as it always has. */
-        if(Handle.IsStatic())
+        /* Only when not dynamic, so a dynamic entity's file reads as it always has. */
+        if(Handle.GetMobility() != EMobility::Dynamic)
         {
-            Root.append_attribute("Mobility") = MobilityName(EMobility::Static);
+            Root.append_attribute("Mobility") = MobilityName(Handle.GetMobility());
         }
         /* Only when set, so a root entity's file reads as it always has. */
         if(const EntityID Parent = Handle.GetParent(); Parent.IsSet())

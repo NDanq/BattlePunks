@@ -124,8 +124,6 @@ private:
 
     SDLInputProbe* InputProbe = nullptr;
     QAction*       InputProbeAction = nullptr;
-    QAction*       BakedViewAction  = nullptr;   // View > Lighting
-    QAction*       LitViewAction    = nullptr;
     bool           bStartSDLInputProbe = false;
     bool           bStartPlay = false;
     QStringList    StartupCommands;

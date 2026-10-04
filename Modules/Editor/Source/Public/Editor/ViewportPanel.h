@@ -20,8 +20,10 @@ class ViewportWidget;
  * keep working. Frame actions are shared with the menus.
  *
  * Show: View Mode -- Lit, Unlit, or Render Target, which asks which of the
- * render targets the last frame drew to show (EditorContext::SetViewMode) --
- * and Editor Gizmos: every entity's bounds, every light's reach.
+ * render targets the last frame drew to show (EditorContext::SetViewMode);
+ * Lighting -- Baked, the world's bake, or Live, every light lit live
+ * ([Rendering] BakedLighting); and Editor Gizmos: every entity's bounds,
+ * every light's reach.
  */
 class ViewportPanel : public QWidget
 {
@@ -37,6 +39,15 @@ public:
 
     /* The Show menu's checks and text, after the view mode changed elsewhere (the console). */
     void RefreshViewMode() { UpdateViewModeUI(); }
+
+    /* Show > Lighting: draw with the world's bake, or light every light live. */
+    void SetBakedLighting(bool bInBaked);
+
+signals:
+    /* A one-line note for the status bar. */
+    void StatusMessage(const QString& InText);
+
+public:
 
     /* For the main window to put Play/Stop/Eject in front of the navigation. */
     QToolBar* GetToolbar() const { return Toolbar; }
@@ -70,6 +81,9 @@ private:
     QAction*     LitModeAction     = nullptr;
     QAction*     UnlitModeAction   = nullptr;
     QAction*     TargetModeAction  = nullptr;
+    QAction*     BakedAction       = nullptr;   // Show > Lighting
+    QAction*     LiveAction        = nullptr;
+    EditorDocument& Document;
 };
 
 #endif // WITH_EDITOR

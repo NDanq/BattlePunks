@@ -20,9 +20,14 @@ namespace EngineCore
  * "Baked lighting". An EngineCore::Archive of chunks:
  *
  *   NBLT v1                the file
- *     BLHD v1              the hash of what was baked; whether the sky was (a
- *                          static SkyLight); atlas, entry and probe counts
- *     BLAT v1              the lightmap atlases: runtime-relative .nmtexture paths (RGBE8)
+ *     BLHD v2              the hash of what was baked; whether the sky was (a
+ *                          static SkyLight); atlas, entry and probe counts;
+ *                          v2: whether the atlases are directional
+ *     BLAT v1              the lightmap atlases: runtime-relative .nmtexture
+ *                          paths (RGBE8). A directional one is twice as tall:
+ *                          the light above, its direction below, RGBA8 --
+ *                          xyz * 0.5 + 0.5 (the direction times how one-sided
+ *                          the light is) and the rebalancing half-Lambert
  *     BLMP v1              per lightmapped entity: its GUID, its atlas, and the
  *                          scale and offset taking its mesh's UV1 into that atlas
  *     BLPR v1              the light probes: a grid over the static entities'
@@ -77,6 +82,7 @@ namespace RenderCore
     {
         uint64_t                        InputHash = 0;
         bool                            bSkyBaked = false;   // else the sky's ambient still lights every surface at run time
+        bool                            bDirectional = false;   // the atlases carry the light's direction (BLAT)
         std::vector<std::string>        Atlases;
         std::vector<BakedLightmapEntry> Entries;
         BakedProbeGrid                  Probes;

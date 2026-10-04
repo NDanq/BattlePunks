@@ -651,7 +651,12 @@ namespace GameCore
 
     const char* MobilityName(const EMobility InMobility)
     {
-        return InMobility == EMobility::Static ? "Static" : "Dynamic";
+        switch(InMobility)
+        {
+            case EMobility::Static:     return "Static";
+            case EMobility::Stationary: return "Stationary";
+            default:                    return "Dynamic";
+        }
     }
 
     bool ParseMobility(const char* InText, EMobility& OutMobility)
@@ -668,6 +673,7 @@ namespace GameCore
         };
         if(!InText) { return false; }
         if(Equals("Static"))  { OutMobility = EMobility::Static;  return true; }
+        if(Equals("Stationary")) { OutMobility = EMobility::Stationary; return true; }
         if(Equals("Dynamic")) { OutMobility = EMobility::Dynamic; return true; }
         return false;
     }

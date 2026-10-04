@@ -631,7 +631,7 @@ bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset)
         {
             uint8_t Mobility = 0;
             Ar << Mobility;
-            E.Mobility = Mobility == uint8_t(EMobility::Static) ? EMobility::Static : EMobility::Dynamic;
+            E.Mobility = Mobility <= uint8_t(EMobility::Stationary) ? EMobility(Mobility) : EMobility::Dynamic;
         }
         Ar << ComponentCount;
         for(uint32_t Component = 0; Component < ComponentCount && !Ar.HasError(); ++Component)
@@ -781,7 +781,7 @@ namespace
             pugi::xml_node Element = Root.append_child("Entity");
             Element.append_attribute("Id")   = unsigned(E.LocalId);
             Element.append_attribute("Name") = E.Name.c_str();
-            if(E.Mobility == EMobility::Static)
+            if(E.Mobility != EMobility::Dynamic)
             {
                 Element.append_attribute("Mobility") = MobilityName(E.Mobility);
             }

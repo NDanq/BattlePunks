@@ -473,7 +473,8 @@ namespace RenderCore
         });
     }
 
-    uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint)
+    uint64_t Renderer::RequestMaterialPreview(const char* InName, const int InSize, const EngineCore::Color InTint,
+                                              const EMaterialPreviewChannel InChannel)
     {
         const size_t Length = InName ? std::strlen(InName) : 0;
         if(!P->DefaultScene() || !P->Thread.IsRunning() || Length == 0 || Length >= RENDER_MATERIAL_PATH_MAX)
@@ -487,6 +488,7 @@ namespace RenderCore
         Request.Width   = InSize;
         Request.Height  = InSize;
         Request.Tint    = InTint;
+        Request.Channel = uint8_t(InChannel);
         Request.Mailbox = &P->Previews;
 
         RenderScene* Scene = P->DefaultScene();

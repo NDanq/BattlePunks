@@ -74,14 +74,35 @@ namespace LightBake
             Out[2][2] = A(0, 0) * A(1, 1) - A(0, 1) * A(1, 0);
         }
 
-        /* A material's BaseColor and Metallic, from its cooked description and
-         * InComponent's overrides for InSlot: what it would draw with, as far
-         * as a constant can say. */
-        Vec3 AlbedoFor(const RenderCore::RenderComponent& InComponent, const int InSlot, const std::string& InMaterial,
-                       std::vector<std::string>& OutWarnings)
+        /* What a section's material is: the slot's, else the section's own,
+         * else DefaultLit -- as the renderer picks it. */
+        std::string MaterialFor(const RenderCore::RenderComponent& InComponent, const RenderCore::MeshSection& InSection, const int InSlot)
         {
-            float Base[3] = { -1.0f, -1.0f, -1.0f };
+            std::string Material = InComponent.GetMaterial(InSlot);
+            if(Material.empty()) { Material = InSection.Material; }
+            if(Material.empty()) { Material = DEFAULT_LIT; }
+            return Material;
+        }
+
+        /* A section's diffuse albedo and glow: its material as measured if it
+         * was, else its BaseColor parameter, else grey; InComponent's
+         * BaseColor and Metallic overrides for InSlot win. */
+        void SurfaceFor(const RenderCore::RenderComponent& InComponent, const int InSlot, const std::string& InMaterial,
+                        const MeasuredMaterials* InMeasured, Vec3& OutAlbedo, Vec3& OutEmissive, std::vector<std::string>& OutWarnings)
+        {
+            Vec3  Base(-1.0f, -1.0f, -1.0f);   // linear; < 0 while unknown
             float Metallic = 0.0f;
+            OutEmissive = Vec3();
+
+            if(InMeasured)
+            {
+                const auto Found = InMeasured->find(InMaterial);
+                if(Found != InMeasured->end())
+                {
+                    Base        = Found->second.BaseColor;
+                    OutEmissive = Found->second.Emissive;
+                }
+            }
 
             std::string Stem;
             RenderCore::MaterialDescription Description;
@@ -90,16 +111,17 @@ namespace LightBake
             if(RenderCore::GetMaterialStem(InMaterial, Stem) && Provider && Provider->ReadAllText(Stem + ".material", Text)
                && RenderCore::ParseMaterialDescription(Text, Description, Error))
             {
-                if(const RenderCore::MaterialParameter* Param = Description.FindParameter("BaseColor"))
+                const RenderCore::MaterialParameter* Param = Description.FindParameter("BaseColor");
+                if(Param && Base.X < 0.0f)
                 {
-                    std::copy_n(Param->Default, 3, Base);
+                    Base = Vec3(ToLinear(Param->Default[0]), ToLinear(Param->Default[1]), ToLinear(Param->Default[2]));
                 }
-                if(const RenderCore::MaterialParameter* Param = Description.FindParameter("Metallic"))
+                if(const RenderCore::MaterialParameter* MetallicParam = Description.FindParameter("Metallic"))
                 {
-                    Metallic = Param->Default[0];
+                    Metallic = MetallicParam->Default[0];
                 }
             }
-            else if(!InMaterial.empty())
+            else if(!InMaterial.empty() && Base.X < 0.0f)
             {
                 OutWarnings.push_back("material '" + InMaterial + "' could not be read (is it cooked?); it bakes grey");
             }
@@ -107,21 +129,17 @@ namespace LightBake
             for(const RenderCore::RenderMaterialParameter& Each : InComponent.Parameters)
             {
                 if(Each.Name[0] == '\0' || int(Each.Slot) != InSlot) { continue; }
-                if(std::strcmp(Each.Name, "BaseColor") == 0) { std::copy_n(Each.Value, 3, Base); }
+                if(std::strcmp(Each.Name, "BaseColor") == 0) { Base = Vec3(ToLinear(Each.Value[0]), ToLinear(Each.Value[1]), ToLinear(Each.Value[2])); }
                 if(std::strcmp(Each.Name, "Metallic") == 0)  { Metallic = Each.Value[0]; }
             }
 
             const float Diffuse = 1.0f - std::clamp(Metallic, 0.0f, 1.0f);
-            if(Base[0] < 0.0f)
-            {
-                return Vec3(FALLBACK_ALBEDO, FALLBACK_ALBEDO, FALLBACK_ALBEDO) * Diffuse;
-            }
-            return Vec3(std::min(ToLinear(Base[0]), MAX_ALBEDO), std::min(ToLinear(Base[1]), MAX_ALBEDO),
-                        std::min(ToLinear(Base[2]), MAX_ALBEDO)) * Diffuse;
+            if(Base.X < 0.0f) { Base = Vec3(FALLBACK_ALBEDO, FALLBACK_ALBEDO, FALLBACK_ALBEDO); }
+            OutAlbedo = Vec3(std::min(Base.X, MAX_ALBEDO), std::min(Base.Y, MAX_ALBEDO), std::min(Base.Z, MAX_ALBEDO)) * Diffuse;
         }
 
         void AddMesh(const GameCore::Entity& InEntity, const RenderCore::RenderComponent& InComponent, Scene& InOutScene,
-                     GatherReport& InOutReport)
+                     GatherReport& InOutReport, const MeasuredMaterials* InMeasured)
         {
             const std::shared_ptr<const RenderCore::MeshData> Mesh = RenderCore::MeshAssetCache::Find(InComponent.Mesh);
             if(!Mesh)
@@ -156,16 +174,15 @@ namespace LightBake
             {
                 const RenderCore::MeshSection& Section = Sections[SectionIndex];
                 const int Slot = int(SectionIndex);
-                std::string Material = InComponent.GetMaterial(Slot);
-                if(Material.empty()) { Material = Section.Material; }
-                if(Material.empty()) { Material = DEFAULT_LIT; }
-                const Vec3 Albedo = AlbedoFor(InComponent, Slot, Material, InOutReport.Warnings);
+                Vec3 Albedo, Emissive;
+                SurfaceFor(InComponent, Slot, MaterialFor(InComponent, Section, Slot), InMeasured, Albedo, Emissive, InOutReport.Warnings);
 
                 for(uint32_t At = Section.FirstIndex; At + 2 < Section.FirstIndex + Section.IndexCount && At + 2 < Mesh->Indices.size(); At += 3)
                 {
                     Triangle T;
                     T.Instance = InstanceIndex;
                     T.Albedo   = Albedo;
+                    T.Emissive = Emissive;
                     for(int Corner = 0; Corner < 3; ++Corner)
                     {
                         const uint32_t V = Mesh->Indices[At + uint32_t(Corner)];
@@ -236,7 +253,148 @@ namespace LightBake
         }
     }
 
-    void GatherScene(GameCore::World& InWorld, Scene& OutScene, GatherReport& OutReport)
+    namespace
+    {
+        std::vector<GameCore::EntityID> EntitiesOf(GameCore::World& InWorld)
+        {
+            std::vector<GameCore::EntityID> Entities;
+            InWorld.ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
+            {
+                static_cast<std::vector<GameCore::EntityID>*>(InUserData)->push_back(InEntity);
+            }, &Entities);
+            return Entities;
+        }
+
+        /* FNV-1a, 64-bit, for HashWorld. */
+        struct Fnv
+        {
+            uint64_t Value = 1469598103934665603ull;
+            void Bytes(const void* InData, const size_t InSize)
+            {
+                const auto* Data = static_cast<const uint8_t*>(InData);
+                for(size_t At = 0; At < InSize; ++At) { Value ^= Data[At]; Value *= 1099511628211ull; }
+            }
+            template<typename T> void Add(const T& InValue) { Bytes(&InValue, sizeof(T)); }
+            void Text(const char* InText) { Bytes(InText, std::strlen(InText) + 1); }
+            void Color(const EngineCore::Color& InColor) { Add(InColor.R); Add(InColor.G); Add(InColor.B); Add(InColor.A); }
+        };
+    }
+
+    std::vector<std::string> ListBakeMaterials(GameCore::World& InWorld)
+    {
+        std::vector<std::string> Out;
+        for(const GameCore::EntityID Id : EntitiesOf(InWorld))
+        {
+            const GameCore::Entity E = InWorld.GetEntity(Id);
+            const auto* Render = E.IsAlive() && E.IsStatic() ? E.GetComponent<RenderCore::RenderComponent>() : nullptr;
+            if(!Render || !Render->bVisible || Render->Mesh[0] == '\0') { continue; }
+            const std::shared_ptr<const RenderCore::MeshData> Mesh = RenderCore::MeshAssetCache::Find(Render->Mesh);
+            if(!Mesh) { continue; }
+            const size_t Count = std::max<size_t>(Mesh->Sections.size(), 1);
+            for(size_t Section = 0; Section < Count; ++Section)
+            {
+                const RenderCore::MeshSection Each = Section < Mesh->Sections.size() ? Mesh->Sections[Section] : RenderCore::MeshSection();
+                const std::string Material = MaterialFor(*Render, Each, int(Section));
+                if(std::find(Out.begin(), Out.end(), Material) == Out.end()) { Out.push_back(Material); }
+            }
+        }
+        return Out;
+    }
+
+    uint64_t HashWorld(GameCore::World& InWorld)
+    {
+        const GameCore::WorldLightingSettings& Settings = InWorld.GetSettings().Lighting;
+        Fnv World;
+        World.Add(Settings.TexelsPerUnit);
+        World.Add(Settings.Bounces);
+        World.Add(Settings.SamplesPerTexel);
+        World.Add(Settings.ProbeSpacing);
+        World.Add(Settings.MaxAtlasSize);
+
+        /* Each entity's own hash, summed: the order entities load in does not matter. */
+        uint64_t Entities = 0;
+        std::unordered_map<std::string, uint64_t> MaterialTexts;
+        for(const GameCore::EntityID Id : EntitiesOf(InWorld))
+        {
+            const GameCore::Entity E = InWorld.GetEntity(Id);
+            if(!E.IsAlive() || (!E.IsStatic() && E.GetMobility() != GameCore::EMobility::Stationary)) { continue; }
+            Fnv H;
+            const GameCore::EntityGuid Guid = E.GetGuid();
+            H.Add(Guid.Hi);
+            H.Add(Guid.Lo);
+            H.Add(uint8_t(E.GetMobility()));
+            const EngineCore::Matrix4x4 M = E.GetWorldMatrix();
+            for(int Row = 0; Row < 3; ++Row) { for(int Col = 0; Col < 4; ++Col) { H.Add(float(M.Data[Row][Col])); } }
+            bool bCounts = false;
+
+            if(const auto* Render = E.IsStatic() ? E.GetComponent<RenderCore::RenderComponent>() : nullptr)
+            {
+                bCounts = true;
+                H.Add(Render->bVisible);
+                H.Text(Render->Mesh);
+                for(const auto& Material : Render->Materials) { H.Text(Material); }
+                for(const RenderCore::RenderMaterialParameter& Each : Render->Parameters)
+                {
+                    H.Text(Each.Name);
+                    H.Add(Each.Slot);
+                    for(const float Value : Each.Value) { H.Add(Value); }
+                }
+                /* The mesh as loaded, and its sections' materials' descriptions. */
+                if(const std::shared_ptr<const RenderCore::MeshData> Mesh = RenderCore::MeshAssetCache::Find(Render->Mesh))
+                {
+                    H.Add(Mesh->GetVertexCount());
+                    H.Add(Mesh->GetTriangleCount());
+                    for(const float Bound : Mesh->BoundsMin) { H.Add(Bound); }
+                    for(const float Bound : Mesh->BoundsMax) { H.Add(Bound); }
+                    H.Add(uint64_t(Mesh->UV1.size()));
+                    const size_t Count = std::max<size_t>(Mesh->Sections.size(), 1);
+                    for(size_t Section = 0; Section < Count; ++Section)
+                    {
+                        const RenderCore::MeshSection Each = Section < Mesh->Sections.size() ? Mesh->Sections[Section] : RenderCore::MeshSection();
+                        const std::string Material = MaterialFor(*Render, Each, int(Section));
+                        auto Found = MaterialTexts.find(Material);
+                        if(Found == MaterialTexts.end())
+                        {
+                            Fnv Text;
+                            std::string Stem, Contents;
+                            EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
+                            if(RenderCore::GetMaterialStem(Material, Stem) && Provider) { Provider->ReadAllText(Stem + ".material", Contents); }
+                            Text.Bytes(Contents.data(), Contents.size());
+                            Found = MaterialTexts.emplace(Material, Text.Value).first;
+                        }
+                        H.Add(Found->second);
+                    }
+                }
+            }
+            if(const auto* Sun = E.GetComponent<RenderCore::DirectionalLightComponent>())
+            {
+                bCounts = true;
+                H.Color(Sun->Color); H.Add(Sun->Intensity); H.Add(Sun->bActive); H.Add(Sun->SourceAngle);
+            }
+            if(const auto* Point = E.GetComponent<RenderCore::PointLightComponent>())
+            {
+                bCounts = true;
+                H.Color(Point->Color); H.Add(Point->Intensity); H.Add(Point->Radius); H.Add(Point->bActive); H.Add(Point->SourceRadius);
+            }
+            if(const auto* Spot = E.GetComponent<RenderCore::SpotLightComponent>())
+            {
+                bCounts = true;
+                H.Color(Spot->Color); H.Add(Spot->Intensity); H.Add(Spot->Range); H.Add(Spot->InnerConeAngle); H.Add(Spot->OuterConeAngle);
+                H.Add(Spot->bActive); H.Add(Spot->SourceRadius);
+            }
+            if(const auto* SkyLight = E.GetComponent<RenderCore::SkyLightComponent>())
+            {
+                bCounts = true;
+                H.Color(SkyLight->SkyColor); H.Color(SkyLight->GroundColor); H.Add(SkyLight->Intensity); H.Add(SkyLight->bActive);
+                H.Text(SkyLight->Environment); H.Add(SkyLight->EnvironmentIntensity); H.Add(SkyLight->EnvironmentRotation);
+            }
+            if(bCounts) { Entities += H.Value; }
+        }
+        World.Add(Entities);
+        return World.Value;
+    }
+
+    void GatherScene(GameCore::World& InWorld, Scene& OutScene, GatherReport& OutReport, const MeasuredMaterials* InMaterials)
     {
         OutScene  = Scene();
         OutReport = GatherReport();
@@ -250,12 +408,15 @@ namespace LightBake
         for(const GameCore::EntityID Id : Entities)
         {
             const GameCore::Entity E = InWorld.GetEntity(Id);
-            if(!E.IsAlive() || !E.IsStatic()) { continue; }
+            const bool bStatic     = E.IsAlive() && E.IsStatic();
+            const bool bStationary = E.IsAlive() && E.GetMobility() == GameCore::EMobility::Stationary;
+            if(!bStatic && !bStationary) { continue; }
             const GameCore::TransformPose Pose = E.GetWorldPose();
 
-            if(const auto* Render = E.GetComponent<RenderCore::RenderComponent>())
+            /* Stationary: only a light's bounce; anything else Stationary is not baked. */
+            if(const auto* Render = bStatic ? E.GetComponent<RenderCore::RenderComponent>() : nullptr)
             {
-                if(Render->bVisible && Render->Mesh[0] != '\0') { AddMesh(E, *Render, OutScene, OutReport); }
+                if(Render->bVisible && Render->Mesh[0] != '\0') { AddMesh(E, *Render, OutScene, OutReport, InMaterials); }
             }
             if(const auto* Sun = E.GetComponent<RenderCore::DirectionalLightComponent>())
             {
@@ -267,6 +428,7 @@ namespace LightBake
                     L.Direction  = Normalize(Vec3(float(Forward.GetX()), float(Forward.GetY()), float(Forward.GetZ())));
                     L.Radiance   = ToLinear(Sun->Color) * Sun->Intensity;
                     L.SourceSize = std::clamp(Sun->SourceAngle, 0.0f, 30.0f) * 3.14159265f / 180.0f;
+                    L.bBakeDirect = bStatic;
                     OutScene.Lights.push_back(L);
                     ++OutReport.Lights;
                 }
@@ -281,6 +443,7 @@ namespace LightBake
                     L.Radiance   = ToLinear(Point->Color) * Point->Intensity;
                     L.Range      = Point->Radius;
                     L.SourceSize = std::max(Point->SourceRadius, 0.0f);
+                    L.bBakeDirect = bStatic;
                     OutScene.Lights.push_back(L);
                     ++OutReport.Lights;
                 }
@@ -303,6 +466,7 @@ namespace LightBake
                     L.CosOuter   = std::cos(Outer * Degrees);
                     L.CosInner   = std::cos(std::min(Inner, Outer - 0.01f) * Degrees);
                     L.SourceSize = std::max(Spot->SourceRadius, 0.0f);
+                    L.bBakeDirect = bStatic;
                     OutScene.Lights.push_back(L);
                     ++OutReport.Lights;
                 }
@@ -313,6 +477,7 @@ namespace LightBake
                 {
                     Sky& S = OutScene.SkyLight;
                     S.bPresent    = true;
+                    S.bBakeDirect = bStatic;
                     S.SkyColor    = ToLinear(SkyLight->SkyColor) * SkyLight->Intensity;
                     S.GroundColor = ToLinear(SkyLight->GroundColor) * SkyLight->Intensity;
                     S.Rotation    = SkyLight->EnvironmentRotation * 3.14159265f / 180.0f;
@@ -322,12 +487,14 @@ namespace LightBake
                         OutReport.Warnings.push_back(std::string("the sky's HDRI ") + SkyLight->Environment
                                                      + " cannot be loaded; its colours light the bake");
                     }
-                    OutReport.bSky = true;
+                    OutReport.bSky    = bStatic;
+                    OutReport.bAnySky = true;
                 }
             }
         }
 
         OutScene.Finish();
+        OutScene.Hash = HashWorld(InWorld);
     }
 
     bool SaveBake(const std::string& InWorldFile, const Scene& InScene, const Result& InResult, const bool bInSkyBaked,
@@ -348,12 +515,18 @@ namespace LightBake
         RenderCore::BakedLightingData Data;
         Data.InputHash = InScene.Hash;
         Data.bSkyBaked = bInSkyBaked;
+        Data.bDirectional = !InResult.Atlases.empty();
+        for(const Atlas& A : InResult.Atlases)
+        {
+            Data.bDirectional &= A.Directions.size() == size_t(A.Size) * size_t(A.Size) * 4;
+        }
 
         for(size_t Index = 0; Index < InResult.Atlases.size(); ++Index)
         {
             const Atlas& A = InResult.Atlases[Index];
             RenderCore::TextureData Texture;
-            Texture.Pixels = EngineCore::Image(A.Size, A.Size, EngineCore::EImageFormat::RGBA8);
+            /* Directional: twice as tall -- the light above, its direction below (BakedLightingAsset.h). */
+            Texture.Pixels = EngineCore::Image(A.Size, Data.bDirectional ? A.Size * 2 : A.Size, EngineCore::EImageFormat::RGBA8);
             Texture.Format = RenderCore::ETexturePixelFormat::RGBE8;
             Texture.bSRGB  = false;
             Texture.Filter = RenderCore::ETextureFilter::Nearest;   // RGBE: the shader filters it
@@ -364,6 +537,19 @@ namespace LightBake
                 const float Rgb[3] = { std::max(A.Texels[Texel * 3], 0.0f), std::max(A.Texels[Texel * 3 + 1], 0.0f),
                                        std::max(A.Texels[Texel * 3 + 2], 0.0f) };
                 RenderCore::EncodeRgbe(Rgb, Bytes + Texel * 4);
+            }
+            if(Data.bDirectional)
+            {
+                uint8_t* Below = Bytes + size_t(A.Size) * size_t(A.Size) * 4;
+                const auto Byte = [](const float InValue) { return uint8_t(std::clamp(InValue, 0.0f, 1.0f) * 255.0f + 0.5f); };
+                for(size_t Texel = 0; Texel < size_t(A.Size) * size_t(A.Size); ++Texel)
+                {
+                    const float* Way = &A.Directions[Texel * 4];
+                    Below[Texel * 4]     = Byte(Way[0] * 0.5f + 0.5f);
+                    Below[Texel * 4 + 1] = Byte(Way[1] * 0.5f + 0.5f);
+                    Below[Texel * 4 + 2] = Byte(Way[2] * 0.5f + 0.5f);
+                    Below[Texel * 4 + 3] = Byte(Way[3]);
+                }
             }
             const std::string File = Folder + "Lightmap_" + std::to_string(Index) + ".nmtexture";
             if(!RenderCore::SaveTextureFile(File, Texture))

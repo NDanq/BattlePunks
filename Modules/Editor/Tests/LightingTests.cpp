@@ -328,6 +328,90 @@ static void TestSkyAndBounce()
     Expect(Open.Y > 0.8f && Open.Y < 1.05f, "an open floor sees about all of a white sky");
     Expect(Wall.Y < Open.Y * 0.85f, "beside a wall the floor sees less sky");
     Expect(Wall.X > Wall.Y * 1.1f, "and picks up the red wall's bounce");
+
+    /* Under the wall the floor is buried: left out and filled from its
+     * neighbours, so no black line runs along the wall's foot. */
+    const Vec3 Under = FloorTexel(R, 0, 1000.0f, -490.0f, 0.0f);
+    std::printf("        under the wall %.3f\n", Under.Y);
+    Expect(Under.Y > Wall.Y * 0.5f, "a texel under the wall takes its neighbours' light, not black");
+}
+
+/* What a floor texel's direction says (Atlas::Directions): xyz, w. */
+static void FloorDirection(const Result& InResult, const float InSize, const float InX, const float InZ, float (&Out)[4])
+{
+    const Placement& Place = InResult.Placements[0];
+    const Atlas& A = InResult.Atlases[Place.Atlas];
+    const int X = std::clamp(int((InX / InSize + 0.5f) * float(Place.Resolution)) + Place.X, 0, A.Size - 1);
+    const int Y = std::clamp(int((InZ / InSize + 0.5f) * float(Place.Resolution)) + Place.Y, 0, A.Size - 1);
+    std::copy_n(&A.Directions[(size_t(Y) * size_t(A.Size) + size_t(X)) * 4], 4, Out);
+}
+
+/* A Stationary sun bakes no direct light; a Static one does, from above (its direction). */
+static void TestStationaryAndDirection()
+{
+    std::printf("[stationary and direction]\n");
+    Settings Config;
+    Config.TexelsPerUnit   = 0.064f;
+    Config.SamplesPerTexel = 16;
+    Config.Bounces         = 1;
+    Config.ProbeSpacing    = 10000.0f;
+    Config.MaxAtlasSize    = 128;
+
+    for(const bool bStationary : { false, true })
+    {
+        Scene S;
+        AddFloor(S, 1000.0f, 0.0f, 0, Vec3(0.5f, 0.5f, 0.5f));
+        FinishInstances(S, { true });
+        Light Sun;
+        Sun.Type        = ELightType::Directional;
+        Sun.Direction   = Vec3(0.0f, -1.0f, 0.0f);
+        Sun.Radiance    = Vec3(3.0f, 3.0f, 3.0f);
+        Sun.bBakeDirect = !bStationary;
+        S.Lights.push_back(Sun);
+        S.Finish();
+        Result R;
+        std::string Error;
+        Expect(Bake(S, Config, R, Error) == EBakeStatus::Done, "the bake finishes");
+        const Vec3 Open = FloorTexel(R, 0, 1000.0f, 300.0f, 300.0f);
+        if(bStationary)
+        {
+            Expect(Open.X < 0.01f, "a Stationary sun bakes no direct light (it stays live)");
+            continue;
+        }
+        Expect(std::fabs(Open.X - 3.0f / PI) < 0.05f, "a Static sun bakes its direct light");
+        float Way[4];
+        FloorDirection(R, 1000.0f, 300.0f, 300.0f, Way);
+        std::printf("        direction %.2f %.2f %.2f, rebalance %.2f\n", Way[0], Way[1], Way[2], Way[3]);
+        Expect(Way[1] > 0.95f && std::fabs(Way[0]) < 0.05f && std::fabs(Way[2]) < 0.05f,
+               "the light comes from straight above, all from one direction");
+        Expect(std::fabs(Way[3] - 1.0f) < 0.05f, "and a flat surface rebalances to the light as baked");
+    }
+}
+
+/* No light at all, but a glowing panel over the floor: the floor under it is lit by it. */
+static void TestEmissive()
+{
+    std::printf("[emissive]\n");
+    Scene S;
+    AddFloor(S, 1000.0f, 0.0f, 0, Vec3(0.5f, 0.5f, 0.5f));
+    AddBox(S, Vec3(-100.0f, 200.0f, -100.0f), Vec3(100.0f, 210.0f, 100.0f), 1, Vec3(0.0f, 0.0f, 0.0f));
+    for(Triangle& Each : S.Triangles) { if(Each.Instance == 1) { Each.Emissive = Vec3(10.0f, 5.0f, 1.0f); } }
+    FinishInstances(S, { true, false });
+
+    Settings Config;
+    Config.TexelsPerUnit   = 0.064f;
+    Config.SamplesPerTexel = 128;
+    Config.Bounces         = 0;
+    Config.ProbeSpacing    = 10000.0f;
+    Config.MaxAtlasSize    = 128;
+    Result R;
+    std::string Error;
+    Expect(Bake(S, Config, R, Error) == EBakeStatus::Done, "the bake finishes");
+    const Vec3 Under = FloorTexel(R, 0, 1000.0f, 0.0f, 0.0f);
+    const Vec3 Far   = FloorTexel(R, 0, 1000.0f, 450.0f, 450.0f);
+    std::printf("        under the panel %.3f %.3f %.3f, far from it %.3f\n", Under.X, Under.Y, Under.Z, Far.X);
+    Expect(Under.X > 1.0f && Under.X > Under.Y && Under.Y > Under.Z, "the floor under a glowing panel takes its light and colour");
+    Expect(Far.X < Under.X * 0.2f, "and less of it farther away");
 }
 
 static void TestCancel()
@@ -351,6 +435,8 @@ int main()
     TestLayout();
     TestSunAndShadow();
     TestSkyAndBounce();
+    TestStationaryAndDirection();
+    TestEmissive();
     TestCancel();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

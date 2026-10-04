@@ -340,7 +340,7 @@ namespace
 
             /* Name and GUID at creation, so OnEntityCreated sees both. */
             const Entity Loaded = InWorld.CreateEntity(Name.c_str(), Guid);
-            if(Mobility == uint8_t(EMobility::Static)) { Loaded.SetMobility(EMobility::Static); }
+            if(Mobility == uint8_t(EMobility::Static) || Mobility == uint8_t(EMobility::Stationary)) { Loaded.SetMobility(EMobility(Mobility)); }
             OutTable.AddForLoading(Loaded);
         }
 
