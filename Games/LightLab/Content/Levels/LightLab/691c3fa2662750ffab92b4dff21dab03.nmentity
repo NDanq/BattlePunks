@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="691c3fa2662750ffab92b4dff21dab03" Name="SweepSpot">
+  <Component Type="Spot Light" Version="1">
+    <Color R="190" G="215" B="255" A="255" />
+    <Intensity Value="14" />
+    <Range Value="1800" />
+    <InnerConeAngle Value="14" />
+    <OuterConeAngle Value="22" />
+    <Active Value="true" />
+    <CastShadows Value="true" />
+    <ShadowTechnique Value="0" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.002" />
+    <ShadowNormalBias Value="1.5" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="700" Y="900" Z="-900" />
+    <Rotation X="50" Y="-20" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

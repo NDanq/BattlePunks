@@ -538,7 +538,7 @@ if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
 endif()
 
 # === Engine/Content/Meshes =================================================
-# The engine's primitive meshes (Box, Sphere, Plane; made by
+# The engine's primitive meshes (Box, Sphere, Plane, Cylinder; made by
 # Scripts/generate_primitive_meshes.py), staged beside the executable at the
 # same path, so a RenderComponent names one "Engine/Content/Meshes/Box.nmmesh"
 # in every target. Single-config only, as the shader staging above.

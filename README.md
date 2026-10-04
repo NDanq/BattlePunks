@@ -60,6 +60,13 @@ everywhere: ambient occlusion in the corners, a soft bloom and FXAA. `Arch.pp.nm
 the arch and blends in over 300 units as the camera nears it: depth of field
 past the arch, motion blur, and a warmer, stronger glow.
 
+A colonnade down the right of the yard is four instances of a prefab file,
+`Content/Prefabs/Column.nmprefab`: a Cylinder shaft (the engine's
+`Cylinder.nmmesh`) on a Box base under a Box capital. The level stores them as
+instances (`.nmprefabinst`). A Client build reads the cooked copy in
+`Cooked/Content/Prefabs/`, which the editor console's `cook prefabs`
+regenerates after the prefab changes.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:

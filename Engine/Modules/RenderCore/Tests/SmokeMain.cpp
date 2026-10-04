@@ -2797,6 +2797,7 @@ static void TestEngineMeshes()
         { "Engine/Content/Meshes/Box.nmmesh",    24,  12,  -0.5f, 0.5f },
         { "Engine/Content/Meshes/Sphere.nmmesh", 561, 960, -0.5f, 0.5f },
         { "Engine/Content/Meshes/Plane.nmmesh",  289, 512,  0.0f, 0.0f },
+        { "Engine/Content/Meshes/Cylinder.nmmesh", 132, 128, -0.5f, 0.5f },
     };
     for(const Expected& Each : Meshes)
     {

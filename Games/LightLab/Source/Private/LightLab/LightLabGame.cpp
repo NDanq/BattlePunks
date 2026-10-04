@@ -68,6 +68,10 @@ namespace
     const char* const BoxMesh    = "Engine/Content/Meshes/Box.nmmesh";
     const char* const SphereMesh = "Engine/Content/Meshes/Sphere.nmmesh";
     const char* const PlaneMesh  = "Engine/Content/Meshes/Plane.nmmesh";
+
+    /* A prefab from a file (Content/Prefabs): a Cylinder shaft on a Box base
+     * under a Box capital, 440 high, standing on its root. */
+    const char* const ColumnPrefab = "Content/Prefabs/Column.nmprefab";
 }
 
 /* An editor build only: when set, the level is built in code (not loaded) and
@@ -550,7 +554,7 @@ private:
      * InMesh -- plain, not a native prefab instance, so a saved level does
      * not need this module loaded to show it. */
     static void SpawnShape(GameCore::World& InWorld, const char* InName, const char* InMesh, const bool bInCasts,
-                           const GameCore::TransformPose& InPose)
+                           const GameCore::TransformPose& InPose, const char* InMaterial = "")
     {
         const GameCore::Entity Shape = InWorld.CreateEntity(InName);
         GameCore::TransformComponent Transform;
@@ -561,6 +565,7 @@ private:
 
         RenderCore::RenderComponent Render;
         std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", InMesh);
+        std::snprintf(Render.Materials[0], sizeof(Render.Materials[0]), "%s", InMaterial);
         Render.bCastShadows = bInCasts ? 1 : 0;
         Shape.AddComponent(Render);
     }
@@ -658,11 +663,25 @@ private:
         SpawnShape(InWorld, "Ball", SphereMesh, true,
                    Placed(EngineCore::Vector3(-300.0, 260.0, -50.0), EngineCore::Vector3(200.0, 200.0, 200.0)));
         SpawnShape(InWorld, "Ball", SphereMesh, true,
-                   Placed(EngineCore::Vector3(280.0, 320.0, 120.0), EngineCore::Vector3(140.0, 140.0, 140.0)));
+                   Placed(EngineCore::Vector3(280.0, 320.0, 120.0), EngineCore::Vector3(140.0, 140.0, 140.0)),
+                   "Content/Materials/Glow.material.nmgraph");   // emissive: what Bloom spreads
         SpawnShape(InWorld, "Ball", SphereMesh, true,
                    Placed(EngineCore::Vector3(420.0, 260.0, -300.0), EngineCore::Vector3(90.0, 90.0, 90.0)));
         SpawnShape(InWorld, "Ball", SphereMesh, true,
                    Placed(EngineCore::Vector3(150.0, 60.0, -600.0), EngineCore::Vector3(120.0, 120.0, 120.0)));
+
+        /* A colonnade down the right of the yard: instances of a prefab file,
+         * so a saved level keeps them as instances (.nmprefabinst) of it. */
+        for(int Index = 0; Index < 4; ++Index)
+        {
+            const double Z = -450.0 + 350.0 * double(Index);
+            if(!InWorld.SpawnPrefab(ColumnPrefab, Placed(EngineCore::Vector3(1000.0, 0.0, Z), EngineCore::Vector3(1.0, 1.0, 1.0)),
+                                    "Column").IsValid())
+            {
+                CORE_LOG_WARN(std::string("[LightLab] could not spawn ") + ColumnPrefab)
+                break;
+            }
+        }
     }
 
     void SpawnLights(GameCore::World& InWorld)

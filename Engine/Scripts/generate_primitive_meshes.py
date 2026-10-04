@@ -7,8 +7,10 @@ RenderComponent names one as "Engine/Content/Meshes/Box.nmmesh").
     Box.nmmesh      a 1-unit cube: 6 faces of 2 triangles, each face its own 4 vertices
     Sphere.nmmesh   a UV sphere, diameter 1: 32 segments around, 16 rings
     Plane.nmmesh    a 1 x 1 square in X and Z, facing up (+Y), in 16 x 16 cells
+    Cylinder.nmmesh diameter 1, height 1, along Y: 32 segments around, a flat cap
+                    at each end (the wall smooth, its edges hard)
 
-All three are centred on the origin and are made the way the importer makes a
+All four are centred on the origin and are made the way the importer makes a
 glTF mesh, so a material treats them alike: each shape is built in glTF's
 frame -- right-handed, +Y up, +Z toward the viewer -- then converted to the
 engine's exactly as GltfImporter.cpp converts one (z flips, and the winding
@@ -158,6 +160,51 @@ def make_sphere(segments=32, rings=16, radius=0.5):
     return mesh
 
 
+def make_cylinder(segments=32, radius=0.5, height=1.0):
+    """The wall as the sphere's equator stretched: u once around, rightwards
+    seen from outside, v from the top edge (0) to the bottom (1), the seam
+    repeating its column. Each cap has its own vertices, so the edges are hard,
+    mapped flat: seen from outside, the top shows an image as the box's top
+    does, the bottom as its bottom."""
+    mesh = Mesh("Cylinder")
+    half = height * 0.5
+
+    def around(segment):
+        azimuth = 2.0 * math.pi * segment / segments
+        return (-math.sin(azimuth), 0.0, -math.cos(azimuth))   # as the sphere's: u grows rightwards
+
+    first = len(mesh.positions)
+    for row, y in ((0, half), (1, -half)):
+        for segment in range(segments + 1):
+            normal = around(segment)
+            mesh.vertex((normal[0] * radius, y, normal[2] * radius), normal, (segment / segments, float(row)))
+    stride = segments + 1
+    for segment in range(segments):
+        top_left = first + segment
+        top_right, bottom_left, bottom_right = top_left + 1, top_left + stride, top_left + stride + 1
+        mesh.triangle(top_left, bottom_left, bottom_right)
+        mesh.triangle(top_left, bottom_right, top_right)
+
+    for normal, y, v_sign in ((UP, half, 1.0), (DOWN, -half, -1.0)):
+        # Top: the image's top is away from the viewer (-Z), so v grows with z;
+        # bottom: toward the viewer, so v falls with z.
+        def cap_vertex(x, z):
+            return mesh.vertex((x, y, z), normal, (0.5 + x, 0.5 + v_sign * z))
+        centre = cap_vertex(0.0, 0.0)
+        ring = []
+        for segment in range(segments):
+            direction = around(segment)
+            ring.append(cap_vertex(direction[0] * radius, direction[2] * radius))
+        for segment in range(segments):
+            a, b = ring[segment], ring[(segment + 1) % segments]
+            edge = cross(sub(mesh.positions[a], mesh.positions[centre]), sub(mesh.positions[b], mesh.positions[centre]))
+            if dot(edge, normal) > 0.0:
+                mesh.triangle(centre, a, b)
+            else:
+                mesh.triangle(centre, b, a)
+    return mesh
+
+
 def to_engine(mesh):
     """glTF's frame -> the engine's, as GltfImporter.cpp does: z flips (a
     mirror), so each triangle's winding swaps to keep it facing its normal."""
@@ -199,7 +246,7 @@ def main():
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
-    for mesh in (make_box(), make_sphere(), make_plane()):
+    for mesh in (make_box(), make_sphere(), make_plane(), make_cylinder()):
         mesh.check()
         to_engine(mesh)
         mesh.check()
