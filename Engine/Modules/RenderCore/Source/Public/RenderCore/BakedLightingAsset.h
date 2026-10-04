@@ -75,7 +75,7 @@ namespace RenderCore
 
         /* The trilinear blend of the eight probes around InPoint (clamped to
          * the grid), skipping invalid ones. False if every one is. */
-        bool Sample(const float (&InPoint)[3], BakedAmbientCube& OutCube) const;
+        RENDERCORE_API bool Sample(const float (&InPoint)[3], BakedAmbientCube& OutCube) const;
     };
 
     struct BakedLightingData
