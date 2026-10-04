@@ -314,6 +314,31 @@ passes run mid-frame, between the Base Pass and Shadows, so that only the
   that cannot sample depth, it is skipped. `Half[0..1]` are free again by the
   time Depth of Field uses them.
 
+### Stat unit
+
+**Stats.Unit** (config var, off by default) draws frame, game thread and
+render thread times, and FPS, in a panel at the top right of every viewport.
+- **Toggling it:** in the editor console, `stat unit` toggles it and
+  `stat none` hides it. In a game, set `[Stats] Unit=true` in
+  `Config/DefaultEngine.ini`.
+- **Frame** is the game thread's time from one `EndFrame` to the next.
+- **Game Thread** runs from `Renderer::BeginGameFrame`, which a host calls
+  before its pump and tick, to `EndFrame`. The time spent blocked in
+  `WaitForPreviousFrame` and `PresentToWindow` is taken out.
+- **Render Thread** is the render thread's time running a frame's commands,
+  summed over every wakeup the frame took. The swap and the wait for work are
+  left out.
+- **Averaging:** each figure is averaged over half a second. `Renderer` then
+  publishes the averages to the render thread (`StatUnitSnapshot`,
+  `RenderThreadInternal.h`) and into `RenderStats`.
+- **Drawing:** `RenderScene::Render` draws the panel last, over the debug
+  lines and after a scene capture's readback, so captures never show it.
+  `RenderContext::DrawStatUnit` is one full-screen pass (`StatsOverlay.fsh`,
+  alpha blended). The text, 4 characters to a uint, goes in the material
+  block. The font (`OverlayFont.h`: 5 x 7 glyphs, ASCII 32-126) is a texture
+  made on first use. The panel is placed from the quad's UV rather than
+  `gl_FragCoord`, whose origin differs between backends.
+
 ### Previews
 
 A material preview runs the same stages into its own small set of targets, so an

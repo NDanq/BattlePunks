@@ -194,6 +194,11 @@ namespace RenderCore
          * next RenderSceneStages uses and forgets them. */
         void SetPostProcess(const PostProcessSettings& InSettings, const EngineCore::Matrix4x4* InPreviousViewProjection);
 
+        /* RenderScene::Render's text overlay ("stat unit"): InText, lines split
+         * by '\n', in a panel at the top right of the bound InWidth x
+         * InHeight target, blended over it (StatsOverlay.fsh). */
+        void DrawStatUnit(uint32_t InWidth, uint32_t InHeight, const std::string& InText);
+
         /* Renderer::MountShaderCache's command: reads
          * Shaders/Cache/<Module>.<Platform>.nmsc and mounts it as a file layer
          * (ShaderCache.h); every material reloads through it. False, logged,

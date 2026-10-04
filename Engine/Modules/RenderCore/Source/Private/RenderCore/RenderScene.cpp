@@ -345,6 +345,14 @@ namespace RenderCore
         }
 #endif
 
+        /* "stat unit" (Stats.Unit) over everything, after the readback above
+         * so a capture never shows it. */
+        const StatUnitSnapshot Unit = GetStatUnit();
+        if(Unit.bShow)
+        {
+            InContext.DrawStatUnit(P->Targets.Width, P->Targets.Height, FormatStatUnit(Unit));
+        }
+
         GDIEndRendering();
 
         /* After EndRendering: the final colour is now in its presentable state. */

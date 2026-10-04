@@ -11,7 +11,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <thread>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -47,6 +49,7 @@
 #include "Public/RenderCore/RenderView.h"
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/ShadowSetup.h"
 
 using namespace RenderCore;
@@ -412,6 +415,57 @@ namespace
 // ============================================================================
 // The World-driven suite: a real GameCore::World bound to a Renderer.
 // ============================================================================
+
+/*
+ * "stat unit": Renderer times the frame and the game thread, the render
+ * thread its own busy time; averaged over half a second into RenderStats and
+ * the overlay's snapshot, shown when Stats.Unit is set. Null backend.
+ */
+static void TestStatUnit()
+{
+    std::printf("[stat unit]\n");
+    StatUnitSnapshot Sample;
+    Sample.FrameMs        = 16.666f;
+    Sample.GameThreadMs   = 2.5f;
+    Sample.RenderThreadMs = 4.25f;
+    const std::string Text = FormatStatUnit(Sample);
+    Expect(Text == "Frame:    16.67 ms\nGame:      2.50 ms\nRender:    4.25 ms\nFPS:       60.0", "the overlay's text, a line each");
+
+    ConfigVar* Unit = ConfigFindVarByPath("Stats.Unit");
+    Expect(Unit != nullptr && !Unit->GetBool(), "Stats.Unit exists, off by default");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null) for stat unit");
+    if(bInit && Unit)
+    {
+        Unit->SetBool(true);
+        const EngineCore::Size Viewport(320, 200);
+        const auto Start = std::chrono::steady_clock::now();
+        uint64_t Frame = 1;
+        while(std::chrono::steady_clock::now() - Start < std::chrono::milliseconds(700))
+        {
+            Rend.BeginGameFrame();
+            std::this_thread::sleep_for(std::chrono::milliseconds(4));   // the game's tick
+            Rend.WaitForPreviousFrame();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+        }
+        Rend.WaitForPreviousFrame();
+        RenderStats Stats;
+        Rend.GetStats(Stats);
+        std::printf("    frame %.2f ms, game %.2f ms, render %.3f ms\n", double(Stats.FrameMs), double(Stats.GameThreadMs),
+                    double(Stats.RenderThreadMs));
+        Expect(Stats.FrameMs >= 4.0f && Stats.GameThreadMs >= 3.5f && Stats.GameThreadMs <= Stats.FrameMs,
+               "after half a second, frame and game thread times are averaged in");
+        Expect(Stats.RenderThreadMs >= 0.0f && Stats.RenderThreadMs < Stats.FrameMs, "and the render thread's, less than the frame");
+        Expect(GetStatUnit().bShow, "Stats.Unit reaches the overlay");
+        Unit->SetBool(false);
+        Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+        Rend.WaitForPreviousFrame();
+        Expect(!GetStatUnit().bShow, "and turning it off hides it");
+        Rend.Shutdown();
+    }
+}
 
 static void TestRendererWithWorld()
 {
@@ -2765,6 +2819,7 @@ int main()
     }
 
     TestRendererWithWorld();
+    TestStatUnit();
     TestShadowSetup();
     TestLightComponents();
     TestPostProcessStack();

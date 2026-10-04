@@ -1123,10 +1123,30 @@ void EditorMainWindow::RegisterConsoleCommands()
             Console.PrintError(QStringLiteral("The renderer is not running"));
             return;
         }
-        Console.Print(QStringLiteral("%1: %2 frames rendered, %3 proxies live")
+        Console.Print(QStringLiteral("%1: %2 frames rendered, %3 proxies live; frame %4 ms, game %5 ms, render %6 ms")
                       .arg(QString::fromLatin1(BackendName(Backend)))
                       .arg(Stats.FramesRendered)
-                      .arg(Stats.ProxiesLive));
+                      .arg(Stats.ProxiesLive)
+                      .arg(double(Stats.FrameMs), 0, 'f', 2)
+                      .arg(double(Stats.GameThreadMs), 0, 'f', 2)
+                      .arg(double(Stats.RenderThreadMs), 0, 'f', 2));
+    });
+
+    /* Unreal's spelling: "stat unit" toggles the viewport overlay (Stats.Unit),
+     * "stat none" hides it. */
+    Console.Register(QStringLiteral("stat"), QStringLiteral("unit | none"),
+                     QStringLiteral("Show frame, game thread and render thread times over the viewport"),
+                     [this](const QStringList& InArgs)
+    {
+        EngineCore::ConfigVar* Unit = EngineCore::ConfigFindVar("Stats", "Unit");
+        const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
+        if(!Unit || (Which != QStringLiteral("unit") && Which != QStringLiteral("none")))
+        {
+            Console.PrintError(QStringLiteral("Usage: stat unit | none"));
+            return;
+        }
+        Unit->SetBool(Which == QStringLiteral("unit") ? !Unit->GetBool() : false);
+        Console.Print(Unit->GetBool() ? QStringLiteral("stat unit: on") : QStringLiteral("stat unit: off"));
     });
 
     Console.Register(QStringLiteral("undo"), QStringLiteral("[count]"), QStringLiteral("Undo the last change (Ctrl+Z)"),

@@ -209,6 +209,7 @@ void EditorContext::RunFrame()
     {
         return;
     }
+    Renderer->BeginGameFrame();   // "stat unit": the editor's and the game's work from here
     const float ViewDeltaSeconds = float(FrameClock.restart()) / 1000.0f;
 
     /* Each viewport's view and overlays, into its document's scene. The level's
