@@ -106,7 +106,9 @@ uses it.
 Docked below the viewport, tabbed with the Console: the project's own folder
 (the one holding `Config/DefaultEngine.ini`, e.g. `Games/Sandbox`) as a folder
 tree beside the current folder's contents. Build trees, `Binaries` and
-dot-folders are hidden. Images and `.nmtexture` files show thumbnails; hovering
+dot-folders are hidden. Images and `.nmtexture` files show thumbnails, and
+`.nmmesh` files a render of the mesh with its own materials (drawn by the
+viewport's renderer, one at a time, so they fill in a moment later); hovering
 an asset shows what it is (vertices and triangles, or size and colour space)
 and where it was imported from.
 
