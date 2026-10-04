@@ -13,7 +13,7 @@ UBO_BLOCK_BEGIN(2, PP_Block)
     vec4 PP_Sizes;   // xy one texel
 UBO_BLOCK_END(PP_Block)
 
-float LumaAt(vec2 InUV) { return PP_Luma(texture(SceneColor, InUV).rgb); }
+float LumaAt(vec2 InUV) { return PP_Luma(textureLod(SceneColor, InUV, 0.0).rgb); }
 
 void main(void)
 {

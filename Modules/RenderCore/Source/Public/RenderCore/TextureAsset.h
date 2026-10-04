@@ -70,7 +70,7 @@ namespace RenderCore
         /* Levels in all, level 0 included. */
         int GetMipCount() const { return 1 + int(Mips.size()); }
         /* Level InLevel (0: Pixels); null past the last. */
-        const EngineCore::Image* GetMip(int InLevel) const;
+        RENDERCORE_API const EngineCore::Image* GetMip(int InLevel) const;
     };
 
     struct TextureHeader

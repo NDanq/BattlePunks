@@ -417,9 +417,15 @@ namespace RenderCore
             }
         }
 
+        /* Indices are sorted, not the lights: RenderLocalLight's SIMD math is
+         * over-aligned, which std::stable_sort's buffer refuses on MSVC. */
         const bool bShadows = Lighting.Shadows.bEnabled != 0;
-        std::stable_sort(Found.begin(), Found.end(), [&InEye, bShadows](const RenderLocalLight& InA, const RenderLocalLight& InB)
+        std::vector<uint32_t> Order(Found.size());
+        for(uint32_t Index = 0; Index < uint32_t(Order.size()); ++Index) { Order[Index] = Index; }
+        std::stable_sort(Order.begin(), Order.end(), [&Found, &InEye, bShadows](const uint32_t InIndexA, const uint32_t InIndexB)
         {
+            const RenderLocalLight& InA = Found[InIndexA];
+            const RenderLocalLight& InB = Found[InIndexB];
             const bool bCastA = bShadows && InA.bCastShadows;
             const bool bCastB = bShadows && InB.bCastShadows;
             if(bCastA != bCastB) { return bCastA; }
@@ -435,7 +441,7 @@ namespace RenderCore
         Lighting.LocalCount = uint32_t(std::min<size_t>(Found.size(), RENDER_LOCAL_LIGHT_MAX));
         for(uint32_t Index = 0; Index < Lighting.LocalCount; ++Index)
         {
-            Lighting.Locals[Index] = Found[Index];
+            Lighting.Locals[Index] = Found[Order[Index]];
         }
         return Lighting;
     }
@@ -814,9 +820,17 @@ namespace RenderCore
             Request.bDue = bDue ? 1 : 0;
             Found.push_back({ &Probe, Request, (Pose.Position - InView.Origin).GetLength() });
         }
-        std::stable_sort(Found.begin(), Found.end(), [](const Candidate& InA, const Candidate& InB) { return InA.Distance < InB.Distance; });
-        for(Candidate& Each : Found)
+        /* Indices are sorted, not the candidates: a ReflectionProbeRequest's
+         * SIMD math is over-aligned, which std::stable_sort's buffer refuses on MSVC. */
+        std::vector<uint32_t> Order(Found.size());
+        for(uint32_t Index = 0; Index < uint32_t(Order.size()); ++Index) { Order[Index] = Index; }
+        std::stable_sort(Order.begin(), Order.end(), [&Found](const uint32_t InA, const uint32_t InB)
         {
+            return Found[InA].Distance < Found[InB].Distance;
+        });
+        for(const uint32_t Sorted : Order)
+        {
+            Candidate& Each = Found[Sorted];
             if(OutList.ProbeCount >= RENDER_REFLECTION_PROBES_MAX)
             {
                 break;
