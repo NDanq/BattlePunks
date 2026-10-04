@@ -112,6 +112,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Content/MeshPreviewView.h
         Source/Private/Editor/Content/MeshViewerWindow.cpp
         Source/Private/Editor/Content/MeshViewerWindow.h
+        Source/Private/Editor/Content/TextureViewerWindow.cpp
+        Source/Private/Editor/Content/TextureViewerWindow.h
         Source/Private/Editor/Content/ImportWizard.cpp
         Source/Private/Editor/Content/ImportWizard.h
         Source/Private/Editor/Project/NewProjectWizard.cpp

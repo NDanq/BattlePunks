@@ -228,6 +228,8 @@ public:
 
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
 
+    GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
+
     bool CheckError(const std::string& InFailStr) override;
 
     ERenderPlatform GetRenderPlatform() const override { return ERP_OpenGL; }

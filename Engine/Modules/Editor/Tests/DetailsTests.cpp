@@ -1,8 +1,9 @@
 /*
  * NimbleEditorDetailsTests -- the Details panel, offscreen: what it builds for
  * a component's properties, struct arrays above all (a RenderComponent's
- * material parameter overrides). NIMBLE_DETAILS_SNAPSHOT=<file.png> also
- * saves the panel as drawn, for a look.
+ * material parameter overrides) -- and the Texture Viewer.
+ * NIMBLE_DETAILS_SNAPSHOT=<file.png> also saves the panel as drawn, for a
+ * look; NIMBLE_TEXTURE_SNAPSHOT=<file.png> the Texture Viewer.
  */
 
 #include <cstdio>
@@ -10,9 +11,17 @@
 #include <cstring>
 
 #include <QApplication>
+#include <QComboBox>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPushButton>
+#include <QTemporaryDir>
+
+#include "Public/Core/CoreArchive.h"
+#include "Public/RenderCore/TextureAsset.h"
+#include "Private/Editor/Content/TextureViewerWindow.h"
 
 #include "Public/Editor/DetailsPanel.h"
 #include "Public/Editor/EditorDocument.h"
@@ -128,6 +137,120 @@ static void TestMaterialParameters()
     }
 }
 
+namespace
+{
+    /* The combo whose items include InItem. */
+    QComboBox* ComboWith(const QWidget& InRoot, const QString& InItem)
+    {
+        for(QComboBox* Each : InRoot.findChildren<QComboBox*>())
+        {
+            if(Each->findText(InItem, Qt::MatchStartsWith) >= 0) { return Each; }
+        }
+        return nullptr;
+    }
+
+    QPushButton* Button(const QWidget& InRoot, const QString& InText)
+    {
+        for(QPushButton* Each : InRoot.findChildren<QPushButton*>())
+        {
+            if(Each->text() == InText) { return Each; }
+        }
+        return nullptr;
+    }
+
+    bool AnyLabelContains(const QWidget& InRoot, const QString& InText)
+    {
+        for(const QLabel* Each : InRoot.findChildren<QLabel*>())
+        {
+            if(Each->text().contains(InText)) { return true; }
+        }
+        return false;
+    }
+
+    bool ReadTextureFile(const QString& InPath, RenderCore::TextureData& OutTexture)
+    {
+        QFile File(InPath);
+        if(!File.open(QIODevice::ReadOnly)) { return false; }
+        const QByteArray Bytes = File.readAll();
+        EngineCore::Archive Ar = EngineCore::Archive::ForReading(std::vector<uint8_t>(Bytes.begin(), Bytes.end()));
+        return RenderCore::SerializeTexture(Ar, OutTexture);
+    }
+}
+
+/* The Texture Viewer, offscreen: settings edited, mips rebuilt and shown, saved. */
+static void TestTextureViewer()
+{
+    std::printf("Texture Viewer\n");
+    QTemporaryDir Temp;
+    const QString Path = Temp.filePath(QStringLiteral("Gradient.nmtexture"));
+    {
+        RenderCore::TextureData Texture;
+        Texture.Pixels = EngineCore::Image(64, 32, EngineCore::EImageFormat::RGBA8);
+        for(int Y = 0; Y < 32; ++Y)
+        {
+            for(int X = 0; X < 64; ++X)
+            {
+                uint8_t* Px = Texture.Pixels.GetScanline(Y) + X * 4;
+                Px[0] = uint8_t(X * 4); Px[1] = uint8_t(Y * 8); Px[2] = ((X / 8 + Y / 8) & 1) ? 220 : 40; Px[3] = 255;
+            }
+        }
+        Texture.ImportInfo.SourcePath = "Source/Gradient.png";
+        Texture.ImportInfo.Settings   = "SRGB=1\nFilter=1\nWrap=0\nMaxDimension=4096\nFlipVertically=0\n";   // from before mips
+        RenderCore::SaveTextureFile(Path.toStdString(), Texture);
+    }
+
+    TextureViewerWindow* Viewer = TextureViewerWindow::Open(Path, nullptr);
+    Expect(Viewer != nullptr, "the viewer opens a texture");
+    if(!Viewer) { return; }
+    PumpFor(50);
+
+    QComboBox* Levels      = ComboWith(*Viewer, QStringLiteral("0: 64 x 32"));
+    QComboBox* MipGen      = ComboWith(*Viewer, QStringLiteral("Kaiser"));
+    QComboBox* Compression = ComboWith(*Viewer, QStringLiteral("BC7"));
+    QPushButton* Save      = Button(*Viewer, QStringLiteral("Save"));
+    Expect(Levels && Levels->count() == 1 && MipGen && Compression && Save, "it lists one level for a texture without mips");
+    Expect(AnyLabelContains(*Viewer, QStringLiteral("64 x 32")) && AnyLabelContains(*Viewer, QStringLiteral("No mips"))
+           && AnyLabelContains(*Viewer, QStringLiteral("GPU memory 8")), "and its statistics: size, no mips, 8 KB on the GPU");
+    if(!Levels || !MipGen || !Compression || !Save) { delete Viewer; return; }
+    Expect(!Save->isEnabled(), "nothing to save yet");
+
+    MipGen->setCurrentIndex(MipGen->findData(int(RenderCore::ETextureMipGen::Box)));
+    PumpFor(20);
+    Expect(Levels->count() == 7 && Levels->itemText(6) == QStringLiteral("6: 1 x 1"), "Box mips: seven levels, 64 x 32 down to 1 x 1");
+    Expect(Save->isEnabled() && Viewer->windowTitle().contains(QLatin1Char('*')), "and the texture is dirty");
+    Levels->setCurrentIndex(3);   // shown: 8 x 4
+
+    Compression->setCurrentIndex(Compression->findData(int(RenderCore::ETextureCompression::BC7)));
+    PumpFor(20);
+    Expect(AnyLabelContains(*Viewer, QStringLiteral("no block encoder is integrated")), "compression says it is a stored setting only");
+
+    if(const char* Snapshot = std::getenv("NIMBLE_TEXTURE_SNAPSHOT"))
+    {
+        Viewer->grab().save(QString::fromUtf8(Snapshot));
+        std::printf("  saved %s\n", Snapshot);
+    }
+
+    Save->click();
+    PumpFor(20);
+    RenderCore::TextureData Back;
+    Expect(ReadTextureFile(Path, Back) && Back.GetMipCount() == 7 && Back.MipGen == RenderCore::ETextureMipGen::Box
+           && Back.Compression == RenderCore::ETextureCompression::BC7, "Save writes the chain and the settings");
+    Expect(QString::fromStdString(Back.ImportInfo.Settings).contains(QStringLiteral("MipGen=1"))
+           && QString::fromStdString(Back.ImportInfo.Settings).contains(QStringLiteral("Compression=5")),
+           "and records them in the import options, so Reimport keeps them");
+    Expect(!Save->isEnabled() && !Viewer->windowTitle().contains(QLatin1Char('*')), "and it is clean again");
+
+    MipGen->setCurrentIndex(MipGen->findData(int(RenderCore::ETextureMipGen::None)));
+    PumpFor(20);
+    Expect(Levels->count() == 1, "None drops the chain");
+    Button(*Viewer, QStringLiteral("Revert"))->click();
+    PumpFor(20);
+    Expect(Levels->count() == 7 && !Save->isEnabled(), "Revert brings back what was saved");
+
+    Expect(TextureViewerWindow::Open(Path, nullptr) == Viewer, "opening it again brings the same window forward");
+    delete Viewer;
+}
+
 int main(int argc, char** argv)
 {
     /* No display needed. */
@@ -139,6 +262,7 @@ int main(int argc, char** argv)
 
     std::printf("NimbleEditorDetailsTests\n");
     TestMaterialParameters();
+    TestTextureViewer();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

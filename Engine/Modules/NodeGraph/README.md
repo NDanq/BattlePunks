@@ -291,9 +291,10 @@ from 1 (slot 0 is a PostProcess material's scene), declared
 `Material_Texture<slot>` at binding 4 + slot; seven fit. Texture Objects take
 slots in GUID order, used or not, and two naming the same texture and sampler
 share one. The `.material`'s `Texture` lines say which file and settings fill
-each slot. One sample node's outputs share one sample. Both stages sample; in
-World Position Offset a sample reads the full-size level (`textureLod`), as the
-vertex stage has no derivatives. A Texture Object with no texture, or a Texture
+each slot. One sample node's outputs share one sample. Both stages sample. In
+the pixel stage, a texture with a baked mip chain is read trilinearly with a
+Linear filter. In World Position Offset a sample reads the full-size level
+(`textureLod`), as the vertex stage has no derivatives. A Texture Object with no texture, or a Texture
 Sample with no Texture Object linked, is an error.
 
 **Reflect** (category Textures, pixel stage only) samples a render target that

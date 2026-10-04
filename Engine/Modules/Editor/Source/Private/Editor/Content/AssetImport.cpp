@@ -157,12 +157,16 @@ namespace EditorContent
             Texture.bSRGB      = InOptions.bSRGB;
             Texture.Filter     = InOptions.Filter;
             Texture.Wrap       = InOptions.Wrap;
+            Texture.MipGen      = InOptions.MipGen;
+            Texture.Compression = InOptions.Compression;
             Texture.ImportInfo = InInfo;
             if(Texture.Pixels.IsNull())
             {
                 OutError = QStringLiteral("%1: the image could not be converted").arg(QFileInfo(InPath).fileName());
                 return false;
             }
+
+            RenderCore::BuildTextureMips(Texture);
 
             EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
             RenderCore::SerializeTexture(Ar, Texture);
@@ -287,8 +291,9 @@ namespace EditorContent
 
     QString TextureImportOptions::ToSettings() const
     {
-        return QStringLiteral("SRGB=%1\nFilter=%2\nWrap=%3\nMaxDimension=%4\nFlipVertically=%5\n")
-               .arg(int(bSRGB)).arg(int(Filter)).arg(int(Wrap)).arg(MaxDimension).arg(int(bFlipVertically));
+        return QStringLiteral("SRGB=%1\nFilter=%2\nWrap=%3\nMaxDimension=%4\nFlipVertically=%5\nMipGen=%6\nCompression=%7\n")
+               .arg(int(bSRGB)).arg(int(Filter)).arg(int(Wrap)).arg(MaxDimension).arg(int(bFlipVertically))
+               .arg(int(MipGen)).arg(int(Compression));
     }
 
     TextureImportOptions TextureImportOptions::FromSettings(const QString& InSettings)
@@ -303,6 +308,13 @@ namespace EditorContent
         if(Wrap   >= 0 && Wrap   <= int(RenderCore::ETextureWrap::Mirror))   { Out.Wrap   = RenderCore::ETextureWrap(Wrap); }
         const int MaxDimension = Map.value(QStringLiteral("MaxDimension")).toInt();
         if(MaxDimension > 0) { Out.MaxDimension = MaxDimension; }
+        /* Absent from a texture imported before mips: none, as it was. */
+        const int MipGen      = Map.value(QStringLiteral("MipGen"), QStringLiteral("0")).toInt();
+        const int Compression = Map.value(QStringLiteral("Compression"), QStringLiteral("0")).toInt();
+        Out.MipGen      = MipGen >= 0 && MipGen <= int(RenderCore::ETextureMipGen::Kaiser) ? RenderCore::ETextureMipGen(MipGen)
+                                                                                        : RenderCore::ETextureMipGen::None;
+        Out.Compression = Compression >= 0 && Compression <= int(RenderCore::ETextureCompression::BC7)
+                          ? RenderCore::ETextureCompression(Compression) : RenderCore::ETextureCompression::None;
         return Out;
     }
 

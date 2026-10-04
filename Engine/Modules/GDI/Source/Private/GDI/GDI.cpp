@@ -536,6 +536,12 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
                             EndDrawEvent,
                             (),,())
 
+GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLevels, const uint32_t InCount,
+                                                 const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
+{
+    return GDynamicGDI ? GDynamicGDI->CreateTextureResourceMips(InLevels, InCount, InBorder, InFilter) : nullptr;
+}
+
 bool GDISupportsGPUTimestamps()
 {
     return GDynamicGDI && GDynamicGDI->SupportsGPUTimestamps();

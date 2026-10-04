@@ -75,6 +75,7 @@ private:
     QComboBox*      Wrap          = nullptr;
     QComboBox*      MaxSize       = nullptr;
     QCheckBox*      FlipVertical  = nullptr;
+    QComboBox*      MipGen        = nullptr;
 
     QProgressBar*   Progress      = nullptr;
     QPlainTextEdit* Log           = nullptr;
