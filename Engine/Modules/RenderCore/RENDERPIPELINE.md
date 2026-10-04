@@ -314,6 +314,19 @@ passes run mid-frame, between the Base Pass and Shadows, so that only the
   that cannot sample depth, it is skipped. `Half[0..1]` are free again by the
   time Depth of Field uses them.
 
+### Background
+
+A scene clears to one colour (`Renderer::SetClearColor`), or to a vertical
+gradient (`Renderer::SetClearGradient(Scene, Top, Bottom)`). For a gradient,
+`RenderSceneStages` draws `ClearGradient.fsh` full screen right after the
+clear: top colour at the top of the view, bottom at the bottom, display
+space, with a half-step of dither so a slow ramp does not band in the 8-bit
+target. Its depth is untouched and the targets are bound again for the
+stages. The Lighting stage writes lit pixels only, and everything else draws
+over it, so the gradient shows wherever the clear colour would. The editor
+sets it on every viewport from Editor Settings (`Editor.ViewportGradient`,
+`ViewportTopColor`, `ViewportBottomColor`); a game keeps its clear colour.
+
 ### Static draw lists
 
 An entity with **Static** mobility (GameCore's `Mobility.h`) keeps its draws

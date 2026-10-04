@@ -75,7 +75,9 @@ namespace RenderCore
         std::vector<std::pair<uint64_t, MaterialPreviewMailbox*>> Captures;   // likewise
 #endif
         RenderView                View;
-        EngineCore::Color         ClearColor{24, 26, 32, 255};
+        EngineCore::Color         ClearColor{24, 26, 32, 255};        // the top, with a gradient
+        EngineCore::Color         ClearBottom{24, 26, 32, 255};
+        bool                      bClearGradient = false;
 
         /* "stat frame": GPU times per ERenderGpuTimer, summed over the current
          * half second, and the last half second's averages (-1: not timed). */
@@ -222,7 +224,16 @@ namespace RenderCore
 
     void RenderScene::SetClearColor(const EngineCore::Color InColor)
     {
-        P->ClearColor = InColor;
+        P->ClearColor     = InColor;
+        P->ClearBottom    = InColor;
+        P->bClearGradient = false;
+    }
+
+    void RenderScene::SetClearGradient(const EngineCore::Color InTop, const EngineCore::Color InBottom)
+    {
+        P->ClearColor     = InTop;
+        P->ClearBottom    = InBottom;
+        P->bClearGradient = true;
     }
 
     void RenderScene::SetLighting(const RenderLighting& InLighting)
@@ -460,7 +471,7 @@ namespace RenderCore
 
         /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
          * leaves the final colour bound, for the present and the overlay. */
-        InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true);
+        InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true, P->bClearGradient ? &P->ClearBottom : nullptr);
 
 #if WITH_EDITOR
         /* Read back before the overlay; the readback flushes and resumes the frame. */

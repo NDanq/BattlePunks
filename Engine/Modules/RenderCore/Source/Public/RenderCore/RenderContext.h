@@ -188,9 +188,12 @@ namespace RenderCore
         uint32_t              PrepareShadows();
         const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
         void                  SetShadowCasterView(int32_t InView);
-        /* bInTimed: write "stat frame"'s GPU timestamps around each stage --
+        /* InClearBottom: the background is a gradient, InClearColor at the
+         * top to it at the bottom (ClearGradient.fsh), under everything.
+         * bInTimed: write "stat frame"'s GPU timestamps around each stage --
          * a scene's own frame only, once per GDI block (BeginTimedBlock). */
-        void RenderSceneStages(SceneTargets& InTargets, EngineCore::Color InClearColor, bool bInTimed = false);
+        void RenderSceneStages(SceneTargets& InTargets, EngineCore::Color InClearColor, bool bInTimed = false,
+                               const EngineCore::Color* InClearBottom = nullptr);
 
         /* RenderScene::Render's, right after GDIBeginRendering: hands back the
          * previous GDI block's stage times (ms per ERenderGpuTimer, -1 where

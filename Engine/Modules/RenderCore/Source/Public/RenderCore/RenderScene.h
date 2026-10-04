@@ -73,6 +73,9 @@ namespace RenderCore
         void SetView(const RenderView& InView);
         void SetClearColor(EngineCore::Color InColor);
 
+        /* A vertical gradient instead (Renderer::SetClearGradient). */
+        void SetClearGradient(EngineCore::Color InTop, EngineCore::Color InBottom);
+
         /* The light the next Render() shades Lit materials with, and the
          * PostProcess materials it draws over the scene afterwards. Both are
          * re-sent every frame by WorldBridge. */

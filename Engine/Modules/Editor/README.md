@@ -515,6 +515,7 @@ Settings instead.
 |---|---|---|
 | Appearance | Theme: System, Light, Dark (applies at once) | `Editor.Theme` |
 | Viewport | Move / Rotate / Scale snap | `Editor.SnapTranslate`, `SnapRotate`, `SnapScale` |
+| Viewport | Background gradient, top and bottom colours (a swatch opens a colour picker; applies at once to every editor viewport) | `Editor.ViewportGradient` (on), `ViewportTopColor` (`#4b515d`), `ViewportBottomColor` (`#1b1d22`) |
 | Rendering | Render backend (on restart) | `Editor.RHI` |
 | Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
 | Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, combine meshes, import a mesh's textures, sRGB, largest texture | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize` |
