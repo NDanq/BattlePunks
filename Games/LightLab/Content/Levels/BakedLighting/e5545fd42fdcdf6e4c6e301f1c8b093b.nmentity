@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="e5545fd42fdcdf6e4c6e301f1c8b093b" Name="Box" Mobility="Static">
+  <Component Type="Render" Version="3">
+    <Visible Value="true" />
+    <Material0 Value="" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="8.8803425" Y="509.93845" Z="-269.3651" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="900" Y="10" Z="300" />
+  </Component>
+</Entity>

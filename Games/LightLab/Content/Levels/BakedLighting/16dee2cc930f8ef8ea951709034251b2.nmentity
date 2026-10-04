@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="0ca58e5971cc7d554c2aacd310412849" Name="Ceiling" Mobility="Static">
+<Entity Guid="16dee2cc930f8ef8ea951709034251b2" Name="BackRight" Mobility="Static">
   <Component Type="Render" Version="3">
     <Visible Value="true" />
     <Material0 Value="Content/Materials/PBR.material.nmgraph" />
@@ -33,8 +33,8 @@
     <CastShadows Value="true" />
   </Component>
   <Component Type="Transform" Version="1">
-    <Position X="0" Y="510" Z="0" />
+    <Position X="19.362183" Y="290" Z="410" />
     <Rotation X="0" Y="0" Z="0" />
-    <Scale X="840" Y="20" Z="840" />
+    <Scale X="280" Y="180" Z="20" />
   </Component>
 </Entity>
