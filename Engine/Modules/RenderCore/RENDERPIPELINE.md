@@ -442,8 +442,14 @@ Verified (`NIMBLE_SMOKE_GPU=Vulkan`, in a room of six coloured walls):
 ### Baked lighting
 
 A world can bake its static lighting: lightmaps for its static meshes, light
-probes for everything else. Only what is **Static** is baked -- an entity's
-Mobility (GameCore's `Mobility.h`) decides, for lights and meshes alike.
+probes for everything else. An entity's Mobility (GameCore's `Mobility.h`)
+decides what is baked:
+
+- **Static** meshes and lights are baked whole.
+- **Stationary** lights (and a Stationary Sky Light) stay live -- their direct
+  light and shadows are drawn every frame -- and only the light they bounce is
+  baked. A Stationary mesh is treated as Dynamic.
+- **Dynamic** entities are left to the renderer, lit by the probes.
 
 **Turning it on.** World > World Settings > Baked lighting
 (`GameCore::WorldLightingSettings`, saved with the world: a `<Settings>`
@@ -463,34 +469,50 @@ probes, as a dynamic one is.
 path tracer in the editor (`Editor/.../Lighting/`), on every core, behind a
 progress dialog that can cancel:
 
-1. **Gather** (`LightBakeWorld.h`). Every static Render component's mesh, in
-   world space, each section's albedo from its material's `BaseColor` and
-   `Metallic` parameters (the entity's overrides first; 0.5 grey without one --
-   a material graph is a shader, which a CPU cannot run). Static directional,
-   point and spot lights and the Sky Light (its colours, or its HDRI). A hash
-   of all of it.
-2. **Layout** (`LightBaker.h`). Each lightmapped mesh gets a square of
+1. **Measure** (`BakeLightmaps.h`). The viewport's renderer draws each static
+   material on a quad twice -- its base colour, then its emissive -- through a
+   material preview's channel (`EMaterialPreviewChannel`, `Scene_View` 2 and 3),
+   and averages each in linear light. So the bake reflects and glows as the
+   materials draw, textures included. Without a GPU (the Null backend), a
+   material bakes by its `BaseColor` parameter, else 0.5 grey.
+2. **Gather** (`LightBakeWorld.h`). Every static Render component's mesh, in
+   world space, each section's albedo and emissive as measured (the entity's
+   `BaseColor` and `Metallic` overrides win). Static and Stationary
+   directional, point and spot lights and the Sky Light (its colours, or its
+   HDRI). The world's hash (`HashWorld`): settings, and each static or
+   Stationary entity's GUID, mobility, place, components, mesh and material
+   description -- no triangles touched, so it is cheap to check again.
+3. **Layout** (`LightBaker.h`). Each lightmapped mesh gets a square of
    sqrt(area) x density texels, shelf-packed into atlases with a texel of
    border; its UV1 maps into it.
-3. **Lighting.** Per texel: every light, through shadow rays jittered over
+4. **Lighting.** A texel whose short rays along its surface find the back of
+   one is inside or under something (the floor under a wall): it is left out
+   and filled from its neighbours, so walls leak no dark line. Then per texel:
+   every Static light, through shadow rays jittered over
    its size for soft shadows -- a Directional Light's **Source Angle** (degrees,
    0.75 by default), a point or spot light's **Source Radius** (units, 4), each
    under Baked Lighting in its Details; then cosine-weighted paths that reach the sky or
-   bounce off up to Bounces surfaces, each lit by every light. Values match the
-   live renderer's: a surface's direct diffuse equals what `EvaluateLight`
-   gives it.
-4. **Filtering.** The bounced light is smoothed across texels of the same
+   bounce off up to Bounces surfaces, each lit by every light, Stationary ones
+   too, and each glowing with its emissive. Values match the live renderer's: a
+   surface's direct diffuse equals what `EvaluateLight` gives it. Each texel
+   also keeps the light's dominant direction (luminance weighted) and how
+   one-sided it is, for directional lightmaps.
+5. **Filtering.** The bounced light (and its direction) is smoothed across texels of the same
    mesh with similar positions and normals; lit texels grow into the empty
    ones round them.
-5. **Probes.** A grid over the static geometry at Probe Spacing, each an
+6. **Probes.** A grid over the static geometry at Probe Spacing, each an
    ambient cube (+X -X +Y -Y +Z -Z) from rays over the whole sphere plus each
-   light's direct part. A probe that sees mostly backfaces is inside something
+   Static light's direct part. A probe that sees mostly backfaces is inside something
    and left out of the blend.
 
 The result goes beside the world, `Levels/<World>/Lighting/`:
-`Lightmap_<n>.nmtexture` (RGBE8, at most `RENDER_BAKED_ATLASES_MAX`, 8) and
+`Lightmap_<n>.nmtexture` (at most `RENDER_BAKED_ATLASES_MAX`, 8) and
 `Lighting.nmlighting` (`BakedLightingAsset.h`: the hash, whether the sky was
-baked, each entity's atlas and UV1 scale/offset, the probes). The world's
+baked, whether the atlases are directional, each entity's atlas and UV1
+scale/offset, the probes). A directional atlas is twice as tall: the light
+above (RGBE8), its direction below (RGBA8: the direction times its
+one-sidedness, x 0.5 + 0.5, and in alpha the half-Lambert at the texel's own
+normal). The world's
 settings name it (`BakedData`): one undo step, saved with the world. The
 status bar says "Lighting needs to be rebuilt" once a static entity or light no
 longer matches the bake's hash.
@@ -514,6 +536,10 @@ and `[Rendering] BakedLighting` is on:
   (x: 0 none, 1 lightmap, 2 ambient cube) and `Material_AmbientCube[6]`. The
   lightmap is bound at material texture slot 0, which a Base Pass material
   does not otherwise use; RGBE, so `Baked_SampleLightmap` filters it by hand.
+  A directional one (`Scene_Baked.z`) is shaded for the surface's normal --
+  its normal map's: `Baked_SampleDirectional` scales the light by the
+  half-Lambert of the normal against the stored direction, over the same at
+  the texel's own normal, so a flat surface shows the bake as it is.
 - **The Base Pass** adds baked light x diffuse albedo x AO to the emissive it
   stores, and writes GBuffer1.a = 0.75. The Lighting stage and the IBL pass
   then leave out their diffuse ambient there (specular reflections stay) --
@@ -521,13 +547,14 @@ and `[Rendering] BakedLighting` is on:
   ambient then still applies (`Scene_Baked.y`).
 - **Forward Lit** (translucent) draws add the ambient cube the same way.
 
-**Lit and Baked.** `[Rendering] BakedLighting` 0 draws as if there were no
-bake: every light live, nothing baked. The editor's View > Lighting > Lit /
-Baked and `lighting lit | baked` set it; LightLab's L key toggles it.
+**Live and Baked.** `[Rendering] BakedLighting` 0 draws as if there were no
+bake: every light live, nothing baked. The editor's Show > Lighting > Baked /
+Live and `lighting baked | live` set it; LightLab's L key toggles it.
 
-The trade-offs of fully baked static lights: they light dynamic entities only
+The trade-offs of fully baked Static lights: they light dynamic entities only
 through the probes -- diffuse, no specular highlight, no sharp shadow -- and
-dynamic entities cast no shadow from them.
+dynamic entities cast no shadow from them. A Stationary light keeps all of
+that, live, at its live cost; only its bounce is baked.
 
 Verified: the editor's lighting tests bake small scenes whose answers are
 known -- an open texel under a straight-down sun equals radiance / pi to 5%,

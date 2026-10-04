@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="1c03d3a4e47cf8587e255e88be3b970c" Name="Lamp" Mobility="Static">
-  <Component Type="Point Light" Version="1">
+  <Component Type="Point Light" Version="2">
     <Color R="255" G="196" B="140" A="255" />
     <Intensity Value="8" />
     <Radius Value="750" />
@@ -10,6 +10,7 @@
     <ShadowTint R="110" G="135" B="200" A="255" />
     <ShadowBias Value="0.004" />
     <ShadowNormalBias Value="2" />
+    <SourceRadius Value="4" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="0" Y="440" Z="-60" />

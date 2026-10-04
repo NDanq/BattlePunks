@@ -174,6 +174,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     tabifyDockWidget(ConsoleDock, ContentDock);
     ContentDock->raise();
     connect(ContentArea, &ContentBrowserPanel::OpenWorldRequested, this, &EditorMainWindow::OpenWorldFile);
+    connect(ViewportArea, &ViewportPanel::StatusMessage, this, [this](const QString& InText) { statusBar()->showMessage(InText, 6000); });
     connect(ContentArea, &ContentBrowserPanel::StatusMessage, this, [this](const QString& InText)
     {
         statusBar()->showMessage(InText, 6000);
@@ -472,36 +473,6 @@ void EditorMainWindow::BuildMenus()
 
     View->addSeparator();
 
-    /* [Rendering] BakedLighting: draw with the world's bake, or light every light live. */
-    QMenu* LightingMenu = View->addMenu(QStringLiteral("&Lighting"));
-    auto* LightingModes = new QActionGroup(LightingMenu);
-    QAction* BakedView = LightingMenu->addAction(QStringLiteral("&Baked"));
-    BakedView->setToolTip(QStringLiteral("Static entities and lights as Build > Bake Lightmaps baked them; dynamic ones lit by the probes"));
-    QAction* LitView = LightingMenu->addAction(QStringLiteral("&Lit"));
-    LitView->setToolTip(QStringLiteral("Every light lit live, as if there were no bake"));
-    for(QAction* Each : { BakedView, LitView })
-    {
-        Each->setCheckable(true);
-        LightingModes->addAction(Each);
-    }
-    {
-        const EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting");
-        (Var && !Var->GetBool() ? LitView : BakedView)->setChecked(true);
-    }
-    const auto SetBakedView = [this](const bool bInBaked)
-    {
-        if(EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting")) { Var->SetBool(bInBaked); }
-        const GameCore::WorldLightingSettings& Lighting = Level.GetWorldSettings().Lighting;
-        statusBar()->showMessage(!bInBaked ? QStringLiteral("Lighting: Lit -- every light live")
-                                 : Lighting.bBakedLighting && !Lighting.BakedData.empty()
-                                   ? QStringLiteral("Lighting: Baked")
-                                   : QStringLiteral("Lighting: Baked -- but this world has no bake yet (Build > Bake Lightmaps)"), 6000);
-    };
-    connect(BakedView, &QAction::triggered, this, [SetBakedView]() { SetBakedView(true); });
-    connect(LitView, &QAction::triggered, this, [SetBakedView]() { SetBakedView(false); });
-    BakedViewAction = BakedView;
-    LitViewAction   = LitView;
-
     QAction* ResetCamera = View->addAction(QStringLiteral("&Reset Camera"));
     connect(ResetCamera, &QAction::triggered, this, [this]() { Viewport->GetCamera() = EditorCamera(); });
 
@@ -613,7 +584,7 @@ void EditorMainWindow::BuildBuildMenu()
                                              "beside the world (World > World Settings turns baked lighting on)"));
     connect(BakeLightmaps, &QAction::triggered, this, [this]()
     {
-        EditorLighting::BakeLightmaps(Level, CurrentPath, this, [this](const QString& InText) { statusBar()->showMessage(InText, 10000); });
+        EditorLighting::BakeLightmaps(Level, Context, CurrentPath, this, [this](const QString& InText) { statusBar()->showMessage(InText, 10000); });
     });
     SceneActions.push_back(BakeLightmaps);
 
@@ -937,23 +908,23 @@ void EditorMainWindow::RegisterConsoleCommands()
                       .arg(QDir::toNativeSeparators(SettingsDialog::GetUserSettingsPath())));
     });
 
-    Console.Register(QStringLiteral("lighting"), QStringLiteral("<bake | baked | lit>"),
-                     QStringLiteral("Bake the static lights into the static entities (Build > Bake Lightmaps), or draw with the bake or live (View > Lighting)"),
+    Console.Register(QStringLiteral("lighting"), QStringLiteral("<bake | baked | live>"),
+                     QStringLiteral("Bake the static lights into the static entities (Build > Bake Lightmaps), or draw with the bake or live (Show > Lighting)"),
                      [this](const QStringList& InArgs)
     {
         const QString Word = InArgs.isEmpty() ? QString() : InArgs[0];
         if(Word == QStringLiteral("bake"))
         {
-            EditorLighting::BakeLightmaps(Level, CurrentPath, this, [this](const QString& InText) { Console.Print(InText); });
+            EditorLighting::BakeLightmaps(Level, Context, CurrentPath, this, [this](const QString& InText) { Console.Print(InText); });
         }
-        else if(Word == QStringLiteral("baked") || Word == QStringLiteral("lit"))
+        else if(Word == QStringLiteral("baked") || Word == QStringLiteral("live"))
         {
-            (Word == QStringLiteral("baked") ? BakedViewAction : LitViewAction)->trigger();
+            ViewportArea->SetBakedLighting(Word == QStringLiteral("baked"));
             Console.Print(QStringLiteral("Lighting: %1").arg(Word));
         }
         else
         {
-            Console.PrintError(QStringLiteral("Usage: lighting <bake | baked | lit>"));
+            Console.PrintError(QStringLiteral("Usage: lighting <bake | baked | live>"));
         }
     });
 
@@ -1649,10 +1620,8 @@ void EditorMainWindow::CheckBake()
         BakeLabel->clear();
         return;
     }
-    LightBake::Scene Scene;
-    LightBake::GatherReport Report;
-    LightBake::GatherScene(Level.GetEditedWorld(), Scene, Report);
-    BakeLabel->setText(Scene.Hash == Bake->InputHash ? QString() : QStringLiteral("Lighting needs to be rebuilt"));
+    BakeLabel->setText(LightBake::HashWorld(Level.GetEditedWorld()) == Bake->InputHash ? QString()
+                                                                                     : QStringLiteral("Lighting needs to be rebuilt"));
 }
 
 bool EditorMainWindow::SaveWorld()

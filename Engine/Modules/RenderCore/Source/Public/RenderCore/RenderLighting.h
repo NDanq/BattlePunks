@@ -122,6 +122,7 @@ namespace RenderCore
          * RenderBakedDraw::Atlas (runtime-relative .nmtexture). */
         uint8_t              bBaked    = 0;
         uint8_t              bBakedSky = 0;
+        uint8_t              bBakedDirectional = 0;   // its lightmaps carry the light's direction
         uint32_t             BakedAtlasCount = 0;
         char                 BakedAtlases[RENDER_BAKED_ATLASES_MAX][128] = {};   // RENDER_MATERIAL_PATH_MAX
     };

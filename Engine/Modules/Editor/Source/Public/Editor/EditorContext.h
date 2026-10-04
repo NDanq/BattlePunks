@@ -74,7 +74,8 @@ public:
 
     /* See Renderer::RequestMaterialPreview. 0 when the Renderer is not
      * running; otherwise poll TakeMaterialPreview until it returns true. */
-    uint64_t RequestMaterialPreview(const QString& InName, int InSize, EngineCore::Color InTint);
+    uint64_t RequestMaterialPreview(const QString& InName, int InSize, EngineCore::Color InTint,
+                                    RenderCore::EMaterialPreviewChannel InChannel = RenderCore::EMaterialPreviewChannel::Lit);
     bool     TakeMaterialPreview(uint64_t InRequest, QImage& OutImage, QString& OutError);
 
     /* A render target's pixels as materials sample them after the next frame's

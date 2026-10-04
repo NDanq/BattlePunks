@@ -27,7 +27,7 @@
 using namespace GameCore;
 
 /* Off: every light lit live, the bake left loaded but unused -- the Lit view
- * the editor's View > Lighting and LightLab's L key switch to. */
+ * the editor's Show > Lighting > Live and LightLab's L key switch to. */
 NIMBLE_CONFIG_BOOL(GBakedLighting, "Rendering", "BakedLighting", true, nullptr);
 
 /*
@@ -342,6 +342,7 @@ namespace RenderCore
         {
             Lighting.bBaked    = 1;
             Lighting.bBakedSky = Bake->bSkyBaked ? 1 : 0;
+            Lighting.bBakedDirectional = Bake->bDirectional ? 1 : 0;
             Lighting.BakedAtlasCount = uint32_t(std::min<size_t>(Bake->Atlases.size(), RENDER_BAKED_ATLASES_MAX));
             for(uint32_t Atlas = 0; Atlas < Lighting.BakedAtlasCount; ++Atlas)
             {

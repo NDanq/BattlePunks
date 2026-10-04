@@ -68,10 +68,10 @@ void main(void)
     Surface.Opacity          = 1.0;
     Surface.OpacityMask      = 1.0;
 
-    // Unlit view mode: the surface's colour and its glow, no light at all.
+    // Unlit view mode, or a preview's channel: no light at all.
     if(Scene_View.x > 0.5)
     {
-        Output = vec4(ToSceneColor(ToLinear(Surface.BaseColor) + ToLinear(Surface.Emissive)), 1.0);
+        Output = vec4(ToSceneColor(ViewChannelColor(Surface.BaseColor, Surface.Emissive)), 1.0);
         return;
     }
 

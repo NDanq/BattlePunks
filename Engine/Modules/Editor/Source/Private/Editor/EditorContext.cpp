@@ -106,13 +106,14 @@ void EditorContext::ReloadMaterial(const QString& InName)
     }
 }
 
-uint64_t EditorContext::RequestMaterialPreview(const QString& InName, const int InSize, const EngineCore::Color InTint)
+uint64_t EditorContext::RequestMaterialPreview(const QString& InName, const int InSize, const EngineCore::Color InTint,
+                                              const RenderCore::EMaterialPreviewChannel InChannel)
 {
     if(!Renderer || !bRendererReady)
     {
         return 0;
     }
-    return Renderer->RequestMaterialPreview(InName.toUtf8().constData(), InSize, InTint);
+    return Renderer->RequestMaterialPreview(InName.toUtf8().constData(), InSize, InTint, InChannel);
 }
 
 uint64_t EditorContext::RequestMeshPreview(const QString& InMesh, const QString& InMaterial, const QStringList& InSections,

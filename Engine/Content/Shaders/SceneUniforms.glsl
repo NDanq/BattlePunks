@@ -42,9 +42,11 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
                                  // [3i+2] x its block in the atlas
 
     // Baked lighting (BakedLighting.glsl): x 1 if the view draws with a bake; y 1 if that bake
-    // has the sky in it, so a baked surface takes no live sky ambient.
+    // has the sky in it, so a baked surface takes no live sky ambient; z 1 if its lightmaps
+    // are directional (the light's direction in each atlas's bottom half).
     vec4 Scene_Baked;
 
-    // The view mode (RenderTypes.h's ERenderViewMode): x 1 for Unlit -- base colour and emissive, no light.
+    // The view mode (RenderTypes.h's ERenderViewMode): x 1 for Unlit -- base colour and emissive, no light;
+    // a material preview's channel (EMaterialPreviewChannel): 2 base colour alone, 3 emissive alone / 16.
     vec4 Scene_View;
 UBO_BLOCK_END(Scene_Block)

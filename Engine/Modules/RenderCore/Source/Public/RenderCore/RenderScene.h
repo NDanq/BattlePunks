@@ -47,6 +47,7 @@ namespace RenderCore
         float                   Pitch = 20.0f;          // degrees above it
         float                   Zoom  = 1.0f;           // 1 frames the mesh's bounds
         EngineCore::Color       Tint{255, 255, 255, 255};
+        uint8_t                 Channel = 0;            // EMaterialPreviewChannel
         MaterialPreviewMailbox* Mailbox = nullptr;
     };
 #endif

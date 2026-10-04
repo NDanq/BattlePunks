@@ -102,6 +102,8 @@ namespace LightBake
             return Window * Window / (1.0f + 16.0f * X * X);
         }
 
+        float Luminance(const Vec3& InRgb) { return 0.2126f * InRgb.X + 0.7152f * InRgb.Y + 0.0722f * InRgb.Z; }
+
         float SmoothStep(const float InEdge0, const float InEdge1, const float InX)
         {
             const float T = std::clamp((InX - InEdge0) / std::max(InEdge1 - InEdge0, 1e-6f), 0.0f, 1.0f);
@@ -120,13 +122,18 @@ namespace LightBake
 
             /* InDirection's light at a point, toward a surface (or probe face)
              * with normal InN (unit; no cosine if null): every light's
-             * radiance times cosine over pi, shadowed. */
-            Vec3 Direct(const Vec3& InPoint, const Vec3* InN, Random& R, const int InSamples) const
+             * radiance times cosine over pi, shadowed. bInBakedOnly leaves out
+             * Stationary lights, whose direct light stays live. OutDirection,
+             * if given, gains each light's direction times its luminance. */
+            Vec3 Direct(const Vec3& InPoint, const Vec3* InN, Random& R, const int InSamples, const bool bInBakedOnly,
+                        Vec3* OutDirection = nullptr) const
             {
                 Vec3 Sum;
                 for(const Light& L : S.Lights)
                 {
+                    if(bInBakedOnly && !L.bBakeDirect) { continue; }
                     Vec3 Light;
+                    Vec3 Toward;
                     for(int Sample = 0; Sample < InSamples; ++Sample)
                     {
                         Vec3  ToLight;
@@ -157,22 +164,48 @@ namespace LightBake
                         {
                             continue;
                         }
-                        Light += L.Radiance * (Cosine * Scale);
+                        Light  += L.Radiance * (Cosine * Scale);
+                        Toward += ToLight * Luminance(L.Radiance * (Cosine * Scale));
                     }
-                    Sum += Light * (1.0f / (float(InSamples) * PI));
+                    const float Norm = 1.0f / (float(InSamples) * PI);
+                    Sum += Light * Norm;
+                    if(OutDirection) { *OutDirection += Toward * Norm; }
                 }
                 return Sum;
             }
 
+            /* Whether a texel at InPoint (normal InN, InTexel world units
+             * across) is inside or under something: a short ray along its
+             * surface finds the back of one -- a floor texel under a wall. */
+            bool IsBuried(const Vec3& InPoint, const Vec3& InN, const float InTexel) const
+            {
+                Vec3 T, B;
+                Basis(InN, T, B);
+                for(int Ray = 0; Ray < 8; ++Ray)
+                {
+                    const float Angle = float(Ray) * (PI / 4.0f);
+                    const Vec3  Dir   = Normalize(T * std::cos(Angle) + B * std::sin(Angle) + InN * 0.1f);
+                    Hit H;
+                    if(!Tree.Intersect(InPoint, Dir, 0.0f, InTexel, H)) { continue; }
+                    const Triangle& Tri = S.Triangles[H.Triangle];
+                    const float W = 1.0f - H.U - H.V;
+                    if(Dot(Normalize(Tri.N[0] * W + Tri.N[1] * H.U + Tri.N[2] * H.V), Dir) > 0.0f) { return true; }
+                }
+                return false;
+            }
+
             /* The radiance arriving at InOrigin from InDirection: the sky if
-             * nothing is hit; a surface's albedo times its own light if
-             * InBounces allows one more; black off a backface. */
-            Vec3 Radiance(const Vec3& InOrigin, const Vec3& InDirection, const int InBounces, Random& R, bool* OutBackface = nullptr) const
+             * nothing is hit (not on a first ray, bInPrimary, when the sky is
+             * Stationary: its live ambient covers that); a surface's glow,
+             * plus its albedo times its own light if InBounces allows one
+             * more; black off a backface. */
+            Vec3 Radiance(const Vec3& InOrigin, const Vec3& InDirection, const int InBounces, Random& R, bool* OutBackface = nullptr,
+                          const bool bInPrimary = false) const
             {
                 Hit H;
                 if(!Tree.Intersect(InOrigin, InDirection, 0.0f, 1e30f, H))
                 {
-                    return S.SkyLight.Radiance(InDirection);
+                    return bInPrimary && !S.SkyLight.bBakeDirect ? Vec3() : S.SkyLight.Radiance(InDirection);
                 }
                 const Triangle& T = S.Triangles[H.Triangle];
                 const float W = 1.0f - H.U - H.V;
@@ -182,12 +215,12 @@ namespace LightBake
                     if(OutBackface) { *OutBackface = true; }
                     return Vec3();
                 }
-                if(InBounces <= 0) { return Vec3(); }
+                if(InBounces <= 0) { return T.Emissive; }
 
                 const Vec3 Point = InOrigin + InDirection * H.T + N * Bias;
-                Vec3 Light = Direct(Point, &N, R, 1);
+                Vec3 Light = Direct(Point, &N, R, 1, /*bInBakedOnly*/ false);
                 Light += Radiance(Point, CosineSample(N, R), InBounces - 1, R);
-                return T.Albedo * Light;
+                return T.Emissive + T.Albedo * Light;
             }
         };
 
@@ -267,6 +300,7 @@ namespace LightBake
             Vec3     Position;
             Vec3     Normal;
             float    Distance = std::numeric_limits<float>::max();   // texels off its triangle; 0 inside
+            float    Size     = 1.0f;                                // world units across, for IsBuried
             uint32_t Instance = 0;
             bool     bUsed    = false;
         };
@@ -344,6 +378,11 @@ namespace LightBake
                     const int Y1 = std::min(Place.Y + Place.Resolution - 1, int(std::ceil(std::max({ Corner[0][1], Corner[1][1], Corner[2][1] }))) + 1);
 
                     const Vec3 Face = Normalize(Cross(T.P[1] - T.P[0], T.P[2] - T.P[0]));
+                    /* World area over texel area: how big a texel is on this triangle. */
+                    const Vec3  WorldCross = Cross(T.P[1] - T.P[0], T.P[2] - T.P[0]);
+                    const float UvArea = std::fabs((Corner[1][0] - Corner[0][0]) * (Corner[2][1] - Corner[0][1])
+                                                   - (Corner[2][0] - Corner[0][0]) * (Corner[1][1] - Corner[0][1]));
+                    const float TexelSize = UvArea > 1e-12f ? std::sqrt(std::sqrt(Dot(WorldCross, WorldCross)) / UvArea) : 1.0f;
                     for(int Y = Y0; Y <= Y1; ++Y)
                     {
                         for(int X = X0; X <= X1; ++X)
@@ -357,6 +396,7 @@ namespace LightBake
                             const Vec3 Off = Dot(Face, Out.Normal) >= 0.0f ? Face : Face * -1.0f;
                             Out.Position = T.P[0] * W0 + T.P[1] * W1 + T.P[2] * W2 + Off * InBias;
                             Out.Distance = Distance;
+                            Out.Size     = TexelSize;
                             Out.Instance = Place.Instance;
                             Out.bUsed    = true;
                         }
@@ -398,8 +438,10 @@ namespace LightBake
 
         // === Filtering ============================================================
 
-        void Smooth(const std::vector<Texel>& InTexels, const int InSize, const float InWorldTexel, std::vector<float>& InOutIndirect)
+        void Smooth(const std::vector<Texel>& InTexels, const int InSize, const float InWorldTexel, std::vector<float>& InOutIndirect,
+                    const int InChannels = 3)
         {
+            const size_t C = size_t(InChannels);
             const std::vector<float> Source = InOutIndirect;
             const float Sigma2 = 2.0f * (2.0f * InWorldTexel) * (2.0f * InWorldTexel);
             for(int Y = 0; Y < InSize; ++Y)
@@ -409,7 +451,7 @@ namespace LightBake
                     const size_t Index = size_t(Y) * size_t(InSize) + size_t(X);
                     const Texel& Centre = InTexels[Index];
                     if(!Centre.bUsed) { continue; }
-                    Vec3  Sum;
+                    float Sum[4] = {};
                     float Weight = 0.0f;
                     for(int DY = -FILTER_RADIUS; DY <= FILTER_RADIUS; ++DY)
                     {
@@ -424,23 +466,22 @@ namespace LightBake
                             if(Facing <= 0.0f) { continue; }
                             const Vec3  Delta = Near.Position - Centre.Position;
                             const float W = std::exp(-Dot(Delta, Delta) / Sigma2) * std::pow(Facing, 8.0f);
-                            Sum += Vec3(Source[Other * 3], Source[Other * 3 + 1], Source[Other * 3 + 2]) * W;
+                            for(size_t Ch = 0; Ch < C; ++Ch) { Sum[Ch] += Source[Other * C + Ch] * W; }
                             Weight += W;
                         }
                     }
                     if(Weight > 0.0f)
                     {
-                        InOutIndirect[Index * 3]     = Sum.X / Weight;
-                        InOutIndirect[Index * 3 + 1] = Sum.Y / Weight;
-                        InOutIndirect[Index * 3 + 2] = Sum.Z / Weight;
+                        for(size_t Ch = 0; Ch < C; ++Ch) { InOutIndirect[Index * C + Ch] = Sum[Ch] / Weight; }
                     }
                 }
             }
         }
 
         /* Empty texels next to lit ones take their average, InPasses times. */
-        void Dilate(std::vector<uint8_t>& InOutFilled, const int InSize, std::vector<float>& InOutTexels)
+        void Dilate(std::vector<uint8_t>& InOutFilled, const int InSize, std::vector<float>& InOutTexels, const int InChannels = 3)
         {
+            const size_t C = size_t(InChannels);
             for(int Pass = 0; Pass < DILATE_PASSES; ++Pass)
             {
                 std::vector<uint8_t> Was = InOutFilled;
@@ -451,8 +492,8 @@ namespace LightBake
                     {
                         const size_t Index = size_t(Y) * size_t(InSize) + size_t(X);
                         if(Was[Index]) { continue; }
-                        Vec3 Sum;
-                        int  Count = 0;
+                        float Sum[4] = {};
+                        int   Count = 0;
                         for(int DY = -1; DY <= 1; ++DY)
                         {
                             for(int DX = -1; DX <= 1; ++DX)
@@ -461,15 +502,12 @@ namespace LightBake
                                 if(NX < 0 || NY < 0 || NX >= InSize || NY >= InSize) { continue; }
                                 const size_t Other = size_t(NY) * size_t(InSize) + size_t(NX);
                                 if(!Was[Other]) { continue; }
-                                Sum += Vec3(Source[Other * 3], Source[Other * 3 + 1], Source[Other * 3 + 2]);
+                                for(size_t Ch = 0; Ch < C; ++Ch) { Sum[Ch] += Source[Other * C + Ch]; }
                                 ++Count;
                             }
                         }
                         if(Count == 0) { continue; }
-                        const Vec3 Mean = Sum * (1.0f / float(Count));
-                        InOutTexels[Index * 3]     = Mean.X;
-                        InOutTexels[Index * 3 + 1] = Mean.Y;
-                        InOutTexels[Index * 3 + 2] = Mean.Z;
+                        for(size_t Ch = 0; Ch < C; ++Ch) { InOutTexels[Index * C + Ch] = Sum[Ch] / float(Count); }
                         InOutFilled[Index] = 1;
                     }
                 }
@@ -533,7 +571,7 @@ namespace LightBake
             {
                 const Vec3 Dir = SphereSample(R);
                 bool bBack = false;
-                const Vec3 L = InTracer.Radiance(Point, Dir, InSettings.Bounces, R, &bBack);
+                const Vec3 L = InTracer.Radiance(Point, Dir, InSettings.Bounces, R, &bBack, /*bInPrimary*/ true);
                 if(bBack) { ++Backfaces; }
                 for(int Face = 0; Face < 6; ++Face)
                 {
@@ -547,7 +585,7 @@ namespace LightBake
             {
                 /* Uniform over the sphere: irradiance over pi is 4/N times the cosine-weighted sum. */
                 Vec3 Value = Faces[Face] * (4.0f / float(Rays));
-                Value += InTracer.Direct(Point, &Axes[Face], R, InTracer.DirectSamples);
+                Value += InTracer.Direct(Point, &Axes[Face], R, InTracer.DirectSamples, /*bInBakedOnly*/ true);
                 Cube.Faces[Face][0] = Value.X;
                 Cube.Faces[Face][1] = Value.Y;
                 Cube.Faces[Face][2] = Value.Z;
@@ -581,8 +619,12 @@ namespace LightBake
         for(size_t AtlasIndex = 0; AtlasIndex < OutResult.Atlases.size(); ++AtlasIndex)
         {
             Atlas& A = OutResult.Atlases[AtlasIndex];
-            const std::vector<Texel>& Used = Texels[AtlasIndex];
+            std::vector<Texel>& Used = Texels[AtlasIndex];
             std::vector<float> Indirect(A.Texels.size(), 0.0f);
+            /* Per texel, the light's direction times its luminance and the
+             * luminance itself: direct (exact) and bounced (smoothed). */
+            const size_t TexelCount = size_t(A.Size) * size_t(A.Size);
+            std::vector<float> DirectWay(TexelCount * 4, 0.0f), BouncedWay(TexelCount * 4, 0.0f);
             const int Samples = std::max(1, InSettings.SamplesPerTexel);
 
             const auto LightRow = [&](const size_t InRow)
@@ -590,22 +632,38 @@ namespace LightBake
                 for(int X = 0; X < A.Size; ++X)
                 {
                     const size_t Index = InRow * size_t(A.Size) + size_t(X);
-                    const Texel& Each = Used[Index];
+                    Texel& Each = Used[Index];
                     if(!Each.bUsed) { continue; }
+                    /* Inside or under something: left out, filled from its neighbours. */
+                    if(T.IsBuried(Each.Position, Each.Normal, std::max(Each.Size, T.Bias * 4.0f)))
+                    {
+                        Each.bUsed = false;
+                        continue;
+                    }
                     Random R(Mix((uint64_t(AtlasIndex) << 40) ^ uint64_t(Index)));
-                    const Vec3 Direct = T.Direct(Each.Position, &Each.Normal, R, T.DirectSamples);
-                    Vec3 Bounced;
+                    Vec3 DirectToward;
+                    const Vec3 Direct = T.Direct(Each.Position, &Each.Normal, R, T.DirectSamples, /*bInBakedOnly*/ true, &DirectToward);
+                    Vec3 Bounced, BouncedToward;
                     for(int Sample = 0; Sample < Samples; ++Sample)
                     {
-                        Bounced += T.Radiance(Each.Position, CosineSample(Each.Normal, R), InSettings.Bounces, R);
+                        const Vec3 Dir = CosineSample(Each.Normal, R);
+                        const Vec3 L   = T.Radiance(Each.Position, Dir, InSettings.Bounces, R, nullptr, /*bInPrimary*/ true);
+                        Bounced       += L;
+                        BouncedToward += Dir * Luminance(L);
                     }
-                    Bounced = Bounced * (1.0f / float(Samples));
+                    const float PerSample = 1.0f / float(Samples);
+                    Bounced       = Bounced * PerSample;
+                    BouncedToward = BouncedToward * PerSample;
                     A.Texels[Index * 3]     = Direct.X;
                     A.Texels[Index * 3 + 1] = Direct.Y;
                     A.Texels[Index * 3 + 2] = Direct.Z;
                     Indirect[Index * 3]     = Bounced.X;
                     Indirect[Index * 3 + 1] = Bounced.Y;
                     Indirect[Index * 3 + 2] = Bounced.Z;
+                    const float DirectWayAndLum[4]  = { DirectToward.X, DirectToward.Y, DirectToward.Z, Luminance(Direct) };
+                    const float BouncedWayAndLum[4] = { BouncedToward.X, BouncedToward.Y, BouncedToward.Z, Luminance(Bounced) };
+                    std::copy_n(DirectWayAndLum, 4, &DirectWay[Index * 4]);
+                    std::copy_n(BouncedWayAndLum, 4, &BouncedWay[Index * 4]);
                 }
             };
             const std::string Stage = OutResult.Atlases.size() > 1
@@ -615,13 +673,32 @@ namespace LightBake
 
             if(InProgress) { InProgress("Filtering", 0.0f); }
             Smooth(Used, A.Size, WorldTexel, Indirect);
+            Smooth(Used, A.Size, WorldTexel, BouncedWay, 4);
             std::vector<uint8_t> Filled(Used.size(), 0);
+            A.Directions.assign(TexelCount * 4, 0.0f);
             for(size_t Index = 0; Index < Used.size(); ++Index)
             {
                 Filled[Index] = Used[Index].bUsed ? 1 : 0;
                 for(int Channel = 0; Channel < 3; ++Channel) { A.Texels[Index * 3 + size_t(Channel)] += Indirect[Index * 3 + size_t(Channel)]; }
+
+                /* The dominant direction, as long as the light is one-sided
+                 * (1: all from there; 0: from all round), and the half-Lambert
+                 * at the texel's own normal, so a flat normal reads the bake as is. */
+                const float Weight = DirectWay[Index * 4 + 3] + BouncedWay[Index * 4 + 3];
+                Vec3 Way(DirectWay[Index * 4] + BouncedWay[Index * 4], DirectWay[Index * 4 + 1] + BouncedWay[Index * 4 + 1],
+                         DirectWay[Index * 4 + 2] + BouncedWay[Index * 4 + 2]);
+                Way = Weight > 1e-8f ? Way * (1.0f / Weight) : Vec3();
+                const float Length = std::sqrt(Dot(Way, Way));
+                if(Length > 1.0f) { Way = Way * (1.0f / Length); }
+                float* Out = &A.Directions[Index * 4];
+                Out[0] = Way.X;
+                Out[1] = Way.Y;
+                Out[2] = Way.Z;
+                Out[3] = Used[Index].bUsed ? Dot(Used[Index].Normal, Way) * 0.5f + 0.5f : 0.5f;
             }
+            std::vector<uint8_t> DirectionsFilled = Filled;
             Dilate(Filled, A.Size, A.Texels);
+            Dilate(DirectionsFilled, A.Size, A.Directions, 4);
         }
 
         // --- Probes, for what the lightmaps do not cover.

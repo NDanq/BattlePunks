@@ -112,7 +112,7 @@ game), shows baked lighting
 - **Dynamic, lit by the light probes:** a ball circling the room
   (LightLab.Swing) and a capsule.
 
-**L** (or View > Lighting in the editor) switches between the bake and live
+**L** (or Show > Lighting in the editor's viewport) switches between the bake and live
 lighting, in either level. `Games/LightLab/Tools/make_baked_lighting_level.py`
 writes the world; Build > Bake Lightmaps (or the headless line in the editor's
 README, "Build menu") bakes it again.

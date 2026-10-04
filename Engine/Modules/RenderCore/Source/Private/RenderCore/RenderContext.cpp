@@ -1039,6 +1039,7 @@ namespace RenderCore
             PutColor(Scene.GroundColor, Lighting.GroundColor, 1.0f);
             Scene.Baked[0] = Lighting.bBaked ? 1.0f : 0.0f;
             Scene.Baked[1] = Lighting.bBaked && Lighting.bBakedSky ? 1.0f : 0.0f;
+            Scene.Baked[2] = Lighting.bBaked && Lighting.bBakedDirectional ? 1.0f : 0.0f;
 
             /* Clip back to world, for the Lighting stage: the inverse of
              * Projection * View, column-major as GDI uploads a mat4. */
@@ -3043,7 +3044,10 @@ namespace RenderCore
                 return false;
             }
         }
+        /* A channel of the surface instead of its lit colour (Scene_View). */
+        P->Scene.View[0] = float(InRequest.Channel);
         RenderSceneStages(P->PreviewTargets, EngineCore::Color(38, 40, 46, 255));   // the editor viewport's clear
+        P->Scene.View[0] = 0.0f;
 
         /* Flushes, reads back, resumes the frame. */
         GDIRenderTarget* Final = P->FinalTarget ? P->FinalTarget : P->PreviewTargets.SceneColor;

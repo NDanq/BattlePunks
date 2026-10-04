@@ -16,7 +16,9 @@
 #include <QVBoxLayout>
 
 #include "Public/Editor/EditorCamera.h"
+#include "Public/Core/CoreConfig.h"
 #include "Public/Editor/EditorContext.h"
+#include "Public/Editor/EditorDocument.h"
 #include "Public/Editor/ViewportWidget.h"
 
 namespace
@@ -75,6 +77,7 @@ namespace
 ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocument, QWidget* InParent)
     : QWidget(InParent)
     , Context(InContext)
+    , Document(InDocument)
 {
     auto* Layout = new QVBoxLayout(this);
     Layout->setContentsMargins(0, 0, 0, 0);
@@ -200,6 +203,24 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
         UpdateViewModeUI();   // a cancel puts the check back where it was
     });
 
+    QMenu* LightingMenu = ShowMenu->addMenu(QStringLiteral("Lighting"));
+    auto* Lighting = new QActionGroup(LightingMenu);
+    BakedAction = LightingMenu->addAction(QStringLiteral("Baked"));
+    BakedAction->setToolTip(QStringLiteral("Static entities and lights as Build > Bake Lightmaps baked them; dynamic ones lit by the probes"));
+    LiveAction = LightingMenu->addAction(QStringLiteral("Live"));
+    LiveAction->setToolTip(QStringLiteral("Every light lit live, as if there were no bake"));
+    for(QAction* Each : { BakedAction, LiveAction })
+    {
+        Each->setCheckable(true);
+        Lighting->addAction(Each);
+    }
+    {
+        const EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting");
+        (Var && !Var->GetBool() ? LiveAction : BakedAction)->setChecked(true);
+    }
+    connect(BakedAction, &QAction::triggered, this, [this]() { SetBakedLighting(true); });
+    connect(LiveAction, &QAction::triggered, this, [this]() { SetBakedLighting(false); });
+
     QMenu* GizmoMenu = ShowMenu->addMenu(QStringLiteral("Editor Gizmos"));
     ShowAllBoundsAction = GizmoMenu->addAction(QStringLiteral("All Bounds"));
     ShowAllBoundsAction->setCheckable(true);
@@ -273,6 +294,17 @@ void ViewportPanel::UpdateViewModeUI()
     if(Mode == RenderCore::ERenderViewMode::RenderTarget) { Text = QStringLiteral("Show: %1").arg(Context.GetViewTarget()); }
     ShowButton->setText(Text);
     ShowButton->setToolTip(QStringLiteral("View mode (Lit, Unlit, a render target) and the editor's gizmos"));
+}
+
+void ViewportPanel::SetBakedLighting(const bool bInBaked)
+{
+    if(EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting")) { Var->SetBool(bInBaked); }
+    (bInBaked ? BakedAction : LiveAction)->setChecked(true);
+    const GameCore::WorldLightingSettings& Lighting = Document.GetWorldSettings().Lighting;
+    emit StatusMessage(!bInBaked ? QStringLiteral("Lighting: Live -- every light lit live")
+                       : Lighting.bBakedLighting && !Lighting.BakedData.empty()
+                         ? QStringLiteral("Lighting: Baked")
+                         : QStringLiteral("Lighting: Baked -- but this world has no bake yet (Build > Bake Lightmaps)"));
 }
 
 #endif // WITH_EDITOR

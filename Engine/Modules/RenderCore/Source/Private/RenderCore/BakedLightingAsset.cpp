@@ -96,12 +96,20 @@ namespace RenderCore
         uint32_t AtlasCount = uint32_t(InOutData.Atlases.size());
         uint32_t EntryCount = uint32_t(InOutData.Entries.size());
         uint32_t ProbeCount = uint32_t(InOutData.Probes.Probes.size());
-        if(OpenRequiredChunk(Ar, TAG_HEADER, 1, "baked lighting: no BLHD chunk"))
+        uint16_t HeaderVersion = 2;
+        if(Ar.OpenChunk(TAG_HEADER, HeaderVersion))
         {
             uint8_t SkyBaked = InOutData.bSkyBaked ? 1 : 0;
             Ar << InOutData.InputHash << SkyBaked << AtlasCount << EntryCount << ProbeCount;
             InOutData.bSkyBaked = SkyBaked != 0;
+            uint8_t Directional = InOutData.bDirectional ? 1 : 0;
+            if(Ar.GetChunkVersion() >= 2) { Ar << Directional; }
+            InOutData.bDirectional = Directional != 0;
             Ar.CloseChunk();
+        }
+        else
+        {
+            Ar.SetError("baked lighting: no BLHD chunk");
         }
 
         if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_ATLASES, 1, "baked lighting: no BLAT chunk"))

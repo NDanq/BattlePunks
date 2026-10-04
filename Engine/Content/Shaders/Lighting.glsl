@@ -17,6 +17,16 @@ vec3 ToDisplay(vec3 InColor) { return pow(max(InColor, vec3(0.0)), vec3(1.0 / 2.
 // makes it display space), display space in an 8-bit one.
 vec3 ToSceneColor(vec3 InLinear) { return Scene_Output.x > 0.5 ? max(InLinear, vec3(0.0)) : ToDisplay(InLinear); }
 
+// Scene_View's unlit colours (above 0.5): base colour and emissive (Unlit), base colour
+// alone, or emissive alone over 16 -- a material preview's channels, which the bake
+// measures materials by (RenderTypes.h's EMaterialPreviewChannel).
+vec3 ViewChannelColor(vec3 InBaseColor, vec3 InEmissive)
+{
+    if(Scene_View.x > 2.5) { return ToLinear(InEmissive) * (1.0 / 16.0); }
+    if(Scene_View.x > 1.5) { return ToLinear(InBaseColor); }
+    return ToLinear(InBaseColor) + ToLinear(InEmissive);
+}
+
 #ifdef LIGHTING_SHADOWS
 #include <Shadows.glsl>
 #endif

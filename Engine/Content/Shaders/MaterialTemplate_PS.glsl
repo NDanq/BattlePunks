@@ -102,7 +102,7 @@ void main(void)
 
 #if MATERIAL_SHADING_LIT
     vec3 Color = Scene_View.x > 0.5
-               ? ToSceneColor(ToLinear(Surface.BaseColor) + ToLinear(Surface.Emissive))
+               ? ToSceneColor(ViewChannelColor(Surface.BaseColor, Surface.Emissive))
                : ToSceneColor(ToLinear(Surface.Emissive) + Baked + ShadeSurface(Surface, Inputs.WorldPosition, Normal, AmbientDiffuse));
 #else
 #if MATERIAL_DOMAIN_POSTPROCESS
@@ -111,6 +111,12 @@ void main(void)
 #else
     // Display space as authored; an HDR scene holds it linear (ToneMapping.glsl).
     vec3 Color = Scene_Output.x > 0.5 ? pow(max(Surface.Emissive, vec3(0.0)), vec3(2.2)) : Surface.Emissive;
+    // A preview's channel (Lighting.glsl's ViewChannelColor): an Unlit surface reflects nothing; it only glows.
+    if(Scene_View.x > 1.5)
+    {
+        vec3 Linear = Scene_View.x > 2.5 ? pow(max(Surface.Emissive, vec3(0.0)), vec3(2.2)) * (1.0 / 16.0) : vec3(0.0);
+        Color = Scene_Output.x > 0.5 ? Linear : pow(Linear, vec3(1.0 / 2.2));
+    }
 #endif
 #endif
 

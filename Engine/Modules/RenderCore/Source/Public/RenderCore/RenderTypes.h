@@ -41,6 +41,19 @@ namespace RenderCore
         RenderTarget = 2,
     };
 
+    /* What a material preview shows (Renderer::RequestMaterialPreview): the
+     * material lit by its studio light, or one of its surface's channels as
+     * drawn -- base colour, or emissive divided by EMISSIVE_PREVIEW_SCALE (so
+     * past 1 survives 8 bits) -- display space, what the bake measures
+     * materials by. Scene_View's values. */
+    enum class EMaterialPreviewChannel : uint8_t
+    {
+        Lit       = 0,
+        BaseColor = 2,
+        Emissive  = 3,
+    };
+    constexpr float EMISSIVE_PREVIEW_SCALE = 16.0f;
+
     enum class ERenderBackend : uint8_t
     {
         Null   = 0,

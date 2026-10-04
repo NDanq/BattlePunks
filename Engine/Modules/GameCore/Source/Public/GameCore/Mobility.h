@@ -21,6 +21,10 @@ namespace GameCore
      *            With baked lighting on (WorldSettings.h), a static light or
      *            Render component is what Build > Bake Lightmaps bakes, and
      *            the renderer then draws it from the bake ("Baked lighting").
+     *   Stationary  a light that stays put but stays live: its direct light
+     *            and shadows are drawn every frame, and only the light it
+     *            bounces is baked. Anything else that is Stationary is
+     *            treated as Dynamic.
      *
      * Tools may still move a static entity (the editor does): the renderer
      * notices a changed transform or component and rebuilds that entity's
@@ -28,11 +32,12 @@ namespace GameCore
      */
     enum class EMobility : uint8_t
     {
-        Dynamic = 0,
-        Static  = 1,
+        Dynamic    = 0,
+        Static     = 1,
+        Stationary = 2,
     };
 
-    /* "Dynamic" / "Static". */
+    /* "Dynamic" / "Static" / "Stationary". */
     GAMECORE_API const char* MobilityName(EMobility InMobility);
 
     /* MobilityName's inverse, case-insensitive. False, OutMobility untouched,

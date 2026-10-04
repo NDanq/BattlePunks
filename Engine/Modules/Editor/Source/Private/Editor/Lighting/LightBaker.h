@@ -33,6 +33,12 @@
  *                 off up to Bounces surfaces (their albedo, each lit by
  *                 every light), backfaces counting as black so light does
  *                 not leak through walls.
+ *                 A texel whose short rays find the back of a surface is
+ *                 inside or under something (a floor under a wall): it is
+ *                 left out and filled from its neighbours, so walls do not
+ *                 leak dark lines. Emissive surfaces light what sees them;
+ *                 Stationary lights and skies give only their bounce. The
+ *                 light's dominant direction is kept too (Atlas::Directions).
  *   4. Filtering  the noisy bounced part is smoothed over neighbouring
  *                 texels of the same instance with similar position and
  *                 normal; then lit texels grow into the empty ones round
@@ -61,7 +67,13 @@ namespace LightBake
     struct Atlas
     {
         int                Size = 0;
-        std::vector<float> Texels;   // RGB per texel, rows top first (v = 0 at the top)
+        std::vector<float> Texels;       // RGB per texel, rows top first (v = 0 at the top)
+
+        /* Directional lightmap, per texel: the light's dominant direction
+         * times its directionality (0 all round, 1 from one direction), and
+         * the half-Lambert at the texel's own normal that rebalances it --
+         * what BakedLighting.glsl needs to shade a normal map. */
+        std::vector<float> Directions;   // 4 per texel: xyz, w
     };
 
     /* Where an instance's lightmap is. */

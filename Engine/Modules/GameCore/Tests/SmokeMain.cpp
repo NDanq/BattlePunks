@@ -2769,6 +2769,32 @@ static void TestMobility()
     Expect(ParseMobility("static", Parsed) && Parsed == EMobility::Static && ParseMobility("Dynamic", Parsed)
            && Parsed == EMobility::Dynamic && !ParseMobility("Moving", Parsed), "ParseMobility reads both names, any case, nothing else");
     Expect(std::string(MobilityName(EMobility::Static)) == "Static", "MobilityName");
+    Expect(ParseMobility("stationary", Parsed) && Parsed == EMobility::Stationary
+           && std::string(MobilityName(EMobility::Stationary)) == "Stationary", "Stationary reads and names (a light baked for its bounce only)");
+
+    /* Stationary rides along in both formats, and is not static. */
+    {
+        World Source;
+        const Entity Lamp = Source.CreateEntity("Lamp");
+        Lamp.SetMobility(EMobility::Stationary);
+        Expect(!Lamp.IsStatic(), "a Stationary entity is not static");
+        EngineCore::Archive Out = EngineCore::Archive::ForWriting();
+        Expect(SerializeWorld(Out, Source), "a world with a Stationary entity saves");
+        EngineCore::Archive In = EngineCore::Archive::ForReading(Out.GetBytes());
+        World Loaded;
+        Expect(SerializeWorld(In, Loaded) && Loaded.GetEntity(Loaded.FindEntityByName("Lamp")).GetMobility() == EMobility::Stationary,
+               "and loads Stationary from a binary world");
+
+        const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "Stationary";
+        std::error_code Ignored;
+        std::filesystem::remove_all(Dir, Ignored);
+        std::filesystem::create_directories(Dir, Ignored);
+        const std::string Path = (Dir / "Lamp.nmworld").generic_string();
+        World FromText;
+        Expect(SaveWorldPackage(Path.c_str(), Source) && LoadWorldFile(Path.c_str(), FromText)
+               && FromText.GetEntity(FromText.FindEntityByName("Lamp")).GetMobility() == EMobility::Stationary,
+               "and from a text world");
+    }
 
     World W;
     const Entity Wall = W.CreateEntity("Wall");

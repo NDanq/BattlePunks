@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="b605c563329e1294d13d5d982803d30a" Name="Sun" Mobility="Static">
-  <Component Type="Directional Light" Version="2">
+  <Component Type="Directional Light" Version="3">
     <Color R="255" G="236" B="205" A="255" />
     <Intensity Value="5" />
     <Active Value="true" />
@@ -12,6 +12,7 @@
     <ShadowDistance Value="3000" />
     <CascadeCount Value="4" />
     <CascadeSplitLambda Value="0.75" />
+    <SourceAngle Value="0.75" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="0" Y="800" Z="800" />
