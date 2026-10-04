@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Instance Guid="76c77b95f8ec4548091f0cc7314f1352" Name="PBRShowcase" Prefab="Content/Prefabs/PBRShowcase.nmprefab">
+  <Entity Id="1" Mobility="Static">
+    <Component Type="Transform" Version="1">
+      <Position X="-1706.5742" Y="10.026245" Z="0.00024414062" />
+      <Rotation X="0" Y="-77.44931" Z="0" />
+    </Component>
+  </Entity>
+</Instance>
