@@ -326,6 +326,7 @@ void MetalDynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     const bool        bWasActive = CurrentStateData->bRenderingActive;
 
     EndActiveEncoder();
+    CloseDebugGroups();
     CommandManager->EndFrame();
     CommandManager->Commit();
 

@@ -386,6 +386,7 @@ namespace RenderCore
             bool bCopied = ViewCount == 6;
             for(uint32_t Index = 0; Index < ViewCount; ++Index)
             {
+                SCOPED_DRAW_EVENT(GetCubeFaceName(Index));
                 InContext.SetView(Views[Index]);
                 uint64_t Visible = 0, Culled = 0, Static = 0;
                 QueueDraws(InContext, Views[Index], &Cube, Visible, Culled, Static);
@@ -410,6 +411,7 @@ namespace RenderCore
             const uint64_t Hash = SkyHashOf();
             if(!bSkyValid || Hash != SkyHash)
             {
+                SCOPED_DRAW_EVENT("SkyLight");
                 bSkyValid = InContext.EnsureIBLResources(IBL, 128) && InContext.RenderSkyToStrip(IBL)
                          && InContext.PrefilterIBLBlock(IBL, 4);
                 SkyHash = Hash;
@@ -451,6 +453,7 @@ namespace RenderCore
                 if(BlockOf[Index] < 0) { continue; }
                 ProbeSlot& Slot = Slots[BlockOf[Index]];
                 if(!Slot.bPending && Slot.bValid) { continue; }
+                SCOPED_DRAW_EVENT("ReflectionProbe " + std::to_string(BlockOf[Index]));
                 Slot.bValid   = CaptureReflectionProbe(InContext, CaptureList.Probes[Index], uint32_t(BlockOf[Index]));
                 Slot.bPending = false;
                 ++Captures;
@@ -643,6 +646,10 @@ namespace RenderCore
 
         GDIBeginRendering();
 
+        /* The frame's root draw event, ended just before EndRendering submits:
+         * everything below nests under it (RENDERPIPELINE.md, "Draw events"). */
+        InContext.BeginDrawEvent("Scene");
+
         /* "stat frame": the last GDI block's GPU times, to the scene that wrote
          * them (they are complete only now), and this block's own, if shown. */
         const StatUnitSnapshot Stats = GetStatUnit();
@@ -665,6 +672,7 @@ namespace RenderCore
          * shows a preview. */
         for(const MaterialPreviewRequest& Each : P->Previews)
         {
+            SCOPED_DRAW_EVENT("MaterialPreview");
             EngineCore::Image Pixels;
             std::string       Error;
             InContext.RenderMaterialPreview(Each, Pixels, Error);
@@ -702,10 +710,12 @@ namespace RenderCore
             {
                 continue;
             }
+            SCOPED_DRAW_EVENT("SceneCapture " + std::string(Request.Target));
             RenderView Views[6];
             const uint32_t ViewCount = BuildCaptureViews(Request, P->View, Stages->Width, Stages->Height, Views);
             for(uint32_t Face = 0; Face < ViewCount; ++Face)
             {
+                SCOPED_DRAW_EVENT(bCube ? GetCubeFaceName(Face) : "Mirror");
                 InContext.SetView(Views[Face]);
                 uint64_t Visible = 0, Culled = 0, Static = 0;
                 P->QueueDraws(InContext, Views[Face], &Request, Visible, Culled, Static);
@@ -735,7 +745,10 @@ namespace RenderCore
 #endif
 
         /* IMAGE-BASED LIGHTING: the sky block and the reflection probes, before the scene lights by them. */
-        P->UpdateImageBasedLighting(InContext);
+        {
+            SCOPED_DRAW_EVENT("ImageBasedLighting");
+            P->UpdateImageBasedLighting(InContext);
+        }
 
         P->QueueDraws(InContext, P->View, nullptr, VisibleCount, CulledCount, StaticCount);
 
@@ -799,12 +812,11 @@ namespace RenderCore
         {
             /* No depth test: an outline or a gizmo shows through what it marks. */
             GDISetDepthState(IDepthStateDesc());
-            InContext.BeginDrawEvent("DebugLines");
+            SCOPED_DRAW_EVENT("DebugLines");
             for(const DebugLine& Line : P->DebugLines)
             {
                 InContext.DrawLine(Line.Start, Line.End, Line.Color, Line.ThicknessPixels);
             }
-            InContext.EndDrawEvent();
             P->DebugLines.clear();
         }
 #endif
@@ -822,6 +834,7 @@ namespace RenderCore
             InContext.DrawStatUnit(P->Targets.Width, P->Targets.Height, Text);
         }
 
+        InContext.EndDrawEvent();   // "Scene"
         GDIEndRendering();
 
         /* After EndRendering: the final colour is now in its presentable state. */

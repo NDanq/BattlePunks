@@ -112,8 +112,8 @@ void VKRenderTarget::Allocate()
         return;
     }
 
-#ifdef QT_DEBUG
-    // Name the image so validation-layer messages identify which RT they refer to.
+    // Name the image so captures and validation-layer messages identify which RT it is.
+    if(VulkanGDIContext::HasDebugUtils())
     {
         static auto SetObjectName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
             vkGetInstanceProcAddr(Device->GetInstance(), "vkSetDebugUtilsObjectNameEXT"));
@@ -128,7 +128,6 @@ void VKRenderTarget::Allocate()
             SetObjectName(Device->GetDevice(), &NameInfo);
         }
     }
-#endif
 
     CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 

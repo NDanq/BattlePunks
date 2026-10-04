@@ -39,6 +39,11 @@ public:
      */
     static VkInstance GetSharedVkInstance();
 
+    /* VK_EXT_debug_utils is enabled on the shared instance: draw events become
+     * command buffer labels and render targets are named. Non-shipping builds,
+     * whenever the loader (or a capture tool's layer) offers the extension. */
+    static bool HasDebugUtils();
+
     VkInstance VKContext = VK_NULL_HANDLE;
 };
 

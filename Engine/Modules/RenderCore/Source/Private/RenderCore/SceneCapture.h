@@ -70,6 +70,9 @@ namespace RenderCore
      * Material_SampleCubeStrip must agree. */
     void CubeFaceBasis(uint32_t InFace, EngineCore::Vector3& OutForward, EngineCore::Vector3& OutUp);
 
+    /* "Face +X" .. "Face -Z", in CubeFaceBasis's order: a face's draw event. */
+    const char* GetCubeFaceName(uint32_t InFace);
+
     /* The views InRequest renders from, at InWidth x InHeight: six cube faces
      * (90 degrees, NearClip to FarClip), or one mirror view -- InMain's camera
      * reflected in the plane, with InMain's projection, so a mirrored screen
