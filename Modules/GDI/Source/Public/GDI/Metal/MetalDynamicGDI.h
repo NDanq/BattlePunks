@@ -128,6 +128,8 @@ public:
     void EndRendering() override;
 
     GDIRenderTarget* CreateRenderTarget(std::string Name, uint InWidth, uint InHeight) override;
+    GDIRenderTarget* CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat) override;
+    bool             SupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat) const override;
     void SetRenderTarget(GDIRenderTarget* InRenderTarget) override;
     void ReleaseRenderTarget(GDIRenderTarget* InRenderTarget) override;
 

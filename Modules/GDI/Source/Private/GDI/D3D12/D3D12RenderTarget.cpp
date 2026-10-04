@@ -1,4 +1,5 @@
 #include "Public/GDI/D3D12/D3D12RenderTarget.h"
+#include "Public/GDI/GDIHalf.h"
 #include "Public/GDI/D3D12/D3D12Device.h"
 #include "Public/GDI/D3D12/D3D12DynamicGDI.h"
 #include "Public/GDI/D3D12/D3D12DescriptorAllocator.h"
@@ -21,10 +22,11 @@ namespace
     }
 }
 
-D3D12RenderTarget::D3D12RenderTarget(D3D12Device* InDevice, const std::string& InName, uint InWidth, uint InHeight)
+D3D12RenderTarget::D3D12RenderTarget(D3D12Device* InDevice, const std::string& InName, uint InWidth, uint InHeight, DXGI_FORMAT InFormat)
     : GDIRenderTarget(InWidth, InHeight)
     , Device(InDevice)
     , Name(InName)
+    , Format(InFormat)
 {
     Allocate();
 }
@@ -246,16 +248,25 @@ EngineCore::Image D3D12RenderTarget::ToImage()
         GDI->FlushForReadback();
     }
 
+    const bool bHalf = Format == DXGI_FORMAT_R16G16B16A16_FLOAT;
     std::vector<uint8_t> Pixels;
-    if(!D3D12Ops::ReadbackTexture(Device, Resource.Get(), CurrentState, 0, 0, Width, Height, Pixels))
+    if(!D3D12Ops::ReadbackTexture(Device, Resource.Get(), CurrentState, 0, 0, Width, Height, Pixels, bHalf ? 8u : 4u))
     {
         return EngineCore::Image();
     }
 
     // RT rows are GL-ordered (see cook_shaders.py's --flip-vert-y), so mirror
-    // like the GL and Vulkan backends to return the same orientation.
+    // like the GL and Vulkan backends to return the same orientation. An HDR
+    // target's half floats come back clamped into RGBA8 (GDIHalf.h).
     EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
-    std::memcpy(Result.GetData(), Pixels.data(), Pixels.size());
+    if(bHalf)
+    {
+        GDIHalvesToBytes(reinterpret_cast<const uint16_t*>(Pixels.data()), Result.GetData(), size_t(Width) * size_t(Height) * 4u);
+    }
+    else
+    {
+        std::memcpy(Result.GetData(), Pixels.data(), Pixels.size());
+    }
     Result.FlipVertical();
     return Result;
 }

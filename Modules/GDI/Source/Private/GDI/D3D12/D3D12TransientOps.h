@@ -121,7 +121,7 @@ inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RE
     void* Mapped = nullptr;
     const D3D12_RANGE NoRead{ 0, 0 };
     if(FAILED(Staging->Map(0, &NoRead, &Mapped))) return false;
-    const size_t RowBytes = size_t(Width) * 4u;
+    const size_t RowBytes = size_t(Width) * InBytesPerTexel;
     for(uint32_t Row = 0; Row < Height; ++Row)
     {
         std::memcpy(static_cast<uint8_t*>(Mapped) + Footprint.Offset + Row * Footprint.Footprint.RowPitch,
@@ -153,10 +153,11 @@ inline bool UploadTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RE
     return true;
 }
 
-/** Reads a Width x Height RGBA8 region at (X, Y) into OutPixels. The texture is returned to InState. */
+/** Reads a Width x Height region at (X, Y) into OutPixels, InBytesPerTexel each (4: RGBA8; 8: RGBA16F),
+ *  tightly packed. The texture is returned to InState. */
 inline bool ReadbackTexture(D3D12Device* Device, ID3D12Resource* Texture, D3D12_RESOURCE_STATES InState,
                             uint32_t X, uint32_t Y, uint32_t Width, uint32_t Height,
-                            std::vector<uint8_t>& OutPixels)
+                            std::vector<uint8_t>& OutPixels, uint32_t InBytesPerTexel = 4)
 {
     D3D12_RESOURCE_DESC RegionDesc = Texture->GetDesc();
     RegionDesc.Width  = Width;

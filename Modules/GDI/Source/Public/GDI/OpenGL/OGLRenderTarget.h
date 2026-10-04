@@ -13,7 +13,8 @@
 class OpenGLRenderTarget : public GDIRenderTarget, protected GDIGLFunctions
 {
 public:
-    OpenGLRenderTarget(const uint InWidth, const uint InHeight );
+    /* InFormat: GDI_RTF_RGBA16F gives a GL_RGBA16F colour texture (HDR); otherwise RGBA8. */
+    OpenGLRenderTarget(const uint InWidth, const uint InHeight, EGDIRenderTargetFormat InFormat = GDI_RTF_RGBA8);
     ~OpenGLRenderTarget();
 
     void Bind() override;
@@ -45,6 +46,8 @@ protected:
 
     /* Borrows DepthTextureID (ToDepthTexture2D); never deletes it. */
     GDITexture2D* DepthWrapper = nullptr;
+
+    EGDIRenderTargetFormat RTFormat = GDI_RTF_RGBA8;
 };
 
 #endif //CORECLIENT_OGLRENDERTARGET_H
