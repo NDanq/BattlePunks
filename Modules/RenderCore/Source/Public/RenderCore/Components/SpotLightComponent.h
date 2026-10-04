@@ -31,6 +31,10 @@ namespace RenderCore
         EngineCore::Color   ShadowTint{ 40, 50, 80 };
         float               ShadowBias       = 0.002f;
         float               ShadowNormalBias = 1.5f;
+
+        /* Baked lighting only (Build > Bake Lightmaps): the bulb's radius,
+         * world units -- how soft its baked shadows are; 0 is a point. */
+        float               SourceRadius     = 4.0f;
     };
 }
 

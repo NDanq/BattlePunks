@@ -1844,9 +1844,10 @@ static void TestRenderComponentSerializer()
            "and no CastShadows, and keeps casting");
 
     /* The lights: version 2 dropped the sun's Direction (it is the
-     * Transform's forward now) and added shadows; point and spot are new. */
+     * Transform's forward now) and added shadows; version 3 its baked
+     * Source Angle, as point and spot lights' version 2 their Source Radius. */
     const GameCore::ComponentSerializerInfo* SunInfo = GameCore::FindComponentSerializer(DirectionalLightComponent::StaticType().ID);
-    Expect(SunInfo && SunInfo->Version == 2, "DirectionalLightComponent saves as version 2");
+    Expect(SunInfo && SunInfo->Version == 3, "DirectionalLightComponent saves as version 3");
     if(SunInfo)
     {
         RecordingArchive SunOut;
@@ -1857,17 +1858,23 @@ static void TestRenderComponentSerializer()
         {
             return std::find(InArchive.Names.begin(), InArchive.Names.end(), std::string(InName)) != InArchive.Names.end();
         };
-        Expect(!Has(SunOut, "Direction") && Has(SunOut, "ShadowTechnique") && Has(SunOut, "CascadeCount"),
-               "version 2 writes no Direction, and the shadow fields");
+        Expect(!Has(SunOut, "Direction") && Has(SunOut, "ShadowTechnique") && Has(SunOut, "CascadeCount") && Has(SunOut, "SourceAngle"),
+               "version 3 writes no Direction, and the shadow fields and Source Angle");
         RecordingArchive SunOld;
         SunOld.bLoading = true;
         SunOld.Version  = 1;
         SunInfo->Fn(SunOld, &Sun);
         Expect(Has(SunOld, "Direction") && !Has(SunOld, "ShadowTechnique"), "a version 1 save's Direction is read (and dropped)");
+        RecordingArchive SunTwo;
+        SunTwo.bLoading = true;
+        SunTwo.Version  = 2;
+        DirectionalLightComponent FromTwo;
+        SunInfo->Fn(SunTwo, &FromTwo);
+        Expect(!Has(SunTwo, "SourceAngle") && FromTwo.SourceAngle == 0.75f, "a version 2 sun keeps the default Source Angle");
     }
     const GameCore::ComponentSerializerInfo* PointInfo = GameCore::FindComponentSerializer(PointLightComponent::StaticType().ID);
     const GameCore::ComponentSerializerInfo* SpotInfo  = GameCore::FindComponentSerializer(SpotLightComponent::StaticType().ID);
-    Expect(PointInfo && PointInfo->Version == 1 && SpotInfo && SpotInfo->Version == 1, "Point and Spot Light save as version 1");
+    Expect(PointInfo && PointInfo->Version == 2 && SpotInfo && SpotInfo->Version == 2, "Point and Spot Light save as version 2 (Source Radius)");
     const GameCore::ComponentSerializerInfo* CameraInfo = GameCore::FindComponentSerializer(CameraComponent::StaticType().ID);
     Expect(CameraInfo && CameraInfo->Version == 2, "CameraComponent saves as version 2 (Projection, FovY)");
 
@@ -3722,9 +3729,9 @@ static void TestLightComponents()
     Expect(std::abs(Right.GetX() - 1.0) < 1e-6, "yaw 90 shines along +X, as the editor camera turns");
 
     size_t Count = 0;
-    Expect(GameCore::FindComponentScript(PointLightComponent::StaticType().ID, Count) && Count == 9,
+    Expect(GameCore::FindComponentScript(PointLightComponent::StaticType().ID, Count) && Count == 10,
            "Point Light exposes its light and shadow fields to Lua");
-    Expect(GameCore::FindComponentScript(SpotLightComponent::StaticType().ID, Count) && Count == 11,
+    Expect(GameCore::FindComponentScript(SpotLightComponent::StaticType().ID, Count) && Count == 12,
            "Spot Light exposes its light and shadow fields to Lua");
 }
 

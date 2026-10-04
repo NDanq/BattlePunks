@@ -14,7 +14,8 @@ namespace RenderCore
     /* Read by WorldBridge's per-frame lighting build. */
     GAMECORE_DEFINE_COMPONENT(SpotLightComponent, "Spot Light")
 
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(SpotLightComponent, 1)
+    /* Version 2: SourceRadius (baked lighting). */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(SpotLightComponent, 2)
     {
         Ar.Field("Color",            C.Color);
         Ar.Field("Intensity",        C.Intensity);
@@ -27,6 +28,10 @@ namespace RenderCore
         Ar.Field("ShadowTint",       C.ShadowTint);
         Ar.Field("ShadowBias",       C.ShadowBias);
         Ar.Field("ShadowNormalBias", C.ShadowNormalBias);
+        if(Ar.GetVersion() >= 2)
+        {
+            Ar.Field("SourceRadius", C.SourceRadius);
+        }
     }
 
     GAMECORE_DEFINE_COMPONENT_SCRIPT(SpotLightComponent)
@@ -42,6 +47,7 @@ namespace RenderCore
         Bind.Field("ShadowTint",       &SpotLightComponent::ShadowTint);
         Bind.Field("ShadowBias",       &SpotLightComponent::ShadowBias);
         Bind.Field("ShadowNormalBias", &SpotLightComponent::ShadowNormalBias);
+        Bind.Field("SourceRadius",     &SpotLightComponent::SourceRadius);
     }
 
 #if WITH_EDITOR
@@ -61,6 +67,9 @@ namespace RenderCore
         Props.Field("Modulated Tint", &SpotLightComponent::ShadowTint);
         Props.Field("Depth Bias",     &SpotLightComponent::ShadowBias);
         Props.Field("Normal Bias",    &SpotLightComponent::ShadowNormalBias);
+
+        Props.Category("Baked Lighting");
+        Props.Field("Source Radius", &SpotLightComponent::SourceRadius);
     }
 #endif
 }

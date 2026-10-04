@@ -36,6 +36,10 @@ namespace RenderCore
         float               ShadowDistance     = 4000.0f;
         int32_t             CascadeCount       = 4;
         float               CascadeSplitLambda = 0.75f;
+
+        /* Baked lighting only (Build > Bake Lightmaps): the sun's angular
+         * radius, degrees -- how soft its baked shadows are; 0 is sharp. */
+        float               SourceAngle        = 0.75f;
     };
 }
 

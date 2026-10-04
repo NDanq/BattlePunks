@@ -473,7 +473,9 @@ progress dialog that can cancel:
    sqrt(area) x density texels, shelf-packed into atlases with a texel of
    border; its UV1 maps into it.
 3. **Lighting.** Per texel: every light, through shadow rays jittered over
-   its size (soft shadows); then cosine-weighted paths that reach the sky or
+   its size for soft shadows -- a Directional Light's **Source Angle** (degrees,
+   0.75 by default), a point or spot light's **Source Radius** (units, 4), each
+   under Baked Lighting in its Details; then cosine-weighted paths that reach the sky or
    bounce off up to Bounces surfaces, each lit by every light. Values match the
    live renderer's: a surface's direct diffuse equals what `EvaluateLight`
    gives it.
