@@ -35,6 +35,9 @@ private:
     void SyncSelectionFromDocument(GameCore::EntityID InEntity);
     void ShowContextMenu(const QPoint& InPos);
 
+    /* F2 / Rename: the selected entity's name, edited in its row. */
+    void RenameSelected();
+
     /* A drop: InDragged under InParent (unset: detach). */
     void Reparent(GameCore::EntityID InDragged, GameCore::EntityID InParent);
 

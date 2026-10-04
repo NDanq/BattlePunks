@@ -486,6 +486,110 @@ namespace EditorHistory
     }
     }
 
+    // === Copies ==============================================================
+
+    namespace
+    {
+        using GuidMap = std::unordered_map<EntityGuid, EntityGuid, GameCore::EntityGuidHash>;
+
+        /* InOut's GUIDs replaced with fresh ones (see RestoreCopies), old to
+         * new in OutEntities; InParentGuid is its new parent's. */
+        void Regenerate(EntitySnapshot& InOut, const EntityGuid& InParentGuid, GuidMap& OutEntities, GuidMap& InOutInstances,
+                        const bool bInKeepInstances)
+        {
+            const EntityGuid OldGuid = InOut.Guid;
+            if(bInKeepInstances && InOut.Instance)
+            {
+                InOutInstances[InOut.InstanceGuid] = EntityGuid::Generate();   // a root: its instance is new
+            }
+            const auto Instance = InOut.InstanceGuid.IsSet() ? InOutInstances.find(InOut.InstanceGuid) : InOutInstances.end();
+            if(Instance != InOutInstances.end())
+            {
+                InOut.InstanceGuid = Instance->second;
+                InOut.Guid = InOut.LocalId != GameCore::PREFAB_NO_LOCAL_ID
+                           ? GameCore::DerivePrefabEntityGuid(InOut.InstanceGuid, InOut.LocalId) : EntityGuid::Generate();
+            }
+            else
+            {
+                /* Its instance was not copied with it: loose. */
+                InOut.InstanceGuid = EntityGuid();
+                InOut.LocalId      = GameCore::PREFAB_NO_LOCAL_ID;
+                InOut.Instance.reset();
+                InOut.Guid = EntityGuid::Generate();
+            }
+            OutEntities[OldGuid] = InOut.Guid;
+            if(InParentGuid.IsSet()) { InOut.ParentGuid = InParentGuid; }
+            for(EntitySnapshot& Child : InOut.Children)
+            {
+                Regenerate(Child, InOut.Guid, OutEntities, InOutInstances, bInKeepInstances);
+            }
+        }
+
+        /* The entities alone, named, parented: components come once every
+         * copy exists, so references between them can be moved. */
+        void CreateCopyTree(World& InWorld, const EntitySnapshot& InSnapshot, const EntityGuid& InOldGuid,
+                            const EntitySnapshot& InOriginal, GuidRemap& OutRemap)
+        {
+            const GameCore::Entity E = InWorld.CreateEntity(InSnapshot.Name.c_str(), InSnapshot.Guid);
+            OutRemap[InOldGuid] = E.GetID();
+            for(size_t Index = 0; Index < InSnapshot.Children.size(); ++Index)
+            {
+                CreateCopyTree(InWorld, InSnapshot.Children[Index], InOriginal.Children[Index].Guid, InOriginal.Children[Index], OutRemap);
+                InWorld.GetEntity(InWorld.FindEntityByGuid(InSnapshot.Children[Index].Guid)).SetParent(E.GetID(), false);
+            }
+        }
+
+        void LoadCopyComponents(World& InWorld, const EntitySnapshot& InSnapshot, const GuidRemap& InRemap)
+        {
+            const EntityID Entity = InWorld.FindEntityByGuid(InSnapshot.Guid);
+            for(const ComponentSnapshot& Component : InSnapshot.Components)
+            {
+                LoadComponent(InWorld, Entity, Component, &InRemap);
+            }
+            for(const EntitySnapshot& Child : InSnapshot.Children)
+            {
+                LoadCopyComponents(InWorld, Child, InRemap);
+            }
+            InWorld.RefreshEntityBounds(Entity);
+        }
+    }
+
+    std::vector<EntityID> RestoreCopies(World& InWorld, const std::vector<EntitySnapshot>& InSnapshots,
+                                        const std::vector<GameCore::TransformPose>& InWorldPoses, const bool bInKeepInstances)
+    {
+        std::vector<EntitySnapshot> Copies = InSnapshots;
+        GuidMap Entities, Instances;
+        for(EntitySnapshot& Copy : Copies)
+        {
+            Regenerate(Copy, EntityGuid(), Entities, Instances, bInKeepInstances);
+        }
+
+        GuidRemap Remap;
+        std::vector<EntityID> Roots;
+        std::vector<bool> bMadeRoot;
+        for(size_t Index = 0; Index < Copies.size(); ++Index)
+        {
+            CreateCopyTree(InWorld, Copies[Index], InSnapshots[Index].Guid, InSnapshots[Index], Remap);
+            const GameCore::Entity Root = InWorld.GetEntity(InWorld.FindEntityByGuid(Copies[Index].Guid));
+            const EntityID Parent = Copies[Index].ParentGuid.IsSet() ? InWorld.FindEntityByGuid(Copies[Index].ParentGuid) : EntityID();
+            const bool bUnderParent = Parent.IsSet() && !InWorld.GetEntity(Parent).IsInInstance();
+            if(bUnderParent) { Root.SetParent(Parent, false); }
+            Roots.push_back(Root.GetID());
+            bMadeRoot.push_back(!bUnderParent);
+        }
+        for(size_t Index = 0; Index < Copies.size(); ++Index)
+        {
+            LoadCopyComponents(InWorld, Copies[Index], Remap);
+            if(bMadeRoot[Index] && Index < InWorldPoses.size())
+            {
+                InWorld.GetEntity(Roots[Index]).SetWorldPose(InWorldPoses[Index]);
+                InWorld.RefreshEntityBounds(Roots[Index]);
+            }
+            RestoreInstances(InWorld, Copies[Index]);
+        }
+        return Roots;
+    }
+
     // === Command =============================================================
 
     Command::Command(EditorDocument& InDocument, const QString& InText)

@@ -77,7 +77,7 @@ uses it.
 | `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere, Cylinder or Plane mesh on a new entity, sized to see, in one undo step |
 | `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
-| `OutlinerPanel` | Entity hierarchy with component summary, filter, create/destroy, drag to reparent |
+| `OutlinerPanel` | Entity hierarchy with component summary, filter, create, drag to reparent; Ctrl/Shift multiple selection, F2 renames in the row, and the edit actions (below) in its context menu |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
 | `ViewportSDLInput` (private) | The viewport as an SDL window (focus hand-over, text forwarding, pumping), for the game's input and the input probe |
 | `DetailsPanel` + `PropertyWidgets` | The entity's name and script path, then one section per component, one editor per property type, lists for array properties, reset-to-default, add/remove component |
@@ -242,11 +242,28 @@ no scripts.
 | Alt + Left drag | Orbit the pivot -- the selection's bounds centre, else the focus point |
 | Alt + Right drag, wheel | Dolly toward the pivot |
 | Middle drag | Pan |
-| Left click | Select the primitive under the cursor; on the axis gizmo, view from that axis (Shift: the opposite side) |
-| Left drag on a handle | Move / rotate / scale the selection (Ctrl inverts Snap); Esc or a right click cancels the drag |
+| Left click | Select the primitive under the cursor -- a prefab instance whole, by its root (its parts are selected in the Outliner); Ctrl+click toggles it in or out of the selection, Shift+click adds it; on the axis gizmo, view from that axis (Shift: the opposite side) |
+| Right click (no drag) | Context menu: Cut, Copy, Paste, Duplicate, Rename, Delete -- for what is under the cursor (selected first) or the selection |
+| Left drag on a handle | Move / rotate / scale the selection -- every selected entity together, as one undo step (Ctrl inverts Snap); Esc or a right click cancels the drag |
 | Q / W / E / R | Handles off (Select) / Move / Rotate / Scale -- not while right-dragging, where W E Q fly |
 | X | Handles in world or local space |
 | F / Home | Frame the selection / the whole scene |
+
+**Selection and editing.** Any number of entities can be selected; the last
+one picked is the *primary*, which the Details panel shows and the handles sit
+on (its box brighter). Cut (Ctrl+X), Copy (Ctrl+C), Paste (Ctrl+V), Duplicate
+(Ctrl+D), Rename (F2) and Delete (Del) act on the selection -- a selected
+child goes with its selected parent -- each as one undo step. They are in the
+viewport's and the Outliner's context menus and on Edit; their keys work while
+the viewport or the Outliner has the focus (so Del and F2 in the Content
+Browser stay its own, and a text field keeps Ctrl+C). Copies are kept for
+every document, so entities copied in a prefab tab paste into the level.
+Paste and Duplicate make new entities (fresh GUIDs; references between the
+copies point at the copies) where the originals were: under the same parent,
+or at the top, where they stood, if that parent is gone or inside a prefab
+instance. A copied prefab instance comes back as a new instance of the same
+prefab; one of its members copied alone comes back loose. Duplicate leaves the
+clipboard alone. Rename asks for the name (in the Outliner, edit it in the row).
 
 The toolbar above the viewport, after Play / Stop / Eject, is mostly combo
 boxes: the handle mode (Select, Move, Rotate, Scale), the space (World,

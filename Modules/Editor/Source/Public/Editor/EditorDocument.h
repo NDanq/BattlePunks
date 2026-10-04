@@ -15,6 +15,7 @@
 #include "Public/GameCore/AABB.h"
 #include "Public/GameCore/ComponentType.h"
 #include "Public/GameCore/Delegate.h"
+#include "Public/GameCore/EntityGuid.h"
 #include "Public/GameCore/EntityID.h"
 #include "Public/GameCore/TransformMath.h"
 
@@ -22,7 +23,7 @@ namespace GameCore { class World; class Entity; class PrefabAsset; }
 
 class QUndoCommand;
 class QUndoStack;
-namespace EditorHistory { struct EntityMembers; }
+namespace EditorHistory { struct EntityMembers; struct EntitySnapshot; }
 
 Q_DECLARE_METATYPE(GameCore::EntityID)
 
@@ -169,6 +170,36 @@ public:
     /* Entity::SetName. */
     void RenameEntity(GameCore::EntityID InEntity, const QString& InName);
 
+    // === Clipboard ==========================================================
+    // Copies hold the selected subtrees (GetSelectedRoots) as snapshots, shared
+    // by every document in the editor, so a prefab tab's entities paste into
+    // the level. The system clipboard carries a marker for them, so copying
+    // text elsewhere makes Paste wait for the next entity copy.
+
+    /* The selection, onto the clipboard. Returns how many subtrees. */
+    int CopySelection();
+
+    /* Copy, then delete the selection as one undo step. */
+    int CutSelection();
+
+    /* The selection's subtrees deleted, as one undo step. Returns how many. */
+    int DeleteSelection();
+
+    /* Something copied, and the system clipboard still holds it. */
+    bool CanPaste() const;
+
+    /*
+     * The clipboard's subtrees made again as new entities (fresh GUIDs, a
+     * copied prefab instance a new instance), each where it was copied from:
+     * under its parent if that is here (and not inside a prefab instance),
+     * else at the top, where it stood in the world. One undo step; the copies
+     * are selected and returned.
+     */
+    std::vector<GameCore::EntityID> Paste();
+
+    /* Paste of a copy of the selection, leaving the clipboard alone. */
+    std::vector<GameCore::EntityID> DuplicateSelection();
+
     /* Entity::SetParent, keeping the entity where it is in the world. An
      * unset InParent detaches. False if refused (a cycle) or unchanged. */
     bool SetEntityParent(GameCore::EntityID InEntity, GameCore::EntityID InParent);
@@ -194,11 +225,39 @@ public:
     GameCore::AABB GetSceneBounds() const;
 
     // === Selection ==========================================================
+    // Any number of entities; one of them, the PRIMARY (the last selected),
+    // is what the Details panel shows and the gizmo is placed on.
 
+    /* The primary selected entity; unset if nothing is selected. */
     GameCore::EntityID GetSelection() const { return Selection; }
 
-    /* An unset or dead id clears it. Emits SelectionChanged on change only. */
+    /* Every selected entity, the primary last. */
+    const std::vector<GameCore::EntityID>& GetSelectedEntities() const { return Selected; }
+    bool IsSelected(GameCore::EntityID InEntity) const;
+
+    /* The selected entities with no selected ancestor -- what copy, delete
+     * and a group move act on (a child goes with its parent) -- in selection
+     * order. */
+    std::vector<GameCore::EntityID> GetSelectedRoots() const;
+
+    /* Just InEntity; an unset or dead id clears it. Emits SelectionChanged
+     * on change only. */
     void SetSelection(GameCore::EntityID InEntity);
+
+    /* Exactly InEntities (dead ones dropped), InPrimary the primary -- the
+     * last of them if InPrimary is not among them. */
+    void SetSelection(const std::vector<GameCore::EntityID>& InEntities, GameCore::EntityID InPrimary = GameCore::EntityID());
+
+    /* Ctrl+click: InEntity out of the selection if in it, else in, as the primary. */
+    void ToggleSelected(GameCore::EntityID InEntity);
+
+    /* Shift+click: InEntity added (or made the primary, if already in). */
+    void AddToSelection(GameCore::EntityID InEntity);
+
+    /* What clicking InEntity in a viewport selects: the root of the outermost
+     * prefab instance it belongs to -- a prefab is picked whole, its parts
+     * through the Outliner -- or InEntity itself if it is in none. */
+    GameCore::EntityID GetPickTarget(GameCore::EntityID InEntity) const;
 
     /* A panel wrote InType on InEntity. Recorded only for the selection, the
      * one entity whose previous values are known. */
@@ -221,6 +280,14 @@ public:
      * <entity>"; none if nothing changed. Undo/redo are refused meanwhile. */
     void BeginEditGesture(const QString& InLabel);
     void EndEditGesture();
+
+    /* A gesture over several entities (dragging a group with the gizmo):
+     * InType's values on each are kept from here, and EndGroupEdit records
+     * every one that changed as one step, "<InLabel> <n> entities" -- or, if
+     * bInCancel, puts them back. Inside it, NotifyPropertyEdited records
+     * nothing. */
+    void BeginGroupEdit(const std::vector<GameCore::EntityID>& InEntities, GameCore::ComponentTypeID InType, const QString& InLabel);
+    void EndGroupEdit(bool bInCancel);
 
     /* InCommand is the latest entry with no undo/redo since: mergeable. */
     bool IsLatestRecorded(const QUndoCommand* InCommand) const;
@@ -265,8 +332,15 @@ private:
     void UnhookActiveWorld();
     void ForgetHooks();
 
-    /* Hooks InWorld, selects InSelection, emits WorldReset and SelectionChanged. */
-    void ActivateWorld(GameCore::World* InWorld, GameCore::EntityID InSelection);
+    /* Hooks InWorld, selects InSelected (InSelection the primary), emits
+     * WorldReset and SelectionChanged. */
+    void ActivateWorld(GameCore::World* InWorld, GameCore::EntityID InSelection,
+                       const std::vector<GameCore::EntityID>& InSelected = {});
+
+    /* SetSelection's body: emits if the set or the primary changed, or if
+     * bInForceSignal. */
+    void ApplySelection(const std::vector<GameCore::EntityID>& InEntities, GameCore::EntityID InPrimary,
+                        bool bInForceSignal = false);
 
     /* Logs and returns true while a World is borrowed. */
     bool RefuseWhileBorrowed(const char* InWhat) const;
@@ -276,6 +350,11 @@ private:
 
     /* Pushes an already-applied command. Takes ownership. */
     void Record(QUndoCommand* InCommand);
+
+    /* Paste and Duplicate: InRoots/InPoses made again (RestoreCopies),
+     * recorded as one InLabel step, then selected. */
+    std::vector<GameCore::EntityID> PasteSnapshots(const std::vector<EditorHistory::EntitySnapshot>& InRoots,
+                                                   const std::vector<GameCore::TransformPose>& InPoses, const QString& InLabel);
 
     /* PlacePrefab's spawn and record, at a full pose. */
     GameCore::EntityID SpawnPrefabRecorded(const QString& InRuntimePath, const GameCore::TransformPose& InAt);
@@ -299,8 +378,10 @@ private:
     GameCore::World*      ActiveWorld = nullptr;   // EditedWorld, or a borrowed one
     bool                  bSingleRoot = false;
 
-    GameCore::EntityID    Selection;
-    GameCore::EntityID    EditedSelection;         // kept while a World is borrowed
+    GameCore::EntityID              Selection;         // the primary
+    std::vector<GameCore::EntityID> Selected;          // all of it, Selection last
+    GameCore::EntityID              EditedSelection;   // kept while a World is borrowed
+    std::vector<GameCore::EntityID> EditedSelected;
 
     GameCore::DelegateHandle CreatedHandle;
     GameCore::DelegateHandle DestroyedHandle;
@@ -326,6 +407,17 @@ private:
     };
     GameCore::EntityID           ShadowEntity;
     std::vector<ShadowComponent> Shadow;
+
+    /* BeginGroupEdit's entities and their values then. */
+    struct GroupEditEntry
+    {
+        GameCore::EntityGuid Guid;
+        std::vector<uint8_t> Before;
+    };
+    bool                        bGroupEditing = false;
+    GameCore::ComponentTypeID   GroupEditType = GameCore::COMPONENT_TYPE_INVALID;
+    QString                     GroupEditLabel;
+    std::vector<GroupEditEntry> GroupEdit;
 };
 
 #endif // WITH_EDITOR

@@ -39,6 +39,7 @@
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/NodeGraph/Schema.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/EditorLights.h"
 #include "Private/Editor/EditorPrimitives.h"
 #include "Private/Editor/AboutDialog.h"
@@ -337,6 +338,14 @@ void EditorMainWindow::BuildMenus()
     connect(&Level, &EditorDocument::HistoryChanged, this, &EditorMainWindow::UpdateHistoryActions);
     UpdateHistoryActions();
 
+    /* Cut/Copy/Paste/Duplicate/Rename/Delete on the level's selection. Their
+     * keys belong to the viewport and the Outliner (EditorEditActions.h);
+     * here they are shown. */
+    Edit->addSeparator();
+    const std::vector<QAction*> EntityItems =
+        EditorEditActions::AddToMenu(Edit, Level, [this]() { EditorEditActions::PromptRename(this, Level); });
+    connect(Edit, &QMenu::aboutToShow, this, [this, EntityItems]() { EditorEditActions::Refresh(EntityItems, Level); });
+
     Edit->addSeparator();
     Edit->addAction(ViewportArea->GetFrameSelectionAction());
     Edit->addAction(ViewportArea->GetFrameAllAction());
@@ -373,9 +382,11 @@ void EditorMainWindow::BuildMenus()
     EditorPrimitives::AddPrimitiveActions(World->addMenu(QStringLiteral("Add &Primitive")), Level, InFrontOfCamera);
     EditorLights::AddLightActions(World->addMenu(QStringLiteral("Add &Light")), Level, InFrontOfCamera);
 
+    /* Del itself belongs to the viewport and the Outliner (EditorEditActions.h). */
     QAction* DeleteEntity = World->addAction(QStringLiteral("&Delete"));
     DeleteEntity->setShortcut(QKeySequence::Delete);
-    connect(DeleteEntity, &QAction::triggered, this, [this]() { Level.DestroyEntity(Level.GetSelection()); });
+    DeleteEntity->setShortcutContext(Qt::WidgetShortcut);
+    connect(DeleteEntity, &QAction::triggered, this, [this]() { Level.DeleteSelection(); });
 
     World->addSeparator();
 
@@ -782,6 +793,11 @@ void EditorMainWindow::RegisterConsoleCommands()
                      QStringLiteral("Destroy an entity, or the selection"),
                      [this, Resolve](const QStringList& InArgs)
     {
+        if(InArgs.isEmpty() && Level.GetSelectedEntities().size() > 1)
+        {
+            Console.Print(QStringLiteral("Destroyed %1 entities").arg(Level.DeleteSelection()));
+            return;
+        }
         const EntityID Target = InArgs.isEmpty() ? Level.GetSelection() : Resolve(InArgs.front());
         if(!Target.IsSet() || !Level.GetWorld().IsAlive(Target))
         {

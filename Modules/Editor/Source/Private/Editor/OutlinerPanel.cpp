@@ -23,6 +23,7 @@
 #include "Public/Editor/EditorDocument.h"
 #include "Public/GameCore/Prefab.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
+#include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/EditorLights.h"
 #include "Private/Editor/EditorPrimitives.h"
 
@@ -95,7 +96,8 @@ OutlinerPanel::OutlinerPanel(EditorDocument& InDocument, QWidget* InParent)
     Tree->setHeaderLabels({ QStringLiteral("Entity"), QStringLiteral("Components") });
     Tree->setRootIsDecorated(true);
     Tree->setUniformRowHeights(true);
-    Tree->setSelectionMode(QAbstractItemView::SingleSelection);
+    Tree->setSelectionMode(QAbstractItemView::ExtendedSelection);   // Ctrl and Shift, as everywhere
+    Tree->setEditTriggers(QAbstractItemView::NoEditTriggers);        // F2 renames (RenameSelected)
     Tree->setContextMenuPolicy(Qt::CustomContextMenu);
     Tree->setDragDropMode(QAbstractItemView::InternalMove);
     Tree->setDragEnabled(true);
@@ -119,9 +121,32 @@ OutlinerPanel::OutlinerPanel(EditorDocument& InDocument, QWidget* InParent)
         {
             return;
         }
-        const QList<QTreeWidgetItem*> Selected = Tree->selectedItems();
-        Document.SetSelection(Selected.isEmpty() ? GameCore::InvalidEntityID() : EntityOf(Selected.front()));
+        /* The row last clicked is the primary, if it is selected. */
+        std::vector<EntityID> Entities;
+        for(const QTreeWidgetItem* Item : Tree->selectedItems())
+        {
+            Entities.push_back(EntityOf(Item));
+        }
+        const QTreeWidgetItem* Current = Tree->currentItem();
+        Document.SetSelection(Entities, Current && Current->isSelected() ? EntityOf(Current) : GameCore::InvalidEntityID());
     });
+
+    /* An inline rename finished. Rebuild's own writes are not renames. */
+    connect(Tree, &QTreeWidget::itemChanged, this, [this](QTreeWidgetItem* InItem, const int InColumn)
+    {
+        const EntityID Entity = EntityOf(InItem);
+        if(bSyncing || InColumn != COL_Name || !Document.GetWorld().IsAlive(Entity))
+        {
+            return;
+        }
+        const QString Name = InItem->text(COL_Name).trimmed();
+        if(!Name.isEmpty() && Name != Document.GetDisplayName(Entity))
+        {
+            Document.RenameEntity(Entity, Name);
+        }
+    });
+
+    EditorEditActions::Install(Tree, Document, [this]() { RenameSelected(); });
 
     connect(Tree, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* InItem)
     {
@@ -186,6 +211,7 @@ void OutlinerPanel::Rebuild()
         }
 
         auto* Item = InParentItem ? new QTreeWidgetItem(InParentItem) : new QTreeWidgetItem(Tree);
+        Item->setFlags(Item->flags() | Qt::ItemIsEditable);
         Item->setText(COL_Name, Document.GetDisplayName(InID));
         Item->setText(COL_Components, Components.join(QStringLiteral(", ")));
         Item->setToolTip(COL_Name, QStringLiteral("#%1 gen %2").arg(InID.Index).arg(InID.Generation));
@@ -277,10 +303,16 @@ void OutlinerPanel::ApplyFilter()
 
 void OutlinerPanel::SyncSelectionFromDocument(const EntityID InEntity)
 {
+    const bool bWasSyncing = bSyncing;
     bSyncing = true;
     Tree->clearSelection();
-    if(QTreeWidgetItem* Item = InEntity.IsSet() ? Items.value(InEntity.Pack(), nullptr) : nullptr)
+    for(const EntityID Each : Document.GetSelectedEntities())
     {
+        QTreeWidgetItem* Item = Items.value(Each.Pack(), nullptr);
+        if(!Item)
+        {
+            continue;
+        }
         /* Opened up to it, so a selection made in the viewport is visible. */
         for(QTreeWidgetItem* Up = Item->parent(); Up; Up = Up->parent())
         {
@@ -288,9 +320,23 @@ void OutlinerPanel::SyncSelectionFromDocument(const EntityID InEntity)
             Collapsed.remove(EntityOf(Up).Pack());
         }
         Item->setSelected(true);
-        Tree->scrollToItem(Item);
     }
-    bSyncing = false;
+    if(QTreeWidgetItem* Primary = InEntity.IsSet() ? Items.value(InEntity.Pack(), nullptr) : nullptr)
+    {
+        Tree->setCurrentItem(Primary, COL_Name, QItemSelectionModel::NoUpdate);
+        Tree->scrollToItem(Primary);
+    }
+    bSyncing = bWasSyncing;
+}
+
+void OutlinerPanel::RenameSelected()
+{
+    QTreeWidgetItem* Item = Items.value(Document.GetSelection().Pack(), nullptr);
+    if(Item && Document.GetSelectedEntities().size() == 1)
+    {
+        Tree->scrollToItem(Item);
+        Tree->editItem(Item, COL_Name);
+    }
 }
 
 void OutlinerPanel::Reparent(const EntityID InDragged, const EntityID InParent)
@@ -310,11 +356,17 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
     QTreeWidgetItem* Item = Tree->itemAt(InPos);
     const EntityID Target = EntityOf(Item);
     GameCore::World& World = Document.GetWorld();
-    const bool bHasChildren = Target.IsSet() && World.GetEntity(Target).GetChildCount() > 0;
     const bool bHasParent   = Target.IsSet() && World.GetEntity(Target).HasParent();
 
+    /* Right-clicking a row outside the selection selects it, as a click would. */
+    if(Target.IsSet() && !Document.IsSelected(Target))
+    {
+        Document.SetSelection(Target);
+    }
 
     QMenu Menu(this);
+    EditorEditActions::AddToMenu(&Menu, Document, [this]() { RenameSelected(); });
+    Menu.addSeparator();
     QAction* Create      = Menu.addAction(QStringLiteral("Create Empty Entity"));
     QAction* CreateChild = Menu.addAction(QStringLiteral("Create Child Entity"));
     CreateChild->setEnabled(Target.IsSet());
@@ -325,10 +377,6 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
     Menu.addSeparator();
     QAction* Detach = Menu.addAction(QStringLiteral("Detach from Parent"));
     Detach->setEnabled(bHasParent);
-    Menu.addSeparator();
-    QAction* Destroy = Menu.addAction(bHasChildren ? QStringLiteral("Destroy Entity and Children")
-                                                   : QStringLiteral("Destroy Entity"));
-    Destroy->setEnabled(Target.IsSet());
 
     /* Prefabs: open an instance's, or make one of this subtree. */
     Menu.addSeparator();
@@ -368,10 +416,6 @@ void OutlinerPanel::ShowContextMenu(const QPoint& InPos)
     else if(Chosen == Detach)
     {
         Reparent(Target, GameCore::InvalidEntityID());
-    }
-    else if(Chosen == Destroy)
-    {
-        Document.DestroyEntity(Target);
     }
     else if(Chosen == OpenPrefab)
     {
