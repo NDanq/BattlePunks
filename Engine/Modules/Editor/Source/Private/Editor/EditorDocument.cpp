@@ -609,6 +609,29 @@ GameCore::AABB EditorDocument::GetEntityBounds(const EntityID InEntity) const
     }
     const GameCore::Entity E = ActiveWorld->GetEntity(InEntity);
 
+    /* Its own shape and its children's, so a prefab's root (or any parent)
+     * frames the whole of it. */
+    GameCore::AABB Box = GetOwnBounds(InEntity);
+    for(EntityID Child = E.GetFirstChild(); Child.IsSet(); Child = ActiveWorld->GetEntity(Child).GetNextSibling())
+    {
+        Box = GameCore::AABB::Union(Box, GetEntityBounds(Child));
+    }
+    if(!Box.IsEmpty() || !E.GetComponent<GameCore::TransformComponent>())
+    {
+        return Box;
+    }
+
+    /* A marker for anything with only a position (a camera, an empty). */
+    const double Half = 25.0;
+    const EngineCore::Vector3 Position = E.GetWorldPose().Position;
+    return GameCore::AABB(Position - EngineCore::Vector3(Half, Half, Half),
+                          Position + EngineCore::Vector3(Half, Half, Half));
+}
+
+GameCore::AABB EditorDocument::GetOwnBounds(const EntityID InEntity) const
+{
+    const GameCore::Entity E = ActiveWorld->GetEntity(InEntity);
+
     if(const GameCore::BoundsComponent* Bounds = E.GetComponent<GameCore::BoundsComponent>())
     {
         if(!Bounds->World.IsEmpty())
@@ -636,12 +659,7 @@ GameCore::AABB EditorDocument::GetEntityBounds(const EntityID InEntity) const
         const GameCore::AABB Quad(EngineCore::Vector3(-0.5, -0.5, 0.0), EngineCore::Vector3(0.5, 0.5, 0.0));   // the unit quad
         return GameCore::AABB::Transformed(Quad, E.GetWorldMatrix());
     }
-
-    /* A marker for anything with only a position (a camera, an empty). */
-    const double Half = 25.0;
-    const EngineCore::Vector3 Position = E.GetWorldPose().Position;
-    return GameCore::AABB(Position - EngineCore::Vector3(Half, Half, Half),
-                          Position + EngineCore::Vector3(Half, Half, Half));
+    return GameCore::AABB();
 }
 
 GameCore::AABB EditorDocument::GetSceneBounds() const
