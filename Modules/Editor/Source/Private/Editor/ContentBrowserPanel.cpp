@@ -264,7 +264,71 @@ private:
         qint64  Stamp = -1;
         QIcon   Thumbnail;
         QString Summary;
+        bool    bRendered     = false;   // a mesh: its thumbnail is rendered
+        bool    bRenderQueued = false;   // waiting for or in RenderNext
+        qint64  RetryAt       = 0;       // after a failed render, not before this
     };
+
+    /* A mesh's thumbnail is rendered (Renderer::RequestMeshPreview), so it
+     * comes later: queued on first view, one request at a time since each
+     * readback stalls the renderer, and only while its folder is shown. */
+    void QueueRender(const QString& InPath, Preview& InEntry) const
+    {
+        if(InEntry.bRenderQueued || QDateTime::currentMSecsSinceEpoch() < InEntry.RetryAt) { return; }
+        InEntry.bRenderQueued = true;
+        RenderQueue.append(InPath);
+        RenderNext();
+    }
+
+    void RenderNext() const
+    {
+        while(!bRenderInFlight && !RenderQueue.isEmpty())
+        {
+            const QString Path = RenderQueue.takeFirst();
+            auto Found = Previews.find(Path);
+            if(Found == Previews.end()) { continue; }
+            const QString Runtime = EditorContent::ToRuntimePath(Path);
+            if(Runtime.isEmpty() || QFileInfo(Path).absolutePath().compare(Panel->GetCurrentFolder(), Qt::CaseInsensitive) != 0)
+            {
+                Found->bRenderQueued = false;   // again when its folder is shown
+                continue;
+            }
+
+            bRenderInFlight = true;
+            const qreal Ratio = Panel->devicePixelRatioF();
+            EditorGraphs::MeshPreviewOptions Options;
+            Options.Mesh   = Runtime;
+            Options.Width  = int(ThumbnailSize * Ratio);
+            Options.Height = Options.Width;
+            const qint64 Stamp = Found->Stamp;
+            auto* Self = const_cast<ContentListProxy*>(this);
+            EditorGraphs::RequestMeshPreview(Options, Self, [Self, Path, Stamp, Ratio](const QImage& InImage, const QString&)
+            {
+                Self->bRenderInFlight = false;
+                auto Entry = Self->Previews.find(Path);
+                if(Entry != Self->Previews.end()) { Entry->bRenderQueued = false; }
+                if(Entry != Self->Previews.end() && !InImage.isNull())
+                {
+                    /* Of an older version: dropped, but the repaint asks for the new one. */
+                    if(Entry->Stamp == Stamp)
+                    {
+                        QPixmap Pixmap = QPixmap::fromImage(InImage);
+                        Pixmap.setDevicePixelRatio(Ratio);
+                        Entry->Thumbnail = QIcon(Pixmap);
+                    }
+                    const auto* Source = static_cast<const QFileSystemModel*>(Self->sourceModel());
+                    const QModelIndex Shown = Self->mapFromSource(Source->index(Path));
+                    if(Shown.isValid()) { emit Self->dataChanged(Shown, Shown, { Qt::DecorationRole }); }
+                }
+                else if(Entry != Self->Previews.end() && Entry->Stamp == Stamp)
+                {
+                    /* The renderer may not be up yet; the next view asks again. */
+                    Entry->RetryAt = QDateTime::currentMSecsSinceEpoch() + 2000;
+                }
+                Self->RenderNext();
+            });
+        }
+    }
 
     /* Made on first view, and again when the file changes. */
     const Preview& FindPreview(const QFileInfo& InInfo) const
@@ -272,10 +336,16 @@ private:
         const QString Key = InInfo.absoluteFilePath();
         const qint64 Stamp = InInfo.lastModified().toMSecsSinceEpoch() ^ InInfo.size();
         Preview& Entry = Previews[Key];
-        if(Entry.Stamp == Stamp) { return Entry; }
+        if(Entry.Stamp == Stamp)
+        {
+            if(Entry.bRendered && Entry.Thumbnail.isNull()) { QueueRender(Key, Entry); }
+            return Entry;
+        }
 
+        const bool bWasQueued = Entry.bRenderQueued;   // still in RenderQueue
         Entry = Preview();
         Entry.Stamp = Stamp;
+        Entry.bRenderQueued = bWasQueued;
         if(InInfo.size() > PreviewByteLimit) { return Entry; }
 
         const QString Path = InInfo.absoluteFilePath();
@@ -337,6 +407,8 @@ private:
                                 .arg(double(Mesh.BoundsMax[2] - Mesh.BoundsMin[2]), 0, 'g', 4)
                                 .arg(Mesh.ImportInfo.IsEmpty() ? QString()
                                      : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Mesh.ImportInfo.SourcePath)));
+                Entry.bRendered = true;
+                QueueRender(Key, Entry);
             }
             else
             {
@@ -363,6 +435,8 @@ private:
     QString                           Root;
     QString                           NameFilter;
     mutable QHash<QString, Preview>   Previews;
+    mutable QStringList               RenderQueue;
+    mutable bool                      bRenderInFlight = false;
 };
 
 // === The item view ===================================================================
