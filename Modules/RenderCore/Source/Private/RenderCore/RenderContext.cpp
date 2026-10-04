@@ -2155,6 +2155,11 @@ namespace RenderCore
         return Written ? Previous : nullptr;
     }
 
+    void RenderContext::WriteGpuTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd)
+    {
+        if(P->TimedOwner) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
+    }
+
     void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor, const bool bInTimed,
                                           const EngineCore::Color* InClearBottom)
     {

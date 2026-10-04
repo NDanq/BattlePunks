@@ -218,6 +218,10 @@ namespace RenderCore
          * notes InOwner as this block's, if bInTime and the backend can time. */
         const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
 
+        /* InTimer's start (or end) timestamp, outside RenderSceneStages (the
+         * scene captures' span); nothing unless this block is timed. */
+        void WriteGpuTimestamp(ERenderGpuTimer InTimer, bool bInEnd);
+
         /* Both DrawMesh overloads: bInEvery puts InSlots[0] in every slot. */
         bool DrawMeshSections(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
                               const char* const* InSlots, uint32_t InSlotCount, bool bInEvery,

@@ -474,7 +474,11 @@ the same panel. Toggle it with `stat frame` in the editor console, or set
 
 **The spans** (`ERenderGpuTimer`) are PrePass, BasePass, AO, Shadows,
 Lighting, Forward (Unlit and the translucent stages), PostProcess, and Total
-(from the scene's clear to the end of the post process).
+(from the scene's clear to the end of the post process). The last line is
+**Captures**: every Scene Capture Probe's views that frame, all stages
+included. Captures run before the scene's stages and are not part of Total.
+`RenderScene::Render` times them with `RenderContext::WriteGpuTimestamp`
+around the capture loop, so a frame with no captures shows 0.00, not `-`.
 
 **How a scene is timed:**
 - `RenderSceneStages(..., bInTimed)` writes a GPU timestamp before and after
