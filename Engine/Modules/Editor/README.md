@@ -232,8 +232,8 @@ Object's Texture field in Details.
 - **The sky:** a Sky Light's **Environment** takes a texture (picked,
   completed or dropped): an HDRI imported from a .hdr. It lights the scene and,
   with Draw Background, is drawn behind it.
-- **Scope:** both need an HDR scene colour (Vulkan); the Texture Viewer shows
-  an HDRI tone mapped.
+- **Scope:** both need an HDR scene colour (every GPU backend; tested on
+  Vulkan). The Texture Viewer shows an HDRI tone mapped.
 
 **Render targets.** The context menu's **New Render Target 2D...** and **New
 Render Target 3D (Cube)...** make a `.nmrt2d` (512 square) or a `.nmrt3d`

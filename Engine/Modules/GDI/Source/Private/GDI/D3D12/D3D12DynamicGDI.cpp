@@ -245,6 +245,21 @@ GDIRenderTarget* D3D12DynamicGDI::CreateRenderTarget(std::string Name, uint InWi
     return RT;
 }
 
+GDIRenderTarget* D3D12DynamicGDI::CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat)
+{
+    if(!DeviceObj) return nullptr;
+    const DXGI_FORMAT Format = InFormat == GDI_RTF_RGBA16F ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_R8G8B8A8_UNORM;
+    auto* RT = new D3D12RenderTarget(DeviceObj, Name, InWidth, InHeight, Format);
+    RegisterRenderTarget(RT);
+    return RT;
+}
+
+bool D3D12DynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
+{
+    /* R16G16B16A16_FLOAT render targets, blending and sampling are required at feature level 11_0. */
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
+}
+
 void D3D12DynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
 {
     SetRenderTargets(&InRenderTarget, 1, InRenderTarget);

@@ -17,6 +17,17 @@ GDIRenderTarget* OpenGLDynamicGDI::CreateRenderTarget(std::string Name, uint InW
     return new OpenGLRenderTarget(InWidth, InHeight);
 }
 
+GDIRenderTarget* OpenGLDynamicGDI::CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat)
+{
+    return new OpenGLRenderTarget(InWidth, InHeight, InFormat);
+}
+
+bool OpenGLDynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
+{
+    /* GL_RGBA16F is colour-renderable and blendable from OpenGL 3.0, which the backend requires. */
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
+}
+
 void OpenGLDynamicGDI::SetRenderTarget(GDIRenderTarget *InRenderTarget)
 {
     if(InRenderTarget)
@@ -68,8 +79,9 @@ void OpenGLDynamicGDI::ReleaseRenderTarget(GDIRenderTarget *InRenderTarget)
     InRenderTarget->Release();
 }
 
-OpenGLRenderTarget::OpenGLRenderTarget(const uint InWidth, const uint InHeight)
+OpenGLRenderTarget::OpenGLRenderTarget(const uint InWidth, const uint InHeight, const EGDIRenderTargetFormat InFormat)
 : GDIRenderTarget(InWidth, InHeight)
+, RTFormat(InFormat)
 {
     TargetGDIType = RTGDI_OpenGL;
     initializeOpenGLFunctions();
@@ -119,6 +131,14 @@ void OpenGLRenderTarget::Allocate()
 
     if(auto* TextureResource = dynamic_cast<OpenGLTextureResource*>( FrameBuffer.FrameTexture->Resource ))
     {
+        /* An HDR target: the colour texture re-specified as half float. glReadPixels (ToImage) asks for
+         * GL_UNSIGNED_BYTE, which clamps it into 0-255 as the other backends' readbacks do. */
+        if(RTFormat == GDI_RTF_RGBA16F)
+        {
+            glBindTexture(GL_TEXTURE_2D, TextureResource->TextureHandle);
+            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16F, GLsizei(Width), GLsizei(Height), 0, GL_RGBA, GL_HALF_FLOAT, nullptr);
+            glBindTexture(GL_TEXTURE_2D, 0);
+        }
         glGenFramebuffers(1, &FrameBuffer.FrameBufferID);
         GDI_CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE, "[QOpenGLFrameBuffer] Error, framebuffer generation incomplete!");
         glBindFramebuffer(GL_FRAMEBUFFER, FrameBuffer.FrameBufferID);

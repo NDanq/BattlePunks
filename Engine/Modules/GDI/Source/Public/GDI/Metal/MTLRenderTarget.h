@@ -29,7 +29,8 @@ class MTLDevice;
 class MTLRenderTarget : public GDIRenderTarget
 {
 public:
-    MTLRenderTarget(MTLDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight);
+    /* InHalfFloat: MTLPixelFormatRGBA16Float (HDR), else RGBA8Unorm. */
+    MTLRenderTarget(MTLDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight, bool InHalfFloat = false);
     ~MTLRenderTarget();
 
     void Bind() override;
@@ -59,6 +60,7 @@ private:
     std::string         Name;
     MTLTextureRef   Texture        = nullptr;
     bool            bHasContent    = false;
+    bool            bHalfFloat     = false;
 
     /**
      * Lazily-created GDITexture2D that adopts this RT's texture so the render

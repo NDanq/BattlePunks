@@ -1,4 +1,5 @@
 #include "Public/GDI/Metal/MTLRenderTarget.h"
+#include "Public/GDI/GDIHalf.h"
 #include "Public/GDI/Metal/MTLDevice.h"
 #include "Public/GDI/Metal/MTLTexture.h"
 #include "Public/GDI/Metal/MetalDynamicGDI.h"
@@ -23,10 +24,11 @@ static MetalDynamicGDI* GetMTLDriver()
     return dynamic_cast<MetalDynamicGDI*>(GDynamicGDI);
 }
 
-MTLRenderTarget::MTLRenderTarget(MTLDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight)
+MTLRenderTarget::MTLRenderTarget(MTLDevice* InDevice, const std::string& InName, uint InWidth, uint InHeight, const bool InHalfFloat)
     : GDIRenderTarget(InWidth, InHeight)
     , Device(InDevice)
     , Name(InName)
+    , bHalfFloat(InHalfFloat)
 {
     Allocate();
 }
@@ -46,7 +48,7 @@ void MTLRenderTarget::Allocate()
     if(Width == 0 || Height == 0)     return;
 
     MTLTextureDescriptor* Desc =
-        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+        [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:(bHalfFloat ? MTLPixelFormatRGBA16Float : MTLPixelFormatRGBA8Unorm)
                                                             width:(NSUInteger)Width
                                                            height:(NSUInteger)Height
                                                         mipmapped:NO];
@@ -145,7 +147,7 @@ EngineCore::Image MTLRenderTarget::ToImage()
     // Buffer<->texture blits have a per-device row-alignment requirement; rounding
     // the destination stride up to 256 satisfies every GPU family, so the readback
     // arrives padded and is copied out row by row below.
-    const NSUInteger TightRowBytes = (NSUInteger)Width * 4u;
+    const NSUInteger TightRowBytes = (NSUInteger)Width * (bHalfFloat ? 8u : 4u);
     const NSUInteger BytesPerRow   = ((TightRowBytes + 255u) / 256u) * 256u;
     const NSUInteger DataSize      = BytesPerRow * (NSUInteger)Height;
 
@@ -178,7 +180,16 @@ EngineCore::Image MTLRenderTarget::ToImage()
     const auto* Src = static_cast<const uint8_t*>([Readback contents]);
     for(uint Row = 0; Row < Height; ++Row)
     {
-        std::memcpy(Result.scanLine(int(Row)), Src + Row * BytesPerRow, (size_t)TightRowBytes);
+        if(bHalfFloat)
+        {
+            /* An HDR target's half floats, clamped into RGBA8 (GDIHalf.h). */
+            GDIHalvesToBytes(reinterpret_cast<const uint16_t*>(Src + Row * BytesPerRow), Result.GetScanline(int(Row)),
+                             size_t(Width) * 4u);
+        }
+        else
+        {
+            std::memcpy(Result.GetScanline(int(Row)), Src + Row * BytesPerRow, (size_t)TightRowBytes);
+        }
     }
     [Readback release];
     Result.FlipVertical();

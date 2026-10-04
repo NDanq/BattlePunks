@@ -330,8 +330,20 @@ sets it on every viewport from Editor Settings (`Editor.ViewportGradient`,
 
 ### HDR and tone mapping
 
-Where the backend can make a half-float render target (`GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F)`:
-Vulkan today), a scene's colour is **RGBA16F holding linear light** (`SceneTargets::bHDR`).
+Where the backend can make a half-float render target
+(`GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F)`), a scene's colour is
+**RGBA16F holding linear light** (`SceneTargets::bHDR`). The format, per backend:
+
+| Backend | Format |
+|---|---|
+| Vulkan | `R16G16B16A16_SFLOAT` |
+| D3D12 | `R16G16B16A16_FLOAT` |
+| Metal | `RGBA16Float` |
+| OpenGL | `GL_RGBA16F` |
+
+Null has none. Only Vulkan is built and tested on Linux. The D3D12, Metal and
+OpenGL code is written to match and awaits its platforms. So does the
+shaders' cross-compilation: HLSL through `fxc` at shader model 5.0, and MSL.
 
 - **Writing it:** `Scene_Output.x` tells the shaders. Lit output skips its
   `ToDisplay` (`ToSceneColor` in `Lighting.glsl`). An Unlit material's emissive,
@@ -353,8 +365,8 @@ Vulkan today), a scene's colour is **RGBA16F holding linear light** (`SceneTarge
   authored.
 - **Captures and previews:** these run with no stack, so they are clamped.
   A reflection is therefore tone mapped once, by the view that shows it.
-- **Elsewhere:** an 8-bit backend (D3D12, Metal and OpenGL for now) keeps the
-  old display-space path; the node does nothing there.
+- **Without one:** a backend with no half-float target (Null) keeps the old
+  display-space path; the node does nothing there.
 
 Verified (`NIMBLE_SMOKE_GPU=Vulkan`): an Unlit quad of display 0.9 reads 229 with
 no tone map, 202 with ACES, 229 with ACES at +1 EV and 176 with Reinhard, and
@@ -413,8 +425,8 @@ ray (`Sky.fsh`).
     BRDF x Lagarde's specular occlusion;
   - diffuse = irradiance x albedo x (1 - metallic) x AO.
 
-An 8-bit backend keeps the hemisphere ambient. A material preview is lit by its
-studio light alone.
+A backend with no half-float target keeps the hemisphere ambient. A material
+preview is lit by its studio light alone.
 
 Verified (`NIMBLE_SMOKE_GPU=Vulkan`, in a room of six coloured walls):
 - **Mirror ball with a probe:** a mirror metal ball reflects, from the probe,
@@ -693,8 +705,8 @@ compiled, as the forward variant. It now has both.
 
 Post process: bloom from the HDR scene colour (it still thresholds display
 colours after the tone map); auto exposure; a velocity target for per-object
-motion blur; temporal AA; colour grading. HDR and image-based lighting on
-D3D12, Metal and OpenGL (half-float targets there). Reflection probe blending
+motion blur; temporal AA; colour grading. Running HDR and image-based lighting
+on D3D12, Metal and OpenGL (written, not yet built there). Reflection probe blending
 across more than four; cube-face capture time-slicing; SH irradiance.
 
 Hardware shadow comparison, depth bias and front-face culling in GDI (then

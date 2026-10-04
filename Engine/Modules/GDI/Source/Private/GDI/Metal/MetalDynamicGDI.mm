@@ -258,6 +258,20 @@ GDIRenderTarget* MetalDynamicGDI::CreateRenderTarget(std::string Name, uint InWi
     return RT;
 }
 
+GDIRenderTarget* MetalDynamicGDI::CreateRenderTargetFormat(std::string Name, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat)
+{
+    if(!DeviceObj) return nullptr;
+    auto* RT = new MTLRenderTarget(DeviceObj, Name, InWidth, InHeight, InFormat == GDI_RTF_RGBA16F);
+    RegisterRenderTarget(RT);
+    return RT;
+}
+
+bool MetalDynamicGDI::SupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat) const
+{
+    /* RGBA16Float is renderable, blendable and filterable on every Metal GPU family. */
+    return InFormat == GDI_RTF_RGBA8 || InFormat == GDI_RTF_RGBA16F;
+}
+
 void MetalDynamicGDI::SetRenderTarget(GDIRenderTarget* InRenderTarget)
 {
     auto* MTLRT = dynamic_cast<MTLRenderTarget*>(InRenderTarget);
