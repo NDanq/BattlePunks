@@ -3,6 +3,7 @@
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/Input.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
@@ -13,6 +14,8 @@
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
+
+#include "Private/LightLab/LightLabAvatar.h"
 
 #include <algorithm>
 #include <cmath>
@@ -50,6 +53,8 @@
  *                      Player and swings the dynamic ball (Swinger).
  *   LightLabGameMode   mouse capture, the T/F/L toggles, a periodic report.
  *   LightLabGameModule owns and registers both levels.
+ *   LightLabAvatar     multiplayer: each connected player is an orb the others
+ *                      see (LightLabServer, LightLab -connect=host:port).
  *
  * Coordinates are the engine's: left-handed, +X right, +Y UP, +Z forward. The
  * floor is at y=0. A rotation's positive pitch (X) tips the nose down.
@@ -416,6 +421,9 @@ public:
             }
         }
 
+        /* Connected to a server: tell it where this camera is (LightLabAvatar.h). */
+        LightLabAvatar::Update(World, PlayerEntity, InFrame.DeltaSeconds);
+
         if(ElapsedSeconds - LastReportSeconds >= ReportIntervalSeconds)
         {
             const GameCore::TransformComponent* Player =
@@ -432,7 +440,9 @@ public:
                                  + Fixed2(Player->Position.GetZ()) + ")"
                                : std::string())
                      + " frames_rendered=" + Num(RenderStats.FramesRendered)
-                     + " draw_calls=" + Num(RenderStats.DrawCalls))
+                     + " draw_calls=" + Num(RenderStats.DrawCalls)
+                     + (NimbleEngine::GetNetMode() != NimbleEngine::ENetMode::Standalone
+                            ? " remote_players=" + Num(LightLabAvatar::CountRemote(World)) : std::string()))
 
             LastReportSeconds = ElapsedSeconds;
             TicksSinceReport  = 0;
@@ -443,6 +453,18 @@ public:
     {
         CORE_LOG("[LightLab] stopping after " + Fixed2(ElapsedSeconds) + "s")
         Session = nullptr;
+    }
+
+    /* Server: a client joined; its player gets an orb the others see. */
+    void OnClientConnected(const int32_t InClient, const GameCore::EntityID InPlayer) override
+    {
+        LightLabAvatar::Add(Session->GetWorld(), InPlayer);
+        CORE_LOG("[LightLab] client " + std::to_string(InClient) + " joined")
+    }
+
+    void OnClientDisconnected(const int32_t InClient, const GameCore::EntityID /*InPlayer*/) override
+    {
+        CORE_LOG("[LightLab] client " + std::to_string(InClient) + " left")
     }
 
 private:

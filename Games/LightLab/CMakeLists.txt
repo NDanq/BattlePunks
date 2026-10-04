@@ -61,6 +61,8 @@ endif()
 nimble_add_hot_module(${GAME_MODULE}
         SOURCES      Source/Private/LightLab/LightLabGame.cpp
                      Source/Private/LightLab/LightLabInput.cpp
+                     Source/Private/LightLab/LightLabAvatar.cpp
+                     Source/Private/LightLab/LightLabAvatar.h
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 
@@ -71,6 +73,16 @@ set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 # starting there. A game that needs its own main() passes SOURCES <file>
 # (Engine/cmake/NimbleModule.cmake).
 nimble_add_game_launcher(${GAME_NAME} MODULE ${GAME_MODULE})
+
+# === The dedicated server ===================================================
+# ${GAME_NAME}Server: the same module and start level, headless, as the
+# session's authority (Engine/Source/Launcher/ServerLauncherMain.cpp). Skipped,
+# not failed, when the engine is configured without networking
+# (NIMBLE_WITH_NETCORE=OFF):
+#
+#     ${GAME_NAME}Server -port=7777
+#     ${GAME_NAME} -connect=127.0.0.1:7777
+nimble_add_server_launcher(${GAME_NAME}Server MODULE ${GAME_MODULE})
 
 # The editor loads this game at Play, and edits this project's master config.
 if(TARGET NimbleEditor)
