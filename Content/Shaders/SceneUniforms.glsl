@@ -44,4 +44,7 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     // Baked lighting (BakedLighting.glsl): x 1 if the view draws with a bake; y 1 if that bake
     // has the sky in it, so a baked surface takes no live sky ambient.
     vec4 Scene_Baked;
+
+    // The view mode (RenderTypes.h's ERenderViewMode): x 1 for Unlit -- base colour and emissive, no light.
+    vec4 Scene_View;
 UBO_BLOCK_END(Scene_Block)

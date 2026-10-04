@@ -90,6 +90,7 @@ bool EditorContext::InitializeRenderer(const RenderCore::ERenderBackend InBacken
     }
 
     Renderer->BindWorld(Level->GetEditedWorld());
+    Renderer->SetViewMode(RenderCore::RENDER_DEFAULT_SCENE, ViewMode, ViewTarget.toStdString());
     AppliedBackground.clear();   // ApplyBackground sets every scene's on the first frame
 
     FrameClock.start();
@@ -151,6 +152,29 @@ bool EditorContext::TakeMaterialPreview(const uint64_t InRequest, QImage& OutIma
     OutImage = Pixels.GetWidth() > 0 ? EngineCore::QtBridge::ToQImage(Pixels) : QImage();
     OutError = QString::fromUtf8(Error.c_str());
     return true;
+}
+
+void EditorContext::SetViewMode(const RenderCore::ERenderViewMode InMode, const QString& InTarget)
+{
+    ViewMode   = InMode;
+    ViewTarget = InMode == RenderCore::ERenderViewMode::RenderTarget ? InTarget : QString();
+    if(Renderer && bRendererReady)
+    {
+        Renderer->SetViewMode(RenderCore::RENDER_DEFAULT_SCENE, ViewMode, ViewTarget.toStdString());
+    }
+}
+
+QStringList EditorContext::GetViewableTargets() const
+{
+    QStringList Names;
+    if(Renderer && bRendererReady)
+    {
+        for(const std::string& Each : Renderer->GetViewableTargets(RenderCore::RENDER_DEFAULT_SCENE))
+        {
+            Names << QString::fromStdString(Each);
+        }
+    }
+    return Names;
 }
 
 uint64_t EditorContext::RequestSceneCapture()

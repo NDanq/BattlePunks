@@ -28,6 +28,19 @@ namespace RenderCore
      * GDIDefinitions.h carries the matching reorder, and DESIGN.md records
      * why this is the one deliberate edit inside the vendored GDI subtree.
      */
+    /*
+     * What a scene's view shows (Renderer::SetViewMode; the editor's Show >
+     * View Mode): its picture as lit; Unlit -- base colour and emissive as
+     * they are, no light at all; or one of the render targets the frame drew
+     * (Renderer::GetViewableTargets), stretched over the view.
+     */
+    enum class ERenderViewMode : uint8_t
+    {
+        Lit          = 0,
+        Unlit        = 1,
+        RenderTarget = 2,
+    };
+
     enum class ERenderBackend : uint8_t
     {
         Null   = 0,

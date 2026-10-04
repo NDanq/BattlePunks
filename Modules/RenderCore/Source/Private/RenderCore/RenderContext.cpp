@@ -1,6 +1,7 @@
 #include "Public/RenderCore/RenderContext.h"
 
 #include <algorithm>
+#include <iterator>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -72,14 +73,14 @@ namespace RenderCore
             PP_DofPrepare, PP_DofBlur, PP_DofComposite, PP_MotionBlur,
             PP_BloomDownsample, PP_BloomUpsample, PP_BloomComposite, PP_Fxaa,
             PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy, PP_Tonemap,
-            PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky,
+            PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
             "PPBloomDownsample.fsh", "PPBloomUpsample.fsh", "PPBloomComposite.fsh", "PPFxaa.fsh",
             "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
-            "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh",
+            "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -132,6 +133,7 @@ namespace RenderCore
             float IBL[4]                = {};                           // on, probes, sky block weight (IBLCommon.glsl)
             float Probes[12][4]         = {};                           // 3 vec4s a probe
             float Baked[4]              = {};                           // drawing with a bake, it has the sky (BakedLighting.glsl)
+            float View[4]               = {};                           // 1: Unlit (ERenderViewMode)
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -144,7 +146,8 @@ namespace RenderCore
                       && offsetof(SceneUniforms, IBL) == 3616 && offsetof(SceneUniforms, Probes) == 3632,
                       "Scene_CascadeTexels, Scene_Output, Scene_IBL and Scene_Probes come last");
         static_assert(offsetof(SceneUniforms, Baked) == 3824, "Scene_Baked comes after Scene_Probes");
-        static_assert(sizeof(SceneUniforms) == 3840 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, View) == 3840, "Scene_View comes after Scene_Baked");
+        static_assert(sizeof(SceneUniforms) == 3856 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -2283,6 +2286,82 @@ namespace RenderCore
     void RenderContext::WriteGpuTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd)
     {
         if(P->TimedOwner) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
+    }
+
+    void RenderContext::SetUnlit(const bool bInUnlit)
+    {
+        P->Scene.View[0] = bInUnlit ? 1.0f : 0.0f;
+    }
+
+    namespace
+    {
+        /* What ListViewableTargets names: a target's colour, or its depth --
+         * grey (a shadow atlas), or as distance (the scene's). ViewTarget.fsh's modes. */
+        struct ViewableTarget
+        {
+            std::string   Name;
+            GDITexture2D* Texture = nullptr;
+            float         Mode    = 0.0f;
+            const void*   Target  = nullptr;   // the render target it is of, so Final is never drawn over itself
+        };
+
+        void CollectViewableTargets(const SceneTargets& InTargets, GDIRenderTarget* const (&InShadows)[SA_Count], const IBLResources* InIBL,
+                                    const std::vector<std::pair<std::string, GDIRenderTarget*>>& InAssets, std::vector<ViewableTarget>& Out)
+        {
+            const auto Add = [&Out](GDIRenderTarget* InTarget, std::string InName)
+            {
+                if(GDITexture2D* Texture = InTarget ? InTarget->ToGDITexture2D() : nullptr) { Out.push_back({ std::move(InName), Texture, 0.0f, InTarget }); }
+            };
+            const auto AddDepth = [&Out](GDIRenderTarget* InTarget, std::string InName, const float InMode)
+            {
+                if(GDITexture2D* Texture = InTarget ? InTarget->ToDepthTexture2D() : nullptr) { Out.push_back({ std::move(InName), Texture, InMode, nullptr }); }
+            };
+            Add(InTargets.SceneColor, "Scene colour");
+            AddDepth(InTargets.SceneColor, "Scene depth", 2.0f);
+            const char* const GBufferNames[RENDER_GBUFFER_TARGETS] = { "GBuffer0 (base colour, AO)", "GBuffer1 (normal)",
+                                                                       "GBuffer2 (metallic, roughness, specular)", "GBuffer3 (emissive)" };
+            for(uint32_t Index = 0; Index < RENDER_GBUFFER_TARGETS; ++Index) { Add(InTargets.GBuffer[Index], GBufferNames[Index]); }
+            Add(InTargets.PostProcess,  "Post process");
+            Add(InTargets.PostProcessB, "Post process B");
+            for(size_t Index = 0; Index < std::size(InTargets.Half); ++Index)    { Add(InTargets.Half[Index], "Half size " + std::to_string(Index) + " (ambient occlusion)"); }
+            for(size_t Index = 0; Index < std::size(InTargets.Bloom); ++Index)   { Add(InTargets.Bloom[Index], "Bloom " + std::to_string(Index)); }
+            for(size_t Index = 0; Index < std::size(InTargets.BloomUp); ++Index) { Add(InTargets.BloomUp[Index], "Bloom up " + std::to_string(Index)); }
+            AddDepth(InShadows[SA_Directional], "Shadow atlas (directional)", 1.0f);
+            AddDepth(InShadows[SA_Local],       "Shadow atlas (point and spot)", 1.0f);
+            if(InIBL)
+            {
+                Add(InIBL->Atlas, "Image-based lighting atlas");
+                Add(InIBL->Strip, "Image-based lighting cube strip");
+            }
+            for(const auto& Each : InAssets) { Add(Each.second, "Render target: " + Each.first); }
+        }
+    }
+
+    void RenderContext::ListViewableTargets(const SceneTargets& InTargets, std::vector<std::string>& OutNames) const
+    {
+        std::vector<std::pair<std::string, GDIRenderTarget*>> Assets;
+        for(const auto& Each : P->RenderTargets) { if(Each.second.Target) { Assets.emplace_back(Each.first, Each.second.Target); } }
+        std::sort(Assets.begin(), Assets.end());
+        std::vector<ViewableTarget> All;
+        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, Assets, All);
+        OutNames.clear();
+        for(ViewableTarget& Each : All) { OutNames.push_back(std::move(Each.Name)); }
+    }
+
+    void RenderContext::ShowTarget(const SceneTargets& InTargets, const std::string& InName)
+    {
+        std::vector<std::pair<std::string, GDIRenderTarget*>> Assets;
+        for(const auto& Each : P->RenderTargets) { if(Each.second.Target) { Assets.emplace_back(Each.first, Each.second.Target); } }
+        std::vector<ViewableTarget> All;
+        CollectViewableTargets(InTargets, P->ShadowAtlas, P->IBL, Assets, All);
+        const auto Found = std::find_if(All.begin(), All.end(), [&InName](const ViewableTarget& Each) { return Each.Name == InName; });
+        if(Found == All.end() || !InTargets.Final || Found->Target == InTargets.Final)
+        {
+            return;
+        }
+        PostBlock Block;
+        Block.A[0] = Found->Mode;
+        P->DrawPost(PP_ViewTarget, InTargets.Final, InTargets.Width, InTargets.Height, { Found->Texture->Resource }, Block);
     }
 
     void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor, const bool bInTimed,

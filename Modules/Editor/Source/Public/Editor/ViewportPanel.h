@@ -10,13 +10,18 @@ class EditorDocument;
 class QAction;
 class QComboBox;
 class QToolBar;
+class QToolButton;
 class ViewportWidget;
 
 /*
- * The viewport and its toolbar (handle mode, space, view preset, camera
- * speed, snap, frame, all-bounds). The toolbar sits above the native surface,
+ * The viewport and its toolbar (handle mode, space, snap, view preset,
+ * frame, Show, camera speed). The toolbar sits above the native surface,
  * since Qt cannot paint over it. Combos never take focus, so viewport keys
- * keep working. Frame and bounds actions are shared with the menus.
+ * keep working. Frame actions are shared with the menus.
+ *
+ * Show: View Mode -- Lit, Unlit, or Render Target, which asks which of the
+ * render targets the last frame drew to show (EditorContext::SetViewMode) --
+ * and Editor Gizmos: every entity's bounds, every light's reach.
  */
 class ViewportPanel : public QWidget
 {
@@ -29,14 +34,23 @@ public:
 
     QAction* GetFrameSelectionAction() const { return FrameSelectionAction; }
     QAction* GetFrameAllAction()       const { return FrameAllAction; }
-    QAction* GetShowAllBoundsAction()  const { return ShowAllBoundsAction; }
-    QAction* GetShowLightGizmosAction() const { return ShowLightGizmosAction; }
+
+    /* The Show menu's checks and text, after the view mode changed elsewhere (the console). */
+    void RefreshViewMode() { UpdateViewModeUI(); }
 
     /* For the main window to put Play/Stop/Eject in front of the navigation. */
     QToolBar* GetToolbar() const { return Toolbar; }
 
 private:
     void SetSpeedStep(int InStep);
+
+    /* Show > View Mode > Render Target: asks which; false if cancelled or there is none. */
+    bool PickRenderTarget();
+
+    /* The Show button's text and the mode actions, as the context has them. */
+    void UpdateViewModeUI();
+
+    EditorContext&  Context;
 
     ViewportWidget* Viewport = nullptr;
     QToolBar*       Toolbar  = nullptr;
@@ -51,6 +65,11 @@ private:
     QAction* FrameAllAction       = nullptr;
     QAction* ShowAllBoundsAction  = nullptr;
     QAction* ShowLightGizmosAction = nullptr;
+
+    QToolButton* ShowButton        = nullptr;
+    QAction*     LitModeAction     = nullptr;
+    QAction*     UnlitModeAction   = nullptr;
+    QAction*     TargetModeAction  = nullptr;
 };
 
 #endif // WITH_EDITOR

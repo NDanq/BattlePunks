@@ -78,7 +78,7 @@ void main(void)
     // diffuse part left out -- unless the bake has no sky, whose ambient then still applies.
     vec3  Baked          = vec3(0.0);
     float AmbientDiffuse = 1.0;
-    if(Material_BakedLighting.x > 0.5)
+    if(Material_BakedLighting.x > 0.5 && Scene_View.x < 0.5)   // the Unlit view mode shows no light, baked or live
     {
         vec3 Diffuse = ToLinear(clamp(Surface.BaseColor, 0.0, 1.0)) * (1.0 - clamp(Surface.Metallic, 0.0, 1.0))
                      * clamp(Surface.AmbientOcclusion, 0.0, 1.0);
@@ -101,8 +101,9 @@ void main(void)
 #else
 
 #if MATERIAL_SHADING_LIT
-    vec3 Color = ToSceneColor(ToLinear(Surface.Emissive) + Baked
-                              + ShadeSurface(Surface, Inputs.WorldPosition, Normal, AmbientDiffuse));
+    vec3 Color = Scene_View.x > 0.5
+               ? ToSceneColor(ToLinear(Surface.BaseColor) + ToLinear(Surface.Emissive))
+               : ToSceneColor(ToLinear(Surface.Emissive) + Baked + ShadeSurface(Surface, Inputs.WorldPosition, Normal, AmbientDiffuse));
 #else
 #if MATERIAL_DOMAIN_POSTPROCESS
     // After the tone map: display space in, display space out.
