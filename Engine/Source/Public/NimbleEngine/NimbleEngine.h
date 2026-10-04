@@ -2,10 +2,14 @@
 #define NIMBLEENGINE_NIMBLEENGINE_H
 
 #include <cstdint>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
+#include "Public/NimbleEngine/NetFacade.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreTypes.h"
 #include "Public/Core/CoreThread.h"
@@ -33,10 +37,44 @@ namespace RenderCore
     class Renderer;
 }
 
+/* Forward-declared only, and only ever a pointer: NetCore is linked PRIVATE,
+ * and may not be built at all (NIMBLE_WITH_NETCORE). */
+namespace NetCore
+{
+    class NetSession;
+}
+
 namespace NimbleEngine
 {
     class ILevel;
     class InputRouter;
+
+    /* How an Application runs. */
+    struct ApplicationDesc
+    {
+        /* No window, no input, the Null renderer: a dedicated server, or
+         * anything else run from a console. Ctrl+C ends the loop. */
+        bool     bHeadless = false;
+
+        /* Server: listen on [Net] Port. Client is not set here -- a game
+         * connects when [Net] ServerAddress is set (-connect=host:port), and
+         * is Standalone otherwise. Server and Client need NetCore; without it
+         * the Application warns and runs Standalone. */
+        ENetMode NetMode   = ENetMode::Standalone;
+    };
+
+    /*
+     * The launchers' command line, as config overrides applied after
+     * Config/DefaultEngine.ini loads:
+     *
+     *     -Section.Key=Value     any config variable, e.g. -Display.RHI=0
+     *     -connect=host[:port]   [Net] ServerAddress (and Port): join a server
+     *     -port=N                [Net] Port
+     *
+     * Anything else is warned about and ignored. Each entry of the result is
+     * an ExecConfigCommand line ("Net.Port 7777").
+     */
+    NE_API std::vector<std::string> ParseLaunchArgs(int InArgc, const char* const* InArgv);
 
     /*
      * THE GAME EXECUTABLE'S HOST. Owns the working directory and config, the
@@ -52,7 +90,12 @@ namespace NimbleEngine
     {
     public:
         Application() = default;
+        explicit Application(const ApplicationDesc& InDesc) : Desc(InDesc) {}
         ~Application() override = default;
+
+        /* ParseLaunchArgs' overrides, applied once the config file has
+         * loaded. Before Exec. */
+        void SetConfigOverrides(std::vector<std::string> InOverrides) { ConfigOverrides = std::move(InOverrides); }
 
         Application(const Application&)            = delete;
         Application& operator=(const Application&) = delete;
@@ -101,6 +144,27 @@ namespace NimbleEngine
         /* Level swap, pump, Tick, fence, collect, present, end. False to stop.
          * Pacing lives in the caller. */
         bool RunFrame(uint64_t InMaxFrames);
+
+        /* The network session: started once the first level has loaded (a
+         * client's first spawns need its World), bound to each World the
+         * session loads, and polled around every Tick. No-ops without NetCore. */
+        void StartNetworking();
+        void StopNetworking();
+        void StopNetworkingWorld();
+        void RebindNetworking();
+        void PollNetworking();
+        void FlushNetworking();
+        static void OnNetClientConnected(GameCore::NetClientID InClient, void* InUserData);
+        static void OnNetClientDisconnected(GameCore::NetClientID InClient, void* InUserData);
+
+        ApplicationDesc          Desc;
+        std::vector<std::string> ConfigOverrides;
+
+        /* nullptr unless networking started. */
+        NetCore::NetSession*     Net = nullptr;
+
+        /* GameSession::GetLoadCount() of the World Net is bound to. */
+        uint32_t                 NetBoundLoad = 0;
 
         /* Where assets (cooked shaders above all) come from: the disk, with
          * mounted shader caches layered on top (RenderCore's ShaderCache.h);

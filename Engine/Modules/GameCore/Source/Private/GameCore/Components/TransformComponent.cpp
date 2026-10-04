@@ -1,5 +1,6 @@
 #include "Public/GameCore/Components/TransformComponent.h"
 
+#include "Public/GameCore/ComponentReplication.h"
 #include "Public/GameCore/ComponentScript.h"
 #if WITH_EDITOR
 #include "Public/GameCore/ComponentProperties.h"
@@ -40,6 +41,15 @@ namespace GameCore
         Ar.Field("Position", C.Position);
         Ar.Field("Rotation", C.Rotation);
         Ar.Field("Scale",    C.Scale);
+    }
+
+    /* A networked entity's place (NetComponent): the server sends each as it
+     * changes. Local, like the component itself. */
+    GAMECORE_DEFINE_COMPONENT_REPLICATION(TransformComponent)
+    {
+        Rep.Field("Position", &TransformComponent::Position);
+        Rep.Field("Rotation", &TransformComponent::Rotation);
+        Rep.Field("Scale",    &TransformComponent::Scale);
     }
 
     /* GetPosition/SetPosition, GetRotation/SetRotation, GetScale/SetScale, as

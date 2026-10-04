@@ -174,24 +174,64 @@ endfunction()
 # ---------------------------------------------------------------------------
 set(NIMBLE_GAME_LAUNCHER_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../Source/Launcher/GameLauncherMain.cpp"
     CACHE INTERNAL "The engine's game launcher, built by nimble_add_game_launcher")
+set(NIMBLE_SERVER_LAUNCHER_SOURCE "${CMAKE_CURRENT_LIST_DIR}/../Source/Launcher/ServerLauncherMain.cpp"
+    CACHE INTERNAL "The engine's dedicated server launcher, built by nimble_add_server_launcher")
 
 function(nimble_add_game_launcher NM_TARGET)
     cmake_parse_arguments(NM "" "MODULE" "SOURCES" ${ARGN})
 
-    if(NOT NM_MODULE OR NOT TARGET ${NM_MODULE})
-        message(FATAL_ERROR "nimble_add_game_launcher(${NM_TARGET}) requires MODULE <game module target>, declared first")
-    endif()
-    if(NOT TARGET NimbleEngine)
-        message(FATAL_ERROR "nimble_add_game_launcher(${NM_TARGET}): the NimbleEngine target does not exist yet")
-    endif()
     if(NOT NM_SOURCES)
         get_filename_component(NM_SOURCES "${NIMBLE_GAME_LAUNCHER_SOURCE}" ABSOLUTE)
+    endif()
+
+    _nimble_add_launcher(${NM_TARGET} "${NM_MODULE}" "${NM_TARGET}" "${NM_SOURCES}")
+endfunction()
+
+# ---------------------------------------------------------------------------
+# nimble_add_server_launcher(<target>
+#     MODULE    <game module target>
+#     [SOURCES  <files...>])
+#
+# A game's dedicated server, named <target> ("LightLabServer"): a CONSOLE
+# executable that runs the same game module headless as the session's
+# authority (Engine/Source/Launcher/ServerLauncherMain.cpp; NetCore's
+# NetSession.h). SOURCES replaces that main(), as for nimble_add_game_launcher.
+#
+# Needs NetCore. When NIMBLE_WITH_NETCORE is off it SKIPS, with a status
+# message, rather than failing -- so a game's CMakeLists declares its server
+# unconditionally and a configure without networking still works.
+# ---------------------------------------------------------------------------
+function(nimble_add_server_launcher NM_TARGET)
+    cmake_parse_arguments(NM "" "MODULE" "SOURCES" ${ARGN})
+
+    if(NOT TARGET NetCore)
+        message(STATUS "nimble_add_server_launcher(${NM_TARGET}): skipped -- NetCore is not built (NIMBLE_WITH_NETCORE=OFF)")
+        return()
+    endif()
+    if(NOT NM_SOURCES)
+        get_filename_component(NM_SOURCES "${NIMBLE_SERVER_LAUNCHER_SOURCE}" ABSOLUTE)
+    endif()
+
+    # NIMBLE_GAME_NAME is the game's, not the server's: it prefixes the
+    # server's console output and leak report.
+    string(REGEX REPLACE "Server$" "" NM_GAME_NAME "${NM_TARGET}")
+    _nimble_add_launcher(${NM_TARGET} "${NM_MODULE}" "${NM_GAME_NAME}" "${NM_SOURCES}")
+endfunction()
+
+# The body both launchers share: an executable from NM_SOURCES that loads
+# NM_MODULE, linked to the engine layer and placed beside it.
+function(_nimble_add_launcher NM_TARGET NM_MODULE NM_GAME_NAME NM_SOURCES)
+    if(NOT NM_MODULE OR NOT TARGET ${NM_MODULE})
+        message(FATAL_ERROR "${NM_TARGET}: a launcher requires MODULE <game module target>, declared first")
+    endif()
+    if(NOT TARGET NimbleEngine)
+        message(FATAL_ERROR "${NM_TARGET}: the NimbleEngine target does not exist yet")
     endif()
 
     add_executable(${NM_TARGET} ${NM_SOURCES})
     target_compile_definitions(${NM_TARGET} PRIVATE
             "NIMBLE_GAME_MODULE=\"${NM_MODULE}\""
-            "NIMBLE_GAME_NAME=\"${NM_TARGET}\"")
+            "NIMBLE_GAME_NAME=\"${NM_GAME_NAME}\"")
     add_dependencies(${NM_TARGET} ${NM_MODULE})
 
     # One link: NimbleEngine brings its include directory, cxx_std_17 and

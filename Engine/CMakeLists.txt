@@ -130,7 +130,32 @@ else()
     set(NIMBLE_WITH_EDITOR 0)
 endif()
 
-message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR})")
+# === Networking ============================================================
+# NetCore (Modules/NetCore): ENet transport, replication and RPC routing, and
+# the dedicated server a game builds with nimble_add_server_launcher. A game
+# that never networks turns it off before adding the engine:
+#
+#     set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
+#
+# and nothing networked is compiled or linked -- no NetCore, no ENet, no
+# ws2_32. Game code still builds unchanged: the replication tables
+# (GameCore/ComponentReplication.h) compile to nothing, RPCs run locally
+# (GameCore/ComponentRpc.h) and NimbleEngine/NetFacade.h answers "standalone".
+#
+# ONE PER CONFIGURE, like WITH_EDITOR, and for the same reason: it is a PUBLIC
+# definition on EngineCore (below), so every image agrees. Always 1 or 0.
+option(NIMBLE_WITH_NETCORE "Build the NetCore networking module (off: networking is compiled out)" ON)
+
+if(NIMBLE_WITH_NETCORE)
+    set(NIMBLE_NETCORE_DEFINE 1)
+else()
+    set(NIMBLE_NETCORE_DEFINE 0)
+    if(NIMBLE_TARGET STREQUAL "Server")
+        message(FATAL_ERROR "NIMBLE_TARGET=Server needs NetCore -- configure with NIMBLE_WITH_NETCORE=ON")
+    endif()
+endif()
+
+message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR}, WITH_NETCORE=${NIMBLE_NETCORE_DEFINE})")
 
 # === Configurations ========================================================
 #   Debug            unoptimised, full debug info.
@@ -268,6 +293,7 @@ add_subdirectory(Modules/Core)
 # links it agrees. Always 1 or 0.
 target_compile_definitions(EngineCore PUBLIC
         WITH_EDITOR=${NIMBLE_WITH_EDITOR}
+        WITH_NETCORE=${NIMBLE_NETCORE_DEFINE}
         NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>)
 
 # The engine cooks its own shader set from Content/Shaders (see "Cooked
@@ -314,6 +340,14 @@ elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/RenderCore/CMakeLists.txt")
     message(STATUS "RenderCore present but GDI is not configured; skipping RenderCore")
 endif()
 
+# NetCore: networking, when NIMBLE_WITH_NETCORE is on (the Networking block
+# above). After GameCore, whose World and registries it drives, and before the
+# NimbleEngine target, which links it.
+if(NIMBLE_WITH_NETCORE AND TARGET GameCore
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/NetCore/CMakeLists.txt")
+    add_subdirectory(Modules/NetCore)
+endif()
+
 # NodeGraph: material/script graphs generating GLSL and Lua. Editor only;
 # after GameCore, which it uses.
 if(NIMBLE_WITH_EDITOR AND TARGET GameCore
@@ -357,6 +391,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/InputInternal.h
         Source/Private/NimbleEngine/InputRouter.cpp
         Source/Private/NimbleEngine/CollisionMeshes.cpp
+        Source/Private/NimbleEngine/NetFacade.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/GameSession.h
@@ -369,6 +404,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/NimbleEngineTypes.h
         Source/Public/NimbleEngine/Input.h
         Source/Public/NimbleEngine/InputRouter.h
+        Source/Public/NimbleEngine/NetFacade.h
 )
 
 nimble_add_module(NimbleEngine SHARED
@@ -414,6 +450,14 @@ endif()
 
 if(TARGET RenderCore)
     target_link_libraries(NimbleEngine PUBLIC RenderCore::RenderCore)
+endif()
+
+# PRIVATE: a game networks through GameCore's replication and RPC macros and
+# NetFacade.h, never NetCore's headers, so turning NetCore off cannot break a
+# game's include or link. A game that wants NetSession itself links NetCore,
+# under if(TARGET NetCore).
+if(TARGET NetCore)
+    target_link_libraries(NimbleEngine PRIVATE NetCore::NetCore)
 endif()
 
 # winmm, for timeBeginPeriod/timeEndPeriod in the frame limiter. Without raising

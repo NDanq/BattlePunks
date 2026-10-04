@@ -15,6 +15,7 @@
  */
 #include "Public/GameCore/Components/BoundsComponent.h"
 #include "Public/GameCore/Components/CollisionComponent.h"
+#include "Public/GameCore/Components/NetComponent.h"
 #include "Public/GameCore/Components/TransformComponent.h"
 
 #endif //GAMECORE_COMPONENTS_H
