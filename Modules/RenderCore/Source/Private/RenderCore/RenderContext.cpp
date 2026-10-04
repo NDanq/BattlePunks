@@ -82,6 +82,13 @@ namespace RenderCore
             "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh",
         };
+        /* Each pass's draw event (DrawPost). */
+        const char* const POST_PASS_NAMES[PP_PassCount] = {
+            "DofPrepare", "DofBlur", "DofComposite", "MotionBlur",
+            "BloomDownsample", "BloomUpsample", "BloomComposite", "Fxaa",
+            "AmbientOcclusion", "AmbientBlur", "StatsOverlay", "ClearGradient", "CaptureCopy", "Tonemap",
+            "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget",
+        };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
          * ahead of them for motion blur and ambient occlusion. */
@@ -644,6 +651,7 @@ namespace RenderCore
             {
                 return false;
             }
+            SCOPED_DRAW_EVENT(POST_PASS_NAMES[InPass]);
             GDISetRenderTargets(&InTarget, 1, nullptr);
             GDISetViewport(InX, 0, InWidth, InHeight);   // InX: a cube face's place in its strip
             GDISetColorMask(EColM_RGBA);
@@ -1258,52 +1266,80 @@ namespace RenderCore
                 return;
             }
 
-            GDIBeginDrawEvent(GetRenderStageName(ERenderStage::Shadows));
+            SCOPED_DRAW_EVENT(GetRenderStageName(ERenderStage::Shadows));
             const uint Size = uint(Shadows.AtlasSize);
-            for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
             {
-                if(!Shadows.UsesAtlas(EShadowAtlas(Atlas)))
+                SCOPED_DRAW_EVENT("ClearAtlases");
+                for(uint32_t Atlas = 0; Atlas < SA_Count; ++Atlas)
                 {
-                    continue;
+                    if(!Shadows.UsesAtlas(EShadowAtlas(Atlas)))
+                    {
+                        continue;
+                    }
+                    GDIRenderTarget* Target = ShadowAtlas[Atlas];
+                    GDISetRenderTargets(&Target, 1, Target);
+                    GDISetViewport(0, 0, Size, Size);
+                    GDISetColorMask(EColM_RGBA);
+                    GDIClear(CM_Color | CM_Depth, EngineCore::Color(0, 0, 0, 0), 1.0f);
                 }
-                GDIRenderTarget* Target = ShadowAtlas[Atlas];
-                GDISetRenderTargets(&Target, 1, Target);
-                GDISetViewport(0, 0, Size, Size);
-                GDISetColorMask(EColM_RGBA);
-                GDIClear(CM_Color | CM_Depth, EngineCore::Color(0, 0, 0, 0), 1.0f);
             }
 
-            /* Queued view by view, the sun's first: each atlas binds once. */
+            /* Queued view by view, the sun's first: each atlas binds once, and
+             * each run of one view's casters is a draw event of its own. */
+            const std::vector<uint32_t> Order = Policy.GetIssueOrder();
             int32_t BoundAtlas = -1;
-            int32_t BoundView  = -1;
-            for(const uint32_t Index : Policy.GetIssueOrder())
+            for(size_t Start = 0; Start < Order.size();)
             {
-                const DrawCommand& Item = Policy[Index];
-                if(Item.ShadowView < 0 || uint32_t(Item.ShadowView) >= Shadows.ViewCount || !Item.Mesh)
+                const int32_t ViewIndex = Policy[Order[Start]].ShadowView;
+                size_t End = Start + 1;
+                while(End < Order.size() && Policy[Order[End]].ShadowView == ViewIndex) { ++End; }
+                if(ViewIndex >= 0 && uint32_t(ViewIndex) < Shadows.ViewCount)
                 {
-                    continue;
-                }
-                const ShadowView& View = Shadows.Views[Item.ShadowView];
-                if(int32_t(View.Atlas) != BoundAtlas)
-                {
-                    BoundAtlas = int32_t(View.Atlas);
-                    GDIRenderTarget* Target = ShadowAtlas[View.Atlas];
-                    GDISetRenderTargets(&Target, 1, Target);
-                    GDISetColorMask(EColM_None);
-                    BoundView = -1;
-                }
-                if(Item.ShadowView != BoundView)
-                {
-                    BoundView = Item.ShadowView;
+                    const ShadowView& View = Shadows.Views[ViewIndex];
+                    if(int32_t(View.Atlas) != BoundAtlas)
+                    {
+                        BoundAtlas = int32_t(View.Atlas);
+                        GDIRenderTarget* Target = ShadowAtlas[View.Atlas];
+                        GDISetRenderTargets(&Target, 1, Target);
+                        GDISetColorMask(EColM_None);
+                    }
                     GDISetViewport(View.TileX, View.TileY, View.TileSize, View.TileSize);
                     PlaceProjection = &View.Projection;
                     PlaceView       = &View.View;
+
+                    SCOPED_DRAW_EVENT(GetShadowViewName(ViewIndex));
+                    IssueByMobility(Policy, Order.data() + Start, Order.data() + End, [this](const DrawCommand& InItem)
+                    {
+                        if(InItem.Mesh) { IssueShadowCaster(InItem); }
+                    });
                 }
-                IssueShadowCaster(Item);
+                Start = End;
             }
             PlaceProjection = nullptr;
             PlaceView       = nullptr;
-            GDIEndDrawEvent();
+        }
+
+        /* "Sun", "Sun Cascade 1", "Spot 2", "Point 0 +X": what a shadow view
+         * is of, for its draw event. */
+        std::string GetShadowViewName(const int32_t InView) const
+        {
+            const int32_t Sun = Shadows.DirectionalFirstView;
+            if(Sun >= 0 && InView >= Sun && InView < Sun + int32_t(Shadows.CascadeCount))
+            {
+                return Shadows.CascadeCount > 1 ? "Sun Cascade " + std::to_string(InView - Sun) : std::string("Sun");
+            }
+            static const char* const POINT_FACE_NAMES[] = { "+X", "-X", "+Y", "-Y", "+Z", "-Z" };
+            for(uint32_t Light = 0; Light < Lighting.LocalCount && Light < RENDER_LOCAL_LIGHT_MAX; ++Light)
+            {
+                const int32_t First  = Shadows.LocalFirstView[Light];
+                const bool    bPoint = Lighting.Locals[Light].Type == RLL_Point;
+                if(First >= 0 && InView >= First && InView < First + (bPoint ? int32_t(SHADOW_POINT_FACES) : 1))
+                {
+                    return bPoint ? "Point " + std::to_string(Light) + " " + POINT_FACE_NAMES[(InView - First) % 6]
+                                  : "Spot " + std::to_string(Light);
+                }
+            }
+            return "View " + std::to_string(InView);
         }
 
         // === Issuing ============================================================
@@ -1417,7 +1453,29 @@ namespace RenderCore
                               : ERenderStage::Unlit;
         }
 
-        /* Issues InStage's policy in its order, under a draw event. */
+        /* InPolicy's draws [InBegin, InEnd) of an issue order: the static draw
+         * lists' first, then the rest, each under its own draw event. Only for
+         * a stage that neither blends nor depends on order within itself. */
+        template<typename IssueFn>
+        static void IssueByMobility(const DrawPolicy& InPolicy, const uint32_t* InBegin, const uint32_t* InEnd, IssueFn&& InIssue)
+        {
+            for(const bool bStatic : { true, false })
+            {
+                const auto Matches = [&InPolicy, bStatic](const uint32_t InIndex) { return InPolicy[InIndex].bStatic == bStatic; };
+                if(std::none_of(InBegin, InEnd, Matches))
+                {
+                    continue;
+                }
+                SCOPED_DRAW_EVENT(bStatic ? "Static" : "Dynamic");
+                for(const uint32_t* It = InBegin; It != InEnd; ++It)
+                {
+                    if(Matches(*It)) { InIssue(InPolicy[*It]); }
+                }
+            }
+        }
+
+        /* Issues InStage's policy in its order, under a draw event. The Base
+         * Pass (no blending) splits into its Static and Dynamic draws. */
         void IssueStage(const ERenderStage InStage)
         {
             const DrawPolicy& Policy = PolicyFor(InStage);
@@ -1426,12 +1484,17 @@ namespace RenderCore
             {
                 return;
             }
-            GDIBeginDrawEvent(GetRenderStageName(InStage));
-            for(const uint32_t Index : Policy.GetIssueOrder())
+            SCOPED_DRAW_EVENT(GetRenderStageName(InStage));
+            const std::vector<uint32_t> Order = Policy.GetIssueOrder();
+            if(InStage == ERenderStage::BasePass)
+            {
+                IssueByMobility(Policy, Order.data(), Order.data() + Order.size(), [this](const DrawCommand& InItem) { Issue(InItem); });
+                return;
+            }
+            for(const uint32_t Index : Order)
             {
                 Issue(Policy[Index]);
             }
-            GDIEndDrawEvent();
         }
 
         /*
@@ -1565,7 +1628,7 @@ namespace RenderCore
             return Each ? Each->Resource : nullptr;
         };
 
-        GDIBeginDrawEvent("AmbientOcclusion");
+        SCOPED_DRAW_EVENT("AmbientOcclusion");
         PostBlock Block;
         PutMatrix(Block.Matrix, View.Projection * View.View);
         Block.A[0] = InPost.AoIntensity;
@@ -1585,7 +1648,6 @@ namespace RenderCore
                 AmbientOcclusion = Texture(InTargets.Half[1]);
             }
         }
-        GDIEndDrawEvent();
     }
 
     GDIRenderTarget* RenderContext::Impl::RunPostProcessStack(SceneTargets& InTargets, const PostProcessSettings& InPost, const bool bInHasPrevious,
@@ -1636,13 +1698,17 @@ namespace RenderCore
             WarnOnce("|post-depth", "post process: this backend cannot sample the scene depth; Depth of Field and Motion Blur are skipped");
         }
 
-        GDIBeginDrawEvent(GetRenderStageName(ERenderStage::PostProcess));
-
         /* Materials at InStage, in their order: slot 0 the scene so far, slot 7 its depth. */
         const auto RunMaterials = [&](const uint8_t InStage)
         {
+            const std::vector<uint32_t> Order = Materials.GetIssueOrder();
+            if(std::none_of(Order.begin(), Order.end(), [&](const uint32_t InIndex) { return Materials[InIndex].PostStage == InStage; }))
+            {
+                return;
+            }
+            SCOPED_DRAW_EVENT(InStage == PPS_BeforeEffects ? "Materials (Before Effects)" : "Materials (After Effects)");
             PostSceneDepth = Depth;
-            for(const uint32_t Index : Materials.GetIssueOrder())
+            for(const uint32_t Index : Order)
             {
                 if(Materials[Index].PostStage != InStage) { continue; }
                 GDIRenderTarget* Dest = Next();
@@ -1667,6 +1733,7 @@ namespace RenderCore
          * of that; the two mixed back at full size. */
         if(bDof && InTargets.EnsureHalf())
         {
+            SCOPED_DRAW_EVENT("DepthOfField");
             PostBlock Block;
             Block.A[0] = InPost.DofFocusDistance;
             Block.A[1] = std::max(InPost.DofFocusRange, 1.0f);
@@ -1710,6 +1777,7 @@ namespace RenderCore
         const uint32_t Levels = uint32_t(std::clamp(int(InPost.BloomLevels + 0.5f), 1, int(RENDER_BLOOM_LEVELS_MAX)));
         if(bBloom && InTargets.EnsureBloom(Levels))
         {
+            SCOPED_DRAW_EVENT("Bloom");
             PostBlock Block;
             Block.A[0] = InPost.BloomThreshold;
             Block.A[1] = 0.2f;   // knee: the threshold's softness, a fraction of it
@@ -1774,7 +1842,6 @@ namespace RenderCore
             }
         }
 
-        GDIEndDrawEvent();
         StageDrawCounts[size_t(ERenderStage::PostProcess)] = Passes;
 
         /* Left bound, as every stage leaves its target: what the present shows. */
@@ -2240,15 +2307,16 @@ namespace RenderCore
     {
         for(const StagedDraw& Each : InDraws)
         {
+            DrawCommand Item = Each.Item;
+            Item.bStatic     = true;
             if(Each.Stage == ERenderStage::Shadows)
             {
                 if(InShadowView < 0) { continue; }
-                DrawCommand Item = Each.Item;
-                Item.ShadowView  = InShadowView;
+                Item.ShadowView = InShadowView;
                 P->PolicyFor(ERenderStage::Shadows).Add(Item);
                 continue;
             }
-            P->Submit(Each.Item, Each.Stage);   // its depth, for this view
+            P->Submit(Item, Each.Stage);   // its depth, for this view
         }
     }
 
@@ -2426,41 +2494,44 @@ namespace RenderCore
         std::memcpy(P->Scene.Probes, P->IBLProbes, sizeof(P->Scene.Probes));
 
         P->StageTimestamp(RGT_Total, false);
-        BindTargets(&SceneColor, 1, SceneColor);
-        GDIClear(CM_Color | CM_Depth, InClearColor);
+        {
+            SCOPED_DRAW_EVENT("Background");
+            BindTargets(&SceneColor, 1, SceneColor);
+            GDIClear(CM_Color | CM_Depth, InClearColor);
 
-        /* The background gradient, over the clear and under everything: the
-         * Lighting stage writes lit pixels only, so it shows wherever the
-         * clear colour would. An HDR scene draws even a plain clear this way,
-         * un-tone-mapped so it comes out as authored (ToneMapping.glsl). */
-        const bool bSky = InTargets.bHDR
-                       && (P->bForceSkyBackground || (P->Lighting.SkyEnvironment[0] != '\0' && P->Lighting.bSkyBackground));
-        if(bSky)
-        {
-            /* The sky behind the scene: the HDRI along each view ray (or the sky colours), linear. */
-            PostBlock Block;
-            GDITextureResource* Environment = P->SkyBlock(Block);
-            if(P->DrawPost(PP_Sky, SceneColor, InTargets.Width, InTargets.Height, { Environment }, Block))
+            /* The background gradient, over the clear and under everything: the
+             * Lighting stage writes lit pixels only, so it shows wherever the
+             * clear colour would. An HDR scene draws even a plain clear this way,
+             * un-tone-mapped so it comes out as authored (ToneMapping.glsl). */
+            const bool bSky = InTargets.bHDR
+                           && (P->bForceSkyBackground || (P->Lighting.SkyEnvironment[0] != '\0' && P->Lighting.bSkyBackground));
+            if(bSky)
             {
-                BindTargets(&SceneColor, 1, SceneColor);
+                /* The sky behind the scene: the HDRI along each view ray (or the sky colours), linear. */
+                PostBlock Block;
+                GDITextureResource* Environment = P->SkyBlock(Block);
+                if(P->DrawPost(PP_Sky, SceneColor, InTargets.Width, InTargets.Height, { Environment }, Block))
+                {
+                    BindTargets(&SceneColor, 1, SceneColor);
+                }
+                GDISetMaterialTexture(0, nullptr);
             }
-            GDISetMaterialTexture(0, nullptr);
-        }
-        else if(InClearBottom || InTargets.bHDR)
-        {
-            PostBlock Block;
-            const auto Put = [](float (&OutColor)[4], const EngineCore::Color InColor)
+            else if(InClearBottom || InTargets.bHDR)
             {
-                OutColor[0] = float(InColor.R) / 255.0f;
-                OutColor[1] = float(InColor.G) / 255.0f;
-                OutColor[2] = float(InColor.B) / 255.0f;
-                OutColor[3] = 1.0f;
-            };
-            Put(Block.A, InClearColor);
-            Put(Block.Sizes, InClearBottom ? *InClearBottom : InClearColor);
-            if(P->DrawPost(PP_ClearGradient, SceneColor, InTargets.Width, InTargets.Height, {}, Block))
-            {
-                BindTargets(&SceneColor, 1, SceneColor);   // the depth back for the stages
+                PostBlock Block;
+                const auto Put = [](float (&OutColor)[4], const EngineCore::Color InColor)
+                {
+                    OutColor[0] = float(InColor.R) / 255.0f;
+                    OutColor[1] = float(InColor.G) / 255.0f;
+                    OutColor[2] = float(InColor.B) / 255.0f;
+                    OutColor[3] = 1.0f;
+                };
+                Put(Block.A, InClearColor);
+                Put(Block.Sizes, InClearBottom ? *InClearBottom : InClearColor);
+                if(P->DrawPost(PP_ClearGradient, SceneColor, InTargets.Width, InTargets.Height, {}, Block))
+                {
+                    BindTargets(&SceneColor, 1, SceneColor);   // the depth back for the stages
+                }
             }
         }
 
@@ -2507,10 +2578,13 @@ namespace RenderCore
         {
             P->StageTimestamp(RGT_Lighting, false);
             BindTargets(&SceneColor, 1, nullptr);
-            BeginDrawEvent(GetRenderStageName(ERenderStage::Lighting));
-            if(P->IssueLighting(InTargets))
+            SCOPED_DRAW_EVENT(GetRenderStageName(ERenderStage::Lighting));
             {
-                P->StageDrawCounts[size_t(ERenderStage::Lighting)] = 1;
+                SCOPED_DRAW_EVENT("DeferredLighting");
+                if(P->IssueLighting(InTargets))
+                {
+                    P->StageDrawCounts[size_t(ERenderStage::Lighting)] = 1;
+                }
             }
             /* Image-based lighting, added over what the Lighting stage lit (IBLLighting.fsh). */
             if(bIBL)
@@ -2530,7 +2604,6 @@ namespace RenderCore
                 for(uint32_t Slot = 0; Slot < 6; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
             }
             P->AmbientOcclusion = nullptr;
-            EndDrawEvent();
             P->StageTimestamp(RGT_Lighting, true);
         }
 
@@ -2549,20 +2622,24 @@ namespace RenderCore
         P->PostSettings           = PostProcessSettings();
         P->bHasPrevViewProjection = false;
         P->StageTimestamp(RGT_PostProcess, false);
-        /* An HDR scene's tone map first: everything after works in display space. */
-        GDIRenderTarget* Display = SceneColor;
-        if(InTargets.bHDR)
+        GDIRenderTarget* Source = nullptr;
         {
-            GDIRenderTarget* Mapped = InTargets.EnsurePostProcess();
-            GDITexture2D*    Linear = SceneColor->ToGDITexture2D();
-            PostBlock Block;
-            if(Mapped && Linear && P->DrawPost(PP_Tonemap, Mapped, Width, Height, { Linear->Resource }, Block))
+            SCOPED_DRAW_EVENT(GetRenderStageName(ERenderStage::PostProcess));
+            /* An HDR scene's tone map first: everything after works in display space. */
+            GDIRenderTarget* Display = SceneColor;
+            if(InTargets.bHDR)
             {
-                Display = Mapped;
+                GDIRenderTarget* Mapped = InTargets.EnsurePostProcess();
+                GDITexture2D*    Linear = SceneColor->ToGDITexture2D();
+                PostBlock Block;
+                if(Mapped && Linear && P->DrawPost(PP_Tonemap, Mapped, Width, Height, { Linear->Resource }, Block))
+                {
+                    Display = Mapped;
+                }
+                GDISetMaterialTexture(0, nullptr);
             }
-            GDISetMaterialTexture(0, nullptr);
+            Source = P->RunPostProcessStack(InTargets, Post, bHasPrev, Display);
         }
-        GDIRenderTarget* const Source = P->RunPostProcessStack(InTargets, Post, bHasPrev, Display);
         P->StageTimestamp(RGT_PostProcess, true);
         P->StageTimestamp(RGT_Total, true);
         P->FinalTarget  = Source;
@@ -2756,7 +2833,7 @@ namespace RenderCore
         std::memcpy(Block.TextColor, TextColor, sizeof(TextColor));
         std::memcpy(Block.PanelColor, PanelColor, sizeof(PanelColor));
 
-        BeginDrawEvent("StatUnit");
+        SCOPED_DRAW_EVENT("StatUnit");
         GDISetViewport(0, 0, InWidth, InHeight);
         GDISetColorMask(EColM_RGBA);
         GDISetMaterialTexture(0, P->OverlayFont);
@@ -2769,7 +2846,6 @@ namespace RenderCore
         GDIDrawObject(P->ScreenObject);
         P->DrawCallCount.fetch_add(1, std::memory_order_relaxed);
         GDISetMaterialTexture(0, nullptr);
-        EndDrawEvent();
     }
 
     void RenderContext::SetPostProcess(const PostProcessSettings& InSettings, const EngineCore::Matrix4x4* InPreviousViewProjection)

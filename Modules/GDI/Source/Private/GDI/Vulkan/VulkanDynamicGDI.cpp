@@ -60,6 +60,11 @@ VulkanGDIContext::~VulkanGDIContext()
  * Configuration is unchanged from the QVulkanInstance version: API 1.3, the
  * platform surface extensions, and validation + debug-utils in debug builds.
  */
+namespace
+{
+    bool bDebugUtils = false;   // GetSharedVkInstance enabled VK_EXT_debug_utils
+}
+
 VkInstance VulkanGDIContext::GetSharedVkInstance()
 {
     static VkInstance SharedInstance = VK_NULL_HANDLE;
@@ -77,7 +82,28 @@ VkInstance VulkanGDIContext::GetSharedVkInstance()
 
 #ifdef QT_DEBUG
     Layers.push_back("VK_LAYER_KHRONOS_validation");
-    Extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+#endif
+
+    /* Debug utils on their own, without validation: draw-event labels and
+     * object names for RenderDoc and the like. Only if offered -- asking for
+     * an extension the loader lacks fails vkCreateInstance outright. */
+    bDebugUtils = false;
+#if !(defined(NIMBLE_SHIPPING) && NIMBLE_SHIPPING)
+    {
+        uint32_t Count = 0;
+        vkEnumerateInstanceExtensionProperties(nullptr, &Count, nullptr);
+        std::vector<VkExtensionProperties> Available(Count);
+        vkEnumerateInstanceExtensionProperties(nullptr, &Count, Available.data());
+        for(const VkExtensionProperties& Each : Available)
+        {
+            if(std::strcmp(Each.extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0)
+            {
+                Extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+                bDebugUtils = true;
+                break;
+            }
+        }
+    }
 #endif
 
     VkInstanceCreateInfo Info{};
@@ -93,9 +119,15 @@ VkInstance VulkanGDIContext::GetSharedVkInstance()
     {
         GDI_LOG_ERROR("[VulkanGDIContext] vkCreateInstance failed (" + ::GDILogDetail::GDINum(Result) + ").")
         SharedInstance = VK_NULL_HANDLE;
+        bDebugUtils    = false;
     }
 
     return SharedInstance;
+}
+
+bool VulkanGDIContext::HasDebugUtils()
+{
+    return bDebugUtils;
 }
 
 

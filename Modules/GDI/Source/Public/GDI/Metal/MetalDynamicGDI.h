@@ -67,10 +67,10 @@ public:
     MTLRenderCommandEncoderRef CurrentEncoder = nullptr;
 
     /**
-     * Open pushDebugGroup: regions on the CURRENT encoder. Reset to 0 whenever an
-     * encoder is closed, so EndDrawEvent never pops a group whose push landed on an
-     * encoder that has already ended (which a mid-frame SetRenderTarget or
-     * FlushForReadback would otherwise cause).
+     * Open pushDebugGroup: regions on the CURRENT command buffer (they span its
+     * encoders). Closed and reset to 0 whenever the buffer is committed, so
+     * EndDrawEvent never pops a group whose push landed on a buffer already
+     * committed (which a mid-frame FlushForReadback would otherwise cause).
      */
     int                 DebugLabelDepth = 0;
 
@@ -229,6 +229,9 @@ private:
 
     /** Close the open render command encoder, if any. */
     void EndActiveEncoder();
+
+    /** Pop the debug groups still open on the current command buffer, before it is committed. */
+    void CloseDebugGroups();
 
     /**
      * Open a render command encoder targeting InRT.

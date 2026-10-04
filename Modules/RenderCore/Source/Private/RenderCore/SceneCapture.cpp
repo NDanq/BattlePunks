@@ -87,6 +87,12 @@ namespace RenderCore
         OutUp      = (InFace % 6 == 2 || InFace % 6 == 3) ? Vector3(0, 0, 1) : Vector3(0, 1, 0);
     }
 
+    const char* GetCubeFaceName(const uint32_t InFace)
+    {
+        static const char* const Names[6] = { "Face +X", "Face -X", "Face +Y", "Face -Y", "Face +Z", "Face -Z" };
+        return Names[InFace % 6];
+    }
+
     uint32_t BuildCaptureViews(const SceneCaptureRequest& InRequest, const RenderView& InMain, const uint32_t InWidth,
                                const uint32_t InHeight, RenderView (&OutViews)[6])
     {

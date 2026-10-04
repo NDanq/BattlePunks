@@ -787,6 +787,62 @@ and OpenGL code builds only on Windows, and has not been compiled or run yet.
 A material preview runs the same stages into its own small set of targets, so an
 Opaque Lit material previews through the G-buffer like the viewport draws it.
 
+### Draw events
+
+Each scene's frame is annotated for GPU capture tools (RenderDoc, PIX, Xcode)
+with nested draw events, `SCOPED_DRAW_EVENT(Name)` (GDI.h: a `GDIDrawEvent` to
+the end of the scope, compiled out of shipping builds). A frame reads:
+
+```
+Scene
+  MaterialPreview            (editor; the stages below, per preview)
+  SceneCapture <target>
+    Face +X .. Face -Z | Mirror
+      (the stages below)
+  ImageBasedLighting
+    SkyLight                 IBLSky, IBLPrefilter
+    ReflectionProbe <block>
+      Face +X .. Face -Z
+  Background                 Sky | ClearGradient
+  BasePass
+    Static                   draws replayed from static draw lists
+    Dynamic
+  AmbientOcclusion           AmbientOcclusion, AmbientBlur
+  Shadows
+    ClearAtlases
+    Sun | Sun Cascade <n> | Spot <light> | Point <light> +X..-Z
+      Static
+      Dynamic
+  Lighting
+    DeferredLighting
+    IBLLighting
+  Unlit, TranslucentLit, TranslucentUnlit
+  PostProcess
+    Tonemap
+    Materials (Before Effects)
+    DepthOfField             DofPrepare, DofBlur, DofComposite
+    MotionBlur
+    Bloom                    BloomDownsample, BloomUpsample, BloomComposite
+    Materials (After Effects)
+    Fxaa
+  ViewTarget, DebugLines, StatUnit
+```
+
+A stage or group with nothing to draw has no event. Every full-screen pass is
+named after its shader (`DrawPost`). Static draws are issued before dynamic ones
+only in the Base Pass and Shadows, which neither blend nor depend on order;
+every other stage keeps its order.
+
+| Backend | As | Notes |
+|---|---|---|
+| Vulkan | `vkCmdBeginDebugUtilsLabelEXT` | `VK_EXT_debug_utils` is enabled on the instance in non-shipping builds whenever offered (a capture tool's layer offers it); render targets are named too |
+| D3D12 | `ID3D12GraphicsCommandList::BeginEvent` | PIX's string encoding |
+| OpenGL | `glPushDebugGroup` | |
+| Metal | `-[MTLCommandBuffer pushDebugGroup:]` | on the command buffer, so an event spans encoders; closed before a commit |
+
+A mid-frame readback (an editor capture) submits the frame and starts another
+command buffer: events opened before it end with it.
+
 ## GDI
 
 Deferred shading needs two things GDI did not have:

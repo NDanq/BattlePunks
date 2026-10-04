@@ -304,8 +304,8 @@ void VulkanDynamicGDI::SetColorMask(EColorMask InMask)
 
 void VulkanDynamicGDI::BeginDrawEvent(const std::string& EventName)
 {
-#ifdef QT_DEBUG
-    // VK_EXT_debug_utils is only enabled in debug builds (see VulkanGDIContext::GetSharedInstance).
+    // Labels need VK_EXT_debug_utils on the instance (VulkanGDIContext::HasDebugUtils).
+    if(!VulkanGDIContext::HasDebugUtils()) return;
     if(!DeviceObj || !CurrentStateData || CurrentStateData->CurrentCmd == VK_NULL_HANDLE) return;
 
     static auto BeginLabel = reinterpret_cast<PFN_vkCmdBeginDebugUtilsLabelEXT>(
@@ -319,14 +319,11 @@ void VulkanDynamicGDI::BeginDrawEvent(const std::string& EventName)
     Label.color[0] = Label.color[1] = Label.color[2] = Label.color[3] = 1.0f;
     BeginLabel(CurrentStateData->CurrentCmd, &Label);
     ++CurrentStateData->DebugLabelDepth;
-#else
-    (void)EventName;
-#endif
 }
 
 void VulkanDynamicGDI::EndDrawEvent()
 {
-#ifdef QT_DEBUG
+    if(!VulkanGDIContext::HasDebugUtils()) return;
     if(!DeviceObj || !CurrentStateData || CurrentStateData->CurrentCmd == VK_NULL_HANDLE) return;
 
     // Only close a label that was opened in the current command buffer. A mid-frame
@@ -340,7 +337,6 @@ void VulkanDynamicGDI::EndDrawEvent()
 
     EndLabel(CurrentStateData->CurrentCmd);
     --CurrentStateData->DebugLabelDepth;
-#endif
 }
 
 #pragma endregion

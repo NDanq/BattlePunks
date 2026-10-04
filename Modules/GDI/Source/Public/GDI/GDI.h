@@ -636,10 +636,13 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(
         )
 
 extern int GDebugGroupID;
+
+/* A named region of GPU work for capture tools (RenderDoc, PIX, Xcode): begun
+ * here, ended when it goes out of scope; regions nest. Render thread only. */
 class GDIDrawEvent
 {
 public:
-    GDIDrawEvent(std::string InString)
+    explicit GDIDrawEvent(const std::string& InString)
     {
         GDebugGroupID++;
         GDIBeginDrawEvent(InString);
@@ -649,20 +652,26 @@ public:
         GDebugGroupID--;
         GDIEndDrawEvent();
     }
-    static int DebugGroupID;
+    GDIDrawEvent(const GDIDrawEvent&)            = delete;
+    GDIDrawEvent& operator=(const GDIDrawEvent&) = delete;
 };
+
+/* SCOPED_DRAW_EVENT("BasePass"): a GDIDrawEvent to the end of the enclosing
+ * scope. Compiled out of shipping builds. */
+#define GDI_DRAW_EVENT_CONCAT_INNER(A, B) A##B
+#define GDI_DRAW_EVENT_CONCAT(A, B)       GDI_DRAW_EVENT_CONCAT_INNER(A, B)
+#if defined(NIMBLE_SHIPPING) && NIMBLE_SHIPPING
+    #define SCOPED_DRAW_EVENT(Name) do {} while(0)
+#else
+    #define SCOPED_DRAW_EVENT(Name) const GDIDrawEvent GDI_DRAW_EVENT_CONCAT(ScopedDrawEvent_, __LINE__)(Name)
+#endif
 
 #ifndef DECLARE_SCOPED_DRAWEVENT
 #define DECLARE_SCOPED_DRAWEVENT(Name, StringLiteral) \
 class Name##DrawEvent : public GDIDrawEvent           \
 {                                                     \
     public:                                           \
-        explicit Name##DrawEvent(std::string InStr)   : GDIDrawEvent(std::move(InStr)) {}\
-        ~Name##DrawEvent()                            \
-        {                                             \
-            GDIDrawEvent::~GDIDrawEvent();            \
-        }                                             \
-                                                        \
+        explicit Name##DrawEvent(const std::string& InStr) : GDIDrawEvent(InStr) {}\
 } Name##_DrawEvent(StringLiteral);
 #endif
 

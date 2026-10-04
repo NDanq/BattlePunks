@@ -64,7 +64,7 @@ namespace RenderCore
         bool  bShowFrame     = false;   // Stats.Frame
     };
     void             SetStatUnit(const StatUnitSnapshot& InSnapshot);
-    StatUnitSnapshot GetStatUnit();
+    RENDERCORE_API StatUnitSnapshot GetStatUnit();
 
     /* The overlay's text, a line each: Frame, Game, Render, Wait, Present,
      * Idle (ms), and FPS. Frame = Game + Wait + Present + Idle. */

@@ -33,6 +33,7 @@ namespace RenderCore
         uint32_t          Count = 0;             // 0: the whole mesh
         int32_t           ShadowView = -1;       // Shadows stage: the ShadowFrame view it draws into
         uint8_t           PostStage  = 1;        // PostProcess stage: EPostProcessStage, before or after the effects
+        bool              bStatic    = false;    // replayed from a static draw list (SubmitCaptured): its own draw event
 
         /* The entity's parameter overrides; those for MaterialSlot apply. */
         const RenderMaterialParameter* Overrides     = nullptr;
