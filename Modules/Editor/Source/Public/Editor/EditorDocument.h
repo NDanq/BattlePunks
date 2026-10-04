@@ -184,9 +184,10 @@ public:
     /* Name if it has one, "Entity <index>" otherwise. */
     QString GetDisplayName(GameCore::EntityID InEntity) const;
 
-    /* World-space box, first available of: BoundsComponent::World, the
-     * RenderComponent's mesh or quad through the Transform, or a small cube at
-     * the Transform. Empty if none apply. */
+    /* World-space box: the entity's own (BoundsComponent::World, else the
+     * RenderComponent's mesh or quad through the Transform) joined with every
+     * child's, recursively -- so a prefab instance's root encloses all of it.
+     * With none of those, a small cube at the Transform; empty without one. */
     GameCore::AABB GetEntityBounds(GameCore::EntityID InEntity) const;
 
     /* The union of every entity's GetEntityBounds. */
@@ -247,6 +248,10 @@ signals:
     void HistoryChanged();
 
 private:
+    /* GetEntityBounds without the children or the marker: empty if InEntity
+     * has no shape of its own. InEntity must be alive. */
+    GameCore::AABB GetOwnBounds(GameCore::EntityID InEntity) const;
+
     static void OnEntityCreated(GameCore::EntityID InEntity, void* InUserData);
     static void OnEntityDestroyed(GameCore::EntityID InEntity, void* InUserData);
     static void OnComponentChanged(GameCore::EntityID InEntity, GameCore::ComponentTypeID InType, void* InUserData);

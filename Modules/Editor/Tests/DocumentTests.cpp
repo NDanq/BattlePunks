@@ -18,6 +18,7 @@
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
+#include "Public/RenderCore/Components/RenderComponent.h"
 
 using GameCore::EntityID;
 
@@ -76,6 +77,38 @@ static void TestCreateUndoRedo()
     Expect(Doc.GetDisplayName(Again) == QStringLiteral("Crate"), "rename applies");
     Doc.Undo();
     Expect(Doc.GetDisplayName(Doc.GetWorld().FindEntityByGuid(Guid)) == QStringLiteral("Box"), "undo restores the name");
+}
+
+/* GetEntityBounds: a parent -- a prefab instance's root -- encloses its children. */
+static void TestHierarchyBounds()
+{
+    std::printf("Hierarchy bounds\n");
+    EditorDocument Doc;
+    GameCore::World& World = Doc.GetWorld();
+
+    /* A root with only a Transform, and two children drawing the unit quad
+     * (no mesh): 100 across at x = 500 and, one level deeper, at x = -300. */
+    const EntityID Root  = Doc.CreateEntity(QStringLiteral("Root"), EngineCore::Vector3(0.0, 0.0, 0.0));
+    const EntityID Near  = Doc.CreateEntity(QStringLiteral("Near"), EngineCore::Vector3(500.0, 0.0, 0.0));
+    const EntityID Far   = Doc.CreateEntity(QStringLiteral("Far"),  EngineCore::Vector3(-300.0, 200.0, 0.0));
+    const EntityID Alone = Doc.CreateEntity(QStringLiteral("Alone"), EngineCore::Vector3(0.0, 1000.0, 0.0));
+    for(const EntityID Each : { Near, Far })
+    {
+        World.GetEntity(Each).GetComponent<GameCore::TransformComponent>()->Scale = EngineCore::Vector3(100.0, 100.0, 1.0);
+        World.GetEntity(Each).AddComponent(RenderCore::RenderComponent());
+    }
+    World.GetEntity(Near).SetParent(Root);
+    World.GetEntity(Far).SetParent(Near);
+
+    const GameCore::AABB Box = Doc.GetEntityBounds(Root);
+    Expect(!Box.IsEmpty() && Box.Min.GetX() <= -350.0 + 1e-6 && Box.Max.GetX() >= 550.0 - 1e-6
+           && Box.Max.GetY() >= 250.0 - 1e-6, "a root's bounds enclose every descendant's");
+    Expect(Box.Max.GetX() <= 550.0 + 1e-6 && Box.Min.GetY() >= -50.0 - 1e-6,
+           "and no more: no marker cube for a root whose children have shapes");
+    const GameCore::AABB Middle = Doc.GetEntityBounds(Near);
+    Expect(Middle.Min.GetX() <= -350.0 + 1e-6 && Middle.Max.GetX() >= 550.0 - 1e-6, "a child's include its own children");
+    const GameCore::AABB Marker = Doc.GetEntityBounds(Alone);
+    Expect(!Marker.IsEmpty() && Marker.Max.GetX() - Marker.Min.GetX() == 50.0, "an empty without children is still a small cube");
 }
 
 static void TestSelection()
@@ -472,6 +505,7 @@ int main(int argc, char* argv[])
 
     TestCreateUndoRedo();
     TestSelection();
+    TestHierarchyBounds();
     TestNewScene();
     TestBorrowedWorld();
     TestDestroyWhileBorrowed();
