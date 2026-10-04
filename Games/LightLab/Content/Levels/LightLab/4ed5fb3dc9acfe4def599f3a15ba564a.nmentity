@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="4ed5fb3dc9acfe4def599f3a15ba564a" Name="Ball">
+<Entity Guid="4ed5fb3dc9acfe4def599f3a15ba564a" Name="Ball" Mobility="Static">
   <Component Type="Render" Version="3">
     <Visible Value="true" />
     <Material0 Value="" />

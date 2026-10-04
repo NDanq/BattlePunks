@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="3ca28931be6c02a224f146e84a1654b9" Name="BackWall">
+<Entity Guid="3ca28931be6c02a224f146e84a1654b9" Name="BackWall" Mobility="Static">
   <Component Type="Render" Version="3">
     <Visible Value="true" />
     <Material0 Value="" />

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="1b6107a862d69bd1d8bedfd901bc9ed7" Name="ArchPost">
+<Entity Guid="1b6107a862d69bd1d8bedfd901bc9ed7" Name="ArchPost" Mobility="Static">
   <Component Type="Render" Version="3">
     <Visible Value="true" />
     <Material0 Value="" />

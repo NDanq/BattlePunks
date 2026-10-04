@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="6388dd754d43f3a08885c1eb7f7bbb6b" Name="Pillar">
+<Entity Guid="6388dd754d43f3a08885c1eb7f7bbb6b" Name="Pillar" Mobility="Static">
   <Component Type="Render" Version="3">
     <Visible Value="true" />
     <Material0 Value="" />

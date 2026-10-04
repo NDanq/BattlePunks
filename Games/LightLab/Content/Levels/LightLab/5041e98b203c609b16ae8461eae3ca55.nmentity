@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<Entity Guid="5041e98b203c609b16ae8461eae3ca55" Name="Crate">
+<Entity Guid="5041e98b203c609b16ae8461eae3ca55" Name="Crate" Mobility="Static">
   <Component Type="Render" Version="3">
     <Visible Value="true" />
     <Material0 Value="" />
