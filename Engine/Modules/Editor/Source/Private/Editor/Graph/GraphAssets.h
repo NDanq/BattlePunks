@@ -138,8 +138,9 @@ namespace EditorGraphs
     /* Adds or focuses the tab; nullptr (message box shown) on load failure. */
     GraphEditorTab* OpenGraph(const QString& InPath, QWidget* InParent);
 
-    /* Asks where, writes a starter graph of InSchema there, and opens it. */
-    GraphEditorTab* CreateGraph(const NodeGraph::Schema& InSchema, QWidget* InParent);
+    /* Asks where (starting in InFolder, or the schema's default folder when
+     * empty), writes a starter graph of InSchema there, and opens it. */
+    GraphEditorTab* CreateGraph(const NodeGraph::Schema& InSchema, QWidget* InParent, const QString& InFolder = QString());
 
     /* Writes a starter graph of InSchema at InPath (compiled and staged) without
      * opening it. False with OutError if it could not be written. */

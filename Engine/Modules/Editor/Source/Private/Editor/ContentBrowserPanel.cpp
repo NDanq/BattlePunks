@@ -40,6 +40,7 @@
 #include "Public/Core/CoreArchive.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/NodeGraph/GraphFile.h"
+#include "Public/NodeGraph/Schema.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
@@ -830,6 +831,17 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
     {
         Menu.addAction(QStringLiteral("New Folder"), this, &ContentBrowserPanel::NewFolder);
         Menu.addAction(QStringLiteral("New Prefab..."), this, [this]() { EditorPrefabs::CreatePrefab(CurrentFolder, window()); });
+        for(const NodeGraph::Schema* Schema : NodeGraph::GetSchemas())
+        {
+            /* By name: a refresh (RefreshGameDeclarations) replaces the schema. */
+            const std::string SchemaName = Schema->GetName();
+            QAction* NewGraph = Menu.addAction(QStringLiteral("New %1 Graph...").arg(QString::fromStdString(SchemaName)), this, [this, SchemaName]()
+            {
+                if(const NodeGraph::Schema* Current = NodeGraph::FindSchema(SchemaName)) { EditorGraphs::CreateGraph(*Current, window(), CurrentFolder); }
+            });
+            NewGraph->setToolTip(QStringLiteral("A %1 graph: generates %2")
+                                 .arg(QString::fromStdString(SchemaName), QString::fromStdString(Schema->GetOutputExtension())));
+        }
         Menu.addAction(QStringLiteral("New Render Target 2D..."), this, [this]()
         {
             EditorRenderTargets::CreateRenderTarget(CurrentFolder, RenderCore::ERenderTargetKind::Tex2D, window());
