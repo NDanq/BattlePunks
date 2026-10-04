@@ -41,6 +41,10 @@ namespace RenderCore
     {
         const RenderMaterialParameter* Items = nullptr;
         uint32_t                       Count = 0;
+
+        /* The entity's baked lighting (RenderLighting.h); null: none. Kept,
+         * like Items, by pointer: it must outlive the frame's draws. */
+        const RenderBakedDraw*         Baked = nullptr;
     };
 
     class RENDERCORE_API RenderContext

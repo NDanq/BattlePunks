@@ -108,7 +108,7 @@ the scene colour target's depth:
 | Target | R | G | B | A |
 |---|---|---|---|---|
 | GBuffer0 | Base Color | | | Ambient Occlusion |
-| GBuffer1 | Normal (world, ×0.5+0.5) | | | 1 = lit pixel |
+| GBuffer1 | Normal (world, ×0.5+0.5) | | | 1 = lit pixel; 0.75 = lit, its diffuse ambient baked |
 | GBuffer2 | Metallic | Roughness | Specular | -- |
 | GBuffer3 | Emissive ÷ scale | | | log2(scale) / 12 |
 
@@ -125,7 +125,9 @@ The Opaque and Masked Lit permutations of `MaterialTemplate_PS.glsl` write the
 four G-buffer outputs instead of a lit colour (`MATERIAL_GBUFFER`). The
 permutation key does not change: those two domain/shading pairs only ever draw
 in the Base Pass. Masked still discards below Clip Value; Two Sided still flips
-a back face's normal, before it is stored.
+a back face's normal, before it is stored. A draw with baked lighting adds it
+to the emissive it stores and marks the pixel 0.75 (see [Baked
+lighting](#baked-lighting)).
 
 ### Lighting
 
@@ -437,6 +439,100 @@ Verified (`NIMBLE_SMOKE_GPU=Vulkan`, in a room of six coloured walls):
 - **HDRI:** a two-tone HDRI is drawn behind the scene and reflected the right
   way up.
 
+### Baked lighting
+
+A world can bake its static lighting: lightmaps for its static meshes, light
+probes for everything else. Only what is **Static** is baked -- an entity's
+Mobility (GameCore's `Mobility.h`) decides, for lights and meshes alike.
+
+**Turning it on.** World > World Settings > Baked lighting
+(`GameCore::WorldLightingSettings`, saved with the world: a `<Settings>`
+element in a text world, a `WSET` chunk in a cooked one). Its fields: lightmap
+density (texels per unit), bounces, samples per texel, probe spacing and the
+lightmap atlas size.
+
+**Lightmap UVs.** A mesh needs a second UV set, UV1 (`MeshData::UV1`, the
+`.nmmesh`'s optional `MUV1` chunk, vertex location 10): charts in 0-1 that do
+not overlap. The importer reads glTF's `TEXCOORD_1`, or makes them with xatlas
+(the editor's `LightmapUVs.h`; an import option, on by default); the engine's
+primitives have them (`generate_primitive_meshes.py`). A static mesh without
+UV1 is still in the bake -- it shadows and bounces light -- but is lit by the
+probes, as a dynamic one is.
+
+**Baking.** Build > Bake Lightmaps (`lighting bake` in the console) is a CPU
+path tracer in the editor (`Editor/.../Lighting/`), on every core, behind a
+progress dialog that can cancel:
+
+1. **Gather** (`LightBakeWorld.h`). Every static Render component's mesh, in
+   world space, each section's albedo from its material's `BaseColor` and
+   `Metallic` parameters (the entity's overrides first; 0.5 grey without one --
+   a material graph is a shader, which a CPU cannot run). Static directional,
+   point and spot lights and the Sky Light (its colours, or its HDRI). A hash
+   of all of it.
+2. **Layout** (`LightBaker.h`). Each lightmapped mesh gets a square of
+   sqrt(area) x density texels, shelf-packed into atlases with a texel of
+   border; its UV1 maps into it.
+3. **Lighting.** Per texel: every light, through shadow rays jittered over
+   its size (soft shadows); then cosine-weighted paths that reach the sky or
+   bounce off up to Bounces surfaces, each lit by every light. Values match the
+   live renderer's: a surface's direct diffuse equals what `EvaluateLight`
+   gives it.
+4. **Filtering.** The bounced light is smoothed across texels of the same
+   mesh with similar positions and normals; lit texels grow into the empty
+   ones round them.
+5. **Probes.** A grid over the static geometry at Probe Spacing, each an
+   ambient cube (+X -X +Y -Y +Z -Z) from rays over the whole sphere plus each
+   light's direct part. A probe that sees mostly backfaces is inside something
+   and left out of the blend.
+
+The result goes beside the world, `Levels/<World>/Lighting/`:
+`Lightmap_<n>.nmtexture` (RGBE8, at most `RENDER_BAKED_ATLASES_MAX`, 8) and
+`Lighting.nmlighting` (`BakedLightingAsset.h`: the hash, whether the sky was
+baked, each entity's atlas and UV1 scale/offset, the probes). The world's
+settings name it (`BakedData`): one undo step, saved with the world. The
+status bar says "Lighting needs to be rebuilt" once a static entity or light no
+longer matches the bake's hash.
+
+Every value is *diffuse radiance* -- irradiance over pi, what a white
+Lambertian surface sends back -- so a surface adds value x albedo, as the
+hemisphere ambient is added.
+
+**Drawing** (`WorldBridge`, `BakedLighting.glsl`). While the world has a bake
+and `[Rendering] BakedLighting` is on:
+- **Static lights** are left out of the frame's lighting and shadow maps --
+  they are in the bake (the default sun too, if a static sun was the only
+  one).
+- **Each Render component's draw** carries `RenderBakedDraw` from the
+  extraction record to its proxy and the draw command:
+  - a static entity the bake has: its lightmap atlas and UV1 scale/offset;
+  - anything else: the probes' trilinear blend at its position, an ambient
+    cube.
+- **The material block's engine bytes** (`MaterialDescription.h`, 32-159)
+  hold that per draw: `Material_LightmapScaleOffset`, `Material_BakedLighting`
+  (x: 0 none, 1 lightmap, 2 ambient cube) and `Material_AmbientCube[6]`. The
+  lightmap is bound at material texture slot 0, which a Base Pass material
+  does not otherwise use; RGBE, so `Baked_SampleLightmap` filters it by hand.
+- **The Base Pass** adds baked light x diffuse albedo x AO to the emissive it
+  stores, and writes GBuffer1.a = 0.75. The Lighting stage and the IBL pass
+  then leave out their diffuse ambient there (specular reflections stay) --
+  unless the bake did not have the sky (a dynamic Sky Light), whose live
+  ambient then still applies (`Scene_Baked.y`).
+- **Forward Lit** (translucent) draws add the ambient cube the same way.
+
+**Lit and Baked.** `[Rendering] BakedLighting` 0 draws as if there were no
+bake: every light live, nothing baked. The editor's View > Lighting > Lit /
+Baked and `lighting lit | baked` set it; LightLab's L key toggles it.
+
+The trade-offs of fully baked static lights: they light dynamic entities only
+through the probes -- diffuse, no specular highlight, no sharp shadow -- and
+dynamic entities cast no shadow from them.
+
+Verified: the editor's lighting tests bake small scenes whose answers are
+known -- an open texel under a straight-down sun equals radiance / pi to 5%,
+the texel under a box is in its shadow, a probe's downward face sees the
+floor's bounce, a white sky lights an open floor fully and a red wall tints
+the floor beside it. LightLab's BakedLighting level, on Vulkan, in both views.
+
 ### Scene capture
 
 A **Scene Capture Probe** component (`Components/SceneCaptureProbeComponent.h`)
@@ -531,7 +627,7 @@ An entity with **Static** mobility (GameCore's `Mobility.h`) keeps its draws
 from frame to frame instead of rebuilding them:
 
 - **Extraction (game thread):** `WorldBridge::ExtractAndRender` builds a
-  static component's record (transform, mobility and component bytes) as
+  static component's record (transform, mobility, baked lighting and component bytes) as
   usual, but sends it only if it differs from the last one it sent for that
   proxy. An editor edit, a tool's move or a mobility change goes through; an
   unchanged static entity costs no copy, no command and no `ApplyComponent`.

@@ -458,6 +458,33 @@ void EditorDocument::RenameEntity(const EntityID InEntity, const QString& InName
     }
 }
 
+const GameCore::WorldSettings& EditorDocument::GetWorldSettings() const
+{
+    return EditedWorld->GetSettings();
+}
+
+bool EditorDocument::SetWorldSettings(const GameCore::WorldSettings& InSettings)
+{
+    if(RefuseWhileBorrowed("Edit World Settings"))
+    {
+        return false;
+    }
+    GameCore::WorldSettings Clamped = InSettings;
+    Clamped.Lighting.Clamp();
+    const GameCore::WorldSettings Before = EditedWorld->GetSettings();
+    if(Clamped == Before)
+    {
+        return false;
+    }
+    EditedWorld->GetSettings() = Clamped;
+    if(IsRecording())
+    {
+        Record(new EditorHistory::WorldSettingsCommand(*this, QStringLiteral("Edit World Settings"), Before, Clamped));
+    }
+    emit WorldSettingsChanged();
+    return true;
+}
+
 void EditorDocument::SetEntityMobility(const EntityID InEntity, const GameCore::EMobility InMobility)
 {
     if(!ActiveWorld || !ActiveWorld->IsAlive(InEntity) || ActiveWorld->GetEntity(InEntity).GetMobility() == InMobility)

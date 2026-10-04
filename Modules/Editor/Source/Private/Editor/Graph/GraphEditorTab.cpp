@@ -57,6 +57,7 @@ namespace
         { "Sphere", "Engine/Content/Meshes/Sphere.nmmesh" },
         { "Box",    "Engine/Content/Meshes/Box.nmmesh" },
         { "Cylinder", "Engine/Content/Meshes/Cylinder.nmmesh" },
+        { "Capsule", "Engine/Content/Meshes/Capsule.nmmesh" },
         { "Plane",  "Engine/Content/Meshes/Plane.nmmesh" },
         { "Quad",   "" },
     };

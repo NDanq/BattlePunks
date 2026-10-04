@@ -695,6 +695,22 @@ namespace EditorHistory
         Document.SetSelection(Entity);
     }
 
+    // === WorldSettingsCommand ================================================
+
+    WorldSettingsCommand::WorldSettingsCommand(EditorDocument& InDocument, const QString& InText,
+                                               const GameCore::WorldSettings& InBefore, const GameCore::WorldSettings& InAfter)
+        : Command(InDocument, InText)
+        , Before(InBefore)
+        , After(InAfter)
+    {
+        setObsolete(Before == After);
+    }
+
+    void WorldSettingsCommand::Apply(const bool bInForward)
+    {
+        Document.SetWorldSettings(bInForward ? After : Before);
+    }
+
     // === EntityLifetimeCommand ===============================================
 
     EntityLifetimeCommand::EntityLifetimeCommand(EditorDocument& InDocument, const QString& InText, const bool bInCreated,

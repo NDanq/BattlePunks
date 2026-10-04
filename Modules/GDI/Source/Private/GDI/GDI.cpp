@@ -244,17 +244,21 @@ bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& O
         /* White, so every backend's mesh layout always has a colour stream. */
         for(uint32_t At = 0; At < InDesc.NumVertices * 4; ++At) { Data.Color[At] = 1.0f; }
     }
+    /* Zero without lightmap UVs, so the stream is always there too. */
+    Data.UV1 = InDesc.UV1 ? static_cast<float*>(Copy(InDesc.UV1, sizeof(float) * 2 * InDesc.NumVertices))
+                          : static_cast<float*>(calloc(size_t(InDesc.NumVertices) * 2, sizeof(float)));
     Data.Indices    = static_cast<uint32_t*>(Copy(InDesc.Indices, sizeof(uint32_t) * InDesc.NumIndices));
     Data.NumIndices = InDesc.NumIndices;
 
     /* As CreateQuadMesh: the POSITION FLOAT count, not the vertex count. */
     Data.NumVertices = InDesc.NumVertices * 3;
 
-    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.Indices)
+    if(!Data.Position || !Data.Normal || !Data.TexCoord || !Data.Color || !Data.UV1 || !Data.Indices)
     {
         free(Data.Position);
         free(Data.Normal);
         free(Data.Color);
+        free(Data.UV1);
         free(Data.TexCoord);
         free(Data.Indices);
         return false;

@@ -74,9 +74,13 @@ uses it.
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow, a scene capture probe's mirror rectangle and normal or its box and reach; all lights or the selected one, View > Light Gizmos), a perspective game camera's frustum |
-| `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere, Cylinder or Plane mesh on a new entity, sized to see, in one undo step |
+| `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere, Cylinder, Capsule or Plane mesh on a new entity, sized to see, in one undo step |
 | `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction; also a Reflection Probe, and a Scene Capture (Omni) or (Mirror) probe |
 | `Content/RenderTargetAssets` (private) | Render target assets: New Render Target 2D / 3D (Cube), the settings dialog, World > Bake Scene Captures |
+| `WorldSettingsDialog` (private) | World > World Settings: the edited world's `GameCore::WorldSettings` -- baked lighting on or off, lightmap density, bounces, samples, probe spacing, lightmap size -- one undo step, saved with the world |
+| `Lighting/LightBaker`, `LightBakeBVH`, `LightBakeScene` (private) | The light baker: a multithreaded CPU path tracer over a bake scene -- lightmap layout, texels, direct and bounced light, filtering, light probes (RenderCore's RENDERPIPELINE.md, "Baked lighting"). No World, no Qt; built with optimisation even in Debug; tested by `NimbleEditorLightingTests` |
+| `Lighting/LightBakeWorld`, `BakeLightmaps` (private) | A World's static meshes and lights to a bake scene, and the bake to files beside the world (`Levels/<World>/Lighting/`, staged too); Build > Bake Lightmaps' worker thread and progress dialog |
+| `Content/LightmapUVs` (private) | Lightmap UVs (UV1) for a mesh without: xatlas (`External/xatlas-f700c77`) charts and packs it, every vertex keeping its index |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity hierarchy with component summary, filter, create, drag to reparent; Ctrl/Shift multiple selection, F2 renames in the row, and the edit actions (below) in its context menu |
 | `PlaySession` (private) | Play-in-Editor: the editor as an `IGameHost` -- game module, ScriptEngine, `GameSession`, `InputRouter` |
@@ -87,7 +91,7 @@ uses it.
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
 | `Graph/GraphScene`, `GraphView`, `GraphItems`, `NodePalette`, `GraphDetailsPanel` (private) | The canvas: nodes, links and comments. Drag between pins to link; Alt+click a pin breaks its links; drag a linked input's link off to move it. Right-click or Tab opens the node palette, and a link dropped on empty space opens it filtered. Wheel zooms, middle-drag pans |
 | `Graph/GraphAssets` (private) | Graphs as project files: where new ones go, compiling into `<gen_code>` on save, a script graph **staged beside the executable** so the next Play runs it without a build, the background glslc check, Build > Cook Content regenerating every graph's `<gen_code>`. A material is named by its graph's path, **cooked for the viewport's backend** from the compiled code, then reloaded into the renderer |
-| Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on one of the engine's meshes -- **Shape**: Sphere (the default), Box, Cylinder or Plane, to orbit (drag, wheel, double-click resets) -- or a flat Quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMeshPreview`, `RequestMaterialPreview`), so it is the backend and cooked shader the level uses. A PostProcess material always fills it. It has an Instance Tint picker and **Animate** (keep drawing, for materials that use Time). Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's RenderComponent Material (adding one if needed), undoably |
+| Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on one of the engine's meshes -- **Shape**: Sphere (the default), Box, Cylinder, Capsule or Plane, to orbit (drag, wheel, double-click resets) -- or a flat Quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMeshPreview`, `RequestMaterialPreview`), so it is the backend and cooked shader the level uses. A PostProcess material always fills it. It has an Instance Tint picker and **Animate** (keep drawing, for materials that use Time). Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's RenderComponent Material (adding one if needed), undoably |
 | `EditorLog` | EngineCore's log handler: a thread-safe, bounded history of every log line, still forwarded to Qt/the debugger |
 | `EditorConsole` | Command registry; unknown words fall through to Core's `ExecConfigCommand` |
 | `ConsolePanel` | The Console dock: filtered transcript over a command line with history and completion |
@@ -113,7 +117,7 @@ an asset shows what it is (vertices and triangles, or size and colour space)
 and where it was imported from.
 
 **Engine Content**, a second tree below the project's, is the engine's own
-`Engine/Content`: its meshes (`Meshes/Box`, `Sphere`, `Plane`, `Cylinder`), materials
+`Engine/Content`: its meshes (`Meshes/Box`, `Sphere`, `Plane`, `Cylinder`, `Capsule`), materials
 (DefaultLit) and shaders. It is read from the source tree the editor was built
 from, else from the copy staged beside the executable, and is read-only here --
 no rename, delete, move, new folder, reimport or drop into it. Drag its meshes
@@ -149,7 +153,8 @@ dropped on, or the one shown -- `Content/` when the browser is at the root.
    warning beside one that will replace an existing asset.
 2. **Mesh options**: scale (glTF is in metres; 100 by default), convert axes
    (glTF is right-handed and the engine left-handed, both +Y up: z flips, with
-   the winding, so the model faces the default camera), generate missing normals, combine the scene into
+   the winding, so the model faces the default camera), generate missing normals, generate
+   lightmap UVs (UV1, for baked lighting) where the file has no `TEXCOORD_1`, combine the scene into
    one mesh or one per glTF mesh, and import the textures it uses -- listed.
 3. **Texture options**:
    - sRGB, plus data maps by name: an image whose name has a word like normal,
@@ -502,6 +507,10 @@ registered:
 | `create [name]`, `delete [name \| #index]` | As the Edit menu |
 | `frame [all]` | Frame the selection, or the scene |
 | `scene <new \| sandbox>` | As the File menu |
+| `save` | File > Save World (the world must have a file) |
+| `quit` | File > Exit, which still asks about unsaved changes |
+| `lighting <bake \| baked \| lit>` | Build > Bake Lightmaps, or View > Lighting > Baked / Lit |
+| `screenshot <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`) |
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `Cooked/` beside it |
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
 | `settings` | Open Edit > Editor Settings, and print where they are saved |
@@ -589,7 +598,7 @@ Settings instead.
 | Viewport | Background gradient, top and bottom colours (a swatch opens a colour picker; applies at once to every editor viewport) | `Editor.ViewportGradient` (on), `ViewportTopColor` (`#4b515d`), `ViewportBottomColor` (`#1b1d22`) |
 | Rendering | Render backend (on restart) | `Editor.RHI` |
 | Build | Restart a running game after Compile | `Editor.ReloadAfterCompile` |
-| Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, combine meshes, import a mesh's textures, sRGB, largest texture, texture mipmaps | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize`, `ImportTextureMipGen` |
+| Import | The Import Wizard's starting options: mesh scale, convert axes, generate normals, generate lightmap UVs, combine meshes, import a mesh's textures, sRGB, largest texture, texture mipmaps | `Editor.ImportMeshScale`, `ImportConvertCoordinates`, `ImportGenerateNormals`, `ImportLightmapUVs`, `ImportCombineMeshes`, `ImportMeshTextures`, `ImportTextureSRGB`, `ImportTextureMaxSize`, `ImportTextureMipGen` |
 
 The settings are those config vars themselves; the dialog keeps no copy.
 **Apply** and **OK** set them the way the Console would and save them;
@@ -680,6 +689,27 @@ With MSVC the compiler needs Visual Studio's environment. An editor started
 from an IDE or a developer prompt has it; otherwise (`INCLUDE` unset) the
 build runs through the `vcvarsall.bat` of the Visual Studio that compiled the
 editor, found at configure time from the compiler's path.
+
+**Bake Lightmaps** (`lighting bake`) bakes the edited world's static lighting
+-- its static lights into its static Render components' lightmaps, and light
+probes for everything else (RenderCore's RENDERPIPELINE.md, "Baked lighting").
+The world must be saved (the bake goes beside it, in `Levels/<World>/Lighting/`)
+and have baked lighting on in World > World Settings (offered if not). It runs
+on every core behind a progress dialog with Cancel, then points the world's
+settings at the bake -- one undo step; save the world to keep it. Meshes
+without lightmap UVs, missing materials and the like are warned about in the
+Console as `[Bake]`. When a static entity or light changes afterwards, the
+status bar says **Lighting needs to be rebuilt**.
+
+**View > Lighting > Baked / Lit** (`lighting baked | lit`, `[Rendering]
+BakedLighting`) draws with the bake, or lights every light live as if there
+were none -- to compare them.
+
+Headless, from the binaries folder (a world opened, baked and saved, then the
+editor closed):
+
+    QT_QPA_PLATFORM=offscreen ./NimbleEditor --rhi 0 <world.nmworld> \
+        --command "lighting bake" --command save --command quit
 
 **Cook Content** is a stub: it says it is not implemented yet. What it should
 cook (which worlds and assets, from where, to where, for which target) is not

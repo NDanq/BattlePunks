@@ -218,29 +218,39 @@ float); a mesh without colours gets white from `GDIMakeIndexedRenderData`, so
 every backend's vertex layout is fixed. `.nmmesh` stores it as an optional
 `MCOL` chunk (older files load white); the glTF importer reads `COLOR_0`.
 
-## The `.material` file, version 2
+Lightmap UVs (UV1) are another, at location 10 (`GDIMeshDesc::UV1`, zero when
+the mesh has none), stored as an optional `MUV1` chunk. The vertex stage
+passes them through as `Interpolants.LightmapUV`; only the Base Pass reads
+them, for baked lighting (RENDERPIPELINE.md, "Baked lighting").
+
+## The `.material` file, version 3
 
 ```
-NimbleMaterial 2
+NimbleMaterial 3
 Domain Opaque
 Shading Lit
 TwoSided 0
 ClipValue 0.5
 MaxOffset 0
 HasOffset 0
-BlockSize 48
-Param Color vec3 32 0.2 0.8 1 0
-Param Intensity float 44 1 0 0 0
+BlockSize 176
+Param Color vec3 160 0.2 0.8 1 0
+Param Intensity float 172 1 0 0 0
 Texture 1 Default Default Content/Textures/Brick.nmtexture
 Texture 2 Nearest Clamp Content/Textures/Height Map.nmtexture
 ```
 
-Offsets are bytes into the material block; the first 32 are the engine's.
+Offsets are bytes into the material block; the first 160 are the engine's
+(`MaterialDescription.h`): the tint, Clip Value and Two Sided in the first
+32, then each draw's baked lighting -- `Material_LightmapScaleOffset`,
+`Material_BakedLighting` and `Material_AmbientCube[6]` -- which the renderer
+writes per draw, as it does the tint. Version 2 put parameters from byte 32;
+it is refused, as version 1 is: recompile the graph (NodeGraphGenerate does
+every graph at once).
 `Texture <slot> <filter> <wrap> <path>`: a material texture slot (1-7), the
 node's sampler settings (`Default` keeps the asset's own), and the texture's
 runtime path -- the rest of the line, so it may hold spaces (not `#`).
-`ParseMaterialDescription` refuses version 1 (recompile the graph) and skips
-lines it does not know.
+`ParseMaterialDescription` skips lines it does not know.
 
 ## Textures
 
@@ -249,7 +259,9 @@ A material graph's **Texture Object** node (NodeGraph's README) names a
 Sample** nodes read it, each at its own UV. The renderer, per draw:
 
 - binds slots 1-7 from the material's `Texture` lines, clearing the rest; slot
-  0 stays the caller's (a PostProcess pass's scene);
+  0 is the caller's: a PostProcess pass's scene, a forward Lit material's
+  probe atlas, or a Base Pass draw's lightmap (RENDERPIPELINE.md, "Baked
+  lighting");
 - loads each file through `TextureAssetCache` (shared, thread-safe, like
   `MeshAssetCache`) and makes one GPU texture per path and *resolved* sampler
   -- the node's setting, else the asset's -- rebuilt when the cache's copy
@@ -265,7 +277,7 @@ glTF's convention, so imported meshes need no flip -- and a quad shows it
 upright. No mipmaps on Vulkan and D3D12 yet (OpenGL generates them): Linear
 filters between texels at the full-size level.
 
-The editor previews a material on the engine's meshes (Sphere, Box, Cylinder, Plane) or a
+The editor previews a material on the engine's meshes (Sphere, Box, Cylinder, Capsule, Plane) or a
 quad, and any mesh with a material per section, through
 `Renderer::RequestMeshPreview`: an orbiting perspective camera framing the
 mesh's bounds, a fixed studio light, the same stages as the viewport.
@@ -358,7 +370,7 @@ colour.
 - Vulkan: descriptor layout group `DLG_Material` (UBO 0-3, samplers 4-11).
 - D3D12: root parameters for b3 and t4-t11/s4-s11.
 - OpenGL: a UBO per binding, `glBindBufferBase`; texture units 4-11.
-- Vertex colour at location 9 on Vulkan, D3D12 and OpenGL.
+- Vertex colour at location 9, and lightmap UVs at 10, on Vulkan, D3D12 and OpenGL.
 - Metal: not done. The engine does not cook Metal, and Metal has no indexed
   meshes yet.
 - Several colour targets in one pass and depth as a texture, for the

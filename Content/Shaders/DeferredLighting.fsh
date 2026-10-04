@@ -13,7 +13,7 @@
 
 // Material texture slots 0-7 (GDI bindings 4-11).
 MATERIAL_SAMPLER2D(4, GBuffer0)           // rgb: Base Color; a: Ambient Occlusion
-MATERIAL_SAMPLER2D(5, GBuffer1)           // rgb: normal * 0.5 + 0.5; a: lit
+MATERIAL_SAMPLER2D(5, GBuffer1)           // rgb: normal * 0.5 + 0.5; a: lit (1), or lit with its ambient baked (0.75)
 MATERIAL_SAMPLER2D(6, GBuffer2)           // Metallic, Roughness, Specular
 MATERIAL_SAMPLER2D(7, GBuffer3)           // Emissive, past 1 too (EncodeGBufferEmissive)
 MATERIAL_SAMPLER2D(8, SceneDepth)         // r: window depth, 0 near to 1 far
@@ -68,6 +68,8 @@ void main(void)
     Surface.Opacity          = 1.0;
     Surface.OpacityMask      = 1.0;
 
-    vec3 Color = ToSceneColor(ToLinear(Surface.Emissive) + ShadeSurface(Surface, WorldPosition, Surface.Normal));
+    // A baked surface carries its diffuse ambient in its emissive (BakedLighting.glsl).
+    float AmbientDiffuse = Gb1.a < 0.875 ? 0.0 : 1.0;
+    vec3 Color = ToSceneColor(ToLinear(Surface.Emissive) + ShadeSurface(Surface, WorldPosition, Surface.Normal, AmbientDiffuse));
     Output = vec4(Color, 1.0);
 }

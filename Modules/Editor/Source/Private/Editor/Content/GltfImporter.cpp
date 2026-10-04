@@ -1,6 +1,7 @@
 #if WITH_EDITOR
 
 #include "Private/Editor/Content/GltfImporter.h"
+#include "Private/Editor/Content/LightmapUVs.h"
 
 #include <cmath>
 #include <cstdlib>
@@ -207,6 +208,7 @@ namespace EditorContent
             const cgltf_accessor* Normals   = FindAttribute(InPrimitive, cgltf_attribute_type_normal, 0);
             const cgltf_accessor* UVs       = FindAttribute(InPrimitive, cgltf_attribute_type_texcoord, 0);
             const cgltf_accessor* Colors    = FindAttribute(InPrimitive, cgltf_attribute_type_color, 0);
+            const cgltf_accessor* UV1s      = FindAttribute(InPrimitive, cgltf_attribute_type_texcoord, 1);
             if(!Positions || Positions->count == 0)
             {
                 OutWarnings << QStringLiteral("%1: skipped -- it has no positions").arg(InSectionName);
@@ -278,6 +280,17 @@ namespace EditorContent
                 if(UVs) { cgltf_accessor_read_float(UVs, Vertex, UV, 2); }
                 InOutMesh.UV0.push_back(UV[0]);
                 InOutMesh.UV0.push_back(UV[1]);
+
+                /* Lightmap UVs (TEXCOORD_1) only from primitives that have
+                 * them: if any lacks them the count falls short, and LoadGltf
+                 * generates the mesh's instead. */
+                if(UV1s)
+                {
+                    float UV1[2] = {0.0f, 0.0f};
+                    cgltf_accessor_read_float(UV1s, Vertex, UV1, 2);
+                    InOutMesh.UV1.push_back(UV1[0]);
+                    InOutMesh.UV1.push_back(UV1[1]);
+                }
 
                 if(!InOutMesh.Colors.empty())
                 {
@@ -443,7 +456,20 @@ namespace EditorContent
             OutError = QStringLiteral("%1: no triangle meshes to import").arg(QFileInfo(InPath).fileName());
             return false;
         }
-        for(GltfMesh& Each : OutMeshes) { RenderCore::ComputeMeshBounds(Each.Data); }
+        for(GltfMesh& Each : OutMeshes)
+        {
+            RenderCore::MeshData& Mesh = Each.Data;
+            if(Mesh.UV1.size() != size_t(Mesh.GetVertexCount()) * 2)
+            {
+                Mesh.UV1.clear();
+                std::string Error;
+                if(InOptions.bGenerateLightmapUVs && !GenerateLightmapUVs(Mesh, Error))
+                {
+                    OutWarnings << QStringLiteral("%1: no lightmap UVs -- %2").arg(Each.Name, QString::fromStdString(Error));
+                }
+            }
+            RenderCore::ComputeMeshBounds(Mesh);
+        }
 
         CollectImages(Data, InPath, OutImages);
         return true;

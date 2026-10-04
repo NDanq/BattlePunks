@@ -40,4 +40,8 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     vec4 Scene_IBL;
     vec4 Scene_Probes[12];       // [3i] xyz centre, w radius; [3i+1] xyz box half sizes (0: a sphere), w intensity;
                                  // [3i+2] x its block in the atlas
+
+    // Baked lighting (BakedLighting.glsl): x 1 if the view draws with a bake; y 1 if that bake
+    // has the sky in it, so a baked surface takes no live sky ambient.
+    vec4 Scene_Baked;
 UBO_BLOCK_END(Scene_Block)

@@ -1638,6 +1638,59 @@ static void TestWorldPackage()
     World Nothing;
     Expect(!LoadWorldFile((Dir / "Missing.nmworld").generic_string().c_str(), Nothing), "loading a missing file fails");
 }
+
+/* World settings (WorldSettings.h) ride along in both formats; a world
+ * without them keeps the defaults, and a default world writes none. */
+static void TestWorldSettings()
+{
+    std::printf("WorldSettings: saved with the world\n");
+
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleGameCoreSmoke" / "Settings";
+    std::error_code Ignored;
+    std::filesystem::remove_all(Dir, Ignored);
+    std::filesystem::create_directories(Dir, Ignored);
+
+    World Plain;
+    Plain.CreateEntity("Only");
+    const std::string PlainPath = (Dir / "Plain.nmworld").generic_string();
+    Expect(SaveWorldPackage(PlainPath.c_str(), Plain), "a world with default settings saves");
+    Expect(ReadFileText(Dir / "Plain.nmworld").find("<Settings") == std::string::npos, "default settings write nothing to the manifest");
+
+    World Baked;
+    Baked.CreateEntity("Only");
+    WorldLightingSettings& Lighting = Baked.GetSettings().Lighting;
+    Lighting.bBakedLighting  = true;
+    Lighting.TexelsPerUnit   = 0.25f;
+    Lighting.Bounces         = 2;
+    Lighting.SamplesPerTexel = 64;
+    Lighting.ProbeSpacing    = 150.0f;
+    Lighting.MaxAtlasSize    = 512;
+    Lighting.BakedData       = "Content/Levels/Baked/Lighting/Lighting.nmlighting";
+    const std::string BakedPath = (Dir / "Baked.nmworld").generic_string();
+    Expect(SaveWorldPackage(BakedPath.c_str(), Baked), "a world with baked lighting saves");
+    {
+        World Loaded;
+        Expect(LoadWorldFile(BakedPath.c_str(), Loaded) && Loaded.GetSettings() == Baked.GetSettings(),
+               "text worlds keep their settings");
+    }
+    {
+        const std::string CookedPath = (Dir / "Cooked" / "Baked.nmworld").generic_string();
+        World Cooked;
+        Expect(CookWorldFile(BakedPath.c_str(), CookedPath.c_str()) && LoadWorldFile(CookedPath.c_str(), Cooked)
+               && Cooked.GetSettings() == Baked.GetSettings(), "cooked worlds keep their settings (WSET)");
+    }
+    {
+        World Loaded;
+        Expect(LoadWorldFile(PlainPath.c_str(), Loaded) && Loaded.GetSettings() == WorldSettings(),
+               "a world without settings loads the defaults");
+    }
+
+    WorldLightingSettings Wild;
+    Wild.Bounces      = 99;
+    Wild.MaxAtlasSize = 700;
+    Wild.Clamp();
+    Expect(Wild.Bounces == 8 && Wild.MaxAtlasSize == 1024, "out-of-range settings clamp, the atlas to a power of two");
+}
 #endif // WITH_EDITOR
 
 static void TestArchiveTextDump()
@@ -3381,6 +3434,7 @@ int main()
     TestComponentProperties();
     TestStructArrayProperties();
     TestWorldPackage();
+    TestWorldSettings();
 #endif
 
     SetLogHandler(nullptr);

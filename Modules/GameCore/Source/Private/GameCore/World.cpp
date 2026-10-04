@@ -103,6 +103,8 @@ namespace GameCore
 
     struct World::Impl
     {
+        WorldSettings Settings;
+
         // --- entities --------------------------------------------------------
 
         std::vector<uint32_t> Generations;     // indexed by EntityID::Index; bumped on every destroy
@@ -1644,4 +1646,7 @@ namespace GameCore
     }
 
     EventBus& World::GetEvents() { return P->Events; }
+
+    WorldSettings&       World::GetSettings()       { return P->Settings; }
+    const WorldSettings& World::GetSettings() const { return P->Settings; }
 }

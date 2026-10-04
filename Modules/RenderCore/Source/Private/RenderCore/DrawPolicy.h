@@ -38,6 +38,9 @@ namespace RenderCore
         const RenderMaterialParameter* Overrides     = nullptr;
         uint32_t                       OverrideCount = 0;
         uint8_t                        MaterialSlot  = 0;
+
+        /* The entity's baked lighting; null: none (BakedLighting.glsl). */
+        const RenderBakedDraw*         Baked = nullptr;
     };
 
     /* A draw as a proxy queued it, kept with its stage: what a static draw

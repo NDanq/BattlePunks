@@ -5,6 +5,7 @@
 #include <algorithm>
 
 #include <QAction>
+#include <QActionGroup>
 #include <QCloseEvent>
 #include <QDir>
 #include <QFile>
@@ -50,6 +51,10 @@
 #include "Private/Editor/Prefab/PrefabEditorWindow.h"
 #include "Private/Editor/Project/NewProjectWizard.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
+#include "Private/Editor/WorldSettingsDialog.h"
+#include "Private/Editor/Lighting/BakeLightmaps.h"
+#include "Private/Editor/Lighting/LightBakeWorld.h"
+#include "Public/RenderCore/BakedLightingAsset.h"
 #include "Private/Editor/SDLInputProbe.h"
 #include "Private/Editor/SettingsDialog.h"
 #include "Private/Editor/SourceBuild.h"
@@ -75,8 +80,9 @@ namespace
     }
 
     /* A world saved inside the project, copied beside the executable too --
-     * its manifest and its folder of entity and instance files, stale ones removed --
-     * so the next Play loads what was saved without a build. */
+     * its manifest, its folder of entity and instance files and its baked
+     * lighting (Lighting/), stale ones removed -- so the next Play loads what
+     * was saved without a build. */
     void StageWorldPackage(const QString& InPath)
     {
         const QString Staged = EditorGraphs::GetStagedPath(InPath);
@@ -99,6 +105,16 @@ namespace
             for(const QString& Each : SourceEntities.entryList(QDir::Files))
             {
                 QFile::copy(SourceEntities.filePath(Each), TargetEntities.filePath(Each));
+            }
+            const QDir SourceLighting(SourceEntities.filePath(QStringLiteral("Lighting")));
+            if(SourceLighting.exists())
+            {
+                const QDir TargetLighting(TargetEntities.filePath(QStringLiteral("Lighting")));
+                QDir().mkpath(TargetLighting.absolutePath());
+                for(const QString& Each : SourceLighting.entryList(QDir::Files))
+                {
+                    QFile::copy(SourceLighting.filePath(Each), TargetLighting.filePath(Each));
+                }
             }
         }
     }
@@ -174,6 +190,22 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
 
     StatsLabel = new QLabel(this);
     statusBar()->addPermanentWidget(StatsLabel);
+
+    BakeLabel = new QLabel(this);
+    BakeLabel->setStyleSheet(QStringLiteral("QLabel { color: rgb(230, 170, 60); }"));
+    BakeLabel->setToolTip(QStringLiteral("A static entity or light changed since Build > Bake Lightmaps"));
+    statusBar()->addPermanentWidget(BakeLabel);
+
+    /* Re-gathering the static scene costs a little: once edits settle. */
+    BakeCheckTimer.setSingleShot(true);
+    BakeCheckTimer.setInterval(1000);
+    connect(&BakeCheckTimer, &QTimer::timeout, this, &EditorMainWindow::CheckBake);
+    const auto QueueBakeCheck = [this]() { BakeCheckTimer.start(); };
+    connect(&Level, &EditorDocument::WorldReset, this, QueueBakeCheck);
+    connect(&Level, &EditorDocument::EntitiesChanged, this, QueueBakeCheck);
+    connect(&Level, &EditorDocument::PropertyEdited, this, QueueBakeCheck);
+    connect(&Level, &EditorDocument::WorldSettingsChanged, this, QueueBakeCheck);
+    connect(&Level, &EditorDocument::HistoryChanged, this, QueueBakeCheck);
 
     /* What a handle drag has done so far, in the status bar's message area. */
     connect(Viewport, &ViewportWidget::GizmoDragStatus, this, [this](const QString& InText)
@@ -413,6 +445,16 @@ void EditorMainWindow::BuildMenus()
         EditorRenderTargets::BakeSceneCaptures(Level, Context, this, [this](const QString& InText) { statusBar()->showMessage(InText, 8000); });
     });
 
+    World->addSeparator();
+    QAction* WorldSettings = World->addAction(QStringLiteral("World &Settings..."));
+    WorldSettings->setToolTip(QStringLiteral("What this world saves besides its entities: baked lighting"));
+    connect(WorldSettings, &QAction::triggered, this, [this]()
+    {
+        WorldSettingsDialog Dialog(Level, this);
+        Dialog.exec();
+    });
+    SceneActions.push_back(WorldSettings);
+
     QMenu* View = menuBar()->addMenu(QStringLiteral("&View"));
     for(QDockWidget* Dock : findChildren<QDockWidget*>())
     {
@@ -431,6 +473,37 @@ void EditorMainWindow::BuildMenus()
     View->addSeparator();
     View->addAction(ViewportArea->GetShowAllBoundsAction());
     View->addAction(ViewportArea->GetShowLightGizmosAction());
+
+    /* [Rendering] BakedLighting: draw with the world's bake, or light every light live. */
+    QMenu* LightingMenu = View->addMenu(QStringLiteral("&Lighting"));
+    auto* LightingModes = new QActionGroup(LightingMenu);
+    QAction* BakedView = LightingMenu->addAction(QStringLiteral("&Baked"));
+    BakedView->setToolTip(QStringLiteral("Static entities and lights as Build > Bake Lightmaps baked them; dynamic ones lit by the probes"));
+    QAction* LitView = LightingMenu->addAction(QStringLiteral("&Lit"));
+    LitView->setToolTip(QStringLiteral("Every light lit live, as if there were no bake"));
+    for(QAction* Each : { BakedView, LitView })
+    {
+        Each->setCheckable(true);
+        LightingModes->addAction(Each);
+    }
+    {
+        const EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting");
+        (Var && !Var->GetBool() ? LitView : BakedView)->setChecked(true);
+    }
+    const auto SetBakedView = [this](const bool bInBaked)
+    {
+        if(EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting")) { Var->SetBool(bInBaked); }
+        const GameCore::WorldLightingSettings& Lighting = Level.GetWorldSettings().Lighting;
+        statusBar()->showMessage(!bInBaked ? QStringLiteral("Lighting: Lit -- every light live")
+                                 : Lighting.bBakedLighting && !Lighting.BakedData.empty()
+                                   ? QStringLiteral("Lighting: Baked")
+                                   : QStringLiteral("Lighting: Baked -- but this world has no bake yet (Build > Bake Lightmaps)"), 6000);
+    };
+    connect(BakedView, &QAction::triggered, this, [SetBakedView]() { SetBakedView(true); });
+    connect(LitView, &QAction::triggered, this, [SetBakedView]() { SetBakedView(false); });
+    BakedViewAction = BakedView;
+    LitViewAction   = LitView;
+
     QAction* ResetCamera = View->addAction(QStringLiteral("&Reset Camera"));
     connect(ResetCamera, &QAction::triggered, this, [this]() { Viewport->GetCamera() = EditorCamera(); });
 
@@ -535,6 +608,15 @@ void EditorMainWindow::BuildBuildMenu()
     QAction* Cook = BuildMenu->addAction(QStringLiteral("C&ook Content"));
     Cook->setToolTip(QStringLiteral("Regenerate every node graph's code; cooking the rest of the content is not implemented yet"));
     connect(Cook, &QAction::triggered, this, &EditorMainWindow::CookContent);
+
+    QAction* BakeLightmaps = BuildMenu->addAction(QStringLiteral("Bake &Lightmaps"));
+    BakeLightmaps->setToolTip(QStringLiteral("Light the static entities from the static lights into lightmaps and light probes, "
+                                             "beside the world (World > World Settings turns baked lighting on)"));
+    connect(BakeLightmaps, &QAction::triggered, this, [this]()
+    {
+        EditorLighting::BakeLightmaps(Level, CurrentPath, this, [this](const QString& InText) { statusBar()->showMessage(InText, 10000); });
+    });
+    SceneActions.push_back(BakeLightmaps);
 
     QAction* RefreshNodes = BuildMenu->addAction(QStringLiteral("&Refresh Script Nodes"));
     RefreshNodes->setToolTip(QStringLiteral("Reread the game module's components and script libraries into the script graph nodes "
@@ -854,6 +936,86 @@ void EditorMainWindow::RegisterConsoleCommands()
         OpenSettings();
         Console.Print(QStringLiteral("Settings are saved to %1")
                       .arg(QDir::toNativeSeparators(SettingsDialog::GetUserSettingsPath())));
+    });
+
+    Console.Register(QStringLiteral("lighting"), QStringLiteral("<bake | baked | lit>"),
+                     QStringLiteral("Bake the static lights into the static entities (Build > Bake Lightmaps), or draw with the bake or live (View > Lighting)"),
+                     [this](const QStringList& InArgs)
+    {
+        const QString Word = InArgs.isEmpty() ? QString() : InArgs[0];
+        if(Word == QStringLiteral("bake"))
+        {
+            EditorLighting::BakeLightmaps(Level, CurrentPath, this, [this](const QString& InText) { Console.Print(InText); });
+        }
+        else if(Word == QStringLiteral("baked") || Word == QStringLiteral("lit"))
+        {
+            (Word == QStringLiteral("baked") ? BakedViewAction : LitViewAction)->trigger();
+            Console.Print(QStringLiteral("Lighting: %1").arg(Word));
+        }
+        else
+        {
+            Console.PrintError(QStringLiteral("Usage: lighting <bake | baked | lit>"));
+        }
+    });
+
+    Console.Register(QStringLiteral("save"), QString(), QStringLiteral("File > Save World (Ctrl+S)"),
+                     [this](const QStringList&)
+    {
+        if(CurrentPath.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("The world has no file yet: File > Save World As"));
+            return;
+        }
+        if(SaveWorld()) { Console.Print(QStringLiteral("Saved %1").arg(CurrentPath)); }
+    });
+
+    Console.Register(QStringLiteral("screenshot"), QStringLiteral("<file.png>"),
+                     QStringLiteral("Save the viewport's next frame (no gizmos or debug lines) as an image"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: screenshot <file.png>"));
+            return;
+        }
+        const QString Path = QFileInfo(InArgs.join(QLatin1Char(' '))).absoluteFilePath();
+        const uint64_t Request = Context.RequestSceneCapture();
+        if(Request == 0)
+        {
+            Console.PrintError(QStringLiteral("The viewport's renderer is not running"));
+            return;
+        }
+        /* Answered after a frame renders; a few seconds, then given up. */
+        auto* Poll  = new QTimer(this);
+        auto  Tries = std::make_shared<int>(0);
+        connect(Poll, &QTimer::timeout, this, [this, Poll, Request, Tries, Path]()
+        {
+            QImage  Image;
+            QString Error;
+            if(Context.TakeMaterialPreview(Request, Image, Error))
+            {
+                Poll->deleteLater();
+                if(Image.isNull() || !Image.save(Path))
+                {
+                    Console.PrintError(QStringLiteral("No screenshot: %1").arg(Image.isNull() ? Error : QStringLiteral("cannot write ") + Path));
+                    return;
+                }
+                Console.Print(QStringLiteral("Saved %1 (%2 x %3)").arg(Path).arg(Image.width()).arg(Image.height()));
+                return;
+            }
+            if(++*Tries > 250)
+            {
+                Poll->deleteLater();
+                Console.PrintError(QStringLiteral("No frame rendered for the screenshot (is the viewport visible?)"));
+            }
+        });
+        Poll->start(20);
+    });
+
+    Console.Register(QStringLiteral("quit"), QString(), QStringLiteral("File > Exit (asks to save unsaved changes)"),
+                     [this](const QStringList&)
+    {
+        QMetaObject::invokeMethod(this, &QWidget::close, Qt::QueuedConnection);
     });
 
     Console.Register(QStringLiteral("projectsettings"), QString(),
@@ -1449,6 +1611,22 @@ void EditorMainWindow::OpenWorldFile(const QString& Path)
         CurrentPath = Path;
     }
     UpdateTitle();
+}
+
+void EditorMainWindow::CheckBake()
+{
+    const GameCore::WorldLightingSettings& Lighting = Level.GetWorldSettings().Lighting;
+    const std::shared_ptr<const RenderCore::BakedLightingData> Bake =
+        Lighting.bBakedLighting ? RenderCore::BakedLightingCache::Find(Lighting.BakedData) : nullptr;
+    if(!Bake || &Level.GetWorld() != &Level.GetEditedWorld())
+    {
+        BakeLabel->clear();
+        return;
+    }
+    LightBake::Scene Scene;
+    LightBake::GatherReport Report;
+    LightBake::GatherScene(Level.GetEditedWorld(), Scene, Report);
+    BakeLabel->setText(Scene.Hash == Bake->InputHash ? QString() : QStringLiteral("Lighting needs to be rebuilt"));
 }
 
 bool EditorMainWindow::SaveWorld()

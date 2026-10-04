@@ -544,6 +544,41 @@ namespace
         }
     }
 
+    /* The manifest's <Settings>: only what differs from the defaults, and
+     * nothing at all for a world with none, so its manifest stays as it was. */
+    void AppendSettings(pugi::xml_node InRoot, const WorldSettings& InSettings)
+    {
+        const WorldLightingSettings Defaults;
+        const WorldLightingSettings& Lighting = InSettings.Lighting;
+        if(Lighting == Defaults) { return; }
+
+        /* Numbers as entity files write them: shortest round-trip, any locale. */
+        pugi::xml_node Element = InRoot.append_child("Settings").append_child("Lighting");
+        const auto Put = [&Element](const char* InName, const std::string& InText) { Element.append_attribute(InName) = InText.c_str(); };
+        if(Lighting.bBakedLighting != Defaults.bBakedLighting)   { Put("BakedLighting",   Lighting.bBakedLighting ? "true" : "false"); }
+        if(Lighting.TexelsPerUnit != Defaults.TexelsPerUnit)     { Put("TexelsPerUnit",   FormatNumber(Lighting.TexelsPerUnit)); }
+        if(Lighting.Bounces != Defaults.Bounces)                 { Put("Bounces",         FormatNumber(Lighting.Bounces)); }
+        if(Lighting.SamplesPerTexel != Defaults.SamplesPerTexel) { Put("SamplesPerTexel", FormatNumber(Lighting.SamplesPerTexel)); }
+        if(Lighting.ProbeSpacing != Defaults.ProbeSpacing)       { Put("ProbeSpacing",    FormatNumber(Lighting.ProbeSpacing)); }
+        if(Lighting.MaxAtlasSize != Defaults.MaxAtlasSize)       { Put("MaxAtlasSize",    FormatNumber(Lighting.MaxAtlasSize)); }
+        if(Lighting.BakedData != Defaults.BakedData)             { Put("BakedData",       Lighting.BakedData); }
+    }
+
+    void ReadSettings(const pugi::xml_node InRoot, WorldSettings& OutSettings)
+    {
+        const pugi::xml_node Element = InRoot.child("Settings").child("Lighting");
+        WorldLightingSettings& Lighting = OutSettings.Lighting;
+        Lighting = WorldLightingSettings();
+        Lighting.bBakedLighting  = Element.attribute("BakedLighting").as_bool(Lighting.bBakedLighting);
+        ParseNumber(Element.attribute("TexelsPerUnit").as_string(), Lighting.TexelsPerUnit);
+        ParseNumber(Element.attribute("Bounces").as_string(), Lighting.Bounces);
+        ParseNumber(Element.attribute("SamplesPerTexel").as_string(), Lighting.SamplesPerTexel);
+        ParseNumber(Element.attribute("ProbeSpacing").as_string(), Lighting.ProbeSpacing);
+        ParseNumber(Element.attribute("MaxAtlasSize").as_string(), Lighting.MaxAtlasSize);
+        Lighting.BakedData       = Element.attribute("BakedData").as_string("");
+        Lighting.Clamp();
+    }
+
     bool LoadTextWorld(const std::string& InPath, World& InOutWorld)
     {
         std::string Text;
@@ -571,6 +606,8 @@ namespace
                                + "; this build reads format " + std::to_string(TEXT_FORMAT))
             return false;
         }
+
+        ReadSettings(Root, InOutWorld.GetSettings());
 
         const std::string Folder = EntityFolderFor(InPath);
 
@@ -928,6 +965,7 @@ bool SaveWorldPackage(const char* InPath, World& InWorld)
     AppendDeclaration(Manifest);
     pugi::xml_node ManifestRoot = Manifest.append_child("World");
     pugi::xml_attribute FormatAttribute = ManifestRoot.append_attribute("Format");
+    AppendSettings(ManifestRoot, InWorld.GetSettings());
 
     /* In slot order. An instance's entities are one <Instance>, listed where
      * its root is; everything else -- loose entities, and members of an

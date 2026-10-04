@@ -148,6 +148,15 @@ void OpenGLMesh::InitResource()
         glVertexAttribPointer(9, 4, GL_FLOAT, GL_FALSE, 0, nullptr);
     }
 
+    if( RenderData.UV1 && IsIndexed() )
+    {
+        glGenBuffers(1, &UV1VBO);
+        glBindBuffer(GL_ARRAY_BUFFER, UV1VBO);
+        glBufferData(GL_ARRAY_BUFFER, (NumVertices / 3) * 2 * sizeof(float), RenderData.UV1, GL_STATIC_DRAW);
+        glEnableVertexAttribArray(10);
+        glVertexAttribPointer(10, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
+    }
+
     if( IsIndexed() )
     {
         // Bound while the VAO is: the VAO records the element buffer.
@@ -207,6 +216,7 @@ void OpenGLMesh::Release()
     glDeleteBuffers(NumBuffersToDelete, VBO);
     if(NormalVBO) { glDeleteBuffers(1, &NormalVBO); NormalVBO = 0; }
     if(ColorVBO)  { glDeleteBuffers(1, &ColorVBO);  ColorVBO  = 0; }
+    if(UV1VBO)    { glDeleteBuffers(1, &UV1VBO);    UV1VBO    = 0; }
     if(IndexEBO)  { glDeleteBuffers(1, &IndexEBO);  IndexEBO  = 0; }
     glDeleteVertexArrays(1, &VAO);
     FreeRenderData();

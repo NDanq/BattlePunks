@@ -9,9 +9,12 @@ RenderComponent names one as "Engine/Content/Meshes/Box.nmmesh").
     Plane.nmmesh    a 1 x 1 square in X and Z, facing up (+Y), in 16 x 16 cells
     Cylinder.nmmesh diameter 1, height 1, along Y: 32 segments around, a flat cap
                     at each end (the wall smooth, its edges hard)
+    Capsule.nmmesh  diameter 1, height 2, along Y: a 1-unit cylinder between two
+                    hemispheres, 32 segments around, 8 rings per hemisphere,
+                    smooth all over
 
-All four are centred on the origin and are made the way the importer makes a
-glTF mesh, so a material treats them alike: each shape is built in glTF's
+All five are centred on the origin and are made the way the importer makes a
+glTF mesh, so a material treats them alike, lightmap UVs included: each shape is built in glTF's
 frame -- right-handed, +Y up, +Z toward the viewer -- then converted to the
 engine's exactly as GltfImporter.cpp converts one (z flips, and the winding
 with it):
@@ -23,13 +26,18 @@ with it):
   - UV0 with v = 0 at the image's top row; a box face and the plane show an
     image upright seen from outside, up being +Y (or away from the viewer, +Z,
     for the top, and toward it for the bottom);
+  - UV1, the lightmap UVs (baked lighting): charts in 0-1 that do not overlap,
+    MARGIN apart -- a texel at the smallest lightmap the editor makes (32) --
+    as the importer's generated ones are. The box's faces in a 3 x 2 grid; the
+    plane, sphere and capsule their UV0 inset; the cylinder's wall across the
+    top half and its caps side by side below;
   - one section, named for the mesh, with no material: drawn with DefaultLit
     unless a RenderComponent slot names one; no vertex colours (white).
 
 The .nmmesh layout is RenderCore's MeshAsset.cpp: EngineCore::Archive chunks
 (tag, version, size, payload; little-endian), no file header:
 
-    NMSH v1 { MHDR v1, MVTX v1, MIDX v1, MSEC v1 }
+    NMSH v1 { MHDR v1, MVTX v1, MIDX v1, MSEC v1, MUV1 v1 }
 
 Usage:
     python Engine/Scripts/generate_primitive_meshes.py [-out <dir>]
@@ -42,6 +50,9 @@ from pathlib import Path
 
 ENGINE_DIR = Path(__file__).resolve().parent.parent
 DEFAULT_OUT = ENGINE_DIR / "Content" / "Meshes"
+
+# Lightmap charts' gutter in UV1: one texel of the smallest lightmap (LightmapUVs.h).
+MARGIN = 1.0 / 32.0
 
 
 # --- Small vector helpers --------------------------------------------------------------
@@ -58,12 +69,15 @@ class Mesh:
 
     def __init__(self, name):
         self.name = name
-        self.positions, self.normals, self.uvs, self.indices = [], [], [], []
+        self.positions, self.normals, self.uvs, self.uv1s, self.indices = [], [], [], [], []
 
-    def vertex(self, position, normal, uv):
+    def vertex(self, position, normal, uv, uv1=None):
+        """uv1 None: UV0 inset by MARGIN, for a shape whose UV0 already lays it
+        out without overlap."""
         self.positions.append(position)
         self.normals.append(normal)
         self.uvs.append(uv)
+        self.uv1s.append(uv1 if uv1 is not None else inset(uv, (0.0, 0.0), (1.0, 1.0)))
         return len(self.positions) - 1
 
     def triangle(self, a, b, c):
@@ -80,10 +94,33 @@ class Mesh:
             if dot(face, face) > 1e-12:   # a pole's sliver triangle has no area
                 assert dot(face, normal) > 0.0, f"{self.name}: triangle {at // 3} is wound backwards"
 
+    def check_uv1(self, size=64):
+        """UV1 is in 0-1 and no texel centre lies inside two triangles."""
+        assert all(0.0 <= c <= 1.0 for t in self.uv1s for c in t), f"{self.name}: UV1 outside 0-1"
+        covered = {}
+        for at in range(0, len(self.indices), 3):
+            a, b, c = (self.uv1s[i] for i in self.indices[at:at + 3])
+            def edge(p, q, x, y):
+                return (q[0] - p[0]) * (y - p[1]) - (q[1] - p[1]) * (x - p[0])
+            lo = [min(a[k], b[k], c[k]) for k in range(2)]
+            hi = [max(a[k], b[k], c[k]) for k in range(2)]
+            for y in range(max(0, int(lo[1] * size) - 1), min(size, int(hi[1] * size) + 2)):
+                for x in range(max(0, int(lo[0] * size) - 1), min(size, int(hi[0] * size) + 2)):
+                    u, v = (x + 0.5) / size, (y + 0.5) / size
+                    e = (edge(a, b, u, v), edge(b, c, u, v), edge(c, a, u, v))
+                    if all(k > 1e-9 for k in e) or all(k < -1e-9 for k in e):
+                        assert (x, y) not in covered, f"{self.name}: UV1 triangles {covered[(x, y)]} and {at // 3} overlap"
+                        covered[(x, y)] = at // 3
+
     def bounds(self):
         lo = tuple(min(p[axis] for p in self.positions) for axis in range(3))
         hi = tuple(max(p[axis] for p in self.positions) for axis in range(3))
         return lo, hi
+
+
+def inset(uv, lo, hi):
+    """uv (0-1) placed in the UV1 cell lo-hi, MARGIN in from its edges."""
+    return tuple(lo[a] + MARGIN + uv[a] * (hi[a] - lo[a] - 2.0 * MARGIN) for a in range(2))
 
 
 # --- The shapes, in glTF's frame (right-handed, +Y up, +Z toward the viewer) --------------
@@ -92,15 +129,16 @@ UP   = (0.0, 1.0, 0.0)
 DOWN = (0.0, -1.0, 0.0)
 
 
-def quad(mesh, centre, right, down, normal, cells=1):
+def quad(mesh, centre, right, down, normal, cells=1, cell1=((0.0, 0.0), (1.0, 1.0))):
     """A square of side |right| = |down| = 1 at centre, seen from outside as an
-    image: u along right, v along down. Wound so each triangle faces normal."""
+    image: u along right, v along down, and in UV1 the cell cell1 (lo, hi).
+    Wound so each triangle faces normal."""
     first = len(mesh.positions)
     for row in range(cells + 1):
         for col in range(cells + 1):
             u, v = col / cells, row / cells
             position = add(centre, add(scale(right, u - 0.5), scale(down, v - 0.5)))
-            mesh.vertex(position, normal, (u, v))
+            mesh.vertex(position, normal, (u, v), inset((u, v), *cell1))
     stride = cells + 1
     for row in range(cells):
         for col in range(cells):
@@ -120,9 +158,11 @@ def make_box():
         ((0.0, 1.0, 0.0), (0.0, 0.0, -1.0)),   # top: away from the viewer up the image
         ((0.0, -1.0, 0.0), (0.0, 0.0, 1.0)),   # bottom
     ]
-    for normal, image_up in faces:
+    for face, (normal, image_up) in enumerate(faces):
         right = cross(image_up, normal)        # right x up = normal, right-handed
-        quad(mesh, scale(normal, 0.5), right, scale(image_up, -1.0), normal)
+        column, row = face % 3, face // 3      # UV1: a 3 x 2 grid of faces
+        cell1 = ((column / 3.0, row / 2.0), ((column + 1) / 3.0, (row + 1) / 2.0))
+        quad(mesh, scale(normal, 0.5), right, scale(image_up, -1.0), normal, cell1=cell1)
     return mesh
 
 
@@ -177,7 +217,8 @@ def make_cylinder(segments=32, radius=0.5, height=1.0):
     for row, y in ((0, half), (1, -half)):
         for segment in range(segments + 1):
             normal = around(segment)
-            mesh.vertex((normal[0] * radius, y, normal[2] * radius), normal, (segment / segments, float(row)))
+            uv = (segment / segments, float(row))
+            mesh.vertex((normal[0] * radius, y, normal[2] * radius), normal, uv, inset(uv, (0.0, 0.0), (1.0, 0.5)))
     stride = segments + 1
     for segment in range(segments):
         top_left = first + segment
@@ -185,11 +226,13 @@ def make_cylinder(segments=32, radius=0.5, height=1.0):
         mesh.triangle(top_left, bottom_left, bottom_right)
         mesh.triangle(top_left, bottom_right, top_right)
 
-    for normal, y, v_sign in ((UP, half, 1.0), (DOWN, -half, -1.0)):
+    for normal, y, v_sign, cell1 in ((UP, half, 1.0, ((0.0, 0.5), (0.5, 1.0))), (DOWN, -half, -1.0, ((0.5, 0.5), (1.0, 1.0)))):
         # Top: the image's top is away from the viewer (-Z), so v grows with z;
-        # bottom: toward the viewer, so v falls with z.
+        # bottom: toward the viewer, so v falls with z. UV1: the caps side by
+        # side under the wall.
         def cap_vertex(x, z):
-            return mesh.vertex((x, y, z), normal, (0.5 + x, 0.5 + v_sign * z))
+            uv = (0.5 + x, 0.5 + v_sign * z)
+            return mesh.vertex((x, y, z), normal, uv, inset(uv, *cell1))
         centre = cap_vertex(0.0, 0.0)
         ring = []
         for segment in range(segments):
@@ -202,6 +245,45 @@ def make_cylinder(segments=32, radius=0.5, height=1.0):
                 mesh.triangle(centre, a, b)
             else:
                 mesh.triangle(centre, b, a)
+    return mesh
+
+
+def make_capsule(segments=32, rings=16, radius=0.5, height=2.0):
+    """The sphere, split at its equator and pulled apart by the straight
+    wall's length: the equator row twice, once on each hemisphere, with the
+    wall between. u as the sphere's; v from the top pole (0) to the bottom (1)
+    by distance along the side, so an image does not stretch on the wall."""
+    mesh = Mesh("Capsule")
+    wall = height - 2.0 * radius
+    assert rings % 2 == 0 and wall >= 0.0
+    arc = 0.5 * math.pi * radius                          # one hemisphere, pole to equator
+    length = 2.0 * arc + wall
+
+    # (polar angle, centre height, distance from the top pole) per row.
+    rows = []
+    for ring in range(rings // 2 + 1):
+        polar = math.pi * ring / rings
+        rows.append((polar, 0.5 * wall, polar * radius))
+    for ring in range(rings // 2, rings + 1):
+        polar = math.pi * ring / rings
+        rows.append((polar, -0.5 * wall, polar * radius + wall))
+
+    for polar, centre, distance in rows:
+        for segment in range(segments + 1):
+            azimuth = 2.0 * math.pi * segment / segments
+            normal = (-math.sin(polar) * math.sin(azimuth), math.cos(polar), -math.sin(polar) * math.cos(azimuth))
+            position = add(scale(normal, radius), (0.0, centre, 0.0))
+            mesh.vertex(position, normal, (segment / segments, distance / length))
+
+    stride = segments + 1
+    for row in range(len(rows) - 1):
+        for segment in range(segments):
+            top_left = row * stride + segment
+            top_right, bottom_left, bottom_right = top_left + 1, top_left + stride, top_left + stride + 1
+            if row != 0:
+                mesh.triangle(top_left, bottom_left, bottom_right)
+            if row != len(rows) - 2:
+                mesh.triangle(top_left, bottom_right, top_right)
     return mesh
 
 
@@ -237,7 +319,10 @@ def serialize(mesh):
     vertices = struct.pack(f"<{len(floats)}f", *floats)
     indices = struct.pack(f"<{len(mesh.indices)}I", *mesh.indices)
     sections = string(mesh.name) + string("") + struct.pack("<II", 0, len(mesh.indices))
-    return chunk("NMSH", chunk("MHDR", header) + chunk("MVTX", vertices) + chunk("MIDX", indices) + chunk("MSEC", sections))
+    uv1 = [c for t in mesh.uv1s for c in t]
+    lightmap = struct.pack(f"<{len(uv1)}f", *uv1)
+    return chunk("NMSH", chunk("MHDR", header) + chunk("MVTX", vertices) + chunk("MIDX", indices) + chunk("MSEC", sections)
+                 + chunk("MUV1", lightmap))
 
 
 def main():
@@ -246,8 +331,9 @@ def main():
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
-    for mesh in (make_box(), make_sphere(), make_plane(), make_cylinder()):
+    for mesh in (make_box(), make_sphere(), make_plane(), make_cylinder(), make_capsule()):
         mesh.check()
+        mesh.check_uv1()
         to_engine(mesh)
         mesh.check()
         path = args.out / f"{mesh.name}.nmmesh"

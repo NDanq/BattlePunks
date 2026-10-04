@@ -104,6 +104,7 @@ namespace RenderCore
         MaterialParameterOverrides Overrides;
         Overrides.Items = Parameters;
         Overrides.Count = ParameterCount;
+        Overrides.Baked = &GetBakedDraw();
 
         const char* Slots[RENDER_MATERIAL_SLOTS];
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot) { Slots[Slot] = Materials[Slot]; }

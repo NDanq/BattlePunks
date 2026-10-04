@@ -285,6 +285,32 @@ static void TestMobility()
 }
 
 /* GetEntityBounds: a parent -- a prefab instance's root -- encloses its children. */
+static void TestWorldSettings()
+{
+    std::printf("World settings\n");
+    EditorDocument Doc;
+
+    int Changed = 0;
+    QObject::connect(&Doc, &EditorDocument::WorldSettingsChanged, [&Changed]() { ++Changed; });
+
+    GameCore::WorldSettings Settings = Doc.GetWorldSettings();
+    Settings.Lighting.bBakedLighting = true;
+    Settings.Lighting.Bounces        = 99;   // clamped to 8
+    Expect(Doc.SetWorldSettings(Settings), "settings change");
+    Expect(Doc.GetWorldSettings().Lighting.bBakedLighting && Doc.GetWorldSettings().Lighting.Bounces == 8,
+           "on the edited world, clamped");
+    Expect(Changed == 1 && Doc.CanUndo() && !Doc.GetHistory().isClean(), "one undo step, signalled, dirtying the document");
+    Expect(!Doc.SetWorldSettings(Doc.GetWorldSettings()), "setting the same settings records nothing");
+
+    Doc.Undo();
+    Expect(Doc.GetWorldSettings() == GameCore::WorldSettings() && Changed == 2, "undo puts the defaults back");
+    Doc.Redo();
+    Expect(Doc.GetWorldSettings().Lighting.bBakedLighting && Changed == 3, "redo applies them again");
+
+    Doc.NewScene();
+    Expect(Doc.GetWorldSettings() == GameCore::WorldSettings(), "a new scene starts with the defaults");
+}
+
 static void TestHierarchyBounds()
 {
     std::printf("Hierarchy bounds\n");
@@ -732,6 +758,7 @@ int main(int argc, char* argv[])
     TestNewScene();
     TestBorrowedWorld();
     TestDestroyWhileBorrowed();
+    TestWorldSettings();
     TestPrefab();
     TestInstances();
     TestReplaceWithPrefab();

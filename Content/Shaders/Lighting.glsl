@@ -81,8 +81,10 @@ float LocalFalloff(float InDistance, float InRange)
     return Window * Window / (1.0 + 16.0 * X * X);
 }
 
-// Linear radiance leaving the surface toward the eye, from every light and the ambient.
-vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNormal)
+// Linear radiance leaving the surface toward the eye, from every light and the ambient --
+// its diffuse part times InAmbientDiffuse: 0 where baked lighting already holds it
+// (BakedLighting.glsl).
+vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNormal, float InAmbientDiffuse)
 {
     LightingSurface S;
     S.Albedo    = ToLinear(Surface.BaseColor);
@@ -154,18 +156,24 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
     // +Y is up, so the sky is toward +Y.
     float Up       = clamp(S.N.y * 0.5 + 0.5, 0.0, 1.0);
     vec3  Ambient  = mix(ToLinear(Scene_GroundColor.rgb), ToLinear(Scene_SkyColor.rgb), Up) * Scene_SkyColor.a;
-    vec3  Indirect = Ambient * (S.Albedo * (1.0 - S.Metallic) + S.F0 * (1.0 - S.Roughness) * 0.5) * Surface.AmbientOcclusion;
+    vec3  Indirect = Ambient * (S.Albedo * (1.0 - S.Metallic) * InAmbientDiffuse + S.F0 * (1.0 - S.Roughness) * 0.5)
+                   * Surface.AmbientOcclusion;
     // Image-based lighting replaces it: in its own pass over the G-buffer (IBLLighting.fsh), or
     // here for a forward Lit material, which has the atlas (LIGHTING_IBL_ATLAS).
     if(Scene_IBL.x > 0.5)
     {
 #ifdef LIGHTING_IBL_ATLAS
         Indirect = IBL_Light(LIGHTING_IBL_ATLAS, InWorldPosition, S.N, S.V, S.Albedo, S.Metallic, S.Roughness, S.F0,
-                             Surface.AmbientOcclusion);
+                             Surface.AmbientOcclusion, InAmbientDiffuse);
 #else
         Indirect = vec3(0.0);
 #endif
     }
 
     return (Direct + Indirect) * Modulate;
+}
+
+vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNormal)
+{
+    return ShadeSurface(Surface, InWorldPosition, InNormal, 1.0);
 }

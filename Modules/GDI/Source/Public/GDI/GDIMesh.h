@@ -15,6 +15,7 @@
  *   location 1  vec2 texcoord
  *   location 8  vec3 normal        (indexed only; 2-7 are instancing's)
  *   location 9  vec4 colour        (indexed only; white when Colors is null)
+ *   location 10 vec2 UV1           (indexed only; the lightmap UVs, zero when UV1 is null)
  */
 struct GDIMeshDesc
 {
@@ -22,6 +23,7 @@ struct GDIMeshDesc
     const float*    Normals     = nullptr;
     const float*    UV0         = nullptr;
     const float*    Colors      = nullptr;   // RGBA, 4 per vertex; optional
+    const float*    UV1         = nullptr;   // 2 per vertex; optional
     uint32_t        NumVertices = 0;
     const uint32_t* Indices     = nullptr;
     uint32_t        NumIndices  = 0;
@@ -48,6 +50,7 @@ public:
          * freed by the backend's Release with the other two. */
         float*    Normal     = nullptr;
         float*    Color      = nullptr;   // RGBA, 4 per vertex
+        float*    UV1        = nullptr;   // 2 per vertex, the lightmap UVs
         uint32_t* Indices    = nullptr;
         uint32_t  NumIndices = 0;
 
@@ -187,6 +190,7 @@ protected:
         free(RenderData.TexCoord); RenderData.TexCoord = nullptr;
         free(RenderData.Normal);   RenderData.Normal   = nullptr;
         free(RenderData.Color);    RenderData.Color    = nullptr;
+        free(RenderData.UV1);      RenderData.UV1      = nullptr;
         free(RenderData.Indices);  RenderData.Indices  = nullptr;
     }
 

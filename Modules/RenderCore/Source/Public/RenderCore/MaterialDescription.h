@@ -22,8 +22,9 @@ namespace RenderCore
 {
     /* MaterialCommon.glsl's MATERIAL_TEMPLATE_VERSION: a shader cache cooked
      * against another is refused (ShaderCache.h). */
-    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 7;   // 3: Y up (Two Sided facing); 4: point/spot lights and shadows; 5: Scene Depth;
-                                                        // 6: emissive past 1 in GBuffer3; 7: HDR scene colour (Scene_Output)
+    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 8;   // 3: Y up (Two Sided facing); 4: point/spot lights and shadows; 5: Scene Depth;
+                                                        // 6: emissive past 1 in GBuffer3; 7: HDR scene colour (Scene_Output);
+                                                        // 8: baked lighting (the 160-byte engine block, UV1, Scene_Baked)
 
     enum class EMaterialDomain : uint8_t { Opaque = 0, Masked = 1, Translucent = 2, PostProcess = 3 };
     enum class EMaterialShading : uint8_t { Lit = 0, Unlit = 1 };
@@ -60,9 +61,26 @@ namespace RenderCore
     /* The shared vertex shaders a material without World Position Offset draws with. */
     constexpr const char* MATERIAL_DEFAULT_VERTEX = "MaterialDefault";
 
-    /* Bytes 0-31 of every material block: Material_Tint (vec4), then
-     * Material_ClipValue, Material_TwoSided and two reserved floats. */
-    constexpr uint32_t MATERIAL_ENGINE_BLOCK_BYTES = 32;
+    /* Bytes 0-159 of every material block: Material_Tint (vec4), then
+     * Material_ClipValue, Material_TwoSided and two reserved floats; then the
+     * draw's baked lighting (RENDERPIPELINE.md, "Baked lighting"):
+     * Material_LightmapScaleOffset (vec4: UV1 * xy + zw), Material_BakedLighting
+     * (vec4: x the EMaterialBakedLighting mode) and Material_AmbientCube[6]
+     * (vec4s: +X -X +Y -Y +Z -Z, rgb). Per draw, so the material's own block
+     * values are only the first 32 bytes' defaults. */
+    constexpr uint32_t MATERIAL_ENGINE_BLOCK_BYTES        = 160;
+    constexpr uint32_t MATERIAL_BLOCK_LIGHTMAP_OFFSET     = 32;
+    constexpr uint32_t MATERIAL_BLOCK_BAKED_OFFSET        = 48;
+    constexpr uint32_t MATERIAL_BLOCK_AMBIENT_CUBE_OFFSET = 64;
+
+    /* Material_BakedLighting.x: how a Lit Opaque or Masked draw takes baked
+     * lighting in the Base Pass. */
+    enum class EMaterialBakedLighting : uint8_t
+    {
+        None        = 0,   // lit live: the sky's ambient in the Lighting stage
+        Lightmap    = 1,   // its lightmap, in material texture slot 0
+        AmbientCube = 2,   // the light probes' blend at its centre
+    };
     constexpr uint32_t MATERIAL_BLOCK_MAX_BYTES    = 1024;   // GDI_MATERIAL_BLOCK_MAX_BYTES
 
     struct MaterialParameter

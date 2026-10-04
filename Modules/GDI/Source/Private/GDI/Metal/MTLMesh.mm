@@ -119,6 +119,7 @@ void MTLMesh::Release()
     if(RenderData.Position) { free(RenderData.Position); RenderData.Position = nullptr; }
     if(RenderData.TexCoord) { free(RenderData.TexCoord); RenderData.TexCoord = nullptr; }
     if(RenderData.Color)    { free(RenderData.Color);    RenderData.Color    = nullptr; }
+    if(RenderData.UV1)      { free(RenderData.UV1);      RenderData.UV1      = nullptr; }
 
     bResourcesValid = false;
 }

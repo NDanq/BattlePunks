@@ -200,10 +200,11 @@ vec3 IBL_ProbeDirection(int InIndex, vec3 InPosition, vec3 InDirection)
     return T > 0.0 ? normalize(InPosition + InDirection * T - CentreRadius.xyz) : InDirection;
 }
 
-// The image-based light a surface receives: diffuse (InAlbedo linear) and
-// specular, the probes' blended nearest first and the sky filling the rest.
+// The image-based light a surface receives: diffuse (InAlbedo linear, times
+// InDiffuse: 0 where baked lighting holds it) and specular, the probes'
+// blended nearest first and the sky filling the rest.
 vec3 IBL_Light(sampler2D InAtlas, vec3 InPosition, vec3 InNormal, vec3 InView, vec3 InAlbedo, float InMetallic,
-               float InRoughness, vec3 InF0, float InOcclusion)
+               float InRoughness, vec3 InF0, float InOcclusion, float InDiffuse)
 {
     float NdotV = clamp(dot(InNormal, InView), 1e-4, 1.0);
     vec3  R     = reflect(-InView, InNormal);
@@ -229,5 +230,5 @@ vec3 IBL_Light(sampler2D InAtlas, vec3 InPosition, vec3 InNormal, vec3 InView, v
     }
     vec3  EnvBrdf = IBL_EnvBRDF(InF0, InRoughness, NdotV);
     float SpecOcc = IBL_SpecularOcclusion(NdotV, InOcclusion, InRoughness);
-    return Diffuse * InAlbedo * (1.0 - InMetallic) * InOcclusion + Specular * EnvBrdf * SpecOcc;
+    return Diffuse * InAlbedo * (1.0 - InMetallic) * InOcclusion * InDiffuse + Specular * EnvBrdf * SpecOcc;
 }

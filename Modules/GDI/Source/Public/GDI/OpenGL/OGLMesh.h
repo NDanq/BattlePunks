@@ -36,6 +36,7 @@ private:
      * element buffer the VAO records. 0 for the quads. */
     uint NormalVBO = 0;
     uint ColorVBO  = 0;   // indexed only; location 9
+    uint UV1VBO    = 0;   // indexed only; location 10
     uint IndexEBO  = 0;
     inline GLenum DecodeMeshType()
     {

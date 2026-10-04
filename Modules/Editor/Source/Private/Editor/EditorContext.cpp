@@ -153,6 +153,15 @@ bool EditorContext::TakeMaterialPreview(const uint64_t InRequest, QImage& OutIma
     return true;
 }
 
+uint64_t EditorContext::RequestSceneCapture()
+{
+    if(!Renderer || !bRendererReady)
+    {
+        return 0;
+    }
+    return Renderer->RequestSceneCapture();
+}
+
 uint64_t EditorContext::RequestRenderTargetReadback(const QString& InRuntimePath)
 {
     if(!Renderer || !bRendererReady)
