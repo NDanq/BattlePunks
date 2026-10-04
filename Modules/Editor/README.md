@@ -74,7 +74,7 @@ uses it.
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
 | `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
 | `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow; all lights or the selected one, View > Light Gizmos), a perspective game camera's frustum |
-| `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere or Plane mesh on a new entity, sized to see, in one undo step |
+| `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere, Cylinder or Plane mesh on a new entity, sized to see, in one undo step |
 | `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction |
 | `TransformGizmo` | Move / rotate / scale handles on the selection: drawing, hit testing and drag math, with no Qt input or World access of its own |
 | `OutlinerPanel` | Entity hierarchy with component summary, filter, create/destroy, drag to reparent |
@@ -86,7 +86,7 @@ uses it.
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
 | `Graph/GraphScene`, `GraphView`, `GraphItems`, `NodePalette`, `GraphDetailsPanel` (private) | The canvas: nodes, links and comments. Drag between pins to link; Alt+click a pin breaks its links; drag a linked input's link off to move it. Right-click or Tab opens the node palette, and a link dropped on empty space opens it filtered. Wheel zooms, middle-drag pans |
 | `Graph/GraphAssets` (private) | Graphs as project files: where new ones go, compiling into `<gen_code>` on save, a script graph **staged beside the executable** so the next Play runs it without a build, the background glslc check, Build > Cook Content regenerating every graph's `<gen_code>`. A material is named by its graph's path, **cooked for the viewport's backend** from the compiled code, then reloaded into the renderer |
-| Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on one of the engine's meshes -- **Shape**: Sphere (the default), Box or Plane, to orbit (drag, wheel, double-click resets) -- or a flat Quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMeshPreview`, `RequestMaterialPreview`), so it is the backend and cooked shader the level uses. A PostProcess material always fills it. It has an Instance Tint picker and **Animate** (keep drawing, for materials that use Time). Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's RenderComponent Material (adding one if needed), undoably |
+| Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on one of the engine's meshes -- **Shape**: Sphere (the default), Box, Cylinder or Plane, to orbit (drag, wheel, double-click resets) -- or a flat Quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMeshPreview`, `RequestMaterialPreview`), so it is the backend and cooked shader the level uses. A PostProcess material always fills it. It has an Instance Tint picker and **Animate** (keep drawing, for materials that use Time). Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's RenderComponent Material (adding one if needed), undoably |
 | `EditorLog` | EngineCore's log handler: a thread-safe, bounded history of every log line, still forwarded to Qt/the debugger |
 | `EditorConsole` | Command registry; unknown words fall through to Core's `ExecConfigCommand` |
 | `ConsolePanel` | The Console dock: filtered transcript over a command line with history and completion |
@@ -109,7 +109,7 @@ an asset shows what it is (vertices and triangles, or size and colour space)
 and where it was imported from.
 
 **Engine Content**, a second tree below the project's, is the engine's own
-`Engine/Content`: its meshes (`Meshes/Box`, `Sphere`, `Plane`), materials
+`Engine/Content`: its meshes (`Meshes/Box`, `Sphere`, `Plane`, `Cylinder`), materials
 (DefaultLit) and shaders. It is read from the source tree the editor was built
 from, else from the copy staged beside the executable, and is read-only here --
 no rename, delete, move, new folder, reimport or drop into it. Drag its meshes

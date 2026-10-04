@@ -265,7 +265,7 @@ glTF's convention, so imported meshes need no flip -- and a quad shows it
 upright. No mipmaps on Vulkan and D3D12 yet (OpenGL generates them): Linear
 filters between texels at the full-size level.
 
-The editor previews a material on the engine's meshes (Sphere, Box, Plane) or a
+The editor previews a material on the engine's meshes (Sphere, Box, Cylinder, Plane) or a
 quad, and any mesh with a material per section, through
 `Renderer::RequestMeshPreview`: an orbiting perspective camera framing the
 mesh's bounds, a fixed studio light, the same stages as the viewport.
