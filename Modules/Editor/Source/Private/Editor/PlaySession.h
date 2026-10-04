@@ -84,6 +84,11 @@ public:
      * latches it once a frame, before the game's frame. */
     NimbleEngine::InputRouter& GetInputRouter() { return Input; }
 
+    /* Attaches the router to the viewport's SDL window. A capture the game
+     * asked for before there was one (IGameMode::OnStart runs inside Start)
+     * is applied to it now. */
+    void AttachInputWindow(GameWindow* InWindow);
+
     /* While the editor holds the view (ejected), the game sees nothing held:
      * what arrives is dropped instead of latched. */
     void SetInputBlocked(bool bInBlocked) { bInputBlocked = bInBlocked; }

@@ -112,6 +112,17 @@ void PlaySession::SetMouseCaptured(const bool bInCaptured)
                                      : "held once the viewport has the input focus -- click it"))
 }
 
+void PlaySession::AttachInputWindow(GameWindow* InWindow)
+{
+    Input.Attach(InWindow);
+    if(bHostMouseCaptured && InWindow)
+    {
+        Input.SetMouseCaptured(true);
+        CORE_LOG(std::string("[PIE] the game's mouse capture moves to the viewport: ")
+                 + (InWindow->HasFocus() ? "held in the viewport" : "held once the viewport has the input focus -- click it"))
+    }
+}
+
 void PlaySession::Stop()
 {
     const bool bWasRunning = Session != nullptr;

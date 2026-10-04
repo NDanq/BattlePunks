@@ -575,7 +575,7 @@ bool EditorContext::StartPlay(const QString& InOpenWorld)
         PlayInput = new ViewportSDLInput(this);
         if(PlayInput->Start(PlayInputWidget))
         {
-            Play->GetInputRouter().Attach(PlayInput->GetWindow());
+            Play->AttachInputWindow(PlayInput->GetWindow());
             CORE_LOG("[PIE] input: SDL, through the viewport")
         }
         else
