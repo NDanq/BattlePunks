@@ -727,9 +727,9 @@ namespace EditorGraphs
         return Tab;
     }
 
-    GraphEditorTab* CreateGraph(const Schema& InSchema, QWidget* InParent)
+    GraphEditorTab* CreateGraph(const Schema& InSchema, QWidget* InParent, const QString& InFolder)
     {
-        const QString Folder = GetDefaultFolder(InSchema);
+        const QString Folder = InFolder.isEmpty() ? GetDefaultFolder(InSchema) : InFolder;
         QDir().mkpath(Folder);
 
         QString Path = QFileDialog::getSaveFileName(InParent, QStringLiteral("New %1 Graph").arg(ToQ(InSchema.GetName())),

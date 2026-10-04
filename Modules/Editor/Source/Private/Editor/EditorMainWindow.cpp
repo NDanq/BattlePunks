@@ -37,7 +37,6 @@
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
 #include "Public/Editor/ViewportWidget.h"
-#include "Public/NodeGraph/Schema.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/EditorEditActions.h"
@@ -274,32 +273,10 @@ void EditorMainWindow::BuildMenus()
 
     File->addSeparator();
 
-    /* Node graphs open in windows of their own, beside the scene. */
-    for(const NodeGraph::Schema* Schema : NodeGraph::GetSchemas())
-    {
-        QAction* NewGraph = File->addAction(QStringLiteral("New %1 &Graph...").arg(QString::fromStdString(Schema->GetName())));
-        NewGraph->setToolTip(QStringLiteral("A %1 graph: generates %2")
-                             .arg(QString::fromStdString(Schema->GetName()), QString::fromStdString(Schema->GetOutputExtension())));
-        /* By name: a refresh (RefreshGameDeclarations) replaces the schema. */
-        const std::string SchemaName = Schema->GetName();
-        connect(NewGraph, &QAction::triggered, this, [this, SchemaName]()
-        {
-            if(const NodeGraph::Schema* Current = NodeGraph::FindSchema(SchemaName)) { EditorGraphs::CreateGraph(*Current, this); }
-        });
-    }
-
     QAction* Import = File->addAction(QStringLiteral("&Import..."));
     Import->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_I));
     Import->setToolTip(QStringLiteral("glTF meshes and images into engine assets, in the Content Browser's folder"));
     connect(Import, &QAction::triggered, this, [this]() { ContentArea->ImportWithDialog(); });
-
-    QAction* NewPrefab = File->addAction(QStringLiteral("New &Prefab..."));
-    NewPrefab->setToolTip(QStringLiteral("A one-entity prefab in the Content Browser's folder, opened in the Prefab Editor"));
-    connect(NewPrefab, &QAction::triggered, this, [this]()
-    {
-        const QString Folder = ContentArea->GetCurrentFolder();
-        EditorPrefabs::CreatePrefab(Folder.startsWith(EditorGraphs::GetProjectRoot()) ? Folder : QString(), this);
-    });
 
     QAction* OpenPrefab = File->addAction(QStringLiteral("Open Pre&fab..."));
     connect(OpenPrefab, &QAction::triggered, this, [this]()

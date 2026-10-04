@@ -487,8 +487,9 @@ Material Stage=After Order=0 Path=Content/Materials/Negative.material.nmgraph
 
 - **Staging:** the graph file itself is staged beside the executable, where the
   runtime reads its `<gen_code>` (GameCore's `GraphText.h`) -- as a script graph
-  is read, so a game build needs no NodeGraph. File > New PostProcess Graph
-  starts one in `Content/PostProcess` with Bloom and Antialiasing.
+  is read, so a game build needs no NodeGraph. Content Browser right-click >
+  New PostProcess Graph... starts one, with Bloom and Antialiasing, in the
+  browser's folder.
 
 ## Tests
 
