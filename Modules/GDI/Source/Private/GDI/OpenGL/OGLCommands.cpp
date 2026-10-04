@@ -165,6 +165,47 @@ void OpenGLDynamicGDI::BeginRendering()
     {
         glWaitSync(ThreadSync, 0, 1000000);
     }
+
+    // The previous block's timestamps, if it wrote any ("stat frame" on).
+    PreviousTimestamps = 0;
+    for(uint32_t Index = 0; Index < GDI_GPU_TIMESTAMP_MAX && TimestampsWritten; ++Index)
+    {
+        if(TimestampsWritten & (uint64_t(1) << Index))
+        {
+            GLuint64 Nanoseconds = 0;
+            glGetQueryObjectui64v(TimestampQueries[Index], GL_QUERY_RESULT, &Nanoseconds);
+            PreviousTimestampMs[Index] = double(Nanoseconds) / 1.0e6;
+        }
+    }
+    PreviousTimestamps = TimestampsWritten;
+    TimestampsWritten  = 0;
+}
+
+void OpenGLDynamicGDI::WriteGPUTimestamp(const uint32_t InIndex)
+{
+    const uint64_t Bit = uint64_t(1) << InIndex;
+    if(InIndex >= GDI_GPU_TIMESTAMP_MAX || (TimestampsWritten & Bit))
+    {
+        return;
+    }
+    if(TimestampQueries[0] == 0)
+    {
+        glGenQueries(GLsizei(GDI_GPU_TIMESTAMP_MAX), TimestampQueries);
+    }
+    glQueryCounter(TimestampQueries[InIndex], GL_TIMESTAMP);
+    TimestampsWritten |= Bit;
+}
+
+uint64_t OpenGLDynamicGDI::GetPreviousGPUTimestamps(double* OutMilliseconds)
+{
+    for(uint32_t Index = 0; Index < GDI_GPU_TIMESTAMP_MAX; ++Index)
+    {
+        if(PreviousTimestamps & (uint64_t(1) << Index))
+        {
+            OutMilliseconds[Index] = PreviousTimestampMs[Index];
+        }
+    }
+    return PreviousTimestamps;
 }
 
 void OpenGLDynamicGDI::EndRendering()

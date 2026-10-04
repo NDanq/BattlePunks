@@ -96,6 +96,7 @@ void D3D12DynamicGDI::BeginRendering()
     if(!List) return;
     if(DescAlloc) DescAlloc->Reset();
     DrainDeferredDestruction();
+    CollectTimestamps();   // the previous block's, complete now its fence is waited
 
     CurrentStateData->CurrentCmd         = List;
     CurrentStateData->ActiveRenderTarget = nullptr;
@@ -222,6 +223,120 @@ void D3D12DynamicGDI::EndDrawEvent()
 
     CurrentStateData->CurrentCmd->EndEvent();
     --CurrentStateData->DebugEventDepth;
+}
+
+#pragma endregion
+
+#pragma region GPU timestamps
+
+void D3D12DynamicGDI::CreateTimestampHeap()
+{
+    UINT64 Frequency = 0;
+    if(!DeviceObj || !DeviceObj->GetQueue() || FAILED(DeviceObj->GetQueue()->GetTimestampFrequency(&Frequency)) || Frequency == 0)
+    {
+        GDI_LOG("[D3D12DynamicGDI] The queue cannot report its timestamp frequency; GPU timing is off.")
+        return;
+    }
+
+    D3D12_QUERY_HEAP_DESC HeapDesc{};
+    HeapDesc.Type  = D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+    HeapDesc.Count = GDI_GPU_TIMESTAMP_MAX;
+    if(FAILED(DeviceObj->GetDevice()->CreateQueryHeap(&HeapDesc, IID_PPV_ARGS(&TimestampHeap))))
+    {
+        TimestampHeap.Reset();
+        return;
+    }
+
+    D3D12_HEAP_PROPERTIES Readback{};
+    Readback.Type = D3D12_HEAP_TYPE_READBACK;
+    D3D12_RESOURCE_DESC Buffer{};
+    Buffer.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+    Buffer.Width            = sizeof(uint64_t) * GDI_GPU_TIMESTAMP_MAX;
+    Buffer.Height           = 1;
+    Buffer.DepthOrArraySize = 1;
+    Buffer.MipLevels        = 1;
+    Buffer.SampleDesc.Count = 1;
+    Buffer.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+    if(FAILED(DeviceObj->GetDevice()->CreateCommittedResource(&Readback, D3D12_HEAP_FLAG_NONE, &Buffer, D3D12_RESOURCE_STATE_COPY_DEST,
+                                                              nullptr, IID_PPV_ARGS(&TimestampReadback))))
+    {
+        TimestampHeap.Reset();
+        TimestampReadback.Reset();
+        return;
+    }
+    TimestampTicksPerMs = double(Frequency) / 1000.0;
+}
+
+void D3D12DynamicGDI::WriteGPUTimestamp(const uint32_t InIndex)
+{
+    const uint64_t Bit = uint64_t(1) << InIndex;
+    if(!TimestampHeap || !CurrentStateData || !CurrentStateData->CurrentCmd || InIndex >= GDI_GPU_TIMESTAMP_MAX
+       || (TimestampsWritten & Bit))
+    {
+        return;
+    }
+    CurrentStateData->CurrentCmd->EndQuery(TimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, InIndex);
+    TimestampsWritten |= Bit;
+}
+
+void D3D12DynamicGDI::ResolveTimestamps(ID3D12GraphicsCommandList* InList)
+{
+    // Each written query into its own slot of the readback buffer; a submit
+    // mid-block (FlushForReadback) resolves what is written so far, the last
+    // submit the rest.
+    if(!TimestampHeap || !InList)
+    {
+        return;
+    }
+    for(uint32_t Index = 0; Index < GDI_GPU_TIMESTAMP_MAX; ++Index)
+    {
+        if(TimestampsWritten & (uint64_t(1) << Index))
+        {
+            InList->ResolveQueryData(TimestampHeap.Get(), D3D12_QUERY_TYPE_TIMESTAMP, Index, 1, TimestampReadback.Get(),
+                                     sizeof(uint64_t) * Index);
+        }
+    }
+    TimestampsResolved |= TimestampsWritten;
+}
+
+void D3D12DynamicGDI::CollectTimestamps()
+{
+    PreviousTimestamps = 0;
+    if(!TimestampReadback || TimestampsResolved == 0)
+    {
+        TimestampsWritten = 0;
+        return;
+    }
+    D3D12_RANGE Range{ 0, sizeof(uint64_t) * GDI_GPU_TIMESTAMP_MAX };
+    void* Mapped = nullptr;
+    if(SUCCEEDED(TimestampReadback->Map(0, &Range, &Mapped)) && Mapped)
+    {
+        const uint64_t* Ticks = static_cast<const uint64_t*>(Mapped);
+        for(uint32_t Index = 0; Index < GDI_GPU_TIMESTAMP_MAX; ++Index)
+        {
+            if(TimestampsResolved & (uint64_t(1) << Index))
+            {
+                PreviousTimestampMs[Index] = double(Ticks[Index]) / TimestampTicksPerMs;
+            }
+        }
+        D3D12_RANGE Nothing{ 0, 0 };
+        TimestampReadback->Unmap(0, &Nothing);
+        PreviousTimestamps = TimestampsResolved;
+    }
+    TimestampsWritten  = 0;
+    TimestampsResolved = 0;
+}
+
+uint64_t D3D12DynamicGDI::GetPreviousGPUTimestamps(double* OutMilliseconds)
+{
+    for(uint32_t Index = 0; Index < GDI_GPU_TIMESTAMP_MAX; ++Index)
+    {
+        if(PreviousTimestamps & (uint64_t(1) << Index))
+        {
+            OutMilliseconds[Index] = PreviousTimestampMs[Index];
+        }
+    }
+    return PreviousTimestamps;
 }
 
 #pragma endregion

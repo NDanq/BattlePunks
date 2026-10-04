@@ -535,3 +535,21 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
 IMPLEMENT_GDI_FUNCTION_BODY(void,
                             EndDrawEvent,
                             (),,())
+
+bool GDISupportsGPUTimestamps()
+{
+    return GDynamicGDI && GDynamicGDI->SupportsGPUTimestamps();
+}
+
+void GDIWriteGPUTimestamp(const uint32_t InIndex)
+{
+    if(GDynamicGDI && InIndex < GDI_GPU_TIMESTAMP_MAX)
+    {
+        GDynamicGDI->WriteGPUTimestamp(InIndex);
+    }
+}
+
+uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds)
+{
+    return GDynamicGDI && OutMilliseconds ? GDynamicGDI->GetPreviousGPUTimestamps(OutMilliseconds) : 0;
+}

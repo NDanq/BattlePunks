@@ -52,13 +52,24 @@ namespace RenderCore
         float FrameMs        = 0.0f;
         float GameThreadMs   = 0.0f;
         float RenderThreadMs = 0.0f;
-        bool  bShow          = false;
+        bool  bShow          = false;   // Stats.Unit
+        bool  bShowFrame     = false;   // Stats.Frame
     };
     void             SetStatUnit(const StatUnitSnapshot& InSnapshot);
     StatUnitSnapshot GetStatUnit();
 
     /* The overlay's text, a line each: Frame, Game, Render (ms), and FPS. */
     RENDERCORE_API std::string FormatStatUnit(const StatUnitSnapshot& InSnapshot);
+
+    /* "stat frame"'s text: a heading, then a line per ERenderGpuTimer with its
+     * milliseconds ("-" where InGpuMs is negative: not timed); one line saying
+     * so if this backend cannot time the GPU. */
+    RENDERCORE_API std::string FormatStatFrame(const float* InGpuMs, bool bInSupported);
+
+    /* The stats-reporting scene's GPU times, for RenderThread::GetStats
+     * (RenderStats::GpuMs): RGT_Count of them. */
+    void SetReportedGpuTimes(const float* InGpuMs);
+    void GetReportedGpuTimes(float* OutGpuMs);
 }
 
 #endif //RENDERCORE_RENDERTHREADINTERNAL_H

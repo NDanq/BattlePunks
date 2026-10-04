@@ -339,6 +339,49 @@ render thread times, and FPS, in a panel at the top right of every viewport.
   made on first use. The panel is placed from the quad's UV rather than
   `gl_FragCoord`, whose origin differs between backends.
 
+### Stat frame
+
+**Stats.Frame** (config var, off by default) adds each stage's **GPU** time to
+the same panel. Toggle it with `stat frame` in the editor console, or set
+`[Stats] Frame=true` in a game's ini.
+
+**The spans** (`ERenderGpuTimer`) are PrePass, BasePass, AO, Shadows,
+Lighting, Forward (Unlit and the translucent stages), PostProcess, and Total
+(from the scene's clear to the end of the post process).
+
+**How a scene is timed:**
+- `RenderSceneStages(..., bInTimed)` writes a GPU timestamp before and after
+  each span (`GDIWriteGPUTimestamp`, indices `2t` and `2t + 1`).
+- It does this only for the scene's own frame, and only while Stats.Frame is
+  on, so a preview in the same block does not overwrite them and timing costs
+  nothing when it is off.
+- A span that does not run (no G-buffer, so no AO, Shadows or Lighting) shows
+  `-`.
+
+**Getting the results back:**
+- A GDI block (`GDIBeginRendering` to `GDIEndRendering`, one scene's render)
+  is complete by the next block's start, because the backends keep one frame
+  in flight.
+- So `RenderScene::Render`, right after `GDIBeginRendering`, takes the
+  previous block's times (`RenderContext::BeginTimedBlock`) and gives them to
+  the scene that wrote them. With several viewports, that is usually another
+  scene.
+- Each scene averages its times over half a second. The stats-reporting scene
+  also publishes them to `RenderStats::GpuMs`.
+
+**GDI timestamps** (`GDIDynamicDriver::WriteGPUTimestamp` /
+`GetPreviousGPUTimestamps`), up to `GDI_GPU_TIMESTAMP_MAX` (64) per block:
+
+| Backend | How |
+|---|---|
+| Vulkan | a 64-query `VK_QUERY_TYPE_TIMESTAMP` pool. It is reset at each `BeginRendering`, after the previous block's results are read (no wait: its fence was just waited). Writes use `vkCmdWriteTimestamp2` (ALL_COMMANDS), and ticks are scaled by `timestampPeriod` and the queue's `timestampValidBits`. Off if the queue cannot time. |
+| D3D12 | a timestamp query heap, `EndQuery`. Every submit, including a mid-block `FlushForReadback`, resolves the queries into a readback buffer, which is read at the next `BeginRendering`. Ticks are divided by the queue's `GetTimestampFrequency`. |
+| OpenGL | `glQueryCounter(GL_TIMESTAMP)`, read with `GL_QUERY_RESULT` at the next `BeginRendering`. That waits for the previous block, as the other backends' fences do, and only while timing. |
+| Metal, Null | none: the panel says the GPU is not timed. |
+
+Verified on Vulkan, including under the Khronos validation layer. The D3D12
+and OpenGL code builds only on Windows, and has not been compiled or run yet.
+
 ### Previews
 
 A material preview runs the same stages into its own small set of targets, so an

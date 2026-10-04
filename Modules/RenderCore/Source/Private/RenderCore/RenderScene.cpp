@@ -1,6 +1,8 @@
 #include "Public/RenderCore/RenderScene.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <utility>
 #include <vector>
 
@@ -23,6 +25,13 @@
 
 namespace RenderCore
 {
+    namespace
+    {
+        /* Every live scene, so a GDI block's GPU times reach the scene that
+         * wrote them a block later ("stat frame"). Render thread only. */
+        std::vector<RenderScene*> GLiveScenes;
+    }
+
     struct RenderScene::Impl
     {
         std::vector<RenderProxy*> Proxies;
@@ -33,6 +42,42 @@ namespace RenderCore
 #endif
         RenderView                View;
         EngineCore::Color         ClearColor{24, 26, 32, 255};
+
+        /* "stat frame": GPU times per ERenderGpuTimer, summed over the current
+         * half second, and the last half second's averages (-1: not timed). */
+        double  GpuSums[RGT_Count]   = {};
+        int     GpuSamples[RGT_Count] = {};
+        int64_t GpuWindowStartNs     = 0;
+        float   GpuMs[RGT_Count]     = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+
+        void AddGpuTimes(const float (&InGpuMs)[RGT_Count])
+        {
+            const int64_t Now = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now().time_since_epoch()).count();
+            if(GpuWindowStartNs == 0) { GpuWindowStartNs = Now; }
+            for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+            {
+                if(InGpuMs[Timer] >= 0.0f) { GpuSums[Timer] += InGpuMs[Timer]; ++GpuSamples[Timer]; }
+            }
+            if(Now - GpuWindowStartNs >= 500'000'000)
+            {
+                for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+                {
+                    GpuMs[Timer] = GpuSamples[Timer] > 0 ? float(GpuSums[Timer] / GpuSamples[Timer]) : -1.0f;
+                    GpuSums[Timer]    = 0.0;
+                    GpuSamples[Timer] = 0;
+                }
+                GpuWindowStartNs = Now;
+                if(bReportsStats) { SetReportedGpuTimes(GpuMs); }
+            }
+        }
+
+        void ClearGpuTimes()
+        {
+            for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer) { GpuSums[Timer] = 0.0; GpuSamples[Timer] = 0; GpuMs[Timer] = -1.0f; }
+            GpuWindowStartNs = 0;
+            if(bReportsStats) { SetReportedGpuTimes(GpuMs); }
+        }
         RenderLighting            Lighting;
         RenderPostProcess         PostProcess;
 
@@ -72,10 +117,12 @@ namespace RenderCore
 
     RenderScene::RenderScene() : P(new Impl())
     {
+        GLiveScenes.push_back(this);
     }
 
     RenderScene::~RenderScene()
     {
+        GLiveScenes.erase(std::remove(GLiveScenes.begin(), GLiveScenes.end(), this), GLiveScenes.end());
         if(!P->Proxies.empty())
         {
             RENDERCORE_LOG_WARN("RenderScene destroyed with proxies still present; "
@@ -189,6 +236,22 @@ namespace RenderCore
         }
 
         GDIBeginRendering();
+
+        /* "stat frame": the last GDI block's GPU times, to the scene that wrote
+         * them (they are complete only now), and this block's own, if shown. */
+        const StatUnitSnapshot Stats = GetStatUnit();
+        {
+            float GpuMs[RGT_Count];
+            const void* Owner = InContext.BeginTimedBlock(this, Stats.bShowFrame, GpuMs);
+            for(RenderScene* Each : GLiveScenes)
+            {
+                if(Each == Owner) { Each->P->AddGpuTimes(GpuMs); }
+            }
+            if(!Stats.bShowFrame && P->GpuWindowStartNs != 0)
+            {
+                P->ClearGpuTimes();
+            }
+        }
 
 #if WITH_EDITOR
         /* Previews FIRST, before the scene's own stages, so the scene's final
@@ -307,7 +370,7 @@ namespace RenderCore
 
         /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
          * leaves the final colour bound, for the present and the overlay. */
-        InContext.RenderSceneStages(P->Targets, P->ClearColor);
+        InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true);
 
 #if WITH_EDITOR
         /* Read back before the overlay; the readback flushes and resumes the frame. */
@@ -345,12 +408,17 @@ namespace RenderCore
         }
 #endif
 
-        /* "stat unit" (Stats.Unit) over everything, after the readback above
-         * so a capture never shows it. */
-        const StatUnitSnapshot Unit = GetStatUnit();
-        if(Unit.bShow)
+        /* "stat unit" (Stats.Unit) and "stat frame" (Stats.Frame) over
+         * everything, in one panel, after the readback above so a capture
+         * never shows them. */
+        if(Stats.bShow || Stats.bShowFrame)
         {
-            InContext.DrawStatUnit(P->Targets.Width, P->Targets.Height, FormatStatUnit(Unit));
+            std::string Text = Stats.bShow ? FormatStatUnit(Stats) : std::string();
+            if(Stats.bShowFrame)
+            {
+                Text += (Text.empty() ? "" : "\n\n") + FormatStatFrame(P->GpuMs, InContext.CanTimeGpu());
+            }
+            InContext.DrawStatUnit(P->Targets.Width, P->Targets.Height, Text);
         }
 
         GDIEndRendering();

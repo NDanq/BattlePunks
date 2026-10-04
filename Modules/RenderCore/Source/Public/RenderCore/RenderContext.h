@@ -174,7 +174,15 @@ namespace RenderCore
         uint32_t              PrepareShadows();
         const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
         void                  SetShadowCasterView(int32_t InView);
-        void RenderSceneStages(SceneTargets& InTargets, EngineCore::Color InClearColor);
+        /* bInTimed: write "stat frame"'s GPU timestamps around each stage --
+         * a scene's own frame only, once per GDI block (BeginTimedBlock). */
+        void RenderSceneStages(SceneTargets& InTargets, EngineCore::Color InClearColor, bool bInTimed = false);
+
+        /* RenderScene::Render's, right after GDIBeginRendering: hands back the
+         * previous GDI block's stage times (ms per ERenderGpuTimer, -1 where
+         * not timed) and the scene that wrote them -- null if none did -- and
+         * notes InOwner as this block's, if bInTime and the backend can time. */
+        const void* BeginTimedBlock(const void* InOwner, bool bInTime, float (&OutGpuMs)[RGT_Count]);
 
         /* Both DrawMesh overloads: bInEvery puts InSlots[0] in every slot. */
         bool DrawMeshSections(const RenderTransform& InTransform, const char* InMeshPath, EngineCore::Color InTint,
@@ -198,6 +206,7 @@ namespace RenderCore
          * by '\n', in a panel at the top right of the bound InWidth x
          * InHeight target, blended over it (StatsOverlay.fsh). */
         void DrawStatUnit(uint32_t InWidth, uint32_t InHeight, const std::string& InText);
+        bool CanTimeGpu() const;
 
         /* Renderer::MountShaderCache's command: reads
          * Shaders/Cache/<Module>.<Platform>.nmsc and mounts it as a file layer

@@ -100,6 +100,8 @@ void D3D12DynamicGDI::Allocate()
 
     CurrentStateData = new D3D12CurrentStateData();
 
+    CreateTimestampHeap();
+
     bInitialized = true;
     GDI_LOG("[D3D12DynamicGDI] Allocate complete.")
 }
@@ -124,6 +126,9 @@ void D3D12DynamicGDI::Destroy()
     }
 
     delete CurrentStateData; CurrentStateData = nullptr;
+
+    TimestampHeap.Reset();
+    TimestampReadback.Reset();
 
     if(ScreenMesh)  { ScreenMesh->Release();  delete ScreenMesh;  ScreenMesh  = nullptr; }
     if(NullTexture) { NullTexture->Release(); delete NullTexture; NullTexture = nullptr; }
@@ -221,6 +226,7 @@ void D3D12DynamicGDI::PrepareCommandList(ID3D12GraphicsCommandList* InList)
 
 void D3D12DynamicGDI::SubmitFrame()
 {
+    ResolveTimestamps(CommandManager->GetCommandList());
     CommandManager->EndFrame();
 
     std::lock_guard<std::mutex> QueueLock(DeviceObj->GetQueueMutex());

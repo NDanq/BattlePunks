@@ -32,6 +32,10 @@
  * (RenderScene::Render). The editor's console toggles it with "stat unit". */
 NIMBLE_CONFIG_BOOL(GStatsUnit, "Stats", "Unit", false, nullptr);
 
+/* "stat frame": each viewport's GPU time per stage of its frame
+ * (ERenderGpuTimer), where the backend can time the GPU. */
+NIMBLE_CONFIG_BOOL(GStatsFrame, "Stats", "Frame", false, nullptr);
+
 namespace RenderCore
 {
     namespace
@@ -129,7 +133,8 @@ namespace RenderCore
             BlockedNs   = 0;
 
             StatUnitSnapshot Unit = GetStatUnit();
-            Unit.bShow = GStatsUnit.GetBool();
+            Unit.bShow      = GStatsUnit.GetBool();
+            Unit.bShowFrame = GStatsFrame.GetBool();
             if(Samples > 0 && InEndNs - WindowStartNs >= 500'000'000)
             {
                 Unit.FrameMs        = float(SumFrame / Samples / 1.0e6);

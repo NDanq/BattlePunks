@@ -180,6 +180,8 @@ void VulkanDynamicGDI::Allocate()
     SemInfo.pNext = &TimelineType;
     vkCreateSemaphore(DeviceObj->GetDevice(), &SemInfo, nullptr, &RenderTimeline);
 
+    CreateTimestampPool();
+
     // Swapchains are created on the UI thread, one per window, by the first
     // present to it (FindOrCreateSwapchain).
 
@@ -247,6 +249,11 @@ void VulkanDynamicGDI::Destroy()
     {
         vkDestroySemaphore(DeviceObj->GetDevice(), RenderTimeline, nullptr);
         RenderTimeline = VK_NULL_HANDLE;
+    }
+    if(DeviceObj && DeviceObj->IsValid() && TimestampPool != VK_NULL_HANDLE)
+    {
+        vkDestroyQueryPool(DeviceObj->GetDevice(), TimestampPool, nullptr);
+        TimestampPool = VK_NULL_HANDLE;
     }
 
     if(DeviceObj)
