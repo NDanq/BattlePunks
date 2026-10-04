@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
@@ -167,6 +168,22 @@ namespace RenderCore
 
         /* The scene block's light and ambient (RenderScene, once a frame). */
         void SetLighting(const RenderLighting& InLighting);
+
+        /* ERenderViewMode::Unlit for the stages that follow: base colour and
+         * emissive, no light (DeferredLighting.fsh). RenderScene sets it for
+         * its own view only, and clears it after. */
+        void SetUnlit(bool bInUnlit);
+
+        /* Every colour target a view can show in its place (ERenderViewMode::
+         * RenderTarget): InTargets' stages, the shadow atlases, the image-based
+         * lighting atlas and strip, and every render target asset captured,
+         * by readable name. Render thread. */
+        void ListViewableTargets(const SceneTargets& InTargets, std::vector<std::string>& OutNames) const;
+
+        /* The one ListViewableTargets names InName, stretched over
+         * InTargets.Final, which stays bound for the present; nothing if it
+         * names none, or Final itself. */
+        void ShowTarget(const SceneTargets& InTargets, const std::string& InName);
 
         /* RenderScene::Render's: queue the proxies' draws in their stages'
          * policies, then run the stages into InTargets (RENDERPIPELINE.md),

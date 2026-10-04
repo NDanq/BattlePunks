@@ -2,6 +2,8 @@
 #define RENDERCORE_RENDERSCENE_H
 
 #include <cstddef>
+#include <string>
+#include <vector>
 
 #include "Public/Core/CoreTypes.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
@@ -82,6 +84,15 @@ namespace RenderCore
          * re-sent every frame by WorldBridge. */
         void SetLighting(const RenderLighting& InLighting);
         void SetPostProcess(const RenderPostProcess& InPostProcess);
+
+        /* What the view shows (Renderer::SetViewMode): its picture, Unlit, or
+         * the render target named InTarget -- one of GetViewableTargets(); the
+         * picture while it names none. Render thread. */
+        void SetViewMode(ERenderViewMode InMode, const std::string& InTarget);
+
+        /* The render targets the last Render() could have shown, by name
+         * (RenderContext::ListViewableTargets). Any thread. */
+        std::vector<std::string> GetViewableTargets() const;
 
         /* This frame's scene captures (WorldBridge): rendered into their
          * render targets at the start of the next Render(), before the

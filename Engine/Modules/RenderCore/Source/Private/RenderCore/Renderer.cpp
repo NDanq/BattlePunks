@@ -5,6 +5,7 @@
 #include <cstring>
 #include <iterator>
 #include <type_traits>
+#include <cstdio>
 #include <vector>
 
 #include "Public/Core/CoreConfig.h"
@@ -764,6 +765,28 @@ namespace RenderCore
         {
             Scene->SetClearGradient(InTop, InBottom);
         });
+    }
+
+    void Renderer::SetViewMode(const RenderSceneID InScene, const ERenderViewMode InMode, const std::string& InTarget)
+    {
+        const RendererScene* Found = P->Find(InScene);
+        if(!Found || !Found->Scene)
+        {
+            return;
+        }
+        struct TargetName { char Text[160]; } Name = {};
+        std::snprintf(Name.Text, sizeof(Name.Text), "%s", InTarget.c_str());
+        RenderScene* Scene = Found->Scene;
+        ENQUEUE_RENDER_COMMAND(SetViewMode)([Scene, InMode, Name](RenderContext&)
+        {
+            Scene->SetViewMode(InMode, Name.Text);
+        });
+    }
+
+    std::vector<std::string> Renderer::GetViewableTargets(const RenderSceneID InScene) const
+    {
+        const RendererScene* Found = P->Find(InScene);
+        return Found && Found->Scene ? Found->Scene->GetViewableTargets() : std::vector<std::string>();
     }
 
     void Renderer::GetStats(RenderStats& OutStats) const

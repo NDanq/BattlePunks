@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <mutex>
 #include <utility>
 #include <vector>
 
@@ -41,6 +42,13 @@ namespace RenderCore
     struct RenderScene::Impl
     {
         std::vector<RenderProxy*> Proxies;
+
+        /* The view mode, and the targets a frame could show: names under
+         * TargetsLock, for the game thread. */
+        ERenderViewMode           ViewMode = ERenderViewMode::Lit;
+        std::string               ViewTarget;
+        mutable std::mutex        TargetsLock;
+        std::vector<std::string>  TargetNames;
 
         /*
          * STATIC DRAW LISTS (RENDERPIPELINE.md): a static proxy's draws, shadow
@@ -575,6 +583,18 @@ namespace RenderCore
         P->Lighting = InLighting;
     }
 
+    void RenderScene::SetViewMode(const ERenderViewMode InMode, const std::string& InTarget)
+    {
+        P->ViewMode   = InMode;
+        P->ViewTarget = InTarget;
+    }
+
+    std::vector<std::string> RenderScene::GetViewableTargets() const
+    {
+        std::lock_guard<std::mutex> Guard(P->TargetsLock);
+        return P->TargetNames;
+    }
+
     void RenderScene::SetPostProcess(const RenderPostProcess& InPostProcess)
     {
         P->PostProcess = InPostProcess;
@@ -735,7 +755,22 @@ namespace RenderCore
 
         /* Base Pass, Lighting, Unlit, the translucent stages, PostProcess;
          * leaves the final colour bound, for the present and the overlay. */
+        InContext.SetUnlit(P->ViewMode == ERenderViewMode::Unlit);
         InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true, P->bClearGradient ? &P->ClearBottom : nullptr);
+        InContext.SetUnlit(false);
+
+        /* The targets this frame drew, for the view mode's list; one of them
+         * over the picture in the Render Target view mode. */
+        {
+            if(P->ViewMode == ERenderViewMode::RenderTarget)
+            {
+                InContext.ShowTarget(P->Targets, P->ViewTarget);
+            }
+            std::vector<std::string> Names;
+            InContext.ListViewableTargets(P->Targets, Names);
+            std::lock_guard<std::mutex> Guard(P->TargetsLock);
+            if(Names != P->TargetNames) { P->TargetNames = std::move(Names); }
+        }
 
 #if WITH_EDITOR
         /* Read back before the overlay; the readback flushes and resumes the frame. */

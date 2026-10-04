@@ -535,6 +535,26 @@ the texel under a box is in its shadow, a probe's downward face sees the
 floor's bounce, a white sky lights an open floor fully and a red wall tints
 the floor beside it. LightLab's BakedLighting level, on Vulkan, in both views.
 
+### View modes
+
+What a scene's view shows (`Renderer::SetViewMode`, `ERenderViewMode`; the
+editor's Show > View Mode):
+
+- **Lit:** the picture.
+- **Unlit:** base colour plus emissive, no light. `Scene_View.x` tells the
+  Lighting stage to write that and the IBL pass to add nothing; a Base Pass
+  draw adds no baked light, and a forward Lit material shades as Unlit.
+- **Render Target:** after the stages, one of the frame's targets is drawn
+  over the final colour (`RenderContext::ShowTarget`, `ViewTarget.fsh`),
+  stretched to the view. A colour target shows as it is; a shadow atlas's
+  depth in grey; the scene's depth as distance from the eye. Each frame lists
+  them by name (`RenderContext::ListViewableTargets`), which
+  `Renderer::GetViewableTargets` hands to the game thread: the scene's stage
+  targets, the shadow atlases, the image-based lighting atlas and cube strip,
+  and every render target asset captured.
+
+The screenshot (`Renderer::RequestSceneCapture`) reads what the mode shows.
+
 ### Scene capture
 
 A **Scene Capture Probe** component (`Components/SceneCaptureProbeComponent.h`)

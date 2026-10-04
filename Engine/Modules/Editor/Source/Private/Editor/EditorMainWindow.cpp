@@ -471,8 +471,6 @@ void EditorMainWindow::BuildMenus()
     });
 
     View->addSeparator();
-    View->addAction(ViewportArea->GetShowAllBoundsAction());
-    View->addAction(ViewportArea->GetShowLightGizmosAction());
 
     /* [Rendering] BakedLighting: draw with the world's bake, or light every light live. */
     QMenu* LightingMenu = View->addMenu(QStringLiteral("&Lighting"));
@@ -957,6 +955,33 @@ void EditorMainWindow::RegisterConsoleCommands()
         {
             Console.PrintError(QStringLiteral("Usage: lighting <bake | baked | lit>"));
         }
+    });
+
+    Console.Register(QStringLiteral("viewmode"), QStringLiteral("<lit | unlit | target [name]>"),
+                     QStringLiteral("The viewport's Show > View Mode; \"target\" alone lists the render targets it can show"),
+                     [this](const QStringList& InArgs)
+    {
+        const QString Mode = InArgs.isEmpty() ? QString() : InArgs[0];
+        if(Mode == QStringLiteral("lit"))        { Context.SetViewMode(RenderCore::ERenderViewMode::Lit); }
+        else if(Mode == QStringLiteral("unlit")) { Context.SetViewMode(RenderCore::ERenderViewMode::Unlit); }
+        else if(Mode == QStringLiteral("target"))
+        {
+            const QStringList Targets = Context.GetViewableTargets();
+            const QString Name = InArgs.mid(1).join(QLatin1Char(' '));
+            if(Name.isEmpty() || !Targets.contains(Name))
+            {
+                if(!Name.isEmpty()) { Console.PrintError(QStringLiteral("No render target named \"%1\"").arg(Name)); }
+                Console.Print(QStringLiteral("Render targets: %1").arg(Targets.isEmpty() ? QStringLiteral("none yet") : Targets.join(QStringLiteral(", "))));
+                return;
+            }
+            Context.SetViewMode(RenderCore::ERenderViewMode::RenderTarget, Name);
+        }
+        else
+        {
+            Console.PrintError(QStringLiteral("Usage: viewmode <lit | unlit | target [name]>"));
+            return;
+        }
+        ViewportArea->RefreshViewMode();
     });
 
     Console.Register(QStringLiteral("save"), QString(), QStringLiteral("File > Save World (Ctrl+S)"),

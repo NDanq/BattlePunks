@@ -12,6 +12,7 @@
 #include <QImage>
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QTimer>
 
 #include "Public/Core/CoreFileProvider.h"
@@ -95,6 +96,16 @@ public:
 
     /* False, leaving OutStats untouched, when the Renderer is not running. */
     bool GetRenderStats(RenderCore::RenderStats& OutStats) const;
+
+    /* What the viewport shows (Renderer::SetViewMode; Show > View Mode): kept
+     * here, so a renderer started later takes it too. */
+    void SetViewMode(RenderCore::ERenderViewMode InMode, const QString& InTarget = QString());
+    RenderCore::ERenderViewMode GetViewMode() const { return ViewMode; }
+    const QString&              GetViewTarget() const { return ViewTarget; }
+
+    /* The render targets the viewport's last frame drew, by name: what the
+     * Render Target view mode can show. Empty without a renderer. */
+    QStringList GetViewableTargets() const;
 
     // === Viewports ==========================================================
     // The context drives ONE frame for every viewport, on its own timer (from
@@ -215,6 +226,8 @@ private:
     EditorDocument*       Level    = nullptr;
     RenderCore::Renderer* Renderer = nullptr;
     bool                  bRendererReady = false;
+    RenderCore::ERenderViewMode ViewMode = RenderCore::ERenderViewMode::Lit;
+    QString                     ViewTarget;
     RenderCore::ERenderBackend Backend   = RenderCore::ERenderBackend::Null;
 
     PlaySession*       Play = nullptr;

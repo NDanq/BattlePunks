@@ -21,7 +21,7 @@ void main(void)
 {
     ivec2 Texel = ivec2(gl_FragCoord.xy);
     vec4  Gb1   = texelFetch(GBuffer1, Texel, 0);
-    if(Gb1.a < 0.5) { discard; }
+    if(Gb1.a < 0.5 || Scene_View.x > 0.5) { discard; }   // unlit pixels, and every pixel in the Unlit view mode
     vec4  Gb0   = texelFetch(GBuffer0, Texel, 0);
     vec4  Gb2   = texelFetch(GBuffer2, Texel, 0);
     float Depth = texelFetch(SceneDepth, Texel, 0).r;

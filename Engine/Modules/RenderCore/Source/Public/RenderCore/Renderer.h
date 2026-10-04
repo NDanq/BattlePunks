@@ -144,6 +144,15 @@ namespace RenderCore
          * "Background"). SetClearColor goes back to one colour. */
         void SetClearGradient(RenderSceneID InScene, EngineCore::Color InTop, EngineCore::Color InBottom);
 
+        /* What InScene's view shows (RenderTypes.h's ERenderViewMode): Lit,
+         * Unlit, or the render target named InTarget -- one of
+         * GetViewableTargets() -- stretched over it. GAME THREAD ONLY. */
+        void SetViewMode(RenderSceneID InScene, ERenderViewMode InMode, const std::string& InTarget = std::string());
+
+        /* The render targets InScene's last frame drew, by name, for
+         * SetViewMode. Empty before its first frame. Any thread. */
+        std::vector<std::string> GetViewableTargets(RenderSceneID InScene) const;
+
 #if WITH_EDITOR
         // === Editor only =====================================================
         // Compiled out of Client and Server targets.

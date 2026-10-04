@@ -72,8 +72,8 @@ uses it.
 | `SettingsDialog` (private) | Edit > Editor Settings: the `[Editor]` config vars as a form, saved to the user's `EditorSettings.ini` |
 | `SourceBuild` (private) | Build > Compile Source: runs `cmake --build` on the editor's own build tree (`EditorBuildTree.h.in`) in the background, logging its output |
 | `AboutDialog` (private) | Help > About: the commit and build this editor came from (`EditorBuildInfo.h.in`, stamped by Core's `GitVersion.cmake` on every build), plus configuration, target, compiler, Qt and renderer; Copy to Clipboard for bug reports |
-| `ViewportPanel` | Navigation toolbar (view presets, framing, bounds toggle, speed) over the viewport |
-| `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow, a scene capture probe's mirror rectangle and normal or its box and reach; all lights or the selected one, View > Light Gizmos), a perspective game camera's frustum |
+| `ViewportPanel` | Navigation toolbar (view presets, framing, the Show menu, speed) over the viewport |
+| `ViewportWidget` + `EditorCamera` | Native render surface, fly/orbit camera, click-to-select (lights by their position), selection bounds, axis gizmo, light gizmos (a point light's sphere, a spot's cone, the sun's arrow, a scene capture probe's mirror rectangle and normal or its box and reach; all lights or the selected one, Show > Editor Gizmos > Light Gizmos), a perspective game camera's frustum |
 | `EditorPrimitives` (private) | World > Add Primitive and the Outliner's Add Primitive: the engine's Box, Sphere, Cylinder, Capsule or Plane mesh on a new entity, sized to see, in one undo step |
 | `EditorLights` (private) | World > Add Light and the Outliner's Add Light: a light entity in one undo step, aimed down when it has a direction; also a Reflection Probe, and a Scene Capture (Omni) or (Mirror) probe |
 | `Content/RenderTargetAssets` (private) | Render target assets: New Render Target 2D / 3D (Cube), the settings dialog, World > Bake Scene Captures |
@@ -347,8 +347,23 @@ boxes: the handle mode (Select, Move, Rotate, Scale), the space (World,
 Local), then Snap; the view preset (Persp, Front, Back, Top, Bottom, Left,
 Right -- each orbits about the pivot to that axis; picking the shown one again
 snaps back to it); a **Frame** button (the selection -- its arrow menu has
-Frame All); All Bounds; and camera speed (1/8x to 8x). The combo boxes never
+Frame All); **Show**; and camera speed (1/8x to 8x). The combo boxes never
 take keyboard focus, so the viewport's keys keep working after one is used.
+
+**Show** is a menu of what the viewport draws (`viewmode` in the Console too):
+
+- **View Mode** (`Renderer::SetViewMode`, RenderCore's RENDERPIPELINE.md,
+  "View modes"):
+  - **Lit**: the scene as it is lit.
+  - **Unlit**: base colour and emissive as they are -- no light, baked or live.
+  - **Render Target...**: asks, in a list, which render target the last frame
+    drew to show over the view -- scene colour and depth, the four G-buffer
+    targets, post process, ambient occlusion and bloom, the shadow atlases, the
+    image-based lighting atlas and strip, and every render target asset
+    captured. The button then names it.
+- **Editor Gizmos**: **All Bounds** (every entity's box, not only the
+  selection's) and **Light Gizmos** (every light's reach, not only the
+  selected light's).
 "Top" looks down from world +Y: the editor uses the engine's left-handed,
 +Y-up axes (RenderCore's RenderView.h).
 
@@ -507,6 +522,7 @@ registered:
 | `create [name]`, `delete [name \| #index]` | As the Edit menu |
 | `frame [all]` | Frame the selection, or the scene |
 | `scene <new \| sandbox>` | As the File menu |
+| `viewmode <lit \| unlit \| target [name]>` | Show > View Mode; `target` alone lists the render targets it can show |
 | `save` | File > Save World (the world must have a file) |
 | `quit` | File > Exit, which still asks about unsaved changes |
 | `lighting <bake \| baked \| lit>` | Build > Bake Lightmaps, or View > Lighting > Baked / Lit |

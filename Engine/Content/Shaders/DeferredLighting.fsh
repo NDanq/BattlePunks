@@ -68,6 +68,13 @@ void main(void)
     Surface.Opacity          = 1.0;
     Surface.OpacityMask      = 1.0;
 
+    // Unlit view mode: the surface's colour and its glow, no light at all.
+    if(Scene_View.x > 0.5)
+    {
+        Output = vec4(ToSceneColor(ToLinear(Surface.BaseColor) + ToLinear(Surface.Emissive)), 1.0);
+        return;
+    }
+
     // A baked surface carries its diffuse ambient in its emissive (BakedLighting.glsl).
     float AmbientDiffuse = Gb1.a < 0.875 ? 0.0 : 1.0;
     vec3 Color = ToSceneColor(ToLinear(Surface.Emissive) + ShadeSurface(Surface, WorldPosition, Surface.Normal, AmbientDiffuse));
