@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <string>
 #include <vector>
 
 #include <QElapsedTimer>
@@ -181,6 +182,11 @@ private:
         RenderCore::RenderSceneID Scene    = RenderCore::RENDER_INVALID_SCENE;
     };
     std::vector<DocumentScene>         DocumentScenes;   // documents other than the level
+
+    /* Editor.Viewport* (the background gradient) onto every scene, when they
+     * change; AppliedBackground is what was last sent ("" sends again). */
+    void        ApplyBackground();
+    std::string AppliedBackground;
     std::vector<EditorViewportClient*> Viewports;
 
     QTimer                    FrameTimer;

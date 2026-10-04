@@ -70,13 +70,13 @@ namespace RenderCore
         {
             PP_DofPrepare, PP_DofBlur, PP_DofComposite, PP_MotionBlur,
             PP_BloomDownsample, PP_BloomUpsample, PP_BloomComposite, PP_Fxaa,
-            PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay,
+            PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
             "PPBloomDownsample.fsh", "PPBloomUpsample.fsh", "PPBloomComposite.fsh", "PPFxaa.fsh",
-            "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh",
+            "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -1981,7 +1981,8 @@ namespace RenderCore
         return Written ? Previous : nullptr;
     }
 
-    void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor, const bool bInTimed)
+    void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor, const bool bInTimed,
+                                          const EngineCore::Color* InClearBottom)
     {
         /* Timed only for the block's owning scene: a preview's stages in the
          * same block would write the same indices. */
@@ -2029,6 +2030,27 @@ namespace RenderCore
         P->StageTimestamp(RGT_Total, false);
         BindTargets(&SceneColor, 1, SceneColor);
         GDIClear(CM_Color | CM_Depth, InClearColor);
+
+        /* The background gradient, over the clear and under everything: the
+         * Lighting stage writes lit pixels only, so it shows wherever the
+         * clear colour would. */
+        if(InClearBottom)
+        {
+            PostBlock Block;
+            const auto Put = [](float (&OutColor)[4], const EngineCore::Color InColor)
+            {
+                OutColor[0] = float(InColor.R) / 255.0f;
+                OutColor[1] = float(InColor.G) / 255.0f;
+                OutColor[2] = float(InColor.B) / 255.0f;
+                OutColor[3] = 1.0f;
+            };
+            Put(Block.A, InClearColor);
+            Put(Block.Sizes, *InClearBottom);
+            if(P->DrawPost(PP_ClearGradient, SceneColor, InTargets.Width, InTargets.Height, {}, Block))
+            {
+                BindTargets(&SceneColor, 1, SceneColor);   // the depth back for the stages
+            }
+        }
 
         /* PrePass: RenderScene culled before the draws were queued. */
         P->StageTimestamp(RGT_PrePass, false);

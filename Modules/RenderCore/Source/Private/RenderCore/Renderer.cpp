@@ -717,6 +717,20 @@ namespace RenderCore
         });
     }
 
+    void Renderer::SetClearGradient(const RenderSceneID InScene, const EngineCore::Color InTop, const EngineCore::Color InBottom)
+    {
+        const RendererScene* Found = P->Find(InScene);
+        if(!Found || !Found->Scene)
+        {
+            return;
+        }
+        RenderScene* Scene = Found->Scene;
+        ENQUEUE_RENDER_COMMAND(SetClearGradient)([Scene, InTop, InBottom](RenderContext&)
+        {
+            Scene->SetClearGradient(InTop, InBottom);
+        });
+    }
+
     void Renderer::GetStats(RenderStats& OutStats) const
     {
         P->Thread.GetStats(OutStats);

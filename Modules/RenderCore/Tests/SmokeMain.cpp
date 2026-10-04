@@ -2442,6 +2442,101 @@ static void TestStaticDrawListsOnGpu()
 }
 
 /*
+ * The background gradient (Renderer::SetClearGradient): top colour at the top
+ * of the view, bottom at the bottom, under what is drawn; SetClearColor back
+ * to one colour.
+ */
+static void TestClearGradientOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[background gradient on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[background gradient on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 300.0, -800.0), Vector3(0.0, -300.0, 800.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        /* A lit box in the middle, to show the gradient stays under it. */
+        const GameCore::Entity Box = World.CreateEntity("Box");
+        GameCore::TransformComponent At;
+        At.Scale = Vector3(120.0, 120.0, 120.0);
+        Box.AddComponent(At);
+        RenderComponent Mesh;
+        std::snprintf(Mesh.Mesh, sizeof(Mesh.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        Box.AddComponent(Mesh);
+        World.CreateEntity("Sky").AddComponent(SkyLightComponent());
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto At_ = [](const EngineCore::Image& InPixels, const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+        const auto Near = [](const int (&InRgb)[3], const int InR, const int InG, const int InB, const int InSlack)
+        {
+            return std::abs(InRgb[0] - InR) <= InSlack && std::abs(InRgb[1] - InG) <= InSlack && std::abs(InRgb[2] - InB) <= InSlack;
+        };
+
+        Rend.SetClearGradient(RENDER_DEFAULT_SCENE, EngineCore::Color(200, 60, 40), EngineCore::Color(20, 40, 160));
+        EngineCore::Image Gradient, Solid;
+        if(Capture(Gradient))
+        {
+            int Top[3], Bottom[3], Middle[3], Centre[3];
+            At_(Gradient, 4, 0, Top);
+            At_(Gradient, 4, 255, Bottom);
+            At_(Gradient, 4, 128, Middle);
+            At_(Gradient, 128, 128, Centre);
+            std::printf("    top %d %d %d, middle %d %d %d, bottom %d %d %d, box %d %d %d\n", Top[0], Top[1], Top[2], Middle[0], Middle[1],
+                        Middle[2], Bottom[0], Bottom[1], Bottom[2], Centre[0], Centre[1], Centre[2]);
+            Expect(Near(Top, 200, 60, 40, 3) && Near(Bottom, 20, 40, 160, 3), "the top row is the top colour, the bottom row the bottom");
+            Expect(Near(Middle, 110, 50, 100, 4), "half way down, half way between");
+            Expect(!Near(Centre, 110, 50, 100, 30), "and a lit box draws over it");
+        }
+        Rend.SetClearColor(RENDER_DEFAULT_SCENE, EngineCore::Color(10, 120, 30));
+        if(Capture(Solid))
+        {
+            int Top[3], Bottom[3];
+            At_(Solid, 4, 0, Top);
+            At_(Solid, 4, 255, Bottom);
+            Expect(Near(Top, 10, 120, 30, 0) && Near(Bottom, 10, 120, 30, 0), "SetClearColor goes back to one colour");
+        }
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
  * Bloom past the 8-bit scene colour: an Opaque Lit quad with emissive 50
  * (Sandbox's HotGlow) clips to white in the scene, but its G-buffer keeps the
  * rest (EncodeGBufferEmissive), and Bloom spreads it -- far wider than the
@@ -3159,6 +3254,7 @@ int main()
     TestBloomHdrOnGpu();
     TestStatFrameOnGpu();
     TestStaticDrawListsOnGpu();
+    TestClearGradientOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();

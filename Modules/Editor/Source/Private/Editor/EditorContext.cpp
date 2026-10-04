@@ -18,6 +18,16 @@
 #include "Private/Editor/PlaySession.h"
 #include "Private/Editor/ViewportSDLInput.h"
 
+#include <QColor>
+
+#include "Public/Core/CoreConfig.h"
+
+/* The editor viewports' background (Edit > Editor Settings > Viewport): a
+ * vertical gradient, top to bottom, or the top colour alone. "#rrggbb". */
+NIMBLE_CONFIG_BOOL(GEditorViewportGradient,     "Editor", "ViewportGradient",    true,      nullptr);
+NIMBLE_CONFIG_STRING(GEditorViewportTopColor,   "Editor", "ViewportTopColor",    "#4b515d", nullptr);
+NIMBLE_CONFIG_STRING(GEditorViewportBottomColor, "Editor", "ViewportBottomColor", "#1b1d22", nullptr);
+
 EditorContext::EditorContext(QObject* InParent)
     : QObject(InParent)
 {
@@ -79,8 +89,8 @@ bool EditorContext::InitializeRenderer(const RenderCore::ERenderBackend InBacken
         return false;
     }
 
-    Renderer->SetClearColor(EngineCore::Color(38, 40, 46));
     Renderer->BindWorld(Level->GetEditedWorld());
+    AppliedBackground.clear();   // ApplyBackground sets every scene's on the first frame
 
     FrameClock.start();
     FrameTimer.start();
@@ -203,12 +213,44 @@ void EditorContext::RemoveViewport(EditorViewportClient* InClient)
     }
 }
 
+void EditorContext::ApplyBackground()
+{
+    /* Read once a frame; sent only when something changed (or a scene is new). */
+    const std::string Key = std::string(GEditorViewportGradient.GetBool() ? "1" : "0") + GEditorViewportTopColor.GetString()
+                          + "|" + GEditorViewportBottomColor.GetString();
+    if(Key == AppliedBackground)
+    {
+        return;
+    }
+    AppliedBackground = Key;
+
+    const auto ColorOf = [](const std::string& InText, const EngineCore::Color InFallback)
+    {
+        const QColor Parsed(QString::fromStdString(InText));
+        return Parsed.isValid() ? EngineCore::Color(uint8_t(Parsed.red()), uint8_t(Parsed.green()), uint8_t(Parsed.blue()))
+                                : InFallback;
+    };
+    const EngineCore::Color Top    = ColorOf(GEditorViewportTopColor.GetString(), EngineCore::Color(75, 81, 93));
+    const EngineCore::Color Bottom = ColorOf(GEditorViewportBottomColor.GetString(), EngineCore::Color(27, 29, 34));
+    const auto Apply = [&](const RenderCore::RenderSceneID InScene)
+    {
+        if(GEditorViewportGradient.GetBool()) { Renderer->SetClearGradient(InScene, Top, Bottom); }
+        else                                  { Renderer->SetClearColor(InScene, Top); }
+    };
+    Apply(RenderCore::RENDER_DEFAULT_SCENE);
+    for(const DocumentScene& Each : DocumentScenes)
+    {
+        Apply(Each.Scene);
+    }
+}
+
 void EditorContext::RunFrame()
 {
     if(!bRendererReady)
     {
         return;
     }
+    ApplyBackground();
     Renderer->BeginGameFrame();   // "stat unit": the editor's and the game's work from here
     const float ViewDeltaSeconds = float(FrameClock.restart()) / 1000.0f;
 
@@ -356,9 +398,9 @@ RenderCore::RenderSceneID EditorContext::GetDocumentScene(EditorDocument* InDocu
     {
         return Scene;
     }
-    Renderer->SetClearColor(Scene, EngineCore::Color(38, 40, 46));
     Renderer->BindWorld(Scene, InDocument->GetWorld());
     DocumentScenes.push_back({ InDocument, Scene });
+    AppliedBackground.clear();   // the new scene gets it next frame
 
     /* The scene follows the document's edited World as New/Open replace it,
      * and goes with the document. A World is bound to one scene at a time,

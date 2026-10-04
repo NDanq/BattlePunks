@@ -139,6 +139,11 @@ namespace RenderCore
         void SetClearColor(EngineCore::Color InColor);
         void SetClearColor(RenderSceneID InScene, EngineCore::Color InColor);
 
+        /* The background as a vertical gradient, InTop at the top of the view
+         * to InBottom at the bottom, under everything drawn (RENDERPIPELINE.md,
+         * "Background"). SetClearColor goes back to one colour. */
+        void SetClearGradient(RenderSceneID InScene, EngineCore::Color InTop, EngineCore::Color InBottom);
+
 #if WITH_EDITOR
         // === Editor only =====================================================
         // Compiled out of Client and Server targets.
