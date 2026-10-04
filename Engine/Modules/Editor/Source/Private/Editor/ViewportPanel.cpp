@@ -38,10 +38,10 @@ namespace
     /* In EMode order: the mode combo's index is the mode. */
     const GizmoModeButton GizmoModes[] =
     {
-        { "Select", "No transform handles -- click to select (Q)",       TransformGizmo::EMode::None      },
-        { "Move",   "Move handles: axes, planes, screen centre (W)",     TransformGizmo::EMode::Translate },
-        { "Rotate", "Rotate rings: one per axis, the outer about the view (E)", TransformGizmo::EMode::Rotate },
-        { "Scale",  "Scale handles: per axis, the centre for all three (R)",    TransformGizmo::EMode::Scale  },
+        { "Select", "No transform handles -- click to select (1)",       TransformGizmo::EMode::None      },
+        { "Move",   "Move handles: axes, planes, screen centre (2)",     TransformGizmo::EMode::Translate },
+        { "Rotate", "Rotate rings: one per axis, the outer about the view (3)", TransformGizmo::EMode::Rotate },
+        { "Scale",  "Scale handles: per axis, the centre for all three (4)",    TransformGizmo::EMode::Scale  },
     };
 
     /* A toolbar combo box that leaves keyboard focus where it was. */
@@ -85,7 +85,7 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     // --- Transform handles ---------------------------------------------------
     /* No shortcuts here: the keys are the viewport's own (see ViewportWidget),
      * so typing Q W E R in a text field never switches modes. */
-    ModeCombo = MakeCombo(Toolbar, QStringLiteral("Transform handles (Q / W / E / R)"));
+    ModeCombo = MakeCombo(Toolbar, QStringLiteral("Transform handles (1 / 2 / 3 / 4)"));
     for(const GizmoModeButton& Button : GizmoModes)
     {
         ModeCombo->addItem(QString::fromLatin1(Button.Label));

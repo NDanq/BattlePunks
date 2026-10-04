@@ -460,7 +460,15 @@ void ViewportWidget::ReleaseMouseHold()
 
 void ViewportWidget::ApplyFlyInput(const float InDeltaSeconds)
 {
-    if(Drag != EDrag::Look || HeldKeys.isEmpty())
+    /* WASD/QE fly with the viewport focused: while looking (right drag), or
+     * with no button held -- but not under Ctrl or Alt, which make them
+     * shortcuts (Ctrl+S, Ctrl+D) rather than moves. */
+    if(HeldKeys.isEmpty() || !hasFocus())
+    {
+        return;
+    }
+    if(Drag != EDrag::Look
+       && (Drag != EDrag::None || HeldKeys.contains(Qt::Key_Control) || HeldKeys.contains(Qt::Key_Alt) || HeldKeys.contains(Qt::Key_Meta)))
     {
         return;
     }
@@ -1127,17 +1135,18 @@ void ViewportWidget::keyPressEvent(QKeyEvent* InEvent)
         default:           break;
     }
 
-    /* Handle modes, except while flying or dragging. Still recorded as held. */
+    /* Handle modes on 1-4 (WASD and Q/E fly), except while dragging. Still
+     * recorded as held. */
     const bool bPlainKey = (InEvent->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) == 0;
     if(bPlainKey && Drag != EDrag::Look && Drag != EDrag::Gizmo)
     {
         using EMode = TransformGizmo::EMode;
         switch(InEvent->key())
         {
-            case Qt::Key_Q: SetGizmoMode(EMode::None);      break;
-            case Qt::Key_W: SetGizmoMode(EMode::Translate); break;
-            case Qt::Key_E: SetGizmoMode(EMode::Rotate);    break;
-            case Qt::Key_R: SetGizmoMode(EMode::Scale);     break;
+            case Qt::Key_1: SetGizmoMode(EMode::None);      break;
+            case Qt::Key_2: SetGizmoMode(EMode::Translate); break;
+            case Qt::Key_3: SetGizmoMode(EMode::Rotate);    break;
+            case Qt::Key_4: SetGizmoMode(EMode::Scale);     break;
             case Qt::Key_X:
                 SetGizmoSpace(Gizmo.GetSpace() == TransformGizmo::ESpace::World ? TransformGizmo::ESpace::Local
                                                                                : TransformGizmo::ESpace::World);

@@ -238,14 +238,15 @@ no scripts.
 
 | Input | Does |
 |---|---|
-| Right drag (+ WASD / Q E, Shift faster) | Look / fly |
+| WASD / Q E (Shift faster) | Fly -- forward, left, back, right; down, up -- whenever the viewport has the focus (not under Ctrl or Alt) |
+| Right drag (+ WASD / Q E) | Look while flying |
 | Alt + Left drag | Orbit the pivot -- the selection's bounds centre, else the focus point |
 | Alt + Right drag, wheel | Dolly toward the pivot |
 | Middle drag | Pan |
 | Left click | Select the primitive under the cursor -- a prefab instance whole, by its root (its parts are selected in the Outliner); Ctrl+click toggles it in or out of the selection, Shift+click adds it; on the axis gizmo, view from that axis (Shift: the opposite side) |
 | Right click (no drag) | Context menu: Cut, Copy, Paste, Duplicate, Rename, Delete -- for what is under the cursor (selected first) or the selection |
 | Left drag on a handle | Move / rotate / scale the selection -- every selected entity together, as one undo step (Ctrl inverts Snap); Esc or a right click cancels the drag |
-| Q / W / E / R | Handles off (Select) / Move / Rotate / Scale -- not while right-dragging, where W E Q fly |
+| 1 / 2 / 3 / 4 | Handles off (Select) / Move / Rotate / Scale |
 | X | Handles in world or local space |
 | F / Home | Frame the selection / the whole scene |
 
