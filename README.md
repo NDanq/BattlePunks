@@ -9,7 +9,7 @@ Two settings pick a build: the **target** (`NIMBLE_TARGET`) and the
 |---|---|---|
 | Editor | every module, `NimbleEditor`, and the game | 1 |
 | Client | the modules and the game; editor-only code compiled out | 0 |
-| Server | same as Client for now | 0 |
+| Server | same as Client for now; needs NetCore | 0 |
 
 | Configuration | Optimised | Debug info | `NIMBLE_SHIPPING` |
 |---|---|---|---|
@@ -20,6 +20,24 @@ Two settings pick a build: the **target** (`NIMBLE_TARGET`) and the
 Shipping is Client/Server only. Configuring Editor + Shipping fails on purpose.
 Both `WITH_EDITOR` and `NIMBLE_SHIPPING` are always defined, to 1 or 0, and
 reach every target through EngineCore.
+
+### Networking
+
+`NIMBLE_WITH_NETCORE` (on by default) builds NetCore and defines
+`WITH_NETCORE=1` everywhere. NetCore provides:
+
+- replication and RPCs
+- each game's dedicated server, `<Game>Server`
+- `<Game> -connect=host:port`
+
+A game that never networks turns it off before adding the engine, and
+nothing networked is compiled or linked:
+
+```cmake
+set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
+```
+
+See `Engine/Modules/NetCore/README.md`.
 
 ### Games are modules
 
