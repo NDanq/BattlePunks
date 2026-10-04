@@ -33,7 +33,9 @@ public:
     PlaySession& operator=(const PlaySession&) = delete;
 
     /* False, logged, on failure; partial startup is undone. */
-    bool Start();
+    /* InOpenWorld: the editor's open world (runtime path); the level that
+     * loads it plays if the game has one, else [Game] StartLevel. */
+    bool Start(const std::string& InOpenWorld = std::string());
 
     /* Null-safe and idempotent. */
     void Stop();

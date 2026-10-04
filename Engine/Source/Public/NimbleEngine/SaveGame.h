@@ -65,6 +65,9 @@ namespace NimbleEngine
     NE_API void    RegisterLevel(ILevel& InLevel);
     NE_API void    UnregisterLevel(ILevel& InLevel);
     NE_API ILevel* FindLevelByName(const char* InName);
+    /* The registered level whose GetWorldFile() is InPath (case-insensitive,
+     * either slash); nullptr if none. */
+    NE_API ILevel* FindLevelByWorldFile(const char* InPath);
     NE_API size_t  GetRegisteredLevelCount();
 }
 

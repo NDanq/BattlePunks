@@ -2,6 +2,8 @@
 
 #include "Private/Editor/PlaySession.h"
 
+#include "Public/NimbleEngine/SaveGame.h"
+
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreMemory.h"
@@ -34,7 +36,7 @@ PlaySession::~PlaySession()
     Stop();
 }
 
-bool PlaySession::Start()
+bool PlaySession::Start(const std::string& InOpenWorld)
 {
     if(Session)
     {
@@ -54,7 +56,16 @@ bool PlaySession::Start()
         return false;
     }
 
-    NimbleEngine::ILevel* Level = Game->ResolveStartLevel();
+    /* The level of the world that is open, if one loads it; else [Game] StartLevel. */
+    NimbleEngine::ILevel* Level = NimbleEngine::FindLevelByWorldFile(InOpenWorld.c_str());
+    if(!Level)
+    {
+        Level = Game->ResolveStartLevel();
+        if(Level && !InOpenWorld.empty())
+        {
+            CORE_LOG("[PIE] no level loads " + InOpenWorld + "; playing the start level")
+        }
+    }
     if(!Level)
     {
         CORE_LOG_ERROR("[PIE] game module '" + Game->GetModuleName() + "' has no start level")

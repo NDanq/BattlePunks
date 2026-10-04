@@ -35,7 +35,8 @@
  * arch. T cycles the sun's technique, F toggles [Shadows] Enabled through its
  * config var.
  *
- * A second level, BakedLighting ([Game] StartLevel=BakedLighting), is baked
+ * A second level, BakedLighting (the editor plays it while its world is open,
+ * ILevel::GetWorldFile; a game, with [Game] StartLevel=BakedLighting), is baked
  * lighting's demo: a Cornell-style room whose static walls, boxes and lights
  * are baked (Build > Bake Lightmaps), with a dynamic ball swinging through it
  * lit by the light probes. L switches between the bake and live lighting,
@@ -510,6 +511,7 @@ class LightLabLevel : public NimbleEngine::ILevel
 {
 public:
     const char* GetName() const override { return "LightLab"; }
+    const char* GetWorldFile() const override { return LevelFile; }
 
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
@@ -852,6 +854,7 @@ class LightLabBakedLevel : public NimbleEngine::ILevel
 {
 public:
     const char* GetName() const override { return "BakedLighting"; }
+    const char* GetWorldFile() const override { return BakedLevelFile; }
 
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {

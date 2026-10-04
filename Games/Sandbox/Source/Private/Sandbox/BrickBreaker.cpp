@@ -515,6 +515,7 @@ namespace
         BrickBreakerLevel() : Mode(State) {}
 
         const char* GetName() const override { return "BrickBreaker"; }
+        const char* GetWorldFile() const override { return GBrickBreakerLevelFile.GetString(); }
 
         /* The scene is all the level's own: not Sandbox's Scripts/Main.lua. */
         const char* GetStartupScript() const override { return ""; }

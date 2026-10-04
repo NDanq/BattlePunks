@@ -517,7 +517,7 @@ void EditorContext::DrawDebugBox(const GameCore::AABB& InBox, const EngineCore::
 
 // === Play-in-Editor ==========================================================
 
-bool EditorContext::StartPlay()
+bool EditorContext::StartPlay(const QString& InOpenWorld)
 {
     if(Play)
     {
@@ -533,7 +533,7 @@ bool EditorContext::StartPlay()
     Renderer->UnbindWorld();
 
     Play = EngineCore::Memory::Alloc<PlaySession>(*Renderer);
-    if(!Play->Start())
+    if(!Play->Start(InOpenWorld.toStdString()))
     {
         EngineCore::Memory::Dealloc(Play);
         Play = nullptr;

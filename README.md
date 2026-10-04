@@ -100,7 +100,8 @@ blue sky with a sun, glowing toward it, over warm ground. The sky then lights
 everything and is drawn behind the scene.
 
 A second level, **BakedLighting** (`Content/Levels/BakedLighting.nmworld`;
-play it with `[Game] StartLevel=BakedLighting`), shows baked lighting
+open it in the editor and Play, or set `[Game] StartLevel=BakedLighting` for the
+game), shows baked lighting
 (RENDERPIPELINE.md, "Baked lighting"). It is a Cornell-style room:
 
 - **Static, baked:** red and green walls, a white floor, ceiling and back wall

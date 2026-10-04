@@ -2,7 +2,7 @@
 <Entity Guid="83605fc6f313129130bbbb9e45eb37f9" Name="Swinger">
   <Component Type="Render" Version="3">
     <Visible Value="true" />
-    <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+    <Material0 Value="Content/Materials/Chrome.material.nmgraph" />
     <Material1 Value="" />
     <Material2 Value="" />
     <Material3 Value="" />
