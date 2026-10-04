@@ -28,6 +28,13 @@ public:
                          EGDITextureBorder        InBorder,
                          EGDITextureFilter        InFilter);
 
+    /** With its mip chain: InLevels[0] full size, each next half the last (GDICreateTextureResourceMips). */
+    D3D12TextureResource(D3D12Device*             InDevice,
+                         const EngineCore::Image* InLevels,
+                         uint32_t                 InCount,
+                         EGDITextureBorder        InBorder,
+                         EGDITextureFilter        InFilter);
+
     /** No initial data; Update() must run before it is sampled. */
     D3D12TextureResource(D3D12Device*      InDevice,
                          GDITexture2D*     InParent,
@@ -56,6 +63,7 @@ private:
     void AllocateImage();
     void DestroyImage();
     void UploadImageData(const EngineCore::Image& InImage);
+    void UploadMipChain(const EngineCore::Image* InLevels, uint32_t InCount);
 
     ID3D12Resource* GetResource() const { return bOwnsImage ? Resource.Get() : ExternalResource; }
 
@@ -64,6 +72,7 @@ private:
     ID3D12Resource*                         ExternalResource = nullptr;
     uint32_t                                SRVSlot          = UINT32_MAX;
     bool                                    bOwnsImage       = true;
+    uint32_t                                MipLevels        = 1;
 
     D3D12_RESOURCE_STATES                   CurrentState     = D3D12_RESOURCE_STATE_COPY_DEST;
 
