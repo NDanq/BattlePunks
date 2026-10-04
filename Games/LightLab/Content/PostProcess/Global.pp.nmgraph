@@ -8,12 +8,12 @@
       <Prop Name="Near Blur" Value="true" />
     </Node>
     <Node Id="b1003e00000000000000000000000001" Type="Effect.Bloom" Version="1" X="-150" Y="0">
-      <Prop Name="Intensity" Value="0.35" />
+      <Prop Name="Intensity" Value="5" />
       <Prop Name="Radius" Value="0.7" />
       <Prop Name="Threshold" Value="0.9" />
     </Node>
     <Node Id="b1003e00000000000000000000000002" Type="Effect.Antialiasing" Version="1" X="150" Y="0" />
-    <Node Id="b1003e00000000000000000000000003" Type="Effect.AmbientOcclusion" Version="1" X="-150" Y="150">
+    <Node Id="b1003e00000000000000000000000003" Type="Effect.AmbientOcclusion" Version="1" X="8" Y="47">
       <Prop Name="Blur" Value="true" />
       <Prop Name="Intensity" Value="1" />
       <Prop Name="Power" Value="1.5" />
@@ -28,7 +28,7 @@
     <Output Extension=".ppstack"><![CDATA[# Post process stack Global
 Effect AmbientOcclusion Intensity=1 Radius=80 Samples=12 Power=1.5 Blur=true
 Effect DepthOfField FocusDistance=1000 FocusRange=500 MaxBlur=5 NearBlur=true
-Effect Bloom Threshold=0.9 Intensity=0.35 Radius=0.7 Levels=5 Tint=1,1,1
+Effect Bloom Threshold=0.9 Intensity=5 Radius=0.7 Levels=5 Tint=1,1,1
 Effect Antialiasing EdgeThreshold=0.125 Method=FXAA Quality=Medium
 ]]></Output>
   </gen_code>
