@@ -714,6 +714,7 @@ namespace RenderCore
             Request.Normal     = Axes.GetAxis(1);
             Request.NearClip   = Probe.NearClip;
             Request.FarClip    = Probe.FarClip;
+            Request.bShadows   = Probe.bCaptureShadows;
 
             /* A mirror the camera cannot see is not worth a capture (unless asked for). */
             if(Probe.Mode == SCM_PlanarMirror && !Probe.bCaptureNow && !InView.Bounds.IsEmpty())

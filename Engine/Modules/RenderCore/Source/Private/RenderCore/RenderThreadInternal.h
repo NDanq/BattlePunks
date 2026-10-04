@@ -57,13 +57,17 @@ namespace RenderCore
         float FrameMs        = 0.0f;
         float GameThreadMs   = 0.0f;
         float RenderThreadMs = 0.0f;
+        float WaitMs         = 0.0f;   // the game thread waiting on the render thread's frame
+        float PresentMs      = 0.0f;   // ... presenting to its windows (the swapchain's vsync)
+        float IdleMs         = 0.0f;   // ... between frames: the host's loop, a frame timer
         bool  bShow          = false;   // Stats.Unit
         bool  bShowFrame     = false;   // Stats.Frame
     };
     void             SetStatUnit(const StatUnitSnapshot& InSnapshot);
     StatUnitSnapshot GetStatUnit();
 
-    /* The overlay's text, a line each: Frame, Game, Render (ms), and FPS. */
+    /* The overlay's text, a line each: Frame, Game, Render, Wait, Present,
+     * Idle (ms), and FPS. Frame = Game + Wait + Present + Idle. */
     RENDERCORE_API std::string FormatStatUnit(const StatUnitSnapshot& InSnapshot);
 
     /* "stat frame"'s text: a heading, then a line per ERenderGpuTimer with its

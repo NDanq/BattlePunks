@@ -44,6 +44,9 @@ namespace RenderCore
      * capture is made. HideOwner leaves this entity and its children out of
      * its own capture (a mirror, a chrome ball). CaptureNow asks for one
      * capture on the next frame, whatever the frequency, and clears itself.
+     * CaptureShadows draws shadows in the capture: off by default, since each
+     * view (a cube's six) redraws every shadow map -- the bulk of a capture's
+     * cost -- and a reflection rarely shows the difference.
      */
     struct RENDERCORE_API SceneCaptureProbeComponent
     {
@@ -61,6 +64,7 @@ namespace RenderCore
         uint8_t bHideOwner  = 1;
         uint8_t bEnabled    = 1;
         uint8_t bCaptureNow = 0;
+        uint8_t bCaptureShadows = 0;   // serializer v2; a v1 save reads as off
     };
 }
 

@@ -32,6 +32,7 @@ namespace RenderCore
         EngineCore::Vector3 Normal{0.0, 1.0, 0.0};   // a mirror's facing (the probe's local +Y)
         float               NearClip = 5.0f;
         float               FarClip  = 5000.0f;
+        uint8_t             bShadows = 0;            // draw shadow maps for each view (the probe's CaptureShadows)
         uint32_t            ExcludedCount = 0;
         GameCore::EntityID  Excluded[RENDER_CAPTURE_EXCLUDED_MAX];
     };

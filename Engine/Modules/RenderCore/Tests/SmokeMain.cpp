@@ -429,8 +429,12 @@ static void TestStatUnit()
     Sample.FrameMs        = 16.666f;
     Sample.GameThreadMs   = 2.5f;
     Sample.RenderThreadMs = 4.25f;
+    Sample.WaitMs         = 1.0f;
+    Sample.PresentMs      = 12.5f;
+    Sample.IdleMs         = 0.67f;
     const std::string Text = FormatStatUnit(Sample);
-    Expect(Text == "Frame:    16.67 ms\nGame:      2.50 ms\nRender:    4.25 ms\nFPS:       60.0", "the overlay's text, a line each");
+    Expect(Text == "Frame:     16.67 ms\nGame:       2.50 ms\nRender:     4.25 ms\nWait:       1.00 ms\nPresent:   12.50 ms\n"
+                   "Idle:       0.67 ms\nFPS:        60.0", "the overlay's text, a line each");
 
     ConfigVar* Unit = ConfigFindVarByPath("Stats.Unit");
     Expect(Unit != nullptr && !Unit->GetBool(), "Stats.Unit exists, off by default");
@@ -2818,6 +2822,52 @@ static void TestSceneCaptureOnGpu()
             Expect(Is(Centre, 230, 220, 30), "the sphere's centre reflects the wall behind the camera");
             Expect(Is(Right, 230, 30, 30) && Is(Left, 30, 220, 220), "its right side the +X wall, its left the -X");
             Expect(Is(Top, 30, 230, 30) && Is(Bottom, 220, 30, 220), "its top the ceiling, its bottom the floor");
+        }
+
+        /* Capture Shadows: off (the default), a capture prepares no shadow
+         * maps, so a lit, shadowed room costs its faces nothing more. */
+        {
+            GameCore::Entity Sun = World.CreateEntity("CaptureSun");
+            GameCore::TransformComponent SunAt;
+            SunAt.Rotation = Vector3(50, 35, 0);
+            Sun.AddComponent(SunAt);
+            DirectionalLightComponent SunLight;
+            SunLight.ShadowTechnique = LST_Standard;
+            Sun.AddComponent(SunLight);
+            /* A lit caster (the Unlit walls cast nothing), off every face's axis. */
+            const GameCore::Entity Caster = Shape("CaptureCaster", "Engine/Content/Meshes/Box.nmmesh",
+                                                  "Engine/Content/Materials/DefaultLit.material.nmgraph", Vector3(300, -450, 300), Vector3(60, 60, 60));
+            Caster.GetComponent<RenderComponent>()->bCastShadows = 1;
+
+            const auto DrawsPerFrame = [&]()
+            {
+                Draw(Facing, 2);
+                RenderStats Before;
+                Rend.GetStats(Before);
+                Draw(Facing, 4);
+                RenderStats After;
+                Rend.GetStats(After);
+                return double(After.DrawCalls - Before.DrawCalls) / double(std::max<uint64_t>(After.FramesRendered - Before.FramesRendered, 1));
+            };
+            Expect(Ball.GetComponent<SceneCaptureProbeComponent>()->bCaptureShadows == 0, "a probe captures without shadows by default");
+            const double Without = DrawsPerFrame();
+            Ball.GetComponent<SceneCaptureProbeComponent>()->bCaptureShadows = 1;
+            const double With = DrawsPerFrame();
+            Ball.GetComponent<SceneCaptureProbeComponent>()->bCaptureShadows = 0;
+            std::printf("    capture shadows: %.0f draws a frame off, %.0f on\n", Without, With);
+            Expect(With >= Without + 6.0, "Capture Shadows on redraws the caster into each face's shadow map; off skips it");
+
+            const uint64_t Again = Rend.RequestRenderTargetReadback("Content/RenderTargets/TestCube.nmrt3d");
+            Draw(Facing, 2);
+            EngineCore::Image Unshadowed;
+            std::string AgainError;
+            int Centre[3] = {};
+            const bool bRead = Again != 0 && Rend.TakeMaterialPreview(Again, Unshadowed, AgainError);
+            if(bRead) { At(Unshadowed, 32, 32, Centre); }
+            Expect(bRead && Is(Centre, 230, 30, 30), "and the faces still capture their walls (+X red) without shadow maps");
+
+            World.DestroyEntity(Caster.GetID());
+            World.DestroyEntity(Sun.GetID());
         }
 
         /* A planar mirror: the room gone, a red box above a mirror floor. */
