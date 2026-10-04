@@ -463,8 +463,31 @@ static void TestStatUnit()
         Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
         Rend.WaitForPreviousFrame();
         Expect(!GetStatUnit().bShow, "and turning it off hides it");
+
+        /* "stat frame" on Null: nothing to time, so nothing is reported. */
+        ConfigVar* FrameVar = ConfigFindVarByPath("Stats.Frame");
+        Expect(FrameVar != nullptr && !FrameVar->GetBool(), "Stats.Frame exists, off by default");
+        if(FrameVar)
+        {
+            FrameVar->SetBool(true);
+            for(int Each = 0; Each < 3; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            RenderStats Null;
+            Rend.GetStats(Null);
+            Expect(Null.GpuMs[RGT_Total] < 0.0f && Null.GpuMs[RGT_BasePass] < 0.0f, "the Null backend times no GPU work");
+            FrameVar->SetBool(false);
+        }
         Rend.Shutdown();
     }
+
+    float Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f };
+    const std::string FrameText = FormatStatFrame(Times, true);
+    Expect(FrameText == "GPU            ms\nPrePass      0.01\nBasePass     0.50\nAO              -\nShadows      1.25\n"
+                        "Lighting     0.20\nForward      0.05\nPostProcess  0.75\nTotal        2.80", "stat frame's text, a line per stage");
+    Expect(FormatStatFrame(Times, false) == "GPU: not timed on this backend", "and a line saying so where the GPU is not timed");
 }
 
 static void TestRendererWithWorld()
@@ -2118,6 +2141,113 @@ static void TestPostProcessOnGpu()
 }
 
 /*
+ * "stat frame" on the GPU: with Stats.Frame on, each stage of the default
+ * scene's frame is timed with GPU timestamps (GDIWriteGPUTimestamp) and
+ * averaged into RenderStats::GpuMs.
+ */
+static void TestStatFrameOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[stat frame on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[stat frame on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+    ConfigVar* FrameVar = ConfigFindVarByPath("Stats.Frame");
+
+    Renderer Rend;
+    const bool bInit = FrameVar && Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakePerspective(Viewport, Vector3(0.0, 700.0, -600.0), Vector3(0.0, -700.0, 600.0),
+                                                            50.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&View);
+        GameCore::World World;
+        Rend.BindWorld(World);
+        const auto Placed = [&World](const char* InName, const Vector3& InPosition, const Vector3& InRotation, const Vector3& InScale)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InPosition;
+            Transform.Rotation = InRotation;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            return Each;
+        };
+        RenderComponent Floor;
+        std::snprintf(Floor.Mesh, sizeof(Floor.Mesh), "%s", "Engine/Content/Meshes/Plane.nmmesh");
+        Placed("Floor", Vector3(), Vector3(), Vector3(3000.0, 1.0, 3000.0)).AddComponent(Floor);
+        RenderComponent Box;
+        std::snprintf(Box.Mesh, sizeof(Box.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+        Placed("Box", Vector3(0.0, 90.0, 0.0), Vector3(), Vector3(120.0, 120.0, 120.0)).AddComponent(Box);
+        DirectionalLightComponent SunInit;
+        SunInit.ShadowTechnique = LST_Standard;
+        SunInit.ShadowDistance  = 3000.0f;
+        Placed("Sun", Vector3(), Vector3(55.0, 90.0, 0.0), Vector3(1.0, 1.0, 1.0)).AddComponent(SunInit);
+        Placed("Sky", Vector3(), Vector3(), Vector3(1.0, 1.0, 1.0)).AddComponent(SkyLightComponent());
+
+        uint64_t   Frame = 1;
+        const auto Run = [&](const int InMilliseconds)
+        {
+            const auto Start = std::chrono::steady_clock::now();
+            while(std::chrono::steady_clock::now() - Start < std::chrono::milliseconds(InMilliseconds))
+            {
+                Rend.BeginGameFrame();
+                Rend.WaitForPreviousFrame();
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            }
+            Rend.WaitForPreviousFrame();
+        };
+
+        Run(100);
+        RenderStats Off;
+        Rend.GetStats(Off);
+        Expect(Off.GpuMs[RGT_Total] < 0.0f, "with Stats.Frame off, nothing is timed");
+
+        FrameVar->SetBool(true);
+        Run(800);
+        RenderStats On;
+        Rend.GetStats(On);
+        std::printf("   ");
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+        {
+            std::printf(" %s %.3f", GetRenderGpuTimerName(ERenderGpuTimer(Timer)), double(On.GpuMs[Timer]));
+        }
+        std::printf("\n");
+        bool  bAllTimed = true;
+        float Stages    = 0.0f;
+        for(uint32_t Timer = 0; Timer < RGT_Total; ++Timer)
+        {
+            bAllTimed = bAllTimed && On.GpuMs[Timer] >= 0.0f;
+            Stages   += std::max(On.GpuMs[Timer], 0.0f);
+        }
+        Expect(bAllTimed && On.GpuMs[RGT_Total] > 0.0f, "every stage of a lit, shadowed scene is timed on the GPU");
+        Expect(On.GpuMs[RGT_Total] + 0.05f >= Stages, "and the stages fit inside the total");
+        Expect(On.GpuMs[RGT_Shadows] > 0.0f && On.GpuMs[RGT_BasePass] > 0.0f, "the shadow and base passes take time");
+
+        FrameVar->SetBool(false);
+        Run(100);
+        RenderStats Hidden;
+        Rend.GetStats(Hidden);
+        Expect(Hidden.GpuMs[RGT_Total] < 0.0f, "turning it off clears the times");
+
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+/*
  * Bloom past the 8-bit scene colour: an Opaque Lit quad with emissive 50
  * (Sandbox's HotGlow) clips to white in the scene, but its G-buffer keeps the
  * rest (EncodeGBufferEmissive), and Bloom spreads it -- far wider than the
@@ -2831,6 +2961,7 @@ int main()
     TestShadowsOnGpu();
     TestPostProcessOnGpu();
     TestBloomHdrOnGpu();
+    TestStatFrameOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestMeshDrawing();

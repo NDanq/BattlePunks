@@ -122,6 +122,10 @@ public:
     void BeginDrawEvent(const std::string& EventName) override;
     void EndDrawEvent() override;
 
+    bool     SupportsGPUTimestamps() const override { return TimestampHeap != nullptr; }
+    void     WriteGPUTimestamp(uint32_t InIndex) override;
+    uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
+
     /** UI thread: draws the last finished frame into the swapchain and presents it. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
     void PresentRenderTargetToWindow(EngineCore::WindowHandle InWindow, GDIRenderTarget* InSource) override;
@@ -197,6 +201,22 @@ private:
     std::unordered_set<D3D12RenderTarget*>             LiveRenderTargets;
 
     std::vector<Microsoft::WRL::ComPtr<ID3D12Resource>> DeferredResources;
+
+    /*
+     * GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread only:
+     * a heap of GDI_GPU_TIMESTAMP_MAX, resolved into TimestampReadback by each
+     * submit and read at the next BeginRendering, after its fence is waited.
+     */
+    Microsoft::WRL::ComPtr<ID3D12QueryHeap> TimestampHeap;
+    Microsoft::WRL::ComPtr<ID3D12Resource>  TimestampReadback;
+    double   TimestampTicksPerMs = 0.0;
+    uint64_t TimestampsWritten   = 0;   // this block's, by index
+    uint64_t TimestampsResolved  = 0;   // resolved by a submit, not yet read
+    uint64_t PreviousTimestamps  = 0;   // the previous block's, read back
+    double   PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
+    void CreateTimestampHeap();
+    void ResolveTimestamps(ID3D12GraphicsCommandList* InList);
+    void CollectTimestamps();
     std::vector<uint32_t>                               DeferredSRVs;
 };
 

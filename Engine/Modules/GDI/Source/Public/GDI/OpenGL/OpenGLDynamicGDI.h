@@ -244,6 +244,10 @@ public:
 
     void EndDrawEvent() override;
 
+    bool     SupportsGPUTimestamps() const override { return true; }
+    void     WriteGPUTimestamp(uint32_t InIndex) override;
+    uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
+
 private:
     inline void MakeCurrentSafe()
     {
@@ -270,6 +274,14 @@ private:
     uint                ScratchFramebuffer = 0;   // SetRenderTargets' attachments
     class OpenGLMesh*   ScreenMesh = nullptr;
     GLsync              ThreadSync;
+
+    /* GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread only:
+     * GL_TIMESTAMP queries made on first use, read at the next BeginRendering
+     * -- waiting for them, as Vulkan and D3D12 wait the previous frame there. */
+    GLuint   TimestampQueries[GDI_GPU_TIMESTAMP_MAX] = {};
+    uint64_t TimestampsWritten  = 0;
+    uint64_t PreviousTimestamps = 0;
+    double   PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
 };
 
 #endif //CORECLIENT_OPENGLDYNAMICGDI_H

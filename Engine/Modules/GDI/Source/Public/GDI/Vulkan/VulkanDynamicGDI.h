@@ -199,6 +199,10 @@ public:
     void BeginDrawEvent(const std::string& EventName) override;
     void EndDrawEvent() override;
 
+    bool     SupportsGPUTimestamps() const override { return TimestampPool != VK_NULL_HANDLE; }
+    void     WriteGPUTimestamp(uint32_t InIndex) override;
+    uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
+
     /** Vulkan present path: UI thread acquires + blits the offscreen RT and presents. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
     void PresentRenderTargetToWindow(EngineCore::WindowHandle InWindow, GDIRenderTarget* InSource) override;
@@ -312,6 +316,21 @@ private:
     VkSemaphore             RenderTimeline        = VK_NULL_HANDLE;
     uint64_t                RenderTimelineCounter = 0;            // render thread only
     std::atomic<uint64_t>   RenderTimelinePublished{0};          // render → UI handoff
+
+    /*
+     * GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread
+     * only. One pool of GDI_GPU_TIMESTAMP_MAX, reset at each BeginRendering
+     * after the previous block's are read back -- its fence has just been
+     * waited, so they are complete. Null if the graphics queue cannot time.
+     */
+    VkQueryPool TimestampPool      = VK_NULL_HANDLE;
+    double      TimestampPeriodNs  = 0.0;                         // nanoseconds per tick
+    uint64_t    TimestampValidMask = 0;                           // the queue's timestampValidBits
+    uint64_t    TimestampsWritten  = 0;                           // this block's, by index
+    uint64_t    PreviousTimestamps = 0;                           // the previous block's, read back
+    double      PreviousTimestampMs[GDI_GPU_TIMESTAMP_MAX] = {};
+    void CreateTimestampPool();
+    void CollectTimestamps();
 
     // Set by RT resize (render thread), cleared by EndRendering; read by the
     // UI-thread present to skip frames while targets are being recreated.

@@ -1132,21 +1132,32 @@ void EditorMainWindow::RegisterConsoleCommands()
                       .arg(double(Stats.RenderThreadMs), 0, 'f', 2));
     });
 
-    /* Unreal's spelling: "stat unit" toggles the viewport overlay (Stats.Unit),
-     * "stat none" hides it. */
-    Console.Register(QStringLiteral("stat"), QStringLiteral("unit | none"),
-                     QStringLiteral("Show frame, game thread and render thread times over the viewport"),
+    /* Unreal's spelling: "stat unit" toggles the frame, game and render
+     * thread times (Stats.Unit), "stat frame" each stage's GPU time
+     * (Stats.Frame); "stat none" hides both. */
+    Console.Register(QStringLiteral("stat"), QStringLiteral("unit | frame | none"),
+                     QStringLiteral("Show thread times (unit) or each render stage's GPU time (frame) over the viewport"),
                      [this](const QStringList& InArgs)
     {
-        EngineCore::ConfigVar* Unit = EngineCore::ConfigFindVar("Stats", "Unit");
+        EngineCore::ConfigVar* Unit  = EngineCore::ConfigFindVar("Stats", "Unit");
+        EngineCore::ConfigVar* Frame = EngineCore::ConfigFindVar("Stats", "Frame");
         const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
-        if(!Unit || (Which != QStringLiteral("unit") && Which != QStringLiteral("none")))
+        if(!Unit || !Frame
+           || (Which != QStringLiteral("unit") && Which != QStringLiteral("frame") && Which != QStringLiteral("none")))
         {
-            Console.PrintError(QStringLiteral("Usage: stat unit | none"));
+            Console.PrintError(QStringLiteral("Usage: stat unit | frame | none"));
             return;
         }
-        Unit->SetBool(Which == QStringLiteral("unit") ? !Unit->GetBool() : false);
-        Console.Print(Unit->GetBool() ? QStringLiteral("stat unit: on") : QStringLiteral("stat unit: off"));
+        if(Which == QStringLiteral("none"))
+        {
+            Unit->SetBool(false);
+            Frame->SetBool(false);
+            Console.Print(QStringLiteral("stats hidden"));
+            return;
+        }
+        EngineCore::ConfigVar* Var = Which == QStringLiteral("unit") ? Unit : Frame;
+        Var->SetBool(!Var->GetBool());
+        Console.Print(QStringLiteral("stat %1: %2").arg(Which, Var->GetBool() ? QStringLiteral("on") : QStringLiteral("off")));
     });
 
     Console.Register(QStringLiteral("undo"), QStringLiteral("[count]"), QStringLiteral("Undo the last change (Ctrl+Z)"),

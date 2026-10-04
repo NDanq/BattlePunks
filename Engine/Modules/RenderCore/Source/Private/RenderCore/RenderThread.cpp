@@ -412,6 +412,7 @@ namespace RenderCore
         OutStats.FrameMs                = Unit.FrameMs;
         OutStats.GameThreadMs           = Unit.GameThreadMs;
         OutStats.RenderThreadMs         = Unit.RenderThreadMs;
+        GetReportedGpuTimes(OutStats.GpuMs);
     }
 
     // === The locator (RenderThreadInternal.h) ==================================
@@ -477,5 +478,47 @@ namespace RenderCore
         std::snprintf(Text, sizeof(Text), "Frame:  %7.2f ms\nGame:   %7.2f ms\nRender: %7.2f ms\nFPS:    %7.1f",
                       double(InSnapshot.FrameMs), double(InSnapshot.GameThreadMs), double(InSnapshot.RenderThreadMs), double(Fps));
         return Text;
+    }
+
+    std::string FormatStatFrame(const float* InGpuMs, const bool bInSupported)
+    {
+        if(!bInSupported)
+        {
+            return "GPU: not timed on this backend";
+        }
+        std::string Text = "GPU            ms";
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+        {
+            char Line[48];
+            const char* Name = GetRenderGpuTimerName(ERenderGpuTimer(Timer));
+            if(InGpuMs && InGpuMs[Timer] >= 0.0f)
+            {
+                std::snprintf(Line, sizeof(Line), "\n%-11s %5.2f", Name, double(InGpuMs[Timer]));
+            }
+            else
+            {
+                std::snprintf(Line, sizeof(Line), "\n%-11s     -", Name);
+            }
+            Text += Line;
+        }
+        return Text;
+    }
+
+    namespace
+    {
+        std::mutex GReportedGpuLock;
+        float      GReportedGpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+    }
+
+    void SetReportedGpuTimes(const float* InGpuMs)
+    {
+        std::lock_guard<std::mutex> Lock(GReportedGpuLock);
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer) { GReportedGpuMs[Timer] = InGpuMs[Timer]; }
+    }
+
+    void GetReportedGpuTimes(float* OutGpuMs)
+    {
+        std::lock_guard<std::mutex> Lock(GReportedGpuLock);
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer) { OutGpuMs[Timer] = GReportedGpuMs[Timer]; }
     }
 }

@@ -351,6 +351,20 @@ public:
     virtual void EndDrawEvent() = 0;
 
     /**
+     * GPU timestamps, for timing GPU work ("stat frame"). Within one
+     * BeginRendering/EndRendering block, WriteGPUTimestamp(i) records the time
+     * the GPU reaches that point, for i below GDI_GPU_TIMESTAMP_MAX. The block
+     * is complete by the next BeginRendering (one frame in flight), so from
+     * then until the next one GetPreviousGPUTimestamps gives the previous
+     * block's: OutMilliseconds[i] for each bit i of the returned mask, on one
+     * GPU clock (only differences mean anything). A backend that cannot
+     * time -- the default -- writes nothing and returns 0.
+     */
+    virtual bool     SupportsGPUTimestamps() const { return false; }
+    virtual void     WriteGPUTimestamp(uint32_t /*InIndex*/) {}
+    virtual uint64_t GetPreviousGPUTimestamps(double* /*OutMilliseconds*/) { return 0; }
+
+    /**
      * Present the most recent rendered frame to the supplied window.
      * Called from the UI thread after RendererFinished(). OpenGL keeps its existing
      * QOpenGLContext-based present path and overrides this as a no-op; Vulkan
@@ -573,6 +587,11 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(EngineCore::Color, GetColorFromSamplePoint, (
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, BeginDrawEvent, (const std::string& InEventName))
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, EndDrawEvent, ())
+
+/* GPU timestamps: GDIDynamicDriver::WriteGPUTimestamp's contract. */
+bool     GDISupportsGPUTimestamps();
+void     GDIWriteGPUTimestamp(uint32_t InIndex);
+uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds);   // GDI_GPU_TIMESTAMP_MAX of them
 
 IMPLEMENT_GDI_FUNCTION_BODY(
         template<typename ShaderRef> void,

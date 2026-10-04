@@ -97,6 +97,27 @@ namespace RenderCore
      * a caller sees a consistent snapshot of no single instant, which is
      * fine for a per-second log line and wrong for anything stricter.
      */
+    /* "stat frame": the GPU spans a scene's frame is timed in, in order. */
+    enum ERenderGpuTimer : uint32_t
+    {
+        RGT_PrePass = 0,
+        RGT_BasePass,            // the G-buffer
+        RGT_AmbientOcclusion,
+        RGT_Shadows,
+        RGT_Lighting,
+        RGT_Forward,             // Unlit and the translucent stages
+        RGT_PostProcess,
+        RGT_Total,               // the whole scene, start to end of its stages
+        RGT_Count
+    };
+
+    /* "BasePass", "Total", ... */
+    inline const char* GetRenderGpuTimerName(const ERenderGpuTimer InTimer)
+    {
+        static const char* const Names[RGT_Count] = { "PrePass", "BasePass", "AO", "Shadows", "Lighting", "Forward", "PostProcess", "Total" };
+        return InTimer < RGT_Count ? Names[InTimer] : "";
+    }
+
     struct RenderStats
     {
         uint64_t FramesRendered         = 0;
@@ -115,6 +136,11 @@ namespace RenderCore
         float FrameMs        = 0.0f;
         float GameThreadMs   = 0.0f;
         float RenderThreadMs = 0.0f;
+
+        /* "stat frame" (Stats.Frame on, and a backend that can time the GPU):
+         * the default scene's GPU time per span, averaged over half a second;
+         * -1 where it was not timed (off, or the span did not run). */
+        float GpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
     };
 }
 

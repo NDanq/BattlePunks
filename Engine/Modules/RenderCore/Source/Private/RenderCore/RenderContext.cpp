@@ -576,6 +576,16 @@ namespace RenderCore
         void IssueAmbientOcclusion(SceneTargets& InTargets, const PostProcessSettings& InPost);
         GDITextureResource* AmbientOcclusion = nullptr;
         GDITextureResource* OverlayFont      = nullptr;   // OverlayFont.h's glyphs side by side, made on first use
+
+        /* "stat frame": the scene timing this GDI block, and the last block's. */
+        bool        bTimeStages = false;
+        const void* TimedOwner  = nullptr;
+
+        /* InTimer's start (or end) timestamp: indices 2t and 2t + 1. */
+        void StageTimestamp(const ERenderGpuTimer InTimer, const bool bInEnd) const
+        {
+            if(bTimeStages) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
+        }
         bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
 
         GDIShader* GetShadowDepthShader()
@@ -1898,8 +1908,44 @@ namespace RenderCore
         return true;
     }
 
-    void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor)
+    bool RenderContext::CanTimeGpu() const
     {
+        return P->Backend != ERenderBackend::Null && GDISupportsGPUTimestamps();
+    }
+
+    const void* RenderContext::BeginTimedBlock(const void* InOwner, const bool bInTime, float (&OutGpuMs)[RGT_Count])
+    {
+        const void* Previous = P->TimedOwner;
+        P->TimedOwner = bInTime && CanTimeGpu() ? InOwner : nullptr;
+        for(float& Each : OutGpuMs) { Each = -1.0f; }
+        if(!Previous)
+        {
+            return nullptr;
+        }
+        double         Stamps[GDI_GPU_TIMESTAMP_MAX] = {};
+        const uint64_t Written = GDIGetPreviousGPUTimestamps(Stamps);
+        for(uint32_t Timer = 0; Timer < RGT_Count; ++Timer)
+        {
+            const uint64_t Both = (uint64_t(1) << (Timer * 2)) | (uint64_t(1) << (Timer * 2 + 1));
+            if((Written & Both) == Both)
+            {
+                OutGpuMs[Timer] = float(std::max(Stamps[Timer * 2 + 1] - Stamps[Timer * 2], 0.0));
+            }
+        }
+        return Written ? Previous : nullptr;
+    }
+
+    void RenderContext::RenderSceneStages(SceneTargets& InTargets, const EngineCore::Color InClearColor, const bool bInTimed)
+    {
+        /* Timed only for the block's owning scene: a preview's stages in the
+         * same block would write the same indices. */
+        struct TimedScope
+        {
+            Impl* Owner;
+            TimedScope(Impl* InOwner, const bool bInTimed) : Owner(InOwner) { Owner->bTimeStages = bInTimed && Owner->TimedOwner; }
+            ~TimedScope() { Owner->bTimeStages = false; }
+        } Timed(P, bInTimed);
+
         P->bDeferring  = false;
         P->FinalTarget = nullptr;
         InTargets.Final = nullptr;
@@ -1934,11 +1980,14 @@ namespace RenderCore
             GDISetColorMask(EColM_RGBA);
         };
 
+        P->StageTimestamp(RGT_Total, false);
         BindTargets(&SceneColor, 1, SceneColor);
         GDIClear(CM_Color | CM_Depth, InClearColor);
 
         /* PrePass: RenderScene culled before the draws were queued. */
+        P->StageTimestamp(RGT_PrePass, false);
         P->IssueStage(ERenderStage::PrePass);
+        P->StageTimestamp(RGT_PrePass, true);
 
         /* Base Pass: the G-buffer, created the first time something needs it. */
         const DrawPolicy& Base = P->PolicyFor(ERenderStage::BasePass);
@@ -1946,9 +1995,11 @@ namespace RenderCore
         P->bGBufferThisFrame = bDeferred;
         if(bDeferred)
         {
+            P->StageTimestamp(RGT_BasePass, false);
             BindTargets(InTargets.GBuffer, RENDER_GBUFFER_TARGETS, SceneColor);
             GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 0));   // alpha 0 in GBuffer1: no lit surface
             P->IssueStage(ERenderStage::BasePass);
+            P->StageTimestamp(RGT_BasePass, true);
         }
         else if(!Base.IsEmpty())
         {
@@ -1961,8 +2012,12 @@ namespace RenderCore
          * the resolve into the scene colour. */
         if(bDeferred)
         {
+            P->StageTimestamp(RGT_AmbientOcclusion, false);
             P->IssueAmbientOcclusion(InTargets, P->PostSettings);
+            P->StageTimestamp(RGT_AmbientOcclusion, true);
+            P->StageTimestamp(RGT_Shadows, false);
             P->IssueShadows();
+            P->StageTimestamp(RGT_Shadows, true);
         }
         else
         {
@@ -1970,6 +2025,7 @@ namespace RenderCore
         }
         if(bDeferred)
         {
+            P->StageTimestamp(RGT_Lighting, false);
             BindTargets(&SceneColor, 1, nullptr);
             BeginDrawEvent(GetRenderStageName(ERenderStage::Lighting));
             if(P->IssueLighting(InTargets))
@@ -1978,13 +2034,16 @@ namespace RenderCore
             }
             P->AmbientOcclusion = nullptr;
             EndDrawEvent();
+            P->StageTimestamp(RGT_Lighting, true);
         }
 
         /* Forward, over the lit scene and against its depth. */
+        P->StageTimestamp(RGT_Forward, false);
         BindTargets(&SceneColor, 1, SceneColor);
         P->IssueStage(ERenderStage::Unlit);
         P->IssueStage(ERenderStage::TranslucentLit);
         P->IssueStage(ERenderStage::TranslucentUnlit);
+        P->StageTimestamp(RGT_Forward, true);
 
         /* PostProcess: the stack (RENDERPIPELINE.md, "Post process"), once a
          * scene's; consumed here, so the next call (a preview) runs none. */
@@ -1992,7 +2051,10 @@ namespace RenderCore
         const bool bHasPrev = P->bHasPrevViewProjection;
         P->PostSettings           = PostProcessSettings();
         P->bHasPrevViewProjection = false;
+        P->StageTimestamp(RGT_PostProcess, false);
         GDIRenderTarget* const Source = P->RunPostProcessStack(InTargets, Post, bHasPrev);
+        P->StageTimestamp(RGT_PostProcess, true);
+        P->StageTimestamp(RGT_Total, true);
         P->FinalTarget  = Source;
         InTargets.Final = Source;
         Finish();
