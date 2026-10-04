@@ -915,3 +915,6 @@ drop most of the receiver bias); Masked casters clipped in the Shadows
 sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
 lights; occlusion queries and a depth prepass in the PrePass; per-section
 bounds for culling; RGBA16F G-buffer and scene colour.
+
+Recording the Base Pass on several threads, after cheaper per-draw work first:
+[MULTITHREADED_RENDERING.md](MULTITHREADED_RENDERING.md).
