@@ -112,6 +112,7 @@ The launchers' command line is config overrides (`ParseLaunchArgs`,
 | `TimeoutMs` | 30000 | the most a peer may go unanswered (see Timeouts) |
 | `ServerTickRate` | 30 | a headless server's frame rate, and so its send rate |
 | `InterpolationDelayMs` | 100 | how far in the past a client shows remote Transforms; 0 shows them as they arrive |
+| `SimulatedLossPercent` | 0 | testing: this share of the state packets the process sends is dropped |
 | `SpawnPlayerPerClient` | true | the host makes each client a player entity |
 
 ---
@@ -192,8 +193,8 @@ GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);
 ### Smoothing and prediction
 
 **Smoothing.**
-- Each server flush begins with a `Frame` message carrying the server's
-  clock, so a client knows when each state was true.
+- Each state batch carries the server's clock, so a client knows when
+  its state was true.
 - A client keeps about a second of each networked Transform it receives.
 - It shows the Transform `InterpolationDelayMs` in the past, blended between
   the samples on either side. If the server goes quiet, it holds the newest
@@ -214,9 +215,10 @@ GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);
 
 ## Wire
 
-- **Transport.** ENet, with two reliable, ordered channels: game and editor.
-  Spawns, state, destroys and RPCs share one channel, so state never arrives
-  for an entity the client does not have yet.
+- **Transport.** ENet, with three channels:
+  - **game** (reliable, ordered): the handshake, spawns, destroys and RPCs;
+  - **state** (unreliable, sequenced): replicated fields and their acks;
+  - **editor** (reliable, ordered): the editor link.
 - **Packets.** Every packet is an `EngineCore::Archive` (little-endian). A
   packet that does not parse disconnects its sender.
   `Private/NetCore/NetProtocol.h` has the layouts.
@@ -224,6 +226,35 @@ GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);
   replicated fields and RPCs (`NetSchema`), so two builds that disagree refuse
   each other. Types travel by name, never `ComponentTypeID`, because ids are
   assigned in first-use order.
+
+### Unreliable state, acknowledged baselines
+
+A lost reliable packet holds up everything sent after it until it is
+resent: a whole round trip of frozen state. So state does not go reliably.
+
+- **Every server tick, each client gets a `StateBatch`,** even an empty one,
+  which also keeps its clock. A batch stays under 1200 bytes; a big tick
+  splits into several, between entities, never within one.
+- **The client acknowledges** the batches it applied (`StateAck`: the newest,
+  and the 32 before it as bits), unreliably too; each ack repeats the last
+  32, so losing one costs little.
+- **The server keeps, per client and component, what the client has
+  acknowledged.** A field is in every batch from the tick it changes until a
+  batch carrying that value is acknowledged. So nothing waits to be resent
+  after a loss: the next batch already has it. And every batch is complete
+  against the client's acknowledged state, so a client never shows a
+  position beside an older `InputAck`, or misses a value that changed and
+  changed back while a packet was lost.
+- **A batch older than the newest received is never applied,** so old values
+  cannot land on new ones.
+- **State may outrun a spawn,** since they travel on different channels. A
+  client does not acknowledge a batch that mentions an entity it has not
+  been sent yet, so the server keeps sending that state until the spawn has
+  landed.
+
+`[Net] SimulatedLossPercent` drops that share of the state packets a process
+sends, for testing. In NetArena at 20% on every process, prediction's worst
+correction stays 0: each batch that arrives is enough on its own.
 
 ### Timeouts
 
@@ -267,8 +298,6 @@ The road from here:
 
 ## What is not here yet
 
-- **Unreliable state with acknowledged baselines.** v1 sends state reliably,
-  which is simple and correct but queues behind a lost packet.
 - **Relevancy and interest management.** Every client gets every networked
   entity.
 - **Level travel during a session.** Both ends must run the same start level.
@@ -288,6 +317,8 @@ a client in one process over 127.0.0.1. It covers:
 - all three RPC targets, and the ownership check
 - a 6 s client stall
 - interpolation, and the prediction handler
+- state under 50% simulated loss each way: changing values, a value changed
+  and changed back, and a change just after a spawn
 - a late joiner
 - destroys and disconnects
 - the editor link

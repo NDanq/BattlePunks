@@ -311,8 +311,11 @@ GAMECORE_RPC(ShipComponent, ServerFire)(MyShip, AimDirection);
   `bool`, `Vector3`, `Color`, `EntityID` / `Entity` (resolved to the receiver's
   entity), and `GameCore::RpcString<N>` for text, by value or `const&`.
   At most 15 arguments.
-- **RPCs are reliable and ordered** with replication, so an RPC never arrives
-  before the entity it is addressed to.
+- **RPCs are reliable and ordered** with spawns and destroys, so an RPC never
+  arrives before the entity it is addressed to. Replicated fields travel
+  separately and unreliably, so an RPC can arrive a tick before or after a
+  field the server changed at the same time. Pass what the receiver needs as
+  arguments, rather than relying on a field it may not have yet.
 - **The call returns `false`** (and logs) if the entity is dead, no RPC has
   that name, or the arguments' types do not match the registration.
 

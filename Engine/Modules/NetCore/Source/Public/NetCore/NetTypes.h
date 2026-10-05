@@ -37,6 +37,11 @@ namespace NetCore
          * the server's updates (NetComponent.h). About three of the server's
          * sends: 100ms at a 30Hz server. 0 snaps to each update. */
         uint32_t InterpolationDelayMs = 100;
+
+        /* Testing: this percentage of the unreliable state packets this end
+         * sends (a server's batches, a client's acks) is dropped, as a lossy
+         * network would. 0 in a real game. */
+        uint32_t SimulatedLossPercent = 0;
     };
 }
 

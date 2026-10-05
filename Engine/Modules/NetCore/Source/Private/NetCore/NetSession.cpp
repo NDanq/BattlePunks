@@ -4,8 +4,10 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <deque>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Private/NetCore/NetProtocol.h"
@@ -95,11 +97,49 @@ struct NetSession::Impl final : public INetEntityMap
     };
     std::vector<PendingParent> PendingParents;
 
+    /* State batches: the newest seen (anything older is ignored), and which
+     * were applied, for the next StateAck. */
+    uint32_t HighestBatch = 0;
+    uint32_t AckLatest    = 0;
+    uint32_t AckBits      = 0;
+    bool     bAckDue      = false;
+
+    /* Destroyed here: state still in flight for one is not missing a spawn. */
+    std::unordered_set<int32_t> DestroyedIds;
+
     // --- server ---------------------------------------------------------
+
+    /*
+     * ACKNOWLEDGED BASELINES. Per client and networked component: the values
+     * last sent, and the fields whose current value the client has not yet
+     * acknowledged. Every batch carries, for each component it mentions,
+     * every such field -- so whatever batches were lost, the newest one to
+     * arrive brings the client to the server's state as of that batch, and a
+     * field is sent each tick from when it changes until a batch carrying
+     * that value is acknowledged.
+     */
+    struct Baseline
+    {
+        std::vector<uint8_t> Sent;              // the component's bytes as last sent
+        uint32_t             Unacked = 0;       // fields the client may not have
+        uint32_t             ValueSeq[32] = {}; // per field: the batch its current value was first sent in
+    };
+
+    /* What a batch carried: acknowledged, those fields' values are the client's. */
+    struct SentBatch
+    {
+        uint32_t                                   Seq = 0;
+        std::vector<std::pair<uint64_t, uint32_t>> Entries;   // ShadowKey, field mask
+    };
+
     struct ClientInfo
     {
         NetClientID ID        = NET_CLIENT_NONE;
         bool        bWelcomed = false;
+
+        uint32_t                               NextBatch = 1;
+        std::unordered_map<uint64_t, Baseline> Baselines;   // by ShadowKey
+        std::deque<SentBatch>                  InFlight;    // oldest first
     };
     std::unordered_map<NetPeerID, ClientInfo> Clients;
     NetClientID                               NextClientID = 0;
@@ -117,10 +157,11 @@ struct NetSession::Impl final : public INetEntityMap
     std::unordered_map<uint64_t, int32_t>  EntityToNet;   // by EntityID::Pack()
     int32_t                                NextNetId = 1;
 
-    /* The server's last-sent copy of each networked component, by
-     * ShadowKey: what the next diff compares against. */
-    std::unordered_map<uint64_t, std::vector<uint8_t>> Shadows;
-    uint32_t                                           ShadowGeneration = 0;
+    /* The replication tables' generation the baselines were made under. */
+    uint32_t BaselineGeneration = 0;
+
+    /* SimulatedLossPercent's dice. */
+    uint32_t LossRandom = 0x9E3779B9u;
 
     /* Set while a remote RPC's arguments decode: a "local" entity from
      * another process means nothing here. */
@@ -192,10 +233,14 @@ struct NetSession::Impl final : public INetEntityMap
         if(Found == NetToEntity.end()) { return; }
         EntityToNet.erase(Found->second.Pack());
         NetToEntity.erase(Found);
-        for(auto It = Shadows.begin(); It != Shadows.end();)
+        for(auto& Client : Clients)
         {
-            if(int32_t(uint32_t(It->first >> 16)) == InNetId) { It = Shadows.erase(It); }
-            else                                             { ++It; }
+            std::unordered_map<uint64_t, Baseline>& Baselines = Client.second.Baselines;
+            for(auto It = Baselines.begin(); It != Baselines.end();)
+            {
+                if(int32_t(uint32_t(It->first >> 16)) == InNetId) { It = Baselines.erase(It); }
+                else                                             { ++It; }
+            }
         }
         Interpolations.erase(InNetId);
     }
@@ -247,16 +292,17 @@ struct NetSession::Impl final : public INetEntityMap
         }
     }
 
-    /* A Frame: the server's clock now, as near as arrival tells. The offset
-     * is smoothed, so arrival jitter does not shake what is shown; a jump
-     * (a stall on either side) is taken at once. */
-    void ReceiveFrame(EngineCore::Archive& Ar)
+    /* A batch's time: the server's clock as near as arrival tells. The
+     * offset is smoothed, so arrival jitter does not shake what is shown; a
+     * jump (a stall on either side) is taken at once. A tick's batches share
+     * one time. */
+    void ReceiveServerTime(const uint32_t ServerMs)
     {
-        uint32_t ServerMs = 0;
-        Ar << ServerMs;
-        if(Ar.HasError()) { return; }
-        PrevServerTimeMs = LastServerTimeMs;
-        LastServerTimeMs = ServerMs;
+        if(ServerMs != LastServerTimeMs)
+        {
+            PrevServerTimeMs = LastServerTimeMs;
+            LastServerTimeMs = ServerMs;
+        }
 
         const double Sample = double(NowMs()) - double(ServerMs);
         if(!bHaveServerTime || std::fabs(Sample - ServerOffsetMs) > 1000.0)
@@ -419,33 +465,24 @@ struct NetSession::Impl final : public INetEntityMap
         return Ar;
     }
 
-    EngineCore::Archive BuildFrame()
-    {
-        EngineCore::Archive Ar = BeginMessage(ENetMessage::Frame);
-        uint32_t Now = NowMs();
-        Ar << Now;
-        return Ar;
-    }
-
-    /* InMask's fields of InType on InEntity, or every field with bInFull. */
-    bool BuildState(const int32_t InNetId, const ComponentTypeID InType, const void* InComponent,
-                    const uint32_t InMask, EngineCore::Archive& OutAr)
+    /* One state entry: InMask's fields of InType on InComponent. */
+    bool WriteStateEntry(EngineCore::Archive& Ar, const int32_t InNetId, const ComponentTypeID InType,
+                         const void* InComponent, const uint32_t InMask)
     {
         size_t FieldCount = 0;
         const GameCore::ReplicatedFieldEntry* Fields = GameCore::FindComponentReplication(InType, FieldCount);
         const uint16_t Wire = Schema.ToWire(InType);
         if(!Fields || InMask == 0 || Wire == NET_WIRE_TYPE_INVALID) { return false; }
 
-        OutAr = BeginMessage(ENetMessage::State);
         int32_t  NetId    = InNetId;
         uint16_t WireType = Wire;
         uint32_t Mask     = InMask;
-        OutAr << NetId << WireType << Mask;
+        Ar << NetId << WireType << Mask;
         for(size_t Field = 0; Field < FieldCount; ++Field)
         {
-            if(InMask & (1u << Field)) { WriteReplicatedField(OutAr, Fields[Field], InComponent, *this); }
+            if(InMask & (1u << Field)) { WriteReplicatedField(Ar, Fields[Field], InComponent, *this); }
         }
-        return !OutAr.HasError();
+        return !Ar.HasError();
     }
 
     uint32_t FullMask(const ComponentTypeID InType) const
@@ -465,28 +502,166 @@ struct NetSession::Impl final : public INetEntityMap
         return Types;
     }
 
-    /* Spawn, then every replicated field, to one client: a late joiner. */
+    /* Testing: true for SimulatedLossPercent of calls. */
+    bool SimulateLoss()
+    {
+        if(Config.SimulatedLossPercent == 0) { return false; }
+        LossRandom ^= LossRandom << 13;
+        LossRandom ^= LossRandom >> 17;
+        LossRandom ^= LossRandom << 5;
+        return LossRandom % 100u < Config.SimulatedLossPercent;
+    }
+
+    /* Every networked entity, to a client that just joined. Its state follows
+     * in the next batches: a new client has no baselines, so they carry
+     * every field. */
     void SendSnapshot(const NetPeerID InPeer)
     {
         if(!BoundWorld) { return; }
-        SendTo(InPeer, BuildFrame());
 
         std::vector<int32_t> Ids;
         Ids.reserve(NetToEntity.size());
         for(const auto& Entry : NetToEntity) { Ids.push_back(Entry.first); }
         std::sort(Ids.begin(), Ids.end());   // creation order: parents before children, usually
 
-        const std::vector<ComponentTypeID> Types = ReplicatedTypes();
-        for(const int32_t NetId : Ids)
+        for(const int32_t NetId : Ids) { SendTo(InPeer, BuildSpawn(NetId, NetToEntity[NetId])); }
+    }
+
+    /* This tick's state for one client, against what it has acknowledged:
+     * one batch or more (split between entities, never within one, so an
+     * entity's fields always arrive together), and at least one, entries or
+     * not, so the client's clock keeps time. */
+    void SendBatches(const NetPeerID InPeer, ClientInfo& InClient, const std::vector<ComponentTypeID>& InTypes,
+                     const uint32_t InNowMs)
+    {
+        struct Item
         {
-            const EntityID Entity = NetToEntity[NetId];
-            SendTo(InPeer, BuildSpawn(NetId, Entity));
-            for(const ComponentTypeID Type : Types)
+            uint64_t    Key;
+            const void* Component;
+            uint32_t    Size;
+            uint32_t    Mask;      // what is sent
+            uint32_t    Changed;   // of those, what changed since last sent
+        };
+
+        std::vector<uint8_t> Body;   // the open batch's entries
+        uint16_t             Count = 0;
+        SentBatch            Record;
+        Record.Seq = InClient.NextBatch;
+
+        const auto Emit = [&]
+        {
+            EngineCore::Archive Ar = BeginMessage(ENetMessage::StateBatch);
+            uint32_t Seq  = Record.Seq;
+            uint32_t Time = InNowMs;
+            uint16_t N    = Count;
+            Ar << Seq << Time << N;
+            if(!Body.empty()) { Ar.SerializeBytes(Body.data(), Body.size()); }
+            if(!Ar.HasError() && !SimulateLoss()) { Transport.Send(InPeer, NET_CHANNEL_STATE, Ar.GetBytes(), false); }
+
+            InClient.InFlight.push_back(std::move(Record));
+            while(InClient.InFlight.size() > 1024) { InClient.InFlight.pop_front(); }   // never answered: its fields stay unacked
+            InClient.NextBatch++;
+
+            Record = SentBatch();
+            Record.Seq = InClient.NextBatch;
+            Body.clear();
+            Count = 0;
+        };
+
+        std::vector<Item> Items;
+        for(const auto& Entry : NetToEntity)
+        {
+            const GameCore::Entity Handle(BoundWorld, Entry.second);
+            Items.clear();
+            EngineCore::Archive EntityAr = EngineCore::Archive::ForWriting();
+
+            for(const ComponentTypeID Type : InTypes)
             {
-                const void* Component = GameCore::Entity(BoundWorld, Entity).GetComponentByType(Type);
-                EngineCore::Archive Ar = BeginMessage(ENetMessage::State);
-                if(Component && BuildState(NetId, Type, Component, FullMask(Type), Ar)) { SendTo(InPeer, Ar); }
+                const void* Component = Handle.GetComponentByType(Type);
+                if(!Component) { continue; }
+
+                size_t FieldCount = 0;
+                const GameCore::ReplicatedFieldEntry* Fields = GameCore::FindComponentReplication(Type, FieldCount);
+                const uint32_t Size  = GameCore::GetComponentType(Type)->SizeBytes;
+                const uint64_t Key   = ShadowKey(Entry.first, Type);
+                const auto     Found = InClient.Baselines.find(Key);
+
+                uint32_t Changed = 0;
+                if(Found == InClient.Baselines.end() || Found->second.Sent.size() != Size)
+                {
+                    Changed = FullMask(Type);   // new to this client: everything
+                }
+                else
+                {
+                    for(size_t Field = 0; Field < FieldCount; ++Field)
+                    {
+                        if((Fields[Field].Flags & GameCore::RFF_InitialOnly) == 0
+                           && ReplicatedFieldDiffers(Fields[Field], Component, Found->second.Sent.data()))
+                        {
+                            Changed |= 1u << Field;
+                        }
+                    }
+                }
+                const uint32_t Unacked = Found != InClient.Baselines.end() ? Found->second.Unacked : 0u;
+                const uint32_t Mask    = Changed | Unacked;
+                if(Mask == 0) { continue; }
+
+                if(WriteStateEntry(EntityAr, Entry.first, Type, Component, Mask))
+                {
+                    Items.push_back({ Key, Component, Size, Mask, Changed });
+                }
             }
+            if(Items.empty()) { continue; }
+
+            /* Full: this entity starts the next batch. */
+            if(Count > 0 && Body.size() + EntityAr.GetSize() > NET_STATE_PACKET_BYTES) { Emit(); }
+
+            Body.insert(Body.end(), EntityAr.GetBytes().begin(), EntityAr.GetBytes().end());
+            for(const Item& Sent : Items)
+            {
+                Baseline& Base = InClient.Baselines[Sent.Key];
+                Base.Sent.assign(static_cast<const uint8_t*>(Sent.Component), static_cast<const uint8_t*>(Sent.Component) + Sent.Size);
+                for(uint32_t Field = 0; Field < 32; ++Field)
+                {
+                    if(Sent.Changed & (1u << Field)) { Base.ValueSeq[Field] = Record.Seq; }
+                }
+                Base.Unacked |= Sent.Mask;
+                Record.Entries.emplace_back(Sent.Key, Sent.Mask);
+                ++Count;
+            }
+        }
+        Emit();
+    }
+
+    /* A client's StateAck: the batches it applied. Their fields are the
+     * client's now -- each one whose value has not changed since that batch
+     * stops being sent. A batch the ack passes over unapplied needs nothing:
+     * what it carried is still unacked, so it is already in the next one. */
+    void ReceiveStateAck(ClientInfo& InClient, EngineCore::Archive& Ar)
+    {
+        uint32_t Latest = 0, Bits = 0;
+        Ar << Latest << Bits;
+        if(Ar.HasError()) { return; }
+
+        while(!InClient.InFlight.empty() && InClient.InFlight.front().Seq <= Latest)
+        {
+            const SentBatch& Batch  = InClient.InFlight.front();
+            const uint32_t   Behind = Latest - Batch.Seq;
+            const bool bApplied = Behind == 0 || (Behind <= 32 && ((Bits >> (Behind - 1)) & 1u) != 0);
+            if(bApplied)
+            {
+                for(const auto& Entry : Batch.Entries)
+                {
+                    const auto Found = InClient.Baselines.find(Entry.first);
+                    if(Found == InClient.Baselines.end()) { continue; }
+                    Baseline& Base = Found->second;
+                    for(uint32_t Field = 0; Field < 32; ++Field)
+                    {
+                        if((Entry.second & (1u << Field)) && Base.ValueSeq[Field] <= Batch.Seq) { Base.Unacked &= ~(1u << Field); }
+                    }
+                }
+            }
+            InClient.InFlight.pop_front();
         }
     }
 
@@ -495,15 +670,16 @@ struct NetSession::Impl final : public INetEntityMap
         if(!BoundWorld) { return; }
         Schema.Refresh();
 
-        /* What follows is the world as of now: a client times it by this. */
-        if(HasWelcomedClients()) { Broadcast(BuildFrame()); }
-
-        /* A table changed (a module reloaded): what was cached about the old
+        /* A table changed (a module reloaded): what was known about the old
          * layout is meaningless; everything goes again in full. */
-        if(ShadowGeneration != GameCore::GetNetTablesGeneration())
+        if(BaselineGeneration != GameCore::GetNetTablesGeneration())
         {
-            Shadows.clear();
-            ShadowGeneration = GameCore::GetNetTablesGeneration();
+            for(auto& Client : Clients)
+            {
+                Client.second.Baselines.clear();
+                Client.second.InFlight.clear();
+            }
+            BaselineGeneration = GameCore::GetNetTablesGeneration();
         }
 
         /* New networked entities: an id each, then a spawn to everyone. */
@@ -515,49 +691,15 @@ struct NetSession::Impl final : public INetEntityMap
             MapEntity(InNet.NetId, InEntity.GetID());
             Spawned.emplace_back(InNet.NetId, InEntity.GetID());
         });
-        const bool bAnyone = HasWelcomedClients();
-        if(bAnyone)
-        {
-            for(const auto& Entry : Spawned) { Broadcast(BuildSpawn(Entry.first, Entry.second)); }
-        }
+        if(!HasWelcomedClients()) { return; }
+        for(const auto& Entry : Spawned) { Broadcast(BuildSpawn(Entry.first, Entry.second)); }
 
-        /* Changed fields. A component with no shadow yet sends everything. */
+        /* Then each client's state, unreliably. */
         const std::vector<ComponentTypeID> Types = ReplicatedTypes();
-        for(const auto& Entry : NetToEntity)
+        const uint32_t Now = NowMs();
+        for(auto& Client : Clients)
         {
-            const GameCore::Entity Handle(BoundWorld, Entry.second);
-            for(const ComponentTypeID Type : Types)
-            {
-                const void* Component = Handle.GetComponentByType(Type);
-                if(!Component) { continue; }
-
-                size_t FieldCount = 0;
-                const GameCore::ReplicatedFieldEntry* Fields = GameCore::FindComponentReplication(Type, FieldCount);
-                const uint32_t Size = GameCore::GetComponentType(Type)->SizeBytes;
-                std::vector<uint8_t>& Shadow = Shadows[ShadowKey(Entry.first, Type)];
-
-                uint32_t Mask = 0;
-                if(Shadow.size() != Size)
-                {
-                    Mask = FullMask(Type);
-                }
-                else
-                {
-                    for(size_t Field = 0; Field < FieldCount; ++Field)
-                    {
-                        if((Fields[Field].Flags & GameCore::RFF_InitialOnly) == 0
-                           && ReplicatedFieldDiffers(Fields[Field], Component, Shadow.data()))
-                        {
-                            Mask |= 1u << Field;
-                        }
-                    }
-                }
-                if(Mask == 0) { continue; }
-
-                Shadow.assign(static_cast<const uint8_t*>(Component), static_cast<const uint8_t*>(Component) + Size);
-                EngineCore::Archive Ar = BeginMessage(ENetMessage::State);
-                if(bAnyone && BuildState(Entry.first, Type, Component, Mask, Ar)) { Broadcast(Ar); }
-            }
+            if(Client.second.bWelcomed) { SendBatches(Client.first, Client.second, Types, Now); }
         }
     }
 
@@ -758,32 +900,49 @@ struct NetSession::Impl final : public INetEntityMap
         if(Ar.HasError() || !BoundWorld) { return; }
         const EntityID Entity = FromNetId(NetId);
         UnmapEntity(NetId);
+        DestroyedIds.insert(NetId);
         if(Entity.IsSet() && BoundWorld->IsAlive(Entity)) { BoundWorld->DestroyEntity(Entity); }
     }
 
-    void ClientState(EngineCore::Archive& Ar)
+    /* One entry of a StateBatch. Always read through, so the next one
+     * parses; false if it is for an entity whose spawn has not arrived yet
+     * (the batch is then not acknowledged, and the server sends it again). */
+    bool ClientState(EngineCore::Archive& Ar)
     {
         int32_t  NetId    = 0;
         uint16_t WireType = 0;
         uint32_t Mask     = 0;
         Ar << NetId << WireType << Mask;
-        if(Ar.HasError() || !BoundWorld) { return; }
+        if(Ar.HasError()) { return true; }
 
-        const EntityID        Entity = FromNetId(NetId);
-        const ComponentTypeID Type   = Schema.FromWire(WireType);
-        void* Component = (Entity.IsSet() && Type != GameCore::COMPONENT_TYPE_INVALID)
-                        ? GameCore::Entity(BoundWorld, Entity).GetComponentByType(Type) : nullptr;
-        if(!Component) { return; }   // an entity or component this client does not have (yet)
-
+        const ComponentTypeID Type = Schema.FromWire(WireType);
         size_t FieldCount = 0;
-        const GameCore::ReplicatedFieldEntry* Fields = GameCore::FindComponentReplication(Type, FieldCount);
+        const GameCore::ReplicatedFieldEntry* Fields =
+            Type != GameCore::COMPONENT_TYPE_INVALID ? GameCore::FindComponentReplication(Type, FieldCount) : nullptr;
+        if(!Fields)
+        {
+            Ar.SetError("state for a type that does not replicate");
+            return true;
+        }
+
+        const EntityID Entity    = FromNetId(NetId);
+        void*          Component = Entity.IsSet() ? GameCore::Entity(BoundWorld, Entity).GetComponentByType(Type) : nullptr;
 
         /* A Transform shown in the past: the server's goes into its samples,
          * and Interpolate() writes the component. */
         const bool bTransform = Type == GameCore::TransformComponent::StaticType().ID;
         void* Into = Component;
         Interpolation* Smooth = nullptr;
-        if(bTransform && IsInterpolated(Entity))
+        std::vector<uint8_t> Scratch;
+        if(!Component)
+        {
+            /* Not here: read it past. A component the entity lacks, or an
+             * entity already destroyed, is done with; one not spawned yet is
+             * not. */
+            Scratch.assign(GameCore::GetComponentType(Type)->SizeBytes, 0);
+            Into = Scratch.data();
+        }
+        else if(bTransform && IsInterpolated(Entity))
         {
             const auto Found = Interpolations.find(NetId);
             Smooth = &Interpolations[NetId];
@@ -795,7 +954,8 @@ struct NetSession::Impl final : public INetEntityMap
         {
             if(Mask & (1u << Field)) { ReadReplicatedField(Ar, Fields[Field], Into, *this); }
         }
-        if(Ar.HasError()) { return; }
+        if(Ar.HasError()) { return true; }
+        if(!Component) { return Entity.IsSet() || DestroyedIds.count(NetId) != 0; }
 
         if(Smooth) { PushSample(*Smooth); }
 
@@ -805,6 +965,54 @@ struct NetSession::Impl final : public INetEntityMap
         {
             Corrected.push_back(NetId);
         }
+        return true;
+    }
+
+    /* A StateBatch: newer than any before it, or ignored -- applying an
+     * older one would put older values over newer. Applied whole, it is
+     * acknowledged in the next flush. */
+    void ReceiveStateBatch(EngineCore::Archive& Ar)
+    {
+        uint32_t Seq = 0, ServerMs = 0;
+        uint16_t Count = 0;
+        Ar << Seq << ServerMs << Count;
+        if(Ar.HasError() || !BoundWorld || !bWelcomed || Seq <= HighestBatch) { return; }
+        HighestBatch = Seq;
+        ReceiveServerTime(ServerMs);
+
+        bool bComplete = true;
+        for(uint16_t Index = 0; Index < Count && !Ar.HasError(); ++Index)
+        {
+            if(!ClientState(Ar)) { bComplete = false; }
+        }
+        if(Ar.HasError() || !bComplete) { return; }
+
+        /* Newest applied, and the 32 before it as bits. */
+        const uint32_t Ahead = AckLatest == 0 ? 64u : Seq - AckLatest;
+        const uint64_t Bits  = Ahead >= 64 ? 0u : ((uint64_t(AckBits) << Ahead) | (uint64_t(1) << (Ahead - 1)));
+        AckBits   = uint32_t(Bits);
+        AckLatest = Seq;
+        bAckDue   = true;
+    }
+
+    /* A client's batch bookkeeping, for a new level or session. */
+    void ResetBatches()
+    {
+        HighestBatch = 0;
+        AckLatest    = 0;
+        AckBits      = 0;
+        bAckDue      = false;
+        DestroyedIds.clear();
+    }
+
+    void SendStateAck()
+    {
+        if(!bAckDue || ServerPeer == NET_PEER_NONE) { return; }
+        bAckDue = false;
+        EngineCore::Archive Ar = BeginMessage(ENetMessage::StateAck);
+        uint32_t Latest = AckLatest, Bits = AckBits;
+        Ar << Latest << Bits;
+        if(!Ar.HasError() && !SimulateLoss()) { Transport.Send(ServerPeer, NET_CHANNEL_STATE, Ar.GetBytes(), false); }
     }
 
     void ReceiveRpc(const NetPeerID InPeer, EngineCore::Archive& Ar)
@@ -855,11 +1063,15 @@ struct NetSession::Impl final : public INetEntityMap
 
     void HandleReceived(const NetPeerID InPeer, const uint8_t InChannel, const std::vector<uint8_t>& InData)
     {
-        if(InChannel != NET_CHANNEL_GAME) { return; }
+        if(InChannel != NET_CHANNEL_GAME && InChannel != NET_CHANNEL_STATE) { return; }
 
         EngineCore::Archive Ar = EngineCore::Archive::ForReading(InData);
         uint8_t Type = 0;
         Ar << Type;
+
+        /* State and its acks go unreliably on their channel; everything else reliably on the game one. */
+        const bool bStateMessage = ENetMessage(Type) == ENetMessage::StateBatch || ENetMessage(Type) == ENetMessage::StateAck;
+        if(bStateMessage != (InChannel == NET_CHANNEL_STATE)) { Ar.SetError("a message on the wrong channel"); }
 
         if(Role == ENetRole::Server)
         {
@@ -867,12 +1079,13 @@ struct NetSession::Impl final : public INetEntityMap
             const bool bWelcomedPeer = Found != Clients.end() && Found->second.bWelcomed;
             switch(ENetMessage(Type))
             {
-                case ENetMessage::Hello: ServerHello(InPeer, Ar); break;
-                case ENetMessage::Rpc:   if(bWelcomedPeer) { ReceiveRpc(InPeer, Ar); } break;
-                default:                 Ar.SetError("a message a client does not send"); break;
+                case ENetMessage::Hello:    if(!Ar.HasError()) { ServerHello(InPeer, Ar); } break;
+                case ENetMessage::StateAck: if(bWelcomedPeer && !Ar.HasError()) { ReceiveStateAck(Found->second, Ar); } break;
+                case ENetMessage::Rpc:      if(bWelcomedPeer && !Ar.HasError()) { ReceiveRpc(InPeer, Ar); } break;
+                default:                    Ar.SetError("a message a client does not send"); break;
             }
         }
-        else
+        else if(!Ar.HasError())
         {
             switch(ENetMessage(Type))
             {
@@ -897,8 +1110,7 @@ struct NetSession::Impl final : public INetEntityMap
                 }
                 case ENetMessage::Spawn:   ClientSpawn(Ar);         break;
                 case ENetMessage::Destroy: ClientDestroy(Ar);       break;
-                case ENetMessage::State:   ClientState(Ar);         break;
-                case ENetMessage::Frame:   ReceiveFrame(Ar);        break;
+                case ENetMessage::StateBatch: ReceiveStateBatch(Ar); break;
                 case ENetMessage::Rpc:     ReceiveRpc(InPeer, Ar);  break;
                 default:                   Ar.SetError("a message a server does not send"); break;
             }
@@ -1148,6 +1360,7 @@ void NetSession::Stop()
     P->bHaveServerTime  = false;
     P->LastServerTimeMs = 0;
     P->PrevServerTimeMs = 0;
+    P->ResetBatches();
     P->Role        = ENetRole::Standalone;
 
     GStarted.erase(std::remove(GStarted.begin(), GStarted.end(), P), GStarted.end());
@@ -1182,7 +1395,12 @@ void NetSession::UnbindWorld()
     P->BoundWorld = nullptr;
     P->NetToEntity.clear();
     P->EntityToNet.clear();
-    P->Shadows.clear();
+    for(auto& Client : P->Clients)
+    {
+        Client.second.Baselines.clear();
+        Client.second.InFlight.clear();
+    }
+    P->ResetBatches();
     P->PendingParents.clear();
     P->Interpolations.clear();
     P->Corrected.clear();
@@ -1214,7 +1432,8 @@ void NetSession::PollIncoming()
 void NetSession::FlushOutgoing()
 {
     if(!P->bStarted) { return; }
-    if(P->Role == ENetRole::Server) { P->ServerFlush(); }
+    if(P->Role == ENetRole::Server)      { P->ServerFlush(); }
+    else if(P->Role == ENetRole::Client) { P->SendStateAck(); }
     P->Transport.Flush();
 }
 

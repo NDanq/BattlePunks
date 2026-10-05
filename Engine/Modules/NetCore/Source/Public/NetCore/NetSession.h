@@ -33,10 +33,11 @@ namespace GameCore { class World; }
  * A Server RPC is accepted only from the client that owns the entity
  * (NetComponent::OwnerClient).
  *
- * WIRE. One reliable, ordered ENet channel carries the game: spawns, state,
- * destroys and RPCs in the order they were made, so state never arrives for
- * an entity a client does not have yet. A second carries the editor link.
- * Every packet is an EngineCore::Archive (little-endian); one that does not
+ * WIRE. A reliable, ordered ENet channel carries spawns, destroys and RPCs in
+ * the order they were made. Replicated state goes unreliably on its own,
+ * each batch against what that client has acknowledged, so a lost packet
+ * delays nothing behind it (NetProtocol.h, README.md "Unreliable state").
+ * A third channel carries the editor link. Every packet is an EngineCore::Archive (little-endian); one that does not
  * parse disconnects its sender. A client whose code differs -- protocol
  * version, or the replication and RPC tables (NetSchema) -- is refused.
  *

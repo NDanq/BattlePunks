@@ -1,5 +1,6 @@
 #include "Public/NimbleEngine/NetHost.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <vector>
 
@@ -36,6 +37,7 @@ NIMBLE_CONFIG_BOOL(GNetSpawnPlayerPerClient, "Net", "SpawnPlayerPerClient", true
 /* A client shows other entities this far in the past, blended between the
  * server's updates; 0 snaps to each (NetComponent.h). */
 NIMBLE_CONFIG_INT(GNetInterpolationDelayMs, "Net", "InterpolationDelayMs", 100, nullptr);
+NIMBLE_CONFIG_INT(GNetSimulatedLossPercent, "Net", "SimulatedLossPercent", 0, nullptr);
 #endif
 
 namespace NimbleEngine
@@ -53,6 +55,7 @@ namespace NimbleEngine
         Desc.TimeoutMs             = uint32_t(GNetTimeoutMs.GetInt() > 0 ? GNetTimeoutMs.GetInt() : 30000);
         Desc.bSpawnPlayerPerClient = GNetSpawnPlayerPerClient.GetBool();
         Desc.InterpolationDelayMs  = uint32_t(GNetInterpolationDelayMs.GetInt() > 0 ? GNetInterpolationDelayMs.GetInt() : 0);
+        Desc.SimulatedLossPercent  = uint32_t(std::clamp(GNetSimulatedLossPercent.GetInt(), 0, 100));
 #endif
         return Desc;
     }
@@ -182,6 +185,7 @@ namespace NimbleEngine
         Config.MaxClients = InDesc.MaxClients;
         Config.TimeoutMs  = InDesc.TimeoutMs;
         Config.InterpolationDelayMs = InDesc.InterpolationDelayMs;
+        Config.SimulatedLossPercent = InDesc.SimulatedLossPercent;
 
         P->Net = new NetCore::NetSession();
         P->Net->SetClientEvents(&Impl::OnClientConnected, &Impl::OnClientDisconnected, P);
