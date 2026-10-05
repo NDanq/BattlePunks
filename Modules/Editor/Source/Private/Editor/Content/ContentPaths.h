@@ -59,6 +59,12 @@ namespace EditorContent
 
     /* Every .nmtexture in the project and the engine, by runtime path; and one file's (empty if not a texture). */
     QStringList ListTexturePaths();
+
+    /* A particle system field (PF_AssetParticleSystem): every .nmparticle in
+     * the project and the engine, by runtime path; and one file's (empty if
+     * not a particle system). */
+    QStringList ListParticleSystemPaths();
+    QString     ParticleSystemPathFor(const QString& InPath);
     QString     TexturePathFor(const QString& InPath);
     QString     RenderTargetPathFor(const QString& InPath);
     bool        IsRenderTargetFieldValue(const QString& InText);

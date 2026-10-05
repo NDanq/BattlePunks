@@ -90,6 +90,9 @@ public:
     uint64_t RequestSceneCapture();
     /* The same, of another viewport's scene (its GetOverlayScene during PrepareFrame). */
     uint64_t RequestSceneCapture(RenderCore::RenderSceneID InScene);
+    /* The same, of the scene InDocument is drawn in (a Prefab or Particle Editor tab's).
+     * 0 if it has none yet: no viewport has drawn it. */
+    uint64_t RequestSceneCapture(EditorDocument* InDocument);
 
     /* See Renderer::RequestMeshPreview: InMesh (a runtime path) framed by an
      * orbiting camera, with InMaterial on every section, else InSections.

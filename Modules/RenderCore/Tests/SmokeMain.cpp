@@ -3876,12 +3876,12 @@ static void TestParticleSystem()
     std::printf("[particle system]\n");
 
     size_t Count = 0;
-    Expect(GameCore::FindComponentScript(ParticleSystemComponent::StaticType().ID, Count) && Count == 22,
-           "Particle System exposes its settings to Lua");
+    Expect(GameCore::FindComponentScript(ParticleSystemComponent::StaticType().ID, Count) && Count == 6,
+           "Particle System exposes its system and overrides to Lua");
     const GameCore::ComponentSerializerInfo* Serializer = GameCore::FindComponentSerializer(ParticleSystemComponent::StaticType().ID);
-    Expect(Serializer && Serializer->Version == 1, "and is saved, version 1");
+    Expect(Serializer && Serializer->Version == 2, "and is saved, version 2 (naming a system)");
 
-    ParticleSystemComponent Wild;
+    ParticleEmitterDesc Wild;
     Wild.MaxParticles = 100000;
     Wild.SpawnRate    = -5.0f;
     Wild.Lifetime     = 0.0f;
@@ -3890,10 +3890,27 @@ static void TestParticleSystem()
     const ParticleEmitterSettings Clamped = Wild.ToSettings();
     Expect(Clamped.MaxParticles == PARTICLE_MAX_PER_SYSTEM && Clamped.SpawnRate == 0.0f && Clamped.Lifetime > 0.0f
            && Clamped.ColorCurve > 0.0f && Clamped.StartColor[0] == 1.0f && Clamped.StartColor[1] == 0.0f,
-           "settings are clamped to what the GPU can run, colours to 0-1");
+           "an emitter's settings are clamped to what the GPU can run, colours to 0-1");
+
+    ParticleEmitterDesc Plain;
+    Plain.SpawnRate = 40.0f;
     ParticleSystemComponent Off;
     Off.bEmitting = 0;
-    Expect(Off.ToSettings().SpawnRate == 0.0f, "not emitting spawns nothing");
+    Expect(Off.ToSettings(Plain, 0).SpawnRate == 0.0f, "not emitting spawns nothing");
+    ParticleSystemComponent Tuned;
+    Tuned.SpawnRateScale = 0.5f;
+    Tuned.Tint           = EngineCore::Color(255, 0, 255, 255);
+    const ParticleEmitterSettings Run = Tuned.ToSettings(Plain, 0);
+    Expect(Run.SpawnRate == 20.0f && Run.StartColor[0] == 1.0f && Run.StartColor[1] == 0.0f && Run.EndColor[2] == 1.0f,
+           "the component scales the spawn rate and tints every colour");
+    Expect(Tuned.ToSettings(Plain, 0).Seed != Tuned.ToSettings(Plain, 1).Seed,
+           "two emitters of one system are seeded apart");
+    Plain.MaxParticles = 100;
+    Plain.Lifetime     = 2.0f;
+    Plain.LifetimeVariance = 0.0f;
+    Expect(std::abs(Plain.GetSteadyStateCount() - 80.0f) < 1e-3f, "40 a second for 2 s holds 80 once it has run a while");
+    Plain.SpawnRate = 1000.0f;
+    Expect(Plain.GetSteadyStateCount() == 100.0f, "never more than Max Particles");
 
     ParticleEmitterGpu Emitter;
     Emitter.MaxParticles = 10;
@@ -3912,6 +3929,72 @@ static void TestParticleSystem()
     Expect(Flood.Spawn[1] == 10 && Flood.Spawn[0] < 10 && Flood.Sort[0] == 16,
            "never more than the ring holds a frame, wrapping round it; the sort runs over the next power of two");
     Expect(First.Spawn[3] != Second.Spawn[3], "each frame seeds its spawns differently");
+}
+
+/*
+ * Particle system assets (ParticleSystemAsset.h): .nmparticle text read and
+ * written, its errors, and the cache a proxy finds them in.
+ */
+static void TestParticleSystemAsset()
+{
+    std::printf("[particle system asset]\n");
+
+    ParticleSystemDesc System;
+    std::string        Error;
+    const std::string  Text =
+        "# smoke and sparks\n"
+        "NimbleParticleSystem 1\n"
+        "\n"
+        "Emitter Smoke Plume\n"
+        "    Material Content/Materials/Smoke.material.nmgraph\n"
+        "    SpawnRate 70\n"
+        "    Velocity 10, 120, 0\n"
+        "    StartColor 225,38,22,150\n"
+        "    FaceCamera false\n"
+        "    Sparkle 3\n"
+        "Emitter Sparks\n"
+        "    Enabled false\n"
+        "    Offset 0,20,0\n";
+    const bool bParsed = ParseParticleSystem(Text, System, Error);
+    Expect(bParsed && System.Emitters.size() == 2, "a system of two emitters is read");
+    if(bParsed && System.Emitters.size() == 2)
+    {
+        const ParticleEmitterDesc& Smoke = System.Emitters[0];
+        Expect(std::strcmp(Smoke.Name, "Smoke Plume") == 0 && std::strcmp(Smoke.Material, "Content/Materials/Smoke.material.nmgraph") == 0
+               && Smoke.SpawnRate == 70.0f && Smoke.Velocity.GetY() == 120.0 && Smoke.StartColor.G == 38 && Smoke.StartColor.A == 150
+               && Smoke.bFaceCamera == 0 && Smoke.Lifetime == ParticleEmitterDesc().Lifetime,
+               "names run to the end of the line, settings are read, unknown keys skipped, the rest at their defaults");
+        Expect(System.Emitters[1].bEnabled == 0 && System.Emitters[1].Offset.GetY() == 20.0, "the second emitter's own settings");
+    }
+
+    const std::string Written = WriteParticleSystem(System);
+    ParticleSystemDesc Again;
+    Expect(ParseParticleSystem(Written, Again, Error) && WriteParticleSystem(Again) == Written,
+           "written and read back, it writes the same bytes");
+    Expect(Written.find("LifetimeVariance 0.25\n") != std::string::npos && Written.find("Sparkle") == std::string::npos,
+           "every known setting is written, numbers in their shortest form");
+
+    Expect(!ParseParticleSystem("Emitter A\n", System, Error) && Error.find("line 1") != std::string::npos,
+           "a file without its NimbleParticleSystem line is refused");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 99\n", System, Error), "a newer format is refused");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nSpawnRate 3\n", System, Error) && Error.find("line 2") != std::string::npos,
+           "a setting before any Emitter is refused, naming its line");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter A\n    StartColor 300,0,0,0\n", System, Error)
+           && Error.find("StartColor") != std::string::npos && System.Emitters.empty(),
+           "a colour out of 0-255 is refused, and nothing is kept");
+    std::string Nine = "NimbleParticleSystem 1\n";
+    for(int Each = 0; Each < 9; ++Each) { Nine += "Emitter E\n"; }
+    Expect(!ParseParticleSystem(Nine, System, Error), "at most eight emitters");
+
+    Expect(GetDefaultParticleSystem() && GetDefaultParticleSystem()->Emitters.size() == 1,
+           "a component naming no system runs one emitter at its defaults");
+
+    auto Stored = std::make_shared<ParticleSystemDesc>(Again);
+    ParticleSystemCache::Store("Test/Stored.nmparticle", Stored);
+    Expect(ParticleSystemCache::Find("Test/Stored.nmparticle") == Stored, "a stored system is found by its path");
+    ParticleSystemCache::Invalidate("Test/Stored.nmparticle");
+    Expect(ParticleSystemCache::Find("Test/Stored.nmparticle") == nullptr, "and once invalidated, read from its file -- here, none");
+    ParticleSystemCache::Invalidate(std::string());
 }
 
 #if WITH_EDITOR
@@ -4025,17 +4108,23 @@ static void TestParticlesOnGpu()
         const GameCore::Entity Plume = World.CreateEntity("Plume");
         GameCore::TransformComponent Transform;
         Plume.AddComponent(Transform);
+        /* A system made in code, stored under a path as the editor's preview does. */
+        auto PlumeSystem = std::make_shared<ParticleSystemDesc>();
+        ParticleEmitterDesc& Puffs = PlumeSystem->Emitters.emplace_back();
+        std::snprintf(Puffs.Material, sizeof(Puffs.Material), "%s", "Content/Materials/ParticleProbe.material.nmgraph");
+        Puffs.MaxParticles     = 512;
+        Puffs.SpawnRate        = 400.0f;
+        Puffs.Lifetime         = 1.0f;
+        Puffs.LifetimeVariance = 0.0f;
+        Puffs.Velocity         = Vector3(0.0, 200.0, 0.0);
+        Puffs.StartSize        = 14.0f;
+        Puffs.EndSize          = 14.0f;
+        Puffs.StartColor       = EngineCore::Color(255, 0, 0, 255);
+        Puffs.EndColor         = EngineCore::Color(0, 0, 0, 255);
+        ParticleSystemCache::Store("Test/Plume.nmparticle", PlumeSystem);
+
         ParticleSystemComponent Particles;
-        std::snprintf(Particles.Material, sizeof(Particles.Material), "%s", "Content/Materials/ParticleProbe.material.nmgraph");
-        Particles.MaxParticles     = 512;
-        Particles.SpawnRate        = 400.0f;
-        Particles.Lifetime         = 1.0f;
-        Particles.LifetimeVariance = 0.0f;
-        Particles.Velocity         = Vector3(0.0, 200.0, 0.0);
-        Particles.StartSize        = 14.0f;
-        Particles.EndSize          = 14.0f;
-        Particles.StartColor       = EngineCore::Color(255, 0, 0, 255);
-        Particles.EndColor         = EngineCore::Color(0, 0, 0, 255);
+        std::snprintf(Particles.System, sizeof(Particles.System), "%s", "Test/Plume.nmparticle");
         Plume.AddComponent(Particles);
 
         /* Real time: the simulation follows the render thread's clock. */
@@ -4082,6 +4171,7 @@ static void TestParticlesOnGpu()
         }
         Rend.UnbindWorld();
         Rend.Shutdown();
+        ParticleSystemCache::Invalidate("Test/Plume.nmparticle");
     }
     SetFileProvider(PreviousProvider);
 }
@@ -4657,6 +4747,7 @@ int main()
     TestShadowSetup();
     TestLightComponents();
     TestParticleSystem();
+    TestParticleSystemAsset();
     TestPostProcessStack();
 #if WITH_EDITOR
     TestMultipleScenes();

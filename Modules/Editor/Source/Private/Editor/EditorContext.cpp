@@ -438,6 +438,16 @@ void EditorContext::RunFrame()
     ++FrameNumber;
 }
 
+uint64_t EditorContext::RequestSceneCapture(EditorDocument* InDocument)
+{
+    if(InDocument == Level) { return RequestSceneCapture(); }
+    for(const DocumentScene& Each : DocumentScenes)
+    {
+        if(Each.Document == InDocument) { return RequestSceneCapture(Each.Scene); }
+    }
+    return 0;
+}
+
 RenderCore::RenderSceneID EditorContext::GetDocumentScene(EditorDocument* InDocument)
 {
     if(InDocument == Level)

@@ -11,6 +11,7 @@
 #include <QUrl>
 
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/ParticleSystemAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -131,6 +132,17 @@ namespace EditorContent
         return InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive) ? ToRuntimePath(InPath) : QString();
     }
 
+    QStringList ListParticleSystemPaths()
+    {
+        return ListGraphs(&ParticleSystemPathFor);
+    }
+
+    QString ParticleSystemPathFor(const QString& InPath)
+    {
+        return InPath.endsWith(QString::fromLatin1(RenderCore::PARTICLE_SYSTEM_EXTENSION), Qt::CaseInsensitive) ? ToRuntimePath(InPath)
+                                                                                                                : QString();
+    }
+
     QStringList ListRenderTargetPaths()
     {
         return ListGraphs(&RenderTargetPathFor);
@@ -194,6 +206,7 @@ namespace EditorContent
             RenderCore::MeshAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::TextureAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::RenderTargetAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::ParticleSystemCache::Invalidate(Runtime.toStdString());
         }
     }
 
@@ -210,6 +223,7 @@ namespace EditorContent
             RenderCore::MeshAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::TextureAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::RenderTargetAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::ParticleSystemCache::Invalidate(Runtime.toStdString());
         }
     }
 }
