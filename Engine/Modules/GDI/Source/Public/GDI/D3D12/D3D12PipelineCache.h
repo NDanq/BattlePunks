@@ -36,12 +36,27 @@ enum ED3D12RootParam : UINT
 };
 
 /**
+ * Root parameters of the compute root signature (GDIDispatchCompute): the
+ * parameter block at b0, then one root UAV per storage buffer at u1-u4 --
+ * spirv-cross makes each std430 buffer a RWByteAddressBuffer at its binding.
+ */
+enum ED3D12ComputeRootParam : UINT
+{
+    CRP_Params = 0,
+    CRP_Storage0,
+    CRP_Count = CRP_Storage0 + 4   // GDI_COMPUTE_MAX_STORAGE_BUFFERS
+};
+
+/**
  * In-process PSO cache keyed on shaders, vertex layout, blend state and RT
  * format. Pipelines are created lazily on the first draw that needs one.
  *
  * Vertex layout IDs:
  *   0 -- standard:  slot 0 float3 position, slot 1 float2 texcoord
  *   1 -- instanced: plus slot 2 float4x4 transform, slot 3 float opacity, slot 4 float3 color
+ *   2 -- indexed mesh: plus slot 2 float3 normal, slot 3 float4 colour, slot 4 float2 UV1
+ *   3 -- indexed mesh instanced from a GDIBuffer (GDISetInstanceBuffer): plus
+ *        slot 5, one GDI_INSTANCE_STRIDE record per instance
  */
 class D3D12PipelineCache
 {
@@ -78,11 +93,19 @@ public:
     /** Null if either shader is missing bytecode or PSO creation fails. Failures are cached too. */
     ID3D12PipelineState* GetOrCreate(const PipelineKey& Key, const D3D12ShaderResource* VS, const D3D12ShaderResource* PS);
 
-    inline ID3D12RootSignature* GetRootSignature() const { return RootSignature.Get(); }
+    /** InCS's compute pipeline, made on first use; null (and cached) if creation fails. */
+    ID3D12PipelineState* GetOrCreateCompute(const D3D12ShaderResource* InCS);
+
+    inline ID3D12RootSignature*    GetRootSignature()        const { return RootSignature.Get(); }
+    inline ID3D12RootSignature*    GetComputeRootSignature() const { return ComputeRootSignature.Get(); }
+    /** ExecuteIndirect's signature for one D3D12_DRAW_INDEXED_ARGUMENTS (GDI_INDIRECT_ARGS_STRIDE). */
+    inline ID3D12CommandSignature* GetDrawIndexedSignature() const { return DrawIndexedSignature.Get(); }
     inline bool                 IsValid()          const { return RootSignature != nullptr; }
 
 private:
     bool BuildRootSignature();
+    bool BuildComputeRootSignature();
+    bool BuildDrawIndexedSignature();
     Microsoft::WRL::ComPtr<ID3D12PipelineState> CreatePipeline(const PipelineKey& Key,
                                                                const D3D12ShaderResource* VS,
                                                                const D3D12ShaderResource* PS) const;
@@ -91,6 +114,10 @@ private:
     D3D12Device*                                    Device = nullptr;
     Microsoft::WRL::ComPtr<ID3D12RootSignature>     RootSignature;
     std::unordered_map<uint64_t, Microsoft::WRL::ComPtr<ID3D12PipelineState>> Pipelines;
+
+    Microsoft::WRL::ComPtr<ID3D12RootSignature>     ComputeRootSignature;
+    Microsoft::WRL::ComPtr<ID3D12CommandSignature>  DrawIndexedSignature;
+    std::unordered_map<uint64_t, Microsoft::WRL::ComPtr<ID3D12PipelineState>> ComputePipelines;   // by shader ID
 };
 
 #endif //CORECLIENT_D3D12PIPELINECACHE_H

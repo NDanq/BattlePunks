@@ -226,13 +226,13 @@ Revert drops the edits; closing with unsaved edits asks. The engine's textures
 view only.
 
 The renderer samples a texture's chain trilinearly with a Linear filter (on
-Vulkan and OpenGL; D3D12 and Metal still upload level 0 alone). A compressed
+Vulkan, D3D12 and OpenGL; Metal still uploads level 0 alone). A compressed
 texture is encoded on import and on Save by bc7enc_rdo (RenderCore's
 `TextureCompression.h`), every level, and the file keeps the blocks beside the
 RGBA8 source, so changing a setting encodes again from the source, never from
 the blocks. The renderer uploads the blocks where the backend samples BC
-formats (Vulkan, OpenGL) and decodes them to RGBA8 where it does not (D3D12,
-Metal for now).
+formats (Vulkan, OpenGL, D3D12) and decodes them to RGBA8 where it does not
+(Metal for now).
 
 **Shipping.** The editor stages what it imports; a clean build of the game
 stages `Content/**/*.nmmesh` and `*.nmtexture` itself (Sandbox's CMakeLists,

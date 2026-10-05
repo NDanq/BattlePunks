@@ -38,6 +38,10 @@ namespace D3D12Util
     D3D12_BLEND_OP DecodeBlendOp(EBlendOp InOp);
     UINT8          DecodeColorMask(EColorMask InColorMask);
     D3D12_COMPARISON_FUNC DecodeCompareFunc(ECompareTestMode InMode);
+
+    /** InName (UTF-8) on InObject for PIX and the debug layer; nothing for a null object, an
+     *  empty name, or with [Shaders] ShaderDebug off (GDIShaderDebugEnabled). */
+    void SetObjectName(ID3D12Object* InObject, const std::string& InName);
 }
 
 /** Render-thread state captured between BeginRendering and EndRendering. */
@@ -120,6 +124,9 @@ public:
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
+    bool                SupportsCompressedFormat(EGDICompressedFormat InFormat) const override;
+    GDITextureResource* CreateCompressedTextureResource(EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels, uint32_t InCount,
+                                                        EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
 
     bool CheckError(const std::string& FailStr) override;
 
@@ -132,6 +139,23 @@ public:
     bool     SupportsGPUTimestamps() const override { return TimestampHeap != nullptr; }
     void     WriteGPUTimestamp(uint32_t InIndex) override;
     uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
+
+    /* Compute and GPU buffers (D3D12Compute.cpp): every device at feature level 11_0 has them. */
+    bool       SupportsCompute() const override { return DeviceObj != nullptr && PipelineCache != nullptr; }
+    GDIBuffer* CreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData) override;
+    bool       DispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
+                               GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                               uint32_t InX, uint32_t InY, uint32_t InZ) override;
+    bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
+    bool       SupportsIndirectDraw() const override { return SupportsCompute(); }
+
+    /**
+     * The open frame list's serial, new each time a frame list is opened
+     * (BeginRendering, FlushForReadback); D3D12Buffer tracks its state per
+     * list with it. AllocateListSerial gives a transient list its own.
+     */
+    inline uint64_t GetListSerial() const { return FrameListSerial; }
+    inline uint64_t AllocateListSerial()  { return ++NextListSerial; }
 
     /** UI thread: draws the last finished frame into the swapchain and presents it. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
@@ -202,6 +226,9 @@ private:
 
     GDIMesh*                  ScreenMesh       = nullptr;
     D3D12TextureResource*     NullTexture      = nullptr;
+
+    uint64_t                  NextListSerial   = 0;
+    uint64_t                  FrameListSerial  = 0;
 
     std::atomic<bool>         bResizing{false};
 
