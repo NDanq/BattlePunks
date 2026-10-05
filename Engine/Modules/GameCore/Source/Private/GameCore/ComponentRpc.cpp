@@ -5,6 +5,7 @@
 #include <string>
 
 #include "Public/Core/CoreLog.h"
+#include "Public/GameCore/ComponentScript.h"
 
 /* The RPC registry (an array indexed by ComponentTypeID, as the serializer
  * and replication ones) and the local sink every process starts with. */
@@ -173,5 +174,95 @@ bool InvokeRpc(World& InWorld, const EntityID InEntity, const ComponentTypeID In
 void ReportRpcCallError(const ComponentTypeID InType, const char* InName, const char* InReason)
 {
     CORE_LOG_WARN(std::string("RPC ") + TypeName(InType) + "." + (InName ? InName : "<null>") + " not called: " + InReason)
+}
+
+// === From scripts ============================================================
+
+bool CallRpcFromScript(ScriptCall& InCall, const int InFirstArg, World& InWorld, const EntityID InEntity,
+                       const ComponentTypeID InType, const RpcEntry& InRpc)
+{
+    if(!InWorld.IsAlive(InEntity))
+    {
+        InCall.Error("the entity is not alive");
+        return false;
+    }
+    if(!Entity(&InWorld, InEntity).HasComponentByType(InType))
+    {
+        InCall.Error((std::string("the entity has no ") + TypeName(InType) + " component").c_str());
+        return false;
+    }
+
+    /* The same encoding RpcArgs::Traits writes from C++, one letter at a time. */
+    EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+    int Arg = InFirstArg;
+    for(const char* Code = InRpc.ArgSignature; *Code != '\0' && !InCall.HasError(); ++Code)
+    {
+        switch(*Code)
+        {
+            case 'f': { float    Value = InCall.GetFloat(Arg++);  Ar << Value; break; }
+            case 'd': { double   Value = InCall.GetNumber(Arg++); Ar << Value; break; }
+            case 'i': { int32_t  Value = InCall.GetInt(Arg++);    Ar << Value; break; }
+            case 'z': { bool     Value = InCall.GetBool(Arg++);   Ar << Value; break; }
+            case 'u':
+            {
+                const double Number = InCall.GetNumber(Arg++);
+                if(!InCall.HasError() && (Number < 0.0 || Number > 4294967295.0)) { InCall.Error("an argument is out of range for uint32"); }
+                uint32_t Value = uint32_t(Number);
+                Ar << Value;
+                break;
+            }
+            case 'b':
+            {
+                const int32_t Number = InCall.GetInt(Arg++);
+                if(!InCall.HasError() && (Number < 0 || Number > 255)) { InCall.Error("an argument is out of range for uint8 (0..255)"); }
+                uint8_t Value = uint8_t(Number);
+                Ar << Value;
+                break;
+            }
+            case 'v':
+            {
+                const EngineCore::Vector3 Value = InCall.GetVector3(Arg);
+                Arg += 3;
+                float X = float(Value.GetX()), Y = float(Value.GetY()), Z = float(Value.GetZ());
+                Ar << X << Y << Z;
+                break;
+            }
+            case 'c':
+            {
+                EngineCore::Color Value = InCall.GetColor(Arg);
+                Arg += 4;
+                Ar << Value.R << Value.G << Value.B << Value.A;
+                break;
+            }
+            case 'e':
+            {
+                const EntityID Value = InCall.GetEntity(Arg++);
+                GetRpcSink().WriteEntity(InWorld, Value, Ar);
+                break;
+            }
+            case 's':
+            {
+                /* What SerializeFixedString writes; the receiver clamps to its RpcString's size. */
+                std::string Value = InCall.GetString(Arg++);
+                Ar << Value;
+                break;
+            }
+            default:
+                InCall.Error("the RPC takes an argument type scripts cannot send");
+                break;
+        }
+    }
+    if(InCall.HasError()) { return false; }
+
+    /* Arg is one past the last value read (a trailing Color's alpha may be left off). */
+    if(InCall.GetArgCount() >= Arg)
+    {
+        InCall.Error((std::string("too many arguments: ") + TypeName(InType) + "." + InRpc.Name + " takes "
+                      + std::to_string(std::strlen(InRpc.ArgSignature)) + " (a Vector3 is 3 values, a Color 4)").c_str());
+        return false;
+    }
+
+    GetRpcSink().Route(InWorld, InEntity, InType, InRpc, Ar.GetBytes());
+    return true;
 }
 }

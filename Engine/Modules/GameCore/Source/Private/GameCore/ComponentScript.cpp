@@ -1,4 +1,5 @@
 #include "Public/GameCore/ComponentScript.h"
+#include "Public/GameCore/ComponentRpc.h"
 
 #include <cstdio>
 #include <cstring>
@@ -299,6 +300,40 @@ namespace
         lua_setfield(InState, -2, InName);
     }
 
+    /* A component's RPC called from Lua, ship:ServerFire(x, y, z): routed by
+     * the RPC sink like a C++ call (ComponentRpc.h), never run here directly.
+     * Upvalues: the type and the RPC's name -- looked up at each call, so a
+     * module reload that changed the table is seen. Returns whether it went. */
+    int RpcDispatch(lua_State* InState)
+    {
+        const ComponentTypeID Type = ComponentTypeID(lua_tointeger(InState, lua_upvalueindex(1)));
+        const char*           Name = lua_tostring(InState, lua_upvalueindex(2));
+
+        char Metatable[96];
+        MetatableName(Type, Metatable);
+        const ComponentProxy* Proxy = static_cast<const ComponentProxy*>(luaL_checkudata(InState, 1, Metatable));
+
+        World* W = LuaGetBoundWorld(InState);
+        if(!W || !Entity(W, Proxy->Entity).GetComponentByType(Type))
+        {
+            return luaL_error(InState, "%s proxy no longer refers to a live component", TypeNameOf(Type));
+        }
+        const RpcEntry* Rpc = FindComponentRpc(Type, Name);
+        if(!Rpc)
+        {
+            return luaL_error(InState, "%s.%s belongs to a module that has unloaded", TypeNameOf(Type), Name);
+        }
+
+        ScriptCall Call(InState, Name, Proxy->Entity, W);   // argument 1 is the first after the proxy
+        const bool bSent = CallRpcFromScript(Call, 1, *W, Proxy->Entity, Type, *Rpc);
+        if(Call.HasError())
+        {
+            return luaL_error(InState, "%s", Call.GetErrorText());
+        }
+        lua_pushboolean(InState, bSent ? 1 : 0);
+        return 1;
+    }
+
     /* Builds InType's metatable on first use. Metatables live in the registry,
      * so a lua_State builds each one once. */
     void EnsureComponentMetatable(lua_State* InState, const ComponentTypeID InType)
@@ -339,6 +374,28 @@ namespace
                 PushDispatch(InState, &Entry, InType, DM_SetField);
                 SetMethod(InState, InType, Accessor);
             }
+        }
+
+        /* Its RPCs, by name, routed. Last, so an RPC wins over a binding of
+         * the same name: a Bind.Native of the handler would otherwise run it
+         * locally and skip the network. */
+        size_t RpcCount = 0;
+        const RpcEntry* Rpcs = FindComponentRpcs(InType, RpcCount);
+        for(size_t Index = 0; Index < RpcCount; ++Index)
+        {
+            lua_getfield(InState, -1, Rpcs[Index].Name);
+            const bool bBound = !lua_isnil(InState, -1);
+            lua_pop(InState, 1);
+            if(bBound)
+            {
+                GAMECORE_LOG(std::string("Component script: '") + TypeNameOf(InType) + "." + Rpcs[Index].Name
+                             + "' is an RPC; scripts call it through the network, not the binding of the same name")
+            }
+
+            lua_pushinteger(InState, lua_Integer(InType));
+            lua_pushstring(InState, Rpcs[Index].Name);
+            lua_pushcclosure(InState, &RpcDispatch, 2);
+            lua_setfield(InState, -2, Rpcs[Index].Name);
         }
 
         lua_setfield(InState, -2, "__index");

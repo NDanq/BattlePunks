@@ -161,6 +161,22 @@ namespace GameCore
     /* Used by CallRpc: logs why a call was refused. */
     GAMECORE_API void ReportRpcCallError(ComponentTypeID InType, const char* InName, const char* InReason);
 
+    class ScriptCall;
+
+    /*
+     * The script side of CallRpc: InCall's arguments, from InFirstArg, read as
+     * InRpc's argument types (its ArgSignature) and handed to the sink -- so a
+     * script's call is routed exactly as C++'s is. A Vector3 is three values,
+     * a Color four (alpha optional when it is last), an entity an Entity, a
+     * string a string. False, with InCall's error set, if the entity is not
+     * alive or the arguments do not fit.
+     *
+     * Every component proxy in Lua answers its type's RPCs by name --
+     * ship:ServerFire(x, y, z) -- and the Net library's Net.Call reaches any.
+     */
+    GAMECORE_API bool CallRpcFromScript(ScriptCall& InCall, int InFirstArg, World& InWorld, EntityID InEntity,
+                                        ComponentTypeID InType, const RpcEntry& InRpc);
+
     // === Argument encoding ===================================================
 
     namespace RpcArgs
