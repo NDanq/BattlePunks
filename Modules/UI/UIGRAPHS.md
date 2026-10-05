@@ -81,8 +81,10 @@ names a handler the graph lacks is outlined in orange.
 Notes:
 - Games stage `Content/UI/*.ui.nmgraph` for every target. The graph carries
   its Lua, so a Client build reads it directly; only the `.nmui` needs `cook ui`.
-- The designer's **Preview** does not run the logic. `Graph:` actions are
-  logged to the status bar instead.
+- The designer's **Preview** runs the logic, in a scratch World and script
+  engine of its own: On Document Open when it starts, your handlers as you
+  click. What it does to config vars is undone when it stops, and the `Game`
+  library answers defaults there. Saving the graph reloads it.
 
 ## 3. What a graph has without any code
 
@@ -92,6 +94,10 @@ Event (any EventBus event, listened to while the document is open).
 **Document nodes.**
 - This Document: the document's path, the first input of the `UI` library
   nodes.
+- Key: a data store key as this document reads it -- its Include's or list
+  row's prefix + the key (`Saves.3.Name`). Use it to write what a row shows.
+- List Item Key: `List.Index.Field`, for filling a ListView (set its count
+  with UI Set Count).
 - Close This Document.
 - Set Widget Text / Visible / Enabled / Focus, and Show Page. Each picks its
   widget from a dropdown of the document's names.
@@ -109,8 +115,8 @@ Editor's Details panel; nothing else is needed.
 
 | Library | Useful for UI |
 |---|---|
-| `UI` | `Open`, `Close`, `IsOpen`, `SetText`, `SetVisible`, `SetEnabled`, `SetProperty`, `SetFocus`, `ShowPage`, `SetNumber` / `SetString` / `SetBool`, `GetNumber` / `GetString` / `GetBool` |
-| `Config` | `GetBool` / `GetNumber` / `GetString`, `SetBool` / `SetNumber` / `SetString`, `Has`. Every `NIMBLE_CONFIG_*` var, by `"Section.Key"` |
+| `UI` | `Open`, `Close`, `IsOpen`, `SetText`, `SetVisible`, `SetEnabled`, `SetProperty`, `SetFocus`, `ShowPage`, `SetNumber` / `SetString` / `SetBool`, `GetNumber` / `GetString` / `GetBool`, `SetCount` (a ListView's length) |
+| `Config` | `GetBool` / `GetNumber` / `GetString`, `SetBool` / `SetNumber` / `SetString`, `Has`, `Save` (the player's User.ini). Every `NIMBLE_CONFIG_*` var, by `"Section.Key"` |
 | `Game` | `SetPaused`, `IsPaused`, the phase, score and lives, and the `PhaseChanged` / `ScoreChanged` / `LivesChanged` events |
 | `Input` | `SetMouseCaptured`, `IsKeyDown`, `GetMousePosition`, ... |
 | `World`, `Events`, `Debug` | finding entities, Emit, Print |
@@ -438,11 +444,12 @@ A complete shipped example is LightLab's pause menu:
 **Wiring a widget:**
 1. Select it. On the event field, **+ > Graph handler**.
 2. Build the chain from the UI Event's `Then` pin, then save the graph.
-3. Run it in Play-in-Editor. The designer's Preview only logs `Graph:` actions.
+3. Try it in the designer's Preview, or Play-in-Editor.
 
 | Symptom | Cause |
 |---|---|
-| Log: `'Graph:X' did not run: '...' has no UI graph running` | The document has no `Graph`, the graph did not load (check earlier log lines), or there is no script engine (the designer's preview). |
+| Log: `'Graph:X' did not run: '...' has no UI graph running` | The document has no `Graph`, or the graph did not load (check earlier log lines). |
+| Log: `Config: no config var 'X.Y'` in the Preview | A game module's var, and the editor has not loaded the module: it reads as a default there. It is there in Play-in-Editor and in the game. |
 | Log: `... has no handler X` | The graph has no UI Event named `X`: the action and the `Handler` setting differ, or the graph was not saved. The field is outlined in orange in the designer. |
 | A library's nodes are missing | The module was not rebuilt or refreshed (Build > Refresh Script Nodes); the library name clashes with a global; or members were rejected (names too long, more than 48 members). Check the log. |
 | The node shows as a placeholder | The graph uses a game's node and the game module is not loaded. Load the game, or refresh. |

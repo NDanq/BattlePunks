@@ -120,6 +120,8 @@ Inside the root element come `<Styles>`, exactly one root widget (usually a
   - `HAlign` and `VAlign` are `Fill`, `Left`/`Top`, `Center` or `Right`/`Bottom`.
   - Along a box's axis, `Fill` is a weight. With `Fill` 0 the child takes its
     desired size; otherwise it takes a share of the space left over.
+- **In a Grid:** `Row`, `Column`, `RowSpan`, `ColumnSpan` (0 first), and
+  `Margin`, `HAlign`, `VAlign` within its cells.
 
 **The MVP widgets:**
 
@@ -137,6 +139,12 @@ Inside the root element come `<Styles>`, exactly one root widget (usually a
 | `CheckBox` | one (its label) | `Checked` (bindable, two-way), `BoxSize`, `Spacing`, `Box`, `BoxHovered`, `Check` (brushes), `Padding`, `OnChanged`; see below |
 | `Slider` | none | `Value` (bindable, two-way), `Min`, `Max`, `Step`, `TrackHeight`, `ThumbSize`, `Track`, `FillBrush`, `Thumb`, `ThumbHovered` (brushes), `OnChanged`; its `Size` is its desired size; see below |
 | `Spacer` | none | its `Size` is its desired size |
+| `ScrollBox` | one | `ScrollOffset` (bindable, two-way), `ScrollStep`, `Orientation`, `ScrollBar` (`Auto`/`Always`/`Never`), `BarWidth`, `Track`, `Thumb`, `ThumbHovered`, `OnScrolled`; its `Size` is its desired size; see below |
+| `Grid` | any | `RowSpacing`, `ColumnSpacing`, `Uniform`; children placed by the Grid slot |
+| `WrapBox` | any | `ItemSpacing`, `LineSpacing`, `LineAlign`; children in lines that wrap at its width |
+| `TextInput` | none | `Text` (bindable, two-way), `Placeholder`, `MaxLength`, `Mode` (`Text`/`Integer`/`Number`), `Password`, font and colours, `Background`, `FocusedBrush`, `Padding`, `OnChanged`, `OnCommit`; see below |
+| `Include` | none | `Document` (a `.nmui`), `Prefix`; see "Documents inside documents" |
+| `ListView` | none | `ItemDocument`, `Items`, `ItemHeight`, `Spacing`, `SelectedIndex` (bindable, two-way), the scroll properties, `SelectedBrush`, `OnSelect`, `OnActivate`; see below |
 
 **Brush** (`Background`, `Brush`, a button's four):
 
@@ -184,10 +192,51 @@ sees it. `OnChanged` runs after each change, and `$value` is the new value:
 
 LightLab's pause menu has a Settings page of both (see "In a game").
 
-**Later widgets:** ScrollBox, TextInput (it needs the
-window's text input, which is already plumbed as `GameWindow::SetTextInputActive`
-and `OnText`), Grid and WrapBox, ListView, an `Include` element
-for documents inside documents, rich text, and rounded or SDF boxes.
+**ScrollBox: more than fits.** Its one child is laid out at full length and
+seen through the box, clipped. The wheel over it scrolls it (an inner box
+first, then, at its end, an outer one); the bar's thumb drags, and a click
+beside the thumb moves a page; focus moving to something out of view (Tab, the
+arrows, a pad) scrolls it in. `ScrollOffset` binds two-way, so a menu can
+remember where a list was. In the designer, selecting a widget inside a scroll
+box scrolls it into view.
+
+**Grid and WrapBox.** A Grid's columns are as wide as their widest child and
+its rows as tall as their tallest; a child spanning several shares its
+surplus among them. `Uniform` makes every cell the largest's size and
+stretches them over the grid (an inventory, a level select). A WrapBox puts
+its children in lines that wrap at its width; its height comes from that
+width, and is right on the first frame (layout runs again, at most twice,
+when a pass asks).
+
+**TextInput: typing.** One line. A click, Tab or the arrows focus it; while it
+has focus the window's text input is on (`UIInputResult::bWantsTextInput`) and
+it takes typed text and the editing keys -- Left and Right move the caret
+rather than focus, Space types, Return commits. Shift extends a selection,
+Ctrl+A/C/X/V select all, copy, cut and paste (the system clipboard, through
+`UISystem::SetClipboard`; a password field never copies). The text scrolls
+sideways to keep the caret in view. `Mode` Integer or Number accepts only a
+number (`$value` is it); `MaxLength` counts characters. `OnChanged` runs on
+each edit, `OnCommit` on Return or when focus leaves it, if it changed. Back
+(Escape, the pad's East) leaves the field instead of running the document's
+`OnBack`.
+
+**ListView: a list from the data store.** `Items="Saves"` shows `Saves.Count`
+items, each as an instance of `ItemDocument` whose bindings read
+`Saves.<i>.<Field>` -- the row document writes `{Bind:Name}` and shows each
+item's own. Only the rows in view are made, and they are reused as it scrolls:
+a thousand items cost a dozen rows. A click selects (`SelectedIndex`, two-way;
+`OnSelect`), Up and Down move the selection while it has focus, and Accept or
+a second click activates (`OnActivate`, `$value` the index). Buttons in a row
+still click, and run the row's own UI graph, whose `self.Prefix` is its
+item's (`Saves.3.`). Fill a list from Lua with `UI.SetCount('Saves', n)` and
+`UI.SetString('Saves.' .. i .. '.Name', ...)`, or from a graph with the List
+Item Key node. A row's graph opens once per row, not per item: read the item
+through its bindings or `self.Prefix`, not in On Document Open.
+
+Sandbox's Settings menu has a Profile page of a TextInput and a ListView whose
+rows are `Content/UI/SaveSlotRow.nmui` (see "In a game").
+
+**Later widgets:** rich text, and rounded or SDF boxes.
 
 **A game's own widget** is a class plus a registration in its module. It shows
 in the designer's palette while that module is loaded:
@@ -301,7 +350,10 @@ The host builds a `UIInputFrame` and calls `UISystem::ProcessInput`.
     Layout containers are not, so a full-screen HUD root lets clicks through.
 - **Clicks:** a click is a press and a release on the same widget. While the
   button is held, the pressed widget keeps the pointer, and hears it move
-  (`PE_Move`, a slider's drag) wherever it goes.
+  (`PE_Move`, a slider's drag) wherever it goes. A press focuses what takes
+  focus.
+- **The wheel** goes to the widget under the pointer, then up its parents, to
+  the first that uses it (`UIWidget::OnWheel`: a scroll box).
 - **Navigation:**
   - Applies in UIOnly documents, and in any document that has focus.
   - The focused widget sees a direction first (`UIWidget::OnNavigate`): a
@@ -319,6 +371,10 @@ The host builds a `UIInputFrame` and calls `UISystem::ProcessInput`.
     | Accept | Return, Space | South |
     | Back | Escape | East |
     | Next | Tab | none |
+
+  - A focused text field (`UIWidget::WantsTextInput`) takes the frame's typed
+    text and editing keys first (`UIInputFrame::Text`, `Backspace`, `Left`,
+    `bPaste`...): Left, Right and Accept edit it instead of navigating.
 
 - **Consumption:** `GameSession` removes what the UI took from the input the
   game reads. See INPUT.md, "The UI". A click on a button never reaches the
@@ -388,8 +444,8 @@ two open copies of a document keep separate state.
 Lua as a script object (`ScriptEngine::CreateObject`). It queues `OnOpen` and
 runs `Graph:` actions on that object. On close it runs `OnClose` and releases
 the object. A hot reload of the document, including a saved graph, rebuilds
-the object. A graph without a script engine (the designer's preview) does not
-run; its `Graph:` actions are logged. Games stage `Content/UI/*.ui.nmgraph`
+the object. A system without a script engine logs `Graph:` actions instead of
+running them. Games stage `Content/UI/*.ui.nmgraph`
 for every target: the graph carries its Lua, so a Client build needs no cook.
 
 **In the designer**, an action field's **+ > Graph handler** does the rest:
@@ -402,8 +458,21 @@ for every target: the graph carries its Lua, so a Client build needs no cook.
 - A field's arrow button opens the handler it names. A field naming a handler
   the graph lacks is outlined in orange.
 - The document's settings have `Graph`, with **Create** or **Open**.
-- Saving the graph reloads its document in Play-in-Editor.
-- Handlers are named, so renaming a widget breaks nothing.
+- Saving the graph reloads its document in Play-in-Editor, and in the Preview.
+- Handlers are named, so renaming a widget breaks nothing. When a widget with
+  handlers named for it is renamed, the designer asks to rename them and the
+  actions that call them too (`Play_OnClick` to `Start_OnClick`); deleting
+  one says which handlers are left with nothing calling them.
+
+**Documents inside documents.** An `Include` shows another document in its
+rectangle, laid out at its host's scale and drawn, clicked and navigated as
+part of it: Tab and the arrows go in and out, and there is one focus in the
+whole tree. Its bindings read `Prefix` + key -- two Includes of one row with
+`Prefix="Slot1."` and `"Slot2."` show two items -- and `{Bind:/Key}` is the key
+as written. Its UI graph is its own instance: `self.Prefix` is its prefix, and
+the graph's **Key** node prefixes a key for it. An included document reloads
+when saved. One that would include itself, or go eight deep, is refused with
+a warning. A ListView's rows are included documents too.
 
 ## In a game
 
@@ -415,6 +484,12 @@ for every target: the graph carries its Lua, so a Client build needs no cook.
 4. Publishes the session's values to the data store.
 5. Applies bindings, lays out and paints whatever changed, and submits the
    merged draw list to the default scene. It submits only when something changed.
+
+**A player's settings** are config vars. The launcher reads
+`<AppData>/NimbleEngine/<[Application] UserDataName, else the game module>/User.ini`
+over `Config/DefaultEngine.ini`; `Config.Save()` (Lua and graphs) writes what
+differs from the game's own values there. LightLab's pause menu and Sandbox's
+Settings save on close, from their UI graphs' On Document Close.
 
 `GameSession::SetPaused(true)` stops the World and the mode's `OnTick`, but the UI
 keeps running, so a pause menu can resume the game. Documents close when their
@@ -501,8 +576,14 @@ Open a `.nmui` from the Content Browser, or right-click and choose
     `<Styles>` as XML.
 
 **Preview**
-- The document takes the mouse, arrow keys, Return, Escape and Tab as a game
-  would. Actions are logged to the status bar, not run.
+- The document takes the mouse, keys and typing as a game would, and runs: its
+  actions and its UI graph run in a scratch World and script engine of the
+  Preview's own (`UIPreviewRuntime`), from On Document Open. Config vars the
+  graph changes are put back when the Preview stops; `Config.Save` does
+  nothing in the editor, and the `Game` library answers defaults. A game
+  module's own config vars are not declared while the editor has not loaded
+  it: `Config.Get*` of one warns and reads a default. Script errors show in
+  the status bar.
 
 **Save**
 - Ctrl+S writes the XML, stages it, and hot-reloads Play-in-Editor.
@@ -592,12 +673,13 @@ layout. Rotation will need stencil clipping, because scissors are axis-aligned.
 
 | Test | What it checks |
 |---|---|
-| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), native/Lua/Event/Graph actions, UI graphs (per-document instances, lifecycle, hot reload, LightLab's menu end to end), the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
+| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), scroll boxes, grids and wrap boxes, text input, Include and ListView (prefixes, focus across, row reuse), the Sandbox Profile page end to end, native/Lua/Event/Graph actions, UI graphs (per-document instances, lifecycle, hot reload, LightLab's menu end to end), the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
 | `UI_TESTS_GPU=Vulkan UI_TESTS_DUMP=<dir> ./UITests`, from a runtime directory | Draws the shipped documents on a GPU and checks pixels. |
 | RenderCore smoke test | `UIDrawList` batching, clipping, nine-slice and packing. `NIMBLE_SMOKE_GPU=Vulkan` checks orientation, scissor, blending, the retained list, and clearing. |
 | GDI smoke test | Scissor flipping and clipping, and the dynamic mesh's append and rewind. |
 | `NimbleEngine.GameFrameworkTests` | The session's UI: clicks do not reach the game, pause and resume, OnBack, HUD pass-through, a self-closing button, published values. |
 | `NimbleEngine.InputTests` | `InputState::Consume*` and `WasInputActionPressed`. |
-| `GameCore.Smoke` | `ScriptEngine::CallFunction`, script objects (`CreateObject`), the `Config` library. |
+| `GameCore.Smoke` | `ScriptEngine::CallFunction`, script objects (`CreateObject`), the `Config` library and `Config.Save`. |
+| Core smoke test (`CORE_BUILD_SMOKETEST`) | The user settings layer: the baseline, a save and reload, lines kept for vars not declared. |
 | `NodeGraph.Tests` | The UI schema: its nodes, golden `UIMenu.lua`, the Lua run as a script object, refused handler names. |
-| `Editor.UIDesigner` | The designer's document (undo, merging, structure, save and reload), its details panel, and Graph handler (making the graph, finding a handler again, flagging a missing one). |
+| `Editor.UIDesigner` | The designer's document (undo, merging, structure, save and reload), its details panel (a Grid slot too), Graph handler (making the graph, finding a handler again, flagging a missing one), renames and deletes followed in the graph, and the Preview's runtime (graphs run, config put back). |

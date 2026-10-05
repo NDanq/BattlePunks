@@ -168,6 +168,16 @@ Up, Down, Left, Right (arrows, the D-pad), Accept (Return, Space, South), Back
 State)` reads a map's action straight from a state, for a reader with no
 `InputComponent`.
 
+**Typing into the UI.** While a UI text field has focus (a `TextInput`), the
+frame also carries the typed text (`InputState::GetText`) and the editing
+keys' presses and repeats (Backspace, Delete, Left, Right, Home, End, Return,
+Shift, Ctrl+A/C/X/V), and the result asks for text input:
+`GameSession` turns the window's text input on (`IGameHost::SetTextInputActive`)
+while it does, and off after -- again after the console closes, which turns
+it off. The field's copy and paste use the system clipboard through
+`IGameHost::GetClipboardText` / `SetClipboardText` (the launcher: SDL's;
+Play-in-Editor: Qt's).
+
 Ahead of the UI, the console (CONSOLE.md) sees the input first: the toggle
 key (`Grave`, the tilde key) opens it, and while it is open it consumes
 everything (`InputState::ConsumeAll`), so neither the UI nor the game sees any
