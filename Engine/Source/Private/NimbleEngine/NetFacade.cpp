@@ -1,6 +1,7 @@
 #include "Public/NimbleEngine/NetFacade.h"
 
 #include "Public/GameCore/Components/NetComponent.h"
+#include "Private/NimbleEngine/NetInternal.h"
 
 #if WITH_NETCORE
 #include "Public/NetCore/NetSession.h"
@@ -42,6 +43,15 @@ namespace NimbleEngine
     GameCore::NetClientID GetLocalClientId()      { return GameCore::NET_CLIENT_NONE; }
     bool                  IsNetConnected()        { return false; }
 #endif
+
+    namespace
+    {
+        bool GDedicatedServer = false;
+    }
+
+    void SetDedicatedServerFlag(const bool bInDedicated) { GDedicatedServer = bInDedicated; }
+
+    bool IsDedicatedServer() { return GDedicatedServer && IsServer(); }
 
     bool IsLocallyOwned(const GameCore::NetComponent& InNet)
     {

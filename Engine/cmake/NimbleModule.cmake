@@ -185,6 +185,7 @@ function(nimble_add_game_launcher NM_TARGET)
     endif()
 
     _nimble_add_launcher(${NM_TARGET} "${NM_MODULE}" "${NM_TARGET}" "${NM_SOURCES}")
+    _nimble_record_for_editor(client ${NM_MODULE} ${NM_TARGET})
 endfunction()
 
 # ---------------------------------------------------------------------------
@@ -216,6 +217,7 @@ function(nimble_add_server_launcher NM_TARGET)
     # server's console output and leak report.
     string(REGEX REPLACE "Server$" "" NM_GAME_NAME "${NM_TARGET}")
     _nimble_add_launcher(${NM_TARGET} "${NM_MODULE}" "${NM_GAME_NAME}" "${NM_SOURCES}")
+    _nimble_record_for_editor(server ${NM_MODULE} ${NM_TARGET})
 endfunction()
 
 # The body both launchers share: an executable from NM_SOURCES that loads
@@ -263,5 +265,16 @@ function(_nimble_add_launcher NM_TARGET NM_MODULE NM_GAME_NAME NM_SOURCES)
                 set_target_properties(${NM_MODULE} PROPERTIES LIBRARY_OUTPUT_DIRECTORY_${NM_CFG_U} "${NM_RT_CFG}")
             endif()
         endforeach()
+    endif()
+endfunction()
+
+# The editor builds and runs a game's executables -- Build > Compile Source
+# builds the client and server beside the module; Play over the network starts
+# them as extra clients and as the dedicated server. It learns their names
+# here, as "<kind>:<module>:<target>" (kind: client or server), read by the
+# Editor's generated EditorProject.h (Modules/Editor/CMakeLists.txt).
+function(_nimble_record_for_editor NM_KIND NM_MODULE NM_TARGET)
+    if(TARGET NimbleEditor)
+        set_property(TARGET NimbleEditor APPEND PROPERTY NIMBLE_GAME_EXECUTABLES "${NM_KIND}:${NM_MODULE}:${NM_TARGET}")
     endif()
 endfunction()
