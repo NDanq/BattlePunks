@@ -116,7 +116,7 @@ vec3 IBL_SampleStrip(sampler2D InStrip, vec3 InDirection)
     vec2  Ndc   = vec2(dot(InDirection, Right), dot(InDirection, Up)) / Depth;
     float Size  = float(textureSize(InStrip, 0).y);
     float Inset = 0.5 / Size;
-    vec2  Uv    = clamp(Ndc * 0.5 + 0.5, vec2(Inset), vec2(1.0 - Inset));
+    vec2  Uv    = clamp(NdcToTargetUv(Ndc), vec2(Inset), vec2(1.0 - Inset));
     return textureLod(InStrip, vec2((float(Face) + Uv.x) / 6.0, Uv.y), 0.0).rgb;
 }
 

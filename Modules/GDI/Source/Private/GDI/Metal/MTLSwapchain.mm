@@ -24,20 +24,18 @@
 /**
  * Full-screen NDC quad, interleaved {float3 position, float2 texcoord}.
  *
- * V mapping: Metal's NDC +Y is the TOP of the attachment (row 0), while the
- * offscreen RT holds GL-ordered rows (row 0 = visual bottom -- the render thread
- * draws through a Y-flipped projection; see PackViewParamsUBO in MTLCommands.mm).
- * So the drawable's top row must sample v=1, i.e. v = (y+1)/2. This is the
- * OPPOSITE of the Vulkan blit quad, whose NDC +Y is the bottom of the image.
+ * V mapping: Metal's NDC +Y is the TOP of the drawable (row 0), and the
+ * offscreen RT's row 0 is its top too (GDI.h). So the drawable's top row
+ * samples v=0, i.e. v = (1-y)/2: the rows copy as they are.
  */
 static const float kQuadVerts[] = {
     // pos.x pos.y pos.z    u     v
-    -1.f, -1.f, 0.f,       0.f,  0.f,
-    -1.f,  1.f, 0.f,       0.f,  1.f,
-     1.f,  1.f, 0.f,       1.f,  1.f,
-     1.f,  1.f, 0.f,       1.f,  1.f,
-     1.f, -1.f, 0.f,       1.f,  0.f,
-    -1.f, -1.f, 0.f,       0.f,  0.f,
+    -1.f, -1.f, 0.f,       0.f,  1.f,
+    -1.f,  1.f, 0.f,       0.f,  0.f,
+     1.f,  1.f, 0.f,       1.f,  0.f,
+     1.f,  1.f, 0.f,       1.f,  0.f,
+     1.f, -1.f, 0.f,       1.f,  1.f,
+    -1.f, -1.f, 0.f,       0.f,  1.f,
 };
 
 /** Sampler/texture index for Screen.fsh -- SAMPLER2D(2, ScreenTexture). */

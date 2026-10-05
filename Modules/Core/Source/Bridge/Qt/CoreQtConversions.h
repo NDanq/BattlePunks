@@ -21,9 +21,10 @@
  * state; these are pure value conversions that a Qt host uses at the boundary.
  *
  * ORIENTATION IS NOT THIS FILE'S JOB. No function here flips anything. The
- * renderer composes vertical and horizontal flips at specific, documented
- * points (the GL readback mirrors vertically, texture upload mirrors
- * horizontally, the in-memory layer restore mirrors both, and the disk-read
+ * renderer composes horizontal and vertical flips at specific, documented
+ * points (texture upload mirrors horizontally, the in-memory layer restore
+ * mirrors both, render-target readbacks mirror neither -- every backend
+ * stores rows top first, GDI.h -- and the disk-read
  * path deliberately mirrors neither). If a conversion here silently flipped,
  * every one of those would be off and the composition would no longer match
  * the comments that describe it. Convert the container; leave orientation to

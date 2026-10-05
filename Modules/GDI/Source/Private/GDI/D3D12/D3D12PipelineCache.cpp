@@ -230,6 +230,10 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
 
     Desc.RasterizerState.FillMode        = D3D12_FILL_MODE_SOLID;
     Desc.RasterizerState.CullMode        = D3D12_CULL_MODE_NONE;
+    /* Counter-clockwise on the target as stored, top-down (GDI.h): a GL front
+     * face, as Vulkan's COUNTER_CLOCKWISE under its negative viewport. Only
+     * gl_FrontFacing sees it (Two Sided), since nothing is culled. */
+    Desc.RasterizerState.FrontCounterClockwise = TRUE;
     Desc.RasterizerState.DepthClipEnable = TRUE;
 
     // Depth testing needs a depth buffer.

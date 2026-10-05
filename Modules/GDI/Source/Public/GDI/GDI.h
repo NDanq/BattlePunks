@@ -306,12 +306,21 @@ public:
     /* Clear current render target. */
     virtual void Clear(uint InClearMode, EngineCore::Color InClearColor, float InDepth = 1.0f, uint InStencilMask = 0x00) = 0;
 
+    /*
+     * ORIENTATION, on every backend: a render target is stored top-down. Its
+     * row 0 is the top of the image and is NDC y = +1, texture v = 0 when the
+     * target is sampled, gl_FragCoord.y = 0.5 when it is drawn, and the first
+     * row ToImage returns -- the order RenderDoc and EngineCore::Image use.
+     * Vulkan gets there with a negative viewport height, OpenGL with
+     * glClipControl(GL_UPPER_LEFT); D3D12 and Metal are top-down natively.
+     * Viewport and scissor rectangles count rows from that top.
+     */
     virtual void SetViewport(uint InX, uint InY, uint InWidth, uint InHeight) = 0;
 
     /*
      * Draws after this touch only InWidth x InHeight pixels at InX, InY -- in
-     * the render target's own rows, row 0 first in memory (GDISetScissorRect
-     * converts from the top-left). Clear ignores it, and the next SetViewport
+     * the render target's own rows, row 0 its top (as GDISetScissorRect takes
+     * them, from the viewport's top-left). Clear ignores it, and the next SetViewport
      * resets it to the viewport. The default ignores it: a backend without
      * scissoring draws unclipped.
      */
@@ -634,10 +643,9 @@ uint64_t GDIGetRenderingSerial();
 
 /*
  * Scissor, in pixels of the current viewport from its TOP-LEFT (the way a
- * UI lays out): draws after this touch only that rectangle, clipped to the
- * viewport. GDI converts to the target's rows -- every backend keeps row 0 at
- * the bottom of the image. GDISetViewport and GDIClearScissorRect reset it to
- * the whole viewport; Clear ignores it.
+ * UI lays out), which are the target's own rows: draws after this touch only
+ * that rectangle, clipped to the viewport. GDISetViewport and
+ * GDIClearScissorRect reset it to the whole viewport; Clear ignores it.
  */
 void GDISetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight);
 void GDIClearScissorRect();

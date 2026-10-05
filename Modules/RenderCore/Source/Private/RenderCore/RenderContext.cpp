@@ -449,10 +449,12 @@ namespace RenderCore
             MeshObject = new GDIViewObject();
             MeshObject->Init(View3D);
 
-            /* The vertices and UVs every backend's own screen quad uses. */
+            /* The vertices and UVs every backend's own screen quad uses: v = 0
+             * at NDC +1, a target's top row (GDI.h), so a pass's TexCoord is
+             * the same pixel in every target it reads. */
             static const float Verts[] = { -1.f, -1.f, 0.f,  -1.f, 1.f, 0.f,  1.f, 1.f, 0.f,
                                             1.f,  1.f, 0.f,   1.f, -1.f, 0.f, -1.f, -1.f, 0.f };
-            static const float UVs[]   = { 0.f, 0.f,  0.f, 1.f,  1.f, 1.f,  1.f, 1.f,  1.f, 0.f,  0.f, 0.f };
+            static const float UVs[]   = { 0.f, 1.f,  0.f, 0.f,  1.f, 0.f,  1.f, 0.f,  1.f, 1.f,  0.f, 1.f };
             ScreenObject = new GDIViewObject();
             ScreenObject->Init(View3D);
             ScreenObject->Mesh = GDICreateQuadMesh(Verts, UVs, 18, 12, false);
@@ -3054,9 +3056,8 @@ namespace RenderCore
         P->Bind(Vertex, Pixel);
         GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &P->Scene, uint(sizeof(P->Scene)));
 
-        /* Pixels from the top-left to clip space, through the view's projection
-         * so every backend's own flip applies (Metal's PackViewParamsUBO, the
-         * D3D12 shaders' --flip-vert-y): NDC +y is up everywhere. */
+        /* Pixels from the top-left to clip space: NDC +y is up, the target's
+         * top row, on every backend (GDI.h). */
         EngineCore::Matrix4x4 Ortho;
         Ortho.InitIdentity();
         Ortho.Data[0][0] = 2.0f / float(InWidth);

@@ -209,7 +209,7 @@ def cook_job(cs, tools, target, job, out_dir):
         is_vertex  = job.stage == "vertex"
         cross_args = [tools["spirv-cross"], "--hlsl", "--shader-model", "50"]
         if is_vertex:
-            cross_args += ["--flip-vert-y", "--hlsl-flatten-matrix-vertex-input-semantics"]
+            cross_args += ["--hlsl-flatten-matrix-vertex-input-semantics"]   # no Y flip: GDI.h
         cross_args += [str(spv_path), "--output", str(hlsl_path)]
         fxc_args = [tools["fxc"], "/nologo", "/T", "vs_5_0" if is_vertex else "ps_5_0",
                     "/E", "main", "/O3", "/Fo", str(out_dir / (job.out_name + ".cso")), str(hlsl_path)]

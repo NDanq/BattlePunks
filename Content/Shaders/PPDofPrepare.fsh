@@ -18,7 +18,7 @@ float CircleOfConfusion(vec2 InUV)
     ivec2 Texel = clamp(ivec2(InUV * PP_Sizes.zw), ivec2(0), ivec2(PP_Sizes.zw) - 1);
     float Depth = texelFetch(SceneDepth, Texel, 0).r;
     if(Depth >= 1.0) { return 1.0; }   // the sky: as far as it gets
-    float Distance = length(PP_WorldAt(InUV * 2.0 - 1.0, Depth) - Scene_CameraPosition.xyz);
+    float Distance = length(PP_WorldAt(TargetUvToNdc(InUV), Depth) - Scene_CameraPosition.xyz);
     float Half     = PP_Focus.y * 0.5;
     float Far      = clamp((Distance - (PP_Focus.x + Half)) / PP_Focus.y, 0.0, 1.0);
     float Near     = clamp(((PP_Focus.x - Half) - Distance) / max(Half, 1.0), 0.0, 1.0) * PP_Focus.w;

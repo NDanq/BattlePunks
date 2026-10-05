@@ -156,7 +156,8 @@ void OpenGLDynamicGDI::SwapBuffers()
     {
         Flush();
         // The host's offscreen drawable, not the visible window -- the host
-        // presents the finished frame itself.
+        // presents the finished frame itself, and must show it top-down: its
+        // row 0 is the top (glClipControl, BeginRendering), not GL's bottom.
         GLInterface->SwapBuffers();
     }
 }
@@ -164,6 +165,12 @@ void OpenGLDynamicGDI::SwapBuffers()
 void OpenGLDynamicGDI::BeginRendering()
 {
     MakeCurrentSafe();
+    /* Per context, so set on whichever is current: NDC +1 lands on window row
+     * 0 and gl_FragCoord counts from it, so targets are stored top-down like
+     * every backend's (GDI.h). Facing keeps its meaning (ARB_clip_control),
+     * and depth stays GL's [-1, 1]. Viewport and scissor rows count from row
+     * 0 as before, which is now the top. */
+    glClipControl(GL_UPPER_LEFT, GL_NEGATIVE_ONE_TO_ONE);
     if( ThreadSync != NULL )
     {
         glWaitSync(ThreadSync, 0, 1000000);
@@ -235,7 +242,7 @@ void OpenGLDynamicGDI::SetViewport( uint InX, uint InY, uint InWidth, uint InHei
 
 void OpenGLDynamicGDI::SetScissorRect( uint InX, uint InY, uint InWidth, uint InHeight )
 {
-    /* GL's scissor origin is the bottom-left, row 0 -- the rows GDI passes. */
+    /* Window row 0 -- the target's top under glClipControl -- as GDI passes it. */
     const bool bWhole = InX == ViewportX && InY == ViewportY && InWidth == ViewportWidth && InHeight == ViewportHeight;
     if(bWhole)
     {
@@ -350,10 +357,11 @@ bool OpenGLDynamicGDI::CheckError(const std::string& InFailStr)
     return ErrCode == GL_NO_ERROR;
 }
 
-EngineCore::Color OpenGLDynamicGDI::GetColorFromSamplePoint(const EngineCore::Point &InPoint, const EngineCore::Size& InSize)
+EngineCore::Color OpenGLDynamicGDI::GetColorFromSamplePoint(const EngineCore::Point &InPoint, const EngineCore::Size& /*InSize*/)
 {
     auto Data = new uchar[4];
-    glReadPixels(InPoint.X, InSize.Height - InPoint.Y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, Data);
+    // Window row 0 is the top (glClipControl, BeginRendering): the point is the row.
+    glReadPixels(InPoint.X, InPoint.Y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, Data);
 
     // Alpha stays at the default 255, exactly as the QColor version did:
     // only RGB was ever assigned here.

@@ -332,10 +332,8 @@ EngineCore::Image VKRenderTarget::ToImage()
 
     void* Mapped = nullptr;
     vkMapMemory(Dev, Mem, 0, DataSize, 0, &Mapped);
-    // The render thread draws with the same GL-convention matrices as the OpenGL
-    // backend, so RT memory is row-identical to a GL framebuffer (row 0 = visual
-    // bottom). Mirror vertically exactly like OpenGLRenderTarget::ToImage so
-    // both backends return an identically-oriented EngineCore::Image.
+    // RT memory is top-down (row 0 = visual top, VulkanDynamicGDI::SetViewport),
+    // which is EngineCore::Image's own order: the rows copy as they are.
     EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
     if(bHalf)
     {
@@ -346,7 +344,6 @@ EngineCore::Image VKRenderTarget::ToImage()
         std::memcpy(Result.GetData(), Mapped, size_t(DataSize));
     }
     vkUnmapMemory(Dev, Mem);
-    Result.FlipVertical();
 
     vkDestroyBuffer(Dev, Buf, nullptr);
     vkFreeMemory(Dev, Mem, nullptr);

@@ -255,9 +255,8 @@ EngineCore::Image D3D12RenderTarget::ToImage()
         return EngineCore::Image();
     }
 
-    // RT rows are GL-ordered (see cook_shaders.py's --flip-vert-y), so mirror
-    // like the GL and Vulkan backends to return the same orientation. An HDR
-    // target's half floats come back clamped into RGBA8 (GDIHalf.h).
+    // RT rows are top-down (GDI.h), EngineCore::Image's order: they copy as
+    // they are. An HDR target's half floats come back clamped into RGBA8 (GDIHalf.h).
     EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
     if(bHalf)
     {
@@ -267,7 +266,6 @@ EngineCore::Image D3D12RenderTarget::ToImage()
     {
         std::memcpy(Result.GetData(), Pixels.data(), Pixels.size());
     }
-    Result.FlipVertical();
     return Result;
 }
 

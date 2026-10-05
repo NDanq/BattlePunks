@@ -63,6 +63,9 @@ void MetalDynamicGDI::BeginEncoderForRT(MTLRenderTarget* InRT, bool bClear, cons
         return;
     }
     Encoder.label = [NSString stringWithFormat:@"Pass:%s", InRT->GetName().c_str()];
+    /* Counter-clockwise on the target as stored, top-down (GDI.h): a GL front
+     * face, as on every backend. Only gl_FrontFacing sees it (Two Sided). */
+    [Encoder setFrontFacingWinding:MTLWindingCounterClockwise];
 
     CurrentStateData->CurrentEncoder     = Encoder;
     CurrentStateData->ActiveRenderTarget = InRT;

@@ -996,8 +996,8 @@ static void PackViewParamsUBO(const std::unordered_map<std::string, VKUniformVal
     //   [0 0 0.5 0.5]
     //   [0 0  0   1 ]
     // The floats here are column-major (D[Col*4 + Row]); only row 2 changes.
-    // Y is intentionally NOT flipped — the render targets keep GL-identical row
-    // order and the swapchain blit flips V at present time instead.
+    // Y is not flipped here: SetViewport's negative height does it, for
+    // projected and full-screen geometry alike, so targets are stored top-down.
     for(int Col = 0; Col < 4; ++Col)
     {
         const float Z = D[Col * 4 + 2];
@@ -1409,13 +1409,13 @@ void VulkanDynamicGDI::DrawScreenQuadPrimitive()
              1.f, -1.f, 0.f,
             -1.f, -1.f, 0.f
         };
-        const float UVs[] = {
-            0.f, 0.f,
+        const float UVs[] = {   // v = 0 at NDC +1, the target's row 0: an identity copy
             0.f, 1.f,
-            1.f, 1.f,
-            1.f, 1.f,
+            0.f, 0.f,
             1.f, 0.f,
-            0.f, 0.f
+            1.f, 0.f,
+            1.f, 1.f,
+            0.f, 1.f
         };
         ScreenMesh = CreateQuadMesh(Verts, UVs, 18, 12, false);
     }
@@ -1430,7 +1430,7 @@ void VulkanDynamicGDI::DrawScreenQuadPrimitive()
 
 bool VulkanDynamicGDI::CheckError(const std::string&) { return false; }
 
-Color VulkanDynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& InSize)
+Color VulkanDynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& /*InSize*/)
 {
     if(!DeviceObj || !CurrentStateData) return Color();
 
@@ -1440,11 +1440,9 @@ Color VulkanDynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size
     VKRenderTarget* RT = CurrentStateData->ActiveRenderTarget;
     if(!RT || !RT->IsValid()) return Color();
 
-    // RT memory is GL-oriented (row 0 = visual bottom — same matrices as the GL
-    // backend), so flip Y from Qt screen space exactly like the OpenGL path's
-    // glReadPixels(x, height - y).
+    // RT memory is top-down, as Qt's screen space: the point is the row.
     const int X = InPoint.X;
-    const int Y = InSize.Height - InPoint.Y;
+    const int Y = InPoint.Y;
     if(X < 0 || Y < 0 || X >= int(RT->GetWidth()) || Y >= int(RT->GetHeight()))
         return Color();
 
