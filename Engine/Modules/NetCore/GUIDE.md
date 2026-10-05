@@ -1,0 +1,485 @@
+# Adding networking to a NimbleEngine game
+
+A step-by-step guide to making a game multiplayer with NetCore.
+`README.md` beside this file explains how NetCore works inside; this guide
+covers what a game writes. `Games/NetArena/NetArenaGame.cpp` is the complete
+worked example, about 400 lines, and every snippet below comes from its
+patterns.
+
+**Contents**
+
+1. The model in one page
+2. Build setup
+3. Decide what is networked
+4. Authority: who does what
+5. Players
+6. Replicated fields
+7. RPCs
+8. Sending input
+9. Testing
+10. Keeping the game buildable without NetCore
+11. Pitfalls
+12. Checklist
+
+---
+
+## 1. The model in one page
+
+NimbleEngine networking is **server-authoritative**:
+
+- **One process is the server.** It is either a headless `<Game>Server` (a
+  dedicated server) or a windowed game that also plays (a listen server).
+- **Every process runs the same game module and the same start level.** The
+  level's own entities (floor, lights, camera) exist everywhere, built by
+  each process.
+- **The server owns everything networked.** An entity with a
+  `GameCore::NetComponent` is created on the server and *replicated*: clients
+  receive it, with its components, when it appears. After that they receive
+  each replicated field whenever it changes, and finally its destruction.
+- **Clients never send state.** A client asks the server to do things with
+  **Server RPCs**: member functions of a component, called on an entity the
+  client owns. The server answers by changing state, which replicates, or
+  with **Client** / **Multicast** RPCs.
+- **Offline, nothing changes in your code.** With no session (or NetCore
+  compiled out) every process is "standalone": it has authority over
+  everything and every RPC runs locally, so the same game plays single-player.
+
+```
+ client                           server                          other clients
+   │  keys → ServerSetMove(dir) ──►  runs ServerSetMove
+   │                                 moves the capsule (system)
+   │  ◄────── Transform changed ───  replication ──────────────────► Transform changed
+```
+
+---
+
+## 2. Build setup
+
+Networking is on by default (`NIMBLE_WITH_NETCORE`). Your game's
+`CMakeLists.txt` needs one line beside its launcher. Games made from the
+template since NetCore arrived already have it:
+
+```cmake
+nimble_add_game_launcher(${GAME_NAME} MODULE ${GAME_MODULE})
+nimble_add_server_launcher(${GAME_NAME}Server MODULE ${GAME_MODULE})   # the dedicated server
+```
+
+`nimble_add_server_launcher` builds a console exe running your module
+headless, with no window and the Null renderer. When NetCore is off, it skips
+itself instead of failing.
+
+Your game module links `NimbleEngine::NimbleEngine` as it already does. **Do
+not link NetCore or include NetCore headers.** Everything a game needs is in
+GameCore and NimbleEngine (section 10 explains why).
+
+The headers you will use:
+
+```cpp
+#include "Public/GameCore/Components.h"          // NetComponent (GameCore/Components/NetComponent.h)
+#include "Public/GameCore/ComponentReplication.h" // GAMECORE_DEFINE_COMPONENT_REPLICATION
+#include "Public/GameCore/ComponentRpc.h"         // GAMECORE_DEFINE_COMPONENT_RPCS, GAMECORE_RPC
+#include "Public/GameCore/ComponentSerializer.h"  // a serializer: how a component reaches clients
+#include "Public/NimbleEngine/NetFacade.h"        // HasAuthority(), IsLocallyOwned(), ...
+```
+
+---
+
+## 3. Decide what is networked
+
+Sort your entities into three kinds:
+
+| Kind | Example | What to do |
+|---|---|---|
+| **Scenery**: identical everywhere, never changes | floor, walls, static lights | Nothing. Each process builds it from the level. |
+| **Local only**: per process, by design | the camera, an input controller, UI, particle effects | Nothing. Leave it without a `NetComponent`. |
+| **Shared state**: the server decides it | players' pawns, pickups, doors, projectiles, score | Give it a `NetComponent`, **create it only on the server**, and replicate what changes. |
+
+Rules for shared-state entities:
+
+- **Create them only where `HasAuthority()` is true.** A client that creates
+  one has made a local entity nobody else can see. The server's copy arrives
+  on its own.
+- **Every component you want clients to have needs a serializer**
+  (`GAMECORE_DEFINE_COMPONENT_SERIALIZER`). When the entity first appears on a
+  client, NetCore sends each of its components through its serializer. A
+  component without one never reaches clients. Engine components
+  (Transform, Render, lights, PlayerState...) already have serializers.
+- **Entities placed in the level file can be networked too.** Add a
+  `NetComponent` in the editor (component "Net"). Both ends load it, and the
+  server's copy is matched to the client's by `EntityGuid`, so it is not
+  duplicated.
+
+---
+
+## 4. Authority: who does what
+
+`NimbleEngine/NetFacade.h` answers every role question without NetCore:
+
+| Call | True when |
+|---|---|
+| `HasAuthority()` | server, listen server, or standalone. **Use this for game logic.** |
+| `IsServer()` | a server (dedicated or listen) |
+| `IsClient()` | connected to a server |
+| `IsDedicatedServer()` | a headless server with no local player |
+| `IsLocallyOwned(const NetComponent&)` | this process controls that entity |
+| `GetLocalClientId()` | a client's id once welcomed, else `GameCore::NET_CLIENT_NONE` |
+| `GetNetMode()` | `ENetMode::Standalone` / `Server` / `Client` |
+
+The role is known from `ILevel::OnLoad` onwards, because networking starts
+before the level loads. Typical uses:
+
+```cpp
+void OnStart() override
+{
+    if(NimbleEngine::HasAuthority()) { SpawnPickups(); }   // the server places them; clients receive them
+}
+
+void MySystem(GameCore::World& InWorld, float InDt, void*)
+{
+    if(!NimbleEngine::HasAuthority()) { return; }   // simulation runs on the server only
+    ...
+}
+```
+
+**Systems that move shared state should early-out on clients.** Otherwise a
+client predicts locally, and the next replication overwrites it. NimbleEngine
+has no client prediction yet.
+
+---
+
+## 5. Players
+
+On the server, when a client joins, the engine makes it a **player entity**:
+
+- a `NetComponent` with `OwnerClient` set to the client's id
+- a `PlayerStateComponent` named "Player N"
+
+Then `IGameMode::OnPlayerAdded` runs, then the hook below. Turn this off with
+`[Net] SpawnPlayerPerClient=false` to make players yourself.
+
+```cpp
+class MyMode : public NimbleEngine::IGameMode
+{
+    /* Server only. Give the player its pawn: add components to InPlayer. */
+    void OnClientConnected(int32_t InClient, GameCore::EntityID InPlayer) override
+    {
+        GameCore::Entity Player = Session->GetWorld().GetEntity(InPlayer);
+        Player.AddComponent(MyTransformAtSpawnPoint());
+        Player.AddComponent(MyRenderComponent());
+        Player.AddComponent<MyPawnComponent>();
+    }
+
+    /* Server only. Everything the client owned is destroyed right after this. */
+    void OnClientDisconnected(int32_t InClient, GameCore::EntityID InPlayer) override {}
+};
+```
+
+Components added in `OnClientConnected` are on the entity before it is first
+sent, so clients get them all at once.
+
+**The listen server's own user** is not a client, so it gets no player
+automatically. Give it one in `OnStart`, owned by nobody, which means the
+server owns it:
+
+```cpp
+void OnStart() override
+{
+    if(NimbleEngine::HasAuthority() && !NimbleEngine::IsDedicatedServer())
+    {
+        GameCore::Entity Host = Session->GetWorld().CreateEntity("Host");
+        Host.AddComponent<GameCore::NetComponent>();   // OwnerClient = NET_CLIENT_NONE
+        MakePawn(Host);
+    }
+}
+```
+
+This also covers standalone play: the same code gives the single player a
+pawn.
+
+**Finding "my" pawn** on any process: iterate pawns and check
+`IsLocallyOwned(*Net)`. On a client that matches `OwnerClient ==
+GetLocalClientId()`. On a server or standalone process it matches entities
+owned by nobody.
+
+---
+
+## 6. Replicated fields
+
+Replication is for state that **changes after spawn** and that every client
+must see. Declare it once per component, in one `.cpp`:
+
+```cpp
+GAMECORE_DEFINE_COMPONENT_REPLICATION(DoorComponent)
+{
+    Rep.Field("OpenAmount", &DoorComponent::OpenAmount);            // float
+    Rep.Flag("Locked",      &DoorComponent::bLocked);               // uint8_t 0/1
+    Rep.Entity("OpenedBy",  &DoorComponent::OpenedBy);              // EntityID, sent as a NetId
+    Rep.Field("Label",      &DoorComponent::Label, GameCore::RFF_InitialOnly);  // char[N], spawn only
+}
+```
+
+- **Field types:** `float`, `double`, `int32_t`, `uint8_t`, `bool`, `Vector3`,
+  `AABB`, `Color`, `char[N]`, `EntityID` (through `Rep.Entity`). Script
+  structs are not supported yet.
+- **At most 32 fields per component.**
+- **`RFF_InitialOnly`** sends the field when the entity appears and never
+  again.
+- **The server sends a field only when its bytes change.** It compares with
+  what it last sent, once per frame after the World ticks.
+- **`TransformComponent` already replicates** Position, Rotation and Scale.
+  Moving a networked entity on the server is enough.
+- **The serializer and the replication table do different jobs:**
+  - The serializer is the whole component, once, when the entity appears.
+  - The replication table is the fields, as they change.
+
+  A field needed only at spawn can be in the serializer alone.
+- **Clients must not write replicated fields.** The server's next change
+  overwrites them.
+
+---
+
+## 7. RPCs
+
+An RPC is a member function of a component, run on the same entity in another
+process.
+
+**Declare** the function as an ordinary member returning `void`. An optional
+first parameter, `const GameCore::RpcContext&`, tells you who sent it:
+
+```cpp
+struct ShipComponent
+{
+    GAMECORE_COMPONENT_BODY()
+    int32_t Ammo = 10;
+
+    void ServerFire(const GameCore::RpcContext& InCtx, const EngineCore::Vector3& InAim);
+    void ClientOutOfAmmo();
+    void MulticastExplode(const EngineCore::Color& InColor);
+};
+```
+
+**Register** them, in one `.cpp`:
+
+```cpp
+GAMECORE_DEFINE_COMPONENT_RPCS(ShipComponent)
+{
+    Rpc.Server<&ShipComponent::ServerFire>("ServerFire");
+    Rpc.Client<&ShipComponent::ClientOutOfAmmo>("ClientOutOfAmmo");
+    Rpc.Multicast<&ShipComponent::MulticastExplode>("MulticastExplode");
+}
+```
+
+**Call** them. `GAMECORE_RPC(Type, Function)` returns a callable that takes the
+entity, then the arguments:
+
+```cpp
+GAMECORE_RPC(ShipComponent, ServerFire)(MyShip, AimDirection);
+```
+
+**Where a call runs:**
+
+| Target | Called on the server | Called on a client |
+|---|---|---|
+| `Server` | runs there | sent to the server |
+| `Client` | sent to the **owning** client; runs on the server if no client owns it | runs there |
+| `Multicast` | runs on the server **and** is sent to every client | runs there |
+
+**Rules:**
+
+- **The entity must be networked** (have a `NetComponent`) and must already
+  have been sent, which happens at the end of the frame it was created. Before
+  that:
+  - a client's Server RPC is dropped, with a log line;
+  - the server's Client RPC to an owning client is dropped, with a log line;
+  - the server's Multicast runs on the server only.
+- **The server accepts a Server RPC only from the client that owns the
+  entity.** Make input go through an entity the player owns, such as their
+  pawn or player entity. To ask about another entity, pass it as an argument.
+- **Validate arguments on the server.** A Server RPC is a client's request,
+  not an order: clamp, check range, check cooldowns.
+- **Argument types:** `float`, `double`, `int32_t`, `uint32_t`, `uint8_t`,
+  `bool`, `Vector3`, `Color`, `EntityID` / `Entity` (resolved to the receiver's
+  entity), and `GameCore::RpcString<N>` for text, by value or `const&`.
+  At most 15 arguments.
+- **RPCs are reliable and ordered** with replication, so an RPC never arrives
+  before the entity it is addressed to.
+- **The call returns `false`** (and logs) if the entity is dead, no RPC has
+  that name, or the arguments' types do not match the registration.
+
+---
+
+## 8. Sending input
+
+The pattern NetArena uses, and the one to start from:
+
+1. **A local controller entity** in the level: an `InputComponent`, no
+   `NetComponent`. Every process has its own, which reads that process's
+   keyboard.
+2. **In `IGameMode::OnTick`,** read the controller's axes and find the pawn
+   this process owns (`IsLocallyOwned`). Call a Server RPC with what the
+   player wants: a direction, a button press. **Send only when it changes**
+   (RPCs are reliable, and the server keeps the last value).
+3. **On the server, the RPC stores the request** in the pawn's component,
+   clamped.
+4. **A server-only system applies it** each tick: it moves the Transform,
+   which replicates.
+
+```cpp
+void ServerSetMove(const EngineCore::Vector3& InDir)          // on the pawn component
+{
+    MoveInput = EngineCore::Vector3(std::clamp(double(InDir.GetX()), -1.0, 1.0), 0.0,
+                                    std::clamp(double(InDir.GetZ()), -1.0, 1.0));
+}
+
+// OnTick, every process:
+World.Each<PawnComponent>([&](GameCore::Entity InPawn, PawnComponent&)
+{
+    const GameCore::NetComponent* Net = InPawn.GetComponent<GameCore::NetComponent>();
+    if(Net && NimbleEngine::IsLocallyOwned(*Net) && Wanted != LastSent)
+    {
+        GAMECORE_RPC(PawnComponent, ServerSetMove)(InPawn, Wanted);
+        LastSent = Wanted;
+    }
+});
+```
+
+On a listen server or a standalone game, the same call simply runs locally.
+
+The cost is latency: a client sees its own movement only after a round trip.
+On a LAN that is a few milliseconds.
+
+---
+
+## 9. Testing
+
+### In the editor
+
+1. Build your game's editor tree. **Build > Compile Source** rebuilds your
+   module, `<Game>` and `<Game>Server` together.
+2. Open **Play > Network Settings...** (Editor Settings > Play):
+   - **Listen Server:** the viewport hosts and plays.
+   - **Client** with **Start a dedicated server:** the editor runs
+     `<Game>Server` and the viewport joins it.
+   - **Client windows at Play:** more players, opened automatically.
+   - **Client window arguments:** extra command line for those windows.
+3. **Play** (F5), then **Play > New Client Window** (Shift+F6) for each extra
+   player.
+4. Every process logs into the editor's Console: `[Server] ...` and
+   `[Client 1] ...` beside your own lines. **Stop** ends them all.
+
+### From a command line
+
+In `Binaries/<Platform>_<Config>`:
+
+```
+<Game>Server -port=7777
+<Game> -connect=127.0.0.1:7777
+<Game> -connect=127.0.0.1:7777
+```
+
+or `<Game> -listen` plus clients. Any config var can be set on the command
+line with `-Section.Key=Value`, including your module's own.
+
+### Unattended
+
+Give your game a bot switch: a config var that replaces keyboard input with a
+pattern. NetArena's is `[NetArena] AutoMove`. Have the mode log what each
+process sees every few seconds. Then a server plus two clients started by a
+script proves replication from their logs alone:
+
+```
+[NetArena] red(you)=(-720,0) blue=(-175,-210)
+```
+
+The editor runs the same way through `--command`:
+
+```
+NimbleEditor --command "Editor.PlayNetMode 1" --command "play" --command "after 3000 play.client" ...
+```
+
+---
+
+## 10. Keeping the game buildable without NetCore
+
+A game that turns networking off must still compile. That holds automatically
+if you follow one rule: **use only GameCore and NimbleEngine headers.**
+
+- `GAMECORE_DEFINE_COMPONENT_REPLICATION` compiles against a binder that
+  records nothing.
+- `GAMECORE_DEFINE_COMPONENT_RPCS` and `GAMECORE_RPC` work as usual, and calls
+  run locally.
+- `NetComponent` still exists, so levels and prefabs with it still load.
+- `NetFacade.h` answers Standalone.
+- `OnClientConnected` and `OnClientDisconnected` are never called.
+
+To turn it off, in your game's `CMakeLists.txt` before the engine is added:
+
+```cmake
+set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
+```
+
+`nimble_add_server_launcher` then skips the server, and no NetCore, ENet or
+`ws2_32` is built or linked.
+
+If you must branch, test `NimbleEngine::IsNetworkingAvailable()` at runtime,
+or `#if WITH_NETCORE` at compile time. The define is always 0 or 1.
+
+---
+
+## 11. Pitfalls
+
+**A capsule appears twice, or a client has an extra one.**
+Shared state was created on a client. Guard creation with `HasAuthority()`.
+
+**A component's data never reaches clients.**
+The component has no serializer, or the changing field is not in its
+replication table.
+
+**"Server RPC ...: not connected, or the entity is not a networked one; dropped".**
+The entity has no `NetComponent`, or the server has not sent it yet. Call
+from an entity the client received, such as its own pawn.
+
+**"client N asked for X on an entity it does not own ... refused".**
+The Server RPC was called on an entity another player, or the server, owns.
+
+**"... registered with other argument types".**
+The arguments passed do not match the function's parameters. Each argument
+is converted to its parameter's type, so pass compatible values.
+
+**State flickers back on a client.**
+The client is writing a replicated field. Only the server writes; clients
+send requests.
+
+**Clients see different levels.**
+Every process must start the same level (`[Game] StartLevel`). Level changes
+during a session are not supported yet.
+
+**"its replicated components or RPCs differ from the server's (a different build of the game)".**
+The handshake compares every replicated field and RPC, so client and server
+must come from the same build. **Build > Compile Source** keeps them together.
+
+**A client window will not start from the editor.**
+`<Game>.exe` is not built, or a running one is locked. Stop Play, then
+Compile Source.
+
+---
+
+## 12. Checklist
+
+- [ ] `nimble_add_server_launcher(<Game>Server MODULE <Game>Game)` in the
+      game's `CMakeLists.txt`.
+- [ ] Shared-state entities get a `NetComponent` and are created only under
+      `HasAuthority()`.
+- [ ] Every component they carry has a `GAMECORE_DEFINE_COMPONENT_SERIALIZER`.
+- [ ] Fields that change after spawn are in
+      `GAMECORE_DEFINE_COMPONENT_REPLICATION` (Transform already is).
+- [ ] Simulation systems that change shared state early-out unless
+      `HasAuthority()`.
+- [ ] `OnClientConnected` turns the engine's player entity into a pawn.
+- [ ] `OnStart` gives a listen server's (and standalone) user a pawn when
+      `HasAuthority() && !IsDedicatedServer()`.
+- [ ] Input is read locally and sent as a Server RPC on the owned pawn, on
+      change. The server validates it.
+- [ ] No NetCore includes in game code.
+- [ ] Tested in the editor as Listen Server plus a client window, and as
+      Client with a dedicated server.

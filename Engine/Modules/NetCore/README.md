@@ -7,6 +7,8 @@ of the editor link.
 `NetCore` is written for this repository and is **optional**. A game that never
 networks configures without it and nothing networked is compiled or linked.
 
+**Adding networking to a game?** `GUIDE.md` is the step-by-step guide.
+
 ---
 
 ## Position in the tree
