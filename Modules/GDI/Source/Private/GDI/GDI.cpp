@@ -782,6 +782,20 @@ void GDISetInstanceBuffer(GDIBuffer* InBuffer, const uint32_t InCount)
     GDynamicGDI->InstanceCount  = bValid ? InCount : 0;
 }
 
+bool GDISupportsIndirectDraw()
+{
+    return GDynamicGDI && GDynamicGDI->SupportsIndirectDraw();
+}
+
+void GDISetIndirectArgs(GDIBuffer* InArgs, const uint32_t InOffsetBytes)
+{
+    if(!GDynamicGDI) { return; }
+    const bool bValid = GDynamicGDI->SupportsIndirectDraw() && InArgs && (InArgs->GetUsage() & GDI_BU_Indirect) != 0
+                     && InOffsetBytes % 4 == 0 && uint64_t(InOffsetBytes) + GDI_INDIRECT_ARGS_STRIDE <= InArgs->GetSize();
+    GDynamicGDI->IndirectArgs       = bValid ? InArgs : nullptr;
+    GDynamicGDI->IndirectArgsOffset = bValid ? InOffsetBytes : 0;
+}
+
 bool GDISupportsGPUTimestamps()
 {
     return GDynamicGDI && GDynamicGDI->SupportsGPUTimestamps();

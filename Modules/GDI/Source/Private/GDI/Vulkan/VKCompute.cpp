@@ -28,14 +28,16 @@ namespace
     void RecordBufferBarrier(VkCommandBuffer InCmd)
     {
         constexpr VkPipelineStageFlags2 Stages = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_ATTRIBUTE_INPUT_BIT
-                                               | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT;
+                                               | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT | VK_PIPELINE_STAGE_2_TRANSFER_BIT
+                                               | VK_PIPELINE_STAGE_2_DRAW_INDIRECT_BIT;
         VkMemoryBarrier2 Barrier{};
         Barrier.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
         Barrier.srcStageMask  = Stages;
         Barrier.srcAccessMask = VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT;
         Barrier.dstStageMask  = Stages;
         Barrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_SHADER_WRITE_BIT
-                              | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT;
+                              | VK_ACCESS_2_VERTEX_ATTRIBUTE_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT
+                              | VK_ACCESS_2_INDIRECT_COMMAND_READ_BIT;
         VkDependencyInfo Dep{};
         Dep.sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
         Dep.memoryBarrierCount = 1;

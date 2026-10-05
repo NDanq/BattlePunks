@@ -880,9 +880,9 @@ BasePass
     Sphere [Sphere] | PBR                      a mesh's section, with its material
     Cylinder [Cylinder] | FlareBody
   Dynamic
-    Particles Debris/Chunks x128 | DefaultLit  a particle emitter: its system and emitter, instance count
+    Particles Debris/Chunks (up to 128) | DefaultLit  a particle emitter: its system and emitter, its capacity
 TranslucentUnlit
-  Particles Sparks/Sparks x512 | ParticleStreak
+  Particles Sparks/Sparks (up to 512) | ParticleStreak
   Quad | Glow                                  a material quad
 PostProcess
   Materials (After Effects)
@@ -1023,6 +1023,16 @@ Elsewhere it draws nothing and says so once.
   material's **InstancedMesh** vertex permutation (MATERIALS.md), in the stage
   its material names, sorted with the other draws at the emitter. The
   particle's colour reaches the material as its **Vertex Color**.
+- **Only the living are drawn.** Each emitter has a small indirect-arguments
+  buffer (`ParticleEmitterGpu::Args`): an entry per section of its mesh (laid
+  out by `DrawParticles` when it first draws it, or the mesh changes), or a
+  strip's two. The sort counts the living as it sorts them first and writes the
+  count into every entry's instance count; the ribbon pass packs the living
+  segments to the front in order (a prefix sum, one workgroup) and writes
+  theirs. The draws are then `GDISetIndirectArgs` draws
+  (`vkCmdDrawIndexedIndirect`): an emitter that holds 512 with 20 alive
+  vertex-shades 20, with no readback. A backend without indirect draws draws
+  the whole ring, the dead collapsed to points as before.
 - **Time** is the render thread's clock (`RenderContext::GetDeltaSeconds`),
   clamped to a tenth of a second a frame, so the editor's viewport animates
   while the World stands still.

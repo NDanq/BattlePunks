@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 #include "Private/RenderCore/RenderCoreInternal.h"
 
@@ -46,7 +47,13 @@ namespace RenderCore
         {
             Emitter->InstancesB = GDICreateBuffer(InMaxParticles * GDI_INSTANCE_STRIDE, GDI_BU_Storage | GDI_BU_Instance);
         }
-        if(!Emitter->Particles || !Emitter->Instances || (bStrip && !Emitter->InstancesB))
+        /* The draws' counts: a strip's two triangle meshes (3 indices each), or a
+         * placeholder entry until a sprite's or mesh's draw lays them out per section. */
+        const uint32_t StripRanges[4] = { 3, 0, 3, 0 };
+        const uint32_t EmptyRange[2]  = { 0, 0 };
+        Emitter->ArgsEntries = bStrip ? 2u : 1u;
+        Emitter->Args        = CreateArgs(bStrip ? StripRanges : EmptyRange, Emitter->ArgsEntries, InMaxParticles);
+        if(!Emitter->Particles || !Emitter->Instances || (bStrip && !Emitter->InstancesB) || !Emitter->Args)
         {
             Release(Emitter);
             return nullptr;
@@ -63,6 +70,7 @@ namespace RenderCore
         if(InEmitter->Particles) { InEmitter->Particles->Release(); }
         if(InEmitter->Instances) { InEmitter->Instances->Release(); }
         if(InEmitter->InstancesB) { InEmitter->InstancesB->Release(); }
+        if(InEmitter->Args)       { InEmitter->Args->Release(); }
         delete InEmitter;
     }
 
@@ -152,6 +160,7 @@ namespace RenderCore
         const uint32_t Segments = std::clamp<uint32_t>(InSettings.BeamSegments, 1u, PARTICLE_BEAM_SEGMENTS_MAX);
         Params.Sort[1] = InSettings.Type == PT_Beam ? 0u : InOutEmitter.SpawnCursor;
         Params.Sort[2] = InSettings.Type == PT_Beam ? std::min(Segments + 1u, Max) : Max;
+        Params.Sort[3] = InOutEmitter.ArgsEntries;   // draws whose instance count the passes write
 
         /* Where the emitter was a frame ago; the first frame, where it is. */
         if(!InOutEmitter.bHasPrev)
@@ -213,25 +222,39 @@ namespace RenderCore
         if(Type == PT_Ribbon || Type == PT_Beam)
         {
             GDIShader* First = Type == PT_Beam ? InShaders.Beam : InShaders.Simulate;
-            GDIBuffer* Strip[3] = { InOutEmitter.Particles, InOutEmitter.Instances, InOutEmitter.InstancesB };
-            if(!First || !InShaders.Ribbon || !InOutEmitter.InstancesB
+            GDIBuffer* Strip[4] = { InOutEmitter.Particles, InOutEmitter.Instances, InOutEmitter.InstancesB, InOutEmitter.Args };
+            if(!First || !InShaders.Ribbon || !InOutEmitter.InstancesB || !InOutEmitter.Args
                || !GDIDispatchCompute(First, &InParams, uint32_t(sizeof(InParams)), State, 1, Groups)
-               || !GDIDispatchCompute(InShaders.Ribbon, &InParams, uint32_t(sizeof(InParams)), Strip, 3, Groups))
+               || !GDIDispatchCompute(InShaders.Ribbon, &InParams, uint32_t(sizeof(InParams)), Strip, 4, 1))
             {
                 return false;
             }
         }
         else
         {
-            GDIBuffer* SortBuffers[2] = { InOutEmitter.Particles, InOutEmitter.Instances };
-            if(!InShaders.Simulate || !InShaders.Sort
+            GDIBuffer* SortBuffers[3] = { InOutEmitter.Particles, InOutEmitter.Instances, InOutEmitter.Args };
+            if(!InShaders.Simulate || !InShaders.Sort || !InOutEmitter.Args
                || !GDIDispatchCompute(InShaders.Simulate, &InParams, uint32_t(sizeof(InParams)), State, 1, Groups)
-               || !GDIDispatchCompute(InShaders.Sort, &InParams, uint32_t(sizeof(InParams)), SortBuffers, 2, 1))
+               || !GDIDispatchCompute(InShaders.Sort, &InParams, uint32_t(sizeof(InParams)), SortBuffers, 3, 1))
             {
                 return false;
             }
         }
         InOutEmitter.bSimulated = true;
         return true;
+    }
+
+    GDIBuffer* ParticleSimulation::CreateArgs(const uint32_t* InRanges, const uint32_t InCount, const uint32_t InInstances)
+    {
+        /* VkDrawIndexedIndirectCommand each: index count, instance count, first index, vertex offset, first instance. */
+        std::vector<uint32_t> Words(size_t(std::max(InCount, 1u)) * 5u, 0u);
+        for(uint32_t Index = 0; Index < InCount; ++Index)
+        {
+            Words[Index * 5 + 0] = InRanges[Index * 2 + 0];
+            Words[Index * 5 + 1] = InInstances;
+            Words[Index * 5 + 2] = InRanges[Index * 2 + 1];
+        }
+        static_assert(GDI_INDIRECT_ARGS_STRIDE == 5 * sizeof(uint32_t), "an entry is five words");
+        return GDICreateBuffer(uint32_t(Words.size() * sizeof(uint32_t)), GDI_BU_Storage | GDI_BU_Indirect, Words.data());
     }
 }

@@ -477,6 +477,14 @@ void VKMesh::Draw()
             const VkDeviceSize InstanceOffset = 0;
             vkCmdBindVertexBuffers(Cmd, 5, 1, &InstanceBuffer, &InstanceOffset);
             Instances = Driver->GetInstanceCount();
+
+            // Indirect (GDISetIndirectArgs): the counts and range from a buffer the GPU wrote.
+            if(auto* Args = static_cast<VKBuffer*>(Driver->GetIndirectArgs()))
+            {
+                if(!Args->IsValid()) return;
+                vkCmdDrawIndexedIndirect(Cmd, Args->GetBuffer(), Driver->GetIndirectArgsOffset(), 1, GDI_INDIRECT_ARGS_STRIDE);
+                return;
+            }
         }
         // A dynamic mesh's last update sits at its base vertex and index; 0 otherwise.
         vkCmdDrawIndexed(Cmd, Count, Instances, GetDynamicBaseIndex() + First, int32_t(GetDynamicBaseVertex()), 0);

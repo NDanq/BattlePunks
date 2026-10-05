@@ -93,18 +93,25 @@ namespace RenderCore
                                               const char* InLabel = nullptr);
         /* Its particles as InMeshPath instanced, with InMaterial on every
          * section (null or "": DefaultLit), queued as one draw per section
-         * sorted at InSortOrigin -- a ribbon or beam as its strip's two
+         * sorted at InSortOrigin -- where the backend draws indirectly
+         * (GDISupportsIndirectDraw), only as many as the simulation counted
+         * alive -- a ribbon or beam as its strip's two
          * triangle meshes instead (PARTICLE_RIBBON_MESH_A/B). InLabel, if
          * set, is what its draws are called in a capture tool, and must
          * outlive the frame. Nothing,
          * returning false, before its first simulation or if the mesh or
          * material cannot draw. */
-        bool                DrawParticles(const ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
+        bool                DrawParticles(ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
                                           const char* InMeshPath, const char* InMaterial,
                                           const char* InLabel = nullptr);
         /* Its particles as the GPU left them, one per slot (MaxParticles),
          * waiting for the GPU: for tests and tools. False where unsupported. */
         bool                ReadParticles(const ParticleEmitterGpu& InEmitter, std::vector<ParticleSample>& OutParticles);
+        /* How many instances its draws draw: the live count the last
+         * simulation wrote for them (sprites and meshes: the living
+         * particles; ribbons and beams: the living segments). False where
+         * unsupported. */
+        bool                ReadParticleDrawCount(const ParticleEmitterGpu& InEmitter, uint32_t& OutCount);
         bool                ReadParticleInstances(const ParticleEmitterGpu& InEmitter, std::vector<ParticleInstanceSample>& OutInstances);
 
         /*

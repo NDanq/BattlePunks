@@ -4268,7 +4268,9 @@ static void TestParticlesOnGpu()
         /* 1b. Each type and mode, from render commands: InSteps of 0.1 s, the emitter at InAt(step). */
         struct TypeRun
         {
-            bool bRan = false;
+            bool     bRan      = false;
+            bool     bCounted  = false;
+            uint32_t DrawCount = 0;      // what the draws draw: the live count the simulation wrote
             std::vector<ParticleSample>         Particles;
             std::vector<ParticleInstanceSample> Instances;
         };
@@ -4286,6 +4288,7 @@ static void TestParticlesOnGpu()
                     bOk = Ctx.SimulateParticles(*Emitter, InSettings, InAt(Step), 0.1f) && bOk;
                 }
                 Run.bRan = bOk && Ctx.ReadParticles(*Emitter, Run.Particles) && Ctx.ReadParticleInstances(*Emitter, Run.Instances);
+                Run.bCounted = Ctx.ReadParticleDrawCount(*Emitter, Run.DrawCount);
                 Ctx.ReleaseParticleEmitter(Emitter);
             });
             FlushRenderCommands();
@@ -4376,6 +4379,8 @@ static void TestParticlesOnGpu()
             if(Each.IsAlive()) { ++BurstAlive; BurstOldest = std::max(BurstOldest, Each.Age); }
         }
         Expect(Burst.bRan && BurstAlive == 20 && BurstOldest <= 0.4f + 1e-4f, "a burst of 20 makes 20 at once, then no more");
+        Expect(Burst.bCounted && Burst.DrawCount == 20 && Burst.Instances.size() == 64,
+               "and its draws draw those 20, not the 64 its ring holds (the count the sort wrote, drawn indirectly)");
 
         /* A ribbon behind an emitter moving along +X: segment after segment sharing their edges exactly. */
         ParticleEmitterSettings Trail;
@@ -4404,6 +4409,13 @@ static void TestParticlesOnGpu()
         for(const ParticleSample& Each : Ribbon.Particles) { RibbonAlive += Each.IsAlive() ? 1 : 0; }
         std::printf("    ribbon: %d points, %d segments\n", RibbonAlive, Segments);
         Expect(RibbonAlive == 50 && Segments == RibbonAlive - 1, "a ribbon of 50 points is 49 segments");
+        bool bPacked = Ribbon.bRan;
+        for(size_t Index = 0; Index < Ribbon.Instances.size(); ++Index)
+        {
+            bPacked = bPacked && (Ribbon.Instances[Index].Transform[15] != 0.0f) == (Index < 49);
+        }
+        Expect(bPacked && Ribbon.bCounted && Ribbon.DrawCount == 49,
+               "packed to the front in order, the slots after cleared, and its draws draw the 49");
         Expect(bJoined && bWide, "each segment starts where the last ended, as wide as the size, with no gap");
         bool bSpread = Ribbon.bRan && Ribbon.Particles.size() == 64;
         float LastX = -1e30f;
@@ -4557,7 +4569,7 @@ static void TestParticlesOnGpu()
         Expect(Jitter.bRan && bEnds && Stray > 0.5f && Stray <= 10.0f + 1e-3f, "with noise, its middle strays up to 10 units; its ends stay");
         int BeamSegments = 0;
         for(const ParticleInstanceSample& Each : Jitter.Instances) { BeamSegments += Each.Transform[15] != 0.0f ? 1 : 0; }
-        Expect(BeamSegments == 8, "and it is strung as 8 segments");
+        Expect(BeamSegments == 8 && Jitter.bCounted && Jitter.DrawCount == 8, "and it is strung as 8 segments, which its draws draw");
 
         /* 2. Drawn: a plume through the instanced-mesh path, seen side on, red at the bottom and dark at the top. */
         const EngineCore::Size Viewport(256, 256);

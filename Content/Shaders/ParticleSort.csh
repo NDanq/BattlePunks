@@ -3,7 +3,8 @@
 // sorted back to front along the view (a bitonic sort in shared memory, two a
 // thread), then written as instances (GDIBuffer.h: a mat4 transform and a
 // colour each), so translucent particles blend in order in one instanced draw
-// (RenderCore/RENDERPIPELINE.md, "Particles"). Each is turned as its type
+// (RenderCore/RENDERPIPELINE.md, "Particles"). The living sort first; their
+// count goes into the draws' arguments, so only they are drawn. Each is turned as its type
 // says: a sprite by its billboard, a mesh by its orientation.
 
 #include <ParticleCommon.glsl>
@@ -14,6 +15,7 @@ layout(local_size_x = 1024) in;
 STORAGE_BUFFER(1, ParticleState) { Particle Particles[]; };
 
 STORAGE_BUFFER(2, InstanceData) { Instance Instances[]; };
+STORAGE_BUFFER(3, DrawArgs) { uint Args[]; };
 
 // InVector turned InAngle radians about the unit InAxis (Rodrigues).
 vec3 Rotate(vec3 InVector, vec3 InAxis, float InAngle)
@@ -110,6 +112,7 @@ mat4 ParticleTransform(Particle InParticle, float InSize)
     return mat4(vec4(Right * InSize, 0.0), vec4(Up * Length, 0.0), vec4(Forward * InSize, 0.0), vec4(Position, 1.0));
 }
 
+shared uint  AliveCount;
 shared float Keys[SORT_MAX];
 shared uint  Ids[SORT_MAX];
 
@@ -119,6 +122,9 @@ void main()
     uint Max    = Pa_Spawn.z;
     uint Count  = Pa_Sort.x;   // a power of two >= Max, <= SORT_MAX
 
+    if(Thread == 0u) { AliveCount = 0u; }
+    barrier();
+
     // Farthest first: the key is minus the depth; the dead and the padding last.
     for(uint Slot = Thread; Slot < Count; Slot += 1024u)
     {
@@ -126,7 +132,11 @@ void main()
         if(Slot < Max)
         {
             Particle P = Particles[Slot];
-            if(IsAlive(P)) { Key = -dot(P.PositionAge.xyz - Pa_Camera.xyz, Pa_CameraForward.xyz); }
+            if(IsAlive(P))
+            {
+                Key = -dot(P.PositionAge.xyz - Pa_Camera.xyz, Pa_CameraForward.xyz);
+                atomicAdd(AliveCount, 1u);
+            }
         }
         Keys[Slot] = Key;
         Ids[Slot]  = Slot;
@@ -170,5 +180,11 @@ void main()
             Out.Color     = ColorAt(Age);
         }
         Instances[Slot] = Out;
+    }
+
+    // The living sort first: the draws draw that many (and the dead after them never).
+    if(Thread == 0u)
+    {
+        for(uint Draw = 0u; Draw < Pa_Sort.w; ++Draw) { Args[Draw * ARGS_WORDS + 1u] = AliveCount; }
     }
 }

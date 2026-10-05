@@ -534,6 +534,13 @@ public:
     GDIBuffer* GetInstanceBuffer() const { return InstanceBuffer; }
     uint32_t   GetInstanceCount()  const { return InstanceCount; }
 
+    /* Whether an instanced indexed draw can take its counts from a buffer
+     * (GDISetIndirectArgs). No by default. */
+    virtual bool SupportsIndirectDraw() const { return false; }
+    /* GDISetIndirectArgs's buffer and byte offset; null: the draws' own counts. */
+    GDIBuffer* GetIndirectArgs()       const { return IndirectArgs; }
+    uint32_t   GetIndirectArgsOffset() const { return IndirectArgsOffset; }
+
     /* Whether InFormat can be sampled (CreateCompressedTextureResource).
      * This default, for a backend without block formats (D3D12, Metal and
      * Null so far), says no: the caller decodes to RGBA8 instead. */
@@ -598,10 +605,15 @@ protected:
     friend bool GDIUpdateDynamicMesh(GDIMesh*, const GDIMeshDesc&);
     friend uint64_t GDIGetRenderingSerial();
     friend void GDISetInstanceBuffer(GDIBuffer*, uint32_t);
+    friend void GDISetIndirectArgs(GDIBuffer*, uint32_t);
 
     /* GDISetInstanceBuffer's: null and 0 draw one instance, as before. */
     GDIBuffer*            InstanceBuffer = nullptr;
     uint32_t              InstanceCount  = 0;
+
+    /* GDISetIndirectArgs's: null, the draws use their own counts. */
+    GDIBuffer*            IndirectArgs       = nullptr;
+    uint32_t              IndirectArgsOffset = 0;
 
     std::vector<uint8_t>  MaterialBlocks[2];
     /* Bumped by each SetUniformBlock, so a backend can reuse an upload of a
@@ -776,6 +788,18 @@ bool       GDIReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes);
  * is ignored and the draws draw once.
  */
 void       GDISetInstanceBuffer(GDIBuffer* InBuffer, uint32_t InCount);
+
+/*
+ * Indirect instancing: while set, an instanced indexed draw (one with
+ * GDISetInstanceBuffer) takes its index count, instance count, first index,
+ * vertex offset and first instance from InArgs (GDI_BU_Indirect) at
+ * InOffsetBytes, laid out as GDI_INDIRECT_ARGS_STRIDE says -- the GPU's own
+ * count, written by a compute shader, with no readback. Its mesh's draw
+ * range and the instance buffer's count are then ignored. Null goes back to
+ * them. Only where GDISupportsIndirectDraw(); elsewhere it is ignored.
+ */
+bool       GDISupportsIndirectDraw();
+void       GDISetIndirectArgs(GDIBuffer* InArgs, uint32_t InOffsetBytes = 0);
 
 /* GPU timestamps: GDIDynamicDriver::WriteGPUTimestamp's contract. */
 bool     GDISupportsGPUTimestamps();

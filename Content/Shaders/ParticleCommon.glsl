@@ -22,7 +22,7 @@ COMPUTE_PARAMS_BEGIN(ParticleParams)
     vec4  Pa_StartColor;     // unused by the shaders: colour over life is Pa_ColorLut
     vec4  Pa_EndColor;
     vec4  Pa_Noise;          // x time, y the swirl's frequency
-    uvec4 Pa_Sort;           // x the power of two the sort runs over; y a strip's first slot, z its points
+    uvec4 Pa_Sort;           // x the power of two the sort runs over; y a strip's first slot, z its points; w draws in the args buffer
     vec4  Pa_PrevEmitter;    // xyz the emitter's position a frame ago: spawns are spread between the two
     uvec4 Pa_Render;         // x type, y billboard, z mesh orientation, w 1: random rotation
     vec4  Pa_Motion;         // x rotation rate (radians a second), y velocity stretch (seconds)
@@ -64,6 +64,11 @@ struct Instance
     mat4 Transform;
     vec4 Color;
 };
+
+// The draws' indirect arguments (GDIBuffer.h's GDI_INDIRECT_ARGS_STRIDE): five
+// words each -- index count, instance count, first index, vertex offset, first
+// instance. The passes write only the instance count, into every draw.
+#define ARGS_WORDS 5u
 
 bool IsAlive(Particle InParticle) { return InParticle.PositionAge.w < InParticle.VelocityLife.w; }
 
