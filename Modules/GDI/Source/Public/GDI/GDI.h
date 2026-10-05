@@ -6,6 +6,7 @@
 #include "Public/Core/CorePlatform.h"
 
 #include "GDIDefinitions.h"
+#include "GDIBuffer.h"
 #include "GDIShader.h"
 #include "GDIMesh.h"
 #include "GDISync.h"
@@ -508,6 +509,27 @@ public:
         return InLevels && InCount > 0 ? CreateTextureResource(InLevels[0], InBorder, InFilter) : nullptr;
     }
 
+    /*
+     * Compute and GPU buffers (GDIBuffer.h). A backend without them keeps
+     * these defaults: no compute, no buffers, every dispatch refused.
+     */
+    virtual bool       SupportsCompute() const { return false; }
+    /* InBytes, InUsage's EGDIBufferUsage bits; InInitialData (InBytes of it)
+     * or zeros. Null where unsupported. */
+    virtual GDIBuffer* CreateBuffer(uint32_t /*InBytes*/, uint8_t /*InUsage*/, const void* /*InInitialData*/) { return nullptr; }
+    /* InShader (ST_Compute) over InX x InY x InZ workgroups, recorded in
+     * frame order: what earlier draws and dispatches wrote it sees, and what
+     * it writes the next ones see. Validated by GDIDispatchCompute. */
+    virtual bool       DispatchCompute(GDIShader* /*InShader*/, const void* /*InParams*/, uint32_t /*InParamBytes*/,
+                                       GDIBuffer* const* /*InBuffers*/, uint32_t /*InBufferCount*/,
+                                       uint32_t /*InX*/, uint32_t /*InY*/, uint32_t /*InZ*/) { return false; }
+    /* InBuffer's bytes as the GPU left them, waiting for it: for tests and tools. */
+    virtual bool       ReadBuffer(GDIBuffer* /*InBuffer*/, std::vector<uint8_t>& /*OutBytes*/) { return false; }
+
+    /* GDISetInstanceBuffer's buffer and count, which indexed draws read. */
+    GDIBuffer* GetInstanceBuffer() const { return InstanceBuffer; }
+    uint32_t   GetInstanceCount()  const { return InstanceCount; }
+
     /* Whether InFormat can be sampled (CreateCompressedTextureResource).
      * This default, for a backend without block formats (D3D12, Metal and
      * Null so far), says no: the caller decodes to RGBA8 instead. */
@@ -571,6 +593,11 @@ protected:
     friend void GDIClearScissorRect();
     friend bool GDIUpdateDynamicMesh(GDIMesh*, const GDIMeshDesc&);
     friend uint64_t GDIGetRenderingSerial();
+    friend void GDISetInstanceBuffer(GDIBuffer*, uint32_t);
+
+    /* GDISetInstanceBuffer's: null and 0 draw one instance, as before. */
+    GDIBuffer*            InstanceBuffer = nullptr;
+    uint32_t              InstanceCount  = 0;
 
     std::vector<uint8_t>  MaterialBlocks[2];
     /* Bumped by each SetUniformBlock, so a backend can reuse an upload of a
@@ -693,6 +720,35 @@ GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLeve
 bool                GDISupportsCompressedFormat(EGDICompressedFormat InFormat);
 GDITextureResource* GDICreateCompressedTextureResource(EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels,
                                                        uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter);
+
+/*
+ * Compute shaders and GPU buffers, where the backend has them (Vulkan and
+ * Null so far; GDIDynamicDriver's defaults elsewhere): false and null
+ * without a driver or support.
+ *
+ * GDIDispatchCompute: InShader is an ST_Compute shader; InParams (at most
+ * GDI_COMPUTE_PARAMS_MAX_BYTES) its block at binding 0, InBuffers (at most
+ * GDI_COMPUTE_MAX_STORAGE_BUFFERS, each GDI_BU_Storage) at bindings 1.. in
+ * order. Between GDIBeginRendering and GDIEndRendering it is recorded in
+ * order with the draws (closing the open render pass, which it reopens);
+ * outside, it runs at once and is waited for. False, with nothing done, if
+ * anything is missing or invalid.
+ */
+bool       GDISupportsCompute();
+GDIBuffer* GDICreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData = nullptr);
+bool       GDIDispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
+                              GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                              uint32_t InX, uint32_t InY = 1, uint32_t InZ = 1);
+bool       GDIReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes);
+
+/*
+ * Instancing: the indexed draws after this (GDIDrawObject of a GDICreateMesh
+ * mesh) each draw InCount instances, reading InBuffer (GDI_BU_Instance) as
+ * GDIBuffer.h lays an instance out -- until it is called again; null or 0
+ * goes back to one instance. Only where GDISupportsCompute(); elsewhere it
+ * is ignored and the draws draw once.
+ */
+void       GDISetInstanceBuffer(GDIBuffer* InBuffer, uint32_t InCount);
 
 /* GPU timestamps: GDIDynamicDriver::WriteGPUTimestamp's contract. */
 bool     GDISupportsGPUTimestamps();

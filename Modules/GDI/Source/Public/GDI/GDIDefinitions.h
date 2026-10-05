@@ -158,6 +158,7 @@ enum EShaderType : char
 {
     ST_Vertex = 0,
     ST_Pixel,
+    ST_Compute,   // a .csh: GDIDispatchCompute, where GDISupportsCompute()
     /*Insert new shader types above this.*/
     ST_MAX
 };
@@ -313,5 +314,13 @@ constexpr unsigned GDI_SCENE_BLOCK_MAX_BYTES    = 4096;
 
 /* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's. */
 constexpr unsigned GDI_MAX_COLOR_TARGETS        = 4;
+
+/*
+ * A compute dispatch's bindings (GDIDispatchCompute): its parameters as a
+ * uniform block at binding 0, then its storage buffers at bindings 1, 2, ...
+ * Shaders declare them with COMPUTE_PARAMS_BEGIN/END and STORAGE_BUFFER.
+ */
+constexpr unsigned GDI_COMPUTE_PARAMS_MAX_BYTES     = 1024;
+constexpr unsigned GDI_COMPUTE_MAX_STORAGE_BUFFERS  = 4;
 
 #endif //CORECLIENT_GDIDEFINITIONS_H

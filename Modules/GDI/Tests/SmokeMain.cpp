@@ -13,6 +13,8 @@
  */
 
 #include <cstdio>
+#include <cstring>
+#include <vector>
 #include <string>
 
 #include "Public/Core/CoreLog.h"
@@ -237,6 +239,83 @@ static void TestScissorAndDynamicMesh()
     delete Dynamic;
 }
 
+/* A shader object for the checks below: Null resources read no file. */
+class TestComputeShader : public GDIShader
+{
+public:
+    void InitUniformBindings() override {}
+};
+
+/*
+ * Compute and instancing (GDIBuffer.h; GDIDispatchCompute,
+ * GDISetInstanceBuffer): what the front end accepts and refuses, on Null,
+ * which "supports" compute so a caller's whole path runs without a GPU.
+ */
+static void TestComputeAndInstancing()
+{
+    std::printf("[compute and instancing]\n");
+    auto* Null = static_cast<NullDynamicGDI*>(GDynamicGDI);
+    Null->ResetStats();
+
+    Expect(GDISupportsCompute(), "Null reports compute, so callers' paths run headless");
+    Expect(GDICreateBuffer(0, GDI_BU_Storage) == nullptr && GDICreateBuffer(64, 0) == nullptr,
+           "a buffer needs bytes and a usage");
+    const uint32_t Initial[4] = { 1, 2, 3, 4 };
+    GDIBuffer* Storage = GDICreateBuffer(sizeof(Initial), GDI_BU_Storage, Initial);
+    GDIBuffer* Zeroed  = GDICreateBuffer(64, GDI_BU_Storage | GDI_BU_Instance);
+    std::vector<uint8_t> Bytes;
+    Expect(Storage && Zeroed && Null->GetStats().BuffersCreated == 2 && GDIReadBuffer(Storage, Bytes)
+           && Bytes.size() == sizeof(Initial) && std::memcmp(Bytes.data(), Initial, sizeof(Initial)) == 0,
+           "a buffer starts with its data, and reads back");
+    Expect(GDIReadBuffer(Zeroed, Bytes) && Bytes.size() == 64 && Bytes[0] == 0 && Bytes[63] == 0, "or with zeros");
+    if(!Storage || !Zeroed) return;
+
+    TestComputeShader Compute;
+    Compute.InitResource(ST_Compute, "Test.csh");
+    TestComputeShader Pixel;
+    Pixel.InitResource(ST_Pixel, "Test.fsh");
+    const float Params[4] = { 1.0f, 2.0f, 3.0f, 4.0f };
+    GDIBuffer* Both[2] = { Storage, Zeroed };
+    GDIBuffer* Five[5] = { Storage, Storage, Storage, Storage, Storage };
+    GDIBuffer* None[1] = { nullptr };
+
+    Expect(GDIDispatchCompute(&Compute, Params, sizeof(Params), Both, 2, 4, 2, 1) && Null->GetStats().DispatchCalls == 1
+           && Null->GetStats().LastDispatchGroups[0] == 4 && Null->GetStats().LastDispatchGroups[1] == 2
+           && Null->GetStats().LastDispatchBuffers == 2 && Null->GetStats().LastDispatchParamBytes == sizeof(Params),
+           "a dispatch goes through with its groups, buffers and parameters");
+    Expect(!GDIDispatchCompute(&Pixel, Params, sizeof(Params), Both, 2, 1)
+           && !GDIDispatchCompute(nullptr, Params, sizeof(Params), Both, 2, 1),
+           "only a compute shader dispatches");
+    Expect(!GDIDispatchCompute(&Compute, Params, GDI_COMPUTE_PARAMS_MAX_BYTES + 4, Both, 2, 1)
+           && !GDIDispatchCompute(&Compute, Five, 0, Five, 5, 1)
+           && !GDIDispatchCompute(&Compute, nullptr, 0, None, 1, 1)
+           && !GDIDispatchCompute(&Compute, nullptr, 0, Both, 2, 0),
+           "too many parameter bytes or buffers, a missing buffer, or no groups: refused");
+    GDIBuffer* InstanceOnly = GDICreateBuffer(GDI_INSTANCE_STRIDE, GDI_BU_Instance);
+    GDIBuffer* WithInstance[1] = { InstanceOnly };
+    Expect(InstanceOnly && !GDIDispatchCompute(&Compute, nullptr, 0, WithInstance, 1, 1), "a buffer a shader writes must be a storage buffer");
+    Expect(Null->GetStats().DispatchCalls == 1, "a refused dispatch reaches no backend");
+
+    /* Zeroed holds 64 bytes: no whole instance (80). */
+    GDIBuffer* Instances = GDICreateBuffer(2 * GDI_INSTANCE_STRIDE, GDI_BU_Storage | GDI_BU_Instance);
+    GDISetInstanceBuffer(Instances, 2);
+    GDIDrawObject(nullptr);
+    Expect(Null->GetStats().InstancedDrawCalls == 1 && Null->GetStats().LastInstanceCount == 2,
+           "after GDISetInstanceBuffer a draw is instanced, that many times");
+    GDISetInstanceBuffer(Instances, 3);
+    GDIDrawObject(nullptr);
+    GDISetInstanceBuffer(Zeroed, 1);
+    GDIDrawObject(nullptr);
+    GDISetInstanceBuffer(Storage, 1);
+    GDIDrawObject(nullptr);
+    Expect(Null->GetStats().InstancedDrawCalls == 1, "more instances than the buffer holds, or a storage-only buffer: one instance");
+    GDISetInstanceBuffer(nullptr, 0);
+    GDIDrawObject(nullptr);
+    Expect(Null->GetStats().InstancedDrawCalls == 1 && Null->GetStats().DrawObjectCalls == 5, "and null goes back to one");
+
+    for(GDIBuffer* Each : { Storage, Zeroed, InstanceOnly, Instances }) { if(Each) Each->Release(); }
+}
+
 static void TestRenderTargetManagerCycle()
 {
     std::printf("[render target manager]\n");
@@ -330,6 +409,7 @@ int main()
     TestFreeFunctionSweep();
     TestResourceCreation();
     TestScissorAndDynamicMesh();
+    TestComputeAndInstancing();
     TestRenderTargetManagerCycle();
     TestDrawObjectOverrides();
     TestRenderTargetDrawTexture();

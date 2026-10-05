@@ -52,6 +52,7 @@
 #include "Public/RenderCore/TextureCompression.h"
 #include "Public/RenderCore/UIDrawList.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
+#include "Private/RenderCore/ParticleSimulation.h"
 #include "Private/RenderCore/ShadowSetup.h"
 
 using namespace RenderCore;
@@ -3864,6 +3865,228 @@ static void TestBloomHdrOnGpu()
 }
 #endif // WITH_EDITOR
 
+
+/*
+ * The Particle System component and the spawn bookkeeping
+ * (ParticleSimulation::BuildParams), on the CPU: settings clamped, spawns
+ * counted round the ring, the sort sized. RENDERPIPELINE.md, "Particles".
+ */
+static void TestParticleSystem()
+{
+    std::printf("[particle system]\n");
+
+    size_t Count = 0;
+    Expect(GameCore::FindComponentScript(ParticleSystemComponent::StaticType().ID, Count) && Count == 22,
+           "Particle System exposes its settings to Lua");
+    const GameCore::ComponentSerializerInfo* Serializer = GameCore::FindComponentSerializer(ParticleSystemComponent::StaticType().ID);
+    Expect(Serializer && Serializer->Version == 1, "and is saved, version 1");
+
+    ParticleSystemComponent Wild;
+    Wild.MaxParticles = 100000;
+    Wild.SpawnRate    = -5.0f;
+    Wild.Lifetime     = 0.0f;
+    Wild.ColorCurve   = 0.0f;
+    Wild.StartColor   = EngineCore::Color(255, 0, 0, 255);
+    const ParticleEmitterSettings Clamped = Wild.ToSettings();
+    Expect(Clamped.MaxParticles == PARTICLE_MAX_PER_SYSTEM && Clamped.SpawnRate == 0.0f && Clamped.Lifetime > 0.0f
+           && Clamped.ColorCurve > 0.0f && Clamped.StartColor[0] == 1.0f && Clamped.StartColor[1] == 0.0f,
+           "settings are clamped to what the GPU can run, colours to 0-1");
+    ParticleSystemComponent Off;
+    Off.bEmitting = 0;
+    Expect(Off.ToSettings().SpawnRate == 0.0f, "not emitting spawns nothing");
+
+    ParticleEmitterGpu Emitter;
+    Emitter.MaxParticles = 10;
+    ParticleEmitterSettings Settings;
+    Settings.SpawnRate = 25.0f;
+    const ParticleCamera Camera;
+    const ParticleParams First  = ParticleSimulation::BuildParams(Emitter, Settings, EngineCore::Vector3(1.0, 2.0, 3.0), Camera, 0.1f, 0.0);
+    const ParticleParams Second = ParticleSimulation::BuildParams(Emitter, Settings, EngineCore::Vector3(1.0, 2.0, 3.0), Camera, 0.1f, 0.0);
+    Expect(First.Spawn[0] == 0 && First.Spawn[1] == 2 && Second.Spawn[0] == 2 && Second.Spawn[1] == 3
+           && First.Spawn[2] == 10 && First.Emitter[1] == 2.0f,
+           "25 a second over 0.1 s: 2, then 3 with the half carried, each from where the last ended");
+    const ParticleParams Hitch = ParticleSimulation::BuildParams(Emitter, Settings, EngineCore::Vector3(), Camera, 5.0f, 0.0);
+    Expect(Hitch.Timing[0] <= 0.1f + 1e-6f && Hitch.Spawn[1] <= 3, "a hitch is clamped to a tenth of a second: no burst");
+    Settings.SpawnRate = 1000.0f;
+    const ParticleParams Flood = ParticleSimulation::BuildParams(Emitter, Settings, EngineCore::Vector3(), Camera, 0.1f, 0.0);
+    Expect(Flood.Spawn[1] == 10 && Flood.Spawn[0] < 10 && Flood.Sort[0] == 16,
+           "never more than the ring holds a frame, wrapping round it; the sort runs over the next power of two");
+    Expect(First.Spawn[3] != Second.Spawn[3], "each frame seeds its spawns differently");
+}
+
+#if WITH_EDITOR
+/*
+ * OPT-IN, on a real GPU: NIMBLE_SMOKE_GPU=Vulkan. The compute passes read
+ * back (spawned, moved, sorted farthest first) and a plume drawn through the
+ * instanced-mesh path: red where it is born, dark where it has aged.
+ */
+static void TestParticlesOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[particles on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[particles on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+
+        /* 1. The compute passes alone, from a render command: 50 a second along +Z for 11 steps of 0.1 s. */
+        struct Readback
+        {
+            bool bSupported = false, bMade = false, bSimulated = true, bRead = false;
+            std::vector<ParticleSample>         Particles;
+            std::vector<ParticleInstanceSample> Instances;
+        } Out;
+        ENQUEUE_RENDER_COMMAND(ParticleCompute)([&Out](RenderContext& Ctx)
+        {
+            Out.bSupported = Ctx.SupportsParticles();
+            ParticleEmitterGpu* Emitter = Ctx.CreateParticleEmitter(64);
+            Out.bMade = Emitter != nullptr;
+            if(!Emitter) { return; }
+            ParticleEmitterSettings Settings;
+            Settings.MaxParticles     = 64;
+            Settings.SpawnRate        = 50.0f;
+            Settings.Lifetime         = 100.0f;
+            Settings.LifetimeVariance = 0.0f;
+            Settings.Velocity[0] = 0.0f; Settings.Velocity[1] = 0.0f; Settings.Velocity[2] = 100.0f;
+            Settings.StartColor[0] = 1.0f; Settings.StartColor[1] = 0.0f; Settings.StartColor[2] = 0.0f; Settings.StartColor[3] = 1.0f;
+            Settings.EndColor[0] = 1.0f;   Settings.EndColor[1] = 0.0f;   Settings.EndColor[2] = 0.0f;   Settings.EndColor[3] = 1.0f;
+            Settings.FadeIn = 0.0f;
+            Settings.FadeOut = 0.0f;
+            for(int Step = 0; Step < 11; ++Step)
+            {
+                Out.bSimulated = Ctx.SimulateParticles(*Emitter, Settings, Vector3(0.0, 0.0, 0.0), 0.1f) && Out.bSimulated;
+            }
+            Out.bRead = Ctx.ReadParticles(*Emitter, Out.Particles) && Ctx.ReadParticleInstances(*Emitter, Out.Instances);
+            Ctx.ReleaseParticleEmitter(Emitter);
+        });
+        FlushRenderCommands();
+
+        Expect(Out.bSupported && Out.bMade && Out.bSimulated && Out.bRead && Out.Particles.size() == 64 && Out.Instances.size() == 64,
+               "Vulkan runs compute: an emitter is made, simulated eleven times and read back");
+        int    Alive = 0;
+        bool   bOnPath = true;
+        float  Oldest = 0.0f;
+        for(const ParticleSample& Each : Out.Particles)
+        {
+            if(!Each.IsAlive()) { continue; }
+            ++Alive;
+            Oldest  = std::max(Oldest, Each.Age);
+            bOnPath = bOnPath && std::abs(Each.Position[0]) < 1e-3f && std::abs(Each.Position[1]) < 1e-3f
+                   && std::abs(Each.Position[2] - Each.Age * 100.0f) < 0.05f && Each.Age <= 1.1f + 1e-4f;
+        }
+        std::printf("    %d alive, the oldest %.3f s\n", Alive, Oldest);
+        Expect(Alive == 55, "50 a second for 1.1 s: 55 particles, the rest of the ring unused");
+        Expect(bOnPath && Oldest > 1.0f, "each has moved 100 units a second along +Z for as long as it has lived");
+
+        bool  bSorted = true, bDeadLast = true, bRed = true;
+        float Last    = 1e30f;
+        for(size_t Slot = 0; Slot < Out.Instances.size(); ++Slot)
+        {
+            const ParticleInstanceSample& Each = Out.Instances[Slot];
+            const bool bDead = Each.Transform[15] == 0.0f;
+            if(Slot < 55)
+            {
+                bSorted = bSorted && !bDead && Each.Transform[14] <= Last + 1e-3f;
+                Last    = Each.Transform[14];
+                bRed    = bRed && Each.Color[0] > 0.99f && Each.Color[1] < 0.01f;
+            }
+            else
+            {
+                bDeadLast = bDeadLast && bDead;
+            }
+        }
+        Expect(bSorted && bDeadLast, "the instances are sorted farthest first along the view, the unused slots after them");
+        Expect(bRed && std::abs(Out.Instances[0].Transform[0] - 10.0f) < 1e-3f,
+               "each instance is the particle's colour and size (10, the default) on the camera's axes");
+
+        /* 2. Drawn: a plume through the instanced-mesh path, seen side on, red at the bottom and dark at the top. */
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Side = RenderView::MakePerspective(Viewport, Vector3(0.0, 100.0, -600.0), Vector3(0.0, 0.0, 1.0),
+                                                            40.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&Side);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const GameCore::Entity Plume = World.CreateEntity("Plume");
+        GameCore::TransformComponent Transform;
+        Plume.AddComponent(Transform);
+        ParticleSystemComponent Particles;
+        std::snprintf(Particles.Material, sizeof(Particles.Material), "%s", "Content/Materials/ParticleProbe.material.nmgraph");
+        Particles.MaxParticles     = 512;
+        Particles.SpawnRate        = 400.0f;
+        Particles.Lifetime         = 1.0f;
+        Particles.LifetimeVariance = 0.0f;
+        Particles.Velocity         = Vector3(0.0, 200.0, 0.0);
+        Particles.StartSize        = 14.0f;
+        Particles.EndSize          = 14.0f;
+        Particles.StartColor       = EngineCore::Color(255, 0, 0, 255);
+        Particles.EndColor         = EngineCore::Color(0, 0, 0, 255);
+        Plume.AddComponent(Particles);
+
+        /* Real time: the simulation follows the render thread's clock. */
+        uint64_t Frame = 1;
+        for(int Each = 0; Each < 90; ++Each)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        const uint64_t Request = Rend.RequestSceneCapture();
+        for(int Each = 0; Each < 2; ++Each)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        }
+        EngineCore::Image Pixels;
+        std::string       Error;
+        const bool bCaptured = Request != 0 && Rend.TakeMaterialPreview(Request, Pixels, Error) && Pixels.GetWidth() == 256;
+        Expect(bCaptured, "the plume is captured");
+        if(bCaptured)
+        {
+            const bool bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
+            /* World y to a row: the camera at y 100 looks along +Z, 600 away. */
+            const auto RowOf = [](const double InY)
+            {
+                const double Focal = 1.0 / std::tan(20.0 * 3.14159265 / 180.0);
+                return int(std::lround(128.0 - (InY - 100.0) / 600.0 * Focal * 128.0));
+            };
+            const auto Red = [&](const int InRow)
+            {
+                int Best = 0;   // the reddest pixel across the plume's middle at that row
+                for(int X = 120; X <= 136; ++X)
+                {
+                    const uint8_t* Px = Pixels.GetData() + Pixels.GetStride() * InRow + X * BytesPerPixel(Pixels.GetFormat());
+                    Best = std::max(Best, int(bBgra ? Px[2] : Px[0]) - int(Px[1]));
+                }
+                return Best;
+            };
+            const int Born = Red(RowOf(20.0)), Middle = Red(RowOf(100.0)), Aged = Red(RowOf(180.0));
+            std::printf("    red over green: %d at 20 units up, %d at 100, %d at 180\n", Born, Middle, Aged);
+            Expect(Born > 150 && Born > Middle && Middle > Aged && Aged < 70,
+                   "the plume is red where it is born and darkens as it rises and ages");
+        }
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
 /*
  * PostProcessStack.h: a stack's text, volume weights, blending, and the cache
  * reading a graph's <gen_code>. Null backend.
@@ -4433,6 +4656,7 @@ int main()
     TestStaticDrawLists();
     TestShadowSetup();
     TestLightComponents();
+    TestParticleSystem();
     TestPostProcessStack();
 #if WITH_EDITOR
     TestMultipleScenes();
@@ -4444,6 +4668,7 @@ int main()
     TestShadowsOnGpu();
     TestPostProcessOnGpu();
     TestBloomHdrOnGpu();
+    TestParticlesOnGpu();
     TestStatFrameOnGpu();
     TestStaticDrawListsOnGpu();
     TestClearGradientOnGpu();

@@ -1,5 +1,7 @@
 #include "Public/GDI/Vulkan/VKShader.h"
 #include "Public/GDI/Vulkan/VKDevice.h"
+#include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
+#include "Public/GDI/Vulkan/VKPipelineCache.h"
 #include "Public/GDI/GDITexture.h"
 
 #include "Public/GDI/GDILog.h"
@@ -174,6 +176,13 @@ void VKShaderResource::Release(void)
 
     if(ShaderModule != VK_NULL_HANDLE && Device)
     {
+        if(GetShaderType() == ST_Compute)
+        {
+            if(auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI))
+            {
+                if(GDI->GetPipelineCache()) { GDI->GetPipelineCache()->ForgetComputeModule(ShaderModule); }
+            }
+        }
         vkDestroyShaderModule(Device->GetDevice(), ShaderModule, nullptr);
         ShaderModule = VK_NULL_HANDLE;
     }

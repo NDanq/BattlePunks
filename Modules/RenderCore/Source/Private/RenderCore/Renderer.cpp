@@ -105,6 +105,7 @@ namespace RenderCore
         RenderSceneID               NextSceneID = RENDER_DEFAULT_SCENE + 1;
 
         bool bRenderRegistered = false;
+        bool bParticlesRegistered = false;
 
         /* "stat unit", game thread only: this frame's start and the time it
          * spent blocked (the fence, presenting); sums over the current half
@@ -255,6 +256,10 @@ namespace RenderCore
         if(!P->bRenderRegistered)
         {
             P->bRenderRegistered = RegisterProxyType(RenderComponent::StaticType().ID, GetRenderComponentFactory());
+        }
+        if(!P->bParticlesRegistered)
+        {
+            P->bParticlesRegistered = RegisterProxyType(ParticleSystemComponent::StaticType().ID, GetParticleSystemComponentFactory());
         }
 
         if(!P->Thread.Start(InBackend, InWindow))

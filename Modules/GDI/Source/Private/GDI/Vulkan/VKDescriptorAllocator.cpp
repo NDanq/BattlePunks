@@ -164,16 +164,19 @@ bool VKDescriptorAllocator::GrowPool()
     // Pool sizes:
     //   UNIFORM_BUFFER         — up to 4 UBO bindings per set (VP@0, Transform@1, custom@2, spare)
     //   COMBINED_IMAGE_SAMPLER — up to 2 sampler bindings per set
-    VkDescriptorPoolSize PoolSizes[2]{};
+    //   STORAGE_BUFFER         — a compute set's buffers (GDI_COMPUTE_MAX_STORAGE_BUFFERS)
+    VkDescriptorPoolSize PoolSizes[3]{};
     PoolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     PoolSizes[0].descriptorCount = kSetsPerPool * 4;
     PoolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     PoolSizes[1].descriptorCount = kSetsPerPool * 8;   // a material set holds GDI_MATERIAL_TEXTURE_SLOTS
+    PoolSizes[2].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    PoolSizes[2].descriptorCount = kSetsPerPool * 4;
 
     VkDescriptorPoolCreateInfo PoolCI{};
     PoolCI.sType         = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     PoolCI.maxSets       = kSetsPerPool;
-    PoolCI.poolSizeCount = 2;
+    PoolCI.poolSizeCount = 3;
     PoolCI.pPoolSizes    = PoolSizes;
     // No FREE_DESCRIPTOR_SET_BIT — reset semantics only.
 

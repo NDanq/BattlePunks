@@ -8,6 +8,7 @@
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
+#include "Public/RenderCore/ParticleTypes.h"
 #include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderPipeline.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
@@ -35,6 +36,7 @@ namespace RenderCore
     struct MaterialPreviewRequest;   // RenderScene.h
     struct RenderMaterialParameter;  // Components/RenderComponent.h
     struct UISceneState;             // Private/RenderCore/UIRenderer.h: a scene's UI draw list
+    struct ParticleEmitterGpu;       // Private/RenderCore/ParticleSimulation.h: an emitter's GPU state
 
     /* An entity's material parameter overrides for one draw call: each entry
      * applies to the material in its Slot. Must stay valid until the scene
@@ -61,6 +63,39 @@ namespace RenderCore
         ERenderBackend    GetBackend()     const;
         uint64_t          GetFrameNumber() const;
         const RenderView& GetView()        const;
+
+        /* The render thread's clock, as shaders see it (Scene_Time): seconds
+         * since the context began, and since the frame before. */
+        double GetTimeSeconds()  const;
+        float  GetDeltaSeconds() const;
+
+        /*
+         * GPU PARTICLES (ParticleTypes.h; RENDERPIPELINE.md, "Particles"),
+         * where the backend runs compute shaders -- Vulkan, and Null, which
+         * runs nothing. An emitter is its particles on the GPU; a proxy makes
+         * one, simulates it once a frame (RenderProxy::Simulate, before any
+         * target is bound) and draws it from every view (Draw).
+         */
+        bool                SupportsParticles() const;
+        /* Null where unsupported. Freed by ReleaseParticleEmitter. */
+        ParticleEmitterGpu* CreateParticleEmitter(uint32_t InMaxParticles);
+        void                ReleaseParticleEmitter(ParticleEmitterGpu* InEmitter);
+        /* Spawns, moves and sorts its particles for this frame and this view:
+         * two dispatches, InDeltaSeconds on (below 0: the frame's own delta).
+         * False if the shaders are missing (warned once). Outside a frame, as
+         * from a render command, they run at once and are waited for. */
+        bool                SimulateParticles(ParticleEmitterGpu& InEmitter, const ParticleEmitterSettings& InSettings,
+                                              const EngineCore::Vector3& InEmitterPosition, float InDeltaSeconds = -1.0f);
+        /* Its particles as InMeshPath instanced, with InMaterial on every
+         * section (null or "": DefaultLit), queued as one draw per section
+         * sorted at InSortOrigin. Nothing, returning false, before its first
+         * simulation or if the mesh or material cannot draw. */
+        bool                DrawParticles(const ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
+                                          const char* InMeshPath, const char* InMaterial);
+        /* Its particles as the GPU left them, one per slot (MaxParticles),
+         * waiting for the GPU: for tests and tools. False where unsupported. */
+        bool                ReadParticles(const ParticleEmitterGpu& InEmitter, std::vector<ParticleSample>& OutParticles);
+        bool                ReadParticleInstances(const ParticleEmitterGpu& InEmitter, std::vector<ParticleInstanceSample>& OutInstances);
 
         /*
          * Draws a quad centred on InTransform's position (scaled by

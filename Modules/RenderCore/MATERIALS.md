@@ -83,7 +83,7 @@ A permutation key is a `uint32_t` (`MaterialDescription.h`):
 |---|---|---|
 | 0-2 | Domain | Opaque 0, Masked 1, Translucent 2, PostProcess 3 |
 | 3-4 | Shading | Lit 0, Unlit 1 |
-| 8-10 | Vertex input | Quad 0, Mesh 1, Fullscreen 2 (vertex stage only) |
+| 8-10 | Vertex input | Quad 0, Mesh 1, Fullscreen 2, InstancedMesh 3 (vertex stage only) |
 | rest | reserved | quality levels, static switches |
 
 Each field becomes 0/1 defines (`MATERIAL_DOMAIN_MASKED`, `MATERIAL_SHADING_LIT`,
@@ -97,8 +97,15 @@ with it.)
 
 Vertex stage: only a material whose World Position Offset is linked compiles
 its own vertex shaders, one per vertex input it can be drawn with (Quad,
-Mesh). Every other material shares the engine's `MaterialDefault` vertex
-shaders (Quad, Mesh, Fullscreen), so most materials add no vertex shaders.
+Mesh, InstancedMesh). Every other material shares the engine's `MaterialDefault`
+vertex shaders (Quad, Mesh, Fullscreen, InstancedMesh), so most materials add
+no vertex shaders.
+
+**InstancedMesh** is a mesh drawn many times in one draw
+(`GDISetInstanceBuffer`; a particle system's): the mesh's attributes, plus each
+instance's transform at locations 2-5, applied inside the model's, and its
+colour at 7, multiplied into the vertex colour. Any material draws that way
+with no change; one that reads **Vertex Color** sees each instance's own.
 
 ## Uniforms
 
@@ -215,7 +222,8 @@ Clip Position; its type id is unchanged so saved graphs load).
 
 Vertex colour is a mesh attribute at location 9 (`GDIMeshDesc::Colors`, RGBA
 float); a mesh without colours gets white from `GDIMakeIndexedRenderData`, so
-every backend's vertex layout is fixed. `.nmmesh` stores it as an optional
+every backend's vertex layout is fixed. An instanced mesh's vertex colour is
+multiplied by its instance's (RENDERPIPELINE.md, "Particles"). `.nmmesh` stores it as an optional
 `MCOL` chunk (older files load white); the glTF importer reads `COLOR_0`.
 
 Lightmap UVs (UV1) are another, at location 10 (`GDIMeshDesc::UV1`, zero when

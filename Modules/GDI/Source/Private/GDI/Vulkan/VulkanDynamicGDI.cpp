@@ -1104,7 +1104,8 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     VKPipelineCache::PipelineKey Key{};
     Key.VertexShader    = CurrentStateData->BoundVSModule;
     Key.FragmentShader  = CurrentStateData->BoundFSModule;
-    Key.VertexLayoutID  = InMesh->IsIndexed() ? 2u : (bIsInstanced ? 1u : 0u);
+    // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
+    Key.VertexLayoutID  = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : 2u) : (bIsInstanced ? 1u : 0u);
     Key.DescLayoutGroup = Group;
 
     if(CurrentStateData->BlendState)

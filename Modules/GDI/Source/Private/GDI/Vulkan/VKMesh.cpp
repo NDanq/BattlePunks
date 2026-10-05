@@ -1,4 +1,5 @@
 #include "Public/GDI/Vulkan/VKMesh.h"
+#include "Public/GDI/Vulkan/VKBuffer.h"
 #include "Public/GDI/Vulkan/VKDevice.h"
 #include "Public/GDI/Vulkan/VulkanDynamicGDI.h"   // VKCurrentStateData, BindDrawState
 
@@ -463,8 +464,20 @@ void VKMesh::Draw()
         const VkDeviceSize MeshOffsets[3] = { 0, 0, 0 };
         vkCmdBindVertexBuffers(Cmd, 2, 3, MeshBuffers, MeshOffsets);
         vkCmdBindIndexBuffer(Cmd, IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
+
+        // Instanced (GDISetInstanceBuffer): vertex layout 3 reads binding 5 per instance.
+        uint32_t Instances = 1;
+        auto* Driver = static_cast<VulkanDynamicGDI*>(GDynamicGDI);
+        if(auto* Instance = static_cast<VKBuffer*>(Driver->GetInstanceBuffer()))
+        {
+            if(!Instance->IsValid()) return;
+            const VkBuffer     InstanceBuffer = Instance->GetBuffer();
+            const VkDeviceSize InstanceOffset = 0;
+            vkCmdBindVertexBuffers(Cmd, 5, 1, &InstanceBuffer, &InstanceOffset);
+            Instances = Driver->GetInstanceCount();
+        }
         // A dynamic mesh's last update sits at its base vertex and index; 0 otherwise.
-        vkCmdDrawIndexed(Cmd, Count, 1, GetDynamicBaseIndex() + First, int32_t(GetDynamicBaseVertex()), 0);
+        vkCmdDrawIndexed(Cmd, Count, Instances, GetDynamicBaseIndex() + First, int32_t(GetDynamicBaseVertex()), 0);
     }
     else if(bSupportsInstanced)
     {

@@ -15,14 +15,14 @@ is written: the output is plain files, or one shader cache.
 
 Usage:
     python cook_material_graphs.py -check FILE [FILE ...]
-        Compile each to SPIR-V in a temporary directory (glslc): a .vsh/.fsh
+        Compile each to SPIR-V in a temporary directory (glslc): a .vsh/.fsh/.csh
         as is, a .mtl.glsl in every permutation it needs. Prints each
         failure's compiler output; exits 1 if any failed.
 
     python cook_material_graphs.py -target <OpenGL|Vulkan|D3D12> -src PATH [-src PATH ...]
                                    (-out DIR [-data-out DIR] | -cache FILE -module NAME)
                                    [-root DIR] [-subdir NAME] [-defaults]
-        Cook every .vsh/.fsh, .mtl.glsl and .material.nmgraph given, or under
+        Cook every .vsh/.fsh/.csh (compute), .mtl.glsl and .material.nmgraph given, or under
         a directory PATH (recursively), into DIR/<Platform>/, named as GDI
         names its shaders:
             OpenGL  <name>          preprocessed GLSL
@@ -76,7 +76,7 @@ MATERIAL_INCLUDE = "Material.glsl"   # what the templates include; mapped per ma
 # --- Permutation keys (RenderCore's MaterialPermutation.h says the same) ------
 DOMAINS    = ["Opaque", "Masked", "Translucent", "PostProcess"]   # bits 0-2
 SHADINGS   = ["Lit", "Unlit"]                                     # bits 3-4
-VERTEX_INS = ["Quad", "Mesh", "Fullscreen"]                       # bits 8-10
+VERTEX_INS = ["Quad", "Mesh", "Fullscreen", "InstancedMesh"]      # bits 8-10
 
 CACHE_VERSION = 1
 
@@ -148,7 +148,7 @@ class Job:
 
     def __init__(self, source, stage, out_name, defines=None, material=None):
         self.source   = Path(source)
-        self.stage    = stage                 # "vertex" or "pixel"
+        self.stage    = stage                 # "vertex", "pixel" or "compute" (a .csh)
         self.out_name = out_name              # e.g. "Glow@00000000.fsh"
         self.defines  = defines or {}
         self.material = material              # the .mtl.glsl <Material.glsl> means, if any
@@ -157,8 +157,13 @@ class Job:
         return self.out_name if not self.material else f"{self.material.name} -> {self.out_name}"
 
 
+STAGE_TYPES   = {"vertex": "VERTEX_SHADER", "pixel": "PIXEL_SHADER", "compute": "COMPUTE_SHADER"}
+STAGE_SUFFIX  = {"vertex": ".vert", "pixel": ".frag", "compute": ".comp"}   # what glslc reads a stage from
+STAGE_PROFILE = {"vertex": "vs_5_0", "pixel": "ps_5_0", "compute": "cs_5_0"}
+
+
 def _preprocess(cs, job, platform_define):
-    shader_type = cs.VERTEX_SHADER if job.stage == "vertex" else cs.PIXEL_SHADER
+    shader_type = getattr(cs, STAGE_TYPES[job.stage])
     defines = {shader_type: "1", platform_define: "1", **job.defines}
     _current_material[0] = job.material or DEFAULT_MATERIAL
     return cs.preprocess(job.source, shader_type, ENGINE_SHADERS_DIR, defines)
@@ -171,7 +176,7 @@ def _spirv(cs, glslc, job, spv_path):
     except SystemExit:
         return False
 
-    fd, tmp_path = tempfile.mkstemp(suffix=".vert" if job.stage == "vertex" else ".frag")
+    fd, tmp_path = tempfile.mkstemp(suffix=STAGE_SUFFIX[job.stage])
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as tmp:
             tmp.write(processed)
@@ -211,7 +216,7 @@ def cook_job(cs, tools, target, job, out_dir):
         if is_vertex:
             cross_args += ["--hlsl-flatten-matrix-vertex-input-semantics"]   # no Y flip: GDI.h
         cross_args += [str(spv_path), "--output", str(hlsl_path)]
-        fxc_args = [tools["fxc"], "/nologo", "/T", "vs_5_0" if is_vertex else "ps_5_0",
+        fxc_args = [tools["fxc"], "/nologo", "/T", STAGE_PROFILE[job.stage],
                     "/E", "main", "/O3", "/Fo", str(out_dir / (job.out_name + ".cso")), str(hlsl_path)]
 
         for args, tool in ((cross_args, "spirv-cross"), (fxc_args, "fxc")):
@@ -267,7 +272,7 @@ def material_jobs(mtl_path, prefix=""):
     key = pixel_key(domain, shading)
     jobs = [Job(TEMPLATE_PS, "pixel", permutation_name(name, key, "pixel"), pixel_defines(domain, shading), mtl_path)]
     if meta["HasOffset"] == "1" and domain != "PostProcess":
-        for vertex_in in ("Quad", "Mesh"):
+        for vertex_in in ("Quad", "Mesh", "InstancedMesh"):
             jobs.append(Job(TEMPLATE_VS, "vertex", permutation_name(name, vertex_key(vertex_in), "vertex"),
                             vertex_defines(vertex_in, True), mtl_path))
     return jobs, meta
@@ -328,13 +333,13 @@ def collect(paths):
                 graphs.append(f.resolve())
             elif f.name.endswith(".mtl.glsl") and f.name != DEFAULT_MATERIAL.name:
                 materials.append(f.resolve())
-            elif f.suffix in (".vsh", ".fsh"):
+            elif f.suffix in (".vsh", ".fsh", ".csh"):
                 plain.append(f.resolve())
     return plain, materials, graphs
 
 
 def plain_job(src):
-    return Job(src, "vertex" if src.suffix == ".vsh" else "pixel", src.name)
+    return Job(src, {".vsh": "vertex", ".csh": "compute"}.get(src.suffix, "pixel"), src.name)
 
 
 # --- The shader cache --------------------------------------------------------------
