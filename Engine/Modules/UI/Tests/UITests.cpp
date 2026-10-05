@@ -1111,6 +1111,42 @@ static void TestLightLabGraph()
     EngineCore::SetFileProvider(Previous);
 }
 
+/* A document opened mid-frame (by game code, after input) shows its graph's
+ * OnOpen values on the frame it first paints. */
+static void TestOpenBeforePaint()
+{
+    std::printf("[open before paint]\n");
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleUIOpenPaint";
+    std::filesystem::create_directories(Dir);
+    EngineCore::FilesystemProvider Disk(Dir.string());
+    EngineCore::IFileProvider* Previous = EngineCore::GetFileProvider();
+    EngineCore::SetFileProvider(&Disk);
+    std::ofstream(Dir / "Hud.ui.nmgraph", std::ios::binary | std::ios::trunc)
+        << "<NodeGraph Version=\"1\" Schema=\"UI\"><gen_code><Output Extension=\".lua\"><![CDATA["
+           "return { OnOpen = function(self) UI.SetNumber('Hp', 7) end }]]></Output></gen_code></NodeGraph>\n";
+    std::ofstream(Dir / "Hud.nmui", std::ios::binary | std::ios::trunc)
+        << R"XML(<UI ScaleMode="None" Graph="Hud.ui.nmgraph"><Canvas><Text Name="Hp" AutoSize="true" Text="HP {Bind:Hp}"/></Canvas></UI>)XML";
+
+    GameCore::World World;
+    GameCore::ScriptEngine Scripts;
+    Scripts.Initialize();
+    Scripts.BindWorld(&World);
+    UISystem System;
+    System.SetScriptEngine(&Scripts);
+    SetScriptUISystem(&System);
+    const UIDocumentHandle Hud = System.Open("Hud.nmui");
+    System.Update(UIVec2{ 800, 600 });   // no RunQueuedActions or Tick between: as when opened from gameplay
+    const UIText* Hp = Hud ? dynamic_cast<UIText*>(System.Find(Hud)->FindWidget("Hp")) : nullptr;
+    Expect(Hp && Hp->Text == "HP 7", "the first painted frame already shows what OnOpen set");
+
+    System.SetScriptEngine(nullptr);
+    SetScriptUISystem(nullptr);
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+    EngineCore::SetFileProvider(Previous);
+    std::filesystem::remove_all(Dir);
+}
+
 // === Hot reload ===============================================================
 
 static void TestHotReload()
@@ -1397,6 +1433,7 @@ int main()
     TestInputAndActions();
     TestScriptedActions();
     TestUIGraphs();
+    TestOpenBeforePaint();
     TestLightLabGraph();
     TestHotReload();
     TestCost();
