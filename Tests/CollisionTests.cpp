@@ -284,7 +284,9 @@ int main()
     TestScripts();
     TestMeshShapes();
 
-    /* What the editor's Details panel builds its Source dropdown from. */
+#if WITH_EDITOR
+    /* What the editor's Details panel builds its Source dropdown from.
+     * Component properties exist only in editor builds. */
     size_t Count = 0;
     const ComponentPropertyEntry* Props = FindComponentProperties(CollisionComponent::StaticType().ID, Count);
     const ComponentPropertyEntry* Source = nullptr;
@@ -294,6 +296,7 @@ int main()
     }
     Expect(Source && Source->IsChoice() && std::string(Source->Choices) == "Bounds component|Render component mesh",
            "Source is a choice property: a dropdown of the shape sources");
+#endif
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }
