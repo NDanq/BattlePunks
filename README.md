@@ -18,6 +18,14 @@ Two settings pick a build: the **target** (`NIMBLE_TARGET`) and the
 | Shipping | yes (Release flags) | no | 1 |
 
 Shipping is Client/Server only. Configuring Editor + Shipping fails on purpose.
+
+Every configuration but Shipping runs **uncooked** (`WITH_UNCOOKED=1`). The
+build stages the project's text worlds and prefabs, and a Debug or
+RelWithDebInfo Client or Server cooks each one the first time it loads it,
+again whenever it changes, into `Intermediate/Cooked/` beside the
+executable. Shipping reads only content cooked ahead in the editor (`cook`,
+`cook prefabs`). Games load content by its source path
+(`GameCore::LoadContentWorld`), so the code is the same for every build.
 Both `WITH_EDITOR` and `NIMBLE_SHIPPING` are always defined, to 1 or 0, and
 reach every target through EngineCore.
 
@@ -65,8 +73,9 @@ its own `CMakePresets.json` and stages into `Games/LightLab/Binaries`. The
 level is `Games/LightLab/Content/Levels/LightLab.nmworld`: the editor opens it
 (`[Editor] StartupWorld`), and the game loads it and finds its Player, Sun,
 SweepSpot and OrbitLight by name, so edits saved in the editor show in the
-next Play. Without it (a Client build has no cooked copy unless one is put in
-`Content/Levels/Cooked/`) the game builds the same scene in code; `[LightLab]
+next Play. A Debug or RelWithDebInfo Client cooks it the first time it loads it;
+a Shipping build reads the copy cooked into `Content/Levels/Cooked/`. Without
+a level file the game builds the same scene in code; `[LightLab]
 ExportLevel=<path>` in an editor build writes that code-built scene out. Mouse
 looks, WASD moves, E/Q (or Space/Ctrl) rise and sink, Shift is faster, T cycles
 the sun's shadow technique, F toggles shadows and L switches between baked and
@@ -81,9 +90,9 @@ past the arch, motion blur, and a warmer, stronger glow.
 A colonnade down the right of the yard is four instances of a prefab file,
 `Content/Prefabs/Column.nmprefab`: a Cylinder shaft (the engine's
 `Cylinder.nmmesh`) on a Box base under a Box capital. The level stores them as
-instances (`.nmprefabinst`). A Client build reads the cooked copy in
-`Cooked/Content/Prefabs/`, which the editor console's `cook prefabs`
-regenerates after the prefab changes.
+instances (`.nmprefabinst`). A Debug or RelWithDebInfo Client cooks it as it
+loads; a Shipping build reads the cooked copy in `Cooked/Content/Prefabs/`,
+which the editor console's `cook prefabs` regenerates after the prefab changes.
 
 `Content/Prefabs/ReflectionDemo.nmprefab` shows scene capture
 (RENDERPIPELINE.md, "Scene capture"). It is a mirror pool with a chrome ball

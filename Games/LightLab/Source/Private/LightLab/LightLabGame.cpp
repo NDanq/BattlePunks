@@ -319,15 +319,12 @@ namespace
                                                   Context.Center.GetZ() + Context.Radius * std::sin(Angle));
     }
 
-    /* InPath into InWorld -- in a game build, its cooked twin in
-     * Content/Levels/Cooked/. False, logged, if there is none or it cannot be read. */
+    /* InPath into InWorld, by its source path (GameCore::ResolveContentWorld:
+     * cooked here or ahead outside the editor). False, logged, if there is
+     * none or it cannot be read. */
     bool LoadWorld(const char* InPath, GameCore::World& InWorld)
     {
-        std::string Path = InPath;
-#if !WITH_EDITOR
-        const size_t Slash = Path.find_last_of('/');
-        Path = Path.substr(0, Slash + 1) + "Cooked/" + Path.substr(Slash + 1);
-#endif
+        const std::string Path = GameCore::ResolveContentWorld(InPath);
         if(GameCore::DetectWorldFileFormat(Path.c_str()) == GameCore::EWorldFileFormat::Unknown)
         {
             CORE_LOG("[LightLab] no " + Path)
@@ -604,17 +601,13 @@ public:
     }
 
 private:
-    /* Content/Levels/LightLab.nmworld into InWorld -- in a game build, its
-     * cooked twin in Content/Levels/Cooked/, as BrickBreaker does. False (and
+    /* Content/Levels/LightLab.nmworld into InWorld, by its source path
+     * (GameCore::ResolveContentWorld, as BrickBreaker does). False (and
      * InWorld emptied) if there is none or it cannot be read, so the level
      * is built in code instead. */
     bool LoadLevelFile(GameCore::World& InWorld)
     {
-        std::string Path = LevelFile;
-#if !WITH_EDITOR
-        const size_t Slash = Path.find_last_of('/');
-        Path = Path.substr(0, Slash + 1) + "Cooked/" + Path.substr(Slash + 1);
-#endif
+        const std::string Path = GameCore::ResolveContentWorld(LevelFile);
         if(GameCore::DetectWorldFileFormat(Path.c_str()) == GameCore::EWorldFileFormat::Unknown)
         {
             CORE_LOG("[LightLab] no " + Path + "; building the level in code")

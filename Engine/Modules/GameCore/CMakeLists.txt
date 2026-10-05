@@ -129,18 +129,19 @@ if(NOT TARGET Lua::Lua)
     source_group("External/Lua" FILES ${GAMECORE_LUA_SOURCES})
 endif()
 
-# === Vendored pugixml (editor builds only) ==================================
-# The editor's text worlds are XML (WorldPackage.h); games load the cooked
-# binary form, so only editor builds compile pugixml. Built by hand, like Lua.
+# === Vendored pugixml (uncooked builds) =====================================
+# Text worlds and prefabs are XML (WorldPackage.h). Every build but Shipping
+# reads them (WITH_UNCOOKED); Shipping links none of it. Built by hand, like Lua.
 # PUGIXML_NO_XPATH: unused, and most of the library.
 set(GAMECORE_PUGIXML_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/pugixml-1.16")
 
-if(NIMBLE_WITH_EDITOR AND NOT TARGET PugiXml::PugiXml)
+if(NOT TARGET PugiXml::PugiXml)
     if(NOT EXISTS "${GAMECORE_PUGIXML_DIR}/src/pugixml.hpp")
         message(FATAL_ERROR "Vendored pugixml not found at ${GAMECORE_PUGIXML_DIR}.")
     endif()
 
-    add_library(PugiXml STATIC "${GAMECORE_PUGIXML_DIR}/src/pugixml.cpp")
+    # EXCLUDE_FROM_ALL: built only where linked, so never for Shipping.
+    add_library(PugiXml STATIC EXCLUDE_FROM_ALL "${GAMECORE_PUGIXML_DIR}/src/pugixml.cpp")
     add_library(PugiXml::PugiXml ALIAS PugiXml)
     target_include_directories(PugiXml PUBLIC "${GAMECORE_PUGIXML_DIR}/src")
     target_compile_definitions(PugiXml PUBLIC PUGIXML_NO_XPATH)
@@ -256,7 +257,7 @@ nimble_add_module(GameCore SHARED
 
 # PRIVATE, like Lua: no public header includes pugixml.hpp.
 if(TARGET PugiXml::PugiXml)
-    target_link_libraries(GameCore PRIVATE PugiXml::PugiXml)
+    target_link_libraries(GameCore PRIVATE $<$<NOT:$<CONFIG:Shipping>>:PugiXml::PugiXml>)
 endif()
 
 # PRIVATE, not PUBLIC: GameCoreInternal.h is included as

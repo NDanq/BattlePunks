@@ -522,14 +522,11 @@ namespace
 
         bool OnLoad(NimbleEngine::GameSession& /*InSession*/) override
         {
-            /* An editor build reads the text level; a game, its cooked twin
-             * in Content/Levels/Cooked/. */
-            std::string Path = GBrickBreakerLevelFile.GetString();
-#if !WITH_EDITOR
-            const size_t Slash = Path.find_last_of('/');
-            Path = Path.substr(0, Slash == std::string::npos ? 0 : Slash + 1) + "Cooked/"
-                   + Path.substr(Slash == std::string::npos ? 0 : Slash + 1);
-#endif
+            /* By its source path: the editor reads the text level, a Debug or
+             * RelWithDebInfo game cooks it the first time, Shipping reads the
+             * copy cooked ahead (GameCore::ResolveContentWorld). */
+            const std::string Source = GBrickBreakerLevelFile.GetString();
+            const std::string Path   = Source.empty() ? Source : GameCore::ResolveContentWorld(Source.c_str());
             if(!Path.empty() && GameCore::DetectWorldFileFormat(Path.c_str()) != GameCore::EWorldFileFormat::Unknown)
             {
                 if(GameCore::LoadWorldFile(Path.c_str(), GetWorld()))

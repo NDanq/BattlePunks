@@ -15,7 +15,7 @@ code (`NetArenaGame.cpp`) only gives it behaviour.
 | `Content/Levels/NetArena.nmworld` | The level, below |
 | `Content/Prefabs/Pawn.nmprefab` | A player's capsule: Transform, Render (capsule mesh, `PawnColor` material), **Net**, NetArenaPawn |
 | `Content/Materials/PawnColor.material.nmgraph` | Lit, with a `BaseColor` parameter set per capsule |
-| `Content/Levels/Cooked/`, `Cooked/Content/Prefabs/` | Their binary forms, which Client and Server builds load |
+| `Content/Levels/Cooked/`, `Cooked/Content/Prefabs/` | Their binary forms, cooked ahead for **Shipping** builds |
 
 The level's entities:
 
@@ -63,8 +63,10 @@ with the world.
    `Content/Levels/NetArena.nmworld`.
 2. Move a spawn point, change the Spinner's *Degrees per second*, or add a Net
    component to another entity, and save.
-3. Client and Server builds read the cooked files. After editing, run these in
-   the editor's console:
+3. Debug and RelWithDebInfo Client and Server builds read the text sources and
+   cook them themselves when they load them, so there is nothing to do while
+   developing. A **Shipping** build reads only the cooked files. Before
+   shipping, run these in the editor's console:
    - `cook` (the open world goes to `Content/Levels/Cooked/`)
    - `cook prefabs` (prefabs go to `Cooked/Content/Prefabs/`)
 

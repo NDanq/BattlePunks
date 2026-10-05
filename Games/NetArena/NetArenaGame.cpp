@@ -455,17 +455,12 @@ public:
     {
         GameCore::World& World = GetWorld();
 
-        /* An Editor build reads the text world it edits; a Client or Server
-         * build its cooked twin in Content/Levels/Cooked/ (cook it in the
-         * editor's console: cook Content/Levels/NetArena.nmworld). */
-        std::string Path = LevelFile;
-#if !WITH_EDITOR
-        const size_t Slash = Path.find_last_of('/');
-        Path = Path.substr(0, Slash + 1) + "Cooked/" + Path.substr(Slash + 1);
-#endif
-        if(!GameCore::LoadWorldFile(Path.c_str(), World))
+        /* By its source path, in every build: the Editor reads the text it
+         * edits, a Debug or RelWithDebInfo Client or Server cooks it the first
+         * time, Shipping reads the copy cooked ahead (WorldPackage.h). */
+        if(!GameCore::LoadContentWorld(LevelFile, World))
         {
-            CORE_LOG_ERROR("[NetArena] could not load " + Path)
+            CORE_LOG_ERROR(std::string("[NetArena] could not load ") + LevelFile)
             return false;
         }
 
