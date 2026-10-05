@@ -353,6 +353,9 @@ script error.
 
 ## Logic graphs
 
+[LOGICGRAPHS.md](LOGICGRAPHS.md) is the how-to: making a graph, and exposing
+C++ functions, variables, events and structs (and Lua) to it.
+
 A document's logic can be a node graph instead of C++ or Lua: a
 `*.ui.nmgraph` (the NodeGraph module's UI schema), named by the document's
 `Logic` setting.
