@@ -47,6 +47,19 @@ namespace EditorUIGraph
 
     /* The handler name for InProperty of a widget named InWidget ("" for the document). */
     QString MakeHandlerName(const QString& InWidget, const QString& InProperty);
+
+    /* The UI Events made for a widget named InWidget (their Widget note). */
+    QStringList HandlersForWidget(const UIDesignDocument& InDesign, const QString& InWidget);
+
+    /*
+     * A widget was renamed InOld -> InNew: its UI Events' Widget note follows,
+     * and with bInRenameHandlers a handler still named for it (Old_OnClick)
+     * becomes New_OnClick, with the document's Graph:Old_OnClick actions --
+     * one graph edit (saved if the graph had no other edits) and one document
+     * edit. The handlers renamed.
+     */
+    QStringList RenameWidgetHandlers(UIDesignDocument& InDesign, const QString& InOld, const QString& InNew,
+                                     bool bInRenameHandlers);
 }
 
 #endif // WITH_EDITOR

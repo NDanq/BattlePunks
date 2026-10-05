@@ -96,6 +96,11 @@ signals:
     void SelectionChanged(int InWidget);
     void DirtyChanged(bool bInDirty);
 
+    /* An edit (not an undo or redo) renamed a widget, or removed some: their
+     * UI graph handlers may want following (UIGraphLink.h). After Changed. */
+    void WidgetRenamed(const QString& InOld, const QString& InNew);
+    void WidgetsRemoved(const QStringList& InNames);
+
 private:
     friend class UISnapshotCommand;
 

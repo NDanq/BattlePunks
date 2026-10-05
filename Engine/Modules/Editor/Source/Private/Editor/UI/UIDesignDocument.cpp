@@ -132,7 +132,28 @@ void UIDesignDocument::Edit(const QString& InLabel, const std::function<void(UI:
         return;   // nothing to record
     }
     Publish(bInStructure);
+
+    /* Names that changed: the same widgets renamed, or some gone. */
+    QStringList Renamed, Removed;
+    if(Before.Widgets.size() == Asset.Widgets.size())
+    {
+        for(size_t At = 0; At < Asset.Widgets.size(); ++At)
+        {
+            const std::string Old = Before.Widgets[At].GetName(), New = Asset.Widgets[At].GetName();
+            if(Old != New && !Old.empty()) { Renamed << QString::fromStdString(Old) << QString::fromStdString(New); }
+        }
+    }
+    else if(Asset.Widgets.size() < Before.Widgets.size())
+    {
+        for(const UI::UIWidgetDesc& Each : Before.Widgets)
+        {
+            const std::string Name = Each.GetName();
+            if(!Name.empty() && Asset.FindWidget(Name) < 0) { Removed << QString::fromStdString(Name); }
+        }
+    }
     Undo->push(new UISnapshotCommand(*this, InLabel, std::move(Before), Asset, SelectedBefore, Selected, InMergeKey, bInStructure));
+    for(int At = 0; At + 1 < Renamed.size(); At += 2) { emit WidgetRenamed(Renamed[At], Renamed[At + 1]); }
+    if(!Removed.isEmpty()) { emit WidgetsRemoved(Removed); }
 }
 
 void UIDesignDocument::SetProperty(const int InWidget, const QString& InName, const QString& InValue)
