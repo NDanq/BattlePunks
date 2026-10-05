@@ -93,7 +93,7 @@ namespace
 NIMBLE_CONFIG_STRING(GLightLabExportLevel, "LightLab", "ExportLevel", "", nullptr);
 
 /* The pause menu's Settings page sets these (and [Shadows] Enabled,
- * [Rendering] BakedLighting) through its logic graph's Config nodes; an .ini
+ * [Rendering] BakedLighting) through its UI graph's Config nodes; an .ini
  * or the console can too. */
 NIMBLE_CONFIG_FLOAT(GLightLabLookSensitivity, "LightLab", "LookSensitivity", 1.0f, nullptr);   // times the Look axes
 NIMBLE_CONFIG_FLOAT(GLightLabFlySpeed, "LightLab", "FlySpeed", 600.0f, nullptr);               // world units a second
@@ -364,8 +364,8 @@ namespace
 
 /*
  * The pause menu: Escape (or Start) opens it and pauses the World. What it
- * does is its logic graph, Content/UI/PauseMenu.ui.nmgraph (the document's
- * Logic; UI/README.md, "Logic graphs"): Resume and Back close it, unpause and
+ * does is its UI graph, Content/UI/PauseMenu.ui.nmgraph (the document's
+ * Graph; UI/README.md, "UI graphs"): Resume and Back close it, unpause and
  * take the mouse back; its Settings page's check boxes and sliders, bound
  * two-way to LightLab.* data store keys, are filled from the config vars as
  * it opens and set them as they change -- the vars T, F and L, an .ini or the

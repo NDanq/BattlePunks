@@ -75,7 +75,7 @@ namespace GameCore
         /*
          * An instance of a script class -- a .lua, or a script graph's stored
          * Lua, that returns a table -- held by C++ for as long as it likes: a
-         * UI document's logic graph. Independent of any World (it survives
+         * UI document's UI graph. Independent of any World (it survives
          * Bind/UnbindWorld), but not of this engine: release every object
          * before Shutdown. 0 is no object.
          */

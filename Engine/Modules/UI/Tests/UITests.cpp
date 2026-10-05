@@ -917,18 +917,18 @@ static void TestScriptedActions()
     Scripts.Shutdown();
 }
 
-// === Logic graphs =============================================================
+// === UI graphs =============================================================
 
-static void TestLogicGraphs()
+static void TestUIGraphs()
 {
-    std::printf("[logic graphs]\n");
+    std::printf("[ui graphs]\n");
     UIActionList Parsed;
     Expect(Parsed.Parse("Graph:Go_OnClick; Native:UI.Close") && Parsed.Actions.size() == 2
            && Parsed.Actions[0].Kind == EUIActionKind::Graph && Parsed.Actions[0].Target == "Go_OnClick", "Graph: parses, and chains");
     Expect(!Parsed.Parse("Graph:Menu.Go") && !Parsed.Parse("Graph:Go(1)") && Parsed.Parse("Graph:Go()"),
            "a Graph: handler is one name with no arguments");
 
-    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleUILogic";
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleUIGraph";
     std::filesystem::create_directories(Dir);
     EngineCore::FilesystemProvider Disk(Dir.string());
     EngineCore::IFileProvider* Previous = EngineCore::GetFileProvider();
@@ -949,7 +949,7 @@ static void TestLogicGraphs()
                "}\n");
     {
         std::ofstream File(Dir / "Menu.nmui", std::ios::binary | std::ios::trunc);
-        File << R"XML(<UI InputMode="UIOnly" ScaleMode="None" Logic="Menu.ui.nmgraph">
+        File << R"XML(<UI InputMode="UIOnly" ScaleMode="None" Graph="Menu.ui.nmgraph">
   <Canvas>
     <Button Name="Go" Position="0,0" Size="100,50" OnClick="Graph:Go_OnClick"/>
     <Button Name="Shut" Position="0,100" Size="100,50" OnClick="Graph:Shut_OnClick"/>
@@ -960,7 +960,7 @@ static void TestLogicGraphs()
 
     GameCore::World World;
     GameCore::ScriptEngine Scripts;
-    Expect(Scripts.Initialize(), "a script engine for logic graphs");
+    Expect(Scripts.Initialize(), "a script engine for UI graphs");
     Scripts.BindWorld(&World);
     UISystem System;
     System.SetScriptEngine(&Scripts);
@@ -968,7 +968,7 @@ static void TestLogicGraphs()
 
     const UIDocumentHandle A = System.Open("Menu.nmui");
     const UIDocumentHandle B = System.OpenAsset(UIAssetCache::Find("Menu.nmui"), "Other.nmui");
-    Expect(A != UI_DOCUMENT_INVALID && B != UI_DOCUMENT_INVALID, "two documents with one logic graph");
+    Expect(A != UI_DOCUMENT_INVALID && B != UI_DOCUMENT_INVALID, "two documents with one UI graph");
     Expect(Scripts.RunString("assert(Opened == nil)", "not-yet"), "OnOpen waits for the action queue");
     System.RunQueuedActions();
     Expect(Scripts.RunString("assert(Opened == 2)", "opened"), "OnOpen runs once for each");
@@ -1031,9 +1031,9 @@ static void TestLogicGraphs()
 NIMBLE_CONFIG_FLOAT(GTestLookSensitivity, "LightLab", "LookSensitivity", 1.0f, nullptr);
 NIMBLE_CONFIG_FLOAT(GTestFlySpeed, "LightLab", "FlySpeed", 600.0f, nullptr);
 
-static void TestLightLabLogic()
+static void TestLightLabGraph()
 {
-    std::printf("[lightlab logic]\n");
+    std::printf("[lightlab graph]\n");
     EngineCore::ConfigVar* Shadows = EngineCore::ConfigFindVarByPath("Shadows.Enabled");
     Expect(Shadows != nullptr, "the shadows config var is there to set");
     if(!Shadows) return;
@@ -1396,8 +1396,8 @@ int main()
     TestStructureEditing();
     TestInputAndActions();
     TestScriptedActions();
-    TestLogicGraphs();
-    TestLightLabLogic();
+    TestUIGraphs();
+    TestLightLabGraph();
     TestHotReload();
     TestCost();
 #if WITH_EDITOR

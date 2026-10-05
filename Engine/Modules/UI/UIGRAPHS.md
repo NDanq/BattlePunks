@@ -1,12 +1,12 @@
-# UI logic graphs: implementation guide
+# UI graphs: implementation guide
 
 How to give a UI document its logic as a node graph (`*.ui.nmgraph`). It
 also covers how to make your own C++ and Lua reachable from that graph:
 functions, variables, events, and value types. [README.md](README.md),
-"Logic graphs", is the reference; this file is the how-to.
+"UI graphs", is the reference; this file is the how-to.
 
 - [1. The pieces](#1-the-pieces)
-- [2. Make a logic graph](#2-make-a-logic-graph)
+- [2. Make a UI graph](#2-make-a-ui-graph)
 - [3. What a graph has without any code](#3-what-a-graph-has-without-any-code)
 - [4. Expose C++ to graphs: script libraries](#4-expose-c-to-graphs-script-libraries)
 - [5. Value types: script structs](#5-value-types-script-structs)
@@ -19,7 +19,7 @@ functions, variables, events, and value types. [README.md](README.md),
 ## 1. The pieces
 
 ```
-Menu.nmui ─ Logic="Content/UI/Menu.ui.nmgraph"
+Menu.nmui ─ Graph="Content/UI/Menu.ui.nmgraph"
   <Button OnClick="Graph:Play_OnClick"/>          ─── calls ──►  UI Event "Play_OnClick"
   <Slider Value="{Bind:Audio.Volume}" .../>  ◄─ data store ─►  UI.SetNumber / UI.GetNumber nodes
 
@@ -31,7 +31,7 @@ Menu.ui.nmgraph ─ compiled to Lua when saved, stored inside the file (<gen_cod
 | Piece | Where it lives | Made by |
 |---|---|---|
 | The document | `Content/UI/Menu.nmui` | UI Designer |
-| Its logic graph | `Content/UI/Menu.ui.nmgraph`, its `Logic` setting | Graph Editor (UI schema) |
+| Its UI graph | `Content/UI/Menu.ui.nmgraph`, its `Graph` setting | Graph Editor (UI schema) |
 | Nodes for your code | `GAMECORE_DEFINE_SCRIPT_LIBRARY` in any `.cpp` of a game module or engine module | you, in C++ |
 | Shared values | the data store (`UISystem::SetValue`, `{Bind:Key}`) | C++, Lua or the graph |
 
@@ -41,7 +41,7 @@ are `OnOpen`, `OnClose`, `OnTick(dt)`, and one per UI Event, plus your
 handlers. Anything a graph node can call is something its Lua can call, so
 exposing code to graphs means exposing it to Lua as a **script library**.
 
-## 2. Make a logic graph
+## 2. Make a UI graph
 
 In the UI Designer:
 
@@ -50,7 +50,7 @@ In the UI Designer:
 2. Select a widget. On an event field (`OnClick`, `OnChanged`, ...), click
    **+ > Graph handler**. This does four things:
    - makes `<Document>.ui.nmgraph` if the document has no graph, and sets the
-     document's **Logic** to it;
+     document's **Graph** to it;
    - adds a **UI Event** node named `<Widget>_<Event>` (for example
      `Play_OnClick`), or finds the one that already exists;
    - opens the Graph Editor on that node;
@@ -63,7 +63,7 @@ In the UI Designer:
 To give the document itself a handler, first deselect everything so the panel
 shows the document's settings. Then use **+ > Graph handler** on `OnBack`,
 `OnOpen` or `OnClose`; the handler is named `Document_OnBack` and so on. The
-**Logic** row's **Create** / **Open** button makes or opens the graph without
+**Graph** row's **Create** / **Open** button makes or opens the graph without
 adding a handler.
 
 The **UI Event** node has these outputs:
@@ -385,7 +385,7 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Audio)
 **Document** (`Content/UI/Audio.nmui`), with the widgets bound two-way:
 
 ```xml
-<UI ... Logic="Content/UI/Audio.ui.nmgraph" OnBack="Native:UI.Close">
+<UI ... Graph="Content/UI/Audio.ui.nmgraph" OnBack="Native:UI.Close">
   <Slider Name="Volume" Min="0" Max="1" Step="0.05" Value="{Bind:Audio.Volume}" OnChanged="Graph:Volume_OnChanged"/>
   <Text Text="{Bind:Audio.Decibels} dB"/>
   <CheckBox Name="Mute" Checked="{Bind:Audio.Muted}" OnChanged="Graph:Mute_OnChanged"><Text Text="Mute"/></CheckBox>
@@ -442,7 +442,7 @@ A complete shipped example is LightLab's pause menu:
 
 | Symptom | Cause |
 |---|---|
-| Log: `'Graph:X' did not run: '...' has no Logic graph running` | The document has no `Logic`, the graph did not load (check earlier log lines), or there is no script engine (the designer's preview). |
+| Log: `'Graph:X' did not run: '...' has no UI graph running` | The document has no `Graph`, the graph did not load (check earlier log lines), or there is no script engine (the designer's preview). |
 | Log: `... has no handler X` | The graph has no UI Event named `X`: the action and the `Handler` setting differ, or the graph was not saved. The field is outlined in orange in the designer. |
 | A library's nodes are missing | The module was not rebuilt or refreshed (Build > Refresh Script Nodes); the library name clashes with a global; or members were rejected (names too long, more than 48 members). Check the log. |
 | The node shows as a placeholder | The graph uses a game's node and the game module is not loaded. Load the game, or refresh. |

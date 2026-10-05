@@ -1,6 +1,6 @@
 #if WITH_EDITOR
 
-#include "Private/Editor/UI/UILogicLink.h"
+#include "Private/Editor/UI/UIGraphLink.h"
 
 #include <algorithm>
 
@@ -86,7 +86,7 @@ namespace
     }
 }
 
-namespace EditorUILogic
+namespace EditorUIGraph
 {
     QString MakeHandlerName(const QString& InWidget, const QString& InProperty)
     {
@@ -106,13 +106,13 @@ namespace EditorUILogic
 
     QString GetGraphPath(const UIDesignDocument& InDesign)
     {
-        const QString Logic = ToQ(InDesign.GetAsset().Settings.Logic);
-        if(Logic.isEmpty()) return QString();
-        if(QFileInfo(Logic).isAbsolute()) return Logic;
+        const QString Graph = ToQ(InDesign.GetAsset().Settings.Graph);
+        if(Graph.isEmpty()) return QString();
+        if(QFileInfo(Graph).isAbsolute()) return Graph;
         /* A runtime path is the project's; failing that, beside the document. */
-        const QString InProject = QDir(EditorGraphs::GetProjectRoot()).filePath(Logic);
+        const QString InProject = QDir(EditorGraphs::GetProjectRoot()).filePath(Graph);
         if(QFileInfo::exists(InProject)) return InProject;
-        return QFileInfo(InDesign.GetPath()).dir().filePath(QFileInfo(Logic).fileName());
+        return QFileInfo(InDesign.GetPath()).dir().filePath(QFileInfo(Graph).fileName());
     }
 
     QString EnsureGraph(UIDesignDocument& InDesign, QWidget* InParent, const bool bInAsk)
@@ -125,8 +125,8 @@ namespace EditorUILogic
 
         const QFileInfo Doc(InDesign.GetPath());
         const QString Path = Doc.dir().filePath(Doc.completeBaseName() + QStringLiteral(".ui.nmgraph"));
-        if(bInAsk && QMessageBox::question(InParent, QStringLiteral("Logic Graph"),
-                QStringLiteral("%1 has no logic graph. Make %2 beside it?").arg(Doc.fileName(), QFileInfo(Path).fileName()))
+        if(bInAsk && QMessageBox::question(InParent, QStringLiteral("UI Graph"),
+                QStringLiteral("%1 has no UI graph. Make %2 beside it?").arg(Doc.fileName(), QFileInfo(Path).fileName()))
                 != QMessageBox::Yes)
         {
             return QString();
@@ -136,12 +136,12 @@ namespace EditorUILogic
             QString Error;
             if(!EditorGraphs::CreateGraphFile(*Schema, Path, Error, { { "Document", Utf8(RuntimePathOf(InDesign.GetPath())) } }))
             {
-                QMessageBox::warning(InParent, QStringLiteral("Logic Graph"), QStringLiteral("Could not write\n%1\n\n%2").arg(Path, Error));
+                QMessageBox::warning(InParent, QStringLiteral("UI Graph"), QStringLiteral("Could not write\n%1\n\n%2").arg(Path, Error));
                 return QString();
             }
         }
-        const std::string Logic = Utf8(RuntimePathOf(Path));
-        InDesign.Edit(QStringLiteral("Set Logic"), [Logic](UI::UIDocumentAsset& InAsset) { InAsset.Settings.Logic = Logic; });
+        const std::string Graph = Utf8(RuntimePathOf(Path));
+        InDesign.Edit(QStringLiteral("Set Graph"), [Graph](UI::UIDocumentAsset& InAsset) { InAsset.Settings.Graph = Graph; });
         return Path;
     }
 

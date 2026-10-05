@@ -128,10 +128,10 @@ namespace UI
         void      Rebuild(Document& InDocument, std::shared_ptr<const UIDocumentAsset> InAsset);
         void      RunScriptOnce(const UIDocumentAsset& InAsset);
 
-        /* A document's logic graph (Settings.Logic) instanced in Scripts, its
+        /* A document's UI graph (Settings.Graph) instanced in Scripts, its
          * OnOpen queued; and let go, OnClose run first if bInCallClose. */
-        void      CreateLogic(Document& InDocument);
-        void      ReleaseLogic(Document& InDocument, bool bInCallClose);
+        void      CreateGraphObject(Document& InDocument);
+        void      ReleaseGraphObject(Document& InDocument, bool bInCallClose);
 
         std::vector<std::unique_ptr<Document>> Documents;   // draw order: bottom first
         UIDocumentHandle         NextHandle = 1;

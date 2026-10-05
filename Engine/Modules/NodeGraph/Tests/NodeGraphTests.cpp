@@ -2334,7 +2334,7 @@ namespace
         }
     }
 
-    // === UI logic graphs ======================================================
+    // === UI graphs ============================================================
 
     /* A UI document's logic: open, a click, a check box, an event, close. */
     Graph MakeUIMenuGraph()
