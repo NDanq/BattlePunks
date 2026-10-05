@@ -4,6 +4,7 @@
 #if WITH_EDITOR
 
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include <QWidget>
@@ -45,7 +46,8 @@ private:
 /*
  * The Particle Editor's Details dock: the selected emitter's settings, in
  * the Details panel's own property widgets (PropertyWidgets.h) grouped as
- * Rendering, Emission, Motion and Over Life, each with its reset arrow.
+ * Rendering, Emission, Motion, Beam and Over Life, each with its reset
+ * arrow -- only those its type and spawn mode use.
  * A footer says how many particles the emitter holds once it has run a while,
  * and warns when Max Particles cuts lives short.
  */
@@ -72,6 +74,9 @@ private:
     QVBoxLayout*      ContentLayout = nullptr;
     QLabel*           Budget  = nullptr;
     std::vector<Row>  Rows;
+    uint8_t           ShownType      = 0;     // what the rows were built for
+    uint8_t           ShownSpawnMode = 0;
+    bool              bRebuildQueued = false;
 };
 
 #endif // WITH_EDITOR

@@ -90,6 +90,12 @@ namespace
                             InOrigin.GetZ() + Emitter.Offset.GetZ() };
             double V[3] = { S.Velocity[0], S.Velocity[1], S.Velocity[2] };
             Grow(P, Pad);
+            if(S.Type == RenderCore::PT_Beam)
+            {
+                const double End[3] = { P[0] + Emitter.BeamEnd.GetX(), P[1] + Emitter.BeamEnd.GetY(), P[2] + Emitter.BeamEnd.GetZ() };
+                Grow(End, S.BeamNoise + 0.5 * std::max(S.StartSize, S.EndSize));
+                continue;
+            }
             const int    Steps = 32;
             const double Dt    = Life / Steps;
             for(int Step = 0; Step < Steps; ++Step)
@@ -108,6 +114,9 @@ namespace
             const double Origin[3] = { InOrigin.GetX(), InOrigin.GetY(), InOrigin.GetZ() };
             Grow(Origin, 100.0);
         }
+        /* What falls through the floor is hidden by it: frame what is above. */
+        Min[1] = std::max(Min[1], InOrigin.GetY() - 20.0);
+        Max[1] = std::max(Max[1], Min[1] + 50.0);
         return GameCore::AABB(EngineCore::Vector3(Min[0], Min[1], Min[2]), EngineCore::Vector3(Max[0], Max[1], Max[2]));
     }
 }

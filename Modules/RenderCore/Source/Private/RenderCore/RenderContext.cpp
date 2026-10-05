@@ -2003,9 +2003,9 @@ namespace RenderCore
         return GDISupportsCompute();
     }
 
-    ParticleEmitterGpu* RenderContext::CreateParticleEmitter(const uint32_t InMaxParticles)
+    ParticleEmitterGpu* RenderContext::CreateParticleEmitter(const uint32_t InMaxParticles, const uint8_t InType)
     {
-        return ParticleSimulation::Create(InMaxParticles);
+        return ParticleSimulation::Create(InMaxParticles, InType);
     }
 
     void RenderContext::ReleaseParticleEmitter(ParticleEmitterGpu* InEmitter)
@@ -2027,8 +2027,18 @@ namespace RenderCore
         const ParticleParams Params = ParticleSimulation::BuildParams(InEmitter, InSettings, InEmitterPosition, Camera,
                                                                       InDeltaSeconds >= 0.0f ? InDeltaSeconds : P->FrameDelta,
                                                                       GetTimeSeconds());
-        return ParticleSimulation::Dispatch(InEmitter, Params, P->GetComputeShader("ParticleSimulate.csh"),
-                                            P->GetComputeShader("ParticleSort.csh"));
+        ParticleSimulation::Shaders Shaders;
+        Shaders.Simulate = P->GetComputeShader("ParticleSimulate.csh");
+        if(InEmitter.Type == PT_Ribbon || InEmitter.Type == PT_Beam)
+        {
+            Shaders.Ribbon = P->GetComputeShader("ParticleRibbon.csh");
+            Shaders.Beam   = InEmitter.Type == PT_Beam ? P->GetComputeShader("ParticleBeam.csh") : nullptr;
+        }
+        else
+        {
+            Shaders.Sort = P->GetComputeShader("ParticleSort.csh");
+        }
+        return ParticleSimulation::Dispatch(InEmitter, Params, Shaders);
     }
 
     bool RenderContext::ReadParticles(const ParticleEmitterGpu& InEmitter, std::vector<ParticleSample>& OutParticles)
@@ -2039,8 +2049,8 @@ namespace RenderCore
         {
             return false;
         }
-        /* ParticleCommon.glsl's Particle: position and age, then velocity and lifetime. */
-        static_assert(sizeof(ParticleSample) == 32, "ParticleSample mirrors the GPU's Particle");
+        /* ParticleCommon.glsl's Particle: position and age, velocity and lifetime, its random bits. */
+        static_assert(sizeof(ParticleSample) == 48, "ParticleSample mirrors the GPU's Particle");
         OutParticles.resize(std::min<size_t>(Bytes.size() / sizeof(ParticleSample), InEmitter.MaxParticles));
         std::memcpy(OutParticles.data(), Bytes.data(), OutParticles.size() * sizeof(ParticleSample));
         return true;
@@ -2063,13 +2073,7 @@ namespace RenderCore
     bool RenderContext::DrawParticles(const ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
                                       const char* InMeshPath, const char* InMaterial)
     {
-        if(!InEmitter.bSimulated || !InEmitter.Instances || !InMeshPath || InMeshPath[0] == '\0')
-        {
-            return false;
-        }
-        std::shared_ptr<const MeshData> Source;
-        GDIMesh* Mesh = P->FindMesh(InMeshPath, Source);
-        if(!Mesh || !Source)
+        if(!InEmitter.bSimulated || !InEmitter.Instances)
         {
             return false;
         }
@@ -2080,24 +2084,42 @@ namespace RenderCore
         }
 
         /* The instances are in world space: drawn in an identity frame, sorted at the emitter. */
-        static const MeshSection Everything;
-        const std::vector<MeshSection>& Sections = Source->Sections;
-        const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
-        for(size_t Index = 0; Index < SectionCount; ++Index)
+        const auto Draw = [&](const char* InPath, GDIBuffer* InInstances)
         {
-            const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
-            DrawCommand Item;
-            Item.Kind          = DrawCommand::EKind::MeshSection;
-            Item.Mat           = Chosen;
-            Item.Mesh          = Mesh;
-            Item.First         = Section.FirstIndex;
-            Item.Count         = Sections.empty() ? 0u : Section.IndexCount;
-            Item.Instances     = InEmitter.Instances;
-            Item.InstanceCount = InEmitter.MaxParticles;
-            Item.SortOrigin    = InSortOrigin;
-            P->Submit(Item, Impl::StageOf(Chosen));
+            std::shared_ptr<const MeshData> Source;
+            GDIMesh* Mesh = InPath && InPath[0] != '\0' ? P->FindMesh(InPath, Source) : nullptr;
+            if(!Mesh || !Source || !InInstances)
+            {
+                return false;
+            }
+            static const MeshSection Everything;
+            const std::vector<MeshSection>& Sections = Source->Sections;
+            const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
+            for(size_t Index = 0; Index < SectionCount; ++Index)
+            {
+                const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
+                DrawCommand Item;
+                Item.Kind          = DrawCommand::EKind::MeshSection;
+                Item.Mat           = Chosen;
+                Item.Mesh          = Mesh;
+                Item.First         = Section.FirstIndex;
+                Item.Count         = Sections.empty() ? 0u : Section.IndexCount;
+                Item.Instances     = InInstances;
+                Item.InstanceCount = InEmitter.MaxParticles;
+                Item.SortOrigin    = InSortOrigin;
+                P->Submit(Item, Impl::StageOf(Chosen));
+            }
+            return true;
+        };
+
+        /* A ribbon or beam is its two triangles a segment (ParticleRibbon.csh); the mesh named is not used. */
+        if(InEmitter.Type == PT_Ribbon || InEmitter.Type == PT_Beam)
+        {
+            const bool bA = Draw(PARTICLE_RIBBON_MESH_A, InEmitter.Instances);
+            const bool bB = Draw(PARTICLE_RIBBON_MESH_B, InEmitter.InstancesB);
+            return bA && bB;
         }
-        return true;
+        return Draw(InMeshPath, InEmitter.Instances);
     }
 
     void RenderContext::DrawQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight,

@@ -896,10 +896,32 @@ Elsewhere it draws nothing and says so once.
   a line per setting under each `Emitter <name>` line, unknown keys skipped --
   so a game reads it as staged, with no cook. The editor's Particle Editor makes
   and edits them (Editor README, "Particle Editor").
+- **Each emitter has a type** (`EParticleType`, `ParticleTypes.h`):
+
+  | Type | Drawn as | Turned by |
+  |---|---|---|
+  | **Sprite** | its mesh (empty: `Quad.nmmesh`) a particle, sorted back to front | **Billboard**: Face Camera (square to the view), Vertical (about world +Y toward the eye), Velocity Aligned (along its motion, stretched by speed x Velocity Stretch), Fixed (the quad's own axes); plus Rotation Rate in its plane |
+  | **Mesh** | its mesh (empty: `Box.nmmesh`) a particle, sized by Size | **Mesh Orientation**: Fixed (spinning about +Y), Random Spin (about an axis of its own), Align to Velocity (+Z along its motion) |
+  | **Ribbon** | one strip through its particles in the order they were born: a trail | widened square to the eye |
+  | **Beam** | one strip from the emitter to Beam End (or the component's Beam Target), through Beam Segments points jittered up to Beam Noise, none at its ends | widened square to the eye |
+
+  Random Rotation starts each sprite or mesh at a random angle, spinning
+  either way. A particle's random bits are fixed at birth (`Particle.Extra`),
+  so its rotation is a function of its age: no extra state.
+- **Spawn Mode**: Continuous (Spawn Rate a second) or **Burst**: Burst Count at
+  once, again every Burst Interval (0: one burst), Burst Cycles times (0: no
+  end). Emitting off and on again starts the bursts over -- how a script
+  replays a one-shot effect. Any type but a beam bursts.
+- **Spawns move with the emitter.** A frame's spawns are born at evenly spread
+  moments inside it, the first oldest, each where the emitter was then (between
+  last frame's position and this one's): a fast emitter leaves a line, not
+  clumps, and a ribbon's points come in order.
 - **The component** names one (`System`; empty runs one emitter at its
   defaults) and says how this instance runs it: Emitting, a Tint on every
-  colour, Spawn Rate Scale, Time Scale (0 freezes it) and a Seed added to each
-  emitter's. Version 1 held one emitter's settings inline; those are read past.
+  colour, Spawn Rate Scale (bursts too), Time Scale (0 freezes it), a Seed added
+  to each emitter's, and a Beam Target its beams end at instead (Use Beam
+  Target), for a script aiming a laser. Version 1 held one emitter's settings
+  inline; those are read past.
 - **`ParticleSystemCache`** holds systems by path. The proxy looks its system up
   every frame and notices a new version by its pointer, so a save (the editor
   invalidates the path) or a `Store` (the editor's unsaved edits, a system made
@@ -907,10 +929,12 @@ Elsewhere it draws nothing and says so once.
   particles through such a change unless its Max Particles changes.
 
 - **Each emitter's particles** live in world space, in a ring of up to
-  `PARTICLE_MAX_PER_SYSTEM` (2048), 32 bytes each: position and age, velocity
-  and lifetime (`ParticleCommon.glsl`). A zeroed slot has never been used.
+  `PARTICLE_MAX_PER_SYSTEM` (2048), 48 bytes each: position and age, velocity
+  and lifetime, its random bits (`ParticleCommon.glsl`). A zeroed slot has never
+  been used.
 - **Once a frame**, before any target is bound (`RenderProxy::Simulate`,
-  against the scene's own view), two dispatches (`RenderContext::SimulateParticles`):
+  against the scene's own view), two dispatches (`RenderContext::SimulateParticles`)
+  for a Sprite or Mesh emitter:
   - `ParticleSimulate.csh`, a thread a particle: this frame's spawns -- the
     rate times the frame's delta, the fraction carried, the CPU's count round
     the ring (`ParticleSimulation::BuildParams`) -- are born in the emitter's
@@ -921,6 +945,20 @@ Elsewhere it draws nothing and says so once.
     an instance (GDI's layout: a transform and a colour) -- turned to the
     camera if Face Camera, sized and coloured by age, faded in and out. Dead
     and unused slots collapse to a point and sort last.
+  A **Ribbon** emitter runs `ParticleSimulate.csh`, then `ParticleRibbon.csh`
+  instead of the sort; a **Beam** places its points with `ParticleBeam.csh`
+  (point i of N at i/N of the way, its age i/N of a life, so size and colour
+  over life run along the beam), then `ParticleRibbon.csh`. The ribbon pass
+  takes the points in order -- a ribbon's from the oldest slot round the ring --
+  widens each across the view to its size, and writes each segment between two
+  living points as **two triangles**, one instance each of
+  `RibbonSegmentA.nmmesh` and `RibbonSegmentB.nmmesh` (a unit triangle, with
+  UVs that make the pair a quad) into two instance buffers. An affine transform
+  maps a triangle's three corners exactly, so neighbouring segments share their
+  edges with no gaps or overlaps -- through the same instanced-material path
+  as sprites, with no new GDI. U runs across the strip, V along each segment.
+  Strips are not sorted; keep a ribbon's Lifetime Variance at 0, or it breaks
+  where a point dies early.
 - **Drawn** from every view that sees it (`Draw`): the mesh (an empty Mesh is
   `Engine/Content/Meshes/Quad.nmmesh`) instanced, one draw per section, with the
   material's **InstancedMesh** vertex permutation (MATERIALS.md), in the stage
@@ -936,6 +974,13 @@ Elsewhere it draws nothing and says so once.
 Particles are sorted within a system, and the systems with every other
 translucent draw by their emitters; two plumes that cross can blend out of
 order. Opaque particles write depth as any mesh does.
+
+LightLab's `Content/Particles/` has a sample of each: `Sparks` (Velocity
+Aligned sprites in repeating bursts, under gravity), `Debris` (Random Spin box
+meshes and a dust puff, bursting), `Trail` (a ribbon with a glowing head: turn
+on Move Emitter), `Laser` (two jittering beams, a wide glow and a thin core) --
+the strips and sparks with `ParticleStreak.material.nmgraph`, soft across U and
+three times as bright, so Bloom spreads them.
 
 LightLab's yard has a flare (`SpawnFlare`): a red stick, a flame ball whose
 emissive (`FlareFlame`) flickers past 10 for Bloom, a red point light, and

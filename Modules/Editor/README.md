@@ -478,7 +478,7 @@ way.
 **Particle System** is added this way too: its **System** (an `.nmparticle`,
 dropped, picked or completed; **Edit** opens it in the Particle Editor, or makes
 one when the field is empty) and what this instance overrides -- Emitting,
-Tint, Spawn Rate Scale, Time Scale, Seed. Its effect animates in the viewport
+Tint, Spawn Rate Scale, Time Scale, Seed, and a Beam Target for its beams. Its effect animates in the viewport
 while editing, since it runs on the render thread's clock rather than the
 World's (RenderCore's RENDERPIPELINE.md, "Particles").
 
@@ -493,7 +493,7 @@ writes one of a single default emitter in the current folder.
 | Part | What it does |
 |---|---|
 | **Emitters** (left) | The system's emitters, up to 8, each simulated and drawn on its own. The check box switches one off; F2 or a double-click renames it; Add, Duplicate (seeded apart), Remove, and up/down to reorder |
-| **Details** (right) | The selected emitter's settings in the Details panel's own widgets, grouped Rendering (Mesh, Material, Face Camera, Offset), Emission, Motion and Over Life, each with its reset arrow and a tooltip. The footer says how many particles it holds once it has run a lifetime, and warns when Spawn Rate x Lifetime outgrows Max Particles, so the oldest are replaced early |
+| **Details** (right) | The selected emitter's settings in the Details panel's own widgets, grouped Rendering, Emission, Motion, Beam and Over Life, each with its reset arrow and a tooltip -- only those its **Type** (Sprite, Mesh, Ribbon, Beam) and **Spawn Mode** (Continuous, Burst) use: Billboard for a sprite, Mesh Orientation for a mesh, Burst Count/Interval/Cycles for a burst, Beam End/Segments/Noise for a beam, and so on; changing either reshapes the panel. The footer says how many particles it holds once it has run a lifetime (a beam: its points), and warns when what it spawns outgrows Max Particles, so the oldest are replaced early |
 | **Viewport** | The system on a floor, under a dim sun and sky, in a World of its own (never saved). Framed from where its particles go (Frame); the emitter can be dragged with the move handle |
 | **Toolbar** | Save; Pause, Restart, Speed (0.1x to 2x); Move Emitter (round a circle, to see world-space trails); Floor; Live in Level; the particle count |
 

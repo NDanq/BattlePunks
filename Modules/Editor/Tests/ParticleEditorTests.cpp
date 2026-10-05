@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QFile>
 #include <QGroupBox>
+#include <QLabel>
 #include <QListWidget>
 #include <QTemporaryDir>
 #include <QToolButton>
@@ -166,6 +167,33 @@ namespace
             Expect(Document.GetEmitter(2)->Drag == 0.0f && Document.GetHistory().undoText() == QStringLiteral("Reset Drag")
                    && VisibleResets().isEmpty(), "which resets it, as an undo step");
         }
+
+        /* Only the settings its type and spawn mode use. */
+        const auto Shows = [&Details](const char* InLabel)
+        {
+            for(QLabel* Label : Details.findChildren<QLabel*>())
+            {
+                if(Label->text() == QString::fromLatin1(InLabel) && Label->isVisibleTo(&Details)) { return true; }
+            }
+            return false;
+        };
+        Expect(Shows("Billboard") && Shows("Spawn Rate") && !Shows("Beam End") && !Shows("Mesh Orientation") && !Shows("Burst Count"),
+               "a continuous Sprite shows its billboard and spawn rate, no beam, mesh or burst settings");
+        Document.Edit(QStringLiteral("Edit Type"), [](RenderCore::ParticleSystemDesc& InOut) { InOut.Emitters[2].Type = RenderCore::PT_Beam; });
+        QApplication::processEvents();
+        Expect(Shows("Beam End") && Shows("Beam Noise") && !Shows("Spawn Rate") && !Shows("Velocity") && !Shows("Billboard") && !Shows("Mesh"),
+               "made a Beam, it shows the beam's settings and none of spawning, motion or billboards");
+        Document.Edit(QStringLiteral("Edit Type"), [](RenderCore::ParticleSystemDesc& InOut)
+        {
+            InOut.Emitters[2].Type      = RenderCore::PT_Mesh;
+            InOut.Emitters[2].SpawnMode = RenderCore::PSM_Burst;
+        });
+        QApplication::processEvents();
+        Expect(Shows("Mesh Orientation") && Shows("Burst Count") && Shows("Burst Interval") && !Shows("Spawn Rate") && !Shows("Billboard"),
+               "a bursting Mesh shows its orientation and burst settings");
+        Document.GetHistory().undo();
+        QApplication::processEvents();
+        Expect(Shows("Beam End") && !Shows("Burst Count"), "undo puts the beam's settings back");
 
         Document.RemoveEmitter(0);
         Document.RemoveEmitter(0);

@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <iterator>
 #include <mutex>
 #include <unordered_map>
 #if WITH_EDITOR
@@ -48,8 +49,13 @@ namespace RenderCore
     ParticleEmitterSettings ParticleEmitterDesc::ToSettings() const
     {
         ParticleEmitterSettings Out;
+        Out.Type             = Type < PT_Count ? Type : uint8_t(PT_Sprite);
         Out.MaxParticles     = uint32_t(std::clamp<int32_t>(MaxParticles, 1, int32_t(PARTICLE_MAX_PER_SYSTEM)));
+        Out.SpawnMode        = SpawnMode < PSM_Count ? SpawnMode : uint8_t(PSM_Continuous);
         Out.SpawnRate        = std::max(SpawnRate, 0.0f);
+        Out.BurstCount       = uint32_t(std::clamp<int32_t>(BurstCount, 0, int32_t(PARTICLE_MAX_PER_SYSTEM)));
+        Out.BurstInterval    = std::max(BurstInterval, 0.0f);
+        Out.BurstCycles      = uint32_t(std::max<int32_t>(BurstCycles, 0));
         Out.Lifetime         = std::max(Lifetime, 0.001f);
         Out.LifetimeVariance = std::clamp(LifetimeVariance, 0.0f, 1.0f);
         Out.EmitterRadius    = std::max(EmitterRadius, 0.0f);
@@ -65,7 +71,15 @@ namespace RenderCore
         Out.ColorCurve       = std::clamp(ColorCurve, 0.05f, 20.0f);
         Out.FadeIn           = std::clamp(FadeIn, 0.0f, 1.0f);
         Out.FadeOut          = std::clamp(FadeOut, 0.0f, 1.0f);
-        Out.bFaceCamera      = bFaceCamera != 0;
+        Out.Billboard        = Billboard < PB_Count ? Billboard : uint8_t(PB_FaceCamera);
+        Out.VelocityStretch  = std::max(VelocityStretch, 0.0f);
+        Out.MeshOrientation  = MeshOrientation < PMO_Count ? MeshOrientation : uint8_t(PMO_Fixed);
+        Out.bRandomRotation  = bRandomRotation != 0;
+        Out.RotationRate     = RotationRate;
+        ToFloats(BeamEnd, Out.BeamEnd);
+        Out.BeamSegments     = uint32_t(std::clamp<int32_t>(BeamSegments, 1, int32_t(PARTICLE_BEAM_SEGMENTS_MAX)));
+        Out.BeamNoise        = std::max(BeamNoise, 0.0f);
+        Out.BeamNoiseSpeed   = std::max(BeamNoiseSpeed, 0.0f);
         Out.Seed             = uint32_t(Seed);
         return Out;
     }
@@ -73,17 +87,52 @@ namespace RenderCore
     float ParticleEmitterDesc::GetSteadyStateCount() const
     {
         const ParticleEmitterSettings S = ToSettings();
+        if(S.Type == PT_Beam)
+        {
+            return float(S.BeamSegments + 1);
+        }
         const float MeanLife = S.Lifetime * (1.0f - 0.5f * S.LifetimeVariance);
+        if(S.SpawnMode == PSM_Burst)
+        {
+            /* Bursts overlap when their particles outlive the interval. */
+            const float Overlap = S.BurstInterval > 0.0f ? std::max(1.0f, std::ceil(MeanLife / S.BurstInterval)) : 1.0f;
+            const float Cycles  = S.BurstInterval > 0.0f && S.BurstCycles > 0 ? std::min(Overlap, float(S.BurstCycles)) : Overlap;
+            return std::min(float(S.BurstCount) * Cycles, float(S.MaxParticles));
+        }
         return std::min(S.SpawnRate * MeanLife, float(S.MaxParticles));
     }
 
     float ParticleEmitterDesc::GetReach() const
     {
         const ParticleEmitterSettings S = ToSettings();
+        if(S.Type == PT_Beam)
+        {
+            return Length(S.BeamEnd) + S.BeamNoise + std::max(S.StartSize, S.EndSize);
+        }
         const float Life = S.Lifetime;
         return S.EmitterRadius + (Length(S.Velocity) + S.VelocitySpread) * Life
              + 0.5f * (Length(S.Acceleration) + S.Turbulence) * Life * Life
-             + std::max(S.StartSize, S.EndSize);
+             + std::max(S.StartSize, S.EndSize) * (S.Billboard == PB_VelocityAligned ? 2.0f : 1.0f)
+             + (S.Billboard == PB_VelocityAligned ? (Length(S.Velocity) + S.VelocitySpread) * S.VelocityStretch : 0.0f);
+    }
+
+    const char* ParticleEmitterDesc::GetMeshPath() const
+    {
+        if(Mesh[0] != '\0') { return Mesh; }
+        return Type == PT_Mesh ? PARTICLE_DEFAULT_SHAPE_MESH : PARTICLE_DEFAULT_MESH;
+    }
+
+    namespace
+    {
+        const char* const TYPE_NAMES[PT_Count]         = { "Sprite", "Mesh", "Ribbon", "Beam" };
+        const char* const BILLBOARD_NAMES[PB_Count]    = { "FaceCamera", "Vertical", "VelocityAligned", "Fixed" };
+        const char* const ORIENTATION_NAMES[PMO_Count] = { "Fixed", "RandomSpin", "AlignToVelocity" };
+        const char* const SPAWN_NAMES[PSM_Count]       = { "Continuous", "Burst" };
+    }
+
+    const char* GetParticleTypeName(const uint8_t InType)
+    {
+        return InType < PT_Count ? TYPE_NAMES[InType] : "Sprite";
     }
 
     // === Text =================================================================
@@ -167,6 +216,20 @@ namespace RenderCore
             return false;
         }
 
+        /* A choice by its name, one of InCount. */
+        bool ToChoice(const std::string& InText, const char* const* InNames, const size_t InCount, uint8_t& OutValue)
+        {
+            for(size_t Index = 0; Index < InCount; ++Index)
+            {
+                if(InText == InNames[Index])
+                {
+                    OutValue = uint8_t(Index);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         template<size_t N>
         bool ToFixed(const std::string& InText, char (&OutValue)[N])
         {
@@ -197,6 +260,7 @@ namespace RenderCore
         /*
          * Every setting, by its key, in the order written: how to read it and
          * how to write it. One table, so the reader and the writer cannot drift.
+         * A key with no writer is only read: an older file's.
          */
         struct EmitterKey
         {
@@ -220,18 +284,30 @@ namespace RenderCore
 #define NM_PARTICLE_FLAG(Name, Member)                                                                          \
         { Name, [](const std::string& V, ParticleEmitterDesc& E) { return ToFlag(V, E.Member); },                \
                 [](const ParticleEmitterDesc& E) { return std::string(E.Member ? "true" : "false"); } }
+#define NM_PARTICLE_CHOICE(Name, Member, Names)                                                                 \
+        { Name, [](const std::string& V, ParticleEmitterDesc& E) { return ToChoice(V, Names, std::size(Names), E.Member); }, \
+                [](const ParticleEmitterDesc& E) { return std::string(E.Member < std::size(Names) ? Names[E.Member] : Names[0]); } }
 #define NM_PARTICLE_STRING(Name, Member)                                                                        \
         { Name, [](const std::string& V, ParticleEmitterDesc& E) { return ToFixed(V, E.Member); },               \
                 [](const ParticleEmitterDesc& E) { return std::string(E.Member); } }
 
         const EmitterKey EMITTER_KEYS[] = {
             NM_PARTICLE_FLAG  ("Enabled",          bEnabled),
+            NM_PARTICLE_CHOICE("Type",             Type, TYPE_NAMES),
             NM_PARTICLE_STRING("Mesh",             Mesh),
             NM_PARTICLE_STRING("Material",         Material),
-            NM_PARTICLE_FLAG  ("FaceCamera",       bFaceCamera),
             NM_PARTICLE_VECTOR("Offset",           Offset),
+            NM_PARTICLE_CHOICE("Billboard",        Billboard, BILLBOARD_NAMES),
+            NM_PARTICLE_FLOAT ("VelocityStretch",  VelocityStretch),
+            NM_PARTICLE_CHOICE("MeshOrientation",  MeshOrientation, ORIENTATION_NAMES),
+            NM_PARTICLE_FLAG  ("RandomRotation",   bRandomRotation),
+            NM_PARTICLE_FLOAT ("RotationRate",     RotationRate),
+            NM_PARTICLE_CHOICE("SpawnMode",        SpawnMode, SPAWN_NAMES),
             NM_PARTICLE_INT   ("MaxParticles",     MaxParticles),
             NM_PARTICLE_FLOAT ("SpawnRate",        SpawnRate),
+            NM_PARTICLE_INT   ("BurstCount",       BurstCount),
+            NM_PARTICLE_FLOAT ("BurstInterval",    BurstInterval),
+            NM_PARTICLE_INT   ("BurstCycles",      BurstCycles),
             NM_PARTICLE_FLOAT ("Lifetime",         Lifetime),
             NM_PARTICLE_FLOAT ("LifetimeVariance", LifetimeVariance),
             NM_PARTICLE_FLOAT ("EmitterRadius",    EmitterRadius),
@@ -241,6 +317,10 @@ namespace RenderCore
             NM_PARTICLE_VECTOR("Acceleration",     Acceleration),
             NM_PARTICLE_FLOAT ("Drag",             Drag),
             NM_PARTICLE_FLOAT ("Turbulence",       Turbulence),
+            NM_PARTICLE_VECTOR("BeamEnd",          BeamEnd),
+            NM_PARTICLE_INT   ("BeamSegments",     BeamSegments),
+            NM_PARTICLE_FLOAT ("BeamNoise",        BeamNoise),
+            NM_PARTICLE_FLOAT ("BeamNoiseSpeed",   BeamNoiseSpeed),
             NM_PARTICLE_FLOAT ("StartSize",        StartSize),
             NM_PARTICLE_FLOAT ("EndSize",          EndSize),
             NM_PARTICLE_COLOR ("StartColor",       StartColor),
@@ -248,6 +328,15 @@ namespace RenderCore
             NM_PARTICLE_FLOAT ("ColorCurve",       ColorCurve),
             NM_PARTICLE_FLOAT ("FadeIn",           FadeIn),
             NM_PARTICLE_FLOAT ("FadeOut",          FadeOut),
+
+            /* Before billboards: true is Face Camera, false Fixed. */
+            { "FaceCamera", [](const std::string& V, ParticleEmitterDesc& E)
+              {
+                  uint8_t bFace = 1;
+                  if(!ToFlag(V, bFace)) { return false; }
+                  E.Billboard = bFace ? PB_FaceCamera : PB_Fixed;
+                  return true;
+              }, nullptr },
         };
 
 #undef NM_PARTICLE_FLOAT
@@ -256,6 +345,7 @@ namespace RenderCore
 #undef NM_PARTICLE_COLOR
 #undef NM_PARTICLE_FLAG
 #undef NM_PARTICLE_STRING
+#undef NM_PARTICLE_CHOICE
     }
 
     bool ParseParticleSystem(const std::string& InText, ParticleSystemDesc& OutSystem, std::string& OutError)
@@ -347,6 +437,7 @@ namespace RenderCore
             Out += "\n" + std::string(EMITTER_KEY) + " " + Emitter.Name + "\n";
             for(const EmitterKey& Each : EMITTER_KEYS)
             {
+                if(!Each.Write) { continue; }
                 const std::string Value = Each.Write(Emitter);
                 Out += "    " + std::string(Each.Key) + (Value.empty() ? std::string() : " " + Value) + "\n";
             }

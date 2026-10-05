@@ -77,8 +77,10 @@ namespace RenderCore
          * target is bound) and draws it from every view (Draw).
          */
         bool                SupportsParticles() const;
-        /* Null where unsupported. Freed by ReleaseParticleEmitter. */
-        ParticleEmitterGpu* CreateParticleEmitter(uint32_t InMaxParticles);
+        /* For an emitter of InType (EParticleType): a ribbon or beam has a
+         * second instance buffer. Null where unsupported. Freed by
+         * ReleaseParticleEmitter. */
+        ParticleEmitterGpu* CreateParticleEmitter(uint32_t InMaxParticles, uint8_t InType = PT_Sprite);
         void                ReleaseParticleEmitter(ParticleEmitterGpu* InEmitter);
         /* Spawns, moves and sorts its particles for this frame and this view:
          * two dispatches, InDeltaSeconds on (below 0: the frame's own delta).
@@ -88,8 +90,10 @@ namespace RenderCore
                                               const EngineCore::Vector3& InEmitterPosition, float InDeltaSeconds = -1.0f);
         /* Its particles as InMeshPath instanced, with InMaterial on every
          * section (null or "": DefaultLit), queued as one draw per section
-         * sorted at InSortOrigin. Nothing, returning false, before its first
-         * simulation or if the mesh or material cannot draw. */
+         * sorted at InSortOrigin -- a ribbon or beam as its strip's two
+         * triangle meshes instead (PARTICLE_RIBBON_MESH_A/B). Nothing,
+         * returning false, before its first simulation or if the mesh or
+         * material cannot draw. */
         bool                DrawParticles(const ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
                                           const char* InMeshPath, const char* InMaterial);
         /* Its particles as the GPU left them, one per slot (MaxParticles),
