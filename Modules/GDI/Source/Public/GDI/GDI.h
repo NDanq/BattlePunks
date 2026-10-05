@@ -377,6 +377,10 @@ public:
 
     virtual void EndDrawEvent() = 0;
 
+    /* Whether BeginDrawEvent records anything a capture tool sees: what a
+     * caller asks before building a label it would otherwise throw away. */
+    virtual bool HasDrawEvents() const { return true; }
+
     /**
      * GPU timestamps, for timing GPU work ("stat frame"). Within one
      * BeginRendering/EndRendering block, WriteGPUTimestamp(i) records the time
@@ -707,6 +711,9 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, BeginDrawEvent, (const std::string& InE
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, EndDrawEvent, ())
 
+/* GDIDynamicDriver::HasDrawEvents: false with no driver. */
+bool GDIHasDrawEvents();
+
 /* GDIDynamicDriver::CreateRenderTargetFormat / SupportsRenderTargetFormat. */
 GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat);
 bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
@@ -770,6 +777,18 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(
         return,
         <ShaderRef>()
         )
+
+/*
+ * A name for a GPU object in capture tools -- RenderDoc's Resource Inspector,
+ * PIX, Xcode -- and validation messages: an asset's path, so a draw's mesh,
+ * texture or buffers read as what they are. Nothing where the backend cannot
+ * name objects (Vulkan names them through VK_EXT_debug_utils when the
+ * instance has it; RenderDoc's layer always provides it). Null objects are
+ * ignored. Render thread.
+ */
+void GDISetDebugName(GDIMesh* InMesh, const std::string& InName);
+void GDISetDebugName(GDIBuffer* InBuffer, const std::string& InName);
+void GDISetDebugName(GDITextureResource* InTexture, const std::string& InName);
 
 extern int GDebugGroupID;
 

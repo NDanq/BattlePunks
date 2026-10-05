@@ -48,7 +48,12 @@ public:
     /* Host readback. Format is the backend's own -- BGRA8 for OpenGL, RGBA8
      * for Vulkan and Metal. */
     virtual EngineCore::Image ToImage() const = 0;
+
+    /* Its name in capture tools (GDISetDebugName). */
+    virtual void SetDebugName(const std::string& InName) { DebugName = InName; }
+    const std::string& GetDebugName() const { return DebugName; }
 protected:
+    std::string   DebugName;
     GDITexture2D* Parent;
     bool bInitialized = false;
     int Width = 0;

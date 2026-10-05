@@ -1,4 +1,5 @@
 #include "Public/GDI/Vulkan/VKDevice.h"
+#include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
 #include <mutex>
 
 
@@ -234,4 +235,24 @@ uint32_t VKDevice::FindMemoryType(uint32_t TypeBits, VkMemoryPropertyFlags Prope
         }
     }
     return UINT32_MAX;
+}
+
+void VKDevice::SetObjectName(const VkObjectType InType, const uint64_t InHandle, const std::string& InName) const
+{
+    if(InHandle == 0 || InName.empty() || Device == VK_NULL_HANDLE || !VulkanGDIContext::HasDebugUtils())
+    {
+        return;
+    }
+    static const auto SetName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+        vkGetInstanceProcAddr(Instance, "vkSetDebugUtilsObjectNameEXT"));
+    if(!SetName)
+    {
+        return;
+    }
+    VkDebugUtilsObjectNameInfoEXT Info{};
+    Info.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+    Info.objectType   = InType;
+    Info.objectHandle = InHandle;
+    Info.pObjectName  = InName.c_str();
+    SetName(Device, &Info);
 }

@@ -835,6 +835,8 @@ the end of the scope, compiled out of shipping builds). A frame reads:
 
 ```
 Scene
+  Simulate
+    Particles <system>/<emitter>   its two compute dispatches
   MaterialPreview            (editor; the stages below, per preview)
   SceneCapture <target>
     Face +X .. Face -Z | Mirror
@@ -867,6 +869,41 @@ Scene
     Fxaa
   ViewTarget, DebugLines, StatUnit
 ```
+
+**Every draw is named** for what it draws and with what (`RenderContext`'s
+`Issue`, from the mesh's file and section and the material's file, extensions
+dropped):
+
+```
+BasePass
+  Static
+    Sphere [Sphere] | PBR                      a mesh's section, with its material
+    Cylinder [Cylinder] | FlareBody
+  Dynamic
+    Particles Debris/Chunks x128 | DefaultLit  a particle emitter: its system and emitter, instance count
+TranslucentUnlit
+  Particles Sparks/Sparks x512 | ParticleStreak
+  Quad | Glow                                  a material quad
+PostProcess
+  Materials (After Effects)
+    Fullscreen | Negative
+```
+
+each a region holding its one `vkCmdDrawIndexed`. A mesh section with no material
+reads `| (plain tint)`. The names are built only where the backend records regions
+(`GDIHasDrawEvents`: Vulkan with `VK_EXT_debug_utils` -- always under RenderDoc --
+D3D12, OpenGL, Metal); `[Rendering] DrawLabels=false` turns the per-draw ones off.
+
+**GPU objects are named** after their assets (`GDISetDebugName`), so RenderDoc's
+Resource Inspector and a draw's pipeline state read what they are: a mesh's
+buffers `Engine/Content/Meshes/Box.nmmesh Positions` (`TexCoords`, `Normals`,
+`Colors`, `UV1`, `Indices`), a texture its path, a particle emitter's buffers
+`Particles Content/Particles/Laser.nmparticle:Glow State` (`Instances`, or a
+strip's `Triangles A`/`B`), every shader module its cooked file
+(`Shaders/Cooked/Vulkan/Content/Materials/Glow@00000000.fsh.spv`), and render
+targets `RT:<name>` as before. Vulkan names them through
+`vkSetDebugUtilsObjectNameEXT`; the other backends keep the name and do not
+pass it on yet.
 
 A stage or group with nothing to draw has no event. Every full-screen pass is
 named after its shader (`DrawPost`). Static draws are issued before dynamic ones

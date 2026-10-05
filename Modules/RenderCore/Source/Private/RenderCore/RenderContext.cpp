@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/GDI/Shaders/Classes/TestbedShaders.h"
@@ -52,11 +53,17 @@
  * Outside a scene (a test) draws are issued at once.
  */
 
+/* Each draw in a debug region named for its mesh and material (RenderContext::Issue),
+ * for capture tools; off saves building the names. Only where the backend records
+ * regions (GDIHasDrawEvents: Vulkan with VK_EXT_debug_utils, as under RenderDoc). */
+NIMBLE_CONFIG_BOOL(GRenderDrawLabels, "Rendering", "DrawLabels", true, nullptr);
+
 namespace RenderCore
 {
     /* A loaded material: DrawCommand points at one (DrawPolicy.h). */
     struct RenderMaterial
     {
+        std::string          Name;                 // its graph's path, as drawn: a draw's label (Issue)
         MaterialDescription  Description;
         GDIShader*           Pixel = nullptr;      // null: failed to load, drawn as the fallback
         GDIShader*           Vertex[4] = {};       // its own Quad, Mesh and InstancedMesh shaders (by EMaterialVertexInput), with an offset only
@@ -525,6 +532,7 @@ namespace RenderCore
             Desc.Indices     = OutSource->Indices.data();
             Desc.NumIndices  = uint32_t(OutSource->Indices.size());
             Entry.Gpu = GDICreateMesh(Desc);
+            GDISetDebugName(Entry.Gpu, InPath);   // its buffers in a capture tool; and its draws' labels (Issue)
             if(!Entry.Gpu)
             {
                 RENDERCORE_LOG_WARN("mesh '" + InPath + "': this backend cannot draw it; drawing a quad")
@@ -584,6 +592,7 @@ namespace RenderCore
             {
                 WarnOnce(InTexture.Path + "|texture", "texture '" + InTexture.Path + "': this backend could not create it");
             }
+            GDISetDebugName(Entry.Gpu, InTexture.Path);   // what a capture tool lists it as
             return Entry.Gpu;
         }
 
@@ -880,6 +889,7 @@ namespace RenderCore
             }
 
             Material& Loaded = Materials[InName];
+            Loaded.Name = InName;
             EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
             std::string Stem;
             const bool bNamed = GetMaterialStem(InName, Stem);
@@ -1521,8 +1531,62 @@ namespace RenderCore
             return true;
         }
 
+        /* What a capture tool shows for InPath: its file name, extensions
+         * dropped ("Engine/Content/Meshes/Sphere.nmmesh" is "Sphere"). */
+        static std::string ShortName(const std::string& InPath)
+        {
+            const size_t Slash = InPath.find_last_of("/\\");
+            const std::string File = Slash == std::string::npos ? InPath : InPath.substr(Slash + 1);
+            const size_t Dot = File.find('.');
+            return Dot == std::string::npos || Dot == 0 ? File : File.substr(0, Dot);
+        }
+
+        /* A draw's label (Issue): what it draws, then with what --
+         * "Sphere [Sphere] | Glow", "Particles Sparks/Sparks x512 | ParticleStreak". */
+        static std::string LabelOf(const DrawCommand& InItem)
+        {
+            std::string Out;
+            switch(InItem.Kind)
+            {
+                case DrawCommand::EKind::MeshSection:
+                    Out = InItem.Label ? std::string(InItem.Label)
+                        : InItem.Mesh && !InItem.Mesh->GetDebugName().empty() ? ShortName(InItem.Mesh->GetDebugName()) : std::string("Mesh");
+                    if(!InItem.Label && InItem.Section && InItem.Section[0] != '\0') { Out += " [" + std::string(InItem.Section) + "]"; }
+                    if(InItem.Instances) { Out += " x" + std::to_string(InItem.InstanceCount); }
+                    break;
+                case DrawCommand::EKind::Quad:
+                case DrawCommand::EKind::MaterialQuad: Out = InItem.Label ? std::string(InItem.Label) : std::string("Quad"); break;
+                case DrawCommand::EKind::Fullscreen:   Out = "Fullscreen"; break;
+            }
+            if(InItem.Mat && !InItem.Mat->Name.empty())          { Out += " | " + ShortName(InItem.Mat->Name); }
+            else if(InItem.Kind == DrawCommand::EKind::MeshSection) { Out += " | (plain tint)"; }
+            return Out;
+        }
+
+        /* A draw's region, named for its mesh and material, so RenderDoc's Event
+         * Browser (and PIX, Xcode) reads what it is; true if one was begun, to end
+         * with EndDrawLabel. Nothing in shipping builds or where nothing records it. */
+        static bool BeginDrawLabel(const DrawCommand& InItem)
+        {
+#if !(defined(NIMBLE_SHIPPING) && NIMBLE_SHIPPING)
+            if(GRenderDrawLabels.GetBool() && GDIHasDrawEvents())
+            {
+                GDIBeginDrawEvent(LabelOf(InItem));
+                return true;
+            }
+#endif
+            (void)InItem;
+            return false;
+        }
+
+        static void EndDrawLabel(const bool bInBegun)
+        {
+            if(bInBegun) { GDIEndDrawEvent(); }
+        }
+
         void Issue(const DrawCommand& InItem)
         {
+            const bool bLabel = BeginDrawLabel(InItem);
             switch(InItem.Kind)
             {
                 case DrawCommand::EKind::Quad:         IssueQuad(InItem);         break;
@@ -1530,6 +1594,7 @@ namespace RenderCore
                 case DrawCommand::EKind::MeshSection:  IssueMeshSection(InItem);  break;
                 case DrawCommand::EKind::Fullscreen:   IssueFullscreen(InItem);   break;
             }
+            EndDrawLabel(bLabel);
         }
 
         /* Into InStage's policy inside a scene; at once outside one. */
@@ -1829,7 +1894,10 @@ namespace RenderCore
                 GDISetViewport(0, 0, Width, Height);
                 GDISetColorMask(EColM_RGBA);
                 GDISetMaterialTexture(0, Texture(Source));
-                if(IssueFullscreen(Materials[Index]))
+                const bool bLabel = BeginDrawLabel(Materials[Index]);
+                const bool bDrawn = IssueFullscreen(Materials[Index]);
+                EndDrawLabel(bLabel);
+                if(bDrawn)
                 {
                     Source = Dest;
                     ++Passes;
@@ -2003,9 +2071,18 @@ namespace RenderCore
         return GDISupportsCompute();
     }
 
-    ParticleEmitterGpu* RenderContext::CreateParticleEmitter(const uint32_t InMaxParticles, const uint8_t InType)
+    ParticleEmitterGpu* RenderContext::CreateParticleEmitter(const uint32_t InMaxParticles, const uint8_t InType, const char* InName)
     {
-        return ParticleSimulation::Create(InMaxParticles, InType);
+        ParticleEmitterGpu* Emitter = ParticleSimulation::Create(InMaxParticles, InType);
+        if(Emitter && InName && InName[0] != '\0')
+        {
+            /* Its buffers as a capture tool lists them. */
+            const std::string Name = std::string("Particles ") + InName;
+            GDISetDebugName(Emitter->Particles, Name + " State");
+            GDISetDebugName(Emitter->Instances, Name + (Emitter->InstancesB ? " Triangles A" : " Instances"));
+            GDISetDebugName(Emitter->InstancesB, Name + " Triangles B");
+        }
+        return Emitter;
     }
 
     void RenderContext::ReleaseParticleEmitter(ParticleEmitterGpu* InEmitter)
@@ -2014,8 +2091,14 @@ namespace RenderCore
     }
 
     bool RenderContext::SimulateParticles(ParticleEmitterGpu& InEmitter, const ParticleEmitterSettings& InSettings,
-                                          const EngineCore::Vector3& InEmitterPosition, const float InDeltaSeconds)
+                                          const EngineCore::Vector3& InEmitterPosition, const float InDeltaSeconds,
+                                          const char* InLabel)
     {
+#if !(defined(NIMBLE_SHIPPING) && NIMBLE_SHIPPING)
+        const bool bLabel = InLabel && InLabel[0] != '\0' && GRenderDrawLabels.GetBool() && GDIHasDrawEvents();
+        if(bLabel) { GDIBeginDrawEvent(InLabel); }
+        struct EndLabel { bool bOn; ~EndLabel() { if(bOn) { GDIEndDrawEvent(); } } } const Closer{ bLabel };
+#endif
         /* Sorted for, and turned toward, the camera of the view being set up: the scene's own. */
         ParticleCamera Camera;
         Camera.Position = EngineCore::Vector3(P->Scene.CameraPosition[0], P->Scene.CameraPosition[1], P->Scene.CameraPosition[2]);
@@ -2071,7 +2154,7 @@ namespace RenderCore
     }
 
     bool RenderContext::DrawParticles(const ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
-                                      const char* InMeshPath, const char* InMaterial)
+                                      const char* InMeshPath, const char* InMaterial, const char* InLabel)
     {
         if(!InEmitter.bSimulated || !InEmitter.Instances)
         {
@@ -2102,6 +2185,7 @@ namespace RenderCore
                 Item.Kind          = DrawCommand::EKind::MeshSection;
                 Item.Mat           = Chosen;
                 Item.Mesh          = Mesh;
+                Item.Label         = InLabel;
                 Item.First         = Section.FirstIndex;
                 Item.Count         = Sections.empty() ? 0u : Section.IndexCount;
                 Item.Instances     = InInstances;
@@ -2217,6 +2301,7 @@ namespace RenderCore
             Item.Tint      = InTint;
             Item.Mat       = Chosen;
             Item.Mesh      = Mesh;
+            Item.Section   = Section.Name.c_str();
             Item.First     = Section.FirstIndex;
             Item.Count     = Sections.empty() ? 0u : Section.IndexCount;
             Item.Overrides     = InOverrides.Items;
@@ -2433,6 +2518,7 @@ namespace RenderCore
             Item.Transform  = InTransform;
             Item.Mat        = Chosen;
             Item.Mesh       = Mesh;
+            Item.Section    = Section.Name.c_str();
             Item.First      = Section.FirstIndex;
             Item.Count      = Sections.empty() ? 0u : Section.IndexCount;
             Item.ShadowView    = P->CasterView;

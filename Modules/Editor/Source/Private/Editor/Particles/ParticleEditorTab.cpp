@@ -133,7 +133,8 @@ ParticleEditorTab::ParticleEditorTab(EditorContext& InContext, QWidget* InParent
     setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowTabbedDocks);
 
     Particles  = new ParticleDocument(this);
-    PreviewKey = QStringLiteral("transient://ParticleEditor/%1").arg(++PreviewCounter());
+    PreviewNumber = ++PreviewCounter();
+    PreviewKey    = QStringLiteral("transient://ParticleEditor/%1").arg(PreviewNumber);
 
     BuildPreview();
     BuildDocks();
@@ -370,6 +371,18 @@ bool ParticleEditorTab::Load(const QString& InPath, QString& OutError)
         return false;
     }
     Path = QFileInfo(InPath).absoluteFilePath();
+
+    /* The preview's key ends in the file's name, so capture tools label its draws by it ("Particles Smoke/..."). */
+    RenderCore::ParticleSystemCache::Invalidate(PreviewKey.toStdString());
+    PreviewKey = QStringLiteral("transient://ParticleEditor/%1/%2").arg(PreviewNumber).arg(QFileInfo(InPath).fileName());
+    GameCore::World& World = Preview->GetEditedWorld();
+    if(World.IsAlive(EmitterEntity))
+    {
+        if(auto* Component = World.GetEntity(EmitterEntity).GetComponent<RenderCore::ParticleSystemComponent>())
+        {
+            std::snprintf(Component->System, sizeof(Component->System), "%s", PreviewKey.toUtf8().constData());
+        }
+    }
     PushToRenderer();
 
     /* Once the viewport has its size. */

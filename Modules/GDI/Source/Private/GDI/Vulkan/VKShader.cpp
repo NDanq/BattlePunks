@@ -67,6 +67,8 @@ VKShaderResource::VKShaderResource(VKDevice* InDevice, EShaderType InType, const
         return;
     }
 
+    /* Named by its file, so a capture reads which material or pass it is. */
+    InDevice->SetObjectName(VK_OBJECT_TYPE_SHADER_MODULE, reinterpret_cast<uint64_t>(ShaderModule), SpvPath);
     bInitialized = true;
     GDI_LOG("[VKShaderResource] Loaded SPIR-V module: " + SpvPath)
 }

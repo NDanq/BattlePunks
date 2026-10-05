@@ -1,6 +1,8 @@
 #ifndef CORECLIENT_VKDEVICE_H
 #define CORECLIENT_VKDEVICE_H
 
+#include <string>
+
 #include <vulkan/vulkan.h>
 #include <mutex>
 
@@ -64,6 +66,11 @@ public:
      * @return memory type index, or UINT32_MAX if none match.
      */
     uint32_t FindMemoryType(uint32_t TypeBits, VkMemoryPropertyFlags Properties) const;
+
+    /** Names InHandle (of InType) for capture tools and validation messages,
+     *  through VK_EXT_debug_utils; nothing when the instance lacks it or the
+     *  handle or name is empty. */
+    void SetObjectName(VkObjectType InType, uint64_t InHandle, const std::string& InName) const;
 
     inline VkInstance       GetInstance() const         { return Instance; }
     inline VkPhysicalDevice GetPhysicalDevice() const   { return PhysicalDevice; }

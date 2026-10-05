@@ -114,6 +114,7 @@ private:
     EditorDocument*   Preview   = nullptr;
     QString           Path;
     QString           PreviewKey;
+    int               PreviewNumber = 0;   // this tab's, in its key: unique among tabs
 
     ViewportPanel*               ViewportArea = nullptr;
     ParticleEmitterListPanel*    EmitterList  = nullptr;

@@ -30,6 +30,8 @@ namespace RenderCore
         EngineCore::Color Tint{255, 255, 255};
         RenderMaterial*   Mat   = nullptr;       // MaterialQuad, Fullscreen; MeshSection (null: Mesh_PS)
         GDIMesh*          Mesh  = nullptr;
+        const char*       Section = nullptr;     // MeshSection: the section's name, for its label (Issue); stable with the mesh
+        const char*       Label   = nullptr;     // what its label calls it instead of the mesh (a particle emitter's); outlives the frame
         uint32_t          First = 0;
         uint32_t          Count = 0;             // 0: the whole mesh
         int32_t           ShadowView = -1;       // Shadows stage: the ShadowFrame view it draws into

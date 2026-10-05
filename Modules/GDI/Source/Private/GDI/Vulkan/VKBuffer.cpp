@@ -101,3 +101,9 @@ void VKBuffer::Release()
     }
     delete this;
 }
+
+void VKBuffer::SetDebugName(const std::string& InName)
+{
+    GDIBuffer::SetDebugName(InName);
+    if(Device) { Device->SetObjectName(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(Buffer), InName); }
+}

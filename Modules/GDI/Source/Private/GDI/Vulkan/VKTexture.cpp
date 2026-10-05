@@ -401,6 +401,7 @@ void VKTextureResource::AllocateImage()
     }
 
     CurrentLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+    ApplyDebugName();
 }
 
 void VKTextureResource::DestroyImage()
@@ -652,4 +653,20 @@ VkFilter VKTextureResource::DecodeFilter(EGDITextureFilter InFilter)
         default: break;
     }
     return VK_FILTER_NEAREST;
+}
+
+void VKTextureResource::SetDebugName(const std::string& InName)
+{
+    GDITextureResource::SetDebugName(InName);
+    ApplyDebugName();
+}
+
+void VKTextureResource::ApplyDebugName() const
+{
+    if(!Device || DebugName.empty())
+    {
+        return;
+    }
+    Device->SetObjectName(VK_OBJECT_TYPE_IMAGE, reinterpret_cast<uint64_t>(Image), DebugName);
+    Device->SetObjectName(VK_OBJECT_TYPE_IMAGE_VIEW, reinterpret_cast<uint64_t>(ImageView), DebugName + " View");
 }

@@ -36,6 +36,9 @@ class VKDevice;
 class VKTextureResource : public GDITextureResource
 {
 public:
+    /** Names its VkImage and view. */
+    void SetDebugName(const std::string& InName) override;
+
     /** Standalone texture from image data. */
     VKTextureResource(VKDevice*           InDevice,
                        const EngineCore::Image&       InImage,
@@ -112,6 +115,9 @@ private:
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
+
+    /** Names its image and view, now and whenever they are remade. */
+    void ApplyDebugName() const;
 
     /** Allocate VkImage + memory + view for the current Width × Height. */
     void AllocateImage();
