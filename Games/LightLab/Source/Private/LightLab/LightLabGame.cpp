@@ -210,6 +210,11 @@ struct LightLabAnimateContext
     /* The point light circles this (the centre pillar) at OrbitRadius. */
     EngineCore::Vector3 OrbitCenter;
     double              OrbitRadius    = 350.0;
+
+    /* The ribbon demo's emitter flies round this, so its trail shows. */
+    GameCore::EntityID  TrailEmitter;
+    EngineCore::Vector3 TrailCenter;
+    double              TrailRadius    = 120.0;
 };
 
 namespace
@@ -302,6 +307,15 @@ namespace
             const double Angle = T * 0.6;
             Orbit->Position.SetX(float(Context.OrbitCenter.GetX() + Context.OrbitRadius * std::cos(Angle)));
             Orbit->Position.SetZ(float(Context.OrbitCenter.GetZ() + Context.OrbitRadius * std::sin(Angle)));
+        }
+
+        if(GameCore::TransformComponent* Trail = InWorld.GetEntity(Context.TrailEmitter).GetComponent<GameCore::TransformComponent>())
+        {
+            /* A lap every ~3 seconds, rising and falling as it goes: a ribbon behind it. */
+            const double Angle = T * 2.1;
+            Trail->Position.SetX(float(Context.TrailCenter.GetX() + Context.TrailRadius * std::cos(Angle)));
+            Trail->Position.SetY(float(Context.TrailCenter.GetY() + 40.0 * std::sin(Angle * 2.0)));
+            Trail->Position.SetZ(float(Context.TrailCenter.GetZ() + Context.TrailRadius * std::sin(Angle)));
         }
     }
 
@@ -575,6 +589,7 @@ public:
         SunEntity                       = World.FindEntityByName("Sun");
         AnimateContext.SweepSpot        = World.FindEntityByName("SweepSpot");
         AnimateContext.OrbitLight       = World.FindEntityByName("OrbitLight");
+        AnimateContext.TrailEmitter     = World.FindEntityByName("TrailDemo");
         if(!Player.IsSet())
         {
             CORE_LOG_ERROR("[LightLab] the level has no entity named Player; nothing to fly")
@@ -596,6 +611,11 @@ public:
             const EngineCore::Vector3 Start = Orbit->Position;
             AnimateContext.OrbitCenter = EngineCore::Vector3(0.0, Start.GetY(), 0.0);
             AnimateContext.OrbitRadius = std::max(std::hypot(double(Start.GetX()), double(Start.GetZ())), 1.0);
+        }
+        if(const GameCore::TransformComponent* Trail = World.GetEntity(AnimateContext.TrailEmitter).GetComponent<GameCore::TransformComponent>())
+        {
+            /* It circles a point TrailRadius toward -X of where it was placed (its circle's east end). */
+            AnimateContext.TrailCenter = Trail->Position - EngineCore::Vector3(AnimateContext.TrailRadius, 0.0, 0.0);
         }
 
         FlyContext.Player = Player;
@@ -722,6 +742,40 @@ private:
         Smoke.AddComponent(Particles);
     }
 
+    /* A Particle System running InSystem at InPosition, named InName. */
+    static RenderCore::ParticleSystemComponent* SpawnParticles(GameCore::World& InWorld, const char* InName,
+                                                               const EngineCore::Vector3& InPosition, const char* InSystem)
+    {
+        const GameCore::Entity Entity = InWorld.CreateEntity(InName);
+        GameCore::TransformComponent Transform;
+        Transform.Position = InPosition;
+        Entity.AddComponent(Transform);
+        RenderCore::ParticleSystemComponent Particles;
+        std::snprintf(Particles.System, sizeof(Particles.System), "%s", InSystem);
+        return Entity.AddComponent(Particles);
+    }
+
+    /*
+     * A sample of each particle type across the front of the yard
+     * (Content/Particles/; RenderCore's RENDERPIPELINE.md, "Particles"):
+     * sparks bursting in front of the left pillars, debris bursting by the ball,
+     * a laser strung between the right pillars (its Beam Target, set here,
+     * overrides the asset's own end), and a ribbon trailing a point that
+     * AnimateLights flies round in a circle.
+     */
+    static void SpawnParticleDemos(GameCore::World& InWorld)
+    {
+        SpawnParticles(InWorld, "SparksDemo", EngineCore::Vector3(-650.0, 0.0, -820.0), "Content/Particles/Sparks.nmparticle");
+        SpawnParticles(InWorld, "DebrisDemo", EngineCore::Vector3(420.0, 0.0, -680.0), "Content/Particles/Debris.nmparticle");
+        if(RenderCore::ParticleSystemComponent* Laser =
+               SpawnParticles(InWorld, "LaserDemo", EngineCore::Vector3(425.0, 260.0, -1000.0), "Content/Particles/Laser.nmparticle"))
+        {
+            Laser->bUseBeamTarget = 1;
+            Laser->BeamTarget     = EngineCore::Vector3(775.0, 260.0, -1000.0);
+        }
+        SpawnParticles(InWorld, "TrailDemo", EngineCore::Vector3(-300.0, 140.0, -600.0), "Content/Particles/Trail.nmparticle");
+    }
+
     /* The flying view, as LightLab.Player: above and behind the yard,
      * looking down into it along +Z. */
     static void SpawnPlayer(GameCore::World& InWorld)
@@ -823,6 +877,7 @@ private:
                    Placed(EngineCore::Vector3(150.0, 60.0, -600.0), EngineCore::Vector3(120.0, 120.0, 120.0)));
 
         SpawnFlare(InWorld);
+        SpawnParticleDemos(InWorld);
 
         /* A colonnade down the right of the yard: instances of a prefab file,
          * so a saved level keeps them as instances (.nmprefabinst) of it. */

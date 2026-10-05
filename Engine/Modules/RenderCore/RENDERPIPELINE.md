@@ -975,12 +975,16 @@ Particles are sorted within a system, and the systems with every other
 translucent draw by their emitters; two plumes that cross can blend out of
 order. Opaque particles write depth as any mesh does.
 
-LightLab's `Content/Particles/` has a sample of each: `Sparks` (Velocity
+LightLab's yard runs a sample of each (`SpawnParticleDemos`; entities
+`SparksDemo`, `DebrisDemo`, `LaserDemo`, `TrailDemo`), from its
+`Content/Particles/`: `Sparks` (Velocity
 Aligned sprites in repeating bursts, under gravity), `Debris` (Random Spin box
 meshes and a dust puff, bursting), `Trail` (a ribbon with a glowing head: turn
-on Move Emitter), `Laser` (two jittering beams, a wide glow and a thin core) --
-the strips and sparks with `ParticleStreak.material.nmgraph`, soft across U and
-three times as bright, so Bloom spreads them.
+on Move Emitter; in the yard, AnimateLights flies it round), `Laser` (two
+jittering beams, a wide glow and a thin core; in the yard, strung between two
+pillars by its Beam Target) -- the strips and sparks with
+`ParticleStreak.material.nmgraph`, soft across U and three times as bright, so
+Bloom spreads them.
 
 LightLab's yard has a flare (`SpawnFlare`): a red stick, a flame ball whose
 emissive (`FlareFlame`) flickers past 10 for Bloom, a red point light, and
