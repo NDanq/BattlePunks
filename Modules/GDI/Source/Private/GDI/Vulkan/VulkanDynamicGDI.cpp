@@ -805,6 +805,19 @@ GDIMesh* VulkanDynamicGDI::CreateMesh(const GDIMeshDesc& InDesc)
     return Mesh;
 }
 
+GDIMesh* VulkanDynamicGDI::CreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+{
+    if(!DeviceObj || !CurrentStateData) return nullptr;
+
+    auto* Mesh = new VKMesh(DeviceObj, CurrentStateData);
+    if(!Mesh->InitDynamic(InMaxVertices, InMaxIndices))
+    {
+        delete Mesh;
+        return nullptr;
+    }
+    return Mesh;
+}
+
 GDIMesh* VulkanDynamicGDI::CreateQuadMesh(const float& InWidth, const float& InHeight,
                                              bool bIsInstanced)
 {

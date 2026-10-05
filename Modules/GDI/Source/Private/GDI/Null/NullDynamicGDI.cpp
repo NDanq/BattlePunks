@@ -57,6 +57,21 @@ void NullDynamicGDI::SetViewport(uint InX, uint InY, uint InWidth, uint InHeight
     Stats.LastViewportY = InY;
     Stats.LastViewportWidth = InWidth;
     Stats.LastViewportHeight = InHeight;
+
+    /* As every backend: a viewport resets the scissor to itself. */
+    Stats.LastScissorX      = InX;
+    Stats.LastScissorY      = InY;
+    Stats.LastScissorWidth  = InWidth;
+    Stats.LastScissorHeight = InHeight;
+}
+
+void NullDynamicGDI::SetScissorRect(const uint InX, const uint InY, const uint InWidth, const uint InHeight)
+{
+    Stats.ScissorCalls++;
+    Stats.LastScissorX      = InX;
+    Stats.LastScissorY      = InY;
+    Stats.LastScissorWidth  = InWidth;
+    Stats.LastScissorHeight = InHeight;
 }
 
 void NullDynamicGDI::SetDepthState(IDepthStateDesc)
@@ -179,6 +194,13 @@ GDIMesh* NullDynamicGDI::CreateMesh(const GDIMeshDesc& InDesc)
     if(!GDIMakeIndexedRenderData(InDesc, Data)) return nullptr;
     Stats.MeshesCreated++;
     return new NullMesh(Data);
+}
+
+GDIMesh* NullDynamicGDI::CreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+{
+    Stats.MeshesCreated++;
+    Stats.DynamicMeshesCreated++;
+    return new NullMesh(InMaxVertices, InMaxIndices);
 }
 
 GDITextureResource* NullDynamicGDI::CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)

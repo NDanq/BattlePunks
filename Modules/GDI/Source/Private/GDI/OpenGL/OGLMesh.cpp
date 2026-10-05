@@ -62,6 +62,13 @@ GDIMesh* OpenGLDynamicGDI::CreateMesh(const GDIMeshDesc& InDesc)
     return Mesh;
 }
 
+GDIMesh* OpenGLDynamicGDI::CreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+{
+    auto* Mesh = new OpenGLMesh(InMaxVertices, InMaxIndices);
+    Mesh->InitResource();
+    return Mesh;
+}
+
 GDIMesh* OpenGLDynamicGDI::CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced)
 {
     const float HalfWidth = InWidth * 0.5f;
@@ -106,8 +113,93 @@ GDIMesh(InMeshType, InRenderData)
     initializeOpenGLFunctions();
 }
 
+OpenGLMesh::OpenGLMesh(const uint32_t InMaxVertices, const uint32_t InMaxIndices) :
+GDIMesh(MT_Stream, ORenderData())
+{
+    initializeOpenGLFunctions();
+    MakeDynamic(InMaxVertices, InMaxIndices);
+}
+
+void OpenGLMesh::InitDynamicResource()
+{
+    const GLsizeiptr NumVerts = GLsizeiptr(DynamicVertexCapacity);
+
+    glGenVertexArrays(1, &VAO);
+    glBindVertexArray(VAO);
+    glGenBuffers(2, VBO);
+    glGenBuffers(1, &NormalVBO);
+    glGenBuffers(1, &ColorVBO);
+    glGenBuffers(1, &UV1VBO);
+    glGenBuffers(1, &IndexEBO);
+
+    /* The streams of GDIMeshDesc's layout, at capacity. Normals and UV1 are
+     * zero once here: UpdateDynamic writes them only when given. */
+    const std::vector<float> Zero(size_t(NumVerts) * 3, 0.0f);
+    const struct { uint Buffer; GLuint Location; GLint Floats; const float* Initial; } Streams[] = {
+        { VBO[ORenderData::Buffers::VERTEX_BUFFER],   0,  3, nullptr     },
+        { VBO[ORenderData::Buffers::TEXCOORD_BUFFER], 1,  2, nullptr     },
+        { NormalVBO,                                  8,  3, Zero.data() },
+        { ColorVBO,                                   9,  4, nullptr     },
+        { UV1VBO,                                     10, 2, Zero.data() },
+    };
+    for(const auto& Each : Streams)
+    {
+        glBindBuffer(GL_ARRAY_BUFFER, Each.Buffer);
+        glBufferData(GL_ARRAY_BUFFER, NumVerts * Each.Floats * GLsizeiptr(sizeof(float)), Each.Initial, GL_STREAM_DRAW);
+        glEnableVertexAttribArray(Each.Location);
+        glVertexAttribPointer(Each.Location, Each.Floats, GL_FLOAT, GL_FALSE, 0, nullptr);
+    }
+
+    // Bound while the VAO is: the VAO records the element buffer.
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, IndexEBO);
+    glBufferData(GL_ELEMENT_ARRAY_BUFFER, GLsizeiptr(DynamicIndexCapacity) * GLsizeiptr(sizeof(uint32_t)), nullptr, GL_STREAM_DRAW);
+
+    glBindVertexArray(0);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+}
+
+bool OpenGLMesh::WriteDynamic(const GDIMeshDesc& InDesc, const uint32_t InBaseVertex, const uint32_t InBaseIndex)
+{
+    if(!VAO) return false;
+
+    const auto Write = [this](const uint InBuffer, const GLenum InTarget, const size_t InElementBytes,
+                              const uint32_t InBase, const uint32_t InCount, const void* InData)
+    {
+        glBindBuffer(InTarget, InBuffer);
+        glBufferSubData(InTarget, GLintptr(InBase * InElementBytes), GLsizeiptr(InCount * InElementBytes), InData);
+    };
+
+    const uint32_t N = InDesc.NumVertices;
+    Write(VBO[ORenderData::Buffers::VERTEX_BUFFER],   GL_ARRAY_BUFFER, sizeof(float) * 3, InBaseVertex, N, InDesc.Positions);
+    Write(VBO[ORenderData::Buffers::TEXCOORD_BUFFER], GL_ARRAY_BUFFER, sizeof(float) * 2, InBaseVertex, N, InDesc.UV0);
+    if(InDesc.Normals) Write(NormalVBO, GL_ARRAY_BUFFER, sizeof(float) * 3, InBaseVertex, N, InDesc.Normals);
+    if(InDesc.UV1)     Write(UV1VBO,    GL_ARRAY_BUFFER, sizeof(float) * 2, InBaseVertex, N, InDesc.UV1);
+    if(InDesc.Colors)
+    {
+        Write(ColorVBO, GL_ARRAY_BUFFER, sizeof(float) * 4, InBaseVertex, N, InDesc.Colors);
+    }
+    else
+    {
+        const std::vector<float> White(size_t(N) * 4, 1.0f);
+        Write(ColorVBO, GL_ARRAY_BUFFER, sizeof(float) * 4, InBaseVertex, N, White.data());
+    }
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    /* The element buffer belongs to the VAO, so bind it there to write it. */
+    glBindVertexArray(VAO);
+    Write(IndexEBO, GL_ELEMENT_ARRAY_BUFFER, sizeof(uint32_t), InBaseIndex, InDesc.NumIndices, InDesc.Indices);
+    glBindVertexArray(0);
+    return true;
+}
+
 void OpenGLMesh::InitResource()
 {
+    if(bDynamic)
+    {
+        InitDynamicResource();
+        return;
+    }
+
     const int NumVertices = RenderData.NumVertices;
 
     glGenVertexArrays(1, &VAO);
@@ -213,12 +305,16 @@ void OpenGLMesh::Release()
 {
     const int NumBuffersToDelete = bSupportsInstanced ? (int)ORenderData::Buffers::NUM_BUFFERS
                                                        : (int)ORenderData::Buffers::INSTANCED_TRANSFORM_BUFFER;
-    glDeleteBuffers(NumBuffersToDelete, VBO);
-    if(NormalVBO) { glDeleteBuffers(1, &NormalVBO); NormalVBO = 0; }
-    if(ColorVBO)  { glDeleteBuffers(1, &ColorVBO);  ColorVBO  = 0; }
-    if(UV1VBO)    { glDeleteBuffers(1, &UV1VBO);    UV1VBO    = 0; }
-    if(IndexEBO)  { glDeleteBuffers(1, &IndexEBO);  IndexEBO  = 0; }
-    glDeleteVertexArrays(1, &VAO);
+    if(VAO)
+    {
+        glDeleteBuffers(NumBuffersToDelete, VBO);
+        if(NormalVBO) { glDeleteBuffers(1, &NormalVBO); NormalVBO = 0; }
+        if(ColorVBO)  { glDeleteBuffers(1, &ColorVBO);  ColorVBO  = 0; }
+        if(UV1VBO)    { glDeleteBuffers(1, &UV1VBO);    UV1VBO    = 0; }
+        if(IndexEBO)  { glDeleteBuffers(1, &IndexEBO);  IndexEBO  = 0; }
+        glDeleteVertexArrays(1, &VAO);
+        VAO = 0;
+    }
     FreeRenderData();
 }
 
@@ -233,7 +329,14 @@ void OpenGLMesh::Draw()
     {
         uint32_t First = 0, Count = 0;
         GetClampedDrawRange(First, Count);
-        if( Count > 0 )
+        if( Count > 0 && bDynamic )
+        {
+            /* The last update's range of the stream buffers. */
+            glDrawElementsBaseVertex(GL_TRIANGLES, GLsizei(Count), GL_UNSIGNED_INT,
+                                     reinterpret_cast<const void*>(uintptr_t(GetDynamicBaseIndex() + First) * sizeof(uint32_t)),
+                                     GLint(GetDynamicBaseVertex()));
+        }
+        else if( Count > 0 )
         {
             glDrawElements(GL_TRIANGLES, GLsizei(Count), GL_UNSIGNED_INT,
                            reinterpret_cast<const void*>(uintptr_t(First) * sizeof(uint32_t)));

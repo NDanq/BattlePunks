@@ -162,6 +162,7 @@ typedef struct __GLsync* GLsync;
     X(void,   glDeleteVertexArrays,      (GLsizei n, const GLuint* arrays), (n, arrays)) \
     X(void,   glDrawBuffers,             (GLsizei n, const GLenum* bufs), (n, bufs)) \
     X(void,   glDrawArraysInstanced,     (GLenum mode, GLint first, GLsizei count, GLsizei instancecount), (mode, first, count, instancecount)) \
+    X(void,   glDrawElementsBaseVertex,  (GLenum mode, GLsizei count, GLenum type, const void* indices, GLint basevertex), (mode, count, type, indices, basevertex)) \
     X(void,   glEnableVertexAttribArray, (GLuint index), (index)) \
     X(GLsync, glFenceSync,               (GLenum condition, GLbitfield flags), (condition, flags)) \
     X(void,   glFramebufferRenderbuffer, (GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer), (target, attachment, renderbuffertarget, renderbuffer)) \

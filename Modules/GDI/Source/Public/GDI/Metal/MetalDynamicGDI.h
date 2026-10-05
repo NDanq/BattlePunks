@@ -119,6 +119,10 @@ public:
 
     void Clear(uint InClearMode, EngineCore::Color InClearColor, float InDepth = 1.0f, uint InStencilMask = 0x00) override;
     void SetViewport(uint InX, uint InY, uint InWidth, uint InHeight) override;
+
+    /* The scissor; dynamic meshes stay unsupported (CreateDynamicMesh's null),
+     * as indexed meshes are on this backend. */
+    void SetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight) override;
     void SetDepthState(IDepthStateDesc) override;
     void SetBlendState(IBlendStateDesc) override;
     void SetStencilState(IStencilStateDesc) override;

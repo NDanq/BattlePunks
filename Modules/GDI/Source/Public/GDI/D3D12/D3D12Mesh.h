@@ -24,7 +24,17 @@ public:
     void Release() override;
     void Draw() override;
 
+    /**
+     * Make this a dynamic mesh (GDICreateDynamicMesh) instead: the indexed
+     * layout's buffers in the upload heap, persistently mapped and written in
+     * place by UpdateDynamic. False (nothing kept) on failure.
+     */
+    bool InitDynamic(uint32_t InMaxVertices, uint32_t InMaxIndices);
+
 protected:
+    /** memcpy into the mapped buffers; nothing is in flight there (GDIMesh::UpdateDynamic). */
+    bool WriteDynamic(const GDIMeshDesc& InDesc, uint32_t InBaseVertex, uint32_t InBaseIndex) override;
+
     /**
      * The rings are frame-scoped: draws recorded earlier in the frame read their
      * slots at execution time, so each batch appends behind the last and Draw()
@@ -59,6 +69,9 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Resource>  UV1Buffer;       // float2 per vertex, slot 4
     Microsoft::WRL::ComPtr<ID3D12Resource>  IndexBuffer;
     UINT                                    IndexBytes    = 0;
+
+    // A dynamic mesh's mappings: position, texcoord, normal, colour, UV1, index.
+    void*                                   DynamicMapped[6] = {};
 
     RingBuffer                              TransformRing;
     RingBuffer                              OpacityRing;
