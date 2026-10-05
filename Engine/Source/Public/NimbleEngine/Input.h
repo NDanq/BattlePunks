@@ -47,6 +47,7 @@ namespace NimbleEngine
         INPUT_ACTIONS_MAX  = 32,   // per map; one bit each on an InputComponent
         INPUT_AXES_MAX     = 16,   // per map
         INPUT_BINDINGS_MAX = 8,    // keys per action or axis
+        INPUT_TEXT_MAX     = 64,   // bytes of typed text a frame keeps, including the NUL
     };
 
     /* "Space" -> its key; INPUT_KEY_INVALID if no key has that name. Case-insensitive. */
@@ -71,6 +72,10 @@ namespace NimbleEngine
         bool  WasPressed (InputKey InKey, uint8_t InPlayer = 0) const;   // this frame
         bool  WasReleased(InputKey InKey, uint8_t InPlayer = 0) const;
 
+        /* Presses plus the OS's repeats while held, this frame: how many times
+         * a text field's Backspace or arrow acts. Gameplay wants WasPressed. */
+        int   GetPressesAndRepeats(InputKey InKey, uint8_t InPlayer = 0) const;
+
         /* 0 or 1 for a button; the position for an analog key (-1..1 for a
          * stick, pixels for Mouse.DeltaX, notches for Mouse.WheelY). */
         float GetValue(InputKey InKey, uint8_t InPlayer = 0) const;
@@ -87,6 +92,11 @@ namespace NimbleEngine
         EngineCore::Point GetMouseDelta() const    { return { MouseDeltaX, MouseDeltaY }; }
         float             GetWheelDelta() const    { return WheelY; }
 
+        /* This frame's typed text, UTF-8 after the keyboard layout and IME
+         * (GameWindow's OnText). Only while the host's text input is on
+         * (IGameHost::SetTextInputActive); "" otherwise. */
+        const char* GetText() const      { return Text; }
+
         bool     HasFocus() const        { return bFocus != 0; }
         bool     IsPadConnected(uint8_t InPlayer) const;
         uint64_t GetFrameNumber() const  { return FrameNumber; }
@@ -96,6 +106,8 @@ namespace NimbleEngine
 
         void Press  (InputKey InKey, uint8_t InPlayer = 0);
         void Release(InputKey InKey, uint8_t InPlayer = 0);
+        void Repeat (InputKey InKey, uint8_t InPlayer = 0);   // an OS auto-repeat of a held key
+        void AppendText(const char* InUtf8);                  // dropped past INPUT_TEXT_MAX
         void SetAnalog(InputKey InKey, float InValue, uint8_t InPlayer = 0);
         void MoveMouse(int InX, int InY, int InDeltaX, int InDeltaY);
         void AddWheel(float InDeltaX, float InDeltaY);
@@ -104,6 +116,20 @@ namespace NimbleEngine
 
         /* Everything up, without losing the edges: focus loss, so nothing sticks. */
         void ReleaseAll();
+
+        /*
+         * Taken by something in front of the game -- the UI over a button, a
+         * menu -- so the game does not see it this frame: up, no edges, no
+         * value. Unlike ReleaseAll there is no release edge: a key consumed
+         * while held looks to the game as if it went up without one, and an
+         * InputComponent reports that as released. GameSession consumes what
+         * its UISystem took (INPUT.md, "The UI").
+         */
+        void Consume(InputKey InKey, uint8_t InPlayer = 0);
+        void ConsumeKeyboard();       // and the typed text
+        void ConsumeMouseButtons();   // and the wheel
+        void ConsumeGamepad();        // every player's buttons and sticks
+        void ConsumeAll();
 
         /* Starts the next frame: edges and per-frame motion back to zero, held
          * state kept. */
@@ -123,12 +149,14 @@ namespace NimbleEngine
             uint8_t bDown    = 0;
             uint8_t Presses  = 0;
             uint8_t Releases = 0;
+            uint8_t Repeats  = 0;
         };
 
         Button   Buttons[BUTTON_SLOTS];
         float    Analog[ANALOG_SLOTS] = {};
         int32_t  MouseX = 0, MouseY = 0, MouseDeltaX = 0, MouseDeltaY = 0;
         float    WheelX = 0.0f, WheelY = 0.0f;
+        char     Text[INPUT_TEXT_MAX] = {};
         uint8_t  bFocus = 1;
         uint8_t  PadConnected[INPUT_PLAYERS_MAX] = {};
         uint64_t FrameNumber = 0;
@@ -225,6 +253,12 @@ namespace NimbleEngine
     /* Every InputComponent in InWorld from InState: the TP_PrePhysics
      * SO_BeforeScripts system a session registers. */
     NE_API void ResolveInputComponents(GameCore::World& InWorld, const InputState& InState);
+
+    /* Whether InMap's action InAction went down this frame in InState (any of
+     * its bindings), for a reader without an InputComponent -- the UI's
+     * navigation. bOutFromGamepad, if given, says a gamepad binding did it. */
+    NE_API bool WasInputActionPressed(const char* InMap, const char* InAction, const InputState& InState,
+                                      uint8_t InPlayer = 0, bool* bOutFromGamepad = nullptr);
 
     /* What the "Input" script library reads; null reads nothing pressed. */
     NE_API void SetScriptInputState(const InputState* InState);

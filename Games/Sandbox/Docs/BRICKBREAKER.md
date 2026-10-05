@@ -24,8 +24,11 @@ described in `GAMEFRAMEWORK.md`; this covers only what the game does with it.
    timer, so a smoke run checks the whole loop without anyone at the keyboard.
 
 Not goals: rendering polish (the pieces are quads; see **Limitations**), physics (collision only reports overlaps; the ball's
-script does its own bouncing), and an on-screen display (score, lives and
-phases go to the log).
+script does its own bouncing). The on-screen display is the UI module's
+(Engine/Modules/UI/README.md): `Content/UI/HUD.nmui` binds `Player0.Score`,
+`Player0.Lives` and `Game.Phase`, which the session publishes, and
+`Content/UI/MainMenu.nmui` holds the game paused until Play
+(`Content/UI/MainMenu.lua`) -- unless it plays itself (AutoPlay or RunSeconds).
 
 ---
 
@@ -461,8 +464,8 @@ from spawning its demo entities here.
   override; RenderCore's MATERIALS.md), for example by `Hits`. The game does
   not do this yet. The paddle and ball have no material and draw as white
   quads.
-- **There is no on-screen display.** Score, lives and phase changes go to the
-  log (`[BrickBreaker] ...`, `[Game] phase ...`).
+- **The HUD shows the phase by its name** ("Serving"). Score, lives and phase
+  changes also go to the log (`[BrickBreaker] ...`, `[Game] phase ...`).
 - **Client and Server targets need cooked content.** `Brick` and `Ball` are
   text `.nmprefab` files and the level is a text world, and only Editor
   targets read text. Run `cook prefabs` in the editor to write

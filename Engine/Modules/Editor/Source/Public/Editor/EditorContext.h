@@ -88,6 +88,8 @@ public:
      * the "screenshot" command. 0 when the Renderer is not running; poll
      * TakeMaterialPreview. */
     uint64_t RequestSceneCapture();
+    /* The same, of another viewport's scene (its GetOverlayScene during PrepareFrame). */
+    uint64_t RequestSceneCapture(RenderCore::RenderSceneID InScene);
 
     /* See Renderer::RequestMeshPreview: InMesh (a runtime path) framed by an
      * orbiting camera, with InMaterial on every section, else InSections.
@@ -130,6 +132,13 @@ public:
      * PrepareFrame is running; nothing outside one. See Renderer::DrawDebugLine. */
     void DrawDebugLine(const RenderCore::DebugLine& InLine);
     void DrawDebugBox(const GameCore::AABB& InBox, EngineCore::Color InColor, float InThicknessPixels);
+
+    /* The scene of the viewport whose PrepareFrame is running (INVALID
+     * outside one), and the Renderer while it runs (null otherwise): for a
+     * viewport that draws its own UI list into its scene (Renderer::
+     * SubmitUIDrawList) -- the UI Designer's. */
+    RenderCore::RenderSceneID GetOverlayScene() const { return OverlayScene; }
+    RenderCore::Renderer*     GetRenderer() const     { return bRendererReady ? Renderer : nullptr; }
 
     // === Play-in-Editor =====================================================
 

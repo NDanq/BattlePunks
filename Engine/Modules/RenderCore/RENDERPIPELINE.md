@@ -702,6 +702,37 @@ Verified: the GPU smoke check draws a lit, shadowed scene static and dynamic
 pixel for pixel alike, and a static box moved by a tool lands exactly where a
 dynamic one does.
 
+### UI
+
+A scene's UI -- HUDs and menus, Engine/Modules/UI/README.md -- is drawn over
+its final colour after the post process stack, and after the Render Target
+view mode's picture, before the editor's readback (so a capture shows it) and
+under "stat unit".
+
+- **What it draws.** `Renderer::SubmitUIDrawList(Scene, List)` gives a scene a
+  `UIDrawList` (`UIDrawList.h`, GDI-free): textured, coloured triangles in
+  pixels from the top-left, in commands of one texture and one scissor each.
+  The scene **keeps** it and draws it every frame until the next submit; an
+  empty list clears it. A host submits only when its UI changed.
+- **Textures.** A command names one by key: `""` white, an asset path
+  (`TextureAssetCache`, as materials sample), or `ui:...`, an image given with
+  `Renderer::SetUIImage` (font atlases). Resolved once per list.
+- **The pass.** `RenderContext::DrawUI` (`UIRenderer.h`): `UI.vsh` / `UI.fsh`,
+  alpha blended, no depth; texture times vertex colour. Positions go through
+  `ViewParameters.Projection` -- an orthographic one -- so each backend's own
+  flip applies exactly as to the scene. One draw per command, a scissor change
+  only between commands that clip differently (`GDISetScissorRect`).
+- **Its mesh.** One dynamic mesh per scene (`GDICreateDynamicMesh`), rewritten
+  only when the list changes: a static HUD uploads nothing per frame. It grows
+  by half when a list outgrows it.
+- **Cost.** A document is typically 1-3 commands: batches merge on matching
+  texture and scissor, and a font atlas keeps a white texel so flat fills join
+  its text's draw.
+
+Verified on a GPU (RenderCore's smoke test with `NIMBLE_SMOKE_GPU=Vulkan`):
+orientation (the list's top-left is the image's), each scissor edge, alpha
+blending, a kept list drawn again without a resubmit, and an empty list clearing.
+
 ### Stat unit
 
 **Stats.Unit** (config var, off by default) draws frame, game thread,
@@ -873,6 +904,35 @@ The G-buffer template needed `MATERIAL_SHADING_LIT && (MATERIAL_DOMAIN_OPAQUE ||
 MATERIAL_DOMAIN_MASKED)`, which `cook_shaders.py`'s own preprocessor read as
 false -- it had no parentheses, and put `!` above `&&` -- so every permutation
 compiled, as the forward variant. It now has both.
+
+UI drawing (### UI) needed two more:
+
+- **Scissor rectangles.** `GDISetScissorRect(X, Y, W, H)`, in pixels of the
+  viewport from its top-left, clipped to it; `GDIClearScissorRect()` goes back
+  to the whole viewport, as `GDISetViewport` does. The front end flips the
+  rectangle to the target's rows once (every backend keeps row 0 at the
+  image's bottom), so a backend's `SetScissorRect` takes rows as they are.
+  `Clear` ignores it.
+- **Dynamic meshes.** `GDICreateDynamicMesh(MaxVertices, MaxIndices)`: the
+  `GDIMeshDesc` layout (normals and UV1 optional), written in place by
+  `GDIUpdateDynamicMesh(Mesh, Desc)`. Within one BeginRendering block each
+  update appends behind the last -- draws recorded earlier still read their
+  own data at submit -- and the next block starts again at 0 (every backend
+  waits for the previous submission first; `GDIGetRenderingSerial` counts
+  blocks). False if it no longer fits: the caller makes a bigger one.
+
+| Backend | Scissor | Dynamic mesh |
+|---|---|---|
+| Vulkan | `vkCmdSetScissor`, kept in the state and set on each new command buffer | host-visible, coherent, persistently mapped buffers; `vkCmdDrawIndexed` at the update's base vertex and index |
+| D3D12 | `RSSetScissorRects`, as Vulkan | upload-heap buffers, persistently mapped; `DrawIndexedInstanced` at the base |
+| OpenGL | `glScissor`, the test on only while it is not the whole viewport, off around `glClear` | stream buffers written with `glBufferSubData`; `glDrawElementsBaseVertex` |
+| Metal | the encoder's scissor, clamped as the viewport's | none (null): Metal has no indexed meshes yet, so no UI |
+| Null | recorded (`NullGDIStats`) | counted, nothing stored |
+
+Verification: Vulkan draws the UI GPU checks; D3D12 and Metal are written
+against their backends' existing patterns but were not compiled here (Linux);
+OpenGL compiles (the host still cannot create a GL context); the Null backend's
+are covered by GDI's smoke test.
 
 ## Tests
 

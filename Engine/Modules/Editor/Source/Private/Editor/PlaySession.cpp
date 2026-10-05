@@ -2,6 +2,9 @@
 
 #include "Private/Editor/PlaySession.h"
 
+#include <QClipboard>
+#include <QGuiApplication>
+
 #include "Public/NimbleEngine/SaveGame.h"
 
 #include "Public/Core/CoreConfig.h"
@@ -130,6 +133,7 @@ void PlaySession::Stop()
     /* The viewport's window outlives the run; it must not call into this one. */
     bHostMouseCaptured = false;
     Input.Detach();
+    Input.SetTextInputActive(false);   // the next run's console starts closed
     Input.GetPending() = NimbleEngine::InputState();
     Input.Latch(0);
 
@@ -209,6 +213,17 @@ std::string PlaySession::Describe() const
         return "(nothing)";
     }
     return Game->GetModuleName() + " / " + Session->GetLevel()->GetName();
+}
+
+std::string PlaySession::GetClipboardText() const
+{
+    /* Qt's: the editor's own copy and paste share it. */
+    return QGuiApplication::clipboard()->text().toUtf8().toStdString();
+}
+
+void PlaySession::SetClipboardText(const std::string& InUtf8)
+{
+    QGuiApplication::clipboard()->setText(QString::fromUtf8(InUtf8.c_str()));
 }
 
 #endif // WITH_EDITOR

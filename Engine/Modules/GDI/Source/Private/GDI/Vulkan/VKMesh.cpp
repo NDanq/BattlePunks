@@ -3,6 +3,7 @@
 #include "Public/GDI/Vulkan/VulkanDynamicGDI.h"   // VKCurrentStateData, BindDrawState
 
 #include <cstring>
+#include <utility>
 #include "Public/GDI/GDILog.h"
 
 // Global GDI driver (declared in GDI.cpp) — used to bind the pipeline/descriptors
@@ -295,9 +296,82 @@ void VKMesh::InitResource()
     bResourcesValid = true;
 }
 
+bool VKMesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+{
+    if(!Device || !Device->IsValid() || bResourcesValid) return false;
+    MakeDynamic(InMaxVertices, InMaxIndices);
+
+    struct Stream { VkBuffer& Buffer; VkDeviceMemory& Memory; void*& Mapped; VkDeviceSize Bytes; VkBufferUsageFlags Usage; };
+    const VkDeviceSize V = InMaxVertices;
+    Stream Streams[] = {
+        { PositionBuffer,    PositionMemory,    PositionMapped,    V * 3 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
+        { TexCoordBuffer,    TexCoordMemory,    TexCoordMapped,    V * 2 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
+        { NormalBuffer,      NormalMemory,      NormalMapped,      V * 3 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
+        { VertexColorBuffer, VertexColorMemory, VertexColorMapped, V * 4 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
+        { UV1Buffer,         UV1Memory,         UV1Mapped,         V * 2 * sizeof(float), VK_BUFFER_USAGE_VERTEX_BUFFER_BIT },
+        { IndexBuffer,       IndexMemory,       IndexMapped,       VkDeviceSize(InMaxIndices) * sizeof(uint32_t), VK_BUFFER_USAGE_INDEX_BUFFER_BIT },
+    };
+    for(Stream& Each : Streams)
+    {
+        if(!CreateBuffer(Each.Bytes, Each.Usage,
+                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                         Each.Buffer, Each.Memory)
+           || vkMapMemory(Device->GetDevice(), Each.Memory, 0, Each.Bytes, 0, &Each.Mapped) != VK_SUCCESS)
+        {
+            Release();
+            return false;
+        }
+    }
+
+    /* Normals and UV1 are written only when an update has them: zero until then. */
+    std::memset(NormalMapped, 0, size_t(V * 3 * sizeof(float)));
+    std::memset(UV1Mapped,    0, size_t(V * 2 * sizeof(float)));
+
+    bResourcesValid = true;
+    return true;
+}
+
+bool VKMesh::WriteDynamic(const GDIMeshDesc& InDesc, const uint32_t InBaseVertex, const uint32_t InBaseIndex)
+{
+    if(!bResourcesValid || !PositionMapped) return false;
+
+    const size_t   Base = InBaseVertex;
+    const size_t   N    = InDesc.NumVertices;
+    std::memcpy(static_cast<float*>(PositionMapped) + Base * 3, InDesc.Positions, N * 3 * sizeof(float));
+    std::memcpy(static_cast<float*>(TexCoordMapped) + Base * 2, InDesc.UV0,       N * 2 * sizeof(float));
+    if(InDesc.Normals) std::memcpy(static_cast<float*>(NormalMapped) + Base * 3, InDesc.Normals, N * 3 * sizeof(float));
+    if(InDesc.UV1)     std::memcpy(static_cast<float*>(UV1Mapped)    + Base * 2, InDesc.UV1,     N * 2 * sizeof(float));
+
+    float* Colors = static_cast<float*>(VertexColorMapped) + Base * 4;
+    if(InDesc.Colors)
+    {
+        std::memcpy(Colors, InDesc.Colors, N * 4 * sizeof(float));
+    }
+    else
+    {
+        for(size_t At = 0; At < N * 4; ++At) { Colors[At] = 1.0f; }
+    }
+    std::memcpy(static_cast<uint32_t*>(IndexMapped) + InBaseIndex, InDesc.Indices, size_t(InDesc.NumIndices) * sizeof(uint32_t));
+    return true;
+}
+
 void VKMesh::Release()
 {
     if(!Device || !Device->IsValid()) return;
+
+    for(auto [Mapped, Memory] : { std::pair<void**, VkDeviceMemory>{ &PositionMapped,    PositionMemory },
+                                  std::pair<void**, VkDeviceMemory>{ &TexCoordMapped,    TexCoordMemory },
+                                  std::pair<void**, VkDeviceMemory>{ &NormalMapped,      NormalMemory },
+                                  std::pair<void**, VkDeviceMemory>{ &VertexColorMapped, VertexColorMemory },
+                                  std::pair<void**, VkDeviceMemory>{ &UV1Mapped,         UV1Memory },
+                                  std::pair<void**, VkDeviceMemory>{ &IndexMapped,       IndexMemory } })
+    {
+        if(*Mapped)
+        {
+            vkUnmapMemory(Device->GetDevice(), Memory);
+            *Mapped = nullptr;
+        }
+    }
 
     // Unmap first (CPU-side, always safe); the buffer destruction itself must be
     // deferred — meshes are deleted mid-frame (e.g. GDICursorObject::Resize when
@@ -389,7 +463,8 @@ void VKMesh::Draw()
         const VkDeviceSize MeshOffsets[3] = { 0, 0, 0 };
         vkCmdBindVertexBuffers(Cmd, 2, 3, MeshBuffers, MeshOffsets);
         vkCmdBindIndexBuffer(Cmd, IndexBuffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(Cmd, Count, 1, First, 0, 0);
+        // A dynamic mesh's last update sits at its base vertex and index; 0 otherwise.
+        vkCmdDrawIndexed(Cmd, Count, 1, GetDynamicBaseIndex() + First, int32_t(GetDynamicBaseVertex()), 0);
     }
     else if(bSupportsInstanced)
     {

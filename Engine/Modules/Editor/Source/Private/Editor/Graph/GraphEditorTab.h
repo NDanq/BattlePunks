@@ -48,6 +48,10 @@ public:
     /* "Glow.material.nmgraph*": the tab's text. */
     QString GetTabTitle() const;
 
+    /* Selects InNode and centres the view on it -- after the scene's queued
+     * rebuild, so a node just added is there. */
+    void RevealNode(const NodeGraph::NodeGuid& InNode);
+
 signals:
     /* Saved, or edited since: the tab's title changed. */
     void TitleChanged();

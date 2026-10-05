@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="GameAndUI">
+  <Styles>
+    <Style Name="HudLabel" Type="Text" FontSize="22" Color="#9FB3C8FF" ShadowOffset="0,2" ShadowColor="#000000A0"/>
+    <Style Name="HudValue" Type="Text" FontSize="40" Color="#FFFFFFFF" ShadowOffset="0,2" ShadowColor="#000000A0"/>
+  </Styles>
+  <Canvas Name="Root">
+    <Border Name="Stats" Position="32,32" AutoSize="true" Padding="24,12" Visibility="HitTestInvisible" Background.Tint="#0B1018B3" Background.OutlineColor="#FFFFFF1F" Background.OutlineThickness="1">
+      <HorizontalBox Spacing="40">
+        <VerticalBox>
+          <Text Class="HudLabel" Text="SCORE"/>
+          <Text Name="Score" Class="HudValue" Text="{Bind:Player0.Score}"/>
+        </VerticalBox>
+        <VerticalBox>
+          <Text Class="HudLabel" Text="LIVES"/>
+          <Text Name="Lives" Class="HudValue" Text="{Bind:Player0.Lives}"/>
+        </VerticalBox>
+      </HorizontalBox>
+    </Border>
+    <Text Name="Phase" Class="HudLabel" Anchors="0.5,0,0.5,0" Pivot="0.5,0" Position="0,40" AutoSize="true" Visibility="HitTestInvisible" Text="{Bind:Game.Phase}" FontSize="28"/>
+  </Canvas>
+</UI>

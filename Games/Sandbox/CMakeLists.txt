@@ -377,6 +377,62 @@ elseif(SANDBOX_PREFAB_COPIES)
     set_target_properties(SandboxStagePrefabs PROPERTIES FOLDER "Games")
 endif()
 
+# === Content/UI/ ===========================================================
+# UI documents (Engine/Modules/UI/README.md) and the Lua beside them, staged at
+# the same relative path ("Content/UI/HUD.nmui", as GameSession::GetUI().Open
+# names one). As prefabs: an Editor target stages the XML it edits; a Client
+# or Server target cannot read XML, so it stages the cooked ones from
+# Cooked/Content/UI/ -- made in the editor with the console command `cook ui`.
+if(NIMBLE_TARGET STREQUAL "Editor")
+    set(SANDBOX_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+else()
+    set(SANDBOX_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
+endif()
+file(GLOB_RECURSE SANDBOX_UI_SCRIPTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.ui.nmgraph")
+file(GLOB_RECURSE SANDBOX_UI_DOCUMENTS CONFIGURE_DEPENDS "${SANDBOX_UI_ROOT}/Content/UI/*.nmui")
+file(GLOB_RECURSE SANDBOX_UI_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.nmui")
+if(NOT NIMBLE_TARGET STREQUAL "Editor" AND SANDBOX_UI_SOURCES AND NOT SANDBOX_UI_DOCUMENTS)
+    message(WARNING "Sandbox: Content/UI/ has documents but Cooked/Content/UI/ has none; a ${NIMBLE_TARGET} build cannot read "
+                    "XML. Cook them in the editor (console: cook ui).")
+endif()
+
+set(SANDBOX_UI_OUTPUTS "")
+set(SANDBOX_UI_COPIES "")
+foreach(SANDBOX_UI_SRC ${SANDBOX_UI_SCRIPTS} ${SANDBOX_UI_DOCUMENTS})
+    if(SANDBOX_UI_SRC IN_LIST SANDBOX_UI_SCRIPTS)
+        file(RELATIVE_PATH SANDBOX_UI_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${SANDBOX_UI_SRC}")
+    else()
+        file(RELATIVE_PATH SANDBOX_UI_REL "${SANDBOX_UI_ROOT}" "${SANDBOX_UI_SRC}")
+    endif()
+    get_filename_component(SANDBOX_UI_REL_DIR "${SANDBOX_UI_REL}" DIRECTORY)
+    if(SANDBOX_RT_DIR AND NOT SANDBOX_MULTI_CONFIG)
+        add_custom_command(
+                OUTPUT  "${SANDBOX_RT_DIR}/${SANDBOX_UI_REL}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${SANDBOX_RT_DIR}/${SANDBOX_UI_REL_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_UI_SRC}" "${SANDBOX_RT_DIR}/${SANDBOX_UI_REL}"
+                DEPENDS "${SANDBOX_UI_SRC}"
+                COMMENT "Sandbox: staging ${SANDBOX_UI_REL} beside the executable"
+                VERBATIM)
+        list(APPEND SANDBOX_UI_OUTPUTS "${SANDBOX_RT_DIR}/${SANDBOX_UI_REL}")
+    else()
+        list(APPEND SANDBOX_UI_COPIES
+                COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_UI_REL_DIR}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SANDBOX_UI_SRC}" "$<TARGET_FILE_DIR:Sandbox>/${SANDBOX_UI_REL}")
+    endif()
+endforeach()
+
+if(SANDBOX_UI_OUTPUTS)
+    add_custom_target(SandboxStageUI DEPENDS ${SANDBOX_UI_OUTPUTS})
+    add_dependencies(Sandbox SandboxStageUI)
+    set_target_properties(SandboxStageUI PROPERTIES FOLDER "Games")
+elseif(SANDBOX_UI_COPIES)
+    # Multi-config fallback, as SandboxStagePrefabs': every file, every build.
+    add_custom_target(SandboxStageUI ALL ${SANDBOX_UI_COPIES} COMMENT "Sandbox: staging Content/UI/ beside the executable" VERBATIM)
+    add_dependencies(SandboxStageUI Sandbox)
+    set_target_properties(SandboxStageUI PROPERTIES FOLDER "Games")
+endif()
+
 # === Content/Levels/ =======================================================
 # Level files, staged at the same relative path beside the executable
 # ("Content/Levels/BrickBreaker.nmworld", as a level loads it). An Editor target

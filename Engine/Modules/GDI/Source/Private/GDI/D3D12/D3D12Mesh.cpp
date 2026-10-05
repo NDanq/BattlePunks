@@ -90,8 +90,73 @@ void D3D12Mesh::InitResource()
     bResourcesValid = true;
 }
 
+bool D3D12Mesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+{
+    if(!Device || !Device->IsValid() || bResourcesValid) return false;
+    MakeDynamic(InMaxVertices, InMaxIndices);
+
+    PositionBytes = InMaxVertices * 3 * sizeof(float);
+    TexCoordBytes = InMaxVertices * 2 * sizeof(float);
+    IndexBytes    = InMaxIndices * sizeof(uint32_t);
+
+    Microsoft::WRL::ComPtr<ID3D12Resource>* Buffers[6] = { &PositionBuffer, &TexCoordBuffer, &NormalBuffer,
+                                                           &ColorBuffer, &UV1Buffer, &IndexBuffer };
+    const UINT Bytes[6] = { PositionBytes, TexCoordBytes, PositionBytes, InMaxVertices * 4 * UINT(sizeof(float)),
+                            TexCoordBytes, IndexBytes };
+    const D3D12_RANGE NoRead{ 0, 0 };
+    for(int At = 0; At < 6; ++At)
+    {
+        *Buffers[At] = D3D12Ops::CreateBuffer(Device, Bytes[At], D3D12_HEAP_TYPE_UPLOAD, D3D12_RESOURCE_STATE_GENERIC_READ);
+        if(!*Buffers[At] || FAILED((*Buffers[At])->Map(0, &NoRead, &DynamicMapped[At])))
+        {
+            DynamicMapped[At] = nullptr;
+            Release();
+            return false;
+        }
+    }
+
+    // Normals and UV1 are written only when an update has them: zero until then.
+    std::memset(DynamicMapped[2], 0, Bytes[2]);
+    std::memset(DynamicMapped[4], 0, Bytes[4]);
+
+    bResourcesValid = true;
+    return true;
+}
+
+bool D3D12Mesh::WriteDynamic(const GDIMeshDesc& InDesc, const uint32_t InBaseVertex, const uint32_t InBaseIndex)
+{
+    if(!bResourcesValid || !DynamicMapped[0]) return false;
+
+    const size_t Base = InBaseVertex;
+    const size_t N    = InDesc.NumVertices;
+    std::memcpy(static_cast<float*>(DynamicMapped[0]) + Base * 3, InDesc.Positions, N * 3 * sizeof(float));
+    std::memcpy(static_cast<float*>(DynamicMapped[1]) + Base * 2, InDesc.UV0,       N * 2 * sizeof(float));
+    if(InDesc.Normals) std::memcpy(static_cast<float*>(DynamicMapped[2]) + Base * 3, InDesc.Normals, N * 3 * sizeof(float));
+    if(InDesc.UV1)     std::memcpy(static_cast<float*>(DynamicMapped[4]) + Base * 2, InDesc.UV1,     N * 2 * sizeof(float));
+
+    float* Colors = static_cast<float*>(DynamicMapped[3]) + Base * 4;
+    if(InDesc.Colors)
+    {
+        std::memcpy(Colors, InDesc.Colors, N * 4 * sizeof(float));
+    }
+    else
+    {
+        for(size_t At = 0; At < N * 4; ++At) { Colors[At] = 1.0f; }
+    }
+    std::memcpy(static_cast<uint32_t*>(DynamicMapped[5]) + InBaseIndex, InDesc.Indices, size_t(InDesc.NumIndices) * sizeof(uint32_t));
+    return true;
+}
+
 void D3D12Mesh::Release()
 {
+    Microsoft::WRL::ComPtr<ID3D12Resource>* Dynamic[6] = { &PositionBuffer, &TexCoordBuffer, &NormalBuffer,
+                                                           &ColorBuffer, &UV1Buffer, &IndexBuffer };
+    for(int At = 0; At < 6; ++At)
+    {
+        if(DynamicMapped[At] && *Dynamic[At]) (*Dynamic[At])->Unmap(0, nullptr);
+        DynamicMapped[At] = nullptr;
+    }
+
     // Deferred: meshes are deleted mid-frame (a cursor resize) while the open list still binds them.
     auto* GDI = dynamic_cast<D3D12DynamicGDI*>(GDynamicGDI);
     auto ReleaseOrDefer = [GDI](Microsoft::WRL::ComPtr<ID3D12Resource>& Buffer)
@@ -172,7 +237,8 @@ void D3D12Mesh::Draw()
         IndexView.SizeInBytes    = IndexBytes;
         IndexView.Format         = DXGI_FORMAT_R32_UINT;
         List->IASetIndexBuffer(&IndexView);
-        List->DrawIndexedInstanced(Count, 1, First, 0, 0);
+        // A dynamic mesh's last update sits at its base vertex and index; 0 otherwise.
+        List->DrawIndexedInstanced(Count, 1, GetDynamicBaseIndex() + First, INT(GetDynamicBaseVertex()), 0);
     }
     else if(bSupportsInstanced)
     {

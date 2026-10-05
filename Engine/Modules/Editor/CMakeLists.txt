@@ -84,6 +84,26 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Prefab/PrefabEditorWindow.h
         Source/Private/Editor/Prefab/PrefabScriptPanel.cpp
         Source/Private/Editor/Prefab/PrefabScriptPanel.h
+        Source/Private/Editor/UI/UIAssets.cpp
+        Source/Private/Editor/UI/UIAssets.h
+        Source/Private/Editor/UI/UIDesignDocument.cpp
+        Source/Private/Editor/UI/UIDesignDocument.h
+        Source/Private/Editor/UI/UIDesignerViewport.cpp
+        Source/Private/Editor/UI/UIDesignerViewport.h
+        Source/Private/Editor/UI/UIDetailsPanel.cpp
+        Source/Private/Editor/UI/UIGraphLink.cpp
+        Source/Private/Editor/UI/UIPreviewRuntime.cpp
+        Source/Private/Editor/UI/UIPreviewRuntime.h
+        Source/Private/Editor/UI/UIGraphLink.h
+        Source/Private/Editor/UI/UIDetailsPanel.h
+        Source/Private/Editor/UI/UIEditorTab.cpp
+        Source/Private/Editor/UI/UIEditorTab.h
+        Source/Private/Editor/UI/UIEditorWindow.cpp
+        Source/Private/Editor/UI/UIEditorWindow.h
+        Source/Private/Editor/UI/UIHierarchyPanel.cpp
+        Source/Private/Editor/UI/UIHierarchyPanel.h
+        Source/Private/Editor/UI/UIPalettePanel.cpp
+        Source/Private/Editor/UI/UIPalettePanel.h
         Source/Private/Editor/Graph/GraphItems.cpp
         Source/Private/Editor/Graph/GraphItems.h
         Source/Private/Editor/Graph/GraphScene.cpp
@@ -209,7 +229,7 @@ target_link_libraries(NimbleEditor PRIVATE
 
 # === Import tests =================================================================
 # Runs from Binaries, where NimbleEditor's windeployqt put Qt (hence the dependency).
-option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests, NimbleEditorDocumentTests and NimbleEditorDetailsTests" ON)
+option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests, NimbleEditorDocumentTests, NimbleEditorDetailsTests and NimbleEditorUIDesignerTests" ON)
 if(NIMBLEEDITOR_BUILD_TESTS)
     add_executable(NimbleEditorImportTests Tests/ImportTests.cpp ${NIMBLE_EDITOR_IMPORT_SOURCES})
     target_include_directories(NimbleEditorImportTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
@@ -290,6 +310,26 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_dependencies(NimbleEditorDetailsTests NimbleEditor)
     add_test(NAME Editor.Details COMMAND NimbleEditorDetailsTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorDetailsTests>")
+
+    # The UI Designer's document and panels, offscreen: the editor's sources without its main().
+    add_executable(NimbleEditorUIDesignerTests Tests/UIDesignerTests.cpp ${NIMBLE_EDITOR_DETAILS_SOURCES})
+    target_include_directories(NimbleEditorUIDesignerTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
+    target_link_libraries(NimbleEditorUIDesignerTests PRIVATE
+            GameCore::GameCore
+            RenderCore::RenderCore
+            GameWindow::GameWindow
+            NimbleEngine::NimbleEngine
+            EngineCore::QtBridge
+            NodeGraph::NodeGraph
+            NimbleXatlas
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Widgets
+    )
+    set_target_properties(NimbleEditorUIDesignerTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorUIDesignerTests NimbleEditor)
+    add_test(NAME Editor.UIDesigner COMMAND NimbleEditorUIDesignerTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorUIDesignerTests>")
 endif()
 
 # === Engine content ===========================================================
@@ -403,9 +443,12 @@ endif()
 
 source_group("Editor" FILES ${NIMBLE_EDITOR_SOURCES})
 
-# The Details tests compile the editor's sources, so they need its generated
-# headers too (build info, project config); made by NimbleEditor's build,
-# which they depend on.
+# The Details and UI Designer tests compile the editor's sources, so they need
+# its generated headers too (build info, project config); made by
+# NimbleEditor's build, which they depend on.
 if(TARGET NimbleEditorDetailsTests)
     target_include_directories(NimbleEditorDetailsTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()
+if(TARGET NimbleEditorUIDesignerTests)
+    target_include_directories(NimbleEditorUIDesignerTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
 endif()

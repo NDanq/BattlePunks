@@ -19,9 +19,18 @@ namespace
 
     void OnKey(GameWindow*, const KeyEvent& InEvent, void* InUserData)
     {
-        if(InEvent.bRepeat) { return; }   // OS auto-repeat is not a press
         const InputKey Key = InputKeyFromKeyCode(InEvent.Key);
+        if(InEvent.bRepeat)
+        {
+            if(InEvent.bPressed) { PendingOf(InUserData).Repeat(Key); }   // OS auto-repeat is not a press
+            return;
+        }
         InEvent.bPressed ? PendingOf(InUserData).Press(Key) : PendingOf(InUserData).Release(Key);
+    }
+
+    void OnText(GameWindow*, const char* InUtf8, void* InUserData)
+    {
+        PendingOf(InUserData).AppendText(InUtf8);
     }
 
     void OnMouseButton(GameWindow*, const MouseButtonEvent& InEvent, void* InUserData)
@@ -96,11 +105,13 @@ void InputRouter::Attach(GameWindow* InWindow)
     GameWindowDelegates Delegates;
     Delegates.UserData       = this;
     Delegates.OnKey          = &OnKey;
+    Delegates.OnText         = &OnText;
     Delegates.OnMouseButton  = &OnMouseButton;
     Delegates.OnMouseMove    = &OnMouseMove;
     Delegates.OnMouseWheel   = &OnMouseWheel;
     Delegates.OnFocusChanged = &OnFocusChanged;
     InWindow->SetDelegates(Delegates);
+    InWindow->SetTextInputActive(bTextInput);
 
     GamepadDelegates Pads;
     Pads.UserData    = this;
@@ -116,6 +127,7 @@ void InputRouter::Detach()
     if(GameWindow* Window = GetWindow())
     {
         Window->SetRelativeMouseMode(false);
+        Window->SetTextInputActive(false);
         Window->ClearDelegates();
     }
     if(bOwnsGamepads && GameWindowSystem::IsInitialized())
@@ -135,6 +147,12 @@ bool InputRouter::IsMouseCaptured() const
 {
     const GameWindow* Window = GetWindow();
     return Window && Window->IsRelativeMouseMode();
+}
+
+void InputRouter::SetTextInputActive(const bool bInActive)
+{
+    bTextInput = bInActive;
+    if(GameWindow* Window = GetWindow()) { Window->SetTextInputActive(bInActive); }
 }
 
 void InputRouter::Latch(const uint64_t InFrameNumber)

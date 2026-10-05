@@ -80,6 +80,9 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/Renderer.cpp
         Source/Private/RenderCore/MaterialDescription.cpp
         Source/Private/RenderCore/ShaderCache.cpp
+        Source/Private/RenderCore/UIDrawList.cpp
+        Source/Private/RenderCore/UIRenderer.h
+        Source/Private/RenderCore/UIRenderer.cpp
         Source/Public/RenderCore/RenderCoreAPI.h
         Source/Public/RenderCore/RenderCoreLog.h
         Source/Public/RenderCore/RenderTypes.h
@@ -113,6 +116,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/RenderLighting.h
         Source/Public/RenderCore/RenderPipeline.h
         Source/Public/RenderCore/ShaderCache.h
+        Source/Public/RenderCore/UIDrawList.h
 )
 
 # ===========================================================================

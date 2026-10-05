@@ -144,7 +144,10 @@ void OpenGLDynamicGDI::Clear(uint InClearMode, EngineCore::Color InClearColor, f
         ClearFlags |= GL_STENCIL_BUFFER_BIT;
     }
 
+    /* glClear honours the scissor; GDI's Clear does not. */
+    if(bScissorTest) glDisable(GL_SCISSOR_TEST);
     glClear( ClearFlags );
+    if(bScissorTest) glEnable(GL_SCISSOR_TEST);
 }
 
 void OpenGLDynamicGDI::SwapBuffers()
@@ -221,6 +224,34 @@ void OpenGLDynamicGDI::EndRendering()
 void OpenGLDynamicGDI::SetViewport( uint InX, uint InY, uint InWidth, uint InHeight )
 {
     glViewport(InX, InY, InWidth, InHeight);
+
+    /* The viewport resets the scissor, as on every backend. */
+    if(bScissorTest)
+    {
+        glDisable(GL_SCISSOR_TEST);
+        bScissorTest = false;
+    }
+}
+
+void OpenGLDynamicGDI::SetScissorRect( uint InX, uint InY, uint InWidth, uint InHeight )
+{
+    /* GL's scissor origin is the bottom-left, row 0 -- the rows GDI passes. */
+    const bool bWhole = InX == ViewportX && InY == ViewportY && InWidth == ViewportWidth && InHeight == ViewportHeight;
+    if(bWhole)
+    {
+        if(bScissorTest)
+        {
+            glDisable(GL_SCISSOR_TEST);
+            bScissorTest = false;
+        }
+        return;
+    }
+    glScissor(GLint(InX), GLint(InY), GLsizei(InWidth), GLsizei(InHeight));
+    if(!bScissorTest)
+    {
+        glEnable(GL_SCISSOR_TEST);
+        bScissorTest = true;
+    }
 }
 
 void OpenGLDynamicGDI::Flush()

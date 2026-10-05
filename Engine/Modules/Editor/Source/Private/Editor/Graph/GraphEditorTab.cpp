@@ -457,6 +457,11 @@ void GraphEditorTab::ShowPalette(const QPointF& InScenePos, const bool bInFromPi
     Palette->Popup(View->mapToGlobal(View->mapFromScene(InScenePos)));
 }
 
+void GraphEditorTab::RevealNode(const NodeGuid& InNode)
+{
+    QTimer::singleShot(0, this, [this, InNode]() { FocusNode(InNode); });
+}
+
 void GraphEditorTab::FocusNode(const NodeGuid& InNode)
 {
     if(NodeItem* Item = Scene->FindNodeItem(InNode))

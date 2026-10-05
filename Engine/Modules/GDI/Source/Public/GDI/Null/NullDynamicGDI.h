@@ -52,6 +52,10 @@ struct NullGDIStats
 
     EngineCore::Color LastClearColor;
     uint LastViewportX = 0, LastViewportY = 0, LastViewportWidth = 0, LastViewportHeight = 0;
+    /* The backend's scissor: the target's rows, row 0 first (SetScissorRect). */
+    uint LastScissorX = 0, LastScissorY = 0, LastScissorWidth = 0, LastScissorHeight = 0;
+    uint64_t ScissorCalls          = 0;
+    uint64_t DynamicMeshesCreated  = 0;
     GDIShader* LastBoundVertexShader = nullptr;
     GDIShader* LastBoundPixelShader  = nullptr;
 };
@@ -87,6 +91,8 @@ public:
     void Clear(uint InClearMode, EngineCore::Color InClearColor, float InDepth = 1.0f, uint InStencilMask = 0x00) override;
 
     void SetViewport(uint InX, uint InY, uint InWidth, uint InHeight) override;
+
+    void SetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight) override;
 
     void SetDepthState(IDepthStateDesc) override;
 
@@ -126,6 +132,8 @@ public:
     GDIMesh* CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced = false) override;
 
     GDIMesh* CreateMesh(const GDIMeshDesc& InDesc) override;
+
+    GDIMesh* CreateDynamicMesh(uint32_t InMaxVertices, uint32_t InMaxIndices) override;
 
     GDITextureResource* CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
 

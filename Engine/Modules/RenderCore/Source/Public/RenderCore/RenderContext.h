@@ -34,6 +34,7 @@ namespace RenderCore
     struct StagedDraw;               // Private/RenderCore/DrawPolicy.h
     struct MaterialPreviewRequest;   // RenderScene.h
     struct RenderMaterialParameter;  // Components/RenderComponent.h
+    struct UISceneState;             // Private/RenderCore/UIRenderer.h: a scene's UI draw list
 
     /* An entity's material parameter overrides for one draw call: each entry
      * applies to the material in its Slot. Must stay valid until the scene
@@ -290,6 +291,15 @@ namespace RenderCore
          * by '\n', in a panel at the top right of the bound InWidth x
          * InHeight target, blended over it (StatsOverlay.fsh). */
         void DrawStatUnit(uint32_t InWidth, uint32_t InHeight, const std::string& InText);
+
+        /* RenderScene::Render's UI (Renderer::SubmitUIDrawList, RENDERPIPELINE.md
+         * "UI"): InState's list over the bound InWidth x InHeight target, blended,
+         * one draw per command, each clipped by its scissor (UI.vsh / UI.fsh). */
+        void DrawUI(UISceneState& InState, uint32_t InWidth, uint32_t InHeight);
+
+        /* Renderer::SetUIImage's command: InImage as UI texture InKey ("ui:..."),
+         * replacing any; null releases it. */
+        void SetUIImage(const char* InKey, const EngineCore::Image* InImage);
         bool CanTimeGpu() const;
 
         /* Renderer::MountShaderCache's command: reads

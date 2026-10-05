@@ -186,6 +186,7 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/ArchiveTextDump.cpp
         Source/Private/GameCore/ComponentScript.cpp
         Source/Private/GameCore/ScriptLibrary.cpp
+        Source/Private/GameCore/ConfigScriptLibrary.cpp
         Source/Private/GameCore/ScriptStruct.cpp
         Source/Private/GameCore/ComponentProperties.cpp
         Source/Public/GameCore/GameCoreAPI.h

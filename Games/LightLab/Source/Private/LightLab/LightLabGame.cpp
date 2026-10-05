@@ -13,6 +13,7 @@
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Public/UI/UISystem.h"
 
 #include <algorithm>
 #include <cmath>
@@ -63,8 +64,7 @@ namespace
      * (EditorCamera.cpp's MaxPitch, for the same reason). */
     constexpr double MaxPitch = 89.0;
 
-    /* Fly speed in world units a second; Boost triples it. */
-    constexpr double FlySpeed = 600.0;
+    /* Boost triples the fly speed ([LightLab] FlySpeed). */
     constexpr double BoostMultiplier = 3.0;
 
     /* Seconds between the mode's log reports. */
@@ -91,6 +91,12 @@ namespace
  * written to this path as a text world before the run starts -- how
  * Content/Levels/LightLab.nmworld was made. Relative to the executable. */
 NIMBLE_CONFIG_STRING(GLightLabExportLevel, "LightLab", "ExportLevel", "", nullptr);
+
+/* The pause menu's Settings page sets these (and [Shadows] Enabled,
+ * [Rendering] BakedLighting) through its UI graph's Config nodes; an .ini
+ * or the console can too. */
+NIMBLE_CONFIG_FLOAT(GLightLabLookSensitivity, "LightLab", "LookSensitivity", 1.0f, nullptr);   // times the Look axes
+NIMBLE_CONFIG_FLOAT(GLightLabFlySpeed, "LightLab", "FlySpeed", 600.0f, nullptr);               // world units a second
 
 // === Native prefabs =========================================================
 // The level's shapes and its player, declared as prefabs ("native:LightLab.Block"):
@@ -255,8 +261,9 @@ namespace
 
         /* Mouse right turns right (+yaw); mouse down (window y grows) looks
          * down, which is POSITIVE pitch. */
-        Context.Yaw   = std::fmod(Context.Yaw + double(Input->GetAxis("LookX")), 360.0);
-        Context.Pitch = std::clamp(Context.Pitch + double(Input->GetAxis("LookY")), -MaxPitch, MaxPitch);
+        const double Look = double(GLightLabLookSensitivity.GetFloat());
+        Context.Yaw   = std::fmod(Context.Yaw + double(Input->GetAxis("LookX")) * Look, 360.0);
+        Context.Pitch = std::clamp(Context.Pitch + double(Input->GetAxis("LookY")) * Look, -MaxPitch, MaxPitch);
 
         /* EditorCamera's basis: Right = Up(0,1,0) ^ Forward, which is +X for
          * a view along +Z. World up is +Y. */
@@ -264,7 +271,7 @@ namespace
         const EngineCore::Vector3 Right   = (EngineCore::Vector3(0.0, 1.0, 0.0) ^ Forward).GetNormalize();
         const EngineCore::Vector3 Up(0.0, 1.0, 0.0);
 
-        const double Speed = FlySpeed * (Input->IsDown("Boost") ? BoostMultiplier : 1.0);
+        const double Speed = double(GLightLabFlySpeed.GetFloat()) * (Input->IsDown("Boost") ? BoostMultiplier : 1.0);
         const EngineCore::Vector3 Velocity = Forward * double(Input->GetAxis("MoveForward"))
                                            + Right   * double(Input->GetAxis("MoveRight"))
                                            + Up      * double(Input->GetAxis("MoveUp"));
@@ -355,6 +362,20 @@ namespace
     }
 }
 
+/*
+ * The pause menu: Escape (or Start) opens it and pauses the World. What it
+ * does is its UI graph, Content/UI/PauseMenu.ui.nmgraph (the document's
+ * Graph; UI/README.md, "UI graphs"): Resume and Back close it, unpause and
+ * take the mouse back; its Settings page's check boxes and sliders, bound
+ * two-way to LightLab.* data store keys, are filled from the config vars as
+ * it opens and set them as they change -- the vars T, F and L, an .ini or the
+ * console set. Quit is the engine's Game.Quit.
+ */
+namespace
+{
+    const char* const PauseMenuPath = "Content/UI/PauseMenu.nmui";
+}
+
 class LightLabGameMode : public NimbleEngine::IGameMode
 {
 public:
@@ -369,13 +390,12 @@ public:
 
     void OnStart() override
     {
-        /* Mouse-look needs the cursor held; Escape lets it go, a click takes it back. */
+        /* Mouse-look needs the cursor held; the pause menu lets it go, a click takes it back. */
         Session->SetMouseCaptured(true);
-        bMouseCaptured = true;
 
         CORE_LOG("[LightLab] fly with WASD + mouse, E/Q up and down, Shift to boost; "
                  "T cycles the sun's shadow technique, F toggles shadows, L switches baked and live lighting, "
-                 "Escape releases the mouse")
+                 "Escape pauses")
     }
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
@@ -404,15 +424,13 @@ public:
                 ToggleBakedLighting();
             }
 
-            if(bMouseCaptured && Input->WasPressed("ReleaseMouse"))
+            if(Input->WasPressed("Pause"))
             {
-                Session->SetMouseCaptured(false);
-                bMouseCaptured = false;
+                OpenPauseMenu();
             }
-            else if(!bMouseCaptured && Input->WasPressed("CaptureMouse"))
+            else if(!Session->IsMouseCaptured() && Input->WasPressed("CaptureMouse"))
             {
                 Session->SetMouseCaptured(true);
-                bMouseCaptured = true;
             }
         }
 
@@ -446,6 +464,20 @@ public:
     }
 
 private:
+    /* Paused under the menu, the cursor free for it. Without the menu (a
+     * Client build with nothing cooked) Escape only frees the mouse, as it
+     * used to: a pause nothing can resume would be a hang. */
+    void OpenPauseMenu()
+    {
+        Session->SetMouseCaptured(false);
+        if(Session->GetUI().Open(PauseMenuPath) == UI::UI_DOCUMENT_INVALID)
+        {
+            CORE_LOG_WARN(std::string("[LightLab] no pause menu (") + PauseMenuPath + "); the mouse is free, a click takes it back")
+            return;
+        }
+        Session->SetPaused(true);
+    }
+
     /* Standard -> Modulated -> Cascaded -> Standard on the sun. */
     void CycleSunTechnique(GameCore::World& InWorld)
     {
@@ -499,7 +531,6 @@ private:
     GameCore::EntityID PlayerEntity;
     GameCore::EntityID SunEntity;
 
-    bool     bMouseCaptured    = false;
     double   ElapsedSeconds    = 0.0;
     double   LastReportSeconds = 0.0;
     uint64_t TicksSinceReport  = 0;
