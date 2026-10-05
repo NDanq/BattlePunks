@@ -62,6 +62,20 @@ namespace NimbleEngine
 #endif
     }
 
+    namespace
+    {
+        /* The Net script library's events (NetScript.cpp): (Client, Player). */
+        void EmitClientEvent(GameCore::World& InWorld, const char* InName, const GameCore::NetClientID InClient,
+                             const GameCore::EntityID InPlayer)
+        {
+            GameCore::EventArgs Args;
+            Args.Args[0] = GameCore::EventArg::Make(double(InClient));
+            Args.Args[1] = GameCore::EventArg::Make(InPlayer);
+            Args.Count   = 2;
+            InWorld.GetEvents().Emit(InName, Args);
+        }
+    }
+
     struct NetHost::Impl
     {
         GameSession* Session = nullptr;
@@ -105,6 +119,7 @@ namespace NimbleEngine
 
             ILevel* Level = Self.Session->GetLevel();
             if(IGameMode* Mode = Level ? Level->GetGameMode() : nullptr) { Mode->OnClientConnected(InClient, Player); }
+            EmitClientEvent(Self.Session->GetWorld(), "ClientConnected", InClient, Player);
         }
 
         static void OnClientDisconnected(const GameCore::NetClientID InClient, void* InUserData)
@@ -125,6 +140,7 @@ namespace NimbleEngine
 
             ILevel* Level = Self.Session->GetLevel();
             if(IGameMode* Mode = Level ? Level->GetGameMode() : nullptr) { Mode->OnClientDisconnected(InClient, Player); }
+            EmitClientEvent(World, "ClientDisconnected", InClient, Player);
 
             for(const GameCore::EntityID Entity : Owned) { World.DestroyEntity(Entity); }
         }

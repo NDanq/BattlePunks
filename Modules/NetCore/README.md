@@ -252,7 +252,8 @@ The road from here:
 - **Interpolation and client-side prediction.** A remote entity moves at the
   server's send rate.
 - **Level travel during a session.** Both ends must run the same start level.
-- **RPCs and replicated fields from Lua.**
+- **RPCs and replicated fields declared in Lua.** Lua can call any C++ RPC and
+  query roles (the `Net` library, GUIDE.md), but cannot declare its own yet.
 
 ---
 

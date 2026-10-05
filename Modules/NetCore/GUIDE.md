@@ -15,7 +15,7 @@ patterns.
 5. Players
 6. Replicated fields
 7. RPCs
-8. Sending input
+8. Sending input (8b: from Lua and script graphs)
 9. Testing
 10. Keeping the game buildable without NetCore
 11. Pitfalls
@@ -347,6 +347,59 @@ On a listen server or a standalone game, the same call simply runs locally.
 
 The cost is latency: a client sees its own movement only after a round trip.
 On a LAN that is a few milliseconds.
+
+---
+
+## 8b. From Lua and script graphs
+
+The `Net` script library and component RPCs give scripts the same reach as C++.
+None of it needs NetCore: with networking compiled out, or no session, every
+answer is standalone's and every call runs locally.
+
+**Roles:**
+- `Net.HasAuthority()`, `Net.IsServer()`, `Net.IsClient()`
+- `Net.IsDedicatedServer()`, `Net.IsStandalone()`, `Net.IsConnected()`
+- `Net.GetLocalClientId()`
+
+**Entities:**
+- `Net.IsNetworked(entity)`
+- `Net.GetOwner(entity)`: a client id, or -1 for the server's own.
+- `Net.IsLocallyOwned(entity)`: an entity without a `NetComponent` counts as
+  this process's.
+
+**Calling RPCs.** Every RPC a component registers is a method of its Lua
+proxy, routed exactly as a C++ call is:
+
+```lua
+local ship = player:GetComponent("Ship")
+ship:ServerFire(aimX, aimY, aimZ)                        -- a Vector3 is three values
+Net.Call(player, "Ship", "ServerFire", aimX, aimY, aimZ)  -- the same by name: the graph node
+```
+
+- **Arguments follow the RPC's C++ types.** A `Vector3` is three numbers, a
+  `Color` four integers (alpha optional when it is last), an `Entity` an
+  entity, `RpcString<N>` a string.
+- **A wrong type or too many arguments raises a Lua error.**
+- **The call returns `true` once handed off.** Routing problems are logged,
+  as for C++.
+- **An RPC wins over a script binding of the same name.** A handler exposed
+  with `Bind.Native` under its RPC name still goes through the network. Bound
+  under another name, it runs locally: don't.
+
+**Events, server only:**
+
+```lua
+Events.On("ClientConnected", function(client, player) ... end)      -- after IGameMode::OnClientConnected
+Events.On("ClientDisconnected", function(client, player) ... end)   -- before its entities are destroyed
+```
+
+`client` arrives as a Lua float, as every EventBus number does.
+`string.format("%d", client)` prints it as an integer.
+
+**Where scripts run.** The startup script and prefab scripts run on every
+process, so guard shared-state changes with `Net.HasAuthority()`, as in C++.
+Scripts cannot yet declare RPCs or replicated fields of their own. Declare
+them on a C++ component and call or read them from Lua.
 
 ---
 

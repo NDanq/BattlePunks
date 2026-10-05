@@ -449,6 +449,37 @@ static void TestNetworkingStandalone()
     Expect(Overrides == Expected, "the command line becomes config overrides, in order, strays dropped");
 }
 
+static void TestNetScripting()
+{
+    std::printf("[networking from Lua, standalone]\n");
+
+    GameCore::ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "a script engine starts");
+    GameCore::World World;
+    Scripts.BindWorld(&World);
+    GameCore::Entity Beacon = World.CreateEntity("Beacon");
+    Beacon.AddComponent<TestBeaconComponent>();
+
+    Expect(Scripts.RunString(R"(
+        assert(Net.HasAuthority() and Net.IsStandalone() and not Net.IsClient() and not Net.IsServer())
+        assert(Net.GetLocalClientId() == -1 and not Net.IsConnected() and not Net.IsDedicatedServer())
+        local beacon = World.FindEntity("Beacon")
+        assert(not Net.IsNetworked(beacon) and Net.GetOwner(beacon) == -1 and Net.IsLocallyOwned(beacon))
+        local b = beacon:GetComponent("TestBeacon")
+        assert(b:ServerFlash(3) == true)                              -- a component's RPC, by name
+        assert(Net.Call(beacon, "TestBeacon", "ServerFlash", 9) == true)  -- the same, through the library
+        assert(not pcall(function() b:ServerFlash("x") end))           -- a mistyped argument raises
+        assert(not pcall(function() b:ServerFlash(1, 2) end))          -- so does one too many
+        assert(not pcall(function() Net.Call(beacon, "TestBeacon", "Nope") end))
+    )", "net-script"), "the Net library and component RPCs answer from Lua");
+
+    const TestBeaconComponent* State = Beacon.GetComponent<TestBeaconComponent>();
+    Expect(State->Flashes == 2 && State->LastPower == 9 && !State->bLastRemote, "Lua's RPC calls ran here, standalone");
+
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+}
+
 static void TestHeadlessApplication()
 {
     std::printf("[headless application]\n");
@@ -480,6 +511,7 @@ int main()
     TestSave();
     TestLevelByWorldFile();
     TestNetworkingStandalone();
+    TestNetScripting();
     TestHeadlessApplication();   // last: the Application claims the main thread
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

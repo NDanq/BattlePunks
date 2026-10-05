@@ -393,6 +393,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/CollisionMeshes.cpp
         Source/Private/NimbleEngine/NetFacade.cpp
         Source/Private/NimbleEngine/NetHost.cpp
+        Source/Private/NimbleEngine/NetScript.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/GameSession.h

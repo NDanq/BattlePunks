@@ -21,6 +21,7 @@
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
 #include "Public/NetCore/NetEditorLink.h"
 #include "Public/NetCore/NetSession.h"
@@ -395,6 +396,47 @@ int main()
     Check(StepUntil(Both, [&] { return GClientLog.Flashes == 1; }), "and on the client");
     Check(GClientLog.LastFlashText == "boom" && GClientLog.LastFlashRed == 200, "with its arguments");
     Check(GClientLog.LastFlashAbout == ClientDoor.GetID(), "and an entity argument mapped to the client's entity");
+
+    // --- RPCs from Lua ----------------------------------------------------------
+    {
+        /* Each end's own script engine on its own World, as each process has. */
+        GameCore::ScriptEngine ServerScripts, ClientScripts;
+        Check(ServerScripts.Initialize() && ClientScripts.Initialize(), "two script engines start");
+        ServerScripts.BindWorld(&ServerWorld);
+        ClientScripts.BindWorld(&ClientWorld);
+
+        const int MovesBefore = GServerLog.ServerMoves;
+        Check(ClientScripts.RunString(R"(
+            local hero = World.FindEntity("Hero")
+            assert(hero:GetComponent("TestPawn"):ServerMove(11, 12, 13) == true)
+        )", "loopback-client"), "a client's Lua calls a Server RPC on its component");
+        Check(StepUntil(Both, [&] { return GServerLog.ServerMoves == MovesBefore + 1; }), "it runs on the server");
+        Check(GServerLog.LastMoveSender == ConnectedId && Near(ServerPawn.GetComponent<PawnComponent>()->Position.GetY(), 12.0f),
+              "from that client, with its Vector3");
+
+        const int FlashesBefore = GClientLog.Flashes;
+        Check(ServerScripts.RunString(R"(
+            local hero = World.FindEntity("Hero")
+            local door = World.FindEntity("Door")
+            assert(hero:GetComponent("TestPawn"):MulticastFlash(10, 20, 30, 255, "from lua", door) == true)
+        )", "loopback-server"), "the server's Lua sends a Multicast with a Color, a string and an entity");
+        Check(StepUntil(Both, [&] { return GClientLog.Flashes == FlashesBefore + 1; }), "the client receives it");
+        Check(GClientLog.LastFlashText == "from lua" && GClientLog.LastFlashRed == 10 && GClientLog.LastFlashAbout == ClientDoor.GetID(),
+              "with every argument, the entity mapped to the client's");
+
+        /* The door is the server's: the client's Lua is refused like C++ is. */
+        const int RefusedBefore = GServerLog.ServerMoves;
+        Check(ClientScripts.RunString(R"(
+            World.FindEntity("Door"):GetComponent("TestPawn"):ServerMove(0, 0, 0)
+        )", "loopback-refused"), "a client's Lua may ask about the door");
+        for(int Index = 0; Index < 50; ++Index) { Step(Both); }
+        Check(GServerLog.ServerMoves == RefusedBefore, "but the server refuses an RPC on what the client does not own");
+
+        ServerScripts.UnbindWorld();
+        ClientScripts.UnbindWorld();
+        ServerScripts.Shutdown();
+        ClientScripts.Shutdown();
+    }
 
     // --- a late joiner -------------------------------------------------------------
     {
