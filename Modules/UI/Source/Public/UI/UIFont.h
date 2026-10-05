@@ -105,6 +105,11 @@ namespace UI
         static void Layout(const UIFont& InFont, const std::string& InUtf8, float InWrapPixels, EUIJustify InJustify,
                            float InLineHeight, UITextLayout& OutLayout);
 
+        /* One line of InUtf8 (no wrap; '\n' as a space): the pen x, pixels, at each
+         * byte offset, 0 through InUtf8.size() -- a caret's position, and where a
+         * click lands. A byte inside a codepoint has its codepoint's start. */
+        static void MeasureCarets(const UIFont& InFont, const std::string& InUtf8, std::vector<float>& OutX);
+
         /* Atlases baked since the last call, to InRenderer (SetUIImage). */
         void Upload(RenderCore::Renderer& InRenderer);
 

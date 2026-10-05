@@ -826,8 +826,11 @@ namespace UI
             const UIWidget& W = *Widgets[size_t(InIndex)];
             if(!W.bFocusable || !W.IsEnabledInHierarchy() || !IsShown(uint32_t(InIndex))) return false;
         }
+        const int32_t Previous = Focused;
         Focused = InIndex;
         MarkPaintDirty();
+        if(Previous >= 0 && size_t(Previous) < Widgets.size()) { Widgets[size_t(Previous)]->OnFocusChanged(false); }
+        if(InIndex >= 0) { Widgets[size_t(InIndex)]->OnFocusChanged(true); }
         for(int32_t Up = InIndex >= 0 ? Parents[size_t(InIndex)] : -1; Up >= 0; Up = Parents[size_t(Up)])
         {
             Widgets[size_t(Up)]->OnDescendantFocused(uint32_t(InIndex));   // scroll boxes bring it into view

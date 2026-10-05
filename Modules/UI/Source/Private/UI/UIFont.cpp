@@ -309,6 +309,26 @@ namespace UI
         OutLayout.Size = UIVec2{ std::ceil(Widest), Lines.empty() ? 0.0f : LineStep * float(Lines.size()) };
     }
 
+    void UIFontCache::MeasureCarets(const UIFont& InFont, const std::string& InUtf8, std::vector<float>& OutX)
+    {
+        OutX.assign(InUtf8.size() + 1, 0.0f);
+        float    Pen = 0.0f;
+        uint32_t Previous = 0;
+        size_t   At = 0;
+        while(At < InUtf8.size())
+        {
+            const size_t Start = At;
+            uint32_t Code = NextCodepoint(InUtf8, At);
+            if(Code == '\r') { for(size_t B = Start; B < At; ++B) OutX[B] = Pen; continue; }
+            if(Code == '\n' || Code == '\t') Code = ' ';
+            if(Previous) { Pen += InFont.GetKerning(Previous, Code); }
+            for(size_t B = Start; B < At; ++B) { OutX[B] = Pen; }
+            Pen += InFont.GetGlyph(Code).Advance;
+            Previous = Code;
+        }
+        OutX[InUtf8.size()] = Pen;
+    }
+
     void UIFontCache::Upload(RenderCore::Renderer& InRenderer)
     {
         for(auto& Each : P->Fonts)

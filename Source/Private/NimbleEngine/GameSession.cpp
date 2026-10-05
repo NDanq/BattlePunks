@@ -99,6 +99,8 @@ namespace NimbleEngine
         Interface->SetRenderer(&Rendering, RenderCore::RENDER_DEFAULT_SCENE);
         Interface->SetScriptEngine(&Scripts);
         Interface->SetHostData(this);
+        Interface->SetClipboard([this]() { return Host.GetClipboardText(); },
+                                [this](const std::string& InText) { Host.SetClipboardText(InText); });
         UI::SetScriptUISystem(Interface);
 
         Console = EngineCore::Memory::Alloc<GameConsole>(*this);
@@ -416,7 +418,34 @@ namespace NimbleEngine
         Frame.bPrevious   = bTab && bShift;
         Frame.bNavFromGamepad = bAnyPad;
 
+        /* Text editing, for a focused text field (the console's own handling is the model). */
+        std::snprintf(Frame.Text, sizeof(Frame.Text), "%s", FilteredInput.GetText());
+        const auto Count = [this](const char* InKey) { return uint8_t(std::min(FilteredInput.GetPressesAndRepeats(FindInputKey(InKey)), 255)); };
+        Frame.Backspace = Count("Backspace");
+        Frame.Delete    = Count("Delete");
+        Frame.Left      = Count("Left");
+        Frame.Right     = Count("Right");
+        Frame.Home      = Count("Home");
+        Frame.End       = Count("End");
+        Frame.bReturn   = FilteredInput.WasPressed(FindInputKey("Return")) || FilteredInput.WasPressed(FindInputKey("KP_Enter"));
+        Frame.bShift    = bShift;
+        Frame.bCtrl     = FilteredInput.IsDown("LeftCtrl") || FilteredInput.IsDown("RightCtrl");
+        Frame.bSelectAll = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("A"));
+        Frame.bCopy      = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("C"));
+        Frame.bCut       = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("X"));
+        Frame.bPaste     = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("V"));
+
         const UI::UIInputResult Taken = Interface->ProcessInput(Frame);
+
+        /* The window's text input follows a focused text field -- and comes back
+         * on after the console, which turns it off as it closes. */
+        const bool bConsoleOpen = Console->IsOpen();
+        if(!bConsoleOpen && (Taken.bWantsTextInput != bUITextInput || (bConsoleOpen != this->bConsoleOpen && bUITextInput)))
+        {
+            bUITextInput = Taken.bWantsTextInput;
+            Host.SetTextInputActive(bUITextInput);
+        }
+        this->bConsoleOpen = bConsoleOpen;
         if(Taken.bConsumeMouse)    { FilteredInput.ConsumeMouseButtons(); }
         if(Taken.bConsumeKeyboard) { FilteredInput.ConsumeKeyboard(); }
         if(Taken.bConsumeGamepad)  { FilteredInput.ConsumeGamepad(); }

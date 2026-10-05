@@ -26,6 +26,7 @@
  *   ScrollBox      its one child, longer than it, scrolled by wheel, bar or focus
  *   Grid           children in rows and columns (Row, Column, spans)
  *   WrapBox        children in a row that wraps onto the next line
+ *   TextInput      one line of text the player types
  *   Spacer         empty space of a size
  */
 namespace UI
@@ -372,6 +373,90 @@ namespace UI
         UIVec2 Flow(UILayoutContext& InContext, float InWidth, const UIRect* InArrange);
 
         float WrapWidth = 0.0f;   // the width last arranged at
+    };
+
+    /*
+     * One line the player types into: click or focus it, type, and Return or
+     * leaving it commits. A caret and a selection (drag, Shift+arrows, Ctrl+A),
+     * the clipboard (Ctrl+C / X / V, through UISystem::SetClipboard), and the
+     * text scrolled sideways to keep the caret in view. Text binds two-way;
+     * OnChanged fires on each edit, OnCommit on Return or losing focus if it
+     * changed -- $value its number in Integer and Number modes. Back (Escape,
+     * pad East) leaves it. It asks a box for its Size.
+     */
+    class UI_API UITextInput : public UIWidget
+    {
+    public:
+        std::string  Text;
+        std::string  Placeholder;            // shown while it is empty
+        int32_t      MaxLength = 0;          // characters; 0 any
+        EUITextMode  Mode      = EUITextMode::Text;
+        bool         bPassword = false;      // shown as '*'; never copied
+        std::string  Font;
+        float        FontSize  = 28.0f;
+        UIColor      Color;
+        UIColor      PlaceholderColor{ 1.0f, 1.0f, 1.0f, 0.4f };
+        UIColor      SelectionColor{ 0.85f, 0.54f, 0.18f, 0.45f };
+        UIColor      CaretColor;
+        UIMargin     Padding{ 12.0f, 8.0f, 12.0f, 8.0f };
+        UIBrush      Background;
+        UIBrush      FocusedBrush;           // while it has focus
+        UIActionList OnChanged;
+        UIActionList OnCommit;
+
+        UITextInput();
+        UIVec2 MeasureContent(UILayoutContext& InContext) override;
+        void   Paint(UIPaintContext& InContext, const UIRect& InRect) const override;
+        bool   IsInteractive() const override { return true; }
+        bool   TakesHits() const override { return true; }
+        bool   WantsTextInput() const override { return true; }
+        bool   OnTextInput(const UIInputFrame& InFrame) override;
+        void   OnPointer(const UIPointerEvent& InEvent) override;
+        void   OnFocusChanged(bool bInFocused) override;
+        bool   OnFocusedTick(float InDeltaSeconds) override;
+        void   OnPropertyChanged(const UIPropertyDesc& InProperty) override;
+        double GetActionValue() const override;
+
+        /* Byte offsets into Text: the caret, and the other end of the selection. */
+        size_t GetCaret() const  { return Caret; }
+        size_t GetAnchor() const { return Anchor; }
+        void   Select(size_t InAnchor, size_t InCaret);
+
+        /* As typed, through the filters (Mode, MaxLength): true if Text changed. */
+        bool Insert(const std::string& InUtf8);
+
+    private:
+        bool   HasSelection() const { return Caret != Anchor; }
+        size_t SelectionStart() const { return std::min(Caret, Anchor); }
+        size_t SelectionEnd() const   { return std::max(Caret, Anchor); }
+        /* Text set as the player's edit: two-way, OnChanged. */
+        bool   Change(const std::string& InText, size_t InCaret);
+        bool   DeleteSelection();
+        /* What is drawn: Text, or one '*' per character. */
+        std::string Shown() const;
+        size_t ShownOffset(size_t InTextOffset) const;
+        size_t TextOffsetForShown(size_t InShownOffset) const;
+        /* The byte offset nearest pixel InX (from the text's start). */
+        size_t CaretAtPixel(float InX) const;
+        void   EnsureLayout(UIFontCache* InFonts, float InScale) const;
+
+        size_t      Caret = 0, Anchor = 0;
+        bool        bDragging = false;
+        float       Blink = 0.0f;
+        std::string TextAtFocus;
+        mutable float ScrollX = 0.0f;   // pixels the text is moved left, to keep the caret in view
+
+        // The shown text laid out, rebuilt when it, the font or the scale changes.
+        mutable std::vector<RenderCore::UIVertex> Glyphs;
+        mutable std::vector<float>                Carets;   // pixels, per shown byte offset
+        mutable std::string                       GlyphTexture;
+        mutable std::string                       LaidOut;
+        mutable float                             LaidOutScale = 0.0f;
+        mutable uint64_t                          LaidOutGeneration = ~uint64_t(0);
+        mutable float                             LineHeight = 0.0f;
+        mutable float                             WhiteU = 0.0f, WhiteV = 0.0f;
+        mutable float                             PixelScale = 1.0f;   // the last paint's, for pointer hits
+        mutable float                             TextLeft = 0.0f;     // pixels, the last paint's text origin
     };
 
     class UI_API UISpacer : public UIWidget

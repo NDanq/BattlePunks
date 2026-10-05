@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include <QApplication>
 #include <QClipboard>
@@ -68,7 +69,9 @@ UIDesignerViewport::UIDesignerViewport(EditorContext& InContext, UIDesignDocumen
     /* An empty World: the scene the list is drawn into. */
     SceneDocument = new EditorDocument(this);
 
-    System.SetExecuteActions(false);   // the preview logs what a click would do
+    System.SetExecuteActions(false);   // until previewing (UIPreviewRuntime)
+    System.SetClipboard([]() { return QApplication::clipboard()->text().toUtf8().toStdString(); },
+                        [](const std::string& InText) { QApplication::clipboard()->setText(QString::fromUtf8(InText.c_str())); });
     connect(&Design, &UIDesignDocument::Changed, this, [this](bool) { Rebuild(); });
     connect(&Design, &UIDesignDocument::SelectionChanged, this, [this](int) { RevealSelection(); bComposeDirty = true; });
 
@@ -710,6 +713,35 @@ void UIDesignerViewport::keyPressEvent(QKeyEvent* InEvent)
 {
     if(bPreview)
     {
+        /* Text editing too, for a text field: a key is both, as from a game's input. */
+        const Qt::KeyboardModifiers Mods = InEvent->modifiers();
+        UI::UIInputFrame& In = PendingInput;
+        In.bShift = Mods & Qt::ShiftModifier;
+        In.bCtrl  = Mods & Qt::ControlModifier;
+        const auto Bump = [](uint8_t& InCount) { if(InCount < 255) ++InCount; };
+        switch(InEvent->key())
+        {
+            case Qt::Key_Backspace: Bump(In.Backspace); break;
+            case Qt::Key_Delete:    Bump(In.Delete);    break;
+            case Qt::Key_Left:      Bump(In.Left);      break;
+            case Qt::Key_Right:     Bump(In.Right);     break;
+            case Qt::Key_Home:      Bump(In.Home);      break;
+            case Qt::Key_End:       Bump(In.End);       break;
+            case Qt::Key_Return:
+            case Qt::Key_Enter:     In.bReturn = true;  break;
+            case Qt::Key_A:         In.bSelectAll = In.bCtrl; break;
+            case Qt::Key_C:         In.bCopy      = In.bCtrl; break;
+            case Qt::Key_X:         In.bCut       = In.bCtrl; break;
+            case Qt::Key_V:         In.bPaste     = In.bCtrl; break;
+            default: break;
+        }
+        const QByteArray Typed = InEvent->text().toUtf8();
+        if(!In.bCtrl && !Typed.isEmpty() && uint8_t(Typed[0]) >= 0x20 && Typed[0] != 0x7F)
+        {
+            const size_t Used = std::strlen(In.Text);
+            if(Used + size_t(Typed.size()) < sizeof(In.Text)) { std::memcpy(In.Text + Used, Typed.constData(), size_t(Typed.size()) + 1); }
+        }
+
         switch(InEvent->key())
         {
             case Qt::Key_Up:     PendingInput.bNavUp    = true; break;
@@ -722,7 +754,9 @@ void UIDesignerViewport::keyPressEvent(QKeyEvent* InEvent)
             case Qt::Key_Escape: PendingInput.bBack     = true; break;
             case Qt::Key_Tab:    PendingInput.bNext     = true; break;
             case Qt::Key_Backtab: PendingInput.bPrevious = true; break;
-            default: QWidget::keyPressEvent(InEvent); return;
+            default:
+                if(Typed.isEmpty() && !In.bCtrl) { QWidget::keyPressEvent(InEvent); }
+                return;
         }
         return;
     }

@@ -26,6 +26,14 @@ namespace UI
         bool bAccept = false, bBack = false;
         bool bNext = false, bPrevious = false;   // Tab, Shift+Tab
         bool bNavFromGamepad = false;            // which device the navigation came from
+
+        // Text editing, for a focused text field (UIWidget::WantsTextInput).
+        char    Text[64] = {};                   // typed this frame, UTF-8 (the window's text input)
+        uint8_t Backspace = 0, Delete = 0;       // presses and repeats this frame
+        uint8_t Left = 0, Right = 0, Home = 0, End = 0;
+        bool    bReturn = false;                 // Return / Enter pressed
+        bool    bShift = false, bCtrl = false;   // held
+        bool    bSelectAll = false, bCopy = false, bCut = false, bPaste = false;   // Ctrl+A / C / X / V
     };
 
     struct UIInputResult
@@ -34,7 +42,7 @@ namespace UI
         bool bConsumeKeyboard = false;
         bool bConsumeGamepad  = false;
         bool bShowCursor      = false;   // a UIOnly document is open
-        bool bWantsTextInput  = false;   // RESERVED: a text field has focus
+        bool bWantsTextInput  = false;   // a text field has focus: the host turns the window's text input on
         bool bOverWidget      = false;   // the pointer is over a widget that takes hits
     };
 }

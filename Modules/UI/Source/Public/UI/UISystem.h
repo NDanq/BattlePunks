@@ -2,6 +2,7 @@
 #define UI_UISYSTEM_H
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -119,6 +120,13 @@ namespace UI
 
         UIFontCache& GetFonts() { return Fonts; }
 
+        /* The clipboard a text field copies to and pastes from: the host's
+         * (GameSession: the window's; the designer: Qt's). Without hooks, one
+         * kept here. */
+        void SetClipboard(std::function<std::string()> InGet, std::function<void(const std::string&)> InSet);
+        std::string GetClipboardText() const;
+        void        SetClipboardText(const std::string& InText);
+
         /* Each action run, logged or not ("Native:Game.Quit"), the newest last; up to 64. */
         const std::vector<std::string>& GetActionLog() const { return ActionLog; }
 
@@ -153,6 +161,10 @@ namespace UI
         GameCore::World*          World    = nullptr;
         void*                     HostData = nullptr;
         bool                      bExecuteActions = true;
+
+        std::function<std::string()>             ClipboardGet;
+        std::function<void(const std::string&)>  ClipboardSet;
+        std::string                              ClipboardOwn;
 
         RenderCore::UIDrawList Merged;
         bool                   bMergedDirty = true;

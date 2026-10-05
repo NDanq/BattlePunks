@@ -88,6 +88,10 @@ namespace NimbleEngine
         /* Typed text into InputState::GetText (InputRouter::SetTextInputActive),
          * for the console. Off by default; a host without a window ignores it. */
         virtual void SetTextInputActive(bool /*bInActive*/) {}
+
+        /* The system clipboard, for a UI text field's copy and paste. */
+        virtual std::string GetClipboardText() const { return std::string(); }
+        virtual void        SetClipboardText(const std::string& /*InUtf8*/) {}
     };
 
     /*
@@ -318,6 +322,8 @@ namespace NimbleEngine
 
         bool bQuitRequested = false;
         bool bPaused        = false;
+        bool bUITextInput   = false;   // a UI text field has the window's text input on
+        bool bConsoleOpen   = false;   // last frame's: the console turns text input off as it closes
 
         /* The UI, and what it left of the host's input this frame. */
         UI::UISystem* Interface = nullptr;

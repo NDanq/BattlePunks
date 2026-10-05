@@ -37,6 +37,7 @@ namespace UI
 {
     class UIDocumentInstance;
     class UIFontCache;
+    struct UIInputFrame;
 
     /* What Measure and Arrange are given. */
     struct UILayoutContext
@@ -162,6 +163,19 @@ namespace UI
 
         /* Focus went to InIndex, a descendant: a scroll box brings it into view. */
         virtual void OnDescendantFocused(uint32_t /*InIndex*/) {}
+
+        /* It gained or lost focus (a text field commits what was typed). */
+        virtual void OnFocusChanged(bool /*bInFocused*/) {}
+
+        /* A text field: while it has focus the window's text input is on, and
+         * typed text and editing keys come to OnTextInput instead of moving
+         * focus (Left and Right, Space and Return included). True if used. */
+        virtual bool WantsTextInput() const { return false; }
+        virtual bool OnTextInput(const UIInputFrame& /*InFrame*/) { return false; }
+
+        /* Each frame while it has focus (a caret's blink); true to repaint. Only
+         * the focused widget is asked: an idle UI costs nothing. */
+        virtual bool OnFocusedTick(float /*InDeltaSeconds*/) { return false; }
 
         /* InActions to its document's UISystem, fired by this widget. */
         void QueueActions(const UIActionList& InActions);

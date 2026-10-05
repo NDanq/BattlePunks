@@ -5,6 +5,8 @@
 
 #include "Public/UI/UIDocument.h"
 #include "Public/UI/UIFont.h"
+#include "Public/UI/UIInput.h"
+#include "Public/UI/UISystem.h"
 #include "Private/UI/UIInternal.h"
 
 namespace UI
@@ -928,6 +930,320 @@ namespace UI
         Flow(InContext, InRect.W, &InRect);
     }
 
+    // === TextInput ================================================================
+
+    namespace
+    {
+        constexpr float CARET_BLINK_SECONDS = 0.53f;
+
+        size_t CountCodepoints(const std::string& InText)
+        {
+            size_t Count = 0;
+            for(size_t At = 0; At < InText.size(); At = NextUtf8(InText, At)) { ++Count; }
+            return Count;
+        }
+    }
+
+    UITextInput::UITextInput()
+    {
+        bFocusable = true;
+        Size = UIVec2{ 360.0f, 48.0f };
+        Background.Tint                = UIColor{ 0.07f, 0.09f, 0.12f, 0.92f };
+        Background.OutlineColor        = UIColor{ 1.0f, 1.0f, 1.0f, 0.3f };
+        Background.OutlineThickness    = 1.0f;
+        FocusedBrush                   = Background;
+        FocusedBrush.OutlineColor      = UIColor{ 0.95f, 0.65f, 0.30f, 1.0f };
+        FocusedBrush.OutlineThickness  = 2.0f;
+    }
+
+    UIVec2 UITextInput::MeasureContent(UILayoutContext& /*InContext*/)
+    {
+        return UIVec2{ Size.X, std::max(Size.Y, FontSize * 1.3f + Padding.Top + Padding.Bottom) };
+    }
+
+    std::string UITextInput::Shown() const
+    {
+        return bPassword ? std::string(CountCodepoints(Text), '*') : Text;
+    }
+
+    size_t UITextInput::ShownOffset(const size_t InTextOffset) const
+    {
+        if(!bPassword) return std::min(InTextOffset, Text.size());
+        size_t Count = 0;
+        for(size_t At = 0; At < InTextOffset && At < Text.size(); At = NextUtf8(Text, At)) { ++Count; }
+        return Count;
+    }
+
+    size_t UITextInput::TextOffsetForShown(const size_t InShownOffset) const
+    {
+        if(!bPassword) return std::min(InShownOffset, Text.size());
+        size_t At = 0;
+        for(size_t Count = 0; Count < InShownOffset && At < Text.size(); ++Count) { At = NextUtf8(Text, At); }
+        return At;
+    }
+
+    void UITextInput::EnsureLayout(UIFontCache* InFonts, const float InScale) const
+    {
+        const std::string Now = Shown();
+        const uint64_t Generation = InFonts ? InFonts->GetGeneration() : 0;
+        if(Now == LaidOut && InScale == LaidOutScale && Generation == LaidOutGeneration) return;
+        LaidOut = Now;
+        LaidOutScale = InScale;
+        LaidOutGeneration = Generation;
+        Glyphs.clear();
+        Carets.assign(Now.size() + 1, 0.0f);
+        UIFont* Font = InFonts ? InFonts->Find(this->Font, int(std::lround(FontSize * InScale))) : nullptr;
+        if(!Font) return;
+        UITextLayout Layout;
+        UIFontCache::Layout(*Font, Now, 0.0f, EUIJustify::Left, 1.0f, Layout);
+        Glyphs       = std::move(Layout.Quads);
+        GlyphTexture = Font->GetTextureKey();
+        LineHeight   = Font->GetLineHeight();
+        WhiteU       = Font->GetWhiteU();
+        WhiteV       = Font->GetWhiteV();
+        UIFontCache::MeasureCarets(*Font, Now, Carets);
+    }
+
+    void UITextInput::Paint(UIPaintContext& InContext, const UIRect& InRect) const
+    {
+        const bool bFocused = IsFocused();
+        InContext.DrawBrush(bFocused ? FocusedBrush : Background, InRect);
+        if(!InContext.List) return;
+
+        const UIRect Inner = InContext.ToPixels(UIRect{ InRect.X + Padding.Left, InRect.Y + Padding.Top,
+                                                        std::max(InRect.W - Padding.Left - Padding.Right, 0.0f),
+                                                        std::max(InRect.H - Padding.Top - Padding.Bottom, 0.0f) });
+        PixelScale = InContext.PixelScale.X;
+        EnsureLayout(InContext.Fonts, InContext.Scale);
+        RenderCore::UIDrawList& List = *InContext.List;
+        const float Top = Inner.Y + std::round((Inner.H - LineHeight) * 0.5f);
+
+        /* The caret in view: the text moved left as it runs past the right edge. */
+        const float CaretX = Carets.empty() ? 0.0f : Carets[std::min(ShownOffset(Caret), Carets.size() - 1)];
+        const float Width  = Carets.empty() ? 0.0f : Carets.back();
+        if(CaretX - ScrollX > Inner.W - 2.0f) ScrollX = CaretX - Inner.W + 2.0f;
+        if(CaretX < ScrollX)                  ScrollX = CaretX;
+        ScrollX = std::clamp(ScrollX, 0.0f, std::max(Width - Inner.W + 2.0f, 0.0f));
+        const float Left = Inner.X - ScrollX;
+        TextLeft = Left;
+
+        List.PushClip(Inner);
+        if(bFocused && HasSelection() && !Carets.empty())
+        {
+            const float A = Carets[std::min(ShownOffset(SelectionStart()), Carets.size() - 1)];
+            const float B = Carets[std::min(ShownOffset(SelectionEnd()), Carets.size() - 1)];
+            List.AddRect(UIRect{ Left + A, Top, B - A, LineHeight }, SelectionColor.Pack(InContext.Opacity));
+        }
+        if(Text.empty() && !Placeholder.empty() && !bFocused)
+        {
+            /* The placeholder, in its own colour: laid out each paint (an empty field is cheap). */
+            if(UIFont* Font = InContext.Fonts ? InContext.Fonts->Find(this->Font, int(std::lround(FontSize * InContext.Scale))) : nullptr)
+            {
+                UITextLayout Layout;
+                UIFontCache::Layout(*Font, Placeholder, 0.0f, EUIJustify::Left, 1.0f, Layout);
+                const uint32_t Packed = PlaceholderColor.Pack(InContext.Opacity);
+                for(RenderCore::UIVertex& Each : Layout.Quads) { Each.X += Left; Each.Y += Top; Each.Color = Packed; }
+                List.AddQuads(Layout.Quads.data(), uint32_t(Layout.Quads.size()), List.FindOrAddTexture(Font->GetTextureKey()));
+            }
+        }
+        else if(!Glyphs.empty())
+        {
+            thread_local std::vector<RenderCore::UIVertex> Scratch;
+            Scratch.assign(Glyphs.begin(), Glyphs.end());
+            const uint32_t Packed = Color.Pack(InContext.Opacity);
+            for(RenderCore::UIVertex& Each : Scratch) { Each.X += Left; Each.Y += Top; Each.Color = Packed; }
+            const uint32_t Texture = List.FindOrAddTexture(GlyphTexture);
+            List.AddQuads(Scratch.data(), uint32_t(Scratch.size()), Texture);
+            List.SetSolidFill(Texture, WhiteU, WhiteV);
+        }
+        if(bFocused && Blink < CARET_BLINK_SECONDS)
+        {
+            const float Thick = std::max(std::round(InContext.Scale * 2.0f), 1.0f);
+            List.AddRect(UIRect{ std::round(Left + CaretX), Top, Thick, LineHeight }, CaretColor.Pack(InContext.Opacity));
+        }
+        List.PopClip();
+    }
+
+    size_t UITextInput::CaretAtPixel(const float InX) const
+    {
+        /* The nearest boundary between characters. */
+        if(Carets.empty()) return 0;
+        const std::string Now = Shown();
+        size_t Best = 0;
+        float  BestDistance = std::abs(InX - Carets[0]);
+        for(size_t At = NextUtf8(Now, 0); At <= Now.size(); At = At < Now.size() ? NextUtf8(Now, At) : Now.size() + 1)
+        {
+            const float Distance = std::abs(InX - Carets[std::min(At, Carets.size() - 1)]);
+            if(Distance < BestDistance) { Best = At; BestDistance = Distance; }
+        }
+        return TextOffsetForShown(Best);
+    }
+
+    void UITextInput::Select(const size_t InAnchor, const size_t InCaret)
+    {
+        Anchor = std::min(InAnchor, Text.size());
+        Caret  = std::min(InCaret, Text.size());
+        Blink  = 0.0f;
+        if(GetDocument()) GetDocument()->MarkPaintDirty();
+    }
+
+    bool UITextInput::Change(const std::string& InText, const size_t InCaret)
+    {
+        UIDocumentInstance* Doc = GetDocument();
+        if(!Doc || InText == Text) { Select(InCaret, InCaret); return false; }
+        Doc->SetInputValue(*this, "Text", UIValue::String(InText));   // two-way
+        Select(InCaret, InCaret);
+        QueueActions(OnChanged);
+        return true;
+    }
+
+    bool UITextInput::DeleteSelection()
+    {
+        if(!HasSelection()) return false;
+        const size_t Start = SelectionStart();
+        return Change(Text.substr(0, Start) + Text.substr(SelectionEnd()), Start);
+    }
+
+    bool UITextInput::Insert(const std::string& InUtf8)
+    {
+        /* What may be typed: printable text; digits (and one '.', a leading '-') for numbers. */
+        const std::string Before = Text.substr(0, SelectionStart()), After = Text.substr(SelectionEnd());
+        std::string Accepted;
+        size_t Count = CountCodepoints(Before) + CountCodepoints(After);
+        bool bDot = (Before + After).find('.') != std::string::npos;
+        for(size_t At = 0; At < InUtf8.size();)
+        {
+            const uint32_t Code = DecodeUtf8(InUtf8, At);
+            if(Code < 0x20 || Code == 0x7F) continue;
+            if(Mode != EUITextMode::Text)
+            {
+                const bool bDigit = Code >= '0' && Code <= '9';
+                const bool bMinus = Code == '-' && Before.empty() && Accepted.empty();
+                const bool bPoint = Code == '.' && Mode == EUITextMode::Number && !bDot;
+                if(!bDigit && !bMinus && !bPoint) continue;
+                if(bPoint) bDot = true;
+            }
+            if(MaxLength > 0 && Count >= size_t(MaxLength)) break;
+            AppendUtf8(Accepted, Code);
+            ++Count;
+        }
+        if(Accepted.empty() && !HasSelection()) return false;
+        return Change(Before + Accepted + After, Before.size() + Accepted.size());
+    }
+
+    bool UITextInput::OnTextInput(const UIInputFrame& InFrame)
+    {
+        bool bUsed = false;
+        const auto Move = [&](const size_t InTo)
+        {
+            Select(InFrame.bShift ? Anchor : InTo, InTo);
+            bUsed = true;
+        };
+
+        /* In a frame's order of intent: select, move, delete, the clipboard, then what was typed. */
+        if(InFrame.bSelectAll) { Select(0, Text.size()); bUsed = true; }
+        for(int Each = 0; Each < InFrame.Left; ++Each)
+        {
+            Move(HasSelection() && !InFrame.bShift ? SelectionStart() : PrevUtf8(Text, Caret));
+        }
+        for(int Each = 0; Each < InFrame.Right; ++Each)
+        {
+            Move(HasSelection() && !InFrame.bShift ? SelectionEnd() : NextUtf8(Text, Caret));
+        }
+        if(InFrame.Home) Move(0);
+        if(InFrame.End)  Move(Text.size());
+        for(int Each = 0; Each < InFrame.Backspace; ++Each)
+        {
+            if(!DeleteSelection() && Caret > 0)
+            {
+                const size_t From = PrevUtf8(Text, Caret);
+                Change(Text.substr(0, From) + Text.substr(Caret), From);
+            }
+            bUsed = true;
+        }
+        for(int Each = 0; Each < InFrame.Delete; ++Each)
+        {
+            if(!DeleteSelection() && Caret < Text.size())
+            {
+                Change(Text.substr(0, Caret) + Text.substr(NextUtf8(Text, Caret)), Caret);
+            }
+            bUsed = true;
+        }
+        if((InFrame.bCopy || InFrame.bCut) && HasSelection() && !bPassword)
+        {
+            if(UISystem* System = GetDocument() ? GetDocument()->GetSystem() : nullptr)
+            {
+                System->SetClipboardText(Text.substr(SelectionStart(), SelectionEnd() - SelectionStart()));
+            }
+            if(InFrame.bCut) DeleteSelection();
+            bUsed = true;
+        }
+        if(InFrame.bPaste)
+        {
+            if(UISystem* System = GetDocument() ? GetDocument()->GetSystem() : nullptr)
+            {
+                std::string Pasted = System->GetClipboardText();
+                Pasted = Pasted.substr(0, Pasted.find_first_of("\r\n"));   // one line
+                Insert(Pasted);
+            }
+            bUsed = true;
+        }
+        if(InFrame.Text[0] != '\0' && !InFrame.bCtrl) { Insert(InFrame.Text); bUsed = true; }
+        if(InFrame.bReturn)
+        {
+            /* Committed: Return keeps focus, for typing on. */
+            if(Text != TextAtFocus) { QueueActions(OnCommit); TextAtFocus = Text; }
+            bUsed = true;
+        }
+        return bUsed;
+    }
+
+    void UITextInput::OnPointer(const UIPointerEvent& InEvent)
+    {
+        if(!GetDocument()) return;
+        const float X = InEvent.Pixels.X - TextLeft;
+        switch(InEvent.Kind)
+        {
+            case UIPointerEvent::PE_Press:   bDragging = true; Select(CaretAtPixel(X), CaretAtPixel(X)); break;
+            case UIPointerEvent::PE_Move:    if(bDragging) Select(Anchor, CaretAtPixel(X)); break;
+            case UIPointerEvent::PE_Release: bDragging = false; break;
+            default: break;
+        }
+    }
+
+    void UITextInput::OnFocusChanged(const bool bInFocused)
+    {
+        if(bInFocused)
+        {
+            TextAtFocus = Text;
+            Select(Text.size(), Text.size());
+            return;
+        }
+        bDragging = false;
+        if(Text != TextAtFocus) { QueueActions(OnCommit); TextAtFocus = Text; }
+        Select(Caret, Caret);
+    }
+
+    bool UITextInput::OnFocusedTick(const float InDeltaSeconds)
+    {
+        const bool bWasOn = Blink < CARET_BLINK_SECONDS;
+        Blink = std::fmod(Blink + InDeltaSeconds, CARET_BLINK_SECONDS * 2.0f);
+        return bWasOn != (Blink < CARET_BLINK_SECONDS);
+    }
+
+    void UITextInput::OnPropertyChanged(const UIPropertyDesc& /*InProperty*/)
+    {
+        /* Text from a binding or a script: the caret stays inside it. */
+        Caret  = std::min(Caret, Text.size());
+        Anchor = std::min(Anchor, Text.size());
+        LaidOutGeneration = ~uint64_t(0);
+    }
+
+    double UITextInput::GetActionValue() const
+    {
+        return Mode == EUITextMode::Text ? 0.0 : std::atof(Text.c_str());
+    }
+
     UIVec2 UISpacer::MeasureContent(UILayoutContext& /*InContext*/)
     {
         return Size;
@@ -1104,6 +1420,30 @@ namespace UI
         Type.Field<&UIWrapBox::ItemSpacing>("ItemSpacing", UPF_Layout);
         Type.Field<&UIWrapBox::LineSpacing>("LineSpacing", UPF_Layout);
         Type.Enum<&UIWrapBox::LineAlign>("LineAlign", GetEnumNames(EUIJustify()), UPF_Layout);
+    }
+
+    UI_DEFINE_WIDGET(UITextInput, UIWidget, "TextInput")
+    {
+        Type.Palette("Common");
+        Type.Category("Text");
+        Type.Field<&UITextInput::Text>("Text", UPF_Bindable).Tooltip("{Bind:Key} is two-way: typing writes the store");
+        Type.Field<&UITextInput::Placeholder>("Placeholder").Tooltip("Shown while it is empty");
+        Type.Field<&UITextInput::MaxLength>("MaxLength").Tooltip("Characters; 0 any");
+        Type.Enum<&UITextInput::Mode>("Mode", GetEnumNames(EUITextMode()));
+        Type.Field<&UITextInput::bPassword>("Password").Tooltip("Shown as '*', never copied");
+        Type.Asset<&UITextInput::Font>("Font", EUIAssetKind::Font);
+        Type.Field<&UITextInput::FontSize>("FontSize", UPF_Layout);
+        Type.Field<&UITextInput::Color>("Color");
+        Type.Field<&UITextInput::PlaceholderColor>("PlaceholderColor");
+        Type.Field<&UITextInput::SelectionColor>("SelectionColor");
+        Type.Field<&UITextInput::CaretColor>("CaretColor");
+        Type.Category("Appearance");
+        Type.Field<&UITextInput::Padding>("Padding", UPF_Layout);
+        Type.Brush<&UITextInput::Background>("Background");
+        Type.Brush<&UITextInput::FocusedBrush>("FocusedBrush");
+        Type.Category("Events");
+        Type.Action<&UITextInput::OnChanged>("OnChanged").Tooltip("Each edit; $value the number (Integer, Number modes)");
+        Type.Action<&UITextInput::OnCommit>("OnCommit").Tooltip("Return, or leaving it, if it changed");
     }
 
     UI_DEFINE_WIDGET(UISpacer, UIWidget, "Spacer")
