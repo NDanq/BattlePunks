@@ -4,6 +4,7 @@
 #if WITH_EDITOR
 
 #include <functional>
+#include <map>
 #include <string>
 
 #include <QColor>
@@ -143,8 +144,10 @@ namespace EditorGraphs
     GraphEditorTab* CreateGraph(const NodeGraph::Schema& InSchema, QWidget* InParent, const QString& InFolder = QString());
 
     /* Writes a starter graph of InSchema at InPath (compiled and staged) without
-     * opening it. False with OutError if it could not be written. */
-    bool CreateGraphFile(const NodeGraph::Schema& InSchema, const QString& InPath, QString& OutError);
+     * opening it, with InProperties as its graph properties (a UI graph's
+     * Document). False with OutError if it could not be written. */
+    bool CreateGraphFile(const NodeGraph::Schema& InSchema, const QString& InPath, QString& OutError,
+                         const std::map<std::string, std::string>& InProperties = {});
 
     /* Offers to save each dirty graph. False if cancelled. */
     bool CloseAllGraphs();

@@ -21,6 +21,11 @@
 #include "Private/Editor/UI/UIDesignDocument.h"
 #include "Private/Editor/UI/UIDetailsPanel.h"
 #include "Private/Editor/UI/UIHierarchyPanel.h"
+#include "Private/Editor/UI/UILogicLink.h"
+#include "Private/Editor/Graph/GraphDocument.h"
+#include "Private/Editor/Graph/GraphEditorTab.h"
+#include "Private/Editor/Graph/GraphEditorWindow.h"
+#include "Public/NodeGraph/GraphFile.h"
 
 static int GChecks   = 0;
 static int GFailures = 0;
@@ -217,6 +222,99 @@ namespace
 
         Expect(Hierarchy.topLevelItemCount() == 1 && Hierarchy.topLevelItem(0)->childCount() == 2, "the hierarchy is the document's tree");
     }
+
+    void TestLogic(const QString& InDir)
+    {
+        std::printf("[logic graph]\n");
+        const QString Path = InDir + QStringLiteral("/Logic.nmui");
+        QFile File(Path);
+        File.open(QIODevice::WriteOnly);
+        File.write(R"XML(<?xml version="1.0" encoding="utf-8"?>
+<UI Format="1" ReferenceSize="1920,1080" InputMode="UIOnly">
+  <Canvas Name="Root">
+    <Button Name="Play" OnClick="Native:Game.Quit"/>
+    <CheckBox Name="Shadows"/>
+  </Canvas>
+</UI>
+)XML");
+        File.close();
+
+        UIDesignDocument Design;
+        Expect(Design.Load(Path), "a document to give logic");
+        Expect(EditorUILogic::MakeHandlerName(QStringLiteral("Play"), QStringLiteral("OnClick")) == QStringLiteral("Play_OnClick")
+               && EditorUILogic::MakeHandlerName(QString(), QStringLiteral("OnBack")) == QStringLiteral("Document_OnBack")
+               && EditorUILogic::MakeHandlerName(QStringLiteral("2 Up"), QStringLiteral("OnClick")) == QStringLiteral("_2_Up_OnClick"),
+               "handler names are identifiers from the widget and its event");
+        Expect(EditorUILogic::FindGraphActions(QStringLiteral("Native:UI.Close; Graph:A_B ;Graph: C")) == QStringList({ QStringLiteral("A_B"), QStringLiteral("C") }),
+               "Graph: actions are found in action text");
+
+        const int Play = Design.GetAsset().FindWidget("Play");
+        const QString Handler = EditorUILogic::AddHandler(Design, Play, QStringLiteral("OnClick"), nullptr);
+        PumpFor(50);
+        const QString GraphPath = InDir + QStringLiteral("/Logic.ui.nmgraph");
+        Expect(Handler == QStringLiteral("Play_OnClick") && QFileInfo::exists(GraphPath), "Graph handler makes the logic graph beside it");
+        Expect(Get(Design, "Play", "OnClick") == "Native:Game.Quit; Graph:Play_OnClick", "and adds Graph:<Handler> to the action");
+        Expect(QFileInfo(QString::fromStdString(Design.GetAsset().Settings.Logic)).fileName() == QStringLiteral("Logic.ui.nmgraph"),
+               "the document's Logic names it");
+
+        NodeGraph::Graph Saved;
+        std::string Error;
+        Expect(NodeGraph::LoadGraphFile(GraphPath.toStdString(), Saved, Error), "the graph was saved");
+        int Handlers = 0;
+        for(const NodeGraph::Node& Each : Saved.Nodes)
+        {
+            if(Each.Type == "UI.Event.Handler" && Each.GetProperty("Handler") == "Play_OnClick" && Each.GetProperty("Widget") == "Play") ++Handlers;
+        }
+        Expect(Handlers == 1 && Saved.GetProperty("Document").find("Logic.nmui") != std::string::npos,
+               "with the UI Event, and the document it is the logic of");
+
+        Expect(EditorUILogic::AddHandler(Design, Play, QStringLiteral("OnClick"), nullptr) == Handler, "asking again finds it");
+        PumpFor(50);
+        Expect(EditorUILogic::GetHandlers(Design).count(QStringLiteral("Play_OnClick")) == 1
+               && Get(Design, "Play", "OnClick") == "Native:Game.Quit; Graph:Play_OnClick", "no second node, no second action");
+
+        EditorUILogic::AddHandler(Design, Design.GetAsset().FindWidget("Shadows"), QStringLiteral("OnChanged"), nullptr);
+        EditorUILogic::AddHandler(Design, -1, QStringLiteral("OnBack"), nullptr);
+        PumpFor(50);
+        Expect(Design.GetAsset().Settings.OnBack == "Graph:Document_OnBack", "a document event gets a handler too");
+        bool bBool = false;
+        if(GraphEditorWindow* Window = GraphEditorWindow::Find())
+        {
+            for(GraphEditorTab* Tab : Window->GetTabs())
+            {
+                for(const NodeGraph::Node& Each : Tab->GetDocument().GetGraph().Nodes)
+                {
+                    if(Each.GetProperty("Handler") == "Shadows_OnChanged") bBool = Each.GetProperty("ValueType") == "Bool";
+                }
+            }
+        }
+        Expect(bBool, "a check box's OnChanged handler takes a bool");
+        Expect(EditorUILogic::RevealHandler(Design, QStringLiteral("Play_OnClick"), nullptr)
+               && !EditorUILogic::RevealHandler(Design, QStringLiteral("Nope"), nullptr), "a handler is revealed by name");
+
+        Design.GetUndoStack()->undo();   // the OnBack action
+        Expect(Design.GetAsset().Settings.OnBack.empty(), "undo takes an added action back");
+
+        /* A field naming a handler the graph lacks is flagged. */
+        Design.SetProperty(Play, QStringLiteral("OnClick"), QStringLiteral("Graph:Gone"));
+        UIDetailsPanel Details(Design);
+        Design.Select(Play);
+        PumpFor(50);
+        QWidget* Field = Details.FindEditor(QStringLiteral("OnClick"));
+        QLineEdit* Edit = Field ? Field->findChild<QLineEdit*>() : nullptr;
+        Expect(Edit && Edit->property("MissingHandler").toBool(), "an action naming a missing handler is flagged");
+        Design.SetProperty(Play, QStringLiteral("OnClick"), QStringLiteral("Graph:Play_OnClick"));
+        PumpFor(50);
+        Field = Details.FindEditor(QStringLiteral("OnClick"));
+        Edit  = Field ? Field->findChild<QLineEdit*>() : nullptr;
+        Expect(Edit && !Edit->property("MissingHandler").toBool(), "one it has is not");
+
+        if(GraphEditorWindow* Window = GraphEditorWindow::Find())
+        {
+            for(GraphEditorTab* Tab : Window->GetTabs()) { Tab->GetDocument().GetHistory().setClean(); }
+            Window->close();
+        }
+    }
 }
 
 int main(int argc, char** argv)
@@ -231,6 +329,7 @@ int main(int argc, char** argv)
     QTemporaryDir Dir;
     TestDocument(Dir.path());
     TestDetails(Dir.path());
+    TestLogic(Dir.path());
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
