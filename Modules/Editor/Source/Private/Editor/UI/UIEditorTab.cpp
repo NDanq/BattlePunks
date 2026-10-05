@@ -10,6 +10,7 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QStatusBar>
+#include <QTimer>
 #include <QToolBar>
 #include <QUndoStack>
 
@@ -17,6 +18,7 @@
 #include "Private/Editor/UI/UIDesignDocument.h"
 #include "Private/Editor/UI/UIDesignerViewport.h"
 #include "Private/Editor/UI/UIDetailsPanel.h"
+#include "Private/Editor/UI/UIGraphLink.h"
 #include "Private/Editor/UI/UIHierarchyPanel.h"
 #include "Private/Editor/UI/UIPalettePanel.h"
 
@@ -52,6 +54,44 @@ UIEditorTab::UIEditorTab(EditorContext& InContext, QWidget* InParent)
     connect(Canvas, &UIDesignerViewport::StatusText, Status, &QLabel::setText);
     connect(Details, &UIDetailsPanel::StatusText, Status, &QLabel::setText);
     connect(Design, &UIDesignDocument::DirtyChanged, this, &UIEditorTab::TitleChanged);
+
+    /* The UI graph follows renamed widgets, and says which handlers a delete left behind.
+     * Asked on the next turn: never inside the edit that changed the name. */
+    connect(Design, &UIDesignDocument::WidgetRenamed, this, [this](const QString& InOld, const QString& InNew)
+    {
+        QTimer::singleShot(0, this, [this, InOld, InNew]()
+        {
+            const QStringList Handlers = EditorUIGraph::HandlersForWidget(*Design, InOld);
+            if(Handlers.isEmpty()) return;
+            QStringList Renamed;
+            for(const QString& Each : Handlers)
+            {
+                if(Each.startsWith(EditorUIGraph::MakeHandlerName(InOld, QString()))) Renamed << Each;
+            }
+            bool bRename = false;
+            if(!Renamed.isEmpty())
+            {
+                const QMessageBox::StandardButton Answer = QMessageBox::question(this, QStringLiteral("Rename Handlers"),
+                    QStringLiteral("%1 has UI graph handlers named for it:\n\n%2\n\nRename them for %3 too (and the actions that call them)?")
+                        .arg(InOld, Renamed.join(QStringLiteral(", ")), InNew),
+                    QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes);
+                bRename = Answer == QMessageBox::Yes;
+            }
+            const QStringList Done = EditorUIGraph::RenameWidgetHandlers(*Design, InOld, InNew, bRename);
+            Status->setText(Done.isEmpty() ? QStringLiteral("The UI graph's handlers now note %1").arg(InNew)
+                                           : QStringLiteral("Renamed in the UI graph: %1").arg(Done.join(QStringLiteral(", "))));
+        });
+    });
+    connect(Design, &UIDesignDocument::WidgetsRemoved, this, [this](const QStringList& InNames)
+    {
+        QStringList Orphans;
+        for(const QString& Each : InNames) { Orphans << EditorUIGraph::HandlersForWidget(*Design, Each); }
+        if(!Orphans.isEmpty())
+        {
+            Status->setText(QStringLiteral("The UI graph still has handlers for what was deleted: %1 (nothing calls them now)")
+                            .arg(Orphans.join(QStringLiteral(", "))));
+        }
+    });
 }
 
 UIEditorTab::~UIEditorTab()

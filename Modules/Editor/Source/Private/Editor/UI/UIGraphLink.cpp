@@ -3,6 +3,8 @@
 #include "Private/Editor/UI/UIGraphLink.h"
 
 #include <algorithm>
+#include <functional>
+#include <map>
 
 #include <QDir>
 #include <QFileInfo>
@@ -83,6 +85,36 @@ namespace
             if(ToQ(Each.Name) == InProperty) return ToQ(Each.Value);
         }
         return QString();
+    }
+}
+
+namespace
+{
+    /* InEdit applied to the UI graph: through its open tab (one undo step;
+     * saved if it had no other edits), else its file (compiled, saved, staged). */
+    bool EditGraph(const QString& InPath, const QString& InLabel, const std::function<void(NodeGraph::Graph&)>& InEdit)
+    {
+        if(GraphEditorTab* Tab = FindOpenTab(InPath))
+        {
+            GraphDocument& Doc = Tab->GetDocument();
+            const bool bWasClean = !Doc.IsDirty();
+            Doc.Edit(InLabel, InEdit);
+            if(bWasClean)
+            {
+                QString Error, Message;
+                Doc.Save(Error, Message);
+            }
+            return true;
+        }
+        NodeGraph::Graph Graph;
+        std::string Error;
+        if(!NodeGraph::LoadGraphFile(Utf8(InPath), Graph, Error)) return false;
+        InEdit(Graph);
+        NodeGraph::CompileResult Result;
+        if(!EditorGraphs::CompileAndSave(InPath, Graph, Result, Error)) return false;
+        QString Message;
+        EditorGraphs::StageOutput(InPath, Graph, Result, Message);
+        return true;
     }
 }
 
@@ -210,6 +242,98 @@ namespace EditorUIGraph
         const NodeGraph::Node* Found = FindHandlerNode(Tab->GetDocument().GetGraph(), Utf8(InHandler));
         if(Found) Tab->RevealNode(Found->Id);
         return Found != nullptr;
+    }
+
+    QStringList HandlersForWidget(const UIDesignDocument& InDesign, const QString& InWidget)
+    {
+        const QString Path = GetGraphPath(InDesign);
+        if(Path.isEmpty() || !QFileInfo::exists(Path)) return {};
+        NodeGraph::Graph Loaded;
+        const NodeGraph::Graph* Graph = nullptr;
+        if(GraphEditorTab* Tab = FindOpenTab(Path)) { Graph = &Tab->GetDocument().GetGraph(); }
+        else
+        {
+            std::string Error;
+            if(!NodeGraph::LoadGraphFile(Utf8(Path), Loaded, Error)) return {};
+            Graph = &Loaded;
+        }
+        QStringList Out;
+        for(const NodeGraph::Node& Each : Graph->Nodes)
+        {
+            if(Each.Type == HANDLER_TYPE && ToQ(Each.GetProperty("Widget")) == InWidget) Out << ToQ(Each.GetProperty("Handler", "Handler"));
+        }
+        return Out;
+    }
+
+    QStringList RenameWidgetHandlers(UIDesignDocument& InDesign, const QString& InOld, const QString& InNew, const bool bInRenameHandlers)
+    {
+        const QString Path = GetGraphPath(InDesign);
+        if(Path.isEmpty() || !QFileInfo::exists(Path) || InOld == InNew) return {};
+
+        /* Which handlers are named for the widget, and what they become. */
+        std::map<std::string, std::string> Renames;
+        QStringList Taken = GetHandlers(InDesign);
+        const std::string Old = Utf8(InOld), New = Utf8(InNew);
+        const auto Plan = [&](const NodeGraph::Graph& InGraph)
+        {
+            for(const NodeGraph::Node& Each : InGraph.Nodes)
+            {
+                if(Each.Type != HANDLER_TYPE || Each.GetProperty("Widget") != Old) continue;
+                const QString Event = ToQ(Each.GetProperty("Event"));
+                const std::string Handler = Each.GetProperty("Handler", "Handler");
+                if(!bInRenameHandlers || Handler != Utf8(MakeHandlerName(InOld, Event))) continue;
+                const QString Renamed = MakeHandlerName(InNew, Event);
+                if(Taken.contains(Renamed)) continue;   // a name already used stays as it was
+                Renames[Handler] = Utf8(Renamed);
+                Taken << Renamed;
+            }
+        };
+        if(GraphEditorTab* Tab = FindOpenTab(Path)) { Plan(Tab->GetDocument().GetGraph()); }
+        else
+        {
+            NodeGraph::Graph Loaded;
+            std::string Error;
+            if(NodeGraph::LoadGraphFile(Utf8(Path), Loaded, Error)) Plan(Loaded);
+        }
+
+        EditGraph(Path, QStringLiteral("Rename %1 to %2").arg(InOld, InNew), [&](NodeGraph::Graph& InGraph)
+        {
+            for(NodeGraph::Node& Each : InGraph.Nodes)
+            {
+                if(Each.Type != HANDLER_TYPE || Each.GetProperty("Widget") != Old) continue;
+                Each.Properties["Widget"] = New;
+                const auto Found = Renames.find(Each.GetProperty("Handler", "Handler"));
+                if(Found != Renames.end()) Each.Properties["Handler"] = Found->second;
+            }
+        });
+
+        /* The document's Graph: actions that named them. */
+        QStringList Done;
+        if(!Renames.empty())
+        {
+            const std::map<std::string, std::string> Names = Renames;
+            InDesign.Edit(QStringLiteral("Rename handlers of %1").arg(InNew), [Names](UI::UIDocumentAsset& InAsset)
+            {
+                const auto Rewrite = [&Names](std::string& InText)
+                {
+                    for(const auto& Each : Names)
+                    {
+                        const QRegularExpression Pattern(QStringLiteral("(Graph\\s*:\\s*)%1\\b").arg(ToQ(Each.first)));
+                        InText = Utf8(ToQ(InText).replace(Pattern, QStringLiteral("\\1") + ToQ(Each.second)));
+                    }
+                };
+                for(UI::UIWidgetDesc& Widget : InAsset.Widgets)
+                {
+                    for(UI::UIPropertyText& Property : Widget.Properties)
+                    {
+                        if(Property.Value.find("Graph") != std::string::npos) Rewrite(Property.Value);
+                    }
+                }
+                for(std::string* Setting : { &InAsset.Settings.OnOpen, &InAsset.Settings.OnClose, &InAsset.Settings.OnBack }) { Rewrite(*Setting); }
+            });
+            for(const auto& Each : Renames) Done << ToQ(Each.second);
+        }
+        return Done;
     }
 
     QStringList GetHandlers(const UIDesignDocument& InDesign)

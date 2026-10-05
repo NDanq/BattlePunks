@@ -309,6 +309,39 @@ namespace
         Edit  = Field ? Field->findChild<QLineEdit*>() : nullptr;
         Expect(Edit && !Edit->property("MissingHandler").toBool(), "one it has is not");
 
+        /* Renames and deletes: the graph follows (UIEditorTab asks; here, directly). */
+        QStringList Renamed, Removed;
+        QObject::connect(&Design, &UIDesignDocument::WidgetRenamed, [&](const QString& InOld, const QString& InNew) { Renamed << InOld << InNew; });
+        QObject::connect(&Design, &UIDesignDocument::WidgetsRemoved, [&](const QStringList& InNames) { Removed << InNames; });
+        Design.SetProperty(Play, QStringLiteral("Name"), QStringLiteral("Start"));
+        Expect(Renamed == QStringList({ QStringLiteral("Play"), QStringLiteral("Start") }), "a rename is announced");
+        Expect(EditorUIGraph::HandlersForWidget(Design, QStringLiteral("Play")) == QStringList({ QStringLiteral("Play_OnClick") }),
+               "the handlers made for the old name are found");
+        /* A handler of its own name, for the same widget: it stays put through a rename. */
+        EditorUIGraph::RevealHandler(Design, QStringLiteral("Play_OnClick"), nullptr);   // the graph is open
+        for(GraphEditorTab* Each : GraphEditorWindow::Find()->GetTabs())
+        {
+            Each->GetDocument().AddNode("UI.Event.Handler", QPointF(0, 900), { { "Handler", "Mine" }, { "Widget", "Play" }, { "Event", "OnHovered" } });
+        }
+        const QStringList Done = EditorUIGraph::RenameWidgetHandlers(Design, QStringLiteral("Play"), QStringLiteral("Start"), true);
+        PumpFor(50);
+        const QStringList Now = EditorUIGraph::GetHandlers(Design);
+        Expect(Done == QStringList({ QStringLiteral("Start_OnClick") }) && Now.contains(QStringLiteral("Start_OnClick"))
+               && !Now.contains(QStringLiteral("Play_OnClick")) && Now.contains(QStringLiteral("Mine")),
+               "a handler named for the widget follows it; one with its own name stays");
+        Expect(Get(Design, "Start", "OnClick") == "Graph:Start_OnClick", "and the action calling it is rewritten");
+        Expect(EditorUIGraph::HandlersForWidget(Design, QStringLiteral("Start")).size() == 2, "every handler now notes the new name");
+
+        Renamed.clear();
+        Design.GetUndoStack()->undo();
+        Expect(Renamed.isEmpty(), "an undo announces nothing");
+        Design.GetUndoStack()->redo();
+
+        Design.Select(Design.GetAsset().FindWidget("Start"));
+        Design.DeleteSelected();
+        Expect(Removed == QStringList({ QStringLiteral("Start") }), "a delete names what went");
+        Expect(EditorUIGraph::HandlersForWidget(Design, QStringLiteral("Start")).size() == 2, "and its handlers are found to report");
+
         if(GraphEditorWindow* Window = GraphEditorWindow::Find())
         {
             for(GraphEditorTab* Tab : Window->GetTabs()) { Tab->GetDocument().GetHistory().setClean(); }
