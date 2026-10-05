@@ -190,6 +190,12 @@ namespace UI
         bool    SetPropertyText(UIWidget& InWidget, const std::string& InName, const std::string& InText);
         UIValue GetProperty(const UIWidget& InWidget, const std::string& InName) const;
 
+        /* An input widget's own change (a check box ticked, a slider dragged):
+         * sets InName keeping its binding, and a whole-value binding writes
+         * the new value back to the data store -- two-way, so the game and
+         * anything else bound to the key see it. False if nothing changed. */
+        bool    SetInputValue(UIWidget& InWidget, const std::string& InName, const UIValue& InValue);
+
         void MarkLayoutDirty() { bLayoutDirty = true; bPaintDirty = true; }
         void MarkPaintDirty()  { bPaintDirty = true; }
         bool IsLayoutDirty() const { return bLayoutDirty; }

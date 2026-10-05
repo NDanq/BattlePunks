@@ -112,7 +112,7 @@ static void TestRegistry()
 
     int Palette = 0;
     for(const UIWidgetType* Each : GetWidgetTypes()) { if(!Each->Palette.empty()) ++Palette; }
-    Expect(Palette == 11, "the eleven widgets are offered in the palette");
+    Expect(Palette == 13, "the thirteen widgets are offered in the palette");
 
     const UIWidgetType* Text = FindWidgetType("Text");
     const int32_t TextProperty = Text ? Text->FindProperty("Text") : -1;
@@ -543,8 +543,17 @@ static void CloseAction(const UIActionContext& InContext)
 static int GBacks = 0;
 static void BackAction(const UIActionContext&) { ++GBacks; }
 
+static int    GValues = 0;
+static double GLastValue = -1.0;
+static void ValueAction(const UIActionContext& InContext)
+{
+    ++GValues;
+    GLastValue = InContext.Args->Count > 0 ? InContext.Args->Args[0].Number : -1.0;
+}
+
 UI_DEFINE_ACTIONS(Test)
 {
+    Actions.Add("Value", &ValueAction, "Records its number");
     Actions.Add("Click", &ClickAction, "Counts a click");
     Actions.Add("Close", &CloseAction);
     Actions.Add("Back", &BackAction);
@@ -618,6 +627,120 @@ static void TestSwitcher()
 
     Pages->ActiveIndex = 9;
     Expect(Pages->GetActiveChild() == int32_t(Doc.FindWidget("Third")->GetIndex()), "an index past the last shows the last");
+}
+
+// === CheckBox and Slider ======================================================
+
+static void TestInputWidgets()
+{
+    std::printf("[check box and slider]\n");
+    UISystem System;
+    System.SetValue("Opt.Shadows", UIValue::Bool(true));
+    System.SetValue("Opt.Speed", UIValue::Number(1.0));
+    const UIDocumentHandle Handle = System.OpenAsset(Parse(R"XML(<UI InputMode="UIOnly" ReferenceSize="1000,1000" ScaleMode="None">
+  <Canvas>
+    <VerticalBox Position="100,100" AutoSize="true" Spacing="10">
+      <CheckBox Name="Shadows" Checked="{Bind:Opt.Shadows}" OnChanged="Native:Test.Value($value)" InitialFocus="true">
+        <Text Name="ShadowsLabel" Text="Shadows" FontSize="20"/>
+      </CheckBox>
+      <Slider Name="Speed" Size="400,40" ThumbSize="20,40" Min="0.25" Max="3" Step="0.05" Value="{Bind:Opt.Speed}" OnChanged="Native:Test.Value($value)"/>
+      <Slider Name="Free" Size="200,20" ThumbSize="0,20"/>
+    </VerticalBox>
+    <Text Name="SpeedText" Position="0,500" AutoSize="true" Text="x{Bind:Opt.Speed}"/>
+  </Canvas>
+</UI>)XML", "a settings document parses"), "Test/Settings.nmui");
+    UIDocumentInstance& Doc = *System.Find(Handle);
+    System.Tick(0.016f);
+    System.Update(UIVec2{ 1000, 1000 });
+    auto* Check  = dynamic_cast<UICheckBox*>(Doc.FindWidget("Shadows"));
+    auto* Slider = dynamic_cast<UISlider*>(Doc.FindWidget("Speed"));
+    auto* Free   = dynamic_cast<UISlider*>(Doc.FindWidget("Free"));
+    Expect(Check && Slider && Free, "CheckBox and Slider are made from XML");
+    if(!Check || !Slider || !Free) return;
+    Expect(Check->bChecked && Near(Slider->Value, 1.0f), "both show the store's values");
+
+    /* The check box: its row is the box, the gap and the label. */
+    const UIRect Row = RectOf(Doc, "Shadows"), Label = RectOf(Doc, "ShadowsLabel");
+    Expect(Near(Label.X, Row.X + 32 + 16) && Row.H >= 32, "its label sits right of the box");
+
+    GValues = 0;
+    const UIVec2 OnLabel = CentreOf(Doc, "ShadowsLabel");
+    System.ProcessInput(Pointer(OnLabel, true, false));
+    System.ProcessInput(Pointer(OnLabel, false, true));
+    System.RunQueuedActions();
+    const UIValue* Shadows = System.GetValue("Opt.Shadows");
+    Expect(!Check->bChecked && Shadows && Shadows->Type == EUIValueType::Bool && !Shadows->B, "a click on its label unticks it, and writes the store");
+    Expect(GValues == 1 && GLastValue == 0.0, "OnChanged fires with $value 0");
+
+    UIInputFrame Accept;
+    Accept.bAccept = true;
+    System.ProcessInput(Accept);
+    System.RunQueuedActions();
+    Expect(Check->bChecked && System.GetValue("Opt.Shadows")->B && GLastValue == 1.0, "Accept ticks the focused box back, $value 1");
+
+    System.SetValue("Opt.Shadows", UIValue::Bool(false));
+    System.Tick(0.016f);
+    Expect(!Check->bChecked, "and the store still drives it: the binding is two-way");
+
+    /* The slider: travel is its width less a thumb; a press jumps there. */
+    System.Update(UIVec2{ 1000, 1000 });
+    const UIRect S = Doc.GetPixelRect(Slider->GetIndex());
+    const auto At = [&S](const float InT) { return UIVec2{ S.X + 10.0f + (S.W - 20.0f) * InT, S.Y + S.H * 0.5f }; };
+    GValues = 0;
+    System.ProcessInput(Pointer(At(1.0f), true, false));
+    System.RunQueuedActions();
+    Expect(Near(Slider->Value, 3.0f) && GValues == 1 && Near(float(GLastValue), 3.0f), "a press at its end jumps to Max");
+
+    UIInputFrame Drag = Pointer(At(0.5f), false, false);
+    Drag.MouseDown[0] = true;
+    System.ProcessInput(Drag);
+    System.RunQueuedActions();
+    Expect(Near(Slider->Value, 1.6f, 0.001f) && GValues == 2, "dragging moves it, snapped to Step (0.25 + 27 * 0.05)");
+    const UIValue* Speed = System.GetValue("Opt.Speed");
+    Expect(Speed && Speed->AsString() == "1.6", "the store holds the snapped value, not a float's noise");
+
+    Drag.MousePixels = UIVec2{ S.X - 300.0f, S.Y + 400.0f };
+    System.ProcessInput(Drag);
+    System.RunQueuedActions();
+    Expect(Near(Slider->Value, 0.25f), "the drag holds outside it, clamped at Min");
+    const int Before = GValues;
+    System.ProcessInput(Drag);
+    System.RunQueuedActions();
+    Expect(GValues == Before, "a still pointer changes nothing");
+    System.ProcessInput(Pointer(Drag.MousePixels, false, true));
+    System.RunQueuedActions();
+    Expect(Doc.GetPressed() < 0, "release lets go");
+
+    System.Tick(0.016f);
+    System.Update(UIVec2{ 1000, 1000 });
+    const UIText* SpeedText = dynamic_cast<UIText*>(Doc.FindWidget("SpeedText"));
+    Expect(SpeedText && SpeedText->Text == "x0.25", "a label bound to the same key follows the slider");
+
+    /* Keys: left and right step it while focused; up and down still move focus. */
+    Doc.SetFocus(int32_t(Slider->GetIndex()));
+    UIInputFrame Right;
+    Right.bNavRight = true;
+    System.ProcessInput(Right);
+    System.ProcessInput(Right);
+    System.RunQueuedActions();
+    Expect(Near(Slider->Value, 0.35f) && Doc.GetFocused() == int32_t(Slider->GetIndex()), "Right steps it twice, focus stays");
+    UIInputFrame Left;
+    Left.bNavLeft = true;
+    for(int Each = 0; Each < 10; ++Each) { System.ProcessInput(Left); }
+    Expect(Near(Slider->Value, 0.25f) && Doc.GetFocused() == int32_t(Slider->GetIndex()), "Left stops at Min and keeps focus");
+    UIInputFrame Down;
+    Down.bNavDown = true;
+    System.ProcessInput(Down);
+    Expect(Doc.GetFocused() == int32_t(Free->GetIndex()), "Down moves focus to the next slider");
+    System.ProcessInput(Right);
+    Expect(Near(Free->Value, 0.55f), "with no Step, a twentieth of the range");
+
+    Expect(Near(Slider->Snap(10.0), 3.0f) && Near(Slider->Snap(-1.0), 0.25f) && Near(Slider->Snap(1.27), 1.25f), "Snap clamps and rounds to Step");
+    Slider->bEnabled = false;
+    const float Held = Slider->Value;
+    Doc.SetPressed(-1);
+    System.ProcessInput(Pointer(At(1.0f), true, false));
+    Expect(Slider->Value == Held, "a disabled slider ignores the pointer");
 }
 
 static void TestInputAndActions()
@@ -1030,6 +1153,25 @@ static void TestOnGpu()
                    "LightLab's pause menu opens");
             EngineCore::Image Pause;
             Expect(Shot(System, "lightlab_pause", Pause), "the pause frame reads back");
+
+            /* Its Settings page, with the values LightLab publishes as it opens. */
+            System.SetValue("LightLab.Shadows", UIValue::Bool(true));
+            System.SetValue("LightLab.BakedLighting", UIValue::Bool(false));
+            System.SetValue("LightLab.LookSensitivity", UIValue::Number(1.25));
+            System.SetValue("LightLab.FlySpeed", UIValue::Number(600));
+            UIDocumentInstance* PauseDoc = System.Find("Content/UI/PauseMenu.nmui");
+            auto* Pages = PauseDoc ? dynamic_cast<UISwitcher*>(PauseDoc->FindWidget("Pages")) : nullptr;
+            Expect(Pages && Pages->ShowPage("Settings"), "it has a Settings page");
+            EngineCore::Image SettingsShot;
+            Expect(Shot(System, "lightlab_settings", SettingsShot), "the settings frame reads back");
+            if(PauseDoc && Pages)
+            {
+                auto* Shadows = dynamic_cast<UICheckBox*>(PauseDoc->FindWidget("Shadows"));
+                auto* Look    = dynamic_cast<UISlider*>(PauseDoc->FindWidget("LookSensitivity"));
+                Expect(Shadows && Shadows->bChecked && PauseDoc->GetFocused() == int32_t(Shadows->GetIndex()),
+                       "the page shows the store's values, focus on its first setting");
+                Expect(Look && Near(Look->Value, 1.25f) && PauseDoc->GetPixelRect(Look->GetIndex()).W > 200.0f, "the sliders are laid out with their values");
+            }
             System.ClearRenderer();
         }
 
@@ -1055,6 +1197,7 @@ int main()
     TestText();
     TestStylesAndFiles();
     TestSwitcher();
+    TestInputWidgets();
     TestStructureEditing();
     TestInputAndActions();
     TestScriptedActions();

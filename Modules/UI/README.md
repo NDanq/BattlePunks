@@ -134,6 +134,8 @@ Inside the root element come `<Styles>`, exactly one root widget (usually a
 | `Overlay` | any | none; children stack over each other |
 | `Switcher` | any | `ActiveIndex` (bindable): its children are pages, one shown at a time; see below |
 | `ProgressBar` | none | `Value` (0-1, bindable), `Background`, `FillBrush`, `FillDirection` |
+| `CheckBox` | one (its label) | `Checked` (bindable, two-way), `BoxSize`, `Spacing`, `Box`, `BoxHovered`, `Check` (brushes), `Padding`, `OnChanged`; see below |
+| `Slider` | none | `Value` (bindable, two-way), `Min`, `Max`, `Step`, `TrackHeight`, `ThumbSize`, `Track`, `FillBrush`, `Thumb`, `ThumbHovered` (brushes), `OnChanged`; its `Size` is its desired size; see below |
 | `Spacer` | none | its `Size` is its desired size |
 
 **Brush** (`Background`, `Brush`, a button's four):
@@ -164,7 +166,25 @@ shown. Switch it with:
 In the designer, selecting a widget on another page shows that page (in the
 canvas only; the document keeps its own `ActiveIndex`).
 
-**Later widgets:** ScrollBox, Slider, CheckBox, TextInput (it needs the
+**CheckBox and Slider: settings.** Both take focus, and bind two-way:
+`Checked="{Bind:Settings.Shadows}"` shows the store's value, and when the
+player changes it the new value is written back to the store, so the game,
+and anything else bound to the key (a label showing a slider's value, say),
+sees it. `OnChanged` runs after each change, and `$value` is the new value:
+1 or 0 for a check box, the value for a slider.
+
+- A **CheckBox** draws its box at the left with its one child (a label) beside
+  it, `Spacing` apart. A click on the box or the label, or `Accept` while it
+  has focus, toggles it.
+- A **Slider** is horizontal. A press jumps the thumb to the pointer, and a
+  drag carries it, even outside the slider, until release. While it has
+  focus, Left and Right step it by `Step`, or by a twentieth of the range
+  when `Step` is 0, and stay on it at either end. Up and Down still move
+  focus. `Value` is clamped to `Min`..`Max` and snapped to `Min + n * Step`.
+
+LightLab's pause menu has a Settings page of both (see "In a game").
+
+**Later widgets:** ScrollBox, TextInput (it needs the
 window's text input, which is already plumbed as `GameWindow::SetTextInputActive`
 and `OnText`), Grid and WrapBox, ListView, an `Include` element
 for documents inside documents, rich text, and rounded or SDF boxes.
@@ -220,8 +240,8 @@ OnClick="Lua:Menu.Select('Arena', 2); Event:Menu.Changed($self)"
 | `Event:Name` | An `EventBus` event on the session's World. Lua listens with `Events.On`. |
 
 - Arguments can be numbers, `'strings'`, `true` and `false`, plus two tokens:
-  `$self` is the widget's name, and `$value` is its value (reserved for
-  sliders; 0 for now). There can be at most four.
+  `$self` is the widget's name, and `$value` is its value (a slider's
+  value, a check box's 1 or 0, otherwise 0). There can be at most four.
 - Actions are parsed when the document loads. Bad text is refused in the editor
   and warned about at runtime.
 - Actions are **queued** and run after the input that fired them, before the game
@@ -259,8 +279,12 @@ How bindings update:
 - `Player<N>.Score` and `Player<N>.Lives`, from `PlayerStateComponent`
 - `Game.Phase`
 
-Reserved for later: pull bindings (Lua expressions, component fields), format
-strings, and two-way bindings for inputs.
+**Two-way.** A CheckBox's `Checked` and a Slider's `Value` write back: when the
+player changes one, a whole-value binding on it sets its key in the store
+(`UIDocumentInstance::SetInputValue`, for a widget of your own too).
+
+Reserved for later: pull bindings (Lua expressions, component fields) and
+format strings.
 
 ## Input
 
@@ -274,11 +298,14 @@ The host builds a `UIInputFrame` and calls `UISystem::ProcessInput`.
   - Only widgets that draw something or take input are hit (`TakesHits`).
     Layout containers are not, so a full-screen HUD root lets clicks through.
 - **Clicks:** a click is a press and a release on the same widget. While the
-  button is held, the pressed widget keeps the pointer.
+  button is held, the pressed widget keeps the pointer, and hears it move
+  (`PE_Move`, a slider's drag) wherever it goes.
 - **Navigation:**
   - Applies in UIOnly documents, and in any document that has focus.
-  - Directions move focus to the widget named by its `Nav*` property, or to the
-    nearest focusable widget in that direction.
+  - The focused widget sees a direction first (`UIWidget::OnNavigate`): a
+    slider uses Left and Right itself.
+  - Otherwise directions move focus to the widget named by its `Nav*` property,
+    or to the nearest focusable widget in that direction.
   - `Accept` clicks the focused widget. `Back` runs `OnBack`. `Tab` and
     `Shift+Tab` cycle through focusable widgets.
   - Keys come from the engine's `UI` input map (NimbleEngine's `GameUI.cpp`),
@@ -334,9 +361,17 @@ level unloads, unless they were opened as persistent.
 LightLab's pause menu is the complete example:
 
 - `LightLabGame.cpp` opens it on `Pause` (Escape, or the gamepad's Start).
-- Its `OnBack` and Resume button run `Native:LightLab.Resume`, defined with
-  `UI_DEFINE_ACTIONS(LightLab)`.
-- Quit runs `Native:Game.Quit`.
+- Its pages are a Switcher. The Settings button runs
+  `Native:UI.ShowPage('Pages', 'Settings')`, and `OnBack` runs
+  `Native:LightLab.Back`, which returns to the first page, or resumes from it.
+- Resume runs `Native:LightLab.Resume`, defined with `UI_DEFINE_ACTIONS(LightLab)`.
+  Quit runs `Native:Game.Quit`.
+- The Settings page has check boxes for shadows and baked lighting, and sliders
+  for look sensitivity and fly speed. Each is bound to a key
+  (`{Bind:LightLab.Shadows}`) that the game fills from its config var as the
+  menu opens. Each `OnChanged` runs `Native:LightLab.SetShadows($value)` (and
+  so on), which sets the var: the one the T/F/L keys, an `.ini` and the console
+  also set.
 
 ## Files and cooking
 
@@ -490,7 +525,7 @@ layout. Rotation will need stencil clipping, because scissors are axis-aligned.
 
 | Test | What it checks |
 |---|---|
-| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, native/Lua/Event actions, the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
+| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), native/Lua/Event actions, the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
 | `UI_TESTS_GPU=Vulkan UI_TESTS_DUMP=<dir> ./UITests`, from a runtime directory | Draws the shipped documents on a GPU and checks pixels. |
 | RenderCore smoke test | `UIDrawList` batching, clipping, nine-slice and packing. `NIMBLE_SMOKE_GPU=Vulkan` checks orientation, scissor, blending, the retained list, and clearing. |
 | GDI smoke test | Scissor flipping and clipping, and the dynamic mesh's append and rewind. |

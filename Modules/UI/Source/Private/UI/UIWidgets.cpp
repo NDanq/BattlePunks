@@ -174,6 +174,7 @@ namespace UI
             case UIPointerEvent::PE_Press:   QueueActions(OnPressed);   break;
             case UIPointerEvent::PE_Release: QueueActions(OnReleased);  break;
             case UIPointerEvent::PE_Click:   QueueActions(OnClick);     break;
+            default: break;
         }
     }
 
@@ -447,6 +448,161 @@ namespace UI
         InContext.DrawBrush(FillBrush, Filled);
     }
 
+    // === CheckBox =================================================================
+
+    UICheckBox::UICheckBox()
+    {
+        bFocusable = true;
+        Padding    = UIMargin{};
+        Box.Tint              = UIColor{ 0.07f, 0.09f, 0.12f, 0.92f };
+        Box.OutlineColor      = UIColor{ 1.0f, 1.0f, 1.0f, 0.35f };
+        Box.OutlineThickness  = 2.0f;
+        BoxHovered            = Box;
+        BoxHovered.OutlineColor = UIColor{ 0.95f, 0.65f, 0.30f, 1.0f };
+        Check.Tint            = UIColor{ 0.95f, 0.65f, 0.30f, 1.0f };
+    }
+
+    UIVec2 UICheckBox::MeasureContent(UILayoutContext& InContext)
+    {
+        UIVec2 Size{ Padding.Left + Padding.Right + BoxSize, Padding.Top + Padding.Bottom + BoxSize };
+        const int32_t Child = FirstChild(*this);
+        if(Child >= 0)
+        {
+            const UIWidget& C = *GetDocument()->GetWidget(uint32_t(Child));
+            const UIVec2 Desired = InContext.Measure(uint32_t(Child));
+            if(C.Visibility != EUIVisibility::Collapsed)
+            {
+                Size.X += Spacing + Desired.X + C.Margin.Left + C.Margin.Right;
+                Size.Y  = std::max(Size.Y, Padding.Top + Padding.Bottom + Desired.Y + C.Margin.Top + C.Margin.Bottom);
+            }
+        }
+        return Size;
+    }
+
+    void UICheckBox::ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect)
+    {
+        const int32_t Child = FirstChild(*this);
+        if(Child < 0) return;
+        const float Left = Padding.Left + BoxSize + Spacing;
+        const UIRect Inner{ InRect.X + Left, InRect.Y + Padding.Top,
+                            std::max(InRect.W - Left - Padding.Right, 0.0f),
+                            std::max(InRect.H - Padding.Top - Padding.Bottom, 0.0f) };
+        const UIWidget& C = *GetDocument()->GetWidget(uint32_t(Child));
+        InContext.Arrange(uint32_t(Child), AlignInSlot(C, GetDocument()->GetDesiredSize(uint32_t(Child)), Inner));
+    }
+
+    void UICheckBox::Paint(UIPaintContext& InContext, const UIRect& InRect) const
+    {
+        UIPaintContext Context = InContext;
+        if(!IsEnabledInHierarchy()) Context.Opacity *= 0.45f;
+
+        /* The box at the left, centred down the row. */
+        const float  Inner = std::max(InRect.H - Padding.Top - Padding.Bottom, 0.0f);
+        const UIRect BoxRect{ InRect.X + Padding.Left, InRect.Y + Padding.Top + (Inner - BoxSize) * 0.5f, BoxSize, BoxSize };
+        Context.DrawBrush(IsHovered() || IsFocused() || IsPressed() ? BoxHovered : Box, BoxRect);
+        if(bChecked)
+        {
+            const float Inset = std::round(BoxSize * 0.22f);
+            Context.DrawBrush(Check, UIRect{ BoxRect.X + Inset, BoxRect.Y + Inset,
+                                             std::max(BoxSize - Inset * 2.0f, 0.0f), std::max(BoxSize - Inset * 2.0f, 0.0f) });
+        }
+    }
+
+    void UICheckBox::OnPointer(const UIPointerEvent& InEvent)
+    {
+        if(InEvent.Kind != UIPointerEvent::PE_Click || !GetDocument()) return;
+        if(GetDocument()->SetInputValue(*this, "Checked", UIValue::Bool(!bChecked))) { QueueActions(OnChanged); }
+    }
+
+    // === Slider ===================================================================
+
+    UISlider::UISlider()
+    {
+        bFocusable = true;
+        Size = UIVec2{ 300.0f, 36.0f };
+        Track.Tint     = UIColor{ 0.07f, 0.09f, 0.12f, 0.92f };
+        Track.OutlineColor     = UIColor{ 1.0f, 1.0f, 1.0f, 0.20f };
+        Track.OutlineThickness = 1.0f;
+        FillBrush.Tint = UIColor{ 0.85f, 0.54f, 0.18f, 0.95f };
+        Thumb.Tint     = UIColor{ 0.92f, 0.94f, 0.97f, 1.0f };
+        ThumbHovered   = Thumb;
+        ThumbHovered.Tint = UIColor{ 1.0f, 0.80f, 0.55f, 1.0f };
+        ThumbHovered.OutlineColor     = UIColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+        ThumbHovered.OutlineThickness = 2.0f;
+    }
+
+    UIVec2 UISlider::MeasureContent(UILayoutContext& /*InContext*/)
+    {
+        return UIVec2{ Size.X, std::max(Size.Y, std::max(ThumbSize.Y, TrackHeight)) };
+    }
+
+    float UISlider::Snap(double InValue) const
+    {
+        const double Low = std::min(Min, Max), High = std::max(Min, Max);
+        double V = std::clamp(InValue, Low, High);
+        if(Step > 0.0f)
+        {
+            /* In double, so Min + n * Step is the float nearest what was meant (0.25 + 22 * 0.05 is 1.35). */
+            V = double(Min) + std::round((V - double(Min)) / double(Step)) * double(Step);
+            V = std::clamp(V, Low, High);
+        }
+        return float(V);
+    }
+
+    float UISlider::GetFraction() const
+    {
+        if(Max == Min) return 0.0f;
+        return std::clamp((Value - Min) / (Max - Min), 0.0f, 1.0f);
+    }
+
+    void UISlider::Paint(UIPaintContext& InContext, const UIRect& InRect) const
+    {
+        UIPaintContext Context = InContext;
+        if(!IsEnabledInHierarchy()) Context.Opacity *= 0.45f;
+
+        /* The thumb's centre travels between half a thumb in from each end: it never hangs out. */
+        const float Half  = ThumbSize.X * 0.5f;
+        const float Start = InRect.X + Half, Length = std::max(InRect.W - ThumbSize.X, 0.0f);
+        const float At    = Start + Length * GetFraction();
+        const float Mid   = InRect.Y + InRect.H * 0.5f;
+
+        const UIRect TrackRect{ InRect.X, Mid - TrackHeight * 0.5f, InRect.W, TrackHeight };
+        Context.DrawBrush(Track, TrackRect);
+        if(At > InRect.X) { Context.DrawBrush(FillBrush, UIRect{ InRect.X, TrackRect.Y, At - InRect.X, TrackHeight }); }
+        Context.DrawBrush(IsHovered() || IsFocused() || IsPressed() ? ThumbHovered : Thumb,
+                          UIRect{ At - Half, Mid - ThumbSize.Y * 0.5f, ThumbSize.X, ThumbSize.Y });
+    }
+
+    void UISlider::ChangeTo(const double InValue)
+    {
+        if(GetDocument() && GetDocument()->SetInputValue(*this, "Value", UIValue::Number(Snap(InValue)))) { QueueActions(OnChanged); }
+    }
+
+    void UISlider::OnPointer(const UIPointerEvent& InEvent)
+    {
+        if(InEvent.Kind != UIPointerEvent::PE_Press && InEvent.Kind != UIPointerEvent::PE_Move) return;
+        if(!GetDocument() || !IsEnabledInHierarchy()) return;
+
+        /* The pointer along the travel, in the pixels it was last painted at (render transforms included). */
+        const uint32_t Self   = GetIndex();
+        const UIRect&  Pixels = GetDocument()->GetPixelRect(Self);
+        const UIRect&  Layout = GetDocument()->GetRect(Self);
+        const float    PerUnit = Layout.W > 0.0f ? Pixels.W / Layout.W : 1.0f;
+        const float    Half    = ThumbSize.X * 0.5f * PerUnit;
+        const float    Travel  = Pixels.W - Half * 2.0f;
+        const double   T = Travel > 0.0f ? std::clamp(double(InEvent.Pixels.X - Pixels.X - Half) / double(Travel), 0.0, 1.0) : 0.0;
+        ChangeTo(double(Min) + (double(Max) - double(Min)) * T);
+    }
+
+    bool UISlider::OnNavigate(const int InDirection)
+    {
+        if(InDirection != 2 && InDirection != 3) return false;
+        const double By = Step > 0.0f ? double(Step) : (double(Max) - double(Min)) / 20.0;
+        const double Sign = (InDirection == 3) == (Max >= Min) ? 1.0 : -1.0;
+        ChangeTo(double(Value) + By * Sign);
+        return true;   // held at an end too: left and right never leave a slider by surprise
+    }
+
     UIVec2 UISpacer::MeasureContent(UILayoutContext& /*InContext*/)
     {
         return Size;
@@ -554,6 +710,40 @@ namespace UI
         Type.Category("Appearance");
         Type.Brush<&UIProgressBar::Background>("Background");
         Type.Brush<&UIProgressBar::FillBrush>("FillBrush");
+    }
+
+    UI_DEFINE_WIDGET(UICheckBox, UIContentWidget, "CheckBox")
+    {
+        Type.Palette("Common").Children(1);
+        Type.Category("CheckBox");
+        Type.Field<&UICheckBox::bChecked>("Checked", UPF_Bindable).Tooltip("{Bind:Key} is two-way: a click writes the store");
+        Type.Field<&UICheckBox::BoxSize>("BoxSize", UPF_Layout);
+        Type.Field<&UICheckBox::Spacing>("Spacing", UPF_Layout).Tooltip("Between the box and its label");
+        Type.Category("Appearance");
+        Type.Brush<&UICheckBox::Box>("Box");
+        Type.Brush<&UICheckBox::BoxHovered>("BoxHovered");
+        Type.Brush<&UICheckBox::Check>("Check");
+        Type.Category("Events");
+        Type.Action<&UICheckBox::OnChanged>("OnChanged").Tooltip("$value is 1 checked, 0 not");
+    }
+
+    UI_DEFINE_WIDGET(UISlider, UIWidget, "Slider")
+    {
+        Type.Palette("Common");
+        Type.Category("Slider");
+        Type.Field<&UISlider::Value>("Value", UPF_Bindable | UPF_Animatable).Tooltip("{Bind:Key} is two-way: a drag writes the store");
+        Type.Field<&UISlider::Min>("Min");
+        Type.Field<&UISlider::Max>("Max");
+        Type.Field<&UISlider::Step>("Step").Tooltip("Values are Min + n * Step; 0 any");
+        Type.Field<&UISlider::TrackHeight>("TrackHeight");
+        Type.Field<&UISlider::ThumbSize>("ThumbSize", UPF_Layout);
+        Type.Category("Appearance");
+        Type.Brush<&UISlider::Track>("Track");
+        Type.Brush<&UISlider::FillBrush>("FillBrush");
+        Type.Brush<&UISlider::Thumb>("Thumb");
+        Type.Brush<&UISlider::ThumbHovered>("ThumbHovered");
+        Type.Category("Events");
+        Type.Action<&UISlider::OnChanged>("OnChanged").Tooltip("$value is the new Value");
     }
 
     UI_DEFINE_WIDGET(UISpacer, UIWidget, "Spacer")

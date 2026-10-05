@@ -10,6 +10,7 @@
 #include "Public/UI/UIFile.h"
 #include "Public/UI/UIFont.h"
 #include "Public/UI/UILog.h"
+#include "Public/UI/UISystem.h"
 #include "Public/UI/UIWidgets.h"
 #include "Private/UI/UIInternal.h"
 
@@ -579,6 +580,30 @@ namespace UI
         UIValue Value;
         if(!ParsePropertyValue(Desc, InText, Value)) return false;
         return ApplyProperty(InWidget, Property, Value);
+    }
+
+    bool UIDocumentInstance::SetInputValue(UIWidget& InWidget, const std::string& InName, const UIValue& InValue)
+    {
+        if(InWidget.Document != this) return false;
+        const int32_t Property = InWidget.Type->FindProperty(InName.c_str());
+        if(Property < 0) return false;
+        const UIPropertyDesc& Desc = InWidget.Type->Properties[size_t(Property)];
+        const UIValue Before = Desc.Get(InWidget);
+        if(!ApplyProperty(InWidget, Property, InValue)) return false;
+        const UIValue After = Desc.Get(InWidget);
+        if(After == Before) return false;
+
+        if(System)
+        {
+            for(const UIBinding& Each : Bindings)
+            {
+                if(Each.Widget != InWidget.Index || Each.Property != Property || !Each.bWhole) continue;
+                std::vector<std::string> Keys;
+                bool bWhole = false;
+                if(ParseBinding(Each.Template, bWhole, &Keys) && !Keys.empty()) { System->SetValue(Keys[0], After); }
+            }
+        }
+        return true;
     }
 
     UIValue UIDocumentInstance::GetProperty(const UIWidget& InWidget, const std::string& InName) const
