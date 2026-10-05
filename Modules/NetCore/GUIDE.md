@@ -108,6 +108,15 @@ Rules for shared-state entities:
   `NetComponent` in the editor (component "Net"). Both ends load it, and the
   server's copy is matched to the client's by `EntityGuid`, so it is not
   duplicated.
+- **Author what you spawn as a prefab with a Net component.** The server
+  spawns it with `World::SpawnPrefab`, then sets its owner and per-instance
+  values before the frame ends.
+- **Your game's own components author like the engine's.** The editor keeps
+  the game module loaded while editing, so they appear under Add Component
+  and save with the world.
+
+`Games/NetArena/README.md` walks through a level authored all three ways:
+scenery, a placed networked entity, and a spawned networked prefab.
 
 ---
 
