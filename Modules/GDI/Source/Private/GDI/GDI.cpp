@@ -3,7 +3,10 @@
 
 #include <atomic>
 #include <cstring>
+#include <fstream>
+#include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/GDI/GDILog.h"
 
 // Qt types used by this file. These were arriving implicitly through
@@ -52,6 +55,43 @@ GDISync*            GSync = nullptr;
 EngineCore::ThreadSafeQueue<GDIRenderCommandBase*> GRenderCommands;
 
 int GDebugGroupID = 0;
+
+/* Edit > Editor Settings > Shaders (GDI.h). Here, not in the editor: GDI is
+ * static in RenderCore alone, so these register once. */
+NIMBLE_CONFIG_BOOL(GShaderDebug, "Shaders", "ShaderDebug", true, nullptr);
+NIMBLE_CONFIG_BOOL(GShaderPDB, "Shaders", "ShaderPDB", false, nullptr);
+NIMBLE_CONFIG_STRING(GShaderPDBDir, "Shaders", "PDBDir", "", nullptr);
+
+bool GDIShaderDebugEnabled()
+{
+    return GShaderDebug.GetBool();
+}
+
+std::string GDIGetShaderPDBPath(const std::string& InCookedPath)
+{
+    static const std::string COOKED = "Shaders/Cooked/";
+    if(!GShaderPDB.GetBool() || InCookedPath.compare(0, COOKED.size(), COOKED) != 0)
+    {
+        return std::string();
+    }
+    const char* Dir = GShaderPDBDir.GetString();
+    std::string Root = Dir ? Dir : "";
+    if(Root.empty())
+    {
+        return std::string();
+    }
+    if(Root.back() != '/' && Root.back() != '\\') { Root += '/'; }
+
+    /* "Shaders/Cooked/Vulkan/Basic.vsh.spv" -> "<PDBDir>/Vulkan/Basic.vsh.spv";
+     * D3D12's PDB beside its .cso's name, as the cook writes it. */
+    std::string Path = Root + InCookedPath.substr(COOKED.size());
+    static const std::string CSO = ".cso";
+    if(Path.size() > CSO.size() && Path.compare(Path.size() - CSO.size(), CSO.size(), CSO) == 0)
+    {
+        Path.replace(Path.size() - CSO.size(), CSO.size(), ".pdb");
+    }
+    return std::ifstream(Path, std::ios::binary).good() ? Path : std::string();
+}
 
 void GDISetDebugName(GDIMesh* InMesh, const std::string& InName)
 {
@@ -627,18 +667,48 @@ ERenderPlatform GDIGetRenderPlatform()
     return ERP_Null;
 }
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            BeginDrawEvent,
-                            (const std::string& InEventName),,
-                            (InEventName))
+/*
+ * Hand-written for [Shaders] ShaderDebug: each Begin remembers whether it
+ * reached the driver, so turning the setting over between a Begin and its
+ * End neither leaves a region open nor closes one that was never begun.
+ */
+namespace
+{
+    std::vector<bool>& DrawEventsIssued()
+    {
+        thread_local std::vector<bool> Issued;
+        return Issued;
+    }
+}
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            EndDrawEvent,
-                            (),,())
+void GDIBeginDrawEvent(const std::string& InEventName)
+{
+    const bool bIssue = GDynamicGDI && GShaderDebug.GetBool();
+    DrawEventsIssued().push_back(bIssue);
+    if(bIssue)
+    {
+        GDynamicGDI->BeginDrawEvent(InEventName);
+    }
+}
+
+void GDIEndDrawEvent()
+{
+    std::vector<bool>& Issued = DrawEventsIssued();
+    if(Issued.empty())
+    {
+        return;
+    }
+    const bool bIssued = Issued.back();
+    Issued.pop_back();
+    if(bIssued && GDynamicGDI)
+    {
+        GDynamicGDI->EndDrawEvent();
+    }
+}
 
 bool GDIHasDrawEvents()
 {
-    return GDynamicGDI && GDynamicGDI->HasDrawEvents();
+    return GDynamicGDI && GShaderDebug.GetBool() && GDynamicGDI->HasDrawEvents();
 }
 
 GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, const uint InWidth, const uint InHeight, const EGDIRenderTargetFormat InFormat)

@@ -90,8 +90,11 @@ void D3D12RenderTarget::Allocate()
     }
 
 #ifndef NDEBUG
-    const std::wstring WideName(L"RT:" + std::wstring(Name.begin(), Name.end()));
-    Resource->SetName(WideName.c_str());
+    if(GDIShaderDebugEnabled())
+    {
+        const std::wstring WideName(L"RT:" + std::wstring(Name.begin(), Name.end()));
+        Resource->SetName(WideName.c_str());
+    }
 #endif
 
     CurrentState = D3D12_RESOURCE_STATE_COMMON;

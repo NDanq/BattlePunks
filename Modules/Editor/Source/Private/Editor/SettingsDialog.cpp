@@ -2,6 +2,7 @@
 
 #include "Private/Editor/SettingsDialog.h"
 
+#include <cstring>
 #include <map>
 #include <string>
 
@@ -27,6 +28,7 @@
 
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
+#include "Private/Editor/Graph/GraphAssets.h"
 
 namespace
 {
@@ -124,10 +126,11 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
     };
 
     const auto AddCheck = [this, AddRow](QFormLayout* InForm, const char* InPath, const QString& InLabel,
-                                         const QString& InTip)
+                                         const QString& InTip, const bool bInRestart = false)
     {
         auto* Check = new QCheckBox(this);
         Row R;
+        R.bRestart = bInRestart;
         R.Show = [Check](const QString& InText) { Check->setChecked(InText == QStringLiteral("true")); };
         R.Read = [Check]() { return Check->isChecked() ? QStringLiteral("true") : QStringLiteral("false"); };
         AddRow(InForm, InPath, InLabel, InTip, Check, std::move(R));
@@ -218,6 +221,21 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
               { { "Vulkan", 2 }, { "D3D12", 4 }, { "Null (draws nothing)", 0 } },
               true);
 
+    /* GDI's (GDI.h): what capture tools (RenderDoc, PIX) are given. */
+    QFormLayout* Shaders = AddGroup(QStringLiteral("Shaders"));
+    AddCheck(Shaders, "Shaders.ShaderDebug", QStringLiteral("ShaderDebug"),
+             QStringLiteral("Draw events and debug names: each draw a named region and each GPU object (mesh, texture, "
+                            "buffer, shader, render target) named, as RenderDoc and PIX show them. Draw events follow at "
+                            "once; objects are named as they are made, so a restart names those made before"));
+    AddCheck(Shaders, "Shaders.ShaderPDB", QStringLiteral("ShaderPDB"),
+             QStringLiteral("Shader PDBs: the shader cook also writes each shader's debug information -- SPIR-V with its "
+                            "source for Vulkan, fxc PDBs for D3D12 -- to %1/<Target>, for the engine's shaders and "
+                            "materials and the project's, and for a material as it is saved. Under RenderDoc a Vulkan "
+                            "shader then shows its source; for D3D12, add the folder to RenderDoc's shader search paths. "
+                            "Shaders loaded before the files are written find them after a restart")
+                 .arg(QDir::toNativeSeparators(EditorGraphs::GetShaderPDBRoot())),
+             true);
+
     QFormLayout* Build = AddGroup(QStringLiteral("Build"));
     AddCheck(Build, "Editor.ReloadAfterCompile", QStringLiteral("Restart a running game after Compile"),
              QStringLiteral("When Compile Source succeeds during Play, stop the run and start it again on the new "
@@ -303,6 +321,7 @@ void SettingsDialog::LoadUserSettings()
 void SettingsDialog::Apply()
 {
     bool bNeedsRestart = false;
+    bool bCookPDBs     = false;
     for(const Row& R : Rows)
     {
         EngineCore::ConfigVar* Var = FindVar(R.Path);
@@ -320,6 +339,7 @@ void SettingsDialog::Apply()
         {
             CORE_LOG(std::string("[Editor] settings: ") + R.Path + " = " + Var->ToString())
             bNeedsRestart |= R.bRestart;
+            bCookPDBs     |= std::strcmp(R.Path, "Shaders.ShaderPDB") == 0 && Var->ToString() == "true";
         }
         R.Show(VarText(*Var));   // as parsed: 0.1000001 shows as the var holds it
     }
@@ -333,7 +353,12 @@ void SettingsDialog::Apply()
     else if(bNeedsRestart)
     {
         QMessageBox::information(this, windowTitle(),
-                                 QStringLiteral("The new render backend takes effect when the editor restarts."));
+                                 QStringLiteral("Settings marked * take full effect when the editor restarts."));
+    }
+
+    if(bCookPDBs)
+    {
+        EditorGraphs::CookShaderPDBs();
     }
 }
 

@@ -239,7 +239,8 @@ uint32_t VKDevice::FindMemoryType(uint32_t TypeBits, VkMemoryPropertyFlags Prope
 
 void VKDevice::SetObjectName(const VkObjectType InType, const uint64_t InHandle, const std::string& InName) const
 {
-    if(InHandle == 0 || InName.empty() || Device == VK_NULL_HANDLE || !VulkanGDIContext::HasDebugUtils())
+    if(InHandle == 0 || InName.empty() || Device == VK_NULL_HANDLE || !VulkanGDIContext::HasDebugUtils()
+       || !GDIShaderDebugEnabled())
     {
         return;
     }
@@ -255,4 +256,27 @@ void VKDevice::SetObjectName(const VkObjectType InType, const uint64_t InHandle,
     Info.objectHandle = InHandle;
     Info.pObjectName  = InName.c_str();
     SetName(Device, &Info);
+}
+
+void VKDevice::SetObjectTag(const VkObjectType InType, const uint64_t InHandle, const uint64_t InTagName,
+                            const std::string& InTag) const
+{
+    if(InHandle == 0 || InTag.empty() || Device == VK_NULL_HANDLE || !VulkanGDIContext::HasDebugUtils())
+    {
+        return;
+    }
+    static const auto SetTag = reinterpret_cast<PFN_vkSetDebugUtilsObjectTagEXT>(
+        vkGetInstanceProcAddr(Instance, "vkSetDebugUtilsObjectTagEXT"));
+    if(!SetTag)
+    {
+        return;
+    }
+    VkDebugUtilsObjectTagInfoEXT Info{};
+    Info.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_TAG_INFO_EXT;
+    Info.objectType   = InType;
+    Info.objectHandle = InHandle;
+    Info.tagName      = InTagName;
+    Info.tagSize      = InTag.size();
+    Info.pTag         = InTag.data();
+    SetTag(Device, &Info);
 }

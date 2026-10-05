@@ -249,6 +249,10 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
     EditorPrefabs::SetEditorContext(&Context);
     EditorParticles::SetEditorContext(&Context);
 
+    /* Editor Settings > Shaders > ShaderPDB: the build cooks without debug
+     * information, so it is written here, in the background. */
+    EditorGraphs::CookShaderPDBs(Backend);
+
     UpdateTitle();
 }
 
