@@ -113,7 +113,7 @@ static void TestRegistry()
 
     int Palette = 0;
     for(const UIWidgetType* Each : GetWidgetTypes()) { if(!Each->Palette.empty()) ++Palette; }
-    Expect(Palette == 18, "the eighteen widgets are offered in the palette");
+    Expect(Palette == 19, "the nineteen widgets are offered in the palette");
 
     const UIWidgetType* Text = FindWidgetType("Text");
     const int32_t TextProperty = Text ? Text->FindProperty("Text") : -1;
@@ -1561,6 +1561,113 @@ static void TestInclude()
     std::filesystem::remove_all(Dir);
 }
 
+// === ListView =================================================================
+
+static void TestListView()
+{
+    std::printf("[list view]\n");
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleUIList";
+    std::filesystem::create_directories(Dir);
+    EngineCore::FilesystemProvider Disk(Dir.string());
+    EngineCore::IFileProvider* Previous = EngineCore::GetFileProvider();
+    EngineCore::SetFileProvider(&Disk);
+    const auto Write = [&Dir](const char* InName, const std::string& InText) { std::ofstream(Dir / InName, std::ios::binary | std::ios::trunc) << InText; };
+    Write("Item.nmui", R"XML(<UI Graph="Item.ui.nmgraph">
+  <HorizontalBox Name="Row" Spacing="8">
+    <Text Name="Label" FontSize="18" Text="{Bind:Name}"/>
+    <Button Name="Del" OnClick="Graph:Del_OnClick"><Spacer Size="30,20"/></Button>
+  </HorizontalBox>
+</UI>)XML");
+    Write("Item.ui.nmgraph", "<NodeGraph Version=\"1\" Schema=\"UI\"><gen_code><Output Extension=\".lua\"><![CDATA["
+          "return { OnOpen = function(self) Opens = (Opens or 0) + 1 end,\n"
+          "  Del_OnClick = function(self) UI.SetString('Deleted', self.Prefix) end }"
+          "]]></Output></gen_code></NodeGraph>\n");
+    Write("Saves.nmui", R"XML(<UI InputMode="UIOnly" ScaleMode="None">
+  <Canvas>
+    <ListView Name="List" Position="0,0" Size="300,200" ItemDocument="Item.nmui" Items="Saves" ItemHeight="36" Spacing="4"
+              SelectedIndex="{Bind:Saves.Selected}" OnActivate="Native:Test.Value($value)" ScrollBar="Never"/>
+  </Canvas>
+</UI>)XML");
+
+    GameCore::World World;
+    GameCore::ScriptEngine Scripts;
+    Scripts.Initialize();
+    Scripts.BindWorld(&World);
+    UISystem System;
+    System.SetScriptEngine(&Scripts);
+    SetScriptUISystem(&System);
+    Expect(Scripts.RunString("UI.SetCount('Saves', 1000)\n"
+                             "for i = 0, 999 do UI.SetString('Saves.' .. i .. '.Name', 'Save ' .. i) end", "fill"),
+           "a thousand items, from Lua (UI.SetCount)");
+
+    const UIDocumentHandle Handle = System.Open("Saves.nmui");
+    const UIVec2 View{ 1000, 1000 };
+    const auto Frame = [&]() { System.Tick(0.016f); System.Update(View); System.RunQueuedActions(); System.Update(View); };
+    Frame();
+    UIDocumentInstance& Doc = *System.Find(Handle);
+    auto* List = dynamic_cast<UIListView*>(Doc.FindWidget("List"));
+    if(!List) { Expect(false, "ListView is made from XML"); EngineCore::SetFileProvider(Previous); return; }
+    const auto LabelOf = [](UIDocumentInstance* InRow) { const UIText* T = InRow ? dynamic_cast<UIText*>(InRow->FindWidget("Label")) : nullptr; return T ? T->Text : std::string("<none>"); };
+    Expect(List->GetItemCount() == 1000 && List->GetRowCount() <= 7 && List->GetEmbeddedCount() >= 5, "a thousand items, a handful of rows: only what is in view");
+    Expect(LabelOf(List->GetEmbeddedAt(0)) == "Save 0" && LabelOf(List->GetEmbeddedAt(2)) == "Save 2", "each row reads its item's keys");
+    Expect(Scripts.RunString(("assert(Opens == " + std::to_string(List->GetRowCount()) + ")").c_str(), "opens"), "each row's graph opened once");
+
+    UIInputFrame Wheel = Pointer(UIVec2{ 100, 100 }, false, false);
+    Wheel.Wheel = -10.0f;
+    System.ProcessInput(Wheel);
+    Frame();
+    Expect(Near(List->ScrollOffset, 600.0f) && List->GetRowCount() <= 7, "scrolling reuses the rows");
+    bool bShows15 = false;
+    for(uint32_t At = 0; At < List->GetEmbeddedCount(); ++At) { bShows15 = bShows15 || LabelOf(List->GetEmbeddedAt(At)) == "Save 15"; }
+    Expect(bShows15 && Scripts.RunString(("assert(Opens == " + std::to_string(List->GetRowCount()) + ")").c_str(), "opens-again"),
+           "re-bound to the items now in view, without opening again");
+
+    /* A click on a row selects it; on its button, the row's handler with its prefix. */
+    System.ProcessInput(Pointer(UIVec2{ 250, 50 }, true, false));   // item 16 (y 50 + 600 = 650, 16 * 40 = 640)
+    System.ProcessInput(Pointer(UIVec2{ 250, 50 }, false, true));
+    Frame();
+    const UIValue* Selected = System.GetValue("Saves.Selected");
+    Expect(List->SelectedIndex == 16 && Selected && Selected->AsNumber() == 16.0, "a click selects its item; SelectedIndex writes back");
+    UIDocumentInstance* Row16 = nullptr;
+    for(uint32_t At = 0; At < List->GetEmbeddedCount(); ++At) { if(LabelOf(List->GetEmbeddedAt(At)) == "Save 16") Row16 = List->GetEmbeddedAt(At); }
+    if(Row16)
+    {
+        const UIRect Del = Row16->GetPixelRect(Row16->FindWidget("Del")->GetIndex());
+        const UIVec2 DelAt{ Del.X + Del.W * 0.5f, Del.Y + Del.H * 0.5f };
+        System.ProcessInput(Pointer(DelAt, true, false));
+        System.ProcessInput(Pointer(DelAt, false, true));
+        Frame();
+    }
+    const UIValue* Deleted = System.GetValue("Deleted");
+    Expect(Deleted && Deleted->AsString() == "Saves.16.", "a button in a row runs the row's handler, its prefix the item's");
+
+    /* Keys: Down moves the selection (kept in view); Accept activates. */
+    Doc.SetTreeFocus(UIWidgetRef{ &Doc, int32_t(List->GetIndex()) });
+    UIInputFrame Down;
+    Down.bNavDown = true;
+    Down.bHasMouse = false;
+    for(int Each = 0; Each < 5; ++Each) { System.ProcessInput(Down); Frame(); }
+    Expect(List->SelectedIndex == 21 && List->ScrollOffset + 200.0f >= 21 * 40.0f + 36.0f, "Down moves the selection, scrolling it into view");
+    UIInputFrame Accept;
+    Accept.bAccept = true;
+    Accept.bHasMouse = false;
+    System.ProcessInput(Accept);
+    System.RunQueuedActions();
+    Expect(GLastValue == 21.0, "Accept activates the selected item");
+
+    Expect(Scripts.RunString("UI.SetCount('Saves', 3)", "shrink"), "the list shrinks");
+    Frame();
+    Expect(List->GetItemCount() == 3 && List->GetEmbeddedCount() == 3 && Near(List->ScrollOffset, 0.0f), "rows and scroll follow its length");
+
+    System.Close(Handle);
+    System.SetScriptEngine(nullptr);
+    SetScriptUISystem(nullptr);
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+    EngineCore::SetFileProvider(Previous);
+    std::filesystem::remove_all(Dir);
+}
+
 // === Hot reload ===============================================================
 
 static void TestHotReload()
@@ -1886,6 +1993,7 @@ int main()
     TestUIGraphs();
     TestOpenBeforePaint();
     TestInclude();
+    TestListView();
     TestLightLabGraph();
     TestHotReload();
     TestCost();

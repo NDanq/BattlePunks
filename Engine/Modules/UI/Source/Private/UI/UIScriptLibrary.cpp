@@ -1,3 +1,5 @@
+#include <algorithm>
+
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ScriptLibrary.h"
 #include "Public/UI/UISystem.h"
@@ -124,6 +126,15 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(UI)
         const UI::UIValue* Value = System ? System->GetValue(Call.GetString(1)) : nullptr;
         Call.PushNumber(Value ? Value->AsNumber() : 0.0);
     }, "Key:string -> Value:number");
+
+    Lib.Function("SetCount", [](GameCore::ScriptCall& Call)
+    {
+        /* A ListView's length: List.Count. Its items are List.<i>.<Field>. */
+        if(UI::UISystem* System = UI::GetScriptUISystem())
+        {
+            System->SetValue(std::string(Call.GetString(1)) + ".Count", UI::UIValue::Number(std::max(Call.GetNumber(2), 0.0)));
+        }
+    }, "List:string, Count:integer").Tooltip("A ListView's item count: List.Count");
 
     Lib.Pure("GetBool", [](GameCore::ScriptCall& Call)
     {

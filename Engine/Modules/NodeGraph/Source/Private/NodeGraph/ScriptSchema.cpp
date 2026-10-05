@@ -1622,6 +1622,10 @@ namespace
             Pure("UI.Key", "Key", "Document", SOP_Call, { In("Key", "string", "Name"), Out("Full", "string") },
                  "((self.Prefix or \"\") .. {Key})", {}, "binding prefix include store")
                 .Tooltip = "A data store key as this document's {Bind:Key} reads it: its Include's Prefix + Key.";
+            Pure("UI.ListItemKey", "List Item Key", "Document", SOP_Call,
+                 { In("List", "string", "Items"), In("Index", "integer", "0"), In("Field", "string", "Name"), Out("Key", "string") },
+                 "({List} .. \".\" .. math.floor({Index}) .. \".\" .. {Field})", {}, "list view item row store")
+                .Tooltip = "A ListView item's key: List.Index.Field (set List.Count too: UI Set Count).";
             const auto Widget = [](const char* InName, const char* InTooltip)
             {
                 return PropertyDefinition{ InName, EPropertyKind::WidgetName, "", {}, InTooltip };

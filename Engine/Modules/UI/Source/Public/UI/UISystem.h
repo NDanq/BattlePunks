@@ -124,6 +124,9 @@ namespace UI
          * UI graph made (OnOpen), or its UI graph let go (OnClose). */
         void AttachEmbedded(UIDocumentInstance& InEmbedded);
         void DetachEmbedded(UIDocumentInstance& InEmbedded);
+        /* An embedded document given a new prefix (a ListView's reused row): its
+         * bindings read again, and its graph's self.Prefix follows. */
+        void RebindEmbedded(UIDocumentInstance& InEmbedded, const std::string& InPrefix);
 
         /* The clipboard a text field copies to and pastes from: the host's
          * (GameSession: the window's; the designer: Qt's). Without hooks, one

@@ -804,9 +804,13 @@ namespace UI
             if(Hit >= 0) return Hit;
         }
         /* A host is hit where its embedded document is (HitTestTree goes on into it). */
-        if(!bInDesign && Contains(InClip, InPixels))
+        if(!bInDesign && Contains(InClip, InPixels) && (!W.bClipChildren || Contains(Pixels, InPixels)))
         {
-            if(const UIDocumentInstance* Inner = W.GetEmbedded(); Inner && Inner->HitTest(InPixels) >= 0) return int32_t(InIndex);
+            for(uint32_t At = 0; At < W.GetEmbeddedCount(); ++At)
+            {
+                const UIDocumentInstance* Inner = W.GetEmbeddedAt(At);
+                if(Inner && Inner->HitTest(InPixels) >= 0) return int32_t(InIndex);
+            }
         }
         if(!bInDesign && (W.Visibility == EUIVisibility::SelfHitTestInvisible || !W.TakesHits())) return -1;
         return Contains(Pixels, InPixels) && Contains(InClip, InPixels) ? int32_t(InIndex) : -1;
@@ -957,8 +961,12 @@ namespace UI
         if(InOther == this) return true;
         for(const uint32_t Host : EmbedHosts)
         {
-            const UIDocumentInstance* Inner = Widgets[Host]->GetEmbedded();
-            if(Inner && Inner->ContainsInstance(InOther)) return true;
+            const UIWidget& W = *Widgets[Host];
+            for(uint32_t At = 0; At < W.GetEmbeddedCount(); ++At)
+            {
+                const UIDocumentInstance* Inner = W.GetEmbeddedAt(At);
+                if(Inner && Inner->ContainsInstance(InOther)) return true;
+            }
         }
         return false;
     }
@@ -1009,10 +1017,16 @@ namespace UI
         UIWidgetRef Hit{ this, HitTest(InPixels) };
         while(Hit.Index >= 0)
         {
-            UIDocumentInstance* Inner = Hit.Doc->Widgets[size_t(Hit.Index)]->GetEmbedded();
-            const int32_t InnerHit = Inner ? Inner->HitTest(InPixels) : -1;
-            if(InnerHit < 0) break;
-            Hit = UIWidgetRef{ Inner, InnerHit };
+            const UIWidget& Host = *Hit.Doc->Widgets[size_t(Hit.Index)];
+            UIWidgetRef Inner;
+            for(uint32_t At = Host.GetEmbeddedCount(); At-- > 0 && !Inner.Doc;)   // topmost last
+            {
+                UIDocumentInstance* Each = Host.GetEmbeddedAt(At);
+                const int32_t EachHit = Each ? Each->HitTest(InPixels) : -1;
+                if(EachHit >= 0) Inner = UIWidgetRef{ Each, EachHit };
+            }
+            if(!Inner.Doc) break;
+            Hit = Inner;
         }
         return Hit.Index >= 0 ? Hit : UIWidgetRef();
     }
@@ -1053,7 +1067,10 @@ namespace UI
                 const UIWidget& W = *InDoc.GetWidget(At);
                 if(!InDoc.IsShown(At)) continue;
                 if(W.bFocusable && W.IsEnabledInHierarchy()) OutRefs.push_back(UIWidgetRef{ &InDoc, int32_t(At) });
-                if(UIDocumentInstance* Inner = W.GetEmbedded()) CollectFocusables(*Inner, OutRefs);
+                for(uint32_t Each = 0; Each < W.GetEmbeddedCount(); ++Each)
+                {
+                    if(UIDocumentInstance* Inner = W.GetEmbeddedAt(Each)) CollectFocusables(*Inner, OutRefs);
+                }
             }
         }
     }
@@ -1145,7 +1162,11 @@ namespace UI
         bool bChanged = false;
         for(const uint32_t Host : EmbedHosts)
         {
-            if(UIDocumentInstance* Inner = Widgets[Host]->GetEmbedded()) { bChanged = Inner->ApplyBindings(InStore) || bChanged; }
+            const UIWidget& W = *Widgets[Host];
+            for(uint32_t At = 0; At < W.GetEmbeddedCount(); ++At)
+            {
+                if(UIDocumentInstance* Inner = W.GetEmbeddedAt(At)) { bChanged = Inner->ApplyBindings(InStore) || bChanged; }
+            }
         }
         if(Bindings.empty() || InStore.GetVersion() == BindingsVersion) return bChanged;
         BindingsVersion = InStore.GetVersion();
