@@ -2,12 +2,21 @@ NimbleParticleSystem 1
 
 Emitter Smoke
     Enabled true
+    Type Sprite
     Mesh
     Material Content/Materials/FlareSmoke.material.nmgraph
-    FaceCamera true
     Offset 0,0,0
+    Billboard FaceCamera
+    VelocityStretch 0.05
+    MeshOrientation RandomSpin
+    RandomRotation false
+    RotationRate 0
+    SpawnMode Continuous
     MaxParticles 600
     SpawnRate 70
+    BurstCount 32
+    BurstInterval 0
+    BurstCycles 1
     Lifetime 6
     LifetimeVariance 0.35
     EmitterRadius 8
@@ -17,6 +26,10 @@ Emitter Smoke
     Acceleration 9,14,0
     Drag 0.35
     Turbulence 45
+    BeamEnd 0,200,0
+    BeamSegments 16
+    BeamNoise 0
+    BeamNoiseSpeed 4
     StartSize 26
     EndSize 230
     StartColor 225,38,22,150

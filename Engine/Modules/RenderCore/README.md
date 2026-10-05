@@ -58,7 +58,7 @@ Engine/Modules/RenderCore/
 |   |   |                           PointLightComponent.h, SpotLightComponent.h, SkyLightComponent.h,
 |   |   |                           LightShadow.h, PostProcessComponent.h,
 |   |   |                           ParticleSystemComponent.h (GPU particles) (GameCore components)
-|   |   |-- ParticleTypes.h         an emitter's settings, and what ReadParticles returns
+|   |   |-- ParticleTypes.h         particle types, billboards, bursts; an emitter's settings; what ReadParticles returns
 |   |   |-- ParticleSystemAsset.h   .nmparticle: emitters as text, Parse/Write/Load/Save, ParticleSystemCache
 |   |   |-- MeshAsset.h             .nmmesh: MeshData, Save/Load, MeshAssetCache
 |   |   |-- TextureAsset.h          .nmtexture: TextureData, Save/Load

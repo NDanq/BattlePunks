@@ -78,12 +78,23 @@ namespace RenderCore
                     Run.bEnabled = Desc.bEnabled != 0;
                     Run.Settings = C.ToSettings(Desc, uint32_t(Index));
                     Run.Offset   = Desc.Offset;
-                    Run.Mesh.assign(Desc.Mesh[0] != '\0' ? Desc.Mesh : PARTICLE_DEFAULT_MESH);
+                    Run.BeamEnd  = Desc.BeamEnd;
+                    Run.bBeamTarget = C.bUseBeamTarget != 0;
+                    Run.BeamTarget  = C.BeamTarget;
+                    Run.Mesh.assign(Desc.GetMeshPath());
                     Run.Material.assign(Desc.Material);
                     if(Run.bEnabled)
                     {
                         const double X = Desc.Offset.GetX(), Y = Desc.Offset.GetY(), Z = Desc.Offset.GetZ();
                         Reach = std::max(Reach, float(std::sqrt(X * X + Y * Y + Z * Z)) + Desc.GetReach());
+                        if(Desc.Type == PT_Beam && Run.bBeamTarget)
+                        {
+                            /* Out to the target, wherever it is: bounds are local, so measured from the entity. */
+                            const EngineCore::Vector3 To = C.BeamTarget - GetTransform().Position;
+                            const double TX = To.GetX(), TY = To.GetY(), TZ = To.GetZ();
+                            Reach = std::max(Reach, float(std::sqrt(TX * TX + TY * TY + TZ * TZ)) + Desc.BeamNoise
+                                                    + std::max(Desc.StartSize, Desc.EndSize));
+                        }
                     }
                 }
 
@@ -109,11 +120,12 @@ namespace RenderCore
                         Run.Capacity = 0;
                         continue;
                     }
-                    if(!Run.Gpu || Run.Capacity != Run.Settings.MaxParticles)
+                    if(!Run.Gpu || Run.Capacity != Run.Settings.GetCapacity() || Run.GpuType != Run.Settings.Type)
                     {
                         InContext.ReleaseParticleEmitter(Run.Gpu);
-                        Run.Gpu      = InContext.CreateParticleEmitter(Run.Settings.MaxParticles);
-                        Run.Capacity = Run.Settings.MaxParticles;
+                        Run.Gpu      = InContext.CreateParticleEmitter(Run.Settings.GetCapacity(), Run.Settings.Type);
+                        Run.Capacity = Run.Settings.GetCapacity();
+                        Run.GpuType  = Run.Settings.Type;
                     }
                     if(!Run.Gpu)
                     {
@@ -125,6 +137,15 @@ namespace RenderCore
                                                 : std::string("this backend runs no compute shaders: particle systems draw nothing"));
                         }
                         continue;
+                    }
+                    /* A beam ends at the component's target, else at its own end from the emitter, in the entity's axes. */
+                    if(Run.Settings.Type == PT_Beam)
+                    {
+                        const EngineCore::Vector3 End = Run.bBeamTarget ? Run.BeamTarget
+                                                                        : EmitterPosition(Run) + GetLocalToWorld() * Run.BeamEnd;
+                        Run.Settings.BeamEnd[0] = float(End.GetX());
+                        Run.Settings.BeamEnd[1] = float(End.GetY());
+                        Run.Settings.BeamEnd[2] = float(End.GetZ());
                     }
                     InContext.SimulateParticles(*Run.Gpu, Run.Settings, EmitterPosition(Run), Delta);
                 }
@@ -162,9 +183,13 @@ namespace RenderCore
                 std::string             Mesh;
                 std::string             Material;
                 EngineCore::Vector3     Offset;
+                EngineCore::Vector3     BeamEnd;          // in the entity's axes
+                EngineCore::Vector3     BeamTarget;       // world: the component's, if bBeamTarget
+                bool                    bBeamTarget = false;
                 bool                    bEnabled = true;
                 ParticleEmitterGpu*     Gpu      = nullptr;
                 uint32_t                Capacity = 0;
+                uint8_t                 GpuType  = PT_Sprite;
             };
 
             /* The entity's position, moved by the emitter's Offset in the entity's own axes (and scale). */
@@ -191,7 +216,9 @@ namespace RenderCore
     ParticleEmitterSettings ParticleSystemComponent::ToSettings(const ParticleEmitterDesc& InEmitter, const uint32_t InEmitterIndex) const
     {
         ParticleEmitterSettings Out = InEmitter.ToSettings();
+        Out.bEmitting = bEmitting != 0;
         Out.SpawnRate = bEmitting ? Out.SpawnRate * std::max(SpawnRateScale, 0.0f) : 0.0f;
+        Out.BurstCount = uint32_t(std::lround(double(Out.BurstCount) * std::max(SpawnRateScale, 0.0f)));
         const float TintChannels[4] = { Tint.Rf(), Tint.Gf(), Tint.Bf(), Tint.Af() };
         for(int Channel = 0; Channel < 4; ++Channel)
         {
@@ -203,18 +230,19 @@ namespace RenderCore
         return Out;
     }
 
-    /* Version 2 names a system; version 1 held one emitter's settings inline,
-     * which are read past (its Emitting and Seed kept) -- re-make such a
-     * component's effect as a .nmparticle. */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(ParticleSystemComponent, 2)
+    /* Version 2 names a system; 3 adds the beam target. Version 1 held one
+     * emitter's settings inline, which are read past (its Emitting and Seed
+     * kept) -- re-make such a component's effect as a .nmparticle. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(ParticleSystemComponent, 3)
     {
         if(Ar.IsLoading() && Ar.GetVersion() < 2)
         {
             ParticleEmitterDesc Legacy;
+            uint8_t             bFaceCamera = 1;
             Ar.Flag("Emitting",          C.bEmitting);
             Ar.Field("Mesh",             Legacy.Mesh);
             Ar.Field("Material",         Legacy.Material);
-            Ar.Flag("FaceCamera",        Legacy.bFaceCamera);
+            Ar.Flag("FaceCamera",        bFaceCamera);
             Ar.Field("MaxParticles",     Legacy.MaxParticles);
             Ar.Field("SpawnRate",        Legacy.SpawnRate);
             Ar.Field("Lifetime",         Legacy.Lifetime);
@@ -243,6 +271,11 @@ namespace RenderCore
         Ar.Field("SpawnRateScale", C.SpawnRateScale);
         Ar.Field("TimeScale",      C.TimeScale);
         Ar.Field("Seed",           C.Seed);
+        if(Ar.GetVersion() >= 3)
+        {
+            Ar.Flag("UseBeamTarget", C.bUseBeamTarget);
+            Ar.Field("BeamTarget",   C.BeamTarget);
+        }
     }
 
     /* Lua sees the same names (e:GetComponent("Particle System"):SetEmitting(false)). */
@@ -254,6 +287,8 @@ namespace RenderCore
         Bind.Field("SpawnRateScale", &ParticleSystemComponent::SpawnRateScale);
         Bind.Field("TimeScale",      &ParticleSystemComponent::TimeScale);
         Bind.Field("Seed",           &ParticleSystemComponent::Seed);
+        Bind.Flag("UseBeamTarget",   &ParticleSystemComponent::bUseBeamTarget);
+        Bind.Field("BeamTarget",     &ParticleSystemComponent::BeamTarget);
     }
 
 #if WITH_EDITOR
@@ -265,6 +300,9 @@ namespace RenderCore
         Props.Field("Spawn Rate Scale", &ParticleSystemComponent::SpawnRateScale);
         Props.Field("Time Scale",       &ParticleSystemComponent::TimeScale);
         Props.Field("Seed",             &ParticleSystemComponent::Seed);
+        Props.Category("Beams");
+        Props.Flag("Use Beam Target",   &ParticleSystemComponent::bUseBeamTarget);
+        Props.Field("Beam Target",      &ParticleSystemComponent::BeamTarget);
     }
 #endif
 }

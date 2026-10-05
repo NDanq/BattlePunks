@@ -1,0 +1,77 @@
+NimbleParticleSystem 1
+
+Emitter Chunks
+    Enabled true
+    Type Mesh
+    Mesh
+    Material
+    Offset 0,0,0
+    Billboard FaceCamera
+    VelocityStretch 0.05
+    MeshOrientation RandomSpin
+    RandomRotation true
+    RotationRate 260
+    SpawnMode Burst
+    MaxParticles 128
+    SpawnRate 32
+    BurstCount 28
+    BurstInterval 2.5
+    BurstCycles 0
+    Lifetime 2.2
+    LifetimeVariance 0.3
+    EmitterRadius 10
+    Seed 0
+    Velocity 0,380,0
+    VelocitySpread 240
+    Acceleration 0,-900,0
+    Drag 0.2
+    Turbulence 0
+    BeamEnd 0,200,0
+    BeamSegments 16
+    BeamNoise 0
+    BeamNoiseSpeed 4
+    StartSize 14
+    EndSize 10
+    StartColor 150,110,80,255
+    EndColor 90,70,55,255
+    ColorCurve 1
+    FadeIn 0
+    FadeOut 0.15
+
+Emitter Dust
+    Enabled true
+    Type Sprite
+    Mesh
+    Material Content/Materials/FlareSmoke.material.nmgraph
+    Offset 0,0,0
+    Billboard FaceCamera
+    VelocityStretch 0.05
+    MeshOrientation RandomSpin
+    RandomRotation false
+    RotationRate 0
+    SpawnMode Burst
+    MaxParticles 64
+    SpawnRate 32
+    BurstCount 24
+    BurstInterval 2.5
+    BurstCycles 0
+    Lifetime 1.8
+    LifetimeVariance 0.4
+    EmitterRadius 20
+    Seed 0
+    Velocity 0,60,0
+    VelocitySpread 120
+    Acceleration 0,0,0
+    Drag 1.5
+    Turbulence 0
+    BeamEnd 0,200,0
+    BeamSegments 16
+    BeamNoise 0
+    BeamNoiseSpeed 4
+    StartSize 40
+    EndSize 160
+    StartColor 170,150,130,120
+    EndColor 140,130,120,0
+    ColorCurve 1
+    FadeIn 0.05
+    FadeOut 0.6

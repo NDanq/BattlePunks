@@ -1,7 +1,8 @@
 #version 450
 // ParticleSimulate.csh -- one emitter's particles, one thread each: this
 // frame's spawns born into their ring slots, the rest moved on by Delta
-// (RenderCore/RENDERPIPELINE.md, "Particles").
+// (RenderCore/RENDERPIPELINE.md, "Particles"). Every type but a beam, whose
+// points ParticleBeam.csh places instead.
 
 #include <ParticleCommon.glsl>
 
@@ -37,18 +38,22 @@ void main()
     float Delta = Pa_Timing.x;
     Particle P  = Particles[Index];
 
-    // This frame's spawns are the Count slots from First round the ring.
+    // This frame's spawns are the Count slots from First round the ring, the
+    // first born earliest: each at its own moment inside the frame (so a burst
+    // is a stream, not a stack, and a ribbon's points come in the order they
+    // join it), where the emitter was at that moment.
     uint Offset = (Index + Max - Pa_Spawn.x) % Max;
     if(Offset < Pa_Spawn.y)
     {
-        uint Seed = HashUint(Index * 9781u + Pa_Spawn.w * 6271u);
+        uint  Seed     = HashUint(Index * 9781u + Pa_Spawn.w * 6271u);
         float Life     = Pa_Timing.y * (1.0 - Pa_Timing.z * HashFloat(Seed));
-        vec3  Position = Pa_Emitter.xyz + RandomDirection(Seed) * (Pa_Emitter.w * pow(HashFloat(Seed), 1.0 / 3.0));
+        float Age      = Delta * (float(Pa_Spawn.y - 1u - Offset) + HashFloat(Seed)) / float(Pa_Spawn.y);
+        vec3  Emitter  = mix(Pa_Emitter.xyz, Pa_PrevEmitter.xyz, Delta > 0.0 ? Age / Delta : 0.0);
+        vec3  Position = Emitter + RandomDirection(Seed) * (Pa_Emitter.w * pow(HashFloat(Seed), 1.0 / 3.0));
         vec3  Velocity = Pa_Velocity.xyz + RandomDirection(Seed) * (Pa_Velocity.w * HashFloat(Seed));
-        // Born somewhere inside the frame, so a burst is a stream, not a stack.
-        float Age      = HashFloat(Seed) * Delta;
         P.PositionAge  = vec4(Position + Velocity * Age, Age);
         P.VelocityLife = vec4(Velocity, max(Life, 1e-3));
+        P.Extra        = vec4(uintBitsToFloat(HashUint(Seed ^ 0x9E3779B9u)), 0.0, 0.0, 0.0);
     }
     else if(IsAlive(P))
     {

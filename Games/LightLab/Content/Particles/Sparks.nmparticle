@@ -1,0 +1,39 @@
+NimbleParticleSystem 1
+
+Emitter Sparks
+    Enabled true
+    Type Sprite
+    Mesh
+    Material Content/Materials/ParticleStreak.material.nmgraph
+    Offset 0,0,0
+    Billboard VelocityAligned
+    VelocityStretch 0.035
+    MeshOrientation RandomSpin
+    RandomRotation false
+    RotationRate 0
+    SpawnMode Burst
+    MaxParticles 512
+    SpawnRate 32
+    BurstCount 90
+    BurstInterval 1.5
+    BurstCycles 0
+    Lifetime 1.3
+    LifetimeVariance 0.5
+    EmitterRadius 4
+    Seed 0
+    Velocity 0,260,0
+    VelocitySpread 320
+    Acceleration 0,-700,0
+    Drag 0.6
+    Turbulence 0
+    BeamEnd 0,200,0
+    BeamSegments 16
+    BeamNoise 0
+    BeamNoiseSpeed 4
+    StartSize 4
+    EndSize 2
+    StartColor 255,230,150,255
+    EndColor 255,70,10,0
+    ColorCurve 0.6
+    FadeIn 0
+    FadeOut 0.4

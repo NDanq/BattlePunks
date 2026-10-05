@@ -17,6 +17,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <map>
 #include <string>
@@ -3876,10 +3877,10 @@ static void TestParticleSystem()
     std::printf("[particle system]\n");
 
     size_t Count = 0;
-    Expect(GameCore::FindComponentScript(ParticleSystemComponent::StaticType().ID, Count) && Count == 6,
+    Expect(GameCore::FindComponentScript(ParticleSystemComponent::StaticType().ID, Count) && Count == 8,
            "Particle System exposes its system and overrides to Lua");
     const GameCore::ComponentSerializerInfo* Serializer = GameCore::FindComponentSerializer(ParticleSystemComponent::StaticType().ID);
-    Expect(Serializer && Serializer->Version == 2, "and is saved, version 2 (naming a system)");
+    Expect(Serializer && Serializer->Version == 3, "and is saved, version 3 (naming a system, aiming its beams)");
 
     ParticleEmitterDesc Wild;
     Wild.MaxParticles = 100000;
@@ -3929,6 +3930,79 @@ static void TestParticleSystem()
     Expect(Flood.Spawn[1] == 10 && Flood.Spawn[0] < 10 && Flood.Sort[0] == 16,
            "never more than the ring holds a frame, wrapping round it; the sort runs over the next power of two");
     Expect(First.Spawn[3] != Second.Spawn[3], "each frame seeds its spawns differently");
+    Expect(Second.PrevEmitter[1] == 2.0f && First.PrevEmitter[1] == 2.0f,
+           "spawns are spread from where the emitter was a frame ago (the first frame, where it is)");
+
+    /* Bursts: Burst Count at once, again every Burst Interval, Burst Cycles times. */
+    ParticleEmitterGpu Bursting;
+    Bursting.MaxParticles = 100;
+    ParticleEmitterSettings Burst;
+    Burst.SpawnMode  = PSM_Burst;
+    Burst.BurstCount = 20;
+    uint32_t Spawned[6] = {};
+    for(int Frame = 0; Frame < 6; ++Frame)
+    {
+        Spawned[Frame] = ParticleSimulation::BuildParams(Bursting, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0).Spawn[1];
+    }
+    Expect(Spawned[0] == 20 && Spawned[1] == 0 && Spawned[5] == 0, "a burst with no interval fires once");
+    Burst.bEmitting = false;
+    ParticleSimulation::BuildParams(Bursting, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0);
+    Burst.bEmitting = true;
+    Expect(ParticleSimulation::BuildParams(Bursting, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0).Spawn[1] == 20,
+           "switched off and on, it fires again");
+
+    ParticleEmitterGpu Repeating;
+    Repeating.MaxParticles = 100;
+    Burst.BurstInterval = 0.25f;
+    Burst.BurstCycles   = 3;
+    uint32_t Total = 0, Bursts = 0;
+    for(int Frame = 0; Frame < 20; ++Frame)
+    {
+        const uint32_t Made = ParticleSimulation::BuildParams(Repeating, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0).Spawn[1];
+        Total  += Made;
+        Bursts += Made > 0 ? 1 : 0;
+    }
+    Expect(Total == 60 && Bursts == 3 && Repeating.BurstsFired == 3, "every 0.25 s, three times: 60 in three bursts, then none");
+    Burst.BurstCount = 500;
+    Burst.BurstInterval = 0.0f;
+    ParticleEmitterGpu Small;
+    Small.MaxParticles = 64;
+    Expect(ParticleSimulation::BuildParams(Small, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0).Spawn[1] == 64,
+           "a burst bigger than the ring fills it, no more");
+
+    /* Strips: a ribbon's points from the oldest slot round the ring; a beam's from 0 to its end. */
+    ParticleEmitterGpu Trail;
+    Trail.MaxParticles = 10;
+    ParticleEmitterSettings Ribbon;
+    Ribbon.Type      = PT_Ribbon;
+    Ribbon.SpawnRate = 30.0f;
+    const ParticleParams RibbonParams = ParticleSimulation::BuildParams(Trail, Ribbon, EngineCore::Vector3(), Camera, 0.1f, 0.0);
+    Expect(RibbonParams.Sort[1] == 3 && RibbonParams.Sort[2] == 10 && RibbonParams.Render[0] == PT_Ribbon,
+           "a ribbon is strung from the next slot to spawn into -- the oldest -- round the whole ring");
+    ParticleEmitterSettings Beam;
+    Beam.Type         = PT_Beam;
+    Beam.BeamSegments = 8;
+    Beam.BeamNoise    = 5.0f;
+    ParticleEmitterGpu Ray;
+    Ray.MaxParticles = Beam.GetCapacity();
+    const ParticleParams BeamParams = ParticleSimulation::BuildParams(Ray, Beam, EngineCore::Vector3(), Camera, 0.1f, 0.0);
+    Expect(Beam.GetCapacity() == 9 && BeamParams.Sort[1] == 0 && BeamParams.Sort[2] == 9 && BeamParams.Spawn[1] == 0
+           && BeamParams.BeamNoise[1] == 8.0f && BeamParams.Beam[1] == 200.0f && BeamParams.Beam[3] == 5.0f,
+           "a beam holds its 9 points, spawns nothing, and is strung from slot 0 to its end");
+
+    ParticleEmitterDesc BeamDesc;
+    BeamDesc.Type         = PT_Beam;
+    BeamDesc.BeamSegments = 1000;
+    Expect(BeamDesc.ToSettings().BeamSegments == PARTICLE_BEAM_SEGMENTS_MAX && BeamDesc.GetSteadyStateCount() == 129.0f,
+           "a beam's segments are clamped to 128; it holds a point more");
+    ParticleEmitterDesc BurstDesc;
+    BurstDesc.SpawnMode = PSM_Burst;
+    BurstDesc.BurstCount = 30;
+    BurstDesc.BurstInterval = 0.5f;
+    BurstDesc.BurstCycles = 0;
+    BurstDesc.Lifetime = 1.2f;
+    BurstDesc.LifetimeVariance = 0.0f;
+    Expect(BurstDesc.GetSteadyStateCount() == 90.0f, "bursts every 0.5 s living 1.2 s overlap three at a time: 90");
 }
 
 /*
@@ -3962,8 +4036,8 @@ static void TestParticleSystemAsset()
         const ParticleEmitterDesc& Smoke = System.Emitters[0];
         Expect(std::strcmp(Smoke.Name, "Smoke Plume") == 0 && std::strcmp(Smoke.Material, "Content/Materials/Smoke.material.nmgraph") == 0
                && Smoke.SpawnRate == 70.0f && Smoke.Velocity.GetY() == 120.0 && Smoke.StartColor.G == 38 && Smoke.StartColor.A == 150
-               && Smoke.bFaceCamera == 0 && Smoke.Lifetime == ParticleEmitterDesc().Lifetime,
-               "names run to the end of the line, settings are read, unknown keys skipped, the rest at their defaults");
+               && Smoke.Billboard == PB_Fixed && Smoke.Lifetime == ParticleEmitterDesc().Lifetime,
+               "names run to the end of the line, settings are read (an old FaceCamera false as a Fixed billboard), unknown keys skipped, the rest at their defaults");
         Expect(System.Emitters[1].bEnabled == 0 && System.Emitters[1].Offset.GetY() == 20.0, "the second emitter's own settings");
     }
 
@@ -3971,8 +4045,20 @@ static void TestParticleSystemAsset()
     ParticleSystemDesc Again;
     Expect(ParseParticleSystem(Written, Again, Error) && WriteParticleSystem(Again) == Written,
            "written and read back, it writes the same bytes");
-    Expect(Written.find("LifetimeVariance 0.25\n") != std::string::npos && Written.find("Sparkle") == std::string::npos,
-           "every known setting is written, numbers in their shortest form");
+    Expect(Written.find("LifetimeVariance 0.25\n") != std::string::npos && Written.find("Sparkle") == std::string::npos
+           && Written.find("Billboard Fixed\n") != std::string::npos && Written.find("\n    FaceCamera ") == std::string::npos,
+           "every known setting is written, numbers in their shortest form, choices by name, old keys not");
+    Expect(ParseParticleSystem("NimbleParticleSystem 1\nEmitter T\n    Type Ribbon\n    SpawnMode Burst\n    MeshOrientation AlignToVelocity\n",
+                               System, Error)
+           && System.Emitters[0].Type == PT_Ribbon && System.Emitters[0].SpawnMode == PSM_Burst
+           && System.Emitters[0].MeshOrientation == PMO_AlignToVelocity, "choices are read by name");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter T\n    Type Laser\n", System, Error) && Error.find("Type") != std::string::npos,
+           "an unknown choice is refused");
+    ParticleEmitterDesc Shapes;
+    Shapes.Type = PT_Mesh;
+    Expect(std::strcmp(Shapes.GetMeshPath(), PARTICLE_DEFAULT_SHAPE_MESH) == 0, "a Mesh emitter with no mesh draws a box");
+    Shapes.Type = PT_Sprite;
+    Expect(std::strcmp(Shapes.GetMeshPath(), PARTICLE_DEFAULT_MESH) == 0, "a Sprite emitter with no mesh, a quad");
 
     Expect(!ParseParticleSystem("Emitter A\n", System, Error) && Error.find("line 1") != std::string::npos,
            "a file without its NimbleParticleSystem line is refused");
@@ -4097,6 +4183,184 @@ static void TestParticlesOnGpu()
         Expect(bRed && std::abs(Out.Instances[0].Transform[0] - 10.0f) < 1e-3f,
                "each instance is the particle's colour and size (10, the default) on the camera's axes");
 
+        /* 1b. Each type and mode, from render commands: InSteps of 0.1 s, the emitter at InAt(step). */
+        struct TypeRun
+        {
+            bool bRan = false;
+            std::vector<ParticleSample>         Particles;
+            std::vector<ParticleInstanceSample> Instances;
+        };
+        const auto RunType = [](const ParticleEmitterSettings& InSettings, const int InSteps,
+                                const std::function<Vector3(int)>& InAt)
+        {
+            TypeRun Run;
+            ENQUEUE_RENDER_COMMAND(ParticleTypes)([&Run, &InSettings, InSteps, &InAt](RenderContext& Ctx)
+            {
+                ParticleEmitterGpu* Emitter = Ctx.CreateParticleEmitter(InSettings.GetCapacity(), InSettings.Type);
+                if(!Emitter) { return; }
+                bool bOk = true;
+                for(int Step = 0; Step < InSteps; ++Step)
+                {
+                    bOk = Ctx.SimulateParticles(*Emitter, InSettings, InAt(Step), 0.1f) && bOk;
+                }
+                Run.bRan = bOk && Ctx.ReadParticles(*Emitter, Run.Particles) && Ctx.ReadParticleInstances(*Emitter, Run.Instances);
+                Ctx.ReleaseParticleEmitter(Emitter);
+            });
+            FlushRenderCommands();
+            return Run;
+        };
+        const auto Still = [](int) { return Vector3(0.0, 0.0, 0.0); };
+        const auto FirstLive = [](const TypeRun& InRun) -> const ParticleInstanceSample*
+        {
+            for(const ParticleInstanceSample& Each : InRun.Instances)
+            {
+                if(Each.Transform[15] != 0.0f) { return &Each; }
+            }
+            return nullptr;
+        };
+        const auto Near = [](const float InA, const float InB) { return std::abs(InA - InB) < 1e-2f; };
+
+        ParticleEmitterSettings Moving;
+        Moving.MaxParticles     = 32;
+        Moving.SpawnRate        = 50.0f;
+        Moving.Lifetime         = 100.0f;
+        Moving.LifetimeVariance = 0.0f;
+        Moving.Velocity[0] = 100.0f; Moving.Velocity[1] = 0.0f; Moving.Velocity[2] = 0.0f;
+
+        Moving.Billboard = PB_Vertical;
+        const TypeRun Vertical = RunType(Moving, 3, Still);
+        const ParticleInstanceSample* V = FirstLive(Vertical);
+        Expect(Vertical.bRan && V && Near(V->Transform[4], 0.0f) && Near(V->Transform[5], 10.0f) && Near(V->Transform[6], 0.0f)
+               && Near(V->Transform[1], 0.0f), "a Vertical sprite stands up world +Y, turned only about it");
+
+        Moving.Billboard       = PB_VelocityAligned;
+        Moving.VelocityStretch = 0.05f;
+        const TypeRun Aligned = RunType(Moving, 3, Still);
+        const ParticleInstanceSample* A = FirstLive(Aligned);
+        Expect(Aligned.bRan && A && Near(A->Transform[4], 15.0f) && Near(A->Transform[5], 0.0f) && Near(A->Transform[6], 0.0f),
+               "a Velocity Aligned sprite lies along its motion, 10 long plus 100 a second times 0.05 s");
+
+        Moving.Billboard       = PB_FaceCamera;
+        Moving.bRandomRotation = true;
+        Moving.RotationRate    = 90.0f;
+        const TypeRun Spun = RunType(Moving, 3, Still);
+        int Live = 0, Turned = 0;
+        bool bSized = Spun.bRan;
+        for(const ParticleInstanceSample& Each : Spun.Instances)
+        {
+            if(Each.Transform[15] == 0.0f) { continue; }
+            ++Live;
+            bSized  = bSized && Near(std::sqrt(Each.Transform[0] * Each.Transform[0] + Each.Transform[1] * Each.Transform[1]
+                                               + Each.Transform[2] * Each.Transform[2]), 10.0f);
+            Turned += Near(Each.Transform[0], 10.0f) ? 0 : 1;
+        }
+        Expect(Live == 15 && Turned >= Live - 1 && bSized, "sprites with Random Rotation are each turned in their plane, their size kept");
+        Moving.bRandomRotation = false;
+        Moving.RotationRate    = 0.0f;
+
+        Moving.Type            = PT_Mesh;
+        Moving.MeshOrientation = PMO_AlignToVelocity;
+        const TypeRun Arrows = RunType(Moving, 3, Still);
+        const ParticleInstanceSample* M = FirstLive(Arrows);
+        Expect(Arrows.bRan && M && Near(M->Transform[8], 10.0f) && Near(M->Transform[9], 0.0f) && Near(M->Transform[10], 0.0f),
+               "an Align to Velocity mesh points its +Z along its motion");
+        Moving.MeshOrientation = PMO_RandomSpin;
+        Moving.RotationRate    = 180.0f;
+        const TypeRun Debris = RunType(Moving, 3, Still);
+        const ParticleInstanceSample* D = FirstLive(Debris);
+        const auto Column = [](const ParticleInstanceSample& InSample, const int InColumn)
+        {
+            return Vector3(InSample.Transform[InColumn * 4], InSample.Transform[InColumn * 4 + 1], InSample.Transform[InColumn * 4 + 2]);
+        };
+        bool bRigid = D != nullptr;
+        if(D)
+        {
+            const Vector3 X = Column(*D, 0), Y = Column(*D, 1), Z = Column(*D, 2);
+            bRigid = Near(float(X.Dot(Y)), 0.0f) && Near(float(Y.Dot(Z)), 0.0f) && Near(float(X.GetLength()), 10.0f)
+                  && !Near(float(X.GetX()), 10.0f);
+        }
+        Expect(Debris.bRan && bRigid, "a Random Spin mesh is turned rigidly, its size kept");
+
+        ParticleEmitterSettings Bang;
+        Bang.MaxParticles = 64;
+        Bang.SpawnMode    = PSM_Burst;
+        Bang.BurstCount   = 20;
+        Bang.Lifetime     = 100.0f;
+        const TypeRun Burst = RunType(Bang, 4, Still);
+        int BurstAlive = 0;
+        float BurstOldest = 0.0f;
+        for(const ParticleSample& Each : Burst.Particles)
+        {
+            if(Each.IsAlive()) { ++BurstAlive; BurstOldest = std::max(BurstOldest, Each.Age); }
+        }
+        Expect(Burst.bRan && BurstAlive == 20 && BurstOldest <= 0.4f + 1e-4f, "a burst of 20 makes 20 at once, then no more");
+
+        /* A ribbon behind an emitter moving along +X: segment after segment sharing their edges exactly. */
+        ParticleEmitterSettings Trail;
+        Trail.Type             = PT_Ribbon;
+        Trail.MaxParticles     = 64;
+        Trail.SpawnRate        = 50.0f;
+        Trail.Lifetime         = 100.0f;
+        Trail.LifetimeVariance = 0.0f;
+        Trail.Velocity[1]      = 0.0f;
+        const TypeRun Ribbon = RunType(Trail, 10, [](const int InStep) { return Vector3(30.0 * InStep, 0.0, 0.0); });
+        int Segments = 0;
+        bool bJoined = Ribbon.bRan, bWide = Ribbon.bRan;
+        for(size_t Index = 0; Index + 1 < Ribbon.Instances.size(); ++Index)
+        {
+            const ParticleInstanceSample& Here = Ribbon.Instances[Index];
+            const ParticleInstanceSample& Next = Ribbon.Instances[Index + 1];
+            if(Here.Transform[15] == 0.0f) { continue; }
+            ++Segments;
+            bWide = bWide && Near(float(Column(Here, 0).GetLength()), 10.0f);
+            if(Next.Transform[15] == 0.0f) { continue; }
+            /* This segment's far left corner (L0 + (L1 - L0)) is the next one's near left corner (L0). */
+            const Vector3 Far = Column(Here, 3) + Column(Here, 1);
+            bJoined = bJoined && float((Far - Column(Next, 3)).GetLength()) < 1e-2f;
+        }
+        int RibbonAlive = 0;
+        for(const ParticleSample& Each : Ribbon.Particles) { RibbonAlive += Each.IsAlive() ? 1 : 0; }
+        std::printf("    ribbon: %d points, %d segments\n", RibbonAlive, Segments);
+        Expect(RibbonAlive == 50 && Segments == RibbonAlive - 1, "a ribbon of 50 points is 49 segments");
+        Expect(bJoined && bWide, "each segment starts where the last ended, as wide as the size, with no gap");
+        bool bSpread = Ribbon.bRan && Ribbon.Particles.size() == 64;
+        float LastX = -1e30f;
+        for(int Slot = 0; bSpread && Slot < 50; ++Slot)
+        {
+            const float X = Ribbon.Particles[size_t(Slot)].Position[0];
+            bSpread = bSpread && X >= LastX - 1e-3f;
+            LastX   = X;
+        }
+        Expect(bSpread && LastX > 240.0f, "spawns are spread along the emitter's path, in the order they were born");
+
+        /* A beam: its points from the emitter to its end; jittered in the middle only. */
+        ParticleEmitterSettings Ray;
+        Ray.Type         = PT_Beam;
+        Ray.BeamSegments = 8;
+        Ray.BeamEnd[0] = 0.0f; Ray.BeamEnd[1] = 200.0f; Ray.BeamEnd[2] = 0.0f;
+        const TypeRun Straight = RunType(Ray, 1, Still);
+        bool bOnLine = Straight.bRan && Straight.Particles.size() == 9;
+        for(size_t Point = 0; bOnLine && Point < 9; ++Point)
+        {
+            const ParticleSample& Each = Straight.Particles[Point];
+            bOnLine = Each.IsAlive() && Near(Each.Position[1], 25.0f * float(Point)) && Near(Each.Position[0], 0.0f);
+        }
+        Expect(bOnLine, "a beam's 9 points run evenly from the emitter to its end");
+        Ray.BeamNoise = 10.0f;
+        const TypeRun Jitter = RunType(Ray, 3, Still);
+        float Stray = 0.0f;
+        for(const ParticleSample& Each : Jitter.Particles)
+        {
+            Stray = std::max(Stray, std::sqrt(Each.Position[0] * Each.Position[0] + Each.Position[2] * Each.Position[2]));
+        }
+        const bool bEnds = Jitter.Particles.size() == 9 && Near(Jitter.Particles[0].Position[0], 0.0f)
+                        && Near(Jitter.Particles[8].Position[0], 0.0f) && Near(Jitter.Particles[8].Position[1], 200.0f);
+        std::printf("    beam: strays %.2f at most\n", Stray);
+        Expect(Jitter.bRan && bEnds && Stray > 0.5f && Stray <= 10.0f + 1e-3f, "with noise, its middle strays up to 10 units; its ends stay");
+        int BeamSegments = 0;
+        for(const ParticleInstanceSample& Each : Jitter.Instances) { BeamSegments += Each.Transform[15] != 0.0f ? 1 : 0; }
+        Expect(BeamSegments == 8, "and it is strung as 8 segments");
+
         /* 2. Drawn: a plume through the instanced-mesh path, seen side on, red at the bottom and dark at the top. */
         const EngineCore::Size Viewport(256, 256);
         const RenderView Side = RenderView::MakePerspective(Viewport, Vector3(0.0, 100.0, -600.0), Vector3(0.0, 0.0, 1.0),
@@ -4169,6 +4433,70 @@ static void TestParticlesOnGpu()
             Expect(Born > 150 && Born > Middle && Middle > Aged && Aged < 70,
                    "the plume is red where it is born and darkens as it rises and ages");
         }
+
+        /* 3. Strips drawn: a ribbon rising at x 100 and a beam across at y 250, both red, the plume gone. */
+        auto Strips = std::make_shared<ParticleSystemDesc>();
+        ParticleEmitterDesc& Rising = Strips->Emitters.emplace_back();
+        std::snprintf(Rising.Material, sizeof(Rising.Material), "%s", "Content/Materials/ParticleProbe.material.nmgraph");
+        Rising.Type             = PT_Ribbon;
+        Rising.Offset           = Vector3(100.0, 0.0, 0.0);
+        Rising.MaxParticles     = 128;
+        Rising.SpawnRate        = 60.0f;
+        Rising.Lifetime         = 1.5f;
+        Rising.LifetimeVariance = 0.0f;
+        Rising.Velocity         = Vector3(0.0, 200.0, 0.0);
+        Rising.StartSize        = 16.0f;
+        Rising.EndSize          = 16.0f;
+        Rising.StartColor       = EngineCore::Color(255, 0, 0, 255);
+        Rising.EndColor         = EngineCore::Color(255, 0, 0, 255);
+        Rising.FadeIn           = 0.0f;
+        Rising.FadeOut          = 0.0f;
+        ParticleEmitterDesc& Across = Strips->Emitters.emplace_back(Rising);
+        Across.Type         = PT_Beam;
+        Across.Offset       = Vector3(-150.0, 250.0, 0.0);
+        Across.BeamEnd      = Vector3(300.0, 0.0, 0.0);
+        Across.BeamSegments = 12;
+        ParticleSystemCache::Store("Test/Strips.nmparticle", Strips);
+        if(auto* Running = Plume.GetComponent<ParticleSystemComponent>())
+        {
+            std::snprintf(Running->System, sizeof(Running->System), "%s", "Test/Strips.nmparticle");
+        }
+        /* Two seconds or so: the ribbon (1.5 s at 200 a second) has risen all the way. */
+        for(int Each = 0; Each < 120; ++Each)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        const uint64_t StripRequest = Rend.RequestSceneCapture();
+        for(int Each = 0; Each < 2; ++Each)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        }
+        EngineCore::Image StripPixels;
+        const bool bStrips = StripRequest != 0 && Rend.TakeMaterialPreview(StripRequest, StripPixels, Error) && StripPixels.GetWidth() == 256;
+        Expect(bStrips, "the ribbon and beam are captured");
+        if(bStrips)
+        {
+            const bool bBgra = StripPixels.GetFormat() == EImageFormat::BGRA8;
+            const double Focal = 1.0 / std::tan(20.0 * 3.14159265 / 180.0);
+            const auto Pixel = [&](const double InX, const double InY)   // world x, y at z 0 to a pixel's red over green
+            {
+                const int Column = int(std::lround(128.0 + InX / 600.0 * Focal * 128.0));
+                const int Row    = int(std::lround(128.0 - (InY - 100.0) / 600.0 * Focal * 128.0));
+                const uint8_t* Px = StripPixels.GetData() + StripPixels.GetStride() * Row + Column * BytesPerPixel(StripPixels.GetFormat());
+                return int(bBgra ? Px[2] : Px[0]) - int(Px[1]);
+            };
+            const int RibbonLow = Pixel(100.0, 50.0), RibbonHigh = Pixel(100.0, 200.0), BeamLeft = Pixel(-100.0, 250.0);
+            const int BeamMiddle = Pixel(0.0, 250.0), Between = Pixel(0.0, 150.0), PlumeWas = Pixel(0.0, 20.0);
+            std::printf("    red over green: ribbon %d at y 50, %d at y 200; beam %d left, %d middle; %d between, %d where the plume was\n",
+                        RibbonLow, RibbonHigh, BeamLeft, BeamMiddle, Between, PlumeWas);
+            Expect(RibbonLow > 150 && RibbonHigh > 150, "the ribbon is drawn up its whole rise, facing the eye");
+            Expect(BeamLeft > 150 && BeamMiddle > 150, "the beam is drawn across from its emitter to its end");
+            Expect(Between < 60 && PlumeWas < 60, "and nothing else: the plume's system was swapped out");
+        }
+        ParticleSystemCache::Invalidate("Test/Strips.nmparticle");
         Rend.UnbindWorld();
         Rend.Shutdown();
         ParticleSystemCache::Invalidate("Test/Plume.nmparticle");

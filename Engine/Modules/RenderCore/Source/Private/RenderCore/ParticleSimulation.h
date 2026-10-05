@@ -16,8 +16,11 @@ class GDIShader;
  * RENDERPIPELINE.md, "Particles"). Private: it holds GDI objects.
  *
  *   Particles   PARTICLE_MAX_PER_SYSTEM-capped ring of ParticleCommon.glsl's
- *               Particle, 32 bytes each, spawned into round the ring
- *   Instances   GDI_INSTANCE_STRIDE bytes each: the sorted draw
+ *               Particle, 48 bytes each, spawned into round the ring (a
+ *               beam's points, from the emitter to its end)
+ *   Instances   GDI_INSTANCE_STRIDE bytes each: the sorted draw (a sprite or
+ *               mesh emitter); a ribbon's or beam's first triangle a segment
+ *   InstancesB  a ribbon's or beam's second triangle a segment; else null
  */
 namespace RenderCore
 {
@@ -25,14 +28,26 @@ namespace RenderCore
     {
         GDIBuffer* Particles    = nullptr;
         GDIBuffer* Instances    = nullptr;
+        GDIBuffer* InstancesB   = nullptr;
         uint32_t   MaxParticles = 0;
+        uint8_t    Type         = PT_Sprite;   // as made: a ribbon or beam has InstancesB
 
         /* The spawn bookkeeping, on the CPU: the next ring slot, the
          * fraction of a particle owed since last frame, the frames simulated. */
         uint32_t   SpawnCursor = 0;
         double     SpawnCarry  = 0.0;
         uint32_t   Frame       = 0;
-        bool       bSimulated  = false;   // the instances hold a sorted frame: drawable
+        bool       bSimulated  = false;   // the instances hold a frame: drawable
+
+        /* Bursts: seconds emitting, bursts fired. Both start over when it
+         * starts emitting again. */
+        double     EmitTime     = 0.0;
+        uint32_t   BurstsFired  = 0;
+        bool       bWasEmitting = false;
+
+        /* Where the emitter was last frame: this frame's spawns are spread between. */
+        float      PrevPosition[3] = {};
+        bool       bHasPrev        = false;
     };
 
     /* ParticleCommon.glsl's ParticleParams, std140, byte for byte. */
@@ -52,8 +67,13 @@ namespace RenderCore
         float    EndColor[4];
         float    Noise[4];
         uint32_t Sort[4];
+        float    PrevEmitter[4];
+        uint32_t Render[4];
+        float    Motion[4];
+        float    Beam[4];
+        float    BeamNoise[4];
     };
-    static_assert(sizeof(ParticleParams) == 14 * 16, "ParticleParams must match ParticleCommon.glsl's std140 block");
+    static_assert(sizeof(ParticleParams) == 19 * 16, "ParticleParams must match ParticleCommon.glsl's std140 block");
 
     /* The camera a frame's particles are sorted and turned toward. */
     struct ParticleCamera
@@ -67,23 +87,37 @@ namespace RenderCore
     namespace ParticleSimulation
     {
         /* InMaxParticles (clamped to 1..PARTICLE_MAX_PER_SYSTEM) worth of
-         * zeroed buffers; null where the backend has no compute. */
-        ParticleEmitterGpu* Create(uint32_t InMaxParticles);
+         * zeroed buffers for an emitter of InType; null where the backend has
+         * no compute. */
+        ParticleEmitterGpu* Create(uint32_t InMaxParticles, uint8_t InType = PT_Sprite);
         void                Release(ParticleEmitterGpu* InEmitter);
 
         /*
          * This frame's parameters, advancing the spawn ring: InSettings at
          * InEmitterPosition, InDelta seconds on (clamped to a tenth, so a
-         * hitch never bursts), InTime for the swirl. Pure CPU; exported for tests.
+         * hitch never bursts), InTime for the swirl and a beam's jitter. A
+         * Continuous emitter spawns its rate times the delta, the fraction
+         * carried; a Burst emitter its Burst Count each time one falls due.
+         * Never more than the ring holds in one frame. Pure CPU; exported for tests.
          */
         RENDERCORE_API ParticleParams BuildParams(ParticleEmitterGpu& InOutEmitter, const ParticleEmitterSettings& InSettings,
                                    const EngineCore::Vector3& InEmitterPosition, const ParticleCamera& InCamera,
                                    float InDelta, double InTime);
 
-        /* The two dispatches: simulate, then sort and write the instances.
-         * False if either shader or dispatch is missing. */
-        bool Dispatch(ParticleEmitterGpu& InOutEmitter, const ParticleParams& InParams,
-                      GDIShader* InSimulate, GDIShader* InSort);
+        /* The compute shaders a frame runs. */
+        struct Shaders
+        {
+            GDIShader* Simulate = nullptr;   // ParticleSimulate.csh
+            GDIShader* Sort     = nullptr;   // ParticleSort.csh
+            GDIShader* Ribbon   = nullptr;   // ParticleRibbon.csh
+            GDIShader* Beam     = nullptr;   // ParticleBeam.csh
+        };
+
+        /* Its type's two dispatches: a sprite or mesh emitter is simulated,
+         * then sorted into its instances; a ribbon simulated, then strung into
+         * its triangles; a beam's points placed, then strung. False if a
+         * shader or dispatch is missing. */
+        bool Dispatch(ParticleEmitterGpu& InOutEmitter, const ParticleParams& InParams, const Shaders& InShaders);
     }
 }
 

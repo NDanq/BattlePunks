@@ -75,7 +75,9 @@ flickers far past 1 so Bloom spreads it, a red point light, and its smoke -- a
 **Particle System** component running `Content/Particles/FlareSmoke.nmparticle`,
 soft puffs (`FlareSmoke.material.nmgraph`, Translucent Unlit) born red and
 turning black as they rise, drift and spread. Double-click it in the Content
-Browser to open it in the editor's Particle Editor.
+Browser to open it in the editor's Particle Editor. `Content/Particles/` also
+has a sample of each particle type -- `Sparks` (stretched sprites in bursts),
+`Debris` (spinning meshes), `Trail` (a ribbon) and `Laser` (beams).
 It is simulated by compute shaders, so it shows on Vulkan only for now, and it
 animates in the editor's viewport as well as in Play.
 

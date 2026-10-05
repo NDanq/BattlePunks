@@ -13,9 +13,6 @@
 
 namespace RenderCore
 {
-    /* What an emitter with an empty Mesh draws: a 1 x 1 quad facing -Z, turned to the camera. */
-    constexpr const char* PARTICLE_DEFAULT_MESH = "Engine/Content/Meshes/Quad.nmmesh";
-
     /*
      * "Particle System". Runs the particle system asset named by System
      * (*.nmparticle, ParticleSystemAsset.h) from its entity: each of the
@@ -26,8 +23,9 @@ namespace RenderCore
      * are born, not the ones already out.
      *
      * The asset says what the effect is; the component, how this one runs:
-     * whether it emits, a tint on every colour, its spawn rate and clock
-     * scaled, and a seed so two of the same system differ. An edit to the
+     * whether it emits (off and on again restarts a burst emitter), a tint on
+     * every colour, its spawn rate and clock scaled, a seed so two of the same
+     * system differ, and where its beams end, if a script aims them. An edit to the
      * asset (a save in the Particle Editor) reaches every component naming it
      * on the next frame.
      *
@@ -46,6 +44,11 @@ namespace RenderCore
         float             SpawnRateScale = 1.0f;   // times every emitter's spawn rate
         float             TimeScale      = 1.0f;   // how fast its particles live: 0 freezes them
         int32_t           Seed           = 0;      // added to each emitter's own
+
+        /* Beams end at BeamTarget, in world space, instead of their own
+         * BeamEnd: a laser aimed at something by a script. */
+        uint8_t             bUseBeamTarget = 0;
+        EngineCore::Vector3 BeamTarget{0.0, 0.0, 0.0};
 
         /* Emitter InEmitter of InSystem as this component runs it: its
          * settings with the overrides above applied. */

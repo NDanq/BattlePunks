@@ -15,7 +15,8 @@
 /*
  * A particle system asset (*.nmparticle; RENDERPIPELINE.md, "Particles"):
  * one or more emitters, each its own GPU simulation drawn with its own mesh
- * and material. A Particle System component names one by its runtime path
+ * and material: sprites (billboards), meshes, a ribbon (a trail through its
+ * particles) or a beam (a strip to a point), spawning continuously or in bursts. A Particle System component names one by its runtime path
  * ("Content/Particles/Smoke.nmparticle"); the editor's Particle Editor makes
  * and edits them.
  *
@@ -26,6 +27,7 @@
  *
  *     Emitter Smoke
  *         Enabled true
+ *         Type Sprite
  *         Material Content/Materials/FlareSmoke.material.nmgraph
  *         SpawnRate 70
  *         Velocity 10,120,0
@@ -33,7 +35,8 @@
  *         ...
  *
  * A key is its first word and its value the rest of the line. Vectors are
- * three numbers, colours four bytes (0-255, sRGB), switches true/false.
+ * three numbers, colours four bytes (0-255, sRGB), switches true/false,
+ * choices their names (Type Ribbon, Billboard VelocityAligned).
  * A setting left out keeps its default and an unknown key is skipped, so
  * an older engine reads a newer file. Written deterministically: every
  * setting, in a fixed order, numbers in their shortest round-trip form.
@@ -68,13 +71,24 @@ namespace RenderCore
     {
         char                Name[PARTICLE_EMITTER_NAME_MAX] = "Emitter";
         uint8_t             bEnabled    = 1;                       // off: neither simulated nor drawn
-        char                Mesh[RENDER_MESH_PATH_MAX]         = {};   // "": PARTICLE_DEFAULT_MESH
+        uint8_t             Type        = PT_Sprite;               // EParticleType
+        char                Mesh[RENDER_MESH_PATH_MAX]         = {};   // "": a Sprite's quad, a Mesh's box (GetMeshPath)
         char                Material[RENDER_MATERIAL_PATH_MAX] = {};   // "": DefaultLit
-        uint8_t             bFaceCamera = 1;
         EngineCore::Vector3 Offset{0.0, 0.0, 0.0};
 
+        /* Sprite and Mesh: how each is turned. */
+        uint8_t             Billboard        = PB_FaceCamera;      // EParticleBillboard (Sprite)
+        float               VelocityStretch  = 0.05f;              // Velocity Aligned: seconds of travel added to its length
+        uint8_t             MeshOrientation  = PMO_RandomSpin;     // EParticleMeshOrientation (Mesh)
+        uint8_t             bRandomRotation  = 0;                  // each starts at a random angle and spins either way
+        float               RotationRate     = 0.0f;               // degrees a second
+
+        uint8_t             SpawnMode        = PSM_Continuous;     // EParticleSpawnMode
         int32_t             MaxParticles     = 256;     // 1..PARTICLE_MAX_PER_SYSTEM; the oldest are replaced
-        float               SpawnRate        = 32.0f;   // a second
+        float               SpawnRate        = 32.0f;   // a second (Continuous)
+        int32_t             BurstCount       = 32;      // a burst (Burst)
+        float               BurstInterval    = 0.0f;    // seconds between bursts; 0: one
+        int32_t             BurstCycles      = 1;       // bursts in all, with an interval; 0: no end
         float               Lifetime         = 2.0f;    // seconds
         float               LifetimeVariance = 0.25f;
         float               EmitterRadius    = 0.0f;
@@ -86,7 +100,14 @@ namespace RenderCore
         float               Drag             = 0.0f;
         float               Turbulence       = 0.0f;
 
-        float               StartSize        = 10.0f;
+        /* Beam: from the emitter to BeamEnd (in the entity's own axes, as
+         * Offset), through BeamSegments points that stray up to BeamNoise. */
+        EngineCore::Vector3 BeamEnd{0.0, 200.0, 0.0};
+        int32_t             BeamSegments     = 16;      // 1..PARTICLE_BEAM_SEGMENTS_MAX
+        float               BeamNoise        = 0.0f;
+        float               BeamNoiseSpeed   = 4.0f;
+
+        float               StartSize        = 10.0f;   // a ribbon or beam: its width
         float               EndSize          = 10.0f;
         EngineCore::Color   StartColor{255, 255, 255, 255};
         EngineCore::Color   EndColor{255, 255, 255, 0};
@@ -95,17 +116,25 @@ namespace RenderCore
         float               FadeOut          = 0.3f;
 
         /* As RenderContext::SimulateParticles takes it: clamped to what the
-         * GPU can run, colours to 0-1. */
+         * GPU can run, colours to 0-1. BeamEnd is left in the entity's axes:
+         * the component places it. */
         RENDERCORE_API ParticleEmitterSettings ToSettings() const;
 
         /* How many particles it holds once it has run a while: the spawn
-         * rate times the mean lifetime, at most MaxParticles. */
+         * rate times the mean lifetime (a burst's count, for a burst that
+         * outlives its interval), at most MaxParticles; a beam's points. */
         RENDERCORE_API float GetSteadyStateCount() const;
 
         /* As far as one of its particles can get from the emitter in its
          * life, plus its size: what culling pads the entity by. */
         RENDERCORE_API float GetReach() const;
+
+        /* The mesh each particle draws: Mesh, or the quad (Sprite) or box (Mesh) when it is empty. */
+        RENDERCORE_API const char* GetMeshPath() const;
     };
+
+    /* Names as the text and the editor give them, by enum value. */
+    RENDERCORE_API const char* GetParticleTypeName(uint8_t InType);
 
     struct ParticleSystemDesc
     {

@@ -14,8 +14,14 @@ RenderComponent names one as "Engine/Content/Meshes/Box.nmmesh").
     Capsule.nmmesh  diameter 1, height 2, along Y: a 1-unit cylinder between two
                     hemispheres, 32 segments around, 8 rings per hemisphere,
                     smooth all over
+    RibbonSegmentA.nmmesh, RibbonSegmentB.nmmesh
+                    one triangle each, corners (0,0,0) (1,0,0) (0,1,0) facing -Z:
+                    a particle ribbon's or beam's two triangles a segment, each
+                    mapped exactly onto its corners (RenderCore's ParticleRibbon.csh).
+                    A's UVs (0,0) (1,0) (0,1); B's (1,1) (0,1) (1,0), so the two
+                    make the segment's quad. Not centred
 
-All six are centred on the origin and are made the way the importer makes a
+The first six are centred on the origin and are made the way the importer makes a
 glTF mesh, so a material treats them alike, lightmap UVs included: each shape is built in glTF's
 frame -- right-handed, +Y up, +Z toward the viewer -- then converted to the
 engine's exactly as GltfImporter.cpp converts one (z flips, and the winding
@@ -183,6 +189,16 @@ def make_quad():
     return mesh
 
 
+def make_ribbon_segment(name, uvs):
+    mesh = Mesh(name)
+    normal = (0.0, 0.0, 1.0)                   # toward the viewer: the engine's -Z, as the quad
+    corners = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+    for corner, uv in zip(corners, uvs):
+        mesh.vertex(corner, normal, uv)
+    mesh.triangle(0, 1, 2)
+    return mesh
+
+
 def make_sphere(segments=32, rings=16, radius=0.5):
     """Rings from the top pole (v = 0) to the bottom (v = 1); u once around,
     rightwards seen from outside. The seam and the poles repeat vertices so
@@ -340,7 +356,9 @@ def main():
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
-    for mesh in (make_box(), make_sphere(), make_plane(), make_quad(), make_cylinder(), make_capsule()):
+    ribbon_a = make_ribbon_segment("RibbonSegmentA", [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)])
+    ribbon_b = make_ribbon_segment("RibbonSegmentB", [(1.0, 1.0), (0.0, 1.0), (1.0, 0.0)])
+    for mesh in (make_box(), make_sphere(), make_plane(), make_quad(), make_cylinder(), make_capsule(), ribbon_a, ribbon_b):
         mesh.check()
         mesh.check_uv1()
         to_engine(mesh)
