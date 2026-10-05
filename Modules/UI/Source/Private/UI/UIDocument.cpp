@@ -488,6 +488,10 @@ namespace UI
             }
         }
         for(size_t At = 0; At < Count; ++At) { SortPaintOrder(uint32_t(At)); }
+        for(size_t At = 0; At < Count; ++At)
+        {
+            if(Widgets[At]->IsEmbedHost()) EmbedHosts.push_back(uint32_t(At));
+        }
 
         for(size_t At = 0; At < Count; ++At)
         {
@@ -602,7 +606,7 @@ namespace UI
                 if(Each.Widget != InWidget.Index || Each.Property != Property || !Each.bWhole) continue;
                 std::vector<std::string> Keys;
                 bool bWhole = false;
-                if(ParseBinding(Each.Template, bWhole, &Keys) && !Keys.empty()) { System->SetValue(Keys[0], After); }
+                if(ParseBinding(Each.Template, bWhole, &Keys) && !Keys.empty()) { System->SetValue(ResolveKey(Keys[0]), After); }
             }
         }
         return true;
@@ -743,10 +747,10 @@ namespace UI
         const UIVec2 Scrolled = W.GetChildOffset();
         Children.Offset.X -= std::round(Scrolled.X * Context.PixelScale.X);
         Children.Offset.Y -= std::round(Scrolled.Y * Context.PixelScale.Y);
-        if(W.bClipChildren) { DrawList.PushClip(PixelRects[InIndex]); }
+        if(W.bClipChildren) { Context.List->PushClip(PixelRects[InIndex]); }
         for(const uint32_t Child : PaintOrders[InIndex]) { PaintWidget(Child, Children); }
         W.PaintOver(Context, Rect);
-        if(W.bClipChildren) { DrawList.PopClip(); }
+        if(W.bClipChildren) { Context.List->PopClip(); }
     }
 
     bool UIDocumentInstance::Paint()
@@ -798,6 +802,11 @@ namespace UI
         {
             const int32_t Hit = HitTestWidget(Order[At], InPixels, Clip, bInDesign);
             if(Hit >= 0) return Hit;
+        }
+        /* A host is hit where its embedded document is (HitTestTree goes on into it). */
+        if(!bInDesign && Contains(InClip, InPixels))
+        {
+            if(const UIDocumentInstance* Inner = W.GetEmbedded(); Inner && Inner->HitTest(InPixels) >= 0) return int32_t(InIndex);
         }
         if(!bInDesign && (W.Visibility == EUIVisibility::SelfHitTestInvisible || !W.TakesHits())) return -1;
         return Contains(Pixels, InPixels) && Contains(InClip, InPixels) ? int32_t(InIndex) : -1;
@@ -918,14 +927,229 @@ namespace UI
         MarkPaintDirty();
     }
 
+    // --- Embedding ---------------------------------------------------------------
+
+    void UIDocumentInstance::SetEmbedded(UIDocumentInstance* InParent, const uint32_t InHost, const std::string& InPrefix)
+    {
+        ParentInstance  = InParent;
+        HostIndex       = InHost;
+        BindingPrefix   = InPrefix;
+        BindingsVersion = 0;   // the next ApplyBindings reads them with the prefix
+        if(InParent) { Fonts = InParent->Fonts; System = InParent->System; }
+    }
+
+    UIDocumentInstance* UIDocumentInstance::GetRootInstance()
+    {
+        UIDocumentInstance* Root = this;
+        while(Root->ParentInstance) Root = Root->ParentInstance;
+        return Root;
+    }
+
+    int UIDocumentInstance::GetEmbedDepth() const
+    {
+        int Depth = 0;
+        for(const UIDocumentInstance* Up = ParentInstance; Up; Up = Up->ParentInstance) ++Depth;
+        return Depth;
+    }
+
+    bool UIDocumentInstance::ContainsInstance(const UIDocumentInstance* InOther) const
+    {
+        if(InOther == this) return true;
+        for(const uint32_t Host : EmbedHosts)
+        {
+            const UIDocumentInstance* Inner = Widgets[Host]->GetEmbedded();
+            if(Inner && Inner->ContainsInstance(InOther)) return true;
+        }
+        return false;
+    }
+
+    std::string UIDocumentInstance::ResolveKey(const std::string& InKey) const
+    {
+        return PrefixBindingKey(BindingPrefix, InKey);
+    }
+
+    UIVec2 UIDocumentInstance::MeasureEmbedded(const UILayoutContext& InOuter)
+    {
+        if(Widgets.empty()) return UIVec2();
+        Scale = InOuter.Scale;
+        if(InOuter.Fonts) Fonts = InOuter.Fonts;
+        std::fill(Measured.begin(), Measured.end(), uint8_t(0));
+        UILayoutContext Context;
+        Context.Document = this;
+        Context.Fonts    = Fonts;
+        Context.Scale    = Scale;
+        bLayoutDirty = false;
+        return Measure(Context, 0);
+    }
+
+    void UIDocumentInstance::ArrangeEmbedded(const UILayoutContext& InOuter, const UIRect& InRect)
+    {
+        if(Widgets.empty()) return;
+        UILayoutContext Context;
+        Context.Document = this;
+        Context.Fonts    = Fonts;
+        Context.Scale    = InOuter.Scale;
+        if(!Measured[0]) Measure(Context, 0);
+        LayoutSize = UIVec2{ InRect.W, InRect.H };
+        Arrange(Context, 0, InRect);
+    }
+
+    void UIDocumentInstance::PaintEmbedded(UIPaintContext& InOuter)
+    {
+        if(Widgets.empty()) return;
+        UIPaintContext Context = InOuter;
+        Context.Document = this;
+        Context.Opacity  = InOuter.Opacity;
+        PaintWidget(0, Context);
+        bPaintDirty = false;
+    }
+
+    UIWidgetRef UIDocumentInstance::HitTestTree(const UIVec2& InPixels)
+    {
+        UIWidgetRef Hit{ this, HitTest(InPixels) };
+        while(Hit.Index >= 0)
+        {
+            UIDocumentInstance* Inner = Hit.Doc->Widgets[size_t(Hit.Index)]->GetEmbedded();
+            const int32_t InnerHit = Inner ? Inner->HitTest(InPixels) : -1;
+            if(InnerHit < 0) break;
+            Hit = UIWidgetRef{ Inner, InnerHit };
+        }
+        return Hit.Index >= 0 ? Hit : UIWidgetRef();
+    }
+
+    UIWidgetRef UIDocumentInstance::FindInteractiveTree(UIWidgetRef InHit)
+    {
+        while(InHit.Doc)
+        {
+            const int32_t Found = InHit.Doc->FindInteractive(InHit.Index);
+            if(Found >= 0) return UIWidgetRef{ InHit.Doc, Found };
+            if(!InHit.Doc->ParentInstance) break;
+            InHit = UIWidgetRef{ InHit.Doc->ParentInstance, int32_t(InHit.Doc->HostIndex) };
+        }
+        return UIWidgetRef();
+    }
+
+    UIWidgetRef UIDocumentInstance::GetTreeFocus()
+    {
+        UIWidgetRef Found;
+        ForEachInstance([&Found](UIDocumentInstance& Each) { if(!Found.Doc && Each.Focused >= 0) Found = UIWidgetRef{ &Each, Each.Focused }; });
+        return Found;
+    }
+
+    bool UIDocumentInstance::SetTreeFocus(const UIWidgetRef InFocus)
+    {
+        if(InFocus.Doc && !InFocus.Doc->SetFocus(InFocus.Index)) return false;
+        ForEachInstance([&InFocus](UIDocumentInstance& Each) { if(&Each != InFocus.Doc && Each.Focused >= 0) Each.SetFocus(-1); });
+        return true;
+    }
+
+    namespace
+    {
+        /* Every focusable, shown widget of InDoc's tree, embedded ones at their host's place. */
+        void CollectFocusables(UIDocumentInstance& InDoc, std::vector<UIWidgetRef>& OutRefs)
+        {
+            for(uint32_t At = 0; At < InDoc.GetWidgetCount(); ++At)
+            {
+                const UIWidget& W = *InDoc.GetWidget(At);
+                if(!InDoc.IsShown(At)) continue;
+                if(W.bFocusable && W.IsEnabledInHierarchy()) OutRefs.push_back(UIWidgetRef{ &InDoc, int32_t(At) });
+                if(UIDocumentInstance* Inner = W.GetEmbedded()) CollectFocusables(*Inner, OutRefs);
+            }
+        }
+    }
+
+    UIWidgetRef UIDocumentInstance::FindTreeNextFocus(const int32_t InStep)
+    {
+        if(EmbedHosts.empty())
+        {
+            const int32_t Next = FindNextFocus(InStep);
+            return Next >= 0 ? UIWidgetRef{ this, Next } : UIWidgetRef();
+        }
+        std::vector<UIWidgetRef> All;
+        CollectFocusables(*this, All);
+        if(All.empty()) return UIWidgetRef();
+        const UIWidgetRef Current = GetTreeFocus();
+        const auto Found = std::find(All.begin(), All.end(), Current);
+        const int32_t Count = int32_t(All.size());
+        if(Found == All.end()) return All[InStep > 0 ? 0 : size_t(Count - 1)];
+        const int32_t At = int32_t(Found - All.begin());
+        return All[size_t((At + InStep % Count + Count) % Count)];
+    }
+
+    UIWidgetRef UIDocumentInstance::FindTreeFocusInDirection(const UIWidgetRef InFrom, const int InDirection)
+    {
+        if(EmbedHosts.empty() && InFrom.Doc == this)
+        {
+            const int32_t Next = FindFocusInDirection(InFrom.Index, InDirection);
+            return Next >= 0 ? UIWidgetRef{ this, Next } : UIWidgetRef();
+        }
+        if(!InFrom.IsValid()) return FindTreeNextFocus(+1);
+        /* A Nav* name looks in its own document. */
+        const UIWidget& From = *InFrom.Doc->GetWidget(uint32_t(InFrom.Index));
+        const std::string* Named[4] = { &From.NavUp, &From.NavDown, &From.NavLeft, &From.NavRight };
+        if(InDirection >= 0 && InDirection < 4 && !Named[InDirection]->empty())
+        {
+            const UIWidget* Target = InFrom.Doc->FindWidget(*Named[InDirection]);
+            return Target ? UIWidgetRef{ InFrom.Doc, int32_t(Target->GetIndex()) } : UIWidgetRef();
+        }
+        std::vector<UIWidgetRef> All;
+        CollectFocusables(*this, All);
+        const UIRect& A = InFrom.Doc->GetPixelRect(uint32_t(InFrom.Index));
+        const float AX = A.X + A.W * 0.5f, AY = A.Y + A.H * 0.5f;
+        UIWidgetRef Best;
+        float BestScore = 0.0f;
+        for(const UIWidgetRef& Each : All)
+        {
+            if(Each == InFrom) continue;
+            const UIRect& B = Each.Doc->GetPixelRect(uint32_t(Each.Index));
+            const float DX = B.X + B.W * 0.5f - AX, DY = B.Y + B.H * 0.5f - AY;
+            float Along = 0.0f, Across = 0.0f;
+            switch(InDirection)
+            {
+                case 0: Along = -DY; Across = DX; break;
+                case 1: Along =  DY; Across = DX; break;
+                case 2: Along = -DX; Across = DY; break;
+                default: Along = DX; Across = DY; break;
+            }
+            if(Along <= 0.5f) continue;
+            const float Score = Along + 2.0f * std::fabs(Across);
+            if(!Best.Doc || Score < BestScore) { Best = Each; BestScore = Score; }
+        }
+        return Best;
+    }
+
+    void UIDocumentInstance::SetTreeHovered(const UIWidgetRef InHover)
+    {
+        ForEachInstance([&InHover](UIDocumentInstance& Each) { if(&Each != InHover.Doc) Each.SetHovered(-1); });
+        if(InHover.Doc) InHover.Doc->SetHovered(InHover.Index);
+    }
+
+    void UIDocumentInstance::SetTreePressed(const UIWidgetRef InPressed)
+    {
+        ForEachInstance([&InPressed](UIDocumentInstance& Each) { if(&Each != InPressed.Doc) Each.SetPressed(-1); });
+        if(InPressed.Doc) InPressed.Doc->SetPressed(InPressed.Index);
+    }
+
+    UIWidgetRef UIDocumentInstance::GetTreePressed()
+    {
+        UIWidgetRef Found;
+        ForEachInstance([&Found](UIDocumentInstance& Each) { if(!Found.Doc && Each.Pressed >= 0) Found = UIWidgetRef{ &Each, Each.Pressed }; });
+        return Found;
+    }
+
     // --- Bindings ----------------------------------------------------------------
 
     bool UIDocumentInstance::ApplyBindings(const UIDataStore& InStore)
     {
-        if(Bindings.empty() || InStore.GetVersion() == BindingsVersion) return false;
+        /* Embedded documents too: each has its own bindings and prefix. */
+        bool bChanged = false;
+        for(const uint32_t Host : EmbedHosts)
+        {
+            if(UIDocumentInstance* Inner = Widgets[Host]->GetEmbedded()) { bChanged = Inner->ApplyBindings(InStore) || bChanged; }
+        }
+        if(Bindings.empty() || InStore.GetVersion() == BindingsVersion) return bChanged;
         BindingsVersion = InStore.GetVersion();
 
-        bool bChanged = false;
         for(const UIBinding& Each : Bindings)
         {
             UIWidget& W = *Widgets[Each.Widget];
@@ -933,13 +1157,13 @@ namespace UI
             UIValue Value;
             if(Each.bWhole)
             {
-                Value = ResolveBindingValue(Each.Template, InStore);
+                Value = ResolveBindingValue(Each.Template, InStore, BindingPrefix);
                 if(Value.IsNone()) continue;   // unset: the property keeps what it has
                 if(Desc.Type == EUIPropertyType::String || Desc.Type == EUIPropertyType::Asset) Value = UIValue::String(Value.AsString());
             }
             else
             {
-                Value = UIValue::String(ResolveBindingText(Each.Template, InStore));
+                Value = UIValue::String(ResolveBindingText(Each.Template, InStore, BindingPrefix));
             }
             /* Only a change costs anything: compared as the property holds it. */
             const UIValue Before = Desc.Get(W);

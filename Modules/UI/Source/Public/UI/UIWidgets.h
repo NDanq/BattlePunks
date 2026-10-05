@@ -2,6 +2,7 @@
 #define UI_UIWIDGETS_H
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,7 @@
  *   Grid           children in rows and columns (Row, Column, spans)
  *   WrapBox        children in a row that wraps onto the next line
  *   TextInput      one line of text the player types
+ *   Include        another document shown inside this one (a row, a panel)
  *   Spacer         empty space of a size
  */
 namespace UI
@@ -457,6 +459,42 @@ namespace UI
         mutable float                             WhiteU = 0.0f, WhiteV = 0.0f;
         mutable float                             PixelScale = 1.0f;   // the last paint's, for pointer hits
         mutable float                             TextLeft = 0.0f;     // pixels, the last paint's text origin
+    };
+
+    /*
+     * Another document shown in its rectangle -- a row, a card, a panel used
+     * in several menus. The included document lays out at this one's scale
+     * and is drawn, clicked and navigated as part of it (Tab and the arrows
+     * cross into it and out). Its {Bind:Key} reads Prefix + Key, so two
+     * Includes of one row show two items ("Slot1." and "Slot2."); {Bind:/Key}
+     * is the key as written. Its UI graph is its own instance (self.Prefix
+     * the prefix; the Key node prefixes a key). Saved, it reloads.
+     */
+    class UI_API UIInclude : public UIWidget
+    {
+    public:
+        std::string Document;   // a .nmui
+        std::string Prefix;     // its binding keys' prefix: "Slot1."
+
+        UIInclude();
+        ~UIInclude() override;
+        UIVec2 MeasureContent(UILayoutContext& InContext) override;
+        void   ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect) override;
+        void   Paint(UIPaintContext& InContext, const UIRect& InRect) const override;
+        void   OnPropertyChanged(const UIPropertyDesc& InProperty) override;
+        bool                IsEmbedHost() const override { return true; }
+        UIDocumentInstance* GetEmbedded() const override { return Embedded.get(); }
+        void                TickEmbedded() override;
+
+    private:
+        /* Its document made if it can be (a system and fonts to make it with), or dropped. */
+        void EnsureEmbedded();
+        void DropEmbedded(bool bInTellSystem);
+
+        std::unique_ptr<UIDocumentInstance> Embedded;
+        uint64_t Generation = 0;     // UIAssetCache's, when made
+        bool     bStale     = true;  // Document or Prefix changed: make it again
+        bool     bRefused   = false; // a cycle or too deep: warned, left empty
     };
 
     class UI_API UISpacer : public UIWidget

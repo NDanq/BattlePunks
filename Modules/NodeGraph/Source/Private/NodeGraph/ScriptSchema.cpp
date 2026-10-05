@@ -1619,6 +1619,9 @@ namespace
                  "self path ui document").Tooltip = "The path of the document this graph is the logic of: the UI library's Path.";
             Statement("UI.CloseDocument", "Close This Document", "Document", SOP_Call, {}, "UI.Close(self.Document)",
                       "close dismiss exit").Tooltip = "Closes the document (its On Document Close runs).";
+            Pure("UI.Key", "Key", "Document", SOP_Call, { In("Key", "string", "Name"), Out("Full", "string") },
+                 "((self.Prefix or \"\") .. {Key})", {}, "binding prefix include store")
+                .Tooltip = "A data store key as this document's {Bind:Key} reads it: its Include's Prefix + Key.";
             const auto Widget = [](const char* InName, const char* InTooltip)
             {
                 return PropertyDefinition{ InName, EPropertyKind::WidgetName, "", {}, InTooltip };

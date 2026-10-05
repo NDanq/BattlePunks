@@ -120,6 +120,11 @@ namespace UI
 
         UIFontCache& GetFonts() { return Fonts; }
 
+        /* An Include made or dropped its document: its bindings applied and its
+         * UI graph made (OnOpen), or its UI graph let go (OnClose). */
+        void AttachEmbedded(UIDocumentInstance& InEmbedded);
+        void DetachEmbedded(UIDocumentInstance& InEmbedded);
+
         /* The clipboard a text field copies to and pastes from: the host's
          * (GameSession: the window's; the designer: Qt's). Without hooks, one
          * kept here. */
@@ -141,9 +146,14 @@ namespace UI
         void      RunScriptOnce(const UIDocumentAsset& InAsset);
 
         /* A document's UI graph (Settings.Graph) instanced in Scripts, its
-         * OnOpen queued; and let go, OnClose run first if bInCallClose. */
-        void      CreateGraphObject(Document& InDocument);
-        void      ReleaseGraphObject(Document& InDocument, bool bInCallClose);
+         * OnOpen queued; and let go, OnClose run first if bInCallClose. The
+         * Tree forms: it and the documents embedded in it. */
+        void      CreateGraphObject(UIDocumentInstance& InDoc);
+        void      ReleaseGraphObject(UIDocumentInstance& InDoc, bool bInCallClose);
+        void      CreateTreeGraphObjects(UIDocumentInstance& InRoot);
+        void      ReleaseTreeGraphObjects(UIDocumentInstance& InRoot, bool bInCallClose);
+
+        std::vector<int32_t> TickingScratch;   // graph objects with an OnTick, this frame
 
         std::vector<std::unique_ptr<Document>> Documents;   // draw order: bottom first
         UIDocumentHandle         NextHandle = 1;

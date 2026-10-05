@@ -5,6 +5,8 @@
 #include <memory>
 
 #include <QCheckBox>
+#include <QDir>
+#include <QFileInfo>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QFileDialog>
@@ -26,6 +28,7 @@
 #include "Public/UI/UIWidget.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/UI/UIAssets.h"
 #include "Private/Editor/UI/UIDesignDocument.h"
 #include "Private/Editor/UI/UIGraphLink.h"
 
@@ -203,8 +206,9 @@ QWidget* UIDetailsPanel::MakeEditor(const UI::UIPropertyDesc& InDesc, const QStr
     {
         auto* Browse = new QToolButton();
         Browse->setText(QStringLiteral("..."));
-        const QString Filter = InDesc.AssetKind == UI::EUIAssetKind::Font   ? QStringLiteral("Fonts (*.ttf)")
-                             : InDesc.AssetKind == UI::EUIAssetKind::Script ? QStringLiteral("Lua (*.lua)") : QStringLiteral("All files (*)");
+        const QString Filter = InDesc.AssetKind == UI::EUIAssetKind::Font     ? QStringLiteral("Fonts (*.ttf)")
+                             : InDesc.AssetKind == UI::EUIAssetKind::Script   ? QStringLiteral("Lua (*.lua)")
+                             : InDesc.AssetKind == UI::EUIAssetKind::Document ? QStringLiteral("UI documents (*.nmui)") : QStringLiteral("All files (*)");
         connect(Browse, &QToolButton::clicked, this, [this, Edit, Filter, Commit]()
         {
             const QString File = QFileDialog::getOpenFileName(this, QStringLiteral("Choose"), EditorGraphs::GetProjectRoot(), Filter);
@@ -219,6 +223,23 @@ QWidget* UIDetailsPanel::MakeEditor(const UI::UIPropertyDesc& InDesc, const QStr
             Commit();
         });
         HBox->addWidget(Browse);
+
+        if(InDesc.AssetKind == UI::EUIAssetKind::Document)
+        {
+            /* An Include's document: edited in a tab of its own. */
+            auto* Open = new QToolButton();
+            Open->setText(QStringLiteral("Open"));
+            Open->setToolTip(QStringLiteral("Open the included document in the UI Designer"));
+            connect(Open, &QToolButton::clicked, this, [this, Edit]()
+            {
+                const QString Runtime = Edit->text().trimmed();
+                if(Runtime.isEmpty()) return;
+                const QString File = QDir(EditorGraphs::GetProjectRoot()).filePath(Runtime);
+                if(!QFileInfo::exists(File)) { emit StatusText(QStringLiteral("%1 is not in the project").arg(Runtime)); return; }
+                EditorUI::OpenUI(File, window());
+            });
+            HBox->addWidget(Open);
+        }
     }
     else if(InDesc.Type == UI::EUIPropertyType::Action)
     {

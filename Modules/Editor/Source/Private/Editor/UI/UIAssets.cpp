@@ -156,6 +156,21 @@ namespace EditorUI
             if(UI::CookUIFile(File.toUtf8().toStdString(), Out.toUtf8().toStdString(), &Error))
             {
                 ++Cooked;
+                /* An Include of a document that is not there shows nothing: said, not failed. */
+                UI::UIDocumentAsset Asset;
+                QFile Source(File);
+                if(Source.open(QIODevice::ReadOnly) && UI::ParseUIXml(Source.readAll().toStdString(), Asset))
+                {
+                    for(const UI::UIWidgetDesc& Widget : Asset.Widgets)
+                    {
+                        const std::string* Included = Widget.Type == "Include" ? Widget.Find("Document") : nullptr;
+                        if(Included && !Included->empty() && !QFileInfo::exists(QDir(InRoot).filePath(QString::fromStdString(*Included))))
+                        {
+                            CORE_LOG_WARN("[UI] " + Runtime.toStdString() + ": Include '" + Widget.GetName() + "' names '" + *Included
+                                          + "', which is not in the project")
+                        }
+                    }
+                }
             }
             else
             {

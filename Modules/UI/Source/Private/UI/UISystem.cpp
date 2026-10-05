@@ -53,9 +53,6 @@ namespace UI
         bool                                bPersistent = false;
         uint64_t                            AssetGeneration = 0;
 
-        /* Its UI graph's instance (Settings.Graph), in Scripts; 0 none. */
-        GameCore::ScriptEngine::Object      GraphObject = 0;
-        bool                                bGraphTicks = false;
         bool                                bClosing    = false;
         bool                                bFollowCache = true;   // rebuilt when UIAssetCache's copy moves
 
@@ -64,7 +61,7 @@ namespace UI
         UIVec2                              HitPointer;
         UIVec2                              DragPointer;   // where the pressed widget last heard of the pointer
         uint64_t                            HitPaintSerial = 0;
-        int32_t                             Hit = -1;
+        UIWidgetRef                         Hit;   // into embedded documents
     };
 
     /* An action fired, held by handles and names: run after input, by which
@@ -83,7 +80,7 @@ namespace UI
 
     UISystem::~UISystem()
     {
-        for(const auto& Each : Documents) { ReleaseGraphObject(*Each, false); }
+        for(const auto& Each : Documents) { ReleaseTreeGraphObjects(*Each->Instance, false); }
         /* Not the renderer: it may already be gone. A host clears it (ClearRenderer). */
         if(GScriptUISystem == this) GScriptUISystem = nullptr;
     }
@@ -101,51 +98,74 @@ namespace UI
     {
         if(InScripts == Scripts) return;
         /* Each document's logic lives in the engine: made again in the new one. */
-        for(const auto& Each : Documents) { ReleaseGraphObject(*Each, false); }
+        for(const auto& Each : Documents) { ReleaseTreeGraphObjects(*Each->Instance, false); }
         ScriptsRun.clear();
         Scripts = InScripts;
-        for(const auto& Each : Documents) { CreateGraphObject(*Each); }
+        for(const auto& Each : Documents) { CreateTreeGraphObjects(*Each->Instance); }
     }
 
-    void UISystem::CreateGraphObject(Document& InDocument)
+    void UISystem::CreateGraphObject(UIDocumentInstance& InDoc)
     {
-        const std::string& GraphPath = InDocument.Instance->GetAsset().Settings.Graph;
-        if(GraphPath.empty() || InDocument.GraphObject) return;
+        const std::string& GraphPath = InDoc.GetAsset().Settings.Graph;
+        if(GraphPath.empty() || InDoc.GetGraphObject()) return;
         if(!Scripts)
         {
             /* The editor's preview runs no logic; a game without scripts says so. */
-            if(bExecuteActions) { UI_LOG_WARN("'" + InDocument.Path + "': its Graph '" + GraphPath + "' did not run: no script engine") }
+            if(bExecuteActions) { UI_LOG_WARN("'" + InDoc.GetPath() + "': its Graph '" + GraphPath + "' did not run: no script engine") }
             return;
         }
-        static const char* const FIELDS[] = { "Document" };
-        const GameCore::EventArg Values[] = { GameCore::EventArg::Make(InDocument.Path.c_str()) };
+        /* self.Document, and self.Prefix: an embedded document's binding keys (the Key node). */
+        static const char* const FIELDS[] = { "Document", "Prefix" };
+        const GameCore::EventArg Values[] = { GameCore::EventArg::Make(InDoc.GetPath().c_str()),
+                                              GameCore::EventArg::Make(InDoc.GetBindingPrefix().c_str()) };
         ScopedScriptUISystem Scope(this);   // the class's chunk runs as it loads
-        InDocument.GraphObject = Scripts->CreateObject(GraphPath.c_str(), FIELDS, Values, 1);   // logged if it does not load
-        if(!InDocument.GraphObject) return;
-        InDocument.bGraphTicks = Scripts->HasObjectMethod(InDocument.GraphObject, "OnTick");
+        const GameCore::ScriptEngine::Object Object = Scripts->CreateObject(GraphPath.c_str(), FIELDS, Values, 2);   // logged if it does not load
+        if(!Object) return;
+        InDoc.SetGraphObject(Object, Scripts->HasObjectMethod(Object, "OnTick"));
 
-        /* OnOpen runs with the other actions, after this frame's input. */
-        if(Scripts->HasObjectMethod(InDocument.GraphObject, "OnOpen"))
+        /* OnOpen runs with the other actions: after this frame's input, before it is painted. */
+        if(Scripts->HasObjectMethod(Object, "OnOpen"))
         {
             UIActionList OnOpen;
             OnOpen.Parse("Graph:OnOpen");
-            QueueActions(OnOpen, InDocument.Instance.get(), nullptr);
+            QueueActions(OnOpen, &InDoc, nullptr);
         }
     }
 
-    void UISystem::ReleaseGraphObject(Document& InDocument, const bool bInCallClose)
+    void UISystem::ReleaseGraphObject(UIDocumentInstance& InDoc, const bool bInCallClose)
     {
-        if(!InDocument.GraphObject) return;
-        const GameCore::ScriptEngine::Object Object = InDocument.GraphObject;
-        InDocument.GraphObject       = 0;
-        InDocument.bGraphTicks = false;
+        const GameCore::ScriptEngine::Object Object = InDoc.GetGraphObject();
+        if(!Object) return;
+        InDoc.SetGraphObject(0, false);
         if(!Scripts) return;
         if(bInCallClose && bExecuteActions)
         {
             ScopedScriptUISystem Scope(this);
             Scripts->CallObjectMethod(Object, "OnClose");   // absent: nothing
-        }   // absent: nothing
+        }
         Scripts->ReleaseObject(Object);
+    }
+
+    void UISystem::CreateTreeGraphObjects(UIDocumentInstance& InRoot)
+    {
+        InRoot.ForEachInstance([this](UIDocumentInstance& InEach) { CreateGraphObject(InEach); });
+    }
+
+    void UISystem::ReleaseTreeGraphObjects(UIDocumentInstance& InRoot, const bool bInCallClose)
+    {
+        /* Embedded documents first: their OnClose before their host's. */
+        InRoot.ForEachInstance([this, bInCallClose](UIDocumentInstance& InEach) { ReleaseGraphObject(InEach, bInCallClose); }, true);
+    }
+
+    void UISystem::AttachEmbedded(UIDocumentInstance& InEmbedded)
+    {
+        InEmbedded.ApplyBindings(Store);
+        CreateTreeGraphObjects(InEmbedded);
+    }
+
+    void UISystem::DetachEmbedded(UIDocumentInstance& InEmbedded)
+    {
+        ReleaseTreeGraphObjects(InEmbedded, true);
     }
 
     void UISystem::SetWorld(GameCore::World* InWorld)
@@ -189,7 +209,7 @@ namespace UI
         Documents.push_back(std::move(Made));
         SortDocuments();
         bMergedDirty = true;
-        CreateGraphObject(Opened);
+        CreateTreeGraphObjects(*Opened.Instance);
 
         UIActionList OnOpen;
         if(OnOpen.Parse(InAsset->Settings.OnOpen)) { QueueActions(OnOpen, Instance, nullptr); }
@@ -203,7 +223,7 @@ namespace UI
         Document* Closing = FindDocument(InHandle);
         if(!Closing || Closing->bClosing) return false;
         Closing->bClosing = true;
-        ReleaseGraphObject(*Closing, true);
+        ReleaseTreeGraphObjects(*Closing->Instance, true);
 
         for(auto It = Documents.begin(); It != Documents.end(); ++It)
         {
@@ -308,15 +328,17 @@ namespace UI
         if(!Made->IsValid()) return;   // logged; the old one stays
 
         /* Its logic too, read again: a saved graph is picked up with its document. */
-        ReleaseGraphObject(InDocument, true);
+        ReleaseTreeGraphObjects(*InDocument.Instance, true);
         if(Scripts && !InAsset->Settings.Graph.empty()) { Scripts->ForgetClass(InAsset->Settings.Graph.c_str()); }
         Made->SetFonts(&Fonts);
         Made->SetSystem(this);
         Made->ApplyBindings(Store);
         if(UIWidget* Focused = Made->FindWidget(Focus)) { Made->SetFocus(int32_t(Focused->GetIndex())); }
         InDocument.Instance = std::move(Made);
+        InDocument.Hit            = UIWidgetRef();   // it pointed into the old instance
+        InDocument.HitPaintSerial = ~uint64_t(0);
         InDocument.Layer    = InAsset->Settings.Layer;
-        CreateGraphObject(InDocument);
+        CreateTreeGraphObjects(*InDocument.Instance);
         SortDocuments();
         bMergedDirty = true;
         UI_LOG("reloaded '" + InDocument.Path + "'")
@@ -368,84 +390,91 @@ namespace UI
             const EUIInputMode Mode = Doc.GetAsset().Settings.InputMode;
             if(bBlocked || Mode == EUIInputMode::GameOnly)
             {
-                Doc.SetHovered(-1);
-                Doc.SetPressed(-1);
+                Doc.SetTreeHovered(UIWidgetRef());
+                Doc.SetTreePressed(UIWidgetRef());
                 continue;
             }
 
-            // --- The pointer ------------------------------------------------
-            int32_t Hit = -1;
+            // --- The pointer, into embedded documents (Include) -------------
+            UIWidgetRef Hit;
             if(InFrame.bHasMouse && !bPointerTaken)
             {
                 if(Entry.HitPaintSerial != Doc.GetPaintSerial() || Entry.HitPointer != InFrame.MousePixels)
                 {
-                    Entry.Hit            = Doc.HitTest(InFrame.MousePixels);
+                    Entry.Hit            = Doc.HitTestTree(InFrame.MousePixels);
                     Entry.HitPointer     = InFrame.MousePixels;
                     Entry.HitPaintSerial = Doc.GetPaintSerial();
                 }
                 Hit = Entry.Hit;
             }
-            const int32_t Interactive = Hit >= 0 ? Doc.FindInteractive(Hit) : -1;
-            if(Hit >= 0)
+            const UIWidgetRef Interactive = Hit.IsValid() ? UIDocumentInstance::FindInteractiveTree(Hit) : UIWidgetRef();
+            if(Hit.IsValid())
             {
                 bPointerTaken      = true;
                 Result.bOverWidget = true;
                 Result.bConsumeMouse = true;
             }
-            Doc.SetHovered(Interactive);
+            Doc.SetTreeHovered(Interactive);
 
-            /* The wheel: the widget under the pointer, then up its parents, until one uses it. */
-            if(InFrame.Wheel != 0.0f && Hit >= 0)
+            /* The wheel: the widget under the pointer, then up its parents (and out of an
+             * embedded document to its host's), until one uses it. */
+            if(InFrame.Wheel != 0.0f && Hit.IsValid())
             {
-                for(int32_t At = Hit; At >= 0; At = Doc.GetParent(uint32_t(At)))
+                for(UIWidgetRef Up = Hit; Up.Doc;)
                 {
-                    UIWidget* Each = Doc.GetWidget(uint32_t(At));
+                    UIWidget* Each = Up.Doc->GetWidget(uint32_t(Up.Index));
                     if(Each->IsEnabledInHierarchy() && Each->OnWheel(InFrame.Wheel)) { Result.bConsumeMouse = true; break; }
+                    const int32_t Parent = Up.Doc->GetParent(uint32_t(Up.Index));
+                    if(Parent >= 0)                    { Up.Index = Parent; }
+                    else if(Up.Doc->GetParentInstance()) { Up = UIWidgetRef{ Up.Doc->GetParentInstance(), int32_t(Up.Doc->GetHostIndex()) }; }
+                    else                               { break; }
                 }
             }
 
-            UIWidget* Target = Interactive >= 0 ? Doc.GetWidget(uint32_t(Interactive)) : nullptr;
+            UIWidget* Target = Interactive.IsValid() ? Interactive.Doc->GetWidget(uint32_t(Interactive.Index)) : nullptr;
+            const UIWidgetRef Held = Doc.GetTreePressed();
             if(InFrame.MousePressed[0] && Target && Target->IsEnabledInHierarchy())
             {
-                Doc.SetPressed(Interactive);
-                if(Target->bFocusable) { Doc.SetFocus(Interactive); }   // a click focuses what takes focus
+                Doc.SetTreePressed(Interactive);
+                if(Target->bFocusable) { Doc.SetTreeFocus(Interactive); }   // a click focuses what takes focus
                 Entry.DragPointer = InFrame.MousePixels;
                 Target->OnPointer({ UIPointerEvent::PE_Press, InFrame.MousePixels });
             }
-            else if(Doc.GetPressed() >= 0 && InFrame.bHasMouse && InFrame.MouseDown[0] && !InFrame.MouseReleased[0]
+            else if(Held.IsValid() && InFrame.bHasMouse && InFrame.MouseDown[0] && !InFrame.MouseReleased[0]
                     && InFrame.MousePixels != Entry.DragPointer)
             {
                 /* Held and moved: the pressed widget hears it, over it or not (a drag). */
                 Entry.DragPointer = InFrame.MousePixels;
-                Doc.GetWidget(uint32_t(Doc.GetPressed()))->OnPointer({ UIPointerEvent::PE_Move, InFrame.MousePixels });
+                Held.Doc->GetWidget(uint32_t(Held.Index))->OnPointer({ UIPointerEvent::PE_Move, InFrame.MousePixels });
             }
-            if(InFrame.MouseReleased[0] && Doc.GetPressed() >= 0)
+            const UIWidgetRef Released = Doc.GetTreePressed();
+            if(InFrame.MouseReleased[0] && Released.IsValid())
             {
                 /* A click is a press and a release on the same widget. */
-                UIWidget* Pressed = Doc.GetWidget(uint32_t(Doc.GetPressed()));
+                UIWidget* Pressed = Released.Doc->GetWidget(uint32_t(Released.Index));
                 Pressed->OnPointer({ UIPointerEvent::PE_Release, InFrame.MousePixels });
-                if(Doc.GetPressed() == Interactive && Pressed->IsEnabledInHierarchy())
+                if(Released == Interactive && Pressed->IsEnabledInHierarchy())
                 {
                     Pressed->OnPointer({ UIPointerEvent::PE_Click, InFrame.MousePixels });
                 }
-                Doc.SetPressed(-1);
+                Doc.SetTreePressed(UIWidgetRef());
                 Result.bConsumeMouse = true;
             }
-            if(Doc.GetPressed() >= 0) { Result.bConsumeMouse = true; }   // held: captured
+            if(Doc.GetTreePressed().IsValid()) { Result.bConsumeMouse = true; }   // held: captured
 
             // --- Navigation: a menu's, or any document holding focus ---------
-            const bool bNavigates = Mode == EUIInputMode::UIOnly || Doc.GetFocused() >= 0;
+            const UIWidgetRef Focus = Doc.GetTreeFocus();
+            UIWidget* Focused = Focus.IsValid() ? Focus.Doc->GetWidget(uint32_t(Focus.Index)) : nullptr;
+            const bool bNavigates = Mode == EUIInputMode::UIOnly || Focused;
 
             /* A focused text field takes typing and editing keys; Back leaves it. */
-            UIWidget* Typing = Doc.GetFocused() >= 0 ? Doc.GetWidget(uint32_t(Doc.GetFocused())) : nullptr;
-            if(Typing && !(Typing->WantsTextInput() && Typing->IsEnabledInHierarchy())) Typing = nullptr;
             UIInputFrame Nav = InFrame;
-            if(Typing)
+            if(Focused && Focused->WantsTextInput() && Focused->IsEnabledInHierarchy())
             {
                 Result.bWantsTextInput  = true;
                 Result.bConsumeKeyboard = true;
-                if(InFrame.bBack) { Doc.SetFocus(-1); }   // and not the document's OnBack
-                else              { Typing->OnTextInput(InFrame); }
+                if(InFrame.bBack) { Doc.SetTreeFocus(UIWidgetRef()); }   // and not the document's OnBack
+                else              { Focused->OnTextInput(InFrame); }
                 Nav.bNavLeft = Nav.bNavRight = Nav.bAccept = Nav.bBack = false;   // edit keys, not navigation
             }
             if(bNavigates)
@@ -453,32 +482,30 @@ namespace UI
                 const bool bDirection = Nav.bNavUp || Nav.bNavDown || Nav.bNavLeft || Nav.bNavRight;
                 if(bDirection || Nav.bNext || Nav.bPrevious)
                 {
-                    if(Doc.GetFocused() < 0)
+                    const UIWidgetRef Now = Doc.GetTreeFocus();
+                    if(!Now.IsValid() || Nav.bNext || Nav.bPrevious)
                     {
-                        Doc.SetFocus(Doc.FindNextFocus(Nav.bPrevious ? -1 : +1));
-                    }
-                    else if(Nav.bNext || Nav.bPrevious)
-                    {
-                        Doc.SetFocus(Doc.FindNextFocus(Nav.bPrevious ? -1 : +1));
+                        Doc.SetTreeFocus(Doc.FindTreeNextFocus(Nav.bPrevious ? -1 : +1));
                     }
                     else
                     {
                         /* The focused widget first (a slider takes left and right), then focus moves. */
                         const int Direction = Nav.bNavUp ? 0 : Nav.bNavDown ? 1 : Nav.bNavLeft ? 2 : 3;
-                        UIWidget* Focused = Doc.GetWidget(uint32_t(Doc.GetFocused()));
-                        if(!(Focused->IsEnabledInHierarchy() && Focused->OnNavigate(Direction)))
+                        UIWidget* Current = Now.Doc->GetWidget(uint32_t(Now.Index));
+                        if(!(Current->IsEnabledInHierarchy() && Current->OnNavigate(Direction)))
                         {
-                            const int32_t Next = Doc.FindFocusInDirection(Doc.GetFocused(), Direction);
-                            if(Next >= 0) Doc.SetFocus(Next);
+                            const UIWidgetRef Next = Doc.FindTreeFocusInDirection(Now, Direction);
+                            if(Next.IsValid()) Doc.SetTreeFocus(Next);
                         }
                     }
                 }
-                if(Nav.bAccept && Doc.GetFocused() >= 0)
+                const UIWidgetRef Accepting = Doc.GetTreeFocus();
+                if(Nav.bAccept && Accepting.IsValid())
                 {
-                    UIWidget* Focused = Doc.GetWidget(uint32_t(Doc.GetFocused()));
-                    if(Focused->IsInteractive() && Focused->IsEnabledInHierarchy())
+                    UIWidget* Each = Accepting.Doc->GetWidget(uint32_t(Accepting.Index));
+                    if(Each->IsInteractive() && Each->IsEnabledInHierarchy())
                     {
-                        Focused->OnPointer({ UIPointerEvent::PE_Click, UIVec2() });
+                        Each->OnPointer({ UIPointerEvent::PE_Click, UIVec2() });
                     }
                 }
                 if(Nav.bBack)
@@ -510,10 +537,12 @@ namespace UI
 
     void UISystem::QueueActions(const UIActionList& InActions, UIDocumentInstance* InDocument, UIWidget* InSender)
     {
+        /* The document it is in -- an embedded one's root's. */
         UIDocumentHandle Handle = UI_DOCUMENT_INVALID;
+        const UIDocumentInstance* Root = InDocument ? InDocument->GetRootInstance() : nullptr;
         for(const auto& Each : Documents)
         {
-            if(Each->Instance.get() == InDocument) { Handle = Each->Handle; break; }
+            if(Each->Instance.get() == Root) { Handle = Each->Handle; break; }
         }
         for(const UIAction& Action : InActions.Actions)
         {
@@ -566,7 +595,7 @@ namespace UI
         UIDocumentInstance* Instance = nullptr;
         if(Document* Found = FindDocument(InAction.Document))
         {
-            if(Found->Instance.get() == InAction.Instance) Instance = Found->Instance.get();
+            if(InAction.Instance && Found->Instance->ContainsInstance(InAction.Instance)) Instance = InAction.Instance;
         }
         UIWidget* Sender = Instance && InAction.Sender >= 0 ? Instance->GetWidget(uint32_t(InAction.Sender)) : nullptr;
 
@@ -605,14 +634,14 @@ namespace UI
                 return;
             case EUIActionKind::Graph:
             {
-                /* The firing document's own graph instance: self:Handler(value, sender). */
-                Document* Found = Instance ? FindDocument(InAction.Document) : nullptr;
-                if(!Found || !Found->GraphObject || !Scripts)
+                /* The firing document's own graph instance (an embedded one's, its own): self:Handler(value, sender). */
+                const GameCore::ScriptEngine::Object Object = Instance ? Instance->GetGraphObject() : 0;
+                if(!Object || !Scripts)
                 {
                     if(Instance) { WarnOnce("'" + Text + "' did not run: '" + Instance->GetPath() + "' has no UI graph running"); }
                     return;
                 }
-                if(!Scripts->HasObjectMethod(Found->GraphObject, Action.Target.c_str()))
+                if(!Scripts->HasObjectMethod(Object, Action.Target.c_str()))
                 {
                     WarnOnce("'" + Text + "': " + Instance->GetAsset().Settings.Graph + " has no handler " + Action.Target);
                     return;
@@ -621,7 +650,7 @@ namespace UI
                 GraphArgs.Args[0] = GameCore::EventArg::Make(InAction.SenderValue);
                 GraphArgs.Args[1] = GameCore::EventArg::Make(InAction.SenderName.c_str());
                 GraphArgs.Count   = 2;
-                Scripts->CallObjectMethod(Found->GraphObject, Action.Target.c_str(), GraphArgs);   // logs its own failure
+                Scripts->CallObjectMethod(Object, Action.Target.c_str(), GraphArgs);   // logs its own failure
                 return;
             }
         }
@@ -647,27 +676,32 @@ namespace UI
             Doc.Instance->GetAnimator().Tick(InDeltaSeconds);
         }
 
-        /* The focused widget of each document (a caret's blink). */
-        for(const auto& Each : Documents)
+        /* Embedded documents made, reloaded or dropped (Include); the focused widget's tick (a caret's blink). */
+        for(size_t At = 0; At < Documents.size(); ++At)
         {
-            UIDocumentInstance& Doc = *Each->Instance;
-            if(Doc.GetFocused() < 0) continue;
-            if(Doc.GetWidget(uint32_t(Doc.GetFocused()))->OnFocusedTick(InDeltaSeconds)) { Doc.MarkPaintDirty(); }
+            UIDocumentInstance& Doc = *Documents[At]->Instance;
+            Doc.ForEachInstance([](UIDocumentInstance& InEach)
+            {
+                for(const uint32_t Host : InEach.GetEmbedHosts()) { InEach.GetWidget(Host)->TickEmbedded(); }
+            });
+            const UIWidgetRef Focus = Doc.GetTreeFocus();
+            if(Focus.IsValid() && Focus.Doc->GetWidget(uint32_t(Focus.Index))->OnFocusedTick(InDeltaSeconds)) { Focus.Doc->MarkPaintDirty(); }
         }
 
         /* Graphs that tick; by handle, as OnTick may open or close documents. */
         if(Scripts && bExecuteActions)
         {
             ScopedScriptUISystem Scope(this);
-            for(size_t At = 0; At < Documents.size(); ++At)
+            GameCore::EventArgs Delta;
+            Delta.Args[0] = GameCore::EventArg::Make(double(InDeltaSeconds));
+            Delta.Count   = 1;
+            std::vector<GameCore::ScriptEngine::Object>& Ticking = TickingScratch;
+            Ticking.clear();
+            for(const auto& Each : Documents)
             {
-                if(!Documents[At]->bGraphTicks) continue;
-                const GameCore::ScriptEngine::Object Object = Documents[At]->GraphObject;
-                GameCore::EventArgs Delta;
-                Delta.Args[0] = GameCore::EventArg::Make(double(InDeltaSeconds));
-                Delta.Count   = 1;
-                Scripts->CallObjectMethod(Object, "OnTick", Delta);
+                Each->Instance->ForEachInstance([&Ticking](UIDocumentInstance& InEach) { if(InEach.GetGraphTicks()) Ticking.push_back(InEach.GetGraphObject()); });
             }
+            for(const GameCore::ScriptEngine::Object Object : Ticking) { Scripts->CallObjectMethod(Object, "OnTick", Delta); }
         }
     }
 
