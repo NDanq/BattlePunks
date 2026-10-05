@@ -55,6 +55,12 @@ namespace NimbleEngine
         void SetMouseCaptured(bool bInCaptured);
         bool IsMouseCaptured() const;
 
+        /* The window's text input (GameWindow::SetTextInputActive): typed text
+         * reaches InputState::GetText only while it is on. Kept across Attach,
+         * so a window attached later takes it; Detach turns the window's off. */
+        void SetTextInputActive(bool bInActive);
+        bool IsTextInputActive() const { return bTextInput; }
+
         /* Sticks read 0 inside this, per axis, and are rescaled outside it so
          * a full push still reads 1. Triggers have none. */
         void  SetStickDeadZone(float InDeadZone) { StickDeadZone = InDeadZone; }
@@ -67,6 +73,7 @@ namespace NimbleEngine
         /* By id: PumpEvents reaps a closed window, so a pointer could dangle. */
         uint32_t    WindowID = 0;
         bool        bOwnsGamepads = false;
+        bool        bTextInput    = false;
         float       StickDeadZone = 0.15f;
         InputState  Pending;
         InputState  Current;

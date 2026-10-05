@@ -334,6 +334,11 @@ namespace NimbleEngine
         return Router && Router->IsMouseCaptured();
     }
 
+    void Application::SetTextInputActive(const bool bInActive)
+    {
+        if(Router) { Router->SetTextInputActive(bInActive); }
+    }
+
     bool Application::RunFrame(const uint64_t InMaxFrames)
     {
         /* steady_clock: a delta must not go backwards because the wall clock

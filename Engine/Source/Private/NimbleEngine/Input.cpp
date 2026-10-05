@@ -177,6 +177,12 @@ bool InputState::WasPressed(const InputKey InKey, const uint8_t InPlayer) const
     return Slot >= 0 && Buttons[Slot].Presses > 0;
 }
 
+int InputState::GetPressesAndRepeats(const InputKey InKey, const uint8_t InPlayer) const
+{
+    const int Slot = ButtonSlot(InKey, InPlayer);
+    return Slot >= 0 ? Buttons[Slot].Presses + Buttons[Slot].Repeats : 0;
+}
+
 bool InputState::WasReleased(const InputKey InKey, const uint8_t InPlayer) const
 {
     const int Slot = ButtonSlot(InKey, InPlayer);
@@ -221,6 +227,22 @@ void InputState::Release(const InputKey InKey, const uint8_t InPlayer)
     if(Slot < 0 || !Buttons[Slot].bDown) { return; }
     Buttons[Slot].bDown = 0;
     if(Buttons[Slot].Releases < 255) { ++Buttons[Slot].Releases; }
+}
+
+void InputState::Repeat(const InputKey InKey, const uint8_t InPlayer)
+{
+    const int Slot = ButtonSlot(InKey, InPlayer);
+    if(Slot < 0 || !Buttons[Slot].bDown) { return; }
+    if(Buttons[Slot].Repeats < 255) { ++Buttons[Slot].Repeats; }
+}
+
+void InputState::AppendText(const char* InUtf8)
+{
+    if(!InUtf8) { return; }
+    size_t Length = std::strlen(Text);
+    const size_t Add = std::strlen(InUtf8);
+    if(Length + Add >= INPUT_TEXT_MAX) { return; }   // whole characters only: never half a UTF-8 sequence
+    std::memcpy(Text + Length, InUtf8, Add + 1);
 }
 
 void InputState::SetAnalog(const InputKey InKey, const float InValue, const uint8_t InPlayer)
@@ -281,6 +303,7 @@ void InputState::Consume(const InputKey InKey, const uint8_t InPlayer)
 void InputState::ConsumeKeyboard()
 {
     for(int Slot = 0; Slot < 256; ++Slot) { Buttons[Slot] = Button(); }
+    Text[0] = '\0';
 }
 
 void InputState::ConsumeMouseButtons()
@@ -305,9 +328,10 @@ void InputState::ConsumeAll()
 
 void InputState::BeginFrame(const uint64_t InFrameNumber)
 {
-    for(Button& Each : Buttons) { Each.Presses = 0; Each.Releases = 0; }
+    for(Button& Each : Buttons) { Each.Presses = 0; Each.Releases = 0; Each.Repeats = 0; }
     MouseDeltaX = MouseDeltaY = 0;
     WheelX = WheelY = 0.0f;
+    Text[0] = '\0';
     FrameNumber = InFrameNumber;
 }
 

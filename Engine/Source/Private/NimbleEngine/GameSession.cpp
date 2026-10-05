@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerState.h"
@@ -99,11 +100,16 @@ namespace NimbleEngine
         Interface->SetScriptEngine(&Scripts);
         Interface->SetHostData(this);
         UI::SetScriptUISystem(Interface);
+
+        Console = EngineCore::Memory::Alloc<GameConsole>(*this);
     }
 
     GameSession::~GameSession()
     {
         UnloadLevel();
+
+        EngineCore::Memory::Dealloc(Console);
+        Console = nullptr;
 
         /* Nothing of this session's stays drawn over the scene after it. */
         Interface->CloseAll(true);
@@ -373,6 +379,9 @@ namespace NimbleEngine
     {
         FilteredInput = Host.GetInput();
 
+        /* The console first: while open, it takes everything. */
+        Console->ProcessInput(FilteredInput);
+
         UI::UIInputFrame Frame;
         const EngineCore::Point Mouse = FilteredInput.GetMousePosition();
         Frame.MousePixels = UI::UIVec2{ float(Mouse.X), float(Mouse.Y) };
@@ -488,6 +497,7 @@ namespace NimbleEngine
         /* After the World: this frame's values, then layout, paint and submit
          * of whatever changed -- before the host's EndFrame renders. */
         PublishUIValues();
+        Console->Update();
         Interface->Tick(float(InFrame.DeltaSeconds));
         Interface->Update(UI::UIVec2{ float(InFrame.ViewportPixels.Width), float(InFrame.ViewportPixels.Height) });
     }

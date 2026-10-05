@@ -60,6 +60,16 @@ it connects and keeps it until it disconnects.
 - **Focus.** SDL ignores button presses while the game's window does not have
   focus.
 
+## Typed text
+
+Keys are physical; text is not. `InputState::GetText()` is the frame's typed
+text, UTF-8 after the keyboard layout and IME (GameWindow's `OnText`). It only
+arrives while the host's text input is on (`IGameHost::SetTextInputActive`,
+`InputRouter::SetTextInputActive`), which the console turns on while it is
+open. A text field's Backspace and arrows read
+`InputState::GetPressesAndRepeats`, which counts the OS's auto-repeats too;
+`WasPressed` never does.
+
 ## Mouse capture
 
 `GameSession::SetMouseCaptured(true)` (Lua: `Input.SetMouseCaptured(true)`)
@@ -157,6 +167,11 @@ Up, Down, Left, Right (arrows, the D-pad), Accept (Return, Space, South), Back
 `[Input_UI] Accept=Return, Gamepad.South`. `WasInputActionPressed(Map, Action,
 State)` reads a map's action straight from a state, for a reader with no
 `InputComponent`.
+
+Ahead of the UI, the console (CONSOLE.md) sees the input first: the toggle
+key (`Grave`, the tilde key) opens it, and while it is open it consumes
+everything (`InputState::ConsumeAll`), so neither the UI nor the game sees any
+of it.
 
 While the session is paused (`GameSession::SetPaused`) the World does not tick,
 but `InputComponent`s are still resolved from the copy, so what a pause menu

@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 #include "Public/Core/CoreConfig.h"
@@ -336,10 +337,39 @@ static void TestConsume()
     Expect(!WasInputActionPressed("TestMap", "Nope", State) && !WasInputActionPressed("NoMap", "Jump", State), "unknown names are not pressed");
 }
 
+static void TestTextAndRepeat()
+{
+    std::printf("[text and repeat]\n");
+    const InputKey Back = FindInputKey("Backspace");
+    InputState State;
+    State.AppendText("h");
+    State.AppendText("\xC3\xA9");   // e acute: two bytes
+    Expect(std::strcmp(State.GetText(), "h\xC3\xA9") == 0, "typed text accumulates over a frame");
+    std::string Long(INPUT_TEXT_MAX, 'x');
+    State.AppendText(Long.c_str());
+    Expect(std::strcmp(State.GetText(), "h\xC3\xA9") == 0, "text that does not fit is dropped whole");
+
+    State.Repeat(Back);
+    Expect(State.GetPressesAndRepeats(Back) == 0, "a repeat of a key not held is nothing");
+    State.Press(Back);
+    State.Repeat(Back);
+    State.Repeat(Back);
+    Expect(State.WasPressed(Back) && State.GetPressesAndRepeats(Back) == 3, "a press and its repeats count");
+
+    InputState Taken = State;
+    Taken.ConsumeKeyboard();
+    Expect(Taken.GetText()[0] == '\0' && Taken.GetPressesAndRepeats(Back) == 0, "ConsumeKeyboard takes the text and repeats too");
+
+    State.BeginFrame(2);
+    Expect(State.GetText()[0] == '\0' && State.GetPressesAndRepeats(Back) == 0 && State.IsDown(Back),
+           "the next frame starts with no text or repeats; held stays held");
+}
+
 int main()
 {
     std::printf("NimbleEngineInputTests\n");
     TestConsume();
+    TestTextAndRepeat();
     TestNames();
     TestEdges();
     TestRouterLatch();
