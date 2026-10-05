@@ -5,7 +5,7 @@
 // the shared vertex shaders of materials without World Position Offset).
 //
 // Permutation defines, each 0 or 1:
-//   MATERIAL_VERTEX_QUAD / _MESH / _FULLSCREEN   which vertex input it reads
+//   MATERIAL_VERTEX_QUAD / _MESH / _FULLSCREEN / _INSTANCEDMESH   which vertex input it reads
 //   MATERIAL_HAS_OFFSET                          add CalcMaterialOffset()
 
 #include <MaterialPlatform.glsl>
@@ -15,14 +15,19 @@
 #include <Material.glsl>
 
 // Quads and the full-screen pass: position and UV. Meshes (GDICreateMesh)
-// add the normal at 8, the colour at 9 and the lightmap UVs (UV1) at 10 --
-// 2-7 belong to instanced quads.
+// add the normal at 8, the colour at 9 and the lightmap UVs (UV1) at 10.
+// An instanced mesh (GDISetInstanceBuffer) adds each instance's transform at
+// 2-5 and its colour at 7 (GDIBuffer.h).
 ATTRIB(0, in, vec3, InPosition)
 ATTRIB(1, in, vec2, InTexCoord)
-#if MATERIAL_VERTEX_MESH
+#if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH
 ATTRIB(8, in, vec3, InNormal)
 ATTRIB(9, in, vec4, InColor)
 ATTRIB(10, in, vec2, InUV1)
+#endif
+#if MATERIAL_VERTEX_INSTANCEDMESH
+ATTRIB(2, in, mat4, InInstanceTransform)
+ATTRIB(7, in, vec4, InInstanceColor)
 #endif
 
 void main(void)
@@ -34,11 +39,21 @@ void main(void)
 #else
     MaterialInputs Inputs;
     Inputs.TexCoord      = InTexCoord;
-    Inputs.WorldPosition = (Transform.Model * vec4(InPosition, 1.0)).xyz;
-#if MATERIAL_VERTEX_MESH
+#if MATERIAL_VERTEX_INSTANCEDMESH
+    // The instance's transform inside the model's; its colour on the vertex colour.
+    mat4 Model           = Transform.Model * InInstanceTransform;
+#else
+    mat4 Model           = Transform.Model;
+#endif
+    Inputs.WorldPosition = (Model * vec4(InPosition, 1.0)).xyz;
+#if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH
     // The inverse transpose, so a non-uniform Scale keeps normals perpendicular.
-    Inputs.WorldNormal = normalize(transpose(inverse(mat3(Transform.Model))) * InNormal);
+    Inputs.WorldNormal = normalize(transpose(inverse(mat3(Model))) * InNormal);
+#if MATERIAL_VERTEX_INSTANCEDMESH
+    Inputs.Color       = InColor * InInstanceColor;
+#else
     Inputs.Color       = InColor;
+#endif
 #else
     // A quad faces -Z: its transformed Y cross X, which survives any scale -- even a flat Z.
     Inputs.WorldNormal = normalize(cross(Transform.Model[1].xyz, Transform.Model[0].xyz));
@@ -55,7 +70,7 @@ void main(void)
     vec4 Clip         = ViewParameters.Projection * ViewPosition;
     // As is: the shared vertex shaders have no material block, so the pixel
     // stage takes it into the draw's atlas square (BakedLighting.glsl).
-#if MATERIAL_VERTEX_MESH
+#if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH
     vec2 LightmapUV = InUV1;
 #else
     vec2 LightmapUV = vec2(0.0);

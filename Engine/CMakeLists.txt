@@ -513,7 +513,8 @@ if(TARGET GDI AND CMAKE_RUNTIME_OUTPUT_DIRECTORY
 
     file(GLOB NM_ENGINE_SHADERS CONFIGURE_DEPENDS
             "${NIMBLE_ENGINE_SHADER_DIR}/*.vsh"
-            "${NIMBLE_ENGINE_SHADER_DIR}/*.fsh")
+            "${NIMBLE_ENGINE_SHADER_DIR}/*.fsh"
+            "${NIMBLE_ENGINE_SHADER_DIR}/*.csh")
     file(GLOB NM_ENGINE_MATERIALS CONFIGURE_DEPENDS "${NIMBLE_ENGINE_MATERIAL_DIR}/*.material.nmgraph")
     get_filename_component(NM_ENGINE_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)   # "Engine/Content/..." below it
     nimble_shader_cook_commands(NM_SHADER_COOK_COMMANDS

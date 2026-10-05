@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="f50b76a9d83050c3e964bd4279d84748" Name="FlareSmoke">
+  <Component Type="Particle System" Version="1">
+    <Emitting Value="true" />
+    <Mesh Value="" />
+    <Material Value="Content/Materials/FlareSmoke.material.nmgraph" />
+    <FaceCamera Value="true" />
+    <MaxParticles Value="600" />
+    <SpawnRate Value="70" />
+    <Lifetime Value="6" />
+    <LifetimeVariance Value="0.35" />
+    <EmitterRadius Value="8" />
+    <Velocity X="10" Y="120" Z="0" />
+    <VelocitySpread Value="20" />
+    <Acceleration X="9" Y="14" Z="0" />
+    <Drag Value="0.35" />
+    <Turbulence Value="45" />
+    <StartSize Value="26" />
+    <EndSize Value="230" />
+    <StartColor R="225" G="38" B="22" A="150" />
+    <EndColor R="8" G="7" B="7" A="120" />
+    <ColorCurve Value="0.45" />
+    <FadeIn Value="0.05" />
+    <FadeOut Value="0.45" />
+    <Seed Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-150" Y="168" Z="-750" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

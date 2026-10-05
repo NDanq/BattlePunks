@@ -1760,7 +1760,8 @@ namespace
         Pure("Input.VertexColor", "Vertex Color", "Inputs",
              { Out("Color", "vec4", "Inputs.Color"), Out("RGB", "vec3", "Inputs.Color.rgb"), Out("A", "float", "Inputs.Color.a") },
              {}, "colour rgba painted")
-            .Tooltip = "The mesh's per-vertex colour; white when it has none (and on quads).";
+            .Tooltip = "The mesh's per-vertex colour; white when it has none (and on quads). A particle system's "
+                       "mesh: times each particle's colour, which fades over its life.";
         Pure("Input.WorldPosition", "World Position", "Inputs", { Out("Position", "vec3", "Inputs.WorldPosition") }, {}, "absolute")
             .Tooltip = "Where this point is in the world. In the vertex stage, before World Position Offset moves it.";
         PixelOnly(Pure("Input.Position", "Clip Position", "Inputs", { Out("Position", "vec3", "Inputs.ClipPosition") }, {},

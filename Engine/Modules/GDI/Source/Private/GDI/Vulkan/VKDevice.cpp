@@ -111,6 +111,14 @@ bool VKDevice::PickPhysicalDevice()
     if(Best == VK_NULL_HANDLE) return false;
     PhysicalDevice = Best;
     GraphicsQueueFamilyIndex = BestQueueFamily;
+    {
+        uint32_t FamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(PhysicalDevice, &FamilyCount, nullptr);
+        std::vector<VkQueueFamilyProperties> Families(FamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(PhysicalDevice, &FamilyCount, Families.data());
+        bGraphicsQueueCompute = GraphicsQueueFamilyIndex < FamilyCount
+                             && (Families[GraphicsQueueFamilyIndex].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
+    }
 
     VkPhysicalDeviceProperties Props{};
     vkGetPhysicalDeviceProperties(PhysicalDevice, &Props);

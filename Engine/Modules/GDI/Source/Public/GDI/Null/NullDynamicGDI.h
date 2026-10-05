@@ -1,6 +1,9 @@
 #ifndef CORECLIENT_NULLDYNAMICGDI_H
 #define CORECLIENT_NULLDYNAMICGDI_H
 
+#include <cstring>
+#include <vector>
+
 #include "Public/GDI/GDI.h"
 #include "Public/GDI/GDIRenderTarget.h"
 #include "Public/GDI/GDIShader.h"
@@ -56,8 +59,29 @@ struct NullGDIStats
     uint LastScissorX = 0, LastScissorY = 0, LastScissorWidth = 0, LastScissorHeight = 0;
     uint64_t ScissorCalls          = 0;
     uint64_t DynamicMeshesCreated  = 0;
+    uint64_t BuffersCreated        = 0;
+    uint64_t DispatchCalls         = 0;
+    uint32_t LastDispatchGroups[3] = {};
+    uint32_t LastDispatchBuffers   = 0;
+    uint32_t LastDispatchParamBytes = 0;
+    uint64_t InstancedDrawCalls    = 0;   // draws with GDISetInstanceBuffer's buffer set
+    uint32_t LastInstanceCount     = 0;
     GDIShader* LastBoundVertexShader = nullptr;
     GDIShader* LastBoundPixelShader  = nullptr;
+};
+
+/* A Null buffer: its bytes on the CPU, which ReadBuffer returns. Dispatches
+ * run nothing, so they stay what they were made with. */
+class NullBuffer final : public GDIBuffer
+{
+public:
+    NullBuffer(const uint32_t InBytes, const uint8_t InUsage, const void* InInitialData)
+        : GDIBuffer(InBytes, InUsage), Data(InBytes, 0)
+    {
+        if(InInitialData) { std::memcpy(Data.data(), InInitialData, InBytes); }
+    }
+    void Release() override { delete this; }
+    std::vector<uint8_t> Data;
 };
 
 /*
@@ -146,6 +170,15 @@ public:
     EngineCore::Color GetColorFromSamplePoint(const EngineCore::Point&, const EngineCore::Size& InSize) override;
 
     ERenderPlatform GetRenderPlatform() const override { return ERP_Null; }
+
+    /* Compute "supported": buffers are created and dispatches counted, so a
+     * caller's whole path runs without a GPU. Nothing executes. */
+    bool       SupportsCompute() const override { return true; }
+    GDIBuffer* CreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData) override;
+    bool       DispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
+                               GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                               uint32_t InX, uint32_t InY, uint32_t InZ) override;
+    bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
 
     const NullGDIStats& GetStats() const { return Stats; }
     void ResetStats() { Stats = NullGDIStats(); }

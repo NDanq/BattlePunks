@@ -659,6 +659,16 @@ namespace RenderCore
          * everything below nests under it (RENDERPIPELINE.md, "Draw events"). */
         InContext.BeginDrawEvent("Scene");
 
+        /* GPU work each proxy needs once a frame (RenderProxy::Simulate) --
+         * particles -- outside any target, against the scene's own view. */
+        {
+            SCOPED_DRAW_EVENT("Simulate");
+            for(RenderProxy* Proxy : P->Proxies)
+            {
+                Proxy->Simulate(InContext);
+            }
+        }
+
         /* "stat frame": the last GDI block's GPU times, to the scene that wrote
          * them (they are complete only now), and this block's own, if shown. */
         const StatUnitSnapshot Stats = GetStatUnit();

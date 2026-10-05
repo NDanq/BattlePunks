@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="daa4a18e947c75c8aee935f8a300819a" Name="FlareStick">
+  <Component Type="Render" Version="3">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/FlareBody.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Cylinder.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-150" Y="70" Z="-750" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="16" Y="140" Z="16" />
+  </Component>
+</Entity>

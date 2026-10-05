@@ -77,6 +77,10 @@ public:
      *  format's own sampled-image support. */
     bool SupportsSampledFormat(VkFormat InFormat) const;
 
+    /** Whether the graphics queue also runs compute (GDISupportsCompute): every
+     *  desktop GPU's does, which is what lets one command buffer hold both. */
+    inline bool GraphicsQueueSupportsCompute() const { return bGraphicsQueueCompute; }
+
 private:
     bool PickPhysicalDevice();
     bool CreateLogicalDevice();
@@ -87,6 +91,7 @@ private:
     uint32_t            GraphicsQueueFamilyIndex = UINT32_MAX;
     VkQueue             GraphicsQueue           = VK_NULL_HANDLE;
     bool                bTextureCompressionBC   = false;   // the feature, enabled
+    bool                bGraphicsQueueCompute   = false;   // GraphicsQueueFamilyIndex has VK_QUEUE_COMPUTE_BIT
 
     VkPhysicalDeviceMemoryProperties MemoryProperties{};
 

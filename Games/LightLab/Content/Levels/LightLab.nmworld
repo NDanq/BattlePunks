@@ -39,4 +39,8 @@
   <Entity Guid="a70bac78a845bfabbf52f70f27feef79" />
   <Entity Guid="dfbd0784caeb8b428ab6e7f6150c356a" />
   <Instance Guid="76c77b95f8ec4548091f0cc7314f1352" />
+  <Entity Guid="daa4a18e947c75c8aee935f8a300819a" />
+  <Entity Guid="25d8ec274e84cb5c453eb23b4771af30" />
+  <Entity Guid="1b5ad19ab3926dbcf9ac75de50f5f42d" />
+  <Entity Guid="f50b76a9d83050c3e964bd4279d84748" />
 </World>

@@ -24,6 +24,7 @@
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Public/RenderCore/TextureCompression.h"
+#include "Private/RenderCore/ParticleSimulation.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/OverlayFont.h"
@@ -58,7 +59,7 @@ namespace RenderCore
     {
         MaterialDescription  Description;
         GDIShader*           Pixel = nullptr;      // null: failed to load, drawn as the fallback
-        GDIShader*           Vertex[2] = {};       // its own Quad and Mesh shaders, with an offset only
+        GDIShader*           Vertex[4] = {};       // its own Quad, Mesh and InstancedMesh shaders (by EMaterialVertexInput), with an offset only
         std::vector<uint8_t> Block;                // the defaults; the tint is written per draw
     };
 
@@ -323,8 +324,8 @@ namespace RenderCore
         GDIShader*     BoundPixel  = nullptr;
 
         std::unordered_map<std::string, Material> Materials;   // node-based: a Material* survives inserts
-        GDIShader*              DefaultVertex[3] = {};          // MaterialDefault, by EMaterialVertexInput
-        bool                    bDefaultVertexTried[3] = {};
+        GDIShader*              DefaultVertex[4] = {};          // MaterialDefault, by EMaterialVertexInput
+        bool                    bDefaultVertexTried[4] = {};
         std::vector<GDIShader*> RetiredShaders;                 // see RenderContext::ReloadMaterial
         std::vector<uint8_t>    OverrideBlock;                  // BindMaterial's: a block with an entity's overrides
         std::set<std::string>   Warned;                         // one warning per material and reason
@@ -677,6 +678,22 @@ namespace RenderCore
             return DefaultVertex[Index];
         }
 
+        /* Content/Shaders/<InFile>, a compute shader, loaded once and kept
+         * (each pipeline belongs to one shader); null without compute or
+         * cooked shader -- warned once by LoadShader. */
+        std::unordered_map<std::string, GDIShader*> ComputeShaders;
+        GDIShader* GetComputeShader(const char* InFile)
+        {
+            const auto Found = ComputeShaders.find(InFile);
+            if(Found != ComputeShaders.end())
+            {
+                return Found->second;
+            }
+            GDIShader* Shader = GDISupportsCompute() ? LoadShader(InFile, ST_Compute, "GPU particles", false) : nullptr;
+            ComputeShaders.emplace(InFile, Shader);
+            return Shader;
+        }
+
         GDIShader* GetLightingShader()
         {
             if(!bLightingTried)
@@ -903,7 +920,7 @@ namespace RenderCore
 
             if(Desc.bHasOffset && Desc.Domain != EMaterialDomain::PostProcess)
             {
-                for(const EMaterialVertexInput Input : { EMaterialVertexInput::Quad, EMaterialVertexInput::Mesh })
+                for(const EMaterialVertexInput Input : { EMaterialVertexInput::Quad, EMaterialVertexInput::Mesh, EMaterialVertexInput::InstancedMesh })
                 {
                     GDIShader* Vertex = LoadShader(GetPermutationFileName(Stem, GetVertexPermutationKey(Input), true), ST_Vertex, Who, false);
                     if(!Vertex)
@@ -1454,6 +1471,22 @@ namespace RenderCore
             Place(MeshObject, InItem.Transform, 1.0f, 1.0f);
             MeshObject->Mesh = InItem.Mesh;
 
+            /* Instanced: the material's InstancedMesh vertex shader, or nothing -- the plain fallback draws once. */
+            if(InItem.Instances)
+            {
+                if(InItem.Mat && BindMaterial(*InItem.Mat, EMaterialVertexInput::InstancedMesh, InItem.Tint, &InItem))
+                {
+                    InItem.Mesh->SetDrawRange(InItem.First, InItem.Count);
+                    GDISetInstanceBuffer(InItem.Instances, InItem.InstanceCount);
+                    GDIDrawObject(MeshObject);
+                    GDISetInstanceBuffer(nullptr, 0);
+                    InItem.Mesh->SetDrawRange(0, 0);
+                    DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+                }
+                MeshObject->Mesh = nullptr;
+                return;
+            }
+
             if(!InItem.Mat || !BindMaterial(*InItem.Mat, EMaterialVertexInput::Mesh, InItem.Tint, &InItem))
             {
                 GDIShader* Pixel = GDIGetShader<Mesh_PS>();
@@ -1512,7 +1545,7 @@ namespace RenderCore
                 Issue(InItem);
                 return;
             }
-            const EngineCore::Vector3 Offset = InItem.Transform.Position - View.Origin;
+            const EngineCore::Vector3 Offset = (InItem.Instances ? InItem.SortOrigin : InItem.Transform.Position) - View.Origin;
             InItem.Depth = float(Offset.Dot(ViewForward(View)));
             PolicyFor(InStage).Add(InItem);
         }
@@ -1638,13 +1671,13 @@ namespace RenderCore
             for(auto& Each : Materials)
             {
                 Material& M = Each.second;
-                for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1] })
+                for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1], M.Vertex[2], M.Vertex[3] })
                 {
                     if(Shader) { RetiredShaders.push_back(Shader); }
                 }
             }
             Materials.clear();
-            for(int Index = 0; Index < 3; ++Index)
+            for(int Index = 0; Index < 4; ++Index)
             {
                 if(DefaultVertex[Index]) { RetiredShaders.push_back(DefaultVertex[Index]); }
                 DefaultVertex[Index] = nullptr;
@@ -1653,6 +1686,11 @@ namespace RenderCore
             if(LightingShader) { RetiredShaders.push_back(LightingShader); }
             LightingShader = nullptr;
             bLightingTried = false;
+            for(auto& Each : ComputeShaders)
+            {
+                if(Each.second) { RetiredShaders.push_back(Each.second); }
+            }
+            ComputeShaders.clear();
             if(ShadowDepthShader) { RetiredShaders.push_back(ShadowDepthShader); }
             ShadowDepthShader = nullptr;
             bShadowDepthTried = false;
@@ -1946,6 +1984,120 @@ namespace RenderCore
     const RenderView& RenderContext::GetView() const
     {
         return P->View;
+    }
+
+    double RenderContext::GetTimeSeconds() const
+    {
+        return std::chrono::duration<double>(P->LastFrame - P->Start).count();
+    }
+
+    float RenderContext::GetDeltaSeconds() const
+    {
+        return P->FrameDelta;
+    }
+
+    // === GPU particles (ParticleSimulation.h) ======================================
+
+    bool RenderContext::SupportsParticles() const
+    {
+        return GDISupportsCompute();
+    }
+
+    ParticleEmitterGpu* RenderContext::CreateParticleEmitter(const uint32_t InMaxParticles)
+    {
+        return ParticleSimulation::Create(InMaxParticles);
+    }
+
+    void RenderContext::ReleaseParticleEmitter(ParticleEmitterGpu* InEmitter)
+    {
+        ParticleSimulation::Release(InEmitter);
+    }
+
+    bool RenderContext::SimulateParticles(ParticleEmitterGpu& InEmitter, const ParticleEmitterSettings& InSettings,
+                                          const EngineCore::Vector3& InEmitterPosition, const float InDeltaSeconds)
+    {
+        /* Sorted for, and turned toward, the camera of the view being set up: the scene's own. */
+        ParticleCamera Camera;
+        Camera.Position = EngineCore::Vector3(P->Scene.CameraPosition[0], P->Scene.CameraPosition[1], P->Scene.CameraPosition[2]);
+        const EngineCore::Matrix4x4& View = P->View.View;
+        Camera.Right   = EngineCore::Vector3(View.Data[0][0], View.Data[0][1], View.Data[0][2]);
+        Camera.Up      = EngineCore::Vector3(View.Data[1][0], View.Data[1][1], View.Data[1][2]);
+        Camera.Forward = ViewForward(P->View);
+
+        const ParticleParams Params = ParticleSimulation::BuildParams(InEmitter, InSettings, InEmitterPosition, Camera,
+                                                                      InDeltaSeconds >= 0.0f ? InDeltaSeconds : P->FrameDelta,
+                                                                      GetTimeSeconds());
+        return ParticleSimulation::Dispatch(InEmitter, Params, P->GetComputeShader("ParticleSimulate.csh"),
+                                            P->GetComputeShader("ParticleSort.csh"));
+    }
+
+    bool RenderContext::ReadParticles(const ParticleEmitterGpu& InEmitter, std::vector<ParticleSample>& OutParticles)
+    {
+        OutParticles.clear();
+        std::vector<uint8_t> Bytes;
+        if(!InEmitter.Particles || !GDIReadBuffer(InEmitter.Particles, Bytes))
+        {
+            return false;
+        }
+        /* ParticleCommon.glsl's Particle: position and age, then velocity and lifetime. */
+        static_assert(sizeof(ParticleSample) == 32, "ParticleSample mirrors the GPU's Particle");
+        OutParticles.resize(std::min<size_t>(Bytes.size() / sizeof(ParticleSample), InEmitter.MaxParticles));
+        std::memcpy(OutParticles.data(), Bytes.data(), OutParticles.size() * sizeof(ParticleSample));
+        return true;
+    }
+
+    bool RenderContext::ReadParticleInstances(const ParticleEmitterGpu& InEmitter, std::vector<ParticleInstanceSample>& OutInstances)
+    {
+        OutInstances.clear();
+        std::vector<uint8_t> Bytes;
+        if(!InEmitter.Instances || !GDIReadBuffer(InEmitter.Instances, Bytes))
+        {
+            return false;
+        }
+        static_assert(sizeof(ParticleInstanceSample) == GDI_INSTANCE_STRIDE, "ParticleInstanceSample mirrors GDI's instance layout");
+        OutInstances.resize(std::min<size_t>(Bytes.size() / sizeof(ParticleInstanceSample), InEmitter.MaxParticles));
+        std::memcpy(OutInstances.data(), Bytes.data(), OutInstances.size() * sizeof(ParticleInstanceSample));
+        return true;
+    }
+
+    bool RenderContext::DrawParticles(const ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
+                                      const char* InMeshPath, const char* InMaterial)
+    {
+        if(!InEmitter.bSimulated || !InEmitter.Instances || !InMeshPath || InMeshPath[0] == '\0')
+        {
+            return false;
+        }
+        std::shared_ptr<const MeshData> Source;
+        GDIMesh* Mesh = P->FindMesh(InMeshPath, Source);
+        if(!Mesh || !Source)
+        {
+            return false;
+        }
+        Material* Chosen = P->SectionMaterial(InMaterial && InMaterial[0] != '\0' ? InMaterial : nullptr, std::string());
+        if(!Chosen)
+        {
+            return false;
+        }
+
+        /* The instances are in world space: drawn in an identity frame, sorted at the emitter. */
+        static const MeshSection Everything;
+        const std::vector<MeshSection>& Sections = Source->Sections;
+        const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
+        for(size_t Index = 0; Index < SectionCount; ++Index)
+        {
+            const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
+            DrawCommand Item;
+            Item.Kind          = DrawCommand::EKind::MeshSection;
+            Item.Mat           = Chosen;
+            Item.Mesh          = Mesh;
+            Item.First         = Section.FirstIndex;
+            Item.Count         = Sections.empty() ? 0u : Section.IndexCount;
+            Item.Instances     = InEmitter.Instances;
+            Item.InstanceCount = InEmitter.MaxParticles;
+            Item.SortOrigin    = InSortOrigin;
+            P->Submit(Item, Impl::StageOf(Chosen));
+        }
+        return true;
     }
 
     void RenderContext::DrawQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight,
@@ -3169,7 +3321,7 @@ namespace RenderCore
             }
 
             Material& M = Found->second;
-            for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1] })
+            for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1], M.Vertex[2], M.Vertex[3] })
             {
                 if(!Shader) { continue; }
                 if(P->BoundPixel == Shader)  { P->BoundPixel = nullptr; }

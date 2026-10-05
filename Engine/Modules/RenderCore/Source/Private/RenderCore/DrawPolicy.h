@@ -10,6 +10,7 @@
 #include "Public/RenderCore/RenderTypes.h"
 
 class GDIMesh;
+class GDIBuffer;
 
 namespace RenderCore
 {
@@ -42,6 +43,14 @@ namespace RenderCore
 
         /* The entity's baked lighting; null: none (BakedLighting.glsl). */
         const RenderBakedDraw*         Baked = nullptr;
+
+        /* MeshSection, instanced (GDISetInstanceBuffer): InstanceCount of it
+         * from Instances, drawn with the InstancedMesh vertex input; sorted by
+         * SortOrigin rather than Transform's position, which is the frame
+         * the instances sit in. Null: one, as before. */
+        GDIBuffer*                     Instances     = nullptr;
+        uint32_t                       InstanceCount = 0;
+        EngineCore::Vector3            SortOrigin;
     };
 
     /* A draw as a proxy queued it, kept with its stage: what a static draw

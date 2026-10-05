@@ -15,6 +15,7 @@
 #include "Public/RenderCore/Components/CameraComponent.h"
 #include "Public/RenderCore/Components/DirectionalLightComponent.h"
 #include "Public/RenderCore/Components/LightShadow.h"
+#include "Public/RenderCore/Components/ParticleSystemComponent.h"
 #include "Public/RenderCore/Components/PointLightComponent.h"
 #include "Public/RenderCore/Components/PostProcessComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"

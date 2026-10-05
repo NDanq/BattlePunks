@@ -84,6 +84,17 @@ namespace RenderCore
          * Offset, RenderContext::GetMaterialMaxOffset). 0 by default. */
         virtual float GetBoundsPadding(RenderContext& InContext) { (void)InContext; return 0.0f; }
 
+        /* RENDER THREAD, once per frame for every proxy, visible or not,
+         * before any view is drawn or target bound -- GPU work a frame needs
+         * once, however many views then draw it: a particle system's
+         * simulation (RenderContext::SimulateParticles). Nothing by default. */
+        virtual void Simulate(RenderContext& InContext) { (void)InContext; }
+
+        /* Whether this proxy's draws may be captured once and replayed while
+         * its owner is static (SetStatic). False for one whose draws change
+         * every frame on their own, as particles do. */
+        virtual bool AllowsStaticDraws() const { return true; }
+
         /* Recomputes LocalToWorld = InTransform.ToMatrix() and
          * WorldBounds = AABB::Transformed(LocalBounds, LocalToWorld) --
          * exactly World::RefreshSpatialIndex's own refit math (World.cpp),
@@ -111,7 +122,11 @@ namespace RenderCore
         /* The owner's mobility (GameCore's Mobility.h), set by extraction: a
          * static proxy's draws are captured once and replayed (RenderScene's
          * static draw lists) until its change serial moves. */
-        void SetStatic(const bool bInStatic) { if(bStatic != bInStatic) { bStatic = bInStatic; ++ChangeSerial; } }
+        void SetStatic(bool bInStatic)
+        {
+            bInStatic = bInStatic && AllowsStaticDraws();
+            if(bStatic != bInStatic) { bStatic = bInStatic; ++ChangeSerial; }
+        }
         bool IsStatic() const { return bStatic; }
 
         /* Bumped by every extraction record applied to it: whatever was

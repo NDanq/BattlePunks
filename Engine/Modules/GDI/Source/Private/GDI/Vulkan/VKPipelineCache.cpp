@@ -1,6 +1,7 @@
 #include "Public/GDI/Vulkan/VKPipelineCache.h"
 #include "Public/GDI/Vulkan/VKDevice.h"
 #include "Public/GDI/GDIDefinitions.h"
+#include "Public/GDI/GDIBuffer.h"
 
 #include "Public/GDI/GDILog.h"
 #include <string>
@@ -19,10 +20,11 @@
 static constexpr uint32_t kLayoutStandard  = 0;
 static constexpr uint32_t kLayoutInstanced = 1;
 static constexpr uint32_t kLayoutMesh      = 2;
+static constexpr uint32_t kLayoutMeshInstanced = 3;   // kLayoutMesh + an instance buffer (GDISetInstanceBuffer)
 
 /** Maximum vertex bindings / attributes across all known layouts */
-static constexpr uint32_t kMaxBindings = 5;
-static constexpr uint32_t kMaxAttribs  = 8;
+static constexpr uint32_t kMaxBindings = 6;
+static constexpr uint32_t kMaxAttribs  = 10;
 
 /** Push-constant range (bytes). Included in all layouts for future use. */
 static constexpr uint32_t kPushConstantBytes = 128;
@@ -139,7 +141,7 @@ void VKPipelineCache::GetVertexInputState(
     OutBindingCount = 2;
     OutAttribCount  = 2;
 
-    if(LayoutID == kLayoutMesh)
+    if(LayoutID == kLayoutMesh || LayoutID == kLayoutMeshInstanced)
     {
         // Binding 2 / location 8: vec3 normal, per vertex.
         OutBindings[2].binding   = 2;
@@ -173,6 +175,29 @@ void VKPipelineCache::GetVertexInputState(
 
         OutBindingCount = 5;
         OutAttribCount  = 5;
+
+        if(LayoutID == kLayoutMeshInstanced)
+        {
+            // Binding 5: one GDI_INSTANCE_STRIDE record per instance (GDIBuffer.h) --
+            // a mat4 transform at locations 2-5, a vec4 colour at location 7.
+            OutBindings[5].binding   = 5;
+            OutBindings[5].stride    = GDI_INSTANCE_STRIDE;
+            OutBindings[5].inputRate = VK_VERTEX_INPUT_RATE_INSTANCE;
+            OutBindingCount = 6;
+
+            for(uint32_t Column = 0; Column < 4; ++Column)
+            {
+                OutAttribs[5 + Column].location = 2 + Column;
+                OutAttribs[5 + Column].binding  = 5;
+                OutAttribs[5 + Column].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+                OutAttribs[5 + Column].offset   = Column * sizeof(float) * 4;
+            }
+            OutAttribs[9].location = 7;
+            OutAttribs[9].binding  = 5;
+            OutAttribs[9].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+            OutAttribs[9].offset   = sizeof(float) * 16;
+            OutAttribCount = 10;
+        }
         return;
     }
 
@@ -254,6 +279,23 @@ void VKPipelineCache::Shutdown()
     {
         if(DescSetLayouts[g]  != VK_NULL_HANDLE) { vkDestroyDescriptorSetLayout(Dev, DescSetLayouts[g],  nullptr); DescSetLayouts[g]  = VK_NULL_HANDLE; }
         if(PipelineLayouts[g] != VK_NULL_HANDLE) { vkDestroyPipelineLayout(Dev,       PipelineLayouts[g], nullptr); PipelineLayouts[g] = VK_NULL_HANDLE; }
+    }
+
+    for(auto& Entry : ComputePipelines)
+    {
+        if(Entry.second != VK_NULL_HANDLE) vkDestroyPipeline(Dev, Entry.second, nullptr);
+    }
+    ComputePipelines.clear();
+    ComputeModules.clear();
+    for(VkPipeline Each : RetiredComputePipelines)
+    {
+        if(Each != VK_NULL_HANDLE) vkDestroyPipeline(Dev, Each, nullptr);
+    }
+    RetiredComputePipelines.clear();
+    for(uint32_t Count = 0; Count < kComputeLayouts; ++Count)
+    {
+        if(ComputeSetLayouts[Count]  != VK_NULL_HANDLE) { vkDestroyDescriptorSetLayout(Dev, ComputeSetLayouts[Count], nullptr); ComputeSetLayouts[Count] = VK_NULL_HANDLE; }
+        if(ComputePipeLayouts[Count] != VK_NULL_HANDLE) { vkDestroyPipelineLayout(Dev, ComputePipeLayouts[Count], nullptr); ComputePipeLayouts[Count] = VK_NULL_HANDLE; }
     }
 
     if(VKCache != VK_NULL_HANDLE)
@@ -633,4 +675,92 @@ VkPipeline VKPipelineCache::CreatePipeline(const PipelineKey& Key) const
     }
 
     return Result;
+}
+
+// ---------------------------------------------------------------------------
+//  Compute pipelines (GDIDispatchCompute)
+// ---------------------------------------------------------------------------
+
+VKPipelineCache::PipelineFetch VKPipelineCache::GetOrCreateCompute(const VkShaderModule InModule, const uint32_t InStorageCount)
+{
+    PipelineFetch Out;
+    if(!Device || !Device->IsValid() || InModule == VK_NULL_HANDLE || InStorageCount >= kComputeLayouts) return Out;
+    VkDevice Dev = Device->GetDevice();
+
+    // The layout for this many storage buffers: the parameter block at 0, the buffers at 1..
+    if(ComputePipeLayouts[InStorageCount] == VK_NULL_HANDLE)
+    {
+        VkDescriptorSetLayoutBinding Bindings[kComputeLayouts]{};
+        Bindings[0].binding         = 0;
+        Bindings[0].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        Bindings[0].descriptorCount = 1;
+        Bindings[0].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+        for(uint32_t Each = 1; Each <= InStorageCount; ++Each)
+        {
+            Bindings[Each].binding         = Each;
+            Bindings[Each].descriptorType  = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            Bindings[Each].descriptorCount = 1;
+            Bindings[Each].stageFlags      = VK_SHADER_STAGE_COMPUTE_BIT;
+        }
+        VkDescriptorSetLayoutCreateInfo SetInfo{};
+        SetInfo.sType        = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        SetInfo.bindingCount = InStorageCount + 1;
+        SetInfo.pBindings    = Bindings;
+        if(vkCreateDescriptorSetLayout(Dev, &SetInfo, nullptr, &ComputeSetLayouts[InStorageCount]) != VK_SUCCESS)
+        {
+            GDI_LOG("[VKPipelineCache] vkCreateDescriptorSetLayout failed for a compute layout.")
+            return Out;
+        }
+        VkPipelineLayoutCreateInfo LayoutInfo{};
+        LayoutInfo.sType          = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+        LayoutInfo.setLayoutCount = 1;
+        LayoutInfo.pSetLayouts    = &ComputeSetLayouts[InStorageCount];
+        if(vkCreatePipelineLayout(Dev, &LayoutInfo, nullptr, &ComputePipeLayouts[InStorageCount]) != VK_SUCCESS)
+        {
+            GDI_LOG("[VKPipelineCache] vkCreatePipelineLayout failed for a compute layout.")
+            return Out;
+        }
+    }
+
+    const uint64_t Key = (uint64_t(reinterpret_cast<uintptr_t>(InModule)) << 3) ^ InStorageCount;
+    auto Found = ComputePipelines.find(Key);
+    if(Found == ComputePipelines.end())
+    {
+        VkComputePipelineCreateInfo Info{};
+        Info.sType        = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+        Info.stage.sType  = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        Info.stage.stage  = VK_SHADER_STAGE_COMPUTE_BIT;
+        Info.stage.module = InModule;
+        Info.stage.pName  = "main";
+        Info.layout       = ComputePipeLayouts[InStorageCount];
+        VkPipeline Pipeline = VK_NULL_HANDLE;
+        if(vkCreateComputePipelines(Dev, VKCache, 1, &Info, nullptr, &Pipeline) != VK_SUCCESS)
+        {
+            GDI_LOG("[VKPipelineCache] vkCreateComputePipelines failed.")
+            Pipeline = VK_NULL_HANDLE;
+        }
+        Found = ComputePipelines.emplace(Key, Pipeline).first;
+        ComputeModules[Key] = InModule;
+    }
+
+    if(Found->second == VK_NULL_HANDLE) return Out;
+    Out.Pipeline   = Found->second;
+    Out.PipeLayout = ComputePipeLayouts[InStorageCount];
+    Out.DescLayout = ComputeSetLayouts[InStorageCount];
+    return Out;
+}
+
+void VKPipelineCache::ForgetComputeModule(const VkShaderModule InModule)
+{
+    for(auto It = ComputeModules.begin(); It != ComputeModules.end();)
+    {
+        if(It->second != InModule) { ++It; continue; }
+        auto Pipeline = ComputePipelines.find(It->first);
+        if(Pipeline != ComputePipelines.end())
+        {
+            RetiredComputePipelines.push_back(Pipeline->second);
+            ComputePipelines.erase(Pipeline);
+        }
+        It = ComputeModules.erase(It);
+    }
 }

@@ -3,6 +3,11 @@
 
 #include <vulkan/vulkan.h>
 #include <unordered_map>
+#include <vector>
+
+#include "Public/GDI/GDIDefinitions.h"
+
+#include "Public/GDI/GDIDefinitions.h"
 
 class VKDevice;
 
@@ -182,6 +187,22 @@ public:
 
     inline bool IsValid() const { return PipelineLayouts[DLG_Base] != VK_NULL_HANDLE; }
 
+    // -------------------------------------------------------------------
+    // Compute (GDIDispatchCompute)
+    // -------------------------------------------------------------------
+
+    /**
+     * The compute pipeline for InModule with InStorageCount storage buffers
+     * (bindings 1..InStorageCount) after its parameter block (binding 0),
+     * with that layout; created on first use. All null if creation fails.
+     */
+    PipelineFetch GetOrCreateCompute(VkShaderModule InModule, uint32_t InStorageCount);
+
+    /** InModule is being destroyed: its compute pipelines leave the cache, so
+     *  a later module given the same handle never finds them. They are
+     *  destroyed at Shutdown, past any frame that may still use them. */
+    void ForgetComputeModule(VkShaderModule InModule);
+
 private:
     void LoadFromDisk();
     void SaveToDisk() const;
@@ -215,6 +236,15 @@ private:
         EDescriptorLayoutGroup Group    = DLG_Base;
     };
     std::unordered_map<uint64_t, PipelineEntry> PipelineEntries;
+
+    // Compute: one layout per storage-buffer count (0..GDI_COMPUTE_MAX_STORAGE_BUFFERS),
+    // made on first use; pipelines by module and count.
+    static constexpr uint32_t kComputeLayouts = GDI_COMPUTE_MAX_STORAGE_BUFFERS + 1;
+    VkDescriptorSetLayout ComputeSetLayouts [kComputeLayouts]{};
+    VkPipelineLayout      ComputePipeLayouts[kComputeLayouts]{};
+    std::unordered_map<uint64_t, VkPipeline> ComputePipelines;
+    std::unordered_map<uint64_t, VkShaderModule> ComputeModules;   // each pipeline's module, by the same key
+    std::vector<VkPipeline> RetiredComputePipelines;
 };
 
 #endif //CORECLIENT_VKPIPELINECACHE_H

@@ -530,7 +530,9 @@ def cook_d3d12(extra_defines=None):
                 cross_args += ["--hlsl-flatten-matrix-vertex-input-semantics"]
             cross_args += [str(spv_path), "--output", str(hlsl_path)]
 
-            fxc_args = [fxc, "/nologo", "/T", "vs_5_0" if is_vertex else "ps_5_0",
+            stage_type = EXT_TO_TYPE[src.suffix]
+            profile    = {VERTEX_SHADER: "vs_5_0", PIXEL_SHADER: "ps_5_0", COMPUTE_SHADER: "cs_5_0"}[stage_type]
+            fxc_args = [fxc, "/nologo", "/T", profile,
                         "/E", "main", "/O3", "/Fo", str(out_dir / cso_name), str(hlsl_path)]
 
             for args, tool in ((cross_args, "spirv-cross"), (fxc_args, "fxc")):

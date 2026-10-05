@@ -123,6 +123,7 @@ set( GDI_CORE_SOURCES
         Source/Public/GDI/GDIShader.h
         Source/Public/GDI/GDITexture.h
         Source/Public/GDI/GDIMesh.h
+        Source/Public/GDI/GDIBuffer.h
         Source/Public/GDI/GDIRenderTarget.h
         Source/Public/GDI/GDIView.h
         Source/Public/GDI/GDISync.h
@@ -180,6 +181,8 @@ if(GDI_WITH_VULKAN)
             Source/Private/GDI/Vulkan/VKShader.cpp
             Source/Private/GDI/Vulkan/VKRenderTarget.cpp
             Source/Private/GDI/Vulkan/VKMesh.cpp
+            Source/Private/GDI/Vulkan/VKBuffer.cpp
+            Source/Private/GDI/Vulkan/VKCompute.cpp
             Source/Private/GDI/Vulkan/VKSync.cpp
             Source/Private/GDI/Vulkan/VKDevice.cpp
             Source/Private/GDI/Vulkan/VKSwapchain.cpp
@@ -195,6 +198,7 @@ if(GDI_WITH_VULKAN)
             Source/Public/GDI/Vulkan/VKTexture.h
             Source/Public/GDI/Vulkan/VKShader.h
             Source/Public/GDI/Vulkan/VKMesh.h
+            Source/Public/GDI/Vulkan/VKBuffer.h
             Source/Public/GDI/Vulkan/VKRenderTarget.h
             Source/Public/GDI/Vulkan/VKSync.h
             Source/Public/GDI/Vulkan/VKDevice.h

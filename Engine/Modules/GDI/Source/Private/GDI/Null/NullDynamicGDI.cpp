@@ -149,6 +149,35 @@ void NullDynamicGDI::DrawScreenQuadPrimitive()
 void NullDynamicGDI::DrawObject(class GDIViewObject*)
 {
     Stats.DrawObjectCalls++;
+    if(InstanceBuffer)
+    {
+        Stats.InstancedDrawCalls++;
+        Stats.LastInstanceCount = InstanceCount;
+    }
+}
+
+GDIBuffer* NullDynamicGDI::CreateBuffer(const uint32_t InBytes, const uint8_t InUsage, const void* InInitialData)
+{
+    Stats.BuffersCreated++;
+    return new NullBuffer(InBytes, InUsage, InInitialData);
+}
+
+bool NullDynamicGDI::DispatchCompute(GDIShader*, const void*, const uint32_t InParamBytes, GDIBuffer* const*,
+                                     const uint32_t InBufferCount, const uint32_t InX, const uint32_t InY, const uint32_t InZ)
+{
+    Stats.DispatchCalls++;
+    Stats.LastDispatchGroups[0] = InX;
+    Stats.LastDispatchGroups[1] = InY;
+    Stats.LastDispatchGroups[2] = InZ;
+    Stats.LastDispatchBuffers   = InBufferCount;
+    Stats.LastDispatchParamBytes = InParamBytes;
+    return true;
+}
+
+bool NullDynamicGDI::ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes)
+{
+    OutBytes = static_cast<NullBuffer*>(InBuffer)->Data;
+    return true;
 }
 
 void NullDynamicGDI::DrawObject(class GDIViewObject*, class GDIView*)

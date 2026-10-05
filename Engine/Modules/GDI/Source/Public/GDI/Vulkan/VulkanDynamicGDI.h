@@ -214,6 +214,15 @@ public:
     void BeginDrawEvent(const std::string& EventName) override;
     void EndDrawEvent() override;
 
+    /** Compute and GPU buffers (VKCompute.cpp): dispatches record into the
+     *  frame's one command buffer, with full memory barriers around them. */
+    bool       SupportsCompute() const override;
+    GDIBuffer* CreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData) override;
+    bool       DispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
+                               GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                               uint32_t InX, uint32_t InY, uint32_t InZ) override;
+    bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
+
     bool     SupportsGPUTimestamps() const override { return TimestampPool != VK_NULL_HANDLE; }
     void     WriteGPUTimestamp(uint32_t InIndex) override;
     uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;

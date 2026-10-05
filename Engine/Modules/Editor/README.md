@@ -473,6 +473,11 @@ starts from its default-constructed bytes. A type opts out of that list with
 `Props.NotAddable()`, for a component that only makes sense attached some other
 way.
 
+**Particle System** is added this way too: its settings under Rendering (Mesh,
+Material, Face Camera), Emission, Motion and Over Life. Its plume animates in
+the viewport while editing, since it runs on the render thread's clock rather
+than the World's (RenderCore's RENDERPIPELINE.md, "Particles").
+
 ## Undo and redo
 
 **Edit > Undo** (Ctrl+Z) and **Redo** (Ctrl+Y, Ctrl+Shift+Z) step through every

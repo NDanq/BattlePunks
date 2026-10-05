@@ -883,6 +883,49 @@ every other stage keeps its order.
 A mid-frame readback (an editor capture) submits the frame and starts another
 command buffer: events opened before it end with it.
 
+### Particles
+
+A **Particle System** component (`ParticleSystemComponent.h`) emits from its
+entity and simulates on the GPU, with compute shaders, where the backend has
+them (Vulkan; Null runs the calls and nothing else). Elsewhere it draws nothing
+and says so once.
+
+- **Its particles** live in world space, in a ring of up to
+  `PARTICLE_MAX_PER_SYSTEM` (2048), 32 bytes each: position and age, velocity
+  and lifetime (`ParticleCommon.glsl`). A zeroed slot has never been used.
+- **Once a frame**, before any target is bound (`RenderProxy::Simulate`,
+  against the scene's own view), two dispatches (`RenderContext::SimulateParticles`):
+  - `ParticleSimulate.csh`, a thread a particle: this frame's spawns -- the
+    rate times the frame's delta, the fraction carried, the CPU's count round
+    the ring (`ParticleSimulation::BuildParams`) -- are born in the emitter's
+    sphere, each at a random moment inside the frame; the rest move on by
+    acceleration, a swirl (Turbulence) and drag.
+  - `ParticleSort.csh`, one workgroup: a bitonic sort in shared memory, two
+    particles a thread, farthest first along the view; then each written as
+    an instance (GDI's layout: a transform and a colour) -- turned to the
+    camera if Face Camera, sized and coloured by age, faded in and out. Dead
+    and unused slots collapse to a point and sort last.
+- **Drawn** from every view that sees it (`Draw`): the mesh (an empty Mesh is
+  `Engine/Content/Meshes/Quad.nmmesh`) instanced, one draw per section, with the
+  material's **InstancedMesh** vertex permutation (MATERIALS.md), in the stage
+  its material names, sorted with the other draws at the emitter. The
+  particle's colour reaches the material as its **Vertex Color**.
+- **Time** is the render thread's clock (`RenderContext::GetDeltaSeconds`),
+  clamped to a tenth of a second a frame, so the editor's viewport animates
+  while the World stands still.
+- **Never static**: a particle proxy refuses static draw lists
+  (`RenderProxy::AllowsStaticDraws`), its draws changing on their own.
+- **Culling** pads the entity by how far a particle can get in its life.
+
+Particles are sorted within a system, and the systems with every other
+translucent draw by their emitters; two plumes that cross can blend out of
+order. Opaque particles write depth as any mesh does.
+
+LightLab's yard has a flare (`SpawnFlare`): a red stick, a flame ball whose
+emissive (`FlareFlame`) flickers past 10 for Bloom, a red point light, and
+smoke (`FlareSmoke`, Translucent Unlit: soft round puffs) born red and black
+well before it fades (Color Curve 0.45).
+
 ## GDI
 
 Deferred shading needs two things GDI did not have:
@@ -943,6 +986,35 @@ against their backends' existing patterns but were not compiled here (Linux);
 OpenGL compiles (the host still cannot create a GL context); the Null backend's
 are covered by GDI's smoke test.
 
+Particles (### Particles) needed three more, where `GDISupportsCompute()` says
+the backend has them -- Vulkan and Null so far:
+
+- **GPU buffers.** `GDICreateBuffer(Bytes, Usage, Data)`: storage for compute
+  (`GDI_BU_Storage`), per-instance vertex data (`GDI_BU_Instance`), or both;
+  filled once at creation (or zeroed), then only shaders write it.
+  `GDIReadBuffer` reads one back, waiting for the GPU, for tests and tools.
+- **Compute shaders.** A `.csh` is cooked like the other stages (`cs_5_0` for
+  D3D12) and loaded as `ST_Compute`. `GDIDispatchCompute(Shader, Params,
+  Bytes, Buffers, Count, X, Y, Z)`: the parameters at binding 0 (up to 1 KB),
+  the storage buffers at 1.. (up to 4), declared with `ComputeCommon.glsl`'s
+  macros. Inside a frame it is recorded in order with the draws, the open
+  render pass closed around it and reopened with its contents; outside one it
+  runs at once.
+- **Instanced meshes.** `GDISetInstanceBuffer(Buffer, Count)`: the indexed
+  draws after it draw Count instances, each a column-major mat4 at locations
+  2-5 and a colour at 7 (`GDI_INSTANCE_STRIDE`, 80 bytes), until it is set
+  again.
+
+| Backend | Compute | Instanced meshes |
+|---|---|---|
+| Vulkan | a compute pipeline per shader and buffer count (`VKPipelineCache::GetOrCreateCompute`), its parameters in the frame's UBO ring; full memory barriers either side | vertex layout 3: the mesh's five streams and the instance buffer at binding 5; `vkCmdDrawIndexed` with the count |
+| Null | buffers kept on the CPU; dispatches counted (`NullGDIStats`) | counted |
+| D3D12, Metal, OpenGL | not yet: `GDISupportsCompute()` is false, so nothing is made and particles draw nothing | ignored: one instance |
+
+A compute pipeline is keyed by its shader module, so releasing a compute
+shader drops its pipelines from the cache (`ForgetComputeModule`); they are
+destroyed at shutdown, past any frame that used them.
+
 ## Tests
 
 - Routing (Null backend, materials from memory): each domain/shading pair lands
@@ -966,6 +1038,15 @@ are covered by GDI's smoke test.
   nothing; Cast Shadows off darkens nothing; a Modulated shadow leans to its
   tint. `NIMBLE_SMOKE_DUMP=<dir>` writes each capture as a PPM.
 - Scene capture (`NIMBLE_SMOKE_GPU`): see Scene capture above.
+- Particles (Null backend): the component's settings clamped, its Lua and save
+  fields; spawns counted round the ring with the fraction carried, a hitch
+  clamped, the sort sized to a power of two. GDI's smoke test: buffers,
+  dispatches and instance buffers accepted and refused.
+- GPU particles (`NIMBLE_SMOKE_GPU=Vulkan`): eleven simulations of 0.1 s read
+  back -- 55 particles, each 100 units along +Z a second of its age; the
+  instances sorted farthest first, the unused slots last; and a plume drawn
+  side on through the instanced path (`ParticleProbe`), red where it is born
+  and dark where it has aged.
 - GPU (`NIMBLE_SMOKE_GPU=Vulkan|D3D12`): previews of DefaultLit and Wave go
   through the G-buffer and keep their forward-shaded pixels (186 188 192; 40
   103 172); Glow (Translucent Unlit) is unchanged; Negative (PostProcess) inverts
@@ -984,6 +1065,11 @@ drop most of the receiver bias); Masked casters clipped in the Shadows
 sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
 lights; occlusion queries and a depth prepass in the PrePass; per-section
 bounds for culling; RGBA16F G-buffer and scene colour.
+
+Particles: compute and instancing on D3D12, Metal and OpenGL; GPU emission
+counts (spawn by events, bursts); collisions with depth; soft particles
+(fading where they meet the scene); lit particles' shadows; sorting across
+systems; sub-UV animation.
 
 Recording the Base Pass on several threads, after cheaper per-draw work first:
 [MULTITHREADED_RENDERING.md](MULTITHREADED_RENDERING.md).

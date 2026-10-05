@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="25d8ec274e84cb5c453eb23b4771af30" Name="FlareFlame">
+  <Component Type="Render" Version="3">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/FlareFlame.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="false" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-150" Y="152" Z="-750" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="30" Y="30" Z="30" />
+  </Component>
+</Entity>

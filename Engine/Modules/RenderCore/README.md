@@ -56,7 +56,9 @@ Engine/Modules/RenderCore/
 |   |   |-- RenderComponents.h      includes every component header below
 |   |   |-- Components/             RenderComponent.h, CameraComponent.h, DirectionalLightComponent.h,
 |   |   |                           PointLightComponent.h, SpotLightComponent.h, SkyLightComponent.h,
-|   |   |                           LightShadow.h, PostProcessComponent.h (GameCore components)
+|   |   |                           LightShadow.h, PostProcessComponent.h,
+|   |   |                           ParticleSystemComponent.h (GPU particles) (GameCore components)
+|   |   |-- ParticleTypes.h         an emitter's settings, and what ReadParticles returns
 |   |   |-- MeshAsset.h             .nmmesh: MeshData, Save/Load, MeshAssetCache
 |   |   |-- TextureAsset.h          .nmtexture: TextureData, Save/Load
 |   |   |-- AssetImportInfo.h       where an imported asset came from (for Reimport)
@@ -70,6 +72,7 @@ Engine/Modules/RenderCore/
 |       |-- RenderProxy.cpp         the fixed proxy-type table
 |       |-- RenderScene.cpp         the proxy vector, culling, Render()
 |       |-- RenderComponentProxy.h/.cpp   a RenderComponent's mesh, or its quad
+|       |-- ParticleSimulation.h/.cpp     an emitter's GPU buffers, its spawn bookkeeping, its two dispatches
 |       |-- MeshAsset.cpp, TextureAsset.cpp, AssetFileCommon.h   the asset formats
 |       |-- Components/             one .cpp per component: registration, serializer, Lua, editor;
 |       |                           MaterialPathUpgrade.h for the old bare material names

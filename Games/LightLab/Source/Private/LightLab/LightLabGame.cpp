@@ -81,6 +81,7 @@ namespace
     const char* const BoxMesh    = "Engine/Content/Meshes/Box.nmmesh";
     const char* const SphereMesh = "Engine/Content/Meshes/Sphere.nmmesh";
     const char* const PlaneMesh  = "Engine/Content/Meshes/Plane.nmmesh";
+    const char* const CylinderMesh = "Engine/Content/Meshes/Cylinder.nmmesh";
 
     /* A prefab from a file (Content/Prefabs): a Cylinder shaft on a Box base
      * under a Box capital, 440 high, standing on its root. */
@@ -687,6 +688,56 @@ private:
         Shape.AddComponent(Render);
     }
 
+    /*
+     * A road flare standing in the yard: a red stick, a glowing ball for
+     * the flame (emissive far past 1, so Bloom spreads it), a red light it
+     * casts, and its smoke -- a Particle System of soft puffs, born red and
+     * blackening as they rise and spread (RenderCore's
+     * ParticleSystemComponent; Content/Materials/Flare*.material.nmgraph).
+     */
+    static void SpawnFlare(GameCore::World& InWorld)
+    {
+        const EngineCore::Vector3 Base(-150.0, 0.0, -750.0);
+        SpawnShape(InWorld, "FlareStick", CylinderMesh, true,
+                   Placed(Base + EngineCore::Vector3(0.0, 70.0, 0.0), EngineCore::Vector3(16.0, 140.0, 16.0)),
+                   "Content/Materials/FlareBody.material.nmgraph");
+        SpawnShape(InWorld, "FlareFlame", SphereMesh, false,
+                   Placed(Base + EngineCore::Vector3(0.0, 152.0, 0.0), EngineCore::Vector3(30.0, 30.0, 30.0)),
+                   "Content/Materials/FlareFlame.material.nmgraph");
+
+        RenderCore::PointLightComponent Light;
+        Light.Color        = EngineCore::Color(255, 70, 35);
+        Light.Intensity    = 12.0f;
+        Light.Radius       = 700.0f;
+        Light.bCastShadows = 0;
+        SpawnLight(InWorld, "FlareLight", Base + EngineCore::Vector3(0.0, 175.0, 0.0), EngineCore::Vector3(0.0, 0.0, 0.0), Light);
+
+        const GameCore::Entity Smoke = InWorld.CreateEntity("FlareSmoke");
+        GameCore::TransformComponent Transform;
+        Transform.Position = Base + EngineCore::Vector3(0.0, 168.0, 0.0);
+        Smoke.AddComponent(Transform);
+        RenderCore::ParticleSystemComponent Particles;
+        std::snprintf(Particles.Material, sizeof(Particles.Material), "%s", "Content/Materials/FlareSmoke.material.nmgraph");
+        Particles.MaxParticles     = 600;
+        Particles.SpawnRate        = 70.0f;
+        Particles.Lifetime         = 6.0f;
+        Particles.LifetimeVariance = 0.35f;
+        Particles.EmitterRadius    = 8.0f;
+        Particles.Velocity         = EngineCore::Vector3(10.0, 120.0, 0.0);  // up, drifting with the wind
+        Particles.VelocitySpread   = 20.0f;
+        Particles.Acceleration     = EngineCore::Vector3(9.0, 14.0, 0.0);    // hot smoke keeps rising
+        Particles.Drag             = 0.35f;
+        Particles.Turbulence       = 45.0f;
+        Particles.StartSize        = 26.0f;
+        Particles.EndSize          = 230.0f;
+        Particles.StartColor       = EngineCore::Color(225, 38, 22, 150);    // red, lit by the flame
+        Particles.EndColor         = EngineCore::Color(8, 7, 7, 120);        // black as it cools
+        Particles.ColorCurve       = 0.45f;                                  // black well before it fades
+        Particles.FadeIn           = 0.05f;
+        Particles.FadeOut          = 0.45f;
+        Smoke.AddComponent(Particles);
+    }
+
     /* The flying view, as LightLab.Player: above and behind the yard,
      * looking down into it along +Z. */
     static void SpawnPlayer(GameCore::World& InWorld)
@@ -786,6 +837,8 @@ private:
                    Placed(EngineCore::Vector3(420.0, 260.0, -300.0), EngineCore::Vector3(90.0, 90.0, 90.0)));
         SpawnShape(InWorld, "Ball", SphereMesh, true,
                    Placed(EngineCore::Vector3(150.0, 60.0, -600.0), EngineCore::Vector3(120.0, 120.0, 120.0)));
+
+        SpawnFlare(InWorld);
 
         /* A colonnade down the right of the yard: instances of a prefab file,
          * so a saved level keeps them as instances (.nmprefabinst) of it. */
