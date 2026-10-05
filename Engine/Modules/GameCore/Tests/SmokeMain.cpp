@@ -1149,6 +1149,17 @@ static void TestConfigLibrary()
     Expect(!Scripts.RunString("Config.GetBool('SmokeConfig.Speed')", "config-mismatch"), "GetBool of a float var is a script error");
     Expect(!Scripts.RunString("Config.SetNumber('SmokeConfig.Missing', 1)", "config-missing"), "a missing var is a script error");
     Expect(Scripts.GetErrorCount() == Errors + 2 && GSmokeConfigFloat.GetFloat() == 2.25f, "counted; nothing changed");
+
+    EngineCore::ConfigSetUserFile("");
+    Expect(Scripts.RunString("assert(Config.Save() == false)", "config-save-none"), "Config.Save without a user file is false");
+    const std::string UserFile = WriteTestScript("SmokeUser.ini", "");
+    EngineCore::ConfigSetUserFile(UserFile);
+    Expect(Scripts.RunString("assert(Config.Save() == true)", "config-save"), "with one it saves");
+    std::ifstream Saved(UserFile);
+    const std::string SavedText((std::istreambuf_iterator<char>(Saved)), std::istreambuf_iterator<char>());
+    Expect(SavedText.find("[SmokeConfig]") != std::string::npos && SavedText.find("Speed=2.25") != std::string::npos,
+           "the changed vars are in it");
+    EngineCore::ConfigSetUserFile("");
     GSmokeConfigBool.ResetToDefault();
     GSmokeConfigFloat.ResetToDefault();
     GSmokeConfigInt.ResetToDefault();

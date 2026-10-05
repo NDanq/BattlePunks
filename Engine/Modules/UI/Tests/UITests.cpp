@@ -1054,6 +1054,9 @@ static void TestLightLabGraph()
     System.SetScriptEngine(&Scripts);
     SetScriptUISystem(&System);
 
+    const std::string UserFile = (std::filesystem::temp_directory_path() / "NimbleUILightLabUser.ini").string();
+    std::filesystem::remove(UserFile);
+    EngineCore::ConfigSetUserFile(UserFile);
     System.SetValue("LightLab.Page", UIValue::Number(1));   // left on Settings last time
     const UIDocumentHandle Menu = System.Open("Content/UI/PauseMenu.nmui");
     Expect(Menu != UI_DOCUMENT_INVALID, "the pause menu opens with its logic");
@@ -1101,6 +1104,13 @@ static void TestLightLabGraph()
     Expect(!System.IsOpen("Content/UI/PauseMenu.nmui") && Scripts.RunString("assert(Paused == false and Captured == true)", "resumed"),
            "Back from there resumes: closed, unpaused, the mouse taken back");
     Expect(Scripts.GetErrorCount() == 0, "the menu's logic raised no Lua errors");
+    std::ifstream Saved(UserFile);
+    const std::string SavedText((std::istreambuf_iterator<char>(Saved)), std::istreambuf_iterator<char>());
+    Expect(SavedText.find("[Shadows]") != std::string::npos && SavedText.find("Enabled=false") != std::string::npos
+           && SavedText.find("LookSensitivity=1.05") != std::string::npos,
+           "closing the menu saved the player's changes to their user file");
+    EngineCore::ConfigSetUserFile("");
+    std::filesystem::remove(UserFile);
 
     Shadows->SetBool(bShadowsBefore);
     GTestLookSensitivity.ResetToDefault();

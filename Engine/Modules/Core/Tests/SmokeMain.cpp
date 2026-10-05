@@ -1619,6 +1619,64 @@ static void TestConfigFile()
     Expect(!LoadConfigFile("SmokeScratch/Config/missing.ini"), "a missing config file fails without crashing");
 }
 
+NIMBLE_CONFIG_FLOAT (GSmokeUserSpeed, "SmokeUser", "Speed",      1.0f,     nullptr);
+NIMBLE_CONFIG_BOOL  (GSmokeUserFull,  "SmokeUser", "Fullscreen", false,    nullptr);
+NIMBLE_CONFIG_STRING(GSmokeUserName,  "SmokeUser", "Name",       "Player", nullptr);
+
+/* The user layer: what a settings menu saves, measured against the project file. */
+static void TestConfigUser()
+{
+    std::printf("[config user]\n");
+    const auto Section = []()
+    {
+        const std::string Text = ConfigBuildUserText();
+        const size_t At = Text.find("[SmokeUser]");
+        if(At == std::string::npos) return std::string();
+        const size_t End = Text.find("\n[", At + 1);
+        return Text.substr(At, End == std::string::npos ? std::string::npos : End - At);
+    };
+
+    LoadConfigText("[SmokeUser]\nFullscreen = true\n");   // the project's own setting
+    Expect(GSmokeUserFull.GetBool() && Section().empty(), "values at the project's or the compiled default write nothing");
+
+    GSmokeUserSpeed.SetFloat(1.5f);
+    GSmokeUserFull.SetBool(false);
+    std::string Mine = Section();
+    Expect(Mine.find("Speed=1.5") != std::string::npos, "a changed var is written");
+    Expect(Mine.find("Fullscreen=false") != std::string::npos, "a var differing from the project file is written");
+    Expect(Mine.find("Name=") == std::string::npos, "an unchanged one is not");
+
+    GSmokeUserSpeed.SetFromString("1.0");
+    Expect(Section().find("Speed") == std::string::npos, "put back to its baseline ('1.0' is 1), it drops out");
+
+    ConfigSetUserFile("");
+    Expect(!ConfigSaveUserFile(), "with no user file there is nowhere to save");
+
+    const std::string Path = "SmokeScratch/Config/User.ini";
+    appCreateDirectories("SmokeScratch/Config");
+    ConfigSetUserFile(Path);
+    GSmokeUserSpeed.SetFloat(2.25f);
+    GSmokeUserName.SetString("Ada");
+    Expect(ConfigSaveUserFile() && appFileExists(Path) && !appFileExists(Path + ".tmp"), "the user file is written, no temporary left");
+
+    GSmokeUserSpeed.ResetToDefault();
+    GSmokeUserName.ResetToDefault();
+    GSmokeUserFull.SetBool(true);
+    ConfigLoadStats Stats;
+    LoadConfigFile(Path, &Stats, EConfigLayer::User);
+    Expect(GSmokeUserSpeed.GetFloat() == 2.25f && std::string(GSmokeUserName.GetString()) == "Ada" && !GSmokeUserFull.GetBool(),
+           "loading it restores the player's values");
+    Expect(Section().find("Fullscreen=false") != std::string::npos, "a user value does not become the baseline");
+
+    LoadConfigText("[SmokeUser]\nFromAnotherModule = 3\n", nullptr, EConfigLayer::User);
+    Expect(Section().find("FromAnotherModule=3") != std::string::npos, "a user line no var here claims is kept");
+    Expect(!LoadConfigFile("SmokeScratch/Config/NoUser.ini", nullptr, EConfigLayer::User), "a missing user file is just absent");
+
+    ConfigSetUserFile("");
+    GSmokeUserSpeed.ResetToDefault();
+    GSmokeUserName.ResetToDefault();
+}
+
 static void TestConfigConsole()
 {
     std::printf("[config console]\n");
@@ -2710,6 +2768,7 @@ int main()
     TestConfigParse();
     TestConfigCallbacks();
     TestConfigFile();
+    TestConfigUser();
     TestConfigConsole();
     RunMemoryTests();
     RunModuleTests();

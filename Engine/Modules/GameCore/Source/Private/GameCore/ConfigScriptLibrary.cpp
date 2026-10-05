@@ -11,6 +11,7 @@
  *
  *     if Config.GetBool("Shadows.Enabled") then ... end
  *     Config.SetNumber("LightLab.LookSensitivity", 1.5)
+ *     Config.Save()   -- the player's settings file, so they survive a restart
  *
  * Typed, so a graph's pins are: GetBool on a float var is a script error,
  * not a quiet conversion. A set fires the var's callback as an .ini would.
@@ -85,4 +86,10 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(Config)
     {
         if(EngineCore::ConfigVar* Var = FindVar(Call, EngineCore::EConfigType::CT_String, "string")) { Var->SetString(Call.GetString(2)); }
     }, "Path:string, Value:string");
+
+    Lib.Function("Save", [](GameCore::ScriptCall& Call)
+    {
+        Call.PushBool(EngineCore::ConfigSaveUserFile());   // logs why not
+    }, "-> Saved:bool").Tooltip("Writes the player's settings (what differs from the game's own) to their user file. "
+                               "An editor session has none: not saved, and says so");
 }

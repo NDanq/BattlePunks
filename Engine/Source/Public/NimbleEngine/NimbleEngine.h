@@ -2,6 +2,7 @@
 #define NIMBLEENGINE_NIMBLEENGINE_H
 
 #include <cstdint>
+#include <string>
 
 #include "Public/NimbleEngine/NimbleEngineAPI.h"
 #include "Public/NimbleEngine/GameMode.h"
@@ -92,12 +93,20 @@ namespace NimbleEngine
         bool Initialize();
         void Shutdown();
 
+        /* The player's settings, over the project's: <AppData>/NimbleEngine/
+         * <[Application] UserDataName, else the game module>/User.ini, loaded
+         * and named as the file Config.Save writes (CoreConfig.h). */
+        void LoadUserSettings();
+
         /* Run(&InLevel). The level-less overloads pass a .cpp-local empty level. */
         void ExecWithLevel(ILevel& InLevel);
 
         /* Engine up, level loaded, loop, unload, engine down. InLevel, or when
          * null the start level of InGameModule. */
         void Run(ILevel* InLevel, const char* InGameModule);
+
+        /* Run's InGameModule, for Initialize: the user settings' folder. */
+        std::string GameModuleName;
 
         /* Level swap, pump, Tick, fence, collect, present, end. False to stop.
          * Pacing lives in the caller. */
