@@ -1488,7 +1488,9 @@ namespace RenderCore
                 {
                     InItem.Mesh->SetDrawRange(InItem.First, InItem.Count);
                     GDISetInstanceBuffer(InItem.Instances, InItem.InstanceCount);
+                    GDISetIndirectArgs(InItem.IndirectArgs, InItem.IndirectOffset);   // the live ones only, where it can
                     GDIDrawObject(MeshObject);
+                    GDISetIndirectArgs(nullptr);
                     GDISetInstanceBuffer(nullptr, 0);
                     InItem.Mesh->SetDrawRange(0, 0);
                     DrawCallCount.fetch_add(1, std::memory_order_relaxed);
@@ -1542,7 +1544,7 @@ namespace RenderCore
         }
 
         /* A draw's label (Issue): what it draws, then with what --
-         * "Sphere [Sphere] | Glow", "Particles Sparks/Sparks x512 | ParticleStreak". */
+         * "Sphere [Sphere] | Glow", "Particles Sparks/Sparks (up to 512) | ParticleStreak". */
         static std::string LabelOf(const DrawCommand& InItem)
         {
             std::string Out;
@@ -1552,7 +1554,12 @@ namespace RenderCore
                     Out = InItem.Label ? std::string(InItem.Label)
                         : InItem.Mesh && !InItem.Mesh->GetDebugName().empty() ? ShortName(InItem.Mesh->GetDebugName()) : std::string("Mesh");
                     if(!InItem.Label && InItem.Section && InItem.Section[0] != '\0') { Out += " [" + std::string(InItem.Section) + "]"; }
-                    if(InItem.Instances) { Out += " x" + std::to_string(InItem.InstanceCount); }
+                    if(InItem.Instances)
+                    {
+                        /* Drawn indirectly, it draws only the live ones: the GPU's count, which a capture shows on the draw. */
+                        Out += InItem.IndirectArgs ? " (up to " + std::to_string(InItem.InstanceCount) + ")"
+                                                   : " x" + std::to_string(InItem.InstanceCount);
+                    }
                     break;
                 case DrawCommand::EKind::Quad:
                 case DrawCommand::EKind::MaterialQuad: Out = InItem.Label ? std::string(InItem.Label) : std::string("Quad"); break;
@@ -2081,6 +2088,7 @@ namespace RenderCore
             GDISetDebugName(Emitter->Particles, Name + " State");
             GDISetDebugName(Emitter->Instances, Name + (Emitter->InstancesB ? " Triangles A" : " Instances"));
             GDISetDebugName(Emitter->InstancesB, Name + " Triangles B");
+            GDISetDebugName(Emitter->Args, Name + " Draws");
         }
         return Emitter;
     }
@@ -2139,6 +2147,18 @@ namespace RenderCore
         return true;
     }
 
+    bool RenderContext::ReadParticleDrawCount(const ParticleEmitterGpu& InEmitter, uint32_t& OutCount)
+    {
+        OutCount = 0;
+        std::vector<uint8_t> Bytes;
+        if(!InEmitter.Args || InEmitter.ArgsEntries == 0 || !GDIReadBuffer(InEmitter.Args, Bytes) || Bytes.size() < GDI_INDIRECT_ARGS_STRIDE)
+        {
+            return false;
+        }
+        std::memcpy(&OutCount, Bytes.data() + sizeof(uint32_t), sizeof(uint32_t));   // entry 0's instance count
+        return true;
+    }
+
     bool RenderContext::ReadParticleInstances(const ParticleEmitterGpu& InEmitter, std::vector<ParticleInstanceSample>& OutInstances)
     {
         OutInstances.clear();
@@ -2153,7 +2173,7 @@ namespace RenderCore
         return true;
     }
 
-    bool RenderContext::DrawParticles(const ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
+    bool RenderContext::DrawParticles(ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
                                       const char* InMeshPath, const char* InMaterial, const char* InLabel)
     {
         if(!InEmitter.bSimulated || !InEmitter.Instances)
@@ -2166,8 +2186,11 @@ namespace RenderCore
             return false;
         }
 
-        /* The instances are in world space: drawn in an identity frame, sorted at the emitter. */
-        const auto Draw = [&](const char* InPath, GDIBuffer* InInstances)
+        /* The instances are in world space: drawn in an identity frame, sorted at the emitter.
+         * Where the backend can, each draw takes its instance count from InEmitter.Args, entry
+         * InFirstArgs + its section: the live count the compute passes wrote. */
+        const bool bIndirect = GDISupportsIndirectDraw() && InEmitter.Args;
+        const auto Draw = [&](const char* InPath, GDIBuffer* InInstances, const uint32_t InFirstArgs)
         {
             std::shared_ptr<const MeshData> Source;
             GDIMesh* Mesh = InPath && InPath[0] != '\0' ? P->FindMesh(InPath, Source) : nullptr;
@@ -2178,6 +2201,34 @@ namespace RenderCore
             static const MeshSection Everything;
             const std::vector<MeshSection>& Sections = Source->Sections;
             const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
+
+            /* A sprite's or mesh's entries, laid out per section of its mesh when it is first drawn
+             * (or the mesh changes): each instance count all of them until the next simulation counts. */
+            bool bArgs = bIndirect && (InEmitter.Type == PT_Ribbon || InEmitter.Type == PT_Beam);
+            if(bIndirect && !bArgs)
+            {
+                if(InEmitter.ArgsMesh != Source.get() || InEmitter.ArgsEntries != SectionCount)
+                {
+                    std::vector<uint32_t> Ranges(SectionCount * 2);
+                    for(size_t Index = 0; Index < SectionCount; ++Index)
+                    {
+                        Ranges[Index * 2]     = Sections.empty() ? uint32_t(Source->Indices.size()) : Sections[Index].IndexCount;
+                        Ranges[Index * 2 + 1] = Sections.empty() ? 0u : Sections[Index].FirstIndex;
+                    }
+                    if(GDIBuffer* Laid = ParticleSimulation::CreateArgs(Ranges.data(), uint32_t(SectionCount), InEmitter.MaxParticles))
+                    {
+                        if(InEmitter.Args)
+                        {
+                            GDISetDebugName(Laid, InEmitter.Args->GetDebugName());
+                            InEmitter.Args->Release();
+                        }
+                        InEmitter.Args        = Laid;
+                        InEmitter.ArgsEntries = uint32_t(SectionCount);
+                        InEmitter.ArgsMesh    = Source.get();
+                    }
+                }
+                bArgs = InEmitter.ArgsMesh == Source.get();
+            }
             for(size_t Index = 0; Index < SectionCount; ++Index)
             {
                 const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
@@ -2190,6 +2241,11 @@ namespace RenderCore
                 Item.Count         = Sections.empty() ? 0u : Section.IndexCount;
                 Item.Instances     = InInstances;
                 Item.InstanceCount = InEmitter.MaxParticles;
+                if(bArgs)
+                {
+                    Item.IndirectArgs   = InEmitter.Args;
+                    Item.IndirectOffset = uint32_t(InFirstArgs + Index) * GDI_INDIRECT_ARGS_STRIDE;
+                }
                 Item.SortOrigin    = InSortOrigin;
                 P->Submit(Item, Impl::StageOf(Chosen));
             }
@@ -2199,11 +2255,11 @@ namespace RenderCore
         /* A ribbon or beam is its two triangles a segment (ParticleRibbon.csh); the mesh named is not used. */
         if(InEmitter.Type == PT_Ribbon || InEmitter.Type == PT_Beam)
         {
-            const bool bA = Draw(PARTICLE_RIBBON_MESH_A, InEmitter.Instances);
-            const bool bB = Draw(PARTICLE_RIBBON_MESH_B, InEmitter.InstancesB);
+            const bool bA = Draw(PARTICLE_RIBBON_MESH_A, InEmitter.Instances, 0);
+            const bool bB = Draw(PARTICLE_RIBBON_MESH_B, InEmitter.InstancesB, 1);
             return bA && bB;
         }
-        return Draw(InMeshPath, InEmitter.Instances);
+        return Draw(InMeshPath, InEmitter.Instances, 0);
     }
 
     void RenderContext::DrawQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight,

@@ -23,6 +23,7 @@ VKBuffer::VKBuffer(VKDevice* InDevice, const uint32_t InBytes, const uint8_t InU
     Info.usage       = VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
     if(InUsage & GDI_BU_Storage)  { Info.usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT; }
     if(InUsage & GDI_BU_Instance) { Info.usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT; }
+    if(InUsage & GDI_BU_Indirect) { Info.usage |= VK_BUFFER_USAGE_INDIRECT_BUFFER_BIT; }
     Info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     if(vkCreateBuffer(Dev, &Info, nullptr, &Buffer) != VK_SUCCESS)
     {

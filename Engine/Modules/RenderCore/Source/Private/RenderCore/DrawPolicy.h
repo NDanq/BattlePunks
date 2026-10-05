@@ -52,6 +52,10 @@ namespace RenderCore
          * the instances sit in. Null: one, as before. */
         GDIBuffer*                     Instances     = nullptr;
         uint32_t                       InstanceCount = 0;
+        /* And, where the backend can, its counts from a buffer the GPU wrote
+         * (GDISetIndirectArgs, this many bytes in): only the live instances. */
+        GDIBuffer*                     IndirectArgs   = nullptr;
+        uint32_t                       IndirectOffset = 0;
         EngineCore::Vector3            SortOrigin;
     };
 

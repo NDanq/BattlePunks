@@ -17,6 +17,7 @@ enum EGDIBufferUsage : uint8_t
 {
     GDI_BU_Storage  = 1 << 0,   // compute shaders read and write it
     GDI_BU_Instance = 1 << 1,   // instanced draws read it, GDI_INSTANCE_STRIDE bytes an instance
+    GDI_BU_Indirect = 1 << 2,   // instanced draws read their counts from it (GDISetIndirectArgs)
 };
 
 /*
@@ -29,6 +30,19 @@ enum EGDIBufferUsage : uint8_t
  * the vertex colour by its colour.
  */
 constexpr uint32_t GDI_INSTANCE_STRIDE = 80;
+
+/*
+ * One indexed draw's arguments, as an indirect buffer holds them
+ * (GDISetIndirectArgs) -- Vulkan's VkDrawIndexedIndirectCommand, D3D12's
+ * D3D12_DRAW_INDEXED_ARGUMENTS:
+ *
+ *   uint32 index count, uint32 instance count, uint32 first index,
+ *   int32 vertex offset, uint32 first instance
+ *
+ * Typically the CPU fills the range once and a compute shader writes the
+ * instance count each frame.
+ */
+constexpr uint32_t GDI_INDIRECT_ARGS_STRIDE = 20;
 
 class GDIBuffer
 {

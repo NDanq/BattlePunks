@@ -219,6 +219,7 @@ public:
     /** Compute and GPU buffers (VKCompute.cpp): dispatches record into the
      *  frame's one command buffer, with full memory barriers around them. */
     bool       SupportsCompute() const override;
+    bool       SupportsIndirectDraw() const override { return SupportsCompute(); }
     GDIBuffer* CreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData) override;
     bool       DispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
                                GDIBuffer* const* InBuffers, uint32_t InBufferCount,

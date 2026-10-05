@@ -21,6 +21,12 @@ class GDIShader;
  *   Instances   GDI_INSTANCE_STRIDE bytes each: the sorted draw (a sprite or
  *               mesh emitter); a ribbon's or beam's first triangle a segment
  *   InstancesB  a ribbon's or beam's second triangle a segment; else null
+ *   Args        GDI_INDIRECT_ARGS_STRIDE bytes a draw (GDISetIndirectArgs):
+ *               the compute passes write the live count into each entry's
+ *               instance count, so the draws draw only the live ones. A
+ *               sprite or mesh emitter has an entry per section of its mesh,
+ *               laid out when it is first drawn (one empty entry before); a
+ *               ribbon or beam one per triangle mesh.
  */
 namespace RenderCore
 {
@@ -29,6 +35,9 @@ namespace RenderCore
         GDIBuffer* Particles    = nullptr;
         GDIBuffer* Instances    = nullptr;
         GDIBuffer* InstancesB   = nullptr;
+        GDIBuffer* Args         = nullptr;
+        uint32_t   ArgsEntries  = 0;          // draws Args holds, each GDI_INDIRECT_ARGS_STRIDE bytes
+        const void* ArgsMesh    = nullptr;    // the mesh (MeshData) Args's entries were laid out for
         uint32_t   MaxParticles = 0;
         uint8_t    Type         = PT_Sprite;   // as made: a ribbon or beam has InstancesB
 
@@ -126,6 +135,11 @@ namespace RenderCore
          * its triangles; a beam's points placed, then strung. False if a
          * shader or dispatch is missing. */
         bool Dispatch(ParticleEmitterGpu& InOutEmitter, const ParticleParams& InParams, const Shaders& InShaders);
+
+        /* InCount draws' arguments, InRanges' index count and first index
+         * each (pairs), every instance count InInstances: a new Args buffer,
+         * Storage and Indirect. Null where unsupported. */
+        GDIBuffer* CreateArgs(const uint32_t* InRanges, uint32_t InCount, uint32_t InInstances);
     }
 }
 
