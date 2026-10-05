@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="UIOnly" Layer="20" OnBack="Native:UI.Close">
+<UI Format="1" ReferenceSize="1920,1080" ScaleMode="FitHeight" InputMode="UIOnly" Layer="20" Graph="Content/UI/Settings.ui.nmgraph" OnBack="Native:UI.Close">
   <Styles>
     <Style Name="Tab" Type="Button" Fill="1" Padding="24,14" Margin="0" Normal.Tint="#00000000" Hovered.Tint="#FFFFFF14" Pressed.Tint="#FFFFFF0A"/>
     <Style Name="TabLabel" Type="Text" FontSize="30" Color="#E6EDF5FF" HAlign="Center"/>
@@ -12,18 +12,20 @@
   </Styles>
   <Canvas Name="Root">
     <Border Name="Dim" Anchors="0,0,1,1" Background.Tint="#05080DC0"/>
-    <Border Name="Panel" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Size="960,640" Padding="40,32" Background.Tint="#0D121AF2" Background.OutlineColor="#FFFFFF26" Background.OutlineThickness="1">
+    <Border Name="Panel" Anchors="0.5,0.5,0.5,0.5" Pivot="0.5,0.5" Size="960,780" Padding="40,32" Background.Tint="#0D121AF2" Background.OutlineColor="#FFFFFF26" Background.OutlineThickness="1">
       <VerticalBox Name="Layout">
         <Text Name="Title" Text="Settings" FontSize="56" Color="#FFFFFFFF" Margin="0,0,0,24"/>
         <HorizontalBox Name="Tabs">
           <Button Name="InputTab" Class="Tab" InitialFocus="true" OnClick="Native:UI.SetValue('Settings.Page', 0)"><Text Class="TabLabel" Text="Input"/></Button>
           <Button Name="GraphicsTab" Class="Tab" OnClick="Native:UI.SetValue('Settings.Page', 1)"><Text Class="TabLabel" Text="Graphics"/></Button>
           <Button Name="GameplayTab" Class="Tab" OnClick="Native:UI.SetValue('Settings.Page', 2)"><Text Class="TabLabel" Text="Gameplay"/></Button>
+          <Button Name="ProfileTab" Class="Tab" OnClick="Native:UI.SetValue('Settings.Page', 3)"><Text Class="TabLabel" Text="Profile"/></Button>
         </HorizontalBox>
         <Switcher Name="TabMarks" ActiveIndex="{Bind:Settings.Page}" Margin="0,0,0,28">
-          <HorizontalBox><Border Class="Mark"/><Spacer Class="Gap"/><Spacer Class="Gap"/></HorizontalBox>
-          <HorizontalBox><Spacer Class="Gap"/><Border Class="Mark"/><Spacer Class="Gap"/></HorizontalBox>
-          <HorizontalBox><Spacer Class="Gap"/><Spacer Class="Gap"/><Border Class="Mark"/></HorizontalBox>
+          <HorizontalBox><Border Class="Mark"/><Spacer Class="Gap"/><Spacer Class="Gap"/><Spacer Class="Gap"/></HorizontalBox>
+          <HorizontalBox><Spacer Class="Gap"/><Border Class="Mark"/><Spacer Class="Gap"/><Spacer Class="Gap"/></HorizontalBox>
+          <HorizontalBox><Spacer Class="Gap"/><Spacer Class="Gap"/><Border Class="Mark"/><Spacer Class="Gap"/></HorizontalBox>
+          <HorizontalBox><Spacer Class="Gap"/><Spacer Class="Gap"/><Spacer Class="Gap"/><Border Class="Mark"/></HorizontalBox>
         </Switcher>
         <Switcher Name="Pages" ActiveIndex="{Bind:Settings.Page}" Fill="1">
           <VerticalBox Name="Input">
@@ -42,6 +44,16 @@
             <Text Class="Heading" Text="Gameplay"/>
             <HorizontalBox Class="Row"><Text Class="Label" Text="Lives"/><Text Class="Value" Text="3"/></HorizontalBox>
             <HorizontalBox Class="Row"><Text Class="Label" Text="Phase"/><Text Class="Value" Text="{Bind:Game.Phase}"/></HorizontalBox>
+          </VerticalBox>
+          <VerticalBox Name="Profile">
+            <Text Class="Heading" Text="Profile"/>
+            <HorizontalBox Class="Row">
+              <Text Class="Label" Text="Name" VAlign="Center"/>
+              <TextInput Name="PlayerName" Size="420,52" FontSize="26" MaxLength="20" Placeholder="Your name" Text="{Bind:Profile.Name}"/>
+            </HorizontalBox>
+            <Text Text="Saves" FontSize="26" Color="#9FB3C8FF" Margin="0,16,0,8"/>
+            <ListView Name="Saves" Size="880,230" ItemDocument="Content/UI/SaveSlotRow.nmui" Items="Saves" ItemHeight="52" Spacing="6"
+                      SelectedIndex="{Bind:Saves.Selected}" BarWidth="6"/>
           </VerticalBox>
         </Switcher>
         <Text Name="Hint" Text="Esc or (B) to go back" FontSize="20" Color="#FFFFFF73" HAlign="Right"/>

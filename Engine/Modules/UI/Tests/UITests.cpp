@@ -1668,6 +1668,78 @@ static void TestListView()
     std::filesystem::remove_all(Dir);
 }
 
+/* Sandbox's Settings menu, Profile page: its UI graph fills the save list,
+ * a row's own graph empties its slot, and the typed name is saved on close. */
+NIMBLE_CONFIG_STRING(GTestProfileName, "Profile", "Name", "Player", nullptr);
+
+static void TestSandboxProfile()
+{
+    std::printf("[sandbox profile]\n");
+    EngineCore::FilesystemProvider Game(std::string(UI_REPO_ROOT) + "/Games/Sandbox");
+    EngineCore::IFileProvider* Previous = EngineCore::GetFileProvider();
+    EngineCore::SetFileProvider(&Game);
+    const std::string UserFile = (std::filesystem::temp_directory_path() / "NimbleUISandboxUser.ini").string();
+    std::filesystem::remove(UserFile);
+    EngineCore::ConfigSetUserFile(UserFile);
+
+    GameCore::World World;
+    GameCore::ScriptEngine Scripts;
+    Scripts.Initialize();
+    Scripts.BindWorld(&World);
+    UISystem System;
+    System.SetScriptEngine(&Scripts);
+    SetScriptUISystem(&System);
+    System.SetValue("Settings.Page", UIValue::Number(3));
+    const UIDocumentHandle Handle = System.Open("Content/UI/Settings.nmui");
+    const UIVec2 View{ 1280, 720 };
+    const auto Frame = [&]() { System.Tick(0.016f); System.Update(View); System.RunQueuedActions(); System.Update(View); };
+    Frame();
+    Frame();
+    UIDocumentInstance* Doc = System.Find(Handle);
+    auto* Saves = Doc ? dynamic_cast<UIListView*>(Doc->FindWidget("Saves")) : nullptr;
+    auto* Name  = Doc ? dynamic_cast<UITextInput*>(Doc->FindWidget("PlayerName")) : nullptr;
+    Expect(Saves && Name && Saves->GetItemCount() == 6 && Name->Text == "Player", "the Profile page: its graph filled the list and the name");
+    if(!Saves || !Name) { EngineCore::SetFileProvider(Previous); return; }
+    UIDocumentInstance* Row1 = nullptr;
+    for(uint32_t At = 0; At < Saves->GetEmbeddedCount(); ++At)
+    {
+        const UIText* Slot = dynamic_cast<UIText*>(Saves->GetEmbeddedAt(At)->FindWidget("Slot"));
+        if(Slot && Slot->Text == "Slot 1") Row1 = Saves->GetEmbeddedAt(At);
+    }
+    Expect(Row1 != nullptr, "rows show their slots");
+    if(Row1)
+    {
+        const UIRect Delete = Row1->GetPixelRect(Row1->FindWidget("Delete")->GetIndex());
+        const UIVec2 At{ Delete.X + Delete.W * 0.5f, Delete.Y + Delete.H * 0.5f };
+        System.ProcessInput(Pointer(At, true, false));
+        System.ProcessInput(Pointer(At, false, true));
+        Frame();
+        const UIValue* Emptied = System.GetValue("Saves.1.Name");
+        Expect(Emptied && Emptied->AsString() == "Empty slot", "a row's Delete empties its own slot (the Key node)");
+    }
+    Doc->SetTreeFocus(UIWidgetRef{ Doc, int32_t(Name->GetIndex()) });
+    UIInputFrame Select;
+    Select.bHasMouse = false;
+    Select.bSelectAll = true;
+    std::snprintf(Select.Text, sizeof(Select.Text), "%s", "Ada");
+    System.ProcessInput(Select);
+    System.Close(Handle);
+    Expect(std::string(GTestProfileName.GetString()) == "Ada", "closing the menu puts the typed name in [Profile] Name");
+    std::ifstream Saved(UserFile);
+    const std::string SavedText((std::istreambuf_iterator<char>(Saved)), std::istreambuf_iterator<char>());
+    Expect(SavedText.find("[Profile]") != std::string::npos && SavedText.find("Name=Ada") != std::string::npos, "and saves it");
+    Expect(Scripts.GetErrorCount() == 0, "the menu's graphs raised no Lua errors");
+
+    GTestProfileName.ResetToDefault();
+    EngineCore::ConfigSetUserFile("");
+    std::filesystem::remove(UserFile);
+    System.SetScriptEngine(nullptr);
+    SetScriptUISystem(nullptr);
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+    EngineCore::SetFileProvider(Previous);
+}
+
 // === Hot reload ===============================================================
 
 static void TestHotReload()
@@ -1892,6 +1964,21 @@ static void TestOnGpu()
             UIDocumentInstance* SettingsDoc = System.Find("Content/UI/Settings.nmui");
             Expect(SettingsDoc && SettingsDoc->IsShown(SettingsDoc->FindWidget("Graphics")->GetIndex())
                    && !SettingsDoc->IsShown(SettingsDoc->FindWidget("Input")->GetIndex()), "it shows the bound page");
+
+            /* Its Profile page: a text field and a list of save rows (included documents). */
+            System.SetValue("Settings.Page", UIValue::Number(3));
+            System.SetValue("Profile.Name", UIValue::String("Ada Lovelace"));
+            System.SetValue("Saves.Count", UIValue::Number(6));
+            System.SetValue("Saves.Selected", UIValue::Number(1));
+            for(int Slot = 0; Slot < 6; ++Slot)
+            {
+                System.SetValue("Saves." + std::to_string(Slot) + ".Name", UIValue::String("Slot " + std::to_string(Slot)));
+                System.SetValue("Saves." + std::to_string(Slot) + ".Time", UIValue::String("Played " + std::to_string(Slot * 3) + "h"));
+            }
+            EngineCore::Image Profile;
+            Expect(Shot(System, "sandbox_profile", Profile), "the profile frame reads back");
+            UIListView* ProfileList = SettingsDoc ? dynamic_cast<UIListView*>(SettingsDoc->FindWidget("Saves")) : nullptr;
+            Expect(ProfileList && ProfileList->GetEmbeddedCount() >= 4, "its list shows rows of the row document");
             System.ClearRenderer();
         }
 
@@ -1994,6 +2081,7 @@ int main()
     TestOpenBeforePaint();
     TestInclude();
     TestListView();
+    TestSandboxProfile();
     TestLightLabGraph();
     TestHotReload();
     TestCost();
