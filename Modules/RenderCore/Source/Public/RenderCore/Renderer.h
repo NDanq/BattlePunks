@@ -4,6 +4,7 @@
 #include "Public/Core/CoreTypes.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 #include "Public/RenderCore/RenderTypes.h"
+#include "Public/RenderCore/UIDrawList.h"
 
 #include <cstdint>
 #include <string>
@@ -153,6 +154,24 @@ namespace RenderCore
          * SetViewMode. Empty before its first frame. Any thread. */
         std::vector<std::string> GetViewableTargets(RenderSceneID InScene) const;
 
+        /*
+         * InList as InScene's UI (UIDrawList.h, RENDERPIPELINE.md "UI"): drawn
+         * over every frame of it after its post process, until the next call --
+         * so call it when the UI changes, not every frame. An empty list clears
+         * it. Copied. GAME THREAD ONLY.
+         */
+        void SubmitUIDrawList(RenderSceneID InScene, const UIDrawList& InList);
+
+        /*
+         * InImage (RGBA8 or BGRA8) as the UI texture InKey, which must start
+         * "ui:" -- a font atlas, or any image the game makes -- for every
+         * scene's lists to name; replaces one already there. ReleaseUIImage
+         * drops it. Keys of 128 characters or more are ignored. Copied.
+         * GAME THREAD ONLY.
+         */
+        void SetUIImage(const char* InKey, const EngineCore::Image& InImage);
+        void ReleaseUIImage(const char* InKey);
+
 #if WITH_EDITOR
         // === Editor only =====================================================
         // Compiled out of Client and Server targets.
@@ -218,6 +237,8 @@ namespace RenderCore
          * debug lines, read back for TakeMaterialPreview (a screenshot, a
          * test). Stalls briefly. 0 if not running. GAME THREAD ONLY. */
         uint64_t RequestSceneCapture();
+        /* The same, of InScene (a tool's own viewport -- the UI Designer's). */
+        uint64_t RequestSceneCapture(RenderSceneID InScene);
 
         /* The render target at InPath (RenderTargetAsset.h) as a material
          * samples it after the default scene's next captures, through

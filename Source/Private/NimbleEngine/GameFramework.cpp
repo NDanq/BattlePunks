@@ -20,12 +20,14 @@
 
 namespace
 {
+    const GameCore::World* GPreviewWorld = nullptr;
+
     /* Null, with a script error, outside a GameSession's World (a test's bare
-     * World, the editor's scene). */
+     * World, the editor's scene) -- quietly null in a preview's World. */
     NimbleEngine::GameSession* SessionFor(GameCore::ScriptCall& InCall)
     {
         NimbleEngine::GameSession* Session = NimbleEngine::FindGameSession(InCall.GetWorld());
-        if(!Session)
+        if(!Session && &InCall.GetWorld() != GPreviewWorld)
         {
             InCall.Error("the Game library needs a running game (this World has no GameSession)");
         }
@@ -33,8 +35,29 @@ namespace
     }
 }
 
+namespace NimbleEngine
+{
+    void SetScriptPreviewWorld(const GameCore::World* InWorld)
+    {
+        GPreviewWorld = InWorld;
+    }
+}
+
 GAMECORE_DEFINE_SCRIPT_LIBRARY(Game)
 {
+    // === Pause =================================================================
+
+    Lib.Function("SetPaused", [](GameCore::ScriptCall& Call)
+    {
+        if(NimbleEngine::GameSession* Session = SessionFor(Call)) { Session->SetPaused(Call.GetBool(1)); }
+    }, "Paused:bool").Tooltip("Stops the World (and the mode's OnTick); the UI keeps running");
+
+    Lib.Pure("IsPaused", [](GameCore::ScriptCall& Call)
+    {
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushBool(Session && Session->IsPaused());
+    }, "-> Paused:bool");
+
     // === Phase =================================================================
 
     Lib.Pure("GetPhase", [](GameCore::ScriptCall& Call)

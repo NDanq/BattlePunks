@@ -20,6 +20,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 
+#include "Public/UI/UIDocument.h"
 #include "Public/NodeGraph/GraphFile.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -291,6 +292,25 @@ void GraphDetailsPanel::BuildNode(QFormLayout* InForm, const Node& InNode)
             });
             Editor = Combo;
         }
+        else if(Property.Kind == EPropertyKind::WidgetName)
+        {
+            /* The names in the UI document the graph is the logic of; anything may be typed. */
+            auto* Combo = new QComboBox();
+            Combo->setEditable(true);
+            const std::string DocumentPath = Document.GetGraph().GetProperty("Document");
+            if(std::shared_ptr<const UI::UIDocumentAsset> Asset = DocumentPath.empty() ? nullptr : UI::UIAssetCache::Find(DocumentPath))
+            {
+                for(const UI::UIWidgetDesc& Each : Asset->Widgets)
+                {
+                    if(!Each.GetName().empty()) { Combo->addItem(ToQ(Each.GetName())); }
+                }
+            }
+            Combo->setCurrentText(ToQ(Value));
+            const auto Commit = [this, Combo, Id, Name]() { Document.SetProperty(Id, Name, ToStd(Combo->currentText())); };
+            connect(Combo, QOverload<int>::of(&QComboBox::activated), this, Commit);
+            connect(Combo->lineEdit(), &QLineEdit::editingFinished, this, Commit);
+            Editor = Combo;
+        }
         else if(Property.Kind == EPropertyKind::Texture)
         {
             auto* Row    = new QWidget();
@@ -398,6 +418,14 @@ void GraphDetailsPanel::BuildGraph(QFormLayout* InForm)
     for(const PropertyDefinition& Property : S.GetGraphProperties())
     {
         const std::string Name = Property.Name;
+        if(Property.Kind != EPropertyKind::Choice)
+        {
+            QWidget* Edit = CommitEdit(ToQ(G.GetProperty(Name, Property.Default)),
+                                       [this, Name](const QString& InText) { Document.SetGraphProperty(Name, ToStd(InText)); });
+            Edit->setToolTip(ToQ(Property.Tooltip));
+            InForm->addRow(ToQ(Name), Edit);
+            continue;
+        }
         auto* Combo = new QComboBox();
         for(const std::string& Choice : Property.Choices) { Combo->addItem(ToQ(Choice)); }
         Combo->setCurrentText(ToQ(G.GetProperty(Name, Property.Default)));

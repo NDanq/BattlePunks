@@ -2334,6 +2334,145 @@ namespace
         }
     }
 
+    // === UI graphs ============================================================
+
+    /* A UI document's logic: open, a click, a check box, an event, close. */
+    Graph MakeUIMenuGraph()
+    {
+        Graph G;
+        G.SchemaName = "UI";
+        G.Name       = "Menu";
+        G.Properties["Document"] = "Content/UI/Menu.nmui";
+        G.Variables.push_back({ "Clicks", "number", "0" });
+
+        AddNode(G, 1, "UI.Event.Open");
+        Node& Title = AddNode(G, 2, "UI.Widget.SetText");
+        Title.Properties["Widget"] = "Title";
+        Title.Constants["Text"]    = "Ready";
+        Connect(G, 1, "Then", 2, "Exec");
+
+        Node& Go = AddNode(G, 10, "UI.Event.Handler");
+        Go.Properties["Handler"] = "Go_OnClick";
+        Go.Properties["Widget"]  = "Go";
+        Go.Properties["Event"]   = "OnClick";
+        AddNode(G, 11, "Variable.Set").Properties["Variable"] = "Clicks";
+        AddNode(G, 12, "Variable.Get").Properties["Variable"] = "Clicks";
+        AddNode(G, 13, "Math.Add");
+        AddNode(G, 14, "Debug.Print");
+        Connect(G, 10, "Then", 11, "Exec");
+        Connect(G, 12, "Value", 13, "A");
+        Connect(G, 10, "Value", 13, "B");
+        Connect(G, 13, "Out", 11, "Value");
+        Connect(G, 11, "Then", 14, "Exec");
+        Connect(G, 10, "Sender", 14, "Value");
+
+        Node& Shadows = AddNode(G, 20, "UI.Event.Handler");
+        Shadows.Properties["Handler"]   = "Shadows_OnChanged";
+        Shadows.Properties["ValueType"] = "Bool";
+        AddNode(G, 21, "Flow.Branch");
+        AddNode(G, 22, "UI.CloseDocument");
+        Connect(G, 20, "Then", 21, "Exec");
+        Connect(G, 20, "Value", 21, "Condition");
+        Connect(G, 21, "False", 22, "Exec");
+
+        AddNode(G, 30, "Event.Custom").Properties["EventName"] = "Scored";
+        Node& Page = AddNode(G, 31, "UI.Widget.ShowPage");
+        Page.Properties["Switcher"] = "Pages";
+        Page.Constants["Page"]      = "Results";
+        Connect(G, 30, "Then", 31, "Exec");
+
+        AddNode(G, 40, "UI.Event.Close");
+        AddNode(G, 41, "Debug.Print").Constants["Value"] = "bye";
+        Connect(G, 40, "Then", 41, "Exec");
+        return G;
+    }
+
+    void TestUIGraphs()
+    {
+        std::printf("[ui graphs]\n");
+        const Schema* UI = FindSchema("UI");
+        Expect(UI && FindSchemaByFileTag("ui") == UI && GetGraphFileTag("Content/UI/Menu.ui.nmgraph") == "ui",
+               "the UI schema, found by its file tag");
+        if(!UI) return;
+        Expect(UI->FindNode("UI.Event.Open") && UI->FindNode("UI.Event.Handler") && UI->FindNode("Event.OnTick")
+               && UI->FindNode("Flow.Branch") && UI->FindNode("Variable.Set"), "it has the UI events and the script nodes");
+        Expect(!UI->FindNode("Event.OnStart") && !UI->FindNode("Event.OnOverlapBegin") && !UI->FindNode("Entity.Self")
+               && !UI->FindNode("Prefab.Root") && !UI->FindNode("Event.OnPrePhysics"), "but nothing that needs an entity");
+        const Schema* Script = FindSchema("Script");
+        Expect(Script && !Script->FindNode("UI.Event.Handler") && Script->FindNode("Event.OnStart"), "and the Script schema is unchanged");
+
+        const Graph G = MakeUIMenuGraph();
+        CompileResult Compiled;
+        CompileGraph(G, Compiled);
+        Expect(!Compiled.HasErrors(), "the UI graph compiles");
+        for(const Diagnostic& Each : Compiled.Diagnostics) { std::printf("    %s\n", Each.Message.c_str()); }
+        ExpectGolden("UIMenu.lua", Compiled.Code);
+        const Node* Shadows = G.FindNode(Id(20));
+        const NodeDefinition* ShadowsDef = Shadows ? UI->FindDefinition(G, *Shadows) : nullptr;
+        Expect(ShadowsDef && ShadowsDef->FindPin("Value")->Type == "bool", "a Bool handler's Value is a bool");
+        Expect(UI->DescribeNode(G, *G.FindNode(Id(10))) == "Go \xC2\xB7 OnClick", "a handler says what it was made for");
+
+        /* It runs as a UI document's logic: an object per document (UISystem). */
+        const std::string Path = TempDir() + "/Menu.lua";
+        WriteFile(Path, Compiled.Code);
+        GameCore::World W;
+        GameCore::ScriptEngine Scripts;
+        Expect(Scripts.Initialize(), "ScriptEngine for the UI graph");
+        Scripts.BindWorld(&W);
+        Expect(Scripts.RunString("Log = {}\n"
+                                 "UI = { SetText = function(p, w, t) Log[#Log + 1] = p .. ':' .. w .. '=' .. t end,\n"
+                                 "       Close = function(p) Log[#Log + 1] = 'close ' .. p end,\n"
+                                 "       ShowPage = function(p, s, n) Log[#Log + 1] = s .. '>' .. n end }\n", "ui-stub"), "a stand-in UI library");
+        const char* Names[] = { "Document" };
+        const GameCore::EventArg Doc[] = { GameCore::EventArg::Make("Menu.nmui") };
+        const GameCore::ScriptEngine::Object Logic = Scripts.CreateObject(Path.c_str(), Names, Doc, 1);
+        Expect(Logic > 0, "the generated table is a class");
+        GameCore::EventArgs Click;
+        Click.Args[0] = GameCore::EventArg::Make(2.0);
+        Click.Args[1] = GameCore::EventArg::Make("Go");
+        Click.Count   = 2;
+        GameCore::EventArgs Off;
+        Off.Args[0] = GameCore::EventArg::Make(0.0);
+        Off.Args[1] = GameCore::EventArg::Make("Shadows");
+        Off.Count   = 2;
+        Expect(Scripts.CallObjectMethod(Logic, "OnOpen") && Scripts.CallObjectMethod(Logic, "Go_OnClick", Click)
+               && Scripts.CallObjectMethod(Logic, "Go_OnClick", Click) && Scripts.CallObjectMethod(Logic, "Shadows_OnChanged", Off),
+               "its handlers run");
+        Expect(Scripts.RunString("Events.Emit('Scored')", "emit"), "a subscribed event fires");
+        Expect(Scripts.CallObjectMethod(Logic, "OnClose"), "OnClose runs");
+        Expect(Scripts.RunString("Events.Emit('Scored')", "emit-after"), "and unsubscribes");
+        Expect(Scripts.RunString("assert(Log[1] == 'Menu.nmui:Title=Ready' and Log[2] == 'close Menu.nmui' and Log[3] == 'Pages>Results' and #Log == 3,"
+                                 " table.concat(Log, ' | '))", "assert-log"),
+               "This Document is self.Document, widget names reach the calls, a false check box takes the False branch");
+        Scripts.ReleaseObject(Logic);
+        Expect(Scripts.GetErrorCount() == 0, "the UI graph raised no Lua errors");
+        Scripts.UnbindWorld();
+        Scripts.Shutdown();
+
+        /* What the compiler refuses. */
+        Graph Bad = MakeUIMenuGraph();
+        Node& Twin = AddNode(Bad, 50, "UI.Event.Handler");
+        Twin.Properties["Handler"] = "Go_OnClick";
+        AddNode(Bad, 51, "UI.Event.Handler").Properties["Handler"] = "OnOpen";
+        AddNode(Bad, 52, "UI.Event.Handler").Properties["Handler"] = "Clicks";
+        CompileResult Refused;
+        CompileGraph(Bad, Refused);
+        Expect(HasErrorOn(Refused, Id(50)), "two handlers may not share a name");
+        Expect(HasErrorOn(Refused, Id(51)) && HasErrorOn(Refused, Id(52)), "nor take a lifecycle method's or a variable's");
+
+        Graph BadName = MakeUIMenuGraph();
+        AddNode(BadName, 53, "UI.Event.Handler").Properties["Handler"] = "2Fast";
+        CompileResult NameRefused;
+        CompileGraph(BadName, NameRefused);
+        Expect(HasErrorOn(NameRefused, Id(53)), "a handler's name is an identifier");
+
+        Graph TwoOpens = MakeUIMenuGraph();
+        AddNode(TwoOpens, 54, "UI.Event.Open");
+        CompileResult OpenRefused;
+        CompileGraph(TwoOpens, OpenRefused);
+        Expect(HasErrorOn(OpenRefused, Id(54)) || HasErrorOn(OpenRefused, Id(1)), "On Document Open may appear once");
+    }
+
     void TestSchemas()
     {
         std::printf("[schemas]\n");
@@ -2374,6 +2513,7 @@ int main()
     TestOverlapEvents();
     TestPhaseEvents();
     TestGraphFunctions();
+    TestUIGraphs();
     TestMaterialCodegen();
     TestComponentSelection();
     TestLogic();

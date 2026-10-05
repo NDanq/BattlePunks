@@ -28,12 +28,14 @@
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/PostProcessStack.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Public/UI/UIDocument.h"
 #include "Public/Editor/EditorContext.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Public/Editor/EditorDocument.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphDocument.h"
 #include "Private/Editor/Graph/GraphEditorTab.h"
+#include "Private/Editor/UI/UIGraphLink.h"
 #include "Private/Editor/Graph/GraphEditorWindow.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 
@@ -249,6 +251,10 @@ namespace
             Add("Event.OnStart", -300.0f, -120.0f);
             Add("Event.OnTick", -300.0f, 60.0f);
         }
+        else if(InSchema.GetName() == "UI")
+        {
+            Add("UI.Event.Open", -300.0f, -120.0f);
+        }
         else if(InSchema.GetName() == "PostProcess")
         {
             /* A soft glow and smooth edges: the effects most scenes want. */
@@ -277,6 +283,7 @@ namespace EditorGraphs
     QString GetDefaultFolder(const Schema& InSchema)
     {
         const QString Folder = InSchema.GetName() == "Script"      ? QStringLiteral("Scripts")
+                             : InSchema.GetName() == "UI"          ? QStringLiteral("Content/UI")
                              : InSchema.GetName() == "PostProcess" ? QStringLiteral("Content/PostProcess")
                                                                    : QStringLiteral("Content/Materials");
         return QDir(GetProjectRoot()).filePath(Folder);
@@ -379,6 +386,13 @@ namespace EditorGraphs
             {
                 const QString Runtime = EditorContent::ToRuntimePath(InGraphPath);
                 if(!Runtime.isEmpty()) { RenderCore::PostProcessStackCache::Invalidate(ToStd(Runtime)); }
+            }
+            /* A UI document's logic: the document reloads in Play, and with it its logic (UISystem). */
+            const std::string Document = InGraph.GetProperty("Document", std::string());
+            if(S->GetName() == "UI" && !Document.empty())
+            {
+                UI::UIAssetCache::Invalidate(Document);
+                emit EditorUIGraph::Notifier().GraphSaved(ToQ(Document), EditorContent::ToRuntimePath(InGraphPath));
             }
         }
         CORE_LOG("[Graph] " + ToStd(OutMessage))
@@ -755,10 +769,12 @@ namespace EditorGraphs
         return OpenGraph(Path, InParent);
     }
 
-    bool CreateGraphFile(const Schema& InSchema, const QString& InPath, QString& OutError)
+    bool CreateGraphFile(const Schema& InSchema, const QString& InPath, QString& OutError,
+                         const std::map<std::string, std::string>& InProperties)
     {
         Graph Starter = StarterGraph(InSchema);
         Starter.Name = GetGraphBaseName(ToStd(InPath));
+        for(const auto& Each : InProperties) { Starter.Properties[Each.first] = Each.second; }
 
         std::string Error;
         CompileResult Result;

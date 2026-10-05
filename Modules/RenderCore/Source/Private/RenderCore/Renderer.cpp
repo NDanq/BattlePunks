@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreImage.h"
 #include "Public/Core/CoreMemory.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCommand.h"
@@ -537,7 +538,13 @@ namespace RenderCore
 
     uint64_t Renderer::RequestSceneCapture()
     {
-        RenderScene* Scene = P->DefaultScene();
+        return RequestSceneCapture(RENDER_DEFAULT_SCENE);
+    }
+
+    uint64_t Renderer::RequestSceneCapture(const RenderSceneID InScene)
+    {
+        const RendererScene* Found = P->Find(InScene);
+        RenderScene* Scene = Found ? Found->Scene : nullptr;
         if(!Scene || !P->Thread.IsRunning())
         {
             return 0;
@@ -739,6 +746,94 @@ namespace RenderCore
     void Renderer::SetClearColor(const EngineCore::Color InColor)
     {
         SetClearColor(RENDER_DEFAULT_SCENE, InColor);
+    }
+
+    void Renderer::SubmitUIDrawList(const RenderSceneID InScene, const UIDrawList& InList)
+    {
+        const RendererScene* Found = P->Find(InScene);
+        if(!Found || !Found->Scene || !P->Thread.IsRunning())
+        {
+            return;
+        }
+
+        /* One allocated copy the scene keeps (commands capture values only). */
+        void*        Blob  = nullptr;
+        const size_t Bytes = InList.IsEmpty() ? 0 : InList.PackedSize();
+        if(Bytes > 0)
+        {
+            Blob = EngineCore::Memory::Allocate(Bytes, alignof(UIVertex), EngineCore::POOL_Default,
+                                                nullptr, EngineCore::AF_None, EngineCore::GImageID);
+            if(!Blob)
+            {
+                return;
+            }
+            InList.Pack(Blob);
+        }
+        RenderScene* Scene = Found->Scene;
+        ENQUEUE_RENDER_COMMAND(SetUIDrawList)([Scene, Blob, Bytes](RenderContext&)
+        {
+            Scene->SetUIDrawList(Blob, Bytes);
+        });
+    }
+
+    namespace
+    {
+        /* SetUIImage's copy for the render thread: this, then the pixels. */
+        struct UIImageBlock
+        {
+            char                    Key[128];
+            int32_t                 Width;
+            int32_t                 Height;
+            EngineCore::EImageFormat Format;
+        };
+    }
+
+    void Renderer::SetUIImage(const char* InKey, const EngineCore::Image& InImage)
+    {
+        if(!InKey || std::strncmp(InKey, "ui:", 3) != 0 || std::strlen(InKey) >= sizeof(UIImageBlock::Key)
+           || !P->Thread.IsRunning() || !InImage.GetData()
+           || (InImage.GetFormat() != EngineCore::EImageFormat::RGBA8 && InImage.GetFormat() != EngineCore::EImageFormat::BGRA8))
+        {
+            return;
+        }
+        const size_t Pixels = InImage.GetStride() * size_t(InImage.GetHeight());
+        void* Blob = EngineCore::Memory::Allocate(sizeof(UIImageBlock) + Pixels, alignof(UIImageBlock), EngineCore::POOL_Default,
+                                                  nullptr, EngineCore::AF_None, EngineCore::GImageID);
+        if(!Blob)
+        {
+            return;
+        }
+        auto* Header = static_cast<UIImageBlock*>(Blob);
+        std::memset(Header->Key, 0, sizeof(Header->Key));
+        std::strncpy(Header->Key, InKey, sizeof(Header->Key) - 1);
+        Header->Width  = InImage.GetWidth();
+        Header->Height = InImage.GetHeight();
+        Header->Format = InImage.GetFormat();
+        std::memcpy(static_cast<uint8_t*>(Blob) + sizeof(UIImageBlock), InImage.GetData(), Pixels);
+
+        ENQUEUE_RENDER_COMMAND(SetUIImage)([Blob](RenderContext& InContext)
+        {
+            const auto* Header = static_cast<const UIImageBlock*>(Blob);
+            EngineCore::Image Image(Header->Width, Header->Height, Header->Format);
+            std::memcpy(Image.GetData(), static_cast<const uint8_t*>(Blob) + sizeof(UIImageBlock),
+                        Image.GetStride() * size_t(Header->Height));
+            InContext.SetUIImage(Header->Key, &Image);
+            EngineCore::Memory::Free(Blob);
+        });
+    }
+
+    void Renderer::ReleaseUIImage(const char* InKey)
+    {
+        if(!InKey || std::strncmp(InKey, "ui:", 3) != 0 || std::strlen(InKey) >= sizeof(UIImageBlock::Key) || !P->Thread.IsRunning())
+        {
+            return;
+        }
+        UIImageBlock Key{};
+        std::strncpy(Key.Key, InKey, sizeof(Key.Key) - 1);
+        ENQUEUE_RENDER_COMMAND(ReleaseUIImage)([Key](RenderContext& InContext)
+        {
+            InContext.SetUIImage(Key.Key, nullptr);
+        });
     }
 
     void Renderer::SetClearColor(const RenderSceneID InScene, const EngineCore::Color InColor)

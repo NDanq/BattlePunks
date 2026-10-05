@@ -92,6 +92,10 @@ public:
      * the viewport holds the native input focus (ViewportSDLInput). */
     void SetMouseCaptured(bool bInCaptured) override;
     bool IsMouseCaptured() const override           { return Input.GetWindow() ? Input.IsMouseCaptured() : bHostMouseCaptured; }
+    /* The viewport's SDL window's; kept for one attached later. */
+    void SetTextInputActive(bool bInActive) override { Input.SetTextInputActive(bInActive); }
+    std::string GetClipboardText() const override;
+    void        SetClipboardText(const std::string& InUtf8) override;
 
     /* The game wants the mouse captured but there is no SDL window to do it
      * (the Qt fallback): the viewport holds the cursor itself. */

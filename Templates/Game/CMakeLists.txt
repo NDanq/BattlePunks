@@ -178,6 +178,26 @@ if(NOT NIMBLE_UNCOOKED_CONTENT AND GAME_PREFAB_SOURCES AND NOT GAME_PREFAB_FILES
 endif()
 game_stage(Prefabs "${GAME_PREFAB_ROOT}" ${GAME_PREFAB_FILES})
 
+# Content/UI/: UI documents (Engine/Modules/UI/README.md) and the Lua beside
+# them. As prefabs: an Editor target stages the XML it edits; a Client or
+# Server target cannot read XML, so it stages the cooked ones from
+# Cooked/Content/UI/ -- made in the editor with the console's `cook ui`.
+file(GLOB_RECURSE GAME_UI_SCRIPTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.lua")
+game_stage(UIScripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_UI_SCRIPTS})
+
+if(NIMBLE_TARGET STREQUAL "Editor")
+    set(GAME_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+else()
+    set(GAME_UI_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
+endif()
+file(GLOB_RECURSE GAME_UI_FILES CONFIGURE_DEPENDS "${GAME_UI_ROOT}/Content/UI/*.nmui")
+file(GLOB_RECURSE GAME_UI_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.nmui")
+if(NOT NIMBLE_TARGET STREQUAL "Editor" AND GAME_UI_SOURCES AND NOT GAME_UI_FILES)
+    message(WARNING "${GAME_NAME}: Content/UI/ has documents but Cooked/Content/UI/ has none; a ${NIMBLE_TARGET} "
+                    "build cannot read XML. Cook them in the editor (console: cook ui).")
+endif()
+game_stage(UI "${GAME_UI_ROOT}" ${GAME_UI_FILES})
+
 # Content/Materials/: material graphs, cooked into the module's shader cache
 # (Engine/cmake/NimbleMaterials.cmake), named "Content/Materials/<Name>.material.nmgraph".
 if(GAME_RT_DIR AND NOT GAME_MULTI_CONFIG)

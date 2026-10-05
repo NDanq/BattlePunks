@@ -162,8 +162,28 @@ public:
 
     virtual void Draw() = 0;
 
-    inline bool     IsIndexed()     const { return RenderData.Indices != nullptr && RenderData.NumIndices > 0; }
+    inline bool     IsIndexed()     const { return (RenderData.Indices != nullptr || bDynamic) && RenderData.NumIndices > 0; }
     inline uint32_t GetNumIndices() const { return RenderData.NumIndices; }
+
+    /*
+     * A dynamic mesh (GDICreateDynamicMesh): the GDIMeshDesc layout, rewritten
+     * by UpdateDynamic rather than created once. Its GPU buffers hold
+     * InMaxVertices / InMaxIndices and are written in place by the CPU, so it
+     * keeps no RenderData copy. Within one BeginRendering block each update
+     * APPENDS behind the last -- draws recorded earlier in the block still read
+     * their own data at submit -- and the next block starts again at 0 (every
+     * backend waits for the previous submission before recording). The draws
+     * after an update read that update's data, by range (SetDrawRange) as for
+     * any indexed mesh.
+     *
+     * False, with the mesh unchanged, if InDesc is invalid (as for CreateMesh;
+     * Normals may be null) or no longer fits in this block: the caller makes a
+     * bigger mesh, or waits for the next block.
+     */
+    inline bool     IsDynamic()                 const { return bDynamic; }
+    inline uint32_t GetDynamicVertexCapacity()  const { return DynamicVertexCapacity; }
+    inline uint32_t GetDynamicIndexCapacity()   const { return DynamicIndexCapacity; }
+    bool            UpdateDynamic(const GDIMeshDesc& InDesc, uint64_t InRenderingSerial);   // GDI.cpp
 
     /* Index range for the next Draw() of an indexed mesh (clamped; count 0 =
      * all), so sections can draw with different shaders. */
@@ -194,8 +214,34 @@ protected:
         free(RenderData.Indices);  RenderData.Indices  = nullptr;
     }
 
+    /* A backend's dynamic mesh calls this from its constructor, before
+     * allocating the capacity in its own buffers. */
+    inline void MakeDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+    {
+        bDynamic              = true;
+        DynamicVertexCapacity = InMaxVertices;
+        DynamicIndexCapacity  = InMaxIndices;
+    }
+
+    /* A dynamic mesh's write: InDesc (validated, fits) into its buffers at
+     * vertex InBaseVertex and index InBaseIndex. Indices stay relative to the
+     * update's own first vertex; Draw adds GetDynamicBaseVertex(). */
+    virtual bool WriteDynamic(const GDIMeshDesc& /*InDesc*/, uint32_t /*InBaseVertex*/, uint32_t /*InBaseIndex*/) { return false; }
+
+    /* Where the last update's vertices and indices start in the buffers. */
+    inline uint32_t GetDynamicBaseVertex() const { return DynamicBaseVertex; }
+    inline uint32_t GetDynamicBaseIndex()  const { return DynamicBaseIndex; }
+
     EPrimitiveType  PrimitiveType;
     ORenderData     RenderData;
+    bool            bDynamic              = false;
+    uint32_t        DynamicVertexCapacity = 0;
+    uint32_t        DynamicIndexCapacity  = 0;
+    uint32_t        DynamicBaseVertex     = 0;
+    uint32_t        DynamicBaseIndex      = 0;
+    uint32_t        DynamicNextVertex     = 0;
+    uint32_t        DynamicNextIndex      = 0;
+    uint64_t        DynamicSerial         = ~uint64_t(0);
     uint32_t        DrawFirstIndex = 0;
     uint32_t        DrawIndexCount = 0;
     bool            bSupportsInstanced = false;

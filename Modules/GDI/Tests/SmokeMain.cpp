@@ -172,6 +172,71 @@ static void TestResourceCreation()
     Expect(GDICreateMesh(Desc) == nullptr, "GDICreateMesh refuses a partial triangle");
 }
 
+static void TestScissorAndDynamicMesh()
+{
+    std::printf("[scissor and dynamic mesh]\n");
+
+    auto* Null = static_cast<NullDynamicGDI*>(GDynamicGDI);
+    const NullGDIStats& Stats = Null->GetStats();
+
+    // From the top-left of the viewport to the target's rows, bottom first.
+    GDISetViewport(0, 0, 200, 100);
+    Expect(Stats.LastScissorWidth == 200 && Stats.LastScissorHeight == 100, "SetViewport resets the scissor to the viewport");
+    GDISetScissorRect(10, 20, 30, 40);
+    Expect(Stats.LastScissorX == 10 && Stats.LastScissorY == 100 - 20 - 40 &&
+           Stats.LastScissorWidth == 30 && Stats.LastScissorHeight == 40,
+           "GDISetScissorRect flips its top-left rectangle into the target's rows");
+    GDISetScissorRect(190, 90, 50, 50);
+    Expect(Stats.LastScissorX == 190 && Stats.LastScissorY == 0 &&
+           Stats.LastScissorWidth == 10 && Stats.LastScissorHeight == 10,
+           "GDISetScissorRect clips to the viewport");
+    GDISetScissorRect(500, 500, 5, 5);
+    Expect(Stats.LastScissorWidth == 0 && Stats.LastScissorHeight == 0, "a scissor outside the viewport is empty");
+
+    GDISetViewport(50, 10, 100, 80);
+    GDISetScissorRect(0, 0, 100, 20);
+    Expect(Stats.LastScissorX == 50 && Stats.LastScissorY == 10 + 60 && Stats.LastScissorHeight == 20,
+           "GDISetScissorRect is relative to an offset viewport");
+    GDIClearScissorRect();
+    Expect(Stats.LastScissorX == 50 && Stats.LastScissorY == 10 && Stats.LastScissorWidth == 100 && Stats.LastScissorHeight == 80,
+           "GDIClearScissorRect restores the viewport");
+
+    const float    Positions[] = { 0, 0, 0,   1, 0, 0,   1, 1, 0,   0, 1, 0 };
+    const float    UVs[]       = { 0, 0,      1, 0,      1, 1,      0, 1 };
+    const uint32_t Indices[]   = { 0, 1, 2,   0, 2, 3 };
+    GDIMeshDesc Desc;
+    Desc.Positions   = Positions;
+    Desc.UV0         = UVs;   // no normals: a dynamic mesh does not need them
+    Desc.NumVertices = 4;
+    Desc.Indices     = Indices;
+    Desc.NumIndices  = 6;
+
+    Expect(GDICreateDynamicMesh(0, 6) == nullptr, "GDICreateDynamicMesh refuses no capacity");
+    GDIMesh* Dynamic = GDICreateDynamicMesh(10, 15);
+    Expect(Dynamic != nullptr && Dynamic->IsDynamic() && Dynamic->GetDynamicVertexCapacity() == 10 &&
+           Dynamic->GetDynamicIndexCapacity() == 15, "GDICreateDynamicMesh makes a dynamic mesh of its capacity");
+    if(!Dynamic) return;
+    Expect(!Dynamic->IsIndexed(), "a dynamic mesh draws nothing before its first update");
+
+    GDIBeginRendering();
+    Expect(GDIUpdateDynamicMesh(Dynamic, Desc) && Dynamic->IsIndexed() && Dynamic->GetNumIndices() == 6,
+           "the first update in a block is drawn");
+    Expect(GDIUpdateDynamicMesh(Dynamic, Desc), "a second update in the same block appends");
+    Expect(!GDIUpdateDynamicMesh(Dynamic, Desc), "an update past the capacity in one block is refused");
+    Expect(Dynamic->GetNumIndices() == 6, "a refused update leaves the mesh as it was");
+    GDIEndRendering();
+
+    GDIBeginRendering();
+    Expect(GDIUpdateDynamicMesh(Dynamic, Desc), "the next block starts the mesh over");
+    const uint32_t BadIndices[] = { 0, 1, 4 };
+    Desc.Indices    = BadIndices;
+    Desc.NumIndices = 3;
+    Expect(!GDIUpdateDynamicMesh(Dynamic, Desc), "an update with an index past its vertices is refused");
+    GDIEndRendering();
+
+    delete Dynamic;
+}
+
 static void TestRenderTargetManagerCycle()
 {
     std::printf("[render target manager]\n");
@@ -264,6 +329,7 @@ int main()
     TestInitAndPlatform();
     TestFreeFunctionSweep();
     TestResourceCreation();
+    TestScissorAndDynamicMesh();
     TestRenderTargetManagerCycle();
     TestDrawObjectOverrides();
     TestRenderTargetDrawTexture();

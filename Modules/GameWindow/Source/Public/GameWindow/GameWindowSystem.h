@@ -73,6 +73,10 @@ namespace GameWindowSystem
      */
     GAMEWINDOW_API void InjectTextInput(GameWindow* InWindow, const char* InUtf8);
 
+    /* The system clipboard's text (UTF-8): "" when it holds none. */
+    GAMEWINDOW_API std::string GetClipboardText();
+    GAMEWINDOW_API void        SetClipboardText(const std::string& InUtf8);
+
     /*
      * Gamepads (GameWindowGamepad.h). One process-level table -- a pad is a
      * player's, not a window's. Setting it reports the pads already connected.

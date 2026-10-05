@@ -60,6 +60,16 @@ it connects and keeps it until it disconnects.
 - **Focus.** SDL ignores button presses while the game's window does not have
   focus.
 
+## Typed text
+
+Keys are physical; text is not. `InputState::GetText()` is the frame's typed
+text, UTF-8 after the keyboard layout and IME (GameWindow's `OnText`). It only
+arrives while the host's text input is on (`IGameHost::SetTextInputActive`,
+`InputRouter::SetTextInputActive`), which the console turns on while it is
+open. A text field's Backspace and arrows read
+`InputState::GetPressesAndRepeats`, which counts the OS's auto-repeats too;
+`WasPressed` never does.
+
 ## Mouse capture
 
 `GameSession::SetMouseCaptured(true)` (Lua: `Input.SetMouseCaptured(true)`)
@@ -125,6 +135,57 @@ if Input.WasKeyPressed("F3") then print(Input.GetMousePosition()) end
 - `Input: Is Down`, `Was Pressed`, `Was Released` and `Get Axis` under
   Components/Input;
 - the `Input` library's nodes.
+
+## The UI
+
+A game session's UI (`GameSession::GetUI`, Engine/Modules/UI/README.md) sees
+each frame's input **before** the game, and what it takes the game does not:
+
+1. `GameSession::Tick` copies the host's `InputState`, builds a
+   `UI::UIInputFrame` from it (the mouse, unless it is captured, and the `UI`
+   map's navigation) and calls `UISystem::ProcessInput`.
+2. What the result says was taken is consumed from the copy --
+   `InputState::ConsumeMouseButtons`, `ConsumeKeyboard`, `ConsumeGamepad`:
+   up, with no edges.
+3. Everything the game reads reads the copy: `GameSession::GetInput()`, the
+   `Input` library, and every `InputComponent` (resolved from it in
+   `TP_PrePhysics`).
+
+So a click on a button never fires the weapon behind it, and a menu's Escape
+never reaches the game. A key consumed while held looks to the game as if it
+went up without a release edge; an `InputComponent` reports it released.
+
+| Document `InputMode` | Takes |
+|---|---|
+| `UIOnly` (a menu) | everything, and shows the cursor |
+| `GameAndUI` (a HUD) | the mouse over a widget that takes hits; keys only while one of its widgets has focus |
+| `GameOnly` | nothing |
+
+The `UI` input map (NimbleEngine's `GameUI.cpp`) is what menus navigate with:
+Up, Down, Left, Right (arrows, the D-pad), Accept (Return, Space, South), Back
+(Escape, East) and Next (Tab; Shift+Tab goes back). Rebind it as any map:
+`[Input_UI] Accept=Return, Gamepad.South`. `WasInputActionPressed(Map, Action,
+State)` reads a map's action straight from a state, for a reader with no
+`InputComponent`.
+
+**Typing into the UI.** While a UI text field has focus (a `TextInput`), the
+frame also carries the typed text (`InputState::GetText`) and the editing
+keys' presses and repeats (Backspace, Delete, Left, Right, Home, End, Return,
+Shift, Ctrl+A/C/X/V), and the result asks for text input:
+`GameSession` turns the window's text input on (`IGameHost::SetTextInputActive`)
+while it does, and off after -- again after the console closes, which turns
+it off. The field's copy and paste use the system clipboard through
+`IGameHost::GetClipboardText` / `SetClipboardText` (the launcher: SDL's;
+Play-in-Editor: Qt's).
+
+Ahead of the UI, the console (CONSOLE.md) sees the input first: the toggle
+key (`Grave`, the tilde key) opens it, and while it is open it consumes
+everything (`InputState::ConsumeAll`), so neither the UI nor the game sees any
+of it.
+
+While the session is paused (`GameSession::SetPaused`) the World does not tick,
+but `InputComponent`s are still resolved from the copy, so what a pause menu
+consumed is not waiting for the game when it resumes.
 
 ## The Sandbox example
 

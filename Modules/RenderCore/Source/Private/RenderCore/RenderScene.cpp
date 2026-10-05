@@ -20,6 +20,7 @@
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/SceneTargets.h"
+#include "Private/RenderCore/UIRenderer.h"
 
 /*
  * A plain dense vector of proxies, swap-removed by the SceneIndex each proxy
@@ -42,6 +43,9 @@ namespace RenderCore
     struct RenderScene::Impl
     {
         std::vector<RenderProxy*> Proxies;
+
+        /* SetUIDrawList's, drawn over the final colour each Render(). */
+        UISceneState UI;
 
         /* The view mode, and the targets a frame could show: names under
          * TargetsLock, for the game thread. */
@@ -603,6 +607,11 @@ namespace RenderCore
         P->PostProcess = InPostProcess;
     }
 
+    void RenderScene::SetUIDrawList(void* InBlock, const size_t InBytes)
+    {
+        P->UI.Set(InBlock, InBytes);
+    }
+
 #if WITH_EDITOR
     void RenderScene::SetDebugLines(const DebugLine* InLines, const size_t InCount)
     {
@@ -785,6 +794,10 @@ namespace RenderCore
             if(Names != P->TargetNames) { P->TargetNames = std::move(Names); }
         }
 
+        /* The UI (RENDERPIPELINE.md, "UI"): over the post-processed picture,
+         * before the readback so a capture shows it, and under "stat unit". */
+        InContext.DrawUI(P->UI, P->Targets.Width, P->Targets.Height);
+
 #if WITH_EDITOR
         /* Read back before the overlay; the readback flushes and resumes the frame. */
         for(const auto& Each : P->Captures)
@@ -877,6 +890,7 @@ namespace RenderCore
          * Renderer::Shutdown stops that thread -- which is what keeps the
          * GPU image's destruction on the thread that owns the context. */
         P->PresentTarget.store(nullptr, std::memory_order_release);
+        P->UI.Release();
         P->Targets.Release();
         P->ProbeStages.Release();
         InContext.ReleaseIBLResources(P->IBL);

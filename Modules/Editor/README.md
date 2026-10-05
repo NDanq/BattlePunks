@@ -89,6 +89,8 @@ uses it.
 | `Graph/GraphEditorWindow` (private) | The graph editor: one window, a closable, movable tab per open `.nmgraph` (Content Browser right-click > New Material / Script Graph, File > Open Graph, or double-click in the Content Browser). Ctrl+Tab steps through them; closing the window offers to save each |
 | `Graph/GraphEditorTab` (private) | One graph, with its own menus and docks. It has the canvas, Details, the generated code (live) and Messages; clicking a code line or a message selects its node. Save writes the graph with its generated code inside it, `<gen_code>` (see `Modules/NodeGraph`); nothing is written beside it |
 | `Graph/GraphDocument` (private) | One open graph and its own undo history, separate from the scene's; every edit is a before/after snapshot |
+| `UI/UIEditorWindow`, `UIEditorTab` (private) | The **UI Designer**: a tab per open `.nmui` (Content Browser double-click, or right-click > New UI...). The canvas is drawn by the game's UI renderer at a design resolution (presets: 720p to 4K, ultrawide, portrait, custom), with the selection's handles drawn over it; Palette and Hierarchy on the left, Details on the right; Preview runs the document as in a game, logging its actions. Engine/Modules/UI/README.md, "Editor: UI Designer" |
+| `UI/UIDesignDocument`, `UIDesignerViewport`, `UIDetailsPanel`, `UIHierarchyPanel`, `UIPalettePanel` (private) | The designer's document (the asset, its undo history as before/after snapshots, the selection), its canvas (an `EditorViewportClient` submitting its own UI list), and its panels, built from the UI module's widget registry |
 | `Graph/GraphScene`, `GraphView`, `GraphItems`, `NodePalette`, `GraphDetailsPanel` (private) | The canvas: nodes, links and comments. Drag between pins to link; Alt+click a pin breaks its links; drag a linked input's link off to move it. Right-click or Tab opens the node palette, and a link dropped on empty space opens it filtered. Wheel zooms, middle-drag pans |
 | `Graph/GraphAssets` (private) | Graphs as project files: where new ones go, compiling into `<gen_code>` on save, a script graph **staged beside the executable** so the next Play runs it without a build, the background glslc check, Build > Cook Content regenerating every graph's `<gen_code>`. A material is named by its graph's path, **cooked for the viewport's backend** from the compiled code, then reloaded into the renderer |
 | Material graph **Preview** dock, Material > Live Preview, Apply to Selected Entity | In a material graph's window. The **Preview** dock shows the material on one of the engine's meshes -- **Shape**: Sphere (the default), Box, Cylinder, Capsule or Plane, to orbit (drag, wheel, double-click resets) -- or a flat Quad, drawn by the viewport's own renderer into an offscreen target and read back (`Renderer::RequestMeshPreview`, `RequestMaterialPreview`), so it is the backend and cooked shader the level uses. A PostProcess material always fills it. It has an Instance Tint picker and **Animate** (keep drawing, for materials that use Time). Live Preview (on by default) cooks every clean recompile, refreshing the dock and every primitive in the level whose `Material` is the graph's name; closing with the change discarded puts the saved one back. Apply to Selected Entity sets the selection's RenderComponent Material (adding one if needed), undoably |
@@ -132,7 +134,7 @@ build. Dragging one into a project folder copies it there.
 | Rename | F2, or the context menu |
 | Delete | Del: confirmed, then moved to the Recycle Bin -- never deleted outright |
 | Move | Drag items onto a folder (in the list) |
-| Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), a mesh in the mesh viewer, a texture in the texture viewer, anything else with the system's own application |
+| Open | Double-click: a graph opens in its window, a world in the viewport (not while playing), a mesh in the mesh viewer, a texture in the texture viewer, a UI document (`.nmui`) in the UI Designer, anything else with the system's own application |
 | Import | Drop files from Explorer, the toolbar's Import..., or File > Import (Ctrl+I) |
 | Reimport | The context menu on a `.nmmesh` / `.nmtexture`: the same source, the same options |
 
@@ -531,6 +533,8 @@ registered:
 | `lighting <bake \| baked \| live>` | Build > Bake Lightmaps, or Show > Lighting > Baked / Live |
 | `screenshot <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`) |
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `Cooked/` beside it |
+| `cook ui [out]`, `cook <doc.nmui> [out]` | Cook every UI document to `<project>/Cooked/Content/UI/` (what a Client build stages), or one |
+| `ui <path \| new \| close \| select <name> \| resolution <w>x<h> \| preview <on\|off> \| screenshot <file.png>>` | Open a `.nmui` in the UI Designer, make one, or drive the one in front -- from `--command` scripts too |
 | `compile [cancel]` | As Build > Compile Source, or cancel the build running |
 | `settings` | Open Edit > Editor Settings, and print where they are saved |
 | `projectsettings` | Open Edit > Project Settings, and print the file it saves to |
