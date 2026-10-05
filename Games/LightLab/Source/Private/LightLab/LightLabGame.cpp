@@ -693,7 +693,8 @@ private:
      * the flame (emissive far past 1, so Bloom spreads it), a red light it
      * casts, and its smoke -- a Particle System of soft puffs, born red and
      * blackening as they rise and spread (RenderCore's
-     * ParticleSystemComponent; Content/Materials/Flare*.material.nmgraph).
+     * ParticleSystemComponent; Content/Particles/FlareSmoke.nmparticle,
+     * Content/Materials/Flare*.material.nmgraph).
      */
     static void SpawnFlare(GameCore::World& InWorld)
     {
@@ -717,24 +718,7 @@ private:
         Transform.Position = Base + EngineCore::Vector3(0.0, 168.0, 0.0);
         Smoke.AddComponent(Transform);
         RenderCore::ParticleSystemComponent Particles;
-        std::snprintf(Particles.Material, sizeof(Particles.Material), "%s", "Content/Materials/FlareSmoke.material.nmgraph");
-        Particles.MaxParticles     = 600;
-        Particles.SpawnRate        = 70.0f;
-        Particles.Lifetime         = 6.0f;
-        Particles.LifetimeVariance = 0.35f;
-        Particles.EmitterRadius    = 8.0f;
-        Particles.Velocity         = EngineCore::Vector3(10.0, 120.0, 0.0);  // up, drifting with the wind
-        Particles.VelocitySpread   = 20.0f;
-        Particles.Acceleration     = EngineCore::Vector3(9.0, 14.0, 0.0);    // hot smoke keeps rising
-        Particles.Drag             = 0.35f;
-        Particles.Turbulence       = 45.0f;
-        Particles.StartSize        = 26.0f;
-        Particles.EndSize          = 230.0f;
-        Particles.StartColor       = EngineCore::Color(225, 38, 22, 150);    // red, lit by the flame
-        Particles.EndColor         = EngineCore::Color(8, 7, 7, 120);        // black as it cools
-        Particles.ColorCurve       = 0.45f;                                  // black well before it fades
-        Particles.FadeIn           = 0.05f;
-        Particles.FadeOut          = 0.45f;
+        std::snprintf(Particles.System, sizeof(Particles.System), "%s", "Content/Particles/FlareSmoke.nmparticle");
         Smoke.AddComponent(Particles);
     }
 

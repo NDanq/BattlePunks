@@ -46,6 +46,10 @@
 #include "Private/Editor/AboutDialog.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/Particles/ParticleAssets.h"
+#include "Private/Editor/Particles/ParticleDocument.h"
+#include "Private/Editor/Particles/ParticleEditorTab.h"
+#include "Private/Editor/Particles/ParticleEditorWindow.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
 #include "Private/Editor/UI/UIAssets.h"
 #include "Private/Editor/UI/UIDesignDocument.h"
@@ -243,6 +247,7 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
      * prefabs draw with it. */
     EditorGraphs::SetEditorContext(&Context);
     EditorPrefabs::SetEditorContext(&Context);
+    EditorParticles::SetEditorContext(&Context);
 
     UpdateTitle();
 }
@@ -257,6 +262,7 @@ EditorMainWindow::~EditorMainWindow()
     }
     EditorGraphs::SetEditorContext(nullptr);
     EditorPrefabs::SetEditorContext(nullptr);
+    EditorParticles::SetEditorContext(nullptr);
     Context.Shutdown();
 }
 
@@ -323,6 +329,14 @@ void EditorMainWindow::BuildMenus()
         const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Prefab"), EditorPrefabs::GetDefaultFolder(),
                                                           QStringLiteral("Prefabs (*.nmprefab)"));
         if(!Path.isEmpty()) { EditorPrefabs::OpenPrefab(Path, this); }
+    });
+
+    QAction* OpenParticles = File->addAction(QStringLiteral("Open Particle S&ystem..."));
+    connect(OpenParticles, &QAction::triggered, this, [this]()
+    {
+        const QString Path = QFileDialog::getOpenFileName(this, QStringLiteral("Open Particle System"), EditorParticles::GetDefaultFolder(),
+                                                          QStringLiteral("Particle Systems (*.nmparticle)"));
+        if(!Path.isEmpty()) { EditorParticles::OpenParticleSystem(Path, this); }
     });
 
     QAction* OpenGraph = File->addAction(QStringLiteral("Open Grap&h..."));
@@ -1286,6 +1300,60 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
     });
 
+    Console.Register(QStringLiteral("particles"),
+                     QStringLiteral("<path | new | close | pause | play | restart | speed <x> | move <on|off> | select <n> | screenshot <file.png>>"),
+                     QStringLiteral("Open a .nmparticle in the Particle Editor, make a new one, or drive the one in front (for scripts and tests)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: particles <path | new | close | pause | play | restart | speed <x> | move <on|off> | "
+                                              "select <n> | screenshot <file.png>>"));
+            return;
+        }
+        const QString Verb = InArgs.front();
+        if(Verb == QStringLiteral("new"))   { EditorParticles::CreateParticleSystem(QString(), this); return; }
+        if(Verb == QStringLiteral("close")) { EditorParticles::CloseAll(); return; }
+
+        const QStringList Drives = { QStringLiteral("pause"), QStringLiteral("play"), QStringLiteral("restart"), QStringLiteral("speed"),
+                                     QStringLiteral("move"), QStringLiteral("select"), QStringLiteral("screenshot") };
+        if(Drives.contains(Verb))
+        {
+            ParticleEditorWindow* Window = ParticleEditorWindow::Find();
+            ParticleEditorTab*    Tab    = Window ? Window->CurrentTab() : nullptr;
+            if(!Tab)
+            {
+                Console.PrintError(QStringLiteral("No particle system is open"));
+                return;
+            }
+            const QString Argument = InArgs.mid(1).join(QLatin1Char(' '));
+            if(Verb == QStringLiteral("pause"))        { Tab->SetPaused(true); }
+            else if(Verb == QStringLiteral("play"))    { Tab->SetPaused(false); }
+            else if(Verb == QStringLiteral("restart")) { Tab->Restart(); }
+            else if(Verb == QStringLiteral("speed"))   { Tab->SetSpeed(Argument.toFloat()); }
+            else if(Verb == QStringLiteral("move"))    { Tab->SetMoving(Argument == QStringLiteral("on")); }
+            else if(Verb == QStringLiteral("select"))  { Tab->GetDocument().SetSelected(Argument.toInt()); }
+            else
+            {
+                const uint64_t Request = Argument.isEmpty() ? 0 : Tab->RequestCapture();
+                if(Request == 0)
+                {
+                    Console.PrintError(QStringLiteral("Usage: particles screenshot <file.png>, with a system open and drawn"));
+                    return;
+                }
+                SaveCaptureWhenReady(Request, QFileInfo(Argument).absoluteFilePath());
+            }
+            return;
+        }
+        const QString Path = QFileInfo(InArgs.join(QLatin1Char(' '))).isAbsolute()
+                           ? InArgs.join(QLatin1Char(' '))
+                           : QDir(EditorGraphs::GetProjectRoot()).filePath(InArgs.join(QLatin1Char(' ')));
+        if(EditorParticles::OpenParticleSystem(Path, this))
+        {
+            Console.Print(QStringLiteral("Opened %1").arg(QDir::toNativeSeparators(Path)));
+        }
+    });
+
     /* A second window on a World of its own: the multi-window rendering path
      * the Prefab Editor will use, until it exists. */
     Console.Register(QStringLiteral("testwindow"), QString(),
@@ -1555,9 +1623,9 @@ void EditorMainWindow::StartRenderer()
 
 void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
-    /* Open prefabs and graphs first: an unsaved one may cancel the close.
-     * Prefabs before the Renderer stops: their viewports' swapchains go now. */
-    if(!EditorPrefabs::CloseAllPrefabs() || !EditorUI::CloseAll() || !EditorGraphs::CloseAllGraphs())
+    /* Open prefabs, particle systems and graphs first: an unsaved one may cancel the close.
+     * Prefabs and particle systems before the Renderer stops: their viewports' swapchains go now. */
+    if(!EditorPrefabs::CloseAllPrefabs() || !EditorParticles::CloseAll() || !EditorUI::CloseAll() || !EditorGraphs::CloseAllGraphs())
     {
         InEvent->ignore();
         return;

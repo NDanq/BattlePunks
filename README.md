@@ -72,8 +72,10 @@ regenerates after the prefab changes.
 A road flare stands in the front of the yard, showing GPU particles
 (RENDERPIPELINE.md, "Particles"): a red stick, a flame ball whose emissive
 flickers far past 1 so Bloom spreads it, a red point light, and its smoke -- a
-**Particle System** component of soft puffs (`FlareSmoke.material.nmgraph`,
-Translucent Unlit) born red and turning black as they rise, drift and spread.
+**Particle System** component running `Content/Particles/FlareSmoke.nmparticle`,
+soft puffs (`FlareSmoke.material.nmgraph`, Translucent Unlit) born red and
+turning black as they rise, drift and spread. Double-click it in the Content
+Browser to open it in the editor's Particle Editor.
 It is simulated by compute shaders, so it shows on Vulkan only for now, and it
 animates in the editor's viewport as well as in Play.
 

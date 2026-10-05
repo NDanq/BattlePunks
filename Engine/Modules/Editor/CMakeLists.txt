@@ -76,6 +76,16 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Graph/GraphEditorTab.h
         Source/Private/Editor/Graph/GraphEditorWindow.cpp
         Source/Private/Editor/Graph/GraphEditorWindow.h
+        Source/Private/Editor/Particles/ParticleAssets.cpp
+        Source/Private/Editor/Particles/ParticleAssets.h
+        Source/Private/Editor/Particles/ParticleDocument.cpp
+        Source/Private/Editor/Particles/ParticleDocument.h
+        Source/Private/Editor/Particles/ParticleEditorTab.cpp
+        Source/Private/Editor/Particles/ParticleEditorTab.h
+        Source/Private/Editor/Particles/ParticleEditorWindow.cpp
+        Source/Private/Editor/Particles/ParticleEditorWindow.h
+        Source/Private/Editor/Particles/ParticleEmitterPanels.cpp
+        Source/Private/Editor/Particles/ParticleEmitterPanels.h
         Source/Private/Editor/Prefab/PrefabAssets.cpp
         Source/Private/Editor/Prefab/PrefabAssets.h
         Source/Private/Editor/Prefab/PrefabEditorTab.cpp
@@ -229,7 +239,7 @@ target_link_libraries(NimbleEditor PRIVATE
 
 # === Import tests =================================================================
 # Runs from Binaries, where NimbleEditor's windeployqt put Qt (hence the dependency).
-option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests, NimbleEditorDocumentTests, NimbleEditorDetailsTests and NimbleEditorUIDesignerTests" ON)
+option(NIMBLEEDITOR_BUILD_TESTS "Build NimbleEditorImportTests, NimbleEditorDocumentTests, NimbleEditorDetailsTests, NimbleEditorUIDesignerTests and NimbleEditorParticleTests" ON)
 if(NIMBLEEDITOR_BUILD_TESTS)
     add_executable(NimbleEditorImportTests Tests/ImportTests.cpp ${NIMBLE_EDITOR_IMPORT_SOURCES})
     target_include_directories(NimbleEditorImportTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
@@ -330,6 +340,26 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     add_dependencies(NimbleEditorUIDesignerTests NimbleEditor)
     add_test(NAME Editor.UIDesigner COMMAND NimbleEditorUIDesignerTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorUIDesignerTests>")
+
+    # The Particle Editor's document and panels, offscreen: the editor's sources without its main().
+    add_executable(NimbleEditorParticleTests Tests/ParticleEditorTests.cpp ${NIMBLE_EDITOR_DETAILS_SOURCES})
+    target_include_directories(NimbleEditorParticleTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source "${NIMBLE_EDITOR_CGLTF_DIR}")
+    target_link_libraries(NimbleEditorParticleTests PRIVATE
+            GameCore::GameCore
+            RenderCore::RenderCore
+            GameWindow::GameWindow
+            NimbleEngine::NimbleEngine
+            EngineCore::QtBridge
+            NodeGraph::NodeGraph
+            NimbleXatlas
+            Qt6::Core
+            Qt6::Gui
+            Qt6::Widgets
+    )
+    set_target_properties(NimbleEditorParticleTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
+    add_dependencies(NimbleEditorParticleTests NimbleEditor)
+    add_test(NAME Editor.Particles COMMAND NimbleEditorParticleTests
+             WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEditorParticleTests>")
 endif()
 
 # === Engine content ===========================================================
@@ -443,7 +473,7 @@ endif()
 
 source_group("Editor" FILES ${NIMBLE_EDITOR_SOURCES})
 
-# The Details and UI Designer tests compile the editor's sources, so they need
+# The Details, UI Designer and Particle tests compile the editor's sources, so they need
 # its generated headers too (build info, project config); made by
 # NimbleEditor's build, which they depend on.
 if(TARGET NimbleEditorDetailsTests)
@@ -451,4 +481,7 @@ if(TARGET NimbleEditorDetailsTests)
 endif()
 if(TARGET NimbleEditorUIDesignerTests)
     target_include_directories(NimbleEditorUIDesignerTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
+endif()
+if(TARGET NimbleEditorParticleTests)
+    target_include_directories(NimbleEditorParticleTests PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/Generated")
 endif()

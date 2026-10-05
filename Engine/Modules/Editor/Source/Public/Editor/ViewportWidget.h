@@ -189,6 +189,12 @@ private:
      * into a prefab: prefabs do not nest. */
     QString DroppedPrefab(const class QMimeData* InData) const;
 
+    /* The .nmparticle in a drag, inside the project, as its runtime path; else empty. */
+    QString DroppedParticleSystem(const class QMimeData* InData) const;
+
+    /* Whether a drag holds something dropEvent places. */
+    bool CanDrop(const class QMimeData* InData) const;
+
     EngineCore::Size GetLogicalSize() const { return EngineCore::Size(width(), height()); }
 
     EditorContext&  Context;

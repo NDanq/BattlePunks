@@ -65,6 +65,7 @@ namespace GameCore
         PF_AssetPostProcess = 1 << 3,   // a post process stack (*.pp.nmgraph), or a PostProcess material graph
         PF_AssetRenderTarget = 1 << 4,  // a render target texture (*.nmrt2d, *.nmrt3d; RenderTargetAsset.h)
         PF_AssetTexture  = 1 << 5,   // a texture asset (*.nmtexture), e.g. a Sky Light's HDRI
+        PF_AssetParticleSystem = 1 << 6,   // a particle system (*.nmparticle; RenderCore's ParticleSystemAsset.h)
     };
 
     enum : size_t

@@ -1,0 +1,26 @@
+NimbleParticleSystem 1
+
+Emitter Smoke
+    Enabled true
+    Mesh
+    Material Content/Materials/FlareSmoke.material.nmgraph
+    FaceCamera true
+    Offset 0,0,0
+    MaxParticles 600
+    SpawnRate 70
+    Lifetime 6
+    LifetimeVariance 0.35
+    EmitterRadius 8
+    Seed 0
+    Velocity 10,120,0
+    VelocitySpread 20
+    Acceleration 9,14,0
+    Drag 0.35
+    Turbulence 45
+    StartSize 26
+    EndSize 230
+    StartColor 225,38,22,150
+    EndColor 8,7,7,120
+    ColorCurve 0.45
+    FadeIn 0.05
+    FadeOut 0.45

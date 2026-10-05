@@ -12,7 +12,9 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <memory>
 #include <string>
+#include <vector>
 
 /* ParticleSystemComponent: registration, its proxy, and what it exposes to
  * saves, Lua and the editor. */
@@ -22,9 +24,13 @@ namespace RenderCore
     namespace
     {
         /*
-         * The render-thread side: its emitter on the GPU, simulated once a
-         * frame (Simulate) and drawn from every view that sees it (Draw).
-         * Never static: its draws change every frame on their own.
+         * The render-thread side: an emitter on the GPU per emitter of its
+         * system, simulated once a frame (Simulate) and drawn from every view
+         * that sees it (Draw). The system is looked up every frame, so a new
+         * version of the asset (ParticleSystemCache) is picked up at once; an
+         * emitter keeps its particles through an edit unless its Max
+         * Particles changes. Never static: its draws change every frame on
+         * their own.
          */
         class ParticleSystemProxy final : public RenderProxy
         {
@@ -40,81 +46,139 @@ namespace RenderCore
             void ApplyComponent(const void* InComponentBytes) override
             {
                 const auto& C = *static_cast<const ParticleSystemComponent*>(InComponentBytes);
-                Settings = C.ToSettings();
-                MeshPath = C.Mesh[0] != '\0' ? std::string(C.Mesh) : std::string(PARTICLE_DEFAULT_MESH);
-                MaterialPath.assign(C.Material);
+                TimeScale = std::max(C.TimeScale, 0.0f);
 
-                /* As far as a particle can get from the emitter in its life, so culling never clips the plume. */
-                const auto Length = [](const float (&InVector)[3])
+                std::shared_ptr<const ParticleSystemDesc> System = C.System[0] != '\0' ? ParticleSystemCache::Find(C.System)
+                                                                                       : GetDefaultParticleSystem();
+                if(!System)
                 {
-                    return std::sqrt(InVector[0] * InVector[0] + InVector[1] * InVector[1] + InVector[2] * InVector[2]);
-                };
-                const float Life  = std::max(Settings.Lifetime, 0.0f);
-                const float Reach = Settings.EmitterRadius + (Length(Settings.Velocity) + Settings.VelocitySpread) * Life
-                                  + 0.5f * (Length(Settings.Acceleration) + Settings.Turbulence) * Life * Life
-                                  + std::max(Settings.StartSize, Settings.EndSize);
+                    if(MissingPath != C.System)
+                    {
+                        MissingPath = C.System;
+                        RENDERCORE_LOG_WARN("particle system '" + MissingPath + "' cannot be loaded: it draws nothing")
+                    }
+                    static const std::shared_ptr<const ParticleSystemDesc> Empty = std::make_shared<const ParticleSystemDesc>();
+                    System = Empty;
+                }
+
+                /* An emitter removed from the asset frees its GPU buffers in the next Simulate. */
+                const size_t Count = std::min<size_t>(System->Emitters.size(), PARTICLE_SYSTEM_EMITTERS_MAX);
+                while(Emitters.size() > Count)
+                {
+                    Retired.push_back(Emitters.back().Gpu);
+                    Emitters.pop_back();
+                }
+                Emitters.resize(Count);
+
+                float Reach = 0.0f;
+                for(size_t Index = 0; Index < Count; ++Index)
+                {
+                    const ParticleEmitterDesc& Desc = System->Emitters[Index];
+                    EmitterRun& Run = Emitters[Index];
+                    Run.bEnabled = Desc.bEnabled != 0;
+                    Run.Settings = C.ToSettings(Desc, uint32_t(Index));
+                    Run.Offset   = Desc.Offset;
+                    Run.Mesh.assign(Desc.Mesh[0] != '\0' ? Desc.Mesh : PARTICLE_DEFAULT_MESH);
+                    Run.Material.assign(Desc.Material);
+                    if(Run.bEnabled)
+                    {
+                        const double X = Desc.Offset.GetX(), Y = Desc.Offset.GetY(), Z = Desc.Offset.GetZ();
+                        Reach = std::max(Reach, float(std::sqrt(X * X + Y * Y + Z * Z)) + Desc.GetReach());
+                    }
+                }
+
+                /* As far as a particle can get from the entity in its life, so culling never clips the plume. */
                 SetLocalBounds(GameCore::AABB(EngineCore::Vector3(-Reach, -Reach, -Reach), EngineCore::Vector3(Reach, Reach, Reach)));
             }
 
             void Simulate(RenderContext& InContext) override
             {
-                if(!Emitter || EmitterCapacity != Settings.MaxParticles)
+                for(ParticleEmitterGpu* Each : Retired)
                 {
-                    InContext.ReleaseParticleEmitter(Emitter);
-                    Emitter         = InContext.CreateParticleEmitter(Settings.MaxParticles);
-                    EmitterCapacity = Settings.MaxParticles;
+                    InContext.ReleaseParticleEmitter(Each);
                 }
-                if(!Emitter)
+                Retired.clear();
+
+                const float Delta = InContext.GetDeltaSeconds() * TimeScale;
+                for(EmitterRun& Run : Emitters)
                 {
-                    if(!bWarned)
+                    if(!Run.bEnabled)
                     {
-                        bWarned = true;
-                        RENDERCORE_LOG_WARN(InContext.SupportsParticles()
-                                            ? std::string("a particle system could not make its GPU buffers: it draws nothing")
-                                            : std::string("this backend runs no compute shaders: particle systems draw nothing"));
+                        InContext.ReleaseParticleEmitter(Run.Gpu);
+                        Run.Gpu      = nullptr;
+                        Run.Capacity = 0;
+                        continue;
                     }
-                    return;
+                    if(!Run.Gpu || Run.Capacity != Run.Settings.MaxParticles)
+                    {
+                        InContext.ReleaseParticleEmitter(Run.Gpu);
+                        Run.Gpu      = InContext.CreateParticleEmitter(Run.Settings.MaxParticles);
+                        Run.Capacity = Run.Settings.MaxParticles;
+                    }
+                    if(!Run.Gpu)
+                    {
+                        if(!bWarned)
+                        {
+                            bWarned = true;
+                            RENDERCORE_LOG_WARN(InContext.SupportsParticles()
+                                                ? std::string("a particle system could not make its GPU buffers: it draws nothing")
+                                                : std::string("this backend runs no compute shaders: particle systems draw nothing"));
+                        }
+                        continue;
+                    }
+                    InContext.SimulateParticles(*Run.Gpu, Run.Settings, EmitterPosition(Run), Delta);
                 }
-                InContext.SimulateParticles(*Emitter, Settings, GetTransform().Position);
             }
 
             void Draw(RenderContext& InContext) override
             {
-                if(Emitter)
+                for(const EmitterRun& Run : Emitters)
                 {
-                    InContext.DrawParticles(*Emitter, GetTransform().Position, MeshPath.c_str(), MaterialPath.c_str());
+                    if(Run.Gpu)
+                    {
+                        InContext.DrawParticles(*Run.Gpu, EmitterPosition(Run), Run.Mesh.c_str(), Run.Material.c_str());
+                    }
                 }
             }
 
             void ReleaseRenderResources(RenderContext& InContext) override
             {
-                InContext.ReleaseParticleEmitter(Emitter);
-                Emitter = nullptr;
+                for(EmitterRun& Run : Emitters)
+                {
+                    InContext.ReleaseParticleEmitter(Run.Gpu);
+                    Run.Gpu = nullptr;
+                }
+                for(ParticleEmitterGpu* Each : Retired)
+                {
+                    InContext.ReleaseParticleEmitter(Each);
+                }
+                Retired.clear();
             }
 
         private:
-            ParticleEmitterSettings Settings;
-            std::string             MeshPath;
-            std::string             MaterialPath;
-            ParticleEmitterGpu*     Emitter         = nullptr;
-            uint32_t                EmitterCapacity = 0;
-            bool                    bWarned         = false;
+            struct EmitterRun
+            {
+                ParticleEmitterSettings Settings;
+                std::string             Mesh;
+                std::string             Material;
+                EngineCore::Vector3     Offset;
+                bool                    bEnabled = true;
+                ParticleEmitterGpu*     Gpu      = nullptr;
+                uint32_t                Capacity = 0;
+            };
+
+            /* The entity's position, moved by the emitter's Offset in the entity's own axes (and scale). */
+            EngineCore::Vector3 EmitterPosition(const EmitterRun& InRun) const
+            {
+                return GetTransform().Position + GetLocalToWorld() * InRun.Offset;
+            }
+
+            std::vector<EmitterRun>          Emitters;
+            std::vector<ParticleEmitterGpu*> Retired;
+            std::string                      MissingPath;
+            float                            TimeScale = 1.0f;
+            bool                             bWarned   = false;
         };
-
-        void ToFloats(const EngineCore::Vector3& InVector, float (&OutVector)[3])
-        {
-            OutVector[0] = float(InVector.GetX());
-            OutVector[1] = float(InVector.GetY());
-            OutVector[2] = float(InVector.GetZ());
-        }
-
-        void ToFloats(const EngineCore::Color InColor, float (&OutColor)[4])
-        {
-            OutColor[0] = InColor.Rf();
-            OutColor[1] = InColor.Gf();
-            OutColor[2] = InColor.Bf();
-            OutColor[3] = InColor.Af();
-        }
     }
 
     RENDERCORE_DEFINE_PROXY_COMPONENT(ParticleSystemComponent, "Particle System", ParticleSystemProxy)
@@ -124,116 +188,83 @@ namespace RenderCore
         return &ParticleSystemComponent_CreateProxy;
     }
 
-    ParticleEmitterSettings ParticleSystemComponent::ToSettings() const
+    ParticleEmitterSettings ParticleSystemComponent::ToSettings(const ParticleEmitterDesc& InEmitter, const uint32_t InEmitterIndex) const
     {
-        ParticleEmitterSettings Out;
-        Out.MaxParticles     = uint32_t(std::clamp<int32_t>(MaxParticles, 1, int32_t(PARTICLE_MAX_PER_SYSTEM)));
-        Out.SpawnRate        = bEmitting ? std::max(SpawnRate, 0.0f) : 0.0f;
-        Out.Lifetime         = std::max(Lifetime, 0.001f);
-        Out.LifetimeVariance = std::clamp(LifetimeVariance, 0.0f, 1.0f);
-        Out.EmitterRadius    = std::max(EmitterRadius, 0.0f);
-        ToFloats(Velocity, Out.Velocity);
-        Out.VelocitySpread   = std::max(VelocitySpread, 0.0f);
-        ToFloats(Acceleration, Out.Acceleration);
-        Out.Drag             = std::max(Drag, 0.0f);
-        Out.Turbulence       = std::max(Turbulence, 0.0f);
-        Out.StartSize        = std::max(StartSize, 0.0f);
-        Out.EndSize          = std::max(EndSize, 0.0f);
-        ToFloats(StartColor, Out.StartColor);
-        ToFloats(EndColor, Out.EndColor);
-        Out.ColorCurve       = std::clamp(ColorCurve, 0.05f, 20.0f);
-        Out.FadeIn           = std::clamp(FadeIn, 0.0f, 1.0f);
-        Out.FadeOut          = std::clamp(FadeOut, 0.0f, 1.0f);
-        Out.bFaceCamera      = bFaceCamera != 0;
-        Out.Seed             = uint32_t(Seed);
+        ParticleEmitterSettings Out = InEmitter.ToSettings();
+        Out.SpawnRate = bEmitting ? Out.SpawnRate * std::max(SpawnRateScale, 0.0f) : 0.0f;
+        const float TintChannels[4] = { Tint.Rf(), Tint.Gf(), Tint.Bf(), Tint.Af() };
+        for(int Channel = 0; Channel < 4; ++Channel)
+        {
+            Out.StartColor[Channel] *= TintChannels[Channel];
+            Out.EndColor[Channel]   *= TintChannels[Channel];
+        }
+        /* Two emitters of one system, or two systems with one seed, never spawn in step. */
+        Out.Seed = Out.Seed + uint32_t(Seed) * 0x9E3779B9u + InEmitterIndex * 0x85EBCA6Bu;
         return Out;
     }
 
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(ParticleSystemComponent, 1)
+    /* Version 2 names a system; version 1 held one emitter's settings inline,
+     * which are read past (its Emitting and Seed kept) -- re-make such a
+     * component's effect as a .nmparticle. */
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(ParticleSystemComponent, 2)
     {
-        Ar.Flag("Emitting",          C.bEmitting);
-        Ar.Field("Mesh",             C.Mesh);
-        Ar.Field("Material",         C.Material);
-        Ar.Flag("FaceCamera",        C.bFaceCamera);
-        Ar.Field("MaxParticles",     C.MaxParticles);
-        Ar.Field("SpawnRate",        C.SpawnRate);
-        Ar.Field("Lifetime",         C.Lifetime);
-        Ar.Field("LifetimeVariance", C.LifetimeVariance);
-        Ar.Field("EmitterRadius",    C.EmitterRadius);
-        Ar.Field("Velocity",         C.Velocity);
-        Ar.Field("VelocitySpread",   C.VelocitySpread);
-        Ar.Field("Acceleration",     C.Acceleration);
-        Ar.Field("Drag",             C.Drag);
-        Ar.Field("Turbulence",       C.Turbulence);
-        Ar.Field("StartSize",        C.StartSize);
-        Ar.Field("EndSize",          C.EndSize);
-        Ar.Field("StartColor",       C.StartColor);
-        Ar.Field("EndColor",         C.EndColor);
-        Ar.Field("ColorCurve",       C.ColorCurve);
-        Ar.Field("FadeIn",           C.FadeIn);
-        Ar.Field("FadeOut",          C.FadeOut);
-        Ar.Field("Seed",             C.Seed);
+        if(Ar.IsLoading() && Ar.GetVersion() < 2)
+        {
+            ParticleEmitterDesc Legacy;
+            Ar.Flag("Emitting",          C.bEmitting);
+            Ar.Field("Mesh",             Legacy.Mesh);
+            Ar.Field("Material",         Legacy.Material);
+            Ar.Flag("FaceCamera",        Legacy.bFaceCamera);
+            Ar.Field("MaxParticles",     Legacy.MaxParticles);
+            Ar.Field("SpawnRate",        Legacy.SpawnRate);
+            Ar.Field("Lifetime",         Legacy.Lifetime);
+            Ar.Field("LifetimeVariance", Legacy.LifetimeVariance);
+            Ar.Field("EmitterRadius",    Legacy.EmitterRadius);
+            Ar.Field("Velocity",         Legacy.Velocity);
+            Ar.Field("VelocitySpread",   Legacy.VelocitySpread);
+            Ar.Field("Acceleration",     Legacy.Acceleration);
+            Ar.Field("Drag",             Legacy.Drag);
+            Ar.Field("Turbulence",       Legacy.Turbulence);
+            Ar.Field("StartSize",        Legacy.StartSize);
+            Ar.Field("EndSize",          Legacy.EndSize);
+            Ar.Field("StartColor",       Legacy.StartColor);
+            Ar.Field("EndColor",         Legacy.EndColor);
+            Ar.Field("ColorCurve",       Legacy.ColorCurve);
+            Ar.Field("FadeIn",           Legacy.FadeIn);
+            Ar.Field("FadeOut",          Legacy.FadeOut);
+            Ar.Field("Seed",             C.Seed);
+            RENDERCORE_LOG_WARN("a Particle System saved before particle system assets: its settings are dropped -- "
+                                "name a .nmparticle in its System")
+            return;
+        }
+        Ar.Field("System",         C.System);
+        Ar.Flag("Emitting",        C.bEmitting);
+        Ar.Field("Tint",           C.Tint);
+        Ar.Field("SpawnRateScale", C.SpawnRateScale);
+        Ar.Field("TimeScale",      C.TimeScale);
+        Ar.Field("Seed",           C.Seed);
     }
 
-    /* Lua sees every setting by the same names (e:GetComponent("Particle System"):SetSpawnRate(10)). */
+    /* Lua sees the same names (e:GetComponent("Particle System"):SetEmitting(false)). */
     GAMECORE_DEFINE_COMPONENT_SCRIPT(ParticleSystemComponent)
     {
-        Bind.Flag("Emitting",          &ParticleSystemComponent::bEmitting);
-        Bind.Field("Mesh",             &ParticleSystemComponent::Mesh);
-        Bind.Field("Material",         &ParticleSystemComponent::Material);
-        Bind.Flag("FaceCamera",        &ParticleSystemComponent::bFaceCamera);
-        Bind.Field("MaxParticles",     &ParticleSystemComponent::MaxParticles);
-        Bind.Field("SpawnRate",        &ParticleSystemComponent::SpawnRate);
-        Bind.Field("Lifetime",         &ParticleSystemComponent::Lifetime);
-        Bind.Field("LifetimeVariance", &ParticleSystemComponent::LifetimeVariance);
-        Bind.Field("EmitterRadius",    &ParticleSystemComponent::EmitterRadius);
-        Bind.Field("Velocity",         &ParticleSystemComponent::Velocity);
-        Bind.Field("VelocitySpread",   &ParticleSystemComponent::VelocitySpread);
-        Bind.Field("Acceleration",     &ParticleSystemComponent::Acceleration);
-        Bind.Field("Drag",             &ParticleSystemComponent::Drag);
-        Bind.Field("Turbulence",       &ParticleSystemComponent::Turbulence);
-        Bind.Field("StartSize",        &ParticleSystemComponent::StartSize);
-        Bind.Field("EndSize",          &ParticleSystemComponent::EndSize);
-        Bind.Field("StartColor",       &ParticleSystemComponent::StartColor);
-        Bind.Field("EndColor",         &ParticleSystemComponent::EndColor);
-        Bind.Field("ColorCurve",       &ParticleSystemComponent::ColorCurve);
-        Bind.Field("FadeIn",           &ParticleSystemComponent::FadeIn);
-        Bind.Field("FadeOut",          &ParticleSystemComponent::FadeOut);
-        Bind.Field("Seed",             &ParticleSystemComponent::Seed);
+        Bind.Field("System",         &ParticleSystemComponent::System);
+        Bind.Flag("Emitting",        &ParticleSystemComponent::bEmitting);
+        Bind.Field("Tint",           &ParticleSystemComponent::Tint);
+        Bind.Field("SpawnRateScale", &ParticleSystemComponent::SpawnRateScale);
+        Bind.Field("TimeScale",      &ParticleSystemComponent::TimeScale);
+        Bind.Field("Seed",           &ParticleSystemComponent::Seed);
     }
 
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(ParticleSystemComponent)
     {
-        Props.Category("Rendering");
-        Props.Field("Mesh",     &ParticleSystemComponent::Mesh, GameCore::PF_AssetMesh);
-        Props.Field("Material", &ParticleSystemComponent::Material, GameCore::PF_AssetMaterial);
-        Props.Flag("Face Camera", &ParticleSystemComponent::bFaceCamera);
-
-        Props.Category("Emission");
+        Props.Field("System",           &ParticleSystemComponent::System, GameCore::PF_AssetParticleSystem);
         Props.Flag("Emitting",          &ParticleSystemComponent::bEmitting);
-        Props.Field("Max Particles",    &ParticleSystemComponent::MaxParticles);
-        Props.Field("Spawn Rate",       &ParticleSystemComponent::SpawnRate);
-        Props.Field("Lifetime",         &ParticleSystemComponent::Lifetime);
-        Props.Field("Lifetime Variance", &ParticleSystemComponent::LifetimeVariance);
-        Props.Field("Emitter Radius",   &ParticleSystemComponent::EmitterRadius);
+        Props.Field("Tint",             &ParticleSystemComponent::Tint);
+        Props.Field("Spawn Rate Scale", &ParticleSystemComponent::SpawnRateScale);
+        Props.Field("Time Scale",       &ParticleSystemComponent::TimeScale);
         Props.Field("Seed",             &ParticleSystemComponent::Seed);
-
-        Props.Category("Motion");
-        Props.Field("Velocity",         &ParticleSystemComponent::Velocity);
-        Props.Field("Velocity Spread",  &ParticleSystemComponent::VelocitySpread);
-        Props.Field("Acceleration",     &ParticleSystemComponent::Acceleration);
-        Props.Field("Drag",             &ParticleSystemComponent::Drag);
-        Props.Field("Turbulence",       &ParticleSystemComponent::Turbulence);
-
-        Props.Category("Over Life");
-        Props.Field("Start Size",       &ParticleSystemComponent::StartSize);
-        Props.Field("End Size",         &ParticleSystemComponent::EndSize);
-        Props.Field("Start Color",      &ParticleSystemComponent::StartColor);
-        Props.Field("End Color",        &ParticleSystemComponent::EndColor);
-        Props.Field("Color Curve",      &ParticleSystemComponent::ColorCurve);
-        Props.Field("Fade In",          &ParticleSystemComponent::FadeIn);
-        Props.Field("Fade Out",         &ParticleSystemComponent::FadeOut);
     }
 #endif
 }

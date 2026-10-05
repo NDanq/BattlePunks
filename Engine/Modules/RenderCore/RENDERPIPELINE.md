@@ -885,12 +885,28 @@ command buffer: events opened before it end with it.
 
 ### Particles
 
-A **Particle System** component (`ParticleSystemComponent.h`) emits from its
-entity and simulates on the GPU, with compute shaders, where the backend has
-them (Vulkan; Null runs the calls and nothing else). Elsewhere it draws nothing
-and says so once.
+A **Particle System** component (`ParticleSystemComponent.h`) runs a particle
+system asset from its entity and simulates it on the GPU, with compute shaders,
+where the backend has them (Vulkan; Null runs the calls and nothing else).
+Elsewhere it draws nothing and says so once.
 
-- **Its particles** live in world space, in a ring of up to
+- **The asset** (`ParticleSystemAsset.h`, `*.nmparticle`) is up to 8 emitters,
+  each with its own mesh, material, offset and settings (spawn rate, lifetime,
+  velocity, forces, size and colour over life). It is text in every build --
+  a line per setting under each `Emitter <name>` line, unknown keys skipped --
+  so a game reads it as staged, with no cook. The editor's Particle Editor makes
+  and edits them (Editor README, "Particle Editor").
+- **The component** names one (`System`; empty runs one emitter at its
+  defaults) and says how this instance runs it: Emitting, a Tint on every
+  colour, Spawn Rate Scale, Time Scale (0 freezes it) and a Seed added to each
+  emitter's. Version 1 held one emitter's settings inline; those are read past.
+- **`ParticleSystemCache`** holds systems by path. The proxy looks its system up
+  every frame and notices a new version by its pointer, so a save (the editor
+  invalidates the path) or a `Store` (the editor's unsaved edits, a system made
+  by code) reaches every component on the next frame. Each emitter keeps its GPU
+  particles through such a change unless its Max Particles changes.
+
+- **Each emitter's particles** live in world space, in a ring of up to
   `PARTICLE_MAX_PER_SYSTEM` (2048), 32 bytes each: position and age, velocity
   and lifetime (`ParticleCommon.glsl`). A zeroed slot has never been used.
 - **Once a frame**, before any target is bound (`RenderProxy::Simulate`,
@@ -923,8 +939,9 @@ order. Opaque particles write depth as any mesh does.
 
 LightLab's yard has a flare (`SpawnFlare`): a red stick, a flame ball whose
 emissive (`FlareFlame`) flickers past 10 for Bloom, a red point light, and
-smoke (`FlareSmoke`, Translucent Unlit: soft round puffs) born red and black
-well before it fades (Color Curve 0.45).
+smoke (`Content/Particles/FlareSmoke.nmparticle` with the `FlareSmoke` material,
+Translucent Unlit: soft round puffs) born red and black well before it fades
+(Color Curve 0.45).
 
 ## GDI
 
