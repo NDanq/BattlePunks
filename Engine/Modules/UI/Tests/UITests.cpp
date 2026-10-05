@@ -113,7 +113,7 @@ static void TestRegistry()
 
     int Palette = 0;
     for(const UIWidgetType* Each : GetWidgetTypes()) { if(!Each->Palette.empty()) ++Palette; }
-    Expect(Palette == 14, "the fourteen widgets are offered in the palette");
+    Expect(Palette == 16, "the sixteen widgets are offered in the palette");
 
     const UIWidgetType* Text = FindWidgetType("Text");
     const int32_t TextProperty = Text ? Text->FindProperty("Text") : -1;
@@ -835,6 +835,59 @@ static void TestScrollBox()
     Expect(Outer && Near(Outer->ScrollOffset, 60.0f), "at its end, the outer one");
 }
 
+// === Grid and WrapBox ==========================================================
+
+static void TestGridAndWrap()
+{
+    std::printf("[grid and wrap box]\n");
+    UISystem System;
+    const UIDocumentHandle Handle = System.OpenAsset(Parse(R"XML(<UI ScaleMode="None">
+  <Canvas>
+    <Grid Name="Grid" Position="0,0" AutoSize="true" ColumnSpacing="10" RowSpacing="5">
+      <Spacer Name="A" Size="100,20"/>
+      <Spacer Name="B" Column="1" Size="50,40"/>
+      <Spacer Name="C" Row="1" ColumnSpan="2" Size="200,30" HAlign="Center"/>
+      <Spacer Name="D" Row="2" Column="1" Size="10,10" HAlign="Right" VAlign="Bottom" Margin="0,0,2,2"/>
+    </Grid>
+    <Grid Name="Uniform" Position="0,300" Size="320,100" Uniform="true" ColumnSpacing="20">
+      <Spacer Name="U0" Size="10,10"/>
+      <Spacer Name="U1" Column="1" Size="10,10"/>
+    </Grid>
+    <WrapBox Name="Wrap" Anchors="0,0.5,0,0.5" Position="0,0" Size="250,0" ItemSpacing="10" LineSpacing="4">
+      <Spacer Name="W0" Size="100,20"/>
+      <Spacer Name="W1" Size="100,30"/>
+      <Spacer Name="W2" Size="100,20"/>
+    </WrapBox>
+    <VerticalBox Name="Column" Position="600,0" Size="250,400">
+      <WrapBox Name="Wrapped" ItemSpacing="10" LineSpacing="4">
+        <Spacer Size="100,20"/><Spacer Size="100,30"/><Spacer Size="100,20"/>
+      </WrapBox>
+      <Spacer Name="After" Size="10,10"/>
+    </VerticalBox>
+  </Canvas>
+</UI>)XML", "a grid and wrap box document parses"), "Test/Grid.nmui");
+    UIDocumentInstance& Doc = *System.Find(Handle);
+    System.Update(UIVec2{ 1000, 1000 });
+    /* C (200 across both) makes the columns 100 + 20 and 50 + 20: its surplus shared. */
+    Expect(Near(RectOf(Doc, "A").X, 0) && Near(RectOf(Doc, "B").X, 130) && Near(RectOf(Doc, "A").H, 40) && Near(RectOf(Doc, "A").W, 120),
+           "columns as wide as their widest; a row as tall as its tallest (Fill)");
+    const UIRect C = RectOf(Doc, "C");
+    Expect(Near(C.Y, 45) && Near(C.X, 0) && Near(C.W, 200), "a spanning child covers the columns it spans, and the spacing");
+    Expect(Near(RectOf(Doc, "Grid").W, 120 + 10 + 70) && Near(RectOf(Doc, "Grid").H, 40 + 5 + 30 + 5 + 12),
+           "a spanning child's surplus widens the columns it spans; the grid is its tracks and spacing");
+    const UIRect D = RectOf(Doc, "D");
+    Expect(Near(D.X + D.W, 200 - 2) && Near(D.Y + D.H, 92 - 2), "a child aligns in its cell, inside its margin");
+
+    Expect(Near(RectOf(Doc, "U1").X, 170) && Near(RectOf(Doc, "U0").W, 150) && Near(RectOf(Doc, "U0").H, 100),
+           "a uniform grid shares its rectangle evenly");
+
+    const UIRect W2 = RectOf(Doc, "W2");
+    Expect(Near(RectOf(Doc, "W1").X, 110) && Near(W2.X, 0) && Near(W2.Y - RectOf(Doc, "W0").Y, 34),
+           "a wrap box wraps what does not fit, lines spaced");
+    Expect(Near(RectOf(Doc, "Wrapped").H, 54) && Near(RectOf(Doc, "After").Y, 54),
+           "its height comes from its width, right on the first frame");
+}
+
 static void TestInputAndActions()
 {
     std::printf("[input and actions]\n");
@@ -1531,6 +1584,7 @@ int main()
     TestSwitcher();
     TestInputWidgets();
     TestScrollBox();
+    TestGridAndWrap();
     TestStructureEditing();
     TestInputAndActions();
     TestScriptedActions();

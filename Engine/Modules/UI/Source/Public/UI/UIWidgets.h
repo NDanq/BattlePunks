@@ -24,6 +24,8 @@
  *   CheckBox       a box ticked on and off, its child a label beside it
  *   Slider         a thumb dragged along a track, Value from Min to Max
  *   ScrollBox      its one child, longer than it, scrolled by wheel, bar or focus
+ *   Grid           children in rows and columns (Row, Column, spans)
+ *   WrapBox        children in a row that wraps onto the next line
  *   Spacer         empty space of a size
  */
 namespace UI
@@ -323,6 +325,53 @@ namespace UI
 
         UIScrollState Scroll;
         float         DragGrab = -1.0f;   // where on the thumb it was taken, pixels; < 0 not dragging
+    };
+
+    /*
+     * Rows and columns: each child in the cells its Row, Column, RowSpan and
+     * ColumnSpan say, aligned there by its HAlign and VAlign. A column is as
+     * wide as its widest child, a row as tall as its tallest; a spanning
+     * child's surplus is shared over the tracks it spans. Uniform: every cell
+     * the size of the largest, stretched to fill the grid's rectangle -- an
+     * inventory, a level select.
+     */
+    class UI_API UIGrid : public UIWidget
+    {
+    public:
+        float RowSpacing    = 0.0f;
+        float ColumnSpacing = 0.0f;
+        bool  bUniform      = false;
+
+        UIVec2 MeasureContent(UILayoutContext& InContext) override;
+        void   ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect) override;
+
+    private:
+        /* Each column's width and row's height, from the children's desired sizes. */
+        void SizeTracks();
+
+        std::vector<float> Columns, Rows;   // kept: their capacity is reused
+    };
+
+    /*
+     * Children left to right, onto the next line when the next would not fit
+     * its width; each line as tall as its tallest. Its height comes from the
+     * width it is given, so it is laid out again once when that changes.
+     */
+    class UI_API UIWrapBox : public UIWidget
+    {
+    public:
+        float      ItemSpacing = 0.0f;   // between children on a line
+        float      LineSpacing = 0.0f;   // between lines
+        EUIJustify LineAlign   = EUIJustify::Left;
+
+        UIVec2 MeasureContent(UILayoutContext& InContext) override;
+        void   ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect) override;
+
+    private:
+        /* Its size wrapped at InWidth (0: never wraps), placing children if bInArrange. */
+        UIVec2 Flow(UILayoutContext& InContext, float InWidth, const UIRect* InArrange);
+
+        float WrapWidth = 0.0f;   // the width last arranged at
     };
 
     class UI_API UISpacer : public UIWidget

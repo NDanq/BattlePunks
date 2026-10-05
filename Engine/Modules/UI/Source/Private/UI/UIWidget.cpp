@@ -189,9 +189,13 @@ UI_DEFINE_ABSTRACT_WIDGET(UIWidget, "Widget")
     Type.Field<&UIWidget::Pivot>("Pivot", UPF_SlotCanvas | UPF_Layout).Tooltip("The point of it at Position, 0-1 of its size");
     Type.Field<&UIWidget::bAutoSize>("AutoSize", UPF_SlotCanvas | UPF_Layout).Tooltip("Its desired size instead of Size");
     Type.Field<&UIWidget::ZOrder>("ZOrder", UPF_SlotCanvas | UPF_Layout).Tooltip("Higher draws over its siblings");
-    Type.Field<&UIWidget::Margin>("Margin", UPF_SlotCanvas | UPF_SlotBox | UPF_Layout);
-    Type.Enum<&UIWidget::HAlign>("HAlign", GetEnumNames(EUIHAlign()), UPF_SlotBox | UPF_Layout);
-    Type.Enum<&UIWidget::VAlign>("VAlign", GetEnumNames(EUIVAlign()), UPF_SlotBox | UPF_Layout);
+    Type.Field<&UIWidget::Margin>("Margin", UPF_SlotCanvas | UPF_SlotBox | UPF_SlotGrid | UPF_Layout);
+    Type.Enum<&UIWidget::HAlign>("HAlign", GetEnumNames(EUIHAlign()), UPF_SlotBox | UPF_SlotGrid | UPF_Layout);
+    Type.Enum<&UIWidget::VAlign>("VAlign", GetEnumNames(EUIVAlign()), UPF_SlotBox | UPF_SlotGrid | UPF_Layout);
     Type.Field<&UIWidget::Fill>("Fill", UPF_SlotBox | UPF_Layout).Tooltip("In a box: a share of the space left; 0 its desired size");
+    Type.Field<&UIWidget::Row>("Row", UPF_SlotGrid | UPF_Layout).Tooltip("In a Grid: its row, 0 first");
+    Type.Field<&UIWidget::Column>("Column", UPF_SlotGrid | UPF_Layout);
+    Type.Field<&UIWidget::RowSpan>("RowSpan", UPF_SlotGrid | UPF_Layout).Tooltip("How many rows it covers");
+    Type.Field<&UIWidget::ColumnSpan>("ColumnSpan", UPF_SlotGrid | UPF_Layout);
 }
 }

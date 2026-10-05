@@ -756,6 +756,178 @@ namespace UI
         if(Offset != ScrollOffset) { ScrollTo(Offset); }
     }
 
+    // === Grid =====================================================================
+
+    void UIGrid::SizeTracks()
+    {
+        UIDocumentInstance* Doc = GetDocument();
+        int32_t ColumnCount = 0, RowCount = 0;
+        for(int32_t Child = FirstChild(*this); Child >= 0; Child = Doc->GetNextSibling(uint32_t(Child)))
+        {
+            const UIWidget& C = *Doc->GetWidget(uint32_t(Child));
+            if(C.Visibility == EUIVisibility::Collapsed) continue;
+            ColumnCount = std::max(ColumnCount, std::max(C.Column, 0) + std::max(C.ColumnSpan, 1));
+            RowCount    = std::max(RowCount, std::max(C.Row, 0) + std::max(C.RowSpan, 1));
+        }
+        Columns.assign(size_t(ColumnCount), 0.0f);
+        Rows.assign(size_t(RowCount), 0.0f);
+
+        /* One axis: single-track children set the sizes, then spanning ones add their surplus evenly. */
+        const auto SizeAxis = [&](std::vector<float>& Tracks, const float Spacing, const bool bColumns)
+        {
+            float Largest = 0.0f;
+            for(int Spanning = 0; Spanning < 2; ++Spanning)
+            {
+                for(int32_t Child = FirstChild(*this); Child >= 0; Child = Doc->GetNextSibling(uint32_t(Child)))
+                {
+                    const UIWidget& C = *Doc->GetWidget(uint32_t(Child));
+                    if(C.Visibility == EUIVisibility::Collapsed) continue;
+                    const int32_t First = std::max(bColumns ? C.Column : C.Row, 0);
+                    const int32_t Span  = std::max(bColumns ? C.ColumnSpan : C.RowSpan, 1);
+                    if((Span > 1) != (Spanning == 1)) continue;
+                    const UIVec2& Desired = Doc->GetDesiredSize(uint32_t(Child));
+                    const float Need = bColumns ? Desired.X + C.Margin.Left + C.Margin.Right : Desired.Y + C.Margin.Top + C.Margin.Bottom;
+                    Largest = std::max(Largest, (Need - Spacing * float(Span - 1)) / float(Span));
+                    float Have = Spacing * float(Span - 1);
+                    for(int32_t At = First; At < First + Span; ++At) { Have += Tracks[size_t(At)]; }
+                    if(Need > Have)
+                    {
+                        const float Each = (Need - Have) / float(Span);
+                        for(int32_t At = First; At < First + Span; ++At) { Tracks[size_t(At)] += Each; }
+                    }
+                }
+            }
+            if(bUniform) { std::fill(Tracks.begin(), Tracks.end(), Largest); }
+        };
+        SizeAxis(Columns, ColumnSpacing, true);
+        SizeAxis(Rows, RowSpacing, false);
+    }
+
+    UIVec2 UIGrid::MeasureContent(UILayoutContext& InContext)
+    {
+        UIDocumentInstance* Doc = GetDocument();
+        for(int32_t Child = FirstChild(*this); Child >= 0; Child = Doc->GetNextSibling(uint32_t(Child))) { InContext.Measure(uint32_t(Child)); }
+        SizeTracks();
+        const auto Total = [](const std::vector<float>& InTracks, const float InSpacing)
+        {
+            float Sum = 0.0f;
+            for(const float Each : InTracks) { Sum += Each; }
+            return Sum + InSpacing * float(std::max(int(InTracks.size()) - 1, 0));
+        };
+        return UIVec2{ Total(Columns, ColumnSpacing), Total(Rows, RowSpacing) };
+    }
+
+    void UIGrid::ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect)
+    {
+        UIDocumentInstance* Doc = GetDocument();
+        SizeTracks();
+        if(bUniform && !Columns.empty() && !Rows.empty())
+        {
+            /* Every cell the same, sharing the grid's rectangle. */
+            const float W = std::max((InRect.W - ColumnSpacing * float(Columns.size() - 1)) / float(Columns.size()), 0.0f);
+            const float H = std::max((InRect.H - RowSpacing * float(Rows.size() - 1)) / float(Rows.size()), 0.0f);
+            std::fill(Columns.begin(), Columns.end(), W);
+            std::fill(Rows.begin(), Rows.end(), H);
+        }
+        const auto Span = [](const std::vector<float>& InTracks, const float InSpacing, const int32_t InFirst, const int32_t InCount,
+                             float& OutStart, float& OutLength)
+        {
+            OutStart = 0.0f;
+            for(int32_t At = 0; At < InFirst && At < int32_t(InTracks.size()); ++At) { OutStart += InTracks[size_t(At)] + InSpacing; }
+            OutLength = InSpacing * float(InCount - 1);
+            for(int32_t At = InFirst; At < InFirst + InCount && At < int32_t(InTracks.size()); ++At) { OutLength += InTracks[size_t(At)]; }
+        };
+        for(int32_t Child = FirstChild(*this); Child >= 0; Child = Doc->GetNextSibling(uint32_t(Child)))
+        {
+            const UIWidget& C = *Doc->GetWidget(uint32_t(Child));
+            if(C.Visibility == EUIVisibility::Collapsed)
+            {
+                InContext.Arrange(uint32_t(Child), UIRect{ InRect.X, InRect.Y, 0.0f, 0.0f });
+                continue;
+            }
+            UIRect Cell;
+            Span(Columns, ColumnSpacing, std::max(C.Column, 0), std::max(C.ColumnSpan, 1), Cell.X, Cell.W);
+            Span(Rows, RowSpacing, std::max(C.Row, 0), std::max(C.RowSpan, 1), Cell.Y, Cell.H);
+            Cell.X += InRect.X;
+            Cell.Y += InRect.Y;
+            InContext.Arrange(uint32_t(Child), AlignInSlot(C, Doc->GetDesiredSize(uint32_t(Child)), Cell));
+        }
+    }
+
+    // === WrapBox ==================================================================
+
+    UIVec2 UIWrapBox::Flow(UILayoutContext& InContext, const float InWidth, const UIRect* InArrange)
+    {
+        UIDocumentInstance* Doc = GetDocument();
+        UIVec2  Size;
+        bool    bAnyLine  = false;
+        int32_t LineFirst = FirstChild(*this);
+        while(LineFirst >= 0)
+        {
+            /* A line: as many as fit (at least one). */
+            float   LineW = 0.0f, LineH = 0.0f;
+            int32_t Next  = LineFirst, Count = 0;
+            for(; Next >= 0; Next = Doc->GetNextSibling(uint32_t(Next)))
+            {
+                const UIWidget& C = *Doc->GetWidget(uint32_t(Next));
+                if(C.Visibility == EUIVisibility::Collapsed) continue;
+                const UIVec2& D = Doc->GetDesiredSize(uint32_t(Next));
+                const float W = D.X + C.Margin.Left + C.Margin.Right, H = D.Y + C.Margin.Top + C.Margin.Bottom;
+                const float With = LineW + (Count > 0 ? ItemSpacing : 0.0f) + W;
+                if(Count > 0 && InWidth > 0.0f && With > InWidth) break;
+                LineW = With;
+                LineH = std::max(LineH, H);
+                ++Count;
+            }
+            const float Top = bAnyLine ? Size.Y + LineSpacing : 0.0f;
+            if(InArrange)
+            {
+                float X = InArrange->X;
+                if(LineAlign == EUIJustify::Center)     { X += (InArrange->W - LineW) * 0.5f; }
+                else if(LineAlign == EUIJustify::Right) { X += InArrange->W - LineW; }
+                for(int32_t Child = LineFirst; Child != Next; Child = Doc->GetNextSibling(uint32_t(Child)))
+                {
+                    const UIWidget& C = *Doc->GetWidget(uint32_t(Child));
+                    const UIVec2& D = Doc->GetDesiredSize(uint32_t(Child));
+                    if(C.Visibility == EUIVisibility::Collapsed)
+                    {
+                        InContext.Arrange(uint32_t(Child), UIRect{ X, InArrange->Y + Top, 0.0f, 0.0f });
+                        continue;
+                    }
+                    const float W = D.X + C.Margin.Left + C.Margin.Right;
+                    InContext.Arrange(uint32_t(Child), AlignInSlot(C, D, UIRect{ X, InArrange->Y + Top, W, LineH }));
+                    X += W + ItemSpacing;
+                }
+            }
+            if(Count > 0)
+            {
+                Size.X   = std::max(Size.X, LineW);
+                Size.Y   = Top + LineH;
+                bAnyLine = true;
+            }
+            LineFirst = Next;
+        }
+        return Size;
+    }
+
+    UIVec2 UIWrapBox::MeasureContent(UILayoutContext& InContext)
+    {
+        UIDocumentInstance* Doc = GetDocument();
+        for(int32_t Child = FirstChild(*this); Child >= 0; Child = Doc->GetNextSibling(uint32_t(Child))) { InContext.Measure(uint32_t(Child)); }
+        return Flow(InContext, WrapWidth, nullptr);
+    }
+
+    void UIWrapBox::ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect)
+    {
+        if(InRect.W != WrapWidth)
+        {
+            /* Its height depends on this width: measured again (UIDocumentInstance::Layout's next pass). */
+            WrapWidth = InRect.W;
+            GetDocument()->MarkLayoutDirty();
+        }
+        Flow(InContext, InRect.W, &InRect);
+    }
+
     UIVec2 UISpacer::MeasureContent(UILayoutContext& /*InContext*/)
     {
         return Size;
@@ -914,6 +1086,24 @@ namespace UI
         Type.Brush<&UIScrollBox::ThumbHovered>("ThumbHovered");
         Type.Category("Events");
         Type.Action<&UIScrollBox::OnScrolled>("OnScrolled").Tooltip("$value is the offset");
+    }
+
+    UI_DEFINE_WIDGET(UIGrid, UIWidget, "Grid")
+    {
+        Type.Palette("Layout").Children(-1);
+        Type.Category("Layout");
+        Type.Field<&UIGrid::RowSpacing>("RowSpacing", UPF_Layout);
+        Type.Field<&UIGrid::ColumnSpacing>("ColumnSpacing", UPF_Layout);
+        Type.Field<&UIGrid::bUniform>("Uniform", UPF_Layout).Tooltip("Every cell the size of the largest, filling the grid");
+    }
+
+    UI_DEFINE_WIDGET(UIWrapBox, UIWidget, "WrapBox")
+    {
+        Type.Palette("Layout").Children(-1);
+        Type.Category("Layout");
+        Type.Field<&UIWrapBox::ItemSpacing>("ItemSpacing", UPF_Layout);
+        Type.Field<&UIWrapBox::LineSpacing>("LineSpacing", UPF_Layout);
+        Type.Enum<&UIWrapBox::LineAlign>("LineAlign", GetEnumNames(EUIJustify()), UPF_Layout);
     }
 
     UI_DEFINE_WIDGET(UISpacer, UIWidget, "Spacer")

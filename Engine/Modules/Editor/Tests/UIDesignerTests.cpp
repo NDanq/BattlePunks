@@ -224,6 +224,16 @@ namespace
         }
 
         Expect(Hierarchy.topLevelItemCount() == 1 && Hierarchy.topLevelItem(0)->childCount() == 2, "the hierarchy is the document's tree");
+
+        /* A Grid's child: the Grid slot (Row, Column, spans, alignment), no Fill or Anchors. */
+        Design.Select(0);
+        const int Grid = Design.AddWidget(QStringLiteral("Grid"), 0, -1);
+        const int Cell = Design.AddWidget(QStringLiteral("Button"), Grid, -1);
+        Design.Select(Cell);
+        PumpFor(30);
+        Expect(Details.FindEditor(QStringLiteral("Row")) && Details.FindEditor(QStringLiteral("ColumnSpan")) && Details.FindEditor(QStringLiteral("HAlign"))
+               && !Details.FindEditor(QStringLiteral("Fill")) && !Details.FindEditor(QStringLiteral("Anchors")),
+               "a Grid child shows the Grid slot");
     }
 
     void TestUIGraph(const QString& InDir)
