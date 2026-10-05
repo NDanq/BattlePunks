@@ -52,7 +52,9 @@ next Play. Without it (a Client build has no cooked copy unless one is put in
 ExportLevel=<path>` in an editor build writes that code-built scene out. Mouse
 looks, WASD moves, E/Q (or Space/Ctrl) rise and sink, Shift is faster, T cycles
 the sun's shadow technique, F toggles shadows and L switches between baked and
-live lighting. Escape frees the mouse; a left click takes it back.
+live lighting. Escape (or the gamepad's Start) pauses under a menu
+(`Content/UI/PauseMenu.nmui`, Engine/Modules/UI/README.md): Resume, Escape
+again or the pad's East goes back to flying, Quit ends the game.
 
 Two post process volumes (`Content/PostProcess`, RENDERPIPELINE.md's "Post
 process") cover the yard. `Global.pp.nmgraph` has no Bounds, so it applies
