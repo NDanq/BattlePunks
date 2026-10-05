@@ -599,6 +599,15 @@ namespace UI
     void UISystem::Update(const UIVec2& InViewportPixels)
     {
         Viewport = InViewportPixels;
+
+        /* Actions queued since input -- a document opened this frame queues
+         * its graph's OnOpen -- run before anything is painted, so a menu's
+         * first frame already shows what OnOpen put in the store. */
+        if(!Queue.empty())
+        {
+            RunQueuedActions();
+            for(const auto& Each : Documents) { Each->Instance->ApplyBindings(Store); }
+        }
         for(const auto& Each : Documents)
         {
             UIDocumentInstance& Doc = *Each->Instance;
