@@ -13,6 +13,8 @@
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Public/UI/UIAction.h"
+#include "Public/UI/UISystem.h"
 
 #include <algorithm>
 #include <cmath>
@@ -355,6 +357,33 @@ namespace
     }
 }
 
+/*
+ * The pause menu: Escape (or Start) opens it and pauses the World; Resume,
+ * Escape again or the pad's East button close it (the document's OnBack).
+ * Its buttons name the native action below and the engine's Game.Quit.
+ */
+namespace
+{
+    const char* const PauseMenuPath = "Content/UI/PauseMenu.nmui";
+
+    void ResumeFromPause(const UI::UIActionContext& InContext)
+    {
+        auto* Session = static_cast<NimbleEngine::GameSession*>(InContext.HostData);
+        if(!Session)
+        {
+            return;
+        }
+        Session->GetUI().Close(PauseMenuPath);
+        Session->SetPaused(false);
+        Session->SetMouseCaptured(true);   // back to flying
+    }
+}
+
+UI_DEFINE_ACTIONS(LightLab)
+{
+    Actions.Add("Resume", &ResumeFromPause, "Closes the pause menu, resumes and takes the mouse back");
+}
+
 class LightLabGameMode : public NimbleEngine::IGameMode
 {
 public:
@@ -369,13 +398,12 @@ public:
 
     void OnStart() override
     {
-        /* Mouse-look needs the cursor held; Escape lets it go, a click takes it back. */
+        /* Mouse-look needs the cursor held; the pause menu lets it go, a click takes it back. */
         Session->SetMouseCaptured(true);
-        bMouseCaptured = true;
 
         CORE_LOG("[LightLab] fly with WASD + mouse, E/Q up and down, Shift to boost; "
                  "T cycles the sun's shadow technique, F toggles shadows, L switches baked and live lighting, "
-                 "Escape releases the mouse")
+                 "Escape pauses")
     }
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
@@ -404,15 +432,13 @@ public:
                 ToggleBakedLighting();
             }
 
-            if(bMouseCaptured && Input->WasPressed("ReleaseMouse"))
+            if(Input->WasPressed("Pause"))
             {
-                Session->SetMouseCaptured(false);
-                bMouseCaptured = false;
+                OpenPauseMenu();
             }
-            else if(!bMouseCaptured && Input->WasPressed("CaptureMouse"))
+            else if(!Session->IsMouseCaptured() && Input->WasPressed("CaptureMouse"))
             {
                 Session->SetMouseCaptured(true);
-                bMouseCaptured = true;
             }
         }
 
@@ -446,6 +472,20 @@ public:
     }
 
 private:
+    /* Paused under the menu, the cursor free for it. Without the menu (a
+     * Client build with nothing cooked) Escape only frees the mouse, as it
+     * used to: a pause nothing can resume would be a hang. */
+    void OpenPauseMenu()
+    {
+        Session->SetMouseCaptured(false);
+        if(Session->GetUI().Open(PauseMenuPath) == UI::UI_DOCUMENT_INVALID)
+        {
+            CORE_LOG_WARN(std::string("[LightLab] no pause menu (") + PauseMenuPath + "); the mouse is free, a click takes it back")
+            return;
+        }
+        Session->SetPaused(true);
+    }
+
     /* Standard -> Modulated -> Cascaded -> Standard on the sun. */
     void CycleSunTechnique(GameCore::World& InWorld)
     {
@@ -499,7 +539,6 @@ private:
     GameCore::EntityID PlayerEntity;
     GameCore::EntityID SunEntity;
 
-    bool     bMouseCaptured    = false;
     double   ElapsedSeconds    = 0.0;
     double   LastReportSeconds = 0.0;
     uint64_t TicksSinceReport  = 0;

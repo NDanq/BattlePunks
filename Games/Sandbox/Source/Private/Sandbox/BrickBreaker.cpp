@@ -18,6 +18,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
+#include "Public/UI/UISystem.h"
 #include "Public/Sandbox/SandboxScripting.h"
 
 #include <algorithm>
@@ -317,6 +318,16 @@ namespace
             CORE_LOG("[BrickBreaker] " + std::to_string(State->BricksRemaining) + " bricks; MoveX steers, Jump launches"
                      + (GBrickBreakerAutoPlay.GetInt() != 0 ? " (AutoPlay on)" : ""))
             Session->SetPhase(Phases::Serving);
+
+            /* The HUD reads the session's Player0.Score, Player0.Lives and
+             * Game.Phase (GameSession::GetUI). The menu holds the game paused
+             * until Play (Content/UI/MainMenu.lua) -- not when it plays itself. */
+            Session->GetUI().Open("Content/UI/HUD.nmui");
+            if(GBrickBreakerAutoPlay.GetInt() == 0 && RunSeconds <= 0.0
+               && Session->GetUI().Open("Content/UI/MainMenu.nmui") != UI::UI_DOCUMENT_INVALID)
+            {
+                Session->SetPaused(true);
+            }
         }
 
         void OnTick(const NimbleEngine::FrameContext& InFrame) override

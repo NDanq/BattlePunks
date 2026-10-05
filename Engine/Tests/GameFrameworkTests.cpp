@@ -24,6 +24,7 @@
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Public/UI/UISystem.h"
 
 using namespace NimbleEngine;
 
@@ -390,6 +391,144 @@ static void TestLevelByWorldFile()
     UnregisterLevel(Code);
 }
 
+/* For the UI test: gameplay's own binding of the left button. */
+NIMBLE_DEFINE_INPUT_MAP(UITest)
+{
+    Map.Action("Fire", "Mouse.Left");
+    Map.Action("Jump", "Space");
+}
+
+namespace
+{
+    /* A host whose devices the test drives. */
+    class InputHost : public IGameHost
+    {
+    public:
+        void     SetFrameRateLimit(uint32_t) override {}
+        uint32_t GetFrameRateLimit() const override { return 0; }
+        const InputState& GetInput() const override { return Input; }
+
+        InputState Input;
+    };
+
+    /* A widget description, by type and properties as text. */
+    UI::UIWidgetDesc Widget(const char* InType, const int32_t InParent, std::vector<UI::UIPropertyText> InProperties)
+    {
+        UI::UIWidgetDesc Desc;
+        Desc.Type       = InType;
+        Desc.Parent     = InParent;
+        Desc.Properties = std::move(InProperties);
+        return Desc;
+    }
+
+    void WorldTicks(GameCore::World&, float, void* InUserData) { ++*static_cast<int*>(InUserData); }
+
+    void TestSessionUI()
+    {
+        std::printf("[session UI]\n");
+        InputHost              Host;
+        GameCore::ScriptEngine Scripts;
+        RenderCore::Renderer   Rendering;   // not running: nothing is drawn, the UI still works
+        Scripts.Initialize();
+        auto* Session = new GameSession(Host, Scripts, Rendering);
+        TestLevel Level;
+        Expect(Session->LoadLevel(Level), "the level loads");
+
+        int Ticks = 0;
+        Session->GetWorld().RegisterSystem("Test.Ticks", GameCore::TP_PostUpdate, &WorldTicks, &Ticks);
+        GameCore::Entity Player = Session->GetWorld().CreateEntity("Shooter");
+        InputComponent Controls;
+        std::snprintf(Controls.Map, sizeof(Controls.Map), "%s", "UITest");
+        Player.AddComponent(Controls);
+
+        uint64_t FrameNumber = 1;
+        const auto Frame = [&](const auto& InInput)
+        {
+            Host.Input.BeginFrame(FrameNumber);
+            InInput(Host.Input);
+            FrameContext Context;
+            Context.DeltaSeconds   = 0.016;
+            Context.FrameNumber    = FrameNumber++;
+            Context.ViewportPixels = EngineCore::Size(1920, 1080);
+            Session->Tick(Context);
+        };
+        const auto Nothing = [](InputState&) {};
+        const InputKey Left = FindInputKey("Mouse.Left"), Escape = FindInputKey("Escape"), Space = FindInputKey("Space");
+
+        /* A pause menu: a button that pauses (to see it run) and Back that resumes. */
+        auto Menu = std::make_shared<UI::UIDocumentAsset>();
+        Menu->Settings.InputMode = UI::EUIInputMode::UIOnly;
+        Menu->Settings.OnBack    = "Native:Game.Resume";
+        Menu->Widgets.push_back(Widget("Canvas", -1, {}));
+        Menu->Widgets.push_back(Widget("Button", 0, { { "Name", "Pause" }, { "Position", "100,100" }, { "Size", "200,100" },
+                                                      { "OnClick", "Native:Game.Pause" } }));
+        Expect(Session->GetUI().OpenAsset(Menu, "Test/Pause.nmui") != UI::UI_DOCUMENT_INVALID, "a menu opens in the session's UI");
+        Frame(Nothing);   // laid out and painted
+
+        Frame([&](InputState& In) { In.MoveMouse(200, 150, 0, 0); In.Press(Left); });
+        const InputComponent* Seen = Player.GetComponent<InputComponent>();
+        Expect(!Session->GetInput().IsDown(Left) && Seen && !Seen->IsDown("Fire"),
+               "a press on the menu's button does not reach the game");
+        Frame([&](InputState& In) { In.Release(Left); });
+        Expect(Session->IsPaused(), "the click ran Native:Game.Pause");
+        Expect(Seen && !Seen->WasPressed("Fire") && !Seen->WasReleased("Fire"), "nor did the click's release reach it");
+
+        const int TicksWhenPaused = Ticks;
+        Frame(Nothing);
+        Frame(Nothing);
+        Expect(Ticks == TicksWhenPaused, "paused, the World does not tick");
+
+        Frame([&](InputState& In) { In.Press(Escape); });
+        Expect(!Session->IsPaused(), "Escape (the UI map's Back) ran the menu's OnBack: resumed");
+        Expect(!Session->GetInput().WasPressed(Escape), "the Escape the menu took is not the game's");
+        Frame([&](InputState& In) { In.Release(Escape); });
+        Expect(Ticks > TicksWhenPaused, "resumed, the World ticks again");
+
+        /* While a UIOnly menu is open the keyboard is the menu's. */
+        Frame([&](InputState& In) { In.Press(Space); });
+        Expect(Seen && !Seen->WasPressed("Jump"), "a UIOnly document takes the keyboard from the game");
+        Frame([&](InputState& In) { In.Release(Space); });
+
+        /* A HUD: clicks outside its widgets are the game's. */
+        Session->GetUI().Close("Test/Pause.nmui");
+        auto Hud = std::make_shared<UI::UIDocumentAsset>();
+        Hud->Widgets.push_back(Widget("Canvas", -1, {}));
+        Hud->Widgets.push_back(Widget("Border", 0, { { "Name", "Panel" }, { "Size", "300,80" } }));
+        Hud->Widgets.push_back(Widget("Text", 0, { { "Name", "Lives" }, { "Position", "0,100" }, { "Text", "Lives: {Bind:Player0.Lives}" } }));
+        Hud->Widgets.push_back(Widget("Button", 0, { { "Name", "Close" }, { "Position", "500,0" }, { "Size", "100,50" },
+                                                     { "OnClick", "Native:UI.Close" } }));
+        Session->GetUI().OpenAsset(Hud, "Test/HUD.nmui");
+        Frame(Nothing);
+        Frame([&](InputState& In) { In.MoveMouse(1000, 800, 0, 0); In.Press(Left); });
+        Frame(Nothing);   // the World resolves last frame's
+        Expect(Seen && Seen->IsDown("Fire"), "outside a HUD's widgets the game fires");
+        Frame([&](InputState& In) { In.Release(Left); In.MoveMouse(100, 40, 0, 0); In.Press(Left); });
+        Frame(Nothing);
+        Expect(Seen && !Seen->IsDown("Fire"), "over its panel, the HUD takes the click");
+        Frame([&](InputState& In) { In.Release(Left); });
+
+        const UI::UIValue* Lives = Session->GetUI().GetValue("Player0.Lives");
+        Expect(Lives && Lives->AsNumber() == 3.0, "the session publishes Player0.Lives");
+        UI::UIDocumentInstance* HudDoc = Session->GetUI().Find("Test/HUD.nmui");
+        Expect(HudDoc && HudDoc->GetProperty(*HudDoc->FindWidget("Lives"), "Text").AsString() == "Lives: 3", "and a HUD binds it");
+        const UI::UIValue* Phase = Session->GetUI().GetValue("Game.Phase");
+        Expect(Phase && Phase->AsString() == "Lobby", "and Game.Phase");
+
+        /* A button whose action closes its own document. */
+        Frame([&](InputState& In) { In.MoveMouse(550, 25, 0, 0); In.Press(Left); });
+        Frame([&](InputState& In) { In.Release(Left); });
+        Expect(!Session->GetUI().IsOpen("Test/HUD.nmui"), "Native:UI.Close from its own button closes it, safely");
+
+        /* A level change closes the level's documents. */
+        Session->GetUI().OpenAsset(Hud, "Test/HUD.nmui");
+        Session->UnloadLevel();
+        Expect(Session->GetUI().GetDocumentCount() == 0, "unloading the level closes its documents");
+
+        delete Session;
+        Scripts.Shutdown();
+    }
+}
+
 int main()
 {
     std::printf("NimbleEngineGameFrameworkTests\n");
@@ -400,6 +539,7 @@ int main()
     TestStartupScript();
     TestSave();
     TestLevelByWorldFile();
+    TestSessionUI();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

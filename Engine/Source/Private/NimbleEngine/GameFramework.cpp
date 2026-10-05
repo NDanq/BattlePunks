@@ -35,6 +35,19 @@ namespace
 
 GAMECORE_DEFINE_SCRIPT_LIBRARY(Game)
 {
+    // === Pause =================================================================
+
+    Lib.Function("SetPaused", [](GameCore::ScriptCall& Call)
+    {
+        if(NimbleEngine::GameSession* Session = SessionFor(Call)) { Session->SetPaused(Call.GetBool(1)); }
+    }, "Paused:bool").Tooltip("Stops the World (and the mode's OnTick); the UI keeps running");
+
+    Lib.Pure("IsPaused", [](GameCore::ScriptCall& Call)
+    {
+        NimbleEngine::GameSession* Session = SessionFor(Call);
+        Call.PushBool(Session && Session->IsPaused());
+    }, "-> Paused:bool");
+
     // === Phase =================================================================
 
     Lib.Pure("GetPhase", [](GameCore::ScriptCall& Call)

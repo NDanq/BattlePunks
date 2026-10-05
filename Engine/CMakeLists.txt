@@ -355,6 +355,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NimbleEngine.cpp
         Source/Private/NimbleEngine/GameSession.cpp
         Source/Private/NimbleEngine/GameFramework.cpp
+        Source/Private/NimbleEngine/GameUI.cpp
         Source/Private/NimbleEngine/PlayerState.cpp
         Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Level.cpp
@@ -421,6 +422,11 @@ endif()
 
 if(TARGET RenderCore)
     target_link_libraries(NimbleEngine PUBLIC RenderCore::RenderCore)
+endif()
+
+# A session's UISystem (GameSession::GetUI) is game-facing: PUBLIC.
+if(TARGET UI)
+    target_link_libraries(NimbleEngine PUBLIC UI::UI)
 endif()
 
 # winmm, for timeBeginPeriod/timeEndPeriod in the frame limiter. Without raising

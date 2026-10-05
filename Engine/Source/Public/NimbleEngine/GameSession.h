@@ -24,6 +24,11 @@ namespace RenderCore
     class Renderer;
 }
 
+namespace UI
+{
+    class UISystem;
+}
+
 namespace NimbleEngine
 {
     class GameSession;
@@ -211,14 +216,39 @@ namespace NimbleEngine
         GameCore::EntityID GetPlayer(uint8_t InIndex);
         uint32_t           GetPlayerCount();
 
-        /* This frame's devices (Input.h). Gameplay usually reads an
-         * InputComponent, resolved from this at the start of TP_PrePhysics. */
-        const InputState& GetInput() const { return Host.GetInput(); }
+        /* This frame's devices (Input.h), less what the UI took (GetUI).
+         * Gameplay usually reads an InputComponent, resolved from this at the
+         * start of TP_PrePhysics. */
+        const InputState& GetInput() const { return FilteredInput; }
 
         /* Hides and holds the cursor, for mouse-look; Mouse.DeltaX keeps
          * coming past the screen's edge. The host lets go when the run ends. */
         void SetMouseCaptured(bool bInCaptured) { Host.SetMouseCaptured(bInCaptured); }
         bool IsMouseCaptured() const            { return Host.IsMouseCaptured(); }
+
+        // === The UI (Modules/UI/README.md) ======================================
+
+        /*
+         * This session's documents: opened from code (GetUI().Open), Lua
+         * (UI.Open) or another document's actions, drawn over the default
+         * scene. Each Tick gives it the input first and the game what it left
+         * -- GetInput, the Input library and InputComponents all read that
+         * (INPUT.md, "The UI") -- then updates it after the World. Its data
+         * store has Player<N>.Score, Player<N>.Lives and Game.Phase, for
+         * {Bind:...}. Open documents close with the session; a level change
+         * closes all but the persistent ones.
+         */
+        UI::UISystem& GetUI() { return *Interface; }
+
+        /*
+         * Paused: the World does not tick and the mode's OnTick is not called;
+         * the UI still runs, so a pause menu can resume. InputComponents keep
+         * reading this frame's input, so a key the menu consumed does not
+         * reach the game when it resumes. Also Game.SetPaused in Lua and the
+         * native actions Game.Pause, Game.Resume and Game.TogglePause.
+         */
+        void SetPaused(bool bInPaused);
+        bool IsPaused() const { return bPaused; }
 
     private:
         /* Friends, not a public setter: only SaveGame.cpp may arm a restore. */
@@ -272,6 +302,17 @@ namespace NimbleEngine
         std::vector<std::string> QueuedPhases;
 
         bool bQuitRequested = false;
+        bool bPaused        = false;
+
+        /* The UI, and what it left of the host's input this frame. */
+        UI::UISystem* Interface = nullptr;
+        InputState    FilteredInput;
+        std::string   PublishedPhase;
+
+        /* The host's input to the UI, and what it took out of FilteredInput. */
+        void RouteInputThroughUI();
+        /* Player<N>.Score, Player<N>.Lives and Game.Phase into the UI's data store. */
+        void PublishUIValues();
 
         uint32_t LoadCount = 0;
     };
