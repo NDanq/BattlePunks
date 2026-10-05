@@ -238,6 +238,7 @@ OnClick="Lua:Menu.Select('Arena', 2); Event:Menu.Changed($self)"
 | `Native:Group.Name` | A C++ function registered with `UI_DEFINE_ACTIONS(Group) { Actions.Add("Name", &Fn); }`. A game module's actions unregister when it unloads. `UIActionContext` provides the system, the document, the sender, the arguments and `HostData` (the `GameSession*`). |
 | `Lua:Path.To.Fn` | A Lua function found by its global path (`ScriptEngine::CallFunction`). Script libraries are globals, so `Lua:Game.SetPaused(false)` works too. |
 | `Event:Name` | An `EventBus` event on the session's World. Lua listens with `Events.On`. |
+| `Graph:Handler` | A UI Event in the document's logic graph, on that document's own instance of it: `self:Handler(value, sender)`. No arguments; see "Logic graphs". |
 
 - Arguments can be numbers, `'strings'`, `true` and `false`, plus two tokens:
   `$self` is the widget's name, and `$value` is its value (a slider's
@@ -339,10 +340,67 @@ The `UI` library acts on the session's system:
 | `UI.SetFocus(path, widget)` | Moves focus to the widget. |
 | `UI.ShowPage(path, switcher, page)` | Shows a Switcher's page, by name or number. |
 | `UI.SetNumber`, `UI.SetString`, `UI.SetBool` | Set data store values. |
-| `UI.GetNumber`, `UI.GetString` | Read data store values. |
+| `UI.GetNumber`, `UI.GetString`, `UI.GetBool` | Read data store values. |
 | `UI.PlayAnimation(path, name)` | Reserved. Returns false. |
 
 The `Game` library also gains `Game.SetPaused(bool)` and `Game.IsPaused()`.
+
+The `Config` library (GameCore) reads and writes the engine's config vars by
+`"Section.Key"`, which is what a settings menu changes: `Config.GetBool`,
+`GetNumber`, `GetString`, the matching `Set*` (the var's callback fires, as an
+`.ini` would), and `Config.Has`. They are typed: `GetBool` of a float var is a
+script error.
+
+## Logic graphs
+
+A document's logic can be a node graph instead of C++ or Lua: a
+`*.ui.nmgraph` (the NodeGraph module's UI schema), named by the document's
+`Logic` setting.
+
+```xml
+<UI ... Logic="Content/UI/PauseMenu.ui.nmgraph" OnBack="Graph:Document_OnBack">
+  <Button Name="Resume" OnClick="Graph:Resume_OnClick"/>
+  <CheckBox Name="Shadows" Checked="{Bind:LightLab.Shadows}" OnChanged="Graph:Shadows_OnChanged"/>
+```
+
+**The graph.** It has the script graph's nodes: flow, maths, variables, graph
+functions, On Event and Emit, the World, and every script library (`UI`,
+`Config`, `Game`, `Input`, a game's own). It leaves out the nodes that need an
+entity. In their place it has:
+
+| Node | Generated as |
+|---|---|
+| On Document Open | `OnOpen`, run once after the document opens (after that frame's input). |
+| On Document Close | `OnClose`, run as it closes. |
+| On Tick | `OnTick(dt)`, every frame while it is open, paused or not. Only a graph that has one costs anything per frame. |
+| UI Event (`Handler`) | `<Handler>(Value, Sender)`, called by `Graph:<Handler>`. `Value` is `$value`, a bool for a check box (`ValueType`). `Sender` is the widget's name. |
+| This Document | `self.Document`, its path: the first argument of the UI library's functions. |
+| Close This Document; Set Widget Text / Visible / Enabled / Focus; Show Page | The UI library's calls on this document, with the widget chosen by name. |
+
+On Event handlers listen while the document is open. A graph's variables are
+per document, because each open document has its own instance (`self`). So
+two open copies of a document keep separate state.
+
+**At runtime** (`UISystem`), opening a document instances its graph's stored
+Lua as a script object (`ScriptEngine::CreateObject`). It queues `OnOpen` and
+runs `Graph:` actions on that object. On close it runs `OnClose` and releases
+the object. A hot reload of the document, including a saved graph, rebuilds
+the object. A graph without a script engine (the designer's preview) does not
+run; its `Graph:` actions are logged. Games stage `Content/UI/*.ui.nmgraph`
+for every target: the graph carries its Lua, so a Client build needs no cook.
+
+**In the designer**, an action field's **+ > Graph handler** does the rest:
+
+- It makes the logic graph if there is none (`<Document>.ui.nmgraph` beside
+  it, set as `Logic`).
+- It finds or adds the UI Event `<Widget>_<Event>` (`Document_OnBack` for the
+  document's own events), opens the Graph Editor on it, and adds
+  `Graph:<Handler>` to the field.
+- A field's arrow button opens the handler it names. A field naming a handler
+  the graph lacks is outlined in orange.
+- The document's settings have `Logic`, with **Create** or **Open**.
+- Saving the graph reloads its document in Play-in-Editor.
+- Handlers are named, so renaming a widget breaks nothing.
 
 ## In a game
 
@@ -359,20 +417,23 @@ The `Game` library also gains `Game.SetPaused(bool)` and `Game.IsPaused()`.
 keeps running, so a pause menu can resume the game. Documents close when their
 level unloads, unless they were opened as persistent.
 
-LightLab's pause menu is the complete example:
+LightLab's pause menu is the complete example. Its logic is a graph,
+`Content/UI/PauseMenu.ui.nmgraph`; the game's C++ only opens it.
 
-- `LightLabGame.cpp` opens it on `Pause` (Escape, or the gamepad's Start).
-- Its pages are a Switcher. The Settings button runs
-  `Native:UI.ShowPage('Pages', 'Settings')`, and `OnBack` runs
-  `Native:LightLab.Back`, which returns to the first page, or resumes from it.
-- Resume runs `Native:LightLab.Resume`, defined with `UI_DEFINE_ACTIONS(LightLab)`.
-  Quit runs `Native:Game.Quit`.
-- The Settings page has check boxes for shadows and baked lighting, and sliders
-  for look sensitivity and fly speed. Each is bound to a key
-  (`{Bind:LightLab.Shadows}`) that the game fills from its config var as the
-  menu opens. Each `OnChanged` runs `Native:LightLab.SetShadows($value)` (and
-  so on), which sets the var: the one the T/F/L keys, an `.ini` and the console
-  also set. Its Load Baked Lighting World button runs
+- `LightLabGame.cpp` opens it on `Pause` (Escape, or the gamepad's Start) and
+  pauses.
+- Its pages are a Switcher bound to `LightLab.Page`. The Settings and Back
+  buttons set the value (`Native:UI.SetValue('LightLab.Page', 1)`).
+- Its graph's On Document Open fills `LightLab.Shadows`, `LightLab.BakedLighting`,
+  `LightLab.LookSensitivity` and `LightLab.FlySpeed` from their config vars
+  (`Config.Get*`). The Settings page's check boxes and sliders bind to these
+  two-way.
+- Each `OnChanged` is `Graph:<Setting>_OnChanged`, which sets the var
+  (`Config.Set*`): the same var the T/F/L keys, an `.ini` and the console set.
+- Resume (`Graph:Resume_OnClick`) and `OnBack` (`Graph:Document_OnBack`: from
+  Settings to the first page, from there resume) call the graph function
+  Resume. It closes the menu, unpauses, and takes the mouse back.
+- Quit runs `Native:Game.Quit`. Load Baked Lighting World runs
   `Native:Game.OpenLevel('BakedLighting')`.
 
 ## Files and cooking
@@ -430,7 +491,8 @@ Open a `.nmui` from the Content Browser, or right-click and choose
     button. Italic means the value comes from a style. Plain means it is the
     type's default.
   - Bindable properties take `{Bind:...}`. Action fields offer the registered
-    native actions.
+    native actions, and a handler in the document's logic graph (see "Logic
+    graphs").
   - A bad value turns the field red and is not written.
   - With nothing selected, the panel shows the document's settings and its
     `<Styles>` as XML.
@@ -527,11 +589,12 @@ layout. Rotation will need stencil clipping, because scissors are axis-aligned.
 
 | Test | What it checks |
 |---|---|
-| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), native/Lua/Event actions, the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
+| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), native/Lua/Event/Graph actions, logic graphs (per-document instances, lifecycle, hot reload, LightLab's menu end to end), the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
 | `UI_TESTS_GPU=Vulkan UI_TESTS_DUMP=<dir> ./UITests`, from a runtime directory | Draws the shipped documents on a GPU and checks pixels. |
 | RenderCore smoke test | `UIDrawList` batching, clipping, nine-slice and packing. `NIMBLE_SMOKE_GPU=Vulkan` checks orientation, scissor, blending, the retained list, and clearing. |
 | GDI smoke test | Scissor flipping and clipping, and the dynamic mesh's append and rewind. |
 | `NimbleEngine.GameFrameworkTests` | The session's UI: clicks do not reach the game, pause and resume, OnBack, HUD pass-through, a self-closing button, published values. |
 | `NimbleEngine.InputTests` | `InputState::Consume*` and `WasInputActionPressed`. |
-| `GameCore.Smoke` | `ScriptEngine::CallFunction`. |
-| `Editor.UIDesigner` | The designer's document (undo, merging, structure, save and reload) and its details panel. |
+| `GameCore.Smoke` | `ScriptEngine::CallFunction`, script objects (`CreateObject`), the `Config` library. |
+| `NodeGraph.Tests` | The UI schema: its nodes, golden `UIMenu.lua`, the Lua run as a script object, refused handler names. |
+| `Editor.UIDesigner` | The designer's document (undo, merging, structure, save and reload), its details panel, and Graph handler (making the graph, finding a handler again, flagging a missing one). |
