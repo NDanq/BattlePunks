@@ -63,12 +63,14 @@ namespace
     bool IsColorGradient(const ParticleEmitterDesc& InEmitter) { return InEmitter.ColorMode == RenderCore::POL_Keys; }
     bool IsSizeStartEnd(const ParticleEmitterDesc& InEmitter)  { return InEmitter.SizeMode != RenderCore::POL_Keys; }
     bool IsSizeCurve(const ParticleEmitterDesc& InEmitter)     { return InEmitter.SizeMode == RenderCore::POL_Keys; }
+    bool IsBouncing(const ParticleEmitterDesc& InEmitter)      { return InEmitter.CollisionResponse == RenderCore::PCR_Bounce; }
 
     /* What decides which sections and rows show: rebuilt when it changes. */
     uint32_t ShapeOf(const ParticleEmitterDesc& InEmitter)
     {
         return uint32_t(InEmitter.Type) | uint32_t(InEmitter.SpawnMode) << 4 | uint32_t(InEmitter.Shape) << 8
-             | uint32_t(InEmitter.ColorMode) << 12 | uint32_t(InEmitter.SizeMode) << 16 | uint32_t(InEmitter.Modules) << 20;
+             | uint32_t(InEmitter.ColorMode) << 12 | uint32_t(InEmitter.SizeMode) << 16 | uint32_t(InEmitter.Modules) << 20
+             | uint32_t(InEmitter.CollisionResponse) << 28;
     }
 
     /* The sections, in the order shown: each a category of settings. One
@@ -88,6 +90,8 @@ namespace
         { "Velocity",  RenderCore::PEM_Velocity, "Each one's speed at birth: without it, they start still" },
         { "Forces",    RenderCore::PEM_Forces,   "Acceleration, drag and swirl as they live: without it, they coast" },
         { "Rotation",  RenderCore::PEM_Rotation, "Spin: without it, sprites and meshes keep their orientation" },
+        { "Collision", RenderCore::PEM_Collision, "A ground plane to bounce off or die on: without it, they fall through" },
+        { "Flipbook",  RenderCore::PEM_Flipbook, "The texture as a grid of frames played over life: without it, the whole texture" },
         { "Beam",      0, "Where a beam runs and how it jitters" },
         { "Size",      0, "Size over life" },
         { "Color",     0, "Colour and alpha over life" },
@@ -200,6 +204,10 @@ namespace
             Setting("Lifetime Variance", &ParticleEmitterDesc::LifetimeVariance, "Emission", FOR_SPAWNS,
                     "0 to 1: each lives Lifetime less up to this much of it, at random (keep a ribbon's at 0: it breaks where one dies early)"),
             Setting("Seed",              &ParticleEmitterDesc::Seed, "Emission", FOR_ALL, "Changes its random numbers (a beam's jitter)"),
+            Setting("Cull Distance",     &ParticleEmitterDesc::CullDistance, "Emission", FOR_ALL,
+                    "Beyond this distance from the view it is neither simulated nor drawn, and its particles are let go; 0 never"),
+            Switch ("Pause Offscreen",   &ParticleEmitterDesc::bPauseOffscreen, "Emission", FOR_ALL,
+                    "Stop simulating once no view has drawn it for half a second, and go on where it left off when one does"),
 
             Choice ("Shape", &ParticleEmitterDesc::Shape, "Shape", FOR_SPAWNS, "Sphere|Hemisphere|Box|Cone|Ring",
                     "Where each is born, in the entity's own axes (it turns with the entity). Sphere and Hemisphere (its +Y half): "
@@ -232,6 +240,28 @@ namespace
                     "Each starts at a random angle and spins either way"),
             Setting("Rotation Rate", &ParticleEmitterDesc::RotationRate, "Rotation", FOR_SPRITE | FOR_MESH,
                     "Degrees a second: a sprite in its own plane, a mesh about its axis"),
+
+            Choice ("Response", &ParticleEmitterDesc::CollisionResponse, "Collision", FOR_SPAWNS, "None|Bounce|Kill",
+                    "What a particle does when it reaches the plane from above: bounce off it, or die there"),
+            Setting("Height", &ParticleEmitterDesc::CollisionHeight, "Collision", FOR_SPAWNS,
+                    "The plane's height above the entity (world up); 0 at the entity"),
+            Only(Setting("Bounce", &ParticleEmitterDesc::Bounce, "Collision", FOR_SPAWNS,
+                         "0 to 1: the share of its speed into the plane it keeps, back out; 0 stops it on the plane"), &IsBouncing),
+            Only(Setting("Friction", &ParticleEmitterDesc::Friction, "Collision", FOR_SPAWNS,
+                         "0 to 1: the share of its speed along the plane it loses each bounce"), &IsBouncing),
+
+            Setting("Columns", &ParticleEmitterDesc::FlipbookColumns, "Flipbook", FOR_SPRITE | FOR_MESH,
+                    "Frames across the texture (1 to 64)"),
+            Setting("Rows", &ParticleEmitterDesc::FlipbookRows, "Flipbook", FOR_SPRITE | FOR_MESH,
+                    "Frames down the texture (1 to 64); frames run left to right, then top to bottom"),
+            Setting("Frames", &ParticleEmitterDesc::FlipbookFrames, "Flipbook", FOR_SPRITE | FOR_MESH,
+                    "How many frames it plays, from the first; 0 every one"),
+            Setting("Frame Rate", &ParticleEmitterDesc::FlipbookRate, "Flipbook", FOR_SPRITE | FOR_MESH,
+                    "Frames a second, looping; 0 plays them over its life instead (Cycles times)"),
+            Setting("Cycles", &ParticleEmitterDesc::FlipbookCycles, "Flipbook", FOR_SPRITE | FOR_MESH,
+                    "With Frame Rate 0: how many times it plays the frames over its life"),
+            Switch ("Random Start", &ParticleEmitterDesc::bFlipbookRandomStart, "Flipbook", FOR_SPRITE | FOR_MESH,
+                    "Each starts on a frame of its own, so they are not in step"),
 
             Setting("Beam End",         &ParticleEmitterDesc::BeamEnd, "Beam", FOR_BEAM,
                     "Where the beam ends, relative to the emitter in the entity's own axes (a component's Beam Target overrides it)"),
@@ -669,7 +699,7 @@ QWidget* ParticleEmitterDetailsPanel::BuildAddModuleButton()
 {
     auto* Button = new QToolButton(Content);
     Button->setText(QStringLiteral("+ Add Module"));
-    Button->setToolTip(QStringLiteral("Add an optional module -- Shape, Velocity, Forces, Rotation -- that this emitter's type uses"));
+    Button->setToolTip(QStringLiteral("Add an optional module -- Shape, Velocity, Forces, Rotation, Collision, Flipbook -- that this emitter's type uses"));
     Button->setToolButtonStyle(Qt::ToolButtonTextOnly);
     Button->setPopupMode(QToolButton::InstantPopup);
     Button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);

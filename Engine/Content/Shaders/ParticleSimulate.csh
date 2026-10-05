@@ -124,6 +124,21 @@ void main()
         Velocity *= exp(-Pa_Acceleration.w * Delta);
         P.PositionAge.xyz += Velocity * Delta;
         P.PositionAge.w   += Delta;
+
+        // The collision plane, met from above: bounce off it (losing speed into it and along it), or die there.
+        if(Pa_Collision.x > 0.5 && P.PositionAge.y < Pa_Collision.y && Velocity.y < 0.0)
+        {
+            if(Pa_Collision.x > 1.5)
+            {
+                P.PositionAge.w = P.VelocityLife.w;
+            }
+            else
+            {
+                P.PositionAge.y = Pa_Collision.y + (Pa_Collision.y - P.PositionAge.y) * Pa_Collision.z;
+                Velocity.y      = -Velocity.y * Pa_Collision.z;
+                Velocity.xz    *= 1.0 - Pa_Collision.w;
+            }
+        }
         P.VelocityLife.xyz = Velocity;
     }
     Particles[Index] = P;

@@ -132,6 +132,23 @@ namespace RenderCore
             Out.bRandomRotation = false;
             Out.RotationRate    = 0.0f;
         }
+        if(HasModule(PEM_Collision) && Type != PT_Beam)
+        {
+            Out.CollisionResponse = CollisionResponse < PCR_Count ? CollisionResponse : uint8_t(PCR_Bounce);
+            Out.CollisionPlaneY   = CollisionHeight;   // the entity's height is added where it is known (the component)
+            Out.Bounce            = std::clamp(Bounce, 0.0f, 1.0f);
+            Out.Friction          = std::clamp(Friction, 0.0f, 1.0f);
+        }
+        if(HasModule(PEM_Flipbook) && (Type == PT_Sprite || Type == PT_Mesh))
+        {
+            Out.FlipbookColumns = uint32_t(std::clamp<int32_t>(FlipbookColumns, 1, 64));
+            Out.FlipbookRows    = uint32_t(std::clamp<int32_t>(FlipbookRows, 1, 64));
+            const uint32_t All  = Out.FlipbookColumns * Out.FlipbookRows;
+            Out.FlipbookFrames  = FlipbookFrames > 0 ? std::min(uint32_t(FlipbookFrames), All) : All;
+            Out.FlipbookRate    = std::max(FlipbookRate, 0.0f);
+            Out.FlipbookCycles  = std::max(FlipbookCycles, 0.0f);
+            Out.bFlipbookRandomStart = bFlipbookRandomStart != 0;
+        }
 
         /* A gradient or curve, baked as the GPU samples it. */
         if((ColorMode == POL_Keys && ColorKeyCount > 0) || (SizeMode == POL_Keys && SizeKeyCount > 0))
@@ -314,6 +331,7 @@ namespace RenderCore
         const char* const SHAPE_NAMES[PS_Count]        = { "Sphere", "Hemisphere", "Box", "Cone", "Ring" };
         const char* const SIZE_MODE_NAMES[POL_Count]   = { "StartEnd", "Curve" };
         const char* const COLOR_MODE_NAMES[POL_Count]  = { "StartEnd", "Gradient" };
+        const char* const COLLISION_NAMES[PCR_Count]   = { "None", "Bounce", "Kill" };
     }
 
     const char* GetParticleModuleName(const uint8_t InModule)
@@ -324,6 +342,8 @@ namespace RenderCore
             case PEM_Velocity: return "Velocity";
             case PEM_Forces:   return "Forces";
             case PEM_Rotation: return "Rotation";
+            case PEM_Collision: return "Collision";
+            case PEM_Flipbook: return "Flipbook";
             default:           return nullptr;
         }
     }
@@ -504,7 +524,7 @@ namespace RenderCore
                 Start = Space == std::string::npos ? InText.size() : Space + 1;
                 if(Name.empty()) { continue; }
                 bool bKnown = false;
-                for(uint8_t Bit = 1; Bit != 0 && Bit <= PEM_Rotation; Bit = uint8_t(Bit << 1))
+                for(uint8_t Bit = 1; Bit != 0 && Bit <= PEM_Flipbook; Bit = uint8_t(Bit << 1))
                 {
                     if(Name == GetParticleModuleName(Bit)) { OutEmitter.Modules |= Bit; bKnown = true; }
                 }
@@ -516,7 +536,7 @@ namespace RenderCore
         std::string FormatModules(const ParticleEmitterDesc& InEmitter)
         {
             std::string Out;
-            for(uint8_t Bit = 1; Bit != 0 && Bit <= PEM_Rotation; Bit = uint8_t(Bit << 1))
+            for(uint8_t Bit = 1; Bit != 0 && Bit <= PEM_Flipbook; Bit = uint8_t(Bit << 1))
             {
                 if(InEmitter.HasModule(Bit)) { Out += (Out.empty() ? "" : " ") + std::string(GetParticleModuleName(Bit)); }
             }
@@ -597,11 +617,23 @@ namespace RenderCore
             NM_PARTICLE_FLOAT ("LifetimeVariance", LifetimeVariance),
             NM_PARTICLE_FLOAT ("EmitterRadius",    EmitterRadius),
             NM_PARTICLE_INT   ("Seed",             Seed),
+            NM_PARTICLE_FLOAT ("CullDistance",     CullDistance),
+            NM_PARTICLE_FLAG  ("PauseOffscreen",   bPauseOffscreen),
             NM_PARTICLE_VECTOR("Velocity",         Velocity),
             NM_PARTICLE_FLOAT ("VelocitySpread",   VelocitySpread),
             NM_PARTICLE_VECTOR("Acceleration",     Acceleration),
             NM_PARTICLE_FLOAT ("Drag",             Drag),
             NM_PARTICLE_FLOAT ("Turbulence",       Turbulence),
+            NM_PARTICLE_CHOICE("CollisionResponse", CollisionResponse, COLLISION_NAMES),
+            NM_PARTICLE_FLOAT ("CollisionHeight",  CollisionHeight),
+            NM_PARTICLE_FLOAT ("Bounce",           Bounce),
+            NM_PARTICLE_FLOAT ("Friction",         Friction),
+            NM_PARTICLE_INT   ("FlipbookColumns",  FlipbookColumns),
+            NM_PARTICLE_INT   ("FlipbookRows",     FlipbookRows),
+            NM_PARTICLE_INT   ("FlipbookFrames",   FlipbookFrames),
+            NM_PARTICLE_FLOAT ("FlipbookRate",     FlipbookRate),
+            NM_PARTICLE_FLOAT ("FlipbookCycles",   FlipbookCycles),
+            NM_PARTICLE_FLAG  ("FlipbookRandomStart", bFlipbookRandomStart),
             NM_PARTICLE_VECTOR("BeamEnd",          BeamEnd),
             NM_PARTICLE_INT   ("BeamSegments",     BeamSegments),
             NM_PARTICLE_FLOAT ("BeamNoise",        BeamNoise),

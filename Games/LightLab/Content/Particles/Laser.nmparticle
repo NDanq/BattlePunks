@@ -28,11 +28,23 @@ Emitter Glow
     LifetimeVariance 0.25
     EmitterRadius 0
     Seed 3
+    CullDistance 0
+    PauseOffscreen true
     Velocity 0,100,0
     VelocitySpread 0
     Acceleration 0,0,0
     Drag 0
     Turbulence 0
+    CollisionResponse Bounce
+    CollisionHeight 0
+    Bounce 0.4
+    Friction 0.2
+    FlipbookColumns 4
+    FlipbookRows 4
+    FlipbookFrames 0
+    FlipbookRate 0
+    FlipbookCycles 1
+    FlipbookRandomStart false
     BeamEnd 0,320,0
     BeamSegments 48
     BeamNoise 14
@@ -77,11 +89,23 @@ Emitter Core
     LifetimeVariance 0.25
     EmitterRadius 0
     Seed 3
+    CullDistance 0
+    PauseOffscreen true
     Velocity 0,100,0
     VelocitySpread 0
     Acceleration 0,0,0
     Drag 0
     Turbulence 0
+    CollisionResponse Bounce
+    CollisionHeight 0
+    Bounce 0.4
+    Friction 0.2
+    FlipbookColumns 4
+    FlipbookRows 4
+    FlipbookFrames 0
+    FlipbookRate 0
+    FlipbookCycles 1
+    FlipbookRandomStart false
     BeamEnd 0,320,0
     BeamSegments 48
     BeamNoise 14

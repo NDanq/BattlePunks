@@ -63,7 +63,8 @@ namespace RenderCore
      * removes as the Details panel adds and removes components. One left out
      * has no effect, whatever its settings hold: no Shape is a point, no
      * Velocity no initial speed, no Forces no acceleration, drag or swirl, no
-     * Rotation no spin. Rendering, Emission, Size and Color (and a beam's
+     * Rotation no spin, no Collision no plane, no Flipbook the whole texture.
+     * Rendering, Emission, Size and Color (and a beam's
      * Beam) are always there.
      */
     enum EParticleModule : uint8_t
@@ -72,7 +73,9 @@ namespace RenderCore
         PEM_Velocity = 1 << 1,   // Velocity, Velocity Spread
         PEM_Forces   = 1 << 2,   // Acceleration, Drag, Turbulence
         PEM_Rotation = 1 << 3,   // Random Rotation, Rotation Rate (sprites and meshes)
-        PEM_All      = PEM_Shape | PEM_Velocity | PEM_Forces | PEM_Rotation,
+        PEM_Collision = 1 << 4,  // a ground plane to bounce off or die on
+        PEM_Flipbook = 1 << 5,   // frames of a texture grid over life (sprites and meshes)
+        PEM_All      = PEM_Shape | PEM_Velocity | PEM_Forces | PEM_Rotation | PEM_Collision | PEM_Flipbook,
     };
 
     /* A module's name, as the file and the editor give it ("Forces"); null for a bit that is not one. */
@@ -143,11 +146,34 @@ namespace RenderCore
         float               EmitterRadius    = 0.0f;
         int32_t             Seed             = 0;
 
+        /* Beyond CullDistance from the view it is neither simulated nor drawn,
+         * its particles let go (0: never); with PauseOffscreen, it stops
+         * simulating once no view has drawn it for half a second, and goes on
+         * where it left off when one does. */
+        float               CullDistance     = 0.0f;
+        uint8_t             bPauseOffscreen  = 1;
+
         EngineCore::Vector3 Velocity{0.0, 100.0, 0.0};
         float               VelocitySpread   = 0.0f;
         EngineCore::Vector3 Acceleration{0.0, 0.0, 0.0};
         float               Drag             = 0.0f;
         float               Turbulence       = 0.0f;
+
+        /* Collision: a horizontal plane CollisionHeight above the entity (world up). */
+        uint8_t             CollisionResponse = PCR_Bounce;    // EParticleCollision: Bounce or Kill
+        float               CollisionHeight  = 0.0f;
+        float               Bounce           = 0.4f;
+        float               Friction         = 0.2f;
+
+        /* Flipbook: the material's texture as FlipbookColumns x FlipbookRows
+         * frames, left to right then top to bottom; FlipbookFrames of them (0:
+         * all), at FlipbookRate a second or FlipbookCycles times over a life. */
+        int32_t             FlipbookColumns  = 4;
+        int32_t             FlipbookRows     = 4;
+        int32_t             FlipbookFrames   = 0;
+        float               FlipbookRate     = 0.0f;
+        float               FlipbookCycles   = 1.0f;
+        uint8_t             bFlipbookRandomStart = 0;
 
         /* Beam: from the emitter to BeamEnd (in the entity's own axes, as
          * Offset), through BeamSegments points that stray up to BeamNoise. */

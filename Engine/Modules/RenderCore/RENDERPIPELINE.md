@@ -929,8 +929,8 @@ Elsewhere it draws nothing and says so once.
 
 - **The asset** (`ParticleSystemAsset.h`, `*.nmparticle`) is up to 8 emitters,
   each with its own mesh, material, offset and settings (spawn rate, lifetime,
-  velocity, forces, size and colour over life). Shape, Velocity, Forces and
-  Rotation are optional **modules** (`EParticleModule`, `Modules Shape Forces`
+  velocity, forces, size and colour over life). Shape, Velocity, Forces,
+  Rotation, Collision and Flipbook are optional **modules** (`EParticleModule`, `Modules Shape Forces`
   in the file): one left out is at rest whatever its settings hold -- a point,
   no initial speed, no forces, no spin (`ToSettings`). A file written before
   modules has those its settings use (`InferModules`; a beam, none). It is text in every build --
@@ -967,6 +967,28 @@ Elsewhere it draws nothing and says so once.
   block may hold), which every pass samples (`SizeAt`, `ColorAt`): one path
   for every type, so a ribbon's or beam's gradient runs along it. The
   component's Tint multiplies the samples.
+- **Collision** (an optional module): a horizontal plane Height above the
+  entity. A particle that reaches it from above bounces off -- keeping Bounce of
+  its speed into the plane and losing Friction of its speed along it -- or, with
+  Response Kill, dies there (`ParticleSimulate.csh`). Any type but a beam.
+- **Flipbook** (an optional module, sprites and meshes): the material's texture
+  as Columns x Rows frames, left to right then top to bottom; Frames of them
+  (0: all), at Frame Rate a second, looping, or -- at 0 -- Cycles times over a
+  life, each from a frame of its own with Random Start. The sort writes each
+  instance's frame into its transform's bottom row (frame, columns, rows),
+  spare in an affine transform; the material template's InstancedMesh vertex
+  shader reads it, clears it and maps the texture coordinate into the frame's
+  cell (`MATERIAL_TEMPLATE_VERSION` 12), so any material's UVs, and so its
+  texture samples, play the frame.
+- **Culling**: past an emitter's **Cull Distance** from the view (0: never) it
+  is neither simulated nor drawn, and its GPU buffers are let go; back in range
+  it starts afresh. With **Pause Offscreen** (on by default) it stops simulating
+  once no view has drawn it for half a second -- its particles kept as they
+  were -- and goes on when one does. A view culls by its Bounds: a game
+  camera's frustum box; the editor's viewport views have none and cull
+  nothing, so there an emitter pauses only when its scene is not drawn at all
+  (a hidden Particle Editor tab). `RenderStats::ParticleSimulations` counts the
+  emitters simulated.
 - **Spawn Mode**: Continuous (Spawn Rate a second) or **Burst**: Burst Count at
   once, again every Burst Interval (0: one burst), Burst Cycles times (0: no
   end). Emitting off and on again starts the bursts over -- how a script
@@ -1047,8 +1069,9 @@ order. Opaque particles write depth as any mesh does.
 LightLab's yard runs a sample of each (`SpawnParticleDemos`; entities
 `SparksDemo`, `DebrisDemo`, `LaserDemo`, `TrailDemo`), from its
 `Content/Particles/`: `Sparks` (Velocity Aligned sprites in repeating bursts
-from a Cone, under gravity, through a white-hot to red Gradient and a
-shrinking size Curve), `Debris` (Random Spin box meshes, and dust thrown out
+from a Cone, under gravity, bouncing on the floor, through a white-hot to red Gradient and a
+shrinking size Curve), `Debris` (Random Spin box meshes coming to rest on the
+floor by Collision, and dust thrown out
 of a Ring that grows by a Curve, bursting), `Trail` (a ribbon with a glowing head: turn
 on Move Emitter; in the yard, AnimateLights flies it round), `Laser` (two
 jittering beams, a wide glow and a thin core; in the yard, strung between two

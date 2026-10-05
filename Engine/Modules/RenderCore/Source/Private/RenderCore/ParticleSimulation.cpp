@@ -142,13 +142,17 @@ namespace RenderCore
         Copy3(InCamera.Forward, Params.CameraForward, 0.0f);
         Params.Size[0] = std::max(InSettings.StartSize, 0.0f);
         Params.Size[1] = std::max(InSettings.EndSize, 0.0f);
-        Params.Size[2] = std::clamp(InSettings.FadeIn, 0.0f, 1.0f);
-        Params.Size[3] = std::clamp(InSettings.FadeOut, 0.0f, 1.0f);
-        for(int Channel = 0; Channel < 4; ++Channel)
-        {
-            Params.StartColor[Channel] = InSettings.StartColor[Channel];
-            Params.EndColor[Channel]   = InSettings.EndColor[Channel];
-        }
+        Params.Size[2] = InSettings.bFlipbookRandomStart ? 1.0f : 0.0f;
+        Params.Size[3] = std::max(InSettings.FlipbookCycles, 0.0f);
+        Params.Collision[0] = float(InSettings.CollisionResponse < PCR_Count ? InSettings.CollisionResponse : PCR_None);
+        Params.Collision[1] = InSettings.CollisionPlaneY;
+        Params.Collision[2] = std::clamp(InSettings.Bounce, 0.0f, 1.0f);
+        Params.Collision[3] = std::clamp(InSettings.Friction, 0.0f, 1.0f);
+        const bool bFlipbook = InSettings.FlipbookColumns > 0 && InSettings.FlipbookRows > 0;
+        Params.Flipbook[0] = bFlipbook ? float(InSettings.FlipbookColumns) : 0.0f;
+        Params.Flipbook[1] = bFlipbook ? float(InSettings.FlipbookRows) : 0.0f;
+        Params.Flipbook[2] = bFlipbook ? float(std::max(InSettings.FlipbookFrames, 1u)) : 0.0f;
+        Params.Flipbook[3] = std::max(InSettings.FlipbookRate, 0.0f);
         /* The swirl's scale: about one wave per few emitter widths, never zero. */
         Params.Noise[0] = float(std::fmod(InTime, 1000.0));
         Params.Noise[1] = 1.0f / std::max(std::max(InSettings.StartSize, InSettings.EndSize) * 4.0f, 1.0f);

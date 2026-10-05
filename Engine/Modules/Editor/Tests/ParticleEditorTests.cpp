@@ -228,6 +228,19 @@ namespace
             }
             return false;
         };
+        const auto Offered = [&Details]()
+        {
+            QStringList Out;
+            for(QToolButton* Button : Details.findChildren<QToolButton*>())
+            {
+                if(Button->text() != QStringLiteral("+ Add Module") || !Button->menu()) { continue; }
+                emit Button->menu()->aboutToShow();
+                for(QAction* Action : Button->menu()->actions()) { if(Action->isEnabled()) { Out << Action->text(); } }
+            }
+            return Out;
+        };
+        Expect(Offered() == QStringList({ "Shape", "Forces", "Rotation", "Collision", "Flipbook" }),
+               "a sprite with Velocity is offered Shape, Forces, Rotation, Collision and Flipbook");
         Expect(!Shows("Shape") && !Shows("Radius") && AddModule(QStringLiteral("Shape")), "Shape is not there until added from + Add Module");
         QApplication::processEvents();
         Expect(Document.GetEmitter(2)->HasModule(RenderCore::PEM_Shape) && Document.GetHistory().undoText() == QStringLiteral("Add Shape")
@@ -262,6 +275,18 @@ namespace
         QApplication::processEvents();
         Expect(Document.GetEmitter(2)->HasModule(RenderCore::PEM_Shape) && Document.GetEmitter(2)->Shape == RenderCore::PS_Cone && Shows("Cone Angle"),
                "and undo puts it back as it was");
+
+        Document.Edit(QStringLiteral("Edit Type"), [](RenderCore::ParticleSystemDesc& InOut) { InOut.Emitters[2].Type = RenderCore::PT_Ribbon; });
+        QApplication::processEvents();
+        Expect(!Offered().contains(QStringLiteral("Flipbook")) && Offered().contains(QStringLiteral("Collision")),
+               "a ribbon is offered Collision, not Flipbook");
+        Document.GetHistory().undo();
+        QApplication::processEvents();
+        Expect(AddModule(QStringLiteral("Collision")), "Collision is added from the menu");
+        QApplication::processEvents();
+        Expect(Shows("Response") && Shows("Height") && Shows("Bounce") && Shows("Friction"), "and shows its plane and bounce");
+        Document.GetHistory().undo();
+        QApplication::processEvents();
 
         /* A section's Reset: every setting in it, one step. */
         Document.GetEmitter(2)->VelocitySpread = 40.0f;

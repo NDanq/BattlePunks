@@ -79,6 +79,15 @@ namespace RenderCore
         PS_Count
     };
 
+    /* What a particle does at the collision plane (the Collision module). */
+    enum EParticleCollision : uint8_t
+    {
+        PCR_None   = 0,
+        PCR_Bounce = 1,   // bounces off it, losing speed (Bounce, Friction)
+        PCR_Kill   = 2,   // dies there
+        PCR_Count
+    };
+
     /* How colour (and alpha) or size follows a particle's life. */
     enum EParticleOverLife : uint8_t
     {
@@ -137,6 +146,22 @@ namespace RenderCore
         float    ShapeSpeed       = 0.0f;    // plus this speed outward from the shape
         float    ShapeAxisX[3]    = { 1.0f, 0.0f, 0.0f };   // the shape's +X and +Y in the world: the entity's
         float    ShapeAxisY[3]    = { 0.0f, 1.0f, 0.0f };
+
+        /* Collision: a horizontal plane at CollisionPlaneY (world space), from above. */
+        uint8_t  CollisionResponse = PCR_None;
+        float    CollisionPlaneY   = 0.0f;
+        float    Bounce            = 0.4f;   // 0-1: the share of its speed into the plane it keeps, back out
+        float    Friction          = 0.2f;   // 0-1: the share of its speed along the plane it loses, each bounce
+
+        /* Flipbook: its texture a grid of FlipbookColumns x FlipbookRows frames
+         * (0: none), played FlipbookFrames of them (0: all) at FlipbookRate a
+         * second, or -- at 0 -- FlipbookCycles times over its life. */
+        uint32_t FlipbookColumns   = 0;
+        uint32_t FlipbookRows      = 0;
+        uint32_t FlipbookFrames    = 0;
+        float    FlipbookRate      = 0.0f;
+        float    FlipbookCycles    = 1.0f;
+        bool     bFlipbookRandomStart = false;   // each starts on a frame of its own
 
         /* Colour and size over life, baked: used instead of Start/End when
          * set (ParticleEmitterDesc::ToSettings bakes a gradient or curve). */

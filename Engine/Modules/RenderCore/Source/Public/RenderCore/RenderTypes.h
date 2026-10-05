@@ -151,6 +151,7 @@ namespace RenderCore
         uint64_t CommandsExecuted       = 0;
         uint64_t CommandsExecutedInline = 0;   // ran on the calling thread because it WAS the render thread -- see RenderCommand.h
         uint64_t DrawCalls              = 0;
+        uint64_t ParticleSimulations    = 0;   // emitters simulated, every frame each ran (not culled or paused offscreen)
         uint64_t ProxiesLive            = 0;
         uint64_t ProxiesCulledLastFrame = 0;
         uint32_t PeakQueueDepth         = 0;
