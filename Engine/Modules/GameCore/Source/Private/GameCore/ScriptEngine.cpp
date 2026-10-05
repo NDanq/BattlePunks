@@ -183,6 +183,86 @@ namespace GameCore
         return true;
     }
 
+    /* Pushes the script's class table, loading it on first use. False
+     * (nothing pushed, logged once) unless it returns a table. */
+    bool LuaPushScriptClass(lua_State* InState, const char* InCacheKey, const char* InPath)
+    {
+        lua_getfield(InState, LUA_REGISTRYINDEX, InCacheKey);        // cache
+        if(!lua_istable(InState, -1))
+        {
+            lua_pop(InState, 1);
+            lua_newtable(InState);
+            lua_pushvalue(InState, -1);
+            lua_setfield(InState, LUA_REGISTRYINDEX, InCacheKey);
+        }
+        lua_getfield(InState, -1, InPath);                           // cache, entry
+        if(lua_istable(InState, -1))
+        {
+            lua_remove(InState, -2);
+            return true;
+        }
+        const bool bKnownBad = !lua_isnil(InState, -1);
+        lua_pop(InState, 1);                                         // cache
+
+        if(bKnownBad)
+        {
+            lua_pop(InState, 1);
+            return false;
+        }
+
+        /* Everything below leaves exactly one value (the class, or false)
+         * above the cache before storing it. */
+        bool bLoaded = false;
+        std::string Source;
+        if(!LuaReadScriptFile(InPath, Source))
+        {
+            GAMECORE_LOG_ERROR(std::string("Script: could not read \"") + InPath + "\"")
+            LuaCountError(InState);
+        }
+        else
+        {
+            const std::string ChunkName = std::string("@") + InPath;
+            if(luaL_loadbuffer(InState, Source.data(), Source.size(), ChunkName.c_str()) != LUA_OK)
+            {
+                const char* ErrorText = lua_tostring(InState, -1);
+                GAMECORE_LOG_ERROR(std::string("Lua load error (") + InPath + "): "
+                                   + (ErrorText ? ErrorText : "<no message>"))
+                lua_pop(InState, 1);
+                LuaCountError(InState);
+            }
+            else if(LuaCallProtected(InState, 0, 1, InPath))   // counts its own error
+            {
+                if(lua_istable(InState, -1))
+                {
+                    bLoaded = true;
+                }
+                else
+                {
+                    GAMECORE_LOG_ERROR(std::string("Script: \"") + InPath
+                                       + "\" must return its class table (got "
+                                       + luaL_typename(InState, -1) + ")")
+                    lua_pop(InState, 1);
+                    LuaCountError(InState);
+                }
+            }
+        }
+
+        if(!bLoaded)
+        {
+            lua_pushboolean(InState, 0);
+        }
+        lua_pushvalue(InState, -1);
+        lua_setfield(InState, -3, InPath);   // cache[path] = class or false
+        lua_remove(InState, -2);             // drop the cache
+
+        if(!bLoaded)
+        {
+            lua_pop(InState, 1);
+        }
+        return bLoaded;
+    }
+
+
     struct ScriptEngine::Impl
     {
         lua_State* State           = nullptr;
@@ -356,6 +436,33 @@ namespace GameCore
         }
     }
 
+    namespace
+    {
+        /* The registry table script objects' classes are cached in: apart
+         * from the World's, which every BindWorld drops. */
+        constexpr const char* OBJECT_CLASS_CACHE_KEY = "GameCore.ObjectClasses";
+
+        void PushEventArg(lua_State* InState, const EventArg& InArg)
+        {
+            switch(InArg.Type)
+            {
+                case EventArg::ET_Number: lua_pushnumber(InState, InArg.Number); break;
+                case EventArg::ET_Bool:   lua_pushboolean(InState, InArg.Bool); break;
+                case EventArg::ET_String: lua_pushstring(InState, InArg.String); break;
+                case EventArg::ET_Entity: LuaPushEntity(InState, EntityID::Unpack(InArg.Entity)); break;
+                case EventArg::ET_None:   lua_pushnil(InState); break;
+            }
+        }
+
+        /* InArgs onto the stack; how many. */
+        int PushEventArgs(lua_State* InState, const EventArgs& InArgs)
+        {
+            const int Count = InArgs.Count < 4 ? int(InArgs.Count) : 4;
+            for(int Index = 0; Index < Count; ++Index) { PushEventArg(InState, InArgs.Args[Index]); }
+            return Count;
+        }
+    }
+
     bool ScriptEngine::CallFunction(const char* InPath, const EventArgs& InArgs)
     {
         if(!P->State || !InPath || !*InPath)
@@ -371,19 +478,7 @@ namespace GameCore
             ++P->ErrorCount;
             return false;
         }
-        const int Count = InArgs.Count < 4 ? int(InArgs.Count) : 4;
-        for(int Index = 0; Index < Count; ++Index)
-        {
-            const EventArg& Arg = InArgs.Args[Index];
-            switch(Arg.Type)
-            {
-                case EventArg::ET_Number: lua_pushnumber(P->State, Arg.Number); break;
-                case EventArg::ET_Bool:   lua_pushboolean(P->State, Arg.Bool); break;
-                case EventArg::ET_String: lua_pushstring(P->State, Arg.String); break;
-                case EventArg::ET_Entity: LuaPushEntity(P->State, EntityID::Unpack(Arg.Entity)); break;
-                case EventArg::ET_None:   lua_pushnil(P->State); break;
-            }
-        }
+        const int Count = PushEventArgs(P->State, InArgs);
         /* LuaCallProtected counts a runtime error itself. */
         return LuaCallProtected(P->State, Count, 0, InPath);
     }
@@ -397,6 +492,93 @@ namespace GameCore
         LuaStackGuard Guard(P->State);
         PushPath(P->State, InPath);
         return lua_isfunction(P->State, -1);
+    }
+
+    ScriptEngine::Object ScriptEngine::CreateObject(const char* InClassPath, const char* const* InFieldNames,
+                                                   const EventArg* InFields, const int InFieldCount)
+    {
+        if(!P->State || !InClassPath || !*InClassPath)
+        {
+            return 0;
+        }
+        LuaStackGuard Guard(P->State);
+        if(!LuaPushScriptClass(P->State, OBJECT_CLASS_CACHE_KEY, InClassPath))   // class
+        {
+            return 0;
+        }
+        lua_newtable(P->State);                                                  // class, self
+        lua_newtable(P->State);                                                  // class, self, meta
+        lua_pushvalue(P->State, -3);
+        lua_setfield(P->State, -2, "__index");
+        lua_setmetatable(P->State, -2);                                          // class, self
+        for(int Index = 0; Index < InFieldCount && InFieldNames && InFields; ++Index)
+        {
+            PushEventArg(P->State, InFields[Index]);
+            lua_setfield(P->State, -2, InFieldNames[Index]);
+        }
+        return Object(luaL_ref(P->State, LUA_REGISTRYINDEX));                   // pops self
+    }
+
+    bool ScriptEngine::HasObjectMethod(const Object InObject, const char* InMethod) const
+    {
+        if(!P->State || InObject <= 0 || !InMethod)
+        {
+            return false;
+        }
+        LuaStackGuard Guard(P->State);
+        lua_rawgeti(P->State, LUA_REGISTRYINDEX, InObject);
+        if(!lua_istable(P->State, -1))
+        {
+            return false;
+        }
+        lua_getfield(P->State, -1, InMethod);
+        return lua_isfunction(P->State, -1);
+    }
+
+    bool ScriptEngine::CallObjectMethod(const Object InObject, const char* InMethod, const EventArgs& InArgs)
+    {
+        if(!P->State || InObject <= 0 || !InMethod)
+        {
+            return false;
+        }
+        LuaStackGuard Guard(P->State);
+        lua_rawgeti(P->State, LUA_REGISTRYINDEX, InObject);                      // self
+        if(!lua_istable(P->State, -1))
+        {
+            return false;
+        }
+        lua_getfield(P->State, -1, InMethod);                                    // self, fn
+        if(!lua_isfunction(P->State, -1))
+        {
+            return false;
+        }
+        lua_insert(P->State, -2);                                                // fn, self
+        const int Count = PushEventArgs(P->State, InArgs);
+        /* LuaCallProtected counts a runtime error itself. */
+        return LuaCallProtected(P->State, Count + 1, 0, InMethod);
+    }
+
+    void ScriptEngine::ReleaseObject(const Object InObject)
+    {
+        if(P->State && InObject > 0)
+        {
+            luaL_unref(P->State, LUA_REGISTRYINDEX, InObject);
+        }
+    }
+
+    void ScriptEngine::ForgetClass(const char* InClassPath)
+    {
+        if(!P->State || !InClassPath)
+        {
+            return;
+        }
+        LuaStackGuard Guard(P->State);
+        lua_getfield(P->State, LUA_REGISTRYINDEX, OBJECT_CLASS_CACHE_KEY);
+        if(lua_istable(P->State, -1))
+        {
+            lua_pushnil(P->State);
+            lua_setfield(P->State, -2, InClassPath);
+        }
     }
 
     lua_State* ScriptEngine::GetState() const

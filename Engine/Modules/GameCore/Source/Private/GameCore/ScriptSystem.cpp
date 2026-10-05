@@ -60,76 +60,9 @@ namespace GameCore
 
         bool IsLiveRef(const int32_t InRef) { return InRef != LUA_NOREF && InRef != LUA_REFNIL; }
 
-        /* Pushes the script's class table, loading it on first use. False
-         * (nothing pushed, logged once) unless it returns a table. */
         bool PushScriptClass(lua_State* InState, const char* InPath)
         {
-            lua_getfield(InState, LUA_REGISTRYINDEX, CLASS_CACHE_KEY);   // cache
-            lua_getfield(InState, -1, InPath);                           // cache, entry
-            if(lua_istable(InState, -1))
-            {
-                lua_remove(InState, -2);
-                return true;
-            }
-            const bool bKnownBad = !lua_isnil(InState, -1);
-            lua_pop(InState, 1);                                         // cache
-
-            if(bKnownBad)
-            {
-                lua_pop(InState, 1);
-                return false;
-            }
-
-            /* Everything below leaves exactly one value (the class, or false)
-             * above the cache before storing it. */
-            bool bLoaded = false;
-            std::string Source;
-            if(!LuaReadScriptFile(InPath, Source))
-            {
-                GAMECORE_LOG_ERROR(std::string("Script: could not read \"") + InPath + "\"")
-                LuaCountError(InState);
-            }
-            else
-            {
-                const std::string ChunkName = std::string("@") + InPath;
-                if(luaL_loadbuffer(InState, Source.data(), Source.size(), ChunkName.c_str()) != LUA_OK)
-                {
-                    const char* ErrorText = lua_tostring(InState, -1);
-                    GAMECORE_LOG_ERROR(std::string("Lua load error (") + InPath + "): "
-                                       + (ErrorText ? ErrorText : "<no message>"))
-                    lua_pop(InState, 1);
-                    LuaCountError(InState);
-                }
-                else if(LuaCallProtected(InState, 0, 1, InPath))   // counts its own error
-                {
-                    if(lua_istable(InState, -1))
-                    {
-                        bLoaded = true;
-                    }
-                    else
-                    {
-                        GAMECORE_LOG_ERROR(std::string("Script: \"") + InPath
-                                           + "\" must return its class table (got "
-                                           + luaL_typename(InState, -1) + ")")
-                        lua_pop(InState, 1);
-                        LuaCountError(InState);
-                    }
-                }
-            }
-
-            if(!bLoaded)
-            {
-                lua_pushboolean(InState, 0);
-            }
-            lua_pushvalue(InState, -1);
-            lua_setfield(InState, -3, InPath);   // cache[path] = class or false
-            lua_remove(InState, -2);             // drop the cache
-
-            if(!bLoaded)
-            {
-                lua_pop(InState, 1);
-            }
-            return bLoaded;
+            return LuaPushScriptClass(InState, CLASS_CACHE_KEY, InPath);
         }
 
         /* Reads TickPhase (if present) from the class table at the stack

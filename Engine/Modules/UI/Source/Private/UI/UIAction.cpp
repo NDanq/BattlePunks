@@ -126,15 +126,23 @@ namespace UI
             if(Kind == "Native")     { Action.Kind = EUIActionKind::Native; }
             else if(Kind == "Lua")   { Action.Kind = EUIActionKind::Lua; }
             else if(Kind == "Event") { Action.Kind = EUIActionKind::Event; }
+            else if(Kind == "Graph") { Action.Kind = EUIActionKind::Graph; }
             else
             {
-                Error = Kind.empty() ? std::string("expected Native:, Lua: or Event:") : "'" + Kind + "' is not Native, Lua or Event";
+                Error = Kind.empty() ? std::string("expected Native:, Lua:, Event: or Graph:")
+                                     : "'" + Kind + "' is not Native, Lua, Event or Graph";
                 break;
             }
             if(!C.Take(':')) { Error = "expected ':' after " + Kind; break; }
 
             Action.Target = C.Word();
             if(!IsDottedName(Action.Target)) { Error = "'" + Action.Target + "' is not a name"; break; }
+            if(Action.Kind == EUIActionKind::Graph)
+            {
+                /* A handler of the graph: one name, given the value and sender itself. */
+                if(Action.Target.find('.') != std::string::npos) { Error = "a Graph: handler is one name ('" + Action.Target + "')"; break; }
+                if(C.Take('(') && !C.Take(')')) { Error = "a Graph: handler takes no arguments (it is given $value and $self)"; break; }
+            }
 
             if(C.Take('('))
             {

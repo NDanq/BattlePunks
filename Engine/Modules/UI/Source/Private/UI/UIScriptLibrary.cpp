@@ -125,6 +125,13 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(UI)
         Call.PushNumber(Value ? Value->AsNumber() : 0.0);
     }, "Key:string -> Value:number");
 
+    Lib.Pure("GetBool", [](GameCore::ScriptCall& Call)
+    {
+        UI::UISystem* System = UI::GetScriptUISystem();
+        const UI::UIValue* Value = System ? System->GetValue(Call.GetString(1)) : nullptr;
+        Call.PushBool(Value && (Value->Type == UI::EUIValueType::Bool ? Value->B : Value->AsNumber() != 0.0));
+    }, "Key:string -> Value:bool");
+
     Lib.Pure("GetString", [](GameCore::ScriptCall& Call)
     {
         UI::UISystem* System = UI::GetScriptUISystem();

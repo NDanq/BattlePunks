@@ -916,6 +916,113 @@ static void TestScriptedActions()
     Scripts.Shutdown();
 }
 
+// === Logic graphs =============================================================
+
+static void TestLogicGraphs()
+{
+    std::printf("[logic graphs]\n");
+    UIActionList Parsed;
+    Expect(Parsed.Parse("Graph:Go_OnClick; Native:UI.Close") && Parsed.Actions.size() == 2
+           && Parsed.Actions[0].Kind == EUIActionKind::Graph && Parsed.Actions[0].Target == "Go_OnClick", "Graph: parses, and chains");
+    Expect(!Parsed.Parse("Graph:Menu.Go") && !Parsed.Parse("Graph:Go(1)") && Parsed.Parse("Graph:Go()"),
+           "a Graph: handler is one name with no arguments");
+
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleUILogic";
+    std::filesystem::create_directories(Dir);
+    EngineCore::FilesystemProvider Disk(Dir.string());
+    EngineCore::IFileProvider* Previous = EngineCore::GetFileProvider();
+    EngineCore::SetFileProvider(&Disk);
+    const auto WriteGraph = [&Dir](const char* InLua)
+    {
+        std::ofstream File(Dir / "Menu.ui.nmgraph", std::ios::binary | std::ios::trunc);
+        File << "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"UI\">\n<gen_code>\n<Output Extension=\".lua\"><![CDATA["
+             << InLua << "]]></Output>\n</gen_code>\n</NodeGraph>\n";
+    };
+    WriteGraph("return {\n"
+               "  Clicks = 0,\n"
+               "  OnOpen = function(self) Opened = (Opened or 0) + 1; LastOpened = self.Document end,\n"
+               "  OnClose = function(self) Closed = (Closed or 0) + 1 end,\n"
+               "  OnTick = function(self, dt) Ticks = (Ticks or 0) + 1 end,\n"
+               "  Go_OnClick = function(self, Value, Sender) self.Clicks = self.Clicks + 1; Last = { self.Document, self.Clicks, Value, Sender } end,\n"
+               "  Shut_OnClick = function(self) UI.Close(self.Document) end,\n"
+               "}\n");
+    {
+        std::ofstream File(Dir / "Menu.nmui", std::ios::binary | std::ios::trunc);
+        File << R"XML(<UI InputMode="UIOnly" ScaleMode="None" Logic="Menu.ui.nmgraph">
+  <Canvas>
+    <Button Name="Go" Position="0,0" Size="100,50" OnClick="Graph:Go_OnClick"/>
+    <Button Name="Shut" Position="0,100" Size="100,50" OnClick="Graph:Shut_OnClick"/>
+    <Button Name="Lost" Position="0,200" Size="100,50" OnClick="Graph:Missing"/>
+  </Canvas>
+</UI>)XML";
+    }
+
+    GameCore::World World;
+    GameCore::ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "a script engine for logic graphs");
+    Scripts.BindWorld(&World);
+    UISystem System;
+    System.SetScriptEngine(&Scripts);
+    SetScriptUISystem(&System);
+
+    const UIDocumentHandle A = System.Open("Menu.nmui");
+    const UIDocumentHandle B = System.OpenAsset(UIAssetCache::Find("Menu.nmui"), "Other.nmui");
+    Expect(A != UI_DOCUMENT_INVALID && B != UI_DOCUMENT_INVALID, "two documents with one logic graph");
+    Expect(Scripts.RunString("assert(Opened == nil)", "not-yet"), "OnOpen waits for the action queue");
+    System.RunQueuedActions();
+    Expect(Scripts.RunString("assert(Opened == 2)", "opened"), "OnOpen runs once for each");
+
+    System.Update(UIVec2{ 1000, 1000 });
+    const auto Click = [&System](const UIDocumentHandle InDoc, const char* InWidget)
+    {
+        const UIVec2 At = CentreOf(*System.Find(InDoc), InWidget);
+        System.ProcessInput(Pointer(At, true, false));
+        System.ProcessInput(Pointer(At, false, true));
+        System.RunQueuedActions();
+    };
+    /* B is over A (opened later, same layer, UIOnly): it takes the clicks. */
+    Click(B, "Go");
+    Click(B, "Go");
+    Expect(Scripts.RunString("assert(Last[1] == 'Other.nmui' and Last[2] == 2 and Last[3] == 0 and Last[4] == 'Go', tostring(Last[2]))", "handler"),
+           "Graph: calls the document's own instance with the value and the sender");
+    const int Warnings = GWarnings;
+    Click(B, "Lost");
+    Expect(GWarnings == Warnings + 1, "a handler the graph lacks is warned about");
+
+    System.Tick(0.016f);
+    Expect(Scripts.RunString("assert(Ticks == 2)", "ticks"), "OnTick runs for each document whose logic has one");
+
+    Click(B, "Shut");
+    Expect(!System.IsOpen("Other.nmui") && System.IsOpen("Menu.nmui") && Scripts.RunString("assert(Closed == 1)", "closed"),
+           "a handler may close its own document; OnClose runs once");
+
+    Click(A, "Go");
+    Expect(Scripts.RunString("assert(Last[1] == 'Menu.nmui' and Last[2] == 1)", "state"), "each document's self is its own");
+
+    /* Saved again: the document rebuilds and its logic is read again. */
+    WriteGraph("return { OnOpen = function(self) Reopened = true end, Go_OnClick = function(self) Last = 'new' end }\n");
+    UIAssetCache::Invalidate("Menu.nmui");
+    System.Tick(0.016f);
+    System.RunQueuedActions();
+    System.Update(UIVec2{ 1000, 1000 });
+    Click(A, "Go");
+    Expect(Scripts.RunString("assert(Closed == 2 and Reopened and Last == 'new')", "reload"),
+           "a reload closes the old logic and opens the new");
+
+    System.SetExecuteActions(false);
+    Click(A, "Go");
+    Expect(System.GetActionLog().back() == "Graph:Go_OnClick" && Scripts.RunString("assert(Last == 'new')", "logged"),
+           "in the preview Graph: is logged, not run");
+    System.SetExecuteActions(true);
+
+    System.SetScriptEngine(nullptr);   // let go before the engine closes
+    SetScriptUISystem(nullptr);
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+    EngineCore::SetFileProvider(Previous);
+    std::filesystem::remove_all(Dir);
+}
+
 // === Hot reload ===============================================================
 
 static void TestHotReload()
@@ -1201,6 +1308,7 @@ int main()
     TestStructureEditing();
     TestInputAndActions();
     TestScriptedActions();
+    TestLogicGraphs();
     TestHotReload();
     TestCost();
 #if WITH_EDITOR

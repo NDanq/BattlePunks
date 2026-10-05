@@ -170,11 +170,12 @@ if(NOT NIMBLE_TARGET STREQUAL "Editor" AND GAME_PREFAB_SOURCES AND NOT GAME_PREF
 endif()
 game_stage(Prefabs "${GAME_PREFAB_ROOT}" ${GAME_PREFAB_FILES})
 
-# Content/UI/: UI documents (Engine/Modules/UI/README.md) and the Lua beside
-# them. As prefabs: an Editor target stages the XML it edits; a Client or
+# Content/UI/: UI documents (Engine/Modules/UI/README.md) and the Lua and
+# logic graphs beside them (a graph carries its Lua: every target reads it). As prefabs: an Editor target stages the XML it edits; a Client or
 # Server target cannot read XML, so it stages the cooked ones from
 # Cooked/Content/UI/ -- made in the editor with the console's `cook ui`.
-file(GLOB_RECURSE GAME_UI_SCRIPTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.lua")
+file(GLOB_RECURSE GAME_UI_SCRIPTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.lua"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/UI/*.ui.nmgraph")
 game_stage(UIScripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_UI_SCRIPTS})
 
 if(NIMBLE_TARGET STREQUAL "Editor")

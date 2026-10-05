@@ -19,10 +19,13 @@
  * Native   a C++ function registered with UI_DEFINE_ACTIONS ("Group.Name")
  * Lua      a Lua function by global path (ScriptEngine::CallFunction)
  * Event    an EventBus event of the session's World (Events.On in Lua)
+ * Graph    a handler of the document's logic graph (its Logic setting):
+ *          Graph:Resume_OnClick calls self:Resume_OnClick(value, sender) on
+ *          the document's own instance of it. No arguments.
  *
  * Up to four arguments: numbers, 'strings' (or "strings"), true, false, and
  * two tokens -- $self, the widget's name, and $value, its value (a slider's,
- * later; 0 for a button). They arrive as GameCore::EventArgs.
+ * a check box's 1 or 0; 0 for a button). They arrive as GameCore::EventArgs.
  *
  * Actions are queued and run after the input that fired them (UISystem), so
  * one that closes its own document is safe.
@@ -33,7 +36,7 @@ namespace UI
     class UIDocumentInstance;
     class UIWidget;
 
-    enum class EUIActionKind : uint8_t { Native, Lua, Event };
+    enum class EUIActionKind : uint8_t { Native, Lua, Event, Graph };
 
     struct UIAction
     {

@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/GameCore/AABB.h"
@@ -1045,6 +1046,113 @@ static void TestScriptCallFunction()
     Expect(!Scripts.CallFunction("Menu..Deep") && !Scripts.CallFunction(""), "an empty link fails");
     Expect(!Scripts.CallFunction("Raises"), "a raising function fails");
     Expect(Scripts.GetErrorCount() == ErrorsBefore + 3, "each failure is counted once");
+    Scripts.Shutdown();
+}
+
+/* ScriptEngine objects: a class instanced and held by C++ (a UI document's logic). */
+static void TestScriptObjects()
+{
+    std::printf("[script objects]\n");
+
+    const std::string ClassPath = WriteTestScript("Panel.lua",
+        "PanelLoads = (PanelLoads or 0) + 1\n"
+        "return {\n"
+        "    Count = 0,\n"
+        "    Bump = function(self, by, name, flag) self.Count = self.Count + (by or 1); Seen = { self.Document, self.Count, name, flag } end,\n"
+        "    Raise = function(self) error('boom') end,\n"
+        "}\n");
+    const std::string GraphPath = WriteTestScript("Panel.ui.nmgraph",
+        "<?xml version=\"1.0\"?>\n<NodeGraph Version=\"1\" Schema=\"UI\">\n<gen_code>\n"
+        "<Output Extension=\".lua\"><![CDATA[return { OnOpen = function(self) Opened = self.Document end }]]></Output>\n"
+        "</gen_code>\n</NodeGraph>\n");
+
+    ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "ScriptEngine initializes for objects");
+
+    const char* Names[] = { "Document" };
+    const EventArg First[] = { EventArg::Make("A.nmui") };
+    const EventArg Second[] = { EventArg::Make("B.nmui") };
+    const ScriptEngine::Object A = Scripts.CreateObject(ClassPath.c_str(), Names, First, 1);
+    const ScriptEngine::Object B = Scripts.CreateObject(ClassPath.c_str(), Names, Second, 1);
+    Expect(A > 0 && B > 0 && A != B, "two objects of one class");
+    Expect(Scripts.RunString("assert(PanelLoads == 1)", "loads-once"), "the class loads once");
+    Expect(Scripts.HasObjectMethod(A, "Bump") && !Scripts.HasObjectMethod(A, "Nope") && !Scripts.HasObjectMethod(A, "Count"),
+           "HasObjectMethod sees the class's functions only");
+
+    EventArgs Args;
+    Args.Args[0] = EventArg::Make(2.0);
+    Args.Args[1] = EventArg::Make("Play");
+    Args.Args[2] = EventArg::Make(true);
+    Args.Count   = 3;
+    Expect(Scripts.CallObjectMethod(A, "Bump", Args), "a method is called on the object");
+    Expect(Scripts.RunString("assert(Seen[1] == 'A.nmui' and Seen[2] == 2 and Seen[3] == 'Play' and Seen[4] == true)", "assert-a"),
+           "self carries its fields and its own state; arguments arrive in order");
+    Scripts.CallObjectMethod(B, "Bump");
+    Expect(Scripts.RunString("assert(Seen[1] == 'B.nmui' and Seen[2] == 1)", "assert-b"), "the other object's state is its own");
+
+    const uint32_t Errors = Scripts.GetErrorCount();
+    Expect(!Scripts.CallObjectMethod(A, "Nope") && Scripts.GetErrorCount() == Errors, "a missing method is false, not an error");
+    Expect(!Scripts.CallObjectMethod(A, "Raise") && Scripts.GetErrorCount() == Errors + 1, "a raising method is false and counted");
+    Expect(Scripts.CreateObject("Missing.lua") == 0, "a class that does not load makes no object");
+
+    const ScriptEngine::Object G = Scripts.CreateObject(GraphPath.c_str(), Names, First, 1);
+    Expect(G > 0 && Scripts.CallObjectMethod(G, "OnOpen") && Scripts.RunString("assert(Opened == 'A.nmui')", "assert-graph"),
+           "a graph's stored Lua is a class too");
+
+    WriteTestScript("Panel.lua", "return { Bump = function(self) Seen = 'new' end }\n");
+    const ScriptEngine::Object Old = Scripts.CreateObject(ClassPath.c_str());
+    Scripts.ForgetClass(ClassPath.c_str());
+    const ScriptEngine::Object New = Scripts.CreateObject(ClassPath.c_str());
+    Scripts.CallObjectMethod(Old, "Bump");
+    Expect(Scripts.RunString("assert(type(Seen) == 'table')", "assert-old"), "until ForgetClass, the cached class is used");
+    Scripts.CallObjectMethod(New, "Bump");
+    Expect(Scripts.RunString("assert(Seen == 'new')", "assert-new"), "after it, the file is read again");
+
+    for(const ScriptEngine::Object Each : { A, B, G, Old, New }) { Scripts.ReleaseObject(Each); }
+    Expect(!Scripts.CallObjectMethod(A, "Bump"), "a released object calls nothing");
+    Scripts.ReleaseObject(0);
+
+    /* Objects live apart from a World: bind and unbind leave them. */
+    World W;
+    const ScriptEngine::Object Kept = Scripts.CreateObject(GraphPath.c_str(), Names, Second, 1);
+    Scripts.BindWorld(&W);
+    Scripts.UnbindWorld();
+    Expect(Scripts.CallObjectMethod(Kept, "OnOpen") && Scripts.RunString("assert(Opened == 'B.nmui')", "assert-kept"),
+           "an object outlives a World's bind and unbind");
+    Scripts.ReleaseObject(Kept);
+    Scripts.Shutdown();
+}
+
+/* The Config library: config vars from Lua, typed. */
+NIMBLE_CONFIG_BOOL(GSmokeConfigBool, "SmokeConfig", "Flag", false, nullptr);
+NIMBLE_CONFIG_FLOAT(GSmokeConfigFloat, "SmokeConfig", "Speed", 1.5f, nullptr);
+NIMBLE_CONFIG_INT(GSmokeConfigInt, "SmokeConfig", "Count", 3, nullptr);
+
+static void TestConfigLibrary()
+{
+    std::printf("[config library]\n");
+    World W;
+    ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "ScriptEngine initializes for Config");
+    Scripts.BindWorld(&W);
+    Expect(Scripts.RunString(
+        "assert(Config.Has('SmokeConfig.Flag') and not Config.Has('SmokeConfig.Nope'))\n"
+        "assert(Config.GetBool('SmokeConfig.Flag') == false)\n"
+        "assert(Config.GetNumber('SmokeConfig.Speed') == 1.5 and Config.GetNumber('SmokeConfig.Count') == 3)\n"
+        "Config.SetBool('SmokeConfig.Flag', true)\n"
+        "Config.SetNumber('SmokeConfig.Speed', 2.25)\n"
+        "Config.SetNumber('SmokeConfig.Count', 7.9)\n",
+        "config"), "Config reads and writes vars by Section.Key");
+    Expect(GSmokeConfigBool.GetBool() && GSmokeConfigFloat.GetFloat() == 2.25f && GSmokeConfigInt.GetInt() == 7,
+           "the vars took the values (an int truncated)");
+    const uint32_t Errors = Scripts.GetErrorCount();
+    Expect(!Scripts.RunString("Config.GetBool('SmokeConfig.Speed')", "config-mismatch"), "GetBool of a float var is a script error");
+    Expect(!Scripts.RunString("Config.SetNumber('SmokeConfig.Missing', 1)", "config-missing"), "a missing var is a script error");
+    Expect(Scripts.GetErrorCount() == Errors + 2 && GSmokeConfigFloat.GetFloat() == 2.25f, "counted; nothing changed");
+    GSmokeConfigBool.ResetToDefault();
+    GSmokeConfigFloat.ResetToDefault();
+    GSmokeConfigInt.ResetToDefault();
+    Scripts.UnbindWorld();
     Scripts.Shutdown();
 }
 
@@ -3468,6 +3576,8 @@ int main()
     TestWorldSpatialIntegration();
     TestScripting();
     TestScriptCallFunction();
+    TestScriptObjects();
+    TestConfigLibrary();
     TestArchiveRoundTrip();
     TestArchiveChunks();
     TestWorldSerialization();
