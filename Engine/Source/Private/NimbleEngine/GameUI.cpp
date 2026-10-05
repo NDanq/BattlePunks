@@ -1,7 +1,11 @@
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/Input.h"
+#include "Public/NimbleEngine/SaveGame.h"
+#include "Public/Core/CoreLog.h"
 #include "Public/UI/UIAction.h"
 #include "Public/UI/UISystem.h"
+
+#include <string>
 
 /*
  * What every game's UI has (Modules/UI/README.md): the "UI" input map its
@@ -51,4 +55,20 @@ UI_DEFINE_ACTIONS(Game)
     {
         if(NimbleEngine::GameSession* Session = SessionOf(InContext)) { Session->SetPaused(!Session->IsPaused()); }
     });
+
+    Actions.Add("OpenLevel", [](const UI::UIActionContext& InContext)
+    {
+        /* By its registered name, as [Game] StartLevel. Deferred (RequestLevel):
+         * the swap closes every document and unpauses. */
+        NimbleEngine::GameSession* Session = SessionOf(InContext);
+        const GameCore::EventArgs& Args = *InContext.Args;
+        if(!Session || Args.Count < 1 || Args.Args[0].Type != GameCore::EventArg::ET_String) return;
+        NimbleEngine::ILevel* Level = NimbleEngine::FindLevelByName(Args.Args[0].String);
+        if(!Level)
+        {
+            CORE_LOG_WARN(std::string("[Game] Game.OpenLevel: no level named '") + Args.Args[0].String + "'")
+            return;
+        }
+        Session->RequestLevel(*Level);
+    }, "Loads a level by name: Game.OpenLevel('BakedLighting')");
 }

@@ -45,7 +45,10 @@
               <Slider Name="FlySpeed" Class="SettingSlider" Min="100" Max="2000" Step="50" Value="{Bind:LightLab.FlySpeed}" OnChanged="Native:LightLab.SetFlySpeed($value)"/>
               <Text Class="SliderValue" Text="{Bind:LightLab.FlySpeed}"/>
             </HorizontalBox>
-            <Button Name="Back" Class="MenuButton" Margin="0,36,0,0" OnClick="Native:UI.ShowPage('Pages', 'Main')">
+            <Button Name="LoadBakedLighting" Class="MenuButton" Margin="0,36,0,0" OnClick="Native:Game.OpenLevel('BakedLighting')">
+              <Text Class="MenuLabel" Text="Load Baked Lighting World"/>
+            </Button>
+            <Button Name="Back" Class="MenuButton" OnClick="Native:UI.ShowPage('Pages', 'Main')">
               <Text Class="MenuLabel" Text="Back"/>
             </Button>
           </VerticalBox>
