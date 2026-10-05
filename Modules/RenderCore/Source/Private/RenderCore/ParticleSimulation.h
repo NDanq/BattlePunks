@@ -71,9 +71,9 @@ namespace RenderCore
         float    CameraRight[4];
         float    CameraUp[4];
         float    CameraForward[4];
-        float    Size[4];
-        float    StartColor[4];
-        float    EndColor[4];
+        float    Size[4];        // x start, y end (the swirl's scale), z 1: random start frame, w flipbook cycles over a life
+        float    Collision[4];   // x response (EParticleCollision), y plane height (world), z bounce, w friction
+        float    Flipbook[4];    // x columns, y rows (0: none), z frames, w frames a second (0: over its life)
         float    Noise[4];
         uint32_t Sort[4];
         float    PrevEmitter[4];

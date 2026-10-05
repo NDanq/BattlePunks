@@ -178,6 +178,21 @@ void main()
             float Age = NormalizedAge(P);
             Out.Transform = ParticleTransform(P, SizeAt(Age));
             Out.Color     = ColorAt(Age);
+
+            // A flipbook's frame rides in the transform's spare bottom row (frame, columns,
+            // rows), which the material's InstancedMesh vertex shader reads and clears.
+            if(Pa_Flipbook.x > 0.5)
+            {
+                float Frames = Pa_Flipbook.z;
+                uint  Seed   = floatBitsToUint(P.Extra.x) ^ 0x68E31DA4u;
+                float Start  = Pa_Size.z > 0.5 ? floor(HashFloat(Seed) * Frames) : 0.0;
+                float Played = Pa_Flipbook.w > 0.0 ? P.PositionAge.w * Pa_Flipbook.w   // frames a second
+                                                   : Age * Frames * Pa_Size.w;         // cycles over its life
+                float Frame  = mod(Start + floor(min(Played, 1.0e6)), Frames);
+                Out.Transform[0].w = Frame;
+                Out.Transform[1].w = Pa_Flipbook.x;
+                Out.Transform[2].w = Pa_Flipbook.y;
+            }
         }
         Instances[Slot] = Out;
     }

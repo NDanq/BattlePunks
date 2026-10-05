@@ -40,8 +40,20 @@ void main(void)
     MaterialInputs Inputs;
     Inputs.TexCoord      = InTexCoord;
 #if MATERIAL_VERTEX_INSTANCEDMESH
-    // The instance's transform inside the model's; its colour on the vertex colour.
-    mat4 Model           = Transform.Model * InInstanceTransform;
+    // The instance's transform inside the model's; its colour on the vertex colour. A
+    // particle's flipbook frame rides in its bottom row -- frame, columns, rows (0: none),
+    // spare in an affine transform -- read here and cleared before it is used.
+    mat4 Instance        = InInstanceTransform;
+    vec3 Flipbook        = vec3(Instance[0].w, Instance[1].w, Instance[2].w);
+    Instance[0].w = 0.0;
+    Instance[1].w = 0.0;
+    Instance[2].w = 0.0;
+    if(Flipbook.y >= 1.0 && Flipbook.z >= 1.0)
+    {
+        vec2 Cell       = vec2(mod(Flipbook.x, Flipbook.y), floor(Flipbook.x / Flipbook.y));
+        Inputs.TexCoord = (InTexCoord + Cell) / Flipbook.yz;
+    }
+    mat4 Model           = Transform.Model * Instance;
 #else
     mat4 Model           = Transform.Model;
 #endif
@@ -75,7 +87,7 @@ void main(void)
 #else
     vec2 LightmapUV = vec2(0.0);
 #endif
-    CalculateInterpolants(Clip.xyz, InTexCoord, Inputs.WorldNormal, Inputs.Color, World, ViewPosition.z, LightmapUV);
+    CalculateInterpolants(Clip.xyz, Inputs.TexCoord, Inputs.WorldNormal, Inputs.Color, World, ViewPosition.z, LightmapUV);
     gl_Position = Clip;
 #endif
 }

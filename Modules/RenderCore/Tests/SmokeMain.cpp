@@ -10,6 +10,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -4123,6 +4124,33 @@ static void TestParticleSystemAsset()
     }
     Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter X\n    Modules Shape Gravity\n", System, Error), "an unknown module is refused");
     Expect(ParticleEmitterDesc().Modules == PEM_Velocity, "a fresh emitter has Velocity, nothing else optional");
+
+    /* Collision and Flipbook: modules like the rest, at rest when left out. */
+    const bool bNewKeys = ParseParticleSystem("NimbleParticleSystem 1\nEmitter C\n    Modules Collision Flipbook\n"
+                                              "    CollisionResponse Kill\n    CollisionHeight 25\n    Bounce 0.7\n"
+                                              "    FlipbookColumns 8\n    FlipbookRows 2\n    FlipbookFrames 12\n    FlipbookRate 30\n"
+                                              "    FlipbookRandomStart true\n    CullDistance 5000\n    PauseOffscreen false\n", System, Error);
+    Expect(bNewKeys && System.Emitters[0].HasModule(PEM_Collision) && System.Emitters[0].HasModule(PEM_Flipbook)
+           && System.Emitters[0].CollisionResponse == PCR_Kill && System.Emitters[0].FlipbookColumns == 8
+           && System.Emitters[0].CullDistance == 5000.0f && System.Emitters[0].bPauseOffscreen == 0,
+           "collision, flipbook and culling settings are read, the modules by name");
+    if(bNewKeys)
+    {
+        ParticleEmitterDesc Flipping = System.Emitters[0];
+        const ParticleEmitterSettings On = Flipping.ToSettings();
+        Expect(On.CollisionResponse == PCR_Kill && On.CollisionPlaneY == 25.0f && On.FlipbookColumns == 8 && On.FlipbookRows == 2
+               && On.FlipbookFrames == 12 && On.FlipbookRate == 30.0f && On.bFlipbookRandomStart, "and reach the settings");
+        Flipping.Modules = 0;
+        const ParticleEmitterSettings Off = Flipping.ToSettings();
+        Expect(Off.CollisionResponse == PCR_None && Off.FlipbookColumns == 0, "left out, no collision and no flipbook");
+        Flipping.Modules = PEM_Flipbook;
+        Flipping.Type    = PT_Ribbon;
+        Expect(Flipping.ToSettings().FlipbookColumns == 0, "a ribbon has no flipbook");
+        const std::string NewText = WriteParticleSystem(System);
+        ParticleSystemDesc NewAgain;
+        Expect(NewText.find("    Modules Collision Flipbook\n") != std::string::npos && ParseParticleSystem(NewText, NewAgain, Error)
+               && WriteParticleSystem(NewAgain) == NewText, "and written back the same");
+    }
     Expect(ParseParticleSystem("NimbleParticleSystem 1\nEmitter Ray\n    Type Beam\n    Velocity 0,100,0\n", System, Error)
            && System.Emitters[0].Modules == 0, "a beam written before modules has none: it uses none");
 
@@ -4543,6 +4571,84 @@ static void TestParticlesOnGpu()
         Expect(Graded.bRan && Checked > 20 && ColorError < 0.01f && SizeError < 0.05f,
                "each is drawn the gradient's colour and the curve's size at its age");
 
+        /* Collision: falling from 100 onto a plane at 0 for 1.5 s -- bouncing, or dying there. */
+        ParticleEmitterSettings Falling;
+        Falling.MaxParticles     = 64;
+        Falling.SpawnRate        = 40.0f;
+        Falling.Lifetime         = 100.0f;
+        Falling.LifetimeVariance = 0.0f;
+        Falling.Velocity[0] = 0.0f; Falling.Velocity[1] = -200.0f; Falling.Velocity[2] = 0.0f;
+        Falling.CollisionResponse = PCR_Bounce;
+        Falling.CollisionPlaneY   = 0.0f;
+        Falling.Bounce            = 0.5f;
+        Falling.Friction          = 0.0f;
+        const auto Above = [](int) { return Vector3(0.0, 100.0, 0.0); };
+        const TypeRun Bouncing = RunType(Falling, 15, Above);
+        int Bounced = 0, Fallen = 0;
+        float Lowest = 1e30f;
+        for(const ParticleSample& Each : Bouncing.Particles)
+        {
+            if(!Each.IsAlive()) { continue; }
+            ++Fallen;
+            Lowest  = std::min(Lowest, Each.Position[1]);
+            Bounced += Each.Velocity[1] > 0.0f ? 1 : 0;
+        }
+        std::printf("    collision: %d alive, %d rising, lowest at %.2f\n", Fallen, Bounced, Lowest);
+        Expect(Bouncing.bRan && Fallen == 60 && Lowest >= -1e-3f && Bounced > 0,
+               "particles falling onto the plane never go below it, and bounce back up");
+        Falling.CollisionResponse = PCR_Kill;
+        const TypeRun Killed = RunType(Falling, 15, Above);
+        int Survivors = 0;
+        bool bAboveAll = true;
+        for(const ParticleSample& Each : Killed.Particles)
+        {
+            if(!Each.IsAlive()) { continue; }
+            ++Survivors;
+            bAboveAll = bAboveAll && Each.Position[1] >= 0.0f;
+        }
+        Expect(Killed.bRan && Survivors < 30 && Survivors > 0 && bAboveAll && Killed.bCounted && Killed.DrawCount == uint32_t(Survivors),
+               "with Kill they die at it: only those still falling live, and only they are drawn");
+
+        /* Flipbook: each instance's frame, in its transform's bottom row, from its age. */
+        ParticleEmitterSettings Book = Moving;
+        Book.Type            = PT_Sprite;
+        Book.Billboard       = PB_FaceCamera;
+        Book.Lifetime        = 1.0f;
+        Book.FlipbookColumns = 4;
+        Book.FlipbookRows    = 2;
+        Book.FlipbookFrames  = 8;
+        Book.FlipbookCycles  = 1.0f;
+        Book.Velocity[0] = 0.0f; Book.Velocity[1] = 0.0f; Book.Velocity[2] = 100.0f;   // depth is age
+        const TypeRun OverLife = RunType(Book, 9, Still);
+        bool bFramed = OverLife.bRan;
+        int  Framed  = 0;
+        for(const ParticleInstanceSample& Each : OverLife.Instances)
+        {
+            if(Each.Transform[15] == 0.0f) { continue; }
+            const float Age = Each.Transform[14] / 100.0f;
+            const float Expected = std::floor(std::min(Age, 0.9999f) * 8.0f);
+            bFramed = bFramed && std::abs(Each.Transform[3] - Expected) < 0.5f + (std::abs(Age * 8.0f - std::round(Age * 8.0f)) < 1e-3f ? 1.0f : 0.0f)
+                   && Each.Transform[7] == 4.0f && Each.Transform[11] == 2.0f;
+            ++Framed;
+        }
+        Expect(bFramed && Framed > 20, "over its life, each is on the frame its age reaches, of 4 x 2");
+        Book.FlipbookRate = 10.0f;
+        const TypeRun AtRate = RunType(Book, 9, Still);
+        bool bTimed = AtRate.bRan;
+        for(const ParticleInstanceSample& Each : AtRate.Instances)
+        {
+            if(Each.Transform[15] == 0.0f) { continue; }
+            const float Seconds = Each.Transform[14] / 100.0f;
+            const float Expected = std::fmod(std::floor(Seconds * 10.0f), 8.0f);
+            bTimed = bTimed && (std::abs(Each.Transform[3] - Expected) < 0.5f || std::abs(Seconds * 10.0f - std::round(Seconds * 10.0f)) < 1e-3f);
+        }
+        Expect(bTimed, "at a frame rate, 10 a second, looping round the 8");
+        Book.FlipbookColumns = 0;
+        const TypeRun NoBook = RunType(Book, 3, Still);
+        const ParticleInstanceSample* Plain = FirstLive(NoBook);
+        Expect(Plain && Plain->Transform[3] == 0.0f && Plain->Transform[7] == 0.0f && Plain->Transform[11] == 0.0f && Plain->Transform[15] == 1.0f,
+               "without one, the bottom row is an affine transform's");
+
         /* A beam: its points from the emitter to its end; jittered in the middle only. */
         ParticleEmitterSettings Ray;
         Ray.Type         = PT_Beam;
@@ -4707,6 +4813,135 @@ static void TestParticlesOnGpu()
             Expect(Between < 60 && PlumeWas < 60, "and nothing else: the plume's system was swapped out");
         }
         ParticleSystemCache::Invalidate("Test/Strips.nmparticle");
+
+        /* 4. A flipbook drawn: one big still sprite of the UV probe (red U, green V), whole and then as frame 0 of 2 x 2. */
+        const auto RunFrames = [&](const int InCount)
+        {
+            for(int Each = 0; Each < InCount; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            }
+        };
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            const uint64_t Asked = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            std::string Why;
+            return Asked != 0 && Rend.TakeMaterialPreview(Asked, OutPixels, Why) && OutPixels.GetWidth() == 256;
+        };
+        const auto Channel = [](const EngineCore::Image& InPixels, const int InX, const int InY, const int InChannel)
+        {
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const int Index = InChannel == 1 ? 1 : (bBgra ? 2 - InChannel : InChannel);
+            return int(Px[Index]);
+        };
+        const auto Sheet = [&](const bool bInFlipbook)
+        {
+            auto Card = std::make_shared<ParticleSystemDesc>();
+            ParticleEmitterDesc& One = Card->Emitters.emplace_back();
+            std::snprintf(One.Material, sizeof(One.Material), "%s", "Content/Materials/UVProbe.material.nmgraph");
+            One.Offset        = Vector3(0.0, 100.0, 0.0);   // the view's centre
+            One.Modules       = bInFlipbook ? uint8_t(PEM_Flipbook) : uint8_t(0);
+            One.SpawnMode     = PSM_Burst;
+            One.BurstCount    = 1;
+            One.MaxParticles  = 1;
+            One.Lifetime      = 100.0f;
+            One.LifetimeVariance = 0.0f;
+            One.StartSize     = 240.0f;
+            One.EndSize       = 240.0f;
+            One.FadeIn        = 0.0f;
+            One.FadeOut       = 0.0f;
+            One.FlipbookColumns = 2;
+            One.FlipbookRows    = 2;
+            ParticleSystemCache::Store("Test/Sheet.nmparticle", Card);
+            if(auto* Running = Plume.GetComponent<ParticleSystemComponent>())
+            {
+                std::snprintf(Running->System, sizeof(Running->System), "%s", "Test/Sheet.nmparticle");
+                Running->bEmitting = 0;   // off and on: the burst starts over in the new system
+            }
+            RunFrames(2);
+            if(auto* Running = Plume.GetComponent<ParticleSystemComponent>()) { Running->bEmitting = 1; }
+            RunFrames(10);
+            EngineCore::Image Pixels;
+            /* Near the card's right and bottom edges (u and v about 0.92): 70 pixels is its half width. */
+            int Right = -1, Bottom = -1, Left = -1;
+            if(Capture(Pixels))
+            {
+                Right  = Channel(Pixels, 128 + 60, 128, 0);
+                Bottom = Channel(Pixels, 128, 128 + 60, 1);
+                Left   = Channel(Pixels, 128 - 60, 128, 0);
+            }
+            return std::array<int, 3>{ Right, Bottom, Left };
+        };
+        const std::array<int, 3> Whole = Sheet(false);
+        const std::array<int, 3> Frame0 = Sheet(true);
+        std::printf("    UV probe red at the right edge: %d whole, %d as frame 0 of 2 x 2; green at the bottom: %d, %d; red at the left: %d, %d\n",
+                    Whole[0], Frame0[0], Whole[1], Frame0[1], Whole[2], Frame0[2]);
+        Expect(Whole[0] > 200 && Whole[1] > 200 && Frame0[0] > 40 && Frame0[0] < Whole[0] - 40 && Frame0[1] > 40 && Frame0[1] < Whole[1] - 40
+               && Frame0[2] < 40 && Whole[2] < 40,
+               "a flipbook frame samples its cell: frame 0 of 2 x 2 reads only the texture's top-left quarter");
+        ParticleSystemCache::Invalidate("Test/Sheet.nmparticle");
+
+        /* 5. Culling: an emitter past its Cull Distance is not simulated; one no view draws pauses, and goes on when seen. */
+        const auto Simulations = [&]()
+        {
+            RenderStats Stats;
+            Rend.GetStats(Stats);
+            return Stats.ParticleSimulations;
+        };
+        const auto Plumes = [&](const float InCullDistance, const bool bInPause)
+        {
+            auto Steady = std::make_shared<ParticleSystemDesc>();
+            ParticleEmitterDesc& Puffs = Steady->Emitters.emplace_back();
+            Puffs.CullDistance    = InCullDistance;
+            Puffs.bPauseOffscreen = bInPause ? 1 : 0;
+            ParticleSystemCache::Store("Test/Steady.nmparticle", Steady);
+            if(auto* Running = Plume.GetComponent<ParticleSystemComponent>())
+            {
+                std::snprintf(Running->System, sizeof(Running->System), "%s", "Test/Steady.nmparticle");
+            }
+        };
+        const auto Simulated = [&](const int InFrames)
+        {
+            const uint64_t Before = Simulations();
+            RunFrames(InFrames);
+            return Simulations() - Before;
+        };
+        Plumes(0.0f, true);
+        RunFrames(5);
+        const uint64_t Seen = Simulated(20);
+        Plumes(300.0f, true);    // the camera is 600 away
+        RunFrames(3);
+        const uint64_t Far = Simulated(20);
+        Plumes(0.0f, true);
+        /* Turned round, with the frustum's box as its bounds, as a game camera's view has (WorldBridge's
+         * PerspectiveBounds; MakePerspective's own are empty, which culls nothing): the emitter behind it is culled. */
+        RenderView Away = RenderView::MakePerspective(Viewport, Vector3(0.0, 100.0, -600.0), Vector3(0.0, 0.0, -1.0),
+                                                      40.0f, 10.0f, 5000.0f);
+        Away.Bounds = GameCore::AABB(Vector3(-1900.0, -1800.0, -5600.0), Vector3(1900.0, 2000.0, -600.0));
+        Rend.SetViewOverride(&Away);
+        RunFrames(50);           // well past half a second unseen
+        const uint64_t Unseen = Simulated(20);
+        Plumes(0.0f, false);     // the same, never pausing
+        const uint64_t Unpaused = Simulated(20);
+        Plumes(0.0f, true);
+        Rend.SetViewOverride(&Side);
+        RunFrames(3);
+        const uint64_t Again = Simulated(20);
+        std::printf("    simulations in 20 frames: %llu seen, %llu past its cull distance, %llu unseen, %llu unseen and never pausing, %llu seen again\n",
+                    static_cast<unsigned long long>(Seen), static_cast<unsigned long long>(Far), static_cast<unsigned long long>(Unseen),
+                    static_cast<unsigned long long>(Unpaused), static_cast<unsigned long long>(Again));
+        Expect(Seen >= 18 && Far == 0, "an emitter past its Cull Distance from the view is not simulated");
+        Expect(Unseen == 0 && Unpaused >= 18 && Again >= 18,
+               "one no view has drawn for half a second pauses (unless told not to), and goes on once seen");
+        ParticleSystemCache::Invalidate("Test/Steady.nmparticle");
         Rend.UnbindWorld();
         Rend.Shutdown();
         ParticleSystemCache::Invalidate("Test/Plume.nmparticle");

@@ -18,9 +18,9 @@ COMPUTE_PARAMS_BEGIN(ParticleParams)
     vec4  Pa_CameraRight;
     vec4  Pa_CameraUp;
     vec4  Pa_CameraForward;
-    vec4  Pa_Size;           // x start, y end (the swirl's scale; size over life is Pa_SizeLut)
-    vec4  Pa_StartColor;     // unused by the shaders: colour over life is Pa_ColorLut
-    vec4  Pa_EndColor;
+    vec4  Pa_Size;           // x start, y end (the swirl's scale; size over life is Pa_SizeLut), z 1: random start frame, w flipbook cycles
+    vec4  Pa_Collision;      // x response (0 none, 1 bounce, 2 kill), y the plane's height (world), z bounce, w friction
+    vec4  Pa_Flipbook;       // x columns, y rows (0: none), z frames, w frames a second (0: over its life)
     vec4  Pa_Noise;          // x time, y the swirl's frequency
     uvec4 Pa_Sort;           // x the power of two the sort runs over; y a strip's first slot, z its points; w draws in the args buffer
     vec4  Pa_PrevEmitter;    // xyz the emitter's position a frame ago: spawns are spread between the two

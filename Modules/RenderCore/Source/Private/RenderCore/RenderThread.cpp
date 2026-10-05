@@ -406,6 +406,7 @@ namespace RenderCore
         OutStats.CommandsExecuted       = P->CommandsExecuted.load(std::memory_order_relaxed);
         OutStats.CommandsExecutedInline = GetInlineRenderCommandCount();
         OutStats.DrawCalls              = P->Context.GetDrawCallCount();
+        OutStats.ParticleSimulations    = P->Context.GetParticleSimulationCount();
         GetSceneStats(OutStats.ProxiesLive, OutStats.ProxiesCulledLastFrame);
         OutStats.PeakQueueDepth         = P->PeakQueueDepth.load(std::memory_order_relaxed);
         const StatUnitSnapshot Unit     = GetStatUnit();

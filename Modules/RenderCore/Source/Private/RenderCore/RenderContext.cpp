@@ -394,6 +394,7 @@ namespace RenderCore
         GDIRenderTarget* FinalTarget = nullptr;
 
         std::atomic<uint64_t> DrawCallCount{0};
+        std::atomic<uint64_t> ParticleSimulationCount{0};
 
         Impl()
         {
@@ -2118,6 +2119,7 @@ namespace RenderCore
         const ParticleParams Params = ParticleSimulation::BuildParams(InEmitter, InSettings, InEmitterPosition, Camera,
                                                                       InDeltaSeconds >= 0.0f ? InDeltaSeconds : P->FrameDelta,
                                                                       GetTimeSeconds());
+        P->ParticleSimulationCount.fetch_add(1, std::memory_order_relaxed);
         ParticleSimulation::Shaders Shaders;
         Shaders.Simulate = P->GetComputeShader("ParticleSimulate.csh");
         if(InEmitter.Type == PT_Ribbon || InEmitter.Type == PT_Beam)
@@ -2472,6 +2474,11 @@ namespace RenderCore
     void RenderContext::EndDrawEvent()
     {
         GDIEndDrawEvent();
+    }
+
+    uint64_t RenderContext::GetParticleSimulationCount() const
+    {
+        return P->ParticleSimulationCount.load(std::memory_order_relaxed);
     }
 
     uint64_t RenderContext::GetDrawCallCount() const

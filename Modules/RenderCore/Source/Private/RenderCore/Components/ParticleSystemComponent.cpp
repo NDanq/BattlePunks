@@ -79,6 +79,9 @@ namespace RenderCore
                     Run.Settings = C.ToSettings(Desc, uint32_t(Index));
                     Run.Offset   = Desc.Offset;
                     Run.BeamEnd  = Desc.BeamEnd;
+                    Run.CollisionHeight = Desc.CollisionHeight;
+                    Run.CullDistance    = std::max(Desc.CullDistance, 0.0f);
+                    Run.bPauseOffscreen = Desc.bPauseOffscreen != 0;
                     Run.bBeamTarget = C.bUseBeamTarget != 0;
                     Run.BeamTarget  = C.BeamTarget;
                     Run.Mesh.assign(Desc.GetMeshPath());
@@ -117,13 +120,27 @@ namespace RenderCore
                 Retired.clear();
 
                 const float Delta = InContext.GetDeltaSeconds() * TimeScale;
+
+                /* Offscreen: no view drew it for half a second (Draw marks the time). A new proxy counts as seen. */
+                const double Now = InContext.GetTimeSeconds();
+                if(LastDrawnSeconds < 0.0) { LastDrawnSeconds = Now; }
+                const bool bOffscreen = Now - LastDrawnSeconds > PAUSE_OFFSCREEN_SECONDS;
+                const EngineCore::Vector3 Eye = InContext.GetView().Origin;
+
                 for(EmitterRun& Run : Emitters)
                 {
-                    if(!Run.bEnabled)
+                    /* Past its cull distance from the view, it lets its particles go: nothing to simulate or draw. */
+                    const bool bCulled = Run.CullDistance > 0.0f && float((EmitterPosition(Run) - Eye).GetLength()) > Run.CullDistance;
+                    if(!Run.bEnabled || bCulled)
                     {
                         InContext.ReleaseParticleEmitter(Run.Gpu);
                         Run.Gpu      = nullptr;
                         Run.Capacity = 0;
+                        continue;
+                    }
+                    /* Paused offscreen: its particles kept, as they were, until a view draws it again. */
+                    if(Run.bPauseOffscreen && bOffscreen && Run.Gpu)
+                    {
                         continue;
                     }
                     if(!Run.Gpu || Run.Capacity != Run.Settings.GetCapacity() || Run.GpuType != Run.Settings.Type)
@@ -145,6 +162,11 @@ namespace RenderCore
                         continue;
                     }
                     /* A beam ends at the component's target, else at its own end from the emitter, in the entity's axes. */
+                    /* Its collision plane, CollisionHeight above the entity. */
+                    if(Run.Settings.CollisionResponse != PCR_None)
+                    {
+                        Run.Settings.CollisionPlaneY = float(GetTransform().Position.GetY()) + Run.CollisionHeight;
+                    }
                     if(Run.Settings.Type == PT_Beam)
                     {
                         const EngineCore::Vector3 End = Run.bBeamTarget ? Run.BeamTarget
@@ -165,9 +187,12 @@ namespace RenderCore
 
             void Draw(RenderContext& InContext) override
             {
+                LastDrawnSeconds = InContext.GetTimeSeconds();   // seen: Simulate goes on
+                const EngineCore::Vector3 Eye = InContext.GetView().Origin;
                 for(const EmitterRun& Run : Emitters)
                 {
-                    if(Run.Gpu)
+                    const bool bCulled = Run.CullDistance > 0.0f && float((EmitterPosition(Run) - Eye).GetLength()) > Run.CullDistance;
+                    if(Run.Gpu && !bCulled)
                     {
                         InContext.DrawParticles(*Run.Gpu, EmitterPosition(Run), Run.Mesh.c_str(), Run.Material.c_str(), Run.Label.c_str());
                     }
@@ -198,6 +223,9 @@ namespace RenderCore
                 std::string             Name;     // its buffers': the system's path and the emitter
                 EngineCore::Vector3     Offset;
                 EngineCore::Vector3     BeamEnd;          // in the entity's axes
+                float                   CollisionHeight = 0.0f;   // above the entity
+                float                   CullDistance    = 0.0f;   // 0: never
+                bool                    bPauseOffscreen = true;
                 EngineCore::Vector3     BeamTarget;       // world: the component's, if bBeamTarget
                 bool                    bBeamTarget = false;
                 bool                    bEnabled = true;
@@ -216,6 +244,10 @@ namespace RenderCore
             std::vector<ParticleEmitterGpu*> Retired;
             std::string                      MissingPath;
             float                            TimeScale = 1.0f;
+            double                           LastDrawnSeconds = -1.0;   // the render clock's, when a view last drew it
+
+            /* How long no view may draw it before an emitter that pauses offscreen stops simulating. */
+            static constexpr double PAUSE_OFFSCREEN_SECONDS = 0.5;
             bool                             bWarned   = false;
         };
     }

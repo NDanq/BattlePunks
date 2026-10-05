@@ -200,6 +200,8 @@ namespace RenderCore
          * consumer (a per-second log line) differences two reads itself,
          * the same convention RenderStats's own comment states. */
         uint64_t GetDrawCallCount() const;
+        /* Particle emitters simulated so far, one a SimulateParticles: what culling and pausing save. */
+        uint64_t GetParticleSimulationCount() const;
 
         /* How many draws InStage queued in the last scene this context drew
          * (a viewport frame or a preview): the routing, as tests see it. The
