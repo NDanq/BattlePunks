@@ -100,6 +100,11 @@ namespace RenderCore
          * scene's own pass, so it samples them. */
         void SetCaptures(const SceneCaptureList& InCaptures);
 
+        /* The UI over this scene (Renderer::SubmitUIDrawList): InBlock, a packed
+         * UIDrawList in EngineCore::Memory, owned from here and drawn by every
+         * Render() until the next; null clears it. */
+        void SetUIDrawList(void* InBlock, size_t InBytes);
+
 #if WITH_EDITOR
         /* EDITOR ONLY. Lines for the next Render() only. */
         void SetDebugLines(const DebugLine* InLines, size_t InCount);
