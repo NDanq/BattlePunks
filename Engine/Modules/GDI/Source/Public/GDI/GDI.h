@@ -308,6 +308,15 @@ public:
 
     virtual void SetViewport(uint InX, uint InY, uint InWidth, uint InHeight) = 0;
 
+    /*
+     * Draws after this touch only InWidth x InHeight pixels at InX, InY -- in
+     * the render target's own rows, row 0 first in memory (GDISetScissorRect
+     * converts from the top-left). Clear ignores it, and the next SetViewport
+     * resets it to the viewport. The default ignores it: a backend without
+     * scissoring draws unclipped.
+     */
+    virtual void SetScissorRect(uint /*InX*/, uint /*InY*/, uint /*InWidth*/, uint /*InHeight*/) {}
+
     virtual void SetDepthState(IDepthStateDesc) = 0;
 
     virtual void SetBlendState(IBlendStateDesc) = 0;
@@ -470,6 +479,10 @@ public:
      * (SetDrawRange). Null if unsupported or InDesc is invalid. */
     virtual GDIMesh* CreateMesh(const GDIMeshDesc& InDesc) = 0;
 
+    /* A dynamic mesh (GDIMesh::UpdateDynamic) with room for InMaxVertices and
+     * InMaxIndices per BeginRendering block. Null if unsupported -- the default. */
+    virtual GDIMesh* CreateDynamicMesh(uint32_t /*InMaxVertices*/, uint32_t /*InMaxIndices*/) { return nullptr; }
+
     virtual GDITextureResource* CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) = 0;
 
     virtual GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) = 0;
@@ -521,6 +534,20 @@ protected:
     bool bInitialized = false;
 
     /* SetUniformBlock's bytes for bindings 2 and 3, and SetMaterialTexture's. */
+    /* GDISetViewport's rectangle, which GDISetScissorRect clips to. */
+    uint                  ViewportX = 0, ViewportY = 0, ViewportWidth = 0, ViewportHeight = 0;
+
+    /* Bumped by each GDIBeginRendering: a dynamic mesh's appends restart
+     * when it changes. */
+    uint64_t              RenderingSerial = 0;
+
+    friend void GDISetViewport(uint, uint, uint, uint);
+    friend void GDIBeginRendering();
+    friend void GDISetScissorRect(uint, uint, uint, uint);
+    friend void GDIClearScissorRect();
+    friend bool GDIUpdateDynamicMesh(GDIMesh*, const GDIMeshDesc&);
+    friend uint64_t GDIGetRenderingSerial();
+
     std::vector<uint8_t>  MaterialBlocks[2];
     /* Bumped by each SetUniformBlock, so a backend can reuse an upload of a
      * block that has not changed since (the scene block: once per frame). */
@@ -575,6 +602,30 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(GDIMesh*, CreateMesh, (const GDIMeshDesc& InD
 /* Copies InDesc into malloc'd RenderData. False (OutData untouched) if empty,
  * out of range, or not whole triangles. */
 bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& OutData);
+
+/* Whether InDesc is drawable as CreateMesh takes it: positions, UVs and
+ * indices (normals too unless bInNormalsOptional), whole triangles, in range. */
+bool GDIValidateMeshDesc(const GDIMeshDesc& InDesc, bool bInNormalsOptional);
+
+/* GDIDynamicDriver::CreateDynamicMesh; null without a driver or support. */
+GDIMesh* GDICreateDynamicMesh(uint32_t InMaxVertices, uint32_t InMaxIndices);
+
+/* InMesh->UpdateDynamic(InDesc) in the current BeginRendering block. */
+bool GDIUpdateDynamicMesh(GDIMesh* InMesh, const GDIMeshDesc& InDesc);
+
+/* How many BeginRendering blocks have begun: a dynamic mesh's appends are
+ * per block. */
+uint64_t GDIGetRenderingSerial();
+
+/*
+ * Scissor, in pixels of the current viewport from its TOP-LEFT (the way a
+ * UI lays out): draws after this touch only that rectangle, clipped to the
+ * viewport. GDI converts to the target's rows -- every backend keeps row 0 at
+ * the bottom of the image. GDISetViewport and GDIClearScissorRect reset it to
+ * the whole viewport; Clear ignores it.
+ */
+void GDISetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight);
+void GDIClearScissorRect();
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, DrawObject, (class GDIViewObject*))
 

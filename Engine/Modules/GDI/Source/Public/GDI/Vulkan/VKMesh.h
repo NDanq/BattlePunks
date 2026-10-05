@@ -43,6 +43,13 @@ public:
     /** Upload vertex data to device-local buffers via a transient command buffer. */
     void InitResource() override;
 
+    /**
+     * Make this a dynamic mesh (GDICreateDynamicMesh) instead: every stream of
+     * the indexed layout in host-visible, persistently mapped memory, written
+     * in place by UpdateDynamic. False (nothing allocated) on failure.
+     */
+    bool InitDynamic(uint32_t InMaxVertices, uint32_t InMaxIndices);
+
     /** Destroy all VkBuffers + memory, free CPU-side render data. */
     void Release() override;
 
@@ -53,6 +60,9 @@ public:
     void Draw() override;
 
 protected:
+    /** memcpy into the mapped streams; nothing is in flight there (GDIMesh::UpdateDynamic). */
+    bool WriteDynamic(const GDIMeshDesc& InDesc, uint32_t InBaseVertex, uint32_t InBaseIndex) override;
+
     /**
      * Copy the last added transform into the persistently-mapped instance buffer.
      * The buffer is a frame-scoped append ring: draws are only recorded now and
@@ -105,6 +115,14 @@ private:
     VkDeviceMemory       UV1Memory       = VK_NULL_HANDLE;
     VkBuffer             IndexBuffer     = VK_NULL_HANDLE;
     VkDeviceMemory       IndexMemory     = VK_NULL_HANDLE;
+
+    /** A dynamic mesh's persistent mappings of the six buffers above. */
+    void*                PositionMapped    = nullptr;
+    void*                TexCoordMapped    = nullptr;
+    void*                NormalMapped      = nullptr;
+    void*                VertexColorMapped = nullptr;
+    void*                UV1Mapped         = nullptr;
+    void*                IndexMapped       = nullptr;
 
     /** Only valid when bSupportsInstanced == true. */
     VkBuffer             InstanceBuffer  = VK_NULL_HANDLE;

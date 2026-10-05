@@ -15,6 +15,9 @@ public:
 
     OpenGLMesh(const EMeshType& InMeshType, const ORenderData& InData);
 
+    /* A dynamic mesh (GDICreateDynamicMesh): stream buffers of this capacity. */
+    OpenGLMesh(uint32_t InMaxVertices, uint32_t InMaxIndices);
+
     ~OpenGLMesh() override;
 
     void InitResource() override;
@@ -24,13 +27,17 @@ public:
     void Draw() override;
 
 protected:
+    bool WriteDynamic(const GDIMeshDesc& InDesc, uint32_t InBaseVertex, uint32_t InBaseIndex) override;
+
     void AddInstancedTransformInner() override;
 
     void ResetInstancedTransformInner() override;
 
 private:
-    uint VAO;
-    uint VBO[ORenderData::Buffers::NUM_BUFFERS];
+    void InitDynamicResource();
+
+    uint VAO = 0;
+    uint VBO[ORenderData::Buffers::NUM_BUFFERS] = {};
 
     /* Indexed meshes only (GDICreateMesh): normals at location 8, and the
      * element buffer the VAO records. 0 for the quads. */

@@ -215,14 +215,20 @@ void ReleaseGDI()
     GSync = nullptr;
 }
 
-bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& OutData)
+bool GDIValidateMeshDesc(const GDIMeshDesc& InDesc, const bool bInNormalsOptional)
 {
-    if(!InDesc.Positions || !InDesc.Normals || !InDesc.UV0 || !InDesc.Indices) return false;
+    if(!InDesc.Positions || (!InDesc.Normals && !bInNormalsOptional) || !InDesc.UV0 || !InDesc.Indices) return false;
     if(InDesc.NumVertices == 0 || InDesc.NumIndices == 0 || InDesc.NumIndices % 3 != 0) return false;
     for(uint32_t At = 0; At < InDesc.NumIndices; ++At)
     {
         if(InDesc.Indices[At] >= InDesc.NumVertices) return false;
     }
+    return true;
+}
+
+bool GDIMakeIndexedRenderData(const GDIMeshDesc& InDesc, GDIMesh::ORenderData& OutData)
+{
+    if(!GDIValidateMeshDesc(InDesc, false)) return false;
 
     const auto Copy = [](const void* InSource, const size_t InBytes) -> void*
     {
@@ -344,11 +350,37 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
                             (uint InColorMask, EngineCore::Color InColor, float InDepth, uint InStencil),
                             ,(InColorMask, InColor, InDepth, InStencil))
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            SetViewport,
-                            (uint InX, uint InY, uint InWidth, uint InHeight),
-                            ,
-                            (InX, InY, InWidth, InHeight))
+/* Hand-written: GDISetScissorRect clips to, and flips within, the viewport. */
+void GDISetViewport(const uint InX, const uint InY, const uint InWidth, const uint InHeight)
+{
+    if(!GDynamicGDI) return;
+    GDynamicGDI->ViewportX      = InX;
+    GDynamicGDI->ViewportY      = InY;
+    GDynamicGDI->ViewportWidth  = InWidth;
+    GDynamicGDI->ViewportHeight = InHeight;
+    GDynamicGDI->SetViewport(InX, InY, InWidth, InHeight);
+}
+
+void GDISetScissorRect(const uint InX, const uint InY, const uint InWidth, const uint InHeight)
+{
+    if(!GDynamicGDI) return;
+    const GDIDynamicDriver& D = *GDynamicGDI;
+
+    /* Clipped to the viewport, then flipped: InY counts down from its top,
+     * the target's rows up from its bottom. */
+    const uint Left   = InX < D.ViewportWidth ? InX : D.ViewportWidth;
+    const uint Top    = InY < D.ViewportHeight ? InY : D.ViewportHeight;
+    const uint Width  = InWidth < D.ViewportWidth - Left ? InWidth : D.ViewportWidth - Left;
+    const uint Height = InHeight < D.ViewportHeight - Top ? InHeight : D.ViewportHeight - Top;
+    GDynamicGDI->SetScissorRect(D.ViewportX + Left, D.ViewportY + (D.ViewportHeight - Top - Height), Width, Height);
+}
+
+void GDIClearScissorRect()
+{
+    if(!GDynamicGDI) return;
+    const GDIDynamicDriver& D = *GDynamicGDI;
+    GDynamicGDI->SetScissorRect(D.ViewportX, D.ViewportY, D.ViewportWidth, D.ViewportHeight);
+}
 
 IMPLEMENT_GDI_FUNCTION_BODY(void,
                             SetDepthState,
@@ -404,10 +436,59 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(GDIShaderResource*,
                             return,
                             (InShaderType, SrcCode))
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            BeginRendering,
-                            (), ,()
-                            )
+/* Hand-written: counts the blocks, for dynamic meshes. */
+void GDIBeginRendering()
+{
+    if(!GDynamicGDI) return;
+    ++GDynamicGDI->RenderingSerial;
+    GDynamicGDI->BeginRendering();
+}
+
+uint64_t GDIGetRenderingSerial()
+{
+    return GDynamicGDI ? GDynamicGDI->RenderingSerial : 0;
+}
+
+GDIMesh* GDICreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+{
+    if(!GDynamicGDI || InMaxVertices == 0 || InMaxIndices == 0) return nullptr;
+    return GDynamicGDI->CreateDynamicMesh(InMaxVertices, InMaxIndices);
+}
+
+bool GDIUpdateDynamicMesh(GDIMesh* InMesh, const GDIMeshDesc& InDesc)
+{
+    return GDynamicGDI && InMesh && InMesh->UpdateDynamic(InDesc, GDynamicGDI->RenderingSerial);
+}
+
+bool GDIMesh::UpdateDynamic(const GDIMeshDesc& InDesc, const uint64_t InRenderingSerial)
+{
+    if(!bDynamic || !GDIValidateMeshDesc(InDesc, true)) return false;
+
+    /* A new block: the previous one's draws have finished (every backend
+     * waits for them before recording again), so start over. */
+    if(InRenderingSerial != DynamicSerial)
+    {
+        DynamicSerial     = InRenderingSerial;
+        DynamicNextVertex = 0;
+        DynamicNextIndex  = 0;
+    }
+    if(InDesc.NumVertices > DynamicVertexCapacity - DynamicNextVertex ||
+       InDesc.NumIndices  > DynamicIndexCapacity  - DynamicNextIndex)
+    {
+        return false;
+    }
+    if(!WriteDynamic(InDesc, DynamicNextVertex, DynamicNextIndex)) return false;
+
+    DynamicBaseVertex       = DynamicNextVertex;
+    DynamicBaseIndex        = DynamicNextIndex;
+    DynamicNextVertex      += InDesc.NumVertices;
+    DynamicNextIndex       += InDesc.NumIndices;
+    RenderData.NumVertices  = InDesc.NumVertices * 3;   // position floats, as everywhere
+    RenderData.NumIndices   = InDesc.NumIndices;
+    DrawFirstIndex          = 0;
+    DrawIndexCount          = 0;
+    return true;
+}
 
 IMPLEMENT_GDI_FUNCTION_BODY(void,
                            EndRendering,

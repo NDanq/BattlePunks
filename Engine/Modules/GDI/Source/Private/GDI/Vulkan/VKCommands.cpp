@@ -274,6 +274,20 @@ void VulkanDynamicGDI::SetViewport(uint InX, uint InY, uint InWidth, uint InHeig
     }
 }
 
+void VulkanDynamicGDI::SetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight)
+{
+    if(!CurrentStateData) return;
+
+    /* The target's own rows, as the viewport: GDISetScissorRect flipped them. */
+    VkRect2D& S = CurrentStateData->ScissorRect;
+    S.offset = { int32_t(InX), int32_t(InY) };
+    S.extent = { InWidth, InHeight };
+    if(CurrentStateData->CurrentCmd != VK_NULL_HANDLE)
+    {
+        vkCmdSetScissor(CurrentStateData->CurrentCmd, 0, 1, &S);
+    }
+}
+
 #pragma endregion
 
 #pragma region State-tracking stubs (used at pipeline build time in Phase 2)

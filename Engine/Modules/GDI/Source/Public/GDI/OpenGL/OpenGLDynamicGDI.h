@@ -189,6 +189,8 @@ public:
 
     void SetViewport(uint InX, uint InY, uint InWidth, uint InHeight) override;
 
+    void SetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight) override;
+
     void SetDepthState(IDepthStateDesc) override;
 
     void SetBlendState(IBlendStateDesc) override;
@@ -223,6 +225,8 @@ public:
     GDIMesh* CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced = false) override;
 
     GDIMesh* CreateMesh(const GDIMeshDesc& InDesc) override;
+
+    GDIMesh* CreateDynamicMesh(uint32_t InMaxVertices, uint32_t InMaxIndices) override;
 
     GDITextureResource* CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
 
@@ -278,6 +282,7 @@ private:
     uint                ScratchFramebuffer = 0;   // SetRenderTargets' attachments
     class OpenGLMesh*   ScreenMesh = nullptr;
     GLsync              ThreadSync;
+    bool                bScissorTest = false;   // GL_SCISSOR_TEST, off while the scissor is the viewport
 
     /* GPU timestamps (GDIDynamicDriver::WriteGPUTimestamp), render thread only:
      * GL_TIMESTAMP queries made on first use, read at the next BeginRendering
