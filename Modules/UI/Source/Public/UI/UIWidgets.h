@@ -29,11 +29,13 @@
  *   WrapBox        children in a row that wraps onto the next line
  *   TextInput      one line of text the player types
  *   Include        another document shown inside this one (a row, a panel)
+ *   ListView       a row document per item of a list in the data store
  *   Spacer         empty space of a size
  */
 namespace UI
 {
     class UIFont;
+    struct UIDocumentAsset;
 
     class UI_API UICanvas : public UIWidget
     {
@@ -483,7 +485,8 @@ namespace UI
         void   Paint(UIPaintContext& InContext, const UIRect& InRect) const override;
         void   OnPropertyChanged(const UIPropertyDesc& InProperty) override;
         bool                IsEmbedHost() const override { return true; }
-        UIDocumentInstance* GetEmbedded() const override { return Embedded.get(); }
+        uint32_t            GetEmbeddedCount() const override { return Embedded ? 1u : 0u; }
+        UIDocumentInstance* GetEmbeddedAt(uint32_t /*InIndex*/) const override { return Embedded.get(); }
         void                TickEmbedded() override;
 
     private:
@@ -495,6 +498,89 @@ namespace UI
         uint64_t Generation = 0;     // UIAssetCache's, when made
         bool     bStale     = true;  // Document or Prefix changed: make it again
         bool     bRefused   = false; // a cycle or too deep: warned, left empty
+    };
+
+    /*
+     * A list from the data store, a row per item: <Items>.Count items, item i
+     * shown by an instance of ItemDocument whose {Bind:Key} reads
+     * <Items>.<i>.Key (as an Include's Prefix). Rows are made only for what
+     * is in view and reused as it scrolls -- a thousand saves cost a dozen
+     * rows -- so a row's UI graph opens once per row, not per item; it reads
+     * its item through self.Prefix. Fixed ItemHeight.
+     *
+     * A click selects (SelectedIndex binds two-way; OnSelect, $value the
+     * index); Up and Down move the selection while it has focus; Accept, or
+     * a second click, activates (OnActivate). Buttons in a row still click.
+     */
+    class UI_API UIListView : public UIWidget
+    {
+    public:
+        std::string      ItemDocument;       // a .nmui, one per row
+        std::string      Items;              // the list's key: Items.Count, Items.<i>.<Field>
+        float            ItemHeight   = 60.0f;
+        float            Spacing      = 4.0f;
+        int32_t          SelectedIndex = -1;
+        float            ScrollOffset = 0.0f;
+        float            ScrollStep   = 60.0f;
+        EUIScrollBarMode ScrollBar    = EUIScrollBarMode::Auto;
+        float            BarWidth     = 8.0f;
+        UIBrush          SelectedBrush;      // behind the selected row
+        UIBrush          Track;
+        UIBrush          Thumb;
+        UIBrush          ThumbHovered;
+        UIActionList     OnSelect;           // $value the index
+        UIActionList     OnActivate;
+
+        UIListView();
+        ~UIListView() override;
+        UIVec2 MeasureContent(UILayoutContext& InContext) override;
+        void   ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect) override;
+        void   Paint(UIPaintContext& InContext, const UIRect& InRect) const override;
+        void   PaintOver(UIPaintContext& InContext, const UIRect& InRect) const override;
+        bool   IsInteractive() const override { return true; }
+        bool   TakesHits() const override { return true; }
+        bool   OnWheel(float InDelta) override;
+        bool   OnNavigate(int InDirection) override;
+        void   OnPointer(const UIPointerEvent& InEvent) override;
+        bool   OnFocusedTick(float InDeltaSeconds) override;
+        void   OnPropertyChanged(const UIPropertyDesc& InProperty) override;
+        double GetActionValue() const override { return double(SelectedIndex); }
+        bool                IsEmbedHost() const override { return true; }
+        uint32_t            GetEmbeddedCount() const override { return ActiveRows; }
+        UIDocumentInstance* GetEmbeddedAt(uint32_t InIndex) const override { return InIndex < ActiveRows ? Rows[InIndex].Doc.get() : nullptr; }
+        void                TickEmbedded() override;
+
+        /* The items, from the store; the rows made now (for tests: they stay few). */
+        int32_t GetItemCount() const { return Count; }
+        size_t  GetRowCount() const  { return Rows.size(); }
+        /* Selects InIndex (clamped; -1 none) as the player would: two-way, OnSelect, kept in view. */
+        bool    Select(int32_t InIndex);
+        bool    ScrollTo(float InOffset);
+        const UIScrollState& GetScroll() const { return Scroll; }
+
+    private:
+        struct Row
+        {
+            std::unique_ptr<UIDocumentInstance> Doc;
+            int32_t Item = -1;
+        };
+        float  Pitch() const { return ItemHeight + Spacing; }
+        bool   ShowsBar() const;
+        int32_t ReadCount() const;
+        std::string RowPrefix(int32_t InItem) const;
+        int32_t ItemAtPixel(float InY) const;
+        void   DropRows();
+
+        std::vector<Row> Rows;
+        uint32_t         ActiveRows = 0;       // Rows[0, ActiveRows) are showing items
+        int32_t          Count = 0;
+        UIScrollState    Scroll;
+        std::shared_ptr<const UIDocumentAsset> RowAsset;
+        uint64_t         RowGeneration = 0;
+        float            DragGrab = -1.0f;
+        bool             bPointerPress = false;
+        int32_t          LastClicked = -1;
+        float            SinceClick  = 1e9f;
     };
 
     class UI_API UISpacer : public UIWidget

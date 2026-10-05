@@ -168,6 +168,17 @@ namespace UI
         ReleaseTreeGraphObjects(InEmbedded, true);
     }
 
+    void UISystem::RebindEmbedded(UIDocumentInstance& InEmbedded, const std::string& InPrefix)
+    {
+        if(InEmbedded.GetBindingPrefix() == InPrefix) return;
+        InEmbedded.SetBindingPrefix(InPrefix);
+        InEmbedded.ApplyBindings(Store);
+        if(Scripts && InEmbedded.GetGraphObject())
+        {
+            Scripts->SetObjectField(InEmbedded.GetGraphObject(), "Prefix", GameCore::EventArg::Make(InPrefix.c_str()));
+        }
+    }
+
     void UISystem::SetWorld(GameCore::World* InWorld)
     {
         World = InWorld;

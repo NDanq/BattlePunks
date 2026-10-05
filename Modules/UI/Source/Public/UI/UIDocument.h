@@ -297,6 +297,8 @@ namespace UI
         UIDocumentInstance* GetParentInstance() const { return ParentInstance; }
         uint32_t            GetHostIndex() const      { return HostIndex; }
         const std::string&  GetBindingPrefix() const  { return BindingPrefix; }
+        /* A new prefix: its bindings read again on the next ApplyBindings (a reused list row). */
+        void                SetBindingPrefix(const std::string& InPrefix) { BindingPrefix = InPrefix; BindingsVersion = 0; MarkPaintDirty(); }
         UIDocumentInstance* GetRootInstance();
         /* How deep it is embedded: 0 a root. */
         int                 GetEmbedDepth() const;
@@ -311,7 +313,11 @@ namespace UI
             if(!bInPostOrder) InVisit(*this);
             for(const uint32_t Host : EmbedHosts)
             {
-                if(UIDocumentInstance* Inner = Widgets[Host]->GetEmbedded()) Inner->ForEachInstance(InVisit, bInPostOrder);
+                const UIWidget& W = *Widgets[Host];
+                for(uint32_t At = 0; At < W.GetEmbeddedCount(); ++At)
+                {
+                    if(UIDocumentInstance* Inner = W.GetEmbeddedAt(At)) Inner->ForEachInstance(InVisit, bInPostOrder);
+                }
             }
             if(bInPostOrder) InVisit(*this);
         }

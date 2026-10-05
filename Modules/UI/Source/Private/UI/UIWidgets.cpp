@@ -1333,6 +1333,271 @@ namespace UI
         bRefused = false;
     }
 
+    // === ListView =================================================================
+
+    namespace
+    {
+        constexpr float DOUBLE_CLICK_SECONDS = 0.4f;
+    }
+
+    UIListView::UIListView()
+    {
+        bFocusable    = true;
+        bClipChildren = true;
+        Size = UIVec2{ 400.0f, 300.0f };
+        SelectedBrush.Tint = UIColor{ 0.85f, 0.54f, 0.18f, 0.35f };
+        Track.Tint         = UIColor{ 1.0f, 1.0f, 1.0f, 0.08f };
+        Thumb.Tint         = UIColor{ 1.0f, 1.0f, 1.0f, 0.35f };
+        ThumbHovered.Tint  = UIColor{ 1.0f, 1.0f, 1.0f, 0.6f };
+    }
+
+    UIListView::~UIListView()
+    {
+        /* Its system let the rows' graphs go already (closing its root does that first). */
+        Rows.clear();
+    }
+
+    void UIListView::DropRows()
+    {
+        UISystem* System = GetDocument() ? GetDocument()->GetSystem() : nullptr;
+        for(Row& Each : Rows)
+        {
+            if(System && Each.Doc) System->DetachEmbedded(*Each.Doc);
+        }
+        Rows.clear();
+        ActiveRows = 0;
+        if(GetDocument()) GetDocument()->MarkLayoutDirty();
+    }
+
+    int32_t UIListView::ReadCount() const
+    {
+        UIDocumentInstance* Doc = GetDocument();
+        UISystem* System = Doc ? Doc->GetSystem() : nullptr;
+        const UIValue* Value = System && !Items.empty() ? System->GetValue(Doc->ResolveKey(Items + ".Count")) : nullptr;
+        return Value ? std::max(int32_t(Value->AsNumber()), 0) : 0;
+    }
+
+    std::string UIListView::RowPrefix(const int32_t InItem) const
+    {
+        return GetDocument()->ResolveKey(Items + "." + std::to_string(InItem) + ".");
+    }
+
+    UIVec2 UIListView::MeasureContent(UILayoutContext& /*InContext*/)
+    {
+        return Size;
+    }
+
+    bool UIListView::ShowsBar() const
+    {
+        return ScrollBar == EUIScrollBarMode::Always || (ScrollBar == EUIScrollBarMode::Auto && Scroll.CanScroll());
+    }
+
+    void UIListView::ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect)
+    {
+        UIDocumentInstance* Host = GetDocument();
+        Count = ReadCount();
+        Scroll.ViewLength    = InRect.H;
+        Scroll.ContentLength = std::max(float(Count) * Pitch() - (Count > 0 ? Spacing : 0.0f), InRect.H);
+        ScrollOffset = std::clamp(ScrollOffset, 0.0f, Scroll.MaxOffset());
+
+        /* The rows in view, made as needed and reused: item i at its place in content space. */
+        if(!RowAsset && !ItemDocument.empty())
+        {
+            RowAsset      = UIAssetCache::Find(ItemDocument);   // logged if missing
+            RowGeneration = UIAssetCache::GetGeneration(ItemDocument);
+        }
+        const int32_t First = Count > 0 ? std::clamp(int32_t(ScrollOffset / Pitch()), 0, Count - 1) : 0;
+        const int32_t Last  = Count > 0 ? std::clamp(int32_t((ScrollOffset + InRect.H) / Pitch()), 0, Count - 1) : -1;
+        const uint32_t Needed = RowAsset ? uint32_t(std::max(Last - First + 1, 0)) : 0u;
+        UISystem* System = Host->GetSystem();
+        while(Rows.size() < Needed)
+        {
+            Row Made;
+            Made.Doc = std::make_unique<UIDocumentInstance>(RowAsset, ItemDocument);
+            if(!Made.Doc->IsValid()) break;
+            Made.Doc->SetEmbedded(Host, GetIndex(), std::string());
+            if(Made.Doc->GetFocused() >= 0) Made.Doc->SetFocus(-1);   // rows never take the tree's focus on their own
+            Rows.push_back(std::move(Made));
+            if(System) System->AttachEmbedded(*Rows.back().Doc);
+        }
+        ActiveRows = std::min(Needed, uint32_t(Rows.size()));
+
+        /* Rows keep the item they show where they can: a scroll only re-binds the ones that change. */
+        std::vector<bool> Taken(ActiveRows, false);
+        std::vector<Row*> Free;
+        for(uint32_t At = 0; At < Rows.size(); ++At)
+        {
+            const int32_t Item = Rows[At].Item;
+            if(At < ActiveRows && Item >= First && Item - First < int32_t(ActiveRows) && !Taken[size_t(Item - First)]) { Taken[size_t(Item - First)] = true; }
+            else { Free.push_back(&Rows[At]); }
+        }
+        size_t NextFree = 0;
+        for(int32_t Item = First; Item <= Last && Item - First < int32_t(ActiveRows); ++Item)
+        {
+            if(Taken[size_t(Item - First)]) continue;
+            while(NextFree < Free.size() && Free[NextFree] >= Rows.data() + ActiveRows) ++NextFree;   // only active slots show items
+            if(NextFree >= Free.size()) break;
+            Row& Reused = *Free[NextFree++];
+            Reused.Item = Item;
+            if(System) System->RebindEmbedded(*Reused.Doc, RowPrefix(Item));
+            else       Reused.Doc->SetBindingPrefix(RowPrefix(Item));
+        }
+        for(uint32_t At = ActiveRows; At < Rows.size(); ++At) { Rows[At].Item = -1; }
+
+        const float Width = std::max(InRect.W - (ShowsBar() ? BarWidth : 0.0f), 0.0f);
+        for(uint32_t At = 0; At < ActiveRows; ++At)
+        {
+            Row& Each = Rows[At];
+            Each.Doc->MeasureEmbedded(InContext);
+            Each.Doc->ArrangeEmbedded(InContext, UIRect{ InRect.X, InRect.Y + float(Each.Item) * Pitch(), Width, ItemHeight });
+        }
+    }
+
+    void UIListView::Paint(UIPaintContext& InContext, const UIRect& InRect) const
+    {
+        if(!InContext.List) return;
+        UIPaintContext Content = InContext;
+        Content.Offset.Y -= std::round(ScrollOffset * InContext.PixelScale.Y);
+        InContext.List->PushClip(InContext.ToPixels(InRect));
+        const float Width = std::max(InRect.W - (ShowsBar() ? BarWidth : 0.0f), 0.0f);
+        if(SelectedIndex >= 0 && SelectedIndex < Count)
+        {
+            Content.DrawBrush(SelectedBrush, UIRect{ InRect.X, InRect.Y + float(SelectedIndex) * Pitch(), Width, ItemHeight });
+        }
+        for(uint32_t At = 0; At < ActiveRows; ++At) { Rows[At].Doc->PaintEmbedded(Content); }
+        InContext.List->PopClip();
+    }
+
+    void UIListView::PaintOver(UIPaintContext& InContext, const UIRect& InRect) const
+    {
+        if(!ShowsBar()) return;
+        const UIRect TrackArea{ InRect.X + InRect.W - BarWidth, InRect.Y, BarWidth, InRect.H };
+        InContext.DrawBrush(Track, TrackArea);
+        float Start = 0.0f, Length = 0.0f;
+        Scroll.Thumb(ScrollOffset, TrackArea.H, Start, Length);
+        InContext.DrawBrush(DragGrab >= 0.0f || IsHovered() ? ThumbHovered : Thumb, UIRect{ TrackArea.X, TrackArea.Y + Start, BarWidth, Length });
+    }
+
+    bool UIListView::ScrollTo(const float InOffset)
+    {
+        const float Clamped = std::clamp(InOffset, 0.0f, Scroll.MaxOffset());
+        if(Clamped == ScrollOffset || !GetDocument()) return false;
+        ScrollOffset = Clamped;
+        GetDocument()->MarkLayoutDirty();   // other rows come into view
+        return true;
+    }
+
+    bool UIListView::Select(const int32_t InIndex)
+    {
+        const int32_t Index = Count > 0 ? std::clamp(InIndex, -1, Count - 1) : -1;
+        if(Index >= 0) { ScrollTo(Scroll.Reveal(ScrollOffset, float(Index) * Pitch(), ItemHeight)); }
+        if(!GetDocument() || !GetDocument()->SetInputValue(*this, "SelectedIndex", UIValue::Number(Index))) return false;
+        QueueActions(OnSelect);
+        return true;
+    }
+
+    bool UIListView::OnWheel(const float InDelta)
+    {
+        return Scroll.CanScroll() && ScrollTo(ScrollOffset - InDelta * ScrollStep);
+    }
+
+    bool UIListView::OnNavigate(const int InDirection)
+    {
+        /* Up and Down move the selection; past an end, focus moves on. */
+        if(InDirection != 0 && InDirection != 1) return false;
+        const int32_t Next = SelectedIndex + (InDirection == 1 ? 1 : -1);
+        if(Next < 0 || Next >= Count) return SelectedIndex < 0 && Count > 0 ? Select(0) : false;
+        return Select(Next);
+    }
+
+    int32_t UIListView::ItemAtPixel(const float InY) const
+    {
+        if(!GetDocument()) return -1;
+        const UIRect& Pixels = GetDocument()->GetPixelRect(GetIndex());
+        const UIRect& Layout = GetDocument()->GetRect(GetIndex());
+        const float PerUnit = Layout.H > 0.0f ? Pixels.H / Layout.H : 1.0f;
+        const float Content = (InY - Pixels.Y) / PerUnit + ScrollOffset;
+        const int32_t Item = int32_t(Content / Pitch());
+        return Item >= 0 && Item < Count && std::fmod(Content, Pitch()) < ItemHeight ? Item : -1;
+    }
+
+    void UIListView::OnPointer(const UIPointerEvent& InEvent)
+    {
+        if(!GetDocument()) return;
+        const UIRect& Pixels = GetDocument()->GetPixelRect(GetIndex());
+        const UIRect& Layout = GetDocument()->GetRect(GetIndex());
+        const float PerUnit = Layout.H > 0.0f ? Pixels.H / Layout.H : 1.0f;
+        const bool  bOnBar  = ShowsBar() && InEvent.Pixels.X >= Pixels.X + Pixels.W - BarWidth * PerUnit;
+        float Start = 0.0f, Length = 0.0f;
+        Scroll.Thumb(ScrollOffset, Pixels.H, Start, Length);
+        const float Along = InEvent.Pixels.Y - Pixels.Y;
+        switch(InEvent.Kind)
+        {
+            case UIPointerEvent::PE_Press:
+                bPointerPress = true;
+                if(bOnBar)
+                {
+                    if(Along >= Start && Along < Start + Length) DragGrab = Along - Start;
+                    else ScrollTo(ScrollOffset + (Along < Start ? -Scroll.ViewLength : Scroll.ViewLength));
+                    GetDocument()->MarkPaintDirty();
+                }
+                break;
+            case UIPointerEvent::PE_Move:
+                if(DragGrab >= 0.0f) ScrollTo(Scroll.OffsetForThumb(Along - DragGrab, Pixels.H));
+                break;
+            case UIPointerEvent::PE_Release:
+                if(DragGrab >= 0.0f) { DragGrab = -1.0f; GetDocument()->MarkPaintDirty(); }
+                break;
+            case UIPointerEvent::PE_Click:
+            {
+                if(!bPointerPress)
+                {
+                    /* Accept, from the keyboard or a pad. */
+                    if(SelectedIndex >= 0) QueueActions(OnActivate);
+                    break;
+                }
+                bPointerPress = false;
+                if(bOnBar) break;
+                const int32_t Item = ItemAtPixel(InEvent.Pixels.Y);
+                if(Item < 0) break;
+                const bool bSecond = Item == LastClicked && SinceClick < DOUBLE_CLICK_SECONDS;
+                Select(Item);
+                if(bSecond) QueueActions(OnActivate);
+                LastClicked = Item;
+                SinceClick  = 0.0f;
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    bool UIListView::OnFocusedTick(const float InDeltaSeconds)
+    {
+        SinceClick += InDeltaSeconds;
+        return false;
+    }
+
+    void UIListView::TickEmbedded()
+    {
+        /* The list's length moved, or its row document was saved: laid out again. */
+        if(!ItemDocument.empty() && RowAsset && UIAssetCache::GetGeneration(ItemDocument) != RowGeneration)
+        {
+            DropRows();
+            RowAsset.reset();
+        }
+        if(ReadCount() != Count && GetDocument()) GetDocument()->MarkLayoutDirty();
+    }
+
+    void UIListView::OnPropertyChanged(const UIPropertyDesc& InProperty)
+    {
+        if(InProperty.Name == "ItemDocument" || InProperty.Name == "Items")
+        {
+            DropRows();
+            RowAsset.reset();
+        }
+    }
+
     UIVec2 UISpacer::MeasureContent(UILayoutContext& /*InContext*/)
     {
         return Size;
@@ -1541,6 +1806,30 @@ namespace UI
         Type.Category("Include");
         Type.Asset<&UIInclude::Document>("Document", EUIAssetKind::Document, UPF_Layout).Tooltip("A .nmui shown here");
         Type.Field<&UIInclude::Prefix>("Prefix", UPF_Layout).Tooltip("Its {Bind:Key} reads Prefix + Key ({Bind:/Key}: the key as written)");
+    }
+
+    UI_DEFINE_WIDGET(UIListView, UIWidget, "ListView")
+    {
+        Type.Palette("Common");
+        Type.Category("List");
+        Type.Asset<&UIListView::ItemDocument>("ItemDocument", EUIAssetKind::Document, UPF_Layout).Tooltip("A .nmui for each row");
+        Type.Field<&UIListView::Items>("Items", UPF_Layout).Tooltip("The list's key: Items.Count, and Items.<i>.<Field> for each row's {Bind:Field}");
+        Type.Field<&UIListView::ItemHeight>("ItemHeight", UPF_Layout);
+        Type.Field<&UIListView::Spacing>("Spacing", UPF_Layout);
+        Type.Field<&UIListView::SelectedIndex>("SelectedIndex", UPF_Bindable).Tooltip("-1 none; {Bind:Key} is two-way");
+        Type.Category("Scroll");
+        Type.Field<&UIListView::ScrollOffset>("ScrollOffset", UPF_Layout);
+        Type.Field<&UIListView::ScrollStep>("ScrollStep");
+        Type.Enum<&UIListView::ScrollBar>("ScrollBar", GetEnumNames(EUIScrollBarMode()), UPF_Layout);
+        Type.Field<&UIListView::BarWidth>("BarWidth", UPF_Layout);
+        Type.Category("Appearance");
+        Type.Brush<&UIListView::SelectedBrush>("SelectedBrush");
+        Type.Brush<&UIListView::Track>("Track");
+        Type.Brush<&UIListView::Thumb>("Thumb");
+        Type.Brush<&UIListView::ThumbHovered>("ThumbHovered");
+        Type.Category("Events");
+        Type.Action<&UIListView::OnSelect>("OnSelect").Tooltip("$value the index");
+        Type.Action<&UIListView::OnActivate>("OnActivate").Tooltip("Accept, or a second click; $value the index");
     }
 
     UI_DEFINE_WIDGET(UISpacer, UIWidget, "Spacer")

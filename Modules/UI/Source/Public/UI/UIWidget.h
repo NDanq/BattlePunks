@@ -177,10 +177,13 @@ namespace UI
          * the focused widget is asked: an idle UI costs nothing. */
         virtual bool OnFocusedTick(float /*InDeltaSeconds*/) { return false; }
 
-        /* A widget that shows a document inside it (Include): its instance,
-         * laid out, painted, hit and focused as part of this one's. */
+        /* A widget that shows documents inside it (Include: one; ListView: a
+         * row each): their instances, laid out, painted, hit and focused as
+         * part of this one's, topmost last. */
         virtual bool                IsEmbedHost() const { return false; }
-        virtual UIDocumentInstance* GetEmbedded() const { return nullptr; }
+        virtual uint32_t            GetEmbeddedCount() const { return 0; }
+        virtual UIDocumentInstance* GetEmbeddedAt(uint32_t /*InIndex*/) const { return nullptr; }
+        UIDocumentInstance*         GetEmbedded() const { return GetEmbeddedCount() > 0 ? GetEmbeddedAt(0) : nullptr; }
         /* Each UISystem::Tick, for an embed host: its document reloaded, made, or dropped. */
         virtual void                TickEmbedded() {}
 

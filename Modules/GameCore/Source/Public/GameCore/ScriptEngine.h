@@ -94,6 +94,9 @@ namespace GameCore
          * such method (silently) or it raises (logged and counted). */
         bool CallObjectMethod(Object InObject, const char* InMethod, const EventArgs& InArgs = EventArgs());
 
+        /* self[InName] = InValue on InObject (a reused list row's prefix). False if there is no such object. */
+        bool SetObjectField(Object InObject, const char* InName, const EventArg& InValue);
+
         /* Lets InObject go. Safe with 0. */
         void ReleaseObject(Object InObject);
 

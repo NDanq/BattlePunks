@@ -558,6 +558,23 @@ namespace GameCore
         return LuaCallProtected(P->State, Count + 1, 0, InMethod);
     }
 
+    bool ScriptEngine::SetObjectField(const Object InObject, const char* InName, const EventArg& InValue)
+    {
+        if(!P->State || InObject <= 0 || !InName)
+        {
+            return false;
+        }
+        LuaStackGuard Guard(P->State);
+        lua_rawgeti(P->State, LUA_REGISTRYINDEX, InObject);
+        if(!lua_istable(P->State, -1))
+        {
+            return false;
+        }
+        PushEventArg(P->State, InValue);
+        lua_setfield(P->State, -2, InName);
+        return true;
+    }
+
     void ScriptEngine::ReleaseObject(const Object InObject)
     {
         if(P->State && InObject > 0)
