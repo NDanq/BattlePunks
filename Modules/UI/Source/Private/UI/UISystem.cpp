@@ -21,6 +21,7 @@ namespace UI
                 case EUIActionKind::Native: return "Native";
                 case EUIActionKind::Lua:    return "Lua";
                 case EUIActionKind::Event:  return "Event";
+                case EUIActionKind::Graph:  return "Graph";
             }
             return "?";
         }
@@ -38,6 +39,11 @@ namespace UI
         uint64_t                            Order = 0;
         bool                                bPersistent = false;
         uint64_t                            AssetGeneration = 0;
+
+        /* Its logic graph's instance (Settings.Logic), in Scripts; 0 none. */
+        GameCore::ScriptEngine::Object      Logic = 0;
+        bool                                bLogicTicks = false;
+        bool                                bClosing    = false;
 
         /* The last hit test, kept while the pointer and the painted
          * rectangles stay put: a still mouse over a still UI costs nothing. */
@@ -63,6 +69,7 @@ namespace UI
 
     UISystem::~UISystem()
     {
+        for(const auto& Each : Documents) { ReleaseLogic(*Each, false); }
         /* Not the renderer: it may already be gone. A host clears it (ClearRenderer). */
         if(GScriptUISystem == this) GScriptUISystem = nullptr;
     }
@@ -78,8 +85,48 @@ namespace UI
 
     void UISystem::SetScriptEngine(GameCore::ScriptEngine* InScripts)
     {
-        if(InScripts != Scripts) ScriptsRun.clear();
+        if(InScripts == Scripts) return;
+        /* Each document's logic lives in the engine: made again in the new one. */
+        for(const auto& Each : Documents) { ReleaseLogic(*Each, false); }
+        ScriptsRun.clear();
         Scripts = InScripts;
+        for(const auto& Each : Documents) { CreateLogic(*Each); }
+    }
+
+    void UISystem::CreateLogic(Document& InDocument)
+    {
+        const std::string& Logic = InDocument.Instance->GetAsset().Settings.Logic;
+        if(Logic.empty() || InDocument.Logic) return;
+        if(!Scripts)
+        {
+            /* The editor's preview runs no logic; a game without scripts says so. */
+            if(bExecuteActions) { UI_LOG_WARN("'" + InDocument.Path + "': its Logic '" + Logic + "' did not run: no script engine") }
+            return;
+        }
+        static const char* const FIELDS[] = { "Document" };
+        const GameCore::EventArg Values[] = { GameCore::EventArg::Make(InDocument.Path.c_str()) };
+        InDocument.Logic = Scripts->CreateObject(Logic.c_str(), FIELDS, Values, 1);   // logged if it does not load
+        if(!InDocument.Logic) return;
+        InDocument.bLogicTicks = Scripts->HasObjectMethod(InDocument.Logic, "OnTick");
+
+        /* OnOpen runs with the other actions, after this frame's input. */
+        if(Scripts->HasObjectMethod(InDocument.Logic, "OnOpen"))
+        {
+            UIActionList OnOpen;
+            OnOpen.Parse("Graph:OnOpen");
+            QueueActions(OnOpen, InDocument.Instance.get(), nullptr);
+        }
+    }
+
+    void UISystem::ReleaseLogic(Document& InDocument, const bool bInCallClose)
+    {
+        if(!InDocument.Logic) return;
+        const GameCore::ScriptEngine::Object Logic = InDocument.Logic;
+        InDocument.Logic       = 0;
+        InDocument.bLogicTicks = false;
+        if(!Scripts) return;
+        if(bInCallClose && bExecuteActions) { Scripts->CallObjectMethod(Logic, "OnClose"); }   // absent: nothing
+        Scripts->ReleaseObject(Logic);
     }
 
     void UISystem::SetWorld(GameCore::World* InWorld)
@@ -117,9 +164,11 @@ namespace UI
         RunScriptOnce(*InAsset);
         UIDocumentInstance* Instance = Made->Instance.get();
         const UIDocumentHandle Handle = Made->Handle;
+        Document& Opened = *Made;
         Documents.push_back(std::move(Made));
         SortDocuments();
         bMergedDirty = true;
+        CreateLogic(Opened);
 
         UIActionList OnOpen;
         if(OnOpen.Parse(InAsset->Settings.OnOpen)) { QueueActions(OnOpen, Instance, nullptr); }
@@ -128,6 +177,13 @@ namespace UI
 
     bool UISystem::Close(const UIDocumentHandle InHandle)
     {
+        /* Its logic's OnClose first: it may open or close others (so the
+         * document is found again after), not this one again (bClosing). */
+        Document* Closing = FindDocument(InHandle);
+        if(!Closing || Closing->bClosing) return false;
+        Closing->bClosing = true;
+        ReleaseLogic(*Closing, true);
+
         for(auto It = Documents.begin(); It != Documents.end(); ++It)
         {
             if((*It)->Handle != InHandle) continue;
@@ -228,12 +284,17 @@ namespace UI
 
         auto Made = std::make_unique<UIDocumentInstance>(InAsset, InDocument.Path);
         if(!Made->IsValid()) return;   // logged; the old one stays
+
+        /* Its logic too, read again: a saved graph is picked up with its document. */
+        ReleaseLogic(InDocument, true);
+        if(Scripts && !InAsset->Settings.Logic.empty()) { Scripts->ForgetClass(InAsset->Settings.Logic.c_str()); }
         Made->SetFonts(&Fonts);
         Made->SetSystem(this);
         Made->ApplyBindings(Store);
         if(UIWidget* Focused = Made->FindWidget(Focus)) { Made->SetFocus(int32_t(Focused->GetIndex())); }
         InDocument.Instance = std::move(Made);
         InDocument.Layer    = InAsset->Settings.Layer;
+        CreateLogic(InDocument);
         SortDocuments();
         bMergedDirty = true;
         UI_LOG("reloaded '" + InDocument.Path + "'")
@@ -476,6 +537,27 @@ namespace UI
                 if(!World) { WarnOnce("'" + Text + "' did not emit: no World"); return; }
                 World->GetEvents().Emit(Action.Target.c_str(), Args);
                 return;
+            case EUIActionKind::Graph:
+            {
+                /* The firing document's own logic instance: self:Handler(value, sender). */
+                Document* Found = Instance ? FindDocument(InAction.Document) : nullptr;
+                if(!Found || !Found->Logic || !Scripts)
+                {
+                    if(Instance) { WarnOnce("'" + Text + "' did not run: '" + Instance->GetPath() + "' has no Logic graph running"); }
+                    return;
+                }
+                if(!Scripts->HasObjectMethod(Found->Logic, Action.Target.c_str()))
+                {
+                    WarnOnce("'" + Text + "': " + Instance->GetAsset().Settings.Logic + " has no handler " + Action.Target);
+                    return;
+                }
+                GameCore::EventArgs GraphArgs;
+                GraphArgs.Args[0] = GameCore::EventArg::Make(InAction.SenderValue);
+                GraphArgs.Args[1] = GameCore::EventArg::Make(InAction.SenderName.c_str());
+                GraphArgs.Count   = 2;
+                Scripts->CallObjectMethod(Found->Logic, Action.Target.c_str(), GraphArgs);   // logs its own failure
+                return;
+            }
         }
     }
 
@@ -497,6 +579,20 @@ namespace UI
             }
             Doc.Instance->ApplyBindings(Store);
             Doc.Instance->GetAnimator().Tick(InDeltaSeconds);
+        }
+
+        /* Logic that ticks; by handle, as OnTick may open or close documents. */
+        if(Scripts && bExecuteActions)
+        {
+            for(size_t At = 0; At < Documents.size(); ++At)
+            {
+                if(!Documents[At]->bLogicTicks) continue;
+                const GameCore::ScriptEngine::Object Logic = Documents[At]->Logic;
+                GameCore::EventArgs Delta;
+                Delta.Args[0] = GameCore::EventArg::Make(double(InDeltaSeconds));
+                Delta.Count   = 1;
+                Scripts->CallObjectMethod(Logic, "OnTick", Delta);
+            }
         }
     }
 

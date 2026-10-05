@@ -71,6 +71,35 @@ namespace GameCore
         /* Whether InPath names a function right now; nothing is called. */
         bool HasFunction(const char* InPath) const;
 
+        // === Script objects ====================================================
+        /*
+         * An instance of a script class -- a .lua, or a script graph's stored
+         * Lua, that returns a table -- held by C++ for as long as it likes: a
+         * UI document's logic graph. Independent of any World (it survives
+         * Bind/UnbindWorld), but not of this engine: release every object
+         * before Shutdown. 0 is no object.
+         */
+        using Object = int32_t;
+
+        /* A new `self` over the class at InClassPath (its methods through
+         * __index), with InFieldCount fields set on it first (InFieldNames[i]
+         * = InFields[i]). 0, logged once per path, if the class does not load. */
+        Object CreateObject(const char* InClassPath, const char* const* InFieldNames = nullptr,
+                            const EventArg* InFields = nullptr, int InFieldCount = 0);
+
+        /* Whether InObject's class has a method InMethod. */
+        bool HasObjectMethod(Object InObject, const char* InMethod) const;
+
+        /* self:InMethod(args...) under a protected call. False if there is no
+         * such method (silently) or it raises (logged and counted). */
+        bool CallObjectMethod(Object InObject, const char* InMethod, const EventArgs& InArgs = EventArgs());
+
+        /* Lets InObject go. Safe with 0. */
+        void ReleaseObject(Object InObject);
+
+        /* The next CreateObject of InClassPath reads it again (a saved graph). */
+        void ForgetClass(const char* InClassPath);
+
         /* For a game's own bindings. nullptr if !IsInitialized(). */
         lua_State* GetState() const;
 

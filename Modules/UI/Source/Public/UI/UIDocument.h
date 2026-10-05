@@ -71,6 +71,7 @@ namespace UI
         EUIInputMode InputMode     = EUIInputMode::GameAndUI;
         int32_t      Layer         = 0;     // higher draws over and takes input first
         std::string  Script;                // a .lua run once when it first opens: its handlers
+        std::string  Logic;                 // a .ui.nmgraph instanced per open document (Graph: actions)
         std::string  DefaultFont;           // "" the engine's
         std::string  OnOpen;                // actions, as text
         std::string  OnClose;

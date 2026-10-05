@@ -62,6 +62,11 @@ namespace GameCore
      * (*.script.nmgraph) gives the Lua stored in it (ExtractGraphGeneratedCode). */
     bool LuaReadScriptFile(const char* InPath, std::string& OutSource);
 
+    /* Pushes the class table the script at InPath returns, loading it on
+     * first use into the registry table InCacheKey (made if missing). False
+     * -- nothing pushed, logged once per cache -- unless it returns a table. */
+    bool LuaPushScriptClass(lua_State* InState, const char* InCacheKey, const char* InPath);
+
     /* Packs an EntityID as a full userdata with the "Entity" metatable.
      * Every binding that hands Lua an entity goes through this. */
     void LuaPushEntity(lua_State* InState, EntityID InEntity);
