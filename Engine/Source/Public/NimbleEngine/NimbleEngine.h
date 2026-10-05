@@ -88,6 +88,8 @@ namespace NimbleEngine
         void SetMouseCaptured(bool bInCaptured) override;
         bool IsMouseCaptured() const override;
         void SetTextInputActive(bool bInActive) override;
+        std::string GetClipboardText() const override;
+        void        SetClipboardText(const std::string& InUtf8) override;
 
     private:
         bool Initialize();

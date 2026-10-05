@@ -1,5 +1,6 @@
 #include "Public/UI/UITypes.h"
 
+#include <algorithm>
 #include <cctype>
 #include <charconv>
 #include <cmath>
@@ -21,6 +22,7 @@ namespace UI
         const char* const FILL_DIR_NAMES[]   = { "LeftToRight", "RightToLeft", "TopToBottom", "BottomToTop" };
         const char* const ORIENTATION_NAMES[] = { "Vertical", "Horizontal" };
         const char* const SCROLL_BAR_NAMES[]  = { "Auto", "Always", "Never" };
+        const char* const TEXT_MODE_NAMES[]   = { "Text", "Integer", "Number" };
 
         template<size_t N>
         UIEnumNames Names(const char* const (&InNames)[N]) { return UIEnumNames{ InNames, uint32_t(N) }; }
@@ -70,6 +72,7 @@ namespace UI
     UIEnumNames GetEnumNames(EUIFillDirection) { return Names(FILL_DIR_NAMES); }
     UIEnumNames GetEnumNames(EUIOrientation)   { return Names(ORIENTATION_NAMES); }
     UIEnumNames GetEnumNames(EUIScrollBarMode) { return Names(SCROLL_BAR_NAMES); }
+    UIEnumNames GetEnumNames(EUITextMode)      { return Names(TEXT_MODE_NAMES); }
 
     uint32_t UIColor::Pack(const float InOpacity) const
     {
@@ -167,6 +170,51 @@ namespace UI
         }
         if(Type == EUIValueType::Number) { return UIMargin{ F[0], F[0], F[0], F[0] }; }
         return UIMargin{ F[0], F[1], F[2], F[3] };
+    }
+
+    uint32_t DecodeUtf8(const std::string& InText, size_t& InOutAt)
+    {
+        if(InOutAt >= InText.size()) return 0;
+        const uint8_t Lead = uint8_t(InText[InOutAt++]);
+        if(Lead < 0x80) return Lead;
+        int Extra = 0;
+        uint32_t Code = 0;
+        if((Lead & 0xE0) == 0xC0)      { Extra = 1; Code = Lead & 0x1F; }
+        else if((Lead & 0xF0) == 0xE0) { Extra = 2; Code = Lead & 0x0F; }
+        else if((Lead & 0xF8) == 0xF0) { Extra = 3; Code = Lead & 0x07; }
+        else return 0xFFFD;
+        for(int Each = 0; Each < Extra; ++Each)
+        {
+            if(InOutAt >= InText.size() || (uint8_t(InText[InOutAt]) & 0xC0) != 0x80) return 0xFFFD;
+            Code = (Code << 6) | (uint8_t(InText[InOutAt++]) & 0x3F);
+        }
+        return Code;
+    }
+
+    size_t NextUtf8(const std::string& InText, size_t InAt)
+    {
+        if(InAt >= InText.size()) return InText.size();
+        ++InAt;
+        while(InAt < InText.size() && (uint8_t(InText[InAt]) & 0xC0) == 0x80) { ++InAt; }
+        return InAt;
+    }
+
+    size_t PrevUtf8(const std::string& InText, size_t InAt)
+    {
+        if(InAt == 0) return 0;
+        InAt = std::min(InAt, InText.size()) - 1;
+        while(InAt > 0 && (uint8_t(InText[InAt]) & 0xC0) == 0x80) { --InAt; }
+        return InAt;
+    }
+
+    void AppendUtf8(std::string& InOutText, const uint32_t InCodepoint)
+    {
+        if(InCodepoint < 0x80)         { InOutText += char(InCodepoint); }
+        else if(InCodepoint < 0x800)   { InOutText += char(0xC0 | (InCodepoint >> 6)); InOutText += char(0x80 | (InCodepoint & 0x3F)); }
+        else if(InCodepoint < 0x10000) { InOutText += char(0xE0 | (InCodepoint >> 12)); InOutText += char(0x80 | ((InCodepoint >> 6) & 0x3F));
+                                         InOutText += char(0x80 | (InCodepoint & 0x3F)); }
+        else                           { InOutText += char(0xF0 | (InCodepoint >> 18)); InOutText += char(0x80 | ((InCodepoint >> 12) & 0x3F));
+                                         InOutText += char(0x80 | ((InCodepoint >> 6) & 0x3F)); InOutText += char(0x80 | (InCodepoint & 0x3F)); }
     }
 
     std::string UIValue::AsString() const

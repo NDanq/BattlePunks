@@ -93,6 +93,7 @@ namespace UI
     enum class EUIFillDirection : uint8_t { LeftToRight, RightToLeft, TopToBottom, BottomToTop };
     enum class EUIOrientation : uint8_t { Vertical, Horizontal };
     enum class EUIScrollBarMode : uint8_t { Auto, Always, Never };   // Auto: while there is more to see
+    enum class EUITextMode : uint8_t { Text, Integer, Number };      // what a TextInput accepts
 
     struct UIEnumNames
     {
@@ -110,6 +111,7 @@ namespace UI
     UI_API UIEnumNames GetEnumNames(EUIFillDirection);
     UI_API UIEnumNames GetEnumNames(EUIOrientation);
     UI_API UIEnumNames GetEnumNames(EUIScrollBarMode);
+    UI_API UIEnumNames GetEnumNames(EUITextMode);
 
     /*
      * How a rectangle is painted: a colour, a texture, or a texture's nine
@@ -125,6 +127,15 @@ namespace UI
         UIColor     OutlineColor{ 0.0f, 0.0f, 0.0f, 0.0f };
         float       OutlineThickness = 0.0f;      // layout units, inside the rectangle
     };
+
+    // === UTF-8 ================================================================
+
+    /* InText's codepoint at InOutAt, which moves past it; U+FFFD for a bad sequence. */
+    UI_API uint32_t DecodeUtf8(const std::string& InText, size_t& InOutAt);
+    /* The byte offset of the codepoint after / before the one at InAt (clamped to the text). */
+    UI_API size_t   NextUtf8(const std::string& InText, size_t InAt);
+    UI_API size_t   PrevUtf8(const std::string& InText, size_t InAt);
+    UI_API void     AppendUtf8(std::string& InOutText, uint32_t InCodepoint);
 
     // === UIValue ==============================================================
 

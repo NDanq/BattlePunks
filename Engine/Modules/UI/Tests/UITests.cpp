@@ -113,7 +113,7 @@ static void TestRegistry()
 
     int Palette = 0;
     for(const UIWidgetType* Each : GetWidgetTypes()) { if(!Each->Palette.empty()) ++Palette; }
-    Expect(Palette == 16, "the sixteen widgets are offered in the palette");
+    Expect(Palette == 17, "the seventeen widgets are offered in the palette");
 
     const UIWidgetType* Text = FindWidgetType("Text");
     const int32_t TextProperty = Text ? Text->FindProperty("Text") : -1;
@@ -888,6 +888,128 @@ static void TestGridAndWrap()
            "its height comes from its width, right on the first frame");
 }
 
+// === TextInput ================================================================
+
+static UIInputFrame Typing(const char* InText)
+{
+    UIInputFrame Frame;
+    Frame.bHasMouse = false;
+    std::snprintf(Frame.Text, sizeof(Frame.Text), "%s", InText);
+    return Frame;
+}
+
+static void TestTextInput()
+{
+    std::printf("[text input]\n");
+    UISystem System;
+    const UIDocumentHandle Handle = System.OpenAsset(Parse(R"XML(<UI InputMode="UIOnly" ScaleMode="None" OnBack="Native:Test.Back">
+  <Canvas>
+    <TextInput Name="Name" Position="0,0" Size="300,48" Text="{Bind:Profile.Name}" OnCommit="Native:Test.Click('commit')"/>
+    <TextInput Name="Age" Position="0,100" Size="300,48" Mode="Integer" MaxLength="4" OnChanged="Native:Test.Value($value)"/>
+    <TextInput Name="Secret" Position="0,200" Size="300,48" Password="true"/>
+    <Button Name="Other" Position="400,0" Size="100,48"/>
+  </Canvas>
+</UI>)XML", "a text input document parses"), "Test/Text.nmui");
+    UIDocumentInstance& Doc = *System.Find(Handle);
+    const UIVec2 View{ 1000, 1000 };
+    System.Update(View);
+    auto* Name = dynamic_cast<UITextInput*>(Doc.FindWidget("Name"));
+    auto* Age  = dynamic_cast<UITextInput*>(Doc.FindWidget("Age"));
+    auto* Secret = dynamic_cast<UITextInput*>(Doc.FindWidget("Secret"));
+    if(!Name || !Age || !Secret) { Expect(false, "TextInput is made from XML"); return; }
+
+    const UIVec2 At = CentreOf(Doc, "Name");
+    System.ProcessInput(Pointer(At, true, false));
+    const UIInputResult Clicked = System.ProcessInput(Pointer(At, false, true));
+    Expect(Doc.GetFocused() == int32_t(Name->GetIndex()) && Clicked.bWantsTextInput, "a click focuses it, and asks for the window's text input");
+
+    const auto Send = [&](UIInputFrame InFrame) { const UIInputResult R = System.ProcessInput(InFrame); System.RunQueuedActions(); System.Update(View); return R; };
+    Send(Typing("Ada"));
+    const UIValue* Bound = System.GetValue("Profile.Name");
+    Expect(Name->Text == "Ada" && Name->GetCaret() == 3 && Bound && Bound->AsString() == "Ada", "typing inserts at the caret and writes its key");
+
+    UIInputFrame Left = Typing("");
+    Left.Left = 1;
+    Left.bNavLeft = true;   // the arrow is navigation too, as from the UI input map
+    Send(Left);
+    Send(Typing("x"));
+    Expect(Name->Text == "Adxa" && Doc.GetFocused() == int32_t(Name->GetIndex()), "Left moves the caret, not focus");
+    UIInputFrame Back1 = Typing("");
+    Back1.Backspace = 1;
+    Send(Back1);
+    Expect(Name->Text == "Ada", "Backspace deletes before the caret");
+
+    UIInputFrame End = Typing("");
+    End.End = 1;
+    Send(End);
+    Send(Typing("\xC3\xA9"));   // e-acute: two bytes
+    Expect(Name->Text == "Ada\xC3\xA9", "UTF-8 is typed whole");
+    Send(Back1);
+    Expect(Name->Text == "Ada", "and deleted whole");
+
+    UIInputFrame SelectHome = Typing("");
+    SelectHome.Home = 1;
+    SelectHome.bShift = true;
+    Send(SelectHome);
+    Expect(Name->GetAnchor() == 3 && Name->GetCaret() == 0, "Shift+Home selects back to the start");
+    Send(Typing("Bo"));
+    Expect(Name->Text == "Bo", "typing replaces the selection");
+
+    UIInputFrame Copy = Typing("");
+    Copy.bSelectAll = true;
+    Copy.bCopy = true;
+    Copy.bCtrl = true;
+    Send(Copy);
+    Expect(System.GetClipboardText() == "Bo", "Ctrl+A, Ctrl+C copies");
+    UIInputFrame Paste = Typing("");
+    Paste.End = 1;
+    Paste.bPaste = true;
+    Paste.bCtrl = true;
+    Send(Paste);
+    Expect(Name->Text == "BoBo", "Ctrl+V pastes at the caret");
+
+    const int Commits = GClicks;
+    UIInputFrame Return = Typing("");
+    Return.bReturn = true;
+    Return.bAccept = true;
+    Send(Return);
+    Expect(GClicks == Commits + 1 && GLastClicked == "commit", "Return commits");
+    UIInputFrame Tab;
+    Tab.bNext = true;
+    Send(Tab);
+    Expect(Doc.GetFocused() != int32_t(Name->GetIndex()) && GClicks == Commits + 1, "Tab moves on; nothing new to commit");
+
+    Doc.SetFocus(int32_t(Age->GetIndex()));
+    Send(Typing("-12a3.5"));
+    Expect(Age->Text == "-123" && GLastValue == -123.0, "an Integer field takes digits and a leading '-', up to MaxLength; $value its number");
+
+    const int Backs = GBacks;
+    UIInputFrame Escape;
+    Escape.bBack = true;
+    const UIInputResult Left2 = Send(Escape);
+    Expect(Doc.GetFocused() < 0 && GBacks == Backs, "Back leaves the field, not the document");
+    Expect(!Send(Typing("")).bWantsTextInput, "and the window's text input can go off");
+    (void)Left2;
+
+    Doc.SetFocus(int32_t(Secret->GetIndex()));
+    Send(Typing("hunter2"));
+    System.SetClipboardText("");
+    Send(Copy);
+    Expect(Secret->Text == "hunter2" && System.GetClipboardText().empty(), "a password field types, and never copies");
+
+    /* The caret blinks: a repaint each half second, only while focused. */
+    const uint64_t Serial = Doc.GetPaintSerial();
+    System.Tick(0.6f);
+    System.Update(View);
+    Expect(Doc.GetPaintSerial() == Serial + 1, "the focused field's caret blink repaints");
+    Doc.SetFocus(-1);
+    System.Update(View);
+    const uint64_t Idle = Doc.GetPaintSerial();
+    System.Tick(0.6f);
+    System.Update(View);
+    Expect(Doc.GetPaintSerial() == Idle, "unfocused, nothing ticks");
+}
+
 static void TestInputAndActions()
 {
     std::printf("[input and actions]\n");
@@ -1560,6 +1682,40 @@ static void TestOnGpu()
             System.ClearRenderer();
         }
 
+        /* The newer widgets together: a text field with a selection, a grid, a scroll box. */
+        {
+            UISystem System;
+            System.SetRenderer(&Rend);
+            std::string Cells;
+            for(int Cell = 0; Cell < 8; ++Cell)
+            {
+                Cells += "<Border Row=\"" + std::to_string(Cell / 4) + "\" Column=\"" + std::to_string(Cell % 4)
+                       + "\" Padding=\"0,0\" Background.Tint=\"#2A3445FF\"><Text Text=\"" + std::to_string(Cell + 1)
+                       + "\" FontSize=\"28\" HAlign=\"Center\" VAlign=\"Center\"/></Border>";
+            }
+            std::string Rows;
+            for(int Row = 0; Row < 12; ++Row) { Rows += "<Text Text=\"Row " + std::to_string(Row + 1) + "\" FontSize=\"26\" Margin=\"8,6\"/>"; }
+            const std::string Xml = R"XML(<UI ScaleMode="FitHeight" ReferenceSize="1280,720"><Canvas>
+  <Border Anchors="0,0,1,1" Background.Tint="#10141CFF"/>
+  <TextInput Name="Field" Position="80,80" Size="460,56" Text="Player One" FontSize="30"/>
+  <TextInput Position="80,160" Size="460,56" Placeholder="Type a name" FontSize="30"/>
+  <Grid Position="80,260" Size="460,200" Uniform="true" RowSpacing="10" ColumnSpacing="10">)XML" + Cells + R"XML(</Grid>
+  <ScrollBox Name="Scroll" Position="640,80" Size="400,300" ScrollOffset="120" ScrollBar="Always" BarWidth="10">
+    <VerticalBox>)XML" + Rows + R"XML(</VerticalBox>
+  </ScrollBox>
+</Canvas></UI>)XML";
+            const UIDocumentHandle Handle = System.OpenAsset(Parse(Xml, "the widgets document parses"), "Test/Widgets.nmui");
+            if(UIDocumentInstance* Doc = System.Find(Handle))
+            {
+                auto* Field = dynamic_cast<UITextInput*>(Doc->FindWidget("Field"));
+                Doc->SetFocus(int32_t(Field->GetIndex()));
+                Field->Select(0, 6);
+            }
+            EngineCore::Image Widgets;
+            Expect(Shot(System, "widgets", Widgets), "the widgets frame reads back");
+            System.ClearRenderer();
+        }
+
         Rend.UnbindWorld();
     }
     Rend.Shutdown();
@@ -1585,6 +1741,7 @@ int main()
     TestInputWidgets();
     TestScrollBox();
     TestGridAndWrap();
+    TestTextInput();
     TestStructureEditing();
     TestInputAndActions();
     TestScriptedActions();

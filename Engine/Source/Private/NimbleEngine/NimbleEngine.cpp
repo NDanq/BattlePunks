@@ -340,6 +340,16 @@ namespace NimbleEngine
         return Router && Router->IsMouseCaptured();
     }
 
+    std::string Application::GetClipboardText() const
+    {
+        return GameWindowSystem::GetClipboardText();
+    }
+
+    void Application::SetClipboardText(const std::string& InUtf8)
+    {
+        GameWindowSystem::SetClipboardText(InUtf8);
+    }
+
     void Application::SetTextInputActive(const bool bInActive)
     {
         if(Router) { Router->SetTextInputActive(bInActive); }

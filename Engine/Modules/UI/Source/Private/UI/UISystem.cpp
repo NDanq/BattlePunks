@@ -322,6 +322,25 @@ namespace UI
         UI_LOG("reloaded '" + InDocument.Path + "'")
     }
 
+    // === Clipboard ================================================================
+
+    void UISystem::SetClipboard(std::function<std::string()> InGet, std::function<void(const std::string&)> InSet)
+    {
+        ClipboardGet = std::move(InGet);
+        ClipboardSet = std::move(InSet);
+    }
+
+    std::string UISystem::GetClipboardText() const
+    {
+        return ClipboardGet ? ClipboardGet() : ClipboardOwn;
+    }
+
+    void UISystem::SetClipboardText(const std::string& InText)
+    {
+        if(ClipboardSet) ClipboardSet(InText);
+        else             ClipboardOwn = InText;
+    }
+
     // === Data store ===============================================================
 
     void UISystem::SetValue(const std::string& InKey, const UIValue& InValue)
@@ -416,23 +435,36 @@ namespace UI
 
             // --- Navigation: a menu's, or any document holding focus ---------
             const bool bNavigates = Mode == EUIInputMode::UIOnly || Doc.GetFocused() >= 0;
+
+            /* A focused text field takes typing and editing keys; Back leaves it. */
+            UIWidget* Typing = Doc.GetFocused() >= 0 ? Doc.GetWidget(uint32_t(Doc.GetFocused())) : nullptr;
+            if(Typing && !(Typing->WantsTextInput() && Typing->IsEnabledInHierarchy())) Typing = nullptr;
+            UIInputFrame Nav = InFrame;
+            if(Typing)
+            {
+                Result.bWantsTextInput  = true;
+                Result.bConsumeKeyboard = true;
+                if(InFrame.bBack) { Doc.SetFocus(-1); }   // and not the document's OnBack
+                else              { Typing->OnTextInput(InFrame); }
+                Nav.bNavLeft = Nav.bNavRight = Nav.bAccept = Nav.bBack = false;   // edit keys, not navigation
+            }
             if(bNavigates)
             {
-                const bool bDirection = InFrame.bNavUp || InFrame.bNavDown || InFrame.bNavLeft || InFrame.bNavRight;
-                if(bDirection || InFrame.bNext || InFrame.bPrevious)
+                const bool bDirection = Nav.bNavUp || Nav.bNavDown || Nav.bNavLeft || Nav.bNavRight;
+                if(bDirection || Nav.bNext || Nav.bPrevious)
                 {
                     if(Doc.GetFocused() < 0)
                     {
-                        Doc.SetFocus(Doc.FindNextFocus(InFrame.bPrevious ? -1 : +1));
+                        Doc.SetFocus(Doc.FindNextFocus(Nav.bPrevious ? -1 : +1));
                     }
-                    else if(InFrame.bNext || InFrame.bPrevious)
+                    else if(Nav.bNext || Nav.bPrevious)
                     {
-                        Doc.SetFocus(Doc.FindNextFocus(InFrame.bPrevious ? -1 : +1));
+                        Doc.SetFocus(Doc.FindNextFocus(Nav.bPrevious ? -1 : +1));
                     }
                     else
                     {
                         /* The focused widget first (a slider takes left and right), then focus moves. */
-                        const int Direction = InFrame.bNavUp ? 0 : InFrame.bNavDown ? 1 : InFrame.bNavLeft ? 2 : 3;
+                        const int Direction = Nav.bNavUp ? 0 : Nav.bNavDown ? 1 : Nav.bNavLeft ? 2 : 3;
                         UIWidget* Focused = Doc.GetWidget(uint32_t(Doc.GetFocused()));
                         if(!(Focused->IsEnabledInHierarchy() && Focused->OnNavigate(Direction)))
                         {
@@ -441,7 +473,7 @@ namespace UI
                         }
                     }
                 }
-                if(InFrame.bAccept && Doc.GetFocused() >= 0)
+                if(Nav.bAccept && Doc.GetFocused() >= 0)
                 {
                     UIWidget* Focused = Doc.GetWidget(uint32_t(Doc.GetFocused()));
                     if(Focused->IsInteractive() && Focused->IsEnabledInHierarchy())
@@ -449,12 +481,12 @@ namespace UI
                         Focused->OnPointer({ UIPointerEvent::PE_Click, UIVec2() });
                     }
                 }
-                if(InFrame.bBack)
+                if(Nav.bBack)
                 {
                     UIActionList OnBack;
                     if(OnBack.Parse(Doc.GetAsset().Settings.OnBack) && !OnBack.IsEmpty()) { QueueActions(OnBack, &Doc, nullptr); }
                 }
-                const bool bUsed = bDirection || InFrame.bNext || InFrame.bPrevious || InFrame.bAccept || InFrame.bBack;
+                const bool bUsed = bDirection || Nav.bNext || Nav.bPrevious || Nav.bAccept || Nav.bBack;
                 if(bUsed || Mode == EUIInputMode::UIOnly)
                 {
                     Result.bConsumeKeyboard = true;
@@ -613,6 +645,14 @@ namespace UI
             }
             Doc.Instance->ApplyBindings(Store);
             Doc.Instance->GetAnimator().Tick(InDeltaSeconds);
+        }
+
+        /* The focused widget of each document (a caret's blink). */
+        for(const auto& Each : Documents)
+        {
+            UIDocumentInstance& Doc = *Each->Instance;
+            if(Doc.GetFocused() < 0) continue;
+            if(Doc.GetWidget(uint32_t(Doc.GetFocused()))->OnFocusedTick(InDeltaSeconds)) { Doc.MarkPaintDirty(); }
         }
 
         /* Graphs that tick; by handle, as OnTick may open or close documents. */
