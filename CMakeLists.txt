@@ -314,6 +314,13 @@ elseif(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/RenderCore/CMakeLists.txt")
     message(STATUS "RenderCore present but GDI is not configured; skipping RenderCore")
 endif()
 
+# UI: in-game interfaces from XML documents (Modules/UI/README.md). After
+# RenderCore, whose UI draw list it paints into, and before NimbleEngine,
+# which owns a game session's UISystem.
+if(TARGET RenderCore AND TARGET GameCore AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/UI/CMakeLists.txt")
+    add_subdirectory(Modules/UI)
+endif()
+
 # NodeGraph: material/script graphs generating GLSL and Lua. Editor only;
 # after GameCore, which it uses.
 if(NIMBLE_WITH_EDITOR AND TARGET GameCore
@@ -560,6 +567,30 @@ if(TARGET NimbleEngine AND CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NM_ENGINE_MESHES)
     add_custom_target(NimbleStageMeshes ALL DEPENDS ${NM_MESH_OUTPUTS})
     add_dependencies(NimbleEngine NimbleStageMeshes)
     set_target_properties(NimbleStageMeshes PROPERTIES FOLDER "Engine")
+endif()
+
+# === Engine/Content/Fonts ==================================================
+# The UI's default font (UIFontCache::DEFAULT_FONT, Noto Sans under the OFL --
+# OFL.txt beside it ships with it), staged as the meshes are, at the same path.
+file(GLOB NM_ENGINE_FONTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Fonts/*.ttf"
+                                            "${CMAKE_CURRENT_SOURCE_DIR}/Content/Fonts/*.txt")
+if(TARGET NimbleEngine AND CMAKE_RUNTIME_OUTPUT_DIRECTORY AND NM_ENGINE_FONTS)
+    set(NM_FONT_OUTPUTS)
+    foreach(NM_FONT ${NM_ENGINE_FONTS})
+        get_filename_component(NM_FONT_NAME "${NM_FONT}" NAME)
+        set(NM_FONT_DST "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Engine/Content/Fonts/${NM_FONT_NAME}")
+        add_custom_command(
+                OUTPUT  "${NM_FONT_DST}"
+                COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}/Engine/Content/Fonts"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${NM_FONT}" "${NM_FONT_DST}"
+                DEPENDS "${NM_FONT}"
+                COMMENT "NimbleEngine: staging Engine/Content/Fonts/${NM_FONT_NAME}"
+                VERBATIM)
+        list(APPEND NM_FONT_OUTPUTS "${NM_FONT_DST}")
+    endforeach()
+    add_custom_target(NimbleStageFonts ALL DEPENDS ${NM_FONT_OUTPUTS})
+    add_dependencies(NimbleEngine NimbleStageFonts)
+    set_target_properties(NimbleStageFonts PROPERTIES FOLDER "Engine")
 endif()
 
 # === Editor ================================================================

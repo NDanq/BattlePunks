@@ -326,6 +326,79 @@ namespace GameCore
         return LuaCallProtected(P->State, 0, 0, InChunkName ? InChunkName : "(RunString)");
     }
 
+    namespace
+    {
+        /* Pushes the value at InPath (globals, then "." into tables); nil if
+         * a link is missing. Plain C locals only: nothing here may raise. */
+        void PushPath(lua_State* InState, const char* InPath)
+        {
+            lua_pushglobaltable(InState);
+            const char* Start = InPath;
+            while(true)
+            {
+                const char* Dot = std::strchr(Start, '.');
+                const size_t Length = Dot ? size_t(Dot - Start) : std::strlen(Start);
+                if(!lua_istable(InState, -1) || Length == 0)
+                {
+                    lua_pop(InState, 1);
+                    lua_pushnil(InState);
+                    return;
+                }
+                lua_pushlstring(InState, Start, Length);
+                lua_rawget(InState, -2);
+                lua_remove(InState, -2);
+                if(!Dot)
+                {
+                    return;
+                }
+                Start = Dot + 1;
+            }
+        }
+    }
+
+    bool ScriptEngine::CallFunction(const char* InPath, const EventArgs& InArgs)
+    {
+        if(!P->State || !InPath || !*InPath)
+        {
+            return false;
+        }
+
+        LuaStackGuard Guard(P->State);
+        PushPath(P->State, InPath);
+        if(!lua_isfunction(P->State, -1))
+        {
+            GAMECORE_LOG_ERROR(std::string("Lua call: '") + InPath + "' is not a function")
+            ++P->ErrorCount;
+            return false;
+        }
+        const int Count = InArgs.Count < 4 ? int(InArgs.Count) : 4;
+        for(int Index = 0; Index < Count; ++Index)
+        {
+            const EventArg& Arg = InArgs.Args[Index];
+            switch(Arg.Type)
+            {
+                case EventArg::ET_Number: lua_pushnumber(P->State, Arg.Number); break;
+                case EventArg::ET_Bool:   lua_pushboolean(P->State, Arg.Bool); break;
+                case EventArg::ET_String: lua_pushstring(P->State, Arg.String); break;
+                case EventArg::ET_Entity: LuaPushEntity(P->State, EntityID::Unpack(Arg.Entity)); break;
+                case EventArg::ET_None:   lua_pushnil(P->State); break;
+            }
+        }
+        /* LuaCallProtected counts a runtime error itself. */
+        return LuaCallProtected(P->State, Count, 0, InPath);
+    }
+
+    bool ScriptEngine::HasFunction(const char* InPath) const
+    {
+        if(!P->State || !InPath || !*InPath)
+        {
+            return false;
+        }
+        LuaStackGuard Guard(P->State);
+        PushPath(P->State, InPath);
+        return lua_isfunction(P->State, -1);
+    }
+
     lua_State* ScriptEngine::GetState() const
     {
         return P->State;

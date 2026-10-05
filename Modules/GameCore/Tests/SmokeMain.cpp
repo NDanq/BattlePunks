@@ -1012,6 +1012,42 @@ namespace
     }
 }
 
+/* ScriptEngine::CallFunction: a function named as data, by dotted path. */
+static void TestScriptCallFunction()
+{
+    std::printf("[script call function]\n");
+
+    ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "ScriptEngine initializes for CallFunction");
+    Expect(Scripts.RunString(
+        "Called = {}\n"
+        "function Top(a) Called.Top = a end\n"
+        "Menu = { Sub = { Deep = function(a, b, c) Called.Deep = tostring(a) .. tostring(b) .. tostring(c) end } }\n"
+        "function Raises() error('boom') end\n",
+        "callfunction"), "the CallFunction fixtures load");
+
+    const uint32_t ErrorsBefore = Scripts.GetErrorCount();
+    Expect(Scripts.CallFunction("Top", [] { EventArgs A; A.Args[0] = EventArg::Make(7.0); A.Count = 1; return A; }()),
+           "CallFunction calls a global with a number");
+    Expect(Scripts.RunString("assert(Called.Top == 7)", "assert-top"), "the global saw its argument");
+
+    EventArgs Args;
+    Args.Args[0] = EventArg::Make("x");
+    Args.Args[1] = EventArg::Make(true);
+    Args.Args[2] = EventArg::Make(2.0);
+    Args.Count   = 3;
+    Expect(Scripts.CallFunction("Menu.Sub.Deep", Args), "CallFunction walks a dotted path into nested tables");
+    Expect(Scripts.RunString("assert(Called.Deep == 'xtrue2.0', Called.Deep)", "assert-deep"), "string, bool and number arrive in order");
+
+    Expect(Scripts.HasFunction("Menu.Sub.Deep") && !Scripts.HasFunction("Menu.Sub") && !Scripts.HasFunction("Nope.Deep"),
+           "HasFunction tells a function from a table or a missing path");
+    Expect(!Scripts.CallFunction("Menu.Missing"), "a missing link fails");
+    Expect(!Scripts.CallFunction("Menu..Deep") && !Scripts.CallFunction(""), "an empty link fails");
+    Expect(!Scripts.CallFunction("Raises"), "a raising function fails");
+    Expect(Scripts.GetErrorCount() == ErrorsBefore + 3, "each failure is counted once");
+    Scripts.Shutdown();
+}
+
 static void TestScripting()
 {
     std::printf("[scripting]\n");
@@ -3431,6 +3467,7 @@ int main()
     TestSpatialIndex();
     TestWorldSpatialIntegration();
     TestScripting();
+    TestScriptCallFunction();
     TestArchiveRoundTrip();
     TestArchiveChunks();
     TestWorldSerialization();

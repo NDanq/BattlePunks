@@ -11,6 +11,8 @@
  * Lua::Lua itself and uses GetState(). */
 struct lua_State;
 
+#include "Public/GameCore/EventBus.h"
+
 namespace GameCore { class World; }
 
 /*
@@ -56,6 +58,18 @@ namespace GameCore
         bool RunFile(const char* InPath);
 
         bool RunString(const char* InSource, const char* InChunkName);
+
+        /*
+         * Calls the Lua function at InPath -- a global, or a dotted path into
+         * nested tables ("Menu.Play") -- with InArgs, under a protected call;
+         * results are dropped. False, logged and counted, if a link of the
+         * path is missing or not a function, or it raises. For callers that
+         * name a function as data (a UI's OnClick="Lua:Menu.Play").
+         */
+        bool CallFunction(const char* InPath, const EventArgs& InArgs = EventArgs());
+
+        /* Whether InPath names a function right now; nothing is called. */
+        bool HasFunction(const char* InPath) const;
 
         /* For a game's own bindings. nullptr if !IsInitialized(). */
         lua_State* GetState() const;
