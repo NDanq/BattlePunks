@@ -253,6 +253,7 @@ OnClick="Lua:Menu.Select('Arena', 2); Event:Menu.Changed($self)"
 |---|---|
 | `Game.Quit` | Ends the game. |
 | `Game.Pause`, `Game.Resume`, `Game.TogglePause` | `GameSession::SetPaused`. |
+| `Game.OpenLevel('Name')` | Loads a registered level by name (`GameSession::RequestLevel`); the swap closes every document and unpauses. |
 | `UI.Open('path')`, `UI.Close('path')`, `UI.Toggle('path')` | Open, close or toggle a document. With no path, `UI.Close` closes its own document. |
 | `UI.ShowPage('Switcher', page)` | Shows a Switcher's page, by name or number, in the same document. |
 | `UI.SetValue('Key', value)` | Sets a value in the data store. |
@@ -371,7 +372,8 @@ LightLab's pause menu is the complete example:
   (`{Bind:LightLab.Shadows}`) that the game fills from its config var as the
   menu opens. Each `OnChanged` runs `Native:LightLab.SetShadows($value)` (and
   so on), which sets the var: the one the T/F/L keys, an `.ini` and the console
-  also set.
+  also set. Its Load Baked Lighting World button runs
+  `Native:Game.OpenLevel('BakedLighting')`.
 
 ## Files and cooking
 
