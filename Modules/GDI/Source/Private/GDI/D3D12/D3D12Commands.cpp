@@ -78,6 +78,17 @@ D3D12_COMPARISON_FUNC D3D12Util::DecodeCompareFunc(ECompareTestMode InMode)
     }
 }
 
+void D3D12Util::SetObjectName(ID3D12Object* InObject, const std::string& InName)
+{
+    if(!InObject || InName.empty() || !GDIShaderDebugEnabled()) return;
+
+    const int Length = MultiByteToWideChar(CP_UTF8, 0, InName.c_str(), int(InName.size()), nullptr, 0);
+    if(Length <= 0) return;
+    std::wstring Wide(size_t(Length), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, InName.c_str(), int(InName.size()), Wide.data(), Length);
+    InObject->SetName(Wide.c_str());
+}
+
 #pragma endregion
 
 #pragma region Frame begin/end and clear
@@ -99,6 +110,7 @@ void D3D12DynamicGDI::BeginRendering()
     CollectTimestamps();   // the previous block's, complete now its fence is waited
 
     CurrentStateData->CurrentCmd         = List;
+    FrameListSerial                      = AllocateListSerial();
     CurrentStateData->ActiveRenderTarget = nullptr;
     CurrentStateData->ActiveColorCount   = 0;
     CurrentStateData->ActiveDepth        = nullptr;

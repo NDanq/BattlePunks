@@ -1,10 +1,13 @@
 #include "Public/GDI/D3D12/D3D12Mesh.h"
+#include "Public/GDI/D3D12/D3D12Buffer.h"
 #include "Public/GDI/D3D12/D3D12Device.h"
 #include "Public/GDI/D3D12/D3D12DynamicGDI.h"
+#include "Public/GDI/D3D12/D3D12PipelineCache.h"
 #include "Private/GDI/D3D12/D3D12TransientOps.h"
 
 #include <cstdlib>
 #include <cstring>
+#include <memory>
 
 #include "Public/GDI/GDILog.h"
 
@@ -88,6 +91,7 @@ void D3D12Mesh::InitResource()
     }
 
     bResourcesValid = true;
+    ApplyDebugName();
 }
 
 bool D3D12Mesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
@@ -99,8 +103,8 @@ bool D3D12Mesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIn
     TexCoordBytes = InMaxVertices * 2 * sizeof(float);
     IndexBytes    = InMaxIndices * sizeof(uint32_t);
 
-    Microsoft::WRL::ComPtr<ID3D12Resource>* Buffers[6] = { &PositionBuffer, &TexCoordBuffer, &NormalBuffer,
-                                                           &ColorBuffer, &UV1Buffer, &IndexBuffer };
+    Microsoft::WRL::ComPtr<ID3D12Resource>* Buffers[6] = { std::addressof(PositionBuffer), std::addressof(TexCoordBuffer), std::addressof(NormalBuffer),
+                                                           std::addressof(ColorBuffer), std::addressof(UV1Buffer), std::addressof(IndexBuffer) };
     const UINT Bytes[6] = { PositionBytes, TexCoordBytes, PositionBytes, InMaxVertices * 4 * UINT(sizeof(float)),
                             TexCoordBytes, IndexBytes };
     const D3D12_RANGE NoRead{ 0, 0 };
@@ -120,7 +124,32 @@ bool D3D12Mesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIn
     std::memset(DynamicMapped[4], 0, Bytes[4]);
 
     bResourcesValid = true;
+    ApplyDebugName();
     return true;
+}
+
+void D3D12Mesh::SetDebugName(const std::string& InName)
+{
+    GDIMesh::SetDebugName(InName);
+    ApplyDebugName();
+}
+
+void D3D12Mesh::ApplyDebugName() const
+{
+    if(DebugName.empty()) return;
+    const auto Name = [this](const Microsoft::WRL::ComPtr<ID3D12Resource>& InBuffer, const char* InStream)
+    {
+        D3D12Util::SetObjectName(InBuffer.Get(), DebugName + " " + InStream);
+    };
+    Name(PositionBuffer,       "Positions");
+    Name(TexCoordBuffer,       "TexCoords");
+    Name(NormalBuffer,         "Normals");
+    Name(ColorBuffer,          "Colors");
+    Name(UV1Buffer,            "UV1");
+    Name(IndexBuffer,          "Indices");
+    Name(TransformRing.Buffer, "Instance Transforms");
+    Name(OpacityRing.Buffer,   "Instance Opacities");
+    Name(ColorRing.Buffer,     "Instance Colors");
 }
 
 bool D3D12Mesh::WriteDynamic(const GDIMeshDesc& InDesc, const uint32_t InBaseVertex, const uint32_t InBaseIndex)
@@ -149,8 +178,10 @@ bool D3D12Mesh::WriteDynamic(const GDIMeshDesc& InDesc, const uint32_t InBaseVer
 
 void D3D12Mesh::Release()
 {
-    Microsoft::WRL::ComPtr<ID3D12Resource>* Dynamic[6] = { &PositionBuffer, &TexCoordBuffer, &NormalBuffer,
-                                                           &ColorBuffer, &UV1Buffer, &IndexBuffer };
+    // std::addressof, not &: a ComPtr's operator& releases what it holds, which here
+    // would free the buffers at once instead of deferring them past the frames using them.
+    Microsoft::WRL::ComPtr<ID3D12Resource>* Dynamic[6] = { std::addressof(PositionBuffer), std::addressof(TexCoordBuffer), std::addressof(NormalBuffer),
+                                                           std::addressof(ColorBuffer), std::addressof(UV1Buffer), std::addressof(IndexBuffer) };
     for(int At = 0; At < 6; ++At)
     {
         if(DynamicMapped[At] && *Dynamic[At]) (*Dynamic[At])->Unmap(0, nullptr);
@@ -237,8 +268,33 @@ void D3D12Mesh::Draw()
         IndexView.SizeInBytes    = IndexBytes;
         IndexView.Format         = DXGI_FORMAT_R32_UINT;
         List->IASetIndexBuffer(&IndexView);
+
+        // Instanced (GDISetInstanceBuffer): vertex layout 3 reads slot 5 per instance.
+        UINT Instances = 1;
+        if(auto* Instance = static_cast<D3D12Buffer*>(GDI->GetInstanceBuffer()))
+        {
+            if(!Instance->IsValid()) return;
+            Instance->Transition(List, GDI->GetListSerial(), Instance->GetDrawReadState());
+
+            D3D12_VERTEX_BUFFER_VIEW InstanceView{};
+            InstanceView.BufferLocation = Instance->GetResource()->GetGPUVirtualAddress();
+            InstanceView.SizeInBytes    = Instance->GetSize();
+            InstanceView.StrideInBytes  = GDI_INSTANCE_STRIDE;
+            List->IASetVertexBuffers(5, 1, &InstanceView);
+            Instances = GDI->GetInstanceCount();
+
+            // Indirect (GDISetIndirectArgs): the counts and range from a buffer the GPU wrote.
+            if(auto* Args = static_cast<D3D12Buffer*>(GDI->GetIndirectArgs()))
+            {
+                if(!Args->IsValid() || !GDI->GetPipelineCache()->GetDrawIndexedSignature()) return;
+                Args->Transition(List, GDI->GetListSerial(), Args->GetDrawReadState());
+                List->ExecuteIndirect(GDI->GetPipelineCache()->GetDrawIndexedSignature(), 1, Args->GetResource(),
+                                      GDI->GetIndirectArgsOffset(), nullptr, 0);
+                return;
+            }
+        }
         // A dynamic mesh's last update sits at its base vertex and index; 0 otherwise.
-        List->DrawIndexedInstanced(Count, 1, GetDynamicBaseIndex() + First, INT(GetDynamicBaseVertex()), 0);
+        List->DrawIndexedInstanced(Count, Instances, GetDynamicBaseIndex() + First, INT(GetDynamicBaseVertex()), 0);
     }
     else if(bSupportsInstanced)
     {

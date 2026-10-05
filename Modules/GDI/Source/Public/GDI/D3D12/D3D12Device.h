@@ -51,6 +51,12 @@ private:
     Microsoft::WRL::ComPtr<ID3D12Fence>         IdleFence;
     uint64_t                                    IdleFenceValue = 0;
 
+    /* The debug layer's message callback (debug builds, where the layer is
+     * installed): its errors reach the GDI log, not only a debugger. */
+    void HookDebugMessages();
+    void UnhookDebugMessages();
+    DWORD                                       DebugMessageCookie = 0;
+
     std::mutex                                  QueueMutex;
 };
 

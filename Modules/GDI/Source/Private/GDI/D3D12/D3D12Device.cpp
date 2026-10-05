@@ -57,8 +57,44 @@ bool D3D12Device::Initialize()
         return false;
     }
 
+    HookDebugMessages();
+
     GDI_LOG("[D3D12Device] Initialized.")
     return true;
+}
+
+void D3D12Device::HookDebugMessages()
+{
+#if !defined(NDEBUG) && defined(__ID3D12InfoQueue1_INTERFACE_DEFINED__)
+    // Only with the debug layer on (D3D12GetDebugInterface above), and a runtime new enough for callbacks.
+    ComPtr<ID3D12InfoQueue1> InfoQueue;
+    if(FAILED(Device.As(&InfoQueue))) return;
+
+    const auto OnMessage = [](D3D12_MESSAGE_CATEGORY, const D3D12_MESSAGE_SEVERITY InSeverity, D3D12_MESSAGE_ID,
+                              const LPCSTR InDescription, void*)
+    {
+        if(InSeverity <= D3D12_MESSAGE_SEVERITY_ERROR)
+        {
+            GDI_LOG_ERROR(std::string("[D3D12 debug layer] ") + (InDescription ? InDescription : ""))
+        }
+    };
+    if(FAILED(InfoQueue->RegisterMessageCallback(OnMessage, D3D12_MESSAGE_CALLBACK_FLAG_NONE, nullptr, &DebugMessageCookie)))
+    {
+        DebugMessageCookie = 0;
+    }
+#endif
+}
+
+void D3D12Device::UnhookDebugMessages()
+{
+#if !defined(NDEBUG) && defined(__ID3D12InfoQueue1_INTERFACE_DEFINED__)
+    ComPtr<ID3D12InfoQueue1> InfoQueue;
+    if(DebugMessageCookie != 0 && Device && SUCCEEDED(Device.As(&InfoQueue)))
+    {
+        InfoQueue->UnregisterMessageCallback(DebugMessageCookie);
+    }
+#endif
+    DebugMessageCookie = 0;
 }
 
 void D3D12Device::Shutdown()
@@ -67,6 +103,7 @@ void D3D12Device::Shutdown()
     {
         WaitIdle();
     }
+    UnhookDebugMessages();
     IdleFence.Reset();
     Queue.Reset();
     Device.Reset();

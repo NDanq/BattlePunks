@@ -74,6 +74,38 @@ D3D12TextureResource::D3D12TextureResource(D3D12Device*             InDevice,
     }
 }
 
+D3D12TextureResource::D3D12TextureResource(D3D12Device*              InDevice,
+                                           const DXGI_FORMAT         InFormat,
+                                           const GDICompressedLevel* InLevels,
+                                           const uint32_t            InCount,
+                                           EGDITextureBorder         InBorder,
+                                           EGDITextureFilter         InFilter)
+    : GDITextureResource()
+    , Device(InDevice)
+    , MipLevels(InCount > 0 ? InCount : 1)
+    , Format(InFormat)
+    , StoredBorder(InBorder)
+    , StoredFilter(InFilter)
+{
+    Width  = int(InLevels[0].Width);
+    Height = int(InLevels[0].Height);
+    AllocateImage();
+    if(!Resource) return;
+
+    // The blocks as they are, a row of blocks a footprint row.
+    std::vector<D3D12Ops::SubresourceData> Levels(MipLevels);
+    for(uint32_t Level = 0; Level < MipLevels; ++Level)
+    {
+        Levels[Level] = { InLevels[Level].Data, InLevels[Level].Bytes };
+    }
+    if(!D3D12Ops::UploadSubresources(Device, Resource.Get(), CurrentState, Levels.data(), MipLevels))
+    {
+        DestroyImage();   // no SRV slot: the driver reports it unmade
+        return;
+    }
+    bInitialized = true;
+}
+
 D3D12TextureResource::D3D12TextureResource(D3D12Device*      InDevice,
                                            GDITexture2D*     InParent,
                                            EGDITextureBorder InBorder,
@@ -123,12 +155,13 @@ void D3D12TextureResource::Update(const EngineCore::Image& InImage)
 {
     if(!Device || !Device->IsValid() || InImage.IsNull() || !bOwnsImage) return;
 
-    // If dimensions changed (or it had mips, which one image cannot refill), recreate the resource.
-    if(InImage.GetWidth() != Width || InImage.GetHeight() != Height || MipLevels != 1)
+    // If dimensions changed (or it had mips or blocks, which one RGBA8 image cannot refill), recreate the resource.
+    if(InImage.GetWidth() != Width || InImage.GetHeight() != Height || MipLevels != 1 || Format != DXGI_FORMAT_R8G8B8A8_UNORM)
     {
         Width     = InImage.GetWidth();
         Height    = InImage.GetHeight();
         MipLevels = 1;
+        Format    = DXGI_FORMAT_R8G8B8A8_UNORM;
         DestroyImage();
         AllocateImage();
     }
@@ -151,7 +184,7 @@ void D3D12TextureResource::Release()
 EngineCore::Image D3D12TextureResource::ToImage() const
 {
     ID3D12Resource* Texture = GetResource();
-    if(!bInitialized || !Device || !Device->IsValid() || !Texture) return EngineCore::Image();
+    if(!bInitialized || !Device || !Device->IsValid() || !Texture || Format != DXGI_FORMAT_R8G8B8A8_UNORM) return EngineCore::Image();
     if(Width <= 0 || Height <= 0) return EngineCore::Image();
 
     std::vector<uint8_t> Pixels;
@@ -163,6 +196,12 @@ EngineCore::Image D3D12TextureResource::ToImage() const
     EngineCore::Image Result(Width, Height, EngineCore::EImageFormat::RGBA8);
     std::memcpy(Result.GetData(), Pixels.data(), Pixels.size());
     return Result;
+}
+
+void D3D12TextureResource::SetDebugName(const std::string& InName)
+{
+    GDITextureResource::SetDebugName(InName);
+    if(bOwnsImage) D3D12Util::SetObjectName(Resource.Get(), DebugName);   // an adopted render target names itself
 }
 
 void D3D12TextureResource::AllocateImage()
@@ -181,7 +220,7 @@ void D3D12TextureResource::AllocateImage()
     Desc.Height           = UINT(Height);
     Desc.DepthOrArraySize = 1;
     Desc.MipLevels        = UINT16(MipLevels);   // the SRV (null desc) sees every level
-    Desc.Format           = DXGI_FORMAT_R8G8B8A8_UNORM;
+    Desc.Format           = Format;
     Desc.SampleDesc.Count = 1;
 
     if(FAILED(Device->GetDevice()->CreateCommittedResource(&Heap, D3D12_HEAP_FLAG_NONE, &Desc,
@@ -192,6 +231,7 @@ void D3D12TextureResource::AllocateImage()
         return;
     }
     CurrentState = D3D12_RESOURCE_STATE_COPY_DEST;
+    D3D12Util::SetObjectName(Resource.Get(), DebugName);
 
     SRVSlot = GDI->GetDescAlloc()->AllocateSRV();
     if(SRVSlot != D3D12DescriptorAllocator::InvalidSlot)
@@ -227,14 +267,14 @@ void D3D12TextureResource::UploadMipChain(const EngineCore::Image* InLevels, con
     if(!Device || !Device->IsValid() || !Resource || InCount == 0) return;
 
     std::vector<EngineCore::Image>     Formatted;
-    std::vector<D3D12Ops::TextureLevel> Levels;
+    std::vector<D3D12Ops::SubresourceData> Levels;
     Formatted.reserve(InCount);
     Levels.reserve(InCount);
     for(uint32_t Level = 0; Level < InCount; ++Level)
     {
         Formatted.push_back(InLevels[Level].ConvertedTo(EngineCore::EImageFormat::RGBA8));
         const EngineCore::Image& Each = Formatted.back();
-        Levels.push_back({ Each.GetData(), uint32_t(Each.GetWidth()), uint32_t(Each.GetHeight()) });
+        Levels.push_back({ Each.GetData(), size_t(Each.GetWidth()) * size_t(Each.GetHeight()) * 4u });
     }
-    D3D12Ops::UploadTextureLevels(Device, Resource.Get(), CurrentState, Levels.data(), InCount);
+    D3D12Ops::UploadSubresources(Device, Resource.Get(), CurrentState, Levels.data(), InCount);
 }
