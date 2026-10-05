@@ -12,13 +12,7 @@
 
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
-#include "Public/NimbleEngine/PlayerState.h"
-#include "Public/GameCore/Components/NetComponent.h"
-#include "Public/GameCore/Entity.h"
 
-#if WITH_NETCORE
-#include "Public/NetCore/NetSession.h"
-#endif
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
@@ -65,21 +59,6 @@ NIMBLE_CONFIG_INT(GMaxFrames, "Application", "MaxFrames", 0, nullptr);
 NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
 
 /* [Scripting] StartupScript is the session's -- see GameSession.cpp. */
-
-#if WITH_NETCORE
-/* A client: the server to join. Empty plays standalone. -connect sets it. */
-NIMBLE_CONFIG_STRING(GNetServerAddress, "Net", "ServerAddress", "", nullptr);
-/* A server listens here; a client connects here. */
-NIMBLE_CONFIG_INT(GNetPort, "Net", "Port", 7777, nullptr);
-/* A windowed game that hosts: a listen server (-listen). */
-NIMBLE_CONFIG_BOOL(GNetListen, "Net", "Listen", false, nullptr);
-NIMBLE_CONFIG_INT(GNetMaxClients, "Net", "MaxClients", 16, nullptr);
-NIMBLE_CONFIG_INT(GNetTimeoutMs, "Net", "TimeoutMs", 30000, nullptr);
-/* A headless server's frame rate; also how often it sends state. */
-NIMBLE_CONFIG_INT(GNetServerTickRate, "Net", "ServerTickRate", 30, nullptr);
-/* The host makes a player for each client that joins (IGameMode::OnClientConnected). */
-NIMBLE_CONFIG_BOOL(GNetSpawnPlayerPerClient, "Net", "SpawnPlayerPerClient", true, nullptr);
-#endif
 
 using namespace EngineCore;
 
@@ -346,6 +325,19 @@ namespace NimbleEngine
         /* The command line wins over the file. */
         for(const std::string& Override : ConfigOverrides)
         {
+            /* A var the game module declares does not exist until it loads:
+             * recorded as a config file's line is, it is applied when it
+             * registers, as [Section] Key in the .ini would be. */
+            const size_t Space = Override.find(' ');
+            const size_t Dot   = Override.find('.');
+            if(Space != std::string::npos && Dot != std::string::npos && Dot < Space
+               && !ConfigFindVarByPath(Override.substr(0, Space)))
+            {
+                LoadConfigText("[" + Override.substr(0, Dot) + "]\n" + Override.substr(Dot + 1, Space - Dot - 1) + "="
+                               + Override.substr(Space + 1) + "\n");
+                continue;
+            }
+
             std::string Response;
             if(!ExecConfigCommand(Override, Response))
             {
@@ -413,6 +405,7 @@ namespace NimbleEngine
 
         /* The game runs in this; the host lends it the two services above. */
         Session = EngineCore::Memory::Alloc<GameSession>(*this, *Scripts, *Rendering);
+        Net     = EngineCore::Memory::Alloc<NetHost>();
         return true;
     }
 
@@ -480,13 +473,12 @@ namespace NimbleEngine
         /* First, where no World is ticking. A failed load ends the session.
          * The network lets go of a World about to be freed, and takes the
          * new one. */
-        if(Session->HasPendingLevel()) { StopNetworkingWorld(); }
+        Net->BeginFrame();
         Session->ApplyPendingLevel();
         if(bQuitRequested || Session->IsQuitRequested())
         {
             return false;
         }
-        RebindNetworking();
 
         if(Desc.bHeadless)
         {
@@ -507,7 +499,7 @@ namespace NimbleEngine
         }
 
         /* Connections, spawns, state and RPCs, before the World sees the frame. */
-        PollNetworking();
+        Net->Poll();
 
         /* Assembled on the game thread before anything overlaps; see
          * FrameContext for why the viewport is read here. */
@@ -525,7 +517,7 @@ namespace NimbleEngine
         Session->Tick(Frame);
 
         /* What changed this frame goes out. */
-        FlushNetworking();
+        Net->Flush();
 
         /* The fence: at most one frame in flight. Waits for the PREVIOUS
          * frame's marker, not an empty queue -- Simulate may have enqueued. */
@@ -603,22 +595,25 @@ namespace NimbleEngine
             /* Negative clamps to unlimited rather than wrapping unsigned. A
              * headless server runs at its tick rate instead. */
             int LimitCfg = GFrameRateLimit.GetInt();
-#if WITH_NETCORE
-            if(Desc.bHeadless && Desc.NetMode == ENetMode::Server) { LimitCfg = GNetServerTickRate.GetInt(); }
-#endif
+            if(Desc.bHeadless && Desc.NetMode == ENetMode::Server) { LimitCfg = int(GetConfiguredServerTickRate()); }
             FrameRateLimit      = LimitCfg > 0 ? uint32_t(LimitCfg) : 0u;
             NextFrameDeadlineNs = 0;
 
             TimerResolutionScope TimerRes;
 
+            /* Before the load, so the level and mode already know whether
+             * they are a server or a client (NetFacade.h). Nothing arrives
+             * until the first frame's poll, which binds the loaded World. */
+            NetHostDesc NetDesc = NetHostDesc::FromConfig(Desc.NetMode);
+            NetDesc.bDedicated  = Desc.bHeadless;
+            if(Level)
+            {
+                Net->Start(*Session, NetDesc);
+            }
+
             if(!Level || !Session->LoadLevel(*Level))
             {
                 bQuitRequested = true;
-            }
-            else
-            {
-                /* After the load: a client's first spawns need its World. */
-                StartNetworking();
             }
 
             while(!bQuitRequested)
@@ -640,7 +635,7 @@ namespace NimbleEngine
         }
 
         /* Clients told, before their entities' World goes. */
-        StopNetworking();
+        if(Net) { Net->Stop(); }
 
         /* Whatever is loaded now, possibly a swapped-in level. */
         if(Session)
@@ -663,7 +658,15 @@ namespace NimbleEngine
          * already gone (GameSession::UnloadLevel), so lua_close is safe; the
          * renderer then drains and stops its thread.
          */
-        /* First: it references both services below. */
+        /* First: it holds the session. */
+        if(Net)
+        {
+            Net->Stop();
+            EngineCore::Memory::Dealloc(Net);
+            Net = nullptr;
+        }
+
+        /* Then the session: it references both services below. */
         if(Session)
         {
             EngineCore::Memory::Dealloc(Session);
@@ -716,134 +719,4 @@ namespace NimbleEngine
         SetFileProvider(nullptr);
     }
 
-    // === Networking ==============================================================
-    // Every body is empty without NetCore, so the loop above needs no #if.
-
-    void Application::StartNetworking()
-    {
-#if WITH_NETCORE
-        ENetMode Mode = Desc.NetMode;
-        if(Mode == ENetMode::Standalone && GNetListen.GetBool())             { Mode = ENetMode::Server; }
-        if(Mode == ENetMode::Standalone && GNetServerAddress.GetString()[0]) { Mode = ENetMode::Client; }
-        if(Mode == ENetMode::Standalone) { return; }
-
-        NetCore::NetConfig Config;
-        std::snprintf(Config.ServerAddress, sizeof(Config.ServerAddress), "%s", GNetServerAddress.GetString());
-        Config.Port       = uint16_t(GNetPort.GetInt());
-        Config.MaxClients = uint32_t(GNetMaxClients.GetInt() > 0 ? GNetMaxClients.GetInt() : 1);
-        Config.TimeoutMs  = uint32_t(GNetTimeoutMs.GetInt() > 0 ? GNetTimeoutMs.GetInt() : 30000);
-
-        Net = EngineCore::Memory::Alloc<NetCore::NetSession>();
-        Net->SetClientEvents(&Application::OnNetClientConnected, &Application::OnNetClientDisconnected, this);
-
-        /* Bound before starting, so a client's handshake names its level. */
-        RebindNetworking();
-        const NetCore::ENetRole Role = Mode == ENetMode::Server ? NetCore::ENetRole::Server : NetCore::ENetRole::Client;
-        if(!Net->Start(Role, Config))
-        {
-            CORE_LOG_ERROR(std::string("Networking failed to start as ") + NetCore::GetNetRoleName(Role) + "; running standalone")
-            StopNetworking();
-        }
-#else
-        if(Desc.NetMode != ENetMode::Standalone)
-        {
-            CORE_LOG_WARN("This build has networking compiled out (NIMBLE_WITH_NETCORE=OFF); running standalone")
-        }
-#endif
-    }
-
-    void Application::StopNetworking()
-    {
-#if WITH_NETCORE
-        if(!Net) { return; }
-        Net->FlushOutgoing();
-        Net->UnbindWorld();
-        Net->Stop();
-        EngineCore::Memory::Dealloc(Net);
-        Net = nullptr;
-#endif
-    }
-
-    void Application::StopNetworkingWorld()
-    {
-#if WITH_NETCORE
-        if(Net) { Net->UnbindWorld(); }
-#endif
-    }
-
-    void Application::RebindNetworking()
-    {
-#if WITH_NETCORE
-        if(!Net || !Session->HasWorld()) { return; }
-        if(Net->GetBoundWorld() && NetBoundLoad == Session->GetLoadCount()) { return; }
-        ILevel* Level = Session->GetLevel();
-        Net->BindWorld(Session->GetWorld(), Level ? Level->GetName() : "");
-        NetBoundLoad = Session->GetLoadCount();
-#endif
-    }
-
-    void Application::PollNetworking()
-    {
-#if WITH_NETCORE
-        if(Net) { Net->PollIncoming(); }
-#endif
-    }
-
-    void Application::FlushNetworking()
-    {
-#if WITH_NETCORE
-        if(Net) { Net->FlushOutgoing(); }
-#endif
-    }
-
-    void Application::OnNetClientConnected(const GameCore::NetClientID InClient, void* InUserData)
-    {
-        Application& Self = *static_cast<Application*>(InUserData);
-        if(!Self.Session || !Self.Session->HasWorld()) { return; }
-
-        GameCore::EntityID Player;
-#if WITH_NETCORE
-        if(GNetSpawnPlayerPerClient.GetBool())
-        {
-            /* Net first, so the player is already networked -- and owned --
-             * when OnPlayerAdded sees it. */
-            char Name[32];
-            std::snprintf(Name, sizeof(Name), "Player %d", int(InClient));
-            GameCore::Entity Entity = Self.Session->GetWorld().CreateEntity(Name);
-            GameCore::NetComponent Net;
-            Net.OwnerClient = InClient;
-            Entity.AddComponent(Net);
-            PlayerStateComponent State;
-            std::snprintf(State.PlayerName, sizeof(State.PlayerName), "%s", Name);
-            State.PlayerIndex = uint8_t(InClient & 0xFF);
-            Entity.AddComponent(State);
-            Player = Entity.GetID();
-        }
-#endif
-
-        ILevel* Level = Self.Session->GetLevel();
-        if(IGameMode* Mode = Level ? Level->GetGameMode() : nullptr) { Mode->OnClientConnected(InClient, Player); }
-    }
-
-    void Application::OnNetClientDisconnected(const GameCore::NetClientID InClient, void* InUserData)
-    {
-        Application& Self = *static_cast<Application*>(InUserData);
-        if(!Self.Session || !Self.Session->HasWorld()) { return; }
-
-        /* Everything the client owned; its player is the one with a PlayerState. */
-        GameCore::World& World = Self.Session->GetWorld();
-        std::vector<GameCore::EntityID> Owned;
-        GameCore::EntityID Player;
-        World.Each<GameCore::NetComponent>([&](GameCore::Entity InEntity, GameCore::NetComponent& InNet)
-        {
-            if(InNet.OwnerClient != InClient) { return; }
-            Owned.push_back(InEntity.GetID());
-            if(!Player.IsSet() && InEntity.HasComponent<PlayerStateComponent>()) { Player = InEntity.GetID(); }
-        });
-
-        ILevel* Level = Self.Session->GetLevel();
-        if(IGameMode* Mode = Level ? Level->GetGameMode() : nullptr) { Mode->OnClientDisconnected(InClient, Player); }
-
-        for(const GameCore::EntityID Entity : Owned) { World.DestroyEntity(Entity); }
-    }
 };

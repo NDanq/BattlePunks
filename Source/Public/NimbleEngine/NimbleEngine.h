@@ -10,6 +10,7 @@
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/NetFacade.h"
+#include "Public/NimbleEngine/NetHost.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreTypes.h"
 #include "Public/Core/CoreThread.h"
@@ -35,13 +36,6 @@ namespace GameCore
 namespace RenderCore
 {
     class Renderer;
-}
-
-/* Forward-declared only, and only ever a pointer: NetCore is linked PRIVATE,
- * and may not be built at all (NIMBLE_WITH_NETCORE). */
-namespace NetCore
-{
-    class NetSession;
 }
 
 namespace NimbleEngine
@@ -145,26 +139,14 @@ namespace NimbleEngine
          * Pacing lives in the caller. */
         bool RunFrame(uint64_t InMaxFrames);
 
-        /* The network session: started once the first level has loaded (a
-         * client's first spawns need its World), bound to each World the
-         * session loads, and polled around every Tick. No-ops without NetCore. */
-        void StartNetworking();
-        void StopNetworking();
-        void StopNetworkingWorld();
-        void RebindNetworking();
-        void PollNetworking();
-        void FlushNetworking();
-        static void OnNetClientConnected(GameCore::NetClientID InClient, void* InUserData);
-        static void OnNetClientDisconnected(GameCore::NetClientID InClient, void* InUserData);
-
+        /* The network session (NetHost.h): started once the first level has
+         * loaded (a client's first spawns need its World), driven around
+         * every Tick. Does nothing without NetCore. */
         ApplicationDesc          Desc;
         std::vector<std::string> ConfigOverrides;
 
-        /* nullptr unless networking started. */
-        NetCore::NetSession*     Net = nullptr;
-
-        /* GameSession::GetLoadCount() of the World Net is bound to. */
-        uint32_t                 NetBoundLoad = 0;
+        /* Created by Initialize. */
+        NetHost*                 Net = nullptr;
 
         /* Where assets (cooked shaders above all) come from: the disk, with
          * mounted shader caches layered on top (RenderCore's ShaderCache.h);

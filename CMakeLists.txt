@@ -392,6 +392,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/InputRouter.cpp
         Source/Private/NimbleEngine/CollisionMeshes.cpp
         Source/Private/NimbleEngine/NetFacade.cpp
+        Source/Private/NimbleEngine/NetHost.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/GameSession.h
@@ -405,6 +406,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/Input.h
         Source/Public/NimbleEngine/InputRouter.h
         Source/Public/NimbleEngine/NetFacade.h
+        Source/Public/NimbleEngine/NetHost.h
 )
 
 nimble_add_module(NimbleEngine SHARED

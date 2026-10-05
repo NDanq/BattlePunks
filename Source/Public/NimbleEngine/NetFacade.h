@@ -43,6 +43,12 @@ namespace NimbleEngine
     inline bool IsClient()     { return GetNetMode() == ENetMode::Client; }
     inline bool HasAuthority() { return GetNetMode() != ENetMode::Client; }
 
+    /* A server with no local player: the headless <Game>Server. A listen
+     * server (-listen, or the editor's Play as Listen Server) is not one, so
+     * a mode gives its own user a player when this is false and it has
+     * authority. */
+    NE_API bool IsDedicatedServer();
+
     /* A client's id, once its server has welcomed it; NET_CLIENT_NONE otherwise. */
     NE_API GameCore::NetClientID GetLocalClientId();
 
