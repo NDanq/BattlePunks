@@ -20,6 +20,8 @@
 #include "Public/UI/UIWidgets.h"
 #include "Private/Editor/UI/UIDesignDocument.h"
 #include "Private/Editor/UI/UIPalettePanel.h"
+#include "Private/Editor/UI/UIGraphLink.h"
+#include "Private/Editor/Content/ContentPaths.h"
 
 namespace
 {
@@ -69,6 +71,15 @@ UIDesignerViewport::UIDesignerViewport(EditorContext& InContext, UIDesignDocumen
     System.SetExecuteActions(false);   // the preview logs what a click would do
     connect(&Design, &UIDesignDocument::Changed, this, [this](bool) { Rebuild(); });
     connect(&Design, &UIDesignDocument::SelectionChanged, this, [this](int) { RevealSelection(); bComposeDirty = true; });
+
+    /* Its UI graph saved: the preview runs the new one. */
+    connect(&EditorUIGraph::Notifier(), &UIGraphNotifier::GraphSaved, this, [this](const QString& InDocument, const QString& InGraph)
+    {
+        if(!Runtime.IsRunning() || InDocument != EditorContent::ToRuntimePath(Design.GetPath())) return;
+        Runtime.ForgetGraph(InGraph.toStdString());
+        Rebuild();
+        emit StatusText(QStringLiteral("Preview: the UI graph reloaded"));
+    });
     Rebuild();
 
     Context.AddViewport(this);
@@ -76,6 +87,7 @@ UIDesignerViewport::UIDesignerViewport(EditorContext& InContext, UIDesignDocumen
 
 UIDesignerViewport::~UIDesignerViewport()
 {
+    Runtime.Stop(System);   // the graph objects go before their engine
     /* While the native window exists: its swapchain goes with it. */
     Context.RemoveViewport(this);
 }
@@ -92,9 +104,10 @@ UI::UIDocumentInstance* UIDesignerViewport::GetInstance() const
 
 void UIDesignerViewport::Rebuild()
 {
-    /* Not by path: the designer's copy is the edited one, not the cache's. */
+    /* Named by its path (its graph's self.Document), but not following the
+     * cache: the designer's copy is the edited one, not the file. */
     System.CloseAll(true);
-    Handle = System.OpenAsset(Design.GetSharedAsset(), std::string());
+    Handle = System.OpenAsset(Design.GetSharedAsset(), EditorContent::ToRuntimePath(Design.GetPath()).toStdString(), false, false);
     Hovered = -1;
     bComposeDirty = true;
     RevealSelection();
@@ -143,7 +156,16 @@ void UIDesignerViewport::FitToView()
 void UIDesignerViewport::SetPreview(const bool bInPreview)
 {
     FinishDrag(false);
+    const bool bWas = bPreview;
     bPreview = bInPreview;
+    if(bPreview != bWas)
+    {
+        /* The document's logic runs while previewing, from its OnOpen. */
+        if(bPreview) { Runtime.Start(System); }
+        else         { Runtime.Stop(System); }
+        ErrorsShown = 0;
+        Rebuild();
+    }
     if(UI::UIDocumentInstance* Instance = GetInstance())
     {
         Instance->SetHovered(-1);
@@ -251,9 +273,14 @@ bool UIDesignerViewport::PrepareFrame(const float InDeltaSeconds, const bool /*b
         System.ProcessInput(Input);
         const size_t Logged = System.GetActionLog().size();
         System.RunQueuedActions();
-        if(System.GetActionLog().size() != Logged)
+        if(Runtime.GetErrorCount() != ErrorsShown)
         {
-            emit StatusText(QStringLiteral("Preview: %1 (logged, not run)").arg(QString::fromStdString(System.GetActionLog().back())));
+            ErrorsShown = Runtime.GetErrorCount();
+            emit StatusText(QStringLiteral("Preview: a script error -- see the Output (%1 so far)").arg(ErrorsShown));
+        }
+        else if(System.GetActionLog().size() != Logged)
+        {
+            emit StatusText(QStringLiteral("Preview: ran %1").arg(QString::fromStdString(System.GetActionLog().back())));
         }
     }
     System.Tick(InDeltaSeconds);

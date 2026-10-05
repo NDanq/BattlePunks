@@ -10,6 +10,7 @@
 #include "Public/Editor/EditorContext.h"
 #include "Public/RenderCore/UIDrawList.h"
 #include "Public/UI/UISystem.h"
+#include "Private/Editor/UI/UIPreviewRuntime.h"
 
 class EditorDocument;
 class UIDesignDocument;
@@ -30,7 +31,9 @@ class UIDesignDocument;
  * Each gesture is one undo step, committed on release.
  *
  * PREVIEW: input goes to the document as in a game -- hover, press, focus,
- * navigation -- and actions are logged to the Console, not run.
+ * navigation -- and its actions and UI graph run, in a scratch World and
+ * script engine of the preview's own (UIPreviewRuntime): what a graph does
+ * to config vars is undone when the preview stops. Saving the graph reloads it.
  */
 class UIDesignerViewport : public QWidget, public EditorViewportClient
 {
@@ -126,6 +129,10 @@ private:
     RenderCore::RenderSceneID Scene = RenderCore::RENDER_INVALID_SCENE;
     UI::UISystem         System;
     UI::UIDocumentHandle Handle = UI::UI_DOCUMENT_INVALID;
+
+    /* The Preview's scripts: the document's logic runs while previewing. */
+    UIPreviewRuntime Runtime;
+    uint32_t         ErrorsShown = 0;
 
     RenderCore::UIDrawList List;
     uint64_t               ComposedSerial = ~uint64_t(0);

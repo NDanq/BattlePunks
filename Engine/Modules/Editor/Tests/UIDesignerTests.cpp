@@ -22,6 +22,9 @@
 #include "Private/Editor/UI/UIDetailsPanel.h"
 #include "Private/Editor/UI/UIHierarchyPanel.h"
 #include "Private/Editor/UI/UIGraphLink.h"
+#include "Private/Editor/UI/UIPreviewRuntime.h"
+#include "Public/Core/CoreConfig.h"
+#include "Public/UI/UISystem.h"
 #include "Private/Editor/Graph/GraphDocument.h"
 #include "Private/Editor/Graph/GraphEditorTab.h"
 #include "Private/Editor/Graph/GraphEditorWindow.h"
@@ -348,6 +351,57 @@ namespace
             Window->close();
         }
     }
+    void TestPreviewRuntime(const QString& InDir)
+    {
+        std::printf("[preview runtime]\n");
+        const QString GraphPath = InDir + QStringLiteral("/Preview.ui.nmgraph");
+        const auto WriteGraph = [&GraphPath](const char* InLua)
+        {
+            QFile File(GraphPath);
+            File.open(QIODevice::WriteOnly | QIODevice::Truncate);
+            File.write(QByteArray("<NodeGraph Version=\"1\" Schema=\"UI\"><gen_code><Output Extension=\".lua\"><![CDATA[") + InLua
+                       + "]]></Output></gen_code></NodeGraph>\n");
+        };
+        WriteGraph("return { OnOpen = function(self) UI.SetNumber('Opened', 1) end,\n"
+                   "  Go_OnClick = function(self) Config.SetBool('Shadows.Enabled', not Config.GetBool('Shadows.Enabled'))\n"
+                   "    Game.SetPaused(true); UI.SetString('Doc', self.Document) end }");
+        UI::UIDocumentAsset Parsed;
+        const std::string Xml = "<UI Graph=\"" + GraphPath.toStdString() + "\"><Canvas><Button Name=\"Go\" OnClick=\"Graph:Go_OnClick\"/></Canvas></UI>";
+        Expect(UI::ParseUIXml(Xml, Parsed), "a document with a UI graph");
+        auto Asset = std::make_shared<const UI::UIDocumentAsset>(Parsed);
+
+        EngineCore::ConfigVar* Shadows = EngineCore::ConfigFindVarByPath("Shadows.Enabled");
+        Expect(Shadows != nullptr, "a config var for the graph to change");
+        if(!Shadows) return;
+        const bool bShadows = Shadows->GetBool();
+
+        UI::UISystem System;
+        System.SetExecuteActions(false);   // as the designer's
+        UIPreviewRuntime Runtime;
+        Expect(Runtime.Start(System), "the preview's runtime starts");
+        UI::UIDocumentHandle Doc = System.OpenAsset(Asset, "Content/UI/Preview.nmui", false, false);
+        System.RunQueuedActions();
+        Expect(System.GetValue("Opened") && System.GetValue("Opened")->AsNumber() == 1.0, "its On Document Open runs");
+
+        UI::UIActionList Click;
+        Click.Parse("Graph:Go_OnClick");
+        System.QueueActions(Click, System.Find(Doc), System.Find(Doc)->FindWidget("Go"));
+        System.RunQueuedActions();
+        Expect(Shadows->GetBool() != bShadows, "a handler runs, and may change config vars");
+        Expect(System.GetValue("Doc") && System.GetValue("Doc")->AsString() == "Content/UI/Preview.nmui", "self.Document is the document's path");
+        Expect(Runtime.GetErrorCount() == 0, "Game.SetPaused in the preview is quiet, not a script error");
+
+        WriteGraph("return { OnOpen = function(self) UI.SetNumber('Opened', 2) end }");
+        Runtime.ForgetGraph(GraphPath.toStdString());
+        System.CloseAll(true);
+        System.OpenAsset(Asset, "Content/UI/Preview.nmui", false, false);
+        System.RunQueuedActions();
+        Expect(System.GetValue("Opened")->AsNumber() == 2.0, "a saved graph is read again");
+
+        Runtime.Stop(System);
+        Expect(Shadows->GetBool() == bShadows, "stopping puts the config vars back");
+        Expect(System.GetDocumentCount() == 0 && !Runtime.IsRunning(), "and closes the preview's documents");
+    }
 }
 
 int main(int argc, char** argv)
@@ -363,6 +417,7 @@ int main(int argc, char** argv)
     TestDocument(Dir.path());
     TestDetails(Dir.path());
     TestUIGraph(Dir.path());
+    TestPreviewRuntime(Dir.path());
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

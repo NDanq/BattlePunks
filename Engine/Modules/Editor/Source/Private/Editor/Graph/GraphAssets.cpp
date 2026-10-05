@@ -35,6 +35,7 @@
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphDocument.h"
 #include "Private/Editor/Graph/GraphEditorTab.h"
+#include "Private/Editor/UI/UIGraphLink.h"
 #include "Private/Editor/Graph/GraphEditorWindow.h"
 #include "Private/Editor/ProjectSettingsDialog.h"
 
@@ -388,7 +389,11 @@ namespace EditorGraphs
             }
             /* A UI document's logic: the document reloads in Play, and with it its logic (UISystem). */
             const std::string Document = InGraph.GetProperty("Document", std::string());
-            if(S->GetName() == "UI" && !Document.empty()) { UI::UIAssetCache::Invalidate(Document); }
+            if(S->GetName() == "UI" && !Document.empty())
+            {
+                UI::UIAssetCache::Invalidate(Document);
+                emit EditorUIGraph::Notifier().GraphSaved(ToQ(Document), EditorContent::ToRuntimePath(InGraphPath));
+            }
         }
         CORE_LOG("[Graph] " + ToStd(OutMessage))
         return true;
