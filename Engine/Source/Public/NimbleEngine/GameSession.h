@@ -24,8 +24,14 @@ namespace RenderCore
     class Renderer;
 }
 
+namespace UI
+{
+    class UISystem;
+}
+
 namespace NimbleEngine
 {
+    class GameConsole;
     class GameSession;
     class GameState;
     class ILevel;
@@ -39,6 +45,12 @@ namespace NimbleEngine
      * library and a native prefab's callbacks reach the rules. Set for the
      * whole of LoadLevel to UnloadLevel. Game thread only. */
     NE_API GameSession* FindGameSession(const GameCore::World& InWorld);
+
+    /* A World with no game in it on purpose -- the UI Designer's Preview,
+     * running a document's UI graph. The "Game" library there does nothing
+     * and answers defaults, instead of raising "needs a running game".
+     * nullptr clears it. Game thread only. */
+    NE_API void SetScriptPreviewWorld(const GameCore::World* InWorld);
 
     /* Declared ahead of the friend declarations below to avoid MSVC C4273
      * (inconsistent linkage). Documented in SaveGame.h. */
@@ -72,6 +84,14 @@ namespace NimbleEngine
          * without a window ignores it. */
         virtual void SetMouseCaptured(bool /*bInCaptured*/) {}
         virtual bool IsMouseCaptured() const { return false; }
+
+        /* Typed text into InputState::GetText (InputRouter::SetTextInputActive),
+         * for the console. Off by default; a host without a window ignores it. */
+        virtual void SetTextInputActive(bool /*bInActive*/) {}
+
+        /* The system clipboard, for a UI text field's copy and paste. */
+        virtual std::string GetClipboardText() const { return std::string(); }
+        virtual void        SetClipboardText(const std::string& /*InUtf8*/) {}
     };
 
     /*
@@ -211,14 +231,43 @@ namespace NimbleEngine
         GameCore::EntityID GetPlayer(uint8_t InIndex);
         uint32_t           GetPlayerCount();
 
-        /* This frame's devices (Input.h). Gameplay usually reads an
-         * InputComponent, resolved from this at the start of TP_PrePhysics. */
-        const InputState& GetInput() const { return Host.GetInput(); }
+        /* This frame's devices (Input.h), less what the UI took (GetUI).
+         * Gameplay usually reads an InputComponent, resolved from this at the
+         * start of TP_PrePhysics. */
+        const InputState& GetInput() const { return FilteredInput; }
 
         /* Hides and holds the cursor, for mouse-look; Mouse.DeltaX keeps
          * coming past the screen's edge. The host lets go when the run ends. */
         void SetMouseCaptured(bool bInCaptured) { Host.SetMouseCaptured(bInCaptured); }
         bool IsMouseCaptured() const            { return Host.IsMouseCaptured(); }
+
+        // === The UI (Modules/UI/README.md) ======================================
+
+        /*
+         * This session's documents: opened from code (GetUI().Open), Lua
+         * (UI.Open) or another document's actions, drawn over the default
+         * scene. Each Tick gives it the input first and the game what it left
+         * -- GetInput, the Input library and InputComponents all read that
+         * (INPUT.md, "The UI") -- then updates it after the World. Its data
+         * store has Player<N>.Score, Player<N>.Lives and Game.Phase, for
+         * {Bind:...}. Open documents close with the session; a level change
+         * closes all but the persistent ones.
+         */
+        UI::UISystem& GetUI() { return *Interface; }
+
+        /*
+         * Paused: the World does not tick and the mode's OnTick is not called;
+         * the UI still runs, so a pause menu can resume. InputComponents keep
+         * reading this frame's input, so a key the menu consumed does not
+         * reach the game when it resumes. Also Game.SetPaused in Lua and the
+         * native actions Game.Pause, Game.Resume and Game.TogglePause.
+         */
+        void SetPaused(bool bInPaused);
+        bool IsPaused() const { return bPaused; }
+
+        /* The in-game console (GameConsole.h, CONSOLE.md): the toggle key
+         * opens it, and while open it takes the input before the UI does. */
+        GameConsole& GetConsole() { return *Console; }
 
     private:
         /* Friends, not a public setter: only SaveGame.cpp may arm a restore. */
@@ -272,6 +321,22 @@ namespace NimbleEngine
         std::vector<std::string> QueuedPhases;
 
         bool bQuitRequested = false;
+        bool bPaused        = false;
+        bool bUITextInput   = false;   // a UI text field has the window's text input on
+        bool bConsoleOpen   = false;   // last frame's: the console turns text input off as it closes
+
+        /* The UI, and what it left of the host's input this frame. */
+        UI::UISystem* Interface = nullptr;
+
+        /* Made after Interface, destroyed before it: it draws a document. */
+        GameConsole*  Console = nullptr;
+        InputState    FilteredInput;
+        std::string   PublishedPhase;
+
+        /* The host's input to the UI, and what it took out of FilteredInput. */
+        void RouteInputThroughUI();
+        /* Player<N>.Score, Player<N>.Lives and Game.Phase into the UI's data store. */
+        void PublishUIValues();
 
         uint32_t LoadCount = 0;
     };

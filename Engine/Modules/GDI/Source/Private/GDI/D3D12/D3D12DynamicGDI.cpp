@@ -509,6 +509,19 @@ GDIMesh* D3D12DynamicGDI::CreateMesh(const GDIMeshDesc& InDesc)
     return Mesh;
 }
 
+GDIMesh* D3D12DynamicGDI::CreateDynamicMesh(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
+{
+    if(!DeviceObj || !CurrentStateData) return nullptr;
+
+    auto* Mesh = new D3D12Mesh(DeviceObj, CurrentStateData);
+    if(!Mesh->InitDynamic(InMaxVertices, InMaxIndices))
+    {
+        delete Mesh;
+        return nullptr;
+    }
+    return Mesh;
+}
+
 GDIMesh* D3D12DynamicGDI::CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced)
 {
     const float HalfWidth  = InWidth  * 0.5f;

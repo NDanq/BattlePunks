@@ -123,10 +123,18 @@ namespace NimbleEngine
         const InputState& GetInput() const override;
         void SetMouseCaptured(bool bInCaptured) override;
         bool IsMouseCaptured() const override;
+        void SetTextInputActive(bool bInActive) override;
+        std::string GetClipboardText() const override;
+        void        SetClipboardText(const std::string& InUtf8) override;
 
     private:
         bool Initialize();
         void Shutdown();
+
+        /* The player's settings, over the project's: <AppData>/NimbleEngine/
+         * <[Application] UserDataName, else the game module>/User.ini, loaded
+         * and named as the file Config.Save writes (CoreConfig.h). */
+        void LoadUserSettings();
 
         /* Run(&InLevel). The level-less overloads pass a .cpp-local empty level. */
         void ExecWithLevel(ILevel& InLevel);
@@ -134,6 +142,9 @@ namespace NimbleEngine
         /* Engine up, level loaded, loop, unload, engine down. InLevel, or when
          * null the start level of InGameModule. */
         void Run(ILevel* InLevel, const char* InGameModule);
+
+        /* Run's InGameModule, for Initialize: the user settings' folder. */
+        std::string GameModuleName;
 
         /* Level swap, pump, Tick, fence, collect, present, end. False to stop.
          * Pacing lives in the caller. */

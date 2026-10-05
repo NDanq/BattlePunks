@@ -9,6 +9,7 @@ stored code is what a game's cook and the runtime use.
 |---|---|---|---|
 | Material | `Glow.material.nmgraph` | `.mtl.glsl` (a material function) and `.material` (its description) | `RenderComponent::Materials[0] = "Materials/Glow.material.nmgraph"`, cooked from the stored code (below) |
 | Script | `Mover.script.nmgraph` | `.lua`, a class table | a prefab's script (`PrefabAsset::SetScriptPath("Scripts/Mover.script.nmgraph")`, `<Script Path>` in the `.nmprefab`): each instance runs the stored Lua |
+| UI | `PauseMenu.ui.nmgraph` | `.lua`, a class table | a UI document's logic (its `Graph` setting): each open document instances the stored Lua (UI/README.md, "UI graphs") |
 
 Written for this repository. **Editor targets only**, and Qt-free: the editor
 draws graphs (`Modules/Editor/Source/Private/Editor/Graph/`), but loading,
@@ -232,6 +233,29 @@ keeps them.
 `Games/Sandbox/Scripts/Pickup.script.nmgraph` (the game's component, library
 functions and variables, a typed Emit) and `ScoreBoard.script.nmgraph` (typed
 On nodes) are the examples.
+
+### UI graphs
+
+The UI schema is the script schema in another flavour (`ScriptSchema.cpp`,
+`EScriptFlavour::UI`). It has the same nodes, without those that need an
+entity: On Start, On Destroy, the phase and overlap events, Self, and the
+prefab nodes. In their place it adds:
+
+- **On Document Open** and **On Document Close.** On Event handlers listen
+  between these two.
+- **UI Event**, a handler a document's `Graph:<Handler>` action calls. It
+  outputs `Value` (a bool when `ValueType` is Bool) and `Sender`.
+- **This Document** (`self.Document`), **Close This Document**, and widget
+  statements whose `Widget` setting (`EPropertyKind::WidgetName`) the editor
+  offers from the linked document. Their templates use `{@Property}`: the
+  node's setting as a Lua string.
+
+The generated table is `{ variables, OnOpen, OnClose, OnTick, <Handler>,
+Event_<X> }`; there is no `TickPhase`. Handler names must be unique Lua
+identifiers that the table does not already use. The graph's `Document`
+property names the `.nmui` it serves, which the editor uses. The runtime link
+is the document's `Graph` setting. `Tests/Data/UIMenu.lua` is the golden
+output.
 
 ## Material graphs
 

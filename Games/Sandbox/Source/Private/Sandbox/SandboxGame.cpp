@@ -50,6 +50,10 @@
  * Unlike [Application] MaxFrames, this is game logic requesting quit. */
 NIMBLE_CONFIG_INT(GSandboxRunSeconds, "Sandbox", "RunSeconds", 0, nullptr);
 
+/* The player's name: the Settings menu's Profile page sets it and saves it
+ * (its UI graph, Config.SetString then Config.Save) to their User.ini. */
+NIMBLE_CONFIG_STRING(GSandboxProfileName, "Profile", "Name", "Player", nullptr);
+
 /* Beside the executable for the demo; a real game would use appGetAppDataDir. */
 static const char* const GSandboxSavePath = "Saves/Quick.nmsg";
 

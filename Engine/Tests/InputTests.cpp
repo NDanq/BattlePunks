@@ -9,6 +9,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
 
 #include "Public/Core/CoreConfig.h"
@@ -294,9 +295,81 @@ namespace
 #endif
 }
 
+/* InputState::Consume*: what the UI takes, the game does not see. */
+static void TestConsume()
+{
+    std::printf("[consume]\n");
+    InputState State;
+    State.BeginFrame(1);
+    State.Press(FindInputKey("Space"));
+    State.Press(FindInputKey("Mouse.Left"));
+    State.Press(FindInputKey("Gamepad.South"), 1);
+    State.SetAnalog(FindInputKey("Gamepad.LeftX"), 0.8f, 1);
+    State.AddWheel(0.0f, 2.0f);
+
+    InputState Keys = State;
+    Keys.ConsumeKeyboard();
+    Expect(!Keys.IsDown("Space") && !Keys.WasPressed("Space"), "ConsumeKeyboard takes a key and its edge");
+    Expect(Keys.IsDown("Mouse.Left") && Keys.IsDown(FindInputKey("Gamepad.South"), 1), "and leaves the mouse and pads");
+
+    InputState Mouse = State;
+    Mouse.ConsumeMouseButtons();
+    Expect(!Mouse.IsDown("Mouse.Left") && Mouse.GetWheelDelta() == 0.0f && Mouse.IsDown("Space"), "ConsumeMouseButtons takes buttons and the wheel");
+
+    InputState Pads = State;
+    Pads.ConsumeGamepad();
+    Expect(!Pads.IsDown(FindInputKey("Gamepad.South"), 1) && Pads.GetValue(FindInputKey("Gamepad.LeftX"), 1) == 0.0f,
+           "ConsumeGamepad takes every player's buttons and sticks");
+
+    InputState One = State;
+    One.Consume(FindInputKey("Space"));
+    Expect(!One.IsDown("Space") && !One.WasReleased("Space") && One.IsDown("Mouse.Left"), "Consume takes one key, with no release edge");
+
+    InputState All = State;
+    All.ConsumeAll();
+    Expect(!All.IsDown("Space") && !All.IsDown("Mouse.Left") && !All.IsDown(FindInputKey("Gamepad.South"), 1), "ConsumeAll takes everything");
+
+    bool bPad = true;
+    Expect(WasInputActionPressed("TestMap", "Jump", State, 0, &bPad) && !bPad, "a map action is read straight from a state, by keyboard");
+    InputState PadOnly;
+    PadOnly.Press(FindInputKey("Gamepad.South"));
+    Expect(WasInputActionPressed("TestMap", "Jump", PadOnly, 0, &bPad) && bPad, "and says when a gamepad pressed it");
+    Expect(!WasInputActionPressed("TestMap", "Nope", State) && !WasInputActionPressed("NoMap", "Jump", State), "unknown names are not pressed");
+}
+
+static void TestTextAndRepeat()
+{
+    std::printf("[text and repeat]\n");
+    const InputKey Back = FindInputKey("Backspace");
+    InputState State;
+    State.AppendText("h");
+    State.AppendText("\xC3\xA9");   // e acute: two bytes
+    Expect(std::strcmp(State.GetText(), "h\xC3\xA9") == 0, "typed text accumulates over a frame");
+    std::string Long(INPUT_TEXT_MAX, 'x');
+    State.AppendText(Long.c_str());
+    Expect(std::strcmp(State.GetText(), "h\xC3\xA9") == 0, "text that does not fit is dropped whole");
+
+    State.Repeat(Back);
+    Expect(State.GetPressesAndRepeats(Back) == 0, "a repeat of a key not held is nothing");
+    State.Press(Back);
+    State.Repeat(Back);
+    State.Repeat(Back);
+    Expect(State.WasPressed(Back) && State.GetPressesAndRepeats(Back) == 3, "a press and its repeats count");
+
+    InputState Taken = State;
+    Taken.ConsumeKeyboard();
+    Expect(Taken.GetText()[0] == '\0' && Taken.GetPressesAndRepeats(Back) == 0, "ConsumeKeyboard takes the text and repeats too");
+
+    State.BeginFrame(2);
+    Expect(State.GetText()[0] == '\0' && State.GetPressesAndRepeats(Back) == 0 && State.IsDown(Back),
+           "the next frame starts with no text or repeats; held stays held");
+}
+
 int main()
 {
     std::printf("NimbleEngineInputTests\n");
+    TestConsume();
+    TestTextAndRepeat();
     TestNames();
     TestEdges();
     TestRouterLatch();

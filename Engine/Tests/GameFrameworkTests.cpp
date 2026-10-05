@@ -19,6 +19,7 @@
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/GameState.h"
@@ -28,6 +29,7 @@
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/NimbleEngine/SaveGame.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Public/UI/UISystem.h"
 
 using namespace NimbleEngine;
 
@@ -500,6 +502,290 @@ static void TestHeadlessApplication()
     Expect(Mode.Ticks == 3, "a headless Application runs with no window, for MaxFrames frames");
 }
 
+/* For the UI test: gameplay's own binding of the left button. */
+NIMBLE_DEFINE_INPUT_MAP(UITest)
+{
+    Map.Action("Fire", "Mouse.Left");
+    Map.Action("Jump", "Space");
+}
+
+namespace
+{
+    /* A host whose devices the test drives. */
+    class InputHost : public IGameHost
+    {
+    public:
+        void     SetFrameRateLimit(uint32_t) override {}
+        uint32_t GetFrameRateLimit() const override { return 0; }
+        const InputState& GetInput() const override { return Input; }
+        void SetTextInputActive(const bool bInActive) override { bTextInput = bInActive; }
+
+        InputState Input;
+        bool       bTextInput = false;
+    };
+
+    /* A widget description, by type and properties as text. */
+    UI::UIWidgetDesc Widget(const char* InType, const int32_t InParent, std::vector<UI::UIPropertyText> InProperties)
+    {
+        UI::UIWidgetDesc Desc;
+        Desc.Type       = InType;
+        Desc.Parent     = InParent;
+        Desc.Properties = std::move(InProperties);
+        return Desc;
+    }
+
+    void WorldTicks(GameCore::World&, float, void* InUserData) { ++*static_cast<int*>(InUserData); }
+
+    void TestSessionUI()
+    {
+        std::printf("[session UI]\n");
+        InputHost              Host;
+        GameCore::ScriptEngine Scripts;
+        RenderCore::Renderer   Rendering;   // not running: nothing is drawn, the UI still works
+        Scripts.Initialize();
+        auto* Session = new GameSession(Host, Scripts, Rendering);
+        TestLevel Level;
+        Expect(Session->LoadLevel(Level), "the level loads");
+
+        int Ticks = 0;
+        Session->GetWorld().RegisterSystem("Test.Ticks", GameCore::TP_PostUpdate, &WorldTicks, &Ticks);
+        GameCore::Entity Player = Session->GetWorld().CreateEntity("Shooter");
+        InputComponent Controls;
+        std::snprintf(Controls.Map, sizeof(Controls.Map), "%s", "UITest");
+        Player.AddComponent(Controls);
+
+        uint64_t FrameNumber = 1;
+        const auto Frame = [&](const auto& InInput)
+        {
+            Host.Input.BeginFrame(FrameNumber);
+            InInput(Host.Input);
+            FrameContext Context;
+            Context.DeltaSeconds   = 0.016;
+            Context.FrameNumber    = FrameNumber++;
+            Context.ViewportPixels = EngineCore::Size(1920, 1080);
+            Session->Tick(Context);
+        };
+        const auto Nothing = [](InputState&) {};
+        const InputKey Left = FindInputKey("Mouse.Left"), Escape = FindInputKey("Escape"), Space = FindInputKey("Space");
+
+        /* A pause menu: a button that pauses (to see it run) and Back that resumes. */
+        auto Menu = std::make_shared<UI::UIDocumentAsset>();
+        Menu->Settings.InputMode = UI::EUIInputMode::UIOnly;
+        Menu->Settings.OnBack    = "Native:Game.Resume";
+        Menu->Widgets.push_back(Widget("Canvas", -1, {}));
+        Menu->Widgets.push_back(Widget("Button", 0, { { "Name", "Pause" }, { "Position", "100,100" }, { "Size", "200,100" },
+                                                      { "OnClick", "Native:Game.Pause" } }));
+        Expect(Session->GetUI().OpenAsset(Menu, "Test/Pause.nmui") != UI::UI_DOCUMENT_INVALID, "a menu opens in the session's UI");
+        Frame(Nothing);   // laid out and painted
+
+        Frame([&](InputState& In) { In.MoveMouse(200, 150, 0, 0); In.Press(Left); });
+        const InputComponent* Seen = Player.GetComponent<InputComponent>();
+        Expect(!Session->GetInput().IsDown(Left) && Seen && !Seen->IsDown("Fire"),
+               "a press on the menu's button does not reach the game");
+        Frame([&](InputState& In) { In.Release(Left); });
+        Expect(Session->IsPaused(), "the click ran Native:Game.Pause");
+        Expect(Seen && !Seen->WasPressed("Fire") && !Seen->WasReleased("Fire"), "nor did the click's release reach it");
+
+        const int TicksWhenPaused = Ticks;
+        Frame(Nothing);
+        Frame(Nothing);
+        Expect(Ticks == TicksWhenPaused, "paused, the World does not tick");
+
+        Frame([&](InputState& In) { In.Press(Escape); });
+        Expect(!Session->IsPaused(), "Escape (the UI map's Back) ran the menu's OnBack: resumed");
+        Expect(!Session->GetInput().WasPressed(Escape), "the Escape the menu took is not the game's");
+        Frame([&](InputState& In) { In.Release(Escape); });
+        Expect(Ticks > TicksWhenPaused, "resumed, the World ticks again");
+
+        /* While a UIOnly menu is open the keyboard is the menu's. */
+        Frame([&](InputState& In) { In.Press(Space); });
+        Expect(Seen && !Seen->WasPressed("Jump"), "a UIOnly document takes the keyboard from the game");
+        Frame([&](InputState& In) { In.Release(Space); });
+
+        /* A HUD: clicks outside its widgets are the game's. */
+        Session->GetUI().Close("Test/Pause.nmui");
+        auto Hud = std::make_shared<UI::UIDocumentAsset>();
+        Hud->Widgets.push_back(Widget("Canvas", -1, {}));
+        Hud->Widgets.push_back(Widget("Border", 0, { { "Name", "Panel" }, { "Size", "300,80" } }));
+        Hud->Widgets.push_back(Widget("Text", 0, { { "Name", "Lives" }, { "Position", "0,100" }, { "Text", "Lives: {Bind:Player0.Lives}" } }));
+        Hud->Widgets.push_back(Widget("Button", 0, { { "Name", "Close" }, { "Position", "500,0" }, { "Size", "100,50" },
+                                                     { "OnClick", "Native:UI.Close" } }));
+        Session->GetUI().OpenAsset(Hud, "Test/HUD.nmui");
+        Frame(Nothing);
+        Frame([&](InputState& In) { In.MoveMouse(1000, 800, 0, 0); In.Press(Left); });
+        Frame(Nothing);   // the World resolves last frame's
+        Expect(Seen && Seen->IsDown("Fire"), "outside a HUD's widgets the game fires");
+        Frame([&](InputState& In) { In.Release(Left); In.MoveMouse(100, 40, 0, 0); In.Press(Left); });
+        Frame(Nothing);
+        Expect(Seen && !Seen->IsDown("Fire"), "over its panel, the HUD takes the click");
+        Frame([&](InputState& In) { In.Release(Left); });
+
+        const UI::UIValue* Lives = Session->GetUI().GetValue("Player0.Lives");
+        Expect(Lives && Lives->AsNumber() == 3.0, "the session publishes Player0.Lives");
+        UI::UIDocumentInstance* HudDoc = Session->GetUI().Find("Test/HUD.nmui");
+        Expect(HudDoc && HudDoc->GetProperty(*HudDoc->FindWidget("Lives"), "Text").AsString() == "Lives: 3", "and a HUD binds it");
+        const UI::UIValue* Phase = Session->GetUI().GetValue("Game.Phase");
+        Expect(Phase && Phase->AsString() == "Lobby", "and Game.Phase");
+
+        /* A button whose action closes its own document. */
+        Frame([&](InputState& In) { In.MoveMouse(550, 25, 0, 0); In.Press(Left); });
+        Frame([&](InputState& In) { In.Release(Left); });
+        Expect(!Session->GetUI().IsOpen("Test/HUD.nmui"), "Native:UI.Close from its own button closes it, safely");
+
+        /* A level change closes the level's documents. */
+        Session->GetUI().OpenAsset(Hud, "Test/HUD.nmui");
+        Session->UnloadLevel();
+        Expect(Session->GetUI().GetDocumentCount() == 0, "unloading the level closes its documents");
+
+        delete Session;
+        Scripts.Shutdown();
+    }
+}
+
+/* The console's: a var to set and a command to run. */
+NIMBLE_CONFIG_INT(GConsoleTestValue, "ConsoleTest", "Value", 1, nullptr);
+
+namespace
+{
+    std::vector<std::string> GConsoleTestArgs;
+    int                      GConsoleTestRuns = 0;
+}
+
+NIMBLE_CONSOLE_COMMAND(consoletest, "[words]", "The tests' command")
+{
+    GConsoleTestArgs = Console.Args;
+    ++GConsoleTestRuns;
+    Console.Print("consoletest ran");
+}
+
+namespace
+{
+    bool OutputHas(const GameConsole& InConsole, const std::string& InLine)
+    {
+        for(const std::string& Each : InConsole.GetOutput())
+        {
+            if(Each == InLine) return true;
+        }
+        return false;
+    }
+
+    void TestConsole()
+    {
+        std::printf("[console]\n");
+        InputHost              Host;
+        GameCore::ScriptEngine Scripts;
+        RenderCore::Renderer   Rendering;
+        Scripts.Initialize();
+        auto* Session = new GameSession(Host, Scripts, Rendering);
+        TestLevel Level;
+        Expect(Session->LoadLevel(Level), "the level loads");
+
+        GameCore::Entity Player = Session->GetWorld().CreateEntity("Typist");
+        InputComponent Controls;
+        std::snprintf(Controls.Map, sizeof(Controls.Map), "%s", "UITest");
+        Player.AddComponent(Controls);
+
+        uint64_t FrameNumber = 1;
+        const auto Frame = [&](const auto& InInput)
+        {
+            Host.Input.BeginFrame(FrameNumber);
+            InInput(Host.Input);
+            FrameContext Context;
+            Context.DeltaSeconds   = 0.016;
+            Context.FrameNumber    = FrameNumber++;
+            Context.ViewportPixels = EngineCore::Size(1920, 1080);
+            Session->Tick(Context);
+        };
+        const auto Nothing = [](InputState&) {};
+        const InputKey Grave = FindInputKey("Grave"), Return = FindInputKey("Return"), Space = FindInputKey("Space"),
+                       Escape = FindInputKey("Escape"), Backspace = FindInputKey("Backspace"), Up = FindInputKey("Up"),
+                       Tab = FindInputKey("Tab"), Left = FindInputKey("Left");
+        GameConsole& Console = Session->GetConsole();
+
+        Expect(FindConsoleCommand("consoletest") && FindConsoleCommand("help") && FindConsoleCommand("open"),
+               "the macro registers commands, the engine's among them");
+        const std::vector<std::string> Words = SplitConsoleLine("set  \"two words\" \"\" x");
+        Expect(Words.size() == 4 && Words[1] == "two words" && Words[2].empty(), "a line splits on spaces; quotes group");
+
+        Frame([&](InputState& In) { In.Press(Grave); });
+        Expect(Console.IsOpen(), "the tilde key opens it");
+        Expect(Host.bTextInput, "with the window's text input on");
+        Expect(Session->GetUI().IsOpen("Engine/Console"), "and its overlay drawn");
+        Expect(!Session->GetInput().WasPressed(Grave), "the game does not see the toggle");
+
+        /* Typing: the game sees none of it. */
+        const InputComponent* Seen = Player.GetComponent<InputComponent>();
+        Frame([&](InputState& In) { In.Release(Grave); In.AppendText("consoletest a \"b c\""); In.Press(Space); });
+        Frame(Nothing);   // the World resolves last frame's
+        Expect(Console.GetInputLine() == "consoletest a \"b c\"", "typed text goes into the line");
+        Expect(Seen && !Seen->IsDown("Jump"), "keys pressed while it is open are not the game's");
+        Frame([&](InputState& In) { In.Release(Space); In.Press(Return); });
+        Expect(GConsoleTestRuns == 1 && GConsoleTestArgs.size() == 2 && GConsoleTestArgs[1] == "b c",
+               "Return runs a registered command with its words");
+        Expect(OutputHas(Console, "> consoletest a \"b c\"") && OutputHas(Console, "consoletest ran"),
+               "the line is echoed, then what the command printed");
+        Expect(Console.GetInputLine().empty(), "and the line empties");
+        Frame([&](InputState& In) { In.Release(Return); });
+
+        /* Editing. */
+        Frame([&](InputState& In) { In.AppendText("abcd"); });
+        Frame([&](InputState& In) { In.Press(Backspace); In.Repeat(Backspace); });
+        Expect(Console.GetInputLine() == "ab", "Backspace, and its repeat, delete");
+        Frame([&](InputState& In) { In.Release(Backspace); In.Press(Left); });
+        Frame([&](InputState& In) { In.Release(Left); In.AppendText("X"); });
+        Expect(Console.GetInputLine() == "aXb", "text goes in at the cursor");
+        const UI::UIValue* Prompt = Session->GetUI().GetValue("Console.Prompt");
+        Expect(Prompt && Prompt->AsString() == "> aX|b", "the prompt shows the line and the cursor");
+
+        Frame([&](InputState& In) { In.Press(Up); });
+        Expect(Console.GetInputLine() == "consoletest a \"b c\"", "Up recalls the last line");
+        Frame([&](InputState& In) { In.Release(Up); });
+
+        /* Completion. */
+        for(int Each = 0; Each < 32; ++Each) { Frame([&](InputState& In) { In.Press(Backspace); }); Frame([&](InputState& In) { In.Release(Backspace); }); }
+        Frame([&](InputState& In) { In.AppendText("consolet"); });
+        Frame([&](InputState& In) { In.Press(Tab); });
+        Expect(Console.GetInputLine() == "consoletest", "Tab completes as far as the choices agree");
+        Expect(OutputHas(Console, "consoletest  ConsoleTest.Value"), "and lists them, commands first");
+        Frame([&](InputState& In) { In.Release(Tab); In.AppendText(" "); });
+        Expect(Console.GetInputLine() == "consoletest ", "typed on after it");
+
+        /* Config vars, and what nothing handles. */
+        Expect(Console.Execute("ConsoleTest.Value 7") && GConsoleTestValue.GetInt() == 7, "a line that is no command sets a config var");
+        Expect(!Console.Execute("nosuchthing"), "a line nothing handles is refused");
+        Expect(!Console.GetOutput().empty() && Console.GetOutput().back().find("Unknown command") != std::string::npos,
+               "and says why");
+
+        /* The log. */
+        CORE_LOG("console test: from the log")
+        Frame(Nothing);
+        Expect(OutputHas(Console, "console test: from the log"), "the log shows in it");
+
+        /* Escape closes it, and is not the game's or the UI's. */
+        Frame([&](InputState& In) { In.Press(Escape); });
+        Expect(!Console.IsOpen() && !Host.bTextInput, "Escape closes it and turns text input off");
+        Expect(!Session->GetUI().IsOpen("Engine/Console"), "its overlay goes");
+        Expect(!Session->GetInput().WasPressed(Escape), "the Escape is not the game's");
+        Frame([&](InputState& In) { In.Release(Escape); });
+
+        /* Closed, the keyboard is the game's again. */
+        Frame([&](InputState& In) { In.Press(Space); });
+        Frame(Nothing);
+        Expect(Seen && Seen->IsDown("Jump"), "closed, keys reach the game");
+        Frame([&](InputState& In) { In.Release(Space); });
+
+        /* The level swap keeps it open. */
+        Frame([&](InputState& In) { In.Press(Grave); });
+        Session->UnloadLevel();
+        Expect(Console.IsOpen() && Session->GetUI().IsOpen("Engine/Console"), "a level change does not close it");
+
+        delete Session;
+        Expect(!Host.bTextInput, "the session going turns text input off");
+        Scripts.Shutdown();
+        GConsoleTestValue.ResetToDefault();
+    }
+}
+
 int main()
 {
     std::printf("NimbleEngineGameFrameworkTests\n");
@@ -510,6 +796,8 @@ int main()
     TestStartupScript();
     TestSave();
     TestLevelByWorldFile();
+    TestSessionUI();
+    TestConsole();
     TestNetworkingStandalone();
     TestNetScripting();
     TestHeadlessApplication();   // last: the Application claims the main thread

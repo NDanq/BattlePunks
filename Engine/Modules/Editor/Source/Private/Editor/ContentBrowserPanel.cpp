@@ -45,6 +45,7 @@
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
+#include "Private/Editor/UI/UIAssets.h"
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/ImportWizard.h"
@@ -833,6 +834,11 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         EditorPrefabs::OpenPrefab(InPath, window());
         return;
     }
+    if(InPath.endsWith(QStringLiteral(".nmui"), Qt::CaseInsensitive))
+    {
+        EditorUI::OpenUI(InPath, window());
+        return;
+    }
     if(InPath.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive))
     {
         MeshViewerWindow::Open(InPath, window());
@@ -905,6 +911,7 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
     {
         Menu.addAction(QStringLiteral("New Folder"), this, &ContentBrowserPanel::NewFolder);
         Menu.addAction(QStringLiteral("New Prefab..."), this, [this]() { EditorPrefabs::CreatePrefab(CurrentFolder, window()); });
+        Menu.addAction(QStringLiteral("New UI..."), this, [this]() { EditorUI::CreateUI(CurrentFolder, window()); });
         for(const NodeGraph::Schema* Schema : NodeGraph::GetSchemas())
         {
             /* By name: a refresh (RefreshGameDeclarations) replaces the schema. */

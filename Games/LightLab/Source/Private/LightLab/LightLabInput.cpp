@@ -11,7 +11,10 @@
  * Who reads it:
  *   Player   LightLabGame.cpp's LightLab.Fly system (Move*, Look*, Boost)
  *            and LightLabGameMode (CycleTechnique, ToggleShadows, ToggleBakedLighting,
- *            ReleaseMouse)
+ *            Pause, CaptureMouse)
+ *
+ * The pause menu (Content/UI/PauseMenu.nmui) is navigated with the engine's
+ * own "UI" map (arrows, Return, Escape; the D-pad, South, East) while it is open.
  */
 NIMBLE_DEFINE_INPUT_MAP(Default)
 {
@@ -19,7 +22,7 @@ NIMBLE_DEFINE_INPUT_MAP(Default)
     Map.Action("CycleTechnique", "T, Gamepad.North");
     Map.Action("ToggleShadows",  "F, Gamepad.West");
     Map.Action("ToggleBakedLighting", "L, Gamepad.East");
-    Map.Action("ReleaseMouse",   "Escape");
+    Map.Action("Pause",          "Escape, Gamepad.Start");
     Map.Action("CaptureMouse",   "Mouse.Left");
 
     /* Along the view, across it, and along world up (+Y). */

@@ -181,6 +181,22 @@ void D3D12DynamicGDI::SetViewport(uint InX, uint InY, uint InWidth, uint InHeigh
     }
 }
 
+void D3D12DynamicGDI::SetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight)
+{
+    if(!CurrentStateData) return;
+
+    // The target's own rows, as the viewport: GDISetScissorRect flipped them.
+    D3D12_RECT& S = CurrentStateData->ScissorRect;
+    S.left   = LONG(InX);
+    S.top    = LONG(InY);
+    S.right  = LONG(InX + InWidth);
+    S.bottom = LONG(InY + InHeight);
+    if(CurrentStateData->CurrentCmd)
+    {
+        CurrentStateData->CurrentCmd->RSSetScissorRects(1, &S);
+    }
+}
+
 #pragma endregion
 
 #pragma region State tracking (consumed at pipeline build time)

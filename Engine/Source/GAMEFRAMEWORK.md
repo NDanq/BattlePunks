@@ -25,6 +25,8 @@ graphs. Public API: `Public/NimbleEngine/GameState.h`, `GameMode.h`,
 | `PlayerStateComponent` | `PlayerState.h`, `"PlayerState"` | One player: `PlayerName`, `PlayerIndex`, `Score`, `Lives`, `bActive`. Being a component, it is saved with the World, placed by prefabs and visible to scripts. |
 | `GameSession` | `GameSession.h` | Routes every change through the rules: `SetPhase`, `AddScore`, `AddLives`, `GetPlayer(Index)`, `GetPlayerCount`. |
 | `"Game"` library | `GameFramework.cpp` | The session's half for scripts. |
+| The UI | `GameSession::GetUI` | The session's documents (Engine/Modules/UI/README.md): HUDs and menus over the game, their input taken first. The session publishes `Player<N>.Score`, `Player<N>.Lives` and `Game.Phase` to its data store for `{Bind:...}`. |
+| Pause | `GameSession::SetPaused` | Stops the World and the mode's `OnTick`; the UI keeps running, so a pause menu can resume. `Game.SetPaused` / `Game.IsPaused` in Lua; `Native:Game.Pause`, `Game.Resume`, `Game.TogglePause` from a document. |
 
 ## Phases
 

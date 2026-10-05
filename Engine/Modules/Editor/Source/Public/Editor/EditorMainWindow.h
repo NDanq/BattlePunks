@@ -63,6 +63,10 @@ private:
     void BuildBuildMenu();
     void BuildHelpMenu();
     void RegisterConsoleCommands();
+
+    /* Saves capture InRequest (EditorContext::RequestSceneCapture) to InPath
+     * once a frame answers it; the Console says how it went. */
+    void SaveCaptureWhenReady(uint64_t InRequest, const QString& InPath);
     void OnPlayStateChanged(bool bInPlaying);
     void StartPlay();
     void CompileSource();

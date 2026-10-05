@@ -166,6 +166,8 @@ public:
 
     void Clear(uint InClearMode, EngineCore::Color InClearColor, float InDepth = 1.0f, uint InStencilMask = 0x00) override;
     void SetViewport(uint InX, uint InY, uint InWidth, uint InHeight) override;
+
+    void SetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight) override;
     void SetDepthState(IDepthStateDesc) override;
     void SetBlendState(IBlendStateDesc) override;
     void SetStencilState(IStencilStateDesc) override;
@@ -193,6 +195,8 @@ public:
     GDIMesh* CreateQuadMesh(const float* VertData, const float* TexData, const int InNumVerts, const int NumTexCoords, bool bIsInstanced = false) override;
     GDIMesh* CreateQuadMesh(const float& InWidth, const float& InHeight, bool bIsInstanced = false) override;
     GDIMesh* CreateMesh(const GDIMeshDesc& InDesc) override;
+
+    GDIMesh* CreateDynamicMesh(uint32_t InMaxVertices, uint32_t InMaxIndices) override;
 
     GDITextureResource* CreateTextureResource(const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;

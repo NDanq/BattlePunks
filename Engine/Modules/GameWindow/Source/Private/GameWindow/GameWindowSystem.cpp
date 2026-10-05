@@ -386,6 +386,20 @@ GameWindow* GameWindowSystem::WrapNativeWindow(const EngineCore::WindowHandle In
     return Window;
 }
 
+std::string GameWindowSystem::GetClipboardText()
+{
+    if(!SDL_HasClipboardText()) return std::string();
+    char* Text = SDL_GetClipboardText();
+    std::string Out = Text ? Text : "";
+    SDL_free(Text);
+    return Out;
+}
+
+void GameWindowSystem::SetClipboardText(const std::string& InUtf8)
+{
+    SDL_SetClipboardText(InUtf8.c_str());
+}
+
 void GameWindowSystem::InjectTextInput(GameWindow* InWindow, const char* InUtf8)
 {
     if(!InWindow || !InUtf8 || InUtf8[0] == '\0')

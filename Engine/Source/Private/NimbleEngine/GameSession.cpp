@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerState.h"
@@ -21,6 +22,7 @@
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldSerializer.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Public/UI/UISystem.h"
 
 /* Chunk tags shared with SaveGame.cpp. */
 #include "Private/NimbleEngine/InputInternal.h"
@@ -93,11 +95,30 @@ namespace NimbleEngine
     {
         InstallCollisionMeshProvider();   // CS_Mesh colliders (CollisionMeshes.cpp)
 
+        Interface = EngineCore::Memory::Alloc<UI::UISystem>();
+        Interface->SetRenderer(&Rendering, RenderCore::RENDER_DEFAULT_SCENE);
+        Interface->SetScriptEngine(&Scripts);
+        Interface->SetHostData(this);
+        Interface->SetClipboard([this]() { return Host.GetClipboardText(); },
+                                [this](const std::string& InText) { Host.SetClipboardText(InText); });
+        UI::SetScriptUISystem(Interface);
+
+        Console = EngineCore::Memory::Alloc<GameConsole>(*this);
     }
 
     GameSession::~GameSession()
     {
         UnloadLevel();
+
+        EngineCore::Memory::Dealloc(Console);
+        Console = nullptr;
+
+        /* Nothing of this session's stays drawn over the scene after it. */
+        Interface->CloseAll(true);
+        Interface->ClearRenderer();
+        if(UI::GetScriptUISystem() == Interface) { UI::SetScriptUISystem(nullptr); }
+        EngineCore::Memory::Dealloc(Interface);
+        Interface = nullptr;
     }
 
     void GameSession::CheckGameThread(const char* InWhat) const
@@ -126,6 +147,9 @@ namespace NimbleEngine
 
         Scripts.BindWorld(LevelWorld);
         Rendering.BindWorld(*LevelWorld);
+        Interface->SetWorld(LevelWorld);   // Event: actions emit on its bus
+        UI::SetScriptUISystem(Interface);
+        bPaused = false;
 
         /* Players come and go as PlayerState components, from anywhere. */
         ComponentAddedHandle   = LevelWorld->OnComponentAdded().Add(&GameSession::OnComponentAdded, this);
@@ -300,6 +324,12 @@ namespace NimbleEngine
 
         ActiveLevel->OnUnload();
 
+        /* The level's documents go with it; a persistent one stays (UI::UISystem::Open). */
+        Interface->CloseAll(false);
+        Interface->RunQueuedActions();   // their OnClose, while the World is still here
+        Interface->SetWorld(nullptr);
+        bPaused = false;
+
         if(LevelWorld)
         {
             LevelWorld->OnComponentAdded().Remove(ComponentAddedHandle);
@@ -347,12 +377,124 @@ namespace NimbleEngine
         }
     }
 
+    void GameSession::RouteInputThroughUI()
+    {
+        FilteredInput = Host.GetInput();
+
+        /* The console first: while open, it takes everything. */
+        Console->ProcessInput(FilteredInput);
+
+        UI::UIInputFrame Frame;
+        const EngineCore::Point Mouse = FilteredInput.GetMousePosition();
+        Frame.MousePixels = UI::UIVec2{ float(Mouse.X), float(Mouse.Y) };
+        Frame.bHasMouse   = !Host.IsMouseCaptured() && FilteredInput.HasFocus();   // a captured mouse is the game's
+        const char* const MouseButtons[3] = { "Mouse.Left", "Mouse.Right", "Mouse.Middle" };
+        for(int Each = 0; Each < 3; ++Each)
+        {
+            const InputKey Key = FindInputKey(MouseButtons[Each]);
+            Frame.MouseDown[Each]     = FilteredInput.IsDown(Key);
+            Frame.MousePressed[Each]  = FilteredInput.WasPressed(Key);
+            Frame.MouseReleased[Each] = FilteredInput.WasReleased(Key);
+        }
+        Frame.Wheel = FilteredInput.GetWheelDelta();
+
+        /* Navigation through the "UI" input map (UIInputMap.cpp): rebindable like any other. */
+        bool bPad = false, bAnyPad = false;
+        const auto Pressed = [this, &bPad, &bAnyPad](const char* InAction)
+        {
+            const bool bPressed = WasInputActionPressed("UI", InAction, FilteredInput, 0, &bPad);
+            bAnyPad = bAnyPad || (bPressed && bPad);
+            return bPressed;
+        };
+        Frame.bNavUp    = Pressed("Up");
+        Frame.bNavDown  = Pressed("Down");
+        Frame.bNavLeft  = Pressed("Left");
+        Frame.bNavRight = Pressed("Right");
+        Frame.bAccept   = Pressed("Accept");
+        Frame.bBack     = Pressed("Back");
+        const bool bTab   = Pressed("Next");
+        const bool bShift = FilteredInput.IsDown("LeftShift") || FilteredInput.IsDown("RightShift");
+        Frame.bNext       = bTab && !bShift;
+        Frame.bPrevious   = bTab && bShift;
+        Frame.bNavFromGamepad = bAnyPad;
+
+        /* Text editing, for a focused text field (the console's own handling is the model). */
+        std::snprintf(Frame.Text, sizeof(Frame.Text), "%s", FilteredInput.GetText());
+        const auto Count = [this](const char* InKey) { return uint8_t(std::min(FilteredInput.GetPressesAndRepeats(FindInputKey(InKey)), 255)); };
+        Frame.Backspace = Count("Backspace");
+        Frame.Delete    = Count("Delete");
+        Frame.Left      = Count("Left");
+        Frame.Right     = Count("Right");
+        Frame.Home      = Count("Home");
+        Frame.End       = Count("End");
+        Frame.bReturn   = FilteredInput.WasPressed(FindInputKey("Return")) || FilteredInput.WasPressed(FindInputKey("KP_Enter"));
+        Frame.bShift    = bShift;
+        Frame.bCtrl     = FilteredInput.IsDown("LeftCtrl") || FilteredInput.IsDown("RightCtrl");
+        Frame.bSelectAll = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("A"));
+        Frame.bCopy      = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("C"));
+        Frame.bCut       = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("X"));
+        Frame.bPaste     = Frame.bCtrl && FilteredInput.WasPressed(FindInputKey("V"));
+
+        const UI::UIInputResult Taken = Interface->ProcessInput(Frame);
+
+        /* The window's text input follows a focused text field -- and comes back
+         * on after the console, which turns it off as it closes. */
+        const bool bConsoleOpen = Console->IsOpen();
+        if(!bConsoleOpen && (Taken.bWantsTextInput != bUITextInput || (bConsoleOpen != this->bConsoleOpen && bUITextInput)))
+        {
+            bUITextInput = Taken.bWantsTextInput;
+            Host.SetTextInputActive(bUITextInput);
+        }
+        this->bConsoleOpen = bConsoleOpen;
+        if(Taken.bConsumeMouse)    { FilteredInput.ConsumeMouseButtons(); }
+        if(Taken.bConsumeKeyboard) { FilteredInput.ConsumeKeyboard(); }
+        if(Taken.bConsumeGamepad)  { FilteredInput.ConsumeGamepad(); }
+
+        /* Before the game ticks: a Resume or a Quit takes effect this frame. */
+        Interface->RunQueuedActions();
+    }
+
+    void GameSession::PublishUIValues()
+    {
+        UI::UISystem& System = *Interface;
+        if(LevelWorld)
+        {
+            /* Keys built once: "Player0.Score" and its kin. */
+            static const std::string ScoreKeys[] = { "Player0.Score", "Player1.Score", "Player2.Score", "Player3.Score" };
+            static const std::string LivesKeys[] = { "Player0.Lives", "Player1.Lives", "Player2.Lives", "Player3.Lives" };
+            LevelWorld->Each<PlayerStateComponent>([&System](GameCore::Entity, PlayerStateComponent& InPlayer)
+            {
+                if(InPlayer.PlayerIndex >= 4) return;
+                System.SetValue(ScoreKeys[InPlayer.PlayerIndex], UI::UIValue::Number(InPlayer.Score));
+                System.SetValue(LivesKeys[InPlayer.PlayerIndex], UI::UIValue::Number(InPlayer.Lives));
+            });
+        }
+        const char* Phase = GetPhase();
+        if(Phase && PublishedPhase != Phase)
+        {
+            PublishedPhase = Phase;
+            System.SetValue("Game.Phase", UI::UIValue::String(PublishedPhase));
+        }
+    }
+
+    void GameSession::SetPaused(const bool bInPaused)
+    {
+        CheckGameThread("SetPaused");
+        if(bPaused == bInPaused) return;
+        bPaused = bInPaused;
+        CORE_LOG(bPaused ? "[Game] paused" : "[Game] resumed")
+    }
+
     void GameSession::Tick(const FrameContext& InFrame)
     {
         /* The mode's OnTick overlaps the render thread: game state only. */
         CheckGameThread("Tick");
+
+        /* The UI sees the input first; the game, what it leaves. */
+        RouteInputThroughUI();
+
         /* Re-read: a level swap may have replaced the mode. */
-        if(ActiveLevel)
+        if(ActiveLevel && !bPaused)
         {
             if(GameState* State = ActiveLevel->GetGameState())
             {
@@ -366,19 +508,32 @@ namespace NimbleEngine
         }
 
         /* WorldBridge reads the World later, in the host's Renderer::EndFrame. */
-        if(LevelWorld)
+        if(LevelWorld && !bPaused)
         {
-            SetScriptInputState(&Host.GetInput());
+            SetScriptInputState(&FilteredInput);
             SetScriptInputHost(&Host);
             LevelWorld->Tick(float(InFrame.DeltaSeconds));
             SetScriptInputHost(nullptr);
             SetScriptInputState(nullptr);
         }
+        else if(LevelWorld)
+        {
+            /* Paused: the components still follow the input, so what the pause
+             * menu consumed is not waiting for the game when it resumes. */
+            ResolveInputComponents(*LevelWorld, FilteredInput);
+        }
+
+        /* After the World: this frame's values, then layout, paint and submit
+         * of whatever changed -- before the host's EndFrame renders. */
+        PublishUIValues();
+        Console->Update();
+        Interface->Tick(float(InFrame.DeltaSeconds));
+        Interface->Update(UI::UIVec2{ float(InFrame.ViewportPixels.Width), float(InFrame.ViewportPixels.Height) });
     }
 
     void GameSession::ResolveInput(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)
     {
-        ResolveInputComponents(InWorld, static_cast<GameSession*>(InUserData)->Host.GetInput());
+        ResolveInputComponents(InWorld, static_cast<GameSession*>(InUserData)->FilteredInput);
     }
 
     void GameSession::RequestLevel(ILevel& InLevel)

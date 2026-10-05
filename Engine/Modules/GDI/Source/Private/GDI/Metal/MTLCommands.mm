@@ -211,6 +211,19 @@ void MetalDynamicGDI::SetViewport(uint InX, uint InY, uint InWidth, uint InHeigh
     ApplyViewportToEncoder();
 }
 
+void MetalDynamicGDI::SetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight)
+{
+    if(!CurrentStateData) return;
+
+    // The target's own rows, as the viewport: GDISetScissorRect flipped them.
+    CurrentStateData->ScissorX = InX;
+    CurrentStateData->ScissorY = InY;
+    CurrentStateData->ScissorW = InWidth;
+    CurrentStateData->ScissorH = InHeight;
+
+    ApplyViewportToEncoder();
+}
+
 // ===========================================================================
 //  Render state
 //
