@@ -51,4 +51,10 @@
     #error "WITH_EDITOR is not defined -- configure through Engine/CMakeLists.txt, or define it to 0 or 1"
 #endif
 
+/* Likewise WITH_UNCOOKED: 1 in every build but Shipping, which reads only
+ * cooked worlds and prefabs (WorldPackage.h). */
+#ifndef WITH_UNCOOKED
+    #error "WITH_UNCOOKED is not defined -- configure through Engine/CMakeLists.txt, or define it to 0 or 1"
+#endif
+
 #endif //GAMECORE_GAMECOREAPI_H

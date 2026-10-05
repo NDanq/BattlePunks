@@ -195,6 +195,26 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Shipping" AND NIMBLE_WITH_EDITOR)
                         "-DNIMBLE_TARGET=Client (or Server), or pick Debug / RelWithDebInfo for the Editor")
 endif()
 
+# === Uncooked content =======================================================
+# Every configuration but Shipping runs UNCOOKED: it reads the project's text
+# worlds and prefabs, as the editor does, and a Client or Server cooks each
+# one itself the first time it loads it (and again when the source changes),
+# into Intermediate/Cooked/ beside the executable -- so a development build
+# never waits on a manual cook. Shipping reads only what was cooked ahead
+# (the editor's console: cook <world>, cook prefabs). See GameCore's
+# WorldPackage.h (LoadContentWorld).
+#
+# WITH_UNCOOKED is that switch in code, 1 or 0, PUBLIC on EngineCore below.
+# NIMBLE_UNCOOKED_CONTENT is it for a game's CMakeLists: what to stage beside
+# the executable -- the text sources, or the cooked files. A multi-config
+# generator stages the sources (its Shipping configuration needs a
+# single-config tree to stage the cooked ones).
+if(NM_MULTI_CONFIG OR NOT CMAKE_BUILD_TYPE STREQUAL "Shipping")
+    set(NIMBLE_UNCOOKED_CONTENT ON  CACHE INTERNAL "Stage text worlds and prefabs (every build but Shipping)")
+else()
+    set(NIMBLE_UNCOOKED_CONTENT OFF CACHE INTERNAL "Stage text worlds and prefabs (every build but Shipping)")
+endif()
+
 # === Binaries/ =============================================================
 # One flat runtime directory per platform+config:
 # <NIMBLE_BINARIES_DIR>/<Platform>_<Config>, e.g. Windows_Debug, Mac_Release,
@@ -294,7 +314,8 @@ add_subdirectory(Modules/Core)
 target_compile_definitions(EngineCore PUBLIC
         WITH_EDITOR=${NIMBLE_WITH_EDITOR}
         WITH_NETCORE=${NIMBLE_NETCORE_DEFINE}
-        NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>)
+        NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>
+        WITH_UNCOOKED=$<IF:$<CONFIG:Shipping>,0,1>)
 
 # The engine cooks its own shader set from Content/Shaders (see "Cooked
 # shaders" below), so GDI's cook -- its full Odessa set, into its own source
