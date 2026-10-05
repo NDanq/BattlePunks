@@ -126,6 +126,42 @@ if Input.WasKeyPressed("F3") then print(Input.GetMousePosition()) end
   Components/Input;
 - the `Input` library's nodes.
 
+## The UI
+
+A game session's UI (`GameSession::GetUI`, Engine/Modules/UI/README.md) sees
+each frame's input **before** the game, and what it takes the game does not:
+
+1. `GameSession::Tick` copies the host's `InputState`, builds a
+   `UI::UIInputFrame` from it (the mouse, unless it is captured, and the `UI`
+   map's navigation) and calls `UISystem::ProcessInput`.
+2. What the result says was taken is consumed from the copy --
+   `InputState::ConsumeMouseButtons`, `ConsumeKeyboard`, `ConsumeGamepad`:
+   up, with no edges.
+3. Everything the game reads reads the copy: `GameSession::GetInput()`, the
+   `Input` library, and every `InputComponent` (resolved from it in
+   `TP_PrePhysics`).
+
+So a click on a button never fires the weapon behind it, and a menu's Escape
+never reaches the game. A key consumed while held looks to the game as if it
+went up without a release edge; an `InputComponent` reports it released.
+
+| Document `InputMode` | Takes |
+|---|---|
+| `UIOnly` (a menu) | everything, and shows the cursor |
+| `GameAndUI` (a HUD) | the mouse over a widget that takes hits; keys only while one of its widgets has focus |
+| `GameOnly` | nothing |
+
+The `UI` input map (NimbleEngine's `GameUI.cpp`) is what menus navigate with:
+Up, Down, Left, Right (arrows, the D-pad), Accept (Return, Space, South), Back
+(Escape, East) and Next (Tab; Shift+Tab goes back). Rebind it as any map:
+`[Input_UI] Accept=Return, Gamepad.South`. `WasInputActionPressed(Map, Action,
+State)` reads a map's action straight from a state, for a reader with no
+`InputComponent`.
+
+While the session is paused (`GameSession::SetPaused`) the World does not tick,
+but `InputComponent`s are still resolved from the copy, so what a pause menu
+consumed is not waiting for the game when it resumes.
+
 ## The Sandbox example
 
 | File | Shows |
