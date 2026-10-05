@@ -68,7 +68,7 @@ UIDesignerViewport::UIDesignerViewport(EditorContext& InContext, UIDesignDocumen
 
     System.SetExecuteActions(false);   // the preview logs what a click would do
     connect(&Design, &UIDesignDocument::Changed, this, [this](bool) { Rebuild(); });
-    connect(&Design, &UIDesignDocument::SelectionChanged, this, [this](int) { bComposeDirty = true; });
+    connect(&Design, &UIDesignDocument::SelectionChanged, this, [this](int) { RevealSelection(); bComposeDirty = true; });
     Rebuild();
 
     Context.AddViewport(this);
@@ -97,9 +97,26 @@ void UIDesignerViewport::Rebuild()
     Handle = System.OpenAsset(Design.GetSharedAsset(), std::string());
     Hovered = -1;
     bComposeDirty = true;
+    RevealSelection();
     if(Handle == UI::UI_DOCUMENT_INVALID)
     {
         emit StatusText(QStringLiteral("The document cannot be shown as it is; the Console says why"));
+    }
+}
+
+void UIDesignerViewport::RevealSelection()
+{
+    UI::UIDocumentInstance* Instance = GetInstance();
+    const int Selected = Design.GetSelected();
+    if(!Instance || Selected <= 0 || Selected >= int(Instance->GetWidgetCount())) return;
+    for(int32_t Child = Selected, Parent = Instance->GetParent(uint32_t(Child)); Parent >= 0;
+        Child = Parent, Parent = Instance->GetParent(uint32_t(Parent)))
+    {
+        auto* Switcher = dynamic_cast<UI::UISwitcher*>(Instance->GetWidget(uint32_t(Parent)));
+        if(!Switcher || Switcher->IsChildShown(uint32_t(Child))) continue;
+        int32_t Page = 0;
+        for(int32_t Each = Instance->GetFirstChild(uint32_t(Parent)); Each >= 0 && Each != Child; Each = Instance->GetNextSibling(uint32_t(Each))) { ++Page; }
+        Instance->SetProperty(*Switcher, "ActiveIndex", UI::UIValue::Number(Page));
     }
 }
 

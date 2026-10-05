@@ -382,6 +382,48 @@ namespace UI
         UIWidget::ArrangeChildren(InContext, InRect);
     }
 
+    // === Switcher =================================================================
+
+    int32_t UISwitcher::GetPageCount() const
+    {
+        int32_t Count = 0;
+        const UIDocumentInstance* Doc = GetDocument();
+        for(int32_t Child = FirstChild(*this); Child >= 0; Child = Doc->GetNextSibling(uint32_t(Child))) { ++Count; }
+        return Count;
+    }
+
+    int32_t UISwitcher::GetActiveChild() const
+    {
+        const UIDocumentInstance* Doc = GetDocument();
+        const int32_t Count  = GetPageCount();
+        if(!Doc || Count == 0) return -1;
+        const int32_t Active = std::clamp(ActiveIndex, 0, Count - 1);
+        int32_t Child = FirstChild(*this);
+        for(int32_t Page = 0; Page < Active; ++Page) { Child = Doc->GetNextSibling(uint32_t(Child)); }
+        return Child;
+    }
+
+    bool UISwitcher::IsChildShown(const uint32_t InChild) const
+    {
+        return int32_t(InChild) == GetActiveChild();
+    }
+
+    bool UISwitcher::ShowPage(const std::string& InPage)
+    {
+        UIDocumentInstance* Doc = GetDocument();
+        if(!Doc || InPage.empty()) return false;
+
+        int32_t Page = -1, At = 0;
+        for(int32_t Child = FirstChild(*this); Child >= 0; Child = Doc->GetNextSibling(uint32_t(Child)), ++At)
+        {
+            if(Doc->GetWidget(uint32_t(Child))->Name == InPage) { Page = At; break; }
+        }
+        float Number = 0.0f;
+        if(Page < 0 && ParseFloat(InPage, Number) && Number >= 0.0f && int32_t(Number) < At) { Page = int32_t(Number); }
+        if(Page < 0) return false;
+        return Doc->SetProperty(*this, "ActiveIndex", UIValue::Number(Page));
+    }
+
     UIProgressBar::UIProgressBar()
     {
         Background.Tint = UIColor{ 0.1f, 0.1f, 0.1f, 0.75f };
@@ -493,6 +535,14 @@ namespace UI
     UI_DEFINE_WIDGET(UIOverlay, UIWidget, "Overlay")
     {
         Type.Palette("Layout").Children(-1);
+    }
+
+    UI_DEFINE_WIDGET(UISwitcher, UIWidget, "Switcher")
+    {
+        Type.Palette("Layout").Children(-1);
+        Type.Category("Pages");
+        Type.Field<&UISwitcher::ActiveIndex>("ActiveIndex", UPF_Bindable)
+            .Tooltip("The page shown, 0 first (its children in order); UI.ShowPage picks one by name");
     }
 
     UI_DEFINE_WIDGET(UIProgressBar, UIWidget, "ProgressBar")

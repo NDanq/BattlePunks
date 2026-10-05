@@ -12,6 +12,9 @@
       <Button Name="Play" Class="MenuButton" InitialFocus="true" OnClick="Lua:MainMenu.Play">
         <Text Class="MenuLabel" Text="Play"/>
       </Button>
+      <Button Name="Settings" Class="MenuButton" OnClick="Native:UI.Open('Content/UI/Settings.nmui')">
+        <Text Class="MenuLabel" Text="Settings"/>
+      </Button>
       <Button Name="Quit" Class="MenuButton" OnClick="Native:Game.Quit">
         <Text Class="MenuLabel" Text="Quit"/>
       </Button>

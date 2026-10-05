@@ -89,6 +89,10 @@ private:
     /* The document instanced again (after an edit). */
     void Rebuild();
 
+    /* Every Switcher above the selection shows the page it is on -- in the
+     * preview only; the document keeps its own ActiveIndex. */
+    void RevealSelection();
+
     /* The widget's size in physical pixels, and the frame's scale and top-left there. */
     EngineCore::Size GetPixelSize() const;
     float   GetFrameScale() const;

@@ -1,6 +1,7 @@
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ScriptLibrary.h"
 #include "Public/UI/UISystem.h"
+#include "Public/UI/UIWidgets.h"
 
 /*
  * Lua's UI library: documents opened and closed, widgets changed by name,
@@ -84,6 +85,14 @@ GAMECORE_DEFINE_SCRIPT_LIBRARY(UI)
         UI::UIWidget* Widget = FindWidget(Call, Document);
         Call.PushBool(Widget && Document->SetFocus(int32_t(Widget->GetIndex())));
     }, "Path:string, Widget:string -> Done:bool");
+
+    Lib.Function("ShowPage", [](GameCore::ScriptCall& Call)
+    {
+        UI::UIDocumentInstance* Document = nullptr;
+        UI::UIWidget* Widget = FindWidget(Call, Document);
+        auto* Switcher = dynamic_cast<UI::UISwitcher*>(Widget);
+        Call.PushBool(Switcher && Switcher->ShowPage(Call.GetString(3)));
+    }, "Path:string, Switcher:string, Page:string -> Done:bool").Tooltip("A Switcher's page, by its Name or its number (0 first)");
 
     Lib.Function("PlayAnimation", [](GameCore::ScriptCall& Call)
     {

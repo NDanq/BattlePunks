@@ -112,7 +112,7 @@ static void TestRegistry()
 
     int Palette = 0;
     for(const UIWidgetType* Each : GetWidgetTypes()) { if(!Each->Palette.empty()) ++Palette; }
-    Expect(Palette == 10, "the ten MVP widgets are offered in the palette");
+    Expect(Palette == 11, "the eleven widgets are offered in the palette");
 
     const UIWidgetType* Text = FindWidgetType("Text");
     const int32_t TextProperty = Text ? Text->FindProperty("Text") : -1;
@@ -566,6 +566,60 @@ static UIVec2 CentreOf(const UIDocumentInstance& InDoc, const char* InName)
     return UIVec2{ R.X + R.W * 0.5f, R.Y + R.H * 0.5f };
 }
 
+// === Switcher =================================================================
+
+static void TestSwitcher()
+{
+    std::printf("[switcher]\n");
+    UISystem System;
+    const UIDocumentHandle Handle = System.OpenAsset(Parse(R"XML(<UI InputMode="UIOnly" ReferenceSize="1000,1000" ScaleMode="None">
+  <Canvas>
+    <Button Name="Tab" Position="0,0" Size="100,50" OnClick="Native:UI.ShowPage('Pages', 'Second')"/>
+    <Switcher Name="Pages" Position="0,100" AutoSize="true" ActiveIndex="{Bind:Page}">
+      <VerticalBox Name="First"><Button Name="A" Size="10,10"><Spacer Size="300,40"/></Button></VerticalBox>
+      <VerticalBox Name="Second"><Button Name="B"><Spacer Size="80,200"/></Button></VerticalBox>
+      <Spacer Name="Third" Size="10,10"/>
+    </Switcher>
+  </Canvas>
+</UI>)XML", "a switcher document parses"), "Test/Switcher.nmui");
+    UIDocumentInstance& Doc = *System.Find(Handle);
+    System.Update(UIVec2{ 1000, 1000 });
+    auto* Pages = dynamic_cast<UISwitcher*>(Doc.FindWidget("Pages"));
+    Expect(Pages && Pages->GetPageCount() == 3, "a Switcher's pages are its children");
+    if(!Pages) return;
+
+    const UIRect R = RectOf(Doc, "Pages");
+    Expect(Near(R.W, 300 + 32) && Near(R.H, 200 + 16), "it is the size of its largest page (each axis)");
+    const uint32_t A = Doc.FindWidget("A")->GetIndex(), B = Doc.FindWidget("B")->GetIndex();
+    Expect(Doc.IsShown(A) && !Doc.IsShown(B), "only the active page is shown");
+    Expect(Doc.HitTest(UIVec2{ 50, 120 }) == int32_t(A), "the active page is hit");
+    Expect(Doc.FindNextFocus(+1) != int32_t(B), "a hidden page's widgets take no focus");
+
+    /* Focus on page one, then switch: focus leaves the hidden page. */
+    Doc.SetFocus(int32_t(A));
+    System.SetValue("Page", UIValue::Number(1));
+    System.Tick(0.016f);
+    System.Update(UIVec2{ 1000, 1000 });
+    Expect(Pages->ActiveIndex == 1 && Doc.IsShown(B) && !Doc.IsShown(A), "a bound ActiveIndex follows the data store");
+    Expect(Doc.GetFocused() != int32_t(A), "focus does not stay on a page that went away");
+    Expect(Doc.HitTest(UIVec2{ 50, 120 }) == int32_t(B), "the new page takes the hits");
+    Expect(RectOf(Doc, "Pages").W == R.W, "switching pages does not move it");
+
+    Expect(Pages->ShowPage("2") && Pages->ActiveIndex == 2, "ShowPage by number");
+    Expect(Pages->ShowPage("First") && Pages->ActiveIndex == 0, "ShowPage by name");
+    Expect(!Pages->ShowPage("Fourth") && !Pages->ShowPage("7") && Pages->ActiveIndex == 0, "an unknown page changes nothing");
+
+    /* The native action, from a click. */
+    const UIVec2 Tab = CentreOf(Doc, "Tab");
+    System.ProcessInput(Pointer(Tab, true, false));
+    System.ProcessInput(Pointer(Tab, false, true));
+    System.RunQueuedActions();
+    Expect(Pages->ActiveIndex == 1, "Native:UI.ShowPage('Pages', 'Second') switches it");
+
+    Pages->ActiveIndex = 9;
+    Expect(Pages->GetActiveChild() == int32_t(Doc.FindWidget("Third")->GetIndex()), "an index past the last shows the last");
+}
+
 static void TestInputAndActions()
 {
     std::printf("[input and actions]\n");
@@ -954,6 +1008,15 @@ static void TestOnGpu()
                 const int R = bBgra ? Px[2] : Px[0], B = bBgra ? Px[0] : Px[2];
                 Expect(B > R + 60, "the focused button shows its hovered look");
             }
+
+            /* Its settings, on the Graphics page: tabs, marks and pages switched by one value. */
+            System.SetValue("Settings.Page", UIValue::Number(1));
+            Expect(System.Open("Content/UI/Settings.nmui") != UI_DOCUMENT_INVALID, "Sandbox's settings menu loads");
+            EngineCore::Image Settings;
+            Expect(Shot(System, "sandbox_settings", Settings), "the settings frame reads back");
+            UIDocumentInstance* SettingsDoc = System.Find("Content/UI/Settings.nmui");
+            Expect(SettingsDoc && SettingsDoc->IsShown(SettingsDoc->FindWidget("Graphics")->GetIndex())
+                   && !SettingsDoc->IsShown(SettingsDoc->FindWidget("Input")->GetIndex()), "it shows the bound page");
             System.ClearRenderer();
         }
 
@@ -991,6 +1054,7 @@ int main()
     TestPaint();
     TestText();
     TestStylesAndFiles();
+    TestSwitcher();
     TestStructureEditing();
     TestInputAndActions();
     TestScriptedActions();

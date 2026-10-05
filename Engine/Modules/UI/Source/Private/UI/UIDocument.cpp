@@ -522,6 +522,7 @@ namespace UI
         const UIPropertyDesc& Desc = InWidget.Type->Properties[size_t(InProperty)];
         if(!Desc.Set || !Desc.Set(InWidget, InValue)) return false;
         InWidget.OnPropertyChanged(Desc);
+        KeepFocusShown();
         if(Desc.Flags & UPF_Layout)
         {
             MarkLayoutDirty();
@@ -660,10 +661,18 @@ namespace UI
 
     // --- Paint -------------------------------------------------------------------
 
+    bool UIDocumentInstance::IsSelfShown(const uint32_t InIndex) const
+    {
+        const EUIVisibility V = Widgets[InIndex]->Visibility;
+        if(V == EUIVisibility::Hidden || V == EUIVisibility::Collapsed) return false;
+        const int32_t Parent = Parents[InIndex];
+        return Parent < 0 || Widgets[size_t(Parent)]->IsChildShown(InIndex);
+    }
+
     void UIDocumentInstance::PaintWidget(const uint32_t InIndex, UIPaintContext& InContext)
     {
         UIWidget& W = *Widgets[InIndex];
-        if(W.Visibility == EUIVisibility::Hidden || W.Visibility == EUIVisibility::Collapsed)
+        if(!IsSelfShown(InIndex))
         {
             /* Not drawn; nor are its children, which keep no rectangle to hit. */
             PixelRects[InIndex] = UIRect();
@@ -721,8 +730,7 @@ namespace UI
     {
         for(int32_t At = int32_t(InIndex); At >= 0 && size_t(At) < Widgets.size(); At = Parents[size_t(At)])
         {
-            const EUIVisibility V = Widgets[size_t(At)]->Visibility;
-            if(V == EUIVisibility::Hidden || V == EUIVisibility::Collapsed) return false;
+            if(!IsSelfShown(uint32_t(At))) return false;
         }
         return InIndex < Widgets.size();
     }
@@ -733,7 +741,7 @@ namespace UI
                                               const bool bInDesign) const
     {
         const UIWidget& W = *Widgets[InIndex];
-        if(W.Visibility == EUIVisibility::Hidden || W.Visibility == EUIVisibility::Collapsed) return -1;
+        if(!IsSelfShown(InIndex)) return -1;
         if(W.Visibility == EUIVisibility::HitTestInvisible && !bInDesign) return -1;
 
         const UIRect& Pixels = PixelRects[InIndex];
@@ -781,6 +789,18 @@ namespace UI
         Focused = InIndex;
         MarkPaintDirty();
         return true;
+    }
+
+    void UIDocumentInstance::KeepFocusShown()
+    {
+        /* A page switched away, or a widget collapsed, under the focus: the
+         * focus goes to the first one still shown. */
+        if(Focused >= 0 && !IsShown(uint32_t(Focused)))
+        {
+            Focused = -1;
+            Focused = FindNextFocus(+1);
+            MarkPaintDirty();
+        }
     }
 
     int32_t UIDocumentInstance::FindNextFocus(const int32_t InStep) const
@@ -881,6 +901,7 @@ namespace UI
                 if(Desc.Get(W) != Before)
                 {
                     W.OnPropertyChanged(Desc);
+                    KeepFocusShown();
                     if(Desc.Flags & UPF_Layout) MarkLayoutDirty(); else MarkPaintDirty();
                     bChanged = true;
                 }

@@ -87,7 +87,7 @@ Inside the root element come `<Styles>`, exactly one root widget (usually a
 - Unknown properties are kept and warned about when instanced, so a typo shows
   in the log and a newer file still opens.
 - Shipped examples: `Games/Sandbox/Content/UI/` (`HUD.nmui`, `MainMenu.nmui` with
-  `MainMenu.lua`) and `Games/LightLab/Content/UI/PauseMenu.nmui`.
+  `MainMenu.lua`, and `Settings.nmui`, tabbed pages) and `Games/LightLab/Content/UI/PauseMenu.nmui`.
 
 ## Widgets
 
@@ -132,6 +132,7 @@ Inside the root element come `<Styles>`, exactly one root widget (usually a
 | `Button` | one | `Normal`, `Hovered`, `Pressed`, `Disabled` (brushes; focus shows Hovered), `Padding`, `OnClick`, `OnPressed`, `OnReleased`, `OnHovered`, `OnUnhovered` |
 | `HorizontalBox`, `VerticalBox` | any | `Spacing` |
 | `Overlay` | any | none; children stack over each other |
+| `Switcher` | any | `ActiveIndex` (bindable): its children are pages, one shown at a time; see below |
 | `ProgressBar` | none | `Value` (0-1, bindable), `Background`, `FillBrush`, `FillDirection` |
 | `Spacer` | none | its `Size` is its desired size |
 
@@ -146,9 +147,26 @@ Inside the root element come `<Styles>`, exactly one root widget (usually a
 | `UVRect` | x, y, w, h of the texture to use, for a sprite-sheet cell. |
 | `OutlineColor`, `OutlineThickness` | An outline drawn inside the rectangle. |
 
+**Switcher: pages.** A settings menu's Input / Graphics / Gameplay. Every page is
+laid out over the others in the Switcher's rectangle, and it is the size of
+its largest page, so switching moves nothing around it. Only the page at
+`ActiveIndex` (its children in order, 0 first; clamped) is drawn, hit or
+focused; focus on a page that goes away moves to the first widget still
+shown. Switch it with:
+
+- a binding: `ActiveIndex="{Bind:Settings.Page}"` and tabs that set the value,
+  `OnClick="Native:UI.SetValue('Settings.Page', 1)"`. Several Switchers can
+  follow one value -- `Games/Sandbox/Content/UI/Settings.nmui` switches its
+  pages and the underline under its tabs together this way;
+- `Native:UI.ShowPage('Pages', 'Graphics')` (by a page's `Name`, or its number);
+- Lua: `UI.ShowPage(path, 'Pages', 'Graphics')`; C++: `UISwitcher::ShowPage`.
+
+In the designer, selecting a widget on another page shows that page (in the
+canvas only; the document keeps its own `ActiveIndex`).
+
 **Later widgets:** ScrollBox, Slider, CheckBox, TextInput (it needs the
 window's text input, which is already plumbed as `GameWindow::SetTextInputActive`
-and `OnText`), Grid and WrapBox, WidgetSwitcher, ListView, an `Include` element
+and `OnText`), Grid and WrapBox, ListView, an `Include` element
 for documents inside documents, rich text, and rounded or SDF boxes.
 
 **A game's own widget** is a class plus a registration in its module. It shows
@@ -209,13 +227,14 @@ OnClick="Lua:Menu.Select('Arena', 2); Event:Menu.Changed($self)"
 - Actions are **queued** and run after the input that fired them, before the game
   ticks. An action that closes its own document is therefore safe.
 
-**Built-in native actions** (NimbleEngine's `GameUI.cpp`):
+**Built-in native actions** (`Game.*` in NimbleEngine's `GameUI.cpp`, which needs the game session; `UI.*` in the UI module's `UIBuiltinActions.cpp`):
 
 | Action | What it does |
 |---|---|
 | `Game.Quit` | Ends the game. |
 | `Game.Pause`, `Game.Resume`, `Game.TogglePause` | `GameSession::SetPaused`. |
 | `UI.Open('path')`, `UI.Close('path')`, `UI.Toggle('path')` | Open, close or toggle a document. With no path, `UI.Close` closes its own document. |
+| `UI.ShowPage('Switcher', page)` | Shows a Switcher's page, by name or number, in the same document. |
 | `UI.SetValue('Key', value)` | Sets a value in the data store. |
 
 ## Data binding
@@ -290,6 +309,7 @@ The `UI` library acts on the session's system:
 | `UI.SetEnabled(path, widget, bool)` | Enables or disables the widget. |
 | `UI.SetProperty(path, widget, property, text)` | Sets any property, written as in XML. |
 | `UI.SetFocus(path, widget)` | Moves focus to the widget. |
+| `UI.ShowPage(path, switcher, page)` | Shows a Switcher's page, by name or number. |
 | `UI.SetNumber`, `UI.SetString`, `UI.SetBool` | Set data store values. |
 | `UI.GetNumber`, `UI.GetString` | Read data store values. |
 | `UI.PlayAnimation(path, name)` | Reserved. Returns false. |
