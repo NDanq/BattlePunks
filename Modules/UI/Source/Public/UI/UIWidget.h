@@ -30,6 +30,8 @@
  *                 Margin (space round it), HAlign, VAlign (Fill stretches),
  *                 and, along a box's axis, Fill: 0 its desired size, else a
  *                 weight of the space left over.
+ *   in a Grid:    Row, Column, RowSpan, ColumnSpan, and Margin, HAlign and
+ *                 VAlign within its cells.
  */
 namespace UI
 {
@@ -109,6 +111,10 @@ namespace UI
         EUIHAlign HAlign = EUIHAlign::Fill;
         EUIVAlign VAlign = EUIVAlign::Fill;
         float     Fill   = 0.0f;
+        int32_t   Row        = 0;         // in a Grid: its cell, 0 first
+        int32_t   Column     = 0;
+        int32_t   RowSpan    = 1;         // and how many it covers
+        int32_t   ColumnSpan = 1;
 
         // === Behaviour ===========================================================
 

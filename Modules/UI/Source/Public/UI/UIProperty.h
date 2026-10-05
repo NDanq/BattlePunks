@@ -58,6 +58,7 @@ namespace UI
         UPF_EditorHidden = 1u << 5,
         UPF_Layout       = 1u << 6,   // changing it moves things: a relayout, not just a repaint
         UPF_Multiline    = 1u << 7,   // a String the editor edits in a box
+        UPF_SlotGrid     = 1u << 8,   // ... when it is a Grid
     };
 
     struct UIPropertyDesc

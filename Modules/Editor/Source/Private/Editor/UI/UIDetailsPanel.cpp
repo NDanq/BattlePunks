@@ -348,8 +348,10 @@ void UIDetailsPanel::BuildWidget(const int InWidget)
     /* Which slot its parent reads: a Canvas's, a box's, or none (the root). */
     const UI::UIWidgetType* ParentType = Desc.Parent >= 0 ? UI::FindWidgetType(Asset.Widgets[size_t(Desc.Parent)].Type.c_str()) : nullptr;
     const UI::UIWidgetType* Canvas     = UI::FindWidgetType("Canvas");
+    const UI::UIWidgetType* Grid       = UI::FindWidgetType("Grid");
     const bool bCanvasSlot = ParentType && Canvas && ParentType->IsA(*Canvas);
-    const bool bBoxSlot    = ParentType && !bCanvasSlot;
+    const bool bGridSlot   = ParentType && Grid && ParentType->IsA(*Grid);
+    const bool bBoxSlot    = ParentType && !bCanvasSlot && !bGridSlot;
 
     const std::vector<UI::UIPropertyText> Effective = Asset.GetEffectiveProperties(InWidget);
     const std::map<std::string, std::string>& TypeDefaults = GetDefaults(*Type);
@@ -358,14 +360,15 @@ void UIDetailsPanel::BuildWidget(const int InWidget)
     for(const UI::UIPropertyDesc& Each : Type->Properties)
     {
         if(Each.Flags & UI::UPF_EditorHidden) continue;
-        const bool bSlot = Each.Flags & (UI::UPF_SlotCanvas | UI::UPF_SlotBox);
-        if(bSlot && !((bCanvasSlot && (Each.Flags & UI::UPF_SlotCanvas)) || (bBoxSlot && (Each.Flags & UI::UPF_SlotBox)))) continue;
+        const bool bSlot = Each.Flags & (UI::UPF_SlotCanvas | UI::UPF_SlotBox | UI::UPF_SlotGrid);
+        if(bSlot && !((bCanvasSlot && (Each.Flags & UI::UPF_SlotCanvas)) || (bBoxSlot && (Each.Flags & UI::UPF_SlotBox))
+                      || (bGridSlot && (Each.Flags & UI::UPF_SlotGrid)))) continue;
         if(Each.Name == "Class") continue;   // shown with the title, below
 
         QFormLayout*& Form = Groups[Each.Category];
         if(!Form)
         {
-            auto* Box = new QGroupBox(QString::fromStdString(Each.Category == "Slot" ? (bCanvasSlot ? "Slot (Canvas)" : "Slot") : Each.Category));
+            auto* Box = new QGroupBox(QString::fromStdString(Each.Category == "Slot" ? (bCanvasSlot ? "Slot (Canvas)" : bGridSlot ? "Slot (Grid)" : "Slot") : Each.Category));
             Form = new QFormLayout(Box);
             Form->setLabelAlignment(Qt::AlignLeft);
             Form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);

@@ -674,15 +674,22 @@ namespace UI
         if(!(Scale > 0.0f) || !std::isfinite(Scale)) Scale = 1.0f;
         LayoutSize = UIVec2{ InViewportPixels.X / Scale, InViewportPixels.Y / Scale };
 
-        bLayoutDirty = false;
-        std::fill(Measured.begin(), Measured.end(), uint8_t(0));
         UILayoutContext Context;
         Context.Document = this;
         Context.Fonts    = Fonts;
         Context.Scale    = Scale;
-        Measure(Context, 0);
-        Arrange(Context, 0, UIRect{ 0.0f, 0.0f, LayoutSize.X, LayoutSize.Y });
-        bPaintDirty = true;
+        /* Again, at most twice, if a widget learned its size from its arrangement
+         * (a WrapBox's height at its width): right on the first frame. */
+        for(int Pass = 0; Pass < 3; ++Pass)
+        {
+            bLayoutDirty = false;
+            std::fill(Measured.begin(), Measured.end(), uint8_t(0));
+            Measure(Context, 0);
+            Arrange(Context, 0, UIRect{ 0.0f, 0.0f, LayoutSize.X, LayoutSize.Y });
+            if(!bLayoutDirty) break;
+        }
+        bLayoutDirty = false;
+        bPaintDirty  = true;
         return true;
     }
 
