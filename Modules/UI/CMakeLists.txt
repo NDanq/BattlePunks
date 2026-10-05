@@ -46,6 +46,7 @@ set(UI_SOURCES
         Source/Private/UI/UIXml.cpp
         Source/Private/UI/UIAnimation.cpp
         Source/Private/UI/UIScriptLibrary.cpp
+        Source/Private/UI/UIBuiltinActions.cpp
 )
 
 # ALWAYS SHARED: the widget type and native action registries exist once (UIAPI.h).

@@ -221,7 +221,8 @@ namespace UI
         const UIRect& GetPixelRect(uint32_t InIndex) const { return PixelRects[InIndex]; }
         const UIVec2& GetDesiredSize(uint32_t InIndex) const { return Desired[InIndex]; }
 
-        /* Shown: neither it nor an ancestor Hidden or Collapsed. */
+        /* Shown: neither it nor an ancestor Hidden, Collapsed or on a hidden
+         * Switcher page. */
         bool IsShown(uint32_t InIndex) const;
 
         /* For UILayoutContext. */
@@ -273,6 +274,9 @@ namespace UI
     private:
         void Build();
         void SortPaintOrder(uint32_t InIndex);
+        /* Its own Visibility, and its parent showing it (IsChildShown). */
+        bool IsSelfShown(uint32_t InIndex) const;
+        void KeepFocusShown();
         void PaintWidget(uint32_t InIndex, UIPaintContext& InContext);
         int32_t HitTestWidget(uint32_t InIndex, const UIVec2& InPixels, const RenderCore::UIClipRect& InClip, bool bInDesign) const;
         bool ApplyProperty(UIWidget& InWidget, int32_t InProperty, const UIValue& InValue);

@@ -19,6 +19,7 @@
  *   HorizontalBox  children in a row
  *   VerticalBox    children in a column
  *   Overlay        children stacked over each other
+ *   Switcher       pages, one shown at a time (a settings menu's tabs)
  *   ProgressBar    a fill over a background, Value 0-1
  *   Spacer         empty space of a size
  */
@@ -145,6 +146,28 @@ namespace UI
     public:
         UIVec2 MeasureContent(UILayoutContext& InContext) override;
         void   ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect) override;
+    };
+
+    /*
+     * Pages: its children, all laid out over each other in its rectangle,
+     * one shown at a time -- the others are not drawn, hit or focused. Sized
+     * by its largest page, so switching does not move what is around it.
+     * ActiveIndex binds ({Bind:Settings.Page}); UI.ShowPage picks one by name.
+     */
+    class UI_API UISwitcher : public UIWidget
+    {
+    public:
+        int32_t ActiveIndex = 0;   // its children in document order; clamped
+
+        bool IsChildShown(uint32_t InChild) const override;
+
+        /* The page shown, a document index; -1 with no pages. */
+        int32_t GetActiveChild() const;
+        int32_t GetPageCount() const;
+
+        /* Shows the page named InPage (a child's Name), or numbered (0 first).
+         * False, nothing changed, if it has no such page. */
+        bool ShowPage(const std::string& InPage);
     };
 
     class UI_API UIProgressBar : public UIWidget

@@ -127,6 +127,10 @@ namespace UI
          * HUD's full-screen root lets clicks through to the game. */
         virtual bool TakesHits() const { return false; }
 
+        /* Whether its child InChild (a document index) is shown: drawn, hit
+         * and focusable. All of them, but a Switcher's inactive pages. */
+        virtual bool IsChildShown(uint32_t /*InChild*/) const { return true; }
+
         /* Hover, press, release, click: UIDocumentInstance's pointer routing.
          * An interactive widget queues its actions here (QueueActions). */
         virtual void OnPointer(const UIPointerEvent& /*InEvent*/) {}
