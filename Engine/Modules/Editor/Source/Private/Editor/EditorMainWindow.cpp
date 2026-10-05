@@ -47,6 +47,12 @@
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
+#include "Private/Editor/UI/UIAssets.h"
+#include "Private/Editor/UI/UIDesignDocument.h"
+#include "Private/Editor/UI/UIDesignerViewport.h"
+#include "Private/Editor/UI/UIEditorTab.h"
+#include "Private/Editor/UI/UIEditorWindow.h"
+#include "Public/UI/UIFile.h"
 #include "Private/Editor/Prefab/PrefabEditorTab.h"
 #include "Private/Editor/Prefab/PrefabEditorWindow.h"
 #include "Private/Editor/Project/NewProjectWizard.h"
@@ -982,31 +988,7 @@ void EditorMainWindow::RegisterConsoleCommands()
             Console.PrintError(QStringLiteral("The viewport's renderer is not running"));
             return;
         }
-        /* Answered after a frame renders; a few seconds, then given up. */
-        auto* Poll  = new QTimer(this);
-        auto  Tries = std::make_shared<int>(0);
-        connect(Poll, &QTimer::timeout, this, [this, Poll, Request, Tries, Path]()
-        {
-            QImage  Image;
-            QString Error;
-            if(Context.TakeMaterialPreview(Request, Image, Error))
-            {
-                Poll->deleteLater();
-                if(Image.isNull() || !Image.save(Path))
-                {
-                    Console.PrintError(QStringLiteral("No screenshot: %1").arg(Image.isNull() ? Error : QStringLiteral("cannot write ") + Path));
-                    return;
-                }
-                Console.Print(QStringLiteral("Saved %1 (%2 x %3)").arg(Path).arg(Image.width()).arg(Image.height()));
-                return;
-            }
-            if(++*Tries > 250)
-            {
-                Poll->deleteLater();
-                Console.PrintError(QStringLiteral("No frame rendered for the screenshot (is the viewport visible?)"));
-            }
-        });
-        Poll->start(20);
+        SaveCaptureWhenReady(Request, Path);
     });
 
     Console.Register(QStringLiteral("quit"), QString(), QStringLiteral("File > Exit (asks to save unsaved changes)"),
@@ -1046,11 +1028,45 @@ void EditorMainWindow::RegisterConsoleCommands()
         CompileSource();
     });
 
-    Console.Register(QStringLiteral("cook"), QStringLiteral("[world | prefab | prefabs] [out]"),
-                     QStringLiteral("Cook a world or prefab file to binary (default: the open world, to Cooked/ beside it); "
-                                    "'prefabs' cooks every prefab to <project>/Cooked/, which a Client build stages"),
+    Console.Register(QStringLiteral("cook"), QStringLiteral("[world | prefab | prefabs | ui | doc.nmui] [out]"),
+                     QStringLiteral("Cook a world, prefab or UI document to binary (default: the open world, to Cooked/ beside it); "
+                                    "'prefabs' and 'ui' cook every prefab or UI document to <project>/Cooked/, which a Client build stages"),
                      [this](const QStringList& InArgs)
     {
+        /* Every UI document in the project, to <out>/<its runtime path>. */
+        if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("ui"))
+        {
+            const QString Root    = EditorGraphs::GetProjectRoot();
+            const QString OutRoot = InArgs.size() >= 2 ? InArgs[1] : QDir(Root).filePath(QStringLiteral("Cooked"));
+            int Failed = 0;
+            QString Errors;
+            const int Cooked = EditorUI::CookAll(Root, OutRoot, Failed, Errors);
+            if(!Errors.isEmpty()) Console.PrintError(Errors.trimmed());
+            Console.Print(QStringLiteral("Cooked %1 UI document(s) to %2%3").arg(Cooked).arg(QDir::toNativeSeparators(OutRoot))
+                          .arg(Failed ? QStringLiteral("; %1 failed").arg(Failed) : QString()));
+            return;
+        }
+        if(!InArgs.isEmpty() && InArgs[0].endsWith(QStringLiteral(".nmui"), Qt::CaseInsensitive))
+        {
+            const QFileInfo SourceInfo(InArgs[0]);
+            const QString Out = InArgs.size() >= 2 ? InArgs[1] : SourceInfo.dir().filePath(QStringLiteral("Cooked/") + SourceInfo.fileName());
+            if(QFileInfo(Out).absoluteFilePath() == SourceInfo.absoluteFilePath())
+            {
+                Console.PrintError(QStringLiteral("Refusing to cook a UI document over itself"));
+                return;
+            }
+            std::string Error;
+            if(UI::CookUIFile(InArgs[0].toUtf8().toStdString(), Out.toUtf8().toStdString(), &Error))
+            {
+                Console.Print(QStringLiteral("Cooked %1 -> %2").arg(InArgs[0], Out));
+            }
+            else
+            {
+                Console.PrintError(QStringLiteral("Cook failed: %1").arg(QString::fromStdString(Error)));
+            }
+            return;
+        }
+
         /* Every prefab in the project, to <out>/<its runtime path>. */
         if(!InArgs.isEmpty() && InArgs[0] == QStringLiteral("prefabs"))
         {
@@ -1170,6 +1186,63 @@ void EditorMainWindow::RegisterConsoleCommands()
             Console.Print(QStringLiteral("> %1").arg(Line));
             Console.Execute(Line);
         });
+    });
+
+    Console.Register(QStringLiteral("ui"), QStringLiteral("<path | new | close | select <name> | resolution <w>x<h> | preview <on|off> | screenshot <file.png>>"),
+                     QStringLiteral("Open a .nmui in the UI Designer, make a new one, or drive the one in front (for scripts and tests)"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: ui <path | new | close | select <name> | resolution <w>x<h> | preview <on|off>>"));
+            return;
+        }
+        const QString Verb = InArgs.front();
+        if(Verb == QStringLiteral("new"))   { EditorUI::CreateUI(QString(), this); return; }
+        if(Verb == QStringLiteral("close")) { EditorUI::CloseAll(); return; }
+
+        UIEditorWindow* Window = UIEditorWindow::Find();
+        UIEditorTab*    Tab    = Window ? Window->CurrentTab() : nullptr;
+        if(Verb == QStringLiteral("select") || Verb == QStringLiteral("resolution") || Verb == QStringLiteral("preview"))
+        {
+            if(!Tab || InArgs.size() < 2)
+            {
+                Console.PrintError(QStringLiteral("No UI document is open, or the command needs an argument"));
+                return;
+            }
+            if(Verb == QStringLiteral("select"))
+            {
+                const int Index = Tab->GetDesign().GetAsset().FindWidget(InArgs[1].toStdString());
+                if(Index < 0) { Console.PrintError(QStringLiteral("No widget '%1'").arg(InArgs[1])); return; }
+                Tab->GetDesign().Select(Index);
+            }
+            else if(Verb == QStringLiteral("resolution"))
+            {
+                const QStringList Parts = InArgs[1].split(QLatin1Char('x'));
+                if(Parts.size() != 2 || Parts[0].toInt() <= 0 || Parts[1].toInt() <= 0) { Console.PrintError(QStringLiteral("Usage: ui resolution 1920x1080")); return; }
+                Tab->GetViewport()->SetDesignSize(QSize(Parts[0].toInt(), Parts[1].toInt()));
+                Tab->GetViewport()->FitToView();
+            }
+            else
+            {
+                Tab->GetViewport()->SetPreview(InArgs[1] == QStringLiteral("on"));
+            }
+            return;
+        }
+        if(Verb == QStringLiteral("screenshot"))
+        {
+            if(!Tab || InArgs.size() < 2 || Tab->GetViewport()->GetScene() == RenderCore::RENDER_INVALID_SCENE)
+            {
+                Console.PrintError(QStringLiteral("Usage: ui screenshot <file.png>, with a document open and drawn"));
+                return;
+            }
+            const uint64_t Request = Context.RequestSceneCapture(Tab->GetViewport()->GetScene());
+            if(Request == 0) { Console.PrintError(QStringLiteral("The renderer is not running")); return; }
+            SaveCaptureWhenReady(Request, QFileInfo(InArgs.mid(1).join(QLatin1Char(' '))).absoluteFilePath());
+            return;
+        }
+        const QString Path = QFileInfo(Verb).isAbsolute() ? Verb : QDir(EditorGraphs::GetProjectRoot()).filePath(Verb);
+        if(!EditorUI::OpenUI(Path, this)) { Console.PrintError(QStringLiteral("Could not open %1").arg(Path)); }
     });
 
     Console.Register(QStringLiteral("prefab"), QStringLiteral("<path | new | simulate | stop | close>"),
@@ -1484,7 +1557,7 @@ void EditorMainWindow::closeEvent(QCloseEvent* InEvent)
 {
     /* Open prefabs and graphs first: an unsaved one may cancel the close.
      * Prefabs before the Renderer stops: their viewports' swapchains go now. */
-    if(!EditorPrefabs::CloseAllPrefabs() || !EditorGraphs::CloseAllGraphs())
+    if(!EditorPrefabs::CloseAllPrefabs() || !EditorUI::CloseAll() || !EditorGraphs::CloseAllGraphs())
     {
         InEvent->ignore();
         return;
@@ -1651,6 +1724,39 @@ bool EditorMainWindow::SaveWorldAs()
     CurrentPath = Path;
     UpdateTitle();
     return SaveWorld();
+}
+
+
+void EditorMainWindow::SaveCaptureWhenReady(const uint64_t InRequest, const QString& InPath)
+{
+    const uint64_t Request = InRequest;
+    const QString  Path    = InPath;
+
+    /* Answered after a frame renders; a few seconds, then given up. */
+    auto* Poll  = new QTimer(this);
+    auto  Tries = std::make_shared<int>(0);
+    connect(Poll, &QTimer::timeout, this, [this, Poll, Request, Tries, Path]()
+    {
+        QImage  Image;
+        QString Error;
+        if(Context.TakeMaterialPreview(Request, Image, Error))
+        {
+            Poll->deleteLater();
+            if(Image.isNull() || !Image.save(Path))
+            {
+                Console.PrintError(QStringLiteral("No screenshot: %1").arg(Image.isNull() ? Error : QStringLiteral("cannot write ") + Path));
+                return;
+            }
+            Console.Print(QStringLiteral("Saved %1 (%2 x %3)").arg(Path).arg(Image.width()).arg(Image.height()));
+            return;
+        }
+        if(++*Tries > 250)
+        {
+            Poll->deleteLater();
+            Console.PrintError(QStringLiteral("No frame rendered for the screenshot (is the viewport visible?)"));
+        }
+    });
+    Poll->start(20);
 }
 
 #endif // WITH_EDITOR
