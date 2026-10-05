@@ -1,0 +1,201 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="UI">
+  <Properties>
+    <Property Name="Document" Value="Content/UI/PauseMenu.nmui" />
+  </Properties>
+  <Functions>
+    <Function Name="Resume" />
+  </Functions>
+  <Nodes>
+    <Node Id="4c4c50617573654d0000000000000001" Type="UI.Event.Open" Version="1" X="-900" Y="0" />
+    <Node Id="4c4c50617573654d0000000000000002" Type="Library.UI.SetBool" Version="1" X="-380" Y="0">
+      <Const Pin="Key" Value="LightLab.Shadows" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000003" Type="Library.Config.GetBool" Version="1" X="-620" Y="140">
+      <Const Pin="Path" Value="Shadows.Enabled" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000004" Type="Library.UI.SetBool" Version="1" X="-80" Y="0">
+      <Const Pin="Key" Value="LightLab.BakedLighting" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000005" Type="Library.Config.GetBool" Version="1" X="-320" Y="140">
+      <Const Pin="Path" Value="Rendering.BakedLighting" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000006" Type="Library.UI.SetNumber" Version="1" X="220" Y="0">
+      <Const Pin="Key" Value="LightLab.LookSensitivity" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000007" Type="Library.Config.GetNumber" Version="1" X="-20" Y="140">
+      <Const Pin="Path" Value="LightLab.LookSensitivity" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000008" Type="Library.UI.SetNumber" Version="1" X="520" Y="0">
+      <Const Pin="Key" Value="LightLab.FlySpeed" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000009" Type="Library.Config.GetNumber" Version="1" X="280" Y="140">
+      <Const Pin="Path" Value="LightLab.FlySpeed" />
+    </Node>
+    <Node Id="4c4c50617573654d000000000000000a" Type="Library.UI.SetNumber" Version="1" X="820" Y="0">
+      <Const Pin="Key" Value="LightLab.Page" />
+      <Const Pin="Value" Value="0" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000014" Type="UI.Event.Handler" Version="1" X="-900" Y="420">
+      <Prop Name="Event" Value="OnChanged" />
+      <Prop Name="Handler" Value="Shadows_OnChanged" />
+      <Prop Name="ValueType" Value="Bool" />
+      <Prop Name="Widget" Value="Shadows" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000015" Type="Library.Config.SetBool" Version="1" X="-560" Y="420">
+      <Const Pin="Path" Value="Shadows.Enabled" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000016" Type="UI.Event.Handler" Version="1" X="-900" Y="570">
+      <Prop Name="Event" Value="OnChanged" />
+      <Prop Name="Handler" Value="BakedLighting_OnChanged" />
+      <Prop Name="ValueType" Value="Bool" />
+      <Prop Name="Widget" Value="BakedLighting" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000017" Type="Library.Config.SetBool" Version="1" X="-560" Y="570">
+      <Const Pin="Path" Value="Rendering.BakedLighting" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000018" Type="UI.Event.Handler" Version="1" X="-900" Y="720">
+      <Prop Name="Event" Value="OnChanged" />
+      <Prop Name="Handler" Value="LookSensitivity_OnChanged" />
+      <Prop Name="ValueType" Value="Number" />
+      <Prop Name="Widget" Value="LookSensitivity" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000019" Type="Library.Config.SetNumber" Version="1" X="-560" Y="720">
+      <Const Pin="Path" Value="LightLab.LookSensitivity" />
+    </Node>
+    <Node Id="4c4c50617573654d000000000000001a" Type="UI.Event.Handler" Version="1" X="-900" Y="870">
+      <Prop Name="Event" Value="OnChanged" />
+      <Prop Name="Handler" Value="FlySpeed_OnChanged" />
+      <Prop Name="ValueType" Value="Number" />
+      <Prop Name="Widget" Value="FlySpeed" />
+    </Node>
+    <Node Id="4c4c50617573654d000000000000001b" Type="Library.Config.SetNumber" Version="1" X="-560" Y="870">
+      <Const Pin="Path" Value="LightLab.FlySpeed" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000028" Type="Function.Entry" Version="1" X="200" Y="420">
+      <Prop Name="Function" Value="Resume" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000029" Type="UI.CloseDocument" Version="1" X="440" Y="420" />
+    <Node Id="4c4c50617573654d000000000000002a" Type="Library.Game.SetPaused" Version="1" X="680" Y="420">
+      <Const Pin="Paused" Value="false" />
+    </Node>
+    <Node Id="4c4c50617573654d000000000000002b" Type="Library.Input.SetMouseCaptured" Version="1" X="920" Y="420">
+      <Const Pin="Captured" Value="true" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000032" Type="UI.Event.Handler" Version="1" X="200" Y="640">
+      <Prop Name="Event" Value="OnClick" />
+      <Prop Name="Handler" Value="Resume_OnClick" />
+      <Prop Name="Widget" Value="Resume" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000033" Type="Function.Call" Version="1" X="520" Y="640">
+      <Prop Name="Function" Value="Resume" />
+    </Node>
+    <Node Id="4c4c50617573654d000000000000003c" Type="UI.Event.Handler" Version="1" X="200" Y="820">
+      <Prop Name="Event" Value="OnBack" />
+      <Prop Name="Handler" Value="Document_OnBack" />
+    </Node>
+    <Node Id="4c4c50617573654d000000000000003d" Type="Flow.Branch" Version="1" X="520" Y="820" />
+    <Node Id="4c4c50617573654d000000000000003e" Type="Library.UI.GetNumber" Version="1" X="200" Y="960">
+      <Const Pin="Key" Value="LightLab.Page" />
+    </Node>
+    <Node Id="4c4c50617573654d000000000000003f" Type="Compare.NotEqual" Version="1" X="380" Y="960">
+      <Const Pin="B" Value="0" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000040" Type="Library.UI.SetNumber" Version="1" X="760" Y="800">
+      <Const Pin="Key" Value="LightLab.Page" />
+      <Const Pin="Value" Value="0" />
+    </Node>
+    <Node Id="4c4c50617573654d0000000000000041" Type="Function.Call" Version="1" X="760" Y="920">
+      <Prop Name="Function" Value="Resume" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="4c4c50617573654d0000000000000001.Then" To="4c4c50617573654d0000000000000002.Exec" />
+    <Link From="4c4c50617573654d0000000000000002.Then" To="4c4c50617573654d0000000000000004.Exec" />
+    <Link From="4c4c50617573654d0000000000000003.Value" To="4c4c50617573654d0000000000000002.Value" />
+    <Link From="4c4c50617573654d0000000000000004.Then" To="4c4c50617573654d0000000000000006.Exec" />
+    <Link From="4c4c50617573654d0000000000000005.Value" To="4c4c50617573654d0000000000000004.Value" />
+    <Link From="4c4c50617573654d0000000000000006.Then" To="4c4c50617573654d0000000000000008.Exec" />
+    <Link From="4c4c50617573654d0000000000000007.Value" To="4c4c50617573654d0000000000000006.Value" />
+    <Link From="4c4c50617573654d0000000000000008.Then" To="4c4c50617573654d000000000000000a.Exec" />
+    <Link From="4c4c50617573654d0000000000000009.Value" To="4c4c50617573654d0000000000000008.Value" />
+    <Link From="4c4c50617573654d0000000000000014.Then" To="4c4c50617573654d0000000000000015.Exec" />
+    <Link From="4c4c50617573654d0000000000000014.Value" To="4c4c50617573654d0000000000000015.Value" />
+    <Link From="4c4c50617573654d0000000000000016.Then" To="4c4c50617573654d0000000000000017.Exec" />
+    <Link From="4c4c50617573654d0000000000000016.Value" To="4c4c50617573654d0000000000000017.Value" />
+    <Link From="4c4c50617573654d0000000000000018.Then" To="4c4c50617573654d0000000000000019.Exec" />
+    <Link From="4c4c50617573654d0000000000000018.Value" To="4c4c50617573654d0000000000000019.Value" />
+    <Link From="4c4c50617573654d000000000000001a.Then" To="4c4c50617573654d000000000000001b.Exec" />
+    <Link From="4c4c50617573654d000000000000001a.Value" To="4c4c50617573654d000000000000001b.Value" />
+    <Link From="4c4c50617573654d0000000000000028.Then" To="4c4c50617573654d0000000000000029.Exec" />
+    <Link From="4c4c50617573654d0000000000000029.Then" To="4c4c50617573654d000000000000002a.Exec" />
+    <Link From="4c4c50617573654d000000000000002a.Then" To="4c4c50617573654d000000000000002b.Exec" />
+    <Link From="4c4c50617573654d0000000000000032.Then" To="4c4c50617573654d0000000000000033.Exec" />
+    <Link From="4c4c50617573654d000000000000003c.Then" To="4c4c50617573654d000000000000003d.Exec" />
+    <Link From="4c4c50617573654d000000000000003d.False" To="4c4c50617573654d0000000000000041.Exec" />
+    <Link From="4c4c50617573654d000000000000003d.True" To="4c4c50617573654d0000000000000040.Exec" />
+    <Link From="4c4c50617573654d000000000000003e.Value" To="4c4c50617573654d000000000000003f.A" />
+    <Link From="4c4c50617573654d000000000000003f.Out" To="4c4c50617573654d000000000000003d.Condition" />
+  </Links>
+  <Comments>
+    <Comment X="-920" Y="-40" Width="1980" Height="300" Text="On open: each setting's config var into the data store key its check box or slider binds to (two-way), and the first page" />
+    <Comment X="-920" Y="380" Width="760" Height="620" Text="A setting changed: its config var -- the one the T/F/L keys, an .ini and the console set" />
+    <Comment X="180" Y="380" Width="1000" Height="160" Text="Function Resume: close the menu, unpause, take the mouse back for flying" />
+    <Comment X="180" Y="600" Width="1000" Height="460" Text="Resume button, and Back: from Settings back to the menu's first page, from there Resume" />
+  </Comments>
+  <gen_code>
+    <Output Extension=".lua"><![CDATA[-- Generated by NimbleEditor from the UI logic graph "PauseMenu". Do not edit.
+local Fn_Resume
+Fn_Resume = function(self)
+    UI.Close(self.Document)
+    Game.SetPaused(false)
+    Input.SetMouseCaptured(true)
+end
+
+return {
+
+    OnOpen = function(self)
+        local t1 = Config.GetBool("Shadows.Enabled")
+        UI.SetBool("LightLab.Shadows", t1)
+        local t2 = Config.GetBool("Rendering.BakedLighting")
+        UI.SetBool("LightLab.BakedLighting", t2)
+        local t3 = Config.GetNumber("LightLab.LookSensitivity")
+        UI.SetNumber("LightLab.LookSensitivity", t3)
+        local t4 = Config.GetNumber("LightLab.FlySpeed")
+        UI.SetNumber("LightLab.FlySpeed", t4)
+        UI.SetNumber("LightLab.Page", 0)
+    end,
+
+    Shadows_OnChanged = function(self, Value, Sender)
+        Config.SetBool("Shadows.Enabled", (Value ~= 0))
+    end,
+
+    BakedLighting_OnChanged = function(self, Value, Sender)
+        Config.SetBool("Rendering.BakedLighting", (Value ~= 0))
+    end,
+
+    LookSensitivity_OnChanged = function(self, Value, Sender)
+        Config.SetNumber("LightLab.LookSensitivity", Value)
+    end,
+
+    FlySpeed_OnChanged = function(self, Value, Sender)
+        Config.SetNumber("LightLab.FlySpeed", Value)
+    end,
+
+    Resume_OnClick = function(self, Value, Sender)
+        Fn_Resume(self)
+    end,
+
+    Document_OnBack = function(self, Value, Sender)
+        local t1 = UI.GetNumber("LightLab.Page")
+        local t2 = t1 ~= 0
+        if t2 then
+            UI.SetNumber("LightLab.Page", 0)
+        else
+            Fn_Resume(self)
+        end
+    end,
+}
+]]></Output>
+  </gen_code>
+</NodeGraph>

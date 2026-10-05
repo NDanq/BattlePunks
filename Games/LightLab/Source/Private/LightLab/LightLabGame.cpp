@@ -13,9 +13,7 @@
 #include "Public/GameCore/WorldPackage.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Public/RenderCore/Renderer.h"
-#include "Public/UI/UIAction.h"
 #include "Public/UI/UISystem.h"
-#include "Public/UI/UIWidgets.h"
 
 #include <algorithm>
 #include <cmath>
@@ -95,7 +93,8 @@ namespace
 NIMBLE_CONFIG_STRING(GLightLabExportLevel, "LightLab", "ExportLevel", "", nullptr);
 
 /* The pause menu's Settings page sets these (and [Shadows] Enabled,
- * [Rendering] BakedLighting); an .ini or the console can too. */
+ * [Rendering] BakedLighting) through its logic graph's Config nodes; an .ini
+ * or the console can too. */
 NIMBLE_CONFIG_FLOAT(GLightLabLookSensitivity, "LightLab", "LookSensitivity", 1.0f, nullptr);   // times the Look axes
 NIMBLE_CONFIG_FLOAT(GLightLabFlySpeed, "LightLab", "FlySpeed", 600.0f, nullptr);               // world units a second
 
@@ -364,106 +363,17 @@ namespace
 }
 
 /*
- * The pause menu: Escape (or Start) opens it and pauses the World; Resume,
- * Escape again or the pad's East button close it (the document's OnBack).
- * Its buttons name the native actions below and the engine's Game.Quit.
- *
- * Its Settings page: check boxes and sliders bound two-way to data store
- * keys (Checked="{Bind:LightLab.Shadows}"), filled from the config vars as
- * the menu opens; each change runs a LightLab.Set* action, $value its new
- * value, which sets the var -- the same var T, F and L, an .ini or the
- * console set.
+ * The pause menu: Escape (or Start) opens it and pauses the World. What it
+ * does is its logic graph, Content/UI/PauseMenu.ui.nmgraph (the document's
+ * Logic; UI/README.md, "Logic graphs"): Resume and Back close it, unpause and
+ * take the mouse back; its Settings page's check boxes and sliders, bound
+ * two-way to LightLab.* data store keys, are filled from the config vars as
+ * it opens and set them as they change -- the vars T, F and L, an .ini or the
+ * console set. Quit is the engine's Game.Quit.
  */
 namespace
 {
     const char* const PauseMenuPath = "Content/UI/PauseMenu.nmui";
-
-    /* The settings the page shows: data store key, config var. */
-    struct LightLabSetting
-    {
-        const char* Key;
-        const char* Var;
-    };
-    const LightLabSetting Settings[] = {
-        { "LightLab.Shadows",         "Shadows.Enabled" },
-        { "LightLab.BakedLighting",   "Rendering.BakedLighting" },
-        { "LightLab.LookSensitivity", "LightLab.LookSensitivity" },
-        { "LightLab.FlySpeed",        "LightLab.FlySpeed" },
-    };
-
-    /* Each setting's var into the store, as the menu opens: what it shows. */
-    void PublishSettings(UI::UISystem& InUI)
-    {
-        for(const LightLabSetting& Each : Settings)
-        {
-            const EngineCore::ConfigVar* Var = EngineCore::ConfigFindVarByPath(Each.Var);
-            if(!Var)
-            {
-                continue;
-            }
-            InUI.SetValue(Each.Key, Var->GetType() == EngineCore::EConfigType::CT_Bool ? UI::UIValue::Bool(Var->GetBool())
-                                                                                     : UI::UIValue::Number(Var->GetFloat()));
-        }
-    }
-
-    /* A Set* action: its $value into the var InVar. */
-    void SetFromAction(const UI::UIActionContext& InContext, const char* InVar)
-    {
-        EngineCore::ConfigVar* Var = EngineCore::ConfigFindVarByPath(InVar);
-        if(!Var || InContext.Args->Count < 1 || InContext.Args->Args[0].Type != GameCore::EventArg::ET_Number)
-        {
-            return;
-        }
-        const double Value = InContext.Args->Args[0].Number;
-        if(Var->GetType() == EngineCore::EConfigType::CT_Bool)
-        {
-            Var->SetBool(Value != 0.0);
-            CORE_LOG("[LightLab] " + Var->GetQualifiedName() + " = " + Var->ToString())
-        }
-        else
-        {
-            Var->SetFloat(float(Value));   // not logged: a drag sets it every step
-        }
-    }
-
-    void ResumeFromPause(const UI::UIActionContext& InContext)
-    {
-        auto* Session = static_cast<NimbleEngine::GameSession*>(InContext.HostData);
-        if(!Session)
-        {
-            return;
-        }
-        Session->GetUI().Close(PauseMenuPath);
-        Session->SetPaused(false);
-        Session->SetMouseCaptured(true);   // back to flying
-    }
-
-    /* Escape or (B): from Settings back to the menu's first page, from there resume. */
-    void BackFromPause(const UI::UIActionContext& InContext)
-    {
-        UI::UIDocumentInstance* Menu = InContext.Document;
-        auto* Pages = Menu ? dynamic_cast<UI::UISwitcher*>(Menu->FindWidget("Pages")) : nullptr;
-        if(Pages && Pages->ActiveIndex != 0)
-        {
-            Pages->ShowPage("0");
-            return;
-        }
-        ResumeFromPause(InContext);
-    }
-}
-
-UI_DEFINE_ACTIONS(LightLab)
-{
-    Actions.Add("Resume", &ResumeFromPause, "Closes the pause menu, resumes and takes the mouse back");
-    Actions.Add("Back", &BackFromPause, "Settings back to the pause menu; from the menu, Resume");
-    Actions.Add("SetShadows", [](const UI::UIActionContext& InContext) { SetFromAction(InContext, "Shadows.Enabled"); },
-                "Shadows on (1) or off (0): LightLab.SetShadows($value)");
-    Actions.Add("SetBakedLighting", [](const UI::UIActionContext& InContext) { SetFromAction(InContext, "Rendering.BakedLighting"); },
-                "Baked (1) or live (0) lighting");
-    Actions.Add("SetLookSensitivity", [](const UI::UIActionContext& InContext) { SetFromAction(InContext, "LightLab.LookSensitivity"); },
-                "Mouse and stick look, times");
-    Actions.Add("SetFlySpeed", [](const UI::UIActionContext& InContext) { SetFromAction(InContext, "LightLab.FlySpeed"); },
-                "Fly speed, world units a second");
 }
 
 class LightLabGameMode : public NimbleEngine::IGameMode
@@ -560,7 +470,6 @@ private:
     void OpenPauseMenu()
     {
         Session->SetMouseCaptured(false);
-        PublishSettings(Session->GetUI());
         if(Session->GetUI().Open(PauseMenuPath) == UI::UI_DOCUMENT_INVALID)
         {
             CORE_LOG_WARN(std::string("[LightLab] no pause menu (") + PauseMenuPath + "); the mouse is free, a click takes it back")

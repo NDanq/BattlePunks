@@ -18,6 +18,7 @@
 #include <new>
 #include <string>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ScriptEngine.h"
@@ -1023,6 +1024,93 @@ static void TestLogicGraphs()
     std::filesystem::remove_all(Dir);
 }
 
+/* LightLab's pause menu as the game runs it: its document and its logic
+ * graph (Content/UI/PauseMenu.ui.nmgraph), on the real Lua UI and Config
+ * libraries; Game and Input stand in (they need a GameSession). LightLab's
+ * own config vars are declared here, as its module declares them. */
+NIMBLE_CONFIG_FLOAT(GTestLookSensitivity, "LightLab", "LookSensitivity", 1.0f, nullptr);
+NIMBLE_CONFIG_FLOAT(GTestFlySpeed, "LightLab", "FlySpeed", 600.0f, nullptr);
+
+static void TestLightLabLogic()
+{
+    std::printf("[lightlab logic]\n");
+    EngineCore::ConfigVar* Shadows = EngineCore::ConfigFindVarByPath("Shadows.Enabled");
+    Expect(Shadows != nullptr, "the shadows config var is there to set");
+    if(!Shadows) return;
+    const bool bShadowsBefore = Shadows->GetBool();
+    Shadows->SetBool(true);
+
+    EngineCore::FilesystemProvider Game(std::string(UI_REPO_ROOT) + "/Games/LightLab");
+    EngineCore::IFileProvider* Previous = EngineCore::GetFileProvider();
+    EngineCore::SetFileProvider(&Game);
+
+    GameCore::World World;
+    GameCore::ScriptEngine Scripts;
+    Expect(Scripts.Initialize(), "a script engine for LightLab's menu");
+    Scripts.BindWorld(&World);
+    Expect(Scripts.RunString("Game = { SetPaused = function(p) Paused = p end }\n"
+                             "Input = { SetMouseCaptured = function(c) Captured = c end }\n", "stand-ins"), "Game and Input stand in");
+    UISystem System;
+    System.SetScriptEngine(&Scripts);
+    SetScriptUISystem(&System);
+
+    System.SetValue("LightLab.Page", UIValue::Number(1));   // left on Settings last time
+    const UIDocumentHandle Menu = System.Open("Content/UI/PauseMenu.nmui");
+    Expect(Menu != UI_DOCUMENT_INVALID, "the pause menu opens with its logic");
+    System.RunQueuedActions();
+    System.Tick(0.016f);
+    System.Update(UIVec2{ 1280, 720 });
+    UIDocumentInstance* Doc = System.Find(Menu);
+    if(!Doc) { EngineCore::SetFileProvider(Previous); return; }
+    const UIValue* Published = System.GetValue("LightLab.Shadows");
+    Expect(Published && Published->B && System.GetValue("LightLab.LookSensitivity")->AsNumber() == 1.0,
+           "On Document Open fills the store from the config vars");
+    auto* Pages = dynamic_cast<UISwitcher*>(Doc->FindWidget("Pages"));
+    Expect(Pages && Pages->ActiveIndex == 0, "and shows the first page");
+
+    const auto Click = [&](const char* InWidget)
+    {
+        System.Update(UIVec2{ 1280, 720 });
+        const UIVec2 At = CentreOf(*Doc, InWidget);
+        System.ProcessInput(Pointer(At, true, false));
+        System.ProcessInput(Pointer(At, false, true));
+        System.RunQueuedActions();
+        System.Tick(0.016f);
+    };
+    Click("SettingsButton");
+    Expect(Pages->ActiveIndex == 1, "Settings shows its page");
+    Click("Shadows");
+    Expect(!Shadows->GetBool(), "unticking Shadows turns the config var off, through the graph");
+
+    Doc->SetFocus(int32_t(Doc->FindWidget("LookSensitivity")->GetIndex()));
+    UIInputFrame Right;
+    Right.bNavRight = true;
+    System.ProcessInput(Right);
+    System.RunQueuedActions();
+    Expect(std::fabs(GTestLookSensitivity.GetFloat() - 1.05f) < 1e-4f, "Right on the slider steps the look sensitivity var");
+
+    UIInputFrame Back;
+    Back.bBack = true;
+    System.ProcessInput(Back);
+    System.RunQueuedActions();
+    System.Tick(0.016f);
+    Expect(Pages->ActiveIndex == 0 && System.IsOpen("Content/UI/PauseMenu.nmui"), "Back from Settings returns to the first page");
+    System.Update(UIVec2{ 1280, 720 });
+    System.ProcessInput(Back);
+    System.RunQueuedActions();
+    Expect(!System.IsOpen("Content/UI/PauseMenu.nmui") && Scripts.RunString("assert(Paused == false and Captured == true)", "resumed"),
+           "Back from there resumes: closed, unpaused, the mouse taken back");
+    Expect(Scripts.GetErrorCount() == 0, "the menu's logic raised no Lua errors");
+
+    Shadows->SetBool(bShadowsBefore);
+    GTestLookSensitivity.ResetToDefault();
+    System.SetScriptEngine(nullptr);
+    SetScriptUISystem(nullptr);
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+    EngineCore::SetFileProvider(Previous);
+}
+
 // === Hot reload ===============================================================
 
 static void TestHotReload()
@@ -1309,6 +1397,7 @@ int main()
     TestInputAndActions();
     TestScriptedActions();
     TestLogicGraphs();
+    TestLightLabLogic();
     TestHotReload();
     TestCost();
 #if WITH_EDITOR
