@@ -17,6 +17,7 @@
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/GameConsole.h"
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/GameState.h"
@@ -407,8 +408,10 @@ namespace
         void     SetFrameRateLimit(uint32_t) override {}
         uint32_t GetFrameRateLimit() const override { return 0; }
         const InputState& GetInput() const override { return Input; }
+        void SetTextInputActive(const bool bInActive) override { bTextInput = bInActive; }
 
         InputState Input;
+        bool       bTextInput = false;
     };
 
     /* A widget description, by type and properties as text. */
@@ -529,6 +532,150 @@ namespace
     }
 }
 
+/* The console's: a var to set and a command to run. */
+NIMBLE_CONFIG_INT(GConsoleTestValue, "ConsoleTest", "Value", 1, nullptr);
+
+namespace
+{
+    std::vector<std::string> GConsoleTestArgs;
+    int                      GConsoleTestRuns = 0;
+}
+
+NIMBLE_CONSOLE_COMMAND(consoletest, "[words]", "The tests' command")
+{
+    GConsoleTestArgs = Console.Args;
+    ++GConsoleTestRuns;
+    Console.Print("consoletest ran");
+}
+
+namespace
+{
+    bool OutputHas(const GameConsole& InConsole, const std::string& InLine)
+    {
+        for(const std::string& Each : InConsole.GetOutput())
+        {
+            if(Each == InLine) return true;
+        }
+        return false;
+    }
+
+    void TestConsole()
+    {
+        std::printf("[console]\n");
+        InputHost              Host;
+        GameCore::ScriptEngine Scripts;
+        RenderCore::Renderer   Rendering;
+        Scripts.Initialize();
+        auto* Session = new GameSession(Host, Scripts, Rendering);
+        TestLevel Level;
+        Expect(Session->LoadLevel(Level), "the level loads");
+
+        GameCore::Entity Player = Session->GetWorld().CreateEntity("Typist");
+        InputComponent Controls;
+        std::snprintf(Controls.Map, sizeof(Controls.Map), "%s", "UITest");
+        Player.AddComponent(Controls);
+
+        uint64_t FrameNumber = 1;
+        const auto Frame = [&](const auto& InInput)
+        {
+            Host.Input.BeginFrame(FrameNumber);
+            InInput(Host.Input);
+            FrameContext Context;
+            Context.DeltaSeconds   = 0.016;
+            Context.FrameNumber    = FrameNumber++;
+            Context.ViewportPixels = EngineCore::Size(1920, 1080);
+            Session->Tick(Context);
+        };
+        const auto Nothing = [](InputState&) {};
+        const InputKey Grave = FindInputKey("Grave"), Return = FindInputKey("Return"), Space = FindInputKey("Space"),
+                       Escape = FindInputKey("Escape"), Backspace = FindInputKey("Backspace"), Up = FindInputKey("Up"),
+                       Tab = FindInputKey("Tab"), Left = FindInputKey("Left");
+        GameConsole& Console = Session->GetConsole();
+
+        Expect(FindConsoleCommand("consoletest") && FindConsoleCommand("help") && FindConsoleCommand("open"),
+               "the macro registers commands, the engine's among them");
+        const std::vector<std::string> Words = SplitConsoleLine("set  \"two words\" \"\" x");
+        Expect(Words.size() == 4 && Words[1] == "two words" && Words[2].empty(), "a line splits on spaces; quotes group");
+
+        Frame([&](InputState& In) { In.Press(Grave); });
+        Expect(Console.IsOpen(), "the tilde key opens it");
+        Expect(Host.bTextInput, "with the window's text input on");
+        Expect(Session->GetUI().IsOpen("Engine/Console"), "and its overlay drawn");
+        Expect(!Session->GetInput().WasPressed(Grave), "the game does not see the toggle");
+
+        /* Typing: the game sees none of it. */
+        const InputComponent* Seen = Player.GetComponent<InputComponent>();
+        Frame([&](InputState& In) { In.Release(Grave); In.AppendText("consoletest a \"b c\""); In.Press(Space); });
+        Frame(Nothing);   // the World resolves last frame's
+        Expect(Console.GetInputLine() == "consoletest a \"b c\"", "typed text goes into the line");
+        Expect(Seen && !Seen->IsDown("Jump"), "keys pressed while it is open are not the game's");
+        Frame([&](InputState& In) { In.Release(Space); In.Press(Return); });
+        Expect(GConsoleTestRuns == 1 && GConsoleTestArgs.size() == 2 && GConsoleTestArgs[1] == "b c",
+               "Return runs a registered command with its words");
+        Expect(OutputHas(Console, "> consoletest a \"b c\"") && OutputHas(Console, "consoletest ran"),
+               "the line is echoed, then what the command printed");
+        Expect(Console.GetInputLine().empty(), "and the line empties");
+        Frame([&](InputState& In) { In.Release(Return); });
+
+        /* Editing. */
+        Frame([&](InputState& In) { In.AppendText("abcd"); });
+        Frame([&](InputState& In) { In.Press(Backspace); In.Repeat(Backspace); });
+        Expect(Console.GetInputLine() == "ab", "Backspace, and its repeat, delete");
+        Frame([&](InputState& In) { In.Release(Backspace); In.Press(Left); });
+        Frame([&](InputState& In) { In.Release(Left); In.AppendText("X"); });
+        Expect(Console.GetInputLine() == "aXb", "text goes in at the cursor");
+        const UI::UIValue* Prompt = Session->GetUI().GetValue("Console.Prompt");
+        Expect(Prompt && Prompt->AsString() == "> aX|b", "the prompt shows the line and the cursor");
+
+        Frame([&](InputState& In) { In.Press(Up); });
+        Expect(Console.GetInputLine() == "consoletest a \"b c\"", "Up recalls the last line");
+        Frame([&](InputState& In) { In.Release(Up); });
+
+        /* Completion. */
+        for(int Each = 0; Each < 32; ++Each) { Frame([&](InputState& In) { In.Press(Backspace); }); Frame([&](InputState& In) { In.Release(Backspace); }); }
+        Frame([&](InputState& In) { In.AppendText("consolet"); });
+        Frame([&](InputState& In) { In.Press(Tab); });
+        Expect(Console.GetInputLine() == "consoletest", "Tab completes as far as the choices agree");
+        Expect(OutputHas(Console, "consoletest  ConsoleTest.Value"), "and lists them, commands first");
+        Frame([&](InputState& In) { In.Release(Tab); In.AppendText(" "); });
+        Expect(Console.GetInputLine() == "consoletest ", "typed on after it");
+
+        /* Config vars, and what nothing handles. */
+        Expect(Console.Execute("ConsoleTest.Value 7") && GConsoleTestValue.GetInt() == 7, "a line that is no command sets a config var");
+        Expect(!Console.Execute("nosuchthing"), "a line nothing handles is refused");
+        Expect(!Console.GetOutput().empty() && Console.GetOutput().back().find("Unknown command") != std::string::npos,
+               "and says why");
+
+        /* The log. */
+        CORE_LOG("console test: from the log")
+        Frame(Nothing);
+        Expect(OutputHas(Console, "console test: from the log"), "the log shows in it");
+
+        /* Escape closes it, and is not the game's or the UI's. */
+        Frame([&](InputState& In) { In.Press(Escape); });
+        Expect(!Console.IsOpen() && !Host.bTextInput, "Escape closes it and turns text input off");
+        Expect(!Session->GetUI().IsOpen("Engine/Console"), "its overlay goes");
+        Expect(!Session->GetInput().WasPressed(Escape), "the Escape is not the game's");
+        Frame([&](InputState& In) { In.Release(Escape); });
+
+        /* Closed, the keyboard is the game's again. */
+        Frame([&](InputState& In) { In.Press(Space); });
+        Frame(Nothing);
+        Expect(Seen && Seen->IsDown("Jump"), "closed, keys reach the game");
+        Frame([&](InputState& In) { In.Release(Space); });
+
+        /* The level swap keeps it open. */
+        Frame([&](InputState& In) { In.Press(Grave); });
+        Session->UnloadLevel();
+        Expect(Console.IsOpen() && Session->GetUI().IsOpen("Engine/Console"), "a level change does not close it");
+
+        delete Session;
+        Expect(!Host.bTextInput, "the session going turns text input off");
+        Scripts.Shutdown();
+        GConsoleTestValue.ResetToDefault();
+    }
+}
+
 int main()
 {
     std::printf("NimbleEngineGameFrameworkTests\n");
@@ -540,6 +687,7 @@ int main()
     TestSave();
     TestLevelByWorldFile();
     TestSessionUI();
+    TestConsole();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

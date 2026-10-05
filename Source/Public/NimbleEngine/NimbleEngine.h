@@ -86,6 +86,7 @@ namespace NimbleEngine
         const InputState& GetInput() const override;
         void SetMouseCaptured(bool bInCaptured) override;
         bool IsMouseCaptured() const override;
+        void SetTextInputActive(bool bInActive) override;
 
     private:
         bool Initialize();

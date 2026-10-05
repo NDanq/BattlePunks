@@ -130,6 +130,7 @@ void PlaySession::Stop()
     /* The viewport's window outlives the run; it must not call into this one. */
     bHostMouseCaptured = false;
     Input.Detach();
+    Input.SetTextInputActive(false);   // the next run's console starts closed
     Input.GetPending() = NimbleEngine::InputState();
     Input.Latch(0);
 

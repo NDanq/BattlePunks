@@ -31,6 +31,7 @@ namespace UI
 
 namespace NimbleEngine
 {
+    class GameConsole;
     class GameSession;
     class GameState;
     class ILevel;
@@ -77,6 +78,10 @@ namespace NimbleEngine
          * without a window ignores it. */
         virtual void SetMouseCaptured(bool /*bInCaptured*/) {}
         virtual bool IsMouseCaptured() const { return false; }
+
+        /* Typed text into InputState::GetText (InputRouter::SetTextInputActive),
+         * for the console. Off by default; a host without a window ignores it. */
+        virtual void SetTextInputActive(bool /*bInActive*/) {}
     };
 
     /*
@@ -250,6 +255,10 @@ namespace NimbleEngine
         void SetPaused(bool bInPaused);
         bool IsPaused() const { return bPaused; }
 
+        /* The in-game console (GameConsole.h, CONSOLE.md): the toggle key
+         * opens it, and while open it takes the input before the UI does. */
+        GameConsole& GetConsole() { return *Console; }
+
     private:
         /* Friends, not a public setter: only SaveGame.cpp may arm a restore. */
         friend NE_API bool SaveGameToFile(GameSession& InSession, const std::string& InPath);
@@ -306,6 +315,9 @@ namespace NimbleEngine
 
         /* The UI, and what it left of the host's input this frame. */
         UI::UISystem* Interface = nullptr;
+
+        /* Made after Interface, destroyed before it: it draws a document. */
+        GameConsole*  Console = nullptr;
         InputState    FilteredInput;
         std::string   PublishedPhase;
 

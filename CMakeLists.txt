@@ -356,6 +356,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/GameSession.cpp
         Source/Private/NimbleEngine/GameFramework.cpp
         Source/Private/NimbleEngine/GameUI.cpp
+        Source/Private/NimbleEngine/GameConsole.cpp
         Source/Private/NimbleEngine/PlayerState.cpp
         Source/Private/NimbleEngine/GameModule.cpp
         Source/Private/NimbleEngine/Level.cpp
@@ -368,6 +369,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/GameSession.h
+        Source/Public/NimbleEngine/GameConsole.h
         Source/Public/NimbleEngine/GameModule.h
         Source/Public/NimbleEngine/NimbleEngineAPI.h
         Source/Public/NimbleEngine/Level.h
