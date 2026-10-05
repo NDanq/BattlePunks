@@ -219,6 +219,10 @@ namespace EngineCore
         bool SetFromString(const std::string& InText, bool* OutbChanged = nullptr);
 
         std::string ToString() const;             // "true" / "60" / "1.5" / the text
+
+        /* Whether InText parses (as SetFromString would) to the value it holds
+         * now: "1.0" and "1" match a float var at 1. False if it does not parse. */
+        bool HoldsText(const std::string& InText) const;
         std::string DefaultToString() const;      // the compiled default, in the same form
         std::string GetQualifiedName() const;      // "Section.Name", or "Name" if sectionless
 
@@ -264,6 +268,13 @@ namespace EngineCore
 
     // === Load ================================================================
 
+    /*
+     * Where a file's values come from. The project's .ini (DefaultEngine.ini)
+     * is the baseline a player's settings are measured against; a User file
+     * holds only what they changed (ConfigSaveUserFile).
+     */
+    enum class EConfigLayer : uint8_t { Project, User };
+
     struct ConfigLoadStats
     {
         int LinesRead      = 0;
@@ -278,11 +289,33 @@ namespace EngineCore
      * appFileReadAll. Never <fstream>. Returns false with a WARNING, not an
      * error, when the file cannot be read -- a missing user override file is
      * the normal case on a first run. */
-    CORE_API bool LoadConfigFile(const std::string& InPath, ConfigLoadStats* OutStats = nullptr);
+    CORE_API bool LoadConfigFile(const std::string& InPath, ConfigLoadStats* OutStats = nullptr,
+                                 EConfigLayer InLayer = EConfigLayer::Project);
 
     /* The whole parser with the file read factored out -- what the smoke test
      * drives, for full grammar coverage at no scratch-file cost. */
-    CORE_API bool LoadConfigText(const std::string& InText, ConfigLoadStats* OutStats = nullptr);
+    CORE_API bool LoadConfigText(const std::string& InText, ConfigLoadStats* OutStats = nullptr,
+                                 EConfigLayer InLayer = EConfigLayer::Project);
+
+    // === User settings =======================================================
+    /*
+     * A game's settings menu changes config vars; ConfigSaveUserFile keeps
+     * them. The host names the file once (the launcher: <AppData>/NimbleEngine/
+     * <Game>/User.ini, loaded as EConfigLayer::User after DefaultEngine.ini);
+     * an empty path -- the editor's -- means there is nowhere to save.
+     *
+     * The file gets one line per var whose value differs from its baseline:
+     * the project file's value for it, else its compiled default. A var put
+     * back to the baseline drops out. Lines a User file set for vars not
+     * declared in this process (a module not loaded) are kept. Written to a
+     * temporary file and renamed over the old one.
+     */
+    CORE_API void               ConfigSetUserFile(const std::string& InPath);
+    CORE_API const std::string& ConfigGetUserFile();
+    CORE_API bool               ConfigSaveUserFile(std::string* OutError = nullptr);
+
+    /* The text ConfigSaveUserFile would write now. */
+    CORE_API std::string        ConfigBuildUserText();
 
     /* Fires every registered var's callback unconditionally, changed or not.
      * NOT part of the load path -- see WHY CALLBACKS FIRE INLINE in

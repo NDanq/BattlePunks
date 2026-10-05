@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <vector>
 
 #include "Public/Core/CoreFileProvider.h"
@@ -34,7 +35,13 @@ namespace
         std::string Key;
         std::string Value;
         bool        bClaimed = false;
+        std::string ProjectValue;          // the Project layer's, if bHasProject
+        bool        bHasProject = false;
+        bool        bFromUser   = false;   // a User file set it
     };
+
+    /* ConfigSetUserFile's; leaked as GConfigEntries is. */
+    std::string* GUserFile = nullptr;
 
     /*
      * Leaked ON PURPOSE. A module DLL's ConfigVar destructors run at unload,
@@ -136,24 +143,45 @@ namespace
 
     // --- retained entry store -----------------------------------------------
 
-    void RecordConfigEntry(const std::string& InSection, const std::string& InKey, const std::string& InValue)
+    void RecordConfigEntry(const std::string& InSection, const std::string& InKey, const std::string& InValue,
+                           const EConfigLayer InLayer)
     {
         if(!GConfigEntries)
         {
             GConfigEntries = new std::vector<ConfigEntry>();
         }
 
+        ConfigEntry* Found = nullptr;
         for(ConfigEntry& Entry : *GConfigEntries)
         {
-            if(EqualsIgnoreCase(Entry.Section, InSection) && EqualsIgnoreCase(Entry.Key, InKey))
-            {
-                Entry.Value    = InValue;
-                Entry.bClaimed = false;   // a fresh value re-opens the claim question
-                return;
-            }
+            if(EqualsIgnoreCase(Entry.Section, InSection) && EqualsIgnoreCase(Entry.Key, InKey)) { Found = &Entry; break; }
         }
+        if(!Found)
+        {
+            GConfigEntries->push_back(ConfigEntry{ InSection, InKey, InValue, false });
+            Found = &GConfigEntries->back();
+        }
+        Found->Value    = InValue;
+        Found->bClaimed = false;   // a fresh value re-opens the claim question
+        if(InLayer == EConfigLayer::Project)
+        {
+            Found->ProjectValue = InValue;
+            Found->bHasProject  = true;
+        }
+        else
+        {
+            Found->bFromUser = true;
+        }
+    }
 
-        GConfigEntries->push_back(ConfigEntry{ InSection, InKey, InValue, false });
+    const ConfigEntry* FindConfigEntry(const std::string& InSection, const std::string& InKey)
+    {
+        if(!GConfigEntries) return nullptr;
+        for(const ConfigEntry& Entry : *GConfigEntries)
+        {
+            if(EqualsIgnoreCase(Entry.Section, InSection) && EqualsIgnoreCase(Entry.Key, InKey)) return &Entry;
+        }
+        return nullptr;
     }
 
     void ClaimConfigEntry(const std::string& InSection, const std::string& InKey)
@@ -395,6 +423,18 @@ std::string ConfigVar::ToString() const
     return ConfigValueToString(Type, Value);
 }
 
+bool ConfigVar::HoldsText(const std::string& InText) const
+{
+    switch(Type)
+    {
+        case EConfigType::CT_Bool:   { bool B = false;    return ParseBool(InText, B) && B == Value.AsBool; }
+        case EConfigType::CT_Int:    { int32_t I = 0;     return ParseInt(InText, I) && I == Value.AsInt; }
+        case EConfigType::CT_Float:  { float F = 0.0f;    return ParseFloat(InText, F) && F == Value.AsFloat; }
+        case EConfigType::CT_String: return InText == Value.AsString;
+    }
+    return false;
+}
+
 std::string ConfigVar::DefaultToString() const
 {
     return ConfigValueToString(Type, Default);
@@ -521,12 +561,24 @@ ConfigVar* ConfigFindVarByPath(const std::string& InQualifiedName, bool* OutbAmb
 // Load
 // ============================================================================
 
-bool LoadConfigFile(const std::string& InPath, ConfigLoadStats* OutStats)
+bool LoadConfigFile(const std::string& InPath, ConfigLoadStats* OutStats, const EConfigLayer InLayer)
 {
     std::string Text;
 
     IFileProvider* Provider = GetFileProvider();
-    if(Provider)
+    if(InLayer == EConfigLayer::User)
+    {
+        /* A per-user path, outside any asset tree: the disk, and no warning
+         * when it is absent -- a first run has none. */
+        std::vector<uint8_t> Bytes;
+        if(!appFileExists(InPath) || !appFileReadAll(InPath, Bytes))
+        {
+            CORE_LOG("CoreConfig: no user settings at '" + InPath + "' yet")
+            return false;
+        }
+        Text.assign(reinterpret_cast<const char*>(Bytes.data()), Bytes.size());
+    }
+    else if(Provider)
     {
         if(!Provider->ReadAllText(InPath, Text))
         {
@@ -545,10 +597,10 @@ bool LoadConfigFile(const std::string& InPath, ConfigLoadStats* OutStats)
         Text.assign(reinterpret_cast<const char*>(Bytes.data()), Bytes.size());
     }
 
-    return LoadConfigText(Text, OutStats);
+    return LoadConfigText(Text, OutStats, InLayer);
 }
 
-bool LoadConfigText(const std::string& InText, ConfigLoadStats* OutStats)
+bool LoadConfigText(const std::string& InText, ConfigLoadStats* OutStats, const EConfigLayer InLayer)
 {
     ConfigLoadStats Stats;
     std::string     CurrentSection;
@@ -606,7 +658,7 @@ bool LoadConfigText(const std::string& InText, ConfigLoadStats* OutStats)
         // Recorded BEFORE the registry walk, so a var that does not exist yet
         // (or ever) still leaves a trail for ConfigVar's constructor and for
         // ConfigWarnUnclaimedEntries to find.
-        RecordConfigEntry(CurrentSection, Key, Value);
+        RecordConfigEntry(CurrentSection, Key, Value, InLayer);
 
         bool bAnyMatch = false;
         for(ConfigVar* V = GConfigHead; V; V = V->GetNext())
@@ -649,6 +701,89 @@ bool LoadConfigText(const std::string& InText, ConfigLoadStats* OutStats)
 
     if(OutStats) *OutStats = Stats;
     return Stats.MalformedLines == 0 && Stats.BadValues == 0;
+}
+
+// ============================================================================
+// User settings
+// ============================================================================
+
+void ConfigSetUserFile(const std::string& InPath)
+{
+    if(!GUserFile) GUserFile = new std::string();
+    *GUserFile = InPath;
+}
+
+const std::string& ConfigGetUserFile()
+{
+    static const std::string None;
+    return GUserFile ? *GUserFile : None;
+}
+
+std::string ConfigBuildUserText()
+{
+    /* Section -> "Key=Value" lines, both sorted (case-folded): a stable file. */
+    const auto Fold = [](std::string InText)
+    {
+        for(char& Each : InText) Each = char(std::tolower(static_cast<unsigned char>(Each)));
+        return InText;
+    };
+    std::map<std::string, std::pair<std::string, std::map<std::string, std::string>>> Sections;
+    const auto Add = [&](const std::string& InSection, const std::string& InKey, const std::string& InValue)
+    {
+        auto& Section = Sections[Fold(InSection)];
+        Section.first = InSection;
+        Section.second[Fold(InKey)] = InKey + "=" + InValue;
+    };
+
+    for(ConfigVar* V = GConfigHead; V; V = V->GetNext())
+    {
+        const ConfigEntry* Entry = FindConfigEntry(V->GetSection(), V->GetName());
+        const std::string Baseline = Entry && Entry->bHasProject ? Entry->ProjectValue : V->DefaultToString();
+        if(!V->HoldsText(Baseline)) Add(V->GetSection(), V->GetName(), V->ToString());
+    }
+    if(GConfigEntries)
+    {
+        /* A User line no var here has claimed: a module not loaded keeps its settings. */
+        for(const ConfigEntry& Entry : *GConfigEntries)
+        {
+            if(Entry.bFromUser && !ConfigFindVar(Entry.Section.c_str(), Entry.Key.c_str())) Add(Entry.Section, Entry.Key, Entry.Value);
+        }
+    }
+
+    std::string Text = "; The player's settings: only what differs from the game's own (Config/DefaultEngine.ini).\n"
+                       "; Written by the game (ConfigSaveUserFile); delete it to go back to the defaults.\n";
+    for(const auto& Section : Sections)
+    {
+        Text += "\n[" + Section.second.first + "]\n";
+        for(const auto& Line : Section.second.second) Text += Line.second + "\n";
+    }
+    return Text;
+}
+
+bool ConfigSaveUserFile(std::string* OutError)
+{
+    const std::string& Path = ConfigGetUserFile();
+    const auto Fail = [OutError](const std::string& InWhy)
+    {
+        if(OutError) *OutError = InWhy;
+        CORE_LOG_WARN("CoreConfig: settings not saved: " + InWhy)
+        return false;
+    };
+    if(Path.empty()) return Fail("no user settings file (an editor session has none)");
+
+    const std::string Text = ConfigBuildUserText();
+    const std::string Temp = Path + ".tmp";
+    FileHandle File = appFileOpenWrite(Temp);
+    if(!File) return Fail("could not write '" + Temp + "'");
+    const bool bWritten = appFileWrite(File, Text.data(), Text.size()) == Text.size();
+    appFileClose(File);
+    if(!bWritten) return Fail("could not write '" + Temp + "'");
+
+    /* Over the old one; Windows' rename will not replace, so the old goes first. */
+    if(appFileExists(Path)) appFileDelete(Path);
+    if(std::rename(Temp.c_str(), Path.c_str()) != 0) return Fail("could not replace '" + Path + "'");
+    CORE_LOG("CoreConfig: settings saved to '" + Path + "'")
+    return true;
 }
 
 void ConfigApplyAll()

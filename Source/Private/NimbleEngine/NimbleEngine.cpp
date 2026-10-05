@@ -11,6 +11,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
+#include "Public/Core/CorePlatform.h"
 #include "Public/Core/CoreGarbageCollector.h"
 #include "Public/NimbleEngine/InputRouter.h"
 #include "Public/Core/CoreMemory.h"
@@ -46,6 +47,10 @@ NIMBLE_CONFIG_INT(GRenderPlatform, "Display", "RHI", int(RenderCore::ERenderBack
 /* 0 runs until the window closes. Non-zero is the only way to get a
  * deterministic run out of something whose exit condition is an OS event. */
 NIMBLE_CONFIG_INT(GMaxFrames, "Application", "MaxFrames", 0, nullptr);
+
+/* The folder of a player's settings under <AppData>/NimbleEngine/; empty: the
+ * game module's name. Two games sharing a module name would share settings. */
+NIMBLE_CONFIG_STRING(GUserDataName, "Application", "UserDataName", "", nullptr);
 
 /* 0 runs unlimited; SetFrameRateLimit is the runtime half. */
 NIMBLE_CONFIG_INT(GFrameRateLimit, "Display", "FrameRateLimit", 60, nullptr);
@@ -228,6 +233,7 @@ namespace NimbleEngine
         {
             CORE_LOG_WARN("No Config/DefaultEngine.ini Found")
         }
+        LoadUserSettings();
 
         WindowDesc Desc;
         Desc.Width = GResolutionX.GetInt();
@@ -413,6 +419,30 @@ namespace NimbleEngine
         return !bQuitRequested && !Session->IsQuitRequested();
     }
 
+    void Application::LoadUserSettings()
+    {
+        std::string Name = GUserDataName.GetString();
+        if(Name.empty())
+        {
+            const ConfigVar* Module = ConfigFindVarByPath("Game.Module");
+            Name = Module && Module->GetString()[0] ? Module->GetString() : GameModuleName;
+        }
+        const std::string Root = Name.empty() ? std::string() : appGetAppDataDir("NimbleEngine");
+        if(Root.empty())
+        {
+            CORE_LOG_WARN("No user settings folder: a player's settings will not be kept")
+            return;
+        }
+        const std::string Folder = Root + "/" + Name;
+        appCreateDirectories(Folder);
+        const std::string Path = Folder + "/User.ini";
+        if(LoadConfigFile(Path, nullptr, EConfigLayer::User))
+        {
+            CORE_LOG("User settings from " + Path)
+        }
+        ConfigSetUserFile(Path);
+    }
+
     void Application::ExecGame(const char* InDefaultModule)
     {
         Run(nullptr, InDefaultModule ? InDefaultModule : "");
@@ -432,6 +462,7 @@ namespace NimbleEngine
         /* Outlives the level, whose code it holds. After SetCollectorThread:
          * it allocates. */
         GameModuleHost Game;
+        GameModuleName = InGameModule ? InGameModule : "";
 
         if(Initialize())
         {
