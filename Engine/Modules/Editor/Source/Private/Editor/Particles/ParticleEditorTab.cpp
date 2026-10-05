@@ -213,7 +213,11 @@ void ParticleEditorTab::BuildDocks()
     DetailsDock->setWidget(Details);
     addDockWidget(Qt::RightDockWidgetArea, DetailsDock);
 
-    resizeDocks({ ListDock, DetailsDock }, { 200, 500 }, Qt::Horizontal);
+    /* Once shown: a dock size set before is ignored. Wide enough that a section's Reset and x show. */
+    QTimer::singleShot(0, this, [this, ListDock, DetailsDock]()
+    {
+        resizeDocks({ ListDock, DetailsDock }, { 200, std::max(DetailsDock->widget()->minimumSizeHint().width() + 24, 520) }, Qt::Horizontal);
+    });
 }
 
 void ParticleEditorTab::BuildToolBar()

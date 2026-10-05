@@ -3,6 +3,7 @@ NimbleParticleSystem 1
 Emitter Glow
     Enabled true
     Type Beam
+    Modules
     Mesh
     Material Content/Materials/ParticleStreak.material.nmgraph
     Offset 0,0,0
@@ -51,6 +52,7 @@ Emitter Glow
 Emitter Core
     Enabled true
     Type Beam
+    Modules
     Mesh
     Material Content/Materials/ParticleStreak.material.nmgraph
     Offset 0,0,0

@@ -4107,6 +4107,25 @@ static void TestParticleSystemAsset()
     Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter K\n    SizeKeys 0:1 0.1:1 0.2:1 0.3:1 0.4:1 0.5:1 0.6:1 0.7:1 0.8:1\n",
                                 System, Error), "and a ninth key");
 
+    /* Modules: named, or inferred from a file written before them; one left out is at rest. */
+    Expect(ParseParticleSystem("NimbleParticleSystem 1\nEmitter Old\n    Velocity 0,0,0\n    Drag 2\n    EmitterRadius 5\n"
+                               "Emitter New\n    Modules Rotation Forces\n    Drag 2\n    EmitterRadius 5\n", System, Error)
+           && System.Emitters[0].Modules == (PEM_Shape | PEM_Forces) && System.Emitters[1].Modules == (PEM_Rotation | PEM_Forces),
+           "an emitter with no Modules line has those its settings use; one with a line, those it names");
+    if(System.Emitters.size() == 2)
+    {
+        const ParticleEmitterSettings AtRest = System.Emitters[1].ToSettings();
+        Expect(AtRest.EmitterRadius == 0.0f && AtRest.Velocity[1] == 0.0f && AtRest.Drag == 2.0f,
+               "a module left out is at rest -- no shape, no velocity -- whatever its settings hold; one there runs");
+        const std::string ModuleText = WriteParticleSystem(System);
+        Expect(ModuleText.find("    Modules Shape Forces\n") != std::string::npos && ModuleText.find("    Modules Forces Rotation\n") != std::string::npos,
+               "modules are written by name, in a fixed order");
+    }
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter X\n    Modules Shape Gravity\n", System, Error), "an unknown module is refused");
+    Expect(ParticleEmitterDesc().Modules == PEM_Velocity, "a fresh emitter has Velocity, nothing else optional");
+    Expect(ParseParticleSystem("NimbleParticleSystem 1\nEmitter Ray\n    Type Beam\n    Velocity 0,100,0\n", System, Error)
+           && System.Emitters[0].Modules == 0, "a beam written before modules has none: it uses none");
+
     /* Start to End, as before keys: no fade is no fade; fades seed a gradient's keys. */
     ParticleEmitterDesc Plain;
     Plain.FadeIn  = 0.0f;

@@ -892,7 +892,11 @@ Elsewhere it draws nothing and says so once.
 
 - **The asset** (`ParticleSystemAsset.h`, `*.nmparticle`) is up to 8 emitters,
   each with its own mesh, material, offset and settings (spawn rate, lifetime,
-  velocity, forces, size and colour over life). It is text in every build --
+  velocity, forces, size and colour over life). Shape, Velocity, Forces and
+  Rotation are optional **modules** (`EParticleModule`, `Modules Shape Forces`
+  in the file): one left out is at rest whatever its settings hold -- a point,
+  no initial speed, no forces, no spin (`ToSettings`). A file written before
+  modules has those its settings use (`InferModules`; a beam, none). It is text in every build --
   a line per setting under each `Emitter <name>` line, unknown keys skipped --
   so a game reads it as staged, with no cook. The editor's Particle Editor makes
   and edits them (Editor README, "Particle Editor").

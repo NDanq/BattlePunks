@@ -3,6 +3,7 @@ NimbleParticleSystem 1
 Emitter Chunks
     Enabled true
     Type Mesh
+    Modules Shape Velocity Forces Rotation
     Mesh
     Material
     Offset 0,0,0
@@ -51,6 +52,7 @@ Emitter Chunks
 Emitter Dust
     Enabled true
     Type Sprite
+    Modules Shape Velocity Forces
     Mesh
     Material Content/Materials/FlareSmoke.material.nmgraph
     Offset 0,0,0

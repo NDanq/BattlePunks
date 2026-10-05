@@ -39,7 +39,9 @@
  * choices their names (Type Ribbon, Billboard VelocityAligned), keys a
  * list of time:value (SizeKeys 0:10 0.5:40 1:0, ColorKeys 0:255,200,80,255 1:40,0,0,0).
  * A setting left out keeps its default and an unknown key is skipped, so
- * an older engine reads a newer file. Written deterministically: every
+ * an older engine reads a newer file. "Modules Shape Forces" names its
+ * optional modules; an emitter with no Modules line has those its
+ * settings use (InferModules). Written deterministically: every
  * setting, in a fixed order, numbers in their shortest round-trip form.
  */
 namespace RenderCore
@@ -55,6 +57,26 @@ namespace RenderCore
 
     /* The most keys a colour gradient or size curve has. */
     constexpr uint32_t PARTICLE_CURVE_KEYS_MAX = 8;
+
+    /*
+     * An emitter's optional modules: what the Particle Editor adds and
+     * removes as the Details panel adds and removes components. One left out
+     * has no effect, whatever its settings hold: no Shape is a point, no
+     * Velocity no initial speed, no Forces no acceleration, drag or swirl, no
+     * Rotation no spin. Rendering, Emission, Size and Color (and a beam's
+     * Beam) are always there.
+     */
+    enum EParticleModule : uint8_t
+    {
+        PEM_Shape    = 1 << 0,   // Shape, its size, On Surface, Outward Speed
+        PEM_Velocity = 1 << 1,   // Velocity, Velocity Spread
+        PEM_Forces   = 1 << 2,   // Acceleration, Drag, Turbulence
+        PEM_Rotation = 1 << 3,   // Random Rotation, Rotation Rate (sprites and meshes)
+        PEM_All      = PEM_Shape | PEM_Velocity | PEM_Forces | PEM_Rotation,
+    };
+
+    /* A module's name, as the file and the editor give it ("Forces"); null for a bit that is not one. */
+    RENDERCORE_API const char* GetParticleModuleName(uint8_t InModule);
 
     /* A colour gradient's key: at Time (0 birth, 1 death), Color (alpha too). */
     struct ParticleColorKey
@@ -90,6 +112,7 @@ namespace RenderCore
         char                Name[PARTICLE_EMITTER_NAME_MAX] = "Emitter";
         uint8_t             bEnabled    = 1;                       // off: neither simulated nor drawn
         uint8_t             Type        = PT_Sprite;               // EParticleType
+        uint8_t             Modules     = PEM_Velocity;            // EParticleModule bits: which optional modules it has
         char                Mesh[RENDER_MESH_PATH_MAX]         = {};   // "": a Sprite's quad, a Mesh's box (GetMeshPath)
         char                Material[RENDER_MATERIAL_PATH_MAX] = {};   // "": DefaultLit
         EngineCore::Vector3 Offset{0.0, 0.0, 0.0};
@@ -151,9 +174,15 @@ namespace RenderCore
         ParticleColorKey    ColorKeys[PARTICLE_CURVE_KEYS_MAX] = {};
         int32_t             ColorKeyCount    = 0;
 
+        bool HasModule(const uint8_t InModule) const { return (Modules & InModule) != 0; }
+
+        /* The modules its settings use, from what differs from a fresh
+         * emitter's (none, for a beam): what a file written before modules had. */
+        RENDERCORE_API uint8_t InferModules() const;
+
         /* As RenderContext::SimulateParticles takes it: clamped to what the
-         * GPU can run, colours to 0-1. BeamEnd is left in the entity's axes:
-         * the component places it. */
+         * GPU can run, colours to 0-1, modules left out as if at rest.
+         * BeamEnd is left in the entity's axes: the component places it. */
         RENDERCORE_API ParticleEmitterSettings ToSettings() const;
 
         /* How many particles it holds once it has run a while: the spawn
