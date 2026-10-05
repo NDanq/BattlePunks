@@ -111,6 +111,7 @@ The launchers' command line is config overrides (`ParseLaunchArgs`,
 | `MaxClients` | 16 | |
 | `TimeoutMs` | 30000 | the most a peer may go unanswered (see Timeouts) |
 | `ServerTickRate` | 30 | a headless server's frame rate, and so its send rate |
+| `InterpolationDelayMs` | 100 | how far in the past a client shows remote Transforms; 0 shows them as they arrive |
 | `SpawnPlayerPerClient` | true | the host makes each client a player entity |
 
 ---
@@ -188,6 +189,27 @@ GAMECORE_RPC(ShipComponent, ServerFire)(Ship, Aim);
 - An RPC on an entity created this frame stays local until the entity has been
   sent, which happens at the end of the frame.
 
+### Smoothing and prediction
+
+**Smoothing.**
+- Each server flush begins with a `Frame` message carrying the server's
+  clock, so a client knows when each state was true.
+- A client keeps about a second of each networked Transform it receives.
+- It shows the Transform `InterpolationDelayMs` in the past, blended between
+  the samples on either side. If the server goes quiet, it holds the newest
+  sample rather than guessing ahead.
+- Nothing else is interpolated: other replicated fields are written as they
+  arrive.
+
+**Prediction.**
+- An entity with `NetComponent::bPredicted`, on the client that owns it, is
+  never interpolated. The server's Transform is written as it arrives.
+- After each poll, the handler set by
+  `NimbleEngine::SetNetCorrectionHandler` runs once for each such entity
+  whose state arrived. It gets the replicated `NetComponent::InputAck`, the
+  last input the server applied, so the game can replay the inputs after it.
+- NetFacade.h and GUIDE.md section 8 describe the game's side.
+
 ---
 
 ## Wire
@@ -249,8 +271,6 @@ The road from here:
   which is simple and correct but queues behind a lost packet.
 - **Relevancy and interest management.** Every client gets every networked
   entity.
-- **Interpolation and client-side prediction.** A remote entity moves at the
-  server's send rate.
 - **Level travel during a session.** Both ends must run the same start level.
 - **RPCs and replicated fields declared in Lua.** Lua can call any C++ RPC and
   query roles (the `Net` library, GUIDE.md), but cannot declare its own yet.
@@ -267,6 +287,7 @@ a client in one process over 127.0.0.1. It covers:
 - replicated and initial-only fields, and entity references
 - all three RPC targets, and the ownership check
 - a 6 s client stall
+- interpolation, and the prediction handler
 - a late joiner
 - destroys and disconnects
 - the editor link

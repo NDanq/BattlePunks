@@ -33,6 +33,9 @@ NIMBLE_CONFIG_INT(GNetTimeoutMs, "Net", "TimeoutMs", 30000, nullptr);
 NIMBLE_CONFIG_INT(GNetServerTickRate, "Net", "ServerTickRate", 30, nullptr);
 /* The host makes a player for each client that joins (IGameMode::OnClientConnected). */
 NIMBLE_CONFIG_BOOL(GNetSpawnPlayerPerClient, "Net", "SpawnPlayerPerClient", true, nullptr);
+/* A client shows other entities this far in the past, blended between the
+ * server's updates; 0 snaps to each (NetComponent.h). */
+NIMBLE_CONFIG_INT(GNetInterpolationDelayMs, "Net", "InterpolationDelayMs", 100, nullptr);
 #endif
 
 namespace NimbleEngine
@@ -49,6 +52,7 @@ namespace NimbleEngine
         Desc.MaxClients            = uint32_t(GNetMaxClients.GetInt() > 0 ? GNetMaxClients.GetInt() : 1);
         Desc.TimeoutMs             = uint32_t(GNetTimeoutMs.GetInt() > 0 ? GNetTimeoutMs.GetInt() : 30000);
         Desc.bSpawnPlayerPerClient = GNetSpawnPlayerPerClient.GetBool();
+        Desc.InterpolationDelayMs  = uint32_t(GNetInterpolationDelayMs.GetInt() > 0 ? GNetInterpolationDelayMs.GetInt() : 0);
 #endif
         return Desc;
     }
@@ -122,6 +126,14 @@ namespace NimbleEngine
             EmitClientEvent(Self.Session->GetWorld(), "ClientConnected", InClient, Player);
         }
 
+        /* The game's handler (NetFacade.h, SetNetCorrectionHandler), looked up at
+         * each call: a mode sets it after networking has started. */
+        static void OnCorrection(GameCore::World& InWorld, const GameCore::EntityID InEntity, const int32_t InAck, void*)
+        {
+            void* UserData = nullptr;
+            if(const NetCorrectionFn Handler = GetNetCorrectionHandler(UserData)) { Handler(InWorld, InEntity, InAck, UserData); }
+        }
+
         static void OnClientDisconnected(const GameCore::NetClientID InClient, void* InUserData)
         {
             Impl& Self = *static_cast<Impl*>(InUserData);
@@ -169,9 +181,11 @@ namespace NimbleEngine
         Config.Port       = InDesc.Port;
         Config.MaxClients = InDesc.MaxClients;
         Config.TimeoutMs  = InDesc.TimeoutMs;
+        Config.InterpolationDelayMs = InDesc.InterpolationDelayMs;
 
         P->Net = new NetCore::NetSession();
         P->Net->SetClientEvents(&Impl::OnClientConnected, &Impl::OnClientDisconnected, P);
+        P->Net->SetCorrectionHandler(&Impl::OnCorrection, P);
 
         /* Bound before starting, so a client's handshake names its level. */
         P->Rebind();

@@ -7,8 +7,8 @@
 -- RPC is a method of the component, routed by the network:
 --
 --   local pawn = World.FindEntity("Host"):GetComponent("NetArenaPawn")
---   pawn:ServerSetMove(1, 0, 0)                                -- steer right
---   Net.Call(pawn:GetEntity(), "NetArenaPawn", "ServerSetMove", 1, 0, 0)
+--   pawn:ServerMove(1, 1, 0, 0, 0.016)                          -- move 1: right, a frame
+--   Net.Call(pawn:GetEntity(), "NetArenaPawn", "ServerMove", 2, 1, 0, 0, 0.016)
 
 local Role = Net.IsDedicatedServer() and "a dedicated server"
           or Net.IsServer() and "a listen server"

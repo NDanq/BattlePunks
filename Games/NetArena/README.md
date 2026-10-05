@@ -56,6 +56,22 @@ in the editor's Add Component list and Details panel like the engine's. The
 editor keeps the game module loaded while editing, so they open and save
 with the world.
 
+### Smooth, and answering at once
+
+On a client, the other capsules and the Spinner are shown about 100 ms in
+the past, blended between the server's 30 updates a second
+(`[Net] InterpolationDelayMs`).
+
+Your own capsule is **predicted**. The prefab's Net component has
+**Predicted** on, so:
+- the client moves it the moment a key is down;
+- each frame's move goes to the server, numbered, in `ServerMove`;
+- the server runs the same `ApplyMove`;
+- when the server's position comes back, the client replays the moves the
+  server had not reached yet.
+
+GUIDE.md, section 8, explains the pattern.
+
 ## Editing
 
 1. Build the editor tree (`cmake --preset editor-debug`, then
@@ -103,10 +119,12 @@ or `NetArena -listen` and one `NetArena -connect=127.0.0.1:7777`.
 
 `-NetArena.AutoMove=1` (or `NetArena.AutoMove 1` in the console) steers this
 process's capsule round a square by itself. Every 5 seconds each process logs
-what it sees:
+what it sees. A client adds its prediction: how many server states it
+replayed its moves on, and the furthest one moved its capsule. 0u means
+client and server agree:
 
 ```
-[NetArena] red(you)=(-500,-400) blue=(83,-400) spinner=357deg
+[NetArena] red(you)=(-900,-408) blue=(832,-400) spinner=42deg predicted: 149 states, 1 pending, worst correction 0u
 ```
 
 Put `-NetArena.AutoMove=1` in **Editor Settings > Play > Client window

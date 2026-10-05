@@ -32,6 +32,11 @@ namespace NetCore
          * peer that stopped acknowledging -- before it is given up. Generous,
          * so a long frame (a client compiling its pipelines) is survived. */
         uint32_t TimeoutMs  = 30000;
+
+        /* A client shows other entities this far in the past, blending between
+         * the server's updates (NetComponent.h). About three of the server's
+         * sends: 100ms at a 30Hz server. 0 snaps to each update. */
+        uint32_t InterpolationDelayMs = 100;
     };
 }
 

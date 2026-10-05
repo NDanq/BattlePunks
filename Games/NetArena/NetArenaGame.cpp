@@ -25,6 +25,7 @@
 #include <cstdio>
 #include <optional>
 #include <string>
+#include <vector>
 
 /*
  * NetArenaGame: networking's test game. Capsules on a flat plane, one per
@@ -59,11 +60,19 @@
  *   - The server spawns the capsules: one for each client that joins
  *     (OnClientConnected), and one for a listen server's or standalone
  *     game's own user (OnStart).
- *   - Each process reads its own keyboard and sends where its capsule should
- *     go -- the Server RPC ServerSetMove, only when that changes. On the
- *     server the call simply runs.
- *   - The server moves every capsule (NetArena.MovePawns) and turns the
- *     Spinner (NetArena.Spin); Transform replication shows it to everyone.
+ *   - Each process reads its own keyboard and sends each frame's move, in
+ *     the numbered Server RPC ServerMove. On the server the call simply runs;
+ *     the server's Transform is the truth, replicated to everyone.
+ *   - The server turns the Spinner (NetArena.Spin).
+ *
+ * Smooth, and answering at once (NetFacade.h, "CLIENT-SIDE PREDICTION"): a
+ * client shows other capsules and the Spinner a moment behind, blended
+ * between the server's updates. Its own capsule is predicted -- Pawn.nmprefab
+ * marks its Net component Predicted -- so the client moves it the moment a
+ * key is down (ApplyMove, the same code the server runs), and when the
+ * server's state comes back replays the moves the server had not reached yet
+ * (OnCorrection). The 5-second report logs the worst correction: 0 when
+ * client and server agree.
  *
  * Run it as:
  *
@@ -73,7 +82,7 @@
  *               Play > Network mode = Listen Server; Play (F5); then
  *               Play > New Client Window (Shift+F6)
  *
- *   NetArenaPawnComponent     a capsule: its colour and the move it was asked for.
+ *   NetArenaPawnComponent     a capsule: its colour, and ServerMove.
  *   NetArenaSpawnComponent    a spawn point, authored in the level.
  *   NetArenaSpinnerComponent  turns its entity, on the server.
  *   NetArenaLevel             loads the world; registers the systems; owns the mode.
@@ -139,18 +148,13 @@ struct NetArenaPawnComponent
      * it spawns the capsule; both reach clients with it. */
     uint8_t ColorIndex = 0;
 
-    /* The server's: where its player last asked to go, each axis -1..1 in X
-     * (right) and Z (forward). Never sent to clients. */
-    EngineCore::Vector3 MoveInput;
-
-    /* A player's input, on the server. Clamped: a client says where to go,
-     * never how fast. */
-    void ServerSetMove(const EngineCore::Vector3& InDirection)
-    {
-        const double X = std::clamp(double(InDirection.GetX()), -1.0, 1.0);
-        const double Z = std::clamp(double(InDirection.GetZ()), -1.0, 1.0);
-        MoveInput = EngineCore::Vector3(X, 0.0, Z);
-    }
+    /* One frame of its player's input, numbered InSequence, on the server:
+     * the same ApplyMove the player's own process has already run
+     * (prediction), then acknowledged in NetComponent::InputAck so that
+     * process knows which of its moves this state includes. Old or repeated
+     * numbers are ignored; the input is clamped -- a client says where to go,
+     * never how far. */
+    void ServerMove(int32_t InSequence, const EngineCore::Vector3& InDirection, float InSeconds);
 };
 
 GAMECORE_DEFINE_COMPONENT(NetArenaPawnComponent, "NetArenaPawn")
@@ -163,7 +167,7 @@ GAMECORE_DEFINE_COMPONENT_SERIALIZER(NetArenaPawnComponent, 1)
 
 GAMECORE_DEFINE_COMPONENT_RPCS(NetArenaPawnComponent)
 {
-    Rpc.Server<&NetArenaPawnComponent::ServerSetMove>("ServerSetMove");
+    Rpc.Server<&NetArenaPawnComponent::ServerMove>("ServerMove");
 }
 
 #if WITH_EDITOR
@@ -225,35 +229,54 @@ GAMECORE_DEFINE_COMPONENT_PROPERTIES(NetArenaSpinnerComponent)
 }
 #endif
 
+// === Movement ================================================================
+
+namespace
+{
+    /* The longest frame a move may claim, so a client cannot cover more
+     * ground than the time it has had. */
+    constexpr float MaxMoveSeconds = 0.1f;
+
+    /*
+     * One frame of movement, InDirection (X right, Z forward, each -1..1) for
+     * InSeconds, kept on the plane. THE ONE MOVE: the server's RPC, the
+     * owner's prediction and its replay after a correction all call this, so
+     * they agree to the bit -- prediction only works if they do.
+     */
+    void ApplyMove(GameCore::TransformComponent& InOut, const EngineCore::Vector3& InDirection, const float InSeconds)
+    {
+        double X = std::clamp(double(InDirection.GetX()), -1.0, 1.0);
+        double Z = std::clamp(double(InDirection.GetZ()), -1.0, 1.0);
+        const double Length = std::sqrt(X * X + Z * Z);
+        if(Length < 0.01) { return; }
+        if(Length > 1.0) { X /= Length; Z /= Length; }   // diagonals no faster
+
+        const double Step = PawnSpeed * double(std::clamp(InSeconds, 0.0f, MaxMoveSeconds));
+        const double NewX = std::clamp(double(InOut.Position.GetX()) + X * Step, -ArenaHalfSize, ArenaHalfSize);
+        const double NewZ = std::clamp(double(InOut.Position.GetZ()) + Z * Step, -ArenaHalfSize, ArenaHalfSize);
+        InOut.Position = EngineCore::Vector3(NewX, InOut.Position.GetY(), NewZ);
+
+        /* Face where it is going. */
+        InOut.Rotation = EngineCore::Vector3(0.0, std::atan2(X, Z) * 57.29577951308232, 0.0);
+    }
+}
+
+void NetArenaPawnComponent::ServerMove(const int32_t InSequence, const EngineCore::Vector3& InDirection, const float InSeconds)
+{
+    GameCore::NetComponent* Net = Owner.GetSibling<GameCore::NetComponent>();
+    if(Net && InSequence <= Net->InputAck) { return; }   // already applied
+
+    if(GameCore::TransformComponent* Transform = Owner.GetSibling<GameCore::TransformComponent>())
+    {
+        ApplyMove(*Transform, InDirection, InSeconds);
+    }
+    if(Net) { Net->InputAck = InSequence; }
+}
+
 // === Systems (server only) ===================================================
 
 namespace
 {
-    /* PrePhysics: every capsule by what its player asked, kept on the plane. */
-    void MovePawnsSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* /*InUserData*/)
-    {
-        if(!NimbleEngine::HasAuthority()) { return; }
-
-        InWorld.Each<NetArenaPawnComponent>([&](GameCore::Entity InPawn, NetArenaPawnComponent& InState)
-        {
-            GameCore::TransformComponent* Transform = InPawn.GetComponent<GameCore::TransformComponent>();
-            if(!Transform) { return; }
-
-            EngineCore::Vector3 Direction = InState.MoveInput;
-            const double Length = std::sqrt(double(Direction.GetX()) * Direction.GetX() + double(Direction.GetZ()) * Direction.GetZ());
-            if(Length < 0.01) { return; }
-            if(Length > 1.0) { Direction = Direction * (1.0 / Length); }   // diagonals no faster
-
-            const double Step = PawnSpeed * double(InDeltaSeconds);
-            const double X = std::clamp(double(Transform->Position.GetX()) + double(Direction.GetX()) * Step, -ArenaHalfSize, ArenaHalfSize);
-            const double Z = std::clamp(double(Transform->Position.GetZ()) + double(Direction.GetZ()) * Step, -ArenaHalfSize, ArenaHalfSize);
-            Transform->Position = EngineCore::Vector3(X, Transform->Position.GetY(), Z);
-
-            /* Face where it is going. */
-            Transform->Rotation = EngineCore::Vector3(0.0, std::atan2(double(Direction.GetX()), double(Direction.GetZ())) * 57.29577951308232, 0.0);
-        });
-    }
-
     /* PrePhysics: every spinner turns. */
     void SpinSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* /*InUserData*/)
     {
@@ -321,6 +344,7 @@ public:
     bool OnLoad(NimbleEngine::GameSession& InSession) override
     {
         Session = &InSession;
+        NimbleEngine::SetNetCorrectionHandler(&OnCorrection, this);
         return true;
     }
 
@@ -359,7 +383,7 @@ public:
     {
         GameCore::World& World = Session->GetWorld();
         ElapsedSeconds += InFrame.DeltaSeconds;
-        SendInput(World);
+        SendInput(World, float(InFrame.DeltaSeconds));
 
         if(ElapsedSeconds - LastReport >= ReportInterval)
         {
@@ -370,13 +394,27 @@ public:
 
     void OnUnload() override
     {
+        NimbleEngine::SetNetCorrectionHandler(nullptr, nullptr);
         Session = nullptr;
     }
 
 private:
-    /* This process's keys to the capsule it owns -- only when they change,
-     * as the RPC is reliable and the server keeps the last one. */
-    void SendInput(GameCore::World& InWorld)
+    /* One move this client has made that the server has not acknowledged yet. */
+    struct PendingMove
+    {
+        int32_t             Sequence;
+        EngineCore::Vector3 Direction;
+        float               Seconds;
+    };
+
+    /*
+     * This process's keys to the capsule it owns, every frame they move it: a
+     * numbered ServerMove. A client whose capsule is predicted (the prefab's
+     * Net component says so) moves it at once with the same ApplyMove and
+     * keeps the move until the server acknowledges it (OnCorrection). On the
+     * server, or standalone, the RPC simply runs here.
+     */
+    void SendInput(GameCore::World& InWorld, const float InSeconds)
     {
         const NimbleEngine::InputComponent* Input = InWorld.GetEntity(Controller).GetComponent<NimbleEngine::InputComponent>();
         if(!Input) { return; }
@@ -390,20 +428,61 @@ private:
             Wanted = EngineCore::Vector3(Sides[Side][0], 0.0, Sides[Side][1]);
         }
 
+        if(InSeconds <= 0.0f || (Wanted.GetX() == 0.0f && Wanted.GetZ() == 0.0f)) { return; }
+
         InWorld.Each<NetArenaPawnComponent>([&](GameCore::Entity InPawn, NetArenaPawnComponent&)
         {
             const GameCore::NetComponent* Net = InPawn.GetComponent<GameCore::NetComponent>();
             if(!Net || !NimbleEngine::IsLocallyOwned(*Net)) { return; }
 
-            /* A capsule this process has not steered yet (a client's arrives
-             * after it joins) is told once, whatever the keys are. */
-            if(InPawn.GetID() == SteeredPawn && Wanted.GetX() == LastSent.GetX() && Wanted.GetZ() == LastSent.GetZ()) { return; }
-            if(GAMECORE_RPC(NetArenaPawnComponent, ServerSetMove)(InPawn, Wanted))
+            const int32_t Sequence = ++NextSequence;
+            const float   Seconds  = std::min(InSeconds, MaxMoveSeconds);
+            if(NimbleEngine::IsClient() && Net->bPredicted)
             {
-                SteeredPawn = InPawn.GetID();
-                LastSent    = Wanted;
+                if(GameCore::TransformComponent* Transform = InPawn.GetComponent<GameCore::TransformComponent>())
+                {
+                    ApplyMove(*Transform, Wanted, Seconds);
+                    Pending.push_back({ Sequence, Wanted, Seconds });
+                    if(Pending.size() > 256) { Pending.erase(Pending.begin()); }   // the server has stopped answering
+                    LastShown  = Transform->Position;
+                    bHaveShown = true;
+                }
             }
+            GAMECORE_RPC(NetArenaPawnComponent, ServerMove)(InPawn, Sequence, Wanted, Seconds);
         });
+    }
+
+    /*
+     * The server's state for this client's capsule arrived: its Transform is
+     * now the server's, as of move InInputAck. Forget the moves up to it and
+     * replay the rest -- the same code from the same place, so the capsule
+     * ends where it was shown unless the server disagreed. How far it jumped
+     * is the correction, reported.
+     */
+    static void OnCorrection(GameCore::World& InWorld, const GameCore::EntityID InEntity, const int32_t InInputAck,
+                             void* InUserData)
+    {
+        NetArenaGameMode& Self = *static_cast<NetArenaGameMode*>(InUserData);
+        GameCore::TransformComponent* Transform = InWorld.GetEntity(InEntity).GetComponent<GameCore::TransformComponent>();
+        if(!Transform) { return; }
+
+        Self.Pending.erase(std::remove_if(Self.Pending.begin(), Self.Pending.end(),
+                                          [&](const PendingMove& InMove) { return InMove.Sequence <= InInputAck; }),
+                           Self.Pending.end());
+        for(const PendingMove& Move : Self.Pending)
+        {
+            ApplyMove(*Transform, Move.Direction, Move.Seconds);
+        }
+
+        if(Self.bHaveShown)
+        {
+            const double DX = double(Transform->Position.GetX()) - double(Self.LastShown.GetX());
+            const double DZ = double(Transform->Position.GetZ()) - double(Self.LastShown.GetZ());
+            Self.MaxCorrection = std::max(Self.MaxCorrection, std::sqrt(DX * DX + DZ * DZ));
+        }
+        Self.LastShown  = Transform->Position;
+        Self.bHaveShown = true;
+        ++Self.Corrections;
     }
 
     /* Where each capsule is, and the spinner's angle, as this process sees
@@ -427,16 +506,29 @@ private:
                 Line += " spinner=" + Fixed0(Transform->Rotation.GetY()) + "deg";
             }
         });
+        if(Corrections > 0)
+        {
+            /* Prediction's evidence: how many server states replayed, and the
+             * furthest one moved the capsule from where it was shown. */
+            Line += " predicted: " + std::to_string(Corrections) + " states, " + std::to_string(Pending.size())
+                  + " pending, worst correction " + Fixed0(MaxCorrection) + "u";
+            Corrections   = 0;
+            MaxCorrection = 0.0;
+        }
         CORE_LOG(Line)
     }
 
     NimbleEngine::GameSession* Session = nullptr;
     GameCore::EntityID         Controller;
 
-    int                 NextColor = 0;
-    GameCore::EntityID  SteeredPawn;
-    EngineCore::Vector3 LastSent;
-    double              ElapsedSeconds = 0.0;
+    int                      NextColor    = 0;
+    int32_t                  NextSequence = 0;
+    std::vector<PendingMove> Pending;
+    EngineCore::Vector3      LastShown;
+    bool                     bHaveShown    = false;
+    int                      Corrections   = 0;
+    double                   MaxCorrection = 0.0;
+    double                   ElapsedSeconds = 0.0;
     double              LastReport     = 0.0;
 };
 
@@ -471,8 +563,7 @@ public:
             CORE_LOG_WARN("[NetArena] the level has no entity named Controller; nobody can steer")
         }
 
-        World.RegisterSystem("NetArena.MovePawns", GameCore::TP_PrePhysics, &MovePawnsSystem);
-        World.RegisterSystem("NetArena.Spin",      GameCore::TP_PrePhysics, &SpinSystem);
+        World.RegisterSystem("NetArena.Spin", GameCore::TP_PrePhysics, &SpinSystem);
 
         Mode.emplace(Controller);
         return true;

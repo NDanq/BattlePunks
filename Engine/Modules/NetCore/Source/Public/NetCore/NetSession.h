@@ -112,6 +112,19 @@ namespace NetCore
         using ClientEventFn = void (*)(GameCore::NetClientID InClient, void* InUserData);
         void SetClientEvents(ClientEventFn InConnected, ClientEventFn InDisconnected, void* InUserData);
 
+        /*
+         * A client's prediction hook. For each entity this client owns and
+         * has marked predicted (NetComponent::bPredicted), whose server state
+         * arrived in this PollIncoming: called once, after that state was
+         * written -- the Transform is the server's, as of the input
+         * NetComponent::InputAck says it had applied. The game replays its
+         * moves after that ack here. Every other networked Transform is
+         * interpolated instead (NetConfig::InterpolationDelayMs).
+         */
+        using CorrectionFn = void (*)(GameCore::World& InWorld, GameCore::EntityID InEntity, int32_t InInputAck,
+                                      void* InUserData);
+        void SetCorrectionHandler(CorrectionFn InFn, void* InUserData);
+
         /* The session that is started now, if any: what NetFacade reports. */
         static NetSession* GetActive();
 

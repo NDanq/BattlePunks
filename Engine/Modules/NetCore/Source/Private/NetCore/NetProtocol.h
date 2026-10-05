@@ -23,6 +23,8 @@
  *   State          S->C  i32 net id, u16 wire type, u32 field mask, then each
  *                        masked field's value in table order (NetReplication.h)
  *   Rpc            both  i32 net id, u16 wire type, u8 rpc index, u32 bytes, bytes
+ *   Frame          S->C  u32 server time in ms, first in each flush (and snapshot):
+ *                        the time the State after it is from, for interpolation
  *
  * Wire types index NetSchema's name-sorted list of the types that replicate
  * or have RPCs -- identical on both ends because the schema hash matched.
@@ -32,7 +34,7 @@
 
 namespace NetCore
 {
-    constexpr uint32_t NET_PROTOCOL_VERSION = 1;
+    constexpr uint32_t NET_PROTOCOL_VERSION = 2;
 
     enum class ENetMessage : uint8_t
     {
@@ -43,6 +45,7 @@ namespace NetCore
         Destroy,
         State,
         Rpc,
+        Frame,                // S->C  u32 server time (ms): what the State messages after it describe
 
         EditorHello = 64,     // u32 version, string user name
         EditorCommand,        // string user name, string command text (STUB)
