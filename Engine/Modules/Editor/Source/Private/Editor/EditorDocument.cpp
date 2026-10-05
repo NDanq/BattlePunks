@@ -1072,9 +1072,14 @@ bool EditorDocument::IsRecording() const
 
 void EditorDocument::Record(QUndoCommand* InCommand)
 {
+    const QUndoCommand* Previous = LatestRecorded;
     History->push(InCommand);   // merged or dropped (obsolete) inside, or appended
     LatestRecorded = History->index() > 0 ? History->command(History->index() - 1) : nullptr;
     emit HistoryChanged();
+    if(LatestRecorded && LatestRecorded != Previous)
+    {
+        emit CommandRecorded(LatestRecorded->text());
+    }
 }
 
 void EditorDocument::ResetHistory()

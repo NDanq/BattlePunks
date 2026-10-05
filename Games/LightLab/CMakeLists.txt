@@ -61,6 +61,8 @@ endif()
 nimble_add_hot_module(${GAME_MODULE}
         SOURCES      Source/Private/LightLab/LightLabGame.cpp
                      Source/Private/LightLab/LightLabInput.cpp
+                     Source/Private/LightLab/LightLabAvatar.cpp
+                     Source/Private/LightLab/LightLabAvatar.h
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 
@@ -71,6 +73,16 @@ set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 # starting there. A game that needs its own main() passes SOURCES <file>
 # (Engine/cmake/NimbleModule.cmake).
 nimble_add_game_launcher(${GAME_NAME} MODULE ${GAME_MODULE})
+
+# === The dedicated server ===================================================
+# ${GAME_NAME}Server: the same module and start level, headless, as the
+# session's authority (Engine/Source/Launcher/ServerLauncherMain.cpp). Skipped,
+# not failed, when the engine is configured without networking
+# (NIMBLE_WITH_NETCORE=OFF):
+#
+#     ${GAME_NAME}Server -port=7777
+#     ${GAME_NAME} -connect=127.0.0.1:7777
+nimble_add_server_launcher(${GAME_NAME}Server MODULE ${GAME_MODULE})
 
 # The editor loads this game at Play, and edits this project's master config.
 if(TARGET NimbleEditor)
@@ -149,23 +161,24 @@ file(GLOB_RECURSE GAME_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmlighting")
 game_stage(Content "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_CONTENT_FILES})
 
-# Content/Prefabs/: an Editor target stages the text prefabs it edits; a
-# Client or Server target cannot read text, so it stages the cooked ones from
+# Content/Prefabs/: every build but Shipping stages the text prefabs -- an
+# Editor edits them, a Client or Server cooks each the first time it loads it
+# (NIMBLE_UNCOOKED_CONTENT); Shipping stages the cooked ones from
 # Cooked/Content/Prefabs/ -- made in the editor with the console's `cook prefabs`.
 file(GLOB_RECURSE GAME_PREFAB_SCRIPTS CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.script.nmgraph")
 game_stage(PrefabScripts "${CMAKE_CURRENT_SOURCE_DIR}" ${GAME_PREFAB_SCRIPTS})
 
-if(NIMBLE_TARGET STREQUAL "Editor")
+if(NIMBLE_UNCOOKED_CONTENT)
     set(GAME_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
     set(GAME_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
 endif()
 file(GLOB_RECURSE GAME_PREFAB_FILES CONFIGURE_DEPENDS "${GAME_PREFAB_ROOT}/Content/Prefabs/*.nmprefab")
 file(GLOB_RECURSE GAME_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.nmprefab")
-if(NOT NIMBLE_TARGET STREQUAL "Editor" AND GAME_PREFAB_SOURCES AND NOT GAME_PREFAB_FILES)
-    message(WARNING "${GAME_NAME}: Content/Prefabs/ has prefabs but Cooked/Content/Prefabs/ has none; a ${NIMBLE_TARGET} "
+if(NOT NIMBLE_UNCOOKED_CONTENT AND GAME_PREFAB_SOURCES AND NOT GAME_PREFAB_FILES)
+    message(WARNING "${GAME_NAME}: Content/Prefabs/ has prefabs but Cooked/Content/Prefabs/ has none; a Shipping "
                     "build cannot read text prefabs. Cook them in the editor (console: cook prefabs).")
 endif()
 game_stage(Prefabs "${GAME_PREFAB_ROOT}" ${GAME_PREFAB_FILES})
@@ -205,11 +218,12 @@ else()
 endif()
 
 # Content/Levels/: worlds saved from the editor, which a level loads by path
-# (GameCore::LoadWorldFile("Content/Levels/LightLab.nmworld")). An Editor target
-# stages the text worlds -- the .nmworld and the folder of entity and instance
-# files beside it; a Client or Server target, the cooked ones from
+# (GameCore::LoadContentWorld("Content/Levels/LightLab.nmworld")). Every build but
+# Shipping stages the text worlds -- the .nmworld and the folder of entity and
+# instance files beside it -- which an Editor edits and a Client or Server
+# cooks the first time it loads one; Shipping, the cooked ones from
 # Content/Levels/Cooked/ (the editor's console: cook <world>).
-if(NIMBLE_TARGET STREQUAL "Editor")
+if(NIMBLE_UNCOOKED_CONTENT)
     file(GLOB_RECURSE GAME_LEVEL_FILES CONFIGURE_DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmworld"
             "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmentity"

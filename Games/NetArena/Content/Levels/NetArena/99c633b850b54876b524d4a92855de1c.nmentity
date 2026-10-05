@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="99c633b850b54876b524d4a92855de1c" Name="Spinner">
+  <Component Type="Net" Version="1">
+    <Replicate Value="true" />
+  </Component>
+  <Component Type="NetArenaSpinner" Version="1">
+    <DegreesPerSecond Value="45" />
+  </Component>
+  <Component Type="Render" Version="3">
+    <Visible Value="true" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="30" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="600" Y="60" Z="60" />
+  </Component>
+</Entity>

@@ -315,23 +315,24 @@ endif()
 # === Content/Prefabs/ ======================================================
 # Prefabs and the scripts beside them, staged at the same relative path beside
 # the executable ("Content/Prefabs/Door.nmprefab", as SpawnPrefab and a level
-# name them). Globbed, like Content/: the Prefab Editor makes these. An Editor
-# target stages the text prefabs it edits; a Client or Server target cannot
-# read text, so it stages the cooked ones from Cooked/Content/Prefabs/ -- made
-# in the editor with the console command `cook prefabs`.
+# name them). Globbed, like Content/: the Prefab Editor makes these. Every build
+# but Shipping stages the text prefabs -- an Editor edits them, a Client or
+# Server cooks each the first time it loads it (NIMBLE_UNCOOKED_CONTENT);
+# Shipping stages the cooked ones from Cooked/Content/Prefabs/ -- made in the
+# editor with the console command `cook prefabs`.
 file(GLOB_RECURSE SANDBOX_PREFAB_SCRIPTS CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.lua"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.script.nmgraph"
 )
-if(NIMBLE_TARGET STREQUAL "Editor")
+if(NIMBLE_UNCOOKED_CONTENT)
     set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
 else()
     set(SANDBOX_PREFAB_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/Cooked")
 endif()
 file(GLOB_RECURSE SANDBOX_PREFAB_ASSETS CONFIGURE_DEPENDS "${SANDBOX_PREFAB_ROOT}/Content/Prefabs/*.nmprefab")
 file(GLOB_RECURSE SANDBOX_PREFAB_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/Content/Prefabs/*.nmprefab")
-if(NOT NIMBLE_TARGET STREQUAL "Editor" AND SANDBOX_PREFAB_SOURCES AND NOT SANDBOX_PREFAB_ASSETS)
-    message(WARNING "Sandbox: Content/Prefabs/ has prefabs but Cooked/Content/Prefabs/ has none; a ${NIMBLE_TARGET} build cannot read "
+if(NOT NIMBLE_UNCOOKED_CONTENT AND SANDBOX_PREFAB_SOURCES AND NOT SANDBOX_PREFAB_ASSETS)
+    message(WARNING "Sandbox: Content/Prefabs/ has prefabs but Cooked/Content/Prefabs/ has none; a Shipping build cannot read "
                     "text prefabs. Cook them in the editor (console: cook prefabs).")
 endif()
 
@@ -435,12 +436,12 @@ endif()
 
 # === Content/Levels/ =======================================================
 # Level files, staged at the same relative path beside the executable
-# ("Content/Levels/BrickBreaker.nmworld", as a level loads it). An Editor target
-# stages the text worlds -- the .nmworld manifest and the per-entity and
-# per-instance files in the folder beside it; a Client or Server target cannot
-# read text, so it stages the cooked ones from Content/Levels/Cooked/ (the
-# editor's `cook` console command).
-if(NIMBLE_TARGET STREQUAL "Editor")
+# ("Content/Levels/BrickBreaker.nmworld", as a level loads it). Every build but
+# Shipping stages the text worlds -- the .nmworld manifest and the per-entity
+# and per-instance files in the folder beside it -- which an Editor edits and a
+# Client or Server cooks the first time it loads one; Shipping, the cooked ones
+# from Content/Levels/Cooked/ (the editor's `cook` console command).
+if(NIMBLE_UNCOOKED_CONTENT)
     file(GLOB_RECURSE SANDBOX_LEVEL_FILES CONFIGURE_DEPENDS
             "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmworld"
             "${CMAKE_CURRENT_SOURCE_DIR}/Content/Levels/*.nmentity"

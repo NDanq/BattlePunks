@@ -64,9 +64,15 @@
 #include "Private/Editor/SDLInputProbe.h"
 #include "Private/Editor/SettingsDialog.h"
 #include "Private/Editor/SourceBuild.h"
+#include "Private/Editor/PlayProcesses.h"
+#if WITH_NETCORE
+#include "Private/Editor/EditorNetSession.h"
+#endif
 
 /* Edit > Editor Settings > Build. */
 NIMBLE_CONFIG_BOOL(GEditorReloadAfterCompile, "Editor", "ReloadAfterCompile", true, nullptr);
+/* Compile Source also builds the game's launcher and dedicated server (Editor Settings > Build). */
+NIMBLE_CONFIG_BOOL(GEditorBuildGameExecutables, "Editor", "BuildGameExecutables", true, nullptr);
 
 /* The world the editor opens when none is named on its command line: a
  * project path ("Content/Levels/LightLab.nmworld"). Empty, or missing: the Sandbox
@@ -227,9 +233,11 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
         }
     });
 
-    /* Before anything builds the schemas, so the game's components and script
-     * libraries are nodes from the first graph opened. */
-    EditorGraphs::RefreshGameDeclarations(false);
+    /* The game module, kept loaded for editing (EditorContext::ReloadAuthoringGame),
+     * before any world opens -- its components open with it -- and before
+     * anything builds the schemas, so its components and script libraries are
+     * nodes from the first graph opened. */
+    EditorGraphs::RefreshGameDeclarations(Context.ReloadAuthoringGame());
 
     BuildMenus();
     BuildPlayControls();
@@ -255,6 +263,10 @@ EditorMainWindow::~EditorMainWindow()
     {
         InputProbe->Stop();
     }
+#if WITH_NETCORE
+    delete NetLink;
+    NetLink = nullptr;
+#endif
     EditorGraphs::SetEditorContext(nullptr);
     EditorPrefabs::SetEditorContext(nullptr);
     Context.Shutdown();
@@ -371,7 +383,7 @@ void EditorMainWindow::BuildMenus()
     QAction* Settings = Edit->addAction(QStringLiteral("Editor &Settings..."));
     Settings->setMenuRole(QAction::PreferencesRole);
     Settings->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Comma));
-    connect(Settings, &QAction::triggered, this, &EditorMainWindow::OpenSettings);
+    connect(Settings, &QAction::triggered, this, [this]() { OpenSettings(); });
 
     QAction* ProjectSettings = Edit->addAction(QStringLiteral("&Project Settings..."));
     ProjectSettings->setToolTip(QStringLiteral("The project's Config/DefaultEngine.ini: the game's and the engine's settings"));
@@ -532,6 +544,24 @@ void EditorMainWindow::BuildPlayControls()
         EjectAction->setChecked(bInEjected);
     });
 
+    PlayMenu->addSeparator();
+
+    /* A second (third, ...) player: the game's own window, joining the run. */
+    ClientWindowAction = PlayMenu->addAction(QStringLiteral("New &Client Window"));
+    ClientWindowAction->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F6));
+    ClientWindowAction->setToolTip(QStringLiteral("While a networked run plays (Editor Settings > Play), open the game in a "
+                                                  "window of its own as another client of it (Shift+F6)"));
+    ClientWindowAction->setEnabled(false);
+    connect(ClientWindowAction, &QAction::triggered, this, [this]()
+    {
+        statusBar()->showMessage(Context.LaunchPlayClientWindow() ? QStringLiteral("Client window started")
+                                                                  : QStringLiteral("No client window -- see the Console"), 5000);
+    });
+
+    QAction* PlaySettings = PlayMenu->addAction(QStringLiteral("Network &Settings..."));
+    PlaySettings->setToolTip(QStringLiteral("How Play runs: standalone, as a listen server, or as a client (Editor Settings > Play)"));
+    connect(PlaySettings, &QAction::triggered, this, [this]() { OpenSettings(QStringLiteral("Play")); });
+
     /* In front of the navigation buttons, where a run is started and ended. */
     QToolBar* Bar = ViewportArea->GetToolbar();
     QAction*  First = Bar->actions().isEmpty() ? nullptr : Bar->actions().front();
@@ -599,7 +629,9 @@ void EditorMainWindow::BuildBuildMenu()
                                             "(graphs already open keep theirs until reopened)"));
     connect(RefreshNodes, &QAction::triggered, this, [this]()
     {
-        const bool bRefreshed = EditorGraphs::RefreshGameDeclarations(Context.IsPlaying());
+        /* Not playing: the editor's own copy, reloaded, is what is read. */
+        const bool bLoaded    = Context.IsPlaying() || Context.ReloadAuthoringGame();
+        const bool bRefreshed = EditorGraphs::RefreshGameDeclarations(bLoaded);
         statusBar()->showMessage(bRefreshed ? QStringLiteral("Script nodes refreshed -- reopen open graphs to see changes")
                                             : QStringLiteral("Script nodes not refreshed -- see the Console"), 5000);
     });
@@ -623,7 +655,24 @@ void EditorMainWindow::CompileSource()
         return;
     }
 
-    if(!Compiler->Start(Module))
+    /* The module, then what runs it: the game's launcher, and with networking
+     * its dedicated server -- what Play's client windows and server run. Not
+     * while they are running: their executables are locked. */
+    QStringList Targets = { Module };
+    if(GEditorBuildGameExecutables.GetBool())
+    {
+        if(Context.IsPlayNetworked())
+        {
+            CORE_LOG_WARN("[Build] the game's client and server are running with Play; building " + std::string(Module.toUtf8().constData()) + " only")
+        }
+        else
+        {
+            Targets << GameExecutables::FindTargets(Module, QStringLiteral("client"))
+                    << GameExecutables::FindTargets(Module, QStringLiteral("server"));
+        }
+    }
+
+    if(!Compiler->Start(Targets))
     {
         statusBar()->showMessage(QStringLiteral("Compile failed -- see the Console"), 5000);
         return;
@@ -660,9 +709,9 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     }
     if(!Context.IsPlaying())
     {
-        CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play")
+        CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " reloaded for editing, and loaded at the next Play")
         statusBar()->showMessage(QStringLiteral("Compiled %1").arg(Module), 5000);
-        EditorGraphs::RefreshGameDeclarations(false);
+        EditorGraphs::RefreshGameDeclarations(Context.ReloadAuthoringGame());
         return;
     }
 
@@ -676,16 +725,18 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     EditorGraphs::RefreshGameDeclarations(Context.IsPlaying());
 }
 
-void EditorMainWindow::OpenSettings()
+void EditorMainWindow::OpenSettings(const QString& InPage)
 {
     /* One at a time: a second request raises the open one. */
     if(auto* Open = findChild<SettingsDialog*>())
     {
+        if(!InPage.isEmpty()) { Open->ShowPage(InPage); }
         Open->raise();
         Open->activateWindow();
         return;
     }
     auto* Dialog = new SettingsDialog(this);   // deletes itself on close
+    if(!InPage.isEmpty()) { Dialog->ShowPage(InPage); }
     Dialog->show();
 }
 
@@ -724,6 +775,7 @@ void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
     PlayAction->setEnabled(!bInPlaying);
     StopAction->setEnabled(bInPlaying);
     EjectAction->setEnabled(bInPlaying);
+    ClientWindowAction->setEnabled(bInPlaying && Context.IsPlayNetworked());
     for(QAction* Action : SceneActions)
     {
         Action->setEnabled(!bInPlaying);
@@ -737,7 +789,7 @@ void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
     if(!bInPlaying && bDeclarationsStale)
     {
         bDeclarationsStale = false;
-        EditorGraphs::RefreshGameDeclarations(false);
+        EditorGraphs::RefreshGameDeclarations(Context.IsAuthoringGameLoaded());
     }
 }
 
@@ -1487,6 +1539,19 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
         Console.Print(QStringLiteral("snap %1").arg(Viewport->IsGizmoSnapEnabled() ? QStringLiteral("on") : QStringLiteral("off")));
     });
+
+    Console.Register(QStringLiteral("play.client"), QString(),
+                     QStringLiteral("Open another client of the networked run in a window of its own (Play > New Client Window)"),
+                     [this](const QStringList&)
+    {
+        if(Context.LaunchPlayClientWindow()) { Console.Print(QStringLiteral("Client window started")); }
+        else                                 { Console.PrintError(QStringLiteral("No client window -- see above")); }
+    });
+
+#if WITH_NETCORE
+    /* net.host / net.join / net.leave / net.status. */
+    if(!NetLink) { NetLink = new EditorNetSession(Level, Console); }
+#endif
 }
 
 void EditorMainWindow::showEvent(QShowEvent* InEvent)

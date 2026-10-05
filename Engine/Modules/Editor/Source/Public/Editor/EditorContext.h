@@ -27,9 +27,10 @@ namespace RenderCore { class Renderer; }
 class EditorDocument;
 class EditorViewportClient;
 class PlaySession;
+class PlayProcesses;
 class QWidget;
 class ViewportSDLInput;
-namespace NimbleEngine { class InputState; }
+namespace NimbleEngine { class InputState; class GameModuleHost; }
 
 /*
  * The editor's app-wide state: the Renderer, asset previews and
@@ -153,6 +154,27 @@ public:
 
     bool IsPlaying() const { return Play != nullptr; }
 
+    /* Another client of the networked run, as a game window of its own: the
+     * game's launcher joining the listen server in the viewport, or the
+     * server the viewport is a client of (Editor Settings > Play). False,
+     * logged, when the run is not networked or the game is not built. */
+    bool LaunchPlayClientWindow();
+
+    // === The authoring game module ============================================
+
+    /* The game module ([Game] Module), loaded while editing -- not only to
+     * play -- so the game's own components keep their serializers and
+     * properties: a world or prefab that uses them opens, edits and saves
+     * with them intact. Play unloads it (the run loads its own copy) and
+     * StopPlay brings it back; Compile reloads it. False if it would not load
+     * (not built yet): the game's components are then dropped from what
+     * opens, as before. */
+    bool ReloadAuthoringGame();
+    bool IsAuthoringGameLoaded() const { return AuthoringGame != nullptr; }
+
+    /* The run is a listen server or a client. */
+    bool IsPlayNetworked() const;
+
     /* "SandboxGame / Sandbox" while playing; empty otherwise. */
     QString DescribePlay() const;
 
@@ -241,6 +263,9 @@ private:
     RenderCore::ERenderBackend Backend   = RenderCore::ERenderBackend::Null;
 
     PlaySession*       Play = nullptr;
+    PlayProcesses*     PlayNet = nullptr;   // the dedicated server and client windows of a networked run
+    NimbleEngine::GameModuleHost* AuthoringGame = nullptr;   // ReloadAuthoringGame
+    void UnloadAuthoringGame();
     QWidget*           PlayInputWidget = nullptr;
     ViewportSDLInput*  PlayInput = nullptr;   // the viewport as an SDL window, while playing
     uint32_t           PlayLoadCount = 0;   // PlaySession::GetLoadCount at the last sync

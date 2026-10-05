@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="89af36af46e948468d5e2fdbe86ac39b" Name="SpawnYellow">
+  <Component Type="NetArenaSpawn" Version="1">
+    <ColorIndex Value="3" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="500" Y="70" Z="400" />
+    <Rotation X="0" Y="-135" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

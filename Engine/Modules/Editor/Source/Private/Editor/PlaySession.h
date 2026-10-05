@@ -9,9 +9,10 @@
 #include "Public/Core/CoreTypes.h"
 #include "Public/NimbleEngine/GameSession.h"
 #include "Public/NimbleEngine/InputRouter.h"
+#include "Public/NimbleEngine/NetFacade.h"
 
 namespace GameCore     { class ScriptEngine; class World; }
-namespace NimbleEngine { class GameModuleHost; }
+namespace NimbleEngine { class GameModuleHost; class NetHost; }
 namespace RenderCore   { class Renderer; }
 
 /*
@@ -23,6 +24,19 @@ namespace RenderCore   { class Renderer; }
  * The module is reloaded per run (from a shadow copy), so rebuilds are picked
  * up on the next Play. The Renderer must be unbound when Start runs.
  */
+/* Play-in-Editor's networking, from Editor Settings > Play ([Editor] Play*). */
+struct PlayNetSettings
+{
+    NimbleEngine::ENetMode Mode = NimbleEngine::ENetMode::Standalone;   // Server: a listen server in the viewport
+    std::string            ServerAddress = "127.0.0.1";                  // a client's server
+    uint16_t               Port = 7777;
+    bool                   bLaunchServer = true;   // a client: start <Game>Server here first
+    int                    ClientWindows = 0;      // more clients, as game windows, at Play
+    std::string            ClientArgs;             // more command line for each client window ("-Display.RHI=4")
+
+    static PlayNetSettings FromConfig();
+};
+
 class PlaySession final : public NimbleEngine::IGameHost
 {
 public:
@@ -36,6 +50,12 @@ public:
     /* InOpenWorld: the editor's open world (runtime path); the level that
      * loads it plays if the game has one, else [Game] StartLevel. */
     bool Start(const std::string& InOpenWorld = std::string());
+
+    /* The run's network role ([Editor] PlayNetMode, Editor Settings > Play),
+     * once it is running: Standalone, a listen server, or a client. */
+    NimbleEngine::ENetMode GetNetMode() const;
+    /* A listen server's port: what a New Client Window connects to. */
+    uint16_t               GetNetPort() const;
 
     /* Null-safe and idempotent. */
     void Stop();
@@ -103,6 +123,7 @@ private:
     NimbleEngine::GameModuleHost* Game    = nullptr;
     GameCore::ScriptEngine*       Scripts = nullptr;
     NimbleEngine::GameSession*    Session = nullptr;
+    NimbleEngine::NetHost*        Net     = nullptr;   // Editor Settings > Play
 
     NimbleEngine::InputRouter Input;
     bool                      bInputBlocked = false;
