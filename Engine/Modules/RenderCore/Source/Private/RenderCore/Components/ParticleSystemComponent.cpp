@@ -147,6 +147,12 @@ namespace RenderCore
                         Run.Settings.BeamEnd[1] = float(End.GetY());
                         Run.Settings.BeamEnd[2] = float(End.GetZ());
                     }
+                    /* Its shape turns with the entity (its rotation, not its scale). */
+                    const EngineCore::Matrix4x4& World = GetLocalToWorld();
+                    const EngineCore::Vector3 AxisX = (World * EngineCore::Vector3(1.0, 0.0, 0.0)).GetNormalize();
+                    const EngineCore::Vector3 AxisY = (World * EngineCore::Vector3(0.0, 1.0, 0.0)).GetNormalize();
+                    Run.Settings.ShapeAxisX[0] = float(AxisX.GetX()); Run.Settings.ShapeAxisX[1] = float(AxisX.GetY()); Run.Settings.ShapeAxisX[2] = float(AxisX.GetZ());
+                    Run.Settings.ShapeAxisY[0] = float(AxisY.GetX()); Run.Settings.ShapeAxisY[1] = float(AxisY.GetY()); Run.Settings.ShapeAxisY[2] = float(AxisY.GetZ());
                     InContext.SimulateParticles(*Run.Gpu, Run.Settings, EmitterPosition(Run), Delta);
                 }
             }
@@ -224,6 +230,7 @@ namespace RenderCore
         {
             Out.StartColor[Channel] *= TintChannels[Channel];
             Out.EndColor[Channel]   *= TintChannels[Channel];
+            for(float (&Sample)[4] : Out.ColorLut) { Sample[Channel] *= TintChannels[Channel]; }
         }
         /* Two emitters of one system, or two systems with one seed, never spawn in step. */
         Out.Seed = Out.Seed + uint32_t(Seed) * 0x9E3779B9u + InEmitterIndex * 0x85EBCA6Bu;

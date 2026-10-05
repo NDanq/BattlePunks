@@ -78,6 +78,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/Graph/GraphEditorWindow.h
         Source/Private/Editor/Particles/ParticleAssets.cpp
         Source/Private/Editor/Particles/ParticleAssets.h
+        Source/Private/Editor/Particles/ParticleCurveWidgets.cpp
+        Source/Private/Editor/Particles/ParticleCurveWidgets.h
         Source/Private/Editor/Particles/ParticleDocument.cpp
         Source/Private/Editor/Particles/ParticleDocument.h
         Source/Private/Editor/Particles/ParticleEditorTab.cpp

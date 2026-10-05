@@ -13,6 +13,12 @@ Emitter Chunks
     RotationRate 260
     SpawnMode Burst
     MaxParticles 128
+    Shape Sphere
+    ShapeSurface false
+    BoxSize 100,100,100
+    ConeAngle 25
+    RingWidth 0
+    ShapeSpeed 0
     SpawnRate 32
     BurstCount 28
     BurstInterval 2.5
@@ -30,13 +36,17 @@ Emitter Chunks
     BeamSegments 16
     BeamNoise 0
     BeamNoiseSpeed 4
+    SizeMode StartEnd
     StartSize 14
     EndSize 10
+    SizeKeys
+    ColorMode StartEnd
     StartColor 150,110,80,255
     EndColor 90,70,55,255
     ColorCurve 1
     FadeIn 0
     FadeOut 0.15
+    ColorKeys
 
 Emitter Dust
     Enabled true
@@ -51,16 +61,22 @@ Emitter Dust
     RotationRate 0
     SpawnMode Burst
     MaxParticles 64
+    Shape Ring
+    ShapeSurface true
+    BoxSize 100,100,100
+    ConeAngle 25
+    RingWidth 0
+    ShapeSpeed 140
     SpawnRate 32
     BurstCount 24
     BurstInterval 2.5
     BurstCycles 0
     Lifetime 1.8
     LifetimeVariance 0.4
-    EmitterRadius 20
+    EmitterRadius 30
     Seed 0
-    Velocity 0,60,0
-    VelocitySpread 120
+    Velocity 0,25,0
+    VelocitySpread 20
     Acceleration 0,0,0
     Drag 1.5
     Turbulence 0
@@ -68,10 +84,14 @@ Emitter Dust
     BeamSegments 16
     BeamNoise 0
     BeamNoiseSpeed 4
+    SizeMode Curve
     StartSize 40
     EndSize 160
+    SizeKeys 0:30 0.25:110 1:170
+    ColorMode StartEnd
     StartColor 170,150,130,120
     EndColor 140,130,120,0
     ColorCurve 1
     FadeIn 0.05
     FadeOut 0.6
+    ColorKeys

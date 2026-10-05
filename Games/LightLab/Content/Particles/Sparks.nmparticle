@@ -13,16 +13,22 @@ Emitter Sparks
     RotationRate 0
     SpawnMode Burst
     MaxParticles 512
+    Shape Cone
+    ShapeSurface false
+    BoxSize 100,100,100
+    ConeAngle 32
+    RingWidth 0
+    ShapeSpeed 330
     SpawnRate 32
     BurstCount 90
     BurstInterval 1.5
     BurstCycles 0
     Lifetime 1.3
     LifetimeVariance 0.5
-    EmitterRadius 4
+    EmitterRadius 6
     Seed 0
-    Velocity 0,260,0
-    VelocitySpread 320
+    Velocity 0,0,0
+    VelocitySpread 60
     Acceleration 0,-700,0
     Drag 0.6
     Turbulence 0
@@ -30,10 +36,14 @@ Emitter Sparks
     BeamSegments 16
     BeamNoise 0
     BeamNoiseSpeed 4
+    SizeMode Curve
     StartSize 4
     EndSize 2
+    SizeKeys 0:5 0.4:3.5 1:1.5
+    ColorMode Gradient
     StartColor 255,230,150,255
     EndColor 255,70,10,0
     ColorCurve 0.6
     FadeIn 0
     FadeOut 0.4
+    ColorKeys 0:255,255,235,255 0.15:255,220,120,255 0.55:255,110,30,230 1:200,30,10,0

@@ -4072,6 +4072,69 @@ static void TestParticleSystemAsset()
     for(int Each = 0; Each < 9; ++Each) { Nine += "Emitter E\n"; }
     Expect(!ParseParticleSystem(Nine, System, Error), "at most eight emitters");
 
+    /* Curves and gradients: keys read in any order, kept sorted; evaluated straight between keys. */
+    const bool bKeys = ParseParticleSystem("NimbleParticleSystem 1\nEmitter K\n    SizeMode Curve\n    SizeKeys 1:0 0:10 0.5:40\n"
+                                           "    ColorMode Gradient\n    ColorKeys 0:255,0,0,255 1:0,0,255,0\n"
+                                           "    Shape Cone\n    ShapeSurface true\n    ConeAngle 30\n    BoxSize 1,2,3\n",
+                                           System, Error);
+    Expect(bKeys && System.Emitters[0].SizeKeyCount == 3 && System.Emitters[0].SizeKeys[0].Time == 0.0f
+           && System.Emitters[0].SizeKeys[1].Value == 40.0f && System.Emitters[0].ColorKeyCount == 2
+           && System.Emitters[0].Shape == PS_Cone && System.Emitters[0].bShapeSurface == 1 && System.Emitters[0].ConeAngle == 30.0f,
+           "size and colour keys, the shape and its settings are read; keys sorted by time");
+    if(bKeys)
+    {
+        const ParticleEmitterDesc& Keyed = System.Emitters[0];
+        float Color[4];
+        float Size = 0.0f;
+        Keyed.Evaluate(0.25f, Color, Size);
+        Expect(std::abs(Size - 25.0f) < 1e-4f && std::abs(Color[0] - 0.75f) < 1e-3f && std::abs(Color[2] - 0.25f) < 1e-3f
+               && std::abs(Color[3] - 0.75f) < 1e-3f, "a quarter of the way: size 25, three quarters red, alpha 0.75");
+        Keyed.Evaluate(0.75f, Color, Size);
+        Expect(std::abs(Size - 20.0f) < 1e-4f, "past the middle key it falls back toward 0");
+        const ParticleEmitterSettings Baked = Keyed.ToSettings();
+        Expect(Baked.bColorLut && Baked.bSizeLut && Baked.ColorLut[0][0] == 1.0f && Baked.ColorLut[PARTICLE_LUT_SIZE - 1][2] == 1.0f
+               && Baked.SizeLut[0] == 10.0f && Baked.SizeLut[PARTICLE_LUT_SIZE - 1] == 0.0f,
+               "and they are baked, birth to death, into the samples the GPU reads");
+        const std::string KeyText = WriteParticleSystem(System);
+        ParticleSystemDesc KeyAgain;
+        Expect(KeyText.find("    SizeKeys 0:10 0.5:40 1:0\n") != std::string::npos
+               && KeyText.find("    ColorKeys 0:255,0,0,255 1:0,0,255,0\n") != std::string::npos
+               && ParseParticleSystem(KeyText, KeyAgain, Error) && WriteParticleSystem(KeyAgain) == KeyText,
+               "keys are written time:value, and read back the same");
+    }
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter K\n    SizeKeys 0:1 1.5:2\n", System, Error),
+           "a key's time past 0-1 is refused");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter K\n    SizeKeys 0:1 0.1:1 0.2:1 0.3:1 0.4:1 0.5:1 0.6:1 0.7:1 0.8:1\n",
+                                System, Error), "and a ninth key");
+
+    /* Start to End, as before keys: no fade is no fade; fades seed a gradient's keys. */
+    ParticleEmitterDesc Plain;
+    Plain.FadeIn  = 0.0f;
+    Plain.FadeOut = 0.0f;
+    Plain.EndColor = EngineCore::Color(255, 255, 255, 255);
+    const ParticleEmitterSettings PlainSettings = Plain.ToSettings();
+    float PlainColors[PARTICLE_LUT_SIZE][4];
+    float PlainSizes[PARTICLE_LUT_SIZE];
+    PlainSettings.BakeStartEnd(PlainColors, PlainSizes);
+    Expect(!PlainSettings.bColorLut && PlainColors[0][3] == 1.0f && PlainColors[PARTICLE_LUT_SIZE - 1][3] == 1.0f && PlainSizes[0] == 10.0f,
+           "Start to End with no fades is opaque right to birth and death");
+    ParticleEmitterDesc Fading;   // fades in over 0.1, out over 0.3, white to clear
+    Fading.SeedColorKeys();
+    Fading.SeedSizeKeys();
+    Expect(Fading.ColorKeyCount == 4 && Fading.ColorKeys[0].Color.A == 0 && Fading.ColorKeys[1].Time == 0.1f
+           && Fading.ColorKeys[1].Color.A > 200 && Fading.ColorKeys[3].Time == 1.0f && Fading.ColorKeys[3].Color.A == 0
+           && Fading.SizeKeyCount == 2 && Fading.SizeKeys[1].Value == Fading.EndSize,
+           "a gradient chosen over Start to End starts as its colours and fades; a curve as its sizes");
+    ParticleEmitterDesc Graded;
+    Graded.ColorMode = POL_Keys;
+    Graded.ColorKeyCount = 1;
+    Graded.ColorKeys[0].Color = EngineCore::Color(255, 255, 255, 255);
+    ParticleSystemComponent Tinted;
+    Tinted.Tint = EngineCore::Color(255, 0, 0, 255);
+    const ParticleEmitterSettings TintedSettings = Tinted.ToSettings(Graded, 0);
+    Expect(TintedSettings.bColorLut && TintedSettings.ColorLut[5][0] == 1.0f && TintedSettings.ColorLut[5][1] == 0.0f,
+           "the component's tint reaches a gradient too");
+
     Expect(GetDefaultParticleSystem() && GetDefaultParticleSystem()->Emitters.size() == 1,
            "a component naming no system runs one emitter at its defaults");
 
@@ -4332,6 +4395,122 @@ static void TestParticlesOnGpu()
             LastX   = X;
         }
         Expect(bSpread && LastX > 240.0f, "spawns are spread along the emitter's path, in the order they were born");
+
+        /* Shapes: where each is born (velocity 0, so where it is), and which way out it goes. */
+        ParticleEmitterSettings Shaped;
+        Shaped.MaxParticles     = 256;
+        Shaped.SpawnRate        = 2000.0f;
+        Shaped.Lifetime         = 100.0f;
+        Shaped.LifetimeVariance = 0.0f;
+        Shaped.Velocity[1]      = 0.0f;
+        const auto Spawned = [&](const ParticleEmitterSettings& InSettings)
+        {
+            std::vector<ParticleSample> Alive;
+            for(const ParticleSample& Each : RunType(InSettings, 1, Still).Particles) { if(Each.IsAlive()) { Alive.push_back(Each); } }
+            return Alive;
+        };
+        Shaped.Shape = PS_Box;
+        Shaped.BoxSize[0] = 200.0f; Shaped.BoxSize[1] = 100.0f; Shaped.BoxSize[2] = 50.0f;
+        bool bInside = true, bFills = false;
+        const std::vector<ParticleSample> InBox = Spawned(Shaped);
+        for(const ParticleSample& Each : InBox)
+        {
+            bInside = bInside && std::abs(Each.Position[0]) <= 100.01f && std::abs(Each.Position[1]) <= 50.01f && std::abs(Each.Position[2]) <= 25.01f;
+            bFills  = bFills || std::abs(Each.Position[0]) > 60.0f;
+        }
+        Expect(InBox.size() == 200 && bInside && bFills, "a Box spawns within its size, all through it");
+        Shaped.bShapeSurface = true;
+        bool bOnFace = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            const float Face = std::max({ std::abs(Each.Position[0]) / 100.0f, std::abs(Each.Position[1]) / 50.0f, std::abs(Each.Position[2]) / 25.0f });
+            bOnFace = bOnFace && std::abs(Face - 1.0f) < 1e-3f;
+        }
+        Expect(bOnFace, "on its surface, every one on a face");
+
+        Shaped.Shape = PS_Ring;
+        Shaped.EmitterRadius = 80.0f;
+        bool bOnRing = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            bOnRing = bOnRing && std::abs(std::hypot(Each.Position[0], Each.Position[2]) - 80.0f) < 1e-2f && std::abs(Each.Position[1]) < 1e-3f;
+        }
+        Expect(bOnRing, "a Ring's surface is its circle, about +Y");
+        Shaped.bShapeSurface = false;
+        Shaped.RingWidth = 20.0f;
+        bool bInRing = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            const float R = std::hypot(Each.Position[0], Each.Position[2]);
+            bInRing = bInRing && R >= 70.0f - 1e-2f && R <= 90.0f + 1e-2f;
+        }
+        Expect(bInRing, "and with a width, a band 20 across it");
+
+        Shaped.Shape = PS_Hemisphere;
+        Shaped.EmitterRadius = 50.0f;
+        Shaped.bShapeSurface = true;
+        bool bDome = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            const float R = std::sqrt(Each.Position[0] * Each.Position[0] + Each.Position[1] * Each.Position[1] + Each.Position[2] * Each.Position[2]);
+            bDome = bDome && std::abs(R - 50.0f) < 1e-2f && Each.Position[1] >= -1e-3f;
+        }
+        Expect(bDome, "a Hemisphere's surface is the upper half of the sphere's shell");
+
+        Shaped.Shape      = PS_Cone;
+        Shaped.ConeAngle  = 20.0f;
+        Shaped.ShapeSpeed = 100.0f;
+        bool bInCone = true, bOpens = false;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            const float Speed = std::sqrt(Each.Velocity[0] * Each.Velocity[0] + Each.Velocity[1] * Each.Velocity[1] + Each.Velocity[2] * Each.Velocity[2]);
+            const float Angle = std::acos(std::clamp(Each.Velocity[1] / std::max(Speed, 1e-6f), -1.0f, 1.0f)) * 180.0f / 3.14159265f;
+            bInCone = bInCone && std::abs(Speed - 100.0f) < 1e-2f && Angle <= 20.01f;
+            bOpens  = bOpens || Angle > 12.0f;
+            bInCone = bInCone && std::abs(std::hypot(Each.Position[0] - Each.Velocity[0] * Each.Age, Each.Position[2] - Each.Velocity[2] * Each.Age) - 50.0f) < 0.05f;
+        }
+        Expect(bInCone && bOpens, "a Cone sends each out at its Outward Speed within its angle of +Y, from its rim");
+
+        Shaped.ConeAngle = 0.0f;
+        Shaped.ShapeAxisX[0] = 0.0f; Shaped.ShapeAxisX[1] = 1.0f; Shaped.ShapeAxisX[2] = 0.0f;   // turned 90 degrees about +Z:
+        Shaped.ShapeAxisY[0] = -1.0f; Shaped.ShapeAxisY[1] = 0.0f; Shaped.ShapeAxisY[2] = 0.0f;  // its +Y is the world's -X
+        bool bTurnedCone = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            bTurnedCone = bTurnedCone && std::abs(Each.Velocity[0] + 100.0f) < 1e-2f && std::abs(Each.Position[0] - Each.Velocity[0] * Each.Age) < 1e-2f;
+        }
+        Expect(bTurnedCone, "a shape turns with its axes: the cone fires along the world's -X, its rim upright");
+
+        /* Over life from keys, drawn: velocity along +Z puts each one's age in its depth. */
+        ParticleEmitterDesc Keyed;
+        Keyed.MaxParticles     = 64;
+        Keyed.SpawnRate        = 40.0f;
+        Keyed.Lifetime         = 1.0f;
+        Keyed.LifetimeVariance = 0.0f;
+        Keyed.Velocity         = Vector3(0.0, 0.0, 100.0);
+        Keyed.ColorMode        = POL_Keys;
+        Keyed.ColorKeyCount    = 2;
+        Keyed.ColorKeys[0]     = ParticleColorKey{ 0.0f, EngineCore::Color(255, 0, 0, 255) };
+        Keyed.ColorKeys[1]     = ParticleColorKey{ 1.0f, EngineCore::Color(0, 0, 255, 255) };
+        Keyed.SizeMode         = POL_Keys;
+        Keyed.SizeKeyCount     = 2;
+        Keyed.SizeKeys[0]      = ParticleSizeKey{ 0.0f, 10.0f };
+        Keyed.SizeKeys[1]      = ParticleSizeKey{ 1.0f, 30.0f };
+        const TypeRun Graded = RunType(Keyed.ToSettings(), 8, Still);
+        int Checked = 0;
+        float ColorError = 0.0f, SizeError = 0.0f;
+        for(const ParticleInstanceSample& Each : Graded.Instances)
+        {
+            if(Each.Transform[15] == 0.0f) { continue; }
+            const float Age  = Each.Transform[14] / 100.0f;
+            const float Size = float(Column(Each, 0).GetLength());
+            ColorError = std::max({ ColorError, std::abs(Each.Color[0] - (1.0f - Age)), std::abs(Each.Color[2] - Age) });
+            SizeError  = std::max(SizeError, std::abs(Size - (10.0f + 20.0f * Age)));
+            ++Checked;
+        }
+        std::printf("    keys: %d checked, colour off by %.4f, size by %.3f at most\n", Checked, ColorError, SizeError);
+        Expect(Graded.bRan && Checked > 20 && ColorError < 0.01f && SizeError < 0.05f,
+               "each is drawn the gradient's colour and the curve's size at its age");
 
         /* A beam: its points from the emitter to its end; jittered in the middle only. */
         ParticleEmitterSettings Ray;

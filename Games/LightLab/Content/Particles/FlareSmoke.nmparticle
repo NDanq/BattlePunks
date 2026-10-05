@@ -13,6 +13,12 @@ Emitter Smoke
     RotationRate 0
     SpawnMode Continuous
     MaxParticles 600
+    Shape Sphere
+    ShapeSurface false
+    BoxSize 100,100,100
+    ConeAngle 25
+    RingWidth 0
+    ShapeSpeed 0
     SpawnRate 70
     BurstCount 32
     BurstInterval 0
@@ -30,10 +36,14 @@ Emitter Smoke
     BeamSegments 16
     BeamNoise 0
     BeamNoiseSpeed 4
+    SizeMode StartEnd
     StartSize 26
     EndSize 230
+    SizeKeys
+    ColorMode StartEnd
     StartColor 225,38,22,150
     EndColor 8,7,7,120
     ColorCurve 0.45
     FadeIn 0.05
     FadeOut 0.45
+    ColorKeys

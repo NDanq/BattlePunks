@@ -8,6 +8,8 @@
 #include <cstring>
 
 #include <QApplication>
+#include <QComboBox>
+#include <QMouseEvent>
 #include <QFile>
 #include <QGroupBox>
 #include <QLabel>
@@ -17,6 +19,7 @@
 #include <QUndoStack>
 
 #include "Public/RenderCore/ParticleSystemAsset.h"
+#include "Private/Editor/Particles/ParticleCurveWidgets.h"
 #include "Private/Editor/Particles/ParticleDocument.h"
 #include "Private/Editor/Particles/ParticleEmitterPanels.h"
 
@@ -144,7 +147,7 @@ namespace
 
         int Groups = 0;
         for(QGroupBox* Box : Details.findChildren<QGroupBox*>()) { Groups += Box->isVisibleTo(&Details) ? 1 : 0; }
-        Expect(Groups == 4, "the details group the emitter's settings: Rendering, Emission, Motion, Over Life");
+        Expect(Groups == 5, "the details group the emitter's settings: Rendering, Emission, Shape, Motion, Over Life");
 
         /* The default emitter shows no reset arrows; a changed setting one, which resets it. */
         const auto VisibleResets = [&Details]()
@@ -194,6 +197,70 @@ namespace
         Document.GetHistory().undo();
         QApplication::processEvents();
         Expect(Shows("Beam End") && !Shows("Burst Count"), "undo puts the beam's settings back");
+
+        /* Shapes: each shows its own settings. */
+        Document.Edit(QStringLiteral("Edit Type"), [](RenderCore::ParticleSystemDesc& InOut)
+        {
+            InOut.Emitters[2].Type      = RenderCore::PT_Sprite;
+            InOut.Emitters[2].SpawnMode = RenderCore::PSM_Continuous;
+        });
+        QApplication::processEvents();
+        Expect(Shows("Shape") && Shows("Radius") && Shows("On Surface") && Shows("Outward Speed") && !Shows("Box Size") && !Shows("Cone Angle"),
+               "a Sphere shows its radius, surface and outward speed");
+        Document.Edit(QStringLiteral("Edit Shape"), [](RenderCore::ParticleSystemDesc& InOut) { InOut.Emitters[2].Shape = RenderCore::PS_Box; });
+        QApplication::processEvents();
+        Expect(Shows("Box Size") && !Shows("Radius"), "a Box its size instead of a radius");
+        Document.Edit(QStringLiteral("Edit Shape"), [](RenderCore::ParticleSystemDesc& InOut) { InOut.Emitters[2].Shape = RenderCore::PS_Cone; });
+        QApplication::processEvents();
+        Expect(Shows("Cone Angle") && Shows("Radius") && !Shows("Ring Width"), "a Cone its angle");
+
+        /* Over life: choosing a gradient seeds it from Start/End, in one step, and shows the gradient editor. */
+        Details.resize(420, 1400);
+        Details.show();
+        QApplication::processEvents();
+        QComboBox* ColorMode = nullptr;
+        for(QComboBox* Each : Details.findChildren<QComboBox*>())
+        {
+            if(Each->count() == 2 && Each->itemText(1) == QStringLiteral("Gradient")) { ColorMode = Each; }
+        }
+        Expect(ColorMode && Shows("Start Color") && Shows("Fade In") && !Shows("Color Gradient"), "Start/End shows its colours and fades");
+        const int StepsBefore = Document.GetHistory().count();
+        if(ColorMode) { ColorMode->setCurrentIndex(1); }
+        /* Twice: the rebuild, then the new rows shown (Qt shows them a turn later in a visible panel). */
+        QApplication::processEvents();
+        QApplication::processEvents();
+        const RenderCore::ParticleEmitterDesc& Graded = *Document.GetEmitter(2);
+        Expect(Graded.ColorMode == RenderCore::POL_Keys && Graded.ColorKeyCount == 4 && Graded.ColorKeys[0].Color.A == 0
+               && Document.GetHistory().count() == StepsBefore + 1,
+               "a Gradient chosen starts as Start/End did -- four keys, faded in and out -- in one undo step");
+        auto* Gradient = Details.findChild<ParticleGradientEdit*>();
+        Expect(Gradient && Gradient->isVisibleTo(&Details) && Gradient->GetKeys().size() == 4 && !Shows("Start Color") && !Shows("Fade In"),
+               "the gradient editor shows its keys, in place of Start/End's settings");
+        if(Gradient)
+        {
+            /* A double-click on the strip adds a key there: one undo step. */
+            const QPointF At(Gradient->width() * 0.4, 12.0);
+            QMouseEvent Click(QEvent::MouseButtonDblClick, At, Gradient->mapToGlobal(At), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+            QApplication::sendEvent(Gradient, &Click);
+            QApplication::processEvents();
+            Expect(Document.GetEmitter(2)->ColorKeyCount == 5 && Document.GetHistory().undoText() == QStringLiteral("Edit Color Gradient"),
+                   "a double-click on the gradient adds a key, recorded");
+            Document.GetHistory().undo();
+            QApplication::processEvents();
+            Expect(Document.GetEmitter(2)->ColorKeyCount == 4 && Gradient->GetKeys().size() == 4, "and undo takes it away, editor and all");
+        }
+        QComboBox* SizeMode = nullptr;
+        for(QComboBox* Each : Details.findChildren<QComboBox*>())
+        {
+            if(Each->count() == 2 && Each->itemText(1) == QStringLiteral("Curve")) { SizeMode = Each; }
+        }
+        if(SizeMode) { SizeMode->setCurrentIndex(1); }
+        QApplication::processEvents();
+        QApplication::processEvents();
+        auto* Curve = Details.findChild<ParticleCurveEdit*>();
+        Expect(SizeMode && Curve && Document.GetEmitter(2)->SizeKeyCount == 2 && Curve->GetKeys().size() == 2 && !Shows("Start Size"),
+               "a size Curve chosen starts as Start to End, in the curve editor");
+        Details.hide();
 
         Document.RemoveEmitter(0);
         Document.RemoveEmitter(0);

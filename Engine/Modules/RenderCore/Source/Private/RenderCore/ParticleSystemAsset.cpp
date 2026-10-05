@@ -81,7 +81,144 @@ namespace RenderCore
         Out.BeamNoise        = std::max(BeamNoise, 0.0f);
         Out.BeamNoiseSpeed   = std::max(BeamNoiseSpeed, 0.0f);
         Out.Seed             = uint32_t(Seed);
+        Out.Shape            = Shape < PS_Count ? Shape : uint8_t(PS_Sphere);
+        Out.bShapeSurface    = bShapeSurface != 0;
+        Out.BoxSize[0]       = std::max(float(BoxSize.GetX()), 0.0f);
+        Out.BoxSize[1]       = std::max(float(BoxSize.GetY()), 0.0f);
+        Out.BoxSize[2]       = std::max(float(BoxSize.GetZ()), 0.0f);
+        Out.ConeAngle        = std::clamp(ConeAngle, 0.0f, 180.0f);
+        Out.RingWidth        = std::max(RingWidth, 0.0f);
+        Out.ShapeSpeed       = ShapeSpeed;
+
+        /* A gradient or curve, baked as the GPU samples it. */
+        if((ColorMode == POL_Keys && ColorKeyCount > 0) || (SizeMode == POL_Keys && SizeKeyCount > 0))
+        {
+            float Color[4];
+            float Size = 0.0f;
+            for(uint32_t Index = 0; Index < PARTICLE_LUT_SIZE; ++Index)
+            {
+                Evaluate(float(Index) / float(PARTICLE_LUT_SIZE - 1), Color, Size);
+                for(int Channel = 0; Channel < 4; ++Channel) { Out.ColorLut[Index][Channel] = Color[Channel]; }
+                Out.SizeLut[Index] = Size;
+            }
+            Out.bColorLut = true;
+            Out.bSizeLut  = true;
+        }
         return Out;
+    }
+
+    namespace
+    {
+        float SmoothStep(const float InEdge0, const float InEdge1, const float InX)
+        {
+            const float T = std::clamp((InX - InEdge0) / (InEdge1 - InEdge0), 0.0f, 1.0f);
+            return T * T * (3.0f - 2.0f * T);
+        }
+    }
+
+    void ParticleEmitterSettings::BakeStartEnd(float (&OutColor)[PARTICLE_LUT_SIZE][4], float (&OutSize)[PARTICLE_LUT_SIZE]) const
+    {
+        const float In  = std::clamp(FadeIn, 0.0f, 1.0f);
+        const float Out = std::clamp(FadeOut, 0.0f, 1.0f);
+        const float Curve = std::clamp(ColorCurve, 0.05f, 20.0f);
+        for(uint32_t Index = 0; Index < PARTICLE_LUT_SIZE; ++Index)
+        {
+            const float Age = float(Index) / float(PARTICLE_LUT_SIZE - 1);
+            const float T   = std::pow(Age, Curve);
+            for(int Channel = 0; Channel < 4; ++Channel)
+            {
+                OutColor[Index][Channel] = StartColor[Channel] + (EndColor[Channel] - StartColor[Channel]) * T;
+            }
+            /* No fade is no fade: an alpha of 1 right to birth and death. */
+            const float Rise = In > 0.0f ? SmoothStep(0.0f, In, Age) : 1.0f;
+            const float Fall = Out > 0.0f ? 1.0f - SmoothStep(1.0f - Out, 1.0f, Age) : 1.0f;
+            OutColor[Index][3] *= Rise * Fall;
+            OutSize[Index] = std::max(StartSize + (EndSize - StartSize) * Age, 0.0f);
+        }
+    }
+
+    void ParticleEmitterDesc::Evaluate(const float InAge, float (&OutColor)[4], float& OutSize) const
+    {
+        const float Age = std::clamp(InAge, 0.0f, 1.0f);
+
+        /* Start to End, as the settings bake it, at the nearest samples. */
+        ParticleEmitterSettings Plain;
+        ToFloats(StartColor, Plain.StartColor);
+        ToFloats(EndColor, Plain.EndColor);
+        Plain.StartSize  = StartSize;
+        Plain.EndSize    = EndSize;
+        Plain.ColorCurve = ColorCurve;
+        Plain.FadeIn     = FadeIn;
+        Plain.FadeOut    = FadeOut;
+        const float At   = Age * float(PARTICLE_LUT_SIZE - 1);
+        const uint32_t Low  = std::min(uint32_t(At), PARTICLE_LUT_SIZE - 1);
+        const uint32_t High = std::min(Low + 1, PARTICLE_LUT_SIZE - 1);
+        const float Blend = At - float(Low);
+        float Colors[PARTICLE_LUT_SIZE][4];
+        float Sizes[PARTICLE_LUT_SIZE];
+        Plain.BakeStartEnd(Colors, Sizes);
+        for(int Channel = 0; Channel < 4; ++Channel)
+        {
+            OutColor[Channel] = Colors[Low][Channel] + (Colors[High][Channel] - Colors[Low][Channel]) * Blend;
+        }
+        OutSize = Sizes[Low] + (Sizes[High] - Sizes[Low]) * Blend;
+
+        /* Through the keys, straight between them, held before the first and after the last. */
+        const int32_t ColorCount = std::clamp<int32_t>(ColorKeyCount, 0, int32_t(PARTICLE_CURVE_KEYS_MAX));
+        if(ColorMode == POL_Keys && ColorCount > 0)
+        {
+            int32_t After = 0;
+            while(After < ColorCount && ColorKeys[After].Time < Age) { ++After; }
+            const ParticleColorKey& A = ColorKeys[std::max(After - 1, 0)];
+            const ParticleColorKey& B = ColorKeys[std::min(After, ColorCount - 1)];
+            const float Span = B.Time - A.Time;
+            const float T    = Span > 1e-6f ? std::clamp((Age - A.Time) / Span, 0.0f, 1.0f) : 0.0f;
+            float CA[4], CB[4];
+            ToFloats(A.Color, CA);
+            ToFloats(B.Color, CB);
+            for(int Channel = 0; Channel < 4; ++Channel) { OutColor[Channel] = CA[Channel] + (CB[Channel] - CA[Channel]) * T; }
+        }
+        const int32_t SizeCount = std::clamp<int32_t>(SizeKeyCount, 0, int32_t(PARTICLE_CURVE_KEYS_MAX));
+        if(SizeMode == POL_Keys && SizeCount > 0)
+        {
+            int32_t After = 0;
+            while(After < SizeCount && SizeKeys[After].Time < Age) { ++After; }
+            const ParticleSizeKey& A = SizeKeys[std::max(After - 1, 0)];
+            const ParticleSizeKey& B = SizeKeys[std::min(After, SizeCount - 1)];
+            const float Span = B.Time - A.Time;
+            const float T    = Span > 1e-6f ? std::clamp((Age - A.Time) / Span, 0.0f, 1.0f) : 0.0f;
+            OutSize = std::max(A.Value + (B.Value - A.Value) * T, 0.0f);
+        }
+    }
+
+    void ParticleEmitterDesc::SeedColorKeys()
+    {
+        /* Start, End, and where a fade ends or begins. */
+        const float Times[4] = { 0.0f, std::clamp(FadeIn, 0.0f, 1.0f), 1.0f - std::clamp(FadeOut, 0.0f, 1.0f), 1.0f };
+        ColorKeyCount = 0;
+        float Last = -1.0f;
+        for(const float Time : Times)
+        {
+            if(Time <= Last + 1e-4f) { continue; }
+            Last = Time;
+            float Color[4];
+            float Size = 0.0f;
+            const uint8_t Mode = ColorMode;
+            ColorMode = POL_StartEnd;
+            Evaluate(Time, Color, Size);
+            ColorMode = Mode;
+            ParticleColorKey& Key = ColorKeys[ColorKeyCount++];
+            Key.Time  = Time;
+            Key.Color = EngineCore::Color(uint8_t(std::lround(Color[0] * 255.0f)), uint8_t(std::lround(Color[1] * 255.0f)),
+                                          uint8_t(std::lround(Color[2] * 255.0f)), uint8_t(std::lround(Color[3] * 255.0f)));
+        }
+    }
+
+    void ParticleEmitterDesc::SeedSizeKeys()
+    {
+        SizeKeys[0] = ParticleSizeKey{ 0.0f, StartSize };
+        SizeKeys[1] = ParticleSizeKey{ 1.0f, EndSize };
+        SizeKeyCount = 2;
     }
 
     float ParticleEmitterDesc::GetSteadyStateCount() const
@@ -110,9 +247,12 @@ namespace RenderCore
             return Length(S.BeamEnd) + S.BeamNoise + std::max(S.StartSize, S.EndSize);
         }
         const float Life = S.Lifetime;
-        return S.EmitterRadius + (Length(S.Velocity) + S.VelocitySpread) * Life
+        const float Shape = S.Shape == PS_Box ? 0.5f * Length(S.BoxSize) : S.EmitterRadius + 0.5f * S.RingWidth;
+        float Largest = std::max(S.StartSize, S.EndSize);
+        if(S.bSizeLut) { for(const float Each : S.SizeLut) { Largest = std::max(Largest, Each); } }
+        return Shape + (Length(S.Velocity) + S.VelocitySpread + std::abs(S.ShapeSpeed)) * Life
              + 0.5f * (Length(S.Acceleration) + S.Turbulence) * Life * Life
-             + std::max(S.StartSize, S.EndSize) * (S.Billboard == PB_VelocityAligned ? 2.0f : 1.0f)
+             + Largest * (S.Billboard == PB_VelocityAligned ? 2.0f : 1.0f)
              + (S.Billboard == PB_VelocityAligned ? (Length(S.Velocity) + S.VelocitySpread) * S.VelocityStretch : 0.0f);
     }
 
@@ -128,6 +268,9 @@ namespace RenderCore
         const char* const BILLBOARD_NAMES[PB_Count]    = { "FaceCamera", "Vertical", "VelocityAligned", "Fixed" };
         const char* const ORIENTATION_NAMES[PMO_Count] = { "Fixed", "RandomSpin", "AlignToVelocity" };
         const char* const SPAWN_NAMES[PSM_Count]       = { "Continuous", "Burst" };
+        const char* const SHAPE_NAMES[PS_Count]        = { "Sphere", "Hemisphere", "Box", "Cone", "Ring" };
+        const char* const SIZE_MODE_NAMES[POL_Count]   = { "StartEnd", "Curve" };
+        const char* const COLOR_MODE_NAMES[POL_Count]  = { "StartEnd", "Gradient" };
     }
 
     const char* GetParticleTypeName(const uint8_t InType)
@@ -257,6 +400,55 @@ namespace RenderCore
                  + std::to_string(InValue.A);
         }
 
+        /* "t:v t:v ...", at most PARTICLE_CURVE_KEYS_MAX, each time 0-1; sorted by time. InValue reads one v. */
+        template<typename TKey, typename FValue>
+        bool ToKeys(const std::string& InText, TKey (&OutKeys)[PARTICLE_CURVE_KEYS_MAX], int32_t& OutCount, FValue&& InValue)
+        {
+            OutCount = 0;
+            size_t Start = 0;
+            while(Start < InText.size())
+            {
+                const size_t Space = InText.find(' ', Start);
+                const std::string Token = InText.substr(Start, Space == std::string::npos ? std::string::npos : Space - Start);
+                Start = Space == std::string::npos ? InText.size() : Space + 1;
+                if(Token.empty()) { continue; }
+                const size_t Colon = Token.find(':');
+                if(Colon == std::string::npos || OutCount >= int32_t(PARTICLE_CURVE_KEYS_MAX)) { return false; }
+                TKey Key;
+                if(!ToFloat(Token.substr(0, Colon), Key.Time) || Key.Time < 0.0f || Key.Time > 1.0f
+                   || !InValue(Token.substr(Colon + 1), Key))
+                {
+                    return false;
+                }
+                OutKeys[OutCount++] = Key;
+            }
+            std::stable_sort(OutKeys, OutKeys + OutCount, [](const TKey& A, const TKey& B) { return A.Time < B.Time; });
+            return true;
+        }
+
+        template<typename TKey, typename FValue>
+        std::string FormatKeys(const TKey (&InKeys)[PARTICLE_CURVE_KEYS_MAX], const int32_t InCount, FValue&& InValue)
+        {
+            std::string Out;
+            for(int32_t Index = 0; Index < std::clamp<int32_t>(InCount, 0, int32_t(PARTICLE_CURVE_KEYS_MAX)); ++Index)
+            {
+                Out += (Out.empty() ? "" : " ") + FormatFloat(InKeys[Index].Time) + ":" + InValue(InKeys[Index]);
+            }
+            return Out;
+        }
+
+        bool ToSizeKeys(const std::string& InText, ParticleEmitterDesc& OutEmitter)
+        {
+            return ToKeys(InText, OutEmitter.SizeKeys, OutEmitter.SizeKeyCount,
+                          [](const std::string& InValue, ParticleSizeKey& OutKey) { return ToFloat(InValue, OutKey.Value); });
+        }
+
+        bool ToColorKeys(const std::string& InText, ParticleEmitterDesc& OutEmitter)
+        {
+            return ToKeys(InText, OutEmitter.ColorKeys, OutEmitter.ColorKeyCount,
+                          [](const std::string& InValue, ParticleColorKey& OutKey) { return ToColor(InValue, OutKey.Color); });
+        }
+
         /*
          * Every setting, by its key, in the order written: how to read it and
          * how to write it. One table, so the reader and the writer cannot drift.
@@ -304,6 +496,12 @@ namespace RenderCore
             NM_PARTICLE_FLOAT ("RotationRate",     RotationRate),
             NM_PARTICLE_CHOICE("SpawnMode",        SpawnMode, SPAWN_NAMES),
             NM_PARTICLE_INT   ("MaxParticles",     MaxParticles),
+            NM_PARTICLE_CHOICE("Shape",            Shape, SHAPE_NAMES),
+            NM_PARTICLE_FLAG  ("ShapeSurface",     bShapeSurface),
+            NM_PARTICLE_VECTOR("BoxSize",          BoxSize),
+            NM_PARTICLE_FLOAT ("ConeAngle",        ConeAngle),
+            NM_PARTICLE_FLOAT ("RingWidth",        RingWidth),
+            NM_PARTICLE_FLOAT ("ShapeSpeed",       ShapeSpeed),
             NM_PARTICLE_FLOAT ("SpawnRate",        SpawnRate),
             NM_PARTICLE_INT   ("BurstCount",       BurstCount),
             NM_PARTICLE_FLOAT ("BurstInterval",    BurstInterval),
@@ -321,13 +519,19 @@ namespace RenderCore
             NM_PARTICLE_INT   ("BeamSegments",     BeamSegments),
             NM_PARTICLE_FLOAT ("BeamNoise",        BeamNoise),
             NM_PARTICLE_FLOAT ("BeamNoiseSpeed",   BeamNoiseSpeed),
+            NM_PARTICLE_CHOICE("SizeMode",         SizeMode, SIZE_MODE_NAMES),
             NM_PARTICLE_FLOAT ("StartSize",        StartSize),
             NM_PARTICLE_FLOAT ("EndSize",          EndSize),
+            { "SizeKeys", &ToSizeKeys, [](const ParticleEmitterDesc& E)
+              { return FormatKeys(E.SizeKeys, E.SizeKeyCount, [](const ParticleSizeKey& K) { return FormatFloat(K.Value); }); } },
+            NM_PARTICLE_CHOICE("ColorMode",        ColorMode, COLOR_MODE_NAMES),
             NM_PARTICLE_COLOR ("StartColor",       StartColor),
             NM_PARTICLE_COLOR ("EndColor",         EndColor),
             NM_PARTICLE_FLOAT ("ColorCurve",       ColorCurve),
             NM_PARTICLE_FLOAT ("FadeIn",           FadeIn),
             NM_PARTICLE_FLOAT ("FadeOut",          FadeOut),
+            { "ColorKeys", &ToColorKeys, [](const ParticleEmitterDesc& E)
+              { return FormatKeys(E.ColorKeys, E.ColorKeyCount, [](const ParticleColorKey& K) { return FormatColor(K.Color); }); } },
 
             /* Before billboards: true is Face Camera, false Fixed. */
             { "FaceCamera", [](const std::string& V, ParticleEmitterDesc& E)

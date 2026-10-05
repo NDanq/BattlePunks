@@ -13,6 +13,12 @@ Emitter Trail
     RotationRate 0
     SpawnMode Continuous
     MaxParticles 256
+    Shape Sphere
+    ShapeSurface false
+    BoxSize 100,100,100
+    ConeAngle 25
+    RingWidth 0
+    ShapeSpeed 0
     SpawnRate 90
     BurstCount 32
     BurstInterval 0
@@ -30,13 +36,17 @@ Emitter Trail
     BeamSegments 16
     BeamNoise 0
     BeamNoiseSpeed 4
+    SizeMode StartEnd
     StartSize 26
     EndSize 2
+    SizeKeys
+    ColorMode StartEnd
     StartColor 120,230,255,255
     EndColor 40,60,255,0
     ColorCurve 0.7
     FadeIn 0
     FadeOut 0.6
+    ColorKeys
 
 Emitter Head
     Enabled true
@@ -51,6 +61,12 @@ Emitter Head
     RotationRate 0
     SpawnMode Continuous
     MaxParticles 32
+    Shape Sphere
+    ShapeSurface false
+    BoxSize 100,100,100
+    ConeAngle 25
+    RingWidth 0
+    ShapeSpeed 0
     SpawnRate 30
     BurstCount 32
     BurstInterval 0
@@ -68,10 +84,14 @@ Emitter Head
     BeamSegments 16
     BeamNoise 0
     BeamNoiseSpeed 4
+    SizeMode StartEnd
     StartSize 40
     EndSize 20
+    SizeKeys
+    ColorMode StartEnd
     StartColor 200,245,255,255
     EndColor 120,200,255,0
     ColorCurve 1
     FadeIn 0
     FadeOut 1
+    ColorKeys

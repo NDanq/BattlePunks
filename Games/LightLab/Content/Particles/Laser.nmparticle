@@ -13,6 +13,12 @@ Emitter Glow
     RotationRate 0
     SpawnMode Continuous
     MaxParticles 256
+    Shape Sphere
+    ShapeSurface false
+    BoxSize 100,100,100
+    ConeAngle 25
+    RingWidth 0
+    ShapeSpeed 0
     SpawnRate 32
     BurstCount 32
     BurstInterval 0
@@ -30,13 +36,17 @@ Emitter Glow
     BeamSegments 48
     BeamNoise 14
     BeamNoiseSpeed 7
+    SizeMode StartEnd
     StartSize 26
     EndSize 18
+    SizeKeys
+    ColorMode StartEnd
     StartColor 255,40,90,170
     EndColor 255,40,90,170
     ColorCurve 1
     FadeIn 0.02
     FadeOut 0.02
+    ColorKeys
 
 Emitter Core
     Enabled true
@@ -51,6 +61,12 @@ Emitter Core
     RotationRate 0
     SpawnMode Continuous
     MaxParticles 256
+    Shape Sphere
+    ShapeSurface false
+    BoxSize 100,100,100
+    ConeAngle 25
+    RingWidth 0
+    ShapeSpeed 0
     SpawnRate 32
     BurstCount 32
     BurstInterval 0
@@ -68,10 +84,14 @@ Emitter Core
     BeamSegments 48
     BeamNoise 14
     BeamNoiseSpeed 7
+    SizeMode StartEnd
     StartSize 7
     EndSize 5
+    SizeKeys
+    ColorMode StartEnd
     StartColor 255,235,245,255
     EndColor 255,235,245,255
     ColorCurve 1
     FadeIn 0.02
     FadeOut 0.02
+    ColorKeys

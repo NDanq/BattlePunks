@@ -84,8 +84,13 @@ namespace
             bAny = true;
             const RenderCore::ParticleEmitterSettings S = Emitter.ToSettings();
             const double Life = S.Lifetime;
-            const double Pad  = S.EmitterRadius + S.VelocitySpread * std::min(Life, 1.5) * 0.5
-                              + 0.5 * std::max(S.StartSize, S.EndSize) + 0.1 * S.Turbulence * Life * Life;
+            float Largest = std::max(S.StartSize, S.EndSize);
+            if(S.bSizeLut) { for(const float Each : S.SizeLut) { Largest = std::max(Largest, Each); } }
+            const double Shape = S.Shape == RenderCore::PS_Box ? 0.5 * std::sqrt(double(S.BoxSize[0]) * S.BoxSize[0] + double(S.BoxSize[1]) * S.BoxSize[1]
+                                                                                 + double(S.BoxSize[2]) * S.BoxSize[2])
+                                                               : double(S.EmitterRadius) + 0.5 * S.RingWidth;
+            const double Pad  = Shape + (S.VelocitySpread + std::abs(S.ShapeSpeed)) * std::min(Life, 1.5) * 0.5
+                              + 0.5 * Largest + 0.1 * S.Turbulence * Life * Life;
             double P[3] = { InOrigin.GetX() + Emitter.Offset.GetX(), InOrigin.GetY() + Emitter.Offset.GetY(),
                             InOrigin.GetZ() + Emitter.Offset.GetZ() };
             double V[3] = { S.Velocity[0], S.Velocity[1], S.Velocity[2] };
@@ -136,6 +141,7 @@ ParticleEditorTab::ParticleEditorTab(EditorContext& InContext, QWidget* InParent
     BuildActions();
 
     connect(Particles, &ParticleDocument::Changed, this, &ParticleEditorTab::PushToRenderer);
+    connect(Particles, &ParticleDocument::LiveChanged, this, &ParticleEditorTab::PushToRenderer);
     connect(&Particles->GetHistory(), &QUndoStack::cleanChanged, this, &ParticleEditorTab::TitleChanged);
     connect(&Particles->GetHistory(), &QUndoStack::indexChanged, this, &ParticleEditorTab::TitleChanged);
 

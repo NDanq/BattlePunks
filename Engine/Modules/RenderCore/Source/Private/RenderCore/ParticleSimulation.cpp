@@ -176,6 +176,28 @@ namespace RenderCore
         Params.BeamNoise[0] = std::max(InSettings.BeamNoiseSpeed, 0.0f);
         Params.BeamNoise[1] = float(Segments);
         Params.BeamNoise[2] = float(InSettings.Seed % 1024u) * 0.618f;
+
+        Params.ShapeA[0] = float(InSettings.Shape < PS_Count ? InSettings.Shape : PS_Sphere);
+        Params.ShapeA[1] = InSettings.bShapeSurface ? 1.0f : 0.0f;
+        Params.ShapeA[2] = InSettings.ShapeSpeed;
+        Params.ShapeA[3] = std::clamp(InSettings.ConeAngle, 0.0f, 180.0f) * 3.14159265f / 180.0f;
+        for(int Axis = 0; Axis < 3; ++Axis) { Params.ShapeB[Axis] = 0.5f * std::max(InSettings.BoxSize[Axis], 0.0f); }
+        Params.ShapeB[3] = std::max(InSettings.RingWidth, 0.0f);
+        Copy3(InSettings.ShapeAxisX, Params.ShapeAxisX, 0.0f);
+        Copy3(InSettings.ShapeAxisY, Params.ShapeAxisY, 0.0f);
+
+        /* Colour and size over life: the emitter's baked gradient or curve, else Start to End. */
+        float Colors[PARTICLE_LUT_SIZE][4];
+        float Sizes[PARTICLE_LUT_SIZE];
+        InSettings.BakeStartEnd(Colors, Sizes);
+        for(uint32_t Index = 0; Index < PARTICLE_LUT_SIZE; ++Index)
+        {
+            for(int Channel = 0; Channel < 4; ++Channel)
+            {
+                Params.ColorLut[Index][Channel] = InSettings.bColorLut ? InSettings.ColorLut[Index][Channel] : Colors[Index][Channel];
+            }
+            Params.SizeLut[Index] = InSettings.bSizeLut ? std::max(InSettings.SizeLut[Index], 0.0f) : Sizes[Index];
+        }
         return Params;
     }
 
