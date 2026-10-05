@@ -50,6 +50,7 @@
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Public/RenderCore/TextureCompression.h"
+#include "Public/RenderCore/UIDrawList.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
 #include "Private/RenderCore/ShadowSetup.h"
 
@@ -823,6 +824,117 @@ static void TestMultipleScenes()
 // Debug lines: queued on the game thread, drawn once, then gone
 // ============================================================================
 
+/* UIDrawList (UIDrawList.h): batching, clipping, nine-slice, packing. CPU only. */
+static void TestUIDrawList()
+{
+    std::printf("[ui draw list]\n");
+
+    const uint32_t White = PackUIColor(1.0f, 1.0f, 1.0f, 1.0f);
+    Expect(White == 0xFFFFFFFFu && PackUIColor(1.0f, 0.0f, 0.0f, 1.0f) == 0xFF0000FFu, "PackUIColor puts R in the low byte");
+
+    UIDrawList List;
+    Expect(List.IsEmpty() && List.GetTextures().size() == 1 && List.GetTextures()[0].empty(), "a new list is empty, texture 0 white");
+
+    List.AddRect({ 0, 0, 10, 10 }, White);
+    List.AddRect({ 20, 0, 10, 10 }, White);
+    Expect(List.GetCommands().size() == 1 && List.GetCommands()[0].IndexCount == 12 && List.GetVertices().size() == 8,
+           "two rects in one texture and clip are one command");
+
+    const uint32_t Atlas = List.FindOrAddTexture("ui:font");
+    Expect(Atlas == 1 && List.FindOrAddTexture("ui:font") == 1, "FindOrAddTexture adds a key once");
+    List.AddImage({ 0, 20, 8, 8 }, { 0, 0, 1, 1 }, White, Atlas);
+    Expect(List.GetCommands().size() == 2 && List.GetCommands()[1].Texture == Atlas, "a texture change starts a command");
+
+    List.SetSolidFill(Atlas, 0.0f, 0.0f);
+    List.AddRect({ 0, 40, 8, 8 }, White);
+    Expect(List.GetCommands().size() == 2, "a solid fill from the atlas joins the atlas's command");
+
+    List.PushClip({ 5.5f, 5.0f, 10.0f, 10.0f });
+    List.PushClip({ 0.0f, 10.0f, 100.0f, 100.0f });
+    const UIClipRect Clip = List.GetClip();
+    Expect(Clip.X == 5 && Clip.Y == 10 && Clip.W == 11 && Clip.H == 5, "nested clips intersect, rounded out to whole pixels");
+    List.AddRect({ 0, 0, 50, 50 }, White);
+    Expect(List.GetCommands().size() == 3 && List.GetCommands()[2].Clip == Clip, "a clip change starts a command");
+    List.PopClip();
+    List.PopClip();
+    Expect(List.GetClip().IsNone(), "popping every clip leaves none");
+
+    List.PushClip({ 0, 0, 10, 10 });
+    List.PushClip({ 50, 50, 10, 10 });
+    const size_t Before = List.GetIndices().size();
+    List.AddRect({ 0, 0, 100, 100 }, White);
+    Expect(List.GetIndices().size() == Before, "nothing is drawn inside clips that do not meet");
+    List.PopClip();
+    List.PopClip();
+
+    List.AddRect({ 0, 0, 10, 10 }, PackUIColor(1.0f, 1.0f, 1.0f, 0.0f));
+    Expect(List.GetIndices().size() == Before, "a fully transparent rect is skipped");
+
+    UIDrawList Nine;
+    const float Margins[4]   = { 4, 4, 4, 4 };
+    const float UVMargins[4] = { 0.25f, 0.25f, 0.25f, 0.25f };
+    Nine.AddNineSlice({ 0, 0, 100, 40 }, Margins, { 0, 0, 1, 1 }, UVMargins, White, Nine.FindOrAddTexture("Textures/Button.nmtexture"));
+    Expect(Nine.GetVertices().size() == 36 && Nine.GetIndices().size() == 54, "a nine-slice is nine quads");
+    Expect(Nine.GetVertices()[4].X == 4.0f && Nine.GetVertices()[4].U == 0.25f, "a nine-slice's middle column starts at its margin");
+    UIDrawList Small;
+    Small.AddNineSlice({ 0, 0, 6, 40 }, Margins, { 0, 0, 1, 1 }, UVMargins, White, 0);
+    Expect(Small.GetVertices()[1].X == 3.0f, "margins wider than the rect shrink to fit");
+
+    UIDrawList Combined;
+    Combined.AddRect({ 0, 0, 4, 4 }, White);
+    Combined.Append(Nine);
+    Expect(Combined.GetCommands().size() == 2 && Combined.GetVertices().size() == 40 && Combined.GetIndices()[6] == 4,
+           "Append offsets the other list's indices past this list's vertices");
+
+    std::vector<uint8_t> Block(List.PackedSize());
+    List.Pack(Block.data());
+    UIDrawListView View;
+    Expect(View.Parse(Block.data(), Block.size()) && View.VertexCount == List.GetVertices().size()
+           && View.IndexCount == List.GetIndices().size() && View.CommandCount == List.GetCommands().size()
+           && View.Textures.size() == 2 && View.Textures[1] == "ui:font", "Pack and Parse round-trip");
+    Expect(!View.Parse(Block.data(), Block.size() - 1), "Parse refuses a truncated block");
+    Block[sizeof(uint32_t)] ^= 0x40u;   // the vertex count
+    Expect(!View.Parse(Block.data(), Block.size()), "Parse refuses a block whose counts do not add up");
+
+    List.Reset();
+    Expect(List.IsEmpty() && List.GetTextures().size() == 1, "Reset empties the list and its textures");
+}
+
+/* Renderer::SubmitUIDrawList on the Null backend: accepted, kept, cleared. */
+static void TestUISubmit()
+{
+    std::printf("[ui submit]\n");
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null, {}) succeeds for the UI test");
+    if(!bInit)
+    {
+        Rend.Shutdown();
+        return;
+    }
+    const EngineCore::Size Viewport(320, 200);
+    UIDrawList List;
+    List.AddRect({ 10, 10, 50, 20 }, PackUIColor(1.0f, 0.0f, 0.0f, 1.0f));
+    Rend.SubmitUIDrawList(RENDER_DEFAULT_SCENE, List);
+    Rend.SubmitUIDrawList(RENDER_INVALID_SCENE, List);   // ignored
+
+    EngineCore::Image Atlas(4, 4, EImageFormat::RGBA8);
+    Rend.SetUIImage("ui:test", Atlas);
+    Rend.SetUIImage("not-ui", Atlas);                    // ignored: no "ui:" prefix
+    for(uint64_t Frame = 0; Frame < 3; ++Frame)
+    {
+        Rend.EndFrame(FrameInfo{Frame, 0.016, Viewport});
+        Rend.WaitForPreviousFrame();
+    }
+    Rend.ReleaseUIImage("ui:test");
+    Rend.SubmitUIDrawList(RENDER_DEFAULT_SCENE, UIDrawList());
+    Rend.EndFrame(FrameInfo{3, 0.016, Viewport});
+    Rend.WaitForPreviousFrame();
+    Rend.Shutdown();
+    Expect(true, "a UI list and image survive frames and Shutdown on the Null backend");
+}
+
 static void TestDebugLines()
 {
     std::printf("[debug lines]\n");
@@ -1423,6 +1535,112 @@ static bool LoadMeshFrom(const Archive& InSaved, MeshData& OutMesh)
     Archive Reader = Archive::ForReading(InSaved.GetBytes());
     return SerializeMesh(Reader, OutMesh);
 }
+
+#if WITH_EDITOR
+/*
+ * The UI on the GPU (NIMBLE_SMOKE_GPU=Vulkan): a list over an empty scene,
+ * read back. Proves the pass's orientation -- the list's top-left is the
+ * image's -- and its scissor: a rect clipped to a smaller one fills only that.
+ */
+static void TestUIOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[ui on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[ui on the GPU: %s]\n", GetShaderPlatformName(Backend));
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -10.0), -1.0f, 1000.0f);
+        Rend.SetViewOverride(&View);
+        Rend.SetClearColor(EngineCore::Color(0, 0, 0, 255));
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const uint32_t Red   = PackUIColor(1.0f, 0.0f, 0.0f, 1.0f);
+        const uint32_t Green = PackUIColor(0.0f, 1.0f, 0.0f, 1.0f);
+        UIDrawList List;
+        List.AddRect({ 0, 0, 16, 16 }, Green);           // the top-left corner
+        List.PushClip({ 100, 120, 40, 20 });
+        List.AddRect({ 80, 100, 100, 100 }, Red);         // only the clip shows
+        List.PopClip();
+        List.AddRect({ 200, 200, 30, 30 }, PackUIColor(0.0f, 0.0f, 1.0f, 0.5f));   // half over black
+        Rend.SubmitUIDrawList(RENDER_DEFAULT_SCENE, List);
+
+        uint64_t Frame = 1;
+        EngineCore::Image Pixels;
+        const auto Capture = [&]
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            const uint64_t Request = Rend.RequestSceneCapture();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, Pixels, Error) && Pixels.GetWidth() == 256;
+        };
+        const auto Rgb = [&Pixels](const int InX, const int InY, int (&OutRgb)[3])
+        {
+            const uint8_t* Px = Pixels.GetData() + Pixels.GetStride() * InY + InX * BytesPerPixel(Pixels.GetFormat());
+            const bool bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
+            OutRgb[0] = bBgra ? Px[2] : Px[0];
+            OutRgb[1] = Px[1];
+            OutRgb[2] = bBgra ? Px[0] : Px[2];
+        };
+
+        const bool bCaptured = Capture();
+        Expect(bCaptured, "the UI frame reads back");
+        if(bCaptured)
+        {
+            int C[3];
+            Rgb(4, 4, C);
+            Expect(C[1] > 200 && C[0] < 40, "the list's top-left is the image's top-left (green)");
+            Rgb(4, 250, C);
+            Expect(C[1] < 40, "the bottom-left is not green");
+            Rgb(120, 130, C);
+            Expect(C[0] > 200 && C[1] < 40, "inside the clip, the red rect shows");
+            Rgb(90, 110, C);
+            Expect(C[0] < 40, "inside the red rect but outside the clip, nothing (scissor, top edge)");
+            Rgb(150, 130, C);
+            Expect(C[0] < 40, "right of the clip, nothing (scissor, right edge)");
+            Rgb(120, 150, C);
+            Expect(C[0] < 40, "below the clip, nothing (scissor, bottom edge)");
+            Rgb(215, 215, C);
+            Expect(C[2] > 90 && C[2] < 170 && C[0] < 40, "a half-transparent rect blends over the scene");
+        }
+
+        /* Unchanged list: drawn again without a resubmit. Then cleared. */
+        const bool bAgain = Capture();
+        int Again[3] = {};
+        if(bAgain) { Rgb(4, 4, Again); }
+        Expect(bAgain && Again[1] > 200, "a submitted list keeps drawing every frame");
+        Rend.SubmitUIDrawList(RENDER_DEFAULT_SCENE, UIDrawList());
+        const bool bCleared = Capture();
+        int Cleared[3] = {};
+        if(bCleared) { Rgb(4, 4, Cleared); }
+        Expect(bCleared && Cleared[1] < 40, "an empty list clears the UI");
+
+        Rend.UnbindWorld();
+    }
+    Rend.Shutdown();
+    SetFileProvider(PreviousProvider);
+}
+#endif
 
 static void TestMeshAssets()
 {
@@ -4062,6 +4280,8 @@ int main()
 #if WITH_EDITOR
     TestMultipleScenes();
     TestDebugLines();
+    TestUIDrawList();
+    TestUISubmit();
     TestMaterials();
     TestMaterialsOnGpu();
     TestShadowsOnGpu();
@@ -4073,6 +4293,7 @@ int main()
     TestSceneCaptureOnGpu();
     TestToneMappingOnGpu();
     TestImageBasedLightingOnGpu();
+    TestUIOnGpu();
     TestMeshAssets();
     TestTextureAssets();
     TestTextureMips();

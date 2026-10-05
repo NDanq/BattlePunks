@@ -26,6 +26,7 @@
 #include "Public/RenderCore/RenderTargetAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/OverlayFont.h"
+#include "Private/RenderCore/UIRenderer.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
 #include "Private/RenderCore/SceneTargets.h"
 #include "Private/RenderCore/ShadowSetup.h"
@@ -66,6 +67,7 @@ namespace RenderCore
         const char* const DEFAULT_LIT_MATERIAL = "Engine/Content/Materials/DefaultLit.material.nmgraph";   // a mesh with none
         const char* const LIGHTING_SHADER      = "DeferredLighting.fsh";  // Engine/Content/Shaders: the Lighting stage
         const char* const SHADOW_DEPTH_SHADER  = "ShadowDepth.fsh";       // the Shadows stage's casters
+        const char* const UI_VERTEX_SHADER     = "UI.vsh";                // DrawUI's, with UI.fsh (PP_UI)
 
         /* The post process stack's passes (Engine/Content/Shaders/PP*.fsh). */
         enum EPostPass : uint32_t
@@ -73,21 +75,21 @@ namespace RenderCore
             PP_DofPrepare, PP_DofBlur, PP_DofComposite, PP_MotionBlur,
             PP_BloomDownsample, PP_BloomUpsample, PP_BloomComposite, PP_Fxaa,
             PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy, PP_Tonemap,
-            PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget,
+            PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
             "PPDofPrepare.fsh", "PPDofBlur.fsh", "PPDofComposite.fsh", "PPMotionBlur.fsh",
             "PPBloomDownsample.fsh", "PPBloomUpsample.fsh", "PPBloomComposite.fsh", "PPFxaa.fsh",
             "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
-            "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh",
+            "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
             "DofPrepare", "DofBlur", "DofComposite", "MotionBlur",
             "BloomDownsample", "BloomUpsample", "BloomComposite", "Fxaa",
             "AmbientOcclusion", "AmbientBlur", "StatsOverlay", "ClearGradient", "CaptureCopy", "Tonemap",
-            "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget",
+            "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -219,6 +221,9 @@ namespace RenderCore
 
         /* A full-screen NDC quad, for PostProcess passes. */
         GDIViewObject* ScreenObject = nullptr;
+
+        /* DrawUI's; its Mesh borrows the scene's UI mesh while it draws. */
+        GDIViewObject* UIObject = nullptr;
 
         /* Keyed by path; rebuilt when MeshAssetCache's pointer differs from
          * Source. Gpu null with Source set: the backend couldn't build it. */
@@ -406,6 +411,12 @@ namespace RenderCore
                 delete ScreenObject->Mesh;
                 delete ScreenObject;
             }
+            if(UIObject)
+            {
+                UIObject->Mesh = nullptr;
+                delete UIObject->Transform;
+                delete UIObject;
+            }
             delete ViewObject;
             delete View3D;
         }
@@ -444,6 +455,9 @@ namespace RenderCore
             ScreenObject = new GDIViewObject();
             ScreenObject->Init(View3D);
             ScreenObject->Mesh = GDICreateQuadMesh(Verts, UVs, 18, 12, false);
+
+            UIObject = new GDIViewObject();
+            UIObject->Init(View3D);
         }
 
         void Bind(GDIShader* InVertex, GDIShader* InPixel)
@@ -697,6 +711,15 @@ namespace RenderCore
         void IssueAmbientOcclusion(SceneTargets& InTargets, const PostProcessSettings& InPost);
         GDITextureResource* AmbientOcclusion = nullptr;
         GDITextureResource* OverlayFont      = nullptr;   // OverlayFont.h's glyphs side by side, made on first use
+
+        /* DrawUI's: its vertex shader (UI.fsh is PP_UI), the white texture a
+         * list's texture 0 is, and Renderer::SetUIImage's images by key --
+         * UIImageEpoch counts their changes, for each scene's resolved textures. */
+        GDIShader*                                           UIVertexShader = nullptr;
+        bool                                                 bUIVertexTried = false;
+        GDITextureResource*                                  UIWhite        = nullptr;
+        std::unordered_map<std::string, GDITextureResource*> UIImages;
+        uint64_t                                             UIImageEpoch   = 1;
 
         /* "stat frame": the scene timing this GDI block, and the last block's. */
         bool        bTimeStages = false;
@@ -1585,6 +1608,9 @@ namespace RenderCore
             if(ShadowDepthShader) { RetiredShaders.push_back(ShadowDepthShader); }
             ShadowDepthShader = nullptr;
             bShadowDepthTried = false;
+            if(UIVertexShader) { RetiredShaders.push_back(UIVertexShader); }
+            UIVertexShader = nullptr;
+            bUIVertexTried = false;
             for(uint32_t Pass = 0; Pass < PP_PassCount; ++Pass)
             {
                 if(PostShaders[Pass]) { RetiredShaders.push_back(PostShaders[Pass]); }
@@ -2848,6 +2874,197 @@ namespace RenderCore
         GDISetMaterialTexture(0, nullptr);
     }
 
+    void RenderContext::SetUIImage(const char* InKey, const EngineCore::Image* InImage)
+    {
+        if(!InKey || !*InKey) return;
+        const std::string Key = InKey;
+        auto Found = P->UIImages.find(Key);
+        if(Found != P->UIImages.end())
+        {
+            /* Kept until ReleaseGPUResources: a frame in flight may still sample it. */
+            if(Found->second) { P->RetiredTextures.push_back(Found->second); }
+            P->UIImages.erase(Found);
+        }
+        if(InImage && InImage->GetWidth() > 0 && InImage->GetHeight() > 0 && P->Backend != ERenderBackend::Null)
+        {
+            P->UIImages[Key] = GDICreateTextureResource(*InImage, GDI_TB_Clamp_To_Edge, GDI_TF_Linear);
+        }
+        ++P->UIImageEpoch;
+    }
+
+    void RenderContext::DrawUI(UISceneState& InState, const uint32_t InWidth, const uint32_t InHeight)
+    {
+        const UIDrawListView& List = InState.List;
+        if(List.CommandCount == 0 || InWidth == 0 || InHeight == 0 || P->Backend == ERenderBackend::Null)
+        {
+            return;
+        }
+        if(!P->bUIVertexTried)
+        {
+            P->bUIVertexTried = true;
+            P->UIVertexShader = P->LoadShader(UI_VERTEX_SHADER, ST_Vertex, "the UI", false);
+        }
+        GDIShader* Pixel  = P->GetPostShader(PP_UI);
+        GDIShader* Vertex = P->UIVertexShader;
+        if(!Pixel || !Vertex)
+        {
+            return;
+        }
+
+        /* The mesh: grown to fit (by half again, so a growing UI does not
+         * rebuild every frame), rewritten only for a list it does not hold. */
+        if(!InState.Mesh || InState.Mesh->GetDynamicVertexCapacity() < List.VertexCount
+           || InState.Mesh->GetDynamicIndexCapacity() < List.IndexCount)
+        {
+            delete InState.Mesh;   // every backend defers the buffers past a frame still using them
+            InState.UploadedGeneration = 0;
+            InState.Mesh = GDICreateDynamicMesh(std::max<uint32_t>(4096, List.VertexCount + List.VertexCount / 2),
+                                                std::max<uint32_t>(6144, List.IndexCount + List.IndexCount / 2));
+            if(!InState.Mesh)
+            {
+                P->WarnOnce("ui|mesh", "the UI: this backend has no dynamic meshes; not drawn");
+                return;
+            }
+        }
+        if(InState.UploadedGeneration != InState.Generation)
+        {
+            const size_t Count = List.VertexCount;
+            InState.Positions.resize(Count * 3);
+            InState.UVs.resize(Count * 2);
+            InState.Colors.resize(Count * 4);
+            for(size_t At = 0; At < Count; ++At)
+            {
+                const UIVertex& V = List.Vertices[At];
+                InState.Positions[At * 3 + 0] = V.X;
+                InState.Positions[At * 3 + 1] = V.Y;
+                InState.Positions[At * 3 + 2] = 0.0f;
+                InState.UVs[At * 2 + 0] = V.U;
+                InState.UVs[At * 2 + 1] = V.V;
+                for(int Channel = 0; Channel < 4; ++Channel)
+                {
+                    InState.Colors[At * 4 + Channel] = float((V.Color >> (Channel * 8)) & 0xFFu) / 255.0f;
+                }
+            }
+            GDIMeshDesc Desc;
+            Desc.Positions   = InState.Positions.data();
+            Desc.UV0         = InState.UVs.data();
+            Desc.Colors      = InState.Colors.data();
+            Desc.NumVertices = List.VertexCount;
+            Desc.Indices     = List.Indices;
+            Desc.NumIndices  = List.IndexCount;
+            if(!GDIUpdateDynamicMesh(InState.Mesh, Desc))
+            {
+                P->WarnOnce("ui|update", "the UI: could not upload its draw list; not drawn");
+                return;
+            }
+            InState.UploadedGeneration = InState.Generation;
+        }
+
+        /* Each command's texture, resolved once per list (and per change to
+         * the UI images): "" white, "ui:..." an image, else a texture asset. */
+        if(InState.TexturesGeneration != InState.Generation || InState.TexturesEpoch != P->UIImageEpoch)
+        {
+            if(!P->UIWhite)
+            {
+                EngineCore::Image White(1, 1, EngineCore::EImageFormat::RGBA8);
+                std::memset(White.GetData(), 0xFF, 4);
+                P->UIWhite = GDICreateTextureResource(White, GDI_TB_Clamp_To_Edge, GDI_TF_Nearest);
+            }
+            std::vector<GDITextureResource*> ByTexture(List.Textures.size(), nullptr);
+            for(size_t At = 0; At < List.Textures.size(); ++At)
+            {
+                const std::string& Key = List.Textures[At];
+                if(Key.empty())
+                {
+                    ByTexture[At] = P->UIWhite;
+                }
+                else if(Key.compare(0, 3, "ui:") == 0)
+                {
+                    auto Found = P->UIImages.find(Key);
+                    ByTexture[At] = Found != P->UIImages.end() ? Found->second : nullptr;
+                }
+                else
+                {
+                    MaterialTexture Texture;
+                    Texture.Path = Key;
+                    ByTexture[At] = P->FindTexture(Texture);
+                }
+            }
+            InState.CommandTextures.resize(List.CommandCount);
+            for(uint32_t At = 0; At < List.CommandCount; ++At)
+            {
+                InState.CommandTextures[At] = ByTexture[List.Commands[At].Texture];
+            }
+            InState.TexturesGeneration = InState.Generation;
+            InState.TexturesEpoch      = P->UIImageEpoch;
+        }
+
+        SCOPED_DRAW_EVENT("UI");
+        P->EnsureInitialised();
+        GDISetViewport(0, 0, InWidth, InHeight);
+        GDISetColorMask(EColM_RGBA);
+        GDISetDepthState(IDepthStateDesc());
+        GDISetBlendState(IBlendStateDesc(true, BM_Src_Alpha, BM_One_Minus_Src_Alpha));
+        P->Bind(Vertex, Pixel);
+        GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &P->Scene, uint(sizeof(P->Scene)));
+
+        /* Pixels from the top-left to clip space, through the view's projection
+         * so every backend's own flip applies (Metal's PackViewParamsUBO, the
+         * D3D12 shaders' --flip-vert-y): NDC +y is up everywhere. */
+        EngineCore::Matrix4x4 Ortho;
+        Ortho.InitIdentity();
+        Ortho.Data[0][0] = 2.0f / float(InWidth);
+        Ortho.Data[0][3] = -1.0f;
+        Ortho.Data[1][1] = -2.0f / float(InHeight);
+        Ortho.Data[1][3] = 1.0f;
+        P->View3D->Camera->Projection = Ortho;
+        P->View3D->Camera->ViewMat    = EngineCore::Matrix4x4().InitIdentity();
+        GDITransform* Transform = P->UIObject->Transform;
+        Transform->Translate = EngineCore::Vector3(0, 0, 0);
+        Transform->Rotate    = EngineCore::Vector3(0, 0, 0);
+        Transform->Scale     = EngineCore::Vector3(1, 1, 1);
+        P->UIObject->Mesh = InState.Mesh;
+
+        UIClipRect Clip;   // none
+        GDITextureResource* Bound = nullptr;
+        bool bFirst = true;
+        for(uint32_t At = 0; At < List.CommandCount; ++At)
+        {
+            const UIDrawCmd& Command = List.Commands[At];
+            GDITextureResource* Texture = InState.CommandTextures[At];
+            if(Command.IndexCount == 0 || !Texture)
+            {
+                continue;   // a missing texture draws nothing rather than white
+            }
+            if(bFirst || Command.Clip != Clip)
+            {
+                Clip = Command.Clip;
+                if(Clip.IsNone())
+                {
+                    GDIClearScissorRect();
+                }
+                else
+                {
+                    GDISetScissorRect(uint(std::max(Clip.X, 0)), uint(std::max(Clip.Y, 0)), uint(std::max(Clip.W, 0)), uint(std::max(Clip.H, 0)));
+                }
+            }
+            if(bFirst || Texture != Bound)
+            {
+                GDISetMaterialTexture(0, Texture);
+                Bound = Texture;
+            }
+            bFirst = false;
+            InState.Mesh->SetDrawRange(Command.FirstIndex, Command.IndexCount);
+            GDIDrawObject(P->UIObject);
+            P->DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        GDIClearScissorRect();
+        GDISetMaterialTexture(0, nullptr);
+        InState.Mesh->SetDrawRange(0, 0);
+        P->UIObject->Mesh = nullptr;
+    }
+
     void RenderContext::SetPostProcess(const PostProcessSettings& InSettings, const EngineCore::Matrix4x4* InPreviousViewProjection)
     {
         P->PostSettings           = InSettings;
@@ -3160,6 +3377,14 @@ namespace RenderCore
         P->Textures.clear();
         if(P->OverlayFont) { P->RetiredTextures.push_back(P->OverlayFont); }
         P->OverlayFont = nullptr;
+        if(P->UIWhite) { P->RetiredTextures.push_back(P->UIWhite); }
+        P->UIWhite = nullptr;
+        for(auto& Each : P->UIImages)
+        {
+            if(Each.second) { P->RetiredTextures.push_back(Each.second); }
+        }
+        P->UIImages.clear();
+        ++P->UIImageEpoch;
         for(GDITextureResource* Each : P->RetiredTextures)
         {
             Each->Release();
