@@ -1067,7 +1067,7 @@ translucent draw by their emitters; two plumes that cross can blend out of
 order. Opaque particles write depth as any mesh does.
 
 LightLab's yard runs a sample of each (`SpawnParticleDemos`; entities
-`SparksDemo`, `DebrisDemo`, `LaserDemo`, `TrailDemo`), from its
+`SparksDemo`, `DebrisDemo`, `LaserDemo`, `TrailDemo`, `ExplosionDemo`), from its
 `Content/Particles/`: `Sparks` (Velocity Aligned sprites in repeating bursts
 from a Cone, under gravity, bouncing on the floor, through a white-hot to red Gradient and a
 shrinking size Curve), `Debris` (Random Spin box meshes coming to rest on the
@@ -1077,7 +1077,13 @@ on Move Emitter; in the yard, AnimateLights flies it round), `Laser` (two
 jittering beams, a wide glow and a thin core; in the yard, strung between two
 pillars by its Beam Target) -- the strips and sparks with
 `ParticleStreak.material.nmgraph`, soft across U and three times as bright, so
-Bloom spreads them.
+Bloom spreads them. `Explosion` is the Flipbook sample: a burst of
+fireballs, each playing the 4 x 4 sprite sheet
+`Content/Textures/ExplosionFlipbook.nmtexture` once over its life (white-hot,
+then orange, then grey smoke) through `ExplosionFlipbook.material.nmgraph`,
+with embers bursting out of it. LightLab's `Tools/make_flipbook_texture.py`
+writes the sheet (procedural fire, every cell's border transparent so filtering
+and mips never show the next frame).
 
 LightLab's yard has a flare (`SpawnFlare`): a red stick, a flame ball whose
 emissive (`FlareFlame`) flickers past 10 for Bloom, a red point light, and

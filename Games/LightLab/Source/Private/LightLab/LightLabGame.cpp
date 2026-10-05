@@ -760,8 +760,11 @@ private:
      * (Content/Particles/; RenderCore's RENDERPIPELINE.md, "Particles"):
      * sparks bursting in front of the left pillars, debris bursting by the ball,
      * a laser strung between the right pillars (its Beam Target, set here,
-     * overrides the asset's own end), and a ribbon trailing a point that
-     * AnimateLights flies round in a circle.
+     * overrides the asset's own end), a ribbon trailing a point that
+     * AnimateLights flies round in a circle, and an explosion in front of the
+     * centre pillar: a fireball played from a sprite sheet (the Flipbook
+     * module; Content/Textures/ExplosionFlipbook.nmtexture, which
+     * Tools/make_flipbook_texture.py writes) with embers bursting out.
      */
     static void SpawnParticleDemos(GameCore::World& InWorld)
     {
@@ -774,6 +777,7 @@ private:
             Laser->BeamTarget     = EngineCore::Vector3(775.0, 260.0, -1000.0);
         }
         SpawnParticles(InWorld, "TrailDemo", EngineCore::Vector3(-300.0, 140.0, -600.0), "Content/Particles/Trail.nmparticle");
+        SpawnParticles(InWorld, "ExplosionDemo", EngineCore::Vector3(160.0, 0.0, -860.0), "Content/Particles/Explosion.nmparticle");
     }
 
     /* The flying view, as LightLab.Player: above and behind the yard,
