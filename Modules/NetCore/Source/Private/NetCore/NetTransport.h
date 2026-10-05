@@ -22,10 +22,15 @@ namespace NetCore
 {
     enum : uint8_t
     {
-        NET_CHANNEL_GAME   = 0,   // reliable, ordered: everything a game session sends
+        NET_CHANNEL_GAME   = 0,   // reliable, ordered: handshake, spawns, destroys, RPCs
         NET_CHANNEL_EDITOR = 1,   // reliable, ordered: the editor link
-        NET_CHANNEL_COUNT  = 2,
+        NET_CHANNEL_STATE  = 2,   // unreliable, sequenced: replicated state and its acks
+        NET_CHANNEL_COUNT  = 3,
     };
+
+    /* The most a state packet carries, so it fits one UDP datagram under the
+     * usual 1400-odd byte path MTU with ENet's headers. */
+    constexpr size_t NET_STATE_PACKET_BYTES = 1200;
 
     using NetPeerID = uint32_t;
     constexpr NetPeerID NET_PEER_NONE = 0xFFFFFFFFu;
@@ -59,7 +64,10 @@ namespace NetCore
         /* The next event, without waiting; false when there is none. */
         bool Service(NetTransportEvent& OutEvent);
 
-        void Send(NetPeerID InPeer, uint8_t InChannel, const std::vector<uint8_t>& InBytes);
+        /* Reliable: delivered, in order on its channel, resent until it is.
+         * Unreliable: once; lost, or dropped if a newer one on its channel
+         * arrived first. */
+        void Send(NetPeerID InPeer, uint8_t InChannel, const std::vector<uint8_t>& InBytes, bool bInReliable = true);
         void Flush();
 
         /* Politely: Disconnected arrives through Service. */

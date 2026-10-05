@@ -236,6 +236,94 @@ namespace
     }
 }
 
+namespace
+{
+    /* State is unreliable: half of every batch and every ack is dropped here
+     * (SimulatedLossPercent), yet the client must end up exactly where the
+     * server is -- the acknowledged baselines resend whatever it may lack. */
+    void TestLossyState()
+    {
+        World ServerWorld;
+        World ClientWorld;
+        NetSession Server;
+        NetSession Client;
+        const Pair Both{ &Server, &Client };
+
+        NetConfig ServerConfig;
+        ServerConfig.Port                 = 0;
+        ServerConfig.SimulatedLossPercent = 50;
+        Check(Server.Start(ENetRole::Server, ServerConfig), "a lossy server listens");
+        Server.BindWorld(ServerWorld, "Lossy");
+
+        NetConfig ClientConfig;
+        std::strcpy(ClientConfig.ServerAddress, "127.0.0.1");
+        ClientConfig.Port                 = Server.GetPort();
+        ClientConfig.SimulatedLossPercent = 50;
+        Check(Client.Start(ENetRole::Client, ClientConfig), "a lossy client connects");
+        Client.BindWorld(ClientWorld, "Lossy");
+        Check(StepUntil(Both, [&] { return Client.IsConnected(); }), "the handshake is reliable, so it is unaffected");
+
+        Entity ServerPawn = ServerWorld.CreateEntity("LossyPawn");
+        ServerPawn.AddComponent<NetComponent>();
+        ServerPawn.AddComponent<PawnComponent>();
+        ServerPawn.AddComponent<TransformComponent>();
+
+        EntityID ClientPawn;
+        Check(StepUntil(Both, [&]
+        {
+            ClientPawn = Client.FindEntityByNetId(ServerPawn.GetComponent<NetComponent>()->NetId);
+            return ClientPawn.IsSet();
+        }), "an entity spawns over it");
+        Entity ClientHandle(&ClientWorld, ClientPawn);
+
+        /* Changing every step, then still: the last values arrive. */
+        for(int Index = 1; Index <= 200; ++Index)
+        {
+            ServerPawn.GetComponent<PawnComponent>()->Health = Index;
+            ServerPawn.GetComponent<TransformComponent>()->Position = EngineCore::Vector3(float(Index), 0.0f, 0.0f);
+            Step(Both);
+        }
+        Check(StepUntil(Both, [&]
+        {
+            return ClientHandle.GetComponent<PawnComponent>()->Health == 200
+                && Near(ClientHandle.GetComponent<TransformComponent>()->Position.GetX(), 200.0f);
+        }), "under 50% loss each way, the latest values arrive");
+
+        /* Changed and changed straight back, again and again: whatever was
+         * lost, the client settles on the server's value. */
+        bool bAllSettled = true;
+        for(int Round = 0; Round < 20; ++Round)
+        {
+            ServerPawn.GetComponent<PawnComponent>()->Health = 1000 + Round;
+            Step(Both);
+            Step(Both);
+            ServerPawn.GetComponent<PawnComponent>()->Health = 200;
+            if(!StepUntil(Both, [&] { return ClientHandle.GetComponent<PawnComponent>()->Health == 200; }, 2000)) { bAllSettled = false; }
+            for(int Index = 0; Index < 30; ++Index) { Step(Both); }
+            if(ClientHandle.GetComponent<PawnComponent>()->Health != 200) { bAllSettled = false; }
+        }
+        Check(bAllSettled, "a value changed and changed back ends right, every time");
+
+        /* State for a new entity, changed right after its spawn went out. */
+        Entity Late = ServerWorld.CreateEntity("LossyLate");
+        Late.AddComponent<NetComponent>();
+        Late.AddComponent<PawnComponent>();
+        Step(Both);   // its spawn goes, reliably
+        Late.GetComponent<PawnComponent>()->Health = 79;
+        Check(StepUntil(Both, [&]
+        {
+            const EntityID There = Client.FindEntityByNetId(Late.GetComponent<NetComponent>()->NetId);
+            const PawnComponent* Pawn = There.IsSet() ? Entity(&ClientWorld, There).GetComponent<PawnComponent>() : nullptr;
+            return Pawn && Pawn->Health == 79;
+        }), "and a change made just after a spawn reaches it");
+
+        Client.Stop();
+        Server.UnbindWorld();
+        Server.Stop();
+        Client.UnbindWorld();
+    }
+}
+
 int main()
 {
     TestEditorLink();
@@ -524,6 +612,13 @@ int main()
         Check(StepUntil(Both, [&] { return Seen.Count > 0 && Seen.LastAck == 5; }), "the correction handler runs with the server's input ack");
         Check(Near(Seen.XAtCall, 50.0f), "with the server's Transform already written, not delayed");
 
+        /* The server sends it each tick until the client acknowledges it,
+         * then stops. */
+        for(int Index = 0; Index < 100; ++Index) { Step(Both); }
+        Seen = Corrections();
+        for(int Index = 0; Index < 50; ++Index) { Step(Both); }
+        Check(Seen.Count == 0, "once acknowledged, unchanged state is not sent again");
+
         /* The game replays on top; the session leaves that alone. */
         ClientHeroHandle.GetComponent<TransformComponent>()->Position = EngineCore::Vector3(60.0f, 0.0f, 0.0f);
         for(int Index = 0; Index < 50; ++Index) { Step(Both); }
@@ -547,6 +642,8 @@ int main()
     const int MovesBefore = GServerLog.ServerMoves;
     GAMECORE_RPC(PawnComponent, ServerMove)(ServerDoor, EngineCore::Vector3(0.0f, 0.0f, 0.0f));
     Check(GServerLog.ServerMoves == MovesBefore + 1, "stopping the last session restores local RPCs");
+
+    TestLossyState();
 
     if(GFailures == 0) { std::printf("NetCore loopback: all passed\n"); }
     else               { std::fprintf(stderr, "NetCore loopback: %d failure(s)\n", GFailures); }

@@ -25,6 +25,8 @@ namespace NimbleEngine
         bool        bDedicated = false;
         /* A client shows other entities this far in the past ([Net] InterpolationDelayMs). */
         uint32_t    InterpolationDelayMs = 100;
+        /* Testing: this share of state packets is dropped ([Net] SimulatedLossPercent). */
+        uint32_t    SimulatedLossPercent = 0;
 
         /*
          * The game's [Net] config. InMode, unless it is Standalone: then

@@ -174,12 +174,14 @@ bool NetTransport::Service(NetTransportEvent& OutEvent)
     return false;
 }
 
-void NetTransport::Send(const NetPeerID InPeer, const uint8_t InChannel, const std::vector<uint8_t>& InBytes)
+void NetTransport::Send(const NetPeerID InPeer, const uint8_t InChannel, const std::vector<uint8_t>& InBytes, const bool bInReliable)
 {
     const auto Found = Peers.find(InPeer);
     if(!Host || Found == Peers.end() || InBytes.empty()) { return; }
 
-    ENetPacket* Packet = enet_packet_create(InBytes.data(), InBytes.size(), ENET_PACKET_FLAG_RELIABLE);
+    /* Unreliable is sequenced: ENet drops one older than the newest that
+     * arrived on its channel. */
+    ENetPacket* Packet = enet_packet_create(InBytes.data(), InBytes.size(), bInReliable ? ENET_PACKET_FLAG_RELIABLE : 0);
     if(Packet && enet_peer_send(Found->second, InChannel, Packet) != 0)
     {
         /* Not queued, so still ours to free. */
