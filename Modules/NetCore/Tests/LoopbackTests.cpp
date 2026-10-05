@@ -9,6 +9,7 @@
  * anything else. Every wait is bounded.
  */
 
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstring>
@@ -453,6 +454,83 @@ int main()
         Check(StepUntil(Three, [&] { return StrangerWorld.GetEntityCount() == 2; }), "and gets a snapshot of every networked entity");
         Stranger.Stop();
         Check(StepUntil(Both, [&] { return Disconnected == 1; }), "its disconnect reaches the server");
+    }
+
+    // --- smoothing: a remote Transform is shown in the past, blended ------------
+    {
+        Entity ServerMover = ServerWorld.CreateEntity("Mover");
+        ServerMover.AddComponent<NetComponent>();
+        ServerMover.AddComponent<TransformComponent>();
+
+        EntityID ClientMover;
+        Check(StepUntil(Both, [&]
+        {
+            ClientMover = Client.FindEntityByNetId(ServerMover.GetComponent<NetComponent>()->NetId);
+            return ClientMover.IsSet();
+        }), "a server-owned entity with a Transform spawns");
+        Entity ClientMoverHandle(&ClientWorld, ClientMover);
+
+        /* Still for a while, then 0 to 100 over 200 ms. The client is 100 ms
+         * behind, so it has not started moving when the server is a quarter
+         * of the way there. */
+        using Clock = std::chrono::steady_clock;
+        const auto StepFor = [&](const int InMs)
+        {
+            const auto Until = Clock::now() + std::chrono::milliseconds(InMs);
+            while(Clock::now() < Until) { Step(Both); }
+        };
+        StepFor(300);
+
+        float Early = -1.0f;
+        bool bSawBetween = false;
+        const auto Start = Clock::now();
+        while(Clock::now() < Start + std::chrono::milliseconds(700))
+        {
+            const double Ms = std::chrono::duration<double, std::milli>(Clock::now() - Start).count();
+            ServerMover.GetComponent<TransformComponent>()->Position = EngineCore::Vector3(float(std::min(Ms / 2.0, 100.0)), 0.0f, 0.0f);
+            Step(Both);
+            const float X = ClientMoverHandle.GetComponent<TransformComponent>()->Position.GetX();
+            if(Ms >= 50.0 && Early < 0.0f) { Early = X; }
+            if(X > 1.0f && X < 99.0f)     { bSawBetween = true; }
+        }
+        Check(Early >= 0.0f && Early < 1.0f, "the client shows the move late, not at once");
+        Check(bSawBetween, "and blends through the positions between");
+        Check(Near(ClientMoverHandle.GetComponent<TransformComponent>()->Position.GetX(), 100.0f),
+              "and arrives where the server put it");
+
+        ServerMover.Destroy();
+        Check(StepUntil(Both, [&] { return !ClientWorld.IsAlive(ClientMover); }), "the mover goes");
+    }
+
+    // --- prediction: the owner's predicted entity is corrected, not blended ------
+    {
+        /* The client predicts its hero: its own choice, on its own copy. */
+        ClientHeroHandle.GetComponent<NetComponent>()->bPredicted = 1;
+
+        struct Corrections { int Count = 0; int32_t LastAck = 0; float XAtCall = 0.0f; } Seen;
+        Client.SetCorrectionHandler([](World& InWorld, const EntityID InEntity, const int32_t InAck, void* InSeen)
+        {
+            Corrections& S = *static_cast<Corrections*>(InSeen);
+            ++S.Count;
+            S.LastAck = InAck;
+            S.XAtCall = Entity(&InWorld, InEntity).GetComponent<TransformComponent>()->Position.GetX();
+        }, &Seen);
+        for(int Index = 0; Index < 5; ++Index) { Step(Both); }   // hands the predicted entity its latest Transform
+        Seen = Corrections();
+
+        /* The server applied the client's move 5, which put it at X = 50. */
+        ServerPawn.GetComponent<NetComponent>()->InputAck = 5;
+        ServerPawn.GetComponent<TransformComponent>()->Position = EngineCore::Vector3(50.0f, 0.0f, 0.0f);
+        Check(StepUntil(Both, [&] { return Seen.Count > 0 && Seen.LastAck == 5; }), "the correction handler runs with the server's input ack");
+        Check(Near(Seen.XAtCall, 50.0f), "with the server's Transform already written, not delayed");
+
+        /* The game replays on top; the session leaves that alone. */
+        ClientHeroHandle.GetComponent<TransformComponent>()->Position = EngineCore::Vector3(60.0f, 0.0f, 0.0f);
+        for(int Index = 0; Index < 50; ++Index) { Step(Both); }
+        Check(Near(ClientHeroHandle.GetComponent<TransformComponent>()->Position.GetX(), 60.0f),
+              "a predicted Transform is not interpolated over");
+
+        Client.SetCorrectionHandler(nullptr, nullptr);
     }
 
     // --- destruction ------------------------------------------------------------

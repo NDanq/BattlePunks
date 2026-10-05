@@ -1,6 +1,8 @@
 #include "Public/NetCore/NetSession.h"
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -17,6 +19,7 @@
 #include "Public/GameCore/ComponentRpc.h"
 #include "Public/GameCore/ComponentSerializer.h"
 #include "Public/GameCore/Components/NetComponent.h"
+#include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/World.h"
 
@@ -123,6 +126,44 @@ struct NetSession::Impl final : public INetEntityMap
      * another process means nothing here. */
     bool bDecodingRemote = false;
 
+    // --- time ------------------------------------------------------------
+    /* Each process's own clock, from when it started: the server stamps its
+     * flushes with it (Frame), a client keeps the offset to it. */
+    std::chrono::steady_clock::time_point Epoch = std::chrono::steady_clock::now();
+
+    uint32_t NowMs() const
+    {
+        return uint32_t(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - Epoch).count());
+    }
+
+    // --- a client's interpolation ------------------------------------------
+    /* The server's clock as this client estimates it: local - offset. */
+    bool     bHaveServerTime  = false;
+    double   ServerOffsetMs   = 0.0;
+    uint32_t LastServerTimeMs = 0;   // the last Frame's: the time of the State that follows it
+    uint32_t PrevServerTimeMs = 0;   // the Frame before that
+
+    struct TransformSample
+    {
+        uint32_t            TimeMs = 0;
+        EngineCore::Vector3 Position, Rotation, Scale;
+    };
+
+    /* A remote entity's Transform as the server sent it, over time. Target
+     * is the latest, as a whole component, so a State with only some fields
+     * builds on it. */
+    struct Interpolation
+    {
+        std::vector<TransformSample>  Samples;
+        GameCore::TransformComponent  Target;
+    };
+    std::unordered_map<int32_t, Interpolation> Interpolations;   // by NetId
+
+    /* Owned, predicted entities whose server state arrived this poll. */
+    std::vector<int32_t> Corrected;
+    CorrectionFn         OnCorrection        = nullptr;
+    void*                CorrectionUserData  = nullptr;
+
     // === INetEntityMap ===================================================
 
     int32_t ToNetId(const EntityID InEntity) const override
@@ -155,6 +196,162 @@ struct NetSession::Impl final : public INetEntityMap
         {
             if(int32_t(uint32_t(It->first >> 16)) == InNetId) { It = Shadows.erase(It); }
             else                                             { ++It; }
+        }
+        Interpolations.erase(InNetId);
+    }
+
+    // === A client's smoothing and prediction ==============================
+
+    /* This client owns InEntity and moves it itself (NetComponent::bPredicted). */
+    bool IsPredictedHere(const EntityID InEntity) const
+    {
+        const NetComponent* Net = GameCore::Entity(BoundWorld, InEntity).GetComponent<NetComponent>();
+        return Net && Net->bPredicted && LocalClient != NET_CLIENT_NONE && Net->OwnerClient == LocalClient;
+    }
+
+    /* Shown in the past and blended: every networked Transform on a client,
+     * but one it predicts. */
+    bool IsInterpolated(const EntityID InEntity) const
+    {
+        return Role == ENetRole::Client && Config.InterpolationDelayMs > 0 && !IsPredictedHere(InEntity)
+            && GameCore::Entity(BoundWorld, InEntity).HasComponent<GameCore::TransformComponent>();
+    }
+
+    /* The server's Transform at LastServerTimeMs, from InTarget. */
+    void PushSample(Interpolation& InOut)
+    {
+        TransformSample Sample;
+        Sample.TimeMs   = LastServerTimeMs;
+        Sample.Position = InOut.Target.Position;
+        Sample.Rotation = InOut.Target.Rotation;
+        Sample.Scale    = InOut.Target.Scale;
+
+        /* State is sent only when it changes, so an entity that sat still has
+         * no sample since it stopped: it was still where the last one says
+         * at the server's previous frame, and the move began after that. */
+        if(!InOut.Samples.empty() && PrevServerTimeMs != 0 && InOut.Samples.back().TimeMs < PrevServerTimeMs
+           && PrevServerTimeMs < Sample.TimeMs)
+        {
+            TransformSample Held = InOut.Samples.back();
+            Held.TimeMs = PrevServerTimeMs;
+            InOut.Samples.push_back(Held);
+        }
+
+        if(!InOut.Samples.empty() && InOut.Samples.back().TimeMs >= Sample.TimeMs) { InOut.Samples.back() = Sample; }
+        else                                                                   { InOut.Samples.push_back(Sample); }
+
+        /* A second of history is ample for any sane delay. */
+        while(InOut.Samples.size() > 2 && InOut.Samples.front().TimeMs + 1000 < Sample.TimeMs)
+        {
+            InOut.Samples.erase(InOut.Samples.begin());
+        }
+    }
+
+    /* A Frame: the server's clock now, as near as arrival tells. The offset
+     * is smoothed, so arrival jitter does not shake what is shown; a jump
+     * (a stall on either side) is taken at once. */
+    void ReceiveFrame(EngineCore::Archive& Ar)
+    {
+        uint32_t ServerMs = 0;
+        Ar << ServerMs;
+        if(Ar.HasError()) { return; }
+        PrevServerTimeMs = LastServerTimeMs;
+        LastServerTimeMs = ServerMs;
+
+        const double Sample = double(NowMs()) - double(ServerMs);
+        if(!bHaveServerTime || std::fabs(Sample - ServerOffsetMs) > 1000.0)
+        {
+            ServerOffsetMs  = Sample;
+            bHaveServerTime = true;
+        }
+        else
+        {
+            ServerOffsetMs += (Sample - ServerOffsetMs) * 0.1;
+        }
+    }
+
+    static double LerpAngle(const double InFrom, const double InTo, const double InAlpha)
+    {
+        double Delta = std::fmod(InTo - InFrom, 360.0);
+        if(Delta > 180.0)  { Delta -= 360.0; }
+        if(Delta < -180.0) { Delta += 360.0; }
+        return InFrom + Delta * InAlpha;
+    }
+
+    static EngineCore::Vector3 Lerp(const EngineCore::Vector3& InA, const EngineCore::Vector3& InB, const double InAlpha)
+    {
+        return EngineCore::Vector3(InA.GetX() + (InB.GetX() - InA.GetX()) * InAlpha,
+                                   InA.GetY() + (InB.GetY() - InA.GetY()) * InAlpha,
+                                   InA.GetZ() + (InB.GetZ() - InA.GetZ()) * InAlpha);
+    }
+
+    /* Every interpolated Transform, at the server's time minus the delay:
+     * blended between the samples either side, or held at the newest when
+     * the server has gone quiet (no guessing ahead). */
+    void Interpolate()
+    {
+        if(Role != ENetRole::Client || !BoundWorld || !bHaveServerTime) { return; }
+        const double RenderMs = double(NowMs()) - ServerOffsetMs - double(Config.InterpolationDelayMs);
+
+        for(auto It = Interpolations.begin(); It != Interpolations.end();)
+        {
+            const EntityID Entity = FromNetId(It->first);
+            GameCore::TransformComponent* Transform =
+                Entity.IsSet() ? GameCore::Entity(BoundWorld, Entity).GetComponent<GameCore::TransformComponent>() : nullptr;
+            if(!Transform) { It = Interpolations.erase(It); continue; }
+
+            /* Became this client's to predict (its owner arrived after its
+             * Transform): the server's latest, then the game's. */
+            if(IsPredictedHere(Entity))
+            {
+                Transform->Position = It->second.Target.Position;
+                Transform->Rotation = It->second.Target.Rotation;
+                Transform->Scale    = It->second.Target.Scale;
+                It = Interpolations.erase(It);
+                continue;
+            }
+
+            const std::vector<TransformSample>& Samples = It->second.Samples;
+            if(Samples.empty()) { ++It; continue; }
+
+            size_t After = 0;
+            while(After < Samples.size() && double(Samples[After].TimeMs) <= RenderMs) { ++After; }
+            if(After == 0 || After == Samples.size())
+            {
+                const TransformSample& Held = After == 0 ? Samples.front() : Samples.back();
+                Transform->Position = Held.Position;
+                Transform->Rotation = Held.Rotation;
+                Transform->Scale    = Held.Scale;
+            }
+            else
+            {
+                const TransformSample& A = Samples[After - 1];
+                const TransformSample& B = Samples[After];
+                const double Alpha = (RenderMs - double(A.TimeMs)) / double(B.TimeMs - A.TimeMs);
+                Transform->Position = Lerp(A.Position, B.Position, Alpha);
+                Transform->Rotation = EngineCore::Vector3(LerpAngle(A.Rotation.GetX(), B.Rotation.GetX(), Alpha),
+                                                          LerpAngle(A.Rotation.GetY(), B.Rotation.GetY(), Alpha),
+                                                          LerpAngle(A.Rotation.GetZ(), B.Rotation.GetZ(), Alpha));
+                Transform->Scale    = Lerp(A.Scale, B.Scale, Alpha);
+            }
+            ++It;
+        }
+    }
+
+    /* After the poll's state is written: the game reconciles what it predicts. */
+    void FireCorrections()
+    {
+        if(Corrected.empty()) { return; }
+        std::vector<int32_t> Ids;
+        Ids.swap(Corrected);
+        std::sort(Ids.begin(), Ids.end());
+        Ids.erase(std::unique(Ids.begin(), Ids.end()), Ids.end());
+        if(!OnCorrection || !BoundWorld) { return; }
+        for(const int32_t NetId : Ids)
+        {
+            const EntityID Entity = FromNetId(NetId);
+            const NetComponent* Net = Entity.IsSet() ? GameCore::Entity(BoundWorld, Entity).GetComponent<NetComponent>() : nullptr;
+            if(Net && BoundWorld->IsAlive(Entity)) { OnCorrection(*BoundWorld, Entity, Net->InputAck, CorrectionUserData); }
         }
     }
 
@@ -222,6 +419,14 @@ struct NetSession::Impl final : public INetEntityMap
         return Ar;
     }
 
+    EngineCore::Archive BuildFrame()
+    {
+        EngineCore::Archive Ar = BeginMessage(ENetMessage::Frame);
+        uint32_t Now = NowMs();
+        Ar << Now;
+        return Ar;
+    }
+
     /* InMask's fields of InType on InEntity, or every field with bInFull. */
     bool BuildState(const int32_t InNetId, const ComponentTypeID InType, const void* InComponent,
                     const uint32_t InMask, EngineCore::Archive& OutAr)
@@ -264,6 +469,7 @@ struct NetSession::Impl final : public INetEntityMap
     void SendSnapshot(const NetPeerID InPeer)
     {
         if(!BoundWorld) { return; }
+        SendTo(InPeer, BuildFrame());
 
         std::vector<int32_t> Ids;
         Ids.reserve(NetToEntity.size());
@@ -288,6 +494,9 @@ struct NetSession::Impl final : public INetEntityMap
     {
         if(!BoundWorld) { return; }
         Schema.Refresh();
+
+        /* What follows is the world as of now: a client times it by this. */
+        if(HasWelcomedClients()) { Broadcast(BuildFrame()); }
 
         /* A table changed (a module reloaded): what was cached about the old
          * layout is meaningless; everything goes again in full. */
@@ -518,6 +727,15 @@ struct NetSession::Impl final : public INetEntityMap
 
         if(ParentGuid.IsSet()) { PendingParents.push_back({ Entity, ParentGuid }); }
         ResolveParents();
+
+        /* Where it appeared is the first of its Transform's samples. */
+        if(IsInterpolated(Entity))
+        {
+            Interpolation& Smooth = Interpolations[NetId];
+            Smooth.Samples.clear();
+            Smooth.Target = *Handle.GetComponent<GameCore::TransformComponent>();
+            PushSample(Smooth);
+        }
     }
 
     /* A child can arrive before its parent; link what can be linked now. */
@@ -559,9 +777,33 @@ struct NetSession::Impl final : public INetEntityMap
 
         size_t FieldCount = 0;
         const GameCore::ReplicatedFieldEntry* Fields = GameCore::FindComponentReplication(Type, FieldCount);
+
+        /* A Transform shown in the past: the server's goes into its samples,
+         * and Interpolate() writes the component. */
+        const bool bTransform = Type == GameCore::TransformComponent::StaticType().ID;
+        void* Into = Component;
+        Interpolation* Smooth = nullptr;
+        if(bTransform && IsInterpolated(Entity))
+        {
+            const auto Found = Interpolations.find(NetId);
+            Smooth = &Interpolations[NetId];
+            if(Found == Interpolations.end()) { Smooth->Target = *static_cast<GameCore::TransformComponent*>(Component); }
+            Into = &Smooth->Target;
+        }
+
         for(size_t Field = 0; Field < FieldCount && !Ar.HasError(); ++Field)
         {
-            if(Mask & (1u << Field)) { ReadReplicatedField(Ar, Fields[Field], Component, *this); }
+            if(Mask & (1u << Field)) { ReadReplicatedField(Ar, Fields[Field], Into, *this); }
+        }
+        if(Ar.HasError()) { return; }
+
+        if(Smooth) { PushSample(*Smooth); }
+
+        /* The server's word on something this client predicts: the game
+         * reconciles once the poll is done. */
+        if((bTransform || Type == NetComponent::StaticType().ID) && IsPredictedHere(Entity))
+        {
+            Corrected.push_back(NetId);
         }
     }
 
@@ -656,6 +898,7 @@ struct NetSession::Impl final : public INetEntityMap
                 case ENetMessage::Spawn:   ClientSpawn(Ar);         break;
                 case ENetMessage::Destroy: ClientDestroy(Ar);       break;
                 case ENetMessage::State:   ClientState(Ar);         break;
+                case ENetMessage::Frame:   ReceiveFrame(Ar);        break;
                 case ENetMessage::Rpc:     ReceiveRpc(InPeer, Ar);  break;
                 default:                   Ar.SetError("a message a server does not send"); break;
             }
@@ -902,6 +1145,9 @@ void NetSession::Stop()
     P->bWelcomed   = false;
     P->LocalClient = NET_CLIENT_NONE;
     P->bStarted    = false;
+    P->bHaveServerTime  = false;
+    P->LastServerTimeMs = 0;
+    P->PrevServerTimeMs = 0;
     P->Role        = ENetRole::Standalone;
 
     GStarted.erase(std::remove(GStarted.begin(), GStarted.end(), P), GStarted.end());
@@ -938,6 +1184,8 @@ void NetSession::UnbindWorld()
     P->EntityToNet.clear();
     P->Shadows.clear();
     P->PendingParents.clear();
+    P->Interpolations.clear();
+    P->Corrected.clear();
 }
 
 GameCore::World* NetSession::GetBoundWorld() const { return P->BoundWorld; }
@@ -956,6 +1204,11 @@ void NetSession::PollIncoming()
             case NetTransportEvent::EType::Received:     P->HandleReceived(Event.Peer, Event.Channel, Event.Data); break;
         }
     }
+
+    /* A client: other entities where they were a moment ago, smoothly; then
+     * what it predicts, reconciled with what just arrived. */
+    P->Interpolate();
+    P->FireCorrections();
 }
 
 void NetSession::FlushOutgoing()
@@ -974,6 +1227,12 @@ void NetSession::SetClientEvents(const ClientEventFn InConnected, const ClientEv
     P->OnConnected    = InConnected;
     P->OnDisconnected = InDisconnected;
     P->EventUserData  = InUserData;
+}
+
+void NetSession::SetCorrectionHandler(const CorrectionFn InFn, void* InUserData)
+{
+    P->OnCorrection       = InFn;
+    P->CorrectionUserData = InUserData;
 }
 
 NetSession* NetSession::GetActive() { return GStarted.empty() ? nullptr : GStarted.front()->Self; }

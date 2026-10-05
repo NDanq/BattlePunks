@@ -46,9 +46,10 @@ NimbleEngine networking is **server-authoritative**:
 
 ```
  client                           server                          other clients
-   │  keys → ServerSetMove(dir) ──►  runs ServerSetMove
-   │                                 moves the capsule (system)
-   │  ◄────── Transform changed ───  replication ──────────────────► Transform changed
+   │  keys → ServerMove(n, dir) ──►  runs ServerMove: moves the capsule
+   │  (moves it at once: predicted)   acknowledges move n
+   │  ◄── Transform, ack n ─────────  replication ──────────────────► Transform (blended)
+   │  replays moves after n
 ```
 
 ---
@@ -151,8 +152,8 @@ void MySystem(GameCore::World& InWorld, float InDt, void*)
 ```
 
 **Systems that move shared state should early-out on clients.** Otherwise a
-client predicts locally, and the next replication overwrites it. NimbleEngine
-has no client prediction yet.
+client moves it too, and the next replication overwrites it. To make a
+player's own pawn answer at once, predict it (section 8).
 
 ---
 
@@ -324,38 +325,86 @@ The pattern NetArena uses, and the one to start from:
 1. **A local controller entity** in the level: an `InputComponent`, no
    `NetComponent`. Every process has its own, which reads that process's
    keyboard.
-2. **In `IGameMode::OnTick`,** read the controller's axes and find the pawn
-   this process owns (`IsLocallyOwned`). Call a Server RPC with what the
-   player wants: a direction, a button press. **Send only when it changes**
-   (RPCs are reliable, and the server keeps the last value).
-3. **On the server, the RPC stores the request** in the pawn's component,
-   clamped.
-4. **A server-only system applies it** each tick: it moves the Transform,
-   which replicates.
+2. **One move function** that both ends run: given a Transform, a direction
+   and a frame's seconds, it moves the Transform. Keep it deterministic and
+   free of anything only the server has.
+3. **In `IGameMode::OnTick`,** read the controller's axes and find the pawn
+   this process owns (`IsLocallyOwned`). Each frame it moves, give the move a
+   number and send it in a Server RPC.
+4. **On the server, the RPC validates and applies the move** with the same
+   function, then records its number in `NetComponent::InputAck`. The
+   Transform and the ack replicate.
 
 ```cpp
-void ServerSetMove(const EngineCore::Vector3& InDir)          // on the pawn component
+void ServerMove(int32_t InSequence, const EngineCore::Vector3& InDir, float InSeconds)   // on the pawn component
 {
-    MoveInput = EngineCore::Vector3(std::clamp(double(InDir.GetX()), -1.0, 1.0), 0.0,
-                                    std::clamp(double(InDir.GetZ()), -1.0, 1.0));
+    GameCore::NetComponent* Net = Owner.GetSibling<GameCore::NetComponent>();
+    if(Net && InSequence <= Net->InputAck) { return; }                  // old or repeated
+    ApplyMove(*Owner.GetSibling<GameCore::TransformComponent>(), InDir,  // clamps the direction and the seconds
+              std::min(InSeconds, 0.1f));
+    if(Net) { Net->InputAck = InSequence; }
 }
-
-// OnTick, every process:
-World.Each<PawnComponent>([&](GameCore::Entity InPawn, PawnComponent&)
-{
-    const GameCore::NetComponent* Net = InPawn.GetComponent<GameCore::NetComponent>();
-    if(Net && NimbleEngine::IsLocallyOwned(*Net) && Wanted != LastSent)
-    {
-        GAMECORE_RPC(PawnComponent, ServerSetMove)(InPawn, Wanted);
-        LastSent = Wanted;
-    }
-});
 ```
 
-On a listen server or a standalone game, the same call simply runs locally.
+On a listen server or a standalone game the same call simply runs locally.
 
-The cost is latency: a client sees its own movement only after a round trip.
-On a LAN that is a few milliseconds.
+### Smoothing
+
+Every networked Transform a client receives is shown slightly in the past
+(`[Net] InterpolationDelayMs`, 100 by default) and blended between the
+server's updates. The server stamps each update with its clock, so a 30 Hz
+server moves remote entities smoothly at any frame rate. This needs nothing
+from the game. `-Net.InterpolationDelayMs=0` turns it off. Keep the delay
+above two server ticks (the server's `[Net] ServerTickRate`), or a single
+late packet shows as a stop.
+
+### Prediction
+
+Smoothing would make a player's own pawn answer its keys a round trip late,
+plus the delay. So the owner **predicts** it:
+
+1. **Mark the pawn predicted:** `Predicted` on its Net component in the
+   prefab (`NetComponent::bPredicted`). Its owner then takes the server's
+   Transform for it as-is, never blended. Everyone else still blends it.
+2. **On the owning client, apply each move at once** with the same function,
+   keep it in a list, and send it:
+
+   ```cpp
+   const int32_t Sequence = ++NextSequence;
+   if(NimbleEngine::IsClient() && Net->bPredicted)
+   {
+       ApplyMove(*Transform, Wanted, Seconds);
+       Pending.push_back({ Sequence, Wanted, Seconds });
+   }
+   GAMECORE_RPC(PawnComponent, ServerMove)(InPawn, Sequence, Wanted, Seconds);
+   ```
+
+3. **Reconcile when the server's state arrives.** Register a handler in the
+   mode's `OnLoad` (`NimbleEngine::SetNetCorrectionHandler`) and clear it in
+   `OnUnload`. NetCore calls it once per predicted pawn whose state arrived,
+   after writing the server's Transform. Drop the moves up to the ack and
+   replay the rest:
+
+   ```cpp
+   static void OnCorrection(GameCore::World& InWorld, GameCore::EntityID InPawn, int32_t InAck, void* InMode)
+   {
+       MyMode& Self = *static_cast<MyMode*>(InMode);
+       GameCore::TransformComponent* T = InWorld.GetEntity(InPawn).GetComponent<GameCore::TransformComponent>();
+       Self.Pending.erase(std::remove_if(Self.Pending.begin(), Self.Pending.end(),
+                                         [&](const PendingMove& M) { return M.Sequence <= InAck; }),
+                          Self.Pending.end());
+       for(const PendingMove& M : Self.Pending) { ApplyMove(*T, M.Direction, M.Seconds); }
+   }
+   ```
+
+When both ends run the same code from the same place, the replay lands where
+the pawn already was and nothing visibly moves. When the server disagrees
+(it clamped a move, or something pushed the pawn), the pawn snaps to the
+server's answer. NetArena logs the worst correction every five seconds:
+`worst correction 0u` means client and server agree.
+
+Predict only what the client can know. Movement into a wall the client also
+has is fine. Being hit by another player is the server's to say.
 
 ---
 

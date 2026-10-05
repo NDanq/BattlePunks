@@ -23,6 +23,8 @@ namespace NimbleEngine
         bool        bSpawnPlayerPerClient = true;
         /* No local player: a headless server (NetFacade's IsDedicatedServer). */
         bool        bDedicated = false;
+        /* A client shows other entities this far in the past ([Net] InterpolationDelayMs). */
+        uint32_t    InterpolationDelayMs = 100;
 
         /*
          * The game's [Net] config. InMode, unless it is Standalone: then

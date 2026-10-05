@@ -51,6 +51,24 @@ namespace NimbleEngine
 
     void SetDedicatedServerFlag(const bool bInDedicated) { GDedicatedServer = bInDedicated; }
 
+    namespace
+    {
+        NetCorrectionFn GCorrectionHandler  = nullptr;
+        void*           GCorrectionUserData = nullptr;
+    }
+
+    void SetNetCorrectionHandler(const NetCorrectionFn InHandler, void* InUserData)
+    {
+        GCorrectionHandler  = InHandler;
+        GCorrectionUserData = InHandler ? InUserData : nullptr;
+    }
+
+    NetCorrectionFn GetNetCorrectionHandler(void*& OutUserData)
+    {
+        OutUserData = GCorrectionUserData;
+        return GCorrectionHandler;
+    }
+
     bool IsDedicatedServer() { return GDedicatedServer && IsServer(); }
 
     bool IsLocallyOwned(const GameCore::NetComponent& InNet)
