@@ -27,7 +27,7 @@
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/UI/UIDesignDocument.h"
-#include "Private/Editor/UI/UILogicLink.h"
+#include "Private/Editor/UI/UIGraphLink.h"
 
 namespace
 {
@@ -256,39 +256,39 @@ QWidget* UIDetailsPanel::MakeEditor(const UI::UIPropertyDesc& InDesc, const QStr
         const QString Property = QString::fromStdString(InDesc.Name);
         QAction* Handler = Menu->addAction(QStringLiteral("Graph handler"), this, [this, InOwner, Property]()
         {
-            const QString Made = EditorUILogic::AddHandler(Design, InOwner, Property, window());
+            const QString Made = EditorUIGraph::AddHandler(Design, InOwner, Property, window());
             if(!Made.isEmpty()) emit StatusText(QStringLiteral("Graph:%1 -- its UI Event is open in the Graph Editor").arg(Made));
         });
-        Handler->setToolTip(QStringLiteral("A UI Event in the document's logic graph (made if it has none), opened there"));
+        Handler->setToolTip(QStringLiteral("A UI Event in the document's UI graph (made if it has none), opened there"));
         Pick->setMenu(Menu);
         HBox->addWidget(Pick);
 
         /* Graph: actions open their handler; one the graph lacks is flagged. */
-        const QStringList Named = EditorUILogic::FindGraphActions(InValue);
+        const QStringList Named = EditorUIGraph::FindGraphActions(InValue);
         if(!Named.isEmpty())
         {
             auto* Go = new QToolButton();
             Go->setText(QStringLiteral("\u2192"));
-            Go->setToolTip(QStringLiteral("Open %1 in the logic graph").arg(Named.front()));
+            Go->setToolTip(QStringLiteral("Open %1 in the UI graph").arg(Named.front()));
             const QString First = Named.front();
             connect(Go, &QToolButton::clicked, this, [this, First]()
             {
-                if(!EditorUILogic::RevealHandler(Design, First, window()))
+                if(!EditorUIGraph::RevealHandler(Design, First, window()))
                 {
-                    emit StatusText(QStringLiteral("The logic graph has no UI Event named %1").arg(First));
+                    emit StatusText(QStringLiteral("The UI graph has no UI Event named %1").arg(First));
                 }
             });
             HBox->addWidget(Go);
 
-            const QStringList Have = EditorUILogic::GetHandlers(Design);
+            const QStringList Have = EditorUIGraph::GetHandlers(Design);
             QStringList Missing;
             for(const QString& Each : Named) { if(!Have.contains(Each)) Missing << Each; }
             if(!Missing.isEmpty())
             {
                 Edit->setStyleSheet(QStringLiteral("QLineEdit { border: 1px solid #d9a030; }"));
-                Edit->setToolTip(Design.GetAsset().Settings.Logic.empty()
-                                 ? QStringLiteral("The document has no Logic graph for Graph: to call")
-                                 : QStringLiteral("The logic graph has no UI Event named %1").arg(Missing.join(QStringLiteral(", "))));
+                Edit->setToolTip(Design.GetAsset().Settings.Graph.empty()
+                                 ? QStringLiteral("The document has no UI graph for Graph: to call")
+                                 : QStringLiteral("The UI graph has no UI Event named %1").arg(Missing.join(QStringLiteral(", "))));
                 Edit->setProperty("MissingHandler", true);
             }
         }
@@ -301,7 +301,7 @@ QWidget* UIDetailsPanel::MakeEditor(const UI::UIPropertyDesc& InDesc, const QStr
     return Row;
 }
 
-QWidget* UIDetailsPanel::MakeLogicRow(const QString& InValue, const std::function<bool(const QString&)>& InWrite)
+QWidget* UIDetailsPanel::MakeGraphRow(const QString& InValue, const std::function<bool(const QString&)>& InWrite)
 {
     auto* Row  = new QWidget();
     auto* HBox = new QHBoxLayout(Row);
@@ -315,13 +315,13 @@ QWidget* UIDetailsPanel::MakeLogicRow(const QString& InValue, const std::functio
     auto* Button = new QToolButton();
     Button->setText(InValue.isEmpty() ? QStringLiteral("Create") : QStringLiteral("Open"));
     Button->setToolTip(InValue.isEmpty() ? QStringLiteral("Make <Document>.ui.nmgraph beside it and set it here")
-                                         : QStringLiteral("Open the logic graph in the Graph Editor"));
+                                         : QStringLiteral("Open the UI graph in the Graph Editor"));
     connect(Button, &QToolButton::clicked, this, [this]()
     {
-        const QString Path = EditorUILogic::EnsureGraph(Design, window(), false);
+        const QString Path = EditorUIGraph::EnsureGraph(Design, window(), false);
         if(Path.isEmpty())
         {
-            emit StatusText(QStringLiteral("No logic graph: save the document first"));
+            emit StatusText(QStringLiteral("No UI graph: save the document first"));
             return;
         }
         EditorGraphs::OpenGraph(Path, window());
@@ -470,7 +470,7 @@ void UIDetailsPanel::BuildDocument()
         { "InputMode",     UI::EUIPropertyType::Enum,   UI::GetEnumNames(UI::EUIInputMode()), UI::EUIAssetKind::None, "UIOnly: a menu, takes all input. GameAndUI: a HUD" },
         { "Layer",         UI::EUIPropertyType::Int,    {}, UI::EUIAssetKind::None,   "Higher draws over, and takes input first" },
         { "Script",        UI::EUIPropertyType::Asset,  {}, UI::EUIAssetKind::Script, "A .lua run once when it first opens: its handlers" },
-        { "Logic",         UI::EUIPropertyType::Asset,  {}, UI::EUIAssetKind::None,   "A logic graph (.ui.nmgraph) run for each open copy: Graph: actions call its UI Events" },
+        { "Graph",         UI::EUIPropertyType::Asset,  {}, UI::EUIAssetKind::None,   "A UI graph (.ui.nmgraph) run for each open copy: Graph: actions call its UI Events" },
         { "DefaultFont",   UI::EUIPropertyType::Asset,  {}, UI::EUIAssetKind::Font,   "Empty: the engine's" },
         { "OnOpen",        UI::EUIPropertyType::Action, {}, UI::EUIAssetKind::None,   "Run when it opens" },
         { "OnClose",       UI::EUIPropertyType::Action, {}, UI::EUIAssetKind::None,   "Run when it closes" },
@@ -485,7 +485,7 @@ void UIDetailsPanel::BuildDocument()
         Desc.AssetKind = Each.Kind;
         auto* Label = new QLabel(QString::fromLatin1(Each.Name));
         Label->setToolTip(QString::fromLatin1(Each.Tip));
-        QWidget* Field = std::string(Each.Name) == "Logic" ? MakeLogicRow(Value(Each.Name), Write(QString::fromLatin1(Each.Name)))
+        QWidget* Field = std::string(Each.Name) == "Graph" ? MakeGraphRow(Value(Each.Name), Write(QString::fromLatin1(Each.Name)))
                                                            : MakeEditor(Desc, Value(Each.Name), Write(QString::fromLatin1(Each.Name)), -1);
         Editors[QString::fromLatin1(Each.Name)] = Field;
         Form->addRow(Label, Field);

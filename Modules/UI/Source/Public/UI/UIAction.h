@@ -19,7 +19,7 @@
  * Native   a C++ function registered with UI_DEFINE_ACTIONS ("Group.Name")
  * Lua      a Lua function by global path (ScriptEngine::CallFunction)
  * Event    an EventBus event of the session's World (Events.On in Lua)
- * Graph    a handler of the document's logic graph (its Logic setting):
+ * Graph    a handler of the document's UI graph (its Graph setting):
  *          Graph:Resume_OnClick calls self:Resume_OnClick(value, sender) on
  *          the document's own instance of it. No arguments.
  *

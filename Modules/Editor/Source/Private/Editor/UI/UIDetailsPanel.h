@@ -24,7 +24,7 @@ class UIDesignDocument;
  *
  * A Bindable property takes {Bind:Key} text as well as a value. An Action
  * property offers the registered native actions, and a handler in the
- * document's logic graph (UILogicLink.h) -- and opens the graph on one it
+ * document's UI graph (UIGraphLink.h) -- and opens the graph on one it
  * names, or warns if the graph has no such handler. A bad value is refused (the
  * field turns red) and not written. With nothing selected it shows the
  * document's own settings and its styles.
@@ -56,8 +56,8 @@ private:
     QWidget* MakeEditor(const UI::UIPropertyDesc& InDesc, const QString& InValue, const std::function<bool(const QString&)>& InWrite,
                         int InOwner = -1);
 
-    /* The Logic setting: its graph's path, and Create or Open. */
-    QWidget* MakeLogicRow(const QString& InValue, const std::function<bool(const QString&)>& InWrite);
+    /* The Graph setting: its graph's path, and Create or Open. */
+    QWidget* MakeGraphRow(const QString& InValue, const std::function<bool(const QString&)>& InWrite);
 
     /* A type's default values, as text, by property name (made once). */
     const std::map<std::string, std::string>& GetDefaults(const UI::UIWidgetType& InType);

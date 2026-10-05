@@ -238,7 +238,7 @@ OnClick="Lua:Menu.Select('Arena', 2); Event:Menu.Changed($self)"
 | `Native:Group.Name` | A C++ function registered with `UI_DEFINE_ACTIONS(Group) { Actions.Add("Name", &Fn); }`. A game module's actions unregister when it unloads. `UIActionContext` provides the system, the document, the sender, the arguments and `HostData` (the `GameSession*`). |
 | `Lua:Path.To.Fn` | A Lua function found by its global path (`ScriptEngine::CallFunction`). Script libraries are globals, so `Lua:Game.SetPaused(false)` works too. |
 | `Event:Name` | An `EventBus` event on the session's World. Lua listens with `Events.On`. |
-| `Graph:Handler` | A UI Event in the document's logic graph, on that document's own instance of it: `self:Handler(value, sender)`. No arguments; see "Logic graphs". |
+| `Graph:Handler` | A UI Event in the document's UI graph, on that document's own instance of it: `self:Handler(value, sender)`. No arguments; see "UI graphs". |
 
 - Arguments can be numbers, `'strings'`, `true` and `false`, plus two tokens:
   `$self` is the widget's name, and `$value` is its value (a slider's
@@ -351,17 +351,17 @@ The `Config` library (GameCore) reads and writes the engine's config vars by
 `.ini` would), and `Config.Has`. They are typed: `GetBool` of a float var is a
 script error.
 
-## Logic graphs
+## UI graphs
 
-[LOGICGRAPHS.md](LOGICGRAPHS.md) is the how-to: making a graph, and exposing
+[UIGRAPHS.md](UIGRAPHS.md) is the how-to: making a graph, and exposing
 C++ functions, variables, events and structs (and Lua) to it.
 
 A document's logic can be a node graph instead of C++ or Lua: a
 `*.ui.nmgraph` (the NodeGraph module's UI schema), named by the document's
-`Logic` setting.
+`Graph` setting.
 
 ```xml
-<UI ... Logic="Content/UI/PauseMenu.ui.nmgraph" OnBack="Graph:Document_OnBack">
+<UI ... Graph="Content/UI/PauseMenu.ui.nmgraph" OnBack="Graph:Document_OnBack">
   <Button Name="Resume" OnClick="Graph:Resume_OnClick"/>
   <CheckBox Name="Shadows" Checked="{Bind:LightLab.Shadows}" OnChanged="Graph:Shadows_OnChanged"/>
 ```
@@ -394,14 +394,14 @@ for every target: the graph carries its Lua, so a Client build needs no cook.
 
 **In the designer**, an action field's **+ > Graph handler** does the rest:
 
-- It makes the logic graph if there is none (`<Document>.ui.nmgraph` beside
-  it, set as `Logic`).
+- It makes the UI graph if there is none (`<Document>.ui.nmgraph` beside
+  it, set as `Graph`).
 - It finds or adds the UI Event `<Widget>_<Event>` (`Document_OnBack` for the
   document's own events), opens the Graph Editor on it, and adds
   `Graph:<Handler>` to the field.
 - A field's arrow button opens the handler it names. A field naming a handler
   the graph lacks is outlined in orange.
-- The document's settings have `Logic`, with **Create** or **Open**.
+- The document's settings have `Graph`, with **Create** or **Open**.
 - Saving the graph reloads its document in Play-in-Editor.
 - Handlers are named, so renaming a widget breaks nothing.
 
@@ -494,7 +494,7 @@ Open a `.nmui` from the Content Browser, or right-click and choose
     button. Italic means the value comes from a style. Plain means it is the
     type's default.
   - Bindable properties take `{Bind:...}`. Action fields offer the registered
-    native actions, and a handler in the document's logic graph (see "Logic
+    native actions, and a handler in the document's UI graph (see "UI
     graphs").
   - A bad value turns the field red and is not written.
   - With nothing selected, the panel shows the document's settings and its
@@ -592,7 +592,7 @@ layout. Rotation will need stencil clipping, because scissors are axis-aligned.
 
 | Test | What it checks |
 |---|---|
-| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), native/Lua/Event/Graph actions, logic graphs (per-document instances, lifecycle, hot reload, LightLab's menu end to end), the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
+| `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), native/Lua/Event/Graph actions, UI graphs (per-document instances, lifecycle, hot reload, LightLab's menu end to end), the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
 | `UI_TESTS_GPU=Vulkan UI_TESTS_DUMP=<dir> ./UITests`, from a runtime directory | Draws the shipped documents on a GPU and checks pixels. |
 | RenderCore smoke test | `UIDrawList` batching, clipping, nine-slice and packing. `NIMBLE_SMOKE_GPU=Vulkan` checks orientation, scissor, blending, the retained list, and clearing. |
 | GDI smoke test | Scissor flipping and clipping, and the dynamic mesh's append and rewind. |

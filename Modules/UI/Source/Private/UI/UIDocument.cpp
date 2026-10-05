@@ -101,7 +101,7 @@ namespace UI
         Out.push_back({ "InputMode", EnumText(InputMode) });
         if(Layer != Default.Layer)        Out.push_back({ "Layer", std::to_string(Layer) });
         if(!Script.empty())               Out.push_back({ "Script", Script });
-        if(!Logic.empty())                Out.push_back({ "Logic", Logic });
+        if(!Graph.empty())                Out.push_back({ "Graph", Graph });
         if(!DefaultFont.empty())          Out.push_back({ "DefaultFont", DefaultFont });
         if(!OnOpen.empty())               Out.push_back({ "OnOpen", OnOpen });
         if(!OnClose.empty())              Out.push_back({ "OnClose", OnClose });
@@ -117,7 +117,7 @@ namespace UI
         if(InName == "InputMode")     return ParseEnumText(InValue, InputMode);
         if(InName == "Layer")         { float V = 0; if(!ParseFloat(InValue, V)) return false; Layer = int32_t(V); return true; }
         if(InName == "Script")        { Script = InValue; return true; }
-        if(InName == "Logic")         { Logic = InValue; return true; }
+        if(InName == "Graph")         { Graph = InValue; return true; }
         if(InName == "DefaultFont")   { DefaultFont = InValue; return true; }
         if(InName == "OnOpen")        { OnOpen = InValue; return true; }
         if(InName == "OnClose")       { OnClose = InValue; return true; }

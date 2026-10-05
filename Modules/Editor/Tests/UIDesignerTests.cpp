@@ -21,7 +21,7 @@
 #include "Private/Editor/UI/UIDesignDocument.h"
 #include "Private/Editor/UI/UIDetailsPanel.h"
 #include "Private/Editor/UI/UIHierarchyPanel.h"
-#include "Private/Editor/UI/UILogicLink.h"
+#include "Private/Editor/UI/UIGraphLink.h"
 #include "Private/Editor/Graph/GraphDocument.h"
 #include "Private/Editor/Graph/GraphEditorTab.h"
 #include "Private/Editor/Graph/GraphEditorWindow.h"
@@ -223,9 +223,9 @@ namespace
         Expect(Hierarchy.topLevelItemCount() == 1 && Hierarchy.topLevelItem(0)->childCount() == 2, "the hierarchy is the document's tree");
     }
 
-    void TestLogic(const QString& InDir)
+    void TestUIGraph(const QString& InDir)
     {
-        std::printf("[logic graph]\n");
+        std::printf("[ui graph]\n");
         const QString Path = InDir + QStringLiteral("/Logic.nmui");
         QFile File(Path);
         File.open(QIODevice::WriteOnly);
@@ -241,21 +241,21 @@ namespace
 
         UIDesignDocument Design;
         Expect(Design.Load(Path), "a document to give logic");
-        Expect(EditorUILogic::MakeHandlerName(QStringLiteral("Play"), QStringLiteral("OnClick")) == QStringLiteral("Play_OnClick")
-               && EditorUILogic::MakeHandlerName(QString(), QStringLiteral("OnBack")) == QStringLiteral("Document_OnBack")
-               && EditorUILogic::MakeHandlerName(QStringLiteral("2 Up"), QStringLiteral("OnClick")) == QStringLiteral("_2_Up_OnClick"),
+        Expect(EditorUIGraph::MakeHandlerName(QStringLiteral("Play"), QStringLiteral("OnClick")) == QStringLiteral("Play_OnClick")
+               && EditorUIGraph::MakeHandlerName(QString(), QStringLiteral("OnBack")) == QStringLiteral("Document_OnBack")
+               && EditorUIGraph::MakeHandlerName(QStringLiteral("2 Up"), QStringLiteral("OnClick")) == QStringLiteral("_2_Up_OnClick"),
                "handler names are identifiers from the widget and its event");
-        Expect(EditorUILogic::FindGraphActions(QStringLiteral("Native:UI.Close; Graph:A_B ;Graph: C")) == QStringList({ QStringLiteral("A_B"), QStringLiteral("C") }),
+        Expect(EditorUIGraph::FindGraphActions(QStringLiteral("Native:UI.Close; Graph:A_B ;Graph: C")) == QStringList({ QStringLiteral("A_B"), QStringLiteral("C") }),
                "Graph: actions are found in action text");
 
         const int Play = Design.GetAsset().FindWidget("Play");
-        const QString Handler = EditorUILogic::AddHandler(Design, Play, QStringLiteral("OnClick"), nullptr);
+        const QString Handler = EditorUIGraph::AddHandler(Design, Play, QStringLiteral("OnClick"), nullptr);
         PumpFor(50);
         const QString GraphPath = InDir + QStringLiteral("/Logic.ui.nmgraph");
-        Expect(Handler == QStringLiteral("Play_OnClick") && QFileInfo::exists(GraphPath), "Graph handler makes the logic graph beside it");
+        Expect(Handler == QStringLiteral("Play_OnClick") && QFileInfo::exists(GraphPath), "Graph handler makes the UI graph beside it");
         Expect(Get(Design, "Play", "OnClick") == "Native:Game.Quit; Graph:Play_OnClick", "and adds Graph:<Handler> to the action");
-        Expect(QFileInfo(QString::fromStdString(Design.GetAsset().Settings.Logic)).fileName() == QStringLiteral("Logic.ui.nmgraph"),
-               "the document's Logic names it");
+        Expect(QFileInfo(QString::fromStdString(Design.GetAsset().Settings.Graph)).fileName() == QStringLiteral("Logic.ui.nmgraph"),
+               "the document's Graph names it");
 
         NodeGraph::Graph Saved;
         std::string Error;
@@ -268,13 +268,13 @@ namespace
         Expect(Handlers == 1 && Saved.GetProperty("Document").find("Logic.nmui") != std::string::npos,
                "with the UI Event, and the document it is the logic of");
 
-        Expect(EditorUILogic::AddHandler(Design, Play, QStringLiteral("OnClick"), nullptr) == Handler, "asking again finds it");
+        Expect(EditorUIGraph::AddHandler(Design, Play, QStringLiteral("OnClick"), nullptr) == Handler, "asking again finds it");
         PumpFor(50);
-        Expect(EditorUILogic::GetHandlers(Design).count(QStringLiteral("Play_OnClick")) == 1
+        Expect(EditorUIGraph::GetHandlers(Design).count(QStringLiteral("Play_OnClick")) == 1
                && Get(Design, "Play", "OnClick") == "Native:Game.Quit; Graph:Play_OnClick", "no second node, no second action");
 
-        EditorUILogic::AddHandler(Design, Design.GetAsset().FindWidget("Shadows"), QStringLiteral("OnChanged"), nullptr);
-        EditorUILogic::AddHandler(Design, -1, QStringLiteral("OnBack"), nullptr);
+        EditorUIGraph::AddHandler(Design, Design.GetAsset().FindWidget("Shadows"), QStringLiteral("OnChanged"), nullptr);
+        EditorUIGraph::AddHandler(Design, -1, QStringLiteral("OnBack"), nullptr);
         PumpFor(50);
         Expect(Design.GetAsset().Settings.OnBack == "Graph:Document_OnBack", "a document event gets a handler too");
         bool bBool = false;
@@ -289,8 +289,8 @@ namespace
             }
         }
         Expect(bBool, "a check box's OnChanged handler takes a bool");
-        Expect(EditorUILogic::RevealHandler(Design, QStringLiteral("Play_OnClick"), nullptr)
-               && !EditorUILogic::RevealHandler(Design, QStringLiteral("Nope"), nullptr), "a handler is revealed by name");
+        Expect(EditorUIGraph::RevealHandler(Design, QStringLiteral("Play_OnClick"), nullptr)
+               && !EditorUIGraph::RevealHandler(Design, QStringLiteral("Nope"), nullptr), "a handler is revealed by name");
 
         Design.GetUndoStack()->undo();   // the OnBack action
         Expect(Design.GetAsset().Settings.OnBack.empty(), "undo takes an added action back");
@@ -329,7 +329,7 @@ int main(int argc, char** argv)
     QTemporaryDir Dir;
     TestDocument(Dir.path());
     TestDetails(Dir.path());
-    TestLogic(Dir.path());
+    TestUIGraph(Dir.path());
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
