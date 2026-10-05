@@ -81,7 +81,17 @@ namespace
         SOP_FunctionReturn,
         SOP_FunctionCall,
         SOP_EventPhase,   // On <Phase>: the phase's name in the definition's Template
+        SOP_UIOpen,       // a UI graph's On Document Open
+        SOP_UIClose,      // On Document Close
+        SOP_UIHandler,    // UI Event: a Graph: action's handler, named by its Handler property
     };
+
+    /* What a script graph is the logic of: a prefab's entities, or a UI
+     * document (a *.ui.nmgraph, its Logic setting -- UI/README.md). */
+    enum class EScriptFlavour : uint8_t { Entity, UI };
+
+    const char* const HANDLER_PROPERTY    = "Handler";
+    const char* const VALUE_TYPE_PROPERTY = "ValueType";
 
     const char* const EXEC_IN  = "Exec";
     const char* const EXEC_OUT = "Then";
@@ -276,12 +286,17 @@ namespace
     class ScriptSchema final : public Schema
     {
     public:
-        ScriptSchema();
+        explicit ScriptSchema(EScriptFlavour InFlavour);
         const NodeDefinition* FindDefinition(const Graph& InGraph, const Node& InNode) const override;
         std::string ResolveWildcard(const Graph& InGraph, const Node& InNode, const NodeDefinition& InDef) const override;
+        std::string DescribeNode(const Graph& InGraph, const Node& InNode) const override;
         void Compile(const Graph& InGraph, CompileResult& OutResult) const override;
 
+        bool IsUI() const { return Flavour == EScriptFlavour::UI; }
+
     private:
+        EScriptFlavour Flavour;
+
         void AddComponentNodes();
         void AddLibraryNodes();
         std::vector<std::string> AddStructTypes();
@@ -298,12 +313,15 @@ namespace
     class ScriptCompiler
     {
     public:
-        ScriptCompiler(const Graph& InGraph, const Schema& InSchema, CompileResult& InResult)
-            : Index(InGraph, InSchema), Result(InResult) {}
+        ScriptCompiler(const Graph& InGraph, const Schema& InSchema, CompileResult& InResult, const bool bInUI)
+            : Index(InGraph, InSchema), Result(InResult), bUI(bInUI) {}
 
         void Run();
 
     private:
+        /* A UI graph's table: OnOpen / OnClose / OnTick and its handlers. */
+        void RunUI();
+
         /* One generated function. */
         struct Scope
         {
@@ -353,6 +371,7 @@ namespace
 
         GraphIndex     Index;
         CompileResult& Result;
+        bool           bUI = false;
 
         std::map<NodeGuid, int> StatementNumbers;   // for stable, readable local names
     };
@@ -376,6 +395,11 @@ namespace
 
     void ScriptCompiler::Run()
     {
+        if(bUI)
+        {
+            RunUI();
+            return;
+        }
         const Graph& G = Index.GetGraph();
 
         /* Names the generated table uses itself; a variable may not take one. */
@@ -549,6 +573,180 @@ namespace
                 if(Pin.IsExec() || !Pin.IsOutput() || ++Arg > CUSTOM_EVENT_ARGS) { continue; }
                 const std::string Name = "Arg" + std::to_string(Arg);
                 Parameters[Pin.Name] = { Pin.Type == "integer" ? "math.floor(" + Name + " or 0)" : Name };
+            }
+            Out.Blank();
+            EmitFunction(Out, Header + ")", Each.N, {}, {}, Parameters);
+        }
+
+        Out.Outdent();
+        Out.Line("}");
+
+        Result.Code      = std::move(Out.Text);
+        Result.LineNodes = std::move(Out.LineNodes);
+    }
+
+    void ScriptCompiler::RunUI()
+    {
+        const Graph& G = Index.GetGraph();
+
+        /* Names the generated table uses itself: neither a variable nor a handler may take one. */
+        static const std::set<std::string> Reserved = { "Document", "OnOpen", "OnClose", "OnTick", HANDLES_FIELD };
+        const auto IsReserved = [](const std::string& InName)
+        {
+            return Reserved.count(InName) || InName.compare(0, 6, "Event_") == 0;
+        };
+        std::set<std::string> Variables;
+        for(const Variable& Each : G.Variables)
+        {
+            Variables.insert(Each.Name);
+            if(IsReserved(Each.Name))
+            {
+                Result.Error(NodeGuid(), std::string(), "variable '" + Each.Name + "' has a name the generated script uses itself");
+            }
+        }
+
+        const Node* OpenNode = nullptr;
+        const Node* CloseNode = nullptr;
+        const Node* TickNode = nullptr;
+        std::vector<const Node*> UIHandlers;
+        std::vector<const Node*> CustomEvents;
+        for(const Node* Each : Index.SortedNodes())
+        {
+            const NodeDefinition* Def = Index.FindDefinition(*Each);
+            if(!Def) { continue; }
+            switch(Def->Op)
+            {
+                case SOP_UIOpen:        OpenNode = Each;  break;
+                case SOP_UIClose:       CloseNode = Each; break;
+                case SOP_EventTick:     TickNode = Each;  break;
+                case SOP_UIHandler:     UIHandlers.push_back(Each); break;
+                case SOP_EventCustom:   CustomEvents.push_back(Each); break;
+                default: break;
+            }
+        }
+        if(!OpenNode && !CloseNode && !TickNode && UIHandlers.empty() && CustomEvents.empty())
+        {
+            Result.Warning(NodeGuid(), std::string(), "the graph has no event node, so the document's logic never runs anything");
+        }
+
+        /* UI Event handlers: their names are what Graph: actions call. */
+        std::set<std::string> HandlerNames;
+        for(const Node* Each : UIHandlers)
+        {
+            const std::string Name = Each->GetProperty(HANDLER_PROPERTY, "Handler");
+            if(Name.empty() || SanitizeIdentifier(Name) != Name)
+            {
+                Result.Error(Each->Id, std::string(), "'" + Name + "' is not a handler name (letters, digits and _)");
+            }
+            else if(IsReserved(Name) || Variables.count(Name))
+            {
+                Result.Error(Each->Id, std::string(), "'" + Name + "' is a name the generated script already uses");
+            }
+            else if(!HandlerNames.insert(Name).second)
+            {
+                Result.Error(Each->Id, std::string(), "two UI Events are named '" + Name + "'");
+            }
+        }
+
+        /* On Event subscriptions live while the document is open. */
+        struct Subscription
+        {
+            const Node* N = nullptr;
+            std::string Method;
+            std::string EventName;
+        };
+        std::vector<Subscription> Subscriptions;
+        std::map<std::string, int> MethodUse;
+        for(const Node* Each : CustomEvents)
+        {
+            const NodeDefinition* Def = Index.FindDefinition(*Each);
+            const std::string EventName = Def->Template.empty() ? Each->GetProperty("EventName") : Def->Template;
+            if(EventName.empty())
+            {
+                Result.Error(Each->Id, std::string(), "'On Event' needs an event name");
+                continue;
+            }
+            std::string Method = "Event_" + SanitizeIdentifier(EventName);
+            const int Use = ++MethodUse[Method];
+            if(Use > 1) { Method += "_" + std::to_string(Use); }
+            Subscriptions.push_back({ Each, Method, EventName });
+        }
+
+        CodeWriter Out;
+        Out.Line("-- Generated by NimbleEditor from the UI logic graph \"" + G.Name + "\". Do not edit.");
+        EmitGraphFunctions(Out);
+        Out.Line("return {");
+        Out.Indent();
+        for(const Variable& Each : G.Variables)
+        {
+            PinDefinition Pin;
+            Pin.Name = Each.Name;
+            Node Holder;
+            Holder.Constants[Each.Name] = Each.Default;
+            const Lanes Values = Literal(Holder, Pin, Each.Type);
+            const Lanes Names  = LaneVariables(Each.Name, Each.Type);
+            for(size_t Lane = 0; Lane < Names.size() && Lane < Values.size(); ++Lane)
+            {
+                Out.Line(Names[Lane] + " = " + Values[Lane] + ",");
+            }
+        }
+
+        if(OpenNode || !Subscriptions.empty())
+        {
+            std::vector<std::string> Prologue;
+            if(!Subscriptions.empty())
+            {
+                Prologue.push_back("self." + std::string(HANDLES_FIELD) + " = {");
+                for(const Subscription& Each : Subscriptions)
+                {
+                    Prologue.push_back("    Events.On(" + LuaString(Each.EventName) + ", function(...) self:" + Each.Method + "(...) end),");
+                }
+                Prologue.push_back("}");
+            }
+            Out.Blank();
+            EmitFunction(Out, "OnOpen = function(self)", OpenNode, Prologue, {}, {});
+        }
+
+        if(CloseNode || !Subscriptions.empty())
+        {
+            std::vector<std::string> Prologue;
+            if(!Subscriptions.empty())
+            {
+                Prologue.push_back("for _, Handle in ipairs(self." + std::string(HANDLES_FIELD) + " or {}) do Events.Off(Handle) end");
+                Prologue.push_back("self." + std::string(HANDLES_FIELD) + " = nil");
+            }
+            Out.Blank();
+            EmitFunction(Out, "OnClose = function(self)", CloseNode, Prologue, {}, {});
+        }
+
+        if(TickNode)
+        {
+            Out.Blank();
+            EmitFunction(Out, "OnTick = function(self, dt)", TickNode, {}, {}, { { "DeltaSeconds", { "dt" } } });
+        }
+
+        /* Graph:<Handler>(value, sender), from UISystem. A check box's value is 1 or 0. */
+        for(const Node* Each : UIHandlers)
+        {
+            const std::string Name = Each->GetProperty(HANDLER_PROPERTY, "Handler");
+            if(Name.empty() || SanitizeIdentifier(Name) != Name) { continue; }
+            const bool bBool = Each->GetProperty(VALUE_TYPE_PROPERTY) == "Bool";
+            Out.Blank();
+            EmitFunction(Out, Name + " = function(self, Value, Sender)", Each, {}, {},
+                         { { "Value", { bBool ? "(Value ~= 0)" : "Value" } }, { "Sender", { "Sender" } } });
+        }
+
+        for(const Subscription& Each : Subscriptions)
+        {
+            std::map<std::string, Lanes> Parameters;
+            std::string Header = Each.Method + " = function(self";
+            for(int Arg = 1; Arg <= CUSTOM_EVENT_ARGS; ++Arg) { Header += ", Arg" + std::to_string(Arg); }
+            int Arg = 0;
+            for(const PinDefinition& Pin : Index.FindDefinition(*Each.N)->Pins)
+            {
+                if(Pin.IsExec() || !Pin.IsOutput() || ++Arg > CUSTOM_EVENT_ARGS) { continue; }
+                const std::string ArgName = "Arg" + std::to_string(Arg);
+                Parameters[Pin.Name] = { Pin.Type == "integer" ? "math.floor(" + ArgName + " or 0)" : ArgName };
             }
             Out.Blank();
             EmitFunction(Out, Header + ")", Each.N, {}, {}, Parameters);
@@ -898,7 +1096,17 @@ namespace
             if(Open == std::string::npos) { Out += T.substr(Pos); break; }
             const size_t Close = T.find('}', Open);
             Out += T.substr(Pos, Open - Pos);
-            Out += Join(Input(S, Cache, InNode, InDef, T.substr(Open + 1, Close - Open - 1)));
+            const std::string Name = T.substr(Open + 1, Close - Open - 1);
+            if(!Name.empty() && Name[0] == '@')
+            {
+                /* {@Property}: the node's setting, as a Lua string (a UI graph's widget name). */
+                const PropertyDefinition* Property = InDef.FindProperty(Name.substr(1));
+                Out += LuaString(InNode.GetProperty(Name.substr(1), Property ? Property->Default : std::string()));
+            }
+            else
+            {
+                Out += Join(Input(S, Cache, InNode, InDef, Name));
+            }
             Pos = Close + 1;
         }
         return Out;
@@ -1198,8 +1406,9 @@ namespace
         return Pin;
     }
 
-    ScriptSchema::ScriptSchema()
-        : Schema("Script", "script", ".lua")
+    ScriptSchema::ScriptSchema(const EScriptFlavour InFlavour)
+        : Schema(InFlavour == EScriptFlavour::UI ? "UI" : "Script", InFlavour == EScriptFlavour::UI ? "ui" : "script", ".lua")
+        , Flavour(InFlavour)
     {
         AddType({ "number",  "Number",  0x9BD96A, "0" });
         AddType({ "integer", "Integer", 0x3FC1A0, "0" });
@@ -1223,8 +1432,16 @@ namespace
         /* Script structs first: variables and signatures may use them. */
         VariableTypes = GVariableTypes;
         for(std::string& Each : AddStructTypes()) { VariableTypes.push_back(std::move(Each)); }
-        GraphProperties.push_back({ "TickPhase", EPropertyKind::Choice, "PrePhysics", GTickPhases,
-                                    "When this script's OnTick runs relative to the World's systems" });
+        if(IsUI())
+        {
+            GraphProperties.push_back({ "Document", EPropertyKind::String, "", {},
+                                        "The UI document this is the logic of (its Logic setting names this graph)" });
+        }
+        else
+        {
+            GraphProperties.push_back({ "TickPhase", EPropertyKind::Choice, "PrePhysics", GTickPhases,
+                                        "When this script's OnTick runs relative to the World's systems" });
+        }
 
         const auto Add = [&](const std::string& InType, const std::string& InName, const std::string& InCategory,
                              const ENodeRole InRole, const uint32_t InOp, std::vector<PinDefinition> InPins,
@@ -1270,29 +1487,51 @@ namespace
         };
 
         // --- Events --------------------------------------------------------------
-        Event("Event.OnStart",   "On Start",   SOP_EventStart,   {}, true).Tooltip = "Runs once, before this entity's first tick.";
-        Event("Event.OnTick",    "On Tick",    SOP_EventTick,    { Out("DeltaSeconds", "number") }, true).Tooltip = "Runs every frame.";
-        Event("Event.OnDestroy", "On Destroy", SOP_EventDestroy, {}, true).Tooltip = "Runs when the entity or its script goes away.";
-        /* A prefab's per-phase functions: define only the phases it needs. */
-        for(const std::string& Phase : GTickPhases)
+        Event("Event.OnTick", "On Tick", SOP_EventTick, { Out("DeltaSeconds", "number") }, true).Tooltip =
+            IsUI() ? "Runs every frame while the document is open, paused or not." : "Runs every frame.";
+        if(IsUI())
         {
-            static const std::map<std::string, std::string> Labels = {
-                { "PrePhysics", "Pre-Physics" }, { "Physics", "Physics" }, { "PostPhysics", "Post-Physics" }, { "PostUpdate", "Post Update" } };
-            NodeDefinition& Def = Event("Event.On" + Phase, "On " + Labels.at(Phase), SOP_EventPhase, { Out("DeltaSeconds", "number") }, true);
-            Def.Template = Phase;
-            Def.Tooltip  = "Runs every frame in the " + Labels.at(Phase) + " phase, on a prefab's script.";
-            Def.Keywords = "tick update frame phase";
+            Event("UI.Event.Open", "On Document Open", SOP_UIOpen, {}, true).Tooltip =
+                "Runs once when the document opens, after that frame's input: fill the data store it binds to.";
+            Event("UI.Event.Close", "On Document Close", SOP_UIClose, {}, true).Tooltip = "Runs as the document closes.";
+            NodeDefinition& Handler = Event("UI.Event.Handler", "UI Event", SOP_UIHandler,
+                                            { Out("Value", "number"), Out("Sender", "string") }, false);
+            Handler.Tooltip = "Runs when a widget's action names it -- OnClick=\"Graph:Resume_OnClick\". "
+                              "Value is the widget's ($value: a slider's value, a check box's), Sender its name. "
+                              "In the UI Designer, + > Graph handler on an event makes one.";
+            Handler.Keywords   = "click changed button slider check box widget handler on";
+            Handler.Properties = {
+                { HANDLER_PROPERTY, EPropertyKind::Identifier, "Handler", {}, "The name actions call it by: Graph:<Handler>" },
+                { "Widget", EPropertyKind::WidgetName, "", {}, "The widget it was made for (a note; the action is what calls it)" },
+                { "Event", EPropertyKind::String, "", {}, "The widget's event it was made for (a note)" },
+                { VALUE_TYPE_PROPERTY, EPropertyKind::Choice, "Number", { "Number", "Bool" }, "Value as a number, or a bool (a check box)" },
+            };
         }
+        if(!IsUI())
         {
-            NodeDefinition& Begin = Event("Event.OnOverlapBegin", "On Overlap Begin", SOP_EventOverlapBegin,
-                                          { Out("Other", "Entity"), Out("Mine", "Entity") }, true);
-            Begin.Tooltip  = "Runs when one of this script's colliders starts overlapping another (start of PostPhysics). "
-                             "Mine is which of its own entities it was.";
-            Begin.Keywords = "collision collide touch trigger enter hit";
-            NodeDefinition& End = Event("Event.OnOverlapEnd", "On Overlap End", SOP_EventOverlapEnd,
-                                        { Out("Other", "Entity"), Out("Mine", "Entity") }, true);
-            End.Tooltip  = "Runs when an overlap ends -- Other may no longer exist (Is Valid).";
-            End.Keywords = "collision collide untouch trigger exit leave";
+            Event("Event.OnStart",   "On Start",   SOP_EventStart,   {}, true).Tooltip = "Runs once, before this entity's first tick.";
+            Event("Event.OnDestroy", "On Destroy", SOP_EventDestroy, {}, true).Tooltip = "Runs when the entity or its script goes away.";
+            /* A prefab's per-phase functions: define only the phases it needs. */
+            for(const std::string& Phase : GTickPhases)
+            {
+                static const std::map<std::string, std::string> Labels = {
+                    { "PrePhysics", "Pre-Physics" }, { "Physics", "Physics" }, { "PostPhysics", "Post-Physics" }, { "PostUpdate", "Post Update" } };
+                NodeDefinition& Def = Event("Event.On" + Phase, "On " + Labels.at(Phase), SOP_EventPhase, { Out("DeltaSeconds", "number") }, true);
+                Def.Template = Phase;
+                Def.Tooltip  = "Runs every frame in the " + Labels.at(Phase) + " phase, on a prefab's script.";
+                Def.Keywords = "tick update frame phase";
+            }
+            {
+                NodeDefinition& Begin = Event("Event.OnOverlapBegin", "On Overlap Begin", SOP_EventOverlapBegin,
+                                              { Out("Other", "Entity"), Out("Mine", "Entity") }, true);
+                Begin.Tooltip  = "Runs when one of this script's colliders starts overlapping another (start of PostPhysics). "
+                                 "Mine is which of its own entities it was.";
+                Begin.Keywords = "collision collide touch trigger enter hit";
+                NodeDefinition& End = Event("Event.OnOverlapEnd", "On Overlap End", SOP_EventOverlapEnd,
+                                            { Out("Other", "Entity"), Out("Mine", "Entity") }, true);
+                End.Tooltip  = "Runs when an overlap ends -- Other may no longer exist (Is Valid).";
+                End.Keywords = "collision collide untouch trigger exit leave";
+            }
         }
         {
             std::vector<PinDefinition> Args;
@@ -1354,21 +1593,56 @@ namespace
         }
 
         // --- Entity and World ----------------------------------------------------
-        Pure("Entity.Self", "Self", "Entity", SOP_Self, { Out("Entity", "Entity") }, std::string(), {}, "this me owner");
+        if(!IsUI()) { Pure("Entity.Self", "Self", "Entity", SOP_Self, { Out("Entity", "Entity") }, std::string(), {}, "this me owner"); }
         Pure("Entity.GetName", "Get Name", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Name", "string") }, "{Entity}:GetName()");
         Pure("Entity.IsValid", "Is Valid", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Valid", "bool") }, "{Entity}:IsValid()", {}, "alive");
         Statement("Entity.SetName", "Set Name", "Entity", SOP_Call, { In("Entity", "Entity"), In("Name", "string") }, "{Entity}:SetName({Name})");
         Statement("Entity.Destroy", "Destroy", "Entity", SOP_Call, { In("Entity", "Entity") }, "{Entity}:Destroy()", "delete remove kill");
         /* A prefab's script: its root, its entities by template name, and how it ticks. */
-        Pure("Prefab.Root", "Prefab Root", "Prefab", SOP_Call, { Out("Root", "Entity") }, "self.Root", {}, "instance self owner");
-        Pure("Prefab.Find", "Find Prefab Entity", "Prefab", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") },
-             "self.Instance:Find({Name})", {}, "instance child template lookup");
-        Statement("Prefab.SetTickMode", "Set Tick Mode", "Prefab", SOP_Call, { In("Mode", "string", "EventsOnly") },
-                  "self.Instance:SetTickMode({Mode})", "instance tick pause sleep events off");
-        Statement("Prefab.SetPhaseEnabled", "Set Phase Enabled", "Prefab", SOP_Call,
-                  { In("Phase", "string", "PrePhysics"), In("Enabled", "bool", "true") },
-                  "self.Instance:SetPhaseEnabled(TickPhase[{Phase}], {Enabled})", "instance tick pause phase");
-        Statement("Prefab.Destroy", "Destroy Prefab", "Prefab", SOP_Call, {}, "self.Instance:Destroy()", "instance remove kill");
+        if(!IsUI())
+        {
+            Pure("Prefab.Root", "Prefab Root", "Prefab", SOP_Call, { Out("Root", "Entity") }, "self.Root", {}, "instance self owner");
+            Pure("Prefab.Find", "Find Prefab Entity", "Prefab", SOP_Call, { In("Name", "string"), Out("Entity", "Entity") },
+                 "self.Instance:Find({Name})", {}, "instance child template lookup");
+            Statement("Prefab.SetTickMode", "Set Tick Mode", "Prefab", SOP_Call, { In("Mode", "string", "EventsOnly") },
+                      "self.Instance:SetTickMode({Mode})", "instance tick pause sleep events off");
+            Statement("Prefab.SetPhaseEnabled", "Set Phase Enabled", "Prefab", SOP_Call,
+                      { In("Phase", "string", "PrePhysics"), In("Enabled", "bool", "true") },
+                      "self.Instance:SetPhaseEnabled(TickPhase[{Phase}], {Enabled})", "instance tick pause phase");
+            Statement("Prefab.Destroy", "Destroy Prefab", "Prefab", SOP_Call, {}, "self.Instance:Destroy()", "instance remove kill");
+        }
+        if(IsUI())
+        {
+            /* The document this graph is the logic of: self.Document is its path,
+             * which the UI library's functions take first. */
+            Pure("UI.Document", "This Document", "Document", SOP_Call, { Out("Path", "string") }, "self.Document", {},
+                 "self path ui document").Tooltip = "The path of the document this graph is the logic of: the UI library's Path.";
+            Statement("UI.CloseDocument", "Close This Document", "Document", SOP_Call, {}, "UI.Close(self.Document)",
+                      "close dismiss exit").Tooltip = "Closes the document (its On Document Close runs).";
+            const auto Widget = [](const char* InName, const char* InTooltip)
+            {
+                return PropertyDefinition{ InName, EPropertyKind::WidgetName, "", {}, InTooltip };
+            };
+            const auto WidgetStatement = [&](const std::string& InType, const std::string& InName, std::vector<PinDefinition> InPins,
+                                             const std::string& InTemplate, const std::string& InKeywords, const std::string& InTooltip)
+            {
+                NodeDefinition& Def = Statement(InType, InName, "Document", SOP_Call, std::move(InPins), InTemplate, InKeywords);
+                Def.Properties = { Widget("Widget", "A widget of this document, by Name") };
+                Def.Tooltip    = InTooltip;
+            };
+            WidgetStatement("UI.Widget.SetText", "Set Widget Text", { In("Text", "string") },
+                            "UI.SetText(self.Document, {@Widget}, {Text})", "label caption", "Sets a Text widget's Text.");
+            WidgetStatement("UI.Widget.SetVisible", "Set Widget Visible", { In("Visible", "bool", "true") },
+                            "UI.SetVisible(self.Document, {@Widget}, {Visible})", "show hide collapse", "Shows it, or collapses it.");
+            WidgetStatement("UI.Widget.SetEnabled", "Set Widget Enabled", { In("Enabled", "bool", "true") },
+                            "UI.SetEnabled(self.Document, {@Widget}, {Enabled})", "disable grey", "Enables it, or greys it out.");
+            WidgetStatement("UI.Widget.SetFocus", "Set Widget Focus", {}, "UI.SetFocus(self.Document, {@Widget})", "focus select",
+                            "Gives it focus (keys and gamepad act on it).");
+            NodeDefinition& Page = Statement("UI.Widget.ShowPage", "Show Page", "Document", SOP_Call, { In("Page", "string", "0") },
+                                             "UI.ShowPage(self.Document, {@Switcher}, {Page})", "switcher tab page");
+            Page.Properties = { Widget("Switcher", "A Switcher of this document, by Name") };
+            Page.Tooltip    = "Shows a Switcher's page, by its Name or number (0 first).";
+        }
         Pure("Entity.GetParent", "Get Parent", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Parent", "Entity") }, "{Entity}:GetParent()", {}, "hierarchy attach owner");
         Pure("Entity.GetChildCount", "Get Child Count", "Entity", SOP_Call, { In("Entity", "Entity"), Out("Count", "integer") }, "{Entity}:GetChildCount()", {}, "hierarchy children");
         Pure("Entity.GetChild", "Get Child", "Entity", SOP_Call, { In("Entity", "Entity"), In("Index", "integer", "1"), Out("Child", "Entity") }, "{Entity}:GetChild({Index})", {}, "hierarchy children");
@@ -1751,6 +2025,17 @@ namespace
     const NodeDefinition* ScriptSchema::FindDefinition(const Graph& InGraph, const Node& InNode) const
     {
         const NodeDefinition* Base = Schema::FindDefinition(InGraph, InNode);
+        if(Base && Base->Op == SOP_UIHandler && InNode.GetProperty(VALUE_TYPE_PROPERTY) == "Bool")
+        {
+            /* A check box's handler: Value is a bool. */
+            const std::lock_guard<std::mutex> Lock(FunctionDefinitionsLock);
+            const std::string Key = Base->Type + "\nBool";
+            const auto Found = FunctionDefinitions.find(Key);
+            if(Found != FunctionDefinitions.end()) { return &Found->second; }
+            NodeDefinition Def = *Base;
+            for(PinDefinition& Pin : Def.Pins) { if(Pin.Name == "Value") Pin.Type = "bool"; }
+            return &FunctionDefinitions.emplace(Key, std::move(Def)).first->second;
+        }
         if(!Base || (Base->Op != SOP_FunctionEntry && Base->Op != SOP_FunctionReturn && Base->Op != SOP_FunctionCall))
         {
             return Base;
@@ -1798,14 +2083,31 @@ namespace
         return Schema::ResolveWildcard(InGraph, InNode, InDef);
     }
 
+    std::string ScriptSchema::DescribeNode(const Graph& InGraph, const Node& InNode) const
+    {
+        const NodeDefinition* Def = Schema::FindDefinition(InGraph, InNode);
+        if(Def && Def->Op == SOP_UIHandler)
+        {
+            /* Where the designer made it: "Resume . OnClick". */
+            const std::string Widget = InNode.GetProperty("Widget"), On = InNode.GetProperty("Event");
+            if(!Widget.empty() || !On.empty()) { return Widget + (Widget.empty() || On.empty() ? "" : " \xC2\xB7 ") + On; }
+        }
+        return Schema::DescribeNode(InGraph, InNode);
+    }
+
     void ScriptSchema::Compile(const Graph& InGraph, CompileResult& OutResult) const
     {
-        ScriptCompiler(InGraph, *this, OutResult).Run();
+        ScriptCompiler(InGraph, *this, OutResult, IsUI()).Run();
     }
 }
 
 std::unique_ptr<Schema> CreateScriptSchema()
 {
-    return std::make_unique<ScriptSchema>();
+    return std::make_unique<ScriptSchema>(EScriptFlavour::Entity);
+}
+
+std::unique_ptr<Schema> CreateUIScriptSchema()
+{
+    return std::make_unique<ScriptSchema>(EScriptFlavour::UI);
 }
 }
