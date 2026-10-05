@@ -62,10 +62,14 @@ namespace UI
     UI_API bool ParseBinding(const std::string& InText, bool& bOutWhole, std::vector<std::string>* OutKeys = nullptr);
 
     /* InText with each {Bind:Key} replaced by the store's value as text ("" if unset). */
-    UI_API std::string ResolveBindingText(const std::string& InText, const UIDataStore& InStore);
+    UI_API std::string ResolveBindingText(const std::string& InText, const UIDataStore& InStore, const std::string& InPrefix = std::string());
 
     /* The value of a whole-value binding; None if its key is unset. */
-    UI_API UIValue ResolveBindingValue(const std::string& InText, const UIDataStore& InStore);
+    UI_API UIValue ResolveBindingValue(const std::string& InText, const UIDataStore& InStore, const std::string& InPrefix = std::string());
+
+    /* A binding's key in a document embedded with InPrefix: InPrefix + InKey,
+     * or InKey without its '/' when it starts with one (absolute). */
+    UI_API std::string PrefixBindingKey(const std::string& InPrefix, const std::string& InKey);
 }
 
 #endif //UI_UIBINDING_H

@@ -79,26 +79,34 @@ namespace UI
         return bAny;
     }
 
-    std::string ResolveBindingText(const std::string& InText, const UIDataStore& InStore)
+    std::string PrefixBindingKey(const std::string& InPrefix, const std::string& InKey)
+    {
+        if(!InKey.empty() && InKey[0] == '/') return InKey.substr(1);
+        return InPrefix.empty() ? InKey : InPrefix + InKey;
+    }
+
+    std::string ResolveBindingText(const std::string& InText, const UIDataStore& InStore, const std::string& InPrefix)
     {
         std::string Out;
         Out.reserve(InText.size());
         Walk(InText,
             [&](const std::string& InKey)
             {
-                if(const UIValue* Value = InStore.Find(InKey)) { Out += Value->AsString(); }
+                const bool bPlain = InPrefix.empty() && (InKey.empty() || InKey[0] != '/');
+                if(const UIValue* Value = InStore.Find(bPlain ? InKey : PrefixBindingKey(InPrefix, InKey))) { Out += Value->AsString(); }
             },
             [&](const std::string& InLiteral) { Out += InLiteral; });
         return Out;
     }
 
-    UIValue ResolveBindingValue(const std::string& InText, const UIDataStore& InStore)
+    UIValue ResolveBindingValue(const std::string& InText, const UIDataStore& InStore, const std::string& InPrefix)
     {
         UIValue Out;
         Walk(InText,
             [&](const std::string& InKey)
             {
-                if(const UIValue* Value = InStore.Find(InKey)) { Out = *Value; }
+                const bool bPlain = InPrefix.empty() && (InKey.empty() || InKey[0] != '/');
+                if(const UIValue* Value = InStore.Find(bPlain ? InKey : PrefixBindingKey(InPrefix, InKey))) { Out = *Value; }
             },
             [](const std::string&) {});
         return Out;

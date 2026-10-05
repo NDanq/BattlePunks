@@ -6,6 +6,7 @@
 #include "Public/UI/UIDocument.h"
 #include "Public/UI/UIFont.h"
 #include "Public/UI/UIInput.h"
+#include "Public/UI/UILog.h"
 #include "Public/UI/UISystem.h"
 #include "Private/UI/UIInternal.h"
 
@@ -1244,6 +1245,94 @@ namespace UI
         return Mode == EUITextMode::Text ? 0.0 : std::atof(Text.c_str());
     }
 
+    // === Include ==================================================================
+
+    namespace
+    {
+        constexpr int MAX_INCLUDE_DEPTH = 8;
+    }
+
+    UIInclude::UIInclude()
+    {
+        Size = UIVec2{ 400.0f, 100.0f };
+    }
+
+    UIInclude::~UIInclude()
+    {
+        /* Its system let its UI graph go already (closing its root does that first). */
+        Embedded.reset();
+    }
+
+    void UIInclude::DropEmbedded(const bool bInTellSystem)
+    {
+        if(!Embedded) return;
+        UISystem* System = GetDocument() ? GetDocument()->GetSystem() : nullptr;
+        if(bInTellSystem && System) System->DetachEmbedded(*Embedded);
+        Embedded.reset();
+        if(GetDocument()) GetDocument()->MarkLayoutDirty();
+    }
+
+    void UIInclude::EnsureEmbedded()
+    {
+        UIDocumentInstance* Host = GetDocument();
+        if(!Host || !bStale) return;
+        bStale = false;
+        DropEmbedded(true);
+        bRefused = false;
+        if(Document.empty()) return;
+
+        /* Not itself, at any depth; and not without end. */
+        bool bCycle = Host->GetEmbedDepth() + 1 >= MAX_INCLUDE_DEPTH;
+        for(UIDocumentInstance* Up = Host; Up && !bCycle; Up = Up->GetParentInstance()) { bCycle = Up->GetPath() == Document; }
+        if(bCycle)
+        {
+            bRefused = true;
+            UI_LOG_WARN("'" + Host->GetPath() + "': Include '" + Name + "' of '" + Document + "' would include itself (or go "
+                        + std::to_string(MAX_INCLUDE_DEPTH) + " deep): left empty")
+            return;
+        }
+        std::shared_ptr<const UIDocumentAsset> Asset = UIAssetCache::Find(Document);   // logged if missing
+        if(!Asset) return;
+        Generation = UIAssetCache::GetGeneration(Document);
+        Embedded = std::make_unique<UIDocumentInstance>(Asset, Document);
+        if(!Embedded->IsValid()) { Embedded.reset(); return; }
+        Embedded->SetEmbedded(Host, GetIndex(), Prefix);
+
+        /* One focus per tree: an included document's InitialFocus yields to its host's. */
+        if(Embedded->GetFocused() >= 0 && Host->GetRootInstance()->GetTreeFocus().Doc != Embedded.get()) { Embedded->SetFocus(-1); }
+        if(UISystem* System = Host->GetSystem()) System->AttachEmbedded(*Embedded);
+        Host->MarkLayoutDirty();
+    }
+
+    void UIInclude::TickEmbedded()
+    {
+        /* Saved again (hot reload): made again. */
+        if(Embedded && !Document.empty() && UIAssetCache::GetGeneration(Document) != Generation) bStale = true;
+        if(bStale && !bRefused) EnsureEmbedded();
+    }
+
+    UIVec2 UIInclude::MeasureContent(UILayoutContext& InContext)
+    {
+        EnsureEmbedded();
+        return Embedded ? Embedded->MeasureEmbedded(InContext) : UIVec2();
+    }
+
+    void UIInclude::ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect)
+    {
+        if(Embedded) Embedded->ArrangeEmbedded(InContext, InRect);
+    }
+
+    void UIInclude::Paint(UIPaintContext& InContext, const UIRect& /*InRect*/) const
+    {
+        if(Embedded) Embedded->PaintEmbedded(InContext);
+    }
+
+    void UIInclude::OnPropertyChanged(const UIPropertyDesc& /*InProperty*/)
+    {
+        bStale = true;
+        bRefused = false;
+    }
+
     UIVec2 UISpacer::MeasureContent(UILayoutContext& /*InContext*/)
     {
         return Size;
@@ -1444,6 +1533,14 @@ namespace UI
         Type.Category("Events");
         Type.Action<&UITextInput::OnChanged>("OnChanged").Tooltip("Each edit; $value the number (Integer, Number modes)");
         Type.Action<&UITextInput::OnCommit>("OnCommit").Tooltip("Return, or leaving it, if it changed");
+    }
+
+    UI_DEFINE_WIDGET(UIInclude, UIWidget, "Include")
+    {
+        Type.Palette("Layout");
+        Type.Category("Include");
+        Type.Asset<&UIInclude::Document>("Document", EUIAssetKind::Document, UPF_Layout).Tooltip("A .nmui shown here");
+        Type.Field<&UIInclude::Prefix>("Prefix", UPF_Layout).Tooltip("Its {Bind:Key} reads Prefix + Key ({Bind:/Key}: the key as written)");
     }
 
     UI_DEFINE_WIDGET(UISpacer, UIWidget, "Spacer")

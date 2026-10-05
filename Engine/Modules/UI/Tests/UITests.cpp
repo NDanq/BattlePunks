@@ -113,7 +113,7 @@ static void TestRegistry()
 
     int Palette = 0;
     for(const UIWidgetType* Each : GetWidgetTypes()) { if(!Each->Palette.empty()) ++Palette; }
-    Expect(Palette == 17, "the seventeen widgets are offered in the palette");
+    Expect(Palette == 18, "the eighteen widgets are offered in the palette");
 
     const UIWidgetType* Text = FindWidgetType("Text");
     const int32_t TextProperty = Text ? Text->FindProperty("Text") : -1;
@@ -1423,6 +1423,144 @@ static void TestOpenBeforePaint()
     std::filesystem::remove_all(Dir);
 }
 
+// === Include ==================================================================
+
+static void TestInclude()
+{
+    std::printf("[include]\n");
+    const std::filesystem::path Dir = std::filesystem::temp_directory_path() / "NimbleUIInclude";
+    std::filesystem::create_directories(Dir);
+    EngineCore::FilesystemProvider Disk(Dir.string());
+    EngineCore::IFileProvider* Previous = EngineCore::GetFileProvider();
+    EngineCore::SetFileProvider(&Disk);
+    const auto Write = [&Dir](const char* InName, const std::string& InText) { std::ofstream(Dir / InName, std::ios::binary | std::ios::trunc) << InText; };
+    const auto RowXml = [](const char* InLabel)
+    {
+        return std::string(R"XML(<UI Graph="Row.ui.nmgraph">
+  <HorizontalBox Name="Row" Spacing="10">
+    <Text Name="Label" FontSize="20" Text=")XML") + InLabel + R"XML("/>
+    <Text Name="Title" FontSize="20" Text="{Bind:/Game.Title}"/>
+    <Button Name="Go" OnClick="Graph:Go_OnClick"><Spacer Size="40,20"/></Button>
+    <TextInput Name="Note" Size="100,30" FontSize="16" Text="{Bind:Note}"/>
+  </HorizontalBox>
+</UI>)XML";
+    };
+    Write("Row.nmui", RowXml("{Bind:Name}"));
+    Write("Row.ui.nmgraph", "<NodeGraph Version=\"1\" Schema=\"UI\"><gen_code><Output Extension=\".lua\"><![CDATA["
+          "return { OnOpen = function(self) UI.SetNumber(self.Prefix .. 'Opened', 1) end,\n"
+          "  OnClose = function(self) Closed = (Closed or 0) + 1 end,\n"
+          "  Go_OnClick = function(self, Value, Sender) UI.SetString(self.Prefix .. 'Clicked', Sender) end }"
+          "]]></Output></gen_code></NodeGraph>\n");
+    Write("Main.nmui", R"XML(<UI InputMode="UIOnly" ScaleMode="None">
+  <Canvas>
+    <VerticalBox Name="List" Position="0,0" AutoSize="true" Spacing="4">
+      <Include Name="One" Document="Row.nmui" Prefix="Slot1."/>
+      <Include Name="Two" Document="Row.nmui" Prefix="Slot2."/>
+    </VerticalBox>
+    <Button Name="Below" Position="0,300" Size="100,40"/>
+  </Canvas>
+</UI>)XML");
+    Write("Loop.nmui", R"XML(<UI><Canvas><Include Name="Self" Document="Loop.nmui"/></Canvas></UI>)XML");
+
+    GameCore::World World;
+    GameCore::ScriptEngine Scripts;
+    Scripts.Initialize();
+    Scripts.BindWorld(&World);
+    UISystem System;
+    System.SetScriptEngine(&Scripts);
+    SetScriptUISystem(&System);
+    System.SetValue("Slot1.Name", UIValue::String("Ada"));
+    System.SetValue("Slot2.Name", UIValue::String("Bo"));
+    System.SetValue("Game.Title", UIValue::String("T"));
+
+    const UIDocumentHandle Main = System.Open("Main.nmui");
+    const UIVec2 View{ 1000, 1000 };
+    System.Tick(0.016f);
+    System.Update(View);
+    System.RunQueuedActions();
+    System.Update(View);
+    UIDocumentInstance& Doc = *System.Find(Main);
+    auto* One = dynamic_cast<UIInclude*>(Doc.FindWidget("One"));
+    auto* Two = dynamic_cast<UIInclude*>(Doc.FindWidget("Two"));
+    UIDocumentInstance* RowOne = One ? One->GetEmbedded() : nullptr;
+    UIDocumentInstance* RowTwo = Two ? Two->GetEmbedded() : nullptr;
+    Expect(RowOne && RowTwo && RowOne != RowTwo, "each Include shows its own instance of the document");
+    if(!RowOne || !RowTwo) { EngineCore::SetFileProvider(Previous); return; }
+    const auto TextOf = [](UIDocumentInstance* InDoc, const char* InName) { const UIText* T = dynamic_cast<UIText*>(InDoc->FindWidget(InName)); return T ? T->Text : std::string("<none>"); };
+    Expect(TextOf(RowOne, "Label") == "Ada" && TextOf(RowTwo, "Label") == "Bo", "{Bind:Name} reads each Include's Prefix + Name");
+    Expect(TextOf(RowTwo, "Title") == "T", "{Bind:/Game.Title} reads the key as written");
+    const UIRect R1 = RectOf(Doc, "One"), R2 = RectOf(Doc, "Two");
+    Expect(R1.H >= 30.0f && Near(R2.Y, R1.Y + R1.H + 4.0f), "an Include is as big as its document wants, laid out in its host");
+    const UIValue* Opened = System.GetValue("Slot2.Opened");
+    Expect(System.GetValue("Slot1.Opened") && Opened && Opened->AsNumber() == 1.0, "each instance's UI graph opened, with its prefix");
+
+    /* A click inside the second row: its own graph, its own keys. */
+    const UIRect Go = RowTwo->GetPixelRect(RowTwo->FindWidget("Go")->GetIndex());
+    const UIVec2 GoAt{ Go.X + Go.W * 0.5f, Go.Y + Go.H * 0.5f };
+    System.ProcessInput(Pointer(GoAt, true, false));
+    System.ProcessInput(Pointer(GoAt, false, true));
+    System.RunQueuedActions();
+    const UIValue* Clicked = System.GetValue("Slot2.Clicked");
+    Expect(Clicked && Clicked->AsString() == "Go" && !System.GetValue("Slot1.Clicked"), "a click in an included row runs that row's handler");
+
+    /* Typing into an included field writes its prefixed key. */
+    RowTwo->GetRootInstance()->SetTreeFocus(UIWidgetRef{ RowTwo, int32_t(RowTwo->FindWidget("Note")->GetIndex()) });
+    UIInputFrame Type;
+    Type.bHasMouse = false;
+    std::snprintf(Type.Text, sizeof(Type.Text), "%s", "hi");
+    System.ProcessInput(Type);
+    const UIValue* Note = System.GetValue("Slot2.Note");
+    Expect(Note && Note->AsString() == "hi", "a two-way binding inside writes back with the prefix");
+
+    /* Tab crosses into the rows and out, in document order. */
+    Doc.SetTreeFocus(UIWidgetRef());
+    UIInputFrame Tab;
+    Tab.bNext = true;
+    Tab.bHasMouse = false;
+    System.ProcessInput(Tab);
+    Expect(Doc.GetTreeFocus().Doc == RowOne && Doc.GetTreeFocus().Index == int32_t(RowOne->FindWidget("Go")->GetIndex()), "Tab goes into the first row");
+    System.ProcessInput(Tab);
+    System.ProcessInput(Tab);
+    Expect(Doc.GetTreeFocus().Doc == RowTwo, "then the second");
+    System.ProcessInput(Tab);
+    System.ProcessInput(Tab);
+    Expect(Doc.GetTreeFocus().Doc == &Doc && Doc.GetTreeFocus().Index == int32_t(Doc.FindWidget("Below")->GetIndex()), "then out again");
+    UIInputFrame Up;
+    Up.bNavUp = true;
+    Up.bHasMouse = false;
+    System.ProcessInput(Up);
+    Expect(Doc.GetTreeFocus().Doc == RowTwo, "an arrow crosses back in by position");
+    int Focused = 0;
+    Doc.ForEachInstance([&Focused](UIDocumentInstance& InEach) { if(InEach.GetFocused() >= 0) ++Focused; });
+    Expect(Focused == 1, "one focus in the whole tree");
+
+    /* Saved again: the rows are made again (their graphs closed and opened). */
+    Scripts.RunString("Closed = 0", "reset");
+    Write("Row.nmui", RowXml("Name: {Bind:Name}"));
+    UIAssetCache::Invalidate("Row.nmui");
+    System.Tick(0.016f);
+    System.Update(View);
+    Expect(One->GetEmbedded() && TextOf(One->GetEmbedded(), "Label") == "Name: Ada", "an included document reloads when saved");
+    Expect(Scripts.RunString("assert(Closed == 2)", "closed-reload"), "the old rows' graphs closed");
+
+    const int Warnings = GWarnings;
+    const UIDocumentHandle Loop = System.Open("Loop.nmui");
+    System.Update(View);
+    auto* Self = System.Find(Loop) ? dynamic_cast<UIInclude*>(System.Find(Loop)->FindWidget("Self")) : nullptr;
+    Expect(Self && !Self->GetEmbedded() && GWarnings > Warnings, "a document including itself is refused, with a warning");
+    System.Close(Loop);
+
+    System.Close(Main);
+    Expect(Scripts.RunString("assert(Closed == 4)", "closed-close"), "closing the host closes its rows' graphs");
+
+    System.SetScriptEngine(nullptr);
+    SetScriptUISystem(nullptr);
+    Scripts.UnbindWorld();
+    Scripts.Shutdown();
+    EngineCore::SetFileProvider(Previous);
+    std::filesystem::remove_all(Dir);
+}
+
 // === Hot reload ===============================================================
 
 static void TestHotReload()
@@ -1747,6 +1885,7 @@ int main()
     TestScriptedActions();
     TestUIGraphs();
     TestOpenBeforePaint();
+    TestInclude();
     TestLightLabGraph();
     TestHotReload();
     TestCost();

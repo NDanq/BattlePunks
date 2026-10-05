@@ -34,6 +34,19 @@ namespace UI
 {
     class UIFontCache;
     class UISystem;
+    class UIDocumentInstance;
+
+    /* A widget of a document tree: an instance (the root, or one an Include
+     * embeds) and its index there. */
+    struct UIWidgetRef
+    {
+        UIDocumentInstance* Doc   = nullptr;
+        int32_t             Index = -1;
+
+        bool IsValid() const { return Doc && Index >= 0; }
+        bool operator==(const UIWidgetRef& InOther) const { return Doc == InOther.Doc && Index == InOther.Index; }
+        bool operator!=(const UIWidgetRef& InOther) const { return !(*this == InOther); }
+    };
 
     struct UIPropertyText
     {
@@ -197,8 +210,9 @@ namespace UI
          * anything else bound to the key see it. False if nothing changed. */
         bool    SetInputValue(UIWidget& InWidget, const std::string& InName, const UIValue& InValue);
 
-        void MarkLayoutDirty() { bLayoutDirty = true; bPaintDirty = true; }
-        void MarkPaintDirty()  { bPaintDirty = true; }
+        /* An embedded document's marks reach its root: one layout, one paint. */
+        void MarkLayoutDirty() { bLayoutDirty = true; bPaintDirty = true; if(ParentInstance) ParentInstance->MarkLayoutDirty(); }
+        void MarkPaintDirty()  { bPaintDirty = true; if(ParentInstance) ParentInstance->MarkPaintDirty(); }
         bool IsLayoutDirty() const { return bLayoutDirty; }
         bool IsPaintDirty()  const { return bPaintDirty; }
 
@@ -272,6 +286,70 @@ namespace UI
          * call. True if any property changed. */
         bool ApplyBindings(const UIDataStore& InStore);
 
+        // === Embedding (Include) ===============================================
+        /*
+         * A document shown inside a widget of another (UIInclude): laid out in
+         * its host's rectangle at its root's scale, painted into its root's
+         * list, its dirty marks its root's. Its {Bind:Key} reads InPrefix + Key
+         * ({Bind:/Key} the key as written); its UI graph is its own.
+         */
+        void SetEmbedded(UIDocumentInstance* InParent, uint32_t InHost, const std::string& InPrefix);
+        UIDocumentInstance* GetParentInstance() const { return ParentInstance; }
+        uint32_t            GetHostIndex() const      { return HostIndex; }
+        const std::string&  GetBindingPrefix() const  { return BindingPrefix; }
+        UIDocumentInstance* GetRootInstance();
+        /* How deep it is embedded: 0 a root. */
+        int                 GetEmbedDepth() const;
+        /* InOther is this instance or one embedded in it, at any depth. */
+        bool                ContainsInstance(const UIDocumentInstance* InOther) const;
+
+        /* This instance, then each embedded one in document order (InVisit
+         * after them instead, with bInPostOrder). */
+        template<typename TVisit>
+        void ForEachInstance(TVisit&& InVisit, const bool bInPostOrder = false)
+        {
+            if(!bInPostOrder) InVisit(*this);
+            for(const uint32_t Host : EmbedHosts)
+            {
+                if(UIDocumentInstance* Inner = Widgets[Host]->GetEmbedded()) Inner->ForEachInstance(InVisit, bInPostOrder);
+            }
+            if(bInPostOrder) InVisit(*this);
+        }
+        const std::vector<uint32_t>& GetEmbedHosts() const { return EmbedHosts; }
+
+        /* The key a binding names: InKey after its prefix, or as written after a '/'. */
+        std::string ResolveKey(const std::string& InKey) const;
+
+        /* For UIInclude: its root measured, arranged and painted as part of the host's. */
+        UIVec2 MeasureEmbedded(const UILayoutContext& InOuter);
+        void   ArrangeEmbedded(const UILayoutContext& InOuter, const UIRect& InRect);
+        void   PaintEmbedded(UIPaintContext& InOuter);
+
+        // --- The whole tree (call on the root) ------------------------------
+
+        /* The deepest widget under InPixels, into embedded documents; and the
+         * interactive widget it belongs to, out of them again if need be. */
+        UIWidgetRef HitTestTree(const UIVec2& InPixels);
+        static UIWidgetRef FindInteractiveTree(UIWidgetRef InHit);
+
+        /* The focused widget anywhere in the tree; focus there (and nowhere
+         * else); the next focusable in document order, embedded ones at their
+         * host's place; the nearest one in a direction. */
+        UIWidgetRef GetTreeFocus();
+        bool        SetTreeFocus(UIWidgetRef InFocus);
+        UIWidgetRef FindTreeNextFocus(int32_t InStep);
+        UIWidgetRef FindTreeFocusInDirection(UIWidgetRef InFrom, int InDirection);
+
+        /* Hover and press, in at most one instance of the tree. */
+        void        SetTreeHovered(UIWidgetRef InHover);
+        void        SetTreePressed(UIWidgetRef InPressed);
+        UIWidgetRef GetTreePressed();
+
+        /* Its UI graph's script object (UISystem's bookkeeping). */
+        int32_t GetGraphObject() const { return GraphObject; }
+        bool    GetGraphTicks() const  { return bGraphTicks; }
+        void    SetGraphObject(int32_t InObject, bool bInTicks) { GraphObject = InObject; bGraphTicks = bInTicks; }
+
         // === Animation (RESERVED: UIAnimation.h) ==============================
 
         /* False, warned once: animations do not play yet. */
@@ -320,6 +398,14 @@ namespace UI
 
         UIAnimator Animator;
         bool       bWarnedAnimation = false;
+
+        // Embedding (Include): its host, and the documents it hosts.
+        UIDocumentInstance*   ParentInstance = nullptr;
+        uint32_t              HostIndex      = 0;
+        std::string           BindingPrefix;
+        std::vector<uint32_t> EmbedHosts;          // its widgets that host a document
+        int32_t               GraphObject = 0;     // its UI graph's script object (UISystem's); 0 none
+        bool                  bGraphTicks = false;
     };
 }
 
