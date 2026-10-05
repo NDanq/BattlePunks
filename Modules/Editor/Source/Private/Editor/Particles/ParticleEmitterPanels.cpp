@@ -7,9 +7,9 @@
 #include <cstring>
 
 #include <QFormLayout>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QFrame>
 #include <QListWidget>
 #include <QMenu>
 #include <QScrollArea>
@@ -64,12 +64,34 @@ namespace
     bool IsSizeStartEnd(const ParticleEmitterDesc& InEmitter)  { return InEmitter.SizeMode != RenderCore::POL_Keys; }
     bool IsSizeCurve(const ParticleEmitterDesc& InEmitter)     { return InEmitter.SizeMode == RenderCore::POL_Keys; }
 
-    /* What decides which rows show: rebuilt when it changes. */
+    /* What decides which sections and rows show: rebuilt when it changes. */
     uint32_t ShapeOf(const ParticleEmitterDesc& InEmitter)
     {
         return uint32_t(InEmitter.Type) | uint32_t(InEmitter.SpawnMode) << 4 | uint32_t(InEmitter.Shape) << 8
-             | uint32_t(InEmitter.ColorMode) << 12 | uint32_t(InEmitter.SizeMode) << 16;
+             | uint32_t(InEmitter.ColorMode) << 12 | uint32_t(InEmitter.SizeMode) << 16 | uint32_t(InEmitter.Modules) << 20;
     }
+
+    /* The sections, in the order shown: each a category of settings. One
+     * with a module is optional -- added and removed as a component is;
+     * the rest are always there (when their type has any of their settings). */
+    struct SectionInfo
+    {
+        const char* Name;
+        uint8_t     Module;   // EParticleModule; 0: always there
+        const char* Tip;
+    };
+
+    const SectionInfo SECTIONS[] = {
+        { "Rendering", 0, "What each particle is drawn as, and with" },
+        { "Emission",  0, "When and how many are born, and how long they live" },
+        { "Shape",     RenderCore::PEM_Shape,    "Where each is born: without it, at a point" },
+        { "Velocity",  RenderCore::PEM_Velocity, "Each one's speed at birth: without it, they start still" },
+        { "Forces",    RenderCore::PEM_Forces,   "Acceleration, drag and swirl as they live: without it, they coast" },
+        { "Rotation",  RenderCore::PEM_Rotation, "Spin: without it, sprites and meshes keep their orientation" },
+        { "Beam",      0, "Where a beam runs and how it jitters" },
+        { "Size",      0, "Size over life" },
+        { "Color",     0, "Colour and alpha over life" },
+    };
 
     template<typename TField>
     EmitterSetting Setting(const char* InName, TField ParticleEmitterDesc::* InMember, const char* InCategory, const uint8_t InTypes,
@@ -112,12 +134,23 @@ namespace
         return InSetting;
     }
 
-    /* A key editor's row, named as a setting is. */
-    EmitterSetting KeyEditor(const char* InName, const ECustom InCustom, const char* InTip)
+    /* A key editor's row, named as a setting is, covering its keys and their
+     * count (adjacent in the emitter) so Reset and "changed" see them. */
+    template<typename TKey>
+    EmitterSetting KeyEditor(const char* InName, const char* InCategory, const ECustom InCustom,
+                             TKey (ParticleEmitterDesc::* InKeys)[RenderCore::PARTICLE_CURVE_KEYS_MAX],
+                             int32_t ParticleEmitterDesc::* InCount, const char* InTip)
     {
+        static const ParticleEmitterDesc Probe{};
+        const char* Base  = reinterpret_cast<const char*>(&Probe);
+        const char* Keys  = reinterpret_cast<const char*>(&(Probe.*InKeys));
+        const char* Count = reinterpret_cast<const char*>(&(Probe.*InCount));
         EmitterSetting Out;
         std::strncpy(Out.Entry.Name, InName, sizeof(Out.Entry.Name) - 1);
-        std::strncpy(Out.Entry.Category, "Over Life", sizeof(Out.Entry.Category) - 1);
+        std::strncpy(Out.Entry.Category, InCategory, sizeof(Out.Entry.Category) - 1);
+        Out.Entry.Type   = GameCore::EPropertyType::Struct;
+        Out.Entry.Offset = uint32_t(Keys - Base);
+        Out.Entry.Size   = uint32_t(Count + sizeof(int32_t) - Keys);
         Out.Tip    = InTip;
         Out.Custom = InCustom;
         return Out;
@@ -149,10 +182,6 @@ namespace
                     "Fixed|Random Spin|Align to Velocity",
                     "How each mesh is turned. Fixed: its own axes, spinning about +Y at Rotation Rate. Random Spin: about an "
                     "axis of its own (debris). Align to Velocity: its +Z along its motion (arrows)"),
-            Switch ("Random Rotation", &ParticleEmitterDesc::bRandomRotation, "Rendering", FOR_SPRITE | FOR_MESH,
-                    "Each starts at a random angle and spins either way"),
-            Setting("Rotation Rate", &ParticleEmitterDesc::RotationRate, "Rendering", FOR_SPRITE | FOR_MESH,
-                    "Degrees a second: a sprite in its own plane, a mesh about its axis"),
 
             Choice("Spawn Mode", &ParticleEmitterDesc::SpawnMode, "Emission", FOR_SPAWNS, "Continuous|Burst",
                     "Continuous: Spawn Rate a second while it emits. Burst: Burst Count at once, then again every Burst "
@@ -189,14 +218,20 @@ namespace
                     "Plus this speed out of the shape where each is born (from the centre, through the face, along the cone); "
                     "negative pulls in"),
 
-            Setting("Velocity",        &ParticleEmitterDesc::Velocity, "Motion", FOR_SPAWNS,
+            Setting("Velocity",        &ParticleEmitterDesc::Velocity, "Velocity", FOR_SPAWNS,
                     "Each one's speed and direction at birth, in world units a second"),
-            Setting("Velocity Spread", &ParticleEmitterDesc::VelocitySpread, "Motion", FOR_SPAWNS, "Plus up to this speed in a random direction"),
-            Setting("Acceleration",    &ParticleEmitterDesc::Acceleration, "Motion", FOR_SPAWNS,
+            Setting("Velocity Spread", &ParticleEmitterDesc::VelocitySpread, "Velocity", FOR_SPAWNS, "Plus up to this speed in a random direction"),
+
+            Setting("Acceleration",    &ParticleEmitterDesc::Acceleration, "Forces", FOR_SPAWNS,
                     "Buoyancy up, gravity down: world units a second, a second"),
-            Setting("Drag",            &ParticleEmitterDesc::Drag, "Motion", FOR_SPAWNS, "Velocity lost a second (1/s): smoke slows, sparks do not"),
-            Setting("Turbulence",      &ParticleEmitterDesc::Turbulence, "Motion", FOR_SPAWNS,
+            Setting("Drag",            &ParticleEmitterDesc::Drag, "Forces", FOR_SPAWNS, "Velocity lost a second (1/s): smoke slows, sparks do not"),
+            Setting("Turbulence",      &ParticleEmitterDesc::Turbulence, "Forces", FOR_SPAWNS,
                     "A swirl's acceleration, pushing each along a moving noise"),
+
+            Switch ("Random Rotation", &ParticleEmitterDesc::bRandomRotation, "Rotation", FOR_SPRITE | FOR_MESH,
+                    "Each starts at a random angle and spins either way"),
+            Setting("Rotation Rate", &ParticleEmitterDesc::RotationRate, "Rotation", FOR_SPRITE | FOR_MESH,
+                    "Degrees a second: a sprite in its own plane, a mesh about its axis"),
 
             Setting("Beam End",         &ParticleEmitterDesc::BeamEnd, "Beam", FOR_BEAM,
                     "Where the beam ends, relative to the emitter in the entity's own axes (a component's Beam Target overrides it)"),
@@ -206,28 +241,29 @@ namespace
                     "How far its middle strays from the straight line, in world units; its ends stay put"),
             Setting("Beam Noise Speed", &ParticleEmitterDesc::BeamNoiseSpeed, "Beam", FOR_BEAM, "How fast the jitter changes"),
 
-            Choice ("Size Mode",   &ParticleEmitterDesc::SizeMode, "Over Life", FOR_ALL, "Start/End|Curve",
+            Choice ("Size Mode",   &ParticleEmitterDesc::SizeMode, "Size", FOR_ALL, "Start/End|Curve",
                     "Start/End: straight from Start Size to End Size. Curve: through keys you place (a beam's from the emitter to its end)"),
-            Only(Setting("Start Size",  &ParticleEmitterDesc::StartSize, "Over Life", FOR_ALL,
+            Only(Setting("Start Size",  &ParticleEmitterDesc::StartSize, "Size", FOR_ALL,
                     "Its size at birth, in world units across (a ribbon's width at its newest point, a beam's at the emitter)"), &IsSizeStartEnd),
-            Only(Setting("End Size",    &ParticleEmitterDesc::EndSize, "Over Life", FOR_ALL, "Its size at death (a beam's at its end)"),
+            Only(Setting("End Size",    &ParticleEmitterDesc::EndSize, "Size", FOR_ALL, "Its size at death (a beam's at its end)"),
                  &IsSizeStartEnd),
-            Only(KeyEditor("Size Curve", ECustom::SizeCurve, "Its size over life, through up to 8 keys"), &IsSizeCurve),
-            Choice ("Color Mode",  &ParticleEmitterDesc::ColorMode, "Over Life", FOR_ALL, "Start/End|Gradient",
+            Only(KeyEditor("Size Curve", "Size", ECustom::SizeCurve, &ParticleEmitterDesc::SizeKeys, &ParticleEmitterDesc::SizeKeyCount,
+                           "Its size over life, through up to 8 keys"), &IsSizeCurve),
+            Choice ("Color Mode",  &ParticleEmitterDesc::ColorMode, "Color", FOR_ALL, "Start/End|Gradient",
                     "Start/End: Start Color to End Color by Color Curve, faded in and out. Gradient: colour and alpha through keys "
                     "(starting from what Start/End gave)"),
-            Only(Setting("Start Color", &ParticleEmitterDesc::StartColor, "Over Life", FOR_ALL,
+            Only(Setting("Start Color", &ParticleEmitterDesc::StartColor, "Color", FOR_ALL,
                          "Its colour and alpha at birth (a beam's at the emitter)"), &IsColorStartEnd),
-            Only(Setting("End Color",   &ParticleEmitterDesc::EndColor, "Over Life", FOR_ALL,
+            Only(Setting("End Color",   &ParticleEmitterDesc::EndColor, "Color", FOR_ALL,
                          "Its colour and alpha at death (a beam's at its end)"), &IsColorStartEnd),
-            Only(Setting("Color Curve", &ParticleEmitterDesc::ColorCurve, "Over Life", FOR_ALL,
+            Only(Setting("Color Curve", &ParticleEmitterDesc::ColorCurve, "Color", FOR_ALL,
                          "The colour follows age^Curve: under 1 it reaches End Color sooner, over 1 later"), &IsColorStartEnd),
-            Only(Setting("Fade In",     &ParticleEmitterDesc::FadeIn, "Over Life", FOR_ALL,
+            Only(Setting("Fade In",     &ParticleEmitterDesc::FadeIn, "Color", FOR_ALL,
                          "0 to 1: the share of its life over which alpha rises from 0"), &IsColorStartEnd),
-            Only(Setting("Fade Out",    &ParticleEmitterDesc::FadeOut, "Over Life", FOR_ALL,
+            Only(Setting("Fade Out",    &ParticleEmitterDesc::FadeOut, "Color", FOR_ALL,
                          "0 to 1: the share of its life over which alpha falls to 0"), &IsColorStartEnd),
-            Only(KeyEditor("Color Gradient", ECustom::ColorGradient, "Its colour and alpha over life, through up to 8 keys"),
-                 &IsColorGradient),
+            Only(KeyEditor("Color Gradient", "Color", ECustom::ColorGradient, &ParticleEmitterDesc::ColorKeys,
+                           &ParticleEmitterDesc::ColorKeyCount, "Its colour and alpha over life, through up to 8 keys"), &IsColorGradient),
         };
         return Settings;
     }
@@ -237,6 +273,29 @@ namespace
     {
         const uint8_t Type = InEmitter.Type < RenderCore::PT_Count ? InEmitter.Type : uint8_t(RenderCore::PT_Sprite);
         return (InSetting.Types & (1u << Type)) != 0 && (!InSetting.While || InSetting.While(InEmitter));
+    }
+
+    /* Every setting of InCategory back to a fresh emitter's: a section's Reset, a module's removal. */
+    void ResetCategory(ParticleEmitterDesc& InOut, const char* InCategory)
+    {
+        static const ParticleEmitterDesc Defaults{};
+        for(const EmitterSetting& Each : GetSettings())
+        {
+            if(std::strcmp(Each.Entry.Category, InCategory) != 0) { continue; }
+            std::memcpy(reinterpret_cast<uint8_t*>(&InOut) + Each.Entry.Offset,
+                        reinterpret_cast<const uint8_t*>(&Defaults) + Each.Entry.Offset, Each.Entry.Size);
+        }
+    }
+
+    /* Whether any setting of InCategory belongs to InEmitter's type: what the Add Module menu offers. */
+    bool ModuleApplies(const char* InCategory, const ParticleEmitterDesc& InEmitter)
+    {
+        const uint8_t Type = InEmitter.Type < RenderCore::PT_Count ? InEmitter.Type : uint8_t(RenderCore::PT_Sprite);
+        for(const EmitterSetting& Each : GetSettings())
+        {
+            if(std::strcmp(Each.Entry.Category, InCategory) == 0 && (Each.Types & (1u << Type)) != 0) { return true; }
+        }
+        return false;
     }
 
     QToolButton* MakeButton(QWidget* InParent, const QString& InText, const QString& InTip)
@@ -405,6 +464,7 @@ ParticleEmitterDetailsPanel::ParticleEmitterDetailsPanel(ParticleDocument& InDoc
 void ParticleEmitterDetailsPanel::Rebuild()
 {
     Rows.clear();
+    Sections.clear();
     Gradient = nullptr;
     Curve    = nullptr;
     while(QLayoutItem* Item = ContentLayout->takeAt(0))
@@ -429,38 +489,15 @@ void ParticleEmitterDetailsPanel::Rebuild()
     ParticleDocument* Doc = &Document;
     const auto Resolve = [Doc, Selected]() -> uint8_t* { return reinterpret_cast<uint8_t*>(Doc->GetEmitter(Selected)); };
 
-    std::vector<std::pair<QString, QFormLayout*>> Forms;
-    const auto FormFor = [&](const QString& InCategory) -> QFormLayout*
-    {
-        for(const auto& Each : Forms)
-        {
-            if(Each.first == InCategory) { return Each.second; }
-        }
-        auto* Box  = new QGroupBox(InCategory, Content);
-        auto* Form = new QFormLayout(Box);
-        Form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-        Form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
-        Form->setContentsMargins(6, 4, 0, 4);
-        ContentLayout->addWidget(Box);
-        Forms.emplace_back(InCategory, Form);
-        return Form;
-    };
-
     const ParticleEmitterDesc& Shown = *Document.GetEmitter(Selected);
     ShownShape = ShapeOf(Shown);
 
+    /* One property row: the editor and its reset arrow. */
     const std::vector<EmitterSetting>& Settings = GetSettings();
-    for(size_t Index = 0; Index < Settings.size(); ++Index)
+    const auto AddRow = [&](const size_t InIndex, QFormLayout* InForm, QWidget* InParent)
     {
-        const EmitterSetting& Setting = Settings[Index];
-        if(!Applies(Setting, Shown)) { continue; }
-        if(Setting.Custom != ECustom::None)
-        {
-            AddKeyEditor(Setting.Custom == ECustom::ColorGradient, QString::fromLatin1(Setting.Entry.Name),
-                         QString::fromLatin1(Setting.Tip), FormFor(QString::fromLatin1(Setting.Entry.Category)));
-            continue;
-        }
-        auto* Field    = new QWidget(Content);
+        const EmitterSetting& Setting = Settings[InIndex];
+        auto* Field    = new QWidget(InParent);
         auto* FieldRow = new QHBoxLayout(Field);
         FieldRow->setContentsMargins(0, 0, 0, 0);
         FieldRow->setSpacing(2);
@@ -469,17 +506,17 @@ void ParticleEmitterDetailsPanel::Rebuild()
         if(!Editor)
         {
             delete Field;
-            continue;
+            return;
         }
         FieldRow->addWidget(Editor, 1);
         const QString Name = QString::fromLatin1(Setting.Entry.Name);
         QToolButton* Reset = MakeResetButton(Field, QStringLiteral("Changed from the default -- click to reset %1").arg(Name));
         FieldRow->addWidget(Reset);
 
-        auto* Label = new QLabel(Name, Content);
+        auto* Label = new QLabel(Name, InParent);
         Label->setToolTip(QString::fromLatin1(Setting.Tip));
         Editor->setToolTip(QString::fromLatin1(Setting.Tip));
-        FormFor(QString::fromLatin1(Setting.Entry.Category))->addRow(Label, Field);
+        InForm->addRow(Label, Field);
 
         connect(Editor, &PropertyEditor::Written, this, [this, Name]()
         {
@@ -497,9 +534,9 @@ void ParticleEmitterDetailsPanel::Rebuild()
             }
             Document.CommitLiveEdit(QStringLiteral("Edit %1").arg(Name));
         });
-        connect(Reset, &QToolButton::clicked, this, [this, Index, Name]()
+        connect(Reset, &QToolButton::clicked, this, [this, InIndex, Name]()
         {
-            const GameCore::ComponentPropertyEntry& Entry = GetSettings()[Index].Entry;
+            const GameCore::ComponentPropertyEntry& Entry = GetSettings()[InIndex].Entry;
             const int At = Document.GetSelected();
             static const ParticleEmitterDesc Defaults{};
             Document.Edit(QStringLiteral("Reset %1").arg(Name), [&Entry, At](RenderCore::ParticleSystemDesc& InOut)
@@ -508,11 +545,169 @@ void ParticleEmitterDetailsPanel::Rebuild()
                             reinterpret_cast<const uint8_t*>(&Defaults) + Entry.Offset, Entry.Size);
             });
         });
+        Rows.push_back({ Editor, Reset, InIndex });
+    };
 
-        Rows.push_back({ Editor, Reset, Index });
+    /* A section a category, in SECTIONS' order: an optional one only once
+     * added, any only if its type has a setting in it. */
+    for(const SectionInfo& Info : SECTIONS)
+    {
+        if(Info.Module != 0 && !Shown.HasModule(Info.Module)) { continue; }
+        std::vector<size_t> Indices;
+        for(size_t Index = 0; Index < Settings.size(); ++Index)
+        {
+            if(std::strcmp(Settings[Index].Entry.Category, Info.Name) == 0 && Applies(Settings[Index], Shown)) { Indices.push_back(Index); }
+        }
+        if(Indices.empty()) { continue; }
+
+        QWidget*     Body = nullptr;
+        QFormLayout* Form = AddSection(Info.Name, Info.Module, QString::fromLatin1(Info.Tip), Body);
+        for(const size_t Index : Indices)
+        {
+            const EmitterSetting& Setting = Settings[Index];
+            if(Setting.Custom != ECustom::None)
+            {
+                AddKeyEditor(Setting.Custom == ECustom::ColorGradient, QString::fromLatin1(Setting.Entry.Name),
+                             QString::fromLatin1(Setting.Tip), Form);
+                continue;
+            }
+            AddRow(Index, Form, Body);
+        }
     }
+
+    ContentLayout->addWidget(BuildAddModuleButton());
     ContentLayout->addStretch(1);
     Refresh();
+}
+
+QFormLayout* ParticleEmitterDetailsPanel::AddSection(const char* InName, const uint8_t InModule, const QString& InTip, QWidget*& OutBody)
+{
+    const QString Name = QString::fromLatin1(InName);
+    auto* Section = new QFrame(Content);
+    Section->setFrameShape(QFrame::StyledPanel);
+    auto* SectionLayout = new QVBoxLayout(Section);
+    SectionLayout->setContentsMargins(4, 2, 4, 4);
+    SectionLayout->setSpacing(2);
+
+    // --- Header: collapse toggle, Reset, Remove (an optional module's) ------
+    auto* HeaderRow = new QHBoxLayout();
+    HeaderRow->setContentsMargins(0, 0, 0, 0);
+    const bool bOpen = !CollapsedSections.contains(Name);
+    auto* Toggle = new QToolButton(Section);
+    Toggle->setText(Name);
+    Toggle->setToolTip(InTip);
+    Toggle->setCheckable(true);
+    Toggle->setChecked(bOpen);
+    Toggle->setArrowType(bOpen ? Qt::DownArrow : Qt::RightArrow);
+    Toggle->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    Toggle->setAutoRaise(true);
+    Toggle->setStyleSheet(QStringLiteral("QToolButton { font-weight: bold; }"));
+    HeaderRow->addWidget(Toggle);
+    HeaderRow->addStretch(1);
+
+    auto* ResetAll = new QToolButton(Section);
+    ResetAll->setText(QStringLiteral("Reset"));
+    ResetAll->setToolTip(QStringLiteral("Reset every setting of %1 to its default").arg(Name));
+    ResetAll->setAutoRaise(true);
+    ResetAll->setEnabled(false);
+    connect(ResetAll, &QToolButton::clicked, this, [this, Name]()
+    {
+        const QByteArray Category = Name.toLatin1();
+        const int At = Document.GetSelected();
+        Document.Edit(QStringLiteral("Reset %1").arg(Name), [Category, At](RenderCore::ParticleSystemDesc& InOut)
+        {
+            ResetCategory(InOut.Emitters[size_t(At)], Category.constData());
+        });
+    });
+    HeaderRow->addWidget(ResetAll);
+
+    if(InModule != 0)
+    {
+        auto* Remove = new QToolButton(Section);
+        Remove->setText(QString(QChar(0x2715)));   // multiplication x, as the Details panel's
+        Remove->setToolTip(QStringLiteral("Remove %1 from this emitter: its settings go back to their defaults and have no effect").arg(Name));
+        Remove->setAutoRaise(true);
+        connect(Remove, &QToolButton::clicked, this, [this, Name, InModule]()
+        {
+            const QByteArray Category = Name.toLatin1();
+            const int At = Document.GetSelected();
+            Document.Edit(QStringLiteral("Remove %1").arg(Name), [Category, At, InModule](RenderCore::ParticleSystemDesc& InOut)
+            {
+                ParticleEmitterDesc& Emitter = InOut.Emitters[size_t(At)];
+                ResetCategory(Emitter, Category.constData());
+                Emitter.Modules = uint8_t(Emitter.Modules & ~InModule);
+            });
+        });
+        HeaderRow->addWidget(Remove);
+    }
+    SectionLayout->addLayout(HeaderRow);
+
+    // --- Its settings ----------------------------------------------------------
+    auto* Body = new QWidget(Section);
+    auto* Form = new QFormLayout(Body);
+    Form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    Form->setFieldGrowthPolicy(QFormLayout::AllNonFixedFieldsGrow);
+    Form->setContentsMargins(14, 0, 0, 0);
+    Body->setVisible(bOpen);
+    SectionLayout->addWidget(Body);
+
+    connect(Toggle, &QToolButton::toggled, this, [this, Toggle, Body, Name](const bool bInOpen)
+    {
+        Toggle->setArrowType(bInOpen ? Qt::DownArrow : Qt::RightArrow);
+        Body->setVisible(bInOpen);
+        if(bInOpen) { CollapsedSections.remove(Name); }
+        else        { CollapsedSections.insert(Name); }
+    });
+
+    ContentLayout->addWidget(Section);
+    Sections.push_back({ Name, ResetAll });
+    OutBody = Body;
+    return Form;
+}
+
+QWidget* ParticleEmitterDetailsPanel::BuildAddModuleButton()
+{
+    auto* Button = new QToolButton(Content);
+    Button->setText(QStringLiteral("+ Add Module"));
+    Button->setToolTip(QStringLiteral("Add an optional module -- Shape, Velocity, Forces, Rotation -- that this emitter's type uses"));
+    Button->setToolButtonStyle(Qt::ToolButtonTextOnly);
+    Button->setPopupMode(QToolButton::InstantPopup);
+    Button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    Button->setMinimumHeight(28);
+
+    /* Filled when opened: the emitter may change between this rebuild and the click. */
+    auto* Menu = new QMenu(Button);
+    connect(Menu, &QMenu::aboutToShow, this, [this, Menu]()
+    {
+        Menu->clear();
+        const int At = Document.GetSelected();
+        const ParticleEmitterDesc* Emitter = Document.GetEmitter(At);
+        if(Emitter)
+        {
+            for(const SectionInfo& Info : SECTIONS)
+            {
+                if(Info.Module == 0 || Emitter->HasModule(Info.Module) || !ModuleApplies(Info.Name, *Emitter)) { continue; }
+                const QString Name = QString::fromLatin1(Info.Name);
+                const uint8_t Module = Info.Module;
+                QAction* Action = Menu->addAction(Name);
+                Action->setToolTip(QString::fromLatin1(Info.Tip));
+                connect(Action, &QAction::triggered, this, [this, Name, Module, At]()
+                {
+                    CollapsedSections.remove(Name);
+                    Document.Edit(QStringLiteral("Add %1").arg(Name), [At, Module](RenderCore::ParticleSystemDesc& InOut)
+                    {
+                        InOut.Emitters[size_t(At)].Modules |= Module;
+                    });
+                });
+            }
+        }
+        if(Menu->isEmpty())
+        {
+            Menu->addAction(QStringLiteral("(every module this emitter's type uses is present)"))->setEnabled(false);
+        }
+    });
+    Button->setMenu(Menu);
+    return Button;
 }
 
 void ParticleEmitterDetailsPanel::AddKeyEditor(const bool bInGradient, const QString& InName, const QString& InTip, QFormLayout* InForm)
@@ -579,6 +774,21 @@ void ParticleEmitterDetailsPanel::Refresh()
     if(Emitter && Curve)    { Curve->SetKeys(Emitter->SizeKeys, Emitter->SizeKeyCount); }
 
     static const ParticleEmitterDesc Defaults{};
+
+    /* A section's Reset, while any of its settings -- shown or not -- differs from a fresh emitter's. */
+    for(const SectionState& Section : Sections)
+    {
+        bool bChanged = false;
+        const QByteArray Category = Section.Name.toLatin1();
+        for(const EmitterSetting& Each : GetSettings())
+        {
+            if(!Emitter || bChanged || std::strcmp(Each.Entry.Category, Category.constData()) != 0) { continue; }
+            bChanged = !IsPropertyAtDefault(Each.Entry, reinterpret_cast<const uint8_t*>(Emitter) + Each.Entry.Offset,
+                                            reinterpret_cast<const uint8_t*>(&Defaults) + Each.Entry.Offset);
+        }
+        Section.ResetAll->setEnabled(bChanged);
+    }
+
     for(const Row& Each : Rows)
     {
         Each.Editor->Refresh(true);

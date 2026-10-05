@@ -46,6 +46,24 @@ namespace RenderCore
         }
     }
 
+    uint8_t ParticleEmitterDesc::InferModules() const
+    {
+        const auto IsZero = [](const EngineCore::Vector3& InVector)
+        {
+            return InVector.GetX() == 0.0 && InVector.GetY() == 0.0 && InVector.GetZ() == 0.0;
+        };
+        uint8_t Out = 0;
+        if(Type == PT_Beam)
+        {
+            return Out;   // a beam uses none of them
+        }
+        if(Shape != PS_Sphere || EmitterRadius != 0.0f || ShapeSpeed != 0.0f || bShapeSurface) { Out |= PEM_Shape; }
+        if(!IsZero(Velocity) || VelocitySpread != 0.0f)                                         { Out |= PEM_Velocity; }
+        if(!IsZero(Acceleration) || Drag != 0.0f || Turbulence != 0.0f)                         { Out |= PEM_Forces; }
+        if(bRandomRotation || RotationRate != 0.0f)                                              { Out |= PEM_Rotation; }
+        return Out;
+    }
+
     ParticleEmitterSettings ParticleEmitterDesc::ToSettings() const
     {
         ParticleEmitterSettings Out;
@@ -89,6 +107,31 @@ namespace RenderCore
         Out.ConeAngle        = std::clamp(ConeAngle, 0.0f, 180.0f);
         Out.RingWidth        = std::max(RingWidth, 0.0f);
         Out.ShapeSpeed       = ShapeSpeed;
+
+        /* A module left out is at rest, whatever its settings hold. */
+        if(!HasModule(PEM_Shape))
+        {
+            Out.Shape         = PS_Sphere;
+            Out.EmitterRadius = 0.0f;
+            Out.bShapeSurface = false;
+            Out.ShapeSpeed    = 0.0f;
+        }
+        if(!HasModule(PEM_Velocity))
+        {
+            Out.Velocity[0] = Out.Velocity[1] = Out.Velocity[2] = 0.0f;
+            Out.VelocitySpread = 0.0f;
+        }
+        if(!HasModule(PEM_Forces))
+        {
+            Out.Acceleration[0] = Out.Acceleration[1] = Out.Acceleration[2] = 0.0f;
+            Out.Drag       = 0.0f;
+            Out.Turbulence = 0.0f;
+        }
+        if(!HasModule(PEM_Rotation))
+        {
+            Out.bRandomRotation = false;
+            Out.RotationRate    = 0.0f;
+        }
 
         /* A gradient or curve, baked as the GPU samples it. */
         if((ColorMode == POL_Keys && ColorKeyCount > 0) || (SizeMode == POL_Keys && SizeKeyCount > 0))
@@ -273,6 +316,18 @@ namespace RenderCore
         const char* const COLOR_MODE_NAMES[POL_Count]  = { "StartEnd", "Gradient" };
     }
 
+    const char* GetParticleModuleName(const uint8_t InModule)
+    {
+        switch(InModule)
+        {
+            case PEM_Shape:    return "Shape";
+            case PEM_Velocity: return "Velocity";
+            case PEM_Forces:   return "Forces";
+            case PEM_Rotation: return "Rotation";
+            default:           return nullptr;
+        }
+    }
+
     const char* GetParticleTypeName(const uint8_t InType)
     {
         return InType < PT_Count ? TYPE_NAMES[InType] : "Sprite";
@@ -437,6 +492,37 @@ namespace RenderCore
             return Out;
         }
 
+        /* "Shape Forces": the named modules, in any order; none for an empty list. */
+        bool ToModules(const std::string& InText, ParticleEmitterDesc& OutEmitter)
+        {
+            OutEmitter.Modules = 0;
+            size_t Start = 0;
+            while(Start < InText.size())
+            {
+                const size_t Space = InText.find(' ', Start);
+                const std::string Name = InText.substr(Start, Space == std::string::npos ? std::string::npos : Space - Start);
+                Start = Space == std::string::npos ? InText.size() : Space + 1;
+                if(Name.empty()) { continue; }
+                bool bKnown = false;
+                for(uint8_t Bit = 1; Bit != 0 && Bit <= PEM_Rotation; Bit = uint8_t(Bit << 1))
+                {
+                    if(Name == GetParticleModuleName(Bit)) { OutEmitter.Modules |= Bit; bKnown = true; }
+                }
+                if(!bKnown) { return false; }
+            }
+            return true;
+        }
+
+        std::string FormatModules(const ParticleEmitterDesc& InEmitter)
+        {
+            std::string Out;
+            for(uint8_t Bit = 1; Bit != 0 && Bit <= PEM_Rotation; Bit = uint8_t(Bit << 1))
+            {
+                if(InEmitter.HasModule(Bit)) { Out += (Out.empty() ? "" : " ") + std::string(GetParticleModuleName(Bit)); }
+            }
+            return Out;
+        }
+
         bool ToSizeKeys(const std::string& InText, ParticleEmitterDesc& OutEmitter)
         {
             return ToKeys(InText, OutEmitter.SizeKeys, OutEmitter.SizeKeyCount,
@@ -486,6 +572,7 @@ namespace RenderCore
         const EmitterKey EMITTER_KEYS[] = {
             NM_PARTICLE_FLAG  ("Enabled",          bEnabled),
             NM_PARTICLE_CHOICE("Type",             Type, TYPE_NAMES),
+            { "Modules", &ToModules, &FormatModules },
             NM_PARTICLE_STRING("Mesh",             Mesh),
             NM_PARTICLE_STRING("Material",         Material),
             NM_PARTICLE_VECTOR("Offset",           Offset),
@@ -559,6 +646,7 @@ namespace RenderCore
 
         bool   bHeader = false;
         size_t LineNumber = 0;
+        std::vector<bool> ModulesNamed;   // each emitter's: whether it had a Modules line
         size_t Start = 0;
         while(Start <= InText.size())
         {
@@ -607,12 +695,14 @@ namespace RenderCore
                     return Fail("emitter name too long");
                 }
                 OutSystem.Emitters.push_back(Emitter);
+                ModulesNamed.push_back(false);
                 continue;
             }
             if(OutSystem.Emitters.empty())
             {
                 return Fail("'" + Key + "' before the first Emitter");
             }
+            if(Key == "Modules") { ModulesNamed.back() = true; }
             for(const EmitterKey& Each : EMITTER_KEYS)
             {
                 if(Key == Each.Key)
@@ -629,6 +719,11 @@ namespace RenderCore
         {
             OutError = "empty: not a particle system";
             return false;
+        }
+        /* Written before modules: the ones its settings use. */
+        for(size_t Index = 0; Index < OutSystem.Emitters.size(); ++Index)
+        {
+            if(!ModulesNamed[Index]) { OutSystem.Emitters[Index].Modules = OutSystem.Emitters[Index].InferModules(); }
         }
         return true;
     }

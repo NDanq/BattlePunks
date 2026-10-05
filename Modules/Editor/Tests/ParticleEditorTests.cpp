@@ -11,7 +11,8 @@
 #include <QComboBox>
 #include <QMouseEvent>
 #include <QFile>
-#include <QGroupBox>
+#include <QAction>
+#include <QMenu>
 #include <QLabel>
 #include <QListWidget>
 #include <QTemporaryDir>
@@ -145,9 +146,18 @@ namespace
         Document.AddEmitter();
         Expect(Rows->count() == 3 && Rows->currentRow() == 2, "an added emitter appears, current");
 
-        int Groups = 0;
-        for(QGroupBox* Box : Details.findChildren<QGroupBox*>()) { Groups += Box->isVisibleTo(&Details) ? 1 : 0; }
-        Expect(Groups == 5, "the details group the emitter's settings: Rendering, Emission, Shape, Motion, Over Life");
+        /* Sections are drawn as components are: a header toggle each. */
+        const auto SectionNames = [&Details]()
+        {
+            QStringList Out;
+            for(QToolButton* Button : Details.findChildren<QToolButton*>())
+            {
+                if(Button->isCheckable() && Button->arrowType() != Qt::NoArrow) { Out << Button->text(); }
+            }
+            return Out;
+        };
+        Expect(SectionNames() == QStringList({ "Rendering", "Emission", "Velocity", "Size", "Color" }),
+               "a fresh emitter's sections: Rendering, Emission, its Velocity module, Size, Color");
 
         /* The default emitter shows no reset arrows; a changed setting one, which resets it. */
         const auto VisibleResets = [&Details]()
@@ -160,14 +170,14 @@ namespace
             return Out;
         };
         Expect(VisibleResets().isEmpty(), "an emitter at its defaults shows no reset arrows");
-        Document.GetEmitter(2)->Drag = 2.0f;
-        Document.CommitLiveEdit(QStringLiteral("Edit Drag"));
+        Document.GetEmitter(2)->VelocitySpread = 15.0f;
+        Document.CommitLiveEdit(QStringLiteral("Edit Velocity Spread"));
         const QList<QToolButton*> Resets = VisibleResets();
         Expect(Resets.size() == 1, "a changed setting shows its reset arrow");
         if(Resets.size() == 1)
         {
             Resets.front()->click();
-            Expect(Document.GetEmitter(2)->Drag == 0.0f && Document.GetHistory().undoText() == QStringLiteral("Reset Drag")
+            Expect(Document.GetEmitter(2)->VelocitySpread == 0.0f && Document.GetHistory().undoText() == QStringLiteral("Reset Velocity Spread")
                    && VisibleResets().isEmpty(), "which resets it, as an undo step");
         }
 
@@ -198,21 +208,89 @@ namespace
         QApplication::processEvents();
         Expect(Shows("Beam End") && !Shows("Burst Count"), "undo puts the beam's settings back");
 
-        /* Shapes: each shows its own settings. */
+        /* Modules: added from "+ Add Module", removed with their x, each one undo step. */
         Document.Edit(QStringLiteral("Edit Type"), [](RenderCore::ParticleSystemDesc& InOut)
         {
             InOut.Emitters[2].Type      = RenderCore::PT_Sprite;
             InOut.Emitters[2].SpawnMode = RenderCore::PSM_Continuous;
         });
         QApplication::processEvents();
-        Expect(Shows("Shape") && Shows("Radius") && Shows("On Surface") && Shows("Outward Speed") && !Shows("Box Size") && !Shows("Cone Angle"),
-               "a Sphere shows its radius, surface and outward speed");
+        const auto AddModule = [&Details](const QString& InName)
+        {
+            for(QToolButton* Button : Details.findChildren<QToolButton*>())
+            {
+                if(Button->text() != QStringLiteral("+ Add Module") || !Button->menu()) { continue; }
+                emit Button->menu()->aboutToShow();
+                for(QAction* Action : Button->menu()->actions())
+                {
+                    if(Action->text() == InName) { Action->trigger(); return true; }
+                }
+            }
+            return false;
+        };
+        Expect(!Shows("Shape") && !Shows("Radius") && AddModule(QStringLiteral("Shape")), "Shape is not there until added from + Add Module");
+        QApplication::processEvents();
+        Expect(Document.GetEmitter(2)->HasModule(RenderCore::PEM_Shape) && Document.GetHistory().undoText() == QStringLiteral("Add Shape")
+               && Shows("Radius") && Shows("On Surface") && Shows("Outward Speed") && !Shows("Box Size") && !Shows("Cone Angle"),
+               "added, a Sphere shows its radius, surface and outward speed, as one undo step");
         Document.Edit(QStringLiteral("Edit Shape"), [](RenderCore::ParticleSystemDesc& InOut) { InOut.Emitters[2].Shape = RenderCore::PS_Box; });
         QApplication::processEvents();
         Expect(Shows("Box Size") && !Shows("Radius"), "a Box its size instead of a radius");
         Document.Edit(QStringLiteral("Edit Shape"), [](RenderCore::ParticleSystemDesc& InOut) { InOut.Emitters[2].Shape = RenderCore::PS_Cone; });
         QApplication::processEvents();
         Expect(Shows("Cone Angle") && Shows("Radius") && !Shows("Ring Width"), "a Cone its angle");
+
+        QToolButton* RemoveShape = nullptr;
+        for(QToolButton* Button : Details.findChildren<QToolButton*>())
+        {
+            if(Button->text() == QString(QChar(0x2715)) && Button->toolTip().contains(QStringLiteral("Remove Shape"))) { RemoveShape = Button; }
+        }
+        Expect(RemoveShape != nullptr, "an optional module has a remove button");
+        bool bRequiredRemovable = false;
+        for(QToolButton* Button : Details.findChildren<QToolButton*>())
+        {
+            bRequiredRemovable = bRequiredRemovable || Button->toolTip().contains(QStringLiteral("Remove Emission"))
+                              || Button->toolTip().contains(QStringLiteral("Remove Color"));
+        }
+        Expect(!bRequiredRemovable, "and the sections every emitter needs have none");
+        if(RemoveShape) { RemoveShape->click(); }
+        QApplication::processEvents();
+        Expect(!Document.GetEmitter(2)->HasModule(RenderCore::PEM_Shape) && Document.GetEmitter(2)->Shape == RenderCore::PS_Sphere
+               && !Shows("Radius") && !SectionNames().contains(QStringLiteral("Shape")),
+               "removed, its section goes and its settings go back to their defaults");
+        Document.GetHistory().undo();
+        QApplication::processEvents();
+        Expect(Document.GetEmitter(2)->HasModule(RenderCore::PEM_Shape) && Document.GetEmitter(2)->Shape == RenderCore::PS_Cone && Shows("Cone Angle"),
+               "and undo puts it back as it was");
+
+        /* A section's Reset: every setting in it, one step. */
+        Document.GetEmitter(2)->VelocitySpread = 40.0f;
+        Document.CommitLiveEdit(QStringLiteral("Edit Velocity Spread"));
+        QToolButton* ResetVelocity = nullptr;
+        for(QToolButton* Button : Details.findChildren<QToolButton*>())
+        {
+            if(Button->text() == QStringLiteral("Reset") && Button->toolTip().contains(QStringLiteral("of Velocity"))) { ResetVelocity = Button; }
+        }
+        Expect(ResetVelocity && ResetVelocity->isEnabled(), "a changed section's Reset is enabled");
+        if(ResetVelocity) { ResetVelocity->click(); }
+        QApplication::processEvents();
+        Expect(Document.GetEmitter(2)->VelocitySpread == 0.0f && Document.GetHistory().undoText() == QStringLiteral("Reset Velocity"),
+               "and resets the section");
+
+        /* Collapsed, a section keeps its header; it stays collapsed through a rebuild. */
+        for(QToolButton* Button : Details.findChildren<QToolButton*>())
+        {
+            if(Button->isCheckable() && Button->text() == QStringLiteral("Emission")) { Button->setChecked(false); }
+        }
+        const bool bHidden = !Shows("Spawn Rate") && SectionNames().contains(QStringLiteral("Emission"));
+        Document.Edit(QStringLiteral("Edit Shape"), [](RenderCore::ParticleSystemDesc& InOut) { InOut.Emitters[2].Shape = RenderCore::PS_Ring; });
+        QApplication::processEvents();
+        Expect(bHidden && !Shows("Spawn Rate") && Shows("Ring Width"), "a collapsed section hides its rows, and stays collapsed when rebuilt");
+        for(QToolButton* Button : Details.findChildren<QToolButton*>())
+        {
+            if(Button->isCheckable() && Button->text() == QStringLiteral("Emission")) { Button->setChecked(true); }
+        }
+        QApplication::processEvents();
 
         /* Over life: choosing a gradient seeds it from Start/End, in one step, and shows the gradient editor. */
         Details.resize(420, 1400);
