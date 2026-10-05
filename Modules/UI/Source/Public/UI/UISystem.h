@@ -68,8 +68,12 @@ namespace UI
          * CloseAll(false) -- a level change. UI_DOCUMENT_INVALID if it does not load. */
         UIDocumentHandle Open(const std::string& InPath, bool bInPersistent = false);
 
-        /* Opens InAsset, not from a file (the editor; tests). */
-        UIDocumentHandle OpenAsset(std::shared_ptr<const UIDocumentAsset> InAsset, const std::string& InPath, bool bInPersistent = false);
+        /* Opens InAsset, not from a file (the editor; tests). InPath names it
+         * (its graph's self.Document). bInFollowCache: rebuilt when the cache's
+         * copy of InPath moves -- false for the designer, whose asset is the
+         * one being edited, not the file. */
+        UIDocumentHandle OpenAsset(std::shared_ptr<const UIDocumentAsset> InAsset, const std::string& InPath, bool bInPersistent = false,
+                                   bool bInFollowCache = true);
 
         bool Close(UIDocumentHandle InHandle);
         bool Close(const std::string& InPath);

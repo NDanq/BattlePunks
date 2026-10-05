@@ -3,6 +3,7 @@
 
 #if WITH_EDITOR
 
+#include <QObject>
 #include <QString>
 #include <QStringList>
 
@@ -19,8 +20,21 @@ class UIDesignDocument;
  * for the document's own) and called by the action Graph:<Handler>; renaming
  * the widget later breaks nothing.
  */
+/* Says when a UI graph was saved (EditorGraphs::StageOutput), naming the
+ * document it is the graph of: the designer's Preview reloads it. */
+class UIGraphNotifier : public QObject
+{
+    Q_OBJECT
+
+signals:
+    void GraphSaved(const QString& InDocumentRuntimePath, const QString& InGraphRuntimePath);
+};
+
 namespace EditorUIGraph
 {
+    /* The one notifier. */
+    UIGraphNotifier& Notifier();
+
     /* The graph file InDesign's Graph setting names, on disk; empty if none is set. */
     QString GetGraphPath(const UIDesignDocument& InDesign);
 

@@ -30,6 +30,19 @@ namespace UI
     void SetScriptUISystem(UISystem* InSystem) { GScriptUISystem = InSystem; }
     UISystem* GetScriptUISystem() { return GScriptUISystem; }
 
+    namespace
+    {
+        /* While a system calls into Lua, the UI library acts on it -- not on
+         * whichever session set the global last (the editor's Preview beside
+         * Play-in-Editor). Restored after. */
+        struct ScopedScriptUISystem
+        {
+            explicit ScopedScriptUISystem(UISystem* InSystem) : Previous(GScriptUISystem) { GScriptUISystem = InSystem; }
+            ~ScopedScriptUISystem() { GScriptUISystem = Previous; }
+            UISystem* Previous;
+        };
+    }
+
     struct UISystem::Document
     {
         UIDocumentHandle                    Handle = UI_DOCUMENT_INVALID;
@@ -44,6 +57,7 @@ namespace UI
         GameCore::ScriptEngine::Object      GraphObject = 0;
         bool                                bGraphTicks = false;
         bool                                bClosing    = false;
+        bool                                bFollowCache = true;   // rebuilt when UIAssetCache's copy moves
 
         /* The last hit test, kept while the pointer and the painted
          * rectangles stay put: a still mouse over a still UI costs nothing. */
@@ -105,6 +119,7 @@ namespace UI
         }
         static const char* const FIELDS[] = { "Document" };
         const GameCore::EventArg Values[] = { GameCore::EventArg::Make(InDocument.Path.c_str()) };
+        ScopedScriptUISystem Scope(this);   // the class's chunk runs as it loads
         InDocument.GraphObject = Scripts->CreateObject(GraphPath.c_str(), FIELDS, Values, 1);   // logged if it does not load
         if(!InDocument.GraphObject) return;
         InDocument.bGraphTicks = Scripts->HasObjectMethod(InDocument.GraphObject, "OnTick");
@@ -125,7 +140,11 @@ namespace UI
         InDocument.GraphObject       = 0;
         InDocument.bGraphTicks = false;
         if(!Scripts) return;
-        if(bInCallClose && bExecuteActions) { Scripts->CallObjectMethod(Object, "OnClose"); }   // absent: nothing
+        if(bInCallClose && bExecuteActions)
+        {
+            ScopedScriptUISystem Scope(this);
+            Scripts->CallObjectMethod(Object, "OnClose");   // absent: nothing
+        }   // absent: nothing
         Scripts->ReleaseObject(Object);
     }
 
@@ -144,7 +163,8 @@ namespace UI
         return OpenAsset(Asset, InPath, bInPersistent);
     }
 
-    UIDocumentHandle UISystem::OpenAsset(std::shared_ptr<const UIDocumentAsset> InAsset, const std::string& InPath, const bool bInPersistent)
+    UIDocumentHandle UISystem::OpenAsset(std::shared_ptr<const UIDocumentAsset> InAsset, const std::string& InPath, const bool bInPersistent,
+                                         const bool bInFollowCache)
     {
         if(!InAsset) return UI_DOCUMENT_INVALID;
         auto Made = std::make_unique<Document>();
@@ -156,6 +176,7 @@ namespace UI
         Made->Layer           = InAsset->Settings.Layer;
         Made->Order           = NextOrder++;
         Made->bPersistent     = bInPersistent;
+        Made->bFollowCache    = bInFollowCache;
         Made->AssetGeneration = InPath.empty() ? 0 : UIAssetCache::GetGeneration(InPath);
         Made->Instance->SetFonts(&Fonts);
         Made->Instance->SetSystem(this);
@@ -273,6 +294,7 @@ namespace UI
         }
         if(std::find(ScriptsRun.begin(), ScriptsRun.end(), Script) != ScriptsRun.end()) return;
         ScriptsRun.push_back(Script);
+        ScopedScriptUISystem Scope(this);
         Scripts->RunFile(Script.c_str());
     }
 
@@ -479,6 +501,7 @@ namespace UI
 
     void UISystem::RunAction(const QueuedAction& InAction)
     {
+        ScopedScriptUISystem Scope(this);
         const UIAction& Action = InAction.Action;
         GameCore::EventArgs Args = Action.Args;
         for(int At = 0; At < Args.Count && At < 4; ++At)
@@ -568,7 +591,7 @@ namespace UI
         for(const auto& Each : Documents)
         {
             Document& Doc = *Each;
-            if(!Doc.Path.empty())
+            if(!Doc.Path.empty() && Doc.bFollowCache)
             {
                 const uint64_t Generation = UIAssetCache::GetGeneration(Doc.Path);
                 if(Generation != Doc.AssetGeneration)
@@ -584,6 +607,7 @@ namespace UI
         /* Graphs that tick; by handle, as OnTick may open or close documents. */
         if(Scripts && bExecuteActions)
         {
+            ScopedScriptUISystem Scope(this);
             for(size_t At = 0; At < Documents.size(); ++At)
             {
                 if(!Documents[At]->bGraphTicks) continue;

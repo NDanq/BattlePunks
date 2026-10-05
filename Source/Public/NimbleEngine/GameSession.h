@@ -46,6 +46,12 @@ namespace NimbleEngine
      * whole of LoadLevel to UnloadLevel. Game thread only. */
     NE_API GameSession* FindGameSession(const GameCore::World& InWorld);
 
+    /* A World with no game in it on purpose -- the UI Designer's Preview,
+     * running a document's UI graph. The "Game" library there does nothing
+     * and answers defaults, instead of raising "needs a running game".
+     * nullptr clears it. Game thread only. */
+    NE_API void SetScriptPreviewWorld(const GameCore::World* InWorld);
+
     /* Declared ahead of the friend declarations below to avoid MSVC C4273
      * (inconsistent linkage). Documented in SaveGame.h. */
     NE_API bool SaveGameToFile  (GameSession& InSession, const std::string& InPath);

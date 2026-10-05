@@ -1147,8 +1147,10 @@ static void TestConfigLibrary()
            "the vars took the values (an int truncated)");
     const uint32_t Errors = Scripts.GetErrorCount();
     Expect(!Scripts.RunString("Config.GetBool('SmokeConfig.Speed')", "config-mismatch"), "GetBool of a float var is a script error");
-    Expect(!Scripts.RunString("Config.SetNumber('SmokeConfig.Missing', 1)", "config-missing"), "a missing var is a script error");
-    Expect(Scripts.GetErrorCount() == Errors + 2 && GSmokeConfigFloat.GetFloat() == 2.25f, "counted; nothing changed");
+    Expect(Scripts.RunString("Config.SetNumber('SmokeConfig.Missing', 1)\n"
+                             "assert(Config.GetNumber('SmokeConfig.Missing') == 0 and Config.GetBool('SmokeConfig.Missing') == false)",
+                             "config-missing"), "a var not declared (a module not loaded) is warned about and reads as a default");
+    Expect(Scripts.GetErrorCount() == Errors + 1 && GSmokeConfigFloat.GetFloat() == 2.25f, "the mismatch is counted; nothing changed"); 
 
     EngineCore::ConfigSetUserFile("");
     Expect(Scripts.RunString("assert(Config.Save() == false)", "config-save-none"), "Config.Save without a user file is false");

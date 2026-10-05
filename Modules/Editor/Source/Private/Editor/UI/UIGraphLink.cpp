@@ -120,6 +120,12 @@ namespace
 
 namespace EditorUIGraph
 {
+    UIGraphNotifier& Notifier()
+    {
+        static UIGraphNotifier* One = new UIGraphNotifier();   // lives as long as the editor
+        return *One;
+    }
+
     QString MakeHandlerName(const QString& InWidget, const QString& InProperty)
     {
         QString Base = InWidget.isEmpty() ? QStringLiteral("Document") : InWidget;

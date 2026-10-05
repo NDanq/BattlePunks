@@ -2,7 +2,10 @@
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ScriptLibrary.h"
 
+#include <set>
 #include <string>
+
+#include "Public/GameCore/GameCoreLog.h"
 
 /*
  * The "Config" script library: the engine's config vars ([Section] Key in an
@@ -15,6 +18,10 @@
  *
  * Typed, so a graph's pins are: GetBool on a float var is a script error,
  * not a quiet conversion. A set fires the var's callback as an .ini would.
+ *
+ * A var that is not declared -- a game module's, in an editor that has not
+ * loaded it (the UI Designer's Preview) -- is warned about once and reads as
+ * false / 0 / "": a menu still opens. A set of one does nothing.
  */
 
 namespace
@@ -26,7 +33,11 @@ namespace
         EngineCore::ConfigVar* Var = Path && *Path ? EngineCore::ConfigFindVarByPath(Path) : nullptr;
         if(!Var)
         {
-            InCall.Error((std::string("no config var '") + (Path ? Path : "") + "'").c_str());
+            static std::set<std::string> Warned;
+            if(Warned.insert(Path ? Path : "").second)
+            {
+                GAMECORE_LOG_WARN(std::string("Config: no config var '") + (Path ? Path : "") + "' (its module not loaded?) -- reads as a default")
+            }
             return nullptr;
         }
         const bool bNumber = InType == EngineCore::EConfigType::CT_Float;

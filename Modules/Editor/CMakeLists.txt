@@ -92,6 +92,8 @@ set(NIMBLE_EDITOR_SOURCES
         Source/Private/Editor/UI/UIDesignerViewport.h
         Source/Private/Editor/UI/UIDetailsPanel.cpp
         Source/Private/Editor/UI/UIGraphLink.cpp
+        Source/Private/Editor/UI/UIPreviewRuntime.cpp
+        Source/Private/Editor/UI/UIPreviewRuntime.h
         Source/Private/Editor/UI/UIGraphLink.h
         Source/Private/Editor/UI/UIDetailsPanel.h
         Source/Private/Editor/UI/UIEditorTab.cpp
