@@ -2,6 +2,7 @@
 #define CORECLIENT_GDIBUFFER_H
 
 #include <cstdint>
+#include <string>
 
 /*
  * A GPU buffer the CPU fills once and shaders then own (GDICreateBuffer):
@@ -41,9 +42,14 @@ public:
     /* Frees it once the GPU no longer reads it; the object is then deleted. */
     virtual void Release() = 0;
 
+    /* Its name in capture tools (GDISetDebugName). */
+    virtual void SetDebugName(const std::string& InName) { DebugName = InName; }
+    const std::string& GetDebugName() const { return DebugName; }
+
 protected:
-    uint32_t Bytes = 0;
-    uint8_t  Usage = 0;
+    uint32_t    Bytes = 0;
+    uint8_t     Usage = 0;
+    std::string DebugName;
 };
 
 #endif //CORECLIENT_GDIBUFFER_H

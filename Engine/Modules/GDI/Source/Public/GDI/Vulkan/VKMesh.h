@@ -53,6 +53,9 @@ public:
     /** Destroy all VkBuffers + memory, free CPU-side render data. */
     void Release() override;
 
+    /** Names its buffers ("<name> Positions", "<name> Indices"...), now and when made. */
+    void SetDebugName(const std::string& InName) override;
+
     /**
      * Record draw call into the current command buffer.
      * Binds vertex buffers at bindings 0-2 and calls vkCmdDraw[Instanced].
@@ -77,6 +80,9 @@ protected:
     void ResetInstancedTransformInner() override;
 
 private:
+    /** SetDebugName's names, on whichever buffers exist. */
+    void ApplyDebugName() const;
+
     /**
      * Allocate a VkBuffer + backing memory with the given usage / property flags.
      * Binds the memory to the buffer before returning.

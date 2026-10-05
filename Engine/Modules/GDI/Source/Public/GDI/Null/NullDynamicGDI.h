@@ -146,6 +146,7 @@ public:
     void DrawObject(class GDIViewObject*, class GDIView*) override;
 
     void BeginDrawEvent(const std::string& EventName) override;
+    bool HasDrawEvents() const override { return false; }
 
     void EndDrawEvent() override;
 

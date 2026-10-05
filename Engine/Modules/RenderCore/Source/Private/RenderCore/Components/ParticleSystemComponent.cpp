@@ -83,6 +83,12 @@ namespace RenderCore
                     Run.BeamTarget  = C.BeamTarget;
                     Run.Mesh.assign(Desc.GetMeshPath());
                     Run.Material.assign(Desc.Material);
+                    /* What capture tools call its draws and buffers: its system and emitter. */
+                    const std::string SystemName = C.System[0] != '\0' ? std::string(C.System) : std::string("(default)");
+                    const size_t Slash = SystemName.find_last_of('/');
+                    const std::string Short = SystemName.substr(Slash == std::string::npos ? 0 : Slash + 1);
+                    Run.Label = "Particles " + Short.substr(0, Short.find('.')) + "/" + Desc.Name;
+                    Run.Name  = SystemName + ":" + Desc.Name;
                     if(Run.bEnabled)
                     {
                         const double X = Desc.Offset.GetX(), Y = Desc.Offset.GetY(), Z = Desc.Offset.GetZ();
@@ -123,7 +129,7 @@ namespace RenderCore
                     if(!Run.Gpu || Run.Capacity != Run.Settings.GetCapacity() || Run.GpuType != Run.Settings.Type)
                     {
                         InContext.ReleaseParticleEmitter(Run.Gpu);
-                        Run.Gpu      = InContext.CreateParticleEmitter(Run.Settings.GetCapacity(), Run.Settings.Type);
+                        Run.Gpu      = InContext.CreateParticleEmitter(Run.Settings.GetCapacity(), Run.Settings.Type, Run.Name.c_str());
                         Run.Capacity = Run.Settings.GetCapacity();
                         Run.GpuType  = Run.Settings.Type;
                     }
@@ -153,7 +159,7 @@ namespace RenderCore
                     const EngineCore::Vector3 AxisY = (World * EngineCore::Vector3(0.0, 1.0, 0.0)).GetNormalize();
                     Run.Settings.ShapeAxisX[0] = float(AxisX.GetX()); Run.Settings.ShapeAxisX[1] = float(AxisX.GetY()); Run.Settings.ShapeAxisX[2] = float(AxisX.GetZ());
                     Run.Settings.ShapeAxisY[0] = float(AxisY.GetX()); Run.Settings.ShapeAxisY[1] = float(AxisY.GetY()); Run.Settings.ShapeAxisY[2] = float(AxisY.GetZ());
-                    InContext.SimulateParticles(*Run.Gpu, Run.Settings, EmitterPosition(Run), Delta);
+                    InContext.SimulateParticles(*Run.Gpu, Run.Settings, EmitterPosition(Run), Delta, Run.Label.c_str());
                 }
             }
 
@@ -163,7 +169,7 @@ namespace RenderCore
                 {
                     if(Run.Gpu)
                     {
-                        InContext.DrawParticles(*Run.Gpu, EmitterPosition(Run), Run.Mesh.c_str(), Run.Material.c_str());
+                        InContext.DrawParticles(*Run.Gpu, EmitterPosition(Run), Run.Mesh.c_str(), Run.Material.c_str(), Run.Label.c_str());
                     }
                 }
             }
@@ -188,6 +194,8 @@ namespace RenderCore
                 ParticleEmitterSettings Settings;
                 std::string             Mesh;
                 std::string             Material;
+                std::string             Label;    // its draws' name in a capture tool: "Particles Sparks/Sparks"
+                std::string             Name;     // its buffers': the system's path and the emitter
                 EngineCore::Vector3     Offset;
                 EngineCore::Vector3     BeamEnd;          // in the entity's axes
                 EngineCore::Vector3     BeamTarget;       // world: the component's, if bBeamTarget

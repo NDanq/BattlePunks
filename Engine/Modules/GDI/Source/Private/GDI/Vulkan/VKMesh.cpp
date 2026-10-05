@@ -295,6 +295,7 @@ void VKMesh::InitResource()
     }
 
     bResourcesValid = true;
+    ApplyDebugName();
 }
 
 bool VKMesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndices)
@@ -329,6 +330,7 @@ bool VKMesh::InitDynamic(const uint32_t InMaxVertices, const uint32_t InMaxIndic
     std::memset(UV1Mapped,    0, size_t(V * 2 * sizeof(float)));
 
     bResourcesValid = true;
+    ApplyDebugName();
     return true;
 }
 
@@ -581,4 +583,29 @@ void VKMesh::ResetInstancedTransformInner()
     // referenced by draws that haven't executed yet. The next batch appends at
     // RingCursor; see AddInstancedTransformInner.  NumInstanced and
     // InstancedTransforms are already cleared by GDIMesh::ResetInstanced().
+}
+
+void VKMesh::SetDebugName(const std::string& InName)
+{
+    GDIMesh::SetDebugName(InName);
+    ApplyDebugName();
+}
+
+void VKMesh::ApplyDebugName() const
+{
+    if(!Device || DebugName.empty())
+    {
+        return;
+    }
+    const auto Name = [this](const VkBuffer InBuffer, const char* InStream)
+    {
+        Device->SetObjectName(VK_OBJECT_TYPE_BUFFER, reinterpret_cast<uint64_t>(InBuffer), DebugName + " " + InStream);
+    };
+    Name(PositionBuffer,    "Positions");
+    Name(TexCoordBuffer,    "TexCoords");
+    Name(NormalBuffer,      "Normals");
+    Name(VertexColorBuffer, "Colors");
+    Name(UV1Buffer,         "UV1");
+    Name(IndexBuffer,       "Indices");
+    Name(InstanceBuffer,    "Instances");
 }

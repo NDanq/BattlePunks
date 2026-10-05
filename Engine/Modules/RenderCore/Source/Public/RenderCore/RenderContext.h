@@ -78,24 +78,30 @@ namespace RenderCore
          */
         bool                SupportsParticles() const;
         /* For an emitter of InType (EParticleType): a ribbon or beam has a
-         * second instance buffer. Null where unsupported. Freed by
+         * second instance buffer. InName (its system and emitter) names its
+         * buffers for capture tools. Null where unsupported. Freed by
          * ReleaseParticleEmitter. */
-        ParticleEmitterGpu* CreateParticleEmitter(uint32_t InMaxParticles, uint8_t InType = PT_Sprite);
+        ParticleEmitterGpu* CreateParticleEmitter(uint32_t InMaxParticles, uint8_t InType = PT_Sprite, const char* InName = nullptr);
         void                ReleaseParticleEmitter(ParticleEmitterGpu* InEmitter);
         /* Spawns, moves and sorts its particles for this frame and this view:
-         * two dispatches, InDeltaSeconds on (below 0: the frame's own delta).
+         * two dispatches, InDeltaSeconds on (below 0: the frame's own delta),
+         * in a debug region named InLabel if set (a capture tool's name for it).
          * False if the shaders are missing (warned once). Outside a frame, as
          * from a render command, they run at once and are waited for. */
         bool                SimulateParticles(ParticleEmitterGpu& InEmitter, const ParticleEmitterSettings& InSettings,
-                                              const EngineCore::Vector3& InEmitterPosition, float InDeltaSeconds = -1.0f);
+                                              const EngineCore::Vector3& InEmitterPosition, float InDeltaSeconds = -1.0f,
+                                              const char* InLabel = nullptr);
         /* Its particles as InMeshPath instanced, with InMaterial on every
          * section (null or "": DefaultLit), queued as one draw per section
          * sorted at InSortOrigin -- a ribbon or beam as its strip's two
-         * triangle meshes instead (PARTICLE_RIBBON_MESH_A/B). Nothing,
+         * triangle meshes instead (PARTICLE_RIBBON_MESH_A/B). InLabel, if
+         * set, is what its draws are called in a capture tool, and must
+         * outlive the frame. Nothing,
          * returning false, before its first simulation or if the mesh or
          * material cannot draw. */
         bool                DrawParticles(const ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
-                                          const char* InMeshPath, const char* InMaterial);
+                                          const char* InMeshPath, const char* InMaterial,
+                                          const char* InLabel = nullptr);
         /* Its particles as the GPU left them, one per slot (MaxParticles),
          * waiting for the GPU: for tests and tools. False where unsupported. */
         bool                ReadParticles(const ParticleEmitterGpu& InEmitter, std::vector<ParticleSample>& OutParticles);

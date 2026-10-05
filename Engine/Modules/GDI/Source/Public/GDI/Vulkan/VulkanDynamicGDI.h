@@ -212,6 +212,8 @@ public:
     EngineCore::Color GetColorFromSamplePoint(const EngineCore::Point&, const EngineCore::Size& InSize) override;
 
     void BeginDrawEvent(const std::string& EventName) override;
+    /* Labels need VK_EXT_debug_utils on the instance: RenderDoc's layer, or the validation layers. */
+    bool HasDrawEvents() const override { return VulkanGDIContext::HasDebugUtils(); }
     void EndDrawEvent() override;
 
     /** Compute and GPU buffers (VKCompute.cpp): dispatches record into the

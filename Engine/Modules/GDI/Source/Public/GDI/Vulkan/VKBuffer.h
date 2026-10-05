@@ -22,6 +22,9 @@ public:
     /** Defers the free past the frames that may still read it, then deletes this. */
     void Release() override;
 
+    /** Names its VkBuffer. */
+    void SetDebugName(const std::string& InName) override;
+
     bool     IsValid()   const { return Buffer != VK_NULL_HANDLE; }
     VkBuffer GetBuffer() const { return Buffer; }
 

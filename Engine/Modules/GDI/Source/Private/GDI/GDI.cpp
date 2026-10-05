@@ -53,6 +53,21 @@ EngineCore::ThreadSafeQueue<GDIRenderCommandBase*> GRenderCommands;
 
 int GDebugGroupID = 0;
 
+void GDISetDebugName(GDIMesh* InMesh, const std::string& InName)
+{
+    if(InMesh) { InMesh->SetDebugName(InName); }
+}
+
+void GDISetDebugName(GDIBuffer* InBuffer, const std::string& InName)
+{
+    if(InBuffer) { InBuffer->SetDebugName(InName); }
+}
+
+void GDISetDebugName(GDITextureResource* InTexture, const std::string& InName)
+{
+    if(InTexture) { InTexture->SetDebugName(InName); }
+}
+
 // ---------------------------------------------------------------------------
 // TRANSITIONAL DIAGNOSTIC -- migration risk F4. See the note in GDI.h.
 // ---------------------------------------------------------------------------
@@ -620,6 +635,11 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
 IMPLEMENT_GDI_FUNCTION_BODY(void,
                             EndDrawEvent,
                             (),,())
+
+bool GDIHasDrawEvents()
+{
+    return GDynamicGDI && GDynamicGDI->HasDrawEvents();
+}
 
 GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, const uint InWidth, const uint InHeight, const EGDIRenderTargetFormat InFormat)
 {
