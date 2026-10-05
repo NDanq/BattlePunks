@@ -142,6 +142,21 @@ namespace UI
          * stays; false moves focus on as usual. */
         virtual bool OnNavigate(int /*InDirection*/) { return false; }
 
+        /* The mouse wheel over it or a descendant (+ is up / away): true if it
+         * used it, else it goes on to its parent. */
+        virtual bool OnWheel(float /*InDelta*/) { return false; }
+
+        /* How far its children are drawn moved back (a scroll box's offset),
+         * layout units. Layout stays in content space; paint, hit tests and
+         * focus geometry see the moved rectangles. */
+        virtual UIVec2 GetChildOffset() const { return UIVec2(); }
+
+        /* Paints over its children, inside its own clip (a scroll bar). */
+        virtual void PaintOver(UIPaintContext& /*InContext*/, const UIRect& /*InRect*/) const {}
+
+        /* Focus went to InIndex, a descendant: a scroll box brings it into view. */
+        virtual void OnDescendantFocused(uint32_t /*InIndex*/) {}
+
         /* InActions to its document's UISystem, fired by this widget. */
         void QueueActions(const UIActionList& InActions);
 

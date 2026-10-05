@@ -91,6 +91,8 @@ namespace UI
     enum class EUIStretch : uint8_t { Fill, None, Uniform, UniformToFill };
     enum class EUIJustify : uint8_t { Left, Center, Right };
     enum class EUIFillDirection : uint8_t { LeftToRight, RightToLeft, TopToBottom, BottomToTop };
+    enum class EUIOrientation : uint8_t { Vertical, Horizontal };
+    enum class EUIScrollBarMode : uint8_t { Auto, Always, Never };   // Auto: while there is more to see
 
     struct UIEnumNames
     {
@@ -106,6 +108,8 @@ namespace UI
     UI_API UIEnumNames GetEnumNames(EUIStretch);
     UI_API UIEnumNames GetEnumNames(EUIJustify);
     UI_API UIEnumNames GetEnumNames(EUIFillDirection);
+    UI_API UIEnumNames GetEnumNames(EUIOrientation);
+    UI_API UIEnumNames GetEnumNames(EUIScrollBarMode);
 
     /*
      * How a rectangle is painted: a colour, a texture, or a texture's nine

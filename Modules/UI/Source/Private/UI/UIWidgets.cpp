@@ -603,6 +603,159 @@ namespace UI
         return true;   // held at an end too: left and right never leave a slider by surprise
     }
 
+    // === Scrolling ================================================================
+
+    void UIScrollState::Thumb(const float InOffset, const float InTrack, float& OutStart, float& OutLength) const
+    {
+        const float Content = std::max(ContentLength, 1.0f);
+        OutLength = std::clamp(InTrack * ViewLength / Content, std::min(24.0f, InTrack), InTrack);
+        const float Max = MaxOffset();
+        OutStart = Max > 0.0f ? (InTrack - OutLength) * std::clamp(InOffset / Max, 0.0f, 1.0f) : 0.0f;
+    }
+
+    float UIScrollState::OffsetForThumb(const float InThumbStart, const float InTrack) const
+    {
+        float Start = 0.0f, Length = 0.0f;
+        Thumb(0.0f, InTrack, Start, Length);
+        const float Travel = InTrack - Length;
+        return Travel > 0.0f ? std::clamp(InThumbStart / Travel, 0.0f, 1.0f) * MaxOffset() : 0.0f;
+    }
+
+    float UIScrollState::Reveal(const float InOffset, const float InStart, const float InLength) const
+    {
+        float Offset = InOffset;
+        if(InStart < Offset)                              { Offset = InStart; }
+        else if(InStart + InLength > Offset + ViewLength) { Offset = InStart + InLength - ViewLength; }
+        return std::clamp(Offset, 0.0f, MaxOffset());
+    }
+
+    UIScrollBox::UIScrollBox()
+    {
+        bClipChildren = true;
+        Size = UIVec2{ 400.0f, 300.0f };
+        Track.Tint        = UIColor{ 1.0f, 1.0f, 1.0f, 0.08f };
+        Thumb.Tint        = UIColor{ 1.0f, 1.0f, 1.0f, 0.35f };
+        ThumbHovered.Tint = UIColor{ 1.0f, 1.0f, 1.0f, 0.6f };
+    }
+
+    UIVec2 UIScrollBox::MeasureContent(UILayoutContext& InContext)
+    {
+        const int32_t Child = FirstChild(*this);
+        if(Child >= 0) { InContext.Measure(uint32_t(Child)); }   // measured, for ArrangeChildren
+        return Size;
+    }
+
+    bool UIScrollBox::ShowsBar() const
+    {
+        return ScrollBar == EUIScrollBarMode::Always || (ScrollBar == EUIScrollBarMode::Auto && Scroll.CanScroll());
+    }
+
+    UIRect UIScrollBox::TrackRect(const UIRect& InRect) const
+    {
+        return IsVertical() ? UIRect{ InRect.X + InRect.W - BarWidth, InRect.Y, BarWidth, InRect.H }
+                            : UIRect{ InRect.X, InRect.Y + InRect.H - BarWidth, InRect.W, BarWidth };
+    }
+
+    void UIScrollBox::ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect)
+    {
+        const int32_t Child = FirstChild(*this);
+        const UIVec2 Desired = Child >= 0 ? GetDocument()->GetDesiredSize(uint32_t(Child)) : UIVec2();
+        const UIWidget* C = Child >= 0 ? GetDocument()->GetWidget(uint32_t(Child)) : nullptr;
+        const float Along = C ? (IsVertical() ? Desired.Y + C->Margin.Top + C->Margin.Bottom : Desired.X + C->Margin.Left + C->Margin.Right) : 0.0f;
+        Scroll.ViewLength    = IsVertical() ? InRect.H : InRect.W;
+        Scroll.ContentLength = std::max(Along, Scroll.ViewLength);
+
+        /* Room for the bar across the axis, when it shows. */
+        const float Bar = ShowsBar() ? BarWidth : 0.0f;
+        if(C)
+        {
+            const UIRect Content = IsVertical() ? UIRect{ InRect.X, InRect.Y, std::max(InRect.W - Bar, 0.0f), Scroll.ContentLength }
+                                                : UIRect{ InRect.X, InRect.Y, Scroll.ContentLength, std::max(InRect.H - Bar, 0.0f) };
+            UIRect Placed = AlignInSlot(*C, Desired, Content);
+            if(IsVertical()) { Placed.Y = Content.Y + C->Margin.Top;  Placed.H = Desired.Y; }
+            else             { Placed.X = Content.X + C->Margin.Left; Placed.W = Desired.X; }
+            InContext.Arrange(uint32_t(Child), Placed);
+        }
+        /* Content that shrank: the offset comes back into range (not a player's change: not written back). */
+        ScrollOffset = std::clamp(ScrollOffset, 0.0f, Scroll.MaxOffset());
+    }
+
+    UIVec2 UIScrollBox::GetChildOffset() const
+    {
+        const float Offset = std::clamp(ScrollOffset, 0.0f, Scroll.MaxOffset());
+        return IsVertical() ? UIVec2{ 0.0f, Offset } : UIVec2{ Offset, 0.0f };
+    }
+
+    void UIScrollBox::PaintOver(UIPaintContext& InContext, const UIRect& InRect) const
+    {
+        if(!ShowsBar()) return;
+        const UIRect TrackArea = TrackRect(InRect);
+        InContext.DrawBrush(Track, TrackArea);
+        const float Length = IsVertical() ? TrackArea.H : TrackArea.W;
+        float Start = 0.0f, ThumbLength = 0.0f;
+        Scroll.Thumb(ScrollOffset, Length, Start, ThumbLength);
+        const UIRect ThumbArea = IsVertical() ? UIRect{ TrackArea.X, TrackArea.Y + Start, TrackArea.W, ThumbLength }
+                                              : UIRect{ TrackArea.X + Start, TrackArea.Y, ThumbLength, TrackArea.H };
+        InContext.DrawBrush(DragGrab >= 0.0f || IsHovered() ? ThumbHovered : Thumb, ThumbArea);
+    }
+
+    bool UIScrollBox::ScrollTo(const float InOffset)
+    {
+        const float Clamped = std::clamp(InOffset, 0.0f, Scroll.MaxOffset());
+        if(!GetDocument() || !GetDocument()->SetInputValue(*this, "ScrollOffset", UIValue::Number(Clamped))) return false;
+        QueueActions(OnScrolled);
+        return true;
+    }
+
+    bool UIScrollBox::OnWheel(const float InDelta)
+    {
+        /* At an end, the wheel goes on to an outer scroll box. */
+        return Scroll.CanScroll() && ScrollTo(ScrollOffset - InDelta * ScrollStep);
+    }
+
+    void UIScrollBox::OnPointer(const UIPointerEvent& InEvent)
+    {
+        if(!GetDocument() || !ShowsBar()) return;
+        const UIRect& Pixels = GetDocument()->GetPixelRect(GetIndex());
+        const UIRect& Layout = GetDocument()->GetRect(GetIndex());
+        const float PerUnit = IsVertical() ? (Layout.H > 0.0f ? Pixels.H / Layout.H : 1.0f) : (Layout.W > 0.0f ? Pixels.W / Layout.W : 1.0f);
+        const float Track   = IsVertical() ? Pixels.H : Pixels.W;
+        const float Along   = IsVertical() ? InEvent.Pixels.Y - Pixels.Y : InEvent.Pixels.X - Pixels.X;
+        const float Across  = IsVertical() ? InEvent.Pixels.X - (Pixels.X + Pixels.W - BarWidth * PerUnit)
+                                           : InEvent.Pixels.Y - (Pixels.Y + Pixels.H - BarWidth * PerUnit);
+        float Start = 0.0f, Length = 0.0f;
+        Scroll.Thumb(ScrollOffset, Track, Start, Length);
+
+        switch(InEvent.Kind)
+        {
+            case UIPointerEvent::PE_Press:
+                if(Across < 0.0f) return;                       // on the content, not the bar
+                if(Along >= Start && Along < Start + Length) { DragGrab = Along - Start; }
+                else { ScrollTo(ScrollOffset + (Along < Start ? -Scroll.ViewLength : Scroll.ViewLength)); }   // a page
+                GetDocument()->MarkPaintDirty();
+                break;
+            case UIPointerEvent::PE_Move:
+                if(DragGrab >= 0.0f) { ScrollTo(Scroll.OffsetForThumb(Along - DragGrab, Track)); }
+                break;
+            case UIPointerEvent::PE_Release:
+                if(DragGrab >= 0.0f) { DragGrab = -1.0f; GetDocument()->MarkPaintDirty(); }
+                break;
+            default:
+                break;
+        }
+    }
+
+    void UIScrollBox::OnDescendantFocused(const uint32_t InIndex)
+    {
+        if(!GetDocument() || !Scroll.CanScroll()) return;
+        const UIRect& Self  = GetDocument()->GetRect(GetIndex());
+        const UIRect& Shown = GetDocument()->GetRect(InIndex);
+        const float Start  = IsVertical() ? Shown.Y - Self.Y : Shown.X - Self.X;
+        const float Length = IsVertical() ? Shown.H : Shown.W;
+        const float Offset = Scroll.Reveal(ScrollOffset, Start, Length);
+        if(Offset != ScrollOffset) { ScrollTo(Offset); }
+    }
+
     UIVec2 UISpacer::MeasureContent(UILayoutContext& /*InContext*/)
     {
         return Size;
@@ -744,6 +897,23 @@ namespace UI
         Type.Brush<&UISlider::ThumbHovered>("ThumbHovered");
         Type.Category("Events");
         Type.Action<&UISlider::OnChanged>("OnChanged").Tooltip("$value is the new Value");
+    }
+
+    UI_DEFINE_WIDGET(UIScrollBox, UIWidget, "ScrollBox")
+    {
+        Type.Palette("Layout").Children(1);
+        Type.Category("Scroll");
+        Type.Field<&UIScrollBox::ScrollOffset>("ScrollOffset", UPF_Bindable).Tooltip("Layout units from the start; {Bind:Key} is two-way");
+        Type.Field<&UIScrollBox::ScrollStep>("ScrollStep").Tooltip("Layout units per wheel notch");
+        Type.Enum<&UIScrollBox::Orientation>("Orientation", GetEnumNames(EUIOrientation()), UPF_Layout);
+        Type.Enum<&UIScrollBox::ScrollBar>("ScrollBar", GetEnumNames(EUIScrollBarMode()), UPF_Layout);
+        Type.Field<&UIScrollBox::BarWidth>("BarWidth", UPF_Layout);
+        Type.Category("Appearance");
+        Type.Brush<&UIScrollBox::Track>("Track");
+        Type.Brush<&UIScrollBox::Thumb>("Thumb");
+        Type.Brush<&UIScrollBox::ThumbHovered>("ThumbHovered");
+        Type.Category("Events");
+        Type.Action<&UIScrollBox::OnScrolled>("OnScrolled").Tooltip("$value is the offset");
     }
 
     UI_DEFINE_WIDGET(UISpacer, UIWidget, "Spacer")

@@ -375,10 +375,21 @@ namespace UI
             }
             Doc.SetHovered(Interactive);
 
+            /* The wheel: the widget under the pointer, then up its parents, until one uses it. */
+            if(InFrame.Wheel != 0.0f && Hit >= 0)
+            {
+                for(int32_t At = Hit; At >= 0; At = Doc.GetParent(uint32_t(At)))
+                {
+                    UIWidget* Each = Doc.GetWidget(uint32_t(At));
+                    if(Each->IsEnabledInHierarchy() && Each->OnWheel(InFrame.Wheel)) { Result.bConsumeMouse = true; break; }
+                }
+            }
+
             UIWidget* Target = Interactive >= 0 ? Doc.GetWidget(uint32_t(Interactive)) : nullptr;
             if(InFrame.MousePressed[0] && Target && Target->IsEnabledInHierarchy())
             {
                 Doc.SetPressed(Interactive);
+                if(Target->bFocusable) { Doc.SetFocus(Interactive); }   // a click focuses what takes focus
                 Entry.DragPointer = InFrame.MousePixels;
                 Target->OnPointer({ UIPointerEvent::PE_Press, InFrame.MousePixels });
             }

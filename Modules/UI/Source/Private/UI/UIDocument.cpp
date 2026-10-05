@@ -731,8 +731,14 @@ namespace UI
         PixelRects[InIndex] = Context.ToPixels(Rect);
         W.Paint(Context, Rect);
 
+        /* Its children, moved back by its child offset (a scroll box's). */
+        UIPaintContext Children = Context;
+        const UIVec2 Scrolled = W.GetChildOffset();
+        Children.Offset.X -= std::round(Scrolled.X * Context.PixelScale.X);
+        Children.Offset.Y -= std::round(Scrolled.Y * Context.PixelScale.Y);
         if(W.bClipChildren) { DrawList.PushClip(PixelRects[InIndex]); }
-        for(const uint32_t Child : PaintOrders[InIndex]) { PaintWidget(Child, Context); }
+        for(const uint32_t Child : PaintOrders[InIndex]) { PaintWidget(Child, Children); }
+        W.PaintOver(Context, Rect);
         if(W.bClipChildren) { DrawList.PopClip(); }
     }
 
@@ -815,6 +821,10 @@ namespace UI
         }
         Focused = InIndex;
         MarkPaintDirty();
+        for(int32_t Up = InIndex >= 0 ? Parents[size_t(InIndex)] : -1; Up >= 0; Up = Parents[size_t(Up)])
+        {
+            Widgets[size_t(Up)]->OnDescendantFocused(uint32_t(InIndex));   // scroll boxes bring it into view
+        }
         return true;
     }
 

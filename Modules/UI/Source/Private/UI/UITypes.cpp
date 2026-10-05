@@ -19,6 +19,8 @@ namespace UI
         const char* const STRETCH_NAMES[]    = { "Fill", "None", "Uniform", "UniformToFill" };
         const char* const JUSTIFY_NAMES[]    = { "Left", "Center", "Right" };
         const char* const FILL_DIR_NAMES[]   = { "LeftToRight", "RightToLeft", "TopToBottom", "BottomToTop" };
+        const char* const ORIENTATION_NAMES[] = { "Vertical", "Horizontal" };
+        const char* const SCROLL_BAR_NAMES[]  = { "Auto", "Always", "Never" };
 
         template<size_t N>
         UIEnumNames Names(const char* const (&InNames)[N]) { return UIEnumNames{ InNames, uint32_t(N) }; }
@@ -66,6 +68,8 @@ namespace UI
     UIEnumNames GetEnumNames(EUIStretch)       { return Names(STRETCH_NAMES); }
     UIEnumNames GetEnumNames(EUIJustify)       { return Names(JUSTIFY_NAMES); }
     UIEnumNames GetEnumNames(EUIFillDirection) { return Names(FILL_DIR_NAMES); }
+    UIEnumNames GetEnumNames(EUIOrientation)   { return Names(ORIENTATION_NAMES); }
+    UIEnumNames GetEnumNames(EUIScrollBarMode) { return Names(SCROLL_BAR_NAMES); }
 
     uint32_t UIColor::Pack(const float InOpacity) const
     {

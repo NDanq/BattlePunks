@@ -113,7 +113,7 @@ static void TestRegistry()
 
     int Palette = 0;
     for(const UIWidgetType* Each : GetWidgetTypes()) { if(!Each->Palette.empty()) ++Palette; }
-    Expect(Palette == 13, "the thirteen widgets are offered in the palette");
+    Expect(Palette == 14, "the fourteen widgets are offered in the palette");
 
     const UIWidgetType* Text = FindWidgetType("Text");
     const int32_t TextProperty = Text ? Text->FindProperty("Text") : -1;
@@ -742,6 +742,97 @@ static void TestInputWidgets()
     Doc.SetPressed(-1);
     System.ProcessInput(Pointer(At(1.0f), true, false));
     Expect(Slider->Value == Held, "a disabled slider ignores the pointer");
+}
+
+// === ScrollBox ================================================================
+
+static void TestScrollBox()
+{
+    std::printf("[scroll box]\n");
+    std::string Rows;
+    for(int Row = 0; Row < 10; ++Row)
+    {
+        Rows += "<Button Name=\"Row" + std::to_string(Row) + "\" Padding=\"0,0\"><Spacer Size=\"180,40\"/></Button>";
+    }
+    UISystem System;
+    const UIDocumentHandle Handle = System.OpenAsset(Parse(R"XML(<UI InputMode="UIOnly" ScaleMode="None">
+  <Canvas>
+    <ScrollBox Name="List" Position="0,0" Size="200,100" ScrollOffset="{Bind:List.Scroll}">
+      <VerticalBox Name="Rows">)XML" + Rows + R"XML(</VerticalBox>
+    </ScrollBox>
+    <ScrollBox Name="Outer" Position="400,0" Size="200,100">
+      <VerticalBox>
+        <ScrollBox Name="Inner" Size="180,50"><Spacer Size="100,100"/></ScrollBox>
+        <Spacer Size="100,200"/>
+      </VerticalBox>
+    </ScrollBox>
+  </Canvas>
+</UI>)XML", "a scroll box document parses"), "Test/Scroll.nmui");
+    UIDocumentInstance& Doc = *System.Find(Handle);
+    const UIVec2 View{ 1000, 1000 };
+    System.Update(View);
+    auto* List = dynamic_cast<UIScrollBox*>(Doc.FindWidget("List"));
+    Expect(List && Near(List->GetScroll().ContentLength, 400.0f) && Near(List->GetScroll().MaxOffset(), 300.0f),
+           "content is its child at full length; the view is its own size");
+    if(!List) return;
+
+    UIInputFrame Wheel = Pointer(UIVec2{ 50, 50 }, false, false);
+    Wheel.Wheel = -1.0f;
+    System.ProcessInput(Wheel);
+    System.Update(View);
+    Expect(Near(List->ScrollOffset, 60.0f), "a wheel notch down scrolls one ScrollStep");
+    const UIValue* Bound = System.GetValue("List.Scroll");
+    Expect(Bound && Near(float(Bound->AsNumber()), 60.0f), "ScrollOffset writes back to its key");
+    Wheel.Wheel = -10.0f;
+    System.ProcessInput(Wheel);
+    System.Update(View);
+    Expect(Near(List->ScrollOffset, 300.0f), "and stops at the end");
+
+    const int32_t Hit = Doc.HitTest(UIVec2{ 50, 10 });
+    Expect(Hit == int32_t(Doc.FindWidget("Row7")->GetIndex()) || Doc.FindInteractive(Hit) == int32_t(Doc.FindWidget("Row7")->GetIndex()),
+           "what is hit is what is shown: row 7 at the top, scrolled 300");
+    const UIRect Row0 = Doc.GetPixelRect(Doc.FindWidget("Row0")->GetIndex());
+    Expect(Near(Row0.Y, -300.0f) && Doc.FindInteractive(Doc.HitTest(UIVec2{ 50, 2 })) != int32_t(Doc.FindWidget("Row0")->GetIndex()),
+           "a row scrolled out is drawn above the view and not hit (clipped)");
+
+    Doc.SetFocus(int32_t(Doc.FindWidget("Row0")->GetIndex()));
+    System.Update(View);
+    Expect(Near(List->ScrollOffset, 0.0f), "focusing a row above the view scrolls back to it");
+    Doc.SetFocus(int32_t(Doc.FindWidget("Row9")->GetIndex()));
+    System.Update(View);
+    Expect(Near(List->ScrollOffset, 300.0f), "and one below scrolls just far enough to show it");
+    UIInputFrame Up;
+    Up.bNavUp = true;
+    for(int Each = 0; Each < 4; ++Each) { System.ProcessInput(Up); System.Update(View); }
+    Expect(Doc.GetFocused() == int32_t(Doc.FindWidget("Row5")->GetIndex()) && Near(List->ScrollOffset, 200.0f),
+           "arrow keys move focus row by row, the view following");
+
+    /* The bar: drag the thumb, click the track for a page. */
+    List->ScrollTo(0.0f);
+    System.Update(View);
+    System.ProcessInput(Pointer(UIVec2{ 196, 5 }, true, false));
+    UIInputFrame Drag = Pointer(UIVec2{ 196, 80 }, false, false);
+    Drag.MouseDown[0] = true;
+    System.ProcessInput(Drag);
+    System.ProcessInput(Pointer(UIVec2{ 196, 80 }, false, true));
+    System.Update(View);
+    Expect(Near(List->ScrollOffset, 300.0f, 1.0f), "dragging the thumb to the bottom scrolls to the end");
+    System.ProcessInput(Pointer(UIVec2{ 196, 5 }, true, false));
+    System.ProcessInput(Pointer(UIVec2{ 196, 5 }, false, true));
+    System.Update(View);
+    Expect(Near(List->ScrollOffset, 200.0f, 1.0f), "a click on the track above the thumb goes back a page");
+
+    /* Nested: the inner box first; at its end, the outer. */
+    auto* Outer = dynamic_cast<UIScrollBox*>(Doc.FindWidget("Outer"));
+    auto* Inner = dynamic_cast<UIScrollBox*>(Doc.FindWidget("Inner"));
+    UIInputFrame Nested = Pointer(UIVec2{ 450, 20 }, false, false);
+    Nested.Wheel = -1.0f;
+    System.ProcessInput(Nested);
+    System.Update(View);
+    Expect(Inner && Outer && Near(Inner->ScrollOffset, 50.0f) && Near(Outer->ScrollOffset, 0.0f), "the wheel scrolls the inner box first");
+    System.ProcessInput(Nested);
+    System.Update(View);
+    Expect(Outer && Near(Outer->ScrollOffset, 60.0f), "at its end, the outer one");
 }
 
 static void TestInputAndActions()
@@ -1439,6 +1530,7 @@ int main()
     TestStylesAndFiles();
     TestSwitcher();
     TestInputWidgets();
+    TestScrollBox();
     TestStructureEditing();
     TestInputAndActions();
     TestScriptedActions();
