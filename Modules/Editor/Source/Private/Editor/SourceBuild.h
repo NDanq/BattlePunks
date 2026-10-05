@@ -8,13 +8,15 @@
 #include <QObject>
 #include <QProcess>
 #include <QString>
+#include <QStringList>
 
 /*
- * Build > Compile Source: background `cmake --build` of one target on the
+ * Build > Compile Source: background `cmake --build` of the game's targets on the
  * editor's own build tree, output logged as "[Build] ...".
  *
- * Only the game module is useful: it is shadow-copied, while the engine DLLs
- * and editor are locked by this process.
+ * The game module (shadow-copied, so rebuilt while loaded), its launcher and
+ * its dedicated server -- never the engine DLLs and editor,
+ * which this process holds locked.
  */
 class SourceBuild : public QObject
 {
@@ -25,7 +27,9 @@ public:
     ~SourceBuild() override;   // kills a build still running
 
     /* False, logged, if already running or unable to start. */
-    bool Start(const QString& InTarget);
+    /* InTargets built together, in one cmake --build; the first names the
+     * build (GetTarget): the game module. */
+    bool Start(const QStringList& InTargets);
 
     /* Kills the running build; Finished follows with bInSucceeded false. */
     void Cancel();

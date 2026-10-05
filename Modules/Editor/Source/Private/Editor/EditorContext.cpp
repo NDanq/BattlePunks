@@ -16,6 +16,7 @@
 #include "Public/RenderCore/RenderView.h"
 #include "Public/RenderCore/Renderer.h"
 #include "Private/Editor/PlaySession.h"
+#include "Private/Editor/PlayProcesses.h"
 #include "Private/Editor/ViewportSDLInput.h"
 
 #include <QColor>
@@ -554,6 +555,18 @@ bool EditorContext::StartPlay(const QString& InOpenWorld)
         return false;
     }
 
+    /* A client of a server this machine runs: start it first. The viewport's
+     * client keeps trying to connect while the server comes up. */
+    const PlayNetSettings NetSettings = PlayNetSettings::FromConfig();
+    if(!PlayNet) { PlayNet = new PlayProcesses(this); }
+    if(NetSettings.Mode == NimbleEngine::ENetMode::Client && NetSettings.bLaunchServer)
+    {
+        if(!PlayNet->StartServer(NetSettings.Port))
+        {
+            CORE_LOG_WARN("[PIE] no dedicated server started; connecting to " + NetSettings.ServerAddress + " anyway")
+        }
+    }
+
     /* Set the edited World aside: the session binds its own level's World. */
     Renderer->UnbindWorld();
 
@@ -562,9 +575,16 @@ bool EditorContext::StartPlay(const QString& InOpenWorld)
     {
         EngineCore::Memory::Dealloc(Play);
         Play = nullptr;
+        PlayNet->StopAll();
 
         Renderer->BindWorld(Level->GetEditedWorld());
         return false;
+    }
+
+    /* More clients, each a window of its own. */
+    for(int Index = 0; Index < NetSettings.ClientWindows && IsPlayNetworked(); ++Index)
+    {
+        LaunchPlayClientWindow();
     }
 
     /* The game's input takes the launcher's path: the viewport as an SDL
@@ -619,6 +639,9 @@ void EditorContext::StopPlay()
     EngineCore::Memory::Dealloc(Play);
     Play = nullptr;
     bPlayViewEjected = false;
+
+    /* The run's server and client windows end with it. */
+    if(PlayNet) { PlayNet->StopAll(); }
 
     if(bRendererReady)
     {
@@ -681,5 +704,30 @@ void EditorContext::SetPlayViewEjected(const bool bInEjected)
     emit PlayViewEjectedChanged(bPlayViewEjected);
 }
 
-#endif // WITH_EDITOR
 
+
+bool EditorContext::IsPlayNetworked() const
+{
+    return Play && Play->GetNetMode() != NimbleEngine::ENetMode::Standalone;
+}
+
+bool EditorContext::LaunchPlayClientWindow()
+{
+    if(!IsPlayNetworked())
+    {
+        CORE_LOG_ERROR("[PIE] a client window needs a networked Play: set Editor Settings > Play > Network mode, then Play")
+        return false;
+    }
+    if(!PlayNet) { PlayNet = new PlayProcesses(this); }
+
+    /* The viewport's own server, or the one it is a client of. */
+    const PlayNetSettings NetSettings = PlayNetSettings::FromConfig();
+    if(Play->GetNetMode() == NimbleEngine::ENetMode::Server)
+    {
+        return PlayNet->StartClient(QStringLiteral("127.0.0.1"), Play->GetNetPort(), QString::fromStdString(NetSettings.ClientArgs));
+    }
+    return PlayNet->StartClient(QString::fromStdString(NetSettings.ServerAddress), NetSettings.Port,
+                                QString::fromStdString(NetSettings.ClientArgs));
+}
+
+#endif // WITH_EDITOR

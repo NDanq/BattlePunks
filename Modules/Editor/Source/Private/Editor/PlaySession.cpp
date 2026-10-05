@@ -13,6 +13,7 @@
 #include "Public/NimbleEngine/GameMode.h"
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
+#include "Public/NimbleEngine/NetHost.h"
 #include "Public/RenderCore/Renderer.h"
 
 /* The game's own [Display] FrameRateLimit, read here only so GetFrameRateLimit
@@ -24,6 +25,34 @@ namespace
         const EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Display", "FrameRateLimit");
         return Var && Var->GetType() == EngineCore::EConfigType::CT_Int ? Var->GetInt() : 0;
     }
+}
+
+/* Play-in-Editor over the network (Editor Settings > Play). */
+NIMBLE_CONFIG_INT(GPlayNetMode, "Editor", "PlayNetMode", 0, nullptr);   // 0 Standalone, 1 Listen Server, 2 Client
+NIMBLE_CONFIG_STRING(GPlayServerAddress, "Editor", "PlayServerAddress", "127.0.0.1", nullptr);
+NIMBLE_CONFIG_INT(GPlayPort, "Editor", "PlayPort", 7777, nullptr);
+NIMBLE_CONFIG_BOOL(GPlayLaunchServer, "Editor", "PlayLaunchServer", true, nullptr);
+NIMBLE_CONFIG_INT(GPlayClientWindows, "Editor", "PlayClientWindows", 0, nullptr);
+NIMBLE_CONFIG_STRING(GPlayClientArgs, "Editor", "PlayClientArgs", "", nullptr);
+
+PlayNetSettings PlayNetSettings::FromConfig()
+{
+    PlayNetSettings Settings;
+#if WITH_NETCORE
+    switch(GPlayNetMode.GetInt())
+    {
+        case 1:  Settings.Mode = NimbleEngine::ENetMode::Server; break;
+        case 2:  Settings.Mode = NimbleEngine::ENetMode::Client; break;
+        default: Settings.Mode = NimbleEngine::ENetMode::Standalone; break;
+    }
+#endif
+    Settings.ServerAddress = GPlayServerAddress.GetString()[0] ? GPlayServerAddress.GetString() : "127.0.0.1";
+    const int32_t Port     = GPlayPort.GetInt();
+    Settings.Port          = uint16_t(Port > 0 && Port <= 0xFFFF ? Port : 7777);
+    Settings.bLaunchServer = GPlayLaunchServer.GetBool();
+    Settings.ClientWindows = GPlayClientWindows.GetInt() > 0 ? GPlayClientWindows.GetInt() : 0;
+    Settings.ClientArgs    = GPlayClientArgs.GetString();
+    return Settings;
 }
 
 PlaySession::PlaySession(RenderCore::Renderer& InRenderer)
@@ -82,6 +111,22 @@ bool PlaySession::Start(const std::string& InOpenWorld)
     }
 
     Session = EngineCore::Memory::Alloc<NimbleEngine::GameSession>(*this, *Scripts, Rendering);
+
+    /* Before the load, as the launcher: the level and mode already know their
+     * role. The first Tick's poll binds the World. */
+    const PlayNetSettings NetSettings = PlayNetSettings::FromConfig();
+    if(NetSettings.Mode != NimbleEngine::ENetMode::Standalone)
+    {
+        NimbleEngine::NetHostDesc Desc = NimbleEngine::NetHostDesc::FromConfig(NetSettings.Mode);
+        Desc.ServerAddress = NetSettings.ServerAddress;
+        Desc.Port          = NetSettings.Port;
+        Net = EngineCore::Memory::Alloc<NimbleEngine::NetHost>();
+        if(!Net->Start(*Session, Desc))
+        {
+            CORE_LOG_WARN("[PIE] networking did not start; playing standalone")
+        }
+    }
+
     if(!Session->LoadLevel(*Level))
     {
         Stop();   // UnloadLevel undoes a partial load
@@ -133,6 +178,14 @@ void PlaySession::Stop()
     Input.GetPending() = NimbleEngine::InputState();
     Input.Latch(0);
 
+    /* Clients told, before the World their entities live in goes. */
+    if(Net)
+    {
+        Net->Stop();
+        EngineCore::Memory::Dealloc(Net);
+        Net = nullptr;
+    }
+
     if(Session)
     {
         /* The render thread may still be drawing the level's last frame from
@@ -174,11 +227,13 @@ void PlaySession::Tick(const double InDeltaSeconds, const EngineCore::Size InVie
     }
 
     /* First, where no World is ticking -- as Application::RunFrame. */
+    if(Net) { Net->BeginFrame(); }
     Session->ApplyPendingLevel();
     if(Session->IsQuitRequested() || !Session->HasWorld())
     {
         return;
     }
+    if(Net) { Net->Poll(); }
 
     /* What arrived since the last frame becomes this frame's -- as the
      * launcher latches after its pump. Blocked, it is dropped unread. */
@@ -193,8 +248,19 @@ void PlaySession::Tick(const double InDeltaSeconds, const EngineCore::Size InVie
     Frame.FrameNumber    = FrameNumber;
     Frame.ViewportPixels = InViewportPixels;
     Session->Tick(Frame);
+    if(Net) { Net->Flush(); }
 
     ++FrameNumber;
+}
+
+NimbleEngine::ENetMode PlaySession::GetNetMode() const
+{
+    return Net ? Net->GetMode() : NimbleEngine::ENetMode::Standalone;
+}
+
+uint16_t PlaySession::GetNetPort() const
+{
+    return Net ? Net->GetPort() : 0;
 }
 
 GameCore::World* PlaySession::GetWorld() const
