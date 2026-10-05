@@ -20,6 +20,7 @@ namespace
     {
         uint16_t                    First       = 0;
         uint16_t                    Count       = 0;
+        uint16_t                    Capacity    = 0;   // slots held from First, kept across an unregister
         bool                        bRegistered = false;
         uint8_t                     TypeFlags   = CPF_None;
         ComponentPropertyDefaultsFn DefaultsFn  = nullptr;
@@ -64,23 +65,42 @@ bool RegisterComponentProperties(const ComponentTypeID InType, const ComponentPr
         return false;
     }
 
-    if(GPropertyEntryCount + InCount > PROPERTY_ENTRY_MAX)
+    /* A type registering again after an unload (a game module reloaded, or
+     * the editor's authoring copy coming back after Play) reuses its old
+     * slots when the new set fits, so reloads do not fill the table. */
+    PropertyTypeRange& Range = GPropertyTypes[InType];
+    const bool bReuse = Range.Capacity >= InCount;
+    if(!bReuse && GPropertyEntryCount + InCount > PROPERTY_ENTRY_MAX)
     {
         GAMECORE_LOG_ERROR(std::string("RegisterComponentProperties: the property table is full; '")
                            + TypeNameOf(InType) + "' will show no properties in the editor")
         return false;
     }
 
-    GPropertyTypes[InType].First       = uint16_t(GPropertyEntryCount);
-    GPropertyTypes[InType].Count       = uint16_t(InCount);
-    GPropertyTypes[InType].bRegistered = true;
-    GPropertyTypes[InType].TypeFlags   = InTypeFlags;
-    GPropertyTypes[InType].DefaultsFn  = InDefaultsFn;
+    if(!bReuse)
+    {
+        Range.First    = uint16_t(GPropertyEntryCount);
+        Range.Capacity = uint16_t(InCount);
+        GPropertyEntryCount += InCount;
+    }
+    Range.Count       = uint16_t(InCount);
+    Range.bRegistered = true;
+    Range.TypeFlags   = InTypeFlags;
+    Range.DefaultsFn  = InDefaultsFn;
     for(size_t Index = 0; Index < InCount; ++Index)
     {
-        GPropertyEntries[GPropertyEntryCount++] = InEntries[Index];
+        GPropertyEntries[Range.First + Index] = InEntries[Index];
     }
     return true;
+}
+
+void UnregisterComponentProperties(const ComponentTypeID InType)
+{
+    if(InType == COMPONENT_TYPE_INVALID || InType >= COMPONENT_TYPE_MAX || !GPropertyTypes[InType].bRegistered) { return; }
+    /* The slots stay the type's, for its next registration. */
+    GPropertyTypes[InType].bRegistered = false;
+    GPropertyTypes[InType].DefaultsFn  = nullptr;
+    GPropertyTypes[InType].Count       = 0;
 }
 
 const ComponentPropertyEntry* FindComponentProperties(const ComponentTypeID InType, size_t& OutCount)

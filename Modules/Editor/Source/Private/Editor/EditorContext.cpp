@@ -17,6 +17,7 @@
 #include "Public/RenderCore/Renderer.h"
 #include "Private/Editor/PlaySession.h"
 #include "Private/Editor/PlayProcesses.h"
+#include "Public/NimbleEngine/GameModule.h"
 #include "Private/Editor/ViewportSDLInput.h"
 
 #include <QColor>
@@ -212,6 +213,7 @@ void EditorContext::Shutdown()
 {
     /* First: the game's level and module go while the Renderer still runs. */
     StopPlay();
+    UnloadAuthoringGame();
     FrameTimer.stop();
 
     /* The Renderer's Shutdown destroys every scene; the documents stay. */
@@ -567,6 +569,9 @@ bool EditorContext::StartPlay(const QString& InOpenWorld)
         }
     }
 
+    /* The run loads the game module itself; the editor's copy makes way. */
+    UnloadAuthoringGame();
+
     /* Set the edited World aside: the session binds its own level's World. */
     Renderer->UnbindWorld();
 
@@ -576,6 +581,7 @@ bool EditorContext::StartPlay(const QString& InOpenWorld)
         EngineCore::Memory::Dealloc(Play);
         Play = nullptr;
         PlayNet->StopAll();
+        ReloadAuthoringGame();
 
         Renderer->BindWorld(Level->GetEditedWorld());
         return false;
@@ -639,6 +645,9 @@ void EditorContext::StopPlay()
     EngineCore::Memory::Dealloc(Play);
     Play = nullptr;
     bPlayViewEjected = false;
+
+    /* The editor's copy of the module comes back for editing. */
+    ReloadAuthoringGame();
 
     /* The run's server and client windows end with it. */
     if(PlayNet) { PlayNet->StopAll(); }
@@ -728,6 +737,36 @@ bool EditorContext::LaunchPlayClientWindow()
     }
     return PlayNet->StartClient(QString::fromStdString(NetSettings.ServerAddress), NetSettings.Port,
                                 QString::fromStdString(NetSettings.ClientArgs));
+}
+
+bool EditorContext::ReloadAuthoringGame()
+{
+    UnloadAuthoringGame();
+    if(Play) { return false; }   // the run has its own copy
+
+    const EngineCore::ConfigVar* ModuleVar = EngineCore::ConfigFindVar("Game", "Module");
+    if(!ModuleVar || ModuleVar->GetString()[0] == '\0') { return false; }
+
+    AuthoringGame = EngineCore::Memory::Alloc<NimbleEngine::GameModuleHost>();
+    if(bRendererReady) { AuthoringGame->SetRenderer(Renderer); }
+    if(!AuthoringGame->Load(""))
+    {
+        EngineCore::Memory::Dealloc(AuthoringGame);
+        AuthoringGame = nullptr;
+        CORE_LOG_WARN("[Editor] the game module did not load: its components will not open with a world or prefab "
+                      "until it is built (Build > Compile Source)")
+        return false;
+    }
+    CORE_LOG("[Editor] " + AuthoringGame->GetModuleName() + " loaded for editing: its components open and save with the world")
+    return true;
+}
+
+void EditorContext::UnloadAuthoringGame()
+{
+    if(!AuthoringGame) { return; }
+    AuthoringGame->Unload();
+    EngineCore::Memory::Dealloc(AuthoringGame);
+    AuthoringGame = nullptr;
 }
 
 #endif // WITH_EDITOR

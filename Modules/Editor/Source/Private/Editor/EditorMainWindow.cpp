@@ -227,9 +227,11 @@ EditorMainWindow::EditorMainWindow(EditorContext& InContext, const RenderCore::E
         }
     });
 
-    /* Before anything builds the schemas, so the game's components and script
-     * libraries are nodes from the first graph opened. */
-    EditorGraphs::RefreshGameDeclarations(false);
+    /* The game module, kept loaded for editing (EditorContext::ReloadAuthoringGame),
+     * before any world opens -- its components open with it -- and before
+     * anything builds the schemas, so its components and script libraries are
+     * nodes from the first graph opened. */
+    EditorGraphs::RefreshGameDeclarations(Context.ReloadAuthoringGame());
 
     BuildMenus();
     BuildPlayControls();
@@ -621,7 +623,9 @@ void EditorMainWindow::BuildBuildMenu()
                                             "(graphs already open keep theirs until reopened)"));
     connect(RefreshNodes, &QAction::triggered, this, [this]()
     {
-        const bool bRefreshed = EditorGraphs::RefreshGameDeclarations(Context.IsPlaying());
+        /* Not playing: the editor's own copy, reloaded, is what is read. */
+        const bool bLoaded    = Context.IsPlaying() || Context.ReloadAuthoringGame();
+        const bool bRefreshed = EditorGraphs::RefreshGameDeclarations(bLoaded);
         statusBar()->showMessage(bRefreshed ? QStringLiteral("Script nodes refreshed -- reopen open graphs to see changes")
                                             : QStringLiteral("Script nodes not refreshed -- see the Console"), 5000);
     });
@@ -699,9 +703,9 @@ void EditorMainWindow::OnCompileFinished(const bool bInSucceeded)
     }
     if(!Context.IsPlaying())
     {
-        CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " is loaded at the next Play")
+        CORE_LOG("[Build] " + std::string(Module.toUtf8().constData()) + " reloaded for editing, and loaded at the next Play")
         statusBar()->showMessage(QStringLiteral("Compiled %1").arg(Module), 5000);
-        EditorGraphs::RefreshGameDeclarations(false);
+        EditorGraphs::RefreshGameDeclarations(Context.ReloadAuthoringGame());
         return;
     }
 
@@ -779,7 +783,7 @@ void EditorMainWindow::OnPlayStateChanged(const bool bInPlaying)
     if(!bInPlaying && bDeclarationsStale)
     {
         bDeclarationsStale = false;
-        EditorGraphs::RefreshGameDeclarations(false);
+        EditorGraphs::RefreshGameDeclarations(Context.IsAuthoringGameLoaded());
     }
 }
 
