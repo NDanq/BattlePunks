@@ -56,14 +56,16 @@ namespace RenderCore
             return P;
         }
 
-        /* GL clip space to (u, v, depth) * w inside a tile of an InAtlasSize atlas. */
+        /* GL clip space to (u, v, depth) * w inside a tile of an InAtlasSize
+         * atlas. The atlas is stored top-down (GDI.h) and the tile drawn at
+         * rows InTileY.. from its top, so NDC y = +1 is v = V0. */
         Matrix4x4 TileMatrix(const uint32_t InTileX, const uint32_t InTileY, const uint32_t InTileSize, const uint32_t InAtlasSize)
         {
             const double Atlas = double(InAtlasSize);
             const double U0 = InTileX / Atlas, V0 = InTileY / Atlas, Extent = InTileSize / Atlas;
             Matrix4x4 T;
             T.Data[0][0] = float(0.5 * Extent); T.Data[0][3] = float(U0 + 0.5 * Extent);
-            T.Data[1][1] = float(0.5 * Extent); T.Data[1][3] = float(V0 + 0.5 * Extent);
+            T.Data[1][1] = float(-0.5 * Extent); T.Data[1][3] = float(V0 + 0.5 * Extent);
             T.Data[2][2] = 0.5f;                T.Data[2][3] = 0.5f;
             return T;
         }

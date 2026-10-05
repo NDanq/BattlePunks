@@ -16,8 +16,8 @@ UBO_BLOCK_END(PP_Block)
 
 void main(void)
 {
-    // TexCoord.y is 0 at the bottom of the view on every backend.
-    vec3  Color  = mix(PP_Bottom.rgb, PP_Top.rgb, clamp(Interpolants.TexCoord.y, 0.0, 1.0));
+    // TexCoord.y is 0 at the top of the view on every backend.
+    vec3  Color  = mix(PP_Top.rgb, PP_Bottom.rgb, clamp(Interpolants.TexCoord.y, 0.0, 1.0));
     float Dither = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) - 0.5;
     // In an HDR scene, what comes out of the tone map as this colour (ToneMapping.glsl).
     Output = vec4(SceneEncodeDisplay(Color + Dither / 255.0), 1.0);

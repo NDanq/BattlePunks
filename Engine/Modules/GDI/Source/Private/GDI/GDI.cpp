@@ -350,7 +350,7 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
                             (uint InColorMask, EngineCore::Color InColor, float InDepth, uint InStencil),
                             ,(InColorMask, InColor, InDepth, InStencil))
 
-/* Hand-written: GDISetScissorRect clips to, and flips within, the viewport. */
+/* Hand-written: GDISetScissorRect clips to the viewport. */
 void GDISetViewport(const uint InX, const uint InY, const uint InWidth, const uint InHeight)
 {
     if(!GDynamicGDI) return;
@@ -366,13 +366,13 @@ void GDISetScissorRect(const uint InX, const uint InY, const uint InWidth, const
     if(!GDynamicGDI) return;
     const GDIDynamicDriver& D = *GDynamicGDI;
 
-    /* Clipped to the viewport, then flipped: InY counts down from its top,
-     * the target's rows up from its bottom. */
+    /* Clipped to the viewport. InY counts down from its top, as the target's
+     * rows do: every backend stores row 0 at the top. */
     const uint Left   = InX < D.ViewportWidth ? InX : D.ViewportWidth;
     const uint Top    = InY < D.ViewportHeight ? InY : D.ViewportHeight;
     const uint Width  = InWidth < D.ViewportWidth - Left ? InWidth : D.ViewportWidth - Left;
     const uint Height = InHeight < D.ViewportHeight - Top ? InHeight : D.ViewportHeight - Top;
-    GDynamicGDI->SetScissorRect(D.ViewportX + Left, D.ViewportY + (D.ViewportHeight - Top - Height), Width, Height);
+    GDynamicGDI->SetScissorRect(D.ViewportX + Left, D.ViewportY + Top, Width, Height);
 }
 
 void GDIClearScissorRect()

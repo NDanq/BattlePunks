@@ -555,22 +555,11 @@ static uint32_t PackScalar(const MTLUniformValue& V, uint8_t* Dst, uint32_t Offs
  *   offset 128: vec3  MouseCoords  (12 + 4 pad)
  *   offset 144: vec4  Resolution   (16)
  *
- * Two fix-ups are applied to the projection, both of which exist because the
- * camera builds a GL projection:
- *
- *  1. Depth range. GL clips z to [-1,1]; Metal (like Vulkan) clips to [0,1], so
- *     geometry would be discarded outright. Remap z' = 0.5*z + 0.5*w.
- *
- *  2. Y direction. This is where Metal and Vulkan genuinely differ. Vulkan's NDC
- *     +Y points at framebuffer row 0, so leaving the GL projection alone already
- *     lands GL-ordered rows in memory. Metal's NDC +Y points at the TOP of the
- *     attachment (row 0), i.e. the same direction as GL on screen but the
- *     opposite of GL in memory -- so without a flip here, every render-to-texture
- *     -> sample-texture hop (layer compositing, stroke buffers) would invert the
- *     image. Negating row 1 makes Metal's render targets byte-identical to the
- *     Vulkan and OpenGL ones (row 0 = visual bottom), which is what lets
- *     ToImage, GetColorFromSamplePoint and the shared shaders behave the same on
- *     all three backends.
+ * The camera builds a GL projection. GL clips z to [-1,1]; Metal (like Vulkan)
+ * clips to [0,1], so geometry would be discarded outright: remap
+ * z' = 0.5*z + 0.5*w. Y is left alone: Metal's NDC +Y is the attachment's row
+ * 0, its top, which is GDI's convention on every backend (render targets
+ * stored top-down, GDI.h) -- for projected and full-screen geometry alike.
  *
  * Floats are column-major (D[Col*4 + Row]).
  */
@@ -596,7 +585,6 @@ static void PackViewParamsUBO(const std::unordered_map<std::string, MTLUniformVa
         const float Z = D[Col * 4 + 2];
         const float W = D[Col * 4 + 3];
         D[Col * 4 + 2] = 0.5f * Z + 0.5f * W;   // GL depth range -> Metal
-        D[Col * 4 + 1] = -D[Col * 4 + 1];       // GL row order   -> Metal
     }
 }
 
@@ -855,14 +843,9 @@ void MetalDynamicGDI::DrawScreenQuadPrimitive()
 
     if(!ScreenMesh)
     {
-        // 6 verts covering the full NDC square.
-        //
-        // The UVs are V-flipped relative to the OpenGL and Vulkan screen quads.
-        // Screen.vsh bypasses the projection (gl_Position = InPosition), so the
-        // Y-flip that PackViewParamsUBO applies to ordinary geometry does not
-        // apply here -- and Metal's NDC +Y is attachment row 0 while the source
-        // texture's row 0 is its visual bottom. Pairing NDC +1 with v=0 is what
-        // keeps this an identity copy instead of a vertical mirror.
+        // 6 verts covering the full NDC square. v = 0 at NDC +1, which is
+        // Metal's attachment row 0 natively: an identity copy, as on every
+        // backend.
         const float Verts[] = {
             -1.f, -1.f, 0.f,
             -1.f,  1.f, 0.f,
@@ -897,7 +880,7 @@ bool MetalDynamicGDI::CheckError(const std::string&)
     return false;
 }
 
-EngineCore::Color MetalDynamicGDI::GetColorFromSamplePoint(const EngineCore::Point& InPoint, const EngineCore::Size& InSize)
+EngineCore::Color MetalDynamicGDI::GetColorFromSamplePoint(const EngineCore::Point& InPoint, const EngineCore::Size& /*InSize*/)
 {
     if(!DeviceObj || !CurrentStateData) return EngineCore::Color();
 
@@ -907,11 +890,9 @@ EngineCore::Color MetalDynamicGDI::GetColorFromSamplePoint(const EngineCore::Poi
     MTLRenderTarget* RT = CurrentStateData->ActiveRenderTarget;
     if(!RT || !RT->IsValid() || !RT->HasContent()) return EngineCore::Color();
 
-    // RT memory is GL-oriented (row 0 = visual bottom -- see PackViewParamsUBO), so
-    // flip Y from Qt screen space exactly like the OpenGL path's
-    // glReadPixels(x, height - y).
+    // RT memory is top-down (GDI.h), as Qt's screen space: the point is the row.
     const int X = InPoint.X;
-    const int Y = InSize.Height - InPoint.Y;
+    const int Y = InPoint.Y;
     if(X < 0 || Y < 0 || X >= int(RT->GetWidth()) || Y >= int(RT->GetHeight()))
         return EngineCore::Color();
 

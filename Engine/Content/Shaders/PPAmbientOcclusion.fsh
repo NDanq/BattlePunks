@@ -28,7 +28,7 @@ vec3 WorldAtUV(vec2 InUV, out float OutDepth)
 {
     ivec2 Texel = clamp(ivec2(InUV * PP_Sizes.zw), ivec2(0), ivec2(PP_Sizes.zw) - 1);
     OutDepth = texelFetch(SceneDepth, Texel, 0).r;
-    return PP_WorldAt(InUV * 2.0 - 1.0, OutDepth);
+    return PP_WorldAt(TargetUvToNdc(InUV), OutDepth);
 }
 
 void main(void)
@@ -68,7 +68,7 @@ void main(void)
 
         vec4 Clip = PP_ViewProjection * vec4(S, 1.0);
         if(Clip.w <= 1e-4) { continue; }
-        vec2 SampleUV = Clip.xy / Clip.w * 0.5 + 0.5;
+        vec2 SampleUV = NdcToTargetUv(Clip.xy / Clip.w);
         if(any(lessThan(SampleUV, vec2(0.0))) || any(greaterThan(SampleUV, vec2(1.0)))) { continue; }
 
         float SceneDepth_;

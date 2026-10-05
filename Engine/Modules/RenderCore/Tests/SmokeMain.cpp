@@ -1366,7 +1366,8 @@ static void TestMaterialsOnGpu()
                            { "Content/Materials/Wave.material.nmgraph", 0, {}, false, {} },
                            { "Content/Materials/Negative.material.nmgraph", 0, {}, false, {} },
                            { "Content/Materials/Textured.material.nmgraph", 0, {}, false, {} },   { "Content/Materials/MipProbe.material.nmgraph", 0, {}, false, {} },
-                           { "Content/Materials/NormalProbe.material.nmgraph", 0, {}, false, {} } };
+                           { "Content/Materials/NormalProbe.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/TwoSidedProbe.material.nmgraph", 0, {}, false, {} } };
         for(Check& Each : Checks)
         {
             Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
@@ -1440,6 +1441,13 @@ static void TestMaterialsOnGpu()
         const Check& Normals = Checks[6];
         Expect(Normals.bOk && Near(Normals.Rgb[0], 191) && Near(Normals.Rgb[1], 191) && Near(Normals.Rgb[2], 37),
                "the Normal Map node tilts the normal the way its map points: right and up the image, out of the surface");
+
+        /* TwoSidedProbe: DefaultLit with Two Sided on. The preview quad faces the camera, so it is a front
+         * face (gl_FrontFacing) and keeps its normal: lit as DefaultLit, not as its back. */
+        const Check& TwoSided = Checks[7];
+        Expect(TwoSided.bOk && DefaultLit.bOk && std::abs(TwoSided.Rgb[0] - DefaultLit.Rgb[0]) <= 4
+               && std::abs(TwoSided.Rgb[2] - DefaultLit.Rgb[2]) <= 4,
+               "Two Sided lights a face toward the camera as its front, as a one-sided material does");
 
         /* Mesh previews: the engine's primitives, as the mesh viewer and the
          * material editor draw them. */

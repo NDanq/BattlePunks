@@ -52,7 +52,7 @@ namespace
 
 bool OpenGLDynamicGDI::SupportsCompressedFormat(const EGDICompressedFormat InFormat) const
 {
-    /* RGTC is core from 3.0 and BPTC from 4.2, under the 4.4 the backend
+    /* RGTC is core from 3.0 and BPTC from 4.2, under the 4.5 the backend
      * requires; S3TC is an extension, though every desktop driver has it. */
     if(InFormat == GDI_CF_BC4 || InFormat == GDI_CF_BC5 || InFormat == GDI_CF_BC7) { return true; }
     if(InFormat != GDI_CF_BC1 && InFormat != GDI_CF_BC3) { return false; }

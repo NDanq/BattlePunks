@@ -612,8 +612,8 @@ namespace
         WriteScalar(S, "ViewParameters.Resolution",  D + 36, 4);
 
         // The camera builds a GL projection (z in [-1,1]); D3D clips z to [0,1].
-        // z' = 0.5z + 0.5w, column-major. Y is flipped in the cooked vertex
-        // shaders instead, so every shader agrees, not just projected ones.
+        // z' = 0.5z + 0.5w, column-major. Y is not flipped: D3D12 maps NDC +1
+        // to a target's first row, GDI's top-down convention (GDI.h).
         for(int Col = 0; Col < 4; ++Col)
         {
             D[Col * 4 + 2] = 0.5f * D[Col * 4 + 2] + 0.5f * D[Col * 4 + 3];
@@ -818,13 +818,13 @@ void D3D12DynamicGDI::DrawScreenQuadPrimitive()
              1.f, -1.f, 0.f,
             -1.f, -1.f, 0.f
         };
-        const float UVs[] = {
-            0.f, 0.f,
+        const float UVs[] = {   // v = 0 at NDC +1, the target's row 0: an identity copy
             0.f, 1.f,
-            1.f, 1.f,
-            1.f, 1.f,
+            0.f, 0.f,
             1.f, 0.f,
-            0.f, 0.f
+            1.f, 0.f,
+            1.f, 1.f,
+            0.f, 1.f
         };
         ScreenMesh = CreateQuadMesh(Verts, UVs, 18, 12, false);
     }
@@ -849,7 +849,7 @@ bool D3D12DynamicGDI::CheckError(const std::string&)
     return false;
 }
 
-Color D3D12DynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& InSize)
+Color D3D12DynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& /*InSize*/)
 {
     if(!DeviceObj || !CurrentStateData) return Color();
 
@@ -858,9 +858,9 @@ Color D3D12DynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size&
     D3D12RenderTarget* RT = CurrentStateData->ActiveRenderTarget;
     if(!RT || !RT->IsValid()) return Color();
 
-    // RT rows are GL-ordered; flip from top-down screen space like glReadPixels(x, height - y).
+    // RT rows are top-down, as the point's screen space: the point is the row.
     const int X = InPoint.X;
-    const int Y = InSize.Height - InPoint.Y;
+    const int Y = InPoint.Y;
     if(X < 0 || Y < 0 || X >= int(RT->GetWidth()) || Y >= int(RT->GetHeight())) return Color();
 
     std::vector<uint8_t> Pixel;

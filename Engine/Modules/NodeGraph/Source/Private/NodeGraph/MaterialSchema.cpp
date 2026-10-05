@@ -1767,7 +1767,7 @@ namespace
                        "interpolated projected"),
                   "The interpolated clip-space position (before the divide by w).");
         PixelOnly(Pure("Input.FragCoord", "Pixel Coordinate", "Inputs", { Out("Coord", "vec4", "Inputs.FragCoord") }, {}, "screen frag"),
-                  "gl_FragCoord: the pixel's window coordinates, depth and 1/w.");
+                  "gl_FragCoord: the pixel's window coordinates from the target's top-left, depth and 1/w.");
         PixelOnly(Pure("Input.PixelDepth", "Pixel Depth", "Inputs",
                        { Out("Linear", "float", "Inputs.ViewDepth"), Out("Device", "float", "Inputs.DeviceDepth") }, {}, "z distance"),
                   "Linear: distance in front of the camera, in world units. Device: the depth buffer's 0-1 value.");

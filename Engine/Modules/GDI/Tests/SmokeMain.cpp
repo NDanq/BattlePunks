@@ -179,15 +179,15 @@ static void TestScissorAndDynamicMesh()
     auto* Null = static_cast<NullDynamicGDI*>(GDynamicGDI);
     const NullGDIStats& Stats = Null->GetStats();
 
-    // From the top-left of the viewport to the target's rows, bottom first.
+    // From the top-left of the viewport: the target's rows, top first.
     GDISetViewport(0, 0, 200, 100);
     Expect(Stats.LastScissorWidth == 200 && Stats.LastScissorHeight == 100, "SetViewport resets the scissor to the viewport");
     GDISetScissorRect(10, 20, 30, 40);
-    Expect(Stats.LastScissorX == 10 && Stats.LastScissorY == 100 - 20 - 40 &&
+    Expect(Stats.LastScissorX == 10 && Stats.LastScissorY == 20 &&
            Stats.LastScissorWidth == 30 && Stats.LastScissorHeight == 40,
-           "GDISetScissorRect flips its top-left rectangle into the target's rows");
+           "GDISetScissorRect's top-left rectangle is the target's rows, unflipped");
     GDISetScissorRect(190, 90, 50, 50);
-    Expect(Stats.LastScissorX == 190 && Stats.LastScissorY == 0 &&
+    Expect(Stats.LastScissorX == 190 && Stats.LastScissorY == 90 &&
            Stats.LastScissorWidth == 10 && Stats.LastScissorHeight == 10,
            "GDISetScissorRect clips to the viewport");
     GDISetScissorRect(500, 500, 5, 5);
@@ -195,7 +195,7 @@ static void TestScissorAndDynamicMesh()
 
     GDISetViewport(50, 10, 100, 80);
     GDISetScissorRect(0, 0, 100, 20);
-    Expect(Stats.LastScissorX == 50 && Stats.LastScissorY == 10 + 60 && Stats.LastScissorHeight == 20,
+    Expect(Stats.LastScissorX == 50 && Stats.LastScissorY == 10 && Stats.LastScissorHeight == 20,
            "GDISetScissorRect is relative to an offset viewport");
     GDIClearScissorRect();
     Expect(Stats.LastScissorX == 50 && Stats.LastScissorY == 10 && Stats.LastScissorWidth == 100 && Stats.LastScissorHeight == 80,

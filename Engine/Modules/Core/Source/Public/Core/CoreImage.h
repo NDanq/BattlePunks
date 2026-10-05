@@ -93,7 +93,8 @@ namespace EngineCore
          * Explicit, separate, and never folded together.
          *
          * The existing renderer composes these flips in a specific order at
-         * specific points (GL reads bottom-up, upload mirrors horizontally,
+         * specific points (upload mirrors horizontally; readbacks no longer
+         * flip, since every backend stores targets top-down (GDI.h);
          * the in-memory restore path mirrors both, the disk-read path
          * deliberately does not). Reproduce each flip where it already
          * happens. Merging two of them into a "rotate 180" is the change that

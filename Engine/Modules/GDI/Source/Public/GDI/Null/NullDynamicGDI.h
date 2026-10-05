@@ -52,7 +52,7 @@ struct NullGDIStats
 
     EngineCore::Color LastClearColor;
     uint LastViewportX = 0, LastViewportY = 0, LastViewportWidth = 0, LastViewportHeight = 0;
-    /* The backend's scissor: the target's rows, row 0 first (SetScissorRect). */
+    /* The backend's scissor: the target's rows, row 0 the top (SetScissorRect). */
     uint LastScissorX = 0, LastScissorY = 0, LastScissorWidth = 0, LastScissorHeight = 0;
     uint64_t ScissorCalls          = 0;
     uint64_t DynamicMeshesCreated  = 0;

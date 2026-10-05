@@ -252,11 +252,14 @@ void VulkanDynamicGDI::Clear(uint InClearMode, EngineCore::Color InClearColor, f
 void VulkanDynamicGDI::SetViewport(uint InX, uint InY, uint InWidth, uint InHeight)
 {
     if(!CurrentStateData) return;
+    /* Negative height (core since Vulkan 1.1): NDC +1 lands on the rect's
+     * first row, so every target is stored top-down -- row 0 the top of the
+     * image, as GDI's other backends store it and as RenderDoc shows it. */
     VkViewport& V = CurrentStateData->ViewportRect;
     V.x        = float(InX);
-    V.y        = float(InY);
+    V.y        = float(InY + InHeight);
     V.width    = float(InWidth);
-    V.height   = float(InHeight);
+    V.height   = -float(InHeight);
     V.minDepth = 0.0f;
     V.maxDepth = 1.0f;
 
@@ -278,7 +281,7 @@ void VulkanDynamicGDI::SetScissorRect(uint InX, uint InY, uint InWidth, uint InH
 {
     if(!CurrentStateData) return;
 
-    /* The target's own rows, as the viewport: GDISetScissorRect flipped them. */
+    /* The target's own rows from its top, as the viewport. */
     VkRect2D& S = CurrentStateData->ScissorRect;
     S.offset = { int32_t(InX), int32_t(InY) };
     S.extent = { InWidth, InHeight };

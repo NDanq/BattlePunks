@@ -5,8 +5,8 @@
 // scene block at 3, its inputs as material textures 0-7 (bindings 4-11).
 //
 // Interpolants.TexCoord is this pixel's UV in whatever target is bound, the
-// same UV every input samples with (a target's (0,0) is NDC (-1,-1));
-// Interpolants.Position.xy is its NDC.
+// same UV every input samples with (a target's (0,0) is its top-left, NDC
+// (-1, +1): TargetUvToNdc, Common.glsl); Interpolants.Position.xy is its NDC.
 
 #include <MaterialPlatform.glsl>
 #include <Common.glsl>

@@ -150,6 +150,15 @@ Vulkan and D3D12 remap the projection to it (`PackViewParamsUBO`) -- and writes
 `ToDisplay(ToLinear(Emissive) + ShadeSurface(...))`, what the forward template
 wrote. Other pixels are discarded, so the clear colour shows.
 
+**Orientation.** Every render target is stored top-down on every backend
+(`GDI.h`): row 0 is the top of the image, NDC y = +1, texture v = 0 and
+`gl_FragCoord.y` = 0.5 -- the order `ToImage` returns and RenderDoc shows.
+Vulkan gets there with a negative viewport height, OpenGL with
+`glClipControl(GL_UPPER_LEFT)`; D3D12 and Metal are top-down natively. A pass
+that turns a target's UV into NDC or back uses `TargetUvToNdc` /
+`NdcToTargetUv` (`Common.glsl`), since v runs down where NDC y runs up.
+Front faces are GL's on every backend, which Two Sided relies on.
+
 The result matches the forward path for the same material: the GPU smoke check's
 DefaultLit, Glow and Wave pixels are unchanged.
 
@@ -601,8 +610,8 @@ material then samples like a texture.
   `RenderTargetAssetCache::CreateTransient`, named `transient://<name>` and
   never written to disk.
 - **Strip format:** GDI has no cube textures, so a cube is a strip. Each face
-  is drawn with a horizontal viewport offset only, which keeps the backends'
-  Y origins out of it. Targets are RGBA8.
+  is drawn with a horizontal viewport offset only, its up at the strip's top
+  row. Targets are RGBA8.
 - **What a material samples:** `RenderContext::FindTexture` sends a
   render-target path to the GPU target if it has been captured, else to the
   bake, else to the null texture.
@@ -719,8 +728,8 @@ under "stat unit".
   `Renderer::SetUIImage` (font atlases). Resolved once per list.
 - **The pass.** `RenderContext::DrawUI` (`UIRenderer.h`): `UI.vsh` / `UI.fsh`,
   alpha blended, no depth; texture times vertex colour. Positions go through
-  `ViewParameters.Projection` -- an orthographic one -- so each backend's own
-  flip applies exactly as to the scene. One draw per command, a scissor change
+  `ViewParameters.Projection` -- an orthographic one, the top-left pixel at
+  NDC (-1, +1) -- so the list lands as the scene does. One draw per command, a scissor change
   only between commands that clip differently (`GDISetScissorRect`).
 - **Its mesh.** One dynamic mesh per scene (`GDICreateDynamicMesh`), rewritten
   only when the list changes: a static HUD uploads nothing per frame. It grows
@@ -763,8 +772,8 @@ render thread, wait, present and idle times, and FPS, in a panel at the top righ
   `RenderContext::DrawStatUnit` is one full-screen pass (`StatsOverlay.fsh`,
   alpha blended). The text, 4 characters to a uint, goes in the material
   block. The font (`OverlayFont.h`: 5 x 7 glyphs, ASCII 32-126) is a texture
-  made on first use. The panel is placed from the quad's UV rather than
-  `gl_FragCoord`, whose origin differs between backends.
+  made on first use. The panel is placed from the quad's UV, which runs from
+  the target's top-left as its layout does.
 
 ### Stat frame
 
@@ -909,9 +918,9 @@ UI drawing (### UI) needed two more:
 
 - **Scissor rectangles.** `GDISetScissorRect(X, Y, W, H)`, in pixels of the
   viewport from its top-left, clipped to it; `GDIClearScissorRect()` goes back
-  to the whole viewport, as `GDISetViewport` does. The front end flips the
-  rectangle to the target's rows once (every backend keeps row 0 at the
-  image's bottom), so a backend's `SetScissorRect` takes rows as they are.
+  to the whole viewport, as `GDISetViewport` does. Those are the target's own
+  rows (every backend stores row 0 at the image's top), so a backend's
+  `SetScissorRect` takes them as they are.
   `Clear` ignores it.
 - **Dynamic meshes.** `GDICreateDynamicMesh(MaxVertices, MaxIndices)`: the
   `GDIMeshDesc` layout (normals and UV1 optional), written in place by

@@ -19,9 +19,8 @@ UBO_BLOCK_END(Overlay_Block)
 
 void main(void)
 {
-    // From the UV, not gl_FragCoord: NDC +y is up on screen on every backend
-    // (the engine's matrices see to it), while gl_FragCoord's origin is not.
-    vec2 Pixel = vec2(Interpolants.TexCoord.x, 1.0 - Interpolants.TexCoord.y) * vec2(Ov_Layout.w, Ov_Grid.z);
+    // A target's UV runs from its top-left on every backend, as the layout does.
+    vec2 Pixel = Interpolants.TexCoord * vec2(Ov_Layout.w, Ov_Grid.z);
     float Scale = Ov_Layout.z;
     vec2  Cell  = vec2(6.0, 9.0) * Scale;   // a 5 x 7 glyph and its spacing
     vec2  Grid  = vec2(Ov_Grid.x, Ov_Grid.y);

@@ -377,18 +377,17 @@ bool VKSwapchain::CreateBlitPipeline()
     if(vkAllocateDescriptorSets(Dev, &SetAlloc, &BlitDescSet) != VK_SUCCESS) return false;
 
     // Full-screen NDC quad: 6 interleaved verts {vec3 position, vec2 texcoord}.
-    // The offscreen RT holds GL-oriented content (row 0 = visual bottom — the render
-    // thread uses the same GL-convention matrices as the OpenGL backend), while
-    // Vulkan NDC (-1,-1) is the TOP-left of the swapchain image, so V is flipped
-    // here to display the canvas right-side-up.
+    // The offscreen RT is stored top-down (row 0 = visual top) and this blit's
+    // viewport is positive, so Vulkan NDC (-1,-1) is the top-left of the
+    // swapchain image: v = 0 there copies the rows as they are.
     const float QuadVerts[] = {
         // pos.x pos.y pos.z   u    v
-        -1.f, -1.f, 0.f,      0.f, 1.f,
-        -1.f,  1.f, 0.f,      0.f, 0.f,
-         1.f,  1.f, 0.f,      1.f, 0.f,
-         1.f,  1.f, 0.f,      1.f, 0.f,
-         1.f, -1.f, 0.f,      1.f, 1.f,
-        -1.f, -1.f, 0.f,      0.f, 1.f,
+        -1.f, -1.f, 0.f,      0.f, 0.f,
+        -1.f,  1.f, 0.f,      0.f, 1.f,
+         1.f,  1.f, 0.f,      1.f, 1.f,
+         1.f,  1.f, 0.f,      1.f, 1.f,
+         1.f, -1.f, 0.f,      1.f, 0.f,
+        -1.f, -1.f, 0.f,      0.f, 0.f,
     };
     const VkDeviceSize QuadSize = sizeof(QuadVerts);
 

@@ -16,12 +16,13 @@ void OpenGLDynamicGDI::DrawScreenQuadPrimitive()
                                                              1.0f, 1.0f, 0.0f,
                                                              1.0f, -1.0f, 0.0f,
                                                              -1.0f, -1.0f, 0.0f };
-        const float				ScreenTexCoordData[12] = {	0.0f, 0.0f,
-                                                                 0.0f, 1.0f,
-                                                                 1.0f, 1.0f,
-                                                                 1.0f, 1.0f,
+        // v = 0 at NDC +1, the target's row 0: an identity copy.
+        const float				ScreenTexCoordData[12] = {	0.0f, 1.0f,
+                                                                 0.0f, 0.0f,
                                                                  1.0f, 0.0f,
-                                                                 0.0f, 0.0f };
+                                                                 1.0f, 0.0f,
+                                                                 1.0f, 1.0f,
+                                                                 0.0f, 1.0f };
         const int VertSize = sizeof(ScreenVertData)/sizeof(ScreenVertData[0]);
         const int TexCoordSize = sizeof(ScreenTexCoordData)/sizeof(ScreenTexCoordData[0]);
         ScreenMesh = dynamic_cast<OpenGLMesh *>(CreateQuadMesh(ScreenVertData, ScreenTexCoordData, VertSize, TexCoordSize));
