@@ -18,7 +18,8 @@ namespace RenderCore
         constexpr uint32_t TAG_HEADER  = EngineCore::MakeArchiveTag('T','H','D','R');
         constexpr uint32_t TAG_PIXELS  = EngineCore::MakeArchiveTag('T','P','I','X');
         constexpr uint32_t TAG_MIPS    = EngineCore::MakeArchiveTag('T','M','I','P');
-        constexpr uint16_t HEADER_VERSION = 2;
+        constexpr uint32_t TAG_BLOCKS  = EngineCore::MakeArchiveTag('T','B','L','K');
+        constexpr uint16_t HEADER_VERSION = 3;
 
         /* THDR's pixel format byte: ETexturePixelFormat. */
         constexpr uint8_t FORMAT_MAX = uint8_t(ETexturePixelFormat::RGBE8);
@@ -34,6 +35,7 @@ namespace RenderCore
             uint8_t MipGen      = uint8_t(InOutHeader.MipGen);
             uint8_t Compression = uint8_t(InOutHeader.Compression);
             uint8_t MipCount    = uint8_t(std::clamp(InOutHeader.MipCount, 1, 255));
+            bool    bBlocks     = InOutHeader.bBlocks;
             Ar << Width << Height << Format << InOutHeader.bSRGB << Filter << Wrap;
             if(Ar.GetChunkVersion() >= 2)
             {
@@ -42,6 +44,14 @@ namespace RenderCore
             else
             {
                 MipGen = 0; Compression = 0; MipCount = 1;
+            }
+            if(Ar.GetChunkVersion() >= 3)
+            {
+                Ar << bBlocks;
+            }
+            else
+            {
+                bBlocks = false;
             }
 
             if(Ar.IsLoading())
@@ -62,6 +72,11 @@ namespace RenderCore
                     Ar.SetError("texture: unknown mip generation or compression, or too many mips");
                     return false;
                 }
+                if(bBlocks && (Compression == uint8_t(ETextureCompression::None) || Format != uint8_t(ETexturePixelFormat::RGBA8)))
+                {
+                    Ar.SetError("texture: blocks without a compression, or for RGBE8");
+                    return false;
+                }
                 InOutHeader.Format      = ETexturePixelFormat(Format);
                 InOutHeader.Width       = Width;
                 InOutHeader.Height      = Height;
@@ -70,106 +85,157 @@ namespace RenderCore
                 InOutHeader.MipGen      = ETextureMipGen(MipGen);
                 InOutHeader.Compression = ETextureCompression(Compression);
                 InOutHeader.MipCount    = MipCount;
+                InOutHeader.bBlocks     = bBlocks;
             }
+            return !Ar.HasError();
+        }
+
+        /* SerializeTexture, and LoadTextureFile's ForGpu. */
+        bool SerializeTextureAs(EngineCore::Archive& Ar, TextureData& InOutTexture, const ETextureLoad InLoad)
+        {
+            if(!OpenRequiredChunk(Ar, TAG_TEXTURE, 1, "not a texture (no NTEX chunk)")) { return false; }
+
+            TextureHeader Header;
+            if(Ar.IsSaving())
+            {
+                if(InOutTexture.Pixels.IsNull() || InOutTexture.Pixels.GetFormat() != EngineCore::EImageFormat::RGBA8)
+                {
+                    Ar.SetError("texture: pixels must be RGBA8");
+                    Ar.CloseChunk();
+                    return false;
+                }
+                Header.Width  = InOutTexture.Pixels.GetWidth();
+                Header.Height = InOutTexture.Pixels.GetHeight();
+                Header.Format = InOutTexture.Format;
+                Header.bSRGB  = InOutTexture.bSRGB;
+                Header.Filter = InOutTexture.Filter;
+                Header.Wrap   = InOutTexture.Wrap;
+                Header.MipGen      = InOutTexture.MipGen;
+                Header.Compression = InOutTexture.Compression;
+                Header.MipCount    = InOutTexture.GetMipCount();
+                int Expected = Header.Width, ExpectedH = Header.Height;
+                for(const EngineCore::Image& Level : InOutTexture.Mips)
+                {
+                    Expected = std::max(Expected / 2, 1); ExpectedH = std::max(ExpectedH / 2, 1);
+                    if(Level.GetWidth() != Expected || Level.GetHeight() != ExpectedH || Level.GetFormat() != EngineCore::EImageFormat::RGBA8)
+                    {
+                        Ar.SetError("texture: a mip is not half the last, or not RGBA8");
+                        Ar.CloseChunk();
+                        return false;
+                    }
+                }
+                if(!InOutTexture.Blocks.empty() && (!TextureBlocksMatch(InOutTexture) || InOutTexture.Format != ETexturePixelFormat::RGBA8))
+                {
+                    Ar.SetError("texture: the blocks are not its levels in its compression");
+                    Ar.CloseChunk();
+                    return false;
+                }
+                Header.bBlocks = !InOutTexture.Blocks.empty();
+            }
+
+            if(OpenRequiredChunk(Ar, TAG_HEADER, HEADER_VERSION, "texture: no THDR chunk"))
+            {
+                SerializeHeader(Ar, Header);
+                Ar.CloseChunk();
+            }
+
+            /* ForGpu, the blocks stand in for the pixels: those are stepped over. */
+            const bool bSkipPixels = Ar.IsLoading() && InLoad == ETextureLoad::ForGpu && Header.bBlocks;
+            if(Ar.IsLoading() && !Ar.HasError())
+            {
+                InOutTexture.Format = Header.Format;
+                InOutTexture.bSRGB  = Header.bSRGB;
+                InOutTexture.Filter = Header.Filter;
+                InOutTexture.Wrap   = Header.Wrap;
+                InOutTexture.MipGen      = Header.MipGen;
+                InOutTexture.Compression = Header.Compression;
+                InOutTexture.Mips.clear();
+                InOutTexture.Blocks.clear();
+                if(bSkipPixels)
+                {
+                    InOutTexture.Pixels = EngineCore::Image();
+                }
+                else if(CanHoldElements(Ar, uint64_t(Header.Width) * uint64_t(Header.Height), 4, "texture: pixels run past the end of the file"))
+                {
+                    InOutTexture.Pixels = EngineCore::Image(Header.Width, Header.Height, EngineCore::EImageFormat::RGBA8);
+                }
+            }
+
+            /* Raw bytes: RGBA8 has no byte order; rows are tightly packed. */
+            if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_PIXELS, 1, "texture: no TPIX chunk"))
+            {
+                if(!bSkipPixels) { Ar.SerializeBytes(InOutTexture.Pixels.GetData(), InOutTexture.Pixels.GetSizeBytes()); }
+                Ar.CloseChunk();
+            }
+
+            /* The rest of the chain, if any: each level's size follows from the last. */
+            if(!Ar.HasError() && Header.MipCount > 1)
+            {
+                if(OpenRequiredChunk(Ar, TAG_MIPS, 1, "texture: THDR counts mips but there is no TMIP chunk"))
+                {
+                    int Width = Header.Width, Height = Header.Height;
+                    for(int Level = 1; Level < Header.MipCount && !Ar.HasError() && !bSkipPixels; ++Level)
+                    {
+                        Width  = std::max(Width / 2, 1);
+                        Height = std::max(Height / 2, 1);
+                        if(Ar.IsLoading())
+                        {
+                            if(!CanHoldElements(Ar, uint64_t(Width) * uint64_t(Height), 4, "texture: mips run past the end of the file")) { break; }
+                            InOutTexture.Mips.emplace_back(Width, Height, EngineCore::EImageFormat::RGBA8);
+                        }
+                        EngineCore::Image& Mip = InOutTexture.Mips[size_t(Level - 1)];
+                        Ar.SerializeBytes(Mip.GetData(), Mip.GetSizeBytes());
+                    }
+                    Ar.CloseChunk();
+                }
+            }
+
+            if(!Ar.HasError())
+            {
+                SerializeImportInfo(Ar, InOutTexture.ImportInfo);
+            }
+
+            /* Every level's blocks; each level's size follows from the last. */
+            if(!Ar.HasError() && Header.bBlocks && OpenRequiredChunk(Ar, TAG_BLOCKS, 1, "texture: THDR says blocks follow but there is no TBLK chunk"))
+            {
+                uint8_t Compression = uint8_t(Header.Compression);
+                Ar << Compression;
+                if(Ar.IsLoading() && Compression != uint8_t(Header.Compression))
+                {
+                    Ar.SetError("texture: the blocks are not in the header's compression");
+                }
+                const uint64_t BlockBytes = uint64_t(TextureBlockBytes(Header.Compression));
+                int Width = Header.Width, Height = Header.Height;
+                for(int Level = 0; Level < Header.MipCount && !Ar.HasError(); ++Level)
+                {
+                    const uint64_t Blocks = uint64_t((Width + 3) / 4) * uint64_t((Height + 3) / 4);
+                    if(Ar.IsLoading())
+                    {
+                        if(!CanHoldElements(Ar, Blocks, size_t(BlockBytes), "texture: blocks run past the end of the file")) { break; }
+                        TextureBlockLevel& Each = InOutTexture.Blocks.emplace_back();
+                        Each.Width  = Width;
+                        Each.Height = Height;
+                        Each.Bytes.resize(size_t(Blocks * BlockBytes));
+                    }
+                    std::vector<uint8_t>& Bytes = InOutTexture.Blocks[size_t(Level)].Bytes;
+                    Ar.SerializeBytes(Bytes.data(), Bytes.size());
+                    Width  = std::max(Width / 2, 1);
+                    Height = std::max(Height / 2, 1);
+                }
+                Ar.CloseChunk();
+            }
+
+            Ar.CloseChunk();
             return !Ar.HasError();
         }
     }
 
     bool SerializeTexture(EngineCore::Archive& Ar, TextureData& InOutTexture)
     {
-        if(!OpenRequiredChunk(Ar, TAG_TEXTURE, 1, "not a texture (no NTEX chunk)")) { return false; }
-
-        TextureHeader Header;
-        if(Ar.IsSaving())
-        {
-            if(InOutTexture.Pixels.IsNull() || InOutTexture.Pixels.GetFormat() != EngineCore::EImageFormat::RGBA8)
-            {
-                Ar.SetError("texture: pixels must be RGBA8");
-                Ar.CloseChunk();
-                return false;
-            }
-            Header.Width  = InOutTexture.Pixels.GetWidth();
-            Header.Height = InOutTexture.Pixels.GetHeight();
-            Header.Format = InOutTexture.Format;
-            Header.bSRGB  = InOutTexture.bSRGB;
-            Header.Filter = InOutTexture.Filter;
-            Header.Wrap   = InOutTexture.Wrap;
-            Header.MipGen      = InOutTexture.MipGen;
-            Header.Compression = InOutTexture.Compression;
-            Header.MipCount    = InOutTexture.GetMipCount();
-            int Expected = Header.Width, ExpectedH = Header.Height;
-            for(const EngineCore::Image& Level : InOutTexture.Mips)
-            {
-                Expected = std::max(Expected / 2, 1); ExpectedH = std::max(ExpectedH / 2, 1);
-                if(Level.GetWidth() != Expected || Level.GetHeight() != ExpectedH || Level.GetFormat() != EngineCore::EImageFormat::RGBA8)
-                {
-                    Ar.SetError("texture: a mip is not half the last, or not RGBA8");
-                    Ar.CloseChunk();
-                    return false;
-                }
-            }
-        }
-
-        if(OpenRequiredChunk(Ar, TAG_HEADER, HEADER_VERSION, "texture: no THDR chunk"))
-        {
-            SerializeHeader(Ar, Header);
-            Ar.CloseChunk();
-        }
-
-        if(Ar.IsLoading() && !Ar.HasError())
-        {
-            InOutTexture.Format = Header.Format;
-            InOutTexture.bSRGB  = Header.bSRGB;
-            InOutTexture.Filter = Header.Filter;
-            InOutTexture.Wrap   = Header.Wrap;
-            InOutTexture.MipGen      = Header.MipGen;
-            InOutTexture.Compression = Header.Compression;
-            InOutTexture.Mips.clear();
-            if(CanHoldElements(Ar, uint64_t(Header.Width) * uint64_t(Header.Height), 4, "texture: pixels run past the end of the file"))
-            {
-                InOutTexture.Pixels = EngineCore::Image(Header.Width, Header.Height, EngineCore::EImageFormat::RGBA8);
-            }
-        }
-
-        /* Raw bytes: RGBA8 has no byte order; rows are tightly packed. */
-        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_PIXELS, 1, "texture: no TPIX chunk"))
-        {
-            Ar.SerializeBytes(InOutTexture.Pixels.GetData(), InOutTexture.Pixels.GetSizeBytes());
-            Ar.CloseChunk();
-        }
-
-        /* The rest of the chain, if any: each level's size follows from the last. */
-        if(!Ar.HasError() && Header.MipCount > 1)
-        {
-            if(OpenRequiredChunk(Ar, TAG_MIPS, 1, "texture: THDR counts mips but there is no TMIP chunk"))
-            {
-                int Width = Header.Width, Height = Header.Height;
-                for(int Level = 1; Level < Header.MipCount && !Ar.HasError(); ++Level)
-                {
-                    Width  = std::max(Width / 2, 1);
-                    Height = std::max(Height / 2, 1);
-                    if(Ar.IsLoading())
-                    {
-                        if(!CanHoldElements(Ar, uint64_t(Width) * uint64_t(Height), 4, "texture: mips run past the end of the file")) { break; }
-                        InOutTexture.Mips.emplace_back(Width, Height, EngineCore::EImageFormat::RGBA8);
-                    }
-                    EngineCore::Image& Mip = InOutTexture.Mips[size_t(Level - 1)];
-                    Ar.SerializeBytes(Mip.GetData(), Mip.GetSizeBytes());
-                }
-                Ar.CloseChunk();
-            }
-        }
-
-        if(!Ar.HasError())
-        {
-            SerializeImportInfo(Ar, InOutTexture.ImportInfo);
-        }
-
-        Ar.CloseChunk();
-        return !Ar.HasError();
+        return SerializeTextureAs(Ar, InOutTexture, ETextureLoad::Everything);
     }
 
-    bool LoadTextureFile(const std::string& InPath, TextureData& OutTexture)
+    bool LoadTextureFile(const std::string& InPath, TextureData& OutTexture, const ETextureLoad InLoad)
     {
         EngineCore::Archive Ar = EngineCore::Archive::ForReading({});
         if(!EngineCore::LoadArchiveFromFile(InPath, Ar))
@@ -177,7 +243,7 @@ namespace RenderCore
             return false;
         }
         OutTexture = TextureData();
-        if(!SerializeTexture(Ar, OutTexture))
+        if(!SerializeTextureAs(Ar, OutTexture, InLoad))
         {
             RENDERCORE_LOG_WARN("cannot load texture " + InPath)
             OutTexture = TextureData();
@@ -460,6 +526,7 @@ namespace RenderCore
     void BuildTextureMips(TextureData& InOutTexture)
     {
         InOutTexture.Mips.clear();
+        InOutTexture.Blocks.clear();   // made from the old chain
         /* RGBE8 is decoded by its shader, point sampled: no chain. */
         if(InOutTexture.MipGen == ETextureMipGen::None || InOutTexture.Pixels.IsNull()
            || InOutTexture.Format != ETexturePixelFormat::RGBA8) { return; }
@@ -474,6 +541,12 @@ namespace RenderCore
 
     uint64_t TextureGpuBytes(const TextureData& InTexture)
     {
+        if(!InTexture.Blocks.empty())
+        {
+            uint64_t Bytes = 0;
+            for(const TextureBlockLevel& Level : InTexture.Blocks) { Bytes += Level.Bytes.size(); }
+            return Bytes;
+        }
         uint64_t Bytes = InTexture.Pixels.GetSizeBytes();
         for(const EngineCore::Image& Level : InTexture.Mips) { Bytes += Level.GetSizeBytes(); }
         return Bytes;
@@ -491,8 +564,7 @@ namespace RenderCore
             else
             {
                 const uint64_t Blocks = uint64_t((InWidth + 3) / 4) * uint64_t((InHeight + 3) / 4);
-                const bool     bHalf  = InCompression == ETextureCompression::BC1 || InCompression == ETextureCompression::BC4;
-                Bytes += Blocks * (bHalf ? 8 : 16);
+                Bytes += Blocks * uint64_t(TextureBlockBytes(InCompression));
             }
             InWidth  = std::max(InWidth / 2, 1);
             InHeight = std::max(InHeight / 2, 1);
@@ -500,22 +572,26 @@ namespace RenderCore
         return Bytes;
     }
 
-    namespace
-    {
-        ITextureCompressor* GCompressor = nullptr;
-    }
-
-    void SetTextureCompressor(ITextureCompressor* InCompressor) { GCompressor = InCompressor; }
-    ITextureCompressor* GetTextureCompressor() { return GCompressor; }
-
-    bool IsTextureCompressionAvailable(const ETextureCompression InCompression)
-    {
-        return InCompression == ETextureCompression::None || (GCompressor && GCompressor->Supports(InCompression));
-    }
-
 #if WITH_EDITOR
     bool SaveTextureFile(const std::string& InPath, TextureData& InTexture)
     {
+        if(InTexture.Compression == ETextureCompression::None || InTexture.Format != ETexturePixelFormat::RGBA8)
+        {
+            InTexture.Blocks.clear();
+        }
+        else if(!TextureBlocksMatch(InTexture))
+        {
+            if(!IsTextureCompressionAvailable(InTexture.Compression))
+            {
+                InTexture.Blocks.clear();   // a setting only: drawn as RGBA8
+            }
+            else if(std::string Error; !CompressTexture(InTexture, Error))
+            {
+                RENDERCORE_LOG_WARN("cannot save texture " + InPath + ": " + Error)
+                return false;
+            }
+        }
+
         EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
         if(!SerializeTexture(Ar, InTexture))
         {
@@ -563,7 +639,7 @@ namespace RenderCore
         /* Loaded outside the lock; if two threads race, the first stored wins. */
         auto Loaded = std::make_shared<TextureData>();
         std::shared_ptr<const TextureData> Result;
-        if(LoadTextureFile(InPath, *Loaded))
+        if(LoadTextureFile(InPath, *Loaded, ETextureLoad::ForGpu))
         {
             Result = std::move(Loaded);
         }

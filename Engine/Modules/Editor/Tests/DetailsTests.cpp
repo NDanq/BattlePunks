@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFile>
@@ -222,7 +223,20 @@ static void TestTextureViewer()
 
     Compression->setCurrentIndex(Compression->findData(int(RenderCore::ETextureCompression::BC7)));
     PumpFor(20);
-    Expect(AnyLabelContains(*Viewer, QStringLiteral("no block encoder is integrated")), "compression says it is a stored setting only");
+    Expect(AnyLabelContains(*Viewer, QStringLiteral("Encoded on save by bc7enc_rdo"))
+           && AnyLabelContains(*Viewer, QStringLiteral("once BC7")), "compression names its encoder, and what it will take");
+
+    /* As compressed: encoded now, and kept for Save. */
+    QCheckBox* AsCompressed = nullptr;
+    for(QCheckBox* Each : Viewer->findChildren<QCheckBox*>())
+    {
+        if(Each->text() == QStringLiteral("As compressed")) { AsCompressed = Each; }
+    }
+    Expect(AsCompressed && AsCompressed->isEnabled(), "the compressed preview can be asked for");
+    if(AsCompressed) { AsCompressed->setChecked(true); }
+    PumpFor(20);
+    Expect(AnyLabelContains(*Viewer, QStringLiteral("as BC7 blocks")) && AnyLabelContains(*Viewer, QStringLiteral("Encoded by bc7enc_rdo")),
+           "which encodes it: the GPU memory is the blocks'");
 
     if(const char* Snapshot = std::getenv("NIMBLE_TEXTURE_SNAPSHOT"))
     {
@@ -235,6 +249,8 @@ static void TestTextureViewer()
     RenderCore::TextureData Back;
     Expect(ReadTextureFile(Path, Back) && Back.GetMipCount() == 7 && Back.MipGen == RenderCore::ETextureMipGen::Box
            && Back.Compression == RenderCore::ETextureCompression::BC7, "Save writes the chain and the settings");
+    Expect(Back.Blocks.size() == 7 && Back.Blocks[0].Bytes.size() == 64 * 32 && Back.Blocks[6].Bytes.size() == 16
+           && Back.Pixels.GetWidth() == 64, "and the BC7 blocks of every level, beside the RGBA8 source");
     Expect(QString::fromStdString(Back.ImportInfo.Settings).contains(QStringLiteral("MipGen=1"))
            && QString::fromStdString(Back.ImportInfo.Settings).contains(QStringLiteral("Compression=5")),
            "and records them in the import options, so Reimport keeps them");

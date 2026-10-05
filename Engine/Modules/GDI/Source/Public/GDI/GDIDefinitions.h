@@ -10,6 +10,8 @@
  * rather than at the moment the last Qt include is removed.
  */
 #include "Public/Core/CoreTypes.h"
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <typeinfo>
 
@@ -119,6 +121,30 @@ enum EGDIRenderTargetFormat : char
 {
     GDI_RTF_RGBA8   = 0,
     GDI_RTF_RGBA16F = 1,
+};
+
+/* A texture's 4x4 block-compressed format (GDICreateCompressedTextureResource),
+ * UNORM -- each reads as its RGBA8 source would: BC1 RGB with alpha 1, BC3
+ * RGBA, BC4 (r, 0, 0, 1), BC5 (r, g, 0, 1), BC7 RGBA. BC1 and BC4 are 8
+ * bytes a block, the rest 16. */
+enum EGDICompressedFormat : char
+{
+    GDI_CF_BC1 = 0,
+    GDI_CF_BC3,
+    GDI_CF_BC4,
+    GDI_CF_BC5,
+    GDI_CF_BC7,
+    GDI_CF_MAX
+};
+
+/* One level of a block-compressed texture: Width x Height texels, Bytes of
+ * blocks row by row ((Width + 3) / 4 of them a row). */
+struct GDICompressedLevel
+{
+    uint32_t       Width  = 0;
+    uint32_t       Height = 0;
+    const uint8_t* Data   = nullptr;
+    size_t         Bytes  = 0;
 };
 
 enum EGDITextureFilter : char

@@ -499,6 +499,21 @@ public:
         return InLevels && InCount > 0 ? CreateTextureResource(InLevels[0], InBorder, InFilter) : nullptr;
     }
 
+    /* Whether InFormat can be sampled (CreateCompressedTextureResource).
+     * This default, for a backend without block formats (D3D12, Metal and
+     * Null so far), says no: the caller decodes to RGBA8 instead. */
+    virtual bool SupportsCompressedFormat(EGDICompressedFormat /*InFormat*/) const { return false; }
+
+    /* A block-compressed texture with its mip chain: InLevels[0] full size,
+     * each next half the last (at least 1), InCount in all, sampled like
+     * CreateTextureResourceMips. Null where SupportsCompressedFormat says no. */
+    virtual GDITextureResource* CreateCompressedTextureResource(EGDICompressedFormat /*InFormat*/,
+                                                                const GDICompressedLevel* /*InLevels*/, uint32_t /*InCount*/,
+                                                                EGDITextureBorder /*InBorder*/, EGDITextureFilter /*InFilter*/)
+    {
+        return nullptr;
+    }
+
     virtual bool CheckError(const std::string& FailStr) = 0;
 
     virtual ERenderPlatform GetRenderPlatform() const = 0;
@@ -664,6 +679,12 @@ bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
 /* GDIDynamicDriver::CreateTextureResourceMips; null without a driver. */
 GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,
                                                  EGDITextureBorder InBorder, EGDITextureFilter InFilter);
+
+/* GDIDynamicDriver::SupportsCompressedFormat / CreateCompressedTextureResource;
+ * false and null without a driver. */
+bool                GDISupportsCompressedFormat(EGDICompressedFormat InFormat);
+GDITextureResource* GDICreateCompressedTextureResource(EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels,
+                                                       uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter);
 
 /* GPU timestamps: GDIDynamicDriver::WriteGPUTimestamp's contract. */
 bool     GDISupportsGPUTimestamps();

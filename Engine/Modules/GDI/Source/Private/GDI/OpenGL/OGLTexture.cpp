@@ -1,4 +1,7 @@
 #include "Public/GDI/OpenGL/OGLTexture.h"
+
+#include <cstring>
+
 #include "Public/GDI/GDI.h"
 #include "Public/GDI/GDIRenderTarget.h"
 #include "Public/GDI/Shaders/Classes/UIShaders.h"
@@ -27,6 +30,87 @@ GDITextureResource* OpenGLDynamicGDI::CreateTextureResourceMips(const EngineCore
                                                                 const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
 {
     return InLevels && InCount > 0 ? new OpenGLTextureResource(InLevels, InCount, InBorder, InFilter) : nullptr;
+}
+
+namespace
+{
+    /* The UNORM block formats; BC1 without alpha, so a 3-colour block's black stays opaque. */
+    GLenum ToGLCompressedFormat(const EGDICompressedFormat InFormat)
+    {
+        switch(InFormat)
+        {
+            case GDI_CF_BC1: return GL_COMPRESSED_RGB_S3TC_DXT1_EXT;
+            case GDI_CF_BC3: return GL_COMPRESSED_RGBA_S3TC_DXT5_EXT;
+            case GDI_CF_BC4: return GL_COMPRESSED_RED_RGTC1;
+            case GDI_CF_BC5: return GL_COMPRESSED_RG_RGTC2;
+            case GDI_CF_BC7: return GL_COMPRESSED_RGBA_BPTC_UNORM;
+            default: break;
+        }
+        return 0;
+    }
+}
+
+bool OpenGLDynamicGDI::SupportsCompressedFormat(const EGDICompressedFormat InFormat) const
+{
+    /* RGTC is core from 3.0 and BPTC from 4.2, under the 4.4 the backend
+     * requires; S3TC is an extension, though every desktop driver has it. */
+    if(InFormat == GDI_CF_BC4 || InFormat == GDI_CF_BC5 || InFormat == GDI_CF_BC7) { return true; }
+    if(InFormat != GDI_CF_BC1 && InFormat != GDI_CF_BC3) { return false; }
+    static const bool bS3TC = [this]
+    {
+        GLint Count = 0;
+        glGetIntegerv(GL_NUM_EXTENSIONS, &Count);
+        for(GLint Each = 0; Each < Count; ++Each)
+        {
+            const char* Name = reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, GLuint(Each)));
+            if(Name && std::strcmp(Name, "GL_EXT_texture_compression_s3tc") == 0) { return true; }
+        }
+        return false;
+    }();
+    return bS3TC;
+}
+
+GDITextureResource* OpenGLDynamicGDI::CreateCompressedTextureResource(const EGDICompressedFormat InFormat,
+                                                                      const GDICompressedLevel* InLevels, const uint32_t InCount,
+                                                                      const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
+{
+    if(!InLevels || InCount == 0 || !SupportsCompressedFormat(InFormat)) { return nullptr; }
+    return new OpenGLTextureResource(ToGLCompressedFormat(InFormat), InLevels, InCount, InBorder, InFilter);
+}
+
+OpenGLTextureResource::OpenGLTextureResource(const GLenum InInternalFormat, const GDICompressedLevel* InLevels,
+                                             const uint32_t InCount, const EGDITextureBorder InBorder,
+                                             const EGDITextureFilter InFilter) :
+        GDITextureResource(),
+        TextureIndex(0)
+{
+    Width  = int(InLevels[0].Width);
+    Height = int(InLevels[0].Height);
+
+    const GLenum TextureBorder = DecodeTB(InBorder);
+    const GLenum Magnify       = DecodeTF(InFilter);
+    const GLenum Minify        = InCount == 1 ? Magnify
+                               : InFilter == GDI_TF_Linear ? GL_LINEAR_MIPMAP_LINEAR : GL_NEAREST_MIPMAP_NEAREST;
+
+    initializeOpenGLFunctions();
+
+    glGenTextures(1, &TextureHandle);
+    glBindTexture(GL_TEXTURE_2D, TextureHandle);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, TextureBorder);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, TextureBorder);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, Minify);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, Magnify);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_BASE_LEVEL, 0);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, GLint(InCount) - 1);
+
+    for(uint32_t Level = 0; Level < InCount; ++Level)
+    {
+        glCompressedTexImage2D(GL_TEXTURE_2D, GLint(Level), InInternalFormat, GLsizei(InLevels[Level].Width),
+                               GLsizei(InLevels[Level].Height), 0, GLsizei(InLevels[Level].Bytes), InLevels[Level].Data);
+    }
+
+    bInitialized = true;
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 OpenGLTextureResource::OpenGLTextureResource(const EngineCore::Image* InLevels, const uint32_t InCount,

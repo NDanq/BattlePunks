@@ -22,6 +22,10 @@ public:
     /* A mip chain: InLevels[0] full size, each next half the last. */
     OpenGLTextureResource(const EngineCore::Image* InLevels, uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter);
 
+    /* The same of blocks in InInternalFormat, a GL_COMPRESSED_* one. */
+    OpenGLTextureResource(GLenum InInternalFormat, const GDICompressedLevel* InLevels, uint32_t InCount,
+                          EGDITextureBorder InBorder, EGDITextureFilter InFilter);
+
     OpenGLTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest);
 
     void Update(const EngineCore::Image& InImage) override;

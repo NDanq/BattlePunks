@@ -148,9 +148,15 @@ bool VKDevice::CreateLogicalDevice()
     DynamicRenderingFeatures.dynamicRendering = VK_TRUE;
     DynamicRenderingFeatures.pNext            = &Sync2Features;
 
+    /* BC block formats (RenderCore's compressed textures), when there are any:
+     * without them those textures are decoded to RGBA8 instead. */
+    VkPhysicalDeviceFeatures Supported{};
+    vkGetPhysicalDeviceFeatures(PhysicalDevice, &Supported);
+
     VkPhysicalDeviceFeatures2 Features2{};
     Features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     Features2.pNext = &DynamicRenderingFeatures;
+    Features2.features.textureCompressionBC = Supported.textureCompressionBC;
 
     VkDeviceCreateInfo CreateInfo{};
     CreateInfo.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -166,7 +172,18 @@ bool VKDevice::CreateLogicalDevice()
     }
 
     vkGetDeviceQueue(Device, GraphicsQueueFamilyIndex, 0, &GraphicsQueue);
+    bTextureCompressionBC = Supported.textureCompressionBC == VK_TRUE;
     return true;
+}
+
+bool VKDevice::SupportsSampledFormat(const VkFormat InFormat) const
+{
+    if(!bTextureCompressionBC || PhysicalDevice == VK_NULL_HANDLE) { return false; }
+    VkFormatProperties Properties{};
+    vkGetPhysicalDeviceFormatProperties(PhysicalDevice, InFormat, &Properties);
+    const VkFormatFeatureFlags Needed = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
+                                      | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    return (Properties.optimalTilingFeatures & Needed) == Needed;
 }
 
 VkResult VKDevice::QueueSubmit(uint32_t SubmitCount, const VkSubmitInfo* Submits, VkFence Fence)

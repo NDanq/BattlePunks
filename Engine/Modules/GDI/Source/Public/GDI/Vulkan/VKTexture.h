@@ -1,6 +1,8 @@
 #ifndef CORECLIENT_VKTEXTURE_H
 #define CORECLIENT_VKTEXTURE_H
 
+#include <vector>
+
 #include <vulkan/vulkan.h>
 
 #include "Public/GDI/GDITexture.h"
@@ -15,7 +17,8 @@ class VKDevice;
  * Vulkan GDITextureResource implementation.
  *
  * Owns:
- *   - VkImage         — device-local, VK_FORMAT_R8G8B8A8_UNORM, TILING_OPTIMAL
+ *   - VkImage         — device-local, VK_FORMAT_R8G8B8A8_UNORM (or a BC format,
+ *                       the compressed constructor), TILING_OPTIMAL
  *   - VkDeviceMemory  — backing memory (device-local)
  *   - VkImageView     — 2D view for sampling / descriptor writes
  *   - VkSampler       — sampler built from the EGDITextureBorder / EGDITextureFilter pair
@@ -54,6 +57,15 @@ public:
                        EGDITextureBorder        InBorder,
                        EGDITextureFilter        InFilter);
 
+    /** Standalone block-compressed texture with its mip chain, as the one
+     *  above: InFormat a BC format the device samples (SupportsSampledFormat). */
+    VKTextureResource(VKDevice*                 InDevice,
+                       VkFormat                  InFormat,
+                       const GDICompressedLevel* InLevels,
+                       uint32_t                  InCount,
+                       EGDITextureBorder         InBorder,
+                       EGDITextureFilter         InFilter);
+
     /** Parented texture with no initial data (caller must call Update later). */
     VKTextureResource(VKDevice*           InDevice,
                        GDITexture2D*       InParent,
@@ -75,8 +87,9 @@ public:
     ~VKTextureResource();
 
     /**
-     * Re-upload pixel data.  If the incoming image has different dimensions,
-     * the VkImage is recreated.  Otherwise only the pixels are re-uploaded.
+     * Re-upload pixel data.  If the incoming image has different dimensions
+     * (or the image has mips or blocks), the VkImage is recreated as RGBA8.
+     * Otherwise only the pixels are re-uploaded.
      */
     void Update(const EngineCore::Image& InImage) override;
 
@@ -86,7 +99,8 @@ public:
     /**
      * Synchronous device-to-host readback.
      * Returns a EngineCore::Image::Format_RGBA8888 copy of the texture data,
-     * or a null EngineCore::Image if the texture has not yet been populated.
+     * or a null EngineCore::Image if the texture has not yet been populated
+     * or is block-compressed.
      */
     EngineCore::Image ToImage() const override;
 
@@ -118,6 +132,11 @@ private:
     /** Every level of a mip chain in one staging copy (MipLevels of them). */
     void UploadMipChain(const EngineCore::Image* InLevels, uint32_t InCount);
 
+    /** Copies InTotal staged bytes into the image by InRegions, one per
+     *  level, leaving it SHADER_READ_ONLY. */
+    void UploadRegions(const uint8_t* const* InSources, const VkDeviceSize* InSizes,
+                       std::vector<VkBufferImageCopy>& InRegions, VkDeviceSize InTotal);
+
     // -----------------------------------------------------------------------
     // Decode helpers
     // -----------------------------------------------------------------------
@@ -138,7 +157,8 @@ private:
     // must not be destroyed by this resource — only the Sampler is owned.
     bool                bOwnsImage      = true;
 
-    static constexpr VkFormat kFormat   = VK_FORMAT_R8G8B8A8_UNORM;
+    static constexpr VkFormat kRGBA8    = VK_FORMAT_R8G8B8A8_UNORM;
+    VkFormat            Format          = kRGBA8;   // the image's; a BC one from the compressed constructor
     VkImageLayout       CurrentLayout   = VK_IMAGE_LAYOUT_UNDEFINED;
     uint32_t            MipLevels       = 1;   // the image's levels; Update() goes back to one
 

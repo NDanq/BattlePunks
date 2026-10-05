@@ -72,6 +72,11 @@ public:
     inline VkQueue          GetGraphicsQueue() const    { return GraphicsQueue; }
     inline bool             IsValid() const             { return Device != VK_NULL_HANDLE; }
 
+    /** Whether InFormat (a block-compressed one) can be sampled: the
+     *  textureCompressionBC feature, enabled when the GPU has it, and the
+     *  format's own sampled-image support. */
+    bool SupportsSampledFormat(VkFormat InFormat) const;
+
 private:
     bool PickPhysicalDevice();
     bool CreateLogicalDevice();
@@ -81,6 +86,7 @@ private:
     VkDevice            Device                  = VK_NULL_HANDLE;
     uint32_t            GraphicsQueueFamilyIndex = UINT32_MAX;
     VkQueue             GraphicsQueue           = VK_NULL_HANDLE;
+    bool                bTextureCompressionBC   = false;   // the feature, enabled
 
     VkPhysicalDeviceMemoryProperties MemoryProperties{};
 

@@ -19,6 +19,7 @@
 #include "CoreQtConversions.h"
 #include "Public/Core/CoreArchive.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/TextureCompression.h"
 #include "Private/Editor/Content/GltfImporter.h"
 
 namespace EditorContent
@@ -326,6 +327,16 @@ namespace EditorContent
             }
 
             RenderCore::BuildTextureMips(Texture);
+            /* Without an encoder, the compression is a setting only. */
+            if(RenderCore::IsTextureCompressionAvailable(Texture.Compression))
+            {
+                std::string Error;
+                if(!RenderCore::CompressTexture(Texture, Error))
+                {
+                    OutError = QStringLiteral("%1: %2").arg(QFileInfo(InPath).fileName(), QString::fromStdString(Error));
+                    return false;
+                }
+            }
 
             EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
             RenderCore::SerializeTexture(Ar, Texture);

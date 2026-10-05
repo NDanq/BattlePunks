@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include <QAction>
+#include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -113,7 +114,7 @@ namespace
             }
         }
         if(bAnyPartial) { return QStringLiteral("blended (BC3 or BC7 keeps it)"); }
-        if(bAnyClear)   { return QStringLiteral("cut-out, 0 or 255 only"); }
+        if(bAnyClear)   { return QStringLiteral("cut-out, 0 or 255 only (BC3 or BC7 keeps it)"); }
         return QStringLiteral("opaque (BC1 is enough)");
     }
 
@@ -124,7 +125,7 @@ namespace
     };
     const CompressionChoice COMPRESSIONS[] = {
         { RenderCore::ETextureCompression::None, "None (RGBA8, 32 bpp)" },
-        { RenderCore::ETextureCompression::BC1,  "BC1 (RGB, cut-out alpha, 4 bpp)" },
+        { RenderCore::ETextureCompression::BC1,  "BC1 (RGB, no alpha, 4 bpp)" },
         { RenderCore::ETextureCompression::BC3,  "BC3 (RGBA, 8 bpp)" },
         { RenderCore::ETextureCompression::BC4,  "BC4 (one channel, 4 bpp)" },
         { RenderCore::ETextureCompression::BC5,  "BC5 (two channels: normal maps, 8 bpp)" },
@@ -344,11 +345,16 @@ void TextureViewerWindow::BuildUi()
     Channels->addItem(QStringLiteral("Green"), int(EChannels::G));
     Channels->addItem(QStringLiteral("Blue"), int(EChannels::B));
     Channels->addItem(QStringLiteral("Alpha"), int(EChannels::A));
+    ShowEncoded = new QCheckBox(QStringLiteral("As compressed"), Side);
+    ShowEncoded->setToolTip(QStringLiteral("The blocks decoded, as the GPU samples them. Encodes the texture now if "
+                                           "need be, which Save then keeps."));
     ViewForm->addRow(QStringLiteral("Mip level"), Level);
     ViewForm->addRow(QStringLiteral("Channels"), Channels);
+    ViewForm->addRow(QString(), ShowEncoded);
     Layout->addLayout(ViewForm);
     connect(Level, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { UpdatePreview(); });
     connect(Channels, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) { UpdatePreview(); });
+    connect(ShowEncoded, &QCheckBox::toggled, this, [this](bool) { UpdatePreview(); UpdateInfo(); });
 
     /* The texture's own settings. */
     Layout->addWidget(new QLabel(QStringLiteral("<b>Settings</b>"), Side));
@@ -443,6 +449,8 @@ void TextureViewerWindow::FillControls()
     const bool bRgbe = Edited.Format == RenderCore::ETexturePixelFormat::RGBE8;
     for(QWidget* Each : std::initializer_list<QWidget*>{ SRGB, MipGen, Compression }) { Each->setEnabled(!bRgbe); }
     bFilling = false;
+    ShowEncoded->setEnabled(Edited.Compression != RenderCore::ETextureCompression::None
+                            && RenderCore::IsTextureCompressionAvailable(Edited.Compression));
 }
 
 void TextureViewerWindow::FillMipLevels()
@@ -482,7 +490,11 @@ void TextureViewerWindow::UpdateInfo()
             .arg(Bytes(quint64(FileBytes)))
             .arg(IsDirty() ? QStringLiteral(" (as saved)") : QString())
             .arg(Bytes(RenderCore::TextureGpuBytes(Edited)));
-    if(Edited.Compression != RenderCore::ETextureCompression::None)
+    if(!Edited.Blocks.empty())
+    {
+        Text += QStringLiteral(" as %1 blocks").arg(QString::fromLatin1(RenderCore::GetTextureCompressionName(Edited.Compression)));
+    }
+    else if(Edited.Compression != RenderCore::ETextureCompression::None)
     {
         Text += QStringLiteral(", %1 once %2").arg(Bytes(RenderCore::TextureCompressedBytes(Width, Height, Mips, Edited.Compression)))
                 .arg(QString::fromLatin1(RenderCore::GetTextureCompressionName(Edited.Compression)));
@@ -505,13 +517,30 @@ void TextureViewerWindow::UpdateInfo()
     }
     else if(RenderCore::IsTextureCompressionAvailable(Edited.Compression))
     {
-        CompressNote->setText(QStringLiteral("Encoded by %1.").arg(QString::fromLatin1(RenderCore::GetTextureCompressor()->GetName())));
+        CompressNote->setText(QStringLiteral("%1 by %2. The RGBA8 source is kept beside the blocks, so a change here "
+                                             "encodes again from it.")
+                              .arg(Edited.Blocks.empty() ? QStringLiteral("Encoded on save") : QStringLiteral("Encoded"))
+                              .arg(QString::fromLatin1(RenderCore::GetTextureCompressor()->GetName())));
     }
     else
     {
-        CompressNote->setText(QStringLiteral("Saved as a setting only: no block encoder is integrated yet (NVIDIA Texture "
-                                             "Tools to come), so the texture is still stored and drawn as RGBA8."));
+        CompressNote->setText(QStringLiteral("Saved as a setting only: this build has no block encoder, so the texture "
+                                             "is stored and drawn as RGBA8."));
     }
+}
+
+bool TextureViewerWindow::EncodeEdited()
+{
+    if(RenderCore::TextureBlocksMatch(Edited)) { return true; }
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    std::string Error;
+    const bool bEncoded = RenderCore::CompressTexture(Edited, Error);
+    QApplication::restoreOverrideCursor();
+    if(!bEncoded)
+    {
+        Status->setText(QStringLiteral("Could not encode: %1").arg(QString::fromStdString(Error)));
+    }
+    return bEncoded;
 }
 
 void TextureViewerWindow::UpdatePreview()
@@ -519,6 +548,12 @@ void TextureViewerWindow::UpdatePreview()
     const int Index = std::max(Level->currentIndex(), 0);
     const EngineCore::Image* Mip = Edited.GetMip(Index);
     if(!Mip) { return; }
+    EngineCore::Image Decoded;
+    if(ShowEncoded->isChecked() && ShowEncoded->isEnabled() && EncodeEdited()
+       && RenderCore::DecodeTextureBlocks(Edited.Blocks[size_t(Index)], Edited.Compression, Decoded))
+    {
+        Mip = &Decoded;
+    }
     Preview->SetBaseSize(QSize(Edited.Pixels.GetWidth(), Edited.Pixels.GetHeight()));
     Preview->SetImage(ToQImage(*Mip, EChannels(Channels->currentData().toInt()),
                                Edited.Format == RenderCore::ETexturePixelFormat::RGBE8), Index);
@@ -547,6 +582,7 @@ void TextureViewerWindow::SettingChanged()
     const bool                       bWasSRGB  = Edited.bSRGB;
     const RenderCore::ETextureWrap   WasWrap   = Edited.Wrap;
     const RenderCore::ETextureMipGen WasMipGen = Edited.MipGen;
+    const RenderCore::ETextureCompression WasCompression = Edited.Compression;
     Edited.bSRGB       = SRGB->isChecked();
     Edited.Filter      = RenderCore::ETextureFilter(Filter->currentData().toInt());
     Edited.Wrap        = RenderCore::ETextureWrap(Wrap->currentData().toInt());
@@ -565,9 +601,18 @@ void TextureViewerWindow::SettingChanged()
             RenderCore::BuildTextureMips(Edited);
         }
         FillMipLevels();
-        UpdatePreview();
     }
+    /* What the blocks are made from: back to the saved ones when that is as saved. */
+    if(Edited.bSRGB != bWasSRGB || Edited.Wrap != WasWrap || Edited.MipGen != WasMipGen || Edited.Compression != WasCompression)
+    {
+        const bool bAsSaved = Edited.bSRGB == Saved.bSRGB && Edited.Wrap == Saved.Wrap && Edited.MipGen == Saved.MipGen
+                           && Edited.Compression == Saved.Compression;
+        Edited.Blocks = bAsSaved ? Saved.Blocks : std::vector<RenderCore::TextureBlockLevel>();
+    }
+    ShowEncoded->setEnabled(Edited.Compression != RenderCore::ETextureCompression::None
+                            && RenderCore::IsTextureCompressionAvailable(Edited.Compression));
     Status->clear();
+    UpdatePreview();
     UpdateInfo();
     UpdateState();
 }
@@ -589,7 +634,10 @@ bool TextureViewerWindow::Save()
         Options.Compression = Updated.Compression;
         Updated.ImportInfo.Settings = Options.ToSettings().toStdString();
     }
-    if(!RenderCore::SaveTextureFile(QFileInfo(Path).absoluteFilePath().toStdString(), Updated))
+    QApplication::setOverrideCursor(Qt::WaitCursor);   // encoding a large texture takes a moment
+    const bool bWritten = RenderCore::SaveTextureFile(QFileInfo(Path).absoluteFilePath().toStdString(), Updated);
+    QApplication::restoreOverrideCursor();
+    if(!bWritten)
     {
         QMessageBox::warning(this, QStringLiteral("Save Texture"), QStringLiteral("Could not write %1 -- see the log").arg(Path));
         return false;

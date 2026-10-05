@@ -20,8 +20,9 @@ class TexturePreview;
  * wrap, mip generation and compression. A changed setting shows at once (the
  * mip chain is rebuilt in memory); Save writes the file, records the settings
  * in its import options so Reimport keeps them, and restages it, so the level
- * shows them. Compression is stored only until an encoder is integrated
- * (RenderCore's TextureCompression.h). The engine's textures view only.
+ * shows them; a compression is encoded then (RenderCore's
+ * TextureCompression.h), or at once to preview it as compressed. The
+ * engine's textures view only.
  *
  * One window per texture; opening it again brings that window forward.
  */
@@ -50,6 +51,7 @@ private:
     void UpdatePreview();
     void UpdateState();
     void SettingChanged();
+    bool EncodeEdited();
     bool IsDirty() const;
     bool Save();
     void Revert();
@@ -59,12 +61,14 @@ private:
     bool                    bReadOnly = false;
     qint64                  FileBytes = 0;
     RenderCore::TextureData Saved;          // as on disk
-    RenderCore::TextureData Edited;         // with the settings picked here, its mips rebuilt
+    RenderCore::TextureData Edited;         // with the settings picked here, its mips rebuilt; its blocks
+                                            // Saved's while those settings are, else made on demand
 
     TexturePreview* Preview      = nullptr;
     QLabel*         Info         = nullptr;
     QComboBox*      Level        = nullptr;
     QComboBox*      Channels     = nullptr;
+    QCheckBox*      ShowEncoded  = nullptr;
     QCheckBox*      SRGB         = nullptr;
     QComboBox*      Filter       = nullptr;
     QComboBox*      Wrap         = nullptr;
