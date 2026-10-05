@@ -29,22 +29,26 @@
           </VerticalBox>
           <VerticalBox Name="Settings">
             <Text Name="SettingsTitle" Class="Heading" Text="Settings"/>
-            <CheckBox Name="Shadows" Class="Setting" Checked="{Bind:LightLab.Shadows}" OnChanged="Graph:Shadows_OnChanged">
-              <Text Class="SettingLabel" Text="Shadows"/>
-            </CheckBox>
-            <CheckBox Name="BakedLighting" Class="Setting" Checked="{Bind:LightLab.BakedLighting}" OnChanged="Graph:BakedLighting_OnChanged">
-              <Text Class="SettingLabel" Text="Baked lighting"/>
-            </CheckBox>
-            <Text Class="SliderLabel" Text="Look sensitivity"/>
-            <HorizontalBox>
-              <Slider Name="LookSensitivity" Class="SettingSlider" Min="0.25" Max="3" Step="0.05" Value="{Bind:LightLab.LookSensitivity}" OnChanged="Graph:LookSensitivity_OnChanged"/>
-              <Text Class="SliderValue" Text="{Bind:LightLab.LookSensitivity}x"/>
-            </HorizontalBox>
-            <Text Class="SliderLabel" Text="Fly speed"/>
-            <HorizontalBox>
-              <Slider Name="FlySpeed" Class="SettingSlider" Min="100" Max="2000" Step="50" Value="{Bind:LightLab.FlySpeed}" OnChanged="Graph:FlySpeed_OnChanged"/>
-              <Text Class="SliderValue" Text="{Bind:LightLab.FlySpeed}"/>
-            </HorizontalBox>
+            <ScrollBox Name="SettingsList" Size="600,340" ScrollBar="Auto" BarWidth="6" Thumb.Tint="#FFFFFF59" ThumbHovered.Tint="#D98A2FFF" Track.Tint="#FFFFFF0F">
+              <VerticalBox Name="SettingsRows" Margin="0,0,14,0">
+                <CheckBox Name="Shadows" Class="Setting" Checked="{Bind:LightLab.Shadows}" OnChanged="Graph:Shadows_OnChanged">
+                  <Text Class="SettingLabel" Text="Shadows"/>
+                </CheckBox>
+                <CheckBox Name="BakedLighting" Class="Setting" Checked="{Bind:LightLab.BakedLighting}" OnChanged="Graph:BakedLighting_OnChanged">
+                  <Text Class="SettingLabel" Text="Baked lighting"/>
+                </CheckBox>
+                <Text Class="SliderLabel" Text="Look sensitivity"/>
+                <HorizontalBox>
+                  <Slider Name="LookSensitivity" Class="SettingSlider" Min="0.25" Max="3" Step="0.05" Value="{Bind:LightLab.LookSensitivity}" OnChanged="Graph:LookSensitivity_OnChanged"/>
+                  <Text Class="SliderValue" Text="{Bind:LightLab.LookSensitivity}x"/>
+                </HorizontalBox>
+                <Text Class="SliderLabel" Text="Fly speed"/>
+                <HorizontalBox>
+                  <Slider Name="FlySpeed" Class="SettingSlider" Min="100" Max="2000" Step="50" Value="{Bind:LightLab.FlySpeed}" OnChanged="Graph:FlySpeed_OnChanged"/>
+                  <Text Class="SliderValue" Text="{Bind:LightLab.FlySpeed}"/>
+                </HorizontalBox>
+              </VerticalBox>
+            </ScrollBox>
             <Button Name="LoadBakedLighting" Class="MenuButton" Margin="0,36,0,0" OnClick="Native:Game.OpenLevel('BakedLighting')">
               <Text Class="MenuLabel" Text="Load Baked Lighting World"/>
             </Button>

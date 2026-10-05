@@ -131,6 +131,20 @@ void UIDesignerViewport::RevealSelection()
         for(int32_t Each = Instance->GetFirstChild(uint32_t(Parent)); Each >= 0 && Each != Child; Each = Instance->GetNextSibling(uint32_t(Each))) { ++Page; }
         Instance->SetProperty(*Switcher, "ActiveIndex", UI::UIValue::Number(Page));
     }
+    bScrollToSelection = true;   // after the next layout, which scroll boxes need
+}
+
+void UIDesignerViewport::ScrollToSelection()
+{
+    /* Scroll boxes above the selection show it -- in the canvas only. */
+    bScrollToSelection = false;
+    UI::UIDocumentInstance* Instance = GetInstance();
+    const int Selected = Design.GetSelected();
+    if(!Instance || Selected <= 0 || Selected >= int(Instance->GetWidgetCount())) return;
+    for(int32_t Parent = Instance->GetParent(uint32_t(Selected)); Parent >= 0; Parent = Instance->GetParent(uint32_t(Parent)))
+    {
+        Instance->GetWidget(uint32_t(Parent))->OnDescendantFocused(uint32_t(Selected));
+    }
 }
 
 void UIDesignerViewport::SetDesignSize(const QSize& InSize)
@@ -285,6 +299,11 @@ bool UIDesignerViewport::PrepareFrame(const float InDeltaSeconds, const bool /*b
     }
     System.Tick(InDeltaSeconds);
     System.Update(UI::UIVec2{ float(DesignSize.width()) * Scale, float(DesignSize.height()) * Scale });
+    if(bScrollToSelection)
+    {
+        ScrollToSelection();
+        System.Update(UI::UIVec2{ float(DesignSize.width()) * Scale, float(DesignSize.height()) * Scale });
+    }
 
     /* Atlases first: the list may name a font baked this frame. An unchanged
      * frame submits nothing -- the scene keeps the list it has. */

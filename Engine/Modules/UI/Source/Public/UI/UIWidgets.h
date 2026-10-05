@@ -23,6 +23,7 @@
  *   ProgressBar    a fill over a background, Value 0-1
  *   CheckBox       a box ticked on and off, its child a label beside it
  *   Slider         a thumb dragged along a track, Value from Min to Max
+ *   ScrollBox      its one child, longer than it, scrolled by wheel, bar or focus
  *   Spacer         empty space of a size
  */
 namespace UI
@@ -252,6 +253,76 @@ namespace UI
     private:
         /* Sets Value as the player's input (two-way) and fires OnChanged if it moved. */
         void ChangeTo(double InValue);
+    };
+
+    /*
+     * Scrolling, shared by ScrollBox and ListView: an offset into content
+     * longer than the view, a bar to drag, and the arithmetic between them.
+     */
+    struct UI_API UIScrollState
+    {
+        float ContentLength = 0.0f;   // layout units, along the axis
+        float ViewLength    = 0.0f;
+
+        float MaxOffset() const { return ContentLength > ViewLength ? ContentLength - ViewLength : 0.0f; }
+        bool  CanScroll() const { return MaxOffset() > 0.0f; }
+
+        /* The thumb's start and length along a track of InTrack, at InOffset. */
+        void Thumb(float InOffset, float InTrack, float& OutStart, float& OutLength) const;
+
+        /* The offset that puts the thumb's start at InThumbStart. */
+        float OffsetForThumb(float InThumbStart, float InTrack) const;
+
+        /* The offset closest to InOffset that shows [InStart, InStart + InLength). */
+        float Reveal(float InOffset, float InStart, float InLength) const;
+    };
+
+    /*
+     * Its one child at full length, seen through its own rectangle: the wheel,
+     * the bar (dragged, or clicked beside the thumb for a page) or focus moving
+     * to something out of view scrolls it. It asks a box for its Size (Fill
+     * stretches it). ScrollOffset binds two-way: {Bind:Menu.Scroll} remembers
+     * where a list was. Children past the edge are clipped, so neither drawn
+     * nor clicked.
+     */
+    class UI_API UIScrollBox : public UIWidget
+    {
+    public:
+        float            ScrollOffset = 0.0f;   // layout units from the start; clamped
+        float            ScrollStep   = 60.0f;  // per wheel notch
+        EUIOrientation   Orientation  = EUIOrientation::Vertical;
+        EUIScrollBarMode ScrollBar    = EUIScrollBarMode::Auto;
+        float            BarWidth     = 8.0f;
+        UIBrush          Track;
+        UIBrush          Thumb;
+        UIBrush          ThumbHovered;          // hovered or dragged
+        UIActionList     OnScrolled;            // $value the offset
+
+        UIScrollBox();
+        UIVec2 MeasureContent(UILayoutContext& InContext) override;
+        void   ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect) override;
+        void   PaintOver(UIPaintContext& InContext, const UIRect& InRect) const override;
+        UIVec2 GetChildOffset() const override;
+        bool   IsInteractive() const override { return true; }
+        bool   TakesHits() const override { return true; }
+        bool   OnWheel(float InDelta) override;
+        void   OnPointer(const UIPointerEvent& InEvent) override;
+        void   OnDescendantFocused(uint32_t InIndex) override;
+        double GetActionValue() const override { return double(ScrollOffset); }
+
+        /* Scrolls to InOffset (clamped), as the player would: two-way, OnScrolled. False if it did not move. */
+        bool ScrollTo(float InOffset);
+
+        const UIScrollState& GetScroll() const { return Scroll; }
+
+    private:
+        bool   IsVertical() const { return Orientation == EUIOrientation::Vertical; }
+        bool   ShowsBar() const;
+        /* The bar's track, layout units. */
+        UIRect TrackRect(const UIRect& InRect) const;
+
+        UIScrollState Scroll;
+        float         DragGrab = -1.0f;   // where on the thumb it was taken, pixels; < 0 not dragging
     };
 
     class UI_API UISpacer : public UIWidget
