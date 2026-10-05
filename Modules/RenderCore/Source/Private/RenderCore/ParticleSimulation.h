@@ -72,8 +72,16 @@ namespace RenderCore
         float    Motion[4];
         float    Beam[4];
         float    BeamNoise[4];
+        float    ShapeA[4];      // x shape, y 1: surface, z outward speed, w cone angle (radians)
+        float    ShapeB[4];      // xyz a box's half size, w a ring's width
+        float    ShapeAxisX[4];  // the shape's +X and +Y in the world
+        float    ShapeAxisY[4];
+        float    ColorLut[PARTICLE_LUT_SIZE][4];      // colour over life, birth to death
+        float    SizeLut[PARTICLE_LUT_SIZE];          // size over life, four a vec4
     };
-    static_assert(sizeof(ParticleParams) == 19 * 16, "ParticleParams must match ParticleCommon.glsl's std140 block");
+    static_assert(sizeof(ParticleParams) == (23 + PARTICLE_LUT_SIZE + PARTICLE_LUT_SIZE / 4) * 16,
+                  "ParticleParams must match ParticleCommon.glsl's std140 block");
+    static_assert(sizeof(ParticleParams) <= 1024, "ParticleParams must fit GDI_COMPUTE_PARAMS_MAX_BYTES");
 
     /* The camera a frame's particles are sorted and turned toward. */
     struct ParticleCamera

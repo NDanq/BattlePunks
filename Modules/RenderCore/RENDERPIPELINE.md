@@ -908,6 +908,24 @@ Elsewhere it draws nothing and says so once.
   Random Rotation starts each sprite or mesh at a random angle, spinning
   either way. A particle's random bits are fixed at birth (`Particle.Extra`),
   so its rotation is a function of its age: no extra state.
+- **Shape**: where each is born, in the entity's own axes (the shape turns
+  with the entity; Velocity and Acceleration stay world space, so gravity is
+  down): **Sphere** (within Radius, the default), **Hemisphere** (its +Y
+  half), **Box** (within Box Size), **Cone** (a disc of Radius facing +Y,
+  each sent out within Cone Angle of +Y), **Ring** (a circle of Radius about
+  +Y, Ring Width across). **On Surface** keeps them to its surface -- the
+  shell, the faces, the rim, the circle -- and **Outward Speed** adds speed
+  out of the shape where each is born (from the centre, through the face,
+  along the cone). `ParticleSimulate.csh`'s `ShapePoint`.
+- **Over life**: size and colour (alpha too) each go **Start/End** -- size
+  straight, colour by Color Curve, faded in and out, as before -- or through
+  up to 8 **keys**: a size **Curve**, a colour **Gradient**, straight between
+  keys and held past the first and last. Either way the CPU bakes them into
+  32 samples, birth to death (`PARTICLE_LUT_SIZE`), in the dispatch's
+  parameter block (`Pa_ColorLut`, `Pa_SizeLut`; 1008 of the 1024 bytes a
+  block may hold), which every pass samples (`SizeAt`, `ColorAt`): one path
+  for every type, so a ribbon's or beam's gradient runs along it. The
+  component's Tint multiplies the samples.
 - **Spawn Mode**: Continuous (Spawn Rate a second) or **Burst**: Burst Count at
   once, again every Burst Interval (0: one burst), Burst Cycles times (0: no
   end). Emitting off and on again starts the bursts over -- how a script
@@ -977,9 +995,10 @@ order. Opaque particles write depth as any mesh does.
 
 LightLab's yard runs a sample of each (`SpawnParticleDemos`; entities
 `SparksDemo`, `DebrisDemo`, `LaserDemo`, `TrailDemo`), from its
-`Content/Particles/`: `Sparks` (Velocity
-Aligned sprites in repeating bursts, under gravity), `Debris` (Random Spin box
-meshes and a dust puff, bursting), `Trail` (a ribbon with a glowing head: turn
+`Content/Particles/`: `Sparks` (Velocity Aligned sprites in repeating bursts
+from a Cone, under gravity, through a white-hot to red Gradient and a
+shrinking size Curve), `Debris` (Random Spin box meshes, and dust thrown out
+of a Ring that grows by a Curve, bursting), `Trail` (a ribbon with a glowing head: turn
 on Move Emitter; in the yard, AnimateLights flies it round), `Laser` (two
 jittering beams, a wide glow and a thin core; in the yard, strung between two
 pillars by its Beam Target) -- the strips and sparks with

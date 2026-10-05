@@ -9,7 +9,10 @@
 
 #include <QWidget>
 
+class ParticleCurveEdit;
 class ParticleDocument;
+class ParticleGradientEdit;
+class QFormLayout;
 class PropertyEditor;
 class QLabel;
 class QListWidget;
@@ -46,8 +49,9 @@ private:
 /*
  * The Particle Editor's Details dock: the selected emitter's settings, in
  * the Details panel's own property widgets (PropertyWidgets.h) grouped as
- * Rendering, Emission, Motion, Beam and Over Life, each with its reset
- * arrow -- only those its type and spawn mode use.
+ * Rendering, Emission, Shape, Motion, Beam and Over Life, each with its
+ * reset arrow -- only those its type, modes and shape use -- and a colour
+ * gradient and size curve editor (ParticleCurveWidgets.h) when chosen.
  * A footer says how many particles the emitter holds once it has run a while,
  * and warns when Max Particles cuts lives short.
  */
@@ -69,13 +73,17 @@ private:
     void Rebuild();
     void Refresh();
 
+    /* A gradient's (or curve's) row: its label, then the editor across the form. */
+    void AddKeyEditor(bool bInGradient, const QString& InName, const QString& InTip, QFormLayout* InForm);
+
     ParticleDocument& Document;
     QWidget*          Content = nullptr;
     QVBoxLayout*      ContentLayout = nullptr;
     QLabel*           Budget  = nullptr;
     std::vector<Row>  Rows;
-    uint8_t           ShownType      = 0;     // what the rows were built for
-    uint8_t           ShownSpawnMode = 0;
+    uint32_t          ShownShape     = 0;     // what the rows were built for: type, modes, shape
+    ParticleGradientEdit* Gradient   = nullptr;   // the over-life key editors, when shown
+    ParticleCurveEdit*    Curve      = nullptr;
     bool              bRebuildQueued = false;
 };
 

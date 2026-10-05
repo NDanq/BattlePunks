@@ -58,6 +58,10 @@ public:
               int InSelectAfter = KEEP_SELECTION);
     void CommitLiveEdit(const QString& InText);
 
+    /* A change written into an emitter's bytes and not done yet (a key being
+     * dragged): shown, not recorded. LiveChanged, not Changed. */
+    void PreviewLiveEdit() { emit LiveChanged(); }
+
     // --- The emitter list ----------------------------------------------------
     // Each one undo step, selecting what it made or moved.
 
@@ -74,6 +78,7 @@ public:
 
 signals:
     void Changed();
+    void LiveChanged();
     void EmittersChanged();
     void SelectionChanged(int InIndex);
 

@@ -3,6 +3,7 @@
 #include "Private/Editor/Particles/ParticleEmitterPanels.h"
 
 #include <cmath>
+#include <algorithm>
 #include <cstring>
 
 #include <QFormLayout>
@@ -18,6 +19,7 @@
 #include <QVBoxLayout>
 
 #include "Public/GameCore/ComponentProperties.h"
+#include "Private/Editor/Particles/ParticleCurveWidgets.h"
 #include "Private/Editor/Particles/ParticleDocument.h"
 #include "Private/Editor/PropertyWidgets.h"
 
@@ -36,16 +38,38 @@ namespace
         FOR_SPAWNS = FOR_SPRITE | FOR_MESH | FOR_RIBBON,   // everything that spawns particles
     };
 
+    /* A row that is not a property widget: the over-life key editors. */
+    enum class ECustom : uint8_t { None, ColorGradient, SizeCurve };
+
     /* One setting of ParticleEmitterDesc as a property entry, so the Details
-     * panel's widgets edit it; its tooltip; and when it is shown: for which
-     * types, and (SpawnMode >= 0) only in that spawn mode. */
+     * panel's widgets edit it (or a custom editor); its tooltip; and when it
+     * is shown: for which types, and only While its predicate holds. */
     struct EmitterSetting
     {
         GameCore::ComponentPropertyEntry Entry;
-        const char*                      Tip       = nullptr;
-        uint8_t                          Types     = FOR_ALL;
-        int                              SpawnMode = -1;
+        const char*                      Tip    = nullptr;
+        uint8_t                          Types  = FOR_ALL;
+        bool                             (*While)(const ParticleEmitterDesc&) = nullptr;
+        ECustom                          Custom = ECustom::None;
     };
+
+    bool IsContinuous(const ParticleEmitterDesc& InEmitter) { return InEmitter.SpawnMode == RenderCore::PSM_Continuous; }
+    bool IsBurst(const ParticleEmitterDesc& InEmitter)      { return InEmitter.SpawnMode == RenderCore::PSM_Burst; }
+    bool IsBox(const ParticleEmitterDesc& InEmitter)        { return InEmitter.Shape == RenderCore::PS_Box; }
+    bool IsRound(const ParticleEmitterDesc& InEmitter)      { return InEmitter.Shape != RenderCore::PS_Box; }
+    bool IsCone(const ParticleEmitterDesc& InEmitter)       { return InEmitter.Shape == RenderCore::PS_Cone; }
+    bool IsRing(const ParticleEmitterDesc& InEmitter)       { return InEmitter.Shape == RenderCore::PS_Ring; }
+    bool IsColorStartEnd(const ParticleEmitterDesc& InEmitter) { return InEmitter.ColorMode != RenderCore::POL_Keys; }
+    bool IsColorGradient(const ParticleEmitterDesc& InEmitter) { return InEmitter.ColorMode == RenderCore::POL_Keys; }
+    bool IsSizeStartEnd(const ParticleEmitterDesc& InEmitter)  { return InEmitter.SizeMode != RenderCore::POL_Keys; }
+    bool IsSizeCurve(const ParticleEmitterDesc& InEmitter)     { return InEmitter.SizeMode == RenderCore::POL_Keys; }
+
+    /* What decides which rows show: rebuilt when it changes. */
+    uint32_t ShapeOf(const ParticleEmitterDesc& InEmitter)
+    {
+        return uint32_t(InEmitter.Type) | uint32_t(InEmitter.SpawnMode) << 4 | uint32_t(InEmitter.Shape) << 8
+             | uint32_t(InEmitter.ColorMode) << 12 | uint32_t(InEmitter.SizeMode) << 16;
+    }
 
     template<typename TField>
     EmitterSetting Setting(const char* InName, TField ParticleEmitterDesc::* InMember, const char* InCategory, const uint8_t InTypes,
@@ -82,10 +106,21 @@ namespace
         return Out;
     }
 
-    EmitterSetting InSpawnMode(EmitterSetting InSetting, const int InMode)
+    EmitterSetting Only(EmitterSetting InSetting, bool (*InWhile)(const ParticleEmitterDesc&))
     {
-        InSetting.SpawnMode = InMode;
+        InSetting.While = InWhile;
         return InSetting;
+    }
+
+    /* A key editor's row, named as a setting is. */
+    EmitterSetting KeyEditor(const char* InName, const ECustom InCustom, const char* InTip)
+    {
+        EmitterSetting Out;
+        std::strncpy(Out.Entry.Name, InName, sizeof(Out.Entry.Name) - 1);
+        std::strncpy(Out.Entry.Category, "Over Life", sizeof(Out.Entry.Category) - 1);
+        Out.Tip    = InTip;
+        Out.Custom = InCustom;
+        return Out;
     }
 
     const std::vector<EmitterSetting>& GetSettings()
@@ -124,20 +159,35 @@ namespace
                     "Interval. Switching Emitting off and on starts the bursts over"),
             Setting("Max Particles",     &ParticleEmitterDesc::MaxParticles, "Emission", FOR_SPAWNS,
                     "How many it holds at once (1 to 2048); past that the oldest are replaced"),
-            InSpawnMode(Setting("Spawn Rate", &ParticleEmitterDesc::SpawnRate, "Emission", FOR_SPAWNS, "Particles born a second"),
-                        RenderCore::PSM_Continuous),
-            InSpawnMode(Setting("Burst Count", &ParticleEmitterDesc::BurstCount, "Emission", FOR_SPAWNS,
-                                "Particles born at once in each burst"), RenderCore::PSM_Burst),
-            InSpawnMode(Setting("Burst Interval", &ParticleEmitterDesc::BurstInterval, "Emission", FOR_SPAWNS,
-                                "Seconds from one burst to the next; 0: a single burst"), RenderCore::PSM_Burst),
-            InSpawnMode(Setting("Burst Cycles", &ParticleEmitterDesc::BurstCycles, "Emission", FOR_SPAWNS,
-                                "How many bursts, with an interval; 0: no end"), RenderCore::PSM_Burst),
+            Only(Setting("Spawn Rate", &ParticleEmitterDesc::SpawnRate, "Emission", FOR_SPAWNS, "Particles born a second"),
+                 &IsContinuous),
+            Only(Setting("Burst Count", &ParticleEmitterDesc::BurstCount, "Emission", FOR_SPAWNS,
+                         "Particles born at once in each burst"), &IsBurst),
+            Only(Setting("Burst Interval", &ParticleEmitterDesc::BurstInterval, "Emission", FOR_SPAWNS,
+                         "Seconds from one burst to the next; 0: a single burst"), &IsBurst),
+            Only(Setting("Burst Cycles", &ParticleEmitterDesc::BurstCycles, "Emission", FOR_SPAWNS,
+                         "How many bursts, with an interval; 0: no end"), &IsBurst),
             Setting("Lifetime",          &ParticleEmitterDesc::Lifetime, "Emission", FOR_SPAWNS, "How long each lives, in seconds"),
             Setting("Lifetime Variance", &ParticleEmitterDesc::LifetimeVariance, "Emission", FOR_SPAWNS,
                     "0 to 1: each lives Lifetime less up to this much of it, at random (keep a ribbon's at 0: it breaks where one dies early)"),
-            Setting("Emitter Radius",    &ParticleEmitterDesc::EmitterRadius, "Emission", FOR_SPAWNS,
-                    "Each is born anywhere in a sphere this big round the emitter"),
             Setting("Seed",              &ParticleEmitterDesc::Seed, "Emission", FOR_ALL, "Changes its random numbers (a beam's jitter)"),
+
+            Choice ("Shape", &ParticleEmitterDesc::Shape, "Shape", FOR_SPAWNS, "Sphere|Hemisphere|Box|Cone|Ring",
+                    "Where each is born, in the entity's own axes (it turns with the entity). Sphere and Hemisphere (its +Y half): "
+                    "within Radius. Box: within Box Size. Cone: on a disc of Radius facing +Y, sent out within Cone Angle. "
+                    "Ring: on a circle of Radius about +Y"),
+            Only(Setting("Radius", &ParticleEmitterDesc::EmitterRadius, "Shape", FOR_SPAWNS,
+                         "The sphere's, the cone's disc's or the ring's radius; 0 for a point"), &IsRound),
+            Only(Setting("Box Size", &ParticleEmitterDesc::BoxSize, "Shape", FOR_SPAWNS, "The box's size along each of its axes"), &IsBox),
+            Only(Setting("Cone Angle", &ParticleEmitterDesc::ConeAngle, "Shape", FOR_SPAWNS,
+                         "Degrees from +Y each is sent out within (with Outward Speed): 0 a jet, 90 a fan"), &IsCone),
+            Only(Setting("Ring Width", &ParticleEmitterDesc::RingWidth, "Shape", FOR_SPAWNS,
+                         "How wide a band about the circle each is born in; 0 on the line"), &IsRing),
+            Switch ("On Surface", &ParticleEmitterDesc::bShapeSurface, "Shape", FOR_SPAWNS,
+                    "Born on the shape's surface only: a sphere's shell, a box's faces, a cone's rim, the ring's circle"),
+            Setting("Outward Speed", &ParticleEmitterDesc::ShapeSpeed, "Shape", FOR_SPAWNS,
+                    "Plus this speed out of the shape where each is born (from the centre, through the face, along the cone); "
+                    "negative pulls in"),
 
             Setting("Velocity",        &ParticleEmitterDesc::Velocity, "Motion", FOR_SPAWNS,
                     "Each one's speed and direction at birth, in world units a second"),
@@ -156,24 +206,37 @@ namespace
                     "How far its middle strays from the straight line, in world units; its ends stay put"),
             Setting("Beam Noise Speed", &ParticleEmitterDesc::BeamNoiseSpeed, "Beam", FOR_BEAM, "How fast the jitter changes"),
 
-            Setting("Start Size",  &ParticleEmitterDesc::StartSize, "Over Life", FOR_ALL,
-                    "Its size at birth, in world units across (a ribbon's width at its newest point, a beam's at the emitter)"),
-            Setting("End Size",    &ParticleEmitterDesc::EndSize, "Over Life", FOR_ALL, "Its size at death (a beam's at its end)"),
-            Setting("Start Color", &ParticleEmitterDesc::StartColor, "Over Life", FOR_ALL, "Its colour and alpha at birth (a beam's at the emitter)"),
-            Setting("End Color",   &ParticleEmitterDesc::EndColor, "Over Life", FOR_ALL, "Its colour and alpha at death (a beam's at its end)"),
-            Setting("Color Curve", &ParticleEmitterDesc::ColorCurve, "Over Life", FOR_ALL,
-                    "The colour follows age^Curve: under 1 it reaches End Color sooner, over 1 later"),
-            Setting("Fade In",     &ParticleEmitterDesc::FadeIn, "Over Life", FOR_ALL, "0 to 1: the share of its life over which alpha rises from 0"),
-            Setting("Fade Out",    &ParticleEmitterDesc::FadeOut, "Over Life", FOR_ALL, "0 to 1: the share of its life over which alpha falls to 0"),
+            Choice ("Size Mode",   &ParticleEmitterDesc::SizeMode, "Over Life", FOR_ALL, "Start/End|Curve",
+                    "Start/End: straight from Start Size to End Size. Curve: through keys you place (a beam's from the emitter to its end)"),
+            Only(Setting("Start Size",  &ParticleEmitterDesc::StartSize, "Over Life", FOR_ALL,
+                    "Its size at birth, in world units across (a ribbon's width at its newest point, a beam's at the emitter)"), &IsSizeStartEnd),
+            Only(Setting("End Size",    &ParticleEmitterDesc::EndSize, "Over Life", FOR_ALL, "Its size at death (a beam's at its end)"),
+                 &IsSizeStartEnd),
+            Only(KeyEditor("Size Curve", ECustom::SizeCurve, "Its size over life, through up to 8 keys"), &IsSizeCurve),
+            Choice ("Color Mode",  &ParticleEmitterDesc::ColorMode, "Over Life", FOR_ALL, "Start/End|Gradient",
+                    "Start/End: Start Color to End Color by Color Curve, faded in and out. Gradient: colour and alpha through keys "
+                    "(starting from what Start/End gave)"),
+            Only(Setting("Start Color", &ParticleEmitterDesc::StartColor, "Over Life", FOR_ALL,
+                         "Its colour and alpha at birth (a beam's at the emitter)"), &IsColorStartEnd),
+            Only(Setting("End Color",   &ParticleEmitterDesc::EndColor, "Over Life", FOR_ALL,
+                         "Its colour and alpha at death (a beam's at its end)"), &IsColorStartEnd),
+            Only(Setting("Color Curve", &ParticleEmitterDesc::ColorCurve, "Over Life", FOR_ALL,
+                         "The colour follows age^Curve: under 1 it reaches End Color sooner, over 1 later"), &IsColorStartEnd),
+            Only(Setting("Fade In",     &ParticleEmitterDesc::FadeIn, "Over Life", FOR_ALL,
+                         "0 to 1: the share of its life over which alpha rises from 0"), &IsColorStartEnd),
+            Only(Setting("Fade Out",    &ParticleEmitterDesc::FadeOut, "Over Life", FOR_ALL,
+                         "0 to 1: the share of its life over which alpha falls to 0"), &IsColorStartEnd),
+            Only(KeyEditor("Color Gradient", ECustom::ColorGradient, "Its colour and alpha over life, through up to 8 keys"),
+                 &IsColorGradient),
         };
         return Settings;
     }
 
-    /* Whether InSetting applies to InEmitter, as its type and spawn mode are. */
+    /* Whether InSetting applies to InEmitter, as its type, modes and shape are. */
     bool Applies(const EmitterSetting& InSetting, const ParticleEmitterDesc& InEmitter)
     {
         const uint8_t Type = InEmitter.Type < RenderCore::PT_Count ? InEmitter.Type : uint8_t(RenderCore::PT_Sprite);
-        return (InSetting.Types & (1u << Type)) != 0 && (InSetting.SpawnMode < 0 || InSetting.SpawnMode == InEmitter.SpawnMode);
+        return (InSetting.Types & (1u << Type)) != 0 && (!InSetting.While || InSetting.While(InEmitter));
     }
 
     QToolButton* MakeButton(QWidget* InParent, const QString& InText, const QString& InTip)
@@ -342,6 +405,8 @@ ParticleEmitterDetailsPanel::ParticleEmitterDetailsPanel(ParticleDocument& InDoc
 void ParticleEmitterDetailsPanel::Rebuild()
 {
     Rows.clear();
+    Gradient = nullptr;
+    Curve    = nullptr;
     while(QLayoutItem* Item = ContentLayout->takeAt(0))
     {
         delete Item->widget();
@@ -382,14 +447,19 @@ void ParticleEmitterDetailsPanel::Rebuild()
     };
 
     const ParticleEmitterDesc& Shown = *Document.GetEmitter(Selected);
-    ShownType      = Shown.Type;
-    ShownSpawnMode = Shown.SpawnMode;
+    ShownShape = ShapeOf(Shown);
 
     const std::vector<EmitterSetting>& Settings = GetSettings();
     for(size_t Index = 0; Index < Settings.size(); ++Index)
     {
         const EmitterSetting& Setting = Settings[Index];
         if(!Applies(Setting, Shown)) { continue; }
+        if(Setting.Custom != ECustom::None)
+        {
+            AddKeyEditor(Setting.Custom == ECustom::ColorGradient, QString::fromLatin1(Setting.Entry.Name),
+                         QString::fromLatin1(Setting.Tip), FormFor(QString::fromLatin1(Setting.Entry.Category)));
+            continue;
+        }
         auto* Field    = new QWidget(Content);
         auto* FieldRow = new QHBoxLayout(Field);
         FieldRow->setContentsMargins(0, 0, 0, 0);
@@ -413,6 +483,18 @@ void ParticleEmitterDetailsPanel::Rebuild()
 
         connect(Editor, &PropertyEditor::Written, this, [this, Name]()
         {
+            /* A gradient or curve chosen for the first time starts as what Start/End gave. */
+            if(ParticleEmitterDesc* Edited = Document.GetEmitter(Document.GetSelected()))
+            {
+                if(Name == QStringLiteral("Color Mode") && Edited->ColorMode == RenderCore::POL_Keys && Edited->ColorKeyCount == 0)
+                {
+                    Edited->SeedColorKeys();
+                }
+                if(Name == QStringLiteral("Size Mode") && Edited->SizeMode == RenderCore::POL_Keys && Edited->SizeKeyCount == 0)
+                {
+                    Edited->SeedSizeKeys();
+                }
+            }
             Document.CommitLiveEdit(QStringLiteral("Edit %1").arg(Name));
         });
         connect(Reset, &QToolButton::clicked, this, [this, Index, Name]()
@@ -433,12 +515,54 @@ void ParticleEmitterDetailsPanel::Rebuild()
     Refresh();
 }
 
+void ParticleEmitterDetailsPanel::AddKeyEditor(const bool bInGradient, const QString& InName, const QString& InTip, QFormLayout* InForm)
+{
+    /* Written straight into the emitter's keys: previewed while dragged, one undo step when done. */
+    const auto Store = [this, bInGradient, InName](const bool bInFinished)
+    {
+        ParticleEmitterDesc* Emitter = Document.GetEmitter(Document.GetSelected());
+        if(!Emitter) { return; }
+        if(bInGradient)
+        {
+            const std::vector<RenderCore::ParticleColorKey>& Keys = Gradient->GetKeys();
+            Emitter->ColorKeyCount = int32_t(std::min(Keys.size(), size_t(RenderCore::PARTICLE_CURVE_KEYS_MAX)));
+            std::copy(Keys.begin(), Keys.begin() + Emitter->ColorKeyCount, Emitter->ColorKeys);
+        }
+        else
+        {
+            const std::vector<RenderCore::ParticleSizeKey>& Keys = Curve->GetKeys();
+            Emitter->SizeKeyCount = int32_t(std::min(Keys.size(), size_t(RenderCore::PARTICLE_CURVE_KEYS_MAX)));
+            std::copy(Keys.begin(), Keys.begin() + Emitter->SizeKeyCount, Emitter->SizeKeys);
+        }
+        if(bInFinished) { Document.CommitLiveEdit(QStringLiteral("Edit %1").arg(InName)); }
+        else            { Document.PreviewLiveEdit(); }
+    };
+
+    auto* Label = new QLabel(InName, Content);
+    Label->setToolTip(InTip);
+    QWidget* Editor = nullptr;
+    if(bInGradient)
+    {
+        Gradient = new ParticleGradientEdit(Content);
+        connect(Gradient, &ParticleGradientEdit::Edited, this, Store);
+        Editor = Gradient;
+    }
+    else
+    {
+        Curve = new ParticleCurveEdit(Content);
+        connect(Curve, &ParticleCurveEdit::Edited, this, Store);
+        Editor = Curve;
+    }
+    InForm->addRow(Label);
+    InForm->addRow(Editor);
+}
+
 void ParticleEmitterDetailsPanel::Refresh()
 {
     const ParticleEmitterDesc* Emitter = Document.GetEmitter(Document.GetSelected());
 
-    /* A new type or spawn mode shows other settings: rebuilt once this edit's signals are done with the widgets. */
-    if(Emitter && !Rows.empty() && (Emitter->Type != ShownType || Emitter->SpawnMode != ShownSpawnMode))
+    /* A new type, mode or shape shows other settings: rebuilt once this edit's signals are done with the widgets. */
+    if(Emitter && (!Rows.empty() || Gradient || Curve) && ShapeOf(*Emitter) != ShownShape)
     {
         if(!bRebuildQueued)
         {
@@ -451,6 +575,9 @@ void ParticleEmitterDetailsPanel::Refresh()
         }
         return;
     }
+    if(Emitter && Gradient) { Gradient->SetKeys(Emitter->ColorKeys, Emitter->ColorKeyCount); }
+    if(Emitter && Curve)    { Curve->SetKeys(Emitter->SizeKeys, Emitter->SizeKeyCount); }
+
     static const ParticleEmitterDesc Defaults{};
     for(const Row& Each : Rows)
     {

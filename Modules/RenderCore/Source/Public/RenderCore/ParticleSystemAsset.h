@@ -36,7 +36,8 @@
  *
  * A key is its first word and its value the rest of the line. Vectors are
  * three numbers, colours four bytes (0-255, sRGB), switches true/false,
- * choices their names (Type Ribbon, Billboard VelocityAligned).
+ * choices their names (Type Ribbon, Billboard VelocityAligned), keys a
+ * list of time:value (SizeKeys 0:10 0.5:40 1:0, ColorKeys 0:255,200,80,255 1:40,0,0,0).
  * A setting left out keeps its default and an unknown key is skipped, so
  * an older engine reads a newer file. Written deterministically: every
  * setting, in a fixed order, numbers in their shortest round-trip form.
@@ -51,6 +52,23 @@ namespace RenderCore
     };
 
     constexpr const char* PARTICLE_SYSTEM_EXTENSION = ".nmparticle";
+
+    /* The most keys a colour gradient or size curve has. */
+    constexpr uint32_t PARTICLE_CURVE_KEYS_MAX = 8;
+
+    /* A colour gradient's key: at Time (0 birth, 1 death), Color (alpha too). */
+    struct ParticleColorKey
+    {
+        float             Time  = 0.0f;
+        EngineCore::Color Color{255, 255, 255, 255};
+    };
+
+    /* A size curve's key: at Time, Value world units across. */
+    struct ParticleSizeKey
+    {
+        float Time  = 0.0f;
+        float Value = 10.0f;
+    };
     constexpr uint32_t    PARTICLE_SYSTEM_FORMAT    = 1;
 
     /*
@@ -85,6 +103,14 @@ namespace RenderCore
 
         uint8_t             SpawnMode        = PSM_Continuous;     // EParticleSpawnMode
         int32_t             MaxParticles     = 256;     // 1..PARTICLE_MAX_PER_SYSTEM; the oldest are replaced
+
+        /* Where each is born (EParticleShape), in the entity's own axes. */
+        uint8_t             Shape            = PS_Sphere;
+        uint8_t             bShapeSurface    = 0;       // on its surface only
+        EngineCore::Vector3 BoxSize{100.0, 100.0, 100.0};
+        float               ConeAngle        = 25.0f;   // degrees from +Y
+        float               RingWidth        = 0.0f;
+        float               ShapeSpeed       = 0.0f;    // plus this outward from the shape
         float               SpawnRate        = 32.0f;   // a second (Continuous)
         int32_t             BurstCount       = 32;      // a burst (Burst)
         float               BurstInterval    = 0.0f;    // seconds between bursts; 0: one
@@ -107,13 +133,23 @@ namespace RenderCore
         float               BeamNoise        = 0.0f;
         float               BeamNoiseSpeed   = 4.0f;
 
-        float               StartSize        = 10.0f;   // a ribbon or beam: its width
+        /* Size over life: Start to End, or through SizeKeys (SizeMode Keys). A ribbon's or beam's: its width. */
+        uint8_t             SizeMode         = POL_StartEnd;
+        float               StartSize        = 10.0f;
         float               EndSize          = 10.0f;
+        ParticleSizeKey     SizeKeys[PARTICLE_CURVE_KEYS_MAX] = {};
+        int32_t             SizeKeyCount     = 0;
+
+        /* Colour (and alpha) over life: Start to End by ColorCurve, faded in
+         * and out; or through ColorKeys (ColorMode Keys: a gradient). */
+        uint8_t             ColorMode        = POL_StartEnd;
         EngineCore::Color   StartColor{255, 255, 255, 255};
         EngineCore::Color   EndColor{255, 255, 255, 0};
         float               ColorCurve       = 1.0f;    // age^ColorCurve picks the colour: under 1, EndColor sooner
         float               FadeIn           = 0.1f;
         float               FadeOut          = 0.3f;
+        ParticleColorKey    ColorKeys[PARTICLE_CURVE_KEYS_MAX] = {};
+        int32_t             ColorKeyCount    = 0;
 
         /* As RenderContext::SimulateParticles takes it: clamped to what the
          * GPU can run, colours to 0-1. BeamEnd is left in the entity's axes:
@@ -128,6 +164,14 @@ namespace RenderCore
         /* As far as one of its particles can get from the emitter in its
          * life, plus its size: what culling pads the entity by. */
         RENDERCORE_API float GetReach() const;
+
+        /* Its colour (0-1) and size at InAge (0 birth, 1 death), as the GPU samples them. */
+        RENDERCORE_API void Evaluate(float InAge, float (&OutColor)[4], float& OutSize) const;
+
+        /* Keys to stand for Start to End when a gradient or curve is first chosen:
+         * the colour with its fades, the size straight. Sorted, at most PARTICLE_CURVE_KEYS_MAX. */
+        RENDERCORE_API void SeedColorKeys();
+        RENDERCORE_API void SeedSizeKeys();
 
         /* The mesh each particle draws: Mesh, or the quad (Sprite) or box (Mesh) when it is empty. */
         RENDERCORE_API const char* GetMeshPath() const;

@@ -3,6 +3,8 @@
 
 #include <cstdint>
 
+#include "Public/RenderCore/RenderCoreAPI.h"
+
 /*
  * GPU particles (ParticleSystemComponent, RenderContext's particle calls;
  * RENDERPIPELINE.md, "Particles"): what one emitter simulates, in world
@@ -64,6 +66,30 @@ namespace RenderCore
         PSM_Count
     };
 
+    /* Where in an emitter's shape a particle is born. Every shape follows
+     * the entity's rotation (ShapeAxisX/Y); its outward direction is what
+     * ShapeSpeed pushes along. */
+    enum EParticleShape : uint8_t
+    {
+        PS_Sphere     = 0,   // within EmitterRadius; outward from the centre
+        PS_Hemisphere = 1,   // the sphere's upper (+Y) half
+        PS_Box        = 2,   // within BoxSize; outward through the nearest face
+        PS_Cone       = 3,   // a disc of EmitterRadius facing +Y; out within ConeAngle of +Y
+        PS_Ring       = 4,   // a circle of EmitterRadius about +Y, RingWidth wide; outward from its centre
+        PS_Count
+    };
+
+    /* How colour (and alpha) or size follows a particle's life. */
+    enum EParticleOverLife : uint8_t
+    {
+        POL_StartEnd = 0,   // Start to End (colour: by ColorCurve, faded in and out)
+        POL_Keys     = 1,   // through keys: a colour gradient, a size curve
+        POL_Count
+    };
+
+    /* Samples a colour or size over life is baked into, evenly from birth to death. */
+    constexpr uint32_t PARTICLE_LUT_SIZE = 32;
+
     /* An emitter's settings, as RenderContext::SimulateParticles takes them.
      * Vectors are world space; colours sRGB 0-1, as a material's are. */
     struct ParticleEmitterSettings
@@ -101,6 +127,26 @@ namespace RenderCore
         float    BeamNoise        = 0.0f;    // how far its middle strays, world units
         float    BeamNoiseSpeed   = 4.0f;    // how fast the jitter changes, a second
         uint32_t Seed             = 0;
+
+        /* Its shape (EmitterRadius is its radius). */
+        uint8_t  Shape            = PS_Sphere;
+        bool     bShapeSurface    = false;   // born on its surface (a sphere's shell, a box's faces, a ring's circle, a cone's rim)
+        float    BoxSize[3]       = { 100.0f, 100.0f, 100.0f };
+        float    ConeAngle        = 25.0f;   // degrees from +Y
+        float    RingWidth        = 0.0f;    // world units across the circle
+        float    ShapeSpeed       = 0.0f;    // plus this speed outward from the shape
+        float    ShapeAxisX[3]    = { 1.0f, 0.0f, 0.0f };   // the shape's +X and +Y in the world: the entity's
+        float    ShapeAxisY[3]    = { 0.0f, 1.0f, 0.0f };
+
+        /* Colour and size over life, baked: used instead of Start/End when
+         * set (ParticleEmitterDesc::ToSettings bakes a gradient or curve). */
+        bool     bColorLut        = false;
+        float    ColorLut[PARTICLE_LUT_SIZE][4] = {};
+        bool     bSizeLut         = false;
+        float    SizeLut[PARTICLE_LUT_SIZE] = {};
+
+        /* Start to End as samples: the colour by ColorCurve, faded in and out; the size straight. */
+        RENDERCORE_API void BakeStartEnd(float (&OutColor)[PARTICLE_LUT_SIZE][4], float (&OutSize)[PARTICLE_LUT_SIZE]) const;
 
         /* Particles its GPU ring holds: a beam's points, or MaxParticles. */
         uint32_t GetCapacity() const;
