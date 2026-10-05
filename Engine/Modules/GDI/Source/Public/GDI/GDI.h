@@ -711,8 +711,28 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, BeginDrawEvent, (const std::string& InE
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, EndDrawEvent, ())
 
-/* GDIDynamicDriver::HasDrawEvents: false with no driver. */
+/* GDIDynamicDriver::HasDrawEvents: false with no driver, or with [Shaders]
+ * ShaderDebug off. */
 bool GDIHasDrawEvents();
+
+/*
+ * [Shaders] ShaderDebug (Edit > Editor Settings > Shaders; default on): draw
+ * events (GDIBeginDrawEvent) and object names (GDISetDebugName, shader
+ * modules, render targets) reach capture tools. Off, regions are dropped at
+ * once; names are given as objects are made, so ones made while it was on
+ * keep theirs.
+ */
+bool GDIShaderDebugEnabled();
+
+/*
+ * [Shaders] ShaderPDB with [Shaders] PDBDir (the editor sets it to
+ * Engine/Shaders/PDBs): the debug-info file the shader cook wrote for a
+ * cooked shader -- "Shaders/Cooked/Vulkan/Basic.vsh.spv" is
+ * "<PDBDir>/Vulkan/Basic.vsh.spv", SPIR-V with its source; a D3D12 .cso's is
+ * "<PDBDir>/D3D12/<name>.pdb". Empty when the setting is off or the file is
+ * not there. Vulkan hands it to RenderDoc on the shader module (VKShader).
+ */
+std::string GDIGetShaderPDBPath(const std::string& InCookedPath);
 
 /* GDIDynamicDriver::CreateRenderTargetFormat / SupportsRenderTargetFormat. */
 GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat);

@@ -68,9 +68,14 @@ public:
     uint32_t FindMemoryType(uint32_t TypeBits, VkMemoryPropertyFlags Properties) const;
 
     /** Names InHandle (of InType) for capture tools and validation messages,
-     *  through VK_EXT_debug_utils; nothing when the instance lacks it or the
-     *  handle or name is empty. */
+     *  through VK_EXT_debug_utils; nothing when the instance lacks it, the
+     *  handle or name is empty, or [Shaders] ShaderDebug is off. */
     void SetObjectName(VkObjectType InType, uint64_t InHandle, const std::string& InName) const;
+
+    /** Attaches InTag's bytes to InHandle under InTagName (VK_EXT_debug_utils
+     *  object tags), for a tool that looks for that name; nothing when the
+     *  instance lacks the extension or the handle or tag is empty. */
+    void SetObjectTag(VkObjectType InType, uint64_t InHandle, uint64_t InTagName, const std::string& InTag) const;
 
     inline VkInstance       GetInstance() const         { return Instance; }
     inline VkPhysicalDevice GetPhysicalDevice() const   { return PhysicalDevice; }

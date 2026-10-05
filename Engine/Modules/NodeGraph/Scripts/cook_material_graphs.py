@@ -21,7 +21,7 @@ Usage:
 
     python cook_material_graphs.py -target <OpenGL|Vulkan|D3D12> -src PATH [-src PATH ...]
                                    (-out DIR [-data-out DIR] | -cache FILE -module NAME)
-                                   [-root DIR] [-subdir NAME] [-defaults]
+                                   [-root DIR] [-subdir NAME] [-defaults] [-pdb DIR]
         Cook every .vsh/.fsh/.csh (compute), .mtl.glsl and .material.nmgraph given, or under
         a directory PATH (recursively), into DIR/<Platform>/, named as GDI
         names its shaders:
@@ -44,6 +44,16 @@ Usage:
         every cooked file at its runtime path under Shaders/Cooked/, plus each
         material's .material at Materials/<Name>.material. RenderCore mounts
         it as a read-only file layer (ShaderCache.h).
+
+        -pdb DIR also writes each shader's debug information below
+        DIR/<Platform>/, at its cooked name (the editor's [Shaders] ShaderPDB,
+        DIR Engine/Shaders/PDBs; GDIGetShaderPDBPath finds them):
+            Vulkan  <name>.spv      SPIR-V with its source and names (glslc -g),
+                                    <name>.glsl the preprocessed source it holds
+            D3D12   <name>.pdb      fxc's PDB (/Zi /Fd); the .cso is stripped
+                                    and names it. <name>.hlsl beside it
+            OpenGL  nothing         the cooked file is already source
+        Without -out or -cache, only these are kept.
 
 The renderer loads the material "Materials/Glow.material.nmgraph" from
 Materials/Glow.material and
@@ -169,21 +179,30 @@ def _preprocess(cs, job, platform_define):
     return cs.preprocess(job.source, shader_type, ENGINE_SHADERS_DIR, defines)
 
 
-def _spirv(cs, glslc, job, spv_path):
-    """GLSL -> SPIR-V; the stage from a temporary file's extension, as glslc reads it."""
+def _spirv(cs, glslc, job, spv_path, debug_source=None):
+    """GLSL -> SPIR-V; the stage from a temporary file's extension, as glslc reads it.
+    With debug_source, the preprocessed source is kept there and the SPIR-V
+    carries it (-g), named after it rather than a temporary file."""
     try:
         processed = _preprocess(cs, job, "WITH_VULKAN")
     except SystemExit:
         return False
 
-    fd, tmp_path = tempfile.mkstemp(suffix=STAGE_SUFFIX[job.stage])
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as tmp:
-            tmp.write(processed)
-        result = subprocess.run([glslc, tmp_path, "-o", str(spv_path)], capture_output=True, text=True)
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
+    if debug_source:
+        debug_source.parent.mkdir(parents=True, exist_ok=True)
+        debug_source.write_text(processed, encoding="utf-8")
+        stage = STAGE_SUFFIX[job.stage][1:]
+        result = subprocess.run([glslc, "-g", f"-fshader-stage={stage}", str(debug_source), "-o", str(spv_path)],
+                                capture_output=True, text=True)
+    else:
+        fd, tmp_path = tempfile.mkstemp(suffix=STAGE_SUFFIX[job.stage])
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as tmp:
+                tmp.write(processed)
+            result = subprocess.run([glslc, tmp_path, "-o", str(spv_path)], capture_output=True, text=True)
+        finally:
+            if os.path.exists(tmp_path):
+                os.unlink(tmp_path)
 
     if result.returncode != 0:
         print(f"ERROR: glslc failed for {job.label()}:\n{result.stderr}", file=sys.stderr)
@@ -191,8 +210,9 @@ def _spirv(cs, glslc, job, spv_path):
     return True
 
 
-def cook_job(cs, tools, target, job, out_dir):
-    """Cooks one job into out_dir; False (reported) on failure."""
+def cook_job(cs, tools, target, job, out_dir, pdb_dir=None):
+    """Cooks one job into out_dir, and its debug information into pdb_dir
+    when given (-pdb); False (reported) on failure."""
     if target == "OpenGL":
         try:
             text = _preprocess(cs, job, "WITH_OPENGL")
@@ -202,12 +222,20 @@ def cook_job(cs, tools, target, job, out_dir):
         return True
 
     if target == "Vulkan":
-        return _spirv(cs, tools["glslc"], job, out_dir / (job.out_name + ".spv"))
+        if not _spirv(cs, tools["glslc"], job, out_dir / (job.out_name + ".spv")):
+            return False
+        # Compiled again rather than stripped: the shipped module stays as it
+        # was without -pdb, and glslc's default -O0 makes the two the same code.
+        return not pdb_dir or _spirv(cs, tools["glslc"], job, pdb_dir / (job.out_name + ".spv"),
+                                     debug_source=pdb_dir / (job.out_name + ".glsl"))
 
     # D3D12: GLSL -> SPIR-V -> HLSL -> DXBC, as cook_shaders.cook_d3d12.
     with tempfile.TemporaryDirectory() as tmp_dir:
         spv_path  = Path(tmp_dir) / "shader.spv"
-        hlsl_path = Path(tmp_dir) / "shader.hlsl"
+        # With -pdb the HLSL is kept beside the PDB, which refers to it by path.
+        hlsl_path = pdb_dir / (job.out_name + ".hlsl") if pdb_dir else Path(tmp_dir) / "shader.hlsl"
+        if pdb_dir:
+            hlsl_path.parent.mkdir(parents=True, exist_ok=True)
         if not _spirv(cs, tools["glslc"], job, spv_path):
             return False
 
@@ -217,7 +245,10 @@ def cook_job(cs, tools, target, job, out_dir):
             cross_args += ["--hlsl-flatten-matrix-vertex-input-semantics"]   # no Y flip: GDI.h
         cross_args += [str(spv_path), "--output", str(hlsl_path)]
         fxc_args = [tools["fxc"], "/nologo", "/T", STAGE_PROFILE[job.stage],
-                    "/E", "main", "/O3", "/Fo", str(out_dir / (job.out_name + ".cso")), str(hlsl_path)]
+                    "/E", "main", "/O3", "/Fo", str(out_dir / (job.out_name + ".cso"))]
+        if pdb_dir:
+            fxc_args += ["/Zi", "/Qstrip_debug", "/Fd", str(pdb_dir / (job.out_name + ".pdb"))]
+        fxc_args += [str(hlsl_path)]
 
         for args, tool in ((cross_args, "spirv-cross"), (fxc_args, "fxc")):
             result = subprocess.run(args, capture_output=True, text=True)
@@ -412,7 +443,8 @@ def check(cs, files, root):
     return failures
 
 
-def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=None, module="", root=None, data_out=None):
+def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=None, module="", root=None, data_out=None,
+         pdb=None):
     plain, materials, graphs = collect(src_paths)
     if graphs and not root:
         print("ERROR: material graphs need -root (what their runtime paths are relative to)", file=sys.stderr)
@@ -446,13 +478,19 @@ def cook(cs, target, src_paths, out_root=None, subdir="", defaults=False, cache=
                 jobs.append(job)
 
         tools = find_tools(cs, target)
-        out_dir = Path(tmp_dir) / target if cache else Path(out_root) / target
+        out_dir = Path(out_root) / target if out_root and not cache else Path(tmp_dir) / target
         out_dir.mkdir(parents=True, exist_ok=True)
+        pdb_dir = Path(pdb) / target if pdb and target != "OpenGL" else None
 
-        print(f"[{target}] {len(jobs)} shader(s) -> {cache or out_dir}")
+        print(f"[{target}] {len(jobs)} shader(s) -> {cache or (out_dir if out_root else pdb_dir)}"
+              + (f" (debug info -> {pdb_dir})" if pdb_dir and (cache or out_root) else ""))
+        if pdb and not pdb_dir:
+            print(f"[{target}] no debug information to write: the cooked shaders are source")
         for job in jobs:
             (out_dir / job.out_name).parent.mkdir(parents=True, exist_ok=True)
-            if cook_job(cs, tools, target, job, out_dir):
+            if pdb_dir:
+                (pdb_dir / job.out_name).parent.mkdir(parents=True, exist_ok=True)
+            if cook_job(cs, tools, target, job, out_dir, pdb_dir):
                 print(f"  {job.label()}")
             else:
                 failures += 1
@@ -487,6 +525,8 @@ def main():
     parser.add_argument("-defaults", action="store_true", help="also cook the shared MaterialDefault vertex shaders")
     parser.add_argument("-cache", metavar="FILE", help="write one shader cache instead of loose files")
     parser.add_argument("-module", default="", metavar="NAME", help="the module the cache belongs to")
+    parser.add_argument("-pdb", metavar="DIR", help="also write each shader's debug information below DIR/<Platform>/; "
+                                                   "alone (no -out or -cache), only that")
     parser.add_argument("-gdi-scripts", default=str(GDI_SCRIPTS_DIR), metavar="DIR",
                         help="where GDI's cook_shaders.py lives (default: beside this module)")
     args = parser.parse_args()
@@ -495,13 +535,13 @@ def main():
 
     if args.check:
         sys.exit(1 if check(cs, args.check, args.root) else 0)
-    if args.target and (args.src or args.defaults) and (args.out or args.cache):
+    if args.target and (args.src or args.defaults) and (args.out or args.cache or args.pdb):
         if args.cache and not args.module:
             parser.error("-cache needs -module")
         sys.exit(1 if cook(cs, args.target, args.src or [], args.out, args.subdir, args.defaults, args.cache,
-                           args.module, args.root, args.data_out) else 0)
+                           args.module, args.root, args.data_out, args.pdb) else 0)
 
-    parser.error("give -check FILE..., or -target with -src (or -defaults) and -out or -cache")
+    parser.error("give -check FILE..., or -target with -src (or -defaults) and -out, -cache or -pdb")
 
 
 if __name__ == "__main__":

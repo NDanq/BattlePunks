@@ -113,7 +113,7 @@ void VKRenderTarget::Allocate()
     }
 
     // Name the image so captures and validation-layer messages identify which RT it is.
-    if(VulkanGDIContext::HasDebugUtils())
+    if(VulkanGDIContext::HasDebugUtils() && GDIShaderDebugEnabled())
     {
         static auto SetObjectName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
             vkGetInstanceProcAddr(Device->GetInstance(), "vkSetDebugUtilsObjectNameEXT"));

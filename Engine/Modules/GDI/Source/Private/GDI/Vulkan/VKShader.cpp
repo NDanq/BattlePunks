@@ -69,6 +69,17 @@ VKShaderResource::VKShaderResource(VKDevice* InDevice, EShaderType InType, const
 
     /* Named by its file, so a capture reads which material or pass it is. */
     InDevice->SetObjectName(VK_OBJECT_TYPE_SHADER_MODULE, reinterpret_cast<uint64_t>(ShaderModule), SpvPath);
+
+    /* [Shaders] ShaderPDB: RenderDoc reads the cook's debug SPIR-V (its source
+     * and names) for this module from the path tagged with its magic value,
+     * RENDERDOC_ShaderDebugMagicValue_truncated in renderdoc_app.h. */
+    const std::string DebugInfo = GDIGetShaderPDBPath(SpvPath);
+    if(!DebugInfo.empty())
+    {
+        constexpr uint64_t RENDERDOC_SHADER_DEBUG_MAGIC = 0x48656670eab25520ULL;
+        InDevice->SetObjectTag(VK_OBJECT_TYPE_SHADER_MODULE, reinterpret_cast<uint64_t>(ShaderModule),
+                               RENDERDOC_SHADER_DEBUG_MAGIC, DebugInfo);
+    }
     bInitialized = true;
     GDI_LOG("[VKShaderResource] Loaded SPIR-V module: " + SpvPath)
 }
