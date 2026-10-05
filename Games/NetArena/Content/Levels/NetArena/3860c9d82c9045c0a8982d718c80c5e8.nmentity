@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="3860c9d82c9045c0a8982d718c80c5e8" Name="SpawnBlue">
+  <Component Type="NetArenaSpawn" Version="1">
+    <ColorIndex Value="1" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="500" Y="70" Z="-400" />
+    <Rotation X="0" Y="-45" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>
