@@ -105,6 +105,20 @@ namespace NimbleEngine
         /* Everything up, without losing the edges: focus loss, so nothing sticks. */
         void ReleaseAll();
 
+        /*
+         * Taken by something in front of the game -- the UI over a button, a
+         * menu -- so the game does not see it this frame: up, no edges, no
+         * value. Unlike ReleaseAll there is no release edge: a key consumed
+         * while held looks to the game as if it went up without one, and an
+         * InputComponent reports that as released. GameSession consumes what
+         * its UISystem took (INPUT.md, "The UI").
+         */
+        void Consume(InputKey InKey, uint8_t InPlayer = 0);
+        void ConsumeKeyboard();
+        void ConsumeMouseButtons();   // and the wheel
+        void ConsumeGamepad();        // every player's buttons and sticks
+        void ConsumeAll();
+
         /* Starts the next frame: edges and per-frame motion back to zero, held
          * state kept. */
         void BeginFrame(uint64_t InFrameNumber);
@@ -225,6 +239,12 @@ namespace NimbleEngine
     /* Every InputComponent in InWorld from InState: the TP_PrePhysics
      * SO_BeforeScripts system a session registers. */
     NE_API void ResolveInputComponents(GameCore::World& InWorld, const InputState& InState);
+
+    /* Whether InMap's action InAction went down this frame in InState (any of
+     * its bindings), for a reader without an InputComponent -- the UI's
+     * navigation. bOutFromGamepad, if given, says a gamepad binding did it. */
+    NE_API bool WasInputActionPressed(const char* InMap, const char* InAction, const InputState& InState,
+                                      uint8_t InPlayer = 0, bool* bOutFromGamepad = nullptr);
 
     /* What the "Input" script library reads; null reads nothing pressed. */
     NE_API void SetScriptInputState(const InputState* InState);

@@ -294,9 +294,52 @@ namespace
 #endif
 }
 
+/* InputState::Consume*: what the UI takes, the game does not see. */
+static void TestConsume()
+{
+    std::printf("[consume]\n");
+    InputState State;
+    State.BeginFrame(1);
+    State.Press(FindInputKey("Space"));
+    State.Press(FindInputKey("Mouse.Left"));
+    State.Press(FindInputKey("Gamepad.South"), 1);
+    State.SetAnalog(FindInputKey("Gamepad.LeftX"), 0.8f, 1);
+    State.AddWheel(0.0f, 2.0f);
+
+    InputState Keys = State;
+    Keys.ConsumeKeyboard();
+    Expect(!Keys.IsDown("Space") && !Keys.WasPressed("Space"), "ConsumeKeyboard takes a key and its edge");
+    Expect(Keys.IsDown("Mouse.Left") && Keys.IsDown(FindInputKey("Gamepad.South"), 1), "and leaves the mouse and pads");
+
+    InputState Mouse = State;
+    Mouse.ConsumeMouseButtons();
+    Expect(!Mouse.IsDown("Mouse.Left") && Mouse.GetWheelDelta() == 0.0f && Mouse.IsDown("Space"), "ConsumeMouseButtons takes buttons and the wheel");
+
+    InputState Pads = State;
+    Pads.ConsumeGamepad();
+    Expect(!Pads.IsDown(FindInputKey("Gamepad.South"), 1) && Pads.GetValue(FindInputKey("Gamepad.LeftX"), 1) == 0.0f,
+           "ConsumeGamepad takes every player's buttons and sticks");
+
+    InputState One = State;
+    One.Consume(FindInputKey("Space"));
+    Expect(!One.IsDown("Space") && !One.WasReleased("Space") && One.IsDown("Mouse.Left"), "Consume takes one key, with no release edge");
+
+    InputState All = State;
+    All.ConsumeAll();
+    Expect(!All.IsDown("Space") && !All.IsDown("Mouse.Left") && !All.IsDown(FindInputKey("Gamepad.South"), 1), "ConsumeAll takes everything");
+
+    bool bPad = true;
+    Expect(WasInputActionPressed("TestMap", "Jump", State, 0, &bPad) && !bPad, "a map action is read straight from a state, by keyboard");
+    InputState PadOnly;
+    PadOnly.Press(FindInputKey("Gamepad.South"));
+    Expect(WasInputActionPressed("TestMap", "Jump", PadOnly, 0, &bPad) && bPad, "and says when a gamepad pressed it");
+    Expect(!WasInputActionPressed("TestMap", "Nope", State) && !WasInputActionPressed("NoMap", "Jump", State), "unknown names are not pressed");
+}
+
 int main()
 {
     std::printf("NimbleEngineInputTests\n");
+    TestConsume();
     TestNames();
     TestEdges();
     TestRouterLatch();
