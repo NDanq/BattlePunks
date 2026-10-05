@@ -1899,11 +1899,160 @@ static void TestTextureMips()
            && TextureCompressedBytes(4, 4, 3, ETextureCompression::None) == (16 + 4 + 1) * 4,
            "TextureCompressedBytes: BC1 and BC4 half a byte a texel, the rest one, a 4x4 block at least per level");
 
-    /* Compression: a stored setting until an encoder is registered. */
-    Expect(GetTextureCompressor() == nullptr && IsTextureCompressionAvailable(ETextureCompression::None)
-           && !IsTextureCompressionAvailable(ETextureCompression::BC7), "no block encoder is integrated yet: only None is honoured");
     Expect(std::string(GetTextureCompressionName(ETextureCompression::BC5)) == "BC5"
            && std::string(GetTextureMipGenName(ETextureMipGen::Kaiser)) == "Kaiser", "the settings' names");
+}
+
+/*
+ * Block compression (TextureCompression.h): the built-in encoder in an editor
+ * build, every format encoded and decoded close to its source, the blocks
+ * saved beside the pixels and loaded ForGpu without them.
+ */
+static void TestTextureCompression()
+{
+    Expect(IsTextureCompressionAvailable(ETextureCompression::None) && TextureBlockBytes(ETextureCompression::BC1) == 8
+           && TextureBlockBytes(ETextureCompression::BC4) == 8 && TextureBlockBytes(ETextureCompression::BC7) == 16,
+           "None is always honoured; BC1 and BC4 are 8 bytes a block, the rest 16");
+
+    /* Decoding needs no encoder: a solid BC4 block (both endpoints 200) is 200 everywhere, reading (r, 0, 0, 1). */
+    TextureBlockLevel Solid;
+    Solid.Width  = 3;
+    Solid.Height = 2;
+    Solid.Bytes  = { 200, 200, 0, 0, 0, 0, 0, 0 };
+    Image SolidImage;
+    Expect(DecodeTextureBlocks(Solid, ETextureCompression::BC4, SolidImage) && SolidImage.GetWidth() == 3
+           && SolidImage.GetHeight() == 2 && SolidImage.GetData()[0] == 200 && SolidImage.GetData()[1] == 0
+           && SolidImage.GetData()[3] == 255 && SolidImage.GetScanline(1)[8] == 200,
+           "a BC4 block decodes as the GPU reads it, cut to the level's size");
+    Solid.Bytes.pop_back();
+    Expect(!DecodeTextureBlocks(Solid, ETextureCompression::BC4, SolidImage), "blocks of the wrong size do not decode");
+
+#if WITH_EDITOR
+    Expect(GetTextureCompressor() && std::string(GetTextureCompressor()->GetName()) == "bc7enc_rdo"
+           && IsTextureCompressionAvailable(ETextureCompression::BC1) && IsTextureCompressionAvailable(ETextureCompression::BC7),
+           "an editor build encodes with bc7enc_rdo");
+
+    /* Smooth ramps, 13x9 so the edge blocks are partial, alpha its own ramp. */
+    TextureData Source;
+    Source.Pixels = Image(13, 9, EImageFormat::RGBA8);
+    for(int Y = 0; Y < 9; ++Y)
+    {
+        uint8_t* Row = Source.Pixels.GetScanline(Y);
+        for(int X = 0; X < 13; ++X)
+        {
+            Row[X * 4 + 0] = uint8_t(X * 18);
+            Row[X * 4 + 1] = uint8_t(Y * 28);
+            Row[X * 4 + 2] = uint8_t(255 - X * 9 - Y * 9);
+            Row[X * 4 + 3] = uint8_t(40 + (X + Y) * 9);
+        }
+    }
+    Source.bSRGB  = true;
+    Source.MipGen = ETextureMipGen::Box;
+    BuildTextureMips(Source);
+
+    /* Each format's channels, and how far a level-0 texel may stray on
+     * average: loose, since three channels ramping apart is a block format's
+     * worst case (about 8 for BC1, 4 for BC7), and a broken codec strays by
+     * tens. The smaller levels ramp twice as steeply each, so get twice it. */
+    struct Case { ETextureCompression Compression; int Channels; bool bAlpha; double MeanError; };
+    const Case Cases[] = {
+        { ETextureCompression::BC1, 3, false, 12.0 },
+        { ETextureCompression::BC3, 3, true,  12.0 },
+        { ETextureCompression::BC4, 1, false, 6.0 },
+        { ETextureCompression::BC5, 2, false, 6.0 },
+        { ETextureCompression::BC7, 3, true,  6.0 },
+    };
+    double LevelZeroError[6] = {};
+    for(const Case& Each : Cases)
+    {
+        TextureData Texture = Source;
+        Texture.Compression = Each.Compression;
+        std::string Error;
+        bool bClose = CompressTexture(Texture, Error) && TextureBlocksMatch(Texture) && Texture.Blocks.size() == 4
+                      && TextureGpuBytes(Texture) == TextureCompressedBytes(13, 9, 4, Each.Compression);
+        for(int Level = 0; bClose && Level < Texture.GetMipCount(); ++Level)
+        {
+            const Image& Mip = *Texture.GetMip(Level);
+            Image Decoded;
+            bClose = DecodeTextureBlocks(Texture.Blocks[size_t(Level)], Each.Compression, Decoded)
+                     && Decoded.GetWidth() == Mip.GetWidth() && Decoded.GetHeight() == Mip.GetHeight();
+            double Error = 0.0;
+            int    Count = 0;
+            for(int Y = 0; bClose && Y < Mip.GetHeight(); ++Y)
+            {
+                const uint8_t* Want = Mip.GetScanline(Y);
+                const uint8_t* Got  = Decoded.GetScanline(Y);
+                for(int X = 0; X < Mip.GetWidth(); ++X)
+                {
+                    for(int Channel = 0; Channel < 4; ++Channel)
+                    {
+                        const int Texel = X * 4 + Channel;
+                        if(Channel < Each.Channels || (Channel == 3 && Each.bAlpha))
+                        {
+                            Error += std::abs(int(Want[Texel]) - int(Got[Texel]));
+                            ++Count;
+                        }
+                        else if(Got[Texel] != (Channel == 3 ? 255 : 0))
+                        {
+                            bClose = false;   // what the format lacks reads 0, alpha 1
+                        }
+                    }
+                }
+            }
+            if(Level == 0) { LevelZeroError[int(Each.Compression)] = Error / std::max(Count, 1); }
+            bClose = bClose && Error / std::max(Count, 1) <= Each.MeanError * (Level == 0 ? 1.0 : 2.0);
+        }
+        Expect(bClose, (std::string(GetTextureCompressionName(Each.Compression))
+                        + ": every level encodes, and decodes close to its source").c_str());
+    }
+    Expect(LevelZeroError[int(ETextureCompression::BC7)] < LevelZeroError[int(ETextureCompression::BC1)],
+           "BC7 is closer than BC1");
+
+    /* Saved beside the pixels; loaded ForGpu without them. */
+    TextureData Texture = Source;
+    Texture.Compression = ETextureCompression::BC7;
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreCompression";
+    std::filesystem::create_directories(Root);
+    const std::string File = (Root / "Ramp.nmtexture").string();
+    Expect(SaveTextureFile(File, Texture) && TextureBlocksMatch(Texture), "SaveTextureFile encodes what it has not");
+    TextureData Everything, ForGpu;
+    Expect(LoadTextureFile(File, Everything) && Everything.Blocks.size() == 4 && Everything.Mips.size() == 3
+           && Everything.Blocks[0].Bytes == Texture.Blocks[0].Bytes && Everything.Blocks[3].Bytes == Texture.Blocks[3].Bytes
+           && std::memcmp(Everything.Pixels.GetData(), Source.Pixels.GetData(), Source.Pixels.GetSizeBytes()) == 0,
+           "and it loads with the RGBA8 source and the blocks");
+    Expect(LoadTextureFile(File, ForGpu, ETextureLoad::ForGpu) && ForGpu.Pixels.IsNull() && ForGpu.Mips.empty()
+           && ForGpu.Blocks.size() == 4 && ForGpu.Blocks[0].Width == 13 && ForGpu.Blocks[3].Width == 1
+           && ForGpu.Blocks[2].Bytes == Texture.Blocks[2].Bytes && ForGpu.Compression == ETextureCompression::BC7,
+           "ForGpu, only the blocks");
+    TextureHeader Header;
+    Expect(LoadTextureHeader(File, Header) && Header.bBlocks && Header.MipCount == 4, "the header says blocks follow");
+
+    TextureData Stale = Texture;
+    Stale.Blocks.pop_back();
+    Archive StaleWriter = Archive::ForWriting();
+    Expect(!SerializeTexture(StaleWriter, Stale), "blocks that are not every level do not save");
+    Stale.Blocks = Texture.Blocks;
+    Stale.Compression = ETextureCompression::BC1;
+    Expect(!TextureBlocksMatch(Stale), "nor do blocks of another compression");
+    Expect(SaveTextureFile(File, Stale) && TextureBlocksMatch(Stale)
+           && Stale.Blocks[0].Bytes.size() == TextureCompressedBytes(13, 9, 1, ETextureCompression::BC1),
+           "which SaveTextureFile encodes again");
+    Stale.Compression = ETextureCompression::None;
+    Expect(SaveTextureFile(File, Stale) && Stale.Blocks.empty() && LoadTextureFile(File, ForGpu, ETextureLoad::ForGpu)
+           && ForGpu.Blocks.empty() && !ForGpu.Pixels.IsNull(), "None drops the blocks: ForGpu then has the pixels");
+    BuildTextureMips(Texture);
+    Expect(Texture.Blocks.empty(), "rebuilding the mips clears the blocks made from them");
+
+    TextureData Hdri = Source;
+    Hdri.Format      = ETexturePixelFormat::RGBE8;
+    Hdri.Compression = ETextureCompression::BC7;
+    std::string Error;
+    Expect(CompressTexture(Hdri, Error) && Hdri.Blocks.empty(), "an RGBE8 texture is never compressed");
+    std::filesystem::remove_all(Root);
+#else
+    Expect(GetTextureCompressor() == nullptr && !IsTextureCompressionAvailable(ETextureCompression::BC7),
+           "a game build has no encoder: only None is honoured");
+#endif
 }
 
 /*
@@ -4296,6 +4445,7 @@ int main()
     TestUIOnGpu();
     TestMeshAssets();
     TestTextureAssets();
+    TestTextureCompression();
     TestTextureMips();
     TestToneMappingSettings();
     TestImageBasedLightingData();

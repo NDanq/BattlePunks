@@ -72,6 +72,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/MeshAsset.cpp
         Source/Private/RenderCore/BakedLightingAsset.cpp
         Source/Private/RenderCore/TextureAsset.cpp
+        Source/Private/RenderCore/TextureCompression.cpp
         Source/Private/RenderCore/RenderTargetAsset.cpp
         Source/Private/RenderCore/SceneCapture.cpp
         Source/Private/RenderCore/SceneCapture.h
@@ -144,6 +145,28 @@ nimble_add_module(RenderCore SHARED
         SOURCES      ${RENDERCORE_SOURCES}
         PUBLIC_DEPS  GameCore::GameCore
         PRIVATE_DEPS GDI::GDI)
+
+# bc7enc_rdo (MIT or public domain), vendored at richgel999/bc7enc_rdo
+# b943862: BC1-BC5 (rgbcx) and BC7 (bc7enc) blocks; TextureCompression.cpp.
+# The decoders are for a backend without block formats, so every build has
+# them; the encoder only an editor build. Its own library, built without the
+# engine's warnings and, off MSVC (where /O2 clashes with Debug's /RTC1),
+# optimised even in Debug -- unoptimised, BC7 is many times slower.
+set(RENDERCORE_BC7ENC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/External/bc7enc_rdo-b943862")
+add_library(NimbleBc7enc STATIC
+        "${RENDERCORE_BC7ENC_DIR}/rgbcx.cpp"
+        "${RENDERCORE_BC7ENC_DIR}/bc7decomp.cpp")
+if(NIMBLE_WITH_EDITOR)
+    target_sources(NimbleBc7enc PRIVATE "${RENDERCORE_BC7ENC_DIR}/bc7enc.cpp")
+endif()
+target_include_directories(NimbleBc7enc PUBLIC "${RENDERCORE_BC7ENC_DIR}")
+if(MSVC)
+    target_compile_options(NimbleBc7enc PRIVATE /w)
+else()
+    target_compile_options(NimbleBc7enc PRIVATE -w -O2)
+endif()
+set_target_properties(NimbleBc7enc PROPERTIES FOLDER "RenderCore/External" POSITION_INDEPENDENT_CODE ON)
+target_link_libraries(RenderCore PRIVATE NimbleBc7enc)
 
 # PRIVATE, not PUBLIC: RenderCoreInternal.h is included as
 # "Private/RenderCore/RenderCoreInternal.h" from this module's own .cpp files

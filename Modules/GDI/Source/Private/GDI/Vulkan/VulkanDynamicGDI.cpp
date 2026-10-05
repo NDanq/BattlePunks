@@ -877,6 +877,44 @@ GDITextureResource* VulkanDynamicGDI::CreateTextureResourceMips(
     return new VKTextureResource(DeviceObj, InLevels, InCount, InBorder, InFilter);
 }
 
+/* The UNORM BC formats; BC1 without alpha, so a 3-colour block's black stays opaque. */
+static VkFormat ToVkCompressedFormat(const EGDICompressedFormat InFormat)
+{
+    switch(InFormat)
+    {
+        case GDI_CF_BC1: return VK_FORMAT_BC1_RGB_UNORM_BLOCK;
+        case GDI_CF_BC3: return VK_FORMAT_BC3_UNORM_BLOCK;
+        case GDI_CF_BC4: return VK_FORMAT_BC4_UNORM_BLOCK;
+        case GDI_CF_BC5: return VK_FORMAT_BC5_UNORM_BLOCK;
+        case GDI_CF_BC7: return VK_FORMAT_BC7_UNORM_BLOCK;
+        default: break;
+    }
+    return VK_FORMAT_UNDEFINED;
+}
+
+bool VulkanDynamicGDI::SupportsCompressedFormat(const EGDICompressedFormat InFormat) const
+{
+    const VkFormat Format = ToVkCompressedFormat(InFormat);
+    return DeviceObj && Format != VK_FORMAT_UNDEFINED && DeviceObj->SupportsSampledFormat(Format);
+}
+
+GDITextureResource* VulkanDynamicGDI::CreateCompressedTextureResource(
+        const EGDICompressedFormat InFormat,
+        const GDICompressedLevel*  InLevels,
+        const uint32_t             InCount,
+        const EGDITextureBorder    InBorder,
+        const EGDITextureFilter    InFilter)
+{
+    if(!InLevels || InCount == 0 || !SupportsCompressedFormat(InFormat)) return nullptr;
+    auto* Texture = new VKTextureResource(DeviceObj, ToVkCompressedFormat(InFormat), InLevels, InCount, InBorder, InFilter);
+    if(Texture->GetImageView() == VK_NULL_HANDLE)
+    {
+        delete Texture;
+        return nullptr;
+    }
+    return Texture;
+}
+
 GDITextureResource* VulkanDynamicGDI::CreateTextureResource(
         GDITexture2D* InParent,
         const EGDITextureBorder InBorder,

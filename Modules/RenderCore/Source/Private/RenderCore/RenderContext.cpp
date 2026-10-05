@@ -23,6 +23,7 @@
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Public/RenderCore/TextureCompression.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/OverlayFont.h"
@@ -559,7 +560,11 @@ namespace RenderCore
             const EGDITextureBorder Border = Wrap == ETextureWrap::Clamp  ? GDI_TB_Clamp_To_Edge
                                            : Wrap == ETextureWrap::Mirror ? GDI_TB_Mirrored_Repeat : GDI_TB_Repeat;
             const EGDITextureFilter GpuFilter = Filter == ETextureFilter::Nearest ? GDI_TF_Nearest : GDI_TF_Linear;
-            if(Source->Mips.empty())
+            if(!Source->Blocks.empty())
+            {
+                Entry.Gpu = CreateBlockTexture(*Source, InTexture.Path, Border, GpuFilter);
+            }
+            else if(Source->Mips.empty())
             {
                 Entry.Gpu = GDICreateTextureResource(Source->Pixels, Border, GpuFilter);
             }
@@ -577,6 +582,47 @@ namespace RenderCore
                 WarnOnce(InTexture.Path + "|texture", "texture '" + InTexture.Path + "': this backend could not create it");
             }
             return Entry.Gpu;
+        }
+
+        /* InSource's blocks as they are where the backend samples the format,
+         * else decoded to RGBA8 -- the same image either way. */
+        GDITextureResource* CreateBlockTexture(const TextureData& InSource, const std::string& InPath,
+                                               const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
+        {
+            EGDICompressedFormat Format = GDI_CF_MAX;
+            switch(InSource.Compression)
+            {
+                case ETextureCompression::BC1:  Format = GDI_CF_BC1; break;
+                case ETextureCompression::BC3:  Format = GDI_CF_BC3; break;
+                case ETextureCompression::BC4:  Format = GDI_CF_BC4; break;
+                case ETextureCompression::BC5:  Format = GDI_CF_BC5; break;
+                case ETextureCompression::BC7:  Format = GDI_CF_BC7; break;
+                case ETextureCompression::None: break;
+            }
+            if(GDISupportsCompressedFormat(Format))
+            {
+                std::vector<GDICompressedLevel> Levels;
+                Levels.reserve(InSource.Blocks.size());
+                for(const TextureBlockLevel& Each : InSource.Blocks)
+                {
+                    Levels.push_back({ uint32_t(Each.Width), uint32_t(Each.Height), Each.Bytes.data(), Each.Bytes.size() });
+                }
+                if(GDITextureResource* Texture = GDICreateCompressedTextureResource(Format, Levels.data(), uint32_t(Levels.size()),
+                                                                                   InBorder, InFilter))
+                {
+                    return Texture;
+                }
+            }
+
+            WarnOnce(InPath + "|blocks", std::string("texture '") + InPath + "': this backend cannot sample "
+                     + GetTextureCompressionName(InSource.Compression) + ", so it is decoded to RGBA8");
+            std::vector<EngineCore::Image> Levels(InSource.Blocks.size());
+            for(size_t Level = 0; Level < Levels.size(); ++Level)
+            {
+                if(!DecodeTextureBlocks(InSource.Blocks[Level], InSource.Compression, Levels[Level])) { return nullptr; }
+            }
+            return Levels.size() == 1 ? GDICreateTextureResource(Levels[0], InBorder, InFilter)
+                                      : GDICreateTextureResourceMips(Levels.data(), uint32_t(Levels.size()), InBorder, InFilter);
         }
 
         void WarnOnce(const std::string& InKey, const std::string& InMessage)

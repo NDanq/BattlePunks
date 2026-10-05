@@ -88,6 +88,48 @@ VKTextureResource::VKTextureResource(VKDevice*                InDevice,
     }
 }
 
+VKTextureResource::VKTextureResource(VKDevice*                 InDevice,
+                                     const VkFormat            InFormat,
+                                     const GDICompressedLevel* InLevels,
+                                     const uint32_t            InCount,
+                                     const EGDITextureBorder   InBorder,
+                                     const EGDITextureFilter   InFilter)
+    : GDITextureResource()
+    , Device(InDevice)
+    , StoredBorder(InBorder)
+    , StoredFilter(InFilter)
+{
+    Width     = int(InLevels[0].Width);
+    Height    = int(InLevels[0].Height);
+    Format    = InFormat;
+    MipLevels = InCount > 0 ? InCount : 1;
+    AllocateImage();
+    BuildSampler();
+    if(Image == VK_NULL_HANDLE) return;
+
+    /* The blocks as they are, each level after the last; a block is 8 or 16
+     * bytes, so every offset stays a multiple of the texel block size. */
+    std::vector<const uint8_t*>    Sources(MipLevels);
+    std::vector<VkDeviceSize>      Sizes(MipLevels);
+    std::vector<VkBufferImageCopy> Regions(MipLevels);
+    VkDeviceSize Total = 0;
+    for(uint32_t Level = 0; Level < MipLevels; ++Level)
+    {
+        VkBufferImageCopy& Region = Regions[Level];
+        Region = {};
+        Region.bufferOffset                = Total;
+        Region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        Region.imageSubresource.mipLevel   = Level;
+        Region.imageSubresource.layerCount = 1;
+        Region.imageExtent                 = { InLevels[Level].Width, InLevels[Level].Height, 1u };
+        Sources[Level] = InLevels[Level].Data;
+        Sizes[Level]   = VkDeviceSize(InLevels[Level].Bytes);
+        Total = (Total + Sizes[Level] + 15u) & ~VkDeviceSize(15u);
+    }
+    UploadRegions(Sources.data(), Sizes.data(), Regions, Total);
+    bInitialized = CurrentLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+}
+
 VKTextureResource::VKTextureResource(VKDevice*         InDevice,
                                          GDITexture2D*     InParent,
                                          EGDITextureBorder InBorder,
@@ -145,13 +187,14 @@ void VKTextureResource::Update(const EngineCore::Image& InImage)
 {
     if(!Device || !Device->IsValid() || InImage.IsNull()) return;
 
-    // If dimensions changed (or it had mips, which one image cannot refill), recreate the image.
-    if(InImage.GetWidth() != Width || InImage.GetHeight() != Height || MipLevels != 1)
+    // If dimensions changed (or it had mips or blocks, which one RGBA8 image cannot refill), recreate the image.
+    if(InImage.GetWidth() != Width || InImage.GetHeight() != Height || MipLevels != 1 || Format != kRGBA8)
     {
         Width  = InImage.GetWidth();
         Height = InImage.GetHeight();
         const bool bHadMips = MipLevels != 1;
         MipLevels = 1;
+        Format    = kRGBA8;
         DestroyImage();
         AllocateImage();
         if(bHadMips) { BuildSampler(); }
@@ -199,7 +242,7 @@ void VKTextureResource::Release()
 
 EngineCore::Image VKTextureResource::ToImage() const
 {
-    if(!bInitialized || !Device || !Device->IsValid() || Image == VK_NULL_HANDLE)
+    if(!bInitialized || !Device || !Device->IsValid() || Image == VK_NULL_HANDLE || Format != kRGBA8)
         return EngineCore::Image();
 
     if(Width <= 0 || Height <= 0) return EngineCore::Image();
@@ -286,7 +329,7 @@ void VKTextureResource::AllocateImage()
     VkImageCreateInfo ImageInfo{};
     ImageInfo.sType         = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
     ImageInfo.imageType     = VK_IMAGE_TYPE_2D;
-    ImageInfo.format        = kFormat;
+    ImageInfo.format        = Format;
     ImageInfo.extent        = { static_cast<uint32_t>(Width),
                                  static_cast<uint32_t>(Height), 1u };
     ImageInfo.mipLevels     = MipLevels;
@@ -338,7 +381,7 @@ void VKTextureResource::AllocateImage()
     ViewInfo.sType                           = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
     ViewInfo.image                           = Image;
     ViewInfo.viewType                        = VK_IMAGE_VIEW_TYPE_2D;
-    ViewInfo.format                          = kFormat;
+    ViewInfo.format                          = Format;
     ViewInfo.components.r                    = VK_COMPONENT_SWIZZLE_IDENTITY;
     ViewInfo.components.g                    = VK_COMPONENT_SWIZZLE_IDENTITY;
     ViewInfo.components.b                    = VK_COMPONENT_SWIZZLE_IDENTITY;
@@ -521,17 +564,32 @@ void VKTextureResource::UploadMipChain(const EngineCore::Image* InLevels, const 
         Total  = (Total + 3u) & ~VkDeviceSize(3u);   // bufferOffset: a multiple of the texel size
     }
 
+    std::vector<const uint8_t*> Sources(InCount);
+    std::vector<VkDeviceSize>   Sizes(InCount);
+    for(uint32_t Level = 0; Level < InCount; ++Level)
+    {
+        Sources[Level] = Formatted[Level].GetData();
+        Sizes[Level]   = VkDeviceSize(Formatted[Level].GetSizeBytes());
+    }
+    UploadRegions(Sources.data(), Sizes.data(), Regions, Total);
+}
+
+void VKTextureResource::UploadRegions(const uint8_t* const* InSources, const VkDeviceSize* InSizes,
+                                      std::vector<VkBufferImageCopy>& InRegions, const VkDeviceSize InTotal)
+{
+    const uint32_t Count = uint32_t(InRegions.size());
+
     VkBuffer       StagingBuf = VK_NULL_HANDLE;
     VkDeviceMemory StagingMem = VK_NULL_HANDLE;
-    if(!AllocStagingBuffer(Device, Total, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, StagingBuf, StagingMem))
+    if(!AllocStagingBuffer(Device, InTotal, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, StagingBuf, StagingMem))
     {
         return;
     }
     uint8_t* Mapped = nullptr;
-    vkMapMemory(Device->GetDevice(), StagingMem, 0, Total, 0, reinterpret_cast<void**>(&Mapped));
-    for(uint32_t Level = 0; Level < InCount; ++Level)
+    vkMapMemory(Device->GetDevice(), StagingMem, 0, InTotal, 0, reinterpret_cast<void**>(&Mapped));
+    for(uint32_t Level = 0; Level < Count; ++Level)
     {
-        std::memcpy(Mapped + Regions[Level].bufferOffset, Formatted[Level].GetData(), Formatted[Level].GetSizeBytes());
+        std::memcpy(Mapped + InRegions[Level].bufferOffset, InSources[Level], size_t(InSizes[Level]));
     }
     vkUnmapMemory(Device->GetDevice(), StagingMem);
 
@@ -548,16 +606,16 @@ void VKTextureResource::UploadMipChain(const EngineCore::Image* InLevels, const 
         Image, CurrentLayout, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         VK_PIPELINE_STAGE_2_TOP_OF_PIPE_BIT, 0,
         VK_PIPELINE_STAGE_2_COPY_BIT,        VK_ACCESS_2_TRANSFER_WRITE_BIT);
-    ToTransfer.subresourceRange.levelCount = InCount;
+    ToTransfer.subresourceRange.levelCount = Count;
     RecordBarrier(UploadCmd, ToTransfer);
 
-    vkCmdCopyBufferToImage(UploadCmd, StagingBuf, Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, InCount, Regions.data());
+    vkCmdCopyBufferToImage(UploadCmd, StagingBuf, Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, Count, InRegions.data());
 
     VkImageMemoryBarrier2 ToShader = MakeImageBarrier(
         Image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
         VK_PIPELINE_STAGE_2_COPY_BIT,            VK_ACCESS_2_TRANSFER_WRITE_BIT,
         VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT, VK_ACCESS_2_SHADER_READ_BIT);
-    ToShader.subresourceRange.levelCount = InCount;
+    ToShader.subresourceRange.levelCount = Count;
     RecordBarrier(UploadCmd, ToShader);
 
     EndAndSubmitTransientCmd(Device, UploadPool, UploadCmd);

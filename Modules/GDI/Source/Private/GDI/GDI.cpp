@@ -637,6 +637,19 @@ GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLeve
     return GDynamicGDI ? GDynamicGDI->CreateTextureResourceMips(InLevels, InCount, InBorder, InFilter) : nullptr;
 }
 
+bool GDISupportsCompressedFormat(const EGDICompressedFormat InFormat)
+{
+    return GDynamicGDI && InFormat < GDI_CF_MAX && GDynamicGDI->SupportsCompressedFormat(InFormat);
+}
+
+GDITextureResource* GDICreateCompressedTextureResource(const EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels,
+                                                       const uint32_t InCount, const EGDITextureBorder InBorder,
+                                                       const EGDITextureFilter InFilter)
+{
+    if(!GDynamicGDI || !InLevels || InCount == 0 || !GDISupportsCompressedFormat(InFormat)) { return nullptr; }
+    return GDynamicGDI->CreateCompressedTextureResource(InFormat, InLevels, InCount, InBorder, InFilter);
+}
+
 bool GDISupportsGPUTimestamps()
 {
     return GDynamicGDI && GDynamicGDI->SupportsGPUTimestamps();

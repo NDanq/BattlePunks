@@ -212,7 +212,10 @@ window (again: the same window, brought forward).
   - **Mip generation:** None, Box (a 2x2 average) or Kaiser (a sharper
     windowed sinc). Mips are built from level 0 down to 1x1, in linear light
     for an sRGB texture, with edges that follow Wrap.
-  - **Compression:** None, BC1, BC3, BC4, BC5 or BC7.
+  - **Compression:** None, BC1 (RGB), BC3 (RGBA), BC4 (one channel), BC5 (two
+    channels: normal maps) or BC7 (RGBA, the best quality).
+- **As compressed** (View): the blocks decoded, as the GPU samples them. It
+  encodes the texture at once if need be, and Save keeps those blocks.
 
 A change shows at once: the chain is rebuilt in memory. **Save** (Ctrl+S)
 writes the file and restages it, so the level draws the new chain. It also
@@ -221,10 +224,13 @@ Revert drops the edits; closing with unsaved edits asks. The engine's textures
 view only.
 
 The renderer samples a texture's chain trilinearly with a Linear filter (on
-Vulkan and OpenGL; D3D12 and Metal still upload level 0 alone). Compression is
-stored only. No block encoder is integrated yet (NVIDIA Texture Tools is to
-come, through RenderCore's `TextureCompression.h`), so the texture is still
-stored and drawn as RGBA8, and the viewer says so.
+Vulkan and OpenGL; D3D12 and Metal still upload level 0 alone). A compressed
+texture is encoded on import and on Save by bc7enc_rdo (RenderCore's
+`TextureCompression.h`), every level, and the file keeps the blocks beside the
+RGBA8 source, so changing a setting encodes again from the source, never from
+the blocks. The renderer uploads the blocks where the backend samples BC
+formats (Vulkan, OpenGL) and decodes them to RGBA8 where it does not (D3D12,
+Metal for now).
 
 **Shipping.** The editor stages what it imports; a clean build of the game
 stages `Content/**/*.nmmesh` and `*.nmtexture` itself (Sandbox's CMakeLists,
@@ -755,5 +761,6 @@ decided. The Console's `cook` still cooks a single world.
 - View presets stay in perspective; there are no orthographic views yet.
 - Moving or renaming an asset in the Content Browser leaves components that
   name it pointing at the old path.
-- Texture compression is a stored setting only, until a block encoder is
-  integrated.
+- A compressed texture's file holds its RGBA8 source as well as its blocks,
+  and a game ships both: there is no cook step to strip the source yet.
+- BC1 has no alpha (no 1-bit punch-through); BC3 or BC7 keep a cut-out.
