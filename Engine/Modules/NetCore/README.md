@@ -68,6 +68,35 @@ Ctrl+C.
 **A client** is the ordinary launcher with `[Net] ServerAddress` set, which is
 what `-connect` does. It loads its start level, then connects.
 
+### In the editor (Play-in-Editor)
+
+**Edit > Editor Settings > Play** (also **Play > Network Settings...**) sets
+how Play runs:
+
+| Setting | `[Editor]` | |
+|---|---|---|
+| Network mode | `PlayNetMode` | Standalone; Listen Server (the viewport hosts and plays); Client (the viewport joins) |
+| Server address, Port | `PlayServerAddress`, `PlayPort` | a client's server; a listen server's port |
+| Start a dedicated server | `PlayLaunchServer` | Client: run `<Game>Server` here first, and stop it with the run |
+| Client windows at Play | `PlayClientWindows` | more players, as game windows, when Play starts |
+| Client window arguments | `PlayClientArgs` | extra command line for each window |
+
+**Play > New Client Window** (Shift+F6, console `play.client`) adds another
+player at any time: the game's own launcher, joined to the run. The server's
+and every window's log is in the editor's Console, tagged `[Server]` and
+`[Client N]`. All of them stop with the run.
+
+PIE drives the same `NimbleEngine::NetHost` (`NetHost.h`) as the launcher. It
+starts before the level loads, so the level and mode already know their role.
+
+**Build > Compile Source** builds the game module, plus the game's launcher
+and dedicated server: what the windows and the server run. These are the
+targets `nimble_add_game_launcher` / `nimble_add_server_launcher` recorded for
+the editor. **Editor Settings > Build** turns that off.
+
+`Games/NetArena` is the test game: capsules on a plane, one per player. Its
+README walks through each mode.
+
 The launchers' command line is config overrides (`ParseLaunchArgs`,
 `NimbleEngine.h`): `-Section.Key=Value` for anything, plus `-connect`,
 `-port` and `-listen`.

@@ -67,7 +67,8 @@ private:
     void StartPlay();
     void CompileSource();
     void CookContent();
-    void OpenSettings();
+    /* InPage: a page to open on ("Play"); empty keeps the first. */
+    void OpenSettings(const QString& InPage = QString());
     void OpenProjectSettings();
     void OnCompileFinished(bool bInSucceeded);
     void StartRenderer();
@@ -111,6 +112,7 @@ private:
     QAction*        PlayAction  = nullptr;
     QAction*        StopAction  = nullptr;
     QAction*        EjectAction = nullptr;
+    QAction*        ClientWindowAction = nullptr;
 
     SourceBuild*    Compiler            = nullptr;
     QAction*        CompileAction       = nullptr;

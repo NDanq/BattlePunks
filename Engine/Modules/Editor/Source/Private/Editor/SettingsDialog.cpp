@@ -16,11 +16,13 @@
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QSaveFile>
 #include <QScrollArea>
+#include <QSpinBox>
 #include <QStackedWidget>
 #include <QStandardPaths>
 #include <QVBoxLayout>
@@ -65,6 +67,7 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
 
     /* Pages, as Project Settings has: a list of sections, one form each. */
     auto* Pages = new QListWidget(this);
+    PageList = Pages;
     Pages->setFixedWidth(150);
     Body->addWidget(Pages);
     auto* Stack = new QStackedWidget(this);
@@ -185,6 +188,28 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
         AddRow(InForm, InPath, InLabel, InTip, Swatch, std::move(R));
     };
 
+    const auto AddText = [this, AddRow](QFormLayout* InForm, const char* InPath, const QString& InLabel,
+                                        const QString& InTip)
+    {
+        auto* Edit = new QLineEdit(this);
+        Edit->setMinimumWidth(200);
+        Row R;
+        R.Show = [Edit](const QString& InText) { Edit->setText(InText); };
+        R.Read = [Edit]() { return Edit->text().trimmed(); };
+        AddRow(InForm, InPath, InLabel, InTip, Edit, std::move(R));
+    };
+
+    const auto AddInt = [this, AddRow](QFormLayout* InForm, const char* InPath, const QString& InLabel,
+                                       const QString& InTip, const int InMin, const int InMax)
+    {
+        auto* Spin = new QSpinBox(this);
+        Spin->setRange(InMin, InMax);
+        Row R;
+        R.Show = [Spin](const QString& InText) { Spin->setValue(InText.toInt()); };
+        R.Read = [Spin]() { return QString::number(Spin->value()); };
+        AddRow(InForm, InPath, InLabel, InTip, Spin, std::move(R));
+    };
+
     // === The settings ========================================================
 
     QFormLayout* Appearance = AddGroup(QStringLiteral("Appearance"));
@@ -222,6 +247,32 @@ SettingsDialog::SettingsDialog(QWidget* InParent)
     AddCheck(Build, "Editor.ReloadAfterCompile", QStringLiteral("Restart a running game after Compile"),
              QStringLiteral("When Compile Source succeeds during Play, stop the run and start it again on the new "
                             "game module. Off: the run keeps the old one until the next Play"));
+    AddCheck(Build, "Editor.BuildGameExecutables", QStringLiteral("Also build the game's client and server"),
+             QStringLiteral("Compile Source builds the game's launcher and, with networking, its dedicated server "
+                            "beside the module -- what Play's client windows and dedicated server run"));
+
+#if WITH_NETCORE
+    /* Play-in-Editor over the network (PlaySession.h's PlayNetSettings). */
+    QFormLayout* Play = AddGroup(QStringLiteral("Play"));
+    AddChoice(Play, "Editor.PlayNetMode", QStringLiteral("Network mode"),
+              QStringLiteral("Standalone: no network. Listen Server: the viewport hosts and is a player too. "
+                             "Client: the viewport joins a server (started here, below, or anywhere)"),
+              { { "Standalone", 0 }, { "Listen Server", 1 }, { "Client", 2 } },
+              false);
+    AddText(Play, "Editor.PlayServerAddress", QStringLiteral("Server address"),
+            QStringLiteral("Client: the server to join. 127.0.0.1 is this machine"));
+    AddInt(Play, "Editor.PlayPort", QStringLiteral("Port"),
+           QStringLiteral("Listen Server: the port the viewport hosts on. Client: the server's port"), 1, 65535);
+    AddCheck(Play, "Editor.PlayLaunchServer", QStringLiteral("Start a dedicated server"),
+             QStringLiteral("Client: run the game's dedicated server on this machine first, on the port above, "
+                            "and stop it with the run (needs the server built: Build > Compile Source)"));
+    AddInt(Play, "Editor.PlayClientWindows", QStringLiteral("Client windows at Play"),
+           QStringLiteral("More players: game windows that join the run when it starts. Play > New Client Window "
+                          "(Shift+F6) adds one at any time"), 0, 8);
+    AddText(Play, "Editor.PlayClientArgs", QStringLiteral("Client window arguments"),
+            QStringLiteral("More command line for each client window, as the game's launcher takes it: "
+                           "-Section.Key=Value overrides, e.g. -Display.RHI=4"));
+#endif
 
     /* What the Import Wizard starts with; it saves back what was last used. */
     QFormLayout* Import = AddGroup(QStringLiteral("Import"));
@@ -298,6 +349,12 @@ void SettingsDialog::LoadUserSettings()
     EngineCore::ConfigLoadStats Stats;
     EngineCore::LoadConfigText(File.readAll().toStdString(), &Stats);
     CORE_LOG("[Editor] user settings: " + std::to_string(Stats.KeysApplied) + " from " + ToStd(File.fileName()))
+}
+
+void SettingsDialog::ShowPage(const QString& InTitle)
+{
+    const QList<QListWidgetItem*> Found = PageList ? PageList->findItems(InTitle, Qt::MatchExactly) : QList<QListWidgetItem*>();
+    if(!Found.isEmpty()) { PageList->setCurrentItem(Found.first()); }
 }
 
 void SettingsDialog::Apply()

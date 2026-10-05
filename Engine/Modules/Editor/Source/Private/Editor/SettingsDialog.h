@@ -10,6 +10,7 @@
 #include <QString>
 
 class QDialogButtonBox;
+class QListWidget;
 
 /*
  * Edit > Editor Settings: the [Editor] config vars as a paged form, per user:
@@ -40,6 +41,9 @@ public:
     /* As Apply does, for tools that set these vars (the Import Wizard). */
     static bool SaveUserSettings();
 
+    /* Opens on the page titled InTitle ("Play"), if there is one. */
+    void ShowPage(const QString& InTitle);
+
 private:
     /* Type-agnostic: goes through ConfigVar::ToString / SetFromString. */
     struct Row
@@ -56,6 +60,7 @@ private:
 
     std::vector<Row>  Rows;
     QDialogButtonBox* Buttons = nullptr;
+    QListWidget*      PageList = nullptr;
 };
 
 #endif // WITH_EDITOR
