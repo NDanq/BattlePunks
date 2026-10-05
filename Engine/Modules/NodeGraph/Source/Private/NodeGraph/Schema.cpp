@@ -281,6 +281,7 @@ namespace NodeGraph
                 Live.clear();
                 Live.push_back(CreateMaterialSchema());
                 Live.push_back(CreateScriptSchema());
+                Live.push_back(CreateUIScriptSchema());
         Live.push_back(CreatePostProcessSchema());
 
                 View.clear();

@@ -78,6 +78,7 @@ namespace NodeGraph
         Texture,      // a texture's runtime-relative path: an asset ("Content/Textures/Brick.nmtexture"), a render
                       // target (.nmrt2d, .nmrt3d, "transient://Name"), or ""
         Function,     // the name of one of the graph's Functions
+        WidgetName,   // the Name of a widget in the UI document the graph is the logic of (a UI graph's Document)
     };
 
     struct PropertyDefinition
