@@ -1375,6 +1375,7 @@ static void TestLightLabGraph()
     Expect(SavedText.find("[Shadows]") != std::string::npos && SavedText.find("Enabled=false") != std::string::npos
            && SavedText.find("LookSensitivity=1.05") != std::string::npos,
            "closing the menu saved the player's changes to their user file");
+    Saved.close();   // Windows cannot remove a file still open
     EngineCore::ConfigSetUserFile("");
     std::filesystem::remove(UserFile);
 
@@ -1728,6 +1729,7 @@ static void TestSandboxProfile()
     std::ifstream Saved(UserFile);
     const std::string SavedText((std::istreambuf_iterator<char>(Saved)), std::istreambuf_iterator<char>());
     Expect(SavedText.find("[Profile]") != std::string::npos && SavedText.find("Name=Ada") != std::string::npos, "and saves it");
+    Saved.close();   // Windows cannot remove a file still open
     Expect(Scripts.GetErrorCount() == 0, "the menu's graphs raised no Lua errors");
 
     GTestProfileName.ResetToDefault();
