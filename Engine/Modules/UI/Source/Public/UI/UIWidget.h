@@ -69,7 +69,9 @@ namespace UI
 
     struct UIPointerEvent
     {
-        enum EKind : uint8_t { PE_Enter, PE_Leave, PE_Press, PE_Release, PE_Click };
+        /* PE_Move: the pointer moved while this widget holds it pressed (a
+         * slider's drag), wherever the pointer is. */
+        enum EKind : uint8_t { PE_Enter, PE_Leave, PE_Press, PE_Release, PE_Click, PE_Move };
         EKind Kind = PE_Enter;
         UIVec2 Pixels;
     };
@@ -134,6 +136,11 @@ namespace UI
         /* Hover, press, release, click: UIDocumentInstance's pointer routing.
          * An interactive widget queues its actions here (QueueActions). */
         virtual void OnPointer(const UIPointerEvent& /*InEvent*/) {}
+
+        /* A navigation direction (0 up, 1 down, 2 left, 3 right) while it has
+         * focus: true if it used it (a slider's left and right), and focus
+         * stays; false moves focus on as usual. */
+        virtual bool OnNavigate(int /*InDirection*/) { return false; }
 
         /* InActions to its document's UISystem, fired by this widget. */
         void QueueActions(const UIActionList& InActions);

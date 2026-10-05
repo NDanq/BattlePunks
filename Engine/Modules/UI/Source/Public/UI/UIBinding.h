@@ -20,8 +20,12 @@
  * its bindings when the store's version moves, and sets a property only when
  * its value changed -- an unchanged HUD costs a compare per binding.
  *
- * RESERVED for later: pull bindings ({Bind:Lua:expr}, a component's field),
- * formats ({Bind:X|0.0}), and two-way bindings for inputs.
+ * TWO-WAY: an input widget's own change (a CheckBox ticked, a Slider
+ * dragged) writes its whole-value binding's key back to the store
+ * (UIDocumentInstance::SetInputValue).
+ *
+ * RESERVED for later: pull bindings ({Bind:Lua:expr}, a component's field)
+ * and formats ({Bind:X|0.0}).
  */
 namespace UI
 {

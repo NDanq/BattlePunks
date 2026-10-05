@@ -42,6 +42,7 @@ namespace UI
         /* The last hit test, kept while the pointer and the painted
          * rectangles stay put: a still mouse over a still UI costs nothing. */
         UIVec2                              HitPointer;
+        UIVec2                              DragPointer;   // where the pressed widget last heard of the pointer
         uint64_t                            HitPaintSerial = 0;
         int32_t                             Hit = -1;
     };
@@ -295,7 +296,15 @@ namespace UI
             if(InFrame.MousePressed[0] && Target && Target->IsEnabledInHierarchy())
             {
                 Doc.SetPressed(Interactive);
+                Entry.DragPointer = InFrame.MousePixels;
                 Target->OnPointer({ UIPointerEvent::PE_Press, InFrame.MousePixels });
+            }
+            else if(Doc.GetPressed() >= 0 && InFrame.bHasMouse && InFrame.MouseDown[0] && !InFrame.MouseReleased[0]
+                    && InFrame.MousePixels != Entry.DragPointer)
+            {
+                /* Held and moved: the pressed widget hears it, over it or not (a drag). */
+                Entry.DragPointer = InFrame.MousePixels;
+                Doc.GetWidget(uint32_t(Doc.GetPressed()))->OnPointer({ UIPointerEvent::PE_Move, InFrame.MousePixels });
             }
             if(InFrame.MouseReleased[0] && Doc.GetPressed() >= 0)
             {
@@ -328,9 +337,14 @@ namespace UI
                     }
                     else
                     {
+                        /* The focused widget first (a slider takes left and right), then focus moves. */
                         const int Direction = InFrame.bNavUp ? 0 : InFrame.bNavDown ? 1 : InFrame.bNavLeft ? 2 : 3;
-                        const int32_t Next = Doc.FindFocusInDirection(Doc.GetFocused(), Direction);
-                        if(Next >= 0) Doc.SetFocus(Next);
+                        UIWidget* Focused = Doc.GetWidget(uint32_t(Doc.GetFocused()));
+                        if(!(Focused->IsEnabledInHierarchy() && Focused->OnNavigate(Direction)))
+                        {
+                            const int32_t Next = Doc.FindFocusInDirection(Doc.GetFocused(), Direction);
+                            if(Next >= 0) Doc.SetFocus(Next);
+                        }
                     }
                 }
                 if(InFrame.bAccept && Doc.GetFocused() >= 0)

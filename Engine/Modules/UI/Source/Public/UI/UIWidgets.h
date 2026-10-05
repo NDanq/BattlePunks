@@ -21,6 +21,8 @@
  *   Overlay        children stacked over each other
  *   Switcher       pages, one shown at a time (a settings menu's tabs)
  *   ProgressBar    a fill over a background, Value 0-1
+ *   CheckBox       a box ticked on and off, its child a label beside it
+ *   Slider         a thumb dragged along a track, Value from Min to Max
  *   Spacer         empty space of a size
  */
 namespace UI
@@ -181,6 +183,75 @@ namespace UI
         UIProgressBar();
         void Paint(UIPaintContext& InContext, const UIRect& InRect) const override;
         bool TakesHits() const override { return true; }
+    };
+
+    /*
+     * A box that ticks on and off, clicked or Accepted, with its one child (a
+     * label) beside it -- the label clicks it too. Checked binds two-way:
+     * Checked="{Bind:Settings.Shadows}" shows the store's value, and a click
+     * writes the new one back. OnChanged fires after, $value 1 or 0.
+     */
+    class UI_API UICheckBox : public UIContentWidget
+    {
+    public:
+        bool         bChecked = false;
+        float        BoxSize  = 32.0f;   // layout units, square
+        float        Spacing  = 16.0f;   // between the box and the label
+        UIBrush      Box;
+        UIBrush      BoxHovered;         // hovered or focused
+        UIBrush      Check;              // the tick, inset in the box
+        UIActionList OnChanged;
+
+        UICheckBox();
+        UIVec2 MeasureContent(UILayoutContext& InContext) override;
+        void   ArrangeChildren(UILayoutContext& InContext, const UIRect& InRect) override;
+        void   Paint(UIPaintContext& InContext, const UIRect& InRect) const override;
+        bool   IsInteractive() const override { return true; }
+        bool   TakesHits() const override { return true; }
+        void   OnPointer(const UIPointerEvent& InEvent) override;
+        double GetActionValue() const override { return bChecked ? 1.0 : 0.0; }
+    };
+
+    /*
+     * A thumb along a horizontal track: pressed or dragged it jumps to the
+     * pointer, and while focused Left and Right step it (by Step, or a
+     * twentieth of the range). Value snaps to Min + n * Step and binds
+     * two-way, as a CheckBox's Checked. OnChanged fires on each change, $value
+     * the new value. It asks a box for its Size.
+     */
+    class UI_API UISlider : public UIWidget
+    {
+    public:
+        float        Value = 0.5f;
+        float        Min   = 0.0f;
+        float        Max   = 1.0f;
+        float        Step  = 0.0f;           // 0: continuous
+        float        TrackHeight = 8.0f;     // layout units
+        UIVec2       ThumbSize{ 20.0f, 36.0f };
+        UIBrush      Track;
+        UIBrush      FillBrush;              // the track up to the thumb
+        UIBrush      Thumb;
+        UIBrush      ThumbHovered;           // hovered, focused or dragged
+        UIActionList OnChanged;
+
+        UISlider();
+        UIVec2 MeasureContent(UILayoutContext& InContext) override;
+        void   Paint(UIPaintContext& InContext, const UIRect& InRect) const override;
+        bool   IsInteractive() const override { return true; }
+        bool   TakesHits() const override { return true; }
+        void   OnPointer(const UIPointerEvent& InEvent) override;
+        bool   OnNavigate(int InDirection) override;
+        double GetActionValue() const override { return double(Value); }
+
+        /* InValue clamped to Min-Max and snapped to Step. */
+        float Snap(double InValue) const;
+
+        /* 0-1: where Value is along the range. */
+        float GetFraction() const;
+
+    private:
+        /* Sets Value as the player's input (two-way) and fires OnChanged if it moved. */
+        void ChangeTo(double InValue);
     };
 
     class UI_API UISpacer : public UIWidget
