@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="8ef326c63d04d5a51770792fa3fb1b98" Name="Pillar" Mobility="Static">
-  <Component Type="Render" Version="3">
+  <Component Type="Render" Version="4">
     <Visible Value="true" />
     <Material0 Value="Content/Materials/PBR.material.nmgraph" />
     <Material1 Value="" />
@@ -31,6 +31,7 @@
     <Parameter2Z Value="0" />
     <Parameter2W Value="0" />
     <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="150" Y="100" Z="230" />

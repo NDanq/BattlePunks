@@ -8,7 +8,7 @@
       <Prop Name="Shading" Value="Unlit" />
       <Prop Name="TwoSided" Value="false" />
     </Node>
-    <Node Id="e7b10f1b00000000000000000000000b" Type="Texture.Object" Version="1" X="-360" Y="0">
+    <Node Id="e7b10f1b00000000000000000000000b" Type="Texture.Object" Version="1" X="-474" Y="-14">
       <Prop Name="Filter" Value="Default" />
       <Prop Name="Texture" Value="Content/Textures/ExplosionFlipbook.nmtexture" />
       <Prop Name="Wrap" Value="Default" />

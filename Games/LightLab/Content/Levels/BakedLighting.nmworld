@@ -22,9 +22,5 @@
   <Entity Guid="c5acef80c4dcce3d23648d76519a9a74" />
   <Entity Guid="fbe38e75f8b59cb9e8c25a807f8ecb4a" />
   <Entity Guid="60a43a2b9396b3e944c47c1976063aff" />
-  <Entity Guid="16dee2cc930f8ef8ea951709034251b2" />
-  <Entity Guid="41f5f53c1e18bbb51a0924b989aa1cef" />
-  <Entity Guid="9fa7ad72ca66b50e95fcde92f34473bd" />
-  <Entity Guid="deb7bf81099b0c06c14cb5422ad38429" />
   <Entity Guid="5c4869e7d50e7105e8837741d428fc0b" />
 </World>
