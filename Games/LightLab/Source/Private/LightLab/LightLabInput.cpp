@@ -11,8 +11,8 @@
  * Who reads it:
  *   Player   LightLabGame.cpp's LightLab.Fly system (Move*, Look*, Boost)
  *            and LightLabGameMode (CycleTechnique, ToggleShadows, ToggleBakedLighting,
- *            Pause, CaptureMouse); in PhysicsLab, LightLabPhysicsMode (Throw,
- *            ResetLevel, Pause, CaptureMouse)
+ *            ResetLevel, Pause, CaptureMouse); in PhysicsLab, LightLabPhysicsMode
+ *            (Throw, ResetLevel, Pause, CaptureMouse)
  *
  * The pause menu (Content/UI/PauseMenu.nmui) is navigated with the engine's
  * own "UI" map (arrows, Return, Escape; the D-pad, South, East) while it is open.
@@ -26,9 +26,11 @@ NIMBLE_DEFINE_INPUT_MAP(Default)
     Map.Action("Pause",          "Escape, Gamepad.Start");
     Map.Action("CaptureMouse",   "Mouse.Left");
 
+    /* Every level: back to how it loaded. */
+    Map.Action("ResetLevel",     "R, Gamepad.Back");
+
     /* PhysicsLab (LightLabPhysics.cpp): a click, once the mouse is held, throws a ball. */
     Map.Action("Throw",          "Mouse.Left, Gamepad.RightTrigger");
-    Map.Action("ResetLevel",     "R, Gamepad.Back");
 
     /* Along the view, across it, and along world up (+Y). */
     Map.Axis("MoveForward", "W, Up, -S, -Down, -Gamepad.LeftY");

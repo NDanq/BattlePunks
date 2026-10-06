@@ -110,8 +110,8 @@ a Shipping build reads the copy cooked into `Content/Levels/Cooked/`. Without
 a level file the game builds the same scene in code; `[LightLab]
 ExportLevel=<path>` in an editor build writes that code-built scene out. Mouse
 looks, WASD moves, E/Q (or Space/Ctrl) rise and sink, Shift is faster, T cycles
-the sun's shadow technique, F toggles shadows and L switches between baked and
-live lighting. Escape (or the gamepad's Start) pauses under a menu
+the sun's shadow technique, F toggles shadows, L switches between baked and
+live lighting, and R resets the level (in every LightLab level). Escape (or the gamepad's Start) pauses under a menu
 (`Content/UI/PauseMenu.nmui`, Engine/Modules/UI/README.md): Resume, Escape
 again or the pad's East goes back to flying, Quit ends the game.
 

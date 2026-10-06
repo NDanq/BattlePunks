@@ -38,7 +38,7 @@
  * and an unshadowed coloured point light. Post process volumes give a soft
  * glow and FXAA everywhere, and depth of field and motion blur round the
  * arch. T cycles the sun's technique, F toggles [Shadows] Enabled through its
- * config var.
+ * config var, and R resets the level (every LightLab level).
  *
  * A second level, BakedLighting (the editor plays it while its world is open,
  * ILevel::GetWorldFile; a game, with [Game] StartLevel=BakedLighting), is baked
@@ -475,7 +475,7 @@ public:
 
         CORE_LOG("[LightLab] fly with WASD + mouse, E/Q up and down, Shift to boost; "
                  "T cycles the sun's shadow technique, F toggles shadows, L switches baked and live lighting, "
-                 "Escape pauses")
+                 "R resets the level, Escape pauses")
     }
 
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
@@ -511,6 +511,15 @@ public:
             else if(!Session->IsMouseCaptured() && Input->WasPressed("CaptureMouse"))
             {
                 Session->SetMouseCaptured(true);
+            }
+
+            /* R: the level again, as it loaded -- the World is rebuilt at the
+             * next frame's ApplyPendingLevel, never inside its own tick. */
+            if(Input->WasPressed("ResetLevel") && Session->GetLevel())
+            {
+                CORE_LOG(std::string("[LightLab] resetting '") + Session->GetLevel()->GetName() + "'")
+                Session->RequestLevel(*Session->GetLevel());
+                return;
             }
         }
 
