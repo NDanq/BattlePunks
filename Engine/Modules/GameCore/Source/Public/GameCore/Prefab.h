@@ -147,11 +147,11 @@ namespace GameCore
     /* The cooked form, both directions. */
     GAMECORE_API bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset);
 
-    /* Either format (text needs an editor build). False, with the reason
+    /* Either format (text needs an uncooked build: not Shipping). False, with the reason
      * logged, if it cannot be read or holds no valid tree. */
     GAMECORE_API bool LoadPrefabFile(const char* InPath, PrefabAsset& OutAsset);
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
     /* The text form, deterministic like a text world: entities in tree
      * order, components sorted by type name. Written to "<path>.tmp" first
      * and renamed over the target. */

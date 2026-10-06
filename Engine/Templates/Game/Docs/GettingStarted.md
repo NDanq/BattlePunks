@@ -138,16 +138,21 @@ NIMBLE_CONFIG_INT(GLives, "@PROJECT_NAME@", "Lives", 3, nullptr);   // [@PROJECT
 
 ## 7. Shipping a client build
 
-A client build cannot read text prefabs or text levels. Before building a
-`client-*` preset, in the editor's Console:
+Debug and RelWithDebInfo Client and Server builds run **uncooked**: they stage
+the text levels and prefabs, as the editor does, and cook each one themselves
+the first time they load it (again when it changes), into
+`Intermediate/Cooked/` beside the executable. Nothing to do while developing.
+
+A **Shipping** build reads only content cooked ahead. Before building
+`client-shipping`, in the editor's Console:
 
 - `cook prefabs` writes binary prefabs to `Cooked/Content/Prefabs/`;
 - `cook` (with the level open and saved) writes its binary twin to
   `Content/Levels/Cooked/`.
 
-The client build stages those instead; commit them with the game. A level
-that loads a world file reads the cooked one in a game build, as
-`Games/Sandbox`'s BrickBreaker does. Material graphs cook themselves during
+Shipping stages those instead; commit them with the game. A level loads its
+world by its source path, `GameCore::LoadContentWorld("Content/Levels/X.nmworld")`,
+and every build reads the right file. Material graphs cook themselves during
 the build.
 
 ## 8. Next

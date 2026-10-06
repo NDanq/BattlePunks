@@ -48,7 +48,7 @@ SourceBuild::~SourceBuild()
     }
 }
 
-bool SourceBuild::Start(const QString& InTarget)
+bool SourceBuild::Start(const QStringList& InTargets)
 {
     if(Process)
     {
@@ -66,11 +66,14 @@ bool SourceBuild::Start(const QString& InTarget)
 
     /* --config is what a multi-config generator needs and a single-config one
      * ignores. */
-    const QStringList Args = {
+    if(InTargets.isEmpty()) { return false; }
+    QStringList Args = {
         QStringLiteral("--build"),  BuildDir,
         QStringLiteral("--config"), QStringLiteral(NIMBLE_SOURCEBUILD_STRINGIFY(NIMBLE_BUILD_CONFIG)),
-        QStringLiteral("--target"), InTarget,
+        QStringLiteral("--target"),
     };
+
+    Args << InTargets;   // cmake 3.15+: several targets after one --target
 
     Process = new QProcess(this);
     Process->setProcessChannelMode(QProcess::MergedChannels);
@@ -87,7 +90,7 @@ bool SourceBuild::Start(const QString& InTarget)
         }
     });
 
-    Target     = InTarget;
+    Target     = InTargets.first();
     bCancelled = false;
     Pending.clear();
 

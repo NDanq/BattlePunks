@@ -309,7 +309,9 @@ Instance.Destroy();                                       // the root and everyt
   saves its entities as plain entities, with a warning.
 
 **Files.** `.nmprefab`, text or cooked, told apart like worlds. `LoadPrefabFile` reads
-either; `SavePrefabFile` and `CookPrefabFile` are editor-only.
+either; `SavePrefabFile` and `CookPrefabFile` exist in every build but Shipping
+(`WITH_UNCOOKED`). `FindOrLoadPrefab` goes through `ResolveContentPrefab`: a
+Debug or RelWithDebInfo game cooks a text prefab as it first loads it.
 
 ```xml
 <Prefab Format="1" Name="Turret" NextId="4">
@@ -727,7 +729,7 @@ A `.nmworld` is text or binary, told apart by its first bytes
 Content/Levels/Sandbox.nmworld               text: <World Format="1"> listing entity and instance GUIDs
 Content/Levels/Sandbox/<guid>.nmentity       text: one loose entity -- name, parent, components
 Content/Levels/Sandbox/<guid>.nmprefabinst   text: one prefab instance -- its prefab and what it changed
-Content/Levels/Cooked/Sandbox.nmworld        binary: what a game ships (CookWorldFile)
+Content/Levels/Cooked/Sandbox.nmworld        binary: what Shipping reads (CookWorldFile)
 ```
 
 **Prefab instances.** The manifest lists them beside the loose entities, as
@@ -783,7 +785,16 @@ between entities resolve; files the manifest does not list are ignored.
 
 **Binary is the shipped format** -- `SerializeWorld`'s archive, one file.
 `CookWorldFile(text, out)` produces it; the editor's `cook` console command
-wraps that. A game build has no XML parser and refuses a text world.
+wraps that. A Shipping build has no XML parser and refuses a text world.
+
+**Uncooked builds.** Every build but Shipping (`WITH_UNCOOKED`) reads text
+too. A game names content by its source path -- `LoadContentWorld`,
+`ResolveContentWorld`, `ResolveContentPrefab` -- and a Debug or RelWithDebInfo
+Client or Server cooks it into `Intermediate/Cooked/<source path>` beside the
+executable the first time it loads it, and again when the source (the
+manifest or any file in its folder) is newer; then reads the cooked file, as
+Shipping would. `[Content] CookOnLoad=false` reads the text directly instead.
+The editor always reads the source.
 
 **Serializers name their fields**, which is what lets one serializer write
 both formats:

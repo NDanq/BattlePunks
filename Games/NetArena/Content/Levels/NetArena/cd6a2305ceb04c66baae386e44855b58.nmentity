@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="cd6a2305ceb04c66baae386e44855b58" Name="Controller">
+  <Component Type="Input" Version="1">
+    <Map Value="Default" />
+    <PlayerIndex Value="0" />
+    <Enabled Value="true" />
+  </Component>
+</Entity>

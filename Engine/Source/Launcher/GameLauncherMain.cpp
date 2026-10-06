@@ -11,6 +11,9 @@
  * linked) by Application::ExecGame from [Game] Module, NIMBLE_GAME_MODULE if
  * unset.
  *
+ * The command line is config overrides (ParseLaunchArgs): -connect=host:port
+ * joins a server, -listen hosts one, -Section.Key=Value sets anything else.
+ *
  * No log handler, deliberately: without one a Fatal aborts instead of
  * continuing.
  */
@@ -19,10 +22,11 @@
 #error "GameLauncherMain.cpp is built by nimble_add_game_launcher(), which defines NIMBLE_GAME_MODULE and NIMBLE_GAME_NAME"
 #endif
 
-int main(int /*argc*/, char** /*argv*/)
+int main(int argc, char** argv)
 {
     {
         NimbleEngine::Application App;
+        App.SetConfigOverrides(NimbleEngine::ParseLaunchArgs(argc, argv));
         App.ExecGame(NIMBLE_GAME_MODULE);
     }
 

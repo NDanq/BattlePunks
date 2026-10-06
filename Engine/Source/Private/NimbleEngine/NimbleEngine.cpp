@@ -1,12 +1,18 @@
 #include "Public/NimbleEngine/NimbleEngine.h"
 
+#include <atomic>
 #include <chrono>
+#include <csignal>
+#include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <system_error>
+#include <vector>
 
 #include "Public/NimbleEngine/GameModule.h"
 #include "Public/NimbleEngine/Level.h"
+
 
 #include "Public/Core/CoreLog.h"
 #include "Public/Core/CoreConfig.h"
@@ -32,6 +38,8 @@
  */
 extern "C" __declspec(dllimport) unsigned int __stdcall timeBeginPeriod(unsigned int uPeriod);
 extern "C" __declspec(dllimport) unsigned int __stdcall timeEndPeriod(unsigned int uPeriod);
+/* Likewise: BOOL is int, DWORD unsigned long. For Ctrl+C in a headless run. */
+extern "C" __declspec(dllimport) int __stdcall SetConsoleCtrlHandler(int (__stdcall* InHandler)(unsigned long), int bInAdd);
 #endif
 
 NIMBLE_CONFIG_INT(GResolutionX, "Display", "ResolutionX", 1280, nullptr);
@@ -107,6 +115,42 @@ namespace
         bool bRaised = false;
     };
 
+    /* A headless run's exit condition, where a windowed one has PumpEvents:
+     * set from the console's Ctrl+C / close handler, which runs on a thread of
+     * its own -- hence atomic, and nothing else is done there. */
+    std::atomic<bool> GConsoleQuit{ false };
+
+#if defined(_WIN32)
+    int __stdcall OnConsoleCtrl(unsigned long /*InCtrlType*/)
+    {
+        GConsoleQuit = true;
+        return 1;   // handled: the loop ends and shuts down cleanly
+    }
+#else
+    void OnInterrupt(int) { GConsoleQuit = true; }
+#endif
+
+    void InstallConsoleQuitHandler()
+    {
+        GConsoleQuit = false;
+#if defined(_WIN32)
+        SetConsoleCtrlHandler(&OnConsoleCtrl, 1);
+#else
+        std::signal(SIGINT, &OnInterrupt);
+        std::signal(SIGTERM, &OnInterrupt);
+#endif
+    }
+
+    void RemoveConsoleQuitHandler()
+    {
+#if defined(_WIN32)
+        SetConsoleCtrlHandler(&OnConsoleCtrl, 0);
+#else
+        std::signal(SIGINT, SIG_DFL);
+        std::signal(SIGTERM, SIG_DFL);
+#endif
+    }
+
     int64_t SteadyNowNs()
     {
         return std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -175,6 +219,55 @@ namespace
 
 namespace NimbleEngine
 {
+    std::vector<std::string> ParseLaunchArgs(const int InArgc, const char* const* InArgv)
+    {
+        std::vector<std::string> Overrides;
+        for(int Index = 1; Index < InArgc; ++Index)
+        {
+            const std::string Arg = InArgv[Index] ? InArgv[Index] : "";
+            if(Arg.size() < 2 || Arg[0] != '-')
+            {
+                CORE_LOG_WARN("Ignoring the argument '" + Arg + "'")
+                continue;
+            }
+
+            const std::string Body   = Arg.substr(Arg[1] == '-' ? 2 : 1);
+            const size_t      Equals = Body.find('=');
+            const std::string Key    = Body.substr(0, Equals);
+            const std::string Value  = Equals == std::string::npos ? std::string() : Body.substr(Equals + 1);
+
+            if(Key == "connect")
+            {
+                /* host[:port]. The last ':' splits, so a bare host keeps its default port. */
+                const size_t Colon = Value.rfind(':');
+                Overrides.push_back("Net.ServerAddress " + Value.substr(0, Colon));
+                if(Colon != std::string::npos) { Overrides.push_back("Net.Port " + Value.substr(Colon + 1)); }
+            }
+            else if(Key == "port")   { Overrides.push_back("Net.Port " + Value); }
+            else if(Key == "listen") { Overrides.push_back("Net.Listen 1"); }
+            else if(Key.find('.') != std::string::npos && Equals != std::string::npos)
+            {
+                Overrides.push_back(Key + " " + Value);
+            }
+            else
+            {
+                CORE_LOG_WARN("Ignoring the argument '" + Arg + "' -- expected -Section.Key=Value, -connect=host[:port], "
+                              "-port=N or -listen")
+            }
+        }
+
+#if !WITH_NETCORE
+        for(const std::string& Override : Overrides)
+        {
+            if(Override.rfind("Net.", 0) == 0)
+            {
+                CORE_LOG_WARN("'" + Override + "': this build has networking compiled out (NIMBLE_WITH_NETCORE=OFF)")
+            }
+        }
+#endif
+        return Overrides;
+    }
+
     namespace
     {
         /* What Exec() and Exec(IGameMode&) run when given no level: an empty
@@ -211,7 +304,7 @@ namespace NimbleEngine
             }
         }
 
-        if(!GameWindowSystem::Initialize())
+        if(!Desc.bHeadless && !GameWindowSystem::Initialize())
         {
             CORE_LOG_ERROR("Failed to Initialize Window")
             return false;
@@ -235,31 +328,64 @@ namespace NimbleEngine
         }
         LoadUserSettings();
 
-        WindowDesc Desc;
-        Desc.Width = GResolutionX.GetInt();
-        Desc.Height = GResolutionY.GetInt();
-        Desc.Title = GTitle.GetString();
-        Desc.Flags = WF_Resizable | WF_HighDPI;
-
-        Window = GameWindowSystem::CreateGameWindow(Desc);
-        if(!Window)
+        /* The command line wins over the file. */
+        for(const std::string& Override : ConfigOverrides)
         {
-            CORE_LOG_ERROR("Failed to Create Window")
-            return false;
+            /* A var the game module declares does not exist until it loads:
+             * recorded as a config file's line is, it is applied when it
+             * registers, as [Section] Key in the .ini would be. */
+            const size_t Space = Override.find(' ');
+            const size_t Dot   = Override.find('.');
+            if(Space != std::string::npos && Dot != std::string::npos && Dot < Space
+               && !ConfigFindVarByPath(Override.substr(0, Space)))
+            {
+                LoadConfigText("[" + Override.substr(0, Dot) + "]\n" + Override.substr(Dot + 1, Space - Dot - 1) + "="
+                               + Override.substr(Space + 1) + "\n");
+                continue;
+            }
+
+            std::string Response;
+            if(!ExecConfigCommand(Override, Response))
+            {
+                CORE_LOG_WARN("Command line '" + Override + "': " + Response)
+            }
         }
-        WindowID = Window->GetID();
 
-        Router = EngineCore::Memory::Alloc<InputRouter>();
-        Router->Attach(Window);
-
-        /* ONCE, HERE, ON THIS THREAD. GetNativeHandle() is a live SDL query,
-         * not a cached read like the geometry accessors. Everything else uses
-         * this copy; the render thread never calls back into GameWindow. */
-        NativeWindow = Window->GetNativeHandle();
-        if(!NativeWindow.IsValid())
+        if(Desc.bHeadless)
         {
-            CORE_LOG_ERROR("Window has no native handle; cannot initialize the renderer")
-            return false;
+            /* No window to draw to, so nothing to draw: the Null backend
+             * needs no GPU and no native window (RenderThread::Start). */
+            GRenderPlatform.SetFromString(std::to_string(int(RenderCore::ERenderBackend::Null)));
+            InstallConsoleQuitHandler();
+        }
+        else
+        {
+            WindowDesc WinDesc;
+            WinDesc.Width = GResolutionX.GetInt();
+            WinDesc.Height = GResolutionY.GetInt();
+            WinDesc.Title = GTitle.GetString();
+            WinDesc.Flags = WF_Resizable | WF_HighDPI;
+
+            Window = GameWindowSystem::CreateGameWindow(WinDesc);
+            if(!Window)
+            {
+                CORE_LOG_ERROR("Failed to Create Window")
+                return false;
+            }
+            WindowID = Window->GetID();
+
+            Router = EngineCore::Memory::Alloc<InputRouter>();
+            Router->Attach(Window);
+
+            /* ONCE, HERE, ON THIS THREAD. GetNativeHandle() is a live SDL query,
+             * not a cached read like the geometry accessors. Everything else uses
+             * this copy; the render thread never calls back into GameWindow. */
+            NativeWindow = Window->GetNativeHandle();
+            if(!NativeWindow.IsValid())
+            {
+                CORE_LOG_ERROR("Window has no native handle; cannot initialize the renderer")
+                return false;
+            }
         }
 
         /*
@@ -285,6 +411,7 @@ namespace NimbleEngine
 
         /* The game runs in this; the host lends it the two services above. */
         Session = EngineCore::Memory::Alloc<GameSession>(*this, *Scripts, *Rendering);
+        Net     = EngineCore::Memory::Alloc<NetHost>();
         return true;
     }
 
@@ -364,22 +491,36 @@ namespace NimbleEngine
         /* "stat unit": the game thread's frame starts here, before the pump. */
         Rendering->BeginGameFrame();
 
-        /* First, where no World is ticking. A failed load ends the session. */
+        /* First, where no World is ticking. A failed load ends the session.
+         * The network lets go of a World about to be freed, and takes the
+         * new one. */
+        Net->BeginFrame();
         Session->ApplyPendingLevel();
         if(bQuitRequested || Session->IsQuitRequested())
         {
             return false;
         }
 
-        /* PumpEvents' return IS the exit condition; delegates run inside it,
-         * on this thread. */
-        if(!GameWindowSystem::PumpEvents())
+        if(Desc.bHeadless)
         {
-            return false;
+            /* No window: the console's Ctrl+C is the exit condition. */
+            if(GConsoleQuit) { return false; }
+        }
+        else
+        {
+            /* PumpEvents' return IS the exit condition; delegates run inside it,
+             * on this thread. */
+            if(!GameWindowSystem::PumpEvents())
+            {
+                return false;
+            }
+
+            /* What arrived in the pump becomes this frame's input. */
+            Router->Latch(FrameNumber);
         }
 
-        /* What arrived in the pump becomes this frame's input. */
-        Router->Latch(FrameNumber);
+        /* Connections, spawns, state and RPCs, before the World sees the frame. */
+        Net->Poll();
 
         /* Assembled on the game thread before anything overlaps; see
          * FrameContext for why the viewport is read here. */
@@ -396,6 +537,9 @@ namespace NimbleEngine
 
         Session->Tick(Frame);
 
+        /* What changed this frame goes out. */
+        Net->Flush();
+
         /* The fence: at most one frame in flight. Waits for the PREVIOUS
          * frame's marker, not an empty queue -- Simulate may have enqueued. */
         Rendering->WaitForPreviousFrame();
@@ -411,7 +555,10 @@ namespace NimbleEngine
          * present path has its own command pool and semaphores
          * (Renderer::PresentToWindow). NativeWindow, not a live SDL query.
          */
-        Rendering->PresentToWindow(NativeWindow);
+        if(!Desc.bHeadless)
+        {
+            Rendering->PresentToWindow(NativeWindow);
+        }
 
         RenderCore::FrameInfo Info;
         Info.FrameNumber    = FrameNumber;
@@ -491,12 +638,24 @@ namespace NimbleEngine
             const int      MaxFramesCfg = GMaxFrames.GetInt();
             const uint64_t MaxFrames    = MaxFramesCfg > 0 ? uint64_t(MaxFramesCfg) : 0;
 
-            /* Negative clamps to unlimited rather than wrapping unsigned. */
-            const int LimitCfg  = GFrameRateLimit.GetInt();
+            /* Negative clamps to unlimited rather than wrapping unsigned. A
+             * headless server runs at its tick rate instead. */
+            int LimitCfg = GFrameRateLimit.GetInt();
+            if(Desc.bHeadless && Desc.NetMode == ENetMode::Server) { LimitCfg = int(GetConfiguredServerTickRate()); }
             FrameRateLimit      = LimitCfg > 0 ? uint32_t(LimitCfg) : 0u;
             NextFrameDeadlineNs = 0;
 
             TimerResolutionScope TimerRes;
+
+            /* Before the load, so the level and mode already know whether
+             * they are a server or a client (NetFacade.h). Nothing arrives
+             * until the first frame's poll, which binds the loaded World. */
+            NetHostDesc NetDesc = NetHostDesc::FromConfig(Desc.NetMode);
+            NetDesc.bDedicated  = Desc.bHeadless;
+            if(Level)
+            {
+                Net->Start(*Session, NetDesc);
+            }
 
             if(!Level || !Session->LoadLevel(*Level))
             {
@@ -521,6 +680,9 @@ namespace NimbleEngine
             CORE_LOG_ERROR("Failed to initialize Application!")
         }
 
+        /* Clients told, before their entities' World goes. */
+        if(Net) { Net->Stop(); }
+
         /* Whatever is loaded now, possibly a swapped-in level. */
         if(Session)
         {
@@ -542,7 +704,15 @@ namespace NimbleEngine
          * already gone (GameSession::UnloadLevel), so lua_close is safe; the
          * renderer then drains and stops its thread.
          */
-        /* First: it references both services below. */
+        /* First: it holds the session. */
+        if(Net)
+        {
+            Net->Stop();
+            EngineCore::Memory::Dealloc(Net);
+            Net = nullptr;
+        }
+
+        /* Then the session: it references both services below. */
         if(Session)
         {
             EngineCore::Memory::Dealloc(Session);
@@ -581,10 +751,18 @@ namespace NimbleEngine
         }
         Window = nullptr;
 
-        GameWindowSystem::Shutdown();
+        if(Desc.bHeadless)
+        {
+            RemoveConsoleQuitHandler();
+        }
+        else
+        {
+            GameWindowSystem::Shutdown();
+        }
 
         /* Last: GDI's teardown can still read an asset. Cleared because
          * AssetProvider dies with this object (CoreJob.h's locator rule). */
         SetFileProvider(nullptr);
     }
+
 };

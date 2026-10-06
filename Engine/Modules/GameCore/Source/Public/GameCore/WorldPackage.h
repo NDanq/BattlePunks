@@ -2,6 +2,7 @@
 #define GAMECORE_WORLDPACKAGE_H
 
 #include <cstdint>
+#include <string>
 
 #include "Public/GameCore/GameCoreAPI.h"
 #include "Public/GameCore/PrefabInstanceID.h"
@@ -33,12 +34,36 @@ namespace GameCore
 
     GAMECORE_API EWorldFileFormat DetectWorldFileFormat(const char* InPath);
 
-    /* Loads either format (text needs an editor build) into an empty World.
+    /* Loads either format (text needs an uncooked build: not Shipping) into an empty World.
      * A failed load leaves it partly filled; use a discardable World. */
     GAMECORE_API bool LoadWorldFile(const char* InPath, World& InOutWorld,
                                     EWorldFileFormat* OutFormat = nullptr);
 
-#if WITH_EDITOR
+    /*
+     * CONTENT BY ITS SOURCE PATH. A game names a world or a prefab as the
+     * project has it -- "Content/Levels/Arena.nmworld" -- in every build, and
+     * the build decides what is read:
+     *
+     *   Editor     the text source itself: what is being edited.
+     *   Debug, RelWithDebInfo Client/Server (WITH_UNCOOKED)
+     *              cooked here, on first use: the source is cooked into
+     *              Intermediate/Cooked/<source path> beside the executable,
+     *              again whenever the source is newer, and that is read -- the
+     *              Shipping load path, with no manual cook. [Content]
+     *              CookOnLoad=false reads the text source instead.
+     *   Shipping   cooked ahead: a world's "<folder>/Cooked/<file>" (the
+     *              editor's console: cook <world>), a prefab at its own path
+     *              (staged from <project>/Cooked/; cook prefabs).
+     *
+     * A source that is already binary is read as it is, in every build.
+     */
+    GAMECORE_API std::string ResolveContentWorld(const char* InSourcePath);
+    GAMECORE_API std::string ResolveContentPrefab(const char* InSourcePath);
+
+    /* LoadWorldFile(ResolveContentWorld(InSourcePath)): how a level loads its world. */
+    GAMECORE_API bool LoadContentWorld(const char* InSourcePath, World& InOutWorld);
+
+#if WITH_UNCOOKED
     /*
      * Saves InWorld as a text world. As atomic as separate files allow:
      *

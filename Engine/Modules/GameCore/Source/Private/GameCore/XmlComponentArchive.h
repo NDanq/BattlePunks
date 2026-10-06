@@ -1,7 +1,7 @@
 #ifndef GAMECORE_XMLCOMPONENTARCHIVE_H
 #define GAMECORE_XMLCOMPONENTARCHIVE_H
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
 
 #include <charconv>
 #include <cstring>
@@ -384,6 +384,6 @@ namespace XmlText
 }
 }
 
-#endif // WITH_EDITOR
+#endif // WITH_UNCOOKED
 
 #endif //GAMECORE_XMLCOMPONENTARCHIVE_H

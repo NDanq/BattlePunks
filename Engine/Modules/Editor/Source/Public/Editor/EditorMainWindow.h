@@ -22,6 +22,7 @@ class QAction;
 class QLabel;
 class SDLInputProbe;
 class SourceBuild;
+class EditorNetSession;
 class ViewportPanel;
 class ViewportWidget;
 
@@ -70,7 +71,8 @@ private:
     void StartPlay();
     void CompileSource();
     void CookContent();
-    void OpenSettings();
+    /* InPage: a page to open on ("Play"); empty keeps the first. */
+    void OpenSettings(const QString& InPage = QString());
     void OpenProjectSettings();
     void OnCompileFinished(bool bInSucceeded);
     void StartRenderer();
@@ -100,6 +102,10 @@ private:
     ConsolePanel*   ConsoleArea = nullptr;
     ContentBrowserPanel* ContentArea = nullptr;
     EditorConsole   Console;
+
+    /* STUB(NetCore-Editor): the editor link's console commands; nullptr
+     * without NetCore. After Console, which it registers into. */
+    EditorNetSession* NetLink = nullptr;
     QLabel*         StatsLabel = nullptr;
     QLabel*         PlayLabel  = nullptr;
     QLabel*         BakeLabel  = nullptr;   // "Lighting needs to be rebuilt"
@@ -110,6 +116,7 @@ private:
     QAction*        PlayAction  = nullptr;
     QAction*        StopAction  = nullptr;
     QAction*        EjectAction = nullptr;
+    QAction*        ClientWindowAction = nullptr;
 
     SourceBuild*    Compiler            = nullptr;
     QAction*        CompileAction       = nullptr;
