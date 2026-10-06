@@ -18,9 +18,15 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/Core/CoreConfig.h"
+#include "Private/Editor/SettingsDialog.h"
+#include "Public/Editor/EditorContext.h"
+#include "Public/Editor/ViewportPanel.h"
+#include "Public/Editor/ViewportWidget.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/TextureViewerWindow.h"
 
@@ -267,6 +273,77 @@ static void TestTextureViewer()
     delete Viewer;
 }
 
+/*
+ * The viewport's view settings outlive a session: saved with the Editor
+ * Settings (EditorSettings.ini, here under Qt's test paths), read back at
+ * startup, applied to a new viewport, and written again when the viewport
+ * changes them -- after a short delay, or as it closes.
+ */
+static void TestViewSettings()
+{
+    std::printf("[view settings]\n");
+    QStandardPaths::setTestModeEnabled(true);
+    QFile::remove(SettingsDialog::GetUserSettingsPath());
+
+    const auto Var = [](const char* InPath) { return EngineCore::ConfigFindVarByPath(InPath); };
+    const char* const Paths[] = { "Editor.ViewGizmoMode", "Editor.ViewGizmoSpace", "Editor.ViewGizmoSnap", "Editor.ViewMode",
+                                  "Editor.ViewAllBounds", "Editor.ViewLightGizmos", "Editor.ViewCameraSpeed", "Rendering.BakedLighting" };
+    bool bAll = true;
+    for(const char* Path : Paths) { bAll &= Var(Path) != nullptr; }
+    Expect(bAll, "every view setting is a config var");
+    if(!bAll) { return; }
+    const auto Reset = [&]() { for(const char* Path : Paths) { Var(Path)->SetFromString(Var(Path)->DefaultToString()); } };
+    const auto FileText = []()
+    {
+        QFile File(SettingsDialog::GetUserSettingsPath());
+        return File.open(QIODevice::ReadOnly) ? QString::fromUtf8(File.readAll()) : QString();
+    };
+
+    /* Saved and loaded, as the editor does at exit and startup. */
+    Var("Editor.ViewGizmoMode")->SetInt(2);
+    Var("Editor.ViewGizmoSnap")->SetBool(true);
+    Var("Editor.ViewMode")->SetInt(1);
+    Var("Editor.ViewAllBounds")->SetBool(true);
+    Var("Editor.ViewLightGizmos")->SetBool(false);
+    Var("Editor.ViewCameraSpeed")->SetInt(5);
+    Var("Rendering.BakedLighting")->SetBool(false);
+    Expect(SettingsDialog::SaveUserSettings(), "the settings save");
+    const QString Saved = FileText();
+    Expect(Saved.contains(QStringLiteral("ViewGizmoMode=2")) && Saved.contains(QStringLiteral("ViewLightGizmos=false"))
+           && Saved.contains(QStringLiteral("[Rendering]")) && Saved.contains(QStringLiteral("BakedLighting=false")),
+           "the view is in EditorSettings.ini");
+    Reset();
+    SettingsDialog::LoadUserSettings();
+    Expect(Var("Editor.ViewGizmoMode")->GetInt() == 2 && Var("Editor.ViewGizmoSnap")->GetBool() && Var("Editor.ViewMode")->GetInt() == 1
+           && Var("Editor.ViewAllBounds")->GetBool() && !Var("Editor.ViewLightGizmos")->GetBool()
+           && Var("Editor.ViewCameraSpeed")->GetInt() == 5 && !Var("Rendering.BakedLighting")->GetBool(),
+           "and read back");
+
+    /* A viewport opens as it was left, and remembers what it changes. */
+    EditorContext Context;
+    EditorDocument Document;
+    {
+        ViewportPanel Panel(Context, Document);
+        ViewportWidget* View = Panel.GetViewport();
+        Expect(View->GetGizmoMode() == TransformGizmo::EMode::Rotate && View->IsGizmoSnapEnabled() && View->IsShowingAllBounds()
+               && !View->IsShowingLightGizmos() && Context.GetViewMode() == RenderCore::ERenderViewMode::Unlit,
+               "a new viewport takes the saved handles, snap, gizmos and view mode");
+
+        View->SetGizmoMode(TransformGizmo::EMode::Scale);   // as its 4 key does
+        Expect(Var("Editor.ViewGizmoMode")->GetInt() == 3, "changing the handles in the viewport sets the setting");
+        PumpFor(1200);
+        Expect(FileText().contains(QStringLiteral("ViewGizmoMode=3")), "and saves it shortly after");
+
+        View->SetGizmoSpace(TransformGizmo::ESpace::Local);
+    }
+    Expect(FileText().contains(QStringLiteral("ViewGizmoSpace=1")), "a change not yet saved is saved as the viewport closes");
+
+    Reset();
+    Context.SetViewMode(RenderCore::ERenderViewMode::Lit);
+    QFile::remove(SettingsDialog::GetUserSettingsPath());
+    QStandardPaths::setTestModeEnabled(false);
+}
+
 int main(int argc, char** argv)
 {
     /* No display needed. */
@@ -279,6 +356,7 @@ int main(int argc, char** argv)
     std::printf("NimbleEditorDetailsTests\n");
     TestMaterialParameters();
     TestTextureViewer();
+    TestViewSettings();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

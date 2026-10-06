@@ -52,6 +52,14 @@ namespace
         const char* Text;
         int         Value;
     };
+
+    /* Saved with the settings but set in the viewport -- its toolbar and Show
+     * menu (ViewportPanel.cpp) -- not on a page here. */
+    const char* const ViewStatePaths[] =
+    {
+        "Editor.ViewGizmoMode", "Editor.ViewGizmoSpace", "Editor.ViewGizmoSnap", "Editor.ViewMode",
+        "Editor.ViewAllBounds", "Editor.ViewLightGizmos", "Editor.ViewCameraSpeed", "Rendering.BakedLighting",
+    };
 }
 
 SettingsDialog::SettingsDialog(QWidget* InParent)
@@ -364,12 +372,16 @@ void SettingsDialog::Apply()
 
 bool SettingsDialog::Save() const
 {
-    /* By section, in row order, so the file reads like the dialog. */
+    /* By section, in row order, so the file reads like the dialog; then the
+     * viewport's view, which no page shows. */
     std::vector<std::string>                              Sections;
     std::map<std::string, std::vector<std::string>>       Lines;
-    for(const Row& R : Rows)
+    std::vector<const char*>                              Paths;
+    for(const Row& R : Rows) { Paths.push_back(R.Path); }
+    for(const char* Path : ViewStatePaths) { Paths.push_back(Path); }
+    for(const char* Path : Paths)
     {
-        const EngineCore::ConfigVar* Var = FindVar(R.Path);
+        const EngineCore::ConfigVar* Var = FindVar(Path);
         if(!Var)
         {
             continue;
