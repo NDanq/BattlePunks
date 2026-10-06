@@ -61,7 +61,12 @@ private:
     void     BuildSectionPages();
     QWidget* AddPage(const QString& InName, QFormLayout*& OutForm);
     void     AddRow(QFormLayout* InForm, const QString& InSection, const QString& InKey, const QString& InLabel);
-    void     Apply();
+    /* False if the dialog should stay open: a module change not confirmed,
+     * or the file could not be written. */
+    bool     Apply();
+    /* Optional module switches changed: asks whether to save them, as they
+     * need a native recompile. False (and the switches put back) if not. */
+    bool     ConfirmModuleChanges();
     void     UpdateLabel(const Row& InRow);
 
     ConfigIniFile     File;
