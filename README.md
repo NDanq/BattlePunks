@@ -38,25 +38,16 @@ reach every target through EngineCore.
 - each game's dedicated server, `<Game>Server`
 - `<Game> -connect=host:port`
 
-A game that never networks turns it off before adding the engine, and
-nothing networked is compiled or linked:
-
-```cmake
-set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
-```
-
-See `Engine/Modules/NetCore/README.md`.
+A game that never networks turns it off, and then nothing networked is
+compiled or linked. See **Choosing modules** below and
+`Engine/Modules/NetCore/README.md`.
 
 ### Physics
 
 `NIMBLE_WITH_JOLTPHYSICS` (**off** by default) builds JoltPhysics, rigid
 bodies and joints on the vendored [Jolt Physics](https://github.com/jrouwe/JoltPhysics),
-and defines `WITH_JOLTPHYSICS=1` everywhere. A game that wants physics opts in
-before adding the engine, as LightLab does:
-
-```cmake
-set(NIMBLE_WITH_JOLTPHYSICS ON CACHE BOOL "" FORCE)
-```
+and defines `WITH_JOLTPHYSICS=1` everywhere. A game that wants physics opts
+in (see **Choosing modules** below), as LightLab does.
 
 Entities get a **Rigid Body** component, and optionally a **Physics
 Constraint**. Each body's shape is inferred from the entity's Render
@@ -64,6 +55,29 @@ component mesh or its Bounds. Both components live in GameCore, so a level
 that carries them still loads, edits and saves with the module off. They do
 not simulate then, and loading such a level warns. Net components in a build
 without NetCore warn the same way. See `Engine/Modules/JoltPhysics/README.md`.
+
+### Choosing modules
+
+A project picks its optional engine modules in its own
+`Config/DefaultEngine.ini`:
+
+```ini
+[Modules]
+NetCore=true
+JoltPhysics=false
+```
+
+The editor edits the same keys under **Project Settings > Project >
+Modules**. CMake reads them as the game configures
+(`Engine/cmake/NimbleProject.cmake`). The game's CMakeLists names the file
+before adding the engine with
+`set(NIMBLE_PROJECT_CONFIG ".../Config/DefaultEngine.ini")`. The file is a
+configure dependency, so the next build after an edit reconfigures and builds
+or drops the module. A key the file has wins over a `-D` on the configure
+line.
+
+A running game or editor whose build disagrees with the file warns. That
+happens when the file was edited since the last build.
 
 ### Games are modules
 

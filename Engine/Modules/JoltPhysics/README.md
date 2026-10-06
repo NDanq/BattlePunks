@@ -30,16 +30,26 @@ per process. GDI lives inside RenderCore for the same reason.
 
 ## Turning it on
 
-It is **off by default**, one switch per configure. It becomes
-`WITH_JOLTPHYSICS=0/1` on every target:
+It is **off by default**, one switch per configure, `NIMBLE_WITH_JOLTPHYSICS`.
+It becomes `WITH_JOLTPHYSICS=0/1` on every target. A project opts in from its
+config file, the way LightLab does:
 
-```cmake
-# In a game's CMakeLists.txt, before add_subdirectory(<engine>):
-set(NIMBLE_WITH_JOLTPHYSICS ON CACHE BOOL "" FORCE)
+```ini
+; Config/DefaultEngine.ini
+[Modules]
+JoltPhysics=true
 ```
 
-You can also pass `-DNIMBLE_WITH_JOLTPHYSICS=ON` on the configure line.
-`Games/LightLab/CMakeLists.txt` opts in this way.
+In the editor the same switch is **Project Settings > Project > Modules >
+Physics (JoltPhysics)**. CMake reads the file as the game configures
+(`Engine/cmake/NimbleProject.cmake`). The file is a configure dependency, so
+the next build applies an edit. A build that disagrees with the file says so
+at startup: `NimbleEngine::WarnModuleConfigMismatch`.
+
+You can also opt in without the file: put
+`set(NIMBLE_WITH_JOLTPHYSICS ON CACHE BOOL "" FORCE)` before
+`add_subdirectory(<engine>)`, or pass `-DNIMBLE_WITH_JOLTPHYSICS=ON`. A
+`[Modules]` key in the file wins over both.
 
 **Off**, nothing of Jolt is compiled:
 

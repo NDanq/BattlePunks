@@ -57,6 +57,13 @@ namespace NimbleEngine
     /* InType is one of those components. */
     NE_API bool IsInactiveModuleComponent(GameCore::ComponentTypeID InType);
 
+    /* [Modules] in the project's config (NetCore, JoltPhysics) asks for a
+     * module this build was configured without, or the other way round --
+     * edited (Project Settings) since the last configure. Warns, once per
+     * call; true if it did. Application and the editor call it after loading
+     * the config. */
+    NE_API bool WarnModuleConfigMismatch();
+
     /* The session whose level owns InWorld, or nullptr: how the "Game" script
      * library and a native prefab's callbacks reach the rules. Set for the
      * whole of LoadLevel to UnloadLevel. Game thread only. */

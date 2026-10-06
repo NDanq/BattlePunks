@@ -351,6 +351,9 @@ namespace NimbleEngine
             }
         }
 
+        /* [Modules] edited since this build was configured (GameSession.h). */
+        WarnModuleConfigMismatch();
+
         if(Desc.bHeadless)
         {
             /* No window to draw to, so nothing to draw: the Null backend

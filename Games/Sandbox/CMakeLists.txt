@@ -66,6 +66,10 @@ if(SANDBOX_STANDALONE)
     set(NIMBLE_BUILD_SANDBOX OFF CACHE BOOL
         "Build the Games/Sandbox host (off here: Sandbox IS the top-level project)" FORCE)
 
+    # Which optional engine modules this game wants: [Modules] in its config
+    # (Engine/cmake/NimbleProject.cmake; the editor's Project Settings).
+    set(NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
+
     # Explicit binary dir because the source dir is outside this one.
     add_subdirectory("${SANDBOX_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/Engine")
 endif()
