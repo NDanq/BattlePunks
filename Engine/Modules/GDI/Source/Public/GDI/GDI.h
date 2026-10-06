@@ -506,7 +506,7 @@ public:
     /* A texture with its mip chain: InLevels[0] full size, each next half
      * the last (at least 1), InCount in all; a Linear filter samples them
      * trilinear. This default makes level 0 alone, for a backend without
-     * mips (D3D12, Metal and Null so far): it samples the full size. */
+     * mips (Metal and Null so far): it samples the full size. */
     virtual GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,
                                                           EGDITextureBorder InBorder, EGDITextureFilter InFilter)
     {
@@ -542,8 +542,8 @@ public:
     uint32_t   GetIndirectArgsOffset() const { return IndirectArgsOffset; }
 
     /* Whether InFormat can be sampled (CreateCompressedTextureResource).
-     * This default, for a backend without block formats (D3D12, Metal and
-     * Null so far), says no: the caller decodes to RGBA8 instead. */
+     * This default, for a backend without block formats (Metal and Null so
+     * far), says no: the caller decodes to RGBA8 instead. */
     virtual bool SupportsCompressedFormat(EGDICompressedFormat /*InFormat*/) const { return false; }
 
     /* A block-compressed texture with its mip chain: InLevels[0] full size,
@@ -761,8 +761,8 @@ GDITextureResource* GDICreateCompressedTextureResource(EGDICompressedFormat InFo
                                                        uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter);
 
 /*
- * Compute shaders and GPU buffers, where the backend has them (Vulkan and
- * Null so far; GDIDynamicDriver's defaults elsewhere): false and null
+ * Compute shaders and GPU buffers, where the backend has them (Vulkan, D3D12
+ * and Null so far; GDIDynamicDriver's defaults elsewhere): false and null
  * without a driver or support.
  *
  * GDIDispatchCompute: InShader is an ST_Compute shader; InParams (at most
@@ -827,8 +827,8 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(
  * PIX, Xcode -- and validation messages: an asset's path, so a draw's mesh,
  * texture or buffers read as what they are. Nothing where the backend cannot
  * name objects (Vulkan names them through VK_EXT_debug_utils when the
- * instance has it; RenderDoc's layer always provides it). Null objects are
- * ignored. Render thread.
+ * instance has it; RenderDoc's layer always provides it. D3D12 through
+ * ID3D12Object::SetName). Null objects are ignored. Render thread.
  */
 void GDISetDebugName(GDIMesh* InMesh, const std::string& InName);
 void GDISetDebugName(GDIBuffer* InBuffer, const std::string& InName);

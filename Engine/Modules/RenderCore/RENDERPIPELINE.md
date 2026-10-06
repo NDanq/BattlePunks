@@ -986,8 +986,8 @@ buffers `Engine/Content/Meshes/Box.nmmesh Positions` (`TexCoords`, `Normals`,
 strip's `Triangles A`/`B`), every shader module its cooked file
 (`Shaders/Cooked/Vulkan/Content/Materials/Glow@00000000.fsh.spv`), and render
 targets `RT:<name>` as before. Vulkan names them through
-`vkSetDebugUtilsObjectNameEXT`; the other backends keep the name and do not
-pass it on yet.
+`vkSetDebugUtilsObjectNameEXT`, D3D12 through `ID3D12Object::SetName` (PIX and
+the debug layer); Metal and OpenGL keep the name and do not pass it on yet.
 
 A stage or group with nothing to draw has no event. Every full-screen pass is
 named after its shader (`DrawPost`). Static draws are issued before dynamic ones
@@ -1136,9 +1136,10 @@ Elsewhere it draws nothing and says so once.
   count into every entry's instance count; the ribbon pass packs the living
   segments to the front in order (a prefix sum, one workgroup) and writes
   theirs. The draws are then `GDISetIndirectArgs` draws
-  (`vkCmdDrawIndexedIndirect`): an emitter that holds 512 with 20 alive
-  vertex-shades 20, with no readback. A backend without indirect draws draws
-  the whole ring, the dead collapsed to points as before.
+  (`vkCmdDrawIndexedIndirect`, D3D12's `ExecuteIndirect`): an emitter that
+  holds 512 with 20 alive vertex-shades 20, with no readback. A backend
+  without indirect draws draws the whole ring, the dead collapsed to points as
+  before.
 - **Time** is the render thread's clock (`RenderContext::GetDeltaSeconds`),
   clamped to a tenth of a second a frame, so the editor's viewport animates
   while the World stands still.
@@ -1236,7 +1237,7 @@ OpenGL compiles (the host still cannot create a GL context); the Null backend's
 are covered by GDI's smoke test.
 
 Particles (### Particles) needed three more, where `GDISupportsCompute()` says
-the backend has them -- Vulkan and Null so far:
+the backend has them -- Vulkan, D3D12 and Null so far:
 
 - **GPU buffers.** `GDICreateBuffer(Bytes, Usage, Data)`: storage for compute
   (`GDI_BU_Storage`), per-instance vertex data (`GDI_BU_Instance`), or both;
@@ -1257,8 +1258,9 @@ the backend has them -- Vulkan and Null so far:
 | Backend | Compute | Instanced meshes |
 |---|---|---|
 | Vulkan | a compute pipeline per shader and buffer count (`VKPipelineCache::GetOrCreateCompute`), its parameters in the frame's UBO ring; full memory barriers either side | vertex layout 3: the mesh's five streams and the instance buffer at binding 5; `vkCmdDrawIndexed` with the count |
+| D3D12 | a compute PSO per shader on one compute root signature (the parameters at b0, root UAVs at u1-u4: spirv-cross makes each buffer a `RWByteAddressBuffer`), its parameters in the frame's constant-buffer ring; UAV barriers either side. No render pass to close: the draws after it keep their targets. Buffers track their state per command list, since a buffer decays to COMMON after each | vertex layout 3: the instance buffer at slot 5; `DrawIndexedInstanced` with the count, or `ExecuteIndirect` |
 | Null | buffers kept on the CPU; dispatches counted (`NullGDIStats`) | counted |
-| D3D12, Metal, OpenGL | not yet: `GDISupportsCompute()` is false, so nothing is made and particles draw nothing | ignored: one instance |
+| Metal, OpenGL | not yet: `GDISupportsCompute()` is false, so nothing is made and particles draw nothing | ignored: one instance |
 
 A compute pipeline is keyed by its shader module, so releasing a compute
 shader drops its pipelines from the cache (`ForgetComputeModule`); they are
@@ -1315,7 +1317,7 @@ sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
 lights; occlusion queries and a depth prepass in the PrePass; per-section
 bounds for culling; RGBA16F G-buffer and scene colour.
 
-Particles: compute and instancing on D3D12, Metal and OpenGL; GPU emission
+Particles: compute and instancing on Metal and OpenGL; GPU emission
 counts (spawn by events, bursts); collisions with depth; soft particles
 (fading where they meet the scene); lit particles' shadows; sorting across
 systems; sub-UV animation.
