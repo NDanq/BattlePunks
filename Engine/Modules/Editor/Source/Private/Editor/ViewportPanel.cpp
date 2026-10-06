@@ -12,6 +12,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QToolBar>
+#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -20,6 +21,7 @@
 #include "Public/Editor/EditorContext.h"
 #include "Public/Editor/EditorDocument.h"
 #include "Public/Editor/ViewportWidget.h"
+#include "Private/Editor/SettingsDialog.h"
 
 namespace
 {
@@ -27,6 +29,27 @@ namespace
     constexpr int SpeedStepMin = 0;
     constexpr int SpeedStepMax = 6;
     constexpr int SpeedStepOne = 3;
+
+    /* How long after the last change the view is written to EditorSettings.ini. */
+    constexpr int SaveDelayMs = 750;
+}
+
+/*
+ * The view as the user left it: read when a viewport opens, written back on
+ * every change (SettingsDialog saves them to EditorSettings.ini with the
+ * Editor Settings, though no page shows them). Show > Lighting is [Rendering]
+ * BakedLighting, saved the same way.
+ */
+NIMBLE_CONFIG_INT (GEditorViewGizmoMode,    "Editor", "ViewGizmoMode",    int(TransformGizmo::EMode::Translate), nullptr);   // 0 Select, 1 Move, 2 Rotate, 3 Scale
+NIMBLE_CONFIG_INT (GEditorViewGizmoSpace,   "Editor", "ViewGizmoSpace",   int(TransformGizmo::ESpace::World), nullptr);      // 0 World, 1 Local
+NIMBLE_CONFIG_BOOL(GEditorViewGizmoSnap,    "Editor", "ViewGizmoSnap",    false, nullptr);
+NIMBLE_CONFIG_INT (GEditorViewMode,         "Editor", "ViewMode",         0, nullptr);       // 0 Lit, 1 Unlit (a render target is not kept)
+NIMBLE_CONFIG_BOOL(GEditorViewAllBounds,    "Editor", "ViewAllBounds",    false, nullptr);
+NIMBLE_CONFIG_BOOL(GEditorViewLightGizmos,  "Editor", "ViewLightGizmos",  true, nullptr);
+NIMBLE_CONFIG_INT (GEditorViewCameraSpeed,  "Editor", "ViewCameraSpeed",  3, nullptr);       // 0 (1/8x) .. 6 (8x)
+
+namespace
+{
 
     struct PresetButton
     {
@@ -91,6 +114,21 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     Viewport = new ViewportWidget(InContext, InDocument, this);
     Layout->addWidget(Viewport, 1);
 
+    /* The view as it was left, before the toolbar reads it back. */
+    SaveTimer = new QTimer(this);
+    SaveTimer->setSingleShot(true);
+    SaveTimer->setInterval(SaveDelayMs);
+    connect(SaveTimer, &QTimer::timeout, this, []() { SettingsDialog::SaveUserSettings(); });
+    Viewport->SetGizmoMode(TransformGizmo::EMode(std::clamp(GEditorViewGizmoMode.GetInt(), 0, int(TransformGizmo::EMode::Scale))));
+    Viewport->SetGizmoSpace(TransformGizmo::ESpace(std::clamp(GEditorViewGizmoSpace.GetInt(), 0, int(TransformGizmo::ESpace::Local))));
+    Viewport->SetGizmoSnap(GEditorViewGizmoSnap.GetBool());
+    Viewport->SetShowAllBounds(GEditorViewAllBounds.GetBool());
+    Viewport->SetShowLightGizmos(GEditorViewLightGizmos.GetBool());
+    if(Context.GetViewMode() != RenderCore::ERenderViewMode::RenderTarget)
+    {
+        Context.SetViewMode(GEditorViewMode.GetInt() == 1 ? RenderCore::ERenderViewMode::Unlit : RenderCore::ERenderViewMode::Lit);
+    }
+
     // --- Transform handles ---------------------------------------------------
     /* No shortcuts here: the keys are the viewport's own (see ViewportWidget),
      * so typing Q W E R in a text field never switches modes. */
@@ -104,6 +142,7 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     connect(ModeCombo, &QComboBox::currentIndexChanged, this, [this](const int InIndex)
     {
         Viewport->SetGizmoMode(TransformGizmo::EMode(InIndex));
+        Remember(GEditorViewGizmoMode.SetInt(InIndex));
     });
     connect(Viewport, &ViewportWidget::GizmoModeChanged, ModeCombo, [this](const TransformGizmo::EMode InMode)
     {
@@ -117,6 +156,7 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     connect(SpaceCombo, &QComboBox::currentIndexChanged, this, [this](const int InIndex)
     {
         Viewport->SetGizmoSpace(TransformGizmo::ESpace(InIndex));
+        Remember(GEditorViewGizmoSpace.SetInt(InIndex));
     });
     connect(Viewport, &ViewportWidget::GizmoSpaceChanged, SpaceCombo, [this](const TransformGizmo::ESpace InSpace)
     {
@@ -128,7 +168,11 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     GizmoSnapAction->setToolTip(QStringLiteral("Snap handle drags to [Editor] SnapTranslate / SnapRotate / SnapScale "
                                                "(Ctrl during a drag inverts this)"));
     GizmoSnapAction->setChecked(Viewport->IsGizmoSnapEnabled());
-    connect(GizmoSnapAction, &QAction::toggled, Viewport, &ViewportWidget::SetGizmoSnap);
+    connect(GizmoSnapAction, &QAction::toggled, this, [this](const bool bInOn)
+    {
+        Viewport->SetGizmoSnap(bInOn);
+        Remember(GEditorViewGizmoSnap.SetBool(bInOn));
+    });
     connect(Viewport, &ViewportWidget::GizmoSnapChanged, GizmoSnapAction, &QAction::setChecked);
 
     Toolbar->addSeparator();
@@ -224,14 +268,23 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
     QMenu* GizmoMenu = ShowMenu->addMenu(QStringLiteral("Editor Gizmos"));
     ShowAllBoundsAction = GizmoMenu->addAction(QStringLiteral("All Bounds"));
     ShowAllBoundsAction->setCheckable(true);
+    ShowAllBoundsAction->setChecked(Viewport->IsShowingAllBounds());
     ShowAllBoundsAction->setToolTip(QStringLiteral("Draw every entity's bounds, not only the selection's"));
-    connect(ShowAllBoundsAction, &QAction::toggled, this, [this](const bool bInOn) { Viewport->SetShowAllBounds(bInOn); });
+    connect(ShowAllBoundsAction, &QAction::toggled, this, [this](const bool bInOn)
+    {
+        Viewport->SetShowAllBounds(bInOn);
+        Remember(GEditorViewAllBounds.SetBool(bInOn));
+    });
 
     ShowLightGizmosAction = GizmoMenu->addAction(QStringLiteral("Light Gizmos"));
     ShowLightGizmosAction->setCheckable(true);
     ShowLightGizmosAction->setChecked(Viewport->IsShowingLightGizmos());
     ShowLightGizmosAction->setToolTip(QStringLiteral("Draw every light's reach, not only the selected light's"));
-    connect(ShowLightGizmosAction, &QAction::toggled, this, [this](const bool bInOn) { Viewport->SetShowLightGizmos(bInOn); });
+    connect(ShowLightGizmosAction, &QAction::toggled, this, [this](const bool bInOn)
+    {
+        Viewport->SetShowLightGizmos(bInOn);
+        Remember(GEditorViewLightGizmos.SetBool(bInOn));
+    });
 
     ShowButton = new QToolButton(Toolbar);
     ShowButton->setFocusPolicy(Qt::NoFocus);
@@ -250,9 +303,32 @@ ViewportPanel::ViewportPanel(EditorContext& InContext, EditorDocument& InDocumen
         SpeedCombo->addItem(Power < 0 ? QStringLiteral("Speed 1/%1x").arg(1 << -Power)
                                       : QStringLiteral("Speed %1x").arg(1 << Power));
     }
-    connect(SpeedCombo, &QComboBox::currentIndexChanged, this, &ViewportPanel::SetSpeedStep);
-    SpeedCombo->setCurrentIndex(SpeedStepOne);
-    SetSpeedStep(SpeedStepOne);
+    const int Speed = std::clamp(GEditorViewCameraSpeed.GetInt(), SpeedStepMin, SpeedStepMax);
+    SpeedCombo->setCurrentIndex(Speed);
+    SetSpeedStep(Speed);
+    connect(SpeedCombo, &QComboBox::currentIndexChanged, this, [this](const int InStep)
+    {
+        SetSpeedStep(InStep);
+        Remember(GEditorViewCameraSpeed.SetInt(InStep));
+    });
+}
+
+ViewportPanel::~ViewportPanel()
+{
+    /* A change still waiting for its save is written now. */
+    if(SaveTimer && SaveTimer->isActive())
+    {
+        SaveTimer->stop();
+        SettingsDialog::SaveUserSettings();
+    }
+}
+
+void ViewportPanel::Remember(const bool bInChanged)
+{
+    if(bInChanged)
+    {
+        SaveTimer->start();
+    }
 }
 
 void ViewportPanel::SetSpeedStep(const int InStep)
@@ -285,6 +361,10 @@ bool ViewportPanel::PickRenderTarget()
 void ViewportPanel::UpdateViewModeUI()
 {
     const RenderCore::ERenderViewMode Mode = Context.GetViewMode();
+    if(Mode != RenderCore::ERenderViewMode::RenderTarget)
+    {
+        Remember(GEditorViewMode.SetInt(Mode == RenderCore::ERenderViewMode::Unlit ? 1 : 0));
+    }
     LitModeAction->setChecked(Mode == RenderCore::ERenderViewMode::Lit);
     UnlitModeAction->setChecked(Mode == RenderCore::ERenderViewMode::Unlit);
     TargetModeAction->setChecked(Mode == RenderCore::ERenderViewMode::RenderTarget);
@@ -298,7 +378,7 @@ void ViewportPanel::UpdateViewModeUI()
 
 void ViewportPanel::SetBakedLighting(const bool bInBaked)
 {
-    if(EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting")) { Var->SetBool(bInBaked); }
+    if(EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Rendering", "BakedLighting")) { Remember(Var->SetBool(bInBaked)); }
     (bInBaked ? BakedAction : LiveAction)->setChecked(true);
     const GameCore::WorldLightingSettings& Lighting = Document.GetWorldSettings().Lighting;
     emit StatusMessage(!bInBaked ? QStringLiteral("Lighting: Live -- every light lit live")

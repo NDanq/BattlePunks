@@ -22,7 +22,8 @@ class QDialogButtonBox;
  *
  * Saved to EditorSettings.ini in AppConfigLocation, loaded after
  * DefaultEngine.ini (and before --rhi). Add a setting with one table row in
- * SettingsDialog.cpp.
+ * SettingsDialog.cpp. The viewport's view ([Editor] View*, Show > Lighting)
+ * is saved with them, though set in the viewport (ViewportPanel).
  */
 class SettingsDialog : public QDialog
 {
