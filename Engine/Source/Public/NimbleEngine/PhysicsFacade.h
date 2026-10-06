@@ -44,6 +44,16 @@ namespace NimbleEngine
     /* InWorld is simulated (a running level's, or one a tool attached). */
     NE_API bool IsWorldSimulated(const GameCore::World& InWorld);
 
+    /*
+     * A tool's own World simulated from now on, as GameSession does a
+     * level's: the editor's prefab Simulate. Its bodies step in TP_Physics
+     * whenever the World ticks, until StopSimulating -- which must come
+     * before the World is destroyed. False (and nothing done) without the
+     * module, or if InWorld is already simulated.
+     */
+    NE_API bool StartSimulating(GameCore::World& InWorld);
+    NE_API void StopSimulating(GameCore::World& InWorld);
+
     /* The nearest hit along InDirection (any length) within InMaxDistance:
      * bodies whose Layer is in InMask (sensors skipped) when InWorld is
      * simulated, else Bounds. */

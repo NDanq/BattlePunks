@@ -8,6 +8,7 @@
 #include "Public/GameCore/Components/NetComponent.h"
 #include "Public/GameCore/Components/PhysicsConstraintComponent.h"
 #include "Public/GameCore/Components/RigidBodyComponent.h"
+#include "Public/GameCore/Components/VehicleComponent.h"
 #include "Public/GameCore/World.h"
 
 /*
@@ -65,6 +66,12 @@ namespace NimbleEngine
             Warn(InContext, Joints, "Physics Constraint", "JoltPhysics", "NIMBLE_WITH_JOLTPHYSICS", "they will not act");
             bWarned = true;
         }
+        const size_t Vehicles = CountOf(InWorld, GameCore::VehicleComponent::StaticType().ID);
+        if(Vehicles > 0)
+        {
+            Warn(InContext, Vehicles, "Vehicle", "JoltPhysics", "NIMBLE_WITH_JOLTPHYSICS", "they will not drive");
+            bWarned = true;
+        }
 #endif
 
 #if !WITH_NETCORE
@@ -100,7 +107,8 @@ namespace NimbleEngine
         (void)InType;
 #if !WITH_JOLTPHYSICS
         if(InType == GameCore::RigidBodyComponent::StaticType().ID
-           || InType == GameCore::PhysicsConstraintComponent::StaticType().ID) { return true; }
+           || InType == GameCore::PhysicsConstraintComponent::StaticType().ID
+           || InType == GameCore::VehicleComponent::StaticType().ID) { return true; }
 #endif
 #if !WITH_NETCORE
         if(InType == GameCore::NetComponent::StaticType().ID) { return true; }

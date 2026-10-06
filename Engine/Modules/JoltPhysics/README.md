@@ -53,7 +53,7 @@ You can also opt in without the file: put
 
 **Off**, nothing of Jolt is compiled:
 
-- **The components stay.** Rigid Body and Physics Constraint are GameCore's,
+- **The components stay.** Rigid Body, Physics Constraint and Vehicle are GameCore's,
   so levels and prefabs that carry them load, edit, save and cook unchanged.
   They are inert.
 - **It says so.** A level that has any warns once as it loads, naming the
@@ -238,7 +238,10 @@ spatial refit at the end of that phase:
   not.
 - **On a network client**, dynamic bodies on networked entities follow their
   replicated Transform kinematically, because the server simulates them.
-- A test or tool can attach its own: `PhysicsWorld::Attach(World)`.
+- A test or tool can attach its own: `PhysicsWorld::Attach(World)`. Outside
+  this module, `NimbleEngine::StartSimulating(World)` / `StopSimulating` do
+  it. The prefab editor's Simulate uses them, on a ground of its own when
+  the prefab has Rigid Bodies (GameCore's PREFABS.md).
 
 ---
 
@@ -345,7 +348,6 @@ I/O. Two headers that sources include unconditionally are kept too:
   bodies start from their Transforms as if new (with their initial
   velocities), and contacts begin again.
 - Per-world gravity (`WorldSettings`). Gravity is `[Physics] GravityY` for now.
-- The prefab editor's Simulate does not simulate physics.
 
 ---
 

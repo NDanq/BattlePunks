@@ -46,8 +46,8 @@ namespace NimbleEngine
      * every GameSession; idempotent. A host without a session calls it. */
     NE_API void InstallCollisionMeshProvider();
 
-    /* Components whose module this build compiled out -- Rigid Body and
-     * Physics Constraint without JoltPhysics, Net without NetCore -- load,
+    /* Components whose module this build compiled out -- Rigid Body,
+     * Physics Constraint and Vehicle without JoltPhysics, Net without NetCore -- load,
      * edit and save, but nothing acts on them. Warns (InContext names the
      * level or file) when InWorld has any; true if it did. Every level load
      * checks (and the first such component added later), as does the
