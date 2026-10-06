@@ -48,6 +48,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # Off before the engine is added: it would add Games/Sandbox to this build.
     set(NIMBLE_BUILD_SANDBOX OFF CACHE BOOL "Build the Games/Sandbox host (off: ${GAME_NAME} is the top-level project)" FORCE)
 
+    # Physics: the PhysicsLab level simulates Rigid Bodies, so this game opts
+    # in to the JoltPhysics module, which the engine leaves off by default.
+    set(NIMBLE_WITH_JOLTPHYSICS ON CACHE BOOL "Build the JoltPhysics module (off: physics components are inert)" FORCE)
+
     add_subdirectory("${GAME_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/Engine")
 endif()
 
@@ -63,6 +67,8 @@ nimble_add_hot_module(${GAME_MODULE}
                      Source/Private/LightLab/LightLabInput.cpp
                      Source/Private/LightLab/LightLabAvatar.cpp
                      Source/Private/LightLab/LightLabAvatar.h
+                     Source/Private/LightLab/LightLabPhysics.cpp
+                     Source/Private/LightLab/LightLabPhysics.h
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 

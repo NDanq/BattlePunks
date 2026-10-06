@@ -29,6 +29,11 @@ namespace UI
     class UISystem;
 }
 
+namespace JoltPhysics
+{
+    class PhysicsWorld;
+}
+
 namespace NimbleEngine
 {
     class GameConsole;
@@ -40,6 +45,17 @@ namespace NimbleEngine
      * headers (CollisionMeshes.cpp). Done when this image loads and again by
      * every GameSession; idempotent. A host without a session calls it. */
     NE_API void InstallCollisionMeshProvider();
+
+    /* Components whose module this build compiled out -- Rigid Body and
+     * Physics Constraint without JoltPhysics, Net without NetCore -- load,
+     * edit and save, but nothing acts on them. Warns (InContext names the
+     * level or file) when InWorld has any; true if it did. Every level load
+     * checks (and the first such component added later), as does the
+     * editor's world open (InactiveModules.cpp). */
+    NE_API bool WarnInactiveModuleComponents(const GameCore::World& InWorld, const char* InContext);
+
+    /* InType is one of those components. */
+    NE_API bool IsInactiveModuleComponent(GameCore::ComponentTypeID InType);
 
     /* The session whose level owns InWorld, or nullptr: how the "Game" script
      * library and a native prefab's callbacks reach the rules. Set for the
@@ -296,6 +312,15 @@ namespace NimbleEngine
 
         /* CORE_CHECKs that the caller is on GameThread; InWhat names the entry. */
         void CheckGameThread(const char* InWhat) const;
+
+        /* The level World's simulation (WITH_JOLTPHYSICS), from just after
+         * the World is made to just before it goes; null without physics. */
+        JoltPhysics::PhysicsWorld* Physics = nullptr;
+
+        /* This load warned about inactive-module components already, or has
+         * not yet looked (WarnInactiveModuleComponents). */
+        bool bInactiveChecked = false;
+        bool bInactiveWarned  = false;
 
         /* LevelWorld lives from LoadLevel to UnloadLevel; same as ILevel::OwnedWorld. */
         ILevel*           ActiveLevel = nullptr;

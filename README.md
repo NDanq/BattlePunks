@@ -47,6 +47,24 @@ set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
 
 See `Engine/Modules/NetCore/README.md`.
 
+### Physics
+
+`NIMBLE_WITH_JOLTPHYSICS` (**off** by default) builds JoltPhysics, rigid
+bodies and joints on the vendored [Jolt Physics](https://github.com/jrouwe/JoltPhysics),
+and defines `WITH_JOLTPHYSICS=1` everywhere. A game that wants physics opts in
+before adding the engine, as LightLab does:
+
+```cmake
+set(NIMBLE_WITH_JOLTPHYSICS ON CACHE BOOL "" FORCE)
+```
+
+Entities get a **Rigid Body** component, and optionally a **Physics
+Constraint**. Each body's shape is inferred from the entity's Render
+component mesh or its Bounds. Both components live in GameCore, so a level
+that carries them still loads, edits and saves with the module off. They do
+not simulate then, and loading such a level warns. Net components in a build
+without NetCore warn the same way. See `Engine/Modules/JoltPhysics/README.md`.
+
 ### Games are modules
 
 A game's code is a module DLL, not part of an executable. Sandbox builds
@@ -160,6 +178,23 @@ game), shows baked lighting
 lighting, in either level. `Games/LightLab/Tools/make_baked_lighting_level.py`
 writes the world; Build > Bake Lightmaps (or the headless line in the editor's
 README, "Build menu") bakes it again.
+
+A third level, **PhysicsLab** (`Content/Levels/PhysicsLab.nmworld`; open it
+in the editor and Play, or set `[Game] StartLevel=PhysicsLab`), is the
+JoltPhysics demo (`LightLabPhysics.cpp`):
+
+- a crate pyramid and tower
+- dominoes set off by a ball rolling down a ramp
+- one slope with a bouncy ball, a heavy one, an ice block and a rubber block
+- balls raining into a static lattice cage (its triangles), with a lattice
+  hull, a capsule and a cylinder tumbling
+- a kinematic sweeper
+- a wrecking ball on a chain of joints
+- a motorised revolving door
+- a sensor jump pad
+
+Click throws a ball and R resets. `[LightLab] ExportPhysicsLevel=<path>`
+writes the code-built scene out, which is how the level file was made.
 
 ### CLion
 

@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Public/NimbleEngine/GameConsole.h"
+#include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerState.h"
@@ -23,6 +24,10 @@
 #include "Public/GameCore/WorldSerializer.h"
 #include "Public/RenderCore/Renderer.h"
 #include "Public/UI/UISystem.h"
+
+#if WITH_JOLTPHYSICS
+#include "Public/JoltPhysics/PhysicsWorld.h"
+#endif
 
 /* Chunk tags shared with SaveGame.cpp. */
 #include "Private/NimbleEngine/InputInternal.h"
@@ -147,6 +152,23 @@ namespace NimbleEngine
 
         Scripts.BindWorld(LevelWorld);
         Rendering.BindWorld(*LevelWorld);
+
+#if WITH_JOLTPHYSICS
+        /* Before OnLoad, so the level's first bodies step with everything else.
+         * A client leaves what the server replicates to the server. */
+        {
+            JoltPhysics::PhysicsSettings Settings = JoltPhysics::PhysicsSettings::FromConfig();
+            Settings.bReplicaKinematic = IsClient();
+            Physics = EngineCore::Memory::Alloc<JoltPhysics::PhysicsWorld>();
+            if(!Physics->Attach(*LevelWorld, Settings))
+            {
+                EngineCore::Memory::Dealloc(Physics);
+                Physics = nullptr;
+            }
+        }
+#endif
+        bInactiveChecked = false;
+        bInactiveWarned  = false;
         Interface->SetWorld(LevelWorld);   // Event: actions emit on its bus
         UI::SetScriptUISystem(Interface);
         bPaused = false;
@@ -204,6 +226,11 @@ namespace NimbleEngine
         {
             Scripts.RunFile(StartupScriptPath);
         }
+
+        /* What the level and its script made, all at once; later additions
+         * are caught as they come (OnComponentAdded). */
+        bInactiveWarned  = WarnInactiveModuleComponents(*LevelWorld, InLevel.GetName());
+        bInactiveChecked = true;
 
         /* Before the restore and OnStart -- see the header's sequence. */
         GameState* State = InLevel.GetGameState();
@@ -337,6 +364,15 @@ namespace NimbleEngine
 
             Scripts.UnbindWorld();
             Rendering.UnbindWorld();
+
+#if WITH_JOLTPHYSICS
+            if(Physics)
+            {
+                Physics->Detach();
+                EngineCore::Memory::Dealloc(Physics);
+                Physics = nullptr;
+            }
+#endif
 
             RemoveWorldSession(LevelWorld);
             QueuedPhases.clear();
@@ -727,6 +763,11 @@ namespace NimbleEngine
     void GameSession::OnComponentAdded(const GameCore::EntityID InEntity, const GameCore::ComponentTypeID InType, void* InUserData)
     {
         auto* Session = static_cast<GameSession*>(InUserData);
+        if(Session->bInactiveChecked && !Session->bInactiveWarned && Session->ActiveLevel && Session->LevelWorld
+           && IsInactiveModuleComponent(InType))
+        {
+            Session->bInactiveWarned = WarnInactiveModuleComponents(*Session->LevelWorld, Session->ActiveLevel->GetName());
+        }
         if(InType != PlayerStateComponent::StaticType().ID || !Session->ActiveLevel || !Session->bModeLoaded)
         {
             return;

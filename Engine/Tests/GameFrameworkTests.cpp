@@ -25,6 +25,7 @@
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/NetFacade.h"
+#include "Public/NimbleEngine/PhysicsFacade.h"
 #include "Public/NimbleEngine/NimbleEngine.h"
 #include "Public/NimbleEngine/PlayerState.h"
 #include "Public/NimbleEngine/SaveGame.h"
@@ -451,6 +452,62 @@ static void TestNetworkingStandalone()
     Expect(Overrides == Expected, "the command line becomes config overrides, in order, strays dropped");
 }
 
+/* A level with a falling ball, a joint and a networked entity: GameSession
+ * attaches physics to the World when JoltPhysics is built, and either way
+ * says which of those components this build cannot run. */
+class PhysicsLevel : public ILevel
+{
+public:
+    const char* GetName() const override { return "PhysicsTest"; }
+    const char* GetStartupScript() const override { return ""; }
+
+    bool OnLoad(GameSession&) override
+    {
+        GameCore::Entity Ball = GetWorld().CreateEntity("Ball");
+        GameCore::TransformComponent At;
+        At.Position = EngineCore::Vector3(0.0, 500.0, 0.0);
+        Ball.AddComponent(At);
+        GameCore::BoundsComponent Box;
+        Box.Local = GameCore::AABB(EngineCore::Vector3(-10.0, -10.0, -10.0), EngineCore::Vector3(10.0, 10.0, 10.0));
+        Ball.AddComponent(Box);
+        Ball.AddComponent<GameCore::RigidBodyComponent>();
+        BallId = Ball.GetID();
+
+        /* Apart from the ball: a joint on it would pin it to the world. */
+        GameCore::Entity Marker = GetWorld().CreateEntity("Marker");
+        Marker.AddComponent<GameCore::PhysicsConstraintComponent>();
+        Marker.AddComponent<GameCore::NetComponent>();
+        return true;
+    }
+
+    GameCore::EntityID BallId;
+};
+
+static void TestPhysicsInSession()
+{
+    std::printf("[physics in a session]\n");
+    Fixture F;
+    PhysicsLevel Level;
+    Expect(F.Session->LoadLevel(Level), "a level with physics components loads");
+    Expect(IsWorldSimulated(F.Session->GetWorld()) == (WITH_JOLTPHYSICS != 0), "the session simulates its World exactly when JoltPhysics is built");
+
+    for(int Index = 0; Index < 30; ++Index) { F.Tick(1.0 / 60.0); }
+    const double Y = double(F.Session->GetWorld().GetEntity(Level.BallId).GetComponent<GameCore::TransformComponent>()->Position.GetY());
+    Expect(WITH_JOLTPHYSICS ? Y < 450.0 : Y == 500.0, "a Rigid Body falls with physics, and stays put (inert) without it");
+
+    /* Which components are inactive is this build's to say. */
+    const bool bExpectWarning = !WITH_JOLTPHYSICS || !WITH_NETCORE;
+    Expect(WarnInactiveModuleComponents(F.Session->GetWorld(), "PhysicsTest") == bExpectWarning,
+           "the inactive-module warning fires exactly when a module these components need is compiled out");
+    Expect(IsInactiveModuleComponent(GameCore::RigidBodyComponent::StaticType().ID) == !WITH_JOLTPHYSICS
+           && IsInactiveModuleComponent(GameCore::NetComponent::StaticType().ID) == !WITH_NETCORE
+           && !IsInactiveModuleComponent(GameCore::TransformComponent::StaticType().ID),
+           "and knows which component needs which module");
+
+    F.Session->UnloadLevel();
+    Expect(!F.Session->HasWorld(), "and unloads, physics and all");
+}
+
 static void TestNetScripting()
 {
     std::printf("[networking from Lua, standalone]\n");
@@ -800,6 +857,7 @@ int main()
     TestConsole();
     TestNetworkingStandalone();
     TestNetScripting();
+    TestPhysicsInSession();
     TestHeadlessApplication();   // last: the Application claims the main thread
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

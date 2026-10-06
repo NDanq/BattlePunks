@@ -17,6 +17,7 @@
 #include "Public/UI/UISystem.h"
 
 #include "Private/LightLab/LightLabAvatar.h"
+#include "Private/LightLab/LightLabPhysics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -52,6 +53,9 @@
  *                      light-animation systems, owns the mode.
  *   LightLabBakedLevel loads Content/Levels/BakedLighting.nmworld; flies the
  *                      Player and swings the dynamic ball (Swinger).
+ *   LightLabPhysics    the PhysicsLab level (LightLabPhysics.cpp): stacks,
+ *                      dominoes, ramps, mesh colliders, joints and a jump
+ *                      pad, simulated by the JoltPhysics module.
  *
  * Both turn the InsetLattice (inset shadows' demo cage) and drift it round
  * where it was placed, so its own shadow map follows a moving caster.
@@ -184,15 +188,9 @@ GAMECORE_DEFINE_NATIVE_PREFAB(Ball,   "LightLab.Ball",   &BuildBall)
 GAMECORE_DEFINE_NATIVE_PREFAB(Floor,  "LightLab.Floor",  &BuildFloor)
 GAMECORE_DEFINE_NATIVE_PREFAB(Player, "LightLab.Player", &BuildPlayer)
 
-/* What LightLab.Fly's void* points at. Yaw and Pitch live here rather than
- * being read back from the Transform each frame, so the clamp and wrap are
- * the system's alone. */
-struct LightLabFlyContext
-{
-    GameCore::EntityID Player;
-    double             Yaw   = 0.0;
-    double             Pitch = 0.0;
-};
+/* LightLabFlyContext (LightLabPhysics.h) is what LightLab.Fly's void* points
+ * at. Yaw and Pitch live there rather than being read back from the
+ * Transform each frame, so the clamp and wrap are the system's alone. */
 
 /* What LightLab.Swing's void* points at: the dynamic ball, circling where it
  * was placed, in and out of the baked shadows. */
@@ -430,6 +428,18 @@ namespace
         Light.AddComponent(InLight);
         return Light;
     }
+}
+
+void LightLabStartFly(GameCore::World& InWorld, const GameCore::EntityID InPlayer, LightLabFlyContext& InContext)
+{
+    InContext = LightLabFlyContext();
+    InContext.Player = InPlayer;
+    if(const GameCore::TransformComponent* View = InWorld.GetEntity(InPlayer).GetComponent<GameCore::TransformComponent>())
+    {
+        InContext.Pitch = std::clamp(double(View->Rotation.GetX()), -MaxPitch, MaxPitch);
+        InContext.Yaw   = double(View->Rotation.GetY());
+    }
+    InWorld.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &InContext);
 }
 
 /*
@@ -1117,6 +1127,7 @@ public:
         /* [Game] StartLevel resolves levels by name. */
         NimbleEngine::RegisterLevel(Level);
         NimbleEngine::RegisterLevel(BakedLevel);
+        NimbleEngine::RegisterLevel(LightLabPhysics::GetLevel());
         return true;
     }
 
@@ -1125,6 +1136,7 @@ public:
         /* The registry holds a bare pointer, and this image is about to go. */
         NimbleEngine::UnregisterLevel(Level);
         NimbleEngine::UnregisterLevel(BakedLevel);
+        NimbleEngine::UnregisterLevel(LightLabPhysics::GetLevel());
     }
 
     NimbleEngine::ILevel* GetStartLevel() override { return &Level; }
