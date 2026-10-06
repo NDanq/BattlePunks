@@ -188,7 +188,7 @@ mesh casts, and **Cast Inset Shadow** gives it a sun shadow map of its own (see
 [Inset shadows](#inset-shadows)). Every scene's quality is the `[Shadows]` config section, a
 project setting (the game's DefaultEngine.ini; Edit > Project Settings >
 Shadows edits it and applies it at once): Enabled, Resolution,
-Filter, MaxShadowedLights, DistanceScale and MaxInsetShadows.
+Filter, MaxShadowedLights, DistanceScale, MaxInsetShadows and InsetFilter.
 
 | Technique | Lights | What it draws |
 |---|---|---|
@@ -250,7 +250,9 @@ swept along the sun across the view's whole extent, overlaps the view's
 bounds. The sphere is
 the mesh's local box, scaled, so it does not change as the entity turns.
 `[Shadows] MaxInsetShadows` (0-4; Project Settings > Shadows > Inset shadows)
-caps them.
+caps them, and `[Shadows] InsetFilter` (Inset shadow filter: Hard, PCF 3x3 --
+the default -- or 5x5) is their edge filter, apart from Filter: their maps are
+already sharp, so a smaller one usually looks the same and costs less.
 
 **The views** (`ShadowSetup.cpp`): each an orthographic view along the sun
 holding the caster's sphere -- its depth across the sphere alone -- moved in

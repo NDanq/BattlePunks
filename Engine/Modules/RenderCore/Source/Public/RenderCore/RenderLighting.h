@@ -59,6 +59,7 @@ namespace RenderCore
         int32_t  MaxShadowedLights = int32_t(RENDER_SHADOWED_LOCAL_LIGHT_MAX);
         float    DistanceScale     = 1.0f;    // multiplies the sun's ShadowDistance
         int32_t  MaxInsetShadows   = int32_t(RENDER_INSET_SHADOW_MAX);   // Render components' inset shadows a view
+        int32_t  InsetFilter       = 1;       // theirs, as Filter: their maps are sharp, so smaller
     };
 
     /* One Render component that asked for an inset shadow (Cast Inset

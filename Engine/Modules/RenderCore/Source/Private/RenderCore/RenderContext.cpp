@@ -1426,7 +1426,7 @@ namespace RenderCore
         /* Lighting_Block's inset shadows, after its first vec4's x: y how
          * many, z and w the depth and normal bias; then the light (xyz toward
          * it, w 1 if Modulated over the whole pixel -- a baked sun's), its
-         * tint; per inset its matrix in Scene_LocalShadowMatrices, its texel
+         * tint and in w the insets' PCF radius ([Shadows] InsetFilter); per inset its matrix in Scene_LocalShadowMatrices, its texel
          * in world units and its tile's corner in atlas UV; then per inset the
          * pixels of an InWidth x InHeight target it can shadow (gl_FragCoord,
          * top-down: x, y min then max), every other pixel skipped. */
@@ -1451,6 +1451,7 @@ namespace RenderCore
             float Tint[4] = {};
             PutColor(Tint, Lighting.InsetShadowTint, 1.0f);
             std::memcpy(OutBlock + 8, Tint, sizeof(Tint));
+            OutBlock[11] = float(std::clamp(Lighting.Shadows.InsetFilter, 0, 2));
 
             /* The local matrices start after the sun's views (PrepareShadows). */
             const uint32_t DirectionalViews = Shadows.DirectionalFirstView >= 0 ? Shadows.CascadeCount : 0;

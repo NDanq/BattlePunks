@@ -27,7 +27,7 @@ UBO_BLOCK_BEGIN(2, Lighting_Block)
                                // y: inset shadows; z, w: their depth and normal bias (the sun's)
     vec4 Lighting_InsetLight;  // xyz: unit, toward the inset shadows' sun; w: 1 if it is baked --
                                // Modulated over the whole pixel, baked light included
-    vec4 Lighting_InsetTint;   // rgb: that Modulated shadow's tint, display space
+    vec4 Lighting_InsetTint;   // rgb: that Modulated shadow's tint, display space; w: the insets' PCF radius, texels
     vec4 Lighting_Insets[4];   // x: its matrix in Scene_LocalShadowMatrices; y: its texel, world units;
                                // zw: its tile's corner, atlas UV (Shadows.glsl's InsetShadow)
     vec4 Lighting_InsetRects[4]; // the pixels each can shadow (gl_FragCoord): xy min, zw max

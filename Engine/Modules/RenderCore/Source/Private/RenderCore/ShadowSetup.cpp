@@ -508,7 +508,7 @@ namespace RenderCore
             /* Where on screen it can shadow: a receiver's sample point moves
              * by its normal offset (Shadows.glsl, at most twice the larger of
              * the normal bias and a texel and a half), and the filter reaches
-             * a couple of texels more. */
+             * a couple of texels more (InsetFilter's widest). */
             const double Texel = 2.0 / std::abs(double(View.Projection.Data[0][0])) / double(View.TileSize);
             const double Pad   = Texel + 2.0 * std::max(double(InLighting.InsetShadowNormalBias), 1.5 * Texel) + 2.0 * Texel;
             InsetScreenNdc(InCasters[Caster], InsetDirection, Pad, InCamera, View.ScreenNdc, InReceivers);
