@@ -155,7 +155,32 @@ else()
     endif()
 endif()
 
-message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR}, WITH_NETCORE=${NIMBLE_NETCORE_DEFINE})")
+# === Physics ===============================================================
+# JoltPhysics (Modules/JoltPhysics): rigid bodies and joints on the vendored
+# Jolt Physics, simulating GameCore's Rigid Body and Physics Constraint
+# components. OFF by default -- a game that wants physics opts in before
+# adding the engine:
+#
+#     set(NIMBLE_WITH_JOLTPHYSICS ON CACHE BOOL "" FORCE)
+#
+# Off, nothing of Jolt is compiled. The components still exist (GameCore), so
+# levels and prefabs carrying them load, edit and save; they do not simulate,
+# and loading one says so (GameSession, WarnInactiveModuleComponents).
+# NimbleEngine/PhysicsFacade.h answers "unavailable" and raycasts against
+# Bounds instead.
+#
+# ONE PER CONFIGURE, like WITH_NETCORE: a PUBLIC definition on EngineCore
+# (below). Always 1 or 0.
+option(NIMBLE_WITH_JOLTPHYSICS "Build the JoltPhysics module (off: physics components are inert)" OFF)
+
+if(NIMBLE_WITH_JOLTPHYSICS)
+    set(NIMBLE_JOLTPHYSICS_DEFINE 1)
+else()
+    set(NIMBLE_JOLTPHYSICS_DEFINE 0)
+endif()
+
+message(STATUS "NimbleEngine: target ${NIMBLE_TARGET} (WITH_EDITOR=${NIMBLE_WITH_EDITOR}, WITH_NETCORE=${NIMBLE_NETCORE_DEFINE}, "
+               "WITH_JOLTPHYSICS=${NIMBLE_JOLTPHYSICS_DEFINE})")
 
 # === Configurations ========================================================
 #   Debug            unoptimised, full debug info.
@@ -314,6 +339,7 @@ add_subdirectory(Modules/Core)
 target_compile_definitions(EngineCore PUBLIC
         WITH_EDITOR=${NIMBLE_WITH_EDITOR}
         WITH_NETCORE=${NIMBLE_NETCORE_DEFINE}
+        WITH_JOLTPHYSICS=${NIMBLE_JOLTPHYSICS_DEFINE}
         NIMBLE_SHIPPING=$<IF:$<CONFIG:Shipping>,1,0>
         WITH_UNCOOKED=$<IF:$<CONFIG:Shipping>,0,1>)
 
@@ -367,6 +393,14 @@ endif()
 if(NIMBLE_WITH_NETCORE AND TARGET GameCore
    AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/NetCore/CMakeLists.txt")
     add_subdirectory(Modules/NetCore)
+endif()
+
+# JoltPhysics: rigid-body physics, when NIMBLE_WITH_JOLTPHYSICS is on (the
+# Physics block above). After GameCore, whose components it simulates, and
+# before NimbleEngine, which attaches it to each level's World.
+if(NIMBLE_WITH_JOLTPHYSICS AND TARGET GameCore
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Modules/JoltPhysics/CMakeLists.txt")
+    add_subdirectory(Modules/JoltPhysics)
 endif()
 
 # UI: in-game interfaces from XML documents (Modules/UI/README.md). After
@@ -424,6 +458,8 @@ set(NIMBLEENGINE_SOURCES
         Source/Private/NimbleEngine/NetFacade.cpp
         Source/Private/NimbleEngine/NetHost.cpp
         Source/Private/NimbleEngine/NetScript.cpp
+        Source/Private/NimbleEngine/PhysicsFacade.cpp
+        Source/Private/NimbleEngine/InactiveModules.cpp
         Source/Public/NimbleEngine/NimbleEngine.h
         Source/Public/NimbleEngine/GameMode.h
         Source/Public/NimbleEngine/GameSession.h
@@ -439,6 +475,7 @@ set(NIMBLEENGINE_SOURCES
         Source/Public/NimbleEngine/InputRouter.h
         Source/Public/NimbleEngine/NetFacade.h
         Source/Public/NimbleEngine/NetHost.h
+        Source/Public/NimbleEngine/PhysicsFacade.h
 )
 
 nimble_add_module(NimbleEngine SHARED
@@ -492,6 +529,12 @@ endif()
 # under if(TARGET NetCore).
 if(TARGET NetCore)
     target_link_libraries(NimbleEngine PRIVATE NetCore::NetCore)
+endif()
+
+# PRIVATE, as NetCore: a game reaches physics through GameCore's components
+# and NimbleEngine/PhysicsFacade.h, so turning it off breaks no game.
+if(TARGET JoltPhysics)
+    target_link_libraries(NimbleEngine PRIVATE JoltPhysics::JoltPhysics)
 endif()
 
 # A session's UISystem (GameSession::GetUI) is game-facing: PUBLIC.
@@ -551,6 +594,17 @@ if(NIMBLEENGINE_BUILD_TESTS)
     add_test(NAME NimbleEngine.GameFrameworkTests COMMAND NimbleEngineGameFrameworkTests
              WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEngineGameFrameworkTests>")
     set_tests_properties(NimbleEngine.GameFrameworkTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+
+    # Physics: bodies, shapes from meshes, forces, joints, events, raycasts.
+    # Only with the module (NIMBLE_WITH_JOLTPHYSICS).
+    if(TARGET JoltPhysics AND JOLTPHYSICS_BUILD_TESTS)
+        add_executable(NimbleEnginePhysicsTests Tests/PhysicsTests.cpp)
+        target_link_libraries(NimbleEnginePhysicsTests PRIVATE NimbleEngine::NimbleEngine JoltPhysics::JoltPhysics)
+        set_target_properties(NimbleEnginePhysicsTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "Engine")
+        add_test(NAME NimbleEngine.PhysicsTests COMMAND NimbleEnginePhysicsTests
+                 WORKING_DIRECTORY "$<TARGET_FILE_DIR:NimbleEnginePhysicsTests>")
+        set_tests_properties(NimbleEngine.PhysicsTests PROPERTIES TIMEOUT 120 LABELS "smoke")
+    endif()
 endif()
 
 # === Cooked shaders ========================================================

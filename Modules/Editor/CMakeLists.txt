@@ -290,6 +290,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     target_include_directories(NimbleEditorDocumentTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
     target_link_libraries(NimbleEditorDocumentTests PRIVATE
             RenderCore::RenderCore
+            NimbleEngine::NimbleEngine   # WarnInactiveModuleComponents on world open
             Qt6::Core
             Qt6::Gui
     )
@@ -376,6 +377,9 @@ if(NIMBLEEDITOR_BUILD_TESTS)
             Qt6::Gui
             Qt6::Widgets
     )
+    if(TARGET NetCore)
+        target_link_libraries(NimbleEditorParticleTests PRIVATE NetCore::NetCore)
+    endif()
     set_target_properties(NimbleEditorParticleTests PROPERTIES FOLDER "Editor" AUTOMOC ON)
     add_dependencies(NimbleEditorParticleTests NimbleEditor)
     add_test(NAME Editor.Particles COMMAND NimbleEditorParticleTests

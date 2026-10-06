@@ -121,6 +121,11 @@ void SetCollisionMeshProvider(const CollisionMeshProvider* InProvider)
     GMeshProvider    = bHasMeshProvider ? *InProvider : CollisionMeshProvider();
 }
 
+const CollisionMeshProvider* GetCollisionMeshProvider()
+{
+    return bHasMeshProvider ? &GMeshProvider : nullptr;
+}
+
 // === World =======================================================================
 
 void World::UpdateOverlaps()

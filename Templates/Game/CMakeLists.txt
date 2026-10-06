@@ -47,6 +47,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # Off before the engine is added: it would add Games/Sandbox to this build.
     set(NIMBLE_BUILD_SANDBOX OFF CACHE BOOL "Build the Games/Sandbox host (off: ${GAME_NAME} is the top-level project)" FORCE)
 
+    # Physics (Engine/Modules/JoltPhysics) is off by default. A game whose
+    # entities carry Rigid Body components opts in here:
+    #
+    #     set(NIMBLE_WITH_JOLTPHYSICS ON CACHE BOOL "" FORCE)
+
     add_subdirectory("${GAME_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/Engine")
 endif()
 

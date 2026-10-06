@@ -51,6 +51,9 @@ or `-DNIMBLE_WITH_NETCORE=OFF` on the configure line. Then:
   CMakeLists needs no `if`.
 - `NIMBLE_TARGET=Server` refuses to configure.
 - `-connect` and the other `[Net]` command-line options warn and are ignored.
+- Net components still load, edit and save (they are GameCore's). A level
+  that has any warns once as it loads, in the game and in the editor, that
+  they will not replicate (`NimbleEngine::WarnInactiveModuleComponents`).
 
 ---
 
