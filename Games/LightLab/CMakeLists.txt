@@ -13,6 +13,8 @@ project(LightLab VERSION 0.1 LANGUAGES CXX)
 #     cmake --preset editor-debug
 #     cmake --build --preset editor-debug
 #
+# (On Linux the presets build with clang: editor-debug-clang, ...)
+#
 # It adds the Engine tree itself, so nothing under Engine/ names this game and
 # the engine is never edited to add one.
 #

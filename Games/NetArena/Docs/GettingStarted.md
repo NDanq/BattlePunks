@@ -22,6 +22,9 @@ presets (`CMakePresets.json`):
 | `editor-debug`, `editor-relwithdebinfo` | The game, the launcher and **NimbleEditor** |
 | `client-debug`, `client-relwithdebinfo`, `client-shipping` | The game and the launcher only |
 
+On Linux each preset builds with clang and lld and carries a `-clang` suffix
+(`editor-debug-clang`, `client-shipping-clang`, ...).
+
 Or open this folder in an IDE as a CMake project and pick a preset. Everything
 lands in `Binaries/<Platform>_<Config>/` (`Linux_Debug`, `Windows_Debug`, ...;
 `_Client` is appended for client presets).

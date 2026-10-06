@@ -225,8 +225,11 @@ saved before the course gets it added as it loads, and
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:
 **Editor - Debug**, **Editor - RelWithDebInfo**, **Client - Debug**,
-**Client - RelWithDebInfo** and **Client - Shipping**. Each has its own build
-tree (`Games/Sandbox/cmake-build-<preset>`). Enable the ones you want under
+**Client - RelWithDebInfo** and **Client - Shipping**. On Linux they build
+with clang and lld and are named with a `-clang` suffix (**Editor - Debug
+(Clang)**, `editor-debug-clang`, ...); elsewhere they use the platform's
+default compiler. Each has its own build tree
+(`Games/Sandbox/cmake-build-<preset>`). Enable the ones you want under
 *Settings > Build, Execution, Deployment > CMake*. Pick a profile, then pick a
 run target:
 
@@ -245,6 +248,8 @@ cd Games/Sandbox
 cmake --preset client-shipping
 cmake --build --preset client-shipping
 ```
+
+On Linux, use `client-shipping-clang`.
 
 Or configure the engine directly: `cmake -S Engine -B build -DNIMBLE_TARGET=Client -DCMAKE_BUILD_TYPE=Shipping`.
 
