@@ -21,6 +21,7 @@
 #include <functional>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <string>
 
 #include "Public/Core/CoreArchive.h"
@@ -1014,6 +1015,14 @@ namespace
            && Text.find("plain tint") != std::string::npos)                { ++GMaterialFallbacks; }
         if(GPreviousLogHandler) { GPreviousLogHandler(InVerbosity, InMessage); }
     }
+
+    /* Counts block textures the backend could not sample, so decoded to RGBA8 instead. */
+    std::atomic<int> GBlockDecodes{0};
+    void BlockLogHandler(const LogVerbosity InVerbosity, const char* InMessage)
+    {
+        if(InMessage && std::strstr(InMessage, "so it is decoded to RGBA8")) { ++GBlockDecodes; }
+        if(GPreviousLogHandler) { GPreviousLogHandler(InVerbosity, InMessage); }
+    }
 }
 
 static void TestMaterials()
@@ -1438,6 +1447,64 @@ static void TestMaterialsOnGpu()
         const Check& Mips = Checks[5];
         Expect(Mips.bOk && Mips.Rgb[1] > 200 && Mips.Rgb[0] < 40,
                "a minified texture samples its baked mip chain (green), not level 0 (red)");
+
+        /* Block compression: Quadrants as BC1 (each quarter one 565 colour, so exact), from a layer
+         * over its file. The GPU backends here sample BC1, so it is drawn as blocks: RenderCore warns
+         * when it has to decode them instead. */
+        {
+            const char* QuadrantsPath = "Content/Textures/Quadrants.nmtexture";
+            TextureData Blocky;
+            Blocky.Filter      = ETextureFilter::Nearest;
+            Blocky.Compression = ETextureCompression::BC1;
+            Blocky.Pixels      = Image(16, 16, EImageFormat::RGBA8);
+            for(int Y = 0; Y < 16; ++Y)
+            {
+                for(int X = 0; X < 16; ++X)
+                {
+                    const bool    bRight = X >= 8;
+                    const uint8_t Quarter[4][4] = { { 255, 0, 0, 255 }, { 0, 255, 0, 255 }, { 0, 0, 255, 255 }, { 255, 255, 255, 255 } };
+                    std::memcpy(Blocky.Pixels.GetScanline(Y) + X * 4, Quarter[(Y >= 8 ? 2 : 0) + (bRight ? 1 : 0)], 4);
+                }
+            }
+            std::string EncodeError;
+            Archive Writer = Archive::ForWriting();
+            const bool bEncoded = CompressTexture(Blocky, EncodeError) && SerializeTexture(Writer, Blocky);
+            std::map<std::string, MemoryFileProvider::FileBytes> Files;
+            Files[QuadrantsPath] = std::make_shared<const std::vector<uint8_t>>(Writer.GetBytes());
+            Layers.MountLayer("SmokeBlocks", std::make_shared<MemoryFileProvider>(std::move(Files)));
+            TextureAssetCache::Invalidate(QuadrantsPath);
+
+            GBlockDecodes       = 0;
+            GPreviousLogHandler = GetLogHandler();
+            SetLogHandler(&BlockLogHandler);
+            const uint64_t Request = Rend.RequestMaterialPreview("Content/Materials/Textured.material.nmgraph", 64,
+                                                                 EngineCore::Color(255, 255, 255, 255));
+            DrawFrame();
+            DrawFrame();
+            SetLogHandler(GPreviousLogHandler);
+            const bool bBlocks = GBlockDecodes == 0;
+            EngineCore::Image Pixels;
+            std::string Error;
+            const bool bTaken = Rend.TakeMaterialPreview(Request, Pixels, Error) && Pixels.GetWidth() == 64 && Pixels.GetData();
+            int Quarter[4][3] = {};
+            for(int Each = 0; bTaken && Each < 4; ++Each)
+            {
+                const bool     bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
+                const uint8_t* Px    = Pixels.GetData() + Pixels.GetStride() * (Each < 2 ? 16 : 48)
+                                     + (Each % 2 == 0 ? 16 : 48) * BytesPerPixel(Pixels.GetFormat());
+                Quarter[Each][0] = bBgra ? Px[2] : Px[0];
+                Quarter[Each][1] = Px[1];
+                Quarter[Each][2] = bBgra ? Px[0] : Px[2];
+            }
+            std::printf("    BC1 quarters (%s) = %d %d %d / %d %d %d / %d %d %d / %d %d %d\n", bBlocks ? "as blocks" : "decoded",
+                        Quarter[0][0], Quarter[0][1], Quarter[0][2], Quarter[1][0], Quarter[1][1], Quarter[1][2],
+                        Quarter[2][0], Quarter[2][1], Quarter[2][2], Quarter[3][0], Quarter[3][1], Quarter[3][2]);
+            Expect(bEncoded && bBlocks && bTaken && Is(Quarter[0], 255, 0, 0) && Is(Quarter[1], 0, 255, 0)
+                   && Is(Quarter[2], 0, 0, 255) && Is(Quarter[3], 255, 255, 255),
+                   "a BC1 texture is sampled as its blocks: the same quarters, upright");
+            Layers.UnmountLayer("SmokeBlocks");
+            TextureAssetCache::Invalidate(QuadrantsPath);
+        }
 
         /* NormalProbe: an OpenGL normal tilted right and up the image, as 0.5 + 0.5 N. The quad faces the
          * camera (-Z), its image upright: right is +X, up +Y. A flipped green reads 64 in G. */
@@ -4280,7 +4347,7 @@ static void TestParticleSystemAsset()
 
 #if WITH_EDITOR
 /*
- * OPT-IN, on a real GPU: NIMBLE_SMOKE_GPU=Vulkan. The compute passes read
+ * OPT-IN, on a real GPU: NIMBLE_SMOKE_GPU=Vulkan or D3D12. The compute passes read
  * back (spawned, moved, sorted farthest first) and a plume drawn through the
  * instanced-mesh path: red where it is born, dark where it has aged.
  */
@@ -4289,7 +4356,7 @@ static void TestParticlesOnGpu()
     const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
     if(!Gpu || !Gpu[0])
     {
-        std::printf("[particles on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan\n");
+        std::printf("[particles on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
         return;
     }
     const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
@@ -4341,7 +4408,7 @@ static void TestParticlesOnGpu()
         FlushRenderCommands();
 
         Expect(Out.bSupported && Out.bMade && Out.bSimulated && Out.bRead && Out.Particles.size() == 64 && Out.Instances.size() == 64,
-               "Vulkan runs compute: an emitter is made, simulated eleven times and read back");
+               "the GPU runs compute: an emitter is made, simulated eleven times and read back");
         int    Alive = 0;
         bool   bOnPath = true;
         float  Oldest = 0.0f;
@@ -4375,7 +4442,7 @@ static void TestParticlesOnGpu()
             }
         }
         Expect(bSorted && bDeadLast, "the instances are sorted farthest first along the view, the unused slots after them");
-        Expect(bRed && std::abs(Out.Instances[0].Transform[0] - 10.0f) < 1e-3f,
+        Expect(bRed && !Out.Instances.empty() && std::abs(Out.Instances[0].Transform[0] - 10.0f) < 1e-3f,
                "each instance is the particle's colour and size (10, the default) on the camera's axes");
 
         /* 1b. Each type and mode, from render commands: InSteps of 0.1 s, the emitter at InAt(step). */
@@ -5717,6 +5784,8 @@ static void TestMeshDrawing()
 
 int main()
 {
+    // Unbuffered, so a run piped to a file shows how far it got if a GPU check hangs.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("RenderCore smoke test\n");
 
     Threads::SetMainThread();

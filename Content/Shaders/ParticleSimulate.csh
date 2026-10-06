@@ -39,11 +39,12 @@ void ShapePoint(inout uint InOutSeed, out vec3 OutPoint, out vec3 OutNormal)
             vec3 Depth = (Half - abs(P)) / max(Half, vec3(1e-6));
             Axis = Depth.x < Depth.y ? (Depth.x < Depth.z ? 0 : 2) : (Depth.y < Depth.z ? 1 : 2);
         }
-        float Side = Surface ? (HashFloat(InOutSeed) < 0.5 ? -1.0 : 1.0) : (P[Axis] < 0.0 ? -1.0 : 1.0);
-        if(Surface) { P[Axis] = Side * Half[Axis]; }
-        OutPoint = P;
-        OutNormal = vec3(0.0);
-        OutNormal[Axis] = Side;
+        // The axis as a mask, not an index: fxc can't write a local vector's component by a variable index.
+        vec3  Mask = vec3(equal(ivec3(Axis), ivec3(0, 1, 2)));
+        float Side = Surface ? (HashFloat(InOutSeed) < 0.5 ? -1.0 : 1.0) : (dot(P, Mask) < 0.0 ? -1.0 : 1.0);
+        if(Surface) { P = mix(P, Side * Half, Mask); }
+        OutPoint  = P;
+        OutNormal = Mask * Side;
         return;
     }
     if(Shape == SHAPE_CONE)

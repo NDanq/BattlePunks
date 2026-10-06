@@ -11,8 +11,9 @@
 class D3D12Device;
 
 /**
- * R8G8B8A8_UNORM texture with its own SRV slot. Uploads and readbacks run
- * synchronously on a transient command list, render thread only.
+ * R8G8B8A8_UNORM (or block-compressed BC1-BC7) texture with its own SRV slot.
+ * Uploads and readbacks run synchronously on a transient command list, render
+ * thread only.
  */
 class D3D12TextureResource : public GDITextureResource
 {
@@ -35,6 +36,15 @@ public:
                          EGDITextureBorder        InBorder,
                          EGDITextureFilter        InFilter);
 
+    /** A block-compressed texture (GDICreateCompressedTextureResource): InFormat a DXGI BC
+     *  format, InLevels[0] full size, each next half the last. Invalid (no SRV) on failure. */
+    D3D12TextureResource(D3D12Device*              InDevice,
+                         DXGI_FORMAT               InFormat,
+                         const GDICompressedLevel* InLevels,
+                         uint32_t                  InCount,
+                         EGDITextureBorder         InBorder,
+                         EGDITextureFilter         InFilter);
+
     /** No initial data; Update() must run before it is sampled. */
     D3D12TextureResource(D3D12Device*      InDevice,
                          GDITexture2D*     InParent,
@@ -55,6 +65,9 @@ public:
     void Release() override;
     EngineCore::Image ToImage() const override;
 
+    /** Names its resource, and again whenever Update() remakes it. */
+    void SetDebugName(const std::string& InName) override;
+
     inline uint32_t          GetSRVSlot() const { return SRVSlot; }
     inline EGDITextureBorder GetBorder()  const { return StoredBorder; }
     inline EGDITextureFilter GetFilter()  const { return StoredFilter; }
@@ -73,6 +86,7 @@ private:
     uint32_t                                SRVSlot          = UINT32_MAX;
     bool                                    bOwnsImage       = true;
     uint32_t                                MipLevels        = 1;
+    DXGI_FORMAT                             Format           = DXGI_FORMAT_R8G8B8A8_UNORM;   // or a BC format: blocks, never Update()d in place
 
     D3D12_RESOURCE_STATES                   CurrentState     = D3D12_RESOURCE_STATE_COPY_DEST;
 

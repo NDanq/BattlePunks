@@ -24,6 +24,9 @@ public:
     void Release() override;
     void Draw() override;
 
+    /** Names each of its buffers, "<name> Positions" and so on. */
+    void SetDebugName(const std::string& InName) override;
+
     /**
      * Make this a dynamic mesh (GDICreateDynamicMesh) instead: the indexed
      * layout's buffers in the upload heap, persistently mapped and written in
@@ -53,6 +56,9 @@ private:
     };
 
     bool CreateRing(RingBuffer& OutRing, UINT InStride);
+
+    /** SetDebugName's names, on whichever buffers exist. */
+    void ApplyDebugName() const;
     void BindRing(ID3D12GraphicsCommandList* InList, UINT InSlot, const RingBuffer& InRing) const;
 
     D3D12Device*                            Device    = nullptr;
