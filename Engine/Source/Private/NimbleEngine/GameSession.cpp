@@ -608,12 +608,13 @@ namespace NimbleEngine
                           "  Static  %6u\n"
                           "  Sensors %6u\n"
                           "Joints    %6u\n"
+                          "Vehicles  %6u\n"
                           "Contacts  %6u\n"
                           "Steps     %6u\n"
                           "Step   %6.2f ms\n"
                           "Sync   %6.2f ms",
                           Stats.Bodies, Stats.ActiveBodies, Stats.DynamicBodies, Stats.KinematicBodies,
-                          Stats.StaticBodies, Stats.Sensors, Stats.Constraints, Stats.Contacts,
+                          Stats.StaticBodies, Stats.Sensors, Stats.Constraints, Stats.Vehicles, Stats.Contacts,
                           Stats.StepsLastFrame, double(Stats.StepMs), double(Stats.SyncMs));
             Text = Buffer;
         }

@@ -273,6 +273,10 @@ namespace
     void FlySystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
     {
         auto& Context = *static_cast<LightLabFlyContext*>(InUserData);
+        if(!Context.bEnabled)
+        {
+            return;
+        }
         const GameCore::Entity Player = InWorld.GetEntity(Context.Player);
         GameCore::TransformComponent* Transform = Player.GetComponent<GameCore::TransformComponent>();
         const NimbleEngine::InputComponent* Input = Player.GetComponent<NimbleEngine::InputComponent>();

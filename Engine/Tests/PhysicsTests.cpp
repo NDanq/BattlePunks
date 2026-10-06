@@ -89,6 +89,14 @@ namespace
         return R;
     }
 
+    RigidBodyComponent MakeChassisBody()
+    {
+        RigidBodyComponent R;
+        R.Motion = RBM_Dynamic;
+        R.Mass   = 1200.0f;
+        return R;
+    }
+
     /* A 2000-wide static floor whose top is y = 0. */
     Entity MakeFloor(World& InWorld)
     {
@@ -488,6 +496,111 @@ namespace
     }
 }
 
+namespace
+{
+    /* A car: a 180 x 40 x 400 chassis (Bounds), 1200 kg, and four wheels of
+     * radius 40 as children named for their slots -- no meshes, so the
+     * Vehicle names their size. */
+    Entity MakeCar(World& InWorld, const EngineCore::Vector3& InAt)
+    {
+        Entity Car = MakeBoxed(InWorld, "Car", InAt, EngineCore::Vector3(90.0, 20.0, 200.0));
+        RigidBodyComponent Body = MakeChassisBody();
+        Car.AddComponent(Body);
+        VehicleComponent Vehicle;
+        Vehicle.WheelRadius = 40.0f;
+        Vehicle.WheelWidth  = 30.0f;
+        Car.AddComponent(Vehicle);
+
+        const char* const Names[] = { "WheelFL", "WheelFR", "WheelRL", "WheelRR" };
+        for(int Slot = 0; Slot < 4; ++Slot)
+        {
+            Entity Wheel = InWorld.CreateEntity(Names[Slot]);
+            TransformComponent T;
+            T.Position = EngineCore::Vector3(Slot % 2 ? 100.0 : -100.0, -25.0, Slot < 2 ? 140.0 : -140.0);
+            Wheel.AddComponent(T);
+            Wheel.SetParent(Car, false);
+        }
+        return Car;
+    }
+
+    void TestVehicle()
+    {
+        std::printf("[vehicle]\n");
+        World W;
+        JoltPhysics::PhysicsWorld Physics;
+        Physics.Attach(W, TestSettings());
+        Entity Floor = MakeBoxed(W, "Floor", EngineCore::Vector3(0.0, -10.0, 0.0), EngineCore::Vector3(5000.0, 10.0, 5000.0));
+        Floor.AddComponent(Body(RBM_Static));
+
+        Entity Car = MakeCar(W, EngineCore::Vector3(0.0, 100.0, 0.0));
+        Run(W, 3.0);
+        const VehicleComponent* V = Car.GetComponent<VehicleComponent>();
+        const GameCore::TransformPose Rest = Car.GetWorldPose();
+        JoltPhysics::PhysicsStats Stats;
+        Physics.GetStats(Stats);
+        Expect(Stats.Vehicles == 1 && V->Handle != 0, "the Vehicle is running");
+        Expect(V->WheelsOnGround == 4, "it settles on four wheels (" + std::to_string(V->WheelsOnGround) + ")");
+        Expect(Rest.Position.GetY() > 40.0f && Rest.Position.GetY() < 120.0f && std::fabs(Rest.Rotation.GetX()) < 3.0f
+               && std::fabs(Rest.Rotation.GetZ()) < 3.0f, "on its suspension, level (y " + Num(Rest.Position.GetY()) + ")");
+        const Entity WheelFL = W.GetEntity(W.FindEntityByName("WheelFL"));
+        const double WheelY = WheelFL.GetWorldPose().Position.GetY();
+        Expect(std::fabs(WheelY - 40.0) < 3.0, "the wheel's Transform is where the suspension holds it: on the ground (y "
+                                              + Num(WheelY) + ", radius 40)");
+
+        /* Throttle: away along +Z, through the gears. */
+        Car.GetComponent<VehicleComponent>()->SetInput(1.0f, 0.0f, 0.0f, 0.0f);
+        Run(W, 3.0);
+        V = Car.GetComponent<VehicleComponent>();
+        const EngineCore::Vector3 Driven = Car.GetWorldPose().Position;
+        Expect(Driven.GetZ() > 300.0f && std::fabs(Driven.GetX()) < 30.0f && V->Speed > 200.0f && V->Gear >= 1,
+               "throttle drives it forward (z " + Num(Driven.GetZ()) + ", " + Num(V->Speed) + " units/s, gear " + std::to_string(V->Gear) + ")");
+
+        /* Steering right turns toward +X. */
+        Car.GetComponent<VehicleComponent>()->SetInput(1.0f, 1.0f, 0.0f, 0.0f);
+        Run(W, 1.5);
+        const EngineCore::Vector3 Turned = Car.GetWorldPose().Position;
+        Expect(Turned.GetX() - Driven.GetX() > 50.0f, "Right = 1 turns it toward +X (x " + Num(Driven.GetX()) + " -> " + Num(Turned.GetX()) + ")");
+
+        /* Reverse while rolling forward: brakes, then backs up. */
+        const float Moving = Car.GetComponent<VehicleComponent>()->Speed;
+        Car.GetComponent<VehicleComponent>()->SetInput(-1.0f, 0.0f, 0.0f, 0.0f);
+        Run(W, 1.0);
+        const float Slowing = Car.GetComponent<VehicleComponent>()->Speed;
+        Run(W, 5.0);
+        const float Backing = Car.GetComponent<VehicleComponent>()->Speed;
+        Expect(Slowing < Moving - 300.0f && Slowing > 0.0f && Backing < -20.0f,
+               "reverse brakes first, then backs up (" + Num(Moving) + ", " + Num(Slowing) + ", then " + Num(Backing) + ")");
+    }
+
+    void TestVehicleOverBump()
+    {
+        std::printf("[vehicle over a bump]\n");
+        World W;
+        JoltPhysics::PhysicsWorld Physics;
+        Physics.Attach(W, TestSettings());
+        Entity Floor = MakeBoxed(W, "Floor", EngineCore::Vector3(0.0, -10.0, 0.0), EngineCore::Vector3(5000.0, 10.0, 5000.0));
+        Floor.AddComponent(Body(RBM_Static));
+        Entity Bump = MakeBoxed(W, "Bump", EngineCore::Vector3(0.0, 7.5, 900.0), EngineCore::Vector3(400.0, 7.5, 40.0));
+        Bump.AddComponent(Body(RBM_Static));
+
+        Entity Car = MakeCar(W, EngineCore::Vector3(0.0, 100.0, 0.0));
+        Run(W, 2.0);
+        Car.GetComponent<VehicleComponent>()->SetInput(0.6f, 0.0f, 0.0f, 0.0f);
+        double MaxLift = 0.0;
+        const double Base = Car.GetWorldPose().Position.GetY();
+        for(int Index = 0; Index < 300; ++Index)
+        {
+            W.Tick(Frame);
+            MaxLift = std::max(MaxLift, double(Car.GetWorldPose().Position.GetY()) - Base);
+        }
+        const GameCore::TransformPose After = Car.GetWorldPose();
+        Expect(After.Position.GetZ() > 1300.0f, "it drives over a 15 cm bump (z " + Num(After.Position.GetZ()) + ")");
+        Expect(MaxLift > 3.0 && MaxLift < 60.0, "its chassis rises over it on the suspension (by " + Num(MaxLift) + ")");
+        Expect(std::fabs(After.Rotation.GetZ()) < 5.0f && Car.GetComponent<VehicleComponent>()->WheelsOnGround == 4,
+               "and stays upright, all wheels down");
+    }
+}
+
 int main()
 {
     std::printf("NimbleEnginePhysicsTests\n");
@@ -501,6 +614,8 @@ int main()
     TestLayers();
     TestEvents();
     TestRaycast();
+    TestVehicle();
+    TestVehicleOverBump();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

@@ -19,5 +19,6 @@
 #include "Public/GameCore/Components/PhysicsConstraintComponent.h"
 #include "Public/GameCore/Components/RigidBodyComponent.h"
 #include "Public/GameCore/Components/TransformComponent.h"
+#include "Public/GameCore/Components/VehicleComponent.h"
 
 #endif //GAMECORE_COMPONENTS_H

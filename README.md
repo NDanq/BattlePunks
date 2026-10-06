@@ -209,9 +209,17 @@ JoltPhysics demo (`LightLabPhysics.cpp`):
 - a wrecking ball on a chain of joints
 - a motorised revolving door
 - a sensor jump pad
+- a buggy (`Content/Prefabs/Vehicle.nmprefab`, a Vehicle made of engine
+  meshes) on a driving course down the right: speed bumps, rough ground, a
+  jump, a cone slalom, a see-saw, a bridge and a crate wall
 
-Click throws a ball and R resets. `[LightLab] ExportPhysicsLevel=<path>`
+Click throws a ball and R resets. C gets in and out of the buggy: WASD
+drives, Space is the handbrake, and a chase camera follows.
+`LightLab.AutoDrive 1` in the console drives it down the course by itself. `[LightLab] ExportPhysicsLevel=<path>`
 writes the code-built scene out, which is how the level file was made.
+`ExportVehiclePrefab=<path>` does the same for the buggy prefab. A level
+saved before the course gets it added as it loads, and
+`SavePhysicsLevel=<path>` keeps it.
 
 ### CLion
 

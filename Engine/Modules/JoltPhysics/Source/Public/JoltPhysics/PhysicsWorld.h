@@ -71,6 +71,9 @@ namespace JoltPhysics
         /* Body pairs touching now (a sleeping pair still counts). */
         uint32_t Contacts = 0;
 
+        /* Vehicle components with a running vehicle. */
+        uint32_t Vehicles = 0;
+
         /* The last frame: fixed steps taken, milliseconds in Jolt's steps and
          * in the sync before them (making, moving and pushing bodies). */
         uint32_t StepsLastFrame = 0;

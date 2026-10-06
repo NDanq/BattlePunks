@@ -28,6 +28,7 @@ struct LightLabFlyContext
     GameCore::EntityID Player;
     double             Yaw   = 0.0;
     double             Pitch = 0.0;
+    bool               bEnabled = true;   // off: the Player is left alone (PhysicsLab's driving)
 };
 
 void LightLabStartFly(GameCore::World& InWorld, GameCore::EntityID InPlayer, LightLabFlyContext& InContext);
