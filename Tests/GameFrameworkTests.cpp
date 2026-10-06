@@ -500,6 +500,8 @@ static void TestPhysicsInSession()
     Expect(WarnInactiveModuleComponents(F.Session->GetWorld(), "PhysicsTest") == bExpectWarning,
            "the inactive-module warning fires exactly when a module these components need is compiled out");
     Expect(IsInactiveModuleComponent(GameCore::RigidBodyComponent::StaticType().ID) == !WITH_JOLTPHYSICS
+           && IsInactiveModuleComponent(GameCore::PhysicsConstraintComponent::StaticType().ID) == !WITH_JOLTPHYSICS
+           && IsInactiveModuleComponent(GameCore::VehicleComponent::StaticType().ID) == !WITH_JOLTPHYSICS
            && IsInactiveModuleComponent(GameCore::NetComponent::StaticType().ID) == !WITH_NETCORE
            && !IsInactiveModuleComponent(GameCore::TransformComponent::StaticType().ID),
            "and knows which component needs which module");

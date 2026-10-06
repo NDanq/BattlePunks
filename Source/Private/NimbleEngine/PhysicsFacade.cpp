@@ -1,6 +1,8 @@
 #include "Public/NimbleEngine/PhysicsFacade.h"
 
 #include <cmath>
+#include <utility>
+#include <vector>
 
 #include "Public/GameCore/ComponentScript.h"
 #include "Public/GameCore/ScriptLibrary.h"
@@ -27,6 +29,53 @@ namespace NimbleEngine
 #else
         (void)InWorld;
         return false;
+#endif
+    }
+
+#if WITH_JOLTPHYSICS
+    namespace
+    {
+        /* StartSimulating's, by World: GameSession owns its levels' itself. */
+        std::vector<std::pair<const GameCore::World*, JoltPhysics::PhysicsWorld*>>& ToolSimulations()
+        {
+            static std::vector<std::pair<const GameCore::World*, JoltPhysics::PhysicsWorld*>> Entries;
+            return Entries;
+        }
+    }
+#endif
+
+    bool StartSimulating(GameCore::World& InWorld)
+    {
+#if WITH_JOLTPHYSICS
+        if(JoltPhysics::PhysicsWorld::Find(InWorld)) { return false; }
+        auto* Physics = new JoltPhysics::PhysicsWorld();
+        if(!Physics->Attach(InWorld))
+        {
+            delete Physics;
+            return false;
+        }
+        ToolSimulations().emplace_back(&InWorld, Physics);
+        return true;
+#else
+        (void)InWorld;
+        return false;
+#endif
+    }
+
+    void StopSimulating(GameCore::World& InWorld)
+    {
+#if WITH_JOLTPHYSICS
+        auto& Entries = ToolSimulations();
+        for(auto It = Entries.begin(); It != Entries.end(); ++It)
+        {
+            if(It->first != &InWorld) { continue; }
+            It->second->Detach();
+            delete It->second;
+            Entries.erase(It);
+            return;
+        }
+#else
+        (void)InWorld;
 #endif
     }
 

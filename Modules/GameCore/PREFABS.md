@@ -423,6 +423,11 @@ Graph Editor.
   `EditorContext::BeforeFrame`; Stop drops it. Edits during a simulation reach
   the simulation and are not recorded. Game-module script libraries are not
   loaded, so a script calling one fails there (Play has them).
+- A prefab with Rigid Bodies simulates with physics when JoltPhysics is built
+  (`NimbleEngine::StartSimulating`). Its bodies fall, collide and drive as in a
+  level. They land on a static "Simulation Ground", a Plane at the prefab's
+  lowest point that lives only in the simulation's World. Without the module
+  they stay put, and Simulate says so.
 - Native prefabs (read-only, "Save As Asset") wait for phase 5. `.nmprefab`
   files are still not cooked for a Client build.
 - Known gap: undoing the delete of an entity that was saved brings it back as
