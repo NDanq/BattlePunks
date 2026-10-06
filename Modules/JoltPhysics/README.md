@@ -202,6 +202,26 @@ spatial refit at the end of that phase:
 
 ---
 
+## stat physics
+
+`stat physics` toggles `[Stats] Physics`, in the editor's console or the
+game's. It adds a Physics section to the stats panel over the viewport while
+a level runs:
+
+- **Bodies:** the total, how many are awake, and how many are Dynamic,
+  Kinematic, Static and sensors.
+- **Joints**, and **Contacts** (body pairs touching).
+- **Steps:** fixed steps taken last frame.
+- **Step:** milliseconds in Jolt's steps last frame.
+- **Sync:** milliseconds making, moving and pushing bodies before them.
+
+`GameSession` publishes the section from `PhysicsWorld::GetStats` through
+`Renderer::SetStatText`. With the module compiled out it says so. The edited
+world is not simulated, so in the editor the section shows during Play. Set
+`[Stats] Physics=true` in a game's ini to start with it on.
+
+---
+
 ## Contacts and sensors
 
 When two bodies begin or stop touching, the World's `EventBus` emits

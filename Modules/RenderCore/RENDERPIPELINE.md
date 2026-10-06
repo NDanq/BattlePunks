@@ -859,6 +859,16 @@ render thread, wait, present and idle times, and FPS, in a panel at the top righ
   made on first use. The panel is placed from the quad's UV, which runs from
   the target's top-left as its layout does.
 
+### Other modules' stats
+
+`Renderer::SetStatText(Name, Text)` adds a section of its own below the
+thread and GPU times, on the game thread. It is how another module shows its
+numbers. `GameSession` uses it for `stat physics` (`[Stats] Physics`), with
+the level's bodies, contacts and step times. Sections show in name order
+from the next `EndFrame`, and empty text removes one. The panel holds 960
+characters (its widest line times its lines), so a section should be a few
+short lines.
+
 ### Stat frame
 
 **Stats.Frame** (config var, off by default) adds each stage's **GPU** time to

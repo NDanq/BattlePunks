@@ -1,6 +1,7 @@
 #include "Public/JoltPhysics/PhysicsWorld.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -203,6 +204,11 @@ namespace JoltPhysics
 
         double   Accumulator = 0.0;
         uint64_t Steps       = 0;
+
+        /* The last frame's work, for GetStats ("stat physics"). */
+        uint32_t StepsLastFrame = 0;
+        float    StepMs         = 0.0f;
+        float    SyncMs         = 0.0f;
 
         GameCore::EventID ContactBeginId = 0, ContactEndId = 0, SensorEnterId = 0, SensorExitId = 0;
 
@@ -921,13 +927,19 @@ namespace JoltPhysics
             }
             Accumulator -= double(FixedDelta()) * StepsNow;
 
+            using Clock = std::chrono::steady_clock;
+            const Clock::time_point SyncStart = Clock::now();
             SyncBodies(StepsNow);
             SyncConstraints();
+            const Clock::time_point StepStart = Clock::now();
 
             for(uint32_t Step = 0; Step < StepsNow; ++Step)
             {
                 StepOnce();
             }
+            StepsLastFrame = StepsNow;
+            SyncMs = std::chrono::duration<float, std::milli>(StepStart - SyncStart).count();
+            StepMs = std::chrono::duration<float, std::milli>(Clock::now() - StepStart).count();
             if(StepsNow > 0)
             {
                 for(auto& Entry : Bodies)
@@ -1085,6 +1097,19 @@ namespace JoltPhysics
         {
             if(Entry.second.Constraint) { ++OutStats.Constraints; }
         }
+        for(const auto& Entry : P->Bodies)
+        {
+            const Impl::BodyRecord& Record = Entry.second;
+            if(Record.Id.IsInvalid()) { continue; }
+            OutStats.DynamicBodies   += Record.Motion == GameCore::RBM_Dynamic ? 1 : 0;
+            OutStats.KinematicBodies += Record.Motion == GameCore::RBM_Kinematic ? 1 : 0;
+            OutStats.StaticBodies    += Record.Motion == GameCore::RBM_Static ? 1 : 0;
+            OutStats.Sensors         += Record.bSensor ? 1 : 0;
+        }
+        OutStats.Contacts       = uint32_t(P->Touching.size());
+        OutStats.StepsLastFrame = P->StepsLastFrame;
+        OutStats.StepMs         = P->StepMs;
+        OutStats.SyncMs         = P->SyncMs;
     }
 
     PhysicsWorld* PhysicsWorld::Find(const GameCore::World& InWorld)

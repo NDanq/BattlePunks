@@ -37,6 +37,11 @@
  * Empty skips it. */
 NIMBLE_CONFIG_STRING(GStartupScript, "Scripting", "StartupScript", "", nullptr);
 
+/* "stat physics": the level's simulation -- bodies, contacts, step times --
+ * in the stats panel over the viewport (Renderer::SetStatText). The editor's
+ * console and the game's toggle it with "stat physics". */
+NIMBLE_CONFIG_BOOL(GStatsPhysics, "Stats", "Physics", false, nullptr);
+
 namespace NimbleEngine
 {
     namespace
@@ -365,6 +370,13 @@ namespace NimbleEngine
             Scripts.UnbindWorld();
             Rendering.UnbindWorld();
 
+            /* "stat physics" shows no World's numbers once it is gone. */
+            if(bPhysicsStatShown)
+            {
+                Rendering.SetStatText("Physics", std::string());
+                bPhysicsStatShown = false;
+            }
+
 #if WITH_JOLTPHYSICS
             if(Physics)
             {
@@ -559,12 +571,61 @@ namespace NimbleEngine
             ResolveInputComponents(*LevelWorld, FilteredInput);
         }
 
+        PublishPhysicsStat();
+
         /* After the World: this frame's values, then layout, paint and submit
          * of whatever changed -- before the host's EndFrame renders. */
         PublishUIValues();
         Console->Update();
         Interface->Tick(float(InFrame.DeltaSeconds));
         Interface->Update(UI::UIVec2{ float(InFrame.ViewportPixels.Width), float(InFrame.ViewportPixels.Height) });
+    }
+
+    void GameSession::PublishPhysicsStat()
+    {
+        if(!GStatsPhysics.GetBool() || !LevelWorld)
+        {
+            if(bPhysicsStatShown)
+            {
+                Rendering.SetStatText("Physics", std::string());
+                bPhysicsStatShown = false;
+            }
+            return;
+        }
+
+        std::string Text;
+#if WITH_JOLTPHYSICS
+        if(Physics)
+        {
+            JoltPhysics::PhysicsStats Stats;
+            Physics->GetStats(Stats);
+            char Buffer[512];
+            std::snprintf(Buffer, sizeof(Buffer),
+                          "Bodies    %6u\n"
+                          "  Awake   %6u\n"
+                          "  Dynamic %6u\n"
+                          "  Kinemat %6u\n"
+                          "  Static  %6u\n"
+                          "  Sensors %6u\n"
+                          "Joints    %6u\n"
+                          "Contacts  %6u\n"
+                          "Steps     %6u\n"
+                          "Step   %6.2f ms\n"
+                          "Sync   %6.2f ms",
+                          Stats.Bodies, Stats.ActiveBodies, Stats.DynamicBodies, Stats.KinematicBodies,
+                          Stats.StaticBodies, Stats.Sensors, Stats.Constraints, Stats.Contacts,
+                          Stats.StepsLastFrame, double(Stats.StepMs), double(Stats.SyncMs));
+            Text = Buffer;
+        }
+        else
+        {
+            Text = "not running";
+        }
+#else
+        Text = "not compiled in\n(NIMBLE_WITH_\n JOLTPHYSICS=OFF)";
+#endif
+        Rendering.SetStatText("Physics", Text);
+        bPhysicsStatShown = true;
     }
 
     void GameSession::ResolveInput(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)

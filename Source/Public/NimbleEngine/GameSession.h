@@ -370,6 +370,11 @@ namespace NimbleEngine
         /* Player<N>.Score, Player<N>.Lives and Game.Phase into the UI's data store. */
         void PublishUIValues();
 
+        /* "stat physics" ([Stats] Physics): the level's simulation into the
+         * renderer's stats panel, or the section removed when it is off. */
+        void PublishPhysicsStat();
+        bool bPhysicsStatShown = false;
+
         uint32_t LoadCount = 0;
     };
 }
