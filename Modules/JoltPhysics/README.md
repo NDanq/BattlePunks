@@ -129,6 +129,46 @@ and `MotorSpeed` drive a Hinge in degrees/s or a Slider in units/s.
 The joint is made once both ends have bodies. It is remade if a field changes
 or either body is remade.
 
+### Vehicle (`GameCore/Components/VehicleComponent.h`)
+
+A wheeled vehicle on Jolt's `VehicleConstraint` and `WheeledVehicleController`.
+It has:
+- suspension that follows the ground over bumps, rocks and ramps
+- tyres with grip
+- an engine with an automatic gearbox
+- differentials and anti-roll bars
+
+| Part | |
+|---|---|
+| **Chassis** | this entity's **Dynamic** Rigid Body, usually shaped by a Bounds box. Up is +Y and forward is +Z. Keep it unscaled: the wheels' positions are read in its space |
+| **Wheels** | four other entities, best this entity's children, in the order front-left, front-right, rear-left, rear-right. `Wheels[]` names them; an unset slot is the child named `WheelFL`, `WheelFR`, `WheelRL` or `WheelRR`. They have no Rigid Body: Jolt casts a cylinder per wheel against the world |
+| **Wheel size** | the wheel's Render mesh bounds through its rotation and scale. Width is along the chassis' X and radius comes from the other two axes. `WheelRadius` / `WheelWidth` override it |
+| **Wheel position** | where the wheel was placed is its centre half way through its travel (`SuspensionMinLength`..`MaxLength`) |
+| **Drive** | rear, front or all wheels. The front wheels steer (`MaxSteerAngle`); the rear take the handbrake |
+| **Tuning** | `EngineTorque`, `MaxRPM`, `BrakeTorque`, `HandBrakeTorque`, `SuspensionFrequency` / `Damping`, `AntiRollStiffness`, and `MaxPitchRollAngle` (how far it may tip) |
+
+**Driving:**
+- **Input:** set `Forward` (−1..1), `Right` (−1..1; +1 toward the chassis'
+  +X), `Brake` and `HandBrake` (0..1), or call `SetInput` for all four.
+- **Reversing:** asking for the other direction while still moving the first
+  way brakes first.
+- **Readouts:** `Speed` (units/s along forward), `EngineRPM`, `Gear` and
+  `WheelsOnGround` are written back each frame.
+- **Wheels:** each wheel's Transform is written each frame (suspension,
+  steering, spin), relative to the chassis, so the wheels move with its
+  interpolated pose.
+- **Rest pose:** each wheel's placement is read once, when the vehicle is first
+  made. The step owns it from then on.
+
+**Rubble:** a heavy vehicle ploughing light loose bodies onto the next
+obstacle can wedge them under its chassis and get stuck. This is a known
+limit of Jolt's iterative solver. Keep the chassis' collision low between
+the wheels (it then shoves rather than rides up), and give scattered debris
+room.
+
+LightLab's buggy (`Content/Prefabs/Vehicle.nmprefab`) is the example, built
+only from engine meshes.
+
 ---
 
 ## Shapes
@@ -299,7 +339,7 @@ I/O. Two headers that sources include unconditionally are kept too:
 
 ## What is not here yet
 
-- Character controllers (`CharacterVirtual`), vehicles, soft bodies, ragdolls.
+- Character controllers (`CharacterVirtual`), tracked vehicles and motorcycles, soft bodies, ragdolls.
 - Debug drawing of shapes and contacts.
 - Saving simulation state. A saved game stores the components; after a load,
   bodies start from their Transforms as if new (with their initial
@@ -322,6 +362,8 @@ I/O. Two headers that sources include unconditionally are kept too:
   - layers
   - contact and sensor events, including no false end on sleep
   - raycasts
+  - a vehicle that settles on its suspension, drives, steers toward +X,
+    brakes into reverse, and rides over a bump upright
 - `Engine/Tests/GameFrameworkTests.cpp` builds in every configure. It checks
   that a session simulates a level only with the module, and that the
   inactive-module warning fires exactly when it should.

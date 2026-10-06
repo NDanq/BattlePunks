@@ -24,6 +24,9 @@
 #include <Jolt/Physics/Constraints/PointConstraint.h>
 #include <Jolt/Physics/Constraints/SliderConstraint.h>
 #include <Jolt/Physics/PhysicsSystem.h>
+#include <Jolt/Physics/Vehicle/VehicleCollisionTester.h>
+#include <Jolt/Physics/Vehicle/VehicleConstraint.h>
+#include <Jolt/Physics/Vehicle/WheeledVehicleController.h>
 
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Components/BoundsComponent.h"
@@ -31,6 +34,8 @@
 #include "Public/GameCore/Components/NetComponent.h"
 #include "Public/GameCore/Components/PhysicsConstraintComponent.h"
 #include "Public/GameCore/Components/RigidBodyComponent.h"
+#include "Public/GameCore/Components/VehicleComponent.h"
+#include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/World.h"
@@ -186,6 +191,31 @@ namespace JoltPhysics
             bool                      bSeen     = false;
         };
 
+        /* One Vehicle component's Jolt vehicle, by its entity. */
+        struct VehicleRecord
+        {
+            JPH::Ref<JPH::VehicleConstraint>      Constraint;
+            JPH::Ref<JPH::VehicleCollisionTester> Tester;
+            JPH::BodyID                           Body;
+            uint64_t                              Signature = 0;
+            bool                                  bSeen     = false;
+            float                                 LastForward = 0.0f;   // the reverse-brakes-first rule
+
+            /* Each wheel slot (GameCore::EVehicleWheel), read once and kept,
+             * as the step rewrites the wheels' Transforms from then on. */
+            struct Wheel
+            {
+                GameCore::EntityID  Entity;
+                int                 Index = -1;     // in the Jolt vehicle; -1: none
+                bool                bRest = false;  // Rest* captured for Entity
+                EngineCore::Vector3 RestPosition;   // relative to the chassis
+                EngineCore::Vector3 RestRotation;
+                EngineCore::Vector3 Scale = EngineCore::Vector3(1.0, 1.0, 1.0);
+                JPH::Vec3           ModelRight = JPH::Vec3::sAxisX();   // the axle, in the wheel's own space
+                JPH::Vec3           ModelUp    = JPH::Vec3::sAxisY();
+            } Wheels[GameCore::VW_Count];
+        };
+
         GameCore::World* World = nullptr;
         PhysicsSettings  Settings;
         bool             bRuntime = false;
@@ -201,6 +231,7 @@ namespace JoltPhysics
         std::unordered_map<uint32_t, uint64_t>         BodyEntities;  // BodyID -> EntityID::Pack()
         std::unordered_map<uint64_t, ConstraintRecord> Constraints;   // by the constraint entity's Pack()
         std::unordered_set<uint64_t>                   Touching;      // body pairs told as touching (PairKey)
+        std::unordered_map<uint64_t, VehicleRecord>    Vehicles;      // by the vehicle entity's Pack()
 
         double   Accumulator = 0.0;
         uint64_t Steps       = 0;
@@ -441,6 +472,13 @@ namespace JoltPhysics
                                             || (!Joint.B.IsInvalid() && Going.count(Joint.B.GetIndexAndSequenceNumber()))))
                     {
                         RemoveConstraint(Joint);
+                    }
+                }
+                for(auto& Entry : Vehicles)
+                {
+                    if(Entry.second.Constraint && Going.count(Entry.second.Body.GetIndexAndSequenceNumber()))
+                    {
+                        RemoveVehicle(Entry.second);
                     }
                 }
             }
@@ -745,6 +783,363 @@ namespace JoltPhysics
             }
         }
 
+        // --- Vehicles --------------------------------------------------------
+
+        void RemoveVehicle(VehicleRecord& InVehicle)
+        {
+            if(InVehicle.Constraint)
+            {
+                System->RemoveStepListener(InVehicle.Constraint);
+                System->RemoveConstraint(InVehicle.Constraint);
+                InVehicle.Constraint = nullptr;
+                InVehicle.Tester     = nullptr;
+            }
+            InVehicle.Signature = 0;
+            for(VehicleRecord::Wheel& Each : InVehicle.Wheels) { Each.Index = -1; }
+        }
+
+        /* Slot InSlot's wheel: Wheels[InSlot], else the child named for it. */
+        GameCore::EntityID ResolveWheel(const GameCore::Entity& InVehicle, const GameCore::VehicleComponent& InComponent,
+                                        const int InSlot) const
+        {
+            static const char* const Names[GameCore::VW_Count] = { "WheelFL", "WheelFR", "WheelRL", "WheelRR" };
+            const GameCore::EntityID Named = InComponent.Wheels[InSlot];
+            if(Named.IsSet() && World->IsAlive(Named)) { return Named; }
+            for(GameCore::EntityID Child = InVehicle.GetFirstChild(); Child.IsSet(); Child = World->GetEntity(Child).GetNextSibling())
+            {
+                if(std::strcmp(World->GetEntity(Child).GetName(), Names[InSlot]) == 0) { return Child; }
+            }
+            return GameCore::EntityID();
+        }
+
+        /* InWheel's pose relative to InVehicle (whose own scale is not applied). */
+        static GameCore::TransformPose RelativePose(const GameCore::Entity& InVehicle, const GameCore::Entity& InWheel)
+        {
+            if(InWheel.GetParent() == InVehicle.GetID())
+            {
+                if(const auto* Local = InWheel.GetComponent<GameCore::TransformComponent>()) { return Local->GetPose(); }
+            }
+            const GameCore::TransformPose Parent = InVehicle.GetWorldPose();
+            const GameCore::TransformPose Child  = InWheel.GetWorldPose();
+            const GameCore::Rotation3 Inverse = GameCore::TransformMath::Transposed(GameCore::TransformMath::EulerToRotation(Parent.Rotation));
+            GameCore::TransformPose Out;
+            Out.Position = Inverse * (Child.Position - Parent.Position);
+            Out.Rotation = GameCore::TransformMath::RotationToEuler(Inverse * GameCore::TransformMath::EulerToRotation(Child.Rotation), Child.Rotation);
+            Out.Scale    = Child.Scale;
+            return Out;
+        }
+
+        /* InWheel's radius and width (units): its mesh's bounds through its
+         * rest rotation and scale -- width along the chassis' X. */
+        bool MeasureWheel(const VehicleRecord::Wheel& InWheel, float& OutRadius, float& OutWidth) const
+        {
+            const GameCore::CollisionMeshProvider* Provider = GameCore::GetCollisionMeshProvider();
+            const char* Path = Provider ? Provider->GetMeshPath(*World, InWheel.Entity, Provider->UserData) : nullptr;
+            GameCore::AABB Local;
+            if(!Path || !Provider->GetMeshBounds(Path, Local, Provider->UserData)) { return false; }
+
+            const GameCore::Rotation3 Turn = GameCore::TransformMath::EulerToRotation(InWheel.RestRotation);
+            double Extent[3] = { 0.0, 0.0, 0.0 };
+            for(int Corner = 0; Corner < 8; ++Corner)
+            {
+                const EngineCore::Vector3 Point((Corner & 1) ? Local.Max.GetX() : Local.Min.GetX(),
+                                                (Corner & 2) ? Local.Max.GetY() : Local.Min.GetY(),
+                                                (Corner & 4) ? Local.Max.GetZ() : Local.Min.GetZ());
+                const EngineCore::Vector3 Scaled(double(Point.GetX()) * InWheel.Scale.GetX(), double(Point.GetY()) * InWheel.Scale.GetY(),
+                                                 double(Point.GetZ()) * InWheel.Scale.GetZ());
+                const EngineCore::Vector3 Placed = Turn * Scaled;
+                Extent[0] = std::max(Extent[0], std::abs(double(Placed.GetX())));
+                Extent[1] = std::max(Extent[1], std::abs(double(Placed.GetY())));
+                Extent[2] = std::max(Extent[2], std::abs(double(Placed.GetZ())));
+            }
+            OutWidth  = float(2.0 * Extent[0]);
+            OutRadius = float(std::max(Extent[1], Extent[2]));
+            return OutRadius > 0.0f && OutWidth > 0.0f;
+        }
+
+        /* Every Vehicle to its Jolt vehicle -- made once its chassis has a
+         * Dynamic body, remade when its fields, wheels or body change -- and
+         * this frame's driving input in. */
+        void SyncVehicles()
+        {
+            for(auto& Entry : Vehicles) { Entry.second.bSeen = false; }
+
+            World->Each<GameCore::VehicleComponent>([&](GameCore::Entity InEntity, GameCore::VehicleComponent& InVehicle)
+            {
+                VehicleRecord& Record = Vehicles[InEntity.GetID().Pack()];
+                Record.bSeen = true;
+
+                const auto Found = InVehicle.bEnabled ? Bodies.find(InEntity.GetID().Pack()) : Bodies.end();
+                if(Found == Bodies.end() || Found->second.Id.IsInvalid() || Found->second.Motion != GameCore::RBM_Dynamic)
+                {
+                    RemoveVehicle(Record);
+                    InVehicle.Handle = 0;
+                    return;
+                }
+                const BodyRecord& Chassis = Found->second;
+
+                GameCore::EntityID Wheels[GameCore::VW_Count];
+                Signature S;
+                for(int Slot = 0; Slot < GameCore::VW_Count; ++Slot)
+                {
+                    Wheels[Slot] = ResolveWheel(InEntity, InVehicle, Slot);
+                    S.Add(Wheels[Slot].Pack());
+                }
+                S.Add(Chassis.Id.GetIndexAndSequenceNumber());
+                S.Add(InVehicle.Drive);
+                S.Add(InVehicle.MaxSteerAngle);
+                S.Add(InVehicle.EngineTorque);
+                S.Add(InVehicle.MaxRPM);
+                S.Add(InVehicle.BrakeTorque);
+                S.Add(InVehicle.HandBrakeTorque);
+                S.Add(InVehicle.SuspensionMinLength);
+                S.Add(InVehicle.SuspensionMaxLength);
+                S.Add(InVehicle.SuspensionFrequency);
+                S.Add(InVehicle.SuspensionDamping);
+                S.Add(InVehicle.WheelRadius);
+                S.Add(InVehicle.WheelWidth);
+                S.Add(InVehicle.AntiRollStiffness);
+                S.Add(InVehicle.MaxPitchRollAngle);
+
+                if(!Record.Constraint || Record.Signature != S.Hash)
+                {
+                    RemoveVehicle(Record);
+                    Record.Signature = S.Hash;   // a failure is not retried until something changes
+                    MakeVehicle(Record, InEntity, InVehicle, Chassis, Wheels);
+                }
+                InVehicle.Handle = Record.Constraint ? uint64_t(reinterpret_cast<uintptr_t>(Record.Constraint.GetPtr())) : 0;
+                if(Record.Constraint)
+                {
+                    DriveVehicle(Record, InVehicle);
+                }
+            });
+
+            for(auto It = Vehicles.begin(); It != Vehicles.end();)
+            {
+                if(!It->second.bSeen)
+                {
+                    RemoveVehicle(It->second);
+                    It = Vehicles.erase(It);
+                }
+                else
+                {
+                    ++It;
+                }
+            }
+        }
+
+        void MakeVehicle(VehicleRecord& InRecord, const GameCore::Entity& InEntity, const GameCore::VehicleComponent& InVehicle,
+                         const BodyRecord& InChassis, const GameCore::EntityID (&InWheels)[GameCore::VW_Count])
+        {
+            const double M = ToMeters();
+            JPH::VehicleConstraintSettings VehicleSettings;
+            VehicleSettings.mUp      = JPH::Vec3::sAxisY();
+            VehicleSettings.mForward = JPH::Vec3::sAxisZ();
+            VehicleSettings.mMaxPitchRollAngle = float(Convert::DegToRad(std::clamp(InVehicle.MaxPitchRollAngle, 1.0f, 180.0f)));
+
+            const float MinLength = std::max(InVehicle.SuspensionMinLength, 0.0f);
+            const float MaxLength = std::max(InVehicle.SuspensionMaxLength, MinLength + 1.0f);
+
+            int Count = 0;
+            for(int Slot = 0; Slot < GameCore::VW_Count; ++Slot)
+            {
+                VehicleRecord::Wheel& Wheel = InRecord.Wheels[Slot];
+                Wheel.Index = -1;
+                if(!InWheels[Slot].IsSet())
+                {
+                    Wheel = VehicleRecord::Wheel();
+                    continue;
+                }
+                if(!Wheel.bRest || Wheel.Entity != InWheels[Slot])
+                {
+                    /* Where it was placed, read once: from here the step moves it. */
+                    const GameCore::TransformPose Rest = RelativePose(InEntity, World->GetEntity(InWheels[Slot]));
+                    Wheel.Entity       = InWheels[Slot];
+                    Wheel.RestPosition = Rest.Position;
+                    Wheel.RestRotation = Rest.Rotation;
+                    Wheel.Scale        = Rest.Scale;
+                    const GameCore::Rotation3 Inverse = GameCore::TransformMath::Transposed(GameCore::TransformMath::EulerToRotation(Rest.Rotation));
+                    Wheel.ModelRight = Convert::ToVec3(Inverse * EngineCore::Vector3(1.0, 0.0, 0.0)).Normalized();
+                    Wheel.ModelUp    = Convert::ToVec3(Inverse * EngineCore::Vector3(0.0, 1.0, 0.0)).Normalized();
+                    Wheel.bRest      = true;
+                }
+
+                float Radius = 30.0f, Width = 20.0f;
+                MeasureWheel(Wheel, Radius, Width);
+                if(InVehicle.WheelRadius > 0.0f) { Radius = InVehicle.WheelRadius; }
+                if(InVehicle.WheelWidth > 0.0f)  { Width  = InVehicle.WheelWidth; }
+
+                const bool bFront = Slot == GameCore::VW_FrontLeft || Slot == GameCore::VW_FrontRight;
+                JPH::Ref<JPH::WheelSettingsWV> Wheel1 = new JPH::WheelSettingsWV();
+                /* The wheel was placed half way through its travel: the
+                 * suspension hangs from above it. */
+                const double Attach = 0.5 * double(MinLength + MaxLength);
+                Wheel1->mPosition = Convert::ToVec3(Wheel.RestPosition + EngineCore::Vector3(0.0, Attach, 0.0), M);
+                Wheel1->mSuspensionDirection = JPH::Vec3(0.0f, -1.0f, 0.0f);
+                Wheel1->mSteeringAxis        = JPH::Vec3::sAxisY();
+                Wheel1->mWheelUp             = JPH::Vec3::sAxisY();
+                Wheel1->mWheelForward        = JPH::Vec3::sAxisZ();
+                Wheel1->mSuspensionMinLength = float(MinLength * M);
+                Wheel1->mSuspensionMaxLength = float(MaxLength * M);
+                Wheel1->mSuspensionSpring.mFrequency = std::max(InVehicle.SuspensionFrequency, 0.1f);
+                Wheel1->mSuspensionSpring.mDamping   = std::clamp(InVehicle.SuspensionDamping, 0.0f, 1.0f);
+                Wheel1->mRadius = float(Radius * M);
+                Wheel1->mWidth  = float(Width * M);
+                Wheel1->mMaxSteerAngle      = bFront ? float(Convert::DegToRad(std::clamp(InVehicle.MaxSteerAngle, 0.0f, 89.0f))) : 0.0f;
+                Wheel1->mMaxBrakeTorque     = std::max(InVehicle.BrakeTorque, 0.0f);
+                Wheel1->mMaxHandBrakeTorque = bFront ? 0.0f : std::max(InVehicle.HandBrakeTorque, 0.0f);
+                VehicleSettings.mWheels.push_back(JPH::Ref<JPH::WheelSettings>(Wheel1.GetPtr()));
+                Wheel.Index = Count++;
+            }
+            if(Count == 0)
+            {
+                CORE_LOG_WARN(std::string("[Physics] vehicle '") + InEntity.GetName() + "' has no wheels (Wheels, or children named "
+                              "WheelFL/FR/RL/RR); it is a plain body")
+                return;
+            }
+
+            /* Axles: left and right of each, for the differentials and anti-roll bars. */
+            const int FrontLeft  = InRecord.Wheels[GameCore::VW_FrontLeft].Index,  FrontRight = InRecord.Wheels[GameCore::VW_FrontRight].Index;
+            const int RearLeft   = InRecord.Wheels[GameCore::VW_RearLeft].Index,   RearRight  = InRecord.Wheels[GameCore::VW_RearRight].Index;
+            const bool bFrontAxle = FrontLeft >= 0 && FrontRight >= 0;
+            const bool bRearAxle  = RearLeft >= 0 && RearRight >= 0;
+
+            JPH::Ref<JPH::WheeledVehicleControllerSettings> Controller = new JPH::WheeledVehicleControllerSettings();
+            Controller->mEngine.mMaxTorque = std::max(InVehicle.EngineTorque, 0.0f);
+            Controller->mEngine.mMaxRPM    = std::max(InVehicle.MaxRPM, Controller->mEngine.mMinRPM + 100.0f);
+            const bool bDriveFront = (InVehicle.Drive == GameCore::VD_Front || InVehicle.Drive == GameCore::VD_All) && bFrontAxle;
+            const bool bDriveRear  = (InVehicle.Drive == GameCore::VD_Rear  || InVehicle.Drive == GameCore::VD_All) && bRearAxle;
+            const auto AddDifferential = [&Controller](const int InLeft, const int InRight)
+            {
+                JPH::VehicleDifferentialSettings Differential;
+                Differential.mLeftWheel  = InLeft;
+                Differential.mRightWheel = InRight;
+                Controller->mDifferentials.push_back(Differential);
+            };
+            if(bDriveFront) { AddDifferential(FrontLeft, FrontRight); }
+            if(bDriveRear)  { AddDifferential(RearLeft, RearRight); }
+            if(Controller->mDifferentials.empty())
+            {
+                /* Whatever axle there is. */
+                if(bRearAxle)       { AddDifferential(RearLeft, RearRight); }
+                else if(bFrontAxle) { AddDifferential(FrontLeft, FrontRight); }
+            }
+            for(JPH::VehicleDifferentialSettings& Differential : Controller->mDifferentials)
+            {
+                Differential.mEngineTorqueRatio = 1.0f / float(Controller->mDifferentials.size());
+            }
+            VehicleSettings.mController = Controller;
+
+            if(InVehicle.AntiRollStiffness > 0.0f)
+            {
+                const auto AddBar = [&VehicleSettings, &InVehicle](const int InLeft, const int InRight)
+                {
+                    JPH::VehicleAntiRollBar Bar;
+                    Bar.mLeftWheel  = InLeft;
+                    Bar.mRightWheel = InRight;
+                    Bar.mStiffness  = InVehicle.AntiRollStiffness;
+                    VehicleSettings.mAntiRollBars.push_back(Bar);
+                };
+                if(bFrontAxle) { AddBar(FrontLeft, FrontRight); }
+                if(bRearAxle)  { AddBar(RearLeft, RearRight); }
+            }
+
+            const JPH::BodyLockInterfaceNoLock& Locks = System->GetBodyLockInterfaceNoLock();
+            JPH::Body* Body = Locks.TryGetBody(InChassis.Id);
+            if(!Body) { return; }
+
+            InRecord.Constraint = new JPH::VehicleConstraint(*Body, VehicleSettings);
+            InRecord.Tester     = new JPH::VehicleCollisionTesterCastCylinder(Body->GetObjectLayer());
+            InRecord.Constraint->SetVehicleCollisionTester(InRecord.Tester);
+            InRecord.Body       = InChassis.Id;
+            System->AddConstraint(InRecord.Constraint);
+            System->AddStepListener(InRecord.Constraint);
+        }
+
+        /* The component's input into the controller. Asking for the other
+         * direction while still moving the first way brakes instead. */
+        void DriveVehicle(VehicleRecord& InRecord, const GameCore::VehicleComponent& InVehicle)
+        {
+            float Forward = std::clamp(InVehicle.Forward, -1.0f, 1.0f);
+            float Brake   = std::clamp(InVehicle.Brake, 0.0f, 1.0f);
+            const float HandBrake = std::clamp(InVehicle.HandBrake, 0.0f, 1.0f);
+            /* Jolt's right is the vehicle's -X; the component's +Right is the
+             * chassis' +X (the World's right). */
+            const float Right = -std::clamp(InVehicle.Right, -1.0f, 1.0f);
+
+            const JPH::Quat Rotation = Interface().GetRotation(InRecord.Body);
+            const float Along = (Rotation.Conjugated() * Interface().GetLinearVelocity(InRecord.Body)).GetZ();
+            if(Forward != 0.0f && InRecord.LastForward * Forward <= 0.0f
+               && ((Forward > 0.0f && Along < -0.5f) || (Forward < 0.0f && Along > 0.5f)))
+            {
+                Brake   = std::max(Brake, std::abs(Forward));
+                Forward = 0.0f;
+            }
+            else
+            {
+                InRecord.LastForward = Forward;
+            }
+
+            auto* Controller = static_cast<JPH::WheeledVehicleController*>(InRecord.Constraint->GetController());
+            Controller->SetDriverInput(Forward, Right, Brake, HandBrake);
+            if(Forward != 0.0f || Right != 0.0f || Brake != 0.0f)
+            {
+                Interface().ActivateBody(InRecord.Body);
+            }
+        }
+
+        /* After the step: each wheel's Transform, and the readouts. */
+        void WriteVehicles()
+        {
+            const double Units = FromMeters();
+            for(auto& Entry : Vehicles)
+            {
+                VehicleRecord& Record = Entry.second;
+                if(!Record.Constraint) { continue; }
+                GameCore::Entity Vehicle = World->GetEntity(GameCore::EntityID::Unpack(Entry.first));
+                GameCore::VehicleComponent* Component = Vehicle.GetComponent<GameCore::VehicleComponent>();
+                if(!Component) { continue; }
+
+                const auto* Controller = static_cast<const JPH::WheeledVehicleController*>(Record.Constraint->GetController());
+                const JPH::Quat Rotation = Interface().GetRotation(Record.Body);
+                Component->Speed     = float((Rotation.Conjugated() * Interface().GetLinearVelocity(Record.Body)).GetZ() * Units);
+                Component->EngineRPM = Controller->GetEngine().GetCurrentRPM();
+                Component->Gear      = Controller->GetTransmission().GetCurrentGear();
+
+                int OnGround = 0;
+                for(const VehicleRecord::Wheel& Wheel : Record.Wheels)
+                {
+                    if(Wheel.Index < 0 || !World->IsAlive(Wheel.Entity)) { continue; }
+                    OnGround += Record.Constraint->GetWheel(JPH::uint(Wheel.Index))->HasContact() ? 1 : 0;
+
+                    /* Body space, metres: where the suspension has the wheel,
+                     * steered and spun. */
+                    const JPH::Mat44 Local = Record.Constraint->GetWheelLocalTransform(JPH::uint(Wheel.Index), Wheel.ModelRight, Wheel.ModelUp);
+                    GameCore::Entity WheelEntity = World->GetEntity(Wheel.Entity);
+                    const EngineCore::Vector3 Position = Convert::FromVec3(Local.GetTranslation(), Units);
+                    GameCore::TransformComponent* Transform = WheelEntity.GetComponent<GameCore::TransformComponent>();
+                    if(!Transform) { continue; }
+                    const EngineCore::Vector3 Euler = Convert::QuatToEuler(Local.GetQuaternion().Normalized(), Transform->Rotation);
+                    if(WheelEntity.GetParent() == Vehicle.GetID())
+                    {
+                        Transform->Position = Position;
+                        Transform->Rotation = Euler;
+                    }
+                    else
+                    {
+                        /* Not a child: through the chassis' world pose. */
+                        const GameCore::TransformPose Chassis = Vehicle.GetWorldPose();
+                        const GameCore::Rotation3 Turn = GameCore::TransformMath::EulerToRotation(Chassis.Rotation);
+                        GameCore::TransformPose Pose = WheelEntity.GetWorldPose();
+                        Pose.Position = Chassis.Position + Turn * Position;
+                        Pose.Rotation = GameCore::TransformMath::RotationToEuler(Turn * GameCore::TransformMath::EulerToRotation(Euler), Pose.Rotation);
+                        WheelEntity.SetWorldPose(Pose);
+                    }
+                }
+                Component->WheelsOnGround = OnGround;
+            }
+        }
+
         // --- Stepping and writing back ---------------------------------------
 
         void StepOnce()
@@ -931,6 +1326,7 @@ namespace JoltPhysics
             const Clock::time_point SyncStart = Clock::now();
             SyncBodies(StepsNow);
             SyncConstraints();
+            SyncVehicles();
             const Clock::time_point StepStart = Clock::now();
 
             for(uint32_t Step = 0; Step < StepsNow; ++Step)
@@ -950,6 +1346,7 @@ namespace JoltPhysics
             }
 
             WriteBack();
+            WriteVehicles();
         }
 
         static void StepSystem(GameCore::World& /*InWorld*/, const float InDeltaSeconds, void* InUserData)
@@ -1022,6 +1419,8 @@ namespace JoltPhysics
                                      [this](const auto& InEntry) { return InEntry.second == this; }),
                       Entries.end());
 
+        for(auto& Entry : P->Vehicles) { P->RemoveVehicle(Entry.second); }
+        P->Vehicles.clear();
         for(auto& Entry : P->Constraints) { P->RemoveConstraint(Entry.second); }
         P->Constraints.clear();
         P->Touching.clear();   // no ends told: the World is going
@@ -1107,6 +1506,10 @@ namespace JoltPhysics
             OutStats.Sensors         += Record.bSensor ? 1 : 0;
         }
         OutStats.Contacts       = uint32_t(P->Touching.size());
+        for(const auto& Entry : P->Vehicles)
+        {
+            if(Entry.second.Constraint) { ++OutStats.Vehicles; }
+        }
         OutStats.StepsLastFrame = P->StepsLastFrame;
         OutStats.StepMs         = P->StepMs;
         OutStats.SyncMs         = P->SyncMs;

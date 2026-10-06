@@ -59,7 +59,8 @@ Engine/Modules/GameCore/
 |   |   |-- Entity.h                header-only handle: World* + EntityID; components, name, parent
 |   |   |-- Components.h            includes every built-in component header below
 |   |   |-- Components/             TransformComponent.h, BoundsComponent.h, CollisionComponent.h,
-|   |   |                           NetComponent.h, RigidBodyComponent.h, PhysicsConstraintComponent.h
+|   |   |                           NetComponent.h, RigidBodyComponent.h, PhysicsConstraintComponent.h,
+|   |   |                           VehicleComponent.h
 |   |   |-- ComponentSerializer.h   ComponentArchive (named fields), the serializer macro and registry
 |   |   |-- WorldSerializer.h       SerializeWorld: the binary world (cooked data, save games)
 |   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
@@ -484,7 +485,8 @@ Layers are in `SandboxLayers`.
 
 A `RigidBodyComponent` ("Rigid Body") makes an entity a simulated body. A
 `PhysicsConstraintComponent` ("Physics Constraint") joins two bodies, or a body
-to the world. Both are data only. The simulation is
+to the world. A `VehicleComponent` ("Vehicle") makes a Rigid Body a wheeled
+vehicle, its wheels being child entities. Both are data only. The simulation is
 `Engine/Modules/JoltPhysics`, an opt-in engine module
 (`NIMBLE_WITH_JOLTPHYSICS`). Without it they load, save and edit as usual, but
 nothing moves, and the engine warns when a level has any. They live here,
