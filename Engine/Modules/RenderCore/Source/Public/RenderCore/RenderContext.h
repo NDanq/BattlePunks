@@ -8,6 +8,7 @@
 #include "Public/Core/CoreTypes.h"
 #include "Public/GameCore/AABB.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
+#include "Public/RenderCore/ParticleTypes.h"
 #include "Public/RenderCore/RenderLighting.h"
 #include "Public/RenderCore/RenderPipeline.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
@@ -35,6 +36,7 @@ namespace RenderCore
     struct MaterialPreviewRequest;   // RenderScene.h
     struct RenderMaterialParameter;  // Components/RenderComponent.h
     struct UISceneState;             // Private/RenderCore/UIRenderer.h: a scene's UI draw list
+    struct ParticleEmitterGpu;       // Private/RenderCore/ParticleSimulation.h: an emitter's GPU state
 
     /* An entity's material parameter overrides for one draw call: each entry
      * applies to the material in its Slot. Must stay valid until the scene
@@ -61,6 +63,56 @@ namespace RenderCore
         ERenderBackend    GetBackend()     const;
         uint64_t          GetFrameNumber() const;
         const RenderView& GetView()        const;
+
+        /* The render thread's clock, as shaders see it (Scene_Time): seconds
+         * since the context began, and since the frame before. */
+        double GetTimeSeconds()  const;
+        float  GetDeltaSeconds() const;
+
+        /*
+         * GPU PARTICLES (ParticleTypes.h; RENDERPIPELINE.md, "Particles"),
+         * where the backend runs compute shaders -- Vulkan, and Null, which
+         * runs nothing. An emitter is its particles on the GPU; a proxy makes
+         * one, simulates it once a frame (RenderProxy::Simulate, before any
+         * target is bound) and draws it from every view (Draw).
+         */
+        bool                SupportsParticles() const;
+        /* For an emitter of InType (EParticleType): a ribbon or beam has a
+         * second instance buffer. InName (its system and emitter) names its
+         * buffers for capture tools. Null where unsupported. Freed by
+         * ReleaseParticleEmitter. */
+        ParticleEmitterGpu* CreateParticleEmitter(uint32_t InMaxParticles, uint8_t InType = PT_Sprite, const char* InName = nullptr);
+        void                ReleaseParticleEmitter(ParticleEmitterGpu* InEmitter);
+        /* Spawns, moves and sorts its particles for this frame and this view:
+         * two dispatches, InDeltaSeconds on (below 0: the frame's own delta),
+         * in a debug region named InLabel if set (a capture tool's name for it).
+         * False if the shaders are missing (warned once). Outside a frame, as
+         * from a render command, they run at once and are waited for. */
+        bool                SimulateParticles(ParticleEmitterGpu& InEmitter, const ParticleEmitterSettings& InSettings,
+                                              const EngineCore::Vector3& InEmitterPosition, float InDeltaSeconds = -1.0f,
+                                              const char* InLabel = nullptr);
+        /* Its particles as InMeshPath instanced, with InMaterial on every
+         * section (null or "": DefaultLit), queued as one draw per section
+         * sorted at InSortOrigin -- where the backend draws indirectly
+         * (GDISupportsIndirectDraw), only as many as the simulation counted
+         * alive -- a ribbon or beam as its strip's two
+         * triangle meshes instead (PARTICLE_RIBBON_MESH_A/B). InLabel, if
+         * set, is what its draws are called in a capture tool, and must
+         * outlive the frame. Nothing,
+         * returning false, before its first simulation or if the mesh or
+         * material cannot draw. */
+        bool                DrawParticles(ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
+                                          const char* InMeshPath, const char* InMaterial,
+                                          const char* InLabel = nullptr);
+        /* Its particles as the GPU left them, one per slot (MaxParticles),
+         * waiting for the GPU: for tests and tools. False where unsupported. */
+        bool                ReadParticles(const ParticleEmitterGpu& InEmitter, std::vector<ParticleSample>& OutParticles);
+        /* How many instances its draws draw: the live count the last
+         * simulation wrote for them (sprites and meshes: the living
+         * particles; ribbons and beams: the living segments). False where
+         * unsupported. */
+        bool                ReadParticleDrawCount(const ParticleEmitterGpu& InEmitter, uint32_t& OutCount);
+        bool                ReadParticleInstances(const ParticleEmitterGpu& InEmitter, std::vector<ParticleInstanceSample>& OutInstances);
 
         /*
          * Draws a quad centred on InTransform's position (scaled by
@@ -148,6 +200,8 @@ namespace RenderCore
          * consumer (a per-second log line) differences two reads itself,
          * the same convention RenderStats's own comment states. */
         uint64_t GetDrawCallCount() const;
+        /* Particle emitters simulated so far, one a SimulateParticles: what culling and pausing save. */
+        uint64_t GetParticleSimulationCount() const;
 
         /* How many draws InStage queued in the last scene this context drew
          * (a viewport frame or a preview): the routing, as tests see it. The
@@ -248,9 +302,19 @@ namespace RenderCore
         /* RenderScene::Render's, after BeginSceneDraws: the frame's shadow
          * views from the view and lighting (none if [Shadows] is off or no
          * light casts). For each, RenderScene sets it as the caster view and
-         * calls DrawShadow on every proxy within its bounds; -1 ends that. */
-        uint32_t              PrepareShadows();
+         * calls DrawShadow on every proxy within its bounds; -1 ends that.
+         *
+         * InCasters: the visible proxies asking for an inset shadow, most
+         * deserving first; those that get a view are its only caster
+         * (GetShadowViewInset: their index, else -1), and are left out of the
+         * sun's views (IsSunShadowView), which their own replaces.
+         * InReceivers: the box round everything the view draws, if known --
+         * where an inset's shadow can land, so how much screen it covers. */
+        uint32_t              PrepareShadows(const InsetShadowCaster* InCasters = nullptr, uint32_t InCasterCount = 0,
+                                             const GameCore::AABB* InReceivers = nullptr);
         const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
+        int32_t               GetShadowViewInset(uint32_t InView) const;
+        bool                  IsSunShadowView(uint32_t InView) const;
         void                  SetShadowCasterView(int32_t InView);
         /* InClearBottom: the background is a gradient, InClearColor at the
          * top to it at the bottom (ClearGradient.fsh), under everything.

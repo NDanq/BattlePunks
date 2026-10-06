@@ -502,9 +502,8 @@ def cook_d3d12(extra_defines=None):
     """
     GLSL -> SPIR-V (glslc) -> HLSL (spirv-cross) -> DXBC (fxc).
 
-    Vertex shaders get --flip-vert-y: D3D12 maps NDC -1 to the last row where
-    Vulkan maps it to the first, and without the flip every render target would
-    be stored upside down relative to the GL and Vulkan backends.
+    No --flip-vert-y: D3D12 maps NDC +1 to a target's first row, which is
+    GDI's convention on every backend (render targets stored top-down, GDI.h).
     """
     out_dir = COOKED_BASE / "D3D12"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -528,10 +527,12 @@ def cook_d3d12(extra_defines=None):
             cross_args = [spirv_cross, "--hlsl", "--shader-model", "50"]
             if is_vertex:
                 # One TEXCOORD per matrix column, matching the D3D12 input layouts.
-                cross_args += ["--flip-vert-y", "--hlsl-flatten-matrix-vertex-input-semantics"]
+                cross_args += ["--hlsl-flatten-matrix-vertex-input-semantics"]
             cross_args += [str(spv_path), "--output", str(hlsl_path)]
 
-            fxc_args = [fxc, "/nologo", "/T", "vs_5_0" if is_vertex else "ps_5_0",
+            stage_type = EXT_TO_TYPE[src.suffix]
+            profile    = {VERTEX_SHADER: "vs_5_0", PIXEL_SHADER: "ps_5_0", COMPUTE_SHADER: "cs_5_0"}[stage_type]
+            fxc_args = [fxc, "/nologo", "/T", profile,
                         "/E", "main", "/O3", "/Fo", str(out_dir / cso_name), str(hlsl_path)]
 
             for args, tool in ((cross_args, "spirv-cross"), (fxc_args, "fxc")):

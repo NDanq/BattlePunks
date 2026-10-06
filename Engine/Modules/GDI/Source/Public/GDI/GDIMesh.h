@@ -158,6 +158,12 @@ public:
 
     virtual void InitResource() = 0;
 
+    /* Its name in capture tools (GDISetDebugName): what RenderDoc, PIX and
+     * Xcode show for its buffers. Kept, so a backend that makes them later
+     * names them then. */
+    virtual void SetDebugName(const std::string& InName) { DebugName = InName; }
+    const std::string& GetDebugName() const { return DebugName; }
+
     virtual void Release() = 0;
 
     virtual void Draw() = 0;
@@ -194,6 +200,8 @@ public:
     }
 
 protected:
+    std::string DebugName;
+
     /* The range SetDrawRange asked for, clamped; Count 0 if there is nothing to draw. */
     inline void GetClampedDrawRange(uint32_t& OutFirst, uint32_t& OutCount) const
     {

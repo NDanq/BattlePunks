@@ -10,6 +10,7 @@
  */
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdio>
@@ -17,8 +18,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <string>
 
 #include "Public/Core/CoreArchive.h"
@@ -52,6 +55,7 @@
 #include "Public/RenderCore/TextureCompression.h"
 #include "Public/RenderCore/UIDrawList.h"
 #include "Private/RenderCore/RenderThreadInternal.h"
+#include "Private/RenderCore/ParticleSimulation.h"
 #include "Private/RenderCore/ShadowSetup.h"
 
 using namespace RenderCore;
@@ -87,8 +91,8 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 10,
-           "Render exposes Visible, Mesh, slots by index, material parameters and CastShadows");
+    Expect(Render != nullptr && RenderCount == 11,
+           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows and CastInsetShadow");
     const auto HasBinding = [&](const char* InName)
     {
         for(size_t Index = 0; Render && Index < RenderCount; ++Index)
@@ -1011,6 +1015,14 @@ namespace
            && Text.find("plain tint") != std::string::npos)                { ++GMaterialFallbacks; }
         if(GPreviousLogHandler) { GPreviousLogHandler(InVerbosity, InMessage); }
     }
+
+    /* Counts block textures the backend could not sample, so decoded to RGBA8 instead. */
+    std::atomic<int> GBlockDecodes{0};
+    void BlockLogHandler(const LogVerbosity InVerbosity, const char* InMessage)
+    {
+        if(InMessage && std::strstr(InMessage, "so it is decoded to RGBA8")) { ++GBlockDecodes; }
+        if(GPreviousLogHandler) { GPreviousLogHandler(InVerbosity, InMessage); }
+    }
 }
 
 static void TestMaterials()
@@ -1366,7 +1378,8 @@ static void TestMaterialsOnGpu()
                            { "Content/Materials/Wave.material.nmgraph", 0, {}, false, {} },
                            { "Content/Materials/Negative.material.nmgraph", 0, {}, false, {} },
                            { "Content/Materials/Textured.material.nmgraph", 0, {}, false, {} },   { "Content/Materials/MipProbe.material.nmgraph", 0, {}, false, {} },
-                           { "Content/Materials/NormalProbe.material.nmgraph", 0, {}, false, {} } };
+                           { "Content/Materials/NormalProbe.material.nmgraph", 0, {}, false, {} },
+                           { "Content/Materials/TwoSidedProbe.material.nmgraph", 0, {}, false, {} } };
         for(Check& Each : Checks)
         {
             Each.Request = Rend.RequestMaterialPreview(Each.Material, 64, EngineCore::Color(255, 255, 255, 255));
@@ -1435,11 +1448,76 @@ static void TestMaterialsOnGpu()
         Expect(Mips.bOk && Mips.Rgb[1] > 200 && Mips.Rgb[0] < 40,
                "a minified texture samples its baked mip chain (green), not level 0 (red)");
 
+        /* Block compression: Quadrants as BC1 (each quarter one 565 colour, so exact), from a layer
+         * over its file. The GPU backends here sample BC1, so it is drawn as blocks: RenderCore warns
+         * when it has to decode them instead. */
+        {
+            const char* QuadrantsPath = "Content/Textures/Quadrants.nmtexture";
+            TextureData Blocky;
+            Blocky.Filter      = ETextureFilter::Nearest;
+            Blocky.Compression = ETextureCompression::BC1;
+            Blocky.Pixels      = Image(16, 16, EImageFormat::RGBA8);
+            for(int Y = 0; Y < 16; ++Y)
+            {
+                for(int X = 0; X < 16; ++X)
+                {
+                    const bool    bRight = X >= 8;
+                    const uint8_t Quarter[4][4] = { { 255, 0, 0, 255 }, { 0, 255, 0, 255 }, { 0, 0, 255, 255 }, { 255, 255, 255, 255 } };
+                    std::memcpy(Blocky.Pixels.GetScanline(Y) + X * 4, Quarter[(Y >= 8 ? 2 : 0) + (bRight ? 1 : 0)], 4);
+                }
+            }
+            std::string EncodeError;
+            Archive Writer = Archive::ForWriting();
+            const bool bEncoded = CompressTexture(Blocky, EncodeError) && SerializeTexture(Writer, Blocky);
+            std::map<std::string, MemoryFileProvider::FileBytes> Files;
+            Files[QuadrantsPath] = std::make_shared<const std::vector<uint8_t>>(Writer.GetBytes());
+            Layers.MountLayer("SmokeBlocks", std::make_shared<MemoryFileProvider>(std::move(Files)));
+            TextureAssetCache::Invalidate(QuadrantsPath);
+
+            GBlockDecodes       = 0;
+            GPreviousLogHandler = GetLogHandler();
+            SetLogHandler(&BlockLogHandler);
+            const uint64_t Request = Rend.RequestMaterialPreview("Content/Materials/Textured.material.nmgraph", 64,
+                                                                 EngineCore::Color(255, 255, 255, 255));
+            DrawFrame();
+            DrawFrame();
+            SetLogHandler(GPreviousLogHandler);
+            const bool bBlocks = GBlockDecodes == 0;
+            EngineCore::Image Pixels;
+            std::string Error;
+            const bool bTaken = Rend.TakeMaterialPreview(Request, Pixels, Error) && Pixels.GetWidth() == 64 && Pixels.GetData();
+            int Quarter[4][3] = {};
+            for(int Each = 0; bTaken && Each < 4; ++Each)
+            {
+                const bool     bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
+                const uint8_t* Px    = Pixels.GetData() + Pixels.GetStride() * (Each < 2 ? 16 : 48)
+                                     + (Each % 2 == 0 ? 16 : 48) * BytesPerPixel(Pixels.GetFormat());
+                Quarter[Each][0] = bBgra ? Px[2] : Px[0];
+                Quarter[Each][1] = Px[1];
+                Quarter[Each][2] = bBgra ? Px[0] : Px[2];
+            }
+            std::printf("    BC1 quarters (%s) = %d %d %d / %d %d %d / %d %d %d / %d %d %d\n", bBlocks ? "as blocks" : "decoded",
+                        Quarter[0][0], Quarter[0][1], Quarter[0][2], Quarter[1][0], Quarter[1][1], Quarter[1][2],
+                        Quarter[2][0], Quarter[2][1], Quarter[2][2], Quarter[3][0], Quarter[3][1], Quarter[3][2]);
+            Expect(bEncoded && bBlocks && bTaken && Is(Quarter[0], 255, 0, 0) && Is(Quarter[1], 0, 255, 0)
+                   && Is(Quarter[2], 0, 0, 255) && Is(Quarter[3], 255, 255, 255),
+                   "a BC1 texture is sampled as its blocks: the same quarters, upright");
+            Layers.UnmountLayer("SmokeBlocks");
+            TextureAssetCache::Invalidate(QuadrantsPath);
+        }
+
         /* NormalProbe: an OpenGL normal tilted right and up the image, as 0.5 + 0.5 N. The quad faces the
          * camera (-Z), its image upright: right is +X, up +Y. A flipped green reads 64 in G. */
         const Check& Normals = Checks[6];
         Expect(Normals.bOk && Near(Normals.Rgb[0], 191) && Near(Normals.Rgb[1], 191) && Near(Normals.Rgb[2], 37),
                "the Normal Map node tilts the normal the way its map points: right and up the image, out of the surface");
+
+        /* TwoSidedProbe: DefaultLit with Two Sided on. The preview quad faces the camera, so it is a front
+         * face (gl_FrontFacing) and keeps its normal: lit as DefaultLit, not as its back. */
+        const Check& TwoSided = Checks[7];
+        Expect(TwoSided.bOk && DefaultLit.bOk && std::abs(TwoSided.Rgb[0] - DefaultLit.Rgb[0]) <= 4
+               && std::abs(TwoSided.Rgb[2] - DefaultLit.Rgb[2]) <= 4,
+               "Two Sided lights a face toward the camera as its front, as a one-sided material does");
 
         /* Mesh previews: the engine's primitives, as the mesh viewer and the
          * material editor draw them. */
@@ -1899,11 +1977,160 @@ static void TestTextureMips()
            && TextureCompressedBytes(4, 4, 3, ETextureCompression::None) == (16 + 4 + 1) * 4,
            "TextureCompressedBytes: BC1 and BC4 half a byte a texel, the rest one, a 4x4 block at least per level");
 
-    /* Compression: a stored setting until an encoder is registered. */
-    Expect(GetTextureCompressor() == nullptr && IsTextureCompressionAvailable(ETextureCompression::None)
-           && !IsTextureCompressionAvailable(ETextureCompression::BC7), "no block encoder is integrated yet: only None is honoured");
     Expect(std::string(GetTextureCompressionName(ETextureCompression::BC5)) == "BC5"
            && std::string(GetTextureMipGenName(ETextureMipGen::Kaiser)) == "Kaiser", "the settings' names");
+}
+
+/*
+ * Block compression (TextureCompression.h): the built-in encoder in an editor
+ * build, every format encoded and decoded close to its source, the blocks
+ * saved beside the pixels and loaded ForGpu without them.
+ */
+static void TestTextureCompression()
+{
+    Expect(IsTextureCompressionAvailable(ETextureCompression::None) && TextureBlockBytes(ETextureCompression::BC1) == 8
+           && TextureBlockBytes(ETextureCompression::BC4) == 8 && TextureBlockBytes(ETextureCompression::BC7) == 16,
+           "None is always honoured; BC1 and BC4 are 8 bytes a block, the rest 16");
+
+    /* Decoding needs no encoder: a solid BC4 block (both endpoints 200) is 200 everywhere, reading (r, 0, 0, 1). */
+    TextureBlockLevel Solid;
+    Solid.Width  = 3;
+    Solid.Height = 2;
+    Solid.Bytes  = { 200, 200, 0, 0, 0, 0, 0, 0 };
+    Image SolidImage;
+    Expect(DecodeTextureBlocks(Solid, ETextureCompression::BC4, SolidImage) && SolidImage.GetWidth() == 3
+           && SolidImage.GetHeight() == 2 && SolidImage.GetData()[0] == 200 && SolidImage.GetData()[1] == 0
+           && SolidImage.GetData()[3] == 255 && SolidImage.GetScanline(1)[8] == 200,
+           "a BC4 block decodes as the GPU reads it, cut to the level's size");
+    Solid.Bytes.pop_back();
+    Expect(!DecodeTextureBlocks(Solid, ETextureCompression::BC4, SolidImage), "blocks of the wrong size do not decode");
+
+#if WITH_EDITOR
+    Expect(GetTextureCompressor() && std::string(GetTextureCompressor()->GetName()) == "bc7enc_rdo"
+           && IsTextureCompressionAvailable(ETextureCompression::BC1) && IsTextureCompressionAvailable(ETextureCompression::BC7),
+           "an editor build encodes with bc7enc_rdo");
+
+    /* Smooth ramps, 13x9 so the edge blocks are partial, alpha its own ramp. */
+    TextureData Source;
+    Source.Pixels = Image(13, 9, EImageFormat::RGBA8);
+    for(int Y = 0; Y < 9; ++Y)
+    {
+        uint8_t* Row = Source.Pixels.GetScanline(Y);
+        for(int X = 0; X < 13; ++X)
+        {
+            Row[X * 4 + 0] = uint8_t(X * 18);
+            Row[X * 4 + 1] = uint8_t(Y * 28);
+            Row[X * 4 + 2] = uint8_t(255 - X * 9 - Y * 9);
+            Row[X * 4 + 3] = uint8_t(40 + (X + Y) * 9);
+        }
+    }
+    Source.bSRGB  = true;
+    Source.MipGen = ETextureMipGen::Box;
+    BuildTextureMips(Source);
+
+    /* Each format's channels, and how far a level-0 texel may stray on
+     * average: loose, since three channels ramping apart is a block format's
+     * worst case (about 8 for BC1, 4 for BC7), and a broken codec strays by
+     * tens. The smaller levels ramp twice as steeply each, so get twice it. */
+    struct Case { ETextureCompression Compression; int Channels; bool bAlpha; double MeanError; };
+    const Case Cases[] = {
+        { ETextureCompression::BC1, 3, false, 12.0 },
+        { ETextureCompression::BC3, 3, true,  12.0 },
+        { ETextureCompression::BC4, 1, false, 6.0 },
+        { ETextureCompression::BC5, 2, false, 6.0 },
+        { ETextureCompression::BC7, 3, true,  6.0 },
+    };
+    double LevelZeroError[6] = {};
+    for(const Case& Each : Cases)
+    {
+        TextureData Texture = Source;
+        Texture.Compression = Each.Compression;
+        std::string Error;
+        bool bClose = CompressTexture(Texture, Error) && TextureBlocksMatch(Texture) && Texture.Blocks.size() == 4
+                      && TextureGpuBytes(Texture) == TextureCompressedBytes(13, 9, 4, Each.Compression);
+        for(int Level = 0; bClose && Level < Texture.GetMipCount(); ++Level)
+        {
+            const Image& Mip = *Texture.GetMip(Level);
+            Image Decoded;
+            bClose = DecodeTextureBlocks(Texture.Blocks[size_t(Level)], Each.Compression, Decoded)
+                     && Decoded.GetWidth() == Mip.GetWidth() && Decoded.GetHeight() == Mip.GetHeight();
+            double Error = 0.0;
+            int    Count = 0;
+            for(int Y = 0; bClose && Y < Mip.GetHeight(); ++Y)
+            {
+                const uint8_t* Want = Mip.GetScanline(Y);
+                const uint8_t* Got  = Decoded.GetScanline(Y);
+                for(int X = 0; X < Mip.GetWidth(); ++X)
+                {
+                    for(int Channel = 0; Channel < 4; ++Channel)
+                    {
+                        const int Texel = X * 4 + Channel;
+                        if(Channel < Each.Channels || (Channel == 3 && Each.bAlpha))
+                        {
+                            Error += std::abs(int(Want[Texel]) - int(Got[Texel]));
+                            ++Count;
+                        }
+                        else if(Got[Texel] != (Channel == 3 ? 255 : 0))
+                        {
+                            bClose = false;   // what the format lacks reads 0, alpha 1
+                        }
+                    }
+                }
+            }
+            if(Level == 0) { LevelZeroError[int(Each.Compression)] = Error / std::max(Count, 1); }
+            bClose = bClose && Error / std::max(Count, 1) <= Each.MeanError * (Level == 0 ? 1.0 : 2.0);
+        }
+        Expect(bClose, (std::string(GetTextureCompressionName(Each.Compression))
+                        + ": every level encodes, and decodes close to its source").c_str());
+    }
+    Expect(LevelZeroError[int(ETextureCompression::BC7)] < LevelZeroError[int(ETextureCompression::BC1)],
+           "BC7 is closer than BC1");
+
+    /* Saved beside the pixels; loaded ForGpu without them. */
+    TextureData Texture = Source;
+    Texture.Compression = ETextureCompression::BC7;
+    const std::filesystem::path Root = std::filesystem::temp_directory_path() / "NimbleRenderCoreCompression";
+    std::filesystem::create_directories(Root);
+    const std::string File = (Root / "Ramp.nmtexture").string();
+    Expect(SaveTextureFile(File, Texture) && TextureBlocksMatch(Texture), "SaveTextureFile encodes what it has not");
+    TextureData Everything, ForGpu;
+    Expect(LoadTextureFile(File, Everything) && Everything.Blocks.size() == 4 && Everything.Mips.size() == 3
+           && Everything.Blocks[0].Bytes == Texture.Blocks[0].Bytes && Everything.Blocks[3].Bytes == Texture.Blocks[3].Bytes
+           && std::memcmp(Everything.Pixels.GetData(), Source.Pixels.GetData(), Source.Pixels.GetSizeBytes()) == 0,
+           "and it loads with the RGBA8 source and the blocks");
+    Expect(LoadTextureFile(File, ForGpu, ETextureLoad::ForGpu) && ForGpu.Pixels.IsNull() && ForGpu.Mips.empty()
+           && ForGpu.Blocks.size() == 4 && ForGpu.Blocks[0].Width == 13 && ForGpu.Blocks[3].Width == 1
+           && ForGpu.Blocks[2].Bytes == Texture.Blocks[2].Bytes && ForGpu.Compression == ETextureCompression::BC7,
+           "ForGpu, only the blocks");
+    TextureHeader Header;
+    Expect(LoadTextureHeader(File, Header) && Header.bBlocks && Header.MipCount == 4, "the header says blocks follow");
+
+    TextureData Stale = Texture;
+    Stale.Blocks.pop_back();
+    Archive StaleWriter = Archive::ForWriting();
+    Expect(!SerializeTexture(StaleWriter, Stale), "blocks that are not every level do not save");
+    Stale.Blocks = Texture.Blocks;
+    Stale.Compression = ETextureCompression::BC1;
+    Expect(!TextureBlocksMatch(Stale), "nor do blocks of another compression");
+    Expect(SaveTextureFile(File, Stale) && TextureBlocksMatch(Stale)
+           && Stale.Blocks[0].Bytes.size() == TextureCompressedBytes(13, 9, 1, ETextureCompression::BC1),
+           "which SaveTextureFile encodes again");
+    Stale.Compression = ETextureCompression::None;
+    Expect(SaveTextureFile(File, Stale) && Stale.Blocks.empty() && LoadTextureFile(File, ForGpu, ETextureLoad::ForGpu)
+           && ForGpu.Blocks.empty() && !ForGpu.Pixels.IsNull(), "None drops the blocks: ForGpu then has the pixels");
+    BuildTextureMips(Texture);
+    Expect(Texture.Blocks.empty(), "rebuilding the mips clears the blocks made from them");
+
+    TextureData Hdri = Source;
+    Hdri.Format      = ETexturePixelFormat::RGBE8;
+    Hdri.Compression = ETextureCompression::BC7;
+    std::string Error;
+    Expect(CompressTexture(Hdri, Error) && Hdri.Blocks.empty(), "an RGBE8 texture is never compressed");
+    std::filesystem::remove_all(Root);
+#else
+    Expect(GetTextureCompressor() == nullptr && !IsTextureCompressionAvailable(ETextureCompression::BC7),
+           "a game build has no encoder: only None is honoured");
+#endif
 }
 
 /*
@@ -2002,7 +2229,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 3, "RenderComponent saves as version 3 (material parameters, CastShadows)");
+    Expect(Info && Info->Version == 4, "RenderComponent saves as version 4 (material parameters, CastShadows, CastInsetShadow)");
     if(!Info) { return; }
 
     RenderComponent Saved;
@@ -2060,6 +2287,11 @@ static void TestRenderComponentSerializer()
            && FromOld.GetMaterialParameterCount() == 0, "a version 1 component reads no parameters");
     Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("CastShadows")) == Old.Names.end() && FromOld.bCastShadows == 1,
            "and no CastShadows, and keeps casting");
+    Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("CastInsetShadow")) == Old.Names.end() && FromOld.bCastInsetShadow == 0,
+           "nor CastInsetShadow, which stays off");
+
+    Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("CastInsetShadow")) != Out.Names.end(),
+           "a version 4 save writes CastInsetShadow");
 
     /* The lights: version 2 dropped the sun's Direction (it is the
      * Transform's forward now) and added shadows; version 3 its baked
@@ -2292,6 +2524,86 @@ static void TestShadowsOnGpu()
             const Difference Cascades = bCascaded ? Compare(Cascaded, Lit) : Difference();
             std::printf("    cascaded: %d pixels darker\n", Cascades.Darker);
             Expect(bCascaded && Cascades.Darker > 300 && Cascades.Brighter < 20, "a Cascaded sun shadows the floor too");
+
+            /* Inset shadows: the sun's Shadow Distance cut short of the box,
+             * so its own view misses it; Cast Inset Shadow gives the box a
+             * map of its own, which [Shadows] MaxInsetShadows 0 takes away. */
+            SunLight->ShadowTechnique = LST_Standard;
+            SunLight->ShadowDistance  = 1.0f;
+            ConfigVar* MaxInsets = ConfigFindVarByPath("Shadows.MaxInsetShadows");
+            Expect(MaxInsets != nullptr, "[Shadows] MaxInsetShadows is a config var");
+            EngineCore::Image Short, Inset, NoInsets;
+            const bool bShort = Capture(Short);
+            const Difference NoReach = bShort ? Compare(Short, Lit) : Difference();
+            Box.GetComponent<RenderComponent>()->bCastInsetShadow = 1;
+            const bool bInset = Capture(Inset);
+            Dump(Inset, "sun-inset");
+            const Difference Own = bInset ? Compare(Inset, Lit) : Difference();
+            if(MaxInsets) { MaxInsets->SetFromString("0"); }
+            const bool bNoInsets = Capture(NoInsets);
+            const Difference Capped = bNoInsets ? Compare(NoInsets, Lit) : Difference();
+            if(MaxInsets) { MaxInsets->SetFromString("4"); }
+            std::printf("    inset: %d pixels darker without, %d with (%d brighter), %d with MaxInsetShadows 0\n",
+                        NoReach.Darker, Own.Darker, Own.Brighter, Capped.Darker);
+            Expect(bShort && NoReach.Darker < 40, "a sun whose Shadow Distance stops short draws no shadow of the box");
+            Expect(bInset && Own.Darker > 300 && Own.Brighter < 20, "Cast Inset Shadow shadows the floor from the box's own map");
+            Expect(bNoInsets && Capped.Darker < 40, "MaxInsetShadows 0 turns inset shadows off");
+
+            /* InsetFilter: every setting draws the shadow; hard and 5x5 edges differ. */
+            ConfigVar* InsetFilter = ConfigFindVarByPath("Shadows.InsetFilter");
+            Expect(InsetFilter != nullptr, "[Shadows] InsetFilter is a config var");
+            EngineCore::Image Hard, Soft;
+            if(InsetFilter) { InsetFilter->SetFromString("0"); }
+            const bool bHard = Capture(Hard);
+            if(InsetFilter) { InsetFilter->SetFromString("2"); }
+            const bool bSoft = Capture(Soft);
+            if(InsetFilter) { InsetFilter->SetFromString("1"); }
+            const Difference HardShadow = bHard ? Compare(Hard, Lit) : Difference();
+            const Difference SoftShadow = bSoft ? Compare(Soft, Lit) : Difference();
+            int EdgePixels = 0;
+            for(int Y = 0; bHard && bSoft && Y < 256; ++Y)
+            {
+                for(int X = 0; X < 256; ++X)
+                {
+                    int A[3], B[3];
+                    Rgb(Hard, X, Y, A);
+                    Rgb(Soft, X, Y, B);
+                    EdgePixels += std::abs((A[0] + A[1] + A[2]) - (B[0] + B[1] + B[2])) > 12 ? 1 : 0;
+                }
+            }
+            std::printf("    inset filter: hard %d pixels darker, 5x5 %d; %d edge pixels differ\n", HardShadow.Darker, SoftShadow.Darker, EdgePixels);
+            Expect(bHard && bSoft && HardShadow.Darker > 300 && SoftShadow.Darker > 300, "every InsetFilter draws the inset shadow");
+            Expect(EdgePixels > 20, "and a hard filter's edge differs from a 5x5 one's");
+            Box.GetComponent<RenderComponent>()->bCastInsetShadow = 0;
+
+            /* A caster out of the view's bounds altogether -- above and behind
+             * the camera -- whose shadow falls on the floor it sees: offered
+             * all the same, since its shadow reaches the view. */
+            GameCore::TransformComponent* SunAt = Sun.GetComponent<GameCore::TransformComponent>();
+            const Vector3 SunRotation = SunAt->Rotation;
+            SunAt->Rotation = Vector3(55.0, 0.0, 0.0);   // down and toward +Z, the way the camera looks
+            const Vector3 Travel = LightForward(SunAt->Rotation);
+            const GameCore::Entity Overhead = Placed("Overhead", Travel * -1500.0, Vector3(), Vector3(120.0, 120.0, 120.0));
+            RenderComponent OverheadRender = Mesh("Engine/Content/Meshes/Box.nmmesh");
+            OverheadRender.bCastInsetShadow = 1;
+            Overhead.AddComponent(OverheadRender);
+            EngineCore::Image Unlit, FromAbove, NotOffered;
+            Enabled->SetFromString("0");
+            const bool bUnlit = Capture(Unlit);
+            Enabled->SetFromString("1");
+            const bool bFromAbove = Capture(FromAbove);
+            Dump(FromAbove, "sun-inset-offscreen");
+            Overhead.GetComponent<RenderComponent>()->bCastInsetShadow = 0;
+            const bool bNotOffered = Capture(NotOffered);
+            const Difference Above = bUnlit && bFromAbove ? Compare(FromAbove, Unlit) : Difference();
+            const Difference Plain = bUnlit && bNotOffered ? Compare(NotOffered, Unlit) : Difference();
+            std::printf("    off-screen caster: %d pixels darker with an inset, %d without\n", Above.Darker, Plain.Darker);
+            Expect(bFromAbove && Above.Darker > 300 && Above.Brighter < 20,
+                   "a caster outside the view's bounds still gets an inset shadow on the floor it sees");
+            Expect(bNotOffered && Plain.Darker < 40, "which the sun's short view alone does not draw");
+            World.DestroyEntity(Overhead.GetID());
+            SunAt->Rotation = SunRotation;
+            SunLight->ShadowDistance = 3000.0f;
 
             /* The sun off; a spot light straight down over the box. */
             SunLight->Intensity = 0.0f;
@@ -3707,6 +4019,1089 @@ static void TestBloomHdrOnGpu()
 }
 #endif // WITH_EDITOR
 
+
+/*
+ * The Particle System component and the spawn bookkeeping
+ * (ParticleSimulation::BuildParams), on the CPU: settings clamped, spawns
+ * counted round the ring, the sort sized. RENDERPIPELINE.md, "Particles".
+ */
+static void TestParticleSystem()
+{
+    std::printf("[particle system]\n");
+
+    size_t Count = 0;
+    Expect(GameCore::FindComponentScript(ParticleSystemComponent::StaticType().ID, Count) && Count == 8,
+           "Particle System exposes its system and overrides to Lua");
+    const GameCore::ComponentSerializerInfo* Serializer = GameCore::FindComponentSerializer(ParticleSystemComponent::StaticType().ID);
+    Expect(Serializer && Serializer->Version == 3, "and is saved, version 3 (naming a system, aiming its beams)");
+
+    ParticleEmitterDesc Wild;
+    Wild.MaxParticles = 100000;
+    Wild.SpawnRate    = -5.0f;
+    Wild.Lifetime     = 0.0f;
+    Wild.ColorCurve   = 0.0f;
+    Wild.StartColor   = EngineCore::Color(255, 0, 0, 255);
+    const ParticleEmitterSettings Clamped = Wild.ToSettings();
+    Expect(Clamped.MaxParticles == PARTICLE_MAX_PER_SYSTEM && Clamped.SpawnRate == 0.0f && Clamped.Lifetime > 0.0f
+           && Clamped.ColorCurve > 0.0f && Clamped.StartColor[0] == 1.0f && Clamped.StartColor[1] == 0.0f,
+           "an emitter's settings are clamped to what the GPU can run, colours to 0-1");
+
+    ParticleEmitterDesc Plain;
+    Plain.SpawnRate = 40.0f;
+    ParticleSystemComponent Off;
+    Off.bEmitting = 0;
+    Expect(Off.ToSettings(Plain, 0).SpawnRate == 0.0f, "not emitting spawns nothing");
+    ParticleSystemComponent Tuned;
+    Tuned.SpawnRateScale = 0.5f;
+    Tuned.Tint           = EngineCore::Color(255, 0, 255, 255);
+    const ParticleEmitterSettings Run = Tuned.ToSettings(Plain, 0);
+    Expect(Run.SpawnRate == 20.0f && Run.StartColor[0] == 1.0f && Run.StartColor[1] == 0.0f && Run.EndColor[2] == 1.0f,
+           "the component scales the spawn rate and tints every colour");
+    Expect(Tuned.ToSettings(Plain, 0).Seed != Tuned.ToSettings(Plain, 1).Seed,
+           "two emitters of one system are seeded apart");
+    Plain.MaxParticles = 100;
+    Plain.Lifetime     = 2.0f;
+    Plain.LifetimeVariance = 0.0f;
+    Expect(std::abs(Plain.GetSteadyStateCount() - 80.0f) < 1e-3f, "40 a second for 2 s holds 80 once it has run a while");
+    Plain.SpawnRate = 1000.0f;
+    Expect(Plain.GetSteadyStateCount() == 100.0f, "never more than Max Particles");
+
+    ParticleEmitterGpu Emitter;
+    Emitter.MaxParticles = 10;
+    ParticleEmitterSettings Settings;
+    Settings.SpawnRate = 25.0f;
+    const ParticleCamera Camera;
+    const ParticleParams First  = ParticleSimulation::BuildParams(Emitter, Settings, EngineCore::Vector3(1.0, 2.0, 3.0), Camera, 0.1f, 0.0);
+    const ParticleParams Second = ParticleSimulation::BuildParams(Emitter, Settings, EngineCore::Vector3(1.0, 2.0, 3.0), Camera, 0.1f, 0.0);
+    Expect(First.Spawn[0] == 0 && First.Spawn[1] == 2 && Second.Spawn[0] == 2 && Second.Spawn[1] == 3
+           && First.Spawn[2] == 10 && First.Emitter[1] == 2.0f,
+           "25 a second over 0.1 s: 2, then 3 with the half carried, each from where the last ended");
+    const ParticleParams Hitch = ParticleSimulation::BuildParams(Emitter, Settings, EngineCore::Vector3(), Camera, 5.0f, 0.0);
+    Expect(Hitch.Timing[0] <= 0.1f + 1e-6f && Hitch.Spawn[1] <= 3, "a hitch is clamped to a tenth of a second: no burst");
+    Settings.SpawnRate = 1000.0f;
+    const ParticleParams Flood = ParticleSimulation::BuildParams(Emitter, Settings, EngineCore::Vector3(), Camera, 0.1f, 0.0);
+    Expect(Flood.Spawn[1] == 10 && Flood.Spawn[0] < 10 && Flood.Sort[0] == 16,
+           "never more than the ring holds a frame, wrapping round it; the sort runs over the next power of two");
+    Expect(First.Spawn[3] != Second.Spawn[3], "each frame seeds its spawns differently");
+    Expect(Second.PrevEmitter[1] == 2.0f && First.PrevEmitter[1] == 2.0f,
+           "spawns are spread from where the emitter was a frame ago (the first frame, where it is)");
+
+    /* Bursts: Burst Count at once, again every Burst Interval, Burst Cycles times. */
+    ParticleEmitterGpu Bursting;
+    Bursting.MaxParticles = 100;
+    ParticleEmitterSettings Burst;
+    Burst.SpawnMode  = PSM_Burst;
+    Burst.BurstCount = 20;
+    uint32_t Spawned[6] = {};
+    for(int Frame = 0; Frame < 6; ++Frame)
+    {
+        Spawned[Frame] = ParticleSimulation::BuildParams(Bursting, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0).Spawn[1];
+    }
+    Expect(Spawned[0] == 20 && Spawned[1] == 0 && Spawned[5] == 0, "a burst with no interval fires once");
+    Burst.bEmitting = false;
+    ParticleSimulation::BuildParams(Bursting, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0);
+    Burst.bEmitting = true;
+    Expect(ParticleSimulation::BuildParams(Bursting, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0).Spawn[1] == 20,
+           "switched off and on, it fires again");
+
+    ParticleEmitterGpu Repeating;
+    Repeating.MaxParticles = 100;
+    Burst.BurstInterval = 0.25f;
+    Burst.BurstCycles   = 3;
+    uint32_t Total = 0, Bursts = 0;
+    for(int Frame = 0; Frame < 20; ++Frame)
+    {
+        const uint32_t Made = ParticleSimulation::BuildParams(Repeating, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0).Spawn[1];
+        Total  += Made;
+        Bursts += Made > 0 ? 1 : 0;
+    }
+    Expect(Total == 60 && Bursts == 3 && Repeating.BurstsFired == 3, "every 0.25 s, three times: 60 in three bursts, then none");
+    Burst.BurstCount = 500;
+    Burst.BurstInterval = 0.0f;
+    ParticleEmitterGpu Small;
+    Small.MaxParticles = 64;
+    Expect(ParticleSimulation::BuildParams(Small, Burst, EngineCore::Vector3(), Camera, 0.1f, 0.0).Spawn[1] == 64,
+           "a burst bigger than the ring fills it, no more");
+
+    /* Strips: a ribbon's points from the oldest slot round the ring; a beam's from 0 to its end. */
+    ParticleEmitterGpu Trail;
+    Trail.MaxParticles = 10;
+    ParticleEmitterSettings Ribbon;
+    Ribbon.Type      = PT_Ribbon;
+    Ribbon.SpawnRate = 30.0f;
+    const ParticleParams RibbonParams = ParticleSimulation::BuildParams(Trail, Ribbon, EngineCore::Vector3(), Camera, 0.1f, 0.0);
+    Expect(RibbonParams.Sort[1] == 3 && RibbonParams.Sort[2] == 10 && RibbonParams.Render[0] == PT_Ribbon,
+           "a ribbon is strung from the next slot to spawn into -- the oldest -- round the whole ring");
+    ParticleEmitterSettings Beam;
+    Beam.Type         = PT_Beam;
+    Beam.BeamSegments = 8;
+    Beam.BeamNoise    = 5.0f;
+    ParticleEmitterGpu Ray;
+    Ray.MaxParticles = Beam.GetCapacity();
+    const ParticleParams BeamParams = ParticleSimulation::BuildParams(Ray, Beam, EngineCore::Vector3(), Camera, 0.1f, 0.0);
+    Expect(Beam.GetCapacity() == 9 && BeamParams.Sort[1] == 0 && BeamParams.Sort[2] == 9 && BeamParams.Spawn[1] == 0
+           && BeamParams.BeamNoise[1] == 8.0f && BeamParams.Beam[1] == 200.0f && BeamParams.Beam[3] == 5.0f,
+           "a beam holds its 9 points, spawns nothing, and is strung from slot 0 to its end");
+
+    ParticleEmitterDesc BeamDesc;
+    BeamDesc.Type         = PT_Beam;
+    BeamDesc.BeamSegments = 1000;
+    Expect(BeamDesc.ToSettings().BeamSegments == PARTICLE_BEAM_SEGMENTS_MAX && BeamDesc.GetSteadyStateCount() == 129.0f,
+           "a beam's segments are clamped to 128; it holds a point more");
+    ParticleEmitterDesc BurstDesc;
+    BurstDesc.SpawnMode = PSM_Burst;
+    BurstDesc.BurstCount = 30;
+    BurstDesc.BurstInterval = 0.5f;
+    BurstDesc.BurstCycles = 0;
+    BurstDesc.Lifetime = 1.2f;
+    BurstDesc.LifetimeVariance = 0.0f;
+    Expect(BurstDesc.GetSteadyStateCount() == 90.0f, "bursts every 0.5 s living 1.2 s overlap three at a time: 90");
+}
+
+/*
+ * Particle system assets (ParticleSystemAsset.h): .nmparticle text read and
+ * written, its errors, and the cache a proxy finds them in.
+ */
+static void TestParticleSystemAsset()
+{
+    std::printf("[particle system asset]\n");
+
+    ParticleSystemDesc System;
+    std::string        Error;
+    const std::string  Text =
+        "# smoke and sparks\n"
+        "NimbleParticleSystem 1\n"
+        "\n"
+        "Emitter Smoke Plume\n"
+        "    Material Content/Materials/Smoke.material.nmgraph\n"
+        "    SpawnRate 70\n"
+        "    Velocity 10, 120, 0\n"
+        "    StartColor 225,38,22,150\n"
+        "    FaceCamera false\n"
+        "    Sparkle 3\n"
+        "Emitter Sparks\n"
+        "    Enabled false\n"
+        "    Offset 0,20,0\n";
+    const bool bParsed = ParseParticleSystem(Text, System, Error);
+    Expect(bParsed && System.Emitters.size() == 2, "a system of two emitters is read");
+    if(bParsed && System.Emitters.size() == 2)
+    {
+        const ParticleEmitterDesc& Smoke = System.Emitters[0];
+        Expect(std::strcmp(Smoke.Name, "Smoke Plume") == 0 && std::strcmp(Smoke.Material, "Content/Materials/Smoke.material.nmgraph") == 0
+               && Smoke.SpawnRate == 70.0f && Smoke.Velocity.GetY() == 120.0 && Smoke.StartColor.G == 38 && Smoke.StartColor.A == 150
+               && Smoke.Billboard == PB_Fixed && Smoke.Lifetime == ParticleEmitterDesc().Lifetime,
+               "names run to the end of the line, settings are read (an old FaceCamera false as a Fixed billboard), unknown keys skipped, the rest at their defaults");
+        Expect(System.Emitters[1].bEnabled == 0 && System.Emitters[1].Offset.GetY() == 20.0, "the second emitter's own settings");
+    }
+
+    const std::string Written = WriteParticleSystem(System);
+    ParticleSystemDesc Again;
+    Expect(ParseParticleSystem(Written, Again, Error) && WriteParticleSystem(Again) == Written,
+           "written and read back, it writes the same bytes");
+    Expect(Written.find("LifetimeVariance 0.25\n") != std::string::npos && Written.find("Sparkle") == std::string::npos
+           && Written.find("Billboard Fixed\n") != std::string::npos && Written.find("\n    FaceCamera ") == std::string::npos,
+           "every known setting is written, numbers in their shortest form, choices by name, old keys not");
+    Expect(ParseParticleSystem("NimbleParticleSystem 1\nEmitter T\n    Type Ribbon\n    SpawnMode Burst\n    MeshOrientation AlignToVelocity\n",
+                               System, Error)
+           && System.Emitters[0].Type == PT_Ribbon && System.Emitters[0].SpawnMode == PSM_Burst
+           && System.Emitters[0].MeshOrientation == PMO_AlignToVelocity, "choices are read by name");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter T\n    Type Laser\n", System, Error) && Error.find("Type") != std::string::npos,
+           "an unknown choice is refused");
+    ParticleEmitterDesc Shapes;
+    Shapes.Type = PT_Mesh;
+    Expect(std::strcmp(Shapes.GetMeshPath(), PARTICLE_DEFAULT_SHAPE_MESH) == 0, "a Mesh emitter with no mesh draws a box");
+    Shapes.Type = PT_Sprite;
+    Expect(std::strcmp(Shapes.GetMeshPath(), PARTICLE_DEFAULT_MESH) == 0, "a Sprite emitter with no mesh, a quad");
+
+    Expect(!ParseParticleSystem("Emitter A\n", System, Error) && Error.find("line 1") != std::string::npos,
+           "a file without its NimbleParticleSystem line is refused");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 99\n", System, Error), "a newer format is refused");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nSpawnRate 3\n", System, Error) && Error.find("line 2") != std::string::npos,
+           "a setting before any Emitter is refused, naming its line");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter A\n    StartColor 300,0,0,0\n", System, Error)
+           && Error.find("StartColor") != std::string::npos && System.Emitters.empty(),
+           "a colour out of 0-255 is refused, and nothing is kept");
+    std::string Nine = "NimbleParticleSystem 1\n";
+    for(int Each = 0; Each < 9; ++Each) { Nine += "Emitter E\n"; }
+    Expect(!ParseParticleSystem(Nine, System, Error), "at most eight emitters");
+
+    /* Curves and gradients: keys read in any order, kept sorted; evaluated straight between keys. */
+    const bool bKeys = ParseParticleSystem("NimbleParticleSystem 1\nEmitter K\n    SizeMode Curve\n    SizeKeys 1:0 0:10 0.5:40\n"
+                                           "    ColorMode Gradient\n    ColorKeys 0:255,0,0,255 1:0,0,255,0\n"
+                                           "    Shape Cone\n    ShapeSurface true\n    ConeAngle 30\n    BoxSize 1,2,3\n",
+                                           System, Error);
+    Expect(bKeys && System.Emitters[0].SizeKeyCount == 3 && System.Emitters[0].SizeKeys[0].Time == 0.0f
+           && System.Emitters[0].SizeKeys[1].Value == 40.0f && System.Emitters[0].ColorKeyCount == 2
+           && System.Emitters[0].Shape == PS_Cone && System.Emitters[0].bShapeSurface == 1 && System.Emitters[0].ConeAngle == 30.0f,
+           "size and colour keys, the shape and its settings are read; keys sorted by time");
+    if(bKeys)
+    {
+        const ParticleEmitterDesc& Keyed = System.Emitters[0];
+        float Color[4];
+        float Size = 0.0f;
+        Keyed.Evaluate(0.25f, Color, Size);
+        Expect(std::abs(Size - 25.0f) < 1e-4f && std::abs(Color[0] - 0.75f) < 1e-3f && std::abs(Color[2] - 0.25f) < 1e-3f
+               && std::abs(Color[3] - 0.75f) < 1e-3f, "a quarter of the way: size 25, three quarters red, alpha 0.75");
+        Keyed.Evaluate(0.75f, Color, Size);
+        Expect(std::abs(Size - 20.0f) < 1e-4f, "past the middle key it falls back toward 0");
+        const ParticleEmitterSettings Baked = Keyed.ToSettings();
+        Expect(Baked.bColorLut && Baked.bSizeLut && Baked.ColorLut[0][0] == 1.0f && Baked.ColorLut[PARTICLE_LUT_SIZE - 1][2] == 1.0f
+               && Baked.SizeLut[0] == 10.0f && Baked.SizeLut[PARTICLE_LUT_SIZE - 1] == 0.0f,
+               "and they are baked, birth to death, into the samples the GPU reads");
+        const std::string KeyText = WriteParticleSystem(System);
+        ParticleSystemDesc KeyAgain;
+        Expect(KeyText.find("    SizeKeys 0:10 0.5:40 1:0\n") != std::string::npos
+               && KeyText.find("    ColorKeys 0:255,0,0,255 1:0,0,255,0\n") != std::string::npos
+               && ParseParticleSystem(KeyText, KeyAgain, Error) && WriteParticleSystem(KeyAgain) == KeyText,
+               "keys are written time:value, and read back the same");
+    }
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter K\n    SizeKeys 0:1 1.5:2\n", System, Error),
+           "a key's time past 0-1 is refused");
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter K\n    SizeKeys 0:1 0.1:1 0.2:1 0.3:1 0.4:1 0.5:1 0.6:1 0.7:1 0.8:1\n",
+                                System, Error), "and a ninth key");
+
+    /* Modules: named, or inferred from a file written before them; one left out is at rest. */
+    Expect(ParseParticleSystem("NimbleParticleSystem 1\nEmitter Old\n    Velocity 0,0,0\n    Drag 2\n    EmitterRadius 5\n"
+                               "Emitter New\n    Modules Rotation Forces\n    Drag 2\n    EmitterRadius 5\n", System, Error)
+           && System.Emitters[0].Modules == (PEM_Shape | PEM_Forces) && System.Emitters[1].Modules == (PEM_Rotation | PEM_Forces),
+           "an emitter with no Modules line has those its settings use; one with a line, those it names");
+    if(System.Emitters.size() == 2)
+    {
+        const ParticleEmitterSettings AtRest = System.Emitters[1].ToSettings();
+        Expect(AtRest.EmitterRadius == 0.0f && AtRest.Velocity[1] == 0.0f && AtRest.Drag == 2.0f,
+               "a module left out is at rest -- no shape, no velocity -- whatever its settings hold; one there runs");
+        const std::string ModuleText = WriteParticleSystem(System);
+        Expect(ModuleText.find("    Modules Shape Forces\n") != std::string::npos && ModuleText.find("    Modules Forces Rotation\n") != std::string::npos,
+               "modules are written by name, in a fixed order");
+    }
+    Expect(!ParseParticleSystem("NimbleParticleSystem 1\nEmitter X\n    Modules Shape Gravity\n", System, Error), "an unknown module is refused");
+    Expect(ParticleEmitterDesc().Modules == PEM_Velocity, "a fresh emitter has Velocity, nothing else optional");
+
+    /* Collision and Flipbook: modules like the rest, at rest when left out. */
+    const bool bNewKeys = ParseParticleSystem("NimbleParticleSystem 1\nEmitter C\n    Modules Collision Flipbook\n"
+                                              "    CollisionResponse Kill\n    CollisionHeight 25\n    Bounce 0.7\n"
+                                              "    FlipbookColumns 8\n    FlipbookRows 2\n    FlipbookFrames 12\n    FlipbookRate 30\n"
+                                              "    FlipbookRandomStart true\n    CullDistance 5000\n    PauseOffscreen false\n", System, Error);
+    Expect(bNewKeys && System.Emitters[0].HasModule(PEM_Collision) && System.Emitters[0].HasModule(PEM_Flipbook)
+           && System.Emitters[0].CollisionResponse == PCR_Kill && System.Emitters[0].FlipbookColumns == 8
+           && System.Emitters[0].CullDistance == 5000.0f && System.Emitters[0].bPauseOffscreen == 0,
+           "collision, flipbook and culling settings are read, the modules by name");
+    if(bNewKeys)
+    {
+        ParticleEmitterDesc Flipping = System.Emitters[0];
+        const ParticleEmitterSettings On = Flipping.ToSettings();
+        Expect(On.CollisionResponse == PCR_Kill && On.CollisionPlaneY == 25.0f && On.FlipbookColumns == 8 && On.FlipbookRows == 2
+               && On.FlipbookFrames == 12 && On.FlipbookRate == 30.0f && On.bFlipbookRandomStart, "and reach the settings");
+        Flipping.Modules = 0;
+        const ParticleEmitterSettings Off = Flipping.ToSettings();
+        Expect(Off.CollisionResponse == PCR_None && Off.FlipbookColumns == 0, "left out, no collision and no flipbook");
+        Flipping.Modules = PEM_Flipbook;
+        Flipping.Type    = PT_Ribbon;
+        Expect(Flipping.ToSettings().FlipbookColumns == 0, "a ribbon has no flipbook");
+        const std::string NewText = WriteParticleSystem(System);
+        ParticleSystemDesc NewAgain;
+        Expect(NewText.find("    Modules Collision Flipbook\n") != std::string::npos && ParseParticleSystem(NewText, NewAgain, Error)
+               && WriteParticleSystem(NewAgain) == NewText, "and written back the same");
+    }
+    Expect(ParseParticleSystem("NimbleParticleSystem 1\nEmitter Ray\n    Type Beam\n    Velocity 0,100,0\n", System, Error)
+           && System.Emitters[0].Modules == 0, "a beam written before modules has none: it uses none");
+
+    /* Start to End, as before keys: no fade is no fade; fades seed a gradient's keys. */
+    ParticleEmitterDesc Plain;
+    Plain.FadeIn  = 0.0f;
+    Plain.FadeOut = 0.0f;
+    Plain.EndColor = EngineCore::Color(255, 255, 255, 255);
+    const ParticleEmitterSettings PlainSettings = Plain.ToSettings();
+    float PlainColors[PARTICLE_LUT_SIZE][4];
+    float PlainSizes[PARTICLE_LUT_SIZE];
+    PlainSettings.BakeStartEnd(PlainColors, PlainSizes);
+    Expect(!PlainSettings.bColorLut && PlainColors[0][3] == 1.0f && PlainColors[PARTICLE_LUT_SIZE - 1][3] == 1.0f && PlainSizes[0] == 10.0f,
+           "Start to End with no fades is opaque right to birth and death");
+    ParticleEmitterDesc Fading;   // fades in over 0.1, out over 0.3, white to clear
+    Fading.SeedColorKeys();
+    Fading.SeedSizeKeys();
+    Expect(Fading.ColorKeyCount == 4 && Fading.ColorKeys[0].Color.A == 0 && Fading.ColorKeys[1].Time == 0.1f
+           && Fading.ColorKeys[1].Color.A > 200 && Fading.ColorKeys[3].Time == 1.0f && Fading.ColorKeys[3].Color.A == 0
+           && Fading.SizeKeyCount == 2 && Fading.SizeKeys[1].Value == Fading.EndSize,
+           "a gradient chosen over Start to End starts as its colours and fades; a curve as its sizes");
+    ParticleEmitterDesc Graded;
+    Graded.ColorMode = POL_Keys;
+    Graded.ColorKeyCount = 1;
+    Graded.ColorKeys[0].Color = EngineCore::Color(255, 255, 255, 255);
+    ParticleSystemComponent Tinted;
+    Tinted.Tint = EngineCore::Color(255, 0, 0, 255);
+    const ParticleEmitterSettings TintedSettings = Tinted.ToSettings(Graded, 0);
+    Expect(TintedSettings.bColorLut && TintedSettings.ColorLut[5][0] == 1.0f && TintedSettings.ColorLut[5][1] == 0.0f,
+           "the component's tint reaches a gradient too");
+
+    Expect(GetDefaultParticleSystem() && GetDefaultParticleSystem()->Emitters.size() == 1,
+           "a component naming no system runs one emitter at its defaults");
+
+    auto Stored = std::make_shared<ParticleSystemDesc>(Again);
+    ParticleSystemCache::Store("Test/Stored.nmparticle", Stored);
+    Expect(ParticleSystemCache::Find("Test/Stored.nmparticle") == Stored, "a stored system is found by its path");
+    ParticleSystemCache::Invalidate("Test/Stored.nmparticle");
+    Expect(ParticleSystemCache::Find("Test/Stored.nmparticle") == nullptr, "and once invalidated, read from its file -- here, none");
+    ParticleSystemCache::Invalidate(std::string());
+}
+
+#if WITH_EDITOR
+/*
+ * OPT-IN, on a real GPU: NIMBLE_SMOKE_GPU=Vulkan or D3D12. The compute passes read
+ * back (spawned, moved, sorted farthest first) and a plume drawn through the
+ * instanced-mesh path: red where it is born, dark where it has aged.
+ */
+static void TestParticlesOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[particles on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[particles on the GPU: %s]\n", GetShaderPlatformName(Backend));
+    using EngineCore::Vector3;
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    if(bInit)
+    {
+        Rend.MountShaderCache("SandboxGame");
+
+        /* 1. The compute passes alone, from a render command: 50 a second along +Z for 11 steps of 0.1 s. */
+        struct Readback
+        {
+            bool bSupported = false, bMade = false, bSimulated = true, bRead = false;
+            std::vector<ParticleSample>         Particles;
+            std::vector<ParticleInstanceSample> Instances;
+        } Out;
+        ENQUEUE_RENDER_COMMAND(ParticleCompute)([&Out](RenderContext& Ctx)
+        {
+            Out.bSupported = Ctx.SupportsParticles();
+            ParticleEmitterGpu* Emitter = Ctx.CreateParticleEmitter(64);
+            Out.bMade = Emitter != nullptr;
+            if(!Emitter) { return; }
+            ParticleEmitterSettings Settings;
+            Settings.MaxParticles     = 64;
+            Settings.SpawnRate        = 50.0f;
+            Settings.Lifetime         = 100.0f;
+            Settings.LifetimeVariance = 0.0f;
+            Settings.Velocity[0] = 0.0f; Settings.Velocity[1] = 0.0f; Settings.Velocity[2] = 100.0f;
+            Settings.StartColor[0] = 1.0f; Settings.StartColor[1] = 0.0f; Settings.StartColor[2] = 0.0f; Settings.StartColor[3] = 1.0f;
+            Settings.EndColor[0] = 1.0f;   Settings.EndColor[1] = 0.0f;   Settings.EndColor[2] = 0.0f;   Settings.EndColor[3] = 1.0f;
+            Settings.FadeIn = 0.0f;
+            Settings.FadeOut = 0.0f;
+            for(int Step = 0; Step < 11; ++Step)
+            {
+                Out.bSimulated = Ctx.SimulateParticles(*Emitter, Settings, Vector3(0.0, 0.0, 0.0), 0.1f) && Out.bSimulated;
+            }
+            Out.bRead = Ctx.ReadParticles(*Emitter, Out.Particles) && Ctx.ReadParticleInstances(*Emitter, Out.Instances);
+            Ctx.ReleaseParticleEmitter(Emitter);
+        });
+        FlushRenderCommands();
+
+        Expect(Out.bSupported && Out.bMade && Out.bSimulated && Out.bRead && Out.Particles.size() == 64 && Out.Instances.size() == 64,
+               "the GPU runs compute: an emitter is made, simulated eleven times and read back");
+        int    Alive = 0;
+        bool   bOnPath = true;
+        float  Oldest = 0.0f;
+        for(const ParticleSample& Each : Out.Particles)
+        {
+            if(!Each.IsAlive()) { continue; }
+            ++Alive;
+            Oldest  = std::max(Oldest, Each.Age);
+            bOnPath = bOnPath && std::abs(Each.Position[0]) < 1e-3f && std::abs(Each.Position[1]) < 1e-3f
+                   && std::abs(Each.Position[2] - Each.Age * 100.0f) < 0.05f && Each.Age <= 1.1f + 1e-4f;
+        }
+        std::printf("    %d alive, the oldest %.3f s\n", Alive, Oldest);
+        Expect(Alive == 55, "50 a second for 1.1 s: 55 particles, the rest of the ring unused");
+        Expect(bOnPath && Oldest > 1.0f, "each has moved 100 units a second along +Z for as long as it has lived");
+
+        bool  bSorted = true, bDeadLast = true, bRed = true;
+        float Last    = 1e30f;
+        for(size_t Slot = 0; Slot < Out.Instances.size(); ++Slot)
+        {
+            const ParticleInstanceSample& Each = Out.Instances[Slot];
+            const bool bDead = Each.Transform[15] == 0.0f;
+            if(Slot < 55)
+            {
+                bSorted = bSorted && !bDead && Each.Transform[14] <= Last + 1e-3f;
+                Last    = Each.Transform[14];
+                bRed    = bRed && Each.Color[0] > 0.99f && Each.Color[1] < 0.01f;
+            }
+            else
+            {
+                bDeadLast = bDeadLast && bDead;
+            }
+        }
+        Expect(bSorted && bDeadLast, "the instances are sorted farthest first along the view, the unused slots after them");
+        Expect(bRed && !Out.Instances.empty() && std::abs(Out.Instances[0].Transform[0] - 10.0f) < 1e-3f,
+               "each instance is the particle's colour and size (10, the default) on the camera's axes");
+
+        /* 1b. Each type and mode, from render commands: InSteps of 0.1 s, the emitter at InAt(step). */
+        struct TypeRun
+        {
+            bool     bRan      = false;
+            bool     bCounted  = false;
+            uint32_t DrawCount = 0;      // what the draws draw: the live count the simulation wrote
+            std::vector<ParticleSample>         Particles;
+            std::vector<ParticleInstanceSample> Instances;
+        };
+        const auto RunType = [](const ParticleEmitterSettings& InSettings, const int InSteps,
+                                const std::function<Vector3(int)>& InAt)
+        {
+            TypeRun Run;
+            ENQUEUE_RENDER_COMMAND(ParticleTypes)([&Run, &InSettings, InSteps, &InAt](RenderContext& Ctx)
+            {
+                ParticleEmitterGpu* Emitter = Ctx.CreateParticleEmitter(InSettings.GetCapacity(), InSettings.Type);
+                if(!Emitter) { return; }
+                bool bOk = true;
+                for(int Step = 0; Step < InSteps; ++Step)
+                {
+                    bOk = Ctx.SimulateParticles(*Emitter, InSettings, InAt(Step), 0.1f) && bOk;
+                }
+                Run.bRan = bOk && Ctx.ReadParticles(*Emitter, Run.Particles) && Ctx.ReadParticleInstances(*Emitter, Run.Instances);
+                Run.bCounted = Ctx.ReadParticleDrawCount(*Emitter, Run.DrawCount);
+                Ctx.ReleaseParticleEmitter(Emitter);
+            });
+            FlushRenderCommands();
+            return Run;
+        };
+        const auto Still = [](int) { return Vector3(0.0, 0.0, 0.0); };
+        const auto FirstLive = [](const TypeRun& InRun) -> const ParticleInstanceSample*
+        {
+            for(const ParticleInstanceSample& Each : InRun.Instances)
+            {
+                if(Each.Transform[15] != 0.0f) { return &Each; }
+            }
+            return nullptr;
+        };
+        const auto Near = [](const float InA, const float InB) { return std::abs(InA - InB) < 1e-2f; };
+
+        ParticleEmitterSettings Moving;
+        Moving.MaxParticles     = 32;
+        Moving.SpawnRate        = 50.0f;
+        Moving.Lifetime         = 100.0f;
+        Moving.LifetimeVariance = 0.0f;
+        Moving.Velocity[0] = 100.0f; Moving.Velocity[1] = 0.0f; Moving.Velocity[2] = 0.0f;
+
+        Moving.Billboard = PB_Vertical;
+        const TypeRun Vertical = RunType(Moving, 3, Still);
+        const ParticleInstanceSample* V = FirstLive(Vertical);
+        Expect(Vertical.bRan && V && Near(V->Transform[4], 0.0f) && Near(V->Transform[5], 10.0f) && Near(V->Transform[6], 0.0f)
+               && Near(V->Transform[1], 0.0f), "a Vertical sprite stands up world +Y, turned only about it");
+
+        Moving.Billboard       = PB_VelocityAligned;
+        Moving.VelocityStretch = 0.05f;
+        const TypeRun Aligned = RunType(Moving, 3, Still);
+        const ParticleInstanceSample* A = FirstLive(Aligned);
+        Expect(Aligned.bRan && A && Near(A->Transform[4], 15.0f) && Near(A->Transform[5], 0.0f) && Near(A->Transform[6], 0.0f),
+               "a Velocity Aligned sprite lies along its motion, 10 long plus 100 a second times 0.05 s");
+
+        Moving.Billboard       = PB_FaceCamera;
+        Moving.bRandomRotation = true;
+        Moving.RotationRate    = 90.0f;
+        const TypeRun Spun = RunType(Moving, 3, Still);
+        int Live = 0, Turned = 0;
+        bool bSized = Spun.bRan;
+        for(const ParticleInstanceSample& Each : Spun.Instances)
+        {
+            if(Each.Transform[15] == 0.0f) { continue; }
+            ++Live;
+            bSized  = bSized && Near(std::sqrt(Each.Transform[0] * Each.Transform[0] + Each.Transform[1] * Each.Transform[1]
+                                               + Each.Transform[2] * Each.Transform[2]), 10.0f);
+            Turned += Near(Each.Transform[0], 10.0f) ? 0 : 1;
+        }
+        Expect(Live == 15 && Turned >= Live - 1 && bSized, "sprites with Random Rotation are each turned in their plane, their size kept");
+        Moving.bRandomRotation = false;
+        Moving.RotationRate    = 0.0f;
+
+        Moving.Type            = PT_Mesh;
+        Moving.MeshOrientation = PMO_AlignToVelocity;
+        const TypeRun Arrows = RunType(Moving, 3, Still);
+        const ParticleInstanceSample* M = FirstLive(Arrows);
+        Expect(Arrows.bRan && M && Near(M->Transform[8], 10.0f) && Near(M->Transform[9], 0.0f) && Near(M->Transform[10], 0.0f),
+               "an Align to Velocity mesh points its +Z along its motion");
+        Moving.MeshOrientation = PMO_RandomSpin;
+        Moving.RotationRate    = 180.0f;
+        const TypeRun Debris = RunType(Moving, 3, Still);
+        const ParticleInstanceSample* D = FirstLive(Debris);
+        const auto Column = [](const ParticleInstanceSample& InSample, const int InColumn)
+        {
+            return Vector3(InSample.Transform[InColumn * 4], InSample.Transform[InColumn * 4 + 1], InSample.Transform[InColumn * 4 + 2]);
+        };
+        bool bRigid = D != nullptr;
+        if(D)
+        {
+            const Vector3 X = Column(*D, 0), Y = Column(*D, 1), Z = Column(*D, 2);
+            bRigid = Near(float(X.Dot(Y)), 0.0f) && Near(float(Y.Dot(Z)), 0.0f) && Near(float(X.GetLength()), 10.0f)
+                  && !Near(float(X.GetX()), 10.0f);
+        }
+        Expect(Debris.bRan && bRigid, "a Random Spin mesh is turned rigidly, its size kept");
+
+        ParticleEmitterSettings Bang;
+        Bang.MaxParticles = 64;
+        Bang.SpawnMode    = PSM_Burst;
+        Bang.BurstCount   = 20;
+        Bang.Lifetime     = 100.0f;
+        const TypeRun Burst = RunType(Bang, 4, Still);
+        int BurstAlive = 0;
+        float BurstOldest = 0.0f;
+        for(const ParticleSample& Each : Burst.Particles)
+        {
+            if(Each.IsAlive()) { ++BurstAlive; BurstOldest = std::max(BurstOldest, Each.Age); }
+        }
+        Expect(Burst.bRan && BurstAlive == 20 && BurstOldest <= 0.4f + 1e-4f, "a burst of 20 makes 20 at once, then no more");
+        Expect(Burst.bCounted && Burst.DrawCount == 20 && Burst.Instances.size() == 64,
+               "and its draws draw those 20, not the 64 its ring holds (the count the sort wrote, drawn indirectly)");
+
+        /* A ribbon behind an emitter moving along +X: segment after segment sharing their edges exactly. */
+        ParticleEmitterSettings Trail;
+        Trail.Type             = PT_Ribbon;
+        Trail.MaxParticles     = 64;
+        Trail.SpawnRate        = 50.0f;
+        Trail.Lifetime         = 100.0f;
+        Trail.LifetimeVariance = 0.0f;
+        Trail.Velocity[1]      = 0.0f;
+        const TypeRun Ribbon = RunType(Trail, 10, [](const int InStep) { return Vector3(30.0 * InStep, 0.0, 0.0); });
+        int Segments = 0;
+        bool bJoined = Ribbon.bRan, bWide = Ribbon.bRan;
+        for(size_t Index = 0; Index + 1 < Ribbon.Instances.size(); ++Index)
+        {
+            const ParticleInstanceSample& Here = Ribbon.Instances[Index];
+            const ParticleInstanceSample& Next = Ribbon.Instances[Index + 1];
+            if(Here.Transform[15] == 0.0f) { continue; }
+            ++Segments;
+            bWide = bWide && Near(float(Column(Here, 0).GetLength()), 10.0f);
+            if(Next.Transform[15] == 0.0f) { continue; }
+            /* This segment's far left corner (L0 + (L1 - L0)) is the next one's near left corner (L0). */
+            const Vector3 Far = Column(Here, 3) + Column(Here, 1);
+            bJoined = bJoined && float((Far - Column(Next, 3)).GetLength()) < 1e-2f;
+        }
+        int RibbonAlive = 0;
+        for(const ParticleSample& Each : Ribbon.Particles) { RibbonAlive += Each.IsAlive() ? 1 : 0; }
+        std::printf("    ribbon: %d points, %d segments\n", RibbonAlive, Segments);
+        Expect(RibbonAlive == 50 && Segments == RibbonAlive - 1, "a ribbon of 50 points is 49 segments");
+        bool bPacked = Ribbon.bRan;
+        for(size_t Index = 0; Index < Ribbon.Instances.size(); ++Index)
+        {
+            bPacked = bPacked && (Ribbon.Instances[Index].Transform[15] != 0.0f) == (Index < 49);
+        }
+        Expect(bPacked && Ribbon.bCounted && Ribbon.DrawCount == 49,
+               "packed to the front in order, the slots after cleared, and its draws draw the 49");
+        Expect(bJoined && bWide, "each segment starts where the last ended, as wide as the size, with no gap");
+        bool bSpread = Ribbon.bRan && Ribbon.Particles.size() == 64;
+        float LastX = -1e30f;
+        for(int Slot = 0; bSpread && Slot < 50; ++Slot)
+        {
+            const float X = Ribbon.Particles[size_t(Slot)].Position[0];
+            bSpread = bSpread && X >= LastX - 1e-3f;
+            LastX   = X;
+        }
+        Expect(bSpread && LastX > 240.0f, "spawns are spread along the emitter's path, in the order they were born");
+
+        /* Shapes: where each is born (velocity 0, so where it is), and which way out it goes. */
+        ParticleEmitterSettings Shaped;
+        Shaped.MaxParticles     = 256;
+        Shaped.SpawnRate        = 2000.0f;
+        Shaped.Lifetime         = 100.0f;
+        Shaped.LifetimeVariance = 0.0f;
+        Shaped.Velocity[1]      = 0.0f;
+        const auto Spawned = [&](const ParticleEmitterSettings& InSettings)
+        {
+            std::vector<ParticleSample> Alive;
+            for(const ParticleSample& Each : RunType(InSettings, 1, Still).Particles) { if(Each.IsAlive()) { Alive.push_back(Each); } }
+            return Alive;
+        };
+        Shaped.Shape = PS_Box;
+        Shaped.BoxSize[0] = 200.0f; Shaped.BoxSize[1] = 100.0f; Shaped.BoxSize[2] = 50.0f;
+        bool bInside = true, bFills = false;
+        const std::vector<ParticleSample> InBox = Spawned(Shaped);
+        for(const ParticleSample& Each : InBox)
+        {
+            bInside = bInside && std::abs(Each.Position[0]) <= 100.01f && std::abs(Each.Position[1]) <= 50.01f && std::abs(Each.Position[2]) <= 25.01f;
+            bFills  = bFills || std::abs(Each.Position[0]) > 60.0f;
+        }
+        Expect(InBox.size() == 200 && bInside && bFills, "a Box spawns within its size, all through it");
+        Shaped.bShapeSurface = true;
+        bool bOnFace = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            const float Face = std::max({ std::abs(Each.Position[0]) / 100.0f, std::abs(Each.Position[1]) / 50.0f, std::abs(Each.Position[2]) / 25.0f });
+            bOnFace = bOnFace && std::abs(Face - 1.0f) < 1e-3f;
+        }
+        Expect(bOnFace, "on its surface, every one on a face");
+
+        Shaped.Shape = PS_Ring;
+        Shaped.EmitterRadius = 80.0f;
+        bool bOnRing = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            bOnRing = bOnRing && std::abs(std::hypot(Each.Position[0], Each.Position[2]) - 80.0f) < 1e-2f && std::abs(Each.Position[1]) < 1e-3f;
+        }
+        Expect(bOnRing, "a Ring's surface is its circle, about +Y");
+        Shaped.bShapeSurface = false;
+        Shaped.RingWidth = 20.0f;
+        bool bInRing = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            const float R = std::hypot(Each.Position[0], Each.Position[2]);
+            bInRing = bInRing && R >= 70.0f - 1e-2f && R <= 90.0f + 1e-2f;
+        }
+        Expect(bInRing, "and with a width, a band 20 across it");
+
+        Shaped.Shape = PS_Hemisphere;
+        Shaped.EmitterRadius = 50.0f;
+        Shaped.bShapeSurface = true;
+        bool bDome = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            const float R = std::sqrt(Each.Position[0] * Each.Position[0] + Each.Position[1] * Each.Position[1] + Each.Position[2] * Each.Position[2]);
+            bDome = bDome && std::abs(R - 50.0f) < 1e-2f && Each.Position[1] >= -1e-3f;
+        }
+        Expect(bDome, "a Hemisphere's surface is the upper half of the sphere's shell");
+
+        Shaped.Shape      = PS_Cone;
+        Shaped.ConeAngle  = 20.0f;
+        Shaped.ShapeSpeed = 100.0f;
+        bool bInCone = true, bOpens = false;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            const float Speed = std::sqrt(Each.Velocity[0] * Each.Velocity[0] + Each.Velocity[1] * Each.Velocity[1] + Each.Velocity[2] * Each.Velocity[2]);
+            const float Angle = std::acos(std::clamp(Each.Velocity[1] / std::max(Speed, 1e-6f), -1.0f, 1.0f)) * 180.0f / 3.14159265f;
+            bInCone = bInCone && std::abs(Speed - 100.0f) < 1e-2f && Angle <= 20.01f;
+            bOpens  = bOpens || Angle > 12.0f;
+            bInCone = bInCone && std::abs(std::hypot(Each.Position[0] - Each.Velocity[0] * Each.Age, Each.Position[2] - Each.Velocity[2] * Each.Age) - 50.0f) < 0.05f;
+        }
+        Expect(bInCone && bOpens, "a Cone sends each out at its Outward Speed within its angle of +Y, from its rim");
+
+        Shaped.ConeAngle = 0.0f;
+        Shaped.ShapeAxisX[0] = 0.0f; Shaped.ShapeAxisX[1] = 1.0f; Shaped.ShapeAxisX[2] = 0.0f;   // turned 90 degrees about +Z:
+        Shaped.ShapeAxisY[0] = -1.0f; Shaped.ShapeAxisY[1] = 0.0f; Shaped.ShapeAxisY[2] = 0.0f;  // its +Y is the world's -X
+        bool bTurnedCone = true;
+        for(const ParticleSample& Each : Spawned(Shaped))
+        {
+            bTurnedCone = bTurnedCone && std::abs(Each.Velocity[0] + 100.0f) < 1e-2f && std::abs(Each.Position[0] - Each.Velocity[0] * Each.Age) < 1e-2f;
+        }
+        Expect(bTurnedCone, "a shape turns with its axes: the cone fires along the world's -X, its rim upright");
+
+        /* Over life from keys, drawn: velocity along +Z puts each one's age in its depth. */
+        ParticleEmitterDesc Keyed;
+        Keyed.MaxParticles     = 64;
+        Keyed.SpawnRate        = 40.0f;
+        Keyed.Lifetime         = 1.0f;
+        Keyed.LifetimeVariance = 0.0f;
+        Keyed.Velocity         = Vector3(0.0, 0.0, 100.0);
+        Keyed.ColorMode        = POL_Keys;
+        Keyed.ColorKeyCount    = 2;
+        Keyed.ColorKeys[0]     = ParticleColorKey{ 0.0f, EngineCore::Color(255, 0, 0, 255) };
+        Keyed.ColorKeys[1]     = ParticleColorKey{ 1.0f, EngineCore::Color(0, 0, 255, 255) };
+        Keyed.SizeMode         = POL_Keys;
+        Keyed.SizeKeyCount     = 2;
+        Keyed.SizeKeys[0]      = ParticleSizeKey{ 0.0f, 10.0f };
+        Keyed.SizeKeys[1]      = ParticleSizeKey{ 1.0f, 30.0f };
+        const TypeRun Graded = RunType(Keyed.ToSettings(), 8, Still);
+        int Checked = 0;
+        float ColorError = 0.0f, SizeError = 0.0f;
+        for(const ParticleInstanceSample& Each : Graded.Instances)
+        {
+            if(Each.Transform[15] == 0.0f) { continue; }
+            const float Age  = Each.Transform[14] / 100.0f;
+            const float Size = float(Column(Each, 0).GetLength());
+            ColorError = std::max({ ColorError, std::abs(Each.Color[0] - (1.0f - Age)), std::abs(Each.Color[2] - Age) });
+            SizeError  = std::max(SizeError, std::abs(Size - (10.0f + 20.0f * Age)));
+            ++Checked;
+        }
+        std::printf("    keys: %d checked, colour off by %.4f, size by %.3f at most\n", Checked, ColorError, SizeError);
+        Expect(Graded.bRan && Checked > 20 && ColorError < 0.01f && SizeError < 0.05f,
+               "each is drawn the gradient's colour and the curve's size at its age");
+
+        /* Collision: falling from 100 onto a plane at 0 for 1.5 s -- bouncing, or dying there. */
+        ParticleEmitterSettings Falling;
+        Falling.MaxParticles     = 64;
+        Falling.SpawnRate        = 40.0f;
+        Falling.Lifetime         = 100.0f;
+        Falling.LifetimeVariance = 0.0f;
+        Falling.Velocity[0] = 0.0f; Falling.Velocity[1] = -200.0f; Falling.Velocity[2] = 0.0f;
+        Falling.CollisionResponse = PCR_Bounce;
+        Falling.CollisionPlaneY   = 0.0f;
+        Falling.Bounce            = 0.5f;
+        Falling.Friction          = 0.0f;
+        const auto Above = [](int) { return Vector3(0.0, 100.0, 0.0); };
+        const TypeRun Bouncing = RunType(Falling, 15, Above);
+        int Bounced = 0, Fallen = 0;
+        float Lowest = 1e30f;
+        for(const ParticleSample& Each : Bouncing.Particles)
+        {
+            if(!Each.IsAlive()) { continue; }
+            ++Fallen;
+            Lowest  = std::min(Lowest, Each.Position[1]);
+            Bounced += Each.Velocity[1] > 0.0f ? 1 : 0;
+        }
+        std::printf("    collision: %d alive, %d rising, lowest at %.2f\n", Fallen, Bounced, Lowest);
+        Expect(Bouncing.bRan && Fallen == 60 && Lowest >= -1e-3f && Bounced > 0,
+               "particles falling onto the plane never go below it, and bounce back up");
+        Falling.CollisionResponse = PCR_Kill;
+        const TypeRun Killed = RunType(Falling, 15, Above);
+        int Survivors = 0;
+        bool bAboveAll = true;
+        for(const ParticleSample& Each : Killed.Particles)
+        {
+            if(!Each.IsAlive()) { continue; }
+            ++Survivors;
+            bAboveAll = bAboveAll && Each.Position[1] >= 0.0f;
+        }
+        Expect(Killed.bRan && Survivors < 30 && Survivors > 0 && bAboveAll && Killed.bCounted && Killed.DrawCount == uint32_t(Survivors),
+               "with Kill they die at it: only those still falling live, and only they are drawn");
+
+        /* Flipbook: each instance's frame, in its transform's bottom row, from its age. */
+        ParticleEmitterSettings Book = Moving;
+        Book.Type            = PT_Sprite;
+        Book.Billboard       = PB_FaceCamera;
+        Book.Lifetime        = 1.0f;
+        Book.FlipbookColumns = 4;
+        Book.FlipbookRows    = 2;
+        Book.FlipbookFrames  = 8;
+        Book.FlipbookCycles  = 1.0f;
+        Book.Velocity[0] = 0.0f; Book.Velocity[1] = 0.0f; Book.Velocity[2] = 100.0f;   // depth is age
+        const TypeRun OverLife = RunType(Book, 9, Still);
+        bool bFramed = OverLife.bRan;
+        int  Framed  = 0;
+        for(const ParticleInstanceSample& Each : OverLife.Instances)
+        {
+            if(Each.Transform[15] == 0.0f) { continue; }
+            const float Age = Each.Transform[14] / 100.0f;
+            const float Expected = std::floor(std::min(Age, 0.9999f) * 8.0f);
+            bFramed = bFramed && std::abs(Each.Transform[3] - Expected) < 0.5f + (std::abs(Age * 8.0f - std::round(Age * 8.0f)) < 1e-3f ? 1.0f : 0.0f)
+                   && Each.Transform[7] == 4.0f && Each.Transform[11] == 2.0f;
+            ++Framed;
+        }
+        Expect(bFramed && Framed > 20, "over its life, each is on the frame its age reaches, of 4 x 2");
+        Book.FlipbookRate = 10.0f;
+        const TypeRun AtRate = RunType(Book, 9, Still);
+        bool bTimed = AtRate.bRan;
+        for(const ParticleInstanceSample& Each : AtRate.Instances)
+        {
+            if(Each.Transform[15] == 0.0f) { continue; }
+            const float Seconds = Each.Transform[14] / 100.0f;
+            const float Expected = std::fmod(std::floor(Seconds * 10.0f), 8.0f);
+            bTimed = bTimed && (std::abs(Each.Transform[3] - Expected) < 0.5f || std::abs(Seconds * 10.0f - std::round(Seconds * 10.0f)) < 1e-3f);
+        }
+        Expect(bTimed, "at a frame rate, 10 a second, looping round the 8");
+        Book.FlipbookColumns = 0;
+        const TypeRun NoBook = RunType(Book, 3, Still);
+        const ParticleInstanceSample* Plain = FirstLive(NoBook);
+        Expect(Plain && Plain->Transform[3] == 0.0f && Plain->Transform[7] == 0.0f && Plain->Transform[11] == 0.0f && Plain->Transform[15] == 1.0f,
+               "without one, the bottom row is an affine transform's");
+
+        /* A beam: its points from the emitter to its end; jittered in the middle only. */
+        ParticleEmitterSettings Ray;
+        Ray.Type         = PT_Beam;
+        Ray.BeamSegments = 8;
+        Ray.BeamEnd[0] = 0.0f; Ray.BeamEnd[1] = 200.0f; Ray.BeamEnd[2] = 0.0f;
+        const TypeRun Straight = RunType(Ray, 1, Still);
+        bool bOnLine = Straight.bRan && Straight.Particles.size() == 9;
+        for(size_t Point = 0; bOnLine && Point < 9; ++Point)
+        {
+            const ParticleSample& Each = Straight.Particles[Point];
+            bOnLine = Each.IsAlive() && Near(Each.Position[1], 25.0f * float(Point)) && Near(Each.Position[0], 0.0f);
+        }
+        Expect(bOnLine, "a beam's 9 points run evenly from the emitter to its end");
+        Ray.BeamNoise = 10.0f;
+        const TypeRun Jitter = RunType(Ray, 3, Still);
+        float Stray = 0.0f;
+        for(const ParticleSample& Each : Jitter.Particles)
+        {
+            Stray = std::max(Stray, std::sqrt(Each.Position[0] * Each.Position[0] + Each.Position[2] * Each.Position[2]));
+        }
+        const bool bEnds = Jitter.Particles.size() == 9 && Near(Jitter.Particles[0].Position[0], 0.0f)
+                        && Near(Jitter.Particles[8].Position[0], 0.0f) && Near(Jitter.Particles[8].Position[1], 200.0f);
+        std::printf("    beam: strays %.2f at most\n", Stray);
+        Expect(Jitter.bRan && bEnds && Stray > 0.5f && Stray <= 10.0f + 1e-3f, "with noise, its middle strays up to 10 units; its ends stay");
+        int BeamSegments = 0;
+        for(const ParticleInstanceSample& Each : Jitter.Instances) { BeamSegments += Each.Transform[15] != 0.0f ? 1 : 0; }
+        Expect(BeamSegments == 8 && Jitter.bCounted && Jitter.DrawCount == 8, "and it is strung as 8 segments, which its draws draw");
+
+        /* 2. Drawn: a plume through the instanced-mesh path, seen side on, red at the bottom and dark at the top. */
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView Side = RenderView::MakePerspective(Viewport, Vector3(0.0, 100.0, -600.0), Vector3(0.0, 0.0, 1.0),
+                                                            40.0f, 10.0f, 5000.0f);
+        Rend.SetViewOverride(&Side);
+        GameCore::World World;
+        Rend.BindWorld(World);
+
+        const GameCore::Entity Plume = World.CreateEntity("Plume");
+        GameCore::TransformComponent Transform;
+        Plume.AddComponent(Transform);
+        /* A system made in code, stored under a path as the editor's preview does. */
+        auto PlumeSystem = std::make_shared<ParticleSystemDesc>();
+        ParticleEmitterDesc& Puffs = PlumeSystem->Emitters.emplace_back();
+        std::snprintf(Puffs.Material, sizeof(Puffs.Material), "%s", "Content/Materials/ParticleProbe.material.nmgraph");
+        Puffs.MaxParticles     = 512;
+        Puffs.SpawnRate        = 400.0f;
+        Puffs.Lifetime         = 1.0f;
+        Puffs.LifetimeVariance = 0.0f;
+        Puffs.Velocity         = Vector3(0.0, 200.0, 0.0);
+        Puffs.StartSize        = 14.0f;
+        Puffs.EndSize          = 14.0f;
+        Puffs.StartColor       = EngineCore::Color(255, 0, 0, 255);
+        Puffs.EndColor         = EngineCore::Color(0, 0, 0, 255);
+        ParticleSystemCache::Store("Test/Plume.nmparticle", PlumeSystem);
+
+        ParticleSystemComponent Particles;
+        std::snprintf(Particles.System, sizeof(Particles.System), "%s", "Test/Plume.nmparticle");
+        Plume.AddComponent(Particles);
+
+        /* Real time: the simulation follows the render thread's clock. */
+        uint64_t Frame = 1;
+        for(int Each = 0; Each < 90; ++Each)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        const uint64_t Request = Rend.RequestSceneCapture();
+        for(int Each = 0; Each < 2; ++Each)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        }
+        EngineCore::Image Pixels;
+        std::string       Error;
+        const bool bCaptured = Request != 0 && Rend.TakeMaterialPreview(Request, Pixels, Error) && Pixels.GetWidth() == 256;
+        Expect(bCaptured, "the plume is captured");
+        if(bCaptured)
+        {
+            const bool bBgra = Pixels.GetFormat() == EImageFormat::BGRA8;
+            /* World y to a row: the camera at y 100 looks along +Z, 600 away. */
+            const auto RowOf = [](const double InY)
+            {
+                const double Focal = 1.0 / std::tan(20.0 * 3.14159265 / 180.0);
+                return int(std::lround(128.0 - (InY - 100.0) / 600.0 * Focal * 128.0));
+            };
+            const auto Red = [&](const int InRow)
+            {
+                int Best = 0;   // the reddest pixel across the plume's middle at that row
+                for(int X = 120; X <= 136; ++X)
+                {
+                    const uint8_t* Px = Pixels.GetData() + Pixels.GetStride() * InRow + X * BytesPerPixel(Pixels.GetFormat());
+                    Best = std::max(Best, int(bBgra ? Px[2] : Px[0]) - int(Px[1]));
+                }
+                return Best;
+            };
+            const int Born = Red(RowOf(20.0)), Middle = Red(RowOf(100.0)), Aged = Red(RowOf(180.0));
+            std::printf("    red over green: %d at 20 units up, %d at 100, %d at 180\n", Born, Middle, Aged);
+            Expect(Born > 150 && Born > Middle && Middle > Aged && Aged < 70,
+                   "the plume is red where it is born and darkens as it rises and ages");
+        }
+
+        /* 3. Strips drawn: a ribbon rising at x 100 and a beam across at y 250, both red, the plume gone. */
+        auto Strips = std::make_shared<ParticleSystemDesc>();
+        ParticleEmitterDesc& Rising = Strips->Emitters.emplace_back();
+        std::snprintf(Rising.Material, sizeof(Rising.Material), "%s", "Content/Materials/ParticleProbe.material.nmgraph");
+        Rising.Type             = PT_Ribbon;
+        Rising.Offset           = Vector3(100.0, 0.0, 0.0);
+        Rising.MaxParticles     = 128;
+        Rising.SpawnRate        = 60.0f;
+        Rising.Lifetime         = 1.5f;
+        Rising.LifetimeVariance = 0.0f;
+        Rising.Velocity         = Vector3(0.0, 200.0, 0.0);
+        Rising.StartSize        = 16.0f;
+        Rising.EndSize          = 16.0f;
+        Rising.StartColor       = EngineCore::Color(255, 0, 0, 255);
+        Rising.EndColor         = EngineCore::Color(255, 0, 0, 255);
+        Rising.FadeIn           = 0.0f;
+        Rising.FadeOut          = 0.0f;
+        ParticleEmitterDesc& Across = Strips->Emitters.emplace_back(Rising);
+        Across.Type         = PT_Beam;
+        Across.Offset       = Vector3(-150.0, 250.0, 0.0);
+        Across.BeamEnd      = Vector3(300.0, 0.0, 0.0);
+        Across.BeamSegments = 12;
+        ParticleSystemCache::Store("Test/Strips.nmparticle", Strips);
+        if(auto* Running = Plume.GetComponent<ParticleSystemComponent>())
+        {
+            std::snprintf(Running->System, sizeof(Running->System), "%s", "Test/Strips.nmparticle");
+        }
+        /* Two seconds or so: the ribbon (1.5 s at 200 a second) has risen all the way. */
+        for(int Each = 0; Each < 120; ++Each)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+        const uint64_t StripRequest = Rend.RequestSceneCapture();
+        for(int Each = 0; Each < 2; ++Each)
+        {
+            Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+            Rend.WaitForPreviousFrame();
+        }
+        EngineCore::Image StripPixels;
+        const bool bStrips = StripRequest != 0 && Rend.TakeMaterialPreview(StripRequest, StripPixels, Error) && StripPixels.GetWidth() == 256;
+        Expect(bStrips, "the ribbon and beam are captured");
+        if(bStrips)
+        {
+            const bool bBgra = StripPixels.GetFormat() == EImageFormat::BGRA8;
+            const double Focal = 1.0 / std::tan(20.0 * 3.14159265 / 180.0);
+            const auto Pixel = [&](const double InX, const double InY)   // world x, y at z 0 to a pixel's red over green
+            {
+                const int Column = int(std::lround(128.0 + InX / 600.0 * Focal * 128.0));
+                const int Row    = int(std::lround(128.0 - (InY - 100.0) / 600.0 * Focal * 128.0));
+                const uint8_t* Px = StripPixels.GetData() + StripPixels.GetStride() * Row + Column * BytesPerPixel(StripPixels.GetFormat());
+                return int(bBgra ? Px[2] : Px[0]) - int(Px[1]);
+            };
+            const int RibbonLow = Pixel(100.0, 50.0), RibbonHigh = Pixel(100.0, 200.0), BeamLeft = Pixel(-100.0, 250.0);
+            const int BeamMiddle = Pixel(0.0, 250.0), Between = Pixel(0.0, 150.0), PlumeWas = Pixel(0.0, 20.0);
+            std::printf("    red over green: ribbon %d at y 50, %d at y 200; beam %d left, %d middle; %d between, %d where the plume was\n",
+                        RibbonLow, RibbonHigh, BeamLeft, BeamMiddle, Between, PlumeWas);
+            Expect(RibbonLow > 150 && RibbonHigh > 150, "the ribbon is drawn up its whole rise, facing the eye");
+            Expect(BeamLeft > 150 && BeamMiddle > 150, "the beam is drawn across from its emitter to its end");
+            Expect(Between < 60 && PlumeWas < 60, "and nothing else: the plume's system was swapped out");
+        }
+        ParticleSystemCache::Invalidate("Test/Strips.nmparticle");
+
+        /* 4. A flipbook drawn: one big still sprite of the UV probe (red U, green V), whole and then as frame 0 of 2 x 2. */
+        const auto RunFrames = [&](const int InCount)
+        {
+            for(int Each = 0; Each < InCount; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+                std::this_thread::sleep_for(std::chrono::milliseconds(16));
+            }
+        };
+        const auto Capture = [&](EngineCore::Image& OutPixels)
+        {
+            const uint64_t Asked = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each)
+            {
+                Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport});
+                Rend.WaitForPreviousFrame();
+            }
+            std::string Why;
+            return Asked != 0 && Rend.TakeMaterialPreview(Asked, OutPixels, Why) && OutPixels.GetWidth() == 256;
+        };
+        const auto Channel = [](const EngineCore::Image& InPixels, const int InX, const int InY, const int InChannel)
+        {
+            const bool bBgra = InPixels.GetFormat() == EImageFormat::BGRA8;
+            const uint8_t* Px = InPixels.GetData() + InPixels.GetStride() * InY + InX * BytesPerPixel(InPixels.GetFormat());
+            const int Index = InChannel == 1 ? 1 : (bBgra ? 2 - InChannel : InChannel);
+            return int(Px[Index]);
+        };
+        const auto Sheet = [&](const bool bInFlipbook)
+        {
+            auto Card = std::make_shared<ParticleSystemDesc>();
+            ParticleEmitterDesc& One = Card->Emitters.emplace_back();
+            std::snprintf(One.Material, sizeof(One.Material), "%s", "Content/Materials/UVProbe.material.nmgraph");
+            One.Offset        = Vector3(0.0, 100.0, 0.0);   // the view's centre
+            One.Modules       = bInFlipbook ? uint8_t(PEM_Flipbook) : uint8_t(0);
+            One.SpawnMode     = PSM_Burst;
+            One.BurstCount    = 1;
+            One.MaxParticles  = 1;
+            One.Lifetime      = 100.0f;
+            One.LifetimeVariance = 0.0f;
+            One.StartSize     = 240.0f;
+            One.EndSize       = 240.0f;
+            One.FadeIn        = 0.0f;
+            One.FadeOut       = 0.0f;
+            One.FlipbookColumns = 2;
+            One.FlipbookRows    = 2;
+            ParticleSystemCache::Store("Test/Sheet.nmparticle", Card);
+            if(auto* Running = Plume.GetComponent<ParticleSystemComponent>())
+            {
+                std::snprintf(Running->System, sizeof(Running->System), "%s", "Test/Sheet.nmparticle");
+                Running->bEmitting = 0;   // off and on: the burst starts over in the new system
+            }
+            RunFrames(2);
+            if(auto* Running = Plume.GetComponent<ParticleSystemComponent>()) { Running->bEmitting = 1; }
+            RunFrames(10);
+            EngineCore::Image Pixels;
+            /* Near the card's right and bottom edges (u and v about 0.92): 70 pixels is its half width. */
+            int Right = -1, Bottom = -1, Left = -1;
+            if(Capture(Pixels))
+            {
+                Right  = Channel(Pixels, 128 + 60, 128, 0);
+                Bottom = Channel(Pixels, 128, 128 + 60, 1);
+                Left   = Channel(Pixels, 128 - 60, 128, 0);
+            }
+            return std::array<int, 3>{ Right, Bottom, Left };
+        };
+        const std::array<int, 3> Whole = Sheet(false);
+        const std::array<int, 3> Frame0 = Sheet(true);
+        std::printf("    UV probe red at the right edge: %d whole, %d as frame 0 of 2 x 2; green at the bottom: %d, %d; red at the left: %d, %d\n",
+                    Whole[0], Frame0[0], Whole[1], Frame0[1], Whole[2], Frame0[2]);
+        Expect(Whole[0] > 200 && Whole[1] > 200 && Frame0[0] > 40 && Frame0[0] < Whole[0] - 40 && Frame0[1] > 40 && Frame0[1] < Whole[1] - 40
+               && Frame0[2] < 40 && Whole[2] < 40,
+               "a flipbook frame samples its cell: frame 0 of 2 x 2 reads only the texture's top-left quarter");
+        ParticleSystemCache::Invalidate("Test/Sheet.nmparticle");
+
+        /* 5. Culling: an emitter past its Cull Distance is not simulated; one no view draws pauses, and goes on when seen. */
+        const auto Simulations = [&]()
+        {
+            RenderStats Stats;
+            Rend.GetStats(Stats);
+            return Stats.ParticleSimulations;
+        };
+        const auto Plumes = [&](const float InCullDistance, const bool bInPause)
+        {
+            auto Steady = std::make_shared<ParticleSystemDesc>();
+            ParticleEmitterDesc& Puffs = Steady->Emitters.emplace_back();
+            Puffs.CullDistance    = InCullDistance;
+            Puffs.bPauseOffscreen = bInPause ? 1 : 0;
+            ParticleSystemCache::Store("Test/Steady.nmparticle", Steady);
+            if(auto* Running = Plume.GetComponent<ParticleSystemComponent>())
+            {
+                std::snprintf(Running->System, sizeof(Running->System), "%s", "Test/Steady.nmparticle");
+            }
+        };
+        const auto Simulated = [&](const int InFrames)
+        {
+            const uint64_t Before = Simulations();
+            RunFrames(InFrames);
+            return Simulations() - Before;
+        };
+        Plumes(0.0f, true);
+        RunFrames(5);
+        const uint64_t Seen = Simulated(20);
+        Plumes(300.0f, true);    // the camera is 600 away
+        RunFrames(3);
+        const uint64_t Far = Simulated(20);
+        Plumes(0.0f, true);
+        /* Turned round, with the frustum's box as its bounds, as a game camera's view has (WorldBridge's
+         * PerspectiveBounds; MakePerspective's own are empty, which culls nothing): the emitter behind it is culled. */
+        RenderView Away = RenderView::MakePerspective(Viewport, Vector3(0.0, 100.0, -600.0), Vector3(0.0, 0.0, -1.0),
+                                                      40.0f, 10.0f, 5000.0f);
+        Away.Bounds = GameCore::AABB(Vector3(-1900.0, -1800.0, -5600.0), Vector3(1900.0, 2000.0, -600.0));
+        Rend.SetViewOverride(&Away);
+        RunFrames(50);           // well past half a second unseen
+        const uint64_t Unseen = Simulated(20);
+        Plumes(0.0f, false);     // the same, never pausing
+        const uint64_t Unpaused = Simulated(20);
+        Plumes(0.0f, true);
+        Rend.SetViewOverride(&Side);
+        RunFrames(3);
+        const uint64_t Again = Simulated(20);
+        std::printf("    simulations in 20 frames: %llu seen, %llu past its cull distance, %llu unseen, %llu unseen and never pausing, %llu seen again\n",
+                    static_cast<unsigned long long>(Seen), static_cast<unsigned long long>(Far), static_cast<unsigned long long>(Unseen),
+                    static_cast<unsigned long long>(Unpaused), static_cast<unsigned long long>(Again));
+        Expect(Seen >= 18 && Far == 0, "an emitter past its Cull Distance from the view is not simulated");
+        Expect(Unseen == 0 && Unpaused >= 18 && Again >= 18,
+               "one no view has drawn for half a second pauses (unless told not to), and goes on once seen");
+        ParticleSystemCache::Invalidate("Test/Steady.nmparticle");
+        Rend.UnbindWorld();
+        Rend.Shutdown();
+        ParticleSystemCache::Invalidate("Test/Plume.nmparticle");
+    }
+    SetFileProvider(PreviousProvider);
+}
+#endif // WITH_EDITOR
+
 /*
  * PostProcessStack.h: a stack's text, volume weights, blending, and the cache
  * reading a graph's <gen_code>. Null backend.
@@ -3922,6 +5317,154 @@ static void TestShadowSetup()
     Lighting.LightShadowTechnique = LST_Standard;
     BuildShadowFrame(Lighting, Camera, Frame);
     Expect(Frame.CascadeCount == 1 && Frame.Views[0].TileSize == 2048, "a Standard sun is one view over the whole atlas");
+
+    /* Inset shadows: the local atlas's spare tiles, after the lights'. */
+    {
+        RenderLighting Insets = Lighting;
+        Insets.Shadows.MaxShadowedLights = 4;
+        Insets.bInsetLight         = 1;
+        Insets.InsetLightDirection = Vector3(0.3, -1.0, 0.2);
+        InsetShadowCaster Casters[5];
+        for(int Index = 0; Index < 5; ++Index)
+        {
+            Casters[Index].Centre = Vector3(100.0 * Index, 50.0, 200.0);
+            Casters[Index].Radius = 40.0f + 10.0f * Index;
+        }
+        Casters[1].Radius = 0.0f;   // nothing to fit: skipped
+
+        BuildShadowFrame(Insets, Camera, Frame);
+        Expect(Frame.InsetCount == 0 && Frame.InsetFirstView == -1, "no casters offered, no inset views");
+
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 5);
+        const int32_t AfterLights = Frame.LocalFirstView[1] + int32_t(SHADOW_POINT_FACES);   // the spot's one, the point light's six
+        Expect(Frame.InsetFirstView == AfterLights && Frame.InsetCount == 4 && Frame.ViewCount == uint32_t(AfterLights) + 4,
+               "insets follow the lights' views, up to four, an empty caster skipped");
+        bool bOwners = true, bContain = true, bTiles = true, bSnapped = true;
+        const int32_t Expected[4] = { 0, 2, 3, 4 };
+        for(uint32_t Index = 0; Index < Frame.InsetCount; ++Index)
+        {
+            const ShadowView& View = Frame.Views[uint32_t(Frame.InsetFirstView) + Index];
+            const InsetShadowCaster& Caster = Casters[View.Inset];
+            bOwners &= View.Inset == Expected[Index] && !Frame.IsSunView(uint32_t(Frame.InsetFirstView) + Index);
+            bTiles  &= View.Atlas == SA_Local && View.TileSize == 2048 / 6;
+            /* The sphere's centre near the tile's middle, its edge just inside. */
+            double U, V, Depth;
+            ToAtlas(View, Caster.Centre, U, V, Depth);
+            bSnapped &= std::abs(U * 2048.0 - (View.TileX + View.TileSize * 0.5)) < 2.0
+                     && std::abs(V * 2048.0 - (View.TileY + View.TileSize * 0.5)) < 2.0 && std::abs(Depth - 0.5) < 0.01;
+            const Vector3 Across = (Vector3(1.0, 0.0, 0.0) ^ Vector3(0.3, -1.0, 0.2)).GetNormalize();
+            ToAtlas(View, Caster.Centre + Across * (double(Caster.Radius) * 0.97), U, V, Depth);
+            bContain &= U * 2048.0 > View.TileX && U * 2048.0 < View.TileX + View.TileSize
+                     && V * 2048.0 > View.TileY && V * 2048.0 < View.TileY + View.TileSize;
+            /* Its depth spans the sphere: the far side lands just short of 1. */
+            ToAtlas(View, Caster.Centre + Vector3(0.3, -1.0, 0.2).GetNormalize() * (double(Caster.Radius) * 0.97), U, V, Depth);
+            bContain &= Depth > 0.95 && Depth < 1.0;
+        }
+        Expect(bOwners, "each inset view names its caster, in the order offered");
+        Expect(bTiles, "each takes one local tile");
+        Expect(bSnapped && bContain, "and holds its caster's sphere, centred, its depth across the sphere alone");
+
+        bool bApartInsets = true;
+        for(uint32_t A = Frame.CascadeCount; A < Frame.ViewCount; ++A)
+        {
+            for(uint32_t B = A + 1; B < Frame.ViewCount; ++B)
+            {
+                const ShadowView& One = Frame.Views[A];
+                const ShadowView& Two = Frame.Views[B];
+                bApartInsets &= One.TileX + One.TileSize <= Two.TileX || Two.TileX + Two.TileSize <= One.TileX
+                             || One.TileY + One.TileSize <= Two.TileY || Two.TileY + Two.TileSize <= One.TileY;
+            }
+        }
+        Expect(bApartInsets, "inset tiles never overlap a light's");
+
+        /* Snapped: moving the caster less than a texel does not move its
+         * map across the world (only along the light, which is depth). */
+        InsetShadowCaster Nudged[1] = { Casters[0] };
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 1);
+        const ShadowView Placed = Frame.Views[Frame.InsetFirstView];
+        Nudged[0].Centre = Casters[0].Centre + Vector3(0.001, 0.0, 0.001);
+        BuildShadowFrame(Insets, Camera, Frame, Nudged, 1);
+        double PlacedU, PlacedV, NudgedU, NudgedV;
+        ToAtlas(Placed, Casters[0].Centre, PlacedU, PlacedV, Depth);
+        ToAtlas(Frame.Views[Frame.InsetFirstView], Casters[0].Centre, NudgedU, NudgedV, Depth);
+        Expect(std::abs(PlacedU - NudgedU) * 2048.0 < 1e-3 && std::abs(PlacedV - NudgedV) * 2048.0 < 1e-3,
+               "an inset view moves in whole texels");
+
+        /* Each inset view's screen rectangle holds its caster's centre and is
+         * less than the whole screen -- its prism, swept down and under the
+         * camera, is clipped to the view. One wholly behind the eye is empty;
+         * one round the eye is the whole screen. */
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 5);
+        bool bRects = true;
+        for(uint32_t Index = 0; Index < Frame.InsetCount; ++Index)
+        {
+            const ShadowView& View = Frame.Views[uint32_t(Frame.InsetFirstView) + Index];
+            const Vector3& Centre = Casters[View.Inset].Centre;
+            const Vector4 Clip = Camera.Projection * Camera.View * Vector4(Centre.GetX(), Centre.GetY(), Centre.GetZ(), 1.0);
+            const double X = Clip.GetX() / Clip.GetW(), Y = Clip.GetY() / Clip.GetW();
+            bRects &= X >= View.ScreenNdc[0] && X <= View.ScreenNdc[2] && Y >= View.ScreenNdc[1] && Y <= View.ScreenNdc[3]
+                   && (View.ScreenNdc[2] - View.ScreenNdc[0]) * (View.ScreenNdc[3] - View.ScreenNdc[1]) < 4.0f;
+        }
+        Expect(bRects, "each inset view's screen rectangle holds its caster, and is less than the screen");
+        /* The receivers cut the sweep: a floor under the casters stops their
+         * prisms there, so each covers less screen -- still holding where its
+         * shadow lands on that floor. */
+        const GameCore::AABB Floor(Vector3(-3000.0, -20.0, -3000.0), Vector3(3000.0, 0.0, 3000.0));
+        bool bFloored = true;
+        for(uint32_t Index = 0; Index < Frame.InsetCount; ++Index)
+        {
+            const ShadowView& View = Frame.Views[uint32_t(Frame.InsetFirstView) + Index];
+            InsetShadowCaster Raised = Casters[View.Inset];
+            Raised.Centre = Raised.Centre + Vector3(0.0, 300.0, 0.0);   // above the floor
+            float Open[4] = {}, Cut[4] = {};
+            InsetScreenNdc(Raised, Vector3(0.3, -1.0, 0.2).GetNormalize(), 2.0, Camera, Open);
+            InsetScreenNdc(Raised, Vector3(0.3, -1.0, 0.2).GetNormalize(), 2.0, Camera, Cut, &Floor);
+            const Vector3 Down = Vector3(0.3, -1.0, 0.2).GetNormalize();
+            const Vector3 Lands = Raised.Centre + Down * ((Raised.Centre.GetY() + 10.0) / -Down.GetY());
+            const Vector4 Clip = Camera.Projection * Camera.View * Vector4(Lands.GetX(), Lands.GetY(), Lands.GetZ(), 1.0);
+            const double X = Clip.GetX() / Clip.GetW(), Y = Clip.GetY() / Clip.GetW();
+            bFloored &= (Cut[2] - Cut[0]) * (Cut[3] - Cut[1]) < (Open[2] - Open[0]) * (Open[3] - Open[1])
+                     && X >= Cut[0] && X <= Cut[2] && Y >= Cut[1] && Y <= Cut[3];
+        }
+        Expect(bFloored, "the receivers' bounds stop a prism at the floor: less screen, its shadow on the floor still in it");
+        float Missed[4] = {};
+        const GameCore::AABB Elsewhere(Vector3(5000.0, 0.0, 5000.0), Vector3(6000.0, 10.0, 6000.0));
+        InsetScreenNdc(Casters[0], Vector3(0.3, -1.0, 0.2).GetNormalize(), 2.0, Camera, Missed, &Elsewhere);
+        Expect(Missed[0] > Missed[2], "a prism that meets no receiver shadows no pixel");
+
+        float None[4] = {}, Whole[4] = {};
+        InsetShadowCaster Behind;
+        Behind.Centre = Camera.Origin + Vector3(0.0, 0.0, -50.0);   // the camera looks along +Z: this is behind it
+        Behind.Radius = 20.0f;
+        InsetScreenNdc(Behind, Vector3(0.0, 0.0, -1.0), 1.0, Camera, None);
+        Expect(None[0] > None[2] && None[1] > None[3], "a prism wholly behind the eye shadows no pixel");
+        InsetShadowCaster Around;
+        Around.Centre = Camera.Origin;
+        Around.Radius = 20.0f;
+        InsetScreenNdc(Around, Vector3(0.3, -1.0, 0.2).GetNormalize(), 1.0, Camera, Whole);
+        Expect(Whole[0] == -1.0f && Whole[1] == -1.0f && Whole[2] == 1.0f && Whole[3] == 1.0f,
+               "a prism round the eye shadows the whole screen");
+
+        Insets.Shadows.MaxInsetShadows = 1;
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 5);
+        Expect(Frame.InsetCount == 1, "MaxInsetShadows caps them");
+        Insets.Shadows.MaxInsetShadows = 4;
+
+        /* Four point lights fill all 24 tiles: none left for insets. */
+        RenderLighting Full = Insets;
+        for(uint32_t Index = 0; Index < 4; ++Index)
+        {
+            Full.Locals[Index] = Point;
+            Full.Locals[Index].Position = Vector3(300.0 * Index, -200.0, 100.0);
+        }
+        Full.LocalCount = 4;
+        BuildShadowFrame(Full, Camera, Frame, Casters, 5);
+        Expect(Frame.InsetCount == 0 && Frame.ViewCount == Frame.CascadeCount + 24, "insets get only the tiles the lights leave");
+
+        Insets.bInsetLight = 0;
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 5);
+        Expect(Frame.InsetCount == 0, "no inset light, no inset views");
+    }
 
     /* An orthographic camera (the 2D view) still gets a sun view. */
     const RenderView Flat = RenderView::MakeOrthographic(EngineCore::Size(1280, 720), Vector3(0.0, 0.0, 0.0), -1.0f, 1000.0f);
@@ -4241,6 +5784,8 @@ static void TestMeshDrawing()
 
 int main()
 {
+    // Unbuffered, so a run piped to a file shows how far it got if a GPU check hangs.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::printf("RenderCore smoke test\n");
 
     Threads::SetMainThread();
@@ -4276,6 +5821,8 @@ int main()
     TestStaticDrawLists();
     TestShadowSetup();
     TestLightComponents();
+    TestParticleSystem();
+    TestParticleSystemAsset();
     TestPostProcessStack();
 #if WITH_EDITOR
     TestMultipleScenes();
@@ -4287,6 +5834,7 @@ int main()
     TestShadowsOnGpu();
     TestPostProcessOnGpu();
     TestBloomHdrOnGpu();
+    TestParticlesOnGpu();
     TestStatFrameOnGpu();
     TestStaticDrawListsOnGpu();
     TestClearGradientOnGpu();
@@ -4296,6 +5844,7 @@ int main()
     TestUIOnGpu();
     TestMeshAssets();
     TestTextureAssets();
+    TestTextureCompression();
     TestTextureMips();
     TestToneMappingSettings();
     TestImageBasedLightingData();

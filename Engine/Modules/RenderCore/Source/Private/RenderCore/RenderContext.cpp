@@ -12,6 +12,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreFileProvider.h"
 #include "Public/Core/CoreImage.h"
 #include "Public/GDI/Shaders/Classes/TestbedShaders.h"
@@ -23,6 +24,8 @@
 #include "Public/RenderCore/RenderScene.h"
 #include "Public/RenderCore/ShaderCache.h"
 #include "Public/RenderCore/TextureAsset.h"
+#include "Public/RenderCore/TextureCompression.h"
+#include "Private/RenderCore/ParticleSimulation.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
 #include "Private/RenderCore/OverlayFont.h"
@@ -50,14 +53,20 @@
  * Outside a scene (a test) draws are issued at once.
  */
 
+/* Each draw in a debug region named for its mesh and material (RenderContext::Issue),
+ * for capture tools; off saves building the names. Only where the backend records
+ * regions (GDIHasDrawEvents: Vulkan with VK_EXT_debug_utils, as under RenderDoc). */
+NIMBLE_CONFIG_BOOL(GRenderDrawLabels, "Rendering", "DrawLabels", true, nullptr);
+
 namespace RenderCore
 {
     /* A loaded material: DrawCommand points at one (DrawPolicy.h). */
     struct RenderMaterial
     {
+        std::string          Name;                 // its graph's path, as drawn: a draw's label (Issue)
         MaterialDescription  Description;
         GDIShader*           Pixel = nullptr;      // null: failed to load, drawn as the fallback
-        GDIShader*           Vertex[2] = {};       // its own Quad and Mesh shaders, with an offset only
+        GDIShader*           Vertex[4] = {};       // its own Quad, Mesh and InstancedMesh shaders (by EMaterialVertexInput), with an offset only
         std::vector<uint8_t> Block;                // the defaults; the tint is written per draw
     };
 
@@ -114,6 +123,11 @@ namespace RenderCore
 
         /* Scene_Locals' vec4s per light. */
         constexpr uint32_t SCENE_LOCAL_VEC4S = 6;
+
+        /* DeferredLighting.fsh's Lighting_Block: Params, the inset light and
+         * tint, then RENDER_INSET_SHADOW_MAX insets and as many screen rects. */
+        constexpr uint32_t LIGHTING_BLOCK_FLOATS = (3 + 2 * RENDER_INSET_SHADOW_MAX) * 4;
+        static_assert(LIGHTING_BLOCK_FLOATS * sizeof(float) <= GDI_MATERIAL_BLOCK_MAX_BYTES, "Lighting_Block fits the material block");
 
         /* SceneUniforms.glsl's Scene_Block, byte for byte: vec4s and mat4s
          * (column-major, as GDI uploads matrices) and arrays of them. */
@@ -322,8 +336,8 @@ namespace RenderCore
         GDIShader*     BoundPixel  = nullptr;
 
         std::unordered_map<std::string, Material> Materials;   // node-based: a Material* survives inserts
-        GDIShader*              DefaultVertex[3] = {};          // MaterialDefault, by EMaterialVertexInput
-        bool                    bDefaultVertexTried[3] = {};
+        GDIShader*              DefaultVertex[4] = {};          // MaterialDefault, by EMaterialVertexInput
+        bool                    bDefaultVertexTried[4] = {};
         std::vector<GDIShader*> RetiredShaders;                 // see RenderContext::ReloadMaterial
         std::vector<uint8_t>    OverrideBlock;                  // BindMaterial's: a block with an entity's overrides
         std::set<std::string>   Warned;                         // one warning per material and reason
@@ -385,6 +399,7 @@ namespace RenderCore
         GDIRenderTarget* FinalTarget = nullptr;
 
         std::atomic<uint64_t> DrawCallCount{0};
+        std::atomic<uint64_t> ParticleSimulationCount{0};
 
         Impl()
         {
@@ -448,10 +463,12 @@ namespace RenderCore
             MeshObject = new GDIViewObject();
             MeshObject->Init(View3D);
 
-            /* The vertices and UVs every backend's own screen quad uses. */
+            /* The vertices and UVs every backend's own screen quad uses: v = 0
+             * at NDC +1, a target's top row (GDI.h), so a pass's TexCoord is
+             * the same pixel in every target it reads. */
             static const float Verts[] = { -1.f, -1.f, 0.f,  -1.f, 1.f, 0.f,  1.f, 1.f, 0.f,
                                             1.f,  1.f, 0.f,   1.f, -1.f, 0.f, -1.f, -1.f, 0.f };
-            static const float UVs[]   = { 0.f, 0.f,  0.f, 1.f,  1.f, 1.f,  1.f, 1.f,  1.f, 0.f,  0.f, 0.f };
+            static const float UVs[]   = { 0.f, 1.f,  0.f, 0.f,  1.f, 0.f,  1.f, 0.f,  1.f, 1.f,  0.f, 1.f };
             ScreenObject = new GDIViewObject();
             ScreenObject->Init(View3D);
             ScreenObject->Mesh = GDICreateQuadMesh(Verts, UVs, 18, 12, false);
@@ -521,6 +538,7 @@ namespace RenderCore
             Desc.Indices     = OutSource->Indices.data();
             Desc.NumIndices  = uint32_t(OutSource->Indices.size());
             Entry.Gpu = GDICreateMesh(Desc);
+            GDISetDebugName(Entry.Gpu, InPath);   // its buffers in a capture tool; and its draws' labels (Issue)
             if(!Entry.Gpu)
             {
                 RENDERCORE_LOG_WARN("mesh '" + InPath + "': this backend cannot draw it; drawing a quad")
@@ -559,7 +577,11 @@ namespace RenderCore
             const EGDITextureBorder Border = Wrap == ETextureWrap::Clamp  ? GDI_TB_Clamp_To_Edge
                                            : Wrap == ETextureWrap::Mirror ? GDI_TB_Mirrored_Repeat : GDI_TB_Repeat;
             const EGDITextureFilter GpuFilter = Filter == ETextureFilter::Nearest ? GDI_TF_Nearest : GDI_TF_Linear;
-            if(Source->Mips.empty())
+            if(!Source->Blocks.empty())
+            {
+                Entry.Gpu = CreateBlockTexture(*Source, InTexture.Path, Border, GpuFilter);
+            }
+            else if(Source->Mips.empty())
             {
                 Entry.Gpu = GDICreateTextureResource(Source->Pixels, Border, GpuFilter);
             }
@@ -576,7 +598,49 @@ namespace RenderCore
             {
                 WarnOnce(InTexture.Path + "|texture", "texture '" + InTexture.Path + "': this backend could not create it");
             }
+            GDISetDebugName(Entry.Gpu, InTexture.Path);   // what a capture tool lists it as
             return Entry.Gpu;
+        }
+
+        /* InSource's blocks as they are where the backend samples the format,
+         * else decoded to RGBA8 -- the same image either way. */
+        GDITextureResource* CreateBlockTexture(const TextureData& InSource, const std::string& InPath,
+                                               const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
+        {
+            EGDICompressedFormat Format = GDI_CF_MAX;
+            switch(InSource.Compression)
+            {
+                case ETextureCompression::BC1:  Format = GDI_CF_BC1; break;
+                case ETextureCompression::BC3:  Format = GDI_CF_BC3; break;
+                case ETextureCompression::BC4:  Format = GDI_CF_BC4; break;
+                case ETextureCompression::BC5:  Format = GDI_CF_BC5; break;
+                case ETextureCompression::BC7:  Format = GDI_CF_BC7; break;
+                case ETextureCompression::None: break;
+            }
+            if(GDISupportsCompressedFormat(Format))
+            {
+                std::vector<GDICompressedLevel> Levels;
+                Levels.reserve(InSource.Blocks.size());
+                for(const TextureBlockLevel& Each : InSource.Blocks)
+                {
+                    Levels.push_back({ uint32_t(Each.Width), uint32_t(Each.Height), Each.Bytes.data(), Each.Bytes.size() });
+                }
+                if(GDITextureResource* Texture = GDICreateCompressedTextureResource(Format, Levels.data(), uint32_t(Levels.size()),
+                                                                                   InBorder, InFilter))
+                {
+                    return Texture;
+                }
+            }
+
+            WarnOnce(InPath + "|blocks", std::string("texture '") + InPath + "': this backend cannot sample "
+                     + GetTextureCompressionName(InSource.Compression) + ", so it is decoded to RGBA8");
+            std::vector<EngineCore::Image> Levels(InSource.Blocks.size());
+            for(size_t Level = 0; Level < Levels.size(); ++Level)
+            {
+                if(!DecodeTextureBlocks(InSource.Blocks[Level], InSource.Compression, Levels[Level])) { return nullptr; }
+            }
+            return Levels.size() == 1 ? GDICreateTextureResource(Levels[0], InBorder, InFilter)
+                                      : GDICreateTextureResourceMips(Levels.data(), uint32_t(Levels.size()), InBorder, InFilter);
         }
 
         void WarnOnce(const std::string& InKey, const std::string& InMessage)
@@ -627,6 +691,22 @@ namespace RenderCore
                                                   ST_Vertex, "the shared material vertex shaders", false);
             }
             return DefaultVertex[Index];
+        }
+
+        /* Content/Shaders/<InFile>, a compute shader, loaded once and kept
+         * (each pipeline belongs to one shader); null without compute or
+         * cooked shader -- warned once by LoadShader. */
+        std::unordered_map<std::string, GDIShader*> ComputeShaders;
+        GDIShader* GetComputeShader(const char* InFile)
+        {
+            const auto Found = ComputeShaders.find(InFile);
+            if(Found != ComputeShaders.end())
+            {
+                return Found->second;
+            }
+            GDIShader* Shader = GDISupportsCompute() ? LoadShader(InFile, ST_Compute, "GPU particles", false) : nullptr;
+            ComputeShaders.emplace(InFile, Shader);
+            return Shader;
         }
 
         GDIShader* GetLightingShader()
@@ -815,6 +895,7 @@ namespace RenderCore
             }
 
             Material& Loaded = Materials[InName];
+            Loaded.Name = InName;
             EngineCore::IFileProvider* Provider = EngineCore::GetFileProvider();
             std::string Stem;
             const bool bNamed = GetMaterialStem(InName, Stem);
@@ -855,7 +936,7 @@ namespace RenderCore
 
             if(Desc.bHasOffset && Desc.Domain != EMaterialDomain::PostProcess)
             {
-                for(const EMaterialVertexInput Input : { EMaterialVertexInput::Quad, EMaterialVertexInput::Mesh })
+                for(const EMaterialVertexInput Input : { EMaterialVertexInput::Quad, EMaterialVertexInput::Mesh, EMaterialVertexInput::InstancedMesh })
                 {
                     GDIShader* Vertex = LoadShader(GetPermutationFileName(Stem, GetVertexPermutationKey(Input), true), ST_Vertex, Who, false);
                     if(!Vertex)
@@ -1153,10 +1234,10 @@ namespace RenderCore
             ShadowAtlasSize = 0;
         }
 
-        /* The frame's shadow views from View and Lighting, into the scene block. */
-        void PrepareShadows()
+        /* The frame's shadow views from View, Lighting and InCasters, into the scene block. */
+        void PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount, const GameCore::AABB* InReceivers)
         {
-            BuildShadowFrame(Lighting, View, Shadows);
+            BuildShadowFrame(Lighting, View, Shadows, InCasters, InCasterCount, InReceivers);
             if(Shadows.ViewCount == 0)
             {
                 return;
@@ -1199,7 +1280,7 @@ namespace RenderCore
                 }
             }
 
-            /* Local views follow the sun's, in Locals order. */
+            /* Local views follow the sun's, in Locals order; then the inset shadows'. */
             for(uint32_t View = DirectionalViews; View < Shadows.ViewCount; ++View)
             {
                 PutMatrix(Scene.LocalShadowMatrices[View - DirectionalViews], Shadows.Views[View].WorldToAtlas);
@@ -1342,10 +1423,66 @@ namespace RenderCore
             PlaceView       = nullptr;
         }
 
+        /* Lighting_Block's inset shadows, after its first vec4's x: y how
+         * many, z and w the depth and normal bias; then the light (xyz toward
+         * it, w 1 if Modulated over the whole pixel -- a baked sun's), its
+         * tint and in w the insets' PCF radius ([Shadows] InsetFilter); per inset its matrix in Scene_LocalShadowMatrices, its texel
+         * in world units and its tile's corner in atlas UV; then per inset the
+         * pixels of an InWidth x InHeight target it can shadow (gl_FragCoord,
+         * top-down: x, y min then max), every other pixel skipped. */
+        void PutInsetShadows(float* OutBlock, const uint32_t InWidth, const uint32_t InHeight) const
+        {
+            const uint32_t Count = Shadows.ViewCount > 0 ? std::min<uint32_t>(Shadows.InsetCount, RENDER_INSET_SHADOW_MAX) : 0;
+            OutBlock[1] = float(Count);
+            if(Count == 0)
+            {
+                return;
+            }
+            OutBlock[2] = Lighting.InsetShadowBias;
+            OutBlock[3] = Lighting.InsetShadowNormalBias;
+
+            EngineCore::Vector3 ToLight = Lighting.InsetLightDirection * -1.0;
+            const double Length = ToLight.GetLength();
+            ToLight = Length > 1e-9 ? ToLight * (1.0 / Length) : EngineCore::Vector3(0.0, 1.0, 0.0);
+            OutBlock[4] = float(ToLight.GetX());
+            OutBlock[5] = float(ToLight.GetY());
+            OutBlock[6] = float(ToLight.GetZ());
+            OutBlock[7] = Lighting.bInsetLightBaked ? 1.0f : 0.0f;
+            float Tint[4] = {};
+            PutColor(Tint, Lighting.InsetShadowTint, 1.0f);
+            std::memcpy(OutBlock + 8, Tint, sizeof(Tint));
+            OutBlock[11] = float(std::clamp(Lighting.Shadows.InsetFilter, 0, 2));
+
+            /* The local matrices start after the sun's views (PrepareShadows). */
+            const uint32_t DirectionalViews = Shadows.DirectionalFirstView >= 0 ? Shadows.CascadeCount : 0;
+            const double   Size             = double(std::max(Shadows.AtlasSize, 1u));
+            for(uint32_t Index = 0; Index < Count; ++Index)
+            {
+                const ShadowView& Inset = Shadows.Views[uint32_t(Shadows.InsetFirstView) + Index];
+                float* Out = OutBlock + 12 + Index * 4;
+                Out[0] = float(uint32_t(Shadows.InsetFirstView) + Index - DirectionalViews);
+                Out[1] = float(2.0 / std::abs(double(Inset.Projection.Data[0][0])) / double(std::max(Inset.TileSize, 1u)));
+                Out[2] = float(double(Inset.TileX) / Size);
+                Out[3] = float(double(Inset.TileY) / Size);
+
+                /* NDC to pixels: y runs down the target (GDI.h), a pixel of slack each way. */
+                float* Rect = OutBlock + 28 + Index * 4;
+                const double Width = double(InWidth), Height = double(InHeight);
+                Rect[0] = float(std::floor((Inset.ScreenNdc[0] * 0.5 + 0.5) * Width) - 1.0);
+                Rect[1] = float(std::floor((0.5 - Inset.ScreenNdc[3] * 0.5) * Height) - 1.0);
+                Rect[2] = float(std::ceil((Inset.ScreenNdc[2] * 0.5 + 0.5) * Width) + 1.0);
+                Rect[3] = float(std::ceil((0.5 - Inset.ScreenNdc[1] * 0.5) * Height) + 1.0);
+            }
+        }
+
         /* "Sun", "Sun Cascade 1", "Spot 2", "Point 0 +X": what a shadow view
          * is of, for its draw event. */
         std::string GetShadowViewName(const int32_t InView) const
         {
+            if(InView >= 0 && uint32_t(InView) < Shadows.ViewCount && Shadows.Views[InView].Inset >= 0)
+            {
+                return "Inset " + std::to_string(InView - Shadows.InsetFirstView);
+            }
             const int32_t Sun = Shadows.DirectionalFirstView;
             if(Sun >= 0 && InView >= Sun && InView < Sun + int32_t(Shadows.CascadeCount))
             {
@@ -1406,6 +1543,24 @@ namespace RenderCore
             Place(MeshObject, InItem.Transform, 1.0f, 1.0f);
             MeshObject->Mesh = InItem.Mesh;
 
+            /* Instanced: the material's InstancedMesh vertex shader, or nothing -- the plain fallback draws once. */
+            if(InItem.Instances)
+            {
+                if(InItem.Mat && BindMaterial(*InItem.Mat, EMaterialVertexInput::InstancedMesh, InItem.Tint, &InItem))
+                {
+                    InItem.Mesh->SetDrawRange(InItem.First, InItem.Count);
+                    GDISetInstanceBuffer(InItem.Instances, InItem.InstanceCount);
+                    GDISetIndirectArgs(InItem.IndirectArgs, InItem.IndirectOffset);   // the live ones only, where it can
+                    GDIDrawObject(MeshObject);
+                    GDISetIndirectArgs(nullptr);
+                    GDISetInstanceBuffer(nullptr, 0);
+                    InItem.Mesh->SetDrawRange(0, 0);
+                    DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+                }
+                MeshObject->Mesh = nullptr;
+                return;
+            }
+
             if(!InItem.Mat || !BindMaterial(*InItem.Mat, EMaterialVertexInput::Mesh, InItem.Tint, &InItem))
             {
                 GDIShader* Pixel = GDIGetShader<Mesh_PS>();
@@ -1440,8 +1595,67 @@ namespace RenderCore
             return true;
         }
 
+        /* What a capture tool shows for InPath: its file name, extensions
+         * dropped ("Engine/Content/Meshes/Sphere.nmmesh" is "Sphere"). */
+        static std::string ShortName(const std::string& InPath)
+        {
+            const size_t Slash = InPath.find_last_of("/\\");
+            const std::string File = Slash == std::string::npos ? InPath : InPath.substr(Slash + 1);
+            const size_t Dot = File.find('.');
+            return Dot == std::string::npos || Dot == 0 ? File : File.substr(0, Dot);
+        }
+
+        /* A draw's label (Issue): what it draws, then with what --
+         * "Sphere [Sphere] | Glow", "Particles Sparks/Sparks (up to 512) | ParticleStreak". */
+        static std::string LabelOf(const DrawCommand& InItem)
+        {
+            std::string Out;
+            switch(InItem.Kind)
+            {
+                case DrawCommand::EKind::MeshSection:
+                    Out = InItem.Label ? std::string(InItem.Label)
+                        : InItem.Mesh && !InItem.Mesh->GetDebugName().empty() ? ShortName(InItem.Mesh->GetDebugName()) : std::string("Mesh");
+                    if(!InItem.Label && InItem.Section && InItem.Section[0] != '\0') { Out += " [" + std::string(InItem.Section) + "]"; }
+                    if(InItem.Instances)
+                    {
+                        /* Drawn indirectly, it draws only the live ones: the GPU's count, which a capture shows on the draw. */
+                        Out += InItem.IndirectArgs ? " (up to " + std::to_string(InItem.InstanceCount) + ")"
+                                                   : " x" + std::to_string(InItem.InstanceCount);
+                    }
+                    break;
+                case DrawCommand::EKind::Quad:
+                case DrawCommand::EKind::MaterialQuad: Out = InItem.Label ? std::string(InItem.Label) : std::string("Quad"); break;
+                case DrawCommand::EKind::Fullscreen:   Out = "Fullscreen"; break;
+            }
+            if(InItem.Mat && !InItem.Mat->Name.empty())          { Out += " | " + ShortName(InItem.Mat->Name); }
+            else if(InItem.Kind == DrawCommand::EKind::MeshSection) { Out += " | (plain tint)"; }
+            return Out;
+        }
+
+        /* A draw's region, named for its mesh and material, so RenderDoc's Event
+         * Browser (and PIX, Xcode) reads what it is; true if one was begun, to end
+         * with EndDrawLabel. Nothing in shipping builds or where nothing records it. */
+        static bool BeginDrawLabel(const DrawCommand& InItem)
+        {
+#if !(defined(NIMBLE_SHIPPING) && NIMBLE_SHIPPING)
+            if(GRenderDrawLabels.GetBool() && GDIHasDrawEvents())
+            {
+                GDIBeginDrawEvent(LabelOf(InItem));
+                return true;
+            }
+#endif
+            (void)InItem;
+            return false;
+        }
+
+        static void EndDrawLabel(const bool bInBegun)
+        {
+            if(bInBegun) { GDIEndDrawEvent(); }
+        }
+
         void Issue(const DrawCommand& InItem)
         {
+            const bool bLabel = BeginDrawLabel(InItem);
             switch(InItem.Kind)
             {
                 case DrawCommand::EKind::Quad:         IssueQuad(InItem);         break;
@@ -1449,6 +1663,7 @@ namespace RenderCore
                 case DrawCommand::EKind::MeshSection:  IssueMeshSection(InItem);  break;
                 case DrawCommand::EKind::Fullscreen:   IssueFullscreen(InItem);   break;
             }
+            EndDrawLabel(bLabel);
         }
 
         /* Into InStage's policy inside a scene; at once outside one. */
@@ -1464,7 +1679,7 @@ namespace RenderCore
                 Issue(InItem);
                 return;
             }
-            const EngineCore::Vector3 Offset = InItem.Transform.Position - View.Origin;
+            const EngineCore::Vector3 Offset = (InItem.Instances ? InItem.SortOrigin : InItem.Transform.Position) - View.Origin;
             InItem.Depth = float(Offset.Dot(ViewForward(View)));
             PolicyFor(InStage).Add(InItem);
         }
@@ -1563,9 +1778,11 @@ namespace RenderCore
             const uint32_t OcclusionSlot = RENDER_GBUFFER_TARGETS + 1 + SA_Count;
             GDISetMaterialTexture(OcclusionSlot, AmbientOcclusion);
 
-            /* Lighting_Block: x, whether the occlusion texture is this frame's. */
-            float LightingBlock[MATERIAL_ENGINE_BLOCK_BYTES / sizeof(float)] = {};
+            /* Lighting_Block (DeferredLighting.fsh): whether the occlusion
+             * texture is this frame's, then the inset shadows. */
+            float LightingBlock[LIGHTING_BLOCK_FLOATS] = {};
             LightingBlock[0] = AmbientOcclusion ? 1.0f : 0.0f;
+            PutInsetShadows(LightingBlock, InTargets.Width, InTargets.Height);
             EnsureInitialised();
             Bind(Vertex, Pixel);
             GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, LightingBlock, uint(sizeof(LightingBlock)));
@@ -1590,13 +1807,13 @@ namespace RenderCore
             for(auto& Each : Materials)
             {
                 Material& M = Each.second;
-                for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1] })
+                for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1], M.Vertex[2], M.Vertex[3] })
                 {
                     if(Shader) { RetiredShaders.push_back(Shader); }
                 }
             }
             Materials.clear();
-            for(int Index = 0; Index < 3; ++Index)
+            for(int Index = 0; Index < 4; ++Index)
             {
                 if(DefaultVertex[Index]) { RetiredShaders.push_back(DefaultVertex[Index]); }
                 DefaultVertex[Index] = nullptr;
@@ -1605,6 +1822,11 @@ namespace RenderCore
             if(LightingShader) { RetiredShaders.push_back(LightingShader); }
             LightingShader = nullptr;
             bLightingTried = false;
+            for(auto& Each : ComputeShaders)
+            {
+                if(Each.second) { RetiredShaders.push_back(Each.second); }
+            }
+            ComputeShaders.clear();
             if(ShadowDepthShader) { RetiredShaders.push_back(ShadowDepthShader); }
             ShadowDepthShader = nullptr;
             bShadowDepthTried = false;
@@ -1743,7 +1965,10 @@ namespace RenderCore
                 GDISetViewport(0, 0, Width, Height);
                 GDISetColorMask(EColM_RGBA);
                 GDISetMaterialTexture(0, Texture(Source));
-                if(IssueFullscreen(Materials[Index]))
+                const bool bLabel = BeginDrawLabel(Materials[Index]);
+                const bool bDrawn = IssueFullscreen(Materials[Index]);
+                EndDrawLabel(bLabel);
+                if(bDrawn)
                 {
                     Source = Dest;
                     ++Passes;
@@ -1900,6 +2125,208 @@ namespace RenderCore
         return P->View;
     }
 
+    double RenderContext::GetTimeSeconds() const
+    {
+        return std::chrono::duration<double>(P->LastFrame - P->Start).count();
+    }
+
+    float RenderContext::GetDeltaSeconds() const
+    {
+        return P->FrameDelta;
+    }
+
+    // === GPU particles (ParticleSimulation.h) ======================================
+
+    bool RenderContext::SupportsParticles() const
+    {
+        return GDISupportsCompute();
+    }
+
+    ParticleEmitterGpu* RenderContext::CreateParticleEmitter(const uint32_t InMaxParticles, const uint8_t InType, const char* InName)
+    {
+        ParticleEmitterGpu* Emitter = ParticleSimulation::Create(InMaxParticles, InType);
+        if(Emitter && InName && InName[0] != '\0')
+        {
+            /* Its buffers as a capture tool lists them. */
+            const std::string Name = std::string("Particles ") + InName;
+            GDISetDebugName(Emitter->Particles, Name + " State");
+            GDISetDebugName(Emitter->Instances, Name + (Emitter->InstancesB ? " Triangles A" : " Instances"));
+            GDISetDebugName(Emitter->InstancesB, Name + " Triangles B");
+            GDISetDebugName(Emitter->Args, Name + " Draws");
+        }
+        return Emitter;
+    }
+
+    void RenderContext::ReleaseParticleEmitter(ParticleEmitterGpu* InEmitter)
+    {
+        ParticleSimulation::Release(InEmitter);
+    }
+
+    bool RenderContext::SimulateParticles(ParticleEmitterGpu& InEmitter, const ParticleEmitterSettings& InSettings,
+                                          const EngineCore::Vector3& InEmitterPosition, const float InDeltaSeconds,
+                                          const char* InLabel)
+    {
+#if !(defined(NIMBLE_SHIPPING) && NIMBLE_SHIPPING)
+        const bool bLabel = InLabel && InLabel[0] != '\0' && GRenderDrawLabels.GetBool() && GDIHasDrawEvents();
+        if(bLabel) { GDIBeginDrawEvent(InLabel); }
+        struct EndLabel { bool bOn; ~EndLabel() { if(bOn) { GDIEndDrawEvent(); } } } const Closer{ bLabel };
+#endif
+        /* Sorted for, and turned toward, the camera of the view being set up: the scene's own. */
+        ParticleCamera Camera;
+        Camera.Position = EngineCore::Vector3(P->Scene.CameraPosition[0], P->Scene.CameraPosition[1], P->Scene.CameraPosition[2]);
+        const EngineCore::Matrix4x4& View = P->View.View;
+        Camera.Right   = EngineCore::Vector3(View.Data[0][0], View.Data[0][1], View.Data[0][2]);
+        Camera.Up      = EngineCore::Vector3(View.Data[1][0], View.Data[1][1], View.Data[1][2]);
+        Camera.Forward = ViewForward(P->View);
+
+        const ParticleParams Params = ParticleSimulation::BuildParams(InEmitter, InSettings, InEmitterPosition, Camera,
+                                                                      InDeltaSeconds >= 0.0f ? InDeltaSeconds : P->FrameDelta,
+                                                                      GetTimeSeconds());
+        P->ParticleSimulationCount.fetch_add(1, std::memory_order_relaxed);
+        ParticleSimulation::Shaders Shaders;
+        Shaders.Simulate = P->GetComputeShader("ParticleSimulate.csh");
+        if(InEmitter.Type == PT_Ribbon || InEmitter.Type == PT_Beam)
+        {
+            Shaders.Ribbon = P->GetComputeShader("ParticleRibbon.csh");
+            Shaders.Beam   = InEmitter.Type == PT_Beam ? P->GetComputeShader("ParticleBeam.csh") : nullptr;
+        }
+        else
+        {
+            Shaders.Sort = P->GetComputeShader("ParticleSort.csh");
+        }
+        return ParticleSimulation::Dispatch(InEmitter, Params, Shaders);
+    }
+
+    bool RenderContext::ReadParticles(const ParticleEmitterGpu& InEmitter, std::vector<ParticleSample>& OutParticles)
+    {
+        OutParticles.clear();
+        std::vector<uint8_t> Bytes;
+        if(!InEmitter.Particles || !GDIReadBuffer(InEmitter.Particles, Bytes))
+        {
+            return false;
+        }
+        /* ParticleCommon.glsl's Particle: position and age, velocity and lifetime, its random bits. */
+        static_assert(sizeof(ParticleSample) == 48, "ParticleSample mirrors the GPU's Particle");
+        OutParticles.resize(std::min<size_t>(Bytes.size() / sizeof(ParticleSample), InEmitter.MaxParticles));
+        std::memcpy(OutParticles.data(), Bytes.data(), OutParticles.size() * sizeof(ParticleSample));
+        return true;
+    }
+
+    bool RenderContext::ReadParticleDrawCount(const ParticleEmitterGpu& InEmitter, uint32_t& OutCount)
+    {
+        OutCount = 0;
+        std::vector<uint8_t> Bytes;
+        if(!InEmitter.Args || InEmitter.ArgsEntries == 0 || !GDIReadBuffer(InEmitter.Args, Bytes) || Bytes.size() < GDI_INDIRECT_ARGS_STRIDE)
+        {
+            return false;
+        }
+        std::memcpy(&OutCount, Bytes.data() + sizeof(uint32_t), sizeof(uint32_t));   // entry 0's instance count
+        return true;
+    }
+
+    bool RenderContext::ReadParticleInstances(const ParticleEmitterGpu& InEmitter, std::vector<ParticleInstanceSample>& OutInstances)
+    {
+        OutInstances.clear();
+        std::vector<uint8_t> Bytes;
+        if(!InEmitter.Instances || !GDIReadBuffer(InEmitter.Instances, Bytes))
+        {
+            return false;
+        }
+        static_assert(sizeof(ParticleInstanceSample) == GDI_INSTANCE_STRIDE, "ParticleInstanceSample mirrors GDI's instance layout");
+        OutInstances.resize(std::min<size_t>(Bytes.size() / sizeof(ParticleInstanceSample), InEmitter.MaxParticles));
+        std::memcpy(OutInstances.data(), Bytes.data(), OutInstances.size() * sizeof(ParticleInstanceSample));
+        return true;
+    }
+
+    bool RenderContext::DrawParticles(ParticleEmitterGpu& InEmitter, const EngineCore::Vector3& InSortOrigin,
+                                      const char* InMeshPath, const char* InMaterial, const char* InLabel)
+    {
+        if(!InEmitter.bSimulated || !InEmitter.Instances)
+        {
+            return false;
+        }
+        Material* Chosen = P->SectionMaterial(InMaterial && InMaterial[0] != '\0' ? InMaterial : nullptr, std::string());
+        if(!Chosen)
+        {
+            return false;
+        }
+
+        /* The instances are in world space: drawn in an identity frame, sorted at the emitter.
+         * Where the backend can, each draw takes its instance count from InEmitter.Args, entry
+         * InFirstArgs + its section: the live count the compute passes wrote. */
+        const bool bIndirect = GDISupportsIndirectDraw() && InEmitter.Args;
+        const auto Draw = [&](const char* InPath, GDIBuffer* InInstances, const uint32_t InFirstArgs)
+        {
+            std::shared_ptr<const MeshData> Source;
+            GDIMesh* Mesh = InPath && InPath[0] != '\0' ? P->FindMesh(InPath, Source) : nullptr;
+            if(!Mesh || !Source || !InInstances)
+            {
+                return false;
+            }
+            static const MeshSection Everything;
+            const std::vector<MeshSection>& Sections = Source->Sections;
+            const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
+
+            /* A sprite's or mesh's entries, laid out per section of its mesh when it is first drawn
+             * (or the mesh changes): each instance count all of them until the next simulation counts. */
+            bool bArgs = bIndirect && (InEmitter.Type == PT_Ribbon || InEmitter.Type == PT_Beam);
+            if(bIndirect && !bArgs)
+            {
+                if(InEmitter.ArgsMesh != Source.get() || InEmitter.ArgsEntries != SectionCount)
+                {
+                    std::vector<uint32_t> Ranges(SectionCount * 2);
+                    for(size_t Index = 0; Index < SectionCount; ++Index)
+                    {
+                        Ranges[Index * 2]     = Sections.empty() ? uint32_t(Source->Indices.size()) : Sections[Index].IndexCount;
+                        Ranges[Index * 2 + 1] = Sections.empty() ? 0u : Sections[Index].FirstIndex;
+                    }
+                    if(GDIBuffer* Laid = ParticleSimulation::CreateArgs(Ranges.data(), uint32_t(SectionCount), InEmitter.MaxParticles))
+                    {
+                        if(InEmitter.Args)
+                        {
+                            GDISetDebugName(Laid, InEmitter.Args->GetDebugName());
+                            InEmitter.Args->Release();
+                        }
+                        InEmitter.Args        = Laid;
+                        InEmitter.ArgsEntries = uint32_t(SectionCount);
+                        InEmitter.ArgsMesh    = Source.get();
+                    }
+                }
+                bArgs = InEmitter.ArgsMesh == Source.get();
+            }
+            for(size_t Index = 0; Index < SectionCount; ++Index)
+            {
+                const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
+                DrawCommand Item;
+                Item.Kind          = DrawCommand::EKind::MeshSection;
+                Item.Mat           = Chosen;
+                Item.Mesh          = Mesh;
+                Item.Label         = InLabel;
+                Item.First         = Section.FirstIndex;
+                Item.Count         = Sections.empty() ? 0u : Section.IndexCount;
+                Item.Instances     = InInstances;
+                Item.InstanceCount = InEmitter.MaxParticles;
+                if(bArgs)
+                {
+                    Item.IndirectArgs   = InEmitter.Args;
+                    Item.IndirectOffset = uint32_t(InFirstArgs + Index) * GDI_INDIRECT_ARGS_STRIDE;
+                }
+                Item.SortOrigin    = InSortOrigin;
+                P->Submit(Item, Impl::StageOf(Chosen));
+            }
+            return true;
+        };
+
+        /* A ribbon or beam is its two triangles a segment (ParticleRibbon.csh); the mesh named is not used. */
+        if(InEmitter.Type == PT_Ribbon || InEmitter.Type == PT_Beam)
+        {
+            const bool bA = Draw(PARTICLE_RIBBON_MESH_A, InEmitter.Instances, 0);
+            const bool bB = Draw(PARTICLE_RIBBON_MESH_B, InEmitter.InstancesB, 1);
+            return bA && bB;
+        }
+        return Draw(InMeshPath, InEmitter.Instances, 0);
+    }
+
     void RenderContext::DrawQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight,
                                   const EngineCore::Color InTint)
     {
@@ -1995,6 +2422,7 @@ namespace RenderCore
             Item.Tint      = InTint;
             Item.Mat       = Chosen;
             Item.Mesh      = Mesh;
+            Item.Section   = Section.Name.c_str();
             Item.First     = Section.FirstIndex;
             Item.Count     = Sections.empty() ? 0u : Section.IndexCount;
             Item.Overrides     = InOverrides.Items;
@@ -2111,6 +2539,11 @@ namespace RenderCore
         GDIEndDrawEvent();
     }
 
+    uint64_t RenderContext::GetParticleSimulationCount() const
+    {
+        return P->ParticleSimulationCount.load(std::memory_order_relaxed);
+    }
+
     uint64_t RenderContext::GetDrawCallCount() const
     {
         return P->DrawCallCount.load(std::memory_order_relaxed);
@@ -2157,10 +2590,21 @@ namespace RenderCore
         P->CasterView        = -1;
     }
 
-    uint32_t RenderContext::PrepareShadows()
+    uint32_t RenderContext::PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount,
+                                           const GameCore::AABB* InReceivers)
     {
-        P->PrepareShadows();
+        P->PrepareShadows(InCasters, InCasterCount, InReceivers);
         return P->Shadows.ViewCount;
+    }
+
+    int32_t RenderContext::GetShadowViewInset(const uint32_t InView) const
+    {
+        return InView < P->Shadows.ViewCount ? P->Shadows.Views[InView].Inset : -1;
+    }
+
+    bool RenderContext::IsSunShadowView(const uint32_t InView) const
+    {
+        return InView < P->Shadows.ViewCount && P->Shadows.IsSunView(InView);
     }
 
     const GameCore::AABB& RenderContext::GetShadowViewBounds(const uint32_t InView) const
@@ -2211,6 +2655,7 @@ namespace RenderCore
             Item.Transform  = InTransform;
             Item.Mat        = Chosen;
             Item.Mesh       = Mesh;
+            Item.Section    = Section.Name.c_str();
             Item.First      = Section.FirstIndex;
             Item.Count      = Sections.empty() ? 0u : Section.IndexCount;
             Item.ShadowView    = P->CasterView;
@@ -3008,9 +3453,8 @@ namespace RenderCore
         P->Bind(Vertex, Pixel);
         GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &P->Scene, uint(sizeof(P->Scene)));
 
-        /* Pixels from the top-left to clip space, through the view's projection
-         * so every backend's own flip applies (Metal's PackViewParamsUBO, the
-         * D3D12 shaders' --flip-vert-y): NDC +y is up everywhere. */
+        /* Pixels from the top-left to clip space: NDC +y is up, the target's
+         * top row, on every backend (GDI.h). */
         EngineCore::Matrix4x4 Ortho;
         Ortho.InitIdentity();
         Ortho.Data[0][0] = 2.0f / float(InWidth);
@@ -3122,7 +3566,7 @@ namespace RenderCore
             }
 
             Material& M = Found->second;
-            for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1] })
+            for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1], M.Vertex[2], M.Vertex[3] })
             {
                 if(!Shader) { continue; }
                 if(P->BoundPixel == Shader)  { P->BoundPixel = nullptr; }

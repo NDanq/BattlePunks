@@ -23,7 +23,14 @@ MATERIAL_SAMPLER2D(11, AmbientOcclusion)  // r: screen-space ambient occlusion, 
 
 // The pass's own settings, at the material block's binding.
 UBO_BLOCK_BEGIN(2, Lighting_Block)
-    vec4 Lighting_Params;   // x: 1 if AmbientOcclusion holds this frame's occlusion
+    vec4 Lighting_Params;      // x: 1 if AmbientOcclusion holds this frame's occlusion;
+                               // y: inset shadows; z, w: their depth and normal bias (the sun's)
+    vec4 Lighting_InsetLight;  // xyz: unit, toward the inset shadows' sun; w: 1 if it is baked --
+                               // Modulated over the whole pixel, baked light included
+    vec4 Lighting_InsetTint;   // rgb: that Modulated shadow's tint, display space; w: the insets' PCF radius, texels
+    vec4 Lighting_Insets[4];   // x: its matrix in Scene_LocalShadowMatrices; y: its texel, world units;
+                               // zw: its tile's corner, atlas UV (Shadows.glsl's InsetShadow)
+    vec4 Lighting_InsetRects[4]; // the pixels each can shadow (gl_FragCoord): xy min, zw max
 UBO_BLOCK_END(Lighting_Block)
 
 // Only here are lights shadowed: the atlases above are this pass's.
@@ -77,6 +84,14 @@ void main(void)
 
     // A baked surface carries its diffuse ambient in its emissive (BakedLighting.glsl).
     float AmbientDiffuse = Gb1.a < 0.875 ? 0.0 : 1.0;
-    vec3 Color = ToSceneColor(ToLinear(Surface.Emissive) + ShadeSurface(Surface, WorldPosition, Surface.Normal, AmbientDiffuse));
-    Output = vec4(Color, 1.0);
+    vec3 Linear = ToLinear(Surface.Emissive) + ShadeSurface(Surface, WorldPosition, Surface.Normal, AmbientDiffuse);
+
+    // A baked sun has no live light to take away: its inset shadows darken
+    // everything here toward its tint, the bake's light (in the emissive) too.
+    if(Lighting_InsetLight.w > 0.5 && Lighting_Params.y > 0.5)
+    {
+        float Lit = InsetShadow(WorldPosition, Surface.Normal, Lighting_InsetLight.xyz);
+        Linear *= ModulatedShadow(Lit, 1.0, dot(Surface.Normal, Lighting_InsetLight.xyz), Lighting_InsetTint.rgb);
+    }
+    Output = vec4(ToSceneColor(Linear), 1.0);
 }

@@ -1,6 +1,8 @@
 #ifndef CORECLIENT_VKDEVICE_H
 #define CORECLIENT_VKDEVICE_H
 
+#include <string>
+
 #include <vulkan/vulkan.h>
 #include <mutex>
 
@@ -65,12 +67,31 @@ public:
      */
     uint32_t FindMemoryType(uint32_t TypeBits, VkMemoryPropertyFlags Properties) const;
 
+    /** Names InHandle (of InType) for capture tools and validation messages,
+     *  through VK_EXT_debug_utils; nothing when the instance lacks it, the
+     *  handle or name is empty, or [Shaders] ShaderDebug is off. */
+    void SetObjectName(VkObjectType InType, uint64_t InHandle, const std::string& InName) const;
+
+    /** Attaches InTag's bytes to InHandle under InTagName (VK_EXT_debug_utils
+     *  object tags), for a tool that looks for that name; nothing when the
+     *  instance lacks the extension or the handle or tag is empty. */
+    void SetObjectTag(VkObjectType InType, uint64_t InHandle, uint64_t InTagName, const std::string& InTag) const;
+
     inline VkInstance       GetInstance() const         { return Instance; }
     inline VkPhysicalDevice GetPhysicalDevice() const   { return PhysicalDevice; }
     inline VkDevice         GetDevice() const           { return Device; }
     inline uint32_t         GetGraphicsQueueFamily() const { return GraphicsQueueFamilyIndex; }
     inline VkQueue          GetGraphicsQueue() const    { return GraphicsQueue; }
     inline bool             IsValid() const             { return Device != VK_NULL_HANDLE; }
+
+    /** Whether InFormat (a block-compressed one) can be sampled: the
+     *  textureCompressionBC feature, enabled when the GPU has it, and the
+     *  format's own sampled-image support. */
+    bool SupportsSampledFormat(VkFormat InFormat) const;
+
+    /** Whether the graphics queue also runs compute (GDISupportsCompute): every
+     *  desktop GPU's does, which is what lets one command buffer hold both. */
+    inline bool GraphicsQueueSupportsCompute() const { return bGraphicsQueueCompute; }
 
 private:
     bool PickPhysicalDevice();
@@ -81,6 +102,8 @@ private:
     VkDevice            Device                  = VK_NULL_HANDLE;
     uint32_t            GraphicsQueueFamilyIndex = UINT32_MAX;
     VkQueue             GraphicsQueue           = VK_NULL_HANDLE;
+    bool                bTextureCompressionBC   = false;   // the feature, enabled
+    bool                bGraphicsQueueCompute   = false;   // GraphicsQueueFamilyIndex has VK_QUEUE_COMPUTE_BIT
 
     VkPhysicalDeviceMemoryProperties MemoryProperties{};
 

@@ -25,10 +25,12 @@ namespace RenderCore
         void Draw(RenderContext& InContext) override;
         void DrawShadow(RenderContext& InContext) override;
         float GetBoundsPadding(RenderContext& InContext) override;
+        bool CastsInsetShadow() const override { return bCastShadows && bCastInsetShadow && MeshSource; }
 
     private:
         bool              bComponentVisible = true;
         bool              bCastShadows      = true;
+        bool              bCastInsetShadow  = false;
         char              Materials[8][128] = {};  // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_PATH_MAX; "" = none
 
         /* The component's parameter overrides; ParameterCount: up to the last in use. */

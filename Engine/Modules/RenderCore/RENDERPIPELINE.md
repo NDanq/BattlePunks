@@ -150,6 +150,15 @@ Vulkan and D3D12 remap the projection to it (`PackViewParamsUBO`) -- and writes
 `ToDisplay(ToLinear(Emissive) + ShadeSurface(...))`, what the forward template
 wrote. Other pixels are discarded, so the clear colour shows.
 
+**Orientation.** Every render target is stored top-down on every backend
+(`GDI.h`): row 0 is the top of the image, NDC y = +1, texture v = 0 and
+`gl_FragCoord.y` = 0.5 -- the order `ToImage` returns and RenderDoc shows.
+Vulkan gets there with a negative viewport height, OpenGL with
+`glClipControl(GL_UPPER_LEFT)`; D3D12 and Metal are top-down natively. A pass
+that turns a target's UV into NDC or back uses `TargetUvToNdc` /
+`NdcToTargetUv` (`Common.glsl`), since v runs down where NDC y runs up.
+Front faces are GL's on every backend, which Two Sided relies on.
+
 The result matches the forward path for the same material: the GPU smoke check's
 DefaultLit, Glow and Wave pixels are unchanged.
 
@@ -175,10 +184,11 @@ same lights forward, but unshadowed: their texture slots are their material's.
 
 Each light has a **Shadows** section: Cast Shadows, a Technique, a Modulated
 Tint and two biases. A Render component's **Cast Shadows** says whether its
-mesh casts. Every scene's quality is the `[Shadows]` config section, a
+mesh casts, and **Cast Inset Shadow** gives it a sun shadow map of its own (see
+[Inset shadows](#inset-shadows)). Every scene's quality is the `[Shadows]` config section, a
 project setting (the game's DefaultEngine.ini; Edit > Project Settings >
 Shadows edits it and applies it at once): Enabled, Resolution,
-Filter, MaxShadowedLights and DistanceScale.
+Filter, MaxShadowedLights, DistanceScale, MaxInsetShadows and InsetFilter.
 
 | Technique | Lights | What it draws |
 |---|---|---|
@@ -212,6 +222,88 @@ Limits: Masked casters cast their whole shape (their clip is not run in the
 Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces are
 unshadowed; Metal, which cannot sample a depth target, draws no shadows (warned
 once). A material preview never draws shadows.
+
+### Inset shadows
+
+A Render component's **Cast Inset Shadow** (Shadows, beside Cast Shadows;
+`bCastInsetShadow`, the component's version 4, off by default) gives its mesh a
+sun shadow map of its own -- Unreal's per-object, or inset, shadow. Two things
+come of it:
+
+- **Sharpness.** The map is fitted round the one caster, not the camera's
+  frustum: LightLab's lattice (90 units across) spends well under a unit a
+  texel, where the far cascade there spends four or more.
+- **A shadow from a baked sun.** A static sun is in the bake, not the live
+  lighting, so a dynamic entity casts nothing from it (see
+  [Baked lighting](#baked-lighting)). Its inset shadow is drawn regardless.
+
+**Which sun.** `WorldBridge::BuildLighting` records it in `RenderLighting`'s
+`InsetLight*` fields: the live Directional Light, else -- drawing with a bake --
+the first static one, if it has Cast Shadows on.
+
+**Which casters.** `RenderScene` offers each proxy whose
+`RenderProxy::CastsInsetShadow` is true (a Render component with a mesh, Cast
+Shadows and Cast Inset Shadow) to `RenderContext::PrepareShadows`, largest on
+screen first -- its bounding sphere's radius over its distance. A visible one
+always; a culled one when its shadow can reach the view: its sphere's box,
+swept along the sun across the view's whole extent, overlaps the view's
+bounds. The sphere is
+the mesh's local box, scaled, so it does not change as the entity turns.
+`[Shadows] MaxInsetShadows` (0-4; Project Settings > Shadows > Inset shadows)
+caps them, and `[Shadows] InsetFilter` (Inset shadow filter: Hard, PCF 3x3 --
+the default -- or 5x5) is their edge filter, apart from Filter: their maps are
+already sharp, so a smaller one usually looks the same and costs less.
+
+**The views** (`ShadowSetup.cpp`): each an orthographic view along the sun
+holding the caster's sphere -- its depth across the sphere alone -- moved in
+whole texels so a moving caster's shadow does not crawl. They take the local
+atlas's tiles the point and spot lights left, one each (Resolution / 6 texels a
+side), so they need no texture slot of their own -- the Lighting pass has none
+spare -- and their matrices are `Scene_LocalShadowMatrices`' after the
+lights'. With no tile left, a caster casts into the sun's own views as
+before -- under a baked sun, none.
+
+**Drawing.** An inset view draws its caster and nothing else (draw event
+"Inset n"). A caster that got one is left out of the sun's own views, so its
+shadow is not drawn twice; it still casts into point and spot lights' views.
+
+**Lighting** (`Shadows.glsl`'s `InsetShadow`, fed by `Lighting_Block`: the count,
+the sun's biases, its direction and tint, and each view's matrix, texel and
+tile). A receiver is shadowed by an inset view only inside its tile -- the
+prism behind its caster. One past the far plane is behind the caster, so its
+depth is held just inside the view; one before the near plane is between the
+caster and the sun, and lit. The darkest of them is the inset shadow:
+
+- **live sun:** taken with the cascade's (the darker of the two), then as the
+  sun's technique says -- Standard takes away its light, Modulated tints.
+- **baked sun:** there is no live light to take away, so it is Modulated by the
+  sun's Shadow Tint over the whole pixel, the baked light in its emissive too
+  (`DeferredLighting.fsh`). Faces turned from the sun are left alone.
+
+**Only the pixels it can reach.** Each inset view also carries the screen
+rectangle of that prism (`ShadowView::ScreenNdc`, `InsetScreenNdc`): its
+caster's sphere -- grown by the largest normal offset and the filter's reach --
+swept along the sun. The sweep runs only while it overlaps the box round
+everything the view draws (`RenderScene` passes it to `PrepareShadows`), so it
+stops at the floor; its faces are then clipped to the view in clip space, so
+what is behind the eye or off screen drops out, and the rest is projected.
+`Lighting_InsetRects` holds it in the Lighting target's pixels, and every
+other pixel skips that inset before its matrix. A prism that meets nothing
+drawn covers no pixel; one round the eye, the whole screen.
+
+Limits: under a baked sun the tint darkens shade the bake already has, so a
+dynamic entity's shadow in a static one's is darker still; the sun only, not
+point or spot lights.
+
+Verified: the smoke test checks the views (after the lights' tiles, never
+overlapping them, capped, texel-snapped, holding the sphere, their screen
+rectangles holding the caster), the component's version 4, and on Vulkan that
+an inset caster shadows the floor where the sun's own view does not reach it,
+that MaxInsetShadows 0 turns that off, and that a caster above and behind the
+camera, out of the view's bounds, still shadows the floor it sees. LightLab's
+lattice (`InsetLattice`, from `Games/LightLab/Tools/make_inset_lattice_mesh.py`)
+shows it, turning and drifting (`LightLab.TurnLattice`): in the LightLab level,
+and in the BakedLighting level's window beam, Baked and Live.
 
 The scene block grew past the material block's 1024 bytes (3600 bytes:
 `GDI_SCENE_BLOCK_MAX_BYTES` is 4096). GDI now re-uploads a uniform block only
@@ -553,8 +645,9 @@ Live and `lighting baked | live` set it; LightLab's L key toggles it.
 
 The trade-offs of fully baked Static lights: they light dynamic entities only
 through the probes -- diffuse, no specular highlight, no sharp shadow -- and
-dynamic entities cast no shadow from them. A Stationary light keeps all of
-that, live, at its live cost; only its bounce is baked.
+dynamic entities cast no shadow from them, unless they have Cast Inset Shadow
+(a static sun's, Modulated: see [Inset shadows](#inset-shadows)). A Stationary
+light keeps all of that, live, at its live cost; only its bounce is baked.
 
 Verified: the editor's lighting tests bake small scenes whose answers are
 known -- an open texel under a straight-down sun equals radiance / pi to 5%,
@@ -601,8 +694,8 @@ material then samples like a texture.
   `RenderTargetAssetCache::CreateTransient`, named `transient://<name>` and
   never written to disk.
 - **Strip format:** GDI has no cube textures, so a cube is a strip. Each face
-  is drawn with a horizontal viewport offset only, which keeps the backends'
-  Y origins out of it. Targets are RGBA8.
+  is drawn with a horizontal viewport offset only, its up at the strip's top
+  row. Targets are RGBA8.
 - **What a material samples:** `RenderContext::FindTexture` sends a
   render-target path to the GPU target if it has been captured, else to the
   bake, else to the null texture.
@@ -719,8 +812,8 @@ under "stat unit".
   `Renderer::SetUIImage` (font atlases). Resolved once per list.
 - **The pass.** `RenderContext::DrawUI` (`UIRenderer.h`): `UI.vsh` / `UI.fsh`,
   alpha blended, no depth; texture times vertex colour. Positions go through
-  `ViewParameters.Projection` -- an orthographic one -- so each backend's own
-  flip applies exactly as to the scene. One draw per command, a scissor change
+  `ViewParameters.Projection` -- an orthographic one, the top-left pixel at
+  NDC (-1, +1) -- so the list lands as the scene does. One draw per command, a scissor change
   only between commands that clip differently (`GDISetScissorRect`).
 - **Its mesh.** One dynamic mesh per scene (`GDICreateDynamicMesh`), rewritten
   only when the list changes: a static HUD uploads nothing per frame. It grows
@@ -763,8 +856,8 @@ render thread, wait, present and idle times, and FPS, in a panel at the top righ
   `RenderContext::DrawStatUnit` is one full-screen pass (`StatsOverlay.fsh`,
   alpha blended). The text, 4 characters to a uint, goes in the material
   block. The font (`OverlayFont.h`: 5 x 7 glyphs, ASCII 32-126) is a texture
-  made on first use. The panel is placed from the quad's UV rather than
-  `gl_FragCoord`, whose origin differs between backends.
+  made on first use. The panel is placed from the quad's UV, which runs from
+  the target's top-left as its layout does.
 
 ### Stat frame
 
@@ -826,6 +919,8 @@ the end of the scope, compiled out of shipping builds). A frame reads:
 
 ```
 Scene
+  Simulate
+    Particles <system>/<emitter>   its two compute dispatches
   MaterialPreview            (editor; the stages below, per preview)
   SceneCapture <target>
     Face +X .. Face -Z | Mirror
@@ -859,6 +954,41 @@ Scene
   ViewTarget, DebugLines, StatUnit
 ```
 
+**Every draw is named** for what it draws and with what (`RenderContext`'s
+`Issue`, from the mesh's file and section and the material's file, extensions
+dropped):
+
+```
+BasePass
+  Static
+    Sphere [Sphere] | PBR                      a mesh's section, with its material
+    Cylinder [Cylinder] | FlareBody
+  Dynamic
+    Particles Debris/Chunks (up to 128) | DefaultLit  a particle emitter: its system and emitter, its capacity
+TranslucentUnlit
+  Particles Sparks/Sparks (up to 512) | ParticleStreak
+  Quad | Glow                                  a material quad
+PostProcess
+  Materials (After Effects)
+    Fullscreen | Negative
+```
+
+each a region holding its one `vkCmdDrawIndexed`. A mesh section with no material
+reads `| (plain tint)`. The names are built only where the backend records regions
+(`GDIHasDrawEvents`: Vulkan with `VK_EXT_debug_utils` -- always under RenderDoc --
+D3D12, OpenGL, Metal); `[Rendering] DrawLabels=false` turns the per-draw ones off.
+
+**GPU objects are named** after their assets (`GDISetDebugName`), so RenderDoc's
+Resource Inspector and a draw's pipeline state read what they are: a mesh's
+buffers `Engine/Content/Meshes/Box.nmmesh Positions` (`TexCoords`, `Normals`,
+`Colors`, `UV1`, `Indices`), a texture its path, a particle emitter's buffers
+`Particles Content/Particles/Laser.nmparticle:Glow State` (`Instances`, or a
+strip's `Triangles A`/`B`), every shader module its cooked file
+(`Shaders/Cooked/Vulkan/Content/Materials/Glow@00000000.fsh.spv`), and render
+targets `RT:<name>` as before. Vulkan names them through
+`vkSetDebugUtilsObjectNameEXT`, D3D12 through `ID3D12Object::SetName` (PIX and
+the debug layer); Metal and OpenGL keep the name and do not pass it on yet.
+
 A stage or group with nothing to draw has no event. Every full-screen pass is
 named after its shader (`DrawPost`). Static draws are issued before dynamic ones
 only in the Base Pass and Shadows, which neither blend nor depend on order;
@@ -873,6 +1003,178 @@ every other stage keeps its order.
 
 A mid-frame readback (an editor capture) submits the frame and starts another
 command buffer: events opened before it end with it.
+
+### Particles
+
+A **Particle System** component (`ParticleSystemComponent.h`) runs a particle
+system asset from its entity and simulates it on the GPU, with compute shaders,
+where the backend has them (Vulkan; Null runs the calls and nothing else).
+Elsewhere it draws nothing and says so once.
+
+- **The asset** (`ParticleSystemAsset.h`, `*.nmparticle`) is up to 8 emitters,
+  each with its own mesh, material, offset and settings (spawn rate, lifetime,
+  velocity, forces, size and colour over life). Shape, Velocity, Forces,
+  Rotation, Collision and Flipbook are optional **modules** (`EParticleModule`, `Modules Shape Forces`
+  in the file): one left out is at rest whatever its settings hold -- a point,
+  no initial speed, no forces, no spin (`ToSettings`). A file written before
+  modules has those its settings use (`InferModules`; a beam, none). It is text in every build --
+  a line per setting under each `Emitter <name>` line, unknown keys skipped --
+  so a game reads it as staged, with no cook. The editor's Particle Editor makes
+  and edits them (Editor README, "Particle Editor").
+- **Each emitter has a type** (`EParticleType`, `ParticleTypes.h`):
+
+  | Type | Drawn as | Turned by |
+  |---|---|---|
+  | **Sprite** | its mesh (empty: `Quad.nmmesh`) a particle, sorted back to front | **Billboard**: Face Camera (square to the view), Vertical (about world +Y toward the eye), Velocity Aligned (along its motion, stretched by speed x Velocity Stretch), Fixed (the quad's own axes); plus Rotation Rate in its plane |
+  | **Mesh** | its mesh (empty: `Box.nmmesh`) a particle, sized by Size | **Mesh Orientation**: Fixed (spinning about +Y), Random Spin (about an axis of its own), Align to Velocity (+Z along its motion) |
+  | **Ribbon** | one strip through its particles in the order they were born: a trail | widened square to the eye |
+  | **Beam** | one strip from the emitter to Beam End (or the component's Beam Target), through Beam Segments points jittered up to Beam Noise, none at its ends | widened square to the eye |
+
+  Random Rotation starts each sprite or mesh at a random angle, spinning
+  either way. A particle's random bits are fixed at birth (`Particle.Extra`),
+  so its rotation is a function of its age: no extra state.
+- **Shape**: where each is born, in the entity's own axes (the shape turns
+  with the entity; Velocity and Acceleration stay world space, so gravity is
+  down): **Sphere** (within Radius, the default), **Hemisphere** (its +Y
+  half), **Box** (within Box Size), **Cone** (a disc of Radius facing +Y,
+  each sent out within Cone Angle of +Y), **Ring** (a circle of Radius about
+  +Y, Ring Width across). **On Surface** keeps them to its surface -- the
+  shell, the faces, the rim, the circle -- and **Outward Speed** adds speed
+  out of the shape where each is born (from the centre, through the face,
+  along the cone). `ParticleSimulate.csh`'s `ShapePoint`.
+- **Over life**: size and colour (alpha too) each go **Start/End** -- size
+  straight, colour by Color Curve, faded in and out, as before -- or through
+  up to 8 **keys**: a size **Curve**, a colour **Gradient**, straight between
+  keys and held past the first and last. Either way the CPU bakes them into
+  32 samples, birth to death (`PARTICLE_LUT_SIZE`), in the dispatch's
+  parameter block (`Pa_ColorLut`, `Pa_SizeLut`; 1008 of the 1024 bytes a
+  block may hold), which every pass samples (`SizeAt`, `ColorAt`): one path
+  for every type, so a ribbon's or beam's gradient runs along it. The
+  component's Tint multiplies the samples.
+- **Collision** (an optional module): a horizontal plane Height above the
+  entity. A particle that reaches it from above bounces off -- keeping Bounce of
+  its speed into the plane and losing Friction of its speed along it -- or, with
+  Response Kill, dies there (`ParticleSimulate.csh`). Any type but a beam.
+- **Flipbook** (an optional module, sprites and meshes): the material's texture
+  as Columns x Rows frames, left to right then top to bottom; Frames of them
+  (0: all), at Frame Rate a second, looping, or -- at 0 -- Cycles times over a
+  life, each from a frame of its own with Random Start. The sort writes each
+  instance's frame into its transform's bottom row (frame, columns, rows),
+  spare in an affine transform; the material template's InstancedMesh vertex
+  shader reads it, clears it and maps the texture coordinate into the frame's
+  cell (`MATERIAL_TEMPLATE_VERSION` 12), so any material's UVs, and so its
+  texture samples, play the frame.
+- **Culling**: past an emitter's **Cull Distance** from the view (0: never) it
+  is neither simulated nor drawn, and its GPU buffers are let go; back in range
+  it starts afresh. With **Pause Offscreen** (on by default) it stops simulating
+  once no view has drawn it for half a second -- its particles kept as they
+  were -- and goes on when one does. A view culls by its Bounds: a game
+  camera's frustum box; the editor's viewport views have none and cull
+  nothing, so there an emitter pauses only when its scene is not drawn at all
+  (a hidden Particle Editor tab). `RenderStats::ParticleSimulations` counts the
+  emitters simulated.
+- **Spawn Mode**: Continuous (Spawn Rate a second) or **Burst**: Burst Count at
+  once, again every Burst Interval (0: one burst), Burst Cycles times (0: no
+  end). Emitting off and on again starts the bursts over -- how a script
+  replays a one-shot effect. Any type but a beam bursts.
+- **Spawns move with the emitter.** A frame's spawns are born at evenly spread
+  moments inside it, the first oldest, each where the emitter was then (between
+  last frame's position and this one's): a fast emitter leaves a line, not
+  clumps, and a ribbon's points come in order.
+- **The component** names one (`System`; empty runs one emitter at its
+  defaults) and says how this instance runs it: Emitting, a Tint on every
+  colour, Spawn Rate Scale (bursts too), Time Scale (0 freezes it), a Seed added
+  to each emitter's, and a Beam Target its beams end at instead (Use Beam
+  Target), for a script aiming a laser. Version 1 held one emitter's settings
+  inline; those are read past.
+- **`ParticleSystemCache`** holds systems by path. The proxy looks its system up
+  every frame and notices a new version by its pointer, so a save (the editor
+  invalidates the path) or a `Store` (the editor's unsaved edits, a system made
+  by code) reaches every component on the next frame. Each emitter keeps its GPU
+  particles through such a change unless its Max Particles changes.
+
+- **Each emitter's particles** live in world space, in a ring of up to
+  `PARTICLE_MAX_PER_SYSTEM` (2048), 48 bytes each: position and age, velocity
+  and lifetime, its random bits (`ParticleCommon.glsl`). A zeroed slot has never
+  been used.
+- **Once a frame**, before any target is bound (`RenderProxy::Simulate`,
+  against the scene's own view), two dispatches (`RenderContext::SimulateParticles`)
+  for a Sprite or Mesh emitter:
+  - `ParticleSimulate.csh`, a thread a particle: this frame's spawns -- the
+    rate times the frame's delta, the fraction carried, the CPU's count round
+    the ring (`ParticleSimulation::BuildParams`) -- are born in the emitter's
+    sphere, each at a random moment inside the frame; the rest move on by
+    acceleration, a swirl (Turbulence) and drag.
+  - `ParticleSort.csh`, one workgroup: a bitonic sort in shared memory, two
+    particles a thread, farthest first along the view; then each written as
+    an instance (GDI's layout: a transform and a colour) -- turned to the
+    camera if Face Camera, sized and coloured by age, faded in and out. Dead
+    and unused slots collapse to a point and sort last.
+  A **Ribbon** emitter runs `ParticleSimulate.csh`, then `ParticleRibbon.csh`
+  instead of the sort; a **Beam** places its points with `ParticleBeam.csh`
+  (point i of N at i/N of the way, its age i/N of a life, so size and colour
+  over life run along the beam), then `ParticleRibbon.csh`. The ribbon pass
+  takes the points in order -- a ribbon's from the oldest slot round the ring --
+  widens each across the view to its size, and writes each segment between two
+  living points as **two triangles**, one instance each of
+  `RibbonSegmentA.nmmesh` and `RibbonSegmentB.nmmesh` (a unit triangle, with
+  UVs that make the pair a quad) into two instance buffers. An affine transform
+  maps a triangle's three corners exactly, so neighbouring segments share their
+  edges with no gaps or overlaps -- through the same instanced-material path
+  as sprites, with no new GDI. U runs across the strip, V along each segment.
+  Strips are not sorted; keep a ribbon's Lifetime Variance at 0, or it breaks
+  where a point dies early.
+- **Drawn** from every view that sees it (`Draw`): the mesh (an empty Mesh is
+  `Engine/Content/Meshes/Quad.nmmesh`) instanced, one draw per section, with the
+  material's **InstancedMesh** vertex permutation (MATERIALS.md), in the stage
+  its material names, sorted with the other draws at the emitter. The
+  particle's colour reaches the material as its **Vertex Color**.
+- **Only the living are drawn.** Each emitter has a small indirect-arguments
+  buffer (`ParticleEmitterGpu::Args`): an entry per section of its mesh (laid
+  out by `DrawParticles` when it first draws it, or the mesh changes), or a
+  strip's two. The sort counts the living as it sorts them first and writes the
+  count into every entry's instance count; the ribbon pass packs the living
+  segments to the front in order (a prefix sum, one workgroup) and writes
+  theirs. The draws are then `GDISetIndirectArgs` draws
+  (`vkCmdDrawIndexedIndirect`, D3D12's `ExecuteIndirect`): an emitter that
+  holds 512 with 20 alive vertex-shades 20, with no readback. A backend
+  without indirect draws draws the whole ring, the dead collapsed to points as
+  before.
+- **Time** is the render thread's clock (`RenderContext::GetDeltaSeconds`),
+  clamped to a tenth of a second a frame, so the editor's viewport animates
+  while the World stands still.
+- **Never static**: a particle proxy refuses static draw lists
+  (`RenderProxy::AllowsStaticDraws`), its draws changing on their own.
+- **Culling** pads the entity by how far a particle can get in its life.
+
+Particles are sorted within a system, and the systems with every other
+translucent draw by their emitters; two plumes that cross can blend out of
+order. Opaque particles write depth as any mesh does.
+
+LightLab's yard runs a sample of each (`SpawnParticleDemos`; entities
+`SparksDemo`, `DebrisDemo`, `LaserDemo`, `TrailDemo`, `ExplosionDemo`), from its
+`Content/Particles/`: `Sparks` (Velocity Aligned sprites in repeating bursts
+from a Cone, under gravity, bouncing on the floor, through a white-hot to red Gradient and a
+shrinking size Curve), `Debris` (Random Spin box meshes coming to rest on the
+floor by Collision, and dust thrown out
+of a Ring that grows by a Curve, bursting), `Trail` (a ribbon with a glowing head: turn
+on Move Emitter; in the yard, AnimateLights flies it round), `Laser` (two
+jittering beams, a wide glow and a thin core; in the yard, strung between two
+pillars by its Beam Target) -- the strips and sparks with
+`ParticleStreak.material.nmgraph`, soft across U and three times as bright, so
+Bloom spreads them. `Explosion` is the Flipbook sample: a burst of
+fireballs, each playing the 4 x 4 sprite sheet
+`Content/Textures/ExplosionFlipbook.nmtexture` once over its life (white-hot,
+then orange, then grey smoke) through `ExplosionFlipbook.material.nmgraph`,
+with embers bursting out of it. LightLab's `Tools/make_flipbook_texture.py`
+writes the sheet (procedural fire, every cell's border transparent so filtering
+and mips never show the next frame).
+
+LightLab's yard has a flare (`SpawnFlare`): a red stick, a flame ball whose
+emissive (`FlareFlame`) flickers past 10 for Bloom, a red point light, and
+smoke (`Content/Particles/FlareSmoke.nmparticle` with the `FlareSmoke` material,
+Translucent Unlit: soft round puffs) born red and black well before it fades
+(Color Curve 0.45).
 
 ## GDI
 
@@ -909,9 +1211,9 @@ UI drawing (### UI) needed two more:
 
 - **Scissor rectangles.** `GDISetScissorRect(X, Y, W, H)`, in pixels of the
   viewport from its top-left, clipped to it; `GDIClearScissorRect()` goes back
-  to the whole viewport, as `GDISetViewport` does. The front end flips the
-  rectangle to the target's rows once (every backend keeps row 0 at the
-  image's bottom), so a backend's `SetScissorRect` takes rows as they are.
+  to the whole viewport, as `GDISetViewport` does. Those are the target's own
+  rows (every backend stores row 0 at the image's top), so a backend's
+  `SetScissorRect` takes them as they are.
   `Clear` ignores it.
 - **Dynamic meshes.** `GDICreateDynamicMesh(MaxVertices, MaxIndices)`: the
   `GDIMeshDesc` layout (normals and UV1 optional), written in place by
@@ -933,6 +1235,36 @@ Verification: Vulkan draws the UI GPU checks; D3D12 and Metal are written
 against their backends' existing patterns but were not compiled here (Linux);
 OpenGL compiles (the host still cannot create a GL context); the Null backend's
 are covered by GDI's smoke test.
+
+Particles (### Particles) needed three more, where `GDISupportsCompute()` says
+the backend has them -- Vulkan, D3D12 and Null so far:
+
+- **GPU buffers.** `GDICreateBuffer(Bytes, Usage, Data)`: storage for compute
+  (`GDI_BU_Storage`), per-instance vertex data (`GDI_BU_Instance`), or both;
+  filled once at creation (or zeroed), then only shaders write it.
+  `GDIReadBuffer` reads one back, waiting for the GPU, for tests and tools.
+- **Compute shaders.** A `.csh` is cooked like the other stages (`cs_5_0` for
+  D3D12) and loaded as `ST_Compute`. `GDIDispatchCompute(Shader, Params,
+  Bytes, Buffers, Count, X, Y, Z)`: the parameters at binding 0 (up to 1 KB),
+  the storage buffers at 1.. (up to 4), declared with `ComputeCommon.glsl`'s
+  macros. Inside a frame it is recorded in order with the draws, the open
+  render pass closed around it and reopened with its contents; outside one it
+  runs at once.
+- **Instanced meshes.** `GDISetInstanceBuffer(Buffer, Count)`: the indexed
+  draws after it draw Count instances, each a column-major mat4 at locations
+  2-5 and a colour at 7 (`GDI_INSTANCE_STRIDE`, 80 bytes), until it is set
+  again.
+
+| Backend | Compute | Instanced meshes |
+|---|---|---|
+| Vulkan | a compute pipeline per shader and buffer count (`VKPipelineCache::GetOrCreateCompute`), its parameters in the frame's UBO ring; full memory barriers either side | vertex layout 3: the mesh's five streams and the instance buffer at binding 5; `vkCmdDrawIndexed` with the count |
+| D3D12 | a compute PSO per shader on one compute root signature (the parameters at b0, root UAVs at u1-u4: spirv-cross makes each buffer a `RWByteAddressBuffer`), its parameters in the frame's constant-buffer ring; UAV barriers either side. No render pass to close: the draws after it keep their targets. Buffers track their state per command list, since a buffer decays to COMMON after each | vertex layout 3: the instance buffer at slot 5; `DrawIndexedInstanced` with the count, or `ExecuteIndirect` |
+| Null | buffers kept on the CPU; dispatches counted (`NullGDIStats`) | counted |
+| Metal, OpenGL | not yet: `GDISupportsCompute()` is false, so nothing is made and particles draw nothing | ignored: one instance |
+
+A compute pipeline is keyed by its shader module, so releasing a compute
+shader drops its pipelines from the cache (`ForgetComputeModule`); they are
+destroyed at shutdown, past any frame that used them.
 
 ## Tests
 
@@ -957,6 +1289,15 @@ are covered by GDI's smoke test.
   nothing; Cast Shadows off darkens nothing; a Modulated shadow leans to its
   tint. `NIMBLE_SMOKE_DUMP=<dir>` writes each capture as a PPM.
 - Scene capture (`NIMBLE_SMOKE_GPU`): see Scene capture above.
+- Particles (Null backend): the component's settings clamped, its Lua and save
+  fields; spawns counted round the ring with the fraction carried, a hitch
+  clamped, the sort sized to a power of two. GDI's smoke test: buffers,
+  dispatches and instance buffers accepted and refused.
+- GPU particles (`NIMBLE_SMOKE_GPU=Vulkan`): eleven simulations of 0.1 s read
+  back -- 55 particles, each 100 units along +Z a second of its age; the
+  instances sorted farthest first, the unused slots last; and a plume drawn
+  side on through the instanced path (`ParticleProbe`), red where it is born
+  and dark where it has aged.
 - GPU (`NIMBLE_SMOKE_GPU=Vulkan|D3D12`): previews of DefaultLit and Wave go
   through the G-buffer and keep their forward-shaded pixels (186 188 192; 40
   103 172); Glow (Translucent Unlit) is unchanged; Negative (PostProcess) inverts
@@ -975,6 +1316,11 @@ drop most of the receiver bias); Masked casters clipped in the Shadows
 sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
 lights; occlusion queries and a depth prepass in the PrePass; per-section
 bounds for culling; RGBA16F G-buffer and scene colour.
+
+Particles: compute and instancing on Metal and OpenGL; GPU emission
+counts (spawn by events, bursts); collisions with depth; soft particles
+(fading where they meet the scene); lit particles' shadows; sorting across
+systems; sub-UV animation.
 
 Recording the Base Pass on several threads, after cheaper per-draw work first:
 [MULTITHREADED_RENDERING.md](MULTITHREADED_RENDERING.md).

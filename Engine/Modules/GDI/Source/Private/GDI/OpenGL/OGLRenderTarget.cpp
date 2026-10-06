@@ -255,9 +255,8 @@ EngineCore::Image OpenGLRenderTarget::ToImage()
     EngineCore::Image Image = EngineCore::Image::CopyFrom(
             PixelData.data(), iWidth, iHeight, EngineCore::EImageFormat::BGRA8, 0);
 
-    // GL rows run bottom-up; this is the same single vertical flip the QImage
-    // version applied. One flip, in the same place. Nothing else changes.
-    Image.FlipVertical();
+    // Row 0 is the top (glClipControl, OpenGLDynamicGDI::BeginRendering), as
+    // EngineCore::Image's: the rows come back as they are.
     return Image;
 }
 

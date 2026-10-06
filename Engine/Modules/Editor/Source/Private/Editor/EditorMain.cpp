@@ -20,6 +20,7 @@
 #include "Public/Editor/EditorLog.h"
 #include "Public/Editor/EditorMainWindow.h"
 #include "Private/Editor/EditorTheme.h"
+#include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/SettingsDialog.h"
 
 /*
@@ -94,6 +95,7 @@ int main(int argc, char* argv[])
     }
     /* The user's own choices, over the project's (Edit > Editor Settings). */
     SettingsDialog::LoadUserSettings();
+    EditorGraphs::InstallShaderPDBDir();   // before the renderer loads a shader
     EditorTheme::Install();
 
     int Rhi = GEditorRHI.GetInt();

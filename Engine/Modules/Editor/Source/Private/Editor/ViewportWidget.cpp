@@ -1397,25 +1397,32 @@ QString ViewportWidget::DroppedPrefab(const QMimeData* InData) const
     return EditorContent::ToRuntimePath(File).isEmpty() ? QString() : File;
 }
 
+QString ViewportWidget::DroppedParticleSystem(const QMimeData* InData) const
+{
+    return EditorContent::ParticleSystemPathFor(EditorContent::SingleDroppedFile(InData));
+}
+
+bool ViewportWidget::CanDrop(const QMimeData* InData) const
+{
+    return !Document.IsWorldBorrowed()
+        && (!DroppedMesh(InData).isEmpty() || !DroppedPrefab(InData).isEmpty() || !DroppedParticleSystem(InData).isEmpty());
+}
+
 void ViewportWidget::dragEnterEvent(QDragEnterEvent* InEvent)
 {
-    const bool bAccept = !Document.IsWorldBorrowed()
-                      && (!DroppedMesh(InEvent->mimeData()).isEmpty() || !DroppedPrefab(InEvent->mimeData()).isEmpty());
-    if(bAccept) { InEvent->acceptProposedAction(); }
-    else        { InEvent->ignore(); }
+    if(CanDrop(InEvent->mimeData())) { InEvent->acceptProposedAction(); }
+    else                             { InEvent->ignore(); }
 }
 
 void ViewportWidget::dragMoveEvent(QDragMoveEvent* InEvent)
 {
-    const bool bAccept = !Document.IsWorldBorrowed()
-                      && (!DroppedMesh(InEvent->mimeData()).isEmpty() || !DroppedPrefab(InEvent->mimeData()).isEmpty());
-    if(bAccept) { InEvent->acceptProposedAction(); }
-    else        { InEvent->ignore(); }
+    if(CanDrop(InEvent->mimeData())) { InEvent->acceptProposedAction(); }
+    else                             { InEvent->ignore(); }
 }
 
-/* Creates (one undo step) and selects an entity drawing the mesh, or an
- * instance of the prefab: where the ray meets z = 0 if reasonably near, else
- * 600 units along it. */
+/* Creates (one undo step) and selects an entity drawing the mesh, running the
+ * particle system, or an instance of the prefab: where the ray meets z = 0 if
+ * reasonably near, else 600 units along it. */
 void ViewportWidget::dropEvent(QDropEvent* InEvent)
 {
     if(Document.IsWorldBorrowed())
@@ -1447,6 +1454,24 @@ void ViewportWidget::dropEvent(QDropEvent* InEvent)
             return;
         }
         Document.SetSelection(Placed);
+        InEvent->acceptProposedAction();
+        setFocus();
+        return;
+    }
+
+    const QString Particles = DroppedParticleSystem(InEvent->mimeData());
+    const QByteArray ParticlesUtf8 = Particles.toUtf8();
+    if(!Particles.isEmpty() && ParticlesUtf8.size() < int(RenderCore::RENDER_PARTICLE_SYSTEM_PATH_MAX))
+    {
+        EditorContent::StageAsset(EditorContent::SingleDroppedFile(InEvent->mimeData()));
+        const GameCore::EntityID Made = Document.CreateEntity(QFileInfo(Particles).completeBaseName(), Spot,
+                                                             [&ParticlesUtf8](const GameCore::Entity& InEntity)
+        {
+            RenderCore::ParticleSystemComponent Component;
+            std::memcpy(Component.System, ParticlesUtf8.constData(), size_t(ParticlesUtf8.size()));
+            InEntity.AddComponent(Component);
+        });
+        Document.SetSelection(Made);
         InEvent->acceptProposedAction();
         setFocus();
         return;

@@ -397,6 +397,7 @@ void D3D12DynamicGDI::FlushForReadback(bool bResumeActiveRegion)
     DrainDeferredDestruction();
 
     CurrentStateData->CurrentCmd         = List;
+    FrameListSerial                      = AllocateListSerial();
     CurrentStateData->ActiveRenderTarget = nullptr;
     CurrentStateData->ActiveColorCount   = 0;
     CurrentStateData->ActiveDepth        = nullptr;
@@ -581,6 +582,56 @@ GDITextureResource* D3D12DynamicGDI::CreateTextureResource(GDITexture2D* InParen
     return new D3D12TextureResource(DeviceObj, InParent, InBorder, InFilter);
 }
 
+namespace
+{
+    /* The UNORM BC formats. BC1 has no alpha-free variant here: the encoder makes no
+     * 3-colour blocks (TextureCompression.cpp), so none reads transparent black. */
+    DXGI_FORMAT ToDXGICompressedFormat(const EGDICompressedFormat InFormat)
+    {
+        switch(InFormat)
+        {
+            case GDI_CF_BC1: return DXGI_FORMAT_BC1_UNORM;
+            case GDI_CF_BC3: return DXGI_FORMAT_BC3_UNORM;
+            case GDI_CF_BC4: return DXGI_FORMAT_BC4_UNORM;
+            case GDI_CF_BC5: return DXGI_FORMAT_BC5_UNORM;
+            case GDI_CF_BC7: return DXGI_FORMAT_BC7_UNORM;
+            default: break;
+        }
+        return DXGI_FORMAT_UNKNOWN;
+    }
+}
+
+bool D3D12DynamicGDI::SupportsCompressedFormat(const EGDICompressedFormat InFormat) const
+{
+    const DXGI_FORMAT Format = ToDXGICompressedFormat(InFormat);
+    if(!DeviceObj || !DeviceObj->GetDevice() || Format == DXGI_FORMAT_UNKNOWN) return false;
+
+    // Required at feature level 11_0, but asked rather than assumed.
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT Support{ Format };
+    return SUCCEEDED(DeviceObj->GetDevice()->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &Support, sizeof(Support)))
+           && (Support.Support1 & D3D12_FORMAT_SUPPORT1_TEXTURE2D) && (Support.Support1 & D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE);
+}
+
+GDITextureResource* D3D12DynamicGDI::CreateCompressedTextureResource(const EGDICompressedFormat InFormat,
+                                                                     const GDICompressedLevel*  InLevels,
+                                                                     const uint32_t             InCount,
+                                                                     const EGDITextureBorder    InBorder,
+                                                                     const EGDITextureFilter    InFilter)
+{
+    if(!InLevels || InCount == 0 || !SupportsCompressedFormat(InFormat)) return nullptr;
+    /* A BC texture's top level must be whole blocks; the caller decodes any other to RGBA8. */
+    if(InLevels[0].Width % 4 != 0 || InLevels[0].Height % 4 != 0) return nullptr;
+
+    auto* Texture = new D3D12TextureResource(DeviceObj, ToDXGICompressedFormat(InFormat), InLevels, InCount, InBorder, InFilter);
+    if(Texture->GetSRVSlot() == UINT32_MAX)
+    {
+        Texture->Release();
+        delete Texture;
+        return nullptr;
+    }
+    return Texture;
+}
+
 #pragma endregion
 
 #pragma region Core draw path
@@ -612,8 +663,8 @@ namespace
         WriteScalar(S, "ViewParameters.Resolution",  D + 36, 4);
 
         // The camera builds a GL projection (z in [-1,1]); D3D clips z to [0,1].
-        // z' = 0.5z + 0.5w, column-major. Y is flipped in the cooked vertex
-        // shaders instead, so every shader agrees, not just projected ones.
+        // z' = 0.5z + 0.5w, column-major. Y is not flipped: D3D12 maps NDC +1
+        // to a target's first row, GDI's top-down convention (GDI.h).
         for(int Col = 0; Col < 4; ++Col)
         {
             D[Col * 4 + 2] = 0.5f * D[Col * 4 + 2] + 0.5f * D[Col * 4 + 3];
@@ -674,7 +725,8 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     D3D12PipelineCache::PipelineKey Key;
     Key.VertexShaderID = VSRes->GetID();
     Key.PixelShaderID  = PSRes->GetID();
-    Key.VertexLayoutID = InMesh->IsIndexed() ? 2u : (bIsInstanced ? 1u : 0u);
+    // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
+    Key.VertexLayoutID = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : 2u) : (bIsInstanced ? 1u : 0u);
     Key.BlendEnable    = Blend.bBlend ? TRUE : FALSE;
     Key.SrcBlend       = DecodeBlendFactor(Blend.Source);
     Key.DestBlend      = DecodeBlendFactor(Blend.Dest);
@@ -818,13 +870,13 @@ void D3D12DynamicGDI::DrawScreenQuadPrimitive()
              1.f, -1.f, 0.f,
             -1.f, -1.f, 0.f
         };
-        const float UVs[] = {
-            0.f, 0.f,
+        const float UVs[] = {   // v = 0 at NDC +1, the target's row 0: an identity copy
             0.f, 1.f,
-            1.f, 1.f,
-            1.f, 1.f,
+            0.f, 0.f,
             1.f, 0.f,
-            0.f, 0.f
+            1.f, 0.f,
+            1.f, 1.f,
+            0.f, 1.f
         };
         ScreenMesh = CreateQuadMesh(Verts, UVs, 18, 12, false);
     }
@@ -849,7 +901,7 @@ bool D3D12DynamicGDI::CheckError(const std::string&)
     return false;
 }
 
-Color D3D12DynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& InSize)
+Color D3D12DynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& /*InSize*/)
 {
     if(!DeviceObj || !CurrentStateData) return Color();
 
@@ -858,9 +910,9 @@ Color D3D12DynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size&
     D3D12RenderTarget* RT = CurrentStateData->ActiveRenderTarget;
     if(!RT || !RT->IsValid()) return Color();
 
-    // RT rows are GL-ordered; flip from top-down screen space like glReadPixels(x, height - y).
+    // RT rows are top-down, as the point's screen space: the point is the row.
     const int X = InPoint.X;
-    const int Y = InSize.Height - InPoint.Y;
+    const int Y = InPoint.Y;
     if(X < 0 || Y < 0 || X >= int(RT->GetWidth()) || Y >= int(RT->GetHeight())) return Color();
 
     std::vector<uint8_t> Pixel;

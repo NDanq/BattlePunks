@@ -9,6 +9,7 @@ class EditorContext;
 class EditorDocument;
 class QAction;
 class QComboBox;
+class QTimer;
 class QToolBar;
 class QToolButton;
 class ViewportWidget;
@@ -24,6 +25,10 @@ class ViewportWidget;
  * Lighting -- Baked, the world's bake, or Live, every light lit live
  * ([Rendering] BakedLighting); and Editor Gizmos: every entity's bounds,
  * every light's reach.
+ *
+ * All of it but a render-target view mode -- handles, space, snap, view mode,
+ * lighting, gizmos, camera speed -- is kept per user ([Editor] View*, in
+ * EditorSettings.ini): a viewport opens as the last one was left.
  */
 class ViewportPanel : public QWidget
 {
@@ -31,6 +36,7 @@ class ViewportPanel : public QWidget
 
 public:
     ViewportPanel(EditorContext& InContext, EditorDocument& InDocument, QWidget* InParent = nullptr);
+    ~ViewportPanel() override;
 
     ViewportWidget* GetViewport() const { return Viewport; }
 
@@ -54,6 +60,10 @@ public:
 
 private:
     void SetSpeedStep(int InStep);
+
+    /* After a view setting's var was set: if it changed, saves the user's
+     * settings shortly (SaveTimer), so a run of changes is one write. */
+    void Remember(bool bInChanged);
 
     /* Show > View Mode > Render Target: asks which; false if cancelled or there is none. */
     bool PickRenderTarget();
@@ -83,6 +93,7 @@ private:
     QAction*     TargetModeAction  = nullptr;
     QAction*     BakedAction       = nullptr;   // Show > Lighting
     QAction*     LiveAction        = nullptr;
+    QTimer*      SaveTimer         = nullptr;
     EditorDocument& Document;
 };
 

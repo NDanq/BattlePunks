@@ -1,4 +1,5 @@
 #include "Public/GDI/Vulkan/VKDevice.h"
+#include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
 #include <mutex>
 
 
@@ -111,6 +112,14 @@ bool VKDevice::PickPhysicalDevice()
     if(Best == VK_NULL_HANDLE) return false;
     PhysicalDevice = Best;
     GraphicsQueueFamilyIndex = BestQueueFamily;
+    {
+        uint32_t FamilyCount = 0;
+        vkGetPhysicalDeviceQueueFamilyProperties(PhysicalDevice, &FamilyCount, nullptr);
+        std::vector<VkQueueFamilyProperties> Families(FamilyCount);
+        vkGetPhysicalDeviceQueueFamilyProperties(PhysicalDevice, &FamilyCount, Families.data());
+        bGraphicsQueueCompute = GraphicsQueueFamilyIndex < FamilyCount
+                             && (Families[GraphicsQueueFamilyIndex].queueFlags & VK_QUEUE_COMPUTE_BIT) != 0;
+    }
 
     VkPhysicalDeviceProperties Props{};
     vkGetPhysicalDeviceProperties(PhysicalDevice, &Props);
@@ -148,9 +157,15 @@ bool VKDevice::CreateLogicalDevice()
     DynamicRenderingFeatures.dynamicRendering = VK_TRUE;
     DynamicRenderingFeatures.pNext            = &Sync2Features;
 
+    /* BC block formats (RenderCore's compressed textures), when there are any:
+     * without them those textures are decoded to RGBA8 instead. */
+    VkPhysicalDeviceFeatures Supported{};
+    vkGetPhysicalDeviceFeatures(PhysicalDevice, &Supported);
+
     VkPhysicalDeviceFeatures2 Features2{};
     Features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     Features2.pNext = &DynamicRenderingFeatures;
+    Features2.features.textureCompressionBC = Supported.textureCompressionBC;
 
     VkDeviceCreateInfo CreateInfo{};
     CreateInfo.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -166,7 +181,18 @@ bool VKDevice::CreateLogicalDevice()
     }
 
     vkGetDeviceQueue(Device, GraphicsQueueFamilyIndex, 0, &GraphicsQueue);
+    bTextureCompressionBC = Supported.textureCompressionBC == VK_TRUE;
     return true;
+}
+
+bool VKDevice::SupportsSampledFormat(const VkFormat InFormat) const
+{
+    if(!bTextureCompressionBC || PhysicalDevice == VK_NULL_HANDLE) { return false; }
+    VkFormatProperties Properties{};
+    vkGetPhysicalDeviceFormatProperties(PhysicalDevice, InFormat, &Properties);
+    const VkFormatFeatureFlags Needed = VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT
+                                      | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+    return (Properties.optimalTilingFeatures & Needed) == Needed;
 }
 
 VkResult VKDevice::QueueSubmit(uint32_t SubmitCount, const VkSubmitInfo* Submits, VkFence Fence)
@@ -209,4 +235,48 @@ uint32_t VKDevice::FindMemoryType(uint32_t TypeBits, VkMemoryPropertyFlags Prope
         }
     }
     return UINT32_MAX;
+}
+
+void VKDevice::SetObjectName(const VkObjectType InType, const uint64_t InHandle, const std::string& InName) const
+{
+    if(InHandle == 0 || InName.empty() || Device == VK_NULL_HANDLE || !VulkanGDIContext::HasDebugUtils()
+       || !GDIShaderDebugEnabled())
+    {
+        return;
+    }
+    static const auto SetName = reinterpret_cast<PFN_vkSetDebugUtilsObjectNameEXT>(
+        vkGetInstanceProcAddr(Instance, "vkSetDebugUtilsObjectNameEXT"));
+    if(!SetName)
+    {
+        return;
+    }
+    VkDebugUtilsObjectNameInfoEXT Info{};
+    Info.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+    Info.objectType   = InType;
+    Info.objectHandle = InHandle;
+    Info.pObjectName  = InName.c_str();
+    SetName(Device, &Info);
+}
+
+void VKDevice::SetObjectTag(const VkObjectType InType, const uint64_t InHandle, const uint64_t InTagName,
+                            const std::string& InTag) const
+{
+    if(InHandle == 0 || InTag.empty() || Device == VK_NULL_HANDLE || !VulkanGDIContext::HasDebugUtils())
+    {
+        return;
+    }
+    static const auto SetTag = reinterpret_cast<PFN_vkSetDebugUtilsObjectTagEXT>(
+        vkGetInstanceProcAddr(Instance, "vkSetDebugUtilsObjectTagEXT"));
+    if(!SetTag)
+    {
+        return;
+    }
+    VkDebugUtilsObjectTagInfoEXT Info{};
+    Info.sType        = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_TAG_INFO_EXT;
+    Info.objectType   = InType;
+    Info.objectHandle = InHandle;
+    Info.tagName      = InTagName;
+    Info.tagSize      = InTag.size();
+    Info.pTag         = InTag.data();
+    SetTag(Device, &Info);
 }

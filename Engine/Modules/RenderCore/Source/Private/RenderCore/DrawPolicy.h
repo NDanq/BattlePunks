@@ -10,6 +10,7 @@
 #include "Public/RenderCore/RenderTypes.h"
 
 class GDIMesh;
+class GDIBuffer;
 
 namespace RenderCore
 {
@@ -29,6 +30,8 @@ namespace RenderCore
         EngineCore::Color Tint{255, 255, 255};
         RenderMaterial*   Mat   = nullptr;       // MaterialQuad, Fullscreen; MeshSection (null: Mesh_PS)
         GDIMesh*          Mesh  = nullptr;
+        const char*       Section = nullptr;     // MeshSection: the section's name, for its label (Issue); stable with the mesh
+        const char*       Label   = nullptr;     // what its label calls it instead of the mesh (a particle emitter's); outlives the frame
         uint32_t          First = 0;
         uint32_t          Count = 0;             // 0: the whole mesh
         int32_t           ShadowView = -1;       // Shadows stage: the ShadowFrame view it draws into
@@ -42,6 +45,18 @@ namespace RenderCore
 
         /* The entity's baked lighting; null: none (BakedLighting.glsl). */
         const RenderBakedDraw*         Baked = nullptr;
+
+        /* MeshSection, instanced (GDISetInstanceBuffer): InstanceCount of it
+         * from Instances, drawn with the InstancedMesh vertex input; sorted by
+         * SortOrigin rather than Transform's position, which is the frame
+         * the instances sit in. Null: one, as before. */
+        GDIBuffer*                     Instances     = nullptr;
+        uint32_t                       InstanceCount = 0;
+        /* And, where the backend can, its counts from a buffer the GPU wrote
+         * (GDISetIndirectArgs, this many bytes in): only the live instances. */
+        GDIBuffer*                     IndirectArgs   = nullptr;
+        uint32_t                       IndirectOffset = 0;
+        EngineCore::Vector3            SortOrigin;
     };
 
     /* A draw as a proxy queued it, kept with its stage: what a static draw

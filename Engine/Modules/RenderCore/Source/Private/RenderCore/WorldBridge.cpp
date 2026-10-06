@@ -354,12 +354,28 @@ namespace RenderCore
         {
             const auto* Lights = static_cast<const DirectionalLightComponent*>(Pool->GetDenseData());
             bool bBakedSun = false, bLiveSun = false;
+            /* Inset shadows' light: the live sun, else the first baked one. */
+            const auto InsetFrom = [&Lighting](const DirectionalLightComponent& InLight, const bool bInBaked)
+            {
+                Lighting.bInsetLight           = InLight.bCastShadows && InLight.Intensity > 0.0f ? 1 : 0;
+                Lighting.bInsetLightBaked      = bInBaked ? 1 : 0;
+                Lighting.InsetLightDirection   = LightForward(PoseOf(InLight.Owner).Rotation);
+                Lighting.InsetShadowTint       = InLight.ShadowTint;
+                Lighting.InsetShadowBias       = InLight.ShadowBias;
+                Lighting.InsetShadowNormalBias = InLight.ShadowNormalBias;
+            };
             for(size_t Index = 0; Index < Pool->GetCount(); ++Index)
             {
                 const DirectionalLightComponent& Light = Lights[Index];
                 if(!Light.bActive) { continue; }
-                if(Baked(Light.Owner)) { bBakedSun = true; continue; }
+                if(Baked(Light.Owner))
+                {
+                    if(!bBakedSun) { InsetFrom(Light, true); }
+                    bBakedSun = true;
+                    continue;
+                }
                 bLiveSun = true;
+                InsetFrom(Light, false);
                 Lighting.LightDirection          = LightForward(PoseOf(Light.Owner).Rotation);
                 Lighting.LightColor              = Light.Color;
                 Lighting.LightIntensity          = Light.Intensity;

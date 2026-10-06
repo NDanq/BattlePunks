@@ -41,7 +41,7 @@ namespace GDIPlatform
     struct GLContextDesc
     {
         int  MajorVersion  = 4;
-        int  MinorVersion  = 4;
+        int  MinorVersion  = 5;   // glClipControl: render targets stored top-down (GDI.h)
         bool bCoreProfile  = true;
 
         /* Context to share objects (textures, buffers) with, or null. */

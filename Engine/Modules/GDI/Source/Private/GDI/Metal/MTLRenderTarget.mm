@@ -172,10 +172,8 @@ EngineCore::Image MTLRenderTarget::ToImage()
     [Cmd commit];
     [Cmd waitUntilCompleted];
 
-    // The render thread draws with a Y-flipped projection so RT memory is
-    // row-identical to a GL framebuffer (row 0 = visual bottom) -- see
-    // MetalDynamicGDI's PackViewParamsUBO. Mirror vertically exactly like the
-    // OpenGL and Vulkan backends so all three return the same orientation.
+    // RT memory is top-down (GDI.h), EngineCore::Image's order: the rows copy
+    // as they are, as on every backend.
     EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
     const auto* Src = static_cast<const uint8_t*>([Readback contents]);
     for(uint Row = 0; Row < Height; ++Row)
@@ -192,7 +190,6 @@ EngineCore::Image MTLRenderTarget::ToImage()
         }
     }
     [Readback release];
-    Result.FlipVertical();
     return Result;
 }
 

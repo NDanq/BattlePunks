@@ -4,7 +4,7 @@
 
 // Bumped when a change here or in the templates breaks shader caches cooked
 // before it; RenderCore refuses a cache that disagrees (MaterialPermutation.h).
-#define MATERIAL_TEMPLATE_VERSION 10
+#define MATERIAL_TEMPLATE_VERSION 12
 
 // What input nodes read. Each stage's template fills it; the pixel-only
 // fields exist only in the pixel stage, so a pixel-only node in the vertex
@@ -120,7 +120,7 @@ vec3 Material_NormalMap(in MaterialInputs Inputs, vec3 InColor, float InStrength
 vec2 Material_MirrorUV(in MaterialInputs Inputs)
 {
     vec2 Ndc = Inputs.ClipPosition.xy / max(Inputs.ViewDepth, 1e-4);
-    vec2 Uv  = Ndc * 0.5 + 0.5;
+    vec2 Uv  = NdcToTargetUv(Ndc);
     return vec2(1.0 - Uv.x, Uv.y);
 }
 
@@ -156,7 +156,7 @@ vec4 Material_SampleCubeStrip(sampler2D InStrip, vec3 InDirection)
     vec2  Ndc   = vec2(dot(InDirection, Right), dot(InDirection, Up)) / Depth;
     float Size  = float(textureSize(InStrip, 0).y);
     float Inset = 0.5 / Size;
-    vec2  Uv    = clamp(Ndc * 0.5 + 0.5, vec2(Inset), vec2(1.0 - Inset));
+    vec2  Uv    = clamp(NdcToTargetUv(Ndc), vec2(Inset), vec2(1.0 - Inset));
     return texture(InStrip, vec2((float(Face) + Uv.x) / 6.0, Uv.y));
 }
 #endif

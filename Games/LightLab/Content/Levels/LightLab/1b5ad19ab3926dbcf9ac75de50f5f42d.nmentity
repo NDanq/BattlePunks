@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="1b5ad19ab3926dbcf9ac75de50f5f42d" Name="FlareLight">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="70" B="35" A="255" />
+    <Intensity Value="12" />
+    <Radius Value="700" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="4" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-150" Y="175" Z="-750" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

@@ -17,7 +17,7 @@ float DistanceAt(vec2 InUV)
 {
     ivec2 Texel = clamp(ivec2(InUV * PP_Sizes.zw), ivec2(0), ivec2(PP_Sizes.zw) - 1);
     float Depth = texelFetch(SceneDepth, Texel, 0).r;
-    return length(PP_WorldAt(InUV * 2.0 - 1.0, Depth) - Scene_CameraPosition.xyz);
+    return length(PP_WorldAt(TargetUvToNdc(InUV), Depth) - Scene_CameraPosition.xyz);
 }
 
 void main(void)

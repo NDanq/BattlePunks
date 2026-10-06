@@ -52,6 +52,9 @@
  *                      light-animation systems, owns the mode.
  *   LightLabBakedLevel loads Content/Levels/BakedLighting.nmworld; flies the
  *                      Player and swings the dynamic ball (Swinger).
+ *
+ * Both turn the InsetLattice (inset shadows' demo cage) and drift it round
+ * where it was placed, so its own shadow map follows a moving caster.
  *   LightLabGameMode   mouse capture, the T/F/L toggles, a periodic report.
  *   LightLabGameModule owns and registers both levels.
  *   LightLabAvatar     multiplayer: each connected player is an orb the others
@@ -86,6 +89,7 @@ namespace
     const char* const BoxMesh    = "Engine/Content/Meshes/Box.nmmesh";
     const char* const SphereMesh = "Engine/Content/Meshes/Sphere.nmmesh";
     const char* const PlaneMesh  = "Engine/Content/Meshes/Plane.nmmesh";
+    const char* const CylinderMesh = "Engine/Content/Meshes/Cylinder.nmmesh";
 
     /* A prefab from a file (Content/Prefabs): a Cylinder shaft on a Box base
      * under a Box capital, 440 high, standing on its root. */
@@ -200,6 +204,16 @@ struct LightLabSwingContext
     double              ElapsedSeconds = 0.0;
 };
 
+/* What LightLab.TurnLattice's void* points at: the inset-shadow lattice,
+ * turning and drifting round where it was placed. */
+struct LightLabLatticeContext
+{
+    GameCore::EntityID  Lattice;
+    EngineCore::Vector3 Center;
+    EngineCore::Vector3 Rotation;
+    double              ElapsedSeconds = 0.0;
+};
+
 /* What LightLab.AnimateLights' void* points at. */
 struct LightLabAnimateContext
 {
@@ -214,6 +228,11 @@ struct LightLabAnimateContext
     /* The point light circles this (the centre pillar) at OrbitRadius. */
     EngineCore::Vector3 OrbitCenter;
     double              OrbitRadius    = 350.0;
+
+    /* The ribbon demo's emitter flies round this, so its trail shows. */
+    GameCore::EntityID  TrailEmitter;
+    EngineCore::Vector3 TrailCenter;
+    double              TrailRadius    = 120.0;
 };
 
 namespace
@@ -307,6 +326,15 @@ namespace
             Orbit->Position.SetX(float(Context.OrbitCenter.GetX() + Context.OrbitRadius * std::cos(Angle)));
             Orbit->Position.SetZ(float(Context.OrbitCenter.GetZ() + Context.OrbitRadius * std::sin(Angle)));
         }
+
+        if(GameCore::TransformComponent* Trail = InWorld.GetEntity(Context.TrailEmitter).GetComponent<GameCore::TransformComponent>())
+        {
+            /* A lap every ~3 seconds, rising and falling as it goes: a ribbon behind it. */
+            const double Angle = T * 2.1;
+            Trail->Position.SetX(float(Context.TrailCenter.GetX() + Context.TrailRadius * std::cos(Angle)));
+            Trail->Position.SetY(float(Context.TrailCenter.GetY() + 40.0 * std::sin(Angle * 2.0)));
+            Trail->Position.SetZ(float(Context.TrailCenter.GetZ() + Context.TrailRadius * std::sin(Angle)));
+        }
     }
 
     /* PrePhysics system: carries the Swinger round its starting point, one lap
@@ -329,6 +357,46 @@ namespace
     /* InPath into InWorld, by its source path (GameCore::ResolveContentWorld:
      * cooked here or ahead outside the editor). False, logged, if there is
      * none or it cannot be read. */
+    /* PrePhysics system: turns the InsetLattice a full turn every 15 seconds
+     * about its height, rocking it 10 degrees, and drifts it round a 25-unit
+     * circle every 9 seconds, bobbing 10 -- slow enough to follow its
+     * shadow's bars, fast enough to cross many shadow-map texels. */
+    void TurnLatticeSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    {
+        auto& Context = *static_cast<LightLabLatticeContext*>(InUserData);
+        Context.ElapsedSeconds += double(InDeltaSeconds);
+        GameCore::TransformComponent* Transform = InWorld.GetEntity(Context.Lattice).GetComponent<GameCore::TransformComponent>();
+        if(!Transform)
+        {
+            return;
+        }
+        const double Time  = Context.ElapsedSeconds;
+        const double Drift = Time * (2.0 * 3.14159265358979323846 / 9.0);
+        Transform->Position = EngineCore::Vector3(Context.Center.GetX() + 25.0 * std::cos(Drift),
+                                                  Context.Center.GetY() + 10.0 * std::sin(Drift * 2.0),
+                                                  Context.Center.GetZ() + 25.0 * std::sin(Drift));
+        Transform->Rotation = EngineCore::Vector3(Context.Rotation.GetX() + 10.0 * std::sin(Time * 0.7),
+                                                  Context.Rotation.GetY() + Time * 24.0,
+                                                  Context.Rotation.GetZ());
+    }
+
+    /* InsetLattice, if InWorld has one, into InOut; false if not (nothing to turn). */
+    bool FindLattice(GameCore::World& InWorld, LightLabLatticeContext& InOut)
+    {
+        InOut = LightLabLatticeContext();
+        InOut.Lattice = InWorld.FindEntityByName("InsetLattice");
+        const GameCore::TransformComponent* Placed = InWorld.GetEntity(InOut.Lattice).GetComponent<GameCore::TransformComponent>();
+        if(!InOut.Lattice.IsSet() || !Placed)
+        {
+            return false;
+        }
+        InOut.Center   = Placed->Position;
+        InOut.Rotation = Placed->Rotation;
+        return true;
+    }
+
+    /* InPath into InWorld -- in a game build, its cooked twin in
+     * Content/Levels/Cooked/. False, logged, if there is none or it cannot be read. */
     bool LoadWorld(const char* InPath, GameCore::World& InWorld)
     {
         const std::string Path = GameCore::ResolveContentWorld(InPath);
@@ -593,6 +661,7 @@ public:
         SunEntity                       = World.FindEntityByName("Sun");
         AnimateContext.SweepSpot        = World.FindEntityByName("SweepSpot");
         AnimateContext.OrbitLight       = World.FindEntityByName("OrbitLight");
+        AnimateContext.TrailEmitter     = World.FindEntityByName("TrailDemo");
         if(!Player.IsSet())
         {
             CORE_LOG_ERROR("[LightLab] the level has no entity named Player; nothing to fly")
@@ -615,10 +684,19 @@ public:
             AnimateContext.OrbitCenter = EngineCore::Vector3(0.0, Start.GetY(), 0.0);
             AnimateContext.OrbitRadius = std::max(std::hypot(double(Start.GetX()), double(Start.GetZ())), 1.0);
         }
+        if(const GameCore::TransformComponent* Trail = World.GetEntity(AnimateContext.TrailEmitter).GetComponent<GameCore::TransformComponent>())
+        {
+            /* It circles a point TrailRadius toward -X of where it was placed (its circle's east end). */
+            AnimateContext.TrailCenter = Trail->Position - EngineCore::Vector3(AnimateContext.TrailRadius, 0.0, 0.0);
+        }
 
         FlyContext.Player = Player;
         World.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &FlyContext);
         World.RegisterSystem("LightLab.AnimateLights", GameCore::TP_PrePhysics, &AnimateLightsSystem, &AnimateContext);
+        if(FindLattice(World, LatticeContext))
+        {
+            World.RegisterSystem("LightLab.TurnLattice", GameCore::TP_PrePhysics, &TurnLatticeSystem, &LatticeContext);
+        }
 
         /* Here, not a member initialiser: needs the Player and the Sun. */
         Mode.emplace(Player, SunEntity);
@@ -700,6 +778,78 @@ private:
         std::snprintf(Render.Materials[0], sizeof(Render.Materials[0]), "%s", InMaterial);
         Render.bCastShadows = bInCasts ? 1 : 0;
         Shape.AddComponent(Render);
+    }
+
+    /*
+     * A road flare standing in the yard: a red stick, a glowing ball for
+     * the flame (emissive far past 1, so Bloom spreads it), a red light it
+     * casts, and its smoke -- a Particle System of soft puffs, born red and
+     * blackening as they rise and spread (RenderCore's
+     * ParticleSystemComponent; Content/Particles/FlareSmoke.nmparticle,
+     * Content/Materials/Flare*.material.nmgraph).
+     */
+    static void SpawnFlare(GameCore::World& InWorld)
+    {
+        const EngineCore::Vector3 Base(-150.0, 0.0, -750.0);
+        SpawnShape(InWorld, "FlareStick", CylinderMesh, true,
+                   Placed(Base + EngineCore::Vector3(0.0, 70.0, 0.0), EngineCore::Vector3(16.0, 140.0, 16.0)),
+                   "Content/Materials/FlareBody.material.nmgraph");
+        SpawnShape(InWorld, "FlareFlame", SphereMesh, false,
+                   Placed(Base + EngineCore::Vector3(0.0, 152.0, 0.0), EngineCore::Vector3(30.0, 30.0, 30.0)),
+                   "Content/Materials/FlareFlame.material.nmgraph");
+
+        RenderCore::PointLightComponent Light;
+        Light.Color        = EngineCore::Color(255, 70, 35);
+        Light.Intensity    = 12.0f;
+        Light.Radius       = 700.0f;
+        Light.bCastShadows = 0;
+        SpawnLight(InWorld, "FlareLight", Base + EngineCore::Vector3(0.0, 175.0, 0.0), EngineCore::Vector3(0.0, 0.0, 0.0), Light);
+
+        const GameCore::Entity Smoke = InWorld.CreateEntity("FlareSmoke");
+        GameCore::TransformComponent Transform;
+        Transform.Position = Base + EngineCore::Vector3(0.0, 168.0, 0.0);
+        Smoke.AddComponent(Transform);
+        RenderCore::ParticleSystemComponent Particles;
+        std::snprintf(Particles.System, sizeof(Particles.System), "%s", "Content/Particles/FlareSmoke.nmparticle");
+        Smoke.AddComponent(Particles);
+    }
+
+    /* A Particle System running InSystem at InPosition, named InName. */
+    static RenderCore::ParticleSystemComponent* SpawnParticles(GameCore::World& InWorld, const char* InName,
+                                                               const EngineCore::Vector3& InPosition, const char* InSystem)
+    {
+        const GameCore::Entity Entity = InWorld.CreateEntity(InName);
+        GameCore::TransformComponent Transform;
+        Transform.Position = InPosition;
+        Entity.AddComponent(Transform);
+        RenderCore::ParticleSystemComponent Particles;
+        std::snprintf(Particles.System, sizeof(Particles.System), "%s", InSystem);
+        return Entity.AddComponent(Particles);
+    }
+
+    /*
+     * A sample of each particle type across the front of the yard
+     * (Content/Particles/; RenderCore's RENDERPIPELINE.md, "Particles"):
+     * sparks bursting in front of the left pillars, debris bursting by the ball,
+     * a laser strung between the right pillars (its Beam Target, set here,
+     * overrides the asset's own end), a ribbon trailing a point that
+     * AnimateLights flies round in a circle, and an explosion in front of the
+     * centre pillar: a fireball played from a sprite sheet (the Flipbook
+     * module; Content/Textures/ExplosionFlipbook.nmtexture, which
+     * Tools/make_flipbook_texture.py writes) with embers bursting out.
+     */
+    static void SpawnParticleDemos(GameCore::World& InWorld)
+    {
+        SpawnParticles(InWorld, "SparksDemo", EngineCore::Vector3(-650.0, 0.0, -820.0), "Content/Particles/Sparks.nmparticle");
+        SpawnParticles(InWorld, "DebrisDemo", EngineCore::Vector3(420.0, 0.0, -680.0), "Content/Particles/Debris.nmparticle");
+        if(RenderCore::ParticleSystemComponent* Laser =
+               SpawnParticles(InWorld, "LaserDemo", EngineCore::Vector3(425.0, 260.0, -1000.0), "Content/Particles/Laser.nmparticle"))
+        {
+            Laser->bUseBeamTarget = 1;
+            Laser->BeamTarget     = EngineCore::Vector3(775.0, 260.0, -1000.0);
+        }
+        SpawnParticles(InWorld, "TrailDemo", EngineCore::Vector3(-300.0, 140.0, -600.0), "Content/Particles/Trail.nmparticle");
+        SpawnParticles(InWorld, "ExplosionDemo", EngineCore::Vector3(160.0, 0.0, -860.0), "Content/Particles/Explosion.nmparticle");
     }
 
     /* The flying view, as LightLab.Player: above and behind the yard,
@@ -802,6 +952,9 @@ private:
         SpawnShape(InWorld, "Ball", SphereMesh, true,
                    Placed(EngineCore::Vector3(150.0, 60.0, -600.0), EngineCore::Vector3(120.0, 120.0, 120.0)));
 
+        SpawnFlare(InWorld);
+        SpawnParticleDemos(InWorld);
+
         /* A colonnade down the right of the yard: instances of a prefab file,
          * so a saved level keeps them as instances (.nmprefabinst) of it. */
         for(int Index = 0; Index < 4; ++Index)
@@ -889,6 +1042,7 @@ private:
     GameCore::EntityID     SunEntity;
     LightLabFlyContext     FlyContext;
     LightLabAnimateContext AnimateContext;
+    LightLabLatticeContext LatticeContext;
 
     std::optional<LightLabGameMode> Mode;
 };
@@ -932,6 +1086,10 @@ public:
 
         World.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &FlyContext);
         World.RegisterSystem("LightLab.Swing", GameCore::TP_PrePhysics, &SwingSystem, &SwingContext);
+        if(FindLattice(World, LatticeContext))
+        {
+            World.RegisterSystem("LightLab.TurnLattice", GameCore::TP_PrePhysics, &TurnLatticeSystem, &LatticeContext);
+        }
         Mode.emplace(Player, World.FindEntityByName("Sun"));
         return true;
     }
@@ -944,6 +1102,7 @@ public:
 private:
     LightLabFlyContext              FlyContext;
     LightLabSwingContext            SwingContext;
+    LightLabLatticeContext          LatticeContext;
     std::optional<LightLabGameMode> Mode;
 };
 

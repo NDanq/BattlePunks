@@ -96,6 +96,21 @@ instances (`.nmprefabinst`). A Debug or RelWithDebInfo Client cooks it as it
 loads; a Shipping build reads the cooked copy in `Cooked/Content/Prefabs/`,
 which the editor console's `cook prefabs` regenerates after the prefab changes.
 
+A road flare stands in the front of the yard, showing GPU particles
+(RENDERPIPELINE.md, "Particles"): a red stick, a flame ball whose emissive
+flickers far past 1 so Bloom spreads it, a red point light, and its smoke -- a
+**Particle System** component running `Content/Particles/FlareSmoke.nmparticle`,
+soft puffs (`FlareSmoke.material.nmgraph`, Translucent Unlit) born red and
+turning black as they rise, drift and spread. Double-click it in the Content
+Browser to open it in the editor's Particle Editor. Across the front of the
+yard is a sample of each particle type (`Content/Particles/`): `Sparks`
+(stretched sprites in bursts) by the left pillars, `Debris` (spinning box
+meshes and a dust puff, bursting) by the ball, `Laser` (two jittering beams)
+strung between the right pillars by its component's Beam Target, and `Trail` (a
+ribbon) behind a point that flies in a circle while playing.
+It is simulated by compute shaders, so it shows on Vulkan only for now, and it
+animates in the editor's viewport as well as in Play.
+
 `Content/Prefabs/ReflectionDemo.nmprefab` shows scene capture
 (RENDERPIPELINE.md, "Scene capture"). It is a mirror pool with a chrome ball
 over it:

@@ -24,8 +24,8 @@ void main(void)
     vec4 Prev    = PP_PrevViewProjection * vec4(PP_WorldAt(Ndc, min(Depth, 0.9999)), 1.0);
     vec2 PrevNdc = Prev.w > 1e-5 ? Prev.xy / Prev.w : Ndc;
 
-    // Where this pixel was, in UV, scaled and limited in pixels.
-    vec2  Velocity = (Ndc - PrevNdc) * 0.5 * PP_Motion.x;
+    // Where this pixel was, in UV (v runs down, NDC y up), scaled and limited in pixels.
+    vec2  Velocity = (Ndc - PrevNdc) * vec2(0.5, -0.5) * PP_Motion.x;
     vec2  Pixels   = Velocity * PP_Sizes.zw;
     float Length   = length(Pixels);
     if(Length > PP_Motion.y) { Velocity *= PP_Motion.y / Length; }

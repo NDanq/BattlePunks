@@ -22,15 +22,19 @@ namespace RenderCore
 {
     /* MaterialCommon.glsl's MATERIAL_TEMPLATE_VERSION: a shader cache cooked
      * against another is refused (ShaderCache.h). */
-    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 10;   // 3: Y up (Two Sided facing); 4: point/spot lights and shadows; 5: Scene Depth;
+    constexpr uint32_t MATERIAL_TEMPLATE_VERSION = 12;   // 3: Y up (Two Sided facing); 4: point/spot lights and shadows; 5: Scene Depth;
                                                         // 6: emissive past 1 in GBuffer3; 7: HDR scene colour (Scene_Output);
                                                         // 8: baked lighting (the 160-byte engine block, UV1, Scene_Baked);
                                                         // 9: the Unlit view mode (Scene_View); 10: preview channels,
-                                                        // directional lightmaps (Scene_Baked.z)
+                                                        // directional lightmaps (Scene_Baked.z); 11: instanced meshes
+                                                        // 12: a particle's flipbook frame in its instance transform's bottom row
 
     enum class EMaterialDomain : uint8_t { Opaque = 0, Masked = 1, Translucent = 2, PostProcess = 3 };
     enum class EMaterialShading : uint8_t { Lit = 0, Unlit = 1 };
-    enum class EMaterialVertexInput : uint8_t { Quad = 0, Mesh = 1, Fullscreen = 2 };
+    /* InstancedMesh: a mesh drawn many times in one draw (GDISetInstanceBuffer),
+     * each instance's transform after the model's and its colour times the
+     * vertex colour -- what a particle system draws with. */
+    enum class EMaterialVertexInput : uint8_t { Quad = 0, Mesh = 1, Fullscreen = 2, InstancedMesh = 3 };
 
     /* Bits 0-2 domain, 3-4 shading: a pixel stage's key. */
     constexpr uint32_t GetPixelPermutationKey(const EMaterialDomain InDomain, const EMaterialShading InShading)

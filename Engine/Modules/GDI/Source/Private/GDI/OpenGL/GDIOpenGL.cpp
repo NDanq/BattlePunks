@@ -48,7 +48,7 @@ bool LoadFunctions()
     if(FirstMissing != nullptr)
     {
         GDI_LOG_ERROR(std::string("[GDIGL] Failed to resolve OpenGL entry point '") + FirstMissing
-                      + "'. Is a context current, and does it meet the 4.4 core requirement?")
+                      + "'. Is a context current, and does it meet the 4.5 core requirement?")
         return false;
     }
 
@@ -65,7 +65,7 @@ bool GDIGLFunctions::hasOpenGLFramebufferBlit()
      * the only use of QOpenGLFramebufferObject anywhere in this backend.
      *
      * glBlitFramebuffer is core from GL 3.0 and this backend already requires
-     * 4.4+, so "did it resolve" is both the honest test and the one that
+     * 4.5+, so "did it resolve" is both the honest test and the one that
      * actually matters -- a driver that gave us a context but no blit entry
      * point would fail here rather than at the call.
      */

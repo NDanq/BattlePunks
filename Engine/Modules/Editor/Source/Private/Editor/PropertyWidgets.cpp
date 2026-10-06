@@ -32,6 +32,7 @@
 #include "Public/Math/Vector.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Private/Editor/Particles/ParticleAssets.h"
 
 using GameCore::EPropertyType;
 
@@ -476,7 +477,8 @@ namespace
             const bool bPost     = (Entry.Flags & GameCore::PF_AssetPostProcess) != 0;
             const bool bTarget   = (Entry.Flags & GameCore::PF_AssetRenderTarget) != 0;
             const bool bTexture  = (Entry.Flags & GameCore::PF_AssetTexture) != 0;
-            if((bMesh || bMaterial || bPost || bTarget || bTexture) && !Entry.IsReadOnly())
+            const bool bParticles = (Entry.Flags & GameCore::PF_AssetParticleSystem) != 0;
+            if((bMesh || bMaterial || bPost || bTarget || bTexture || bParticles) && !Entry.IsReadOnly())
             {
                 /* What each kind of asset field offers. */
                 struct AssetUi { EAsset Kind; const char* Placeholder; const char* Tip; const char* PickTip; const char* Title; const char* Filter; };
@@ -496,17 +498,21 @@ namespace
                     { EAsset::Texture, "Drop an .nmtexture here",
                       "A texture, by its path: Content/Textures/Sky.nmtexture (an HDRI imported from a Radiance .hdr, for a Sky Light)",
                       "Choose a texture", "Choose a Texture", "Textures (*.nmtexture)" },
+                    { EAsset::ParticleSystem, "Drop an .nmparticle here (empty: one default emitter)",
+                      "A particle system, by its path: Content/Particles/Smoke.nmparticle -- made and edited in the Particle Editor",
+                      "Choose a particle system", "Choose a Particle System", "Particle Systems (*.nmparticle)" },
                 };
-                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : 4];
+                const AssetUi& Ui = Kinds[bMesh ? 0 : bMaterial ? 1 : bPost ? 2 : bTarget ? 3 : bTexture ? 4 : 5];
                 AssetKind = Ui.Kind;
                 Edit->setPlaceholderText(QString::fromLatin1(Ui.Placeholder));
                 Edit->installEventFilter(this);
                 if(!bMesh)
                 {
-                    auto* Completer = new QCompleter(bMaterial ? EditorContent::ListMaterialPaths()
-                                                     : bPost   ? EditorContent::ListPostProcessPaths()
-                                                     : bTarget ? EditorContent::ListRenderTargetPaths()
-                                                               : EditorContent::ListTexturePaths(), Edit);
+                    auto* Completer = new QCompleter(bMaterial  ? EditorContent::ListMaterialPaths()
+                                                     : bPost      ? EditorContent::ListPostProcessPaths()
+                                                     : bTarget    ? EditorContent::ListRenderTargetPaths()
+                                                     : bParticles ? EditorContent::ListParticleSystemPaths()
+                                                                  : EditorContent::ListTexturePaths(), Edit);
                     Completer->setCaseSensitivity(Qt::CaseInsensitive);
                     Completer->setFilterMode(Qt::MatchContains);
                     Edit->setCompleter(Completer);
@@ -525,6 +531,31 @@ namespace
                     const QString Value = Chosen.isEmpty() ? QString() : ValueForFile(Chosen);
                     if(!Value.isEmpty()) { SetAndCommit(Value); }
                 });
+
+                /* A particle system opens in the Particle Editor, made first if the field is empty. */
+                if(bParticles)
+                {
+                    auto* Open = new QToolButton(this);
+                    Open->setText(QStringLiteral("Edit"));
+                    Open->setToolTip(QStringLiteral("Open this particle system in the Particle Editor (empty: make a new one here)"));
+                    Layout->addWidget(Open);
+                    connect(Open, &QToolButton::clicked, this, [this]()
+                    {
+                        const QString Runtime = Edit->text().trimmed();
+                        if(Runtime.isEmpty())
+                        {
+                            const QString Made = EditorParticles::CreateParticleSystem(QString(), window(), false);
+                            const QString Value = Made.isEmpty() ? QString() : ValueForFile(Made);
+                            if(!Value.isEmpty())
+                            {
+                                SetAndCommit(Value);
+                                EditorParticles::OpenParticleSystem(Made, window());
+                            }
+                            return;
+                        }
+                        EditorParticles::OpenParticleSystem(EditorParticles::ToProjectPath(Runtime), window());
+                    });
+                }
             }
         }
 
@@ -572,7 +603,7 @@ namespace
         }
 
     private:
-        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture };
+        enum class EAsset { None, Mesh, Material, PostProcess, RenderTarget, Texture, ParticleSystem };
 
         void Commit()
         {
@@ -645,6 +676,10 @@ namespace
             if(AssetKind == EAsset::Texture)
             {
                 return EditorContent::TexturePathFor(InFile);
+            }
+            if(AssetKind == EAsset::ParticleSystem)
+            {
+                return EditorContent::ParticleSystemPathFor(InFile);
             }
             return QString();
         }

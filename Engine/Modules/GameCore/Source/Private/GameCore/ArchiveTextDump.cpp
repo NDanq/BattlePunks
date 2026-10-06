@@ -67,6 +67,8 @@ namespace
             EngineCore::MakeArchiveTag('N','T','E','X'),   // RenderCore: a .nmtexture
             EngineCore::MakeArchiveTag('T','H','D','R'),   // RenderCore: texture size and sampling
             EngineCore::MakeArchiveTag('T','P','I','X'),   // RenderCore: texture pixels
+            EngineCore::MakeArchiveTag('T','M','I','P'),   // RenderCore: texture mip levels
+            EngineCore::MakeArchiveTag('T','B','L','K'),   // RenderCore: texture compressed blocks
             EngineCore::MakeArchiveTag('I','S','R','C'),   // RenderCore: where an imported asset came from
         };
 

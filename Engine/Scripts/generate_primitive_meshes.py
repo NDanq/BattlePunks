@@ -7,13 +7,21 @@ RenderComponent names one as "Engine/Content/Meshes/Box.nmmesh").
     Box.nmmesh      a 1-unit cube: 6 faces of 2 triangles, each face its own 4 vertices
     Sphere.nmmesh   a UV sphere, diameter 1: 32 segments around, 16 rings
     Plane.nmmesh    a 1 x 1 square in X and Z, facing up (+Y), in 16 x 16 cells
+    Quad.nmmesh     a 1 x 1 square in X and Y facing -Z (toward the viewer), as a
+                    Render component's built-in quad: what a particle system draws
     Cylinder.nmmesh diameter 1, height 1, along Y: 32 segments around, a flat cap
                     at each end (the wall smooth, its edges hard)
     Capsule.nmmesh  diameter 1, height 2, along Y: a 1-unit cylinder between two
                     hemispheres, 32 segments around, 8 rings per hemisphere,
                     smooth all over
+    RibbonSegmentA.nmmesh, RibbonSegmentB.nmmesh
+                    one triangle each, corners (0,0,0) (1,0,0) (0,1,0) facing -Z:
+                    a particle ribbon's or beam's two triangles a segment, each
+                    mapped exactly onto its corners (RenderCore's ParticleRibbon.csh).
+                    A's UVs (0,0) (1,0) (0,1); B's (1,1) (0,1) (1,0), so the two
+                    make the segment's quad. Not centred
 
-All five are centred on the origin and are made the way the importer makes a
+The first six are centred on the origin and are made the way the importer makes a
 glTF mesh, so a material treats them alike, lightmap UVs included: each shape is built in glTF's
 frame -- right-handed, +Y up, +Z toward the viewer -- then converted to the
 engine's exactly as GltfImporter.cpp converts one (z flips, and the winding
@@ -29,7 +37,7 @@ with it):
   - UV1, the lightmap UVs (baked lighting): charts in 0-1 that do not overlap,
     MARGIN apart -- a texel at the smallest lightmap the editor makes (32) --
     as the importer's generated ones are. The box's faces in a 3 x 2 grid; the
-    plane, sphere and capsule their UV0 inset; the cylinder's wall across the
+    plane, sphere and capsule their UV0 inset, the quad its UV0; the cylinder's wall across the
     top half and its caps side by side below;
   - one section, named for the mesh, with no material: drawn with DefaultLit
     unless a RenderComponent slot names one; no vertex colours (white).
@@ -171,6 +179,23 @@ def make_plane(cells=16):
     normal = UP
     image_up = (0.0, 0.0, -1.0)                # away from the viewer is the image's top
     quad(mesh, (0.0, 0.0, 0.0), cross(image_up, normal), scale(image_up, -1.0), normal, cells)
+    return mesh
+
+
+def make_quad():
+    mesh = Mesh("Quad")
+    normal = (0.0, 0.0, 1.0)                   # toward the viewer: the engine's -Z
+    quad(mesh, (0.0, 0.0, 0.0), cross(UP, normal), scale(UP, -1.0), normal)
+    return mesh
+
+
+def make_ribbon_segment(name, uvs):
+    mesh = Mesh(name)
+    normal = (0.0, 0.0, 1.0)                   # toward the viewer: the engine's -Z, as the quad
+    corners = [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)]
+    for corner, uv in zip(corners, uvs):
+        mesh.vertex(corner, normal, uv)
+    mesh.triangle(0, 1, 2)
     return mesh
 
 
@@ -331,7 +356,9 @@ def main():
     args = parser.parse_args()
 
     args.out.mkdir(parents=True, exist_ok=True)
-    for mesh in (make_box(), make_sphere(), make_plane(), make_cylinder(), make_capsule()):
+    ribbon_a = make_ribbon_segment("RibbonSegmentA", [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)])
+    ribbon_b = make_ribbon_segment("RibbonSegmentB", [(1.0, 1.0), (0.0, 1.0), (1.0, 0.0)])
+    for mesh in (make_box(), make_sphere(), make_plane(), make_quad(), make_cylinder(), make_capsule(), ribbon_a, ribbon_b):
         mesh.check()
         mesh.check_uv1()
         to_engine(mesh)

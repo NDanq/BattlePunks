@@ -23,7 +23,7 @@ void main(void)
     vec2  Uv   = vec2(gl_FragCoord.x - float(Face) * Size, gl_FragCoord.y) / Size;
     vec3  Forward, Right, Up;
     IBL_FaceBasis(Face, Forward, Right, Up);
-    vec2  Ndc  = Uv * 2.0 - 1.0;
+    vec2  Ndc  = TargetUvToNdc(Uv);   // row 0 is the face's top
     vec3  Dir  = normalize(Forward + Right * Ndc.x + Up * Ndc.y);
 
     vec3 Radiance;

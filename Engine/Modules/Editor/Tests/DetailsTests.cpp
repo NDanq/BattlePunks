@@ -11,15 +11,22 @@
 #include <cstring>
 
 #include <QApplication>
+#include <QCheckBox>
 #include <QComboBox>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QStandardPaths>
 #include <QTemporaryDir>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/Core/CoreConfig.h"
+#include "Private/Editor/SettingsDialog.h"
+#include "Public/Editor/EditorContext.h"
+#include "Public/Editor/ViewportPanel.h"
+#include "Public/Editor/ViewportWidget.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/TextureViewerWindow.h"
 
@@ -222,7 +229,20 @@ static void TestTextureViewer()
 
     Compression->setCurrentIndex(Compression->findData(int(RenderCore::ETextureCompression::BC7)));
     PumpFor(20);
-    Expect(AnyLabelContains(*Viewer, QStringLiteral("no block encoder is integrated")), "compression says it is a stored setting only");
+    Expect(AnyLabelContains(*Viewer, QStringLiteral("Encoded on save by bc7enc_rdo"))
+           && AnyLabelContains(*Viewer, QStringLiteral("once BC7")), "compression names its encoder, and what it will take");
+
+    /* As compressed: encoded now, and kept for Save. */
+    QCheckBox* AsCompressed = nullptr;
+    for(QCheckBox* Each : Viewer->findChildren<QCheckBox*>())
+    {
+        if(Each->text() == QStringLiteral("As compressed")) { AsCompressed = Each; }
+    }
+    Expect(AsCompressed && AsCompressed->isEnabled(), "the compressed preview can be asked for");
+    if(AsCompressed) { AsCompressed->setChecked(true); }
+    PumpFor(20);
+    Expect(AnyLabelContains(*Viewer, QStringLiteral("as BC7 blocks")) && AnyLabelContains(*Viewer, QStringLiteral("Encoded by bc7enc_rdo")),
+           "which encodes it: the GPU memory is the blocks'");
 
     if(const char* Snapshot = std::getenv("NIMBLE_TEXTURE_SNAPSHOT"))
     {
@@ -235,6 +255,8 @@ static void TestTextureViewer()
     RenderCore::TextureData Back;
     Expect(ReadTextureFile(Path, Back) && Back.GetMipCount() == 7 && Back.MipGen == RenderCore::ETextureMipGen::Box
            && Back.Compression == RenderCore::ETextureCompression::BC7, "Save writes the chain and the settings");
+    Expect(Back.Blocks.size() == 7 && Back.Blocks[0].Bytes.size() == 64 * 32 && Back.Blocks[6].Bytes.size() == 16
+           && Back.Pixels.GetWidth() == 64, "and the BC7 blocks of every level, beside the RGBA8 source");
     Expect(QString::fromStdString(Back.ImportInfo.Settings).contains(QStringLiteral("MipGen=1"))
            && QString::fromStdString(Back.ImportInfo.Settings).contains(QStringLiteral("Compression=5")),
            "and records them in the import options, so Reimport keeps them");
@@ -251,6 +273,77 @@ static void TestTextureViewer()
     delete Viewer;
 }
 
+/*
+ * The viewport's view settings outlive a session: saved with the Editor
+ * Settings (EditorSettings.ini, here under Qt's test paths), read back at
+ * startup, applied to a new viewport, and written again when the viewport
+ * changes them -- after a short delay, or as it closes.
+ */
+static void TestViewSettings()
+{
+    std::printf("[view settings]\n");
+    QStandardPaths::setTestModeEnabled(true);
+    QFile::remove(SettingsDialog::GetUserSettingsPath());
+
+    const auto Var = [](const char* InPath) { return EngineCore::ConfigFindVarByPath(InPath); };
+    const char* const Paths[] = { "Editor.ViewGizmoMode", "Editor.ViewGizmoSpace", "Editor.ViewGizmoSnap", "Editor.ViewMode",
+                                  "Editor.ViewAllBounds", "Editor.ViewLightGizmos", "Editor.ViewCameraSpeed", "Rendering.BakedLighting" };
+    bool bAll = true;
+    for(const char* Path : Paths) { bAll &= Var(Path) != nullptr; }
+    Expect(bAll, "every view setting is a config var");
+    if(!bAll) { return; }
+    const auto Reset = [&]() { for(const char* Path : Paths) { Var(Path)->SetFromString(Var(Path)->DefaultToString()); } };
+    const auto FileText = []()
+    {
+        QFile File(SettingsDialog::GetUserSettingsPath());
+        return File.open(QIODevice::ReadOnly) ? QString::fromUtf8(File.readAll()) : QString();
+    };
+
+    /* Saved and loaded, as the editor does at exit and startup. */
+    Var("Editor.ViewGizmoMode")->SetInt(2);
+    Var("Editor.ViewGizmoSnap")->SetBool(true);
+    Var("Editor.ViewMode")->SetInt(1);
+    Var("Editor.ViewAllBounds")->SetBool(true);
+    Var("Editor.ViewLightGizmos")->SetBool(false);
+    Var("Editor.ViewCameraSpeed")->SetInt(5);
+    Var("Rendering.BakedLighting")->SetBool(false);
+    Expect(SettingsDialog::SaveUserSettings(), "the settings save");
+    const QString Saved = FileText();
+    Expect(Saved.contains(QStringLiteral("ViewGizmoMode=2")) && Saved.contains(QStringLiteral("ViewLightGizmos=false"))
+           && Saved.contains(QStringLiteral("[Rendering]")) && Saved.contains(QStringLiteral("BakedLighting=false")),
+           "the view is in EditorSettings.ini");
+    Reset();
+    SettingsDialog::LoadUserSettings();
+    Expect(Var("Editor.ViewGizmoMode")->GetInt() == 2 && Var("Editor.ViewGizmoSnap")->GetBool() && Var("Editor.ViewMode")->GetInt() == 1
+           && Var("Editor.ViewAllBounds")->GetBool() && !Var("Editor.ViewLightGizmos")->GetBool()
+           && Var("Editor.ViewCameraSpeed")->GetInt() == 5 && !Var("Rendering.BakedLighting")->GetBool(),
+           "and read back");
+
+    /* A viewport opens as it was left, and remembers what it changes. */
+    EditorContext Context;
+    EditorDocument Document;
+    {
+        ViewportPanel Panel(Context, Document);
+        ViewportWidget* View = Panel.GetViewport();
+        Expect(View->GetGizmoMode() == TransformGizmo::EMode::Rotate && View->IsGizmoSnapEnabled() && View->IsShowingAllBounds()
+               && !View->IsShowingLightGizmos() && Context.GetViewMode() == RenderCore::ERenderViewMode::Unlit,
+               "a new viewport takes the saved handles, snap, gizmos and view mode");
+
+        View->SetGizmoMode(TransformGizmo::EMode::Scale);   // as its 4 key does
+        Expect(Var("Editor.ViewGizmoMode")->GetInt() == 3, "changing the handles in the viewport sets the setting");
+        PumpFor(1200);
+        Expect(FileText().contains(QStringLiteral("ViewGizmoMode=3")), "and saves it shortly after");
+
+        View->SetGizmoSpace(TransformGizmo::ESpace::Local);
+    }
+    Expect(FileText().contains(QStringLiteral("ViewGizmoSpace=1")), "a change not yet saved is saved as the viewport closes");
+
+    Reset();
+    Context.SetViewMode(RenderCore::ERenderViewMode::Lit);
+    QFile::remove(SettingsDialog::GetUserSettingsPath());
+    QStandardPaths::setTestModeEnabled(false);
+}
+
 int main(int argc, char** argv)
 {
     /* No display needed. */
@@ -263,6 +356,7 @@ int main(int argc, char** argv)
     std::printf("NimbleEditorDetailsTests\n");
     TestMaterialParameters();
     TestTextureViewer();
+    TestViewSettings();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

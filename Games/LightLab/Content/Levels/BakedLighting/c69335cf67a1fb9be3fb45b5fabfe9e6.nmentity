@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="c69335cf67a1fb9be3fb45b5fabfe9e6" Name="BackLower" Mobility="Static">
-  <Component Type="Render" Version="3">
+  <Component Type="Render" Version="4">
     <Visible Value="true" />
     <Material0 Value="Content/Materials/PBR.material.nmgraph" />
     <Material1 Value="" />
@@ -31,6 +31,7 @@
     <Parameter2Z Value="0" />
     <Parameter2W Value="0" />
     <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="0" Y="100" Z="410" />

@@ -6,6 +6,7 @@
 #include "Public/Core/CorePlatform.h"
 
 #include "GDIDefinitions.h"
+#include "GDIBuffer.h"
 #include "GDIShader.h"
 #include "GDIMesh.h"
 #include "GDISync.h"
@@ -306,12 +307,21 @@ public:
     /* Clear current render target. */
     virtual void Clear(uint InClearMode, EngineCore::Color InClearColor, float InDepth = 1.0f, uint InStencilMask = 0x00) = 0;
 
+    /*
+     * ORIENTATION, on every backend: a render target is stored top-down. Its
+     * row 0 is the top of the image and is NDC y = +1, texture v = 0 when the
+     * target is sampled, gl_FragCoord.y = 0.5 when it is drawn, and the first
+     * row ToImage returns -- the order RenderDoc and EngineCore::Image use.
+     * Vulkan gets there with a negative viewport height, OpenGL with
+     * glClipControl(GL_UPPER_LEFT); D3D12 and Metal are top-down natively.
+     * Viewport and scissor rectangles count rows from that top.
+     */
     virtual void SetViewport(uint InX, uint InY, uint InWidth, uint InHeight) = 0;
 
     /*
      * Draws after this touch only InWidth x InHeight pixels at InX, InY -- in
-     * the render target's own rows, row 0 first in memory (GDISetScissorRect
-     * converts from the top-left). Clear ignores it, and the next SetViewport
+     * the render target's own rows, row 0 its top (as GDISetScissorRect takes
+     * them, from the viewport's top-left). Clear ignores it, and the next SetViewport
      * resets it to the viewport. The default ignores it: a backend without
      * scissoring draws unclipped.
      */
@@ -366,6 +376,10 @@ public:
     virtual void BeginDrawEvent(const std::string& EventName) = 0;
 
     virtual void EndDrawEvent() = 0;
+
+    /* Whether BeginDrawEvent records anything a capture tool sees: what a
+     * caller asks before building a label it would otherwise throw away. */
+    virtual bool HasDrawEvents() const { return true; }
 
     /**
      * GPU timestamps, for timing GPU work ("stat frame"). Within one
@@ -492,11 +506,54 @@ public:
     /* A texture with its mip chain: InLevels[0] full size, each next half
      * the last (at least 1), InCount in all; a Linear filter samples them
      * trilinear. This default makes level 0 alone, for a backend without
-     * mips (D3D12, Metal and Null so far): it samples the full size. */
+     * mips (Metal and Null so far): it samples the full size. */
     virtual GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,
                                                           EGDITextureBorder InBorder, EGDITextureFilter InFilter)
     {
         return InLevels && InCount > 0 ? CreateTextureResource(InLevels[0], InBorder, InFilter) : nullptr;
+    }
+
+    /*
+     * Compute and GPU buffers (GDIBuffer.h). A backend without them keeps
+     * these defaults: no compute, no buffers, every dispatch refused.
+     */
+    virtual bool       SupportsCompute() const { return false; }
+    /* InBytes, InUsage's EGDIBufferUsage bits; InInitialData (InBytes of it)
+     * or zeros. Null where unsupported. */
+    virtual GDIBuffer* CreateBuffer(uint32_t /*InBytes*/, uint8_t /*InUsage*/, const void* /*InInitialData*/) { return nullptr; }
+    /* InShader (ST_Compute) over InX x InY x InZ workgroups, recorded in
+     * frame order: what earlier draws and dispatches wrote it sees, and what
+     * it writes the next ones see. Validated by GDIDispatchCompute. */
+    virtual bool       DispatchCompute(GDIShader* /*InShader*/, const void* /*InParams*/, uint32_t /*InParamBytes*/,
+                                       GDIBuffer* const* /*InBuffers*/, uint32_t /*InBufferCount*/,
+                                       uint32_t /*InX*/, uint32_t /*InY*/, uint32_t /*InZ*/) { return false; }
+    /* InBuffer's bytes as the GPU left them, waiting for it: for tests and tools. */
+    virtual bool       ReadBuffer(GDIBuffer* /*InBuffer*/, std::vector<uint8_t>& /*OutBytes*/) { return false; }
+
+    /* GDISetInstanceBuffer's buffer and count, which indexed draws read. */
+    GDIBuffer* GetInstanceBuffer() const { return InstanceBuffer; }
+    uint32_t   GetInstanceCount()  const { return InstanceCount; }
+
+    /* Whether an instanced indexed draw can take its counts from a buffer
+     * (GDISetIndirectArgs). No by default. */
+    virtual bool SupportsIndirectDraw() const { return false; }
+    /* GDISetIndirectArgs's buffer and byte offset; null: the draws' own counts. */
+    GDIBuffer* GetIndirectArgs()       const { return IndirectArgs; }
+    uint32_t   GetIndirectArgsOffset() const { return IndirectArgsOffset; }
+
+    /* Whether InFormat can be sampled (CreateCompressedTextureResource).
+     * This default, for a backend without block formats (Metal and Null so
+     * far), says no: the caller decodes to RGBA8 instead. */
+    virtual bool SupportsCompressedFormat(EGDICompressedFormat /*InFormat*/) const { return false; }
+
+    /* A block-compressed texture with its mip chain: InLevels[0] full size,
+     * each next half the last (at least 1), InCount in all, sampled like
+     * CreateTextureResourceMips. Null where SupportsCompressedFormat says no. */
+    virtual GDITextureResource* CreateCompressedTextureResource(EGDICompressedFormat /*InFormat*/,
+                                                                const GDICompressedLevel* /*InLevels*/, uint32_t /*InCount*/,
+                                                                EGDITextureBorder /*InBorder*/, EGDITextureFilter /*InFilter*/)
+    {
+        return nullptr;
     }
 
     virtual bool CheckError(const std::string& FailStr) = 0;
@@ -547,6 +604,16 @@ protected:
     friend void GDIClearScissorRect();
     friend bool GDIUpdateDynamicMesh(GDIMesh*, const GDIMeshDesc&);
     friend uint64_t GDIGetRenderingSerial();
+    friend void GDISetInstanceBuffer(GDIBuffer*, uint32_t);
+    friend void GDISetIndirectArgs(GDIBuffer*, uint32_t);
+
+    /* GDISetInstanceBuffer's: null and 0 draw one instance, as before. */
+    GDIBuffer*            InstanceBuffer = nullptr;
+    uint32_t              InstanceCount  = 0;
+
+    /* GDISetIndirectArgs's: null, the draws use their own counts. */
+    GDIBuffer*            IndirectArgs       = nullptr;
+    uint32_t              IndirectArgsOffset = 0;
 
     std::vector<uint8_t>  MaterialBlocks[2];
     /* Bumped by each SetUniformBlock, so a backend can reuse an upload of a
@@ -619,10 +686,9 @@ uint64_t GDIGetRenderingSerial();
 
 /*
  * Scissor, in pixels of the current viewport from its TOP-LEFT (the way a
- * UI lays out): draws after this touch only that rectangle, clipped to the
- * viewport. GDI converts to the target's rows -- every backend keeps row 0 at
- * the bottom of the image. GDISetViewport and GDIClearScissorRect reset it to
- * the whole viewport; Clear ignores it.
+ * UI lays out), which are the target's own rows: draws after this touch only
+ * that rectangle, clipped to the viewport. GDISetViewport and
+ * GDIClearScissorRect reset it to the whole viewport; Clear ignores it.
  */
 void GDISetScissorRect(uint InX, uint InY, uint InWidth, uint InHeight);
 void GDIClearScissorRect();
@@ -657,6 +723,29 @@ IMPLEMENT_GDI_FUNCTION_DECLARATION(void, BeginDrawEvent, (const std::string& InE
 
 IMPLEMENT_GDI_FUNCTION_DECLARATION(void, EndDrawEvent, ())
 
+/* GDIDynamicDriver::HasDrawEvents: false with no driver, or with [Shaders]
+ * ShaderDebug off. */
+bool GDIHasDrawEvents();
+
+/*
+ * [Shaders] ShaderDebug (Edit > Editor Settings > Shaders; default on): draw
+ * events (GDIBeginDrawEvent) and object names (GDISetDebugName, shader
+ * modules, render targets) reach capture tools. Off, regions are dropped at
+ * once; names are given as objects are made, so ones made while it was on
+ * keep theirs.
+ */
+bool GDIShaderDebugEnabled();
+
+/*
+ * [Shaders] ShaderPDB with [Shaders] PDBDir (the editor sets it to
+ * Engine/Shaders/PDBs): the debug-info file the shader cook wrote for a
+ * cooked shader -- "Shaders/Cooked/Vulkan/Basic.vsh.spv" is
+ * "<PDBDir>/Vulkan/Basic.vsh.spv", SPIR-V with its source; a D3D12 .cso's is
+ * "<PDBDir>/D3D12/<name>.pdb". Empty when the setting is off or the file is
+ * not there. Vulkan hands it to RenderDoc on the shader module (VKShader).
+ */
+std::string GDIGetShaderPDBPath(const std::string& InCookedPath);
+
 /* GDIDynamicDriver::CreateRenderTargetFormat / SupportsRenderTargetFormat. */
 GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat);
 bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
@@ -664,6 +753,53 @@ bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
 /* GDIDynamicDriver::CreateTextureResourceMips; null without a driver. */
 GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount,
                                                  EGDITextureBorder InBorder, EGDITextureFilter InFilter);
+
+/* GDIDynamicDriver::SupportsCompressedFormat / CreateCompressedTextureResource;
+ * false and null without a driver. */
+bool                GDISupportsCompressedFormat(EGDICompressedFormat InFormat);
+GDITextureResource* GDICreateCompressedTextureResource(EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels,
+                                                       uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter);
+
+/*
+ * Compute shaders and GPU buffers, where the backend has them (Vulkan, D3D12
+ * and Null so far; GDIDynamicDriver's defaults elsewhere): false and null
+ * without a driver or support.
+ *
+ * GDIDispatchCompute: InShader is an ST_Compute shader; InParams (at most
+ * GDI_COMPUTE_PARAMS_MAX_BYTES) its block at binding 0, InBuffers (at most
+ * GDI_COMPUTE_MAX_STORAGE_BUFFERS, each GDI_BU_Storage) at bindings 1.. in
+ * order. Between GDIBeginRendering and GDIEndRendering it is recorded in
+ * order with the draws (closing the open render pass, which it reopens);
+ * outside, it runs at once and is waited for. False, with nothing done, if
+ * anything is missing or invalid.
+ */
+bool       GDISupportsCompute();
+GDIBuffer* GDICreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData = nullptr);
+bool       GDIDispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
+                              GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                              uint32_t InX, uint32_t InY = 1, uint32_t InZ = 1);
+bool       GDIReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes);
+
+/*
+ * Instancing: the indexed draws after this (GDIDrawObject of a GDICreateMesh
+ * mesh) each draw InCount instances, reading InBuffer (GDI_BU_Instance) as
+ * GDIBuffer.h lays an instance out -- until it is called again; null or 0
+ * goes back to one instance. Only where GDISupportsCompute(); elsewhere it
+ * is ignored and the draws draw once.
+ */
+void       GDISetInstanceBuffer(GDIBuffer* InBuffer, uint32_t InCount);
+
+/*
+ * Indirect instancing: while set, an instanced indexed draw (one with
+ * GDISetInstanceBuffer) takes its index count, instance count, first index,
+ * vertex offset and first instance from InArgs (GDI_BU_Indirect) at
+ * InOffsetBytes, laid out as GDI_INDIRECT_ARGS_STRIDE says -- the GPU's own
+ * count, written by a compute shader, with no readback. Its mesh's draw
+ * range and the instance buffer's count are then ignored. Null goes back to
+ * them. Only where GDISupportsIndirectDraw(); elsewhere it is ignored.
+ */
+bool       GDISupportsIndirectDraw();
+void       GDISetIndirectArgs(GDIBuffer* InArgs, uint32_t InOffsetBytes = 0);
 
 /* GPU timestamps: GDIDynamicDriver::WriteGPUTimestamp's contract. */
 bool     GDISupportsGPUTimestamps();
@@ -685,6 +821,18 @@ IMPLEMENT_GDI_FUNCTION_BODY_RET(
         return,
         <ShaderRef>()
         )
+
+/*
+ * A name for a GPU object in capture tools -- RenderDoc's Resource Inspector,
+ * PIX, Xcode -- and validation messages: an asset's path, so a draw's mesh,
+ * texture or buffers read as what they are. Nothing where the backend cannot
+ * name objects (Vulkan names them through VK_EXT_debug_utils when the
+ * instance has it; RenderDoc's layer always provides it. D3D12 through
+ * ID3D12Object::SetName). Null objects are ignored. Render thread.
+ */
+void GDISetDebugName(GDIMesh* InMesh, const std::string& InName);
+void GDISetDebugName(GDIBuffer* InBuffer, const std::string& InName);
+void GDISetDebugName(GDITextureResource* InTexture, const std::string& InName);
 
 extern int GDebugGroupID;
 

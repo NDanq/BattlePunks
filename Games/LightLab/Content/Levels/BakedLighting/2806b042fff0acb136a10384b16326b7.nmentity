@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="2806b042fff0acb136a10384b16326b7" Name="Visitor">
-  <Component Type="Render" Version="3">
+  <Component Type="Render" Version="4">
     <Visible Value="true" />
     <Material0 Value="Content/Materials/PBR.material.nmgraph" />
     <Material1 Value="" />
@@ -31,6 +31,7 @@
     <Parameter2Z Value="0" />
     <Parameter2W Value="0" />
     <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
   </Component>
   <Component Type="Transform" Version="1">
     <Position X="-280" Y="90" Z="-230" />

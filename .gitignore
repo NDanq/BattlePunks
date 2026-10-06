@@ -27,6 +27,10 @@
 /Engine/SmokeScratch/
 /Games/*/Binaries/SmokeScratch/
 
+# Shader debug information (Editor Settings > Shaders > ShaderPDB), written by
+# the editor's shader cooks per target.
+/Engine/Shaders/PDBs/
+
 # Engine-level build trees.
 #
 # The repo-root entries are for a tree configured from here with -B build --

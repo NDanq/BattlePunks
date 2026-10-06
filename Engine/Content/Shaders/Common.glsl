@@ -142,3 +142,10 @@ vec3 DecodeGBufferEmissive(vec4 InEncoded)
 #define BLOOM_CHAIN_RANGE 64.0
 vec3 EncodeBloom(vec3 InColor) { return sqrt(clamp(InColor / BLOOM_CHAIN_RANGE, 0.0, 1.0)); }
 vec3 DecodeBloom(vec3 InStored) { return InStored * InStored * BLOOM_CHAIN_RANGE; }
+
+// Render targets are stored top-down on every backend (GDI.h): row 0 is the
+// top of the image, NDC y = +1, texture v = 0 and gl_FragCoord.y = 0.5. So a
+// target's UV (0, 0) is its top-left, NDC (-1, +1), and these convert between
+// the two. A texture made from an image is the same way up: row 0 its top.
+vec2 NdcToTargetUv(vec2 InNdc) { return vec2(InNdc.x * 0.5 + 0.5, 0.5 - InNdc.y * 0.5); }
+vec2 TargetUvToNdc(vec2 InUv)  { return vec2(InUv.x * 2.0 - 1.0, 1.0 - InUv.y * 2.0); }

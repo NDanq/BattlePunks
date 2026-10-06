@@ -877,6 +877,44 @@ GDITextureResource* VulkanDynamicGDI::CreateTextureResourceMips(
     return new VKTextureResource(DeviceObj, InLevels, InCount, InBorder, InFilter);
 }
 
+/* The UNORM BC formats; BC1 without alpha, so a 3-colour block's black stays opaque. */
+static VkFormat ToVkCompressedFormat(const EGDICompressedFormat InFormat)
+{
+    switch(InFormat)
+    {
+        case GDI_CF_BC1: return VK_FORMAT_BC1_RGB_UNORM_BLOCK;
+        case GDI_CF_BC3: return VK_FORMAT_BC3_UNORM_BLOCK;
+        case GDI_CF_BC4: return VK_FORMAT_BC4_UNORM_BLOCK;
+        case GDI_CF_BC5: return VK_FORMAT_BC5_UNORM_BLOCK;
+        case GDI_CF_BC7: return VK_FORMAT_BC7_UNORM_BLOCK;
+        default: break;
+    }
+    return VK_FORMAT_UNDEFINED;
+}
+
+bool VulkanDynamicGDI::SupportsCompressedFormat(const EGDICompressedFormat InFormat) const
+{
+    const VkFormat Format = ToVkCompressedFormat(InFormat);
+    return DeviceObj && Format != VK_FORMAT_UNDEFINED && DeviceObj->SupportsSampledFormat(Format);
+}
+
+GDITextureResource* VulkanDynamicGDI::CreateCompressedTextureResource(
+        const EGDICompressedFormat InFormat,
+        const GDICompressedLevel*  InLevels,
+        const uint32_t             InCount,
+        const EGDITextureBorder    InBorder,
+        const EGDITextureFilter    InFilter)
+{
+    if(!InLevels || InCount == 0 || !SupportsCompressedFormat(InFormat)) return nullptr;
+    auto* Texture = new VKTextureResource(DeviceObj, ToVkCompressedFormat(InFormat), InLevels, InCount, InBorder, InFilter);
+    if(Texture->GetImageView() == VK_NULL_HANDLE)
+    {
+        delete Texture;
+        return nullptr;
+    }
+    return Texture;
+}
+
 GDITextureResource* VulkanDynamicGDI::CreateTextureResource(
         GDITexture2D* InParent,
         const EGDITextureBorder InBorder,
@@ -958,8 +996,8 @@ static void PackViewParamsUBO(const std::unordered_map<std::string, VKUniformVal
     //   [0 0 0.5 0.5]
     //   [0 0  0   1 ]
     // The floats here are column-major (D[Col*4 + Row]); only row 2 changes.
-    // Y is intentionally NOT flipped — the render targets keep GL-identical row
-    // order and the swapchain blit flips V at present time instead.
+    // Y is not flipped here: SetViewport's negative height does it, for
+    // projected and full-screen geometry alike, so targets are stored top-down.
     for(int Col = 0; Col < 4; ++Col)
     {
         const float Z = D[Col * 4 + 2];
@@ -1066,7 +1104,8 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     VKPipelineCache::PipelineKey Key{};
     Key.VertexShader    = CurrentStateData->BoundVSModule;
     Key.FragmentShader  = CurrentStateData->BoundFSModule;
-    Key.VertexLayoutID  = InMesh->IsIndexed() ? 2u : (bIsInstanced ? 1u : 0u);
+    // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
+    Key.VertexLayoutID  = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : 2u) : (bIsInstanced ? 1u : 0u);
     Key.DescLayoutGroup = Group;
 
     if(CurrentStateData->BlendState)
@@ -1371,13 +1410,13 @@ void VulkanDynamicGDI::DrawScreenQuadPrimitive()
              1.f, -1.f, 0.f,
             -1.f, -1.f, 0.f
         };
-        const float UVs[] = {
-            0.f, 0.f,
+        const float UVs[] = {   // v = 0 at NDC +1, the target's row 0: an identity copy
             0.f, 1.f,
-            1.f, 1.f,
-            1.f, 1.f,
+            0.f, 0.f,
             1.f, 0.f,
-            0.f, 0.f
+            1.f, 0.f,
+            1.f, 1.f,
+            0.f, 1.f
         };
         ScreenMesh = CreateQuadMesh(Verts, UVs, 18, 12, false);
     }
@@ -1392,7 +1431,7 @@ void VulkanDynamicGDI::DrawScreenQuadPrimitive()
 
 bool VulkanDynamicGDI::CheckError(const std::string&) { return false; }
 
-Color VulkanDynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& InSize)
+Color VulkanDynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size& /*InSize*/)
 {
     if(!DeviceObj || !CurrentStateData) return Color();
 
@@ -1402,11 +1441,9 @@ Color VulkanDynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size
     VKRenderTarget* RT = CurrentStateData->ActiveRenderTarget;
     if(!RT || !RT->IsValid()) return Color();
 
-    // RT memory is GL-oriented (row 0 = visual bottom — same matrices as the GL
-    // backend), so flip Y from Qt screen space exactly like the OpenGL path's
-    // glReadPixels(x, height - y).
+    // RT memory is top-down, as Qt's screen space: the point is the row.
     const int X = InPoint.X;
-    const int Y = InSize.Height - InPoint.Y;
+    const int Y = InPoint.Y;
     if(X < 0 || Y < 0 || X >= int(RT->GetWidth()) || Y >= int(RT->GetHeight()))
         return Color();
 

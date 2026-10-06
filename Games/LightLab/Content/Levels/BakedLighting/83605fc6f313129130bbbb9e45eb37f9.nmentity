@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <Entity Guid="83605fc6f313129130bbbb9e45eb37f9" Name="Swinger">
-  <Component Type="Render" Version="3">
+  <Component Type="Render" Version="4">
     <Visible Value="true" />
     <Material0 Value="Content/Materials/Chrome.material.nmgraph" />
     <Material1 Value="" />
@@ -31,6 +31,7 @@
     <Parameter2Z Value="0" />
     <Parameter2W Value="0" />
     <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
   </Component>
   <Component Type="Scene Capture Probe" Version="2">
     <Target Value="Content/RenderTargets/ChromeBall.nmrt3d" />

@@ -1760,14 +1760,15 @@ namespace
         Pure("Input.VertexColor", "Vertex Color", "Inputs",
              { Out("Color", "vec4", "Inputs.Color"), Out("RGB", "vec3", "Inputs.Color.rgb"), Out("A", "float", "Inputs.Color.a") },
              {}, "colour rgba painted")
-            .Tooltip = "The mesh's per-vertex colour; white when it has none (and on quads).";
+            .Tooltip = "The mesh's per-vertex colour; white when it has none (and on quads). A particle system's "
+                       "mesh: times each particle's colour, which fades over its life.";
         Pure("Input.WorldPosition", "World Position", "Inputs", { Out("Position", "vec3", "Inputs.WorldPosition") }, {}, "absolute")
             .Tooltip = "Where this point is in the world. In the vertex stage, before World Position Offset moves it.";
         PixelOnly(Pure("Input.Position", "Clip Position", "Inputs", { Out("Position", "vec3", "Inputs.ClipPosition") }, {},
                        "interpolated projected"),
                   "The interpolated clip-space position (before the divide by w).");
         PixelOnly(Pure("Input.FragCoord", "Pixel Coordinate", "Inputs", { Out("Coord", "vec4", "Inputs.FragCoord") }, {}, "screen frag"),
-                  "gl_FragCoord: the pixel's window coordinates, depth and 1/w.");
+                  "gl_FragCoord: the pixel's window coordinates from the target's top-left, depth and 1/w.");
         PixelOnly(Pure("Input.PixelDepth", "Pixel Depth", "Inputs",
                        { Out("Linear", "float", "Inputs.ViewDepth"), Out("Device", "float", "Inputs.DeviceDepth") }, {}, "z distance"),
                   "Linear: distance in front of the camera, in world units. Device: the depth buffer's 0-1 value.");

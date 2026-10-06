@@ -676,7 +676,7 @@ layout. Rotation will need stencil clipping, because scissors are axis-aligned.
 | `UITests` (`UI.Core`, editor builds) | Registry, values, actions, layout across viewports and every scale mode, paint and batching, text, styles, round-trips of XML and cooked files (byte-identical, deterministic), structure editing, input routing, check boxes and sliders (clicks, drags, keys, two-way binding), scroll boxes, grids and wrap boxes, text input, Include and ListView (prefixes, focus across, row reuse), the Sandbox Profile page end to end, native/Lua/Event/Graph actions, UI graphs (per-document instances, lifecycle, hot reload, LightLab's menu end to end), the Lua library, hot reload, and cost (zero allocations per unchanged frame). |
 | `UI_TESTS_GPU=Vulkan UI_TESTS_DUMP=<dir> ./UITests`, from a runtime directory | Draws the shipped documents on a GPU and checks pixels. |
 | RenderCore smoke test | `UIDrawList` batching, clipping, nine-slice and packing. `NIMBLE_SMOKE_GPU=Vulkan` checks orientation, scissor, blending, the retained list, and clearing. |
-| GDI smoke test | Scissor flipping and clipping, and the dynamic mesh's append and rewind. |
+| GDI smoke test | Scissor rows and clipping, and the dynamic mesh's append and rewind. |
 | `NimbleEngine.GameFrameworkTests` | The session's UI: clicks do not reach the game, pause and resume, OnBack, HUD pass-through, a self-closing button, published values. |
 | `NimbleEngine.InputTests` | `InputState::Consume*` and `WasInputActionPressed`. |
 | `GameCore.Smoke` | `ScriptEngine::CallFunction`, script objects (`CreateObject`), the `Config` library and `Config.Save`. |

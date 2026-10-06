@@ -125,6 +125,15 @@ typedef struct __GLsync* GLsync;
 #define GL_QUERY_RESULT                   0x8866
 #define GL_TIMESTAMP                      0x8E28
 
+#define GL_NUM_EXTENSIONS                 0x821D   // GL 3.0: glGetStringi's count
+#define GL_UPPER_LEFT                     0x8CA2   // GL 4.5 / ARB_clip_control: targets stored top-down (GDI.h)
+#define GL_NEGATIVE_ONE_TO_ONE            0x935E
+#define GL_COMPRESSED_RGB_S3TC_DXT1_EXT   0x83F0   // EXT_texture_compression_s3tc: BC1, BC3
+#define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT  0x83F3
+#define GL_COMPRESSED_RED_RGTC1           0x8DBB   // GL 3.0: BC4, BC5
+#define GL_COMPRESSED_RG_RGTC2            0x8DBD
+#define GL_COMPRESSED_RGBA_BPTC_UNORM     0x8E8C   // GL 4.2: BC7
+
 // ---------------------------------------------------------------------------
 // Entry points.
 //
@@ -148,8 +157,10 @@ typedef struct __GLsync* GLsync;
     X(void,   glBufferData,              (GLenum target, GLsizeiptr size, const void* data, GLenum usage), (target, size, data, usage)) \
     X(void,   glBufferSubData,           (GLenum target, GLintptr offset, GLsizeiptr size, const void* data), (target, offset, size, data)) \
     X(GLenum, glCheckFramebufferStatus,  (GLenum target), (target)) \
+    X(void,   glClipControl,             (GLenum origin, GLenum depth), (origin, depth)) \
     X(GLenum, glClientWaitSync,          (GLsync sync, GLbitfield flags, GLuint64 timeout), (sync, flags, timeout)) \
     X(void,   glCompileShader,           (GLuint shader), (shader)) \
+    X(void,   glCompressedTexImage2D,    (GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, GLint border, GLsizei imageSize, const void* data), (target, level, internalformat, width, height, border, imageSize, data)) \
     X(GLuint, glCreateProgram,           (void), ()) \
     X(GLuint, glCreateShader,            (GLenum type), (type)) \
     X(void,   glDeleteBuffers,           (GLsizei n, const GLuint* buffers), (n, buffers)) \
@@ -178,6 +189,7 @@ typedef struct __GLsync* GLsync;
     X(void,   glGetQueryObjectui64v,     (GLuint id, GLenum pname, GLuint64* params), (id, pname, params)) \
     X(void,   glGetShaderInfoLog,        (GLuint shader, GLsizei bufSize, GLsizei* length, GLchar* infoLog), (shader, bufSize, length, infoLog)) \
     X(void,   glGetShaderiv,             (GLuint shader, GLenum pname, GLint* params), (shader, pname, params)) \
+    X(const GLubyte*, glGetStringi,      (GLenum name, GLuint index), (name, index)) \
     X(GLint,  glGetUniformLocation,      (GLuint program, const GLchar* name), (program, name)) \
     X(void,   glLinkProgram,             (GLuint program), (program)) \
     X(void,   glPopDebugGroup,           (void), ()) \
@@ -244,7 +256,7 @@ public:
      *
      * That was the ONLY use of QOpenGLFramebufferObject in the whole backend --
      * every other FBO operation here is already raw GL. Blit is core from GL
-     * 3.0 and this backend requires 4.4+, so the honest test is whether
+     * 3.0 and this backend requires 4.5+, so the honest test is whether
      * glBlitFramebuffer actually resolved.
      */
     static bool hasOpenGLFramebufferBlit();

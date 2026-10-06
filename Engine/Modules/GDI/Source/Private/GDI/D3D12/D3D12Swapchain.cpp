@@ -192,8 +192,8 @@ bool D3D12Swapchain::CreateBlitPipeline()
     HeapDesc.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
     if(FAILED(Dev->CreateDescriptorHeap(&HeapDesc, IID_PPV_ARGS(&BlitSRVHeap)))) return false;
 
-    // Interleaved {pos3, uv2}. RT rows are GL-ordered while the swapchain's top
-    // row is NDC +1 after the cooked flip, so V is flipped exactly as on Vulkan.
+    // Interleaved {pos3, uv2}. The swapchain's top row is NDC +1 and the RT's
+    // row 0 its top (GDI.h): v = 0 at NDC +1 copies the rows as they are.
     const float QuadVerts[] = {
         -1.f, -1.f, 0.f,   0.f, 1.f,
         -1.f,  1.f, 0.f,   0.f, 0.f,

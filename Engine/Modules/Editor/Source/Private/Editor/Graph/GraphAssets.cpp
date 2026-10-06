@@ -185,10 +185,77 @@ namespace
             FinishMaterialCook(InName, false, QStringLiteral("could not run the shader cook: ") + Process->errorString(), Guard, InDone);
         });
 
-        Process->start(QString::fromUtf8(NIMBLEEDITOR_PYTHON),
-                       { QString::fromUtf8(NIMBLEEDITOR_MATERIAL_CHECK_SCRIPT), QStringLiteral("-target"), Target,
-                         QStringLiteral("-src"), CookSourcePath(InName), QStringLiteral("-out"), Out,
-                         QStringLiteral("-subdir"), CookSubdir(InName) });
+        QStringList Arguments{ QString::fromUtf8(NIMBLEEDITOR_MATERIAL_CHECK_SCRIPT), QStringLiteral("-target"), Target,
+                               QStringLiteral("-src"), CookSourcePath(InName), QStringLiteral("-out"), Out,
+                               QStringLiteral("-subdir"), CookSubdir(InName) };
+        if(EditorGraphs::IsShaderPDBEnabled())
+        {
+            Arguments << QStringLiteral("-pdb") << EditorGraphs::GetShaderPDBRoot();
+        }
+        Process->start(QString::fromUtf8(NIMBLEEDITOR_PYTHON), Arguments);
+    }
+
+    /* CookShaderPDBs' queue: one cook_material_graphs.py run at a time. */
+    struct PDBCook
+    {
+        std::vector<QStringList> Runs;
+        bool                     bRunning = false;
+        bool                     bAgain   = false;   // asked for while running
+        QString                  Target;
+        int                      Failures = 0;
+    };
+
+    PDBCook& PDBCooks()
+    {
+        static PDBCook Cook;
+        return Cook;
+    }
+
+    void RunNextPDBCook()
+    {
+        PDBCook& Cook = PDBCooks();
+        if(Cook.Runs.empty())
+        {
+            Cook.bRunning = false;
+            if(Cook.Failures == 0)
+            {
+                CORE_LOG("[Shaders] debug information for " + EditorGraphs::ToStd(Cook.Target) + " written to "
+                         + EditorGraphs::ToStd(QDir::toNativeSeparators(QDir(EditorGraphs::GetShaderPDBRoot()).filePath(Cook.Target))))
+            }
+            if(Cook.bAgain)
+            {
+                Cook.bAgain = false;
+                EditorGraphs::CookShaderPDBs();
+            }
+            return;
+        }
+
+        const QStringList Arguments = Cook.Runs.front();
+        Cook.Runs.erase(Cook.Runs.begin());
+
+        auto* Process = new QProcess(qApp);
+        Process->setProcessChannelMode(QProcess::MergedChannels);
+        QObject::connect(Process, QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), qApp,
+                         [Process](const int InCode, const QProcess::ExitStatus InStatus)
+        {
+            if(InStatus != QProcess::NormalExit || InCode != 0)
+            {
+                ++PDBCooks().Failures;
+                CORE_LOG_WARN("[Shaders] writing shader debug information failed:\n"
+                              + EditorGraphs::ToStd(QString::fromUtf8(Process->readAll()).trimmed()))
+            }
+            Process->deleteLater();
+            RunNextPDBCook();
+        });
+        QObject::connect(Process, &QProcess::errorOccurred, qApp, [Process](const QProcess::ProcessError InError)
+        {
+            if(InError != QProcess::FailedToStart) { return; }   // finished() reports the rest
+            ++PDBCooks().Failures;
+            CORE_LOG_WARN("[Shaders] could not run the shader cook: " + EditorGraphs::ToStd(Process->errorString()))
+            Process->deleteLater();
+            RunNextPDBCook();
+        });
+        Process->start(QString::fromUtf8(NIMBLEEDITOR_PYTHON), Arguments);
     }
 
     QString Canonical(const QString& InPath)
@@ -599,6 +666,100 @@ namespace EditorGraphs
 
         OutMessage = QStringLiteral("%1 now draws with %2").arg(Doc->GetDisplayName(Target), InName);
         return true;
+    }
+
+    bool IsShaderPDBEnabled()
+    {
+        const EngineCore::ConfigVar* Var = EngineCore::ConfigFindVarByPath("Shaders.ShaderPDB");
+        return Var && Var->ToString() == "true";
+    }
+
+    QString GetShaderPDBRoot()
+    {
+        /* Engine/Shaders/PDBs, beside Engine/Content -- the source tree's when
+         * the editor was built from one, else the staged copy's. */
+        const QString Content = EditorContent::GetEngineContentRoot();
+        const QString Engine  = Content.isEmpty() ? QCoreApplication::applicationDirPath() + QStringLiteral("/Engine")
+                                                  : QFileInfo(Content).absolutePath();
+        return QDir::cleanPath(Engine + QStringLiteral("/Shaders/PDBs"));
+    }
+
+    void InstallShaderPDBDir()
+    {
+        EngineCore::ConfigVar* Var = EngineCore::ConfigFindVarByPath("Shaders.PDBDir");
+        if(!Var)
+        {
+            CORE_LOG_WARN("[Shaders] no config var Shaders.PDBDir; shader debug information is not handed to capture tools")
+            return;
+        }
+        if(Var->ToString().empty())   // an .ini may point it elsewhere
+        {
+            Var->SetFromString(ToStd(GetShaderPDBRoot()));
+        }
+    }
+
+    void CookShaderPDBs()
+    {
+        CookShaderPDBs(Context() ? Context()->GetRenderBackend() : RenderCore::ERenderBackend::Null);
+    }
+
+    void CookShaderPDBs(const RenderCore::ERenderBackend InBackend)
+    {
+        if(!IsShaderPDBEnabled()) { return; }
+        const QString Target = CookTarget(InBackend);
+        if(Target.isEmpty() || Target == QStringLiteral("OpenGL"))
+        {
+            return;   // nothing compiled, or compiled from source the driver already has
+        }
+        if(!CanCheckShaders())
+        {
+            CORE_LOG_WARN("[Shaders] cannot write shader debug information: the editor was built without Python")
+            return;
+        }
+
+        PDBCook& Cook = PDBCooks();
+        if(Cook.bRunning)
+        {
+            Cook.bAgain = true;
+            return;
+        }
+
+        /* What the build cooks (Engine/CMakeLists.txt, nimble_stage_materials),
+         * named as it names them, with -pdb alone: only the debug information
+         * is kept. The engine's from its source tree; nothing of it to do from
+         * a staged copy, whose sources are not there. */
+        const QString Script = QString::fromUtf8(NIMBLEEDITOR_MATERIAL_CHECK_SCRIPT);
+        const QString Pdb    = GetShaderPDBRoot();
+        const QStringList Common{ Script, QStringLiteral("-target"), Target, QStringLiteral("-pdb"), Pdb };
+
+        Cook.Runs.clear();
+        const QString Content = EditorContent::GetEngineContentRoot();
+        const QString Shaders = QDir(Content).filePath(QStringLiteral("Shaders"));
+        if(!Content.isEmpty() && QFileInfo(Shaders).isDir())
+        {
+            Cook.Runs.push_back(Common + QStringList{ QStringLiteral("-src"), Shaders });
+            const QString Materials = QDir(Content).filePath(QStringLiteral("Materials"));
+            if(QFileInfo(Materials).isDir())
+            {
+                const QString EngineRoot = QFileInfo(QFileInfo(Content).absolutePath()).absolutePath();   // "Engine/Content/..." below it
+                Cook.Runs.push_back(Common + QStringList{ QStringLiteral("-src"), Materials, QStringLiteral("-root"), EngineRoot,
+                                                          QStringLiteral("-subdir"), QStringLiteral("Materials"),
+                                                          QStringLiteral("-defaults") });
+            }
+        }
+        const QString Project   = GetProjectRoot();
+        const QString Materials = QDir(Project).filePath(QStringLiteral("Content/Materials"));
+        if(QFileInfo(Materials).isDir() && !QDir(Materials).entryList({ QStringLiteral("*.material.nmgraph") }, QDir::Files).isEmpty())
+        {
+            Cook.Runs.push_back(Common + QStringList{ QStringLiteral("-src"), Materials, QStringLiteral("-root"), Project });
+        }
+
+        if(Cook.Runs.empty()) { return; }
+        Cook.bRunning = true;
+        Cook.Target   = Target;
+        Cook.Failures = 0;
+        CORE_LOG("[Shaders] writing shader debug information for " + ToStd(Target) + " in the background")
+        RunNextPDBCook();
     }
 
     bool CanCheckShaders()

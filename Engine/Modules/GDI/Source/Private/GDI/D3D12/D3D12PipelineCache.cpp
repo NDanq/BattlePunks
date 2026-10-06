@@ -5,14 +5,16 @@
 #include <climits>
 #include <string>
 
+#include "Public/GDI/GDIBuffer.h"
 #include "Public/GDI/GDILog.h"
 
 using Microsoft::WRL::ComPtr;
 
 namespace
 {
-    constexpr uint32_t kLayoutInstanced = 1;
-    constexpr uint32_t kLayoutMesh      = 2;
+    constexpr uint32_t kLayoutInstanced     = 1;
+    constexpr uint32_t kLayoutMesh          = 2;
+    constexpr uint32_t kLayoutMeshInstanced = 3;   // kLayoutMesh + an instance buffer (GDISetInstanceBuffer)
 
     // spirv-cross emits TEXCOORD<location> for every stage input, matrices
     // flattened one column per location (--hlsl-flatten-matrix-vertex-input-semantics).
@@ -28,6 +30,21 @@ namespace
         { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
         { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+    };
+
+    // The mesh layout plus slot 5: one GDI_INSTANCE_STRIDE record per instance (GDIBuffer.h) --
+    // a float4x4 transform at locations 2-5, a float4 colour at location 7.
+    const D3D12_INPUT_ELEMENT_DESC GMeshInstancedLayout[] = {
+        { "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 1, DXGI_FORMAT_R32G32_FLOAT,    1, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 8, DXGI_FORMAT_R32G32B32_FLOAT,    2, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 9, DXGI_FORMAT_R32G32B32A32_FLOAT, 3, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 10, DXGI_FORMAT_R32G32_FLOAT,      4, 0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "TEXCOORD", 2, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 0,  D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 3, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 16, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 4, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 32, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 5, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 48, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
+        { "TEXCOORD", 7, DXGI_FORMAT_R32G32B32A32_FLOAT, 5, 64, D3D12_INPUT_CLASSIFICATION_PER_INSTANCE_DATA, 1 },
     };
 
     const D3D12_INPUT_ELEMENT_DESC GInstancedLayout[] = {
@@ -60,12 +77,15 @@ bool D3D12PipelineCache::Initialize(D3D12Device* InDevice)
 {
     Device = InDevice;
     if(!Device || !Device->IsValid()) return false;
-    return BuildRootSignature();
+    return BuildRootSignature() && BuildComputeRootSignature() && BuildDrawIndexedSignature();
 }
 
 void D3D12PipelineCache::Shutdown()
 {
     Pipelines.clear();
+    ComputePipelines.clear();
+    DrawIndexedSignature.Reset();
+    ComputeRootSignature.Reset();
     RootSignature.Reset();
     Device = nullptr;
 }
@@ -145,6 +165,83 @@ bool D3D12PipelineCache::BuildRootSignature()
     return true;
 }
 
+bool D3D12PipelineCache::BuildComputeRootSignature()
+{
+    static_assert(CRP_Count - CRP_Storage0 == GDI_COMPUTE_MAX_STORAGE_BUFFERS, "one root UAV per storage buffer");
+
+    D3D12_ROOT_PARAMETER Params[CRP_Count]{};
+    Params[CRP_Params].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[CRP_Params].Descriptor.ShaderRegister = 0;
+    Params[CRP_Params].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+    for(UINT Each = 0; Each < GDI_COMPUTE_MAX_STORAGE_BUFFERS; ++Each)
+    {
+        Params[CRP_Storage0 + Each].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_UAV;
+        Params[CRP_Storage0 + Each].Descriptor.ShaderRegister = 1 + Each;
+        Params[CRP_Storage0 + Each].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+    }
+
+    D3D12_ROOT_SIGNATURE_DESC Desc{};
+    Desc.NumParameters = CRP_Count;
+    Desc.pParameters   = Params;
+
+    ComPtr<ID3DBlob> Blob, Error;
+    if(FAILED(D3D12SerializeRootSignature(&Desc, D3D_ROOT_SIGNATURE_VERSION_1, &Blob, &Error)) ||
+       FAILED(Device->GetDevice()->CreateRootSignature(0, Blob->GetBufferPointer(), Blob->GetBufferSize(),
+                                                       IID_PPV_ARGS(&ComputeRootSignature))))
+    {
+        GDI_LOG_ERROR(std::string("[D3D12PipelineCache] The compute root signature failed: ")
+                      + (Error ? static_cast<const char*>(Error->GetBufferPointer()) : ""))
+        ComputeRootSignature.Reset();
+        return false;
+    }
+    return true;
+}
+
+bool D3D12PipelineCache::BuildDrawIndexedSignature()
+{
+    static_assert(sizeof(D3D12_DRAW_INDEXED_ARGUMENTS) == GDI_INDIRECT_ARGS_STRIDE, "GDI's indirect args are D3D12's");
+
+    D3D12_INDIRECT_ARGUMENT_DESC Argument{};
+    Argument.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+
+    D3D12_COMMAND_SIGNATURE_DESC Desc{};
+    Desc.ByteStride       = GDI_INDIRECT_ARGS_STRIDE;
+    Desc.NumArgumentDescs = 1;
+    Desc.pArgumentDescs   = &Argument;
+    // A draw-only signature changes no root arguments, so it needs no root signature.
+    if(FAILED(Device->GetDevice()->CreateCommandSignature(&Desc, nullptr, IID_PPV_ARGS(&DrawIndexedSignature))))
+    {
+        GDI_LOG_ERROR("[D3D12PipelineCache] CreateCommandSignature failed for indexed draws.")
+        return false;
+    }
+    return true;
+}
+
+ID3D12PipelineState* D3D12PipelineCache::GetOrCreateCompute(const D3D12ShaderResource* InCS)
+{
+    if(!InCS || !InCS->IsValid() || !ComputeRootSignature) return nullptr;
+
+    auto It = ComputePipelines.find(InCS->GetID());
+    if(It != ComputePipelines.end())
+    {
+        return It->second.Get();
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC Desc{};
+    Desc.pRootSignature = ComputeRootSignature.Get();
+    Desc.CS             = { InCS->GetBytecode().data(), InCS->GetBytecode().size() };
+
+    ComPtr<ID3D12PipelineState> Pipeline;
+    const HRESULT Result = Device->GetDevice()->CreateComputePipelineState(&Desc, IID_PPV_ARGS(&Pipeline));
+    if(FAILED(Result))
+    {
+        GDI_LOG_ERROR("[D3D12PipelineCache] CreateComputePipelineState failed (" + GDIHex(uint32_t(Result)) + ").")
+    }
+    ID3D12PipelineState* Out = Pipeline.Get();
+    ComputePipelines.emplace(InCS->GetID(), std::move(Pipeline));
+    return Out;
+}
+
 uint64_t D3D12PipelineCache::HashKey(const PipelineKey& K)
 {
     uint64_t H = 0xcbf29ce484222325ULL;
@@ -204,7 +301,11 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
     Desc.VS                    = { VS->GetBytecode().data(), VS->GetBytecode().size() };
     Desc.PS                    = { PS->GetBytecode().data(), PS->GetBytecode().size() };
 
-    if(Key.VertexLayoutID == kLayoutMesh)
+    if(Key.VertexLayoutID == kLayoutMeshInstanced)
+    {
+        Desc.InputLayout = { GMeshInstancedLayout, UINT(sizeof(GMeshInstancedLayout) / sizeof(GMeshInstancedLayout[0])) };
+    }
+    else if(Key.VertexLayoutID == kLayoutMesh)
     {
         Desc.InputLayout = { GMeshLayout, UINT(sizeof(GMeshLayout) / sizeof(GMeshLayout[0])) };
     }
@@ -230,6 +331,10 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
 
     Desc.RasterizerState.FillMode        = D3D12_FILL_MODE_SOLID;
     Desc.RasterizerState.CullMode        = D3D12_CULL_MODE_NONE;
+    /* Counter-clockwise on the target as stored, top-down (GDI.h): a GL front
+     * face, as Vulkan's COUNTER_CLOCKWISE under its negative viewport. Only
+     * gl_FrontFacing sees it (Two Sided), since nothing is culled. */
+    Desc.RasterizerState.FrontCounterClockwise = TRUE;
     Desc.RasterizerState.DepthClipEnable = TRUE;
 
     // Depth testing needs a depth buffer.

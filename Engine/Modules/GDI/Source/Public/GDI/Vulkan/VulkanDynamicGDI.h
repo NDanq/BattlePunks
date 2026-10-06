@@ -202,6 +202,9 @@ public:
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EngineCore::Image& InImage, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResource(GDITexture2D* InParent, const EGDITextureBorder InBorder = GDI_TB_Repeat, const EGDITextureFilter InFilter = GDI_TF_Nearest) override;
     GDITextureResource* CreateTextureResourceMips(const EngineCore::Image* InLevels, uint32_t InCount, EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
+    bool                SupportsCompressedFormat(EGDICompressedFormat InFormat) const override;
+    GDITextureResource* CreateCompressedTextureResource(EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels, uint32_t InCount,
+                                                        EGDITextureBorder InBorder, EGDITextureFilter InFilter) override;
 
     bool CheckError(const std::string& FailStr) override;
 
@@ -209,7 +212,19 @@ public:
     EngineCore::Color GetColorFromSamplePoint(const EngineCore::Point&, const EngineCore::Size& InSize) override;
 
     void BeginDrawEvent(const std::string& EventName) override;
+    /* Labels need VK_EXT_debug_utils on the instance: RenderDoc's layer, or the validation layers. */
+    bool HasDrawEvents() const override { return VulkanGDIContext::HasDebugUtils(); }
     void EndDrawEvent() override;
+
+    /** Compute and GPU buffers (VKCompute.cpp): dispatches record into the
+     *  frame's one command buffer, with full memory barriers around them. */
+    bool       SupportsCompute() const override;
+    bool       SupportsIndirectDraw() const override { return SupportsCompute(); }
+    GDIBuffer* CreateBuffer(uint32_t InBytes, uint8_t InUsage, const void* InInitialData) override;
+    bool       DispatchCompute(GDIShader* InShader, const void* InParams, uint32_t InParamBytes,
+                               GDIBuffer* const* InBuffers, uint32_t InBufferCount,
+                               uint32_t InX, uint32_t InY, uint32_t InZ) override;
+    bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
 
     bool     SupportsGPUTimestamps() const override { return TimestampPool != VK_NULL_HANDLE; }
     void     WriteGPUTimestamp(uint32_t InIndex) override;

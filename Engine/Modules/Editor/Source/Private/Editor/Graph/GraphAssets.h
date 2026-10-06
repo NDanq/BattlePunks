@@ -15,6 +15,7 @@
 #include "Public/NodeGraph/Graph.h"
 #include "Public/NodeGraph/GraphCompiler.h"
 #include "Public/NodeGraph/Schema.h"
+#include "Public/RenderCore/RenderTypes.h"
 
 class EditorContext;
 class QObject;
@@ -73,6 +74,30 @@ namespace EditorGraphs
      * <gen_code>; InDone(passed, output). Never calls InDone without Python. */
     void CheckShader(const QString& InGraphPath, QObject* InContext, std::function<void(bool, const QString&)> InDone);
     bool CanCheckShaders();
+
+    // --- Shader debug information (Editor Settings > Shaders > ShaderPDB) ---------
+
+    /* [Shaders] ShaderPDB: the shader cooks also write debug information. */
+    bool IsShaderPDBEnabled();
+
+    /* Engine/Shaders/PDBs; the cook writes below <root>/<Target>/. */
+    QString GetShaderPDBRoot();
+
+    /* Once, after the user's settings load and before the renderer starts:
+     * points [Shaders] PDBDir, which GDI finds the files by, at the root
+     * above, unless an .ini set it. */
+    void InstallShaderPDBDir();
+
+    /*
+     * With ShaderPDB on, writes the debug information of everything the build
+     * cooks -- Engine/Content/Shaders, the engine's materials, the project's
+     * Content/Materials -- for InBackend (Vulkan, D3D12; OpenGL's shaders are
+     * source already) in the background, logged when done. A material saved
+     * in the editor writes its own as it cooks. No argument: the editor's
+     * backend.
+     */
+    void CookShaderPDBs();
+    void CookShaderPDBs(RenderCore::ERenderBackend InBackend);
 
     /* Recompiles every graph in the project; returns the failure count. */
     int RegenerateAll(QStringList& OutLines);

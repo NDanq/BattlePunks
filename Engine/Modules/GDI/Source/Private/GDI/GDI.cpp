@@ -3,7 +3,10 @@
 
 #include <atomic>
 #include <cstring>
+#include <fstream>
+#include <vector>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/GDI/GDILog.h"
 
 // Qt types used by this file. These were arriving implicitly through
@@ -52,6 +55,58 @@ GDISync*            GSync = nullptr;
 EngineCore::ThreadSafeQueue<GDIRenderCommandBase*> GRenderCommands;
 
 int GDebugGroupID = 0;
+
+/* Edit > Editor Settings > Shaders (GDI.h). Here, not in the editor: GDI is
+ * static in RenderCore alone, so these register once. */
+NIMBLE_CONFIG_BOOL(GShaderDebug, "Shaders", "ShaderDebug", true, nullptr);
+NIMBLE_CONFIG_BOOL(GShaderPDB, "Shaders", "ShaderPDB", false, nullptr);
+NIMBLE_CONFIG_STRING(GShaderPDBDir, "Shaders", "PDBDir", "", nullptr);
+
+bool GDIShaderDebugEnabled()
+{
+    return GShaderDebug.GetBool();
+}
+
+std::string GDIGetShaderPDBPath(const std::string& InCookedPath)
+{
+    static const std::string COOKED = "Shaders/Cooked/";
+    if(!GShaderPDB.GetBool() || InCookedPath.compare(0, COOKED.size(), COOKED) != 0)
+    {
+        return std::string();
+    }
+    const char* Dir = GShaderPDBDir.GetString();
+    std::string Root = Dir ? Dir : "";
+    if(Root.empty())
+    {
+        return std::string();
+    }
+    if(Root.back() != '/' && Root.back() != '\\') { Root += '/'; }
+
+    /* "Shaders/Cooked/Vulkan/Basic.vsh.spv" -> "<PDBDir>/Vulkan/Basic.vsh.spv";
+     * D3D12's PDB beside its .cso's name, as the cook writes it. */
+    std::string Path = Root + InCookedPath.substr(COOKED.size());
+    static const std::string CSO = ".cso";
+    if(Path.size() > CSO.size() && Path.compare(Path.size() - CSO.size(), CSO.size(), CSO) == 0)
+    {
+        Path.replace(Path.size() - CSO.size(), CSO.size(), ".pdb");
+    }
+    return std::ifstream(Path, std::ios::binary).good() ? Path : std::string();
+}
+
+void GDISetDebugName(GDIMesh* InMesh, const std::string& InName)
+{
+    if(InMesh) { InMesh->SetDebugName(InName); }
+}
+
+void GDISetDebugName(GDIBuffer* InBuffer, const std::string& InName)
+{
+    if(InBuffer) { InBuffer->SetDebugName(InName); }
+}
+
+void GDISetDebugName(GDITextureResource* InTexture, const std::string& InName)
+{
+    if(InTexture) { InTexture->SetDebugName(InName); }
+}
 
 // ---------------------------------------------------------------------------
 // TRANSITIONAL DIAGNOSTIC -- migration risk F4. See the note in GDI.h.
@@ -350,7 +405,7 @@ IMPLEMENT_GDI_FUNCTION_BODY(void,
                             (uint InColorMask, EngineCore::Color InColor, float InDepth, uint InStencil),
                             ,(InColorMask, InColor, InDepth, InStencil))
 
-/* Hand-written: GDISetScissorRect clips to, and flips within, the viewport. */
+/* Hand-written: GDISetScissorRect clips to the viewport. */
 void GDISetViewport(const uint InX, const uint InY, const uint InWidth, const uint InHeight)
 {
     if(!GDynamicGDI) return;
@@ -366,13 +421,13 @@ void GDISetScissorRect(const uint InX, const uint InY, const uint InWidth, const
     if(!GDynamicGDI) return;
     const GDIDynamicDriver& D = *GDynamicGDI;
 
-    /* Clipped to the viewport, then flipped: InY counts down from its top,
-     * the target's rows up from its bottom. */
+    /* Clipped to the viewport. InY counts down from its top, as the target's
+     * rows do: every backend stores row 0 at the top. */
     const uint Left   = InX < D.ViewportWidth ? InX : D.ViewportWidth;
     const uint Top    = InY < D.ViewportHeight ? InY : D.ViewportHeight;
     const uint Width  = InWidth < D.ViewportWidth - Left ? InWidth : D.ViewportWidth - Left;
     const uint Height = InHeight < D.ViewportHeight - Top ? InHeight : D.ViewportHeight - Top;
-    GDynamicGDI->SetScissorRect(D.ViewportX + Left, D.ViewportY + (D.ViewportHeight - Top - Height), Width, Height);
+    GDynamicGDI->SetScissorRect(D.ViewportX + Left, D.ViewportY + Top, Width, Height);
 }
 
 void GDIClearScissorRect()
@@ -612,14 +667,49 @@ ERenderPlatform GDIGetRenderPlatform()
     return ERP_Null;
 }
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            BeginDrawEvent,
-                            (const std::string& InEventName),,
-                            (InEventName))
+/*
+ * Hand-written for [Shaders] ShaderDebug: each Begin remembers whether it
+ * reached the driver, so turning the setting over between a Begin and its
+ * End neither leaves a region open nor closes one that was never begun.
+ */
+namespace
+{
+    std::vector<bool>& DrawEventsIssued()
+    {
+        thread_local std::vector<bool> Issued;
+        return Issued;
+    }
+}
 
-IMPLEMENT_GDI_FUNCTION_BODY(void,
-                            EndDrawEvent,
-                            (),,())
+void GDIBeginDrawEvent(const std::string& InEventName)
+{
+    const bool bIssue = GDynamicGDI && GShaderDebug.GetBool();
+    DrawEventsIssued().push_back(bIssue);
+    if(bIssue)
+    {
+        GDynamicGDI->BeginDrawEvent(InEventName);
+    }
+}
+
+void GDIEndDrawEvent()
+{
+    std::vector<bool>& Issued = DrawEventsIssued();
+    if(Issued.empty())
+    {
+        return;
+    }
+    const bool bIssued = Issued.back();
+    Issued.pop_back();
+    if(bIssued && GDynamicGDI)
+    {
+        GDynamicGDI->EndDrawEvent();
+    }
+}
+
+bool GDIHasDrawEvents()
+{
+    return GDynamicGDI && GShaderDebug.GetBool() && GDynamicGDI->HasDrawEvents();
+}
 
 GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, const uint InWidth, const uint InHeight, const EGDIRenderTargetFormat InFormat)
 {
@@ -635,6 +725,75 @@ GDITextureResource* GDICreateTextureResourceMips(const EngineCore::Image* InLeve
                                                  const EGDITextureBorder InBorder, const EGDITextureFilter InFilter)
 {
     return GDynamicGDI ? GDynamicGDI->CreateTextureResourceMips(InLevels, InCount, InBorder, InFilter) : nullptr;
+}
+
+bool GDISupportsCompressedFormat(const EGDICompressedFormat InFormat)
+{
+    return GDynamicGDI && InFormat < GDI_CF_MAX && GDynamicGDI->SupportsCompressedFormat(InFormat);
+}
+
+GDITextureResource* GDICreateCompressedTextureResource(const EGDICompressedFormat InFormat, const GDICompressedLevel* InLevels,
+                                                       const uint32_t InCount, const EGDITextureBorder InBorder,
+                                                       const EGDITextureFilter InFilter)
+{
+    if(!GDynamicGDI || !InLevels || InCount == 0 || !GDISupportsCompressedFormat(InFormat)) { return nullptr; }
+    return GDynamicGDI->CreateCompressedTextureResource(InFormat, InLevels, InCount, InBorder, InFilter);
+}
+
+bool GDISupportsCompute()
+{
+    return GDynamicGDI && GDynamicGDI->SupportsCompute();
+}
+
+GDIBuffer* GDICreateBuffer(const uint32_t InBytes, const uint8_t InUsage, const void* InInitialData)
+{
+    if(!GDISupportsCompute() || InBytes == 0 || (InUsage & (GDI_BU_Storage | GDI_BU_Instance)) == 0) { return nullptr; }
+    return GDynamicGDI->CreateBuffer(InBytes, InUsage, InInitialData);
+}
+
+bool GDIDispatchCompute(GDIShader* InShader, const void* InParams, const uint32_t InParamBytes,
+                        GDIBuffer* const* InBuffers, const uint32_t InBufferCount,
+                        const uint32_t InX, const uint32_t InY, const uint32_t InZ)
+{
+    if(!GDISupportsCompute() || !InShader || !InShader->Resource || InShader->GetShaderType() != ST_Compute) { return false; }
+    if(InParamBytes > GDI_COMPUTE_PARAMS_MAX_BYTES || (InParamBytes > 0 && !InParams)) { return false; }
+    if(InBufferCount > GDI_COMPUTE_MAX_STORAGE_BUFFERS || (InBufferCount > 0 && !InBuffers)) { return false; }
+    for(uint32_t Each = 0; Each < InBufferCount; ++Each)
+    {
+        if(!InBuffers[Each] || (InBuffers[Each]->GetUsage() & GDI_BU_Storage) == 0) { return false; }
+    }
+    if(InX == 0 || InY == 0 || InZ == 0) { return false; }
+    return GDynamicGDI->DispatchCompute(InShader, InParams, InParamBytes, InBuffers, InBufferCount, InX, InY, InZ);
+}
+
+bool GDIReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes)
+{
+    OutBytes.clear();
+    return GDISupportsCompute() && InBuffer && GDynamicGDI->ReadBuffer(InBuffer, OutBytes);
+}
+
+void GDISetInstanceBuffer(GDIBuffer* InBuffer, const uint32_t InCount)
+{
+    if(!GDynamicGDI) { return; }
+    const bool bValid = GDynamicGDI->SupportsCompute() && InBuffer && InCount > 0
+                     && (InBuffer->GetUsage() & GDI_BU_Instance) != 0
+                     && uint64_t(InCount) * GDI_INSTANCE_STRIDE <= InBuffer->GetSize();
+    GDynamicGDI->InstanceBuffer = bValid ? InBuffer : nullptr;
+    GDynamicGDI->InstanceCount  = bValid ? InCount : 0;
+}
+
+bool GDISupportsIndirectDraw()
+{
+    return GDynamicGDI && GDynamicGDI->SupportsIndirectDraw();
+}
+
+void GDISetIndirectArgs(GDIBuffer* InArgs, const uint32_t InOffsetBytes)
+{
+    if(!GDynamicGDI) { return; }
+    const bool bValid = GDynamicGDI->SupportsIndirectDraw() && InArgs && (InArgs->GetUsage() & GDI_BU_Indirect) != 0
+                     && InOffsetBytes % 4 == 0 && uint64_t(InOffsetBytes) + GDI_INDIRECT_ARGS_STRIDE <= InArgs->GetSize();
+    GDynamicGDI->IndirectArgs       = bValid ? InArgs : nullptr;
+    GDynamicGDI->IndirectArgsOffset = bValid ? InOffsetBytes : 0;
 }
 
 bool GDISupportsGPUTimestamps()

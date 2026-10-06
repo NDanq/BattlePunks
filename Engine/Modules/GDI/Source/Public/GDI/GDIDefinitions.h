@@ -10,6 +10,8 @@
  * rather than at the moment the last Qt include is removed.
  */
 #include "Public/Core/CoreTypes.h"
+#include <cstddef>
+#include <cstdint>
 #include <string>
 #include <typeinfo>
 
@@ -121,6 +123,30 @@ enum EGDIRenderTargetFormat : char
     GDI_RTF_RGBA16F = 1,
 };
 
+/* A texture's 4x4 block-compressed format (GDICreateCompressedTextureResource),
+ * UNORM -- each reads as its RGBA8 source would: BC1 RGB with alpha 1, BC3
+ * RGBA, BC4 (r, 0, 0, 1), BC5 (r, g, 0, 1), BC7 RGBA. BC1 and BC4 are 8
+ * bytes a block, the rest 16. */
+enum EGDICompressedFormat : char
+{
+    GDI_CF_BC1 = 0,
+    GDI_CF_BC3,
+    GDI_CF_BC4,
+    GDI_CF_BC5,
+    GDI_CF_BC7,
+    GDI_CF_MAX
+};
+
+/* One level of a block-compressed texture: Width x Height texels, Bytes of
+ * blocks row by row ((Width + 3) / 4 of them a row). */
+struct GDICompressedLevel
+{
+    uint32_t       Width  = 0;
+    uint32_t       Height = 0;
+    const uint8_t* Data   = nullptr;
+    size_t         Bytes  = 0;
+};
+
 enum EGDITextureFilter : char
 {
     GDI_TF_Nearest = 0,
@@ -132,6 +158,7 @@ enum EShaderType : char
 {
     ST_Vertex = 0,
     ST_Pixel,
+    ST_Compute,   // a .csh: GDIDispatchCompute, where GDISupportsCompute()
     /*Insert new shader types above this.*/
     ST_MAX
 };
@@ -287,5 +314,13 @@ constexpr unsigned GDI_SCENE_BLOCK_MAX_BYTES    = 4096;
 
 /* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's. */
 constexpr unsigned GDI_MAX_COLOR_TARGETS        = 4;
+
+/*
+ * A compute dispatch's bindings (GDIDispatchCompute): its parameters as a
+ * uniform block at binding 0, then its storage buffers at bindings 1, 2, ...
+ * Shaders declare them with COMPUTE_PARAMS_BEGIN/END and STORAGE_BUFFER.
+ */
+constexpr unsigned GDI_COMPUTE_PARAMS_MAX_BYTES     = 1024;
+constexpr unsigned GDI_COMPUTE_MAX_STORAGE_BUFFERS  = 4;
 
 #endif //CORECLIENT_GDIDEFINITIONS_H
