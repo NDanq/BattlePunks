@@ -2482,6 +2482,34 @@ static void TestShadowsOnGpu()
             Expect(bInset && Own.Darker > 300 && Own.Brighter < 20, "Cast Inset Shadow shadows the floor from the box's own map");
             Expect(bNoInsets && Capped.Darker < 40, "MaxInsetShadows 0 turns inset shadows off");
             Box.GetComponent<RenderComponent>()->bCastInsetShadow = 0;
+
+            /* A caster out of the view's bounds altogether -- above and behind
+             * the camera -- whose shadow falls on the floor it sees: offered
+             * all the same, since its shadow reaches the view. */
+            GameCore::TransformComponent* SunAt = Sun.GetComponent<GameCore::TransformComponent>();
+            const Vector3 SunRotation = SunAt->Rotation;
+            SunAt->Rotation = Vector3(55.0, 0.0, 0.0);   // down and toward +Z, the way the camera looks
+            const Vector3 Travel = LightForward(SunAt->Rotation);
+            const GameCore::Entity Overhead = Placed("Overhead", Travel * -1500.0, Vector3(), Vector3(120.0, 120.0, 120.0));
+            RenderComponent OverheadRender = Mesh("Engine/Content/Meshes/Box.nmmesh");
+            OverheadRender.bCastInsetShadow = 1;
+            Overhead.AddComponent(OverheadRender);
+            EngineCore::Image Unlit, FromAbove, NotOffered;
+            Enabled->SetFromString("0");
+            const bool bUnlit = Capture(Unlit);
+            Enabled->SetFromString("1");
+            const bool bFromAbove = Capture(FromAbove);
+            Dump(FromAbove, "sun-inset-offscreen");
+            Overhead.GetComponent<RenderComponent>()->bCastInsetShadow = 0;
+            const bool bNotOffered = Capture(NotOffered);
+            const Difference Above = bUnlit && bFromAbove ? Compare(FromAbove, Unlit) : Difference();
+            const Difference Plain = bUnlit && bNotOffered ? Compare(NotOffered, Unlit) : Difference();
+            std::printf("    off-screen caster: %d pixels darker with an inset, %d without\n", Above.Darker, Plain.Darker);
+            Expect(bFromAbove && Above.Darker > 300 && Above.Brighter < 20,
+                   "a caster outside the view's bounds still gets an inset shadow on the floor it sees");
+            Expect(bNotOffered && Plain.Darker < 40, "which the sun's short view alone does not draw");
+            World.DestroyEntity(Overhead.GetID());
+            SunAt->Rotation = SunRotation;
             SunLight->ShadowDistance = 3000.0f;
 
             /* The sun off; a spot light straight down over the box. */
@@ -5268,6 +5296,61 @@ static void TestShadowSetup()
         ToAtlas(Frame.Views[Frame.InsetFirstView], Casters[0].Centre, NudgedU, NudgedV, Depth);
         Expect(std::abs(PlacedU - NudgedU) * 2048.0 < 1e-3 && std::abs(PlacedV - NudgedV) * 2048.0 < 1e-3,
                "an inset view moves in whole texels");
+
+        /* Each inset view's screen rectangle holds its caster's centre and is
+         * less than the whole screen -- its prism, swept down and under the
+         * camera, is clipped to the view. One wholly behind the eye is empty;
+         * one round the eye is the whole screen. */
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 5);
+        bool bRects = true;
+        for(uint32_t Index = 0; Index < Frame.InsetCount; ++Index)
+        {
+            const ShadowView& View = Frame.Views[uint32_t(Frame.InsetFirstView) + Index];
+            const Vector3& Centre = Casters[View.Inset].Centre;
+            const Vector4 Clip = Camera.Projection * Camera.View * Vector4(Centre.GetX(), Centre.GetY(), Centre.GetZ(), 1.0);
+            const double X = Clip.GetX() / Clip.GetW(), Y = Clip.GetY() / Clip.GetW();
+            bRects &= X >= View.ScreenNdc[0] && X <= View.ScreenNdc[2] && Y >= View.ScreenNdc[1] && Y <= View.ScreenNdc[3]
+                   && (View.ScreenNdc[2] - View.ScreenNdc[0]) * (View.ScreenNdc[3] - View.ScreenNdc[1]) < 4.0f;
+        }
+        Expect(bRects, "each inset view's screen rectangle holds its caster, and is less than the screen");
+        /* The receivers cut the sweep: a floor under the casters stops their
+         * prisms there, so each covers less screen -- still holding where its
+         * shadow lands on that floor. */
+        const GameCore::AABB Floor(Vector3(-3000.0, -20.0, -3000.0), Vector3(3000.0, 0.0, 3000.0));
+        bool bFloored = true;
+        for(uint32_t Index = 0; Index < Frame.InsetCount; ++Index)
+        {
+            const ShadowView& View = Frame.Views[uint32_t(Frame.InsetFirstView) + Index];
+            InsetShadowCaster Raised = Casters[View.Inset];
+            Raised.Centre = Raised.Centre + Vector3(0.0, 300.0, 0.0);   // above the floor
+            float Open[4] = {}, Cut[4] = {};
+            InsetScreenNdc(Raised, Vector3(0.3, -1.0, 0.2).GetNormalize(), 2.0, Camera, Open);
+            InsetScreenNdc(Raised, Vector3(0.3, -1.0, 0.2).GetNormalize(), 2.0, Camera, Cut, &Floor);
+            const Vector3 Down = Vector3(0.3, -1.0, 0.2).GetNormalize();
+            const Vector3 Lands = Raised.Centre + Down * ((Raised.Centre.GetY() + 10.0) / -Down.GetY());
+            const Vector4 Clip = Camera.Projection * Camera.View * Vector4(Lands.GetX(), Lands.GetY(), Lands.GetZ(), 1.0);
+            const double X = Clip.GetX() / Clip.GetW(), Y = Clip.GetY() / Clip.GetW();
+            bFloored &= (Cut[2] - Cut[0]) * (Cut[3] - Cut[1]) < (Open[2] - Open[0]) * (Open[3] - Open[1])
+                     && X >= Cut[0] && X <= Cut[2] && Y >= Cut[1] && Y <= Cut[3];
+        }
+        Expect(bFloored, "the receivers' bounds stop a prism at the floor: less screen, its shadow on the floor still in it");
+        float Missed[4] = {};
+        const GameCore::AABB Elsewhere(Vector3(5000.0, 0.0, 5000.0), Vector3(6000.0, 10.0, 6000.0));
+        InsetScreenNdc(Casters[0], Vector3(0.3, -1.0, 0.2).GetNormalize(), 2.0, Camera, Missed, &Elsewhere);
+        Expect(Missed[0] > Missed[2], "a prism that meets no receiver shadows no pixel");
+
+        float None[4] = {}, Whole[4] = {};
+        InsetShadowCaster Behind;
+        Behind.Centre = Camera.Origin + Vector3(0.0, 0.0, -50.0);   // the camera looks along +Z: this is behind it
+        Behind.Radius = 20.0f;
+        InsetScreenNdc(Behind, Vector3(0.0, 0.0, -1.0), 1.0, Camera, None);
+        Expect(None[0] > None[2] && None[1] > None[3], "a prism wholly behind the eye shadows no pixel");
+        InsetShadowCaster Around;
+        Around.Centre = Camera.Origin;
+        Around.Radius = 20.0f;
+        InsetScreenNdc(Around, Vector3(0.3, -1.0, 0.2).GetNormalize(), 1.0, Camera, Whole);
+        Expect(Whole[0] == -1.0f && Whole[1] == -1.0f && Whole[2] == 1.0f && Whole[3] == 1.0f,
+               "a prism round the eye shadows the whole screen");
 
         Insets.Shadows.MaxInsetShadows = 1;
         BuildShadowFrame(Insets, Camera, Frame, Casters, 5);

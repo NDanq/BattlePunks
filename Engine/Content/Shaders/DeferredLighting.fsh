@@ -30,6 +30,7 @@ UBO_BLOCK_BEGIN(2, Lighting_Block)
     vec4 Lighting_InsetTint;   // rgb: that Modulated shadow's tint, display space
     vec4 Lighting_Insets[4];   // x: its matrix in Scene_LocalShadowMatrices; y: its texel, world units;
                                // zw: its tile's corner, atlas UV (Shadows.glsl's InsetShadow)
+    vec4 Lighting_InsetRects[4]; // the pixels each can shadow (gl_FragCoord): xy min, zw max
 UBO_BLOCK_END(Lighting_Block)
 
 // Only here are lights shadowed: the atlases above are this pass's.

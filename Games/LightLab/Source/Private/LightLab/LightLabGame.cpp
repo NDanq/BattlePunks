@@ -49,6 +49,9 @@
  *                      light-animation systems, owns the mode.
  *   LightLabBakedLevel loads Content/Levels/BakedLighting.nmworld; flies the
  *                      Player and swings the dynamic ball (Swinger).
+ *
+ * Both turn the InsetLattice (inset shadows' demo cage) and drift it round
+ * where it was placed, so its own shadow map follows a moving caster.
  *   LightLabGameMode   mouse capture, the T/F/L toggles, a periodic report.
  *   LightLabGameModule owns and registers both levels.
  *
@@ -196,6 +199,16 @@ struct LightLabSwingContext
     double              ElapsedSeconds = 0.0;
 };
 
+/* What LightLab.TurnLattice's void* points at: the inset-shadow lattice,
+ * turning and drifting round where it was placed. */
+struct LightLabLatticeContext
+{
+    GameCore::EntityID  Lattice;
+    EngineCore::Vector3 Center;
+    EngineCore::Vector3 Rotation;
+    double              ElapsedSeconds = 0.0;
+};
+
 /* What LightLab.AnimateLights' void* points at. */
 struct LightLabAnimateContext
 {
@@ -334,6 +347,44 @@ namespace
         Transform->Position = EngineCore::Vector3(Context.Center.GetX() + Context.Radius * std::cos(Angle),
                                                   Context.Center.GetY() + 40.0 * std::sin(Angle * 2.0),
                                                   Context.Center.GetZ() + Context.Radius * std::sin(Angle));
+    }
+
+    /* PrePhysics system: turns the InsetLattice a full turn every 15 seconds
+     * about its height, rocking it 10 degrees, and drifts it round a 25-unit
+     * circle every 9 seconds, bobbing 10 -- slow enough to follow its
+     * shadow's bars, fast enough to cross many shadow-map texels. */
+    void TurnLatticeSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    {
+        auto& Context = *static_cast<LightLabLatticeContext*>(InUserData);
+        Context.ElapsedSeconds += double(InDeltaSeconds);
+        GameCore::TransformComponent* Transform = InWorld.GetEntity(Context.Lattice).GetComponent<GameCore::TransformComponent>();
+        if(!Transform)
+        {
+            return;
+        }
+        const double Time  = Context.ElapsedSeconds;
+        const double Drift = Time * (2.0 * 3.14159265358979323846 / 9.0);
+        Transform->Position = EngineCore::Vector3(Context.Center.GetX() + 25.0 * std::cos(Drift),
+                                                  Context.Center.GetY() + 10.0 * std::sin(Drift * 2.0),
+                                                  Context.Center.GetZ() + 25.0 * std::sin(Drift));
+        Transform->Rotation = EngineCore::Vector3(Context.Rotation.GetX() + 10.0 * std::sin(Time * 0.7),
+                                                  Context.Rotation.GetY() + Time * 24.0,
+                                                  Context.Rotation.GetZ());
+    }
+
+    /* InsetLattice, if InWorld has one, into InOut; false if not (nothing to turn). */
+    bool FindLattice(GameCore::World& InWorld, LightLabLatticeContext& InOut)
+    {
+        InOut = LightLabLatticeContext();
+        InOut.Lattice = InWorld.FindEntityByName("InsetLattice");
+        const GameCore::TransformComponent* Placed = InWorld.GetEntity(InOut.Lattice).GetComponent<GameCore::TransformComponent>();
+        if(!InOut.Lattice.IsSet() || !Placed)
+        {
+            return false;
+        }
+        InOut.Center   = Placed->Position;
+        InOut.Rotation = Placed->Rotation;
+        return true;
     }
 
     /* InPath into InWorld -- in a game build, its cooked twin in
@@ -621,6 +672,10 @@ public:
         FlyContext.Player = Player;
         World.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &FlyContext);
         World.RegisterSystem("LightLab.AnimateLights", GameCore::TP_PrePhysics, &AnimateLightsSystem, &AnimateContext);
+        if(FindLattice(World, LatticeContext))
+        {
+            World.RegisterSystem("LightLab.TurnLattice", GameCore::TP_PrePhysics, &TurnLatticeSystem, &LatticeContext);
+        }
 
         /* Here, not a member initialiser: needs the Player and the Sun. */
         Mode.emplace(Player, SunEntity);
@@ -970,6 +1025,7 @@ private:
     GameCore::EntityID     SunEntity;
     LightLabFlyContext     FlyContext;
     LightLabAnimateContext AnimateContext;
+    LightLabLatticeContext LatticeContext;
 
     std::optional<LightLabGameMode> Mode;
 };
@@ -1013,6 +1069,10 @@ public:
 
         World.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &FlyContext);
         World.RegisterSystem("LightLab.Swing", GameCore::TP_PrePhysics, &SwingSystem, &SwingContext);
+        if(FindLattice(World, LatticeContext))
+        {
+            World.RegisterSystem("LightLab.TurnLattice", GameCore::TP_PrePhysics, &TurnLatticeSystem, &LatticeContext);
+        }
         Mode.emplace(Player, World.FindEntityByName("Sun"));
         return true;
     }
@@ -1025,6 +1085,7 @@ public:
 private:
     LightLabFlyContext              FlyContext;
     LightLabSwingContext            SwingContext;
+    LightLabLatticeContext          LatticeContext;
     std::optional<LightLabGameMode> Mode;
 };
 

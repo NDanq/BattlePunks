@@ -143,8 +143,9 @@ namespace RenderCore
             };
             uint64_t StaticCount = 0;
 
-            /* Visible proxies asking for an inset shadow, and how much of the
-             * view each fills (radius over distance): the largest get one. */
+            /* Proxies asking for an inset shadow -- visible, or culled but with
+             * a shadow that can reach the view -- and how much of the view
+             * each fills (radius over distance): the largest get one. */
             struct InsetCandidate
             {
                 RenderProxy*      Proxy;
@@ -152,6 +153,35 @@ namespace RenderCore
                 double            Coverage;
             };
             std::vector<InsetCandidate> InsetCandidates;
+            const auto OfferInset = [&](RenderProxy* InProxy)
+            {
+                InsetCandidates.push_back({ InProxy, InsetSphere(*InProxy), 0.0 });
+                InsetCandidate& Candidate = InsetCandidates.back();
+                const double Distance = (Candidate.Caster.Centre - InView.Origin).GetLength();
+                Candidate.Coverage = double(Candidate.Caster.Radius) / std::max(Distance, 1.0);
+            };
+
+            /* A culled caster's shadow reaches the view if its sphere's box,
+             * swept along the inset light across the view's whole extent,
+             * overlaps it. Conservative: a box, not the prism. */
+            const double LightLength = Lighting.InsetLightDirection.GetLength();
+            const bool   bInsetLight = Lighting.bInsetLight && LightLength > 1e-9 && !InView.Bounds.IsEmpty();
+            const EngineCore::Vector3 InsetSweep = bInsetLight
+                ? Lighting.InsetLightDirection * ((InView.Bounds.Max - InView.Bounds.Min).GetLength() / LightLength)
+                : EngineCore::Vector3(0.0, 0.0, 0.0);
+            const auto ShadowReachesView = [&](const RenderProxy& InProxy)
+            {
+                const InsetShadowCaster Sphere = InsetSphere(InProxy);
+                const EngineCore::Vector3 Half(Sphere.Radius, Sphere.Radius, Sphere.Radius);
+                const GameCore::AABB Near(Sphere.Centre - Half, Sphere.Centre + Half);
+                const GameCore::AABB Far(Near.Min + InsetSweep, Near.Max + InsetSweep);
+                return GameCore::AABB::Union(Near, Far).Overlaps(InView.Bounds);
+            };
+
+            /* What the view draws, so where an inset's shadow can land: unknown
+             * (unbounded) if the view or any drawn proxy has no bounds. */
+            GameCore::AABB Receivers;
+            bool           bReceiversKnown = !InView.Bounds.IsEmpty();
 
             for(RenderProxy* Proxy : Proxies)
             {
@@ -193,6 +223,10 @@ namespace RenderCore
                 if(!bVisible)
                 {
                     ++CulledCount;
+                    if(bInsetLight && Proxy->CastsInsetShadow() && bProxyHasBounds && ShadowReachesView(*Proxy))
+                    {
+                        OfferInset(Proxy);
+                    }
                     continue;
                 }
 
@@ -218,11 +252,10 @@ namespace RenderCore
 
                 if(Proxy->CastsInsetShadow() && !Proxy->GetLocalBounds().IsEmpty())
                 {
-                    InsetCandidates.push_back({ Proxy, InsetSphere(*Proxy), 0.0 });
-                    InsetCandidate& Candidate = InsetCandidates.back();
-                    const double Distance = (Candidate.Caster.Centre - InView.Origin).GetLength();
-                    Candidate.Coverage = double(Candidate.Caster.Radius) / std::max(Distance, 1.0);
+                    OfferInset(Proxy);
                 }
+                if(bProxyHasBounds) { Receivers = GameCore::AABB::Union(Receivers, Bounds); }
+                else                { bReceiversKnown = false; }
             }
             std::stable_sort(InsetCandidates.begin(), InsetCandidates.end(),
                              [](const InsetCandidate& InA, const InsetCandidate& InB) { return InA.Coverage > InB.Coverage; });
@@ -238,7 +271,8 @@ namespace RenderCore
              * scene's shadows off, so it lights unshadowed.
              */
             const bool     bShadows    = !InCapture || InCapture->bShadows;
-            const uint32_t ShadowViews = bShadows ? InContext.PrepareShadows(InsetCasters, uint32_t(InsetCandidates.size())) : 0;
+            const uint32_t ShadowViews = bShadows ? InContext.PrepareShadows(InsetCasters, uint32_t(InsetCandidates.size()),
+                                                                             bReceiversKnown ? &Receivers : nullptr) : 0;
 
             /* The casters that got an inset view: theirs replaces the sun's. */
             std::vector<const RenderProxy*> Inset;

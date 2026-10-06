@@ -56,6 +56,12 @@ namespace RenderCore
         /* An inset shadow's view: which of BuildShadowFrame's InCasters it
          * draws -- that one alone. -1 for a light's view. */
         int32_t        Inset = -1;
+
+        /* An inset view: the part of the camera's screen it can shadow, as
+         * NDC x and y min then max (y up) -- the prism behind its caster,
+         * swept to the far plane and clipped to the view (InsetScreenNdc).
+         * The Lighting pass skips every pixel outside. */
+        float          ScreenNdc[4] = { -1.0f, -1.0f, 1.0f, 1.0f };
     };
 
     /* A frame's shadow views and what the lights index into. */
@@ -108,13 +114,25 @@ namespace RenderCore
      * Then InCasters, most deserving first, while the local atlas has tiles
      * left and up to MaxInsetShadows (and RENDER_INSET_SHADOW_MAX): each an
      * orthographic view along InLighting's inset light holding the caster's
-     * sphere, texel-snapped. None without an inset light.
+     * sphere, texel-snapped. None without an inset light. InReceivers bounds
+     * what they can shadow on screen (InsetScreenNdc).
      */
     RENDERCORE_API void BuildShadowFrame(const RenderLighting& InLighting, const RenderView& InCamera, ShadowFrame& OutFrame,
-                                         const InsetShadowCaster* InCasters = nullptr, uint32_t InCasterCount = 0);
+                                         const InsetShadowCaster* InCasters = nullptr, uint32_t InCasterCount = 0,
+                                         const GameCore::AABB* InReceivers = nullptr);
 
     /* The cascades' far edges between InNear and InFar: InLambda 0 uniform,
      * 1 logarithmic. */
+    /* The NDC rectangle (x, y min then max) InCamera sees of InCaster's
+     * sphere, grown by InPad world units and swept along InDirection (unit)
+     * to past InCamera's far plane -- clipped to the view, so what is behind
+     * the eye or off screen drops out. Empty (min above max) if none of it is
+     * in view; the whole screen if it holds the view. InReceivers, if given,
+     * bounds everything a shadow can land on (what the view draws): the
+     * prism is cut to it first, so it stops at the floor. */
+    RENDERCORE_API void InsetScreenNdc(const InsetShadowCaster& InCaster, const EngineCore::Vector3& InDirection, double InPad,
+                                       const RenderView& InCamera, float (&OutNdc)[4], const GameCore::AABB* InReceivers = nullptr);
+
     RENDERCORE_API void ComputeCascadeSplits(float InNear, float InFar, uint32_t InCount, float InLambda, float* OutSplits);
 
     /* The [Shadows] config section (ShadowSettings.cpp). GAME THREAD: the
