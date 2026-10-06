@@ -260,6 +260,17 @@ namespace RenderCore
 
         void GetStats(RenderStats& OutStats) const;
 
+        /*
+         * A section of the stats panel ("stat unit") that is not the
+         * renderer's own: InText, a line each, under the heading InName, drawn
+         * below the thread and GPU times in every viewport -- how another
+         * module shows its numbers ("stat physics"). Sections show in name
+         * order, from the next EndFrame. Empty InText removes the section.
+         * Game thread only. The whole panel holds 960 characters (its widest
+         * line times its lines), so keep a section short.
+         */
+        void SetStatText(const char* InName, const std::string& InText);
+
     private:
         struct Impl;
         Impl* P;

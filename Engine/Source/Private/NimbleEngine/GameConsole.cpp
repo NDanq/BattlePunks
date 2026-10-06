@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iterator>
 #include <cstdio>
 #include <cstdlib>
 #include <memory>
@@ -701,6 +702,37 @@ NIMBLE_CONSOLE_COMMAND(open, "<level>", "Load a level by its registered name, as
     }
     Console.Print("Opening " + Console.Args.front());
     Console.Session.RequestLevel(*Level);
+}
+
+/* As the editor's console spells it: "stat unit" toggles [Stats] Unit, "stat
+ * frame" [Stats] Frame, "stat physics" [Stats] Physics; "stat none" hides
+ * them all. */
+NIMBLE_CONSOLE_COMMAND(stat, "<unit|frame|physics|none>", "Show thread times, GPU times or the physics simulation over the game")
+{
+    static const char* const Names[] = { "unit", "frame", "physics" };
+    static const char* const Vars[]  = { "Unit", "Frame", "Physics" };
+    std::string Which = Console.Args.size() == 1 ? Console.Args.front() : std::string();
+    for(char& Each : Which) { Each = char(std::tolower(static_cast<unsigned char>(Each))); }
+
+    if(Which == "none")
+    {
+        for(const char* Var : Vars)
+        {
+            if(EngineCore::ConfigVar* Found = EngineCore::ConfigFindVar("Stats", Var)) { Found->SetBool(false); }
+        }
+        Console.Print("stats hidden");
+        return;
+    }
+    for(size_t Index = 0; Index < std::size(Names); ++Index)
+    {
+        if(Which != Names[Index]) { continue; }
+        EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Stats", Vars[Index]);
+        if(!Var) { break; }
+        Var->SetBool(!Var->GetBool());
+        Console.Print("stat " + Which + ": " + (Var->GetBool() ? "on" : "off"));
+        return;
+    }
+    Console.PrintError("Usage: stat unit | frame | physics | none");
 }
 
 NIMBLE_CONSOLE_COMMAND(pause, "", "Pause or resume the World")

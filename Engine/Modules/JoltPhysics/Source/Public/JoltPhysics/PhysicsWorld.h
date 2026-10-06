@@ -61,6 +61,21 @@ namespace JoltPhysics
         uint32_t ActiveBodies = 0;   // awake, dynamic or kinematic
         uint32_t Constraints  = 0;
         uint64_t Steps        = 0;   // fixed steps taken since Attach
+
+        /* Bodies by motion; sensors are counted in their motion too. */
+        uint32_t DynamicBodies   = 0;
+        uint32_t KinematicBodies = 0;
+        uint32_t StaticBodies    = 0;
+        uint32_t Sensors         = 0;
+
+        /* Body pairs touching now (a sleeping pair still counts). */
+        uint32_t Contacts = 0;
+
+        /* The last frame: fixed steps taken, milliseconds in Jolt's steps and
+         * in the sync before them (making, moving and pushing bodies). */
+        uint32_t StepsLastFrame = 0;
+        float    StepMs         = 0.0f;
+        float    SyncMs         = 0.0f;
     };
 
     /*
