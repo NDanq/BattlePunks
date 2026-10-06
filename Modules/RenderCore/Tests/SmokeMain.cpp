@@ -2481,6 +2481,32 @@ static void TestShadowsOnGpu()
             Expect(bShort && NoReach.Darker < 40, "a sun whose Shadow Distance stops short draws no shadow of the box");
             Expect(bInset && Own.Darker > 300 && Own.Brighter < 20, "Cast Inset Shadow shadows the floor from the box's own map");
             Expect(bNoInsets && Capped.Darker < 40, "MaxInsetShadows 0 turns inset shadows off");
+
+            /* InsetFilter: every setting draws the shadow; hard and 5x5 edges differ. */
+            ConfigVar* InsetFilter = ConfigFindVarByPath("Shadows.InsetFilter");
+            Expect(InsetFilter != nullptr, "[Shadows] InsetFilter is a config var");
+            EngineCore::Image Hard, Soft;
+            if(InsetFilter) { InsetFilter->SetFromString("0"); }
+            const bool bHard = Capture(Hard);
+            if(InsetFilter) { InsetFilter->SetFromString("2"); }
+            const bool bSoft = Capture(Soft);
+            if(InsetFilter) { InsetFilter->SetFromString("1"); }
+            const Difference HardShadow = bHard ? Compare(Hard, Lit) : Difference();
+            const Difference SoftShadow = bSoft ? Compare(Soft, Lit) : Difference();
+            int EdgePixels = 0;
+            for(int Y = 0; bHard && bSoft && Y < 256; ++Y)
+            {
+                for(int X = 0; X < 256; ++X)
+                {
+                    int A[3], B[3];
+                    Rgb(Hard, X, Y, A);
+                    Rgb(Soft, X, Y, B);
+                    EdgePixels += std::abs((A[0] + A[1] + A[2]) - (B[0] + B[1] + B[2])) > 12 ? 1 : 0;
+                }
+            }
+            std::printf("    inset filter: hard %d pixels darker, 5x5 %d; %d edge pixels differ\n", HardShadow.Darker, SoftShadow.Darker, EdgePixels);
+            Expect(bHard && bSoft && HardShadow.Darker > 300 && SoftShadow.Darker > 300, "every InsetFilter draws the inset shadow");
+            Expect(EdgePixels > 20, "and a hard filter's edge differs from a 5x5 one's");
             Box.GetComponent<RenderComponent>()->bCastInsetShadow = 0;
 
             /* A caster out of the view's bounds altogether -- above and behind

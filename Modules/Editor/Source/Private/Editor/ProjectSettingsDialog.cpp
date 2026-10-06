@@ -77,6 +77,7 @@ namespace
         { "Shadows", "Filter",            ShadowFilterChoices,     int(std::size(ShadowFilterChoices)) },
         { "Shadows", "MaxShadowedLights", ShadowLightChoices,      int(std::size(ShadowLightChoices)) },
         { "Shadows", "MaxInsetShadows",   ShadowLightChoices,      int(std::size(ShadowLightChoices)) },
+        { "Shadows", "InsetFilter",       ShadowFilterChoices,     int(std::size(ShadowFilterChoices)) },
     };
 
     /* A readable label and what a key does, where its name alone says too
@@ -101,6 +102,9 @@ namespace
         { "Shadows", "MaxInsetShadows",   "Inset shadows",
           "How many Render components with Cast Inset Shadow get a sun shadow map of their own, largest on screen first. "
           "They share the point and spot lights' atlas: each takes a tile the lights leave" },
+        { "Shadows", "InsetFilter",       "Inset shadow filter",
+          "How soft an inset shadow's edge is. Their maps are already sharp, so a smaller filter than Filter's "
+          "usually looks the same and costs less" },
         { "Shadows", "DistanceScale",     "Sun shadow distance scale",
           "Multiplies every Directional Light's Shadow Distance: lower is sharper and shorter" },
     };
