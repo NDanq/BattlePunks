@@ -157,6 +157,12 @@ namespace GameCore
                                                   size_t InCount, size_t InRejected,
                                                   ComponentPropertyDefaultsFn InDefaultsFn, uint8_t InTypeFlags);
 
+    /* Withdraws InType's properties; the macro's registrar calls it when its
+     * image unloads, as the serializer and script registrars do -- so a game
+     * module's defaults function never outlives its code, and a reloaded
+     * module registers again (into the same slots). */
+    GAMECORE_API void UnregisterComponentProperties(ComponentTypeID InType);
+
     /* nullptr/0 if InType has no editor-visible properties. */
     GAMECORE_API const ComponentPropertyEntry* FindComponentProperties(ComponentTypeID InType, size_t& OutCount);
 
@@ -343,7 +349,7 @@ namespace GameCore
         /* Keeps the type out of a tool's "Add Component" (CPF_NotAddable). */
         void NotAddable() { TypeFlags |= CPF_NotAddable; }
 
-        void Commit() { RegisterComponentProperties(T::StaticType().ID, Entries, Count, Rejected, &Defaults, TypeFlags); }
+        bool Commit() { return RegisterComponentProperties(T::StaticType().ID, Entries, Count, Rejected, &Defaults, TypeFlags); }
 
     private:
         template<typename, typename> friend class ComponentStructBinder;
@@ -409,8 +415,14 @@ namespace GameCore
             {                                                                                         \
                 ::GameCore::ComponentPropertyBinder<TypeName> Props;                                  \
                 TypeName##_PropertiesBody(Props);                                                     \
-                Props.Commit();                                                                       \
+                bRegistered = Props.Commit();                                                         \
             }                                                                                         \
+            /* Only its own registration: a refused duplicate leaves the first. */                    \
+            ~TypeName##_PropertiesRegistrar()                                                         \
+            {                                                                                         \
+                if(bRegistered) { ::GameCore::UnregisterComponentProperties(TypeName::StaticType().ID); } \
+            }                                                                                         \
+            bool bRegistered = false;                                                                 \
         };                                                                                            \
         TypeName##_PropertiesRegistrar G##TypeName##_PropertiesRegistrar;                             \
     }                                                                                                 \

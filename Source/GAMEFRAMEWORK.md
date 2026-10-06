@@ -149,3 +149,32 @@ loses every ball. `[BrickBreaker] RunSeconds` quits after a while.
 Client and Server targets need cooked prefabs for `Brick` and `Ball` (`cook
 prefabs` in the editor writes `Cooked/Prefabs/`), as Sandbox's other
 `.nmprefab` files do.
+
+## Networking
+
+With NetCore built (`NIMBLE_WITH_NETCORE`, on by default), the same game runs as:
+
+- a dedicated server: `<Game>Server`
+- a client: `<Game> -connect=host:port`
+- a listen server: `<Game> -listen`
+
+`Engine/Modules/NetCore/README.md` has the whole model. In short:
+
+- **Both ends run the same level and mode. The server has authority.** Put
+  anything that changes networked state behind `NimbleEngine::HasAuthority()`
+  (`NetFacade.h`): spawning, scoring, phases. Clients see it by replication.
+- **Players.** The server makes each joining client an entity with a
+  `PlayerStateComponent` and a `NetComponent` the client owns. Then
+  `OnPlayerAdded` and `IGameMode::OnClientConnected(Client, Player)` run.
+  Give the player its pawn there. `OnClientDisconnected` comes before the
+  client's entities are destroyed.
+- **Input goes to the server as RPCs.** A client checks
+  `IsLocallyOwned(*Net)` on its own entities and calls a Server RPC
+  (`GAMECORE_RPC`). The server answers with replicated fields, or with Client
+  and Multicast RPCs.
+- **Standalone** (no session, or NetCore compiled out), every `HasAuthority()`
+  is true and every RPC runs locally, so the same code plays offline.
+
+`Games/LightLab/Source/Private/LightLab/LightLabAvatar.cpp` is the smallest
+working example. Each player is an orb the others see, steered by a Server RPC
+and moved by Transform replication.

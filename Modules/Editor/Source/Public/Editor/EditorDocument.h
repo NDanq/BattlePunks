@@ -331,6 +331,11 @@ signals:
     /* CanUndo / CanRedo / clean state may have changed. */
     void HistoryChanged();
 
+    /* A new step joined the history (not one merged into the last, as a
+     * drag's steps are), with its undo text. What the editor link announces
+     * (EditorNetSession.h). */
+    void CommandRecorded(const QString& InText);
+
 private:
     /* GetEntityBounds without the children or the marker: empty if InEntity
      * has no shape of its own. InEntity must be alive. */

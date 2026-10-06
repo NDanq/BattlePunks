@@ -10,8 +10,17 @@
 #include "Public/GameCore/GameCoreLog.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldSerializer.h"
+#include "Public/Core/CoreConfig.h"
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED && !WITH_EDITOR
+#include <filesystem>
+
+/* A Client or Server build cooks a text world or prefab when it first loads
+ * it (WorldPackage.h, ResolveContentWorld); off, it reads the text itself. */
+NIMBLE_CONFIG_BOOL(GContentCookOnLoad, "Content", "CookOnLoad", true, nullptr);
+#endif
+
+#if WITH_UNCOOKED
 #include <algorithm>
 #include <charconv>
 #include <filesystem>
@@ -30,12 +39,12 @@
 #include "Private/GameCore/XmlComponentArchive.h"
 #endif
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
 using namespace GameCore::XmlText;
 #endif
 
 /* Format detection and binary load in every build; the text package (save,
- * load, cook) in editor builds only. See WorldPackage.h and DESIGN.md. */
+ * load, cook) in every build but Shipping (WITH_UNCOOKED). See WorldPackage.h. */
 
 namespace GameCore
 {
@@ -51,7 +60,7 @@ namespace
         return SerializeWorld(Ar, InOutWorld) && !Ar.HasError();
     }
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
     /* The one text format: loose entities and prefab instances. */
     constexpr int         TEXT_FORMAT        = 1;
     constexpr const char* ENTITY_EXTENSION   = ".nmentity";
@@ -809,10 +818,10 @@ namespace
         InOutWorld.RefreshSpatialIndex();
         return true;
     }
-#endif // WITH_EDITOR
+#endif // WITH_UNCOOKED
 }
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
 PrefabInstanceID RefreshPrefabInstance(World& InWorld, const PrefabInstanceID InInstance)
 {
     if(InWorld.IsTicking() || !IsSavedAsInstance(InWorld, InInstance))
@@ -884,7 +893,7 @@ PrefabInstanceID RefreshPrefabInstance(World& InWorld, const PrefabInstanceID In
     }
     return New.GetID();
 }
-#endif // WITH_EDITOR
+#endif // WITH_UNCOOKED
 
 EWorldFileFormat DetectWorldFileFormat(const char* InPath)
 {
@@ -920,11 +929,11 @@ bool LoadWorldFile(const char* InPath, World& InOutWorld, EWorldFileFormat* OutF
             return LoadBinaryWorld(InPath, InOutWorld);
 
         case EWorldFileFormat::Text:
-#if WITH_EDITOR
+#if WITH_UNCOOKED
             return LoadTextWorld(InPath, InOutWorld);
 #else
             GAMECORE_LOG_ERROR(std::string("LoadWorldFile: '") + InPath
-                               + "' is an editor (text) world; a game build loads cooked worlds -- cook it first")
+                               + "' is a text world; a Shipping build loads only cooked worlds -- cook it first")
             return false;
 #endif
 
@@ -935,7 +944,7 @@ bool LoadWorldFile(const char* InPath, World& InOutWorld, EWorldFileFormat* OutF
     return false;
 }
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
 bool SaveWorldPackage(const char* InPath, World& InWorld)
 {
     CORE_CHECK(!InWorld.IsTicking(), "SaveWorldPackage called while the World is ticking -- see WorldPackage.h")
@@ -1126,5 +1135,110 @@ bool CookWorldFile(const char* InSourcePath, const char* InCookedPath)
                  + std::to_string(Bytes.size()) + " bytes, " + std::to_string(Scratch.GetEntityCount()) + " entities)")
     return true;
 }
-#endif // WITH_EDITOR
+#endif // WITH_UNCOOKED
+
+// === Content by source path ==================================================
+
+namespace
+{
+#if !WITH_UNCOOKED
+    /* The cooked twin a Shipping build reads: a world's "<folder>/Cooked/<file>". */
+    std::string ShippingWorldPath(const std::string& InSource)
+    {
+        const size_t Slash = InSource.find_last_of("/\\");
+        return Slash == std::string::npos ? "Cooked/" + InSource
+                                          : InSource.substr(0, Slash + 1) + "Cooked/" + InSource.substr(Slash + 1);
+    }
+#endif
+
+#if WITH_UNCOOKED && !WITH_EDITOR
+    namespace fs = std::filesystem;
+
+
+    /* The newest modification of InFile and of every file under InFolder;
+     * false if InFile is missing. */
+    bool NewestTime(const fs::path& InFile, const fs::path* InFolder, fs::file_time_type& OutNewest)
+    {
+        std::error_code Error;
+        OutNewest = fs::last_write_time(InFile, Error);
+        if(Error) { return false; }
+        if(InFolder && fs::is_directory(*InFolder, Error))
+        {
+            for(const fs::directory_entry& Entry : fs::recursive_directory_iterator(*InFolder, Error))
+            {
+                const fs::file_time_type Time = Entry.last_write_time(Error);
+                if(!Error && Time > OutNewest) { OutNewest = Time; }
+            }
+        }
+        return true;
+    }
+
+    /* InSource (text) cooked into Intermediate/Cooked/<InSource> if that is
+     * missing or older; the path to read: the cooked one, or InSource if the
+     * cook fails. InFolder: a world's entity folder, part of its source. */
+    std::string CookOnLoad(const std::string& InSource, const fs::path* InFolder,
+                           bool (*InCook)(const char*, const char*), const char* InWhat)
+    {
+        const fs::path Source = fs::u8path(InSource);
+        fs::file_time_type SourceTime;
+        if(!NewestTime(Source, InFolder, SourceTime)) { return InSource; }   // no source: let the load report it
+
+        const fs::path Cooked = fs::u8path("Intermediate/Cooked") / Source.relative_path();
+        std::error_code Error;
+        const fs::file_time_type CookedTime = fs::last_write_time(Cooked, Error);
+        const auto CookedU8 = Cooked.generic_u8string();
+        const std::string CookedPath(CookedU8.begin(), CookedU8.end());
+        if(!Error && CookedTime >= SourceTime) { return CookedPath; }
+
+        fs::create_directories(Cooked.parent_path(), Error);
+        if(!InCook(InSource.c_str(), CookedPath.c_str()))
+        {
+            GAMECORE_LOG_WARN(std::string("Content: could not cook ") + InWhat + " '" + InSource + "'; reading the text source")
+            return InSource;
+        }
+        GAMECORE_LOG(std::string("Content: cooked ") + InWhat + " '" + InSource + "' for this build")
+        return CookedPath;
+    }
+#endif
+}
+
+std::string ResolveContentWorld(const char* InSourcePath)
+{
+    const std::string Source = InSourcePath ? InSourcePath : "";
+#if WITH_EDITOR
+    return Source;
+#elif WITH_UNCOOKED
+    if(DetectWorldFileFormat(Source.c_str()) != EWorldFileFormat::Text || !GContentCookOnLoad.GetBool()) { return Source; }
+    const fs::path Folder = fs::u8path(EntityFolderFor(Source));
+    return CookOnLoad(Source, &Folder, &CookWorldFile, "world");
+#else
+    /* A binary file at the source path (a game that ships it there) is fine as it is. */
+    return DetectWorldFileFormat(Source.c_str()) == EWorldFileFormat::Binary ? Source : ShippingWorldPath(Source);
+#endif
+}
+
+std::string ResolveContentPrefab(const char* InSourcePath)
+{
+    const std::string Source = InSourcePath ? InSourcePath : "";
+#if WITH_UNCOOKED && !WITH_EDITOR
+    if(DetectWorldFileFormat(Source.c_str()) == EWorldFileFormat::Text && GContentCookOnLoad.GetBool())
+    {
+        return CookOnLoad(Source, nullptr, &CookPrefabFile, "prefab");
+    }
+#endif
+    /* Editor: the source. Shipping: the cooked prefab is staged at the same path. */
+    return Source;
+}
+
+bool LoadContentWorld(const char* InSourcePath, World& InOutWorld)
+{
+    const std::string Path = ResolveContentWorld(InSourcePath);
+    if(!LoadWorldFile(Path.c_str(), InOutWorld))
+    {
+        GAMECORE_LOG_ERROR(std::string("LoadContentWorld: could not load '") + (InSourcePath ? InSourcePath : "")
+                           + "'" + (Path != (InSourcePath ? InSourcePath : "") ? " (read as '" + Path + "')" : std::string()))
+        return false;
+    }
+    return true;
+}
 }

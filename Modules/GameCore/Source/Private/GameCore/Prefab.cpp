@@ -18,7 +18,7 @@
 #include "Public/GameCore/WorldPackage.h"
 #include "Private/GameCore/PrefabInternal.h"
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
 #include <filesystem>
 
 #include "pugixml.hpp"
@@ -31,7 +31,7 @@
  * Spawning is World's (World.cpp). See Prefab.h and DESIGN.md.
  */
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
 using namespace GameCore::XmlText;
 #endif
 
@@ -670,7 +670,7 @@ bool SerializePrefab(EngineCore::Archive& Ar, PrefabAsset& InOutAsset)
 
 // === The text form ===========================================================
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
 namespace
 {
     constexpr int TEXT_FORMAT = 1;
@@ -916,7 +916,7 @@ namespace
         return true;
     }
 }
-#endif // WITH_EDITOR
+#endif // WITH_UNCOOKED
 
 // === Files ===================================================================
 
@@ -947,7 +947,7 @@ bool LoadPrefabFile(const char* InPath, PrefabAsset& OutAsset)
 
         case EWorldFileFormat::Text:
         {
-#if WITH_EDITOR
+#if WITH_UNCOOKED
             PrefabAsset Loaded;
             if(!LoadTextPrefab(InPath, PrefabAccess::Write(Loaded)))
             {
@@ -958,7 +958,7 @@ bool LoadPrefabFile(const char* InPath, PrefabAsset& OutAsset)
             return true;
 #else
             GAMECORE_LOG_ERROR(std::string("LoadPrefabFile: '") + InPath
-                               + "' is an editor (text) prefab; a game build loads cooked prefabs -- cook it first")
+                               + "' is a text prefab; a Shipping build loads only cooked prefabs -- cook it first")
             return false;
 #endif
         }
@@ -970,7 +970,7 @@ bool LoadPrefabFile(const char* InPath, PrefabAsset& OutAsset)
     return false;
 }
 
-#if WITH_EDITOR
+#if WITH_UNCOOKED
 bool SavePrefabFile(const char* InPath, const PrefabAsset& InAsset)
 {
     if(!InPath || InPath[0] == '\0') { return false; }
@@ -1014,7 +1014,7 @@ bool CookPrefabFile(const char* InSourcePath, const char* InCookedPath)
                  + std::to_string(Bytes.size()) + " bytes, " + std::to_string(Asset.GetEntityCount()) + " entities)")
     return true;
 }
-#endif // WITH_EDITOR
+#endif // WITH_UNCOOKED
 
 // === The registry ============================================================
 
@@ -1038,7 +1038,8 @@ namespace
         {
             return BuildNativePrefab(InPath + PrefixLength, OutAsset);
         }
-        return LoadPrefabFile(InPath, OutAsset);
+        /* By source path: Shipping's cooked file, or one cooked here (WorldPackage.h). */
+        return LoadPrefabFile(ResolveContentPrefab(InPath).c_str(), OutAsset);
     }
 }
 
