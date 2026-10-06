@@ -47,10 +47,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # Off before the engine is added: it would add Games/Sandbox to this build.
     set(NIMBLE_BUILD_SANDBOX OFF CACHE BOOL "Build the Games/Sandbox host (off: ${GAME_NAME} is the top-level project)" FORCE)
 
-    # Physics (Engine/Modules/JoltPhysics) is off by default. A game whose
-    # entities carry Rigid Body components opts in here:
-    #
-    #     set(NIMBLE_WITH_JOLTPHYSICS ON CACHE BOOL "" FORCE)
+    # Which optional engine modules this game wants: [Modules] in its config
+    # (Engine/cmake/NimbleProject.cmake; the editor's Project Settings).
+    set(NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
 
     add_subdirectory("${GAME_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/Engine")
 endif()
@@ -79,9 +78,10 @@ nimble_add_game_launcher(${GAME_NAME} MODULE ${GAME_MODULE})
 # ${GAME_NAME}Server: the same module, headless, as a network session's
 # authority (Engine/Source/Launcher/ServerLauncherMain.cpp). Skipped when the
 # engine is configured without networking. A game that never networks can
-# drop this line and, before the engine is added above, turn NetCore off:
+# drop this line and turn NetCore off in Config/DefaultEngine.ini:
 #
-#     set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
+#     [Modules]
+#     NetCore=false
 nimble_add_server_launcher(${GAME_NAME}Server MODULE ${GAME_MODULE})
 
 # The editor loads this game at Play, and edits this project's master config.

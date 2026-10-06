@@ -28,7 +28,8 @@ namespace EngineCore { class ConfigVar; }
  * refreshes the staged copy; without a game, the staged copy. Line-by-line
  * (ConfigIniFile), changed values only.
  *
- * Pages: Project (title, module, start level, startup script); one per
+ * Pages: Project (title, module, start level, startup script, and the
+ * optional engine modules -- [Modules], build-time); one per
  * config section (registered vars, outside [Editor], with reset; keys set
  * in the file shown bold); and unregistered keys as text.
  *

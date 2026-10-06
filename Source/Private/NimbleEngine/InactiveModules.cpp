@@ -2,12 +2,24 @@
 
 #include <string>
 
+#include "Public/Core/CoreConfig.h"
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/ComponentPool.h"
 #include "Public/GameCore/Components/NetComponent.h"
 #include "Public/GameCore/Components/PhysicsConstraintComponent.h"
 #include "Public/GameCore/Components/RigidBodyComponent.h"
 #include "Public/GameCore/World.h"
+
+/*
+ * [Modules]: which optional engine modules the project builds with. CMake
+ * reads them from the project's DefaultEngine.ini as the game configures
+ * (Engine/cmake/NimbleProject.cmake) -- these vars are how the file's keys are
+ * known at runtime, how Project Settings shows them as switches, and how a
+ * build that has not yet caught up with an edit says so. Defaulted to what
+ * this build has, so a file without the keys never disagrees with it.
+ */
+NIMBLE_CONFIG_BOOL(GModulesNetCore, "Modules", "NetCore", WITH_NETCORE != 0, nullptr);
+NIMBLE_CONFIG_BOOL(GModulesJoltPhysics, "Modules", "JoltPhysics", WITH_JOLTPHYSICS != 0, nullptr);
 
 /*
  * Components whose module this build compiled out: GameCore keeps them, so
@@ -64,6 +76,22 @@ namespace NimbleEngine
         }
 #endif
 
+        return bWarned;
+    }
+
+    bool WarnModuleConfigMismatch()
+    {
+        bool bWarned = false;
+        const auto Check = [&bWarned](const bool bInWanted, const bool bInBuilt, const char* InKey, const char* InOption)
+        {
+            if(bInWanted == bInBuilt) { return; }
+            CORE_LOG_WARN(std::string("[Modules] ") + InKey + "=" + (bInWanted ? "true" : "false") + ", but this build was configured "
+                          + (bInBuilt ? "with" : "without") + " it (" + InOption + "=" + (bInBuilt ? "ON" : "OFF")
+                          + "); rebuild the game to apply the change -- its next build re-configures from the project's config")
+            bWarned = true;
+        };
+        Check(GModulesNetCore.GetBool(), WITH_NETCORE != 0, "NetCore", "NIMBLE_WITH_NETCORE");
+        Check(GModulesJoltPhysics.GetBool(), WITH_JOLTPHYSICS != 0, "JoltPhysics", "NIMBLE_WITH_JOLTPHYSICS");
         return bWarned;
     }
 

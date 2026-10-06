@@ -35,6 +35,7 @@ project(NimbleEngine VERSION 0.1 LANGUAGES CXX)
 list(PREPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(NimbleModule)
 include(NimbleMaterials)
+include(NimbleProject)
 
 enable_testing()
 
@@ -133,7 +134,13 @@ endif()
 # === Networking ============================================================
 # NetCore (Modules/NetCore): ENet transport, replication and RPC routing, and
 # the dedicated server a game builds with nimble_add_server_launcher. A game
-# that never networks turns it off before adding the engine:
+# that never networks turns it off -- in its config file (the project block
+# below; Project Settings > Project > Modules):
+#
+#     [Modules]
+#     NetCore=false
+#
+# or in its CMakeLists before adding the engine:
 #
 #     set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
 #
@@ -144,7 +151,21 @@ endif()
 #
 # ONE PER CONFIGURE, like WITH_EDITOR, and for the same reason: it is a PUBLIC
 # definition on EngineCore (below), so every image agrees. Always 1 or 0.
+# === The project's module choices ==========================================
+# The game's Config/DefaultEngine.ini says which optional modules it wants, in
+# [Modules] (cmake/NimbleProject.cmake) -- what the editor's Project Settings
+# edits. A game names the file before adding the engine:
+#
+#     set(NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
+#
+# Configured from here with Sandbox added below, Sandbox's is the project.
+if(NOT NIMBLE_PROJECT_CONFIG AND (NOT DEFINED NIMBLE_BUILD_SANDBOX OR NIMBLE_BUILD_SANDBOX)
+   AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../Games/Sandbox/Config/DefaultEngine.ini")
+    get_filename_component(NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/../Games/Sandbox/Config/DefaultEngine.ini" ABSOLUTE)
+endif()
+
 option(NIMBLE_WITH_NETCORE "Build the NetCore networking module (off: networking is compiled out)" ON)
+nimble_project_module(NetCore NIMBLE_WITH_NETCORE "Build the NetCore networking module (off: networking is compiled out)")
 
 if(NIMBLE_WITH_NETCORE)
     set(NIMBLE_NETCORE_DEFINE 1)
@@ -158,8 +179,13 @@ endif()
 # === Physics ===============================================================
 # JoltPhysics (Modules/JoltPhysics): rigid bodies and joints on the vendored
 # Jolt Physics, simulating GameCore's Rigid Body and Physics Constraint
-# components. OFF by default -- a game that wants physics opts in before
-# adding the engine:
+# components. OFF by default -- a game that wants physics opts in, in its
+# config file (the project block above; Project Settings > Project > Modules):
+#
+#     [Modules]
+#     JoltPhysics=true
+#
+# or in its CMakeLists before adding the engine:
 #
 #     set(NIMBLE_WITH_JOLTPHYSICS ON CACHE BOOL "" FORCE)
 #
@@ -172,6 +198,7 @@ endif()
 # ONE PER CONFIGURE, like WITH_NETCORE: a PUBLIC definition on EngineCore
 # (below). Always 1 or 0.
 option(NIMBLE_WITH_JOLTPHYSICS "Build the JoltPhysics module (off: physics components are inert)" OFF)
+nimble_project_module(JoltPhysics NIMBLE_WITH_JOLTPHYSICS "Build the JoltPhysics module (off: physics components are inert)")
 
 if(NIMBLE_WITH_JOLTPHYSICS)
     set(NIMBLE_JOLTPHYSICS_DEFINE 1)
