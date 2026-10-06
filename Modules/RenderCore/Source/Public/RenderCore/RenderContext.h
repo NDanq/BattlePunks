@@ -307,8 +307,11 @@ namespace RenderCore
          * InCasters: the visible proxies asking for an inset shadow, most
          * deserving first; those that get a view are its only caster
          * (GetShadowViewInset: their index, else -1), and are left out of the
-         * sun's views (IsSunShadowView), which their own replaces. */
-        uint32_t              PrepareShadows(const InsetShadowCaster* InCasters = nullptr, uint32_t InCasterCount = 0);
+         * sun's views (IsSunShadowView), which their own replaces.
+         * InReceivers: the box round everything the view draws, if known --
+         * where an inset's shadow can land, so how much screen it covers. */
+        uint32_t              PrepareShadows(const InsetShadowCaster* InCasters = nullptr, uint32_t InCasterCount = 0,
+                                             const GameCore::AABB* InReceivers = nullptr);
         const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
         int32_t               GetShadowViewInset(uint32_t InView) const;
         bool                  IsSunShadowView(uint32_t InView) const;

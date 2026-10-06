@@ -116,6 +116,7 @@ float LocalShadow(int InFirst, bool bInSpot, float InCosOuter, vec3 InLightPosit
 // sees only the prism behind that caster: outside its tile, lit. Its depth
 // spans the sphere alone -- a receiver past the far plane is behind the caster,
 // so is held just inside it; one before the near plane is between it and the sun.
+// Fragment shaders only: each inset also names the screen pixels it can reach.
 float InsetShadow(vec3 InWorld, vec3 InNormal, vec3 InToLight)
 {
     int Count = int(Lighting_Params.y);
@@ -127,6 +128,10 @@ float InsetShadow(vec3 InWorld, vec3 InNormal, vec3 InToLight)
     float Lit   = 1.0;
     for(int Index = 0; Index < Count; ++Index)
     {
+        // Only the pixels behind its caster, as the CPU projected them: the rest skip the matrix and filter.
+        vec4 Rect = Lighting_InsetRects[Index];
+        if(any(lessThan(gl_FragCoord.xy, Rect.xy)) || any(greaterThan(gl_FragCoord.xy, Rect.zw))) { continue; }
+
         vec4 Inset  = Lighting_Insets[Index];   // x matrix, y texel (world), zw tile corner (atlas UV)
         vec3 Offset = NormalOffset(InNormal, NdotL, Lighting_Params.w, Inset.y);
         vec4 Clip   = Scene_LocalShadowMatrices[int(Inset.x)] * vec4(InWorld + Offset, 1.0);

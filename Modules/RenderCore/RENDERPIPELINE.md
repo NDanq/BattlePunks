@@ -241,10 +241,13 @@ come of it:
 `InsetLight*` fields: the live Directional Light, else -- drawing with a bake --
 the first static one, if it has Cast Shadows on.
 
-**Which casters.** `RenderScene` offers each visible proxy whose
+**Which casters.** `RenderScene` offers each proxy whose
 `RenderProxy::CastsInsetShadow` is true (a Render component with a mesh, Cast
 Shadows and Cast Inset Shadow) to `RenderContext::PrepareShadows`, largest on
-screen first -- its bounding sphere's radius over its distance. The sphere is
+screen first -- its bounding sphere's radius over its distance. A visible one
+always; a culled one when its shadow can reach the view: its sphere's box,
+swept along the sun across the view's whole extent, overlaps the view's
+bounds. The sphere is
 the mesh's local box, scaled, so it does not change as the entity turns.
 `[Shadows] MaxInsetShadows` (0-4; Project Settings > Shadows > Inset shadows)
 caps them.
@@ -275,18 +278,30 @@ caster and the sun, and lit. The darkest of them is the inset shadow:
   sun's Shadow Tint over the whole pixel, the baked light in its emissive too
   (`DeferredLighting.fsh`). Faces turned from the sun are left alone.
 
-Limits: a caster off screen whose shadow is on screen gets none (only visible
-proxies are offered); under a baked sun the tint darkens shade the bake
-already has, so a dynamic entity's shadow in a static one's is darker still;
-the sun only, not point or spot lights.
+**Only the pixels it can reach.** Each inset view also carries the screen
+rectangle of that prism (`ShadowView::ScreenNdc`, `InsetScreenNdc`): its
+caster's sphere -- grown by the largest normal offset and the filter's reach --
+swept along the sun. The sweep runs only while it overlaps the box round
+everything the view draws (`RenderScene` passes it to `PrepareShadows`), so it
+stops at the floor; its faces are then clipped to the view in clip space, so
+what is behind the eye or off screen drops out, and the rest is projected.
+`Lighting_InsetRects` holds it in the Lighting target's pixels, and every
+other pixel skips that inset before its matrix. A prism that meets nothing
+drawn covers no pixel; one round the eye, the whole screen.
+
+Limits: under a baked sun the tint darkens shade the bake already has, so a
+dynamic entity's shadow in a static one's is darker still; the sun only, not
+point or spot lights.
 
 Verified: the smoke test checks the views (after the lights' tiles, never
-overlapping them, capped, texel-snapped, holding the sphere), the component's
-version 4, and on Vulkan that an inset caster shadows the floor where the
-sun's own view does not reach it, and that MaxInsetShadows 0 turns that off.
-LightLab's lattice (`InsetLattice`, from
-`Games/LightLab/Tools/make_inset_lattice_mesh.py`) shows it: in the LightLab
-level, and in the BakedLighting level's window beam, Baked and Live.
+overlapping them, capped, texel-snapped, holding the sphere, their screen
+rectangles holding the caster), the component's version 4, and on Vulkan that
+an inset caster shadows the floor where the sun's own view does not reach it,
+that MaxInsetShadows 0 turns that off, and that a caster above and behind the
+camera, out of the view's bounds, still shadows the floor it sees. LightLab's
+lattice (`InsetLattice`, from `Games/LightLab/Tools/make_inset_lattice_mesh.py`)
+shows it, turning and drifting (`LightLab.TurnLattice`): in the LightLab level,
+and in the BakedLighting level's window beam, Baked and Live.
 
 The scene block grew past the material block's 1024 bytes (3600 bytes:
 `GDI_SCENE_BLOCK_MAX_BYTES` is 4096). GDI now re-uploads a uniform block only

@@ -193,6 +193,164 @@ namespace RenderCore
         };
     }
 
+    void InsetScreenNdc(const InsetShadowCaster& InCaster, const Vector3& InDirection, const double InPad,
+                        const RenderView& InCamera, float (&OutNdc)[4], const GameCore::AABB* InReceivers)
+    {
+        /*
+         * The prism is the sphere's box swept along InDirection to past the far
+         * plane: a convex hull whose faces are among the box's faces at each
+         * end and its edges swept. Each of those quads is clipped to the
+         * view's clip volume (-w <= x, y, z <= w) in homogeneous space, so
+         * what lies behind the eye or off screen drops out, and what is left
+         * is projected. Interior quads only add inner points: still a bound.
+         *
+         * InReceivers shortens the sweep: a receiver point in the prism is
+         * within Half of the sweep at some t, so lies in the box swept from the
+         * first t whose box overlaps InReceivers to the last. None: no pixel.
+         */
+        const double Half  = double(InCaster.Radius) + std::max(InPad, 0.0);
+        const double Reach = double(std::abs(InCamera.ZFar)) + (InCaster.Centre - InCamera.Origin).GetLength();
+        double TStart = 0.0, TEnd = Reach;
+        if(InReceivers && !InReceivers->IsEmpty())
+        {
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                const auto Of = [Axis](const Vector3& InV) { return double(Axis == 0 ? InV.GetX() : Axis == 1 ? InV.GetY() : InV.GetZ()); };
+                const double C = Of(InCaster.Centre), D = Of(InDirection);
+                const double Lo = Of(InReceivers->Min) - Half - C, Hi = Of(InReceivers->Max) + Half - C;   // the box overlaps on this axis while D t is in [Lo, Hi]
+                if(std::abs(D) < 1e-12)
+                {
+                    if(Lo > 0.0 || Hi < 0.0) { TEnd = -1.0; }
+                    continue;
+                }
+                TStart = std::max(TStart, std::min(Lo / D, Hi / D));
+                TEnd   = std::min(TEnd, std::max(Lo / D, Hi / D));
+            }
+            if(TStart > TEnd)
+            {
+                OutNdc[0] = 1.0f; OutNdc[1] = 1.0f; OutNdc[2] = -1.0f; OutNdc[3] = -1.0f;
+                return;
+            }
+        }
+        const Vector3 Start = InDirection * TStart;
+        const Vector3 Sweep = InDirection * TEnd;
+        const Matrix4x4 ToClip = InCamera.Projection * InCamera.View;
+
+        struct Clip4 { double V[4]; };
+        Clip4 Corners[16];
+        for(int Corner = 0; Corner < 16; ++Corner)
+        {
+            const Vector3 Point = InCaster.Centre + Vector3((Corner & 1) ? Half : -Half, (Corner & 2) ? Half : -Half, (Corner & 4) ? Half : -Half)
+                                + ((Corner & 8) ? Sweep : Start);
+            const Vector4 At = ToClip * Vector4(Point.GetX(), Point.GetY(), Point.GetZ(), 1.0);
+            Corners[Corner] = { { double(At.GetX()), double(At.GetY()), double(At.GetZ()), double(At.GetW()) } };
+        }
+
+        /* Sutherland-Hodgman: InOutPoly (InOutCount points) cut to InInside(point) >= 0, linear in the point. */
+        const auto ClipBy = [](Clip4 (&InOutPoly)[24], int& InOutCount, const auto& InInside)
+        {
+            Clip4 Kept[24];
+            int KeptCount = 0;
+            for(int Index = 0; Index < InOutCount; ++Index)
+            {
+                const Clip4& From = InOutPoly[Index];
+                const Clip4& To   = InOutPoly[(Index + 1) % InOutCount];
+                const double DFrom = InInside(From), DTo = InInside(To);
+                if(DFrom >= 0.0 && KeptCount < 24) { Kept[KeptCount++] = From; }
+                if((DFrom >= 0.0) != (DTo >= 0.0) && KeptCount < 24)
+                {
+                    const double T = DFrom / (DFrom - DTo);
+                    Clip4 Cut;
+                    for(int C = 0; C < 4; ++C) { Cut.V[C] = From.V[C] + (To.V[C] - From.V[C]) * T; }
+                    Kept[KeptCount++] = Cut;
+                }
+            }
+            InOutCount = KeptCount;
+            for(int Index = 0; Index < InOutCount; ++Index) { InOutPoly[Index] = Kept[Index]; }
+        };
+
+        double Lo[2] = { 1e30, 1e30 }, Hi[2] = { -1e30, -1e30 };
+        bool bAny = false;
+        const auto Plane = [](const Clip4& InPoint, const int InPlane)
+        {
+            const double Axis = InPoint.V[InPlane / 2];
+            return InPoint.V[3] + ((InPlane & 1) ? -Axis : Axis);   // w + x, w - x, w + y, ...
+        };
+        const auto ClipQuad = [&](const int InA, const int InB, const int InC, const int InD)
+        {
+            Clip4 Poly[24] = { Corners[InA], Corners[InB], Corners[InC], Corners[InD] };
+            int Count = 4;
+            for(int PlaneIndex = 0; PlaneIndex < 6 && Count > 0; ++PlaneIndex)
+            {
+                ClipBy(Poly, Count, [&Plane, PlaneIndex](const Clip4& InPoint) { return Plane(InPoint, PlaneIndex); });
+            }
+            for(int Index = 0; Index < Count; ++Index)
+            {
+                const double W = Poly[Index].V[3];
+                if(W <= 1e-12) { continue; }
+                for(int Axis = 0; Axis < 2; ++Axis)
+                {
+                    Lo[Axis] = std::min(Lo[Axis], Poly[Index].V[Axis] / W);
+                    Hi[Axis] = std::max(Hi[Axis], Poly[Index].V[Axis] / W);
+                }
+                bAny = true;
+            }
+        };
+
+        for(int End = 0; End < 2; ++End)                 // the box's faces, at the caster and swept
+        {
+            const int Base = End * 8;
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                const int U = 1 << ((Axis + 1) % 3), V = 1 << ((Axis + 2) % 3);
+                for(int Side = 0; Side < 2; ++Side)
+                {
+                    const int A = Base + (Side << Axis);
+                    ClipQuad(A, A + U, A + U + V, A + V);
+                }
+            }
+        }
+        for(int Corner = 0; Corner < 8; ++Corner)          // its 12 edges, swept
+        {
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                if(Corner & (1 << Axis)) { continue; }
+                const int Other = Corner | (1 << Axis);
+                ClipQuad(Corner, Other, Other + 8, Corner + 8);
+            }
+        }
+
+        if(bAny)
+        {
+            OutNdc[0] = float(std::clamp(Lo[0], -1.0, 1.0)); OutNdc[1] = float(std::clamp(Lo[1], -1.0, 1.0));
+            OutNdc[2] = float(std::clamp(Hi[0], -1.0, 1.0)); OutNdc[3] = float(std::clamp(Hi[1], -1.0, 1.0));
+            return;
+        }
+
+        /* No face crosses the view: the prism misses it, or holds all of it. */
+        const Matrix4x4 FromClip = Matrix4x4::Inverse(ToClip);
+        const Vector4 Middle = FromClip * Vector4(0.0, 0.0, 0.0, 1.0);
+        const double  MiddleW = std::abs(double(Middle.GetW())) > 1e-12 ? double(Middle.GetW()) : 1e-12;
+        const Vector3 Inside = Vector3(Middle.GetX() / MiddleW, Middle.GetY() / MiddleW, Middle.GetZ() / MiddleW) - InCaster.Centre;
+        double TMin = TStart, TMax = TEnd;   // some point of the sweep within Half of it on every axis
+        for(int Axis = 0; Axis < 3; ++Axis)
+        {
+            const double P = Axis == 0 ? Inside.GetX() : Axis == 1 ? Inside.GetY() : Inside.GetZ();
+            const double D = Axis == 0 ? InDirection.GetX() : Axis == 1 ? InDirection.GetY() : InDirection.GetZ();
+            if(std::abs(D) < 1e-12)
+            {
+                if(std::abs(P) > Half) { TMax = -1.0; }
+                continue;
+            }
+            const double T0 = (P - Half) / D, T1 = (P + Half) / D;
+            TMin = std::max(TMin, std::min(T0, T1));
+            TMax = std::min(TMax, std::max(T0, T1));
+        }
+        const bool bHoldsView = TMin <= TMax;
+        OutNdc[0] = bHoldsView ? -1.0f : 1.0f; OutNdc[1] = bHoldsView ? -1.0f : 1.0f;
+        OutNdc[2] = bHoldsView ? 1.0f : -1.0f; OutNdc[3] = bHoldsView ? 1.0f : -1.0f;
+    }
+
     void ComputeCascadeSplits(const float InNear, const float InFar, const uint32_t InCount, const float InLambda, float* OutSplits)
     {
         const double Near   = std::max(double(InNear), 1.0);
@@ -212,7 +370,7 @@ namespace RenderCore
     }
 
     void BuildShadowFrame(const RenderLighting& InLighting, const RenderView& InCamera, ShadowFrame& OutFrame,
-                          const InsetShadowCaster* InCasters, const uint32_t InCasterCount)
+                          const InsetShadowCaster* InCasters, const uint32_t InCasterCount, const GameCore::AABB* InReceivers)
     {
         OutFrame.ViewCount            = 0;
         OutFrame.InsetFirstView       = -1;
@@ -346,6 +504,14 @@ namespace RenderCore
             View.Inset    = int32_t(Caster);
             ++NextTile;
             FitInset(View, InsetDirection, InCasters[Caster], Atlas);
+
+            /* Where on screen it can shadow: a receiver's sample point moves
+             * by its normal offset (Shadows.glsl, at most twice the larger of
+             * the normal bias and a texel and a half), and the filter reaches
+             * a couple of texels more. */
+            const double Texel = 2.0 / std::abs(double(View.Projection.Data[0][0])) / double(View.TileSize);
+            const double Pad   = Texel + 2.0 * std::max(double(InLighting.InsetShadowNormalBias), 1.5 * Texel) + 2.0 * Texel;
+            InsetScreenNdc(InCasters[Caster], InsetDirection, Pad, InCamera, View.ScreenNdc, InReceivers);
             ++OutFrame.InsetCount;
         }
     }

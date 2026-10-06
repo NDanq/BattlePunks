@@ -124,6 +124,11 @@ namespace RenderCore
         /* Scene_Locals' vec4s per light. */
         constexpr uint32_t SCENE_LOCAL_VEC4S = 6;
 
+        /* DeferredLighting.fsh's Lighting_Block: Params, the inset light and
+         * tint, then RENDER_INSET_SHADOW_MAX insets and as many screen rects. */
+        constexpr uint32_t LIGHTING_BLOCK_FLOATS = (3 + 2 * RENDER_INSET_SHADOW_MAX) * 4;
+        static_assert(LIGHTING_BLOCK_FLOATS * sizeof(float) <= GDI_MATERIAL_BLOCK_MAX_BYTES, "Lighting_Block fits the material block");
+
         /* SceneUniforms.glsl's Scene_Block, byte for byte: vec4s and mat4s
          * (column-major, as GDI uploads matrices) and arrays of them. */
         struct SceneUniforms
@@ -1230,9 +1235,9 @@ namespace RenderCore
         }
 
         /* The frame's shadow views from View, Lighting and InCasters, into the scene block. */
-        void PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount)
+        void PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount, const GameCore::AABB* InReceivers)
         {
-            BuildShadowFrame(Lighting, View, Shadows, InCasters, InCasterCount);
+            BuildShadowFrame(Lighting, View, Shadows, InCasters, InCasterCount, InReceivers);
             if(Shadows.ViewCount == 0)
             {
                 return;
@@ -1421,11 +1426,12 @@ namespace RenderCore
         /* Lighting_Block's inset shadows, after its first vec4's x: y how
          * many, z and w the depth and normal bias; then the light (xyz toward
          * it, w 1 if Modulated over the whole pixel -- a baked sun's), its
-         * tint, and per inset its matrix in Scene_LocalShadowMatrices, its
-         * texel in world units and its tile's corner in atlas UV. */
-        void PutInsetShadows(float* OutBlock) const
+         * tint; per inset its matrix in Scene_LocalShadowMatrices, its texel
+         * in world units and its tile's corner in atlas UV; then per inset the
+         * pixels of an InWidth x InHeight target it can shadow (gl_FragCoord,
+         * top-down: x, y min then max), every other pixel skipped. */
+        void PutInsetShadows(float* OutBlock, const uint32_t InWidth, const uint32_t InHeight) const
         {
-            static_assert((7 * 4) * sizeof(float) <= MATERIAL_ENGINE_BLOCK_BYTES, "Lighting_Block's inset shadows fit the block");
             const uint32_t Count = Shadows.ViewCount > 0 ? std::min<uint32_t>(Shadows.InsetCount, RENDER_INSET_SHADOW_MAX) : 0;
             OutBlock[1] = float(Count);
             if(Count == 0)
@@ -1457,6 +1463,14 @@ namespace RenderCore
                 Out[1] = float(2.0 / std::abs(double(Inset.Projection.Data[0][0])) / double(std::max(Inset.TileSize, 1u)));
                 Out[2] = float(double(Inset.TileX) / Size);
                 Out[3] = float(double(Inset.TileY) / Size);
+
+                /* NDC to pixels: y runs down the target (GDI.h), a pixel of slack each way. */
+                float* Rect = OutBlock + 28 + Index * 4;
+                const double Width = double(InWidth), Height = double(InHeight);
+                Rect[0] = float(std::floor((Inset.ScreenNdc[0] * 0.5 + 0.5) * Width) - 1.0);
+                Rect[1] = float(std::floor((0.5 - Inset.ScreenNdc[3] * 0.5) * Height) - 1.0);
+                Rect[2] = float(std::ceil((Inset.ScreenNdc[2] * 0.5 + 0.5) * Width) + 1.0);
+                Rect[3] = float(std::ceil((0.5 - Inset.ScreenNdc[1] * 0.5) * Height) + 1.0);
             }
         }
 
@@ -1765,9 +1779,9 @@ namespace RenderCore
 
             /* Lighting_Block (DeferredLighting.fsh): whether the occlusion
              * texture is this frame's, then the inset shadows. */
-            float LightingBlock[MATERIAL_ENGINE_BLOCK_BYTES / sizeof(float)] = {};
+            float LightingBlock[LIGHTING_BLOCK_FLOATS] = {};
             LightingBlock[0] = AmbientOcclusion ? 1.0f : 0.0f;
-            PutInsetShadows(LightingBlock);
+            PutInsetShadows(LightingBlock, InTargets.Width, InTargets.Height);
             EnsureInitialised();
             Bind(Vertex, Pixel);
             GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, LightingBlock, uint(sizeof(LightingBlock)));
@@ -2575,9 +2589,10 @@ namespace RenderCore
         P->CasterView        = -1;
     }
 
-    uint32_t RenderContext::PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount)
+    uint32_t RenderContext::PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount,
+                                           const GameCore::AABB* InReceivers)
     {
-        P->PrepareShadows(InCasters, InCasterCount);
+        P->PrepareShadows(InCasters, InCasterCount, InReceivers);
         return P->Shadows.ViewCount;
     }
 
