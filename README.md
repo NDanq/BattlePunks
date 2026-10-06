@@ -76,6 +76,9 @@ configure dependency, so the next build after an edit reconfigures and builds
 or drops the module. A key the file has wins over a `-D` on the configure
 line.
 
+Flipping a switch there asks first, because it needs a native recompile.
+Cancel puts the switch back; the other settings still apply.
+
 A running game or editor whose build disagrees with the file warns. That
 happens when the file was edited since the last build.
 

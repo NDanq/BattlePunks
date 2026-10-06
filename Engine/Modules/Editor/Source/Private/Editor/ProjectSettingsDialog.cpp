@@ -241,8 +241,11 @@ ProjectSettingsDialog::ProjectSettingsDialog(QWidget* InParent)
     connect(Buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(Buttons, &QDialogButtonBox::accepted, this, [this]()
     {
-        Apply();
-        accept();
+        /* Stays open if a module change was not confirmed. */
+        if(Apply())
+        {
+            accept();
+        }
     });
     connect(Buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, this, &ProjectSettingsDialog::Apply);
     Layout->addWidget(Buttons);
@@ -509,8 +512,59 @@ void ProjectSettingsDialog::UpdateLabel(const Row& InRow)
     InRow.Label->setFont(Font);
 }
 
-void ProjectSettingsDialog::Apply()
+bool ProjectSettingsDialog::ConfirmModuleChanges()
 {
+    QStringList Edits;
+    for(const Row& R : Rows)
+    {
+        const QString Text = R.Read();
+        if(Text == R.Baseline || !IsModuleKey(R.Section, R.Key))
+        {
+            continue;
+        }
+        const bool bOn = Text == QStringLiteral("true");
+        Edits << QStringLiteral("%1: %2").arg(R.Label->text(), bOn ? QStringLiteral("compiled in") : QStringLiteral("compiled out"));
+    }
+    if(Edits.isEmpty())
+    {
+        return true;
+    }
+
+    QMessageBox Box(QMessageBox::Warning, windowTitle(),
+                    QStringLiteral("Changing optional modules requires native recompilation."), QMessageBox::NoButton, this);
+    Box.setInformativeText(
+        QStringLiteral("%1\n\nThe engine and the game are rebuilt with %2: close the editor, build the project "
+                       "(it re-configures from %3), and start the editor again. Until then, the editor and Play keep "
+                       "the modules this build has.")
+        .arg(Edits.join(QLatin1Char('\n')), Edits.size() == 1 ? QStringLiteral("the module compiled in or out")
+                                                                : QStringLiteral("the modules compiled in or out"),
+             QDir::toNativeSeparators(FilePath)));
+    QPushButton* Save = Box.addButton(QStringLiteral("Save and Recompile Later"), QMessageBox::AcceptRole);
+    QPushButton* Cancel = Box.addButton(QMessageBox::Cancel);
+    Box.setDefaultButton(Cancel);
+    Box.exec();
+    if(Box.clickedButton() == Save)
+    {
+        return true;
+    }
+
+    /* Not confirmed: the switches go back to what the file says. */
+    for(Row& R : Rows)
+    {
+        if(IsModuleKey(R.Section, R.Key) && R.Read() != R.Baseline)
+        {
+            R.Show(R.Baseline);
+        }
+    }
+    return false;
+}
+
+bool ProjectSettingsDialog::Apply()
+{
+    /* A module switch is a native rebuild, not a setting: asked first. Other
+     * changes apply either way. */
+    const bool bModulesConfirmed = ConfirmModuleChanges();
+
     QStringList Changed;
     QStringList Rejected;
     QStringList ModulesChanged;
@@ -549,7 +603,7 @@ void ProjectSettingsDialog::Apply()
     }
     if(Changed.isEmpty())
     {
-        return;
+        return bModulesConfirmed;
     }
 
     if(!File.Save(FilePath))
@@ -558,7 +612,7 @@ void ProjectSettingsDialog::Apply()
         QMessageBox::warning(this, windowTitle(),
                              QStringLiteral("The settings apply to this session, but could not be saved to\n%1\n\n%2")
                              .arg(QDir::toNativeSeparators(FilePath), File.GetError()));
-        return;
+        return false;
     }
     for(const QString& Line : Changed)
     {
@@ -568,13 +622,8 @@ void ProjectSettingsDialog::Apply()
 
     if(!ModulesChanged.isEmpty())
     {
-        CORE_LOG("[Editor] project settings: module changes apply at the game's next build ("
-                 + ToStd(ModulesChanged.join(QStringLiteral(", "))) + ")")
-        QMessageBox::information(this, windowTitle(),
-                                 QStringLiteral("%1\n\nModules are chosen when the game is built. Close the editor, "
-                                                "build the game (it re-configures from %2), and start the editor "
-                                                "again to use the change.")
-                                 .arg(ModulesChanged.join(QLatin1Char('\n')), QDir::toNativeSeparators(FilePath)));
+        CORE_LOG_WARN("[Editor] project settings: " + ToStd(ModulesChanged.join(QStringLiteral(", ")))
+                      + " -- a native recompile applies it: close the editor and build the project")
     }
 
     /* The staged copy too, so the next Play and the next launch see the
@@ -589,6 +638,7 @@ void ProjectSettingsDialog::Apply()
                           + "; the next build will")
         }
     }
+    return bModulesConfirmed;
 }
 
 #endif // WITH_EDITOR
