@@ -1229,10 +1229,10 @@ namespace RenderCore
             ShadowAtlasSize = 0;
         }
 
-        /* The frame's shadow views from View and Lighting, into the scene block. */
-        void PrepareShadows()
+        /* The frame's shadow views from View, Lighting and InCasters, into the scene block. */
+        void PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount)
         {
-            BuildShadowFrame(Lighting, View, Shadows);
+            BuildShadowFrame(Lighting, View, Shadows, InCasters, InCasterCount);
             if(Shadows.ViewCount == 0)
             {
                 return;
@@ -1275,7 +1275,7 @@ namespace RenderCore
                 }
             }
 
-            /* Local views follow the sun's, in Locals order. */
+            /* Local views follow the sun's, in Locals order; then the inset shadows'. */
             for(uint32_t View = DirectionalViews; View < Shadows.ViewCount; ++View)
             {
                 PutMatrix(Scene.LocalShadowMatrices[View - DirectionalViews], Shadows.Views[View].WorldToAtlas);
@@ -1418,10 +1418,56 @@ namespace RenderCore
             PlaceView       = nullptr;
         }
 
+        /* Lighting_Block's inset shadows, after its first vec4's x: y how
+         * many, z and w the depth and normal bias; then the light (xyz toward
+         * it, w 1 if Modulated over the whole pixel -- a baked sun's), its
+         * tint, and per inset its matrix in Scene_LocalShadowMatrices, its
+         * texel in world units and its tile's corner in atlas UV. */
+        void PutInsetShadows(float* OutBlock) const
+        {
+            static_assert((7 * 4) * sizeof(float) <= MATERIAL_ENGINE_BLOCK_BYTES, "Lighting_Block's inset shadows fit the block");
+            const uint32_t Count = Shadows.ViewCount > 0 ? std::min<uint32_t>(Shadows.InsetCount, RENDER_INSET_SHADOW_MAX) : 0;
+            OutBlock[1] = float(Count);
+            if(Count == 0)
+            {
+                return;
+            }
+            OutBlock[2] = Lighting.InsetShadowBias;
+            OutBlock[3] = Lighting.InsetShadowNormalBias;
+
+            EngineCore::Vector3 ToLight = Lighting.InsetLightDirection * -1.0;
+            const double Length = ToLight.GetLength();
+            ToLight = Length > 1e-9 ? ToLight * (1.0 / Length) : EngineCore::Vector3(0.0, 1.0, 0.0);
+            OutBlock[4] = float(ToLight.GetX());
+            OutBlock[5] = float(ToLight.GetY());
+            OutBlock[6] = float(ToLight.GetZ());
+            OutBlock[7] = Lighting.bInsetLightBaked ? 1.0f : 0.0f;
+            float Tint[4] = {};
+            PutColor(Tint, Lighting.InsetShadowTint, 1.0f);
+            std::memcpy(OutBlock + 8, Tint, sizeof(Tint));
+
+            /* The local matrices start after the sun's views (PrepareShadows). */
+            const uint32_t DirectionalViews = Shadows.DirectionalFirstView >= 0 ? Shadows.CascadeCount : 0;
+            const double   Size             = double(std::max(Shadows.AtlasSize, 1u));
+            for(uint32_t Index = 0; Index < Count; ++Index)
+            {
+                const ShadowView& Inset = Shadows.Views[uint32_t(Shadows.InsetFirstView) + Index];
+                float* Out = OutBlock + 12 + Index * 4;
+                Out[0] = float(uint32_t(Shadows.InsetFirstView) + Index - DirectionalViews);
+                Out[1] = float(2.0 / std::abs(double(Inset.Projection.Data[0][0])) / double(std::max(Inset.TileSize, 1u)));
+                Out[2] = float(double(Inset.TileX) / Size);
+                Out[3] = float(double(Inset.TileY) / Size);
+            }
+        }
+
         /* "Sun", "Sun Cascade 1", "Spot 2", "Point 0 +X": what a shadow view
          * is of, for its draw event. */
         std::string GetShadowViewName(const int32_t InView) const
         {
+            if(InView >= 0 && uint32_t(InView) < Shadows.ViewCount && Shadows.Views[InView].Inset >= 0)
+            {
+                return "Inset " + std::to_string(InView - Shadows.InsetFirstView);
+            }
             const int32_t Sun = Shadows.DirectionalFirstView;
             if(Sun >= 0 && InView >= Sun && InView < Sun + int32_t(Shadows.CascadeCount))
             {
@@ -1717,9 +1763,11 @@ namespace RenderCore
             const uint32_t OcclusionSlot = RENDER_GBUFFER_TARGETS + 1 + SA_Count;
             GDISetMaterialTexture(OcclusionSlot, AmbientOcclusion);
 
-            /* Lighting_Block: x, whether the occlusion texture is this frame's. */
+            /* Lighting_Block (DeferredLighting.fsh): whether the occlusion
+             * texture is this frame's, then the inset shadows. */
             float LightingBlock[MATERIAL_ENGINE_BLOCK_BYTES / sizeof(float)] = {};
             LightingBlock[0] = AmbientOcclusion ? 1.0f : 0.0f;
+            PutInsetShadows(LightingBlock);
             EnsureInitialised();
             Bind(Vertex, Pixel);
             GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, LightingBlock, uint(sizeof(LightingBlock)));
@@ -2527,10 +2575,20 @@ namespace RenderCore
         P->CasterView        = -1;
     }
 
-    uint32_t RenderContext::PrepareShadows()
+    uint32_t RenderContext::PrepareShadows(const InsetShadowCaster* InCasters, const uint32_t InCasterCount)
     {
-        P->PrepareShadows();
+        P->PrepareShadows(InCasters, InCasterCount);
         return P->Shadows.ViewCount;
+    }
+
+    int32_t RenderContext::GetShadowViewInset(const uint32_t InView) const
+    {
+        return InView < P->Shadows.ViewCount ? P->Shadows.Views[InView].Inset : -1;
+    }
+
+    bool RenderContext::IsSunShadowView(const uint32_t InView) const
+    {
+        return InView < P->Shadows.ViewCount && P->Shadows.IsSunView(InView);
     }
 
     const GameCore::AABB& RenderContext::GetShadowViewBounds(const uint32_t InView) const

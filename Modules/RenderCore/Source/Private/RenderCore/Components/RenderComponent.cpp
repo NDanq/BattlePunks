@@ -188,9 +188,10 @@ namespace RenderCore
      */
     /* Each slot's material is a graph path. 2: the parameter overrides, a
      * count then that many (up to the last in use, so an empty one between
-     * keeps its place), so a component with none writes one field. 3: CastShadows (an
+     * keeps its place), so a component with none writes one field. 4: CastInsetShadow
+     * (an older save keeps the default, off). 3: CastShadows (an
      * older save keeps the default, on). */
-    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 3)
+    GAMECORE_DEFINE_COMPONENT_SERIALIZER(RenderComponent, 4)
     {
         Ar.Flag("Visible",   C.bVisible);
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot)
@@ -228,6 +229,10 @@ namespace RenderCore
         if(Ar.GetVersion() >= 3)
         {
             Ar.Flag("CastShadows", C.bCastShadows);
+        }
+        if(Ar.GetVersion() >= 4)
+        {
+            Ar.Flag("CastInsetShadow", C.bCastInsetShadow);
         }
     }
 
@@ -291,6 +296,7 @@ namespace RenderCore
         Bind.Native<&RenderComponent::ClearMaterialParameter>("ClearMaterialParameter", "Slot, Name -> Cleared");
 
         Bind.Flag("CastShadows", &RenderComponent::bCastShadows);
+        Bind.Flag("CastInsetShadow", &RenderComponent::bCastInsetShadow);
     }
 
 #if WITH_EDITOR
@@ -305,6 +311,7 @@ namespace RenderCore
         Props.Array("Materials", &RenderComponent::Materials, GameCore::PF_AssetMaterial);
         Props.Category("Shadows");
         Props.Flag("Cast Shadows", &RenderComponent::bCastShadows);
+        Props.Flag("Cast Inset Shadow", &RenderComponent::bCastInsetShadow);
 
         /* This entity's overrides: a material slot, a parameter of its
          * material (the Parameter node's Name), and up to four values. */

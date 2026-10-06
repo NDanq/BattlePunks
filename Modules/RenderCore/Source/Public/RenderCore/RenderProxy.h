@@ -95,6 +95,12 @@ namespace RenderCore
          * every frame on their own, as particles do. */
         virtual bool AllowsStaticDraws() const { return true; }
 
+        /* Whether this proxy asks for an inset shadow -- a sun shadow map of
+         * its own (RenderComponent::bCastInsetShadow). RenderScene offers
+         * the visible ones to the frame's shadow views; one granted draws
+         * into its own view alone, and no longer into the sun's. */
+        virtual bool CastsInsetShadow() const { return false; }
+
         /* Recomputes LocalToWorld = InTransform.ToMatrix() and
          * WorldBounds = AABB::Transformed(LocalBounds, LocalToWorld) --
          * exactly World::RefreshSpatialIndex's own refit math (World.cpp),
@@ -137,6 +143,7 @@ namespace RenderCore
         const RenderTransform&        GetTransform()    const { return Transform; }
         const EngineCore::Matrix4x4&  GetLocalToWorld() const { return LocalToWorld; }
         const GameCore::AABB&         GetWorldBounds()  const { return WorldBounds; }
+        const GameCore::AABB&         GetLocalBounds()  const { return LocalBounds; }
         bool                          IsVisible()       const { return bVisible; }
         GameCore::EntityID            GetOwner()        const { return Owner; }
 

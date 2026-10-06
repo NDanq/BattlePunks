@@ -27,6 +27,7 @@ namespace RenderCore
 
         bComponentVisible = Component.bVisible != 0;
         bCastShadows      = Component.bCastShadows != 0;
+        bCastInsetShadow  = Component.bCastInsetShadow != 0;
 
         /* Bounded copy: the component's buffers need not be NUL-terminated. */
         static_assert(sizeof(Materials) == sizeof(Component.Materials), "RenderComponentProxy::Materials must match the component's");

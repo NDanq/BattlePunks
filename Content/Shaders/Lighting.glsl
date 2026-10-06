@@ -116,6 +116,8 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
     if(Scene_LightShadow.x >= 0.0)
     {
         float Lit = DirectionalShadow(InWorldPosition, S.N, SunL);
+        // A live sun's inset shadows (a baked sun's DeferredLighting.fsh lays over the pixel).
+        if(Lighting_InsetLight.w < 0.5) { Lit = min(Lit, InsetShadow(InWorldPosition, S.N, SunL)); }
         if(Scene_LightShadow.x == 1.0) { Modulate *= ModulatedShadow(Lit, 1.0, dot(S.N, SunL), Scene_LightShadowTint.rgb); }
         else                           { SunShadow = Lit; }
     }

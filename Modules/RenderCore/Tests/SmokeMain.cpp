@@ -90,8 +90,8 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 10,
-           "Render exposes Visible, Mesh, slots by index, material parameters and CastShadows");
+    Expect(Render != nullptr && RenderCount == 11,
+           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows and CastInsetShadow");
     const auto HasBinding = [&](const char* InName)
     {
         for(size_t Index = 0; Render && Index < RenderCount; ++Index)
@@ -2162,7 +2162,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 3, "RenderComponent saves as version 3 (material parameters, CastShadows)");
+    Expect(Info && Info->Version == 4, "RenderComponent saves as version 4 (material parameters, CastShadows, CastInsetShadow)");
     if(!Info) { return; }
 
     RenderComponent Saved;
@@ -2220,6 +2220,11 @@ static void TestRenderComponentSerializer()
            && FromOld.GetMaterialParameterCount() == 0, "a version 1 component reads no parameters");
     Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("CastShadows")) == Old.Names.end() && FromOld.bCastShadows == 1,
            "and no CastShadows, and keeps casting");
+    Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("CastInsetShadow")) == Old.Names.end() && FromOld.bCastInsetShadow == 0,
+           "nor CastInsetShadow, which stays off");
+
+    Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("CastInsetShadow")) != Out.Names.end(),
+           "a version 4 save writes CastInsetShadow");
 
     /* The lights: version 2 dropped the sun's Direction (it is the
      * Transform's forward now) and added shadows; version 3 its baked
@@ -2452,6 +2457,32 @@ static void TestShadowsOnGpu()
             const Difference Cascades = bCascaded ? Compare(Cascaded, Lit) : Difference();
             std::printf("    cascaded: %d pixels darker\n", Cascades.Darker);
             Expect(bCascaded && Cascades.Darker > 300 && Cascades.Brighter < 20, "a Cascaded sun shadows the floor too");
+
+            /* Inset shadows: the sun's Shadow Distance cut short of the box,
+             * so its own view misses it; Cast Inset Shadow gives the box a
+             * map of its own, which [Shadows] MaxInsetShadows 0 takes away. */
+            SunLight->ShadowTechnique = LST_Standard;
+            SunLight->ShadowDistance  = 1.0f;
+            ConfigVar* MaxInsets = ConfigFindVarByPath("Shadows.MaxInsetShadows");
+            Expect(MaxInsets != nullptr, "[Shadows] MaxInsetShadows is a config var");
+            EngineCore::Image Short, Inset, NoInsets;
+            const bool bShort = Capture(Short);
+            const Difference NoReach = bShort ? Compare(Short, Lit) : Difference();
+            Box.GetComponent<RenderComponent>()->bCastInsetShadow = 1;
+            const bool bInset = Capture(Inset);
+            Dump(Inset, "sun-inset");
+            const Difference Own = bInset ? Compare(Inset, Lit) : Difference();
+            if(MaxInsets) { MaxInsets->SetFromString("0"); }
+            const bool bNoInsets = Capture(NoInsets);
+            const Difference Capped = bNoInsets ? Compare(NoInsets, Lit) : Difference();
+            if(MaxInsets) { MaxInsets->SetFromString("4"); }
+            std::printf("    inset: %d pixels darker without, %d with (%d brighter), %d with MaxInsetShadows 0\n",
+                        NoReach.Darker, Own.Darker, Own.Brighter, Capped.Darker);
+            Expect(bShort && NoReach.Darker < 40, "a sun whose Shadow Distance stops short draws no shadow of the box");
+            Expect(bInset && Own.Darker > 300 && Own.Brighter < 20, "Cast Inset Shadow shadows the floor from the box's own map");
+            Expect(bNoInsets && Capped.Darker < 40, "MaxInsetShadows 0 turns inset shadows off");
+            Box.GetComponent<RenderComponent>()->bCastInsetShadow = 0;
+            SunLight->ShadowDistance = 3000.0f;
 
             /* The sun off; a spot light straight down over the box. */
             SunLight->Intensity = 0.0f;
@@ -5165,6 +5196,99 @@ static void TestShadowSetup()
     Lighting.LightShadowTechnique = LST_Standard;
     BuildShadowFrame(Lighting, Camera, Frame);
     Expect(Frame.CascadeCount == 1 && Frame.Views[0].TileSize == 2048, "a Standard sun is one view over the whole atlas");
+
+    /* Inset shadows: the local atlas's spare tiles, after the lights'. */
+    {
+        RenderLighting Insets = Lighting;
+        Insets.Shadows.MaxShadowedLights = 4;
+        Insets.bInsetLight         = 1;
+        Insets.InsetLightDirection = Vector3(0.3, -1.0, 0.2);
+        InsetShadowCaster Casters[5];
+        for(int Index = 0; Index < 5; ++Index)
+        {
+            Casters[Index].Centre = Vector3(100.0 * Index, 50.0, 200.0);
+            Casters[Index].Radius = 40.0f + 10.0f * Index;
+        }
+        Casters[1].Radius = 0.0f;   // nothing to fit: skipped
+
+        BuildShadowFrame(Insets, Camera, Frame);
+        Expect(Frame.InsetCount == 0 && Frame.InsetFirstView == -1, "no casters offered, no inset views");
+
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 5);
+        const int32_t AfterLights = Frame.LocalFirstView[1] + int32_t(SHADOW_POINT_FACES);   // the spot's one, the point light's six
+        Expect(Frame.InsetFirstView == AfterLights && Frame.InsetCount == 4 && Frame.ViewCount == uint32_t(AfterLights) + 4,
+               "insets follow the lights' views, up to four, an empty caster skipped");
+        bool bOwners = true, bContain = true, bTiles = true, bSnapped = true;
+        const int32_t Expected[4] = { 0, 2, 3, 4 };
+        for(uint32_t Index = 0; Index < Frame.InsetCount; ++Index)
+        {
+            const ShadowView& View = Frame.Views[uint32_t(Frame.InsetFirstView) + Index];
+            const InsetShadowCaster& Caster = Casters[View.Inset];
+            bOwners &= View.Inset == Expected[Index] && !Frame.IsSunView(uint32_t(Frame.InsetFirstView) + Index);
+            bTiles  &= View.Atlas == SA_Local && View.TileSize == 2048 / 6;
+            /* The sphere's centre near the tile's middle, its edge just inside. */
+            double U, V, Depth;
+            ToAtlas(View, Caster.Centre, U, V, Depth);
+            bSnapped &= std::abs(U * 2048.0 - (View.TileX + View.TileSize * 0.5)) < 2.0
+                     && std::abs(V * 2048.0 - (View.TileY + View.TileSize * 0.5)) < 2.0 && std::abs(Depth - 0.5) < 0.01;
+            const Vector3 Across = (Vector3(1.0, 0.0, 0.0) ^ Vector3(0.3, -1.0, 0.2)).GetNormalize();
+            ToAtlas(View, Caster.Centre + Across * (double(Caster.Radius) * 0.97), U, V, Depth);
+            bContain &= U * 2048.0 > View.TileX && U * 2048.0 < View.TileX + View.TileSize
+                     && V * 2048.0 > View.TileY && V * 2048.0 < View.TileY + View.TileSize;
+            /* Its depth spans the sphere: the far side lands just short of 1. */
+            ToAtlas(View, Caster.Centre + Vector3(0.3, -1.0, 0.2).GetNormalize() * (double(Caster.Radius) * 0.97), U, V, Depth);
+            bContain &= Depth > 0.95 && Depth < 1.0;
+        }
+        Expect(bOwners, "each inset view names its caster, in the order offered");
+        Expect(bTiles, "each takes one local tile");
+        Expect(bSnapped && bContain, "and holds its caster's sphere, centred, its depth across the sphere alone");
+
+        bool bApartInsets = true;
+        for(uint32_t A = Frame.CascadeCount; A < Frame.ViewCount; ++A)
+        {
+            for(uint32_t B = A + 1; B < Frame.ViewCount; ++B)
+            {
+                const ShadowView& One = Frame.Views[A];
+                const ShadowView& Two = Frame.Views[B];
+                bApartInsets &= One.TileX + One.TileSize <= Two.TileX || Two.TileX + Two.TileSize <= One.TileX
+                             || One.TileY + One.TileSize <= Two.TileY || Two.TileY + Two.TileSize <= One.TileY;
+            }
+        }
+        Expect(bApartInsets, "inset tiles never overlap a light's");
+
+        /* Snapped: moving the caster less than a texel does not move its
+         * map across the world (only along the light, which is depth). */
+        InsetShadowCaster Nudged[1] = { Casters[0] };
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 1);
+        const ShadowView Placed = Frame.Views[Frame.InsetFirstView];
+        Nudged[0].Centre = Casters[0].Centre + Vector3(0.001, 0.0, 0.001);
+        BuildShadowFrame(Insets, Camera, Frame, Nudged, 1);
+        double PlacedU, PlacedV, NudgedU, NudgedV;
+        ToAtlas(Placed, Casters[0].Centre, PlacedU, PlacedV, Depth);
+        ToAtlas(Frame.Views[Frame.InsetFirstView], Casters[0].Centre, NudgedU, NudgedV, Depth);
+        Expect(std::abs(PlacedU - NudgedU) * 2048.0 < 1e-3 && std::abs(PlacedV - NudgedV) * 2048.0 < 1e-3,
+               "an inset view moves in whole texels");
+
+        Insets.Shadows.MaxInsetShadows = 1;
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 5);
+        Expect(Frame.InsetCount == 1, "MaxInsetShadows caps them");
+        Insets.Shadows.MaxInsetShadows = 4;
+
+        /* Four point lights fill all 24 tiles: none left for insets. */
+        RenderLighting Full = Insets;
+        for(uint32_t Index = 0; Index < 4; ++Index)
+        {
+            Full.Locals[Index] = Point;
+            Full.Locals[Index].Position = Vector3(300.0 * Index, -200.0, 100.0);
+        }
+        Full.LocalCount = 4;
+        BuildShadowFrame(Full, Camera, Frame, Casters, 5);
+        Expect(Frame.InsetCount == 0 && Frame.ViewCount == Frame.CascadeCount + 24, "insets get only the tiles the lights leave");
+
+        Insets.bInsetLight = 0;
+        BuildShadowFrame(Insets, Camera, Frame, Casters, 5);
+        Expect(Frame.InsetCount == 0, "no inset light, no inset views");
+    }
 
     /* An orthographic camera (the 2D view) still gets a sun view. */
     const RenderView Flat = RenderView::MakeOrthographic(EngineCore::Size(1280, 720), Vector3(0.0, 0.0, 0.0), -1.0f, 1000.0f);
