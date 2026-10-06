@@ -10,6 +10,9 @@ editor saves a text world: the manifest and a folder of .nmentity files.
     capsule. All of that is Static, and so are its lights: a sun through the
     window, a warm lamp under the ceiling and the sky. A ball and a capsule
     are Dynamic: lit by the light probes, the ball circling (LightLab.Swing).
+    So is a brass lattice cage hung in the sun's beam (InsetLattice, from
+    make_inset_lattice_mesh.py): inset shadows' demo, its grid shadow falling
+    in the window's patch of sun on the floor.
 
 The world has baked lighting on (its <Settings>). Bake it after running this:
 
@@ -36,6 +39,7 @@ FOLDER   = WORLD.with_suffix("")
 BOX     = "Engine/Content/Meshes/Box.nmmesh"
 SPHERE  = "Engine/Content/Meshes/Sphere.nmmesh"
 CAPSULE = "Engine/Content/Meshes/Capsule.nmmesh"
+LATTICE = "Content/Meshes/InsetLattice.nmmesh"
 PBR     = "Content/Materials/PBR.material.nmgraph"
 
 WHITE = (0.85, 0.85, 0.85)
@@ -64,18 +68,28 @@ def transform(position, rotation=(0, 0, 0), scale=(1, 1, 1)):
 def render(mesh, colour, roughness=0.6, casts=True):
     """A mesh drawn with LightLab's PBR material, its BaseColor overridden --
     which the bake reads as the surface's albedo."""
-    lines = ["  <Component Type=\"Render\" Version=\"3\">\n", "    <Visible Value=\"true\" />\n",
-             f"    <Material0 Value=\"{PBR}\" />\n"]
-    lines += [f"    <Material{slot} Value=\"\" />\n" for slot in range(1, 8)]
+    return render_slots(mesh, [(colour, 0, roughness)], casts)
+
+
+def render_slots(mesh, slots, casts=True, inset=False):
+    """render() with a PBR slot per (colour, metallic, roughness): section i
+    draws with slot i, its parameters overridden in that slot. inset: Cast
+    Inset Shadow on (the component's version 4; without it, version 3 as
+    before)."""
+    lines = [f"  <Component Type=\"Render\" Version=\"{4 if inset else 3}\">\n", "    <Visible Value=\"true\" />\n"]
+    lines += [f"    <Material{slot} Value=\"{PBR if slot < len(slots) else ''}\" />\n" for slot in range(8)]
     lines.append(f"    <Mesh Value=\"{mesh}\" />\n")
-    params = [("BaseColor", colour + (0,)), ("Metallic", (0, 0, 0, 0)), ("Roughness", (roughness, 0, 0, 0))]
+    params = [(slot, name, value) for slot, (tint, metallic, roughness) in enumerate(slots)
+              for name, value in (("BaseColor", tint + (0,)), ("Metallic", (metallic, 0, 0, 0)), ("Roughness", (roughness, 0, 0, 0)))]
     lines.append(f"    <ParameterCount Value=\"{len(params)}\" />\n")
-    for index, (name, value) in enumerate(params):
+    for index, (slot, name, value) in enumerate(params):
         lines.append(f"    <Parameter{index}Name Value=\"{name}\" />\n")
-        lines.append(f"    <Parameter{index}Slot Value=\"0\" />\n")
+        lines.append(f"    <Parameter{index}Slot Value=\"{slot}\" />\n")
         for axis, component in zip("XYZW", value):
             lines.append(f"    <Parameter{index}{axis} Value=\"{num(component)}\" />\n")
     lines.append(f"    <CastShadows Value=\"{'true' if casts else 'false'}\" />\n")
+    if inset:
+        lines.append("    <CastInsetShadow Value=\"true\" />\n")
     lines.append("  </Component>\n")
     return "".join(lines)
 
@@ -118,6 +132,15 @@ def main():
     # --- Dynamic: lit by the probes. Swinger circles (LightLab.Swing).
     shape("Swinger",     SPHERE, (-40, 110, -120), (80, 80, 80), WHITE, static=False, roughness=0.3)
     shape("Visitor",     CAPSULE, (-280, 90, -230), (60, 90, 60), (0.3, 0.45, 0.9), static=False, roughness=0.4)
+
+    # --- Dynamic: inset shadows' demo. A brass cage round a red core, in the
+    # sun's beam between the window and the floor; its grid shadow lands in
+    # the window's patch of sun, from its own map (Cast Inset Shadow): the
+    # baked sun casts nothing else from a dynamic entity. Slot 0 the lattice,
+    # slot 1 the core.
+    lattice = render_slots(LATTICE, [((0.9, 0.62, 0.22), 1, 0.35), ((0.8, 0.1, 0.08), 0, 0.4)], inset=True)
+    entities.append(("InsetLattice", entity("InsetLattice", [("Render", lattice),
+                                                             ("Transform", transform((10, 150, 170), (15, 30, 0), (90, 90, 90)))], False)))
 
     # --- Static lights.
     sun = ("  <Component Type=\"Directional Light\" Version=\"2\">\n"

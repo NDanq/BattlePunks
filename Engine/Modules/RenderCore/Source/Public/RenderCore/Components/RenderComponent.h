@@ -57,6 +57,13 @@ namespace RenderCore
         /* Whether its Opaque and Masked sections draw into shadow maps. */
         uint8_t           bCastShadows = 1;
 
+        /* Whether, while casting, it also gets a shadow map of its own from
+         * the sun -- live or baked -- fitted round it alone: far sharper
+         * than the sun's cascades, and the only shadow a dynamic entity casts
+         * from a baked sun (RENDERPIPELINE.md, "Inset shadows"). The frame's
+         * largest on screen get one, up to [Shadows] MaxInsetShadows. */
+        uint8_t           bCastInsetShadow = 0;
+
         /* Slot InSlot's material path; "" if unset or out of range. */
         const char* GetMaterial(int32_t InSlot) const;
         /* False if InSlot is out of range. */

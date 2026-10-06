@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="5c4869e7d50e7105e8837741d428fc0b" Name="InsetLattice">
+  <Component Type="Render" Version="4">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+    <Material1 Value="Content/Materials/PBR.material.nmgraph" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Content/Meshes/InsetLattice.nmmesh" />
+    <ParameterCount Value="6" />
+    <Parameter0Name Value="BaseColor" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="0.9" />
+    <Parameter0Y Value="0.62" />
+    <Parameter0Z Value="0.22" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="Metallic" />
+    <Parameter1Slot Value="0" />
+    <Parameter1X Value="1" />
+    <Parameter1Y Value="0" />
+    <Parameter1Z Value="0" />
+    <Parameter1W Value="0" />
+    <Parameter2Name Value="Roughness" />
+    <Parameter2Slot Value="0" />
+    <Parameter2X Value="0.35" />
+    <Parameter2Y Value="0" />
+    <Parameter2Z Value="0" />
+    <Parameter2W Value="0" />
+    <Parameter3Name Value="BaseColor" />
+    <Parameter3Slot Value="1" />
+    <Parameter3X Value="0.8" />
+    <Parameter3Y Value="0.1" />
+    <Parameter3Z Value="0.08" />
+    <Parameter3W Value="0" />
+    <Parameter4Name Value="Metallic" />
+    <Parameter4Slot Value="1" />
+    <Parameter4X Value="0" />
+    <Parameter4Y Value="0" />
+    <Parameter4Z Value="0" />
+    <Parameter4W Value="0" />
+    <Parameter5Name Value="Roughness" />
+    <Parameter5Slot Value="1" />
+    <Parameter5X Value="0.4" />
+    <Parameter5Y Value="0" />
+    <Parameter5Z Value="0" />
+    <Parameter5W Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="10" Y="150" Z="170" />
+    <Rotation X="15" Y="30" Z="0" />
+    <Scale X="90" Y="90" Z="90" />
+  </Component>
+</Entity>

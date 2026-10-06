@@ -184,10 +184,11 @@ same lights forward, but unshadowed: their texture slots are their material's.
 
 Each light has a **Shadows** section: Cast Shadows, a Technique, a Modulated
 Tint and two biases. A Render component's **Cast Shadows** says whether its
-mesh casts. Every scene's quality is the `[Shadows]` config section, a
+mesh casts, and **Cast Inset Shadow** gives it a sun shadow map of its own (see
+[Inset shadows](#inset-shadows)). Every scene's quality is the `[Shadows]` config section, a
 project setting (the game's DefaultEngine.ini; Edit > Project Settings >
 Shadows edits it and applies it at once): Enabled, Resolution,
-Filter, MaxShadowedLights and DistanceScale.
+Filter, MaxShadowedLights, DistanceScale and MaxInsetShadows.
 
 | Technique | Lights | What it draws |
 |---|---|---|
@@ -221,6 +222,71 @@ Limits: Masked casters cast their whole shape (their clip is not run in the
 Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces are
 unshadowed; Metal, which cannot sample a depth target, draws no shadows (warned
 once). A material preview never draws shadows.
+
+### Inset shadows
+
+A Render component's **Cast Inset Shadow** (Shadows, beside Cast Shadows;
+`bCastInsetShadow`, the component's version 4, off by default) gives its mesh a
+sun shadow map of its own -- Unreal's per-object, or inset, shadow. Two things
+come of it:
+
+- **Sharpness.** The map is fitted round the one caster, not the camera's
+  frustum: LightLab's lattice (90 units across) spends well under a unit a
+  texel, where the far cascade there spends four or more.
+- **A shadow from a baked sun.** A static sun is in the bake, not the live
+  lighting, so a dynamic entity casts nothing from it (see
+  [Baked lighting](#baked-lighting)). Its inset shadow is drawn regardless.
+
+**Which sun.** `WorldBridge::BuildLighting` records it in `RenderLighting`'s
+`InsetLight*` fields: the live Directional Light, else -- drawing with a bake --
+the first static one, if it has Cast Shadows on.
+
+**Which casters.** `RenderScene` offers each visible proxy whose
+`RenderProxy::CastsInsetShadow` is true (a Render component with a mesh, Cast
+Shadows and Cast Inset Shadow) to `RenderContext::PrepareShadows`, largest on
+screen first -- its bounding sphere's radius over its distance. The sphere is
+the mesh's local box, scaled, so it does not change as the entity turns.
+`[Shadows] MaxInsetShadows` (0-4; Project Settings > Shadows > Inset shadows)
+caps them.
+
+**The views** (`ShadowSetup.cpp`): each an orthographic view along the sun
+holding the caster's sphere -- its depth across the sphere alone -- moved in
+whole texels so a moving caster's shadow does not crawl. They take the local
+atlas's tiles the point and spot lights left, one each (Resolution / 6 texels a
+side), so they need no texture slot of their own -- the Lighting pass has none
+spare -- and their matrices are `Scene_LocalShadowMatrices`' after the
+lights'. With no tile left, a caster casts into the sun's own views as
+before -- under a baked sun, none.
+
+**Drawing.** An inset view draws its caster and nothing else (draw event
+"Inset n"). A caster that got one is left out of the sun's own views, so its
+shadow is not drawn twice; it still casts into point and spot lights' views.
+
+**Lighting** (`Shadows.glsl`'s `InsetShadow`, fed by `Lighting_Block`: the count,
+the sun's biases, its direction and tint, and each view's matrix, texel and
+tile). A receiver is shadowed by an inset view only inside its tile -- the
+prism behind its caster. One past the far plane is behind the caster, so its
+depth is held just inside the view; one before the near plane is between the
+caster and the sun, and lit. The darkest of them is the inset shadow:
+
+- **live sun:** taken with the cascade's (the darker of the two), then as the
+  sun's technique says -- Standard takes away its light, Modulated tints.
+- **baked sun:** there is no live light to take away, so it is Modulated by the
+  sun's Shadow Tint over the whole pixel, the baked light in its emissive too
+  (`DeferredLighting.fsh`). Faces turned from the sun are left alone.
+
+Limits: a caster off screen whose shadow is on screen gets none (only visible
+proxies are offered); under a baked sun the tint darkens shade the bake
+already has, so a dynamic entity's shadow in a static one's is darker still;
+the sun only, not point or spot lights.
+
+Verified: the smoke test checks the views (after the lights' tiles, never
+overlapping them, capped, texel-snapped, holding the sphere), the component's
+version 4, and on Vulkan that an inset caster shadows the floor where the
+sun's own view does not reach it, and that MaxInsetShadows 0 turns that off.
+LightLab's lattice (`InsetLattice`, from
+`Games/LightLab/Tools/make_inset_lattice_mesh.py`) shows it: in the LightLab
+level, and in the BakedLighting level's window beam, Baked and Live.
 
 The scene block grew past the material block's 1024 bytes (3600 bytes:
 `GDI_SCENE_BLOCK_MAX_BYTES` is 4096). GDI now re-uploads a uniform block only
@@ -562,8 +628,9 @@ Live and `lighting baked | live` set it; LightLab's L key toggles it.
 
 The trade-offs of fully baked Static lights: they light dynamic entities only
 through the probes -- diffuse, no specular highlight, no sharp shadow -- and
-dynamic entities cast no shadow from them. A Stationary light keeps all of
-that, live, at its live cost; only its bounce is baked.
+dynamic entities cast no shadow from them, unless they have Cast Inset Shadow
+(a static sun's, Modulated: see [Inset shadows](#inset-shadows)). A Stationary
+light keeps all of that, live, at its live cost; only its bounce is baked.
 
 Verified: the editor's lighting tests bake small scenes whose answers are
 known -- an open texel under a straight-down sun equals radiance / pi to 5%,

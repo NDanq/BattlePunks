@@ -163,6 +163,28 @@ namespace RenderCore
             FinishView(InOutView, View, Projection, InAtlasSize);
         }
 
+        /* An orthographic view along InDirection holding InCaster's sphere and
+         * no more: its depth runs across the sphere alone, so a receiver past
+         * the far plane is behind the caster (Shadows.glsl holds it there).
+         * Snapped to whole texels in the light's plane, so a moving caster's
+         * shadow does not crawl. */
+        void FitInset(ShadowView& InOutView, const Vector3& InDirection, const InsetShadowCaster& InCaster, const uint32_t InAtlasSize)
+        {
+            const double Radius = std::max(1.0, std::ceil(double(InCaster.Radius) * 16.0) / 16.0);
+
+            const Matrix4x4 Orient = LookAlong(Vector3(0.0, 0.0, 0.0), InDirection);
+            const double TexelWorld = 2.0 * Radius / double(InOutView.TileSize);
+            Vector3 LightSpace = Orient * InCaster.Centre;
+            LightSpace = Vector3(std::floor(LightSpace.GetX() / TexelWorld) * TexelWorld,
+                                 std::floor(LightSpace.GetY() / TexelWorld) * TexelWorld,
+                                 LightSpace.GetZ());
+            const Vector3 Snapped = Orient.Transpose() * LightSpace;
+
+            /* Snapping moves the centre up to a texel: a texel more each way. */
+            const double Half = Radius + TexelWorld;
+            FinishView(InOutView, LookAlong(Snapped, InDirection), Orthographic(Half, Half, -Radius, Radius), InAtlasSize);
+        }
+
         /* The six cube faces' directions, +X -X +Y -Y +Z -Z (Shadows.glsl picks them in this order). */
         const Vector3 POINT_FACES[SHADOW_POINT_FACES] = {
             Vector3( 1.0, 0.0, 0.0), Vector3(-1.0, 0.0, 0.0),
@@ -189,9 +211,12 @@ namespace RenderCore
         }
     }
 
-    void BuildShadowFrame(const RenderLighting& InLighting, const RenderView& InCamera, ShadowFrame& OutFrame)
+    void BuildShadowFrame(const RenderLighting& InLighting, const RenderView& InCamera, ShadowFrame& OutFrame,
+                          const InsetShadowCaster* InCasters, const uint32_t InCasterCount)
     {
         OutFrame.ViewCount            = 0;
+        OutFrame.InsetFirstView       = -1;
+        OutFrame.InsetCount           = 0;
         OutFrame.AtlasSize            = 0;
         OutFrame.DirectionalFirstView = -1;
         OutFrame.CascadeCount         = 0;
@@ -244,6 +269,7 @@ namespace RenderCore
             {
                 ShadowView& View = OutFrame.Views[OutFrame.ViewCount++];
                 View.Atlas    = SA_Directional;
+                View.Inset    = -1;
                 View.TileSize = Tile;
                 View.TileX    = (Index % 2) * Tile;
                 View.TileY    = (Index / 2) * Tile;
@@ -281,6 +307,7 @@ namespace RenderCore
             {
                 ShadowView& View = OutFrame.Views[OutFrame.ViewCount++];
                 View.Atlas    = SA_Local;
+                View.Inset    = -1;
                 View.TileSize = TileSize;
                 View.TileX    = (NextTile % SHADOW_LOCAL_ATLAS_COLUMNS) * TileSize;
                 View.TileY    = (NextTile / SHADOW_LOCAL_ATLAS_COLUMNS) * TileSize;
@@ -291,6 +318,35 @@ namespace RenderCore
                 FinishView(View, LookAlong(Light.Position, Forward), Perspective(Fov, Near, Far), Atlas);
             }
             ++Shadowed;
+        }
+
+        // --- Inset shadows, in the local atlas's tiles the lights left -------
+        const double InsetLength = InLighting.InsetLightDirection.GetLength();
+        if(!InLighting.bInsetLight || !InCasters || InsetLength <= 1e-9)
+        {
+            return;
+        }
+        const Vector3  InsetDirection = InLighting.InsetLightDirection * (1.0 / InsetLength);
+        const uint32_t MaxInsets      = uint32_t(std::clamp(Settings.MaxInsetShadows, 0, int32_t(RENDER_INSET_SHADOW_MAX)));
+        for(uint32_t Caster = 0; Caster < InCasterCount && OutFrame.InsetCount < MaxInsets && NextTile < TileCount; ++Caster)
+        {
+            if(!(InCasters[Caster].Radius > 0.0f))
+            {
+                continue;
+            }
+            if(OutFrame.InsetCount == 0)
+            {
+                OutFrame.InsetFirstView = int32_t(OutFrame.ViewCount);
+            }
+            ShadowView& View = OutFrame.Views[OutFrame.ViewCount++];
+            View.Atlas    = SA_Local;
+            View.TileSize = TileSize;
+            View.TileX    = (NextTile % SHADOW_LOCAL_ATLAS_COLUMNS) * TileSize;
+            View.TileY    = (NextTile / SHADOW_LOCAL_ATLAS_COLUMNS) * TileSize;
+            View.Inset    = int32_t(Caster);
+            ++NextTile;
+            FitInset(View, InsetDirection, InCasters[Caster], Atlas);
+            ++OutFrame.InsetCount;
         }
     }
 }

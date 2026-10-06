@@ -20,6 +20,7 @@ namespace RenderCore
         RENDER_LOCAL_LIGHT_MAX          = 16,  // point + spot lights a frame, nearest first
         RENDER_SHADOWED_LOCAL_LIGHT_MAX = 4,   // of those, how many may draw shadows (the local atlas's 6x4 tiles)
         RENDER_CASCADE_MAX              = 4,
+        RENDER_INSET_SHADOW_MAX         = 4,   // per-object sun shadows a view (in the local atlas's spare tiles)
     };
 
     enum ERenderLocalLightType : uint8_t
@@ -57,6 +58,17 @@ namespace RenderCore
         int32_t  Filter            = 1;       // 0 hard, 1 PCF 3x3, 2 PCF 5x5
         int32_t  MaxShadowedLights = int32_t(RENDER_SHADOWED_LOCAL_LIGHT_MAX);
         float    DistanceScale     = 1.0f;    // multiplies the sun's ShadowDistance
+        int32_t  MaxInsetShadows   = int32_t(RENDER_INSET_SHADOW_MAX);   // Render components' inset shadows a view
+    };
+
+    /* One Render component that asked for an inset shadow (Cast Inset
+     * Shadow), as RenderScene offers it to the frame's shadow views: its
+     * bounding sphere, world space. Rotation-invariant, so turning the
+     * caster does not resize its shadow map. */
+    struct InsetShadowCaster
+    {
+        EngineCore::Vector3 Centre;
+        float               Radius = 0.0f;
     };
 
     /* What a world's bake holds of its lightmaps, at most (the baker refuses more). */
@@ -95,6 +107,18 @@ namespace RenderCore
         float               LightShadowDistance   = 4000.0f;
         int32_t             LightCascadeCount     = 4;
         float               LightCascadeSplitLambda = 0.75f;
+
+        /* Inset shadows' light (RENDERPIPELINE.md, "Inset shadows"): the sun
+         * that casts -- the live one above, or, drawing with a bake, the
+         * static sun the bake holds (bInsetLightBaked). That one has no live
+         * light to take away, so its inset shadows are Modulated by its
+         * ShadowTint. bInsetLight 0: no sun casts, no inset shadows. */
+        uint8_t             bInsetLight        = 0;
+        uint8_t             bInsetLightBaked   = 0;
+        EngineCore::Vector3 InsetLightDirection{ 0.35, -1.0, 0.55 };   // the way it travels
+        EngineCore::Color   InsetShadowTint{ 40, 50, 80 };
+        float               InsetShadowBias       = 0.0015f;
+        float               InsetShadowNormalBias = 2.0f;
 
         /* Ambient: SkyColor from above (+Y), GroundColor from below. */
         EngineCore::Color   SkyColor{ 120, 130, 150 };

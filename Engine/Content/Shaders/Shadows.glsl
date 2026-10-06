@@ -9,6 +9,9 @@
 // comparison and its filter (Scene_ShadowParams.y texels each way) are here.
 // Each matrix takes a world position to (u, v, depth) * w in its atlas, its
 // tile included; a filter tap never leaves the tile it started in.
+//
+// Inset shadows (InsetShadow) read the includer's Lighting_Block too: per-object
+// views of the sun in the local atlas's spare tiles.
 
 // Receiver bias. Depth: InBias, more the more the light grazes (slope-scaled).
 // Normal: along the surface normal, at least a texel and a half of the shadow
@@ -24,20 +27,15 @@ vec3 NormalOffset(vec3 InNormal, float InNdotL, float InNormalBias, float InTexe
     return InNormal * max(InNormalBias, 1.5 * InTexelWorld) * (1.0 + (1.0 - InNdotL));
 }
 
-// How lit InWorld is in the tile InTileTexels wide that InMatrix projects it
-// into: 1 lit, 0 in shadow. Outside the view, lit.
-float SampleShadowAtlas(sampler2D InAtlas, mat4 InMatrix, vec3 InWorld, float InBias, int InTileTexels)
+// How lit InPoint -- (u, v, depth) in InAtlas -- is, filtered inside the tile
+// InTileTexels wide it lands in: 1 lit, 0 in shadow.
+float FilterShadowAtlas(sampler2D InAtlas, vec3 InPoint, float InBias, int InTileTexels)
 {
-    vec4 Clip = InMatrix * vec4(InWorld, 1.0);
-    if(Clip.w <= 0.0) { return 1.0; }
-    vec3 Atlas = Clip.xyz / Clip.w;
-    if(Atlas.z >= 1.0 || Atlas.z <= 0.0) { return 1.0; }
-
     float Size    = Scene_ShadowParams.w;
-    ivec2 Texel   = ivec2(floor(Atlas.xy * Size));
+    ivec2 Texel   = ivec2(floor(InPoint.xy * Size));
     ivec2 TileMin = (Texel / InTileTexels) * InTileTexels;
     ivec2 TileMax = TileMin + ivec2(InTileTexels - 1);
-    float Depth   = Atlas.z - InBias;
+    float Depth   = InPoint.z - InBias;
 
     int   Radius = int(Scene_ShadowParams.y);
     float Lit    = 0.0;
@@ -52,6 +50,17 @@ float SampleShadowAtlas(sampler2D InAtlas, mat4 InMatrix, vec3 InWorld, float In
         }
     }
     return Lit / Taps;
+}
+
+// How lit InWorld is in the tile InTileTexels wide that InMatrix projects it
+// into: 1 lit, 0 in shadow. Outside the view, lit.
+float SampleShadowAtlas(sampler2D InAtlas, mat4 InMatrix, vec3 InWorld, float InBias, int InTileTexels)
+{
+    vec4 Clip = InMatrix * vec4(InWorld, 1.0);
+    if(Clip.w <= 0.0) { return 1.0; }
+    vec3 Atlas = Clip.xyz / Clip.w;
+    if(Atlas.z >= 1.0 || Atlas.z <= 0.0) { return 1.0; }
+    return FilterShadowAtlas(InAtlas, Atlas, InBias, InTileTexels);
 }
 
 // The sun's shadow at InWorld: its cascade by view depth, faded out over the
@@ -100,4 +109,33 @@ float LocalShadow(int InFirst, bool bInSpot, float InCosOuter, vec3 InLightPosit
     float NdotL     = clamp(dot(InNormal, InToLight), 0.0, 1.0);
     vec3  Offset    = NormalOffset(InNormal, NdotL, InNormalBias, Texel);
     return SampleShadowAtlas(ShadowLocal, Scene_LocalShadowMatrices[Matrix], InWorld + Offset, SlopeBias(InBias, NdotL), Tile);
+}
+
+// The inset shadows at InWorld (Lighting_Block): the darkest of them. Each is an
+// orthographic view of the sun holding one caster's sphere and no more, so it
+// sees only the prism behind that caster: outside its tile, lit. Its depth
+// spans the sphere alone -- a receiver past the far plane is behind the caster,
+// so is held just inside it; one before the near plane is between it and the sun.
+float InsetShadow(vec3 InWorld, vec3 InNormal, vec3 InToLight)
+{
+    int Count = int(Lighting_Params.y);
+    if(Count <= 0) { return 1.0; }
+
+    int   Tile  = int(Scene_ShadowParams.w) / 6;
+    float NdotL = clamp(dot(InNormal, InToLight), 0.0, 1.0);
+    float Bias  = SlopeBias(Lighting_Params.z, NdotL);
+    float Lit   = 1.0;
+    for(int Index = 0; Index < Count; ++Index)
+    {
+        vec4 Inset  = Lighting_Insets[Index];   // x matrix, y texel (world), zw tile corner (atlas UV)
+        vec3 Offset = NormalOffset(InNormal, NdotL, Lighting_Params.w, Inset.y);
+        vec4 Clip   = Scene_LocalShadowMatrices[int(Inset.x)] * vec4(InWorld + Offset, 1.0);
+        vec3 Atlas  = Clip.xyz / Clip.w;        // orthographic: w is 1
+
+        vec2 InTile = (Atlas.xy - Inset.zw) * Scene_ShadowParams.w;   // texels into its tile
+        if(any(lessThan(InTile, vec2(0.0))) || any(greaterThanEqual(InTile, vec2(float(Tile)))) || Atlas.z <= 0.0) { continue; }
+        Atlas.z = min(Atlas.z, 0.9999);
+        Lit = min(Lit, FilterShadowAtlas(ShadowLocal, Atlas, Bias, Tile));
+    }
+    return Lit;
 }

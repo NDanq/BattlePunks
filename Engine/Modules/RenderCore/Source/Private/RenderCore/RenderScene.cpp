@@ -4,6 +4,7 @@
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include <utility>
@@ -74,6 +75,22 @@ namespace RenderCore
         std::unordered_map<const RenderProxy*, StaticDrawList> StaticLists;
         uint64_t                                               StaticBuilds = 0;   // lifetime captures
 
+        /* InProxy's bounding sphere, world space, from its local box: the
+         * same size however it is turned (its world box grows as it turns). */
+        static InsetShadowCaster InsetSphere(const RenderProxy& InProxy)
+        {
+            const GameCore::AABB& Local = InProxy.GetLocalBounds();
+            const EngineCore::Vector3 Centre = (Local.Min + Local.Max) * 0.5;
+            const EngineCore::Vector3 Scale  = InProxy.GetTransform().Scale;
+            const double Largest = std::max({ std::abs(double(Scale.GetX())), std::abs(double(Scale.GetY())), std::abs(double(Scale.GetZ())) });
+            const EngineCore::Vector4 World = InProxy.GetLocalToWorld() * EngineCore::Vector4(Centre.GetX(), Centre.GetY(), Centre.GetZ(), 1.0);
+
+            InsetShadowCaster Out;
+            Out.Centre = EngineCore::Vector3(World.GetX(), World.GetY(), World.GetZ());
+            Out.Radius = float(((Local.Max - Local.Min) * 0.5).GetLength() * Largest);
+            return Out;
+        }
+
         StaticDrawList& ListFor(const RenderProxy* InProxy, const uint64_t InGeneration)
         {
             StaticDrawList& List = StaticLists[InProxy];
@@ -125,6 +142,16 @@ namespace RenderCore
                 return List.Padding;
             };
             uint64_t StaticCount = 0;
+
+            /* Visible proxies asking for an inset shadow, and how much of the
+             * view each fills (radius over distance): the largest get one. */
+            struct InsetCandidate
+            {
+                RenderProxy*      Proxy;
+                InsetShadowCaster Caster;
+                double            Coverage;
+            };
+            std::vector<InsetCandidate> InsetCandidates;
 
             for(RenderProxy* Proxy : Proxies)
             {
@@ -188,7 +215,20 @@ namespace RenderCore
                     Proxy->Draw(InContext);
                 }
                 ++VisibleCount;
+
+                if(Proxy->CastsInsetShadow() && !Proxy->GetLocalBounds().IsEmpty())
+                {
+                    InsetCandidates.push_back({ Proxy, InsetSphere(*Proxy), 0.0 });
+                    InsetCandidate& Candidate = InsetCandidates.back();
+                    const double Distance = (Candidate.Caster.Centre - InView.Origin).GetLength();
+                    Candidate.Coverage = double(Candidate.Caster.Radius) / std::max(Distance, 1.0);
+                }
             }
+            std::stable_sort(InsetCandidates.begin(), InsetCandidates.end(),
+                             [](const InsetCandidate& InA, const InsetCandidate& InB) { return InA.Coverage > InB.Coverage; });
+            InsetCandidates.resize(std::min<size_t>(InsetCandidates.size(), RENDER_INSET_SHADOW_MAX));
+            InsetShadowCaster InsetCasters[RENDER_INSET_SHADOW_MAX];
+            for(size_t Index = 0; Index < InsetCandidates.size(); ++Index) { InsetCasters[Index] = InsetCandidates[Index].Caster; }
 
             /*
              * Shadow casters: per shadow view, every visible proxy it can see,
@@ -198,14 +238,62 @@ namespace RenderCore
              * scene's shadows off, so it lights unshadowed.
              */
             const bool     bShadows    = !InCapture || InCapture->bShadows;
-            const uint32_t ShadowViews = bShadows ? InContext.PrepareShadows() : 0;
+            const uint32_t ShadowViews = bShadows ? InContext.PrepareShadows(InsetCasters, uint32_t(InsetCandidates.size())) : 0;
+
+            /* The casters that got an inset view: theirs replaces the sun's. */
+            std::vector<const RenderProxy*> Inset;
+            for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews; ++ViewIndex)
+            {
+                const int32_t Caster = InContext.GetShadowViewInset(ViewIndex);
+                if(Caster >= 0 && size_t(Caster) < InsetCandidates.size()) { Inset.push_back(InsetCandidates[size_t(Caster)].Proxy); }
+            }
+            const auto HasInset = [&Inset](const RenderProxy* InProxy)
+            {
+                return std::find(Inset.begin(), Inset.end(), InProxy) != Inset.end();
+            };
+
+            /* Queues InProxy's casters for the current shadow view. */
+            const auto DrawCaster = [&](RenderProxy* InProxy, const uint32_t InViewIndex)
+            {
+                if(InProxy->IsStatic())
+                {
+                    StaticDrawList& List = ListFor(InProxy, Generation);
+                    if(!List.bShadows)
+                    {
+                        InContext.BeginCapture(&List.Shadows);
+                        InProxy->DrawShadow(InContext);
+                        InContext.EndCapture();
+                        List.bShadows = true;
+                        ++StaticBuilds;
+                    }
+                    InContext.SubmitCaptured(List.Shadows, int32_t(InViewIndex));
+                }
+                else
+                {
+                    InProxy->DrawShadow(InContext);
+                }
+            };
+
             for(uint32_t ViewIndex = 0; ViewIndex < ShadowViews; ++ViewIndex)
             {
                 const GameCore::AABB& ViewBounds = InContext.GetShadowViewBounds(ViewIndex);
                 InContext.SetShadowCasterView(int32_t(ViewIndex));
+
+                /* An inset view draws its own caster and nothing else. */
+                const int32_t InsetCaster = InContext.GetShadowViewInset(ViewIndex);
+                if(InsetCaster >= 0)
+                {
+                    if(size_t(InsetCaster) < InsetCandidates.size())
+                    {
+                        DrawCaster(InsetCandidates[size_t(InsetCaster)].Proxy, ViewIndex);
+                    }
+                    continue;
+                }
+                const bool bSunView = InContext.IsSunShadowView(ViewIndex);
+
                 for(RenderProxy* Proxy : Proxies)
                 {
-                    if(!Proxy->IsVisible() || Excluded(Proxy))
+                    if(!Proxy->IsVisible() || Excluded(Proxy) || (bSunView && !Inset.empty() && HasInset(Proxy)))
                     {
                         continue;
                     }
@@ -220,23 +308,7 @@ namespace RenderCore
                             continue;
                         }
                     }
-                    if(Proxy->IsStatic())
-                    {
-                        StaticDrawList& List = ListFor(Proxy, Generation);
-                        if(!List.bShadows)
-                        {
-                            InContext.BeginCapture(&List.Shadows);
-                            Proxy->DrawShadow(InContext);
-                            InContext.EndCapture();
-                            List.bShadows = true;
-                            ++StaticBuilds;
-                        }
-                        InContext.SubmitCaptured(List.Shadows, int32_t(ViewIndex));
-                    }
-                    else
-                    {
-                        Proxy->DrawShadow(InContext);
-                    }
+                    DrawCaster(Proxy, ViewIndex);
                 }
             }
             InContext.SetShadowCasterView(-1);

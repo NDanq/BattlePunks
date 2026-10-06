@@ -302,9 +302,16 @@ namespace RenderCore
         /* RenderScene::Render's, after BeginSceneDraws: the frame's shadow
          * views from the view and lighting (none if [Shadows] is off or no
          * light casts). For each, RenderScene sets it as the caster view and
-         * calls DrawShadow on every proxy within its bounds; -1 ends that. */
-        uint32_t              PrepareShadows();
+         * calls DrawShadow on every proxy within its bounds; -1 ends that.
+         *
+         * InCasters: the visible proxies asking for an inset shadow, most
+         * deserving first; those that get a view are its only caster
+         * (GetShadowViewInset: their index, else -1), and are left out of the
+         * sun's views (IsSunShadowView), which their own replaces. */
+        uint32_t              PrepareShadows(const InsetShadowCaster* InCasters = nullptr, uint32_t InCasterCount = 0);
         const GameCore::AABB& GetShadowViewBounds(uint32_t InView) const;
+        int32_t               GetShadowViewInset(uint32_t InView) const;
+        bool                  IsSunShadowView(uint32_t InView) const;
         void                  SetShadowCasterView(int32_t InView);
         /* InClearBottom: the background is a gradient, InClearColor at the
          * top to it at the bottom (ClearGradient.fsh), under everything.
