@@ -27,14 +27,18 @@ namespace EngineCore
  *     fading over its Duration;
  *   - a LAYER after the first is laid over the ones before through a bone
  *     mask, at its weight (scaled by a parameter, if it names one): an
- *     upper-body layer holding a weapon while the legs walk.
+ *     upper-body layer holding a weapon while the legs walk. An ADDITIVE
+ *     layer adds its clips' movement instead -- each clip relative to its
+ *     first frame (or the reference pose) -- so breathing or a flinch plays
+ *     over whatever the layers before are doing.
  *
  * An EngineCore::Archive of chunks:
  *
  *   NAST v1      the file
  *     APRM v1    the parameters: name, type, default
- *     ALYR v2    the layers, each with its states and transitions
- *                (v1: no 2D blend spaces -- BlendParameterY, PositionY)
+ *     ALYR v3    the layers, each with its states and transitions
+ *                (v2: no Blend or AdditiveBase; v1: nor 2D blend spaces --
+ *                BlendParameterY, PositionY)
  *
  * Clips are named by runtime path; skeletons are not -- a state plays on
  * whatever skeleton its entity's mesh has, its clips binding by bone name.
@@ -98,9 +102,24 @@ namespace RenderCore
         std::vector<AnimCondition> Conditions;   // all must hold; none: it fires (bAtEnd: at the end)
     };
 
+    enum class EAnimLayerBlend : uint8_t
+    {
+        Override = 0,   // its pose replaces what is below, by weight and mask
+        Additive = 1    // its movement is added to what is below
+    };
+
+    /* What an additive layer's clips are measured from. */
+    enum class EAnimAdditiveBase : uint8_t
+    {
+        FirstFrame    = 0,   // each clip's own first frame: it adds how it moves from there
+        ReferencePose = 1    // the skeleton's reference pose
+    };
+
     struct AnimLayer
     {
         std::string                 Name;
+        EAnimLayerBlend             Blend        = EAnimLayerBlend::Override;
+        EAnimAdditiveBase           AdditiveBase = EAnimAdditiveBase::FirstFrame;
         float                       Weight = 1.0f;
         std::string                 WeightParameter;   // scales Weight (clamped 0..1); empty: none
         std::vector<std::string>    MaskBones;         // each with what is below it; empty: every bone

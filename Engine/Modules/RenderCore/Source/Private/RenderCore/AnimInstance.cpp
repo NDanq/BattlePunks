@@ -91,6 +91,8 @@ namespace RenderCore
             LayerRuntime Layer;
             Layer.Weight          = Source.Weight;
             Layer.WeightParameter = Source.WeightParameter.empty() ? -1 : State->FindParameter(Source.WeightParameter);
+            Layer.bAdditive       = Source.Blend == EAnimLayerBlend::Additive;
+            Layer.AdditiveBase    = Source.AdditiveBase;
             Layer.Entry           = Source.EntryState;
             if(Skeleton && !Source.MaskBones.empty())
             {
@@ -363,12 +365,35 @@ namespace RenderCore
         return Travel;
     }
 
-    void AnimInstance::EvaluateState(const StateRuntime& InState, const float InPhase, AnimLocalPose& OutPose)
+    void AnimInstance::EvaluateState(const LayerRuntime& InLayer, const StateRuntime& InState, const float InPhase, AnimLocalPose& OutPose)
     {
         GetRefPose(*Skeleton, OutPose);
         std::vector<float> Weights;
         size_t Dominant = 0;
         SampleWeights(InState, Weights, Dominant);
+
+        /* One sample's pose: an additive layer's relative to its base, and
+         * with no root held -- root motion is the first layer's. */
+        const auto Pose = [this, &InLayer](const Sample& InSample, const float InTime, AnimLocalPose& OutSample)
+        {
+            GetRefPose(*Skeleton, OutSample);
+            SampleClip(*InSample.Clip, InSample.Binding, InTime, OutSample);
+            if(!InLayer.bAdditive)
+            {
+                HoldRoot(InSample, OutSample);
+                return;
+            }
+            GetRefPose(*Skeleton, Scratch[3]);
+            if(InLayer.AdditiveBase == EAnimAdditiveBase::FirstFrame)
+            {
+                SampleClip(*InSample.Clip, InSample.Binding, 0.0f, Scratch[3]);
+            }
+            MakeAdditivePose(OutSample, Scratch[3]);
+        };
+        if(InLayer.bAdditive)
+        {
+            OutPose.assign(OutPose.size(), AnimTransform());   // nothing added, until a sample adds it
+        }
 
         /* Incremental: each sample blended in by its share of the weight so far. */
         float Total = 0.0f;
@@ -382,14 +407,11 @@ namespace RenderCore
             const float Time = InPhase * Each.Clip->GetDuration();
             if(Total <= 0.0f)
             {
-                SampleClip(*Each.Clip, Each.Binding, Time, OutPose);
-                HoldRoot(Each, OutPose);
+                Pose(Each, Time, OutPose);
                 Total = Weights[Index];
                 continue;
             }
-            GetRefPose(*Skeleton, Scratch[2]);
-            SampleClip(*Each.Clip, Each.Binding, Time, Scratch[2]);
-            HoldRoot(Each, Scratch[2]);
+            Pose(Each, Time, Scratch[2]);
             Total += Weights[Index];
             BlendPoses(OutPose, Scratch[2], Weights[Index] / Total);
         }
@@ -538,15 +560,17 @@ namespace RenderCore
             }
 
             /* The layer's pose: its state, or a crossfade into it. */
-            EvaluateState(Layer.States[size_t(Layer.Current.State)], Layer.Current.Phase, Scratch[0]);
+            EvaluateState(Layer, Layer.States[size_t(Layer.Current.State)], Layer.Current.Phase, Scratch[0]);
             const AnimLocalPose* LayerPose = &Scratch[0];
             if(Layer.Previous.State >= 0 && Layer.FadeDuration > 0.0f)
             {
-                EvaluateState(Layer.States[size_t(Layer.Previous.State)], Layer.Previous.Phase, Scratch[1]);
+                EvaluateState(Layer, Layer.States[size_t(Layer.Previous.State)], Layer.Previous.Phase, Scratch[1]);
                 BlendPoses(Scratch[1], Scratch[0], std::clamp(Layer.FadeTime / Layer.FadeDuration, 0.0f, 1.0f));
                 LayerPose = &Scratch[1];
             }
-            BlendPoses(LocalPose, *LayerPose, Weight, Layer.Mask.empty() ? nullptr : &Layer.Mask);
+            const std::vector<float>* Mask = Layer.Mask.empty() ? nullptr : &Layer.Mask;
+            if(Layer.bAdditive) { ApplyAdditivePose(LocalPose, *LayerPose, Weight, Mask); }
+            else                { BlendPoses(LocalPose, *LayerPose, Weight, Mask); }
         }
         LocalToModel(*Skeleton, LocalPose, ModelPose);
     }

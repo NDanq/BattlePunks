@@ -144,6 +144,8 @@ namespace RenderCore
             std::vector<float>             Mask;            // per bone; empty: every bone
             float                          Weight = 1.0f;
             int32_t                        WeightParameter = -1;
+            bool                           bAdditive = false;
+            EAnimAdditiveBase              AdditiveBase = EAnimAdditiveBase::FirstFrame;
             int32_t                        Entry = 0;
 
             Playhead Current, Previous;                     // Previous: what it fades from
@@ -165,7 +167,8 @@ namespace RenderCore
         AnimMatrix ParentModel(const AnimLocalPose& InPose, int32_t InBone) const;
         /* A clip with root motion keeps its root bone's model X and Z at its first frame's. */
         void  HoldRoot(const Sample& InSample, AnimLocalPose& InOutPose) const;
-        void  EvaluateState(const StateRuntime& InState, float InPhase, AnimLocalPose& OutPose);
+        /* InLayer's state InState at InPhase; an additive layer's as its additive pose. */
+        void  EvaluateState(const LayerRuntime& InLayer, const StateRuntime& InState, float InPhase, AnimLocalPose& OutPose);
         bool  ConditionsHold(const TransitionRuntime& InTransition, const LayerRuntime& InLayer) const;
         void  UpdateTransitions(LayerRuntime& InOutLayer);
 
@@ -181,7 +184,7 @@ namespace RenderCore
         int   LoopOverride = -1;
 
         AnimLocalPose            LocalPose;
-        AnimLocalPose            Scratch[3];        // state, sample and layer poses, reused
+        AnimLocalPose            Scratch[4];        // state, previous state, sample and additive base poses, reused
         std::vector<AnimMatrix>  ModelPose;
         std::vector<AnimNotify>    Fired;
         std::vector<FinishedState> Finished;
