@@ -5,9 +5,10 @@
 #include <cstdint>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/RenderCore/AnimMath.h"
 #include "Public/RenderCore/AssetImportInfo.h"
 
-/* What MeshAsset.cpp and TextureAsset.cpp share. Private to RenderCore. */
+/* What the asset files' serializers share. Private to RenderCore. */
 namespace RenderCore
 {
     constexpr uint32_t TAG_IMPORT_SOURCE = EngineCore::MakeArchiveTag('I','S','R','C');
@@ -39,6 +40,14 @@ namespace RenderCore
             return false;
         }
         return true;
+    }
+
+    /* Translation, rotation (x y z w), scale: ten floats. */
+    inline void SerializeAnimTransform(EngineCore::Archive& Ar, AnimTransform& InOutTransform)
+    {
+        Ar << InOutTransform.Translation.X << InOutTransform.Translation.Y << InOutTransform.Translation.Z;
+        Ar << InOutTransform.Rotation.X << InOutTransform.Rotation.Y << InOutTransform.Rotation.Z << InOutTransform.Rotation.W;
+        Ar << InOutTransform.Scale.X << InOutTransform.Scale.Y << InOutTransform.Scale.Z;
     }
 
     /* A required chunk: opened, or the archive failed with InWhat. */

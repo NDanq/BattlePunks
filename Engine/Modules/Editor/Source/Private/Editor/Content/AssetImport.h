@@ -57,6 +57,12 @@ namespace EditorContent
         /* Import the images the glTF refers to as .nmtexture beside the mesh. */
         bool bImportTextures = true;
 
+        /* A skinned file's skeleton (.nmskel), its meshes skinned, and its
+         * animations as .nmanim clips (ANIMATION.md). */
+        bool  bImportAnimations   = true;
+        /* Frames per second the clips are resampled at. */
+        float AnimationSampleRate = 30.0f;
+
         QString ToSettings() const;
         static MeshImportOptions FromSettings(const QString& InSettings);
     };

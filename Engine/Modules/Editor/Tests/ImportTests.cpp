@@ -12,11 +12,14 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QTemporaryDir>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/AssetImport.h"
 
@@ -134,6 +137,149 @@ static void WriteScene(const QDir& InFolder)
         for(int X = 6; X < 8; ++X) { Checker.setPixelColor(X, Y, QColor(0, 255, 0)); }
     }
     Checker.save(InFolder.filePath(QStringLiteral("Checker.png")));
+}
+
+/*
+ * Skinned.gltf: a two-bone arm and one animation.
+ *   node "Root" (at the origin)  -> child "Arm" (translation 1,0,0)
+ *   node "Body" (translation 5,5,5 -- ignored: a skinned mesh is in bind
+ *       space) -> mesh "Arm", skin 0: joints [Root, Arm], inverse binds
+ *       identity and translation(-1,0,0)
+ *   one triangle: (0,0,0) on Root, (2,0,0) on Arm, (0,1,0) half each
+ *   animation "Bend": Arm turns 90 degrees about Z over one second
+ */
+static void WriteSkinnedScene(const QDir& InFolder)
+{
+    const float    Pos[9]     = { 0, 0, 0,   2, 0, 0,   0, 1, 0 };
+    const uint8_t  Joints[12] = { 0, 0, 0, 0,   1, 0, 0, 0,   0, 1, 0, 0 };
+    const float    Weights[12] = { 1, 0, 0, 0,   1, 0, 0, 0,   0.5f, 0.5f, 0, 0 };
+    const float    InvBind[32] = { 1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0,  0, 0, 0, 1,
+                                   1, 0, 0, 0,  0, 1, 0, 0,  0, 0, 1, 0, -1, 0, 0, 1 };
+    const float    Times[2]   = { 0, 1 };
+    const float    S = std::sqrt(0.5f);
+    const float    Rot[8]     = { 0, 0, 0, 1,   0, 0, S, S };
+
+    QByteArray Buffer;
+    Buffer.append(reinterpret_cast<const char*>(Pos),     sizeof(Pos));       //   0..36
+    Buffer.append(reinterpret_cast<const char*>(Joints),  sizeof(Joints));    //  36..48
+    Buffer.append(reinterpret_cast<const char*>(Weights), sizeof(Weights));   //  48..96
+    Buffer.append(reinterpret_cast<const char*>(InvBind), sizeof(InvBind));   //  96..224
+    Buffer.append(reinterpret_cast<const char*>(Times),   sizeof(Times));     // 224..232
+    Buffer.append(reinterpret_cast<const char*>(Rot),     sizeof(Rot));       // 232..264
+
+    const QString Json = QStringLiteral(R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [0, 2] } ],
+  "nodes": [
+    { "name": "Root", "children": [1] },
+    { "name": "Arm", "translation": [1, 0, 0] },
+    { "name": "Body", "mesh": 0, "skin": 0, "translation": [5, 5, 5] }
+  ],
+  "skins": [ { "joints": [0, 1], "inverseBindMatrices": 3 } ],
+  "meshes": [ { "name": "Arm", "primitives": [ { "attributes": { "POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2 } } ] } ],
+  "animations": [ { "name": "Bend",
+      "samplers": [ { "input": 4, "output": 5, "interpolation": "LINEAR" } ],
+      "channels": [ { "sampler": 0, "target": { "node": 1, "path": "rotation" } } ] } ],
+  "buffers": [ { "byteLength": %1, "uri": "data:application/octet-stream;base64,%2" } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,   "byteLength": 36 },
+    { "buffer": 0, "byteOffset": 36,  "byteLength": 12 },
+    { "buffer": 0, "byteOffset": 48,  "byteLength": 48 },
+    { "buffer": 0, "byteOffset": 96,  "byteLength": 128 },
+    { "buffer": 0, "byteOffset": 224, "byteLength": 8 },
+    { "buffer": 0, "byteOffset": 232, "byteLength": 32 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0,0,0], "max": [2,1,0] },
+    { "bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4" },
+    { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4" },
+    { "bufferView": 3, "componentType": 5126, "count": 2, "type": "MAT4" },
+    { "bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
+    { "bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC4" }
+  ]
+})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64()));
+
+    QFile File(InFolder.filePath(QStringLiteral("Skinned.gltf")));
+    File.open(QIODevice::WriteOnly);
+    File.write(Json.toUtf8());
+    File.close();
+}
+
+static void TestAnimationImport(const QDir& InRoot)
+{
+    std::printf("[animation import]\n");
+
+    /* The defaults: scale 100, z flipped. */
+    MeshImportOptions Options;
+    const QString Source  = InRoot.filePath(QStringLiteral("Source/Skinned.gltf"));
+    const QString Content = InRoot.filePath(QStringLiteral("Content/Anim"));
+    const ImportResult Result = ImportMesh(Source, Content, QStringLiteral("Arm"), Options, TextureImportOptions(), InRoot.absolutePath());
+    Expect(Result.bOK, "a skinned glTF imports");
+    if(!Result.bOK) { std::printf("        %s\n", qPrintable(Result.Message)); return; }
+    Expect(Result.Written.size() == 3, "a skeleton, a clip and a mesh are written");
+
+    RenderCore::SkeletonData Skeleton;
+    Expect(ReadAsset(QDir(Content).filePath(QStringLiteral("Arm_Skeleton.nmskel")), Skeleton, &RenderCore::SerializeSkeleton),
+           "the skeleton reads back");
+    Expect(Skeleton.Bones.size() == 2 && Skeleton.Bones[0].Name == "Root" && Skeleton.Bones[1].Name == "Arm"
+           && Skeleton.Bones[0].Parent == -1 && Skeleton.Bones[1].Parent == 0, "its bones are the joints, parents first");
+    Expect(Near(Skeleton.Bones[1].RefPose.Translation.X, 100.0f), "bone translations are scaled like vertices");
+
+    RenderCore::MeshData Mesh;
+    Expect(ReadMesh(QDir(Content).filePath(QStringLiteral("Arm.nmmesh")), Mesh), "the skinned mesh reads back");
+    Expect(Mesh.IsSkinned() && Mesh.Skeleton == "Content/Anim/Arm_Skeleton.nmskel", "it is skinned, and names its skeleton by runtime path");
+    Expect(Mesh.InverseBind.size() == 2 && Near(Mesh.InverseBind[1].M[0][3], -100.0f), "it carries the converted inverse binds");
+    Expect(Mesh.GetVertexCount() == 3 && Near(Mesh.Positions[3], 200.0f) && Near(Mesh.Positions[4], 0.0f),
+           "its vertices are in bind space: the node's own transform is ignored");
+    Expect(Mesh.Joints[4] == 1 && Near(Mesh.Weights[4], 1.0f) && Mesh.Joints[8] == 0 && Mesh.Joints[9] == 1
+           && Near(Mesh.Weights[8] + Mesh.Weights[9], 1.0f), "each vertex keeps its bones and weights");
+
+    RenderCore::AnimClipData Clip;
+    const QString ClipPath = QDir(Content).filePath(QStringLiteral("Arm_Bend.nmanim"));
+    Expect(ReadAsset(ClipPath, Clip, &RenderCore::SerializeAnimClip), "the clip reads back");
+    Expect(Clip.FrameCount == 31 && Near(Clip.GetDuration(), 1.0f), "one second at 30 fps is 31 frames");
+    Expect(Clip.Tracks.size() == 1 && Clip.Tracks[0].Bone == "Arm", "only the bone that moves has a track");
+    Expect(Clip.Tracks[0].Translations.size() == 1 && Clip.Tracks[0].Rotations.size() == 31, "a constant channel collapses to one key");
+
+    /* The whole chain: at the end, the Arm's vertex (2,0,0) has swung to
+     * (1,1,0) -- engine (100, 100, 0). */
+    const RenderCore::AnimMatrix ArmModel = RenderCore::AnimMath::Mul(RenderCore::AnimMath::ToMatrix(Skeleton.Bones[0].RefPose),
+                                                                      RenderCore::AnimMath::ToMatrix(Clip.SampleTrack(0, 1.0f)));
+    const RenderCore::AnimVec3 Moved = RenderCore::AnimMath::TransformPoint(RenderCore::AnimMath::Mul(ArmModel, Mesh.InverseBind[1]),
+                                                                            { Mesh.Positions[3], Mesh.Positions[4], Mesh.Positions[5] });
+    Expect(std::fabs(Moved.X - 100.0f) < 0.01f && std::fabs(Moved.Y - 100.0f) < 0.01f && std::fabs(Moved.Z) < 0.01f,
+           "skinning with the imported bones moves a vertex where glTF says");
+
+    /* What the editor sets on a clip survives a reimport. */
+    Clip.Notifies.push_back({ "Footstep", 0.5f });
+    Clip.bLoop = false;
+    {
+        EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+        RenderCore::SerializeAnimClip(Ar, Clip);
+        QFile File(ClipPath);
+        File.open(QIODevice::WriteOnly);
+        File.write(reinterpret_cast<const char*>(Ar.GetBytes().data()), qint64(Ar.GetBytes().size()));
+    }
+    const ImportResult Again = Reimport(ClipPath, InRoot.absolutePath());
+    Expect(Again.bOK, "the clip reimports");
+    RenderCore::AnimClipData Back;
+    Expect(ReadAsset(ClipPath, Back, &RenderCore::SerializeAnimClip) && Back.Notifies.size() == 1 && !Back.bLoop,
+           "keeping its notifies and looping");
+    Expect(Reimport(QDir(Content).filePath(QStringLiteral("Arm_Skeleton.nmskel")), InRoot.absolutePath()).bOK, "the skeleton reimports");
+    const ImportResult MeshAgain = Reimport(QDir(Content).filePath(QStringLiteral("Arm.nmmesh")), InRoot.absolutePath());
+    RenderCore::MeshData MeshBack;
+    Expect(MeshAgain.bOK && ReadMesh(QDir(Content).filePath(QStringLiteral("Arm.nmmesh")), MeshBack) && MeshBack.Skeleton == Mesh.Skeleton,
+           "the mesh reimports, still naming its skeleton");
+
+    /* Without animation import, the same file is a static mesh. */
+    MeshImportOptions Static;
+    Static.bImportAnimations = false;
+    const ImportResult Plain = ImportMesh(Source, InRoot.filePath(QStringLiteral("Content/Plain")), QStringLiteral("Arm"), Static,
+                                          TextureImportOptions(), InRoot.absolutePath());
+    RenderCore::MeshData PlainMesh;
+    Expect(Plain.bOK && Plain.Written.size() == 1 && ReadMesh(Plain.Written[0], PlainMesh) && !PlainMesh.IsSkinned(),
+           "with animations off, it imports static");
 }
 
 static void TestClassify()
@@ -341,12 +487,30 @@ int main(int argc, char** argv)
 
     QTemporaryDir Temp;
     const QDir Root(Temp.path());
+
+    /* NimbleEditorImportTests <file.gltf|glb>...: import each into a scratch
+     * folder and say what came out -- a quick look at a real asset. */
+    for(int Arg = 1; Arg < argc; ++Arg)
+    {
+        const QString Path = QString::fromLocal8Bit(argv[Arg]);
+        const ImportResult Each = ImportMesh(Path, Root.filePath(QStringLiteral("Look")), QFileInfo(Path).completeBaseName(),
+                                             MeshImportOptions(), TextureImportOptions(), Root.absolutePath());
+        std::printf("%s: %s\n", qPrintable(Path), qPrintable(Each.Message));
+        for(const QString& Warning : Each.Warnings) { std::printf("  warning: %s\n", qPrintable(Warning)); }
+        for(const QString& Written : Each.Written)  { std::printf("  wrote %s\n", qPrintable(QFileInfo(Written).fileName())); }
+    }
+    if(argc > 1)
+    {
+        return 0;
+    }
     Root.mkpath(QStringLiteral("Source"));
     WriteScene(QDir(Root.filePath(QStringLiteral("Source"))));
+    WriteSkinnedScene(QDir(Root.filePath(QStringLiteral("Source"))));
 
     TestClassify();
     TestMeshImport(Root);
     TestTextureImport(Root);
+    TestAnimationImport(Root);
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

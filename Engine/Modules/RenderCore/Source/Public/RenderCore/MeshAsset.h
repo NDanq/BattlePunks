@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "Public/RenderCore/AnimMath.h"
 #include "Public/RenderCore/AssetImportInfo.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 
@@ -25,6 +26,9 @@ namespace EngineCore
  *     MCOL v1 (optional)   vertex colours, RGBA floats
  *     MUV1 v1 (optional)   UV1, the lightmap UVs: charts in 0-1 that do not
  *                          overlap (baked lighting; RENDERPIPELINE.md)
+ *     MSKN v1 (optional)   skinning (ANIMATION.md): the skeleton's path, an
+ *                          inverse bind matrix per skeleton bone, then four
+ *                          bone indices (uint16) and four weights per vertex
  *     ISRC v1 (optional)   AssetImportInfo, for Reimport
  *
  * Every vertex has a normal and UV. Loading bounds-checks indices and
@@ -49,12 +53,21 @@ namespace RenderCore
         std::vector<float>       UV1;         // 2 per vertex; empty: no lightmap UVs (the optional MUV1 chunk)
         std::vector<uint32_t>    Indices;     // 3 per triangle
         std::vector<MeshSection> Sections;
+
+        /* Skinning, the optional MSKN chunk; all empty for a static mesh.
+         * Bone indices are the skeleton's; a vertex's weights sum to 1. */
+        std::string              Skeleton;      // runtime path of its .nmskel
+        std::vector<AnimMatrix>  InverseBind;   // one per skeleton bone: model space -> the bone's own
+        std::vector<uint16_t>    Joints;        // 4 per vertex
+        std::vector<float>       Weights;       // 4 per vertex
+
         float                    BoundsMin[3] = {0.0f, 0.0f, 0.0f};
         float                    BoundsMax[3] = {0.0f, 0.0f, 0.0f};
         AssetImportInfo          ImportInfo;
 
         uint32_t GetVertexCount()   const { return uint32_t(Positions.size() / 3); }
         uint32_t GetTriangleCount() const { return uint32_t(Indices.size() / 3); }
+        bool     IsSkinned()        const { return !Joints.empty(); }
     };
 
     /* What LoadMeshHeader reads: enough to describe a mesh, or bound it. */
