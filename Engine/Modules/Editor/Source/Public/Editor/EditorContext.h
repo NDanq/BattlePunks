@@ -99,7 +99,8 @@ public:
      * orbiting camera, with InMaterial on every section, else InSections.
      * Answered through TakeMaterialPreview. 0 when the Renderer is not running. */
     uint64_t RequestMeshPreview(const QString& InMesh, const QString& InMaterial, const QStringList& InSections,
-                                int InWidth, int InHeight, float InYaw, float InPitch, float InZoom, EngineCore::Color InTint);
+                                int InWidth, int InHeight, float InYaw, float InPitch, float InZoom, EngineCore::Color InTint,
+                                const std::vector<float>& InSkinPalette = {});
 
     /* False, leaving OutStats untouched, when the Renderer is not running. */
     bool GetRenderStats(RenderCore::RenderStats& OutStats) const;

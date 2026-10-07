@@ -49,6 +49,12 @@ namespace RenderCore
         EngineCore::Color       Tint{255, 255, 255, 255};
         uint8_t                 Channel = 0;            // EMaterialPreviewChannel
         MaterialPreviewMailbox* Mailbox = nullptr;
+
+        /* A skinned mesh's pose (ANIMATION.md): SkinBones palette entries,
+         * 12 floats each; 0: its reference pose. Inline, so the request stays
+         * a plain copy across threads. */
+        uint32_t                SkinBones = 0;
+        float                   SkinPalette[256 * 12] = {};   // SKELETON_MAX_BONES
     };
 #endif
 

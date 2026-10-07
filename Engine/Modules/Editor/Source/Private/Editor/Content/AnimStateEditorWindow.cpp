@@ -1,0 +1,1110 @@
+#if WITH_EDITOR
+
+#include "Private/Editor/Content/AnimStateEditorWindow.h"
+
+#include <algorithm>
+#include <map>
+#include <memory>
+
+#include <QAction>
+#include <QCheckBox>
+#include <QCloseEvent>
+#include <QComboBox>
+#include <QCompleter>
+#include <QDoubleSpinBox>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QFormLayout>
+#include <QGroupBox>
+#include <QHBoxLayout>
+#include <QHeaderView>
+#include <QKeySequence>
+#include <QLabel>
+#include <QLineEdit>
+#include <QListWidget>
+#include <QMessageBox>
+#include <QPointer>
+#include <QPushButton>
+#include <QScrollArea>
+#include <QSignalBlocker>
+#include <QSplitter>
+#include <QTableWidget>
+#include <QVBoxLayout>
+
+#include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
+#include "Private/Editor/Content/AnimPreviewWidget.h"
+#include "Private/Editor/Content/AnimationAssets.h"
+#include "Private/Editor/Content/ContentPaths.h"
+#include "Private/Editor/Graph/GraphAssets.h"
+
+namespace
+{
+    QList<QPointer<AnimStateEditorWindow>>& OpenEditors()
+    {
+        static QList<QPointer<AnimStateEditorWindow>> Editors;
+        return Editors;
+    }
+
+    const QStringList TYPE_NAMES    = { QStringLiteral("Float"), QStringLiteral("Bool"), QStringLiteral("Trigger") };
+    const QStringList LOOP_NAMES    = { QStringLiteral("As the clip says"), QStringLiteral("Once"), QStringLiteral("Loop") };
+    const QStringList COMPARE_NAMES = { QStringLiteral(">"), QStringLiteral("<"), QStringLiteral("=="), QStringLiteral("!="),
+                                        QStringLiteral("is true"), QStringLiteral("is false"), QStringLiteral("triggered") };
+
+    QString ToQ(const std::string& InText) { return QString::fromStdString(InText); }
+
+    /* "+" and "-" under a list or table. */
+    QHBoxLayout* AddRemoveRow(QWidget* InParent, const QString& InWhat, QPushButton*& OutAdd, QPushButton*& OutRemove)
+    {
+        OutAdd    = new QPushButton(QStringLiteral("+"), InParent);
+        OutRemove = new QPushButton(QStringLiteral("-"), InParent);
+        OutAdd->setToolTip(QStringLiteral("Add a %1").arg(InWhat));
+        OutRemove->setToolTip(QStringLiteral("Remove the selected %1").arg(InWhat));
+        OutAdd->setFixedWidth(32);
+        OutRemove->setFixedWidth(32);
+        auto* Row = new QHBoxLayout();
+        Row->setContentsMargins(0, 0, 0, 0);
+        Row->addWidget(OutAdd);
+        Row->addWidget(OutRemove);
+        Row->addStretch(1);
+        return Row;
+    }
+
+    QTableWidget* MakeTable(QWidget* InParent, const QStringList& InColumns)
+    {
+        auto* Table = new QTableWidget(0, int(InColumns.size()), InParent);
+        Table->setHorizontalHeaderLabels(InColumns);
+        Table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+        Table->verticalHeader()->setVisible(false);
+        Table->setSelectionBehavior(QAbstractItemView::SelectRows);
+        Table->setSelectionMode(QAbstractItemView::SingleSelection);
+        Table->setMinimumHeight(110);
+        return Table;
+    }
+}
+
+// === Opening ==============================================================================
+
+AnimStateEditorWindow* AnimStateEditorWindow::Open(const QString& InPath, QWidget* InParent)
+{
+    const QString Path = QFileInfo(InPath).absoluteFilePath();
+    for(const QPointer<AnimStateEditorWindow>& Each : OpenEditors())
+    {
+        if(Each && Each->GetPath().compare(Path, Qt::CaseInsensitive) == 0)
+        {
+            AnimStateEditorWindow* Found = Each;
+            OpenEditors().removeAll(Each);
+            OpenEditors() << Found;
+            Found->show();
+            Found->raise();
+            Found->activateWindow();
+            return Found;
+        }
+    }
+
+    auto* Editor = new AnimStateEditorWindow(Path);
+    QString Error;
+    if(!Editor->Load(Error))
+    {
+        QMessageBox::warning(InParent, QStringLiteral("Open Anim State"), QStringLiteral("Could not open %1\n\n%2")
+                             .arg(QFileInfo(Path).fileName(), Error));
+        delete Editor;
+        return nullptr;
+    }
+    Editor->BuildUi();
+    OpenEditors().removeAll(nullptr);
+    OpenEditors() << Editor;
+    Editor->resize(1400, 860);
+    Editor->show();
+    return Editor;
+}
+
+AnimStateEditorWindow* AnimStateEditorWindow::FindFront()
+{
+    OpenEditors().removeAll(nullptr);
+    return OpenEditors().isEmpty() ? nullptr : OpenEditors().back().data();
+}
+
+AnimStateEditorWindow::AnimStateEditorWindow(const QString& InPath)
+    : QMainWindow(nullptr)
+    , Path(InPath)
+    , bReadOnly(EditorContent::IsEngineContent(InPath))
+{
+    setAttribute(Qt::WA_DeleteOnClose);
+}
+
+bool AnimStateEditorWindow::Load(QString& OutError)
+{
+    EngineCore::Archive Ar = EditorAnimation::ReadAssetArchive(Path);
+    RenderCore::AnimStateData Loaded;
+    if(!RenderCore::SerializeAnimState(Ar, Loaded))
+    {
+        OutError = QStringLiteral("Not an anim state this editor can read (the log says why)");
+        return false;
+    }
+    Saved = Loaded;
+    Edit  = std::move(Loaded);
+    return true;
+}
+
+// === Building =============================================================================
+
+void AnimStateEditorWindow::BuildUi()
+{
+    auto* Forms  = new QWidget(this);
+    auto* Layout = new QVBoxLayout(Forms);
+    Layout->addWidget(BuildParameters());
+    Layout->addWidget(BuildLayers());
+    Layout->addWidget(BuildStates(), 1);
+    Layout->addWidget(BuildTransitions(), 1);
+
+    SaveButton   = new QPushButton(QStringLiteral("Save"), Forms);
+    RevertButton = new QPushButton(QStringLiteral("Revert"), Forms);
+    SaveButton->setToolTip(bReadOnly ? QStringLiteral("The engine's content is read-only here") : QStringLiteral("Write the file and restage it (Ctrl+S)"));
+    connect(SaveButton, &QPushButton::clicked, this, &AnimStateEditorWindow::Save);
+    connect(RevertButton, &QPushButton::clicked, this, [this]()
+    {
+        Edit = Saved;
+        Edited(true, /*bInDirty*/ false);
+    });
+    auto* SaveRow = new QHBoxLayout();
+    SaveRow->addStretch(1);
+    SaveRow->addWidget(RevertButton);
+    SaveRow->addWidget(SaveButton);
+    Layout->addLayout(SaveRow);
+
+    auto* Scroll = new QScrollArea(this);
+    Scroll->setWidget(Forms);
+    Scroll->setWidgetResizable(true);
+
+    auto* Split = new QSplitter(Qt::Horizontal, this);
+    Split->addWidget(Scroll);
+    Split->addWidget(BuildPreview());
+    Split->setStretchFactor(0, 0);
+    Split->setStretchFactor(1, 1);
+    Split->setSizes({ 640, 760 });
+    setCentralWidget(Split);
+
+    auto* SaveKey = new QAction(this);
+    SaveKey->setShortcut(QKeySequence::Save);
+    connect(SaveKey, &QAction::triggered, this, &AnimStateEditorWindow::Save);
+    addAction(SaveKey);
+
+    /* A mesh on the clips' skeleton, if the project has one. */
+    PickMesh(EditorAnimation::FindMeshOn(EditorAnimation::SkeletonOfAnimation(Path)));
+
+    Edited(true, /*bInDirty*/ false);
+}
+
+QWidget* AnimStateEditorWindow::BuildParameters()
+{
+    auto* Box = new QGroupBox(QStringLiteral("Parameters -- what gameplay sets (animation:SetFloat, SetBool, SetTrigger)"), this);
+    auto* Layout = new QVBoxLayout(Box);
+    ParameterTable = MakeTable(Box, { QStringLiteral("Name"), QStringLiteral("Type"), QStringLiteral("Default") });
+    Layout->addWidget(ParameterTable);
+    QPushButton *Add = nullptr, *Remove = nullptr;
+    Layout->addLayout(AddRemoveRow(Box, QStringLiteral("parameter"), Add, Remove));
+
+    connect(ParameterTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* InItem)
+    {
+        const int Row = InItem->row();
+        if(bFilling || Row < 0 || size_t(Row) >= Edit.Parameters.size()) { return; }
+        RenderCore::AnimStateParameter& Parameter = Edit.Parameters[size_t(Row)];
+        if(InItem->column() == 0)
+        {
+            const std::string Name = InItem->text().trimmed().toStdString();
+            if(Name.empty() || Name == Parameter.Name || Edit.FindParameter(Name) >= 0)
+            {
+                const QSignalBlocker Block(ParameterTable);
+                InItem->setText(ToQ(Parameter.Name));   // empty or taken: refused
+                return;
+            }
+            RenameParameter(Parameter.Name, Name);
+            Edited(true);
+        }
+        else if(InItem->column() == 2)
+        {
+            Parameter.Default = InItem->text().toFloat();
+            Edited();
+        }
+    });
+    connect(Add, &QPushButton::clicked, this, [this]()
+    {
+        std::string Name = "Parameter";
+        for(int Suffix = 2; Edit.FindParameter(Name) >= 0; ++Suffix) { Name = "Parameter" + std::to_string(Suffix); }
+        Edit.Parameters.push_back({ Name, RenderCore::EAnimParameterType::Float, 0.0f });
+        Edited(true);
+        ParameterTable->setCurrentCell(ParameterTable->rowCount() - 1, 0);
+    });
+    connect(Remove, &QPushButton::clicked, this, [this]()
+    {
+        const int Row = ParameterTable->currentRow();
+        if(Row < 0 || size_t(Row) >= Edit.Parameters.size()) { return; }
+        Edit.Parameters.erase(Edit.Parameters.begin() + Row);   // what named it now names nothing: shown under Problems
+        Edited(true);
+    });
+    return Box;
+}
+
+QWidget* AnimStateEditorWindow::BuildLayers()
+{
+    auto* Box = new QGroupBox(QStringLiteral("Layers -- each over the ones above it, through its mask"), this);
+    auto* Row = new QHBoxLayout(Box);
+
+    auto* ListColumn = new QVBoxLayout();
+    LayerList = new QListWidget(Box);
+    LayerList->setMaximumWidth(180);
+    LayerList->setMinimumHeight(90);
+    ListColumn->addWidget(LayerList);
+    QPushButton *Add = nullptr, *Remove = nullptr;
+    ListColumn->addLayout(AddRemoveRow(Box, QStringLiteral("layer"), Add, Remove));
+    Row->addLayout(ListColumn);
+
+    auto* Form = new QFormLayout();
+    LayerName = new QLineEdit(Box);
+    LayerWeight = new QDoubleSpinBox(Box);
+    LayerWeight->setRange(0.0, 1.0);
+    LayerWeight->setSingleStep(0.1);
+    LayerWeightParameter = new QComboBox(Box);
+    LayerWeightParameter->setToolTip(QStringLiteral("A float parameter (0..1) that scales the weight: Armed, say, to raise a weapon layer"));
+    LayerMask = new QLineEdit(Box);
+    LayerMask->setPlaceholderText(QStringLiteral("every bone"));
+    LayerMask->setToolTip(QStringLiteral("Bones it moves, comma-separated, each with every bone below it (spine_02 for the upper body). "
+                                         "Empty: all of them"));
+    LayerEntry = new QComboBox(Box);
+    Form->addRow(QStringLiteral("Name"), LayerName);
+    Form->addRow(QStringLiteral("Weight"), LayerWeight);
+    Form->addRow(QStringLiteral("Weight Parameter"), LayerWeightParameter);
+    Form->addRow(QStringLiteral("Mask"), LayerMask);
+    Form->addRow(QStringLiteral("Entry State"), LayerEntry);
+    Row->addLayout(Form, 1);
+
+    connect(LayerList, &QListWidget::currentRowChanged, this, [this](int) { if(!bFilling) { FillLayer(); } });
+    connect(LayerName, &QLineEdit::editingFinished, this, [this]()
+    {
+        if(RenderCore::AnimLayer* Layer = CurrentLayer()) { Layer->Name = LayerName->text().trimmed().toStdString(); Edited(true); }
+    });
+    connect(LayerWeight, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](const double InValue)
+    {
+        if(RenderCore::AnimLayer* Layer = CurrentLayer(); Layer && !bFilling) { Layer->Weight = float(InValue); Edited(); }
+    });
+    connect(LayerWeightParameter, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(RenderCore::AnimLayer* Layer = CurrentLayer())
+        {
+            Layer->WeightParameter = InIndex <= 0 ? std::string() : LayerWeightParameter->itemText(InIndex).toStdString();
+            Edited();
+        }
+    });
+    connect(LayerMask, &QLineEdit::editingFinished, this, [this]()
+    {
+        RenderCore::AnimLayer* Layer = CurrentLayer();
+        if(!Layer) { return; }
+        Layer->MaskBones.clear();
+        for(const QString& Bone : LayerMask->text().split(QLatin1Char(','), Qt::SkipEmptyParts))
+        {
+            if(!Bone.trimmed().isEmpty()) { Layer->MaskBones.push_back(Bone.trimmed().toStdString()); }
+        }
+        Edited();
+    });
+    connect(LayerEntry, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(RenderCore::AnimLayer* Layer = CurrentLayer()) { Layer->EntryState = InIndex; Edited(true); }
+    });
+    connect(Add, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimLayer Layer;
+        Layer.Name = Edit.Layers.empty() ? "Base" : "Layer " + std::to_string(Edit.Layers.size() + 1);
+        RenderCore::AnimStateNode Idle;
+        Idle.Name = "Idle";
+        Layer.States.push_back(Idle);
+        Edit.Layers.push_back(Layer);
+        Edited(true);
+        LayerList->setCurrentRow(LayerList->count() - 1);
+    });
+    connect(Remove, &QPushButton::clicked, this, [this]()
+    {
+        const int Row = LayerList->currentRow();
+        if(Row < 0 || size_t(Row) >= Edit.Layers.size()) { return; }
+        Edit.Layers.erase(Edit.Layers.begin() + Row);
+        Edited(true);
+    });
+    return Box;
+}
+
+QWidget* AnimStateEditorWindow::BuildStates()
+{
+    auto* Box = new QGroupBox(QStringLiteral("States of the layer"), this);
+    auto* Row = new QHBoxLayout(Box);
+
+    auto* ListColumn = new QVBoxLayout();
+    StateList = new QListWidget(Box);
+    StateList->setMaximumWidth(180);
+    ListColumn->addWidget(StateList);
+    QPushButton *Add = nullptr, *Remove = nullptr;
+    ListColumn->addLayout(AddRemoveRow(Box, QStringLiteral("state"), Add, Remove));
+    Row->addLayout(ListColumn);
+
+    StateForm = new QWidget(Box);
+    auto* Form = new QFormLayout(StateForm);
+    Form->setContentsMargins(0, 0, 0, 0);
+    StateName  = new QLineEdit(StateForm);
+    StateSpeed = new QDoubleSpinBox(StateForm);
+    StateSpeed->setRange(0.0, 10.0);
+    StateSpeed->setSingleStep(0.1);
+    StateLoop = new QComboBox(StateForm);
+    StateLoop->addItems(LOOP_NAMES);
+    StateBlend = new QComboBox(StateForm);
+    StateBlend->setToolTip(QStringLiteral("None: the first clip alone. A float parameter: a blend space -- each clip plays fully at its "
+                                          "position, and between two the parameter blends them"));
+    SampleTable = MakeTable(StateForm, { QStringLiteral("Clip (.nmanim)"), QStringLiteral("Position") });
+    QPushButton *AddSample = nullptr, *RemoveSample = nullptr;
+    auto* SampleColumn = new QVBoxLayout();
+    SampleColumn->addWidget(SampleTable);
+    SampleColumn->addLayout(AddRemoveRow(StateForm, QStringLiteral("clip"), AddSample, RemoveSample));
+    Form->addRow(QStringLiteral("Name"), StateName);
+    Form->addRow(QStringLiteral("Speed"), StateSpeed);
+    Form->addRow(QStringLiteral("Loop"), StateLoop);
+    Form->addRow(QStringLiteral("Blend Parameter"), StateBlend);
+    Form->addRow(QStringLiteral("Clips"), SampleColumn);
+    Row->addWidget(StateForm, 1);
+
+    connect(StateList, &QListWidget::currentRowChanged, this, [this](int) { if(!bFilling) { FillState(); } });
+    connect(StateName, &QLineEdit::editingFinished, this, [this]()
+    {
+        if(RenderCore::AnimStateNode* State = CurrentState()) { State->Name = StateName->text().trimmed().toStdString(); Edited(true); }
+    });
+    connect(StateSpeed, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](const double InValue)
+    {
+        if(RenderCore::AnimStateNode* State = CurrentState(); State && !bFilling) { State->Speed = float(InValue); Edited(); }
+    });
+    connect(StateLoop, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(RenderCore::AnimStateNode* State = CurrentState()) { State->Loop = RenderCore::EAnimLoop(InIndex); Edited(); }
+    });
+    connect(StateBlend, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(RenderCore::AnimStateNode* State = CurrentState())
+        {
+            State->BlendParameter = InIndex <= 0 ? std::string() : StateBlend->itemText(InIndex).toStdString();
+            Edited();
+        }
+    });
+    connect(SampleTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* InItem)
+    {
+        RenderCore::AnimStateNode* State = CurrentState();
+        if(bFilling || !State || InItem->row() < 0 || size_t(InItem->row()) >= State->Samples.size() || InItem->column() != 1) { return; }
+        State->Samples[size_t(InItem->row())].Position = InItem->text().toFloat();
+        Edited();
+    });
+    connect(AddSample, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimStateNode* State = CurrentState();
+        if(!State) { return; }
+        const float Next = State->Samples.empty() ? 0.0f : State->Samples.back().Position + 100.0f;
+        State->Samples.push_back({ std::string(), Next });
+        Edited();
+        FillState();
+    });
+    connect(RemoveSample, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimStateNode* State = CurrentState();
+        const int Row = SampleTable->currentRow();
+        if(!State || Row < 0 || size_t(Row) >= State->Samples.size()) { return; }
+        State->Samples.erase(State->Samples.begin() + Row);
+        Edited();
+        FillState();
+    });
+    connect(Add, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimLayer* Layer = CurrentLayer();
+        if(!Layer) { return; }
+        RenderCore::AnimStateNode State;
+        State.Name = "State " + std::to_string(Layer->States.size() + 1);
+        Layer->States.push_back(State);
+        Edited(true);
+        StateList->setCurrentRow(StateList->count() - 1);
+    });
+    connect(Remove, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimLayer* Layer = CurrentLayer();
+        const int Row = StateList->currentRow();
+        if(!Layer || Row < 0 || size_t(Row) >= Layer->States.size()) { return; }
+        if(Layer->States.size() == 1)
+        {
+            QMessageBox::information(this, QStringLiteral("Anim State"), QStringLiteral("A layer keeps at least one state."));
+            return;
+        }
+        /* Its transitions go with it; the rest are renumbered. */
+        Layer->States.erase(Layer->States.begin() + Row);
+        Layer->Transitions.erase(std::remove_if(Layer->Transitions.begin(), Layer->Transitions.end(),
+                                                [Row](const RenderCore::AnimTransition& InT) { return InT.From == Row || InT.To == Row; }),
+                                 Layer->Transitions.end());
+        for(RenderCore::AnimTransition& Transition : Layer->Transitions)
+        {
+            if(Transition.From > Row) { --Transition.From; }
+            if(Transition.To > Row)   { --Transition.To; }
+        }
+        if(Layer->EntryState >= Row && Layer->EntryState > 0) { --Layer->EntryState; }
+        Edited(true);
+    });
+    return Box;
+}
+
+QWidget* AnimStateEditorWindow::BuildTransitions()
+{
+    auto* Box = new QGroupBox(QStringLiteral("Transitions of the layer -- the first that holds, in order"), this);
+    auto* Row = new QHBoxLayout(Box);
+
+    auto* ListColumn = new QVBoxLayout();
+    TransitionList = new QListWidget(Box);
+    TransitionList->setMaximumWidth(240);
+    ListColumn->addWidget(TransitionList);
+    QPushButton *Add = nullptr, *Remove = nullptr;
+    ListColumn->addLayout(AddRemoveRow(Box, QStringLiteral("transition"), Add, Remove));
+    Row->addLayout(ListColumn);
+
+    TransitionForm = new QWidget(Box);
+    auto* Form = new QFormLayout(TransitionForm);
+    Form->setContentsMargins(0, 0, 0, 0);
+    TransitionFrom = new QComboBox(TransitionForm);
+    TransitionTo   = new QComboBox(TransitionForm);
+    TransitionDuration = new QDoubleSpinBox(TransitionForm);
+    TransitionDuration->setRange(0.0, 10.0);
+    TransitionDuration->setSingleStep(0.05);
+    TransitionDuration->setSuffix(QStringLiteral(" s"));
+    TransitionDuration->setToolTip(QStringLiteral("The crossfade; 0 cuts"));
+    TransitionAtEnd = new QCheckBox(QStringLiteral("Only as the clip ends"), TransitionForm);
+    TransitionAtEnd->setToolTip(QStringLiteral("Waits for the state's clip to come within the crossfade of its end. With no "
+                                               "conditions, it then always fires: a one-shot going back"));
+    ConditionTable = MakeTable(TransitionForm, { QStringLiteral("Parameter"), QStringLiteral("Test"), QStringLiteral("Value") });
+    QPushButton *AddCondition = nullptr, *RemoveCondition = nullptr;
+    auto* ConditionColumn = new QVBoxLayout();
+    ConditionColumn->addWidget(ConditionTable);
+    ConditionColumn->addLayout(AddRemoveRow(TransitionForm, QStringLiteral("condition"), AddCondition, RemoveCondition));
+    Form->addRow(QStringLiteral("From"), TransitionFrom);
+    Form->addRow(QStringLiteral("To"), TransitionTo);
+    Form->addRow(QStringLiteral("Crossfade"), TransitionDuration);
+    Form->addRow(QString(), TransitionAtEnd);
+    Form->addRow(QStringLiteral("When all of"), ConditionColumn);
+    Row->addWidget(TransitionForm, 1);
+
+    connect(TransitionList, &QListWidget::currentRowChanged, this, [this](int) { if(!bFilling) { FillTransition(); } });
+    connect(TransitionFrom, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(RenderCore::AnimTransition* Transition = CurrentTransition()) { Transition->From = InIndex - 1; Edited(true); }
+    });
+    connect(TransitionTo, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(RenderCore::AnimTransition* Transition = CurrentTransition()) { Transition->To = InIndex; Edited(true); }
+    });
+    connect(TransitionDuration, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](const double InValue)
+    {
+        if(RenderCore::AnimTransition* Transition = CurrentTransition(); Transition && !bFilling) { Transition->Duration = float(InValue); Edited(); }
+    });
+    connect(TransitionAtEnd, &QCheckBox::toggled, this, [this](const bool bInAtEnd)
+    {
+        if(RenderCore::AnimTransition* Transition = CurrentTransition(); Transition && !bFilling) { Transition->bAtEnd = bInAtEnd; Edited(true); }
+    });
+    connect(ConditionTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* InItem)
+    {
+        RenderCore::AnimTransition* Transition = CurrentTransition();
+        if(bFilling || !Transition || InItem->row() < 0 || size_t(InItem->row()) >= Transition->Conditions.size() || InItem->column() != 2) { return; }
+        Transition->Conditions[size_t(InItem->row())].Value = InItem->text().toFloat();
+        Edited(true);
+    });
+    connect(AddCondition, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimTransition* Transition = CurrentTransition();
+        if(!Transition) { return; }
+        RenderCore::AnimCondition Condition;
+        if(!Edit.Parameters.empty())
+        {
+            Condition.Parameter = Edit.Parameters.front().Name;
+            Condition.Compare   = Edit.Parameters.front().Type == RenderCore::EAnimParameterType::Trigger ? RenderCore::EAnimCompare::Triggered
+                                : Edit.Parameters.front().Type == RenderCore::EAnimParameterType::Bool    ? RenderCore::EAnimCompare::IsTrue
+                                                                                                         : RenderCore::EAnimCompare::Greater;
+        }
+        Transition->Conditions.push_back(Condition);
+        Edited(true);
+        FillTransition();
+    });
+    connect(RemoveCondition, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimTransition* Transition = CurrentTransition();
+        const int Row = ConditionTable->currentRow();
+        if(!Transition || Row < 0 || size_t(Row) >= Transition->Conditions.size()) { return; }
+        Transition->Conditions.erase(Transition->Conditions.begin() + Row);
+        Edited(true);
+        FillTransition();
+    });
+    connect(Add, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimLayer* Layer = CurrentLayer();
+        if(!Layer) { return; }
+        RenderCore::AnimTransition Transition;
+        Transition.From = std::max(StateList->currentRow(), 0);
+        Transition.To   = Layer->States.size() > 1 ? (Transition.From + 1) % int32_t(Layer->States.size()) : 0;
+        Layer->Transitions.push_back(Transition);
+        Edited(true);
+        TransitionList->setCurrentRow(TransitionList->count() - 1);
+    });
+    connect(Remove, &QPushButton::clicked, this, [this]()
+    {
+        RenderCore::AnimLayer* Layer = CurrentLayer();
+        const int Row = TransitionList->currentRow();
+        if(!Layer || Row < 0 || size_t(Row) >= Layer->Transitions.size()) { return; }
+        Layer->Transitions.erase(Layer->Transitions.begin() + Row);
+        Edited(true);
+    });
+    return Box;
+}
+
+QWidget* AnimStateEditorWindow::BuildPreview()
+{
+    auto* Side   = new QWidget(this);
+    auto* Layout = new QVBoxLayout(Side);
+
+    auto* MeshRow = new QHBoxLayout();
+    MeshLabel = new QLabel(Side);
+    MeshLabel->setWordWrap(true);
+    auto* ChooseMesh = new QPushButton(QStringLiteral("Mesh..."), Side);
+    ChooseMesh->setToolTip(QStringLiteral("Preview on another skinned mesh of the project"));
+    connect(ChooseMesh, &QPushButton::clicked, this, [this]()
+    {
+        const QString File = QFileDialog::getOpenFileName(this, QStringLiteral("Preview Mesh"), EditorGraphs::GetProjectRoot(),
+                                                          QStringLiteral("Meshes (*.nmmesh)"));
+        if(!File.isEmpty()) { PickMesh(File); }
+    });
+    MeshRow->addWidget(MeshLabel, 1);
+    MeshRow->addWidget(ChooseMesh);
+    Layout->addLayout(MeshRow);
+
+    Preview = new AnimPreviewWidget(Side);
+    Layout->addWidget(Preview, 1);
+
+    LiveStates = new QLabel(Side);
+    LiveStates->setWordWrap(true);
+    Layout->addWidget(LiveStates);
+
+    LiveBox  = new QGroupBox(QStringLiteral("Drive it -- the preview only"), Side);
+    LiveForm = new QFormLayout(LiveBox);
+    Layout->addWidget(LiveBox);
+
+    Problems = new QLabel(Side);
+    Problems->setWordWrap(true);
+    Layout->addWidget(Problems);
+
+    connect(Preview, &AnimPreviewWidget::Advanced, this, &AnimStateEditorWindow::UpdateLive);
+    return Side;
+}
+
+// === Editing ==============================================================================
+
+RenderCore::AnimLayer* AnimStateEditorWindow::CurrentLayer()
+{
+    const int Row = LayerList ? LayerList->currentRow() : -1;
+    return Row >= 0 && size_t(Row) < Edit.Layers.size() ? &Edit.Layers[size_t(Row)] : nullptr;
+}
+
+RenderCore::AnimStateNode* AnimStateEditorWindow::CurrentState()
+{
+    RenderCore::AnimLayer* Layer = CurrentLayer();
+    const int Row = StateList ? StateList->currentRow() : -1;
+    return Layer && Row >= 0 && size_t(Row) < Layer->States.size() ? &Layer->States[size_t(Row)] : nullptr;
+}
+
+RenderCore::AnimTransition* AnimStateEditorWindow::CurrentTransition()
+{
+    RenderCore::AnimLayer* Layer = CurrentLayer();
+    const int Row = TransitionList ? TransitionList->currentRow() : -1;
+    return Layer && Row >= 0 && size_t(Row) < Layer->Transitions.size() ? &Layer->Transitions[size_t(Row)] : nullptr;
+}
+
+QStringList AnimStateEditorWindow::ParameterNames(const bool bInFloatsOnly) const
+{
+    QStringList Names;
+    for(const RenderCore::AnimStateParameter& Parameter : Edit.Parameters)
+    {
+        if(!bInFloatsOnly || Parameter.Type == RenderCore::EAnimParameterType::Float) { Names << ToQ(Parameter.Name); }
+    }
+    return Names;
+}
+
+QString AnimStateEditorWindow::DescribeTransition(const RenderCore::AnimLayer& InLayer, const RenderCore::AnimTransition& InTransition) const
+{
+    const auto StateName = [&InLayer](const int32_t InIndex)
+    {
+        return InIndex < 0 ? QStringLiteral("Any") : InIndex < int32_t(InLayer.States.size()) ? ToQ(InLayer.States[size_t(InIndex)].Name) : QStringLiteral("?");
+    };
+    QString Text = QStringLiteral("%1 -> %2").arg(StateName(InTransition.From), StateName(InTransition.To));
+    if(InTransition.bAtEnd) { Text += QStringLiteral(" (at end)"); }
+    if(!InTransition.Conditions.empty()) { Text += QStringLiteral(" if %1").arg(ToQ(InTransition.Conditions.front().Parameter)); }
+    if(InTransition.Conditions.size() > 1) { Text += QStringLiteral(" +%1").arg(InTransition.Conditions.size() - 1); }
+    return Text;
+}
+
+void AnimStateEditorWindow::RenameParameter(const std::string& InOld, const std::string& InNew)
+{
+    for(RenderCore::AnimStateParameter& Parameter : Edit.Parameters)
+    {
+        if(Parameter.Name == InOld) { Parameter.Name = InNew; }
+    }
+    for(RenderCore::AnimLayer& Layer : Edit.Layers)
+    {
+        if(Layer.WeightParameter == InOld) { Layer.WeightParameter = InNew; }
+        for(RenderCore::AnimStateNode& State : Layer.States)
+        {
+            if(State.BlendParameter == InOld) { State.BlendParameter = InNew; }
+        }
+        for(RenderCore::AnimTransition& Transition : Layer.Transitions)
+        {
+            for(RenderCore::AnimCondition& Condition : Transition.Conditions)
+            {
+                if(Condition.Parameter == InOld) { Condition.Parameter = InNew; }
+            }
+        }
+    }
+}
+
+void AnimStateEditorWindow::Edited(const bool bInStructure, const bool bInDirty)
+{
+    bDirty = bInDirty;
+    if(bInStructure)
+    {
+        FillAll();
+    }
+
+    /* What would keep it from playing, and what would quietly do nothing. */
+    QStringList Found;
+    if(const char* Defect = Edit.FindDefect()) { Found << QString::fromLatin1(Defect); }
+    if(Edit.Layers.empty()) { Found << QStringLiteral("No layers: it plays nothing"); }
+    const auto CheckParameter = [&](const std::string& InName, const QString& InWhere)
+    {
+        if(!InName.empty() && Edit.FindParameter(InName) < 0) { Found << QStringLiteral("%1 names a parameter it lacks: %2").arg(InWhere, ToQ(InName)); }
+    };
+    const RenderCore::SkeletonData* Skeleton = Preview ? Preview->GetSkeleton() : nullptr;
+    for(const RenderCore::AnimLayer& Layer : Edit.Layers)
+    {
+        const QString LayerName = ToQ(Layer.Name);
+        CheckParameter(Layer.WeightParameter, QStringLiteral("Layer %1").arg(LayerName));
+        for(const std::string& Bone : Layer.MaskBones)
+        {
+            if(Skeleton && Skeleton->FindBone(Bone) < 0) { Found << QStringLiteral("Layer %1 masks a bone the skeleton lacks: %2").arg(LayerName, ToQ(Bone)); }
+        }
+        for(const RenderCore::AnimStateNode& State : Layer.States)
+        {
+            const QString Where = QStringLiteral("State %1").arg(ToQ(State.Name));
+            CheckParameter(State.BlendParameter, Where);
+            for(const RenderCore::AnimBlendSample& Sample : State.Samples)
+            {
+                if(Sample.Clip.empty() || !QFileInfo::exists(EditorAnimation::FileOfRuntimePath(ToQ(Sample.Clip))))
+                {
+                    Found << QStringLiteral("%1: a clip that is not there: %2").arg(Where, Sample.Clip.empty() ? QStringLiteral("(none)") : ToQ(Sample.Clip));
+                }
+            }
+        }
+        for(const RenderCore::AnimTransition& Transition : Layer.Transitions)
+        {
+            for(const RenderCore::AnimCondition& Condition : Transition.Conditions)
+            {
+                CheckParameter(Condition.Parameter, QStringLiteral("Transition %1").arg(DescribeTransition(Layer, Transition)));
+            }
+        }
+    }
+    QStringList Escaped;
+    for(const QString& Each : Found) { Escaped << Each.toHtmlEscaped(); }
+    Problems->setText(Found.isEmpty() ? QString() : QStringLiteral("<b>Problems</b><br>") + Escaped.join(QStringLiteral("<br>")));
+
+    RestartPreview();
+    UpdateTitle();
+}
+
+void AnimStateEditorWindow::RestartPreview()
+{
+    if(!Preview || !Preview->HasSkeleton()) { UpdateLive(); return; }
+    if(Edit.FindDefect())
+    {
+        Preview->PlayState(nullptr);
+        UpdateLive();
+        return;
+    }
+    /* What the drive controls say survives a restart. */
+    std::map<std::string, float> Live;
+    for(const RenderCore::AnimStateParameter& Parameter : Edit.Parameters)
+    {
+        Live[Parameter.Name] = Preview->GetInstance().GetParameter(Parameter.Name, Parameter.Default);
+    }
+    Preview->PlayState(std::make_shared<RenderCore::AnimStateData>(Edit));
+    for(const auto& Each : Live)
+    {
+        const int32_t Index = Edit.FindParameter(Each.first);
+        if(Index >= 0 && Edit.Parameters[size_t(Index)].Type != RenderCore::EAnimParameterType::Trigger)
+        {
+            Preview->GetInstance().SetParameter(Each.first, Each.second);
+        }
+    }
+    UpdateLive();
+}
+
+void AnimStateEditorWindow::PickMesh(const QString& InFile)
+{
+    PreviewMesh = RenderCore::MeshData();
+    MeshRuntime.clear();
+    if(!InFile.isEmpty())
+    {
+        EngineCore::Archive Ar = EditorAnimation::ReadAssetArchive(InFile);
+        RenderCore::MeshData Loaded;
+        if(RenderCore::SerializeMesh(Ar, Loaded) && Loaded.IsSkinned())
+        {
+            PreviewMesh = std::move(Loaded);
+            MeshRuntime = EditorContent::ToRuntimePath(InFile);
+        }
+        else
+        {
+            QMessageBox::information(this, QStringLiteral("Preview Mesh"), QStringLiteral("%1 is not a skinned mesh.").arg(QFileInfo(InFile).fileName()));
+        }
+    }
+    if(MeshRuntime.isEmpty())
+    {
+        MeshLabel->setText(QStringLiteral("No skinned mesh on its clips' skeleton was found: choose one to preview on."));
+        return;
+    }
+    MeshLabel->setText(QStringLiteral("Previewed on <b>%1</b>").arg(MeshRuntime.toHtmlEscaped()));
+    Preview->SetMesh(MeshRuntime, PreviewMesh);
+
+    /* Mask bones complete from its skeleton. */
+    if(const RenderCore::SkeletonData* Skeleton = Preview->GetSkeleton())
+    {
+        QStringList Bones;
+        for(const RenderCore::SkeletonBone& Bone : Skeleton->Bones) { Bones << ToQ(Bone.Name); }
+        auto* Completer = new QCompleter(Bones, LayerMask);
+        Completer->setCaseSensitivity(Qt::CaseInsensitive);
+        Completer->setFilterMode(Qt::MatchContains);
+        LayerMask->setCompleter(Completer);
+    }
+    RestartPreview();
+}
+
+// === Filling ==============================================================================
+
+void AnimStateEditorWindow::FillAll()
+{
+    FillParameters();
+    FillLayers();
+    FillLive();
+}
+
+void AnimStateEditorWindow::FillParameters()
+{
+    const bool bWas = bFilling;
+    bFilling = true;
+    const int Row = ParameterTable->currentRow();
+    ParameterTable->setRowCount(int(Edit.Parameters.size()));
+    for(size_t Index = 0; Index < Edit.Parameters.size(); ++Index)
+    {
+        const RenderCore::AnimStateParameter& Parameter = Edit.Parameters[Index];
+        ParameterTable->setItem(int(Index), 0, new QTableWidgetItem(ToQ(Parameter.Name)));
+        auto* Type = new QComboBox(ParameterTable);
+        Type->addItems(TYPE_NAMES);
+        Type->setCurrentIndex(int(Parameter.Type));
+        connect(Type, QOverload<int>::of(&QComboBox::activated), this, [this, Index](const int InType)
+        {
+            if(Index < Edit.Parameters.size()) { Edit.Parameters[Index].Type = RenderCore::EAnimParameterType(InType); Edited(true); }
+        });
+        ParameterTable->setCellWidget(int(Index), 1, Type);
+        ParameterTable->setItem(int(Index), 2, new QTableWidgetItem(QString::number(double(Parameter.Default))));
+    }
+    if(Row >= 0 && Row < ParameterTable->rowCount()) { ParameterTable->setCurrentCell(Row, 0); }
+    bFilling = bWas;
+}
+
+void AnimStateEditorWindow::FillLayers()
+{
+    const bool bWas = bFilling;
+    bFilling = true;
+    const int Row = std::max(LayerList->currentRow(), 0);
+    LayerList->clear();
+    for(const RenderCore::AnimLayer& Layer : Edit.Layers)
+    {
+        LayerList->addItem(ToQ(Layer.Name.empty() ? std::string("(unnamed)") : Layer.Name));
+    }
+    LayerList->setCurrentRow(std::min(Row, LayerList->count() - 1));
+    bFilling = bWas;
+    FillLayer();
+}
+
+void AnimStateEditorWindow::FillLayer()
+{
+    const bool bWas = bFilling;
+    bFilling = true;
+    RenderCore::AnimLayer* Layer = CurrentLayer();
+    for(QWidget* Each : std::initializer_list<QWidget*>{ LayerName, LayerWeight, LayerWeightParameter, LayerMask, LayerEntry })
+    {
+        Each->setEnabled(Layer != nullptr && !bReadOnly);
+    }
+    LayerWeightParameter->clear();
+    LayerWeightParameter->addItem(QStringLiteral("(none)"));
+    LayerWeightParameter->addItems(ParameterNames(true));
+    LayerEntry->clear();
+    if(Layer)
+    {
+        LayerName->setText(ToQ(Layer->Name));
+        LayerWeight->setValue(double(Layer->Weight));
+        LayerWeightParameter->setCurrentIndex(std::max(LayerWeightParameter->findText(ToQ(Layer->WeightParameter)), 0));
+        QStringList Mask;
+        for(const std::string& Bone : Layer->MaskBones) { Mask << ToQ(Bone); }
+        LayerMask->setText(Mask.join(QStringLiteral(", ")));
+        for(const RenderCore::AnimStateNode& State : Layer->States) { LayerEntry->addItem(ToQ(State.Name)); }
+        LayerEntry->setCurrentIndex(Layer->EntryState);
+    }
+    bFilling = bWas;
+    FillStates();
+    FillTransitions();
+}
+
+void AnimStateEditorWindow::FillStates()
+{
+    const bool bWas = bFilling;
+    bFilling = true;
+    const int Row = std::max(StateList->currentRow(), 0);
+    StateList->clear();
+    if(const RenderCore::AnimLayer* Layer = CurrentLayer())
+    {
+        for(size_t Index = 0; Index < Layer->States.size(); ++Index)
+        {
+            const RenderCore::AnimStateNode& State = Layer->States[Index];
+            StateList->addItem(ToQ(State.Name) + (int32_t(Index) == Layer->EntryState ? QStringLiteral("  (entry)") : QString()));
+        }
+        StateList->setCurrentRow(std::min(Row, StateList->count() - 1));
+    }
+    bFilling = bWas;
+    FillState();
+}
+
+void AnimStateEditorWindow::FillState()
+{
+    const bool bWas = bFilling;
+    bFilling = true;
+    RenderCore::AnimStateNode* State = CurrentState();
+    StateForm->setEnabled(State != nullptr && !bReadOnly);
+    StateBlend->clear();
+    StateBlend->addItem(QStringLiteral("(none)"));
+    StateBlend->addItems(ParameterNames(true));
+    SampleTable->setRowCount(0);
+    if(State)
+    {
+        StateName->setText(ToQ(State->Name));
+        StateSpeed->setValue(double(State->Speed));
+        StateLoop->setCurrentIndex(int(State->Loop));
+        StateBlend->setCurrentIndex(std::max(StateBlend->findText(ToQ(State->BlendParameter)), 0));
+
+        QStringList Clips;
+        for(const QString& Each : EditorContent::ListAnimationPaths())
+        {
+            if(Each.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)) { Clips << Each; }
+        }
+        SampleTable->setRowCount(int(State->Samples.size()));
+        for(size_t Index = 0; Index < State->Samples.size(); ++Index)
+        {
+            auto* Clip = new QComboBox(SampleTable);
+            Clip->setEditable(true);
+            Clip->addItems(Clips);
+            Clip->setCurrentText(ToQ(State->Samples[Index].Clip));
+            Clip->lineEdit()->setPlaceholderText(QStringLiteral("Content/Animation/Fox_Walk.nmanim"));
+            const auto Picked = [this, Clip, Index]()
+            {
+                RenderCore::AnimStateNode* Current = CurrentState();
+                if(!Current || Index >= Current->Samples.size()) { return; }
+                const std::string Text = Clip->currentText().trimmed().toStdString();
+                if(Text == Current->Samples[Index].Clip) { return; }
+                Current->Samples[Index].Clip = Text;
+                Edited();
+                if(MeshRuntime.isEmpty()) { PickMesh(EditorAnimation::FindMeshOn(EditorAnimation::SkeletonOfAnimation(Path))); }
+            };
+            connect(Clip, QOverload<int>::of(&QComboBox::activated), this, Picked);
+            connect(Clip->lineEdit(), &QLineEdit::editingFinished, this, Picked);
+            SampleTable->setCellWidget(int(Index), 0, Clip);
+            SampleTable->setItem(int(Index), 1, new QTableWidgetItem(QString::number(double(State->Samples[Index].Position))));
+        }
+    }
+    bFilling = bWas;
+}
+
+void AnimStateEditorWindow::FillTransitions()
+{
+    const bool bWas = bFilling;
+    bFilling = true;
+    const int Row = std::max(TransitionList->currentRow(), 0);
+    TransitionList->clear();
+    if(const RenderCore::AnimLayer* Layer = CurrentLayer())
+    {
+        for(const RenderCore::AnimTransition& Transition : Layer->Transitions) { TransitionList->addItem(DescribeTransition(*Layer, Transition)); }
+        TransitionList->setCurrentRow(std::min(Row, TransitionList->count() - 1));
+    }
+    bFilling = bWas;
+    FillTransition();
+}
+
+void AnimStateEditorWindow::FillTransition()
+{
+    const bool bWas = bFilling;
+    bFilling = true;
+    RenderCore::AnimLayer*      Layer      = CurrentLayer();
+    RenderCore::AnimTransition* Transition = CurrentTransition();
+    TransitionForm->setEnabled(Transition != nullptr && !bReadOnly);
+    TransitionFrom->clear();
+    TransitionTo->clear();
+    ConditionTable->setRowCount(0);
+    if(Layer && Transition)
+    {
+        TransitionFrom->addItem(QStringLiteral("Any state"));
+        for(const RenderCore::AnimStateNode& State : Layer->States)
+        {
+            TransitionFrom->addItem(ToQ(State.Name));
+            TransitionTo->addItem(ToQ(State.Name));
+        }
+        TransitionFrom->setCurrentIndex(Transition->From + 1);
+        TransitionTo->setCurrentIndex(Transition->To);
+        TransitionDuration->setValue(double(Transition->Duration));
+        TransitionAtEnd->setChecked(Transition->bAtEnd);
+
+        const QStringList Names = ParameterNames(false);
+        ConditionTable->setRowCount(int(Transition->Conditions.size()));
+        for(size_t Index = 0; Index < Transition->Conditions.size(); ++Index)
+        {
+            const RenderCore::AnimCondition& Condition = Transition->Conditions[Index];
+            auto* Parameter = new QComboBox(ConditionTable);
+            Parameter->addItems(Names);
+            if(Parameter->findText(ToQ(Condition.Parameter)) < 0) { Parameter->addItem(ToQ(Condition.Parameter)); }
+            Parameter->setCurrentText(ToQ(Condition.Parameter));
+            connect(Parameter, QOverload<int>::of(&QComboBox::activated), this, [this, Parameter, Index]()
+            {
+                RenderCore::AnimTransition* Current = CurrentTransition();
+                if(!Current || Index >= Current->Conditions.size()) { return; }
+                Current->Conditions[Index].Parameter = Parameter->currentText().toStdString();
+                Edited(true);
+            });
+            auto* Compare = new QComboBox(ConditionTable);
+            Compare->addItems(COMPARE_NAMES);
+            Compare->setCurrentIndex(int(Condition.Compare));
+            connect(Compare, QOverload<int>::of(&QComboBox::activated), this, [this, Index](const int InCompare)
+            {
+                RenderCore::AnimTransition* Current = CurrentTransition();
+                if(!Current || Index >= Current->Conditions.size()) { return; }
+                Current->Conditions[Index].Compare = RenderCore::EAnimCompare(InCompare);
+                Edited(true);
+            });
+            ConditionTable->setCellWidget(int(Index), 0, Parameter);
+            ConditionTable->setCellWidget(int(Index), 1, Compare);
+            ConditionTable->setItem(int(Index), 2, new QTableWidgetItem(QString::number(double(Condition.Value))));
+        }
+    }
+    bFilling = bWas;
+}
+
+void AnimStateEditorWindow::FillLive()
+{
+    while(LiveForm->rowCount() > 0) { LiveForm->removeRow(0); }
+    for(const RenderCore::AnimStateParameter& Parameter : Edit.Parameters)
+    {
+        const std::string Name  = Parameter.Name;
+        const QString     Label = ToQ(Name);
+        const float       Now   = Preview->GetInstance().GetParameter(Name, Parameter.Default);
+        if(Parameter.Type == RenderCore::EAnimParameterType::Float)
+        {
+            auto* Value = new QDoubleSpinBox(LiveBox);
+            Value->setRange(-100000.0, 100000.0);
+            Value->setValue(double(Now));
+            connect(Value, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this, Name](const double InValue)
+            {
+                Preview->GetInstance().SetParameter(Name, float(InValue));
+                if(!Preview->IsPlaying()) { Preview->Repose(); }
+            });
+            LiveForm->addRow(Label, Value);
+        }
+        else if(Parameter.Type == RenderCore::EAnimParameterType::Bool)
+        {
+            auto* Value = new QCheckBox(LiveBox);
+            Value->setChecked(Now != 0.0f);
+            connect(Value, &QCheckBox::toggled, this, [this, Name](const bool bInValue)
+            {
+                Preview->GetInstance().SetParameter(Name, bInValue ? 1.0f : 0.0f);
+                if(!Preview->IsPlaying()) { Preview->Repose(); }
+            });
+            LiveForm->addRow(Label, Value);
+        }
+        else
+        {
+            auto* Fire = new QPushButton(QStringLiteral("Fire"), LiveBox);
+            connect(Fire, &QPushButton::clicked, this, [this, Name]()
+            {
+                Preview->GetInstance().SetParameter(Name, 1.0f);
+                if(!Preview->IsPlaying()) { Preview->SetPlaying(true); }
+            });
+            LiveForm->addRow(Label, Fire);
+        }
+    }
+    LiveBox->setVisible(!Edit.Parameters.empty());
+}
+
+void AnimStateEditorWindow::UpdateLive()
+{
+    if(!LiveStates) { return; }
+    const RenderCore::AnimInstance& Instance = Preview->GetInstance();
+    QStringList Lines;
+    for(size_t Layer = 0; Layer < Instance.GetLayerCount() && Layer < Edit.Layers.size(); ++Layer)
+    {
+        Lines << QStringLiteral("<b>%1</b>: %2%3").arg(ToQ(Edit.Layers[Layer].Name).toHtmlEscaped(),
+                                                       QString::fromUtf8(Instance.GetCurrentStateName(Layer)).toHtmlEscaped(),
+                                                       Instance.IsInTransition(Layer) ? QStringLiteral(" (blending in)") : QString());
+    }
+    LiveStates->setText(Lines.join(QStringLiteral("<br>")));
+}
+
+void AnimStateEditorWindow::UpdateTitle()
+{
+    const bool bShowDirty = bDirty && !bReadOnly;
+    SaveButton->setEnabled(bShowDirty && !Edit.FindDefect());
+    RevertButton->setEnabled(bShowDirty);
+    setWindowTitle(QStringLiteral("%1%2 - Anim State%3").arg(QFileInfo(Path).fileName(), bShowDirty ? QStringLiteral("*") : QString(),
+                                                             bReadOnly ? QStringLiteral(" (engine, read-only)") : QString()));
+}
+
+bool AnimStateEditorWindow::Save()
+{
+    if(bReadOnly) { return true; }
+    if(const char* Defect = Edit.FindDefect())
+    {
+        QMessageBox::warning(this, QStringLiteral("Save Anim State"), QStringLiteral("It cannot be saved as it is: %1").arg(QString::fromLatin1(Defect)));
+        return false;
+    }
+    if(!RenderCore::SaveAnimStateFile(Path.toStdString(), Edit))
+    {
+        QMessageBox::warning(this, QStringLiteral("Save Anim State"), QStringLiteral("Could not write %1 -- see the log").arg(Path));
+        return false;
+    }
+    Saved  = Edit;
+    bDirty = false;
+    EditorContent::StageAsset(Path);   // levels playing it load it afresh
+    UpdateTitle();
+    return true;
+}
+
+void AnimStateEditorWindow::closeEvent(QCloseEvent* InEvent)
+{
+    if(bDirty && !bReadOnly)
+    {
+        const QMessageBox::StandardButton Answer = QMessageBox::question(
+            this, QStringLiteral("Anim State"), QStringLiteral("Save the changes to %1?").arg(QFileInfo(Path).fileName()),
+            QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel, QMessageBox::Save);
+        if(Answer == QMessageBox::Cancel || (Answer == QMessageBox::Save && !Save()))
+        {
+            InEvent->ignore();
+            return;
+        }
+    }
+    InEvent->accept();
+}
+
+#endif // WITH_EDITOR

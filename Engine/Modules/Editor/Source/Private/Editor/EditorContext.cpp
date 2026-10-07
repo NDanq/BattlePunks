@@ -120,7 +120,8 @@ uint64_t EditorContext::RequestMaterialPreview(const QString& InName, const int 
 
 uint64_t EditorContext::RequestMeshPreview(const QString& InMesh, const QString& InMaterial, const QStringList& InSections,
                                            const int InWidth, const int InHeight, const float InYaw, const float InPitch,
-                                           const float InZoom, const EngineCore::Color InTint)
+                                           const float InZoom, const EngineCore::Color InTint,
+                                           const std::vector<float>& InSkinPalette)
 {
     if(!Renderer || !bRendererReady)
     {
@@ -136,6 +137,7 @@ uint64_t EditorContext::RequestMeshPreview(const QString& InMesh, const QString&
     Preview.Pitch  = InPitch;
     Preview.Zoom   = InZoom;
     Preview.Tint   = InTint;
+    Preview.SkinPalette = InSkinPalette;
     return Renderer->RequestMeshPreview(Preview);
 }
 

@@ -3863,8 +3863,17 @@ namespace RenderCore
                 SlotText[Slot][sizeof(SlotText[Slot]) - 1] = '\0';
                 Slots[Slot] = SlotText[Slot];
             }
-            const bool bDrawn = Found ? DrawMesh(RenderTransform(), Mesh.c_str(), InRequest.Tint, Name.c_str())
-                                      : DrawMesh(RenderTransform(), Mesh.c_str(), InRequest.Tint, Slots, uint32_t(RENDER_PREVIEW_SLOTS));
+            /* A skinned mesh in the pose the request carries, else its reference pose. */
+            MaterialParameterOverrides Skin;
+            if(InRequest.SkinBones > 0)
+            {
+                Skin.SkinPalette = InRequest.SkinPalette;
+                Skin.SkinBones   = InRequest.SkinBones;
+            }
+            const char* Every[1] = { Name.c_str() };
+            const bool bDrawn = Found ? DrawMeshSections(RenderTransform(), Mesh.c_str(), InRequest.Tint, Every, 1, /*bInEvery*/ true, Skin)
+                                      : DrawMeshSections(RenderTransform(), Mesh.c_str(), InRequest.Tint, Slots, uint32_t(RENDER_PREVIEW_SLOTS),
+                                                         /*bInEvery*/ false, Skin);
             if(!bDrawn)
             {
                 RenderSceneStages(P->PreviewTargets, EngineCore::Color(38, 40, 46, 255));   // drop the queued draws
