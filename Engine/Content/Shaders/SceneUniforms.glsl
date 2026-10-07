@@ -49,4 +49,10 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     // The view mode (RenderTypes.h's ERenderViewMode): x 1 for Unlit -- base colour and emissive, no light;
     // a material preview's channel (EMaterialPreviewChannel): 2 base colour alone, 3 emissive alone / 16.
     vec4 Scene_View;
+
+    // Contact shadows (Lighting.glsl's ContactShadow; the Lighting stage only): world to clip,
+    // GL's (Scene_InvViewProjection's inverse); x the march's length toward the sun, world units
+    // (0: off), y a depth-buffer surface's assumed thickness, z its samples, w its strength.
+    mat4 Scene_ViewProjection;
+    vec4 Scene_ContactShadow;
 UBO_BLOCK_END(Scene_Block)

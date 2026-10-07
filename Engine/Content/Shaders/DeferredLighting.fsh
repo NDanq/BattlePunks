@@ -33,8 +33,11 @@ UBO_BLOCK_BEGIN(2, Lighting_Block)
     vec4 Lighting_InsetRects[4]; // the pixels each can shadow (gl_FragCoord): xy min, zw max
 UBO_BLOCK_END(Lighting_Block)
 
-// Only here are lights shadowed: the atlases above are this pass's.
+// Only here are lights shadowed: the atlases above are this pass's -- and only here
+// is there a scene depth for the sun's contact shadows to march through.
 #define LIGHTING_SHADOWS 1
+#define LIGHTING_CONTACT_SHADOWS 1
+#define LIGHTING_SCENE_DEPTH SceneDepth
 #include <Lighting.glsl>
 
 OUTPUT(0, vec4, Output)

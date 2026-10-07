@@ -159,6 +159,8 @@ namespace RenderCore
             float Probes[12][4]         = {};                           // 3 vec4s a probe
             float Baked[4]              = {};                           // drawing with a bake, it has the sky (BakedLighting.glsl)
             float View[4]               = {};                           // 1: Unlit (ERenderViewMode)
+            float ViewProjection[16]    = {};                           // world to clip: contact shadows' march (Lighting.glsl)
+            float ContactShadow[4]      = {};                           // length (0: off), thickness, steps, strength
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -172,7 +174,9 @@ namespace RenderCore
                       "Scene_CascadeTexels, Scene_Output, Scene_IBL and Scene_Probes come last");
         static_assert(offsetof(SceneUniforms, Baked) == 3824, "Scene_Baked comes after Scene_Probes");
         static_assert(offsetof(SceneUniforms, View) == 3840, "Scene_View comes after Scene_Baked");
-        static_assert(sizeof(SceneUniforms) == 3856 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, ViewProjection) == 3856 && offsetof(SceneUniforms, ContactShadow) == 3920,
+                      "Scene_ViewProjection and Scene_ContactShadow come after Scene_View");
+        static_assert(sizeof(SceneUniforms) == 3936 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -1250,6 +1254,7 @@ namespace RenderCore
             /* Clip back to world, for the Lighting stage: the inverse of
              * Projection * View, column-major as GDI uploads a mat4. */
             PutMatrix(Scene.InvViewProjection, EngineCore::Matrix4x4::Inverse(View.Projection * View.View));
+            PutMatrix(Scene.ViewProjection, View.Projection * View.View);
 
             /* View depth, for picking a cascade: from the view's own origin. */
             const EngineCore::Vector3 Forward = ViewForward(View);
@@ -1282,8 +1287,9 @@ namespace RenderCore
                 Out[5][0] = Light.ShadowBias; Out[5][1] = Light.ShadowNormalBias; Out[5][2] = 0.0f; Out[5][3] = 0.0f;
             }
 
-            /* No shadow until PrepareShadows draws some. */
+            /* No shadow until PrepareShadows draws some -- contact shadows included. */
             Scene.ShadowParams[0] = 0.0f;
+            Scene.ContactShadow[0] = 0.0f;
             Scene.LightShadow[0]  = -1.0f;
             Scene.LightShadow[1]  = 0.0f;
         }
@@ -1351,6 +1357,15 @@ namespace RenderCore
             Scene.ShadowParams[1] = float(std::clamp(Lighting.Shadows.Filter, 0, 2));
             Scene.ShadowParams[2] = 1.0f / Size;
             Scene.ShadowParams[3] = Size;
+
+            /* The sun's contact shadows ([Shadows] ContactShadows): with shadows drawn at all, so
+             * Enabled turns them off too. The Lighting stage marches only when the sun casts. */
+            const RenderShadowSettings& Settings = Lighting.Shadows;
+            const bool bContact = Settings.bContactShadows && Settings.ContactLength > 0.0f && Settings.ContactStrength > 0.0f;
+            Scene.ContactShadow[0] = bContact ? Settings.ContactLength : 0.0f;
+            Scene.ContactShadow[1] = Settings.ContactThickness;
+            Scene.ContactShadow[2] = float(Settings.ContactSteps);
+            Scene.ContactShadow[3] = Settings.ContactStrength;
 
             uint32_t DirectionalViews = 0;
             if(Shadows.DirectionalFirstView >= 0)

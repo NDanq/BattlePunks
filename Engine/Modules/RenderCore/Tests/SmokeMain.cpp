@@ -2581,6 +2581,32 @@ static void TestShadowsOnGpu()
             Expect(EdgePixels > 20, "and a hard filter's edge differs from a 5x5 one's");
             Box.GetComponent<RenderComponent>()->bCastInsetShadow = 0;
 
+            /* Contact shadows ([Shadows] ContactShadows): the sun's map still stops short of
+             * the box, so only the screen-space march toward the sun can find it -- from the
+             * floor under it, where its shadow falls. The box floats 30 above the floor and
+             * is 120 deep, so the march reaches further and takes thicker surfaces than the
+             * defaults. Off (the default), Short above already showed nothing. */
+            ConfigVar* Contact          = ConfigFindVarByPath("Shadows.ContactShadows");
+            ConfigVar* ContactLength    = ConfigFindVarByPath("Shadows.ContactLength");
+            ConfigVar* ContactThickness = ConfigFindVarByPath("Shadows.ContactThickness");
+            Expect(Contact && ContactLength && ContactThickness, "[Shadows] ContactShadows, ContactLength and ContactThickness are config vars");
+            EngineCore::Image Contacted;
+            bool bContacted = false;
+            if(Contact && ContactLength && ContactThickness)
+            {
+                ContactLength->SetFromString("150");
+                ContactThickness->SetFromString("200");
+                Contact->SetFromString("true");
+                bContacted = Capture(Contacted);
+                Contact->ResetToDefault();
+                ContactLength->ResetToDefault();
+                ContactThickness->ResetToDefault();
+            }
+            Dump(Contacted, "sun-contact");
+            const Difference Touch = bContacted ? Compare(Contacted, Short) : Difference();
+            std::printf("    contact: %d pixels darker, %d brighter\n", Touch.Darker, Touch.Brighter);
+            Expect(bContacted && Touch.Darker > 300 && Touch.Brighter < 20, "sun contact shadows find the box from the floor under it");
+
             /* A caster out of the view's bounds altogether -- above and behind
              * the camera -- whose shadow falls on the floor it sees: offered
              * all the same, since its shadow reaches the view. */
