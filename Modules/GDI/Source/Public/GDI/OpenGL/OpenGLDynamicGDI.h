@@ -283,8 +283,8 @@ private:
     uint                BoundShaderProgram;
     uint                MaterialUBOs[2] = {};
     /* The skin block's buffer (binding 12), refilled only when its serial moves. */
-    uint                SkinUBO = 0;
-    uint64_t            SkinUBOSerial = ~0ull;
+    uint                SkinUBO[2] = {};                 // the palette, and the frame before's
+    uint64_t            SkinUBOSerial[2] = { ~0ull, ~0ull };
     uint                ScratchFramebuffer = 0;   // SetRenderTargets' attachments
     class OpenGLMesh*   ScreenMesh = nullptr;
     GLsync              ThreadSync;

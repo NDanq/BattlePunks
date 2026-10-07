@@ -2913,6 +2913,34 @@ static void TestPostProcessOnGpu()
             Expect(Smear.Brighter + Smear.Darker > 200, "Motion Blur smears the frame the camera turned in");
         }
 
+        /* Velocity: the camera still, a box that moved since the frame before
+         * smears; standing still at the same place, it does not. */
+        const GameCore::Entity Mover = Placed("Mover", Vector3(-120.0, 60.0, -150.0), Vector3(), Vector3(90.0, 120.0, 90.0));
+        Mover.AddComponent(Mesh("Engine/Content/Meshes/Box.nmmesh"));
+        const auto MoveTo = [&](const double InX)
+        {
+            Mover.GetComponent<GameCore::TransformComponent>()->Position = Vector3(InX, 60.0, -150.0);
+        };
+        EngineCore::Image MoverStill, MoverMoving;
+        MoveTo(0.0);
+        const bool bMoverStill = Capture(MoverStill, Turned, Turned);
+        MoveTo(-120.0);
+        Draw(Turned);
+        Draw(Turned);
+        const uint64_t MoverRequest = Rend.RequestSceneCapture();
+        MoveTo(0.0);
+        Draw(Turned);
+        Draw(Turned);
+        if(bMoverStill && MoverRequest && Rend.TakeMaterialPreview(MoverRequest, MoverMoving, Error))
+        {
+            Dump(MoverStill, "post-velocity-still");
+            Dump(MoverMoving, "post-velocity-moving");
+            const Difference Smear = Compare(MoverMoving, MoverStill);
+            std::printf("    motion blur, a box moved and the camera still: %d pixels changed\n", Smear.Brighter + Smear.Darker);
+            Expect(Smear.Brighter + Smear.Darker > 150, "Motion Blur smears what moved, with the camera still (velocity)");
+            Expect(Smear.Brighter + Smear.Darker < 256 * 256 / 4, "and only that");
+        }
+
         Rend.UnbindWorld();
         Rend.Shutdown();
     }

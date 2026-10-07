@@ -100,6 +100,7 @@ uint64_t VKPipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.DepthCompareOp,    sizeof(K.DepthCompareOp));
     Mix(&K.StencilTestEnable, sizeof(K.StencilTestEnable));
     Mix(&K.RTFormat,          sizeof(K.RTFormat));
+    Mix(&K.ColorFormats,      sizeof(K.ColorFormats));
     Mix(&K.ColorCount,        sizeof(K.ColorCount));
     Mix(&K.DepthFormat,       sizeof(K.DepthFormat));
     Mix(&K.Topology,          sizeof(K.Topology));
@@ -439,11 +440,12 @@ bool VKPipelineCache::BuildLayouts()
     Push.size       = kPushConstantBytes;
 
     // --- Descriptor set layout bindings per group ---
-    static_assert(GDI_SKIN_BLOCK_BINDING == GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS,
-                  "the skin block follows the material textures");
+    static_assert(GDI_SKIN_BLOCK_BINDING == GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS
+                  && GDI_PREV_SKIN_BLOCK_BINDING == GDI_SKIN_BLOCK_BINDING + 1,
+                  "the skin blocks follow the material textures");
     struct GroupDef
     {
-        VkDescriptorSetLayoutBinding Bindings[GDI_SKIN_BLOCK_BINDING + 1];
+        VkDescriptorSetLayoutBinding Bindings[GDI_PREV_SKIN_BLOCK_BINDING + 1];
         uint32_t                     Count;
     } Groups[DLG_Count];
 
@@ -483,9 +485,10 @@ bool VKPipelineCache::BuildLayouts()
         Sampler.stageFlags = kAllStages;
         Groups[DLG_Material].Bindings[GDI_MATERIAL_TEXTURE_BINDING + s] = Sampler;
     }
-    // The skin block at 12: a skinned vertex shader's bone palette.
-    Groups[DLG_Material].Bindings[GDI_SKIN_BLOCK_BINDING] = MakeUBO(GDI_SKIN_BLOCK_BINDING);
-    Groups[DLG_Material].Count = GDI_SKIN_BLOCK_BINDING + 1;
+    // The skin blocks at 12 and 13: a skinned vertex shader's bone palette, and the frame before's.
+    Groups[DLG_Material].Bindings[GDI_SKIN_BLOCK_BINDING]      = MakeUBO(GDI_SKIN_BLOCK_BINDING);
+    Groups[DLG_Material].Bindings[GDI_PREV_SKIN_BLOCK_BINDING] = MakeUBO(GDI_PREV_SKIN_BLOCK_BINDING);
+    Groups[DLG_Material].Count = GDI_PREV_SKIN_BLOCK_BINDING + 1;
 
     for(uint32_t g = 0; g < DLG_Count; ++g)
     {
@@ -646,7 +649,7 @@ VkPipeline VKPipelineCache::CreatePipeline(const PipelineKey& Key) const
     for(uint32_t Index = 0; Index < ColorCount; ++Index)
     {
         BlendAtts[Index]    = BlendAtt;
-        ColorFormats[Index] = Key.RTFormat;
+        ColorFormats[Index] = Key.ColorFormats[Index] != VK_FORMAT_UNDEFINED ? Key.ColorFormats[Index] : Key.RTFormat;
     }
 
     VkPipelineColorBlendStateCreateInfo ColorBlend{};

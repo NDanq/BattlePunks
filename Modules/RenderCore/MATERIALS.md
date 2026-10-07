@@ -231,6 +231,12 @@ the mesh has none), stored as an optional `MUV1` chunk. The vertex stage
 passes them through as `Interpolants.LightmapUV`; only the Base Pass reads
 them, for baked lighting (RENDERPIPELINE.md, "Baked lighting").
 
+`WorldMotion` (vec3) is how far the surface moved in the world since the
+frame before: the material vertex stage takes its position less where
+`Transform.PrevModel` (and, skinned, the previous skin block at binding 13)
+had it, and the Base Pass writes it to the velocity target
+(RENDERPIPELINE.md, "Velocity"). Other vertex shaders leave it 0.
+
 ## The `.material` file, version 3
 
 ```

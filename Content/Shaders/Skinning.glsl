@@ -12,6 +12,12 @@ UBO_BLOCK_BEGIN(12, Skin_Block)
     vec4 Skin_Bones[SKIN_MAX_BONES * 3];
 UBO_BLOCK_END(Skin_Block)
 
+// The palette the frame before (binding 13): where the vertex was, for its
+// velocity. RenderCore sets it with the palette; the same one if it is new.
+UBO_BLOCK_BEGIN(13, PrevSkin_Block)
+    vec4 PrevSkin_Bones[SKIN_MAX_BONES * 3];
+UBO_BLOCK_END(PrevSkin_Block)
+
 // The four bones' rows, blended by weight: one matrix to move the vertex by.
 void SkinRows(vec4 InJoints, vec4 InWeights, out vec4 OutRow0, out vec4 OutRow1, out vec4 OutRow2)
 {
@@ -24,6 +30,21 @@ void SkinRows(vec4 InJoints, vec4 InWeights, out vec4 OutRow0, out vec4 OutRow1,
         OutRow0 += Skin_Bones[Bone + 0] * InWeights[Each];
         OutRow1 += Skin_Bones[Bone + 1] * InWeights[Each];
         OutRow2 += Skin_Bones[Bone + 2] * InWeights[Each];
+    }
+}
+
+// As SkinRows, from the frame before's palette.
+void PrevSkinRows(vec4 InJoints, vec4 InWeights, out vec4 OutRow0, out vec4 OutRow1, out vec4 OutRow2)
+{
+    OutRow0 = vec4(0.0);
+    OutRow1 = vec4(0.0);
+    OutRow2 = vec4(0.0);
+    for(int Each = 0; Each < 4; ++Each)
+    {
+        int Bone = clamp(int(InJoints[Each] + 0.5), 0, SKIN_MAX_BONES - 1) * 3;
+        OutRow0 += PrevSkin_Bones[Bone + 0] * InWeights[Each];
+        OutRow1 += PrevSkin_Bones[Bone + 1] * InWeights[Each];
+        OutRow2 += PrevSkin_Bones[Bone + 2] * InWeights[Each];
     }
 }
 

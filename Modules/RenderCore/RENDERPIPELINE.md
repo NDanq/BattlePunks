@@ -12,7 +12,7 @@ A frame runs these stages, in this order (`ERenderStage`, RenderPipeline.h):
 | Stage | Draws | Into | State |
 |---|---|---|---|
 | **PrePass** | nothing yet | -- | culls proxies against the view (padded by World Position Offset); what survives submits its draws to the stages below. Occlusion queries and a depth prepass belong here later |
-| **Base Pass** | Opaque and Masked, **Lit** | the G-buffer, and depth | depth test and write; no blending. Writes no colour to the scene |
+| **Base Pass** | Opaque and Masked, **Lit** | the G-buffer and the velocity target, and depth | depth test and write; no blending. Writes no colour to the scene |
 | **Lighting** | one full-screen pass | scene colour | reads the G-buffer and depth; lit pixels only |
 | &nbsp;&nbsp;Shadows | shadow casters: Opaque and Masked mesh sections whose component casts | the two shadow atlases' depth | a sub-stage of Lighting, run first; depth test and write, no colour. See [Shadows](#shadows) |
 | **Unlit** | Opaque and Masked, **Unlit**; plain quads; tinted meshes | scene colour, with the Base Pass depth | depth test and write; plain quads keep their alpha blend |
@@ -118,6 +118,41 @@ brightest channel, when that is over 1, with that scale in alpha as log2 over
 12 octaves, up to 4096 (`EncodeGBufferEmissive` / `DecodeGBufferEmissive` in
 `Common.glsl`). The Lighting stage reads it back whole, and Bloom uses it too. Eight-bit normals band a little on smooth, glossy surfaces;
 RGBA16F targets need a render-target format in GDI (MATERIALS.md, "Later").
+
+### Velocity
+
+Beside the G-buffer, where the backend has RGBA16F targets, the Base Pass
+writes a fifth target, **Velocity** (`SceneTargets::Velocity`): each pixel's
+**world motion** since the frame before -- xyz in world units, a 1 where
+written. What nothing writes stays 0: not moving. Motion Blur takes the
+pixel's world position from depth, less that motion, to last frame's camera
+(see [Post process](#post-process)), so the camera's motion and the
+surface's own make one screen motion, and the target needs no previous
+camera of its own.
+
+**Where a draw was:**
+- **Its transform.** `RenderProxy::EndFrameMotion`, after each frame, keeps
+  `LocalToWorld` as `PrevLocalToWorld`. Before a proxy draws, RenderScene
+  asks it how it moved (`GetMotion`: then times the inverse of now) and
+  hands that to `RenderContext::SetDrawMotion`; each draw it queues takes
+  it, and at issue its model the frame before is that times its model now --
+  GDI's `Transform.PrevModel` (the transform block: 144 bytes on every
+  backend). A new proxy, one that did not move, and a static draw list's
+  replays have none: `PrevModel` is `Model`.
+- **A skinned mesh's pose.** `RenderComponentProxy` keeps its palette the
+  frame before; the draw sets it in the **previous skin block** (binding 13,
+  `GDI_PREV_SKIN_BLOCK_BINDING`) beside the palette (12). The vertex stage
+  skins the vertex both ways.
+- **World Position Offset** is taken to be the same both frames.
+
+**Not written:** anything drawn outside the Base Pass -- Unlit and
+Translucent surfaces, plain quads -- and the sky: they move with the camera
+only. Pixel shaders
+write output 4 in every Base Pass permutation; a pass with no velocity
+target bound drops it.
+
+**Seeing it:** the Render Target view mode lists "Velocity (world motion,
+units a frame)" (negative components show black).
 
 ### Base Pass
 
@@ -347,7 +382,7 @@ is not in this chain, runs earlier: see [below](#ambient-occlusion)):
 |---|---|---|---|
 | 1 | Materials, Before Effects | the material's | full size |
 | 2 | Depth of Field | `PPDofPrepare` (circle of confusion from depth: far past the focus range, or nearer with Near Blur; a half-size copy, CoC in alpha), `PPDofBlur` (a 16-tap disc, each tap counted as far as its own CoC reaches), `PPDofComposite` (sharp to blurred by CoC) | `Half[0..1]`, then full |
-| 3 | Motion Blur | `PPMotionBlur`: each pixel's world position, from depth, reprojected with **last frame's** view-projection gives its screen motion; taps along it, jittered, limited to Max Length | full |
+| 3 | Motion Blur | `PPMotionBlur`: each pixel's world position, from depth, less its world motion ([Velocity](#velocity)), reprojected with **last frame's** view-projection gives its screen motion, limited to Max Length. A reconstruction filter (McGuire et al. 2012) in one pass: the strongest motion within half Max Length, then taps along it, jittered, each weighted by which is in front and whose streak reaches the other -- a moving thing streaks out over a still background | full |
 | 4 | Bloom | `PPBloomDownsample` (13 taps; the first step adds back the emissive the scene clipped, from GBuffer3, and keeps what passes the threshold, with a soft knee) down `Bloom[0..Levels-1]` (1/2 to 1/64); `PPBloomUpsample` (each level's own plus a 9-tap tent of the one below, times Radius) back up `BloomUp`; `PPBloomComposite` adds the top level times Intensity and Tint | chain, then full |
 | 5 | Materials, After Effects | the material's | full |
 | 6 | Antialiasing | `PPFxaa` (FXAA 3.11 quality: luma edges, an end search of 4, 8 or 12 steps by Quality, plus sub-pixel smoothing) | full |
@@ -377,7 +412,11 @@ is not in this chain, runs earlier: see [below](#ambient-occlusion)):
   colour, so it still stops at 1. A white lit surface past the threshold glows
   all over, but only by its clipped 0-1. What reaches the G-buffer is bloomed
   even if a translucent surface later covers it.
-- **Motion Blur:** the camera's motion only; there is no per-object velocity.
+- **Motion Blur:** objects move it only where the Base Pass drew them (Lit
+  Opaque and Masked); Unlit and Translucent surfaces blur with the camera
+  alone. The strongest motion is searched at sixteen taps, not per tile: a
+  thing much smaller than half Max Length moving fast can be missed beside
+  it. A teleport blurs for one frame, as far as Max Length.
 - **Antialiasing:** FXAA only; there is no temporal AA.
 - **Memory:** each small target also allocates a depth it never uses (GDI makes
   every target with one).

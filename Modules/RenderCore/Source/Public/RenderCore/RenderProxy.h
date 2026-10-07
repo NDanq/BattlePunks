@@ -1,6 +1,7 @@
 #ifndef RENDERCORE_RENDERPROXY_H
 #define RENDERCORE_RENDERPROXY_H
 
+#include <cstring>
 #include <cstddef>
 #include <cstdint>
 #include <type_traits>
@@ -112,6 +113,27 @@ namespace RenderCore
             WorldBounds  = GameCore::AABB::Transformed(LocalBounds, LocalToWorld);
         }
 
+        /* VELOCITY (RENDERPIPELINE.md): RenderScene calls this once a frame,
+         * after drawing it: what it is now becomes what it was. A proxy with
+         * more that moves (a skinned mesh's pose) keeps that too. */
+        virtual void EndFrameMotion()
+        {
+            PrevLocalToWorld  = LocalToWorld;
+            bHasPrevTransform = true;
+        }
+
+        /* How it moved since the frame before: OutMotion times LocalToWorld
+         * is LocalToWorld then. False if it did not, or is new. */
+        bool GetMotion(EngineCore::Matrix4x4& OutMotion) const
+        {
+            if(!bHasPrevTransform || std::memcmp(&PrevLocalToWorld, &LocalToWorld, sizeof(LocalToWorld)) == 0)
+            {
+                return false;
+            }
+            OutMotion = PrevLocalToWorld * EngineCore::Matrix4x4::Inverse(LocalToWorld);
+            return true;
+        }
+
         void SetLocalBounds(const GameCore::AABB& InBounds)
         {
             LocalBounds = InBounds;
@@ -153,6 +175,8 @@ namespace RenderCore
         GameCore::EntityID     Owner;
         RenderTransform        Transform;
         EngineCore::Matrix4x4  LocalToWorld;
+        EngineCore::Matrix4x4  PrevLocalToWorld;            // as the frame before was drawn (EndFrameMotion)
+        bool                   bHasPrevTransform = false;
         GameCore::AABB         LocalBounds;
         GameCore::AABB         WorldBounds;
 

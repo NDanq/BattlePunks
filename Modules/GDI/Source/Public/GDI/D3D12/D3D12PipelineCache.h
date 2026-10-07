@@ -33,6 +33,7 @@ enum ED3D12RootParam : UINT
     RP_MaterialTexture0,
     RP_MaterialSampler0 = RP_MaterialTexture0 + 8,   // GDI_MATERIAL_TEXTURE_SLOTS
     RP_Skin             = RP_MaterialSampler0 + 8,   // b12, GDI_SKIN_BLOCK_BINDING
+    RP_PrevSkin,                                     // b13, GDI_PREV_SKIN_BLOCK_BINDING
     RP_Count
 };
 
@@ -78,7 +79,8 @@ public:
         UINT8                   WriteMask       = D3D12_COLOR_WRITE_ENABLE_ALL;
 
         DXGI_FORMAT             RTFormat        = DXGI_FORMAT_R8G8B8A8_UNORM;
-        UINT                    ColorCount      = 1;   // render targets, every one RTFormat
+        UINT                    ColorCount      = 1;   // render targets
+        DXGI_FORMAT             ColorFormats[GDI_MAX_COLOR_TARGETS] = {};   // each one's (UNKNOWN: RTFormat)
 
         // The render target's depth buffer (UNKNOWN for none) and its test.
         DXGI_FORMAT             DSVFormat       = DXGI_FORMAT_UNKNOWN;

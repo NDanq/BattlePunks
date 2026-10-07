@@ -63,8 +63,10 @@ void main(void)
         Inputs.TexCoord = (InTexCoord + Cell) / Flipbook.yz;
     }
     mat4 Model           = Transform.Model * Instance;
+    mat4 PrevModel       = Transform.PrevModel * Instance;
 #else
     mat4 Model           = Transform.Model;
+    mat4 PrevModel       = Transform.PrevModel;
 #endif
 #if MATERIAL_VERTEX_SKINNEDMESH
     // Posed in model space first; the entity's transform after.
@@ -72,8 +74,12 @@ void main(void)
     SkinRows(InJoints, InWeights, SkinRow0, SkinRow1, SkinRow2);
     vec3 LocalPosition = SkinPoint(SkinRow0, SkinRow1, SkinRow2, InPosition);
     vec3 LocalNormal   = SkinDirection(SkinRow0, SkinRow1, SkinRow2, InNormal);
+    vec4 PrevRow0, PrevRow1, PrevRow2;
+    PrevSkinRows(InJoints, InWeights, PrevRow0, PrevRow1, PrevRow2);
+    vec3 PrevLocalPosition = SkinPoint(PrevRow0, PrevRow1, PrevRow2, InPosition);
 #else
     vec3 LocalPosition = InPosition;
+    vec3 PrevLocalPosition = InPosition;
 #if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH
     vec3 LocalNormal   = InNormal;
 #endif
@@ -109,6 +115,10 @@ void main(void)
     vec2 LightmapUV = vec2(0.0);
 #endif
     CalculateInterpolants(Clip.xyz, Inputs.TexCoord, Inputs.WorldNormal, Inputs.Color, World, ViewPosition.z, LightmapUV);
+    // Its velocity: where it is less where it was -- the entity's transform
+    // and a skinned mesh's pose the frame before. A World Position Offset is
+    // taken to be the same both frames.
+    Interpolants.WorldMotion = Inputs.WorldPosition - (PrevModel * vec4(PrevLocalPosition, 1.0)).xyz;
     gl_Position = Clip;
 #endif
 }

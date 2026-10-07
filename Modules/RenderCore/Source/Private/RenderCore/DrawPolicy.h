@@ -50,6 +50,12 @@ namespace RenderCore
          * floats a bone; null, its bind pose. Owned by the proxy. */
         const float*                   SkinPalette = nullptr;
         uint32_t                       SkinBones   = 0;
+        const float*                   PrevSkinPalette = nullptr;   // the frame before's; null: SkinPalette
+
+        /* Velocity: Motion times its model is its model the frame before
+         * (RenderContext::SetDrawMotion). Not bMoved: it did not move. */
+        EngineCore::Matrix4x4          Motion;
+        bool                           bMoved = false;
 
         /* MeshSection, instanced (GDISetInstanceBuffer): InstanceCount of it
          * from Instances, drawn with the InstancedMesh vertex input; sorted by

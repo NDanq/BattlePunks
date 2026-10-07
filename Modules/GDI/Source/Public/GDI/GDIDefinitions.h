@@ -301,6 +301,8 @@ struct ITextureState
  *   4-11   material textures 0-7  GDISetMaterialTexture
  *   12     skin block             GDISetUniformBlock: a skinned mesh's bone
  *                                 palette, three vec4 rows per bone (Skinning.glsl)
+ *   13     previous skin block    GDISetUniformBlock: the palette it had the
+ *                                 frame before, for its velocity (as 12)
  *
  * The blocks are visible to both stages. Shaders declare them with
  * UBO_BLOCK_BEGIN/END and the textures with MATERIAL_SAMPLER2D. Only a
@@ -313,6 +315,7 @@ constexpr unsigned GDI_SCENE_BLOCK_BINDING      = 3;
 constexpr unsigned GDI_MATERIAL_TEXTURE_BINDING = 4;
 constexpr unsigned GDI_MATERIAL_TEXTURE_SLOTS   = 8;
 constexpr unsigned GDI_SKIN_BLOCK_BINDING       = 12;
+constexpr unsigned GDI_PREV_SKIN_BLOCK_BINDING  = 13;
 /* 256 bones of three vec4 rows: within every backend's guaranteed 16 KB. */
 constexpr unsigned GDI_SKIN_MAX_BONES           = 256;
 constexpr unsigned GDI_SKIN_BLOCK_MAX_BYTES     = GDI_SKIN_MAX_BONES * 48;
@@ -321,8 +324,9 @@ constexpr unsigned GDI_MATERIAL_BLOCK_MAX_BYTES = 1024;
 /* The scene block carries the frame's lights and shadow matrices: larger. */
 constexpr unsigned GDI_SCENE_BLOCK_MAX_BYTES    = 4096;
 
-/* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's. */
-constexpr unsigned GDI_MAX_COLOR_TARGETS        = 4;
+/* Colour targets one pass can write (GDISetRenderTargets): a G-buffer's and
+ * its velocity. Each may have its own format. */
+constexpr unsigned GDI_MAX_COLOR_TARGETS        = 5;
 
 /*
  * A compute dispatch's bindings (GDIDispatchCompute): its parameters as a

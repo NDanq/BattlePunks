@@ -17,6 +17,7 @@ struct GDITransform
 {
     vec3 PositionWorldSpace;
     mat4 Model;
+    mat4 PrevModel;         // Model the frame before (Model if it is new): for velocity
 };
 
 // GDIVSToPSInterpolants is kept as a struct so GetInterpolants() can return it
@@ -44,11 +45,13 @@ layout(location=0) out Interp_Block
     vec3  WorldPosition;
     float ViewDepth;
     vec2  LightmapUV;     // a mesh's UV1, its lightmap UVs (BakedLighting.glsl); 0 elsewhere
+    vec3  WorldMotion;    // how far the surface moved in the world since the frame before (the Base Pass's velocity)
 } Interpolants;
 
 void CalculateInterpolants( vec3 InPosition, vec2 InTexCoord, vec3 InNormal, vec4 InColor, vec3 InWorldPosition, float InViewDepth,
                             vec2 InLightmapUV )
 {
+    Interpolants.WorldMotion   = vec3(0.0);   // the material template's vertex stage sets its own after
     Interpolants.Position      = InPosition;
     Interpolants.TexCoord      = InTexCoord;
     Interpolants.Normal        = InNormal;
@@ -84,6 +87,7 @@ layout(location=0) in Interp_Block
     vec3  WorldPosition;
     float ViewDepth;
     vec2  LightmapUV;     // a mesh's UV1, its lightmap UVs (BakedLighting.glsl); 0 elsewhere
+    vec3  WorldMotion;    // how far the surface moved in the world since the frame before (the Base Pass's velocity)
 } Interpolants;
 
 GDIVSToPSInterpolants GetInterpolants()
@@ -117,8 +121,8 @@ DECLARE_UBO(1, TR_Block, GDITransform,      Transform)
 layout(std140, set=0, binding=0) uniform VP_Block { mat4 Projection; mat4 View; vec3 MouseCoords; vec4 Resolution; };
 GDIViewParameters ViewParameters = GDIViewParameters(Projection, View, MouseCoords, Resolution);
 
-layout(std140, set=0, binding=1) uniform TR_Block { vec3 PositionWorldSpace; mat4 Model; };
-GDITransform Transform = GDITransform(PositionWorldSpace, Model);
+layout(std140, set=0, binding=1) uniform TR_Block { vec3 PositionWorldSpace; mat4 Model; mat4 PrevModel; };
+GDITransform Transform = GDITransform(PositionWorldSpace, Model, PrevModel);
 #endif
 
 // Emissive past 1 in an 8-bit G-buffer target (GBuffer3): rgb the colour
