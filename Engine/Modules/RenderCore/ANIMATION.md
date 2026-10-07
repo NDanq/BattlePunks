@@ -159,19 +159,30 @@ entity; turning is not extracted. The editor's preview moves nothing.
 ## Budget
 
 What each character costs falls off with distance from the frame's views
-(every camera WorldBridge draws the world from), in `[Animation]`:
+(every camera WorldBridge draws the world from), and outside them, in
+`[Animation]`:
 
 | Var | Default | |
 |---|---|---|
 | `FullRateDistance` | 3000 | past it, an update every (distance / this)th tick, the time saved up |
 | `MaxSkipFrames` | 3 | at most this many ticks skipped in a row |
+| `OffscreenSkipFrames` | 3 | outside every view's frustum (behind the camera, off to the side): an update every (this + 1)th tick, the time saved up, its pose still made then -- for its shadow and sockets. Whichever of this and the distance skips more |
 | `FreezeDistance` | 20000 | past it, time passes -- notifies, transitions, root motion -- but no pose is evaluated |
 | `ParallelMin` | 16 | at least this many updating in a tick, and they run across the job system |
 
-0 turns a distance off. A world with no view -- a dedicated server -- and the
-editor's preview of a level run everything at full rate. `AnimationSystem::GetLastStats` says what the last
-tick did. Visibility (behind the camera, occluded) is not considered yet:
-the game thread does not know it.
+0 turns a distance (or the off-screen rate) off. A world with no view -- a
+dedicated server -- and the editor's preview of a level run everything at
+full rate. `AnimationSystem::GetLastStats` says what the last tick did
+(`Offscreen` counts those outside every view).
+
+**Visibility.** WorldBridge hands each frame's view to the system with its
+view-projection (`AnimationSystem::AddView`), and a character is tested as a
+sphere round its mesh's own box and its bones where they are now -- root
+motion as authored can walk it off its entity -- padded a quarter for the
+skin, against each view's frustum. A view given by origin alone
+(`AddViewOrigin`) sees everything. One that comes back into view takes the
+time it saved at once. Occlusion is not considered: the renderer has no
+occlusion culling yet.
 
 ## Anim states
 
@@ -244,4 +255,4 @@ Layer Arms   mask spine_02, weight scaled by Armed
 
 Inverse kinematics (feet, look-at), morph targets, retargeting between
 differently named skeletons, clip compression, turning root motion, skinned
-meshes on Metal, and a visibility-aware budget.
+meshes on Metal, and an occlusion-aware budget.

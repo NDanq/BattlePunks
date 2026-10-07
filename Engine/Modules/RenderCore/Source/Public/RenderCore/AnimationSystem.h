@@ -8,12 +8,14 @@
 #include <vector>
 
 #include "Public/GameCore/EntityID.h"
+#include "Public/Math/Matrix.h"
 #include "Public/GameCore/TransformMath.h"
 #include "Public/RenderCore/AnimInstance.h"
 #include "Public/RenderCore/RenderCoreAPI.h"
 
 namespace GameCore
 {
+    class Entity;
     class World;
 }
 
@@ -78,9 +80,12 @@ namespace RenderCore
          * pose-dependent views (sockets) look again. */
         uint64_t GetGeneration() const { return Generation; }
 
-        /* Where frame InFrame is seen from (WorldBridge, per view): the next
-         * ticks spend less on what is far from all of them -- the budget's
-         * [Animation] config. None: everything at full rate. */
+        /* Where frame InFrame is seen from (WorldBridge, per view), and
+         * (AddView) what it sees -- InViewProjection, GL clip space: the next
+         * ticks spend less on what is far from all of them, or outside every
+         * one -- the budget's [Animation] config. None: everything at full
+         * rate. A view given by origin alone sees everything. */
+        void AddView(uint64_t InFrame, const EngineCore::Vector3& InOrigin, const EngineCore::Matrix4x4& InViewProjection);
         void AddViewOrigin(uint64_t InFrame, const EngineCore::Vector3& InOrigin);
 
         /* What the last tick did. */
@@ -90,6 +95,7 @@ namespace RenderCore
             uint32_t Reduced = 0;    // updated after skipping ticks, their time saved up
             uint32_t Skipped = 0;    // not updated this tick: far
             uint32_t Frozen  = 0;    // updated without a pose: farther
+            uint32_t Offscreen = 0;  // outside every view: at the slowest rate (among Reduced and Skipped)
             bool     bParallel = false;
         };
         const Stats& GetLastStats() const { return LastStats; }
@@ -137,6 +143,10 @@ namespace RenderCore
             int32_t                              Skipped = 0;
         };
 
+        /* Whether any view sees InEntity's character: a sphere round its mesh's
+         * box and its bones now, in the world, against each view's frustum. */
+        bool IsSeen(const GameCore::Entity& InEntity, const Entry& InEntry, const AnimInstance& InInstance) const;
+
         GameCore::World&                     World;
         int                                  Attachments = 0;
         std::unordered_map<uint64_t, Entry>  Entries;   // by packed EntityID
@@ -145,6 +155,12 @@ namespace RenderCore
         bool                                 bTicked    = false;
         double                               Clock      = 0.0;       // game seconds advanced
         std::vector<EngineCore::Vector3>     ViewOrigins;              // the last frame's views
+        struct ViewFrustum
+        {
+            float Planes[6][4] = {};   // xyz inward normal (unit), w: inside where dot(n, p) + w >= 0
+            bool  bHas = false;        // false: a view by origin alone, which sees everything
+        };
+        std::vector<ViewFrustum>             ViewFrustums;             // by view, as ViewOrigins
         uint64_t                             ViewFrame  = ~0ull;
         Stats                                LastStats;
         std::vector<PendingEffect>           Pending;
