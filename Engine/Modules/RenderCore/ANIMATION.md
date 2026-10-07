@@ -85,7 +85,15 @@ animation:SetBool("Crouched", true)
 animation:SetTrigger("Jump")             -- cleared when a transition uses it
 local x, y, z, found = animation:GetBoneLocation("Hand_R")
 local seconds = animation:GetTime()
+local state = animation:GetState(0)        -- layer 0's state; IsInTransition(0) while it blends in
 ```
+
+**Script graphs** get the same as nodes: Get/Add Animation, and on it Set
+Float, Set Bool, Set Trigger, Get Float, Get Bool, Get Bone Location (a
+Vector3), Get State, Is In Transition, Get Time and its fields; the Anim
+Socket's Bone and offsets; and, from the `Animation` script library, typed
+**On AnimNotify** (Entity, Name) and **On AnimEnded** (Entity, State, Layer)
+events, with Emit nodes for each.
 
 It replicates what it plays and its parameters; each client animates on its
 own. Poses are never sent.
