@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 
+#include <QApplication>
 #include <QMouseEvent>
 #include <QScrollBar>
 #include <QWheelEvent>
@@ -61,8 +62,21 @@ void GraphView::mousePressEvent(QMouseEvent* InEvent)
     if(InEvent->button() == Qt::MiddleButton)
     {
         bPanning = true;
+        PanButton = Qt::MiddleButton;
         PanLast = InEvent->pos();
         setCursor(Qt::ClosedHandCursor);
+        InEvent->accept();
+        return;
+    }
+
+    /* Left on empty canvas pans once it moves; Shift or Ctrl box-selects instead. Not while the
+     * owner has taken drag over (NoDrag), e.g. drawing a link to a click target. */
+    if(InEvent->button() == Qt::LeftButton && dragMode() == QGraphicsView::RubberBandDrag && !itemAt(InEvent->pos())
+       && !(InEvent->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)))
+    {
+        bPanPending = true;
+        PanButton = Qt::LeftButton;
+        PanStart = PanLast = InEvent->pos();
         InEvent->accept();
         return;
     }
@@ -71,6 +85,17 @@ void GraphView::mousePressEvent(QMouseEvent* InEvent)
 
 void GraphView::mouseMoveEvent(QMouseEvent* InEvent)
 {
+    if(bPanPending && (InEvent->pos() - PanStart).manhattanLength() >= QApplication::startDragDistance())
+    {
+        bPanPending = false;
+        bPanning = true;
+        setCursor(Qt::ClosedHandCursor);
+    }
+    if(bPanPending)
+    {
+        InEvent->accept();
+        return;
+    }
     if(bPanning)
     {
         const QPoint Delta = InEvent->pos() - PanLast;
@@ -85,7 +110,15 @@ void GraphView::mouseMoveEvent(QMouseEvent* InEvent)
 
 void GraphView::mouseReleaseEvent(QMouseEvent* InEvent)
 {
-    if(bPanning && InEvent->button() == Qt::MiddleButton)
+    if(bPanPending && InEvent->button() == Qt::LeftButton)
+    {
+        /* A click, not a drag: empty canvas clears the selection, as before. */
+        bPanPending = false;
+        if(scene()) { scene()->clearSelection(); }
+        InEvent->accept();
+        return;
+    }
+    if(bPanning && InEvent->button() == PanButton)
     {
         bPanning = false;
         unsetCursor();
