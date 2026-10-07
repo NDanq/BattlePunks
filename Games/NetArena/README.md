@@ -75,7 +75,7 @@ GUIDE.md, section 8, explains the pattern.
 ## Editing
 
 1. Build the editor tree (`cmake --preset editor-debug`, then
-   `cmake --build --preset editor-debug`) and open
+   `cmake --build --preset editor-debug`; on Linux, `editor-debug-clang`) and open
    `Content/Levels/NetArena.nmworld`.
 2. Move a spawn point, change the Spinner's *Degrees per second*, or add a Net
    component to another entity, and save.

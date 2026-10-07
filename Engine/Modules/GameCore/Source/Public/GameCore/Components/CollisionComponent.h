@@ -68,12 +68,24 @@ namespace GameCore
         /* InPath's bounds in entity space. False if it cannot be read. */
         bool (*GetMeshBounds)(const char* InPath, AABB& OutLocal, void* InUserData) = nullptr;
 
+        /* InPath's triangles in entity space, for shapes that need more than
+         * a box (the physics module's hulls and triangle meshes): xyz floats
+         * per vertex, three indices per triangle. The arrays are the
+         * provider's and stay valid for the life of the process (it keeps
+         * every mesh it hands out). False if it cannot be read. Optional. */
+        bool (*GetMeshGeometry)(const char* InPath, const float*& OutPositions, uint32_t& OutVertexCount,
+                                const uint32_t*& OutIndices, uint32_t& OutIndexCount, void* InUserData) = nullptr;
+
         void* UserData = nullptr;
     };
 
     /* Process-wide; null removes it. The installer removes it before its
      * image unloads. Defined in Collision.cpp, beside the pass that uses it. */
     GAMECORE_API void SetCollisionMeshProvider(const CollisionMeshProvider* InProvider);
+
+    /* The installed provider, or nullptr: how another module (the physics
+     * module) shapes its bodies from the same meshes. */
+    GAMECORE_API const CollisionMeshProvider* GetCollisionMeshProvider();
 }
 
 #endif //GAMECORE_COLLISIONCOMPONENT_H

@@ -953,12 +953,17 @@ namespace RenderCore
         /* "stat unit" (Stats.Unit) and "stat frame" (Stats.Frame) over
          * everything, in one panel, after the readback above so a capture
          * never shows them. */
-        if(Stats.bShow || Stats.bShowFrame)
+        if(Stats.bShow || Stats.bShowFrame || !Stats.Extra.empty())
         {
             std::string Text = Stats.bShow ? FormatStatUnit(Stats) : std::string();
             if(Stats.bShowFrame)
             {
                 Text += (Text.empty() ? "" : "\n\n") + FormatStatFrame(P->GpuMs, InContext.CanTimeGpu());
+            }
+            if(!Stats.Extra.empty())
+            {
+                /* Other modules' sections (Renderer::SetStatText), below. */
+                Text += (Text.empty() ? "" : "\n\n") + Stats.Extra;
             }
             InContext.DrawStatUnit(P->Targets.Width, P->Targets.Height, Text);
         }

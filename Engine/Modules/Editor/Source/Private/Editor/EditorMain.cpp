@@ -22,6 +22,7 @@
 #include "Private/Editor/EditorTheme.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/SettingsDialog.h"
+#include "Public/NimbleEngine/GameSession.h"
 
 /*
  * NimbleEditor's entry point.
@@ -95,6 +96,9 @@ int main(int argc, char* argv[])
     }
     /* The user's own choices, over the project's (Edit > Editor Settings). */
     SettingsDialog::LoadUserSettings();
+    /* [Modules] asking for what this build was configured without, or the
+     * reverse: the project's next build applies it (Project Settings). */
+    NimbleEngine::WarnModuleConfigMismatch();
     EditorGraphs::InstallShaderPDBDir();   // before the renderer loads a shader
     EditorTheme::Install();
 

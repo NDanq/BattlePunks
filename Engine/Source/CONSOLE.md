@@ -44,6 +44,7 @@ level change.
 | `reset <Section.Name>` | Puts a config var back to its compiled default |
 | `open <level>` | Loads a level by its registered name (`GameSession::RequestLevel`) |
 | `pause` | Pauses or resumes the World |
+| `stat <unit\|frame\|physics\|none>` | Toggles a stats panel over the game: thread times (`[Stats] Unit`), each render stage's GPU time (`[Stats] Frame`), the level's physics simulation (`[Stats] Physics`). `none` hides them all. |
 | `quit` | Ends the game |
 
 ## A game's own command

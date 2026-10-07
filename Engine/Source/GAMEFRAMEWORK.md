@@ -178,3 +178,21 @@ With NetCore built (`NIMBLE_WITH_NETCORE`, on by default), the same game runs as
 `Games/LightLab/Source/Private/LightLab/LightLabAvatar.cpp` is the smallest
 working example. Each player is an orb the others see, steered by a Server RPC
 and moved by Transform replication.
+
+## Physics
+
+With JoltPhysics built (`NIMBLE_WITH_JOLTPHYSICS`, off by default), every
+level's World is simulated. The session attaches it as the World is made and
+detaches it as the World goes, so Play-in-Editor simulates and the edited
+world never does. A Rigid Body component makes an entity a body. Push it with
+its `AddImpulse` / `AddForce` / `SetLinearVelocity`, and hear what it touches
+through the `ContactBegin` / `SensorEnter` World events.
+`NimbleEngine/PhysicsFacade.h` raycasts. `Engine/Modules/JoltPhysics/README.md`
+has the model, and LightLab's PhysicsLab level is the example.
+
+**Components a build cannot run.** Rigid Body and Physics Constraint without
+JoltPhysics, and Net without NetCore, are GameCore's, so they load, edit and
+save in any build. They are simply inert. Loading a level that has any warns
+once, naming the module and its CMake option, and so does the first one added
+later. The editor warns as it opens such a world.
+(`NimbleEngine::WarnInactiveModuleComponents`, `GameSession.h`.)

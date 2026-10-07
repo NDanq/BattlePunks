@@ -13,6 +13,8 @@ project(LightLab VERSION 0.1 LANGUAGES CXX)
 #     cmake --preset editor-debug
 #     cmake --build --preset editor-debug
 #
+# (On Linux the presets build with clang: editor-debug-clang, ...)
+#
 # It adds the Engine tree itself, so nothing under Engine/ names this game and
 # the engine is never edited to add one.
 #
@@ -48,6 +50,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     # Off before the engine is added: it would add Games/Sandbox to this build.
     set(NIMBLE_BUILD_SANDBOX OFF CACHE BOOL "Build the Games/Sandbox host (off: ${GAME_NAME} is the top-level project)" FORCE)
 
+    # Which optional engine modules this game wants: [Modules] in its config
+    # (Engine/cmake/NimbleProject.cmake; the editor's Project Settings).
+    # LightLab opts in to JoltPhysics there, for the PhysicsLab level.
+    set(NIMBLE_PROJECT_CONFIG "${CMAKE_CURRENT_SOURCE_DIR}/Config/DefaultEngine.ini")
+
     add_subdirectory("${GAME_ENGINE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/Engine")
 endif()
 
@@ -63,6 +70,8 @@ nimble_add_hot_module(${GAME_MODULE}
                      Source/Private/LightLab/LightLabInput.cpp
                      Source/Private/LightLab/LightLabAvatar.cpp
                      Source/Private/LightLab/LightLabAvatar.h
+                     Source/Private/LightLab/LightLabPhysics.cpp
+                     Source/Private/LightLab/LightLabPhysics.h
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 

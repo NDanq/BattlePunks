@@ -38,12 +38,17 @@ game's include or link line.
 One switch per configure, like `NIMBLE_TARGET`. It becomes `WITH_NETCORE=0/1`
 on every target:
 
-```cmake
-# In a game's CMakeLists.txt, before add_subdirectory(<engine>):
-set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
+```ini
+; The project's Config/DefaultEngine.ini -- or Project Settings > Project > Modules
+[Modules]
+NetCore=false
 ```
 
-or `-DNIMBLE_WITH_NETCORE=OFF` on the configure line. Then:
+CMake reads it as the game configures (`Engine/cmake/NimbleProject.cmake`),
+and the next build after an edit applies it. You can also set
+`NIMBLE_WITH_NETCORE` before `add_subdirectory(<engine>)` or pass
+`-DNIMBLE_WITH_NETCORE=OFF`; a `[Modules]` key in the file wins over both.
+Then:
 
 - No `NetCore`, `ENet` or `ws2_32`. `dumpbin /dependents` on the game shows no
   `WS2_32.dll`.
@@ -51,6 +56,9 @@ or `-DNIMBLE_WITH_NETCORE=OFF` on the configure line. Then:
   CMakeLists needs no `if`.
 - `NIMBLE_TARGET=Server` refuses to configure.
 - `-connect` and the other `[Net]` command-line options warn and are ignored.
+- Net components still load, edit and save (they are GameCore's). A level
+  that has any warns once as it loads, in the game and in the editor, that
+  they will not replicate (`NimbleEngine::WarnInactiveModuleComponents`).
 
 ---
 

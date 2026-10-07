@@ -27,42 +27,68 @@
       "displayName": "Editor - Debug",
       "description": "NimbleEditor and NetArena with WITH_EDITOR=1, unoptimised.",
       "inherits": "editor",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     },
     {
       "name": "editor-relwithdebinfo",
       "displayName": "Editor - RelWithDebInfo",
       "description": "NimbleEditor and NetArena with WITH_EDITOR=1, optimised with debug info.",
       "inherits": "editor",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" },
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     },
     {
       "name": "client-debug",
       "displayName": "Client - Debug",
       "description": "NetArena with WITH_EDITOR=0, unoptimised. No editor is built.",
       "inherits": "client",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" },
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     },
     {
       "name": "client-relwithdebinfo",
       "displayName": "Client - RelWithDebInfo",
       "description": "NetArena with WITH_EDITOR=0, optimised with debug info.",
       "inherits": "client",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo" },
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" }
     },
     {
       "name": "client-shipping",
       "displayName": "Client - Shipping",
       "description": "NetArena with WITH_EDITOR=0 and NIMBLE_SHIPPING=1: optimised, no debug info. The Editor has no Shipping build.",
       "inherits": "client",
-      "cacheVariables": { "CMAKE_BUILD_TYPE": "Shipping" }
-    }
+      "cacheVariables": { "CMAKE_BUILD_TYPE": "Shipping" },
+      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" }
+    },
+
+    {
+      "name": "clang",
+      "hidden": true,
+      "description": "Clang and lld. Linux builds only with these; the plain presets are for the platform default compiler elsewhere.",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_LINKER_TYPE": "LLD"
+      }
+    },
+    { "name": "editor-debug-clang", "displayName": "Editor - Debug (Clang)", "inherits": ["editor-debug", "clang"], "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "editor-relwithdebinfo-clang", "displayName": "Editor - RelWithDebInfo (Clang)", "inherits": ["editor-relwithdebinfo", "clang"], "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "client-debug-clang", "displayName": "Client - Debug (Clang)", "inherits": ["client-debug", "clang"], "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "client-relwithdebinfo-clang", "displayName": "Client - RelWithDebInfo (Clang)", "inherits": ["client-relwithdebinfo", "clang"], "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "client-shipping-clang", "displayName": "Client - Shipping (Clang)", "inherits": ["client-shipping", "clang"], "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } }
   ],
   "buildPresets": [
-    { "name": "editor-debug",          "displayName": "Editor - Debug",          "configurePreset": "editor-debug" },
-    { "name": "editor-relwithdebinfo", "displayName": "Editor - RelWithDebInfo", "configurePreset": "editor-relwithdebinfo" },
-    { "name": "client-debug",          "displayName": "Client - Debug",          "configurePreset": "client-debug" },
-    { "name": "client-relwithdebinfo", "displayName": "Client - RelWithDebInfo", "configurePreset": "client-relwithdebinfo" },
-    { "name": "client-shipping",       "displayName": "Client - Shipping",       "configurePreset": "client-shipping" }
+    { "name": "editor-debug",          "displayName": "Editor - Debug",          "configurePreset": "editor-debug", "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "editor-relwithdebinfo", "displayName": "Editor - RelWithDebInfo", "configurePreset": "editor-relwithdebinfo", "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "client-debug",          "displayName": "Client - Debug",          "configurePreset": "client-debug", "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "client-relwithdebinfo", "displayName": "Client - RelWithDebInfo", "configurePreset": "client-relwithdebinfo", "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "client-shipping",       "displayName": "Client - Shipping",       "configurePreset": "client-shipping", "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "editor-debug-clang",          "displayName": "Editor - Debug (Clang)",          "configurePreset": "editor-debug-clang", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "editor-relwithdebinfo-clang", "displayName": "Editor - RelWithDebInfo (Clang)", "configurePreset": "editor-relwithdebinfo-clang", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "client-debug-clang",          "displayName": "Client - Debug (Clang)",          "configurePreset": "client-debug-clang", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "client-relwithdebinfo-clang", "displayName": "Client - RelWithDebInfo (Clang)", "configurePreset": "client-relwithdebinfo-clang", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } },
+    { "name": "client-shipping-clang",       "displayName": "Client - Shipping (Clang)",       "configurePreset": "client-shipping-clang", "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Linux" } }
   ]
 }

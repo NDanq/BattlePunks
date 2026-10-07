@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="72b13635e191e822379c2bb1976e4693" Name="JumpPad" Mobility="Static">
+  <Component Type="Render" Version="4">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/Bricks.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="2" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Mass Value="0" />
+    <Friction Value="0.5" />
+    <Restitution Value="0" />
+    <LinearDamping Value="0.05" />
+    <AngularDamping Value="0.05" />
+    <GravityFactor Value="1" />
+    <Continuous Value="false" />
+    <Sensor Value="true" />
+    <AllowSleeping Value="true" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+    <InitialLinearVelocity X="0" Y="0" Z="0" />
+    <InitialAngularVelocity X="0" Y="0" Z="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="15" Z="-1350" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="300" Y="30" Z="300" />
+  </Component>
+</Entity>

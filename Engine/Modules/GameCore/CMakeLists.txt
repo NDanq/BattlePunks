@@ -169,6 +169,9 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/Components/BoundsComponent.cpp
         Source/Private/GameCore/Components/CollisionComponent.cpp
         Source/Private/GameCore/Components/NetComponent.cpp
+        Source/Private/GameCore/Components/RigidBodyComponent.cpp
+        Source/Private/GameCore/Components/PhysicsConstraintComponent.cpp
+        Source/Private/GameCore/Components/VehicleComponent.cpp
         Source/Private/GameCore/Delegate.cpp
         Source/Private/GameCore/EventBus.cpp
         Source/Private/GameCore/TickPhase.cpp
@@ -213,6 +216,9 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/Components/BoundsComponent.h
         Source/Public/GameCore/Components/CollisionComponent.h
         Source/Public/GameCore/Components/NetComponent.h
+        Source/Public/GameCore/Components/RigidBodyComponent.h
+        Source/Public/GameCore/Components/PhysicsConstraintComponent.h
+        Source/Public/GameCore/Components/VehicleComponent.h
         Source/Public/GameCore/TransformMath.h
         Source/Public/GameCore/ScriptEngine.h
         Source/Public/GameCore/ComponentSerializer.h

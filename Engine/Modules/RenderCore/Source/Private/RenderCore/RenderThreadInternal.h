@@ -62,6 +62,10 @@ namespace RenderCore
         float IdleMs         = 0.0f;   // ... between frames: the host's loop, a frame timer
         bool  bShow          = false;   // Stats.Unit
         bool  bShowFrame     = false;   // Stats.Frame
+
+        /* Renderer::SetStatText's sections, joined, drawn below the rest:
+         * other modules' stats ("stat physics"). Empty: none. */
+        std::string Extra;
     };
     void             SetStatUnit(const StatUnitSnapshot& InSnapshot);
     RENDERCORE_API StatUnitSnapshot GetStatUnit();
