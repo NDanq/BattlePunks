@@ -28,7 +28,8 @@ namespace EngineCore { class ConfigVar; }
  * refreshes the staged copy; without a game, the staged copy. Line-by-line
  * (ConfigIniFile), changed values only.
  *
- * Pages: Project (title, module, start level, startup script); one per
+ * Pages: Project (title, module, start level, startup script, and the
+ * optional engine modules -- [Modules], build-time); one per
  * config section (registered vars, outside [Editor], with reset; keys set
  * in the file shown bold); and unregistered keys as text.
  *
@@ -60,7 +61,12 @@ private:
     void     BuildSectionPages();
     QWidget* AddPage(const QString& InName, QFormLayout*& OutForm);
     void     AddRow(QFormLayout* InForm, const QString& InSection, const QString& InKey, const QString& InLabel);
-    void     Apply();
+    /* False if the dialog should stay open: a module change not confirmed,
+     * or the file could not be written. */
+    bool     Apply();
+    /* Optional module switches changed: asks whether to save them, as they
+     * need a native recompile. False (and the switches put back) if not. */
+    bool     ConfirmModuleChanges();
     void     UpdateLabel(const Row& InRow);
 
     ConfigIniFile     File;

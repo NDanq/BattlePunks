@@ -22,6 +22,7 @@
 #include "Public/GameCore/Prefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
+#include "Public/NimbleEngine/GameSession.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderComponents.h"
 #include "Private/Editor/EditorHistory.h"
@@ -159,6 +160,10 @@ bool EditorDocument::LoadWorld(const QString& InPath, bool* OutbCooked)
         return false;
     }
     if(OutbCooked) { *OutbCooked = Format == GameCore::EWorldFileFormat::Binary; }
+
+    /* Physics or networking components this build cannot run: they edit and
+     * save as ever, but Play will not simulate or replicate them. */
+    NimbleEngine::WarnInactiveModuleComponents(*EditedWorld, Path.constData());
 
     QueueEntitiesChanged();
     return true;

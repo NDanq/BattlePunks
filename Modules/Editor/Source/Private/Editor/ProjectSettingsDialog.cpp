@@ -50,6 +50,13 @@ namespace
         { "Scripting",   "StartupScript", "Startup script" },
     };
 
+    /* Also on the Project page, under their own heading: build-time switches
+     * (Engine/cmake/NimbleProject.cmake reads them as the game configures). */
+    const ProjectKey ModuleKeys[] = {
+        { "Modules", "NetCore",     "Networking (NetCore)" },
+        { "Modules", "JoltPhysics", "Physics (JoltPhysics)" },
+    };
+
     /* Ints that are really a choice. The same numbering as DefaultEngine.ini's
      * comments; a value the list lacks still shows, as Other. */
     struct IntChoice
@@ -107,6 +114,12 @@ namespace
           "usually looks the same and costs less" },
         { "Shadows", "DistanceScale",     "Sun shadow distance scale",
           "Multiplies every Directional Light's Shadow Distance: lower is sharper and shorter" },
+        { "Modules", "NetCore",           "Networking (NetCore)",
+          "Build the game with networking: replication, RPCs, its dedicated server (<Game>Server) and -connect. "
+          "Off, Net components load but do not replicate. Takes effect at the game's next build" },
+        { "Modules", "JoltPhysics",       "Physics (JoltPhysics)",
+          "Build the game with rigid-body physics on Jolt: Rigid Body and Physics Constraint components simulate. "
+          "Off, they load but do not move. Takes effect at the game's next build" },
     };
 
     bool Same(const QString& InA, const char* InB);
@@ -128,6 +141,18 @@ namespace
         return InA.compare(QLatin1String(InB), Qt::CaseInsensitive) == 0;
     }
 
+    bool IsModuleKey(const QString& InSection, const QString& InKey)
+    {
+        for(const ProjectKey& P : ModuleKeys)
+        {
+            if(Same(InSection, P.Section) && Same(InKey, P.Key))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool IsProjectKey(const QString& InSection, const QString& InKey)
     {
         for(const ProjectKey& P : ProjectKeys)
@@ -137,8 +162,10 @@ namespace
                 return true;
             }
         }
-        return false;
+        return IsModuleKey(InSection, InKey);
     }
+
+    QString OnOff(const bool bInOn) { return bInOn ? QStringLiteral("on") : QStringLiteral("off"); }
 
     const ChoiceList* FindChoices(const QString& InSection, const QString& InKey)
     {
@@ -214,8 +241,11 @@ ProjectSettingsDialog::ProjectSettingsDialog(QWidget* InParent)
     connect(Buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect(Buttons, &QDialogButtonBox::accepted, this, [this]()
     {
-        Apply();
-        accept();
+        /* Stays open if a module change was not confirmed. */
+        if(Apply())
+        {
+            accept();
+        }
     });
     connect(Buttons->button(QDialogButtonBox::Apply), &QPushButton::clicked, this, &ProjectSettingsDialog::Apply);
     Layout->addWidget(Buttons);
@@ -249,6 +279,21 @@ void ProjectSettingsDialog::BuildProjectPage()
     QWidget*     Page = AddPage(QString::fromLatin1(ProjectPageName), Form);
 
     for(const ProjectKey& P : ProjectKeys)
+    {
+        AddRow(Form, QString::fromLatin1(P.Section), QString::fromLatin1(P.Key), QString::fromLatin1(P.Label));
+    }
+
+    /* The optional engine modules: [Modules], read by CMake, so a build
+     * applies them -- this editor has what it was built with. */
+    auto* ModulesTitle = new QLabel(QStringLiteral("<br><b>Modules</b>"), Page);
+    Form->addRow(ModulesTitle);
+    auto* ModulesNote = new QLabel(QStringLiteral(
+        "Optional engine modules the game builds with. A change applies at the game's next build, which "
+        "re-configures from this file: close the editor, build, and start it again. This editor was built "
+        "with networking %1 and physics %2.").arg(OnOff(WITH_NETCORE != 0), OnOff(WITH_JOLTPHYSICS != 0)), Page);
+    ModulesNote->setWordWrap(true);
+    Form->addRow(ModulesNote);
+    for(const ProjectKey& P : ModuleKeys)
     {
         AddRow(Form, QString::fromLatin1(P.Section), QString::fromLatin1(P.Key), QString::fromLatin1(P.Label));
     }
@@ -467,10 +512,62 @@ void ProjectSettingsDialog::UpdateLabel(const Row& InRow)
     InRow.Label->setFont(Font);
 }
 
-void ProjectSettingsDialog::Apply()
+bool ProjectSettingsDialog::ConfirmModuleChanges()
 {
+    QStringList Edits;
+    for(const Row& R : Rows)
+    {
+        const QString Text = R.Read();
+        if(Text == R.Baseline || !IsModuleKey(R.Section, R.Key))
+        {
+            continue;
+        }
+        const bool bOn = Text == QStringLiteral("true");
+        Edits << QStringLiteral("%1: %2").arg(R.Label->text(), bOn ? QStringLiteral("compiled in") : QStringLiteral("compiled out"));
+    }
+    if(Edits.isEmpty())
+    {
+        return true;
+    }
+
+    QMessageBox Box(QMessageBox::Warning, windowTitle(),
+                    QStringLiteral("Changing optional modules requires native recompilation."), QMessageBox::NoButton, this);
+    Box.setInformativeText(
+        QStringLiteral("%1\n\nThe engine and the game are rebuilt with %2: close the editor, build the project "
+                       "(it re-configures from %3), and start the editor again. Until then, the editor and Play keep "
+                       "the modules this build has.")
+        .arg(Edits.join(QLatin1Char('\n')), Edits.size() == 1 ? QStringLiteral("the module compiled in or out")
+                                                                : QStringLiteral("the modules compiled in or out"),
+             QDir::toNativeSeparators(FilePath)));
+    QPushButton* Save = Box.addButton(QStringLiteral("Save and Recompile Later"), QMessageBox::AcceptRole);
+    QPushButton* Cancel = Box.addButton(QMessageBox::Cancel);
+    Box.setDefaultButton(Cancel);
+    Box.exec();
+    if(Box.clickedButton() == Save)
+    {
+        return true;
+    }
+
+    /* Not confirmed: the switches go back to what the file says. */
+    for(Row& R : Rows)
+    {
+        if(IsModuleKey(R.Section, R.Key) && R.Read() != R.Baseline)
+        {
+            R.Show(R.Baseline);
+        }
+    }
+    return false;
+}
+
+bool ProjectSettingsDialog::Apply()
+{
+    /* A module switch is a native rebuild, not a setting: asked first. Other
+     * changes apply either way. */
+    const bool bModulesConfirmed = ConfirmModuleChanges();
+
     QStringList Changed;
     QStringList Rejected;
+    QStringList ModulesChanged;
     for(Row& R : Rows)
     {
         const QString Text = R.Read();
@@ -493,6 +590,10 @@ void ProjectSettingsDialog::Apply()
         R.bInFile  = true;
         UpdateLabel(R);
         Changed << QStringLiteral("%1 = %2").arg(Path, Text);
+        if(IsModuleKey(R.Section, R.Key))
+        {
+            ModulesChanged << QStringLiteral("%1 = %2").arg(Path, Text);
+        }
     }
 
     if(!Rejected.isEmpty())
@@ -502,7 +603,7 @@ void ProjectSettingsDialog::Apply()
     }
     if(Changed.isEmpty())
     {
-        return;
+        return bModulesConfirmed;
     }
 
     if(!File.Save(FilePath))
@@ -511,13 +612,19 @@ void ProjectSettingsDialog::Apply()
         QMessageBox::warning(this, windowTitle(),
                              QStringLiteral("The settings apply to this session, but could not be saved to\n%1\n\n%2")
                              .arg(QDir::toNativeSeparators(FilePath), File.GetError()));
-        return;
+        return false;
     }
     for(const QString& Line : Changed)
     {
         CORE_LOG("[Editor] project settings: " + ToStd(Line))
     }
     CORE_LOG("[Editor] project settings saved to " + ToStd(FilePath))
+
+    if(!ModulesChanged.isEmpty())
+    {
+        CORE_LOG_WARN("[Editor] project settings: " + ToStd(ModulesChanged.join(QStringLiteral(", ")))
+                      + " -- a native recompile applies it: close the editor and build the project")
+    }
 
     /* The staged copy too, so the next Play and the next launch see the
      * change before any build copies it across. */
@@ -531,6 +638,7 @@ void ProjectSettingsDialog::Apply()
                           + "; the next build will")
         }
     }
+    return bModulesConfirmed;
 }
 
 #endif // WITH_EDITOR

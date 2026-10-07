@@ -3,6 +3,7 @@
 #include "Public/Editor/EditorMainWindow.h"
 
 #include <algorithm>
+#include <iterator>
 
 #include <QAction>
 #include <QActionGroup>
@@ -1587,30 +1588,39 @@ void EditorMainWindow::RegisterConsoleCommands()
 
     /* Unreal's spelling: "stat unit" toggles the frame, game and render
      * thread times (Stats.Unit), "stat frame" each stage's GPU time
-     * (Stats.Frame); "stat none" hides both. */
-    Console.Register(QStringLiteral("stat"), QStringLiteral("unit | frame | none"),
-                     QStringLiteral("Show thread times (unit) or each render stage's GPU time (frame) over the viewport"),
+     * (Stats.Frame), "stat physics" the playing level's simulation
+     * (Stats.Physics, GameSession); "stat none" hides them all. */
+    Console.Register(QStringLiteral("stat"), QStringLiteral("unit | frame | physics | none"),
+                     QStringLiteral("Show thread times (unit), each render stage's GPU time (frame) or the "
+                                    "physics simulation while playing (physics) over the viewport"),
                      [this](const QStringList& InArgs)
     {
-        EngineCore::ConfigVar* Unit  = EngineCore::ConfigFindVar("Stats", "Unit");
-        EngineCore::ConfigVar* Frame = EngineCore::ConfigFindVar("Stats", "Frame");
+        static const char* const Names[] = { "unit", "frame", "physics" };
+        static const char* const Vars[]  = { "Unit", "Frame", "Physics" };
         const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
-        if(!Unit || !Frame
-           || (Which != QStringLiteral("unit") && Which != QStringLiteral("frame") && Which != QStringLiteral("none")))
-        {
-            Console.PrintError(QStringLiteral("Usage: stat unit | frame | none"));
-            return;
-        }
         if(Which == QStringLiteral("none"))
         {
-            Unit->SetBool(false);
-            Frame->SetBool(false);
+            for(const char* Var : Vars)
+            {
+                if(EngineCore::ConfigVar* Found = EngineCore::ConfigFindVar("Stats", Var)) { Found->SetBool(false); }
+            }
             Console.Print(QStringLiteral("stats hidden"));
             return;
         }
-        EngineCore::ConfigVar* Var = Which == QStringLiteral("unit") ? Unit : Frame;
-        Var->SetBool(!Var->GetBool());
-        Console.Print(QStringLiteral("stat %1: %2").arg(Which, Var->GetBool() ? QStringLiteral("on") : QStringLiteral("off")));
+        for(size_t Index = 0; Index < std::size(Names); ++Index)
+        {
+            if(Which != QLatin1String(Names[Index])) { continue; }
+            EngineCore::ConfigVar* Var = EngineCore::ConfigFindVar("Stats", Vars[Index]);
+            if(!Var) { break; }
+            Var->SetBool(!Var->GetBool());
+            Console.Print(QStringLiteral("stat %1: %2").arg(Which, Var->GetBool() ? QStringLiteral("on") : QStringLiteral("off")));
+            if(Which == QStringLiteral("physics") && Var->GetBool() && !Context.IsPlaying())
+            {
+                Console.Print(QStringLiteral("(shown while playing: the edited world is not simulated)"));
+            }
+            return;
+        }
+        Console.PrintError(QStringLiteral("Usage: stat unit | frame | physics | none"));
     });
 
     Console.Register(QStringLiteral("undo"), QStringLiteral("[count]"), QStringLiteral("Undo the last change (Ctrl+Z)"),

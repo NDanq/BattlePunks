@@ -4,6 +4,8 @@
 #include <chrono>
 #include <cstring>
 #include <iterator>
+#include <map>
+#include <string>
 #include <type_traits>
 #include <cstdio>
 #include <vector>
@@ -119,6 +121,9 @@ namespace RenderCore
         double  SumFrame = 0.0, SumGame = 0.0, SumRender = 0.0, SumWait = 0.0, SumPresent = 0.0, SumIdle = 0.0;
         int     Samples  = 0;
 
+        /* SetStatText's sections, by name: published with every frame's snapshot. */
+        std::map<std::string, std::string> StatSections;
+
         /* Adds this frame to the window; publishes the averages every half second. */
         void NoteFrameTimes(const int64_t InEndNs)
         {
@@ -146,6 +151,11 @@ namespace RenderCore
             StatUnitSnapshot Unit = GetStatUnit();
             Unit.bShow      = GStatsUnit.GetBool();
             Unit.bShowFrame = GStatsFrame.GetBool();
+            Unit.Extra.clear();
+            for(const auto& [Name, Text] : StatSections)
+            {
+                Unit.Extra += (Unit.Extra.empty() ? "" : "\n\n") + Name + "\n" + Text;
+            }
             if(Samples > 0 && InEndNs - WindowStartNs >= 500'000'000)
             {
                 Unit.FrameMs        = float(SumFrame / Samples / 1.0e6);
@@ -891,6 +901,13 @@ namespace RenderCore
     {
         const RendererScene* Found = P->Find(InScene);
         return Found && Found->Scene ? Found->Scene->GetViewableTargets() : std::vector<std::string>();
+    }
+
+    void Renderer::SetStatText(const char* InName, const std::string& InText)
+    {
+        const std::string Name = InName ? InName : "";
+        if(InText.empty()) { P->StatSections.erase(Name); }
+        else               { P->StatSections[Name] = InText; }
     }
 
     void Renderer::GetStats(RenderStats& OutStats) const

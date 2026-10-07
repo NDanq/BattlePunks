@@ -3,6 +3,8 @@
 #include "Private/Editor/EditorEditActions.h"
 #include "Private/Editor/Prefab/PrefabEditorTab.h"
 
+#include <algorithm>
+#include <cstdio>
 #include <QAction>
 #include <QComboBox>
 #include <QDir>
@@ -26,9 +28,13 @@
 #include "Public/Editor/OutlinerPanel.h"
 #include "Public/Editor/ViewportPanel.h"
 #include "Public/Editor/ViewportWidget.h"
+#include "Public/GameCore/Components.h"
+#include "Public/GameCore/Entity.h"
 #include "Public/GameCore/ScriptEngine.h"
 #include "Public/GameCore/World.h"
+#include "Public/NimbleEngine/PhysicsFacade.h"
 #include "Public/NodeGraph/GraphFile.h"
+#include "Public/RenderCore/RenderComponents.h"
 #include "Public/NodeGraph/Schema.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/Prefab/PrefabAssets.h"
@@ -455,6 +461,84 @@ void PrefabEditorTab::SetScriptPath(const QString& InRuntimePath)
 
 // === Simulate ==================================================================
 
+namespace
+{
+    /* LowestPoint's walk: every entity's box (its Bounds, else its Render
+     * mesh's) through its world pose. */
+    struct LowestWalk
+    {
+        GameCore::World* World  = nullptr;
+        double           Lowest = 0.0;
+        bool             bFound = false;
+    };
+
+    /* The lowest point anything in InWorld reaches, or 0 if nothing has a box. */
+    double LowestPoint(GameCore::World& InWorld)
+    {
+        LowestWalk Walk;
+        Walk.World = &InWorld;
+        InWorld.ForEachEntity([](const GameCore::EntityID InEntity, void* InUserData)
+        {
+            auto& Walk = *static_cast<LowestWalk*>(InUserData);
+            const GameCore::Entity Entity = Walk.World->GetEntity(InEntity);
+            GameCore::AABB Local;
+            if(const auto* Bounds = Entity.GetComponent<GameCore::BoundsComponent>())
+            {
+                Local = Bounds->Local;
+            }
+            else
+            {
+                const GameCore::CollisionMeshProvider* Provider = GameCore::GetCollisionMeshProvider();
+                const char* Mesh = Provider ? Provider->GetMeshPath(*Walk.World, InEntity, Provider->UserData) : nullptr;
+                if(!Mesh || !Provider->GetMeshBounds(Mesh, Local, Provider->UserData)) { return; }
+            }
+            if(Local.IsEmpty()) { return; }
+
+            const GameCore::TransformPose Pose = Entity.GetWorldPose();
+            const GameCore::Rotation3 Turn = GameCore::TransformMath::EulerToRotation(Pose.Rotation);
+            for(int Corner = 0; Corner < 8; ++Corner)
+            {
+                const EngineCore::Vector3 Point(double((Corner & 1) ? Local.Max.GetX() : Local.Min.GetX()) * Pose.Scale.GetX(),
+                                                double((Corner & 2) ? Local.Max.GetY() : Local.Min.GetY()) * Pose.Scale.GetY(),
+                                                double((Corner & 4) ? Local.Max.GetZ() : Local.Min.GetZ()) * Pose.Scale.GetZ());
+                const double Y = double((Pose.Position + Turn * Point).GetY());
+                Walk.Lowest = Walk.bFound ? std::min(Walk.Lowest, Y) : Y;
+                Walk.bFound = true;
+            }
+        }, &Walk);
+        return Walk.bFound ? Walk.Lowest : 0.0;
+    }
+
+    /* Something for the prefab's bodies to land on: a large static Plane at
+     * the prefab's lowest point, drawn so it is clear what they rest on.
+     * Simulate's World only: never part of the prefab. */
+    void SpawnSimulationGround(GameCore::World& InWorld)
+    {
+        const GameCore::Entity Ground = InWorld.CreateEntity("Simulation Ground");
+        GameCore::TransformComponent Transform;
+        Transform.Position = EngineCore::Vector3(0.0, LowestPoint(InWorld), 0.0);
+        Transform.Scale    = EngineCore::Vector3(4000.0, 1.0, 4000.0);
+        Ground.AddComponent(Transform);
+
+        RenderCore::RenderComponent Render;
+        std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", "Engine/Content/Meshes/Plane.nmmesh");
+        Render.bCastShadows = 0;
+        Ground.AddComponent(Render);
+
+        GameCore::RigidBodyComponent Body;
+        Body.Motion = GameCore::RBM_Static;
+        Ground.AddComponent(Body);
+        Ground.SetMobility(GameCore::EMobility::Static);
+    }
+
+    bool HasRigidBodies(GameCore::World& InWorld)
+    {
+        bool bAny = false;
+        InWorld.Each<GameCore::RigidBodyComponent>([&bAny](GameCore::Entity, GameCore::RigidBodyComponent&) { bAny = true; });
+        return bAny;
+    }
+}
+
 void PrefabEditorTab::StartSimulation()
 {
     if(IsSimulating())
@@ -489,6 +573,22 @@ void PrefabEditorTab::StartSimulation()
     }
     SimWorld->SpawnPrefab(Snapshot);
 
+    /* Rigid Bodies simulate here as they would in a level, on a ground of
+     * their own. Without the physics module they stay put. */
+    bSimPhysics = false;
+    if(HasRigidBodies(*SimWorld))
+    {
+        if(NimbleEngine::IsPhysicsAvailable())
+        {
+            SpawnSimulationGround(*SimWorld);
+            bSimPhysics = NimbleEngine::StartSimulating(*SimWorld);
+        }
+        else
+        {
+            CORE_LOG_WARN("[Prefab] its Rigid Bodies will not move: JoltPhysics is not compiled in (Project Settings > Modules)")
+        }
+    }
+
     Document->BorrowWorld(SimWorld);
     Context.BindDocumentScene(*Document);
     connect(&Context, &EditorContext::BeforeFrame, this, [this](const double InDeltaSeconds)
@@ -496,7 +596,8 @@ void PrefabEditorTab::StartSimulation()
         if(SimWorld) { SimWorld->Tick(float(InDeltaSeconds)); }
     });
 
-    CORE_LOG("[Prefab] simulating " + std::string(QFileInfo(Path).fileName().toUtf8().constData()))
+    CORE_LOG("[Prefab] simulating " + std::string(QFileInfo(Path).fileName().toUtf8().constData())
+             + (bSimPhysics ? " with physics" : ""))
     UpdateSimulationControls();
 }
 
@@ -514,6 +615,11 @@ void PrefabEditorTab::StopSimulation()
     Context.UnbindDocumentScene(*Document);
     Document->DropBorrowedWorld();
 
+    if(bSimPhysics)
+    {
+        NimbleEngine::StopSimulating(*SimWorld);
+        bSimPhysics = false;
+    }
     SimScripts->UnbindWorld();
     SimScripts->Shutdown();
     delete SimScripts;

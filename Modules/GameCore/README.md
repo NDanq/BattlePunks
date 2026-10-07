@@ -58,7 +58,9 @@ Engine/Modules/GameCore/
 |   |   |                           prefab instances, the script driver slot, spatial queries, delegates
 |   |   |-- Entity.h                header-only handle: World* + EntityID; components, name, parent
 |   |   |-- Components.h            includes every built-in component header below
-|   |   |-- Components/             TransformComponent.h, BoundsComponent.h, CollisionComponent.h
+|   |   |-- Components/             TransformComponent.h, BoundsComponent.h, CollisionComponent.h,
+|   |   |                           NetComponent.h, RigidBodyComponent.h, PhysicsConstraintComponent.h,
+|   |   |                           VehicleComponent.h
 |   |   |-- ComponentSerializer.h   ComponentArchive (named fields), the serializer macro and registry
 |   |   |-- WorldSerializer.h       SerializeWorld: the binary world (cooked data, save games)
 |   |   |-- WorldPackage.h          .nmworld files: text package save/load, cooking, format detection
@@ -476,6 +478,43 @@ Sandbox has one example of each:
 - **Script graph:** pickups collected on *On Overlap Begin*, in `Scripts/Pickup.script.nmgraph`.
 
 Layers are in `SandboxLayers`.
+
+---
+
+## Physics
+
+A `RigidBodyComponent` ("Rigid Body") makes an entity a simulated body. A
+`PhysicsConstraintComponent` ("Physics Constraint") joins two bodies, or a body
+to the world. A `VehicleComponent` ("Vehicle") makes a Rigid Body a wheeled
+vehicle, its wheels being child entities. Both are data only. The simulation is
+`Engine/Modules/JoltPhysics`, an opt-in engine module
+(`NIMBLE_WITH_JOLTPHYSICS`). Without it they load, save and edit as usual, but
+nothing moves, and the engine warns when a level has any. They live here,
+like `NetComponent`, so that turning the module off loses no data.
+
+```cpp
+GameCore::RigidBodyComponent Body;          // Dynamic; shape Auto: from the Render mesh, else the Bounds
+Body.Restitution = 0.8f;
+Crate.AddComponent(Body);
+Crate.GetComponent<GameCore::RigidBodyComponent>()->AddImpulse(EngineCore::Vector3(0.0, 5000.0, 0.0));
+```
+
+**Methods record, the module applies.** `AddImpulse`, `AddForce` and
+`SetLinearVelocity` write fields that the next physics step reads and clears.
+Nothing is called across images. `LinearVelocity`, `AngularVelocity` and
+`IsAwake()` are as of the last step.
+
+**Shapes come from the entity.** The CS_Mesh collider's
+`CollisionMeshProvider` hands out the mesh bounds, and now the mesh triangles
+too (`GetMeshGeometry`, `GetCollisionMeshProvider()`). The module builds the
+body's shape from them. The rules are in `RigidBodyComponent.h` and the
+module's README.
+
+Lua and script graphs get each component's fields and methods
+(`GetLinearVelocity`, `AddImpulse`, `SetMotion("Kinematic")`...). The
+`Physics` script library has `Raycast` and the `ContactBegin` / `ContactEnd` /
+`SensorEnter` / `SensorExit` events. A prefab script can define
+`OnContactBegin(self, other, mine)` and the rest.
 
 ---
 

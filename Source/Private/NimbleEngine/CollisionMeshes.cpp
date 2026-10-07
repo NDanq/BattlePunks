@@ -1,4 +1,5 @@
 #include <map>
+#include <memory>
 #include <string>
 
 #include "Public/Core/CoreLog.h"
@@ -18,6 +19,10 @@
  *
  * Headers are cached by path, failures too (warned once): a collider whose
  * mesh never changes reads its file once.
+ *
+ * GetMeshGeometry (the physics module's hulls and triangle meshes) hands out
+ * the vertices of RenderCore's MeshAssetCache, keeping each mesh it gave out
+ * alive here for the life of the process, so the pointers never dangle.
  */
 namespace
 {
@@ -61,6 +66,42 @@ namespace
         return true;
     }
 
+    std::map<std::string, std::shared_ptr<const RenderCore::MeshData>>& Geometry()
+    {
+        static std::map<std::string, std::shared_ptr<const RenderCore::MeshData>> Entries;
+        return Entries;
+    }
+
+    bool GetMeshGeometry(const char* InPath, const float*& OutPositions, uint32_t& OutVertexCount,
+                         const uint32_t*& OutIndices, uint32_t& OutIndexCount, void*)
+    {
+        const std::string Path = InPath ? InPath : "";
+        if(Path.empty()) { return false; }
+
+        auto Found = Geometry().find(Path);
+        if(Found == Geometry().end())
+        {
+            std::shared_ptr<const RenderCore::MeshData> Mesh = RenderCore::MeshAssetCache::Find(Path);
+            if(Mesh && (Mesh->Positions.size() < 9 || Mesh->Indices.size() < 3))
+            {
+                Mesh.reset();
+            }
+            if(!Mesh)
+            {
+                CORE_LOG_WARN("[Collision] no triangles in '" + Path + "'; shapes needing them use its bounds")
+            }
+            Found = Geometry().emplace(Path, Mesh).first;
+        }
+        if(!Found->second) { return false; }
+
+        const RenderCore::MeshData& Mesh = *Found->second;
+        OutPositions   = Mesh.Positions.data();
+        OutVertexCount = uint32_t(Mesh.Positions.size() / 3);
+        OutIndices     = Mesh.Indices.data();
+        OutIndexCount  = uint32_t(Mesh.Indices.size());
+        return true;
+    }
+
     struct CollisionMeshRegistrar
     {
         CollisionMeshRegistrar()  { NimbleEngine::InstallCollisionMeshProvider(); }
@@ -76,6 +117,7 @@ namespace NimbleEngine
         GameCore::CollisionMeshProvider Provider;
         Provider.GetMeshPath   = &GetMeshPath;
         Provider.GetMeshBounds = &GetMeshBounds;
+        Provider.GetMeshGeometry = &GetMeshGeometry;
         GameCore::SetCollisionMeshProvider(&Provider);
     }
 }

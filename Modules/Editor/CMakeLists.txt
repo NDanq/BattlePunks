@@ -300,6 +300,7 @@ if(NIMBLEEDITOR_BUILD_TESTS)
     target_include_directories(NimbleEditorDocumentTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/Source)
     target_link_libraries(NimbleEditorDocumentTests PRIVATE
             RenderCore::RenderCore
+            NimbleEngine::NimbleEngine   # WarnInactiveModuleComponents on world open
             Qt6::Core
             Qt6::Gui
     )
