@@ -172,7 +172,7 @@ namespace
             Ar << GuidHi << GuidLo;
 
             std::string Name(Handle.GetName());
-            uint8_t     Mobility = uint8_t(Handle.GetMobility());
+            uint8_t     Mobility = uint8_t(Handle.GetAuthoredMobility());
             Ar << Name << Mobility;
         }
 

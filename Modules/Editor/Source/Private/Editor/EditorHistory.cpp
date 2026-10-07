@@ -313,7 +313,7 @@ namespace EditorHistory
         EntityMembers Members;
         const GameCore::Entity E = InWorld.GetEntity(InEntity);
         Members.Name     = E.GetName();
-        Members.Mobility = E.GetMobility();
+        Members.Mobility = E.GetAuthoredMobility();
         return Members;
     }
 

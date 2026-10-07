@@ -456,7 +456,7 @@ bool CapturePrefab(World& InWorld, const EntityID InRoot, PrefabAsset& InOutAsse
         Data.LocalId  = Ids[Index];
         Data.ParentId = Index == 0 ? PREFAB_NO_LOCAL_ID : ToLocal[E.GetParent().Pack()];
         Data.Name     = E.GetName();
-        Data.Mobility = E.GetMobility();
+        Data.Mobility = E.GetAuthoredMobility();
 
         for(ComponentTypeID Type = 0; Type < COMPONENT_TYPE_MAX; ++Type)
         {

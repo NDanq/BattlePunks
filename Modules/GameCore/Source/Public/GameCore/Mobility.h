@@ -15,7 +15,9 @@ namespace GameCore
      *            not refitted once in the spatial index, two static
      *            entities are never tested for overlap, a prefab instance
      *            whose root is static gets no phase ticks (events still
-     *            arrive, as EventsOnly), and the renderer keeps its draws in
+     *            arrive, as EventsOnly) and its dynamic members read as
+     *            static too (World::GetEntityMobility; what is saved is
+     *            each entity's own, GetEntityAuthoredMobility), and the renderer keeps its draws in
      *            a cached static list instead of rebuilding them each frame
      *            (RenderCore's RENDERPIPELINE.md, "Static draw lists").
      *            With baked lighting on (WorldSettings.h), a static light or
