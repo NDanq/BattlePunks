@@ -6,6 +6,7 @@
 #include "Public/GameCore/ComponentProperties.h"
 #endif
 #include "Public/GameCore/ComponentSerializer.h"
+#include "Public/GameCore/ScriptLibrary.h"
 
 #include "Public/RenderCore/AnimationSystem.h"
 
@@ -163,7 +164,8 @@ namespace RenderCore
             Call.PushBool(C.GetBool(Name));
         }, "Name:string -> Value:bool");
 
-        /* Where InBone is in the world now: its position, or Found false. */
+        /* Where InBone is in the world now: its position (three values in
+         * Lua, a Vector3 pin in a graph), or Found false. */
         Bind.Pure("GetBoneLocation", [](AnimationComponent& C, GameCore::ScriptCall& Call)
         {
             const char* Bone = Call.GetString(1);
@@ -173,7 +175,27 @@ namespace RenderCore
             const bool bFound = System && System->GetBoneWorldPose(C.Owner.Entity, Bone, Pose);
             Call.PushVector3(bFound ? Pose.Position : EngineCore::Vector3());
             Call.PushBool(bFound);
-        }, "Bone:string -> X:number, Y:number, Z:number, Found:bool");
+        }, "Bone:string -> Location:Vector3, Found:bool");
+
+        /* The state a layer is in (0: the base layer); "" for a lone clip. */
+        Bind.Pure("GetState", [](AnimationComponent& C, GameCore::ScriptCall& Call)
+        {
+            const int32_t Layer = Call.HasArg(1) ? Call.GetInt(1) : 0;
+            if(Call.HasError()) { return; }
+            AnimationSystem* System = AnimationSystem::Find(C.Owner.OwningWorld);
+            const AnimInstance* Instance = System ? System->FindInstance(C.Owner.Entity) : nullptr;
+            Call.PushString(Instance && Layer >= 0 ? Instance->GetCurrentStateName(size_t(Layer)) : "");
+        }, "Layer:integer -> State:string");
+
+        /* Whether a layer is still crossfading into its state. */
+        Bind.Pure("IsInTransition", [](AnimationComponent& C, GameCore::ScriptCall& Call)
+        {
+            const int32_t Layer = Call.HasArg(1) ? Call.GetInt(1) : 0;
+            if(Call.HasError()) { return; }
+            AnimationSystem* System = AnimationSystem::Find(C.Owner.OwningWorld);
+            const AnimInstance* Instance = System ? System->FindInstance(C.Owner.Entity) : nullptr;
+            Call.PushBool(Instance && Layer >= 0 && Instance->IsInTransition(size_t(Layer)));
+        }, "Layer:integer -> Blending:bool");
 
         /* The clip's playhead in seconds (an anim state's: its first layer's state). */
         Bind.Pure("GetTime", [](AnimationComponent& C, GameCore::ScriptCall& Call)
@@ -184,6 +206,23 @@ namespace RenderCore
         }, "-> Seconds:number");
     }
 
+}
+
+/*
+ * The animation events, typed: script graphs get On AnimNotify and On
+ * AnimEnded nodes with these outputs (Lua keeps Events.On). The animation
+ * system emits them (AnimationSystem.h); a game may emit them too.
+ */
+GAMECORE_DEFINE_SCRIPT_LIBRARY(Animation)
+{
+    Lib.Event("AnimNotify", "Entity:Entity, Name:string")
+       .Tooltip("A clip of the entity's animation passed a notify (mesh viewer, Clip > Notifies)");
+    Lib.Event("AnimEnded", "Entity:Entity, State:string, Layer:integer")
+       .Tooltip("A state that plays once ended (State \"\" for a lone clip); Layer 0 is the base");
+}
+
+namespace RenderCore
+{
 #if WITH_EDITOR
     GAMECORE_DEFINE_COMPONENT_PROPERTIES(AnimationComponent)
     {
