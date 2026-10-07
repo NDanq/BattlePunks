@@ -11,6 +11,7 @@
 #include <QUrl>
 
 #include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/ParticleSystemAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
@@ -223,6 +224,7 @@ namespace EditorContent
             RenderCore::ParticleSystemCache::Invalidate(Runtime.toStdString());
             RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
         }
     }
 
@@ -242,6 +244,7 @@ namespace EditorContent
             RenderCore::ParticleSystemCache::Invalidate(Runtime.toStdString());
             RenderCore::SkeletonAssetCache::Invalidate(Runtime.toStdString());
             RenderCore::AnimClipAssetCache::Invalidate(Runtime.toStdString());
+            RenderCore::AnimStateAssetCache::Invalidate(Runtime.toStdString());
         }
     }
 }

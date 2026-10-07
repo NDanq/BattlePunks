@@ -79,6 +79,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/SkeletonAsset.cpp
         Source/Private/RenderCore/AnimClipAsset.cpp
         Source/Private/RenderCore/AnimPose.cpp
+        Source/Private/RenderCore/AnimStateAsset.cpp
         Source/Private/RenderCore/AnimInstance.cpp
         Source/Private/RenderCore/AnimationSystem.cpp
         Source/Private/RenderCore/Components/AnimationComponent.cpp
@@ -112,6 +113,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/SkeletonAsset.h
         Source/Public/RenderCore/AnimClipAsset.h
         Source/Public/RenderCore/AnimPose.h
+        Source/Public/RenderCore/AnimStateAsset.h
         Source/Public/RenderCore/AnimInstance.h
         Source/Public/RenderCore/AnimationSystem.h
         Source/Public/RenderCore/Components/AnimationComponent.h

@@ -19,6 +19,7 @@
 #include "Public/RenderCore/AnimationSystem.h"
 #include "Public/RenderCore/AnimInstance.h"
 #include "Public/RenderCore/AnimPose.h"
+#include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
@@ -235,12 +236,199 @@ static void TestSystem()
     Expect(AnimationSystem::Find(&World) == nullptr, "the last detach removes the system");
 }
 
+/* A clip that turns InBone 0 -> InDegrees about Z over one second; constant at 0 if InDegrees is 0. */
+static AnimClipData MakeTurn(const char* InBone, const float InTranslationX, const float InDegrees, const bool bInLoop)
+{
+    AnimClipData Clip;
+    Clip.SampleRate = 30.0f;
+    Clip.FrameCount = 31;
+    Clip.bLoop      = bInLoop;
+    AnimTrack Track;
+    Track.Bone = InBone;
+    Track.Translations.push_back({ InTranslationX, 0.0f, 0.0f });
+    Track.Scales.push_back({ 1.0f, 1.0f, 1.0f });
+    for(uint32_t Frame = 0; Frame < (InDegrees != 0.0f ? Clip.FrameCount : 1u); ++Frame)
+    {
+        const float Angle = 0.5f * InDegrees * 0.01745329f * float(Frame) / 30.0f;
+        Track.Rotations.push_back({ 0.0f, 0.0f, std::sin(Angle), std::cos(Angle) });
+    }
+    Clip.Tracks.push_back(Track);
+    return Clip;
+}
+
+/*
+ * Base: "Locomotion", a blend space on Speed (Idle at 0, Bend at 100); any
+ * state -> "Jump" (Bend, once) on the Jump trigger; Jump -> Locomotion at its
+ * end, fading 0.1 s. Upper: "Wave" (the hand turning), masked to Hand,
+ * weighted by Armed.
+ */
+static AnimStateData MakeState()
+{
+    AnimStateData State;
+    State.Parameters = { { "Speed", EAnimParameterType::Float, 0.0f }, { "Armed", EAnimParameterType::Float, 0.0f },
+                         { "Jump", EAnimParameterType::Trigger, 0.0f } };
+
+    AnimLayer Base;
+    Base.Name = "Base";
+    AnimStateNode Locomotion;
+    Locomotion.Name = "Locomotion";
+    Locomotion.BlendParameter = "Speed";
+    Locomotion.Samples = { { std::string(SCRATCH) + "Bend.nmanim", 100.0f }, { std::string(SCRATCH) + "Idle.nmanim", 0.0f } };
+    AnimStateNode Jump;
+    Jump.Name = "Jump";
+    Jump.Samples = { { std::string(SCRATCH) + "Bend.nmanim", 0.0f } };
+    Jump.Loop = EAnimLoop::Once;
+    Base.States = { Locomotion, Jump };
+    AnimTransition ToJump;
+    ToJump.From = -1;
+    ToJump.To   = 1;
+    ToJump.Duration = 0.0f;
+    ToJump.Conditions.push_back({ "Jump", EAnimCompare::Triggered, 0.0f });
+    AnimTransition Land;
+    Land.From = 1;
+    Land.To   = 0;
+    Land.Duration = 0.1f;
+    Land.bAtEnd = true;
+    Base.Transitions = { ToJump, Land };
+
+    AnimLayer Upper;
+    Upper.Name = "Upper";
+    Upper.WeightParameter = "Armed";
+    Upper.MaskBones = { "Hand" };
+    AnimStateNode Wave;
+    Wave.Name = "Wave";
+    Wave.Samples = { { std::string(SCRATCH) + "Wave.nmanim", 0.0f } };
+    Upper.States = { Wave };
+
+    State.Layers = { Base, Upper };
+    return State;
+}
+
+static void WriteStateClips()
+{
+    AnimClipData Idle = MakeTurn("Arm", 100.0f, 0.0f, true);
+    AnimClipData Bend = MakeTurn("Arm", 100.0f, 90.0f, true);
+    AnimClipData Wave = MakeTurn("Hand", 50.0f, 90.0f, true);
+    SaveAnimClipFile(std::string(SCRATCH) + "Idle.nmanim", Idle);
+    SaveAnimClipFile(std::string(SCRATCH) + "Bend.nmanim", Bend);
+    SaveAnimClipFile(std::string(SCRATCH) + "Wave.nmanim", Wave);
+    AnimClipAssetCache::Invalidate("");
+}
+
+static void TestStateAsset()
+{
+    std::printf("[anim state asset]\n");
+    AnimStateData State = MakeState();
+    Expect(State.FindDefect() == nullptr, "a well-formed anim state has no defect");
+
+    EngineCore::Archive Out = EngineCore::Archive::ForWriting();
+    Expect(SerializeAnimState(Out, State), "it saves");
+    EngineCore::Archive In = EngineCore::Archive::ForReading(Out.GetBytes());
+    AnimStateData Back;
+    Expect(SerializeAnimState(In, Back) && Back.Parameters.size() == 3 && Back.Layers.size() == 2
+           && Back.Layers[0].Transitions.size() == 2 && Back.Layers[0].Transitions[1].bAtEnd
+           && Back.Layers[1].MaskBones.size() == 1 && Back.Layers[0].States[0].Samples.size() == 2
+           && Back.Layers[0].Transitions[0].Conditions[0].Compare == EAnimCompare::Triggered,
+           "and reads back whole");
+
+    AnimStateData Broken = MakeState();
+    Broken.Layers[0].Transitions[0].To = 7;
+    EngineCore::Archive Refused = EngineCore::Archive::ForWriting();
+    Expect(!SerializeAnimState(Refused, Broken), "a transition to a state the layer lacks is refused");
+}
+
+static void TestStateMachine()
+{
+    std::printf("[state machine]\n");
+    WriteStateClips();
+    auto Skeleton = std::make_shared<SkeletonData>(MakeSkeleton());
+    auto State    = std::make_shared<AnimStateData>(MakeState());
+
+    AnimInstance Instance;
+    Instance.SetSkeleton(Skeleton);
+    Instance.SetState(State);
+    Expect(Instance.GetLayerCount() == 2 && std::string(Instance.GetCurrentStateName(0)) == "Locomotion"
+           && std::string(Instance.GetCurrentStateName(1)) == "Wave", "each layer starts in its entry state");
+
+    /* Speed 0: Idle alone -- the arm straight. */
+    Instance.SetTime(1.0f);
+    Expect(Near(Instance.GetModelPose()[2].M[0][3], 150.0f), "at Speed 0 the blend space is its Idle sample");
+
+    /* Speed 100: Bend alone; at its end the hand is at (100, 50). */
+    Instance.SetParameter("Speed", 100.0f);
+    Instance.SetTime(1.0f);
+    Expect(Near(Instance.GetModelPose()[2].M[0][3], 100.0f) && Near(Instance.GetModelPose()[2].M[1][3], 50.0f),
+           "at Speed 100 it is its Bend sample");
+
+    /* Speed 50: half of each -- 45 degrees. */
+    Instance.SetParameter("Speed", 50.0f);
+    Instance.SetTime(1.0f);
+    Expect(Near(Instance.GetModelPose()[2].M[1][3], 50.0f * std::sin(0.7853982f), 0.05f), "between, it blends by distance");
+
+    /* The upper layer, masked to the hand: nothing at Armed 0, all at 1. */
+    Instance.SetParameter("Speed", 0.0f);
+    Instance.SetTime(0.0f);
+    Instance.SetParameter("Armed", 1.0f);
+    Instance.Update(1.0f - 1.0f / 60.0f);   // the wave nearly at its 90 degrees
+    const AnimMatrix& Hand = Instance.GetModelPose()[2];
+    Expect(Near(Hand.M[0][3], 150.0f) && Hand.M[1][0] > 0.95f, "a masked layer turns the hand and leaves the arm");
+    Instance.SetParameter("Armed", 0.0f);
+    Instance.Evaluate();
+    Expect(Near(Instance.GetModelPose()[2].M[1][0], 0.0f), "its weight parameter at 0 turns it off");
+
+    /* A trigger: any state -> Jump at once, the trigger spent. */
+    Instance.SetParameter("Jump", 1.0f);
+    Instance.Update(0.01f);
+    Expect(std::string(Instance.GetCurrentStateName(0)) == "Jump" && Instance.GetConsumedTriggers().size() == 1
+           && Instance.GetParameter("Jump") == 0.0f, "a trigger fires its transition and is spent");
+    Instance.Update(0.5f);
+    Expect(std::string(Instance.GetCurrentStateName(0)) == "Jump", "a one-shot plays out");
+    Instance.Update(0.45f);
+    Expect(std::string(Instance.GetCurrentStateName(0)) == "Locomotion" && Instance.IsInTransition(0),
+           "at its end it returns, crossfading");
+    Instance.Update(0.2f);
+    Expect(!Instance.IsInTransition(0), "the crossfade finishes after its duration");
+}
+
+static void TestStateSystem()
+{
+    std::printf("[anim state on a component]\n");
+    WriteStateClips();
+    AnimStateData State = MakeState();
+    const std::string StatePath = std::string(SCRATCH) + "Arm.nmanimstate";
+    Expect(SaveAnimStateFile(StatePath, State), "the anim state is written");
+    AnimStateAssetCache::Invalidate("");
+
+    GameCore::World World;
+    AnimationSystem* System = AnimationSystem::Attach(World);
+    GameCore::Entity Actor = World.CreateEntity();
+    Actor.AddComponent(GameCore::TransformComponent());
+    RenderComponent Render;
+    std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%sArm.nmmesh", SCRATCH);
+    Actor.AddComponent(Render);
+    AnimationComponent Animation;
+    std::snprintf(Animation.Animation, sizeof(Animation.Animation), "%s", StatePath.c_str());
+    Actor.AddComponent(Animation);
+
+    World.Tick(0.1f);
+    Expect(System->FindInstance(Actor) && std::string(System->FindInstance(Actor)->GetCurrentStateName(0)) == "Locomotion",
+           "a component naming an .nmanimstate runs it");
+    Actor.GetComponent<AnimationComponent>()->SetTrigger("Jump");
+    World.Tick(0.1f);
+    Expect(std::string(System->FindInstance(Actor)->GetCurrentStateName(0)) == "Jump", "the component's parameters drive it");
+    Expect(Actor.GetComponent<AnimationComponent>()->GetFloat("Jump", -1.0f) == 0.0f, "and a spent trigger is cleared on the component");
+    AnimationSystem::Detach(World);
+}
+
 int main()
 {
     std::printf("RenderCore animation tests\n");
     TestPoseMath();
     TestInstance();
     TestSystem();
+    TestStateAsset();
+    TestStateMachine();
+    TestStateSystem();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

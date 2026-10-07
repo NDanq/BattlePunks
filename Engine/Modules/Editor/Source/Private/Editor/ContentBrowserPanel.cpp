@@ -42,6 +42,7 @@
 #include "Public/NodeGraph/GraphFile.h"
 #include "Public/NodeGraph/Schema.h"
 #include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/ParticleSystemAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
@@ -138,6 +139,7 @@ namespace
             || InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmrt2d"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmrt3d"), Qt::CaseInsensitive);
     }
@@ -444,6 +446,22 @@ private:
                             .arg(Clip.Tracks.size()).arg(Clip.Notifies.size())
                             .arg(Clip.bLoop ? QStringLiteral(", looping") : QString())
                           : QStringLiteral("Not an animation clip this editor can read");
+        }
+        else if(Path.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive))
+        {
+            RenderCore::AnimStateData State;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            if(RenderCore::SerializeAnimState(Ar, State))
+            {
+                size_t States = 0;
+                for(const RenderCore::AnimLayer& Layer : State.Layers) { States += Layer.States.size(); }
+                Entry.Summary = QStringLiteral("Anim state, %1 layer(s), %2 state(s), %3 parameter(s)\nDouble-click to edit")
+                                .arg(State.Layers.size()).arg(States).arg(State.Parameters.size());
+            }
+            else
+            {
+                Entry.Summary = QStringLiteral("Not an anim state this editor can read");
+            }
         }
         else if(EditorContent::ClassifySource(Path) == EditorContent::EImportKind::Texture)
         {
