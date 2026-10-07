@@ -145,6 +145,18 @@ namespace EditorContent
                                                                                                                 : QString();
     }
 
+    QStringList ListAnimationPaths()
+    {
+        return ListGraphs(&AnimationPathFor);
+    }
+
+    QString AnimationPathFor(const QString& InPath)
+    {
+        const bool bAnimation = InPath.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)
+                             || InPath.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive);
+        return bAnimation ? ToRuntimePath(InPath) : QString();
+    }
+
     QStringList ListRenderTargetPaths()
     {
         return ListGraphs(&RenderTargetPathFor);

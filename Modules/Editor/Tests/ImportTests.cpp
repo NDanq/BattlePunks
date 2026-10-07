@@ -22,6 +22,7 @@
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/AssetImport.h"
+#include "Private/Editor/Content/LightmapUVs.h"
 
 using namespace EditorContent;
 
@@ -250,6 +251,12 @@ static void TestAnimationImport(const QDir& InRoot)
                                                                             { Mesh.Positions[3], Mesh.Positions[4], Mesh.Positions[5] });
     Expect(std::fabs(Moved.X - 100.0f) < 0.01f && std::fabs(Moved.Y - 100.0f) < 0.01f && std::fabs(Moved.Z) < 0.01f,
            "skinning with the imported bones moves a vertex where glTF says");
+
+    /* A lightmap split (seams duplicate vertices) carries the bones with the copies. */
+    RenderCore::MeshData Seamed = Mesh;
+    std::string SeamError;
+    Expect(GenerateLightmapUVs(Seamed, SeamError) && Seamed.Joints.size() == size_t(Seamed.GetVertexCount()) * 4
+           && Seamed.Weights.size() == Seamed.Joints.size(), "a lightmap split keeps every vertex's bones");
 
     /* What the editor sets on a clip survives a reimport. */
     Clip.Notifies.push_back({ "Footstep", 0.5f });
@@ -508,6 +515,58 @@ int main(int argc, char** argv)
         std::printf("%s: %s\n", qPrintable(Path), qPrintable(Each.Message));
         for(const QString& Warning : Each.Warnings) { std::printf("  warning: %s\n", qPrintable(Warning)); }
         for(const QString& Written : Each.Written)  { std::printf("  wrote %s\n", qPrintable(QFileInfo(Written).fileName())); }
+
+        /* A skinned mesh's extent at rest and posed: a mesh that binds wrong shows it here. */
+        RenderCore::SkeletonData Skeleton;
+        RenderCore::MeshData     Mesh;
+        std::vector<RenderCore::AnimClipData> Clips;
+        for(const QString& Written : Each.Written)
+        {
+            if(Written.endsWith(QStringLiteral(".nmskel"))) { ReadAsset(Written, Skeleton, &RenderCore::SerializeSkeleton); }
+            if(Written.endsWith(QStringLiteral(".nmmesh"))) { ReadMesh(Written, Mesh); }
+            if(Written.endsWith(QStringLiteral(".nmanim"))) { Clips.emplace_back(); ReadAsset(Written, Clips.back(), &RenderCore::SerializeAnimClip); }
+        }
+        if(!Mesh.IsSkinned() || Skeleton.Bones.empty()) { continue; }
+        const auto Extent = [&](const std::vector<RenderCore::AnimMatrix>* InModel, const char* InWhat)
+        {
+            float Min[3] = { 1e30f, 1e30f, 1e30f }, Max[3] = { -1e30f, -1e30f, -1e30f };
+            for(uint32_t Vertex = 0; Vertex < Mesh.GetVertexCount(); ++Vertex)
+            {
+                const RenderCore::AnimVec3 P{ Mesh.Positions[Vertex * 3], Mesh.Positions[Vertex * 3 + 1], Mesh.Positions[Vertex * 3 + 2] };
+                RenderCore::AnimVec3 Out{ 0, 0, 0 };
+                for(int Influence = 0; Influence < 4; ++Influence)
+                {
+                    const float Weight = Mesh.Weights[Vertex * 4 + Influence];
+                    const uint16_t Bone = Mesh.Joints[Vertex * 4 + Influence];
+                    const RenderCore::AnimVec3 Moved = InModel
+                        ? RenderCore::AnimMath::TransformPoint(RenderCore::AnimMath::Mul((*InModel)[Bone], Mesh.InverseBind[Bone]), P) : P;
+                    Out = RenderCore::AnimMath::Add(Out, RenderCore::AnimMath::Scale(Moved, Weight));
+                }
+                const float At[3] = { Out.X, Out.Y, Out.Z };
+                for(int Axis = 0; Axis < 3; ++Axis) { Min[Axis] = std::min(Min[Axis], At[Axis]); Max[Axis] = std::max(Max[Axis], At[Axis]); }
+            }
+            std::printf("  %-22s x %8.1f..%8.1f  y %8.1f..%8.1f  z %8.1f..%8.1f\n", InWhat, Min[0], Max[0], Min[1], Max[1], Min[2], Max[2]);
+        };
+        Extent(nullptr, "bind space");
+        std::vector<RenderCore::AnimMatrix> Model;
+        Skeleton.ComputeRefPoseModel(Model);
+        Extent(&Model, "reference pose");
+        for(const RenderCore::AnimClipData& Clip : Clips)
+        {
+            std::vector<RenderCore::AnimTransform> Local(Skeleton.Bones.size());
+            for(size_t Bone = 0; Bone < Skeleton.Bones.size(); ++Bone) { Local[Bone] = Skeleton.Bones[Bone].RefPose; }
+            for(size_t Track = 0; Track < Clip.Tracks.size(); ++Track)
+            {
+                const int32_t Bone = Skeleton.FindBone(Clip.Tracks[Track].Bone);
+                if(Bone >= 0) { Local[size_t(Bone)] = Clip.SampleTrack(Track, 0.0f); }
+            }
+            for(size_t Bone = 0; Bone < Skeleton.Bones.size(); ++Bone)
+            {
+                const RenderCore::AnimMatrix L = RenderCore::AnimMath::ToMatrix(Local[Bone]);
+                Model[Bone] = Skeleton.Bones[Bone].Parent >= 0 ? RenderCore::AnimMath::Mul(Model[size_t(Skeleton.Bones[Bone].Parent)], L) : L;
+            }
+            Extent(&Model, "clip frame 0");
+        }
     }
     if(argc > 1)
     {

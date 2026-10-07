@@ -926,9 +926,10 @@ namespace EditorContent
             RenderCore::MeshData& Mesh = Each.Data;
             if(Mesh.UV1.size() != size_t(Mesh.GetVertexCount()) * 2)
             {
+                /* A skinned mesh moves: never lightmapped, so no seams cut for it. */
                 Mesh.UV1.clear();
                 std::string Error;
-                if(InOptions.bGenerateLightmapUVs && !GenerateLightmapUVs(Mesh, Error))
+                if(InOptions.bGenerateLightmapUVs && !Mesh.IsSkinned() && !GenerateLightmapUVs(Mesh, Error))
                 {
                     OutWarnings << QStringLiteral("%1: no lightmap UVs -- %2").arg(Each.Name, QString::fromStdString(Error));
                 }
@@ -937,6 +938,7 @@ namespace EditorContent
             if(Mesh.IsSkinned())
             {
                 Mesh.InverseBind = Skeleton.InverseBind;
+                RenderCore::ComputeSkinnedMeshBounds(Mesh, Skeleton.Skeleton);
             }
         }
 
