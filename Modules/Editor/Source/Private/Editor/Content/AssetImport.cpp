@@ -18,7 +18,9 @@
 
 #include "CoreQtConversions.h"
 #include "Public/Core/CoreArchive.h"
+#include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureCompression.h"
 #include "Private/Editor/Content/GltfImporter.h"
 
@@ -28,6 +30,12 @@ namespace EditorContent
     {
         const char* const MESH_EXTENSION    = ".nmmesh";
         const char* const TEXTURE_EXTENSION = ".nmtexture";
+        const char* const SKELETON_EXTENSION = ".nmskel";
+        const char* const CLIP_EXTENSION     = ".nmanim";
+
+        /* What a skeleton's and a clip's recorded settings add to the mesh options'. */
+        const char* const SKELETON_PART_SETTING = "Part=Skeleton\n";
+        const char* const CLIP_SETTING_KEY      = "Animation";
 
         /* Where an embedded image's source points: the glTF, then which image. */
         const char* const EMBEDDED_IMAGE_MARK = "#image";
@@ -288,6 +296,51 @@ namespace EditorContent
             return WriteArchive(InPath, Ar, OutError);
         }
 
+        bool WriteSkeleton(const QString& InPath, RenderCore::SkeletonData& InSkeleton, QString& OutError)
+        {
+            EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+            RenderCore::SerializeSkeleton(Ar, InSkeleton);
+            return WriteArchive(InPath, Ar, OutError);
+        }
+
+        bool WriteClip(const QString& InPath, RenderCore::AnimClipData& InClip, QString& OutError)
+        {
+            EngineCore::Archive Ar = EngineCore::Archive::ForWriting();
+            RenderCore::SerializeAnimClip(Ar, InClip);
+            return WriteArchive(InPath, Ar, OutError);
+        }
+
+        /* What an asset names InAbsolute by: project-relative, as a
+         * RenderComponent names a mesh. Outside the project, the absolute
+         * path -- which only this machine's editor can follow. */
+        QString RuntimePathOf(const QString& InAbsolute, const QString& InProjectRoot)
+        {
+            if(!InProjectRoot.isEmpty())
+            {
+                const QString Relative = QDir(InProjectRoot).relativeFilePath(InAbsolute);
+                if(!Relative.startsWith(QStringLiteral(".."))) { return QDir::fromNativeSeparators(Relative); }
+            }
+            return QDir::fromNativeSeparators(QFileInfo(InAbsolute).absoluteFilePath());
+        }
+
+        /* InPath's file whole, read directly (not via the file provider, rooted at the exe). */
+        EngineCore::Archive ReadAssetArchive(const QString& InPath)
+        {
+            QFile File(InPath);
+            if(!File.open(QIODevice::ReadOnly))
+            {
+                return EngineCore::Archive::ForReading({});
+            }
+            const QByteArray Bytes = File.readAll();
+            return EngineCore::Archive::ForReading(std::vector<uint8_t>(Bytes.begin(), Bytes.end()));
+        }
+
+        /* A skeleton is written as <Base>_Skeleton, each clip as <Base>_<Clip>. */
+        QString SkeletonFileFor(const QString& InFolder, const QString& InBase)
+        {
+            return QDir(InFolder).absoluteFilePath(InBase + QStringLiteral("_Skeleton") + QString::fromLatin1(SKELETON_EXTENSION));
+        }
+
         /* InImage, decoded, into a texture as InOptions say, written to InPath. */
         bool WriteTexture(const QString& InPath, QImage InImage, const TextureImportOptions& InOptions,
                           const RenderCore::AssetImportInfo& InInfo, QStringList& OutWarnings, QString& OutError)
@@ -382,9 +435,23 @@ namespace EditorContent
                 OutInfo = Texture.ImportInfo;
                 OutKind = EImportKind::Texture;
             }
+            else if(InAssetPath.endsWith(QString::fromLatin1(SKELETON_EXTENSION), Qt::CaseInsensitive))
+            {
+                RenderCore::SkeletonData Skeleton;
+                bRead   = RenderCore::SerializeSkeleton(Ar, Skeleton);
+                OutInfo = Skeleton.ImportInfo;
+                OutKind = EImportKind::Mesh;   // from a glTF, as its meshes are
+            }
+            else if(InAssetPath.endsWith(QString::fromLatin1(CLIP_EXTENSION), Qt::CaseInsensitive))
+            {
+                RenderCore::AnimClipData Clip;
+                bRead   = RenderCore::SerializeAnimClip(Ar, Clip);
+                OutInfo = Clip.ImportInfo;
+                OutKind = EImportKind::Mesh;
+            }
             if(!bRead)
             {
-                OutError = QStringLiteral("%1: not a mesh or texture this editor can read").arg(QFileInfo(InAssetPath).fileName());
+                OutError = QStringLiteral("%1: not a mesh, texture, skeleton or clip this editor can read").arg(QFileInfo(InAssetPath).fileName());
                 return false;
             }
             if(OutInfo.IsEmpty())
@@ -441,9 +508,10 @@ namespace EditorContent
     QString MeshImportOptions::ToSettings() const
     {
         return QStringLiteral("Scale=%1\nConvertCoordinates=%2\nGenerateNormals=%3\nCombineMeshes=%4\nImportTextures=%5\n"
-                              "GenerateLightmapUVs=%6\n")
+                              "GenerateLightmapUVs=%6\nImportAnimations=%7\nAnimationSampleRate=%8\n")
                .arg(double(Scale)).arg(int(bConvertCoordinates)).arg(int(bGenerateNormals))
-               .arg(int(bCombineMeshes)).arg(int(bImportTextures)).arg(int(bGenerateLightmapUVs));
+               .arg(int(bCombineMeshes)).arg(int(bImportTextures)).arg(int(bGenerateLightmapUVs))
+               .arg(int(bImportAnimations)).arg(double(AnimationSampleRate));
     }
 
     MeshImportOptions MeshImportOptions::FromSettings(const QString& InSettings)
@@ -458,6 +526,10 @@ namespace EditorContent
         Out.bCombineMeshes      = ReadBool(Map, QStringLiteral("CombineMeshes"), Out.bCombineMeshes);
         Out.bImportTextures     = ReadBool(Map, QStringLiteral("ImportTextures"), Out.bImportTextures);
         Out.bGenerateLightmapUVs = ReadBool(Map, QStringLiteral("GenerateLightmapUVs"), Out.bGenerateLightmapUVs);
+        Out.bImportAnimations   = ReadBool(Map, QStringLiteral("ImportAnimations"), Out.bImportAnimations);
+        bool bRateOK = false;
+        const float Rate = Map.value(QStringLiteral("AnimationSampleRate")).toFloat(&bRateOK);
+        if(bRateOK && Rate >= 1.0f && Rate <= 240.0f) { Out.AnimationSampleRate = Rate; }
         return Out;
     }
 
@@ -504,17 +576,51 @@ namespace EditorContent
     {
         ImportResult Result;
         QList<GltfMesh> Meshes;
+        GltfAnimationSet Animation;
         QString Error;
-        if(!LoadGltf(InSource, InOptions, Meshes, Result.Images, Result.Warnings, Error))
+        if(!LoadGltf(InSource, InOptions, Meshes, Result.Images, Result.Warnings, Error, &Animation))
         {
             Result.Message = Error;
             return Result;
         }
 
         const QString Base = SanitizeName(InBaseName);
+
+        /* The skeleton before the meshes and clips, which name it. */
+        QString SkeletonRuntime;
+        if(Animation.bHasSkeleton)
+        {
+            const QString SkeletonPath = SkeletonFileFor(InDestFolder, Base);
+            Animation.Skeleton.ImportInfo = MakeImportInfo(InSource, InProjectRoot,
+                                                           InOptions.ToSettings() + QString::fromLatin1(SKELETON_PART_SETTING));
+            if(!WriteSkeleton(SkeletonPath, Animation.Skeleton, Error))
+            {
+                Result.Message = Error;
+                return Result;
+            }
+            Result.Written << SkeletonPath;
+            SkeletonRuntime = RuntimePathOf(SkeletonPath, InProjectRoot);
+        }
+        for(GltfClip& Clip : Animation.Clips)
+        {
+            const QString ClipPath = QDir(InDestFolder).absoluteFilePath(Base + QStringLiteral("_") + SanitizeName(Clip.Name)
+                                                                         + QString::fromLatin1(CLIP_EXTENSION));
+            Clip.Data.Skeleton   = SkeletonRuntime.toStdString();
+            Clip.Data.ImportInfo = MakeImportInfo(InSource, InProjectRoot, InOptions.ToSettings()
+                                                  + QStringLiteral("%1=%2\n").arg(QString::fromLatin1(CLIP_SETTING_KEY), Clip.Name));
+            if(!WriteClip(ClipPath, Clip.Data, Error))
+            {
+                Result.Message = Error;
+                return Result;
+            }
+            Result.Written << ClipPath;
+        }
+
         uint64_t Triangles = 0;
         for(GltfMesh& Mesh : Meshes)
         {
+            if(Mesh.Data.IsSkinned()) { Mesh.Data.Skeleton = SkeletonRuntime.toStdString(); }
+
             /* A split mesh records which one it is, for Reimport to find again. */
             QString Settings = InOptions.ToSettings();
             QString FileName = Base;
@@ -546,6 +652,11 @@ namespace EditorContent
         Result.bOK = true;
         Result.Message = QStringLiteral("%1: %2 mesh file(s), %3 triangles")
                          .arg(QFileInfo(InSource).fileName()).arg(Meshes.size()).arg(Triangles);
+        if(Animation.bHasSkeleton)
+        {
+            Result.Message += QStringLiteral("; a %1-bone skeleton and %2 animation clip(s)")
+                              .arg(Animation.Skeleton.Bones.size()).arg(Animation.Clips.size());
+        }
         return Result;
     }
 
@@ -705,10 +816,63 @@ namespace EditorContent
 
         QList<GltfMesh> Meshes;
         QList<ReferencedImage> Images;
-        if(!LoadGltf(Source, Options, Meshes, Images, Result.Warnings, Result.Message))
+        GltfAnimationSet Animation;
+        if(!LoadGltf(Source, Options, Meshes, Images, Result.Warnings, Result.Message, &Animation))
         {
             return Result;
         }
+
+        /* A skeleton or a clip: the same file's again, by part or name. */
+        const QMap<QString, QString> Parsed = ParseSettings(Settings);
+        if(InAssetPath.endsWith(QString::fromLatin1(SKELETON_EXTENSION), Qt::CaseInsensitive))
+        {
+            if(!Animation.bHasSkeleton)
+            {
+                Result.Message = QStringLiteral("%1 no longer has a skeleton").arg(QFileInfo(Source).fileName());
+                return Result;
+            }
+            Animation.Skeleton.ImportInfo = MakeImportInfo(Source, InProjectRoot, Settings);
+            if(!WriteSkeleton(InAssetPath, Animation.Skeleton, Result.Message))
+            {
+                return Result;
+            }
+            Result.bOK = true;
+            Result.Written << QFileInfo(InAssetPath).absoluteFilePath();
+            Result.Message = QStringLiteral("%1: reimported, %2 bones").arg(QFileInfo(InAssetPath).fileName())
+                             .arg(Animation.Skeleton.Bones.size());
+            return Result;
+        }
+        if(InAssetPath.endsWith(QString::fromLatin1(CLIP_EXTENSION), Qt::CaseInsensitive))
+        {
+            const QString Name = Parsed.value(QString::fromLatin1(CLIP_SETTING_KEY));
+            for(GltfClip& Clip : Animation.Clips)
+            {
+                if(Clip.Name != Name) { continue; }
+
+                /* What the editor set on the clip survives: its notifies, looping and root motion. */
+                RenderCore::AnimClipData Old;
+                EngineCore::Archive OldAr = ReadAssetArchive(InAssetPath);
+                if(RenderCore::SerializeAnimClip(OldAr, Old))
+                {
+                    Clip.Data.Notifies   = Old.Notifies;
+                    Clip.Data.bLoop      = Old.bLoop;
+                    Clip.Data.RootMotion = Old.RootMotion;
+                    Clip.Data.Skeleton   = Old.Skeleton;
+                }
+                Clip.Data.ImportInfo = MakeImportInfo(Source, InProjectRoot, Settings);
+                if(!WriteClip(InAssetPath, Clip.Data, Result.Message))
+                {
+                    return Result;
+                }
+                Result.bOK = true;
+                Result.Written << QFileInfo(InAssetPath).absoluteFilePath();
+                Result.Message = QStringLiteral("%1: reimported, %2 frames").arg(QFileInfo(InAssetPath).fileName()).arg(Clip.Data.FrameCount);
+                return Result;
+            }
+            Result.Message = QStringLiteral("%1 no longer has an animation named %2").arg(QFileInfo(Source).fileName(), Name);
+            return Result;
+        }
+
         GltfMesh* Chosen = Options.bCombineMeshes ? &Meshes.front() : nullptr;
         for(GltfMesh& Mesh : Meshes)
         {
@@ -721,6 +885,16 @@ namespace EditorContent
         }
 
         Chosen->Data.ImportInfo = MakeImportInfo(Source, InProjectRoot, Settings);
+        if(Chosen->Data.IsSkinned())
+        {
+            /* Its skeleton where the first import wrote it -- or where the mesh last said. */
+            RenderCore::MeshData Old;
+            EngineCore::Archive OldAr = ReadAssetArchive(InAssetPath);
+            const bool bOld = RenderCore::SerializeMesh(OldAr, Old);
+            Chosen->Data.Skeleton = bOld && !Old.Skeleton.empty()
+                                  ? Old.Skeleton
+                                  : RuntimePathOf(SkeletonFileFor(Folder, Base), InProjectRoot).toStdString();
+        }
         if(!WriteMesh(InAssetPath, Chosen->Data, Result.Message))
         {
             return Result;

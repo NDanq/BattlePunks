@@ -41,8 +41,10 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/NodeGraph/GraphFile.h"
 #include "Public/NodeGraph/Schema.h"
+#include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/ParticleSystemAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/RenderTargetAssets.h"
 #include "Private/Editor/Particles/ParticleAssets.h"
@@ -134,6 +136,8 @@ namespace
     {
         return InPath.endsWith(QStringLiteral(".nmmesh"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmrt2d"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmrt3d"), Qt::CaseInsensitive);
     }
@@ -403,13 +407,15 @@ private:
             EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
             if(RenderCore::SerializeMesh(Ar, Mesh))
             {
-                Entry.Summary = QStringLiteral("Mesh, %1 vertices, %2 triangles, %3 section(s)\nSize %4 x %5 x %6%7")
+                Entry.Summary = QStringLiteral("%8, %1 vertices, %2 triangles, %3 section(s)\nSize %4 x %5 x %6%7")
                                 .arg(Mesh.GetVertexCount()).arg(Mesh.GetTriangleCount()).arg(Mesh.Sections.size())
                                 .arg(double(Mesh.BoundsMax[0] - Mesh.BoundsMin[0]), 0, 'g', 4)
                                 .arg(double(Mesh.BoundsMax[1] - Mesh.BoundsMin[1]), 0, 'g', 4)
                                 .arg(double(Mesh.BoundsMax[2] - Mesh.BoundsMin[2]), 0, 'g', 4)
                                 .arg(Mesh.ImportInfo.IsEmpty() ? QString()
-                                     : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Mesh.ImportInfo.SourcePath)));
+                                     : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Mesh.ImportInfo.SourcePath)))
+                                .arg(Mesh.IsSkinned() ? QStringLiteral("Skinned mesh (%1)").arg(QString::fromStdString(Mesh.Skeleton))
+                                                      : QStringLiteral("Mesh"));
                 Entry.bRendered = true;
                 QueueRender(Key, Entry);
             }
@@ -417,6 +423,27 @@ private:
             {
                 Entry.Summary = QStringLiteral("Not a mesh this editor can read");
             }
+        }
+        else if(Path.endsWith(QStringLiteral(".nmskel"), Qt::CaseInsensitive))
+        {
+            RenderCore::SkeletonData Skeleton;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            Entry.Summary = RenderCore::SerializeSkeleton(Ar, Skeleton)
+                          ? QStringLiteral("Skeleton, %1 bones%2").arg(Skeleton.Bones.size())
+                            .arg(Skeleton.ImportInfo.IsEmpty() ? QString()
+                                 : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Skeleton.ImportInfo.SourcePath)))
+                          : QStringLiteral("Not a skeleton this editor can read");
+        }
+        else if(Path.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive))
+        {
+            RenderCore::AnimClipData Clip;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            Entry.Summary = RenderCore::SerializeAnimClip(Ar, Clip)
+                          ? QStringLiteral("Animation clip, %1 s (%2 frames at %3 fps), %4 tracks, %5 notifies%6\nDouble-click to preview")
+                            .arg(double(Clip.GetDuration()), 0, 'g', 4).arg(Clip.FrameCount).arg(double(Clip.SampleRate))
+                            .arg(Clip.Tracks.size()).arg(Clip.Notifies.size())
+                            .arg(Clip.bLoop ? QStringLiteral(", looping") : QString())
+                          : QStringLiteral("Not an animation clip this editor can read");
         }
         else if(EditorContent::ClassifySource(Path) == EditorContent::EImportKind::Texture)
         {

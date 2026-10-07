@@ -7,7 +7,9 @@
 #include <QString>
 #include <QStringList>
 
+#include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
 #include "Private/Editor/Content/AssetImport.h"
 
 /*
@@ -23,10 +25,32 @@ namespace EditorContent
         RenderCore::MeshData Data;   // bounds computed; no import info yet
     };
 
+    struct GltfClip
+    {
+        QString                  Name;   // the glTF animation's name, else "Anim<n>"; unique
+        RenderCore::AnimClipData Data;   // no skeleton path or import info yet
+    };
+
+    /*
+     * What a skinned file adds (ANIMATION.md): one skeleton -- every skin's
+     * joints and their ancestors -- and its animations, resampled. The
+     * skinned meshes' Skeleton paths are left empty for the caller, which
+     * knows where the skeleton is written.
+     */
+    struct GltfAnimationSet
+    {
+        bool                     bHasSkeleton = false;
+        RenderCore::SkeletonData Skeleton;
+        QList<GltfClip>          Clips;
+    };
+
     /* One mesh (combined) or one per mesh node, uniquely named. False if
-     * unreadable or triangle-free. */
+     * unreadable or triangle-free. OutAnimation, if given, receives the
+     * skeleton and clips (InOptions.bImportAnimations); without it, skins
+     * are ignored and meshes import static, as before. */
     bool LoadGltf(const QString& InPath, const MeshImportOptions& InOptions, QList<GltfMesh>& OutMeshes,
-                  QList<ReferencedImage>& OutImages, QStringList& OutWarnings, QString& OutError);
+                  QList<ReferencedImage>& OutImages, QStringList& OutWarnings, QString& OutError,
+                  GltfAnimationSet* OutAnimation = nullptr);
 
     /* Only the images -- what FindReferencedImages answers with. */
     bool LoadGltfImages(const QString& InPath, QList<ReferencedImage>& OutImages, QString& OutError);

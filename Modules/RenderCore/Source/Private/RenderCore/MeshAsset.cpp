@@ -20,6 +20,7 @@ namespace RenderCore
         constexpr uint32_t TAG_SECTIONS = EngineCore::MakeArchiveTag('M','S','E','C');
         constexpr uint32_t TAG_COLORS   = EngineCore::MakeArchiveTag('M','C','O','L');   // optional
         constexpr uint32_t TAG_UV1      = EngineCore::MakeArchiveTag('M','U','V','1');   // optional
+        constexpr uint32_t TAG_SKIN     = EngineCore::MakeArchiveTag('M','S','K','N');   // optional
 
         void SerializeFloats(EngineCore::Archive& Ar, std::vector<float>& InOutValues)
         {
@@ -48,6 +49,17 @@ namespace RenderCore
                 if(uint64_t(Section.FirstIndex) + Section.IndexCount > InMesh.Indices.size())
                 {
                     return "mesh: a section runs past the last index";
+                }
+            }
+            if(InMesh.IsSkinned())
+            {
+                if(InMesh.Joints.size() != size_t(VertexCount) * 4 || InMesh.Weights.size() != size_t(VertexCount) * 4)
+                {
+                    return "mesh: skinning needs four bones and weights per vertex";
+                }
+                for(const uint16_t Joint : InMesh.Joints)
+                {
+                    if(Joint >= InMesh.InverseBind.size()) { return "mesh: a vertex names a bone past the last"; }
                 }
             }
             return nullptr;
@@ -177,6 +189,30 @@ namespace RenderCore
                 InOutMesh.UV1.assign(size_t(Header.VertexCount) * 2, 0.0f);
             }
             SerializeFloats(Ar, InOutMesh.UV1);
+            Ar.CloseChunk();
+        }
+
+        /* Skinning, the same way: a file without it is a static mesh. */
+        const bool bSkin = Ar.IsSaving() ? InOutMesh.IsSkinned() : Ar.PeekChunkTag() == TAG_SKIN;
+        if(!Ar.HasError() && bSkin && OpenRequiredChunk(Ar, TAG_SKIN, 1, "mesh: bad MSKN chunk"))
+        {
+            uint32_t BoneCount = uint32_t(InOutMesh.InverseBind.size());
+            Ar << InOutMesh.Skeleton << BoneCount;
+            if(Ar.IsLoading()
+               && CanHoldElements(Ar, BoneCount, 12 * sizeof(float), "mesh: bone count is past the end of the file")
+               && CanHoldElements(Ar, uint64_t(Header.VertexCount), 4 * (sizeof(uint16_t) + sizeof(float)),
+                                  "mesh: skinned vertex count is past the end of the file"))
+            {
+                InOutMesh.InverseBind.assign(BoneCount, AnimMatrix());
+                InOutMesh.Joints.assign(size_t(Header.VertexCount) * 4, 0);
+                InOutMesh.Weights.assign(size_t(Header.VertexCount) * 4, 0.0f);
+            }
+            for(AnimMatrix& Matrix : InOutMesh.InverseBind)
+            {
+                for(float (&Row)[4] : Matrix.M) { for(float& Value : Row) { Ar << Value; } }
+            }
+            for(uint16_t& Joint : InOutMesh.Joints) { Ar << Joint; }
+            SerializeFloats(Ar, InOutMesh.Weights);
             Ar.CloseChunk();
         }
 
