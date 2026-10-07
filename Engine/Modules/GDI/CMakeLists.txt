@@ -124,6 +124,7 @@ set( GDI_CORE_SOURCES
         Source/Public/GDI/GDITexture.h
         Source/Public/GDI/GDIMesh.h
         Source/Public/GDI/GDIBuffer.h
+        Source/Public/GDI/GDIQuery.h
         Source/Public/GDI/GDIRenderTarget.h
         Source/Public/GDI/GDIView.h
         Source/Public/GDI/GDISync.h
@@ -183,6 +184,7 @@ if(GDI_WITH_VULKAN)
             Source/Private/GDI/Vulkan/VKMesh.cpp
             Source/Private/GDI/Vulkan/VKBuffer.cpp
             Source/Private/GDI/Vulkan/VKCompute.cpp
+            Source/Private/GDI/Vulkan/VKQuery.cpp
             Source/Private/GDI/Vulkan/VKSync.cpp
             Source/Private/GDI/Vulkan/VKDevice.cpp
             Source/Private/GDI/Vulkan/VKSwapchain.cpp
@@ -225,6 +227,7 @@ if(GDI_WITH_D3D12)
             Source/Private/GDI/D3D12/D3D12Sync.cpp
             Source/Private/GDI/D3D12/D3D12Buffer.cpp
             Source/Private/GDI/D3D12/D3D12Compute.cpp
+            Source/Private/GDI/D3D12/D3D12Query.cpp
             Source/Private/GDI/D3D12/D3D12TransientOps.h
             Source/Public/GDI/D3D12/GDID3D12Platform.h
             Source/Public/GDI/D3D12/D3D12DynamicGDI.h

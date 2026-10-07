@@ -213,6 +213,7 @@ void VulkanDynamicGDI::Allocate()
     vkCreateSemaphore(DeviceObj->GetDevice(), &SemInfo, nullptr, &RenderTimeline);
 
     CreateTimestampPool();
+    LoadQueryFunctions();
 
     // Swapchains are created on the UI thread, one per window, by the first
     // present to it (FindOrCreateSwapchain).
@@ -608,7 +609,7 @@ void VulkanDynamicGDI::DeferDestroyBuffer(VkBuffer InBuffer, VkDeviceMemory InMe
 
 void VulkanDynamicGDI::DrainDeferredDestruction()
 {
-    if(!DeviceObj || !DeviceObj->IsValid()) { DeferredImages.clear(); DeferredBuffers.clear(); return; }
+    if(!DeviceObj || !DeviceObj->IsValid()) { DeferredImages.clear(); DeferredBuffers.clear(); DeferredQueryPools.clear(); return; }
     VkDevice Dev = DeviceObj->GetDevice();
 
     for(const DeferredImage& D : DeferredImages)
@@ -626,6 +627,12 @@ void VulkanDynamicGDI::DrainDeferredDestruction()
         if(D.Memory != VK_NULL_HANDLE) vkFreeMemory(Dev, D.Memory, nullptr);
     }
     DeferredBuffers.clear();
+
+    for(const VkQueryPool Pool : DeferredQueryPools)
+    {
+        vkDestroyQueryPool(Dev, Pool, nullptr);
+    }
+    DeferredQueryPools.clear();
 }
 
 void VulkanDynamicGDI::EndActiveRenderingRegion()

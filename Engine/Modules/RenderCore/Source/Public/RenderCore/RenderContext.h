@@ -29,7 +29,8 @@
  */
 namespace EngineCore { class Image; }
 
-class GDIReadback;   // Public/GDI/GDIRenderTarget.h
+class GDIReadback;           // Public/GDI/GDIRenderTarget.h
+class GDIOcclusionQueries;   // Public/GDI/GDIQuery.h
 
 namespace RenderCore
 {
@@ -185,6 +186,20 @@ namespace RenderCore
                             const char* const* InSlots, uint32_t InSlotCount,
                             const MaterialParameterOverrides& InOverrides = MaterialParameterOverrides());
 
+        /*
+         * An occluder (RENDERPIPELINE.md, "Occlusion culling"): InMeshPath's
+         * Opaque sections, depth only, into the PrePass -- the depth the
+         * frame's occlusion queries are tested against -- seen from the
+         * view, with their materials' vertex shaders (World Position Offset).
+         * Masked sections are left out: their holes would hide what is
+         * behind them. Draws nothing, returning false, unless RenderScene is
+         * gathering occluders (RenderProxy::DrawOccluder) or the mesh cannot
+         * be loaded.
+         */
+        bool DrawMeshOccluder(const RenderTransform& InTransform, const char* InMeshPath,
+                              const char* const* InSlots, uint32_t InSlotCount,
+                              const MaterialParameterOverrides& InOverrides = MaterialParameterOverrides());
+
         /* How far InMaterial's World Position Offset reaches (its Max Offset),
          * for a proxy to pad its culling bounds; 0 without one, or if it
          * cannot load. Loads it if need be -- warning as a draw of it would,
@@ -266,6 +281,31 @@ namespace RenderCore
          * Null: nothing moved. RenderScene sets it per proxy; a static draw
          * list's replays never move. */
         void SetDrawMotion(const EngineCore::Matrix4x4* InMotion);
+
+        /*
+         * OCCLUSION CULLING (RenderScene; RENDERPIPELINE.md, "Occlusion
+         * culling"), for the scene being queued -- BeginSceneDraws forgets it,
+         * so a capture or preview has none. With InQueries set:
+         *
+         *   AddOcclusionQuery   a world box to test against the occluders'
+         *                       depth in the PrePass; its query's index, or -1
+         *                       when the set is full (then: not tested, drawn)
+         *   SetDrawOcclusion    the draws queued next are skipped by the GPU
+         *                       if query InQuery finds nothing (-1: drawn);
+         *                       shadow casters never are
+         *   SetGatheringOccluders  while on, DrawMeshOccluder queues: what
+         *                       RenderScene calls each occluder's DrawOccluder in
+         *   CanPredicateOcclusion  whether the GPU skips SetDrawOcclusion's
+         *                       draws, or (this backend) draws them all
+         *
+         * RenderSceneStages then draws the occluders, runs the queries and
+         * resolves them before the Base Pass, and forgets all of it.
+         */
+        void    SetOcclusionQueries(GDIOcclusionQueries* InQueries);
+        int32_t AddOcclusionQuery(const GameCore::AABB& InBox);
+        void    SetDrawOcclusion(int32_t InQuery);
+        void    SetGatheringOccluders(bool bInGathering);
+        bool    CanPredicateOcclusion() const;
 
         /* STATIC DRAW LISTS (RenderScene): between BeginCapture and
          * EndCapture, whatever a proxy's Draw or DrawShadow queues lands in

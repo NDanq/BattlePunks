@@ -49,6 +49,11 @@ namespace RenderCore
     void SetStaticDrawStats(uint64_t InDrawn, uint64_t InBuilds);
     void GetStaticDrawStats(uint64_t& OutDrawn, uint64_t& OutBuilds);
 
+    /* The reporting scene's occlusion culling (RenderStats::ProxiesOccludedLastFrame
+     * and OcclusionQueriesLastFrame). */
+    void SetOcclusionStats(uint64_t InOccluded, uint64_t InQueries);
+    void GetOcclusionStats(uint64_t& OutOccluded, uint64_t& OutQueries);
+
     /* "stat unit": Renderer::EndFrame publishes the averaged times and
      * whether to show them (Stats.Unit); RenderScene::Render draws them and
      * RenderThread::GetStats copies them into RenderStats. */

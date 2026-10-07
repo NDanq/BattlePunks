@@ -254,6 +254,16 @@ void D3D12Mesh::Draw()
 
     ID3D12GraphicsCommandList* List = StateData->CurrentCmd;
 
+    /* Skipped on the GPU if GDISetOcclusionPredicate's query found nothing:
+     * predication round whichever draw this records, and off again after. */
+    struct PredicateScope
+    {
+        D3D12DynamicGDI*           Driver;
+        ID3D12GraphicsCommandList* List;
+        bool                       bBegun;
+        ~PredicateScope() { Driver->EndDrawPredicate(List, bBegun); }
+    } Predicate{ GDI, List, GDI->BeginDrawPredicate(List) };
+
     D3D12_VERTEX_BUFFER_VIEW Views[2]{};
     Views[0].BufferLocation = PositionBuffer->GetGPUVirtualAddress();
     Views[0].SizeInBytes    = PositionBytes;

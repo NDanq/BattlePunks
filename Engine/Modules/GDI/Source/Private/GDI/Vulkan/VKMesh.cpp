@@ -464,11 +464,21 @@ void VKMesh::Draw()
     // happen for EVERY draw — including a direct Mesh->Draw() (layer compositing /
     // LayerBlit), which does not go through DrawObject. If state is incomplete, skip
     // the draw rather than issue vkCmdDraw with no pipeline bound.
-    if(auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI))
+    auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI);
+    if(GDI && !GDI->BindDrawState(this, IsInstanced()))
     {
-        if(!GDI->BindDrawState(this, IsInstanced()))
-            return;
+        return;
     }
+
+    /* Skipped on the GPU if GDISetOcclusionPredicate's query found nothing:
+     * conditional rendering round whichever draw this records. */
+    struct PredicateScope
+    {
+        VulkanDynamicGDI* Driver;
+        VkCommandBuffer   Cmd;
+        bool              bBegun;
+        ~PredicateScope() { if(Driver) { Driver->EndDrawPredicate(Cmd, bBegun); } }
+    } Predicate{ GDI, Cmd, GDI && GDI->BeginDrawPredicate(Cmd) };
 
     // Bind position (binding 0) and texcoord (binding 1) buffers.
     const VkBuffer     Buffers[2] = { PositionBuffer, TexCoordBuffer };

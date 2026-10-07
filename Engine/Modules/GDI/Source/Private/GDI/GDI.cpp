@@ -829,3 +829,65 @@ uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds)
 {
     return GDynamicGDI && OutMilliseconds ? GDynamicGDI->GetPreviousGPUTimestamps(OutMilliseconds) : 0;
 }
+
+bool GDISupportsOcclusionQueries()
+{
+    return GDynamicGDI && GDynamicGDI->SupportsOcclusionQueries();
+}
+
+bool GDISupportsOcclusionPredication()
+{
+    return GDISupportsOcclusionQueries() && GDynamicGDI->SupportsOcclusionPredication();
+}
+
+GDIOcclusionQueries* GDICreateOcclusionQueries(const uint32_t InCapacity)
+{
+    return GDISupportsOcclusionQueries() && InCapacity > 0 ? GDynamicGDI->CreateOcclusionQueries(InCapacity) : nullptr;
+}
+
+void GDIBeginOcclusionRound(GDIOcclusionQueries* InSet, const uint32_t InCount)
+{
+    if(GDynamicGDI && InSet && InCount > 0 && InCount <= InSet->GetCapacity())
+    {
+        GDynamicGDI->BeginOcclusionRound(InSet, InCount);
+    }
+}
+
+void GDIBeginOcclusionQuery(GDIOcclusionQueries* InSet, const uint32_t InIndex)
+{
+    if(GDynamicGDI && InSet && InIndex < InSet->GetCapacity())
+    {
+        GDynamicGDI->BeginOcclusionQuery(InSet, InIndex);
+    }
+}
+
+void GDIEndOcclusionQuery(GDIOcclusionQueries* InSet, const uint32_t InIndex)
+{
+    if(GDynamicGDI && InSet && InIndex < InSet->GetCapacity())
+    {
+        GDynamicGDI->EndOcclusionQuery(InSet, InIndex);
+    }
+}
+
+void GDIResolveOcclusionQueries(GDIOcclusionQueries* InSet)
+{
+    if(GDynamicGDI && InSet)
+    {
+        GDynamicGDI->ResolveOcclusionQueries(InSet);
+    }
+}
+
+void GDISetOcclusionPredicate(GDIOcclusionQueries* InSet, const int32_t InIndex)
+{
+    if(!GDynamicGDI)
+    {
+        return;
+    }
+    const bool bSet = InSet && InIndex >= 0 && uint32_t(InIndex) < InSet->GetCapacity();
+    GDynamicGDI->SetOcclusionPredicate(bSet ? InSet : nullptr, bSet ? InIndex : -1);
+}
+
+bool GDIReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible)
+{
+    return GDynamicGDI && InSet && GDynamicGDI->ReadOcclusionResults(InSet, OutVisible);
+}

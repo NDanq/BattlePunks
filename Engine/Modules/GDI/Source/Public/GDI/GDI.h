@@ -7,6 +7,7 @@
 
 #include "GDIDefinitions.h"
 #include "GDIBuffer.h"
+#include "GDIQuery.h"
 #include "GDIShader.h"
 #include "GDIMesh.h"
 #include "GDISync.h"
@@ -394,6 +395,22 @@ public:
     virtual bool     SupportsGPUTimestamps() const { return false; }
     virtual void     WriteGPUTimestamp(uint32_t /*InIndex*/) {}
     virtual uint64_t GetPreviousGPUTimestamps(double* /*OutMilliseconds*/) { return 0; }
+
+    /**
+     * Occlusion queries (GDIQuery.h; validated by the GDI* functions). A
+     * backend without them keeps these defaults: none made, nothing done.
+     * SupportsOcclusionPredication: whether GDISetOcclusionPredicate skips
+     * draws, or is ignored and they all draw.
+     */
+    virtual bool                 SupportsOcclusionQueries() const { return false; }
+    virtual bool                 SupportsOcclusionPredication() const { return false; }
+    virtual GDIOcclusionQueries* CreateOcclusionQueries(uint32_t /*InCapacity*/) { return nullptr; }
+    virtual void                 BeginOcclusionRound(GDIOcclusionQueries* /*InSet*/, uint32_t /*InCount*/) {}
+    virtual void                 BeginOcclusionQuery(GDIOcclusionQueries* /*InSet*/, uint32_t /*InIndex*/) {}
+    virtual void                 EndOcclusionQuery(GDIOcclusionQueries* /*InSet*/, uint32_t /*InIndex*/) {}
+    virtual void                 ResolveOcclusionQueries(GDIOcclusionQueries* /*InSet*/) {}
+    virtual void                 SetOcclusionPredicate(GDIOcclusionQueries* /*InSet*/, int32_t /*InIndex*/) {}
+    virtual bool                 ReadOcclusionResults(GDIOcclusionQueries* /*InSet*/, std::vector<uint8_t>& /*OutVisible*/) { return false; }
 
     /**
      * Present the most recent rendered frame to the supplied window.
@@ -807,6 +824,30 @@ void       GDISetIndirectArgs(GDIBuffer* InArgs, uint32_t InOffsetBytes = 0);
 bool     GDISupportsGPUTimestamps();
 void     GDIWriteGPUTimestamp(uint32_t InIndex);
 uint64_t GDIGetPreviousGPUTimestamps(double* OutMilliseconds);   // GDI_GPU_TIMESTAMP_MAX of them
+
+/*
+ * Occlusion queries (GDIQuery.h), where the backend has them (Vulkan, D3D12
+ * and Null so far): false and null without a driver or support. Out of range
+ * indices, and a round past the set's capacity, are ignored.
+ *
+ * GDISetOcclusionPredicate: the draws after it are skipped if InSet's query
+ * InIndex (resolved this round) found nothing, until it is called with null
+ * or -1. Where !GDISupportsOcclusionPredication() it is ignored: they draw.
+ *
+ * GDIReadOcclusionResults: OutVisible[i] for each query i of InSet's last
+ * round, nonzero if it passed, once that round's block has finished on the
+ * GPU -- by the next GDIBeginRendering. False, OutVisible untouched, before
+ * then or with no round; it never waits. Each round is read at most once.
+ */
+bool                 GDISupportsOcclusionQueries();
+bool                 GDISupportsOcclusionPredication();
+GDIOcclusionQueries* GDICreateOcclusionQueries(uint32_t InCapacity);
+void                 GDIBeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount);
+void                 GDIBeginOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex);
+void                 GDIEndOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex);
+void                 GDIResolveOcclusionQueries(GDIOcclusionQueries* InSet);
+void                 GDISetOcclusionPredicate(GDIOcclusionQueries* InSet, int32_t InIndex);
+bool                 GDIReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible);
 
 IMPLEMENT_GDI_FUNCTION_BODY(
         template<typename ShaderRef> void,

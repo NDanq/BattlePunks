@@ -29,6 +29,7 @@ namespace RenderCore
         bComponentVisible = Component.bVisible != 0;
         bCastShadows      = Component.bCastShadows != 0;
         bCastInsetShadow  = Component.bCastInsetShadow != 0;
+        bOccluder         = Component.bOccluder != 0;
 
         /* Bounded copy: the component's buffers need not be NUL-terminated. */
         static_assert(sizeof(Materials) == sizeof(Component.Materials), "RenderComponentProxy::Materials must match the component's");
@@ -225,10 +226,22 @@ namespace RenderCore
     void RenderComponentProxy::DrawShadow(RenderContext& InContext)
     {
         /* A mesh only: a quad is a 2D sprite, and casts nothing. */
-        if(!bCastShadows || !MeshSource)
+        if(bCastShadows && MeshSource)
         {
-            return;
+            DrawDepth(InContext, /*bInOccluder*/ false);
         }
+    }
+
+    void RenderComponentProxy::DrawOccluder(RenderContext& InContext)
+    {
+        if(IsOccluder())
+        {
+            DrawDepth(InContext, /*bInOccluder*/ true);
+        }
+    }
+
+    void RenderComponentProxy::DrawDepth(RenderContext& InContext, const bool bInOccluder)
+    {
         MaterialParameterOverrides Overrides;
         Overrides.Items = Parameters;
         Overrides.Count = ParameterCount;
@@ -241,6 +254,13 @@ namespace RenderCore
 
         const char* Slots[RENDER_MATERIAL_SLOTS];
         for(size_t Slot = 0; Slot < RENDER_MATERIAL_SLOTS; ++Slot) { Slots[Slot] = Materials[Slot]; }
-        InContext.DrawMeshShadow(GetTransform(), MeshPath.c_str(), Slots, uint32_t(RENDER_MATERIAL_SLOTS), Overrides);
+        if(bInOccluder)
+        {
+            InContext.DrawMeshOccluder(GetTransform(), MeshPath.c_str(), Slots, uint32_t(RENDER_MATERIAL_SLOTS), Overrides);
+        }
+        else
+        {
+            InContext.DrawMeshShadow(GetTransform(), MeshPath.c_str(), Slots, uint32_t(RENDER_MATERIAL_SLOTS), Overrides);
+        }
     }
 }

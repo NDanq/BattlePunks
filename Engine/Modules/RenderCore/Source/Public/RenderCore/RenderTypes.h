@@ -162,6 +162,12 @@ namespace RenderCore
         uint64_t StaticProxiesDrawn     = 0;
         uint64_t StaticListBuilds       = 0;
 
+        /* Occlusion culling (RENDERPIPELINE.md): proxies in view not drawn
+         * last frame because the answer before found them hidden, and how
+         * many boxes were queried. The GPU's own skips are not counted. */
+        uint64_t ProxiesOccludedLastFrame  = 0;
+        uint64_t OcclusionQueriesLastFrame = 0;
+
         /* "stat unit": each averaged over the last half second (0 until the
          * first half second has passed). Frame is the game thread's time
          * from one EndFrame to the next; Game Thread is that less the time it
