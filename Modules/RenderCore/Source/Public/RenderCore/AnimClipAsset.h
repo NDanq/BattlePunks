@@ -41,7 +41,9 @@ namespace RenderCore
     enum class EAnimRootMotion : uint8_t
     {
         Keep    = 0,   // as authored: the character walks off its entity
-        InPlace = 1    // X and Z held at the first frame's: it walks on the spot
+        InPlace = 1,   // its model-space X and Z held at the first frame's: it walks on the spot
+        Extract = 2    // held as InPlace, and the travel moves the entity instead
+                       // (AnimInstance::GetRootMotion; the animation system applies it)
     };
 
     struct AnimTrack
@@ -73,11 +75,17 @@ namespace RenderCore
         /* Seconds from the first frame to the last. */
         float GetDuration() const { return FrameCount > 1 && SampleRate > 0.0f ? float(FrameCount - 1) / SampleRate : 0.0f; }
 
-        /* Track InTrack at InTime (clamped to the clip), root motion applied. */
+        /* Track InTrack at InTime (clamped to the clip), as authored: root
+         * motion is the playback's (AnimInstance), which knows the skeleton. */
         RENDERCORE_API AnimTransform SampleTrack(size_t InTrack, float InTime) const;
 
         /* The track for InBone; -1 if none. */
         RENDERCORE_API int32_t FindTrack(const std::string& InBone) const;
+
+        /* How far the root bone's translation moves, in its parent's space,
+         * from InFrom to InTo seconds -- across the end and round again when
+         * bInWrapped. Zero unless RootMotion is Extract. */
+        RENDERCORE_API AnimVec3 GetRootTravel(float InFrom, float InTo, bool bInWrapped) const;
     };
 
     /* Both directions. False, logged, for an invalid clip. */

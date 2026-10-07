@@ -363,12 +363,16 @@ QWidget* MeshViewerWindow::BuildAnimationTab()
     auto* ClipLayout = new QVBoxLayout(ClipBox);
     ClipLoop = new QCheckBox(QStringLiteral("Loops"), ClipBox);
     ClipLoop->setToolTip(QStringLiteral("Whether an Animation component (or an anim state set to the clip's own) loops it"));
-    ClipInPlace = new QCheckBox(QStringLiteral("In place (hold the root bone's X and Z)"), ClipBox);
-    ClipInPlace->setToolTip(QStringLiteral("Root motion: on, a walk walks on the spot; the entity's own movement carries it"));
+    ClipRootMotion = new QComboBox(ClipBox);
+    ClipRootMotion->addItems({ QStringLiteral("Root motion: as authored"), QStringLiteral("Root motion: in place"),
+                               QStringLiteral("Root motion: moves the entity") });
+    ClipRootMotion->setToolTip(QStringLiteral("As authored: the character walks off its entity. In place: it walks on the spot, "
+                                              "the entity's own movement carries it. Moves the entity: in place, and the clip's "
+                                              "travel moves the entity in game"));
     const auto ClipEdited = [this]()
     {
         ClipEdit.bLoop      = ClipLoop->isChecked();
-        ClipEdit.RootMotion = ClipInPlace->isChecked() ? RenderCore::EAnimRootMotion::InPlace : RenderCore::EAnimRootMotion::Keep;
+        ClipEdit.RootMotion = RenderCore::EAnimRootMotion(std::clamp(ClipRootMotion->currentIndex(), 0, 2));
         bClipDirty = true;
         const float Time = Anim->GetInstance().GetTime();
         Anim->PlayClip(std::make_shared<RenderCore::AnimClipData>(ClipEdit));
@@ -376,9 +380,9 @@ QWidget* MeshViewerWindow::BuildAnimationTab()
         UpdateAnimationState();
     };
     connect(ClipLoop, &QCheckBox::toggled, this, ClipEdited);
-    connect(ClipInPlace, &QCheckBox::toggled, this, ClipEdited);
+    connect(ClipRootMotion, QOverload<int>::of(&QComboBox::activated), this, ClipEdited);
     ClipLayout->addWidget(ClipLoop);
-    ClipLayout->addWidget(ClipInPlace);
+    ClipLayout->addWidget(ClipRootMotion);
 
     auto* NotifyHeading = new QLabel(QStringLiteral("Notifies -- each fires \"AnimNotify\" (entity, name) as the clip passes it"), ClipBox);
     NotifyHeading->setWordWrap(true);
@@ -580,11 +584,11 @@ void MeshViewerWindow::FillNotifies()
     const QSignalBlocker Block(NotifyTable);
     {
         const QSignalBlocker BlockLoop(ClipLoop);
-        const QSignalBlocker BlockPlace(ClipInPlace);
+        const QSignalBlocker BlockPlace(ClipRootMotion);
         ClipLoop->setChecked(ClipEdit.bLoop);
-        ClipInPlace->setChecked(ClipEdit.RootMotion == RenderCore::EAnimRootMotion::InPlace);
-        ClipInPlace->setToolTip(QStringLiteral("Root motion: on, the root bone (%1) keeps its first frame's X and Z -- a walk walks on the spot")
-                                .arg(QString::fromStdString(ClipEdit.RootBone)));
+        ClipRootMotion->setCurrentIndex(int(ClipEdit.RootMotion));
+        ClipRootMotion->setItemData(0, QStringLiteral("The root bone (%1) moves as authored").arg(QString::fromStdString(ClipEdit.RootBone)),
+                                    Qt::ToolTipRole);
     }
     NotifyTable->setRowCount(int(ClipEdit.Notifies.size()));
     for(size_t Row = 0; Row < ClipEdit.Notifies.size(); ++Row)
@@ -595,7 +599,7 @@ void MeshViewerWindow::FillNotifies()
     const bool bReadOnlyClip = EditorContent::IsEngineContent(ClipFile);
     NotifyTable->setEnabled(!bReadOnlyClip);
     ClipLoop->setEnabled(!bReadOnlyClip);
-    ClipInPlace->setEnabled(!bReadOnlyClip);
+    ClipRootMotion->setEnabled(!bReadOnlyClip);
 }
 
 void MeshViewerWindow::UpdateAnimationState()

@@ -212,6 +212,19 @@ namespace RenderCore
                 return;
             }
 
+            /* Root motion: the clip's travel moves the entity, turned and
+             * sized as the entity is. Not in the editor's preview, which
+             * moves nothing. */
+            const AnimVec3& Travel = Instance.GetRootMotion();
+            if(Travel.X != 0.0f || Travel.Z != 0.0f)
+            {
+                if(GameCore::TransformComponent* Transform = InEntity.GetComponent<GameCore::TransformComponent>())
+                {
+                    const EngineCore::Vector3 Local(double(Travel.X) * Transform->Scale.GetX(), 0.0, double(Travel.Z) * Transform->Scale.GetZ());
+                    Transform->Position = Transform->Position + GameCore::TransformMath::EulerToRotation(Transform->Rotation) * Local;
+                }
+            }
+
             /* A trigger a transition used is spent: the component's too. */
             for(const std::string& Trigger : Instance.GetConsumedTriggers())
             {

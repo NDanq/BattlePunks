@@ -458,6 +458,74 @@ static void TestSocket()
     AnimationSystem::Detach(World);
 }
 
+/* The root walks 100 along X in one second, looping. */
+static AnimClipData MakeStride(const EAnimRootMotion InRootMotion)
+{
+    AnimClipData Clip;
+    Clip.SampleRate = 30.0f;
+    Clip.FrameCount = 31;
+    Clip.bLoop      = true;
+    Clip.RootBone   = "Root";
+    Clip.RootMotion = InRootMotion;
+    AnimTrack Track;
+    Track.Bone = "Root";
+    for(uint32_t Frame = 0; Frame < Clip.FrameCount; ++Frame) { Track.Translations.push_back({ 100.0f * float(Frame) / 30.0f, 0.0f, 0.0f }); }
+    Track.Rotations.push_back(AnimQuat());
+    Track.Scales.push_back({ 1.0f, 1.0f, 1.0f });
+    Clip.Tracks.push_back(Track);
+    return Clip;
+}
+
+static void TestRootMotion()
+{
+    std::printf("[root motion]\n");
+    auto Skeleton = std::make_shared<SkeletonData>(MakeSkeleton());
+
+    AnimInstance Extracted;
+    Extracted.SetSkeleton(Skeleton);
+    Extracted.PlayClip(std::make_shared<AnimClipData>(MakeStride(EAnimRootMotion::Extract)));
+    Extracted.Update(0.5f);
+    Expect(Near(Extracted.GetRootMotion().X, 50.0f, 0.5f) && Near(Extracted.GetRootMotion().Z, 0.0f), "Extract hands out the root's travel");
+    Expect(Near(Extracted.GetModelPose()[0].M[0][3], 0.0f), "and holds the root where it started");
+    Extracted.Update(0.7f);
+    Expect(Near(Extracted.GetRootMotion().X, 70.0f, 0.5f), "across the loop's end too");
+
+    AnimInstance Held;
+    Held.SetSkeleton(Skeleton);
+    Held.PlayClip(std::make_shared<AnimClipData>(MakeStride(EAnimRootMotion::InPlace)));
+    Held.Update(0.5f);
+    Expect(Near(Held.GetRootMotion().X, 0.0f) && Near(Held.GetModelPose()[0].M[0][3], 0.0f), "In Place holds it and moves nothing");
+
+    AnimInstance Kept;
+    Kept.SetSkeleton(Skeleton);
+    Kept.PlayClip(std::make_shared<AnimClipData>(MakeStride(EAnimRootMotion::Keep)));
+    Kept.Update(0.5f);
+    Expect(Near(Kept.GetModelPose()[0].M[0][3], 50.0f, 0.5f), "Keep plays it as authored");
+
+    /* On a component: the entity walks, along its own (turned) X. */
+    AnimClipData Stride = MakeStride(EAnimRootMotion::Extract);
+    const std::string Path = std::string(SCRATCH) + "Stride.nmanim";
+    SaveAnimClipFile(Path, Stride);
+    AnimClipAssetCache::Invalidate(Path);
+    GameCore::World World;
+    AnimationSystem::Attach(World);
+    GameCore::Entity Walker = World.CreateEntity();
+    GameCore::TransformComponent Transform;
+    Transform.Rotation = EngineCore::Vector3(0.0, 90.0, 0.0);
+    Walker.AddComponent(Transform);
+    RenderComponent Render;
+    std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%sArm.nmmesh", SCRATCH);
+    Walker.AddComponent(Render);
+    AnimationComponent Animation;
+    std::snprintf(Animation.Animation, sizeof(Animation.Animation), "%s", Path.c_str());
+    Walker.AddComponent(Animation);
+    World.Tick(0.5f);
+    const EngineCore::Vector3 Moved = Walker.GetComponent<GameCore::TransformComponent>()->Position;
+    Expect(std::fabs(std::hypot(Moved.GetX(), Moved.GetZ()) - 50.0) < 1.0 && std::fabs(Moved.GetX()) < 1.0,
+           "root motion moves the entity, turned as it is");
+    AnimationSystem::Detach(World);
+}
+
 /* A dedicated server: a headless session's renderer is the Null backend
  * (no GPU, no window), and binding its world brings animation with it --
  * the server has poses for sockets and bone queries. */
@@ -505,6 +573,7 @@ int main()
     TestStateMachine();
     TestStateSystem();
     TestSocket();
+    TestRootMotion();
     TestHeadless();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
