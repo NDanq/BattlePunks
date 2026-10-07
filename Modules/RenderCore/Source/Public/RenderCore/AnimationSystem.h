@@ -89,6 +89,8 @@ namespace RenderCore
             std::shared_ptr<const MeshData>      Mesh;
             std::shared_ptr<const SkeletonData>  Skeleton;
             std::shared_ptr<const AnimClipData>  Clip;
+            std::shared_ptr<const AnimStateData> State;
+            uint64_t                             ClipGeneration = 0;   // an anim state's clips, as loaded
             uint64_t                             Seen = 0;
         };
 

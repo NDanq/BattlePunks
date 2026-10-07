@@ -7,6 +7,7 @@
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/AnimClipAsset.h"
+#include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
@@ -119,9 +120,13 @@ namespace RenderCore
                 Mesh = MeshPath.empty() ? nullptr : MeshAssetCache::Find(MeshPath);
             }
             std::shared_ptr<const SkeletonData> Skeleton = Mesh && Mesh->IsSkinned() ? SkeletonAssetCache::Find(Mesh->Skeleton) : nullptr;
-            std::shared_ptr<const AnimClipData> Clip = EndsWith(Path, ".nmanim") ? AnimClipAssetCache::Find(Path) : nullptr;
+            std::shared_ptr<const AnimClipData>  Clip  = EndsWith(Path, ".nmanim") ? AnimClipAssetCache::Find(Path) : nullptr;
+            std::shared_ptr<const AnimStateData> State = EndsWith(Path, ANIM_STATE_EXTENSION) ? AnimStateAssetCache::Find(Path) : nullptr;
 
-            if(Each.Instance && Each.AnimationPath == Path && Each.Mesh == Mesh && Each.Skeleton == Skeleton && Each.Clip == Clip)
+            /* An anim state names its clips: one reimported, it binds again. */
+            const uint64_t ClipGeneration = State ? AnimClipAssetCache::GetGeneration() : 0;
+            if(Each.Instance && Each.AnimationPath == Path && Each.Mesh == Mesh && Each.Skeleton == Skeleton && Each.Clip == Clip
+               && Each.State == State && Each.ClipGeneration == ClipGeneration)
             {
                 return;
             }
@@ -138,8 +143,11 @@ namespace RenderCore
             Each.Mesh          = Mesh;
             Each.Skeleton      = Skeleton;
             Each.Clip          = Clip;
+            Each.State         = State;
+            Each.ClipGeneration = ClipGeneration;
             Each.Instance->SetSkeleton(Skeleton);
-            Each.Instance->PlayClip(Clip);
+            if(State) { Each.Instance->SetState(State); }
+            else      { Each.Instance->PlayClip(Clip); }
             ++Generation;
         });
 
@@ -185,12 +193,28 @@ namespace RenderCore
                 return;
             }
             AnimInstance& Instance = *Found->second.Instance;
+
+            /* What gameplay set, into the anim state's parameters by name. */
+            for(const AnimationParameter& Parameter : InComponent.Parameters)
+            {
+                if(Parameter.Name[0] != '\0')
+                {
+                    Instance.SetParameter(std::string(Parameter.Name, strnlen(Parameter.Name, ANIMATION_PARAMETER_NAME_MAX)), Parameter.Value);
+                }
+            }
             Instance.SetPlayRate(InComponent.PlayRate);
             Instance.Update(InComponent.bPaused ? 0.0f : InDeltaSeconds);
 
             if(!bInGame)
             {
                 return;
+            }
+
+            /* A trigger a transition used is spent: the component's too. */
+            for(const std::string& Trigger : Instance.GetConsumedTriggers())
+            {
+                const int32_t Slot = InComponent.FindParameter(Trigger.c_str());
+                if(Slot >= 0) { InComponent.Parameters[Slot].Value = 0.0f; }
             }
             for(const std::string& Name : Instance.GetFiredNotifies())
             {
