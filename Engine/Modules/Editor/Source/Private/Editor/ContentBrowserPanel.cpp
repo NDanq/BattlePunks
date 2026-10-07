@@ -31,6 +31,7 @@
 #include <QSortFilterProxyModel>
 #include <QSplitter>
 #include <QStyle>
+#include <QTimer>
 #include <QToolButton>
 #include <QTreeView>
 #include <QUrl>
@@ -65,6 +66,9 @@ namespace
 
     /* The engine's content folder as the tree and the path bar name it. */
     const char* const ENGINE_CONTENT_LABEL = "Engine Content";
+
+    /* What a material's thumbnail draws it on. */
+    const QString PREVIEW_SPHERE = QStringLiteral("Engine/Content/Meshes/Sphere.nmmesh");
 
     /* Thumbnails and tooltips past this size are not read on hover. */
     constexpr qint64 PreviewByteLimit = 64 * 1024 * 1024;
@@ -274,14 +278,15 @@ private:
         qint64  Stamp = -1;
         QIcon   Thumbnail;
         QString Summary;
-        bool    bRendered     = false;   // a mesh: its thumbnail is rendered
+        bool    bRendered     = false;   // a mesh or material: its thumbnail is rendered
         bool    bRenderQueued = false;   // waiting for or in RenderNext
         qint64  RetryAt       = 0;       // after a failed render, not before this
     };
 
-    /* A mesh's thumbnail is rendered (Renderer::RequestMeshPreview), so it
-     * comes later: queued on first view, one request at a time since each
-     * readback stalls the renderer, and only while its folder is shown. */
+    /* A mesh's thumbnail is rendered (Renderer::RequestMeshPreview), and a
+     * material's is the Sphere wearing it, so they come later: queued on
+     * first view, one request at a time since each readback stalls the
+     * renderer, and only while its folder is shown. */
     void QueueRender(const QString& InPath, Preview& InEntry) const
     {
         if(InEntry.bRenderQueued || QDateTime::currentMSecsSinceEpoch() < InEntry.RetryAt) { return; }
@@ -304,12 +309,28 @@ private:
                 continue;
             }
 
+            const QString Material = EditorContent::MaterialPathFor(Path);
+            if(!Material.isEmpty() && EditorGraphs::IsMaterialCooking(Material))
+            {
+                /* Just saved: drawn once the cook is in, not before. */
+                Found->bRenderQueued = false;
+                auto* Self = const_cast<ContentListProxy*>(this);
+                QTimer::singleShot(500, Self, [Self, Path]()
+                {
+                    const auto* Source = static_cast<const QFileSystemModel*>(Self->sourceModel());
+                    const QModelIndex Shown = Self->mapFromSource(Source->index(Path));
+                    if(Shown.isValid()) { emit Self->dataChanged(Shown, Shown, { Qt::DecorationRole }); }
+                });
+                continue;
+            }
+
             bRenderInFlight = true;
             const qreal Ratio = Panel->devicePixelRatioF();
             EditorGraphs::MeshPreviewOptions Options;
-            Options.Mesh   = Runtime;
-            Options.Width  = int(ThumbnailSize * Ratio);
-            Options.Height = Options.Width;
+            Options.Mesh     = Material.isEmpty() ? Runtime : PREVIEW_SPHERE;
+            Options.Material = Material;
+            Options.Width    = int(ThumbnailSize * Ratio);
+            Options.Height   = Options.Width;
             const qint64 Stamp = Found->Stamp;
             auto* Self = const_cast<ContentListProxy*>(this);
             EditorGraphs::RequestMeshPreview(Options, Self, [Self, Path, Stamp, Ratio](const QImage& InImage, const QString&)
@@ -463,6 +484,12 @@ private:
             {
                 Entry.Summary = QStringLiteral("Not an anim state this editor can read");
             }
+        }
+        else if(!EditorContent::MaterialPathFor(Path).isEmpty())
+        {
+            Entry.Summary = QStringLiteral("Material graph\nDouble-click to edit");
+            Entry.bRendered = true;
+            QueueRender(Key, Entry);
         }
         else if(EditorContent::ClassifySource(Path) == EditorContent::EImportKind::Texture)
         {
