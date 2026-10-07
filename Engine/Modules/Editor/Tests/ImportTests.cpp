@@ -9,6 +9,7 @@
 #include <cstring>
 #include <vector>
 
+#include <QBuffer>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
@@ -149,6 +150,18 @@ static void WriteScene(const QDir& InFolder)
  *   one triangle: (0,0,0) on Root, (2,0,0) on Arm, (0,1,0) half each
  *   animation "Bend": Arm turns 90 degrees about Z over one second
  */
+/* A 2 x 2 PNG, for an embedded image with no name. */
+static QByteArray TinyPng()
+{
+    QImage Image(2, 2, QImage::Format_RGBA8888);
+    Image.fill(QColor(200, 120, 40));
+    QByteArray Bytes;
+    QBuffer Out(&Bytes);
+    Out.open(QIODevice::WriteOnly);
+    Image.save(&Out, "PNG");
+    return Bytes;
+}
+
 static void WriteSkinnedScene(const QDir& InFolder)
 {
     const float    Pos[9]     = { 0, 0, 0,   2, 0, 0,   0, 1, 0 };
@@ -178,6 +191,7 @@ static void WriteSkinnedScene(const QDir& InFolder)
     { "name": "Body", "mesh": 0, "skin": 0, "translation": [5, 5, 5] }
   ],
   "skins": [ { "joints": [0, 1], "inverseBindMatrices": 3 } ],
+  "images": [ { "uri": "data:image/png;base64,%3" } ],
   "meshes": [ { "name": "Arm", "primitives": [ { "attributes": { "POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2 } } ] } ],
   "animations": [ { "name": "Bend",
       "samplers": [ { "input": 4, "output": 5, "interpolation": "LINEAR" } ],
@@ -199,7 +213,7 @@ static void WriteSkinnedScene(const QDir& InFolder)
     { "bufferView": 4, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1] },
     { "bufferView": 5, "componentType": 5126, "count": 2, "type": "VEC4" }
   ]
-})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64()));
+})").arg(Buffer.size()).arg(QString::fromLatin1(Buffer.toBase64())).arg(QString::fromLatin1(TinyPng().toBase64()));
 
     QFile File(InFolder.filePath(QStringLiteral("Skinned.gltf")));
     File.open(QIODevice::WriteOnly);
@@ -218,7 +232,9 @@ static void TestAnimationImport(const QDir& InRoot)
     const ImportResult Result = ImportMesh(Source, Content, QStringLiteral("Arm"), Options, TextureImportOptions(), InRoot.absolutePath());
     Expect(Result.bOK, "a skinned glTF imports");
     if(!Result.bOK) { std::printf("        %s\n", qPrintable(Result.Message)); return; }
-    Expect(Result.Written.size() == 3, "a skeleton, a clip and a mesh are written");
+    Expect(Result.Written.size() == 4, "a skeleton, a clip, a mesh and its image are written");
+    Expect(QFile::exists(QDir(Content).filePath(QStringLiteral("Skinned_Image0.nmtexture"))),
+           "an unnamed embedded image is named for its glTF, so another file's does not overwrite it");
 
     RenderCore::SkeletonData Skeleton;
     Expect(ReadAsset(QDir(Content).filePath(QStringLiteral("Arm_Skeleton.nmskel")), Skeleton, &RenderCore::SerializeSkeleton),
@@ -285,7 +301,7 @@ static void TestAnimationImport(const QDir& InRoot)
     const ImportResult Plain = ImportMesh(Source, InRoot.filePath(QStringLiteral("Content/Plain")), QStringLiteral("Arm"), Static,
                                           TextureImportOptions(), InRoot.absolutePath());
     RenderCore::MeshData PlainMesh;
-    Expect(Plain.bOK && Plain.Written.size() == 1 && ReadMesh(Plain.Written[0], PlainMesh) && !PlainMesh.IsSkinned(),
+    Expect(Plain.bOK && Plain.Written.size() == 2 && ReadMesh(Plain.Written[0], PlainMesh) && !PlainMesh.IsSkinned(),
            "with animations off, it imports static");
 }
 
