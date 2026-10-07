@@ -5,6 +5,8 @@
 #include <cstdio>
 #include <cstring>
 
+#include "Public/Core/CoreConfig.h"
+#include "Public/Core/CoreJob.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/World.h"
@@ -19,6 +21,17 @@
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/SkeletonAsset.h"
+
+/* The animation budget (ANIMATION.md, "Budget"): past FullRateDistance from
+ * every view a character updates every (distance / FullRateDistance)th tick,
+ * at most MaxSkipFrames skipped; past FreezeDistance its time passes but its
+ * pose is not evaluated. 0 turns either off. A world with no view -- a
+ * server -- runs everything at full rate. */
+NIMBLE_CONFIG_FLOAT(GAnimationFullRateDistance, "Animation", "FullRateDistance", 3000.0f, nullptr);
+NIMBLE_CONFIG_FLOAT(GAnimationFreezeDistance, "Animation", "FreezeDistance", 20000.0f, nullptr);
+NIMBLE_CONFIG_INT(GAnimationMaxSkipFrames, "Animation", "MaxSkipFrames", 3, nullptr);
+/* At least this many updating in a tick, and they run across the job system. */
+NIMBLE_CONFIG_INT(GAnimationParallelMin, "Animation", "ParallelMin", 16, nullptr);
 
 namespace RenderCore
 {
@@ -186,13 +199,38 @@ namespace RenderCore
         else           { Sync(); }
     }
 
+    void AnimationSystem::AddViewOrigin(const uint64_t InFrame, const EngineCore::Vector3& InOrigin)
+    {
+        if(InFrame != ViewFrame)
+        {
+            ViewFrame = InFrame;
+            ViewOrigins.clear();
+        }
+        ViewOrigins.push_back(InOrigin);
+    }
+
     void AnimationSystem::Advance(const float InDeltaSeconds, const bool bInGame)
     {
         Sync();
         Clock += double(InDeltaSeconds);
         Pending.clear();
+        LastStats = Stats();
 
-        GameCore::EventBus& Events = World.GetEvents();
+        /* 1. Gather, serially: parameters in, and how much each moves this
+         *    tick -- by how far it is from the nearest view. */
+        struct Work
+        {
+            AnimInstance*       Instance  = nullptr;
+            AnimationComponent* Component = nullptr;
+            GameCore::EntityID  Entity;
+            float               Step      = 0.0f;
+            bool                bEvaluate = true;
+        };
+        std::vector<Work> Works;
+        Works.reserve(Entries.size());
+        const double FullRate = double(GAnimationFullRateDistance.GetFloat());
+        const double Freeze   = double(GAnimationFreezeDistance.GetFloat());
+        const int32_t MaxSkip = std::max(0, GAnimationMaxSkipFrames.GetInt());
         World.Each<AnimationComponent>([&](const GameCore::Entity& InEntity, AnimationComponent& InComponent)
         {
             const auto Found = Entries.find(InEntity.GetID().Pack());
@@ -200,9 +238,8 @@ namespace RenderCore
             {
                 return;
             }
-            AnimInstance& Instance = *Found->second.Instance;
-
-            /* What gameplay set, into the anim state's parameters by name. */
+            Entry& Each = Found->second;
+            AnimInstance& Instance = *Each.Instance;
             for(const AnimationParameter& Parameter : InComponent.Parameters)
             {
                 if(Parameter.Name[0] != '\0')
@@ -211,20 +248,85 @@ namespace RenderCore
                 }
             }
             Instance.SetPlayRate(InComponent.PlayRate);
-            Instance.Update(InComponent.bPaused ? 0.0f : InDeltaSeconds);
 
-            if(!bInGame)
+            Work Item;
+            Item.Instance  = &Instance;
+            Item.Component = &InComponent;
+            Item.Entity    = InEntity.GetID();
+            Item.Step      = InComponent.bPaused ? 0.0f : InDeltaSeconds;
+
+            /* No view (a server): everything at full rate. */
+            if(!ViewOrigins.empty() && Instance.HasPose())
             {
-                return;
+                const EngineCore::Vector3 At = InEntity.GetWorldPose().Position;
+                double Nearest = 1e300;
+                for(const EngineCore::Vector3& View : ViewOrigins) { Nearest = std::min(Nearest, (At - View).GetLength()); }
+
+                if(Freeze > 0.0 && Nearest > Freeze)
+                {
+                    /* Far: time passes -- notifies, transitions, root motion -- but no pose. */
+                    Item.bEvaluate = false;
+                    ++LastStats.Frozen;
+                }
+                else if(FullRate > 0.0 && Nearest > FullRate && MaxSkip > 0)
+                {
+                    /* Farther, fewer updates: every (distance / FullRate)th tick, the time saved up. */
+                    const int32_t Every = std::min(MaxSkip + 1, int32_t(std::ceil(Nearest / FullRate)));
+                    Each.Saved += Item.Step;
+                    if(++Each.Skipped < Every)
+                    {
+                        ++LastStats.Skipped;
+                        return;
+                    }
+                    Item.Step    = Each.Saved;
+                    Each.Saved   = 0.0f;
+                    Each.Skipped = 0;
+                    ++LastStats.Reduced;
+                }
             }
+            Works.push_back(Item);
+        });
+        LastStats.Updated = uint32_t(Works.size());
+
+        /* 2. Update: each instance alone, so across the job system when there
+         *    are enough of them to be worth it. */
+        const auto UpdateRange = [&Works](const uint32_t InBegin, const uint32_t InEnd)
+        {
+            for(uint32_t Index = InBegin; Index < InEnd; ++Index)
+            {
+                Works[Index].Instance->Update(Works[Index].Step, Works[Index].bEvaluate);
+            }
+        };
+        EngineCore::JobSystem* Jobs = EngineCore::GetJobSystem();
+        const int32_t ParallelMin = GAnimationParallelMin.GetInt();
+        if(Jobs && ParallelMin > 0 && Works.size() >= size_t(ParallelMin))
+        {
+            Jobs->ParallelFor(uint32_t(Works.size()), 4, UpdateRange);
+            LastStats.bParallel = true;
+        }
+        else
+        {
+            UpdateRange(0, uint32_t(Works.size()));
+        }
+
+        /* 3. What the updates did, serially: the world is written here only. */
+        if(!bInGame)
+        {
+            UpdateSockets();
+            return;
+        }
+        GameCore::EventBus& Events = World.GetEvents();
+        for(const Work& Item : Works)
+        {
+            const AnimInstance& Instance = *Item.Instance;
+            const GameCore::Entity Owner = World.GetEntity(Item.Entity);
 
             /* Root motion: the clip's travel moves the entity, turned and
-             * sized as the entity is. Not in the editor's preview, which
-             * moves nothing. */
+             * sized as the entity is. Not in the editor's preview. */
             const AnimVec3& Travel = Instance.GetRootMotion();
             if(Travel.X != 0.0f || Travel.Z != 0.0f)
             {
-                if(GameCore::TransformComponent* Transform = InEntity.GetComponent<GameCore::TransformComponent>())
+                if(GameCore::TransformComponent* Transform = Owner.GetComponent<GameCore::TransformComponent>())
                 {
                     const EngineCore::Vector3 Local(double(Travel.X) * Transform->Scale.GetX(), 0.0, double(Travel.Z) * Transform->Scale.GetZ());
                     Transform->Position = Transform->Position + GameCore::TransformMath::EulerToRotation(Transform->Rotation) * Local;
@@ -234,38 +336,36 @@ namespace RenderCore
             /* A trigger a transition used is spent: the component's too. */
             for(const std::string& Trigger : Instance.GetConsumedTriggers())
             {
-                const int32_t Slot = InComponent.FindParameter(Trigger.c_str());
-                if(Slot >= 0) { InComponent.Parameters[Slot].Value = 0.0f; }
+                const int32_t Slot = Item.Component->FindParameter(Trigger.c_str());
+                if(Slot >= 0) { Item.Component->Parameters[Slot].Value = 0.0f; }
             }
             for(const AnimNotify& Notify : Instance.GetFiredNotifies())
             {
                 GameCore::EventArgs Args;
-                Args.Args[0] = GameCore::EventArg::Make(InEntity.GetID());
+                Args.Args[0] = GameCore::EventArg::Make(Item.Entity);
                 Args.Args[1] = GameCore::EventArg::Make(Notify.Name.c_str());
                 Args.Count   = 2;
                 Events.Emit("AnimNotify", Args);   // ids are per bus: by name
                 if(!Notify.ParticleSystem.empty())
                 {
-                    Pending.push_back({ InEntity.GetID(), Notify.ParticleSystem, Notify.Bone });
+                    Pending.push_back({ Item.Entity, Notify.ParticleSystem, Notify.Bone });
                 }
             }
             for(const AnimInstance::FinishedState& Done : Instance.GetFinishedStates())
             {
                 GameCore::EventArgs Args;
-                Args.Args[0] = GameCore::EventArg::Make(InEntity.GetID());
+                Args.Args[0] = GameCore::EventArg::Make(Item.Entity);
                 Args.Args[1] = GameCore::EventArg::Make(Done.Name.c_str());
                 Args.Args[2] = GameCore::EventArg::Make(double(Done.Layer));
                 Args.Count   = 3;
                 Events.Emit("AnimEnded", Args);
             }
-        });
-        UpdateSockets();
-        if(bInGame)
-        {
-            /* After the walk over the pool: spawning adds entities. */
-            for(const PendingEffect& Each : Pending) { SpawnEffect(Each); }
-            UpdateEffects();
         }
+        UpdateSockets();
+
+        /* After the walk over the pool: spawning adds entities. */
+        for(const PendingEffect& Each : Pending) { SpawnEffect(Each); }
+        UpdateEffects();
     }
 
     void AnimationSystem::SpawnEffect(const PendingEffect& InEffect)

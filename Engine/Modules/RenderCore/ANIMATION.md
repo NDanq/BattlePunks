@@ -148,6 +148,23 @@ The travel is the first layer's (`AnimInstance::GetRootMotion`), blended
 as its poses are -- a blend space, a crossfade. Only X and Z move the
 entity; turning is not extracted. The editor's preview moves nothing.
 
+## Budget
+
+What each character costs falls off with distance from the frame's views
+(every camera WorldBridge draws the world from), in `[Animation]`:
+
+| Var | Default | |
+|---|---|---|
+| `FullRateDistance` | 3000 | past it, an update every (distance / this)th tick, the time saved up |
+| `MaxSkipFrames` | 3 | at most this many ticks skipped in a row |
+| `FreezeDistance` | 20000 | past it, time passes -- notifies, transitions, root motion -- but no pose is evaluated |
+| `ParallelMin` | 16 | at least this many updating in a tick, and they run across the job system |
+
+0 turns a distance off. A world with no view -- a dedicated server -- runs
+everything at full rate. `AnimationSystem::GetLastStats` says what the last
+tick did. Visibility (behind the camera, occluded) is not considered yet:
+the game thread does not know it.
+
 ## Anim states
 
 ```
@@ -194,5 +211,4 @@ Layer Arms   mask spine_02, weight scaled by Armed
 
 Inverse kinematics (feet, look-at), morph targets, additive layers, 2D blend
 spaces, retargeting between differently named skeletons, clip compression,
-turning root motion, skinned meshes on Metal, and animation
-budgets (off-screen entities still animate).
+turning root motion, skinned meshes on Metal, and a visibility-aware budget.

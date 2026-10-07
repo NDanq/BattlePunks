@@ -794,6 +794,7 @@ namespace RenderCore
 
         RenderView View = InViewOverride ? *InViewOverride : BuildView(InFrame);
         View.ViewportPixels = InFrame.ViewportPixels;   // the render targets are sized from this
+        if(Animation) { Animation->AddViewOrigin(InFrame.FrameNumber, View.Origin); }
         const RenderLighting    Lighting    = BuildLighting(View.Origin);
         const RenderPostProcess PostProcess = BuildPostProcess(View);
         const SceneCaptureList  Captures    = BuildCaptures(View, InFrame.DeltaSeconds);

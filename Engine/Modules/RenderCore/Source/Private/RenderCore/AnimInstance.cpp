@@ -428,7 +428,7 @@ namespace RenderCore
 
     // === Playback ==============================================================
 
-    void AnimInstance::Update(const float InDeltaSeconds)
+    void AnimInstance::Update(const float InDeltaSeconds, const bool bInEvaluate)
     {
         Fired.clear();
         Finished.clear();
@@ -462,7 +462,7 @@ namespace RenderCore
                 UpdateTransitions(Layer);
             }
         }
-        Evaluate();
+        if(bInEvaluate) { Evaluate(); }
     }
 
     void AnimInstance::Evaluate()
