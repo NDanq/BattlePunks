@@ -173,7 +173,8 @@ What each character costs falls off with distance from the frame's views
 0 turns a distance (or the off-screen rate) off. A world with no view -- a
 dedicated server -- and the editor's preview of a level run everything at
 full rate. `AnimationSystem::GetLastStats` says what the last tick did
-(`Offscreen` counts those outside every view).
+(`Offscreen` counts those outside every view) and how long it took:
+`Milliseconds` the whole tick, `UpdateMilliseconds` the poses alone.
 
 **Visibility.** WorldBridge hands each frame's view to the system with its
 view-projection (`AnimationSystem::AddView`), and a character is tested as a

@@ -63,6 +63,8 @@ nimble_add_hot_module(${GAME_MODULE}
                      Source/Private/LightLab/LightLabInput.cpp
                      Source/Private/LightLab/LightLabAvatar.cpp
                      Source/Private/LightLab/LightLabAvatar.h
+                     Source/Private/LightLab/LightLabGpuTest.cpp
+                     Source/Private/LightLab/LightLabGpuTest.h
         PRIVATE_DEPS NimbleEngine::NimbleEngine)
 set_target_properties(${GAME_MODULE} PROPERTIES FOLDER "Games")
 

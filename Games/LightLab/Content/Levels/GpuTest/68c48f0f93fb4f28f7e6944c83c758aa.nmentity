@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="68c48f0f93fb4f28f7e6944c83c758aa" Name="AvenueLamp3L" Mobility="Static">
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="210" B="160" A="255" />
+    <Intensity Value="3" />
+    <Radius Value="500" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="4" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-240" Y="300" Z="2200" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

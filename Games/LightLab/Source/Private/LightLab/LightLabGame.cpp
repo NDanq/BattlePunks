@@ -18,6 +18,7 @@
 #include "Public/UI/UISystem.h"
 
 #include "Private/LightLab/LightLabAvatar.h"
+#include "Private/LightLab/LightLabGpuTest.h"
 
 #include <algorithm>
 #include <cmath>
@@ -54,6 +55,11 @@
  *                      light-animation systems, owns the mode.
  *   LightLabBakedLevel loads Content/Levels/BakedLighting.nmworld; flies the
  *                      Player and swings the dynamic ball (Swinger).
+ *   LightLabGpuTestLevel loads Content/Levels/GpuTest.nmworld (GpuTest, from
+ *                      Tools/make_gpu_test_level.py): a town of occluding
+ *                      blocks, PBR props, shadowed lights and a herd of foxes
+ *                      (LightLabGpuTest.h); flies the Player, or with
+ *                      [LightLab] Benchmark flies a fixed path and records it.
  *
  * Both turn the InsetLattice (inset shadows' demo cage) and drift it round
  * where it was placed, so its own shadow map follows a moving caster.
@@ -92,6 +98,10 @@ namespace
      * baked in the editor. Player, Sun and Swinger are found by name. */
     const char* const BakedLevelFile = "Content/Levels/BakedLighting.nmworld";
 
+    /* The GPU test world, made by Tools/make_gpu_test_level.py. Player and
+     * Sun are found by name, the herd by its prefab. */
+    const char* const GpuTestLevelFile = "Content/Levels/GpuTest.nmworld";
+
     const char* const BoxMesh    = "Engine/Content/Meshes/Box.nmmesh";
     const char* const SphereMesh = "Engine/Content/Meshes/Sphere.nmmesh";
     const char* const PlaneMesh  = "Engine/Content/Meshes/Plane.nmmesh";
@@ -112,6 +122,17 @@ NIMBLE_CONFIG_STRING(GLightLabExportLevel, "LightLab", "ExportLevel", "", nullpt
  * or the console can too. */
 NIMBLE_CONFIG_FLOAT(GLightLabLookSensitivity, "LightLab", "LookSensitivity", 1.0f, nullptr);   // times the Look axes
 NIMBLE_CONFIG_FLOAT(GLightLabFlySpeed, "LightLab", "FlySpeed", 600.0f, nullptr);               // world units a second
+
+/* The GpuTest level's: a CSV path makes it fly its benchmark path, record each
+ * frame there and quit (LightLabBenchmark); HerdCount makes its herd that many
+ * foxes (-1: as placed). Tools/gpu_test_perf.py sets both. */
+NIMBLE_CONFIG_STRING(GLightLabBenchmark, "LightLab", "Benchmark", "", nullptr);
+NIMBLE_CONFIG_INT(GLightLabHerdCount, "LightLab", "HerdCount", -1, nullptr);
+/* With Benchmark: Shots, a folder for each leg's middle frame (an editor
+ * build); Freeze, every animation paused and the herd still, so two runs'
+ * shots compare pixel for pixel. */
+NIMBLE_CONFIG_STRING(GLightLabBenchmarkShots, "LightLab", "BenchmarkShots", "", nullptr);
+NIMBLE_CONFIG_BOOL(GLightLabBenchmarkFreeze, "LightLab", "BenchmarkFreeze", false, nullptr);
 
 // === Native prefabs =========================================================
 // The level's shapes and its player, declared as prefabs ("native:LightLab.Block"):
@@ -608,8 +629,13 @@ public:
                  "Escape pauses")
     }
 
+    /* The GpuTest level's benchmark, recorded each tick; null: none. */
+    void SetBenchmark(LightLabBenchmark* InBenchmark) { Benchmark = InBenchmark; }
+
     void OnTick(const NimbleEngine::FrameContext& InFrame) override
     {
+        if(Benchmark) { Benchmark->Record(*Session, InFrame); }
+
         /* Concurrent with the render thread: no renderer or window access. */
         GameCore::World& World = Session->GetWorld();
         ElapsedSeconds += InFrame.DeltaSeconds;
@@ -761,6 +787,8 @@ private:
     double   ElapsedSeconds    = 0.0;
     double   LastReportSeconds = 0.0;
     uint64_t TicksSinceReport  = 0;
+
+    LightLabBenchmark* Benchmark = nullptr;
 };
 
 /* The scene: a floor, a yard of blocks and balls, every kind of light, and
@@ -1252,6 +1280,70 @@ private:
     std::optional<LightLabGameMode> Mode;
 };
 
+/* The GPU test world (Content/Levels/GpuTest.nmworld): its herd walks;
+ * the Player flies, or follows the benchmark's path ([LightLab] Benchmark). */
+class LightLabGpuTestLevel : public NimbleEngine::ILevel
+{
+public:
+    const char* GetName() const override { return "GpuTest"; }
+    const char* GetWorldFile() const override { return GpuTestLevelFile; }
+
+    bool OnLoad(NimbleEngine::GameSession& InSession) override
+    {
+        (void)InSession;
+        GameCore::World& World = GetWorld();
+        FlyContext = LightLabFlyContext();
+
+        if(!LoadWorld(GpuTestLevelFile, World))
+        {
+            CORE_LOG_ERROR("[LightLab] the GpuTest level needs Content/Levels/GpuTest.nmworld (Tools/make_gpu_test_level.py)")
+            return false;
+        }
+
+        const GameCore::EntityID Player = World.FindEntityByName("Player");
+        const bool bFreeze = GLightLabBenchmarkFreeze.GetBool();
+        if(LightLabFindHerd(World, GLightLabHerdCount.GetInt(), HerdContext) && !bFreeze)
+        {
+            World.RegisterSystem("LightLab.Herd", GameCore::TP_PrePhysics, &LightLabHerdSystem, &HerdContext);
+        }
+        if(bFreeze)
+        {
+            LightLabFreezeAnimation(World);
+        }
+        CORE_LOG("[LightLab] GpuTest: a herd of " + std::to_string(HerdContext.Members.size()) + " foxes")
+
+        Mode.emplace(Player, World.FindEntityByName("Sun"));
+        const std::string Csv = GLightLabBenchmark.GetString();
+        if(!Csv.empty() && Benchmark.Begin(Player, Csv, GLightLabBenchmarkShots.GetString()))
+        {
+            World.RegisterSystem("LightLab.Benchmark", GameCore::TP_PrePhysics, &LightLabBenchmark::System, &Benchmark);
+            Mode->SetBenchmark(&Benchmark);
+        }
+        else
+        {
+            if(const GameCore::TransformComponent* View = World.GetEntity(Player).GetComponent<GameCore::TransformComponent>())
+            {
+                FlyContext.Pitch = std::clamp(double(View->Rotation.GetX()), -MaxPitch, MaxPitch);
+                FlyContext.Yaw   = double(View->Rotation.GetY());
+            }
+            FlyContext.Player = Player;
+            World.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &FlyContext);
+        }
+        return true;
+    }
+
+    NimbleEngine::IGameMode* GetGameMode() override
+    {
+        return Mode ? &*Mode : nullptr;
+    }
+
+private:
+    LightLabFlyContext              FlyContext;
+    LightLabHerdContext             HerdContext;
+    LightLabBenchmark               Benchmark;
+    std::optional<LightLabGameMode> Mode;
+};
+
 class LightLabGameModule : public NimbleEngine::IGameModule
 {
 public:
@@ -1263,6 +1355,7 @@ public:
         /* [Game] StartLevel resolves levels by name. */
         NimbleEngine::RegisterLevel(Level);
         NimbleEngine::RegisterLevel(BakedLevel);
+        NimbleEngine::RegisterLevel(GpuTestLevel);
         return true;
     }
 
@@ -1271,13 +1364,15 @@ public:
         /* The registry holds a bare pointer, and this image is about to go. */
         NimbleEngine::UnregisterLevel(Level);
         NimbleEngine::UnregisterLevel(BakedLevel);
+        NimbleEngine::UnregisterLevel(GpuTestLevel);
     }
 
     NimbleEngine::ILevel* GetStartLevel() override { return &Level; }
 
 private:
-    LightLabLevel      Level;
-    LightLabBakedLevel BakedLevel;
+    LightLabLevel        Level;
+    LightLabBakedLevel   BakedLevel;
+    LightLabGpuTestLevel GpuTestLevel;
 };
 
 NIMBLE_IMPLEMENT_GAME_MODULE(LightLabGameModule, "LightLabGame")

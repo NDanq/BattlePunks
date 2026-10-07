@@ -1,6 +1,7 @@
 #include "Public/RenderCore/AnimationSystem.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -294,10 +295,24 @@ namespace RenderCore
 
     void AnimationSystem::Advance(const float InDeltaSeconds, const bool bInGame)
     {
+        using Clock_t = std::chrono::steady_clock;
+        const auto MillisecondsSince = [](const Clock_t::time_point InStart)
+        {
+            return float(std::chrono::duration<double, std::milli>(Clock_t::now() - InStart).count());
+        };
+        /* The whole tick's time, however it returns. */
+        struct TickTimer
+        {
+            Stats&             Out;
+            Clock_t::time_point Start;
+            ~TickTimer() { Out.Milliseconds = float(std::chrono::duration<double, std::milli>(Clock_t::now() - Start).count()); }
+        };
+        const Clock_t::time_point TickStart = Clock_t::now();
         Sync();
         Clock += double(InDeltaSeconds);
         Pending.clear();
         LastStats = Stats();
+        const TickTimer Timer{ LastStats, TickStart };
 
         /* 1. Gather, serially: parameters in, and how much each moves this
          *    tick -- by how far it is from the nearest view. */
@@ -404,6 +419,7 @@ namespace RenderCore
         };
         EngineCore::JobSystem* Jobs = EngineCore::GetJobSystem();
         const int32_t ParallelMin = GAnimationParallelMin.GetInt();
+        const Clock_t::time_point UpdateStart = Clock_t::now();
         if(Jobs && ParallelMin > 0 && Works.size() >= size_t(ParallelMin))
         {
             Jobs->ParallelFor(uint32_t(Works.size()), 4, UpdateRange);
@@ -413,6 +429,7 @@ namespace RenderCore
         {
             UpdateRange(0, uint32_t(Works.size()));
         }
+        LastStats.UpdateMilliseconds = MillisecondsSince(UpdateStart);
 
         /* 3. What the updates did, serially: the world is written here only. */
         if(!bInGame)

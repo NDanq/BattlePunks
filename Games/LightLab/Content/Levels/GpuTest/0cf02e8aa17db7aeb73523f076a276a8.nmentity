@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="0cf02e8aa17db7aeb73523f076a276a8" Name="B12_W1" Mobility="Static">
+  <Component Type="Render" Version="5">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/Bricks.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+    <Occluder Value="true" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-1750" Y="650" Z="1350" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="300" Y="1300" Z="500" />
+  </Component>
+</Entity>

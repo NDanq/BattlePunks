@@ -97,6 +97,12 @@ namespace RenderCore
             uint32_t Frozen  = 0;    // updated without a pose: farther
             uint32_t Offscreen = 0;  // outside every view: at the slowest rate (among Reduced and Skipped)
             bool     bParallel = false;
+
+            /* Wall time: the whole tick (sync, gather, update, events,
+             * sockets), and the update alone -- the poses, across the job
+             * system when parallel. */
+            float    Milliseconds       = 0.0f;
+            float    UpdateMilliseconds = 0.0f;
         };
         const Stats& GetLastStats() const { return LastStats; }
 
