@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="219a0bff8f6e411f9ae255be3c539b23" Name="AnimMan">
+  <Component Type="Render" Version="4">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+    <Mesh Value="Content/Animation/CesiumMan.nmmesh" />
+    <ParameterCount Value="2" />
+    <Parameter0Name Value="BaseColor" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="0.32" />
+    <Parameter0Y Value="0.45" />
+    <Parameter0Z Value="0.62" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="Roughness" />
+    <Parameter1Slot Value="0" />
+    <Parameter1X Value="0.5" />
+    <Parameter1Y Value="0" />
+    <Parameter1Z Value="0" />
+    <Parameter1W Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+  </Component>
+  <Component Type="Animation" Version="1">
+    <Animation Value="Content/Animation/CesiumMan_Anim0.nmanim" />
+    <PlayRate Value="1" />
+    <Paused Value="false" />
+    <ParameterCount Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="490" Y="0" Z="-1150" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="1" Y="1" Z="1" />
+  </Component>
+</Entity>

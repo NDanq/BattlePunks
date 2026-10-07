@@ -9,6 +9,7 @@
 #include "Public/Core/CoreLog.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
+#include "Public/GameCore/EventBus.h"
 #include "Public/GameCore/NativePrefab.h"
 #include "Public/GameCore/World.h"
 #include "Public/GameCore/WorldPackage.h"
@@ -22,6 +23,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <vector>
@@ -55,6 +57,10 @@
  *
  * Both turn the InsetLattice (inset shadows' demo cage) and drift it round
  * where it was placed, so its own shadow map follows a moving caster.
+ * LightLab's yard also has the animation demo (LightLab.Animals): a fox on
+ * an anim state -- a walk/run blend space, a sit, a masked head layer -- and
+ * a walking man carrying a lantern on an Anim Socket, its light pulsing at
+ * his footstep notifies (Content/Animation, from Art/Animation's glTFs).
  *   LightLabGameMode   mouse capture, the T/F/L toggles, a periodic report.
  *   LightLabGameModule owns and registers both levels.
  *   LightLabAvatar     multiplayer: each connected player is an orb the others
@@ -214,6 +220,35 @@ struct LightLabLatticeContext
     double              ElapsedSeconds = 0.0;
 };
 
+/* What LightLab.Animals' void* points at: the animation demo (RenderCore's
+ * ANIMATION.md). The fox laps an ellipse, walking then running -- its
+ * anim state's Speed is its ground speed, so the blend space follows it --
+ * stops, sits (a one-shot that ends on its own) and sets off again; Look
+ * brings in its masked head layer while it walks. The man walks a circle,
+ * a lantern in his hand on an Anim Socket, its light pulsing at each Step
+ * notify his walk fires. */
+struct LightLabAnimalsContext
+{
+    GameCore::EntityID  Fox;
+    GameCore::EntityID  Man;
+    GameCore::EntityID  Lantern;
+
+    /* Each loop starts where its entity was placed: its east end. */
+    EngineCore::Vector3 FoxCenter;
+    double              FoxRadiusX = 240.0, FoxRadiusZ = 100.0;
+    double              FoxAngle   = 0.0;
+    double              FoxSpeed   = 0.0;    // world units a second, along the path
+    int                 FoxPhase   = 0;      // 0 walk, 1 run, 2 stopping, 3 sitting
+    double              FoxPhaseSeconds = 0.0;
+
+    EngineCore::Vector3 ManCenter;
+    double              ManRadius = 110.0;
+    double              ManAngle  = 0.0;
+
+    double              LanternIntensity = 6.0;   // as placed
+    double              LanternPulse     = 0.0;   // 1 at a footstep, fading
+};
+
 /* What LightLab.AnimateLights' void* points at. */
 struct LightLabAnimateContext
 {
@@ -335,6 +370,111 @@ namespace
             Trail->Position.SetY(float(Context.TrailCenter.GetY() + 40.0 * std::sin(Angle * 2.0)));
             Trail->Position.SetZ(float(Context.TrailCenter.GetZ() + Context.TrailRadius * std::sin(Angle)));
         }
+    }
+
+    /* A heading's yaw (TransformComponent Y): the forward of FlyForward. */
+    double YawOf(const double InX, const double InZ)
+    {
+        return std::atan2(InX, InZ) / DegToRad;
+    }
+
+    /* InCurrent toward InTarget by at most InStep. */
+    double Approach(const double InCurrent, const double InTarget, const double InStep)
+    {
+        return InCurrent < InTarget ? std::min(InCurrent + InStep, InTarget) : std::max(InCurrent - InStep, InTarget);
+    }
+
+    /* "AnimNotify" (entity, name): the man's footsteps pulse his lantern. */
+    void OnAnimNotify(GameCore::EventID, const GameCore::EventArgs& InArgs, void* InUserData)
+    {
+        auto& Context = *static_cast<LightLabAnimalsContext*>(InUserData);
+        if(InArgs.Count >= 2 && InArgs.Args[0].Entity == Context.Man.Pack() && std::strcmp(InArgs.Args[1].String, "Step") == 0)
+        {
+            Context.LanternPulse = 1.0;
+        }
+    }
+
+    /* PrePhysics system, before the animation tick (PostUpdate) reads the
+     * parameters it sets: moves the fox and the man and drives their
+     * animations. Walk 6 s, run 6 s, stop, sit while Survey plays, again. */
+    void AnimalsSystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
+    {
+        auto& Context = *static_cast<LightLabAnimalsContext*>(InUserData);
+        const double Delta = double(InDeltaSeconds);
+
+        const GameCore::Entity Fox = InWorld.GetEntity(Context.Fox);
+        GameCore::TransformComponent*   FoxTransform = Fox.GetComponent<GameCore::TransformComponent>();
+        RenderCore::AnimationComponent* FoxAnimation = Fox.GetComponent<RenderCore::AnimationComponent>();
+        if(FoxTransform && FoxAnimation)
+        {
+            Context.FoxPhaseSeconds += Delta;
+            double Target = 0.0;
+            switch(Context.FoxPhase)
+            {
+                case 0: Target = 65.0;  if(Context.FoxPhaseSeconds > 6.0) { Context.FoxPhase = 1; Context.FoxPhaseSeconds = 0.0; } break;
+                case 1: Target = 160.0; if(Context.FoxPhaseSeconds > 6.0) { Context.FoxPhase = 2; Context.FoxPhaseSeconds = 0.0; } break;
+                case 2:
+                    Target = 0.0;
+                    if(Context.FoxSpeed <= 0.0)
+                    {
+                        FoxAnimation->SetTrigger("Sit");
+                        Context.FoxPhase = 3;
+                        Context.FoxPhaseSeconds = 0.0;
+                    }
+                    break;
+                default: Target = 0.0;  if(Context.FoxPhaseSeconds > 4.0) { Context.FoxPhase = 0; Context.FoxPhaseSeconds = 0.0; } break;
+            }
+            Context.FoxSpeed = Approach(Context.FoxSpeed, Target, 90.0 * Delta);
+
+            /* Along the ellipse at that speed: the angle by the arc length it covers. */
+            const double SinA = std::sin(Context.FoxAngle), CosA = std::cos(Context.FoxAngle);
+            const double ArcPerRadian = std::max(std::hypot(Context.FoxRadiusX * SinA, Context.FoxRadiusZ * CosA), 1.0);
+            Context.FoxAngle += Context.FoxSpeed * Delta / ArcPerRadian;
+            FoxTransform->Position = Context.FoxCenter + EngineCore::Vector3(Context.FoxRadiusX * std::cos(Context.FoxAngle), 0.0,
+                                                                            Context.FoxRadiusZ * std::sin(Context.FoxAngle));
+            /* The fox's clips face -Z, as the man's do: the heading's yaw, turned round. */
+            FoxTransform->Rotation.SetY(float(YawOf(-Context.FoxRadiusX * std::sin(Context.FoxAngle),
+                                                    Context.FoxRadiusZ * std::cos(Context.FoxAngle)) + 180.0));
+            FoxAnimation->SetFloat("Speed", float(Context.FoxSpeed));
+            FoxAnimation->SetFloat("Look", float(Approach(FoxAnimation->GetFloat("Look"), Context.FoxPhase == 0 ? 1.0 : 0.0, 1.5 * Delta)));
+        }
+
+        /* The man: a walk's pace round his circle. His clip faces -Z, so his yaw is the heading's, turned round. */
+        if(GameCore::TransformComponent* ManTransform = InWorld.GetEntity(Context.Man).GetComponent<GameCore::TransformComponent>())
+        {
+            Context.ManAngle += 90.0 * Delta / Context.ManRadius;
+            ManTransform->Position = Context.ManCenter + EngineCore::Vector3(Context.ManRadius * std::cos(Context.ManAngle), 0.0,
+                                                                            Context.ManRadius * std::sin(Context.ManAngle));
+            ManTransform->Rotation.SetY(float(YawOf(-std::sin(Context.ManAngle), std::cos(Context.ManAngle)) + 180.0));
+        }
+
+        if(RenderCore::PointLightComponent* Light = InWorld.GetEntity(Context.Lantern).GetComponent<RenderCore::PointLightComponent>())
+        {
+            Context.LanternPulse = std::max(0.0, Context.LanternPulse - 4.0 * Delta);
+            Light->Intensity = float(Context.LanternIntensity * (1.0 + 0.6 * Context.LanternPulse));
+        }
+    }
+
+    /* AnimFox, AnimMan and AnimLantern, if InWorld has them, into InOut; false if not. */
+    bool FindAnimals(GameCore::World& InWorld, LightLabAnimalsContext& InOut)
+    {
+        InOut = LightLabAnimalsContext();
+        InOut.Fox     = InWorld.FindEntityByName("AnimFox");
+        InOut.Man     = InWorld.FindEntityByName("AnimMan");
+        InOut.Lantern = InWorld.FindEntityByName("AnimLantern");
+        const GameCore::TransformComponent* Fox = InWorld.GetEntity(InOut.Fox).GetComponent<GameCore::TransformComponent>();
+        const GameCore::TransformComponent* Man = InWorld.GetEntity(InOut.Man).GetComponent<GameCore::TransformComponent>();
+        if(!Fox && !Man)
+        {
+            return false;
+        }
+        if(Fox) { InOut.FoxCenter = Fox->Position - EngineCore::Vector3(InOut.FoxRadiusX, 0.0, 0.0); }
+        if(Man) { InOut.ManCenter = Man->Position - EngineCore::Vector3(InOut.ManRadius, 0.0, 0.0); }
+        if(const RenderCore::PointLightComponent* Light = InWorld.GetEntity(InOut.Lantern).GetComponent<RenderCore::PointLightComponent>())
+        {
+            InOut.LanternIntensity = double(Light->Intensity);
+        }
+        return true;
     }
 
     /* PrePhysics system: carries the Swinger round its starting point, one lap
@@ -697,6 +837,11 @@ public:
         {
             World.RegisterSystem("LightLab.TurnLattice", GameCore::TP_PrePhysics, &TurnLatticeSystem, &LatticeContext);
         }
+        if(FindAnimals(World, AnimalsContext))
+        {
+            World.RegisterSystem("LightLab.Animals", GameCore::TP_PrePhysics, &AnimalsSystem, &AnimalsContext);
+            World.GetEvents().Subscribe("AnimNotify", &OnAnimNotify, &AnimalsContext);
+        }
 
         /* Here, not a member initialiser: needs the Player and the Sun. */
         Mode.emplace(Player, SunEntity);
@@ -1043,6 +1188,7 @@ private:
     LightLabFlyContext     FlyContext;
     LightLabAnimateContext AnimateContext;
     LightLabLatticeContext LatticeContext;
+    LightLabAnimalsContext AnimalsContext;
 
     std::optional<LightLabGameMode> Mode;
 };

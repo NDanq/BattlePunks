@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="c887387e2c7a4b1dba03fffb9b2e3e52" Name="AnimFox">
+  <Component Type="Render" Version="4">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+    <Mesh Value="Content/Animation/Fox.nmmesh" />
+    <ParameterCount Value="2" />
+    <Parameter0Name Value="BaseColor" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="0.85" />
+    <Parameter0Y Value="0.42" />
+    <Parameter0Z Value="0.16" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="Roughness" />
+    <Parameter1Slot Value="0" />
+    <Parameter1X Value="0.7" />
+    <Parameter1Y Value="0" />
+    <Parameter1Z Value="0" />
+    <Parameter1W Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+  </Component>
+  <Component Type="Animation" Version="1">
+    <Animation Value="Content/Animation/Fox.nmanimstate" />
+    <PlayRate Value="1" />
+    <Paused Value="false" />
+    <ParameterCount Value="2" />
+    <P0Name Value="Speed" />
+    <P0Value Value="0" />
+    <P1Name Value="Look" />
+    <P1Value Value="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-140" Y="0" Z="-1150" />
+    <Rotation X="0" Y="90" Z="0" />
+    <Scale X="0.01" Y="0.01" Z="0.01" />
+  </Component>
+</Entity>

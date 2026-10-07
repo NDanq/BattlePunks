@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="13e886ee25e641d39a1307c933af25d9" Name="AnimLantern" Parent="219a0bff8f6e411f9ae255be3c539b23">
+  <Component Type="Anim Socket" Version="1">
+    <Bone Value="Skeleton_arm_joint_R__3_" />
+    <PositionOffset X="0" Y="0" Z="0" />
+    <RotationOffset X="0" Y="0" Z="0" />
+  </Component>
+  <Component Type="Render" Version="4">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/FlareFlame.material.nmgraph" />
+    <Mesh Value="Engine/Content/Meshes/Sphere.nmmesh" />
+    <ParameterCount Value="0" />
+    <CastShadows Value="false" />
+    <CastInsetShadow Value="false" />
+  </Component>
+  <Component Type="Point Light" Version="2">
+    <Color R="255" G="190" B="110" A="255" />
+    <Intensity Value="4" />
+    <Radius Value="320" />
+    <Active Value="true" />
+    <CastShadows Value="false" />
+    <ShadowTechnique Value="0" />
+    <ShadowTint R="40" G="50" B="80" A="255" />
+    <ShadowBias Value="0.004" />
+    <ShadowNormalBias Value="2" />
+    <SourceRadius Value="4" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="0" Y="0" Z="0" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="10" Y="10" Z="10" />
+  </Component>
+</Entity>
