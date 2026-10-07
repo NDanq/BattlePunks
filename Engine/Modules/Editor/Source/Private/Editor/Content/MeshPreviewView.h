@@ -4,6 +4,7 @@
 #if WITH_EDITOR
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include <QColor>
@@ -49,6 +50,11 @@ public:
      * bone); empty: its reference pose. Drawn with the next request. */
     void SetSkinPalette(std::vector<float> InPalette);
 
+    /* While set, redraws every editor frame (EditorContext::BeforeFrame),
+     * calling InSource just before each request: what it sets (a pose) is
+     * as new as the image it goes with. Empty: redraws only on change. */
+    void SetFrameSource(std::function<void()> InSource);
+
     /* Bones drawn over the image: segments, bone to parent, in model space
      * (6 floats each) -- framed as the renderer frames a mesh with these
      * bounds. Empty: none. */
@@ -90,9 +96,14 @@ private:
     float       Pitch = 20.0f;
     float       Zoom  = 1.0f;
 
-    bool        bInFlight = false;
+    int         InFlight  = 0;       // requests out; more than one only for a FrameSource
+    uint64_t    Sent      = 0;       // requests made, and the newest one shown: an older answer is dropped
+    uint64_t    Shown     = 0;
     bool        bPending  = false;   // something changed while a request was out
     bool        bAnimate  = false;
+    bool        bInFrameSource = false;   // FrameSource is running: its changes join this request
+    std::function<void()> FrameSource;
+    QMetaObject::Connection FrameTick;
     bool        bDragging = false;
     QPoint      LastMouse;
 

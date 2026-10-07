@@ -14,7 +14,6 @@
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStyle>
-#include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
 
@@ -79,11 +78,6 @@ AnimPreviewWidget::AnimPreviewWidget(QWidget* InParent) : QWidget(InParent)
     Layout->addWidget(View, 1);
     Layout->addLayout(Transport);
 
-    /* About as often as the preview answers; each step sends the pose. */
-    Clock = new QTimer(this);
-    Clock->setInterval(33);
-    connect(Clock, &QTimer::timeout, this, &AnimPreviewWidget::Step);
-
     UpdateTransport();
 }
 
@@ -139,12 +133,14 @@ void AnimPreviewWidget::SetPlaying(const bool bInPlaying)
     bPlaying = bInPlaying && HasSkeleton();
     if(bPlaying)
     {
+        /* Stepped as each frame is sent, not on a clock of its own: every
+         * image shows the pose of the moment it was asked for. */
         Elapsed.restart();
-        Clock->start();
+        View->SetFrameSource([this]() { Step(); });
     }
     else
     {
-        Clock->stop();
+        View->SetFrameSource({});
     }
     UpdateTransport();
 }

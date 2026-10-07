@@ -113,6 +113,7 @@ void VulkanDynamicGDI::BeginRendering()
     VkCommandBuffer Cmd = CommandManager->BeginFrame();
     if(DescAlloc) DescAlloc->Reset();
     DrainDeferredDestruction();
+    CompletedTimelineValue = RenderTimelineCounter;   // what BeginReadback's readbacks wait on
 
     // The previous block's timestamps are complete (its fence was just waited):
     // read them, then reset the pool for this block's, outside any rendering.

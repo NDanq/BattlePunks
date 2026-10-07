@@ -29,6 +29,7 @@
 #include "Private/RenderCore/ParticleSimulation.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
 #include "Private/RenderCore/DrawPolicy.h"
+#include "Private/RenderCore/MaterialPreview.h"
 #include "Private/RenderCore/OverlayFont.h"
 #include "Private/RenderCore/UIRenderer.h"
 #include "Private/RenderCore/RenderCoreInternal.h"
@@ -422,6 +423,17 @@ namespace RenderCore
          * target the last RenderSceneStages finished in. */
         SceneTargets     PreviewTargets{"RenderCore.MaterialPreview"};
         GDIRenderTarget* FinalTarget = nullptr;
+
+#if WITH_EDITOR
+        /* Previews drawn and on their way back (DeliverMaterialPreviews). */
+        struct PendingPreview
+        {
+            std::unique_ptr<GDIReadback> Readback;
+            uint64_t                     Request = 0;
+            MaterialPreviewMailbox*      Mailbox = nullptr;
+        };
+        std::vector<PendingPreview> PendingPreviews;
+#endif
 
         std::atomic<uint64_t> DrawCallCount{0};
         std::atomic<uint64_t> ParticleSimulationCount{0};
@@ -3740,7 +3752,45 @@ namespace RenderCore
     }
 
 #if WITH_EDITOR
-    bool RenderContext::RenderMaterialPreview(const MaterialPreviewRequest& InRequest, EngineCore::Image& OutImage, std::string& OutError)
+    void RenderContext::RenderMaterialPreview(const MaterialPreviewRequest& InRequest)
+    {
+        std::unique_ptr<GDIReadback> Readback;
+        std::string Error;
+        if(!DrawMaterialPreview(InRequest, Readback, Error))
+        {
+            if(InRequest.Mailbox) { InRequest.Mailbox->Deliver(InRequest.Request, EngineCore::Image(), std::move(Error)); }
+            return;
+        }
+        Impl::PendingPreview Pending;
+        Pending.Readback = std::move(Readback);
+        Pending.Request  = InRequest.Request;
+        Pending.Mailbox  = InRequest.Mailbox;
+        P->PendingPreviews.push_back(std::move(Pending));
+        DeliverMaterialPreviews();   // a backend that read back at once
+    }
+
+    void RenderContext::DeliverMaterialPreviews()
+    {
+        auto& Pending = P->PendingPreviews;
+        for(size_t At = 0; At < Pending.size();)
+        {
+            if(!Pending[At].Readback->IsReady())
+            {
+                ++At;
+                continue;
+            }
+            EngineCore::Image Pixels = Pending[At].Readback->Take();
+            std::string       Error;
+            if(Pixels.GetWidth() == 0)
+            {
+                Error = "this backend reads nothing back (the Null backend draws nothing)";
+            }
+            if(Pending[At].Mailbox) { Pending[At].Mailbox->Deliver(Pending[At].Request, std::move(Pixels), std::move(Error)); }
+            Pending.erase(Pending.begin() + std::ptrdiff_t(At));
+        }
+    }
+
+    bool RenderContext::DrawMaterialPreview(const MaterialPreviewRequest& InRequest, std::unique_ptr<GDIReadback>& OutReadback, std::string& OutError)
     {
         const std::string Name(InRequest.Material, strnlen(InRequest.Material, sizeof(InRequest.Material)));
         const std::string Mesh(InRequest.Mesh, strnlen(InRequest.Mesh, sizeof(InRequest.Mesh)));
@@ -3889,24 +3939,21 @@ namespace RenderCore
         RenderSceneStages(P->PreviewTargets, EngineCore::Color(38, 40, 46, 255));   // the editor viewport's clear
         P->Scene.View[0] = 0.0f;
 
-        /* Flushes, reads back, resumes the frame. */
+        /* The copy joins the frame; the pixels are taken when it is done. */
         GDIRenderTarget* Final = P->FinalTarget ? P->FinalTarget : P->PreviewTargets.SceneColor;
-        OutImage    = Final->ToImage();
+        OutReadback.reset(Final->BeginReadback());
         P->View     = SavedView;
         P->Lighting = SavedLighting;
         P->UpdateScene();
-
-        if(OutImage.GetWidth() == 0)
-        {
-            OutError = "this backend reads nothing back (the Null backend draws nothing)";
-            return false;
-        }
         return true;
     }
 #endif // WITH_EDITOR
 
     void RenderContext::ReleaseGPUResources()
     {
+#if WITH_EDITOR
+        P->PendingPreviews.clear();
+#endif
         P->PreviewTargets.Release();
         P->ReleaseRenderTargets();
         P->ReleaseShadowAtlases();

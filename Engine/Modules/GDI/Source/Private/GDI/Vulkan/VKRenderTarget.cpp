@@ -299,7 +299,7 @@ EngineCore::Image VKRenderTarget::ToImage()
 
     VkBuffer       Buf = VK_NULL_HANDLE;
     VkDeviceMemory Mem = VK_NULL_HANDLE;
-    if(!AllocStagingBuffer(Device, DataSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem))
+    if(!AllocStagingBuffer(Device, DataSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem, true))
         return EngineCore::Image();
 
     VkCommandPool   Pool = VK_NULL_HANDLE;
@@ -348,6 +348,88 @@ EngineCore::Image VKRenderTarget::ToImage()
     vkDestroyBuffer(Dev, Buf, nullptr);
     vkFreeMemory(Dev, Mem, nullptr);
     return Result;
+}
+
+namespace
+{
+    /* VKRenderTarget::BeginReadback's: a staging buffer the frame copies into. */
+    class VKReadback final : public GDIReadback
+    {
+    public:
+        VKReadback(VKDevice* InDevice, VkBuffer InBuffer, VkDeviceMemory InMemory, uint InWidth, uint InHeight, bool bInHalf, uint64_t InDoneAt)
+            : Device(InDevice), Buffer(InBuffer), Memory(InMemory), Width(InWidth), Height(InHeight), bHalf(bInHalf), DoneAt(InDoneAt) {}
+
+        ~VKReadback() override
+        {
+            /* Still being copied into: freed once the GPU is past it. */
+            auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI);
+            if(GDI && !GDI->IsSubmissionDone(DoneAt))
+            {
+                GDI->DeferDestroyBuffer(Buffer, Memory);
+                return;
+            }
+            if(Device && Device->IsValid())
+            {
+                vkDestroyBuffer(Device->GetDevice(), Buffer, nullptr);
+                vkFreeMemory(Device->GetDevice(), Memory, nullptr);
+            }
+        }
+
+        bool IsReady() override
+        {
+            auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI);
+            return !GDI || GDI->IsSubmissionDone(DoneAt);
+        }
+
+        EngineCore::Image Take() override
+        {
+            if(bTaken || !IsReady() || !Device || !Device->IsValid()) return EngineCore::Image();
+            bTaken = true;
+
+            const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * (bHalf ? 8u : 4u);
+            void* Mapped = nullptr;
+            if(vkMapMemory(Device->GetDevice(), Memory, 0, DataSize, 0, &Mapped) != VK_SUCCESS) return EngineCore::Image();
+            // RT memory is top-down, EngineCore::Image's own order (ToImage).
+            EngineCore::Image Result(int(Width), int(Height), EngineCore::EImageFormat::RGBA8);
+            if(bHalf) { GDIHalvesToBytes(static_cast<const uint16_t*>(Mapped), Result.GetData(), size_t(Width) * size_t(Height) * 4u); }
+            else      { std::memcpy(Result.GetData(), Mapped, size_t(DataSize)); }
+            vkUnmapMemory(Device->GetDevice(), Memory);
+            return Result;
+        }
+
+    private:
+        VKDevice*      Device;
+        VkBuffer       Buffer;
+        VkDeviceMemory Memory;
+        uint           Width, Height;
+        bool           bHalf;
+        uint64_t       DoneAt;
+        bool           bTaken = false;
+    };
+}
+
+GDIReadback* VKRenderTarget::BeginReadback()
+{
+    auto* GDI = dynamic_cast<VulkanDynamicGDI*>(GDynamicGDI);
+    if(!GDI || !Device || !Device->IsValid() || Image == VK_NULL_HANDLE || Width == 0 || Height == 0)
+        return GDIRenderTarget::BeginReadback();
+
+    const bool bHalf = Format == VK_FORMAT_R16G16B16A16_SFLOAT;
+    const VkDeviceSize DataSize = VkDeviceSize(Width) * VkDeviceSize(Height) * (bHalf ? 8u : 4u);
+    VkBuffer       Buf = VK_NULL_HANDLE;
+    VkDeviceMemory Mem = VK_NULL_HANDLE;
+    if(!AllocStagingBuffer(Device, DataSize, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem, true))
+        return GDIRenderTarget::BeginReadback();
+
+    uint64_t DoneAt = 0;
+    if(!GDI->RecordReadback(this, Buf, DoneAt))
+    {
+        // No frame recording: the synchronous path.
+        vkDestroyBuffer(Device->GetDevice(), Buf, nullptr);
+        vkFreeMemory(Device->GetDevice(), Mem, nullptr);
+        return GDIRenderTarget::BeginReadback();
+    }
+    return new VKReadback(Device, Buf, Mem, Width, Height, bHalf, DoneAt);
 }
 
 GDITexture2D* VKRenderTarget::ToGDITexture2D()

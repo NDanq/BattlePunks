@@ -2,6 +2,7 @@
 #define RENDERCORE_RENDERCONTEXT_H
 
 #include <cstdint>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -27,6 +28,8 @@
  * ONLY image in the process that links it -- see RenderCoreAPI.h.
  */
 namespace EngineCore { class Image; }
+
+class GDIReadback;   // Public/GDI/GDIRenderTarget.h
 
 namespace RenderCore
 {
@@ -396,9 +399,21 @@ namespace RenderCore
          * light, with its material (or its slots) on its sections. A
          * PostProcess material always runs full screen. Called by
          * RenderScene::Render before the scene's own draws; restores the view
-         * and lighting. False, with OutError, if it cannot draw or read back.
+         * and lighting. The answer goes to InRequest's mailbox: at once if it
+         * cannot draw, else when the readback is in -- a frame or so later,
+         * not waited for (DeliverMaterialPreviews).
          */
-        bool RenderMaterialPreview(const MaterialPreviewRequest& InRequest, EngineCore::Image& OutImage, std::string& OutError);
+        void RenderMaterialPreview(const MaterialPreviewRequest& InRequest);
+
+        /* The previews whose readbacks are in, to their mailboxes: each
+         * frame, before its own previews. */
+        void DeliverMaterialPreviews();
+
+    private:
+        bool DrawMaterialPreview(const MaterialPreviewRequest& InRequest, std::unique_ptr<GDIReadback>& OutReadback,
+                                 std::string& OutError);
+
+    public:
 #endif
 
         struct Impl;

@@ -168,8 +168,8 @@ What each character costs falls off with distance from the frame's views
 | `FreezeDistance` | 20000 | past it, time passes -- notifies, transitions, root motion -- but no pose is evaluated |
 | `ParallelMin` | 16 | at least this many updating in a tick, and they run across the job system |
 
-0 turns a distance off. A world with no view -- a dedicated server -- runs
-everything at full rate. `AnimationSystem::GetLastStats` says what the last
+0 turns a distance off. A world with no view -- a dedicated server -- and the
+editor's preview of a level run everything at full rate. `AnimationSystem::GetLastStats` says what the last
 tick did. Visibility (behind the camera, occluded) is not considered yet:
 the game thread does not know it.
 

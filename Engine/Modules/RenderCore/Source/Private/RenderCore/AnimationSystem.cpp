@@ -255,8 +255,9 @@ namespace RenderCore
             Item.Entity    = InEntity.GetID();
             Item.Step      = InComponent.bPaused ? 0.0f : InDeltaSeconds;
 
-            /* No view (a server): everything at full rate. */
-            if(!ViewOrigins.empty() && Instance.HasPose())
+            /* No view (a server), or the editor's preview -- one world, and a
+             * camera that is often far off: everything at full rate. */
+            if(bInGame && !ViewOrigins.empty() && Instance.HasPose())
             {
                 const EngineCore::Vector3 At = InEntity.GetWorldPose().Position;
                 double Nearest = 1e300;

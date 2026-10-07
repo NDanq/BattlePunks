@@ -257,6 +257,15 @@ public:
     void RecordResolve(class VKRenderTarget* Src, class VKRenderTarget* Dst);
 
     /**
+     * Record a copy of Src's colour into Dst (a host-visible buffer) in the frame
+     * being recorded, resuming any rendering region after it. False when no frame
+     * is recording. OutDoneAt: the value IsSubmissionDone reports it done at.
+     * Backs VKRenderTarget::BeginReadback.
+     */
+    bool RecordReadback(class VKRenderTarget* Src, VkBuffer Dst, uint64_t& OutDoneAt);
+    bool IsSubmissionDone(uint64_t InDoneAt) const { return InDoneAt <= CompletedTimelineValue; }
+
+    /**
      * Build the pipeline + descriptor set for the current GDI state and bind them
      * into the active command buffer. Called by GDIMesh::Draw() (VKMesh::Draw)
      * immediately before it issues the vkCmdDraw, so EVERY draw — both the
@@ -348,6 +357,7 @@ private:
      */
     VkSemaphore             RenderTimeline        = VK_NULL_HANDLE;
     uint64_t                RenderTimelineCounter = 0;            // render thread only
+    uint64_t                CompletedTimelineValue = 0;           // every frame up to it has finished on the GPU
     std::atomic<uint64_t>   RenderTimelinePublished{0};          // render → UI handoff
 
     /*

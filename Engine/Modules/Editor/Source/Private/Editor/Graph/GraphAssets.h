@@ -119,6 +119,7 @@ namespace EditorGraphs
 
     /* Set by the main window; nullptr when there is none. */
     void SetEditorContext(EditorContext* InContext);
+    EditorContext* GetEditorContext();
 
     /* What a RenderComponent names a material graph by: its runtime path,
      * "Materials/Glow.material.nmgraph" (the engine's: "Engine/Content/...").
