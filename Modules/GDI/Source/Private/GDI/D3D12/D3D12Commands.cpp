@@ -108,6 +108,7 @@ void D3D12DynamicGDI::BeginRendering()
     if(DescAlloc) DescAlloc->Reset();
     DrainDeferredDestruction();
     CollectTimestamps();   // the previous block's, complete now its fence is waited
+    ++RenderingBlocks;     // and the previous block's occlusion answers with them
 
     CurrentStateData->CurrentCmd         = List;
     FrameListSerial                      = AllocateListSerial();

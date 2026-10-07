@@ -181,8 +181,8 @@ sphere round its mesh's own box and its bones where they are now -- root
 motion as authored can walk it off its entity -- padded a quarter for the
 skin, against each view's frustum. A view given by origin alone
 (`AddViewOrigin`) sees everything. One that comes back into view takes the
-time it saved at once. Occlusion is not considered: the renderer has no
-occlusion culling yet.
+time it saved at once. Occlusion is not considered: a character hidden behind
+an occluder (RENDERPIPELINE.md, "Occlusion culling") is still in view.
 
 ## Anim states
 

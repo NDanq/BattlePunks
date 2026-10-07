@@ -80,6 +80,15 @@ namespace RenderCore
          * proxy type casts no shadow unless it says so. */
         virtual void DrawShadow(RenderContext& InContext) { (void)InContext; }
 
+        /* OCCLUSION CULLING (RENDERPIPELINE.md, "Occlusion culling"). An
+         * occluder is never culled by occlusion itself: RENDER THREAD, once a
+         * frame while it is in view, DrawOccluder queues its depth into the
+         * PrePass (RenderContext::DrawMeshOccluder), which every other proxy's
+         * box is tested against. Neither by default: a proxy type occludes
+         * nothing unless it says so (RenderComponent::bOccluder). */
+        virtual bool IsOccluder() const { return false; }
+        virtual void DrawOccluder(RenderContext& InContext) { (void)InContext; }
+
         /* RENDER THREAD, before culling: how far past WorldBounds this
          * proxy's draw can reach -- a material's World Position Offset (Max
          * Offset, RenderContext::GetMaterialMaxOffset). 0 by default. */
@@ -188,6 +197,11 @@ namespace RenderCore
         bool     bStatic      = false;
         uint64_t ChangeSerial = 0;
         RenderBakedDraw Baked;
+
+        /* RenderScene's occlusion bookkeeping: its query in the scene's last
+         * round (-1: none), and whether the last answer read found it hidden. */
+        int32_t  OcclusionQuery = -1;
+        bool     bOccluded      = false;
     };
 
     /*

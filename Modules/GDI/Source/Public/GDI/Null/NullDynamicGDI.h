@@ -66,6 +66,9 @@ struct NullGDIStats
     uint32_t LastDispatchParamBytes = 0;
     uint64_t InstancedDrawCalls    = 0;   // draws with GDISetInstanceBuffer's buffer set
     uint32_t LastInstanceCount     = 0;
+    uint64_t OcclusionRounds       = 0;
+    uint64_t OcclusionQueries      = 0;   // ended, over every round
+    uint64_t PredicatedDrawCalls   = 0;   // draws with GDISetOcclusionPredicate's query set
     GDIShader* LastBoundVertexShader = nullptr;
     GDIShader* LastBoundPixelShader  = nullptr;
 };
@@ -82,6 +85,19 @@ public:
     }
     void Release() override { delete this; }
     std::vector<uint8_t> Data;
+};
+
+/* A Null query set: which of its queries this round ended, and the round's
+ * block (BeginRenderingCalls), for when it reads as finished. */
+class NullOcclusionQueries final : public GDIOcclusionQueries
+{
+public:
+    explicit NullOcclusionQueries(const uint32_t InCapacity) : GDIOcclusionQueries(InCapacity) {}
+    void Release() override { delete this; }
+
+    std::vector<uint8_t> Ended;            // by query, this round's
+    uint64_t             RoundBlock = 0;   // the BeginRenderingCalls it was begun in
+    bool                 bPending   = false;
 };
 
 /*
@@ -181,11 +197,26 @@ public:
                                uint32_t InX, uint32_t InY, uint32_t InZ) override;
     bool       ReadBuffer(GDIBuffer* InBuffer, std::vector<uint8_t>& OutBytes) override;
 
+    /* Occlusion queries "supported": a round's queries read back, a block
+     * later, as SetOcclusionAnswer says every one found (visible unless told
+     * otherwise), so a caller's culling runs without a GPU. Predicates are
+     * counted; every draw is a no-op anyway. */
+    bool                 SupportsOcclusionQueries() const override { return true; }
+    bool                 SupportsOcclusionPredication() const override { return true; }
+    GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
+    void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;
+    void                 EndOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex) override;
+    void                 SetOcclusionPredicate(GDIOcclusionQueries* InSet, int32_t InIndex) override;
+    bool                 ReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible) override;
+    void                 SetOcclusionAnswer(const bool bInVisible) { bOcclusionAnswer = bInVisible; }
+
     const NullGDIStats& GetStats() const { return Stats; }
     void ResetStats() { Stats = NullGDIStats(); }
 
 private:
     NullGDIStats Stats;
+    bool         bOcclusionAnswer = true;
+    bool         bPredicated      = false;
 };
 
 #endif //CORECLIENT_NULLDYNAMICGDI_H

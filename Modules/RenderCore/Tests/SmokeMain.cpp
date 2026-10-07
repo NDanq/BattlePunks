@@ -91,8 +91,8 @@ static void TestScriptBindings()
     size_t RenderCount = 0;
     const GameCore::ScriptBindingEntry* Render =
         GameCore::FindComponentScript(RenderComponent::StaticType().ID, RenderCount);
-    Expect(Render != nullptr && RenderCount == 11,
-           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows and CastInsetShadow");
+    Expect(Render != nullptr && RenderCount == 12,
+           "Render exposes Visible, Mesh, slots by index, material parameters, CastShadows, CastInsetShadow and Occluder");
     const auto HasBinding = [&](const char* InName)
     {
         for(size_t Index = 0; Render && Index < RenderCount; ++Index)
@@ -107,6 +107,7 @@ static void TestScriptBindings()
     Expect(HasBinding("SetMaterialParameter") && HasBinding("SetMaterialColor") && HasBinding("GetMaterialParameter")
            && HasBinding("ClearMaterialParameter"), "material parameters can be set, read and cleared");
     Expect(HasBinding("CastShadows"), "and whether it casts shadows");
+    Expect(HasBinding("Occluder"), "and whether it occludes");
 
     bool bProxyExposed = false;
     for(size_t Index = 0; Index < RenderCount; ++Index)
@@ -2229,7 +2230,7 @@ static void TestRenderComponentSerializer()
     };
 
     const GameCore::ComponentSerializerInfo* Info = GameCore::FindComponentSerializer(RenderComponent::StaticType().ID);
-    Expect(Info && Info->Version == 4, "RenderComponent saves as version 4 (material parameters, CastShadows, CastInsetShadow)");
+    Expect(Info && Info->Version == 5, "RenderComponent saves as version 5 (material parameters, CastShadows, CastInsetShadow, Occluder)");
     if(!Info) { return; }
 
     RenderComponent Saved;
@@ -2289,9 +2290,13 @@ static void TestRenderComponentSerializer()
            "and no CastShadows, and keeps casting");
     Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("CastInsetShadow")) == Old.Names.end() && FromOld.bCastInsetShadow == 0,
            "nor CastInsetShadow, which stays off");
+    Expect(std::find(Old.Names.begin(), Old.Names.end(), std::string("Occluder")) == Old.Names.end() && FromOld.bOccluder == 0,
+           "nor Occluder, which stays off");
 
     Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("CastInsetShadow")) != Out.Names.end(),
            "a version 4 save writes CastInsetShadow");
+    Expect(std::find(Out.Names.begin(), Out.Names.end(), std::string("Occluder")) != Out.Names.end(),
+           "a version 5 save writes Occluder");
 
     /* The lights: version 2 dropped the sun's Direction (it is the
      * Transform's forward now) and added shadows; version 3 its baked
@@ -5810,6 +5815,195 @@ static void TestMeshDrawing()
 }
 #endif // WITH_EDITOR
 
+/*
+ * Occlusion culling (RENDERPIPELINE.md, "Occlusion culling"): a wall marked
+ * Occluder, a box behind it and a box beside it, seen in perspective. On the
+ * Null backend every query answers "visible", so this checks what is queried;
+ * with NIMBLE_SMOKE_GPU set it checks what the GPU finds, and that culling
+ * changes no pixel.
+ */
+struct OcclusionScene
+{
+    GameCore::World  World;
+    GameCore::Entity Wall, Hidden, Beside;
+
+    OcclusionScene()
+    {
+        const auto Placed = [this](const char* InName, const EngineCore::Vector3& InAt, const EngineCore::Vector3& InScale, const bool bInOccluder)
+        {
+            const GameCore::Entity Each = World.CreateEntity(InName);
+            GameCore::TransformComponent Transform;
+            Transform.Position = InAt;
+            Transform.Scale    = InScale;
+            Each.AddComponent(Transform);
+            RenderComponent Render;
+            std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%s", "Engine/Content/Meshes/Box.nmmesh");
+            Render.bOccluder = bInOccluder ? 1 : 0;
+            Each.AddComponent(Render);
+            return Each;
+        };
+        /* From (0, 100, -800) along +Z: the wall at depth 800 hides x within
+         * 200 of the middle; the box beside it, at depth 1100, is clear of it. */
+        Wall   = Placed("Wall",   EngineCore::Vector3(0.0, 100.0, 0.0),   EngineCore::Vector3(400.0, 400.0, 20.0), true);
+        Hidden = Placed("Hidden", EngineCore::Vector3(0.0, 100.0, 300.0), EngineCore::Vector3(100.0, 100.0, 100.0), false);
+        Beside = Placed("Beside", EngineCore::Vector3(420.0, 100.0, 300.0), EngineCore::Vector3(100.0, 100.0, 100.0), false);
+    }
+
+    static RenderView MakeView(const EngineCore::Size InViewport, const EngineCore::Vector3& InEye = EngineCore::Vector3(0.0, 100.0, -800.0))
+    {
+        return RenderView::MakePerspective(InViewport, InEye, EngineCore::Vector3(0.0, 0.0, 1.0), 50.0f, 10.0f, 5000.0f);
+    }
+};
+
+static void TestOcclusionCulling()
+{
+    std::printf("[occlusion culling]\n");
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(ERenderBackend::Null, WindowHandle());
+    Expect(bInit, "Renderer::Initialize(Null) for occlusion culling");
+    if(bInit)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = OcclusionScene::MakeView(Viewport);
+        Rend.SetViewOverride(&View);
+        OcclusionScene Scene;
+        Rend.BindWorld(Scene.World);
+
+        uint64_t Frame = 1;
+        const auto Stats = [&]()
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            RenderStats Out;
+            Rend.GetStats(Out);
+            return Out;
+        };
+
+        RenderStats On = Stats();
+        Expect(On.OcclusionQueriesLastFrame == 2, "both boxes are queried; the occluder is not");
+        Expect(On.ProxiesOccludedLastFrame == 0, "and nothing is hidden where every query answers visible");
+
+        ConfigVar* Enabled = ConfigFindVarByPath("Rendering.OcclusionCulling");
+        Expect(Enabled != nullptr, "[Rendering] OcclusionCulling is a setting");
+        if(Enabled)
+        {
+            Enabled->SetBool(false);
+            Expect(Stats().OcclusionQueriesLastFrame == 0, "off, nothing is queried");
+            Enabled->SetBool(true);
+        }
+
+        /* A box round the eye could be cut by the near plane: drawn, never queried. */
+        const RenderView Inside = OcclusionScene::MakeView(Viewport, EngineCore::Vector3(0.0, 100.0, 300.0));
+        Rend.SetViewOverride(&Inside);
+        Expect(Stats().OcclusionQueriesLastFrame == 1, "a box the eye is in is not queried");
+
+        const RenderView Flat = RenderView::MakeOrthographic(Viewport, EngineCore::Vector3(0.0, 0.0, -1000.0), -1.0f, 5000.0f);
+        Rend.SetViewOverride(&Flat);
+        Expect(Stats().OcclusionQueriesLastFrame == 0, "an orthographic view queries nothing");
+
+        Rend.SetViewOverride(&View);
+        Scene.Wall.GetComponent<RenderComponent>()->bOccluder = 0;
+        Expect(Stats().OcclusionQueriesLastFrame == 0, "with no occluder in view, nothing is queried: there is nothing to hide behind");
+        Scene.Beside.GetComponent<RenderComponent>()->bOccluder = 1;
+        Expect(Stats().OcclusionQueriesLastFrame == 2, "an entity no longer an occluder is queried like any other");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
+static void TestOcclusionCullingOnGpu()
+{
+    const char* Gpu = std::getenv("NIMBLE_SMOKE_GPU");
+    if(!Gpu || !Gpu[0])
+    {
+        std::printf("[occlusion culling on the GPU] skipped: set NIMBLE_SMOKE_GPU=Vulkan or D3D12\n");
+        return;
+    }
+    const ERenderBackend Backend = std::strcmp(Gpu, "D3D12") == 0 ? ERenderBackend::D3D12 : ERenderBackend::Vulkan;
+    std::printf("[occlusion culling on the GPU: %s]\n", GetShaderPlatformName(Backend));
+
+    FilesystemProvider  Disk;
+    LayeredFileProvider Layers(&Disk, false);
+    IFileProvider* PreviousProvider = GetFileProvider();
+    SetFileProvider(&Layers);
+
+    Renderer Rend;
+    const bool bInit = Rend.Initialize(Backend, WindowHandle());
+    Expect(bInit, "Renderer::Initialize on the GPU with no window");
+    ConfigVar* Enabled = ConfigFindVarByPath("Rendering.OcclusionCulling");
+    if(bInit && Enabled)
+    {
+        const EngineCore::Size Viewport(256, 256);
+        const RenderView View = OcclusionScene::MakeView(Viewport);
+        Rend.SetViewOverride(&View);
+        OcclusionScene Scene;
+        Rend.BindWorld(Scene.World);
+
+        uint64_t Frame = 1;
+        const auto Capture = [&](EngineCore::Image& OutPixels, RenderStats& OutStats)
+        {
+            for(int Each = 0; Each < 3; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            const uint64_t Request = Rend.RequestSceneCapture();
+            for(int Each = 0; Each < 2; ++Each) { Rend.EndFrame(FrameInfo{Frame++, 0.016, Viewport}); Rend.WaitForPreviousFrame(); }
+            Rend.GetStats(OutStats);
+            std::string Error;
+            return Request != 0 && Rend.TakeMaterialPreview(Request, OutPixels, Error) && OutPixels.GetWidth() == 256;
+        };
+        const auto Differing = [](const EngineCore::Image& InA, const EngineCore::Image& InB)
+        {
+            int Count = 0;
+            for(int Y = 0; Y < 256; ++Y)
+            {
+                const uint8_t* A = InA.GetData() + InA.GetStride() * Y;
+                const uint8_t* B = InB.GetData() + InB.GetStride() * Y;
+                for(int X = 0; X < 256 * 4; X += 4)
+                {
+                    Count += (A[X] != B[X] || A[X + 1] != B[X + 1] || A[X + 2] != B[X + 2]) ? 1 : 0;
+                }
+            }
+            return Count;
+        };
+
+        EngineCore::Image Culled, Unculled, Revealed, RevealedUnculled;
+        RenderStats CulledStats, UnculledStats, RevealedStats, Ignored;
+        const bool bCulled = Capture(Culled, CulledStats);
+        std::printf("    behind the wall: %llu of %llu queried boxes occluded\n",
+                    (unsigned long long)CulledStats.ProxiesOccludedLastFrame, (unsigned long long)CulledStats.OcclusionQueriesLastFrame);
+        Expect(bCulled && CulledStats.OcclusionQueriesLastFrame == 2, "both boxes are queried");
+        Expect(bCulled && CulledStats.ProxiesOccludedLastFrame == 1, "the box behind the wall is found hidden and not drawn; the one beside it is drawn");
+
+        Enabled->SetBool(false);
+        const bool bUnculled = Capture(Unculled, UnculledStats);
+        Enabled->SetBool(true);
+        std::printf("    culled vs not: %d pixels differ\n", Differing(Culled, Unculled));
+        Expect(bCulled && bUnculled && UnculledStats.OcclusionQueriesLastFrame == 0 && Differing(Culled, Unculled) == 0,
+               "and the frame is pixel for pixel the one drawn without occlusion culling");
+
+        /* The wall moved aside: the box shows again, a frame late at most. */
+        Scene.Wall.GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(-3000.0, 100.0, 0.0);
+        const bool bRevealed = Capture(Revealed, RevealedStats);
+        Enabled->SetBool(false);
+        const bool bRevealedUnculled = Capture(RevealedUnculled, Ignored);
+        Enabled->SetBool(true);
+        std::printf("    wall moved aside: %d pixels changed; vs unculled %d\n", Differing(Culled, Revealed), Differing(Revealed, RevealedUnculled));
+        Expect(bRevealed && RevealedStats.ProxiesOccludedLastFrame == 0 && Differing(Culled, Revealed) > 200,
+               "with the wall moved aside, the box is drawn again");
+        Expect(bRevealed && bRevealedUnculled && Differing(Revealed, RevealedUnculled) == 0, "exactly as it is without occlusion culling");
+
+        Rend.UnbindWorld();
+        Rend.SetViewOverride(nullptr);
+        Rend.Shutdown();
+    }
+    SetFileProvider(PreviousProvider);
+}
+
 int main()
 {
     // Unbuffered, so a run piped to a file shows how far it got if a GPU check hangs.
@@ -5865,6 +6059,8 @@ int main()
     TestParticlesOnGpu();
     TestStatFrameOnGpu();
     TestStaticDrawListsOnGpu();
+    TestOcclusionCulling();
+    TestOcclusionCullingOnGpu();
     TestClearGradientOnGpu();
     TestSceneCaptureOnGpu();
     TestToneMappingOnGpu();

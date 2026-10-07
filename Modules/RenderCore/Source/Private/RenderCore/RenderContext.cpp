@@ -221,6 +221,14 @@ namespace RenderCore
         {
             return InView.Projection.Data[3][2] == 0.0f && InView.Projection.Data[3][3] != 0.0f;
         }
+
+        /* Which sections a depth-only draw of a mesh queues (DrawMeshShadow,
+         * DrawMeshOccluder): the materials that write depth. */
+        enum class EDepthSections : uint8_t
+        {
+            OpaqueAndMasked,   // a shadow caster: Masked whole, for now -- its clip is not run here
+            Opaque,            // an occluder: a Masked one's holes would hide what is behind them
+        };
     }
 
     struct RenderContext::Impl
@@ -866,8 +874,36 @@ namespace RenderCore
         }
         bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
         bool                bVelocityThisFrame = false;  // and the velocity beside it: Motion Blur may read it
+        /* InMeshPath's depth-writing sections (InWhich) as depth-only draws
+         * into InStage -- Shadows for InShadowView, or the PrePass -- by the
+         * same slot rules as DrawMesh. False if the mesh cannot be loaded. */
+        bool QueueDepthSections(const RenderTransform& InTransform, const char* InMeshPath, const char* const* InSlots,
+                                uint32_t InSlotCount, const MaterialParameterOverrides& InOverrides, EDepthSections InWhich,
+                                ERenderStage InStage, int32_t InShadowView);
+
         bool                  bDrawMotion = false;       // SetDrawMotion's, for the draws queued now
         EngineCore::Matrix4x4 DrawMotion;
+
+        /* OCCLUSION CULLING (SetOcclusionQueries): the scene's query set and
+         * the boxes it tests this frame; the query the draws queued now are
+         * predicated on; whether DrawMeshOccluder queues; whether this frame's
+         * queries are resolved (so draws may be predicated on them). The unit
+         * box the queries draw is made on first use. */
+        GDIOcclusionQueries*        OcclusionQueries    = nullptr;
+        std::vector<GameCore::AABB> OcclusionBoxes;
+        int32_t                     DrawOcclusion       = -1;
+        bool                        bGatheringOccluders = false;
+        bool                        bOcclusionResolved  = false;
+        GDIMesh*                    OcclusionBox        = nullptr;
+
+        void ForgetOcclusion()
+        {
+            OcclusionQueries    = nullptr;
+            OcclusionBoxes.clear();
+            DrawOcclusion       = -1;
+            bGatheringOccluders = false;
+            bOcclusionResolved  = false;
+        }
 
         /* Image-based lighting (SetImageBasedLighting): the scene's atlas and its probes, for the next
          * RenderSceneStages; and whether every view draws the sky behind it (a reflection probe's captures). */
@@ -1408,8 +1444,10 @@ namespace RenderCore
         }
 
         /* One caster section into the bound atlas tile, with its material's
-         * vertex shader (World Position Offset) and ShadowDepth.fsh. */
-        void IssueShadowCaster(const DrawCommand& InItem)
+         * vertex shader (World Position Offset) and ShadowDepth.fsh: depth
+         * only. The PrePass draws its occluders, and its query boxes
+         * (!bInDepthWrite: tested, never written), the same way. */
+        void IssueShadowCaster(const DrawCommand& InItem, const bool bInDepthWrite = true)
         {
             EnsureInitialised();
             GDIShader* Pixel  = GetShadowDepthShader();
@@ -1439,7 +1477,7 @@ namespace RenderCore
 
             IDepthStateDesc Depth;
             Depth.bDepthTest = true;
-            Depth.bDepthMask = true;
+            Depth.bDepthMask = bInDepthWrite;
             Depth.DepthMode  = CTM_LEQUAL;
             GDISetDepthState(Depth);
             GDISetBlendState(IBlendStateDesc());
@@ -1449,6 +1487,81 @@ namespace RenderCore
             InItem.Mesh->SetDrawRange(0, 0);
             MeshObject->Mesh = nullptr;
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
+        }
+
+        /* The unit box [-0.5, 0.5]^3 the occlusion queries draw, scaled to each
+         * proxy's world box; null where the backend has no indexed meshes. */
+        GDIMesh* GetOcclusionBox()
+        {
+            if(!OcclusionBox)
+            {
+                static const float Positions[8 * 3] = { -0.5f, -0.5f, -0.5f,   0.5f, -0.5f, -0.5f,   0.5f, 0.5f, -0.5f,   -0.5f, 0.5f, -0.5f,
+                                                        -0.5f, -0.5f,  0.5f,   0.5f, -0.5f,  0.5f,   0.5f, 0.5f,  0.5f,   -0.5f, 0.5f,  0.5f };
+                static const float    Normals[8 * 3] = {};   // nothing shades it
+                static const float    UVs[8 * 2]     = {};
+                static const uint32_t Indices[36]    = { 0, 2, 1,  0, 3, 2,   4, 5, 6,  4, 6, 7,   0, 1, 5,  0, 5, 4,
+                                                         3, 6, 2,  3, 7, 6,   0, 4, 7,  0, 7, 3,   1, 2, 6,  1, 6, 5 };
+                GDIMeshDesc Desc;
+                Desc.Positions   = Positions;
+                Desc.Normals     = Normals;
+                Desc.UV0         = UVs;
+                Desc.NumVertices = 8;
+                Desc.Indices     = Indices;
+                Desc.NumIndices  = 36;
+                OcclusionBox = GDICreateMesh(Desc);
+                GDISetDebugName(OcclusionBox, "RenderCore.OcclusionBox");
+            }
+            return OcclusionBox;
+        }
+
+        /*
+         * The PrePass (RENDERPIPELINE.md, "Occlusion culling"), into the bound
+         * scene depth, colour masked off: the occluders' depth, then a query
+         * per box -- the box drawn against that depth, writing nothing -- then
+         * the answers resolved for the stages after it to be predicated on.
+         * Nothing without a query to run: the occluders would be for nothing.
+         */
+        void IssuePrePass()
+        {
+            const DrawPolicy& Policy = PolicyFor(ERenderStage::PrePass);
+            const uint32_t    Count  = OcclusionQueries ? uint32_t(std::min<size_t>(OcclusionBoxes.size(), OcclusionQueries->GetCapacity())) : 0;
+            StageDrawCounts[size_t(ERenderStage::PrePass)] = Count > 0 ? uint32_t(Policy.Num()) + Count : 0;
+            GDIMesh* Box = Count > 0 ? GetOcclusionBox() : nullptr;
+            if(!Box)
+            {
+                return;
+            }
+
+            SCOPED_DRAW_EVENT(GetRenderStageName(ERenderStage::PrePass));
+            GDIBeginOcclusionRound(OcclusionQueries, Count);
+            GDISetColorMask(EColM_None);
+            if(!Policy.IsEmpty())
+            {
+                SCOPED_DRAW_EVENT("Occluders");
+                const std::vector<uint32_t> Order = Policy.GetIssueOrder();
+                IssueByMobility(Policy, Order.data(), Order.data() + Order.size(), [this](const DrawCommand& InItem)
+                {
+                    if(InItem.Mesh) { IssueShadowCaster(InItem); }
+                });
+            }
+            {
+                SCOPED_DRAW_EVENT("OcclusionQueries");
+                DrawCommand Query;
+                Query.Kind = DrawCommand::EKind::MeshSection;
+                Query.Mesh = Box;
+                for(uint32_t Index = 0; Index < Count; ++Index)
+                {
+                    const GameCore::AABB& Bounds = OcclusionBoxes[Index];
+                    Query.Transform.Position = (Bounds.Min + Bounds.Max) * 0.5;
+                    Query.Transform.Scale    = Bounds.Max - Bounds.Min;
+                    GDIBeginOcclusionQuery(OcclusionQueries, Index);
+                    IssueShadowCaster(Query, /*bInDepthWrite*/ false);
+                    GDIEndOcclusionQuery(OcclusionQueries, Index);
+                }
+            }
+            GDIResolveOcclusionQueries(OcclusionQueries);
+            GDISetColorMask(EColM_RGBA);
+            bOcclusionResolved = true;
         }
 
         /* The Shadows stage: clears each atlas in use, then each caster into
@@ -1748,6 +1861,9 @@ namespace RenderCore
         void Issue(const DrawCommand& InItem)
         {
             const bool bLabel = BeginDrawLabel(InItem);
+            /* Skipped by the GPU if its proxy's occlusion query found nothing. */
+            const bool bPredicated = InItem.Occlusion >= 0 && OcclusionQueries && bOcclusionResolved;
+            if(bPredicated) { GDISetOcclusionPredicate(OcclusionQueries, InItem.Occlusion); }
             switch(InItem.Kind)
             {
                 case DrawCommand::EKind::Quad:         IssueQuad(InItem);         break;
@@ -1755,6 +1871,7 @@ namespace RenderCore
                 case DrawCommand::EKind::MeshSection:  IssueMeshSection(InItem);  break;
                 case DrawCommand::EKind::Fullscreen:   IssueFullscreen(InItem);   break;
             }
+            if(bPredicated) { GDISetOcclusionPredicate(nullptr, -1); }
             EndDrawLabel(bLabel);
         }
 
@@ -1771,6 +1888,7 @@ namespace RenderCore
                 InItem.bMoved = true;
                 InItem.Motion = DrawMotion;
             }
+            InItem.Occlusion = DrawOcclusion;   // a static list's replay too: its query is this frame's
             if(!bDeferring)
             {
                 Issue(InItem);
@@ -2699,6 +2817,7 @@ namespace RenderCore
     void RenderContext::BeginSceneDraws()
     {
         for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
+        P->ForgetOcclusion();   // a scene's own, set again by RenderScene
         P->bDeferring        = true;
         P->Shadows.ViewCount = 0;   // a preview has none; a scene's PrepareShadows adds them
         P->CasterView        = -1;
@@ -2732,17 +2851,14 @@ namespace RenderCore
         P->CasterView = InView >= 0 && uint32_t(InView) < P->Shadows.ViewCount ? InView : -1;
     }
 
-    bool RenderContext::DrawMeshShadow(const RenderTransform& InTransform, const char* InMeshPath,
-                                       const char* const* InSlots, const uint32_t InSlotCount,
-                                       const MaterialParameterOverrides& InOverrides)
+    bool RenderContext::Impl::QueueDepthSections(const RenderTransform& InTransform, const char* InMeshPath,
+                                                 const char* const* InSlots, const uint32_t InSlotCount,
+                                                 const MaterialParameterOverrides& InOverrides, const EDepthSections InWhich,
+                                                 const ERenderStage InStage, const int32_t InShadowView)
     {
-        if(P->CasterView < 0 || !P->bDeferring || !InMeshPath || InMeshPath[0] == '\0')
-        {
-            return false;
-        }
-
+        Impl& P = *this;
         std::shared_ptr<const MeshData> Source;
-        GDIMesh* Mesh = P->FindMesh(InMeshPath, Source);
+        GDIMesh* Mesh = P.FindMesh(InMeshPath, Source);
         if(!Mesh || !Source)
         {
             return false;
@@ -2753,7 +2869,7 @@ namespace RenderCore
         uint32_t     SkinBones   = InOverrides.SkinBones;
         if(!SkinPalette && Source->IsSkinned())
         {
-            if(const std::vector<float>* RefPalette = P->FindRefPalette(InMeshPath))
+            if(const std::vector<float>* RefPalette = P.FindRefPalette(InMeshPath))
             {
                 SkinPalette = RefPalette->data();
                 SkinBones   = uint32_t(RefPalette->size() / 12);
@@ -2767,11 +2883,11 @@ namespace RenderCore
         {
             const MeshSection& Section = Sections.empty() ? Everything : Sections[Index];
             const char* Slot = InSlots && Index < InSlotCount && InSlots[Index] && InSlots[Index][0] != '\0' ? InSlots[Index] : nullptr;
-            Material* Chosen = P->SectionMaterial(Slot, Section.Material);
+            RenderMaterial* Chosen = P.SectionMaterial(Slot, Section.Material);
 
-            /* Only what writes depth casts: Opaque and Masked (Masked whole,
-             * for now -- its clip is not run here). The plain fallback is opaque. */
-            if(Chosen && Chosen->Description.Domain != EMaterialDomain::Opaque && Chosen->Description.Domain != EMaterialDomain::Masked)
+            /* Only what writes depth: Opaque, and Masked if asked. The plain fallback is opaque. */
+            const EMaterialDomain Domain = Chosen ? Chosen->Description.Domain : EMaterialDomain::Opaque;
+            if(Domain != EMaterialDomain::Opaque && (InWhich == EDepthSections::Opaque || Domain != EMaterialDomain::Masked))
             {
                 continue;
             }
@@ -2784,16 +2900,71 @@ namespace RenderCore
             Item.Section    = Section.Name.c_str();
             Item.First      = Section.FirstIndex;
             Item.Count      = Sections.empty() ? 0u : Section.IndexCount;
-            Item.ShadowView    = P->CasterView;
+            Item.ShadowView    = InShadowView;
             Item.Overrides     = InOverrides.Items;
             Item.OverrideCount = InOverrides.Count;
             Item.SkinPalette   = SkinPalette;
             Item.SkinBones     = SkinBones;
             Item.MaterialSlot  = uint8_t(Index);
-            if(P->Capture) { P->Capture->push_back({ Item, ERenderStage::Shadows }); }
-            else           { P->PolicyFor(ERenderStage::Shadows).Add(Item); }
+            if(P.Capture && InStage == ERenderStage::Shadows) { P.Capture->push_back({ Item, InStage }); }
+            else                                              { P.PolicyFor(InStage).Add(Item); }
         }
         return true;
+    }
+
+    bool RenderContext::DrawMeshShadow(const RenderTransform& InTransform, const char* InMeshPath,
+                                       const char* const* InSlots, const uint32_t InSlotCount,
+                                       const MaterialParameterOverrides& InOverrides)
+    {
+        if(P->CasterView < 0 || !P->bDeferring || !InMeshPath || InMeshPath[0] == '\0')
+        {
+            return false;
+        }
+        return P->QueueDepthSections(InTransform, InMeshPath, InSlots, InSlotCount, InOverrides,
+                                  EDepthSections::OpaqueAndMasked, ERenderStage::Shadows, P->CasterView);
+    }
+
+    bool RenderContext::DrawMeshOccluder(const RenderTransform& InTransform, const char* InMeshPath,
+                                         const char* const* InSlots, const uint32_t InSlotCount,
+                                         const MaterialParameterOverrides& InOverrides)
+    {
+        if(!P->bGatheringOccluders || !P->bDeferring || !InMeshPath || InMeshPath[0] == '\0')
+        {
+            return false;
+        }
+        return P->QueueDepthSections(InTransform, InMeshPath, InSlots, InSlotCount, InOverrides,
+                                  EDepthSections::Opaque, ERenderStage::PrePass, -1);
+    }
+
+    void RenderContext::SetOcclusionQueries(GDIOcclusionQueries* InQueries)
+    {
+        P->ForgetOcclusion();
+        P->OcclusionQueries = InQueries;
+    }
+
+    int32_t RenderContext::AddOcclusionQuery(const GameCore::AABB& InBox)
+    {
+        if(!P->OcclusionQueries || InBox.IsEmpty() || P->OcclusionBoxes.size() >= P->OcclusionQueries->GetCapacity())
+        {
+            return -1;
+        }
+        P->OcclusionBoxes.push_back(InBox);
+        return int32_t(P->OcclusionBoxes.size() - 1);
+    }
+
+    void RenderContext::SetDrawOcclusion(const int32_t InQuery)
+    {
+        P->DrawOcclusion = P->OcclusionQueries && InQuery >= 0 && size_t(InQuery) < P->OcclusionBoxes.size() ? InQuery : -1;
+    }
+
+    void RenderContext::SetGatheringOccluders(const bool bInGathering)
+    {
+        P->bGatheringOccluders = bInGathering && P->OcclusionQueries;
+    }
+
+    bool RenderContext::CanPredicateOcclusion() const
+    {
+        return GDISupportsOcclusionPredication();
     }
 
     SceneTargets* RenderContext::BeginTargetCapture(const char* InPath, const uint32_t InResolution, const ERenderTargetKind InKind,
@@ -3059,6 +3230,7 @@ namespace RenderCore
         const auto Finish = [this]()
         {
             for(DrawPolicy& Policy : P->Policies) { Policy.Clear(); }
+            P->ForgetOcclusion();
         };
 
         /* Nothing to draw into (an empty viewport): the routing still counts. */
@@ -3141,9 +3313,11 @@ namespace RenderCore
             }
         }
 
-        /* PrePass: RenderScene culled before the draws were queued. */
+        /* PrePass: RenderScene culled against the view before the draws were
+         * queued; now the occluders' depth and the occlusion queries, which
+         * every stage after it may be predicated on. */
         P->StageTimestamp(RGT_PrePass, false);
-        P->IssueStage(ERenderStage::PrePass);
+        P->IssuePrePass();
         P->StageTimestamp(RGT_PrePass, true);
 
         /* Base Pass: the G-buffer, created the first time something needs it. */
@@ -3998,6 +4172,9 @@ namespace RenderCore
 
         for(auto& Each : P->Meshes) { delete Each.second.Gpu; }
         P->Meshes.clear();
+        delete P->OcclusionBox;
+        P->OcclusionBox = nullptr;
+        P->ForgetOcclusion();
 
         for(uint Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
         for(auto& Each : P->Textures)

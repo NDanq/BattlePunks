@@ -369,6 +369,7 @@ void D3D12DynamicGDI::DeferFreeSRV(uint32_t InSlot)
 void D3D12DynamicGDI::DrainDeferredDestruction()
 {
     DeferredResources.clear();
+    DeferredQueryHeaps.clear();
     if(DescAlloc)
     {
         for(uint32_t Slot : DeferredSRVs)

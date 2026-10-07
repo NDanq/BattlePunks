@@ -15,7 +15,7 @@ namespace RenderCore
 {
     enum class ERenderStage : uint8_t
     {
-        PrePass = 0,        // culling; occlusion and a depth prepass later. Draws nothing yet
+        PrePass = 0,        // culling; occluders' depth and the occlusion queries
         BasePass,           // Opaque and Masked, Lit: the G-buffer
         Shadows,            // Lighting's first part: shadow casters. Draws nothing yet
         Lighting,           // the G-buffer resolve, one full-screen pass

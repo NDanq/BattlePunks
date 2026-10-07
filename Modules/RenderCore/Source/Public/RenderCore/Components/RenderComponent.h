@@ -64,6 +64,14 @@ namespace RenderCore
          * largest on screen get one, up to [Shadows] MaxInsetShadows. */
         uint8_t           bCastInsetShadow = 0;
 
+        /* Whether its Opaque sections hide what is behind them from
+         * occlusion culling (RENDERPIPELINE.md, "Occlusion culling"): its
+         * depth is drawn first, and every other entity whose box it covers
+         * is skipped. For large, solid things -- walls, terrain, buildings --
+         * not for small or thin ones, which cost more to draw first than
+         * they save. An occluder itself is never occlusion culled. */
+        uint8_t           bOccluder = 0;
+
         /* Slot InSlot's material path; "" if unset or out of range. */
         const char* GetMaterial(int32_t InSlot) const;
         /* False if InSlot is out of range. */

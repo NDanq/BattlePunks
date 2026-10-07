@@ -93,6 +93,10 @@ public:
      *  desktop GPU's does, which is what lets one command buffer hold both. */
     inline bool GraphicsQueueSupportsCompute() const { return bGraphicsQueueCompute; }
 
+    /** VK_EXT_conditional_rendering and its feature, enabled when the GPU has
+     *  them: what lets an occlusion query skip draws (GDISetOcclusionPredicate). */
+    inline bool SupportsConditionalRendering() const { return bConditionalRendering; }
+
 private:
     bool PickPhysicalDevice();
     bool CreateLogicalDevice();
@@ -104,6 +108,7 @@ private:
     VkQueue             GraphicsQueue           = VK_NULL_HANDLE;
     bool                bTextureCompressionBC   = false;   // the feature, enabled
     bool                bGraphicsQueueCompute   = false;   // GraphicsQueueFamilyIndex has VK_QUEUE_COMPUTE_BIT
+    bool                bConditionalRendering   = false;   // VK_EXT_conditional_rendering, enabled
 
     VkPhysicalDeviceMemoryProperties MemoryProperties{};
 

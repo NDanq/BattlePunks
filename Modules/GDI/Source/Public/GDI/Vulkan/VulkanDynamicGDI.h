@@ -230,6 +230,29 @@ public:
     void     WriteGPUTimestamp(uint32_t InIndex) override;
     uint64_t GetPreviousGPUTimestamps(double* OutMilliseconds) override;
 
+    /** Occlusion queries (VKQuery.cpp): a query pool and a host-visible result
+     *  buffer per set; predication through VK_EXT_conditional_rendering. */
+    bool                 SupportsOcclusionQueries() const override;
+    bool                 SupportsOcclusionPredication() const override;
+    GDIOcclusionQueries* CreateOcclusionQueries(uint32_t InCapacity) override;
+    void                 BeginOcclusionRound(GDIOcclusionQueries* InSet, uint32_t InCount) override;
+    void                 BeginOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex) override;
+    void                 EndOcclusionQuery(GDIOcclusionQueries* InSet, uint32_t InIndex) override;
+    void                 ResolveOcclusionQueries(GDIOcclusionQueries* InSet) override;
+    void                 SetOcclusionPredicate(GDIOcclusionQueries* InSet, int32_t InIndex) override;
+    bool                 ReadOcclusionResults(GDIOcclusionQueries* InSet, std::vector<uint8_t>& OutVisible) override;
+
+    /** VKOcclusionQueries::Release: its pool and buffer, destroyed once the GPU is done. */
+    void ReleaseOcclusionQueries(class VKOcclusionQueries* InSet);
+
+    /**
+     * VKMesh::Draw, around its vkCmdDraw*: begins conditional rendering on
+     * GDISetOcclusionPredicate's query, if one is set and the device can;
+     * true if it did, to pass to EndDrawPredicate.
+     */
+    bool BeginDrawPredicate(VkCommandBuffer InCmd);
+    void EndDrawPredicate(VkCommandBuffer InCmd, bool bInBegun);
+
     /** Vulkan present path: UI thread acquires + blits the offscreen RT and presents. */
     void PresentToWindow(EngineCore::WindowHandle InWindow) override;
     void PresentRenderTargetToWindow(EngineCore::WindowHandle InWindow, GDIRenderTarget* InSource) override;
@@ -314,6 +337,18 @@ public:
 private:
     void EndActiveRenderingRegion();
 
+    /** InWork(Cmd) outside the open rendering region, reopened after it (VKQuery.cpp). */
+    template<typename WorkFn> void RecordOutsideRendering(WorkFn&& InWork);
+
+    /** VK_EXT_conditional_rendering's commands, where the device enabled it. */
+    void LoadQueryFunctions();
+    PFN_vkCmdBeginConditionalRenderingEXT CmdBeginConditionalRendering = nullptr;
+    PFN_vkCmdEndConditionalRenderingEXT   CmdEndConditionalRendering   = nullptr;
+
+    /** GDISetOcclusionPredicate's: the draws after it are conditional on it. */
+    class VKOcclusionQueries* PredicateSet   = nullptr;
+    int32_t                   PredicateIndex = -1;
+
     /** InWindow's swapchain, created and initialized on first use; null if that
      *  failed (retried on the next present). UI thread. */
     VKSwapchain* FindOrCreateSwapchain(EngineCore::WindowHandle InWindow);
@@ -390,6 +425,7 @@ private:
     struct DeferredBuffer { VkBuffer Buffer; VkDeviceMemory Memory; };
     std::vector<DeferredImage>  DeferredImages;
     std::vector<DeferredBuffer> DeferredBuffers;
+    std::vector<VkQueryPool>    DeferredQueryPools;   // released occlusion query sets'
 };
 
 #endif //CORECLIENT_VULKANDYNAMICGDI_H

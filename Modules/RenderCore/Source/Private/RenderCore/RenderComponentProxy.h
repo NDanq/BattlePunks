@@ -29,6 +29,10 @@ namespace RenderCore
         float GetBoundsPadding(RenderContext& InContext) override;
         bool CastsInsetShadow() const override { return bCastShadows && bCastInsetShadow && MeshSource; }
 
+        /* A mesh only: a quad is a sprite, too thin to hide anything. */
+        bool IsOccluder() const override { return bOccluder && MeshSource; }
+        void DrawOccluder(RenderContext& InContext) override;
+
         /* A skinned mesh moves every frame on its own: never a static draw. */
         bool AllowsStaticDraws() const override { return !bSkinned; }
 
@@ -41,6 +45,9 @@ namespace RenderCore
         void EndFrameMotion() override;
 
     private:
+        /* Its mesh's depth-writing sections, as shadow casters or as an occluder. */
+        void DrawDepth(RenderContext& InContext, bool bInOccluder);
+
         /* The palette from SkinPose and the mesh's inverse binds, and the
          * local bounds that hold the posed mesh. */
         void RebuildSkin();
@@ -55,6 +62,7 @@ namespace RenderCore
         bool              bComponentVisible = true;
         bool              bCastShadows      = true;
         bool              bCastInsetShadow  = false;
+        bool              bOccluder         = false;
         char              Materials[8][128] = {};  // RENDER_MATERIAL_SLOTS x RENDER_MATERIAL_PATH_MAX; "" = none
 
         /* The component's parameter overrides; ParameterCount: up to the last in use. */

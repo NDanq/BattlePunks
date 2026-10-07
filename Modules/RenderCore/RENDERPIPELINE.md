@@ -11,7 +11,7 @@ A frame runs these stages, in this order (`ERenderStage`, RenderPipeline.h):
 
 | Stage | Draws | Into | State |
 |---|---|---|---|
-| **PrePass** | nothing yet | -- | culls proxies against the view (padded by World Position Offset); what survives submits its draws to the stages below. Occlusion queries and a depth prepass belong here later |
+| **PrePass** | occluders' Opaque sections, depth only; a box per occlusion query | the scene depth | culls proxies against the view (padded by World Position Offset); what survives submits its draws to the stages below. Then the occluders' depth (depth test and write, no colour) and the queries (depth test, no write). See [Occlusion culling](#occlusion-culling) |
 | **Base Pass** | Opaque and Masked, **Lit** | the G-buffer and the velocity target, and depth | depth test and write; no blending. Writes no colour to the scene |
 | **Lighting** | one full-screen pass | scene colour | reads the G-buffer and depth; lit pixels only |
 | &nbsp;&nbsp;Shadows | shadow casters: Opaque and Masked mesh sections whose component casts | the two shadow atlases' depth | a sub-stage of Lighting, run first; depth test and write, no colour. See [Shadows](#shadows) |
@@ -834,6 +834,59 @@ Verified: the GPU smoke check draws a lit, shadowed scene static and dynamic
 pixel for pixel alike, and a static box moved by a tool lands exactly where a
 dynamic one does.
 
+### Occlusion culling
+
+A Render component's **Occluder** (Culling; `bOccluder`, the component's
+version 5, off by default) marks it as something that hides what is behind
+it: a wall, terrain, a building. Each frame, for the main view only:
+
+- **PrePass:** every occluder in view draws its Opaque sections into the scene
+  depth, depth only, with its materials' vertex shaders so World Position
+  Offset matches (`RenderProxy::DrawOccluder`, `RenderContext::DrawMeshOccluder`).
+  Masked sections are left out -- drawn whole, their holes would hide what is
+  behind them. Then every other proxy in view has its world box (padded by
+  World Position Offset, and 1% more so coplanar faces pass) drawn against
+  that depth inside an occlusion query, writing nothing. The queries are
+  resolved before the Base Pass.
+- **Same frame, on the GPU:** each queried proxy's draws in every stage after
+  the PrePass -- Base Pass, Unlit, both translucent ones -- are predicated on
+  its query (`GDISetOcclusionPredicate`), so the GPU skips them if no sample
+  of its box passed. Shadow casters never are: a hidden caster's shadow can
+  still fall in view.
+- **Next frame, on the CPU:** a proxy whose last answer read hidden is not
+  drawn at all -- no draw queued, nothing extracted into the stages -- but its
+  box is still queried. When it comes out from behind the occluder it is drawn
+  again from the frame after: a revealed object can pop in one frame late.
+- **Not queried:** anything, while no occluder is in view; occluders
+  themselves; proxies without bounds; a box the
+  near plane could cut (nearer the eye than 1.5 times the near plane's corner
+  distance), whose query could miss what shows in front; and everything in an
+  orthographic view, a scene capture or a preview.
+
+The occluders' depth stays in the scene depth, so the Base Pass draws them a
+second time at equal depth. Mark only large, solid things as occluders:
+small or thin ones cost more to draw first than they hide.
+
+Each scene keeps its own query set (`GDIOcclusionQueries`), 256 queries to
+start, doubled when a frame wants more (that frame culls nothing on the CPU).
+`[Rendering] OcclusionCulling` (default on) turns it all off.
+`RenderStats::ProxiesOccludedLastFrame` counts the proxies skipped on the CPU,
+`OcclusionQueriesLastFrame` the boxes queried; the GPU's own skips are not
+counted.
+
+| Backend | Queries | Predication |
+|---|---|---|
+| Vulkan | `VK_QUERY_TYPE_OCCLUSION` pool, reset and copied outside the rendering region (closed and reopened, as a dispatch does) into a host-visible buffer the CPU reads a frame later | `VK_EXT_conditional_rendering`, where the GPU has it, round each draw; without it every draw draws |
+| D3D12 | binary occlusion heap, `ResolveQueryData` into a default-heap buffer, copied to a readback one | `SetPredication` round each draw |
+| Null | answers "visible" a block later (`NullDynamicGDI::SetOcclusionAnswer`) | counted |
+| Metal, OpenGL | not yet: `GDISupportsOcclusionQueries()` is false, so nothing is culled | -- |
+
+Verified: the GPU smoke check (Vulkan) culls a box behind an occluding wall
+and draws one beside it, and the frame is pixel for pixel the one drawn with
+culling off; with the wall moved aside the box is drawn again, and that frame
+too matches. D3D12 is written against its backend's patterns but was not
+compiled here (Linux).
+
 ### UI
 
 A scene's UI -- HUDs and menus, Engine/Modules/UI/README.md -- is drawn over
@@ -1305,6 +1358,17 @@ A compute pipeline is keyed by its shader module, so releasing a compute
 shader drops its pipelines from the cache (`ForgetComputeModule`); they are
 destroyed at shutdown, past any frame that used them.
 
+Occlusion culling (### Occlusion culling) needed occlusion queries
+(`GDIQuery.h`), where `GDISupportsOcclusionQueries()` says so -- Vulkan, D3D12
+and Null so far. `GDICreateOcclusionQueries(Capacity)` makes a set, used a round
+per BeginRendering block: `GDIBeginOcclusionRound(Set, Count)` before the
+first query, `GDIBeginOcclusionQuery` / `GDIEndOcclusionQuery` round draws (one
+open at a time), `GDIResolveOcclusionQueries` after the last. Then
+`GDISetOcclusionPredicate(Set, Index)` makes the draws after it conditional on
+the query (`GDISupportsOcclusionPredication()`; ignored elsewhere), and
+`GDIReadOcclusionResults` hands the CPU a round's answers once its block has
+finished on the GPU, never waiting. A query never ended answers "visible".
+
 ## Tests
 
 - Routing (Null backend, materials from memory): each domain/shading pair lands
@@ -1337,6 +1401,12 @@ destroyed at shutdown, past any frame that used them.
   instances sorted farthest first, the unused slots last; and a plume drawn
   side on through the instanced path (`ParticleProbe`), red where it is born
   and dark where it has aged.
+- Occlusion culling (Null backend): an occluding wall, a box behind it and one
+  beside it -- both boxes queried, not the wall; nothing queried with
+  `[Rendering] OcclusionCulling` off, in an orthographic view, or for a box the
+  eye is in. On the GPU (`NIMBLE_SMOKE_GPU`): the box behind is culled, the
+  frame matches the unculled one pixel for pixel, and it shows again when the
+  wall moves aside.
 - GPU (`NIMBLE_SMOKE_GPU=Vulkan|D3D12`): previews of DefaultLit and Wave go
   through the G-buffer and keep their forward-shaded pixels (186 188 192; 40
   103 172); Glow (Translucent Unlit) is unchanged; Negative (PostProcess) inverts
@@ -1353,8 +1423,13 @@ across more than four; cube-face capture time-slicing; SH irradiance.
 Hardware shadow comparison, depth bias and front-face culling in GDI (then
 drop most of the receiver bias); Masked casters clipped in the Shadows
 sub-stage; shadows for Translucent Lit; a tiled or clustered light list past 16
-lights; occlusion queries and a depth prepass in the PrePass; per-section
-bounds for culling; RGBA16F G-buffer and scene colour.
+lights; per-section bounds for culling; RGBA16F G-buffer and scene colour.
+
+Occlusion culling: Masked occluders with their clip; occlusion queries on
+Metal and OpenGL; a hierarchical depth buffer tested on the GPU, so nothing
+waits a frame and nothing pops; the Base Pass skipping occluders' depth
+writes (depth equal) instead of drawing them twice; occlusion for shadow
+views and scene captures.
 
 Particles: compute and instancing on Metal and OpenGL; GPU emission
 counts (spawn by events, bursts); collisions with depth; soft particles

@@ -1,5 +1,6 @@
 #include "Public/GDI/Vulkan/VKDevice.h"
 #include "Public/GDI/Vulkan/VulkanDynamicGDI.h"
+#include <algorithm>
 #include <mutex>
 
 
@@ -137,15 +138,46 @@ bool VKDevice::CreateLogicalDevice()
     QueueCreateInfo.pQueuePriorities = &Priority;
 
     // Required device extensions for Phase 1: swapchain + dynamic rendering.
-    const char* DeviceExtensions[] = {
+    std::vector<const char*> DeviceExtensions = {
         VK_KHR_SWAPCHAIN_EXTENSION_NAME,
         VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME,
         VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME,
     };
 
+    /* Conditional rendering, when the GPU has it: occlusion predication
+     * (GDISetOcclusionPredicate). Without it the queries still work; every
+     * draw just draws. */
+    VkPhysicalDeviceConditionalRenderingFeaturesEXT ConditionalFeatures{};
+    ConditionalFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_CONDITIONAL_RENDERING_FEATURES_EXT;
+    {
+        uint32_t Count = 0;
+        vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &Count, nullptr);
+        std::vector<VkExtensionProperties> Available(Count);
+        vkEnumerateDeviceExtensionProperties(PhysicalDevice, nullptr, &Count, Available.data());
+        const bool bHasExtension = std::any_of(Available.begin(), Available.end(), [](const VkExtensionProperties& InEach)
+        {
+            return std::strcmp(InEach.extensionName, VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME) == 0;
+        });
+        if(bHasExtension)
+        {
+            VkPhysicalDeviceFeatures2 Query{};
+            Query.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+            Query.pNext = &ConditionalFeatures;
+            vkGetPhysicalDeviceFeatures2(PhysicalDevice, &Query);
+            ConditionalFeatures.pNext                         = nullptr;
+            ConditionalFeatures.inheritedConditionalRendering = VK_FALSE;
+        }
+        bConditionalRendering = bHasExtension && ConditionalFeatures.conditionalRendering == VK_TRUE;
+        if(bConditionalRendering)
+        {
+            DeviceExtensions.push_back(VK_EXT_CONDITIONAL_RENDERING_EXTENSION_NAME);
+        }
+    }
+
     VkPhysicalDeviceTimelineSemaphoreFeatures TimelineFeatures{};
     TimelineFeatures.sType             = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_TIMELINE_SEMAPHORE_FEATURES;
     TimelineFeatures.timelineSemaphore = VK_TRUE;
+    TimelineFeatures.pNext             = bConditionalRendering ? &ConditionalFeatures : nullptr;
 
     VkPhysicalDeviceSynchronization2Features Sync2Features{};
     Sync2Features.sType            = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES;
@@ -172,11 +204,12 @@ bool VKDevice::CreateLogicalDevice()
     CreateInfo.pNext                = &Features2;
     CreateInfo.queueCreateInfoCount = 1;
     CreateInfo.pQueueCreateInfos    = &QueueCreateInfo;
-    CreateInfo.enabledExtensionCount = static_cast<uint32_t>(sizeof(DeviceExtensions) / sizeof(DeviceExtensions[0]));
-    CreateInfo.ppEnabledExtensionNames = DeviceExtensions;
+    CreateInfo.enabledExtensionCount = static_cast<uint32_t>(DeviceExtensions.size());
+    CreateInfo.ppEnabledExtensionNames = DeviceExtensions.data();
 
     if(vkCreateDevice(PhysicalDevice, &CreateInfo, nullptr, &Device) != VK_SUCCESS)
     {
+        bConditionalRendering = false;
         return false;
     }
 
