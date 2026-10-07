@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <type_traits>
 
 #include "Public/Core/CoreArchive.h"
 #include "Public/RenderCore/RenderCoreLog.h"
@@ -123,6 +124,40 @@ namespace RenderCore
             return AnimMath::Add(AnimMath::Sub(At(GetDuration()), At(InFrom)), AnimMath::Sub(At(InTo), At(0.0f)));
         }
         return AnimMath::Sub(At(InTo), At(InFrom));
+    }
+
+    bool TrimClip(AnimClipData& InOutClip, const uint32_t InFirst, const uint32_t InLast)
+    {
+        if(InFirst > InLast || InLast >= InOutClip.FrameCount || InOutClip.SampleRate <= 0.0f)
+        {
+            return false;
+        }
+        const uint32_t Frames = InLast - InFirst + 1;
+        const auto Slice = [&](auto& InOutKeys)
+        {
+            if(InOutKeys.size() != InOutClip.FrameCount) { return; }   // one key: it holds throughout
+            InOutKeys = std::vector<typename std::decay_t<decltype(InOutKeys)>::value_type>(InOutKeys.begin() + InFirst, InOutKeys.begin() + InLast + 1);
+        };
+        for(AnimTrack& Track : InOutClip.Tracks)
+        {
+            Slice(Track.Translations);
+            Slice(Track.Rotations);
+            Slice(Track.Scales);
+        }
+
+        /* Notifies by time: shifted to the new start, those outside gone. */
+        const float Start = float(InFirst) / InOutClip.SampleRate;
+        const float End   = float(InLast) / InOutClip.SampleRate;
+        std::vector<AnimNotify> Kept;
+        for(AnimNotify Notify : InOutClip.Notifies)
+        {
+            if(Notify.Time < Start - 1e-4f || Notify.Time > End + 1e-4f) { continue; }
+            Notify.Time = std::clamp(Notify.Time - Start, 0.0f, End - Start);
+            Kept.push_back(std::move(Notify));
+        }
+        InOutClip.Notifies   = std::move(Kept);
+        InOutClip.FrameCount = Frames;
+        return true;
     }
 
     bool SerializeAnimClip(EngineCore::Archive& Ar, AnimClipData& InOutClip)
