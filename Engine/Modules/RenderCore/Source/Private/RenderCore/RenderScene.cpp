@@ -1,6 +1,7 @@
 #include "Public/RenderCore/RenderScene.h"
 
 #include <algorithm>
+#include <type_traits>
 #include <unordered_map>
 #include <atomic>
 #include <chrono>
@@ -557,6 +558,9 @@ namespace RenderCore
         EngineCore::Size          PrevViewport;
         bool                      bHasPrevView = false;
 
+        /* TAA's jitter: where in its 8-frame Halton(2, 3) cycle the main view is. */
+        uint32_t                  JitterIndex = 0;
+
         /*
          * THE SCENE'S RENDER TARGETS, and the whole reason anything reaches
          * the screen. GDIDynamicDriver::PresentToWindow presents
@@ -1028,8 +1032,42 @@ namespace RenderCore
         }
         InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
 
-        GDIOcclusionQueries* Occlusion = P->PrepareOcclusion(P->View);
-        P->QueueDraws(InContext, P->View, nullptr, VisibleCount, CulledCount, StaticCount, Occlusion);
+        /* TAA's jitter (RENDERPIPELINE.md, "Temporal antialiasing"): the main view drawn a
+         * sub-pixel off, a different way each frame (Halton 2, 3), so the resolve averages
+         * many samples a pixel. P->View stays unjittered: the captures above, the next
+         * frame's PrevViewProjection the resolve reprojects with, what draws after. */
+        RenderView Drawn = P->View;
+        InContext.SetTemporalJitter(0.0f, 0.0f);
+        const PostProcessSettings& Stack = P->PostProcess.Settings;
+        if(Stack.bAntialiasing && Stack.AaMethod == 1 && P->Targets.bHDR && P->Targets.Width > 0 && P->Targets.Height > 0)
+        {
+            const auto Halton = [](uint32_t InIndex, const uint32_t InBase)
+            {
+                double Fraction = 1.0, Result = 0.0;
+                while(InIndex > 0)
+                {
+                    Fraction /= double(InBase);
+                    Result   += Fraction * double(InIndex % InBase);
+                    InIndex  /= InBase;
+                }
+                return Result;
+            };
+            P->JitterIndex = (P->JitterIndex + 1) % 8;
+            const double X = (Halton(P->JitterIndex + 1, 2) - 0.5) * 2.0 / double(P->Targets.Width);    // NDC
+            const double Y = (Halton(P->JitterIndex + 1, 3) - 0.5) * 2.0 / double(P->Targets.Height);
+            InContext.SetTemporalJitter(float(X), float(Y));
+            using Element = std::remove_reference_t<decltype(Drawn.Projection.Data[0][0])>;
+            for(int Column = 0; Column < 4; ++Column)
+            {
+                // clip.xy += offset * clip.w: whatever the projection, perspective or not.
+                Drawn.Projection.Data[0][Column] += Element(X) * Drawn.Projection.Data[3][Column];
+                Drawn.Projection.Data[1][Column] += Element(Y) * Drawn.Projection.Data[3][Column];
+            }
+        }
+        InContext.SetView(Drawn);
+
+        GDIOcclusionQueries* Occlusion = P->PrepareOcclusion(Drawn);
+        P->QueueDraws(InContext, Drawn, nullptr, VisibleCount, CulledCount, StaticCount, Occlusion);
 
         /* The post process stack: the volumes' blend (WorldBridge), its
          * materials by stage and order, then the effects' settings. */
@@ -1050,6 +1088,7 @@ namespace RenderCore
         InContext.SetUnlit(P->ViewMode == ERenderViewMode::Unlit);
         InContext.RenderSceneStages(P->Targets, P->ClearColor, /*bInTimed*/ true, P->bClearGradient ? &P->ClearBottom : nullptr);
         InContext.SetUnlit(false);
+        InContext.SetView(P->View);   // unjittered again, for what draws over the picture
 
         /* The targets this frame drew, for the view mode's list; one of them
          * over the picture in the Render Target view mode. */

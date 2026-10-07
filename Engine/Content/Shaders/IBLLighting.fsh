@@ -7,7 +7,7 @@
 #include <IBLCommon.glsl>
 
 UBO_BLOCK_BEGIN(2, PP_Block)
-    vec4 PP_Settings;   // x: 1 if AmbientOcclusion holds this frame's occlusion
+    vec4 PP_Settings;   // x: 1 if AmbientOcclusion holds this frame's occlusion; y: 1 if ScreenReflections holds this frame's
 UBO_BLOCK_END(PP_Block)
 
 MATERIAL_SAMPLER2D(4, GBuffer0)          // rgb: Base Color; a: Ambient Occlusion
@@ -16,6 +16,7 @@ MATERIAL_SAMPLER2D(6, GBuffer2)          // Metallic, Roughness, Specular
 MATERIAL_SAMPLER2D(7, SceneDepth)
 MATERIAL_SAMPLER2D(8, AmbientOcclusion)  // half size
 MATERIAL_SAMPLER2D(9, Atlas)
+MATERIAL_SAMPLER2D(10, ScreenReflections)   // rgb: reflected radiance; a: trust (PPScreenReflections.fsh)
 
 void main(void)
 {
@@ -40,5 +41,6 @@ void main(void)
 
     // A baked surface (alpha 0.75, BakedLighting.glsl) has its diffuse ambient already.
     float Diffuse = Gb1.a < 0.875 ? 0.0 : 1.0;
-    Output = vec4(IBL_Light(Atlas, Position, N, V, Albedo, Metallic, Roughness, F0, Occlusion, Diffuse), 1.0);
+    vec4 Screen = PP_Settings.y > 0.5 ? texelFetch(ScreenReflections, Texel, 0) : vec4(0.0);
+    Output = vec4(IBL_LightReflected(Atlas, Position, N, V, Albedo, Metallic, Roughness, F0, Occlusion, Diffuse, Screen), 1.0);
 }

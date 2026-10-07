@@ -23,6 +23,7 @@ NIMBLE_CONFIG_FLOAT(GShadowsContactLength,    "Shadows", "ContactLength",     25
 NIMBLE_CONFIG_FLOAT(GShadowsContactThickness, "Shadows", "ContactThickness",  6.0f,  nullptr);   // a depth-buffer surface's assumed depth
 NIMBLE_CONFIG_INT(GShadowsContactSteps,       "Shadows", "ContactSteps",      12,    nullptr);   // samples along the march, 4-32
 NIMBLE_CONFIG_FLOAT(GShadowsContactStrength,  "Shadows", "ContactStrength",   1.0f,  nullptr);   // 0-1
+NIMBLE_CONFIG_BOOL(GShadowsContactLocal,      "Shadows", "ContactLocalLights", true, nullptr);   // shadowed point and spot lights too
 
 namespace RenderCore
 {
@@ -41,6 +42,7 @@ namespace RenderCore
         Settings.ContactThickness  = std::max(GShadowsContactThickness.GetFloat(), 0.01f);
         Settings.ContactSteps      = std::clamp(GShadowsContactSteps.GetInt(), 4, 32);
         Settings.ContactStrength   = std::clamp(GShadowsContactStrength.GetFloat(), 0.0f, 1.0f);
+        Settings.bContactLocalLights = GShadowsContactLocal.GetBool() ? 1 : 0;
         return Settings;
     }
 }

@@ -1,6 +1,7 @@
 #include "Public/RenderCore/PostProcessStack.h"
 
 #include <algorithm>
+#include <iterator>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -157,6 +158,28 @@ namespace RenderCore
                     else if(Key == "Power")   { Target = &S.AoPower; }
                     else if(Key == "Blur")    { S.bAoBlur = Value == "true" ? 1 : 0; }
                 }
+                else if(Effect == "VolumetricFog")
+                {
+                    if(Key == "Density")              { Target = &S.FogDensity; }
+                    else if(Key == "HeightFalloff")   { Target = &S.FogHeightFalloff; }
+                    else if(Key == "BaseHeight")      { Target = &S.FogBaseHeight; }
+                    else if(Key == "MaxDistance")     { Target = &S.FogMaxDistance; }
+                    else if(Key == "Anisotropy")      { Target = &S.FogAnisotropy; }
+                    else if(Key == "SunScattering")   { Target = &S.FogSun; }
+                    else if(Key == "SkyScattering")   { Target = &S.FogSky; }
+                    else if(Key == "LightScattering") { Target = &S.FogLights; }
+                    else if(Key == "Steps")           { Target = &S.FogSteps; }
+                    else if(Key == "Shadows")         { S.bFogShadows = Value == "true" ? 1 : 0; }
+                    else if(Key == "Albedo" && !ToFloats(Value, S.FogAlbedo, 3)) { return Fail("bad Albedo '" + Value + "'"); }
+                }
+                else if(Effect == "ScreenSpaceReflections")
+                {
+                    if(Key == "Intensity")         { Target = &S.SsrIntensity; }
+                    else if(Key == "MaxRoughness") { Target = &S.SsrMaxRoughness; }
+                    else if(Key == "MaxDistance")  { Target = &S.SsrMaxDistance; }
+                    else if(Key == "Thickness")    { Target = &S.SsrThickness; }
+                    else if(Key == "Steps")        { Target = &S.SsrSteps; }
+                }
                 else if(Effect == "DepthOfField")
                 {
                     if(Key == "FocusDistance")  { Target = &S.DofFocusDistance; }
@@ -183,10 +206,21 @@ namespace RenderCore
                     if(Key == "Exposure")        { Target = &S.Exposure; }
                     else if(Key == "ToneMapper") { S.ToneMapper = Value == "None" ? 0 : Value == "Reinhard" ? 1 : 2; }
                 }
+                else if(Effect == "AutoExposure")
+                {
+                    if(Key == "Key")               { Target = &S.AeKey; }
+                    else if(Key == "MinEV")        { Target = &S.AeMinEV; }
+                    else if(Key == "MaxEV")        { Target = &S.AeMaxEV; }
+                    else if(Key == "SpeedUp")      { Target = &S.AeSpeedUp; }
+                    else if(Key == "SpeedDown")    { Target = &S.AeSpeedDown; }
+                    else if(Key == "CentreWeight") { Target = &S.AeCentreWeight; }
+                }
                 else if(Effect == "Antialiasing")
                 {
                     if(Key == "EdgeThreshold") { Target = &S.AaEdgeThreshold; }
                     else if(Key == "Quality")  { S.AaQuality = Value == "Low" ? 0 : Value == "High" ? 2 : 1; }
+                    else if(Key == "Method")   { S.AaMethod  = Value == "TAA" ? 1 : 0; }
+                    else if(Key == "Sharpness") { Target = &S.AaSharpness; }
                 }
                 if(Target && !ToFloat(Value, *Target))
                 {
@@ -199,6 +233,9 @@ namespace RenderCore
             else if(Effect == "Bloom")        { S.bBloom        = 1; }
             else if(Effect == "Antialiasing") { S.bAntialiasing = 1; }
             else if(Effect == "ToneMapping")  { S.bToneMapping  = 1; }
+            else if(Effect == "AutoExposure") { S.bAutoExposure = 1; }
+            else if(Effect == "ScreenSpaceReflections") { S.bScreenReflections = 1; }
+            else if(Effect == "VolumetricFog") { S.bVolumetricFog = 1; }
         }
         return true;
     }
@@ -255,6 +292,74 @@ namespace RenderCore
             B.Exposure     = Lerp(B.Exposure, InStack.Exposure, W);
             if(bSwitch) { B.ToneMapper = InStack.ToneMapper; }
         }
+        if(InStack.bVolumetricFog)
+        {
+            if(!B.bVolumetricFog)
+            {
+                /* From off: the stack's look, no density yet -- it thickens as the volume comes in. */
+                B.FogDensity       = 0.0f;
+                B.FogHeightFalloff = InStack.FogHeightFalloff;
+                B.FogBaseHeight    = InStack.FogBaseHeight;
+                B.FogMaxDistance   = InStack.FogMaxDistance;
+                B.FogAnisotropy    = InStack.FogAnisotropy;
+                B.FogSun           = InStack.FogSun;
+                B.FogSky           = InStack.FogSky;
+                B.FogLights        = InStack.FogLights;
+                std::copy(std::begin(InStack.FogAlbedo), std::end(InStack.FogAlbedo), B.FogAlbedo);
+                B.FogSteps         = InStack.FogSteps;
+                B.bFogShadows      = InStack.bFogShadows;
+            }
+            B.bVolumetricFog   = 1;
+            B.FogDensity       = Lerp(B.FogDensity, InStack.FogDensity, W);
+            B.FogHeightFalloff = Lerp(B.FogHeightFalloff, InStack.FogHeightFalloff, W);
+            B.FogBaseHeight    = Lerp(B.FogBaseHeight, InStack.FogBaseHeight, W);
+            B.FogMaxDistance   = Lerp(B.FogMaxDistance, InStack.FogMaxDistance, W);
+            B.FogAnisotropy    = Lerp(B.FogAnisotropy, InStack.FogAnisotropy, W);
+            B.FogSun           = Lerp(B.FogSun, InStack.FogSun, W);
+            B.FogSky           = Lerp(B.FogSky, InStack.FogSky, W);
+            B.FogLights        = Lerp(B.FogLights, InStack.FogLights, W);
+            for(int C = 0; C < 3; ++C) { B.FogAlbedo[C] = Lerp(B.FogAlbedo[C], InStack.FogAlbedo[C], W); }
+            B.FogSteps         = Lerp(B.FogSteps, InStack.FogSteps, W);
+            if(bSwitch) { B.bFogShadows = InStack.bFogShadows; }
+        }
+        if(InStack.bScreenReflections)
+        {
+            if(!B.bScreenReflections)
+            {
+                /* From off: the stack's reach and quality, no strength yet. */
+                B.SsrIntensity    = 0.0f;
+                B.SsrMaxRoughness = InStack.SsrMaxRoughness;
+                B.SsrMaxDistance  = InStack.SsrMaxDistance;
+                B.SsrThickness    = InStack.SsrThickness;
+                B.SsrSteps        = InStack.SsrSteps;
+            }
+            B.bScreenReflections = 1;
+            B.SsrIntensity    = Lerp(B.SsrIntensity, InStack.SsrIntensity, W);
+            B.SsrMaxRoughness = Lerp(B.SsrMaxRoughness, InStack.SsrMaxRoughness, W);
+            B.SsrMaxDistance  = Lerp(B.SsrMaxDistance, InStack.SsrMaxDistance, W);
+            B.SsrThickness    = Lerp(B.SsrThickness, InStack.SsrThickness, W);
+            B.SsrSteps        = Lerp(B.SsrSteps, InStack.SsrSteps, W);
+        }
+        if(InStack.bAutoExposure)
+        {
+            if(!B.bAutoExposure)
+            {
+                /* From off: no correction either way, widening to the stack's range as the volume comes in. */
+                B.AeKey          = InStack.AeKey;
+                B.AeMinEV        = 0.0f;
+                B.AeMaxEV        = 0.0f;
+                B.AeSpeedUp      = InStack.AeSpeedUp;
+                B.AeSpeedDown    = InStack.AeSpeedDown;
+                B.AeCentreWeight = InStack.AeCentreWeight;
+            }
+            B.bAutoExposure  = 1;
+            B.AeKey          = Lerp(B.AeKey, InStack.AeKey, W);
+            B.AeMinEV        = Lerp(B.AeMinEV, InStack.AeMinEV, W);
+            B.AeMaxEV        = Lerp(B.AeMaxEV, InStack.AeMaxEV, W);
+            B.AeSpeedUp      = Lerp(B.AeSpeedUp, InStack.AeSpeedUp, W);
+            B.AeSpeedDown    = Lerp(B.AeSpeedDown, InStack.AeSpeedDown, W);
+            B.AeCentreWeight = Lerp(B.AeCentreWeight, InStack.AeCentreWeight, W);
+        }
         if(InStack.bDepthOfField)
         {
             if(!B.bDepthOfField)
@@ -310,12 +415,15 @@ namespace RenderCore
             if(!B.bAntialiasing)
             {
                 B.AaEdgeThreshold = InStack.AaEdgeThreshold;
+                B.AaSharpness     = InStack.AaSharpness;
             }
             B.AaEdgeThreshold = Lerp(B.AaEdgeThreshold, InStack.AaEdgeThreshold, W);
+            B.AaSharpness     = Lerp(B.AaSharpness, InStack.AaSharpness, W);
             if(bSwitch)
             {
                 B.bAntialiasing = 1;
                 B.AaQuality     = InStack.AaQuality;
+                B.AaMethod      = InStack.AaMethod;
             }
         }
         if(bSwitch)

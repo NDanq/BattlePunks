@@ -92,15 +92,15 @@ float LocalFalloff(float InDistance, float InRange)
 }
 
 #ifdef LIGHTING_CONTACT_SHADOWS
-// The sun's contact shadow at a pixel (RENDERPIPELINE.md, "Contact shadows"):
+// A contact shadow at a pixel toward InL, at most InMaxLength (RENDERPIPELINE.md, "Contact shadows"):
 // a short march toward the light through the scene depth, for the shadows the
 // shadow maps are too coarse to hold -- under a pot's rim, where a column meets
 // its base, between roof tiles. 1 lit, down to 1 - strength. Screen space: a
 // caster off screen or hidden casts nothing. LIGHTING_SCENE_DEPTH names the
 // pass's depth texture (window depth, GL's 0-1); only the Lighting stage has one.
-float ContactShadow(vec3 InWorldPosition, vec3 InNormal, vec3 InL)
+float ContactShadowWithin(vec3 InWorldPosition, vec3 InNormal, vec3 InL, float InMaxLength)
 {
-    float Length = Scene_ContactShadow.x;
+    float Length = min(Scene_ContactShadow.x, InMaxLength);
     if(Length <= 0.0 || dot(InNormal, InL) <= 0.0) { return 1.0; }
 
     int   Steps    = int(clamp(Scene_ContactShadow.z, 4.0, 32.0));
@@ -134,6 +134,12 @@ float ContactShadow(vec3 InWorldPosition, vec3 InNormal, vec3 InL)
         }
     }
     return 1.0;
+}
+
+// The sun's: its full length.
+float ContactShadow(vec3 InWorldPosition, vec3 InNormal, vec3 InL)
+{
+    return ContactShadowWithin(InWorldPosition, InNormal, InL, 1.0e9);
 }
 #endif
 
@@ -202,6 +208,11 @@ vec3 ShadeSurface(in MaterialSurface Surface, vec3 InWorldPosition, vec3 InNorma
             vec4  Biases = Scene_Locals[Index * 6 + 5];
             float Lit    = LocalShadow(int(ConeShadow.z), DirectionType.w > 0.5, ConeShadow.x, PositionRange.xyz,
                                        InWorldPosition, S.N, L, Biases.x, Biases.y);
+#ifdef LIGHTING_CONTACT_SHADOWS
+            // A shadowed point or spot light's contact shadows too ([Shadows] ContactLocalLights):
+            // no further than the light itself.
+            if(Scene_ContactLocal.x > 0.5) { Lit = min(Lit, ContactShadowWithin(InWorldPosition, S.N, L, Distance * 0.9)); }
+#endif
             if(ConeShadow.w == 1.0)
             {
                 // Fades out with the light: full where it is at least a quarter strength.

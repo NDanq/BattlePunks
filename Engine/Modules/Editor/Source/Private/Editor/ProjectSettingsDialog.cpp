@@ -126,6 +126,9 @@ namespace
           "Samples along each pixel's march, 4-32: more is cleaner and costs more" },
         { "Shadows", "ContactStrength",   "Contact shadow strength",
           "0 none, 1 a full shadow where they hit" },
+        { "Shadows", "ContactLocalLights", "Contact shadows for point and spot lights",
+          "The shadowed point and spot lights (MaxShadowedLights) march too, no further than the light: a march per "
+          "light per pixel it reaches" },
         { "Modules", "NetCore",           "Networking (NetCore)",
           "Build the game with networking: replication, RPCs, its dedicated server (<Game>Server) and -connect. "
           "Off, Net components load but do not replicate. Takes effect at the game's next build" },

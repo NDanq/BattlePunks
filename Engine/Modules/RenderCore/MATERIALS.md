@@ -289,8 +289,11 @@ Texels are read as stored: a colour texture is display space, like every
 colour a material authors, so nothing converts it (`sRGB` on a texture marks
 colour data for later, for an sRGB format). The image's top row is v = 0 --
 glTF's convention, so imported meshes need no flip -- and a quad shows it
-upright. No mipmaps on Vulkan and D3D12 yet (OpenGL generates them): Linear
-filters between texels at the full-size level.
+upright. A texture with a mip chain (its `TMIP`) samples it, Linear blending
+between levels, and is filtered anisotropically -- sharp at grazing angles, a
+floor receding from the camera -- up to `[Rendering] Anisotropy` (1 off to 16,
+8 by default; `GDISetMaxAnisotropy`, read as the renderer starts the device,
+clamped to what it supports). A render target, one level, never is.
 
 The editor previews a material on the engine's meshes (Sphere, Box, Cylinder, Capsule, Plane) or a
 quad, and any mesh with a material per section, through

@@ -766,6 +766,14 @@ bool GDIShaderDebugEnabled();
 std::string GDIGetShaderPDBPath(const std::string& InCookedPath);
 
 /* GDIDynamicDriver::CreateRenderTargetFormat / SupportsRenderTargetFormat. */
+/* Anisotropic filtering for textures with a mip chain and Linear filtering:
+ * InMax 1 (off) to 16, clamped to what the device supports. Read when a
+ * sampler is made, so set it before textures are created -- RenderCore does,
+ * from [Rendering] Anisotropy, before the render thread starts the device.
+ * Render targets (one level) are never filtered anisotropically. */
+void  GDISetMaxAnisotropy(float InMax);
+float GDIGetMaxAnisotropy();
+
 GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, uint InWidth, uint InHeight, EGDIRenderTargetFormat InFormat);
 bool             GDISupportsRenderTargetFormat(EGDIRenderTargetFormat InFormat);
 

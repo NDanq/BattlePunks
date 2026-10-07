@@ -198,6 +198,7 @@ bool VKDevice::CreateLogicalDevice()
     Features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
     Features2.pNext = &DynamicRenderingFeatures;
     Features2.features.textureCompressionBC = Supported.textureCompressionBC;
+    Features2.features.samplerAnisotropy    = Supported.samplerAnisotropy;   // GDISetMaxAnisotropy, where it has it
 
     VkDeviceCreateInfo CreateInfo{};
     CreateInfo.sType                = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
@@ -215,6 +216,13 @@ bool VKDevice::CreateLogicalDevice()
 
     vkGetDeviceQueue(Device, GraphicsQueueFamilyIndex, 0, &GraphicsQueue);
     bTextureCompressionBC = Supported.textureCompressionBC == VK_TRUE;
+    MaxSamplerAnisotropy  = 1.0f;
+    if(Supported.samplerAnisotropy == VK_TRUE)
+    {
+        VkPhysicalDeviceProperties Properties{};
+        vkGetPhysicalDeviceProperties(PhysicalDevice, &Properties);
+        MaxSamplerAnisotropy = Properties.limits.maxSamplerAnisotropy > 1.0f ? Properties.limits.maxSamplerAnisotropy : 1.0f;
+    }
     return true;
 }
 

@@ -203,8 +203,10 @@ vec3 IBL_ProbeDirection(int InIndex, vec3 InPosition, vec3 InDirection)
 // The image-based light a surface receives: diffuse (InAlbedo linear, times
 // InDiffuse: 0 where baked lighting holds it) and specular, the probes'
 // blended nearest first and the sky filling the rest.
-vec3 IBL_Light(sampler2D InAtlas, vec3 InPosition, vec3 InNormal, vec3 InView, vec3 InAlbedo, float InMetallic,
-               float InRoughness, vec3 InF0, float InOcclusion, float InDiffuse)
+// IBL_Light, its specular blended toward InScreen.rgb by InScreen.a: a screen-space
+// reflection (PPScreenReflections.fsh) where it found one, the probes where it did not.
+vec3 IBL_LightReflected(sampler2D InAtlas, vec3 InPosition, vec3 InNormal, vec3 InView, vec3 InAlbedo, float InMetallic,
+                        float InRoughness, vec3 InF0, float InOcclusion, float InDiffuse, vec4 InScreen)
 {
     float NdotV = clamp(dot(InNormal, InView), 1e-4, 1.0);
     vec3  R     = reflect(-InView, InNormal);
@@ -228,7 +230,15 @@ vec3 IBL_Light(sampler2D InAtlas, vec3 InPosition, vec3 InNormal, vec3 InView, v
         Specular += IBL_SampleSpecular(InAtlas, IBL_SKY_BLOCK, R, InRoughness) * Remaining * Scene_IBL.z;
         Diffuse  += IBL_SampleIrradiance(InAtlas, IBL_SKY_BLOCK, InNormal) * Remaining * Scene_IBL.z;
     }
+    Specular = mix(Specular, InScreen.rgb, clamp(InScreen.a, 0.0, 1.0));
     vec3  EnvBrdf = IBL_EnvBRDF(InF0, InRoughness, NdotV);
     float SpecOcc = IBL_SpecularOcclusion(NdotV, InOcclusion, InRoughness);
     return Diffuse * InAlbedo * (1.0 - InMetallic) * InOcclusion * InDiffuse + Specular * EnvBrdf * SpecOcc;
+}
+
+vec3 IBL_Light(sampler2D InAtlas, vec3 InPosition, vec3 InNormal, vec3 InView, vec3 InAlbedo, float InMetallic,
+               float InRoughness, vec3 InF0, float InOcclusion, float InDiffuse)
+{
+    return IBL_LightReflected(InAtlas, InPosition, InNormal, InView, InAlbedo, InMetallic, InRoughness, InF0, InOcclusion,
+                              InDiffuse, vec4(0.0));
 }
