@@ -55,4 +55,5 @@ UBO_BLOCK_BEGIN(3, Scene_Block)
     // (0: off), y a depth-buffer surface's assumed thickness, z its samples, w its strength.
     mat4 Scene_ViewProjection;
     vec4 Scene_ContactShadow;
+    vec4 Scene_ContactLocal;     // x: 1 if shadowed point and spot lights march too
 UBO_BLOCK_END(Scene_Block)

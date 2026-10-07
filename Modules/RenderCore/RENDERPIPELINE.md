@@ -283,15 +283,22 @@ where a thing meets the ground, under a rim, or between roof tiles is lost.
   (4-32, 12) and ContactStrength (0-1, 1). `Scene_ContactShadow` carries
   them, its length 0 when off -- or when shadows are not drawn at all, so
   Enabled turns them off too.
+- **Point and spot lights** (`[Shadows] ContactLocalLights`, on by default
+  with ContactShadows): each shadowed one (MaxShadowedLights, nearest the
+  camera) marches too, toward the light and no further than it
+  (`ContactShadowWithin`), `min`'d with its shadow map. A march per light
+  per pixel it reaches.
 - **Limits:** screen space -- a caster off screen or behind something
   casts nothing; a surface thinner than ContactThickness (a rail, a bar)
-  can cast a halo past its back; the sun only, not point or spot lights.
+  can cast a halo past its back; unshadowed point and spot lights get none.
 
 Cost: about 0.4 ms of the Lighting stage at 1280 x 720, 12 samples, on an
 integrated GPU (Intel Arc B390, LightLab's Courtyard). Verified
 (`NIMBLE_SMOKE_GPU=Vulkan`): with the sun's map cut short of the floating
 box, contact shadows alone darken the floor under it (1094 pixels, against
-1091 for its full map shadow), and lighten nothing.
+1091 for its full map shadow), and lighten nothing; with the box out of a
+spot light's map, the spot's contact shadows alone darken 713 pixels, and
+none with ContactLocalLights off.
 
 ### Inset shadows
 
@@ -420,7 +427,7 @@ is not in this chain, runs earlier: see [below](#ambient-occlusion)):
 | 3 | Motion Blur | `PPMotionBlur`: each pixel's world position, from depth, less its world motion ([Velocity](#velocity)), reprojected with **last frame's** view-projection gives its screen motion, limited to Max Length. A reconstruction filter (McGuire et al. 2012) in one pass: the strongest motion within half Max Length, then taps along it, jittered, each weighted by which is in front and whose streak reaches the other -- a moving thing streaks out over a still background | full |
 | 4 | Bloom | `PPBloomDownsample` (13 taps; the first step adds back the emissive the scene clipped, from GBuffer3, and keeps what passes the threshold, with a soft knee) down `Bloom[0..Levels-1]` (1/2 to 1/64); `PPBloomUpsample` (each level's own plus a 9-tap tent of the one below, times Radius) back up `BloomUp`; `PPBloomComposite` adds the top level times Intensity and Tint | chain, then full |
 | 5 | Materials, After Effects | the material's | full |
-| 6 | Antialiasing | `PPFxaa` (FXAA 3.11 quality: luma edges, an end search of 4, 8 or 12 steps by Quality, plus sub-pixel smoothing) | full |
+| 6 | Antialiasing | `PPFxaa` (FXAA 3.11 quality: luma edges, an end search of 4, 8 or 12 steps by Quality, plus sub-pixel smoothing); not when [TAA](#temporal-antialiasing) resolved the frame | full |
 
 **How the passes run:**
 - **Targets:** they alternate between `SceneTargets::PostProcess` and
@@ -539,6 +546,110 @@ shaders' cross-compilation: HLSL through `fxc` at shader model 5.0, and MSL.
 Verified (`NIMBLE_SMOKE_GPU=Vulkan`): an Unlit quad of display 0.9 reads 229 with
 no tone map, 202 with ACES, 229 with ACES at +1 EV and 176 with Reinhard, and
 the gradient background stays within 1 of authored under each.
+
+### Auto exposure
+
+A stack's **Auto Exposure** node (with Tone Mapping, in an HDR scene) is
+eye adaptation, all on the GPU -- nothing is read back:
+
+- **The meter:** `PPLuminance` writes the scene colour's mean log2
+  luminance over a 4 x 4 grid per texel of a 64 x 64 target, weighted
+  toward the middle of the view by Centre Weight; `PPLuminanceReduce`
+  averages it to 8 x 8, then 1 x 1.
+- **Adaptation:** `PPAdaptExposure` eases a 1 x 1 adapted value toward
+  that, at Speed Up toward a brighter view and Speed Down toward a darker
+  (per second, `1 - exp(-dt * speed)`), into the other of two 1 x 1s the
+  scene's targets ping-pong. A first frame -- or the node newly on --
+  starts at what it meters.
+- **Exposure:** the tone map multiplies the scene by `Key / 2^adapted`,
+  clamped to Min EV - Max EV stops, then by Tone Mapping's own Exposure,
+  which compensates on top. Previews and captures run no stack, so none.
+- **Volumes:** from off, the range widens from 0 -- it fades in.
+
+The background gradient (editor) is un-exposed for the stack's Exposure
+only, so auto exposure moves it.
+
+### Temporal antialiasing
+
+A stack's **Antialiasing** node with Method **TAA** (an HDR scene with a
+velocity target; else FXAA stands in):
+
+- **Jitter:** the main view is drawn a sub-pixel off each frame, along an
+  8-frame Halton (2, 3) sequence (`RenderScene::Render`, the projection's x
+  and y rows plus the offset times its w row, so any projection takes it);
+  captures, the next frame's PrevViewProjection and what draws after the
+  stages keep the unjittered view. `RenderContext::SetTemporalJitter` hands
+  the offset to the resolve.
+- **The resolve** (`PPTemporalAA`, after the forward stages and volumetric
+  fog, before the tone map): the scene colour blended into a full-size
+  half-float history (two, ping-ponged). Each pixel reprojects through the
+  nearest depth in its 3 x 3 and that texel's world motion, with last
+  frame's unjittered view, less this frame's jitter -- so a still scene
+  reprojects onto itself. The history is sampled Catmull-Rom (5 taps),
+  clipped toward the 3 x 3's mean +- 1.25 standard deviations, and blended
+  at 0.9 (less as the pixel moves faster) in a tone-weighted space, so a
+  lone bright sample does not dominate. No history -- first frame, resize,
+  off screen -- is the current colour alone.
+- **Sharpness** (the node's, 0.35): the tone map sharpens the resolve
+  against its four neighbours, in the same weighted space -- never the
+  history, which would sharpen itself frame after frame.
+- **Limits:** translucent surfaces and particles write no depth or motion,
+  so they reproject with what is behind them and can smear when the camera
+  moves; the clip keeps it short. Still, it is as sharp as FXAA with
+  smoother edges; moving, softer.
+
+### Screen-space reflections
+
+A stack's **Screen-Space Reflections** node (an HDR scene with image-based
+lighting): Opaque and Masked Lit surfaces smoother than Max Roughness
+reflect what is on screen, over the probes' specular.
+
+- **The march** (`PPScreenReflections`, full size, between the Lighting
+  stage and the IBL pass): the view reflected about the G-buffer normal,
+  Steps samples over Max Distance in world space (growing along the ray,
+  the start jittered per pixel), each tested against the scene depth as
+  view depth (behind it by less than Thickness, more further along), then
+  five halvings toward the surface. A hit on a back face is refused.
+- **Its colour:** the hit reprojected into the last frame (its world motion
+  off, last frame's unjittered view) and read from the last frame's
+  finished linear scene colour -- TAA's history when it ran, else a copy
+  the scene keeps (`PPCopy`, only while reflections are on) -- so it holds
+  all of that frame's light.
+- **Trust** (its alpha): faded toward the screen's edges (at the hit and
+  where it was), with roughness, and toward the ray's end, times
+  Intensity. `IBL_LightReflected` blends the probes' specular toward it by
+  that, under the same split-sum BRDF and specular occlusion.
+- **Limits:** only G-buffer surfaces: Translucent Lit (glass, water) keep
+  the probes; what is off screen or hidden reflects the probes; a rough
+  surface's reflection is sharp, so it is faded out by Max Roughness.
+
+### Volumetric fog
+
+A stack's **Volumetric Fog** node (an HDR scene): exponential height fog
+that the lights shine through.
+
+- **The march** (`PPVolumetricFog`, half size, after the forward stages,
+  before TAA): from the eye to the surface each pixel shows (Max Distance
+  for the sky), Steps jittered samples. Density is Density at Base Height
+  and below, falling by `exp(-Height Falloff * height above)`. Each sample
+  is lit by the sun -- its cascaded shadow map, one tap, when Shadows is on
+  (shafts) -- through a Henyey-Greenstein phase of Anisotropy (forward
+  scattering: a glow round a low sun); by every point and spot light in
+  reach (Lighting.glsl's falloff and cones, unshadowed); and by the sky
+  ambient. Scattering integrates per step (energy conserving), times
+  Albedo.
+- **The composite** (`PPFogComposite`): the half-size result filtered up,
+  blended (one, source alpha) -- `DrawPost`'s transmit mode -- so the scene
+  becomes scene x transmittance + scattered light, translucent surfaces
+  included.
+- **Volumes:** from off, the density rises from 0.
+- **Cost:** the march's grain is smoothed by TAA; the point and spot lights
+  are each sampled at every step, so Steps and the light count set it.
+
+Measured on LightLab's Courtyard (1280 x 720, Arc B390, Vulkan), all of the
+above on at once -- auto exposure, TAA, reflections (32 steps), fog (24
+steps, 11 local lights) and point and spot contact shadows: about 2.4 ms
+more GPU a frame (4.0 to 6.4), fog the most (about 1.2).
 
 ### Image-based lighting
 

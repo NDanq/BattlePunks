@@ -2654,6 +2654,38 @@ static void TestShadowsOnGpu()
             std::printf("    spot: %d pixels darker, %d brighter\n", SpotShadow.Darker, SpotShadow.Brighter);
             Expect(SpotShadow.Darker > 200 && SpotShadow.Brighter < 20, "a spot light's shadow falls under the box");
 
+            /* The spot's contact shadows ([Shadows] ContactLocalLights): the box out of the
+             * shadow map (Cast Shadows off), so only the march toward the light finds it. */
+            {
+                ConfigVar* Contact          = ConfigFindVarByPath("Shadows.ContactShadows");
+                ConfigVar* ContactLength    = ConfigFindVarByPath("Shadows.ContactLength");
+                ConfigVar* ContactThickness = ConfigFindVarByPath("Shadows.ContactThickness");
+                ConfigVar* ContactLocal     = ConfigFindVarByPath("Shadows.ContactLocalLights");
+                Expect(Contact && ContactLength && ContactThickness && ContactLocal, "[Shadows] ContactLocalLights is a config var");
+                EngineCore::Image NoMap, SpotContact, SpotSunOnly;
+                bool bNoMap = false, bSpotContact = false, bSunOnly = false;
+                if(Contact && ContactLength && ContactThickness && ContactLocal)
+                {
+                    Box.GetComponent<RenderComponent>()->bCastShadows = 0;
+                    bNoMap = Capture(NoMap);
+                    ContactLength->SetFromString("400");
+                    ContactThickness->SetFromString("200");
+                    Contact->SetFromString("true");
+                    bSpotContact = Capture(SpotContact);
+                    ContactLocal->SetFromString("false");
+                    bSunOnly = Capture(SpotSunOnly);
+                    for(ConfigVar* Each : { Contact, ContactLength, ContactThickness, ContactLocal }) { Each->ResetToDefault(); }
+                    Box.GetComponent<RenderComponent>()->bCastShadows = 1;
+                }
+                Dump(SpotContact, "spot-contact");
+                const Difference Local  = bNoMap && bSpotContact ? Compare(SpotContact, NoMap) : Difference();
+                const Difference Sunned = bNoMap && bSunOnly ? Compare(SpotSunOnly, NoMap) : Difference();
+                std::printf("    spot contact: %d pixels darker, %d brighter; %d darker with ContactLocalLights off\n",
+                            Local.Darker, Local.Brighter, Sunned.Darker);
+                Expect(bSpotContact && Local.Darker > 200 && Local.Brighter < 20, "a shadowed spot light's contact shadows find the box");
+                Expect(bSunOnly && Sunned.Darker < 40, "and ContactLocalLights off leaves them to the sun alone");
+            }
+
             /* The spot swapped for a point light over the box. */
             World.DestroyEntity(Spot);
             PointLightComponent PointInit;
@@ -3363,6 +3395,43 @@ static void TestToneMappingSettings()
            "a quarter in: a quarter of the exposure, the operator not yet (None)");
     BlendPostProcess(Blend, Parsed, 1.0f);
     Expect(Blend.Exposure == 2.0f && Blend.ToneMapper == 1, "all the way in: the stack's");
+}
+
+/* Auto exposure, screen-space reflections, volumetric fog and TAA: their .ppstack keys, and
+ * how a volume fades each in (RENDERPIPELINE.md). */
+static void TestFidelitySettings()
+{
+    std::printf("[auto exposure, reflections, fog and TAA settings]\n");
+    PostProcessSettings S;
+    std::string Error;
+    const bool bParsed = ParsePostProcessStack(
+        "Effect AutoExposure Key=0.12 MinEV=-3 MaxEV=2 SpeedUp=4 SpeedDown=0.5 CentreWeight=0.8\n"
+        "Effect ScreenSpaceReflections Intensity=0.7 MaxRoughness=0.3 MaxDistance=900 Thickness=12 Steps=40\n"
+        "Effect VolumetricFog Density=0.0002 HeightFalloff=0.001 BaseHeight=50 MaxDistance=5000 Anisotropy=0.7 "
+        "SunScattering=2 SkyScattering=0.5 LightScattering=3 Albedo=1,0.9,0.8 Steps=16 Shadows=false\n"
+        "Effect Antialiasing Method=TAA Sharpness=0.5 Quality=High\n", S, Error);
+    Expect(bParsed && S.bAutoExposure && S.AeKey == 0.12f && S.AeMinEV == -3.0f && S.AeMaxEV == 2.0f && S.AeSpeedUp == 4.0f
+           && S.AeSpeedDown == 0.5f && S.AeCentreWeight == 0.8f, "AutoExposure reads its key, range, speeds and weighting");
+    Expect(S.bScreenReflections && S.SsrIntensity == 0.7f && S.SsrMaxRoughness == 0.3f && S.SsrMaxDistance == 900.0f
+           && S.SsrThickness == 12.0f && S.SsrSteps == 40.0f, "ScreenSpaceReflections reads its settings");
+    Expect(S.bVolumetricFog && S.FogDensity == 0.0002f && S.FogBaseHeight == 50.0f && S.FogAnisotropy == 0.7f
+           && S.FogAlbedo[1] == 0.9f && S.FogSteps == 16.0f && !S.bFogShadows, "VolumetricFog reads its settings and Albedo");
+    Expect(S.bAntialiasing && S.AaMethod == 1 && S.AaSharpness == 0.5f, "Antialiasing reads Method TAA and its Sharpness");
+    PostProcessSettings Fxaa;
+    ParsePostProcessStack("Effect Antialiasing\n", Fxaa, Error);
+    Expect(Fxaa.AaMethod == 0 && !PostProcessSettings().bAutoExposure && !PostProcessSettings().bVolumetricFog,
+           "FXAA by default; the new effects off unless a stack has their node");
+
+    PostProcessSettings Blend;
+    BlendPostProcess(Blend, S, 0.25f);
+    Expect(Blend.bAutoExposure && std::abs(Blend.AeMinEV + 0.75f) < 1e-5f && std::abs(Blend.AeMaxEV - 0.5f) < 1e-5f,
+           "a quarter in: a quarter of auto exposure's range, from none");
+    Expect(Blend.bScreenReflections && std::abs(Blend.SsrIntensity - 0.175f) < 1e-5f, "a quarter of the reflections' intensity");
+    Expect(Blend.bVolumetricFog && std::abs(Blend.FogDensity - 0.00005f) < 1e-9f && !Blend.bFogShadows,
+           "a quarter of the fog's density, its switches the stack's from the start (as from off)");
+    BlendPostProcess(Blend, S, 1.0f);
+    Expect(Blend.AeMinEV == -3.0f && Blend.FogDensity == 0.0002f && !Blend.bFogShadows && Blend.AaMethod == 1,
+           "all the way in: the stack's, switches too");
 }
 
 /*
@@ -6098,6 +6167,7 @@ int main()
     TestTextureCompression();
     TestTextureMips();
     TestToneMappingSettings();
+    TestFidelitySettings();
     TestImageBasedLightingData();
     TestMeshDrawing();
     TestEngineMeshes();

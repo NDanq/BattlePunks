@@ -410,6 +410,9 @@ namespace RenderCore
          * (its materials are submitted separately) and last frame's
          * Projection * View, for motion blur -- null on a first frame. The
          * next RenderSceneStages uses and forgets them. */
+        /* The main view's TAA jitter this frame, in NDC (RenderScene's Halton offset): the
+         * temporal resolve takes it off its reprojection. 0, 0 when the view is not jittered. */
+        void SetTemporalJitter(float InNdcX, float InNdcY);
         void SetPostProcess(const PostProcessSettings& InSettings, const EngineCore::Matrix4x4* InPreviousViewProjection);
 
         /* RenderScene::Render's text overlay ("stat unit"): InText, lines split

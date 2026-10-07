@@ -67,6 +67,7 @@ namespace RenderCore
         float    ContactThickness  = 6.0f;    // how deep a surface in the depth buffer is taken to be, world units
         int32_t  ContactSteps      = 12;      // samples along the march, 4-32
         float    ContactStrength   = 1.0f;    // 0 none, 1 a full shadow where it hits
+        uint8_t  bContactLocalLights = 1;     // shadowed point and spot lights march too
     };
 
     /* One Render component that asked for an inset shadow (Cast Inset

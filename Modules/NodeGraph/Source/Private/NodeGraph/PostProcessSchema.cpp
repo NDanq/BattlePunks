@@ -62,6 +62,31 @@ namespace
                 { "Samples",   "12",  4.0, 32.0,   1, "Directions tested per pixel: more is smoother and slower" },
                 { "Power",     "1.5", 0.5, 4.0,    1, "Contrast: above 1 darkens creases more than open areas" } },
               { { "Blur", EPropertyKind::Bool, "true", {}, "Smooth the result, keeping edges; off shows the raw samples" } } },
+            { "Effect.ScreenSpaceReflections", "ScreenSpaceReflections", "Screen-Space Reflections",
+              "Glossy Opaque and Masked Lit surfaces reflect what is on screen: each pixel's reflection marched through the "
+              "depth, its colour the last frame's. Where it finds nothing -- off screen, behind something, too rough -- the "
+              "reflection probes and the sky still do. An HDR scene with image-based lighting only.",
+              { { "Intensity",     "1",    0.0, 1.0,   1, "How far a found reflection replaces the probes'" },
+                { "Max Roughness", "0.45", 0.05, 1.0,  1, "Rougher surfaces than this keep the probes' reflection alone" },
+                { "Max Distance",  "1500", 10.0, 1.0e5, 1, "How far a ray goes, world units" },
+                { "Thickness",     "25",   0.1, 1.0e4, 1, "How deep a surface in the depth is taken to be, world units: too thin and rays slip past" },
+                { "Steps",         "32",   8.0, 64.0,  1, "Samples along each ray: more finds thinner things and costs more" } },
+              {} },
+            { "Effect.VolumetricFog", "VolumetricFog", "Volumetric Fog",
+              "Height fog the light shines through: the sun (with its shadows: shafts), the point and spot lights and "
+              "the sky scatter in it toward the eye, and what is behind fades. Marched at half resolution; an HDR "
+              "scene only. TAA smooths its grain.",
+              { { "Density",          "0.00003", 0.0, 0.01,  1, "How thick it is at Base Height and below, per world unit" },
+                { "Height Falloff",   "0.0008",  0.0, 0.1,   1, "How fast it thins above Base Height, per world unit" },
+                { "Base Height",      "0",      -1.0e6, 1.0e6, 1, "Where it starts to thin" },
+                { "Max Distance",     "8000",    10.0, 1.0e6, 1, "How far it is marched -- the sky takes this much" },
+                { "Anisotropy",       "0.6",     0.0, 0.95,  1, "How much it scatters forward: toward 1, a glow round the sun" },
+                { "Sun Scattering",   "1",       0.0, 16.0,  1, "How brightly the sun lights it" },
+                { "Sky Scattering",   "1",       0.0, 16.0,  1, "How brightly the sky lights it" },
+                { "Light Scattering", "1",       0.0, 16.0,  1, "How brightly point and spot lights light it" },
+                { "Albedo",           "1 1 1",   0.0, 1.0,   3, "The fog's colour: what it scatters" },
+                { "Steps",            "24",      4.0, 64.0,  1, "Samples along each ray: more is smoother and costs more" } },
+              { { "Shadows", EPropertyKind::Bool, "true", {}, "Shadow the sun's light in it (shafts)" } } },
             { "Effect.DepthOfField", "DepthOfField", "Depth of Field",
               "Blurs what is nearer or farther than the focus. Uses the scene depth.",
               { { "Focus Distance", "800", 0.0, 1.0e7, 1, "World units from the camera to the sharpest plane" },
@@ -88,10 +113,24 @@ namespace
               { { "Exposure", "0", -16.0, 16.0, 1, "Stops (EV): each +1 doubles the scene's brightness before the tone map" } },
               { { "Tone Mapper", EPropertyKind::Choice, "ACES", { "ACES", "Reinhard", "None" },
                   "ACES: a filmic curve, soft highlights and deeper blacks. Reinhard: x / (1 + x), flatter. None: clamped" } } },
+            { "Effect.AutoExposure", "AutoExposure", "Auto Exposure",
+              "Eye adaptation for an HDR scene: meters the scene's average brightness each frame (weighted to the middle) "
+              "and exposes it toward Key, adapting over time -- faster toward a brighter view than a darker one. Tone "
+              "Mapping's Exposure then compensates on top. Without Tone Mapping it does nothing.",
+              { { "Key",           "0.18", 0.01, 1.0,  1, "The grey the scene's average is exposed to: higher is brighter" },
+                { "Min EV",        "-2",  -16.0, 0.0,  1, "The most it darkens a bright view, in stops" },
+                { "Max EV",        "4",    0.0, 16.0,  1, "The most it brightens a dark view, in stops" },
+                { "Speed Up",      "3",    0.01, 20.0, 1, "How fast it adapts to a brighter view (per second)" },
+                { "Speed Down",    "1",    0.01, 20.0, 1, "How fast it adapts to a darker view (per second)" },
+                { "Centre Weight", "0.5",  0.0, 1.0,  1, "0 meters the whole view evenly; 1 mostly its middle" } },
+              {} },
             { "Effect.Antialiasing", "Antialiasing", "Antialiasing",
               "Smooths jagged edges after every other effect.",
-              { { "Edge Threshold", "0.125", 0.0, 1.0, 1, "The contrast an edge needs before it is smoothed: lower catches more" } },
-              { { "Method",  EPropertyKind::Choice, "FXAA",   { "FXAA" }, "The technique" },
+              { { "Edge Threshold", "0.125", 0.0, 1.0, 1, "The contrast an edge needs before it is smoothed: lower catches more" },
+                { "Sharpness",      "0.35",  0.0, 1.0, 1, "TAA: how much detail its blend's softening is sharpened back (not FXAA)" } },
+              { { "Method",  EPropertyKind::Choice, "FXAA",   { "FXAA", "TAA" },
+                  "FXAA: edges found and smoothed in the finished image. TAA: each frame drawn a sub-pixel apart and "
+                  "blended with the ones before -- smooths shimmer on fine detail too (an HDR scene; else FXAA)" },
                 { "Quality", EPropertyKind::Choice, "Medium", { "Low", "Medium", "High" }, "How far along an edge it searches" } } },
         };
         return Effects;

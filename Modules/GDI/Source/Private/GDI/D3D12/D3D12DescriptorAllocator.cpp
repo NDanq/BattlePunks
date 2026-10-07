@@ -2,6 +2,7 @@
 #include "Public/GDI/D3D12/D3D12Device.h"
 #include "Private/GDI/D3D12/D3D12TransientOps.h"
 
+#include "Public/GDI/GDI.h"
 #include "Public/GDI/GDILog.h"
 
 bool D3D12DescriptorAllocator::Initialize(D3D12Device* InDevice)
@@ -77,12 +78,16 @@ bool D3D12DescriptorAllocator::CreateSamplers()
     {
         for(int Filter = 0; Filter < GDI_TF_MAX; ++Filter)
         {
+            // Linear samplers are anisotropic when GDISetMaxAnisotropy asks (set before the
+            // device is made); a single-level resource samples the same either way.
+            const UINT Anisotropy  = UINT(GDIGetMaxAnisotropy());
+            const bool bAnisotropic = Filter == GDI_TF_Linear && Anisotropy > 1;
             D3D12_SAMPLER_DESC Sampler{};
-            Sampler.Filter         = Filters[Filter];
+            Sampler.Filter         = bAnisotropic ? D3D12_FILTER_ANISOTROPIC : Filters[Filter];
             Sampler.AddressU       = Modes[Border];
             Sampler.AddressV       = Modes[Border];
             Sampler.AddressW       = Modes[Border];
-            Sampler.MaxAnisotropy  = 1;
+            Sampler.MaxAnisotropy  = bAnisotropic ? (Anisotropy > 16 ? 16 : Anisotropy) : 1;
             Sampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
             Sampler.MinLOD         = 0.0f;
             // Unclamped: a texture with a mip chain samples it, and LOD clamps to

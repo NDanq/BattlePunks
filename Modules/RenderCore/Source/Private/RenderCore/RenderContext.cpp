@@ -87,6 +87,8 @@ namespace RenderCore
             PP_BloomDownsample, PP_BloomUpsample, PP_BloomComposite, PP_Fxaa,
             PP_AmbientOcclusion, PP_AmbientBlur, PP_StatsOverlay, PP_ClearGradient, PP_CaptureCopy, PP_Tonemap,
             PP_IBLSky, PP_IBLPrefilter, PP_IBLLighting, PP_Sky, PP_ViewTarget, PP_UI,
+            PP_Luminance, PP_LuminanceReduce, PP_AdaptExposure, PP_TemporalAA, PP_ScreenReflections, PP_Copy,
+            PP_VolumetricFog, PP_FogComposite,
             PP_PassCount
         };
         const char* const POST_PASS_SHADERS[PP_PassCount] = {
@@ -94,6 +96,8 @@ namespace RenderCore
             "PPBloomDownsample.fsh", "PPBloomUpsample.fsh", "PPBloomComposite.fsh", "PPFxaa.fsh",
             "PPAmbientOcclusion.fsh", "PPAmbientBlur.fsh", "StatsOverlay.fsh", "ClearGradient.fsh", "CaptureCopy.fsh", "Tonemap.fsh",
             "IBLSky.fsh", "IBLPrefilter.fsh", "IBLLighting.fsh", "Sky.fsh", "ViewTarget.fsh", "UI.fsh",
+            "PPLuminance.fsh", "PPLuminanceReduce.fsh", "PPAdaptExposure.fsh", "PPTemporalAA.fsh", "PPScreenReflections.fsh",
+            "PPCopy.fsh", "PPVolumetricFog.fsh", "PPFogComposite.fsh",
         };
         /* Each pass's draw event (DrawPost). */
         const char* const POST_PASS_NAMES[PP_PassCount] = {
@@ -101,6 +105,8 @@ namespace RenderCore
             "BloomDownsample", "BloomUpsample", "BloomComposite", "Fxaa",
             "AmbientOcclusion", "AmbientBlur", "StatsOverlay", "ClearGradient", "CaptureCopy", "Tonemap",
             "IBLSky", "IBLPrefilter", "IBLLighting", "Sky", "ViewTarget", "UI",
+            "Luminance", "LuminanceReduce", "AdaptExposure", "TemporalAA", "ScreenReflections", "Copy",
+            "VolumetricFog", "FogComposite",
         };
 
         /* A pass's PP_Block: { vec4 settings; vec4 sizes; }, with a mat4
@@ -161,6 +167,7 @@ namespace RenderCore
             float View[4]               = {};                           // 1: Unlit (ERenderViewMode)
             float ViewProjection[16]    = {};                           // world to clip: contact shadows' march (Lighting.glsl)
             float ContactShadow[4]      = {};                           // length (0: off), thickness, steps, strength
+            float ContactLocal[4]       = {};                           // 1: shadowed point and spot lights' too
         };
         static_assert(offsetof(SceneUniforms, Time) == 16 && offsetof(SceneUniforms, LightDirection) == 32
                       && offsetof(SceneUniforms, GroundColor) == 80 && offsetof(SceneUniforms, InvViewProjection) == 96,
@@ -176,7 +183,8 @@ namespace RenderCore
         static_assert(offsetof(SceneUniforms, View) == 3840, "Scene_View comes after Scene_Baked");
         static_assert(offsetof(SceneUniforms, ViewProjection) == 3856 && offsetof(SceneUniforms, ContactShadow) == 3920,
                       "Scene_ViewProjection and Scene_ContactShadow come after Scene_View");
-        static_assert(sizeof(SceneUniforms) == 3936 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
+        static_assert(offsetof(SceneUniforms, ContactLocal) == 3936, "Scene_ContactLocal comes after Scene_ContactShadow");
+        static_assert(sizeof(SceneUniforms) == 3952 && sizeof(SceneUniforms) <= GDI_SCENE_BLOCK_MAX_BYTES,
                       "SceneUniforms must match Scene_Block (SceneUniforms.glsl) and fit the scene block");
 
         /* Row-major InMatrix into a GLSL mat4's column-major floats. */
@@ -425,6 +433,8 @@ namespace RenderCore
         PostProcessSettings   PostSettings;
         EngineCore::Matrix4x4 PrevViewProjection;
         bool                  bHasPrevViewProjection = false;
+        bool                  bTemporalResolved      = false;   // this frame's TAA ran: the stack's FXAA stands down
+        float                 TemporalJitter[2]      = {};      // the main view's TAA jitter, NDC (SetTemporalJitter)
         GDITextureResource*   PostSceneDepth = nullptr;
         GDIShader*            PostShaders[PP_PassCount] = {};
         bool                  bPostShaderTried[PP_PassCount] = {};
@@ -803,7 +813,7 @@ namespace RenderCore
          */
         bool DrawPost(const EPostPass InPass, GDIRenderTarget* InTarget, const uint InWidth, const uint InHeight,
                       std::initializer_list<GDITextureResource*> InTextures, const PostBlock& InBlock, const bool bInAdditive = false,
-                      const uint InX = 0)
+                      const uint InX = 0, const bool bInTransmit = false)
         {
             GDIShader* Pixel  = GetPostShader(InPass);
             GDIShader* Vertex = GetDefaultVertex(EMaterialVertexInput::Fullscreen);
@@ -824,7 +834,8 @@ namespace RenderCore
             EnsureInitialised();
             Bind(Vertex, Pixel);
             /* These blocks carry their matrix first; the others start at A. */
-            if(InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion || InPass == PP_IBLSky || InPass == PP_Sky)
+            if(InPass == PP_MotionBlur || InPass == PP_AmbientOcclusion || InPass == PP_IBLSky || InPass == PP_Sky
+               || InPass == PP_TemporalAA || InPass == PP_ScreenReflections || InPass == PP_VolumetricFog)
             {
                 GDISetUniformBlock(GDI_MATERIAL_BLOCK_BINDING, &InBlock, uint(sizeof(InBlock)));
             }
@@ -834,7 +845,9 @@ namespace RenderCore
             }
             GDISetUniformBlock(GDI_SCENE_BLOCK_BINDING, &Scene, uint(sizeof(Scene)));
             GDISetDepthState(IDepthStateDesc());
-            GDISetBlendState(bInAdditive ? IBlendStateDesc(true, BM_One, BM_One) : IBlendStateDesc());
+            // bInTransmit: the target times the source's alpha, plus its colour (a medium laid over it: fog).
+            GDISetBlendState(bInAdditive ? IBlendStateDesc(true, BM_One, BM_One)
+                           : bInTransmit ? IBlendStateDesc(true, BM_One, BM_Src_Alpha) : IBlendStateDesc());
             GDIDrawObject(ScreenObject);
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
             for(uint32_t Each = 0; Each < Slot; ++Each)
@@ -842,6 +855,94 @@ namespace RenderCore
                 GDISetMaterialTexture(Each, nullptr);
             }
             return true;
+        }
+
+        /* Auto exposure (RENDERPIPELINE.md, "Auto exposure"): InLinear (the HDR scene colour)
+         * metered into InTargets.Luminance, 64 x 64 down to 1 x 1, then the adapted value
+         * eased toward it into the other of InTargets.Exposure. The adapted 1 x 1 to read;
+         * null (exposure stays as the stack sets it) if a target or pass is missing. */
+        /* Temporal antialiasing (RENDERPIPELINE.md, "Temporal antialiasing"): InCurrent, this
+         * frame's jittered scene colour, blended into InTargets.History by PPTemporalAA.fsh,
+         * reprojected through the depth and velocity targets and PrevViewProjection (the
+         * last frame's, unjittered). The resolve; null if a target is missing. */
+        GDITextureResource* ResolveTemporal(SceneTargets& InTargets, GDITextureResource* InCurrent, const bool bInHasPrevious)
+        {
+            GDITexture2D* Depth = InTargets.SceneColor ? InTargets.SceneColor->ToDepthTexture2D() : nullptr;
+            GDITexture2D* Motion = InTargets.Velocity ? InTargets.Velocity->ToGDITexture2D() : nullptr;
+            if(!Depth || !Motion || !InTargets.EnsureHistory())
+            {
+                InTargets.bHistoryValid = false;
+                return nullptr;
+            }
+            const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
+            {
+                GDITexture2D* Each = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+                return Each ? Each->Resource : nullptr;
+            };
+            const uint32_t Write = InTargets.HistoryCurrent ^ 1u;
+            PostBlock Block;
+            PutMatrix(Block.Matrix, PrevViewProjection);
+            Block.A[0] = InTargets.bHistoryValid && bInHasPrevious ? 1.0f : 0.0f;
+            Block.A[1] = 0.9f;    // history weight: about ten frames' worth
+            Block.A[2] = 1.25f;   // clip box half width, in standard deviations
+            // This frame's jitter in target UV: a pixel centre here shows the point the
+            // unjittered view has that far back, so the reprojection takes it off.
+            Block.Sizes[0] = TemporalJitter[0] * 0.5f;
+            Block.Sizes[1] = -TemporalJitter[1] * 0.5f;
+            Block.Sizes[2] = float(InTargets.Width);
+            Block.Sizes[3] = float(InTargets.Height);
+            const bool bDone = DrawPost(PP_TemporalAA, InTargets.History[Write], InTargets.Width, InTargets.Height,
+                                        { InCurrent, Texture(InTargets.History[InTargets.HistoryCurrent]), Depth->Resource, Motion->Resource },
+                                        Block);
+            for(uint32_t Slot = 0; Slot < 4; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+            if(!bDone)
+            {
+                InTargets.bHistoryValid = false;
+                return nullptr;
+            }
+            InTargets.HistoryCurrent = Write;
+            InTargets.bHistoryValid  = true;
+            return Texture(InTargets.History[Write]);
+        }
+
+        GDITextureResource* MeterExposure(SceneTargets& InTargets, GDITextureResource* InLinear,
+                                          const PostProcessSettings& InSettings, const float InDeltaSeconds)
+        {
+            if(!InTargets.EnsureExposure())
+            {
+                return nullptr;
+            }
+            SCOPED_DRAW_EVENT("AutoExposure");
+            const auto Texture = [](GDIRenderTarget* InTarget) -> GDITextureResource*
+            {
+                GDITexture2D* Each = InTarget ? InTarget->ToGDITexture2D() : nullptr;
+                return Each ? Each->Resource : nullptr;
+            };
+            PostBlock Meter;
+            Meter.A[0] = InSettings.AeCentreWeight;
+            PostBlock Reduce;
+            Reduce.A[0] = 8.0f;
+            const uint32_t Write = InTargets.ExposureCurrent ^ 1u;
+            PostBlock Adapt;
+            Adapt.A[0] = InDeltaSeconds;
+            Adapt.A[1] = InSettings.AeSpeedUp;
+            Adapt.A[2] = InSettings.AeSpeedDown;
+            Adapt.A[3] = InTargets.bExposureValid ? 1.0f : 0.0f;
+            const bool bDone = DrawPost(PP_Luminance, InTargets.Luminance[0], 64, 64, { InLinear }, Meter)
+                            && DrawPost(PP_LuminanceReduce, InTargets.Luminance[1], 8, 8, { Texture(InTargets.Luminance[0]) }, Reduce)
+                            && DrawPost(PP_LuminanceReduce, InTargets.Luminance[2], 1, 1, { Texture(InTargets.Luminance[1]) }, Reduce)
+                            && DrawPost(PP_AdaptExposure, InTargets.Exposure[Write], 1, 1,
+                                        { Texture(InTargets.Luminance[2]), Texture(InTargets.Exposure[InTargets.ExposureCurrent]) }, Adapt);
+            GDISetMaterialTexture(0, nullptr);
+            GDISetMaterialTexture(1, nullptr);
+            if(!bDone)
+            {
+                InTargets.bExposureValid = false;
+                return nullptr;
+            }
+            InTargets.ExposureCurrent = Write;
+            InTargets.bExposureValid  = true;
+            return Texture(InTargets.Exposure[Write]);
         }
 
         /* RenderSceneStages' post process stack (RENDERPIPELINE.md, "Post
@@ -1290,6 +1391,7 @@ namespace RenderCore
             /* No shadow until PrepareShadows draws some -- contact shadows included. */
             Scene.ShadowParams[0] = 0.0f;
             Scene.ContactShadow[0] = 0.0f;
+            Scene.ContactLocal[0]  = 0.0f;
             Scene.LightShadow[0]  = -1.0f;
             Scene.LightShadow[1]  = 0.0f;
         }
@@ -1366,6 +1468,7 @@ namespace RenderCore
             Scene.ContactShadow[1] = Settings.ContactThickness;
             Scene.ContactShadow[2] = float(Settings.ContactSteps);
             Scene.ContactShadow[3] = Settings.ContactStrength;
+            Scene.ContactLocal[0]  = bContact && Settings.bContactLocalLights ? 1.0f : 0.0f;
 
             uint32_t DirectionalViews = 0;
             if(Shadows.DirectionalFirstView >= 0)
@@ -2308,8 +2411,8 @@ namespace RenderCore
 
         RunMaterials(PPS_AfterEffects);
 
-        /* Antialiasing, last: FXAA over everything before it. */
-        if(bAa)
+        /* Antialiasing, last: FXAA over everything before it -- unless TAA resolved this frame already. */
+        if(bAa && !bTemporalResolved)
         {
             static const float SEARCH_STEPS[3] = { 4.0f, 8.0f, 12.0f };
             PostBlock Block;
@@ -3401,13 +3504,44 @@ namespace RenderCore
                     return Each ? Each->Resource : nullptr;
                 };
                 GDITexture2D* Depth = SceneColor->ToDepthTexture2D();
+
+                /* Screen-space reflections (PPScreenReflections.fsh): what the IBL pass blends
+                 * over the probes' specular, from the last frame's colour. */
+                GDITextureResource* Screen = nullptr;
+                const PostProcessSettings& Stack = P->PostSettings;
+                GDITexture2D* Motion = InTargets.Velocity ? InTargets.Velocity->ToGDITexture2D() : nullptr;
+                if(Stack.bScreenReflections && InTargets.LastColor && P->bHasPrevViewProjection && Depth && Motion)
+                {
+                    if(GDIRenderTarget* Reflections = InTargets.EnsureFullHalfFloat(InTargets.Reflections, "Reflections"))
+                    {
+                        PostBlock Ssr;
+                        PutMatrix(Ssr.Matrix, P->PrevViewProjection);
+                        Ssr.A[0]     = std::clamp(Stack.SsrIntensity, 0.0f, 1.0f);
+                        Ssr.A[1]     = std::clamp(Stack.SsrMaxRoughness, 0.05f, 1.0f);
+                        Ssr.A[2]     = std::clamp(Stack.SsrSteps, 8.0f, 64.0f);
+                        Ssr.A[3]     = std::max(Stack.SsrThickness, 0.1f);
+                        Ssr.Sizes[0] = std::max(Stack.SsrMaxDistance, 10.0f);
+                        Ssr.Sizes[1] = 1.0f;
+                        Ssr.Sizes[2] = float(Width);
+                        Ssr.Sizes[3] = float(Height);
+                        if(P->DrawPost(PP_ScreenReflections, Reflections, Width, Height,
+                                       { Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]), Depth->Resource,
+                                         Texture(InTargets.LastColor), Motion->Resource }, Ssr))
+                        {
+                            Screen = Texture(Reflections);
+                        }
+                        for(uint32_t Slot = 0; Slot < 5; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                    }
+                }
+
                 PostBlock Block;
                 Block.A[0] = P->AmbientOcclusion ? 1.0f : 0.0f;
+                Block.A[1] = Screen ? 1.0f : 0.0f;
                 P->DrawPost(PP_IBLLighting, SceneColor, Width, Height,
                             { Texture(InTargets.GBuffer[0]), Texture(InTargets.GBuffer[1]), Texture(InTargets.GBuffer[2]),
-                              Depth ? Depth->Resource : nullptr, P->AmbientOcclusion, P->IBLAtlasTexture() },
+                              Depth ? Depth->Resource : nullptr, P->AmbientOcclusion, P->IBLAtlasTexture(), Screen },
                             Block, /*bInAdditive*/ true);
-                for(uint32_t Slot = 0; Slot < 6; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
+                for(uint32_t Slot = 0; Slot < 7; ++Slot) { GDISetMaterialTexture(Slot, nullptr); }
             }
             P->AmbientOcclusion = nullptr;
             P->StageTimestamp(RGT_Lighting, true);
@@ -3419,6 +3553,42 @@ namespace RenderCore
         P->IssueStage(ERenderStage::Unlit);
         P->IssueStage(ERenderStage::TranslucentLit);
         P->IssueStage(ERenderStage::TranslucentUnlit);
+
+        /* Volumetric fog (PPVolumetricFog.fsh): marched at half size through the depth and the
+         * sun's shadow map, then laid over everything drawn so far, before TAA smooths it. */
+        const PostProcessSettings& FogStack = P->PostSettings;
+        if(FogStack.bVolumetricFog && InTargets.bHDR && FogStack.FogDensity > 0.0f)
+        {
+            GDITexture2D* Depth = SceneColor->ToDepthTexture2D();
+            GDIRenderTarget* Fog = InTargets.EnsureFog();
+            if(Depth && Fog)
+            {
+                SCOPED_DRAW_EVENT("VolumetricFog");
+                GDITexture2D* Sun = P->Shadows.ViewCount > 0 && P->ShadowAtlas[SA_Directional]
+                                  ? P->ShadowAtlas[SA_Directional]->ToDepthTexture2D() : nullptr;
+                PostBlock March;
+                const float Settings[16] = {
+                    FogStack.FogDensity, FogStack.FogHeightFalloff, FogStack.FogBaseHeight, std::max(FogStack.FogMaxDistance, 10.0f),
+                    std::clamp(FogStack.FogAnisotropy, 0.0f, 0.95f), FogStack.FogSun, FogStack.FogSky, FogStack.FogLights,
+                    FogStack.FogAlbedo[0], FogStack.FogAlbedo[1], FogStack.FogAlbedo[2], FogStack.bFogShadows && Sun ? 1.0f : 0.0f,
+                    std::clamp(FogStack.FogSteps, 4.0f, 64.0f), 0.0f, 0.0f, 0.0f };
+                std::memcpy(March.Matrix, Settings, sizeof(Settings));   // PPVolumetricFog.fsh's four vec4s, in the matrix's place
+                March.Sizes[2] = float(Width);
+                March.Sizes[3] = float(Height);
+                const uint HalfW = Fog->GetWidth(), HalfH = Fog->GetHeight();
+                const bool bMarched = P->DrawPost(PP_VolumetricFog, Fog, HalfW, HalfH, { Depth->Resource, Sun ? Sun->Resource : nullptr }, March);
+                GDISetMaterialTexture(0, nullptr);
+                GDISetMaterialTexture(1, nullptr);
+                GDITexture2D* Marched = Fog->ToGDITexture2D();
+                PostBlock Composite;
+                if(bMarched && Marched)
+                {
+                    P->DrawPost(PP_FogComposite, SceneColor, Width, Height, { Marched->Resource }, Composite,
+                                /*bInAdditive*/ false, 0, /*bInTransmit*/ true);
+                    GDISetMaterialTexture(0, nullptr);
+                }
+            }
+        }
         P->StageTimestamp(RGT_Forward, true);
 
         /* PostProcess: the stack (RENDERPIPELINE.md, "Post process"), once a
@@ -3436,13 +3606,66 @@ namespace RenderCore
             if(InTargets.bHDR)
             {
                 GDIRenderTarget* Mapped = InTargets.EnsurePostProcess();
-                GDITexture2D*    Linear = SceneColor->ToGDITexture2D();
+                GDITexture2D*    Scene  = SceneColor->ToGDITexture2D();
+                GDITextureResource* Linear = Scene ? Scene->Resource : nullptr;
+                /* Temporal antialiasing: this frame's (jittered) colour into the history; what it
+                 * resolves is the scene from here on. FXAA stands in when it cannot run. */
+                P->bTemporalResolved = false;
+                if(Post.bAntialiasing && Post.AaMethod == 1 && Linear)
+                {
+                    if(GDITextureResource* Resolved = P->ResolveTemporal(InTargets, Linear, bHasPrev))
+                    {
+                        Linear = Resolved;
+                        P->bTemporalResolved = true;
+                    }
+                }
+                else
+                {
+                    InTargets.bHistoryValid = false;
+                }
+                /* The next frame's last colour, for screen-space reflections: the resolve TAA
+                 * keeps anyway, else a copy of this frame's scene -- only while they are on. */
+                if(P->bTemporalResolved)
+                {
+                    InTargets.LastColor = InTargets.History[InTargets.HistoryCurrent];
+                }
+                else if(Post.bScreenReflections && Linear && InTargets.EnsureFullHalfFloat(InTargets.LastCopy, "LastColor"))
+                {
+                    PostBlock Copy;
+                    InTargets.LastColor = P->DrawPost(PP_Copy, InTargets.LastCopy, Width, Height, { Linear }, Copy)
+                                        ? InTargets.LastCopy : nullptr;
+                    GDISetMaterialTexture(0, nullptr);
+                }
+                else
+                {
+                    InTargets.LastColor = nullptr;
+                }
                 PostBlock Block;
-                if(Mapped && Linear && P->DrawPost(PP_Tonemap, Mapped, Width, Height, { Linear->Resource }, Block))
+                /* Auto exposure: meter the scene, ease the adapted value toward it, and let the tone map read it. */
+                GDITextureResource* Adapted = nullptr;
+                if(Post.bAutoExposure && Post.bToneMapping && Linear)
+                {
+                    Adapted = P->MeterExposure(InTargets, Linear, Post, GetDeltaSeconds());
+                }
+                else
+                {
+                    InTargets.bExposureValid = false;   // back on, it starts from what it meters
+                }
+                if(Adapted)
+                {
+                    Block.A[0] = 1.0f;
+                    Block.A[1] = Post.AeKey;
+                    Block.A[2] = std::min(Post.AeMinEV, Post.AeMaxEV);
+                    Block.A[3] = std::max(Post.AeMinEV, Post.AeMaxEV);
+                }
+                /* After TAA, its softening sharpened back: in the tone map, so never into the history. */
+                Block.Sizes[0] = P->bTemporalResolved ? std::clamp(Post.AaSharpness, 0.0f, 1.0f) : 0.0f;
+                if(Mapped && Linear && P->DrawPost(PP_Tonemap, Mapped, Width, Height, { Linear, Adapted }, Block))
                 {
                     Display = Mapped;
                 }
                 GDISetMaterialTexture(0, nullptr);
+                GDISetMaterialTexture(1, nullptr);
             }
             Source = P->RunPostProcessStack(InTargets, Post, bHasPrev, Display);
         }
@@ -3842,6 +4065,12 @@ namespace RenderCore
         GDISetMaterialTexture(0, nullptr);
         InState.Mesh->SetDrawRange(0, 0);
         P->UIObject->Mesh = nullptr;
+    }
+
+    void RenderContext::SetTemporalJitter(const float InNdcX, const float InNdcY)
+    {
+        P->TemporalJitter[0] = InNdcX;
+        P->TemporalJitter[1] = InNdcY;
     }
 
     void RenderContext::SetPostProcess(const PostProcessSettings& InSettings, const EngineCore::Matrix4x4* InPreviousViewProjection)

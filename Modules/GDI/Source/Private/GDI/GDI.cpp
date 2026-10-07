@@ -732,6 +732,21 @@ GDIRenderTarget* GDICreateRenderTargetFormat(std::string InName, const uint InWi
     return GDynamicGDI ? GDynamicGDI->CreateRenderTargetFormat(std::move(InName), InWidth, InHeight, InFormat) : nullptr;
 }
 
+namespace
+{
+    float GMaxAnisotropy = 1.0f;   // GDISetMaxAnisotropy: what the backends' samplers ask for
+}
+
+void GDISetMaxAnisotropy(const float InMax)
+{
+    GMaxAnisotropy = InMax < 1.0f ? 1.0f : (InMax > 16.0f ? 16.0f : InMax);
+}
+
+float GDIGetMaxAnisotropy()
+{
+    return GMaxAnisotropy;
+}
+
 bool GDISupportsRenderTargetFormat(const EGDIRenderTargetFormat InFormat)
 {
     return GDynamicGDI && GDynamicGDI->SupportsRenderTargetFormat(InFormat);
