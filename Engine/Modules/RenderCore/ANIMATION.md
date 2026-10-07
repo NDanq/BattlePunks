@@ -120,9 +120,17 @@ end)
 to where `Bone` is in its parent's pose, moved by its offsets in the bone's
 frame. Change `Bone` to move it -- `"Spine_02"` holstered, `"Hand_R"` drawn.
 
-**Root motion**: a clip set In Place holds its root bone's X and Z at the
-first frame's -- a walk walks on the spot, and the entity's own movement
-carries it. Extracting root motion into the entity is not done yet.
+**Root motion** is the clip's (mesh viewer, Clip > Root motion):
+
+| Mode | |
+|---|---|
+| As authored | the root bone travels: the character walks off its entity |
+| In place | the root's model-space X and Z held at the first frame's: a walk on the spot, the entity's own movement carries it |
+| Moves the entity | held in place, and the travel moves the entity instead -- turned and sized as the entity is, each game tick |
+
+The travel is the first layer's (`AnimInstance::GetRootMotion`), blended
+as its poses are -- a blend space, a crossfade. Only X and Z move the
+entity; turning is not extracted. The editor's preview moves nothing.
 
 ## Anim states
 
@@ -170,5 +178,5 @@ Layer Arms   mask spine_02, weight scaled by Armed
 
 Inverse kinematics (feet, look-at), morph targets, additive layers, 2D blend
 spaces, retargeting between differently named skeletons, clip compression,
-root motion applied to the entity, skinned meshes on Metal, and animation
+turning root motion, skinned meshes on Metal, and animation
 budgets (off-screen entities still animate).

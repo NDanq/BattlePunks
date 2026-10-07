@@ -112,7 +112,7 @@ private:
     std::vector<AnimParameterControl> ParameterControls;
     QWidget*      ClipBox         = nullptr;
     QCheckBox*    ClipLoop        = nullptr;
-    QCheckBox*    ClipInPlace     = nullptr;
+    QComboBox*    ClipRootMotion  = nullptr;
     QTableWidget* NotifyTable     = nullptr;
     QPushButton*  SaveClipButton  = nullptr;
     QLabel*       NotifyFlash     = nullptr;

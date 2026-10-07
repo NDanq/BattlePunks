@@ -49,13 +49,23 @@ namespace RenderCore
     {
         Layers.clear();
         Parameters.clear();
+        RefPose.clear();
+        if(Skeleton) { GetRefPose(*Skeleton, RefPose); }
 
         const auto MakeSample = [this](std::shared_ptr<const AnimClipData> InClip, const float InPosition)
         {
             Sample Out;
             Out.Clip     = std::move(InClip);
             Out.Position = InPosition;
-            if(Out.Clip && Skeleton) { BindClip(*Out.Clip, *Skeleton, Out.Binding); }
+            if(Out.Clip && Skeleton)
+            {
+                BindClip(*Out.Clip, *Skeleton, Out.Binding);
+                if(Out.Clip->RootMotion != EAnimRootMotion::Keep)
+                {
+                    Out.RootBone  = Skeleton->FindBone(Out.Clip->RootBone);
+                    Out.RootTrack = Out.Clip->FindTrack(Out.Clip->RootBone);
+                }
+            }
             return Out;
         };
 
@@ -208,19 +218,49 @@ namespace RenderCore
         return Dominant < InState.Samples.size() && InState.Samples[Dominant].Clip && InState.Samples[Dominant].Clip->bLoop;
     }
 
-    void AnimInstance::AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, const float InDelta, const bool bInNotify)
+    AnimMatrix AnimInstance::ParentModel(const AnimLocalPose& InPose, const int32_t InBone) const
+    {
+        AnimMatrix Model;
+        if(!Skeleton || InBone < 0) { return Model; }
+        /* Up the chain, then composed root-first. */
+        int32_t Chain[SKELETON_MAX_BONES];
+        int32_t Depth = 0;
+        for(int32_t At = Skeleton->Bones[size_t(InBone)].Parent; At >= 0 && Depth < int32_t(SKELETON_MAX_BONES); At = Skeleton->Bones[size_t(At)].Parent)
+        {
+            Chain[Depth++] = At;
+        }
+        for(int32_t Index = Depth - 1; Index >= 0; --Index)
+        {
+            Model = AnimMath::Mul(Model, AnimMath::ToMatrix(InPose[size_t(Chain[Index])]));
+        }
+        return Model;
+    }
+
+    void AnimInstance::HoldRoot(const Sample& InSample, AnimLocalPose& InOutPose) const
+    {
+        if(InSample.RootBone < 0 || InSample.RootTrack < 0 || size_t(InSample.RootBone) >= InOutPose.size()) { return; }
+        const std::vector<AnimVec3>& Keys = InSample.Clip->Tracks[size_t(InSample.RootTrack)].Translations;
+        if(Keys.empty()) { return; }
+        const AnimMatrix Parent = ParentModel(InOutPose, InSample.RootBone);
+        AnimVec3& Local = InOutPose[size_t(InSample.RootBone)].Translation;
+        const AnimVec3 Now   = AnimMath::TransformPoint(Parent, Local);
+        const AnimVec3 First = AnimMath::TransformPoint(Parent, Keys.front());
+        Local = AnimMath::TransformPoint(AnimMath::Inverse(Parent), { First.X, Now.Y, First.Z });
+    }
+
+    AnimVec3 AnimInstance::AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, const float InDelta, const bool bInNotify)
     {
         InOutHead.bEnded = false;
         if(InOutHead.State < 0 || size_t(InOutHead.State) >= InLayer.States.size())
         {
-            return;
+            return AnimVec3();
         }
         const StateRuntime& State = InLayer.States[size_t(InOutHead.State)];
         const float Duration = StateDuration(State);
         if(Duration <= 0.0f)
         {
             InOutHead.bEnded = true;   // nothing to play: as good as finished
-            return;
+            return AnimVec3();
         }
 
         const float From  = InOutHead.Phase;
@@ -243,12 +283,13 @@ namespace RenderCore
         }
         InOutHead.Phase = To;
 
+        std::vector<float> Weights;
+        size_t Dominant = 0;
+        SampleWeights(State, Weights, Dominant);
+
         /* The dominant clip's notifies, moving forward. */
         if(bInNotify && To != From && InDelta * State.Speed > 0.0f)
         {
-            std::vector<float> Weights;
-            size_t Dominant = 0;
-            SampleWeights(State, Weights, Dominant);
             if(Dominant < State.Samples.size() && State.Samples[Dominant].Clip)
             {
                 const AnimClipData& Notifying = *State.Samples[Dominant].Clip;
@@ -256,6 +297,23 @@ namespace RenderCore
                 CollectNotifies(Notifying, From * Length, To * Length, bWrap, Fired);
             }
         }
+
+        /* Each Extract clip's travel, by its weight, from its parent's space
+         * into the model's (the reference pose's parents); only X and Z move it. */
+        AnimVec3 Travel;
+        for(size_t Index = 0; Index < State.Samples.size(); ++Index)
+        {
+            const Sample& Each = State.Samples[Index];
+            if(Weights[Index] <= 0.0f || Each.RootBone < 0 || Each.Clip->RootMotion != EAnimRootMotion::Extract) { continue; }
+            const float Length = Each.Clip->GetDuration();
+            const AnimVec3 Local = Each.Clip->GetRootTravel(From * Length, To * Length, bWrap);
+            const AnimMatrix Parent = ParentModel(RefPose, Each.RootBone);
+            const AnimVec3 Model{ Parent.M[0][0] * Local.X + Parent.M[0][1] * Local.Y + Parent.M[0][2] * Local.Z,
+                                  0.0f,
+                                  Parent.M[2][0] * Local.X + Parent.M[2][1] * Local.Y + Parent.M[2][2] * Local.Z };
+            Travel = AnimMath::Add(Travel, AnimMath::Scale(Model, Weights[Index]));
+        }
+        return Travel;
     }
 
     void AnimInstance::EvaluateState(const StateRuntime& InState, const float InPhase, AnimLocalPose& OutPose)
@@ -278,11 +336,13 @@ namespace RenderCore
             if(Total <= 0.0f)
             {
                 SampleClip(*Each.Clip, Each.Binding, Time, OutPose);
+                HoldRoot(Each, OutPose);
                 Total = Weights[Index];
                 continue;
             }
             GetRefPose(*Skeleton, Scratch[2]);
             SampleClip(*Each.Clip, Each.Binding, Time, Scratch[2]);
+            HoldRoot(Each, Scratch[2]);
             Total += Weights[Index];
             BlendPoses(OutPose, Scratch[2], Weights[Index] / Total);
         }
@@ -365,18 +425,24 @@ namespace RenderCore
     {
         Fired.clear();
         Consumed.clear();
+        RootMotion = AnimVec3();
         if(Skeleton)
         {
             const float Delta = InDeltaSeconds * PlayRate;
-            for(LayerRuntime& Layer : Layers)
+            for(size_t Index = 0; Index < Layers.size(); ++Index)
             {
-                AdvancePlayhead(Layer, Layer.Current, Delta, /*bInNotify*/ true);
+                LayerRuntime& Layer = Layers[Index];
+                AnimVec3 Travel = AdvancePlayhead(Layer, Layer.Current, Delta, /*bInNotify*/ true);
                 if(Layer.Previous.State >= 0)
                 {
-                    AdvancePlayhead(Layer, Layer.Previous, Delta, /*bInNotify*/ false);
+                    const AnimVec3 Fading = AdvancePlayhead(Layer, Layer.Previous, Delta, /*bInNotify*/ false);
                     Layer.FadeTime += std::fabs(Delta);
+                    const float Alpha = Layer.FadeDuration > 0.0f ? std::clamp(Layer.FadeTime / Layer.FadeDuration, 0.0f, 1.0f) : 1.0f;
+                    Travel = AnimMath::Lerp(Fading, Travel, Alpha);
                     if(Layer.FadeTime >= Layer.FadeDuration) { Layer.Previous.State = -1; }
                 }
+                /* The first layer is the body's: its travel moves the entity. */
+                if(Index == 0) { RootMotion = Travel; }
                 UpdateTransitions(Layer);
             }
         }

@@ -99,12 +99,30 @@ namespace RenderCore
         if(!Track.Rotations.empty())    { Out.Rotation    = AnimMath::Nlerp(KeyAt(Track.Rotations, A), KeyAt(Track.Rotations, B), T); }
         if(!Track.Scales.empty())       { Out.Scale       = AnimMath::Lerp(KeyAt(Track.Scales, A), KeyAt(Track.Scales, B), T); }
 
-        if(RootMotion == EAnimRootMotion::InPlace && !Track.Translations.empty() && Track.Bone == RootBone)
-        {
-            Out.Translation.X = Track.Translations[0].X;
-            Out.Translation.Z = Track.Translations[0].Z;
-        }
         return Out;
+    }
+
+    AnimVec3 AnimClipData::GetRootTravel(const float InFrom, const float InTo, const bool bInWrapped) const
+    {
+        const int32_t Root = RootMotion == EAnimRootMotion::Extract ? FindTrack(RootBone) : -1;
+        if(Root < 0 || Tracks[size_t(Root)].Translations.size() < 2)
+        {
+            return AnimVec3();
+        }
+        /* The track as authored: its own travel, not SampleTrack's held one. */
+        const std::vector<AnimVec3>& Keys = Tracks[size_t(Root)].Translations;
+        const auto At = [&](const float InTime)
+        {
+            const float    Frame = std::clamp(InTime, 0.0f, GetDuration()) * SampleRate;
+            const uint32_t A = uint32_t(std::floor(Frame));
+            const uint32_t B = std::min(A + 1, FrameCount - 1);
+            return AnimMath::Lerp(Keys[std::min<size_t>(A, Keys.size() - 1)], Keys[std::min<size_t>(B, Keys.size() - 1)], Frame - float(A));
+        };
+        if(bInWrapped)
+        {
+            return AnimMath::Add(AnimMath::Sub(At(GetDuration()), At(InFrom)), AnimMath::Sub(At(InTo), At(0.0f)));
+        }
+        return AnimMath::Sub(At(InTo), At(InFrom));
     }
 
     bool SerializeAnimClip(EngineCore::Archive& Ar, AnimClipData& InOutClip)
@@ -128,7 +146,7 @@ namespace RenderCore
             uint8_t RootMotion = uint8_t(InOutClip.RootMotion);
             Ar << InOutClip.SampleRate << InOutClip.FrameCount << InOutClip.bLoop << RootMotion;
             Ar << InOutClip.Skeleton << InOutClip.RootBone << TrackCount << NotifyCount;
-            InOutClip.RootMotion = RootMotion == uint8_t(EAnimRootMotion::InPlace) ? EAnimRootMotion::InPlace : EAnimRootMotion::Keep;
+            InOutClip.RootMotion = RootMotion <= uint8_t(EAnimRootMotion::Extract) ? EAnimRootMotion(RootMotion) : EAnimRootMotion::Keep;
             Ar.CloseChunk();
         }
         if(Ar.IsLoading() && !Ar.HasError() && (InOutClip.FrameCount == 0 || InOutClip.FrameCount > MAX_FRAMES))

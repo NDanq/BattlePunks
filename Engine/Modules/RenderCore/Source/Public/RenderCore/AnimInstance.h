@@ -87,12 +87,19 @@ namespace RenderCore
         /* The notifies the last Update passed, in order. */
         const std::vector<std::string>& GetFiredNotifies() const { return Fired; }
 
+        /* How far the last Update's root motion moves the entity, in model
+         * space (X and Z): the travel of the first layer's clips set to
+         * EAnimRootMotion::Extract, blended as their poses are. */
+        const AnimVec3& GetRootMotion() const { return RootMotion; }
+
     private:
         struct Sample
         {
             std::shared_ptr<const AnimClipData> Clip;
             AnimClipBinding                     Binding;
             float                               Position = 0.0f;
+            int32_t                             RootBone  = -1;   // the clip's root bone, when its root motion is not Keep
+            int32_t                             RootTrack = -1;
         };
         struct StateRuntime
         {
@@ -138,7 +145,12 @@ namespace RenderCore
         void  SampleWeights(const StateRuntime& InState, std::vector<float>& OutWeights, size_t& OutDominant) const;
         float StateDuration(const StateRuntime& InState) const;
         bool  StateLoops(const StateRuntime& InState) const;
-        void  AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, float InDelta, bool bInNotify);
+        /* Moves InOutHead; returns its root motion (model space). */
+        AnimVec3 AdvancePlayhead(const LayerRuntime& InLayer, Playhead& InOutHead, float InDelta, bool bInNotify);
+        /* InPose's InBone parent's model matrix: its ancestors composed. */
+        AnimMatrix ParentModel(const AnimLocalPose& InPose, int32_t InBone) const;
+        /* A clip with root motion keeps its root bone's model X and Z at its first frame's. */
+        void  HoldRoot(const Sample& InSample, AnimLocalPose& InOutPose) const;
         void  EvaluateState(const StateRuntime& InState, float InPhase, AnimLocalPose& OutPose);
         bool  ConditionsHold(const TransitionRuntime& InTransition, const LayerRuntime& InLayer) const;
         void  UpdateTransitions(LayerRuntime& InOutLayer);
@@ -158,6 +170,8 @@ namespace RenderCore
         AnimLocalPose            Scratch[3];        // state, sample and layer poses, reused
         std::vector<AnimMatrix>  ModelPose;
         std::vector<std::string> Fired;
+        AnimVec3                 RootMotion;
+        AnimLocalPose            RefPose;          // the skeleton's: what root travel is measured in
     };
 }
 
