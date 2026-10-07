@@ -8,6 +8,8 @@
 #include "Public/GameCore/World.h"
 #include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/AnimStateAsset.h"
+#include "Public/GameCore/Components/TransformComponent.h"
+#include "Public/RenderCore/Components/AnimSocketComponent.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
@@ -32,7 +34,7 @@ namespace RenderCore
         }
 
         /* A bone's model-space matrix as a TransformComponent would say it. */
-        GameCore::TransformPose ToTransformPose(const AnimMatrix& InMatrix)
+        GameCore::TransformPose ToTransformPose(const AnimMatrix& InMatrix, const EngineCore::Vector3& InNear = EngineCore::Vector3())
         {
             GameCore::TransformPose Pose;
             Pose.Position = EngineCore::Vector3(InMatrix.M[0][3], InMatrix.M[1][3], InMatrix.M[2][3]);
@@ -47,7 +49,7 @@ namespace RenderCore
                     Rotation.M[Row][Col] = Scale[Col] > 1e-12 ? InMatrix.M[Row][Col] / Scale[Col] : (Row == Col ? 1.0 : 0.0);
                 }
             }
-            Pose.Rotation = GameCore::TransformMath::RotationToEuler(Rotation, EngineCore::Vector3());
+            Pose.Rotation = GameCore::TransformMath::RotationToEuler(Rotation, InNear);
             Pose.Scale    = EngineCore::Vector3(Scale[0], Scale[1], Scale[2]);
             return Pose;
         }
@@ -224,6 +226,36 @@ namespace RenderCore
                 Args.Count   = 2;
                 Events.Emit("AnimNotify", Args);   // ids are per bus: by name
             }
+        });
+        UpdateSockets();
+    }
+
+    void AnimationSystem::UpdateSockets()
+    {
+        World.Each<AnimSocketComponent>([this](const GameCore::Entity& InEntity, AnimSocketComponent& InSocket)
+        {
+            const GameCore::EntityID Parent = InEntity.GetParent();
+            const AnimInstance* Instance = Parent.IsSet() ? FindInstance(Parent) : nullptr;
+            GameCore::TransformComponent* Transform = InEntity.GetComponent<GameCore::TransformComponent>();
+            if(!Instance || !Transform || !Instance->HasPose())
+            {
+                return;
+            }
+            const int32_t Bone = Instance->GetSkeleton()->FindBone(std::string(InSocket.Bone, strnlen(InSocket.Bone, ANIM_SOCKET_BONE_MAX)));
+            if(Bone < 0 || size_t(Bone) >= Instance->GetModelPose().size())
+            {
+                return;
+            }
+            /* The bone in its entity's space, then the offset in the bone's;
+             * Euler angles kept near the last, so they do not flip. */
+            GameCore::TransformPose BonePose = ToTransformPose(Instance->GetModelPose()[size_t(Bone)], Transform->Rotation);
+            BonePose.Scale = EngineCore::Vector3(1.0, 1.0, 1.0);
+            GameCore::TransformPose Offset;
+            Offset.Position = InSocket.PositionOffset;
+            Offset.Rotation = InSocket.RotationOffset;
+            const GameCore::TransformPose Placed = GameCore::TransformMath::Compose(BonePose, Offset);
+            Transform->Position = Placed.Position;
+            Transform->Rotation = Placed.Rotation;
         });
     }
 
