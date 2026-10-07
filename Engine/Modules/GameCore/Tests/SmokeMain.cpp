@@ -3063,6 +3063,25 @@ static void TestMobility()
             *static_cast<PrefabInstanceID*>(InUserData) = InInstance;
         }, &Back);
         Expect(Back.IsSet() && !Reloaded.GetInstance(Back).FindEntity("Slab").IsStatic(), "a mobility override survives the load");
+
+        /* A static root makes its dynamic members static, without overriding them. */
+        Reloaded.GetInstance(Back).GetRoot().SetMobility(EMobility::Static);
+        const Entity Inherits = Reloaded.GetInstance(Back).FindEntity("Slab");
+        Expect(Inherits.IsStatic() && Inherits.GetAuthoredMobility() == EMobility::Dynamic,
+               "a static root's dynamic member reads static, its own mobility untouched");
+        Expect(SaveWorldPackage(LevelPath.c_str(), Reloaded), "a level with a static-rooted instance saves");
+        World Again;
+        Expect(LoadWorldFile(LevelPath.c_str(), Again), "and loads");
+        PrefabInstanceID AgainID;
+        Again.ForEachInstance([](const PrefabInstanceID InInstance, void* InUserData)
+        {
+            *static_cast<PrefabInstanceID*>(InUserData) = InInstance;
+        }, &AgainID);
+        Expect(AgainID.IsSet() && Again.GetInstance(AgainID).FindEntity("Slab").IsStatic()
+               && Again.GetInstance(AgainID).FindEntity("Slab").GetAuthoredMobility() == EMobility::Dynamic,
+               "and stays static through its root, still dynamic on its own");
+        Again.GetInstance(AgainID).GetRoot().SetMobility(EMobility::Dynamic);
+        Expect(!Again.GetInstance(AgainID).FindEntity("Slab").IsStatic(), "a dynamic root lets it go again");
     }
 
     /* A static root's instance gets no phase ticks. */

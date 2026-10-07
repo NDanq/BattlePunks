@@ -184,9 +184,9 @@ namespace
         Root.append_attribute("Guid") = GuidString.c_str();
         Root.append_attribute("Name") = Handle.GetName();
         /* Only when not dynamic, so a dynamic entity's file reads as it always has. */
-        if(Handle.GetMobility() != EMobility::Dynamic)
+        if(Handle.GetAuthoredMobility() != EMobility::Dynamic)
         {
-            Root.append_attribute("Mobility") = MobilityName(Handle.GetMobility());
+            Root.append_attribute("Mobility") = MobilityName(Handle.GetAuthoredMobility());
         }
         /* Only when set, so a root entity's file reads as it always has. */
         if(const EntityID Parent = Handle.GetParent(); Parent.IsSet())
@@ -335,9 +335,9 @@ namespace
             {
                 Element.append_attribute("Name") = Member.GetName();
             }
-            if(Template.Mobility != Member.GetMobility())
+            if(Template.Mobility != Member.GetAuthoredMobility())
             {
-                Element.append_attribute("Mobility") = MobilityName(Member.GetMobility());
+                Element.append_attribute("Mobility") = MobilityName(Member.GetAuthoredMobility());
             }
 
             /* Every type either side has, by name. */

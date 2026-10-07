@@ -699,6 +699,20 @@ namespace GameCore
 
     EMobility World::GetEntityMobility(const EntityID InEntity) const
     {
+        if(!P->IsAliveIndex(InEntity)) { return EMobility::Dynamic; }
+        const EntityMembers& Member = P->Members[InEntity.Index];
+
+        /* A static root makes its instance's dynamic members static too. */
+        if(Member.Mobility == EMobility::Dynamic && Member.InstanceSlot != NO_SLOT)
+        {
+            const uint32_t RootSlot = P->Instances[Member.InstanceSlot].RootSlot;
+            if(RootSlot != NO_SLOT && P->Members[RootSlot].Mobility == EMobility::Static) { return EMobility::Static; }
+        }
+        return Member.Mobility;
+    }
+
+    EMobility World::GetEntityAuthoredMobility(const EntityID InEntity) const
+    {
         return P->IsAliveIndex(InEntity) ? P->Members[InEntity.Index].Mobility : EMobility::Dynamic;
     }
 

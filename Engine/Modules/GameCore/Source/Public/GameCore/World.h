@@ -379,6 +379,7 @@ namespace GameCore
         const char*        GetEntityName(EntityID InEntity) const;
         bool               SetEntityName(EntityID InEntity, const char* InName);
         EMobility          GetEntityMobility(EntityID InEntity) const;
+        EMobility          GetEntityAuthoredMobility(EntityID InEntity) const;
         bool               SetEntityMobility(EntityID InEntity, EMobility InMobility);
 
         /* The hierarchy -- see Entity.h's section for the contract. */
