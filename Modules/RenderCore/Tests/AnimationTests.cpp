@@ -27,6 +27,7 @@
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Public/RenderCore/RenderView.h"
 #include "Private/RenderCore/RenderComponentProxy.h"
 
 using namespace RenderCore;
@@ -687,6 +688,34 @@ static void TestBudget()
     Expect(Near(System->FindInstance(Distant)->GetTime(), 0.6f) && Near(System->FindInstance(Distant)->GetModelPose()[2].M[1][3], FrozenAngle),
            "a frozen one's time passes while its pose holds");
     AnimationSystem::Detach(World);
+
+    /* Visibility: a view that says what it sees -- one arm in front, one
+     * behind, one far to the side, all near enough for full rate. */
+    GameCore::World Seen;
+    AnimationSystem* SeenSystem = AnimationSystem::Attach(Seen);
+    const GameCore::Entity Front = SpawnArm(Seen, EngineCore::Vector3(0.0, 0.0, 300.0));
+    const GameCore::Entity Back  = SpawnArm(Seen, EngineCore::Vector3(0.0, 0.0, -300.0));
+    const GameCore::Entity Side  = SpawnArm(Seen, EngineCore::Vector3(2000.0, 0.0, 300.0));
+    Seen.Tick(0.0f);   // posed: the bones are where they are
+    const RenderView Camera = RenderView::MakePerspective(EngineCore::Size(256, 256), EngineCore::Vector3(), EngineCore::Vector3(0.0, 0.0, 1.0),
+                                                          60.0f, 10.0f, 50000.0f);
+    SeenSystem->AddView(1, Camera.Origin, Camera.Projection * Camera.View);
+    Seen.Tick(0.1f);
+    const AnimationSystem::Stats Glance = SeenSystem->GetLastStats();
+    Expect(Glance.Offscreen == 2 && Glance.Skipped == 2 && Glance.Updated == 1,
+           "behind the camera and off to the side: outside the view, skipped; in front: updated");
+    Seen.Tick(0.1f);
+    Back.GetComponent<GameCore::TransformComponent>()->Position = EngineCore::Vector3(0.0, 0.0, 600.0);   // into view
+    Seen.Tick(0.1f);
+    Expect(Near(SeenSystem->FindInstance(Back)->GetTime(), SeenSystem->FindInstance(Front)->GetTime()),
+           "come into view, it catches up at once: the time it saved");
+    Seen.Tick(0.1f);
+    Expect(SeenSystem->GetLastStats().Reduced == 1 && Near(SeenSystem->FindInstance(Side)->GetTime(), SeenSystem->FindInstance(Front)->GetTime()),
+           "still outside, every fourth tick (OffscreenSkipFrames 3), its time saved up");
+    SeenSystem->AddViewOrigin(2, Camera.Origin);
+    Seen.Tick(0.1f);
+    Expect(SeenSystem->GetLastStats().Offscreen == 0, "a view by origin alone sees everything");
+    AnimationSystem::Detach(Seen);
 
     /* Enough of them, and they update across the job system -- to the same result. */
     EngineCore::JobSystem Jobs(2);

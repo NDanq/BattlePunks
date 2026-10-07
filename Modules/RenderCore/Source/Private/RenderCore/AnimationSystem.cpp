@@ -20,6 +20,7 @@
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCoreLog.h"
+#include "Public/RenderCore/RenderTypes.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 
 /* The animation budget (ANIMATION.md, "Budget"): past FullRateDistance from
@@ -30,6 +31,10 @@
 NIMBLE_CONFIG_FLOAT(GAnimationFullRateDistance, "Animation", "FullRateDistance", 3000.0f, nullptr);
 NIMBLE_CONFIG_FLOAT(GAnimationFreezeDistance, "Animation", "FreezeDistance", 20000.0f, nullptr);
 NIMBLE_CONFIG_INT(GAnimationMaxSkipFrames, "Animation", "MaxSkipFrames", 3, nullptr);
+/* Outside every view (behind the camera, off to the side): updated every
+ * (OffscreenSkipFrames + 1)th tick, the time saved up; its pose still made
+ * then, for its shadow and its sockets. 0 turns it off. */
+NIMBLE_CONFIG_INT(GAnimationOffscreenSkipFrames, "Animation", "OffscreenSkipFrames", 3, nullptr);
 /* At least this many updating in a tick, and they run across the job system. */
 NIMBLE_CONFIG_INT(GAnimationParallelMin, "Animation", "ParallelMin", 16, nullptr);
 
@@ -205,8 +210,86 @@ namespace RenderCore
         {
             ViewFrame = InFrame;
             ViewOrigins.clear();
+            ViewFrustums.clear();
         }
         ViewOrigins.push_back(InOrigin);
+        ViewFrustums.push_back(ViewFrustum());
+    }
+
+    void AnimationSystem::AddView(const uint64_t InFrame, const EngineCore::Vector3& InOrigin, const EngineCore::Matrix4x4& InViewProjection)
+    {
+        AddViewOrigin(InFrame, InOrigin);
+
+        /* The six planes from the clip matrix's rows (Gribb and Hartmann):
+         * w +- x, w +- y, w +- z, each inward, made unit. */
+        ViewFrustum& Frustum = ViewFrustums.back();
+        const auto Row = [&InViewProjection](const int InRow, const int InColumn) { return float(InViewProjection.Data[InRow][InColumn]); };
+        for(int Plane = 0; Plane < 6; ++Plane)
+        {
+            const int   Axis = Plane / 2;
+            const float Sign = (Plane % 2 == 0) ? 1.0f : -1.0f;
+            float* Out = Frustum.Planes[Plane];
+            for(int Column = 0; Column < 4; ++Column) { Out[Column] = Row(3, Column) + Sign * Row(Axis, Column); }
+            const float Length = std::sqrt(Out[0] * Out[0] + Out[1] * Out[1] + Out[2] * Out[2]);
+            if(Length > 1e-12f) { for(int Column = 0; Column < 4; ++Column) { Out[Column] /= Length; } }
+        }
+        Frustum.bHas = true;
+    }
+
+    bool AnimationSystem::IsSeen(const GameCore::Entity& InEntity, const Entry& InEntry, const AnimInstance& InInstance) const
+    {
+        for(const ViewFrustum& Each : ViewFrustums)
+        {
+            if(!Each.bHas) { return true; }   // a view by origin alone sees everything
+        }
+
+        /* Model space: the mesh's own box and every bone where it is now --
+         * root motion as authored walks it off its entity -- padded for the
+         * skin past the bones. */
+        float Min[3], Max[3];
+        bool  bAny = false;
+        const auto Grow = [&](const float InX, const float InY, const float InZ)
+        {
+            const float P[3] = { InX, InY, InZ };
+            for(int Axis = 0; Axis < 3; ++Axis)
+            {
+                Min[Axis] = bAny ? std::min(Min[Axis], P[Axis]) : P[Axis];
+                Max[Axis] = bAny ? std::max(Max[Axis], P[Axis]) : P[Axis];
+            }
+            bAny = true;
+        };
+        if(InEntry.Mesh)
+        {
+            Grow(InEntry.Mesh->BoundsMin[0], InEntry.Mesh->BoundsMin[1], InEntry.Mesh->BoundsMin[2]);
+            Grow(InEntry.Mesh->BoundsMax[0], InEntry.Mesh->BoundsMax[1], InEntry.Mesh->BoundsMax[2]);
+        }
+        for(const AnimMatrix& Bone : InInstance.GetModelPose()) { Grow(Bone.M[0][3], Bone.M[1][3], Bone.M[2][3]); }
+        if(!bAny) { return true; }
+        const float HalfX = 0.5f * (Max[0] - Min[0]), HalfY = 0.5f * (Max[1] - Min[1]), HalfZ = 0.5f * (Max[2] - Min[2]);
+        const float Radius = 1.25f * std::sqrt(HalfX * HalfX + HalfY * HalfY + HalfZ * HalfZ) + 1.0f;
+
+        /* Into the world by the entity's transform; its largest scale for the radius. */
+        const GameCore::TransformPose Pose = InEntity.GetWorldPose();
+        RenderTransform Placed;
+        Placed.Position = Pose.Position;
+        Placed.Rotation = Pose.Rotation;
+        Placed.Scale    = Pose.Scale;
+        const EngineCore::Vector4 Centre = Placed.ToMatrix() * EngineCore::Vector4(0.5 * (Min[0] + Max[0]), 0.5 * (Min[1] + Max[1]),
+                                                                                0.5 * (Min[2] + Max[2]), 1.0);
+        const double Scale = std::max({ std::fabs(Pose.Scale.GetX()), std::fabs(Pose.Scale.GetY()), std::fabs(Pose.Scale.GetZ()) });
+        const float  Reach = float(double(Radius) * Scale);
+
+        for(const ViewFrustum& Each : ViewFrustums)
+        {
+            bool bInside = true;
+            for(int Plane = 0; Plane < 6 && bInside; ++Plane)
+            {
+                const float* N = Each.Planes[Plane];
+                bInside = N[0] * float(Centre.GetX()) + N[1] * float(Centre.GetY()) + N[2] * float(Centre.GetZ()) + N[3] >= -Reach;
+            }
+            if(bInside) { return true; }
+        }
+        return false;
     }
 
     void AnimationSystem::Advance(const float InDeltaSeconds, const bool bInGame)
@@ -231,6 +314,7 @@ namespace RenderCore
         const double FullRate = double(GAnimationFullRateDistance.GetFloat());
         const double Freeze   = double(GAnimationFreezeDistance.GetFloat());
         const int32_t MaxSkip = std::max(0, GAnimationMaxSkipFrames.GetInt());
+        const int32_t OffscreenSkip = std::max(0, GAnimationOffscreenSkipFrames.GetInt());
         World.Each<AnimationComponent>([&](const GameCore::Entity& InEntity, AnimationComponent& InComponent)
         {
             const auto Found = Entries.find(InEntity.GetID().Pack());
@@ -269,10 +353,30 @@ namespace RenderCore
                     Item.bEvaluate = false;
                     ++LastStats.Frozen;
                 }
-                else if(FullRate > 0.0 && Nearest > FullRate && MaxSkip > 0)
+                else
                 {
-                    /* Farther, fewer updates: every (distance / FullRate)th tick, the time saved up. */
-                    const int32_t Every = std::min(MaxSkip + 1, int32_t(std::ceil(Nearest / FullRate)));
+                    /* Farther, fewer updates: every (distance / FullRate)th tick; outside
+                     * every view, every (OffscreenSkipFrames + 1)th -- whichever is fewer. */
+                    int32_t Every = 1;
+                    if(FullRate > 0.0 && Nearest > FullRate && MaxSkip > 0)
+                    {
+                        Every = std::min(MaxSkip + 1, int32_t(std::ceil(Nearest / FullRate)));
+                    }
+                    if(OffscreenSkip > 0 && !IsSeen(InEntity, Each, Instance))
+                    {
+                        Every = std::max(Every, OffscreenSkip + 1);
+                        ++LastStats.Offscreen;
+                    }
+                    if(Every <= 1)
+                    {
+                        /* At full rate -- again, if it was not: what it saved up, at once. */
+                        Item.Step   += Each.Saved;
+                        Each.Saved   = 0.0f;
+                        Each.Skipped = 0;
+                        Works.push_back(Item);
+                        return;
+                    }
+                    /* The time saved up while skipped. */
                     Each.Saved += Item.Step;
                     if(++Each.Skipped < Every)
                     {
