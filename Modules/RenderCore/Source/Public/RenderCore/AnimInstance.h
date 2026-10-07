@@ -85,7 +85,16 @@ namespace RenderCore
         bool HasPose() const { return !ModelPose.empty(); }
 
         /* The notifies the last Update passed, in order. */
-        const std::vector<std::string>& GetFiredNotifies() const { return Fired; }
+        const std::vector<AnimNotify>& GetFiredNotifies() const { return Fired; }
+
+        /* A state that played once and reached its end in the last Update:
+         * its layer, and its name ("" for a lone clip). */
+        struct FinishedState
+        {
+            size_t      Layer = 0;
+            std::string Name;
+        };
+        const std::vector<FinishedState>& GetFinishedStates() const { return Finished; }
 
         /* How far the last Update's root motion moves the entity, in model
          * space (X and Z): the travel of the first layer's clips set to
@@ -169,7 +178,8 @@ namespace RenderCore
         AnimLocalPose            LocalPose;
         AnimLocalPose            Scratch[3];        // state, sample and layer poses, reused
         std::vector<AnimMatrix>  ModelPose;
-        std::vector<std::string> Fired;
+        std::vector<AnimNotify>    Fired;
+        std::vector<FinishedState> Finished;
         AnimVec3                 RootMotion;
         AnimLocalPose            RefPose;          // the skeleton's: what root travel is measured in
     };

@@ -384,18 +384,24 @@ QWidget* MeshViewerWindow::BuildAnimationTab()
     ClipLayout->addWidget(ClipLoop);
     ClipLayout->addWidget(ClipRootMotion);
 
-    auto* NotifyHeading = new QLabel(QStringLiteral("Notifies -- each fires \"AnimNotify\" (entity, name) as the clip passes it"), ClipBox);
+    auto* NotifyHeading = new QLabel(QStringLiteral("Notifies -- each fires \"AnimNotify\" (entity, name) as the clip passes it, "
+                                                    "and plays its particle system at its bone"), ClipBox);
     NotifyHeading->setWordWrap(true);
     ClipLayout->addWidget(NotifyHeading);
-    NotifyTable = new QTableWidget(0, 2, ClipBox);
-    NotifyTable->setHorizontalHeaderLabels({ QStringLiteral("Name"), QStringLiteral("Time (s)") });
+    NotifyTable = new QTableWidget(0, 4, ClipBox);
+    NotifyTable->setHorizontalHeaderLabels({ QStringLiteral("Name"), QStringLiteral("Time (s)"), QStringLiteral("Particle System"),
+                                             QStringLiteral("Bone") });
+    NotifyTable->horizontalHeaderItem(2)->setToolTip(QStringLiteral("An .nmparticle to play where it fires, in game; empty: none"));
+    NotifyTable->horizontalHeaderItem(3)->setToolTip(QStringLiteral("The bone it plays at (see the Skeleton tab); empty: the entity"));
     NotifyTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     NotifyTable->verticalHeader()->setVisible(false);
     connect(NotifyTable, &QTableWidget::cellChanged, this, [this](const int InRow, const int InColumn)
     {
         if(InRow < 0 || size_t(InRow) >= ClipEdit.Notifies.size()) { return; }
         const QString Text = NotifyTable->item(InRow, InColumn)->text().trimmed();
-        if(InColumn == 0) { ClipEdit.Notifies[size_t(InRow)].Name = Text.toStdString(); }
+        if(InColumn == 0)      { ClipEdit.Notifies[size_t(InRow)].Name = Text.toStdString(); }
+        else if(InColumn == 2) { ClipEdit.Notifies[size_t(InRow)].ParticleSystem = Text.toStdString(); }
+        else if(InColumn == 3) { ClipEdit.Notifies[size_t(InRow)].Bone = Text.toStdString(); }
         else
         {
             bool bOK = false;
@@ -595,6 +601,8 @@ void MeshViewerWindow::FillNotifies()
     {
         NotifyTable->setItem(int(Row), 0, new QTableWidgetItem(QString::fromStdString(ClipEdit.Notifies[Row].Name)));
         NotifyTable->setItem(int(Row), 1, new QTableWidgetItem(QString::number(double(ClipEdit.Notifies[Row].Time), 'f', 3)));
+        NotifyTable->setItem(int(Row), 2, new QTableWidgetItem(QString::fromStdString(ClipEdit.Notifies[Row].ParticleSystem)));
+        NotifyTable->setItem(int(Row), 3, new QTableWidgetItem(QString::fromStdString(ClipEdit.Notifies[Row].Bone)));
     }
     const bool bReadOnlyClip = EditorContent::IsEngineContent(ClipFile);
     NotifyTable->setEnabled(!bReadOnlyClip);

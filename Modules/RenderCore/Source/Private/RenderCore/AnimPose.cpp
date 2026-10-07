@@ -113,7 +113,7 @@ namespace RenderCore
     }
 
     void CollectNotifies(const AnimClipData& InClip, const float InFrom, const float InTo, const bool bInWrapped,
-                         std::vector<std::string>& OutNames)
+                         std::vector<AnimNotify>& OutNotifies)
     {
         /* (From, To], so a notify at 0 fires on the wrap and not again at once. */
         const auto Span = [&](const float InA, const float InB, const bool bInclusiveStart)
@@ -121,7 +121,7 @@ namespace RenderCore
             for(const AnimNotify& Notify : InClip.Notifies)
             {
                 const bool bAfter = bInclusiveStart ? Notify.Time >= InA : Notify.Time > InA;
-                if(bAfter && Notify.Time <= InB) { OutNames.push_back(Notify.Name); }
+                if(bAfter && Notify.Time <= InB) { OutNotifies.push_back(Notify); }
             }
         };
         if(!bInWrapped)

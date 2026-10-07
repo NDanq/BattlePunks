@@ -409,6 +409,13 @@ namespace RenderCore
                     Consumed.push_back(State->Parameters[size_t(Condition.Parameter)].Name);
                 }
             }
+            /* A one-shot left at its end (within the crossfade of it) has ended,
+             * though its last moments play out under the fade. */
+            const StateRuntime& Leaving = InOutLayer.States[size_t(InOutLayer.Current.State)];
+            if(Transition.bAtEnd && !StateLoops(Leaving) && InOutLayer.Current.Phase < 1.0f)
+            {
+                Finished.push_back({ size_t(&InOutLayer - Layers.data()), Leaving.Name });
+            }
             InOutLayer.Previous     = InOutLayer.Current;
             InOutLayer.Current      = Playhead();
             InOutLayer.Current.State = Transition.To;
@@ -424,6 +431,7 @@ namespace RenderCore
     void AnimInstance::Update(const float InDeltaSeconds)
     {
         Fired.clear();
+        Finished.clear();
         Consumed.clear();
         RootMotion = AnimVec3();
         if(Skeleton)
@@ -432,7 +440,15 @@ namespace RenderCore
             for(size_t Index = 0; Index < Layers.size(); ++Index)
             {
                 LayerRuntime& Layer = Layers[Index];
+                const bool bWasEnded = Layer.Current.State >= 0 && Layer.Current.Phase >= 1.0f;
                 AnimVec3 Travel = AdvancePlayhead(Layer, Layer.Current, Delta, /*bInNotify*/ true);
+
+                /* A one-shot reaching its end: once, as it gets there. */
+                if(Layer.Current.State >= 0 && !bWasEnded && Layer.Current.Phase >= 1.0f
+                   && !StateLoops(Layer.States[size_t(Layer.Current.State)]))
+                {
+                    Finished.push_back({ Index, Layer.States[size_t(Layer.Current.State)].Name });
+                }
                 if(Layer.Previous.State >= 0)
                 {
                     const AnimVec3 Fading = AdvancePlayhead(Layer, Layer.Previous, Delta, /*bInNotify*/ false);

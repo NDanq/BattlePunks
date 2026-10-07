@@ -22,6 +22,7 @@
 #include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/Components/AnimSocketComponent.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
+#include "Public/RenderCore/Components/ParticleSystemComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/Renderer.h"
@@ -141,7 +142,7 @@ static void TestPoseMath()
     bool bWrapped = false;
     Expect(Near(AdvanceClipTime(Clip, true, 0.9f, 0.2f, bWrapped), 0.1f) && bWrapped, "a loop wraps");
     Expect(Near(AdvanceClipTime(Clip, false, 0.9f, 0.2f, bWrapped), 1.0f) && bWrapped, "a one-shot stops at its end");
-    std::vector<std::string> Names;
+    std::vector<AnimNotify> Names;
     CollectNotifies(Clip, 0.4f, 0.6f, false, Names);
     CollectNotifies(Clip, 0.6f, 0.1f, true, Names);
     CollectNotifies(Clip, 0.9f, 0.6f, true, Names);
@@ -419,6 +420,14 @@ static void TestStateSystem()
     World.Tick(0.1f);
     Expect(std::string(System->FindInstance(Actor)->GetCurrentStateName(0)) == "Jump", "the component's parameters drive it");
     Expect(Actor.GetComponent<AnimationComponent>()->GetFloat("Jump", -1.0f) == 0.0f, "and a spent trigger is cleared on the component");
+
+    int Ended = 0;
+    World.GetEvents().Subscribe("AnimEnded", [](GameCore::EventID, const GameCore::EventArgs& InArgs, void* InUserData)
+    {
+        if(InArgs.Count >= 2 && std::strcmp(InArgs.Args[1].String, "Jump") == 0) { ++*static_cast<int*>(InUserData); }
+    }, &Ended);
+    for(int Step = 0; Step < 12; ++Step) { World.Tick(0.1f); }
+    Expect(Ended == 1, "a one-shot state emits AnimEnded once, as it ends");
     AnimationSystem::Detach(World);
 }
 
@@ -456,6 +465,47 @@ static void TestSocket()
            "its offset is in the bone's frame");
     (void)System;
     AnimationSystem::Detach(World);
+}
+
+static void TestNotifyEffects()
+{
+    std::printf("[notify effects]\n");
+    AnimClipData Clip = MakeClip();
+    Clip.Notifies = { { "Puff", 0.5f, std::string(SCRATCH) + "Puff.nmparticle", "Hand" } };
+    const std::string Path = std::string(SCRATCH) + "Arm_Puff.nmanim";
+    SaveAnimClipFile(Path, Clip);
+    AnimClipData Back;
+    Expect(LoadAnimClipFile(Path, Back) && Back.Notifies.size() == 1 && Back.Notifies[0].Bone == "Hand"
+           && Back.Notifies[0].ParticleSystem == std::string(SCRATCH) + "Puff.nmparticle", "a notify keeps its particle system and bone");
+    AnimClipAssetCache::Invalidate(Path);
+
+    GameCore::World World;
+    AnimationSystem::Attach(World);
+    GameCore::Entity Actor = World.CreateEntity();
+    GameCore::TransformComponent Transform;
+    Transform.Position = EngineCore::Vector3(0.0, 0.0, 500.0);
+    Actor.AddComponent(Transform);
+    RenderComponent Render;
+    std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%sArm.nmmesh", SCRATCH);
+    Actor.AddComponent(Render);
+    AnimationComponent Animation;
+    std::snprintf(Animation.Animation, sizeof(Animation.Animation), "%s", Path.c_str());
+    Actor.AddComponent(Animation);
+
+    World.Tick(0.6f);
+    const GameCore::EntityID Effect = World.FindEntityByName("AnimEffect");
+    const GameCore::TransformComponent* Placed = World.GetEntity(Effect).GetComponent<GameCore::TransformComponent>();
+    Expect(Effect.IsSet() && World.GetEntity(Effect).HasComponent<ParticleSystemComponent>(), "a notify with a particle system starts it");
+    Expect(Placed && std::fabs(Placed->Position.GetZ() - 500.0) < 0.5 && Placed->Position.GetX() > 50.0,
+           "at its bone, in the world");
+    for(int Step = 0; Step < 40; ++Step) { World.Tick(0.1f); }
+    Expect(!World.IsAlive(Effect), "and it goes once its particles are done");
+    AnimationSystem::Detach(World);
+
+    /* An older clip: notifies as names and times only (ANTF v1) still read. */
+    AnimClipData Plain = MakeClip();
+    EngineCore::Archive Out = EngineCore::Archive::ForWriting();
+    Expect(SerializeAnimClip(Out, Plain), "a clip without effects saves");
 }
 
 /* The root walks 100 along X in one second, looping. */
@@ -574,6 +624,7 @@ int main()
     TestStateSystem();
     TestSocket();
     TestRootMotion();
+    TestNotifyEffects();
     TestHeadless();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

@@ -1,6 +1,8 @@
 #include "Public/RenderCore/AnimationSystem.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include "Public/GameCore/Entity.h"
@@ -11,6 +13,8 @@
 #include "Public/GameCore/Components/TransformComponent.h"
 #include "Public/RenderCore/Components/AnimSocketComponent.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
+#include "Public/RenderCore/Components/ParticleSystemComponent.h"
+#include "Public/RenderCore/ParticleSystemAsset.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/RenderCoreLog.h"
@@ -185,6 +189,8 @@ namespace RenderCore
     void AnimationSystem::Advance(const float InDeltaSeconds, const bool bInGame)
     {
         Sync();
+        Clock += double(InDeltaSeconds);
+        Pending.clear();
 
         GameCore::EventBus& Events = World.GetEvents();
         World.Each<AnimationComponent>([&](const GameCore::Entity& InEntity, AnimationComponent& InComponent)
@@ -231,16 +237,86 @@ namespace RenderCore
                 const int32_t Slot = InComponent.FindParameter(Trigger.c_str());
                 if(Slot >= 0) { InComponent.Parameters[Slot].Value = 0.0f; }
             }
-            for(const std::string& Name : Instance.GetFiredNotifies())
+            for(const AnimNotify& Notify : Instance.GetFiredNotifies())
             {
                 GameCore::EventArgs Args;
                 Args.Args[0] = GameCore::EventArg::Make(InEntity.GetID());
-                Args.Args[1] = GameCore::EventArg::Make(Name.c_str());
+                Args.Args[1] = GameCore::EventArg::Make(Notify.Name.c_str());
                 Args.Count   = 2;
                 Events.Emit("AnimNotify", Args);   // ids are per bus: by name
+                if(!Notify.ParticleSystem.empty())
+                {
+                    Pending.push_back({ InEntity.GetID(), Notify.ParticleSystem, Notify.Bone });
+                }
+            }
+            for(const AnimInstance::FinishedState& Done : Instance.GetFinishedStates())
+            {
+                GameCore::EventArgs Args;
+                Args.Args[0] = GameCore::EventArg::Make(InEntity.GetID());
+                Args.Args[1] = GameCore::EventArg::Make(Done.Name.c_str());
+                Args.Args[2] = GameCore::EventArg::Make(double(Done.Layer));
+                Args.Count   = 3;
+                Events.Emit("AnimEnded", Args);
             }
         });
         UpdateSockets();
+        if(bInGame)
+        {
+            /* After the walk over the pool: spawning adds entities. */
+            for(const PendingEffect& Each : Pending) { SpawnEffect(Each); }
+            UpdateEffects();
+        }
+    }
+
+    void AnimationSystem::SpawnEffect(const PendingEffect& InEffect)
+    {
+        /* Where: the bone, or the entity. Not attached: it plays where it starts. */
+        GameCore::TransformPose Where = World.GetEntity(InEffect.Owner).GetWorldPose();
+        if(!InEffect.Bone.empty())
+        {
+            GetBoneWorldPose(InEffect.Owner, InEffect.Bone.c_str(), Where);
+        }
+        const GameCore::Entity Effect = World.CreateEntity("AnimEffect");
+        GameCore::TransformComponent Transform;
+        Transform.Position = Where.Position;
+        Transform.Rotation = Where.Rotation;
+        Effect.AddComponent(Transform);
+        ParticleSystemComponent Particles;
+        std::snprintf(Particles.System, sizeof(Particles.System), "%s", InEffect.System.c_str());
+        Effect.AddComponent(Particles);
+
+        /* It emits a moment (its bursts, if it bursts), and goes once its
+         * longest-lived particle has had time to die. */
+        double Emit = 0.1, Live = 2.0;
+        if(const std::shared_ptr<const ParticleSystemDesc> System = ParticleSystemCache::Find(InEffect.System))
+        {
+            Live = 0.0;
+            for(const ParticleEmitterDesc& Emitter : System->Emitters)
+            {
+                Live = std::max(Live, double(Emitter.Lifetime) * (1.0 + double(Emitter.LifetimeVariance)));
+                if(Emitter.BurstCycles > 1) { Emit = std::max(Emit, double(Emitter.BurstInterval) * double(Emitter.BurstCycles - 1) + 0.1); }
+            }
+        }
+        Effects.push_back({ Effect.GetID(), Clock + Emit, Clock + Emit + Live + 0.1 });
+    }
+
+    void AnimationSystem::UpdateEffects()
+    {
+        for(auto It = Effects.begin(); It != Effects.end(); )
+        {
+            const GameCore::Entity Effect = World.GetEntity(It->Entity);
+            if(!Effect.IsAlive() || Clock >= It->DestroyAt)
+            {
+                if(Effect.IsAlive()) { World.DestroyEntity(It->Entity); }
+                It = Effects.erase(It);
+                continue;
+            }
+            if(Clock >= It->StopAt)
+            {
+                if(ParticleSystemComponent* Particles = Effect.GetComponent<ParticleSystemComponent>()) { Particles->bEmitting = 0; }
+            }
+            ++It;
+        }
     }
 
     void AnimationSystem::UpdateSockets()
