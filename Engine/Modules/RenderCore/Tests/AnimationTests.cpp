@@ -151,6 +151,19 @@ static void TestPoseMath()
     Expect(Names.size() == 2, "a notify fires when passed, across a wrap too, and not otherwise");
 }
 
+static void TestTrim()
+{
+    std::printf("[trim]\n");
+    AnimClipData Clip = MakeClip();   // 31 frames: the arm 0 -> 90 degrees; a notify at 0.5 s
+    Clip.Notifies.push_back({ "Late", 0.9f });
+    Expect(!TrimClip(Clip, 10, 40) && !TrimClip(Clip, 20, 10) && Clip.FrameCount == 31, "a range it does not hold is refused");
+    Expect(TrimClip(Clip, 15, 24), "frames 15..24 are kept");
+    Expect(Clip.FrameCount == 10 && Clip.Tracks[0].Rotations.size() == 10 && Clip.Tracks[0].Translations.size() == 1,
+           "ten frames, each per-frame track sliced, a one-key track kept");
+    Expect(Near(Clip.Tracks[0].Rotations[0].Z, std::sin(0.5f * 1.5707963f * 15.0f / 30.0f)), "the first frame is the old fifteenth");
+    Expect(Clip.Notifies.size() == 1 && Near(Clip.Notifies[0].Time, 0.0f), "the 0.5 s notify now starts it; the 0.9 s one, past the end, is gone");
+}
+
 static void TestInstance()
 {
     std::printf("[instance]\n");
@@ -834,6 +847,7 @@ int main()
 {
     std::printf("RenderCore animation tests\n");
     TestPoseMath();
+    TestTrim();
     TestInstance();
     TestSystem();
     TestStateAsset();

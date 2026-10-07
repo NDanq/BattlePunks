@@ -6,6 +6,7 @@
  * look; NIMBLE_TEXTURE_SNAPSHOT=<file.png> the Texture Viewer.
  */
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -31,6 +32,8 @@
 #include "Private/Editor/Content/TextureViewerWindow.h"
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
 #include "Private/Editor/Content/AnimStateGraph.h"
+#include "Private/Editor/Content/ClipTimeline.h"
+#include <QMouseEvent>
 #include "Public/RenderCore/AnimStateAsset.h"
 
 #include "Public/Editor/DetailsPanel.h"
@@ -415,6 +418,58 @@ static void TestAnimStateGraph()
     PumpFor(10);
 }
 
+/* The clip timeline, offscreen: real mouse events -- scrub, drag a notify,
+ * drag the Out handle, double-click to add. */
+static void TestClipTimeline()
+{
+    std::printf("Clip timeline\n");
+    ClipTimeline Timeline;
+    Timeline.resize(320, 74);   // strip: x 10..310, y 22..52; 31 frames, 1 s: 300 px a second
+    Timeline.SetClip(31, 30.0f);
+    Timeline.SetMarkers({ { QStringLiteral("Step"), 0.5f } });
+    Timeline.show();
+    PumpFor(10);
+
+    float Scrubbed = -1.0f, Moved = -1.0f;
+    int   Dropped = -1;
+    float Added = -1.0f;
+    uint32_t RangeLast = 0;
+    QObject::connect(&Timeline, &ClipTimeline::Scrubbed, [&](const float InT) { Scrubbed = InT; });
+    QObject::connect(&Timeline, &ClipTimeline::MarkerMoved, [&](int, const float InT) { Moved = InT; });
+    QObject::connect(&Timeline, &ClipTimeline::MarkerDropped, [&](const int InM) { Dropped = InM; });
+    QObject::connect(&Timeline, &ClipTimeline::AddRequested, [&](const float InT) { Added = InT; });
+    QObject::connect(&Timeline, &ClipTimeline::RangeChanged, [&](uint32_t, const uint32_t InLast) { RangeLast = InLast; });
+
+    const auto Send = [&Timeline](const QEvent::Type InType, const QPointF& InAt, const Qt::MouseButtons InHeld)
+    {
+        QMouseEvent Event(InType, InAt, Timeline.mapToGlobal(InAt.toPoint()), InType == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton,
+                          InHeld, Qt::NoModifier);
+        QApplication::sendEvent(&Timeline, &Event);
+    };
+
+    Send(QEvent::MouseButtonPress, QPointF(85.0, 40.0), Qt::LeftButton);    // a quarter in
+    Send(QEvent::MouseButtonRelease, QPointF(85.0, 40.0), Qt::NoButton);
+    Expect(std::fabs(Scrubbed - 0.25f) < 0.01f, "a click on the strip scrubs there");
+
+    Send(QEvent::MouseButtonPress, QPointF(160.0, 20.0), Qt::LeftButton);   // the notify's diamond, at 0.5 s
+    Send(QEvent::MouseMove, QPointF(250.0, 20.0), Qt::LeftButton);
+    Send(QEvent::MouseButtonRelease, QPointF(250.0, 20.0), Qt::NoButton);
+    Expect(std::fabs(Moved - 0.8f) < 0.01f && Dropped == 0, "a notify dragged moves -- to the frame it lands near -- and is dropped");
+
+    Send(QEvent::MouseButtonPress, QPointF(310.0, 50.0), Qt::LeftButton);   // the Out handle, at the end
+    Send(QEvent::MouseMove, QPointF(220.0, 50.0), Qt::LeftButton);
+    Send(QEvent::MouseButtonRelease, QPointF(220.0, 50.0), Qt::NoButton);
+    Expect(RangeLast == 21 && Timeline.GetRangeLast() == 21 && !Timeline.IsWholeClip(), "the Out handle dragged sets the range's end");
+
+    Send(QEvent::MouseButtonDblClick, QPointF(70.0, 40.0), Qt::LeftButton);
+    Expect(std::fabs(Added - 0.2f) < 0.01f, "a double-click asks for a notify there");
+
+    Timeline.SetReadOnly(true);
+    Added = -1.0f;
+    Send(QEvent::MouseButtonDblClick, QPointF(70.0, 40.0), Qt::LeftButton);
+    Expect(Added < 0.0f, "read-only, it adds nothing");
+}
+
 int main(int argc, char** argv)
 {
     /* No display needed. */
@@ -428,6 +483,7 @@ int main(int argc, char** argv)
     TestMaterialParameters();
     TestTextureViewer();
     TestAnimStateGraph();
+    TestClipTimeline();
     TestViewSettings();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

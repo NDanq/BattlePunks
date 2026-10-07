@@ -216,8 +216,14 @@ Layer Arms   mask spine_02, weight scaled by Armed
   menu.
 - **Mesh viewer**, for a skinned mesh: play any clip on its skeleton or any
   anim state, scrub, change speed, draw the skeleton; drive an anim state's
-  parameters and see each layer's state; edit a clip's notifies (added at the
-  playhead), looping and In Place, and save them. The Skeleton tab lists
+  parameters and see each layer's state; edit a clip and save it. A clip's
+  timeline shows its frames, the playhead (click or drag to scrub) and its
+  notifies (drag to move one, double-click to add one); drag its In and Out
+  handles and Crop to Range to keep only those frames -- what plays, and
+  what loops (`TrimClip`; reimporting restores the whole clip). Beside it:
+  looping, root motion (as authored, in place, or moving the entity) and
+  the root bone whose travel that is, and each notify's particle system and
+  bone. The Skeleton tab lists
   the bones -- names for sockets and masks.
 - **Anim state editor**: parameters and layers as forms; the picked layer's
   states and transitions as a graph -- boxes and arrows, Any State among

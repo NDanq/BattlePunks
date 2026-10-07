@@ -28,6 +28,7 @@
 #include <QMimeData>
 #include <QPointer>
 #include <QPushButton>
+#include <QSignalBlocker>
 #include <QSplitter>
 #include <QTableWidget>
 #include <QToolTip>
@@ -37,6 +38,7 @@
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
 #include "Private/Editor/Content/AnimationAssets.h"
+#include "Private/Editor/Content/ClipTimeline.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/MeshPreviewView.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -369,20 +371,84 @@ QWidget* MeshViewerWindow::BuildAnimationTab()
     ClipRootMotion->setToolTip(QStringLiteral("As authored: the character walks off its entity. In place: it walks on the spot, "
                                               "the entity's own movement carries it. Moves the entity: in place, and the clip's "
                                               "travel moves the entity in game"));
+    ClipRootBone = new QComboBox(ClipBox);
+    ClipRootBone->setToolTip(QStringLiteral("The bone whose travel is root motion: the hips or pelvis, as a rule -- "
+                                            "the bone that carries the body forward"));
     const auto ClipEdited = [this]()
     {
         ClipEdit.bLoop      = ClipLoop->isChecked();
         ClipEdit.RootMotion = RenderCore::EAnimRootMotion(std::clamp(ClipRootMotion->currentIndex(), 0, 2));
+        if(ClipRootBone->currentIndex() >= 0) { ClipEdit.RootBone = ClipRootBone->currentData().toString().toStdString(); }
         bClipDirty = true;
-        const float Time = Anim->GetInstance().GetTime();
-        Anim->PlayClip(std::make_shared<RenderCore::AnimClipData>(ClipEdit));
-        Anim->Seek(Time);
-        UpdateAnimationState();
+        ReplayClip();
     };
     connect(ClipLoop, &QCheckBox::toggled, this, ClipEdited);
     connect(ClipRootMotion, QOverload<int>::of(&QComboBox::activated), this, ClipEdited);
+    connect(ClipRootBone, QOverload<int>::of(&QComboBox::activated), this, ClipEdited);
     ClipLayout->addWidget(ClipLoop);
-    ClipLayout->addWidget(ClipRootMotion);
+    auto* RootRow = new QHBoxLayout();
+    RootRow->addWidget(ClipRootMotion, 1);
+    RootRow->addWidget(new QLabel(QStringLiteral("of"), ClipBox));
+    RootRow->addWidget(ClipRootBone, 1);
+    ClipLayout->addLayout(RootRow);
+
+    /* The timeline: scrub, move notifies, choose a range to crop to. */
+    Timeline = new ClipTimeline(ClipBox);
+    ClipLayout->addWidget(Timeline);
+    CropButton = new QPushButton(QStringLiteral("Crop to Range"), ClipBox);
+    CropButton->setToolTip(QStringLiteral("Keep only the frames between the In and Out handles: what plays, and loops. "
+                                          "Notifies outside go; reimporting brings the whole clip back"));
+    CropButton->setEnabled(false);
+    connect(Timeline, &ClipTimeline::RangeChanged, this, [this]() { CropButton->setEnabled(!Timeline->IsWholeClip()); });
+    connect(CropButton, &QPushButton::clicked, this, [this]()
+    {
+        if(!RenderCore::TrimClip(ClipEdit, Timeline->GetRangeFirst(), Timeline->GetRangeLast())) { return; }
+        bClipDirty = true;
+        Timeline->SetClip(ClipEdit.FrameCount, ClipEdit.SampleRate);
+        CropButton->setEnabled(false);
+        Anim->PlayClip(std::make_shared<RenderCore::AnimClipData>(ClipEdit));
+        FillNotifies();
+        UpdateAnimationState();
+    });
+    connect(Timeline, &ClipTimeline::Scrubbed, this, [this](const float InSeconds)
+    {
+        if(Anim->IsPlaying()) { Anim->SetPlaying(false); }
+        Anim->Seek(InSeconds);
+    });
+    connect(Timeline, &ClipTimeline::MarkerPicked, this, [this](const int InMarker) { NotifyTable->selectRow(InMarker); });
+    connect(Timeline, &ClipTimeline::MarkerMoved, this, [this](const int InMarker, const float InSeconds)
+    {
+        if(InMarker < 0 || size_t(InMarker) >= ClipEdit.Notifies.size()) { return; }
+        ClipEdit.Notifies[size_t(InMarker)].Time = InSeconds;
+        bClipDirty = true;
+        const QSignalBlocker Block(NotifyTable);
+        if(QTableWidgetItem* Item = NotifyTable->item(InMarker, 1)) { Item->setText(QString::number(double(InSeconds), 'f', 3)); }
+    });
+    connect(Timeline, &ClipTimeline::MarkerDropped, this, [this](const int InMarker)
+    {
+        if(InMarker < 0 || size_t(InMarker) >= ClipEdit.Notifies.size()) { return; }
+        /* In time order again; the dropped one stays picked. */
+        const RenderCore::AnimNotify Dropped = ClipEdit.Notifies[size_t(InMarker)];
+        std::stable_sort(ClipEdit.Notifies.begin(), ClipEdit.Notifies.end(),
+                         [](const RenderCore::AnimNotify& InA, const RenderCore::AnimNotify& InB) { return InA.Time < InB.Time; });
+        int Row = 0;
+        for(size_t Index = 0; Index < ClipEdit.Notifies.size(); ++Index)
+        {
+            if(ClipEdit.Notifies[Index].Name == Dropped.Name && ClipEdit.Notifies[Index].Time == Dropped.Time) { Row = int(Index); break; }
+        }
+        ReplayClip();
+        FillNotifies();
+        NotifyTable->selectRow(Row);
+    });
+    connect(Timeline, &ClipTimeline::AddRequested, this, [this](const float InSeconds)
+    {
+        ClipEdit.Notifies.push_back({ "Notify", InSeconds });
+        std::stable_sort(ClipEdit.Notifies.begin(), ClipEdit.Notifies.end(),
+                         [](const RenderCore::AnimNotify& InA, const RenderCore::AnimNotify& InB) { return InA.Time < InB.Time; });
+        bClipDirty = true;
+        ReplayClip();
+        FillNotifies();
+    });
 
     auto* NotifyHeading = new QLabel(QStringLiteral("Notifies -- each fires \"AnimNotify\" (entity, name) as the clip passes it, "
                                                     "and plays its particle system at its bone"), ClipBox);
@@ -413,6 +479,7 @@ QWidget* MeshViewerWindow::BuildAnimationTab()
         UpdateAnimationState();
     });
     ClipLayout->addWidget(NotifyTable, 1);
+    connect(NotifyTable, &QTableWidget::currentCellChanged, this, [this](const int InRow) { Timeline->SetSelected(InRow); });
 
     auto* AddNotify = new QPushButton(QStringLiteral("Add at Playhead"), ClipBox);
     connect(AddNotify, &QPushButton::clicked, this, [this]()
@@ -439,6 +506,7 @@ QWidget* MeshViewerWindow::BuildAnimationTab()
     auto* NotifyRow = new QHBoxLayout();
     NotifyRow->addWidget(AddNotify);
     NotifyRow->addWidget(RemoveNotify);
+    NotifyRow->addWidget(CropButton);
     NotifyRow->addStretch(1);
     NotifyRow->addWidget(SaveClipButton);
     ClipLayout->addLayout(NotifyRow);
@@ -520,6 +588,8 @@ void MeshViewerWindow::SelectAnimation(const QString& InRuntimePath)
         }
         AnimationPicker->setCurrentIndex(std::max(Index, 0));
     }
+    if(Timeline) { Timeline->SetClip(ClipEdit.FrameCount, ClipEdit.SampleRate); }
+    if(CropButton) { CropButton->setEnabled(false); }
     FillParameters();
     FillNotifies();
     UpdateAnimationState();
@@ -595,7 +665,25 @@ void MeshViewerWindow::FillNotifies()
         ClipRootMotion->setCurrentIndex(int(ClipEdit.RootMotion));
         ClipRootMotion->setItemData(0, QStringLiteral("The root bone (%1) moves as authored").arg(QString::fromStdString(ClipEdit.RootBone)),
                                     Qt::ToolTipRole);
+
+        /* The skeleton's bones; the clip's own kept if the skeleton lacks it. */
+        const QSignalBlocker BlockBone(ClipRootBone);
+        ClipRootBone->clear();
+        if(const RenderCore::SkeletonData* Skeleton = Anim->GetSkeleton())
+        {
+            for(const RenderCore::SkeletonBone& Bone : Skeleton->Bones)
+            {
+                const QString Name = QString::fromStdString(Bone.Name);
+                ClipRootBone->addItem(Name, Name);
+            }
+        }
+        const QString Root = QString::fromStdString(ClipEdit.RootBone);
+        if(ClipRootBone->findData(Root) < 0) { ClipRootBone->addItem(Root.isEmpty() ? QStringLiteral("(none)") : QStringLiteral("%1 (not on this skeleton)").arg(Root), Root); }
+        ClipRootBone->setCurrentIndex(ClipRootBone->findData(Root));
     }
+    std::vector<ClipTimeline::Marker> Markers;
+    for(const RenderCore::AnimNotify& Notify : ClipEdit.Notifies) { Markers.push_back({ QString::fromStdString(Notify.Name), Notify.Time }); }
+    Timeline->SetMarkers(std::move(Markers));
     NotifyTable->setRowCount(int(ClipEdit.Notifies.size()));
     for(size_t Row = 0; Row < ClipEdit.Notifies.size(); ++Row)
     {
@@ -608,6 +696,8 @@ void MeshViewerWindow::FillNotifies()
     NotifyTable->setEnabled(!bReadOnlyClip);
     ClipLoop->setEnabled(!bReadOnlyClip);
     ClipRootMotion->setEnabled(!bReadOnlyClip);
+    ClipRootBone->setEnabled(!bReadOnlyClip);
+    Timeline->SetReadOnly(bReadOnlyClip);
 }
 
 void MeshViewerWindow::UpdateAnimationState()
@@ -636,7 +726,16 @@ void MeshViewerWindow::UpdateAnimationState()
         Text = QStringLiteral("The reference pose: the skeleton as it binds, with nothing playing.");
     }
     StateLabel->setText(Text);
+    if(Timeline && !ClipFile.isEmpty()) { Timeline->SetPlayhead(Instance.GetTime()); }
     SaveClipButton->setEnabled(bClipDirty && !EditorContent::IsEngineContent(ClipFile));
+}
+
+void MeshViewerWindow::ReplayClip()
+{
+    const float Time = Anim->GetInstance().GetTime();
+    Anim->PlayClip(std::make_shared<RenderCore::AnimClipData>(ClipEdit));
+    Anim->Seek(Time);
+    UpdateAnimationState();
 }
 
 bool MeshViewerWindow::SaveClip()

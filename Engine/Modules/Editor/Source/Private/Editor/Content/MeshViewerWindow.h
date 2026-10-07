@@ -15,6 +15,7 @@
 
 class AnimPreviewWidget;
 class MeshPreviewView;
+class ClipTimeline;
 class QCheckBox;
 class QComboBox;
 class QFormLayout;
@@ -88,6 +89,9 @@ private:
     void     UpdateAnimationState();
     bool     SaveClip();
 
+    /* The clip as edited, played again where it was: after a change to it. */
+    void     ReplayClip();
+
     QString               Path;          // absolute, on disk
     QString               RuntimePath;   // as a RenderComponent names it
     bool                  bReadOnly = false;
@@ -113,6 +117,9 @@ private:
     QWidget*      ClipBox         = nullptr;
     QCheckBox*    ClipLoop        = nullptr;
     QComboBox*    ClipRootMotion  = nullptr;
+    QComboBox*    ClipRootBone    = nullptr;   // whose travel root motion is
+    ClipTimeline* Timeline        = nullptr;
+    QPushButton*  CropButton      = nullptr;
     QTableWidget* NotifyTable     = nullptr;
     QPushButton*  SaveClipButton  = nullptr;
     QLabel*       NotifyFlash     = nullptr;

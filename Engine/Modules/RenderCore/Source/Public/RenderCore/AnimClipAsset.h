@@ -97,6 +97,11 @@ namespace RenderCore
     /* Both directions. False, logged, for an invalid clip. */
     RENDERCORE_API bool SerializeAnimClip(EngineCore::Archive& Ar, AnimClipData& InOutClip);
 
+    /* InOutClip cropped to frames InFirst..InLast (inclusive): each track's
+     * keys sliced (a one-key track kept), notifies moved to match and those
+     * outside dropped. False, unchanged, for a range it does not hold. */
+    RENDERCORE_API bool TrimClip(AnimClipData& InOutClip, uint32_t InFirst, uint32_t InLast);
+
     RENDERCORE_API bool LoadAnimClipFile(const std::string& InPath, AnimClipData& OutClip);
 
 #if WITH_EDITOR
