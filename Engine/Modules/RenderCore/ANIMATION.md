@@ -219,10 +219,17 @@ Layer Arms   mask spine_02, weight scaled by Armed
   parameters and see each layer's state; edit a clip's notifies (added at the
   playhead), looping and In Place, and save them. The Skeleton tab lists
   the bones -- names for sockets and masks.
-- **Anim state editor**: parameters, layers, states and transitions as
-  forms, beside a live preview you can drive. A renamed parameter is renamed
-  where it is used; problems (missing clips, parameters, mask bones) are
-  listed.
+- **Anim state editor**: parameters and layers as forms; the picked layer's
+  states and transitions as a graph -- boxes and arrows, Any State among
+  them, the entry state barred, the state the preview is in lit (dashed
+  while it blends in). Right-click to add a state, make a transition (then
+  click the state it goes to), set the entry or delete; drag boxes about;
+  Delete removes what is picked. What is picked is edited in the form beside
+  it: a state's clips or blend space, a transition's crossfade and
+  conditions. Dashed arrows wait for the clip's end. Where the boxes sit is
+  saved in the file (ALYR v4); older files are laid out on opening. A live
+  preview you can drive sits alongside. A renamed parameter is renamed where
+  it is used; problems (missing clips, parameters, mask bones) are listed.
 - Console, for scripts: `mesh <path> | play | pause | seek <s> | param <n> <v>
   | bones on | windowshot <png>` and `animstate <path> | new | save |
   windowshot <png>`.
