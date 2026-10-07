@@ -215,8 +215,9 @@ if(RENDERCORE_BUILD_SMOKETEST)
 endif()
 
 # The animation runtime, headless (ANIMATION.md): pose math, clip playback, a
-# World's AnimationSystem. Writes its assets beside the executable.
-if(RENDERCORE_BUILD_ANIMATION_TESTS)
+# World's AnimationSystem. Writes its assets beside the executable, with the
+# Save*File writers, so editor builds only.
+if(RENDERCORE_BUILD_ANIMATION_TESTS AND NIMBLE_WITH_EDITOR)
     add_executable(RenderCoreAnimationTests Tests/AnimationTests.cpp)
     target_link_libraries(RenderCoreAnimationTests PRIVATE RenderCore::RenderCore)
     set_target_properties(RenderCoreAnimationTests PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF FOLDER "RenderCore")

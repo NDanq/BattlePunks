@@ -116,7 +116,8 @@ namespace GameCore
         void TickMode(EPrefabTickMode InMode);
 
     private:
-        friend bool BuildNativePrefab(const char* InName, PrefabAsset& OutAsset);
+        // GAMECORE_API here too, or an importing module sees inconsistent linkage (C4273)
+        friend GAMECORE_API bool BuildNativePrefab(const char* InName, PrefabAsset& OutAsset);
 
         World*          Scratch = nullptr;
         EntityID        RootID;
