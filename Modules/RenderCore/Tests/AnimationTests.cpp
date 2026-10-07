@@ -27,6 +27,7 @@
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
 #include "Public/RenderCore/Renderer.h"
+#include "Private/RenderCore/RenderComponentProxy.h"
 
 using namespace RenderCore;
 
@@ -642,6 +643,37 @@ static void TestRootMotion()
 /* A dedicated server: a headless session's renderer is the Null backend
  * (no GPU, no window), and binding its world brings animation with it --
  * the server has poses for sockets and bone queries. */
+/* A skinned proxy's bounds follow its pose: culling and shadows see the
+ * mesh where the animation has put it, not where it binds. */
+static void TestPosedBounds()
+{
+    std::printf("[posed bounds]\n");
+    RenderComponent Render;
+    std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%sArm.nmmesh", SCRATCH);
+    RenderComponentProxy Proxy(GameCore::EntityID(), Render);
+    const GameCore::AABB Bind = Proxy.GetLocalBounds();
+    Expect(!Bind.IsEmpty() && Bind.Max.GetY() < 11.0 && Bind.Min.GetX() > 149.0, "unposed: the mesh's own box");
+
+    /* The arm turned 90 degrees: the hand, and its triangle, at (100, 50). */
+    const SkeletonData Skeleton = MakeSkeleton();
+    const AnimClipData Clip = MakeClip();
+    AnimClipBinding Binding;
+    BindClip(Clip, Skeleton, Binding);
+    AnimLocalPose Pose;
+    GetRefPose(Skeleton, Pose);
+    SampleClip(Clip, Binding, 1.0f, Pose);
+    std::vector<AnimMatrix> Model;
+    LocalToModel(Skeleton, Pose, Model);
+    Proxy.SetSkinPose(Model.data(), uint32_t(Model.size()));
+    const GameCore::AABB Posed = Proxy.GetLocalBounds();
+    Expect(Posed.Min.GetX() <= 90.0 && Posed.Max.GetX() >= 100.0 && Posed.Min.GetY() <= 50.0 && Posed.Max.GetY() >= 60.0,
+           "posed: the box holds the triangle where the hand has taken it");
+    Expect(Posed.Max.GetX() < 150.0, "and no longer where it bound");
+
+    Proxy.SetSkinPose(nullptr, 0);
+    Expect(Proxy.GetLocalBounds().Max.GetY() < 11.0, "no pose: the mesh's box again");
+}
+
 static void TestHeadless()
 {
     std::printf("[headless]\n");
@@ -689,6 +721,7 @@ int main()
     TestRootMotion();
     TestNotifyEffects();
     TestBudget();
+    TestPosedBounds();
     TestHeadless();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
