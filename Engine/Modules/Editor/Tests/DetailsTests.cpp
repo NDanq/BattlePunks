@@ -33,6 +33,8 @@
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
 #include "Private/Editor/Content/AnimStateGraph.h"
 #include "Private/Editor/Content/ClipTimeline.h"
+#include "Private/Editor/Graph/GraphView.h"
+#include <QGraphicsItem>
 #include <QMouseEvent>
 #include "Public/RenderCore/AnimStateAsset.h"
 
@@ -413,6 +415,51 @@ static void TestAnimStateGraph()
         Expect(Layer.EntryState == 1, "the entry set");
         Expect(Layer.bEditorPlaced && Layer.States[0].EditorX == -100.0f && Layer.States[0].EditorY == 60.0f
                && Layer.States[2].EditorX == 500.0f, "where the boxes were put is kept");
+    }
+
+    /* Left-drag on empty canvas pans; a click there clears the selection. */
+    if(GraphView* View = Graph->findChild<GraphView*>())
+    {
+        QWidget* Port = View->viewport();
+        auto Send = [Port](const QEvent::Type InType, const QPoint& InAt, const Qt::MouseButtons InButtons)
+        {
+            QMouseEvent Event(InType, QPointF(InAt), Port->mapToGlobal(QPointF(InAt)),
+                              InType == QEvent::MouseMove ? Qt::NoButton : Qt::LeftButton, InButtons, Qt::NoModifier);
+            QApplication::sendEvent(Port, &Event);
+        };
+        QPoint Empty(-1, -1);
+        for(int Y = 4; Y < Port->height() && Empty.x() < 0; Y += 8)
+        {
+            for(int X = 4; X < Port->width() - 60; X += 8)
+            {
+                if(!View->itemAt(QPoint(X, Y))) { Empty = QPoint(X, Y); break; }
+            }
+        }
+        Expect(Empty.x() >= 0, "the canvas has empty space");
+        if(Empty.x() >= 0)
+        {
+            QGraphicsItem* Box = nullptr;
+            for(QGraphicsItem* Each : View->scene()->items()) { if(Each->flags() & QGraphicsItem::ItemIsMovable) { Box = Each; break; } }
+            const QPointF BoxAt  = Box ? Box->pos() : QPointF();
+            const QPointF Before = View->mapToScene(Empty);
+            Send(QEvent::MouseButtonPress, Empty, Qt::LeftButton);
+            Send(QEvent::MouseMove, Empty + QPoint(30, 0), Qt::LeftButton);
+            Send(QEvent::MouseMove, Empty + QPoint(50, 20), Qt::LeftButton);
+            Send(QEvent::MouseButtonRelease, Empty + QPoint(50, 20), Qt::NoButton);
+            const QPointF Moved = View->mapToScene(Empty) - Before;
+            Expect(std::fabs(Moved.x() + 50.0 / View->transform().m11()) < 1.5 && std::fabs(Moved.y() + 20.0 / View->transform().m11()) < 1.5,
+                   "left-drag on empty canvas pans the view");
+            Expect(!Box || Box->pos() == BoxAt, "and moves no state");
+
+            Graph->SetSelection(0, -1);
+            const QPoint Still = View->mapFromScene(Before);
+            if(!View->itemAt(Still))
+            {
+                Send(QEvent::MouseButtonPress, Still, Qt::LeftButton);
+                Send(QEvent::MouseButtonRelease, Still, Qt::NoButton);
+                Expect(View->scene()->selectedItems().isEmpty(), "a click on empty canvas clears the selection");
+            }
+        }
     }
     Window->close();
     PumpFor(10);

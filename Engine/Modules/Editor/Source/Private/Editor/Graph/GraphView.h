@@ -7,8 +7,8 @@
 #include <QPoint>
 
 /*
- * The canvas's camera: wheel to zoom about the cursor, middle-drag to pan,
- * left-drag on empty canvas to box-select.
+ * The canvas's camera: wheel to zoom about the cursor, middle-drag or left-drag
+ * on empty canvas to pan, Shift/Ctrl+left-drag on empty canvas to box-select.
  */
 class GraphView : public QGraphicsView
 {
@@ -30,8 +30,10 @@ protected:
     void mouseReleaseEvent(QMouseEvent* InEvent) override;
 
 private:
-    bool   bPanning = false;
-    QPoint PanLast;
+    bool            bPanning    = false;
+    bool            bPanPending = false;   // left pressed on empty canvas, not yet moved far enough
+    Qt::MouseButton PanButton   = Qt::MiddleButton;
+    QPoint          PanStart, PanLast;
 };
 
 #endif // WITH_EDITOR
