@@ -41,6 +41,7 @@ Engine/Modules/RenderCore/
 |-- CMakeLists.txt
 |-- README.md                       (this file)
 |-- DESIGN.md                       the long-form "why"
+|-- ANIMATION.md                    skeletal meshes, skinning, clips, anim states, sockets
 |-- Source/
 |   |-- Public/RenderCore/
 |   |   |-- RenderCoreAPI.h         RENDERCORE_API three-state export macro (always SHARED)
@@ -260,6 +261,13 @@ instant that image unloads. A module that registers a proxy type
 unregisters it before it unloads.
 
 ---
+
+## Animation
+
+A Render component with a skinned mesh (imported from glTF with its
+skeleton) is animated by an **Animation** component beside it: a clip, or an
+anim state of layered state machines driven by parameters. Skinning runs on
+the GPU; an **Anim Socket** holds a child entity on a bone. See ANIMATION.md.
 
 ## Threading contract
 

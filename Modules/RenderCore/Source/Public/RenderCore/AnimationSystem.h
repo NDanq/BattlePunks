@@ -28,6 +28,9 @@ namespace GameCore
  * -- the editor's, outside Play -- is synced instead: each new or changed
  * component evaluated where it starts, and left there.
  *
+ * After each advance, an entity with an Anim Socket is moved onto its bone
+ * of its parent's pose (AnimSocketComponent.h).
+ *
  * Each notify a tick passes is emitted on the world's EventBus as
  * "AnimNotify" with (entity, notify name) -- Lua: Events.On("AnimNotify", ...).
  */
@@ -81,6 +84,9 @@ namespace RenderCore
 
         /* Tick and Preview: bInGame emits notifies and writes back to components. */
         void Advance(float InDeltaSeconds, bool bInGame);
+
+        /* Each Anim Socket's entity onto its bone of its parent's pose. */
+        void UpdateSockets();
 
         struct Entry
         {

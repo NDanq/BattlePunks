@@ -20,6 +20,7 @@
 #include "Public/RenderCore/AnimInstance.h"
 #include "Public/RenderCore/AnimPose.h"
 #include "Public/RenderCore/AnimStateAsset.h"
+#include "Public/RenderCore/Components/AnimSocketComponent.h"
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
@@ -420,6 +421,42 @@ static void TestStateSystem()
     AnimationSystem::Detach(World);
 }
 
+static void TestSocket()
+{
+    std::printf("[socket]\n");
+    GameCore::World World;
+    AnimationSystem* System = AnimationSystem::Attach(World);
+    GameCore::Entity Actor = World.CreateEntity();
+    Actor.AddComponent(GameCore::TransformComponent());
+    RenderComponent Render;
+    std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%sArm.nmmesh", SCRATCH);
+    Actor.AddComponent(Render);
+    AnimationComponent Animation;
+    std::snprintf(Animation.Animation, sizeof(Animation.Animation), "%sArm_Bend.nmanim", SCRATCH);
+    Actor.AddComponent(Animation);
+
+    GameCore::Entity Sword = World.CreateEntity();
+    Sword.AddComponent(GameCore::TransformComponent());
+    Sword.SetParent(Actor, false);
+    AnimSocketComponent Socket;
+    std::snprintf(Socket.Bone, sizeof(Socket.Bone), "Hand");
+    Sword.AddComponent(Socket);
+
+    /* At the clip's end the hand is at (100, 50), turned 90 degrees about Z. */
+    World.Tick(0.999f);
+    const GameCore::TransformComponent* Held = Sword.GetComponent<GameCore::TransformComponent>();
+    Expect(std::fabs(Held->Position.GetX() - 100.0) < 0.5 && std::fabs(Held->Position.GetY() - 50.0) < 0.5,
+           "a socket puts its entity on its bone");
+    Expect(std::fabs(Held->Rotation.GetZ() - 90.0) < 1.0, "turned as the bone is");
+
+    Sword.GetComponent<AnimSocketComponent>()->PositionOffset = EngineCore::Vector3(10.0, 0.0, 0.0);
+    World.Tick(0.0f);
+    Expect(std::fabs(Sword.GetComponent<GameCore::TransformComponent>()->Position.GetY() - 60.0) < 0.5,
+           "its offset is in the bone's frame");
+    (void)System;
+    AnimationSystem::Detach(World);
+}
+
 int main()
 {
     std::printf("RenderCore animation tests\n");
@@ -429,6 +466,7 @@ int main()
     TestStateAsset();
     TestStateMachine();
     TestStateSystem();
+    TestSocket();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

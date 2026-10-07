@@ -83,6 +83,7 @@ set(RENDERCORE_SOURCES
         Source/Private/RenderCore/AnimInstance.cpp
         Source/Private/RenderCore/AnimationSystem.cpp
         Source/Private/RenderCore/Components/AnimationComponent.cpp
+        Source/Private/RenderCore/Components/AnimSocketComponent.cpp
         Source/Private/RenderCore/BakedLightingAsset.cpp
         Source/Private/RenderCore/TextureAsset.cpp
         Source/Private/RenderCore/TextureCompression.cpp
@@ -117,6 +118,7 @@ set(RENDERCORE_SOURCES
         Source/Public/RenderCore/AnimInstance.h
         Source/Public/RenderCore/AnimationSystem.h
         Source/Public/RenderCore/Components/AnimationComponent.h
+        Source/Public/RenderCore/Components/AnimSocketComponent.h
         Source/Public/RenderCore/BakedLightingAsset.h
         Source/Public/RenderCore/TextureAsset.h
         Source/Public/RenderCore/TextureCompression.h
