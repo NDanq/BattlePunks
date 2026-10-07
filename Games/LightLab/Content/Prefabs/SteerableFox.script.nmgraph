@@ -1,0 +1,319 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<NodeGraph Version="1" Schema="Script">
+  <Properties>
+    <Property Name="TickPhase" Value="PrePhysics" />
+  </Properties>
+  <Variables>
+    <Variable Name="WalkSpeed" Type="number" Default="65" />
+    <Variable Name="RunSpeed" Type="number" Default="160" />
+    <Variable Name="TurnRate" Type="number" Default="120" />
+    <Variable Name="HatPrefab" Type="string" Default="Content/Prefabs/FoxHat.nmprefab" />
+    <Variable Name="Yaw" Type="number" Default="0" />
+    <Variable Name="Speed" Type="number" Default="0" />
+    <Variable Name="Drive" Type="number" Default="1" />
+  </Variables>
+  <Nodes>
+    <Node Id="466f7853746565720000000000000001" Type="Event.OnStart" Version="1" X="-1400" Y="-700" />
+    <Node Id="466f7853746565720000000000000002" Type="Component.Transform.Get" Version="1" X="-1400" Y="-560" />
+    <Node Id="466f7853746565720000000000000003" Type="Component.Transform.GetRotation" Version="1" X="-1160" Y="-560" />
+    <Node Id="466f7853746565720000000000000004" Type="Vector.Break" Version="1" X="-920" Y="-560" />
+    <Node Id="466f7853746565720000000000000005" Type="Variable.Set" Version="1" X="-680" Y="-700">
+      <Prop Name="Variable" Value="Yaw" />
+    </Node>
+    <Node Id="466f7853746565720000000000000006" Type="Variable.Get" Version="1" X="-680" Y="-540">
+      <Prop Name="Variable" Value="HatPrefab" />
+    </Node>
+    <Node Id="466f7853746565720000000000000007" Type="World.SpawnPrefab" Version="1" X="-420" Y="-700" />
+    <Node Id="466f7853746565720000000000000008" Type="Prefab.Find" Version="1" X="-420" Y="-540">
+      <Const Pin="Name" Value="HatSocket" />
+    </Node>
+    <Node Id="466f7853746565720000000000000009" Type="Entity.SetParent" Version="1" X="-140" Y="-700">
+      <Const Pin="KeepWorld" Value="false" />
+    </Node>
+    <Node Id="466f785374656572000000000000000a" Type="Event.OnTick" Version="1" X="-1400" Y="0" />
+    <Node Id="466f785374656572000000000000000b" Type="Flow.Sequence" Version="1" X="-1160" Y="0" />
+    <Node Id="466f785374656572000000000000000c" Type="Prefab.Find" Version="1" X="-1400" Y="400">
+      <Const Pin="Name" Value="Body" />
+    </Node>
+    <Node Id="466f785374656572000000000000000d" Type="Component.Animation.Get" Version="1" X="-1160" Y="400" />
+    <Node Id="466f785374656572000000000000000e" Type="Component.Animation.GetState" Version="1" X="-920" Y="260" />
+    <Node Id="466f785374656572000000000000000f" Type="Compare.Equal" Version="1" X="-680" Y="260" Wildcard="string">
+      <Const Pin="B" Value="Survey" />
+    </Node>
+    <Node Id="466f7853746565720000000000000010" Type="Flow.Branch" Version="1" X="-440" Y="120" />
+    <Node Id="466f7853746565720000000000000011" Type="Variable.Set" Version="1" X="-200" Y="60">
+      <Const Pin="Value" Value="0" />
+      <Prop Name="Variable" Value="Drive" />
+    </Node>
+    <Node Id="466f7853746565720000000000000012" Type="Variable.Set" Version="1" X="-200" Y="180">
+      <Const Pin="Value" Value="1" />
+      <Prop Name="Variable" Value="Drive" />
+    </Node>
+    <Node Id="466f7853746565720000000000000013" Type="Component.Input.Get" Version="1" X="200" Y="700" />
+    <Node Id="466f7853746565720000000000000014" Type="Component.Input.GetAxis" Version="1" X="440" Y="600">
+      <Const Pin="Axis" Value="FoxForward" />
+    </Node>
+    <Node Id="466f7853746565720000000000000015" Type="Math.Max" Version="1" X="680" Y="600" />
+    <Node Id="466f7853746565720000000000000016" Type="Component.Input.GetAxis" Version="1" X="440" Y="720">
+      <Const Pin="Axis" Value="FoxRun" />
+    </Node>
+    <Node Id="466f7853746565720000000000000017" Type="Variable.Get" Version="1" X="440" Y="820">
+      <Prop Name="Variable" Value="WalkSpeed" />
+    </Node>
+    <Node Id="466f7853746565720000000000000018" Type="Variable.Get" Version="1" X="440" Y="900">
+      <Prop Name="Variable" Value="RunSpeed" />
+    </Node>
+    <Node Id="466f7853746565720000000000000019" Type="Math.Lerp" Version="1" X="680" Y="760" Wildcard="number" />
+    <Node Id="466f785374656572000000000000001a" Type="Math.Multiply" Version="1" X="920" Y="640" Wildcard="number" />
+    <Node Id="466f785374656572000000000000001b" Type="Variable.Get" Version="1" X="920" Y="760">
+      <Prop Name="Variable" Value="Drive" />
+    </Node>
+    <Node Id="466f785374656572000000000000001c" Type="Math.Multiply" Version="1" X="1160" Y="640" Wildcard="number" />
+    <Node Id="466f785374656572000000000000001d" Type="Variable.Get" Version="1" X="1160" Y="520">
+      <Prop Name="Variable" Value="Speed" />
+    </Node>
+    <Node Id="466f785374656572000000000000001e" Type="Math.Multiply" Version="1" X="920" Y="880" Wildcard="number">
+      <Const Pin="B" Value="4" />
+    </Node>
+    <Node Id="466f785374656572000000000000001f" Type="Math.Min" Version="1" X="1160" Y="880">
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="466f7853746565720000000000000020" Type="Math.Lerp" Version="1" X="1400" Y="600" Wildcard="number" />
+    <Node Id="466f7853746565720000000000000021" Type="Variable.Set" Version="1" X="1640" Y="0">
+      <Prop Name="Variable" Value="Speed" />
+    </Node>
+    <Node Id="466f7853746565720000000000000022" Type="Component.Input.GetAxis" Version="1" X="1640" Y="1040">
+      <Const Pin="Axis" Value="FoxTurn" />
+    </Node>
+    <Node Id="466f7853746565720000000000000023" Type="Variable.Get" Version="1" X="1640" Y="1160">
+      <Prop Name="Variable" Value="TurnRate" />
+    </Node>
+    <Node Id="466f7853746565720000000000000024" Type="Math.Multiply" Version="1" X="1880" Y="1040" Wildcard="number" />
+    <Node Id="466f7853746565720000000000000025" Type="Math.Multiply" Version="1" X="2120" Y="1040" Wildcard="number" />
+    <Node Id="466f7853746565720000000000000026" Type="Math.Multiply" Version="1" X="2360" Y="1040" Wildcard="number" />
+    <Node Id="466f7853746565720000000000000027" Type="Variable.Get" Version="1" X="2120" Y="520">
+      <Prop Name="Variable" Value="Yaw" />
+    </Node>
+    <Node Id="466f7853746565720000000000000028" Type="Math.Add" Version="1" X="2360" Y="600" Wildcard="number" />
+    <Node Id="466f7853746565720000000000000029" Type="Variable.Set" Version="1" X="1900" Y="0">
+      <Prop Name="Variable" Value="Yaw" />
+    </Node>
+    <Node Id="466f785374656572000000000000002a" Type="Component.Transform.Get" Version="1" X="2160" Y="280" />
+    <Node Id="466f785374656572000000000000002b" Type="Vector.Make" Version="1" X="2600" Y="400" />
+    <Node Id="466f785374656572000000000000002c" Type="Component.Transform.SetRotation" Version="1" X="2160" Y="0" />
+    <Node Id="466f785374656572000000000000002d" Type="Math.Multiply" Version="1" X="2600" Y="600" Wildcard="number">
+      <Const Pin="B" Value="0.017453292519943295" />
+    </Node>
+    <Node Id="466f785374656572000000000000002e" Type="Math.Sin" Version="1" X="2840" Y="560" />
+    <Node Id="466f785374656572000000000000002f" Type="Math.Cos" Version="1" X="2840" Y="660" />
+    <Node Id="466f7853746565720000000000000030" Type="Vector.Make" Version="1" X="3080" Y="560" />
+    <Node Id="466f7853746565720000000000000031" Type="Math.Multiply" Version="1" X="3080" Y="760" Wildcard="number" />
+    <Node Id="466f7853746565720000000000000032" Type="Vector.Scale" Version="1" X="3320" Y="600" />
+    <Node Id="466f7853746565720000000000000033" Type="Component.Transform.Translate" Version="1" X="2420" Y="0" />
+    <Node Id="466f7853746565720000000000000034" Type="Component.Animation.SetFloat" Version="1" X="3600" Y="0">
+      <Const Pin="Name" Value="Speed" />
+    </Node>
+    <Node Id="466f7853746565720000000000000035" Type="Component.Input.GetAxis" Version="1" X="3600" Y="400">
+      <Const Pin="Axis" Value="FoxLook" />
+    </Node>
+    <Node Id="466f7853746565720000000000000036" Type="Component.Animation.GetFloat" Version="1" X="3600" Y="280">
+      <Const Pin="Name" Value="Look" />
+    </Node>
+    <Node Id="466f7853746565720000000000000037" Type="Math.Multiply" Version="1" X="3600" Y="520" Wildcard="number">
+      <Const Pin="B" Value="3" />
+    </Node>
+    <Node Id="466f7853746565720000000000000038" Type="Math.Min" Version="1" X="3840" Y="520">
+      <Const Pin="B" Value="1" />
+    </Node>
+    <Node Id="466f7853746565720000000000000039" Type="Math.Lerp" Version="1" X="4080" Y="320" Wildcard="number" />
+    <Node Id="466f785374656572000000000000003a" Type="Component.Animation.SetFloat" Version="1" X="3900" Y="0">
+      <Const Pin="Name" Value="Look" />
+    </Node>
+    <Node Id="466f785374656572000000000000003b" Type="Component.Input.WasPressed" Version="1" X="-920" Y="1100">
+      <Const Pin="Action" Value="FoxSit" />
+    </Node>
+    <Node Id="466f785374656572000000000000003c" Type="Compare.Less" Version="1" X="-920" Y="1220">
+      <Const Pin="B" Value="10" />
+    </Node>
+    <Node Id="466f785374656572000000000000003d" Type="Logic.And" Version="1" X="-680" Y="1140" />
+    <Node Id="466f785374656572000000000000003e" Type="Flow.Branch" Version="1" X="-440" Y="980" />
+    <Node Id="466f785374656572000000000000003f" Type="Component.Animation.SetTrigger" Version="1" X="-200" Y="980">
+      <Const Pin="Name" Value="Sit" />
+    </Node>
+  </Nodes>
+  <Links>
+    <Link From="466f7853746565720000000000000001.Then" To="466f7853746565720000000000000005.Exec" />
+    <Link From="466f7853746565720000000000000002.Transform" To="466f7853746565720000000000000003.Target" />
+    <Link From="466f7853746565720000000000000003.Rotation" To="466f7853746565720000000000000004.Vector" />
+    <Link From="466f7853746565720000000000000004.Y" To="466f7853746565720000000000000005.Value" />
+    <Link From="466f7853746565720000000000000005.Then" To="466f7853746565720000000000000007.Exec" />
+    <Link From="466f7853746565720000000000000006.Value" To="466f7853746565720000000000000007.Prefab" />
+    <Link From="466f7853746565720000000000000007.Root" To="466f7853746565720000000000000009.Entity" />
+    <Link From="466f7853746565720000000000000007.Then" To="466f7853746565720000000000000009.Exec" />
+    <Link From="466f7853746565720000000000000008.Entity" To="466f7853746565720000000000000009.Parent" />
+    <Link From="466f785374656572000000000000000a.DeltaSeconds" To="466f785374656572000000000000001e.A" />
+    <Link From="466f785374656572000000000000000a.DeltaSeconds" To="466f7853746565720000000000000025.B" />
+    <Link From="466f785374656572000000000000000a.DeltaSeconds" To="466f7853746565720000000000000031.B" />
+    <Link From="466f785374656572000000000000000a.DeltaSeconds" To="466f7853746565720000000000000037.A" />
+    <Link From="466f785374656572000000000000000a.Then" To="466f785374656572000000000000000b.Exec" />
+    <Link From="466f785374656572000000000000000b.Then 1" To="466f7853746565720000000000000010.Exec" />
+    <Link From="466f785374656572000000000000000b.Then 2" To="466f7853746565720000000000000021.Exec" />
+    <Link From="466f785374656572000000000000000b.Then 3" To="466f785374656572000000000000003e.Exec" />
+    <Link From="466f785374656572000000000000000c.Entity" To="466f785374656572000000000000000d.Entity" />
+    <Link From="466f785374656572000000000000000d.Animation" To="466f785374656572000000000000000e.Target" />
+    <Link From="466f785374656572000000000000000d.Animation" To="466f7853746565720000000000000034.Target" />
+    <Link From="466f785374656572000000000000000d.Animation" To="466f7853746565720000000000000036.Target" />
+    <Link From="466f785374656572000000000000000d.Animation" To="466f785374656572000000000000003a.Target" />
+    <Link From="466f785374656572000000000000000d.Animation" To="466f785374656572000000000000003f.Target" />
+    <Link From="466f785374656572000000000000000e.State" To="466f785374656572000000000000000f.A" />
+    <Link From="466f785374656572000000000000000f.Out" To="466f7853746565720000000000000010.Condition" />
+    <Link From="466f7853746565720000000000000010.False" To="466f7853746565720000000000000012.Exec" />
+    <Link From="466f7853746565720000000000000010.True" To="466f7853746565720000000000000011.Exec" />
+    <Link From="466f7853746565720000000000000013.Input" To="466f7853746565720000000000000014.Target" />
+    <Link From="466f7853746565720000000000000013.Input" To="466f7853746565720000000000000016.Target" />
+    <Link From="466f7853746565720000000000000013.Input" To="466f7853746565720000000000000022.Target" />
+    <Link From="466f7853746565720000000000000013.Input" To="466f7853746565720000000000000035.Target" />
+    <Link From="466f7853746565720000000000000013.Input" To="466f785374656572000000000000003b.Target" />
+    <Link From="466f7853746565720000000000000014.Value" To="466f7853746565720000000000000015.A" />
+    <Link From="466f7853746565720000000000000015.Out" To="466f785374656572000000000000001a.A" />
+    <Link From="466f7853746565720000000000000016.Value" To="466f7853746565720000000000000019.T" />
+    <Link From="466f7853746565720000000000000017.Value" To="466f7853746565720000000000000019.A" />
+    <Link From="466f7853746565720000000000000018.Value" To="466f7853746565720000000000000019.B" />
+    <Link From="466f7853746565720000000000000019.Out" To="466f785374656572000000000000001a.B" />
+    <Link From="466f785374656572000000000000001a.Out" To="466f785374656572000000000000001c.A" />
+    <Link From="466f785374656572000000000000001b.Value" To="466f785374656572000000000000001c.B" />
+    <Link From="466f785374656572000000000000001b.Value" To="466f7853746565720000000000000026.B" />
+    <Link From="466f785374656572000000000000001c.Out" To="466f7853746565720000000000000020.B" />
+    <Link From="466f785374656572000000000000001d.Value" To="466f7853746565720000000000000020.A" />
+    <Link From="466f785374656572000000000000001d.Value" To="466f7853746565720000000000000031.A" />
+    <Link From="466f785374656572000000000000001d.Value" To="466f7853746565720000000000000034.Value" />
+    <Link From="466f785374656572000000000000001d.Value" To="466f785374656572000000000000003c.A" />
+    <Link From="466f785374656572000000000000001e.Out" To="466f785374656572000000000000001f.A" />
+    <Link From="466f785374656572000000000000001f.Out" To="466f7853746565720000000000000020.T" />
+    <Link From="466f7853746565720000000000000020.Out" To="466f7853746565720000000000000021.Value" />
+    <Link From="466f7853746565720000000000000021.Then" To="466f7853746565720000000000000029.Exec" />
+    <Link From="466f7853746565720000000000000022.Value" To="466f7853746565720000000000000024.A" />
+    <Link From="466f7853746565720000000000000023.Value" To="466f7853746565720000000000000024.B" />
+    <Link From="466f7853746565720000000000000024.Out" To="466f7853746565720000000000000025.A" />
+    <Link From="466f7853746565720000000000000025.Out" To="466f7853746565720000000000000026.A" />
+    <Link From="466f7853746565720000000000000026.Out" To="466f7853746565720000000000000028.B" />
+    <Link From="466f7853746565720000000000000027.Value" To="466f7853746565720000000000000028.A" />
+    <Link From="466f7853746565720000000000000027.Value" To="466f785374656572000000000000002b.Y" />
+    <Link From="466f7853746565720000000000000027.Value" To="466f785374656572000000000000002d.A" />
+    <Link From="466f7853746565720000000000000028.Out" To="466f7853746565720000000000000029.Value" />
+    <Link From="466f7853746565720000000000000029.Then" To="466f785374656572000000000000002c.Exec" />
+    <Link From="466f785374656572000000000000002a.Transform" To="466f785374656572000000000000002c.Target" />
+    <Link From="466f785374656572000000000000002a.Transform" To="466f7853746565720000000000000033.Target" />
+    <Link From="466f785374656572000000000000002b.Vector" To="466f785374656572000000000000002c.Rotation" />
+    <Link From="466f785374656572000000000000002c.Then" To="466f7853746565720000000000000033.Exec" />
+    <Link From="466f785374656572000000000000002d.Out" To="466f785374656572000000000000002e.X" />
+    <Link From="466f785374656572000000000000002d.Out" To="466f785374656572000000000000002f.X" />
+    <Link From="466f785374656572000000000000002e.Out" To="466f7853746565720000000000000030.X" />
+    <Link From="466f785374656572000000000000002f.Out" To="466f7853746565720000000000000030.Z" />
+    <Link From="466f7853746565720000000000000030.Vector" To="466f7853746565720000000000000032.Vector" />
+    <Link From="466f7853746565720000000000000031.Out" To="466f7853746565720000000000000032.Scale" />
+    <Link From="466f7853746565720000000000000032.Out" To="466f7853746565720000000000000033.Delta" />
+    <Link From="466f7853746565720000000000000033.Then" To="466f7853746565720000000000000034.Exec" />
+    <Link From="466f7853746565720000000000000034.Then" To="466f785374656572000000000000003a.Exec" />
+    <Link From="466f7853746565720000000000000035.Value" To="466f7853746565720000000000000039.B" />
+    <Link From="466f7853746565720000000000000036.Value" To="466f7853746565720000000000000039.A" />
+    <Link From="466f7853746565720000000000000037.Out" To="466f7853746565720000000000000038.A" />
+    <Link From="466f7853746565720000000000000038.Out" To="466f7853746565720000000000000039.T" />
+    <Link From="466f7853746565720000000000000039.Out" To="466f785374656572000000000000003a.Value" />
+    <Link From="466f785374656572000000000000003b.Pressed" To="466f785374656572000000000000003d.A" />
+    <Link From="466f785374656572000000000000003c.Out" To="466f785374656572000000000000003d.B" />
+    <Link From="466f785374656572000000000000003d.Out" To="466f785374656572000000000000003e.Condition" />
+    <Link From="466f785374656572000000000000003e.True" To="466f785374656572000000000000003f.Exec" />
+  </Links>
+  <Comments>
+    <Comment X="-1420" Y="-760" Width="1500" Height="340" Text="On Start: the yaw it was placed with, then its hat -- FoxHat spawned and parented to HatSocket (an Anim Socket on b_Head_05), so it rides the head" />
+    <Comment X="-1420" Y="-60" Width="1420" Height="1400" Text="Every tick, in order: (1) sitting -- the anim state's Survey state -- holds it still (Drive 0); (3) J sits it, once nearly stopped" />
+    <Comment X="180" Y="-60" Width="3960" Height="1300" Text="(2) Speed eases toward U's (Y runs: WalkSpeed to RunSpeed); H/K turn; it moves along its heading (+Z at yaw 0), and the anim state gets Speed (its walk/run blend space) and Look (I: the masked head layer)" />
+  </Comments>
+  <gen_code>
+    <Output Extension=".lua"><![CDATA[-- Generated by NimbleEditor from the script graph "SteerableFox". Do not edit.
+return {
+    TickPhase = TickPhase.PrePhysics,
+
+    WalkSpeed = 65,
+    RunSpeed = 160,
+    TurnRate = 120,
+    HatPrefab = "Content/Prefabs/FoxHat.nmprefab",
+    Yaw = 0,
+    Speed = 0,
+    Drive = 1,
+
+    OnStart = function(self)
+        local Root1
+        local t1 = self.Entity:GetComponent("Transform")
+        local t2_X, t2_Y, t2_Z = t1:GetRotation()
+        self.Yaw = t2_Y
+        Root1 = World.SpawnPrefab(self.HatPrefab, 0, 0, 0)
+        local t3 = self.Instance:Find("HatSocket")
+        Root1:SetParent(t3, false)
+    end,
+
+    OnTick = function(self, dt)
+        local Set2, Set3, Set4
+        local t1 = self.Instance:Find("Body")
+        local t2 = t1:GetComponent("Animation")
+        local t3 = t2:GetState(0)
+        local t4 = t3 == "Survey"
+        if t4 then
+            self.Drive = 0
+        else
+            self.Drive = 1
+        end
+        local t5 = self.Entity:GetComponent("Input")
+        local t6 = t5:GetAxis("FoxForward")
+        local t7 = math.max(t6, 0)
+        local t8 = t5:GetAxis("FoxRun")
+        local t9 = self.WalkSpeed + (self.RunSpeed - self.WalkSpeed) * t8
+        local t10 = t7 * t9
+        local t11 = t10 * self.Drive
+        local t12 = dt * 4
+        local t13 = math.min(t12, 1)
+        local t14 = self.Speed + (t11 - self.Speed) * t13
+        self.Speed = t14
+        local t15 = self.Entity:GetComponent("Input")
+        local t16 = t15:GetAxis("FoxTurn")
+        local t17 = t16 * self.TurnRate
+        local t18 = t17 * dt
+        local t19 = t18 * self.Drive
+        local t20 = self.Yaw + t19
+        self.Yaw = t20
+        local t21 = self.Entity:GetComponent("Transform")
+        t21:SetRotation(0, self.Yaw, 0)
+        local t22 = self.Entity:GetComponent("Transform")
+        local t23 = self.Yaw * 0.017453292519943295
+        local t24 = math.sin(t23)
+        local t25 = math.cos(t23)
+        local t26 = self.Speed * dt
+        local t27_X, t27_Y, t27_Z = t24 * t26, 0 * t26, t25 * t26
+        t22:Translate(t27_X, t27_Y, t27_Z)
+        local t28 = self.Instance:Find("Body")
+        local t29 = t28:GetComponent("Animation")
+        Set2 = t29:SetFloat("Speed", self.Speed)
+        local t30 = self.Instance:Find("Body")
+        local t31 = t30:GetComponent("Animation")
+        local t32 = t31:GetFloat("Look")
+        local t33 = self.Entity:GetComponent("Input")
+        local t34 = t33:GetAxis("FoxLook")
+        local t35 = dt * 3
+        local t36 = math.min(t35, 1)
+        local t37 = t32 + (t34 - t32) * t36
+        Set3 = t31:SetFloat("Look", t37)
+        local t38 = self.Entity:GetComponent("Input")
+        local t39 = t38:WasPressed("FoxSit")
+        local t40 = self.Speed < 10
+        local t41 = t39 and t40
+        if t41 then
+            local t42 = self.Instance:Find("Body")
+            local t43 = t42:GetComponent("Animation")
+            Set4 = t43:SetTrigger("Sit")
+        end
+    end,
+}
+]]></Output>
+  </gen_code>
+</NodeGraph>
