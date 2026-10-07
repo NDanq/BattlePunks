@@ -1764,6 +1764,9 @@ namespace
                        "mesh: times each particle's colour, which fades over its life.";
         Pure("Input.WorldPosition", "World Position", "Inputs", { Out("Position", "vec3", "Inputs.WorldPosition") }, {}, "absolute")
             .Tooltip = "Where this point is in the world. In the vertex stage, before World Position Offset moves it.";
+        Pure("Input.CameraPosition", "Camera Position", "Inputs", { Out("Position", "vec3", "Scene_CameraPosition.xyz") }, {},
+             "eye view camera fresnel")
+            .Tooltip = "Where the view's eye is in the world: with World Position, the direction to the camera (Fresnel).";
         PixelOnly(Pure("Input.Position", "Clip Position", "Inputs", { Out("Position", "vec3", "Inputs.ClipPosition") }, {},
                        "interpolated projected"),
                   "The interpolated clip-space position (before the divide by w).");
