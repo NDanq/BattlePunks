@@ -683,6 +683,65 @@ void VulkanDynamicGDI::FlushForReadback(bool bResumeActiveRegion)
         SetRenderTargets(Colors, ColorCount, Depth);
 }
 
+bool VulkanDynamicGDI::RecordReadback(VKRenderTarget* Src, VkBuffer Dst, uint64_t& OutDoneAt)
+{
+    if(!Src || Dst == VK_NULL_HANDLE || !CurrentStateData || !DeviceObj) return false;
+    if(CurrentStateData->CurrentCmd == VK_NULL_HANDLE || !Src->IsValid()) return false;
+
+    VKRenderTarget*  RT         = CurrentStateData->ActiveRenderTarget;
+    const bool       bWasActive = CurrentStateData->bRenderingActive;
+    GDIRenderTarget* Colors[GDI_MAX_COLOR_TARGETS] = {};
+    const uint32_t   ColorCount = CurrentStateData->ActiveColorCount;
+    for(uint32_t Index = 0; Index < ColorCount; ++Index) { Colors[Index] = CurrentStateData->ActiveColors[Index]; }
+    GDIRenderTarget* Depth      = CurrentStateData->ActiveDepth;
+
+    // A copy cannot happen inside a dynamic-rendering region.
+    EndActiveRenderingRegion();
+    VkCommandBuffer Cmd = CurrentStateData->CurrentCmd;
+
+    const VkImageLayout Cur = Src->GetCurrentLayout();
+    RecordBarrier(Cmd, MakeImageBarrier(
+        Src->GetImage(), Cur, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_WRITE_BIT,
+        VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_READ_BIT));
+
+    VkBufferImageCopy Region{};
+    Region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    Region.imageSubresource.layerCount = 1;
+    Region.imageExtent = { Src->GetWidth(), Src->GetHeight(), 1 };
+    vkCmdCopyImageToBuffer(Cmd, Src->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Dst, 1, &Region);
+
+    // Back as it was, and the copy made visible to the host's read.
+    RecordBarrier(Cmd, MakeImageBarrier(
+        Src->GetImage(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, Cur,
+        VK_PIPELINE_STAGE_2_COPY_BIT,         VK_ACCESS_2_TRANSFER_READ_BIT,
+        VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT, VK_ACCESS_2_MEMORY_READ_BIT | VK_ACCESS_2_MEMORY_WRITE_BIT));
+    VkMemoryBarrier2 ToHost{};
+    ToHost.sType         = VK_STRUCTURE_TYPE_MEMORY_BARRIER_2;
+    ToHost.srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT;
+    ToHost.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    ToHost.dstStageMask  = VK_PIPELINE_STAGE_2_HOST_BIT;
+    ToHost.dstAccessMask = VK_ACCESS_2_HOST_READ_BIT;
+    VkDependencyInfo Dep{};
+    Dep.sType              = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    Dep.memoryBarrierCount = 1;
+    Dep.pMemoryBarriers    = &ToHost;
+    vkCmdPipelineBarrier2(Cmd, &Dep);
+
+    // Done once this frame's submit (EndRendering's, the next timeline value) has
+    // finished -- which the next BeginRendering's fence wait establishes. A flush
+    // in between submits it sooner; that only makes it done earlier.
+    OutDoneAt = RenderTimelineCounter + 1;
+
+    // The frame continues as before the copy (loadOp=LOAD preserves contents).
+    CurrentStateData->ActiveRenderTarget = nullptr;
+    CurrentStateData->ActiveColorCount   = 0;
+    CurrentStateData->ActiveDepth        = nullptr;
+    if(bWasActive && RT && ColorCount > 0)
+        SetRenderTargets(Colors, ColorCount, Depth);
+    return true;
+}
+
 void VulkanDynamicGDI::RecordResolve(VKRenderTarget* Src, VKRenderTarget* Dst)
 {
     if(!Src || !Dst || !CurrentStateData || !DeviceObj) return;
@@ -1487,7 +1546,7 @@ Color VulkanDynamicGDI::GetColorFromSamplePoint(const Point& InPoint, const Size
 
     VkBuffer       Buf = VK_NULL_HANDLE;
     VkDeviceMemory Mem = VK_NULL_HANDLE;
-    if(!AllocStagingBuffer(DeviceObj, 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem))
+    if(!AllocStagingBuffer(DeviceObj, 4, VK_BUFFER_USAGE_TRANSFER_DST_BIT, Buf, Mem, true))
         return Color();
 
     VkCommandPool   Pool = VK_NULL_HANDLE;

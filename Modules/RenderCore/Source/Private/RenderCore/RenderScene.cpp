@@ -795,13 +795,11 @@ namespace RenderCore
         /* Previews FIRST, before the scene's own stages, so the scene's final
          * target is the active one at EndRendering and the present never
          * shows a preview. */
+        InContext.DeliverMaterialPreviews();
         for(const MaterialPreviewRequest& Each : P->Previews)
         {
             SCOPED_DRAW_EVENT("MaterialPreview");
-            EngineCore::Image Pixels;
-            std::string       Error;
-            InContext.RenderMaterialPreview(Each, Pixels, Error);
-            if(Each.Mailbox) { Each.Mailbox->Deliver(Each.Request, std::move(Pixels), std::move(Error)); }
+            InContext.RenderMaterialPreview(Each);
         }
         P->Previews.clear();
 #endif

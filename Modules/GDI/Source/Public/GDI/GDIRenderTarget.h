@@ -25,6 +25,33 @@ enum ERenderTargetPass : char
     MAX_RenderTargetPass
 };
 
+/* An image on its way back from a render target (GDIRenderTarget::BeginReadback).
+ * Render thread only. */
+class GDIReadback
+{
+public:
+    virtual ~GDIReadback() = default;
+
+    /* True once Take will not wait on the GPU. */
+    virtual bool IsReady() = 0;
+
+    /* The pixels, once (empty: the backend reads nothing back). */
+    virtual EngineCore::Image Take() = 0;
+};
+
+/* A readback done at once: what a backend without an asynchronous one gives. */
+class GDIImmediateReadback : public GDIReadback
+{
+public:
+    explicit GDIImmediateReadback(EngineCore::Image InImage) : Pixels(std::move(InImage)) {}
+
+    bool              IsReady() override { return true; }
+    EngineCore::Image Take() override    { return std::move(Pixels); }
+
+private:
+    EngineCore::Image Pixels;
+};
+
 class GDIRenderTarget
 {
 public:
@@ -58,6 +85,12 @@ public:
     const uint GetHeight() const { return Height; }
 
     virtual EngineCore::Image ToImage() { return EngineCore::Image(); }
+
+    /* ToImage without waiting for the GPU: the copy joins the commands being
+     * recorded, and is ready a frame or so later -- a preview drawn every
+     * frame does not stall each one. Backends without one read back at once.
+     * The caller owns the result, and polls it on the render thread. */
+    virtual GDIReadback* BeginReadback() { return new GDIImmediateReadback(ToImage()); }
 
     virtual GDITexture2D* ToGDITexture2D() = 0;
 

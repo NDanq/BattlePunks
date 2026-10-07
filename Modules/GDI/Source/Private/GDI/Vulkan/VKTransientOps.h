@@ -17,12 +17,16 @@
 namespace VKOps
 {
 
-/** Allocate a host-coherent buffer of the given size.  Returns true on success. */
+/** Allocate a host-coherent buffer of the given size.  Returns true on success.
+ *  bInReadback: the CPU reads it -- host-cached memory where there is some, as
+ *  reading uncached (write-combined) memory is an order of magnitude slower
+ *  (~30 ms for a 1024x1024 RGBA8 image). */
 inline bool AllocStagingBuffer(VKDevice*          Device,
                                VkDeviceSize       Size,
                                VkBufferUsageFlags Usage,
                                VkBuffer&          OutBuf,
-                               VkDeviceMemory&    OutMem)
+                               VkDeviceMemory&    OutMem,
+                               bool               bInReadback = false)
 {
     VkBufferCreateInfo BufInfo{};
     BufInfo.sType       = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -39,9 +43,11 @@ inline bool AllocStagingBuffer(VKDevice*          Device,
     VkMemoryRequirements MemReq{};
     vkGetBufferMemoryRequirements(Device->GetDevice(), OutBuf, &MemReq);
 
-    const uint32_t MemType = Device->FindMemoryType(
-        MemReq.memoryTypeBits,
-        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    const VkMemoryPropertyFlags Coherent = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    uint32_t MemType = bInReadback ? Device->FindMemoryType(MemReq.memoryTypeBits, Coherent | VK_MEMORY_PROPERTY_HOST_CACHED_BIT)
+                                   : UINT32_MAX;
+    if(MemType == UINT32_MAX)
+        MemType = Device->FindMemoryType(MemReq.memoryTypeBits, Coherent);
 
     if(MemType == UINT32_MAX)
     {

@@ -256,7 +256,7 @@ EngineCore::Image VKTextureResource::ToImage() const
 
     if(!AllocStagingBuffer(Device, ImageDataSize,
                             VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-                            ReadbackBuf, ReadbackMem))
+                            ReadbackBuf, ReadbackMem, /*bInReadback*/ true))
     {
         return EngineCore::Image();
     }

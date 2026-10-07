@@ -11,6 +11,7 @@
 #include <QWheelEvent>
 
 #include "Private/Editor/Graph/GraphAssets.h"
+#include "Public/Editor/EditorContext.h"
 
 MeshPreviewView::MeshPreviewView(QWidget* InParent) : QWidget(InParent)
 {
@@ -64,6 +65,23 @@ void MeshPreviewView::SetAnimate(const bool bInAnimate)
 void MeshPreviewView::SetSkinPalette(std::vector<float> InPalette)
 {
     SkinPalette = std::move(InPalette);
+    Refresh();
+}
+
+void MeshPreviewView::SetFrameSource(std::function<void()> InSource)
+{
+    FrameSource = std::move(InSource);
+    disconnect(FrameTick);
+    FrameTick = QMetaObject::Connection();
+    if(!FrameSource)
+    {
+        return;
+    }
+    /* Paced by the editor's frames: a request each, rendered with that frame. */
+    if(EditorContext* Ctx = EditorGraphs::GetEditorContext())
+    {
+        FrameTick = connect(Ctx, &EditorContext::BeforeFrame, this, [this]() { Send(); });
+    }
     Refresh();
 }
 
@@ -127,9 +145,13 @@ void MeshPreviewView::ResetView()
 
 void MeshPreviewView::Refresh()
 {
-    if(bInFlight)
+    if(bInFrameSource)
     {
-        bPending = true;
+        return;   // the request being sent takes it
+    }
+    if(InFlight > 0)
+    {
+        bPending = !FrameSource;   // a FrameSource's next frame takes it
         return;
     }
     Send();
@@ -137,7 +159,8 @@ void MeshPreviewView::Refresh()
 
 void MeshPreviewView::Send()
 {
-    if(bInFlight || !isVisible())
+    /* A few out at once for a FrameSource: one a frame, each a frame or two to answer. */
+    if(InFlight >= (FrameSource ? 3 : 1) || !isVisible())
     {
         bPending = !isVisible();   // drawn when shown
         return;
@@ -150,8 +173,18 @@ void MeshPreviewView::Send()
         return;
     }
 
-    bInFlight = true;
+    /* The frame's pose, as of now: sent at once, it is never older than one round trip. */
+    if(FrameSource)
+    {
+        const std::function<void()> Source = FrameSource;   // it may clear itself (a clip that stops)
+        bInFrameSource = true;
+        Source();
+        bInFrameSource = false;
+    }
+
+    ++InFlight;
     bPending  = false;
+    const uint64_t Serial = ++Sent;
     const qreal Ratio = devicePixelRatioF();
     const int   Width  = std::clamp(int(width() * Ratio), 32, 1024);
     const int   Height = std::clamp(int(height() * Ratio), 32, 1024);
@@ -159,9 +192,14 @@ void MeshPreviewView::Send()
     /* The overlay goes with the image it was sent for. */
     const std::vector<float> SentSegments = Segments;
     const float SentYaw = Yaw, SentPitch = Pitch, SentZoom = Zoom;
-    const auto Done = [this, SentSegments, SentYaw, SentPitch, SentZoom](const QImage& InImage, const QString& InError)
+    const auto Done = [this, Serial, SentSegments, SentYaw, SentPitch, SentZoom](const QImage& InImage, const QString& InError)
     {
-        bInFlight = false;
+        --InFlight;
+        if(Serial < Shown)
+        {
+            return;   // overtaken by a newer answer
+        }
+        Shown = Serial;
         Image = InImage;
         Error = InError;
         ShownSegments = SentSegments;
@@ -171,8 +209,12 @@ void MeshPreviewView::Send()
         update();
         emit Drawn(InImage.isNull() ? InError : QString());
 
-        if(bPending)      { Send(); }
-        else if(bAnimate) { Animator->start(); }
+        /* A FrameSource with no editor frames to pace it draws again at once --
+         * after a failure, not before the Animator's wait (a renderer that is
+         * not running answers at once). */
+        if(bPending)                        { Send(); }
+        else if(FrameSource && !FrameTick)  { InImage.isNull() ? Animator->start() : Send(); }
+        else if(bAnimate && !FrameSource)   { Animator->start(); }
     };
 
     if(Mesh.isEmpty())

@@ -18,7 +18,6 @@ class QCheckBox;
 class QDoubleSpinBox;
 class QLabel;
 class QSlider;
-class QTimer;
 class QToolButton;
 
 /*
@@ -79,7 +78,6 @@ private:
     QDoubleSpinBox*  Speed      = nullptr;
     QCheckBox*       Loop       = nullptr;
     QCheckBox*       Bones      = nullptr;
-    QTimer*          Clock      = nullptr;
     QElapsedTimer    Elapsed;
     bool             bPlaying   = false;
     bool             bScrubbing = false;

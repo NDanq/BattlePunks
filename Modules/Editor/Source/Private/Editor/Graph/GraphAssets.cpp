@@ -473,6 +473,11 @@ namespace EditorGraphs
         Context() = InContext;
     }
 
+    EditorContext* GetEditorContext()
+    {
+        return Context();
+    }
+
     QString GetMaterialPath(const QString& InGraphPath)
     {
         const QString Runtime = EditorContent::ToRuntimePath(InGraphPath);
@@ -562,13 +567,13 @@ namespace EditorGraphs
                 InDone(Image, Error);
                 return;
             }
-            if(!Now || ++*Tries > 150)
+            if(!Now || ++*Tries > 600)
             {
                 Poll->deleteLater();
                 InDone(QImage(), QStringLiteral("No frame was rendered to draw the preview (is the viewport visible?)"));
             }
         });
-        Poll->start(20);
+        Poll->start(5);   // answered within a frame or two: a coarse poll would add most of a frame
     }
 
     static EngineCore::Color ToColor(const QColor& InColor)
