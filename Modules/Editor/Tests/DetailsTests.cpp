@@ -29,6 +29,9 @@
 #include "Public/Editor/ViewportWidget.h"
 #include "Public/RenderCore/TextureAsset.h"
 #include "Private/Editor/Content/TextureViewerWindow.h"
+#include "Private/Editor/Content/AnimStateEditorWindow.h"
+#include "Private/Editor/Content/AnimStateGraph.h"
+#include "Public/RenderCore/AnimStateAsset.h"
 
 #include "Public/Editor/DetailsPanel.h"
 #include "Public/Editor/EditorDocument.h"
@@ -344,6 +347,74 @@ static void TestViewSettings()
     QStandardPaths::setTestModeEnabled(false);
 }
 
+/* The anim state editor's graph, offscreen: what is asked on it -- states
+ * and transitions added and removed, a box moved, the entry set -- is what
+ * Save writes. */
+static void TestAnimStateGraph()
+{
+    std::printf("Anim state graph\n");
+
+    RenderCore::AnimLayer Unplaced;
+    Unplaced.States.resize(3);
+    Unplaced.States[0].Name = "A";
+    Unplaced.States[1].Name = "B";
+    Unplaced.States[2].Name = "C";
+    Unplaced.EntryState = 2;
+    AnimStateGraph::LayOut(Unplaced);
+    Expect(Unplaced.bEditorPlaced && Unplaced.States[2].EditorX == 0.0f && Unplaced.States[2].EditorY == 0.0f
+           && Unplaced.States[0].EditorX > 0.0f, "a layer laid out: placed, the entry first");
+
+    QTemporaryDir Temp;
+    const QString Path = Temp.filePath(QStringLiteral("Graph.nmanimstate"));
+    {
+        RenderCore::AnimStateData Data;
+        RenderCore::AnimLayer Layer;
+        Layer.Name = "Base";
+        Layer.States.resize(3);
+        Layer.States[0].Name = "A";
+        Layer.States[1].Name = "B";
+        Layer.States[2].Name = "C";
+        RenderCore::AnimTransition AB;
+        AB.From = 0;
+        AB.To   = 1;
+        Layer.Transitions.push_back(AB);
+        Data.Layers.push_back(Layer);
+        RenderCore::SaveAnimStateFile(Path.toStdString(), Data);
+    }
+
+    AnimStateEditorWindow* Window = AnimStateEditorWindow::Open(Path, nullptr);
+    AnimStateGraph* Graph = Window ? Window->findChild<AnimStateGraph*>() : nullptr;
+    Expect(Window && Graph, "the editor opens with its graph");
+    if(!Window || !Graph) { return; }
+    PumpFor(50);
+
+    emit Graph->AddTransitionRequested(-1, 2);     // Any -> C
+    PumpFor(10);
+    emit Graph->RemoveStateRequested(1);           // B, and A -> B with it; C becomes 1
+    PumpFor(10);
+    emit Graph->AddStateRequested(QPointF(500.0, 40.0));
+    PumpFor(10);
+    emit Graph->StateMoved(0, QPointF(-100.0, 60.0));
+    emit Graph->EntryRequested(1);
+    PumpFor(10);
+    Expect(Window->Save(), "it saves");
+
+    RenderCore::AnimStateData Back;
+    Expect(RenderCore::LoadAnimStateFile(Path.toStdString(), Back) && Back.Layers.size() == 1, "and loads back");
+    if(Back.Layers.size() == 1)
+    {
+        const RenderCore::AnimLayer& Layer = Back.Layers[0];
+        Expect(Layer.States.size() == 3 && Layer.States[0].Name == "A" && Layer.States[1].Name == "C", "B removed, the rest in order, one added");
+        Expect(Layer.Transitions.size() == 1 && Layer.Transitions[0].From == -1 && Layer.Transitions[0].To == 1,
+               "its transition went with it; Any -> C renumbered");
+        Expect(Layer.EntryState == 1, "the entry set");
+        Expect(Layer.bEditorPlaced && Layer.States[0].EditorX == -100.0f && Layer.States[0].EditorY == 60.0f
+               && Layer.States[2].EditorX == 500.0f, "where the boxes were put is kept");
+    }
+    Window->close();
+    PumpFor(10);
+}
+
 int main(int argc, char** argv)
 {
     /* No display needed. */
@@ -356,6 +427,7 @@ int main(int argc, char** argv)
     std::printf("NimbleEditorDetailsTests\n");
     TestMaterialParameters();
     TestTextureViewer();
+    TestAnimStateGraph();
     TestViewSettings();
 
     std::printf("%d checks, %d failures\n", GChecks, GFailures);

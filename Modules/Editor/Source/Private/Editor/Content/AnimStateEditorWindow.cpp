@@ -35,6 +35,7 @@
 #include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
+#include "Private/Editor/Content/AnimStateGraph.h"
 #include "Private/Editor/Content/AnimationAssets.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -115,7 +116,7 @@ AnimStateEditorWindow* AnimStateEditorWindow::Open(const QString& InPath, QWidge
     Editor->BuildUi();
     OpenEditors().removeAll(nullptr);
     OpenEditors() << Editor;
-    Editor->resize(1400, 860);
+    Editor->resize(1760, 920);
     Editor->show();
     return Editor;
 }
@@ -158,6 +159,7 @@ void AnimStateEditorWindow::BuildUi()
     Layout->addWidget(BuildLayers());
     Layout->addWidget(BuildStates(), 1);
     Layout->addWidget(BuildTransitions(), 1);
+    Layout->addStretch(0);
 
     SaveButton   = new QPushButton(QStringLiteral("Save"), Forms);
     RevertButton = new QPushButton(QStringLiteral("Revert"), Forms);
@@ -178,12 +180,52 @@ void AnimStateEditorWindow::BuildUi()
     Scroll->setWidget(Forms);
     Scroll->setWidgetResizable(true);
 
+    /* The graph of the layer picked on the left; what is picked on the graph, edited on the left. */
+    Graph = new AnimStateGraph(this);
+    connect(Graph, &AnimStateGraph::StateSelected, this, [this](const int InState)
+    {
+        ShowDetail(false);
+        StateList->setCurrentRow(InState);
+    });
+    connect(Graph, &AnimStateGraph::TransitionSelected, this, [this](const int InTransition)
+    {
+        ShowDetail(true);
+        TransitionList->setCurrentRow(InTransition);
+    });
+    connect(Graph, &AnimStateGraph::StateMoved, this, [this](const int InState, const QPointF& InAt)
+    {
+        /* Only where it is drawn: nothing to replay, and the graph already shows it. */
+        RenderCore::AnimLayer* Layer = CurrentLayer();
+        if(!Layer || bReadOnly) { return; }
+        if(InState < 0) { Layer->AnyEditorX = float(InAt.x()); Layer->AnyEditorY = float(InAt.y()); }
+        else if(size_t(InState) < Layer->States.size())
+        {
+            Layer->States[size_t(InState)].EditorX = float(InAt.x());
+            Layer->States[size_t(InState)].EditorY = float(InAt.y());
+        }
+        Layer->bEditorPlaced = true;
+        bDirty = true;
+        UpdateTitle();
+    });
+    /* Queued: each redraws the graph, which must not happen under its own event. */
+    connect(Graph, &AnimStateGraph::AddStateRequested, this, &AnimStateEditorWindow::AddState, Qt::QueuedConnection);
+    connect(Graph, &AnimStateGraph::RemoveStateRequested, this, &AnimStateEditorWindow::RemoveState, Qt::QueuedConnection);
+    connect(Graph, &AnimStateGraph::AddTransitionRequested, this, &AnimStateEditorWindow::AddTransition, Qt::QueuedConnection);
+    connect(Graph, &AnimStateGraph::RemoveTransitionRequested, this, &AnimStateEditorWindow::RemoveTransition, Qt::QueuedConnection);
+    connect(Graph, &AnimStateGraph::EntryRequested, this, [this](const int InState)
+    {
+        RenderCore::AnimLayer* Layer = CurrentLayer();
+        if(Layer && InState >= 0 && size_t(InState) < Layer->States.size()) { Layer->EntryState = InState; Edited(true); }
+    }, Qt::QueuedConnection);
+
     auto* Split = new QSplitter(Qt::Horizontal, this);
     Split->addWidget(Scroll);
+    Split->addWidget(Graph);
     Split->addWidget(BuildPreview());
     Split->setStretchFactor(0, 0);
     Split->setStretchFactor(1, 1);
-    Split->setSizes({ 640, 760 });
+    Split->setStretchFactor(2, 0);
+    Split->setSizes({ 560, 660, 540 });
     setCentralWidget(Split);
 
     auto* SaveKey = new QAction(this);
@@ -358,9 +400,11 @@ QWidget* AnimStateEditorWindow::BuildLayers()
 
 QWidget* AnimStateEditorWindow::BuildStates()
 {
-    auto* Box = new QGroupBox(QStringLiteral("States of the layer"), this);
+    auto* Box = new QGroupBox(QStringLiteral("State -- picked on the graph"), this);
+    StateBox = Box;
     auto* Row = new QHBoxLayout(Box);
 
+    /* The list and its buttons stay, hidden: the graph picks and adds. */
     auto* ListColumn = new QVBoxLayout();
     StateList = new QListWidget(Box);
     StateList->setMaximumWidth(180);
@@ -368,6 +412,7 @@ QWidget* AnimStateEditorWindow::BuildStates()
     QPushButton *Add = nullptr, *Remove = nullptr;
     ListColumn->addLayout(AddRemoveRow(Box, QStringLiteral("state"), Add, Remove));
     Row->addLayout(ListColumn);
+    for(QWidget* Each : std::initializer_list<QWidget*>{ StateList, Add, Remove }) { Each->hide(); }
 
     StateForm = new QWidget(Box);
     auto* Form = new QFormLayout(StateForm);
@@ -460,43 +505,102 @@ QWidget* AnimStateEditorWindow::BuildStates()
     });
     connect(Add, &QPushButton::clicked, this, [this]()
     {
+        /* Right of the right-most state. */
         RenderCore::AnimLayer* Layer = CurrentLayer();
         if(!Layer) { return; }
-        RenderCore::AnimStateNode State;
-        State.Name = "State " + std::to_string(Layer->States.size() + 1);
-        Layer->States.push_back(State);
-        Edited(true);
-        StateList->setCurrentRow(StateList->count() - 1);
+        float Right = 0.0f;
+        for(const RenderCore::AnimStateNode& Each : Layer->States) { Right = std::max(Right, Each.EditorX + 240.0f); }
+        AddState(QPointF(Right, 0.0));
     });
-    connect(Remove, &QPushButton::clicked, this, [this]()
-    {
-        RenderCore::AnimLayer* Layer = CurrentLayer();
-        const int Row = StateList->currentRow();
-        if(!Layer || Row < 0 || size_t(Row) >= Layer->States.size()) { return; }
-        if(Layer->States.size() == 1)
-        {
-            QMessageBox::information(this, QStringLiteral("Anim State"), QStringLiteral("A layer keeps at least one state."));
-            return;
-        }
-        /* Its transitions go with it; the rest are renumbered. */
-        Layer->States.erase(Layer->States.begin() + Row);
-        Layer->Transitions.erase(std::remove_if(Layer->Transitions.begin(), Layer->Transitions.end(),
-                                                [Row](const RenderCore::AnimTransition& InT) { return InT.From == Row || InT.To == Row; }),
-                                 Layer->Transitions.end());
-        for(RenderCore::AnimTransition& Transition : Layer->Transitions)
-        {
-            if(Transition.From > Row) { --Transition.From; }
-            if(Transition.To > Row)   { --Transition.To; }
-        }
-        if(Layer->EntryState >= Row && Layer->EntryState > 0) { --Layer->EntryState; }
-        Edited(true);
-    });
+    connect(Remove, &QPushButton::clicked, this, [this]() { RemoveState(StateList->currentRow()); });
     return Box;
+}
+
+void AnimStateEditorWindow::AddState(const QPointF& InAt)
+{
+    RenderCore::AnimLayer* Layer = CurrentLayer();
+    if(!Layer || bReadOnly) { return; }
+    RenderCore::AnimStateNode State;
+    State.Name    = "State " + std::to_string(Layer->States.size() + 1);
+    State.EditorX = float(InAt.x());
+    State.EditorY = float(InAt.y());
+    Layer->States.push_back(State);
+    Edited(true);
+    ShowDetail(false);
+    StateList->setCurrentRow(StateList->count() - 1);
+    SyncGraph();
+}
+
+void AnimStateEditorWindow::RemoveState(const int InState)
+{
+    RenderCore::AnimLayer* Layer = CurrentLayer();
+    if(!Layer || bReadOnly || InState < 0 || size_t(InState) >= Layer->States.size()) { return; }
+    if(Layer->States.size() == 1)
+    {
+        QMessageBox::information(this, QStringLiteral("Anim State"), QStringLiteral("A layer keeps at least one state."));
+        return;
+    }
+    /* Its transitions go with it; the rest are renumbered. */
+    Layer->States.erase(Layer->States.begin() + InState);
+    Layer->Transitions.erase(std::remove_if(Layer->Transitions.begin(), Layer->Transitions.end(),
+                                            [InState](const RenderCore::AnimTransition& InT) { return InT.From == InState || InT.To == InState; }),
+                             Layer->Transitions.end());
+    for(RenderCore::AnimTransition& Transition : Layer->Transitions)
+    {
+        if(Transition.From > InState) { --Transition.From; }
+        if(Transition.To > InState)   { --Transition.To; }
+    }
+    if(Layer->EntryState >= InState && Layer->EntryState > 0) { --Layer->EntryState; }
+    Edited(true);
+}
+
+void AnimStateEditorWindow::AddTransition(const int InFrom, const int InTo)
+{
+    RenderCore::AnimLayer* Layer = CurrentLayer();
+    if(!Layer || bReadOnly || InTo < 0 || size_t(InTo) >= Layer->States.size()) { return; }
+    RenderCore::AnimTransition Transition;
+    Transition.From = InFrom;
+    Transition.To   = InTo;
+    Layer->Transitions.push_back(Transition);
+    Edited(true);
+    ShowDetail(true);
+    TransitionList->setCurrentRow(TransitionList->count() - 1);
+    SyncGraph();
+}
+
+void AnimStateEditorWindow::RemoveTransition(const int InTransition)
+{
+    RenderCore::AnimLayer* Layer = CurrentLayer();
+    if(!Layer || bReadOnly || InTransition < 0 || size_t(InTransition) >= Layer->Transitions.size()) { return; }
+    Layer->Transitions.erase(Layer->Transitions.begin() + InTransition);
+    Edited(true);
+}
+
+void AnimStateEditorWindow::ShowDetail(const bool bInTransition)
+{
+    StateBox->setVisible(!bInTransition);
+    TransitionBox->setVisible(bInTransition);
+}
+
+void AnimStateEditorWindow::SyncGraph()
+{
+    if(!Graph) { return; }
+    RenderCore::AnimLayer* Layer = CurrentLayer();
+    if(Layer && !Layer->bEditorPlaced)
+    {
+        AnimStateGraph::LayOut(*Layer);   // where it is drawn: not an edit to save
+    }
+    Graph->SetLayer(Layer, bReadOnly);
+    if(TransitionBox->isVisible()) { Graph->SetSelection(-1, TransitionList->currentRow()); }
+    else                           { Graph->SetSelection(StateList->currentRow(), -1); }
+    UpdateLive();
 }
 
 QWidget* AnimStateEditorWindow::BuildTransitions()
 {
-    auto* Box = new QGroupBox(QStringLiteral("Transitions of the layer -- the first that holds, in order"), this);
+    auto* Box = new QGroupBox(QStringLiteral("Transition -- picked on the graph; of a state's, the first that holds fires"), this);
+    TransitionBox = Box;
+    Box->hide();   // until one is picked
     auto* Row = new QHBoxLayout(Box);
 
     auto* ListColumn = new QVBoxLayout();
@@ -506,6 +610,7 @@ QWidget* AnimStateEditorWindow::BuildTransitions()
     QPushButton *Add = nullptr, *Remove = nullptr;
     ListColumn->addLayout(AddRemoveRow(Box, QStringLiteral("transition"), Add, Remove));
     Row->addLayout(ListColumn);
+    for(QWidget* Each : std::initializer_list<QWidget*>{ TransitionList, Add, Remove }) { Each->hide(); }
 
     TransitionForm = new QWidget(Box);
     auto* Form = new QFormLayout(TransitionForm);
@@ -585,21 +690,10 @@ QWidget* AnimStateEditorWindow::BuildTransitions()
     {
         RenderCore::AnimLayer* Layer = CurrentLayer();
         if(!Layer) { return; }
-        RenderCore::AnimTransition Transition;
-        Transition.From = std::max(StateList->currentRow(), 0);
-        Transition.To   = Layer->States.size() > 1 ? (Transition.From + 1) % int32_t(Layer->States.size()) : 0;
-        Layer->Transitions.push_back(Transition);
-        Edited(true);
-        TransitionList->setCurrentRow(TransitionList->count() - 1);
+        const int From = std::max(StateList->currentRow(), 0);
+        AddTransition(From, Layer->States.size() > 1 ? (From + 1) % int(Layer->States.size()) : 0);
     });
-    connect(Remove, &QPushButton::clicked, this, [this]()
-    {
-        RenderCore::AnimLayer* Layer = CurrentLayer();
-        const int Row = TransitionList->currentRow();
-        if(!Layer || Row < 0 || size_t(Row) >= Layer->Transitions.size()) { return; }
-        Layer->Transitions.erase(Layer->Transitions.begin() + Row);
-        Edited(true);
-    });
+    connect(Remove, &QPushButton::clicked, this, [this]() { RemoveTransition(TransitionList->currentRow()); });
     return Box;
 }
 
@@ -716,7 +810,11 @@ void AnimStateEditorWindow::Edited(const bool bInStructure, const bool bInDirty)
     bDirty = bInDirty;
     if(bInStructure)
     {
-        FillAll();
+        FillAll();   // and the graph, through FillLayer
+    }
+    else
+    {
+        SyncGraph();   // a state's blend or clip: its box says so
     }
 
     /* What would keep it from playing, and what would quietly do nothing. */
@@ -913,6 +1011,7 @@ void AnimStateEditorWindow::FillLayer()
     bFilling = bWas;
     FillStates();
     FillTransitions();
+    SyncGraph();
 }
 
 void AnimStateEditorWindow::FillStates()
@@ -1146,6 +1245,11 @@ void AnimStateEditorWindow::UpdateLive()
                                                        Instance.IsInTransition(Layer) ? QStringLiteral(" (blending in)") : QString());
     }
     LiveStates->setText(Lines.join(QStringLiteral("<br>")));
+    const int Layer = LayerList ? LayerList->currentRow() : -1;
+    if(Graph && Layer >= 0 && size_t(Layer) < Instance.GetLayerCount())
+    {
+        Graph->SetLive(Instance.GetCurrentState(size_t(Layer)), Instance.IsInTransition(size_t(Layer)));
+    }
 }
 
 void AnimStateEditorWindow::UpdateTitle()

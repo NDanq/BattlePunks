@@ -11,6 +11,7 @@
 #include "Private/Editor/Content/AnimPreviewWidget.h"
 
 class AnimPreviewWidget;
+class AnimStateGraph;
 class QCheckBox;
 class QComboBox;
 class QDoubleSpinBox;
@@ -23,12 +24,13 @@ class QPushButton;
 class QTableWidget;
 
 /*
- * An .nmanimstate, edited as forms (ANIMATION.md): its parameters; its
- * layers, each with a weight, a weight parameter and a bone mask; each
- * layer's states -- a clip, or a blend space of clips along a parameter --
- * and the transitions between them, with their conditions. Beside them, a
- * skinned mesh on the clips' skeleton plays it live, its parameters to drive
- * by hand. Save writes the file and restages it, so levels pick it up.
+ * An .nmanimstate (ANIMATION.md): its parameters and layers as forms; the
+ * selected layer's states and transitions as a graph (AnimStateGraph), what
+ * is picked there edited in a form beside it -- a state's clip or blend
+ * space, a transition's crossfade and conditions. Beside them, a skinned
+ * mesh on the clips' skeleton plays it live, its parameters to drive by
+ * hand, the state it is in lit on the graph. Save writes the file and
+ * restages it, so levels pick it up.
  *
  * A parameter renamed here is renamed where it is used; a state removed
  * takes its transitions with it. One window per file.
@@ -74,6 +76,18 @@ private:
     void FillTransitions();
     void FillTransition();
     void FillLive();
+
+    /* The graph: the current layer redrawn (laid out first if no one has
+     * placed it), with what the forms have selected. */
+    void SyncGraph();
+    /* The state form, or the transition form, beside the graph. */
+    void ShowDetail(bool bInTransition);
+
+    /* The graph's (and the hidden lists') edits to the current layer. */
+    void AddState(const QPointF& InAt);
+    void RemoveState(int InState);
+    void AddTransition(int InFrom, int InTo);
+    void RemoveTransition(int InTransition);
     void UpdateLive();
     void UpdateTitle();
     void PickMesh(const QString& InFile);
@@ -110,7 +124,11 @@ private:
     QComboBox*      LayerBlend  = nullptr;   // override or additive
     QComboBox*      LayerBase   = nullptr;   // an additive layer's base
 
-    QListWidget*    StateList   = nullptr;
+    AnimStateGraph* Graph       = nullptr;
+    QGroupBox*      StateBox    = nullptr;
+    QGroupBox*      TransitionBox = nullptr;
+
+    QListWidget*    StateList   = nullptr;   // hidden: the selection model behind the graph
     QWidget*        StateForm   = nullptr;
     QLineEdit*      StateName   = nullptr;
     QDoubleSpinBox* StateSpeed  = nullptr;
@@ -119,7 +137,7 @@ private:
     QComboBox*      StateBlendY = nullptr;   // a second: a 2D blend space
     QTableWidget*   SampleTable = nullptr;
 
-    QListWidget*    TransitionList = nullptr;
+    QListWidget*    TransitionList = nullptr;   // hidden, likewise
     QWidget*        TransitionForm = nullptr;
     QComboBox*      TransitionFrom = nullptr;
     QComboBox*      TransitionTo   = nullptr;

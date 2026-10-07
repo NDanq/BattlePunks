@@ -36,9 +36,9 @@ namespace EngineCore
  *
  *   NAST v1      the file
  *     APRM v1    the parameters: name, type, default
- *     ALYR v3    the layers, each with its states and transitions
- *                (v2: no Blend or AdditiveBase; v1: nor 2D blend spaces --
- *                BlendParameterY, PositionY)
+ *     ALYR v4    the layers, each with its states and transitions
+ *                (v3: no editor positions; v2: nor Blend or AdditiveBase;
+ *                v1: nor 2D blend spaces -- BlendParameterY, PositionY)
  *
  * Clips are named by runtime path; skeletons are not -- a state plays on
  * whatever skeleton its entity's mesh has, its clips binding by bone name.
@@ -77,6 +77,7 @@ namespace RenderCore
         std::string                  BlendParameterY;  // a second: a 2D blend space; empty: 1D (or none)
         float                        Speed = 1.0f;
         EAnimLoop                    Loop  = EAnimLoop::Clip;
+        float                        EditorX = 0.0f, EditorY = 0.0f;   // where the anim state editor draws it; not played
     };
 
     enum class EAnimCompare : uint8_t
@@ -126,6 +127,8 @@ namespace RenderCore
         int32_t                     EntryState = 0;
         std::vector<AnimStateNode>  States;
         std::vector<AnimTransition> Transitions;
+        float                       AnyEditorX = 0.0f, AnyEditorY = 0.0f;   // the editor's Any State node
+        bool                        bEditorPlaced = false;                  // false: the editor lays the states out
     };
 
     struct AnimStateData

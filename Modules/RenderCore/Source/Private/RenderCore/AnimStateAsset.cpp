@@ -49,7 +49,8 @@ namespace RenderCore
         /* InVersion: the ALYR chunk's (AnimStateAsset.h). */
         void SerializeLayer(EngineCore::Archive& Ar, AnimLayer& InOutLayer, const uint16_t InVersion)
         {
-            const bool b2D = InVersion >= 2;
+            const bool b2D     = InVersion >= 2;
+            const bool bPlaced = InVersion >= 4;
             Ar << InOutLayer.Name << InOutLayer.Weight << InOutLayer.WeightParameter << InOutLayer.EntryState;
             if(InVersion >= 3)
             {
@@ -57,10 +58,12 @@ namespace RenderCore
                 SerializeEnum(Ar, InOutLayer.AdditiveBase);
             }
             SerializeList(Ar, InOutLayer.MaskBones, [](EngineCore::Archive& InAr, std::string& InOutBone) { InAr << InOutBone; });
-            SerializeList(Ar, InOutLayer.States, [b2D](EngineCore::Archive& InAr, AnimStateNode& InOutState)
+            if(bPlaced) { Ar << InOutLayer.bEditorPlaced << InOutLayer.AnyEditorX << InOutLayer.AnyEditorY; }
+            SerializeList(Ar, InOutLayer.States, [b2D, bPlaced](EngineCore::Archive& InAr, AnimStateNode& InOutState)
             {
                 InAr << InOutState.Name << InOutState.BlendParameter << InOutState.Speed;
                 if(b2D) { InAr << InOutState.BlendParameterY; }
+                if(bPlaced) { InAr << InOutState.EditorX << InOutState.EditorY; }
                 SerializeEnum(InAr, InOutState.Loop);
                 SerializeList(InAr, InOutState.Samples, [b2D](EngineCore::Archive& InSampleAr, AnimBlendSample& InOutSample)
                 {
@@ -153,7 +156,7 @@ namespace RenderCore
             });
             Ar.CloseChunk();
         }
-        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_LAYERS, 3, "anim state: no ALYR chunk"))
+        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_LAYERS, 4, "anim state: no ALYR chunk"))
         {
             const uint16_t Version = Ar.GetChunkVersion();
             SerializeList(Ar, InOutState.Layers, [Version](EngineCore::Archive& InAr, AnimLayer& InOutLayer) { SerializeLayer(InAr, InOutLayer, Version); });
