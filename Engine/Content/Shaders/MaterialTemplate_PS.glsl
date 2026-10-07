@@ -125,6 +125,9 @@ void main(void)
     float Alpha = 1.0;
 #if MATERIAL_DOMAIN_TRANSLUCENT
     Alpha = clamp(Surface.Opacity, 0.0, 1.0);
+    // A pixel that would change the scene by under half a step of 8 bits
+    // (soft particles' corners and fringes) skips its blend: no colour write.
+    if(Alpha * max(1.0, max(Color.r, max(Color.g, Color.b))) < 0.5 / 255.0) { discard; }
 #endif
     Output = vec4(Color, Alpha);
 #endif

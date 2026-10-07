@@ -2462,6 +2462,10 @@ namespace RenderCore
         {
             return false;
         }
+        if(InEmitter.bIdle)
+        {
+            return true;   // every particle dead: nothing to draw
+        }
         Material* Chosen = P->SectionMaterial(InMaterial && InMaterial[0] != '\0' ? InMaterial : nullptr, std::string());
         if(!Chosen)
         {

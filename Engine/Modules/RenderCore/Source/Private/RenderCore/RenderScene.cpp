@@ -518,7 +518,7 @@ namespace RenderCore
         double  GpuSums[RGT_Count]   = {};
         int     GpuSamples[RGT_Count] = {};
         int64_t GpuWindowStartNs     = 0;
-        float   GpuMs[RGT_Count]     = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        float   GpuMs[RGT_Count]     = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
 
         void AddGpuTimes(const float (&InGpuMs)[RGT_Count])
         {
@@ -915,16 +915,6 @@ namespace RenderCore
          * everything below nests under it (RENDERPIPELINE.md, "Draw events"). */
         InContext.BeginDrawEvent("Scene");
 
-        /* GPU work each proxy needs once a frame (RenderProxy::Simulate) --
-         * particles -- outside any target, against the scene's own view. */
-        {
-            SCOPED_DRAW_EVENT("Simulate");
-            for(RenderProxy* Proxy : P->Proxies)
-            {
-                Proxy->Simulate(InContext);
-            }
-        }
-
         /* "stat frame": the last GDI block's GPU times, to the scene that wrote
          * them (they are complete only now), and this block's own, if shown. */
         const StatUnitSnapshot Stats = GetStatUnit();
@@ -939,6 +929,19 @@ namespace RenderCore
             {
                 P->ClearGpuTimes();
             }
+        }
+
+        /* GPU work each proxy needs once a frame (RenderProxy::Simulate) --
+         * particles -- outside any target, against the scene's own view;
+         * after the timed block opens, so "stat frame" times them. */
+        {
+            SCOPED_DRAW_EVENT("Simulate");
+            InContext.WriteGpuTimestamp(RGT_Particles, false);   // 0 with no emitters, not "-"
+            for(RenderProxy* Proxy : P->Proxies)
+            {
+                Proxy->Simulate(InContext);
+            }
+            InContext.WriteGpuTimestamp(RGT_Particles, true);
         }
 
 #if WITH_EDITOR

@@ -135,13 +135,14 @@ namespace RenderCore
         RGT_PostProcess,
         RGT_Total,               // the whole scene, start to end of its stages
         RGT_SceneCapture,        // every Scene Capture Probe's views, before the scene's stages (not in Total)
+        RGT_Particles,           // every particle emitter's compute passes, before the captures (not in Total)
         RGT_Count
     };
 
     /* "BasePass", "Total", ... */
     inline const char* GetRenderGpuTimerName(const ERenderGpuTimer InTimer)
     {
-        static const char* const Names[RGT_Count] = { "PrePass", "BasePass", "AO", "Shadows", "Lighting", "Forward", "PostProcess", "Total", "Captures" };
+        static const char* const Names[RGT_Count] = { "PrePass", "BasePass", "AO", "Shadows", "Lighting", "Forward", "PostProcess", "Total", "Captures", "Particles" };
         return InTimer < RGT_Count ? Names[InTimer] : "";
     }
 
@@ -186,7 +187,7 @@ namespace RenderCore
         /* "stat frame" (Stats.Frame on, and a backend that can time the GPU):
          * the default scene's GPU time per span, averaged over half a second;
          * -1 where it was not timed (off, or the span did not run). */
-        float GpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
+        float GpuMs[RGT_Count] = { -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f, -1.0f };
     };
 }
 

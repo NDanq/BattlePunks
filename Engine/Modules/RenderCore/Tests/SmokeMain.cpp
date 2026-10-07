@@ -494,11 +494,11 @@ static void TestStatUnit()
         Rend.Shutdown();
     }
 
-    float Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f, 0.6f };
+    float Times[RGT_Count] = { 0.01f, 0.5f, -1.0f, 1.25f, 0.2f, 0.05f, 0.75f, 2.8f, 0.6f, 0.3f };
     const std::string FrameText = FormatStatFrame(Times, true);
     Expect(FrameText == "GPU            ms\nPrePass      0.01\nBasePass     0.50\nAO              -\nShadows      1.25\n"
-                        "Lighting     0.20\nForward      0.05\nPostProcess  0.75\nTotal        2.80\nCaptures     0.60",
-           "stat frame's text, a line per stage, the scene captures after the total");
+                        "Lighting     0.20\nForward      0.05\nPostProcess  0.75\nTotal        2.80\nCaptures     0.60\nParticles    0.30",
+           "stat frame's text, a line per stage, the scene captures and particles after the total");
     Expect(FormatStatFrame(Times, false) == "GPU: not timed on this backend", "and a line saying so where the GPU is not timed");
 }
 
@@ -3048,6 +3048,7 @@ static void TestStatFrameOnGpu()
         Expect(On.GpuMs[RGT_Total] + 0.05f >= Stages, "and the stages fit inside the total");
         Expect(On.GpuMs[RGT_Shadows] > 0.0f && On.GpuMs[RGT_BasePass] > 0.0f, "the shadow and base passes take time");
         Expect(On.GpuMs[RGT_SceneCapture] >= 0.0f, "the scene captures are timed, if only as nothing");
+        Expect(On.GpuMs[RGT_Particles] >= 0.0f, "the particle passes are timed, if only as nothing");
 
         FrameVar->SetBool(false);
         Run(100);
