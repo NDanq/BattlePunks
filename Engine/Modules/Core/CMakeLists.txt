@@ -193,6 +193,10 @@ if(CORE_WITH_SIMD AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64|i.86)
     target_compile_definitions(EngineCore PUBLIC WITH_SIMD)
     if(MSVC)
         target_compile_options(EngineCore PUBLIC /arch:AVX2)
+        # alignas(16) vectors exceed MSVC's max_align_t (8), so the STL's
+        # aligned_storage (std::stable_sort's buffer, say) static_asserts
+        # unless this confirms the conforming, extended-alignment layout.
+        target_compile_definitions(EngineCore PUBLIC _ENABLE_EXTENDED_ALIGNED_STORAGE)
     else()
         target_compile_options(EngineCore PUBLIC -mavx2 -mfma)
     endif()
