@@ -60,6 +60,13 @@ namespace RenderCore
         float    DistanceScale     = 1.0f;    // multiplies the sun's ShadowDistance
         int32_t  MaxInsetShadows   = int32_t(RENDER_INSET_SHADOW_MAX);   // Render components' inset shadows a view
         int32_t  InsetFilter       = 1;       // theirs, as Filter: their maps are sharp, so smaller
+        /* Sun contact shadows (RENDERPIPELINE.md, "Contact shadows"): a short screen-space march
+         * toward the sun from each lit pixel, for the small shadows the shadow maps are too coarse for. */
+        uint8_t  bContactShadows   = 0;
+        float    ContactLength     = 25.0f;   // how far toward the sun it looks, world units
+        float    ContactThickness  = 6.0f;    // how deep a surface in the depth buffer is taken to be, world units
+        int32_t  ContactSteps      = 12;      // samples along the march, 4-32
+        float    ContactStrength   = 1.0f;    // 0 none, 1 a full shadow where it hits
     };
 
     /* One Render component that asked for an inset shadow (Cast Inset

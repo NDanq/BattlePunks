@@ -114,6 +114,18 @@ namespace
           "usually looks the same and costs less" },
         { "Shadows", "DistanceScale",     "Sun shadow distance scale",
           "Multiplies every Directional Light's Shadow Distance: lower is sharper and shorter" },
+        { "Shadows", "ContactShadows",    "Sun contact shadows",
+          "A short screen-space march toward the sun from each lit pixel, for the small shadows the shadow maps "
+          "are too coarse for: where things meet the ground, between tiles. Only where the sun casts" },
+        { "Shadows", "ContactLength",     "Contact shadow length",
+          "How far toward the sun they look, world units: longer finds more, softer and with more misses" },
+        { "Shadows", "ContactThickness",  "Contact shadow thickness",
+          "How deep a surface in the depth buffer is taken to be, world units: too thin and rails and bars miss; "
+          "too thick and edges cast halos" },
+        { "Shadows", "ContactSteps",      "Contact shadow samples",
+          "Samples along each pixel's march, 4-32: more is cleaner and costs more" },
+        { "Shadows", "ContactStrength",   "Contact shadow strength",
+          "0 none, 1 a full shadow where they hit" },
         { "Modules", "NetCore",           "Networking (NetCore)",
           "Build the game with networking: replication, RPCs, its dedicated server (<Game>Server) and -connect. "
           "Off, Net components load but do not replicate. Takes effect at the game's next build" },

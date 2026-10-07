@@ -223,7 +223,8 @@ mesh casts, and **Cast Inset Shadow** gives it a sun shadow map of its own (see
 [Inset shadows](#inset-shadows)). Every scene's quality is the `[Shadows]` config section, a
 project setting (the game's DefaultEngine.ini; Edit > Project Settings >
 Shadows edits it and applies it at once): Enabled, Resolution,
-Filter, MaxShadowedLights, DistanceScale, MaxInsetShadows and InsetFilter.
+Filter, MaxShadowedLights, DistanceScale, MaxInsetShadows and InsetFilter,
+and the sun's [contact shadows](#contact-shadows).
 
 | Technique | Lights | What it draws |
 |---|---|---|
@@ -257,6 +258,40 @@ Limits: Masked casters cast their whole shape (their clip is not run in the
 Shadows sub-stage); a quad casts nothing; Translucent Lit surfaces are
 unshadowed; Metal, which cannot sample a depth target, draws no shadows (warned
 once). A material preview never draws shadows.
+
+### Contact shadows
+
+The shadow maps hold a texel of several world units at best, so the shadow
+where a thing meets the ground, under a rim, or between roof tiles is lost.
+**Sun contact shadows** find it in screen space, in the Lighting stage:
+
+- **The march:** from each lit pixel the sun lights (N.L > 0, where the
+  sun casts), Lighting.glsl's `ContactShadow` steps ContactLength world
+  units toward the sun in ContactSteps samples, starting a little off the
+  surface (more with distance, where the depth is coarser) and jittered
+  per pixel (interleaved gradient noise). Each sample is projected with
+  `Scene_ViewProjection` and compared with the scene depth there, as view
+  depth: behind the surface by more than the depth buffer's error and by
+  less than ContactThickness, it is in shadow.
+- **The result:** 1 minus ContactStrength at the first hit, softer the
+  further along the march it hit, gone past 50 m; `min`'d with the sun's
+  map (and inset) shadow, so Modulated and Standard suns take it the same
+  way. Only the deferred pass has a depth to march through
+  (`LIGHTING_CONTACT_SHADOWS`); forward (Translucent Lit) surfaces get none.
+- **Settings** (`[Shadows]`, Project Settings > Shadows): ContactShadows
+  (off by default), ContactLength (25), ContactThickness (6), ContactSteps
+  (4-32, 12) and ContactStrength (0-1, 1). `Scene_ContactShadow` carries
+  them, its length 0 when off -- or when shadows are not drawn at all, so
+  Enabled turns them off too.
+- **Limits:** screen space -- a caster off screen or behind something
+  casts nothing; a surface thinner than ContactThickness (a rail, a bar)
+  can cast a halo past its back; the sun only, not point or spot lights.
+
+Cost: about 0.4 ms of the Lighting stage at 1280 x 720, 12 samples, on an
+integrated GPU (Intel Arc B390, LightLab's Courtyard). Verified
+(`NIMBLE_SMOKE_GPU=Vulkan`): with the sun's map cut short of the floating
+box, contact shadows alone darken the floor under it (1094 pixels, against
+1091 for its full map shadow), and lighten nothing.
 
 ### Inset shadows
 
