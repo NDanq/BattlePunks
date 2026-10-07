@@ -358,8 +358,12 @@ QWidget* AnimStateEditorWindow::BuildStates()
     StateBlend = new QComboBox(StateForm);
     StateBlend->setToolTip(QStringLiteral("None: the first clip alone. A float parameter: a blend space -- each clip plays fully at its "
                                           "position, and between two the parameter blends them"));
-    SampleTable = MakeTable(StateForm, { QStringLiteral("Clip (.nmanim)"), QStringLiteral("Position") });
+    StateBlendY = new QComboBox(StateForm);
+    StateBlendY->setToolTip(QStringLiteral("None: a 1D blend space. A second float parameter: a 2D one -- each clip at a point "
+                                           "(X, Y), the parameters' point blending those round it (speed by direction, say)"));
+    SampleTable = MakeTable(StateForm, { QStringLiteral("Clip (.nmanim)"), QStringLiteral("X"), QStringLiteral("Y") });
     SampleTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    SampleTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     QPushButton *AddSample = nullptr, *RemoveSample = nullptr;
     auto* SampleColumn = new QVBoxLayout();
     SampleColumn->addWidget(SampleTable);
@@ -368,6 +372,7 @@ QWidget* AnimStateEditorWindow::BuildStates()
     Form->addRow(QStringLiteral("Speed"), StateSpeed);
     Form->addRow(QStringLiteral("Loop"), StateLoop);
     Form->addRow(QStringLiteral("Blend Parameter"), StateBlend);
+    Form->addRow(QStringLiteral("Blend Parameter Y"), StateBlendY);
     Form->addRow(QStringLiteral("Clips"), SampleColumn);
     Row->addWidget(StateForm, 1);
 
@@ -390,21 +395,34 @@ QWidget* AnimStateEditorWindow::BuildStates()
         {
             State->BlendParameter = InIndex <= 0 ? std::string() : StateBlend->itemText(InIndex).toStdString();
             Edited();
+            FillState();   // Y needs an X
+        }
+    });
+    connect(StateBlendY, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(RenderCore::AnimStateNode* State = CurrentState())
+        {
+            State->BlendParameterY = InIndex <= 0 ? std::string() : StateBlendY->itemText(InIndex).toStdString();
+            Edited();
+            FillState();
         }
     });
     connect(SampleTable, &QTableWidget::itemChanged, this, [this](QTableWidgetItem* InItem)
     {
         RenderCore::AnimStateNode* State = CurrentState();
-        if(bFilling || !State || InItem->row() < 0 || size_t(InItem->row()) >= State->Samples.size() || InItem->column() != 1) { return; }
-        State->Samples[size_t(InItem->row())].Position = InItem->text().toFloat();
+        if(bFilling || !State || InItem->row() < 0 || size_t(InItem->row()) >= State->Samples.size() || InItem->column() < 1) { return; }
+        RenderCore::AnimBlendSample& Sample = State->Samples[size_t(InItem->row())];
+        (InItem->column() == 1 ? Sample.Position : Sample.PositionY) = InItem->text().toFloat();
         Edited();
     });
     connect(AddSample, &QPushButton::clicked, this, [this]()
     {
         RenderCore::AnimStateNode* State = CurrentState();
         if(!State) { return; }
-        const float Next = State->Samples.empty() ? 0.0f : State->Samples.back().Position + 100.0f;
-        State->Samples.push_back({ std::string(), Next });
+        /* 1D: past the last. 2D: where the last was -- moved from there. */
+        const bool  b2D  = !State->BlendParameterY.empty();
+        const float Next = State->Samples.empty() ? 0.0f : State->Samples.back().Position + (b2D ? 0.0f : 100.0f);
+        State->Samples.push_back({ std::string(), Next, State->Samples.empty() ? 0.0f : State->Samples.back().PositionY });
         Edited();
         FillState();
     });
@@ -658,6 +676,7 @@ void AnimStateEditorWindow::RenameParameter(const std::string& InOld, const std:
         for(RenderCore::AnimStateNode& State : Layer.States)
         {
             if(State.BlendParameter == InOld) { State.BlendParameter = InNew; }
+            if(State.BlendParameterY == InOld) { State.BlendParameterY = InNew; }
         }
         for(RenderCore::AnimTransition& Transition : Layer.Transitions)
         {
@@ -698,6 +717,11 @@ void AnimStateEditorWindow::Edited(const bool bInStructure, const bool bInDirty)
         {
             const QString Where = QStringLiteral("State %1").arg(ToQ(State.Name));
             CheckParameter(State.BlendParameter, Where);
+            CheckParameter(State.BlendParameterY, Where);
+            if(!State.BlendParameterY.empty() && State.BlendParameter.empty())
+            {
+                Found << QStringLiteral("%1: a Y blend parameter but no X -- it plays its first clip alone").arg(Where);
+            }
             for(const RenderCore::AnimBlendSample& Sample : State.Samples)
             {
                 if(Sample.Clip.empty() || !QFileInfo::exists(EditorAnimation::FileOfRuntimePath(ToQ(Sample.Clip))))
@@ -893,6 +917,9 @@ void AnimStateEditorWindow::FillState()
     StateBlend->clear();
     StateBlend->addItem(QStringLiteral("(none)"));
     StateBlend->addItems(ParameterNames(true));
+    StateBlendY->clear();
+    StateBlendY->addItem(QStringLiteral("(none)"));
+    StateBlendY->addItems(ParameterNames(true));
     SampleTable->setRowCount(0);
     if(State)
     {
@@ -900,6 +927,9 @@ void AnimStateEditorWindow::FillState()
         StateSpeed->setValue(double(State->Speed));
         StateLoop->setCurrentIndex(int(State->Loop));
         StateBlend->setCurrentIndex(std::max(StateBlend->findText(ToQ(State->BlendParameter)), 0));
+        StateBlendY->setCurrentIndex(std::max(StateBlendY->findText(ToQ(State->BlendParameterY)), 0));
+        StateBlendY->setEnabled(!State->BlendParameter.empty() || !State->BlendParameterY.empty());
+        SampleTable->setColumnHidden(2, State->BlendParameterY.empty());
 
         /* Clips by file name -- what tells them apart in a narrow column --
          * with the runtime path as the data and the tip. A name two folders
@@ -950,6 +980,7 @@ void AnimStateEditorWindow::FillState()
             });
             SampleTable->setCellWidget(int(Index), 0, Clip);
             SampleTable->setItem(int(Index), 1, new QTableWidgetItem(QString::number(double(State->Samples[Index].Position))));
+            SampleTable->setItem(int(Index), 2, new QTableWidgetItem(QString::number(double(State->Samples[Index].PositionY))));
         }
     }
     bFilling = bWas;

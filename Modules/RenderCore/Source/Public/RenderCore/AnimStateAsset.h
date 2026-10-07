@@ -19,7 +19,9 @@ namespace EngineCore
  * drive it; it is made of layers, each a state machine:
  *
  *   - a STATE plays one clip, or blends several along a float parameter (a
- *     1D blend space: idle at Speed 0, walk at 150, run at 400);
+ *     1D blend space: idle at Speed 0, walk at 150, run at 400), or two (a
+ *     2D blend space: walks forward, back and to each side, by speed and
+ *     direction);
  *   - a TRANSITION moves from one state (or any) to another when its
  *     conditions hold -- optionally only as the state's clip ends -- cross-
  *     fading over its Duration;
@@ -31,7 +33,8 @@ namespace EngineCore
  *
  *   NAST v1      the file
  *     APRM v1    the parameters: name, type, default
- *     ALYR v1    the layers, each with its states and transitions
+ *     ALYR v2    the layers, each with its states and transitions
+ *                (v1: no 2D blend spaces -- BlendParameterY, PositionY)
  *
  * Clips are named by runtime path; skeletons are not -- a state plays on
  * whatever skeleton its entity's mesh has, its clips binding by bone name.
@@ -55,8 +58,9 @@ namespace RenderCore
     /* One clip of a state: alone, or a point of its blend space. */
     struct AnimBlendSample
     {
-        std::string Clip;            // an .nmanim, by runtime path
-        float       Position = 0.0f; // where it plays fully, along the blend parameter
+        std::string Clip;             // an .nmanim, by runtime path
+        float       Position  = 0.0f; // where it plays fully, along the blend parameter
+        float       PositionY = 0.0f; // and along BlendParameterY, in a 2D blend space
     };
 
     enum class EAnimLoop : uint8_t { Clip = 0, Once = 1, Loop = 2 };   // Clip: as each clip says
@@ -66,6 +70,7 @@ namespace RenderCore
         std::string                  Name;
         std::vector<AnimBlendSample> Samples;          // one: a clip; more: a blend space
         std::string                  BlendParameter;   // a Float parameter; empty: the first sample alone
+        std::string                  BlendParameterY;  // a second: a 2D blend space; empty: 1D (or none)
         float                        Speed = 1.0f;
         EAnimLoop                    Loop  = EAnimLoop::Clip;
     };

@@ -52,11 +52,12 @@ namespace RenderCore
         RefPose.clear();
         if(Skeleton) { GetRefPose(*Skeleton, RefPose); }
 
-        const auto MakeSample = [this](std::shared_ptr<const AnimClipData> InClip, const float InPosition)
+        const auto MakeSample = [this](std::shared_ptr<const AnimClipData> InClip, const float InPosition, const float InPositionY)
         {
             Sample Out;
-            Out.Clip     = std::move(InClip);
-            Out.Position = InPosition;
+            Out.Clip      = std::move(InClip);
+            Out.Position  = InPosition;
+            Out.PositionY = InPositionY;
             if(Out.Clip && Skeleton)
             {
                 BindClip(*Out.Clip, *Skeleton, Out.Binding);
@@ -74,7 +75,7 @@ namespace RenderCore
             /* A lone clip: one layer of one state. */
             LayerRuntime Layer;
             StateRuntime Only;
-            if(Clip) { Only.Samples.push_back(MakeSample(Clip, 0.0f)); }
+            if(Clip) { Only.Samples.push_back(MakeSample(Clip, 0.0f, 0.0f)); }
             Only.Loop = LoopOverride < 0 ? EAnimLoop::Clip : LoopOverride == 0 ? EAnimLoop::Once : EAnimLoop::Loop;
             Layer.States.push_back(std::move(Only));
             Layers.push_back(std::move(Layer));
@@ -100,11 +101,12 @@ namespace RenderCore
                 StateRuntime Runtime;
                 Runtime.Name           = Node.Name;
                 Runtime.BlendParameter = Node.BlendParameter.empty() ? -1 : State->FindParameter(Node.BlendParameter);
+                Runtime.BlendParameterY = Node.BlendParameterY.empty() || Runtime.BlendParameter < 0 ? -1 : State->FindParameter(Node.BlendParameterY);
                 Runtime.Speed          = Node.Speed;
                 Runtime.Loop           = Node.Loop;
                 for(const AnimBlendSample& Each : Node.Samples)
                 {
-                    Runtime.Samples.push_back(MakeSample(AnimClipAssetCache::Find(Each.Clip), Each.Position));
+                    Runtime.Samples.push_back(MakeSample(AnimClipAssetCache::Find(Each.Clip), Each.Position, Each.PositionY));
                 }
                 std::stable_sort(Runtime.Samples.begin(), Runtime.Samples.end(),
                                  [](const Sample& InA, const Sample& InB) { return InA.Position < InB.Position; });
@@ -173,8 +175,14 @@ namespace RenderCore
             OutWeights[0] = 1.0f;
             return;
         }
-        /* A 1D blend space: the two samples either side of the parameter, by distance. */
         const float X = Parameters[size_t(InState.BlendParameter)];
+        if(InState.BlendParameterY >= 0 && size_t(InState.BlendParameterY) < Parameters.size())
+        {
+            SampleWeights2D(InState, X, Parameters[size_t(InState.BlendParameterY)], OutWeights, OutDominant);
+            return;
+        }
+
+        /* A 1D blend space: the two samples either side of the parameter, by distance. */
         if(X <= InState.Samples.front().Position) { OutWeights.front() = 1.0f; return; }
         if(X >= InState.Samples.back().Position)  { OutWeights.back() = 1.0f; OutDominant = Count - 1; return; }
         for(size_t Index = 0; Index + 1 < Count; ++Index)
@@ -188,6 +196,45 @@ namespace RenderCore
                 OutDominant = T > 0.5f ? Index + 1 : Index;
                 return;
             }
+        }
+    }
+
+    void AnimInstance::SampleWeights2D(const StateRuntime& InState, const float InX, const float InY,
+                                       std::vector<float>& OutWeights, size_t& OutDominant)
+    {
+        /* Gradient band interpolation (Johansen, "Automated Semi-Procedural
+         * Animation", 2009): each sample's influence falls off toward every
+         * other sample along the line between them, the least of those its
+         * weight. Any layout works -- a cross, a grid, a ring -- each sample
+         * is whole at its own point, and the weights move smoothly between. */
+        const size_t Count = InState.Samples.size();
+        float Total = 0.0f;
+        for(size_t I = 0; I < Count; ++I)
+        {
+            const float PX = InX - InState.Samples[I].Position, PY = InY - InState.Samples[I].PositionY;
+            float Weight = 1.0f;
+            for(size_t J = 0; J < Count && Weight > 0.0f; ++J)
+            {
+                if(J == I) { continue; }
+                const float DX = InState.Samples[J].Position - InState.Samples[I].Position;
+                const float DY = InState.Samples[J].PositionY - InState.Samples[I].PositionY;
+                const float Length2 = DX * DX + DY * DY;
+                if(Length2 < 1e-8f) { continue; }   // two samples at one point: they share it
+                Weight = std::min(Weight, std::clamp(1.0f - (PX * DX + PY * DY) / Length2, 0.0f, 1.0f));
+            }
+            OutWeights[I] = Weight;
+            Total += Weight;
+        }
+        if(Total <= 0.0f)
+        {
+            OutWeights.assign(Count, 0.0f);
+            OutWeights[0] = 1.0f;
+            return;
+        }
+        for(size_t I = 0; I < Count; ++I)
+        {
+            OutWeights[I] /= Total;
+            if(OutWeights[I] > OutWeights[OutDominant]) { OutDominant = I; }
         }
     }
 

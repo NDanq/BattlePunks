@@ -108,7 +108,8 @@ namespace RenderCore
         {
             std::shared_ptr<const AnimClipData> Clip;
             AnimClipBinding                     Binding;
-            float                               Position = 0.0f;
+            float                               Position  = 0.0f;
+            float                               PositionY = 0.0f;
             int32_t                             RootBone  = -1;   // the clip's root bone, when its root motion is not Keep
             int32_t                             RootTrack = -1;
         };
@@ -116,7 +117,8 @@ namespace RenderCore
         {
             std::string         Name;
             std::vector<Sample> Samples;       // by Position
-            int32_t             BlendParameter = -1;
+            int32_t             BlendParameter  = -1;
+            int32_t             BlendParameterY = -1;   // >= 0: a 2D blend space
             float               Speed = 1.0f;
             EAnimLoop           Loop  = EAnimLoop::Clip;
         };
@@ -154,6 +156,7 @@ namespace RenderCore
 
         /* The samples' weights for InState now, and its dominant sample. */
         void  SampleWeights(const StateRuntime& InState, std::vector<float>& OutWeights, size_t& OutDominant) const;
+        static void SampleWeights2D(const StateRuntime& InState, float InX, float InY, std::vector<float>& OutWeights, size_t& OutDominant);
         float StateDuration(const StateRuntime& InState) const;
         bool  StateLoops(const StateRuntime& InState) const;
         /* Moves InOutHead; returns its root motion (model space). */

@@ -186,8 +186,14 @@ Layer Arms   mask spine_02, weight scaled by Armed
   Holster      clip
 ```
 
-- A **state** plays one clip, or blends several along a float parameter. The
+- A **state** plays one clip, or blends several along a float parameter (a
+  1D blend space), or over two (a 2D one: each clip at a point, X and Y --
+  walks forward, back and to the sides, by speed and direction). The
   samples share one phase, so a walk and a run blended step together.
+  A 2D space weighs its clips by gradient band interpolation: any layout of
+  points works, each clip is whole at its own point, and past the edge the
+  nearest clips play. The axes are measured as they are, so give them
+  similar ranges (direction in -1..1 beside speed in 0..1, not 0..400).
 - A **transition** fires when all its conditions hold (`>`, `<`, `==`, `!=`,
   is true, is false, triggered), from its state or from any; At End waits
   for the clip to come within the crossfade of its end. The first that holds
@@ -217,6 +223,6 @@ Layer Arms   mask spine_02, weight scaled by Armed
 
 ## Not yet
 
-Inverse kinematics (feet, look-at), morph targets, additive layers, 2D blend
-spaces, retargeting between differently named skeletons, clip compression,
+Inverse kinematics (feet, look-at), morph targets, additive layers,
+retargeting between differently named skeletons, clip compression,
 turning root motion, skinned meshes on Metal, and a visibility-aware budget.
