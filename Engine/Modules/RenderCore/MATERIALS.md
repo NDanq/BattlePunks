@@ -187,6 +187,7 @@ about them generically. Enforced:
 |---|---|---|
 | Texture Coordinate, Vertex Color, Vertex Normal | yes | yes |
 | World Position (before the offset in the vertex stage) | yes | yes |
+| Camera Position (the view's eye: with World Position, the direction to the camera for Fresnel) | yes | yes |
 | Parameter, Instance Tint, Viewport Size, Mouse, Time | yes | yes |
 | Math, Vector, Logic | yes | yes |
 | Pixel Coordinate, Pixel Depth, Clip Position | no | yes |
