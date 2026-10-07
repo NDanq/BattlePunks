@@ -590,7 +590,7 @@ protected:
     GDIShader* BoundPixelShader;
     bool bInitialized = false;
 
-    /* SetUniformBlock's bytes for bindings 2 and 3, and SetMaterialTexture's. */
+    /* SetUniformBlock's bytes for bindings 2, 3 and 12 (GDI_SKIN_BLOCK_BINDING), and SetMaterialTexture's. */
     /* GDISetViewport's rectangle, which GDISetScissorRect clips to. */
     uint                  ViewportX = 0, ViewportY = 0, ViewportWidth = 0, ViewportHeight = 0;
 
@@ -615,10 +615,11 @@ protected:
     GDIBuffer*            IndirectArgs       = nullptr;
     uint32_t              IndirectArgsOffset = 0;
 
-    std::vector<uint8_t>  MaterialBlocks[2];
+    /* [0] material, [1] scene, [2] skin (empty: no skinned draw since the last clear). */
+    std::vector<uint8_t>  MaterialBlocks[3];
     /* Bumped by each SetUniformBlock, so a backend can reuse an upload of a
      * block that has not changed since (the scene block: once per frame). */
-    uint64_t              MaterialBlockSerials[2] = {};
+    uint64_t              MaterialBlockSerials[3] = {};
     GDITextureResource*   MaterialTextures[GDI_MATERIAL_TEXTURE_SLOTS] = {};
 };
 

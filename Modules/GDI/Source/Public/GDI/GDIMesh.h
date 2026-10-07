@@ -16,6 +16,9 @@
  *   location 8  vec3 normal        (indexed only; 2-7 are instancing's)
  *   location 9  vec4 colour        (indexed only; white when Colors is null)
  *   location 10 vec2 UV1           (indexed only; the lightmap UVs, zero when UV1 is null)
+ *   location 11 vec4 bone indices  (skinned only: Joints and Weights both set;
+ *   location 12 vec4 bone weights   a skinned vertex shader reads them --
+ *                                   GDI_SKIN_BLOCK_BINDING has its bones)
  */
 struct GDIMeshDesc
 {
@@ -24,6 +27,8 @@ struct GDIMeshDesc
     const float*    UV0         = nullptr;
     const float*    Colors      = nullptr;   // RGBA, 4 per vertex; optional
     const float*    UV1         = nullptr;   // 2 per vertex; optional
+    const float*    Joints      = nullptr;   // 4 per vertex, bone indices as floats; optional, with Weights
+    const float*    Weights     = nullptr;   // 4 per vertex; optional, with Joints
     uint32_t        NumVertices = 0;
     const uint32_t* Indices     = nullptr;
     uint32_t        NumIndices  = 0;
@@ -51,6 +56,8 @@ public:
         float*    Normal     = nullptr;
         float*    Color      = nullptr;   // RGBA, 4 per vertex
         float*    UV1        = nullptr;   // 2 per vertex, the lightmap UVs
+        float*    Joints     = nullptr;   // 4 per vertex, skinned meshes only
+        float*    Weights    = nullptr;   // 4 per vertex, skinned meshes only
         uint32_t* Indices    = nullptr;
         uint32_t  NumIndices = 0;
 
@@ -169,6 +176,8 @@ public:
     virtual void Draw() = 0;
 
     inline bool     IsIndexed()     const { return (RenderData.Indices != nullptr || bDynamic) && RenderData.NumIndices > 0; }
+    /* Bone indices and weights at locations 11 and 12 (an indexed, static mesh). */
+    inline bool     IsSkinned()     const { return RenderData.Joints != nullptr && RenderData.Weights != nullptr && !bDynamic && IsIndexed(); }
     inline uint32_t GetNumIndices() const { return RenderData.NumIndices; }
 
     /*
@@ -219,6 +228,8 @@ protected:
         free(RenderData.Normal);   RenderData.Normal   = nullptr;
         free(RenderData.Color);    RenderData.Color    = nullptr;
         free(RenderData.UV1);      RenderData.UV1      = nullptr;
+        free(RenderData.Joints);   RenderData.Joints   = nullptr;
+        free(RenderData.Weights);  RenderData.Weights  = nullptr;
         free(RenderData.Indices);  RenderData.Indices  = nullptr;
     }
 

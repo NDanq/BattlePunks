@@ -488,13 +488,23 @@ int main(int argc, char** argv)
     QTemporaryDir Temp;
     const QDir Root(Temp.path());
 
-    /* NimbleEditorImportTests <file.gltf|glb>...: import each into a scratch
-     * folder and say what came out -- a quick look at a real asset. */
-    for(int Arg = 1; Arg < argc; ++Arg)
+    /* NimbleEditorImportTests [--into <project> <folder>] <file.gltf|glb>...:
+     * import each into a scratch folder (or <project>/<folder>) and say what
+     * came out -- a quick look at a real asset, or test content. */
+    QString IntoRoot = Root.absolutePath();
+    QString IntoFolder = Root.filePath(QStringLiteral("Look"));
+    int FirstFile = 1;
+    if(argc > 3 && std::strcmp(argv[1], "--into") == 0)
+    {
+        IntoRoot   = QFileInfo(QString::fromLocal8Bit(argv[2])).absoluteFilePath();
+        IntoFolder = QDir(IntoRoot).filePath(QString::fromLocal8Bit(argv[3]));
+        FirstFile  = 4;
+    }
+    for(int Arg = FirstFile; Arg < argc; ++Arg)
     {
         const QString Path = QString::fromLocal8Bit(argv[Arg]);
-        const ImportResult Each = ImportMesh(Path, Root.filePath(QStringLiteral("Look")), QFileInfo(Path).completeBaseName(),
-                                             MeshImportOptions(), TextureImportOptions(), Root.absolutePath());
+        const ImportResult Each = ImportMesh(Path, IntoFolder, QFileInfo(Path).completeBaseName(),
+                                             MeshImportOptions(), TextureImportOptions(), IntoRoot);
         std::printf("%s: %s\n", qPrintable(Path), qPrintable(Each.Message));
         for(const QString& Warning : Each.Warnings) { std::printf("  warning: %s\n", qPrintable(Warning)); }
         for(const QString& Written : Each.Written)  { std::printf("  wrote %s\n", qPrintable(QFileInfo(Written).fileName())); }

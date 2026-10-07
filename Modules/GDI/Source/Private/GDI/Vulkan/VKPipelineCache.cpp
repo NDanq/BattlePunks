@@ -21,9 +21,10 @@ static constexpr uint32_t kLayoutStandard  = 0;
 static constexpr uint32_t kLayoutInstanced = 1;
 static constexpr uint32_t kLayoutMesh      = 2;
 static constexpr uint32_t kLayoutMeshInstanced = 3;   // kLayoutMesh + an instance buffer (GDISetInstanceBuffer)
+static constexpr uint32_t kLayoutMeshSkinned   = 4;   // kLayoutMesh + bone indices and weights (bindings 6, 7)
 
 /** Maximum vertex bindings / attributes across all known layouts */
-static constexpr uint32_t kMaxBindings = 6;
+static constexpr uint32_t kMaxBindings = 8;
 static constexpr uint32_t kMaxAttribs  = 10;
 
 /** Push-constant range (bytes). Included in all layouts for future use. */
@@ -141,7 +142,7 @@ void VKPipelineCache::GetVertexInputState(
     OutBindingCount = 2;
     OutAttribCount  = 2;
 
-    if(LayoutID == kLayoutMesh || LayoutID == kLayoutMeshInstanced)
+    if(LayoutID == kLayoutMesh || LayoutID == kLayoutMeshInstanced || LayoutID == kLayoutMeshSkinned)
     {
         // Binding 2 / location 8: vec3 normal, per vertex.
         OutBindings[2].binding   = 2;
@@ -175,6 +176,26 @@ void VKPipelineCache::GetVertexInputState(
 
         OutBindingCount = 5;
         OutAttribCount  = 5;
+
+        if(LayoutID == kLayoutMeshSkinned)
+        {
+            // Bindings 6 and 7 / locations 11 and 12: vec4 bone indices (as
+            // floats) and vec4 weights, per vertex. 5 stays the instance
+            // buffer's: a skinned mesh is never drawn instanced.
+            for(uint32_t Stream = 0; Stream < 2; ++Stream)
+            {
+                OutBindings[5 + Stream].binding   = 6 + Stream;
+                OutBindings[5 + Stream].stride    = sizeof(float) * 4;
+                OutBindings[5 + Stream].inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+                OutAttribs[5 + Stream].location = 11 + Stream;
+                OutAttribs[5 + Stream].binding  = 6 + Stream;
+                OutAttribs[5 + Stream].format   = VK_FORMAT_R32G32B32A32_SFLOAT;
+                OutAttribs[5 + Stream].offset   = 0;
+            }
+            OutBindingCount = 7;
+            OutAttribCount  = 7;
+        }
 
         if(LayoutID == kLayoutMeshInstanced)
         {
@@ -418,9 +439,11 @@ bool VKPipelineCache::BuildLayouts()
     Push.size       = kPushConstantBytes;
 
     // --- Descriptor set layout bindings per group ---
+    static_assert(GDI_SKIN_BLOCK_BINDING == GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS,
+                  "the skin block follows the material textures");
     struct GroupDef
     {
-        VkDescriptorSetLayoutBinding Bindings[GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS];
+        VkDescriptorSetLayoutBinding Bindings[GDI_SKIN_BLOCK_BINDING + 1];
         uint32_t                     Count;
     } Groups[DLG_Count];
 
@@ -460,7 +483,9 @@ bool VKPipelineCache::BuildLayouts()
         Sampler.stageFlags = kAllStages;
         Groups[DLG_Material].Bindings[GDI_MATERIAL_TEXTURE_BINDING + s] = Sampler;
     }
-    Groups[DLG_Material].Count = GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS;
+    // The skin block at 12: a skinned vertex shader's bone palette.
+    Groups[DLG_Material].Bindings[GDI_SKIN_BLOCK_BINDING] = MakeUBO(GDI_SKIN_BLOCK_BINDING);
+    Groups[DLG_Material].Count = GDI_SKIN_BLOCK_BINDING + 1;
 
     for(uint32_t g = 0; g < DLG_Count; ++g)
     {

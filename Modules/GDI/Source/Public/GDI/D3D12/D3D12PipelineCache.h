@@ -32,7 +32,8 @@ enum ED3D12RootParam : UINT
     RP_Scene,
     RP_MaterialTexture0,
     RP_MaterialSampler0 = RP_MaterialTexture0 + 8,   // GDI_MATERIAL_TEXTURE_SLOTS
-    RP_Count            = RP_MaterialSampler0 + 8
+    RP_Skin             = RP_MaterialSampler0 + 8,   // b12, GDI_SKIN_BLOCK_BINDING
+    RP_Count
 };
 
 /**
@@ -57,6 +58,8 @@ enum ED3D12ComputeRootParam : UINT
  *   2 -- indexed mesh: plus slot 2 float3 normal, slot 3 float4 colour, slot 4 float2 UV1
  *   3 -- indexed mesh instanced from a GDIBuffer (GDISetInstanceBuffer): plus
  *        slot 5, one GDI_INSTANCE_STRIDE record per instance
+ *   4 -- skinned mesh: 2 plus slot 6 float4 bone indices, slot 7 float4 weights
+ *        (locations 11 and 12)
  */
 class D3D12PipelineCache
 {

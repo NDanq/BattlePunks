@@ -726,7 +726,8 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     Key.VertexShaderID = VSRes->GetID();
     Key.PixelShaderID  = PSRes->GetID();
     // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
-    Key.VertexLayoutID = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : 2u) : (bIsInstanced ? 1u : 0u);
+    // 4: a skinned mesh, its bone streams in slots 6 and 7 (never instanced).
+    Key.VertexLayoutID = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
     Key.BlendEnable    = Blend.bBlend ? TRUE : FALSE;
     Key.SrcBlend       = DecodeBlendFactor(Blend.Source);
     Key.DestBlend      = DecodeBlendFactor(Blend.Dest);
@@ -793,6 +794,21 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             SceneBlockUploadSerial = MaterialBlockSerials[1];
             SceneBlockUploadEpoch  = DescAlloc->GetEpoch();
         }
+
+        /* The skin block (b12): the last palette set, uploaded once per change. */
+        if(SkinBlockUploadSerial != MaterialBlockSerials[2] || SkinBlockUploadEpoch != DescAlloc->GetEpoch()
+           || SkinBlockUploadAddress == 0)
+        {
+            /* A skinned shader declares the whole palette: upload all of it. */
+            const uint32_t SkinBytes = MaterialBlocks[2].empty() ? 256u : GDI_SKIN_BLOCK_MAX_BYTES;
+            const D3D12CBAllocation Skin = DescAlloc->AllocateCB(SkinBytes);
+            if(!Skin.MappedPtr) return false;
+            memset(Skin.MappedPtr, 0, SkinBytes);
+            if(!MaterialBlocks[2].empty()) memcpy(Skin.MappedPtr, MaterialBlocks[2].data(), MaterialBlocks[2].size());
+            SkinBlockUploadAddress = Skin.GPUAddress;
+            SkinBlockUploadSerial  = MaterialBlockSerials[2];
+            SkinBlockUploadEpoch   = DescAlloc->GetEpoch();
+        }
     }
     else
     {
@@ -831,6 +847,7 @@ bool D3D12DynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     if(bMaterial)
     {
         List->SetGraphicsRootConstantBufferView(RP_Scene, Scene.GPUAddress);
+        List->SetGraphicsRootConstantBufferView(RP_Skin,  SkinBlockUploadAddress);
         for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
         {
             auto* SlotTexture = dynamic_cast<D3D12TextureResource*>(MaterialTextures[Slot]);

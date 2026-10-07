@@ -162,12 +162,12 @@ VKUBOAllocation VKDescriptorAllocator::AllocateUBO(VkDeviceSize Size)
 bool VKDescriptorAllocator::GrowPool()
 {
     // Pool sizes:
-    //   UNIFORM_BUFFER         — up to 4 UBO bindings per set (VP@0, Transform@1, custom@2, spare)
+    //   UNIFORM_BUFFER         — up to 5 UBO bindings per set (VP@0, Transform@1, material@2, scene@3, skin@12)
     //   COMBINED_IMAGE_SAMPLER — up to 2 sampler bindings per set
     //   STORAGE_BUFFER         — a compute set's buffers (GDI_COMPUTE_MAX_STORAGE_BUFFERS)
     VkDescriptorPoolSize PoolSizes[3]{};
     PoolSizes[0].type            = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    PoolSizes[0].descriptorCount = kSetsPerPool * 4;
+    PoolSizes[0].descriptorCount = kSetsPerPool * 5;
     PoolSizes[1].type            = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     PoolSizes[1].descriptorCount = kSetsPerPool * 8;   // a material set holds GDI_MATERIAL_TEXTURE_SLOTS
     PoolSizes[2].type            = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;

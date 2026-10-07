@@ -5,7 +5,8 @@
 // the shared vertex shaders of materials without World Position Offset).
 //
 // Permutation defines, each 0 or 1:
-//   MATERIAL_VERTEX_QUAD / _MESH / _FULLSCREEN / _INSTANCEDMESH   which vertex input it reads
+//   MATERIAL_VERTEX_QUAD / _MESH / _FULLSCREEN / _INSTANCEDMESH / _SKINNEDMESH
+//                                                which vertex input it reads
 //   MATERIAL_HAS_OFFSET                          add CalcMaterialOffset()
 
 #include <MaterialPlatform.glsl>
@@ -13,17 +14,25 @@
 #include <SceneUniforms.glsl>
 #include <MaterialCommon.glsl>
 #include <Material.glsl>
+#if MATERIAL_VERTEX_SKINNEDMESH
+#include <Skinning.glsl>
+#endif
 
 // Quads and the full-screen pass: position and UV. Meshes (GDICreateMesh)
 // add the normal at 8, the colour at 9 and the lightmap UVs (UV1) at 10.
 // An instanced mesh (GDISetInstanceBuffer) adds each instance's transform at
-// 2-5 and its colour at 7 (GDIBuffer.h).
+// 2-5 and its colour at 7 (GDIBuffer.h); a skinned mesh, its bone indices at
+// 11 and weights at 12 (Skinning.glsl).
 ATTRIB(0, in, vec3, InPosition)
 ATTRIB(1, in, vec2, InTexCoord)
-#if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH
+#if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH || MATERIAL_VERTEX_SKINNEDMESH
 ATTRIB(8, in, vec3, InNormal)
 ATTRIB(9, in, vec4, InColor)
 ATTRIB(10, in, vec2, InUV1)
+#endif
+#if MATERIAL_VERTEX_SKINNEDMESH
+ATTRIB(11, in, vec4, InJoints)
+ATTRIB(12, in, vec4, InWeights)
 #endif
 #if MATERIAL_VERTEX_INSTANCEDMESH
 ATTRIB(2, in, mat4, InInstanceTransform)
@@ -57,10 +66,22 @@ void main(void)
 #else
     mat4 Model           = Transform.Model;
 #endif
-    Inputs.WorldPosition = (Model * vec4(InPosition, 1.0)).xyz;
+#if MATERIAL_VERTEX_SKINNEDMESH
+    // Posed in model space first; the entity's transform after.
+    vec4 SkinRow0, SkinRow1, SkinRow2;
+    SkinRows(InJoints, InWeights, SkinRow0, SkinRow1, SkinRow2);
+    vec3 LocalPosition = SkinPoint(SkinRow0, SkinRow1, SkinRow2, InPosition);
+    vec3 LocalNormal   = SkinDirection(SkinRow0, SkinRow1, SkinRow2, InNormal);
+#else
+    vec3 LocalPosition = InPosition;
 #if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH
+    vec3 LocalNormal   = InNormal;
+#endif
+#endif
+    Inputs.WorldPosition = (Model * vec4(LocalPosition, 1.0)).xyz;
+#if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH || MATERIAL_VERTEX_SKINNEDMESH
     // The inverse transpose, so a non-uniform Scale keeps normals perpendicular.
-    Inputs.WorldNormal = normalize(transpose(inverse(mat3(Model))) * InNormal);
+    Inputs.WorldNormal = normalize(transpose(inverse(mat3(Model))) * LocalNormal);
 #if MATERIAL_VERTEX_INSTANCEDMESH
     Inputs.Color       = InColor * InInstanceColor;
 #else
@@ -82,7 +103,7 @@ void main(void)
     vec4 Clip         = ViewParameters.Projection * ViewPosition;
     // As is: the shared vertex shaders have no material block, so the pixel
     // stage takes it into the draw's atlas square (BakedLighting.glsl).
-#if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH
+#if MATERIAL_VERTEX_MESH || MATERIAL_VERTEX_INSTANCEDMESH || MATERIAL_VERTEX_SKINNEDMESH
     vec2 LightmapUV = InUV1;
 #else
     vec2 LightmapUV = vec2(0.0);

@@ -66,7 +66,7 @@ namespace RenderCore
         std::string          Name;                 // its graph's path, as drawn: a draw's label (Issue)
         MaterialDescription  Description;
         GDIShader*           Pixel = nullptr;      // null: failed to load, drawn as the fallback
-        GDIShader*           Vertex[4] = {};       // its own Quad, Mesh and InstancedMesh shaders (by EMaterialVertexInput), with an offset only
+        GDIShader*           Vertex[5] = {};       // its own Quad, Mesh, InstancedMesh and SkinnedMesh shaders (by EMaterialVertexInput), with an offset only
         std::vector<uint8_t> Block;                // the defaults; the tint is written per draw
     };
 
@@ -336,8 +336,8 @@ namespace RenderCore
         GDIShader*     BoundPixel  = nullptr;
 
         std::unordered_map<std::string, Material> Materials;   // node-based: a Material* survives inserts
-        GDIShader*              DefaultVertex[4] = {};          // MaterialDefault, by EMaterialVertexInput
-        bool                    bDefaultVertexTried[4] = {};
+        GDIShader*              DefaultVertex[5] = {};          // MaterialDefault, by EMaterialVertexInput
+        bool                    bDefaultVertexTried[5] = {};
         std::vector<GDIShader*> RetiredShaders;                 // see RenderContext::ReloadMaterial
         std::vector<uint8_t>    OverrideBlock;                  // BindMaterial's: a block with an entity's overrides
         std::set<std::string>   Warned;                         // one warning per material and reason
@@ -537,6 +537,15 @@ namespace RenderCore
             Desc.NumVertices = OutSource->GetVertexCount();
             Desc.Indices     = OutSource->Indices.data();
             Desc.NumIndices  = uint32_t(OutSource->Indices.size());
+
+            /* A skinned mesh's bone indices go to the GPU as floats, as its weights are. */
+            std::vector<float> Joints;
+            if(OutSource->IsSkinned())
+            {
+                Joints.assign(OutSource->Joints.begin(), OutSource->Joints.end());
+                Desc.Joints  = Joints.data();
+                Desc.Weights = OutSource->Weights.data();
+            }
             Entry.Gpu = GDICreateMesh(Desc);
             GDISetDebugName(Entry.Gpu, InPath);   // its buffers in a capture tool; and its draws' labels (Issue)
             if(!Entry.Gpu)
@@ -936,7 +945,8 @@ namespace RenderCore
 
             if(Desc.bHasOffset && Desc.Domain != EMaterialDomain::PostProcess)
             {
-                for(const EMaterialVertexInput Input : { EMaterialVertexInput::Quad, EMaterialVertexInput::Mesh, EMaterialVertexInput::InstancedMesh })
+                for(const EMaterialVertexInput Input : { EMaterialVertexInput::Quad, EMaterialVertexInput::Mesh, EMaterialVertexInput::InstancedMesh,
+                                                         EMaterialVertexInput::SkinnedMesh })
                 {
                     GDIShader* Vertex = LoadShader(GetPermutationFileName(Stem, GetVertexPermutationKey(Input), true), ST_Vertex, Who, false);
                     if(!Vertex)
@@ -1316,13 +1326,44 @@ namespace RenderCore
             return Chosen;
         }
 
+        /* The vertex input InItem's mesh draws with: a skinned mesh's, with
+         * its bones set in GDI's skin block (its bind pose without a palette),
+         * else the plain mesh's. */
+        EMaterialVertexInput PrepareMeshInput(const DrawCommand& InItem)
+        {
+            if(!InItem.Mesh || !InItem.Mesh->IsSkinned())
+            {
+                return EMaterialVertexInput::Mesh;
+            }
+            if(InItem.SkinPalette && InItem.SkinBones > 0)
+            {
+                const uint32_t Bones = std::min<uint32_t>(InItem.SkinBones, GDI_SKIN_MAX_BONES);
+                GDISetUniformBlock(GDI_SKIN_BLOCK_BINDING, InItem.SkinPalette, uint(Bones * 12 * sizeof(float)));
+            }
+            else
+            {
+                static const std::vector<float> Identity = []()
+                {
+                    std::vector<float> Rows(size_t(GDI_SKIN_MAX_BONES) * 12, 0.0f);
+                    for(size_t Bone = 0; Bone < GDI_SKIN_MAX_BONES; ++Bone)
+                    {
+                        Rows[Bone * 12 + 0] = Rows[Bone * 12 + 5] = Rows[Bone * 12 + 10] = 1.0f;
+                    }
+                    return Rows;
+                }();
+                GDISetUniformBlock(GDI_SKIN_BLOCK_BINDING, Identity.data(), uint(Identity.size() * sizeof(float)));
+            }
+            return EMaterialVertexInput::SkinnedMesh;
+        }
+
         /* One caster section into the bound atlas tile, with its material's
          * vertex shader (World Position Offset) and ShadowDepth.fsh. */
         void IssueShadowCaster(const DrawCommand& InItem)
         {
             EnsureInitialised();
             GDIShader* Pixel  = GetShadowDepthShader();
-            GDIShader* Vertex = InItem.Mat ? VertexFor(*InItem.Mat, EMaterialVertexInput::Mesh) : GetDefaultVertex(EMaterialVertexInput::Mesh);
+            const EMaterialVertexInput Input = PrepareMeshInput(InItem);
+            GDIShader* Vertex = InItem.Mat ? VertexFor(*InItem.Mat, Input) : GetDefaultVertex(Input);
             if(!Pixel || !Vertex)
             {
                 return;   // warned by LoadShader
@@ -1561,7 +1602,7 @@ namespace RenderCore
                 return;
             }
 
-            if(!InItem.Mat || !BindMaterial(*InItem.Mat, EMaterialVertexInput::Mesh, InItem.Tint, &InItem))
+            if(!InItem.Mat || !BindMaterial(*InItem.Mat, PrepareMeshInput(InItem), InItem.Tint, &InItem))
             {
                 GDIShader* Pixel = GDIGetShader<Mesh_PS>();
                 Bind(GDIGetShader<Mesh_VS>(), Pixel);
@@ -1807,13 +1848,13 @@ namespace RenderCore
             for(auto& Each : Materials)
             {
                 Material& M = Each.second;
-                for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1], M.Vertex[2], M.Vertex[3] })
+                for(GDIShader* Shader : { M.Pixel, M.Vertex[0], M.Vertex[1], M.Vertex[2], M.Vertex[3], M.Vertex[4] })
                 {
                     if(Shader) { RetiredShaders.push_back(Shader); }
                 }
             }
             Materials.clear();
-            for(int Index = 0; Index < 4; ++Index)
+            for(int Index = 0; Index < 5; ++Index)
             {
                 if(DefaultVertex[Index]) { RetiredShaders.push_back(DefaultVertex[Index]); }
                 DefaultVertex[Index] = nullptr;
@@ -2428,6 +2469,8 @@ namespace RenderCore
             Item.Overrides     = InOverrides.Items;
             Item.OverrideCount = InOverrides.Count;
             Item.Baked         = InOverrides.Baked;
+            Item.SkinPalette   = InOverrides.SkinPalette;
+            Item.SkinBones     = InOverrides.SkinBones;
             Item.MaterialSlot  = uint8_t(SlotIndex);   // the section's slot, whichever material it fell back to
             P->Submit(Item, Impl::StageOf(Chosen));
         }
@@ -2661,6 +2704,8 @@ namespace RenderCore
             Item.ShadowView    = P->CasterView;
             Item.Overrides     = InOverrides.Items;
             Item.OverrideCount = InOverrides.Count;
+            Item.SkinPalette   = InOverrides.SkinPalette;
+            Item.SkinBones     = InOverrides.SkinBones;
             Item.MaterialSlot  = uint8_t(Index);
             if(P->Capture) { P->Capture->push_back({ Item, ERenderStage::Shadows }); }
             else           { P->PolicyFor(ERenderStage::Shadows).Add(Item); }

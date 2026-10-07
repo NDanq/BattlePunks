@@ -299,14 +299,23 @@ struct ITextureState
  *   2      material block         GDISetUniformBlock, raw std140 bytes
  *   3      scene block            GDISetUniformBlock, raw std140 bytes
  *   4-11   material textures 0-7  GDISetMaterialTexture
+ *   12     skin block             GDISetUniformBlock: a skinned mesh's bone
+ *                                 palette, three vec4 rows per bone (Skinning.glsl)
  *
- * Both blocks are visible to both stages. Shaders declare them with
- * UBO_BLOCK_BEGIN/END and the textures with MATERIAL_SAMPLER2D.
+ * The blocks are visible to both stages. Shaders declare them with
+ * UBO_BLOCK_BEGIN/END and the textures with MATERIAL_SAMPLER2D. Only a
+ * skinned vertex shader declares the skin block; every material draw binds
+ * whatever was last set (16 zero bytes if nothing was), so set it before
+ * each skinned draw. Vulkan, D3D12 and OpenGL; Metal draws no indexed meshes.
  */
 constexpr unsigned GDI_MATERIAL_BLOCK_BINDING   = 2;
 constexpr unsigned GDI_SCENE_BLOCK_BINDING      = 3;
 constexpr unsigned GDI_MATERIAL_TEXTURE_BINDING = 4;
 constexpr unsigned GDI_MATERIAL_TEXTURE_SLOTS   = 8;
+constexpr unsigned GDI_SKIN_BLOCK_BINDING       = 12;
+/* 256 bones of three vec4 rows: within every backend's guaranteed 16 KB. */
+constexpr unsigned GDI_SKIN_MAX_BONES           = 256;
+constexpr unsigned GDI_SKIN_BLOCK_MAX_BYTES     = GDI_SKIN_MAX_BONES * 48;
 constexpr unsigned GDI_GPU_TIMESTAMP_MAX        = 64;   // GPU timestamps one BeginRendering/EndRendering block may write
 constexpr unsigned GDI_MATERIAL_BLOCK_MAX_BYTES = 1024;
 /* The scene block carries the frame's lights and shadow matrices: larger. */
