@@ -110,6 +110,11 @@ namespace RenderCore
         explicit AnimationSystem(GameCore::World& InWorld);
         ~AnimationSystem();
 
+        /* Deleted outright: an exported class gets its implicit copies
+         * instantiated, and Entries' unique_ptrs cannot copy (MSVC's C2280). */
+        AnimationSystem(const AnimationSystem&)            = delete;
+        AnimationSystem& operator=(const AnimationSystem&) = delete;
+
         static void TickSystem(GameCore::World& InWorld, float InDeltaSeconds, void* InUserData);
 
         /* Tick and Preview: bInGame emits notifies and writes back to components. */
