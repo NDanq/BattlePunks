@@ -44,6 +44,16 @@ namespace RenderCore
     /* Local to model space, parents first (SkeletonAsset.h's order). */
     RENDERCORE_API void LocalToModel(const SkeletonData& InSkeleton, const AnimLocalPose& InPose, std::vector<AnimMatrix>& OutModel);
 
+    /* InOutPose made relative to InBase, bone by bone -- what an additive layer
+     * adds: translation less the base's, rotation times the base's inverse,
+     * scale over the base's. A bone as its base is the identity. */
+    RENDERCORE_API void MakeAdditivePose(AnimLocalPose& InOutPose, const AnimLocalPose& InBase);
+
+    /* InAdditive (MakeAdditivePose's) applied over InOutPose by InWeight, per
+     * bone scaled by InMask when given: 0 leaves it, 1 adds it whole. */
+    RENDERCORE_API void ApplyAdditivePose(AnimLocalPose& InOutPose, const AnimLocalPose& InAdditive, float InWeight,
+                                          const std::vector<float>* InMask = nullptr);
+
     /* A mask that is 1 on InRoot and every bone below it, 0 elsewhere;
      * empty InRoot (or one the skeleton lacks): 1 everywhere. */
     RENDERCORE_API void MakeBoneMask(const SkeletonData& InSkeleton, const std::vector<std::string>& InRoots, std::vector<float>& OutMask);

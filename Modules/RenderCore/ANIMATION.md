@@ -202,6 +202,12 @@ Layer Arms   mask spine_02, weight scaled by Armed
   mask -- each named bone and every bone below it -- at its weight, scaled by
   its weight parameter if it has one. That is how legs walk while the arms
   hold a weapon, or stay idle.
+- An **additive** layer adds movement instead of replacing the pose: each of
+  its clips is taken relative to a base -- its own first frame, or the
+  skeleton's reference pose -- and that difference (translation, rotation,
+  scale) is laid over the layers before it, by weight and mask. Breathing,
+  a flinch or a lean then plays over whatever the body is doing. Its clips
+  give no root motion.
 
 ## In the editor
 
@@ -223,6 +229,6 @@ Layer Arms   mask spine_02, weight scaled by Armed
 
 ## Not yet
 
-Inverse kinematics (feet, look-at), morph targets, additive layers,
-retargeting between differently named skeletons, clip compression,
-turning root motion, skinned meshes on Metal, and a visibility-aware budget.
+Inverse kinematics (feet, look-at), morph targets, retargeting between
+differently named skeletons, clip compression, turning root motion, skinned
+meshes on Metal, and a visibility-aware budget.

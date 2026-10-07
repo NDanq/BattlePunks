@@ -107,6 +107,8 @@ private:
     QComboBox*      LayerWeightParameter = nullptr;
     QLineEdit*      LayerMask   = nullptr;
     QComboBox*      LayerEntry  = nullptr;
+    QComboBox*      LayerBlend  = nullptr;   // override or additive
+    QComboBox*      LayerBase   = nullptr;   // an additive layer's base
 
     QListWidget*    StateList   = nullptr;
     QWidget*        StateForm   = nullptr;

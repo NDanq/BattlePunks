@@ -51,6 +51,11 @@ namespace RenderCore
         {
             const bool b2D = InVersion >= 2;
             Ar << InOutLayer.Name << InOutLayer.Weight << InOutLayer.WeightParameter << InOutLayer.EntryState;
+            if(InVersion >= 3)
+            {
+                SerializeEnum(Ar, InOutLayer.Blend);
+                SerializeEnum(Ar, InOutLayer.AdditiveBase);
+            }
             SerializeList(Ar, InOutLayer.MaskBones, [](EngineCore::Archive& InAr, std::string& InOutBone) { InAr << InOutBone; });
             SerializeList(Ar, InOutLayer.States, [b2D](EngineCore::Archive& InAr, AnimStateNode& InOutState)
             {
@@ -102,6 +107,8 @@ namespace RenderCore
         {
             if(Layer.States.empty()) { return "anim state: a layer has no states"; }
             if(Layer.EntryState < 0 || size_t(Layer.EntryState) >= Layer.States.size()) { return "anim state: a layer's entry is not one of its states"; }
+            if(uint8_t(Layer.Blend) > uint8_t(EAnimLayerBlend::Additive)) { return "anim state: a layer blends in no known way"; }
+            if(uint8_t(Layer.AdditiveBase) > uint8_t(EAnimAdditiveBase::ReferencePose)) { return "anim state: an additive layer has no known base"; }
             for(const AnimStateNode& State : Layer.States)
             {
                 if(uint8_t(State.Loop) > uint8_t(EAnimLoop::Loop)) { return "anim state: a state loops in no known way"; }
@@ -146,7 +153,7 @@ namespace RenderCore
             });
             Ar.CloseChunk();
         }
-        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_LAYERS, 2, "anim state: no ALYR chunk"))
+        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_LAYERS, 3, "anim state: no ALYR chunk"))
         {
             const uint16_t Version = Ar.GetChunkVersion();
             SerializeList(Ar, InOutState.Layers, [Version](EngineCore::Archive& InAr, AnimLayer& InOutLayer) { SerializeLayer(InAr, InOutLayer, Version); });

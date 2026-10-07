@@ -273,7 +273,17 @@ QWidget* AnimStateEditorWindow::BuildLayers()
     LayerMask->setToolTip(QStringLiteral("Bones it moves, comma-separated, each with every bone below it (spine_02 for the upper body). "
                                          "Empty: all of them"));
     LayerEntry = new QComboBox(Box);
+    LayerBlend = new QComboBox(Box);
+    LayerBlend->addItems({ QStringLiteral("Override"), QStringLiteral("Additive") });
+    LayerBlend->setToolTip(QStringLiteral("Override: its pose replaces what the layers above it make, by weight and mask. "
+                                          "Additive: its clips' movement is added to it -- breathing, a flinch, a lean"));
+    LayerBase = new QComboBox(Box);
+    LayerBase->addItems({ QStringLiteral("Each clip's first frame"), QStringLiteral("Reference pose") });
+    LayerBase->setToolTip(QStringLiteral("What an additive clip's movement is measured from: its own first frame (it adds how it "
+                                         "moves from there), or the skeleton's reference pose (it adds its whole pose's difference)"));
     Form->addRow(QStringLiteral("Name"), LayerName);
+    Form->addRow(QStringLiteral("Blend"), LayerBlend);
+    Form->addRow(QStringLiteral("Additive Base"), LayerBase);
     Form->addRow(QStringLiteral("Weight"), LayerWeight);
     Form->addRow(QStringLiteral("Weight Parameter"), LayerWeightParameter);
     Form->addRow(QStringLiteral("Mask"), LayerMask);
@@ -288,6 +298,19 @@ QWidget* AnimStateEditorWindow::BuildLayers()
     connect(LayerWeight, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this, [this](const double InValue)
     {
         if(RenderCore::AnimLayer* Layer = CurrentLayer(); Layer && !bFilling) { Layer->Weight = float(InValue); Edited(); }
+    });
+    connect(LayerBlend, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(RenderCore::AnimLayer* Layer = CurrentLayer())
+        {
+            Layer->Blend = RenderCore::EAnimLayerBlend(InIndex);
+            Edited();
+            FillLayer();
+        }
+    });
+    connect(LayerBase, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
+    {
+        if(RenderCore::AnimLayer* Layer = CurrentLayer()) { Layer->AdditiveBase = RenderCore::EAnimAdditiveBase(InIndex); Edited(); }
     });
     connect(LayerWeightParameter, QOverload<int>::of(&QComboBox::activated), this, [this](const int InIndex)
     {
@@ -865,7 +888,7 @@ void AnimStateEditorWindow::FillLayer()
     const bool bWas = bFilling;
     bFilling = true;
     RenderCore::AnimLayer* Layer = CurrentLayer();
-    for(QWidget* Each : std::initializer_list<QWidget*>{ LayerName, LayerWeight, LayerWeightParameter, LayerMask, LayerEntry })
+    for(QWidget* Each : std::initializer_list<QWidget*>{ LayerName, LayerBlend, LayerBase, LayerWeight, LayerWeightParameter, LayerMask, LayerEntry })
     {
         Each->setEnabled(Layer != nullptr && !bReadOnly);
     }
@@ -877,6 +900,9 @@ void AnimStateEditorWindow::FillLayer()
     {
         LayerName->setText(ToQ(Layer->Name));
         LayerWeight->setValue(double(Layer->Weight));
+        LayerBlend->setCurrentIndex(int(Layer->Blend));
+        LayerBase->setCurrentIndex(int(Layer->AdditiveBase));
+        LayerBase->setEnabled(Layer->Blend == RenderCore::EAnimLayerBlend::Additive && !bReadOnly);
         LayerWeightParameter->setCurrentIndex(std::max(LayerWeightParameter->findText(ToQ(Layer->WeightParameter)), 0));
         QStringList Mask;
         for(const std::string& Bone : Layer->MaskBones) { Mask << ToQ(Bone); }

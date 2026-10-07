@@ -53,6 +53,41 @@ namespace RenderCore
         }
     }
 
+    void MakeAdditivePose(AnimLocalPose& InOutPose, const AnimLocalPose& InBase)
+    {
+        const size_t Bones = std::min(InOutPose.size(), InBase.size());
+        for(size_t Bone = 0; Bone < Bones; ++Bone)
+        {
+            AnimTransform&       Pose = InOutPose[Bone];
+            const AnimTransform& Base = InBase[Bone];
+            Pose.Translation = AnimMath::Sub(Pose.Translation, Base.Translation);
+            Pose.Rotation    = AnimMath::Normalize(AnimMath::Mul(Pose.Rotation, AnimMath::Conjugate(Base.Rotation)));
+            const auto Over  = [](const float InA, const float InB) { return std::fabs(InB) > 1e-6f ? InA / InB : 1.0f; };
+            Pose.Scale       = { Over(Pose.Scale.X, Base.Scale.X), Over(Pose.Scale.Y, Base.Scale.Y), Over(Pose.Scale.Z, Base.Scale.Z) };
+        }
+    }
+
+    void ApplyAdditivePose(AnimLocalPose& InOutPose, const AnimLocalPose& InAdditive, const float InWeight, const std::vector<float>* InMask)
+    {
+        if(InWeight <= 0.0f)
+        {
+            return;
+        }
+        static const AnimTransform Identity;
+        const size_t Bones = std::min(InOutPose.size(), InAdditive.size());
+        for(size_t Bone = 0; Bone < Bones; ++Bone)
+        {
+            float Weight = InWeight;
+            if(InMask) { Weight *= Bone < InMask->size() ? (*InMask)[Bone] : 0.0f; }
+            if(Weight <= 0.0f) { continue; }
+            const AnimTransform Delta = Weight >= 1.0f ? InAdditive[Bone] : AnimMath::Lerp(Identity, InAdditive[Bone], Weight);
+            AnimTransform& Pose = InOutPose[Bone];
+            Pose.Translation = AnimMath::Add(Pose.Translation, Delta.Translation);
+            Pose.Rotation    = AnimMath::Normalize(AnimMath::Mul(Delta.Rotation, Pose.Rotation));
+            Pose.Scale       = AnimMath::Mul(Pose.Scale, Delta.Scale);
+        }
+    }
+
     void LocalToModel(const SkeletonData& InSkeleton, const AnimLocalPose& InPose, std::vector<AnimMatrix>& OutModel)
     {
         const size_t Bones = std::min(InSkeleton.Bones.size(), InPose.size());

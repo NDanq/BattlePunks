@@ -449,6 +449,74 @@ static void TestBlendSpace2D()
     Expect(Corner.M[1][3] > 1.0f && Corner.M[1][3] < 35.0f && Corner.M[1][0] > 0.05f, "between +X and +Y: some of both");
 }
 
+/* An additive layer over a base that holds the hand at 45 degrees: Wave
+ * (the hand turning 0 -> 90) adds its turn to that, where an override
+ * layer would replace it. */
+static void TestAdditiveLayer()
+{
+    std::printf("[additive layer]\n");
+    WriteStateClips();
+    AnimClipData Held = MakeTurn("Hand", 50.0f, 0.0f, true);
+    Held.Tracks[0].Rotations = { { 0.0f, 0.0f, std::sin(0.3926991f), std::cos(0.3926991f) } };   // 45 degrees, every frame
+    SaveAnimClipFile(std::string(SCRATCH) + "HandHeld.nmanim", Held);
+    AnimClipAssetCache::Invalidate("");
+
+    const auto Make = [](const EAnimLayerBlend InBlend, const EAnimAdditiveBase InBase, const std::string& InClip)
+    {
+        AnimStateData Data;
+        Data.Parameters = { { "Add", EAnimParameterType::Float, 1.0f } };
+        AnimLayer Base;
+        Base.Name = "Base";
+        AnimStateNode Hold;
+        Hold.Name = "Hold";
+        Hold.Samples = { { std::string(SCRATCH) + "HandHeld.nmanim", 0.0f, 0.0f } };
+        Base.States.push_back(Hold);
+        AnimLayer Over;
+        Over.Name            = "Over";
+        Over.Blend           = InBlend;
+        Over.AdditiveBase    = InBase;
+        Over.WeightParameter = "Add";
+        AnimStateNode Play;
+        Play.Name = "Play";
+        Play.Samples = { { std::string(SCRATCH) + InClip, 0.0f, 0.0f } };
+        Over.States.push_back(Play);
+        Data.Layers = { Base, Over };
+        return Data;
+    };
+    /* The hand's angle in the model, in degrees (the arm stays straight). */
+    const auto HandAngle = [](const AnimStateData& InData, const float InTime, const float InAdd)
+    {
+        AnimInstance Instance;
+        Instance.SetSkeleton(std::make_shared<SkeletonData>(MakeSkeleton()));
+        Instance.SetState(std::make_shared<AnimStateData>(InData));
+        Instance.SetParameter("Add", InAdd);
+        Instance.Update(InTime);   // every layer -- SetTime moves only the first
+        const AnimMatrix& Hand = Instance.GetModelPose()[2];
+        return std::atan2(Hand.M[1][0], Hand.M[0][0]) * 57.29578f;
+    };
+
+    const AnimStateData Additive = Make(EAnimLayerBlend::Additive, EAnimAdditiveBase::FirstFrame, "Wave.nmanim");
+    EngineCore::Archive Out = EngineCore::Archive::ForWriting();
+    Expect(SerializeAnimState(Out, const_cast<AnimStateData&>(Additive)), "it saves");
+    EngineCore::Archive In = EngineCore::Archive::ForReading(Out.GetBytes());
+    AnimStateData Read;
+    Expect(SerializeAnimState(In, Read) && Read.Layers[1].Blend == EAnimLayerBlend::Additive
+           && Read.Layers[1].AdditiveBase == EAnimAdditiveBase::FirstFrame, "a layer's blend and base read back");
+
+    Expect(Near(HandAngle(Additive, 0.0f, 1.0f), 45.0f, 0.1f), "at the clip's first frame it adds nothing");
+    /* At 0.75 s Wave has turned 67.5 degrees. */
+    Expect(Near(HandAngle(Additive, 0.75f, 1.0f), 112.5f, 0.1f), "later, its 67.5 degrees on the base's 45");
+    Expect(Near(HandAngle(Additive, 0.75f, 0.5f), 78.75f, 0.1f), "at half weight, half of it");
+    Expect(Near(HandAngle(Make(EAnimLayerBlend::Override, EAnimAdditiveBase::FirstFrame, "Wave.nmanim"), 0.75f, 1.0f), 67.5f, 0.1f),
+           "an override layer replaces the base instead");
+
+    /* A clip that only holds 45 degrees: nothing, from its first frame; 45, from the reference pose. */
+    Expect(Near(HandAngle(Make(EAnimLayerBlend::Additive, EAnimAdditiveBase::FirstFrame, "HandHeld.nmanim"), 0.5f, 1.0f), 45.0f, 0.1f),
+           "a still clip, from its first frame, adds nothing");
+    Expect(Near(HandAngle(Make(EAnimLayerBlend::Additive, EAnimAdditiveBase::ReferencePose, "HandHeld.nmanim"), 0.5f, 1.0f), 90.0f, 0.1f),
+           "from the reference pose, it adds its 45");
+}
+
 static void TestStateSystem()
 {
     std::printf("[anim state on a component]\n");
@@ -771,6 +839,7 @@ int main()
     TestStateAsset();
     TestStateMachine();
     TestBlendSpace2D();
+    TestAdditiveLayer();
     TestStateSystem();
     TestSocket();
     TestRootMotion();
