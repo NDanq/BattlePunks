@@ -8,6 +8,7 @@
 
 #include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Private/Editor/Content/AnimPreviewWidget.h"
 
 class AnimPreviewWidget;
 class QCheckBox;
@@ -127,6 +128,7 @@ private:
     QLabel*            MeshLabel   = nullptr;
     QGroupBox*         LiveBox     = nullptr;
     QFormLayout*       LiveForm    = nullptr;
+    std::vector<AnimParameterControl> LiveControls;
     QLabel*            LiveStates  = nullptr;
     QLabel*            Problems    = nullptr;
     QPushButton*       SaveButton  = nullptr;
