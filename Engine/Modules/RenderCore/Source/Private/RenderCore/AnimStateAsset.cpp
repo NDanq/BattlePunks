@@ -46,17 +46,21 @@ namespace RenderCore
             InOutValue = TEnum(Raw);
         }
 
-        void SerializeLayer(EngineCore::Archive& Ar, AnimLayer& InOutLayer)
+        /* InVersion: the ALYR chunk's (AnimStateAsset.h). */
+        void SerializeLayer(EngineCore::Archive& Ar, AnimLayer& InOutLayer, const uint16_t InVersion)
         {
+            const bool b2D = InVersion >= 2;
             Ar << InOutLayer.Name << InOutLayer.Weight << InOutLayer.WeightParameter << InOutLayer.EntryState;
             SerializeList(Ar, InOutLayer.MaskBones, [](EngineCore::Archive& InAr, std::string& InOutBone) { InAr << InOutBone; });
-            SerializeList(Ar, InOutLayer.States, [](EngineCore::Archive& InAr, AnimStateNode& InOutState)
+            SerializeList(Ar, InOutLayer.States, [b2D](EngineCore::Archive& InAr, AnimStateNode& InOutState)
             {
                 InAr << InOutState.Name << InOutState.BlendParameter << InOutState.Speed;
+                if(b2D) { InAr << InOutState.BlendParameterY; }
                 SerializeEnum(InAr, InOutState.Loop);
-                SerializeList(InAr, InOutState.Samples, [](EngineCore::Archive& InSampleAr, AnimBlendSample& InOutSample)
+                SerializeList(InAr, InOutState.Samples, [b2D](EngineCore::Archive& InSampleAr, AnimBlendSample& InOutSample)
                 {
                     InSampleAr << InOutSample.Clip << InOutSample.Position;
+                    if(b2D) { InSampleAr << InOutSample.PositionY; }
                 });
             });
             SerializeList(Ar, InOutLayer.Transitions, [](EngineCore::Archive& InAr, AnimTransition& InOutTransition)
@@ -142,9 +146,10 @@ namespace RenderCore
             });
             Ar.CloseChunk();
         }
-        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_LAYERS, 1, "anim state: no ALYR chunk"))
+        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_LAYERS, 2, "anim state: no ALYR chunk"))
         {
-            SerializeList(Ar, InOutState.Layers, &SerializeLayer);
+            const uint16_t Version = Ar.GetChunkVersion();
+            SerializeList(Ar, InOutState.Layers, [Version](EngineCore::Archive& InAr, AnimLayer& InOutLayer) { SerializeLayer(InAr, InOutLayer, Version); });
             Ar.CloseChunk();
         }
         Ar.CloseChunk();

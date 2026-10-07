@@ -114,6 +114,7 @@ private:
     QDoubleSpinBox* StateSpeed  = nullptr;
     QComboBox*      StateLoop   = nullptr;
     QComboBox*      StateBlend  = nullptr;
+    QComboBox*      StateBlendY = nullptr;   // a second: a 2D blend space
     QTableWidget*   SampleTable = nullptr;
 
     QListWidget*    TransitionList = nullptr;

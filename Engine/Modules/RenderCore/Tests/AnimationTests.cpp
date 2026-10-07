@@ -395,6 +395,60 @@ static void TestStateMachine()
     Expect(!Instance.IsInTransition(0), "the crossfade finishes after its duration");
 }
 
+/* A 2D blend space on X and Y: Idle at the centre, Bend at +X, its mirror
+ * at -X, Wave (the hand) at +Y. */
+static void TestBlendSpace2D()
+{
+    std::printf("[2D blend space]\n");
+    WriteStateClips();
+    AnimClipData Back = MakeTurn("Arm", 100.0f, -90.0f, true);
+    SaveAnimClipFile(std::string(SCRATCH) + "BendBack.nmanim", Back);
+    AnimClipAssetCache::Invalidate("");
+
+    AnimStateData Data;
+    Data.Parameters = { { "X", EAnimParameterType::Float, 0.0f }, { "Y", EAnimParameterType::Float, 0.0f } };
+    AnimLayer Layer;
+    Layer.Name = "Base";
+    AnimStateNode Move;
+    Move.Name            = "Move";
+    Move.BlendParameter  = "X";
+    Move.BlendParameterY = "Y";
+    Move.Samples = { { std::string(SCRATCH) + "Idle.nmanim", 0.0f, 0.0f }, { std::string(SCRATCH) + "Bend.nmanim", 1.0f, 0.0f },
+                     { std::string(SCRATCH) + "BendBack.nmanim", -1.0f, 0.0f }, { std::string(SCRATCH) + "Wave.nmanim", 0.0f, 1.0f } };
+    Layer.States.push_back(Move);
+    Data.Layers.push_back(Layer);
+
+    EngineCore::Archive Out = EngineCore::Archive::ForWriting();
+    Expect(SerializeAnimState(Out, Data), "it saves");
+    EngineCore::Archive In = EngineCore::Archive::ForReading(Out.GetBytes());
+    AnimStateData Read;
+    Expect(SerializeAnimState(In, Read) && Read.Layers[0].States[0].BlendParameterY == "Y"
+           && Near(Read.Layers[0].States[0].Samples[3].PositionY, 1.0f), "the second parameter and each sample's Y read back");
+
+    AnimInstance Instance;
+    Instance.SetSkeleton(std::make_shared<SkeletonData>(MakeSkeleton()));
+    Instance.SetState(std::make_shared<AnimStateData>(Data));
+    const auto At = [&Instance](const float InX, const float InY)
+    {
+        Instance.SetParameter("X", InX);
+        Instance.SetParameter("Y", InY);
+        Instance.SetTime(1.0f);
+        return Instance.GetModelPose()[2];
+    };
+    Expect(Near(At(0.0f, 0.0f).M[0][3], 150.0f), "at the centre: Idle alone");
+    const AnimMatrix Right = At(1.0f, 0.0f);
+    Expect(Near(Right.M[0][3], 100.0f) && Near(Right.M[1][3], 50.0f), "at +X: Bend alone");
+    const AnimMatrix Left = At(-1.0f, 0.0f);
+    Expect(Near(Left.M[0][3], 100.0f) && Near(Left.M[1][3], -50.0f), "at -X: its mirror");
+    const AnimMatrix Up = At(0.0f, 1.0f);
+    Expect(Near(Up.M[0][3], 150.0f) && Up.M[1][0] > 0.95f, "at +Y: Wave, the arm straight and the hand turned");
+    Expect(Near(At(0.5f, 0.0f).M[1][3], 50.0f * std::sin(0.7853982f), 0.05f), "half way to +X: half of each, as in 1D");
+    const AnimMatrix Far = At(3.0f, 0.0f);
+    Expect(Near(Far.M[0][3], 100.0f) && Near(Far.M[1][3], 50.0f), "past the last sample: that sample");
+    const AnimMatrix Corner = At(0.5f, 0.5f);
+    Expect(Corner.M[1][3] > 1.0f && Corner.M[1][3] < 35.0f && Corner.M[1][0] > 0.05f, "between +X and +Y: some of both");
+}
+
 static void TestStateSystem()
 {
     std::printf("[anim state on a component]\n");
@@ -716,6 +770,7 @@ int main()
     TestSystem();
     TestStateAsset();
     TestStateMachine();
+    TestBlendSpace2D();
     TestStateSystem();
     TestSocket();
     TestRootMotion();
