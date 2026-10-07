@@ -4,7 +4,7 @@
 
 // Bumped when a change here or in the templates breaks shader caches cooked
 // before it; RenderCore refuses a cache that disagrees (MaterialPermutation.h).
-#define MATERIAL_TEMPLATE_VERSION 13
+#define MATERIAL_TEMPLATE_VERSION 14
 
 // What input nodes read. Each stage's template fills it; the pixel-only
 // fields exist only in the pixel stage, so a pixel-only node in the vertex

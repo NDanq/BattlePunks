@@ -58,6 +58,10 @@ namespace RenderCore
          * model space. Null: its bind pose. Kept by pointer, as Items. */
         const float*                   SkinPalette = nullptr;
         uint32_t                       SkinBones   = 0;
+
+        /* Its palette the frame before, as SkinPalette, for velocity; null:
+         * SkinPalette (it did not move). */
+        const float*                   PrevSkinPalette = nullptr;
     };
 
     class RENDERCORE_API RenderContext
@@ -254,6 +258,14 @@ namespace RenderCore
          * clearing to InClearColor. Leaves the final colour target bound --
          * what the present shows. */
         void BeginSceneDraws();
+
+        /* VELOCITY (RENDERPIPELINE.md, "Velocity"): the world motion of what
+         * queues draws next -- its transform the frame before times the
+         * inverse of its transform now. Each draw queued until the next call
+         * takes it, its model the frame before that times its model now.
+         * Null: nothing moved. RenderScene sets it per proxy; a static draw
+         * list's replays never move. */
+        void SetDrawMotion(const EngineCore::Matrix4x4* InMotion);
 
         /* STATIC DRAW LISTS (RenderScene): between BeginCapture and
          * EndCapture, whatever a proxy's Draw or DrawShadow queues lands in

@@ -224,9 +224,9 @@ private:
     uint64_t                  SceneBlockUploadSerial = ~0ull;
     uint64_t                  SceneBlockUploadEpoch  = ~0ull;
     /* The skin block the same way: unchanged since its last upload, reused. */
-    uint64_t                  SkinBlockUploadAddress = 0;    // D3D12_GPU_VIRTUAL_ADDRESS
-    uint64_t                  SkinBlockUploadSerial  = ~0ull;
-    uint64_t                  SkinBlockUploadEpoch   = ~0ull;
+    uint64_t                  SkinBlockUploadAddress[2] = {};                 // D3D12_GPU_VIRTUAL_ADDRESS; the palette, the frame before's
+    uint64_t                  SkinBlockUploadSerial[2]  = { ~0ull, ~0ull };
+    uint64_t                  SkinBlockUploadEpoch[2]   = { ~0ull, ~0ull };
 
     GDIMesh*                  ScreenMesh       = nullptr;
     D3D12TextureResource*     NullTexture      = nullptr;

@@ -121,6 +121,9 @@ bool D3D12PipelineCache::BuildRootSignature()
     Params[RP_Skin].ParameterType              = D3D12_ROOT_PARAMETER_TYPE_CBV;
     Params[RP_Skin].Descriptor.ShaderRegister  = GDI_SKIN_BLOCK_BINDING;
     Params[RP_Skin].ShaderVisibility           = D3D12_SHADER_VISIBILITY_VERTEX;
+    Params[RP_PrevSkin].ParameterType              = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    Params[RP_PrevSkin].Descriptor.ShaderRegister  = GDI_PREV_SKIN_BLOCK_BINDING;
+    Params[RP_PrevSkin].ShaderVisibility           = D3D12_SHADER_VISIBILITY_VERTEX;
 
     for(UINT Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
     {
@@ -281,6 +284,7 @@ uint64_t D3D12PipelineCache::HashKey(const PipelineKey& K)
     Mix(&K.WriteMask,      sizeof(K.WriteMask));
     Mix(&K.RTFormat,       sizeof(K.RTFormat));
     Mix(&K.ColorCount,     sizeof(K.ColorCount));
+    Mix(&K.ColorFormats,   sizeof(K.ColorFormats));
     Mix(&K.DSVFormat,      sizeof(K.DSVFormat));
     Mix(&K.DepthEnable,    sizeof(K.DepthEnable));
     Mix(&K.DepthWrite,     sizeof(K.DepthWrite));
@@ -369,7 +373,7 @@ ComPtr<ID3D12PipelineState> D3D12PipelineCache::CreatePipeline(const PipelineKey
     Desc.NumRenderTargets      = Key.ColorCount == 0 ? 1u : (Key.ColorCount > GDI_MAX_COLOR_TARGETS ? GDI_MAX_COLOR_TARGETS : Key.ColorCount);
     for(UINT Index = 0; Index < Desc.NumRenderTargets; ++Index)
     {
-        Desc.RTVFormats[Index] = Key.RTFormat;
+        Desc.RTVFormats[Index] = Key.ColorFormats[Index] != DXGI_FORMAT_UNKNOWN ? Key.ColorFormats[Index] : Key.RTFormat;
     }
     Desc.DSVFormat             = Key.DSVFormat;
     Desc.SampleDesc.Count      = 1;

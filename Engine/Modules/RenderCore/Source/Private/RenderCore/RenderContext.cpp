@@ -525,7 +525,8 @@ namespace RenderCore
         }
 
         /* Camera, and InTransform with scale times InScaleX/Y (1 for a mesh). */
-        void Place(GDIViewObject* InObject, const RenderTransform& InTransform, const float InScaleX, const float InScaleY)
+        void Place(GDIViewObject* InObject, const RenderTransform& InTransform, const float InScaleX, const float InScaleY,
+                   const DrawCommand* InItem = nullptr)
         {
             /* Here rather than in SetView(), so a RenderContext without a
              * RenderScene (tests) still draws. */
@@ -538,12 +539,19 @@ namespace RenderCore
             Transform->Scale     = EngineCore::Vector3(InTransform.Scale.GetX() * double(InScaleX),
                                                        InTransform.Scale.GetY() * double(InScaleY),
                                                        InTransform.Scale.GetZ());
+
+            /* Where it was the frame before (Transform.PrevModel), for velocity. */
+            Transform->bHasPrevModel = InItem && InItem->bMoved;
+            if(Transform->bHasPrevModel)
+            {
+                Transform->PrevModel = InItem->Motion * Transform->GetModel();
+            }
         }
 
         /* The camera and the quad's placement, shared by both quad draws. */
-        void PlaceQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight)
+        void PlaceQuad(const RenderTransform& InTransform, const float InWidth, const float InHeight, const DrawCommand* InItem = nullptr)
         {
-            Place(ViewObject, InTransform, InWidth, InHeight);
+            Place(ViewObject, InTransform, InWidth, InHeight, InItem);
         }
 
         /* Null if unloadable or unbuildable; OutSource is set if found. */
@@ -857,6 +865,9 @@ namespace RenderCore
             if(bTimeStages) { GDIWriteGPUTimestamp(uint32_t(InTimer) * 2 + (bInEnd ? 1 : 0)); }
         }
         bool                bGBufferThisFrame = false;   // RenderSceneStages wrote the G-buffer: Bloom may read its emissive
+        bool                bVelocityThisFrame = false;  // and the velocity beside it: Motion Blur may read it
+        bool                  bDrawMotion = false;       // SetDrawMotion's, for the draws queued now
+        EngineCore::Matrix4x4 DrawMotion;
 
         /* Image-based lighting (SetImageBasedLighting): the scene's atlas and its probes, for the next
          * RenderSceneStages; and whether every view draws the sky behind it (a reflection probe's captures). */
@@ -1376,6 +1387,8 @@ namespace RenderCore
             {
                 const uint32_t Bones = std::min<uint32_t>(InItem.SkinBones, GDI_SKIN_MAX_BONES);
                 GDISetUniformBlock(GDI_SKIN_BLOCK_BINDING, InItem.SkinPalette, uint(Bones * 12 * sizeof(float)));
+                GDISetUniformBlock(GDI_PREV_SKIN_BLOCK_BINDING, InItem.PrevSkinPalette ? InItem.PrevSkinPalette : InItem.SkinPalette,
+                                   uint(Bones * 12 * sizeof(float)));
             }
             else
             {
@@ -1389,6 +1402,7 @@ namespace RenderCore
                     return Rows;
                 }();
                 GDISetUniformBlock(GDI_SKIN_BLOCK_BINDING, Identity.data(), uint(Identity.size() * sizeof(float)));
+                GDISetUniformBlock(GDI_PREV_SKIN_BLOCK_BINDING, Identity.data(), uint(Identity.size() * sizeof(float)));
             }
             return EMaterialVertexInput::SkinnedMesh;
         }
@@ -1610,7 +1624,7 @@ namespace RenderCore
                 IssueQuad(Plain);
                 return;
             }
-            PlaceQuad(InItem.Transform, InItem.Width, InItem.Height);
+            PlaceQuad(InItem.Transform, InItem.Width, InItem.Height, &InItem);
             GDIDrawObject(ViewObject);
             DrawCallCount.fetch_add(1, std::memory_order_relaxed);
         }
@@ -1618,7 +1632,7 @@ namespace RenderCore
         void IssueMeshSection(const DrawCommand& InItem)
         {
             EnsureInitialised();
-            Place(MeshObject, InItem.Transform, 1.0f, 1.0f);
+            Place(MeshObject, InItem.Transform, 1.0f, 1.0f, &InItem);
             MeshObject->Mesh = InItem.Mesh;
 
             /* Instanced: the material's InstancedMesh vertex shader, or nothing -- the plain fallback draws once. */
@@ -1749,8 +1763,13 @@ namespace RenderCore
         {
             if(Capture)
             {
-                Capture->push_back({ InItem, InStage });
+                Capture->push_back({ InItem, InStage });   // a static list's: it never moves
                 return;
+            }
+            if(bDrawMotion && !InItem.bStatic)
+            {
+                InItem.bMoved = true;
+                InItem.Motion = DrawMotion;
             }
             if(!bDeferring)
             {
@@ -2090,9 +2109,11 @@ namespace RenderCore
             Block.A[0] = InPost.MotionIntensity;
             Block.A[1] = InPost.MotionMaxLength;
             Block.A[2] = InPost.MotionSamples;
+            Block.A[3] = bVelocityThisFrame ? 1.0f : 0.0f;   // each surface's own motion too, from the Base Pass
             Sizes(Block, Width, Height);
             GDIRenderTarget* Dest = Next();
-            if(DrawPost(PP_MotionBlur, Dest, Width, Height, { Texture(Source), Depth }, Block))
+            GDITextureResource* Velocity = bVelocityThisFrame ? Texture(InTargets.Velocity) : nullptr;
+            if(DrawPost(PP_MotionBlur, Dest, Width, Height, { Texture(Source), Depth, Velocity }, Block))
             {
                 Source = Dest;
                 ++Passes;
@@ -2520,6 +2541,7 @@ namespace RenderCore
             Item.Baked         = InOverrides.Baked;
             Item.SkinPalette   = SkinPalette;
             Item.SkinBones     = SkinBones;
+            Item.PrevSkinPalette = SkinPalette == InOverrides.SkinPalette ? InOverrides.PrevSkinPalette : nullptr;
             Item.MaterialSlot  = uint8_t(SlotIndex);   // the section's slot, whichever material it fell back to
             P->Submit(Item, Impl::StageOf(Chosen));
         }
@@ -2880,6 +2902,12 @@ namespace RenderCore
         P->Capture = nullptr;
     }
 
+    void RenderContext::SetDrawMotion(const EngineCore::Matrix4x4* InMotion)
+    {
+        P->bDrawMotion = InMotion != nullptr;
+        if(InMotion) { P->DrawMotion = *InMotion; }
+    }
+
     void RenderContext::SubmitCaptured(const std::vector<StagedDraw>& InDraws, const int32_t InShadowView)
     {
         for(const StagedDraw& Each : InDraws)
@@ -2967,6 +2995,7 @@ namespace RenderCore
             const char* const GBufferNames[RENDER_GBUFFER_TARGETS] = { "GBuffer0 (base colour, AO)", "GBuffer1 (normal)",
                                                                        "GBuffer2 (metallic, roughness, specular)", "GBuffer3 (emissive)" };
             for(uint32_t Index = 0; Index < RENDER_GBUFFER_TARGETS; ++Index) { Add(InTargets.GBuffer[Index], GBufferNames[Index]); }
+            Add(InTargets.Velocity,     "Velocity (world motion, units a frame)");
             Add(InTargets.PostProcess,  "Post process");
             Add(InTargets.PostProcessB, "Post process B");
             for(size_t Index = 0; Index < std::size(InTargets.Half); ++Index)    { Add(InTargets.Half[Index], "Half size " + std::to_string(Index) + " (ambient occlusion)"); }
@@ -3120,11 +3149,18 @@ namespace RenderCore
         /* Base Pass: the G-buffer, created the first time something needs it. */
         const DrawPolicy& Base = P->PolicyFor(ERenderStage::BasePass);
         const bool bDeferred = !Base.IsEmpty() && InTargets.EnsureGBuffer();
-        P->bGBufferThisFrame = bDeferred;
+        P->bGBufferThisFrame  = bDeferred;
+        P->bVelocityThisFrame = false;
         if(bDeferred)
         {
             P->StageTimestamp(RGT_BasePass, false);
-            BindTargets(InTargets.GBuffer, RENDER_GBUFFER_TARGETS, SceneColor);
+            /* And the velocity beside it, where the backend has one: what
+             * nothing here writes stays 0, not moving (the camera's motion
+             * alone, to Motion Blur). */
+            GDIRenderTarget* Targets[RENDER_GBUFFER_TARGETS + 1] = { InTargets.GBuffer[0], InTargets.GBuffer[1], InTargets.GBuffer[2],
+                                                                     InTargets.GBuffer[3], InTargets.EnsureVelocity() };
+            P->bVelocityThisFrame = Targets[RENDER_GBUFFER_TARGETS] != nullptr;
+            BindTargets(Targets, P->bVelocityThisFrame ? RENDER_GBUFFER_TARGETS + 1 : RENDER_GBUFFER_TARGETS, SceneColor);
             GDIClear(CM_Color, EngineCore::Color(0, 0, 0, 0));   // alpha 0 in GBuffer1: no lit surface
             P->IssueStage(ERenderStage::BasePass);
             P->StageTimestamp(RGT_BasePass, true);

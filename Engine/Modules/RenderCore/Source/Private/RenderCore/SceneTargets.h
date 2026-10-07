@@ -35,6 +35,11 @@ namespace RenderCore
         GDIRenderTarget* SceneColor  = nullptr;
         bool             bHDR        = false;                   // SceneColor is RGBA16F, linear light (RENDERPIPELINE.md, "HDR and tone mapping")
         GDIRenderTarget* GBuffer[RENDER_GBUFFER_TARGETS] = {};
+        /* The Base Pass's fifth target (RENDERPIPELINE.md, "Velocity"): each
+         * pixel's world motion since the frame before, a 1 where written.
+         * RGBA16F; null where the backend has no such target. */
+        GDIRenderTarget* Velocity    = nullptr;
+        bool             bVelocityTried = false;
         GDIRenderTarget* PostProcess = nullptr;
         GDIRenderTarget* PostProcessB = nullptr;                // the post process stack ping-pongs PostProcess and this
 
@@ -81,6 +86,10 @@ namespace RenderCore
                 {
                     if(Each) { Each->Resize(InWidth, InHeight); }
                 }
+                if(Velocity)
+                {
+                    Velocity->Resize(InWidth, InHeight);
+                }
                 if(PostProcess)
                 {
                     PostProcess->Resize(InWidth, InHeight);
@@ -122,6 +131,20 @@ namespace RenderCore
                 }
             }
             return true;
+        }
+
+        /* The velocity target, made once with the G-buffer; null if the backend cannot. */
+        GDIRenderTarget* EnsureVelocity()
+        {
+            if(!Velocity && !bVelocityTried && Width > 0 && Height > 0)
+            {
+                bVelocityTried = true;
+                if(GDISupportsRenderTargetFormat(GDI_RTF_RGBA16F))
+                {
+                    Velocity = GDICreateRenderTargetFormat(Name + ".Velocity", Width, Height, GDI_RTF_RGBA16F);
+                }
+            }
+            return Velocity && Velocity->IsValid() ? Velocity : nullptr;
         }
 
         /* InSize halved InTimes times, never below 1. */
@@ -190,7 +213,7 @@ namespace RenderCore
 
         void Release()
         {
-            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &PostProcess, &PostProcessB,
+            for(GDIRenderTarget** Each : { &SceneColor, &GBuffer[0], &GBuffer[1], &GBuffer[2], &GBuffer[3], &Velocity, &PostProcess, &PostProcessB,
                                            &Half[0], &Half[1], &Bloom[0], &Bloom[1], &Bloom[2], &Bloom[3], &Bloom[4], &Bloom[5],
                                            &BloomUp[0], &BloomUp[1], &BloomUp[2], &BloomUp[3], &BloomUp[4] })
             {
@@ -202,6 +225,7 @@ namespace RenderCore
                 }
             }
             Final  = nullptr;
+            bVelocityTried = false;
             Width  = 0;
             Height = 0;
         }

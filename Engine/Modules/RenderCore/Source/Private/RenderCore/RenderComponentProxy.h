@@ -37,6 +37,9 @@ namespace RenderCore
          * InCount 0: the mesh's bind pose. */
         void SetSkinPose(const AnimMatrix* InBones, uint32_t InCount);
 
+        /* And its palette: this frame's is the next one's previous. */
+        void EndFrameMotion() override;
+
     private:
         /* The palette from SkinPose and the mesh's inverse binds, and the
          * local bounds that hold the posed mesh. */
@@ -45,6 +48,7 @@ namespace RenderCore
         bool                     bSkinned = false;
         std::vector<AnimMatrix>  SkinPose;           // model space, by skeleton bone; empty: the bind pose
         std::vector<float>       SkinPalette;        // 12 floats a bone: pose times inverse bind
+        std::vector<float>       PrevSkinPalette;    // as SkinPalette was the frame before (EndFrameMotion); velocity's
         std::vector<float>       BoneRadii;          // how far each bone's vertices reach from it; < 0: none
         const MeshData*          RadiiFor = nullptr; // the mesh BoneRadii were measured on
 

@@ -336,12 +336,13 @@ private:
     VkDeviceSize            SceneBlockUploadOffset = 0;
     uint64_t                SceneBlockUploadSerial = ~0ull;
     uint64_t                SceneBlockUploadEpoch  = ~0ull;
-    /* The skin block the same way: unchanged since its last upload, reused. */
-    VkBuffer                SkinBlockUploadBuffer = VK_NULL_HANDLE;
-    VkDeviceSize            SkinBlockUploadOffset = 0;
-    uint32_t                SkinBlockUploadSize   = 0;
-    uint64_t                SkinBlockUploadSerial = ~0ull;
-    uint64_t                SkinBlockUploadEpoch  = ~0ull;
+    /* The skin blocks the same way (the palette, the frame before's):
+     * unchanged since the last upload, reused. */
+    VkBuffer                SkinBlockUploadBuffer[2] = { VK_NULL_HANDLE, VK_NULL_HANDLE };
+    VkDeviceSize            SkinBlockUploadOffset[2] = {};
+    uint32_t                SkinBlockUploadSize[2]   = {};
+    uint64_t                SkinBlockUploadSerial[2] = { ~0ull, ~0ull };
+    uint64_t                SkinBlockUploadEpoch[2]  = { ~0ull, ~0ull };
 
     /** Lazily-created full-screen NDC quad for DrawScreenQuadPrimitive. */
     GDIMesh*                ScreenMesh          = nullptr;

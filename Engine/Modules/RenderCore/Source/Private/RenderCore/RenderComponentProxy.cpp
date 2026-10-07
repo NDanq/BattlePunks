@@ -93,6 +93,12 @@ namespace RenderCore
         }
     }
 
+    void RenderComponentProxy::EndFrameMotion()
+    {
+        RenderProxy::EndFrameMotion();
+        PrevSkinPalette = SkinPalette;
+    }
+
     void RenderComponentProxy::RebuildSkin()
     {
         const MeshData& Mesh = *MeshSource;
@@ -197,6 +203,7 @@ namespace RenderCore
         {
             Overrides.SkinPalette = SkinPalette.data();
             Overrides.SkinBones   = uint32_t(SkinPalette.size() / 12);
+            Overrides.PrevSkinPalette = PrevSkinPalette.size() == SkinPalette.size() ? PrevSkinPalette.data() : nullptr;
         }
 
         const char* Slots[RENDER_MATERIAL_SLOTS];
@@ -229,6 +236,7 @@ namespace RenderCore
         {
             Overrides.SkinPalette = SkinPalette.data();
             Overrides.SkinBones   = uint32_t(SkinPalette.size() / 12);
+            Overrides.PrevSkinPalette = PrevSkinPalette.size() == SkinPalette.size() ? PrevSkinPalette.data() : nullptr;
         }
 
         const char* Slots[RENDER_MATERIAL_SLOTS];

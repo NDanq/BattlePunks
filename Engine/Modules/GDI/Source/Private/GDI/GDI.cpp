@@ -346,6 +346,7 @@ void GDIDynamicDriver::SetUniformBlock(const uint InBinding, const void* InData,
         case GDI_MATERIAL_BLOCK_BINDING: Index = 0; MaxBytes = GDI_MATERIAL_BLOCK_MAX_BYTES; break;
         case GDI_SCENE_BLOCK_BINDING:    Index = 1; MaxBytes = GDI_SCENE_BLOCK_MAX_BYTES;    break;
         case GDI_SKIN_BLOCK_BINDING:     Index = 2; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;     break;
+        case GDI_PREV_SKIN_BLOCK_BINDING: Index = 3; MaxBytes = GDI_SKIN_BLOCK_MAX_BYTES;    break;
         default: return;
     }
     std::vector<uint8_t>& Block = MaterialBlocks[Index];

@@ -246,7 +246,12 @@ namespace RenderCore
                 }
                 else
                 {
+                    /* Its velocity: how it moved since the frame before (a static list's never does). */
+                    EngineCore::Matrix4x4 Motion;
+                    const bool bMoved = Proxy->GetMotion(Motion);
+                    InContext.SetDrawMotion(bMoved ? &Motion : nullptr);
                     Proxy->Draw(InContext);
+                    InContext.SetDrawMotion(nullptr);
                 }
                 ++VisibleCount;
 
@@ -963,6 +968,12 @@ namespace RenderCore
 
         InContext.EndDrawEvent();   // "Scene"
         GDIEndRendering();
+
+        /* Drawn: what each proxy is now is what it was, for the next frame's velocity. */
+        for(RenderProxy* Proxy : P->Proxies)
+        {
+            Proxy->EndFrameMotion();
+        }
 
         /* After EndRendering: the final colour is now in its presentable state. */
         P->PresentTarget.store(P->Targets.Final, std::memory_order_release);
