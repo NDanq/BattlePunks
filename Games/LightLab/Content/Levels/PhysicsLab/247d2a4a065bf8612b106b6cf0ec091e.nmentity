@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Entity Guid="247d2a4a065bf8612b106b6cf0ec091e" Name="WallCrate">
+  <Component Type="Render" Version="4">
+    <Visible Value="true" />
+    <Material0 Value="Content/Materials/PBR.material.nmgraph" />
+    <Material1 Value="" />
+    <Material2 Value="" />
+    <Material3 Value="" />
+    <Material4 Value="" />
+    <Material5 Value="" />
+    <Material6 Value="" />
+    <Material7 Value="" />
+    <Mesh Value="Engine/Content/Meshes/Box.nmmesh" />
+    <ParameterCount Value="3" />
+    <Parameter0Name Value="BaseColor" />
+    <Parameter0Slot Value="0" />
+    <Parameter0X Value="0.82" />
+    <Parameter0Y Value="0.78" />
+    <Parameter0Z Value="0.7" />
+    <Parameter0W Value="0" />
+    <Parameter1Name Value="Metallic" />
+    <Parameter1Slot Value="0" />
+    <Parameter1X Value="0" />
+    <Parameter1Y Value="0" />
+    <Parameter1Z Value="0" />
+    <Parameter1W Value="0" />
+    <Parameter2Name Value="Roughness" />
+    <Parameter2Slot Value="0" />
+    <Parameter2X Value="0.8" />
+    <Parameter2Y Value="0" />
+    <Parameter2Z Value="0" />
+    <Parameter2W Value="0" />
+    <CastShadows Value="true" />
+    <CastInsetShadow Value="false" />
+  </Component>
+  <Component Type="Rigid Body" Version="1">
+    <Enabled Value="true" />
+    <Motion Value="0" />
+    <Shape Value="0" />
+    <ShapeSource Value="0" />
+    <Mass Value="0" />
+    <Friction Value="0.5" />
+    <Restitution Value="0" />
+    <LinearDamping Value="0.05" />
+    <AngularDamping Value="0.05" />
+    <GravityFactor Value="1" />
+    <Continuous Value="false" />
+    <Sensor Value="false" />
+    <AllowSleeping Value="true" />
+    <Layer Value="1" />
+    <Mask Value="-1" />
+    <InitialLinearVelocity X="0" Y="0" Z="0" />
+    <InitialAngularVelocity X="0" Y="0" Z="0" />
+  </Component>
+  <Component Type="Transform" Version="1">
+    <Position X="-1410" Y="270" Z="1330" />
+    <Rotation X="0" Y="0" Z="0" />
+    <Scale X="58" Y="58" Z="58" />
+  </Component>
+</Entity>

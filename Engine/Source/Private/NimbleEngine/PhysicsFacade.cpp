@@ -1,0 +1,166 @@
+#include "Public/NimbleEngine/PhysicsFacade.h"
+
+#include <cmath>
+#include <utility>
+#include <vector>
+
+#include "Public/GameCore/ComponentScript.h"
+#include "Public/GameCore/ScriptLibrary.h"
+#include "Public/GameCore/SpatialIndex.h"
+#include "Public/GameCore/World.h"
+
+#if WITH_JOLTPHYSICS
+#include "Public/JoltPhysics/PhysicsWorld.h"
+#endif
+
+/* PhysicsFacade.h has the contract. */
+
+namespace NimbleEngine
+{
+    bool IsPhysicsAvailable()
+    {
+        return WITH_JOLTPHYSICS != 0;
+    }
+
+    bool IsWorldSimulated(const GameCore::World& InWorld)
+    {
+#if WITH_JOLTPHYSICS
+        return JoltPhysics::PhysicsWorld::Find(InWorld) != nullptr;
+#else
+        (void)InWorld;
+        return false;
+#endif
+    }
+
+#if WITH_JOLTPHYSICS
+    namespace
+    {
+        /* StartSimulating's, by World: GameSession owns its levels' itself. */
+        std::vector<std::pair<const GameCore::World*, JoltPhysics::PhysicsWorld*>>& ToolSimulations()
+        {
+            static std::vector<std::pair<const GameCore::World*, JoltPhysics::PhysicsWorld*>> Entries;
+            return Entries;
+        }
+    }
+#endif
+
+    bool StartSimulating(GameCore::World& InWorld)
+    {
+#if WITH_JOLTPHYSICS
+        if(JoltPhysics::PhysicsWorld::Find(InWorld)) { return false; }
+        auto* Physics = new JoltPhysics::PhysicsWorld();
+        if(!Physics->Attach(InWorld))
+        {
+            delete Physics;
+            return false;
+        }
+        ToolSimulations().emplace_back(&InWorld, Physics);
+        return true;
+#else
+        (void)InWorld;
+        return false;
+#endif
+    }
+
+    void StopSimulating(GameCore::World& InWorld)
+    {
+#if WITH_JOLTPHYSICS
+        auto& Entries = ToolSimulations();
+        for(auto It = Entries.begin(); It != Entries.end(); ++It)
+        {
+            if(It->first != &InWorld) { continue; }
+            It->second->Detach();
+            delete It->second;
+            Entries.erase(It);
+            return;
+        }
+#else
+        (void)InWorld;
+#endif
+    }
+
+    bool PhysicsRaycast(GameCore::World& InWorld, const EngineCore::Vector3& InOrigin, const EngineCore::Vector3& InDirection,
+                        const float InMaxDistance, PhysicsRaycastHit& OutHit, const int32_t InMask)
+    {
+        OutHit = PhysicsRaycastHit();
+
+#if WITH_JOLTPHYSICS
+        if(const JoltPhysics::PhysicsWorld* Physics = JoltPhysics::PhysicsWorld::Find(InWorld))
+        {
+            JoltPhysics::PhysicsHit Hit;
+            if(!Physics->Raycast(InOrigin, InDirection, InMaxDistance, Hit, InMask)) { return false; }
+            OutHit.Entity   = Hit.Entity;
+            OutHit.Distance = Hit.Distance;
+            OutHit.Point    = Hit.Point;
+            OutHit.Normal   = Hit.Normal;
+            return true;
+        }
+#endif
+
+        /* Without physics: the World's Bounds, along a unit direction so T is a distance. */
+        (void)InMask;
+        const double Length = std::sqrt(double(InDirection.GetX()) * InDirection.GetX() + double(InDirection.GetY()) * InDirection.GetY()
+                                        + double(InDirection.GetZ()) * InDirection.GetZ());
+        if(Length <= 0.0 || InMaxDistance <= 0.0f) { return false; }
+        const EngineCore::Vector3 Unit = InDirection * (1.0 / Length);
+        GameCore::RaycastHit Hit;
+        if(!InWorld.Raycast(InOrigin, Unit, InMaxDistance, Hit)) { return false; }
+        OutHit.Entity   = Hit.Entity;
+        OutHit.Distance = Hit.T;
+        OutHit.Point    = InOrigin + Unit * double(Hit.T);
+        return true;
+    }
+}
+
+namespace
+{
+    /* Raycast's and RaycastNormal's arguments: From (3), Dir (3), Len, [Mask]. */
+    bool CastFromScript(GameCore::ScriptCall& InCall, NimbleEngine::PhysicsRaycastHit& OutHit)
+    {
+        const EngineCore::Vector3 Origin    = InCall.GetVector3(1);
+        const EngineCore::Vector3 Direction = InCall.GetVector3(4);
+        const float               Distance  = InCall.GetFloat(7);
+        const int32_t             Mask      = InCall.HasArg(8) ? InCall.GetInt(8) : -1;
+        if(InCall.HasError()) { return false; }
+        return NimbleEngine::PhysicsRaycast(InCall.GetWorld(), Origin, Direction, Distance, OutHit, Mask);
+    }
+}
+
+/*
+ * The "Physics" script library: PhysicsFacade.h for Lua and script graphs.
+ * Always registered; without physics Raycast tests Bounds.
+ */
+GAMECORE_DEFINE_SCRIPT_LIBRARY(Physics)
+{
+    Lib.Pure("IsAvailable", [](GameCore::ScriptCall& Call) { Call.PushBool(NimbleEngine::IsPhysicsAvailable()); },
+             "-> Available:bool")
+       .Tooltip("The JoltPhysics module is compiled in (NIMBLE_WITH_JOLTPHYSICS)");
+
+    /* Two calls rather than one: a signature has room for so many pins. */
+    Lib.Function("Raycast", [](GameCore::ScriptCall& Call)
+    {
+        NimbleEngine::PhysicsRaycastHit Hit;
+        const bool bHit = CastFromScript(Call, Hit);
+        if(Call.HasError()) { return; }
+        Call.PushBool(bHit);
+        Call.PushEntity(Hit.Entity);
+        Call.PushVector3(Hit.Point);
+    }, "From:Vector3, Dir:Vector3, Len:number, Mask:integer -> Hit:bool, Entity:Entity, At:Vector3")
+       .Tooltip("The nearest body along the ray within Len world units whose Layer is in Mask (default all); "
+                "Bounds when the world is not simulated");
+
+    Lib.Function("RaycastNormal", [](GameCore::ScriptCall& Call)
+    {
+        NimbleEngine::PhysicsRaycastHit Hit;
+        const bool bHit = CastFromScript(Call, Hit);
+        if(Call.HasError()) { return; }
+        Call.PushBool(bHit);
+        Call.PushVector3(Hit.Normal);
+    }, "From:Vector3, Dir:Vector3, Len:number, Mask:integer -> Hit:bool, Normal:Vector3")
+       .Tooltip("Raycast's surface normal at the hit; zero when the world is not simulated");
+
+    Lib.Event("ContactBegin", "Self:Entity, Other:Entity").Tooltip("Two Rigid Bodies began touching; told once for each");
+    Lib.Event("ContactEnd",   "Self:Entity, Other:Entity").Tooltip("Two Rigid Bodies stopped touching (Other may be gone)");
+    Lib.Event("SensorEnter",  "Sensor:Entity, Other:Entity").Tooltip("A body entered a sensor Rigid Body");
+    Lib.Event("SensorExit",   "Sensor:Entity, Other:Entity").Tooltip("A body left a sensor Rigid Body");
+}

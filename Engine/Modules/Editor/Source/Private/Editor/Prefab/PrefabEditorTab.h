@@ -27,7 +27,8 @@ namespace GameCore { class ScriptEngine; class World; }
  *   Details    the selected entity's name and components
  *   Viewport   the prefab alone
  *   Script     the prefab's Lua script, or a link to its script graph
- *   Toolbar    Save, Simulate, the tick mode, the script
+ *   Toolbar    Save, Simulate (with physics, on a ground of its own, when the
+ *              prefab has Rigid Bodies), the tick mode, the script
  *
  * SIMULATE runs the prefab as a game would, in a World of its own: the
  * document borrows it (EditorDocument::BorrowWorld), so the prefab being
@@ -122,6 +123,7 @@ private:
 
     /* While simulating. */
     GameCore::World*        SimWorld   = nullptr;
+    bool                    bSimPhysics = false;   // SimWorld is simulated (NimbleEngine::StartSimulating)
     GameCore::ScriptEngine* SimScripts = nullptr;
 };
 

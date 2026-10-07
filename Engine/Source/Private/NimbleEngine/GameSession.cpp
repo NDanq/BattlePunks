@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "Public/NimbleEngine/GameConsole.h"
+#include "Public/NimbleEngine/NetFacade.h"
 #include "Public/NimbleEngine/GameState.h"
 #include "Public/NimbleEngine/Level.h"
 #include "Public/NimbleEngine/PlayerState.h"
@@ -24,6 +25,10 @@
 #include "Public/RenderCore/Renderer.h"
 #include "Public/UI/UISystem.h"
 
+#if WITH_JOLTPHYSICS
+#include "Public/JoltPhysics/PhysicsWorld.h"
+#endif
+
 /* Chunk tags shared with SaveGame.cpp. */
 #include "Private/NimbleEngine/InputInternal.h"
 #include "Private/NimbleEngine/SaveGameFormat.h"
@@ -31,6 +36,11 @@
 /* Lua file run on every level load, after IGameMode::OnLoad (see LoadLevel).
  * Empty skips it. */
 NIMBLE_CONFIG_STRING(GStartupScript, "Scripting", "StartupScript", "", nullptr);
+
+/* "stat physics": the level's simulation -- bodies, contacts, step times --
+ * in the stats panel over the viewport (Renderer::SetStatText). The editor's
+ * console and the game's toggle it with "stat physics". */
+NIMBLE_CONFIG_BOOL(GStatsPhysics, "Stats", "Physics", false, nullptr);
 
 namespace NimbleEngine
 {
@@ -147,6 +157,23 @@ namespace NimbleEngine
 
         Scripts.BindWorld(LevelWorld);
         Rendering.BindWorld(*LevelWorld);
+
+#if WITH_JOLTPHYSICS
+        /* Before OnLoad, so the level's first bodies step with everything else.
+         * A client leaves what the server replicates to the server. */
+        {
+            JoltPhysics::PhysicsSettings Settings = JoltPhysics::PhysicsSettings::FromConfig();
+            Settings.bReplicaKinematic = IsClient();
+            Physics = EngineCore::Memory::Alloc<JoltPhysics::PhysicsWorld>();
+            if(!Physics->Attach(*LevelWorld, Settings))
+            {
+                EngineCore::Memory::Dealloc(Physics);
+                Physics = nullptr;
+            }
+        }
+#endif
+        bInactiveChecked = false;
+        bInactiveWarned  = false;
         Interface->SetWorld(LevelWorld);   // Event: actions emit on its bus
         UI::SetScriptUISystem(Interface);
         bPaused = false;
@@ -204,6 +231,11 @@ namespace NimbleEngine
         {
             Scripts.RunFile(StartupScriptPath);
         }
+
+        /* What the level and its script made, all at once; later additions
+         * are caught as they come (OnComponentAdded). */
+        bInactiveWarned  = WarnInactiveModuleComponents(*LevelWorld, InLevel.GetName());
+        bInactiveChecked = true;
 
         /* Before the restore and OnStart -- see the header's sequence. */
         GameState* State = InLevel.GetGameState();
@@ -337,6 +369,22 @@ namespace NimbleEngine
 
             Scripts.UnbindWorld();
             Rendering.UnbindWorld();
+
+            /* "stat physics" shows no World's numbers once it is gone. */
+            if(bPhysicsStatShown)
+            {
+                Rendering.SetStatText("Physics", std::string());
+                bPhysicsStatShown = false;
+            }
+
+#if WITH_JOLTPHYSICS
+            if(Physics)
+            {
+                Physics->Detach();
+                EngineCore::Memory::Dealloc(Physics);
+                Physics = nullptr;
+            }
+#endif
 
             RemoveWorldSession(LevelWorld);
             QueuedPhases.clear();
@@ -523,12 +571,62 @@ namespace NimbleEngine
             ResolveInputComponents(*LevelWorld, FilteredInput);
         }
 
+        PublishPhysicsStat();
+
         /* After the World: this frame's values, then layout, paint and submit
          * of whatever changed -- before the host's EndFrame renders. */
         PublishUIValues();
         Console->Update();
         Interface->Tick(float(InFrame.DeltaSeconds));
         Interface->Update(UI::UIVec2{ float(InFrame.ViewportPixels.Width), float(InFrame.ViewportPixels.Height) });
+    }
+
+    void GameSession::PublishPhysicsStat()
+    {
+        if(!GStatsPhysics.GetBool() || !LevelWorld)
+        {
+            if(bPhysicsStatShown)
+            {
+                Rendering.SetStatText("Physics", std::string());
+                bPhysicsStatShown = false;
+            }
+            return;
+        }
+
+        std::string Text;
+#if WITH_JOLTPHYSICS
+        if(Physics)
+        {
+            JoltPhysics::PhysicsStats Stats;
+            Physics->GetStats(Stats);
+            char Buffer[512];
+            std::snprintf(Buffer, sizeof(Buffer),
+                          "Bodies    %6u\n"
+                          "  Awake   %6u\n"
+                          "  Dynamic %6u\n"
+                          "  Kinemat %6u\n"
+                          "  Static  %6u\n"
+                          "  Sensors %6u\n"
+                          "Joints    %6u\n"
+                          "Vehicles  %6u\n"
+                          "Contacts  %6u\n"
+                          "Steps     %6u\n"
+                          "Step   %6.2f ms\n"
+                          "Sync   %6.2f ms",
+                          Stats.Bodies, Stats.ActiveBodies, Stats.DynamicBodies, Stats.KinematicBodies,
+                          Stats.StaticBodies, Stats.Sensors, Stats.Constraints, Stats.Vehicles, Stats.Contacts,
+                          Stats.StepsLastFrame, double(Stats.StepMs), double(Stats.SyncMs));
+            Text = Buffer;
+        }
+        else
+        {
+            Text = "not running";
+        }
+#else
+        Text = "not compiled in\n(NIMBLE_WITH_\n JOLTPHYSICS=OFF)";
+#endif
+        Rendering.SetStatText("Physics", Text);
+        bPhysicsStatShown = true;
     }
 
     void GameSession::ResolveInput(GameCore::World& InWorld, float /*InDeltaSeconds*/, void* InUserData)
@@ -727,6 +825,11 @@ namespace NimbleEngine
     void GameSession::OnComponentAdded(const GameCore::EntityID InEntity, const GameCore::ComponentTypeID InType, void* InUserData)
     {
         auto* Session = static_cast<GameSession*>(InUserData);
+        if(Session->bInactiveChecked && !Session->bInactiveWarned && Session->ActiveLevel && Session->LevelWorld
+           && IsInactiveModuleComponent(InType))
+        {
+            Session->bInactiveWarned = WarnInactiveModuleComponents(*Session->LevelWorld, Session->ActiveLevel->GetName());
+        }
         if(InType != PlayerStateComponent::StaticType().ID || !Session->ActiveLevel || !Session->bModeLoaded)
         {
             return;

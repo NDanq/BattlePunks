@@ -38,14 +38,49 @@ reach every target through EngineCore.
 - each game's dedicated server, `<Game>Server`
 - `<Game> -connect=host:port`
 
-A game that never networks turns it off before adding the engine, and
-nothing networked is compiled or linked:
+A game that never networks turns it off, and then nothing networked is
+compiled or linked. See **Choosing modules** below and
+`Engine/Modules/NetCore/README.md`.
 
-```cmake
-set(NIMBLE_WITH_NETCORE OFF CACHE BOOL "" FORCE)
+### Physics
+
+`NIMBLE_WITH_JOLTPHYSICS` (**off** by default) builds JoltPhysics, rigid
+bodies and joints on the vendored [Jolt Physics](https://github.com/jrouwe/JoltPhysics),
+and defines `WITH_JOLTPHYSICS=1` everywhere. A game that wants physics opts
+in (see **Choosing modules** below), as LightLab does.
+
+Entities get a **Rigid Body** component, and optionally a **Physics
+Constraint**. Each body's shape is inferred from the entity's Render
+component mesh or its Bounds. Both components live in GameCore, so a level
+that carries them still loads, edits and saves with the module off. They do
+not simulate then, and loading such a level warns. Net components in a build
+without NetCore warn the same way. See `Engine/Modules/JoltPhysics/README.md`.
+
+### Choosing modules
+
+A project picks its optional engine modules in its own
+`Config/DefaultEngine.ini`:
+
+```ini
+[Modules]
+NetCore=true
+JoltPhysics=false
 ```
 
-See `Engine/Modules/NetCore/README.md`.
+The editor edits the same keys under **Project Settings > Project >
+Modules**. CMake reads them as the game configures
+(`Engine/cmake/NimbleProject.cmake`). The game's CMakeLists names the file
+before adding the engine with
+`set(NIMBLE_PROJECT_CONFIG ".../Config/DefaultEngine.ini")`. The file is a
+configure dependency, so the next build after an edit reconfigures and builds
+or drops the module. A key the file has wins over a `-D` on the configure
+line.
+
+Flipping a switch there asks first, because it needs a native recompile.
+Cancel puts the switch back; the other settings still apply.
+
+A running game or editor whose build disagrees with the file warns. That
+happens when the file was edited since the last build.
 
 ### Games are modules
 
@@ -78,8 +113,8 @@ a Shipping build reads the copy cooked into `Content/Levels/Cooked/`. Without
 a level file the game builds the same scene in code; `[LightLab]
 ExportLevel=<path>` in an editor build writes that code-built scene out. Mouse
 looks, WASD moves, E/Q (or Space/Ctrl) rise and sink, Shift is faster, T cycles
-the sun's shadow technique, F toggles shadows and L switches between baked and
-live lighting. Escape (or the gamepad's Start) pauses under a menu
+the sun's shadow technique, F toggles shadows, L switches between baked and
+live lighting, and R resets the level (in every LightLab level). Escape (or the gamepad's Start) pauses under a menu
 (`Content/UI/PauseMenu.nmui`, Engine/Modules/UI/README.md): Resume, Escape
 again or the pad's East goes back to flying, Quit ends the game.
 
@@ -161,12 +196,40 @@ lighting, in either level. `Games/LightLab/Tools/make_baked_lighting_level.py`
 writes the world; Build > Bake Lightmaps (or the headless line in the editor's
 README, "Build menu") bakes it again.
 
+A third level, **PhysicsLab** (`Content/Levels/PhysicsLab.nmworld`; open it
+in the editor and Play, or set `[Game] StartLevel=PhysicsLab`), is the
+JoltPhysics demo (`LightLabPhysics.cpp`):
+
+- a crate pyramid and tower
+- dominoes set off by a ball rolling down a ramp
+- one slope with a bouncy ball, a heavy one, an ice block and a rubber block
+- balls raining into a static lattice cage (its triangles), with a lattice
+  hull, a capsule and a cylinder tumbling
+- a kinematic sweeper
+- a wrecking ball on a chain of joints
+- a motorised revolving door
+- a sensor jump pad
+- a buggy (`Content/Prefabs/Vehicle.nmprefab`, a Vehicle made of engine
+  meshes) on a driving course down the right: speed bumps, rough ground, a
+  jump, a cone slalom, a see-saw, a bridge and a crate wall
+
+Click throws a ball and R resets. C gets in and out of the buggy: WASD
+drives, Space is the handbrake, and a chase camera follows.
+`LightLab.AutoDrive 1` in the console drives it down the course by itself. `[LightLab] ExportPhysicsLevel=<path>`
+writes the code-built scene out, which is how the level file was made.
+`ExportVehiclePrefab=<path>` does the same for the buggy prefab. A level
+saved before the course gets it added as it loads, and
+`SavePhysicsLevel=<path>` keeps it.
+
 ### CLion
 
 Open `Games/Sandbox`. Its `CMakePresets.json` gives CLion five profiles:
 **Editor - Debug**, **Editor - RelWithDebInfo**, **Client - Debug**,
-**Client - RelWithDebInfo** and **Client - Shipping**. Each has its own build
-tree (`Games/Sandbox/cmake-build-<preset>`). Enable the ones you want under
+**Client - RelWithDebInfo** and **Client - Shipping**. On Linux they build
+with clang and lld and are named with a `-clang` suffix (**Editor - Debug
+(Clang)**, `editor-debug-clang`, ...); elsewhere they use the platform's
+default compiler. Each has its own build tree
+(`Games/Sandbox/cmake-build-<preset>`). Enable the ones you want under
 *Settings > Build, Execution, Deployment > CMake*. Pick a profile, then pick a
 run target:
 
@@ -185,6 +248,8 @@ cd Games/Sandbox
 cmake --preset client-shipping
 cmake --build --preset client-shipping
 ```
+
+On Linux, use `client-shipping-clang`.
 
 Or configure the engine directly: `cmake -S Engine -B build -DNIMBLE_TARGET=Client -DCMAKE_BUILD_TYPE=Shipping`.
 

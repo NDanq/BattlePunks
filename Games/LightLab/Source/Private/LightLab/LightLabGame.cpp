@@ -19,6 +19,7 @@
 
 #include "Private/LightLab/LightLabAvatar.h"
 #include "Private/LightLab/LightLabGpuTest.h"
+#include "Private/LightLab/LightLabPhysics.h"
 
 #include <algorithm>
 #include <cmath>
@@ -40,7 +41,7 @@
  * and an unshadowed coloured point light. Post process volumes give a soft
  * glow and FXAA everywhere, and depth of field and motion blur round the
  * arch. T cycles the sun's technique, F toggles [Shadows] Enabled through its
- * config var.
+ * config var, and R resets the level (every LightLab level).
  *
  * A second level, BakedLighting (the editor plays it while its world is open,
  * ILevel::GetWorldFile; a game, with [Game] StartLevel=BakedLighting), is baked
@@ -60,6 +61,9 @@
  *                      blocks, PBR props, shadowed lights and a herd of foxes
  *                      (LightLabGpuTest.h); flies the Player, or with
  *                      [LightLab] Benchmark flies a fixed path and records it.
+ *   LightLabPhysics    the PhysicsLab level (LightLabPhysics.cpp): stacks,
+ *                      dominoes, ramps, mesh colliders, joints and a jump
+ *                      pad, simulated by the JoltPhysics module.
  *
  * Both turn the InsetLattice (inset shadows' demo cage) and drift it round
  * where it was placed, so its own shadow map follows a moving caster.
@@ -211,15 +215,9 @@ GAMECORE_DEFINE_NATIVE_PREFAB(Ball,   "LightLab.Ball",   &BuildBall)
 GAMECORE_DEFINE_NATIVE_PREFAB(Floor,  "LightLab.Floor",  &BuildFloor)
 GAMECORE_DEFINE_NATIVE_PREFAB(Player, "LightLab.Player", &BuildPlayer)
 
-/* What LightLab.Fly's void* points at. Yaw and Pitch live here rather than
- * being read back from the Transform each frame, so the clamp and wrap are
- * the system's alone. */
-struct LightLabFlyContext
-{
-    GameCore::EntityID Player;
-    double             Yaw   = 0.0;
-    double             Pitch = 0.0;
-};
+/* LightLabFlyContext (LightLabPhysics.h) is what LightLab.Fly's void* points
+ * at. Yaw and Pitch live there rather than being read back from the
+ * Transform each frame, so the clamp and wrap are the system's alone. */
 
 /* What LightLab.Swing's void* points at: the dynamic ball, circling where it
  * was placed, in and out of the baked shadows. */
@@ -331,6 +329,10 @@ namespace
     void FlySystem(GameCore::World& InWorld, const float InDeltaSeconds, void* InUserData)
     {
         auto& Context = *static_cast<LightLabFlyContext*>(InUserData);
+        if(!Context.bEnabled)
+        {
+            return;
+        }
         const GameCore::Entity Player = InWorld.GetEntity(Context.Player);
         GameCore::TransformComponent* Transform = Player.GetComponent<GameCore::TransformComponent>();
         const NimbleEngine::InputComponent* Input = Player.GetComponent<NimbleEngine::InputComponent>();
@@ -593,6 +595,18 @@ namespace
     }
 }
 
+void LightLabStartFly(GameCore::World& InWorld, const GameCore::EntityID InPlayer, LightLabFlyContext& InContext)
+{
+    InContext = LightLabFlyContext();
+    InContext.Player = InPlayer;
+    if(const GameCore::TransformComponent* View = InWorld.GetEntity(InPlayer).GetComponent<GameCore::TransformComponent>())
+    {
+        InContext.Pitch = std::clamp(double(View->Rotation.GetX()), -MaxPitch, MaxPitch);
+        InContext.Yaw   = double(View->Rotation.GetY());
+    }
+    InWorld.RegisterSystem("LightLab.Fly", GameCore::TP_PrePhysics, &FlySystem, &InContext);
+}
+
 /*
  * The pause menu: Escape (or Start) opens it and pauses the World. What it
  * does is its UI graph, Content/UI/PauseMenu.ui.nmgraph (the document's
@@ -626,7 +640,7 @@ public:
 
         CORE_LOG("[LightLab] fly with WASD + mouse, E/Q up and down, Shift to boost; "
                  "T cycles the sun's shadow technique, F toggles shadows, L switches baked and live lighting, "
-                 "Escape pauses")
+                 "R resets the level, Escape pauses")
     }
 
     /* The GpuTest level's benchmark, recorded each tick; null: none. */
@@ -667,6 +681,15 @@ public:
             else if(!Session->IsMouseCaptured() && Input->WasPressed("CaptureMouse"))
             {
                 Session->SetMouseCaptured(true);
+            }
+
+            /* R: the level again, as it loaded -- the World is rebuilt at the
+             * next frame's ApplyPendingLevel, never inside its own tick. */
+            if(Input->WasPressed("ResetLevel") && Session->GetLevel())
+            {
+                CORE_LOG(std::string("[LightLab] resetting '") + Session->GetLevel()->GetName() + "'")
+                Session->RequestLevel(*Session->GetLevel());
+                return;
             }
         }
 
@@ -1356,6 +1379,7 @@ public:
         NimbleEngine::RegisterLevel(Level);
         NimbleEngine::RegisterLevel(BakedLevel);
         NimbleEngine::RegisterLevel(GpuTestLevel);
+        NimbleEngine::RegisterLevel(LightLabPhysics::GetLevel());
         return true;
     }
 
@@ -1365,6 +1389,7 @@ public:
         NimbleEngine::UnregisterLevel(Level);
         NimbleEngine::UnregisterLevel(BakedLevel);
         NimbleEngine::UnregisterLevel(GpuTestLevel);
+        NimbleEngine::UnregisterLevel(LightLabPhysics::GetLevel());
     }
 
     NimbleEngine::ILevel* GetStartLevel() override { return &Level; }
