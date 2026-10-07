@@ -588,7 +588,8 @@ namespace EditorGraphs
     {
         EditorContext* Ctx = Context();
         PollPreview(Ctx ? Ctx->RequestMeshPreview(InOptions.Mesh, InOptions.Material, InOptions.Sections, InOptions.Width,
-                                                  InOptions.Height, InOptions.Yaw, InOptions.Pitch, InOptions.Zoom, ToColor(InOptions.Tint))
+                                                  InOptions.Height, InOptions.Yaw, InOptions.Pitch, InOptions.Zoom, ToColor(InOptions.Tint),
+                                                  InOptions.SkinPalette)
                         : 0,
                     InContext, std::move(InDone));
     }

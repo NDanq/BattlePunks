@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 
 #include <QColor>
 #include <QImage>
@@ -148,6 +149,7 @@ namespace EditorGraphs
         float       Pitch  = 20.0f;
         float       Zoom   = 1.0f;
         QColor      Tint   = QColor(255, 255, 255);
+        std::vector<float> SkinPalette;   // a skinned mesh's pose, 12 floats a bone; empty: its reference pose
     };
     void RequestMeshPreview(const MeshPreviewOptions& InOptions, QObject* InContext,
                             std::function<void(const QImage&, const QString&)> InDone);

@@ -54,6 +54,7 @@
 #include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/ImportWizard.h"
+#include "Private/Editor/Content/AnimationAssets.h"
 #include "Private/Editor/Content/MeshViewerWindow.h"
 #include "Private/Editor/Content/TextureViewerWindow.h"
 #include "Private/Editor/Graph/GraphAssets.h"
@@ -896,6 +897,16 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         MeshViewerWindow::Open(InPath, window());
         return;
     }
+    if(InPath.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive))
+    {
+        MeshViewerWindow::OpenAnimation(InPath, window());
+        return;
+    }
+    if(InPath.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive))
+    {
+        EditorAnimation::OpenAnimState(InPath, window());
+        return;
+    }
     if(InPath.endsWith(QStringLiteral(".nmtexture"), Qt::CaseInsensitive))
     {
         TextureViewerWindow::Open(InPath, window());
@@ -965,6 +976,7 @@ void ContentBrowserPanel::ShowContextMenu(const QPoint& InPos)
         Menu.addAction(QStringLiteral("New Prefab..."), this, [this]() { EditorPrefabs::CreatePrefab(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New UI..."), this, [this]() { EditorUI::CreateUI(CurrentFolder, window()); });
         Menu.addAction(QStringLiteral("New Particle System..."), this, [this]() { EditorParticles::CreateParticleSystem(CurrentFolder, window()); });
+        Menu.addAction(QStringLiteral("New Anim State..."), this, [this]() { EditorAnimation::CreateAnimState(CurrentFolder, window()); });
         for(const NodeGraph::Schema* Schema : NodeGraph::GetSchemas())
         {
             /* By name: a refresh (RefreshGameDeclarations) replaces the schema. */

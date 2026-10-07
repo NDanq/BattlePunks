@@ -532,6 +532,8 @@ namespace RenderCore
         Request.Zoom    = InPreview.Zoom;
         Request.Tint    = InPreview.Tint;
         Request.Mailbox = &P->Previews;
+        Request.SkinBones = uint32_t(std::min(InPreview.SkinPalette.size() / 12, std::size(Request.SkinPalette) / 12));
+        std::copy_n(InPreview.SkinPalette.begin(), size_t(Request.SkinBones) * 12, Request.SkinPalette);
 
         RenderScene* Scene = P->DefaultScene();
         ENQUEUE_RENDER_COMMAND(AddMeshPreview)([Scene, Request](RenderContext&)

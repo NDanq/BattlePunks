@@ -4,6 +4,7 @@
 #if WITH_EDITOR
 
 #include <cstdint>
+#include <vector>
 
 #include <QColor>
 #include <QImage>
@@ -44,6 +45,15 @@ public:
     /* Redraw continuously, for materials that move (Time). */
     void SetAnimate(bool bInAnimate);
 
+    /* A skinned mesh's pose, as Renderer::MeshPreview takes it (12 floats a
+     * bone); empty: its reference pose. Drawn with the next request. */
+    void SetSkinPalette(std::vector<float> InPalette);
+
+    /* Bones drawn over the image: segments, bone to parent, in model space
+     * (6 floats each) -- framed as the renderer frames a mesh with these
+     * bounds. Empty: none. */
+    void SetSkeletonOverlay(std::vector<float> InSegments, const float InBoundsMin[3], const float InBoundsMax[3]);
+
     void ResetView();
 
     /* Draw again with the current settings (a recooked material, say). */
@@ -68,6 +78,10 @@ protected:
 private:
     void Send();
 
+    /* Where a model-space point lands in InTarget, by the preview's camera
+     * as it was for the image shown; false behind the camera. */
+    bool Project(const float* InPoint, const QRectF& InTarget, QPointF& OutPoint) const;
+
     QString     Mesh;
     QString     Material;
     QStringList Sections;
@@ -84,6 +98,13 @@ private:
 
     QImage      Image;
     QString     Error;
+
+    std::vector<float> SkinPalette;
+    std::vector<float> Segments;           // as set
+    std::vector<float> ShownSegments;      // as they were for Image
+    float       BoundsMin[3] = {0.0f, 0.0f, 0.0f};
+    float       BoundsMax[3] = {0.0f, 0.0f, 0.0f};
+    float       ShownYaw = 30.0f, ShownPitch = 20.0f, ShownZoom = 1.0f;
     QTimer*     Resized  = nullptr;  // coalesces a drag of the window's edge
     QTimer*     Animator = nullptr;
 };
