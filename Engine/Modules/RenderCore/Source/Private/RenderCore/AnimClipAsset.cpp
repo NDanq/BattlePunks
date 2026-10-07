@@ -175,8 +175,9 @@ namespace RenderCore
             Ar.CloseChunk();
         }
 
-        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_NOTIFIES, 1, "clip: no ANTF chunk"))
+        if(!Ar.HasError() && OpenRequiredChunk(Ar, TAG_NOTIFIES, 2, "clip: no ANTF chunk"))
         {
+            const bool bEffects = Ar.GetChunkVersion() >= 2;   // v1: names and times
             if(Ar.IsLoading() && CanHoldElements(Ar, NotifyCount, sizeof(uint32_t) + sizeof(float),
                                                  "clip: notify count is past the end of the file"))
             {
@@ -185,6 +186,7 @@ namespace RenderCore
             for(AnimNotify& Notify : InOutClip.Notifies)
             {
                 Ar << Notify.Name << Notify.Time;
+                if(bEffects) { Ar << Notify.ParticleSystem << Notify.Bone; }
             }
             Ar.CloseChunk();
         }

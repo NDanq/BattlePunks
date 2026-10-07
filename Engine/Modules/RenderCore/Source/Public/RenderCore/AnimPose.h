@@ -53,9 +53,9 @@ namespace RenderCore
     RENDERCORE_API float AdvanceClipTime(const AnimClipData& InClip, bool bInLoop, float InFrom, float InDelta, bool& OutWrapped);
 
     /* The notifies InClip passes moving from InFrom to InTo (forward, wrapping
-     * once when bInWrapped), in order, appended to OutNames. */
+     * once when bInWrapped), in order, appended to OutNotifies. */
     RENDERCORE_API void CollectNotifies(const AnimClipData& InClip, float InFrom, float InTo, bool bInWrapped,
-                                        std::vector<std::string>& OutNames);
+                                        std::vector<AnimNotify>& OutNotifies);
 }
 
 #endif //RENDERCORE_ANIMPOSE_H

@@ -116,6 +116,22 @@ Events.On("AnimNotify", function(entity, name)
 end)
 ```
 
+A notify can also name a **particle system** and a **bone** (mesh viewer,
+Clip > Notifies): in game, as it fires, the system plays there -- an
+`AnimEffect` entity at the bone's place, emitting a moment (or its bursts)
+and destroyed once its particles are gone. It is not attached: it plays
+where it started. (There is no audio module yet; a sound would go here.)
+
+A state that plays once emits **`"AnimEnded"`** (entity, state name, layer)
+as it ends -- reaching its end, or leaving through an At End transition. A
+lone clip that does not loop does too, its state name "".
+
+```lua
+Events.On("AnimEnded", function(entity, state, layer)
+    if state == "Jump" then Land(entity) end
+end)
+```
+
 **Sockets**: `"Anim Socket"` on a child entity sets its Transform each tick
 to where `Bone` is in its parent's pose, moved by its offsets in the bone's
 frame. Change `Bone` to move it -- `"Spine_02"` holstered, `"Hand_R"` drawn.

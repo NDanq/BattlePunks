@@ -32,7 +32,9 @@ namespace GameCore
  * of its parent's pose (AnimSocketComponent.h).
  *
  * Each notify a tick passes is emitted on the world's EventBus as
- * "AnimNotify" with (entity, notify name) -- Lua: Events.On("AnimNotify", ...).
+ * "AnimNotify" with (entity, notify name) -- Lua: Events.On("AnimNotify", ...)
+ * -- and plays its particle system, if it names one, at its bone. A state
+ * that plays once emits "AnimEnded" (entity, state name, layer) as it ends.
  */
 namespace RenderCore
 {
@@ -88,6 +90,23 @@ namespace RenderCore
         /* Each Anim Socket's entity onto its bone of its parent's pose. */
         void UpdateSockets();
 
+        /* A notify's particle system, started at its bone: an entity that
+         * emits a moment, and is destroyed when its particles are gone. */
+        struct PendingEffect
+        {
+            GameCore::EntityID Owner;
+            std::string        System;
+            std::string        Bone;
+        };
+        struct LiveEffect
+        {
+            GameCore::EntityID Entity;
+            double             StopAt    = 0.0;
+            double             DestroyAt = 0.0;
+        };
+        void SpawnEffect(const PendingEffect& InEffect);
+        void UpdateEffects();
+
         struct Entry
         {
             std::unique_ptr<AnimInstance>        Instance;
@@ -106,6 +125,9 @@ namespace RenderCore
         uint64_t                             SyncSerial = 0;
         uint64_t                             Generation = 0;
         bool                                 bTicked    = false;
+        double                               Clock      = 0.0;       // game seconds advanced
+        std::vector<PendingEffect>           Pending;
+        std::vector<LiveEffect>              Effects;
         uint64_t                             PreparedFrame = ~0ull;
     };
 }

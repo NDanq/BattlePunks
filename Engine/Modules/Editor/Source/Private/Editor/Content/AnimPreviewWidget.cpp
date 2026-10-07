@@ -162,9 +162,9 @@ void AnimPreviewWidget::Step()
     /* Real time since the last step, so a slow answer does not slow the clip. */
     const float Delta = std::min(float(Elapsed.restart()) / 1000.0f, 0.1f);
     Instance.Update(Delta);
-    for(const std::string& Name : Instance.GetFiredNotifies())
+    for(const RenderCore::AnimNotify& Notify : Instance.GetFiredNotifies())
     {
-        emit NotifyFired(QString::fromStdString(Name));
+        emit NotifyFired(QString::fromStdString(Notify.Name));
     }
     PushPose();
     UpdateTransport();
