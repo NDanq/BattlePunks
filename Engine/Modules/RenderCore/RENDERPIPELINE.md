@@ -971,8 +971,10 @@ the same panel. Toggle it with `stat frame` in the editor console, or set
 Lighting, Forward (Unlit and the translucent stages), PostProcess, and Total
 (from the scene's clear to the end of the post process). Then
 **Captures**: every Scene Capture Probe's views that frame, all stages
-included, and **Particles**: every emitter's compute passes (simulate, then
-sort or string). Both run before the scene's stages and are not part of Total.
+included, then the image-based lighting update -- the reflection probes
+captured that frame (six views each) and their prefilter -- and
+**Particles**: every emitter's compute passes (simulate, then sort or
+string). Both run before the scene's stages and are not part of Total.
 `RenderScene::Render` times them with `RenderContext::WriteGpuTimestamp`
 around the capture and simulate loops, so a frame with none shows 0.00, not `-`.
 

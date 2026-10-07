@@ -134,7 +134,7 @@ namespace RenderCore
         RGT_Forward,             // Unlit and the translucent stages
         RGT_PostProcess,
         RGT_Total,               // the whole scene, start to end of its stages
-        RGT_SceneCapture,        // every Scene Capture Probe's views, before the scene's stages (not in Total)
+        RGT_SceneCapture,        // every Scene Capture Probe's and reflection probe's views and the IBL prefilter, before the scene's stages (not in Total)
         RGT_Particles,           // every particle emitter's compute passes, before the captures (not in Total)
         RGT_Count
     };

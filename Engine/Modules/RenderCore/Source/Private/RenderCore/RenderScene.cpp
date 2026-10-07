@@ -1000,7 +1000,6 @@ namespace RenderCore
                 bCaptured = true;
             }
         }
-        InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
         P->CaptureList.Count = 0;
         if(bCaptured)
         {
@@ -1020,11 +1019,14 @@ namespace RenderCore
         P->TargetReadbacks.clear();
 #endif
 
-        /* IMAGE-BASED LIGHTING: the sky block and the reflection probes, before the scene lights by them. */
+        /* IMAGE-BASED LIGHTING: the sky block and the reflection probes, before the scene lights by them.
+         * Inside the Captures span: a reflection probe's capture is six views of the scene, as costly
+         * as a Scene Capture Probe's, and a probe left capturing every frame should show in "stat frame". */
         {
             SCOPED_DRAW_EVENT("ImageBasedLighting");
             P->UpdateImageBasedLighting(InContext);
         }
+        InContext.WriteGpuTimestamp(RGT_SceneCapture, true);
 
         GDIOcclusionQueries* Occlusion = P->PrepareOcclusion(P->View);
         P->QueueDraws(InContext, P->View, nullptr, VisibleCount, CulledCount, StaticCount, Occlusion);
