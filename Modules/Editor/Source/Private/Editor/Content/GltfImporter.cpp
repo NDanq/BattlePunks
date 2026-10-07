@@ -805,8 +805,11 @@ namespace EditorContent
                     Found.SourcePath = QDir::cleanPath(Folder.absoluteFilePath(QString::fromUtf8(Uri.constData())));
                 }
 
+                /* Unnamed and embedded: named for its glTF too, so two files'
+                 * "Image0"s imported into one folder do not overwrite each other. */
                 const QString FromFile = Found.SourcePath.isEmpty() ? QString() : QFileInfo(Found.SourcePath).completeBaseName();
-                Found.Name = NameOf(Image.name, FromFile.isEmpty() ? QStringLiteral("Image%1").arg(At) : FromFile);
+                const QString Fallback = QStringLiteral("%1_Image%2").arg(QFileInfo(InGltfPath).completeBaseName()).arg(At);
+                Found.Name = NameOf(Image.name, FromFile.isEmpty() ? Fallback : FromFile);
                 OutImages << Found;
             }
         }
