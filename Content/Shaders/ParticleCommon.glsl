@@ -22,7 +22,7 @@ COMPUTE_PARAMS_BEGIN(ParticleParams)
     vec4  Pa_Collision;      // x response (0 none, 1 bounce, 2 kill), y the plane's height (world), z bounce, w friction
     vec4  Pa_Flipbook;       // x columns, y rows (0: none), z frames, w frames a second (0: over its life)
     vec4  Pa_Noise;          // x time, y the swirl's frequency
-    uvec4 Pa_Sort;           // x the power of two the sort runs over; y a strip's first slot, z its points; w draws in the args buffer
+    uvec4 Pa_Sort;           // x the power of two above the ring (the most the sort runs over); y a strip's first slot, z its points; w draws in the args buffer
     vec4  Pa_PrevEmitter;    // xyz the emitter's position a frame ago: spawns are spread between the two
     uvec4 Pa_Render;         // x type, y billboard, z mesh orientation, w 1: random rotation
     vec4  Pa_Motion;         // x rotation rate (radians a second), y velocity stretch (seconds)

@@ -310,8 +310,14 @@ namespace RenderCore
         const float Shape = S.Shape == PS_Box ? 0.5f * Length(S.BoxSize) : S.EmitterRadius + 0.5f * S.RingWidth;
         float Largest = std::max(S.StartSize, S.EndSize);
         if(S.bSizeLut) { for(const float Each : S.SizeLut) { Largest = std::max(Largest, Each); } }
-        return Shape + (Length(S.Velocity) + S.VelocitySpread + std::abs(S.ShapeSpeed)) * Life
-             + 0.5f * (Length(S.Acceleration) + S.Turbulence) * Life * Life
+        /* Drag slows it toward its terminal speed (Velocity *= exp(-Drag dt)):
+         * a speed v and an acceleration a carry it v (1 - e^(-dL)) / d and
+         * a (L - (1 - e^(-dL)) / d) / d in a life L -- vL and aL^2 / 2 with no drag. */
+        const float Drag  = std::max(S.Drag, 0.0f);
+        const float Coast = Drag * Life > 1e-4f ? (1.0f - std::exp(-Drag * Life)) / Drag : Life;
+        const float Push  = Drag * Life > 1e-4f ? (Life - Coast) / Drag : 0.5f * Life * Life;
+        return Shape + (Length(S.Velocity) + S.VelocitySpread + std::abs(S.ShapeSpeed)) * Coast
+             + (Length(S.Acceleration) + S.Turbulence) * Push
              + Largest * (S.Billboard == PB_VelocityAligned ? 2.0f : 1.0f)
              + (S.Billboard == PB_VelocityAligned ? (Length(S.Velocity) + S.VelocitySpread) * S.VelocityStretch : 0.0f);
     }

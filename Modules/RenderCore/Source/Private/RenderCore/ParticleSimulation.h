@@ -57,6 +57,14 @@ namespace RenderCore
         /* Where the emitter was last frame: this frame's spawns are spread between. */
         float      PrevPosition[3] = {};
         bool       bHasPrev        = false;
+
+        /* Idle: nothing spawned for longer than any particle lives, so every
+         * one is dead and the last frame's passes counted none -- its passes
+         * and draws are skipped until it spawns again. Not a beam (its points
+         * never die). */
+        double     SinceSpawn  = 0.0;     // seconds simulated since the last frame that spawned
+        float      LongestLife = 0.0f;    // the longest Lifetime spawned with since it was last idle
+        bool       bIdle       = false;
     };
 
     /* ParticleCommon.glsl's ParticleParams, std140, byte for byte. */
@@ -115,7 +123,8 @@ namespace RenderCore
          * hitch never bursts), InTime for the swirl and a beam's jitter. A
          * Continuous emitter spawns its rate times the delta, the fraction
          * carried; a Burst emitter its Burst Count each time one falls due.
-         * Never more than the ring holds in one frame. Pure CPU; exported for tests.
+         * Never more than the ring holds in one frame. Sets bIdle. Pure CPU;
+         * exported for tests.
          */
         RENDERCORE_API ParticleParams BuildParams(ParticleEmitterGpu& InOutEmitter, const ParticleEmitterSettings& InSettings,
                                    const EngineCore::Vector3& InEmitterPosition, const ParticleCamera& InCamera,
@@ -132,8 +141,8 @@ namespace RenderCore
 
         /* Its type's two dispatches: a sprite or mesh emitter is simulated,
          * then sorted into its instances; a ribbon simulated, then strung into
-         * its triangles; a beam's points placed, then strung. False if a
-         * shader or dispatch is missing. */
+         * its triangles; a beam's points placed, then strung. None while it is
+         * idle. False if a shader or dispatch is missing. */
         bool Dispatch(ParticleEmitterGpu& InOutEmitter, const ParticleParams& InParams, const Shaders& InShaders);
 
         /* InCount draws' arguments, InRanges' index count and first index

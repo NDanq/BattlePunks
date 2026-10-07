@@ -969,11 +969,12 @@ the same panel. Toggle it with `stat frame` in the editor console, or set
 
 **The spans** (`ERenderGpuTimer`) are PrePass, BasePass, AO, Shadows,
 Lighting, Forward (Unlit and the translucent stages), PostProcess, and Total
-(from the scene's clear to the end of the post process). The last line is
+(from the scene's clear to the end of the post process). Then
 **Captures**: every Scene Capture Probe's views that frame, all stages
-included. Captures run before the scene's stages and are not part of Total.
+included, and **Particles**: every emitter's compute passes (simulate, then
+sort or string). Both run before the scene's stages and are not part of Total.
 `RenderScene::Render` times them with `RenderContext::WriteGpuTimestamp`
-around the capture loop, so a frame with no captures shows 0.00, not `-`.
+around the capture and simulate loops, so a frame with none shows 0.00, not `-`.
 
 **How a scene is timed:**
 - `RenderSceneStages(..., bInTimed)` writes a GPU timestamp before and after
@@ -1207,11 +1208,12 @@ Elsewhere it draws nothing and says so once.
     the ring (`ParticleSimulation::BuildParams`) -- are born in the emitter's
     sphere, each at a random moment inside the frame; the rest move on by
     acceleration, a swirl (Turbulence) and drag.
-  - `ParticleSort.csh`, one workgroup: a bitonic sort in shared memory, two
-    particles a thread, farthest first along the view; then each written as
-    an instance (GDI's layout: a transform and a colour) -- turned to the
-    camera if Face Camera, sized and coloured by age, faded in and out. Dead
-    and unused slots collapse to a point and sort last.
+  - `ParticleSort.csh`, one workgroup: the living packed to the front, then a
+    bitonic sort in shared memory over the power of two above their count (not
+    the ring's), two particles a thread, farthest first along the view; then
+    each written as an instance (GDI's layout: a transform and a colour) --
+    turned to the camera if Face Camera, sized and coloured by age, faded in
+    and out. The slots after the living collapse to a point.
   A **Ribbon** emitter runs `ParticleSimulate.csh`, then `ParticleRibbon.csh`
   instead of the sort; a **Beam** places its points with `ParticleBeam.csh`
   (point i of N at i/N of the way, its age i/N of a life, so size and colour
@@ -1226,8 +1228,14 @@ Elsewhere it draws nothing and says so once.
   as sprites, with no new GDI. U runs across the strip, V along each segment.
   Strips are not sorted; keep a ribbon's Lifetime Variance at 0, or it breaks
   where a point dies early.
+- **An idle emitter costs nothing.** Once nothing has spawned for longer than
+  the longest Lifetime it spawned with (plus a tenth of a second), every
+  particle is dead and the last passes counted none: `BuildParams` marks it
+  idle and its dispatches and draws are skipped until it spawns again -- a
+  burst emitter between bursts, one stopped emitting. A beam never idles.
 - **Drawn** from every view that sees it (`Draw`): the mesh (an empty Mesh is
-  `Engine/Content/Meshes/Quad.nmmesh`) instanced, one draw per section, with the
+  `Engine/Content/Meshes/Quad.nmmesh`; a round image draws 17% fewer pixels with
+  `SpriteOctagon.nmmesh`, the quad with its corners cut) instanced, one draw per section, with the
   material's **InstancedMesh** vertex permutation (MATERIALS.md), in the stage
   its material names, sorted with the other draws at the emitter. The
   particle's colour reaches the material as its **Vertex Color**.

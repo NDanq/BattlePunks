@@ -20,8 +20,14 @@ RenderComponent names one as "Engine/Content/Meshes/Box.nmmesh").
                     mapped exactly onto its corners (RenderCore's ParticleRibbon.csh).
                     A's UVs (0,0) (1,0) (0,1); B's (1,1) (0,1) (1,0), so the two
                     make the segment's quad. Not centred
+    SpriteOctagon.nmmesh
+                    the quad with its corners cut: an octagon round the circle of
+                    diameter 1, mapped as the quad is (each vertex's UV where it
+                    lies on the quad). For a particle sprite whose image is round
+                    -- a soft puff, a glow: 17% fewer pixels drawn than the quad,
+                    every one of them inside the circle kept
 
-The first six are centred on the origin and are made the way the importer makes a
+The first six (and the octagon) are centred on the origin and are made the way the importer makes a
 glTF mesh, so a material treats them alike, lightmap UVs included: each shape is built in glTF's
 frame -- right-handed, +Y up, +Z toward the viewer -- then converted to the
 engine's exactly as GltfImporter.cpp converts one (z flips, and the winding
@@ -186,6 +192,19 @@ def make_quad():
     mesh = Mesh("Quad")
     normal = (0.0, 0.0, 1.0)                   # toward the viewer: the engine's -Z
     quad(mesh, (0.0, 0.0, 0.0), cross(UP, normal), scale(UP, -1.0), normal)
+    return mesh
+
+
+def make_sprite_octagon():
+    mesh = Mesh("SpriteOctagon")
+    normal = (0.0, 0.0, 1.0)                   # toward the viewer: the engine's -Z, as the quad
+    radius = 0.5 / math.cos(math.pi / 8.0)     # its edges touch the circle the quad holds
+    for corner in range(8):                    # anticlockwise seen from the front: facing normal
+        angle = math.pi / 8.0 + corner * math.pi / 4.0
+        x, y = radius * math.cos(angle), radius * math.sin(angle)
+        mesh.vertex((x, y, 0.0), normal, (x + 0.5, 0.5 - y))   # u along +X, v down, as the quad
+    for corner in range(1, 7):
+        mesh.triangle(0, corner, corner + 1)
     return mesh
 
 
@@ -358,7 +377,8 @@ def main():
     args.out.mkdir(parents=True, exist_ok=True)
     ribbon_a = make_ribbon_segment("RibbonSegmentA", [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)])
     ribbon_b = make_ribbon_segment("RibbonSegmentB", [(1.0, 1.0), (0.0, 1.0), (1.0, 0.0)])
-    for mesh in (make_box(), make_sphere(), make_plane(), make_quad(), make_cylinder(), make_capsule(), ribbon_a, ribbon_b):
+    for mesh in (make_box(), make_sphere(), make_plane(), make_quad(), make_cylinder(), make_capsule(), ribbon_a, ribbon_b,
+                 make_sprite_octagon()):
         mesh.check()
         mesh.check_uv1()
         to_engine(mesh)
