@@ -49,6 +49,12 @@ namespace RenderCore
         /* The entity's baked lighting (RenderLighting.h); null: none. Kept,
          * like Items, by pointer: it must outlive the frame's draws. */
         const RenderBakedDraw*         Baked = nullptr;
+
+        /* A skinned mesh's bones (ANIMATION.md): SkinBones AnimMatrix rows --
+         * 12 floats each, the bone's pose times the mesh's inverse bind, in
+         * model space. Null: its bind pose. Kept by pointer, as Items. */
+        const float*                   SkinPalette = nullptr;
+        uint32_t                       SkinBones   = 0;
     };
 
     class RENDERCORE_API RenderContext

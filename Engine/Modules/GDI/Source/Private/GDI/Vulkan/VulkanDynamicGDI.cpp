@@ -1105,7 +1105,8 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     Key.VertexShader    = CurrentStateData->BoundVSModule;
     Key.FragmentShader  = CurrentStateData->BoundFSModule;
     // 3: an indexed mesh drawn instanced from GDISetInstanceBuffer's buffer.
-    Key.VertexLayoutID  = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : 2u) : (bIsInstanced ? 1u : 0u);
+    // 4: a skinned mesh, its bone streams at bindings 6 and 7 (never instanced).
+    Key.VertexLayoutID  = InMesh->IsIndexed() ? (GetInstanceBuffer() ? 3u : (InMesh->IsSkinned() ? 4u : 2u)) : (bIsInstanced ? 1u : 0u);
     Key.DescLayoutGroup = Group;
 
     if(CurrentStateData->BlendState)
@@ -1173,7 +1174,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
     // ----------------------------------------------------------------
     // 7. Collect descriptor writes (up to 4 bindings; the material layout's 12)
     // ----------------------------------------------------------------
-    VkWriteDescriptorSet Writes[GDI_MATERIAL_TEXTURE_BINDING + GDI_MATERIAL_TEXTURE_SLOTS]{};
+    VkWriteDescriptorSet Writes[GDI_SKIN_BLOCK_BINDING + 1]{};
     uint32_t WriteCount = 0;
 
     // VP UBO (binding 0)
@@ -1222,6 +1223,7 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
 
     // --- Material layout: raw blocks at 2 and 3, textures at 4-11 ---
     VkDescriptorBufferInfo BlockBufs[2]{};
+    VkDescriptorBufferInfo SkinBuf{};
     VkDescriptorImageInfo  MaterialImages[GDI_MATERIAL_TEXTURE_SLOTS]{};
     if(Group == DLG_Material)
     {
@@ -1267,6 +1269,40 @@ bool VulkanDynamicGDI::BindDrawState(GDIMesh* InMesh, bool bIsInstanced)
             Writes[WriteCount].descriptorCount = 1;
             Writes[WriteCount].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
             Writes[WriteCount].pBufferInfo     = &BlockBufs[b];
+            ++WriteCount;
+        }
+
+        // The skin block (binding 12): the last palette set, uploaded once per
+        // change -- a run of draws after a skinned one rebinds it, no more.
+        {
+            // A skinned shader declares the whole palette: bind all of it.
+            const std::vector<uint8_t>& Bytes = MaterialBlocks[2];
+            const uint32_t Size = Bytes.empty() ? 16u : GDI_SKIN_BLOCK_MAX_BYTES;
+            const bool bReuse = SkinBlockUploadSerial == MaterialBlockSerials[2]
+                                && SkinBlockUploadEpoch == DescAlloc->GetEpoch()
+                                && SkinBlockUploadBuffer != VK_NULL_HANDLE;
+            if(!bReuse)
+            {
+                const VKUBOAllocation Block = DescAlloc->AllocateUBO(Size);
+                if(Block.Buffer == VK_NULL_HANDLE) return false;
+                memset(Block.MappedPtr, 0, Size);
+                if(!Bytes.empty()) memcpy(Block.MappedPtr, Bytes.data(), Bytes.size());
+                SkinBlockUploadBuffer = Block.Buffer;
+                SkinBlockUploadOffset = Block.Offset;
+                SkinBlockUploadSize   = Size;
+                SkinBlockUploadSerial = MaterialBlockSerials[2];
+                SkinBlockUploadEpoch  = DescAlloc->GetEpoch();
+            }
+            SkinBuf.buffer = SkinBlockUploadBuffer;
+            SkinBuf.offset = SkinBlockUploadOffset;
+            SkinBuf.range  = SkinBlockUploadSize;
+
+            Writes[WriteCount].sType           = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            Writes[WriteCount].dstSet          = DescSet;
+            Writes[WriteCount].dstBinding      = GDI_SKIN_BLOCK_BINDING;
+            Writes[WriteCount].descriptorCount = 1;
+            Writes[WriteCount].descriptorType  = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            Writes[WriteCount].pBufferInfo     = &SkinBuf;
             ++WriteCount;
         }
 

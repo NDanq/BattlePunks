@@ -79,6 +79,20 @@ void D3D12Mesh::InitResource()
         }
     }
 
+    if(IsSkinned())
+    {
+        const UINT SkinBytes = NumVerts * 4 * sizeof(float);
+        JointBuffer  = D3D12Ops::CreateBuffer(Device, SkinBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        WeightBuffer = D3D12Ops::CreateBuffer(Device, SkinBytes, D3D12_HEAP_TYPE_DEFAULT, D3D12_RESOURCE_STATE_COMMON);
+        if(!JointBuffer || !WeightBuffer ||
+           !D3D12Ops::UploadBuffer(Device, JointBuffer.Get(), RenderData.Joints, SkinBytes) ||
+           !D3D12Ops::UploadBuffer(Device, WeightBuffer.Get(), RenderData.Weights, SkinBytes))
+        {
+            Release();
+            return;
+        }
+    }
+
     if(bSupportsInstanced)
     {
         if(!CreateRing(TransformRing, sizeof(float) * 16) ||
@@ -146,6 +160,8 @@ void D3D12Mesh::ApplyDebugName() const
     Name(NormalBuffer,         "Normals");
     Name(ColorBuffer,          "Colors");
     Name(UV1Buffer,            "UV1");
+    Name(JointBuffer,          "Joints");
+    Name(WeightBuffer,         "Weights");
     Name(IndexBuffer,          "Indices");
     Name(TransformRing.Buffer, "Instance Transforms");
     Name(OpacityRing.Buffer,   "Instance Opacities");
@@ -207,6 +223,8 @@ void D3D12Mesh::Release()
     ReleaseOrDefer(NormalBuffer);
     ReleaseOrDefer(ColorBuffer);
     ReleaseOrDefer(UV1Buffer);
+    ReleaseOrDefer(JointBuffer);
+    ReleaseOrDefer(WeightBuffer);
     ReleaseOrDefer(IndexBuffer);
 
     FreeRenderData();
@@ -262,6 +280,18 @@ void D3D12Mesh::Draw()
         MeshViews[2].SizeInBytes    = TexCoordBytes;
         MeshViews[2].StrideInBytes  = sizeof(float) * 2;
         List->IASetVertexBuffers(2, 3, MeshViews);
+        if(JointBuffer && WeightBuffer)
+        {
+            // Vertex layout 4: bone indices and weights in slots 6 and 7.
+            D3D12_VERTEX_BUFFER_VIEW SkinViews[2]{};
+            for(int Stream = 0; Stream < 2; ++Stream)
+            {
+                SkinViews[Stream].BufferLocation = (Stream == 0 ? JointBuffer : WeightBuffer)->GetGPUVirtualAddress();
+                SkinViews[Stream].SizeInBytes    = (PositionBytes / 3) * 4;
+                SkinViews[Stream].StrideInBytes  = sizeof(float) * 4;
+            }
+            List->IASetVertexBuffers(6, 2, SkinViews);
+        }
 
         D3D12_INDEX_BUFFER_VIEW IndexView{};
         IndexView.BufferLocation = IndexBuffer->GetGPUVirtualAddress();

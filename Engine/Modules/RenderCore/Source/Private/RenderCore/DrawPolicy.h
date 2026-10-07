@@ -46,6 +46,11 @@ namespace RenderCore
         /* The entity's baked lighting; null: none (BakedLighting.glsl). */
         const RenderBakedDraw*         Baked = nullptr;
 
+        /* MeshSection of a skinned mesh: its bone palette (Skinning.glsl), 12
+         * floats a bone; null, its bind pose. Owned by the proxy. */
+        const float*                   SkinPalette = nullptr;
+        uint32_t                       SkinBones   = 0;
+
         /* MeshSection, instanced (GDISetInstanceBuffer): InstanceCount of it
          * from Instances, drawn with the InstancedMesh vertex input; sorted by
          * SortOrigin rather than Transform's position, which is the frame

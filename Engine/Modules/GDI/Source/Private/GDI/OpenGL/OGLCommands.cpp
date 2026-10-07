@@ -109,6 +109,7 @@ void OpenGLDynamicGDI::Destroy()
     {
         bInitialized = false;
         if(MaterialUBOs[0]) { glDeleteBuffers(2, MaterialUBOs); MaterialUBOs[0] = MaterialUBOs[1] = 0; }
+        if(SkinUBO)         { glDeleteBuffers(1, &SkinUBO); SkinUBO = 0; SkinUBOSerial = ~0ull; }
         if(ScratchFramebuffer) { glDeleteFramebuffers(1, &ScratchFramebuffer); ScratchFramebuffer = 0; }
         delete ScreenMesh;
         delete Context;

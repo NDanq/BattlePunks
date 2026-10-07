@@ -80,6 +80,26 @@ void OpenGLDynamicGDI::ApplyMaterialBindings()
         }
         glBindBufferBase(GL_UNIFORM_BUFFER, GDI_MATERIAL_BLOCK_BINDING + Block, MaterialUBOs[Block]);
     }
+
+    /* The skin block: a skinned mesh's palette, kept until the next is set. */
+    if(!SkinUBO)
+    {
+        glGenBuffers(1, &SkinUBO);
+    }
+    if(SkinUBOSerial != MaterialBlockSerials[2])
+    {
+        /* A skinned shader declares the whole palette: GL wants a buffer that big. */
+        const std::vector<uint8_t>& Bytes = MaterialBlocks[2];
+        const GLsizeiptr Size = Bytes.empty() ? 16 : GLsizeiptr(GDI_SKIN_BLOCK_MAX_BYTES);
+        glBindBuffer(GL_UNIFORM_BUFFER, SkinUBO);
+        glBufferData(GL_UNIFORM_BUFFER, Size, nullptr, GL_STREAM_DRAW);
+        if(!Bytes.empty())
+        {
+            glBufferSubData(GL_UNIFORM_BUFFER, 0, GLsizeiptr(Bytes.size()), Bytes.data());
+        }
+        SkinUBOSerial = MaterialBlockSerials[2];
+    }
+    glBindBufferBase(GL_UNIFORM_BUFFER, GDI_SKIN_BLOCK_BINDING, SkinUBO);
     glBindBuffer(GL_UNIFORM_BUFFER, 0);
 
     for(uint Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
