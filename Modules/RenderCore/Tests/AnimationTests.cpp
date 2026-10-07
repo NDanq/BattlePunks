@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Public/Core/CoreArchive.h"
+#include "Public/Core/CoreJob.h"
 #include "Public/GameCore/Components.h"
 #include "Public/GameCore/Entity.h"
 #include "Public/GameCore/EventBus.h"
@@ -508,6 +509,68 @@ static void TestNotifyEffects()
     Expect(SerializeAnimClip(Out, Plain), "a clip without effects saves");
 }
 
+/* An animated arm at InPosition in InWorld. */
+static GameCore::Entity SpawnArm(GameCore::World& InWorld, const EngineCore::Vector3& InPosition)
+{
+    GameCore::Entity Actor = InWorld.CreateEntity();
+    GameCore::TransformComponent Transform;
+    Transform.Position = InPosition;
+    Actor.AddComponent(Transform);
+    RenderComponent Render;
+    std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%sArm.nmmesh", SCRATCH);
+    Actor.AddComponent(Render);
+    AnimationComponent Animation;
+    std::snprintf(Animation.Animation, sizeof(Animation.Animation), "%sArm_Bend.nmanim", SCRATCH);
+    Actor.AddComponent(Animation);
+    return Actor;
+}
+
+static void TestBudget()
+{
+    std::printf("[budget]\n");
+    GameCore::World World;
+    AnimationSystem* System = AnimationSystem::Attach(World);
+    const GameCore::Entity Close   = SpawnArm(World, EngineCore::Vector3(0.0, 0.0, 100.0));
+    const GameCore::Entity Middle  = SpawnArm(World, EngineCore::Vector3(0.0, 0.0, 5000.0));    // past 3000: every 2nd tick
+    const GameCore::Entity Distant = SpawnArm(World, EngineCore::Vector3(0.0, 0.0, 30000.0));   // past 20000: no pose
+
+    World.Tick(0.1f);
+    Expect(System->GetLastStats().Updated == 3, "with no view -- a server -- everything updates");
+
+    System->AddViewOrigin(1, EngineCore::Vector3());
+    World.Tick(0.1f);
+    const AnimationSystem::Stats First = System->GetLastStats();
+    World.Tick(0.1f);
+    const AnimationSystem::Stats Second = System->GetLastStats();
+    Expect(First.Skipped == 1 && Second.Reduced == 1, "past FullRateDistance, an update every other tick");
+    Expect(First.Frozen == 1 && Second.Frozen == 1, "past FreezeDistance, no pose");
+    Expect(Near(System->FindInstance(Close)->GetTime(), 0.3f) && Near(System->FindInstance(Middle)->GetTime(), 0.3f),
+           "a reduced one's time is saved up, not lost");
+    const float FrozenAngle = System->FindInstance(Distant)->GetModelPose()[2].M[1][3];
+    World.Tick(0.3f);
+    Expect(Near(System->FindInstance(Distant)->GetTime(), 0.6f) && Near(System->FindInstance(Distant)->GetModelPose()[2].M[1][3], FrozenAngle),
+           "a frozen one's time passes while its pose holds");
+    AnimationSystem::Detach(World);
+
+    /* Enough of them, and they update across the job system -- to the same result. */
+    EngineCore::JobSystem Jobs(2);
+    EngineCore::JobSystem* Before = EngineCore::GetJobSystem();
+    EngineCore::SetJobSystem(&Jobs);
+    GameCore::World Crowd;
+    AnimationSystem* CrowdSystem = AnimationSystem::Attach(Crowd);
+    std::vector<GameCore::Entity> Arms;
+    for(int Index = 0; Index < 24; ++Index) { Arms.push_back(SpawnArm(Crowd, EngineCore::Vector3(double(Index) * 10.0, 0.0, 0.0))); }
+    Crowd.Tick(0.5f);   // half way: the arm at 45 degrees
+    bool bAllPosed = true;
+    for(const GameCore::Entity& Arm : Arms)
+    {
+        bAllPosed = bAllPosed && Near(CrowdSystem->FindInstance(Arm)->GetModelPose()[2].M[1][3], 50.0f * std::sin(0.7853982f), 0.5f);
+    }
+    Expect(CrowdSystem->GetLastStats().bParallel && bAllPosed, "a crowd updates in parallel, every pose as alone");
+    AnimationSystem::Detach(Crowd);
+    EngineCore::SetJobSystem(Before);
+}
+
 /* The root walks 100 along X in one second, looping. */
 static AnimClipData MakeStride(const EAnimRootMotion InRootMotion)
 {
@@ -625,6 +688,7 @@ int main()
     TestSocket();
     TestRootMotion();
     TestNotifyEffects();
+    TestBudget();
     TestHeadless();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;

@@ -54,8 +54,10 @@ namespace RenderCore
          * copies go back to 0 too. */
         const std::vector<std::string>& GetConsumedTriggers() const { return Consumed; }
 
-        /* Advances by InDeltaSeconds (scaled by the play rate) and evaluates. */
-        void Update(float InDeltaSeconds);
+        /* Advances by InDeltaSeconds (scaled by the play rate) and evaluates
+         * -- unless bInEvaluate is false: time passes (notifies, transitions,
+         * root motion) and the pose stays as it was. */
+        void Update(float InDeltaSeconds, bool bInEvaluate = true);
 
         /* Evaluates where it is, without moving: after a seek or a change. */
         void Evaluate();

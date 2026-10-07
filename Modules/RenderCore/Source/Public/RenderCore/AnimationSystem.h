@@ -78,6 +78,22 @@ namespace RenderCore
          * pose-dependent views (sockets) look again. */
         uint64_t GetGeneration() const { return Generation; }
 
+        /* Where frame InFrame is seen from (WorldBridge, per view): the next
+         * ticks spend less on what is far from all of them -- the budget's
+         * [Animation] config. None: everything at full rate. */
+        void AddViewOrigin(uint64_t InFrame, const EngineCore::Vector3& InOrigin);
+
+        /* What the last tick did. */
+        struct Stats
+        {
+            uint32_t Updated = 0;    // updated this tick (Reduced among them)
+            uint32_t Reduced = 0;    // updated after skipping ticks, their time saved up
+            uint32_t Skipped = 0;    // not updated this tick: far
+            uint32_t Frozen  = 0;    // updated without a pose: farther
+            bool     bParallel = false;
+        };
+        const Stats& GetLastStats() const { return LastStats; }
+
     private:
         explicit AnimationSystem(GameCore::World& InWorld);
         ~AnimationSystem();
@@ -117,6 +133,8 @@ namespace RenderCore
             std::shared_ptr<const AnimStateData> State;
             uint64_t                             ClipGeneration = 0;   // an anim state's clips, as loaded
             uint64_t                             Seen = 0;
+            float                                Saved   = 0.0f;       // time saved up while skipped
+            int32_t                              Skipped = 0;
         };
 
         GameCore::World&                     World;
@@ -126,6 +144,9 @@ namespace RenderCore
         uint64_t                             Generation = 0;
         bool                                 bTicked    = false;
         double                               Clock      = 0.0;       // game seconds advanced
+        std::vector<EngineCore::Vector3>     ViewOrigins;              // the last frame's views
+        uint64_t                             ViewFrame  = ~0ull;
+        Stats                                LastStats;
         std::vector<PendingEffect>           Pending;
         std::vector<LiveEffect>              Effects;
         uint64_t                             PreparedFrame = ~0ull;
