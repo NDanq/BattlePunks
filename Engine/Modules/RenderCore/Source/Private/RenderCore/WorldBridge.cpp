@@ -21,6 +21,9 @@
 #include "Private/RenderCore/ShadowSetup.h"
 #include "Public/RenderCore/RenderTargetAsset.h"
 #include "Public/GameCore/TransformMath.h"
+#include "Public/RenderCore/AnimationSystem.h"
+#include "Public/RenderCore/Components/AnimationComponent.h"
+#include "Private/RenderCore/RenderComponentProxy.h"
 
 // GameCore is this file's whole subject -- it reads World's pools and
 // components on every line.
@@ -29,6 +32,10 @@ using namespace GameCore;
 /* Off: every light lit live, the bake left loaded but unused -- the Lit view
  * the editor's Show > Lighting > Live and LightLab's L key switch to. */
 NIMBLE_CONFIG_BOOL(GBakedLighting, "Rendering", "BakedLighting", true, nullptr);
+
+/* A world that does not tick -- the editor's, outside Play -- still plays its
+ * animations in the viewport; off, each holds its first frame (ANIMATION.md). */
+NIMBLE_CONFIG_BOOL(GAnimationPreview, "Animation", "PreviewInEditor", true, nullptr);
 
 /*
  * See WorldBridge.h for the contract; this is the "how". Three pieces:
@@ -87,6 +94,7 @@ namespace RenderCore
 
         AddedHandle   = InWorld.OnComponentAdded().Add(&WorldBridge::OnComponentAdded, this);
         RemovedHandle = InWorld.OnComponentRemoved().Add(&WorldBridge::OnComponentRemoved, this);
+        Animation     = AnimationSystem::Attach(InWorld);
 
         /* Sweep every registered proxy type's pool for components that
          * predate this call -- BindWorld runs after a game has likely
@@ -151,6 +159,9 @@ namespace RenderCore
         BoundWorld->OnComponentRemoved().Remove(RemovedHandle);
         AddedHandle   = DelegateHandle();
         RemovedHandle = DelegateHandle();
+        AnimationSystem::Detach(*BoundWorld);
+        Animation = nullptr;
+        PosedProxies.clear();
 
         BoundWorld = nullptr;
     }
@@ -228,6 +239,7 @@ namespace RenderCore
             return;
         }
         Bridge->StaticRecords.erase(Proxy);   // a later proxy at this address starts fresh
+        Bridge->PosedProxies.erase(Proxy);    // and is never sent a pose meant for this one
 
         RenderScene* Scene = Bridge->Scene;
         ENQUEUE_RENDER_COMMAND(RemoveProxy)([Scene, Proxy](RenderContext& Ctx)
@@ -778,6 +790,8 @@ namespace RenderCore
             });
         }
 
+        ExtractPoses(InFrame);
+
         RenderView View = InViewOverride ? *InViewOverride : BuildView(InFrame);
         View.ViewportPixels = InFrame.ViewportPixels;   // the render targets are sized from this
         const RenderLighting    Lighting    = BuildLighting(View.Origin);
@@ -792,6 +806,103 @@ namespace RenderCore
             SceneCapture->SetPostProcess(PostProcess);
             SceneCapture->SetCaptures(Captures);
             SceneCapture->Render(Ctx);
+        });
+    }
+
+    namespace
+    {
+        /* One proxy's pose in ExtractPoses' blob: this header, then Count
+         * AnimMatrix. Trivially copyable, freed whole, as the extraction is. */
+        struct PoseHeader
+        {
+            RenderProxy* Proxy = nullptr;
+            uint32_t     Count = 0;
+            uint32_t     Pad   = 0;
+        };
+    }
+
+    void WorldBridge::ExtractPoses(const FrameInfo& InFrame)
+    {
+        if(!Animation)
+        {
+            return;
+        }
+
+        /* A world that does not tick (the editor's) still shows each
+         * animation -- playing, or where it starts -- and follows edits to it. */
+        Animation->PrepareFrame(InFrame.FrameNumber, float(InFrame.DeltaSeconds), GAnimationPreview.GetBool());
+
+        struct Posed { RenderProxy* Proxy; const std::vector<AnimMatrix>* Bones; };
+        std::vector<Posed> Now;
+        BoundWorld->Each<AnimationComponent>([&](const Entity& InEntity, AnimationComponent&)
+        {
+            const RenderComponent* Render = InEntity.GetComponent<RenderComponent>();
+            const AnimInstance*    Instance = Animation->FindInstance(InEntity.GetID());
+            if(Render && Render->Proxy.Ptr && Instance && Instance->HasPose())
+            {
+                Now.push_back({ Render->Proxy.Ptr, &Instance->GetModelPose() });
+            }
+        });
+
+        /* Posed last frame and not now: back to the bind pose (Count 0). */
+        std::vector<RenderProxy*> Released;
+        for(const void* Each : PosedProxies)
+        {
+            const bool bStill = std::any_of(Now.begin(), Now.end(), [Each](const Posed& InPosed) { return InPosed.Proxy == Each; });
+            if(!bStill) { Released.push_back(static_cast<RenderProxy*>(const_cast<void*>(Each))); }
+        }
+        PosedProxies.clear();
+        for(const Posed& Each : Now) { PosedProxies.insert(Each.Proxy); }
+        if(Now.empty() && Released.empty())
+        {
+            return;
+        }
+
+        size_t Bytes = 0;
+        for(const Posed& Each : Now) { Bytes += sizeof(PoseHeader) + Each.Bones->size() * sizeof(AnimMatrix); }
+        Bytes += Released.size() * sizeof(PoseHeader);
+        void* Blob = EngineCore::Memory::Allocate(Bytes, alignof(PoseHeader), EngineCore::POOL_Default, nullptr,
+                                                  EngineCore::AF_None, EngineCore::GImageID);
+        if(!Blob)
+        {
+            RENDERCORE_LOG_ERROR("WorldBridge::ExtractPoses: allocation failed; poses skipped this frame")
+            return;
+        }
+        uint8_t* Write = static_cast<uint8_t*>(Blob);
+        const auto Put = [&Write](RenderProxy* InProxy, const std::vector<AnimMatrix>* InBones)
+        {
+            PoseHeader Header;
+            Header.Proxy = InProxy;
+            Header.Count = InBones ? uint32_t(InBones->size()) : 0u;
+            std::memcpy(Write, &Header, sizeof(Header));
+            Write += sizeof(Header);
+            if(Header.Count > 0)
+            {
+                std::memcpy(Write, InBones->data(), Header.Count * sizeof(AnimMatrix));
+                Write += Header.Count * sizeof(AnimMatrix);
+            }
+        };
+        for(const Posed& Each : Now)          { Put(Each.Proxy, Each.Bones); }
+        for(RenderProxy* Each : Released)     { Put(Each, nullptr); }
+
+        /* After this frame's ApplyExtraction commands: the component's mesh
+         * is the proxy's before its pose is. Only Render components' proxies
+         * are posed, so the cast is to theirs. */
+        const size_t BlobBytes = Bytes;
+        ENQUEUE_RENDER_COMMAND(ApplyPoses)([Blob, BlobBytes](RenderContext&)
+        {
+            const uint8_t* Read = static_cast<const uint8_t*>(Blob);
+            const uint8_t* End  = Read + BlobBytes;
+            while(Read + sizeof(PoseHeader) <= End)
+            {
+                PoseHeader Header;
+                std::memcpy(&Header, Read, sizeof(Header));
+                Read += sizeof(Header);
+                /* The bones follow the 16-byte header: aligned for floats. */
+                static_cast<RenderComponentProxy*>(Header.Proxy)->SetSkinPose(reinterpret_cast<const AnimMatrix*>(Read), Header.Count);
+                Read += Header.Count * sizeof(AnimMatrix);
+            }
+            EngineCore::Memory::Free(Blob);
         });
     }
 

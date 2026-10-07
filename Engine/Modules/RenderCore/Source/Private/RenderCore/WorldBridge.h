@@ -5,6 +5,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Public/GameCore/Delegate.h"
@@ -67,6 +68,11 @@ namespace RenderCore
 
         RenderView BuildView(const FrameInfo& InFrame) const;
 
+        /* Each animated Render component's pose, to its proxy, as one batch
+         * after the frame's extraction (ANIMATION.md); a proxy posed before
+         * and not now is told so, and goes back to its bind pose. */
+        void ExtractPoses(const FrameInfo& InFrame);
+
         /* The first active DirectionalLightComponent and SkyLightComponent,
          * over RenderLighting's defaults; the point and spot lights nearest
          * InEye (casters first); the [Shadows] settings. Game thread, like
@@ -105,6 +111,11 @@ namespace RenderCore
 
         RenderScene*    Scene = nullptr;
         GameCore::World* BoundWorld = nullptr;
+
+        /* The bound world's animation (attached while bound), and the
+         * proxies ExtractPoses posed last frame. */
+        class AnimationSystem*               Animation = nullptr;
+        std::unordered_set<const void*>      PosedProxies;
 
         /* A static component's last extraction record (header and bytes), by
          * its proxy: unchanged, it is not sent again. Cleared when a mesh is

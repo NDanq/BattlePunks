@@ -65,6 +65,12 @@ namespace EditorContent
      * not a particle system). */
     QStringList ListParticleSystemPaths();
     QString     ParticleSystemPathFor(const QString& InPath);
+
+    /* An animation field (PF_AssetAnimation): an .nmanim clip or an
+     * .nmanimstate anim state. Every one's runtime path in the project and
+     * the engine, sorted; and one file's (empty if neither). */
+    QStringList ListAnimationPaths();
+    QString     AnimationPathFor(const QString& InPath);
     QString     TexturePathFor(const QString& InPath);
     QString     RenderTargetPathFor(const QString& InPath);
     bool        IsRenderTargetFieldValue(const QString& InText);

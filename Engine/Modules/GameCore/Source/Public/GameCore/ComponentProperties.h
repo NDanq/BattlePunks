@@ -66,6 +66,7 @@ namespace GameCore
         PF_AssetRenderTarget = 1 << 4,  // a render target texture (*.nmrt2d, *.nmrt3d; RenderTargetAsset.h)
         PF_AssetTexture  = 1 << 5,   // a texture asset (*.nmtexture), e.g. a Sky Light's HDRI
         PF_AssetParticleSystem = 1 << 6,   // a particle system (*.nmparticle; RenderCore's ParticleSystemAsset.h)
+        PF_AssetAnimation = 1 << 7,   // an animation clip (*.nmanim) or anim state (*.nmanimstate; RenderCore's ANIMATION.md)
     };
 
     enum : size_t

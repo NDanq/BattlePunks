@@ -19,6 +19,7 @@
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MaterialDescription.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/RenderCoreLog.h"
 #include "Public/RenderCore/RenderPipeline.h"
 #include "Public/RenderCore/RenderScene.h"
@@ -245,8 +246,32 @@ namespace RenderCore
         {
             std::shared_ptr<const MeshData> Source;
             GDIMesh*                        Gpu = nullptr;
+
+            /* A skinned mesh's reference pose (MakeRefPosePalette): how it
+             * draws when nothing poses it. Remade when its skeleton is. */
+            std::shared_ptr<const SkeletonData> Skeleton;
+            std::vector<float>                  RefPalette;
         };
         std::unordered_map<std::string, GpuMesh> Meshes;
+
+        /* InPath's reference-pose palette; null if it is not skinned or has no skeleton. */
+        const std::vector<float>* FindRefPalette(const std::string& InPath)
+        {
+            const auto Found = Meshes.find(InPath);
+            if(Found == Meshes.end() || !Found->second.Source || !Found->second.Source->IsSkinned())
+            {
+                return nullptr;
+            }
+            GpuMesh& Entry = Found->second;
+            std::shared_ptr<const SkeletonData> Skeleton = SkeletonAssetCache::Find(Entry.Source->Skeleton);
+            if(Skeleton != Entry.Skeleton)
+            {
+                Entry.Skeleton = Skeleton;
+                if(Skeleton) { MakeRefPosePalette(*Entry.Source, *Skeleton, Entry.RefPalette); }
+                else         { Entry.RefPalette.clear(); }
+            }
+            return Entry.RefPalette.empty() ? nullptr : &Entry.RefPalette;
+        }
 
         /* A material's textures, keyed by path and the sampler settings they
          * resolve to; rebuilt when TextureAssetCache's pointer differs from
@@ -2442,6 +2467,18 @@ namespace RenderCore
             return false;
         }
 
+        /* A skinned mesh nothing poses draws in its reference pose. */
+        const float* SkinPalette = InOverrides.SkinPalette;
+        uint32_t     SkinBones   = InOverrides.SkinBones;
+        if(!SkinPalette && Source->IsSkinned())
+        {
+            if(const std::vector<float>* RefPalette = P->FindRefPalette(InMeshPath))
+            {
+                SkinPalette = RefPalette->data();
+                SkinBones   = uint32_t(RefPalette->size() / 12);
+            }
+        }
+
         /* A section per material; a mesh with none is one section of everything. */
         static const MeshSection Everything;
         const std::vector<MeshSection>& Sections = Source->Sections;
@@ -2469,8 +2506,8 @@ namespace RenderCore
             Item.Overrides     = InOverrides.Items;
             Item.OverrideCount = InOverrides.Count;
             Item.Baked         = InOverrides.Baked;
-            Item.SkinPalette   = InOverrides.SkinPalette;
-            Item.SkinBones     = InOverrides.SkinBones;
+            Item.SkinPalette   = SkinPalette;
+            Item.SkinBones     = SkinBones;
             Item.MaterialSlot  = uint8_t(SlotIndex);   // the section's slot, whichever material it fell back to
             P->Submit(Item, Impl::StageOf(Chosen));
         }
@@ -2677,6 +2714,18 @@ namespace RenderCore
             return false;
         }
 
+        /* A skinned mesh nothing poses draws in its reference pose. */
+        const float* SkinPalette = InOverrides.SkinPalette;
+        uint32_t     SkinBones   = InOverrides.SkinBones;
+        if(!SkinPalette && Source->IsSkinned())
+        {
+            if(const std::vector<float>* RefPalette = P->FindRefPalette(InMeshPath))
+            {
+                SkinPalette = RefPalette->data();
+                SkinBones   = uint32_t(RefPalette->size() / 12);
+            }
+        }
+
         static const MeshSection Everything;
         const std::vector<MeshSection>& Sections = Source->Sections;
         const size_t SectionCount = Sections.empty() ? 1 : Sections.size();
@@ -2704,8 +2753,8 @@ namespace RenderCore
             Item.ShadowView    = P->CasterView;
             Item.Overrides     = InOverrides.Items;
             Item.OverrideCount = InOverrides.Count;
-            Item.SkinPalette   = InOverrides.SkinPalette;
-            Item.SkinBones     = InOverrides.SkinBones;
+            Item.SkinPalette   = SkinPalette;
+            Item.SkinBones     = SkinBones;
             Item.MaterialSlot  = uint8_t(Index);
             if(P->Capture) { P->Capture->push_back({ Item, ERenderStage::Shadows }); }
             else           { P->PolicyFor(ERenderStage::Shadows).Add(Item); }

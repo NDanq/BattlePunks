@@ -83,6 +83,16 @@ namespace RenderCore
     /* Sets BoundsMin/Max from the positions; zero for an empty mesh. */
     RENDERCORE_API void ComputeMeshBounds(MeshData& InOutMesh);
 
+    struct SkeletonData;
+
+    /* A skinned mesh's bounds: where its vertices are in InSkeleton's
+     * reference pose -- how it draws with no animation -- not in bind space. */
+    RENDERCORE_API void ComputeSkinnedMeshBounds(MeshData& InOutMesh, const SkeletonData& InSkeleton);
+
+    /* The palette (Skinning.glsl: 12 floats a bone) that draws InMesh in
+     * InSkeleton's reference pose. Empty if InMesh is not skinned. */
+    RENDERCORE_API void MakeRefPosePalette(const MeshData& InMesh, const SkeletonData& InSkeleton, std::vector<float>& OutPalette);
+
     /* Both directions. False, logged, for an invalid mesh. */
     RENDERCORE_API bool SerializeMesh(EngineCore::Archive& Ar, MeshData& InOutMesh);
 
