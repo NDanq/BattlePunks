@@ -518,6 +518,7 @@ void MeshViewerWindow::SelectAnimation(const QString& InRuntimePath)
 void MeshViewerWindow::FillParameters()
 {
     while(ParameterForm->rowCount() > 0) { ParameterForm->removeRow(0); }
+    ParameterControls.clear();
     ParameterBox->setVisible(State && !State->Parameters.empty());
     if(!State) { return; }
 
@@ -539,6 +540,7 @@ void MeshViewerWindow::FillParameters()
                     if(!Anim->IsPlaying()) { Anim->Repose(); }
                 });
                 ParameterForm->addRow(Label, Value);
+                ParameterControls.push_back({ Name, Parameter.Type, Value });
                 break;
             }
             case RenderCore::EAnimParameterType::Bool:
@@ -551,6 +553,7 @@ void MeshViewerWindow::FillParameters()
                     if(!Anim->IsPlaying()) { Anim->Repose(); }
                 });
                 ParameterForm->addRow(Label, Value);
+                ParameterControls.push_back({ Name, Parameter.Type, Value });
                 break;
             }
             case RenderCore::EAnimParameterType::Trigger:
@@ -562,6 +565,7 @@ void MeshViewerWindow::FillParameters()
                     if(!Anim->IsPlaying()) { Anim->SetPlaying(true); }
                 });
                 ParameterForm->addRow(Label, Fire);
+                ParameterControls.push_back({ Name, Parameter.Type, Fire });
                 break;
             }
         }
@@ -598,6 +602,7 @@ void MeshViewerWindow::UpdateAnimationState()
 {
     if(!StateLabel) { return; }
     RenderCore::AnimInstance& Instance = Anim->GetInstance();
+    SyncParameterControls(ParameterControls, Instance);
     QString Text;
     if(State)
     {

@@ -3,12 +3,14 @@
 #include "Private/Editor/Content/AnimPreviewWidget.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QHBoxLayout>
 #include <QLabel>
+#include <QPushButton>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStyle>
@@ -89,6 +91,14 @@ bool AnimPreviewWidget::SetMesh(const QString& InRuntimePath, const RenderCore::
 {
     MeshCopy = InMesh;
     Mesh = &MeshCopy;
+
+    /* The bones the skin uses. Ancestors no vertex follows -- an armature's
+     * root, a Z-up node -- would draw long lines to the origin. */
+    Weighted.assign(InMesh.InverseBind.size(), false);
+    for(size_t At = 0; At < InMesh.Joints.size() && At < InMesh.Weights.size(); ++At)
+    {
+        if(InMesh.Weights[At] > 0.0f && InMesh.Joints[At] < Weighted.size()) { Weighted[InMesh.Joints[At]] = true; }
+    }
     View->SetMesh(InRuntimePath);
     std::shared_ptr<const RenderCore::SkeletonData> Skeleton =
         InMesh.IsSkinned() ? RenderCore::SkeletonAssetCache::Find(InMesh.Skeleton) : nullptr;
@@ -185,11 +195,14 @@ void AnimPreviewWidget::PushPose()
     std::vector<float> Segments;
     if(Bones->isChecked())
     {
+        /* Weighted bones only: each a joint, joined to its parent if that is weighted too. */
         const RenderCore::SkeletonData& Skeleton = *Instance.GetSkeleton();
+        const auto IsWeighted = [this](const int32_t InBone) { return InBone >= 0 && size_t(InBone) < Weighted.size() && Weighted[size_t(InBone)]; };
         for(size_t Bone = 0; Bone < Model.size() && Bone < Skeleton.Bones.size(); ++Bone)
         {
+            if(!IsWeighted(int32_t(Bone))) { continue; }
             const int32_t Parent = Skeleton.Bones[Bone].Parent;
-            const RenderCore::AnimMatrix& To = Model[size_t(Parent >= 0 ? Parent : int32_t(Bone))];
+            const RenderCore::AnimMatrix& To = Model[size_t(IsWeighted(Parent) ? Parent : int32_t(Bone))];
             Segments.insert(Segments.end(), { Model[Bone].M[0][3], Model[Bone].M[1][3], Model[Bone].M[2][3],
                                               To.M[0][3], To.M[1][3], To.M[2][3] });
         }
@@ -210,6 +223,32 @@ void AnimPreviewWidget::UpdateTransport()
     }
     TimeLabel->setText(HasSkeleton() ? QStringLiteral("%1 / %2 s").arg(double(Instance.GetTime()), 0, 'f', 2).arg(double(Duration), 0, 'f', 2)
                                      : QStringLiteral("no skeleton"));
+}
+
+void SyncParameterControls(const std::vector<AnimParameterControl>& InControls, const RenderCore::AnimInstance& InInstance)
+{
+    for(const AnimParameterControl& Control : InControls)
+    {
+        if(!Control.Widget || Control.Widget->hasFocus())
+        {
+            continue;
+        }
+        const float Value = InInstance.GetParameter(Control.Name);
+        const QSignalBlocker Block(Control.Widget);
+        if(auto* Spin = qobject_cast<QDoubleSpinBox*>(Control.Widget))
+        {
+            if(std::abs(Spin->value() - double(Value)) > 1e-4) { Spin->setValue(double(Value)); }
+        }
+        else if(auto* Check = qobject_cast<QCheckBox*>(Control.Widget))
+        {
+            Check->setChecked(Value != 0.0f);
+        }
+        else if(auto* Button = qobject_cast<QPushButton*>(Control.Widget))
+        {
+            /* Set and waiting for a transition to use it, or spent. */
+            Button->setText(Value != 0.0f ? QStringLiteral("Fired...") : QStringLiteral("Fire"));
+        }
+    }
 }
 
 #endif // WITH_EDITOR

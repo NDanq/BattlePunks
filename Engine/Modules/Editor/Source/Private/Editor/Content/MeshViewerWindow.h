@@ -11,6 +11,7 @@
 #include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Private/Editor/Content/AnimPreviewWidget.h"
 
 class AnimPreviewWidget;
 class MeshPreviewView;
@@ -108,6 +109,7 @@ private:
     QLabel*       StateLabel      = nullptr;
     QWidget*      ParameterBox    = nullptr;
     QFormLayout*  ParameterForm   = nullptr;
+    std::vector<AnimParameterControl> ParameterControls;
     QWidget*      ClipBox         = nullptr;
     QCheckBox*    ClipLoop        = nullptr;
     QCheckBox*    ClipInPlace     = nullptr;

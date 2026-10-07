@@ -4,6 +4,8 @@
 #if WITH_EDITOR
 
 #include <memory>
+#include <string>
+#include <vector>
 
 #include <QElapsedTimer>
 #include <QWidget>
@@ -68,6 +70,7 @@ private:
     RenderCore::AnimInstance Instance;
     const RenderCore::MeshData* Mesh = nullptr;   // the caller's, while it shows it
     RenderCore::MeshData        MeshCopy;
+    std::vector<bool>           Weighted;         // per bone: some vertex moves with it (the overlay draws these)
 
     MeshPreviewView* View       = nullptr;
     QToolButton*     PlayButton = nullptr;
@@ -81,6 +84,20 @@ private:
     bool             bPlaying   = false;
     bool             bScrubbing = false;
 };
+
+/* An anim state parameter's control in a window: a spin box (Float), a
+ * check box (Bool) or a Fire button (Trigger). */
+struct AnimParameterControl
+{
+    std::string                    Name;
+    RenderCore::EAnimParameterType Type = RenderCore::EAnimParameterType::Float;
+    QWidget*                       Widget = nullptr;
+};
+
+/* Each control shown as InInstance has its parameter now -- set from
+ * elsewhere, or a trigger a transition spent ("Fire" again) -- without
+ * signalling, and not while one is being typed in. */
+void SyncParameterControls(const std::vector<AnimParameterControl>& InControls, const RenderCore::AnimInstance& InInstance);
 
 #endif // WITH_EDITOR
 

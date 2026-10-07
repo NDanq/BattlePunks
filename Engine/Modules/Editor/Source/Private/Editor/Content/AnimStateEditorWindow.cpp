@@ -22,6 +22,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMap>
 #include <QMessageBox>
 #include <QPointer>
 #include <QPushButton>
@@ -358,6 +359,7 @@ QWidget* AnimStateEditorWindow::BuildStates()
     StateBlend->setToolTip(QStringLiteral("None: the first clip alone. A float parameter: a blend space -- each clip plays fully at its "
                                           "position, and between two the parameter blends them"));
     SampleTable = MakeTable(StateForm, { QStringLiteral("Clip (.nmanim)"), QStringLiteral("Position") });
+    SampleTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     QPushButton *AddSample = nullptr, *RemoveSample = nullptr;
     auto* SampleColumn = new QVBoxLayout();
     SampleColumn->addWidget(SampleTable);
@@ -899,31 +901,53 @@ void AnimStateEditorWindow::FillState()
         StateLoop->setCurrentIndex(int(State->Loop));
         StateBlend->setCurrentIndex(std::max(StateBlend->findText(ToQ(State->BlendParameter)), 0));
 
+        /* Clips by file name -- what tells them apart in a narrow column --
+         * with the runtime path as the data and the tip. A name two folders
+         * share gets its folder. */
         QStringList Clips;
+        QMap<QString, int> NameCount;
         for(const QString& Each : EditorContent::ListAnimationPaths())
         {
-            if(Each.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)) { Clips << Each; }
+            if(!Each.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)) { continue; }
+            Clips << Each;
+            ++NameCount[QFileInfo(Each).fileName()];
         }
+        const auto Label = [&NameCount](const QString& InPath)
+        {
+            const QString Name = QFileInfo(InPath).fileName();
+            return NameCount.value(Name) > 1 ? QStringLiteral("%1 (%2)").arg(Name, QFileInfo(InPath).path()) : Name;
+        };
         SampleTable->setRowCount(int(State->Samples.size()));
         for(size_t Index = 0; Index < State->Samples.size(); ++Index)
         {
+            const QString Current = ToQ(State->Samples[Index].Clip);
             auto* Clip = new QComboBox(SampleTable);
-            Clip->setEditable(true);
-            Clip->addItems(Clips);
-            Clip->setCurrentText(ToQ(State->Samples[Index].Clip));
-            Clip->lineEdit()->setPlaceholderText(QStringLiteral("Content/Animation/Fox_Walk.nmanim"));
-            const auto Picked = [this, Clip, Index]()
+            Clip->addItem(QStringLiteral("(choose a clip)"), QString());
+            for(const QString& Each : Clips)
             {
-                RenderCore::AnimStateNode* Current = CurrentState();
-                if(!Current || Index >= Current->Samples.size()) { return; }
-                const std::string Text = Clip->currentText().trimmed().toStdString();
-                if(Text == Current->Samples[Index].Clip) { return; }
-                Current->Samples[Index].Clip = Text;
+                Clip->addItem(Label(Each), Each);
+                Clip->setItemData(Clip->count() - 1, Each, Qt::ToolTipRole);
+            }
+            int At = Clip->findData(Current);
+            if(At < 0 && !Current.isEmpty())
+            {
+                /* A clip that is not there (moved, deleted): kept, so it can be seen and replaced. */
+                Clip->addItem(QStringLiteral("%1 (missing)").arg(Current), Current);
+                At = Clip->count() - 1;
+            }
+            Clip->setCurrentIndex(std::max(At, 0));
+            Clip->setToolTip(Current.isEmpty() ? QStringLiteral("An .nmanim, by runtime path") : Current);
+            connect(Clip, QOverload<int>::of(&QComboBox::activated), this, [this, Clip, Index](const int InIndex)
+            {
+                RenderCore::AnimStateNode* State = CurrentState();
+                if(!State || Index >= State->Samples.size()) { return; }
+                const std::string Picked = Clip->itemData(InIndex).toString().toStdString();
+                if(Picked == State->Samples[Index].Clip) { return; }
+                State->Samples[Index].Clip = Picked;
+                Clip->setToolTip(QString::fromStdString(Picked));
                 Edited();
                 if(MeshRuntime.isEmpty()) { PickMesh(EditorAnimation::FindMeshOn(EditorAnimation::SkeletonOfAnimation(Path))); }
-            };
-            connect(Clip, QOverload<int>::of(&QComboBox::activated), this, Picked);
-            connect(Clip->lineEdit(), &QLineEdit::editingFinished, this, Picked);
+            });
             SampleTable->setCellWidget(int(Index), 0, Clip);
             SampleTable->setItem(int(Index), 1, new QTableWidgetItem(QString::number(double(State->Samples[Index].Position))));
         }
@@ -1006,6 +1030,7 @@ void AnimStateEditorWindow::FillTransition()
 void AnimStateEditorWindow::FillLive()
 {
     while(LiveForm->rowCount() > 0) { LiveForm->removeRow(0); }
+    LiveControls.clear();
     for(const RenderCore::AnimStateParameter& Parameter : Edit.Parameters)
     {
         const std::string Name  = Parameter.Name;
@@ -1022,6 +1047,7 @@ void AnimStateEditorWindow::FillLive()
                 if(!Preview->IsPlaying()) { Preview->Repose(); }
             });
             LiveForm->addRow(Label, Value);
+            LiveControls.push_back({ Name, Parameter.Type, Value });
         }
         else if(Parameter.Type == RenderCore::EAnimParameterType::Bool)
         {
@@ -1033,6 +1059,7 @@ void AnimStateEditorWindow::FillLive()
                 if(!Preview->IsPlaying()) { Preview->Repose(); }
             });
             LiveForm->addRow(Label, Value);
+            LiveControls.push_back({ Name, Parameter.Type, Value });
         }
         else
         {
@@ -1043,6 +1070,7 @@ void AnimStateEditorWindow::FillLive()
                 if(!Preview->IsPlaying()) { Preview->SetPlaying(true); }
             });
             LiveForm->addRow(Label, Fire);
+            LiveControls.push_back({ Name, Parameter.Type, Fire });
         }
     }
     LiveBox->setVisible(!Edit.Parameters.empty());
@@ -1052,6 +1080,7 @@ void AnimStateEditorWindow::UpdateLive()
 {
     if(!LiveStates) { return; }
     const RenderCore::AnimInstance& Instance = Preview->GetInstance();
+    SyncParameterControls(LiveControls, Instance);
     QStringList Lines;
     for(size_t Layer = 0; Layer < Instance.GetLayerCount() && Layer < Edit.Layers.size(); ++Layer)
     {
