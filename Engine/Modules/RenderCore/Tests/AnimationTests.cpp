@@ -24,6 +24,7 @@
 #include "Public/RenderCore/Components/AnimationComponent.h"
 #include "Public/RenderCore/Components/RenderComponent.h"
 #include "Public/RenderCore/MeshAsset.h"
+#include "Public/RenderCore/Renderer.h"
 
 using namespace RenderCore;
 
@@ -457,6 +458,43 @@ static void TestSocket()
     AnimationSystem::Detach(World);
 }
 
+/* A dedicated server: a headless session's renderer is the Null backend
+ * (no GPU, no window), and binding its world brings animation with it --
+ * the server has poses for sockets and bone queries. */
+static void TestHeadless()
+{
+    std::printf("[headless]\n");
+    Renderer Rend;
+    Expect(Rend.Initialize(ERenderBackend::Null, EngineCore::WindowHandle()), "the Null renderer starts with no window");
+
+    GameCore::World World;
+    Rend.BindWorld(World);
+    Expect(AnimationSystem::Find(&World) != nullptr, "binding a world attaches its animation, on the Null backend too");
+
+    GameCore::Entity Actor = World.CreateEntity();
+    Actor.AddComponent(GameCore::TransformComponent());
+    RenderComponent Render;
+    std::snprintf(Render.Mesh, sizeof(Render.Mesh), "%sArm.nmmesh", SCRATCH);
+    Actor.AddComponent(Render);
+    AnimationComponent Animation;
+    std::snprintf(Animation.Animation, sizeof(Animation.Animation), "%sArm_Bend.nmanim", SCRATCH);
+    Actor.AddComponent(Animation);
+
+    World.Tick(0.999f);
+    FrameInfo Frame;
+    Frame.FrameNumber = 1;
+    Frame.DeltaSeconds = 0.999;
+    Rend.EndFrame(Frame);
+    GameCore::TransformPose Hand;
+    const AnimationSystem* System = AnimationSystem::Find(&World);
+    Expect(System && System->GetBoneWorldPose(Actor, "Hand", Hand) && std::fabs(Hand.Position.GetY() - 50.0) < 0.5,
+           "and a tick poses it, as a client would");
+
+    Rend.UnbindWorld();
+    Expect(AnimationSystem::Find(&World) == nullptr, "unbinding detaches it");
+    Rend.Shutdown();
+}
+
 int main()
 {
     std::printf("RenderCore animation tests\n");
@@ -467,6 +505,7 @@ int main()
     TestStateMachine();
     TestStateSystem();
     TestSocket();
+    TestHeadless();
     std::printf("%d checks, %d failures\n", GChecks, GFailures);
     return GFailures == 0 ? 0 : 1;
 }

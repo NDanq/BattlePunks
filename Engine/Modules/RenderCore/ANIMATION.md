@@ -98,6 +98,11 @@ world it binds; it ticks in `TP_PostUpdate`, after gameplay sets parameters
 and before the frame's extraction, which sends every pose to its Render
 proxy as one batch.
 
+**Servers** animate too: a headless session's renderer is the Null backend
+(no GPU, no window), and binding its world attaches the system, so sockets
+and `GetBoneLocation` work on a dedicated server; only the skinning, on the
+GPU, is skipped.
+
 A world that does not tick -- the editor's, outside Play -- still plays its
 animations in the viewport (`[Animation] PreviewInEditor`, on by default).
 That preview emits nothing and writes to no component.
@@ -166,5 +171,4 @@ Layer Arms   mask spine_02, weight scaled by Armed
 Inverse kinematics (feet, look-at), morph targets, additive layers, 2D blend
 spaces, retargeting between differently named skeletons, clip compression,
 root motion applied to the entity, skinned meshes on Metal, and animation
-budgets (off-screen entities still animate). Skinning is on the GPU only, so
-a server has poses (sockets, bone queries) only where it binds a renderer.
+budgets (off-screen entities still animate).
