@@ -131,6 +131,10 @@ namespace EditorGraphs
     void StageMaterial(const QString& InMaterial, const NodeGraph::CompileResult& InResult, QObject* InContext,
                        std::function<void(bool, const QString&)> InDone);
 
+    /* Whether InMaterial (a runtime path) is being cooked, or waits to be:
+     * a preview now would draw what it was before. */
+    bool IsMaterialCooking(const QString& InMaterial);
+
     /* Renderer preview of InName; InDone gets the image or null and why.
      * Not called if InContext is gone. */
     void RequestMaterialPreview(const QString& InName, int InSize, const QColor& InTint, QObject* InContext,

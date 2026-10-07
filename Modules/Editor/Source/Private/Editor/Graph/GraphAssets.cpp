@@ -576,6 +576,12 @@ namespace EditorGraphs
         return EngineCore::Color(uint8_t(InColor.red()), uint8_t(InColor.green()), uint8_t(InColor.blue()), uint8_t(InColor.alpha()));
     }
 
+    bool IsMaterialCooking(const QString& InMaterial)
+    {
+        const auto Found = MaterialCooks().find(InMaterial);
+        return Found != MaterialCooks().end() && (Found->second.bRunning || Found->second.bPending);
+    }
+
     void RequestMaterialPreview(const QString& InName, const int InSize, const QColor& InTint, QObject* InContext,
                                 std::function<void(const QImage&, const QString&)> InDone)
     {
