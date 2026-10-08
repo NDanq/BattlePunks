@@ -31,6 +31,9 @@ namespace EditorProjectBuild
         bool           bCook         = true;
         bool           bCompile      = true;
         bool           bOpenOutput   = true;
+        /* Debug, RelWithDebInfo: the game reads the project's raw files by
+         * default (NIMBLE_RUN_UNCOOKED; -cooked overrides). Not Shipping. */
+        bool           bRunUncooked  = false;
     };
 
     /* From / to [Build] in the project's config file (ProjectSettingsDialog's). */
@@ -50,9 +53,10 @@ namespace EditorProjectBuild
      * (Engine/CMakeLists.txt's NIMBLE_BINARIES_DIR layout). */
     QString GetOutputDir(const QString& InProjectRoot, EConfiguration InConfiguration);
 
-    /* `cmake --preset <p> -DNIMBLE_PACKAGE_CONTENT=ON` -- a packaged game,
-     * its content in Paks/ -- and `cmake --build --preset <p>`. */
-    QStringList ConfigureArgs(const QString& InPreset);
+    /* `cmake --preset <p> -DNIMBLE_PACKAGE_CONTENT=ON
+     * -DNIMBLE_RUN_UNCOOKED=<bInRunUncooked>` -- a packaged game, its content
+     * in Paks/ -- and `cmake --build --preset <p>`. */
+    QStringList ConfigureArgs(const QString& InPreset, bool bInRunUncooked);
     QStringList BuildArgs(const QString& InPreset);
 }
 

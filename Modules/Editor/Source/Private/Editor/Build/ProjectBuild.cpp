@@ -117,6 +117,7 @@ namespace EditorProjectBuild
         Options.bCook       = ParseBool(File.Get(Section, QStringLiteral("Cook")), Options.bCook);
         Options.bCompile    = ParseBool(File.Get(Section, QStringLiteral("Compile")), Options.bCompile);
         Options.bOpenOutput = ParseBool(File.Get(Section, QStringLiteral("OpenOutput")), Options.bOpenOutput);
+        Options.bRunUncooked = ParseBool(File.Get(Section, QStringLiteral("RunUncooked")), Options.bRunUncooked);
         return Options;
     }
 
@@ -137,6 +138,7 @@ namespace EditorProjectBuild
             { QStringLiteral("Cook"),          Bool(InOptions.bCook) },
             { QStringLiteral("Compile"),       Bool(InOptions.bCompile) },
             { QStringLiteral("OpenOutput"),    Bool(InOptions.bOpenOutput) },
+            { QStringLiteral("RunUncooked"),   Bool(InOptions.bRunUncooked) },
         };
         bool bChanged = false;
         for(const QPair<QString, QString>& Key : Wanted)
@@ -197,11 +199,13 @@ namespace EditorProjectBuild
                                             .arg(BinariesPlatform(), QLatin1String(GetConfigurationName(InConfiguration))));
     }
 
-    QStringList ConfigureArgs(const QString& InPreset)
+    QStringList ConfigureArgs(const QString& InPreset, const bool bInRunUncooked)
     {
         /* Always packaged: the content in Paks/ (NimblePack.cmake), with each
-         * path kept beside its hash in every configuration but Shipping. */
-        return { QStringLiteral("--preset"), InPreset, QStringLiteral("-DNIMBLE_PACKAGE_CONTENT=ON") };
+         * path kept beside its hash in every configuration but Shipping.
+         * Uncooked: the game reads the project's raw files over the packs. */
+        return { QStringLiteral("--preset"), InPreset, QStringLiteral("-DNIMBLE_PACKAGE_CONTENT=ON"),
+                 bInRunUncooked ? QStringLiteral("-DNIMBLE_RUN_UNCOOKED=ON") : QStringLiteral("-DNIMBLE_RUN_UNCOOKED=OFF") };
     }
 
     QStringList BuildArgs(const QString& InPreset)

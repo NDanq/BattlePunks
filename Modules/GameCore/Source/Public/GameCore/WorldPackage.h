@@ -60,6 +60,17 @@ namespace GameCore
     GAMECORE_API std::string ResolveContentWorld(const char* InSourcePath);
     GAMECORE_API std::string ResolveContentPrefab(const char* InSourcePath);
 
+#if WITH_UNCOOKED
+    /*
+     * RUN UNCOOKED (a Debug or RelWithDebInfo game started -uncooked): a
+     * world or prefab named by its source path is read raw from InRoot --
+     * the project folder -- as the editor reads it, ahead of anything staged
+     * or packed; no cook-on-load. Empty turns it off. Not in Shipping.
+     */
+    GAMECORE_API void               SetUncookedContentRoot(const std::string& InRoot);
+    GAMECORE_API const std::string& GetUncookedContentRoot();
+#endif
+
     /* LoadWorldFile(ResolveContentWorld(InSourcePath)): how a level loads its world. */
     GAMECORE_API bool LoadContentWorld(const char* InSourcePath, World& InOutWorld);
 

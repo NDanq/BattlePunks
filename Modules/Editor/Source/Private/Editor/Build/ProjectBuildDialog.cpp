@@ -75,6 +75,12 @@ ProjectBuildDialog::ProjectBuildDialog(QWidget* InParent, std::function<void()> 
     Form->addRow(QString(), CompileGame);
     Form->addRow(QString(), OpenOutput);
 
+    RunUncooked = new QCheckBox(QStringLiteral("Run uncooked: the game reads the project's raw files (Debug, RelWithDebInfo)"), OptionsBox);
+    RunUncooked->setToolTip(QStringLiteral("The built game reads config, scripts, Content, worlds, prefabs and UI straight from "
+                                           "the project folder -- edits show at its next start, with no cook or build. -cooked "
+                                           "on its command line runs it on the packed content. Not in Shipping"));
+    Form->addRow(QString(), RunUncooked);
+
     Target = new QLabel(OptionsBox);
     Target->setWordWrap(true);
     Target->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -91,7 +97,12 @@ ProjectBuildDialog::ProjectBuildDialog(QWidget* InParent, std::function<void()> 
     Layout->addWidget(OptionsBox);
 
     connect(EditWorlds, &QPushButton::clicked, this, [this]() { if(OpenProjectSettings) { OpenProjectSettings(); } });
-    connect(Configuration, &QComboBox::currentIndexChanged, this, [this](int) { RefreshTarget(); });
+    connect(Configuration, &QComboBox::currentIndexChanged, this, [this](int)
+    {
+        RefreshTarget();
+        RunUncooked->setEnabled(Configuration->isEnabled()
+                                && EditorProjectBuild::EConfiguration(Configuration->currentIndex()) != EditorProjectBuild::BC_Shipping);
+    });
 
     // --- Stats and output --------------------------------------------------------
     Stats = new QTableWidget(0, 6, this);
@@ -165,6 +176,8 @@ void ProjectBuildDialog::ReadOptions()
     CookContent->setChecked(Options.bCook);
     CompileGame->setChecked(Options.bCompile);
     OpenOutput->setChecked(Options.bOpenOutput);
+    RunUncooked->setChecked(Options.bRunUncooked);
+    RunUncooked->setEnabled(Options.Configuration != EditorProjectBuild::BC_Shipping);
 }
 
 EditorProjectBuild::BuildOptions ProjectBuildDialog::GatherOptions() const
@@ -174,6 +187,7 @@ EditorProjectBuild::BuildOptions ProjectBuildDialog::GatherOptions() const
     Options.bCook         = CookContent->isChecked();
     Options.bCompile      = CompileGame->isChecked();
     Options.bOpenOutput   = OpenOutput->isChecked();
+    Options.bRunUncooked  = RunUncooked->isChecked();
     return Options;
 }
 
@@ -231,6 +245,7 @@ void ProjectBuildDialog::SetRunning(const bool bInRunning)
     CookContent->setEnabled(!bInRunning);
     CompileGame->setEnabled(!bInRunning);
     OpenOutput->setEnabled(!bInRunning);
+    RunUncooked->setEnabled(!bInRunning && EditorProjectBuild::EConfiguration(Configuration->currentIndex()) != EditorProjectBuild::BC_Shipping);
 }
 
 void ProjectBuildDialog::Log(const QString& InLine)
@@ -404,7 +419,9 @@ void ProjectBuildDialog::StartCompile()
     SetRunning(true);
     Status->setText(QStringLiteral("Configuring %1...").arg(Preset));
     Log(QStringLiteral("== cmake --preset %1").arg(Preset));
-    if(!Builder->StartCommand(EditorProjectBuild::ConfigureArgs(Preset), ProjectRoot, Preset))
+    const bool bUncooked = RunUncooked->isChecked()
+                           && EditorProjectBuild::EConfiguration(Configuration->currentIndex()) != EditorProjectBuild::BC_Shipping;
+    if(!Builder->StartCommand(EditorProjectBuild::ConfigureArgs(Preset, bUncooked), ProjectRoot, Preset))
     {
         Finish(false, QStringLiteral("cmake could not be started; see the Console."));
     }
