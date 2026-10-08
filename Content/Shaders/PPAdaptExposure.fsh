@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPAdaptExposure.fsh -- auto exposure's adaptation (RenderCore/RENDERPIPELINE.md,
 // "Auto exposure"): last frame's adapted log luminance eased toward this frame's
 // metered one, faster toward a brighter scene than a darker (as an eye adapts),

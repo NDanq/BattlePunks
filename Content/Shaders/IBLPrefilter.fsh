@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // IBLPrefilter.fsh -- one block of the probe atlas (IBLCommon.glsl) from a
 // capture's cube strip: drawn over the whole atlas, it writes its block's
 // levels and irradiance and discards the rest. Level 0 is a copy; each rougher

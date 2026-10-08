@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // ShadowDepth.fsh -- the Shadows stage's pixel shader (RenderCore/RENDERPIPELINE.md):
 // a caster draws only its depth into a shadow atlas tile, with its own
 // material's vertex shader (so World Position Offset matches) and this. The

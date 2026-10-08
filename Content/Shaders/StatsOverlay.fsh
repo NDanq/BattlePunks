@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // StatsOverlay.fsh -- the text overlay ("stat unit", RenderContext::DrawStatUnit):
 // a panel of fixed-width text over the final image, drawn full screen with
 // alpha blending. Each pixel finds its character cell, its character in

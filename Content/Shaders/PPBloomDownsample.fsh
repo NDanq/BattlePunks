@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPBloomDownsample.fsh -- Bloom, down the chain: a 13-tap filter into a
 // target half the size of its source (Jimenez, "Next Generation Post
 // Processing in Call of Duty"). The first step reads the scene, adds back

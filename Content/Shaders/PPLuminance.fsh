@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPLuminance.fsh -- auto exposure's meter, its first step (RenderCore/
 // RENDERPIPELINE.md, "Auto exposure"): the HDR scene colour, linear, into a
 // 64 x 64 target. Each texel is the mean log2 luminance of a 4 x 4 grid over

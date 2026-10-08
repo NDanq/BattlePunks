@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // UI.vsh -- RenderCore's UI pass (RenderContext::DrawUI, RENDERPIPELINE.md "UI"):
 // a UIDrawList's triangles, in pixels from the top-left of the view, to clip
 // space through ViewParameters.Projection -- DrawUI's orthographic one -- so

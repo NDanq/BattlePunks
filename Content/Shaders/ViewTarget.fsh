@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // ViewTarget.fsh -- the Render Target view mode (RenderTypes.h's ERenderViewMode;
 // the editor's Show > View Mode): one of the frame's render targets stretched
 // over the view (RenderContext::ShowTarget).

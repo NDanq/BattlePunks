@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // CaptureCopy.fsh -- a scene capture's face, copied into its render target
 // (RenderContext::FinishTargetFace; RenderCore/RENDERPIPELINE.md, "Scene
 // capture"): the viewport is the face's place, so TexCoord spans the face.

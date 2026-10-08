@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPFxaa.fsh -- antialiasing: FXAA (after Lottes' FXAA 3.11, quality path).
 // Finds an edge by local luma contrast, walks along it both ways to its ends,
 // and blends across it by how far this pixel is from the nearer end. Last in

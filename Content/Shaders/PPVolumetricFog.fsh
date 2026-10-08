@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // PPVolumetricFog.fsh -- volumetric fog's march, at half resolution (RenderCore/
 // RENDERPIPELINE.md, "Volumetric fog"), after the translucent stages and before
 // TAA, which smooths its per-pixel jitter.

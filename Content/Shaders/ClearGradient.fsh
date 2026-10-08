@@ -1,4 +1,4 @@
-#version 440 core
+#version 450 core
 // ClearGradient.fsh -- a scene's background as a vertical gradient
 // (Renderer::SetClearGradient; RenderCore/RENDERPIPELINE.md, "Background"):
 // drawn over the clear, under everything else. A half-step of dither keeps
