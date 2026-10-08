@@ -104,12 +104,24 @@ void D3D12ShaderResource::SetUniform(std::string InName, GDITextureResource* InT
     Binding.Resource = InTexResource;
     Binding.Index    = InIndex;
     Textures[InName] = Binding;
+
+    Texture0 = nullptr;
+    for(const auto& Entry : Textures)
+    {
+        if(Entry.second.Index == 0)
+        {
+            Texture0 = Entry.second.Resource;
+            break;
+        }
+    }
 }
 
 void D3D12ShaderResource::Release(void)
 {
     Scalars.clear();
     Textures.clear();
+    Texture0 = nullptr;
+    Core     = CoreBlocks();
     Bytecode.clear();
     bInitialized = false;
 }

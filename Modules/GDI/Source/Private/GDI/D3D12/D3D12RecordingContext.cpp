@@ -139,8 +139,8 @@ bool D3D12DynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCon
         BindActiveTargets(List);
 
         /* The driver's state as the pass begins: what a serial issue would
-         * start from. The block uploads are forgotten, so the context's first
-         * draw uploads its blocks and its serials then only rise. */
+         * start from. The caches are forgotten, so the context's first draw
+         * uploads its blocks and its serials then only rise. */
         Context.BoundVertexShader = BoundVertexShader;
         Context.BoundPixelShader  = BoundPixelShader;
         for(uint32_t Block = 0; Block < 4; ++Block)
@@ -163,7 +163,7 @@ bool D3D12DynamicGDI::BeginParallelPass(const uint32_t InChunks, GDIRecordingCon
         Context.DrawCount          = 0;
         Context.Index              = Chunk;
         Context.DrawsRecorded      = 0;
-        Context.Uploads.Forget();
+        Context.Caches.Forget();   // a fresh list: nothing bound, and the uploads are this pass's
         Context.Blend          = CurrentStateData->BlendState;
         Context.ColorMask      = CurrentStateData->ColorMask;
         Context.Depth          = CurrentStateData->DepthState;
@@ -319,7 +319,7 @@ void D3D12DynamicGDI::RecordDrawObject(GDIRecordingContext* InContext, GDIViewOb
     In.Blocks             = Context.MaterialBlocks;
     In.Serials            = Context.MaterialBlockSerials;
     In.Textures           = Context.MaterialTextures;
-    In.Uploads            = &Context.Uploads;
+    In.Caches             = &Context.Caches;
     In.InstanceBuffer     = Context.InstanceBuffer;
     In.InstanceCount      = Context.InstanceCount;
     In.IndirectArgs       = Context.IndirectArgs;

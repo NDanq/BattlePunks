@@ -232,6 +232,7 @@ void D3D12DynamicGDI::PrepareCommandList(ID3D12GraphicsCommandList* InList)
     InList->SetDescriptorHeaps(2, Heaps);
     InList->SetGraphicsRootSignature(PipelineCache->GetRootSignature());
     InList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    if(CurrentStateData && InList == CurrentStateData->CurrentCmd) { DrawCaches.ForgetBound(); }   // a chunk's: BeginParallelPass
 }
 
 void D3D12DynamicGDI::SubmitFrame()
@@ -761,7 +762,7 @@ bool D3D12DynamicGDI::MakeDrawInputs(D3D12DrawInputs& OutIn)
     OutIn.Blocks             = MaterialBlocks;
     OutIn.Serials            = MaterialBlockSerials;
     OutIn.Textures           = MaterialTextures;
-    OutIn.Uploads            = &BlockUploads;
+    OutIn.Caches             = &DrawCaches;
     OutIn.InstanceBuffer     = GetInstanceBuffer();
     OutIn.InstanceCount      = GetInstanceCount();
     OutIn.IndirectArgs       = GetIndirectArgs();
@@ -771,6 +772,12 @@ bool D3D12DynamicGDI::MakeDrawInputs(D3D12DrawInputs& OutIn)
     OutIn.Depth              = &CurrentStateData->DepthState;
     OutIn.PredicateSet       = PredicateSet;
     OutIn.PredicateIndex     = PredicateIndex;
+    if(const D3D12ShaderResource* PS = CurrentStateData->BoundPS)
+    {
+        const D3D12ShaderResource::CoreBlocks& Core = PS->GetCoreBlocks();
+        OutIn.CoreView      = Core.bView ? Core.View : nullptr;
+        OutIn.CoreTransform = Core.bTransform ? Core.Transform : nullptr;
+    }
     return true;
 }
 
@@ -810,8 +817,31 @@ bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh
     Key.DepthWrite     = Depth.bDepthMask ? TRUE : FALSE;
     Key.DepthFunc      = DecodeCompareFunc(Depth.DepthMode);
 
-    ID3D12PipelineState* Pipeline = PipelineCache->GetOrCreate(Key, VSRes, PSRes);
+    D3D12DrawCaches& Caches = *InIn.Caches;
+    ID3D12GraphicsCommandList* List = InIn.List;
+
+    /* The pipeline: the last key's again, or looked up (hashed, under the cache's lock). */
+    if(!Caches.Pipeline || !(Caches.PipelineKey == Key))
+    {
+        Caches.Pipeline    = PipelineCache->GetOrCreate(Key, VSRes, PSRes);
+        Caches.PipelineKey = Key;
+    }
+    ID3D12PipelineState* Pipeline = Caches.Pipeline;
     if(!Pipeline) return false;
+
+    // A root CBV or table set only if it differs from what the list has.
+    const auto SetCBV = [List, &Caches](const UINT InParam, const uint64_t InAddress)
+    {
+        if(Caches.BoundRoot[InParam] == InAddress) return;
+        List->SetGraphicsRootConstantBufferView(InParam, InAddress);
+        Caches.BoundRoot[InParam] = InAddress;
+    };
+    const auto SetTable = [List, &Caches](const UINT InParam, const D3D12_GPU_DESCRIPTOR_HANDLE InHandle)
+    {
+        if(Caches.BoundRoot[InParam] == InHandle.ptr) return;
+        List->SetGraphicsRootDescriptorTable(InParam, InHandle);
+        Caches.BoundRoot[InParam] = InHandle.ptr;
+    };
 
     // Both stages carry identical core uniforms; the PS copy also has the custom ones.
     // In a recording context they are only read: its core blocks come packed (InIn.Core*).
@@ -820,7 +850,7 @@ bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh
     static constexpr uint32_t kCustomBytes = 256;
     const bool bMaterial = InIn.bMaterial;
     const std::vector<uint8_t>* Blocks = InIn.Blocks;
-    D3D12BlockUploads& Uploads = *InIn.Uploads;
+    const uint64_t Epoch = DescAlloc->GetEpoch();
 
     /* A cbuffer is read in 256-byte units; the material layout's blocks are
      * raw bytes (GDISetUniformBlock), rounded up, never empty. */
@@ -828,122 +858,128 @@ bool D3D12DynamicGDI::BindDrawState(const D3D12DrawInputs& InIn, GDIMesh* InMesh
     {
         return InBlock.empty() ? 256u : uint32_t((InBlock.size() + 255) & ~size_t(255));
     };
-    const uint32_t CustomBytes = bMaterial ? BlockBytes(Blocks[0]) : kCustomBytes;
 
-    const D3D12CBAllocation VP     = DescAlloc->AllocateCB(160);
-    const D3D12CBAllocation TR     = DescAlloc->AllocateCB(kTransformBytes);
-    const D3D12CBAllocation Custom = DescAlloc->AllocateCB(CustomBytes);
-    if(!VP.MappedPtr || !TR.MappedPtr || !Custom.MappedPtr) return false;
-
+    /* The view block, as the shaders read it (clip z remapped): uploaded once
+     * per view, while its bytes are unchanged. */
+    alignas(16) float View[40];
     if(InIn.CoreView)
     {
-        float* View = static_cast<float*>(VP.MappedPtr);
-        memcpy(View, InIn.CoreView, 160);
+        memcpy(View, InIn.CoreView, sizeof(View));
         GDICorePack::RemapClipZ(View);
     }
     else
     {
-        PackViewParams(Scalars, VP.MappedPtr);
+        PackViewParams(Scalars, View);
     }
+    if(Caches.ViewEpoch != Epoch || Caches.ViewAddress == 0 || memcmp(Caches.View, View, sizeof(View)) != 0)
+    {
+        const D3D12CBAllocation VP = DescAlloc->AllocateCB(160);
+        if(!VP.MappedPtr) return false;
+        memcpy(VP.MappedPtr, View, sizeof(View));
+        memcpy(Caches.View, View, sizeof(View));
+        Caches.ViewAddress = VP.GPUAddress;
+        Caches.ViewEpoch   = Epoch;
+    }
+
+    /* The transform: every draw's own. */
+    const D3D12CBAllocation TR = DescAlloc->AllocateCB(kTransformBytes);
+    if(!TR.MappedPtr) return false;
     if(InIn.CoreTransform) { memcpy(TR.MappedPtr, InIn.CoreTransform, kTransformBytes); }
     else                   { PackTransform(Scalars, TR.MappedPtr); }
 
-    D3D12CBAllocation Scene{};
-    const uint64_t Epoch = DescAlloc->GetEpoch();
+    /* b2: a material draw's block once per change (by serial), as the scene's
+     * and the skin's; anything else's custom scalars every draw. */
+    uint64_t CustomAddress = 0;
     if(bMaterial)
     {
-        const bool bReuseScene = Uploads.SceneSerial == InIn.Serials[1] && Uploads.SceneEpoch == Epoch
-                                 && Uploads.SceneAddress != 0;
-        if(bReuseScene)
+        const auto Upload = [this, &BlockBytes](const std::vector<uint8_t>& InBlock, const uint32_t InBytes,
+                                                uint64_t& OutAddress) -> bool
         {
-            Scene.GPUAddress = Uploads.SceneAddress;
+            const D3D12CBAllocation At = DescAlloc->AllocateCB(InBytes);
+            if(!At.MappedPtr) return false;
+            memset(At.MappedPtr, 0, InBytes);
+            if(!InBlock.empty()) memcpy(At.MappedPtr, InBlock.data(), InBlock.size());
+            OutAddress = At.GPUAddress;
+            return true;
+        };
+        if(Caches.MaterialSerial != InIn.Serials[0] || Caches.MaterialEpoch != Epoch || Caches.MaterialAddress == 0)
+        {
+            if(!Upload(Blocks[0], BlockBytes(Blocks[0]), Caches.MaterialAddress)) return false;
+            Caches.MaterialSerial = InIn.Serials[0];
+            Caches.MaterialEpoch  = Epoch;
         }
-        else
+        CustomAddress = Caches.MaterialAddress;
+
+        if(Caches.SceneSerial != InIn.Serials[1] || Caches.SceneEpoch != Epoch || Caches.SceneAddress == 0)
         {
-            Scene = DescAlloc->AllocateCB(BlockBytes(Blocks[1]));
-            if(!Scene.MappedPtr) return false;
-        }
-        for(int b = 0; b < 2; ++b)
-        {
-            if(b == 1 && bReuseScene) continue;
-            void* Dst = b == 0 ? Custom.MappedPtr : Scene.MappedPtr;
-            memset(Dst, 0, BlockBytes(Blocks[b]));
-            if(!Blocks[b].empty()) memcpy(Dst, Blocks[b].data(), Blocks[b].size());
-        }
-        if(!bReuseScene)
-        {
-            Uploads.SceneAddress = Scene.GPUAddress;
-            Uploads.SceneSerial  = InIn.Serials[1];
-            Uploads.SceneEpoch   = Epoch;
+            if(!Upload(Blocks[1], BlockBytes(Blocks[1]), Caches.SceneAddress)) return false;
+            Caches.SceneSerial = InIn.Serials[1];
+            Caches.SceneEpoch  = Epoch;
         }
 
         /* The skin blocks (b12, b13): the last palette set and the frame
-         * before's, each uploaded once per change. */
+         * before's. A skinned shader declares the whole palette: upload all of it. */
         for(uint32_t SkinIndex = 0; SkinIndex < 2; ++SkinIndex)
         {
             const std::vector<uint8_t>& Bytes = Blocks[2 + SkinIndex];
-            if(Uploads.SkinSerial[SkinIndex] == InIn.Serials[2 + SkinIndex] && Uploads.SkinEpoch[SkinIndex] == Epoch
-               && Uploads.SkinAddress[SkinIndex] != 0)
+            if(Caches.SkinSerial[SkinIndex] == InIn.Serials[2 + SkinIndex] && Caches.SkinEpoch[SkinIndex] == Epoch
+               && Caches.SkinAddress[SkinIndex] != 0)
             {
                 continue;
             }
-            /* A skinned shader declares the whole palette: upload all of it. */
-            const uint32_t SkinBytes = Bytes.empty() ? 256u : GDI_SKIN_BLOCK_MAX_BYTES;
-            const D3D12CBAllocation Skin = DescAlloc->AllocateCB(SkinBytes);
-            if(!Skin.MappedPtr) return false;
-            memset(Skin.MappedPtr, 0, SkinBytes);
-            if(!Bytes.empty()) memcpy(Skin.MappedPtr, Bytes.data(), Bytes.size());
-            Uploads.SkinAddress[SkinIndex] = Skin.GPUAddress;
-            Uploads.SkinSerial[SkinIndex]  = InIn.Serials[2 + SkinIndex];
-            Uploads.SkinEpoch[SkinIndex]   = Epoch;
+            if(!Upload(Bytes, Bytes.empty() ? 256u : GDI_SKIN_BLOCK_MAX_BYTES, Caches.SkinAddress[SkinIndex])) return false;
+            Caches.SkinSerial[SkinIndex] = InIn.Serials[2 + SkinIndex];
+            Caches.SkinEpoch[SkinIndex]  = Epoch;
         }
     }
     else
     {
+        const D3D12CBAllocation Custom = DescAlloc->AllocateCB(kCustomBytes);
+        if(!Custom.MappedPtr) return false;
         PackCustom(Scalars, Custom.MappedPtr, kCustomBytes);
+        CustomAddress = Custom.GPUAddress;
     }
 
-    GDITextureResource* TexRes = nullptr;
-    for(const auto& Entry : PSRes->GetTextures())
-    {
-        if(Entry.second.Index == 0)
-        {
-            TexRes = Entry.second.Resource;
-            break;
-        }
-    }
-    auto* Texture = dynamic_cast<D3D12TextureResource*>(TexRes);
+    // Every texture resource this backend makes is a D3D12TextureResource.
+    auto* Texture = static_cast<D3D12TextureResource*>(PSRes->GetTexture0());
     if(!Texture || Texture->GetSRVSlot() == UINT32_MAX) Texture = NullTexture;
     if(!Texture || Texture->GetSRVSlot() == UINT32_MAX) return false;
 
-    const D3D12_GPU_DESCRIPTOR_HANDLE SRV     = DescAlloc->GetSRVGPUHandle(Texture->GetSRVSlot());
-    const D3D12_GPU_DESCRIPTOR_HANDLE Sampler = DescAlloc->GetSamplerGPUHandle(Texture->GetBorder(), Texture->GetFilter());
-
-    ID3D12GraphicsCommandList* List = InIn.List;
-    List->SetPipelineState(Pipeline);
-    List->SetGraphicsRootConstantBufferView(RP_ViewParameters, VP.GPUAddress);
-    List->SetGraphicsRootConstantBufferView(RP_Transform,      TR.GPUAddress);
-    List->SetGraphicsRootConstantBufferView(RP_Custom,         Custom.GPUAddress);
+    if(Caches.BoundPipeline != Pipeline)
+    {
+        List->SetPipelineState(Pipeline);
+        Caches.BoundPipeline = Pipeline;
+    }
+    SetCBV(RP_ViewParameters, Caches.ViewAddress);
+    SetCBV(RP_Transform,      TR.GPUAddress);
+    SetCBV(RP_Custom,         CustomAddress);
 
     // Shaders sample at t2 or t3 depending on whether they declare a custom
     // cbuffer; binding the one texture to both saves re-deriving which.
-    List->SetGraphicsRootDescriptorTable(RP_Texture2, SRV);
-    List->SetGraphicsRootDescriptorTable(RP_Texture3, SRV);
-    List->SetGraphicsRootDescriptorTable(RP_Sampler2, Sampler);
-    List->SetGraphicsRootDescriptorTable(RP_Sampler3, Sampler);
+    const D3D12_GPU_DESCRIPTOR_HANDLE SRV     = DescAlloc->GetSRVGPUHandle(Texture->GetSRVSlot());
+    const D3D12_GPU_DESCRIPTOR_HANDLE Sampler = DescAlloc->GetSamplerGPUHandle(Texture->GetBorder(), Texture->GetFilter());
+    SetTable(RP_Texture2, SRV);
+    SetTable(RP_Texture3, SRV);
+    SetTable(RP_Sampler2, Sampler);
+    SetTable(RP_Sampler3, Sampler);
 
     if(bMaterial)
     {
-        List->SetGraphicsRootConstantBufferView(RP_Scene, Scene.GPUAddress);
-        List->SetGraphicsRootConstantBufferView(RP_Skin,     Uploads.SkinAddress[0]);
-        List->SetGraphicsRootConstantBufferView(RP_PrevSkin, Uploads.SkinAddress[1]);
+        SetCBV(RP_Scene,    Caches.SceneAddress);
+        SetCBV(RP_Skin,     Caches.SkinAddress[0]);
+        SetCBV(RP_PrevSkin, Caches.SkinAddress[1]);
         for(uint32_t Slot = 0; Slot < GDI_MATERIAL_TEXTURE_SLOTS; ++Slot)
         {
-            auto* SlotTexture = dynamic_cast<D3D12TextureResource*>(InIn.Textures[Slot]);
+            /* The same resource as the list has bound: its tables are already
+             * these (any reopened list forgets them, so a resource replaced
+             * since -- a resize goes through a flush -- is bound again). */
+            GDITextureResource* Resource = InIn.Textures[Slot];
+            if(Resource && Resource == Caches.BoundTextures[Slot]) continue;
+            auto* SlotTexture = static_cast<D3D12TextureResource*>(Resource);
             if(!SlotTexture || SlotTexture->GetSRVSlot() == UINT32_MAX) SlotTexture = NullTexture;
-            List->SetGraphicsRootDescriptorTable(RP_MaterialTexture0 + Slot, DescAlloc->GetSRVGPUHandle(SlotTexture->GetSRVSlot()));
-            List->SetGraphicsRootDescriptorTable(RP_MaterialSampler0 + Slot,
-                                                 DescAlloc->GetSamplerGPUHandle(SlotTexture->GetBorder(), SlotTexture->GetFilter()));
+            SetTable(RP_MaterialTexture0 + Slot, DescAlloc->GetSRVGPUHandle(SlotTexture->GetSRVSlot()));
+            SetTable(RP_MaterialSampler0 + Slot, DescAlloc->GetSamplerGPUHandle(SlotTexture->GetBorder(), SlotTexture->GetFilter()));
+            Caches.BoundTextures[Slot] = Resource;
         }
     }
     return true;
@@ -953,8 +989,30 @@ void D3D12DynamicGDI::DrawObject(GDIViewObject* InObject, GDIView* InView)
 {
     if(!InObject || !InObject->Mesh) return;
 
-    if(BoundVertexShader) BoundVertexShader->UpdateCoreUniforms(InView, InObject->Transform);
-    if(BoundPixelShader)  BoundPixelShader->UpdateCoreUniforms(InView, InObject->Transform);
+    /* The core blocks, packed once as BindDrawState uploads them, onto both
+     * shaders -- what UpdateCoreUniforms' seven named scalars each held, with
+     * no string per value (MULTITHREADED_RENDERING.md, phase 1). A shader's
+     * user uniforms still go through by name. */
+    alignas(16) float View[40];
+    alignas(16) float Transform[36];
+    if(InView) { GDICorePack::PackCoreView(InView, View); }
+    if(InObject->Transform) { GDICorePack::PackCoreTransform(InObject->Transform, Transform); }
+    for(GDIShader* Shader : { static_cast<GDIShader*>(BoundVertexShader), static_cast<GDIShader*>(BoundPixelShader) })
+    {
+        if(!Shader || !Shader->Resource) continue;
+        D3D12ShaderResource::CoreBlocks& Core = static_cast<D3D12ShaderResource*>(Shader->Resource)->GetCoreBlocks();
+        if(InView)
+        {
+            memcpy(Core.View, View, sizeof(View));
+            Core.bView = true;
+        }
+        if(InObject->Transform)
+        {
+            memcpy(Core.Transform, Transform, sizeof(Transform));
+            Core.bTransform = true;
+        }
+        Shader->UpdateUserDefinedUniforms();
+    }
 
     InObject->Mesh->Draw();
 }
