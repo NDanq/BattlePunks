@@ -23,6 +23,7 @@
 #include "Private/Editor/EditorTheme.h"
 #include "Private/Editor/Graph/GraphAssets.h"
 #include "Private/Editor/SettingsDialog.h"
+#include "Public/NimbleEngine/AudioFacade.h"
 #include "Public/NimbleEngine/GameSession.h"
 
 /*
@@ -124,6 +125,10 @@ int main(int argc, char* argv[])
         }
     }
 
+    /* Before any Play session or preview can make a sound; no device just
+     * leaves the editor silent. */
+    NimbleEngine::StartAudio();
+
     int Result = 0;
     {
         EditorContext    Context;
@@ -136,6 +141,9 @@ int main(int argc, char* argv[])
 
         Result = App.exec();
     }
+
+    /* The window and every Play session are gone, and their voices with them. */
+    NimbleEngine::StopAudio();
 
     EditorLog::Uninstall();
     EngineCore::CloseRunLog();

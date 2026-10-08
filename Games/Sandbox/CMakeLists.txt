@@ -278,7 +278,7 @@ else()
 endif()
 
 # === Content/ ===============================================================
-# Imported .nmmesh / .nmtexture files, render targets (.nmrt2d / .nmrt3d), particle systems (.nmparticle), animation (.nmskel, .nmanim, .nmanimstate), post process stacks (.pp.nmgraph)
+# Imported .nmmesh / .nmtexture files, render targets (.nmrt2d / .nmrt3d), particle systems (.nmparticle), animation (.nmskel, .nmanim, .nmanimstate), sounds (.nmsound), post process stacks (.pp.nmgraph)
 # and baked lighting (.nmlighting),
 # staged at the same relative path beside
 # the executable (how a RenderComponent names them). Globbed, unlike Scripts/:
@@ -294,6 +294,7 @@ file(GLOB_RECURSE SANDBOX_CONTENT_FILES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmskel"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmanim"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmanimstate"
+        "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmsound"
         "${CMAKE_CURRENT_SOURCE_DIR}/Content/*.nmlighting"
 )
 if(NIMBLE_PACKAGE_CONTENT)

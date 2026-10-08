@@ -80,6 +80,7 @@ namespace
         {
             case EImportKind::Mesh:    return QStringLiteral("Mesh");
             case EImportKind::Texture: return QStringLiteral("Texture");
+            case EImportKind::Sound:   return QStringLiteral("Sound");
             case EImportKind::None:    break;
         }
         return QStringLiteral("Not importable");
@@ -129,10 +130,10 @@ QWizardPage* ImportWizard::BuildSourcesPage()
     auto* Page = new ConditionPage([this]()
     {
         return !DestFolder->text().trimmed().isEmpty()
-            && (HasChecked(int(EImportKind::Mesh)) || HasChecked(int(EImportKind::Texture)));
+            && (HasChecked(int(EImportKind::Mesh)) || HasChecked(int(EImportKind::Texture)) || HasChecked(int(EImportKind::Sound)));
     });
     Page->setTitle(QStringLiteral("Files to import"));
-    Page->setSubTitle(QStringLiteral("Meshes become .nmmesh and images .nmtexture, in the folder below. "
+    Page->setSubTitle(QStringLiteral("Meshes become .nmmesh, images .nmtexture and sounds .nmsound, in the folder below. "
                                      "Untick a file to leave it out; edit a name to rename its asset."));
 
     SourceTable = new QTableWidget(int(Files.size()), Col_Count, Page);
@@ -456,6 +457,8 @@ void ImportWizard::StartImport()
         {
             const ImportResult Result = Each.Kind == EImportKind::Mesh
                 ? ImportMesh(Each.Source, Each.DestFolder, Each.BaseName, Each.Mesh, Each.Texture, Each.ProjectRoot)
+                : Each.Kind == EImportKind::Sound
+                ? ImportSound(Each.Source, Each.DestFolder, Each.BaseName, Each.ProjectRoot)
                 : ImportTexture(Each.Source, Each.DestFolder, Each.BaseName, Each.Texture, Each.ProjectRoot);
 
             QString Text = (Result.bOK ? QStringLiteral("OK    ") : QStringLiteral("FAIL  ")) + Result.Message;

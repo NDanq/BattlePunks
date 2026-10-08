@@ -580,6 +580,7 @@ registered:
 | `quit` | File > Exit, which still asks about unsaved changes |
 | `lighting <bake \| baked \| live>` | Build > Bake Lightmaps, or Show > Lighting > Baked / Live |
 | `screenshot <file.png>` | Save the viewport's next frame, without gizmos or debug lines (`Renderer::RequestSceneCapture`) |
+| `import <source> [folder]` | The Content Browser's import with default options: a `.gltf`/`.glb`, an image, or a `.wav`/`.flac`/`.mp3`/`.ogg` (with the Audio module) into the project folder given, `Content` by default |
 | `cook project` | As Build > Cook Content: the listed worlds, every prefab and UI document, with the stats |
 | `cook [world] [out]` | Cook a world file to binary -- by default the open world's saved file, to `<project>/Saved/Cooked/<its path>` |
 | `cook ui [out]`, `cook <doc.nmui> [out]` | Cook every UI document to `<project>/Saved/Cooked/Content/UI/` (what a Client build stages), or one |
@@ -588,7 +589,7 @@ registered:
 | `settings` | Open Edit > Editor Settings, and print where they are saved |
 | `projectsettings` | Open Edit > Project Settings, and print the file it saves to |
 | `stats` | The renderer's counters, with the frame, game thread and render thread times |
-| `stat <unit \| frame \| none>` | `unit` toggles the frame, game thread and render thread times over the viewport (`Stats.Unit`); `frame` toggles each render stage's GPU time (`Stats.Frame`); `none` hides both |
+| `stat <unit \| frame \| physics \| audio \| none>` | `unit` toggles the frame, game thread and render thread times over the viewport (`Stats.Unit`); `frame` toggles each render stage's GPU time (`Stats.Frame`); `physics` and `audio` the playing level's simulation and sound (`Stats.Physics`, `Stats.Audio`); `none` hides them all |
 | `gizmo [none \| move \| rotate \| scale] [world \| local]` | Set the transform handles, or print them |
 | `snap [on \| off]` | Snap handle drags, or print whether they do |
 | `undo [count]`, `redo [count]` | Step back or forward through the history |

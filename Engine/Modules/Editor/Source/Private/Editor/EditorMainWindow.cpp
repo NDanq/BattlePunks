@@ -45,6 +45,7 @@
 #include "Private/Editor/EditorLights.h"
 #include "Private/Editor/EditorPrimitives.h"
 #include "Private/Editor/AboutDialog.h"
+#include "Private/Editor/Content/AssetImport.h"
 #include "Private/Editor/Content/ContentPaths.h"
 #include "Private/Editor/Content/AnimPreviewWidget.h"
 #include "Private/Editor/Content/AnimStateEditorWindow.h"
@@ -1024,6 +1025,48 @@ void EditorMainWindow::RegisterConsoleCommands()
         }
     });
 
+    /* The Content Browser's import, by hand or from --command: one file at the
+     * importer's default options, into a project folder (default the
+     * project's Content). Mesh, image or sound, by its extension. */
+    Console.Register(QStringLiteral("import"), QStringLiteral("<source file> [project folder]"),
+                     QStringLiteral("Import a .gltf/.glb, an image or a sound into the project (Content, or the folder given), "
+                                    "with the importer's default options"),
+                     [this](const QStringList& InArgs)
+    {
+        if(InArgs.isEmpty())
+        {
+            Console.PrintError(QStringLiteral("Usage: import <source file> [project folder]"));
+            return;
+        }
+        const QString Root   = EditorGraphs::GetProjectRoot();
+        const QString Source = QFileInfo(QDir(Root), InArgs[0]).absoluteFilePath();
+        const QString Folder = QDir(Root).absoluteFilePath(InArgs.size() > 1 ? InArgs[1] : QStringLiteral("Content"));
+        const QString Base   = QFileInfo(Source).completeBaseName();
+        QDir().mkpath(Folder);
+
+        EditorContent::ImportResult Result;
+        switch(EditorContent::ClassifySource(Source))
+        {
+            case EditorContent::EImportKind::Mesh:
+                Result = EditorContent::ImportMesh(Source, Folder, Base, EditorContent::MeshImportOptions(),
+                                                   EditorContent::TextureImportOptions(), Root);
+                break;
+            case EditorContent::EImportKind::Texture:
+                Result = EditorContent::ImportTexture(Source, Folder, Base, EditorContent::TextureImportOptions(), Root);
+                break;
+            case EditorContent::EImportKind::Sound:
+                Result = EditorContent::ImportSound(Source, Folder, Base, Root);
+                break;
+            case EditorContent::EImportKind::None:
+                Console.PrintError(QStringLiteral("import: %1 is not a mesh, image or sound this editor imports").arg(InArgs[0]));
+                return;
+        }
+        for(const QString& Written : Result.Written) { EditorContent::StageAsset(Written); }
+        for(const QString& Warning : Result.Warnings) { Console.Print(QStringLiteral("  ") + Warning); }
+        if(Result.bOK) { Console.Print(QStringLiteral("import: ") + Result.Message); }
+        else           { Console.PrintError(QStringLiteral("import: ") + Result.Message); }
+    });
+
     Console.Register(QStringLiteral("viewmode"), QStringLiteral("<lit | unlit | target [name]>"),
                      QStringLiteral("The viewport's Show > View Mode; \"target\" alone lists the render targets it can show"),
                      [this](const QStringList& InArgs)
@@ -1634,14 +1677,15 @@ void EditorMainWindow::RegisterConsoleCommands()
     /* Unreal's spelling: "stat unit" toggles the frame, game and render
      * thread times (Stats.Unit), "stat frame" each stage's GPU time
      * (Stats.Frame), "stat physics" the playing level's simulation
-     * (Stats.Physics, GameSession); "stat none" hides them all. */
-    Console.Register(QStringLiteral("stat"), QStringLiteral("unit | frame | physics | none"),
-                     QStringLiteral("Show thread times (unit), each render stage's GPU time (frame) or the "
-                                    "physics simulation while playing (physics) over the viewport"),
+     * (Stats.Physics, GameSession), "stat audio" the playing level's sound
+     * (Stats.Audio); "stat none" hides them all. */
+    Console.Register(QStringLiteral("stat"), QStringLiteral("unit | frame | physics | audio | none"),
+                     QStringLiteral("Show thread times (unit), each render stage's GPU time (frame), the "
+                                    "physics simulation (physics) or the sound (audio) while playing over the viewport"),
                      [this](const QStringList& InArgs)
     {
-        static const char* const Names[] = { "unit", "frame", "physics" };
-        static const char* const Vars[]  = { "Unit", "Frame", "Physics" };
+        static const char* const Names[] = { "unit", "frame", "physics", "audio" };
+        static const char* const Vars[]  = { "Unit", "Frame", "Physics", "Audio" };
         const QString Which = InArgs.isEmpty() ? QString() : InArgs.front().toLower();
         if(Which == QStringLiteral("none"))
         {
@@ -1663,9 +1707,13 @@ void EditorMainWindow::RegisterConsoleCommands()
             {
                 Console.Print(QStringLiteral("(shown while playing: the edited world is not simulated)"));
             }
+            if(Which == QStringLiteral("audio") && Var->GetBool() && !Context.IsPlaying())
+            {
+                Console.Print(QStringLiteral("(shown while playing: the edited world is not heard)"));
+            }
             return;
         }
-        Console.PrintError(QStringLiteral("Usage: stat unit | frame | physics | none"));
+        Console.PrintError(QStringLiteral("Usage: stat unit | frame | physics | audio | none"));
     });
 
     Console.Register(QStringLiteral("undo"), QStringLiteral("[count]"), QStringLiteral("Undo the last change (Ctrl+Z)"),
