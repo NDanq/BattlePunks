@@ -128,7 +128,16 @@ A notify can also name a **particle system** and a **bone** (mesh viewer,
 Clip > Notifies): in game, as it fires, the system plays there -- an
 `AnimEffect` entity at the bone's place, emitting a moment (or its bursts)
 and destroyed once its particles are gone. It is not attached: it plays
-where it started. (There is no audio module yet; a sound would go here.)
+where it started.
+
+A notify can name a **sound** too (an `.nmsound`, the same table's Sound
+column): a footstep. As it fires, the sound plays once at the bone (or the
+entity), in 3D. RenderCore plays no sound itself. It hands the sound and the
+place to the animation system's sound sink (`AnimationSystem::SetSoundSink`),
+and NimbleEngine's GameSession points the sink at the level's audio (the
+Audio module's `AudioWorld::PlaySoundAt`). Without the Audio module, the
+sound is ignored. LightLab's `Tools/add_footstep_notifies.py` places
+footsteps where each paw lands, from the clip's poses.
 
 A state that plays once emits **`"AnimEnded"`** (entity, state name, layer)
 as it ends -- reaching its end, or leaving through an At End transition. A
@@ -234,8 +243,8 @@ Layer Arms   mask spine_02, weight scaled by Armed
   handles and Crop to Range to keep only those frames -- what plays, and
   what loops (`TrimClip`; reimporting restores the whole clip). Beside it:
   looping, root motion (as authored, in place, or moving the entity) and
-  the root bone whose travel that is, and each notify's particle system and
-  bone. The Skeleton tab lists
+  the root bone whose travel that is, and each notify's particle system,
+  bone and sound. The Skeleton tab lists
   the bones -- names for sockets and masks.
 - **Anim state editor**: parameters and layers as forms; the picked layer's
   states and transitions as a graph -- boxes and arrows, Any State among

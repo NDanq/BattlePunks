@@ -10,7 +10,8 @@
 #include "Public/RenderCore/TextureAsset.h"
 
 /*
- * glTF / GLB -> .nmmesh and images -> .nmtexture. Widget-free and
+ * glTF / GLB -> .nmmesh, images -> .nmtexture and, with the Audio module,
+ * sound files -> .nmsound. Widget-free and
  * thread-safe (the wizard runs these on a worker). Outputs record their
  * source and options for Reimport. Writes are atomic (QSaveFile).
  */
@@ -20,7 +21,8 @@ namespace EditorContent
     {
         None,
         Mesh,       // .gltf, .glb
-        Texture     // any image Qt can read
+        Texture,    // any image Qt can read
+        Sound       // .wav, .flac, .mp3, .ogg -- only with the Audio module (WITH_AUDIO)
     };
 
     EImportKind ClassifySource(const QString& InPath);
@@ -28,7 +30,7 @@ namespace EditorContent
     /* "Importable Files (*.gltf *.glb *.png ...);;Meshes (...);;Images (...)" */
     QString GetImportFileFilter();
 
-    /* ".nmmesh" / ".nmtexture" for a kind; empty for None. */
+    /* ".nmmesh" / ".nmtexture" / ".nmsound" for a kind; empty for None. */
     QString GetAssetExtension(EImportKind InKind);
 
     // --- Options ------------------------------------------------------------------
@@ -125,6 +127,12 @@ namespace EditorContent
     ImportResult ImportReferencedImage(const ReferencedImage& InImage, const QString& InGltfPath,
                                        const QString& InDestFolder, const QString& InBaseName,
                                        const TextureImportOptions& InOptions, const QString& InProjectRoot);
+
+    /* A sound file into InDestFolder/InBaseName.nmsound, cooked by its
+     * default settings -- or, replacing a sound, by that sound's settings, so
+     * what an author set survives a new source. Fails without the module. */
+    ImportResult ImportSound(const QString& InSource, const QString& InDestFolder, const QString& InBaseName,
+                             const QString& InProjectRoot);
 
     /* From the recorded source and options; fails if none or the source is
      * gone. Meshes reimport without their textures. */

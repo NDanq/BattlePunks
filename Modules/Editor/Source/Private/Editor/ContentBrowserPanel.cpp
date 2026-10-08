@@ -45,6 +45,10 @@
 #include "Public/RenderCore/AnimClipAsset.h"
 #include "Public/RenderCore/AnimStateAsset.h"
 #include "Public/RenderCore/MeshAsset.h"
+#if WITH_AUDIO
+#include "Public/Audio/AudioWorld.h"
+#include "Public/Audio/SoundAsset.h"
+#endif
 #include "Public/RenderCore/ParticleSystemAsset.h"
 #include "Public/RenderCore/SkeletonAsset.h"
 #include "Public/RenderCore/TextureAsset.h"
@@ -146,8 +150,28 @@ namespace
             || InPath.endsWith(QStringLiteral(".nmanim"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmanimstate"), Qt::CaseInsensitive)
             || InPath.endsWith(QStringLiteral(".nmrt2d"), Qt::CaseInsensitive)
-            || InPath.endsWith(QStringLiteral(".nmrt3d"), Qt::CaseInsensitive);
+            || InPath.endsWith(QStringLiteral(".nmrt3d"), Qt::CaseInsensitive)
+            || InPath.endsWith(QStringLiteral(".nmsound"), Qt::CaseInsensitive);
     }
+
+#if WITH_AUDIO
+    /* A sound's waveform as its thumbnail: each bucket's peak, mirrored. */
+    QIcon WaveformIcon(const std::vector<uint8_t>& InWaveform, const int InSize)
+    {
+        QImage Image(InSize, InSize, QImage::Format_ARGB32_Premultiplied);
+        Image.fill(Qt::transparent);
+        QPainter Painter(&Image);
+        Painter.setPen(QColor(110, 190, 255));
+        const int    Mid     = InSize / 2;
+        const size_t Buckets = InWaveform.size();
+        for(int X = 0; X < InSize && Buckets > 0; ++X)
+        {
+            const int Peak = int(InWaveform[size_t(X) * Buckets / size_t(InSize)]) * (Mid - 2) / 255;
+            Painter.drawLine(X, Mid - Peak, X, Mid + Peak);
+        }
+        return QIcon(QPixmap::fromImage(Image));
+    }
+#endif
 }
 
 // === Models ==========================================================================
@@ -491,6 +515,37 @@ private:
             Entry.bRendered = true;
             QueueRender(Key, Entry);
         }
+#if WITH_AUDIO
+        else if(Path.endsWith(QStringLiteral(".nmsound"), Qt::CaseInsensitive))
+        {
+            Audio::SoundData Sound;
+            EngineCore::Archive Ar = ArchiveOf(ReadAll(Path));
+            if(Audio::SerializeSound(Ar, Sound, Audio::ESoundLoad::ForPlayback))
+            {
+                const Audio::CookedSound& Cooked = Sound.Cooked;
+                Entry.Thumbnail = WaveformIcon(Cooked.Waveform, ThumbnailSize);
+                Entry.Summary = QStringLiteral("Sound, %1 s, %2, %3 channel(s), %4 Hz, %5%6%7\nPlays on %8%9%10")
+                                .arg(Cooked.GetDuration(), 0, 'f', 2)
+                                .arg(QString::fromLatin1(Audio::GetSoundSourceFormatName(Sound.SourceFormat)))
+                                .arg(Cooked.Channels).arg(Cooked.SampleRate)
+                                .arg(QString::fromLatin1(Audio::GetSoundLoadModeName(Cooked.Mode)))
+                                .arg(Sound.Settings.bLoop ? QStringLiteral(", looping") : QString())
+                                .arg(Sound.Settings.bSpatial ? QStringLiteral(", 3D") : QStringLiteral(", 2D"))
+                                .arg(QString::fromLatin1(Audio::GetBusName(Sound.Settings.Bus)))
+                                .arg(Cooked.Gain != 1.0f ? QStringLiteral(", normalized") : QString())
+                                .arg(Sound.Import.IsEmpty() ? QString()
+                                     : QStringLiteral("\nFrom %1").arg(QString::fromStdString(Sound.Import.SourcePath)));
+            }
+            else
+            {
+                Entry.Summary = QStringLiteral("Not a sound this editor can read");
+            }
+        }
+        else if(EditorContent::ClassifySource(Path) == EditorContent::EImportKind::Sound)
+        {
+            Entry.Summary = QStringLiteral("Sound file -- drop it on a folder from outside the project to import it");
+        }
+#endif
         else if(EditorContent::ClassifySource(Path) == EditorContent::EImportKind::Texture)
         {
             QImageReader Reader(Path);
@@ -939,6 +994,27 @@ void ContentBrowserPanel::OpenItem(const QString& InPath)
         TextureViewerWindow::Open(InPath, window());
         return;
     }
+#if WITH_AUDIO
+    /* A sound plays; double-clicking it again while it does stops it. */
+    if(!EditorContent::SoundPathFor(InPath).isEmpty())
+    {
+        const std::string Runtime = EditorContent::SoundPathFor(InPath).toStdString();
+        if(Runtime == Audio::GetPreviewSound())
+        {
+            Audio::StopPreview();
+            emit StatusMessage(QStringLiteral("Stopped %1").arg(Info.fileName()));
+        }
+        else if(Audio::PlayPreview(Runtime.c_str()))
+        {
+            emit StatusMessage(QStringLiteral("Playing %1 -- double-click again to stop").arg(Info.fileName()));
+        }
+        else
+        {
+            emit StatusMessage(QStringLiteral("Cannot play %1 (no output device, or not a sound)").arg(Info.fileName()));
+        }
+        return;
+    }
+#endif
     if(!EditorContent::RenderTargetPathFor(InPath).isEmpty())
     {
         EditorRenderTargets::EditRenderTarget(InPath, window());

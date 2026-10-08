@@ -27,8 +27,9 @@ namespace EngineCore
  *     ATRK v1              each track: its bone's name, then its translation,
  *                          rotation and scale keys -- one (constant) or one
  *                          per frame each
- *     ANTF v2              notifies: a name and a time in seconds; v2 adds a
- *                          particle system and a bone
+ *     ANTF v3              notifies: a name and a time in seconds; v2 adds a
+ *                          particle system and a bone; v3, after them all,
+ *                          each one's sound (so a v2 reader skips them)
  *     ISRC v1 (optional)   AssetImportInfo, for Reimport
  *
  * Tracks name bones rather than index them, so a clip plays on any skeleton
@@ -63,7 +64,8 @@ namespace RenderCore
         std::string Name;
         float       Time = 0.0f;       // seconds from the start
         std::string ParticleSystem;    // an .nmparticle; "": none
-        std::string Bone;              // where the particles start; "": the entity
+        std::string Bone;              // where the particles start and the sound plays; "": the entity
+        std::string Sound;             // an .nmsound, played once there (the Audio module; "AnimSound"); "": none
     };
 
     struct AnimClipData

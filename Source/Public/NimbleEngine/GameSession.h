@@ -33,6 +33,10 @@ namespace JoltPhysics
 {
     class PhysicsWorld;
 }
+namespace Audio
+{
+    class AudioWorld;
+}
 
 namespace NimbleEngine
 {
@@ -325,6 +329,10 @@ namespace NimbleEngine
          * the World is made to just before it goes; null without physics. */
         JoltPhysics::PhysicsWorld* Physics = nullptr;
 
+        /* The level World's sound (WITH_AUDIO), likewise; null without the
+         * module or an output device. */
+        Audio::AudioWorld* LevelAudio = nullptr;
+
         /* This load warned about inactive-module components already, or has
          * not yet looked (WarnInactiveModuleComponents). */
         bool bInactiveChecked = false;
@@ -375,6 +383,10 @@ namespace NimbleEngine
          * renderer's stats panel, or the section removed when it is off. */
         void PublishPhysicsStat();
         bool bPhysicsStatShown = false;
+
+        /* "stat audio": the level's voices and the device (GStatsAudio). */
+        void PublishAudioStat();
+        bool bAudioStatShown = false;
 
         uint32_t LoadCount = 0;
     };

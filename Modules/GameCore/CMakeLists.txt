@@ -172,6 +172,8 @@ set(GAMECORE_SOURCES
         Source/Private/GameCore/Components/RigidBodyComponent.cpp
         Source/Private/GameCore/Components/PhysicsConstraintComponent.cpp
         Source/Private/GameCore/Components/VehicleComponent.cpp
+        Source/Private/GameCore/Components/AudioSourceComponent.cpp
+        Source/Private/GameCore/Components/AudioListenerComponent.cpp
         Source/Private/GameCore/Delegate.cpp
         Source/Private/GameCore/EventBus.cpp
         Source/Private/GameCore/TickPhase.cpp
@@ -219,6 +221,8 @@ set(GAMECORE_SOURCES
         Source/Public/GameCore/Components/RigidBodyComponent.h
         Source/Public/GameCore/Components/PhysicsConstraintComponent.h
         Source/Public/GameCore/Components/VehicleComponent.h
+        Source/Public/GameCore/Components/AudioSourceComponent.h
+        Source/Public/GameCore/Components/AudioListenerComponent.h
         Source/Public/GameCore/TransformMath.h
         Source/Public/GameCore/ScriptEngine.h
         Source/Public/GameCore/ComponentSerializer.h

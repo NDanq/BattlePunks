@@ -71,6 +71,11 @@ namespace EditorContent
      * the engine, sorted; and one file's (empty if neither). */
     QStringList ListAnimationPaths();
     QString     AnimationPathFor(const QString& InPath);
+
+    /* A sound field (PF_AssetSound): every .nmsound in the project and the
+     * engine, by runtime path; and one file's (empty if not a sound). */
+    QStringList ListSoundPaths();
+    QString     SoundPathFor(const QString& InPath);
     QString     TexturePathFor(const QString& InPath);
     QString     RenderTargetPathFor(const QString& InPath);
     bool        IsRenderTargetFieldValue(const QString& InText);

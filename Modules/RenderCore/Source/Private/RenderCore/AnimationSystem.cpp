@@ -472,6 +472,13 @@ namespace RenderCore
                 {
                     Pending.push_back({ Item.Entity, Notify.ParticleSystem, Notify.Bone });
                 }
+                /* A footstep: where it fires, to whoever plays sounds. */
+                if(!Notify.Sound.empty() && SoundSink)
+                {
+                    GameCore::TransformPose Where = Owner.GetWorldPose();
+                    if(!Notify.Bone.empty()) { GetBoneWorldPose(Item.Entity, Notify.Bone.c_str(), Where); }
+                    SoundSink(Notify.Sound.c_str(), Where.Position, SoundSinkUserData);
+                }
             }
             for(const AnimInstance::FinishedState& Done : Instance.GetFinishedStates())
             {
