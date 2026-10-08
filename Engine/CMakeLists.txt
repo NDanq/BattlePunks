@@ -288,6 +288,14 @@ else()
     set(NIMBLE_PACKAGE_CONTENT ${NM_PACKAGE_DEFAULT} CACHE BOOL "Pack a game's content into Paks/ instead of loose files")
 endif()
 
+# NIMBLE_RUN_UNCOOKED: a Debug or RelWithDebInfo game runs uncooked by default
+# -- reading the project's raw files (config, scripts, Content, text worlds,
+# prefabs and UI) from its source folder instead of anything staged or packed
+# (-uncooked / -cooked on its command line choose either way; ParseLaunchArgs).
+# The editor's Build Project sets it from its "Run uncooked" option. No effect
+# on Shipping, which reads only cooked content.
+option(NIMBLE_RUN_UNCOOKED "Debug/RelWithDebInfo games read the project's raw files by default (-uncooked)" OFF)
+
 # What a game stages: the cooked worlds and prefabs unless it runs on the
 # text sources (an uncooked build that is not packaged).
 if(NIMBLE_UNCOOKED_CONTENT AND NOT NIMBLE_PACKAGE_CONTENT)

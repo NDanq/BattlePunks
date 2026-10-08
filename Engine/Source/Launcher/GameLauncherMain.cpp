@@ -3,6 +3,8 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <string>
+#include <vector>
 
 /*
  * Every game's launcher: the engine's, compiled once per game by
@@ -26,7 +28,18 @@ int main(int argc, char** argv)
 {
     {
         NimbleEngine::Application App;
-        App.SetConfigOverrides(NimbleEngine::ParseLaunchArgs(argc, argv));
+#if defined(NIMBLE_PROJECT_DIR)
+        App.SetProjectDir(NIMBLE_PROJECT_DIR);   // -uncooked reads its raw files
+#endif
+        std::vector<std::string> Overrides;
+#if NIMBLE_RUN_UNCOOKED
+        Overrides.push_back("Content.Uncooked 1");   // the build's default; -cooked turns it off
+#endif
+        for(std::string& Each : NimbleEngine::ParseLaunchArgs(argc, argv))
+        {
+            Overrides.push_back(std::move(Each));
+        }
+        App.SetConfigOverrides(std::move(Overrides));
         App.ExecGame(NIMBLE_GAME_MODULE);
     }
 

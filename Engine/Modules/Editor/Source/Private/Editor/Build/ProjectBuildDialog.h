@@ -75,6 +75,7 @@ private:
     QCheckBox*      CookContent   = nullptr;
     QCheckBox*      CompileGame   = nullptr;
     QCheckBox*      OpenOutput    = nullptr;
+    QCheckBox*      RunUncooked   = nullptr;
     QLabel*         Target        = nullptr;
     QLabel*         WorldList     = nullptr;
     QTableWidget*   Stats         = nullptr;

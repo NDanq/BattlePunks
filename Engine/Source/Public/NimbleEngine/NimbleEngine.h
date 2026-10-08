@@ -64,6 +64,10 @@ namespace NimbleEngine
      *     -Section.Key=Value     any config variable, e.g. -Display.RHI=0
      *     -connect=host[:port]   [Net] ServerAddress (and Port): join a server
      *     -port=N                [Net] Port
+     *     -uncooked[=<folder>]   run uncooked (Debug, RelWithDebInfo): read the
+     *                            project's raw files -- the folder, else the one
+     *                            the game was built from (SetProjectDir)
+     *     -cooked                not uncooked, whatever the build's default
      *
      * Anything else is warned about and ignored. Each entry of the result is
      * an ExecConfigCommand line ("Net.Port 7777").
@@ -90,6 +94,17 @@ namespace NimbleEngine
         /* ParseLaunchArgs' overrides, applied once the config file has
          * loaded. Before Exec. */
         void SetConfigOverrides(std::vector<std::string> InOverrides) { ConfigOverrides = std::move(InOverrides); }
+
+        /* The project folder the game was built from (the launcher's
+         * NIMBLE_PROJECT_DIR): where -uncooked reads raw files. Before Exec. */
+        void SetProjectDir(std::string InDir) { ProjectDir = std::move(InDir); }
+
+    private:
+        /* -uncooked's folder mounted over the packs and the executable's; the
+         * folder, or empty when not running uncooked. */
+        std::string MountUncookedProject();
+
+    public:
 
         Application(const Application&)            = delete;
         Application& operator=(const Application&) = delete;
@@ -155,6 +170,7 @@ namespace NimbleEngine
          * every Tick. Does nothing without NetCore. */
         ApplicationDesc          Desc;
         std::vector<std::string> ConfigOverrides;
+        std::string              ProjectDir;
 
         /* Created by Initialize. */
         NetHost*                 Net = nullptr;

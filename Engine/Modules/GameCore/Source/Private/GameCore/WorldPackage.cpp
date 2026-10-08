@@ -1207,12 +1207,47 @@ namespace
 #endif
 }
 
+#if WITH_UNCOOKED
+namespace
+{
+    std::string& UncookedRoot()
+    {
+        static std::string* Root = new std::string();   // leaked: read during shutdown
+        return *Root;
+    }
+
+    /* InSource under the uncooked root, if it is set and has it; else empty. */
+    std::string UncookedSource(const std::string& InSource)
+    {
+        if(UncookedRoot().empty() || InSource.empty()) { return std::string(); }
+        std::error_code Error;
+        const std::filesystem::path Path = std::filesystem::u8path(UncookedRoot()) / std::filesystem::u8path(InSource);
+        if(!std::filesystem::is_regular_file(Path, Error)) { return std::string(); }
+        const auto PathU8 = Path.generic_u8string();
+        return std::string(PathU8.begin(), PathU8.end());
+    }
+}
+
+void SetUncookedContentRoot(const std::string& InRoot)
+{
+    UncookedRoot() = InRoot;
+}
+
+const std::string& GetUncookedContentRoot()
+{
+    return UncookedRoot();
+}
+#endif
+
 std::string ResolveContentWorld(const char* InSourcePath)
 {
     const std::string Source = InSourcePath ? InSourcePath : "";
 #if WITH_EDITOR
     return Source;
 #elif WITH_UNCOOKED
+    /* Run uncooked: the project's own file, raw. */
+    const std::string Raw = UncookedSource(Source);
+    if(!Raw.empty()) { return Raw; }
     if(DetectWorldFileFormat(Source.c_str()) != EWorldFileFormat::Text || !GContentCookOnLoad.GetBool()) { return Source; }
     const fs::path Folder = fs::u8path(EntityFolderFor(Source));
     return CookOnLoad(Source, &Folder, &CookWorldFile, "world");
@@ -1226,6 +1261,8 @@ std::string ResolveContentPrefab(const char* InSourcePath)
 {
     const std::string Source = InSourcePath ? InSourcePath : "";
 #if WITH_UNCOOKED && !WITH_EDITOR
+    const std::string Raw = UncookedSource(Source);
+    if(!Raw.empty()) { return Raw; }
     if(DetectWorldFileFormat(Source.c_str()) == EWorldFileFormat::Text && GContentCookOnLoad.GetBool())
     {
         return CookOnLoad(Source, nullptr, &CookPrefabFile, "prefab");

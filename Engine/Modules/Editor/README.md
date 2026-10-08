@@ -825,6 +825,13 @@ options kept in `[Build]` of `DefaultEngine.ini`.
   name nothing anywhere: scripts and script graphs are stripped Lua
   bytecode, the config has no comments, shader caches index by hash, and
   every entry is scrambled, so no asset path shows even inside content.
+- **Run uncooked** (Debug and RelWithDebInfo; `NIMBLE_RUN_UNCOOKED`): the
+  built game reads the project's raw files -- config, scripts, Content, text
+  worlds and prefabs, XML UI -- straight from the project folder, over its
+  packs, so an edit shows at the game's next start with no cook or build.
+  Shaders still come from the build. Any Debug or RelWithDebInfo game takes
+  `-uncooked[=<folder>]` or `-cooked` on its command line to choose either
+  way; Shipping has no uncooked mode.
 
 The game's CMake stages exactly the listed, ticked worlds
 (`nimble_project_worlds` in `Engine/cmake/NimbleProject.cmake`): the text

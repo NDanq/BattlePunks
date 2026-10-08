@@ -167,10 +167,10 @@ namespace UI
             case EUIFileFormat::Binary:
                 return ReadUIBinary(InBytes, OutAsset, OutError);
             case EUIFileFormat::Text:
-#if WITH_EDITOR
+#if WITH_UNCOOKED
                 return ParseUIXml(std::string(InBytes.begin(), InBytes.end()), OutAsset, OutError);
 #else
-                if(OutError) *OutError = "is XML; a game reads only the cooked form ('cook ui' in the editor)";
+                if(OutError) *OutError = "is XML; a Shipping game reads only the cooked form (Build > Cook Content)";
                 return false;
 #endif
             case EUIFileFormat::Unknown:
